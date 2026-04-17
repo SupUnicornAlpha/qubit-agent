@@ -12,3 +12,6 @@ src-tauri/target/
 python_connectors/__pycache__/
 python_connectors/.venv/
 *.pyc
+
+# Product docs (PRD / ERD) — tracked separately
+docs/
