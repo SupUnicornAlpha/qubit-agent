@@ -21,10 +21,10 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@duckdb/node-api": "^1.5.2-r.1",
+    "@lancedb/lancedb": "^0.17.0",
     "@langchain/core": "^0.3.32",
     "@langchain/langgraph": "^0.2.39",
-    "@duckdb/node-api": "^1.1.0",
-    "@lancedb/lancedb": "^0.17.0",
     "drizzle-orm": "^0.44.0",
     "hono": "^4.7.0",
     "openai": "^4.103.0",

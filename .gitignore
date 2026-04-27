@@ -15,3 +15,9 @@ python_connectors/.venv/
 
 # Product docs (PRD / ERD) — tracked separately
 docs/
+
+# IDE metadata
+.idea/
+
+# Runtime workspace config (local)
+.qubit/
