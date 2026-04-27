@@ -39,3 +39,22 @@ workspaceRouter.get("/:id/projects", async (c) => {
     .where(eq(project.workspaceId, c.req.param("id")));
   return c.json({ data: rows });
 });
+
+workspaceRouter.post("/:id/projects", async (c) => {
+  const body = await c.req.json<{
+    name: string;
+    marketScope: string;
+    status?: "active" | "archived" | "paused";
+  }>();
+  const db = await getDb();
+  const id = crypto.randomUUID();
+  await db.insert(project).values({
+    id,
+    workspaceId: c.req.param("id"),
+    name: body.name,
+    marketScope: body.marketScope,
+    status: body.status ?? "active",
+  });
+  const created = await db.select().from(project).where(eq(project.id, id)).limit(1);
+  return c.json({ data: created[0] }, 201);
+});

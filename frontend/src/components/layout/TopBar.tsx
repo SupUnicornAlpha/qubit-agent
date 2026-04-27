@@ -1,20 +1,30 @@
 import type { FC } from "react";
+import { useAppStore } from "../../store";
 
 export const TopBar: FC = () => {
+  const connected = useAppStore((s) => s.backendConnected);
   return (
     <header style={styles.bar}>
       <span style={styles.logo}>QUBIT</span>
       <span style={styles.subtitle}>量化研究 Agent 平台</span>
       <div style={styles.spacer} />
-      <StatusDot />
+      <StatusDot connected={connected} />
     </header>
   );
 };
 
-const StatusDot: FC = () => (
+const StatusDot: FC<{ connected: boolean }> = ({ connected }) => (
   <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#71717a" }}>
-    <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", display: "inline-block" }} />
-    Connected
+    <span
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: connected ? "#22c55e" : "#ef4444",
+        display: "inline-block",
+      }}
+    />
+    {connected ? "Backend Connected" : "Backend Offline"}
   </div>
 );
 

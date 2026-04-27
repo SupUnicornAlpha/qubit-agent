@@ -1,15 +1,34 @@
 import { create } from "zustand";
+import type { AgentSummary, AgentsConfigResponse, StepStreamEvent } from "../api/types";
 
 interface AppState {
-  wsConnected: boolean;
-  setWsConnected: (v: boolean) => void;
-  activeView: string;
-  setActiveView: (view: string) => void;
+  backendConnected: boolean;
+  setBackendConnected: (v: boolean) => void;
+  activeView: "monitor" | "config";
+  setActiveView: (view: "monitor" | "config") => void;
+  agents: AgentSummary[];
+  setAgents: (agents: AgentSummary[]) => void;
+  streamEvents: StepStreamEvent[];
+  pushStreamEvent: (event: StepStreamEvent) => void;
+  clearStreamEvents: () => void;
+  configData: AgentsConfigResponse | null;
+  setConfigData: (v: AgentsConfigResponse | null) => void;
+  reloadSummary: { before: number; after: number } | null;
+  setReloadSummary: (v: { before: number; after: number } | null) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  wsConnected: false,
-  setWsConnected: (v) => set({ wsConnected: v }),
-  activeView: "workflow",
+  backendConnected: false,
+  setBackendConnected: (v) => set({ backendConnected: v }),
+  activeView: "monitor",
   setActiveView: (view) => set({ activeView: view }),
+  agents: [],
+  setAgents: (agents) => set({ agents }),
+  streamEvents: [],
+  pushStreamEvent: (event) => set((s) => ({ streamEvents: [...s.streamEvents, event] })),
+  clearStreamEvents: () => set({ streamEvents: [] }),
+  configData: null,
+  setConfigData: (v) => set({ configData: v }),
+  reloadSummary: null,
+  setReloadSummary: (v) => set({ reloadSummary: v }),
 }));
