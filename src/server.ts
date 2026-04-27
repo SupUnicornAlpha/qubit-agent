@@ -6,6 +6,7 @@ import { config } from "./config";
 import { workspaceRouter } from "./routes/workspace.routes";
 import { workflowRouter } from "./routes/workflow.routes";
 import { agentRouter } from "./routes/agent.routes";
+import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
 // ─── HTTP API (Hono) ─────────────────────────────────────────────────────────
 
@@ -21,6 +22,29 @@ app.get("/health", (c) =>
 app.route("/api/v1/workspaces", workspaceRouter);
 app.route("/api/v1/workflows", workflowRouter);
 app.route("/api/v1/agents", agentRouter);
+app.get("/api/v1/workflows/:id/stream", (c) => {
+  const runId = c.req.query("runId");
+  if (!runId) return c.json({ error: "runId is required" }, 400);
+  const stream = stepStreamBus.createSseStream(runId);
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+});
+app.get("/api/v1/workflows/:id/stream/:runId", (c) => {
+  const runId = c.req.param("runId");
+  const stream = stepStreamBus.createSseStream(runId);
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+});
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {

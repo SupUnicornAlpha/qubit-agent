@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { workflowRun } from "../db/sqlite/schema";
 import { eq } from "drizzle-orm";
-import { orchestratorAgent } from "../agents/orchestrator";
+import { dispatchTaskToRole } from "../agents";
 
 export const workflowRouter = new Hono();
 
@@ -30,12 +30,16 @@ workflowRouter.post("/", async (c) => {
     status: "pending",
   });
 
-  // Kick off orchestration
-  await orchestratorAgent.assignTask(id, orchestratorAgent.id, {
-    taskId: crypto.randomUUID(),
-    taskType: "workflow_start",
-    params: { workflowRunId: id, goal: body.goal, mode: body.mode },
-    assignedRole: "orchestrator",
+  // Kick off orchestration through runtime agent pool
+  const { runId } = await dispatchTaskToRole({
+    workflowId: id,
+    role: "orchestrator",
+    payload: {
+      taskId: crypto.randomUUID(),
+      taskType: "workflow_start",
+      params: { workflowRunId: id, goal: body.goal, mode: body.mode },
+      assignedRole: "orchestrator",
+    },
   });
 
   const created = await db
@@ -44,7 +48,7 @@ workflowRouter.post("/", async (c) => {
     .where(eq(workflowRun.id, id))
     .limit(1);
 
-  return c.json({ data: created[0] }, 201);
+  return c.json({ data: created[0], runId }, 201);
 });
 
 workflowRouter.get("/:id", async (c) => {

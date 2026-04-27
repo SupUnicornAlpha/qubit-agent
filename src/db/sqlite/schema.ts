@@ -1,11 +1,5 @@
 import { sql } from "drizzle-orm";
-import {
-  integer,
-  real,
-  sqliteTable,
-  text,
-  uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // ─── Helper: default nanoid-style text PK ────────────────────────────────────
 
@@ -58,11 +52,66 @@ export const workflowRun = sqliteTable("workflow_run", {
   endedAt: text("ended_at"),
 });
 
-// ─── 2.2 Agent 与通信域 ──────────────────────────────────────────────────────
+// ─── 2.2 Agent 运行时域（V1.2） ───────────────────────────────────────────────
 
-export const agent = sqliteTable("agent", {
+export const sandboxPolicy = sqliteTable("sandbox_policy", {
   id: id(),
   name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  allowedToolsJson: text("allowed_tools_json", { mode: "json" }).notNull().default("[]"),
+  allowedMcpServersJson: text("allowed_mcp_servers_json", { mode: "json" })
+    .notNull()
+    .default("[]"),
+  allowedConnectorsJson: text("allowed_connectors_json", { mode: "json" })
+    .notNull()
+    .default("[]"),
+  allowedHostsJson: text("allowed_hosts_json", { mode: "json" }).notNull().default("[]"),
+  allowedFsPathsJson: text("allowed_fs_paths_json", { mode: "json" }).notNull().default("[]"),
+  canWriteMemory: integer("can_write_memory", { mode: "boolean" }).notNull().default(true),
+  canReadLiveMarket: integer("can_read_live_market", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  canSubmitOrder: integer("can_submit_order", { mode: "boolean" }).notNull().default(false),
+  maxToolCallMs: integer("max_tool_call_ms").notNull().default(30_000),
+  maxIterationsPerRun: integer("max_iterations_per_run").notNull().default(20),
+  maxOutputTokens: integer("max_output_tokens").notNull().default(4096),
+  isolationLevel: text("isolation_level", { enum: ["none", "process", "vm"] })
+    .notNull()
+    .default("none"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const llmProviderConfig = sqliteTable("llm_provider_config", {
+  id: id(),
+  providerId: text("provider_id").notNull(),
+  providerType: text("provider_type", {
+    enum: ["openai", "anthropic", "ollama", "custom"],
+  }).notNull(),
+  baseUrl: text("base_url"),
+  modelName: text("model_name").notNull(),
+  apiKeyRef: text("api_key_ref"),
+  contextWindow: integer("context_window").notNull().default(128_000),
+  supportsFunctionCalling: integer("supports_function_calling", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const mcpServerConfig = sqliteTable("mcp_server_config", {
+  id: id(),
+  name: text("name").notNull(),
+  transport: text("transport", { enum: ["stdio", "http", "ws"] }).notNull(),
+  command: text("command"),
+  url: text("url"),
+  capabilitiesJson: text("capabilities_json", { mode: "json" }).notNull().default("[]"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+});
+
+export const agentDefinition = sqliteTable("agent_definition", {
+  id: id(),
   role: text("role", {
     enum: [
       "orchestrator",
@@ -77,10 +126,38 @@ export const agent = sqliteTable("agent", {
       "audit",
     ],
   }).notNull(),
+  name: text("name").notNull(),
   version: text("version").notNull().default("1.0.0"),
+  systemPrompt: text("system_prompt").notNull(),
+  toolsJson: text("tools_json", { mode: "json" }).notNull().default("[]"),
+  mcpServersJson: text("mcp_servers_json", { mode: "json" }).notNull().default("[]"),
+  skillsJson: text("skills_json", { mode: "json" }).notNull().default("[]"),
+  subscriptionsJson: text("subscriptions_json", { mode: "json" }).notNull().default("[]"),
+  llmProvider: text("llm_provider").notNull(),
+  maxIterations: integer("max_iterations").notNull().default(20),
+  sandboxPolicyId: text("sandbox_policy_id")
+    .notNull()
+    .references(() => sandboxPolicy.id),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const agentInstance = sqliteTable("agent_instance", {
+  id: id(),
+  definitionId: text("definition_id")
+    .notNull()
+    .references(() => agentDefinition.id),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
   status: text("status", { enum: ["idle", "running", "error", "stopped"] })
     .notNull()
     .default("idle"),
+  currentIteration: integer("current_iteration").notNull().default(0),
+  startedAt: text("started_at"),
+  endedAt: text("ended_at"),
+  errorMessage: text("error_message"),
 });
 
 export const a2aMessage = sqliteTable("a2a_message", {
@@ -89,12 +166,10 @@ export const a2aMessage = sqliteTable("a2a_message", {
     .notNull()
     .references(() => workflowRun.id),
   traceId: text("trace_id").notNull(),
-  senderAgentId: text("sender_agent_id")
+  senderInstanceId: text("sender_instance_id")
     .notNull()
-    .references(() => agent.id),
-  receiverAgentId: text("receiver_agent_id")
-    .notNull()
-    .references(() => agent.id),
+    .references(() => agentInstance.id),
+  receiverInstanceId: text("receiver_instance_id").references(() => agentInstance.id),
   messageType: text("message_type", {
     enum: [
       "TASK_ASSIGN",
@@ -117,9 +192,10 @@ export const acpCall = sqliteTable("acp_call", {
     .notNull()
     .references(() => workflowRun.id),
   traceId: text("trace_id").notNull(),
-  callerAgentId: text("caller_agent_id")
+  agentStepId: text("agent_step_id"),
+  callerInstanceId: text("caller_instance_id")
     .notNull()
-    .references(() => agent.id),
+    .references(() => agentInstance.id),
   targetKind: text("target_kind", {
     enum: ["skill", "mcp", "tool", "connector"],
   }).notNull(),
@@ -128,8 +204,73 @@ export const acpCall = sqliteTable("acp_call", {
   inputSchemaVersion: text("input_schema_version").notNull().default("1.0"),
   outputSchemaVersion: text("output_schema_version"),
   latencyMs: integer("latency_ms"),
-  status: text("status", { enum: ["success", "error", "timeout"] }).notNull(),
+  status: text("status", {
+    enum: ["success", "error", "timeout", "blocked_by_sandbox"],
+  }).notNull(),
   errorCode: text("error_code"),
+  createdAt: createdAt(),
+});
+
+export const agentStep = sqliteTable("agent_step", {
+  id: id(),
+  agentInstanceId: text("agent_instance_id")
+    .notNull()
+    .references(() => agentInstance.id),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  stepIndex: integer("step_index").notNull(),
+  phase: text("phase", { enum: ["perceive", "reason", "act", "observe"] }).notNull(),
+  thought: text("thought"),
+  actionType: text("action_type", {
+    enum: ["tool_call", "final_answer", "memory_read", "memory_write", "a2a_send"],
+  }).notNull(),
+  actionJson: text("action_json", { mode: "json" }).notNull(),
+  observationJson: text("observation_json", { mode: "json" }),
+  tokenCount: integer("token_count"),
+  latencyMs: integer("latency_ms"),
+  createdAt: createdAt(),
+});
+
+export const toolCallLog = sqliteTable("tool_call_log", {
+  id: id(),
+  agentStepId: text("agent_step_id")
+    .notNull()
+    .references(() => agentStep.id),
+  toolName: text("tool_name").notNull(),
+  toolKind: text("tool_kind", { enum: ["acp_connector", "mcp", "skill", "builtin"] }).notNull(),
+  requestJson: text("request_json", { mode: "json" }).notNull(),
+  responseJson: text("response_json", { mode: "json" }),
+  status: text("status", {
+    enum: ["success", "error", "timeout", "sandbox_blocked"],
+  }).notNull(),
+  latencyMs: integer("latency_ms"),
+  errorMessage: text("error_message"),
+  createdAt: createdAt(),
+});
+
+export const sandboxViolationLog = sqliteTable("sandbox_violation_log", {
+  id: id(),
+  agentInstanceId: text("agent_instance_id")
+    .notNull()
+    .references(() => agentInstance.id),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  violationType: text("violation_type", {
+    enum: [
+      "tool_not_allowed",
+      "mcp_not_allowed",
+      "network_blocked",
+      "fs_blocked",
+      "timeout",
+      "iteration_exceeded",
+    ],
+  }).notNull(),
+  attemptedAction: text("attempted_action", { mode: "json" }).notNull(),
+  sandboxPolicyId: text("sandbox_policy_id")
+    .notNull()
+    .references(() => sandboxPolicy.id),
   createdAt: createdAt(),
 });
 
@@ -145,7 +286,7 @@ export const strategy = sqliteTable("strategy", {
     enum: ["low_freq", "mid_freq", "high_freq", "options", "futures"],
   }).notNull(),
   description: text("description").notNull().default(""),
-  ownerAgentId: text("owner_agent_id").references(() => agent.id),
+  ownerInstanceId: text("owner_instance_id").references(() => agentInstance.id),
   createdAt: createdAt(),
 });
 
@@ -178,6 +319,7 @@ export const researchExperiment = sqliteTable("research_experiment", {
   strategyVersionId: text("strategy_version_id")
     .notNull()
     .references(() => strategyVersion.id),
+  agentInstanceId: text("agent_instance_id").references(() => agentInstance.id),
   datasetSnapshotId: text("dataset_snapshot_id").notNull(),
   metricJson: text("metric_json", { mode: "json" }).notNull(),
   resultSummary: text("result_summary").notNull().default(""),
@@ -189,6 +331,7 @@ export const backtestRun = sqliteTable("backtest_run", {
   strategyVersionId: text("strategy_version_id")
     .notNull()
     .references(() => strategyVersion.id),
+  agentInstanceId: text("agent_instance_id").references(() => agentInstance.id),
   connectorInstanceId: text("connector_instance_id").notNull(),
   datasetSnapshotId: text("dataset_snapshot_id").notNull(),
   configJson: text("config_json", { mode: "json" }).notNull(),
@@ -207,6 +350,7 @@ export const simulationRun = sqliteTable("simulation_run", {
   strategyVersionId: text("strategy_version_id")
     .notNull()
     .references(() => strategyVersion.id),
+  agentInstanceId: text("agent_instance_id").references(() => agentInstance.id),
   connectorInstanceId: text("connector_instance_id").notNull(),
   paperAccountId: text("paper_account_id").notNull(),
   performanceJson: text("performance_json", { mode: "json" }),
@@ -329,6 +473,7 @@ export const riskDecision = sqliteTable("risk_decision", {
   riskRuleId: text("risk_rule_id")
     .notNull()
     .references(() => riskRule.id),
+  agentInstanceId: text("agent_instance_id").references(() => agentInstance.id),
   decision: text("decision", { enum: ["allow", "block", "review"] }).notNull(),
   reason: text("reason").notNull(),
   evaluatedAt: createdAt(),
@@ -407,6 +552,7 @@ export const connectorCallLog = sqliteTable("connector_call_log", {
   connectorInstanceId: text("connector_instance_id")
     .notNull()
     .references(() => connectorInstance.id),
+  acpCallId: text("acp_call_id").references(() => acpCall.id),
   traceId: text("trace_id").notNull(),
   operation: text("operation", {
     enum: ["init", "healthcheck", "execute", "shutdown"],
@@ -543,6 +689,7 @@ export const auditLog = sqliteTable("audit_log", {
   id: id(),
   traceId: text("trace_id").notNull(),
   workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+  agentInstanceId: text("agent_instance_id").references(() => agentInstance.id),
   actorType: text("actor_type", {
     enum: ["agent", "user", "system"],
   }).notNull(),

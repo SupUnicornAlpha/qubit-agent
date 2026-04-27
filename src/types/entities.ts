@@ -1,6 +1,5 @@
 /**
- * ERD V1 entity types — mirrors the Drizzle schema definitions.
- * All IDs are nanoid strings unless noted otherwise.
+ * ERD V1.2 entity types — mirrors the Drizzle schema definitions.
  */
 
 // ─── 2.1 组织与任务域 ────────────────────────────────────────────────────────
@@ -49,12 +48,121 @@ export type AgentRole =
   | "memory"
   | "audit";
 
-export interface Agent {
+export interface AgentDefinition {
+  id: string;
+  role: AgentRole;
+  name: string;
+  version: string;
+  systemPrompt: string;
+  toolsJson: unknown;
+  mcpServersJson: unknown;
+  skillsJson: unknown;
+  subscriptionsJson: unknown;
+  llmProvider: string;
+  maxIterations: number;
+  sandboxPolicyId: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentInstance {
+  id: string;
+  definitionId: string;
+  workflowRunId: string;
+  status: "idle" | "running" | "error" | "stopped";
+  currentIteration: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface AgentStep {
+  id: string;
+  agentInstanceId: string;
+  workflowRunId: string;
+  stepIndex: number;
+  phase: "perceive" | "reason" | "act" | "observe";
+  thought: string | null;
+  actionType: "tool_call" | "final_answer" | "memory_read" | "memory_write" | "a2a_send";
+  actionJson: unknown;
+  observationJson: unknown | null;
+  tokenCount: number | null;
+  latencyMs: number | null;
+  createdAt: string;
+}
+
+export interface ToolCallLog {
+  id: string;
+  agentStepId: string;
+  toolName: string;
+  toolKind: "acp_connector" | "mcp" | "skill" | "builtin";
+  requestJson: unknown;
+  responseJson: unknown | null;
+  status: "success" | "error" | "timeout" | "sandbox_blocked";
+  latencyMs: number | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface SandboxPolicy {
   id: string;
   name: string;
-  role: AgentRole;
-  version: string;
-  status: "idle" | "running" | "error" | "stopped";
+  description: string;
+  allowedToolsJson: unknown;
+  allowedMcpServersJson: unknown;
+  allowedConnectorsJson: unknown;
+  allowedHostsJson: unknown;
+  allowedFsPathsJson: unknown;
+  canWriteMemory: boolean;
+  canReadLiveMarket: boolean;
+  canSubmitOrder: boolean;
+  maxToolCallMs: number;
+  maxIterationsPerRun: number;
+  maxOutputTokens: number;
+  isolationLevel: "none" | "process" | "vm";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SandboxViolationLog {
+  id: string;
+  agentInstanceId: string;
+  workflowRunId: string;
+  violationType:
+    | "tool_not_allowed"
+    | "mcp_not_allowed"
+    | "network_blocked"
+    | "fs_blocked"
+    | "timeout"
+    | "iteration_exceeded";
+  attemptedAction: unknown;
+  sandboxPolicyId: string;
+  createdAt: string;
+}
+
+export interface LlmProviderConfig {
+  id: string;
+  providerId: string;
+  providerType: "openai" | "anthropic" | "ollama" | "custom";
+  baseUrl: string | null;
+  modelName: string;
+  apiKeyRef: string | null;
+  contextWindow: number;
+  supportsFunctionCalling: boolean;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: "stdio" | "http" | "ws";
+  command: string | null;
+  url: string | null;
+  capabilitiesJson: unknown;
+  enabled: boolean;
+  createdAt: string;
 }
 
 export type A2AMessageType =
@@ -70,8 +178,8 @@ export interface A2AMessage {
   id: string;
   workflowRunId: string;
   traceId: string;
-  senderAgentId: string;
-  receiverAgentId: string;
+  senderInstanceId: string;
+  receiverInstanceId: string | null;
   messageType: A2AMessageType;
   payloadJson: unknown;
   priority: number;
@@ -83,15 +191,16 @@ export type ConnectorTargetKind = "skill" | "mcp" | "tool" | "connector";
 export interface AcpCall {
   id: string;
   workflowRunId: string;
+  agentStepId: string | null;
   traceId: string;
-  callerAgentId: string;
+  callerInstanceId: string;
   targetKind: ConnectorTargetKind;
   targetName: string;
   intent: string;
   inputSchemaVersion: string;
   outputSchemaVersion: string | null;
   latencyMs: number | null;
-  status: "success" | "error" | "timeout";
+  status: "success" | "error" | "timeout" | "blocked_by_sandbox";
   errorCode: string | null;
   createdAt: string;
 }
@@ -106,7 +215,7 @@ export interface Strategy {
   name: string;
   style: StrategyStyle;
   description: string;
-  ownerAgentId: string;
+  ownerInstanceId: string | null;
   createdAt: string;
 }
 
@@ -133,6 +242,7 @@ export interface FactorDefinition {
 export interface ResearchExperiment {
   id: string;
   strategyVersionId: string;
+  agentInstanceId: string | null;
   datasetSnapshotId: string;
   metricJson: unknown;
   resultSummary: string;
@@ -144,6 +254,7 @@ export type RunStatus = "pending" | "running" | "completed" | "failed";
 export interface BacktestRun {
   id: string;
   strategyVersionId: string;
+  agentInstanceId: string | null;
   connectorInstanceId: string;
   datasetSnapshotId: string;
   configJson: unknown;
@@ -156,6 +267,7 @@ export interface BacktestRun {
 export interface SimulationRun {
   id: string;
   strategyVersionId: string;
+  agentInstanceId: string | null;
   connectorInstanceId: string;
   paperAccountId: string;
   performanceJson: unknown | null;
@@ -255,6 +367,7 @@ export interface RiskDecision {
   id: string;
   orderIntentId: string;
   riskRuleId: string;
+  agentInstanceId: string | null;
   decision: RiskDecisionResult;
   reason: string;
   evaluatedAt: string;
@@ -329,6 +442,7 @@ export type ConnectorOperation = "init" | "healthcheck" | "execute" | "shutdown"
 export interface ConnectorCallLog {
   id: string;
   connectorInstanceId: string;
+  acpCallId: string | null;
   traceId: string;
   operation: ConnectorOperation;
   requestJson: unknown;
@@ -448,7 +562,8 @@ export type AuditActorType = "agent" | "user" | "system";
 export interface AuditLog {
   id: string;
   traceId: string;
-  workflowRunId: string;
+  workflowRunId: string | null;
+  agentInstanceId: string | null;
   actorType: AuditActorType;
   actorId: string;
   action: string;
