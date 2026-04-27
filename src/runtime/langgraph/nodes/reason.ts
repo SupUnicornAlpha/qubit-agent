@@ -1,45 +1,46 @@
-import OpenAI from "openai";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { loadModelConfig } from "../../config/model-config";
-
-function splitForPseudoStreaming(text: string): string[] {
-  return text.split(/\s+/).filter(Boolean);
-}
+import { runLlmGateway } from "../../llm/gateway";
 
 export async function reasonNode(
   state: AgentGraphState,
   emit: (event: StepStreamEvent) => void
 ): Promise<Partial<AgentGraphState>> {
   const runtimeModel = await loadModelConfig();
-  const apiKey = runtimeModel?.apiKey || process.env["OPENAI_API_KEY"];
-  const modelName = runtimeModel?.model || "gpt-4o-mini";
-  const baseUrl = runtimeModel?.baseUrl;
+  const modelConfig = runtimeModel ?? {
+    provider: "mock" as const,
+    model: "mock-reasoner",
+    apiKey: "",
+  };
   let answer = "";
 
-  if (apiKey) {
-    const client = new OpenAI({ apiKey, baseURL: baseUrl });
-    const stream = await client.chat.completions.create({
-      model: modelName,
-      messages: [
-        { role: "system", content: state.agentDefinition.systemPrompt },
-        {
-          role: "user",
-          content: JSON.stringify({
-            workflowId: state.workflowId,
-            messageType: state.inboundMessage.messageType,
-            payload: state.inboundMessage.payload,
-            contextMemory: state.contextMemory,
-          }),
-        },
-      ],
-      temperature: 0.1,
-      stream: true,
+  try {
+    answer = await runLlmGateway({
+      config: modelConfig,
+      systemPrompt: state.agentDefinition.systemPrompt,
+      userPrompt: JSON.stringify({
+        workflowId: state.workflowId,
+        messageType: state.inboundMessage.messageType,
+        payload: state.inboundMessage.payload,
+        contextMemory: state.contextMemory,
+      }),
+      onToken: (token) => {
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "token",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: { token, provider: modelConfig.provider, model: modelConfig.model },
+        });
+      },
     });
-
-    for await (const chunk of stream) {
-      const token = chunk.choices[0]?.delta?.content ?? "";
+  } catch (error) {
+    const fallback = `LLM gateway error: ${(error as Error).message}`;
+    for (const token of fallback.split(/\s+/).filter(Boolean)) {
       if (!token) continue;
-      answer += token;
       emit({
         runId: state.runId,
         workflowId: state.workflowId,
@@ -48,24 +49,10 @@ export async function reasonNode(
         type: "token",
         stepIndex: state.iteration,
         ts: Date.now(),
-        payload: { token },
+        payload: { token, provider: modelConfig.provider, error: true },
       });
     }
-  } else {
-    answer = `Mock reason result for role=${state.agentDefinition.role}`;
-    const tokens = splitForPseudoStreaming(answer);
-    for (const token of tokens) {
-      emit({
-        runId: state.runId,
-        workflowId: state.workflowId,
-        traceId: state.traceId,
-        role: state.agentDefinition.role,
-        type: "token",
-        stepIndex: state.iteration,
-        ts: Date.now(),
-        payload: { token },
-      });
-    }
+    answer = fallback;
   }
 
   return {

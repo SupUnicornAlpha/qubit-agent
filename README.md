@@ -83,6 +83,24 @@ bun tauri dev
 
 `reason` 节点优先读取该文件；若未配置则回退到环境变量 `OPENAI_API_KEY`。
 
+当前支持 provider：
+
+- `openai`
+- `anthropic`
+- `ollama`
+- `deepseek`
+- `qwen`（阿里云 DashScope 兼容模式）
+- `zhipu`
+- `mock`
+
+常见环境变量回退：
+
+- OpenAI：`OPENAI_API_KEY`
+- Anthropic：`ANTHROPIC_API_KEY`
+- DeepSeek：`DEEPSEEK_API_KEY`
+- Qwen：`DASHSCOPE_API_KEY`
+- Zhipu：`ZHIPU_API_KEY`
+
 ## 常用 API
 
 - `POST /api/v1/workflows`：创建 workflow（返回 `runId`）

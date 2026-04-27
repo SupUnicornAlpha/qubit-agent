@@ -154,6 +154,9 @@ const ConfigPanel: FC = () => {
   const reloadSummary = useAppStore((s) => s.reloadSummary);
   const setReloadSummary = useAppStore((s) => s.setReloadSummary);
   const [loading, setLoading] = useState(false);
+  const [provider, setProvider] = useState<
+    "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
+  >("mock");
   const [modelName, setModelName] = useState("gpt-4o-mini");
   const [modelApiKey, setModelApiKey] = useState("");
   const [modelBaseUrl, setModelBaseUrl] = useState("");
@@ -172,6 +175,7 @@ const ConfigPanel: FC = () => {
     void loadConfig();
     void getModelConfig()
       .then((cfg) => {
+        setProvider(cfg.provider ?? "mock");
         setModelName(cfg.model ?? "gpt-4o-mini");
         setModelApiKey(cfg.apiKey ?? "");
         setModelBaseUrl(cfg.baseUrl ?? "");
@@ -187,11 +191,12 @@ const ConfigPanel: FC = () => {
 
   const onSaveModel = async () => {
     const saved = await saveModelConfig({
-      provider: "openai",
+      provider,
       model: modelName,
       apiKey: modelApiKey,
       baseUrl: modelBaseUrl || undefined,
     });
+    setProvider(saved.provider);
     setModelName(saved.model);
     setModelApiKey(saved.apiKey);
     setModelBaseUrl(saved.baseUrl ?? "");
@@ -211,6 +216,30 @@ const ConfigPanel: FC = () => {
       </div>
       <h3 style={styles.subTitle}>模型配置</h3>
       <div style={styles.form}>
+        <select
+          style={styles.select}
+          value={provider}
+          onChange={(e) =>
+            setProvider(
+              e.target.value as
+                | "openai"
+                | "anthropic"
+                | "ollama"
+                | "deepseek"
+                | "qwen"
+                | "zhipu"
+                | "mock"
+            )
+          }
+        >
+          <option value="mock">mock</option>
+          <option value="openai">openai</option>
+          <option value="anthropic">anthropic</option>
+          <option value="ollama">ollama</option>
+          <option value="deepseek">deepseek</option>
+          <option value="qwen">qwen</option>
+          <option value="zhipu">zhipu</option>
+        </select>
         <input
           style={styles.input}
           value={modelName}

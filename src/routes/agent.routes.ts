@@ -100,7 +100,7 @@ agentRouter.get("/config", async (c) => {
 
 agentRouter.get("/model-config", async (c) => {
   const config = (await loadModelConfig()) ?? {
-    provider: "openai",
+    provider: "mock",
     model: "gpt-4o-mini",
     apiKey: "",
   };
@@ -109,7 +109,7 @@ agentRouter.get("/model-config", async (c) => {
 
 agentRouter.post("/model-config", async (c) => {
   const body = await c.req.json<{
-    provider?: "openai";
+    provider?: "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock";
     model?: string;
     apiKey?: string;
     baseUrl?: string;

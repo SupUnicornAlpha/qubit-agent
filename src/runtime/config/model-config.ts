@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { z } from "zod";
 
 const ModelConfigSchema = z.object({
-  provider: z.enum(["openai"]).default("openai"),
+  provider: z
+    .enum(["openai", "anthropic", "ollama", "deepseek", "qwen", "zhipu", "mock"])
+    .default("openai"),
   model: z.string().min(1).default("gpt-4o-mini"),
   apiKey: z.string().default(""),
   baseUrl: z.string().optional(),

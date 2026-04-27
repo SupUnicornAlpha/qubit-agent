@@ -64,7 +64,7 @@ export interface AgentsConfigResponse {
 }
 
 export interface ModelConfig {
-  provider: "openai";
+  provider: "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock";
   model: string;
   apiKey: string;
   baseUrl?: string;
