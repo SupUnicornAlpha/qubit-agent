@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { AgentGraphState, StepStreamEvent } from "../state";
+import { loadModelConfig } from "../../config/model-config";
 
 function splitForPseudoStreaming(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
@@ -9,13 +10,16 @@ export async function reasonNode(
   state: AgentGraphState,
   emit: (event: StepStreamEvent) => void
 ): Promise<Partial<AgentGraphState>> {
-  const apiKey = process.env["OPENAI_API_KEY"];
+  const runtimeModel = await loadModelConfig();
+  const apiKey = runtimeModel?.apiKey || process.env["OPENAI_API_KEY"];
+  const modelName = runtimeModel?.model || "gpt-4o-mini";
+  const baseUrl = runtimeModel?.baseUrl;
   let answer = "";
 
   if (apiKey) {
-    const client = new OpenAI({ apiKey });
+    const client = new OpenAI({ apiKey, baseURL: baseUrl });
     const stream = await client.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: modelName,
       messages: [
         { role: "system", content: state.agentDefinition.systemPrompt },
         {

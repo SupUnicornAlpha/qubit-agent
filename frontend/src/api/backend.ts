@@ -2,6 +2,7 @@ import { httpGet, httpPost } from "./client";
 import type {
   AgentSummary,
   AgentsConfigResponse,
+  ModelConfig,
   StepStreamEvent,
   WorkflowCreateInput,
 } from "./types";
@@ -58,6 +59,16 @@ export async function reloadAgents(): Promise<{ ok: boolean; before: number; aft
 
 export async function getAgentsConfig(): Promise<AgentsConfigResponse> {
   return httpGet<AgentsConfigResponse>("/api/v1/agents/config");
+}
+
+export async function getModelConfig(): Promise<ModelConfig> {
+  const res = await httpGet<{ data: ModelConfig }>("/api/v1/agents/model-config");
+  return res.data;
+}
+
+export async function saveModelConfig(input: Partial<ModelConfig>): Promise<ModelConfig> {
+  const res = await httpPost<{ data: ModelConfig }>("/api/v1/agents/model-config", input);
+  return res.data;
 }
 
 export function subscribeWorkflowStream(params: {

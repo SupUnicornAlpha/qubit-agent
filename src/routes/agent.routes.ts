@@ -4,6 +4,7 @@ import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
 import { getDb } from "../db/sqlite/client";
 import { agentDefinition, sandboxPolicy } from "../db/sqlite/schema";
+import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
 
 export const agentRouter = new Hono();
 
@@ -95,4 +96,29 @@ agentRouter.get("/config", async (c) => {
       activeAgents: getRuntimeAgents(),
     },
   });
+});
+
+agentRouter.get("/model-config", async (c) => {
+  const config = (await loadModelConfig()) ?? {
+    provider: "openai",
+    model: "gpt-4o-mini",
+    apiKey: "",
+  };
+  return c.json({ data: config });
+});
+
+agentRouter.post("/model-config", async (c) => {
+  const body = await c.req.json<{
+    provider?: "openai";
+    model?: string;
+    apiKey?: string;
+    baseUrl?: string;
+  }>();
+  const saved = await saveModelConfig({
+    provider: body.provider,
+    model: body.model,
+    apiKey: body.apiKey,
+    baseUrl: body.baseUrl,
+  });
+  return c.json({ data: saved });
 });

@@ -63,3 +63,10 @@ export interface AgentsConfigResponse {
   };
 }
 
+export interface ModelConfig {
+  provider: "openai";
+  model: string;
+  apiKey: string;
+  baseUrl?: string;
+}
+

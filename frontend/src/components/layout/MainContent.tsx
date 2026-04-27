@@ -5,10 +5,12 @@ import {
   createWorkspace,
   createWorkflow,
   getAgentsConfig,
+  getModelConfig,
   listProjects,
   listAgents,
   listWorkspaces,
   reloadAgents,
+  saveModelConfig,
   subscribeWorkflowStream,
 } from "../../api/backend";
 import type { WorkflowMode } from "../../api/types";
@@ -152,6 +154,9 @@ const ConfigPanel: FC = () => {
   const reloadSummary = useAppStore((s) => s.reloadSummary);
   const setReloadSummary = useAppStore((s) => s.setReloadSummary);
   const [loading, setLoading] = useState(false);
+  const [modelName, setModelName] = useState("gpt-4o-mini");
+  const [modelApiKey, setModelApiKey] = useState("");
+  const [modelBaseUrl, setModelBaseUrl] = useState("");
 
   const loadConfig = async () => {
     setLoading(true);
@@ -165,12 +170,31 @@ const ConfigPanel: FC = () => {
 
   useEffect(() => {
     void loadConfig();
+    void getModelConfig()
+      .then((cfg) => {
+        setModelName(cfg.model ?? "gpt-4o-mini");
+        setModelApiKey(cfg.apiKey ?? "");
+        setModelBaseUrl(cfg.baseUrl ?? "");
+      })
+      .catch(console.error);
   }, []);
 
   const onReload = async () => {
     const res = await reloadAgents();
     setReloadSummary({ before: res.before, after: res.after });
     await loadConfig();
+  };
+
+  const onSaveModel = async () => {
+    const saved = await saveModelConfig({
+      provider: "openai",
+      model: modelName,
+      apiKey: modelApiKey,
+      baseUrl: modelBaseUrl || undefined,
+    });
+    setModelName(saved.model);
+    setModelApiKey(saved.apiKey);
+    setModelBaseUrl(saved.baseUrl ?? "");
   };
 
   return (
@@ -183,6 +207,31 @@ const ConfigPanel: FC = () => {
         </button>
         <button style={styles.buttonSecondary} onClick={() => void onReload()}>
           触发 reload
+        </button>
+      </div>
+      <h3 style={styles.subTitle}>模型配置</h3>
+      <div style={styles.form}>
+        <input
+          style={styles.input}
+          value={modelName}
+          onChange={(e) => setModelName(e.target.value)}
+          placeholder="model (e.g. gpt-4o-mini)"
+        />
+        <input
+          style={styles.input}
+          value={modelApiKey}
+          onChange={(e) => setModelApiKey(e.target.value)}
+          placeholder="api key"
+          type="password"
+        />
+        <input
+          style={styles.input}
+          value={modelBaseUrl}
+          onChange={(e) => setModelBaseUrl(e.target.value)}
+          placeholder="base url (optional)"
+        />
+        <button style={styles.button} onClick={() => void onSaveModel()}>
+          保存模型配置
         </button>
       </div>
       <pre style={styles.streamBox}>{JSON.stringify(configData?.diffSummary ?? {}, null, 2)}</pre>
