@@ -35,3 +35,10 @@ export async function httpPost<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
+export async function httpPatch<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PATCH",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+

@@ -35,22 +35,82 @@ export const project = sqliteTable("project", {
   createdAt: createdAt(),
 });
 
+export const chatSession = sqliteTable("chat_session", {
+  id: id(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id),
+  projectId: text("project_id").references(() => project.id),
+  title: text("title").notNull(),
+  status: text("status", { enum: ["active", "archived"] })
+    .notNull()
+    .default("active"),
+  lastActivityAt: createdAt(),
+  createdBy: text("created_by").notNull().default("user"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 export const workflowRun = sqliteTable("workflow_run", {
   id: id(),
   projectId: text("project_id")
     .notNull()
     .references(() => project.id),
-  sessionId: text("session_id"),
+  sessionId: text("session_id").references(() => chatSession.id),
   goal: text("goal").notNull(),
   mode: text("mode", { enum: ["research", "backtest", "simulation", "live"] }).notNull(),
+  source: text("source", { enum: ["chat", "manual", "api"] })
+    .notNull()
+    .default("manual"),
   status: text("status", {
     enum: ["pending", "running", "completed", "failed", "cancelled"],
   })
     .notNull()
     .default("pending"),
+  signalFusionId: text("signal_fusion_id"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
 });
+
+export const chatMessage = sqliteTable("chat_message", {
+  id: id(),
+  sessionId: text("session_id")
+    .notNull()
+    .references(() => chatSession.id),
+  role: text("role", { enum: ["user", "assistant", "system"] }).notNull(),
+  sender: text("sender", { enum: ["user", "orchestrator", "agent", "system"] })
+    .notNull()
+    .default("user"),
+  content: text("content").notNull(),
+  status: text("status", { enum: ["queued", "running", "completed", "failed"] })
+    .notNull()
+    .default("queued"),
+  errorMessage: text("error_message"),
+  tokenCount: integer("token_count"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const chatMessageWorkflowLink = sqliteTable(
+  "chat_message_workflow_link",
+  {
+    id: id(),
+    chatMessageId: text("chat_message_id")
+      .notNull()
+      .references(() => chatMessage.id),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id),
+    traceId: text("trace_id").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    messageWorkflowUnique: uniqueIndex("idx_chat_msg_workflow_unique").on(
+      table.chatMessageId,
+      table.workflowRunId
+    ),
+  })
+);
 
 // ─── 2.2 Agent 运行时域（V1.2） ───────────────────────────────────────────────
 
@@ -114,6 +174,7 @@ export const agentDefinition = sqliteTable("agent_definition", {
   id: id(),
   role: text("role", {
     enum: [
+      // V1 roles
       "orchestrator",
       "market_data",
       "news_event",
@@ -124,6 +185,19 @@ export const agentDefinition = sqliteTable("agent_definition", {
       "execution",
       "memory",
       "audit",
+      // V2 analyst team roles
+      "analyst_fundamental",
+      "analyst_technical",
+      "analyst_sentiment",
+      "analyst_macro",
+      "researcher_bull",
+      "researcher_bear",
+      "risk_manager",
+      "portfolio_manager",
+      "stock_screener",
+      "backtest_engineer",
+      "execution_trader",
+      "memory_curator",
     ],
   }).notNull(),
   name: text("name").notNull(),
@@ -138,9 +212,60 @@ export const agentDefinition = sqliteTable("agent_definition", {
   sandboxPolicyId: text("sandbox_policy_id")
     .notNull()
     .references(() => sandboxPolicy.id),
+  signalWeight: real("signal_weight").notNull().default(1.0),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
+});
+
+export const agentProfile = sqliteTable("agent_profile", {
+  id: id(),
+  definitionId: text("definition_id")
+    .notNull()
+    .references(() => agentDefinition.id),
+  displayName: text("display_name").notNull(),
+  soulFileRef: text("soul_file_ref").notNull().default(""),
+  promptTemplateRef: text("prompt_template_ref"),
+  description: text("description").notNull().default(""),
+  tagsJson: text("tags_json", { mode: "json" }).notNull().default("[]"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const agentDefinitionDraft = sqliteTable("agent_definition_draft", {
+  id: id(),
+  definitionId: text("definition_id")
+    .notNull()
+    .references(() => agentDefinition.id),
+  versionTag: text("version_tag").notNull(),
+  systemPrompt: text("system_prompt").notNull(),
+  toolsJson: text("tools_json", { mode: "json" }).notNull().default("[]"),
+  mcpServersJson: text("mcp_servers_json", { mode: "json" }).notNull().default("[]"),
+  skillsJson: text("skills_json", { mode: "json" }).notNull().default("[]"),
+  subscriptionsJson: text("subscriptions_json", { mode: "json" }).notNull().default("[]"),
+  llmProvider: text("llm_provider").notNull(),
+  maxIterations: integer("max_iterations").notNull().default(20),
+  sandboxPolicyId: text("sandbox_policy_id")
+    .notNull()
+    .references(() => sandboxPolicy.id),
+  changeNote: text("change_note").notNull().default(""),
+  createdBy: text("created_by").notNull().default("user"),
+  createdAt: createdAt(),
+});
+
+export const agentDefinitionRelease = sqliteTable("agent_definition_release", {
+  id: id(),
+  definitionId: text("definition_id")
+    .notNull()
+    .references(() => agentDefinition.id),
+  draftId: text("draft_id")
+    .notNull()
+    .references(() => agentDefinitionDraft.id),
+  releasedVersion: text("released_version").notNull(),
+  releaseNote: text("release_note").notNull().default(""),
+  releasedBy: text("released_by").notNull().default("user"),
+  releasedAt: createdAt(),
 });
 
 export const agentInstance = sqliteTable("agent_instance", {
@@ -681,6 +806,89 @@ export const memorySyncLog = sqliteTable("memory_sync_log", {
   latencyMs: integer("latency_ms"),
   errorDetail: text("error_detail"),
   createdAt: createdAt(),
+});
+
+export const communicationChannel = sqliteTable("communication_channel", {
+  id: id(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id),
+  projectId: text("project_id").references(() => project.id),
+  kind: text("kind", { enum: ["telegram", "webhook"] }).notNull(),
+  name: text("name").notNull(),
+  externalChatId: text("external_chat_id").notNull(),
+  secretRef: text("secret_ref").notNull().default(""),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const communicationMessageLog = sqliteTable("communication_message_log", {
+  id: id(),
+  direction: text("direction", { enum: ["inbound", "outbound"] }).notNull(),
+  channelKind: text("channel_kind", { enum: ["telegram", "webhook"] }).notNull(),
+  externalChatId: text("external_chat_id").notNull(),
+  externalMessageId: text("external_message_id"),
+  payloadJson: text("payload_json", { mode: "json" }).notNull(),
+  status: text("status", { enum: ["success", "failed"] }).notNull(),
+  errorMessage: text("error_message"),
+  createdAt: createdAt(),
+});
+
+// ─── 2.8 审计与可观测域 ──────────────────────────────────────────────────────
+
+// ─── V2 角色字典 ──────────────────────────────────────────────────────────────
+
+export const agentRoleCatalog = sqliteTable("agent_role_catalog", {
+  role: text("role").primaryKey(),
+  displayName: text("display_name").notNull(),
+  description: text("description").notNull().default(""),
+  defaultPromptTemplate: text("default_prompt_template").notNull().default(""),
+  team: text("team").notNull().default("ops"),
+  isBuiltin: integer("is_builtin", { mode: "boolean" }).notNull().default(true),
+});
+
+// ─── V2 多信号融合域（MSA） ───────────────────────────────────────────────────
+
+export const analystSignal = sqliteTable("analyst_signal", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  agentInstanceId: text("agent_instance_id").references(() => agentInstance.id),
+  analystRole: text("analyst_role").notNull(),
+  ticker: text("ticker").notNull(),
+  signal: text("signal", { enum: ["buy", "sell", "hold"] }).notNull(),
+  confidence: real("confidence").notNull().default(0.5),
+  reasoning: text("reasoning").notNull().default(""),
+  dataSnapshotJson: text("data_snapshot_json", { mode: "json" }).notNull().default("{}"),
+  createdAt: createdAt(),
+});
+
+export const signalFusionResult = sqliteTable("signal_fusion_result", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  ticker: text("ticker").notNull(),
+  fusedSignal: text("fused_signal", { enum: ["buy", "sell", "hold"] }).notNull(),
+  fusedConfidence: real("fused_confidence").notNull().default(0.5),
+  weightsJson: text("weights_json", { mode: "json" }).notNull().default("{}"),
+  debateTriggered: integer("debate_triggered", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+});
+
+export const analystAccuracyLog = sqliteTable("analyst_accuracy_log", {
+  id: id(),
+  definitionId: text("definition_id")
+    .notNull()
+    .references(() => agentDefinition.id),
+  ticker: text("ticker").notNull(),
+  signalDate: integer("signal_date").notNull(),
+  predictedSignal: text("predicted_signal", { enum: ["buy", "sell", "hold"] }).notNull(),
+  actualOutcome: text("actual_outcome", { enum: ["up", "down", "flat"] }),
+  isCorrect: integer("is_correct"),
+  evaluatedAt: integer("evaluated_at"),
 });
 
 // ─── 2.8 审计与可观测域 ──────────────────────────────────────────────────────

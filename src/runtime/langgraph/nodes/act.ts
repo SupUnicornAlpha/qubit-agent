@@ -3,6 +3,32 @@ import { acpCall, toolCallLog } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
+import { runAnalystTeam } from "../../msa/analyst-team";
+
+/** Extract tool name and params from LLM reason text */
+function extractToolCall(reasonText: string, availableTools: string[]): { toolName: string; params: Record<string, unknown> } {
+  // Try to parse JSON tool call from reason text
+  try {
+    const match = reasonText.match(/\{[\s\S]*"tool"[\s\S]*\}/);
+    if (match) {
+      const parsed = JSON.parse(match[0]) as Record<string, unknown>;
+      const toolName = typeof parsed["tool"] === "string" ? parsed["tool"] : "";
+      if (toolName && availableTools.includes(toolName)) {
+        const params = (parsed["params"] ?? parsed["parameters"] ?? {}) as Record<string, unknown>;
+        return { toolName, params };
+      }
+    }
+  } catch {
+    // fall through
+  }
+  // Try to find tool name mentioned in text
+  for (const tool of availableTools) {
+    if (reasonText.includes(tool)) {
+      return { toolName: tool, params: {} };
+    }
+  }
+  return { toolName: availableTools[0] ?? "noop_tool", params: {} };
+}
 
 export async function actNode(
   state: AgentGraphState,
@@ -10,7 +36,10 @@ export async function actNode(
   agentInstanceId: string,
   agentStepId: string
 ): Promise<Partial<AgentGraphState>> {
-  const toolName = state.agentDefinition.tools[0] ?? "noop_tool";
+  const { toolName, params: toolParams } = extractToolCall(
+    state.reasonText ?? "",
+    state.agentDefinition.tools
+  );
   const toolCallId = crypto.randomUUID();
   const db = await getDb();
 
@@ -117,6 +146,23 @@ export async function actNode(
     agentInstanceId,
     definition: state.agentDefinition,
     action: async () => {
+      // V2: dispatch run_analyst_team tool
+      if (toolName === "run_analyst_team") {
+        const ticker = (toolParams["ticker"] as string) ||
+          (state.inboundMessage.payload as Record<string, unknown>)?.["ticker"] as string ||
+          extractTickerFromText(state.reasonText ?? "") ||
+          "UNKNOWN";
+        const context = (toolParams["context"] as string) ||
+          (state.inboundMessage.payload as Record<string, unknown>)?.["goal"] as string ||
+          undefined;
+
+        const teamResult = await runAnalystTeam({
+          workflowRunId: state.workflowId,
+          ticker,
+          context,
+        });
+        return { result: "ok" as const, analystTeamResult: teamResult };
+      }
       await Bun.sleep(1);
       return { result: "ok" as const };
     },
@@ -214,8 +260,21 @@ export async function actNode(
     payload: { toolCallId, status: "success", acpId },
   });
 
+  const toolResult = execution.ok && execution.value ? execution.value : {};
+
   return {
     toolCalls: [...state.toolCalls, { toolCallId, toolName, status: "success", acpId }],
+    observations: toolResult["analystTeamResult"]
+      ? [...state.observations, { analystTeamResult: toolResult["analystTeamResult"] }]
+      : state.observations,
   };
+}
+
+/** Try to extract a ticker symbol from free-form text */
+function extractTickerFromText(text: string): string | null {
+  // Match $SYMBOL, SYMBOL.SH, SYMBOL.SZ patterns
+  const match = text.match(/\$([A-Z]{1,6})|([A-Z0-9]{6})\.(SH|SZ)|([A-Z]{1,5})\b/);
+  if (match) return match[1] ?? match[2] ?? match[4] ?? null;
+  return null;
 }
 

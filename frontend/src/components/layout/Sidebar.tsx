@@ -2,6 +2,8 @@ import type { FC } from "react";
 import { useAppStore } from "../../store";
 
 const NAV_ITEMS = [
+  { label: "对话工作台", icon: "💬", key: "chat" as const },
+  { label: "研究团队", icon: "🧑‍💼", key: "team" as const },
   { label: "运行监控", icon: "⚡", key: "monitor" as const },
   { label: "配置中心", icon: "🛠️", key: "config" as const },
 ];

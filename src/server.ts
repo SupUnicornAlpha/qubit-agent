@@ -6,11 +6,15 @@ import { config } from "./config";
 import { workspaceRouter } from "./routes/workspace.routes";
 import { workflowRouter } from "./routes/workflow.routes";
 import { agentRouter } from "./routes/agent.routes";
+import { chatRouter } from "./routes/chat.routes";
+import { monitorRouter } from "./routes/monitor.routes";
+import { integrationsRouter } from "./routes/integrations.routes";
+import { analystRouter } from "./routes/analyst.routes";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
 // ─── HTTP API (Hono) ─────────────────────────────────────────────────────────
 
-const app = new Hono();
+export const app = new Hono();
 
 app.use("*", cors({ origin: "*" }));
 app.use("*", logger());
@@ -22,6 +26,10 @@ app.get("/health", (c) =>
 app.route("/api/v1/workspaces", workspaceRouter);
 app.route("/api/v1/workflows", workflowRouter);
 app.route("/api/v1/agents", agentRouter);
+app.route("/api/v1/chat", chatRouter);
+app.route("/api/v1/monitor", monitorRouter);
+app.route("/api/v1/integrations", integrationsRouter);
+app.route("/api/v1/analyst", analystRouter);
 app.get("/api/v1/workflows/:id/stream", (c) => {
   const runId = c.req.query("runId");
   if (!runId) return c.json({ error: "runId is required" }, 400);

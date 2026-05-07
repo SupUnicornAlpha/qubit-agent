@@ -37,6 +37,7 @@ export interface WorkflowRun {
 // ─── 2.2 Agent 与通信域 ──────────────────────────────────────────────────────
 
 export type AgentRole =
+  // V1 roles
   | "orchestrator"
   | "market_data"
   | "news_event"
@@ -46,7 +47,68 @@ export type AgentRole =
   | "risk"
   | "execution"
   | "memory"
-  | "audit";
+  | "audit"
+  // V2 analyst team roles
+  | "analyst_fundamental"
+  | "analyst_technical"
+  | "analyst_sentiment"
+  | "analyst_macro"
+  | "researcher_bull"
+  | "researcher_bear"
+  | "risk_manager"
+  | "portfolio_manager"
+  | "stock_screener"
+  | "backtest_engineer"
+  | "execution_trader"
+  | "memory_curator";
+
+// ─── V2 分析师信号域 ──────────────────────────────────────────────────────────
+
+export type AnalystSignalValue = "buy" | "sell" | "hold";
+
+export interface AnalystSignal {
+  id: string;
+  workflowRunId: string;
+  agentInstanceId: string;
+  analystRole: AgentRole;
+  ticker: string;
+  signal: AnalystSignalValue;
+  confidence: number;
+  reasoning: string;
+  dataSnapshotJson: unknown;
+  createdAt: string;
+}
+
+export interface SignalFusionResult {
+  id: string;
+  workflowRunId: string;
+  ticker: string;
+  fusedSignal: AnalystSignalValue;
+  fusedConfidence: number;
+  weightsJson: unknown;
+  debateTriggered: boolean;
+  createdAt: string;
+}
+
+export interface AgentRoleCatalog {
+  role: string;
+  displayName: string;
+  description: string;
+  defaultPromptTemplate: string;
+  team: string;
+  isBuiltin: boolean;
+}
+
+export interface AnalystAccuracyLog {
+  id: string;
+  definitionId: string;
+  ticker: string;
+  signalDate: number;
+  predictedSignal: AnalystSignalValue;
+  actualOutcome: "up" | "down" | "flat" | null;
+  isCorrect: number | null;
+  evaluatedAt: number | null;
+}
 
 export interface AgentDefinition {
   id: string;

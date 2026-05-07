@@ -37,12 +37,18 @@ const DEFAULT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-orchestrator",
     role: "orchestrator",
     name: "Orchestrator",
-    version: "1.0.0",
-    systemPrompt: "Task decomposition and workflow coordination.",
-    tools: ["task_decompose", "assign_task"],
+    version: "2.0.0",
+    systemPrompt: `你是 QUBIT 量化研究团队的基金经理。你负责：
+1. 接收研究目标并分解任务
+2. 并行协调分析师团队（基本面/技术面/情绪面/宏观面）
+3. 触发多信号融合（MSA）
+4. 若置信度不足，主持辩论（SDP）
+5. 提交风控审核后输出投资建议
+在研究任务中，请先分析用户意图，确定研究标的，然后调用 run_analyst_team 工具启动分析师团队协作。`,
+    tools: ["task_decompose", "assign_task", "run_analyst_team", "fuse_signals", "check_risk"],
     mcpServers: [],
     skills: [],
-    subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
+    subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK", "SIGNAL_READY"],
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
@@ -188,6 +194,93 @@ const DEFAULT_DEFINITIONS: RuntimeAgentDefinition[] = [
     ],
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
+    sandboxPolicyId: "default-policy",
+    enabled: true,
+  },
+  // ─── V2 分析师团队 ──────────────────────────────────────────────────────────
+  {
+    id: "def-analyst-fundamental",
+    role: "analyst_fundamental",
+    name: "基本面研究员",
+    version: "1.0.0",
+    systemPrompt: `你是 QUBIT 量化研究团队的基本面研究员。你需要分析公司财务报告、估值水平、行业竞争格局，输出买卖建议与置信度。
+分析框架：估值分析（PE/PB/PS）、成长性（营收/利润 CAGR）、财务健康度（现金流/负债率）、行业地位（市场份额/护城河）。
+输出格式：{"signal":"buy|sell|hold","confidence":0-1,"reasoning":"详细说明","key_drivers":[],"key_risks":[]}`,
+    tools: ["fetch_financial_data", "compute_valuation", "analyze_industry"],
+    mcpServers: [],
+    skills: ["fundamental-analysis"],
+    subscriptions: ["TASK_ASSIGN"],
+    llmProvider: "openai:gpt-4o",
+    maxIterations: 10,
+    sandboxPolicyId: "default-policy",
+    enabled: true,
+  },
+  {
+    id: "def-analyst-technical",
+    role: "analyst_technical",
+    name: "量化策略师",
+    version: "1.0.0",
+    systemPrompt: `你是 QUBIT 量化研究团队的量化策略师。你通过技术指标和价格形态判断交易时机。
+分析工具：趋势（MA/MACD/ADX）、动量（RSI/布林带）、量价关系、形态识别（支撑阻力/头肩顶等）。
+输出格式：{"signal":"buy|sell|hold","confidence":0-1,"reasoning":"技术分析说明","entry_zone":"进场区间","stop_loss":"止损位"}`,
+    tools: ["fetch_price_data", "compute_indicators", "detect_patterns"],
+    mcpServers: [],
+    skills: ["technical-analysis"],
+    subscriptions: ["TASK_ASSIGN"],
+    llmProvider: "openai:gpt-4o",
+    maxIterations: 10,
+    sandboxPolicyId: "default-policy",
+    enabled: true,
+  },
+  {
+    id: "def-analyst-sentiment",
+    role: "analyst_sentiment",
+    name: "舆情分析师",
+    version: "1.0.0",
+    systemPrompt: `你是 QUBIT 量化研究团队的舆情分析师。你量化市场情绪、新闻舆情和投资者行为。
+分析维度：新闻情绪正负向比例、社媒讨论热度、分析师评级变化、机构调研频率。
+输出格式：{"signal":"buy|sell|hold","confidence":0-1,"sentiment_score":-1~1,"reasoning":"情绪分析说明","catalysts":[],"risks":[]}`,
+    tools: ["fetch_news_sentiment", "analyze_social_media", "get_analyst_ratings"],
+    mcpServers: [],
+    skills: ["sentiment-analysis"],
+    subscriptions: ["TASK_ASSIGN"],
+    llmProvider: "openai:gpt-4o",
+    maxIterations: 10,
+    sandboxPolicyId: "default-policy",
+    enabled: true,
+  },
+  {
+    id: "def-analyst-macro",
+    role: "analyst_macro",
+    name: "宏观策略师",
+    version: "1.0.0",
+    systemPrompt: `你是 QUBIT 量化研究团队的宏观策略师。你从宏观经济和政策高度判断市场大方向。
+分析框架：货币政策环境（利率/流动性）、经济周期定位（PMI/GDP/通胀）、产业政策（监管/支持方向）、全球市场联动。
+输出格式：{"signal":"buy|sell|hold","confidence":0-1,"macro_cycle":"recovery|expansion|slowdown|recession","policy_stance":"easing|neutral|tightening","reasoning":"宏观分析说明"}`,
+    tools: ["fetch_macro_data", "analyze_policy", "compute_macro_indicators"],
+    mcpServers: [],
+    skills: ["macro-analysis"],
+    subscriptions: ["TASK_ASSIGN"],
+    llmProvider: "openai:gpt-4o",
+    maxIterations: 10,
+    sandboxPolicyId: "default-policy",
+    enabled: true,
+  },
+  {
+    id: "def-risk-manager",
+    role: "risk_manager",
+    name: "风控主管",
+    version: "1.0.0",
+    systemPrompt: `你是 QUBIT 量化研究团队的风控主管。你的核心职责是评估每一项投资决策的风险，并在必要时行使一票否决权。
+风控维度：最大回撤限额（> 30% 否决）、仓位集中度（单标的 > 20% 警告）、流动性风险、行业集中度、宏观逆风因素。
+如果风险评分 > 0.7（满分 1.0），你必须否决该投资意向。
+输出格式：{"verdict":"approved|rejected|conditional","risk_score":0-1,"rules_triggered":[],"reasoning":"风控说明"}`,
+    tools: ["evaluate_risk", "check_concentration", "assess_liquidity"],
+    mcpServers: [],
+    skills: ["risk-management"],
+    subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
+    llmProvider: "openai:gpt-4o",
+    maxIterations: 10,
     sandboxPolicyId: "default-policy",
     enabled: true,
   },

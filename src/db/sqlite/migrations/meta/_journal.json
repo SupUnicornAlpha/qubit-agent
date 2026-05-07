@@ -8,6 +8,34 @@
       "when": 1777283350567,
       "tag": "0000_small_nightshade",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777347600000,
+      "tag": "0001_app_frontend_slice",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777349200000,
+      "tag": "0002_telegram_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1777351200000,
+      "tag": "0003_chat_and_release_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1746604800000,
+      "tag": "0004_v2_trading_agent",
+      "breakpoints": true
     }
   ]
 }

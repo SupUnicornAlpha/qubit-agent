@@ -3,10 +3,12 @@ import { useAppStore } from "../../store";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
+  const backendHint = useAppStore((s) => s.backendHint);
   return (
     <header style={styles.bar}>
       <span style={styles.logo}>QUBIT</span>
       <span style={styles.subtitle}>量化研究 Agent 平台</span>
+      {backendHint ? <span style={styles.hint}>{backendHint}</span> : null}
       <div style={styles.spacer} />
       <StatusDot connected={connected} />
     </header>
@@ -48,6 +50,14 @@ const styles: Record<string, React.CSSProperties> = {
   subtitle: {
     fontSize: 12,
     color: "#52525b",
+  },
+  hint: {
+    fontSize: 12,
+    color: "#f59e0b",
+    maxWidth: 440,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
   },
   spacer: { flex: 1 },
 };

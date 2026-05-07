@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { workflowRun } from "../db/sqlite/schema";
+import { chatMessageWorkflowLink, workflowRun } from "../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { dispatchTaskToRole } from "../agents";
 
@@ -17,6 +17,9 @@ workflowRouter.post("/", async (c) => {
     projectId: string;
     goal: string;
     mode: "research" | "backtest" | "simulation" | "live";
+    sessionId?: string;
+    source?: "chat" | "manual" | "api";
+    messageId?: string;
   }>();
 
   const db = await getDb();
@@ -25,8 +28,10 @@ workflowRouter.post("/", async (c) => {
   await db.insert(workflowRun).values({
     id,
     projectId: body.projectId,
+    sessionId: body.sessionId,
     goal: body.goal,
     mode: body.mode,
+    source: body.source ?? "manual",
     status: "pending",
   });
 
@@ -47,6 +52,15 @@ workflowRouter.post("/", async (c) => {
     .from(workflowRun)
     .where(eq(workflowRun.id, id))
     .limit(1);
+
+  if (body.messageId) {
+    await db.insert(chatMessageWorkflowLink).values({
+      id: crypto.randomUUID(),
+      chatMessageId: body.messageId,
+      workflowRunId: id,
+      traceId: crypto.randomUUID(),
+    });
+  }
 
   return c.json({ data: created[0], runId }, 201);
 });

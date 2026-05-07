@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-function isTauriEnv(): boolean {
+export function isTauriEnv(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 

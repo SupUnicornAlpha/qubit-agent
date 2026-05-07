@@ -1,9 +1,20 @@
-import { httpGet, httpPost } from "./client";
+import { httpGet, httpPatch, httpPost } from "./client";
 import type {
   AgentSummary,
+  AgentDefinitionBundle,
   AgentsConfigResponse,
+  AgentRoleCatalogItem,
+  AnalystSignalRecord,
+  AnalystTeamResult,
+  ChatMessage,
+  ChatSession,
   ModelConfig,
+  SessionOverview,
+  SessionAgentBoardItem,
+  SignalFusionRecord,
   StepStreamEvent,
+  WorkflowDetail,
+  WorkflowTimeline,
   WorkflowCreateInput,
 } from "./types";
 
@@ -53,6 +64,44 @@ export async function createWorkflow(input: WorkflowCreateInput): Promise<{
   return httpPost("/api/v1/workflows", input);
 }
 
+export async function listAgentDefinitions(): Promise<AgentDefinitionBundle[]> {
+  const res = await httpGet<{ data: AgentDefinitionBundle[] }>("/api/v1/agents/definitions");
+  return res.data;
+}
+
+export async function createAgentDraft(params: {
+  definitionId: string;
+  systemPrompt?: string;
+  changeNote?: string;
+  llmProvider?: string;
+  maxIterations?: number;
+  profile?: {
+    displayName?: string;
+    soulFileRef?: string;
+    description?: string;
+  };
+}): Promise<{ id: string }> {
+  const { definitionId, ...payload } = params;
+  const res = await httpPost<{ data: { id: string } }>(
+    `/api/v1/agents/definitions/${definitionId}/draft`,
+    payload
+  );
+  return res.data;
+}
+
+export async function releaseAgentDraft(params: {
+  definitionId: string;
+  draftId: string;
+  releasedVersion?: string;
+  releaseNote?: string;
+}): Promise<void> {
+  await httpPost(`/api/v1/agents/definitions/${params.definitionId}/release`, {
+    draftId: params.draftId,
+    releasedVersion: params.releasedVersion,
+    releaseNote: params.releaseNote,
+  });
+}
+
 export async function reloadAgents(): Promise<{ ok: boolean; before: number; after: number }> {
   return httpPost("/api/v1/agents/reload");
 }
@@ -68,6 +117,151 @@ export async function getModelConfig(): Promise<ModelConfig> {
 
 export async function saveModelConfig(input: Partial<ModelConfig>): Promise<ModelConfig> {
   const res = await httpPost<{ data: ModelConfig }>("/api/v1/agents/model-config", input);
+  return res.data;
+}
+
+export async function listChatSessions(params: {
+  workspaceId: string;
+  projectId?: string;
+}): Promise<ChatSession[]> {
+  const query = new URLSearchParams({ workspaceId: params.workspaceId });
+  if (params.projectId) query.set("projectId", params.projectId);
+  const res = await httpGet<{ data: ChatSession[] }>(`/api/v1/chat/sessions?${query.toString()}`);
+  return res.data;
+}
+
+export async function createChatSession(input: {
+  workspaceId: string;
+  projectId?: string;
+  title?: string;
+}): Promise<ChatSession> {
+  const res = await httpPost<{ data: ChatSession }>("/api/v1/chat/sessions", input);
+  return res.data;
+}
+
+export async function getDefaultProjectSession(projectId: string): Promise<ChatSession> {
+  const res = await httpGet<{ data: ChatSession }>(`/api/v1/chat/projects/${projectId}/sessions/default`);
+  return res.data;
+}
+
+export async function listSessionMessages(sessionId: string): Promise<ChatMessage[]> {
+  const res = await httpGet<{ data: ChatMessage[] }>(`/api/v1/chat/sessions/${sessionId}/messages`);
+  return res.data;
+}
+
+export async function createSessionMessage(params: {
+  sessionId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  sender?: "user" | "orchestrator" | "agent" | "system";
+  status?: "queued" | "running" | "completed" | "failed";
+  workflowRunIds?: string[];
+}): Promise<ChatMessage> {
+  const { sessionId, ...payload } = params;
+  const res = await httpPost<{ data: ChatMessage }>(`/api/v1/chat/sessions/${sessionId}/messages`, payload);
+  return res.data;
+}
+
+export async function patchSessionMessage(params: {
+  messageId: string;
+  content?: string;
+  status?: "queued" | "running" | "completed" | "failed";
+  errorMessage?: string | null;
+  workflowRunIds?: string[];
+}): Promise<ChatMessage> {
+  const { messageId, ...payload } = params;
+  const res = await httpPatch<{ data: ChatMessage }>(`/api/v1/chat/messages/${messageId}`, payload);
+  return res.data;
+}
+
+export async function chatHealth(): Promise<{ ok: boolean }> {
+  return httpGet<{ ok: boolean }>("/api/v1/chat/health");
+}
+
+export async function getSessionOverview(sessionId: string): Promise<SessionOverview> {
+  const res = await httpGet<{ data: SessionOverview }>(`/api/v1/monitor/sessions/${sessionId}/overview`);
+  return res.data;
+}
+
+export async function getWorkflowTimeline(workflowId: string): Promise<WorkflowTimeline> {
+  const res = await httpGet<{ data: WorkflowTimeline }>(`/api/v1/monitor/workflows/${workflowId}/timeline`);
+  return res.data;
+}
+
+export async function getWorkflowSandboxViolations(workflowId: string): Promise<unknown[]> {
+  const res = await httpGet<{ data: unknown[] }>(
+    `/api/v1/monitor/workflows/${workflowId}/sandbox-violations`
+  );
+  return res.data;
+}
+
+export async function listMonitorWorkflows(params: {
+  sessionId?: string;
+  status?: string;
+  mode?: string;
+}): Promise<unknown[]> {
+  const query = new URLSearchParams();
+  if (params.sessionId) query.set("sessionId", params.sessionId);
+  if (params.status) query.set("status", params.status);
+  if (params.mode) query.set("mode", params.mode);
+  const res = await httpGet<{ data: unknown[] }>(`/api/v1/monitor/workflows?${query.toString()}`);
+  return res.data;
+}
+
+export async function getWorkflowDetail(workflowId: string): Promise<WorkflowDetail> {
+  const res = await httpGet<{ data: WorkflowDetail }>(`/api/v1/monitor/workflows/${workflowId}/detail`);
+  return res.data;
+}
+
+export async function getSessionAgentsBoard(sessionId: string): Promise<SessionAgentBoardItem[]> {
+  const res = await httpGet<{ data: { agents: SessionAgentBoardItem[] } }>(
+    `/api/v1/monitor/sessions/${sessionId}/agents-board`
+  );
+  return res.data.agents;
+}
+
+// ─── V2 分析师团队 API ────────────────────────────────────────────────────────
+
+export async function runAnalystTeam(params: {
+  workflowRunId: string;
+  ticker: string;
+  context?: string;
+}): Promise<AnalystTeamResult> {
+  const res = await httpPost<{ ok: boolean; data: AnalystTeamResult }>("/api/v1/analyst/run", params);
+  return res.data;
+}
+
+export async function getAnalystSignals(workflowId: string): Promise<AnalystSignalRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: AnalystSignalRecord[] }>(
+    `/api/v1/analyst/signals/${workflowId}`
+  );
+  return res.data;
+}
+
+export async function getSignalFusion(workflowId: string): Promise<AnalystTeamResult | null> {
+  const res = await httpGet<{ ok: boolean; data: AnalystTeamResult | null }>(
+    `/api/v1/analyst/fusion/${workflowId}`
+  );
+  return res.data;
+}
+
+export async function getAgentRoles(): Promise<AgentRoleCatalogItem[]> {
+  const res = await httpGet<{ ok: boolean; data: AgentRoleCatalogItem[] }>("/api/v1/analyst/roles");
+  return res.data;
+}
+
+export async function getFusionHistory(params?: {
+  ticker?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<SignalFusionRecord[]> {
+  const query = new URLSearchParams();
+  if (params?.ticker) query.set("ticker", params.ticker);
+  if (params?.limit) query.set("limit", String(params.limit));
+  if (params?.offset) query.set("offset", String(params.offset));
+  const res = await httpGet<{ ok: boolean; data: SignalFusionRecord[] }>(
+    `/api/v1/analyst/fusion/history?${query.toString()}`
+  );
   return res.data;
 }
 
