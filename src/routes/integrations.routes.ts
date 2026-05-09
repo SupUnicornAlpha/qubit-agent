@@ -57,6 +57,72 @@ integrationsRouter.post("/telegram/send", async (c) => {
   return c.json({ ok: res.ok, data: payload }, res.ok ? 200 : 502);
 });
 
+integrationsRouter.get("/channels", async (c) => {
+  const db = await getDb();
+  const kind = c.req.query("kind") as "telegram" | "webhook" | undefined;
+  const rows = await db.select().from(communicationChannel).orderBy(desc(communicationChannel.updatedAt));
+  const data = kind ? rows.filter((row) => row.kind === kind) : rows;
+  return c.json({ ok: true, data });
+});
+
+integrationsRouter.post("/channels/upsert", async (c) => {
+  const body = await c.req.json<{
+    id?: string;
+    workspaceId?: string;
+    projectId?: string | null;
+    kind?: "telegram" | "webhook";
+    name?: string;
+    externalChatId?: string;
+    secretRef?: string;
+    enabled?: boolean;
+  }>();
+  if (!body.workspaceId || !body.kind || !body.name || !body.externalChatId) {
+    return c.json({ ok: false, error: "workspaceId/kind/name/externalChatId are required" }, 400);
+  }
+  const db = await getDb();
+  const id = body.id ?? crypto.randomUUID();
+  const existed = await db.select().from(communicationChannel).where(eq(communicationChannel.id, id)).limit(1);
+  if (existed[0]) {
+    await db
+      .update(communicationChannel)
+      .set({
+        projectId: body.projectId ?? existed[0].projectId,
+        name: body.name,
+        externalChatId: body.externalChatId,
+        secretRef: body.secretRef ?? existed[0].secretRef,
+        enabled: body.enabled ?? existed[0].enabled,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(communicationChannel.id, id));
+  } else {
+    await db.insert(communicationChannel).values({
+      id,
+      workspaceId: body.workspaceId,
+      projectId: body.projectId ?? null,
+      kind: body.kind,
+      name: body.name,
+      externalChatId: body.externalChatId,
+      secretRef: body.secretRef ?? "",
+      enabled: body.enabled ?? true,
+    });
+  }
+  const row = await db.select().from(communicationChannel).where(eq(communicationChannel.id, id)).limit(1);
+  return c.json({ ok: true, data: row[0] });
+});
+
+integrationsRouter.get("/logs", async (c) => {
+  const db = await getDb();
+  const kind = c.req.query("kind") as "telegram" | "webhook" | undefined;
+  const limit = Number(c.req.query("limit") ?? 100);
+  const rows = await db
+    .select()
+    .from(communicationMessageLog)
+    .orderBy(desc(communicationMessageLog.createdAt))
+    .limit(Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 100);
+  const data = kind ? rows.filter((row) => row.channelKind === kind) : rows;
+  return c.json({ ok: true, data });
+});
+
 integrationsRouter.post("/telegram/webhook", async (c) => {
   const secret = c.req.header("x-telegram-bot-api-secret-token");
   if (process.env.QUBIT_TELEGRAM_WEBHOOK_SECRET && secret !== process.env.QUBIT_TELEGRAM_WEBHOOK_SECRET) {

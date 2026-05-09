@@ -1,12 +1,23 @@
 import { getDb } from "../../../db/sqlite/client";
-import { acpCall, toolCallLog } from "../../../db/sqlite/schema";
+import { acpCall, mcpCallLog, toolCallLog } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { runAnalystTeam } from "../../msa/analyst-team";
+import { dispatchMcpToolCall } from "../../mcp/dispatcher";
+
+type ExtractedToolCall = {
+  toolName: string;
+  params: Record<string, unknown>;
+  mcp?: {
+    serverName: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+  };
+};
 
 /** Extract tool name and params from LLM reason text */
-function extractToolCall(reasonText: string, availableTools: string[]): { toolName: string; params: Record<string, unknown> } {
+function extractToolCall(reasonText: string, availableTools: string[]): ExtractedToolCall {
   // Try to parse JSON tool call from reason text
   try {
     const match = reasonText.match(/\{[\s\S]*"tool"[\s\S]*\}/);
@@ -15,7 +26,11 @@ function extractToolCall(reasonText: string, availableTools: string[]): { toolNa
       const toolName = typeof parsed["tool"] === "string" ? parsed["tool"] : "";
       if (toolName && availableTools.includes(toolName)) {
         const params = (parsed["params"] ?? parsed["parameters"] ?? {}) as Record<string, unknown>;
-        return { toolName, params };
+        const mcp =
+          toolName === "call_mcp" || toolName.startsWith("mcp:")
+            ? extractMcpMeta(toolName, params)
+            : undefined;
+        return { toolName, params, mcp };
       }
     }
   } catch {
@@ -24,10 +39,48 @@ function extractToolCall(reasonText: string, availableTools: string[]): { toolNa
   // Try to find tool name mentioned in text
   for (const tool of availableTools) {
     if (reasonText.includes(tool)) {
-      return { toolName: tool, params: {} };
+      const mcp = tool === "call_mcp" || tool.startsWith("mcp:") ? extractMcpMeta(tool, {}) : undefined;
+      return { toolName: tool, params: {}, mcp };
     }
   }
   return { toolName: availableTools[0] ?? "noop_tool", params: {} };
+}
+
+function extractMcpMeta(
+  toolName: string,
+  params: Record<string, unknown>
+): ExtractedToolCall["mcp"] | undefined {
+  if (toolName.startsWith("mcp:")) {
+    // format: mcp:<server>:<tool>
+    const parts = toolName.split(":");
+    if (parts.length >= 3) {
+      return {
+        serverName: parts[1] ?? "unknown",
+        toolName: parts.slice(2).join(":"),
+        arguments: params,
+      };
+    }
+  }
+  const serverName =
+    (typeof params["serverName"] === "string" ? params["serverName"] : undefined) ??
+    (typeof params["server"] === "string" ? params["server"] : undefined);
+  const mcpToolName =
+    (typeof params["mcpTool"] === "string" ? params["mcpTool"] : undefined) ??
+    (typeof params["toolName"] === "string" ? params["toolName"] : undefined) ??
+    (typeof params["tool"] === "string" ? params["tool"] : undefined);
+  const argumentsValue = params["arguments"];
+  const argumentsObj =
+    argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)
+      ? (argumentsValue as Record<string, unknown>)
+      : {};
+  if (serverName && mcpToolName) {
+    return {
+      serverName,
+      toolName: mcpToolName,
+      arguments: argumentsObj,
+    };
+  }
+  return undefined;
 }
 
 export async function actNode(
@@ -36,10 +89,13 @@ export async function actNode(
   agentInstanceId: string,
   agentStepId: string
 ): Promise<Partial<AgentGraphState>> {
-  const { toolName, params: toolParams } = extractToolCall(
+  const { toolName, params: toolParams, mcp } = extractToolCall(
     state.reasonText ?? "",
     state.agentDefinition.tools
   );
+  const targetKind = mcp ? "mcp" : "tool";
+  const targetName = mcp ? `${mcp.serverName}/${mcp.toolName}` : toolName;
+  const toolKind = mcp ? "mcp" : "builtin";
   const toolCallId = crypto.randomUUID();
   const db = await getDb();
 
@@ -51,31 +107,62 @@ export async function actNode(
     type: "tool_call_start",
     stepIndex: state.iteration,
     ts: Date.now(),
-    payload: { toolCallId, toolName },
+    payload: { toolCallId, toolName, targetKind, targetName },
   });
 
   await db.insert(toolCallLog).values({
     id: toolCallId,
     agentStepId,
-    toolName,
-    toolKind: "builtin",
+    toolName: targetName,
+    toolKind,
     requestJson: {
       reasonText: state.reasonText,
       contextMemory: state.contextMemory,
+      targetKind,
+      mcp: mcp ?? null,
     },
     status: "success",
     latencyMs: 1,
   });
+  if (mcp) {
+    await db.insert(mcpCallLog).values({
+      id: toolCallId,
+      workflowRunId: state.workflowId,
+      agentStepId,
+      serverName: mcp.serverName,
+      toolName: mcp.toolName,
+      requestJson: {
+        reasonText: state.reasonText,
+        arguments: mcp.arguments,
+      },
+      status: "success",
+      latencyMs: 1,
+    });
+  }
 
-  const check = await sandboxExecutor.checkToolCall({
-    runId: state.runId,
-    workflowId: state.workflowId,
-    traceId: state.traceId,
-    agentInstanceId,
-    toolName,
-    payload: { plannedAction: state.plannedAction ?? "unknown" },
-    definition: state.agentDefinition,
-  });
+  const check = mcp
+    ? await sandboxExecutor.checkMcpCall({
+        runId: state.runId,
+        workflowId: state.workflowId,
+        traceId: state.traceId,
+        agentInstanceId,
+        definition: state.agentDefinition,
+        serverName: mcp.serverName,
+        payload: {
+          plannedAction: state.plannedAction ?? "unknown",
+          toolName: mcp.toolName,
+          arguments: mcp.arguments,
+        },
+      })
+    : await sandboxExecutor.checkToolCall({
+        runId: state.runId,
+        workflowId: state.workflowId,
+        traceId: state.traceId,
+        agentInstanceId,
+        toolName,
+        payload: { plannedAction: state.plannedAction ?? "unknown" },
+        definition: state.agentDefinition,
+      });
 
   if (!check.allowed) {
     const acpId = crypto.randomUUID();
@@ -85,11 +172,11 @@ export async function actNode(
       traceId: state.traceId,
       agentStepId,
       callerInstanceId: agentInstanceId,
-      targetKind: "tool",
-      targetName: toolName,
+      targetKind,
+      targetName,
       intent: state.plannedAction ?? "tool_call",
       status: "blocked_by_sandbox",
-      errorCode: check.violationType ?? "tool_not_allowed",
+      errorCode: check.violationType ?? (mcp ? "mcp_not_allowed" : "tool_not_allowed"),
     });
 
     await db
@@ -99,6 +186,16 @@ export async function actNode(
         errorMessage: check.reason ?? "blocked by sandbox",
       })
       .where(eq(toolCallLog.id, toolCallId));
+    if (mcp) {
+      await db
+        .update(mcpCallLog)
+        .set({
+          status: "sandbox_blocked",
+          errorCode: check.violationType ?? "mcp_not_allowed",
+          responseJson: { reason: check.reason ?? "blocked by sandbox" },
+        })
+        .where(eq(mcpCallLog.id, toolCallId));
+    }
 
     emit({
       runId: state.runId,
@@ -108,7 +205,7 @@ export async function actNode(
       type: "tool_call_end",
       stepIndex: state.iteration,
       ts: Date.now(),
-      payload: { toolCallId, status: "blocked_by_sandbox", reason: check.reason },
+      payload: { toolCallId, status: "blocked_by_sandbox", reason: check.reason, targetKind, targetName },
     });
     emit({
       runId: state.runId,
@@ -129,7 +226,7 @@ export async function actNode(
     return {
       toolCalls: [
         ...state.toolCalls,
-        { toolCallId, toolName, status: "blocked_by_sandbox", reason: check.reason },
+        { toolCallId, toolName: targetName, status: "blocked_by_sandbox", reason: check.reason },
       ],
       observations: [
         ...state.observations,
@@ -146,6 +243,14 @@ export async function actNode(
     agentInstanceId,
     definition: state.agentDefinition,
     action: async () => {
+      if (mcp) {
+        const mcpResult = await dispatchMcpToolCall({
+          serverName: mcp.serverName,
+          toolName: mcp.toolName,
+          arguments: mcp.arguments,
+        });
+        return { result: "ok" as const, mcpResult };
+      }
       // V2: dispatch run_analyst_team tool
       if (toolName === "run_analyst_team") {
         const ticker = (toolParams["ticker"] as string) ||
@@ -178,8 +283,8 @@ export async function actNode(
       traceId: state.traceId,
       agentStepId,
       callerInstanceId: agentInstanceId,
-      targetKind: "tool",
-      targetName: toolName,
+      targetKind,
+      targetName,
       intent: state.plannedAction ?? "tool_call",
       status: "timeout",
       latencyMs,
@@ -193,6 +298,17 @@ export async function actNode(
         errorMessage: execution.result.reason ?? "tool timeout",
       })
       .where(eq(toolCallLog.id, toolCallId));
+    if (mcp) {
+      await db
+        .update(mcpCallLog)
+        .set({
+          status: "timeout",
+          latencyMs,
+          errorCode: execution.result.violationType ?? "timeout",
+          responseJson: { reason: execution.result.reason ?? "tool timeout" },
+        })
+        .where(eq(mcpCallLog.id, toolCallId));
+    }
     emit({
       runId: state.runId,
       workflowId: state.workflowId,
@@ -201,7 +317,7 @@ export async function actNode(
       type: "tool_call_end",
       stepIndex: state.iteration,
       ts: Date.now(),
-      payload: { toolCallId, status: "timeout", reason: execution.result.reason },
+      payload: { toolCallId, status: "timeout", reason: execution.result.reason, targetKind, targetName },
     });
     emit({
       runId: state.runId,
@@ -216,7 +332,7 @@ export async function actNode(
     return {
       toolCalls: [
         ...state.toolCalls,
-        { toolCallId, toolName, status: "timeout", reason: execution.result.reason },
+        { toolCallId, toolName: targetName, status: "timeout", reason: execution.result.reason },
       ],
       observations: [
         ...state.observations,
@@ -233,8 +349,8 @@ export async function actNode(
     traceId: state.traceId,
     agentStepId,
     callerInstanceId: agentInstanceId,
-    targetKind: "tool",
-    targetName: toolName,
+    targetKind,
+    targetName,
     intent: state.plannedAction ?? "tool_call",
     status: "success",
     latencyMs,
@@ -248,6 +364,16 @@ export async function actNode(
       responseJson: { ...execution.value, acpId },
     })
     .where(eq(toolCallLog.id, toolCallId));
+  if (mcp) {
+    await db
+      .update(mcpCallLog)
+      .set({
+        status: "success",
+        latencyMs,
+        responseJson: { ...execution.value, acpId },
+      })
+      .where(eq(mcpCallLog.id, toolCallId));
+  }
 
   emit({
     runId: state.runId,
@@ -257,16 +383,21 @@ export async function actNode(
     type: "tool_call_end",
     stepIndex: state.iteration,
     ts: Date.now(),
-    payload: { toolCallId, status: "success", acpId },
+    payload: { toolCallId, status: "success", acpId, targetKind, targetName },
   });
 
   const toolResult = execution.ok && execution.value ? execution.value : {};
+  const nextObservations = [...state.observations];
+  if (toolResult["analystTeamResult"]) {
+    nextObservations.push({ analystTeamResult: toolResult["analystTeamResult"] });
+  }
+  if (toolResult["mcpResult"]) {
+    nextObservations.push({ mcpResult: toolResult["mcpResult"] });
+  }
 
   return {
-    toolCalls: [...state.toolCalls, { toolCallId, toolName, status: "success", acpId }],
-    observations: toolResult["analystTeamResult"]
-      ? [...state.observations, { analystTeamResult: toolResult["analystTeamResult"] }]
-      : state.observations,
+    toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success", acpId }],
+    observations: nextObservations,
   };
 }
 

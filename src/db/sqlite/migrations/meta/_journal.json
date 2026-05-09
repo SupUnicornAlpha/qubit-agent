@@ -71,6 +71,41 @@
       "when": 1746870000000,
       "tag": "0009_v2_reia",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1746880000000,
+      "tag": "0010_mcp_dispatcher",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1746886000000,
+      "tag": "0011_execution_confirm_ticket",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1746890000000,
+      "tag": "0012_observability_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1746894000000,
+      "tag": "0013_alert_and_eval",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1746898000000,
+      "tag": "0014_broker_and_compensation",
+      "breakpoints": true
     }
   ]
 }

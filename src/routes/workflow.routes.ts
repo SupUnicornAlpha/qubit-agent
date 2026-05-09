@@ -3,6 +3,11 @@ import { getDb } from "../db/sqlite/client";
 import { chatMessageWorkflowLink, workflowRun } from "../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { dispatchTaskToRole } from "../runtime/agent-pool";
+import {
+  enqueueCompensationTask,
+  listCompensationTasks,
+  processCompensationQueue,
+} from "../runtime/workflow/compensation-queue";
 
 export const workflowRouter = new Hono();
 
@@ -74,4 +79,41 @@ workflowRouter.get("/:id", async (c) => {
     .limit(1);
   if (!rows[0]) return c.json({ error: "Not found" }, 404);
   return c.json({ data: rows[0] });
+});
+
+workflowRouter.post("/compensation/enqueue", async (c) => {
+  const body = await c.req.json<{
+    workflowRunId?: string;
+    actionType?: "retry_from_start" | "resume" | "manual_intervention";
+    reason?: string;
+    payloadJson?: Record<string, unknown>;
+    maxRetries?: number;
+  }>();
+  if (!body.workflowRunId) return c.json({ ok: false, error: "workflowRunId is required" }, 400);
+  const data = await enqueueCompensationTask({
+    workflowRunId: body.workflowRunId,
+    actionType: body.actionType,
+    reason: body.reason,
+    payloadJson: body.payloadJson,
+    maxRetries: body.maxRetries,
+  });
+  return c.json({ ok: true, data });
+});
+
+workflowRouter.get("/compensation/tasks", async (c) => {
+  const status = c.req.query("status");
+  const workflowRunId = c.req.query("workflowRunId");
+  const limit = Number(c.req.query("limit") ?? 100);
+  const data = await listCompensationTasks({
+    status: status || undefined,
+    workflowRunId: workflowRunId || undefined,
+    limit: Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 100,
+  });
+  return c.json({ ok: true, data });
+});
+
+workflowRouter.post("/compensation/process", async (c) => {
+  const body = await c.req.json<{ limit?: number }>().catch(() => ({}));
+  const data = await processCompensationQueue(body.limit ? Math.max(1, Math.min(50, body.limit)) : 10);
+  return c.json({ ok: true, data });
 });

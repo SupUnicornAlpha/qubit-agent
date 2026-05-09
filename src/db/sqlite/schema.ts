@@ -72,6 +72,27 @@ export const workflowRun = sqliteTable("workflow_run", {
   endedAt: text("ended_at"),
 });
 
+export const workflowCompensationTask = sqliteTable("workflow_compensation_task", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  status: text("status", {
+    enum: ["pending", "running", "completed", "failed", "cancelled"],
+  })
+    .notNull()
+    .default("pending"),
+  actionType: text("action_type", { enum: ["retry_from_start", "resume", "manual_intervention"] }).notNull(),
+  reason: text("reason").notNull().default(""),
+  retryCount: integer("retry_count").notNull().default(0),
+  maxRetries: integer("max_retries").notNull().default(3),
+  payloadJson: text("payload_json", { mode: "json" }).notNull().default("{}"),
+  lastError: text("last_error"),
+  nextRunAt: text("next_run_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 export const chatMessage = sqliteTable("chat_message", {
   id: id(),
   sessionId: text("session_id")
@@ -168,6 +189,18 @@ export const mcpServerConfig = sqliteTable("mcp_server_config", {
   capabilitiesJson: text("capabilities_json", { mode: "json" }).notNull().default("[]"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
+});
+
+export const mcpToolBinding = sqliteTable("mcp_tool_binding", {
+  id: id(),
+  serverName: text("server_name").notNull(),
+  toolName: text("tool_name").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  timeoutMs: integer("timeout_ms"),
+  retryPolicyJson: text("retry_policy_json", { mode: "json" }).notNull().default("{}"),
+  rateLimitJson: text("rate_limit_json", { mode: "json" }).notNull().default("{}"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
 export const agentDefinition = sqliteTable("agent_definition", {
@@ -371,6 +404,24 @@ export const toolCallLog = sqliteTable("tool_call_log", {
   }).notNull(),
   latencyMs: integer("latency_ms"),
   errorMessage: text("error_message"),
+  createdAt: createdAt(),
+});
+
+export const mcpCallLog = sqliteTable("mcp_call_log", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  agentStepId: text("agent_step_id")
+    .notNull()
+    .references(() => agentStep.id),
+  serverName: text("server_name").notNull(),
+  toolName: text("tool_name").notNull(),
+  requestJson: text("request_json", { mode: "json" }).notNull(),
+  responseJson: text("response_json", { mode: "json" }),
+  status: text("status", { enum: ["success", "timeout", "failed", "sandbox_blocked"] }).notNull(),
+  errorCode: text("error_code"),
+  latencyMs: integer("latency_ms"),
   createdAt: createdAt(),
 });
 
@@ -753,6 +804,37 @@ export const executionReport = sqliteTable("execution_report", {
   createdAt: createdAt(),
 });
 
+export const brokerAccount = sqliteTable("broker_account", {
+  id: id(),
+  provider: text("provider", { enum: ["futu", "ib"] }).notNull(),
+  accountRef: text("account_ref").notNull(),
+  mode: text("mode", { enum: ["mock", "sandbox", "live"] }).notNull().default("mock"),
+  baseUrl: text("base_url"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  healthStatus: text("health_status", { enum: ["unknown", "healthy", "degraded", "down"] })
+    .notNull()
+    .default("unknown"),
+  healthMessage: text("health_message"),
+  lastHealthAt: text("last_health_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const brokerOrderEvent = sqliteTable("broker_order_event", {
+  id: id(),
+  intentOrderId: text("intent_order_id").references(() => intentOrder.id),
+  executionReportId: text("execution_report_id").references(() => executionReport.id),
+  provider: text("provider", { enum: ["futu", "ib"] }).notNull(),
+  eventType: text("event_type", {
+    enum: ["submit", "ack", "partial_fill", "fill", "cancel", "reject", "health_check"],
+  }).notNull(),
+  brokerOrderId: text("broker_order_id"),
+  status: text("status").notNull().default("ok"),
+  detailJson: text("detail_json", { mode: "json" }).notNull().default("{}"),
+  eventAt: text("event_at").notNull(),
+  createdAt: createdAt(),
+});
+
 export const intentDeviation = sqliteTable("intent_deviation", {
   id: id(),
   intentOrderId: text("intent_order_id")
@@ -766,6 +848,24 @@ export const intentDeviation = sqliteTable("intent_deviation", {
   exceededThreshold: integer("exceeded_threshold", { mode: "boolean" }).notNull().default(false),
   callbackTriggered: integer("callback_triggered", { mode: "boolean" }).notNull().default(false),
   callbackWorkflowId: text("callback_workflow_id"),
+  createdAt: createdAt(),
+});
+
+export const executionConfirmTicket = sqliteTable("execution_confirm_ticket", {
+  id: id(),
+  intentOrderId: text("intent_order_id")
+    .notNull()
+    .references(() => intentOrder.id),
+  confirmTokenHash: text("confirm_token_hash").notNull(),
+  issuedBy: text("issued_by").notNull().default("system"),
+  issuedAt: text("issued_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  consumedAt: text("consumed_at"),
+  status: text("status", { enum: ["active", "expired", "consumed", "revoked"] })
+    .notNull()
+    .default("active"),
+  riskScoreSnapshot: real("risk_score_snapshot").notNull(),
+  blockersJson: text("blockers_json", { mode: "json" }).notNull().default("[]"),
   createdAt: createdAt(),
 });
 
@@ -1083,6 +1183,89 @@ export const riskVetoLog = sqliteTable("risk_veto_log", {
 });
 
 // ─── 2.8 审计与可观测域 ──────────────────────────────────────────────────────
+
+export const agentRuntimeMetric = sqliteTable("agent_runtime_metric", {
+  id: id(),
+  definitionId: text("definition_id")
+    .notNull()
+    .references(() => agentDefinition.id),
+  windowStart: text("window_start").notNull(),
+  windowEnd: text("window_end").notNull(),
+  runCount: integer("run_count").notNull().default(0),
+  successCount: integer("success_count").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+  timeoutCount: integer("timeout_count").notNull().default(0),
+  p50LatencyMs: real("p50_latency_ms"),
+  p95LatencyMs: real("p95_latency_ms"),
+  avgTokenCount: real("avg_token_count"),
+  createdAt: createdAt(),
+});
+
+export const workflowQualitySnapshot = sqliteTable("workflow_quality_snapshot", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  totalDurationMs: integer("total_duration_ms"),
+  totalToolCalls: integer("total_tool_calls").notNull().default(0),
+  sandboxBlockCount: integer("sandbox_block_count").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+  qualityScore: real("quality_score").notNull().default(0),
+  createdAt: createdAt(),
+});
+
+export const alertEvent = sqliteTable("alert_event", {
+  id: id(),
+  scopeType: text("scope_type", { enum: ["workflow", "agent", "system"] }).notNull(),
+  scopeId: text("scope_id").notNull(),
+  alertType: text("alert_type").notNull(),
+  severity: text("severity", { enum: ["info", "warn", "error", "critical"] }).notNull(),
+  title: text("title").notNull(),
+  detailsJson: text("details_json", { mode: "json" }).notNull().default("{}"),
+  status: text("status", { enum: ["open", "ack", "resolved"] }).notNull().default("open"),
+  createdAt: createdAt(),
+  resolvedAt: text("resolved_at"),
+});
+
+export const evalDataset = sqliteTable("eval_dataset", {
+  id: id(),
+  name: text("name").notNull(),
+  version: text("version").notNull().default("v1"),
+  scenario: text("scenario").notNull().default("mixed"),
+  sourceDesc: text("source_desc").notNull().default(""),
+  metaJson: text("meta_json", { mode: "json" }).notNull().default("{}"),
+  createdAt: createdAt(),
+});
+
+export const evalRun = sqliteTable("eval_run", {
+  id: id(),
+  datasetId: text("dataset_id")
+    .notNull()
+    .references(() => evalDataset.id),
+  configSnapshotJson: text("config_snapshot_json", { mode: "json" }).notNull().default("{}"),
+  modelSnapshotJson: text("model_snapshot_json", { mode: "json" }).notNull().default("{}"),
+  status: text("status", { enum: ["pending", "running", "completed", "failed"] })
+    .notNull()
+    .default("pending"),
+  summaryMetricsJson: text("summary_metrics_json", { mode: "json" }).notNull().default("{}"),
+  startedAt: text("started_at"),
+  endedAt: text("ended_at"),
+  createdAt: createdAt(),
+});
+
+export const evalCaseResult = sqliteTable("eval_case_result", {
+  id: id(),
+  evalRunId: text("eval_run_id")
+    .notNull()
+    .references(() => evalRun.id),
+  caseKey: text("case_key").notNull(),
+  workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+  expectedJson: text("expected_json", { mode: "json" }).notNull().default("{}"),
+  actualJson: text("actual_json", { mode: "json" }).notNull().default("{}"),
+  score: real("score").notNull().default(0),
+  pass: integer("pass", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+});
 
 export const auditLog = sqliteTable("audit_log", {
   id: id(),

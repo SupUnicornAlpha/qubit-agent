@@ -9,6 +9,26 @@ import {
   toolCallLog,
   workflowRun,
 } from "../db/sqlite/schema";
+import {
+  aggregateAgentRuntimeMetrics,
+  createWorkflowQualitySnapshot,
+  listAgentRuntimeMetrics,
+  listWorkflowQualitySnapshots,
+} from "../runtime/monitor/quality-metrics";
+import {
+  ackAlert,
+  createAlertsFromWorkflowQuality,
+  listAlerts,
+  resolveAlert,
+  resolveAlertsByScope,
+} from "../runtime/monitor/alert-service";
+import {
+  createEvalDataset,
+  getEvalRunDetail,
+  listEvalDatasets,
+  listEvalRuns,
+  runEval,
+} from "../runtime/eval/pipeline";
 
 export const monitorRouter = new Hono();
 
@@ -163,4 +183,130 @@ monitorRouter.get("/workflows/:id/detail", async (c) => {
       sandboxViolations: violations,
     },
   });
+});
+
+monitorRouter.post("/quality/workflows/:id/snapshot", async (c) => {
+  const workflowId = c.req.param("id");
+  const data = await createWorkflowQualitySnapshot(workflowId);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.get("/quality/workflows/:id/snapshots", async (c) => {
+  const workflowId = c.req.param("id");
+  const data = await listWorkflowQualitySnapshots(workflowId);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/quality/agents/aggregate", async (c) => {
+  const body = await c.req
+    .json<{ windowStart?: string; windowEnd?: string }>()
+    .catch(() => ({}));
+  const data = await aggregateAgentRuntimeMetrics({
+    windowStart: body.windowStart,
+    windowEnd: body.windowEnd,
+  });
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.get("/quality/agents/metrics", async (c) => {
+  const windowStart = c.req.query("windowStart");
+  const windowEnd = c.req.query("windowEnd");
+  const data = await listAgentRuntimeMetrics({ windowStart, windowEnd });
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/alerts/workflows/:id/trigger", async (c) => {
+  const workflowId = c.req.param("id");
+  const data = await createAlertsFromWorkflowQuality(workflowId);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.get("/alerts", async (c) => {
+  const scopeType = c.req.query("scopeType") as "workflow" | "agent" | "system" | undefined;
+  const scopeId = c.req.query("scopeId");
+  const status = c.req.query("status") as "open" | "ack" | "resolved" | undefined;
+  const data = await listAlerts({ scopeType, scopeId, status });
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/alerts/:id/ack", async (c) => {
+  const alertId = c.req.param("id");
+  const data = await ackAlert(alertId);
+  if (!data) return c.json({ ok: false, error: "alert not found" }, 404);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/alerts/:id/resolve", async (c) => {
+  const alertId = c.req.param("id");
+  const data = await resolveAlert(alertId);
+  if (!data) return c.json({ ok: false, error: "alert not found" }, 404);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/alerts/resolve-by-scope", async (c) => {
+  const body = await c.req
+    .json<{ scopeType?: "workflow" | "agent" | "system"; scopeId?: string }>()
+    .catch(() => ({}));
+  if (!body.scopeType || !body.scopeId) {
+    return c.json({ ok: false, error: "scopeType and scopeId required" }, 400);
+  }
+  const data = await resolveAlertsByScope(body.scopeType, body.scopeId);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.get("/eval/datasets", async (c) => {
+  const data = await listEvalDatasets();
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/eval/datasets", async (c) => {
+  const body = await c.req
+    .json<{
+      name?: string;
+      version?: string;
+      scenario?: string;
+      sourceDesc?: string;
+      metaJson?: Record<string, unknown>;
+    }>()
+    .catch(() => ({}));
+  if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
+  const data = await createEvalDataset({
+    name: body.name,
+    version: body.version,
+    scenario: body.scenario,
+    sourceDesc: body.sourceDesc,
+    metaJson: body.metaJson,
+  });
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/eval/runs", async (c) => {
+  const body = await c.req
+    .json<{
+      datasetId?: string;
+      caseCount?: number;
+      toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+      baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+    }>()
+    .catch(() => ({}));
+  if (!body.datasetId) return c.json({ ok: false, error: "datasetId is required" }, 400);
+  const data = await runEval({
+    datasetId: body.datasetId,
+    caseCount: body.caseCount,
+    toggle: body.toggle,
+    baselineToggle: body.baselineToggle,
+  });
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.get("/eval/runs", async (c) => {
+  const datasetId = c.req.query("datasetId");
+  const data = await listEvalRuns(datasetId);
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.get("/eval/runs/:id", async (c) => {
+  const runId = c.req.param("id");
+  const data = await getEvalRunDetail(runId);
+  return c.json({ ok: true, data });
 });

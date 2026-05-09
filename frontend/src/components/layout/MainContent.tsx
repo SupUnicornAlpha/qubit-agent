@@ -2,6 +2,8 @@ import type { CSSProperties, FC, FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   chatHealth,
+  checkBrokerHealth,
+  createEvalDataset,
   createAgentDraft,
   createChatSession,
   createProject,
@@ -15,6 +17,7 @@ import {
   getDebateTurns,
   getDebateVerdict,
   getDefaultProjectSession,
+  getExecutionSafetyConfig,
   getFusionHistory,
   initGenePool,
   getRiskConfig,
@@ -27,11 +30,23 @@ import {
   getModelConfig,
   getIntentExecutionView,
   getSessionAgentsBoard,
+  getEvalRunDetail,
   getWorkflowDetail,
+  listBrokerAccounts,
+  listBrokerEvents,
+  listMcpBindings,
+  listMcpServers,
   listAgentDefinitions,
   listAgents,
+  listAgentQuality,
+  listAlerts,
   listChatSessions,
+  listEvalDatasets,
+  listEvalRuns,
+  listWorkflowQuality,
   listMonitorWorkflows,
+  listIntegrationChannels,
+  listIntegrationLogs,
   listIntentOrders,
   listProjects,
   listSessionMessages,
@@ -39,6 +54,7 @@ import {
   patchSessionMessage,
   releaseAgentDraft,
   reloadAgents,
+  processWorkflowCompensations,
   evolveGenePool,
   runAnalystTeam,
   runScreener,
@@ -47,10 +63,19 @@ import {
   saveDebateConfig,
   saveExecutionSafetyConfig,
   saveRiskConfig,
+  testMcpCall,
+  upsertBrokerAccount,
+  upsertIntegrationChannel,
+  upsertMcpBinding,
   requestExecutionConfirmation,
+  resolveAlert,
+  runEval,
   subscribeDebateStream,
   subscribeWorkflowStream,
-  getExecutionSafetyConfig,
+  triggerWorkflowAlerts,
+  createWorkflowQuality,
+  listWorkflowCompensations,
+  enqueueWorkflowCompensation,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
@@ -60,6 +85,9 @@ import type {
   DebateStreamEvent,
   DebateTurnRecord,
   DebateVerdictRecord,
+  EvalCaseResultRecord,
+  EvalDatasetRecord,
+  EvalRunRecord,
   RiskConfig,
   RiskVetoLogRecord,
   GeneGenerationRecord,
@@ -69,12 +97,22 @@ import type {
   ExecutionReportRecord,
   ExecutionSafetyCheckResult,
   ExecutionSafetyConfig,
+  McpServerConfigRecord,
+  McpToolBindingRecord,
   ScreenerCandidateRecord,
   ScreenerRunRecord,
   SessionAgentBoardItem,
+  AlertEventRecord,
+  AgentRuntimeMetricRecord,
+  BrokerAccountRecord,
+  BrokerOrderEventRecord,
+  CommunicationChannelRecord,
+  CommunicationMessageLogRecord,
+  WorkflowCompensationTaskRecord,
   SignalFusionRecord,
   StrategyGenomeRecord,
   StepStreamEvent,
+  WorkflowQualitySnapshotRecord,
   WorkflowMode,
 } from "../../api/types";
 import { useAppStore } from "../../store";
@@ -123,6 +161,14 @@ const MonitorPanel: FC = () => {
   const [statusFilter, setStatusFilter] = useState("");
   const [workflowList, setWorkflowList] = useState<Array<Record<string, unknown>>>([]);
   const [drawerDetail, setDrawerDetail] = useState("");
+  const [qualitySnapshots, setQualitySnapshots] = useState<WorkflowQualitySnapshotRecord[]>([]);
+  const [agentQuality, setAgentQuality] = useState<AgentRuntimeMetricRecord[]>([]);
+  const [alerts, setAlerts] = useState<AlertEventRecord[]>([]);
+  const [evalDatasets, setEvalDatasets] = useState<EvalDatasetRecord[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [evalRuns, setEvalRuns] = useState<EvalRunRecord[]>([]);
+  const [evalRunCases, setEvalRunCases] = useState<EvalCaseResultRecord[]>([]);
+  const [datasetName, setDatasetName] = useState("Default Eval Dataset");
 
   useEffect(() => {
     void listAgents().then(setAgents).catch(console.error);
@@ -187,6 +233,61 @@ const MonitorPanel: FC = () => {
   const onOpenDrawer = async (workflowId: string) => {
     const detail = await getWorkflowDetail(workflowId);
     setDrawerDetail(JSON.stringify(detail, null, 2));
+  };
+
+  const refreshAlerts = async () => {
+    setAlerts(await listAlerts({ status: "open" }));
+  };
+
+  const onCreateQuality = async (workflowId: string) => {
+    await createWorkflowQuality(workflowId);
+    setQualitySnapshots(await listWorkflowQuality(workflowId));
+    await triggerWorkflowAlerts(workflowId);
+    await refreshAlerts();
+  };
+
+  const onAckAlert = async (id: string) => {
+    await resolveAlert(id);
+    await refreshAlerts();
+  };
+
+  const loadEvalBoard = async (datasetId?: string) => {
+    const datasets = await listEvalDatasets();
+    setEvalDatasets(datasets);
+    const useDatasetId = datasetId ?? selectedDatasetId ?? datasets[0]?.id ?? "";
+    if (!useDatasetId) return;
+    setSelectedDatasetId(useDatasetId);
+    setEvalRuns(await listEvalRuns(useDatasetId));
+  };
+
+  useEffect(() => {
+    void (async () => {
+      setAgentQuality(await listAgentQuality());
+      await refreshAlerts();
+      await loadEvalBoard();
+    })().catch(console.error);
+  }, []);
+
+  const onCreateDataset = async () => {
+    const created = await createEvalDataset({ name: datasetName || "Eval Dataset" });
+    setSelectedDatasetId(created.id);
+    await loadEvalBoard(created.id);
+  };
+
+  const onRunEval = async () => {
+    if (!selectedDatasetId) return;
+    await runEval({
+      datasetId: selectedDatasetId,
+      caseCount: 20,
+      toggle: { msa: true, sdp: true, rfv: true },
+      baselineToggle: { msa: false, sdp: false, rfv: true },
+    });
+    await loadEvalBoard(selectedDatasetId);
+  };
+
+  const onOpenEvalRun = async (runId: string) => {
+    const detail = await getEvalRunDetail(runId);
+    setEvalRunCases(detail.cases);
   };
 
   return (
@@ -259,6 +360,108 @@ const MonitorPanel: FC = () => {
 
       <h3 style={styles.subTitle}>详情抽屉</h3>
       <pre style={styles.streamBox}>{drawerDetail || "请选择 workflow 查看详情..."}</pre>
+
+      <h3 style={styles.subTitle}>运行质量（M9-F1）</h3>
+      <div style={styles.grid}>
+        {agentQuality.slice(0, 12).map((row) => (
+          <div key={row.id} style={styles.card}>
+            <div style={styles.cardName}>{row.definitionId}</div>
+            <div style={styles.cardDesc}>
+              p50={Math.round(row.p50LatencyMs ?? 0)}ms · p95={Math.round(row.p95LatencyMs ?? 0)}ms · err=
+              {row.errorCount}/{row.runCount}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <h3 style={styles.subTitle}>告警中心（M9-B2）</h3>
+      <div style={styles.form}>
+        <button style={styles.buttonSecondary} type="button" onClick={() => void refreshAlerts()}>
+          刷新告警
+        </button>
+      </div>
+      <div style={styles.grid}>
+        {alerts.slice(0, 30).map((alert) => (
+          <div key={alert.id} style={styles.card}>
+            <div style={styles.cardName}>
+              [{alert.severity}] {alert.title}
+            </div>
+            <div style={styles.cardDesc}>
+              {alert.scopeType}:{alert.scopeId} · {alert.status}
+            </div>
+            <div style={styles.form}>
+              <button style={styles.buttonSecondary} type="button" onClick={() => void onAckAlert(alert.id)}>
+                关闭
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <h3 style={styles.subTitle}>评测报告（M10-F1）</h3>
+      <div style={styles.form}>
+        <input style={styles.input} value={datasetName} onChange={(e) => setDatasetName(e.target.value)} />
+        <button style={styles.buttonSecondary} type="button" onClick={() => void onCreateDataset()}>
+          新建数据集
+        </button>
+        <select
+          style={styles.select}
+          value={selectedDatasetId}
+          onChange={(e) => {
+            setSelectedDatasetId(e.target.value);
+            void loadEvalBoard(e.target.value);
+          }}
+        >
+          <option value="">选择评测数据集</option>
+          {evalDatasets.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}@{d.version}
+            </option>
+          ))}
+        </select>
+        <button style={styles.button} type="button" onClick={() => void onRunEval()} disabled={!selectedDatasetId}>
+          发起对照评测
+        </button>
+      </div>
+      <div style={styles.grid}>
+        {workflowList.slice(0, 8).map((row) => (
+          <button
+            key={`q-${String(row.id)}`}
+            type="button"
+            style={styles.cardButton}
+            onClick={() => void onCreateQuality(String(row.id))}
+          >
+            <div style={styles.cardName}>质量快照+告警: {String(row.id)}</div>
+            <div style={styles.cardDesc}>点击生成 quality snapshot 并触发告警</div>
+          </button>
+        ))}
+      </div>
+      <div style={styles.grid}>
+        {evalRuns.slice(0, 20).map((run) => (
+          <button key={run.id} type="button" style={styles.cardButton} onClick={() => void onOpenEvalRun(run.id)}>
+            <div style={styles.cardName}>{run.id}</div>
+            <div style={styles.cardDesc}>
+              {run.status} · {JSON.stringify(run.summaryMetricsJson)}
+            </div>
+          </button>
+        ))}
+      </div>
+      <pre style={styles.streamBox}>
+        {evalRunCases.length === 0
+          ? "请选择 eval run 查看失败样本..."
+          : evalRunCases
+              .slice(0, 20)
+              .map((c) => `${c.caseKey} score=${c.score.toFixed(3)} pass=${String(c.pass)}`)
+              .join("\n")}
+      </pre>
+      <pre style={styles.streamBox}>
+        {qualitySnapshots.length === 0
+          ? "暂无质量快照..."
+          : qualitySnapshots
+              .slice(0, 20)
+              .map((s) => `${s.workflowRunId} score=${s.qualityScore.toFixed(3)} err=${s.errorCount}`)
+              .join("\n")}
+      </pre>
     </>
   );
 };
@@ -523,11 +726,37 @@ const ConfigPanel: FC = () => {
   const [modelName, setModelName] = useState("gpt-4o-mini");
   const [modelApiKey, setModelApiKey] = useState("");
   const [modelBaseUrl, setModelBaseUrl] = useState("");
+  const [mcpServers, setMcpServers] = useState<McpServerConfigRecord[]>([]);
+  const [mcpBindings, setMcpBindings] = useState<McpToolBindingRecord[]>([]);
+  const [selectedMcpServer, setSelectedMcpServer] = useState("");
+  const [mcpToolName, setMcpToolName] = useState("");
+  const [mcpTimeoutMs, setMcpTimeoutMs] = useState(20000);
+  const [mcpTestOutput, setMcpTestOutput] = useState("");
+  const [integrationKind, setIntegrationKind] = useState<"telegram" | "webhook">("telegram");
+  const [integrationName, setIntegrationName] = useState("default-telegram");
+  const [integrationExternalChatId, setIntegrationExternalChatId] = useState("");
+  const [integrationSecretRef, setIntegrationSecretRef] = useState("");
+  const [integrationChannels, setIntegrationChannels] = useState<CommunicationChannelRecord[]>([]);
+  const [integrationLogs, setIntegrationLogs] = useState<CommunicationMessageLogRecord[]>([]);
 
   const loadConfig = async () => {
-    const [data, bundles] = await Promise.all([getAgentsConfig(), listAgentDefinitions()]);
+    const [data, bundles, servers, bindings, channels, logs] = await Promise.all([
+      getAgentsConfig(),
+      listAgentDefinitions(),
+      listMcpServers(),
+      listMcpBindings(),
+      listIntegrationChannels(),
+      listIntegrationLogs(undefined, 50),
+    ]);
     setConfigData(data);
     setDefinitions(bundles);
+    setMcpServers(servers);
+    setMcpBindings(bindings);
+    setIntegrationChannels(channels);
+    setIntegrationLogs(logs);
+    if (!selectedMcpServer && servers[0]) {
+      setSelectedMcpServer(servers[0].name);
+    }
     if (!selectedDefinitionId && bundles[0]) {
       setSelectedDefinitionId(bundles[0].definition.id);
       setDraftPrompt(bundles[0].draft?.systemPrompt ?? bundles[0].definition.systemPrompt);
@@ -549,6 +778,48 @@ const ConfigPanel: FC = () => {
     () => definitions.find((item) => item.definition.id === selectedDefinitionId) ?? null,
     [definitions, selectedDefinitionId]
   );
+
+  const saveMcpBindingNow = async () => {
+    if (!selectedMcpServer || !mcpToolName.trim()) return;
+    const row = await upsertMcpBinding({
+      serverName: selectedMcpServer,
+      toolName: mcpToolName.trim(),
+      enabled: true,
+      timeoutMs: mcpTimeoutMs,
+      retryPolicyJson: { maxAttempts: 2, backoffMs: 300 },
+      rateLimitJson: {},
+    });
+    setMcpTestOutput(`binding saved: ${row.serverName}/${row.toolName}`);
+    setMcpBindings(await listMcpBindings());
+  };
+
+  const testMcpNow = async () => {
+    if (!selectedMcpServer || !mcpToolName.trim()) return;
+    const out = await testMcpCall({
+      serverName: selectedMcpServer,
+      toolName: mcpToolName.trim(),
+      arguments: { ping: true, ts: Date.now() },
+    });
+    setMcpTestOutput(JSON.stringify(out, null, 2));
+  };
+
+  const saveIntegrationNow = async () => {
+    const workspaces = await listWorkspaces();
+    const ws = workspaces[0];
+    if (!ws) return;
+    const projects = await listProjects(ws.id);
+    const data = await upsertIntegrationChannel({
+      workspaceId: ws.id,
+      projectId: projects[0]?.id ?? null,
+      kind: integrationKind,
+      name: integrationName || `${integrationKind}-channel`,
+      externalChatId: integrationExternalChatId || "default",
+      secretRef: integrationSecretRef,
+      enabled: true,
+    });
+    setIntegrationName(data.name);
+    setIntegrationChannels(await listIntegrationChannels());
+  };
 
   return (
     <>
@@ -602,6 +873,75 @@ const ConfigPanel: FC = () => {
           保存模型配置
         </button>
       </div>
+      <h3 style={styles.subTitle}>MCP 配置与连通性</h3>
+      <div style={styles.form}>
+        <select
+          style={styles.select}
+          value={selectedMcpServer}
+          onChange={(e) => setSelectedMcpServer(e.target.value)}
+        >
+          {mcpServers.map((s) => (
+            <option key={s.id} value={s.name}>
+              {s.name} · {s.transport} · {s.enabled ? "enabled" : "disabled"}
+            </option>
+          ))}
+        </select>
+        <input
+          style={styles.input}
+          value={mcpToolName}
+          onChange={(e) => setMcpToolName(e.target.value)}
+          placeholder="tool name"
+        />
+        <input
+          style={styles.input}
+          type="number"
+          value={mcpTimeoutMs}
+          onChange={(e) => setMcpTimeoutMs(Number(e.target.value))}
+          placeholder="timeout ms"
+        />
+        <button style={styles.buttonSecondary} onClick={() => void saveMcpBindingNow()}>
+          保存绑定
+        </button>
+        <button style={styles.button} onClick={() => void testMcpNow()}>
+          测试 MCP
+        </button>
+      </div>
+      <pre style={styles.streamBox}>{mcpTestOutput || "暂无测试结果"}</pre>
+      <pre style={styles.streamBox}>{JSON.stringify(mcpBindings, null, 2)}</pre>
+      <h3 style={styles.subTitle}>集成管理（T9）</h3>
+      <div style={styles.form}>
+        <select
+          style={styles.select}
+          value={integrationKind}
+          onChange={(e) => setIntegrationKind(e.target.value as "telegram" | "webhook")}
+        >
+          <option value="telegram">telegram</option>
+          <option value="webhook">webhook</option>
+        </select>
+        <input
+          style={styles.input}
+          value={integrationName}
+          onChange={(e) => setIntegrationName(e.target.value)}
+          placeholder="channel name"
+        />
+        <input
+          style={styles.input}
+          value={integrationExternalChatId}
+          onChange={(e) => setIntegrationExternalChatId(e.target.value)}
+          placeholder="chatId / webhook target"
+        />
+        <input
+          style={styles.input}
+          value={integrationSecretRef}
+          onChange={(e) => setIntegrationSecretRef(e.target.value)}
+          placeholder="token / secret"
+        />
+        <button style={styles.buttonSecondary} onClick={() => void saveIntegrationNow()}>
+          保存集成配置
+        </button>
+      </div>
+      <pre style={styles.streamBox}>{JSON.stringify(integrationChannels, null, 2)}</pre>
+      <pre style={styles.streamBox}>{JSON.stringify(integrationLogs, null, 2)}</pre>
       <h3 style={styles.subTitle}>Agent 配置</h3>
       <div style={styles.form}>
         <select
@@ -815,6 +1155,7 @@ const TeamDashboardPanel: FC = () => {
   const [roles, setRoles] = useState<AgentRoleCatalogItem[]>([]);
   const [ticker, setTicker] = useState("AAPL");
   const [workflowRunId, setWorkflowRunId] = useState("");
+  const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [history, setHistory] = useState<SignalFusionRecord[]>([]);
@@ -852,6 +1193,12 @@ const TeamDashboardPanel: FC = () => {
   const [intentOrders, setIntentOrdersState] = useState<IntentOrderRecord[]>([]);
   const [selectedIntentId, setSelectedIntentId] = useState("");
   const [brokerProvider, setBrokerProvider] = useState<"futu" | "ib">("futu");
+  const [brokerAccountRef, setBrokerAccountRef] = useState("default");
+  const [brokerMode, setBrokerMode] = useState<"mock" | "sandbox" | "live">("mock");
+  const [brokerBaseUrl, setBrokerBaseUrl] = useState("");
+  const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccountRecord[]>([]);
+  const [brokerEvents, setBrokerEvents] = useState<BrokerOrderEventRecord[]>([]);
+  const [compTasks, setCompTasks] = useState<WorkflowCompensationTaskRecord[]>([]);
   const [executionSafetyConfig, setExecutionSafetyConfigState] = useState<ExecutionSafetyConfig>({
     dryRunOnly: true,
     requireDoubleConfirm: true,
@@ -867,12 +1214,34 @@ const TeamDashboardPanel: FC = () => {
 
 
   useEffect(() => {
-    getAgentRoles().then(setRoles).catch(() => {});
-    getFusionHistory({ limit: 10 }).then(setHistory).catch(() => {});
-    getDebateConfig().then(setDebateConfigState).catch(() => {});
-    getRiskConfig().then(setRiskConfigState).catch(() => {});
-    getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
+    void (async () => {
+      getAgentRoles().then(setRoles).catch(() => {});
+      getFusionHistory({ limit: 10 }).then(setHistory).catch(() => {});
+      getDebateConfig().then(setDebateConfigState).catch(() => {});
+      getRiskConfig().then(setRiskConfigState).catch(() => {});
+      getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
+      const wfRows = (await listMonitorWorkflows({})) as Array<Record<string, unknown>>;
+      setWorkflowOptions(wfRows);
+      if (!workflowRunId && wfRows[0]?.id) {
+        setWorkflowRunId(String(wfRows[0].id));
+      }
+      await refreshBrokerAndComp();
+    })().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const row = workflowOptions.find((item) => String(item.id) === workflowRunId);
+    if (!row) return;
+    const projectId = row.projectId ? String(row.projectId) : "";
+    if (projectId && !geneProjectId) {
+      setGeneProjectId(projectId);
+    }
+  }, [workflowRunId, workflowOptions, geneProjectId]);
+
+  useEffect(() => {
+    if (!workflowRunId) return;
+    void refreshIntentOrders().catch(() => {});
+  }, [workflowRunId]);
 
   const handleRun = async () => {
     if (!ticker.trim()) return;
@@ -883,11 +1252,9 @@ const TeamDashboardPanel: FC = () => {
     setReplayTurns([]);
     setReplayVerdict(null);
     try {
-      // Need a workflow run ID — create a minimal one
-      let wfId = workflowRunId;
+      const wfId = workflowRunId;
       if (!wfId) {
-        // Try to find default project from store
-        setError("请先填写 workflowRunId，或在对话工作台触发一次研究任务后，在此处填入对应的工作流 ID");
+        setError("请先选择 workflowRunId（可在下拉框直接选取最近工作流）");
         setRunning(false);
         return;
       }
@@ -1096,6 +1463,53 @@ const TeamDashboardPanel: FC = () => {
     }
   };
 
+  const refreshBrokerAndComp = async () => {
+    const [accounts, events, tasks] = await Promise.all([
+      listBrokerAccounts(),
+      listBrokerEvents(undefined, 30),
+      listWorkflowCompensations({ workflowRunId: workflowRunId || undefined, limit: 30 }),
+    ]);
+    setBrokerAccounts(accounts);
+    setBrokerEvents(events);
+    setCompTasks(tasks);
+  };
+
+  const saveBrokerAccountNow = async () => {
+    await upsertBrokerAccount({
+      provider: brokerProvider,
+      accountRef: brokerAccountRef || "default",
+      mode: brokerMode,
+      baseUrl: brokerBaseUrl || undefined,
+      enabled: true,
+    });
+    await refreshBrokerAndComp();
+  };
+
+  const checkBrokerNow = async () => {
+    const out = await checkBrokerHealth({ provider: brokerProvider, accountRef: brokerAccountRef || "default" });
+    setError(`Broker健康检查: ${out.provider} ${out.status} ${out.message}`);
+    await refreshBrokerAndComp();
+  };
+
+  const enqueueRetryNow = async () => {
+    if (!workflowRunId) {
+      setError("请选择 workflowRunId 后再加入补偿队列");
+      return;
+    }
+    await enqueueWorkflowCompensation({
+      workflowRunId,
+      actionType: "retry_from_start",
+      reason: "manual enqueue from team dashboard",
+    });
+    await refreshBrokerAndComp();
+  };
+
+  const processCompNow = async () => {
+    const out = await processWorkflowCompensations(5);
+    setError(`补偿队列处理: picked=${out.picked}, success=${out.success}, failed=${out.failed}`);
+    await refreshBrokerAndComp();
+  };
+
   const groupedRoles = TEAM_GROUPS.map((g) => ({
     ...g,
     members: roles.filter((r) => r.team === g.key),
@@ -1133,13 +1547,15 @@ const TeamDashboardPanel: FC = () => {
               />
             </div>
             <div style={teamStyles.field}>
-              <label style={teamStyles.label}>工作流 ID（必填）</label>
-              <input
-                style={teamStyles.input}
-                value={workflowRunId}
-                onChange={(e) => setWorkflowRunId(e.target.value)}
-                placeholder="从监控页复制 workflow run id"
-              />
+              <label style={teamStyles.label}>工作流 ID（选择器联动）</label>
+              <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
+                <option value="">请选择 workflow</option>
+                {workflowOptions.slice(0, 80).map((row) => (
+                  <option key={String(row.id)} value={String(row.id)}>
+                    {String(row.id)} · {String(row.status)} · {String(row.mode)}
+                  </option>
+                ))}
+              </select>
             </div>
             <button
               type="button"
@@ -1450,6 +1866,64 @@ const TeamDashboardPanel: FC = () => {
               刷新意图列表
             </button>
           </div>
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>Broker 账号</label>
+              <input
+                style={teamStyles.input}
+                value={brokerAccountRef}
+                onChange={(e) => setBrokerAccountRef(e.target.value)}
+                placeholder="account ref"
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>Broker 模式</label>
+              <select style={teamStyles.input} value={brokerMode} onChange={(e) => setBrokerMode(e.target.value as "mock" | "sandbox" | "live")}>
+                <option value="mock">mock</option>
+                <option value="sandbox">sandbox</option>
+                <option value="live">live</option>
+              </select>
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>Broker Base URL</label>
+              <input
+                style={teamStyles.input}
+                value={brokerBaseUrl}
+                onChange={(e) => setBrokerBaseUrl(e.target.value)}
+                placeholder="http://broker-api"
+              />
+            </div>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void saveBrokerAccountNow()}>
+              保存 Broker 账号
+            </button>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void checkBrokerNow()}>
+              健康检查
+            </button>
+          </div>
+          <div style={teamStyles.configRow}>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void refreshBrokerAndComp()}>
+              刷新补偿与Broker状态
+            </button>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void enqueueRetryNow()}>
+              加入失败补偿队列
+            </button>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void processCompNow()}>
+              执行补偿队列
+            </button>
+          </div>
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>意图订单选择器（联动）</label>
+              <select style={teamStyles.input} value={selectedIntentId} onChange={(e) => void loadIntentView(e.target.value)}>
+                <option value="">请选择 intent</option>
+                {intentOrders.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.ticker} · {it.direction} · {it.status}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           {error && <div style={teamStyles.error}>{error}</div>}
 
@@ -1691,6 +2165,38 @@ const TeamDashboardPanel: FC = () => {
                           {lastSafetyCheck.blockers.length ? lastSafetyCheck.blockers.join(", ") : "none"}
                         </div>
                       )}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {(brokerAccounts.length > 0 || brokerEvents.length > 0 || compTasks.length > 0) && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🔌 Broker / 补偿队列（T1/T4）</h3>
+                  <div style={teamStyles.replayBox}>
+                    <div style={teamStyles.replayVerdict}>
+                      <strong>Broker Accounts</strong>
+                      <br />
+                      {brokerAccounts
+                        .slice(0, 10)
+                        .map((a) => `${a.provider}:${a.accountRef} ${a.mode} ${a.healthStatus}`)
+                        .join("\n") || "none"}
+                    </div>
+                    <div style={teamStyles.replayVerdict}>
+                      <strong>Broker Events</strong>
+                      <br />
+                      {brokerEvents
+                        .slice(0, 10)
+                        .map((e) => `${e.provider}:${e.eventType} ${e.status} ${e.intentOrderId ?? "-"}`)
+                        .join("\n") || "none"}
+                    </div>
+                    <div style={teamStyles.replayVerdict}>
+                      <strong>Compensation Tasks</strong>
+                      <br />
+                      {compTasks
+                        .slice(0, 10)
+                        .map((t) => `${t.workflowRunId} ${t.actionType} ${t.status} retry ${t.retryCount}/${t.maxRetries}`)
+                        .join("\n") || "none"}
                     </div>
                   </div>
                 </>

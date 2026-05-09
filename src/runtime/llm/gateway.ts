@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { RuntimeModelConfig } from "../config/model-config";
+import { executeWithPolicy } from "../external-call/policy";
 
 export interface LlmGatewayInput {
   config: RuntimeModelConfig;
@@ -159,12 +160,22 @@ function runMock(input: LlmGatewayInput): string {
 
 export async function runLlmGateway(input: LlmGatewayInput): Promise<string> {
   const provider = input.config.provider;
-  if (provider === "openai") return runOpenAI(input);
-  if (provider === "anthropic") return runAnthropic(input);
-  if (provider === "ollama") return runOllama(input);
-  if (provider === "deepseek" || provider === "qwen" || provider === "zhipu") {
-    return runOpenAICompatible(input);
-  }
-  return runMock(input);
+  return executeWithPolicy(
+    {
+      scopeKey: `llm:${provider}:${input.config.model}`,
+      // 流式输出场景默认不重试，避免 token 重复写入前端流。
+      retry: { maxAttempts: 1, backoffMs: 200, backoffMultiplier: 2 },
+      circuitBreaker: { failureThreshold: 4, cooldownMs: 20_000 },
+    },
+    async () => {
+      if (provider === "openai") return runOpenAI(input);
+      if (provider === "anthropic") return runAnthropic(input);
+      if (provider === "ollama") return runOllama(input);
+      if (provider === "deepseek" || provider === "qwen" || provider === "zhipu") {
+        return runOpenAICompatible(input);
+      }
+      return runMock(input);
+    }
+  );
 }
 

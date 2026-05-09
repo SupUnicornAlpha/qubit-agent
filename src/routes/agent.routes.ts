@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getRuntimeAgents } from "../runtime/agent-pool";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
@@ -9,9 +9,12 @@ import {
   agentDefinitionDraft,
   agentDefinitionRelease,
   agentProfile,
+  mcpServerConfig,
+  mcpToolBinding,
   sandboxPolicy,
 } from "../db/sqlite/schema";
 import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
+import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 
 export const agentRouter = new Hono();
 
@@ -306,4 +309,79 @@ agentRouter.post("/model-config", async (c) => {
     baseUrl: body.baseUrl,
   });
   return c.json({ data: saved });
+});
+
+agentRouter.get("/mcp/servers", async (c) => {
+  const db = await getDb();
+  const rows = await db.select().from(mcpServerConfig).orderBy(desc(mcpServerConfig.createdAt));
+  return c.json({ data: rows });
+});
+
+agentRouter.get("/mcp/bindings", async (c) => {
+  const db = await getDb();
+  const rows = await db.select().from(mcpToolBinding).orderBy(desc(mcpToolBinding.createdAt));
+  return c.json({ data: rows });
+});
+
+agentRouter.post("/mcp/bindings/upsert", async (c) => {
+  const body = await c.req.json<{
+    serverName: string;
+    toolName: string;
+    enabled?: boolean;
+    timeoutMs?: number;
+    retryPolicyJson?: Record<string, unknown>;
+    rateLimitJson?: Record<string, unknown>;
+  }>();
+  if (!body.serverName || !body.toolName) {
+    return c.json({ error: "serverName and toolName are required" }, 400);
+  }
+  const db = await getDb();
+  const existing = await db
+    .select()
+    .from(mcpToolBinding)
+    .where(and(eq(mcpToolBinding.serverName, body.serverName), eq(mcpToolBinding.toolName, body.toolName)))
+    .limit(1);
+  if (existing[0]) {
+    await db
+      .update(mcpToolBinding)
+      .set({
+        enabled: body.enabled ?? existing[0].enabled,
+        timeoutMs: body.timeoutMs ?? existing[0].timeoutMs,
+        retryPolicyJson: body.retryPolicyJson ?? existing[0].retryPolicyJson,
+        rateLimitJson: body.rateLimitJson ?? existing[0].rateLimitJson,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(mcpToolBinding.id, existing[0].id));
+    const latest = await db.select().from(mcpToolBinding).where(eq(mcpToolBinding.id, existing[0].id)).limit(1);
+    return c.json({ data: latest[0] });
+  }
+  const id = crypto.randomUUID();
+  await db.insert(mcpToolBinding).values({
+    id,
+    serverName: body.serverName,
+    toolName: body.toolName,
+    enabled: body.enabled ?? true,
+    timeoutMs: body.timeoutMs,
+    retryPolicyJson: body.retryPolicyJson ?? {},
+    rateLimitJson: body.rateLimitJson ?? {},
+  });
+  const created = await db.select().from(mcpToolBinding).where(eq(mcpToolBinding.id, id)).limit(1);
+  return c.json({ data: created[0] }, 201);
+});
+
+agentRouter.post("/mcp/test", async (c) => {
+  const body = await c.req.json<{
+    serverName: string;
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  }>();
+  if (!body.serverName || !body.toolName) {
+    return c.json({ error: "serverName and toolName are required" }, 400);
+  }
+  const data = await dispatchMcpToolCall({
+    serverName: body.serverName,
+    toolName: body.toolName,
+    arguments: body.arguments ?? {},
+  });
+  return c.json({ ok: true, data });
 });

@@ -10,6 +10,17 @@ import type {
   DebateVerdictRecord,
   ExecutionSafetyCheckResult,
   ExecutionSafetyConfig,
+  ExecutionConfirmTicketRecord,
+  EvalCaseResultRecord,
+  EvalDatasetRecord,
+  EvalRunRecord,
+  AlertEventRecord,
+  BrokerAccountRecord,
+  BrokerOrderEventRecord,
+  CommunicationChannelRecord,
+  CommunicationMessageLogRecord,
+  McpServerConfigRecord,
+  McpToolBindingRecord,
   RiskConfig,
   RiskVetoLogRecord,
   GeneGenerationRecord,
@@ -26,6 +37,9 @@ import type {
   ChatSession,
   ModelConfig,
   SessionOverview,
+  WorkflowQualitySnapshotRecord,
+  WorkflowCompensationTaskRecord,
+  AgentRuntimeMetricRecord,
   SessionAgentBoardItem,
   SignalFusionRecord,
   StepStreamEvent,
@@ -234,6 +248,136 @@ export async function getSessionAgentsBoard(sessionId: string): Promise<SessionA
     `/api/v1/monitor/sessions/${sessionId}/agents-board`
   );
   return res.data.agents;
+}
+
+export async function createWorkflowQuality(workflowId: string): Promise<WorkflowQualitySnapshotRecord> {
+  const res = await httpPost<{ ok: boolean; data: WorkflowQualitySnapshotRecord }>(
+    `/api/v1/monitor/quality/workflows/${workflowId}/snapshot`,
+    {}
+  );
+  return res.data;
+}
+
+export async function listWorkflowQuality(workflowId: string): Promise<WorkflowQualitySnapshotRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: WorkflowQualitySnapshotRecord[] }>(
+    `/api/v1/monitor/quality/workflows/${workflowId}/snapshots`
+  );
+  return res.data;
+}
+
+export async function aggregateAgentQuality(input?: {
+  windowStart?: string;
+  windowEnd?: string;
+}): Promise<AgentRuntimeMetricRecord[]> {
+  const res = await httpPost<{ ok: boolean; data: AgentRuntimeMetricRecord[] }>(
+    "/api/v1/monitor/quality/agents/aggregate",
+    input ?? {}
+  );
+  return res.data;
+}
+
+export async function listAgentQuality(input?: {
+  windowStart?: string;
+  windowEnd?: string;
+}): Promise<AgentRuntimeMetricRecord[]> {
+  const query = new URLSearchParams();
+  if (input?.windowStart) query.set("windowStart", input.windowStart);
+  if (input?.windowEnd) query.set("windowEnd", input.windowEnd);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: AgentRuntimeMetricRecord[] }>(
+    `/api/v1/monitor/quality/agents/metrics${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function triggerWorkflowAlerts(workflowId: string): Promise<AlertEventRecord[]> {
+  const res = await httpPost<{ ok: boolean; data: AlertEventRecord[] }>(
+    `/api/v1/monitor/alerts/workflows/${workflowId}/trigger`,
+    {}
+  );
+  return res.data;
+}
+
+export async function listAlerts(input?: {
+  scopeType?: "workflow" | "agent" | "system";
+  scopeId?: string;
+  status?: "open" | "ack" | "resolved";
+}): Promise<AlertEventRecord[]> {
+  const query = new URLSearchParams();
+  if (input?.scopeType) query.set("scopeType", input.scopeType);
+  if (input?.scopeId) query.set("scopeId", input.scopeId);
+  if (input?.status) query.set("status", input.status);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: AlertEventRecord[] }>(
+    `/api/v1/monitor/alerts${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function ackAlert(alertId: string): Promise<AlertEventRecord> {
+  const res = await httpPost<{ ok: boolean; data: AlertEventRecord }>(`/api/v1/monitor/alerts/${alertId}/ack`, {});
+  return res.data;
+}
+
+export async function resolveAlert(alertId: string): Promise<AlertEventRecord> {
+  const res = await httpPost<{ ok: boolean; data: AlertEventRecord }>(
+    `/api/v1/monitor/alerts/${alertId}/resolve`,
+    {}
+  );
+  return res.data;
+}
+
+export async function createEvalDataset(input: {
+  name: string;
+  version?: string;
+  scenario?: string;
+  sourceDesc?: string;
+  metaJson?: Record<string, unknown>;
+}): Promise<EvalDatasetRecord> {
+  const res = await httpPost<{ ok: boolean; data: EvalDatasetRecord }>("/api/v1/monitor/eval/datasets", input);
+  return res.data;
+}
+
+export async function listEvalDatasets(): Promise<EvalDatasetRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: EvalDatasetRecord[] }>("/api/v1/monitor/eval/datasets");
+  return res.data;
+}
+
+export async function runEval(input: {
+  datasetId: string;
+  caseCount?: number;
+  toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+  baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+}): Promise<{
+  runId: string;
+  baselineRunId?: string | null;
+  summaryMetricsJson: Record<string, unknown>;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      runId: string;
+      baselineRunId?: string | null;
+      summaryMetricsJson: Record<string, unknown>;
+    };
+  }>("/api/v1/monitor/eval/runs", input);
+  return res.data;
+}
+
+export async function listEvalRuns(datasetId?: string): Promise<EvalRunRecord[]> {
+  const suffix = datasetId ? `?datasetId=${encodeURIComponent(datasetId)}` : "";
+  const res = await httpGet<{ ok: boolean; data: EvalRunRecord[] }>(`/api/v1/monitor/eval/runs${suffix}`);
+  return res.data;
+}
+
+export async function getEvalRunDetail(runId: string): Promise<{
+  run: EvalRunRecord;
+  cases: EvalCaseResultRecord[];
+}> {
+  const res = await httpGet<{ ok: boolean; data: { run: EvalRunRecord; cases: EvalCaseResultRecord[] } }>(
+    `/api/v1/monitor/eval/runs/${runId}`
+  );
+  return res.data;
 }
 
 // ─── V2 分析师团队 API ────────────────────────────────────────────────────────
@@ -558,6 +702,130 @@ export async function executeIntentConfirmed(input: {
   return { gate: res.gate, data: res.data };
 }
 
+export async function listExecutionConfirmTickets(intentOrderId: string): Promise<ExecutionConfirmTicketRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: ExecutionConfirmTicketRecord[] }>(
+    `/api/v1/reia/safety/tickets/${intentOrderId}`
+  );
+  return res.data;
+}
+
+export async function cleanupExecutionConfirmTickets(): Promise<{ cleaned: number }> {
+  const res = await httpPost<{ ok: boolean; data: { cleaned: number } }>(
+    "/api/v1/reia/safety/tickets/cleanup",
+    {}
+  );
+  return res.data;
+}
+
+export async function listBrokerAccounts(provider?: "futu" | "ib"): Promise<BrokerAccountRecord[]> {
+  const suffix = provider ? `?provider=${provider}` : "";
+  const res = await httpGet<{ ok: boolean; data: BrokerAccountRecord[] }>(`/api/v1/reia/broker/accounts${suffix}`);
+  return res.data;
+}
+
+export async function upsertBrokerAccount(input: {
+  provider: "futu" | "ib";
+  accountRef: string;
+  mode?: "mock" | "sandbox" | "live";
+  baseUrl?: string;
+  enabled?: boolean;
+}): Promise<BrokerAccountRecord> {
+  const res = await httpPost<{ ok: boolean; data: BrokerAccountRecord }>("/api/v1/reia/broker/accounts/upsert", input);
+  return res.data;
+}
+
+export async function checkBrokerHealth(input: {
+  provider: "futu" | "ib";
+  accountRef: string;
+}): Promise<{ provider: "futu" | "ib"; status: "healthy" | "degraded" | "down"; message: string; checkedAt: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { provider: "futu" | "ib"; status: "healthy" | "degraded" | "down"; message: string; checkedAt: string };
+  }>("/api/v1/reia/broker/health-check", input);
+  return res.data;
+}
+
+export async function listBrokerEvents(provider?: "futu" | "ib", limit = 100): Promise<BrokerOrderEventRecord[]> {
+  const query = new URLSearchParams();
+  if (provider) query.set("provider", provider);
+  query.set("limit", String(limit));
+  const res = await httpGet<{ ok: boolean; data: BrokerOrderEventRecord[] }>(
+    `/api/v1/reia/broker/events?${query.toString()}`
+  );
+  return res.data;
+}
+
+export async function enqueueWorkflowCompensation(input: {
+  workflowRunId: string;
+  actionType?: "retry_from_start" | "resume" | "manual_intervention";
+  reason?: string;
+  payloadJson?: Record<string, unknown>;
+  maxRetries?: number;
+}): Promise<WorkflowCompensationTaskRecord> {
+  const res = await httpPost<{ ok: boolean; data: WorkflowCompensationTaskRecord }>(
+    "/api/v1/workflows/compensation/enqueue",
+    input
+  );
+  return res.data;
+}
+
+export async function listWorkflowCompensations(input?: {
+  status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  workflowRunId?: string;
+  limit?: number;
+}): Promise<WorkflowCompensationTaskRecord[]> {
+  const query = new URLSearchParams();
+  if (input?.status) query.set("status", input.status);
+  if (input?.workflowRunId) query.set("workflowRunId", input.workflowRunId);
+  if (input?.limit) query.set("limit", String(input.limit));
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: WorkflowCompensationTaskRecord[] }>(
+    `/api/v1/workflows/compensation/tasks${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function processWorkflowCompensations(limit = 10): Promise<{ picked: number; success: number; failed: number }> {
+  const res = await httpPost<{ ok: boolean; data: { picked: number; success: number; failed: number } }>(
+    "/api/v1/workflows/compensation/process",
+    { limit }
+  );
+  return res.data;
+}
+
+export async function listIntegrationChannels(kind?: "telegram" | "webhook"): Promise<CommunicationChannelRecord[]> {
+  const suffix = kind ? `?kind=${kind}` : "";
+  const res = await httpGet<{ ok: boolean; data: CommunicationChannelRecord[] }>(`/api/v1/integrations/channels${suffix}`);
+  return res.data;
+}
+
+export async function upsertIntegrationChannel(input: {
+  id?: string;
+  workspaceId: string;
+  projectId?: string | null;
+  kind: "telegram" | "webhook";
+  name: string;
+  externalChatId: string;
+  secretRef?: string;
+  enabled?: boolean;
+}): Promise<CommunicationChannelRecord> {
+  const res = await httpPost<{ ok: boolean; data: CommunicationChannelRecord }>(
+    "/api/v1/integrations/channels/upsert",
+    input
+  );
+  return res.data;
+}
+
+export async function listIntegrationLogs(kind?: "telegram" | "webhook", limit = 100): Promise<CommunicationMessageLogRecord[]> {
+  const query = new URLSearchParams();
+  if (kind) query.set("kind", kind);
+  query.set("limit", String(limit));
+  const res = await httpGet<{ ok: boolean; data: CommunicationMessageLogRecord[] }>(
+    `/api/v1/integrations/logs?${query.toString()}`
+  );
+  return res.data;
+}
+
 export function subscribeWorkflowStream(params: {
   workflowId: string;
   runId: string;
@@ -586,5 +854,51 @@ export function subscribeWorkflowStream(params: {
     params.onError?.(err);
   };
   return () => es.close();
+}
+
+export async function listMcpServers(): Promise<McpServerConfigRecord[]> {
+  const res = await httpGet<{ data: McpServerConfigRecord[] }>("/api/v1/agents/mcp/servers");
+  return res.data;
+}
+
+export async function listMcpBindings(): Promise<McpToolBindingRecord[]> {
+  const res = await httpGet<{ data: McpToolBindingRecord[] }>("/api/v1/agents/mcp/bindings");
+  return res.data;
+}
+
+export async function upsertMcpBinding(input: {
+  serverName: string;
+  toolName: string;
+  enabled?: boolean;
+  timeoutMs?: number;
+  retryPolicyJson?: Record<string, unknown>;
+  rateLimitJson?: Record<string, unknown>;
+}): Promise<McpToolBindingRecord> {
+  const res = await httpPost<{ data: McpToolBindingRecord }>("/api/v1/agents/mcp/bindings/upsert", input);
+  return res.data;
+}
+
+export async function testMcpCall(input: {
+  serverName: string;
+  toolName: string;
+  arguments?: Record<string, unknown>;
+}): Promise<{
+  serverName: string;
+  toolName: string;
+  transport: "stdio" | "http" | "ws";
+  accepted: boolean;
+  output: Record<string, unknown>;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      serverName: string;
+      toolName: string;
+      transport: "stdio" | "http" | "ws";
+      accepted: boolean;
+      output: Record<string, unknown>;
+    };
+  }>("/api/v1/agents/mcp/test", input);
+  return res.data;
 }
 

@@ -10,7 +10,18 @@ import {
   loadExecutionSafetyConfig,
   saveExecutionSafetyConfig,
 } from "../runtime/config/execution-safety-config";
-import { requestExecutionConfirmation, verifyConfirmationAndAllowExecute } from "../runtime/reia/safety-gate";
+import {
+  cleanupExpiredExecutionConfirmTickets,
+  listExecutionConfirmTickets,
+  requestExecutionConfirmation,
+  verifyConfirmationAndAllowExecute,
+} from "../runtime/reia/safety-gate";
+import {
+  checkBrokerAccountHealth,
+  listBrokerAccounts,
+  listBrokerEvents,
+  upsertBrokerAccount,
+} from "../runtime/reia/broker-admin";
 
 export const reiaRouter = new Hono();
 
@@ -86,6 +97,60 @@ reiaRouter.post("/safety/execute-confirmed", async (c) => {
           deviationThreshold: body.deviationThreshold,
         });
   return c.json({ ok: true, gate, data });
+});
+
+reiaRouter.get("/safety/tickets/:intentOrderId", async (c) => {
+  const intentOrderId = c.req.param("intentOrderId");
+  const data = await listExecutionConfirmTickets(intentOrderId);
+  return c.json({ ok: true, data });
+});
+
+reiaRouter.post("/safety/tickets/cleanup", async (c) => {
+  const data = await cleanupExpiredExecutionConfirmTickets();
+  return c.json({ ok: true, data });
+});
+
+reiaRouter.get("/broker/accounts", async (c) => {
+  const provider = c.req.query("provider") as "futu" | "ib" | undefined;
+  const data = await listBrokerAccounts(provider);
+  return c.json({ ok: true, data });
+});
+
+reiaRouter.post("/broker/accounts/upsert", async (c) => {
+  const body = await c.req.json<{
+    provider?: "futu" | "ib";
+    accountRef?: string;
+    mode?: "mock" | "sandbox" | "live";
+    baseUrl?: string;
+    enabled?: boolean;
+  }>();
+  if (!body.provider || !body.accountRef) {
+    return c.json({ ok: false, error: "provider and accountRef are required" }, 400);
+  }
+  const data = await upsertBrokerAccount({
+    provider: body.provider,
+    accountRef: body.accountRef,
+    mode: body.mode,
+    baseUrl: body.baseUrl,
+    enabled: body.enabled,
+  });
+  return c.json({ ok: true, data });
+});
+
+reiaRouter.post("/broker/health-check", async (c) => {
+  const body = await c.req.json<{ provider?: "futu" | "ib"; accountRef?: string }>();
+  if (!body.provider || !body.accountRef) {
+    return c.json({ ok: false, error: "provider and accountRef are required" }, 400);
+  }
+  const data = await checkBrokerAccountHealth({ provider: body.provider, accountRef: body.accountRef });
+  return c.json({ ok: true, data });
+});
+
+reiaRouter.get("/broker/events", async (c) => {
+  const provider = c.req.query("provider") as "futu" | "ib" | undefined;
+  const limit = Number(c.req.query("limit") ?? 100);
+  const data = await listBrokerEvents(provider, Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 100);
+  return c.json({ ok: true, data });
 });
 
 reiaRouter.get("/intents/:workflowRunId", async (c) => {

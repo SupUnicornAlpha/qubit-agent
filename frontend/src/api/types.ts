@@ -401,3 +401,179 @@ export interface ExecutionSafetyCheckResult {
   blockers: string[];
 }
 
+export interface McpServerConfigRecord {
+  id: string;
+  name: string;
+  transport: "stdio" | "http" | "ws";
+  command?: string | null;
+  url?: string | null;
+  capabilitiesJson: unknown;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface McpToolBindingRecord {
+  id: string;
+  serverName: string;
+  toolName: string;
+  enabled: boolean;
+  timeoutMs?: number | null;
+  retryPolicyJson: unknown;
+  rateLimitJson: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExecutionConfirmTicketRecord {
+  id: string;
+  intentOrderId: string;
+  issuedBy: string;
+  issuedAt: string;
+  expiresAt: string;
+  consumedAt?: string | null;
+  status: "active" | "expired" | "consumed" | "revoked";
+  riskScoreSnapshot: number;
+  blockersJson: unknown;
+  createdAt: string;
+}
+
+export interface WorkflowQualitySnapshotRecord {
+  id: string;
+  workflowRunId: string;
+  totalDurationMs: number | null;
+  totalToolCalls: number;
+  sandboxBlockCount: number;
+  errorCount: number;
+  qualityScore: number;
+  createdAt: string;
+}
+
+export interface AgentRuntimeMetricRecord {
+  id: string;
+  definitionId: string;
+  windowStart: string;
+  windowEnd: string;
+  runCount: number;
+  successCount: number;
+  errorCount: number;
+  timeoutCount: number;
+  p50LatencyMs: number | null;
+  p95LatencyMs: number | null;
+  avgTokenCount: number | null;
+  createdAt: string;
+}
+
+export interface AlertEventRecord {
+  id: string;
+  scopeType: "workflow" | "agent" | "system";
+  scopeId: string;
+  alertType: string;
+  severity: "info" | "warn" | "error" | "critical";
+  title: string;
+  detailsJson: Record<string, unknown>;
+  status: "open" | "ack" | "resolved";
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface EvalDatasetRecord {
+  id: string;
+  name: string;
+  version: string;
+  scenario: string;
+  sourceDesc: string;
+  metaJson: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface EvalRunRecord {
+  id: string;
+  datasetId: string;
+  configSnapshotJson: Record<string, unknown>;
+  modelSnapshotJson: Record<string, unknown>;
+  status: "pending" | "running" | "completed" | "failed";
+  summaryMetricsJson: Record<string, unknown>;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  createdAt: string;
+}
+
+export interface EvalCaseResultRecord {
+  id: string;
+  evalRunId: string;
+  caseKey: string;
+  workflowRunId?: string | null;
+  expectedJson: Record<string, unknown>;
+  actualJson: Record<string, unknown>;
+  score: number;
+  pass: boolean;
+  createdAt: string;
+}
+
+export interface BrokerAccountRecord {
+  id: string;
+  provider: "futu" | "ib";
+  accountRef: string;
+  mode: "mock" | "sandbox" | "live";
+  baseUrl?: string | null;
+  enabled: boolean;
+  healthStatus: "unknown" | "healthy" | "degraded" | "down";
+  healthMessage?: string | null;
+  lastHealthAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrokerOrderEventRecord {
+  id: string;
+  intentOrderId?: string | null;
+  executionReportId?: string | null;
+  provider: "futu" | "ib";
+  eventType: "submit" | "ack" | "partial_fill" | "fill" | "cancel" | "reject" | "health_check";
+  brokerOrderId?: string | null;
+  status: string;
+  detailJson: Record<string, unknown>;
+  eventAt: string;
+  createdAt: string;
+}
+
+export interface WorkflowCompensationTaskRecord {
+  id: string;
+  workflowRunId: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  actionType: "retry_from_start" | "resume" | "manual_intervention";
+  reason: string;
+  retryCount: number;
+  maxRetries: number;
+  payloadJson: Record<string, unknown>;
+  lastError?: string | null;
+  nextRunAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunicationChannelRecord {
+  id: string;
+  workspaceId: string;
+  projectId?: string | null;
+  kind: "telegram" | "webhook";
+  name: string;
+  externalChatId: string;
+  secretRef: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommunicationMessageLogRecord {
+  id: string;
+  direction: "inbound" | "outbound";
+  channelKind: "telegram" | "webhook";
+  externalChatId: string;
+  externalMessageId?: string | null;
+  payloadJson: Record<string, unknown>;
+  status: "success" | "failed";
+  errorMessage?: string | null;
+  createdAt: string;
+}
+

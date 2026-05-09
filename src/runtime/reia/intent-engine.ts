@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
+import { brokerAccount, brokerOrderEvent, executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
 import type { BrokerProvider } from "./broker-connector";
-import { getBrokerConnector } from "./broker-connector";
+import { createBrokerConnector, getBrokerConnector } from "./broker-connector";
+import { executeWithPolicy } from "../external-call/policy";
 
 const DEFAULT_DEVIATION_THRESHOLD = 0.015; // 1.5%
 
@@ -108,15 +109,54 @@ export async function executeIntentLive(input: {
   const intent = rows[0];
   if (!intent) throw new Error("intent order not found");
 
-  const connector = getBrokerConnector(input.provider);
+  const accountRows = await db
+    .select()
+    .from(brokerAccount)
+    .where(and(eq(brokerAccount.provider, input.provider), eq(brokerAccount.enabled, true)))
+    .orderBy(desc(brokerAccount.updatedAt))
+    .limit(1);
+  const account = accountRows[0];
+  const connector = account
+    ? createBrokerConnector({
+        provider: input.provider,
+        mode: account.mode,
+        accountRef: account.accountRef,
+        baseUrl: account.baseUrl ?? undefined,
+      })
+    : getBrokerConnector(input.provider);
   const side = intent.direction === "short" || intent.direction === "close" ? "sell" : "buy";
-  const live = await connector.submitOrder({
-    ticker: intent.ticker,
-    side,
-    quantity: intent.quantity,
-    orderType: "limit",
-    limitPrice: intent.targetPrice,
+  const submittedAt = new Date().toISOString();
+  await db.insert(brokerOrderEvent).values({
+    id: randomUUID(),
+    intentOrderId: intent.id,
+    executionReportId: null,
+    provider: input.provider,
+    eventType: "submit",
+    brokerOrderId: null,
+    status: "pending",
+    detailJson: { ticker: intent.ticker, quantity: intent.quantity, targetPrice: intent.targetPrice, side },
+    eventAt: submittedAt,
   });
+  const live = await executeWithPolicy(
+    {
+      scopeKey: `broker:${input.provider}:${intent.ticker}`,
+      retry: { maxAttempts: 2, backoffMs: 200, backoffMultiplier: 2 },
+      circuitBreaker: { failureThreshold: 3, cooldownMs: 30_000 },
+      idempotency: {
+        enabled: true,
+        key: `broker:${input.provider}:intent:${intent.id}`,
+        ttlMs: 15_000,
+      },
+    },
+    async () =>
+      connector.submitOrder({
+        ticker: intent.ticker,
+        side,
+        quantity: intent.quantity,
+        orderType: "limit",
+        limitPrice: intent.targetPrice,
+      })
+  );
 
   const slippage = Number((live.actualPrice - intent.targetPrice).toFixed(6));
   const reportId = randomUUID();
@@ -130,6 +170,17 @@ export async function executeIntentLive(input: {
     executionTimeMs: live.executionTimeMs,
     brokerOrderId: live.brokerOrderId,
     status: live.status === "filled" ? "filled" : live.status === "rejected" ? "rejected" : "cancelled",
+  });
+  await db.insert(brokerOrderEvent).values({
+    id: randomUUID(),
+    intentOrderId: intent.id,
+    executionReportId: reportId,
+    provider: input.provider,
+    eventType: live.status === "filled" ? "fill" : live.status === "rejected" ? "reject" : "ack",
+    brokerOrderId: live.brokerOrderId,
+    status: live.status,
+    detailJson: live.raw ?? {},
+    eventAt: new Date().toISOString(),
   });
 
   const priceDeviationPct = Math.abs((live.actualPrice - intent.targetPrice) / intent.targetPrice);
