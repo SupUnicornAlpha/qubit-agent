@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { createServer } from "./server";
-import { startAllAgents, stopAllAgents } from "./agents";
+import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { runMigrations } from "./db/sqlite/migrate";
 
 async function main() {

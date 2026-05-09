@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { dispatchTaskToRole } from "../agents";
+import { dispatchTaskToRole } from "../runtime/agent-pool";
 import { getDb } from "../db/sqlite/client";
 import {
   chatMessage,

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
+import type { BrokerProvider } from "./broker-connector";
+import { getBrokerConnector } from "./broker-connector";
 
 const DEFAULT_DEVIATION_THRESHOLD = 0.015; // 1.5%
 
@@ -93,6 +95,75 @@ export async function executeIntentPaper(input: {
     priceDeviationPct,
     quantityDeviationPct,
     threshold,
+  };
+}
+
+export async function executeIntentLive(input: {
+  intentOrderId: string;
+  provider: BrokerProvider;
+  deviationThreshold?: number;
+}) {
+  const db = await getDb();
+  const rows = await db.select().from(intentOrder).where(eq(intentOrder.id, input.intentOrderId)).limit(1);
+  const intent = rows[0];
+  if (!intent) throw new Error("intent order not found");
+
+  const connector = getBrokerConnector(input.provider);
+  const side = intent.direction === "short" || intent.direction === "close" ? "sell" : "buy";
+  const live = await connector.submitOrder({
+    ticker: intent.ticker,
+    side,
+    quantity: intent.quantity,
+    orderType: "limit",
+    limitPrice: intent.targetPrice,
+  });
+
+  const slippage = Number((live.actualPrice - intent.targetPrice).toFixed(6));
+  const reportId = randomUUID();
+  await db.insert(executionReport).values({
+    id: reportId,
+    intentOrderId: intent.id,
+    executorInstanceId: null,
+    actualPrice: live.actualPrice,
+    actualQuantity: live.actualQuantity,
+    slippage,
+    executionTimeMs: live.executionTimeMs,
+    brokerOrderId: live.brokerOrderId,
+    status: live.status === "filled" ? "filled" : live.status === "rejected" ? "rejected" : "cancelled",
+  });
+
+  const priceDeviationPct = Math.abs((live.actualPrice - intent.targetPrice) / intent.targetPrice);
+  const quantityDeviationPct = Math.abs((live.actualQuantity - intent.quantity) / intent.quantity);
+  const threshold = input.deviationThreshold ?? DEFAULT_DEVIATION_THRESHOLD;
+  const exceeded = priceDeviationPct >= threshold || quantityDeviationPct >= threshold;
+
+  const deviationId = randomUUID();
+  await db.insert(intentDeviation).values({
+    id: deviationId,
+    intentOrderId: intent.id,
+    executionReportId: reportId,
+    priceDeviationPct,
+    quantityDeviationPct,
+    exceededThreshold: exceeded,
+    callbackTriggered: exceeded,
+    callbackWorkflowId: null,
+  });
+
+  await db
+    .update(intentOrder)
+    .set({ status: exceeded ? "deviated" : "executed" })
+    .where(eq(intentOrder.id, intent.id));
+
+  return {
+    intentOrderId: intent.id,
+    executionReportId: reportId,
+    deviationId,
+    exceededThreshold: exceeded,
+    priceDeviationPct,
+    quantityDeviationPct,
+    threshold,
+    provider: input.provider,
+    brokerOrderId: live.brokerOrderId,
   };
 }
 

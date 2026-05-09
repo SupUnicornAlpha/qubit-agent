@@ -1,6 +1,6 @@
 import type { TaskAssignPayload } from "../types/a2a";
 import type { AgentRole } from "../types/entities";
-import { graphRunner } from "../runtime/langgraph/graph-factory";
+import { graphRunner } from "./langgraph/graph-factory";
 
 export function getRuntimeAgents() {
   return graphRunner.getViews();

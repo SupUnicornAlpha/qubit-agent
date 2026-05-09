@@ -8,6 +8,8 @@ import type {
   DebateStreamEvent,
   DebateTurnRecord,
   DebateVerdictRecord,
+  ExecutionSafetyCheckResult,
+  ExecutionSafetyConfig,
   RiskConfig,
   RiskVetoLogRecord,
   GeneGenerationRecord,
@@ -490,6 +492,70 @@ export async function getIntentExecutionView(intentOrderId: string): Promise<{
     };
   }>(`/api/v1/reia/view/${intentOrderId}`);
   return res.data;
+}
+
+export async function getExecutionSafetyConfig(): Promise<ExecutionSafetyConfig> {
+  const res = await httpGet<{ ok: boolean; data: ExecutionSafetyConfig }>("/api/v1/reia/safety/config");
+  return res.data;
+}
+
+export async function saveExecutionSafetyConfig(
+  input: Partial<ExecutionSafetyConfig>
+): Promise<ExecutionSafetyConfig> {
+  const res = await httpPut<{ ok: boolean; data: ExecutionSafetyConfig }>("/api/v1/reia/safety/config", input);
+  return res.data;
+}
+
+export async function requestExecutionConfirmation(intentOrderId: string): Promise<ExecutionSafetyCheckResult> {
+  const res = await httpPost<{ ok: boolean; data: ExecutionSafetyCheckResult }>(
+    "/api/v1/reia/safety/request-confirm",
+    { intentOrderId }
+  );
+  return res.data;
+}
+
+export async function executeIntentConfirmed(input: {
+  intentOrderId: string;
+  confirmToken?: string;
+  deviationThreshold?: number;
+  forceDryRun?: boolean;
+  provider?: "futu" | "ib";
+}): Promise<{
+  gate: {
+    executeMode: "paper" | "live";
+    safety: ExecutionSafetyConfig;
+  };
+  data: {
+    intentOrderId: string;
+    executionReportId: string;
+    deviationId: string;
+    exceededThreshold: boolean;
+    priceDeviationPct: number;
+    quantityDeviationPct: number;
+    threshold: number;
+    provider?: "futu" | "ib";
+    brokerOrderId?: string;
+  };
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    gate: {
+      executeMode: "paper" | "live";
+      safety: ExecutionSafetyConfig;
+    };
+    data: {
+      intentOrderId: string;
+      executionReportId: string;
+      deviationId: string;
+      exceededThreshold: boolean;
+      priceDeviationPct: number;
+      quantityDeviationPct: number;
+      threshold: number;
+      provider?: "futu" | "ib";
+      brokerOrderId?: string;
+    };
+  }>("/api/v1/reia/safety/execute-confirmed", input);
+  return { gate: res.gate, data: res.data };
 }
 
 export function subscribeWorkflowStream(params: {

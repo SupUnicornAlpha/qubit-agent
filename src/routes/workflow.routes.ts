@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { chatMessageWorkflowLink, workflowRun } from "../db/sqlite/schema";
 import { eq } from "drizzle-orm";
-import { dispatchTaskToRole } from "../agents";
+import { dispatchTaskToRole } from "../runtime/agent-pool";
 
 export const workflowRouter = new Hono();
 

@@ -383,3 +383,21 @@ export interface IntentDeviationRecord {
   createdAt: string;
 }
 
+export interface ExecutionSafetyConfig {
+  dryRunOnly: boolean;
+  requireDoubleConfirm: boolean;
+  confirmTokenTtlSec: number;
+  finalRiskScoreThreshold: number;
+}
+
+export interface ExecutionSafetyCheckResult {
+  intentOrderId: string;
+  finalRiskScore: number;
+  riskAllowed: boolean;
+  dryRunOnly: boolean;
+  requireDoubleConfirm: boolean;
+  confirmToken: string;
+  expiresAt: number;
+  blockers: string[];
+}
+

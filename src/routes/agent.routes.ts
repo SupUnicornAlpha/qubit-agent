@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
-import { getRuntimeAgents } from "../agents";
+import { getRuntimeAgents } from "../runtime/agent-pool";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
 import { getDb } from "../db/sqlite/client";

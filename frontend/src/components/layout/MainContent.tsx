@@ -42,12 +42,15 @@ import {
   evolveGenePool,
   runAnalystTeam,
   runScreener,
-  executeIntent,
+  executeIntentConfirmed,
   saveModelConfig,
   saveDebateConfig,
+  saveExecutionSafetyConfig,
   saveRiskConfig,
+  requestExecutionConfirmation,
   subscribeDebateStream,
   subscribeWorkflowStream,
+  getExecutionSafetyConfig,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
@@ -64,6 +67,8 @@ import type {
   IntentOrderRecord,
   IntentDeviationRecord,
   ExecutionReportRecord,
+  ExecutionSafetyCheckResult,
+  ExecutionSafetyConfig,
   ScreenerCandidateRecord,
   ScreenerRunRecord,
   SessionAgentBoardItem,
@@ -846,6 +851,14 @@ const TeamDashboardPanel: FC = () => {
   const [intentTargetPrice, setIntentTargetPrice] = useState(1500);
   const [intentOrders, setIntentOrdersState] = useState<IntentOrderRecord[]>([]);
   const [selectedIntentId, setSelectedIntentId] = useState("");
+  const [brokerProvider, setBrokerProvider] = useState<"futu" | "ib">("futu");
+  const [executionSafetyConfig, setExecutionSafetyConfigState] = useState<ExecutionSafetyConfig>({
+    dryRunOnly: true,
+    requireDoubleConfirm: true,
+    confirmTokenTtlSec: 300,
+    finalRiskScoreThreshold: 0.75,
+  });
+  const [lastSafetyCheck, setLastSafetyCheck] = useState<ExecutionSafetyCheckResult | null>(null);
   const [intentView, setIntentView] = useState<{
     intent: IntentOrderRecord | null;
     report: ExecutionReportRecord | null;
@@ -858,6 +871,7 @@ const TeamDashboardPanel: FC = () => {
     getFusionHistory({ limit: 10 }).then(setHistory).catch(() => {});
     getDebateConfig().then(setDebateConfigState).catch(() => {});
     getRiskConfig().then(setRiskConfigState).catch(() => {});
+    getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
   }, []);
 
   const handleRun = async () => {
@@ -1038,7 +1052,27 @@ const TeamDashboardPanel: FC = () => {
       return;
     }
     try {
-      await executeIntent({ intentOrderId: selectedIntentId });
+      const check = await requestExecutionConfirmation(selectedIntentId);
+      setLastSafetyCheck(check);
+      const shouldContinue = window.confirm(
+        [
+          `最终风控得分: ${(check.finalRiskScore * 100).toFixed(1)}%`,
+          `执行模式: ${check.dryRunOnly ? "仅演练(Paper)" : "允许实盘(Live)"}`,
+          `双重确认: ${check.requireDoubleConfirm ? "开启" : "关闭"}`,
+          check.blockers.length ? `阻断原因: ${check.blockers.join(", ")}` : "无阻断原因",
+          "确认继续执行？",
+        ].join("\n")
+      );
+      if (!shouldContinue) return;
+      if (check.blockers.length > 0 && !check.dryRunOnly) {
+        setError(`执行被阻断：${check.blockers.join(", ")}`);
+        return;
+      }
+      await executeIntentConfirmed({
+        intentOrderId: selectedIntentId,
+        confirmToken: check.confirmToken,
+        provider: brokerProvider,
+      });
       await refreshIntentOrders();
       const view = await getIntentExecutionView(selectedIntentId);
       setIntentView(view);
@@ -1051,6 +1085,15 @@ const TeamDashboardPanel: FC = () => {
     setSelectedIntentId(intentId);
     const view = await getIntentExecutionView(intentId);
     setIntentView(view);
+  };
+
+  const saveExecutionSafetyRuntimeConfig = async () => {
+    try {
+      const next = await saveExecutionSafetyConfig(executionSafetyConfig);
+      setExecutionSafetyConfigState(next);
+    } catch (e) {
+      setError(`保存执行安全配置失败: ${(e as Error).message}`);
+    }
   };
 
   const groupedRoles = TEAM_GROUPS.map((g) => ({
@@ -1275,6 +1318,81 @@ const TeamDashboardPanel: FC = () => {
 
           <div style={teamStyles.configRow}>
             <div style={teamStyles.field}>
+              <label style={teamStyles.label}>执行安全：仅演练</label>
+              <select
+                style={teamStyles.input}
+                value={executionSafetyConfig.dryRunOnly ? "yes" : "no"}
+                onChange={(e) =>
+                  setExecutionSafetyConfigState((prev) => ({
+                    ...prev,
+                    dryRunOnly: e.target.value === "yes",
+                  }))
+                }
+              >
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+              </select>
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>双重确认</label>
+              <select
+                style={teamStyles.input}
+                value={executionSafetyConfig.requireDoubleConfirm ? "yes" : "no"}
+                onChange={(e) =>
+                  setExecutionSafetyConfigState((prev) => ({
+                    ...prev,
+                    requireDoubleConfirm: e.target.value === "yes",
+                  }))
+                }
+              >
+                <option value="yes">yes</option>
+                <option value="no">no</option>
+              </select>
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>确认 token TTL(秒)</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={30}
+                max={3600}
+                value={executionSafetyConfig.confirmTokenTtlSec}
+                onChange={(e) =>
+                  setExecutionSafetyConfigState((prev) => ({
+                    ...prev,
+                    confirmTokenTtlSec: Number(e.target.value),
+                  }))
+                }
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>最终风险阈值</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={executionSafetyConfig.finalRiskScoreThreshold}
+                onChange={(e) =>
+                  setExecutionSafetyConfigState((prev) => ({
+                    ...prev,
+                    finalRiskScoreThreshold: Number(e.target.value),
+                  }))
+                }
+              />
+            </div>
+            <button
+              type="button"
+              style={teamStyles.buttonSecondary}
+              onClick={() => void saveExecutionSafetyRuntimeConfig()}
+            >
+              保存执行安全配置
+            </button>
+          </div>
+
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
               <label style={teamStyles.label}>Intent Ticker</label>
               <input style={teamStyles.input} value={intentTicker} onChange={(e) => setIntentTicker(e.target.value)} />
             </div>
@@ -1311,11 +1429,22 @@ const TeamDashboardPanel: FC = () => {
                 onChange={(e) => setIntentTargetPrice(Number(e.target.value))}
               />
             </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>Broker</label>
+              <select
+                style={teamStyles.input}
+                value={brokerProvider}
+                onChange={(e) => setBrokerProvider(e.target.value as "futu" | "ib")}
+              >
+                <option value="futu">futu</option>
+                <option value="ib">ib</option>
+              </select>
+            </div>
             <button type="button" style={teamStyles.buttonSecondary} onClick={() => void createIntentNow()}>
               创建意图
             </button>
             <button type="button" style={teamStyles.buttonSecondary} onClick={() => void executeIntentNow()}>
-              执行意图（Paper）
+              安全确认后执行
             </button>
             <button type="button" style={teamStyles.buttonSecondary} onClick={() => void refreshIntentOrders()}>
               刷新意图列表
@@ -1552,6 +1681,14 @@ const TeamDashboardPanel: FC = () => {
                           price {(intentView.deviation.priceDeviationPct * 100).toFixed(2)}% · qty{" "}
                           {(intentView.deviation.quantityDeviationPct * 100).toFixed(2)}% · exceeded{" "}
                           {intentView.deviation.exceededThreshold ? "YES" : "NO"}
+                        </div>
+                      )}
+                      {lastSafetyCheck && (
+                        <div style={teamStyles.replayVerdict}>
+                          <strong>Safety Check</strong>
+                          <br />
+                          risk {(lastSafetyCheck.finalRiskScore * 100).toFixed(1)}% · blockers{" "}
+                          {lastSafetyCheck.blockers.length ? lastSafetyCheck.blockers.join(", ") : "none"}
                         </div>
                       )}
                     </div>
