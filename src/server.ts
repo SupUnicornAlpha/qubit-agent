@@ -10,6 +10,11 @@ import { chatRouter } from "./routes/chat.routes";
 import { monitorRouter } from "./routes/monitor.routes";
 import { integrationsRouter } from "./routes/integrations.routes";
 import { analystRouter } from "./routes/analyst.routes";
+import { debateRouter } from "./routes/debate.routes";
+import { riskRouter } from "./routes/risk.routes";
+import { screenerRouter } from "./routes/screener.routes";
+import { geneRouter } from "./routes/gene.routes";
+import { reiaRouter } from "./routes/reia.routes";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
 // ─── HTTP API (Hono) ─────────────────────────────────────────────────────────
@@ -30,6 +35,11 @@ app.route("/api/v1/chat", chatRouter);
 app.route("/api/v1/monitor", monitorRouter);
 app.route("/api/v1/integrations", integrationsRouter);
 app.route("/api/v1/analyst", analystRouter);
+app.route("/api/v1/debate", debateRouter);
+app.route("/api/v1/risk", riskRouter);
+app.route("/api/v1/screener", screenerRouter);
+app.route("/api/v1/gene", geneRouter);
+app.route("/api/v1/reia", reiaRouter);
 app.get("/api/v1/workflows/:id/stream", (c) => {
   const runId = c.req.query("runId");
   if (!runId) return c.json({ error: "runId is required" }, 400);

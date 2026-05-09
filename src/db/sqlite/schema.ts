@@ -488,6 +488,52 @@ export const simulationRun = sqliteTable("simulation_run", {
   endedAt: text("ended_at"),
 });
 
+// ─── V2 策略基因池域（SGP） ───────────────────────────────────────────────────
+
+export const geneGeneration = sqliteTable("gene_generation", {
+  id: id(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id),
+  generationNumber: integer("generation_number").notNull(),
+  populationSize: integer("population_size").notNull(),
+  mutationRate: real("mutation_rate").notNull().default(0.1),
+  bestSharpe: real("best_sharpe"),
+  createdAt: createdAt(),
+});
+
+export const strategyGene = sqliteTable("strategy_gene", {
+  id: id(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id),
+  geneType: text("gene_type").notNull(),
+  key: text("key").notNull(),
+  valueJson: text("value_json", { mode: "json" }).notNull(),
+  description: text("description").notNull().default(""),
+});
+
+export const strategyGenome = sqliteTable("strategy_genome", {
+  id: id(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id),
+  generationId: text("generation_id")
+    .notNull()
+    .references(() => geneGeneration.id),
+  name: text("name").notNull(),
+  genesSnapshotJson: text("genes_snapshot_json", { mode: "json" }).notNull().default("{}"),
+  sharpeRatio: real("sharpe_ratio"),
+  maxDrawdown: real("max_drawdown"),
+  totalReturn: real("total_return"),
+  backtestRunId: text("backtest_run_id").references(() => backtestRun.id),
+  parentAId: text("parent_a_id"),
+  parentBId: text("parent_b_id"),
+  mutationLog: text("mutation_log"),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+});
+
 // ─── 2.4 市场数据与快照域 ────────────────────────────────────────────────────
 
 export const instrument = sqliteTable("instrument", {
@@ -538,6 +584,32 @@ export const newsEvent = sqliteTable("news_event", {
   eventType: text("event_type").notNull(),
   sentimentScore: real("sentiment_score"),
   contentRef: text("content_ref").notNull(),
+});
+
+// ─── V2 选股域（Stock Screener） ───────────────────────────────────────────────
+
+export const screenerRun = sqliteTable("screener_run", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  criteriaJson: text("criteria_json", { mode: "json" }).notNull().default("{}"),
+  universe: text("universe").notNull().default("CN-A"),
+  candidateCount: integer("candidate_count").notNull().default(0),
+  createdAt: createdAt(),
+});
+
+export const screenerCandidate = sqliteTable("screener_candidate", {
+  id: id(),
+  screenerRunId: text("screener_run_id")
+    .notNull()
+    .references(() => screenerRun.id),
+  ticker: text("ticker").notNull(),
+  companyName: text("company_name").notNull(),
+  score: real("score").notNull(),
+  scoreBreakdownJson: text("score_breakdown_json", { mode: "json" }).notNull().default("{}"),
+  passedToAnalyst: integer("passed_to_analyst", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
 });
 
 // ─── 2.5 交易执行与风控域 ────────────────────────────────────────────────────
@@ -638,6 +710,63 @@ export const fill = sqliteTable("fill", {
   fillPrice: real("fill_price").notNull(),
   fee: real("fee").notNull().default(0),
   filledAt: createdAt(),
+});
+
+// ─── V2 执行意图对齐域（REIA） ────────────────────────────────────────────────
+
+export const intentOrder = sqliteTable("intent_order", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  createdByInstanceId: text("created_by_instance_id").references(() => agentInstance.id),
+  ticker: text("ticker").notNull(),
+  direction: text("direction", { enum: ["long", "short", "close"] }).notNull(),
+  quantity: real("quantity").notNull(),
+  targetPrice: real("target_price").notNull(),
+  rationale: text("rationale").notNull().default(""),
+  expectedReturn: real("expected_return"),
+  expectedRisk: real("expected_risk"),
+  status: text("status", {
+    enum: ["pending", "approved", "rejected", "executed", "deviated"],
+  })
+    .notNull()
+    .default("pending"),
+  riskApprovedAt: text("risk_approved_at"),
+  createdAt: createdAt(),
+});
+
+export const executionReport = sqliteTable("execution_report", {
+  id: id(),
+  intentOrderId: text("intent_order_id")
+    .notNull()
+    .references(() => intentOrder.id),
+  executorInstanceId: text("executor_instance_id").references(() => agentInstance.id),
+  actualPrice: real("actual_price").notNull(),
+  actualQuantity: real("actual_quantity").notNull(),
+  slippage: real("slippage").notNull(),
+  executionTimeMs: integer("execution_time_ms").notNull(),
+  brokerOrderId: text("broker_order_id"),
+  status: text("status", { enum: ["filled", "partial", "rejected", "cancelled"] })
+    .notNull()
+    .default("filled"),
+  createdAt: createdAt(),
+});
+
+export const intentDeviation = sqliteTable("intent_deviation", {
+  id: id(),
+  intentOrderId: text("intent_order_id")
+    .notNull()
+    .references(() => intentOrder.id),
+  executionReportId: text("execution_report_id")
+    .notNull()
+    .references(() => executionReport.id),
+  priceDeviationPct: real("price_deviation_pct").notNull(),
+  quantityDeviationPct: real("quantity_deviation_pct").notNull(),
+  exceededThreshold: integer("exceeded_threshold", { mode: "boolean" }).notNull().default(false),
+  callbackTriggered: integer("callback_triggered", { mode: "boolean" }).notNull().default(false),
+  callbackWorkflowId: text("callback_workflow_id"),
+  createdAt: createdAt(),
 });
 
 // ─── 2.6 插件接入域 ──────────────────────────────────────────────────────────
@@ -889,6 +1018,68 @@ export const analystAccuracyLog = sqliteTable("analyst_accuracy_log", {
   actualOutcome: text("actual_outcome", { enum: ["up", "down", "flat"] }),
   isCorrect: integer("is_correct"),
   evaluatedAt: integer("evaluated_at"),
+});
+
+// ─── V2 结构化辩论域（SDP） ───────────────────────────────────────────────────
+
+export const debateSession = sqliteTable("debate_session", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  topic: text("topic").notNull(),
+  triggerReason: text("trigger_reason").notNull().default("low_confidence"),
+  maxRounds: integer("max_rounds").notNull().default(3),
+  status: text("status", { enum: ["pending", "in_progress", "completed", "skipped"] })
+    .notNull()
+    .default("pending"),
+  consensusScore: real("consensus_score"),
+  verdict: text("verdict", { enum: ["agree_bull", "agree_bear", "no_consensus"] }),
+  createdAt: createdAt(),
+  endedAt: text("ended_at"),
+});
+
+export const debateTurn = sqliteTable("debate_turn", {
+  id: id(),
+  debateSessionId: text("debate_session_id")
+    .notNull()
+    .references(() => debateSession.id),
+  roundNumber: integer("round_number").notNull(),
+  speakerRole: text("speaker_role").notNull(),
+  stance: text("stance", { enum: ["bull", "bear", "neutral"] }).notNull(),
+  statement: text("statement").notNull(),
+  evidenceJson: text("evidence_json", { mode: "json" }).notNull().default("[]"),
+  confidence: real("confidence").notNull().default(0.5),
+  createdAt: createdAt(),
+});
+
+export const debateVerdict = sqliteTable("debate_verdict", {
+  id: id(),
+  debateSessionId: text("debate_session_id")
+    .notNull()
+    .references(() => debateSession.id),
+  orchestratorRole: text("orchestrator_role").notNull().default("orchestrator"),
+  reasoning: text("reasoning").notNull(),
+  consensusScore: real("consensus_score").notNull(),
+  finalStance: text("final_stance", { enum: ["bull", "bear", "hold", "abort"] }).notNull(),
+  vetoByRisk: integer("veto_by_risk", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+});
+
+// ─── V2 风险前置一票否决域（RFV） ────────────────────────────────────────────
+
+export const riskVetoLog = sqliteTable("risk_veto_log", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  riskInstanceId: text("risk_instance_id").references(() => agentInstance.id),
+  vetoTarget: text("veto_target").notNull(),
+  vetoReason: text("veto_reason").notNull(),
+  riskScore: real("risk_score").notNull(),
+  riskRulesTriggeredJson: text("risk_rules_triggered_json", { mode: "json" }).notNull().default("[]"),
+  severity: text("severity", { enum: ["warning", "block", "critical"] }).notNull().default("block"),
+  createdAt: createdAt(),
 });
 
 // ─── 2.8 审计与可观测域 ──────────────────────────────────────────────────────

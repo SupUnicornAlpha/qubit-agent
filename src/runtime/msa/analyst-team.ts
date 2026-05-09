@@ -11,7 +11,10 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance, agentStep } from "../../db/sqlite/schema";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
+import { loadDebateConfig } from "../config/debate-config";
 import { fuseSignals, type RawAnalystSignal } from "./signal-fusion";
+import { runDebateSession } from "../debate/debate-engine";
+import { evaluateRiskAndVeto } from "../risk/veto-engine";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 
 const ANALYST_ROLES: AgentRole[] = [
@@ -60,6 +63,21 @@ export interface AnalystTeamResult {
     reasoning: string;
   }>;
   report: string;
+  debate?: {
+    sessionId: string;
+    consensusScore: number;
+    finalStance: "bull" | "bear" | "hold" | "abort";
+    verdict: "agree_bull" | "agree_bear" | "no_consensus";
+    reasoning: string;
+  };
+  risk?: {
+    approved: boolean;
+    vetoed: boolean;
+    riskScore: number;
+    reason: string;
+    severity: "warning" | "block" | "critical";
+    rulesTriggered: string[];
+  };
 }
 
 /**
@@ -238,13 +256,43 @@ export async function runAnalystTeam(params: {
 
   // Build human-readable report
   const report = buildTeamReport(ticker, fusionResult.fusedSignal, fusionResult.fusedConfidence, fusionResult.signalBreakdown);
+  let debate: AnalystTeamResult["debate"];
+  const debateConfig = await loadDebateConfig();
+  const shouldDebate = fusionResult.fusedConfidence < debateConfig.confidenceThreshold;
+  if (shouldDebate) {
+    const analystSummary = fusionResult.signalBreakdown
+      .map((s) => `${s.role}: ${s.signal} (${(s.confidence * 100).toFixed(0)}%) ${s.reasoning.slice(0, 120)}`)
+      .join("\n");
+    const d = await runDebateSession({
+      workflowRunId,
+      ticker,
+      fusedSignal: fusionResult.fusedSignal,
+      fusedConfidence: fusionResult.fusedConfidence,
+      analystSummary,
+      maxRounds: debateConfig.maxRounds,
+    });
+    debate = {
+      sessionId: d.debateSessionId,
+      consensusScore: d.consensusScore,
+      finalStance: d.finalStance,
+      verdict: d.verdict,
+      reasoning: d.reasoning,
+    };
+  }
+  const risk = await evaluateRiskAndVeto({
+    workflowRunId,
+    ticker,
+    fusedSignal: fusionResult.fusedSignal,
+    fusedConfidence: fusionResult.fusedConfidence,
+    debateConsensusScore: debate?.consensusScore,
+  });
 
   return {
     fusionId: fusionResult.fusionId,
     ticker,
     fusedSignal: fusionResult.fusedSignal,
     fusedConfidence: fusionResult.fusedConfidence,
-    debateTriggered: fusionResult.debateTriggered,
+    debateTriggered: shouldDebate,
     breakdown: fusionResult.signalBreakdown.map((s) => ({
       role: s.role,
       signal: s.signal,
@@ -252,6 +300,8 @@ export async function runAnalystTeam(params: {
       reasoning: s.reasoning,
     })),
     report,
+    debate,
+    risk,
   };
 }
 

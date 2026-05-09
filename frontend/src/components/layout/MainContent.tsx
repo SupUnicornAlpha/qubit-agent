@@ -6,35 +6,69 @@ import {
   createChatSession,
   createProject,
   createSessionMessage,
+  createIntentOrder,
   createWorkflow,
   createWorkspace,
   getAgentsConfig,
   getAgentRoles,
+  getDebateConfig,
+  getDebateTurns,
+  getDebateVerdict,
   getDefaultProjectSession,
   getFusionHistory,
+  initGenePool,
+  getRiskConfig,
+  getRiskVetoLogs,
+  listGeneGenerations,
+  listGeneTrends,
+  listGenomes,
+  listScreenerCandidates,
+  listScreenerRuns,
   getModelConfig,
+  getIntentExecutionView,
   getSessionAgentsBoard,
   getWorkflowDetail,
   listAgentDefinitions,
   listAgents,
   listChatSessions,
   listMonitorWorkflows,
+  listIntentOrders,
   listProjects,
   listSessionMessages,
   listWorkspaces,
   patchSessionMessage,
   releaseAgentDraft,
   reloadAgents,
+  evolveGenePool,
   runAnalystTeam,
+  runScreener,
+  executeIntent,
   saveModelConfig,
+  saveDebateConfig,
+  saveRiskConfig,
+  subscribeDebateStream,
   subscribeWorkflowStream,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
   AgentRoleCatalogItem,
   AnalystTeamResult,
+  DebateConfig,
+  DebateStreamEvent,
+  DebateTurnRecord,
+  DebateVerdictRecord,
+  RiskConfig,
+  RiskVetoLogRecord,
+  GeneGenerationRecord,
+  GeneTrendPoint,
+  IntentOrderRecord,
+  IntentDeviationRecord,
+  ExecutionReportRecord,
+  ScreenerCandidateRecord,
+  ScreenerRunRecord,
   SessionAgentBoardItem,
   SignalFusionRecord,
+  StrategyGenomeRecord,
   StepStreamEvent,
   WorkflowMode,
 } from "../../api/types";
@@ -781,11 +815,49 @@ const TeamDashboardPanel: FC = () => {
   const [history, setHistory] = useState<SignalFusionRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"run" | "roles" | "history">("run");
+  const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
+    confidenceThreshold: 0.55,
+    maxRounds: 2,
+  });
+  const [liveDebateEvents, setLiveDebateEvents] = useState<DebateStreamEvent[]>([]);
+  const [replayTurns, setReplayTurns] = useState<DebateTurnRecord[]>([]);
+  const [replayVerdict, setReplayVerdict] = useState<DebateVerdictRecord | null>(null);
+  const [riskConfig, setRiskConfigState] = useState<RiskConfig>({
+    vetoThreshold: 0.7,
+    blockConfidenceThreshold: 0.35,
+    severityMode: "balanced",
+  });
+  const [riskVetoLogs, setRiskVetoLogs] = useState<RiskVetoLogRecord[]>([]);
+  const [screenerUniverse, setScreenerUniverse] = useState<"CN-A" | "US" | "HK">("CN-A");
+  const [screenerTopN, setScreenerTopN] = useState(5);
+  const [screenerRuns, setScreenerRunsState] = useState<ScreenerRunRecord[]>([]);
+  const [selectedScreenerRunId, setSelectedScreenerRunId] = useState("");
+  const [screenerCandidates, setScreenerCandidates] = useState<ScreenerCandidateRecord[]>([]);
+  const [geneProjectId, setGeneProjectId] = useState("");
+  const [genePopulationSize, setGenePopulationSize] = useState(8);
+  const [geneMutationRate, setGeneMutationRate] = useState(0.12);
+  const [geneGenerations, setGeneGenerations] = useState<GeneGenerationRecord[]>([]);
+  const [selectedGenerationId, setSelectedGenerationId] = useState("");
+  const [genomes, setGenomes] = useState<StrategyGenomeRecord[]>([]);
+  const [geneTrends, setGeneTrends] = useState<GeneTrendPoint[]>([]);
+  const [intentTicker, setIntentTicker] = useState("600519");
+  const [intentDirection, setIntentDirection] = useState<"long" | "short" | "close">("long");
+  const [intentQty, setIntentQty] = useState(100);
+  const [intentTargetPrice, setIntentTargetPrice] = useState(1500);
+  const [intentOrders, setIntentOrdersState] = useState<IntentOrderRecord[]>([]);
+  const [selectedIntentId, setSelectedIntentId] = useState("");
+  const [intentView, setIntentView] = useState<{
+    intent: IntentOrderRecord | null;
+    report: ExecutionReportRecord | null;
+    deviation: IntentDeviationRecord | null;
+  } | null>(null);
 
 
   useEffect(() => {
     getAgentRoles().then(setRoles).catch(() => {});
     getFusionHistory({ limit: 10 }).then(setHistory).catch(() => {});
+    getDebateConfig().then(setDebateConfigState).catch(() => {});
+    getRiskConfig().then(setRiskConfigState).catch(() => {});
   }, []);
 
   const handleRun = async () => {
@@ -793,6 +865,9 @@ const TeamDashboardPanel: FC = () => {
     setError(null);
     setRunning(true);
     setResult(null);
+    setLiveDebateEvents([]);
+    setReplayTurns([]);
+    setReplayVerdict(null);
     try {
       // Need a workflow run ID — create a minimal one
       let wfId = workflowRunId;
@@ -802,8 +877,26 @@ const TeamDashboardPanel: FC = () => {
         setRunning(false);
         return;
       }
+      const unsubscribe = subscribeDebateStream({
+        workflowRunId: wfId,
+        onEvent: (event) => {
+          setLiveDebateEvents((prev) => [...prev.slice(-49), event]);
+        },
+        onError: () => {},
+      });
       const res = await runAnalystTeam({ workflowRunId: wfId, ticker: ticker.trim() });
+      unsubscribe();
       setResult(res);
+      if (res.debate?.sessionId) {
+        const [turns, verdict] = await Promise.all([
+          getDebateTurns(res.debate.sessionId),
+          getDebateVerdict(res.debate.sessionId),
+        ]);
+        setReplayTurns(turns);
+        setReplayVerdict(verdict);
+      }
+      const vetoLogs = await getRiskVetoLogs(wfId);
+      setRiskVetoLogs(vetoLogs);
       const newHistory = await getFusionHistory({ limit: 10 });
       setHistory(newHistory);
     } catch (e) {
@@ -811,6 +904,153 @@ const TeamDashboardPanel: FC = () => {
     } finally {
       setRunning(false);
     }
+  };
+
+  const saveDebateRuntimeConfig = async () => {
+    try {
+      const next = await saveDebateConfig(debateConfig);
+      setDebateConfigState(next);
+    } catch (e) {
+      setError(`保存辩论配置失败: ${(e as Error).message}`);
+    }
+  };
+
+  const saveRiskRuntimeConfig = async () => {
+    try {
+      const next = await saveRiskConfig(riskConfig);
+      setRiskConfigState(next);
+    } catch (e) {
+      setError(`保存风控配置失败: ${(e as Error).message}`);
+    }
+  };
+
+  const runScreenerNow = async () => {
+    if (!workflowRunId) {
+      setError("请先填写 workflowRunId，再运行选股。");
+      return;
+    }
+    try {
+      const out = await runScreener({
+        workflowRunId,
+        universe: screenerUniverse,
+        topN: screenerTopN,
+      });
+      const runs = await listScreenerRuns(workflowRunId);
+      setScreenerRunsState(runs);
+      setSelectedScreenerRunId(out.screenerRunId);
+      const candidates = await listScreenerCandidates(out.screenerRunId);
+      setScreenerCandidates(candidates);
+    } catch (e) {
+      setError(`运行选股失败: ${(e as Error).message}`);
+    }
+  };
+
+  const loadScreenerRun = async (runId: string) => {
+    setSelectedScreenerRunId(runId);
+    const candidates = await listScreenerCandidates(runId);
+    setScreenerCandidates(candidates);
+  };
+
+  const initGenePoolNow = async () => {
+    if (!geneProjectId) {
+      setError("请填写 Gene ProjectId");
+      return;
+    }
+    try {
+      await initGenePool({
+        projectId: geneProjectId,
+        populationSize: genePopulationSize,
+        mutationRate: geneMutationRate,
+      });
+      const gens = await listGeneGenerations(geneProjectId);
+      setGeneGenerations(gens);
+      if (gens[0]) {
+        setSelectedGenerationId(gens[0].id);
+        const rows = await listGenomes(gens[0].id);
+        setGenomes(rows);
+      }
+      const trends = await listGeneTrends(geneProjectId);
+      setGeneTrends(trends);
+    } catch (e) {
+      setError(`初始化基因池失败: ${(e as Error).message}`);
+    }
+  };
+
+  const evolveNow = async () => {
+    if (!geneProjectId) {
+      setError("请填写 Gene ProjectId");
+      return;
+    }
+    try {
+      await evolveGenePool(geneProjectId);
+      const gens = await listGeneGenerations(geneProjectId);
+      setGeneGenerations(gens);
+      if (gens[0]) {
+        setSelectedGenerationId(gens[0].id);
+        const rows = await listGenomes(gens[0].id);
+        setGenomes(rows);
+      }
+      const trends = await listGeneTrends(geneProjectId);
+      setGeneTrends(trends);
+    } catch (e) {
+      setError(`演化失败: ${(e as Error).message}`);
+    }
+  };
+
+  const loadGeneration = async (generationId: string) => {
+    setSelectedGenerationId(generationId);
+    const rows = await listGenomes(generationId);
+    setGenomes(rows);
+  };
+
+  const refreshIntentOrders = async () => {
+    if (!workflowRunId) return;
+    const rows = await listIntentOrders(workflowRunId);
+    setIntentOrdersState(rows);
+  };
+
+  const createIntentNow = async () => {
+    if (!workflowRunId) {
+      setError("请先填写 workflowRunId");
+      return;
+    }
+    try {
+      const created = await createIntentOrder({
+        workflowRunId,
+        ticker: intentTicker,
+        direction: intentDirection,
+        quantity: intentQty,
+        targetPrice: intentTargetPrice,
+        rationale: "manual REIA test",
+      });
+      await refreshIntentOrders();
+      setSelectedIntentId(created.id);
+      const view = await getIntentExecutionView(created.id);
+      setIntentView(view);
+    } catch (e) {
+      setError(`创建意图失败: ${(e as Error).message}`);
+    }
+  };
+
+  const executeIntentNow = async () => {
+    if (!selectedIntentId) {
+      setError("请选择一个意图订单");
+      return;
+    }
+    try {
+      await executeIntent({ intentOrderId: selectedIntentId });
+      await refreshIntentOrders();
+      const view = await getIntentExecutionView(selectedIntentId);
+      setIntentView(view);
+    } catch (e) {
+      setError(`执行意图失败: ${(e as Error).message}`);
+    }
+  };
+
+  const loadIntentView = async (intentId: string) => {
+    setSelectedIntentId(intentId);
+    const view = await getIntentExecutionView(intentId);
+    setIntentView(view);
   };
 
   const groupedRoles = TEAM_GROUPS.map((g) => ({
@@ -868,6 +1108,220 @@ const TeamDashboardPanel: FC = () => {
             </button>
           </div>
 
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>辩论触发阈值（低于触发）</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={debateConfig.confidenceThreshold}
+                onChange={(e) =>
+                  setDebateConfigState((prev) => ({
+                    ...prev,
+                    confidenceThreshold: Number(e.target.value),
+                  }))
+                }
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>最大辩论轮次</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={1}
+                max={5}
+                value={debateConfig.maxRounds}
+                onChange={(e) =>
+                  setDebateConfigState((prev) => ({
+                    ...prev,
+                    maxRounds: Number(e.target.value),
+                  }))
+                }
+              />
+            </div>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void saveDebateRuntimeConfig()}>
+              保存辩论配置
+            </button>
+          </div>
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>风险否决阈值（风险分 ≥ 阈值拦截）</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={riskConfig.vetoThreshold}
+                onChange={(e) =>
+                  setRiskConfigState((prev) => ({
+                    ...prev,
+                    vetoThreshold: Number(e.target.value),
+                  }))
+                }
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>低置信阻断阈值</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={riskConfig.blockConfidenceThreshold}
+                onChange={(e) =>
+                  setRiskConfigState((prev) => ({
+                    ...prev,
+                    blockConfidenceThreshold: Number(e.target.value),
+                  }))
+                }
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>风控烈度</label>
+              <select
+                style={teamStyles.input}
+                value={riskConfig.severityMode}
+                onChange={(e) =>
+                  setRiskConfigState((prev) => ({
+                    ...prev,
+                    severityMode: e.target.value as RiskConfig["severityMode"],
+                  }))
+                }
+              >
+                <option value="conservative">conservative</option>
+                <option value="balanced">balanced</option>
+                <option value="aggressive">aggressive</option>
+              </select>
+            </div>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void saveRiskRuntimeConfig()}>
+              保存风控配置
+            </button>
+          </div>
+
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>选股市场</label>
+              <select
+                style={teamStyles.input}
+                value={screenerUniverse}
+                onChange={(e) => setScreenerUniverse(e.target.value as "CN-A" | "US" | "HK")}
+              >
+                <option value="CN-A">CN-A</option>
+                <option value="US">US</option>
+                <option value="HK">HK</option>
+              </select>
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>TopN</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={1}
+                max={20}
+                value={screenerTopN}
+                onChange={(e) => setScreenerTopN(Number(e.target.value))}
+              />
+            </div>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void runScreenerNow()}>
+              运行选股
+            </button>
+          </div>
+
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>Gene ProjectId</label>
+              <input
+                style={teamStyles.input}
+                value={geneProjectId}
+                onChange={(e) => setGeneProjectId(e.target.value)}
+                placeholder="project id"
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>种群大小</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={3}
+                max={20}
+                value={genePopulationSize}
+                onChange={(e) => setGenePopulationSize(Number(e.target.value))}
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>变异率</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={0.01}
+                max={0.5}
+                step={0.01}
+                value={geneMutationRate}
+                onChange={(e) => setGeneMutationRate(Number(e.target.value))}
+              />
+            </div>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void initGenePoolNow()}>
+              初始化基因池
+            </button>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void evolveNow()}>
+              演化一代
+            </button>
+          </div>
+
+          <div style={teamStyles.configRow}>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>Intent Ticker</label>
+              <input style={teamStyles.input} value={intentTicker} onChange={(e) => setIntentTicker(e.target.value)} />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>方向</label>
+              <select
+                style={teamStyles.input}
+                value={intentDirection}
+                onChange={(e) => setIntentDirection(e.target.value as "long" | "short" | "close")}
+              >
+                <option value="long">long</option>
+                <option value="short">short</option>
+                <option value="close">close</option>
+              </select>
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>数量</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={1}
+                value={intentQty}
+                onChange={(e) => setIntentQty(Number(e.target.value))}
+              />
+            </div>
+            <div style={teamStyles.field}>
+              <label style={teamStyles.label}>目标价</label>
+              <input
+                style={teamStyles.input}
+                type="number"
+                min={0.01}
+                step={0.01}
+                value={intentTargetPrice}
+                onChange={(e) => setIntentTargetPrice(Number(e.target.value))}
+              />
+            </div>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void createIntentNow()}>
+              创建意图
+            </button>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void executeIntentNow()}>
+              执行意图（Paper）
+            </button>
+            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void refreshIntentOrders()}>
+              刷新意图列表
+            </button>
+          </div>
+
           {error && <div style={teamStyles.error}>{error}</div>}
 
           {result && (
@@ -912,6 +1366,249 @@ const TeamDashboardPanel: FC = () => {
                   </div>
                 ))}
               </div>
+
+              {result.debate && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🗳️ 辩论裁决 (SDP)</h3>
+                  <div style={teamStyles.debateBox}>
+                    <div>会话：`{result.debate.sessionId}`</div>
+                    <div>裁决：{result.debate.verdict}</div>
+                    <div>最终立场：{result.debate.finalStance.toUpperCase()}</div>
+                    <div>共识得分：{(result.debate.consensusScore * 100).toFixed(0)}%</div>
+                    <div style={teamStyles.debateReason}>{result.debate.reasoning}</div>
+                  </div>
+                </>
+              )}
+
+              {result.risk && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🛡️ 风控裁决 (RFV)</h3>
+                  <div
+                    style={{
+                      ...teamStyles.riskBox,
+                      borderColor: result.risk.vetoed ? "#7f1d1d" : "#14532d",
+                      background: result.risk.vetoed ? "#3f1d1d" : "#052e16",
+                    }}
+                  >
+                    <div>
+                      状态：{result.risk.vetoed ? "❌ 已拦截（VETO）" : "✅ 通过"} · 严重级别：{result.risk.severity}
+                    </div>
+                    <div>风险分：{(result.risk.riskScore * 100).toFixed(0)}%</div>
+                    <div>{result.risk.reason}</div>
+                    <div>触发规则：{result.risk.rulesTriggered.length ? result.risk.rulesTriggered.join(", ") : "无"}</div>
+                  </div>
+                </>
+              )}
+
+              {(screenerRuns.length > 0 || screenerCandidates.length > 0) && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🎯 选股结果（Screener）</h3>
+                  <div style={teamStyles.screenerBox}>
+                    <div style={teamStyles.screenerRunList}>
+                      {screenerRuns.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          style={{
+                            ...teamStyles.screenerRunBtn,
+                            ...(selectedScreenerRunId === r.id ? teamStyles.screenerRunBtnActive : {}),
+                          }}
+                          onClick={() => void loadScreenerRun(r.id)}
+                        >
+                          {new Date(r.createdAt).toLocaleTimeString()} · {r.universe} · {r.candidateCount} 个
+                        </button>
+                      ))}
+                    </div>
+                    <div style={teamStyles.screenerCandidates}>
+                      {screenerCandidates.map((c) => (
+                        <div key={c.id} style={teamStyles.screenerCard}>
+                          <div style={teamStyles.screenerHead}>
+                            <strong>{c.ticker}</strong> <span>{c.companyName}</span>
+                          </div>
+                          <div>综合分：{(c.score * 100).toFixed(1)}</div>
+                          <div style={teamStyles.screenerBreakdown}>
+                            {Object.entries(c.scoreBreakdownJson ?? {}).map(([k, v]) => (
+                              <span key={k}>{k}:{(Number(v) * 100).toFixed(0)}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {screenerCandidates.length === 0 && <div style={teamStyles.memberEmpty}>暂无候选</div>}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {(geneGenerations.length > 0 || genomes.length > 0) && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🧬 策略基因池（SGP）</h3>
+                  <div style={teamStyles.screenerBox}>
+                    <div style={teamStyles.screenerRunList}>
+                      {geneGenerations.map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          style={{
+                            ...teamStyles.screenerRunBtn,
+                            ...(selectedGenerationId === g.id ? teamStyles.screenerRunBtnActive : {}),
+                          }}
+                          onClick={() => void loadGeneration(g.id)}
+                        >
+                          Gen {g.generationNumber} · bestSharpe {g.bestSharpe?.toFixed(2) ?? "-"} · pop {g.populationSize}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={teamStyles.screenerCandidates}>
+                      {genomes.map((gm) => (
+                        <div key={gm.id} style={teamStyles.screenerCard}>
+                          <div style={teamStyles.screenerHead}>
+                            <strong>{gm.name}</strong> <span>{gm.isActive ? "active" : "idle"}</span>
+                          </div>
+                          <div>Sharpe: {gm.sharpeRatio?.toFixed(2) ?? "-"}</div>
+                          <div>Drawdown: {gm.maxDrawdown?.toFixed(2) ?? "-"}</div>
+                          <div>Return: {gm.totalReturn?.toFixed(2) ?? "-"}</div>
+                          <div style={teamStyles.screenerBreakdown}>
+                            {Object.entries(gm.genesSnapshotJson ?? {}).map(([k, v]) => (
+                              <span key={k}>{k}:{Number(v).toFixed(2)}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {geneTrends.length > 0 && (
+                    <div style={teamStyles.trendBox}>
+                      <div style={teamStyles.trendTitle}>世代趋势（Best Sharpe / Avg Drawdown）</div>
+                      <table style={teamStyles.table}>
+                        <thead>
+                          <tr>
+                            <th style={teamStyles.th}>Generation</th>
+                            <th style={teamStyles.th}>Best Sharpe</th>
+                            <th style={teamStyles.th}>Avg Sharpe</th>
+                            <th style={teamStyles.th}>Avg Drawdown</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {geneTrends.map((t) => (
+                            <tr key={t.generationId}>
+                              <td style={teamStyles.td}>Gen {t.generationNumber}</td>
+                              <td style={teamStyles.td}>{t.bestSharpe?.toFixed(2) ?? "-"}</td>
+                              <td style={teamStyles.td}>{t.avgSharpe?.toFixed(2) ?? "-"}</td>
+                              <td style={teamStyles.td}>{t.avgDrawdown?.toFixed(2) ?? "-"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {(intentOrders.length > 0 || intentView) && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🧾 意图 vs 实际执行（REIA）</h3>
+                  <div style={teamStyles.screenerBox}>
+                    <div style={teamStyles.screenerRunList}>
+                      {intentOrders.map((it) => (
+                        <button
+                          key={it.id}
+                          type="button"
+                          style={{
+                            ...teamStyles.screenerRunBtn,
+                            ...(selectedIntentId === it.id ? teamStyles.screenerRunBtnActive : {}),
+                          }}
+                          onClick={() => void loadIntentView(it.id)}
+                        >
+                          {it.ticker} · {it.direction} · qty {it.quantity} · {it.status}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={teamStyles.replayBox}>
+                      {intentView?.intent && (
+                        <div style={teamStyles.replayVerdict}>
+                          <strong>Intent</strong>
+                          <br />
+                          {intentView.intent.ticker} {intentView.intent.direction} qty {intentView.intent.quantity} @
+                          {intentView.intent.targetPrice}
+                        </div>
+                      )}
+                      {intentView?.report && (
+                        <div style={teamStyles.replayVerdict}>
+                          <strong>Execution</strong>
+                          <br />
+                          actual {intentView.report.actualQuantity} @ {intentView.report.actualPrice} · slippage{" "}
+                          {intentView.report.slippage.toFixed(4)} · {intentView.report.executionTimeMs}ms
+                        </div>
+                      )}
+                      {intentView?.deviation && (
+                        <div
+                          style={{
+                            ...teamStyles.replayVerdict,
+                            borderColor: intentView.deviation.exceededThreshold ? "#7f1d1d" : "#14532d",
+                          }}
+                        >
+                          <strong>Deviation</strong>
+                          <br />
+                          price {(intentView.deviation.priceDeviationPct * 100).toFixed(2)}% · qty{" "}
+                          {(intentView.deviation.quantityDeviationPct * 100).toFixed(2)}% · exceeded{" "}
+                          {intentView.deviation.exceededThreshold ? "YES" : "NO"}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {riskVetoLogs.length > 0 && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>📕 风控拦截回放</h3>
+                  <div style={teamStyles.replayBox}>
+                    {riskVetoLogs.map((v) => (
+                      <div key={v.id} style={teamStyles.replayTurn}>
+                        <div style={teamStyles.replayMeta}>
+                          {new Date(v.createdAt).toLocaleString()} · {v.severity.toUpperCase()} ·{" "}
+                          {(v.riskScore * 100).toFixed(0)}%
+                        </div>
+                        <div>{v.vetoReason}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <h3 style={teamStyles.sectionTitle}>📡 实时辩论事件流</h3>
+              <pre style={teamStyles.report}>
+                {liveDebateEvents.length
+                  ? liveDebateEvents
+                      .map((e) => `${new Date(e.ts).toLocaleTimeString()} [${e.type}] ${JSON.stringify(e.payload)}`)
+                      .join("\n")
+                  : "暂无实时辩论事件"}
+              </pre>
+
+              {(replayTurns.length > 0 || replayVerdict) && (
+                <>
+                  <h3 style={teamStyles.sectionTitle}>🎬 辩论回放</h3>
+                  <div style={teamStyles.replayBox}>
+                    {replayTurns.map((t) => (
+                      <div key={t.id} style={teamStyles.replayTurn}>
+                        <div style={teamStyles.replayMeta}>
+                          第 {t.roundNumber} 轮 · {t.speakerRole} · {t.stance.toUpperCase()} ·{" "}
+                          {(t.confidence * 100).toFixed(0)}%
+                        </div>
+                        <div>{t.statement}</div>
+                      </div>
+                    ))}
+                    {replayVerdict && (
+                      <div style={teamStyles.replayVerdict}>
+                        裁决：{replayVerdict.finalStance.toUpperCase()} · 共识度{" "}
+                        {(replayVerdict.consensusScore * 100).toFixed(0)}%
+                        <br />
+                        {replayVerdict.reasoning}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
 
               {/* Report */}
               <h3 style={teamStyles.sectionTitle}>📝 分析报告</h3>
@@ -1000,6 +1697,7 @@ const teamStyles: Record<string, CSSProperties> = {
   tabActive: { background: "#27272a", color: "#e4e4e7", borderColor: "#7c3aed" },
   panel: { background: "#111114", border: "1px solid #27272a", borderRadius: 10, padding: 16 },
   row: { display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 12 },
+  configRow: { display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 },
   field: { display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 160 },
   label: { fontSize: 12, color: "#a1a1aa" },
   input: {
@@ -1022,6 +1720,15 @@ const teamStyles: Record<string, CSSProperties> = {
     whiteSpace: "nowrap",
   },
   btnDisabled: { opacity: 0.5, cursor: "not-allowed" },
+  buttonSecondary: {
+    border: "1px solid #3f3f46",
+    color: "#e4e4e7",
+    background: "#18181b",
+    borderRadius: 6,
+    padding: "8px 12px",
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
   error: {
     background: "#3f1d1d",
     border: "1px solid #7f1d1d",
@@ -1053,6 +1760,128 @@ const teamStyles: Record<string, CSSProperties> = {
     width: "fit-content",
   },
   sectionTitle: { color: "#e4e4e7", fontSize: 14, marginBottom: 10 },
+  debateBox: {
+    background: "#1a1424",
+    border: "1px solid #3b2b63",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+    color: "#ddd6fe",
+    fontSize: 12,
+    display: "grid",
+    gap: 6,
+  },
+  debateReason: { color: "#a78bfa" },
+  riskBox: {
+    border: "1px solid",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+    color: "#e4e4e7",
+    fontSize: 12,
+    display: "grid",
+    gap: 6,
+  },
+  replayBox: {
+    background: "#18181b",
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+    display: "grid",
+    gap: 8,
+    maxHeight: 260,
+    overflow: "auto",
+  },
+  replayTurn: {
+    borderBottom: "1px dashed #3f3f46",
+    paddingBottom: 6,
+  },
+  replayMeta: { fontSize: 11, color: "#a1a1aa", marginBottom: 4 },
+  replayVerdict: {
+    background: "#1a1424",
+    border: "1px solid #3b2b63",
+    borderRadius: 6,
+    padding: 8,
+    color: "#ddd6fe",
+    fontSize: 12,
+  },
+  trendBox: {
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    background: "#18181b",
+    padding: 10,
+    marginBottom: 16,
+  },
+  trendTitle: {
+    color: "#e4e4e7",
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  screenerBox: {
+    display: "grid",
+    gridTemplateColumns: "260px 1fr",
+    gap: 10,
+    marginBottom: 16,
+  },
+  screenerRunList: {
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    background: "#18181b",
+    padding: 8,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    maxHeight: 220,
+    overflow: "auto",
+  },
+  screenerRunBtn: {
+    border: "1px solid #3f3f46",
+    borderRadius: 6,
+    background: "#111114",
+    color: "#d4d4d8",
+    textAlign: "left",
+    padding: "6px 8px",
+    cursor: "pointer",
+    fontSize: 12,
+  },
+  screenerRunBtnActive: {
+    borderColor: "#7c3aed",
+    background: "#221838",
+  },
+  screenerCandidates: {
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    background: "#18181b",
+    padding: 8,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+    gap: 8,
+    maxHeight: 280,
+    overflow: "auto",
+  },
+  screenerCard: {
+    border: "1px solid #3f3f46",
+    borderRadius: 8,
+    background: "#111114",
+    padding: 8,
+    fontSize: 12,
+    color: "#e4e4e7",
+  },
+  screenerHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    marginBottom: 6,
+    fontSize: 12,
+  },
+  screenerBreakdown: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    color: "#a1a1aa",
+    marginTop: 4,
+    fontSize: 11,
+  },
   radarGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 },
   radarCard: {
     background: "#18181b",

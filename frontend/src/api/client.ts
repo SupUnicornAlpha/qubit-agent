@@ -42,3 +42,10 @@ export async function httpPatch<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
+export async function httpPut<T>(path: string, body?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: "PUT",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+

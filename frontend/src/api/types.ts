@@ -219,6 +219,21 @@ export interface AnalystTeamResult {
     reasoning: string;
   }>;
   report: string;
+  debate?: {
+    sessionId: string;
+    consensusScore: number;
+    finalStance: "bull" | "bear" | "hold" | "abort";
+    verdict: "agree_bull" | "agree_bear" | "no_consensus";
+    reasoning: string;
+  };
+  risk?: {
+    approved: boolean;
+    vetoed: boolean;
+    riskScore: number;
+    reason: string;
+    severity: "warning" | "block" | "critical";
+    rulesTriggered: string[];
+  };
 }
 
 export interface AgentRoleCatalogItem {
@@ -227,5 +242,144 @@ export interface AgentRoleCatalogItem {
   description: string;
   team: string;
   isBuiltin: boolean;
+}
+
+export interface DebateConfig {
+  confidenceThreshold: number;
+  maxRounds: number;
+}
+
+export interface DebateTurnRecord {
+  id: string;
+  debateSessionId: string;
+  roundNumber: number;
+  speakerRole: string;
+  stance: "bull" | "bear" | "neutral";
+  statement: string;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface DebateVerdictRecord {
+  id: string;
+  debateSessionId: string;
+  orchestratorRole: string;
+  reasoning: string;
+  consensusScore: number;
+  finalStance: "bull" | "bear" | "hold" | "abort";
+  vetoByRisk: boolean;
+  createdAt: string;
+}
+
+export interface DebateStreamEvent {
+  workflowRunId: string;
+  sessionId: string;
+  type: "debate_start" | "debate_turn" | "debate_verdict" | "debate_end";
+  ts: number;
+  payload: Record<string, unknown>;
+}
+
+export interface RiskConfig {
+  vetoThreshold: number;
+  blockConfidenceThreshold: number;
+  severityMode: "conservative" | "balanced" | "aggressive";
+}
+
+export interface RiskVetoLogRecord {
+  id: string;
+  workflowRunId: string;
+  vetoTarget: string;
+  vetoReason: string;
+  riskScore: number;
+  riskRulesTriggeredJson: string[] | unknown;
+  severity: "warning" | "block" | "critical";
+  createdAt: string;
+}
+
+export interface ScreenerRunRecord {
+  id: string;
+  workflowRunId: string;
+  criteriaJson: Record<string, unknown>;
+  universe: string;
+  candidateCount: number;
+  createdAt: string;
+}
+
+export interface ScreenerCandidateRecord {
+  id: string;
+  screenerRunId: string;
+  ticker: string;
+  companyName: string;
+  score: number;
+  scoreBreakdownJson: Record<string, number>;
+  passedToAnalyst: boolean;
+  createdAt: string;
+}
+
+export interface GeneGenerationRecord {
+  id: string;
+  projectId: string;
+  generationNumber: number;
+  populationSize: number;
+  mutationRate: number;
+  bestSharpe: number | null;
+  createdAt: string;
+}
+
+export interface StrategyGenomeRecord {
+  id: string;
+  projectId: string;
+  generationId: string;
+  name: string;
+  genesSnapshotJson: Record<string, number>;
+  sharpeRatio: number | null;
+  maxDrawdown: number | null;
+  totalReturn: number | null;
+  mutationLog: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface GeneTrendPoint {
+  generationId: string;
+  generationNumber: number;
+  bestSharpe: number | null;
+  avgSharpe: number | null;
+  avgDrawdown: number | null;
+  populationSize: number;
+  createdAt: string;
+}
+
+export interface IntentOrderRecord {
+  id: string;
+  workflowRunId: string;
+  ticker: string;
+  direction: "long" | "short" | "close";
+  quantity: number;
+  targetPrice: number;
+  status: "pending" | "approved" | "rejected" | "executed" | "deviated";
+  createdAt: string;
+}
+
+export interface ExecutionReportRecord {
+  id: string;
+  intentOrderId: string;
+  actualPrice: number;
+  actualQuantity: number;
+  slippage: number;
+  executionTimeMs: number;
+  status: "filled" | "partial" | "rejected" | "cancelled";
+  createdAt: string;
+}
+
+export interface IntentDeviationRecord {
+  id: string;
+  intentOrderId: string;
+  executionReportId: string;
+  priceDeviationPct: number;
+  quantityDeviationPct: number;
+  exceededThreshold: boolean;
+  callbackTriggered: boolean;
+  createdAt: string;
 }
 

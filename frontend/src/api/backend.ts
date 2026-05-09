@@ -1,9 +1,23 @@
-import { httpGet, httpPatch, httpPost } from "./client";
+import { httpGet, httpPatch, httpPost, httpPut } from "./client";
 import type {
   AgentSummary,
   AgentDefinitionBundle,
   AgentsConfigResponse,
   AgentRoleCatalogItem,
+  DebateConfig,
+  DebateStreamEvent,
+  DebateTurnRecord,
+  DebateVerdictRecord,
+  RiskConfig,
+  RiskVetoLogRecord,
+  GeneGenerationRecord,
+  GeneTrendPoint,
+  IntentDeviationRecord,
+  IntentOrderRecord,
+  ExecutionReportRecord,
+  StrategyGenomeRecord,
+  ScreenerCandidateRecord,
+  ScreenerRunRecord,
   AnalystSignalRecord,
   AnalystTeamResult,
   ChatMessage,
@@ -262,6 +276,219 @@ export async function getFusionHistory(params?: {
   const res = await httpGet<{ ok: boolean; data: SignalFusionRecord[] }>(
     `/api/v1/analyst/fusion/history?${query.toString()}`
   );
+  return res.data;
+}
+
+export async function getDebateConfig(): Promise<DebateConfig> {
+  const res = await httpGet<{ ok: boolean; data: DebateConfig }>("/api/v1/debate/config");
+  return res.data;
+}
+
+export async function saveDebateConfig(input: Partial<DebateConfig>): Promise<DebateConfig> {
+  const res = await httpPut<{ ok: boolean; data: DebateConfig }>("/api/v1/debate/config", input);
+  return res.data;
+}
+
+export async function getDebateTurns(sessionId: string): Promise<DebateTurnRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: DebateTurnRecord[] }>(
+    `/api/v1/debate/sessions/${sessionId}/turns`
+  );
+  return res.data;
+}
+
+export async function getDebateVerdict(sessionId: string): Promise<DebateVerdictRecord | null> {
+  const res = await httpGet<{ ok: boolean; data: DebateVerdictRecord | null }>(
+    `/api/v1/debate/sessions/${sessionId}/verdict`
+  );
+  return res.data;
+}
+
+export function subscribeDebateStream(params: {
+  workflowRunId: string;
+  onEvent: (event: DebateStreamEvent) => void;
+  onError?: (err: Event) => void;
+}): () => void {
+  const base = localStorage.getItem("qubit_backend_url") ?? "http://localhost:3000";
+  const url = `${base}/api/v1/debate/stream/${params.workflowRunId}`;
+  const es = new EventSource(url);
+  const types: DebateStreamEvent["type"][] = [
+    "debate_start",
+    "debate_turn",
+    "debate_verdict",
+    "debate_end",
+  ];
+  for (const t of types) {
+    es.addEventListener(t, (ev) => {
+      const msg = ev as MessageEvent<string>;
+      params.onEvent(JSON.parse(msg.data) as DebateStreamEvent);
+    });
+  }
+  es.onerror = (err) => {
+    params.onError?.(err);
+  };
+  return () => es.close();
+}
+
+export async function getRiskConfig(): Promise<RiskConfig> {
+  const res = await httpGet<{ ok: boolean; data: RiskConfig }>("/api/v1/risk/config");
+  return res.data;
+}
+
+export async function saveRiskConfig(input: Partial<RiskConfig>): Promise<RiskConfig> {
+  const res = await httpPut<{ ok: boolean; data: RiskConfig }>("/api/v1/risk/config", input);
+  return res.data;
+}
+
+export async function getRiskVetoLogs(workflowRunId: string): Promise<RiskVetoLogRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: RiskVetoLogRecord[] }>(
+    `/api/v1/risk/veto-logs/${workflowRunId}`
+  );
+  return res.data;
+}
+
+export async function runScreener(params: {
+  workflowRunId: string;
+  universe?: "CN-A" | "US" | "HK";
+  criteria?: {
+    minMarketCapBillion?: number;
+    maxPe?: number;
+    minMomentum30d?: number;
+  };
+  topN?: number;
+}): Promise<{
+  screenerRunId: string;
+  universe: string;
+  candidateCount: number;
+  candidates: Array<{
+    ticker: string;
+    companyName: string;
+    score: number;
+    scoreBreakdown: Record<string, number>;
+  }>;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      screenerRunId: string;
+      universe: string;
+      candidateCount: number;
+      candidates: Array<{
+        ticker: string;
+        companyName: string;
+        score: number;
+        scoreBreakdown: Record<string, number>;
+      }>;
+    };
+  }>("/api/v1/screener/run", params);
+  return res.data;
+}
+
+export async function listScreenerRuns(workflowRunId: string): Promise<ScreenerRunRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: ScreenerRunRecord[] }>(`/api/v1/screener/runs/${workflowRunId}`);
+  return res.data;
+}
+
+export async function listScreenerCandidates(screenerRunId: string): Promise<ScreenerCandidateRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: ScreenerCandidateRecord[] }>(
+    `/api/v1/screener/candidates/${screenerRunId}`
+  );
+  return res.data;
+}
+
+export async function initGenePool(input: {
+  projectId: string;
+  populationSize?: number;
+  mutationRate?: number;
+}): Promise<{ generationId: string; generationNumber: number; populationSize: number }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { generationId: string; generationNumber: number; populationSize: number };
+  }>("/api/v1/gene/init", input);
+  return res.data;
+}
+
+export async function evolveGenePool(projectId: string): Promise<{ generationId: string; generationNumber: number }> {
+  const res = await httpPost<{ ok: boolean; data: { generationId: string; generationNumber: number } }>(
+    "/api/v1/gene/evolve",
+    { projectId }
+  );
+  return res.data;
+}
+
+export async function listGeneGenerations(projectId: string): Promise<GeneGenerationRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: GeneGenerationRecord[] }>(`/api/v1/gene/generations/${projectId}`);
+  return res.data;
+}
+
+export async function listGenomes(generationId: string): Promise<StrategyGenomeRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: StrategyGenomeRecord[] }>(`/api/v1/gene/genomes/${generationId}`);
+  return res.data;
+}
+
+export async function listGeneTrends(projectId: string): Promise<GeneTrendPoint[]> {
+  const res = await httpGet<{ ok: boolean; data: GeneTrendPoint[] }>(`/api/v1/gene/trends/${projectId}`);
+  return res.data;
+}
+
+export async function createIntentOrder(input: {
+  workflowRunId: string;
+  ticker: string;
+  direction: "long" | "short" | "close";
+  quantity: number;
+  targetPrice: number;
+  rationale?: string;
+  expectedReturn?: number;
+  expectedRisk?: number;
+}): Promise<{ id: string }> {
+  const res = await httpPost<{ ok: boolean; data: { id: string } }>("/api/v1/reia/intent", input);
+  return res.data;
+}
+
+export async function executeIntent(input: {
+  intentOrderId: string;
+  deviationThreshold?: number;
+}): Promise<{
+  intentOrderId: string;
+  executionReportId: string;
+  deviationId: string;
+  exceededThreshold: boolean;
+  priceDeviationPct: number;
+  quantityDeviationPct: number;
+  threshold: number;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      intentOrderId: string;
+      executionReportId: string;
+      deviationId: string;
+      exceededThreshold: boolean;
+      priceDeviationPct: number;
+      quantityDeviationPct: number;
+      threshold: number;
+    };
+  }>("/api/v1/reia/execute", input);
+  return res.data;
+}
+
+export async function listIntentOrders(workflowRunId: string): Promise<IntentOrderRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: IntentOrderRecord[] }>(`/api/v1/reia/intents/${workflowRunId}`);
+  return res.data;
+}
+
+export async function getIntentExecutionView(intentOrderId: string): Promise<{
+  intent: IntentOrderRecord | null;
+  report: ExecutionReportRecord | null;
+  deviation: IntentDeviationRecord | null;
+}> {
+  const res = await httpGet<{
+    ok: boolean;
+    data: {
+      intent: IntentOrderRecord | null;
+      report: ExecutionReportRecord | null;
+      deviation: IntentDeviationRecord | null;
+    };
+  }>(`/api/v1/reia/view/${intentOrderId}`);
   return res.data;
 }
 
