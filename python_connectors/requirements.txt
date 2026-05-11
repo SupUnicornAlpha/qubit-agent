@@ -14,5 +14,9 @@ pandas>=2.2.0
 # backtrader>=1.9.78
 # vnpy>=3.9.0
 
+# Broker (optional — user enables real trading via OpenD / IB Gateway)
+# futu-api>=9.0.0
+# ib-insync>=0.9.86
+
 # Dev / test
 pytest>=8.0.0

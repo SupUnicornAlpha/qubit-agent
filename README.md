@@ -136,6 +136,27 @@ bun tauri dev
 - `POST /api/v1/integrations/channels/upsert`：保存集成通道配置
 - `GET /api/v1/integrations/logs`：查询集成消息日志
 
+## 真券商接入（可选）
+
+是否使用**模拟盘 / 实盘**由你在券商侧与环境中自行决定；QUBIT 只提供统一 HTTP 桥与账号配置。
+
+1. （可选）安装 Python 依赖：`cd python_connectors && pip install futu-api ib-insync`（按你实际使用的券商安装其一或全部）。
+2. 启动本地 HTTP 桥：`python broker_http_server.py`（默认监听 `http://127.0.0.1:18765`，可用环境变量 `QUBIT_BROKER_PORT` 修改）。
+3. 在后端 `POST /api/v1/reia/broker/accounts/upsert` 或使用 UI 配置 Broker 账号：`baseUrl` 指向上述地址，`mode` 为 `sandbox` 或 `live`，`accountRef` 自定义标识即可。
+4. 环境变量提示：`QUBIT_BROKER_PROVIDER`（`futu` | `ib`）、`QUBIT_FUTU_OPEND_HOST` / `QUBIT_FUTU_OPEND_PORT`（富途 OpenD）、`QUBIT_IB_HOST` / `QUBIT_IB_PORT`、`QUBIT_BROKER_PAPER=1` 表示在支持模拟环境时走模拟（具体以各券商 API 为准）。
+
+未安装 SDK 时桥接服务仍可对 `/health`、`/orders` 返回**模拟成功**，便于联调；接入真实交易前请务必阅读券商协议与风控要求。
+
+## 外部 MCP（stdio / http / ws）
+
+在 `mcp_server_config` 中为同一服务配置 `transport` 与连接信息：
+
+- **stdio**：填写 `command`（可执行命令行），或通过 `capabilities_json.argv` 传入字符串数组；可选 `capabilities_json.env`、`cwd`。
+- **http**：填写 `url`（POST 接收 JSON-RPC `tools/call` 的端点）；可选 `capabilities_json.httpPath`、`capabilities_json.httpHeaders`。
+- **ws**：填写可建立 WebSocket 的 `url`，按行发送/接收 JSON-RPC。
+
+工具级超时可在 `mcp_tool_binding` 中按 `server_name` + `tool_name`（或 `*`）配置 `timeout_ms`。
+
 ## 说明
 
 - `.qubit/`、`.idea/` 已在 `.gitignore`，属于本地运行配置与 IDE 产物。
