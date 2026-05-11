@@ -12,18 +12,30 @@ class DebateStreamBus {
   private controllersByWorkflow = new Map<string, Set<DebateStreamController>>();
   private encoder = new TextEncoder();
 
+  private safeClose(controller: DebateStreamController): void {
+    try {
+      controller.close();
+    } catch {
+      // Ignore double-close and already-closed stream errors.
+    }
+  }
+
   createSseStream(workflowRunId: string): ReadableStream<Uint8Array> {
+    let currentController: DebateStreamController | null = null;
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
+        currentController = controller;
         const set = this.controllersByWorkflow.get(workflowRunId) ?? new Set<DebateStreamController>();
         set.add(controller);
         this.controllersByWorkflow.set(workflowRunId, set);
       },
       cancel: () => {
+        if (!currentController) return;
         const set = this.controllersByWorkflow.get(workflowRunId);
         if (!set) return;
-        for (const c of set) c.close();
-        this.controllersByWorkflow.delete(workflowRunId);
+        set.delete(currentController);
+        this.safeClose(currentController);
+        if (set.size === 0) this.controllersByWorkflow.delete(workflowRunId);
       },
     });
   }
@@ -44,7 +56,7 @@ class DebateStreamBus {
   close(workflowRunId: string): void {
     const set = this.controllersByWorkflow.get(workflowRunId);
     if (!set) return;
-    for (const c of set) c.close();
+    for (const c of set) this.safeClose(c);
     this.controllersByWorkflow.delete(workflowRunId);
   }
 }

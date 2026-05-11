@@ -7,6 +7,7 @@ import {
   createAgentDraft,
   createChatSession,
   createProject,
+  createScheduledJob,
   createSessionMessage,
   createIntentOrder,
   createWorkflow,
@@ -35,7 +36,12 @@ import {
   listBrokerAccounts,
   listBrokerEvents,
   listMcpBindings,
+  listMcpMarketCatalog,
+  listMcpProjectInstalls,
+  listMcpSources,
   listMcpServers,
+  listScheduledJobRuns,
+  listScheduledJobs,
   listAgentDefinitions,
   listAgents,
   listAgentQuality,
@@ -52,6 +58,7 @@ import {
   listSessionMessages,
   listWorkspaces,
   patchSessionMessage,
+  patchScheduledJob,
   releaseAgentDraft,
   reloadAgents,
   processWorkflowCompensations,
@@ -64,9 +71,12 @@ import {
   saveExecutionSafetyConfig,
   saveRiskConfig,
   testMcpCall,
+  testMcpProjectInstall,
   upsertBrokerAccount,
   upsertIntegrationChannel,
   upsertMcpBinding,
+  upsertMcpSource,
+  upsertMcpServer,
   requestExecutionConfirmation,
   resolveAlert,
   runEval,
@@ -76,6 +86,9 @@ import {
   createWorkflowQuality,
   listWorkflowCompensations,
   enqueueWorkflowCompensation,
+  installMcpMarket,
+  runScheduledJobNow,
+  syncMcpSource,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
@@ -98,6 +111,9 @@ import type {
   ExecutionSafetyCheckResult,
   ExecutionSafetyConfig,
   McpServerConfigRecord,
+  McpCatalogItemRecord,
+  McpProjectInstallRecord,
+  McpRegistrySourceRecord,
   McpToolBindingRecord,
   ScreenerCandidateRecord,
   ScreenerRunRecord,
@@ -109,6 +125,8 @@ import type {
   CommunicationChannelRecord,
   CommunicationMessageLogRecord,
   WorkflowCompensationTaskRecord,
+  ScheduledJobRecord,
+  ScheduledJobRunRecord,
   SignalFusionRecord,
   StrategyGenomeRecord,
   StepStreamEvent,
@@ -361,7 +379,7 @@ const MonitorPanel: FC = () => {
       <h3 style={styles.subTitle}>详情抽屉</h3>
       <pre style={styles.streamBox}>{drawerDetail || "请选择 workflow 查看详情..."}</pre>
 
-      <h3 style={styles.subTitle}>运行质量（M9-F1）</h3>
+      <h3 style={styles.subTitle}>运行质量</h3>
       <div style={styles.grid}>
         {agentQuality.slice(0, 12).map((row) => (
           <div key={row.id} style={styles.card}>
@@ -374,7 +392,7 @@ const MonitorPanel: FC = () => {
         ))}
       </div>
 
-      <h3 style={styles.subTitle}>告警中心（M9-B2）</h3>
+      <h3 style={styles.subTitle}>告警中心</h3>
       <div style={styles.form}>
         <button style={styles.buttonSecondary} type="button" onClick={() => void refreshAlerts()}>
           刷新告警
@@ -398,7 +416,7 @@ const MonitorPanel: FC = () => {
         ))}
       </div>
 
-      <h3 style={styles.subTitle}>评测报告（M10-F1）</h3>
+      <h3 style={styles.subTitle}>评测报告</h3>
       <div style={styles.form}>
         <input style={styles.input} value={datasetName} onChange={(e) => setDatasetName(e.target.value)} />
         <button style={styles.buttonSecondary} type="button" onClick={() => void onCreateDataset()}>
@@ -586,7 +604,28 @@ const ChatPanel: FC = () => {
           unsubscribe();
         }
       },
-      onError: () => unsubscribe(),
+      onError: () => {
+        void patchSessionMessage({
+          messageId: assistantMessageId,
+          content: buffer || "流式连接中断，请重试",
+          status: "failed",
+          errorMessage: "workflow stream disconnected",
+        });
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? {
+                  ...m,
+                  content: buffer || "流式连接中断，请重试",
+                  status: "failed",
+                  errorMessage: "workflow stream disconnected",
+                }
+              : m
+          )
+        );
+        setRefreshKey((v) => v + 1);
+        unsubscribe();
+      },
     });
   };
 
@@ -728,10 +767,59 @@ const ConfigPanel: FC = () => {
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [mcpServers, setMcpServers] = useState<McpServerConfigRecord[]>([]);
   const [mcpBindings, setMcpBindings] = useState<McpToolBindingRecord[]>([]);
+  const [mcpSources, setMcpSources] = useState<McpRegistrySourceRecord[]>([]);
+  const [selectedSourceId, setSelectedSourceId] = useState("");
+  const [sourceName, setSourceName] = useState("MCP Official Registry");
+  const [sourceBaseUrl, setSourceBaseUrl] = useState("https://registry.modelcontextprotocol.io/v1/catalog.json");
+  const [sourceAuthType, setSourceAuthType] = useState<"none" | "bearer" | "api_key">("none");
+  const [sourceAuthRef, setSourceAuthRef] = useState("");
+  const [mcpMarketItems, setMcpMarketItems] = useState<McpCatalogItemRecord[]>([]);
+  const [mcpMarketInstalls, setMcpMarketInstalls] = useState<McpProjectInstallRecord[]>([]);
+  const [marketQuery, setMarketQuery] = useState("");
+  const [currentProjectId, setCurrentProjectId] = useState("");
+  const [selectedCatalogId, setSelectedCatalogId] = useState("");
+  const [catalogServerName, setCatalogServerName] = useState("");
   const [selectedMcpServer, setSelectedMcpServer] = useState("");
+  const [newMcpServerName, setNewMcpServerName] = useState("");
+  const [newMcpServerTransport, setNewMcpServerTransport] = useState<"stdio" | "http" | "ws">("stdio");
+  const [newMcpServerCommand, setNewMcpServerCommand] = useState("");
+  const [newMcpServerUrl, setNewMcpServerUrl] = useState("");
   const [mcpToolName, setMcpToolName] = useState("");
   const [mcpTimeoutMs, setMcpTimeoutMs] = useState(20000);
   const [mcpTestOutput, setMcpTestOutput] = useState("");
+  const [scheduledJobs, setScheduledJobs] = useState<ScheduledJobRecord[]>([]);
+  const [selectedScheduledJobId, setSelectedScheduledJobId] = useState("");
+  const [scheduledJobRuns, setScheduledJobRuns] = useState<ScheduledJobRunRecord[]>([]);
+  const [scheduledJobName, setScheduledJobName] = useState("定时任务");
+  const [scheduledCronExpr, setScheduledCronExpr] = useState("*/5 * * * *");
+  const [scheduledExecutionMode, setScheduledExecutionMode] = useState<
+    "paper" | "live_with_confirm" | "live_direct"
+  >("paper");
+  const [scheduledPayload, setScheduledPayload] = useState(
+    JSON.stringify(
+      {
+        goal: "交易时段内，基于新闻/重大事件/K线异动触发分析并决定是否挂单",
+        mode: "research",
+        triggerDriven: true,
+        triggerSources: ["news", "event", "kline"],
+        newsLookbackMinutes: 30,
+        eventLookbackMinutes: 60,
+        klineLookbackMinutes: 15,
+        klineKeywords: ["kline", "price_break", "volatility_spike"],
+        timezone: "Asia/Shanghai",
+        tradingDays: [1, 2, 3, 4, 5],
+        tradingStart: "09:30",
+        tradingEnd: "16:00",
+        ticker: "AAPL",
+        direction: "long",
+        quantity: 1,
+        targetPrice: 100,
+        brokerProvider: "futu",
+      },
+      null,
+      2
+    )
+  );
   const [integrationKind, setIntegrationKind] = useState<"telegram" | "webhook">("telegram");
   const [integrationName, setIntegrationName] = useState("default-telegram");
   const [integrationExternalChatId, setIntegrationExternalChatId] = useState("");
@@ -740,22 +828,54 @@ const ConfigPanel: FC = () => {
   const [integrationLogs, setIntegrationLogs] = useState<CommunicationMessageLogRecord[]>([]);
 
   const loadConfig = async () => {
-    const [data, bundles, servers, bindings, channels, logs] = await Promise.all([
+    const workspaces = await listWorkspaces();
+    const currentWorkspace = workspaces[0];
+    const projects = currentWorkspace ? await listProjects(currentWorkspace.id) : [];
+    const currentProject = projects[0];
+    const [data, bundles, servers, bindings, channels, logs, sources] = await Promise.all([
       getAgentsConfig(),
       listAgentDefinitions(),
-      listMcpServers(),
-      listMcpBindings(),
+      listMcpServers(currentProject?.id),
+      listMcpBindings(currentProject?.id),
       listIntegrationChannels(),
       listIntegrationLogs(undefined, 50),
+      listMcpSources(),
+    ]);
+    const [marketItems, jobs, installs] = await Promise.all([
+      listMcpMarketCatalog({ sourceId: sources[0]?.id }),
+      currentWorkspace && currentProject
+        ? listScheduledJobs({ workspaceId: currentWorkspace.id, projectId: currentProject.id })
+        : Promise.resolve([]),
+      currentProject ? listMcpProjectInstalls(currentProject.id) : Promise.resolve([]),
     ]);
     setConfigData(data);
     setDefinitions(bundles);
     setMcpServers(servers);
     setMcpBindings(bindings);
+    setMcpSources(sources);
+    setMcpMarketItems(marketItems);
+    setMcpMarketInstalls(installs);
     setIntegrationChannels(channels);
     setIntegrationLogs(logs);
+    setScheduledJobs(jobs);
+    if (currentProject) setCurrentProjectId(currentProject.id);
     if (!selectedMcpServer && servers[0]) {
       setSelectedMcpServer(servers[0].name);
+    }
+    if (!selectedCatalogId && marketItems[0]) {
+      setSelectedCatalogId(marketItems[0].id);
+      setCatalogServerName(marketItems[0].slug.replace(/[^a-z0-9_-]/gi, "-"));
+    }
+    if (!selectedSourceId && sources[0]) {
+      setSelectedSourceId(sources[0].id);
+      setSourceName(sources[0].name);
+      setSourceBaseUrl(sources[0].baseUrl);
+      setSourceAuthType(sources[0].authType);
+      setSourceAuthRef(sources[0].authRef ?? "");
+    }
+    if (!selectedScheduledJobId && jobs[0]) {
+      setSelectedScheduledJobId(jobs[0].id);
+      setScheduledJobRuns(await listScheduledJobRuns(jobs[0].id));
     }
     if (!selectedDefinitionId && bundles[0]) {
       setSelectedDefinitionId(bundles[0].definition.id);
@@ -782,6 +902,7 @@ const ConfigPanel: FC = () => {
   const saveMcpBindingNow = async () => {
     if (!selectedMcpServer || !mcpToolName.trim()) return;
     const row = await upsertMcpBinding({
+      projectId: currentProjectId || undefined,
       serverName: selectedMcpServer,
       toolName: mcpToolName.trim(),
       enabled: true,
@@ -790,17 +911,128 @@ const ConfigPanel: FC = () => {
       rateLimitJson: {},
     });
     setMcpTestOutput(`binding saved: ${row.serverName}/${row.toolName}`);
-    setMcpBindings(await listMcpBindings());
+    setMcpBindings(await listMcpBindings(currentProjectId || undefined));
   };
 
   const testMcpNow = async () => {
     if (!selectedMcpServer || !mcpToolName.trim()) return;
     const out = await testMcpCall({
+      projectId: currentProjectId || undefined,
       serverName: selectedMcpServer,
       toolName: mcpToolName.trim(),
       arguments: { ping: true, ts: Date.now() },
     });
     setMcpTestOutput(JSON.stringify(out, null, 2));
+  };
+
+  const upsertMcpServerNow = async () => {
+    if (!newMcpServerName.trim()) return;
+    const saved = await upsertMcpServer({
+      projectId: currentProjectId || undefined,
+      name: newMcpServerName.trim(),
+      transport: newMcpServerTransport,
+      command: newMcpServerCommand.trim() || undefined,
+      url: newMcpServerUrl.trim() || undefined,
+      capabilitiesJson: ["tools"],
+      enabled: true,
+    });
+    setSelectedMcpServer(saved.name);
+    setMcpServers(await listMcpServers(currentProjectId || undefined));
+    setMcpTestOutput(`server upserted: ${saved.name}`);
+  };
+
+  const saveSourceNow = async () => {
+    const saved = await upsertMcpSource({
+      id: selectedSourceId || undefined,
+      name: sourceName.trim(),
+      baseUrl: sourceBaseUrl.trim(),
+      authType: sourceAuthType,
+      authRef: sourceAuthRef.trim() || undefined,
+      enabled: true,
+      isDefault: true,
+    });
+    setSelectedSourceId(saved.id);
+    setMcpSources(await listMcpSources());
+  };
+
+  const syncSourceNowAction = async () => {
+    if (!selectedSourceId) return;
+    const out = await syncMcpSource(selectedSourceId);
+    setMcpTestOutput(`source synced: ${out.syncedCount}, fallback=${out.usedFallback}`);
+    setMcpMarketItems(await listMcpMarketCatalog({ sourceId: selectedSourceId, q: marketQuery || undefined }));
+  };
+
+  const searchMarketNow = async () => {
+    setMcpMarketItems(await listMcpMarketCatalog({ sourceId: selectedSourceId, q: marketQuery || undefined }));
+  };
+
+  const installMarketItemNow = async () => {
+    if (!currentProjectId || !selectedCatalogId || !catalogServerName.trim()) return;
+    const installed = await installMcpMarket({
+      projectId: currentProjectId,
+      catalogItemId: selectedCatalogId,
+      serverName: catalogServerName.trim(),
+      toolName: mcpToolName.trim() || undefined,
+      timeoutMs: mcpTimeoutMs,
+    });
+    setMcpMarketInstalls((prev) => [installed, ...prev].slice(0, 30));
+    setMcpServers(await listMcpServers(currentProjectId));
+    setMcpBindings(await listMcpBindings(currentProjectId));
+    setSelectedMcpServer(installed.serverName);
+  };
+
+  const testProjectInstallNow = async () => {
+    if (!mcpMarketInstalls[0]) return;
+    const out = await testMcpProjectInstall({
+      installId: mcpMarketInstalls[0].id,
+      toolName: mcpToolName.trim() || undefined,
+    });
+    setMcpTestOutput(JSON.stringify(out, null, 2));
+  };
+
+  const createScheduledJobNow = async () => {
+    const workspaces = await listWorkspaces();
+    const ws = workspaces[0];
+    if (!ws) return;
+    const projects = await listProjects(ws.id);
+    const project = projects[0];
+    if (!project) return;
+    const parsedPayload = JSON.parse(scheduledPayload || "{}") as Record<string, unknown>;
+    const created = await createScheduledJob({
+      workspaceId: ws.id,
+      projectId: project.id,
+      name: scheduledJobName,
+      cronExpr: scheduledCronExpr,
+      timezone: "UTC",
+      payloadJson: parsedPayload,
+      executionMode: scheduledExecutionMode,
+      enabled: true,
+    });
+    const jobs = await listScheduledJobs({ workspaceId: ws.id, projectId: project.id });
+    setScheduledJobs(jobs);
+    setSelectedScheduledJobId(created.id);
+    setScheduledJobRuns(await listScheduledJobRuns(created.id));
+  };
+
+  const runScheduledNow = async () => {
+    if (!selectedScheduledJobId) return;
+    await runScheduledJobNow(selectedScheduledJobId);
+    setScheduledJobRuns(await listScheduledJobRuns(selectedScheduledJobId));
+    const workspaces = await listWorkspaces();
+    const ws = workspaces[0];
+    if (!ws) return;
+    const projects = await listProjects(ws.id);
+    const project = projects[0];
+    if (!project) return;
+    setScheduledJobs(await listScheduledJobs({ workspaceId: ws.id, projectId: project.id }));
+  };
+
+  const toggleScheduledJob = async (enabled: boolean) => {
+    if (!selectedScheduledJobId) return;
+    await patchScheduledJob(selectedScheduledJobId, { enabled });
+    const job = scheduledJobs.find((item) => item.id === selectedScheduledJobId);
+    if (!job) return;
+    setScheduledJobs(await listScheduledJobs({ workspaceId: job.workspaceId, projectId: job.projectId }));
   };
 
   const saveIntegrationNow = async () => {
@@ -875,6 +1107,38 @@ const ConfigPanel: FC = () => {
       </div>
       <h3 style={styles.subTitle}>MCP 配置与连通性</h3>
       <div style={styles.form}>
+        <input
+          style={styles.input}
+          value={newMcpServerName}
+          onChange={(e) => setNewMcpServerName(e.target.value)}
+          placeholder="server name"
+        />
+        <select
+          style={styles.select}
+          value={newMcpServerTransport}
+          onChange={(e) => setNewMcpServerTransport(e.target.value as "stdio" | "http" | "ws")}
+        >
+          <option value="stdio">stdio</option>
+          <option value="http">http</option>
+          <option value="ws">ws</option>
+        </select>
+        <input
+          style={styles.input}
+          value={newMcpServerCommand}
+          onChange={(e) => setNewMcpServerCommand(e.target.value)}
+          placeholder="command (stdio)"
+        />
+        <input
+          style={styles.input}
+          value={newMcpServerUrl}
+          onChange={(e) => setNewMcpServerUrl(e.target.value)}
+          placeholder="url (http/ws)"
+        />
+        <button style={styles.buttonSecondary} onClick={() => void upsertMcpServerNow()}>
+          保存 Server
+        </button>
+      </div>
+      <div style={styles.form}>
         <select
           style={styles.select}
           value={selectedMcpServer}
@@ -906,8 +1170,134 @@ const ConfigPanel: FC = () => {
           测试 MCP
         </button>
       </div>
+      <h3 style={styles.subTitle}>MCP 市场</h3>
+      <div style={styles.form}>
+        <input style={styles.input} value={sourceName} onChange={(e) => setSourceName(e.target.value)} placeholder="source name" />
+        <input style={styles.input} value={sourceBaseUrl} onChange={(e) => setSourceBaseUrl(e.target.value)} placeholder="source base url" />
+        <select style={styles.select} value={sourceAuthType} onChange={(e) => setSourceAuthType(e.target.value as "none" | "bearer" | "api_key")}>
+          <option value="none">none</option>
+          <option value="bearer">bearer</option>
+          <option value="api_key">api_key</option>
+        </select>
+        <input style={styles.input} value={sourceAuthRef} onChange={(e) => setSourceAuthRef(e.target.value)} placeholder="auth ref (optional)" />
+        <button style={styles.buttonSecondary} onClick={() => void saveSourceNow()}>
+          保存源
+        </button>
+      </div>
+      <div style={styles.form}>
+        <select style={styles.select} value={selectedSourceId} onChange={(e) => setSelectedSourceId(e.target.value)}>
+          {mcpSources.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name} · {item.isDefault ? "default" : "custom"} · {item.enabled ? "enabled" : "disabled"}
+            </option>
+          ))}
+        </select>
+        <input style={styles.input} value={marketQuery} onChange={(e) => setMarketQuery(e.target.value)} placeholder="搜索市场工具" />
+        <button style={styles.buttonSecondary} onClick={() => void syncSourceNowAction()}>
+          同步目录
+        </button>
+        <button style={styles.button} onClick={() => void searchMarketNow()}>
+          刷新市场
+        </button>
+      </div>
+      <div style={styles.form}>
+        <select style={styles.select} value={selectedCatalogId} onChange={(e) => setSelectedCatalogId(e.target.value)}>
+          {mcpMarketItems.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name} · {item.riskLevel} · {item.transport} · {item.version}
+            </option>
+          ))}
+        </select>
+        <input
+          style={styles.input}
+          value={catalogServerName}
+          onChange={(e) => setCatalogServerName(e.target.value)}
+          placeholder="project scoped server name"
+        />
+        <button style={styles.buttonSecondary} onClick={() => void installMarketItemNow()} disabled={!currentProjectId}>
+          安装到当前项目
+        </button>
+        <button style={styles.button} onClick={() => void testProjectInstallNow()}>
+          测试最近安装
+        </button>
+      </div>
+      <pre style={styles.streamBox}>{JSON.stringify(mcpSources, null, 2)}</pre>
+      <pre style={styles.streamBox}>{JSON.stringify(mcpMarketItems, null, 2)}</pre>
+      <pre style={styles.streamBox}>{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
       <pre style={styles.streamBox}>{mcpTestOutput || "暂无测试结果"}</pre>
       <pre style={styles.streamBox}>{JSON.stringify(mcpBindings, null, 2)}</pre>
+      <h3 style={styles.subTitle}>定时任务</h3>
+      <div style={styles.form}>
+        <input
+          style={styles.input}
+          value={scheduledJobName}
+          onChange={(e) => setScheduledJobName(e.target.value)}
+          placeholder="job name"
+        />
+        <input
+          style={styles.input}
+          value={scheduledCronExpr}
+          onChange={(e) => setScheduledCronExpr(e.target.value)}
+          placeholder="cron (e.g. */5 * * * *)"
+        />
+        <select
+          style={styles.select}
+          value={scheduledExecutionMode}
+          onChange={(e) =>
+            setScheduledExecutionMode(e.target.value as "paper" | "live_with_confirm" | "live_direct")
+          }
+        >
+          <option value="paper">paper</option>
+          <option value="live_with_confirm">live_with_confirm</option>
+          <option value="live_direct">live_direct</option>
+        </select>
+        <button style={styles.buttonSecondary} onClick={() => void createScheduledJobNow()}>
+          创建定时任务
+        </button>
+        <button style={styles.button} onClick={() => void runScheduledNow()} disabled={!selectedScheduledJobId}>
+          立即执行
+        </button>
+      </div>
+      <textarea
+        style={{ ...styles.input, minHeight: 120, width: "100%" }}
+        value={scheduledPayload}
+        onChange={(e) => setScheduledPayload(e.target.value)}
+      />
+      <div style={styles.form}>
+        <select
+          style={styles.select}
+          value={selectedScheduledJobId}
+          onChange={async (e) => {
+            const nextId = e.target.value;
+            setSelectedScheduledJobId(nextId);
+            if (!nextId) return;
+            setScheduledJobRuns(await listScheduledJobRuns(nextId));
+          }}
+        >
+          <option value="">选择任务</option>
+          {scheduledJobs.map((job) => (
+            <option key={job.id} value={job.id}>
+              {job.name} · {job.enabled ? "enabled" : "disabled"} · {job.cronExpr}
+            </option>
+          ))}
+        </select>
+        <button
+          style={styles.buttonSecondary}
+          onClick={() => void toggleScheduledJob(false)}
+          disabled={!selectedScheduledJobId}
+        >
+          停用
+        </button>
+        <button
+          style={styles.buttonSecondary}
+          onClick={() => void toggleScheduledJob(true)}
+          disabled={!selectedScheduledJobId}
+        >
+          启用
+        </button>
+      </div>
+      <pre style={styles.streamBox}>{JSON.stringify(scheduledJobs, null, 2)}</pre>
+      <pre style={styles.streamBox}>{JSON.stringify(scheduledJobRuns, null, 2)}</pre>
       <h3 style={styles.subTitle}>集成管理（T9）</h3>
       <div style={styles.form}>
         <select

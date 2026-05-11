@@ -93,6 +93,59 @@ export const workflowCompensationTask = sqliteTable("workflow_compensation_task"
   updatedAt: updatedAt(),
 });
 
+export const scheduledJob = sqliteTable("scheduled_job", {
+  id: id(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspace.id),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id),
+  sessionId: text("session_id").references(() => chatSession.id),
+  name: text("name").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  cronExpr: text("cron_expr").notNull(),
+  timezone: text("timezone").notNull().default("UTC"),
+  payloadJson: text("payload_json", { mode: "json" }).notNull().default("{}"),
+  executionMode: text("execution_mode", {
+    enum: ["paper", "live_with_confirm", "live_direct"],
+  })
+    .notNull()
+    .default("paper"),
+  nextRunAt: text("next_run_at"),
+  lastRunAt: text("last_run_at"),
+  createdBy: text("created_by").notNull().default("user"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const scheduledJobRun = sqliteTable(
+  "scheduled_job_run",
+  {
+    id: id(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => scheduledJob.id),
+    triggerAt: text("trigger_at").notNull(),
+    status: text("status", { enum: ["pending", "running", "success", "failed", "skipped"] })
+      .notNull()
+      .default("pending"),
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+    intentOrderId: text("intent_order_id"),
+    executionReportId: text("execution_report_id"),
+    errorMessage: text("error_message"),
+    startedAt: text("started_at"),
+    endedAt: text("ended_at"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    jobTriggerUnique: uniqueIndex("idx_scheduled_job_run_job_trigger_unique").on(
+      table.jobId,
+      table.triggerAt
+    ),
+  })
+);
+
 export const chatMessage = sqliteTable("chat_message", {
   id: id(),
   sessionId: text("session_id")
@@ -183,6 +236,7 @@ export const llmProviderConfig = sqliteTable("llm_provider_config", {
 export const mcpServerConfig = sqliteTable("mcp_server_config", {
   id: id(),
   name: text("name").notNull(),
+  projectId: text("project_id").references(() => project.id),
   transport: text("transport", { enum: ["stdio", "http", "ws"] }).notNull(),
   command: text("command"),
   url: text("url"),
@@ -193,6 +247,7 @@ export const mcpServerConfig = sqliteTable("mcp_server_config", {
 
 export const mcpToolBinding = sqliteTable("mcp_tool_binding", {
   id: id(),
+  projectId: text("project_id").references(() => project.id),
   serverName: text("server_name").notNull(),
   toolName: text("tool_name").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -201,6 +256,116 @@ export const mcpToolBinding = sqliteTable("mcp_tool_binding", {
   rateLimitJson: text("rate_limit_json", { mode: "json" }).notNull().default("{}"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
+});
+
+export const mcpRegistrySource = sqliteTable(
+  "mcp_registry_source",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    baseUrl: text("base_url").notNull(),
+    authType: text("auth_type", { enum: ["none", "bearer", "api_key"] })
+      .notNull()
+      .default("none"),
+    authRef: text("auth_ref"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+    syncIntervalSec: integer("sync_interval_sec").notNull().default(300),
+    lastSyncedAt: text("last_synced_at"),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    sourceNameUnique: uniqueIndex("idx_mcp_registry_source_name_unique").on(table.name),
+  })
+);
+
+export const mcpCatalogItem = sqliteTable(
+  "mcp_catalog_item",
+  {
+    id: id(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => mcpRegistrySource.id),
+    externalId: text("external_id").notNull().default(""),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    version: text("version").notNull().default("latest"),
+    description: text("description").notNull().default(""),
+    provider: text("provider").notNull().default("community"),
+    transport: text("transport", { enum: ["stdio", "http", "ws"] }).notNull(),
+    riskLevel: text("risk_level", { enum: ["low", "medium", "high"] })
+      .notNull()
+      .default("medium"),
+    specJson: text("spec_json", { mode: "json" }).notNull().default("{}"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    itemSourceSlugUnique: uniqueIndex("idx_mcp_catalog_item_source_slug_unique").on(
+      table.sourceId,
+      table.slug
+    ),
+  })
+);
+
+export const mcpCatalog = sqliteTable(
+  "mcp_catalog",
+  {
+    id: id(),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    provider: text("provider").notNull().default("community"),
+    source: text("source").notNull().default("builtin"),
+    riskLevel: text("risk_level", { enum: ["low", "medium", "high"] })
+      .notNull()
+      .default("medium"),
+    transport: text("transport", { enum: ["stdio", "http", "ws"] }).notNull(),
+    command: text("command"),
+    url: text("url"),
+    defaultToolName: text("default_tool_name").notNull().default(""),
+    defaultTimeoutMs: integer("default_timeout_ms").notNull().default(20_000),
+    defaultRetryPolicyJson: text("default_retry_policy_json", { mode: "json" })
+      .notNull()
+      .default("{}"),
+    defaultRateLimitJson: text("default_rate_limit_json", { mode: "json" })
+      .notNull()
+      .default("{}"),
+    defaultCapabilitiesJson: text("default_capabilities_json", { mode: "json" })
+      .notNull()
+      .default("[]"),
+    setupSchemaJson: text("setup_schema_json", { mode: "json" }).notNull().default("{}"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    slugUnique: uniqueIndex("idx_mcp_catalog_slug_unique").on(table.slug),
+  })
+);
+
+export const mcpCatalogInstall = sqliteTable("mcp_catalog_install", {
+  id: id(),
+  projectId: text("project_id").references(() => project.id),
+  workspaceId: text("workspace_id").references(() => workspace.id),
+  sourceId: text("source_id").references(() => mcpRegistrySource.id),
+  catalogItemId: text("catalog_item_id").references(() => mcpCatalogItem.id),
+  catalogId: text("catalog_id")
+    .notNull()
+    .references(() => mcpCatalog.id),
+  serverName: text("server_name").notNull(),
+  status: text("status", { enum: ["installed", "failed"] })
+    .notNull()
+    .default("installed"),
+  installStatus: text("install_status", { enum: ["installed", "failed", "pending"] })
+    .notNull()
+    .default("installed"),
+  errorMessage: text("error_message"),
+  installedBy: text("installed_by").notNull().default("user"),
+  createdAt: createdAt(),
 });
 
 export const agentDefinition = sqliteTable("agent_definition", {

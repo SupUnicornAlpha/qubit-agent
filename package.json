@@ -9,8 +9,10 @@
   "scripts": {
     "dev": "bun run src/index.ts",
     "dev:frontend": "bun run --cwd frontend dev",
+    "dev:tauri": "tauri dev",
     "build": "bun build --compile src/cli.ts --outfile dist/qubit",
-    "build:tauri": "bun tauri build",
+    "build:tauri": "tauri build",
+    "tauri": "tauri",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run src/db/sqlite/migrate.ts",
     "seed:agent-definitions": "bun run src/runtime/seed-agent-definitions.ts",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
+    "@tauri-apps/cli": "^2.8.0",
     "@types/bun": "^1.2.0",
     "drizzle-kit": "^0.31.0",
     "typescript": "^5.8.0"

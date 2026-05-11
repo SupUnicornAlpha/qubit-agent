@@ -21,6 +21,11 @@ import type {
   CommunicationMessageLogRecord,
   McpServerConfigRecord,
   McpToolBindingRecord,
+  McpRegistrySourceRecord,
+  McpCatalogItemRecord,
+  McpProjectInstallRecord,
+  McpCatalogRecord,
+  McpCatalogInstallRecord,
   RiskConfig,
   RiskVetoLogRecord,
   GeneGenerationRecord,
@@ -46,6 +51,8 @@ import type {
   WorkflowDetail,
   WorkflowTimeline,
   WorkflowCreateInput,
+  ScheduledJobRecord,
+  ScheduledJobRunRecord,
 } from "./types";
 
 export async function getHealth(): Promise<{ status: string }> {
@@ -92,6 +99,65 @@ export async function createWorkflow(input: WorkflowCreateInput): Promise<{
   runId: string;
 }> {
   return httpPost("/api/v1/workflows", input);
+}
+
+export async function listScheduledJobs(input?: {
+  workspaceId?: string;
+  projectId?: string;
+}): Promise<ScheduledJobRecord[]> {
+  const params = new URLSearchParams();
+  if (input?.workspaceId) params.set("workspaceId", input.workspaceId);
+  if (input?.projectId) params.set("projectId", input.projectId);
+  const suffix = params.toString();
+  const res = await httpGet<{ data: ScheduledJobRecord[] }>(
+    `/api/v1/workflows/scheduled-jobs${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function createScheduledJob(input: {
+  workspaceId: string;
+  projectId: string;
+  sessionId?: string | null;
+  name?: string;
+  cronExpr: string;
+  timezone?: string;
+  payloadJson?: Record<string, unknown>;
+  executionMode?: "paper" | "live_with_confirm" | "live_direct";
+  enabled?: boolean;
+}): Promise<ScheduledJobRecord> {
+  const res = await httpPost<{ data: ScheduledJobRecord }>("/api/v1/workflows/scheduled-jobs", input);
+  return res.data;
+}
+
+export async function patchScheduledJob(
+  id: string,
+  input: {
+    name?: string;
+    enabled?: boolean;
+    cronExpr?: string;
+    timezone?: string;
+    payloadJson?: Record<string, unknown>;
+    executionMode?: "paper" | "live_with_confirm" | "live_direct";
+  }
+): Promise<ScheduledJobRecord> {
+  const res = await httpPatch<{ data: ScheduledJobRecord }>(`/api/v1/workflows/scheduled-jobs/${id}`, input);
+  return res.data;
+}
+
+export async function runScheduledJobNow(id: string): Promise<ScheduledJobRunRecord | null> {
+  const res = await httpPost<{ ok: boolean; data: ScheduledJobRunRecord | null }>(
+    `/api/v1/workflows/scheduled-jobs/${id}/run-now`,
+    {}
+  );
+  return res.data;
+}
+
+export async function listScheduledJobRuns(id: string, limit = 50): Promise<ScheduledJobRunRecord[]> {
+  const res = await httpGet<{ data: ScheduledJobRunRecord[] }>(
+    `/api/v1/workflows/scheduled-jobs/${id}/runs?limit=${Math.max(1, Math.min(200, limit))}`
+  );
+  return res.data;
 }
 
 export async function listAgentDefinitions(): Promise<AgentDefinitionBundle[]> {
@@ -856,17 +922,33 @@ export function subscribeWorkflowStream(params: {
   return () => es.close();
 }
 
-export async function listMcpServers(): Promise<McpServerConfigRecord[]> {
-  const res = await httpGet<{ data: McpServerConfigRecord[] }>("/api/v1/agents/mcp/servers");
+export async function listMcpServers(projectId?: string): Promise<McpServerConfigRecord[]> {
+  const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  const res = await httpGet<{ data: McpServerConfigRecord[] }>(`/api/v1/agents/mcp/servers${suffix}`);
   return res.data;
 }
 
-export async function listMcpBindings(): Promise<McpToolBindingRecord[]> {
-  const res = await httpGet<{ data: McpToolBindingRecord[] }>("/api/v1/agents/mcp/bindings");
+export async function upsertMcpServer(input: {
+  name: string;
+  projectId?: string;
+  transport: "stdio" | "http" | "ws";
+  command?: string;
+  url?: string;
+  capabilitiesJson?: unknown[];
+  enabled?: boolean;
+}): Promise<McpServerConfigRecord> {
+  const res = await httpPost<{ data: McpServerConfigRecord }>("/api/v1/agents/mcp/servers/upsert", input);
+  return res.data;
+}
+
+export async function listMcpBindings(projectId?: string): Promise<McpToolBindingRecord[]> {
+  const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+  const res = await httpGet<{ data: McpToolBindingRecord[] }>(`/api/v1/agents/mcp/bindings${suffix}`);
   return res.data;
 }
 
 export async function upsertMcpBinding(input: {
+  projectId?: string;
   serverName: string;
   toolName: string;
   enabled?: boolean;
@@ -879,6 +961,7 @@ export async function upsertMcpBinding(input: {
 }
 
 export async function testMcpCall(input: {
+  projectId?: string;
   serverName: string;
   toolName: string;
   arguments?: Record<string, unknown>;
@@ -899,6 +982,151 @@ export async function testMcpCall(input: {
       output: Record<string, unknown>;
     };
   }>("/api/v1/agents/mcp/test", input);
+  return res.data;
+}
+
+export async function listMcpCatalog(): Promise<McpCatalogRecord[]> {
+  const res = await httpGet<{ data: McpCatalogRecord[] }>("/api/v1/agents/mcp/catalog");
+  return res.data;
+}
+
+export async function listMcpSources(): Promise<McpRegistrySourceRecord[]> {
+  const res = await httpGet<{ data: McpRegistrySourceRecord[] }>("/api/v1/agents/mcp/sources");
+  return res.data;
+}
+
+export async function upsertMcpSource(input: {
+  id?: string;
+  name: string;
+  baseUrl: string;
+  authType?: "none" | "bearer" | "api_key";
+  authRef?: string;
+  enabled?: boolean;
+  isDefault?: boolean;
+  syncIntervalSec?: number;
+}): Promise<McpRegistrySourceRecord> {
+  if (input.id) {
+    const res = await httpPatch<{ data: McpRegistrySourceRecord }>(`/api/v1/agents/mcp/sources/${input.id}`, input);
+    return res.data;
+  }
+  const res = await httpPost<{ data: McpRegistrySourceRecord }>("/api/v1/agents/mcp/sources", input);
+  return res.data;
+}
+
+export async function syncMcpSource(id: string): Promise<{
+  sourceId: string;
+  syncedCount: number;
+  usedFallback: boolean;
+}> {
+  const res = await httpPost<{ ok: boolean; data: { sourceId: string; syncedCount: number; usedFallback: boolean } }>(
+    `/api/v1/agents/mcp/sources/${id}/sync`,
+    {}
+  );
+  return res.data;
+}
+
+export async function listMcpMarketCatalog(input?: {
+  sourceId?: string;
+  q?: string;
+  risk?: "low" | "medium" | "high";
+}): Promise<McpCatalogItemRecord[]> {
+  const query = new URLSearchParams();
+  if (input?.sourceId) query.set("sourceId", input.sourceId);
+  if (input?.q) query.set("q", input.q);
+  if (input?.risk) query.set("risk", input.risk);
+  const suffix = query.toString();
+  const res = await httpGet<{ data: McpCatalogItemRecord[] }>(
+    `/api/v1/agents/mcp/market/catalog${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function installMcpMarket(input: {
+  projectId: string;
+  catalogItemId: string;
+  serverName: string;
+  installedBy?: string;
+  command?: string;
+  url?: string;
+  toolName?: string;
+  timeoutMs?: number;
+}): Promise<McpProjectInstallRecord> {
+  const res = await httpPost<{ data: McpProjectInstallRecord }>("/api/v1/agents/mcp/market/install", input);
+  return res.data;
+}
+
+export async function listMcpProjectInstalls(projectId: string): Promise<McpProjectInstallRecord[]> {
+  const res = await httpGet<{ data: McpProjectInstallRecord[] }>(
+    `/api/v1/agents/mcp/market/installs?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
+export async function testMcpProjectInstall(input: {
+  installId: string;
+  toolName?: string;
+  arguments?: Record<string, unknown>;
+}): Promise<{
+  serverName: string;
+  toolName: string;
+  transport: "stdio" | "http" | "ws";
+  accepted: boolean;
+  output: Record<string, unknown>;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      serverName: string;
+      toolName: string;
+      transport: "stdio" | "http" | "ws";
+      accepted: boolean;
+      output: Record<string, unknown>;
+    };
+  }>(`/api/v1/agents/mcp/market/installs/${input.installId}/test`, {
+    toolName: input.toolName,
+    arguments: input.arguments,
+  });
+  return res.data;
+}
+
+export async function installMcpCatalog(input: {
+  catalogId: string;
+  serverName: string;
+  command?: string;
+  url?: string;
+  toolName?: string;
+  timeoutMs?: number;
+}): Promise<McpCatalogInstallRecord> {
+  const res = await httpPost<{ data: McpCatalogInstallRecord }>("/api/v1/agents/mcp/catalog/install", input);
+  return res.data;
+}
+
+export async function testMcpCatalog(input: {
+  catalogId: string;
+  serverName: string;
+  toolName?: string;
+  arguments?: Record<string, unknown>;
+}): Promise<{
+  serverName: string;
+  toolName: string;
+  transport: "stdio" | "http" | "ws";
+  accepted: boolean;
+  output: Record<string, unknown>;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      serverName: string;
+      toolName: string;
+      transport: "stdio" | "http" | "ws";
+      accepted: boolean;
+      output: Record<string, unknown>;
+    };
+  }>(`/api/v1/agents/mcp/catalog/${input.catalogId}/test`, {
+    serverName: input.serverName,
+    toolName: input.toolName,
+    arguments: input.arguments ?? { ping: true, ts: Date.now() },
+  });
   return res.data;
 }
 

@@ -2,6 +2,7 @@ import { config } from "./config";
 import { createServer } from "./server";
 import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { runMigrations } from "./db/sqlite/migrate";
+import { workflowScheduler } from "./runtime/workflow/scheduler";
 
 async function main() {
   console.log(`[QUBIT] Starting in ${config.env} mode...`);
@@ -11,6 +12,7 @@ async function main() {
 
   // Start all agents
   await startAllAgents();
+  workflowScheduler.start();
 
   // Start HTTP + WS server
   const server = createServer();
@@ -19,12 +21,14 @@ async function main() {
   // Graceful shutdown
   process.on("SIGINT", async () => {
     console.log("\n[QUBIT] Shutting down...");
+    workflowScheduler.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);
   });
 
   process.on("SIGTERM", async () => {
+    workflowScheduler.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);

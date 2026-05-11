@@ -10,6 +10,7 @@ export interface McpDispatchInput {
   serverName: string;
   toolName: string;
   arguments?: Record<string, unknown>;
+  projectId?: string;
 }
 
 export interface McpDispatchResult {
@@ -30,9 +31,13 @@ function stringifyResult(result: unknown): Record<string, unknown> {
   return { value: result as string | number | boolean | null };
 }
 
-async function resolveTimeoutMs(serverName: string, toolName: string): Promise<number> {
+async function resolveTimeoutMs(
+  serverName: string,
+  toolName: string,
+  projectId?: string
+): Promise<number> {
   const db = await getDb();
-  const exact = await db
+  const exactRows = await db
     .select()
     .from(mcpToolBinding)
     .where(
@@ -41,10 +46,11 @@ async function resolveTimeoutMs(serverName: string, toolName: string): Promise<n
         eq(mcpToolBinding.toolName, toolName),
         eq(mcpToolBinding.enabled, true)
       )
-    )
-    .limit(1);
-  if (exact[0]?.timeoutMs) return exact[0].timeoutMs;
-  const wildcard = await db
+    );
+  const exact =
+    exactRows.find((row) => row.projectId === projectId) ?? exactRows.find((row) => row.projectId == null);
+  if (exact?.timeoutMs) return exact.timeoutMs;
+  const wildcardRows = await db
     .select()
     .from(mcpToolBinding)
     .where(
@@ -53,15 +59,25 @@ async function resolveTimeoutMs(serverName: string, toolName: string): Promise<n
         eq(mcpToolBinding.toolName, "*"),
         eq(mcpToolBinding.enabled, true)
       )
-    )
-    .limit(1);
-  if (wildcard[0]?.timeoutMs) return wildcard[0].timeoutMs;
+    );
+  const wildcard =
+    wildcardRows.find((row) => row.projectId === projectId) ??
+    wildcardRows.find((row) => row.projectId == null);
+  if (wildcard?.timeoutMs) return wildcard.timeoutMs;
   return 60_000;
 }
 
-async function assertToolBindingNotDisabled(serverName: string, toolName: string) {
+async function assertToolBindingNotDisabled(serverName: string, toolName: string, projectId?: string) {
   const db = await getDb();
-  const rows = await db.select().from(mcpToolBinding).where(eq(mcpToolBinding.serverName, serverName));
+  const rows = await db
+    .select()
+    .from(mcpToolBinding)
+    .where(
+      and(
+        eq(mcpToolBinding.serverName, serverName),
+        projectId ? or(eq(mcpToolBinding.projectId, projectId), eq(mcpToolBinding.projectId, null)) : undefined
+      )
+    );
   for (const row of rows) {
     if (row.toolName !== toolName && row.toolName !== "*") continue;
     if (!row.enabled) throw new Error(`mcp tool binding disabled: ${serverName}/${toolName}`);
@@ -85,15 +101,23 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
       const rows = await db
         .select()
         .from(mcpServerConfig)
-        .where(and(eq(mcpServerConfig.name, input.serverName), eq(mcpServerConfig.enabled, true)))
-        .limit(1);
-      const server = rows[0];
+        .where(
+          and(
+            eq(mcpServerConfig.name, input.serverName),
+            eq(mcpServerConfig.enabled, true),
+            input.projectId
+              ? or(eq(mcpServerConfig.projectId, input.projectId), eq(mcpServerConfig.projectId, null))
+              : undefined
+          )
+        );
+      const server =
+        rows.find((row) => row.projectId === input.projectId) ?? rows.find((row) => row.projectId == null);
       if (!server) {
         throw new Error(`mcp server "${input.serverName}" not found or disabled`);
       }
 
-      await assertToolBindingNotDisabled(input.serverName, input.toolName);
-      const timeoutMs = await resolveTimeoutMs(input.serverName, input.toolName);
+      await assertToolBindingNotDisabled(input.serverName, input.toolName, input.projectId);
+      const timeoutMs = await resolveTimeoutMs(input.serverName, input.toolName, input.projectId);
       const caps = server.capabilitiesJson;
 
       let result: unknown;

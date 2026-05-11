@@ -6,18 +6,30 @@ class StepStreamBus {
   private controllersByRun = new Map<string, Set<StreamController>>();
   private encoder = new TextEncoder();
 
+  private safeClose(controller: StreamController): void {
+    try {
+      controller.close();
+    } catch {
+      // Ignore already-closed stream errors.
+    }
+  }
+
   createSseStream(runId: string): ReadableStream<Uint8Array> {
+    let currentController: StreamController | null = null;
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
+        currentController = controller;
         const set = this.controllersByRun.get(runId) ?? new Set<StreamController>();
         set.add(controller);
         this.controllersByRun.set(runId, set);
       },
       cancel: () => {
+        if (!currentController) return;
         const set = this.controllersByRun.get(runId);
         if (!set) return;
-        for (const c of set) c.close();
-        this.controllersByRun.delete(runId);
+        set.delete(currentController);
+        this.safeClose(currentController);
+        if (set.size === 0) this.controllersByRun.delete(runId);
       },
     });
   }
@@ -38,7 +50,7 @@ class StepStreamBus {
   close(runId: string): void {
     const set = this.controllersByRun.get(runId);
     if (!set) return;
-    for (const c of set) c.close();
+    for (const c of set) this.safeClose(c);
     this.controllersByRun.delete(runId);
   }
 }

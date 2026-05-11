@@ -1,5 +1,5 @@
 import { getDb } from "../../../db/sqlite/client";
-import { acpCall, mcpCallLog, toolCallLog } from "../../../db/sqlite/schema";
+import { acpCall, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
@@ -98,6 +98,12 @@ export async function actNode(
   const toolKind = mcp ? "mcp" : "builtin";
   const toolCallId = crypto.randomUUID();
   const db = await getDb();
+  const workflowRows = await db
+    .select({ projectId: workflowRun.projectId })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, state.workflowId))
+    .limit(1);
+  const projectId = workflowRows[0]?.projectId;
 
   emit({
     runId: state.runId,
@@ -245,6 +251,7 @@ export async function actNode(
     action: async () => {
       if (mcp) {
         const mcpResult = await dispatchMcpToolCall({
+          projectId: projectId ?? undefined,
           serverName: mcp.serverName,
           toolName: mcp.toolName,
           arguments: mcp.arguments,

@@ -33,78 +33,99 @@
     {
       "idx": 4,
       "version": "7",
-      "when": 1746604800000,
+      "when": 1777352000000,
       "tag": "0004_v2_trading_agent",
       "breakpoints": true
     },
     {
       "idx": 5,
       "version": "7",
-      "when": 1746609000000,
+      "when": 1777352010000,
       "tag": "0005_v2_debate_protocol",
       "breakpoints": true
     },
     {
       "idx": 6,
       "version": "7",
-      "when": 1746613200000,
+      "when": 1777352020000,
       "tag": "0006_v2_risk_veto",
       "breakpoints": true
     },
     {
       "idx": 7,
       "version": "7",
-      "when": 1746860000000,
+      "when": 1777352030000,
       "tag": "0007_v2_stock_screener",
       "breakpoints": true
     },
     {
       "idx": 8,
       "version": "7",
-      "when": 1746861200000,
+      "when": 1777352040000,
       "tag": "0008_v2_gene_pool",
       "breakpoints": true
     },
     {
       "idx": 9,
       "version": "7",
-      "when": 1746870000000,
+      "when": 1777352050000,
       "tag": "0009_v2_reia",
       "breakpoints": true
     },
     {
       "idx": 10,
       "version": "7",
-      "when": 1746880000000,
+      "when": 1777352060000,
       "tag": "0010_mcp_dispatcher",
       "breakpoints": true
     },
     {
       "idx": 11,
       "version": "7",
-      "when": 1746886000000,
+      "when": 1777352070000,
       "tag": "0011_execution_confirm_ticket",
       "breakpoints": true
     },
     {
       "idx": 12,
       "version": "7",
-      "when": 1746890000000,
+      "when": 1777352080000,
       "tag": "0012_observability_metrics",
       "breakpoints": true
     },
     {
       "idx": 13,
       "version": "7",
-      "when": 1746894000000,
+      "when": 1777352090000,
       "tag": "0013_alert_and_eval",
       "breakpoints": true
     },
     {
       "idx": 14,
       "version": "7",
-      "when": 1746898000000,
+      "when": 1777352100000,
       "tag": "0014_broker_and_compensation",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1777352110000,
+      "tag": "0015_scheduled_job",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1777352120000,
+      "tag": "0016_mcp_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1777352130000,
+      "tag": "0017_mcp_multisource",
       "breakpoints": true
     }
   ]

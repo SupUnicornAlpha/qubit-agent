@@ -1,4 +1,4 @@
-CREATE TABLE `communication_channel` (
+CREATE TABLE IF NOT EXISTS `communication_channel` (
 	`id` text PRIMARY KEY NOT NULL,
 	`workspace_id` text NOT NULL,
 	`project_id` text,
@@ -13,7 +13,7 @@ CREATE TABLE `communication_channel` (
 	FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON UPDATE no action ON DELETE no action
 );
 
-CREATE TABLE `communication_message_log` (
+CREATE TABLE IF NOT EXISTS `communication_message_log` (
 	`id` text PRIMARY KEY NOT NULL,
 	`direction` text NOT NULL,
 	`channel_kind` text NOT NULL,

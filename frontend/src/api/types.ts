@@ -577,3 +577,114 @@ export interface CommunicationMessageLogRecord {
   createdAt: string;
 }
 
+export interface ScheduledJobRecord {
+  id: string;
+  workspaceId: string;
+  projectId: string;
+  sessionId?: string | null;
+  name: string;
+  enabled: boolean;
+  cronExpr: string;
+  timezone: string;
+  payloadJson: Record<string, unknown>;
+  executionMode: "paper" | "live_with_confirm" | "live_direct";
+  nextRunAt?: string | null;
+  lastRunAt?: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScheduledJobRunRecord {
+  id: string;
+  jobId: string;
+  triggerAt: string;
+  status: "pending" | "running" | "success" | "failed" | "skipped";
+  workflowRunId?: string | null;
+  intentOrderId?: string | null;
+  executionReportId?: string | null;
+  errorMessage?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  createdAt: string;
+}
+
+export interface McpCatalogRecord {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  provider: string;
+  source: string;
+  riskLevel: "low" | "medium" | "high";
+  transport: "stdio" | "http" | "ws";
+  command?: string | null;
+  url?: string | null;
+  defaultToolName: string;
+  defaultTimeoutMs: number;
+  defaultRetryPolicyJson: Record<string, unknown>;
+  defaultRateLimitJson: Record<string, unknown>;
+  defaultCapabilitiesJson: unknown[];
+  setupSchemaJson: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpCatalogInstallRecord {
+  id: string;
+  catalogId: string;
+  serverName: string;
+  status: "installed" | "failed";
+  errorMessage?: string | null;
+  installedBy: string;
+  createdAt: string;
+}
+
+export interface McpRegistrySourceRecord {
+  id: string;
+  name: string;
+  baseUrl: string;
+  authType: "none" | "bearer" | "api_key";
+  authRef?: string | null;
+  enabled: boolean;
+  isDefault: boolean;
+  syncIntervalSec: number;
+  lastSyncedAt?: string | null;
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpCatalogItemRecord {
+  id: string;
+  sourceId: string;
+  externalId: string;
+  slug: string;
+  name: string;
+  version: string;
+  description: string;
+  provider: string;
+  transport: "stdio" | "http" | "ws";
+  riskLevel: "low" | "medium" | "high";
+  specJson: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpProjectInstallRecord {
+  id: string;
+  projectId?: string | null;
+  workspaceId?: string | null;
+  sourceId?: string | null;
+  catalogItemId?: string | null;
+  catalogId: string;
+  serverName: string;
+  status: "installed" | "failed";
+  installStatus: "installed" | "failed" | "pending";
+  errorMessage?: string | null;
+  installedBy: string;
+  createdAt: string;
+}
+

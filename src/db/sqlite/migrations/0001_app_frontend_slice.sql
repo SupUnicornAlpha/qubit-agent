@@ -1,6 +1,6 @@
 ALTER TABLE `workflow_run` ADD `source` text DEFAULT 'manual' NOT NULL;
 
-CREATE TABLE `chat_session` (
+CREATE TABLE IF NOT EXISTS `chat_session` (
 	`id` text PRIMARY KEY NOT NULL,
 	`workspace_id` text NOT NULL,
 	`project_id` text,
@@ -14,7 +14,7 @@ CREATE TABLE `chat_session` (
 	FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON UPDATE no action ON DELETE no action
 );
 
-CREATE TABLE `chat_message` (
+CREATE TABLE IF NOT EXISTS `chat_message` (
 	`id` text PRIMARY KEY NOT NULL,
 	`session_id` text NOT NULL,
 	`role` text NOT NULL,
@@ -28,7 +28,7 @@ CREATE TABLE `chat_message` (
 	FOREIGN KEY (`session_id`) REFERENCES `chat_session`(`id`) ON UPDATE no action ON DELETE no action
 );
 
-CREATE TABLE `chat_message_workflow_link` (
+CREATE TABLE IF NOT EXISTS `chat_message_workflow_link` (
 	`id` text PRIMARY KEY NOT NULL,
 	`chat_message_id` text NOT NULL,
 	`workflow_run_id` text NOT NULL,
@@ -37,9 +37,9 @@ CREATE TABLE `chat_message_workflow_link` (
 	FOREIGN KEY (`chat_message_id`) REFERENCES `chat_message`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`workflow_run_id`) REFERENCES `workflow_run`(`id`) ON UPDATE no action ON DELETE no action
 );
-CREATE UNIQUE INDEX `idx_chat_msg_workflow_unique` ON `chat_message_workflow_link` (`chat_message_id`,`workflow_run_id`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_chat_msg_workflow_unique` ON `chat_message_workflow_link` (`chat_message_id`,`workflow_run_id`);
 
-CREATE TABLE `agent_profile` (
+CREATE TABLE IF NOT EXISTS `agent_profile` (
 	`id` text PRIMARY KEY NOT NULL,
 	`definition_id` text NOT NULL,
 	`display_name` text NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE `agent_profile` (
 	FOREIGN KEY (`definition_id`) REFERENCES `agent_definition`(`id`) ON UPDATE no action ON DELETE no action
 );
 
-CREATE TABLE `agent_definition_draft` (
+CREATE TABLE IF NOT EXISTS `agent_definition_draft` (
 	`id` text PRIMARY KEY NOT NULL,
 	`definition_id` text NOT NULL,
 	`version_tag` text NOT NULL,
@@ -72,7 +72,7 @@ CREATE TABLE `agent_definition_draft` (
 	FOREIGN KEY (`sandbox_policy_id`) REFERENCES `sandbox_policy`(`id`) ON UPDATE no action ON DELETE no action
 );
 
-CREATE TABLE `agent_definition_release` (
+CREATE TABLE IF NOT EXISTS `agent_definition_release` (
 	`id` text PRIMARY KEY NOT NULL,
 	`definition_id` text NOT NULL,
 	`draft_id` text NOT NULL,

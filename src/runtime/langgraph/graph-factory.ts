@@ -135,7 +135,7 @@ export class GraphRunner {
             llmProvider: d.llmProvider,
             maxIterations: d.maxIterations,
             sandboxPolicyId: d.sandboxPolicyId,
-            enabled: d.enabled === 1,
+            enabled: Boolean(d.enabled),
           })
         )
       : DEFAULT_DEFINITIONS
