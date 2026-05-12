@@ -1,19 +1,33 @@
 /**
  * Analyst Team & MSA API Routes
  *
- * POST /api/v1/analyst/run          — 启动分析师团队分析
+ * POST /api/v1/analyst/run          — 启动分析师团队分析（异步，立即返回 jobId）
+ * GET  /api/v1/analyst/job/:jobId   — 轮询分析任务状态与结果
  * GET  /api/v1/analyst/signals/:workflowId  — 查询工作流的所有分析师信号
  * GET  /api/v1/analyst/fusion/:workflowId   — 查询工作流的信号融合结果
  */
 
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import { analystSignal, agentRoleCatalog, signalFusionResult, workflowRun } from "../db/sqlite/schema";
-import { runAnalystTeam } from "../runtime/msa/analyst-team";
+import { runAnalystTeam, type AnalystTeamResult } from "../runtime/msa/analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 
 export const analystRouter = new Hono();
+
+/** In-memory async job store (local single-process app, no persistence needed). */
+interface AnalystJob {
+  status: "running" | "completed" | "failed";
+  result?: AnalystTeamResult;
+  error?: string;
+  workflowRunId: string;
+  ticker: string;
+  startedAt: number;
+  endedAt?: number;
+}
+const analystJobs = new Map<string, AnalystJob>();
 
 /**
  * POST /api/v1/analyst/run
@@ -42,21 +56,55 @@ analystRouter.post("/run", async (c) => {
     return c.json({ error: "workflow not found" }, 404);
   }
 
-  try {
-    const result = await runAnalystTeam({
-      workflowRunId: body.workflowRunId,
-      ticker: body.ticker,
-      context: body.context,
+  const jobId = randomUUID();
+  const job: AnalystJob = {
+    status: "running",
+    workflowRunId: body.workflowRunId,
+    ticker: body.ticker,
+    startedAt: Date.now(),
+  };
+  analystJobs.set(jobId, job);
+
+  // Fire-and-forget: run the heavy analysis in the background.
+  void runAnalystTeam({
+    workflowRunId: body.workflowRunId,
+    ticker: body.ticker,
+    context: body.context,
+  })
+    .then((result) => {
+      job.status = "completed";
+      job.result = result;
+      job.endedAt = Date.now();
+      console.log(`[AnalystRouter] job ${jobId} completed in ${job.endedAt - job.startedAt}ms`);
+    })
+    .catch((err) => {
+      job.status = "failed";
+      job.error = err instanceof Error ? err.message : String(err);
+      job.endedAt = Date.now();
+      console.error(`[AnalystRouter] job ${jobId} failed:`, err);
     });
 
-    return c.json({
-      ok: true,
-      data: result,
-    });
-  } catch (err) {
-    console.error("[AnalystRouter] run failed:", err);
-    return c.json({ error: (err as Error).message }, 500);
-  }
+  return c.json({ ok: true, jobId, status: "running" }, 202);
+});
+
+/**
+ * GET /api/v1/analyst/job/:jobId
+ * 轮询分析任务状态与结果
+ */
+analystRouter.get("/job/:jobId", (c) => {
+  const jobId = c.req.param("jobId");
+  const job = analystJobs.get(jobId);
+  if (!job) return c.json({ error: "job not found" }, 404);
+  return c.json({
+    ok: true,
+    jobId,
+    status: job.status,
+    workflowRunId: job.workflowRunId,
+    ticker: job.ticker,
+    elapsedMs: Date.now() - job.startedAt,
+    result: job.result,
+    error: job.error,
+  });
 });
 
 /**
@@ -132,6 +180,26 @@ analystRouter.get("/fusion/history", async (c) => {
   } else {
     results = await query;
   }
+
+  // #region agent log
+  const sample = results[0] as Record<string, unknown> | undefined;
+  fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
+    body: JSON.stringify({
+      sessionId: "6ea60d",
+      hypothesisId: "H2",
+      location: "analyst.routes.ts:fusion/history",
+      message: "fusion history query",
+      data: {
+        rowCount: results.length,
+        sampleKeys: sample ? Object.keys(sample) : [],
+        hasFusedSignal: Boolean(sample && "fusedSignal" in sample),
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
 
   return c.json({ ok: true, data: results });
 });

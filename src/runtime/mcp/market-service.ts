@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, like } from "drizzle-orm";
+import { and, desc, eq, like, ne } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   mcpCatalog,
@@ -21,6 +21,7 @@ type InstallSpec = {
   defaultRetryPolicyJson?: Record<string, unknown>;
   defaultRateLimitJson?: Record<string, unknown>;
   defaultCapabilitiesJson?: unknown[];
+  setupSchemaJson?: Record<string, unknown>;
 };
 
 export async function listMcpSources() {
@@ -240,8 +241,41 @@ export async function listProjectInstalls(projectId: string) {
   return db
     .select()
     .from(mcpCatalogInstall)
-    .where(eq(mcpCatalogInstall.projectId, projectId))
+    .where(and(eq(mcpCatalogInstall.projectId, projectId), ne(mcpCatalogInstall.installStatus, "removed")))
     .orderBy(desc(mcpCatalogInstall.createdAt));
+}
+
+export async function uninstallProjectCatalogInstall(input: {
+  installId: string;
+  projectId: string;
+}): Promise<typeof mcpCatalogInstall.$inferSelect> {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(mcpCatalogInstall)
+    .where(and(eq(mcpCatalogInstall.id, input.installId), eq(mcpCatalogInstall.projectId, input.projectId)))
+    .limit(1);
+  const install = rows[0];
+  if (!install) throw new Error("install not found");
+  if (install.installStatus === "removed") return install;
+
+  if (install.projectId && install.serverName) {
+    await db
+      .update(mcpServerConfig)
+      .set({ enabled: false })
+      .where(and(eq(mcpServerConfig.projectId, install.projectId), eq(mcpServerConfig.name, install.serverName)));
+    await db
+      .delete(mcpToolBinding)
+      .where(and(eq(mcpToolBinding.projectId, install.projectId), eq(mcpToolBinding.serverName, install.serverName)));
+  }
+
+  await db
+    .update(mcpCatalogInstall)
+    .set({ installStatus: "removed" })
+    .where(eq(mcpCatalogInstall.id, install.id));
+
+  const updated = await db.select().from(mcpCatalogInstall).where(eq(mcpCatalogInstall.id, install.id)).limit(1);
+  return updated[0]!;
 }
 
 export async function testProjectInstall(input: {

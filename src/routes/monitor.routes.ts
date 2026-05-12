@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
+  a2aMessage,
   agentDefinition,
   agentInstance,
   agentStep,
@@ -142,6 +143,45 @@ monitorRouter.get("/sessions/:id/agents-board", async (c) => {
             : null,
         };
       }),
+    },
+  });
+});
+
+monitorRouter.get("/sessions/:id/a2a-messages", async (c) => {
+  const db = await getDb();
+  const sessionId = c.req.param("id");
+  const limit = Math.max(1, Math.min(500, Number(c.req.query("limit") ?? "100")));
+  const workflows = await db
+    .select()
+    .from(workflowRun)
+    .where(eq(workflowRun.sessionId, sessionId))
+    .orderBy(desc(workflowRun.startedAt))
+    .limit(50);
+  const workflowIds = workflows.map((w) => w.id);
+  if (workflowIds.length === 0) return c.json({ data: { sessionId, messages: [] } });
+
+  const [instances, definitions, messages] = await Promise.all([
+    db.select().from(agentInstance),
+    db.select().from(agentDefinition),
+    db.select().from(a2aMessage).orderBy(desc(a2aMessage.createdAt)).limit(limit * 4),
+  ]);
+
+  const defById = new Map(definitions.map((d) => [d.id, d]));
+  const instanceRoleById = new Map(
+    instances.map((i) => [i.id, defById.get(i.definitionId)?.role ?? "unknown"])
+  );
+  const filtered = messages.filter((m) => workflowIds.includes(m.workflowRunId)).slice(0, limit);
+
+  return c.json({
+    data: {
+      sessionId,
+      messages: filtered.map((m) => ({
+        ...m,
+        senderRole: instanceRoleById.get(m.senderInstanceId) ?? "unknown",
+        receiverRole: m.receiverInstanceId
+          ? (instanceRoleById.get(m.receiverInstanceId) ?? "unknown")
+          : null,
+      })),
     },
   });
 });

@@ -151,7 +151,20 @@ async function runOllama(input: LlmGatewayInput): Promise<string> {
 }
 
 function runMock(input: LlmGatewayInput): string {
-  const answer = `Mock reason result by provider=mock model=${input.config.model}`;
+  // Extract goal/task from userPrompt for a more helpful placeholder response.
+  const goalMatch = input.userPrompt.match(/\*\*任务目标\*\*：(.*)/);
+  const goal = goalMatch?.[1]?.trim().slice(0, 80) ?? input.userPrompt.slice(0, 60);
+
+  const answer = [
+    `【Mock 模式】收到任务：「${goal}」`,
+    ``,
+    `当前 LLM 提供商为 mock，未调用真实 AI 模型。`,
+    `请在「配置中心 → 模型配置」中填写真实 API Key（支持 OpenAI / DeepSeek / Qwen 等），`,
+    `保存后重新发送消息即可获得真实 AI 回复。`,
+    ``,
+    `计划执行：task_decompose`,
+  ].join("\n");
+
   for (const token of splitForPseudoStreaming(answer)) {
     input.onToken(token);
   }

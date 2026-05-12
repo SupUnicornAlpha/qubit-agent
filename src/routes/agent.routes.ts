@@ -16,6 +16,11 @@ import {
   sandboxPolicy,
 } from "../db/sqlite/schema";
 import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
+import {
+  loadBuiltinConnectorSettings,
+  saveBuiltinConnectorSettings,
+} from "../runtime/config/builtin-connector-settings";
+import { reloadBuiltinConnectorsFromSettings } from "../connectors/bootstrap";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
   installCatalogItemToProject,
@@ -25,6 +30,7 @@ import {
   setDefaultSource,
   syncSourceNow,
   testProjectInstall,
+  uninstallProjectCatalogInstall,
   upsertMcpSource,
 } from "../runtime/mcp/market-service";
 
@@ -401,6 +407,24 @@ agentRouter.post("/model-config", async (c) => {
   return c.json({ data: saved });
 });
 
+agentRouter.get("/builtin-connector-config", async (c) => {
+  const data = await loadBuiltinConnectorSettings();
+  return c.json({ data });
+});
+
+agentRouter.post("/builtin-connector-config", async (c) => {
+  const body = await c.req.json<{
+    "qubit-data"?: Record<string, unknown>;
+    "qubit-news"?: Record<string, unknown>;
+  }>();
+  await saveBuiltinConnectorSettings({
+    ...(body["qubit-data"] !== undefined ? { "qubit-data": body["qubit-data"] } : {}),
+    ...(body["qubit-news"] !== undefined ? { "qubit-news": body["qubit-news"] } : {}),
+  });
+  const data = await reloadBuiltinConnectorsFromSettings();
+  return c.json({ data });
+});
+
 agentRouter.get("/mcp/servers", async (c) => {
   const db = await getDb();
   const projectId = c.req.query("projectId");
@@ -769,6 +793,20 @@ agentRouter.get("/mcp/market/installs", async (c) => {
   if (!projectId) return c.json({ error: "projectId is required" }, 400);
   const data = await listProjectInstalls(projectId);
   return c.json({ data });
+});
+
+agentRouter.delete("/mcp/market/installs/:id", async (c) => {
+  const installId = c.req.param("id");
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  try {
+    const data = await uninstallProjectCatalogInstall({ installId, projectId });
+    return c.json({ data });
+  } catch (error) {
+    const message = (error as Error).message;
+    if (message === "install not found") return c.json({ error: message }, 404);
+    throw error;
+  }
 });
 
 agentRouter.post("/mcp/market/installs/:id/test", async (c) => {

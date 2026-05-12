@@ -161,3 +161,8 @@ bun tauri dev
 
 - `.qubit/`、`.idea/` 已在 `.gitignore`，属于本地运行配置与 IDE 产物。
 - 当前实现以 MVP 为目标，重点在 runtime 与桌面端联通闭环。
+
+## 产品与数据设计文档
+
+- PRD：`docs/PRD.md`
+- ERD：`docs/ERD.md`

@@ -10,11 +10,12 @@ export function setBackendBaseUrl(url: string): void {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const { headers: initHeaders, ...restInit } = init ?? {};
   const res = await fetch(`${getBackendBaseUrl()}${path}`, {
-    ...init,
+    ...restInit,
     headers: {
       "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
+      ...(initHeaders as Record<string, string> | undefined),
     },
   });
   if (!res.ok) {
@@ -28,8 +29,9 @@ export async function httpGet<T>(path: string): Promise<T> {
   return request<T>(path, { method: "GET" });
 }
 
-export async function httpPost<T>(path: string, body?: unknown): Promise<T> {
+export async function httpPost<T>(path: string, body?: unknown, init?: RequestInit): Promise<T> {
   return request<T>(path, {
+    ...init,
     method: "POST",
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -47,5 +49,9 @@ export async function httpPut<T>(path: string, body?: unknown): Promise<T> {
     method: "PUT",
     body: body ? JSON.stringify(body) : undefined,
   });
+}
+
+export async function httpDelete<T>(path: string): Promise<T> {
+  return request<T>(path, { method: "DELETE" });
 }
 

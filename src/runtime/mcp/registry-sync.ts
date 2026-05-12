@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, like } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCatalogItem, mcpRegistrySource } from "../../db/sqlite/schema";
 
@@ -19,7 +19,8 @@ export interface RegistryCatalogPayload {
 }
 
 const DEFAULT_SOURCE_NAME = "MCP Official Registry";
-const DEFAULT_SOURCE_URL = "https://registry.modelcontextprotocol.io/v1/catalog.json";
+const DEFAULT_SOURCE_URL =
+  "https://registry.modelcontextprotocol.io/v0.1/servers?version=latest&limit=100";
 
 const FALLBACK_CATALOG: RegistryCatalogPayload = {
   items: [
@@ -62,10 +63,140 @@ const FALLBACK_CATALOG: RegistryCatalogPayload = {
   ],
 };
 
+const MAX_REGISTRY_PAGES = 100;
+
 function isCatalogPayload(input: unknown): input is RegistryCatalogPayload {
   if (!input || typeof input !== "object") return false;
   const items = (input as Record<string, unknown>)["items"];
   return Array.isArray(items);
+}
+
+interface OfficialServersPage {
+  servers: unknown[];
+  metadata?: { nextCursor?: string | null };
+}
+
+function isOfficialServersPayload(input: unknown): input is OfficialServersPage {
+  if (!input || typeof input !== "object") return false;
+  const servers = (input as Record<string, unknown>)["servers"];
+  return Array.isArray(servers);
+}
+
+function ensureServersListUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl);
+    if (u.pathname.includes("/v0.1/servers")) {
+      if (!u.searchParams.has("version")) u.searchParams.set("version", "latest");
+      if (!u.searchParams.has("limit")) u.searchParams.set("limit", "100");
+      return u.toString();
+    }
+  } catch {
+    /* keep raw */
+  }
+  return baseUrl;
+}
+
+function mapOfficialServerEntry(entry: unknown): RegistryCatalogPayload["items"][number] | null {
+  if (!entry || typeof entry !== "object") return null;
+  const wrap = entry as Record<string, unknown>;
+  const server = wrap.server;
+  if (!server || typeof server !== "object") return null;
+  const s = server as Record<string, unknown>;
+  const name = typeof s.name === "string" ? s.name : "";
+  if (!name) return null;
+  const version = typeof s.version === "string" ? s.version : "latest";
+  const description = typeof s.description === "string" ? s.description : "";
+  const title = typeof s.title === "string" ? s.title : (name.split("/").pop() ?? name);
+
+  const metaBlock = wrap["_meta"];
+  if (metaBlock && typeof metaBlock === "object") {
+    const official = (metaBlock as Record<string, unknown>)["io.modelcontextprotocol.registry/official"];
+    if (official && typeof official === "object") {
+      const status = (official as Record<string, unknown>)["status"];
+      if (status === "deleted") return null;
+    }
+  }
+
+  const packages = Array.isArray(s.packages) ? s.packages : [];
+  for (const pkg of packages) {
+    if (!pkg || typeof pkg !== "object") continue;
+    const p = pkg as Record<string, unknown>;
+    const transportWrap = p.transport;
+    const transportType =
+      transportWrap && typeof transportWrap === "object"
+        ? (transportWrap as Record<string, unknown>)["type"]
+        : undefined;
+    if (transportType === "stdio") {
+      const identifier = typeof p.identifier === "string" ? p.identifier : "";
+      const pkgVer = typeof p.version === "string" ? p.version : version;
+      const command = identifier ? `npx -y ${identifier}@${pkgVer}` : undefined;
+      const envVars = Array.isArray(p.environmentVariables) ? p.environmentVariables : [];
+      const fields = envVars
+        .map((ev) => {
+          if (!ev || typeof ev !== "object") return null;
+          const e = ev as Record<string, unknown>;
+          const key = typeof e.name === "string" ? e.name : "";
+          if (!key) return null;
+          return {
+            key,
+            type: "string" as const,
+            required: e.isRequired === true,
+            description: typeof e.description === "string" ? e.description : undefined,
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      return {
+        slug: name,
+        name: title,
+        version,
+        description,
+        provider: "registry",
+        transport: "stdio",
+        riskLevel: "medium",
+        externalId: name,
+        specJson: {
+          command,
+          defaultToolName: "",
+          setupSchemaJson: fields.length ? { fields } : {},
+          defaultRetryPolicyJson: { maxAttempts: 2, backoffMs: 200 },
+          defaultRateLimitJson: {},
+          defaultCapabilitiesJson: ["tools"],
+        },
+        enabled: true,
+      };
+    }
+  }
+
+  const remotes = Array.isArray(s.remotes) ? s.remotes : [];
+  for (const remote of remotes) {
+    if (!remote || typeof remote !== "object") continue;
+    const r = remote as Record<string, unknown>;
+    const type = r.type;
+    const url = typeof r.url === "string" ? r.url : "";
+    if ((type === "streamable-http" || type === "sse") && url) {
+      return {
+        slug: name,
+        name: title,
+        version,
+        description,
+        provider: "registry",
+        transport: "http",
+        riskLevel: "medium",
+        externalId: name,
+        specJson: {
+          url,
+          defaultToolName: "",
+          setupSchemaJson: {},
+          defaultRetryPolicyJson: { maxAttempts: 2, backoffMs: 200 },
+          defaultRateLimitJson: {},
+          defaultCapabilitiesJson: ["tools"],
+        },
+        enabled: true,
+      };
+    }
+  }
+
+  return null;
 }
 
 async function fetchCatalogFromSource(
@@ -77,31 +208,69 @@ async function fetchCatalogFromSource(
   } else if (source.authType === "api_key" && source.authRef) {
     headers["x-api-key"] = source.authRef;
   }
-  const response = await fetch(source.baseUrl, { headers });
+
+  const listUrl = ensureServersListUrl(source.baseUrl);
+  const response = await fetch(listUrl, { headers });
   if (!response.ok) {
     throw new Error(`registry source responded ${response.status}`);
   }
-  const json = (await response.json()) as unknown;
-  if (!isCatalogPayload(json)) {
+  const firstJson = (await response.json()) as unknown;
+
+  if (isCatalogPayload(firstJson)) {
+    return firstJson;
+  }
+
+  if (!isOfficialServersPayload(firstJson)) {
     throw new Error("invalid registry payload shape");
   }
-  return json;
+
+  const items: RegistryCatalogPayload["items"] = [];
+  let cursor: string | null | undefined = firstJson.metadata?.nextCursor ?? null;
+  let pageJson: OfficialServersPage = firstJson;
+
+  for (let page = 0; page < MAX_REGISTRY_PAGES; page += 1) {
+    for (const entry of pageJson.servers) {
+      const mapped = mapOfficialServerEntry(entry);
+      if (mapped) items.push(mapped);
+    }
+    if (!cursor || String(cursor).length === 0) break;
+
+    const nextUrl = new URL(listUrl);
+    nextUrl.searchParams.set("cursor", String(cursor));
+    const nextRes = await fetch(nextUrl.toString(), { headers });
+    if (!nextRes.ok) {
+      throw new Error(`registry source responded ${nextRes.status} (page ${page + 2})`);
+    }
+    const nextJson = (await nextRes.json()) as unknown;
+    if (!isOfficialServersPayload(nextJson)) {
+      throw new Error("invalid registry payload shape (paged)");
+    }
+    pageJson = nextJson;
+    cursor = nextJson.metadata?.nextCursor ?? null;
+  }
+
+  return { items };
 }
 
 export async function ensureDefaultRegistrySource(): Promise<void> {
   const db = await getDb();
   const rows = await db.select().from(mcpRegistrySource).limit(1);
-  if (rows[0]) return;
-  await db.insert(mcpRegistrySource).values({
-    id: randomUUID(),
-    name: DEFAULT_SOURCE_NAME,
-    baseUrl: DEFAULT_SOURCE_URL,
-    authType: "none",
-    authRef: null,
-    enabled: true,
-    isDefault: true,
-    syncIntervalSec: 300,
-  });
+  if (!rows[0]) {
+    await db.insert(mcpRegistrySource).values({
+      id: randomUUID(),
+      name: DEFAULT_SOURCE_NAME,
+      baseUrl: DEFAULT_SOURCE_URL,
+      authType: "none",
+      authRef: null,
+      enabled: true,
+      isDefault: true,
+      syncIntervalSec: 300,
+    });
+  }
+  await db
+    .update(mcpRegistrySource)
+    .set({ baseUrl: DEFAULT_SOURCE_URL, updatedAt: new Date().toISOString() })
+    .where(like(mcpRegistrySource.baseUrl, "%v1/catalog.json%"));
 }
 
 export async function syncRegistrySource(sourceId: string): Promise<{

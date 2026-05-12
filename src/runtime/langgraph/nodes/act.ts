@@ -1,10 +1,21 @@
 import { getDb } from "../../../db/sqlite/client";
 import { acpCall, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
+import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { runAnalystTeam } from "../../msa/analyst-team";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
+
+/** Builtin tools routed to ACP connectors (see registerBuiltinConnectors). */
+const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
+  fetch_bars: "qubit-data",
+  fetch_ticks: "qubit-data",
+  write_snapshot: "qubit-data",
+  fetch_news: "qubit-news",
+  extract_event: "qubit-news",
+  score_sentiment: "qubit-news",
+};
 
 type ExtractedToolCall = {
   toolName: string;
@@ -93,9 +104,18 @@ export async function actNode(
     state.reasonText ?? "",
     state.agentDefinition.tools
   );
-  const targetKind = mcp ? "mcp" : "tool";
-  const targetName = mcp ? `${mcp.serverName}/${mcp.toolName}` : toolName;
-  const toolKind = mcp ? "mcp" : "builtin";
+  const connectorTarget = !mcp ? TOOL_CONNECTOR_ROUTES[toolName] : undefined;
+  const targetKind: "mcp" | "tool" | "connector" = mcp ? "mcp" : connectorTarget ? "connector" : "tool";
+  const targetName = mcp
+    ? `${mcp.serverName}/${mcp.toolName}`
+    : connectorTarget
+      ? `${connectorTarget}/${toolName}`
+      : toolName;
+  const toolKind: "mcp" | "builtin" | "acp_connector" = mcp
+    ? "mcp"
+    : connectorTarget
+      ? "acp_connector"
+      : "builtin";
   const toolCallId = crypto.randomUUID();
   const db = await getDb();
   const workflowRows = await db
@@ -160,15 +180,25 @@ export async function actNode(
           arguments: mcp.arguments,
         },
       })
-    : await sandboxExecutor.checkToolCall({
-        runId: state.runId,
-        workflowId: state.workflowId,
-        traceId: state.traceId,
-        agentInstanceId,
-        toolName,
-        payload: { plannedAction: state.plannedAction ?? "unknown" },
-        definition: state.agentDefinition,
-      });
+    : connectorTarget
+      ? await sandboxExecutor.checkConnectorCall({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          agentInstanceId,
+          definition: state.agentDefinition,
+          connectorName: connectorTarget,
+          payload: toolParams,
+        })
+      : await sandboxExecutor.checkToolCall({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          agentInstanceId,
+          toolName,
+          payload: { plannedAction: state.plannedAction ?? "unknown" },
+          definition: state.agentDefinition,
+        });
 
   if (!check.allowed) {
     const acpId = crypto.randomUUID();
@@ -182,7 +212,7 @@ export async function actNode(
       targetName,
       intent: state.plannedAction ?? "tool_call",
       status: "blocked_by_sandbox",
-      errorCode: check.violationType ?? (mcp ? "mcp_not_allowed" : "tool_not_allowed"),
+        errorCode: check.violationType ?? (mcp ? "mcp_not_allowed" : connectorTarget ? "connector_not_allowed" : "tool_not_allowed"),
     });
 
     await db
@@ -257,6 +287,24 @@ export async function actNode(
           arguments: mcp.arguments,
         });
         return { result: "ok" as const, mcpResult };
+      }
+      if (connectorTarget) {
+        const policy = await sandboxExecutor.loadPolicy(state.agentDefinition);
+        const request = buildAcpRequest({
+          sessionId: state.inboundMessage.messageId,
+          workflowId: state.workflowId,
+          senderAgent: agentInstanceId,
+          targetKind: "connector",
+          targetName: connectorTarget,
+          intent: toolName,
+          payload: { operation: toolName, params: toolParams },
+          timeoutMs: policy.maxToolCallMs,
+        });
+        const response = await defaultAcpCaller.call(request);
+        if (response.status !== "success") {
+          throw new Error(response.errorCode ?? response.status ?? "connector_call_failed");
+        }
+        return { result: "ok" as const, connectorResult: response.result };
       }
       // V2: dispatch run_analyst_team tool
       if (toolName === "run_analyst_team") {
@@ -400,6 +448,9 @@ export async function actNode(
   }
   if (toolResult["mcpResult"]) {
     nextObservations.push({ mcpResult: toolResult["mcpResult"] });
+  }
+  if (toolResult["connectorResult"] !== undefined) {
+    nextObservations.push({ connectorResult: toolResult["connectorResult"] });
   }
 
   return {

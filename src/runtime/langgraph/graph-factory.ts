@@ -1,3 +1,4 @@
+import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { eq } from "drizzle-orm";
@@ -20,6 +21,8 @@ import {
   type WorkspaceSandboxPolicy,
 } from "../config/workspace-config";
 import { syncWorkspaceConfigToDb } from "../config/config-sync";
+
+void registerBuiltinConnectors();
 
 type GraphAgentView = {
   instanceId: string;
@@ -255,50 +258,65 @@ export class GraphRunner {
   }): Promise<void> {
     const db = await getDb();
     const agentInstanceId = randomUUID();
+    let state: AgentGraphState | undefined;
 
-    await db.insert(agentInstance).values({
-      id: agentInstanceId,
-      definitionId: params.def.id,
-      workflowRunId: params.workflowId,
-      status: "running",
-      currentIteration: 0,
-      startedAt: new Date().toISOString(),
-    });
-
-    const initialState = createInitialGraphState({
-      runId: params.runId,
-      workflowId: params.workflowId,
-      traceId: params.traceId,
-      agentDefinition: params.def,
-      inboundMessage: {
-        messageId: randomUUID(),
+    const publishError = (message: string, stepIndex: number) => {
+      stepStreamBus.publish({
+        runId: params.runId,
         workflowId: params.workflowId,
         traceId: params.traceId,
-        senderAgent: "system",
-        receiverAgent: agentInstanceId,
-        messageType: "TASK_ASSIGN",
-        payload: params.payload,
-        priority: 50,
-        createdAt: new Date().toISOString(),
-      },
-    });
-    let state = initialState;
-
-    const emit = (event: StepStreamEvent) => {
-      state.events.push(event);
-      stepStreamBus.publish(event);
+        role: params.def.role,
+        type: "error",
+        stepIndex,
+        ts: Date.now(),
+        payload: { error: message },
+      });
     };
 
-    const graph = new StateGraph({
-      channels: {
-        state: {
-          value: (x: AgentGraphState, y: Partial<AgentGraphState>) => ({ ...x, ...y }),
-          default: () => initialState,
-        },
-      },
-    }) as any;
+    try {
+      await db.insert(agentInstance).values({
+        id: agentInstanceId,
+        definitionId: params.def.id,
+        workflowRunId: params.workflowId,
+        status: "running",
+        currentIteration: 0,
+        startedAt: new Date().toISOString(),
+      });
 
-    graph.addNode("perceive", async (input: { state: AgentGraphState }) => {
+      const initialState = createInitialGraphState({
+        runId: params.runId,
+        workflowId: params.workflowId,
+        traceId: params.traceId,
+        agentDefinition: params.def,
+        inboundMessage: {
+          messageId: randomUUID(),
+          workflowId: params.workflowId,
+          traceId: params.traceId,
+          senderAgent: "system",
+          receiverAgent: agentInstanceId,
+          messageType: "TASK_ASSIGN",
+          payload: params.payload,
+          priority: 50,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      state = initialState;
+
+      const emit = (event: StepStreamEvent) => {
+        state!.events.push(event);
+        stepStreamBus.publish(event);
+      };
+
+      const graph = new StateGraph({
+        channels: {
+          state: {
+            value: (x: AgentGraphState, y: Partial<AgentGraphState>) => ({ ...x, ...y }),
+            default: () => initialState,
+          },
+        },
+      }) as any;
+
+      graph.addNode("perceive", async (input: { state: AgentGraphState }) => {
       const s = input.state;
       const perceiveStepId = randomUUID();
       await db.insert(agentStep).values({
@@ -315,7 +333,7 @@ export class GraphRunner {
       return { state: { ...s, ...partial } };
     });
 
-    graph.addNode("reason", async (input: { state: AgentGraphState }) => {
+      graph.addNode("reason", async (input: { state: AgentGraphState }) => {
       const nextIteration = input.state.iteration + 1;
       const iterationCheck = await sandboxExecutor.checkIterationLimit({
         runId: params.runId,
@@ -373,7 +391,7 @@ export class GraphRunner {
       return { state: { ...input.state, iteration: nextIteration, ...partial } };
     });
 
-    graph.addNode("act", async (input: { state: AgentGraphState }) => {
+      graph.addNode("act", async (input: { state: AgentGraphState }) => {
       const s = input.state;
       const actStepId = randomUUID();
       await db.insert(agentStep).values({
@@ -390,13 +408,13 @@ export class GraphRunner {
       return { state: { ...s, ...partial } };
     });
 
-    graph.addNode("observe", async (input: { state: AgentGraphState }) => {
+      graph.addNode("observe", async (input: { state: AgentGraphState }) => {
       const s = input.state;
       const partial = await observeNode(s, emit, agentInstanceId);
       return { state: { ...s, ...partial } };
     });
 
-    graph.addNode("finalize", async (input: { state: AgentGraphState }) => {
+      graph.addNode("finalize", async (input: { state: AgentGraphState }) => {
       const s = input.state;
       const forceLoop = Boolean(params.payload.params?.["forceLoop"]);
       const exceeded = forceLoop && s.iteration >= params.def.maxIterations;
@@ -427,51 +445,79 @@ export class GraphRunner {
       return { state: { ...s, finalResponse } };
     });
 
-    graph.addEdge(START, "perceive");
-    graph.addEdge("perceive", "reason");
-    graph.addEdge("reason", "act");
-    graph.addEdge("act", "observe");
-    graph.addConditionalEdges(
-      "observe",
-      (input: { state: AgentGraphState }) => {
-        if (input.state.finalResponse) return "finalize";
-        const forceLoop = Boolean(params.payload.params?.["forceLoop"]);
-        if (forceLoop && input.state.iteration < params.def.maxIterations) {
-          return "reason";
-        }
-        return "finalize";
-      },
-      { reason: "reason", finalize: "finalize" }
-    );
-    graph.addEdge("finalize", END);
+      graph.addEdge(START, "perceive");
+      graph.addEdge("perceive", "reason");
+      graph.addEdge("reason", "act");
+      graph.addEdge("act", "observe");
+      graph.addConditionalEdges(
+        "observe",
+        (input: { state: AgentGraphState }) => {
+          if (input.state.finalResponse) return "finalize";
+          const forceLoop = Boolean(params.payload.params?.["forceLoop"]);
+          if (forceLoop && input.state.iteration < params.def.maxIterations) {
+            return "reason";
+          }
+          return "finalize";
+        },
+        { reason: "reason", finalize: "finalize" }
+      );
+      graph.addEdge("finalize", END);
 
-    const app = graph.compile();
-    const result = (await app.invoke({ state: initialState })) as { state: AgentGraphState };
-    state = result.state;
+      const app = graph.compile();
+      const result = (await app.invoke({ state: initialState })) as { state: AgentGraphState };
+      state = result.state;
 
-    await db
-      .update(agentInstance)
-      .set({
-        status: "stopped",
-        endedAt: new Date().toISOString(),
-      })
-      .where(eq(agentInstance.id, agentInstanceId));
-    await db
-      .update(workflowRun)
-      .set({ status: state.finalResponse?.["status"] === "terminated" ? "failed" : "completed" })
-      .where(eq(workflowRun.id, params.workflowId));
+      await db
+        .update(agentInstance)
+        .set({
+          status: "stopped",
+          endedAt: new Date().toISOString(),
+        })
+        .where(eq(agentInstance.id, agentInstanceId));
+      await db
+        .update(workflowRun)
+        .set({ status: state.finalResponse?.["status"] === "terminated" ? "failed" : "completed" })
+        .where(eq(workflowRun.id, params.workflowId));
 
-    emit({
-      runId: params.runId,
-      workflowId: params.workflowId,
-      traceId: params.traceId,
-      role: params.def.role,
-      type: "final",
-      stepIndex: state.iteration,
-      ts: Date.now(),
-      payload: state.finalResponse ?? { status: "completed" },
-    });
-    stepStreamBus.close(params.runId);
+      emit({
+        runId: params.runId,
+        workflowId: params.workflowId,
+        traceId: params.traceId,
+        role: params.def.role,
+        type: "final",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: state.finalResponse ?? { status: "completed" },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      publishError(message, state?.iteration ?? 0);
+      try {
+        await db
+          .update(workflowRun)
+          .set({ status: "failed" })
+          .where(eq(workflowRun.id, params.workflowId));
+      } catch {
+        // ignore secondary failures
+      }
+      try {
+        await db
+          .update(agentInstance)
+          .set({
+            status: "error",
+            endedAt: new Date().toISOString(),
+            errorMessage: message.slice(0, 2000),
+          })
+          .where(eq(agentInstance.id, agentInstanceId));
+      } catch {
+        // ignore if instance row never committed
+      }
+    } finally {
+      // Defer close so the browser can process the last SSE frame before FIN;
+      // otherwise EventSource often fires onerror before the "final" handler runs.
+      const rid = params.runId;
+      setTimeout(() => stepStreamBus.close(rid), 250);
+    }
   }
 }
 

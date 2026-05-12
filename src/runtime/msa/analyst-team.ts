@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentInstance, agentStep } from "../../db/sqlite/schema";
+import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
 import { loadDebateConfig } from "../config/debate-config";
@@ -85,6 +85,7 @@ export interface AnalystTeamResult {
  */
 async function runAnalystLlm(params: {
   role: AgentRole;
+  definitionId: string;
   systemPrompt: string;
   ticker: string;
   context: string;
@@ -138,7 +139,7 @@ async function runAnalystLlm(params: {
     : answer.slice(0, 500);
 
   return {
-    definitionId: ANALYST_DEF_IDS[params.role],
+    definitionId: params.definitionId,
     analystRole: params.role,
     ticker: params.ticker,
     signal,
@@ -170,6 +171,20 @@ export async function runAnalystTeam(params: {
     ANALYST_ROLES.includes(d.role as AgentRole)
   );
 
+  const definitionIdByRole: Partial<Record<AgentRole, string>> = {};
+  for (const def of analystDefs) {
+    const r = def.role as AgentRole;
+    if (!definitionIdByRole[r]) definitionIdByRole[r] = def.id;
+  }
+
+  function resolveSignalDefinitionId(role: AgentRole): string {
+    const fromDb = definitionIdByRole[role];
+    if (fromDb) return fromDb;
+    const legacy = ANALYST_DEF_IDS[role];
+    if (legacy) return legacy;
+    return `synthetic-analyst:${role}`;
+  }
+
   // If no analyst defs in DB, fall back to seed defaults
   const prompts: Record<AgentRole, string> = {
     analyst_fundamental: "你是基本面研究员，分析估值/成长/财务健康度/行业地位，输出JSON：{signal,confidence,reasoning,key_drivers,key_risks}",
@@ -187,10 +202,11 @@ export async function runAnalystTeam(params: {
     prompts[def.role as AgentRole] = def.systemPrompt;
   }
 
-  // Create agent instances for tracking
-  const instanceIds: Record<AgentRole, string> = {} as Record<AgentRole, string>;
+  // Create agent instances only when a real agent_definition row exists (FK).
+  const instanceIds: Partial<Record<AgentRole, string>> = {};
   for (const role of ANALYST_ROLES) {
-    const defId = ANALYST_DEF_IDS[role] || `def-${role.replace("_", "-")}`;
+    const defId = definitionIdByRole[role];
+    if (!defId) continue;
     const instanceId = randomUUID();
     instanceIds[role] = instanceId;
     await db.insert(agentInstance).values({
@@ -208,6 +224,7 @@ export async function runAnalystTeam(params: {
     ANALYST_ROLES.map((role) =>
       runAnalystLlm({
         role,
+        definitionId: resolveSignalDefinitionId(role),
         systemPrompt: prompts[role],
         ticker,
         context,
@@ -229,7 +246,7 @@ export async function runAnalystTeam(params: {
     } else {
       // Default to hold with low confidence if analyst fails
       const fallback: RawAnalystSignal = {
-        definitionId: ANALYST_DEF_IDS[role],
+        definitionId: resolveSignalDefinitionId(role),
         analystRole: role,
         ticker,
         signal: "hold",
@@ -240,11 +257,13 @@ export async function runAnalystTeam(params: {
       persistSignals.push({ agentInstanceId: instanceIds[role], signal: fallback });
     }
 
-    // Mark agent instance as stopped
-    await db
-      .update(agentInstance)
-      .set({ status: "stopped", endedAt: new Date().toISOString() })
-      .where(eq(agentInstance.id, instanceIds[role]));
+    const instanceId = instanceIds[role];
+    if (instanceId) {
+      await db
+        .update(agentInstance)
+        .set({ status: "stopped", endedAt: new Date().toISOString() })
+        .where(eq(agentInstance.id, instanceId));
+    }
   }
 
   // Run MSA fusion

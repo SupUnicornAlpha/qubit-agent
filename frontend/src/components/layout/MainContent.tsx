@@ -20,6 +20,7 @@ import {
   getDefaultProjectSession,
   getExecutionSafetyConfig,
   getFusionHistory,
+  getSignalFusion,
   initGenePool,
   getRiskConfig,
   getRiskVetoLogs,
@@ -29,8 +30,10 @@ import {
   listScreenerCandidates,
   listScreenerRuns,
   getModelConfig,
+  getBuiltinConnectorConfig,
   getIntentExecutionView,
   getSessionAgentsBoard,
+  getSessionA2AMessages,
   getEvalRunDetail,
   getWorkflowDetail,
   listBrokerAccounts,
@@ -67,6 +70,7 @@ import {
   runScreener,
   executeIntentConfirmed,
   saveModelConfig,
+  saveBuiltinConnectorConfig,
   saveDebateConfig,
   saveExecutionSafetyConfig,
   saveRiskConfig,
@@ -89,6 +93,7 @@ import {
   installMcpMarket,
   runScheduledJobNow,
   syncMcpSource,
+  uninstallMcpProjectInstall,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
@@ -118,6 +123,7 @@ import type {
   ScreenerCandidateRecord,
   ScreenerRunRecord,
   SessionAgentBoardItem,
+  SessionA2AMessageItem,
   AlertEventRecord,
   AgentRuntimeMetricRecord,
   BrokerAccountRecord,
@@ -132,6 +138,7 @@ import type {
   StepStreamEvent,
   WorkflowQualitySnapshotRecord,
   WorkflowMode,
+  BuiltinConnectorConfig,
 } from "../../api/types";
 import { useAppStore } from "../../store";
 
@@ -491,6 +498,7 @@ const ChatPanel: FC = () => {
   const setSelectedSessionId = useAppStore((s) => s.setSelectedSessionId);
   const chatMessages = useAppStore((s) => s.chatMessages);
   const setChatMessages = useAppStore((s) => s.setChatMessages);
+  const streamEvents = useAppStore((s) => s.streamEvents);
   const pushStreamEvent = useAppStore((s) => s.pushStreamEvent);
 
   const [workspaceId, setWorkspaceId] = useState("");
@@ -498,7 +506,48 @@ const ChatPanel: FC = () => {
   const [input, setInput] = useState("");
   const [errorText, setErrorText] = useState("");
   const [agentsBoard, setAgentsBoard] = useState<SessionAgentBoardItem[]>([]);
+  const [a2aMessages, setA2aMessages] = useState<SessionA2AMessageItem[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const sessionWorkflowIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const msg of chatMessages) {
+      for (const wid of msg.workflowRunIds ?? []) ids.add(wid);
+    }
+    return ids;
+  }, [chatMessages]);
+
+  const timelineItems = useMemo(() => {
+    const streamPart = streamEvents
+      .filter((e) => sessionWorkflowIds.size === 0 || sessionWorkflowIds.has(e.workflowId))
+      .map((e) => {
+        const at = e.ts;
+        let text = `${e.role} ${e.type}`;
+        if (e.type === "token") text = `${e.role} token: ${String(e.payload.token ?? "").slice(0, 40)}`;
+        if (e.type === "tool_call_start") text = `${e.role} 调用工具 ${String(e.payload.targetName ?? e.payload.toolName ?? "")}`;
+        if (e.type === "tool_call_end") text = `${e.role} 工具结束 ${String(e.payload.status ?? "")}`;
+        if (e.type === "observe") text = `${e.role} observe #${e.stepIndex}`;
+        if (e.type === "final") text = `${e.role} 完成`;
+        if (e.type === "error") text = `${e.role} 失败: ${String(e.payload.error ?? "unknown")}`;
+        return {
+          id: `stream-${e.runId}-${e.ts}-${e.type}-${e.stepIndex}`,
+          at,
+          kind: "stream" as const,
+          workflowRunId: e.workflowId,
+          text,
+          detail: JSON.stringify(e.payload).slice(0, 200),
+        };
+      });
+    const a2aPart = a2aMessages.map((m) => ({
+      id: `a2a-${m.id}`,
+      at: new Date(m.createdAt).getTime(),
+      kind: "a2a" as const,
+      workflowRunId: m.workflowRunId,
+      text: `${m.senderRole} → ${m.receiverRole ?? "broadcast"} · ${m.messageType}`,
+      detail: JSON.stringify(m.payloadJson).slice(0, 200),
+    }));
+    return [...streamPart, ...a2aPart].sort((a, b) => b.at - a.at).slice(0, 80);
+  }, [streamEvents, a2aMessages, sessionWorkflowIds]);
 
   useEffect(() => {
     const boot = async () => {
@@ -541,6 +590,9 @@ const ChatPanel: FC = () => {
     void getSessionAgentsBoard(selectedSessionId)
       .then(setAgentsBoard)
       .catch(() => setAgentsBoard([]));
+    void getSessionA2AMessages(selectedSessionId, 120)
+      .then(setA2aMessages)
+      .catch(() => setA2aMessages([]));
   }, [selectedSessionId, refreshKey]);
 
   const onSelectSession = async (sessionId: string) => {
@@ -566,65 +618,158 @@ const ChatPanel: FC = () => {
 
   const bindStream = (workflowId: string, runId: string, assistantMessageId: string) => {
     let buffer = "";
-    const unsubscribe = subscribeWorkflowStream({
+    let streamDone = false;
+    let failTimer: ReturnType<typeof setTimeout> | null = null;
+    let esClose: () => void = () => {};
+
+    const clearFailTimer = () => {
+      if (failTimer !== null) {
+        clearTimeout(failTimer);
+        failTimer = null;
+      }
+    };
+
+    const stopStream = () => {
+      clearFailTimer();
+      esClose();
+    };
+
+    esClose = subscribeWorkflowStream({
       workflowId,
       runId,
       onEvent: (event: StepStreamEvent) => {
         pushStreamEvent(event);
         if (event.type === "token") {
           const piece = String(event.payload.token ?? event.payload.text ?? "");
-          buffer += piece;
-          void patchSessionMessage({
-            messageId: assistantMessageId,
-            content: buffer,
-            status: "running",
-          });
-          setChatMessages((prev) =>
-            prev.map((m) => (m.id === assistantMessageId ? { ...m, content: buffer, status: "running" } : m))
-          );
+          if (piece) {
+            buffer += piece;
+            setChatMessages((prev) =>
+              prev.map((m) => (m.id === assistantMessageId ? { ...m, content: buffer, status: "running" } : m))
+            );
+          }
+        }
+        if (event.type === "observe" || event.type === "tool_call_start" || event.type === "tool_call_end") {
+          // Show tool/observe steps as interim content if no token buffer yet
+          if (!buffer) {
+            const stepLabel =
+              event.type === "tool_call_start"
+                ? `🔧 调用工具: ${String(event.payload.toolName ?? "")}`
+                : event.type === "tool_call_end"
+                  ? `✅ 工具完成: ${String(event.payload.toolName ?? event.payload.targetName ?? "")}`
+                  : `👁 观测第 ${event.stepIndex} 步`;
+            setChatMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMessageId
+                  ? { ...m, content: stepLabel, status: "running" }
+                  : m
+              )
+            );
+          }
         }
         if (event.type === "final") {
-          const finalText = String((event.payload.finalResponse ?? buffer) || "完成");
+          clearFailTimer();
+          streamDone = true;
+          // event.payload IS the finalResponse object; payload.finalResponse does not exist
+          const role = String(event.payload.role ?? "agent");
+          const obs = event.payload.observation as Record<string, unknown> | undefined;
+          let obsText = "";
+          if (obs && Object.keys(obs).length > 0) {
+            const obsStr = JSON.stringify(obs, null, 2);
+            obsText = `\n\n📎 观测结果:\n\`\`\`json\n${obsStr}\n\`\`\``;
+          }
+          const finalText = buffer || `✅ ${role} 已完成（第 ${event.stepIndex} 轮）${obsText}`;
           void patchSessionMessage({
             messageId: assistantMessageId,
             content: finalText,
             status: "completed",
           });
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessageId ? { ...m, content: finalText, status: "completed" } : m
+            )
+          );
           setRefreshKey((v) => v + 1);
-          unsubscribe();
+          stopStream();
         }
         if (event.type === "error") {
+          clearFailTimer();
+          streamDone = true;
+          const errMsg = String(event.payload.error ?? "unknown error");
           void patchSessionMessage({
             messageId: assistantMessageId,
-            content: buffer || "执行失败",
+            content: buffer || `❌ 执行出错: ${errMsg}`,
             status: "failed",
-            errorMessage: String(event.payload.error ?? "unknown error"),
+            errorMessage: errMsg,
           });
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessageId
+                ? {
+                    ...m,
+                    content: buffer || `❌ 执行出错: ${errMsg}`,
+                    status: "failed",
+                    errorMessage: errMsg,
+                  }
+                : m
+            )
+          );
           setRefreshKey((v) => v + 1);
-          unsubscribe();
+          stopStream();
         }
       },
       onError: () => {
-        void patchSessionMessage({
-          messageId: assistantMessageId,
-          content: buffer || "流式连接中断，请重试",
-          status: "failed",
-          errorMessage: "workflow stream disconnected",
-        });
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMessageId
-              ? {
-                  ...m,
-                  content: buffer || "流式连接中断，请重试",
-                  status: "failed",
-                  errorMessage: "workflow stream disconnected",
-                }
-              : m
-          )
-        );
-        setRefreshKey((v) => v + 1);
-        unsubscribe();
+        if (streamDone) {
+          stopStream();
+          return;
+        }
+        // If we already have some buffer content, the stream likely ended cleanly
+        // just without a proper final event — treat as completed rather than failed.
+        if (buffer.trim()) {
+          clearFailTimer();
+          streamDone = true;
+          void patchSessionMessage({
+            messageId: assistantMessageId,
+            content: buffer,
+            status: "completed",
+          });
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessageId ? { ...m, content: buffer, status: "completed" } : m
+            )
+          );
+          setRefreshKey((v) => v + 1);
+          stopStream();
+          return;
+        }
+        clearFailTimer();
+        // Give the stream a generous grace period — it might have already sent a
+        // final/error event that we're still processing, or the backend just closed
+        // the TCP connection slightly early after sending all data.
+        failTimer = setTimeout(() => {
+          failTimer = null;
+          if (streamDone) return;
+          streamDone = true;
+          void patchSessionMessage({
+            messageId: assistantMessageId,
+            content: buffer || "⚠️ 流式连接中断，请重试",
+            status: "failed",
+            errorMessage: "workflow stream disconnected",
+          });
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMessageId
+                ? {
+                    ...m,
+                    content: buffer || "⚠️ 流式连接中断，请重试",
+                    status: "failed",
+                    errorMessage: "workflow stream disconnected",
+                  }
+                : m
+            )
+          );
+          setRefreshKey((v) => v + 1);
+          stopStream();
+        }, 3000); // 3s grace period (was 450ms — too aggressive)
       },
     });
   };
@@ -654,11 +799,13 @@ const ChatPanel: FC = () => {
         sessionId: selectedSessionId,
         source: "chat",
         messageId: userMsg.id,
+        reuseSessionWorkflow: true,
       });
       await patchSessionMessage({
         messageId: assistantMsg.id,
         workflowRunIds: [created.data.id],
       });
+      await patchSessionMessage({ messageId: userMsg.id, status: "completed" });
       bindStream(created.data.id, created.runId, assistantMsg.id);
       setChatMessages(await listSessionMessages(selectedSessionId));
       setInput("");
@@ -743,6 +890,43 @@ const ChatPanel: FC = () => {
               </div>
             ))}
           </div>
+          <h3 style={{ ...styles.subTitle, marginTop: 14 }}>Agent 间对话（A2A）</h3>
+          <div style={styles.boardList}>
+            {a2aMessages.slice(0, 30).map((msg) => (
+              <div key={msg.id} style={styles.boardCard}>
+                <div style={styles.cardName}>
+                  {msg.senderRole} → {msg.receiverRole ?? "broadcast"}
+                </div>
+                <div style={styles.cardDesc}>type: {msg.messageType}</div>
+                <div style={styles.cardDesc}>workflow: {msg.workflowRunId}</div>
+                <div style={styles.cardDesc}>
+                  {new Date(msg.createdAt).toLocaleString()}
+                </div>
+                <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>
+                  {JSON.stringify(msg.payloadJson).slice(0, 220)}
+                </div>
+              </div>
+            ))}
+            {a2aMessages.length === 0 ? (
+              <div style={styles.chatMeta}>暂无 A2A 消息（当前路径主要是 GraphRunner 直连执行）</div>
+            ) : null}
+          </div>
+          <h3 style={{ ...styles.subTitle, marginTop: 14 }}>统一执行时间线</h3>
+          <div style={styles.boardList}>
+            {timelineItems.map((item) => (
+              <div key={item.id} style={styles.boardCard}>
+                <div style={styles.cardName}>
+                  {item.kind === "a2a" ? "A2A" : "Stream"} · {new Date(item.at).toLocaleTimeString()}
+                </div>
+                <div style={styles.cardDesc}>{item.text}</div>
+                <div style={styles.cardDesc}>workflow: {item.workflowRunId}</div>
+                <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>{item.detail}</div>
+              </div>
+            ))}
+            {timelineItems.length === 0 ? (
+              <div style={styles.chatMeta}>暂无时间线事件</div>
+            ) : null}
+          </div>
         </div>
       </div>
     </>
@@ -765,6 +949,13 @@ const ConfigPanel: FC = () => {
   const [modelName, setModelName] = useState("gpt-4o-mini");
   const [modelApiKey, setModelApiKey] = useState("");
   const [modelBaseUrl, setModelBaseUrl] = useState("");
+  const [tushareToken, setTushareToken] = useState("");
+  const [dataSyntheticFallback, setDataSyntheticFallback] = useState(true);
+  const [newsApiBaseUrl, setNewsApiBaseUrl] = useState("");
+  const [newsApiKey, setNewsApiKey] = useState("");
+  const [newsFetchPath, setNewsFetchPath] = useState("/");
+  const [newsTimeoutMs, setNewsTimeoutMs] = useState(15_000);
+  const [newsSyntheticWhenEmpty, setNewsSyntheticWhenEmpty] = useState(true);
   const [mcpServers, setMcpServers] = useState<McpServerConfigRecord[]>([]);
   const [mcpBindings, setMcpBindings] = useState<McpToolBindingRecord[]>([]);
   const [mcpSources, setMcpSources] = useState<McpRegistrySourceRecord[]>([]);
@@ -827,6 +1018,27 @@ const ConfigPanel: FC = () => {
   const [integrationChannels, setIntegrationChannels] = useState<CommunicationChannelRecord[]>([]);
   const [integrationLogs, setIntegrationLogs] = useState<CommunicationMessageLogRecord[]>([]);
 
+  const hydrateBuiltinConnectorForm = (cfg: BuiltinConnectorConfig) => {
+    const d = cfg["qubit-data"] ?? {};
+    const n = cfg["qubit-news"] ?? {};
+    setTushareToken(typeof d.tushareToken === "string" ? d.tushareToken : "");
+    const sf = d["syntheticFallback"];
+    setDataSyntheticFallback(typeof sf === "boolean" ? sf : String(sf) !== "false");
+    setNewsApiBaseUrl(typeof n.newsApiBaseUrl === "string" ? n.newsApiBaseUrl : "");
+    setNewsApiKey(typeof n.newsApiKey === "string" ? n.newsApiKey : "");
+    setNewsFetchPath(typeof n.newsFetchPath === "string" ? n.newsFetchPath : "/");
+    const to = n["newsTimeoutMs"];
+    setNewsTimeoutMs(
+      typeof to === "number" && Number.isFinite(to)
+        ? to
+        : typeof to === "string" && Number.isFinite(Number(to))
+          ? Number(to)
+          : 15_000
+    );
+    const swe = n["syntheticWhenEmpty"];
+    setNewsSyntheticWhenEmpty(typeof swe === "boolean" ? swe : String(swe) !== "false");
+  };
+
   const loadConfig = async () => {
     const workspaces = await listWorkspaces();
     const currentWorkspace = workspaces[0];
@@ -882,6 +1094,12 @@ const ConfigPanel: FC = () => {
       setDraftPrompt(bundles[0].draft?.systemPrompt ?? bundles[0].definition.systemPrompt);
       setDraftSoul(bundles[0].profile?.soulFileRef ?? "");
     }
+    try {
+      const bc = await getBuiltinConnectorConfig();
+      hydrateBuiltinConnectorForm(bc);
+    } catch {
+      /* ignore */
+    }
   };
 
   useEffect(() => {
@@ -892,6 +1110,9 @@ const ConfigPanel: FC = () => {
       setModelApiKey(cfg.apiKey ?? "");
       setModelBaseUrl(cfg.baseUrl ?? "");
     });
+    void getBuiltinConnectorConfig()
+      .then(hydrateBuiltinConnectorForm)
+      .catch(() => {});
   }, []);
 
   const selectedBundle = useMemo(
@@ -988,6 +1209,15 @@ const ConfigPanel: FC = () => {
       toolName: mcpToolName.trim() || undefined,
     });
     setMcpTestOutput(JSON.stringify(out, null, 2));
+  };
+
+  const uninstallMarketInstallNow = async (installId: string) => {
+    if (!currentProjectId) return;
+    await uninstallMcpProjectInstall({ projectId: currentProjectId, installId });
+    setMcpMarketInstalls(await listMcpProjectInstalls(currentProjectId));
+    setMcpServers(await listMcpServers(currentProjectId));
+    setMcpBindings(await listMcpBindings(currentProjectId));
+    setMcpTestOutput(`已卸载安装记录 ${installId}`);
   };
 
   const createScheduledJobNow = async () => {
@@ -1105,6 +1335,85 @@ const ConfigPanel: FC = () => {
           保存模型配置
         </button>
       </div>
+      <h3 style={styles.subTitle}>内置数据源（qubit-data / qubit-news）</h3>
+      <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
+        在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
+      </p>
+      <div style={{ ...styles.form, flexWrap: "wrap" }}>
+        <input
+          style={{ ...styles.input, minWidth: 200 }}
+          type="password"
+          autoComplete="off"
+          value={tushareToken}
+          onChange={(e) => setTushareToken(e.target.value)}
+          placeholder="Tushare token（日线 K 线，period=1d）"
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#d4d4d8" }}>
+          <input
+            type="checkbox"
+            checked={dataSyntheticFallback}
+            onChange={(e) => setDataSyntheticFallback(e.target.checked)}
+          />
+          行情失败时回落合成
+        </label>
+      </div>
+      <div style={{ ...styles.form, flexWrap: "wrap" }}>
+        <input
+          style={{ ...styles.input, minWidth: 200 }}
+          value={newsApiBaseUrl}
+          onChange={(e) => setNewsApiBaseUrl(e.target.value)}
+          placeholder="新闻 API Base URL"
+        />
+        <input
+          style={{ ...styles.input, minWidth: 160 }}
+          type="password"
+          autoComplete="off"
+          value={newsApiKey}
+          onChange={(e) => setNewsApiKey(e.target.value)}
+          placeholder="API Key（可选）"
+        />
+        <input
+          style={{ ...styles.input, width: 120 }}
+          value={newsFetchPath}
+          onChange={(e) => setNewsFetchPath(e.target.value)}
+          placeholder="路径，默认 /"
+        />
+        <input
+          style={{ ...styles.input, width: 100 }}
+          type="number"
+          value={newsTimeoutMs}
+          onChange={(e) => setNewsTimeoutMs(Number(e.target.value))}
+          placeholder="超时 ms"
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#d4d4d8" }}>
+          <input
+            type="checkbox"
+            checked={newsSyntheticWhenEmpty}
+            onChange={(e) => setNewsSyntheticWhenEmpty(e.target.checked)}
+          />
+          空结果时回落 stub
+        </label>
+        <button
+          style={styles.button}
+          onClick={() =>
+            void saveBuiltinConnectorConfig({
+              "qubit-data": {
+                tushareToken: tushareToken.trim() || undefined,
+                syntheticFallback: dataSyntheticFallback,
+              },
+              "qubit-news": {
+                newsApiBaseUrl: newsApiBaseUrl.trim() || undefined,
+                newsApiKey: newsApiKey.trim() || undefined,
+                newsFetchPath: newsFetchPath.trim() || "/",
+                newsTimeoutMs,
+                syntheticWhenEmpty: newsSyntheticWhenEmpty,
+              },
+            }).then(hydrateBuiltinConnectorForm)
+          }
+        >
+          保存数据源配置
+        </button>
+      </div>
       <h3 style={styles.subTitle}>MCP 配置与连通性</h3>
       <div style={styles.form}>
         <input
@@ -1220,6 +1529,23 @@ const ConfigPanel: FC = () => {
         <button style={styles.button} onClick={() => void testProjectInstallNow()}>
           测试最近安装
         </button>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {mcpMarketInstalls.map((row) => (
+          <div key={row.id} style={styles.form}>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              {row.serverName} · {row.installStatus}
+            </span>
+            <button
+              type="button"
+              style={styles.buttonSecondary}
+              onClick={() => void uninstallMarketInstallNow(row.id)}
+              disabled={!currentProjectId}
+            >
+              卸载
+            </button>
+          </div>
+        ))}
       </div>
       <pre style={styles.streamBox}>{JSON.stringify(mcpSources, null, 2)}</pre>
       <pre style={styles.streamBox}>{JSON.stringify(mcpMarketItems, null, 2)}</pre>
@@ -1550,7 +1876,7 @@ const TeamDashboardPanel: FC = () => {
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [history, setHistory] = useState<SignalFusionRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"run" | "roles" | "history">("run");
+  const [activeTab, setActiveTab] = useState<"run" | "conclusion" | "roles" | "history">("run");
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
     confidenceThreshold: 0.55,
     maxRounds: 2,
@@ -1606,11 +1932,61 @@ const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     void (async () => {
       getAgentRoles().then(setRoles).catch(() => {});
-      getFusionHistory({ limit: 10 }).then(setHistory).catch(() => {});
+      try {
+        const hist = await getFusionHistory({ limit: 10 });
+        // #region agent log
+        fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
+          body: JSON.stringify({
+            sessionId: "6ea60d",
+            hypothesisId: "H2",
+            location: "MainContent.tsx:TeamDashboard:init:fusionHistory",
+            message: "getFusionHistory ok",
+            data: {
+              count: Array.isArray(hist) ? hist.length : -1,
+              sampleKeys: Array.isArray(hist) && hist[0] ? Object.keys(hist[0] as object) : [],
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+        setHistory(hist);
+      } catch (e) {
+        // #region agent log
+        fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
+          body: JSON.stringify({
+            sessionId: "6ea60d",
+            hypothesisId: "H2",
+            location: "MainContent.tsx:TeamDashboard:init:fusionHistory:err",
+            message: "getFusionHistory failed",
+            data: { err: (e as Error).message },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
+        setHistory([]);
+      }
       getDebateConfig().then(setDebateConfigState).catch(() => {});
       getRiskConfig().then(setRiskConfigState).catch(() => {});
       getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
       const wfRows = (await listMonitorWorkflows({})) as Array<Record<string, unknown>>;
+      // #region agent log
+      fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
+        body: JSON.stringify({
+          sessionId: "6ea60d",
+          hypothesisId: "H4",
+          location: "MainContent.tsx:TeamDashboard:init:workflows",
+          message: "listMonitorWorkflows",
+          data: { wfCount: wfRows.length, firstId: wfRows[0]?.id ? String(wfRows[0].id) : null },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       setWorkflowOptions(wfRows);
       if (!workflowRunId && wfRows[0]?.id) {
         setWorkflowRunId(String(wfRows[0].id));
@@ -1618,6 +1994,28 @@ const TeamDashboardPanel: FC = () => {
       await refreshBrokerAndComp();
     })().catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "history") return;
+    void (async () => {
+      const rows = await getFusionHistory({ limit: 50 }).catch(() => [] as SignalFusionRecord[]);
+      setHistory(rows);
+      // #region agent log
+      fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
+        body: JSON.stringify({
+          sessionId: "6ea60d",
+          hypothesisId: "H5",
+          location: "MainContent.tsx:TeamDashboard:tab:history",
+          message: "history tab refetch",
+          data: { fetchedLen: rows.length },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    })();
+  }, [activeTab]);
 
   useEffect(() => {
     const row = workflowOptions.find((item) => String(item.id) === workflowRunId);
@@ -1633,6 +2031,8 @@ const TeamDashboardPanel: FC = () => {
     void refreshIntentOrders().catch(() => {});
   }, [workflowRunId]);
 
+  const [runProgress, setRunProgress] = useState<string>("");
+
   const handleRun = async () => {
     if (!ticker.trim()) return;
     setError(null);
@@ -1641,6 +2041,7 @@ const TeamDashboardPanel: FC = () => {
     setLiveDebateEvents([]);
     setReplayTurns([]);
     setReplayVerdict(null);
+    setRunProgress("正在启动分析任务...");
     try {
       const wfId = workflowRunId;
       if (!wfId) {
@@ -1655,9 +2056,19 @@ const TeamDashboardPanel: FC = () => {
         },
         onError: () => {},
       });
-      const res = await runAnalystTeam({ workflowRunId: wfId, ticker: ticker.trim() });
+      // 使用异步轮询，避免浏览器 60s 系统级超时
+      const res = await runAnalystTeam({
+        workflowRunId: wfId,
+        ticker: ticker.trim(),
+        onProgress: (elapsedMs) => {
+          const secs = Math.floor(elapsedMs / 1000);
+          setRunProgress(`分析进行中… 已用时 ${secs}s（多 Agent LLM 推理，请耐心等待）`);
+        },
+      });
       unsubscribe();
       setResult(res);
+      setRunProgress("");
+      setActiveTab("conclusion");
       if (res.debate?.sessionId) {
         const [turns, verdict] = await Promise.all([
           getDebateTurns(res.debate.sessionId),
@@ -1672,6 +2083,7 @@ const TeamDashboardPanel: FC = () => {
       setHistory(newHistory);
     } catch (e) {
       setError((e as Error).message);
+      setRunProgress("");
     } finally {
       setRunning(false);
     }
@@ -1900,6 +2312,40 @@ const TeamDashboardPanel: FC = () => {
     await refreshBrokerAndComp();
   };
 
+  const loadLatestFusion = async () => {
+    if (!workflowRunId.trim()) {
+      setError("请先选择工作流");
+      return;
+    }
+    setError(null);
+    try {
+      const data = await getSignalFusion(workflowRunId);
+      if (!data) {
+        setError("数据库中暂无该工作流的融合记录");
+        return;
+      }
+      const d = data as unknown as AnalystTeamResult & {
+        signalBreakdown?: AnalystTeamResult["breakdown"];
+      };
+      setResult({
+        fusionId: d.fusionId,
+        ticker: d.ticker,
+        fusedSignal: d.fusedSignal,
+        fusedConfidence: d.fusedConfidence,
+        debateTriggered: d.debateTriggered,
+        breakdown: d.breakdown?.length ? d.breakdown : d.signalBreakdown ?? [],
+        report:
+          d.report?.trim() ||
+          "（从数据库恢复：仅含融合与分项信号，完整文字报告需重新「启动团队分析」。）",
+        debate: d.debate,
+        risk: d.risk,
+      });
+      setActiveTab("conclusion");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const groupedRoles = TEAM_GROUPS.map((g) => ({
     ...g,
     members: roles.filter((r) => r.team === g.key),
@@ -1911,14 +2357,14 @@ const TeamDashboardPanel: FC = () => {
 
       {/* Tabs */}
       <div style={teamStyles.tabs}>
-        {(["run", "roles", "history"] as const).map((t) => (
+        {(["run", "conclusion", "roles", "history"] as const).map((t) => (
           <button
             key={t}
             type="button"
             style={{ ...teamStyles.tab, ...(activeTab === t ? teamStyles.tabActive : {}) }}
             onClick={() => setActiveTab(t)}
           >
-            {t === "run" ? "🚀 发起分析" : t === "roles" ? "👥 团队成员" : "📊 历史信号"}
+            {t === "run" ? "🚀 发起分析" : t === "conclusion" ? "📋 分析结论" : t === "roles" ? "👥 团队成员" : "📊 历史信号"}
           </button>
         ))}
       </div>
@@ -1956,6 +2402,12 @@ const TeamDashboardPanel: FC = () => {
               {running ? "分析中..." : "启动团队分析"}
             </button>
           </div>
+          {running && runProgress && (
+            <div style={{ ...teamStyles.panel, background: "#1e293b", color: "#38bdf8", fontSize: 13, padding: "8px 14px", marginTop: 8, borderRadius: 6 }}>
+              ⏳ {runProgress}
+            </div>
+          )}
+          {error && <div style={teamStyles.error}>{error}</div>}
 
           <div style={teamStyles.configRow}>
             <div style={teamStyles.field}>
@@ -2315,7 +2767,32 @@ const TeamDashboardPanel: FC = () => {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* Conclusion Panel */}
+      {activeTab === "conclusion" && (
+        <div style={teamStyles.panel}>
+          <p style={{ fontSize: 13, color: "#a1a1aa", marginBottom: 12, lineHeight: 1.5 }}>
+            汇总「多信号融合、分项观点、辩论/风控与文字报告」。运行「启动团队分析」成功后会自动切换到本页；也可从数据库恢复最近一次融合结果。
+          </p>
+          <div style={teamStyles.row}>
+            <button
+              type="button"
+              style={teamStyles.buttonSecondary}
+              onClick={() => void loadLatestFusion()}
+              disabled={!workflowRunId}
+            >
+              从数据库加载当前工作流的最近一次融合
+            </button>
+          </div>
           {error && <div style={teamStyles.error}>{error}</div>}
+
+          {!result && (
+            <div style={teamStyles.empty}>
+              暂无内存中的分析结论。请在「发起分析」填写标的与工作流并点击「启动团队分析」；若此前已跑过，可点击上方按钮尝试从数据库加载最近一次融合。
+            </div>
+          )}
 
           {result && (
             <div style={teamStyles.resultBox}>

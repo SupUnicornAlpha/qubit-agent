@@ -127,6 +127,20 @@
       "when": 1777352130000,
       "tag": "0017_mcp_multisource",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1777352140000,
+      "tag": "0018_builtin_connector_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777352150000,
+      "tag": "0019_execution_task_and_risk_logs",
+      "breakpoints": true
     }
   ]
 }

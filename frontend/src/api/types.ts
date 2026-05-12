@@ -7,6 +7,8 @@ export interface WorkflowCreateInput {
   sessionId?: string;
   source?: "chat" | "manual" | "api";
   messageId?: string;
+  /** Chat mode: reuse latest workflow in this session instead of creating one per message. */
+  reuseSessionWorkflow?: boolean;
 }
 
 export interface AgentSummary {
@@ -71,6 +73,12 @@ export interface ModelConfig {
   model: string;
   apiKey: string;
   baseUrl?: string;
+}
+
+/** Persisted builtin connector init payloads (`qubit-data`, `qubit-news`). */
+export interface BuiltinConnectorConfig {
+  "qubit-data": Record<string, unknown>;
+  "qubit-news": Record<string, unknown>;
 }
 
 export interface AgentDefinitionRecord {
@@ -168,6 +176,19 @@ export interface SessionAgentBoardItem {
     createdAt: string;
     stepIndex: number;
   } | null;
+}
+
+export interface SessionA2AMessageItem {
+  id: string;
+  workflowRunId: string;
+  traceId: string;
+  senderInstanceId: string;
+  receiverInstanceId?: string | null;
+  senderRole: string;
+  receiverRole?: string | null;
+  messageType: string;
+  payloadJson: unknown;
+  createdAt: string;
 }
 
 export interface WorkflowDetail {
@@ -682,7 +703,7 @@ export interface McpProjectInstallRecord {
   catalogId: string;
   serverName: string;
   status: "installed" | "failed";
-  installStatus: "installed" | "failed" | "pending";
+  installStatus: "installed" | "failed" | "pending" | "removed";
   errorMessage?: string | null;
   installedBy: string;
   createdAt: string;

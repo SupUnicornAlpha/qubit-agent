@@ -1,4 +1,4 @@
-import { httpGet, httpPatch, httpPost, httpPut } from "./client";
+import { getBackendBaseUrl, httpDelete, httpGet, httpPatch, httpPost, httpPut } from "./client";
 import type {
   AgentSummary,
   AgentDefinitionBundle,
@@ -41,11 +41,13 @@ import type {
   ChatMessage,
   ChatSession,
   ModelConfig,
+  BuiltinConnectorConfig,
   SessionOverview,
   WorkflowQualitySnapshotRecord,
   WorkflowCompensationTaskRecord,
   AgentRuntimeMetricRecord,
   SessionAgentBoardItem,
+  SessionA2AMessageItem,
   SignalFusionRecord,
   StepStreamEvent,
   WorkflowDetail,
@@ -216,6 +218,21 @@ export async function saveModelConfig(input: Partial<ModelConfig>): Promise<Mode
   return res.data;
 }
 
+export async function getBuiltinConnectorConfig(): Promise<BuiltinConnectorConfig> {
+  const res = await httpGet<{ data: BuiltinConnectorConfig }>("/api/v1/agents/builtin-connector-config");
+  return res.data;
+}
+
+export async function saveBuiltinConnectorConfig(
+  input: Partial<BuiltinConnectorConfig>
+): Promise<BuiltinConnectorConfig> {
+  const res = await httpPost<{ data: BuiltinConnectorConfig }>(
+    "/api/v1/agents/builtin-connector-config",
+    input
+  );
+  return res.data;
+}
+
 export async function listChatSessions(params: {
   workspaceId: string;
   projectId?: string;
@@ -314,6 +331,16 @@ export async function getSessionAgentsBoard(sessionId: string): Promise<SessionA
     `/api/v1/monitor/sessions/${sessionId}/agents-board`
   );
   return res.data.agents;
+}
+
+export async function getSessionA2AMessages(
+  sessionId: string,
+  limit = 120
+): Promise<SessionA2AMessageItem[]> {
+  const res = await httpGet<{ data: { messages: SessionA2AMessageItem[] } }>(
+    `/api/v1/monitor/sessions/${sessionId}/a2a-messages?limit=${encodeURIComponent(String(limit))}`
+  );
+  return res.data.messages;
 }
 
 export async function createWorkflowQuality(workflowId: string): Promise<WorkflowQualitySnapshotRecord> {
@@ -448,13 +475,63 @@ export async function getEvalRunDetail(runId: string): Promise<{
 
 // ─── V2 分析师团队 API ────────────────────────────────────────────────────────
 
+/**
+ * 启动分析师团队分析（异步任务）。
+ * 后端立即返回 jobId，前端通过 pollAnalystJob 轮询结果。
+ * 避免 WebView 系统级 ~60s 超时（分析可能耗时 2-10 分钟）。
+ */
+export async function startAnalystTeam(params: {
+  workflowRunId: string;
+  ticker: string;
+  context?: string;
+}): Promise<{ jobId: string }> {
+  const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
+    "/api/v1/analyst/run",
+    params
+  );
+  return { jobId: res.jobId };
+}
+
+/** 轮询分析任务状态，直到完成或失败 */
+export async function pollAnalystJob(
+  jobId: string,
+  opts?: { intervalMs?: number; timeoutMs?: number; onProgress?: (elapsedMs: number) => void }
+): Promise<AnalystTeamResult> {
+  const intervalMs = opts?.intervalMs ?? 3000;
+  const timeoutMs = opts?.timeoutMs ?? 900_000; // 15 minutes
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const res = await httpGet<{
+      ok: boolean;
+      jobId: string;
+      status: "running" | "completed" | "failed";
+      result?: AnalystTeamResult;
+      error?: string;
+      elapsedMs: number;
+    }>(`/api/v1/analyst/job/${jobId}`);
+
+    if (res.status === "completed" && res.result) {
+      return res.result;
+    }
+    if (res.status === "failed") {
+      throw new Error(res.error ?? "analyst team job failed");
+    }
+    opts?.onProgress?.(res.elapsedMs);
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error("analyst team job timed out after 15 minutes");
+}
+
+/** 保留旧名称向后兼容 */
 export async function runAnalystTeam(params: {
   workflowRunId: string;
   ticker: string;
   context?: string;
+  onProgress?: (elapsedMs: number) => void;
 }): Promise<AnalystTeamResult> {
-  const res = await httpPost<{ ok: boolean; data: AnalystTeamResult }>("/api/v1/analyst/run", params);
-  return res.data;
+  const { jobId } = await startAnalystTeam(params);
+  return pollAnalystJob(jobId, { onProgress: params.onProgress });
 }
 
 export async function getAnalystSignals(workflowId: string): Promise<AnalystSignalRecord[]> {
@@ -485,10 +562,11 @@ export async function getFusionHistory(params?: {
   if (params?.ticker) query.set("ticker", params.ticker);
   if (params?.limit) query.set("limit", String(params.limit));
   if (params?.offset) query.set("offset", String(params.offset));
-  const res = await httpGet<{ ok: boolean; data: SignalFusionRecord[] }>(
+  const res = await httpGet<{ ok?: boolean; data?: SignalFusionRecord[] | null }>(
     `/api/v1/analyst/fusion/history?${query.toString()}`
   );
-  return res.data;
+  const rows = (res as { data?: unknown } | null)?.data;
+  return Array.isArray(rows) ? (rows as SignalFusionRecord[]) : [];
 }
 
 export async function getDebateConfig(): Promise<DebateConfig> {
@@ -520,8 +598,7 @@ export function subscribeDebateStream(params: {
   onEvent: (event: DebateStreamEvent) => void;
   onError?: (err: Event) => void;
 }): () => void {
-  const base = localStorage.getItem("qubit_backend_url") ?? "http://localhost:3000";
-  const url = `${base}/api/v1/debate/stream/${params.workflowRunId}`;
+  const url = `${getBackendBaseUrl()}/api/v1/debate/stream/${params.workflowRunId}`;
   const es = new EventSource(url);
   const types: DebateStreamEvent["type"][] = [
     "debate_start",
@@ -892,34 +969,102 @@ export async function listIntegrationLogs(kind?: "telegram" | "webhook", limit =
   return res.data;
 }
 
+/** Parse one SSE block (lines between blank lines). */
+function parseSseBlock(block: string): { eventName: string; data: string } | null {
+  const lines = block.replace(/\r\n/g, "\n").split("\n");
+  let eventName = "message";
+  const dataLines: string[] = [];
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, "");
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+      continue;
+    }
+    if (line.startsWith("data:")) {
+      dataLines.push(line.startsWith("data: ") ? line.slice(6) : line.slice(5));
+    }
+  }
+  const data = dataLines.join("\n");
+  if (!data) return null;
+  return { eventName, data };
+}
+
+/**
+ * Subscribe to workflow step stream (SSE). Uses fetch + ReadableStream instead of EventSource
+ * so Tauri/WebView does not treat normal stream close as a spurious error/reconnect loop.
+ */
 export function subscribeWorkflowStream(params: {
   workflowId: string;
   runId: string;
   onEvent: (event: StepStreamEvent) => void;
   onError?: (err: Event) => void;
 }): () => void {
-  const base = localStorage.getItem("qubit_backend_url") ?? "http://localhost:3000";
-  const url = `${base}/api/v1/workflows/${params.workflowId}/stream/${params.runId}`;
-  const es = new EventSource(url);
-  const types: StepStreamEvent["type"][] = [
-    "token",
-    "tool_call_start",
-    "tool_call_end",
-    "observe",
-    "step_persisted",
-    "final",
-    "error",
-  ];
-  for (const t of types) {
-    es.addEventListener(t, (ev) => {
-      const msg = ev as MessageEvent<string>;
-      params.onEvent(JSON.parse(msg.data) as StepStreamEvent);
-    });
-  }
-  es.onerror = (err) => {
-    params.onError?.(err);
+  const url = `${getBackendBaseUrl()}/api/v1/workflows/${params.workflowId}/stream/${params.runId}`;
+  const ac = new AbortController();
+  let active = true;
+
+  const run = async (): Promise<void> => {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal: ac.signal,
+        cache: "no-store",
+      });
+      if (!res.ok || !res.body) {
+        if (active) params.onError?.(new Event("http-error"));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (active) {
+        const { done, value } = await reader.read();
+        if (value) buf += decoder.decode(value, { stream: true });
+        if (done) {
+          buf += decoder.decode();
+          break;
+        }
+        buf = buf.replace(/\r\n/g, "\n");
+        for (;;) {
+          const sep = buf.indexOf("\n\n");
+          if (sep < 0) break;
+          const block = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          try {
+            params.onEvent(JSON.parse(parsed.data) as StepStreamEvent);
+          } catch {
+            // ignore malformed JSON
+          }
+        }
+      }
+      if (active && buf.trim()) {
+        const parsed = parseSseBlock(buf);
+        if (parsed) {
+          try {
+            params.onEvent(JSON.parse(parsed.data) as StepStreamEvent);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch (e) {
+      if (!active) return;
+      const name = e instanceof Error ? e.name : "";
+      if (name === "AbortError") return;
+      params.onError?.(new Event("fetch-error"));
+    }
   };
-  return () => es.close();
+
+  void run();
+
+  return () => {
+    active = false;
+    ac.abort();
+  };
 }
 
 export async function listMcpServers(projectId?: string): Promise<McpServerConfigRecord[]> {
@@ -1058,6 +1203,16 @@ export async function installMcpMarket(input: {
 export async function listMcpProjectInstalls(projectId: string): Promise<McpProjectInstallRecord[]> {
   const res = await httpGet<{ data: McpProjectInstallRecord[] }>(
     `/api/v1/agents/mcp/market/installs?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
+export async function uninstallMcpProjectInstall(input: {
+  projectId: string;
+  installId: string;
+}): Promise<McpProjectInstallRecord> {
+  const res = await httpDelete<{ data: McpProjectInstallRecord }>(
+    `/api/v1/agents/mcp/market/installs/${encodeURIComponent(input.installId)}?projectId=${encodeURIComponent(input.projectId)}`
   );
   return res.data;
 }

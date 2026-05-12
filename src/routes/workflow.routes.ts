@@ -27,6 +27,7 @@ workflowRouter.post("/", async (c) => {
     sessionId?: string;
     source?: "chat" | "manual" | "api";
     messageId?: string;
+    reuseSessionWorkflow?: boolean;
   }>();
 
   const created = await createAndDispatchWorkflow({
@@ -36,6 +37,7 @@ workflowRouter.post("/", async (c) => {
     sessionId: body.sessionId,
     source: body.source,
     messageId: body.messageId,
+    reuseSessionWorkflow: body.reuseSessionWorkflow,
   });
   return c.json(created, 201);
 });

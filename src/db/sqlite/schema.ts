@@ -360,7 +360,7 @@ export const mcpCatalogInstall = sqliteTable("mcp_catalog_install", {
   status: text("status", { enum: ["installed", "failed"] })
     .notNull()
     .default("installed"),
-  installStatus: text("install_status", { enum: ["installed", "failed", "pending"] })
+  installStatus: text("install_status", { enum: ["installed", "failed", "pending", "removed"] })
     .notNull()
     .default("installed"),
   errorMessage: text("error_message"),
@@ -928,6 +928,93 @@ export const fill = sqliteTable("fill", {
   filledAt: createdAt(),
 });
 
+/** Built-in paper trading account seeded in migration `0019_execution_task_and_risk_logs`. */
+export const BUILTIN_PAPER_TRADING_ACCOUNT_ID = "ta_builtin_paper" as const;
+/** Built-in mock execution connector instance for paper fills. */
+export const BUILTIN_PAPER_CONNECTOR_INSTANCE_ID = "ci_builtin_paper_execution" as const;
+
+export const executionTask = sqliteTable(
+  "execution_task",
+  {
+    id: id(),
+    orderIntentId: text("order_intent_id")
+      .notNull()
+      .references(() => orderIntent.id),
+    accountId: text("account_id")
+      .notNull()
+      .references(() => tradingAccount.id),
+    status: text("status", {
+      enum: [
+        "pending",
+        "awaiting_review",
+        "dispatching",
+        "waiting_ack",
+        "partially_filled",
+        "filled",
+        "cancelled",
+        "rejected",
+        "failed",
+      ],
+    }).notNull(),
+    retryCount: integer("retry_count").notNull().default(0),
+    maxRetries: integer("max_retries").notNull().default(3),
+    nextRetryAt: text("next_retry_at"),
+    lastError: text("last_error"),
+    traceId: text("trace_id").notNull().default(""),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    orderIntentUnique: uniqueIndex("idx_execution_task_order_intent_unique").on(table.orderIntentId),
+  })
+);
+
+export const executionTaskEvent = sqliteTable("execution_task_event", {
+  id: id(),
+  executionTaskId: text("execution_task_id")
+    .notNull()
+    .references(() => executionTask.id, { onDelete: "cascade" }),
+  eventType: text("event_type", {
+    enum: ["dispatch", "ack", "partial_fill", "fill", "cancel", "reject", "timeout", "retry"],
+  }).notNull(),
+  eventPayloadJson: text("event_payload_json", { mode: "json" }).notNull().default("{}"),
+  eventAt: text("event_at").notNull(),
+  createdAt: createdAt(),
+});
+
+export const riskHitLog = sqliteTable("risk_hit_log", {
+  id: id(),
+  orderIntentId: text("order_intent_id")
+    .notNull()
+    .references(() => orderIntent.id),
+  riskRuleId: text("risk_rule_id")
+    .notNull()
+    .references(() => riskRule.id),
+  hit: integer("hit", { mode: "boolean" }).notNull(),
+  hitValue: real("hit_value"),
+  thresholdValue: real("threshold_value"),
+  severity: text("severity", {
+    enum: ["info", "warn", "block", "critical"],
+  }).notNull(),
+  message: text("message").notNull().default(""),
+  evaluatedAt: text("evaluated_at").notNull(),
+});
+
+export const riskReviewTicket = sqliteTable("risk_review_ticket", {
+  id: id(),
+  orderIntentId: text("order_intent_id")
+    .notNull()
+    .references(() => orderIntent.id),
+  status: text("status", {
+    enum: ["open", "approved", "rejected", "expired"],
+  }).notNull(),
+  reviewer: text("reviewer"),
+  reviewNote: text("review_note"),
+  expiresAt: text("expires_at").notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 // ─── V2 执行意图对齐域（REIA） ────────────────────────────────────────────────
 
 export const intentOrder = sqliteTable("intent_order", {
@@ -1200,6 +1287,13 @@ export const memorySyncLog = sqliteTable("memory_sync_log", {
   latencyMs: integer("latency_ms"),
   errorDetail: text("error_detail"),
   createdAt: createdAt(),
+});
+
+/** Single-row JSON: init payloads for `qubit-data` / `qubit-news` (configured in the desktop/web UI). */
+export const builtinConnectorSettings = sqliteTable("builtin_connector_settings", {
+  id: text("id").primaryKey(),
+  configJson: text("config_json", { mode: "json" }).notNull(),
+  updatedAt: updatedAt(),
 });
 
 export const communicationChannel = sqliteTable("communication_channel", {

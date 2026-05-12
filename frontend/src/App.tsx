@@ -36,9 +36,8 @@ const App: FC = () => {
       if (disposed) return;
       try {
         if (inTauri) {
-          // Prefer local status in Tauri to reduce HTTP probing.
-          const status = await tauriBackendStatus();
-          if (!status.running) throw new Error("backend process not running");
+          // Subprocess flag can be stale/false while HTTP is up (e.g. manual `bun run`). Always verify with getHealth.
+          await tauriBackendStatus().catch(() => null);
         }
         await getHealth();
         lastConnected = true;
@@ -47,6 +46,20 @@ const App: FC = () => {
       } catch {
         lastConnected = false;
         setBackendConnected(false);
+        // #region agent log
+        fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
+          body: JSON.stringify({
+            sessionId: "6ea60d",
+            hypothesisId: "H1",
+            location: "App.tsx:probeHealth:fail",
+            message: "backend health probe failed",
+            data: { inTauri },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+        // #endregion
         if (!inTauri) {
           setBackendHint("后端未连接：请在项目根目录启动 `bun run dev`。");
         }

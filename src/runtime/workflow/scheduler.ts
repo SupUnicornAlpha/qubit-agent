@@ -32,7 +32,7 @@ function floorToMinute(input: Date): Date {
   return d;
 }
 
-function supportsCronExpression(expr: string): boolean {
+export function supportsCronExpression(expr: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
   const [minute, hour, day, month, weekday] = parts;
@@ -40,7 +40,7 @@ function supportsCronExpression(expr: string): boolean {
   return minute === "*" || /^\*\/\d+$/.test(minute);
 }
 
-function parseMinuteStep(expr: string): number {
+export function parseMinuteStep(expr: string): number {
   const minute = expr.trim().split(/\s+/)[0] ?? "*";
   if (minute === "*") return 1;
   const matched = minute.match(/^\*\/(\d+)$/);
