@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
 import { runMigrations } from "../db/sqlite/migrate";
-import { getDb } from "../db/sqlite/client";
+import { closeDb, getDb } from "../db/sqlite/client";
 import { workflowRun } from "../db/sqlite/schema";
 
 async function jsonOf(res: Response) {
@@ -19,6 +19,7 @@ describe("api minimal integration", () => {
     await rm(testHome, { recursive: true, force: true });
     await mkdir(testHome, { recursive: true });
     process.env.HOME = testHome;
+    closeDb();
     await runMigrations();
     const server = await import("../server");
     app = server.app;
@@ -81,6 +82,44 @@ describe("api minimal integration", () => {
     expect((patched.data as Record<string, unknown>).content).toBe("hello stream");
   });
 
+  test("chat: indicator strategy scripts", async () => {
+    const post = await app.request(
+      new Request(`http://test/api/v1/chat/sessions/${sessionId}/strategy-scripts`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "demo-strat",
+          ideCode: "def on_bar(b,c): return None",
+          signalCode: "output={}",
+          purpose: "both",
+          chartSnapshotJson: { symbol: "TSLA", timeframe: "1d" },
+        }),
+      })
+    );
+    expect(post.status).toBe(201);
+    const postJson = await jsonOf(post);
+    const scriptId = (postJson.data as Record<string, unknown>).id as string;
+    expect(scriptId.length).toBeGreaterThan(10);
+
+    const list = await app.request(new Request(`http://test/api/v1/chat/sessions/${sessionId}/strategy-scripts`));
+    expect(list.status).toBe(200);
+    const listJson = await jsonOf(list);
+    const rows = listJson.data as unknown[];
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+
+    const patch = await app.request(
+      new Request(`http://test/api/v1/chat/strategy-scripts/${scriptId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ideCode: "x=1" }),
+      })
+    );
+    expect(patch.status).toBe(200);
+
+    const del = await app.request(new Request(`http://test/api/v1/chat/strategy-scripts/${scriptId}`, { method: "DELETE" }));
+    expect(del.status).toBe(200);
+  });
+
   test("monitor: workflows filter and detail", async () => {
     const db = await getDb();
     const workflowId = crypto.randomUUID();
@@ -135,5 +174,58 @@ describe("api minimal integration", () => {
     expect(res.status).toBe(200);
     const payload = await jsonOf(res);
     expect(payload.ok).toBe(true);
+  });
+
+  test("market: klines returns OHLCV array", async () => {
+    const bad = await app.request(new Request("http://test/api/v1/market/klines"));
+    expect(bad.status).toBe(400);
+
+    const res = await app.request(
+      new Request("http://test/api/v1/market/klines?symbol=600000&exchange=SH&timeframe=1d&limit=10")
+    );
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.ok).toBe(true);
+    expect(Array.isArray(body.data)).toBe(true);
+    const bars = body.data as Record<string, unknown>[];
+    expect(bars.length).toBeGreaterThan(0);
+    expect(bars.length).toBeLessThanOrEqual(10);
+    const b0 = bars[0] as Record<string, unknown>;
+    expect(typeof b0.open).toBe("number");
+    expect(typeof b0.high).toBe("number");
+    expect(typeof b0.low).toBe("number");
+    expect(typeof b0.close).toBe("number");
+    expect(typeof b0.volume).toBe("number");
+    expect(typeof b0.timestamp).toBe("string");
+    const meta = body.meta as Record<string, unknown>;
+    expect(meta.timeframe).toBe("1d");
+    expect(meta.period).toBe("1d");
+    expect(["tushare_daily", "synthetic", "yahoo_chart"]).toContain(meta.dataSource);
+  });
+
+  test("agents: agent-groups list and create", async () => {
+    const listRes = await app.request(new Request("http://test/api/v1/agents/agent-groups"));
+    expect(listRes.status).toBe(200);
+    const listJson = await jsonOf(listRes);
+    expect(Array.isArray(listJson.data)).toBeTrue();
+
+    const createRes = await app.request(
+      new Request("http://test/api/v1/agents/agent-groups", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: `g-${Date.now()}`, description: "integration" }),
+      })
+    );
+    expect(createRes.status).toBe(201);
+    const created = await jsonOf(createRes);
+    const gid = String((created.data as Record<string, unknown>).id ?? "");
+    expect(gid.length).toBeGreaterThan(4);
+
+    const detailRes = await app.request(new Request(`http://test/api/v1/agents/agent-groups/${gid}`));
+    expect(detailRes.status).toBe(200);
+    const detailJson = await jsonOf(detailRes);
+    const data = detailJson.data as Record<string, unknown>;
+    expect(Array.isArray(data.members)).toBeTrue();
+    expect((data.members as unknown[]).length).toBe(0);
   });
 });

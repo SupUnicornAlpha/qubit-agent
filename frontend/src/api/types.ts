@@ -1,4 +1,28 @@
+
+/** OHLCV bar from `GET /api/v1/market/klines`（与后端 BarData 对齐） */
+export interface KlineBar {
+  symbol: string;
+  exchange: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  turnover: number;
+  timestamp: string;
+}
+
+export interface KlinesResponseMeta {
+  timeframe: string;
+  period: string;
+  dataSource: "tushare_daily" | "yahoo_chart" | "synthetic";
+  requestedLimit: number;
+  returned: number;
+}
+
 export type WorkflowMode = "research" | "backtest" | "simulation" | "live";
+
+export type StrategyScriptPurpose = "research" | "live_trading" | "both";
 
 export interface WorkflowCreateInput {
   projectId: string;
@@ -119,6 +143,29 @@ export interface AgentDefinitionBundle {
   draft: AgentDefinitionDraftRecord | null;
 }
 
+export interface AgentGroupRecord {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+  memberCount?: number;
+}
+
+export interface AgentGroupMemberDetail {
+  id: string;
+  groupId: string;
+  definitionId: string;
+  sortOrder: number;
+  role: string;
+  definitionName: string;
+}
+
+export interface AgentGroupDetail {
+  group: AgentGroupRecord;
+  members: AgentGroupMemberDetail[];
+}
+
 export interface ChatSession {
   id: string;
   workspaceId: string;
@@ -139,6 +186,21 @@ export interface ChatMessage {
   createdAt: string;
   workflowRunIds?: string[];
   errorMessage?: string | null;
+}
+
+/** Persisted strategy bundle from IDE (linked to session + optional research workflow run). */
+export interface IndicatorStrategyScriptRecord {
+  id: string;
+  sessionId: string;
+  workflowRunId?: string | null;
+  name: string;
+  ideCode: string;
+  signalCode: string;
+  aiPromptSnapshot?: string | null;
+  chartSnapshotJson?: Record<string, unknown> | string;
+  purpose: StrategyScriptPurpose;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SessionOverview {
@@ -197,6 +259,65 @@ export interface WorkflowDetail {
   steps: Array<Record<string, unknown>>;
   toolCalls: Array<Record<string, unknown>>;
   sandboxViolations: Array<Record<string, unknown>>;
+}
+
+/** GET /analyst/workflow/:id/team-graph */
+export interface AnalystTeamGraphNode {
+  id: string;
+  role: string;
+  label: string;
+}
+
+export interface AnalystTeamGraphEdge {
+  key: string;
+  a: string;
+  b: string;
+  messageCount: number;
+  toolCount: number;
+}
+
+export interface AnalystTeamGraphInteraction {
+  id: string;
+  workflowRunId: string;
+  fromRole: string;
+  toRole: string;
+  kind: string;
+  toolKind: string | null;
+  toolName: string | null;
+  contentText: string;
+  payloadJson: unknown;
+  createdAt: string;
+}
+
+export interface AnalystTeamGraphToolCall {
+  id: string;
+  agentRole: string;
+  agentInstanceId: string;
+  toolName: string;
+  toolKind: string;
+  status: string;
+  latencyMs: number | null;
+  createdAt: string;
+  agentStepId: string;
+}
+
+export interface AnalystTeamGraphMcpCall {
+  id: string;
+  agentRole: string;
+  agentInstanceId: string;
+  serverName: string;
+  toolName: string;
+  status: string;
+  latencyMs: number | null;
+  createdAt: string;
+}
+
+export interface AnalystTeamGraphPayload {
+  nodes: AnalystTeamGraphNode[];
+  edges: AnalystTeamGraphEdge[];
+  interactions: AnalystTeamGraphInteraction[];
+  toolCalls: AnalystTeamGraphToolCall[];
+  mcpCalls: AnalystTeamGraphMcpCall[];
 }
 
 // ─── V2 分析师团队与 MSA 类型 ─────────────────────────────────────────────────
@@ -279,6 +400,20 @@ export interface DebateTurnRecord {
   statement: string;
   confidence: number;
   createdAt: string;
+}
+
+/** GET /debate/sessions/:workflowRunId 返回的辩论会话摘要 */
+export interface DebateSessionRecord {
+  id: string;
+  workflowRunId: string;
+  topic: string;
+  triggerReason: string;
+  maxRounds: number;
+  status: string;
+  consensusScore: number | null;
+  verdict: string | null;
+  createdAt: string;
+  endedAt: string | null;
 }
 
 export interface DebateVerdictRecord {
@@ -425,6 +560,7 @@ export interface ExecutionSafetyCheckResult {
 export interface McpServerConfigRecord {
   id: string;
   name: string;
+  projectId?: string | null;
   transport: "stdio" | "http" | "ws";
   command?: string | null;
   url?: string | null;
@@ -435,6 +571,7 @@ export interface McpServerConfigRecord {
 
 export interface McpToolBindingRecord {
   id: string;
+  projectId?: string | null;
   serverName: string;
   toolName: string;
   enabled: boolean;

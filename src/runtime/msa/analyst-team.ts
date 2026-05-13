@@ -6,15 +6,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
+import { agentDefinition, agentGroupMember, agentInstance, workflowRun } from "../../db/sqlite/schema";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
 import { loadDebateConfig } from "../config/debate-config";
 import { fuseSignals, type RawAnalystSignal } from "./signal-fusion";
 import { runDebateSession } from "../debate/debate-engine";
 import { evaluateRiskAndVeto } from "../risk/veto-engine";
+import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 
 const ANALYST_ROLES: AgentRole[] = [
@@ -23,32 +24,6 @@ const ANALYST_ROLES: AgentRole[] = [
   "analyst_sentiment",
   "analyst_macro",
 ];
-
-const ANALYST_DEF_IDS: Record<AgentRole, string> = {
-  analyst_fundamental: "def-analyst-fundamental",
-  analyst_technical: "def-analyst-technical",
-  analyst_sentiment: "def-analyst-sentiment",
-  analyst_macro: "def-analyst-macro",
-  // fill other roles to satisfy type (unused in this map)
-  orchestrator: "",
-  market_data: "",
-  news_event: "",
-  research: "",
-  backtest: "",
-  simulation: "",
-  risk: "",
-  execution: "",
-  memory: "",
-  audit: "",
-  researcher_bull: "",
-  researcher_bear: "",
-  risk_manager: "",
-  portfolio_manager: "",
-  stock_screener: "",
-  backtest_engineer: "",
-  execution_trader: "",
-  memory_curator: "",
-};
 
 export interface AnalystTeamResult {
   fusionId: string;
@@ -149,69 +124,112 @@ async function runAnalystLlm(params: {
   };
 }
 
-/**
- * 主入口：并行运行四个 Analyst Agent，收集信号，执行 MSA 融合
- */
-export async function runAnalystTeam(params: {
-  workflowRunId: string;
-  ticker: string;
-  context?: string;
-}): Promise<AnalystTeamResult> {
-  const db = await getDb();
-  const { workflowRunId, ticker } = params;
-  const context = params.context ?? `请对 ${ticker} 进行全面分析`;
+async function resolveAnalystSlots(params: {
+  db: Awaited<ReturnType<typeof getDb>>;
+  agentGroupId?: string | null;
+}): Promise<Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>> {
+  const { db, agentGroupId } = params;
+  if (agentGroupId) {
+    const rows = await db
+      .select({ m: agentGroupMember, d: agentDefinition })
+      .from(agentGroupMember)
+      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+      .where(eq(agentGroupMember.groupId, agentGroupId))
+      .orderBy(asc(agentGroupMember.sortOrder));
+    const slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }> = [];
+    for (const row of rows) {
+      if (!row.d.enabled) continue;
+      const role = row.d.role as AgentRole;
+      if (!ANALYST_ROLES.includes(role)) continue;
+      slots.push({ role, definitionId: row.d.id, systemPrompt: row.d.systemPrompt });
+    }
+    if (slots.length === 0) {
+      throw new Error(
+        "所选 Agent 组中没有可用的分析师定义（需为 analyst_fundamental / technical / sentiment / macro 且已启用）"
+      );
+    }
+    return slots;
+  }
 
-  // Load analyst definitions from DB (or use defaults)
-  const dbDefs = await db
-    .select()
-    .from(agentDefinition)
-    .where(eq(agentDefinition.enabled, true));
-
-  const analystDefs = dbDefs.filter((d) =>
-    ANALYST_ROLES.includes(d.role as AgentRole)
-  );
-
+  const dbDefs = await db.select().from(agentDefinition).where(eq(agentDefinition.enabled, true));
+  const analystDefs = dbDefs.filter((d) => ANALYST_ROLES.includes(d.role as AgentRole));
   const definitionIdByRole: Partial<Record<AgentRole, string>> = {};
   for (const def of analystDefs) {
     const r = def.role as AgentRole;
     if (!definitionIdByRole[r]) definitionIdByRole[r] = def.id;
   }
 
-  function resolveSignalDefinitionId(role: AgentRole): string {
-    const fromDb = definitionIdByRole[role];
-    if (fromDb) return fromDb;
-    const legacy = ANALYST_DEF_IDS[role];
-    if (legacy) return legacy;
-    return `synthetic-analyst:${role}`;
-  }
-
-  // If no analyst defs in DB, fall back to seed defaults
   const prompts: Record<AgentRole, string> = {
-    analyst_fundamental: "你是基本面研究员，分析估值/成长/财务健康度/行业地位，输出JSON：{signal,confidence,reasoning,key_drivers,key_risks}",
-    analyst_technical: "你是量化策略师，分析趋势/动量/量价/形态，输出JSON：{signal,confidence,reasoning,entry_zone,stop_loss}",
-    analyst_sentiment: "你是舆情分析师，分析新闻情绪/社媒/分析师评级，输出JSON：{signal,confidence,sentiment_score,reasoning,catalysts,risks}",
-    analyst_macro: "你是宏观策略师，分析货币政策/经济周期/产业政策/全球联动，输出JSON：{signal,confidence,macro_cycle,policy_stance,reasoning}",
-    // unused roles
-    orchestrator: "", market_data: "", news_event: "", research: "",
-    backtest: "", simulation: "", risk: "", execution: "", memory: "", audit: "",
-    researcher_bull: "", researcher_bear: "", risk_manager: "", portfolio_manager: "",
-    stock_screener: "", backtest_engineer: "", execution_trader: "", memory_curator: "",
+    analyst_fundamental:
+      "你是基本面研究员，分析估值/成长/财务健康度/行业地位，输出JSON：{signal,confidence,reasoning,key_drivers,key_risks}",
+    analyst_technical:
+      "你是量化策略师，分析趋势/动量/量价/形态，输出JSON：{signal,confidence,reasoning,entry_zone,stop_loss}",
+    analyst_sentiment:
+      "你是舆情分析师，分析新闻情绪/社媒/分析师评级，输出JSON：{signal,confidence,sentiment_score,reasoning,catalysts,risks}",
+    analyst_macro:
+      "你是宏观策略师，分析货币政策/经济周期/产业政策/全球联动，输出JSON：{signal,confidence,macro_cycle,policy_stance,reasoning}",
+    orchestrator: "",
+    market_data: "",
+    news_event: "",
+    research: "",
+    backtest: "",
+    simulation: "",
+    risk: "",
+    execution: "",
+    memory: "",
+    audit: "",
+    researcher_bull: "",
+    researcher_bear: "",
+    risk_manager: "",
+    portfolio_manager: "",
+    stock_screener: "",
+    backtest_engineer: "",
+    execution_trader: "",
+    memory_curator: "",
   };
-
   for (const def of analystDefs) {
     prompts[def.role as AgentRole] = def.systemPrompt;
   }
 
-  // Create agent instances only when a real agent_definition row exists (FK).
-  const instanceIds: Partial<Record<AgentRole, string>> = {};
+  const slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }> = [];
   for (const role of ANALYST_ROLES) {
     const defId = definitionIdByRole[role];
     if (!defId) continue;
+    slots.push({ role, definitionId: defId, systemPrompt: prompts[role] });
+  }
+  if (slots.length === 0) {
+    throw new Error("未在数据库中找到已启用的 analyst_* 定义，无法运行研究团队分析");
+  }
+  return slots;
+}
+
+/**
+ * 主入口：并行运行 Analyst Agent（默认四类；可选用 Agent 组子集/顺序），收集信号，执行 MSA 融合
+ */
+export async function runAnalystTeam(params: {
+  workflowRunId: string;
+  ticker: string;
+  context?: string;
+  agentGroupId?: string | null;
+}): Promise<AnalystTeamResult> {
+  const db = await getDb();
+  const { workflowRunId, ticker } = params;
+  const context = params.context ?? `请对 ${ticker} 进行全面分析`;
+
+  await db
+    .update(workflowRun)
+    .set({ agentGroupId: params.agentGroupId ?? null })
+    .where(eq(workflowRun.id, workflowRunId));
+
+  const slots = await resolveAnalystSlots({ db, agentGroupId: params.agentGroupId });
+
+  const instanceBySlotIndex: string[] = [];
+  for (let i = 0; i < slots.length; i++) {
     const instanceId = randomUUID();
-    instanceIds[role] = instanceId;
+    instanceBySlotIndex[i] = instanceId;
     await db.insert(agentInstance).values({
       id: instanceId,
-      definitionId: defId,
+      definitionId: slots[i].definitionId,
       workflowRunId,
       status: "running",
       currentIteration: 0,
@@ -219,45 +237,42 @@ export async function runAnalystTeam(params: {
     });
   }
 
-  // Run all analysts in parallel
   const analystResults = await Promise.allSettled(
-    ANALYST_ROLES.map((role) =>
+    slots.map((slot, i) =>
       runAnalystLlm({
-        role,
-        definitionId: resolveSignalDefinitionId(role),
-        systemPrompt: prompts[role],
+        role: slot.role,
+        definitionId: slot.definitionId,
+        systemPrompt: slot.systemPrompt,
         ticker,
         context,
-      }).then((result) => ({ ...result, agentInstanceId: instanceIds[role] }))
+      }).then((result) => ({ ...result, agentInstanceId: instanceBySlotIndex[i] }))
     )
   );
 
-  // Collect successful signals
   const rawSignals: RawAnalystSignal[] = [];
   const persistSignals: Array<{ agentInstanceId?: string; signal: RawAnalystSignal }> = [];
 
-  for (let i = 0; i < ANALYST_ROLES.length; i++) {
-    const role = ANALYST_ROLES[i];
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
     const result = analystResults[i];
     if (result.status === "fulfilled") {
       const { agentInstanceId: _id, ...signal } = result.value;
       rawSignals.push(signal);
-      persistSignals.push({ agentInstanceId: instanceIds[role], signal });
+      persistSignals.push({ agentInstanceId: instanceBySlotIndex[i], signal });
     } else {
-      // Default to hold with low confidence if analyst fails
       const fallback: RawAnalystSignal = {
-        definitionId: resolveSignalDefinitionId(role),
-        analystRole: role,
+        definitionId: slot.definitionId,
+        analystRole: slot.role,
         ticker,
         signal: "hold",
         confidence: 0.2,
-        reasoning: `Analyst ${role} failed: ${result.reason}`,
+        reasoning: `Analyst ${slot.role} failed: ${result.reason}`,
       };
       rawSignals.push(fallback);
-      persistSignals.push({ agentInstanceId: instanceIds[role], signal: fallback });
+      persistSignals.push({ agentInstanceId: instanceBySlotIndex[i], signal: fallback });
     }
 
-    const instanceId = instanceIds[role];
+    const instanceId = instanceBySlotIndex[i];
     if (instanceId) {
       await db
         .update(agentInstance)
@@ -272,6 +287,17 @@ export async function runAnalystTeam(params: {
     signals: rawSignals,
     persistSignals,
   });
+
+  for (const { signal } of persistSignals) {
+    await logResearchTeamInteraction({
+      workflowRunId,
+      fromRole: String(signal.analystRole),
+      toRole: "msa",
+      kind: "llm_message",
+      contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 4000)}`,
+      payloadJson: { ticker, signal: signal.signal, confidence: signal.confidence },
+    });
+  }
 
   // Build human-readable report
   const report = buildTeamReport(ticker, fusionResult.fusedSignal, fusionResult.fusedConfidence, fusionResult.signalBreakdown);

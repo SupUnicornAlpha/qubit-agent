@@ -6,7 +6,10 @@ export const TopBar: FC = () => {
   const backendHint = useAppStore((s) => s.backendHint);
   return (
     <header style={styles.bar}>
-      <span style={styles.logo}>QUBIT</span>
+      <div style={styles.brand}>
+        <img src="/icon.png" alt="QUBIT" width={28} height={28} style={styles.mark} />
+        <span style={styles.logo}>QUBIT</span>
+      </div>
       <span style={styles.subtitle}>量化研究 Agent 平台</span>
       {backendHint ? <span style={styles.hint}>{backendHint}</span> : null}
       <div style={styles.spacer} />
@@ -36,10 +39,24 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     height: 48,
     padding: "0 20px",
-    background: "#18181b",
+    background: "#0d0d0f",
     borderBottom: "1px solid #27272a",
     gap: 12,
     flexShrink: 0,
+  },
+  brand: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexShrink: 0,
+  },
+  mark: {
+    display: "block",
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    objectFit: "cover",
+    boxShadow: "0 1px 3px rgba(0, 0, 0, 0.45)",
   },
   logo: {
     fontWeight: 700,

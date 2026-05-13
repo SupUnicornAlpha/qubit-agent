@@ -59,8 +59,9 @@ const DEFAULT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "market_data",
     name: "MarketData",
     version: "1.0.0",
-    systemPrompt: "Collect market data and write snapshots.",
-    tools: ["fetch_bars", "fetch_ticks", "write_snapshot"],
+    systemPrompt:
+      "Collect market data and write snapshots. Use fetch_bars with startDate/endDate/period, or fetch_klines with symbol, exchange, timeframe (1m|5m|…|1d|1w), limit — same window as GET /api/v1/market/klines.",
+    tools: ["fetch_bars", "fetch_klines", "fetch_ticks", "write_snapshot"],
     mcpServers: ["qubit-data"],
     skills: [],
     subscriptions: ["TASK_ASSIGN"],

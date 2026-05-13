@@ -68,8 +68,29 @@ export const workflowRun = sqliteTable("workflow_run", {
     .notNull()
     .default("pending"),
   signalFusionId: text("signal_fusion_id"),
+  /** 研究团队分析选用的 Agent 组（见迁移 0023_agent_group；Drizzle 侧不声明 FK 避免表定义顺序循环） */
+  agentGroupId: text("agent_group_id"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
+});
+
+/** Saved from IDE: indicator draft + optional Python signal (buy/sell) for backtest / live reuse. */
+export const indicatorStrategyScript = sqliteTable("indicator_strategy_script", {
+  id: id(),
+  sessionId: text("session_id")
+    .notNull()
+    .references(() => chatSession.id, { onDelete: "cascade" }),
+  workflowRunId: text("workflow_run_id").references(() => workflowRun.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  ideCode: text("ide_code").notNull().default(""),
+  signalCode: text("signal_code").notNull().default(""),
+  aiPromptSnapshot: text("ai_prompt_snapshot"),
+  chartSnapshotJson: text("chart_snapshot_json").notNull().default("{}"),
+  purpose: text("purpose", { enum: ["research", "live_trading", "both"] })
+    .notNull()
+    .default("both"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
 export const workflowCompensationTask = sqliteTable("workflow_compensation_task", {
@@ -415,6 +436,32 @@ export const agentDefinition = sqliteTable("agent_definition", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+/** 可复用的多 Agent 编排：成员指向 analyst_* 等 definition，relations 描述协作/汇报关系（展示与后续编排用） */
+export const agentGroup = sqliteTable("agent_group", {
+  id: id(),
+  workspaceId: text("workspace_id").references(() => workspace.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  relationsJson: text("relations_json", { mode: "json" }).notNull().default("[]"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const agentGroupMember = sqliteTable(
+  "agent_group_member",
+  {
+    id: id(),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => agentGroup.id, { onDelete: "cascade" }),
+    definitionId: text("definition_id")
+      .notNull()
+      .references(() => agentDefinition.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [uniqueIndex("agent_group_member_unique_def").on(t.groupId, t.definitionId)]
+);
 
 export const agentProfile = sqliteTable("agent_profile", {
   id: id(),
@@ -1296,6 +1343,22 @@ export const builtinConnectorSettings = sqliteTable("builtin_connector_settings"
   updatedAt: updatedAt(),
 });
 
+/** Server-side market backtest job (SMA crossover v1, etc.). */
+export const backtestJob = sqliteTable("backtest_job", {
+  id: id(),
+  status: text("status", {
+    enum: ["queued", "running", "completed", "failed"],
+  })
+    .notNull()
+    .default("queued"),
+  kind: text("kind").notNull(),
+  paramsJson: text("params_json", { mode: "json" }).notNull(),
+  resultJson: text("result_json", { mode: "json" }),
+  error: text("error"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 export const communicationChannel = sqliteTable("communication_channel", {
   id: id(),
   workspaceId: text("workspace_id")
@@ -1363,6 +1426,24 @@ export const signalFusionResult = sqliteTable("signal_fusion_result", {
   fusedConfidence: real("fused_confidence").notNull().default(0.5),
   weightsJson: text("weights_json", { mode: "json" }).notNull().default("{}"),
   debateTriggered: integer("debate_triggered", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+});
+
+/** 研究团队 / 多 Agent 对话与 tool 调用轨迹（用于 IDE 拓扑与回放） */
+export const researchTeamInteraction = sqliteTable("research_team_interaction", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  fromRole: text("from_role").notNull(),
+  toRole: text("to_role").notNull(),
+  kind: text("kind", {
+    enum: ["llm_message", "tool_call", "signal_submit"],
+  }).notNull(),
+  toolKind: text("tool_kind"),
+  toolName: text("tool_name"),
+  contentText: text("content_text").notNull().default(""),
+  payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
   createdAt: createdAt(),
 });
 

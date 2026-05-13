@@ -1,5 +1,5 @@
-import type { CSSProperties, FC, FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties, FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
 import {
   chatHealth,
   checkBrokerHealth,
@@ -20,6 +20,7 @@ import {
   getDefaultProjectSession,
   getExecutionSafetyConfig,
   getFusionHistory,
+  getAnalystTeamGraph,
   getSignalFusion,
   initGenePool,
   getRiskConfig,
@@ -46,6 +47,7 @@ import {
   listScheduledJobRuns,
   listScheduledJobs,
   listAgentDefinitions,
+  listAgentGroups,
   listAgents,
   listAgentQuality,
   listAlerts,
@@ -97,6 +99,7 @@ import {
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
+  AgentGroupRecord,
   AgentRoleCatalogItem,
   AnalystTeamResult,
   DebateConfig,
@@ -134,16 +137,46 @@ import type {
   ScheduledJobRecord,
   ScheduledJobRunRecord,
   SignalFusionRecord,
+  AnalystTeamGraphPayload,
+  AnalystTeamGraphToolCall,
+  AnalystTeamGraphMcpCall,
   StrategyGenomeRecord,
   StepStreamEvent,
   WorkflowQualitySnapshotRecord,
   WorkflowMode,
   BuiltinConnectorConfig,
 } from "../../api/types";
-import { useAppStore } from "../../store";
+import { useAppStore, type ChartContextPayload } from "../../store";
+import { KlinePanel } from "../chart/KlinePanel";
+import { IdeQuickTradePanel } from "../ide/IdeQuickTradePanel";
+import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
+import { TeamAgentGraph, type TeamGraphSelection } from "../ide/TeamAgentGraph";
 
 export const MainContent: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
+  if (activeView === "ide") {
+    return (
+      <main style={styles.mainIde}>
+        <IdeResearchWorkbench renderChat={() => <ChatPanel ideEmbedded />} />
+      </main>
+    );
+  }
+  if (activeView === "chart") {
+    return (
+      <main style={styles.mainIde}>
+        <KlinePanel />
+      </main>
+    );
+  }
+  if (activeView === "trader") {
+    return (
+      <main style={styles.main}>
+        <div style={{ maxWidth: 420, margin: "24px auto", padding: "0 16px" }}>
+          <IdeQuickTradePanel />
+        </div>
+      </main>
+    );
+  }
   if (activeView === "chat") {
     return (
       <main style={styles.main}>
@@ -491,7 +524,20 @@ const MonitorPanel: FC = () => {
   );
 };
 
-const ChatPanel: FC = () => {
+function formatChartContextBlock(ctx: ChartContextPayload): string {
+  const lines = [
+    "[行情上下文]",
+    `品种: ${ctx.symbol}${ctx.exchange ? ` · 交易所: ${ctx.exchange}` : ""}`,
+    `周期: ${ctx.timeframe} · 请求条数: ${ctx.limit}`,
+  ];
+  if (ctx.summary) lines.push(`摘要: ${ctx.summary}`);
+  lines.push(`采集时间(UTC): ${ctx.fetchedAt}`);
+  return lines.join("\n");
+}
+
+const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
+  const chartContext = useAppStore((s) => s.chartContext);
+  const setChartContext = useAppStore((s) => s.setChartContext);
   const chatSessions = useAppStore((s) => s.chatSessions);
   const setChatSessions = useAppStore((s) => s.setChatSessions);
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
@@ -504,7 +550,15 @@ const ChatPanel: FC = () => {
   const [workspaceId, setWorkspaceId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [input, setInput] = useState("");
+  const chatDraftPrefill = useAppStore((s) => s.chatDraftPrefill);
+  const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
+  useEffect(() => {
+    if (chatDraftPrefill === null) return;
+    setInput(chatDraftPrefill);
+    setChatDraftPrefill(null);
+  }, [chatDraftPrefill, setChatDraftPrefill]);
+
   const [agentsBoard, setAgentsBoard] = useState<SessionAgentBoardItem[]>([]);
   const [a2aMessages, setA2aMessages] = useState<SessionA2AMessageItem[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -518,27 +572,89 @@ const ChatPanel: FC = () => {
   }, [chatMessages]);
 
   const timelineItems = useMemo(() => {
-    const streamPart = streamEvents
-      .filter((e) => sessionWorkflowIds.size === 0 || sessionWorkflowIds.has(e.workflowId))
-      .map((e) => {
-        const at = e.ts;
-        let text = `${e.role} ${e.type}`;
-        if (e.type === "token") text = `${e.role} token: ${String(e.payload.token ?? "").slice(0, 40)}`;
-        if (e.type === "tool_call_start") text = `${e.role} 调用工具 ${String(e.payload.targetName ?? e.payload.toolName ?? "")}`;
-        if (e.type === "tool_call_end") text = `${e.role} 工具结束 ${String(e.payload.status ?? "")}`;
-        if (e.type === "observe") text = `${e.role} observe #${e.stepIndex}`;
-        if (e.type === "final") text = `${e.role} 完成`;
-        if (e.type === "error") text = `${e.role} 失败: ${String(e.payload.error ?? "unknown")}`;
-        return {
-          id: `stream-${e.runId}-${e.ts}-${e.type}-${e.stepIndex}`,
-          at,
-          kind: "stream" as const,
-          workflowRunId: e.workflowId,
-          text,
-          detail: JSON.stringify(e.payload).slice(0, 200),
+    type StreamTimelineItem =
+      | {
+          kind: "stream_tokens";
+          id: string;
+          at: number;
+          workflowRunId: string;
+          runId: string;
+          role: string;
+          text: string;
+          detail: string;
+          mergedBody: string;
+        }
+      | {
+          kind: "stream";
+          id: string;
+          at: number;
+          workflowRunId: string;
+          text: string;
+          detail: string;
         };
+    type A2aTimelineItem = {
+      kind: "a2a";
+      id: string;
+      at: number;
+      workflowRunId: string;
+      text: string;
+      detail: string;
+    };
+    type TimelineItem = StreamTimelineItem | A2aTimelineItem;
+
+    const filtered = streamEvents.filter(
+      (e) => sessionWorkflowIds.size === 0 || sessionWorkflowIds.has(e.workflowId)
+    );
+    const byTs = [...filtered].sort((a, b) => a.ts - b.ts);
+
+    const streamRows: StreamTimelineItem[] = [];
+    for (const e of byTs) {
+      const workflowRunId = e.workflowId;
+      if (e.type === "token") {
+        const piece = String(e.payload.token ?? "");
+        const prev = streamRows[streamRows.length - 1];
+        if (
+          prev?.kind === "stream_tokens" &&
+          prev.workflowRunId === workflowRunId &&
+          prev.runId === e.runId &&
+          prev.role === e.role
+        ) {
+          prev.mergedBody += piece;
+          prev.at = e.ts;
+          prev.detail = JSON.stringify(e.payload).slice(0, 200);
+        } else {
+          streamRows.push({
+            kind: "stream_tokens",
+            id: `stream-tokens-${e.runId}-${e.role}`,
+            at: e.ts,
+            workflowRunId,
+            runId: e.runId,
+            role: e.role,
+            text: `${e.role} 流式输出（已合并）`,
+            detail: JSON.stringify(e.payload).slice(0, 200),
+            mergedBody: piece,
+          });
+        }
+        continue;
+      }
+
+      let text = `${e.role} ${e.type}`;
+      if (e.type === "tool_call_start") text = `${e.role} 调用工具 ${String(e.payload.targetName ?? e.payload.toolName ?? "")}`;
+      if (e.type === "tool_call_end") text = `${e.role} 工具结束 ${String(e.payload.status ?? "")}`;
+      if (e.type === "observe") text = `${e.role} observe #${e.stepIndex}`;
+      if (e.type === "final") text = `${e.role} 完成`;
+      if (e.type === "error") text = `${e.role} 失败: ${String(e.payload.error ?? "unknown")}`;
+      streamRows.push({
+        kind: "stream",
+        id: `stream-${e.runId}-${e.ts}-${e.type}-${e.stepIndex}`,
+        at: e.ts,
+        workflowRunId,
+        text,
+        detail: JSON.stringify(e.payload).slice(0, 200),
       });
-    const a2aPart = a2aMessages.map((m) => ({
+    }
+
+    const a2aPart: A2aTimelineItem[] = a2aMessages.map((m) => ({
       id: `a2a-${m.id}`,
       at: new Date(m.createdAt).getTime(),
       kind: "a2a" as const,
@@ -546,7 +662,7 @@ const ChatPanel: FC = () => {
       text: `${m.senderRole} → ${m.receiverRole ?? "broadcast"} · ${m.messageType}`,
       detail: JSON.stringify(m.payloadJson).slice(0, 200),
     }));
-    return [...streamPart, ...a2aPart].sort((a, b) => b.at - a.at).slice(0, 80);
+    return [...streamRows, ...a2aPart].sort((a, b) => b.at - a.at).slice(0, 80) as TimelineItem[];
   }, [streamEvents, a2aMessages, sessionWorkflowIds]);
 
   useEffect(() => {
@@ -778,11 +894,14 @@ const ChatPanel: FC = () => {
     event.preventDefault();
     if (!selectedSessionId || !projectId || !input.trim()) return;
     try {
+      const trimmed = input.trim();
+      const block = chartContext ? formatChartContextBlock(chartContext) : "";
+      const combinedGoal = block ? `${block}\n\n${trimmed}` : trimmed;
       const userMsg = await createSessionMessage({
         sessionId: selectedSessionId,
         role: "user",
         sender: "user",
-        content: input.trim(),
+        content: combinedGoal,
         status: "running",
       });
       const assistantMsg = await createSessionMessage({
@@ -794,7 +913,7 @@ const ChatPanel: FC = () => {
       });
       const created = await createWorkflow({
         projectId,
-        goal: input.trim(),
+        goal: combinedGoal,
         mode: "research",
         sessionId: selectedSessionId,
         source: "chat",
@@ -809,6 +928,7 @@ const ChatPanel: FC = () => {
       bindStream(created.data.id, created.runId, assistantMsg.id);
       setChatMessages(await listSessionMessages(selectedSessionId));
       setInput("");
+      setChartContext(null);
       setErrorText("");
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : "发送失败");
@@ -816,10 +936,19 @@ const ChatPanel: FC = () => {
   };
 
   return (
-    <>
-      <h2 style={styles.title}>对话工作台</h2>
+    <div style={ideEmbedded ? styles.chatIdeRoot : { minHeight: 520 }}>
+      {ideEmbedded ? (
+        <div style={styles.chatIdeHeader}>
+          对话 · 与右侧 K 线联动；「带入对话分析」会附加行情上下文。
+        </div>
+      ) : null}
+      {chartContext ? (
+        <div style={styles.chartCtxBanner}>
+          已附带行情上下文（{chartContext.symbol} / {chartContext.timeframe}）。发送一条消息后会自动清除。
+        </div>
+      ) : null}
       {errorText ? <div style={styles.errorBox}>{errorText}</div> : null}
-      <div style={styles.chatLayout}>
+      <div style={{ ...styles.chatLayout, ...(ideEmbedded ? styles.chatLayoutIde : {}) }}>
         <div style={styles.chatSidebar}>
           <button style={styles.button} onClick={() => void onCreateSession()}>
             新建会话
@@ -929,7 +1058,7 @@ const ChatPanel: FC = () => {
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 
@@ -938,6 +1067,8 @@ const ConfigPanel: FC = () => {
   const setConfigData = useAppStore((s) => s.setConfigData);
   const reloadSummary = useAppStore((s) => s.reloadSummary);
   const setReloadSummary = useAppStore((s) => s.setReloadSummary);
+  const activeConfigSubPage = useAppStore((s) => s.configSubPage);
+  const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
   const [definitions, setDefinitions] = useState<AgentDefinitionBundle[]>([]);
   const [selectedDefinitionId, setSelectedDefinitionId] = useState("");
   const [draftPrompt, setDraftPrompt] = useState("");
@@ -950,7 +1081,9 @@ const ConfigPanel: FC = () => {
   const [modelApiKey, setModelApiKey] = useState("");
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [tushareToken, setTushareToken] = useState("");
-  const [dataSyntheticFallback, setDataSyntheticFallback] = useState(true);
+  const [klinesDataSource, setKlinesDataSource] = useState<
+    "auto" | "tushare_daily" | "yahoo_chart" | "synthetic"
+  >("auto");
   const [newsApiBaseUrl, setNewsApiBaseUrl] = useState("");
   const [newsApiKey, setNewsApiKey] = useState("");
   const [newsFetchPath, setNewsFetchPath] = useState("/");
@@ -978,6 +1111,10 @@ const ConfigPanel: FC = () => {
   const [mcpToolName, setMcpToolName] = useState("");
   const [mcpTimeoutMs, setMcpTimeoutMs] = useState(20000);
   const [mcpTestOutput, setMcpTestOutput] = useState("");
+  const [focusedMcpServerId, setFocusedMcpServerId] = useState<string | null>(null);
+  const [mcpProbeByServer, setMcpProbeByServer] = useState<
+    Record<string, { status: "idle" | "checking" | "ok" | "error"; message?: string; checkedAt?: string }>
+  >({});
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJobRecord[]>([]);
   const [selectedScheduledJobId, setSelectedScheduledJobId] = useState("");
   const [scheduledJobRuns, setScheduledJobRuns] = useState<ScheduledJobRunRecord[]>([]);
@@ -1022,8 +1159,12 @@ const ConfigPanel: FC = () => {
     const d = cfg["qubit-data"] ?? {};
     const n = cfg["qubit-news"] ?? {};
     setTushareToken(typeof d.tushareToken === "string" ? d.tushareToken : "");
-    const sf = d["syntheticFallback"];
-    setDataSyntheticFallback(typeof sf === "boolean" ? sf : String(sf) !== "false");
+    const kds = d["klinesDataSource"];
+    setKlinesDataSource(
+      kds === "tushare_daily" || kds === "yahoo_chart" || kds === "synthetic" || kds === "auto"
+        ? kds
+        : "auto"
+    );
     setNewsApiBaseUrl(typeof n.newsApiBaseUrl === "string" ? n.newsApiBaseUrl : "");
     setNewsApiKey(typeof n.newsApiKey === "string" ? n.newsApiKey : "");
     setNewsFetchPath(typeof n.newsFetchPath === "string" ? n.newsFetchPath : "/");
@@ -1064,6 +1205,8 @@ const ConfigPanel: FC = () => {
     setDefinitions(bundles);
     setMcpServers(servers);
     setMcpBindings(bindings);
+    setMcpProbeByServer({});
+    setFocusedMcpServerId((prev) => (prev && servers.some((s) => s.id === prev) ? prev : null));
     setMcpSources(sources);
     setMcpMarketItems(marketItems);
     setMcpMarketInstalls(installs);
@@ -1120,6 +1263,104 @@ const ConfigPanel: FC = () => {
     [definitions, selectedDefinitionId]
   );
 
+  const mcpServerBindingCount = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const row of mcpBindings) {
+      map.set(row.serverName, (map.get(row.serverName) ?? 0) + 1);
+    }
+    return map;
+  }, [mcpBindings]);
+
+  const pickBindingForMcpServer = (serverName: string): McpToolBindingRecord | undefined => {
+    const pid = currentProjectId || undefined;
+    const forServer = mcpBindings.filter((b) => b.serverName === serverName);
+    const enabled = forServer.filter((b) => b.enabled);
+    const pool = enabled.length ? enabled : forServer;
+    return (
+      pool.find((b) => b.projectId === pid) ??
+      pool.find((b) => b.projectId == null) ??
+      pool[0]
+    );
+  };
+
+  const mcpConnectionSpecOk = (row: McpServerConfigRecord): boolean => {
+    if (!row.enabled) return false;
+    if (row.transport === "stdio") return Boolean(row.command?.trim());
+    return Boolean(row.url?.trim());
+  };
+
+  const probeMcpServer = async (row: McpServerConfigRecord, binding?: McpToolBindingRecord) => {
+    const key = row.name;
+    if (!mcpConnectionSpecOk(row)) {
+      setMcpProbeByServer((prev) => ({
+        ...prev,
+        [key]: {
+          status: "error",
+          message: !row.enabled ? "Server 已禁用" : row.transport === "stdio" ? "缺少 command" : "缺少 url",
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+      return;
+    }
+    const bind = binding ?? pickBindingForMcpServer(row.name);
+    if (!bind?.toolName?.trim()) {
+      setMcpProbeByServer((prev) => ({
+        ...prev,
+        [key]: {
+          status: "error",
+          message: "未绑定工具，无法探测连通性",
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+      return;
+    }
+    setMcpProbeByServer((prev) => ({
+      ...prev,
+      [key]: { status: "checking", checkedAt: new Date().toISOString() },
+    }));
+    try {
+      const out = await testMcpCall({
+        projectId: currentProjectId || undefined,
+        serverName: row.name,
+        toolName: bind.toolName.trim(),
+        arguments: { ping: true, ts: Date.now() },
+      });
+      setMcpTestOutput(JSON.stringify(out, null, 2));
+      setMcpProbeByServer((prev) => ({
+        ...prev,
+        [key]: {
+          status: "ok",
+          message: out.accepted ? `工具「${bind.toolName}」调用成功` : `工具「${bind.toolName}」返回未接受`,
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMcpTestOutput(msg);
+      setMcpProbeByServer((prev) => ({
+        ...prev,
+        [key]: { status: "error", message: msg, checkedAt: new Date().toISOString() },
+      }));
+    }
+  };
+
+  const applyMcpFromCard = (row: McpServerConfigRecord) => {
+    setNewMcpServerName(row.name);
+    setNewMcpServerTransport(row.transport);
+    setNewMcpServerCommand(row.command?.trim() ? String(row.command) : "");
+    setNewMcpServerUrl(row.url?.trim() ? String(row.url) : "");
+    setSelectedMcpServer(row.name);
+    setFocusedMcpServerId(row.id);
+    const bind = pickBindingForMcpServer(row.name);
+    if (bind) {
+      setMcpToolName(bind.toolName);
+      if (typeof bind.timeoutMs === "number" && Number.isFinite(bind.timeoutMs)) {
+        setMcpTimeoutMs(bind.timeoutMs);
+      }
+    }
+    void probeMcpServer(row, bind);
+  };
+
   const saveMcpBindingNow = async () => {
     if (!selectedMcpServer || !mcpToolName.trim()) return;
     const row = await upsertMcpBinding({
@@ -1133,17 +1374,44 @@ const ConfigPanel: FC = () => {
     });
     setMcpTestOutput(`binding saved: ${row.serverName}/${row.toolName}`);
     setMcpBindings(await listMcpBindings(currentProjectId || undefined));
+    setMcpProbeByServer((prev) => {
+      const next = { ...prev };
+      delete next[row.serverName];
+      return next;
+    });
   };
 
   const testMcpNow = async () => {
     if (!selectedMcpServer || !mcpToolName.trim()) return;
-    const out = await testMcpCall({
-      projectId: currentProjectId || undefined,
-      serverName: selectedMcpServer,
-      toolName: mcpToolName.trim(),
-      arguments: { ping: true, ts: Date.now() },
-    });
-    setMcpTestOutput(JSON.stringify(out, null, 2));
+    const key = selectedMcpServer;
+    setMcpProbeByServer((prev) => ({
+      ...prev,
+      [key]: { status: "checking", checkedAt: new Date().toISOString() },
+    }));
+    try {
+      const out = await testMcpCall({
+        projectId: currentProjectId || undefined,
+        serverName: selectedMcpServer,
+        toolName: mcpToolName.trim(),
+        arguments: { ping: true, ts: Date.now() },
+      });
+      setMcpTestOutput(JSON.stringify(out, null, 2));
+      setMcpProbeByServer((prev) => ({
+        ...prev,
+        [key]: {
+          status: "ok",
+          message: out.accepted ? `工具「${mcpToolName.trim()}」调用成功` : "返回未接受",
+          checkedAt: new Date().toISOString(),
+        },
+      }));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setMcpTestOutput(msg);
+      setMcpProbeByServer((prev) => ({
+        ...prev,
+        [key]: { status: "error", message: msg, checkedAt: new Date().toISOString() },
+      }));
+    }
   };
 
   const upsertMcpServerNow = async () => {
@@ -1159,6 +1427,11 @@ const ConfigPanel: FC = () => {
     });
     setSelectedMcpServer(saved.name);
     setMcpServers(await listMcpServers(currentProjectId || undefined));
+    setMcpProbeByServer((prev) => {
+      const next = { ...prev };
+      delete next[saved.name];
+      return next;
+    });
     setMcpTestOutput(`server upserted: ${saved.name}`);
   };
 
@@ -1299,121 +1572,177 @@ const ConfigPanel: FC = () => {
           触发 reload
         </button>
       </div>
-      <h3 style={styles.subTitle}>模型配置</h3>
-      <div style={styles.form}>
-        <select
-          style={styles.select}
-          value={provider}
-          onChange={(e) =>
-            setProvider(
-              e.target.value as "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
-            )
-          }
-        >
-          <option value="mock">mock</option>
-          <option value="openai">openai</option>
-          <option value="anthropic">anthropic</option>
-          <option value="ollama">ollama</option>
-          <option value="deepseek">deepseek</option>
-          <option value="qwen">qwen</option>
-          <option value="zhipu">zhipu</option>
-        </select>
-        <input style={styles.input} value={modelName} onChange={(e) => setModelName(e.target.value)} />
-        <input style={styles.input} value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} />
-        <input style={styles.input} value={modelBaseUrl} onChange={(e) => setModelBaseUrl(e.target.value)} />
-        <button
-          style={styles.button}
-          onClick={() =>
-            void saveModelConfig({
-              provider,
-              model: modelName,
-              apiKey: modelApiKey,
-              baseUrl: modelBaseUrl || undefined,
-            })
-          }
-        >
-          保存模型配置
-        </button>
+      {reloadSummary ? (
+        <div style={{ ...styles.meta, marginBottom: 12 }}>
+          <span>reload before: {reloadSummary.before}</span>
+          <span>reload after: {reloadSummary.after}</span>
+        </div>
+      ) : null}
+      <div style={styles.configSubNav} role="tablist" aria-label="配置分类">
+        {(
+          [
+            ["llm", "LLM"],
+            ["datasources", "数据源"],
+            ["mcp", "MCP"],
+            ["agent", "Agent"],
+            ["integration", "集成 / IM"],
+            ["schedule", "定时任务"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={activeConfigSubPage === id}
+            style={{
+              ...styles.configSubTab,
+              ...(activeConfigSubPage === id ? styles.configSubTabActive : {}),
+            }}
+            onClick={() => setConfigSubPage(id)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
-      <h3 style={styles.subTitle}>内置数据源（qubit-data / qubit-news）</h3>
-      <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
-        在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
-      </p>
-      <div style={{ ...styles.form, flexWrap: "wrap" }}>
-        <input
-          style={{ ...styles.input, minWidth: 200 }}
-          type="password"
-          autoComplete="off"
-          value={tushareToken}
-          onChange={(e) => setTushareToken(e.target.value)}
-          placeholder="Tushare token（日线 K 线，period=1d）"
-        />
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#d4d4d8" }}>
-          <input
-            type="checkbox"
-            checked={dataSyntheticFallback}
-            onChange={(e) => setDataSyntheticFallback(e.target.checked)}
-          />
-          行情失败时回落合成
-        </label>
-      </div>
-      <div style={{ ...styles.form, flexWrap: "wrap" }}>
-        <input
-          style={{ ...styles.input, minWidth: 200 }}
-          value={newsApiBaseUrl}
-          onChange={(e) => setNewsApiBaseUrl(e.target.value)}
-          placeholder="新闻 API Base URL"
-        />
-        <input
-          style={{ ...styles.input, minWidth: 160 }}
-          type="password"
-          autoComplete="off"
-          value={newsApiKey}
-          onChange={(e) => setNewsApiKey(e.target.value)}
-          placeholder="API Key（可选）"
-        />
-        <input
-          style={{ ...styles.input, width: 120 }}
-          value={newsFetchPath}
-          onChange={(e) => setNewsFetchPath(e.target.value)}
-          placeholder="路径，默认 /"
-        />
-        <input
-          style={{ ...styles.input, width: 100 }}
-          type="number"
-          value={newsTimeoutMs}
-          onChange={(e) => setNewsTimeoutMs(Number(e.target.value))}
-          placeholder="超时 ms"
-        />
-        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#d4d4d8" }}>
-          <input
-            type="checkbox"
-            checked={newsSyntheticWhenEmpty}
-            onChange={(e) => setNewsSyntheticWhenEmpty(e.target.checked)}
-          />
-          空结果时回落 stub
-        </label>
-        <button
-          style={styles.button}
-          onClick={() =>
-            void saveBuiltinConnectorConfig({
-              "qubit-data": {
-                tushareToken: tushareToken.trim() || undefined,
-                syntheticFallback: dataSyntheticFallback,
-              },
-              "qubit-news": {
-                newsApiBaseUrl: newsApiBaseUrl.trim() || undefined,
-                newsApiKey: newsApiKey.trim() || undefined,
-                newsFetchPath: newsFetchPath.trim() || "/",
-                newsTimeoutMs,
-                syntheticWhenEmpty: newsSyntheticWhenEmpty,
-              },
-            }).then(hydrateBuiltinConnectorForm)
-          }
-        >
-          保存数据源配置
-        </button>
-      </div>
+      <div style={styles.configPageBody}>
+        {activeConfigSubPage === "llm" ? (
+          <>
+            <h3 style={styles.subTitle}>LLM（模型提供方）</h3>
+            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+              配置默认对话 / 编排使用的模型与鉴权；保存后由后端加载。
+            </p>
+            <div style={styles.form}>
+              <select
+                style={styles.select}
+                value={provider}
+                onChange={(e) =>
+                  setProvider(
+                    e.target.value as "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
+                  )
+                }
+              >
+                <option value="mock">mock</option>
+                <option value="openai">openai</option>
+                <option value="anthropic">anthropic</option>
+                <option value="ollama">ollama</option>
+                <option value="deepseek">deepseek</option>
+                <option value="qwen">qwen</option>
+                <option value="zhipu">zhipu</option>
+              </select>
+              <input style={styles.input} value={modelName} onChange={(e) => setModelName(e.target.value)} />
+              <input style={styles.input} value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} />
+              <input style={styles.input} value={modelBaseUrl} onChange={(e) => setModelBaseUrl(e.target.value)} />
+              <button
+                style={styles.button}
+                onClick={() =>
+                  void saveModelConfig({
+                    provider,
+                    model: modelName,
+                    apiKey: modelApiKey,
+                    baseUrl: modelBaseUrl || undefined,
+                  })
+                }
+              >
+                保存 LLM 配置
+              </button>
+            </div>
+          </>
+        ) : null}
+        {activeConfigSubPage === "datasources" ? (
+          <>
+            <h3 style={styles.subTitle}>数据源（qubit-data / qubit-news）</h3>
+            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
+              在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
+              <br />
+              K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为无 Tushare token 时使用{" "}
+              <strong>Yahoo Finance</strong>（免费、日线、无需 API key）；有 token 时自动走 Tushare 日线。
+            </p>
+            <div style={{ ...styles.form, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#d4d4d8" }}>
+                <span style={{ whiteSpace: "nowrap" }}>K 线数据源</span>
+                <select
+                  style={styles.select}
+                  value={klinesDataSource}
+                  onChange={(e) =>
+                    setKlinesDataSource(e.target.value as "auto" | "tushare_daily" | "yahoo_chart" | "synthetic")
+                  }
+                >
+                  <option value="auto">自动（有 Tushare → 日线 Tushare；否则 Yahoo）</option>
+                  <option value="yahoo_chart">Yahoo Finance（免费日线）</option>
+                  <option value="tushare_daily">Tushare 日线（需 token）</option>
+                  <option value="synthetic">不拉外源（K 线为空，用于禁用行情）</option>
+                </select>
+              </label>
+              <input
+                style={{ ...styles.input, minWidth: 200 }}
+                type="password"
+                autoComplete="off"
+                value={tushareToken}
+                onChange={(e) => setTushareToken(e.target.value)}
+                placeholder="Tushare token（仅在选择 Tushare 或自动且有 token 时使用）"
+              />
+            </div>
+            <div style={{ ...styles.form, flexWrap: "wrap" }}>
+              <input
+                style={{ ...styles.input, minWidth: 200 }}
+                value={newsApiBaseUrl}
+                onChange={(e) => setNewsApiBaseUrl(e.target.value)}
+                placeholder="新闻 API Base URL"
+              />
+              <input
+                style={{ ...styles.input, minWidth: 160 }}
+                type="password"
+                autoComplete="off"
+                value={newsApiKey}
+                onChange={(e) => setNewsApiKey(e.target.value)}
+                placeholder="API Key（可选）"
+              />
+              <input
+                style={{ ...styles.input, width: 120 }}
+                value={newsFetchPath}
+                onChange={(e) => setNewsFetchPath(e.target.value)}
+                placeholder="路径，默认 /"
+              />
+              <input
+                style={{ ...styles.input, width: 100 }}
+                type="number"
+                value={newsTimeoutMs}
+                onChange={(e) => setNewsTimeoutMs(Number(e.target.value))}
+                placeholder="超时 ms"
+              />
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#d4d4d8" }}>
+                <input
+                  type="checkbox"
+                  checked={newsSyntheticWhenEmpty}
+                  onChange={(e) => setNewsSyntheticWhenEmpty(e.target.checked)}
+                />
+                空结果时回落 stub
+              </label>
+              <button
+                style={styles.button}
+                onClick={() =>
+                  void saveBuiltinConnectorConfig({
+                    "qubit-data": {
+                      klinesDataSource,
+                      tushareToken: tushareToken.trim() || undefined,
+                    },
+                    "qubit-news": {
+                      newsApiBaseUrl: newsApiBaseUrl.trim() || undefined,
+                      newsApiKey: newsApiKey.trim() || undefined,
+                      newsFetchPath: newsFetchPath.trim() || "/",
+                      newsTimeoutMs,
+                      syntheticWhenEmpty: newsSyntheticWhenEmpty,
+                    },
+                  }).then(hydrateBuiltinConnectorForm)
+                }
+              >
+                保存数据源配置
+              </button>
+            </div>
+          </>
+        ) : null}
+        {activeConfigSubPage === "mcp" ? (
+          <>
       <h3 style={styles.subTitle}>MCP 配置与连通性</h3>
       <div style={styles.form}>
         <input
@@ -1478,6 +1807,79 @@ const ConfigPanel: FC = () => {
         <button style={styles.button} onClick={() => void testMcpNow()}>
           测试 MCP
         </button>
+      </div>
+      <div style={styles.meta}>
+        <span>已配置 MCP Server: {mcpServers.length}</span>
+        <span>已配置 MCP 绑定: {mcpBindings.length}</span>
+        <span>已安装市场项: {mcpMarketInstalls.length}</span>
+      </div>
+      <div style={styles.grid}>
+        {mcpServers.map((row) => {
+          const probe = mcpProbeByServer[row.name];
+          const specOk = mcpConnectionSpecOk(row);
+          const bindCount = mcpServerBindingCount.get(row.name) ?? 0;
+          const shortMsg = (m?: string) => (!m ? "" : m.length > 72 ? `${m.slice(0, 72)}…` : m);
+          const cfgPill =
+            !row.enabled
+              ? { bg: "#3f1f1f", color: "#fca5a5", text: "配置：已禁用" }
+              : !specOk
+                ? {
+                    bg: "#422006",
+                    color: "#fdba74",
+                    text: row.transport === "stdio" ? "配置：缺少 command" : "配置：缺少 url",
+                  }
+                : { bg: "#14532d", color: "#86efac", text: "配置：参数齐全" };
+          const reachPill =
+            probe?.status === "checking"
+              ? { bg: "#1e3a8a", color: "#bfdbfe", text: "连通性：检测中…" }
+              : probe?.status === "ok"
+                ? {
+                    bg: "#14532d",
+                    color: "#bbf7d0",
+                    text: `连通性：可用${probe.message ? `（${shortMsg(probe.message)}）` : ""}`,
+                  }
+                : probe?.status === "error"
+                  ? {
+                      bg: "#3f1f1f",
+                      color: "#fca5a5",
+                      text: `连通性：不可用${probe.message ? `（${shortMsg(probe.message)}）` : ""}`,
+                    }
+                  : specOk && bindCount > 0
+                    ? { bg: "#27272a", color: "#a1a1aa", text: "连通性：点击卡片自动检测" }
+                    : {
+                        bg: "#27272a",
+                        color: "#a1a1aa",
+                        text: bindCount === 0 ? "连通性：需先绑定工具" : "连通性：待检测",
+                      };
+          const selected = focusedMcpServerId === row.id;
+          return (
+            <button
+              key={row.id}
+              type="button"
+              onClick={() => applyMcpFromCard(row)}
+              title="点击载入到上方表单并探测连通性"
+              style={{
+                ...styles.card,
+                ...styles.mcpCardBtn,
+                ...(selected ? styles.mcpCardBtnSelected : {}),
+              }}
+            >
+              <div style={styles.cardName}>{row.name}</div>
+              <div style={styles.cardDesc}>
+                {row.transport} · {row.enabled ? "enabled" : "disabled"} · 绑定 {bindCount} 个 tool
+              </div>
+              <div style={styles.cardDesc}>
+                {row.projectId ? `project: ${row.projectId}` : "project: 全局"}
+              </div>
+              <div style={styles.mcpCardPillRow}>
+                <span style={{ ...styles.mcpCardPill, background: cfgPill.bg, color: cfgPill.color }}>{cfgPill.text}</span>
+                <span style={{ ...styles.mcpCardPill, background: reachPill.bg, color: reachPill.color }}>
+                  {reachPill.text}
+                </span>
+              </div>
+            </button>
+          );
+        })}
       </div>
       <h3 style={styles.subTitle}>MCP 市场</h3>
       <div style={styles.form}>
@@ -1552,6 +1954,10 @@ const ConfigPanel: FC = () => {
       <pre style={styles.streamBox}>{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
       <pre style={styles.streamBox}>{mcpTestOutput || "暂无测试结果"}</pre>
       <pre style={styles.streamBox}>{JSON.stringify(mcpBindings, null, 2)}</pre>
+          </>
+        ) : null}
+        {activeConfigSubPage === "schedule" ? (
+          <>
       <h3 style={styles.subTitle}>定时任务</h3>
       <div style={styles.form}>
         <input
@@ -1624,7 +2030,14 @@ const ConfigPanel: FC = () => {
       </div>
       <pre style={styles.streamBox}>{JSON.stringify(scheduledJobs, null, 2)}</pre>
       <pre style={styles.streamBox}>{JSON.stringify(scheduledJobRuns, null, 2)}</pre>
-      <h3 style={styles.subTitle}>集成管理（T9）</h3>
+          </>
+        ) : null}
+        {activeConfigSubPage === "integration" ? (
+          <>
+      <h3 style={styles.subTitle}>集成与 IM 工具（Telegram / Webhook）</h3>
+      <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+        配置外部消息通道与密钥引用，供编排向 IM 推送或接收 Webhook。
+      </p>
       <div style={styles.form}>
         <select
           style={styles.select}
@@ -1658,6 +2071,10 @@ const ConfigPanel: FC = () => {
       </div>
       <pre style={styles.streamBox}>{JSON.stringify(integrationChannels, null, 2)}</pre>
       <pre style={styles.streamBox}>{JSON.stringify(integrationLogs, null, 2)}</pre>
+          </>
+        ) : null}
+        {activeConfigSubPage === "agent" ? (
+          <>
       <h3 style={styles.subTitle}>Agent 配置</h3>
       <div style={styles.form}>
         <select
@@ -1710,18 +2127,86 @@ const ConfigPanel: FC = () => {
         </button>
       </div>
       <pre style={styles.streamBox}>{JSON.stringify(configData?.diffSummary ?? {}, null, 2)}</pre>
-      {reloadSummary ? (
-        <div style={styles.meta}>
-          <span>reload before: {reloadSummary.before}</span>
-          <span>reload after: {reloadSummary.after}</span>
-        </div>
-      ) : null}
+          </>
+        ) : null}
+      </div>
     </>
   );
 };
 
 const styles: Record<string, CSSProperties> = {
   main: { flex: 1, overflow: "auto", padding: 24 },
+  mainIde: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    padding: 0,
+  },
+  ideWorkbenchOuter: {
+    display: "flex",
+    flexDirection: "column",
+    flex: 1,
+    minHeight: 0,
+    width: "100%",
+    overflow: "hidden",
+  },
+  ideMainRow: {
+    display: "flex",
+    flexDirection: "row",
+    flex: 1,
+    minHeight: 0,
+    width: "100%",
+    overflow: "hidden",
+  },
+  ideLeftPane: {
+    display: "flex",
+    flexDirection: "column",
+    flexGrow: 0,
+    flexShrink: 0,
+    minWidth: 0,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  ideGutter: {
+    width: 6,
+    flexShrink: 0,
+    cursor: "col-resize",
+    background: "#27272a",
+    alignSelf: "stretch",
+  },
+  ideRightPane: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  ideCenterStack: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+  },
+  ideChartArea: {
+    flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+  },
+  ideQuickGutter: {
+    width: 1,
+    flexShrink: 0,
+    background: "#27272a",
+    alignSelf: "stretch",
+  },
   title: { fontSize: 26, fontWeight: 700, margin: "0 0 8px" },
   subTitle: { fontSize: 16, margin: "16px 0 8px" },
   form: { display: "flex", gap: 8, marginBottom: 10 },
@@ -1769,6 +2254,36 @@ const styles: Record<string, CSSProperties> = {
   },
   actions: { display: "flex", gap: 8, marginBottom: 8 },
   meta: { display: "flex", gap: 12, fontSize: 12, color: "#a1a1aa" },
+  configPageBody: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    width: "100%",
+  },
+  configSubNav: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 16,
+    padding: "10px 0",
+    borderBottom: "1px solid #27272a",
+  },
+  configSubTab: {
+    padding: "8px 14px",
+    borderRadius: 8,
+    border: "1px solid #3f3f46",
+    background: "#18181b",
+    color: "#a1a1aa",
+    fontSize: 13,
+    cursor: "pointer",
+  },
+  configSubTabActive: {
+    borderColor: "#7c3aed",
+    background: "#27272a",
+    color: "#e4e4e7",
+  },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 10 },
   card: {
     background: "#18181b",
@@ -1787,6 +2302,34 @@ const styles: Record<string, CSSProperties> = {
   },
   cardName: { fontSize: 13, fontWeight: 600, color: "#a78bfa" },
   cardDesc: { fontSize: 12, color: "#a1a1aa" },
+  mcpCardBtn: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 4,
+    textAlign: "left",
+    cursor: "pointer",
+    font: "inherit",
+    color: "inherit",
+  },
+  mcpCardBtnSelected: {
+    borderColor: "#3b82f6",
+    boxShadow: "0 0 0 1px rgba(59,130,246,0.35)",
+  },
+  mcpCardPillRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    marginTop: 6,
+  },
+  mcpCardPill: {
+    fontSize: 11,
+    fontWeight: 600,
+    borderRadius: 6,
+    padding: "4px 8px",
+    lineHeight: 1.35,
+    wordBreak: "break-word",
+  },
   streamBox: {
     background: "#09090b",
     border: "1px solid #27272a",
@@ -1807,6 +2350,27 @@ const styles: Record<string, CSSProperties> = {
     marginBottom: 10,
   },
   chatLayout: { display: "grid", gridTemplateColumns: "260px 1fr 300px", gap: 10, minHeight: 520 },
+  chatLayoutIde: {
+    flex: 1,
+    minHeight: 0,
+    gridTemplateColumns: "minmax(140px, 22%) minmax(0, 1fr) minmax(120px, 20%)",
+    gap: 8,
+  },
+  chatIdeRoot: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100%",
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  chatIdeHeader: {
+    flexShrink: 0,
+    fontSize: 12,
+    color: "#a1a1aa",
+    padding: "8px 12px",
+    borderBottom: "1px solid #27272a",
+    background: "#111114",
+  },
   chatSidebar: {
     border: "1px solid #27272a",
     borderRadius: 8,
@@ -1831,12 +2395,22 @@ const styles: Record<string, CSSProperties> = {
     background: "#111114",
     display: "flex",
     flexDirection: "column",
+    minHeight: 0,
   },
   chatMessages: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 },
   chatBubble: { padding: "8px 10px", borderRadius: 8, border: "1px solid #27272a" },
   chatBubbleUser: { background: "#27272a", alignSelf: "flex-end", maxWidth: "82%" },
   chatBubbleAgent: { background: "#18181b", alignSelf: "flex-start", maxWidth: "90%" },
   chatMeta: { fontSize: 11, color: "#a1a1aa", marginBottom: 4 },
+  chartCtxBanner: {
+    fontSize: 12,
+    color: "#a5b4fc",
+    background: "#1e1b4b",
+    border: "1px solid #4338ca",
+    borderRadius: 8,
+    padding: "8px 12px",
+    marginBottom: 10,
+  },
   boardCol: { border: "1px solid #27272a", borderRadius: 8, padding: 10, background: "#111114" },
   boardList: { display: "flex", flexDirection: "column", gap: 8 },
   boardCard: { background: "#18181b", border: "1px solid #27272a", borderRadius: 8, padding: 10 },
@@ -1867,16 +2441,26 @@ const TEAM_GROUPS = [
   { key: "ops", label: "运营支持", color: "#6b7280" },
 ];
 
+/** 画布可多选高亮的分析师角色（与后端 MSA 四分析师一致；空集表示不过滤） */
+const TEAM_RESEARCH_ANALYST_ROLES = new Set([
+  "analyst_fundamental",
+  "analyst_technical",
+  "analyst_sentiment",
+  "analyst_macro",
+]);
+
 const TeamDashboardPanel: FC = () => {
   const [roles, setRoles] = useState<AgentRoleCatalogItem[]>([]);
   const [ticker, setTicker] = useState("AAPL");
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
+  const [analystAgentGroupId, setAnalystAgentGroupId] = useState("");
+  const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [history, setHistory] = useState<SignalFusionRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"run" | "conclusion" | "roles" | "history">("run");
+  const [activeTab, setActiveTab] = useState<"run" | "conclusion" | "roles" | "history" | "graph">("run");
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
     confidenceThreshold: 0.55,
     maxRounds: 2,
@@ -1928,10 +2512,122 @@ const TeamDashboardPanel: FC = () => {
     deviation: IntentDeviationRecord | null;
   } | null>(null);
 
+  const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
+  const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+  const [selectedResearchRoles, setSelectedResearchRoles] = useState<string[]>([]);
+
+  const loadTeamGraph = useCallback(async () => {
+    if (!workflowRunId.trim()) {
+      setTeamGraph(null);
+      return;
+    }
+    setGraphLoading(true);
+    try {
+      const g = await getAnalystTeamGraph(workflowRunId.trim());
+      setTeamGraph(g);
+      setGraphSelection(null);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, [workflowRunId]);
+
+  useEffect(() => {
+    if (activeTab !== "graph") return;
+    void loadTeamGraph();
+  }, [activeTab, loadTeamGraph]);
+
+  const graphInteractions = useMemo(() => {
+    const allow =
+      selectedResearchRoles.length > 0 ? new Set(selectedResearchRoles) : null;
+    if (!teamGraph?.interactions?.length) return [];
+    let list = [...teamGraph.interactions];
+    if (allow) list = list.filter((i) => allow.has(i.fromRole) || allow.has(i.toRole));
+    if (!graphSelection) return list.reverse().slice(0, 120);
+    if (graphSelection.kind === "node") {
+      const r = graphSelection.role;
+      return list.filter((i) => i.fromRole === r || i.toRole === r).reverse();
+    }
+    const { a, b } = graphSelection;
+    return list
+      .filter(
+        (i) => (i.fromRole === a && i.toRole === b) || (i.fromRole === b && i.toRole === a)
+      )
+      .reverse();
+  }, [teamGraph, graphSelection, selectedResearchRoles]);
+
+  const graphToolsForNode = useMemo((): {
+    tools: AnalystTeamGraphToolCall[];
+    mcps: AnalystTeamGraphMcpCall[];
+  } => {
+    if (!teamGraph || graphSelection?.kind !== "node") return { tools: [], mcps: [] };
+    const r = graphSelection.role;
+    return {
+      tools: teamGraph.toolCalls.filter((t) => t.agentRole === r),
+      mcps: teamGraph.mcpCalls.filter((m) => m.agentRole === r),
+    };
+  }, [teamGraph, graphSelection]);
+
+  const filteredGraphDisplay = useMemo((): AnalystTeamGraphPayload | null => {
+    if (!teamGraph) return null;
+    if (!selectedResearchRoles.length) return teamGraph;
+    const allow = new Set(selectedResearchRoles);
+    const nodes = teamGraph.nodes.filter((n) => allow.has(n.role));
+    const edges =
+      teamGraph.edges?.filter((e) => allow.has(e.a) && allow.has(e.b)) ?? [];
+    return {
+      ...teamGraph,
+      nodes,
+      edges,
+      interactions: (teamGraph.interactions ?? []).filter(
+        (i) => allow.has(i.fromRole) || allow.has(i.toRole)
+      ),
+      toolCalls: (teamGraph.toolCalls ?? []).filter((t) => allow.has(t.agentRole)),
+      mcpCalls: (teamGraph.mcpCalls ?? []).filter((m) => allow.has(m.agentRole)),
+    };
+  }, [teamGraph, selectedResearchRoles]);
+
+  const analystRoleCatalog = useMemo(
+    () => roles.filter((r) => TEAM_RESEARCH_ANALYST_ROLES.has(r.role)),
+    [roles]
+  );
+
+  const graphWrapRef = useRef<HTMLDivElement | null>(null);
+  const [graphSize, setGraphSize] = useState({ w: 720, h: 420 });
+
+  useLayoutEffect(() => {
+    const el = graphWrapRef.current;
+    if (!el || activeTab !== "graph") return;
+    const ro = new ResizeObserver((entries) => {
+      const cr = entries[0]?.contentRect;
+      if (!cr) return;
+      const w = Math.max(320, Math.floor(cr.width));
+      const h = Math.max(260, Math.floor(cr.height));
+      setGraphSize({ w, h });
+    });
+    ro.observe(el);
+    const r = el.getBoundingClientRect();
+    setGraphSize({ w: Math.max(320, Math.floor(r.width)), h: Math.max(260, Math.floor(r.height)) });
+    return () => ro.disconnect();
+  }, [activeTab, teamGraph]);
+
+  useEffect(() => {
+    setGraphSelection(null);
+  }, [selectedResearchRoles]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void loadTeamGraph();
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [workflowRunId, loadTeamGraph]);
 
   useEffect(() => {
     void (async () => {
       getAgentRoles().then(setRoles).catch(() => {});
+      void listAgentGroups()
+        .then(setAnalystAgentGroupOptions)
+        .catch(() => setAnalystAgentGroupOptions([]));
       try {
         const hist = await getFusionHistory({ limit: 10 });
         // #region agent log
@@ -2060,6 +2756,7 @@ const TeamDashboardPanel: FC = () => {
       const res = await runAnalystTeam({
         workflowRunId: wfId,
         ticker: ticker.trim(),
+        agentGroupId: analystAgentGroupId.trim() || undefined,
         onProgress: (elapsedMs) => {
           const secs = Math.floor(elapsedMs / 1000);
           setRunProgress(`分析进行中… 已用时 ${secs}s（多 Agent LLM 推理，请耐心等待）`);
@@ -2068,7 +2765,8 @@ const TeamDashboardPanel: FC = () => {
       unsubscribe();
       setResult(res);
       setRunProgress("");
-      setActiveTab("conclusion");
+      setActiveTab("graph");
+      void loadTeamGraph();
       if (res.debate?.sessionId) {
         const [turns, verdict] = await Promise.all([
           getDebateTurns(res.debate.sessionId),
@@ -2354,17 +3052,148 @@ const TeamDashboardPanel: FC = () => {
   return (
     <div style={teamStyles.container}>
       <h2 style={teamStyles.title}>🧑‍💼 量化研究团队仪表盘</h2>
+      <p style={{ fontSize: 13, color: "#a1a1aa", marginBottom: 14, maxWidth: 960, lineHeight: 1.45 }}>
+        左侧配置标的与工作流、启动分析，并可多选「画布聚焦」的分析师角色；右侧常驻对话台账；中栏在各 Tab 中查看结论、成员与拓扑。
+      </p>
 
-      {/* Tabs */}
-      <div style={teamStyles.tabs}>
-        {(["run", "conclusion", "roles", "history"] as const).map((t) => (
+      <div style={teamStyles.workbenchGrid}>
+        <aside style={teamStyles.leftRail}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 10 }}>研究与工作流</div>
+          <div style={teamStyles.field}>
+            <label style={teamStyles.label}>标的代码</label>
+            <input
+              style={teamStyles.input}
+              value={ticker}
+              onChange={(e) => setTicker(e.target.value)}
+              placeholder="e.g. AAPL / 600519"
+            />
+          </div>
+          <div style={{ ...teamStyles.field, marginTop: 10 }}>
+            <label style={teamStyles.label}>工作流 ID</label>
+            <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
+              <option value="">请选择 workflow</option>
+              {workflowOptions.slice(0, 80).map((row) => (
+                <option key={String(row.id)} value={String(row.id)}>
+                  {String(row.id)} · {String(row.status)} · {String(row.mode)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ ...teamStyles.field, marginTop: 10 }}>
+            <label style={teamStyles.label}>分析师编组（可选）</label>
+            <select
+              style={teamStyles.input}
+              value={analystAgentGroupId}
+              onChange={(e) => setAnalystAgentGroupId(e.target.value)}
+            >
+              <option value="">默认（全部启用的分析师定义）</option>
+              {analystAgentGroupOptions.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            style={{ ...teamStyles.btn, marginTop: 12, width: "100%", ...(running ? teamStyles.btnDisabled : {}) }}
+            onClick={handleRun}
+            disabled={running}
+          >
+            {running ? "分析中…" : "启动团队分析"}
+          </button>
+          {running && runProgress && (
+            <div
+              style={{
+                background: "#1e293b",
+                color: "#38bdf8",
+                fontSize: 12,
+                padding: "8px 10px",
+                marginTop: 10,
+                borderRadius: 6,
+                border: "1px solid #334155",
+              }}
+            >
+              ⏳ {runProgress}
+            </div>
+          )}
+          {error && <div style={{ ...teamStyles.error, marginTop: 10, fontSize: 12 }}>{error}</div>}
+
+          <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>画布聚焦（分析师）</div>
+            <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
+              勾选后拓扑与台账仅高亮相关角色；不选表示显示全部。
+            </p>
+            {analystRoleCatalog.length === 0 ? (
+              <div style={{ fontSize: 11, color: "#71717a" }}>暂无分析师角色（请加载成员列表）</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 200, overflow: "auto" }}>
+                {analystRoleCatalog.map((r) => {
+                  const checked = selectedResearchRoles.includes(r.role);
+                  return (
+                    <label
+                      key={r.role}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        color: "#d4d4d8",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          setSelectedResearchRoles((prev) =>
+                            e.target.checked ? [...prev, r.role] : prev.filter((x) => x !== r.role)
+                          );
+                        }}
+                      />
+                      <span>
+                        <span style={{ fontWeight: 500 }}>{r.displayName}</span>
+                        <span style={{ color: "#52525b", display: "block", fontSize: 10 }}>{r.role}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                style={teamStyles.buttonSecondary}
+                onClick={() => setSelectedResearchRoles(analystRoleCatalog.map((rr) => rr.role))}
+              >
+                全选
+              </button>
+              <button type="button" style={teamStyles.buttonSecondary} onClick={() => setSelectedResearchRoles([])}>
+                清空
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <div style={teamStyles.centerCol}>
+          {/* Tabs */}
+          <div style={teamStyles.tabs}>
+        {(["run", "conclusion", "roles", "history", "graph"] as const).map((t) => (
           <button
             key={t}
             type="button"
             style={{ ...teamStyles.tab, ...(activeTab === t ? teamStyles.tabActive : {}) }}
             onClick={() => setActiveTab(t)}
           >
-            {t === "run" ? "🚀 发起分析" : t === "conclusion" ? "📋 分析结论" : t === "roles" ? "👥 团队成员" : "📊 历史信号"}
+            {t === "run"
+              ? "🚀 发起分析"
+              : t === "conclusion"
+                ? "📋 分析结论"
+                : t === "roles"
+                  ? "👥 团队成员"
+                  : t === "history"
+                    ? "📊 历史信号"
+                    : "🕸️ 对话拓扑"}
           </button>
         ))}
       </div>
@@ -2372,43 +3201,6 @@ const TeamDashboardPanel: FC = () => {
       {/* Run Panel */}
       {activeTab === "run" && (
         <div style={teamStyles.panel}>
-          <div style={teamStyles.row}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>标的代码</label>
-              <input
-                style={teamStyles.input}
-                value={ticker}
-                onChange={(e) => setTicker(e.target.value)}
-                placeholder="e.g. AAPL / 600519"
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>工作流 ID（选择器联动）</label>
-              <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
-                <option value="">请选择 workflow</option>
-                {workflowOptions.slice(0, 80).map((row) => (
-                  <option key={String(row.id)} value={String(row.id)}>
-                    {String(row.id)} · {String(row.status)} · {String(row.mode)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              style={{ ...teamStyles.btn, ...(running ? teamStyles.btnDisabled : {}) }}
-              onClick={handleRun}
-              disabled={running}
-            >
-              {running ? "分析中..." : "启动团队分析"}
-            </button>
-          </div>
-          {running && runProgress && (
-            <div style={{ ...teamStyles.panel, background: "#1e293b", color: "#38bdf8", fontSize: 13, padding: "8px 14px", marginTop: 8, borderRadius: 6 }}>
-              ⏳ {runProgress}
-            </div>
-          )}
-          {error && <div style={teamStyles.error}>{error}</div>}
-
           <div style={teamStyles.configRow}>
             <div style={teamStyles.field}>
               <label style={teamStyles.label}>辩论触发阈值（低于触发）</label>
@@ -3187,13 +3979,164 @@ const TeamDashboardPanel: FC = () => {
           )}
         </div>
       )}
+
+      {activeTab === "graph" && (
+        <div style={teamStyles.panel}>
+          <h3 style={teamStyles.sectionTitle}>多 Agent 对话拓扑</h3>
+          <p style={{ fontSize: 12, color: "#a1a1aa", marginBottom: 12 }}>
+            边表示双方有消息往来；点击节点或边后，右侧台账与工具摘要会联动筛选。画布随容器自适应放大。需先完成分析并已执行迁移 0021。
+          </p>
+          {!workflowRunId.trim() ? (
+            <div style={teamStyles.empty}>请先在左侧栏选择工作流 ID</div>
+          ) : (
+            <>
+              <div style={teamStyles.row}>
+                <button type="button" style={teamStyles.btn} disabled={graphLoading} onClick={() => void loadTeamGraph()}>
+                  {graphLoading ? "加载中…" : "刷新拓扑"}
+                </button>
+                <span style={{ fontSize: 12, color: "#71717a" }}>
+                  {selectedResearchRoles.length > 0
+                    ? `画布过滤：${selectedResearchRoles.length} 个角色`
+                    : "画布：全部角色"}
+                </span>
+              </div>
+              {filteredGraphDisplay && filteredGraphDisplay.nodes.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
+                  <div ref={graphWrapRef} style={teamStyles.graphCanvasHost}>
+                    <TeamAgentGraph
+                      nodes={filteredGraphDisplay.nodes}
+                      edges={filteredGraphDisplay.edges}
+                      width={graphSize.w}
+                      height={graphSize.h}
+                      selection={graphSelection}
+                      onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
+                      onSelectEdge={(a, b) => setGraphSelection({ kind: "edge", a, b })}
+                      onClear={() => setGraphSelection(null)}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div style={{ ...teamStyles.empty, marginTop: 12 }}>
+                  {graphLoading
+                    ? "…"
+                    : teamGraph && teamGraph.nodes.length > 0 && selectedResearchRoles.length > 0
+                      ? "当前左侧「画布聚焦」过滤后无可见节点，请调整勾选或清空。"
+                      : "暂无拓扑数据：请运行一次团队分析，并确认迁移已应用（research_team_interaction）。"}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+        </div>
+
+        <aside style={teamStyles.rightRail}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 8 }}>Agent 对话台账</div>
+          <button
+            type="button"
+            style={{ ...teamStyles.btn, width: "100%", marginBottom: 10 }}
+            disabled={graphLoading || !workflowRunId.trim()}
+            onClick={() => void loadTeamGraph()}
+          >
+            {graphLoading ? "刷新中…" : "刷新台账 / 拓扑"}
+          </button>
+          {graphSelection?.kind === "node" ? (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ ...teamStyles.sectionTitle, fontSize: 12 }}>Tool / MCP（{graphSelection.role}）</div>
+              {graphToolsForNode.tools.length === 0 && graphToolsForNode.mcps.length === 0 ? (
+                <div style={{ fontSize: 11, color: "#71717a" }}>无工具记录</div>
+              ) : (
+                <div style={{ maxHeight: 140, overflow: "auto", fontSize: 10, color: "#d4d4d8" }}>
+                  {graphToolsForNode.tools.map((t) => (
+                    <div key={t.id} style={{ marginBottom: 4 }}>
+                      [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status}
+                    </div>
+                  ))}
+                  {graphToolsForNode.mcps.map((m) => (
+                    <div key={m.id} style={{ marginBottom: 4 }}>
+                      [MCP] {m.serverName}/{m.toolName} · {m.status}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+          <div style={{ fontSize: 11, fontWeight: 600, color: "#a1a1aa", marginBottom: 6 }}>
+            {graphSelection ? "已筛选" : "最近"} · {graphInteractions.length} 条
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", display: "grid", gap: 8 }}>
+            {graphInteractions.length === 0 ? (
+              <div style={{ fontSize: 11, color: "#71717a" }}>
+                {!workflowRunId.trim() ? "请选择工作流后查看台账。" : "暂无记录"}
+              </div>
+            ) : (
+              graphInteractions.slice(0, 80).map((row) => (
+                <div
+                  key={row.id}
+                  style={{
+                    border: "1px solid #27272a",
+                    borderRadius: 6,
+                    padding: 8,
+                    fontSize: 10,
+                    color: "#d4d4d8",
+                  }}
+                >
+                  <div style={{ color: "#94a3b8", marginBottom: 4 }}>
+                    {row.createdAt} · {row.fromRole} → {row.toRole} · {row.kind}
+                    {row.toolName ? ` · ${row.toolName}` : ""}
+                  </div>
+                  <div style={{ whiteSpace: "pre-wrap" }}>{row.contentText.slice(0, 500)}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+      </div>
     </div>
   );
 };
 
 const teamStyles: Record<string, CSSProperties> = {
-  container: { padding: 20, maxWidth: 960, margin: "0 auto" },
-  title: { color: "#e4e4e7", fontSize: 20, marginBottom: 16 },
+  container: { padding: 20, maxWidth: "min(1480px, 100%)", margin: "0 auto", minHeight: "72vh" },
+  workbenchGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(240px, 260px) minmax(0, 1fr) minmax(260px, 320px)",
+    gap: 16,
+    alignItems: "stretch",
+  },
+  leftRail: {
+    background: "#111114",
+    border: "1px solid #27272a",
+    borderRadius: 10,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    alignSelf: "start",
+    position: "sticky",
+    top: 12,
+    maxHeight: "calc(100vh - 72px)",
+    overflow: "auto",
+  },
+  centerCol: { minWidth: 0, display: "flex", flexDirection: "column" },
+  rightRail: {
+    background: "#111114",
+    border: "1px solid #27272a",
+    borderRadius: 10,
+    padding: 14,
+    display: "flex",
+    flexDirection: "column",
+    maxHeight: "calc(100vh - 72px)",
+    minHeight: 360,
+    overflow: "hidden",
+  },
+  graphCanvasHost: {
+    width: "100%",
+    minHeight: 360,
+    display: "flex",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  title: { color: "#e4e4e7", fontSize: 20, marginBottom: 8 },
   tabs: { display: "flex", gap: 8, marginBottom: 16 },
   tab: {
     padding: "6px 14px",

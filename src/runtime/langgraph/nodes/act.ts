@@ -6,10 +6,12 @@ import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { runAnalystTeam } from "../../msa/analyst-team";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
+import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 
 /** Builtin tools routed to ACP connectors (see registerBuiltinConnectors). */
 const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
   fetch_bars: "qubit-data",
+  fetch_klines: "qubit-data",
   fetch_ticks: "qubit-data",
   write_snapshot: "qubit-data",
   fetch_news: "qubit-news",
@@ -149,6 +151,16 @@ export async function actNode(
     },
     status: "success",
     latencyMs: 1,
+  });
+  void logResearchTeamInteraction({
+    workflowRunId: state.workflowId,
+    fromRole: state.agentDefinition.role,
+    toRole: "__tools__",
+    kind: "tool_call",
+    toolKind,
+    toolName: targetName,
+    contentText: `${String(targetKind)} → ${targetName}`,
+    payloadJson: { toolCallId, toolName, targetKind },
   });
   if (mcp) {
     await db.insert(mcpCallLog).values({

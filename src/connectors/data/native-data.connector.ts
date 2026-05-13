@@ -1,7 +1,15 @@
+import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
+import {
+  fetchYahooFinanceDailyBars,
+  parseKlinesDataSourceSetting,
+  resolveEffectiveKlinesSource,
+  symbolToYahooSymbol,
+} from "../../runtime/market/klines-data-source";
+import type { BuiltinConnectorInitConfigs } from "../../runtime/config/builtin-connector-settings";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
 import {
-  DataConnector,
   type BarData,
+  DataConnector,
   type FetchBarsParams,
   type FetchFundamentalsParams,
   type FetchNewsParams,
@@ -75,36 +83,55 @@ function idx(fields: string[], name: string): number {
 }
 
 /**
- * Built-in market data connector: uses Tushare HTTP when `tushareToken` is set in connector init
- * (persisted via UI → SQLite); otherwise deterministic synthetic bars.
+ * Built-in market data connector: K 线由 `klinesDataSource` 配置（见配置中心）。
+ * 无外源或请求失败时不返回模拟数据，仅返回空数组并在服务端打印原因。
  */
 export class QubitNativeDataConnector extends DataConnector {
   readonly meta: ConnectorMeta = {
     name: "qubit-data",
     version: "0.1.0",
     connectorType: "data",
-    capabilities: ["fetch_bars", "fetch_ticks", "fetch_news", "fetch_fundamentals", "write_snapshot"],
+    capabilities: [
+      "fetch_bars",
+      "fetch_klines",
+      "fetch_ticks",
+      "fetch_news",
+      "fetch_fundamentals",
+      "write_snapshot",
+    ],
     assetClasses: ["stock"],
     latencyProfile: "batch",
     description:
-      "Built-in market data: Tushare daily K-line when token configured; otherwise synthetic stub.",
+      "Built-in market data: configurable daily K-line (Tushare / Yahoo Finance); empty when unavailable.",
   };
 
   private tushareToken: string | undefined;
-  private syntheticFallback = true;
 
   protected async onInit(config: ConnectorConfig): Promise<void> {
     this.tushareToken = cfgStr(config, "tushareToken");
-    const sf = config["syntheticFallback"];
-    if (typeof sf === "boolean") this.syntheticFallback = sf;
-    else this.syntheticFallback = cfgStr(config, "syntheticFallback") !== "false";
+  }
+
+  private settingsBundle(): BuiltinConnectorInitConfigs {
+    return { "qubit-data": { ...this.config }, "qubit-news": {} };
   }
 
   protected async onHealthcheck(): Promise<Omit<HealthCheckResult, "latencyMs" | "checkedAt">> {
-    if (this.tushareToken) {
-      return { status: "healthy", message: "qubit-data: Tushare token configured" };
+    const hasToken = Boolean(this.tushareToken);
+    const daily = resolveEffectiveKlinesSource({
+      settings: this.settingsBundle(),
+      period: "1d",
+      hasTushareToken: hasToken,
+    });
+    if (daily === "tushare_daily") {
+      return { status: "healthy", message: "qubit-data: 日线 → Tushare（已配置 token）" };
     }
-    return { status: "healthy", message: "qubit-data: synthetic mode (no token in settings)" };
+    if (daily === "yahoo_chart") {
+      return { status: "healthy", message: "qubit-data: 日线 → Yahoo Finance（免费，无需 API key）" };
+    }
+    return {
+      status: "healthy",
+      message: "qubit-data: 当前配置下日线无外源（K 线将为空，见服务端 fetch_bars 日志）",
+    };
   }
 
   protected async onShutdown(): Promise<void> {}
@@ -118,32 +145,37 @@ export class QubitNativeDataConnector extends DataConnector {
         keys: Object.keys(p),
       } as TOutput;
     }
+    if (operation === "fetch_klines") {
+      const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+      const p = raw as {
+        symbol?: string;
+        exchange?: string;
+        timeframe?: string;
+        limit?: number;
+      };
+      const symbol = String(p.symbol ?? "").trim();
+      if (!symbol) throw new Error("fetch_klines: symbol is required");
+      const exchange = String(p.exchange ?? "");
+      const timeframe = String(p.timeframe ?? "1d");
+      const limit = Math.max(1, Math.min(Number(p.limit ?? 120), 2000));
+      const { startDate, endDate, period } = computeDateRangeForLimit(timeframe, limit);
+      return this.fetchBars({
+        symbol,
+        exchange,
+        period,
+        startDate,
+        endDate,
+      }) as TOutput;
+    }
     return super.onExecute<TOutput>(operation, payload);
   }
 
-  private syntheticBars(params: FetchBarsParams): BarData[] {
-    const start = Date.parse(params.startDate);
-    const end = Date.parse(params.endDate);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-      throw new Error("fetch_bars: startDate/endDate must be parseable dates");
+  private logFetchBarsEmpty(reason: string, detail?: unknown): void {
+    if (detail !== undefined) {
+      console.warn(`[qubit-data] fetch_bars: empty — ${reason}`, detail);
+    } else {
+      console.warn(`[qubit-data] fetch_bars: empty — ${reason}`);
     }
-    const bars: BarData[] = [];
-    const dayMs = 86_400_000;
-    for (let t = start, i = 0; t <= end && i < 64; t += dayMs, i += 1) {
-      const base = 100 + (i % 7) * 0.5;
-      bars.push({
-        symbol: params.symbol,
-        exchange: params.exchange || "UNKNOWN",
-        open: base,
-        high: base + 1.2,
-        low: base - 0.8,
-        close: base + 0.3,
-        volume: 1_000_000 + i * 10_000,
-        turnover: 0,
-        timestamp: new Date(t).toISOString(),
-      });
-    }
-    return bars;
   }
 
   async fetchBars(params: FetchBarsParams): Promise<BarData[]> {
@@ -154,7 +186,13 @@ export class QubitNativeDataConnector extends DataConnector {
       throw new Error("fetch_bars: startDate/endDate must be parseable dates");
     }
 
-    if (this.tushareToken && params.period === "1d") {
+    const effective = resolveEffectiveKlinesSource({
+      settings: this.settingsBundle(),
+      period: params.period,
+      hasTushareToken: Boolean(this.tushareToken),
+    });
+
+    if (effective === "tushare_daily" && this.tushareToken) {
       try {
         const tsCode = symbolToTsCode(params.symbol, params.exchange || "");
         const data = await tushareCall(this.tushareToken, "daily", {
@@ -172,7 +210,10 @@ export class QubitNativeDataConnector extends DataConnector {
         const iVol = idx(fields, "vol");
         const iAmount = idx(fields, "amount");
         if (iTrade < 0 || iOpen < 0 || iHigh < 0 || iLow < 0 || iClose < 0) {
-          throw new Error("Tushare daily: unexpected field set");
+          this.logFetchBarsEmpty(
+            `Tushare daily response missing required fields (ts_code=${tsCode}, fields=${fields.join(",")})`
+          );
+          return [];
         }
         const bars: BarData[] = [];
         for (const row of items) {
@@ -199,21 +240,66 @@ export class QubitNativeDataConnector extends DataConnector {
           });
         }
         bars.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        if (bars.length === 0) {
+          this.logFetchBarsEmpty(
+            `Tushare daily returned no rows (ts_code=${tsCode}, start=${parseIsoToYmd(params.startDate)}, end=${parseIsoToYmd(params.endDate)})`
+          );
+        }
         return bars;
       } catch (e) {
-        if (!this.syntheticFallback) throw e;
-        console.warn(
-          "[qubit-data] Tushare fetch_bars failed, using synthetic:",
+        this.logFetchBarsEmpty(
+          `Tushare daily request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        return [];
       }
-    } else if (this.tushareToken && params.period !== "1d") {
-      console.warn(
-        `[qubit-data] period "${params.period}" is not mapped to Tushare in native connector; using synthetic or extend stk_mins/pro_bar.`
-      );
     }
 
-    return this.syntheticBars(params);
+    if (effective === "yahoo_chart") {
+      try {
+        const ySym = symbolToYahooSymbol(params.symbol, params.exchange || "");
+        const bars = await fetchYahooFinanceDailyBars(params);
+        if (bars.length === 0) {
+          this.logFetchBarsEmpty(
+            `Yahoo Finance returned no usable OHLCV (yahooSymbol=${ySym}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+          );
+        }
+        return bars;
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `Yahoo Finance request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+        return [];
+      }
+    }
+
+    const mode = parseKlinesDataSourceSetting(this.config["klinesDataSource"]);
+    if (effective === "synthetic") {
+      if (mode === "tushare_daily" && !this.tushareToken) {
+        this.logFetchBarsEmpty(
+          `klinesDataSource=tushare_daily but tushareToken is missing (symbol=${params.symbol})`
+        );
+      } else if (params.period !== "1d") {
+        this.logFetchBarsEmpty(
+          `period=${params.period}: native connector only maps daily (1d) to Yahoo/Tushare; intraday not supported (symbol=${params.symbol})`
+        );
+      } else if (mode === "synthetic") {
+        this.logFetchBarsEmpty(
+          `klinesDataSource=synthetic — external K-line disabled by configuration (symbol=${params.symbol})`
+        );
+      } else {
+        this.logFetchBarsEmpty(
+          `no upstream for daily bars (mode=${mode}, effective=${effective}, symbol=${params.symbol})`
+        );
+      }
+      return [];
+    }
+
+    this.logFetchBarsEmpty(
+      `unexpected resolution (effective=${effective}, symbol=${params.symbol}, period=${params.period})`
+    );
+    return [];
   }
 
   async fetchTicks(params: FetchTicksParams): Promise<TickData[]> {

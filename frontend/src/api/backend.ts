@@ -1,13 +1,16 @@
-import { getBackendBaseUrl, httpDelete, httpGet, httpPatch, httpPost, httpPut } from "./client";
+import { backendFetchUrl, httpDelete, httpGet, httpPatch, httpPost, httpPut } from "./client";
 import type {
   AgentSummary,
   AgentDefinitionBundle,
+  AgentGroupDetail,
+  AgentGroupRecord,
   AgentsConfigResponse,
   AgentRoleCatalogItem,
   DebateConfig,
   DebateStreamEvent,
   DebateTurnRecord,
   DebateVerdictRecord,
+  DebateSessionRecord,
   ExecutionSafetyCheckResult,
   ExecutionSafetyConfig,
   ExecutionConfirmTicketRecord,
@@ -38,8 +41,10 @@ import type {
   ScreenerRunRecord,
   AnalystSignalRecord,
   AnalystTeamResult,
+  AnalystTeamGraphPayload,
   ChatMessage,
   ChatSession,
+  IndicatorStrategyScriptRecord,
   ModelConfig,
   BuiltinConnectorConfig,
   SessionOverview,
@@ -55,10 +60,107 @@ import type {
   WorkflowCreateInput,
   ScheduledJobRecord,
   ScheduledJobRunRecord,
+  KlineBar,
+  KlinesResponseMeta,
 } from "./types";
+import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 
 export async function getHealth(): Promise<{ status: string }> {
   return httpGet<{ status: string }>("/health");
+}
+
+export async function getKlines(params: {
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+  limit?: number;
+}): Promise<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta }> {
+  const q = new URLSearchParams();
+  q.set("symbol", params.symbol);
+  if (params.exchange) q.set("exchange", params.exchange);
+  if (params.timeframe) q.set("timeframe", params.timeframe);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  return httpGet<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta }>(
+    `/api/v1/market/klines?${q.toString()}`
+  );
+}
+
+export type MarketBacktestJobStatus = "queued" | "running" | "completed" | "failed";
+
+export interface MarketBacktestPostBody {
+  kind?: string;
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+  limit?: number;
+  startDate?: string;
+  endDate?: string;
+  fastPeriod?: number;
+  slowPeriod?: number;
+  initialCapital?: number;
+  commission?: number;
+}
+
+export interface MarketBacktestPostResponse {
+  ok: boolean;
+  data?: {
+    id: string;
+    status?: MarketBacktestJobStatus;
+    result?: unknown;
+    error?: string | null;
+  };
+  error?: string;
+}
+
+export async function postMarketBacktest(
+  body: MarketBacktestPostBody
+): Promise<MarketBacktestPostResponse> {
+  return httpPost<MarketBacktestPostResponse>("/api/v1/market/backtests", body as unknown as Record<string, unknown>);
+}
+
+export async function getMarketBacktest(jobId: string): Promise<{
+  ok: boolean;
+  data?: {
+    id: string;
+    status: string;
+    kind: string;
+    paramsJson: unknown;
+    resultJson: unknown;
+    error: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
+  error?: string;
+}> {
+  return httpGet(`/api/v1/market/backtests/${encodeURIComponent(jobId)}`);
+}
+
+export async function postMarketStructuredTune(body: {
+  base: {
+    symbol: string;
+    exchange?: string;
+    timeframe?: string;
+    limit?: number;
+    startDate?: string;
+    endDate?: string;
+  };
+  fastPeriods?: number[];
+  slowPeriods?: number[];
+  initialCapital?: number;
+  commission?: number;
+}): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  return httpPost("/api/v1/market/experiments/structured-tune", body as Record<string, unknown>);
+}
+
+export async function postMarketRegimeDetect(body: {
+  symbol: string;
+  exchange?: string;
+  timeframe?: string;
+  limit?: number;
+  startDate?: string;
+  endDate?: string;
+}): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  return httpPost("/api/v1/market/experiments/regime/detect", body as Record<string, unknown>);
 }
 
 export async function listWorkspaces(): Promise<Array<{ id: string; name: string }>> {
@@ -167,6 +269,39 @@ export async function listAgentDefinitions(): Promise<AgentDefinitionBundle[]> {
   return res.data;
 }
 
+export async function listAgentGroups(): Promise<AgentGroupRecord[]> {
+  const res = await httpGet<{ data: AgentGroupRecord[] }>("/api/v1/agents/agent-groups");
+  return res.data;
+}
+
+export async function createAgentGroup(input: { name: string; description?: string }): Promise<AgentGroupRecord> {
+  const res = await httpPost<{ data: AgentGroupRecord }>("/api/v1/agents/agent-groups", input);
+  return res.data;
+}
+
+export async function deleteAgentGroup(id: string): Promise<void> {
+  await httpDelete<{ ok: boolean }>(`/api/v1/agents/agent-groups/${id}`);
+}
+
+export async function getAgentGroup(id: string): Promise<AgentGroupDetail> {
+  const res = await httpGet<{ data: AgentGroupDetail }>(`/api/v1/agents/agent-groups/${id}`);
+  return res.data;
+}
+
+export async function addAgentGroupMember(
+  groupId: string,
+  input: { definitionId: string; sortOrder?: number }
+): Promise<{ id: string; groupId: string; definitionId: string; sortOrder: number; createdAt: string }> {
+  const res = await httpPost<{
+    data: { id: string; groupId: string; definitionId: string; sortOrder: number; createdAt: string };
+  }>(`/api/v1/agents/agent-groups/${groupId}/members`, input);
+  return res.data;
+}
+
+export async function removeAgentGroupMember(groupId: string, memberId: string): Promise<void> {
+  await httpDelete<{ ok: boolean }>(`/api/v1/agents/agent-groups/${groupId}/members/${memberId}`);
+}
+
 export async function createAgentDraft(params: {
   definitionId: string;
   systemPrompt?: string;
@@ -260,6 +395,57 @@ export async function getDefaultProjectSession(projectId: string): Promise<ChatS
 export async function listSessionMessages(sessionId: string): Promise<ChatMessage[]> {
   const res = await httpGet<{ data: ChatMessage[] }>(`/api/v1/chat/sessions/${sessionId}/messages`);
   return res.data;
+}
+
+export async function listStrategyScripts(sessionId: string): Promise<IndicatorStrategyScriptRecord[]> {
+  const res = await httpGet<{ data: IndicatorStrategyScriptRecord[] }>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/strategy-scripts`
+  );
+  return res.data;
+}
+
+export async function createStrategyScript(
+  sessionId: string,
+  body: {
+    name: string;
+    ideCode: string;
+    signalCode?: string;
+    workflowRunId?: string | null;
+    aiPromptSnapshot?: string | null;
+    chartSnapshotJson?: Record<string, unknown>;
+    purpose?: "research" | "live_trading" | "both";
+  }
+): Promise<IndicatorStrategyScriptRecord> {
+  const res = await httpPost<{ data: IndicatorStrategyScriptRecord }>(
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/strategy-scripts`,
+    body as unknown as Record<string, unknown>
+  );
+  return res.data;
+}
+
+export async function updateStrategyScript(
+  scriptId: string,
+  body: Partial<{
+    name: string;
+    ideCode: string;
+    signalCode: string;
+    workflowRunId: string | null;
+    aiPromptSnapshot: string | null;
+    chartSnapshotJson: Record<string, unknown>;
+    purpose: "research" | "live_trading" | "both";
+  }>
+): Promise<IndicatorStrategyScriptRecord> {
+  const res = await httpPatch<{ data: IndicatorStrategyScriptRecord }>(
+    `/api/v1/chat/strategy-scripts/${encodeURIComponent(scriptId)}`,
+    body as unknown as Record<string, unknown>
+  );
+  return res.data;
+}
+
+export async function deleteStrategyScript(scriptId: string): Promise<{ ok: boolean; deletedId: string }> {
+  return httpDelete<{ ok: boolean; deletedId: string }>(
+    `/api/v1/chat/strategy-scripts/${encodeURIComponent(scriptId)}`
+  );
 }
 
 export async function createSessionMessage(params: {
@@ -484,6 +670,7 @@ export async function startAnalystTeam(params: {
   workflowRunId: string;
   ticker: string;
   context?: string;
+  agentGroupId?: string;
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
@@ -529,6 +716,7 @@ export async function runAnalystTeam(params: {
   ticker: string;
   context?: string;
   onProgress?: (elapsedMs: number) => void;
+  agentGroupId?: string;
 }): Promise<AnalystTeamResult> {
   const { jobId } = await startAnalystTeam(params);
   return pollAnalystJob(jobId, { onProgress: params.onProgress });
@@ -542,10 +730,23 @@ export async function getAnalystSignals(workflowId: string): Promise<AnalystSign
 }
 
 export async function getSignalFusion(workflowId: string): Promise<AnalystTeamResult | null> {
-  const res = await httpGet<{ ok: boolean; data: AnalystTeamResult | null }>(
-    `/api/v1/analyst/fusion/${workflowId}`
+  const res = await httpGet<{ ok: boolean; data: unknown }>(`/api/v1/analyst/fusion/${workflowId}`);
+  return normalizeFusionApiToTeamResult(res.data);
+}
+
+export async function listDebateSessionsForWorkflow(workflowRunId: string): Promise<DebateSessionRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: DebateSessionRecord[] }>(
+    `/api/v1/debate/sessions/${encodeURIComponent(workflowRunId)}`
   );
-  return res.data;
+  return Array.isArray(res.data) ? res.data : [];
+}
+
+export async function getAnalystTeamGraph(workflowRunId: string): Promise<AnalystTeamGraphPayload | null> {
+  const res = await httpGet<{ ok: boolean; data?: AnalystTeamGraphPayload; error?: string }>(
+    `/api/v1/analyst/workflow/${encodeURIComponent(workflowRunId)}/team-graph`
+  );
+  if (!(res as { ok?: boolean }).ok) return null;
+  return (res as { data?: AnalystTeamGraphPayload }).data ?? null;
 }
 
 export async function getAgentRoles(): Promise<AgentRoleCatalogItem[]> {
@@ -598,7 +799,7 @@ export function subscribeDebateStream(params: {
   onEvent: (event: DebateStreamEvent) => void;
   onError?: (err: Event) => void;
 }): () => void {
-  const url = `${getBackendBaseUrl()}/api/v1/debate/stream/${params.workflowRunId}`;
+  const url = backendFetchUrl(`/api/v1/debate/stream/${params.workflowRunId}`);
   const es = new EventSource(url);
   const types: DebateStreamEvent["type"][] = [
     "debate_start",
@@ -1000,7 +1201,7 @@ export function subscribeWorkflowStream(params: {
   onEvent: (event: StepStreamEvent) => void;
   onError?: (err: Event) => void;
 }): () => void {
-  const url = `${getBackendBaseUrl()}/api/v1/workflows/${params.workflowId}/stream/${params.runId}`;
+  const url = backendFetchUrl(`/api/v1/workflows/${params.workflowId}/stream/${params.runId}`);
   const ac = new AbortController();
   let active = true;
 

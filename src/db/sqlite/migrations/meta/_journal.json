@@ -141,6 +141,34 @@
       "when": 1777352150000,
       "tag": "0019_execution_task_and_risk_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1777352160000,
+      "tag": "0020_agent_group",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1777352170000,
+      "tag": "0021_research_team_interaction",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1777352180000,
+      "tag": "0022_backtest_job",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1777352190000,
+      "tag": "0023_indicator_strategy_script",
+      "breakpoints": true
     }
   ]
 }

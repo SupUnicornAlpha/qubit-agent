@@ -6,6 +6,7 @@ import { loadModelConfig } from "../config/model-config";
 import { runLlmGateway } from "../llm/gateway";
 import type { AnalystSignalValue } from "../../types/entities";
 import { debateStreamBus } from "./debate-stream";
+import { logResearchTeamInteraction } from "../research-team/interaction-log";
 
 export interface DebateInput {
   workflowRunId: string;
@@ -94,6 +95,14 @@ export async function runDebateSession(input: DebateInput): Promise<DebateOutput
         confidence: bull.confidence,
       },
     });
+    await logResearchTeamInteraction({
+      workflowRunId: input.workflowRunId,
+      fromRole: "researcher_bull",
+      toRole: "researcher_bear",
+      kind: "llm_message",
+      contentText: bull.statement.slice(0, 8000),
+      payloadJson: { roundNumber: round, stance: "bull", confidence: bull.confidence },
+    });
     bullScore += bull.confidence;
 
     const bear = await runRole("bear", topic, input.analystSummary);
@@ -119,6 +128,14 @@ export async function runDebateSession(input: DebateInput): Promise<DebateOutput
         statement: bear.statement,
         confidence: bear.confidence,
       },
+    });
+    await logResearchTeamInteraction({
+      workflowRunId: input.workflowRunId,
+      fromRole: "researcher_bear",
+      toRole: "researcher_bull",
+      kind: "llm_message",
+      contentText: bear.statement.slice(0, 8000),
+      payloadJson: { roundNumber: round, stance: "bear", confidence: bear.confidence },
     });
     bearScore += bear.confidence;
   }
@@ -149,6 +166,14 @@ export async function runDebateSession(input: DebateInput): Promise<DebateOutput
     type: "debate_verdict",
     ts: Date.now(),
     payload: { consensusScore, finalStance, verdict, reasoning },
+  });
+  await logResearchTeamInteraction({
+    workflowRunId: input.workflowRunId,
+    fromRole: "orchestrator",
+    toRole: "msa",
+    kind: "llm_message",
+    contentText: `辩论结论: ${verdict} / ${finalStance} — ${reasoning.slice(0, 4000)}`,
+    payloadJson: { consensusScore, finalStance, verdict },
   });
 
   await db

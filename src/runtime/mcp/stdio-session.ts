@@ -92,13 +92,23 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
     pools.delete(key);
   }
 
-  const proc = Bun.spawn(argv, {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: { ...process.env, ...env },
-    cwd,
-  });
+  let proc: Subprocess;
+  try {
+    proc = Bun.spawn(argv, {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ...env },
+      cwd,
+    });
+  } catch (e) {
+    const hint =
+      argv[0] === "uvx" || argv.join(" ").includes("uvx")
+        ? " 这些内置 MCP 的 command 依赖 uvx。请安装 uv（https://docs.astral.sh/uv/getting-started/installation/），并确保启动本服务时的 PATH 包含 uvx（例如在终端里 `which uvx` 能成功后再启动后端），或在配置里把 command 改成 uvx 的绝对路径。"
+        : " 请检查 command 第一个可执行文件是否已安装，并在当前进程的 PATH 中可用，或改为绝对路径。";
+    const raw = e instanceof Error ? e.message : String(e);
+    throw new Error(`MCP stdio 无法启动子进程（${argv[0] ?? "?"}）：${raw}。${hint}`);
+  }
 
   if (!proc.stdin || !proc.stdout) throw new Error("stdio MCP: subprocess missing pipes");
 

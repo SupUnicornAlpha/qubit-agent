@@ -11,9 +11,10 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
-import { analystSignal, agentRoleCatalog, signalFusionResult, workflowRun } from "../db/sqlite/schema";
+import { analystSignal, agentGroup, agentRoleCatalog, signalFusionResult, workflowRun } from "../db/sqlite/schema";
 import { runAnalystTeam, type AnalystTeamResult } from "../runtime/msa/analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
+import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
 
 export const analystRouter = new Hono();
 
@@ -38,6 +39,7 @@ analystRouter.post("/run", async (c) => {
     workflowRunId: string;
     ticker: string;
     context?: string;
+    agentGroupId?: string | null;
   }>();
 
   if (!body.workflowRunId || !body.ticker) {
@@ -46,6 +48,10 @@ analystRouter.post("/run", async (c) => {
 
   // Verify workflow exists
   const db = await getDb();
+  if (body.agentGroupId) {
+    const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, body.agentGroupId)).limit(1);
+    if (!grp[0]) return c.json({ error: "agent group not found" }, 404);
+  }
   const wf = await db
     .select({ id: workflowRun.id })
     .from(workflowRun)
@@ -70,6 +76,7 @@ analystRouter.post("/run", async (c) => {
     workflowRunId: body.workflowRunId,
     ticker: body.ticker,
     context: body.context,
+    agentGroupId: body.agentGroupId,
   })
     .then((result) => {
       job.status = "completed";
@@ -105,6 +112,23 @@ analystRouter.get("/job/:jobId", (c) => {
     result: job.result,
     error: job.error,
   });
+});
+
+/**
+ * GET /api/v1/analyst/workflow/:workflowId/team-graph
+ * Agent 拓扑、边统计、交互轨迹与 tool/mcp 调用（供 IDE 画布）
+ */
+analystRouter.get("/workflow/:workflowId/team-graph", async (c) => {
+  const workflowRunId = c.req.param("workflowId");
+  const db = await getDb();
+  const wf = await db
+    .select({ id: workflowRun.id })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
+  if (!wf[0]) return c.json({ error: "workflow not found" }, 404);
+  const data = await buildTeamWorkflowGraph(workflowRunId);
+  return c.json({ ok: true, data });
 });
 
 /**

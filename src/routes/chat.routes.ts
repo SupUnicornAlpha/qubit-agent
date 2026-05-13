@@ -5,6 +5,7 @@ import {
   chatMessage,
   chatMessageWorkflowLink,
   chatSession,
+  indicatorStrategyScript,
   project,
   workflowRun,
   workspace,
@@ -70,6 +71,127 @@ chatRouter.post("/sessions", async (c) => {
   });
   const created = await db.select().from(chatSession).where(eq(chatSession.id, id)).limit(1);
   return c.json({ data: created[0] }, 201);
+});
+
+const purposeEnum = ["research", "live_trading", "both"] as const;
+
+async function assertWorkflowBelongsToSession(
+  db: Awaited<ReturnType<typeof getDb>>,
+  sessionId: string,
+  workflowRunId: string | undefined | null
+): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
+  if (!workflowRunId) return { ok: true };
+  const wf = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  if (!wf[0]) return { ok: false, status: 404, body: { error: "workflow run not found", workflowRunId } };
+  if (wf[0].sessionId !== sessionId) {
+    return { ok: false, status: 400, body: { error: "workflow run does not belong to this session", workflowRunId } };
+  }
+  return { ok: true };
+}
+
+chatRouter.get("/sessions/:sessionId/strategy-scripts", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const db = await getDb();
+  const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
+  if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
+  const rows = await db
+    .select()
+    .from(indicatorStrategyScript)
+    .where(eq(indicatorStrategyScript.sessionId, sessionId))
+    .orderBy(desc(indicatorStrategyScript.updatedAt));
+  return c.json({ data: rows });
+});
+
+chatRouter.post("/sessions/:sessionId/strategy-scripts", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const body = await c.req.json<{
+    name?: string;
+    ideCode?: string;
+    signalCode?: string;
+    workflowRunId?: string | null;
+    aiPromptSnapshot?: string | null;
+    chartSnapshotJson?: Record<string, unknown>;
+    purpose?: (typeof purposeEnum)[number];
+  }>();
+  const db = await getDb();
+  const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
+  if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
+  const name = String(body.name ?? "").trim();
+  if (!name) return c.json({ error: "name is required" }, 400);
+  const wfCheck = await assertWorkflowBelongsToSession(db, sessionId, body.workflowRunId ?? undefined);
+  if (!wfCheck.ok) return c.json(wfCheck.body, wfCheck.status);
+  const purpose = body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : "both";
+  const chartJson =
+    body.chartSnapshotJson && typeof body.chartSnapshotJson === "object"
+      ? JSON.stringify(body.chartSnapshotJson)
+      : "{}";
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.insert(indicatorStrategyScript).values({
+    id,
+    sessionId,
+    workflowRunId: body.workflowRunId ?? null,
+    name,
+    ideCode: String(body.ideCode ?? ""),
+    signalCode: String(body.signalCode ?? ""),
+    aiPromptSnapshot: body.aiPromptSnapshot ?? null,
+    chartSnapshotJson: chartJson,
+    purpose,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const created = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, id)).limit(1);
+  return c.json({ data: created[0] }, 201);
+});
+
+chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
+  const scriptId = c.req.param("scriptId");
+  const body = await c.req.json<{
+    name?: string;
+    ideCode?: string;
+    signalCode?: string;
+    workflowRunId?: string | null;
+    aiPromptSnapshot?: string | null;
+    chartSnapshotJson?: Record<string, unknown>;
+    purpose?: (typeof purposeEnum)[number];
+  }>();
+  const db = await getDb();
+  const rows = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, scriptId)).limit(1);
+  const row = rows[0];
+  if (!row) return c.json({ error: "strategy script not found", scriptId }, 404);
+  const wfCheck = await assertWorkflowBelongsToSession(
+    db,
+    row.sessionId,
+    body.workflowRunId !== undefined ? body.workflowRunId : row.workflowRunId
+  );
+  if (!wfCheck.ok) return c.json(wfCheck.body, wfCheck.status);
+  const purpose =
+    body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : row.purpose;
+  const patch: Partial<typeof indicatorStrategyScript.$inferInsert> = {
+    updatedAt: new Date().toISOString(),
+    purpose,
+  };
+  if (body.name !== undefined) {
+    const n = String(body.name).trim();
+    patch.name = n || row.name;
+  }
+  if (body.ideCode !== undefined) patch.ideCode = String(body.ideCode);
+  if (body.signalCode !== undefined) patch.signalCode = String(body.signalCode);
+  if (body.workflowRunId !== undefined) patch.workflowRunId = body.workflowRunId;
+  if (body.aiPromptSnapshot !== undefined) patch.aiPromptSnapshot = body.aiPromptSnapshot;
+  if (body.chartSnapshotJson !== undefined && typeof body.chartSnapshotJson === "object") {
+    patch.chartSnapshotJson = JSON.stringify(body.chartSnapshotJson);
+  }
+  await db.update(indicatorStrategyScript).set(patch).where(eq(indicatorStrategyScript.id, scriptId));
+  const updated = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, scriptId)).limit(1);
+  return c.json({ data: updated[0] });
+});
+
+chatRouter.delete("/strategy-scripts/:scriptId", async (c) => {
+  const scriptId = c.req.param("scriptId");
+  const db = await getDb();
+  await db.delete(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, scriptId));
+  return c.json({ ok: true, deletedId: scriptId });
 });
 
 chatRouter.get("/sessions/:id/messages", async (c) => {

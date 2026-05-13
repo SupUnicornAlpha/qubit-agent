@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, or } from "drizzle-orm";
 import { getRuntimeAgents } from "../runtime/agent-pool";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
@@ -8,6 +8,8 @@ import {
   agentDefinition,
   agentDefinitionDraft,
   agentDefinitionRelease,
+  agentGroup,
+  agentGroupMember,
   agentProfile,
   mcpCatalog,
   mcpCatalogInstall,
@@ -35,6 +37,13 @@ import {
 } from "../runtime/mcp/market-service";
 
 export const agentRouter = new Hono();
+
+const ANALYST_TEAM_MEMBER_ROLES: AgentRole[] = [
+  "analyst_fundamental",
+  "analyst_technical",
+  "analyst_sentiment",
+  "analyst_macro",
+];
 
 function toJsonValue(input: unknown): unknown {
   if (typeof input !== "string") return input;
@@ -572,13 +581,22 @@ agentRouter.post("/mcp/test", async (c) => {
   if (!body.serverName || !body.toolName) {
     return c.json({ error: "serverName and toolName are required" }, 400);
   }
-  const data = await dispatchMcpToolCall({
-    projectId: body.projectId,
-    serverName: body.serverName,
-    toolName: body.toolName,
-    arguments: body.arguments ?? {},
-  });
-  return c.json({ ok: true, data });
+  try {
+    const data = await dispatchMcpToolCall({
+      projectId: body.projectId,
+      serverName: body.serverName,
+      toolName: body.toolName,
+      arguments: body.arguments ?? {},
+    });
+    return c.json({ ok: true, data });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isCircuit = message.includes("circuit breaker open");
+    const detail = isCircuit
+      ? `${message}（同一 server+tool 在短时间内失败次数过多，约 30 秒后会自动恢复；若根因是缺少 uvx，请先修好环境再测。）`
+      : message;
+    return c.json({ ok: false, error: detail }, 500);
+  }
 });
 
 agentRouter.get("/mcp/catalog", async (c) => {
@@ -818,4 +836,481 @@ agentRouter.post("/mcp/market/installs/:id/test", async (c) => {
     arguments: body.arguments,
   });
   return c.json({ ok: true, data });
+});
+
+// ─── Agent groups（分析师等多定义编组）────────────────────────────────────────
+
+agentRouter.get("/agent-groups", async (c) => {
+  const db = await getDb();
+  const groups = await db.select().from(agentGroup).orderBy(desc(agentGroup.updatedAt));
+  const memberCounts = await db
+    .select({
+      groupId: agentGroupMember.groupId,
+      n: count(agentGroupMember.id),
+    })
+    .from(agentGroupMember)
+    .groupBy(agentGroupMember.groupId);
+  const countByGroup = new Map(memberCounts.map((row) => [row.groupId, Number(row.n)]));
+  return c.json({
+    data: groups.map((g) => ({
+      ...g,
+      memberCount: countByGroup.get(g.id) ?? 0,
+    })),
+  });
+});
+
+agentRouter.post("/agent-groups", async (c) => {
+  const body = await c.req.json<{ name?: string; description?: string }>();
+  if (!body.name?.trim()) return c.json({ error: "name is required" }, 400);
+  const db = await getDb();
+  const id = crypto.randomUUID();
+  await db.insert(agentGroup).values({
+    id,
+    name: body.name.trim(),
+    description: (body.description ?? "").trim(),
+  });
+  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  return c.json({ data: row[0] }, 201);
+});
+
+agentRouter.patch("/agent-groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ name?: string; description?: string }>();
+  const db = await getDb();
+  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!existing[0]) return c.json({ error: "not found" }, 404);
+  const patch: { name?: string; description?: string; updatedAt?: string } = {
+    updatedAt: new Date().toISOString(),
+  };
+  if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
+  if (typeof body.description === "string") patch.description = body.description;
+  await db.update(agentGroup).set(patch).where(eq(agentGroup.id, id));
+  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  return c.json({ data: row[0] });
+});
+
+agentRouter.delete("/agent-groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!existing[0]) return c.json({ error: "not found" }, 404);
+  await db.delete(agentGroup).where(eq(agentGroup.id, id));
+  return c.json({ ok: true });
+});
+
+agentRouter.get("/agent-groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!g[0]) return c.json({ error: "not found" }, 404);
+  const members = await db
+    .select({
+      id: agentGroupMember.id,
+      groupId: agentGroupMember.groupId,
+      definitionId: agentGroupMember.definitionId,
+      sortOrder: agentGroupMember.sortOrder,
+      role: agentDefinition.role,
+      definitionName: agentDefinition.name,
+    })
+    .from(agentGroupMember)
+    .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+    .where(eq(agentGroupMember.groupId, id))
+    .orderBy(asc(agentGroupMember.sortOrder), asc(agentGroupMember.id));
+  return c.json({ data: { group: g[0], members } });
+});
+
+agentRouter.post("/agent-groups/:id/members", async (c) => {
+  const groupId = c.req.param("id");
+  const body = await c.req.json<{ definitionId?: string; sortOrder?: number }>();
+  if (!body.definitionId?.trim()) return c.json({ error: "definitionId is required" }, 400);
+  const db = await getDb();
+  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, groupId)).limit(1);
+  if (!g[0]) return c.json({ error: "group not found" }, 404);
+  const def = await db
+    .select({ id: agentDefinition.id })
+    .from(agentDefinition)
+    .where(eq(agentDefinition.id, body.definitionId.trim()))
+    .limit(1);
+  if (!def[0]) return c.json({ error: "definition not found" }, 404);
+  const memberId = crypto.randomUUID();
+  const sortOrder =
+    typeof body.sortOrder === "number" && Number.isFinite(body.sortOrder) ? Math.trunc(body.sortOrder) : 0;
+  try {
+    await db.insert(agentGroupMember).values({
+      id: memberId,
+      groupId,
+      definitionId: body.definitionId.trim(),
+      sortOrder,
+    });
+  } catch {
+    return c.json({ error: "member already exists for this definition" }, 409);
+  }
+  await db
+    .update(agentGroup)
+    .set({ updatedAt: new Date().toISOString() })
+    .where(eq(agentGroup.id, groupId));
+  const row = await db.select().from(agentGroupMember).where(eq(agentGroupMember.id, memberId)).limit(1);
+  return c.json({ data: row[0] }, 201);
+});
+
+agentRouter.delete("/agent-groups/:id/members/:memberId", async (c) => {
+  const groupId = c.req.param("id");
+  const memberId = c.req.param("memberId");
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(agentGroupMember)
+    .where(and(eq(agentGroupMember.id, memberId), eq(agentGroupMember.groupId, groupId)))
+    .limit(1);
+  if (!row[0]) return c.json({ error: "not found" }, 404);
+  await db.delete(agentGroupMember).where(eq(agentGroupMember.id, memberId));
+  await db
+    .update(agentGroup)
+    .set({ updatedAt: new Date().toISOString() })
+    .where(eq(agentGroup.id, groupId));
+  return c.json({ ok: true });
+});
+
+// ─── Agent 组（研究团队可选）────────────────────────────────────────────────────
+
+async function assertAnalystGroupMembers(definitionIds: string[]) {
+  const db = await getDb();
+  if (definitionIds.length === 0) {
+    return { ok: false as const, error: "members must include at least one agent definition" };
+  }
+  const defs = await db
+    .select()
+    .from(agentDefinition)
+    .where(inArray(agentDefinition.id, definitionIds));
+  if (defs.length !== definitionIds.length) {
+    return { ok: false as const, error: "one or more definition ids not found" };
+  }
+  const roles = defs.map((d) => d.role as AgentRole);
+  for (const r of roles) {
+    if (!ANALYST_TEAM_MEMBER_ROLES.includes(r)) {
+      return {
+        ok: false as const,
+        error: `only analyst team roles allowed in group: ${ANALYST_TEAM_MEMBER_ROLES.join(", ")}; got ${r}`,
+      };
+    }
+  }
+  const seen = new Set<string>();
+  for (const r of roles) {
+    if (seen.has(r)) {
+      return { ok: false as const, error: `duplicate analyst role in group: ${r} (one definition per role)` };
+    }
+    seen.add(r);
+  }
+  return { ok: true as const, definitions: defs };
+}
+
+agentRouter.get("/groups", async (c) => {
+  const workspaceId = c.req.query("workspaceId");
+  const db = await getDb();
+  const rows = workspaceId
+    ? await db
+        .select()
+        .from(agentGroup)
+        .where(or(eq(agentGroup.workspaceId, workspaceId), isNull(agentGroup.workspaceId)))
+        .orderBy(asc(agentGroup.name))
+    : await db.select().from(agentGroup).orderBy(asc(agentGroup.name));
+
+  const groupIds = rows.map((g) => g.id);
+  const members =
+    groupIds.length > 0
+      ? await db
+          .select({
+            m: agentGroupMember,
+            def: agentDefinition,
+          })
+          .from(agentGroupMember)
+          .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+          .where(inArray(agentGroupMember.groupId, groupIds))
+          .orderBy(asc(agentGroupMember.sortOrder))
+      : [];
+
+  const byGroup = new Map<string, typeof members>();
+  for (const row of members) {
+    const gid = row.m.groupId;
+    const arr = byGroup.get(gid) ?? [];
+    arr.push(row);
+    byGroup.set(gid, arr);
+  }
+
+  return c.json({
+    data: rows.map((g) => ({
+      group: g,
+      members: (byGroup.get(g.id) ?? []).map((row) => ({
+        id: row.m.id,
+        groupId: row.m.groupId,
+        definitionId: row.m.definitionId,
+        sortOrder: row.m.sortOrder,
+        role: row.def.role,
+        name: row.def.name,
+        version: row.def.version,
+      })),
+    })),
+  });
+});
+
+agentRouter.get("/groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!g[0]) return c.json({ error: "group not found" }, 404);
+  const members = await db
+    .select({
+      m: agentGroupMember,
+      def: agentDefinition,
+    })
+    .from(agentGroupMember)
+    .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+    .where(eq(agentGroupMember.groupId, id))
+    .orderBy(asc(agentGroupMember.sortOrder));
+  return c.json({
+    data: {
+      group: g[0],
+      members: members.map((row) => ({
+        id: row.m.id,
+        groupId: row.m.groupId,
+        definitionId: row.m.definitionId,
+        sortOrder: row.m.sortOrder,
+        role: row.def.role,
+        name: row.def.name,
+        version: row.def.version,
+        systemPrompt: row.def.systemPrompt,
+      })),
+    },
+  });
+});
+
+agentRouter.post("/groups", async (c) => {
+  const body = await c.req.json<{
+    name: string;
+    workspaceId?: string | null;
+    description?: string;
+    relationsJson?: unknown[];
+    members: Array<{ definitionId: string; sortOrder?: number }>;
+  }>();
+  if (!body.name?.trim()) return c.json({ error: "name is required" }, 400);
+  if (!Array.isArray(body.members) || body.members.length === 0) {
+    return c.json({ error: "members array is required" }, 400);
+  }
+  const db = await getDb();
+  if (body.workspaceId) {
+    const ws = await db.select().from(workspace).where(eq(workspace.id, body.workspaceId)).limit(1);
+    if (!ws[0]) return c.json({ error: "workspace not found" }, 404);
+  }
+  const ordered = [...body.members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  const definitionIds = ordered.map((m) => m.definitionId);
+  const check = await assertAnalystGroupMembers(definitionIds);
+  if (!check.ok) return c.json({ error: check.error }, 400);
+
+  const groupId = crypto.randomUUID();
+  await db.insert(agentGroup).values({
+    id: groupId,
+    workspaceId: body.workspaceId ?? null,
+    name: body.name.trim(),
+    description: body.description ?? "",
+    relationsJson: toJsonValue(body.relationsJson ?? []) as never,
+  });
+  for (let i = 0; i < ordered.length; i++) {
+    await db.insert(agentGroupMember).values({
+      id: crypto.randomUUID(),
+      groupId,
+      definitionId: ordered[i].definitionId,
+      sortOrder: ordered[i].sortOrder ?? i,
+    });
+  }
+  const created = await db.select().from(agentGroup).where(eq(agentGroup.id, groupId)).limit(1);
+  return c.json({ data: created[0] }, 201);
+});
+
+agentRouter.patch("/groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{
+    name?: string;
+    workspaceId?: string | null;
+    description?: string;
+    relationsJson?: unknown[];
+    members?: Array<{ definitionId: string; sortOrder?: number }>;
+  }>();
+  const db = await getDb();
+  const existed = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!existed[0]) return c.json({ error: "group not found" }, 404);
+  if (body.workspaceId) {
+    const ws = await db.select().from(workspace).where(eq(workspace.id, body.workspaceId)).limit(1);
+    if (!ws[0]) return c.json({ error: "workspace not found" }, 404);
+  }
+  if (body.members) {
+    const ordered = [...body.members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+    const definitionIds = ordered.map((m) => m.definitionId);
+    const check = await assertAnalystGroupMembers(definitionIds);
+    if (!check.ok) return c.json({ error: check.error }, 400);
+    await db.delete(agentGroupMember).where(eq(agentGroupMember.groupId, id));
+    for (let i = 0; i < ordered.length; i++) {
+      await db.insert(agentGroupMember).values({
+        id: crypto.randomUUID(),
+        groupId: id,
+        definitionId: ordered[i].definitionId,
+        sortOrder: ordered[i].sortOrder ?? i,
+      });
+    }
+  }
+  const now = new Date().toISOString();
+  await db
+    .update(agentGroup)
+    .set({
+      name: body.name?.trim() ?? existed[0].name,
+      workspaceId: body.workspaceId !== undefined ? body.workspaceId : existed[0].workspaceId,
+      description: body.description ?? existed[0].description,
+      relationsJson:
+        body.relationsJson !== undefined ? (toJsonValue(body.relationsJson) as never) : existed[0].relationsJson,
+      updatedAt: now,
+    })
+    .where(eq(agentGroup.id, id));
+  const updated = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  return c.json({ data: updated[0] });
+});
+
+agentRouter.delete("/groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const existed = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!existed[0]) return c.json({ error: "group not found" }, 404);
+  await db.delete(agentGroup).where(eq(agentGroup.id, id));
+  return c.json({ ok: true });
+});
+
+// ─── Agent groups（分析师等多定义编组）────────────────────────────────────────
+
+agentRouter.get("/agent-groups", async (c) => {
+  const db = await getDb();
+  const groups = await db.select().from(agentGroup).orderBy(desc(agentGroup.updatedAt));
+  const memberCounts = await db
+    .select({
+      groupId: agentGroupMember.groupId,
+      n: count(agentGroupMember.id),
+    })
+    .from(agentGroupMember)
+    .groupBy(agentGroupMember.groupId);
+  const countByGroup = new Map(memberCounts.map((row) => [row.groupId, Number(row.n)]));
+  return c.json({
+    data: groups.map((g) => ({
+      ...g,
+      memberCount: countByGroup.get(g.id) ?? 0,
+    })),
+  });
+});
+
+agentRouter.post("/agent-groups", async (c) => {
+  const body = await c.req.json<{ name?: string; description?: string }>();
+  if (!body.name?.trim()) return c.json({ error: "name is required" }, 400);
+  const db = await getDb();
+  const id = crypto.randomUUID();
+  await db.insert(agentGroup).values({
+    id,
+    name: body.name.trim(),
+    description: (body.description ?? "").trim(),
+  });
+  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  return c.json({ data: row[0] }, 201);
+});
+
+agentRouter.patch("/agent-groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ name?: string; description?: string }>();
+  const db = await getDb();
+  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!existing[0]) return c.json({ error: "not found" }, 404);
+  const patch: { name?: string; description?: string; updatedAt?: string } = {
+    updatedAt: new Date().toISOString(),
+  };
+  if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
+  if (typeof body.description === "string") patch.description = body.description;
+  await db.update(agentGroup).set(patch).where(eq(agentGroup.id, id));
+  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  return c.json({ data: row[0] });
+});
+
+agentRouter.delete("/agent-groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!existing[0]) return c.json({ error: "not found" }, 404);
+  await db.delete(agentGroup).where(eq(agentGroup.id, id));
+  return c.json({ ok: true });
+});
+
+agentRouter.get("/agent-groups/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
+  if (!g[0]) return c.json({ error: "not found" }, 404);
+  const members = await db
+    .select({
+      id: agentGroupMember.id,
+      groupId: agentGroupMember.groupId,
+      definitionId: agentGroupMember.definitionId,
+      sortOrder: agentGroupMember.sortOrder,
+      role: agentDefinition.role,
+      definitionName: agentDefinition.name,
+    })
+    .from(agentGroupMember)
+    .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+    .where(eq(agentGroupMember.groupId, id))
+    .orderBy(asc(agentGroupMember.sortOrder), asc(agentGroupMember.id));
+  return c.json({ data: { group: g[0], members } });
+});
+
+agentRouter.post("/agent-groups/:id/members", async (c) => {
+  const groupId = c.req.param("id");
+  const body = await c.req.json<{ definitionId?: string; sortOrder?: number }>();
+  if (!body.definitionId?.trim()) return c.json({ error: "definitionId is required" }, 400);
+  const db = await getDb();
+  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, groupId)).limit(1);
+  if (!g[0]) return c.json({ error: "group not found" }, 404);
+  const def = await db
+    .select({ id: agentDefinition.id })
+    .from(agentDefinition)
+    .where(eq(agentDefinition.id, body.definitionId.trim()))
+    .limit(1);
+  if (!def[0]) return c.json({ error: "definition not found" }, 404);
+  const memberId = crypto.randomUUID();
+  const sortOrder =
+    typeof body.sortOrder === "number" && Number.isFinite(body.sortOrder) ? Math.trunc(body.sortOrder) : 0;
+  try {
+    await db.insert(agentGroupMember).values({
+      id: memberId,
+      groupId,
+      definitionId: body.definitionId.trim(),
+      sortOrder,
+    });
+  } catch {
+    return c.json({ error: "member already exists for this definition" }, 409);
+  }
+  await db
+    .update(agentGroup)
+    .set({ updatedAt: new Date().toISOString() })
+    .where(eq(agentGroup.id, groupId));
+  const row = await db.select().from(agentGroupMember).where(eq(agentGroupMember.id, memberId)).limit(1);
+  return c.json({ data: row[0] }, 201);
+});
+
+agentRouter.delete("/agent-groups/:id/members/:memberId", async (c) => {
+  const groupId = c.req.param("id");
+  const memberId = c.req.param("memberId");
+  const db = await getDb();
+  const row = await db
+    .select()
+    .from(agentGroupMember)
+    .where(and(eq(agentGroupMember.id, memberId), eq(agentGroupMember.groupId, groupId)))
+    .limit(1);
+  if (!row[0]) return c.json({ error: "not found" }, 404);
+  await db.delete(agentGroupMember).where(eq(agentGroupMember.id, memberId));
+  await db
+    .update(agentGroup)
+    .set({ updatedAt: new Date().toISOString() })
+    .where(eq(agentGroup.id, groupId));
+  return c.json({ ok: true });
 });
