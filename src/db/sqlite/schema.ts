@@ -70,6 +70,11 @@ export const workflowRun = sqliteTable("workflow_run", {
   signalFusionId: text("signal_fusion_id"),
   /** 研究团队分析选用的 Agent 组（见迁移 0023_agent_group；Drizzle 侧不声明 FK 避免表定义顺序循环） */
   agentGroupId: text("agent_group_id"),
+  /** Agent 执行循环：native=LangGraph；claude_cli / codex_cli=外部 CLI（见 src/runtime/loop） */
+  loopKind: text("loop_kind", { enum: ["native", "claude_cli", "codex_cli"] })
+    .notNull()
+    .default("native"),
+  loopOptionsJson: text("loop_options_json", { mode: "json" }).notNull().default("{}"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
 });
@@ -269,6 +274,7 @@ export const mcpServerConfig = sqliteTable("mcp_server_config", {
 export const mcpToolBinding = sqliteTable("mcp_tool_binding", {
   id: id(),
   projectId: text("project_id").references(() => project.id),
+  definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
   serverName: text("server_name").notNull(),
   toolName: text("tool_name").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -389,6 +395,32 @@ export const mcpCatalogInstall = sqliteTable("mcp_catalog_install", {
   createdAt: createdAt(),
 });
 
+export const skillMarketInstall = sqliteTable(
+  "skill_market_install",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    registry: text("registry").notNull().default("open-skill-market"),
+    externalSkillId: text("external_skill_id").notNull(),
+    skillName: text("skill_name").notNull(),
+    description: text("description").notNull().default(""),
+    metaJson: text("meta_json", { mode: "json" }).notNull().default("{}"),
+    installStatus: text("install_status", { enum: ["installed", "removed"] })
+      .notNull()
+      .default("installed"),
+    installedBy: text("installed_by").notNull().default("user"),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    projectExtUnique: uniqueIndex("idx_skill_market_install_project_ext").on(
+      table.projectId,
+      table.externalSkillId
+    ),
+  })
+);
+
 export const agentDefinition = sqliteTable("agent_definition", {
   id: id(),
   role: text("role", {
@@ -474,6 +506,15 @@ export const agentProfile = sqliteTable("agent_profile", {
   description: text("description").notNull().default(""),
   tagsJson: text("tags_json", { mode: "json" }).notNull().default("[]"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /** 可选；空则使用 dataDir/agents/{definitionId} */
+  configRootUri: text("config_root_uri").notNull().default(""),
+  /** 空则运行时使用 def:{definitionId} */
+  memoryNamespace: text("memory_namespace").notNull().default(""),
+  promptMode: text("prompt_mode", { enum: ["db_primary", "file_primary", "merged"] })
+    .notNull()
+    .default("db_primary"),
+  configContentHash: text("config_content_hash").notNull().default(""),
+  configSyncedAt: text("config_synced_at").notNull().default(""),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -590,10 +631,12 @@ export const agentStep = sqliteTable("agent_step", {
     .notNull()
     .references(() => workflowRun.id),
   stepIndex: integer("step_index").notNull(),
-  phase: text("phase", { enum: ["perceive", "reason", "act", "observe"] }).notNull(),
+  phase: text("phase", {
+    enum: ["perceive", "reason", "act", "observe", "external"],
+  }).notNull(),
   thought: text("thought"),
   actionType: text("action_type", {
-    enum: ["tool_call", "final_answer", "memory_read", "memory_write", "a2a_send"],
+    enum: ["tool_call", "final_answer", "memory_read", "memory_write", "a2a_send", "cli_io"],
   }).notNull(),
   actionJson: text("action_json", { mode: "json" }).notNull(),
   observationJson: text("observation_json", { mode: "json" }),
@@ -1240,6 +1283,7 @@ export const midtermMemory = sqliteTable("midterm_memory", {
   projectId: text("project_id")
     .notNull()
     .references(() => project.id),
+  definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
   memoryType: text("memory_type", {
     enum: ["strategy_iteration", "risk_review", "simulation_note", "param_scan"],
   }).notNull(),
@@ -1255,6 +1299,7 @@ export const longtermMemory = sqliteTable("longterm_memory", {
   id: id(),
   scope: text("scope", { enum: ["org", "project", "strategy"] }).notNull(),
   scopeId: text("scope_id").notNull(),
+  definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
   memoryType: text("memory_type", {
     enum: [
       "factor_archive",

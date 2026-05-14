@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, like, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, like, ne } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   mcpCatalog,
@@ -191,7 +191,8 @@ export async function installCatalogItemToProject(input: {
       and(
         eq(mcpToolBinding.projectId, input.projectId),
         eq(mcpToolBinding.serverName, scopedName),
-        eq(mcpToolBinding.toolName, toolName)
+        eq(mcpToolBinding.toolName, toolName),
+        isNull(mcpToolBinding.definitionId)
       )
     )
     .limit(1);
@@ -210,6 +211,7 @@ export async function installCatalogItemToProject(input: {
     await db.insert(mcpToolBinding).values({
       id: randomUUID(),
       projectId: input.projectId,
+      definitionId: null,
       serverName: scopedName,
       toolName,
       enabled: true,

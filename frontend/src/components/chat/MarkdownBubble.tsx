@@ -37,16 +37,31 @@ const mdComponents: Components = {
   ),
   hr: () => <hr style={{ border: "none", borderTop: "1px solid #3f3f46", margin: "0.75em 0" }} />,
   table: ({ children }) => (
-    <div style={{ overflow: "auto", maxWidth: "100%", margin: "0.5em 0" }}>
-      <table style={{ borderCollapse: "collapse", fontSize: 13 }}>{children}</table>
+    <div style={{ overflow: "auto", maxWidth: "100%", width: "100%", margin: "0.5em 0" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 13, width: "100%", maxWidth: "100%", tableLayout: "fixed" }}>
+        {children}
+      </table>
     </div>
   ),
   th: ({ children }) => (
-    <th style={{ border: "1px solid #3f3f46", padding: "6px 10px", background: "#27272a", textAlign: "left" }}>
+    <th
+      style={{
+        border: "1px solid #3f3f46",
+        padding: "6px 10px",
+        background: "#27272a",
+        textAlign: "left",
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
+      }}
+    >
       {children}
     </th>
   ),
-  td: ({ children }) => <td style={{ border: "1px solid #3f3f46", padding: "6px 10px" }}>{children}</td>,
+  td: ({ children }) => (
+    <td style={{ border: "1px solid #3f3f46", padding: "6px 10px", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+      {children}
+    </td>
+  ),
   code: ({ className, children }) => {
     const isBlock = Boolean(className?.includes("language-"));
     if (isBlock) {
@@ -96,7 +111,7 @@ export const MarkdownBubble: FC<{ text: string }> = ({ text }) => {
     return <span style={{ color: "#71717a" }}>(空)</span>;
   }
   return (
-    <div style={mdBase}>
+    <div style={{ ...mdBase, maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
         {text}
       </ReactMarkdown>

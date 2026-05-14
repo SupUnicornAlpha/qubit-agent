@@ -19,6 +19,9 @@ export interface StepStreamEvent {
   stepIndex: number;
   ts: number;
   payload: Record<string, unknown>;
+  /** When set, identifies which agent loop produced this frame (native vs external CLI). */
+  loopKind?: import("../../types/loop").AgentLoopKind;
+  source?: "native" | "cli";
 }
 
 export interface AgentGraphState {
@@ -64,4 +67,3 @@ export function createInitialGraphState(input: {
     events: [],
   };
 }
-

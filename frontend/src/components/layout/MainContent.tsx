@@ -4,8 +4,6 @@ import { History, Loader2, Network, Rocket, Users, type LucideIcon } from "lucid
 import {
   chatHealth,
   checkBrokerHealth,
-  createEvalDataset,
-  createAgentDraft,
   createChatSession,
   createProject,
   createScheduledJob,
@@ -14,11 +12,9 @@ import {
   createWorkflow,
   createWorkspace,
   getAgentsConfig,
-  getAgentRoles,
   getDebateConfig,
   getDebateTurns,
   getDebateVerdict,
-  getDefaultProjectSession,
   getExecutionSafetyConfig,
   getFusionHistory,
   getAnalystTeamGraph,
@@ -36,8 +32,6 @@ import {
   getIntentExecutionView,
   getSessionAgentsBoard,
   getSessionA2AMessages,
-  getEvalRunDetail,
-  getWorkflowDetail,
   listBrokerAccounts,
   listBrokerEvents,
   listMcpBindings,
@@ -47,15 +41,18 @@ import {
   listMcpServers,
   listScheduledJobRuns,
   listScheduledJobs,
+  appendAgentDraftSkills,
+  deleteSkillMarketInstall,
+  getSkillMarketStatus,
+  installSkillFromMarket,
+  listSkillMarketInstalls,
   listAgentDefinitions,
+  refreshSkillMarketRegistry,
+  searchSkillMarket,
+  getAgentDefinitionMemoryStats,
+  getAgentDefinitionPack,
   listAgentGroups,
-  listAgents,
-  listAgentQuality,
-  listAlerts,
   listChatSessions,
-  listEvalDatasets,
-  listEvalRuns,
-  listWorkflowQuality,
   listMonitorWorkflows,
   listStrategyScripts,
   listIntegrationChannels,
@@ -66,7 +63,6 @@ import {
   listWorkspaces,
   patchSessionMessage,
   patchScheduledJob,
-  releaseAgentDraft,
   reloadAgents,
   processWorkflowCompensations,
   evolveGenePool,
@@ -86,12 +82,8 @@ import {
   upsertMcpSource,
   upsertMcpServer,
   requestExecutionConfirmation,
-  resolveAlert,
-  runEval,
   subscribeDebateStream,
   subscribeWorkflowStream,
-  triggerWorkflowAlerts,
-  createWorkflowQuality,
   listWorkflowCompensations,
   enqueueWorkflowCompensation,
   installMcpMarket,
@@ -101,16 +93,14 @@ import {
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
+  AgentMemoryStatsResponse,
+  AgentPackResponse,
   AgentGroupRecord,
-  AgentRoleCatalogItem,
   AnalystTeamResult,
   DebateConfig,
   DebateStreamEvent,
   DebateTurnRecord,
   DebateVerdictRecord,
-  EvalCaseResultRecord,
-  EvalDatasetRecord,
-  EvalRunRecord,
   RiskConfig,
   RiskVetoLogRecord,
   GeneGenerationRecord,
@@ -125,12 +115,13 @@ import type {
   McpProjectInstallRecord,
   McpRegistrySourceRecord,
   McpToolBindingRecord,
+  OpenSkillMarketEntryDto,
+  SkillMarketInstallRecord,
+  SkillMarketStatusDto,
   ScreenerCandidateRecord,
   ScreenerRunRecord,
   SessionAgentBoardItem,
   SessionA2AMessageItem,
-  AlertEventRecord,
-  AgentRuntimeMetricRecord,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
   CommunicationChannelRecord,
@@ -144,18 +135,22 @@ import type {
   AnalystTeamGraphMcpCall,
   StrategyGenomeRecord,
   StepStreamEvent,
-  WorkflowQualitySnapshotRecord,
-  WorkflowMode,
   BuiltinConnectorConfig,
   IndicatorStrategyScriptRecord,
+  AgentLoopKind,
 } from "../../api/types";
+import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { useAppStore, type ChartContextPayload } from "../../store";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import { StreamTimelineGroupCard } from "../chat/StreamTimelineGroupCard";
 import { KlinePanel } from "../chart/KlinePanel";
-import { IdeQuickTradePanel } from "../ide/IdeQuickTradePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, type TeamGraphSelection } from "../ide/TeamAgentGraph";
+import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
+import { MonitorDashboard } from "../monitor/MonitorDashboard";
+import { TraderLivePanel } from "../trader/TraderLivePanel";
+import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
+import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 
 export const MainContent: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
@@ -175,16 +170,14 @@ export const MainContent: FC = () => {
   }
   if (activeView === "trader") {
     return (
-      <main style={styles.main}>
-        <div style={{ maxWidth: 420, margin: "24px auto", padding: "0 16px" }}>
-          <IdeQuickTradePanel />
-        </div>
+      <main style={styles.mainTrader}>
+        <TraderLivePanel />
       </main>
     );
   }
   if (activeView === "chat") {
     return (
-      <main style={styles.main}>
+      <main style={styles.mainChat}>
         <ChatPanel />
       </main>
     );
@@ -193,6 +186,13 @@ export const MainContent: FC = () => {
     return (
       <main style={styles.mainTeam}>
         <TeamDashboardPanel />
+      </main>
+    );
+  }
+  if (activeView === "broker") {
+    return (
+      <main style={styles.main}>
+        <BrokerAccountsPanel />
       </main>
     );
   }
@@ -205,327 +205,8 @@ export const MainContent: FC = () => {
   }
   return (
     <main style={styles.main}>
-      <MonitorPanel />
+      <MonitorDashboard />
     </main>
-  );
-};
-
-const MonitorPanel: FC = () => {
-  const agents = useAppStore((s) => s.agents);
-  const setAgents = useAppStore((s) => s.setAgents);
-  const streamEvents = useAppStore((s) => s.streamEvents);
-  const pushStreamEvent = useAppStore((s) => s.pushStreamEvent);
-  const clearStreamEvents = useAppStore((s) => s.clearStreamEvents);
-  const [projectId, setProjectId] = useState("");
-  const [sessionId, setSessionId] = useState("");
-  const [goal, setGoal] = useState("Run orchestrator workflow");
-  const [mode, setMode] = useState<WorkflowMode>("research");
-  const [sessionFilter, setSessionFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [workflowList, setWorkflowList] = useState<Array<Record<string, unknown>>>([]);
-  const [drawerDetail, setDrawerDetail] = useState("");
-  const [qualitySnapshots, setQualitySnapshots] = useState<WorkflowQualitySnapshotRecord[]>([]);
-  const [agentQuality, setAgentQuality] = useState<AgentRuntimeMetricRecord[]>([]);
-  const [alerts, setAlerts] = useState<AlertEventRecord[]>([]);
-  const [evalDatasets, setEvalDatasets] = useState<EvalDatasetRecord[]>([]);
-  const [selectedDatasetId, setSelectedDatasetId] = useState("");
-  const [evalRuns, setEvalRuns] = useState<EvalRunRecord[]>([]);
-  const [evalRunCases, setEvalRunCases] = useState<EvalCaseResultRecord[]>([]);
-  const [datasetName, setDatasetName] = useState("Default Eval Dataset");
-
-  useEffect(() => {
-    void listAgents().then(setAgents).catch(console.error);
-  }, [setAgents]);
-
-  useEffect(() => {
-    const boot = async () => {
-      const workspaces = await listWorkspaces();
-      let workspaceId = workspaces[0]?.id;
-      if (!workspaceId) {
-        const created = await createWorkspace({ name: "QUBIT Default Workspace", owner: "local-user" });
-        workspaceId = created.data.id;
-      }
-      const projects = await listProjects(workspaceId);
-      let pid = projects[0]?.id;
-      if (!pid) {
-        const created = await createProject({
-          workspaceId,
-          name: "QUBIT Default Project",
-          marketScope: "CN-A",
-        });
-        pid = created.data.id;
-      }
-      setProjectId(pid);
-      const defaultSession = await getDefaultProjectSession(pid);
-      setSessionId(defaultSession.id);
-      setSessionFilter(defaultSession.id);
-    };
-    void boot().catch(console.error);
-  }, []);
-
-  const eventsPreview = useMemo(() => streamEvents.slice(-120), [streamEvents]);
-
-  const onCreate = async (event: FormEvent) => {
-    event.preventDefault();
-    clearStreamEvents();
-    const created = await createWorkflow({
-      projectId,
-      goal,
-      mode,
-      sessionId: sessionId || undefined,
-      source: "manual",
-    });
-    const unsubscribe = subscribeWorkflowStream({
-      workflowId: created.data.id,
-      runId: created.runId,
-      onEvent: pushStreamEvent,
-      onError: () => unsubscribe(),
-    });
-    const detail = await getWorkflowDetail(created.data.id);
-    setDrawerDetail(JSON.stringify(detail, null, 2));
-  };
-
-  const onSearch = async () => {
-    const rows = await listMonitorWorkflows({
-      sessionId: sessionFilter || undefined,
-      status: statusFilter || undefined,
-    });
-    setWorkflowList(rows as Array<Record<string, unknown>>);
-  };
-
-  const onOpenDrawer = async (workflowId: string) => {
-    const detail = await getWorkflowDetail(workflowId);
-    setDrawerDetail(JSON.stringify(detail, null, 2));
-  };
-
-  const refreshAlerts = async () => {
-    setAlerts(await listAlerts({ status: "open" }));
-  };
-
-  const onCreateQuality = async (workflowId: string) => {
-    await createWorkflowQuality(workflowId);
-    setQualitySnapshots(await listWorkflowQuality(workflowId));
-    await triggerWorkflowAlerts(workflowId);
-    await refreshAlerts();
-  };
-
-  const onAckAlert = async (id: string) => {
-    await resolveAlert(id);
-    await refreshAlerts();
-  };
-
-  const loadEvalBoard = async (datasetId?: string) => {
-    const datasets = await listEvalDatasets();
-    setEvalDatasets(datasets);
-    const useDatasetId = datasetId ?? selectedDatasetId ?? datasets[0]?.id ?? "";
-    if (!useDatasetId) return;
-    setSelectedDatasetId(useDatasetId);
-    setEvalRuns(await listEvalRuns(useDatasetId));
-  };
-
-  useEffect(() => {
-    void (async () => {
-      setAgentQuality(await listAgentQuality());
-      await refreshAlerts();
-      await loadEvalBoard();
-    })().catch(console.error);
-  }, []);
-
-  const onCreateDataset = async () => {
-    const created = await createEvalDataset({ name: datasetName || "Eval Dataset" });
-    setSelectedDatasetId(created.id);
-    await loadEvalBoard(created.id);
-  };
-
-  const onRunEval = async () => {
-    if (!selectedDatasetId) return;
-    await runEval({
-      datasetId: selectedDatasetId,
-      caseCount: 20,
-      toggle: { msa: true, sdp: true, rfv: true },
-      baselineToggle: { msa: false, sdp: false, rfv: true },
-    });
-    await loadEvalBoard(selectedDatasetId);
-  };
-
-  const onOpenEvalRun = async (runId: string) => {
-    const detail = await getEvalRunDetail(runId);
-    setEvalRunCases(detail.cases);
-  };
-
-  return (
-    <>
-      <h2 style={styles.title}>运行监控</h2>
-      <form style={styles.form} onSubmit={onCreate}>
-        <input style={styles.input} value={goal} onChange={(e) => setGoal(e.target.value)} />
-        <select style={styles.select} value={mode} onChange={(e) => setMode(e.target.value as WorkflowMode)}>
-          <option value="research">research</option>
-          <option value="backtest">backtest</option>
-          <option value="simulation">simulation</option>
-          <option value="live">live</option>
-        </select>
-        <button style={styles.button} type="submit" disabled={!projectId}>
-          创建并订阅
-        </button>
-      </form>
-
-      <h3 style={styles.subTitle}>筛选</h3>
-      <div style={styles.form}>
-        <input
-          style={styles.input}
-          placeholder="sessionId"
-          value={sessionFilter}
-          onChange={(e) => setSessionFilter(e.target.value)}
-        />
-        <input
-          style={styles.input}
-          placeholder="status"
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        />
-        <button style={styles.buttonSecondary} type="button" onClick={() => void onSearch()}>
-          查询
-        </button>
-      </div>
-
-      <div style={styles.grid}>
-        {workflowList.map((row) => (
-          <button
-            key={String(row.id)}
-            type="button"
-            style={styles.cardButton}
-            onClick={() => void onOpenDrawer(String(row.id))}
-          >
-            <div style={styles.cardName}>{String(row.id)}</div>
-            <div style={styles.cardDesc}>
-              {String(row.status)} · {String(row.mode)}
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <h3 style={styles.subTitle}>Agent 列表</h3>
-      <div style={styles.grid}>
-        {agents.map((a) => (
-          <div key={a.id} style={styles.card}>
-            <div style={styles.cardName}>{a.role}</div>
-            <div style={styles.cardDesc}>
-              {a.running ? "running" : "stopped"} · {a.version}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <h3 style={styles.subTitle}>SSE 事件流</h3>
-      <pre style={styles.streamBox}>
-        {eventsPreview.length === 0 ? "暂无事件..." : eventsPreview.map((e) => JSON.stringify(e)).join("\n")}
-      </pre>
-
-      <h3 style={styles.subTitle}>详情抽屉</h3>
-      <pre style={styles.streamBox}>{drawerDetail || "请选择 workflow 查看详情..."}</pre>
-
-      <h3 style={styles.subTitle}>运行质量</h3>
-      <div style={styles.grid}>
-        {agentQuality.slice(0, 12).map((row) => (
-          <div key={row.id} style={styles.card}>
-            <div style={styles.cardName}>{row.definitionId}</div>
-            <div style={styles.cardDesc}>
-              p50={Math.round(row.p50LatencyMs ?? 0)}ms · p95={Math.round(row.p95LatencyMs ?? 0)}ms · err=
-              {row.errorCount}/{row.runCount}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <h3 style={styles.subTitle}>告警中心</h3>
-      <div style={styles.form}>
-        <button style={styles.buttonSecondary} type="button" onClick={() => void refreshAlerts()}>
-          刷新告警
-        </button>
-      </div>
-      <div style={styles.grid}>
-        {alerts.slice(0, 30).map((alert) => (
-          <div key={alert.id} style={styles.card}>
-            <div style={styles.cardName}>
-              [{alert.severity}] {alert.title}
-            </div>
-            <div style={styles.cardDesc}>
-              {alert.scopeType}:{alert.scopeId} · {alert.status}
-            </div>
-            <div style={styles.form}>
-              <button style={styles.buttonSecondary} type="button" onClick={() => void onAckAlert(alert.id)}>
-                关闭
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <h3 style={styles.subTitle}>评测报告</h3>
-      <div style={styles.form}>
-        <input style={styles.input} value={datasetName} onChange={(e) => setDatasetName(e.target.value)} />
-        <button style={styles.buttonSecondary} type="button" onClick={() => void onCreateDataset()}>
-          新建数据集
-        </button>
-        <select
-          style={styles.select}
-          value={selectedDatasetId}
-          onChange={(e) => {
-            setSelectedDatasetId(e.target.value);
-            void loadEvalBoard(e.target.value);
-          }}
-        >
-          <option value="">选择评测数据集</option>
-          {evalDatasets.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}@{d.version}
-            </option>
-          ))}
-        </select>
-        <button style={styles.button} type="button" onClick={() => void onRunEval()} disabled={!selectedDatasetId}>
-          发起对照评测
-        </button>
-      </div>
-      <div style={styles.grid}>
-        {workflowList.slice(0, 8).map((row) => (
-          <button
-            key={`q-${String(row.id)}`}
-            type="button"
-            style={styles.cardButton}
-            onClick={() => void onCreateQuality(String(row.id))}
-          >
-            <div style={styles.cardName}>质量快照+告警: {String(row.id)}</div>
-            <div style={styles.cardDesc}>点击生成 quality snapshot 并触发告警</div>
-          </button>
-        ))}
-      </div>
-      <div style={styles.grid}>
-        {evalRuns.slice(0, 20).map((run) => (
-          <button key={run.id} type="button" style={styles.cardButton} onClick={() => void onOpenEvalRun(run.id)}>
-            <div style={styles.cardName}>{run.id}</div>
-            <div style={styles.cardDesc}>
-              {run.status} · {JSON.stringify(run.summaryMetricsJson)}
-            </div>
-          </button>
-        ))}
-      </div>
-      <pre style={styles.streamBox}>
-        {evalRunCases.length === 0
-          ? "请选择 eval run 查看失败样本..."
-          : evalRunCases
-              .slice(0, 20)
-              .map((c) => `${c.caseKey} score=${c.score.toFixed(3)} pass=${String(c.pass)}`)
-              .join("\n")}
-      </pre>
-      <pre style={styles.streamBox}>
-        {qualitySnapshots.length === 0
-          ? "暂无质量快照..."
-          : qualitySnapshots
-              .slice(0, 20)
-              .map((s) => `${s.workflowRunId} score=${s.qualityScore.toFixed(3)} err=${s.errorCount}`)
-              .join("\n")}
-      </pre>
-    </>
   );
 };
 
@@ -558,6 +239,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const chatDraftPrefill = useAppStore((s) => s.chatDraftPrefill);
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
+  const [chatLoopKind, setChatLoopKind] = useState<AgentLoopKind>("native");
   useEffect(() => {
     if (chatDraftPrefill === null) return;
     setInput(chatDraftPrefill);
@@ -597,101 +279,19 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     };
     type TimelineItem = StreamGroupItem | A2aTimelineItem;
 
-    const filtered = streamEvents.filter(
-      (e) => sessionWorkflowIds.size === 0 || sessionWorkflowIds.has(e.workflowId)
-    );
-    const byTs = [...filtered].sort((a, b) => a.ts - b.ts);
+    const filterSet = sessionWorkflowIds.size === 0 ? null : sessionWorkflowIds;
+    const grouped = groupStreamEventsByRun(streamEvents, filterSet);
 
-    type GroupAcc = {
-      workflowRunId: string;
-      runId: string;
-      firstTs: number;
-      lastTs: number;
-      roles: Set<string>;
-      steps: Array<{ ts: number; label: string; detail: string }>;
-    };
-
-    const groupOrder: string[] = [];
-    const groupMap = new Map<string, GroupAcc>();
-
-    const groupKey = (workflowId: string, runId: string) => `${workflowId}::${runId}`;
-
-    const pushStep = (g: GroupAcc, step: { ts: number; label: string; detail: string }) => {
-      g.lastTs = step.ts;
-      const role = step.label.split(/\s/)[0];
-      if (role) g.roles.add(role);
-      g.steps.push(step);
-    };
-
-    for (const e of byTs) {
-      const workflowRunId = e.workflowId;
-      const key = groupKey(workflowRunId, e.runId);
-      let g = groupMap.get(key);
-      if (!g) {
-        g = {
-          workflowRunId,
-          runId: e.runId,
-          firstTs: e.ts,
-          lastTs: e.ts,
-          roles: new Set<string>(),
-          steps: [],
-        };
-        groupMap.set(key, g);
-        groupOrder.push(key);
-      }
-
-      if (e.type === "token") {
-        const piece = String(e.payload.token ?? "");
-        const lastStep = g.steps[g.steps.length - 1];
-        if (lastStep?.label === `${e.role} 流式输出（已合并）`) {
-          lastStep.detail += piece;
-          lastStep.ts = e.ts;
-          g.lastTs = e.ts;
-        } else {
-          pushStep(g, {
-            ts: e.ts,
-            label: `${e.role} 流式输出（已合并）`,
-            detail: piece,
-          });
-        }
-        continue;
-      }
-
-      let label = `${e.role} ${e.type}`;
-      if (e.type === "tool_call_start") {
-        label = `${e.role} 调用工具 ${String(e.payload.targetName ?? e.payload.toolName ?? "")}`;
-      }
-      if (e.type === "tool_call_end") {
-        label = `${e.role} 工具结束 ${String(e.payload.status ?? "")}`;
-      }
-      if (e.type === "observe") label = `${e.role} observe #${e.stepIndex}`;
-      if (e.type === "step_persisted") label = `${e.role} step_persisted #${e.stepIndex}`;
-      if (e.type === "final") label = `${e.role} 完成`;
-      if (e.type === "error") label = `${e.role} 失败: ${String(e.payload.error ?? "unknown")}`;
-
-      let detail: string;
-      try {
-        detail = JSON.stringify(e.payload, null, 2);
-      } catch {
-        detail = String(e.payload);
-      }
-      pushStep(g, { ts: e.ts, label, detail });
-    }
-
-    const streamGroups: StreamGroupItem[] = groupOrder.map((key) => {
-      const g = groupMap.get(key)!;
-      const roles = [...g.roles];
-      return {
-        kind: "stream_group" as const,
-        id: `stream-group-${key}`,
-        at: g.lastTs,
-        workflowRunId: g.workflowRunId,
-        runId: g.runId,
-        firstTs: g.firstTs,
-        roleSummary: roles.length ? roles.join(" · ") : "—",
-        steps: g.steps,
-      };
-    });
+    const streamGroups: StreamGroupItem[] = grouped.map((g) => ({
+      kind: "stream_group" as const,
+      id: `stream-group-${g.workflowRunId}::${g.runId}`,
+      at: g.at,
+      workflowRunId: g.workflowRunId,
+      runId: g.runId,
+      firstTs: g.firstTs,
+      roleSummary: g.roleSummary,
+      steps: g.steps,
+    }));
 
     const a2aPart: A2aTimelineItem[] = a2aMessages.map((m) => ({
       id: `a2a-${m.id}`,
@@ -959,6 +559,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         source: "chat",
         messageId: userMsg.id,
         reuseSessionWorkflow: true,
+        loopKind: chatLoopKind,
       });
       await patchSessionMessage({
         messageId: assistantMsg.id,
@@ -976,21 +577,28 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   };
 
   return (
-    <div style={ideEmbedded ? styles.chatIdeRoot : { minHeight: 520 }}>
+    <div style={ideEmbedded ? styles.chatIdeRoot : styles.chatPageRoot}>
       {ideEmbedded ? (
         <div style={styles.chatIdeHeader}>
           对话 · 与右侧 K 线联动；「带入对话分析」会附加行情上下文。
         </div>
       ) : null}
-      {chartContext ? (
-        <div style={styles.chartCtxBanner}>
-          已附带行情上下文（{chartContext.symbol} / {chartContext.timeframe}）。发送一条消息后会自动清除。
-        </div>
-      ) : null}
-      {errorText ? <div style={styles.errorBox}>{errorText}</div> : null}
+      <div style={styles.chatChrome}>
+        {chartContext ? (
+          <div style={styles.chartCtxBanner}>
+            已附带行情上下文（{chartContext.symbol} / {chartContext.timeframe}）。发送一条消息后会自动清除。
+          </div>
+        ) : null}
+        {errorText ? <div style={styles.errorBox}>{errorText}</div> : null}
+      </div>
       <div style={{ ...styles.chatLayout, ...(ideEmbedded ? styles.chatLayoutIde : {}) }}>
         <div style={styles.chatSidebar}>
-          <button style={styles.button} onClick={() => void onCreateSession()}>
+          <button
+            type="button"
+            className="qb-btn-primary-brand"
+            style={{ flexShrink: 0, alignSelf: "stretch" }}
+            onClick={() => void onCreateSession()}
+          >
             新建会话
           </button>
           <div style={styles.chatSessionList}>
@@ -1033,85 +641,99 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               </div>
             ))}
           </div>
-          <form style={styles.form} onSubmit={onSend}>
+          <form style={styles.chatForm} onSubmit={onSend}>
+            <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
+              Loop
+              <select
+                value={chatLoopKind}
+                onChange={(e) => setChatLoopKind(e.target.value as AgentLoopKind)}
+                style={{ ...styles.input, maxWidth: 160 }}
+              >
+                <option value="native">Native</option>
+                <option value="claude_cli">Claude CLI</option>
+                <option value="codex_cli">Codex CLI</option>
+              </select>
+            </label>
             <input
-              style={styles.input}
+              style={{ ...styles.input, flex: 1 }}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="输入任务目标，发送给主 Agent"
             />
-            <button style={styles.button} type="submit">
+            <button className="qb-btn-primary-brand" type="submit">
               发送
             </button>
           </form>
         </div>
 
         <div style={styles.boardCol}>
-          <h3 style={styles.subTitle}>会话 Agent 看板</h3>
-          <div style={styles.boardList}>
-            {agentsBoard.map((item) => (
-              <div key={item.instanceId} style={styles.boardCard}>
-                <div style={styles.cardName}>{item.role}</div>
-                <div style={styles.cardDesc}>status: {item.status}</div>
-                <div style={styles.cardDesc}>iteration: {item.currentIteration}</div>
-                <div style={styles.cardDesc}>
-                  latest: {item.latestStep?.phase ?? "-"} #{item.latestStep?.stepIndex ?? "-"}
+          <div style={styles.boardColScroll}>
+            <h3 style={{ ...styles.subTitle, marginTop: 0 }}>会话 Agent 看板</h3>
+            <div style={styles.boardList}>
+              {agentsBoard.map((item) => (
+                <div key={item.instanceId} style={styles.boardCard}>
+                  <div style={styles.cardName}>{item.role}</div>
+                  <div style={styles.cardDesc}>status: {item.status}</div>
+                  <div style={styles.cardDesc}>iteration: {item.currentIteration}</div>
+                  <div style={styles.cardDesc}>
+                    latest: {item.latestStep?.phase ?? "-"} #{item.latestStep?.stepIndex ?? "-"}
+                  </div>
+                  {item.lastError ? <div style={styles.errorText}>{item.lastError}</div> : null}
                 </div>
-                {item.lastError ? <div style={styles.errorText}>{item.lastError}</div> : null}
-              </div>
-            ))}
-          </div>
-          <h3 style={{ ...styles.subTitle, marginTop: 14 }}>Agent 间对话（A2A）</h3>
-          <div style={styles.boardList}>
-            {a2aMessages.slice(0, 30).map((msg) => (
-              <div key={msg.id} style={styles.boardCard}>
-                <div style={styles.cardName}>
-                  {msg.senderRole} → {msg.receiverRole ?? "broadcast"}
+              ))}
+            </div>
+            <h3 style={{ ...styles.subTitle, marginTop: 14 }}>Agent 间对话（A2A）</h3>
+            <div style={styles.boardList}>
+              {a2aMessages.slice(0, 30).map((msg) => (
+                <div key={msg.id} style={styles.boardCard}>
+                  <div style={styles.cardName}>
+                    {msg.senderRole} → {msg.receiverRole ?? "broadcast"}
+                  </div>
+                  <div style={styles.cardDesc}>type: {msg.messageType}</div>
+                  <div style={styles.cardDesc}>workflow: {msg.workflowRunId}</div>
+                  <div style={styles.cardDesc}>
+                    {new Date(msg.createdAt).toLocaleString()}
+                  </div>
+                  <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify(msg.payloadJson).slice(0, 220)}
+                  </div>
                 </div>
-                <div style={styles.cardDesc}>type: {msg.messageType}</div>
-                <div style={styles.cardDesc}>workflow: {msg.workflowRunId}</div>
-                <div style={styles.cardDesc}>
-                  {new Date(msg.createdAt).toLocaleString()}
-                </div>
-                <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>
-                  {JSON.stringify(msg.payloadJson).slice(0, 220)}
-                </div>
-              </div>
-            ))}
-            {a2aMessages.length === 0 ? (
-              <div style={styles.chatMeta}>暂无 A2A 消息（当前路径主要是 GraphRunner 直连执行）</div>
-            ) : null}
-          </div>
-          <h3 style={{ ...styles.subTitle, marginTop: 14 }}>统一执行时间线</h3>
-          <div style={styles.boardList}>
-            {timelineItems.map((item) => {
-              if (item.kind === "stream_group") {
+              ))}
+              {a2aMessages.length === 0 ? (
+                <div style={styles.chatMeta}>暂无 A2A 消息（当前路径主要是 GraphRunner 直连执行）</div>
+              ) : null}
+            </div>
+            <h3 style={{ ...styles.subTitle, marginTop: 14 }}>统一执行时间线</h3>
+            <div style={styles.boardList}>
+              {timelineItems.map((item) => {
+                if (item.kind === "stream_group") {
+                  return (
+                    <StreamTimelineGroupCard
+                      key={item.id}
+                      item={{
+                        workflowRunId: item.workflowRunId,
+                        runId: item.runId,
+                        at: item.at,
+                        firstTs: item.firstTs,
+                        roleSummary: item.roleSummary,
+                        steps: item.steps,
+                      }}
+                    />
+                  );
+                }
                 return (
-                  <StreamTimelineGroupCard
-                    key={item.id}
-                    item={{
-                      workflowRunId: item.workflowRunId,
-                      runId: item.runId,
-                      at: item.at,
-                      firstTs: item.firstTs,
-                      roleSummary: item.roleSummary,
-                      steps: item.steps,
-                    }}
-                  />
+                  <div key={item.id} style={styles.boardCard}>
+                    <div style={styles.cardName}>A2A · {new Date(item.at).toLocaleTimeString()}</div>
+                    <div style={styles.cardDesc}>{item.text}</div>
+                    <div style={styles.cardDesc}>workflow: {item.workflowRunId}</div>
+                    <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>{item.detail}</div>
+                  </div>
                 );
-              }
-              return (
-                <div key={item.id} style={styles.boardCard}>
-                  <div style={styles.cardName}>A2A · {new Date(item.at).toLocaleTimeString()}</div>
-                  <div style={styles.cardDesc}>{item.text}</div>
-                  <div style={styles.cardDesc}>workflow: {item.workflowRunId}</div>
-                  <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>{item.detail}</div>
-                </div>
-              );
-            })}
-            {timelineItems.length === 0 ? (
-              <div style={styles.chatMeta}>暂无时间线事件</div>
-            ) : null}
+              })}
+              {timelineItems.length === 0 ? (
+                <div style={styles.chatMeta}>暂无时间线事件</div>
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
@@ -1131,6 +753,19 @@ const ConfigPanel: FC = () => {
   const [draftPrompt, setDraftPrompt] = useState("");
   const [draftSoul, setDraftSoul] = useState("");
   const [draftNote, setDraftNote] = useState("");
+  const [agentUiTab, setAgentUiTab] = useState<AgentConfigUiTab>("overview");
+  const [agentPack, setAgentPack] = useState<AgentPackResponse | null>(null);
+  const [agentMemoryStats, setAgentMemoryStats] = useState<AgentMemoryStatsResponse | null>(null);
+  const [fileSoulMd, setFileSoulMd] = useState("");
+  const [filePromptMd, setFilePromptMd] = useState("");
+  const [fileAgentMd, setFileAgentMd] = useState("");
+  const [fileUserMd, setFileUserMd] = useState("");
+  const [fileMemoryMd, setFileMemoryMd] = useState("");
+  const [draftPromptMode, setDraftPromptMode] = useState<"db_primary" | "file_primary" | "merged">("db_primary");
+  const [draftMemoryNamespace, setDraftMemoryNamespace] = useState("");
+  const [draftConfigRootUri, setDraftConfigRootUri] = useState("");
+  const [draftMcpServerNames, setDraftMcpServerNames] = useState<string[]>([]);
+  const [draftPromptTemplateRef, setDraftPromptTemplateRef] = useState("");
   const [provider, setProvider] = useState<
     "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
   >("mock");
@@ -1156,6 +791,13 @@ const ConfigPanel: FC = () => {
   const [sourceAuthRef, setSourceAuthRef] = useState("");
   const [mcpMarketItems, setMcpMarketItems] = useState<McpCatalogItemRecord[]>([]);
   const [mcpMarketInstalls, setMcpMarketInstalls] = useState<McpProjectInstallRecord[]>([]);
+  const [skillMarketStatus, setSkillMarketStatus] = useState<SkillMarketStatusDto | null>(null);
+  const [skillSearchQ, setSkillSearchQ] = useState("");
+  const [skillSearchBusy, setSkillSearchBusy] = useState(false);
+  const [skillSearchHits, setSkillSearchHits] = useState<OpenSkillMarketEntryDto[]>([]);
+  const [skillInstalls, setSkillInstalls] = useState<SkillMarketInstallRecord[]>([]);
+  const [skillRefreshBusy, setSkillRefreshBusy] = useState(false);
+  const [skillAppendDefinitionId, setSkillAppendDefinitionId] = useState("");
   const [marketQuery, setMarketQuery] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState("");
   const [selectedCatalogId, setSelectedCatalogId] = useState("");
@@ -1169,6 +811,9 @@ const ConfigPanel: FC = () => {
   const [mcpTimeoutMs, setMcpTimeoutMs] = useState(20000);
   const [mcpTestOutput, setMcpTestOutput] = useState("");
   const [focusedMcpServerId, setFocusedMcpServerId] = useState<string | null>(null);
+  const [mcpAdvancedEditorOpen, setMcpAdvancedEditorOpen] = useState(false);
+  const [mcpAdvancedJsonDraft, setMcpAdvancedJsonDraft] = useState("");
+  const [mcpAdvancedJsonError, setMcpAdvancedJsonError] = useState("");
   const [mcpProbeByServer, setMcpProbeByServer] = useState<
     Record<string, { status: "idle" | "checking" | "ok" | "error"; message?: string; checkedAt?: string }>
   >({});
@@ -1251,12 +896,13 @@ const ConfigPanel: FC = () => {
       listIntegrationLogs(undefined, 50),
       listMcpSources(),
     ]);
-    const [marketItems, jobs, installs] = await Promise.all([
+    const [marketItems, jobs, installs, skillInstallRows] = await Promise.all([
       listMcpMarketCatalog({ sourceId: sources[0]?.id }),
       currentWorkspace && currentProject
         ? listScheduledJobs({ workspaceId: currentWorkspace.id, projectId: currentProject.id })
         : Promise.resolve([]),
       currentProject ? listMcpProjectInstalls(currentProject.id) : Promise.resolve([]),
+      currentProject ? listSkillMarketInstalls(currentProject.id) : Promise.resolve([]),
     ]);
     setConfigData(data);
     setDefinitions(bundles);
@@ -1267,6 +913,7 @@ const ConfigPanel: FC = () => {
     setMcpSources(sources);
     setMcpMarketItems(marketItems);
     setMcpMarketInstalls(installs);
+    setSkillInstalls(skillInstallRows);
     setIntegrationChannels(channels);
     setIntegrationLogs(logs);
     setScheduledJobs(jobs);
@@ -1293,6 +940,13 @@ const ConfigPanel: FC = () => {
       setSelectedDefinitionId(bundles[0].definition.id);
       setDraftPrompt(bundles[0].draft?.systemPrompt ?? bundles[0].definition.systemPrompt);
       setDraftSoul(bundles[0].profile?.soulFileRef ?? "");
+      setDraftPromptMode(
+        (bundles[0].profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary"
+      );
+      setDraftMemoryNamespace(bundles[0].profile?.memoryNamespace ?? "");
+      setDraftConfigRootUri(bundles[0].profile?.configRootUri ?? "");
+      setDraftMcpServerNames(parseAgentMcpServerNames(bundles[0].draft?.mcpServersJson ?? bundles[0].definition.mcpServersJson));
+      setDraftPromptTemplateRef(bundles[0].profile?.promptTemplateRef ?? "");
     }
     try {
       const bc = await getBuiltinConnectorConfig();
@@ -1315,29 +969,109 @@ const ConfigPanel: FC = () => {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (activeConfigSubPage !== "skills") return;
+    void getSkillMarketStatus().then(setSkillMarketStatus);
+  }, [activeConfigSubPage]);
+
+  useEffect(() => {
+    if (activeConfigSubPage !== "skills" || !currentProjectId) return;
+    void listSkillMarketInstalls(currentProjectId).then(setSkillInstalls);
+  }, [activeConfigSubPage, currentProjectId]);
+
+  useEffect(() => {
+    if (!definitions.length) return;
+    setSkillAppendDefinitionId((prev) =>
+      prev && definitions.some((b) => b.definition.id === prev) ? prev : definitions[0]!.definition.id
+    );
+  }, [definitions]);
+
   const selectedBundle = useMemo(
     () => definitions.find((item) => item.definition.id === selectedDefinitionId) ?? null,
     [definitions, selectedDefinitionId]
   );
 
+  useEffect(() => {
+    if (!selectedDefinitionId) return;
+    void Promise.all([getAgentDefinitionPack(selectedDefinitionId), getAgentDefinitionMemoryStats(selectedDefinitionId)])
+      .then(([pack, mem]) => {
+        setAgentPack(pack);
+        setAgentMemoryStats(mem);
+        setFileAgentMd(pack.agentMarkdown ?? "");
+        setFileSoulMd(pack.soulMarkdown);
+        setFilePromptMd(pack.promptMarkdown);
+        setFileUserMd(pack.userMarkdown ?? "");
+        setFileMemoryMd(pack.memoryMarkdown ?? "");
+      })
+      .catch(() => {
+        setAgentPack(null);
+        setAgentMemoryStats(null);
+        setFileAgentMd("");
+        setFileUserMd("");
+        setFileMemoryMd("");
+      });
+  }, [selectedDefinitionId]);
+
+  const prevAgentDefId = useRef<string>("");
+  useEffect(() => {
+    if (!selectedDefinitionId) return;
+    if (prevAgentDefId.current === selectedDefinitionId) return;
+    prevAgentDefId.current = selectedDefinitionId;
+    const b = definitions.find((x) => x.definition.id === selectedDefinitionId);
+    if (!b) return;
+    setDraftPrompt(b.draft?.systemPrompt ?? b.definition.systemPrompt);
+    setDraftSoul(b.profile?.soulFileRef ?? "");
+    setDraftPromptMode((b.profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary");
+    setDraftMemoryNamespace(b.profile?.memoryNamespace ?? "");
+    setDraftConfigRootUri(b.profile?.configRootUri ?? "");
+    setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
+    setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
+  }, [selectedDefinitionId, definitions]);
+
   const mcpServerBindingCount = useMemo(() => {
     const map = new Map<string, number>();
+    const did = selectedDefinitionId || undefined;
     for (const row of mcpBindings) {
+      if (did) {
+        if (row.definitionId && row.definitionId !== did) continue;
+      } else if (row.definitionId) continue;
       map.set(row.serverName, (map.get(row.serverName) ?? 0) + 1);
     }
     return map;
-  }, [mcpBindings]);
+  }, [mcpBindings, selectedDefinitionId]);
 
   const pickBindingForMcpServer = (serverName: string): McpToolBindingRecord | undefined => {
     const pid = currentProjectId || undefined;
+    const did = selectedDefinitionId || undefined;
     const forServer = mcpBindings.filter((b) => b.serverName === serverName);
-    const enabled = forServer.filter((b) => b.enabled);
-    const pool = enabled.length ? enabled : forServer;
-    return (
-      pool.find((b) => b.projectId === pid) ??
-      pool.find((b) => b.projectId == null) ??
-      pool[0]
-    );
+    const score = (b: McpToolBindingRecord) => {
+      let s = 0;
+      if (did) {
+        if (b.definitionId === did) s += 100;
+        else if (b.definitionId == null) s += 10;
+        else return -1;
+      } else {
+        if (b.definitionId != null) return -1;
+        s += 10;
+      }
+      if (pid) {
+        if (b.projectId === pid) s += 50;
+        else if (b.projectId == null) s += 5;
+        else return -1;
+      } else {
+        if (b.projectId != null) return -1;
+        s += 5;
+      }
+      return s;
+    };
+    const pool = forServer.filter((b) => score(b) >= 0);
+    const sorted = [...pool].sort((a, b) => {
+      const ds = score(b) - score(a);
+      if (ds !== 0) return ds;
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+      return 0;
+    });
+    return sorted.find((b) => b.enabled) ?? sorted[0];
   };
 
   const mcpConnectionSpecOk = (row: McpServerConfigRecord): boolean => {
@@ -1401,14 +1135,38 @@ const ConfigPanel: FC = () => {
     }
   };
 
-  const applyMcpFromCard = (row: McpServerConfigRecord) => {
-    setNewMcpServerName(row.name);
-    setNewMcpServerTransport(row.transport);
-    setNewMcpServerCommand(row.command?.trim() ? String(row.command) : "");
-    setNewMcpServerUrl(row.url?.trim() ? String(row.url) : "");
+  const buildMcpAdvancedPayload = (row: McpServerConfigRecord, bind?: McpToolBindingRecord) => ({
+    server: {
+      id: row.id,
+      name: row.name,
+      projectId: row.projectId,
+      transport: row.transport,
+      command: row.command?.trim() ? String(row.command) : "",
+      url: row.url?.trim() ? String(row.url) : "",
+      capabilitiesJson: row.capabilitiesJson,
+      enabled: row.enabled,
+    },
+    binding: bind
+      ? {
+          id: bind.id,
+          projectId: bind.projectId,
+          serverName: bind.serverName,
+          toolName: bind.toolName,
+          enabled: bind.enabled,
+          timeoutMs: bind.timeoutMs ?? 20_000,
+          retryPolicyJson: bind.retryPolicyJson,
+          rateLimitJson: bind.rateLimitJson,
+        }
+      : null,
+  });
+
+  const openMcpAdvancedEditor = (row: McpServerConfigRecord) => {
+    const bind = pickBindingForMcpServer(row.name);
+    setMcpAdvancedJsonDraft(JSON.stringify(buildMcpAdvancedPayload(row, bind), null, 2));
+    setMcpAdvancedJsonError("");
     setSelectedMcpServer(row.name);
     setFocusedMcpServerId(row.id);
-    const bind = pickBindingForMcpServer(row.name);
+    setMcpAdvancedEditorOpen(true);
     if (bind) {
       setMcpToolName(bind.toolName);
       if (typeof bind.timeoutMs === "number" && Number.isFinite(bind.timeoutMs)) {
@@ -1416,6 +1174,135 @@ const ConfigPanel: FC = () => {
       }
     }
     void probeMcpServer(row, bind);
+  };
+
+  const saveMcpAdvancedJson = async () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(mcpAdvancedJsonDraft || "{}");
+    } catch {
+      setMcpAdvancedJsonError("JSON 解析失败，请检查语法");
+      return;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      setMcpAdvancedJsonError("根节点须为对象，且包含 server 字段");
+      return;
+    }
+    const root = parsed as Record<string, unknown>;
+    const server = root["server"];
+    if (!server || typeof server !== "object") {
+      setMcpAdvancedJsonError("缺少 server 对象");
+      return;
+    }
+    const s = server as Record<string, unknown>;
+    const name = typeof s["name"] === "string" ? s["name"].trim() : "";
+    const transport = s["transport"];
+    if (!name || (transport !== "stdio" && transport !== "http" && transport !== "ws")) {
+      setMcpAdvancedJsonError("server.name 与 server.transport（stdio|http|ws）为必填");
+      return;
+    }
+    const cmd = typeof s["command"] === "string" ? s["command"].trim() : "";
+    const url = typeof s["url"] === "string" ? s["url"].trim() : "";
+    const caps = s["capabilitiesJson"];
+    const enabled = typeof s["enabled"] === "boolean" ? s["enabled"] : true;
+    const proj =
+      typeof s["projectId"] === "string" && s["projectId"].trim()
+        ? s["projectId"].trim()
+        : currentProjectId || undefined;
+    try {
+      await upsertMcpServer({
+        name,
+        projectId: proj,
+        transport,
+        command: cmd || undefined,
+        url: url || undefined,
+        capabilitiesJson: Array.isArray(caps) ? (caps as unknown[]) : ["tools"],
+        enabled,
+      });
+    } catch (e) {
+      setMcpAdvancedJsonError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const binding = root["binding"];
+    if (binding && typeof binding === "object") {
+      const b = binding as Record<string, unknown>;
+      const toolName = typeof b["toolName"] === "string" ? b["toolName"].trim() : "";
+      if (toolName) {
+        const timeoutRaw = b["timeoutMs"];
+        const timeoutMs =
+          typeof timeoutRaw === "number" && Number.isFinite(timeoutRaw)
+            ? timeoutRaw
+            : typeof timeoutRaw === "string" && Number.isFinite(Number(timeoutRaw))
+              ? Number(timeoutRaw)
+              : 20_000;
+        const ben = typeof b["enabled"] === "boolean" ? b["enabled"] : true;
+        const retry = b["retryPolicyJson"];
+        const rate = b["rateLimitJson"];
+        try {
+          await upsertMcpBinding({
+            projectId: proj,
+            serverName: name,
+            toolName,
+            enabled: ben,
+            timeoutMs,
+            retryPolicyJson:
+              retry && typeof retry === "object" ? (retry as Record<string, unknown>) : { maxAttempts: 2, backoffMs: 300 },
+            rateLimitJson: rate && typeof rate === "object" ? (rate as Record<string, unknown>) : {},
+          });
+        } catch (e) {
+          setMcpAdvancedJsonError(e instanceof Error ? e.message : String(e));
+          return;
+        }
+      }
+    }
+    setMcpAdvancedJsonError("");
+    setMcpServers(await listMcpServers(currentProjectId || undefined));
+    setMcpBindings(await listMcpBindings(currentProjectId || undefined));
+    setMcpTestOutput("高级 JSON 已保存并同步到数据库");
+    setMcpProbeByServer((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
+
+  const installMarketCatalogItem = async (item: McpCatalogItemRecord) => {
+    if (!currentProjectId) return;
+    const spec = (item.specJson ?? {}) as Record<string, unknown>;
+    const serverName = item.slug.replace(/[^a-z0-9_-]/gi, "-");
+    const toolRaw = spec["defaultToolName"];
+    const toolName = typeof toolRaw === "string" && toolRaw.trim() ? toolRaw.trim() : undefined;
+    const toRaw = spec["defaultTimeoutMs"];
+    const timeoutMs =
+      typeof toRaw === "number" && Number.isFinite(toRaw)
+        ? toRaw
+        : typeof toRaw === "string" && Number.isFinite(Number(toRaw))
+          ? Number(toRaw)
+          : mcpTimeoutMs;
+    const cmd = typeof spec["command"] === "string" ? spec["command"].trim() : "";
+    const url = typeof spec["url"] === "string" ? spec["url"].trim() : "";
+    try {
+      const installed = await installMcpMarket({
+        projectId: currentProjectId,
+        catalogItemId: item.id,
+        serverName,
+        toolName,
+        timeoutMs,
+        command: cmd || undefined,
+        url: url || undefined,
+      });
+      setSelectedCatalogId(item.id);
+      setCatalogServerName(serverName);
+      if (toolName) setMcpToolName(toolName);
+      setMcpTimeoutMs(timeoutMs);
+      setMcpMarketInstalls((prev) => [installed, ...prev].slice(0, 30));
+      setMcpServers(await listMcpServers(currentProjectId));
+      setMcpBindings(await listMcpBindings(currentProjectId));
+      setSelectedMcpServer(installed.serverName);
+      setMcpTestOutput(`已从市场安装：${item.name} → ${installed.serverName}`);
+    } catch (e) {
+      setMcpTestOutput(e instanceof Error ? e.message : String(e));
+    }
   };
 
   const saveMcpBindingNow = async () => {
@@ -1617,11 +1504,12 @@ const ConfigPanel: FC = () => {
     <>
       <h2 style={styles.title}>配置中心</h2>
       <div style={styles.actions}>
-        <button style={styles.button} onClick={() => void loadConfig()}>
+        <button type="button" className="qb-btn-primary-brand" onClick={() => void loadConfig()}>
           刷新配置
         </button>
         <button
-          style={styles.buttonSecondary}
+          type="button"
+          className="qb-btn-secondary"
           onClick={() =>
             void reloadAgents().then((res) => setReloadSummary({ before: res.before, after: res.after }))
           }
@@ -1635,12 +1523,13 @@ const ConfigPanel: FC = () => {
           <span>reload after: {reloadSummary.after}</span>
         </div>
       ) : null}
-      <div style={styles.configSubNav} role="tablist" aria-label="配置分类">
+      <div className="qb-segmented" role="tablist" aria-label="配置分类">
         {(
           [
             ["llm", "LLM"],
             ["datasources", "数据源"],
             ["mcp", "MCP"],
+            ["skills", "Skills"],
             ["agent", "Agent"],
             ["integration", "集成 / IM"],
             ["schedule", "定时任务"],
@@ -1651,10 +1540,7 @@ const ConfigPanel: FC = () => {
             type="button"
             role="tab"
             aria-selected={activeConfigSubPage === id}
-            style={{
-              ...styles.configSubTab,
-              ...(activeConfigSubPage === id ? styles.configSubTabActive : {}),
-            }}
+            className={`qb-segmented__tab${activeConfigSubPage === id ? " qb-segmented__tab--active" : ""}`}
             onClick={() => setConfigSubPage(id)}
           >
             {label}
@@ -1690,7 +1576,7 @@ const ConfigPanel: FC = () => {
               <input style={styles.input} value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} />
               <input style={styles.input} value={modelBaseUrl} onChange={(e) => setModelBaseUrl(e.target.value)} />
               <button
-                style={styles.button}
+                className="qb-btn-primary-brand"
                 onClick={() =>
                   void saveModelConfig({
                     provider,
@@ -1776,7 +1662,7 @@ const ConfigPanel: FC = () => {
                 空结果时回落 stub
               </label>
               <button
-                style={styles.button}
+                className="qb-btn-primary-brand"
                 onClick={() =>
                   void saveBuiltinConnectorConfig({
                     "qubit-data": {
@@ -1800,217 +1686,668 @@ const ConfigPanel: FC = () => {
         ) : null}
         {activeConfigSubPage === "mcp" ? (
           <>
-      <h3 style={styles.subTitle}>MCP 配置与连通性</h3>
-      <div style={styles.form}>
-        <input
-          style={styles.input}
-          value={newMcpServerName}
-          onChange={(e) => setNewMcpServerName(e.target.value)}
-          placeholder="server name"
-        />
-        <select
-          style={styles.select}
-          value={newMcpServerTransport}
-          onChange={(e) => setNewMcpServerTransport(e.target.value as "stdio" | "http" | "ws")}
-        >
-          <option value="stdio">stdio</option>
-          <option value="http">http</option>
-          <option value="ws">ws</option>
-        </select>
-        <input
-          style={styles.input}
-          value={newMcpServerCommand}
-          onChange={(e) => setNewMcpServerCommand(e.target.value)}
-          placeholder="command (stdio)"
-        />
-        <input
-          style={styles.input}
-          value={newMcpServerUrl}
-          onChange={(e) => setNewMcpServerUrl(e.target.value)}
-          placeholder="url (http/ws)"
-        />
-        <button style={styles.buttonSecondary} onClick={() => void upsertMcpServerNow()}>
-          保存 Server
-        </button>
-      </div>
-      <div style={styles.form}>
-        <select
-          style={styles.select}
-          value={selectedMcpServer}
-          onChange={(e) => setSelectedMcpServer(e.target.value)}
-        >
-          {mcpServers.map((s) => (
-            <option key={s.id} value={s.name}>
-              {s.name} · {s.transport} · {s.enabled ? "enabled" : "disabled"}
-            </option>
-          ))}
-        </select>
-        <input
-          style={styles.input}
-          value={mcpToolName}
-          onChange={(e) => setMcpToolName(e.target.value)}
-          placeholder="tool name"
-        />
-        <input
-          style={styles.input}
-          type="number"
-          value={mcpTimeoutMs}
-          onChange={(e) => setMcpTimeoutMs(Number(e.target.value))}
-          placeholder="timeout ms"
-        />
-        <button style={styles.buttonSecondary} onClick={() => void saveMcpBindingNow()}>
-          保存绑定
-        </button>
-        <button style={styles.button} onClick={() => void testMcpNow()}>
-          测试 MCP
-        </button>
-      </div>
-      <div style={styles.meta}>
-        <span>已配置 MCP Server: {mcpServers.length}</span>
-        <span>已配置 MCP 绑定: {mcpBindings.length}</span>
-        <span>已安装市场项: {mcpMarketInstalls.length}</span>
-      </div>
-      <div style={styles.grid}>
-        {mcpServers.map((row) => {
-          const probe = mcpProbeByServer[row.name];
-          const specOk = mcpConnectionSpecOk(row);
-          const bindCount = mcpServerBindingCount.get(row.name) ?? 0;
-          const shortMsg = (m?: string) => (!m ? "" : m.length > 72 ? `${m.slice(0, 72)}…` : m);
-          const cfgPill =
-            !row.enabled
-              ? { bg: "#3f1f1f", color: "#fca5a5", text: "配置：已禁用" }
-              : !specOk
-                ? {
-                    bg: "#422006",
-                    color: "#fdba74",
-                    text: row.transport === "stdio" ? "配置：缺少 command" : "配置：缺少 url",
-                  }
-                : { bg: "#14532d", color: "#86efac", text: "配置：参数齐全" };
-          const reachPill =
-            probe?.status === "checking"
-              ? { bg: "#1e3a8a", color: "#bfdbfe", text: "连通性：检测中…" }
-              : probe?.status === "ok"
-                ? {
-                    bg: "#14532d",
-                    color: "#bbf7d0",
-                    text: `连通性：可用${probe.message ? `（${shortMsg(probe.message)}）` : ""}`,
-                  }
-                : probe?.status === "error"
-                  ? {
-                      bg: "#3f1f1f",
-                      color: "#fca5a5",
-                      text: `连通性：不可用${probe.message ? `（${shortMsg(probe.message)}）` : ""}`,
-                    }
-                  : specOk && bindCount > 0
-                    ? { bg: "#27272a", color: "#a1a1aa", text: "连通性：点击卡片自动检测" }
-                    : {
-                        bg: "#27272a",
-                        color: "#a1a1aa",
-                        text: bindCount === 0 ? "连通性：需先绑定工具" : "连通性：待检测",
-                      };
-          const selected = focusedMcpServerId === row.id;
-          return (
-            <button
-              key={row.id}
-              type="button"
-              onClick={() => applyMcpFromCard(row)}
-              title="点击载入到上方表单并探测连通性"
-              style={{
-                ...styles.card,
-                ...styles.mcpCardBtn,
-                ...(selected ? styles.mcpCardBtnSelected : {}),
-              }}
-            >
-              <div style={styles.cardName}>{row.name}</div>
-              <div style={styles.cardDesc}>
-                {row.transport} · {row.enabled ? "enabled" : "disabled"} · 绑定 {bindCount} 个 tool
+            <h3 style={styles.subTitle}>已注册的 MCP</h3>
+            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+              每张卡片展示连接规格与最近一次探测结果。点击卡片打开<strong>高级 JSON 编辑</strong>（含 server + binding）；打开时会尝试探测连通性。
+            </p>
+            <div style={styles.meta}>
+              <span>Server: {mcpServers.length}</span>
+              <span>绑定: {mcpBindings.length}</span>
+              <span>市场安装: {mcpMarketInstalls.length}</span>
+            </div>
+            <div style={styles.grid}>
+              {mcpServers.length === 0 ? (
+                <div style={{ ...styles.card, color: "#a1a1aa", fontSize: 13 }}>暂无 MCP，可从下方市场安装或使用「快速添加」。</div>
+              ) : null}
+              {mcpServers.map((row) => {
+                const probe = mcpProbeByServer[row.name];
+                const specOk = mcpConnectionSpecOk(row);
+                const bindCount = mcpServerBindingCount.get(row.name) ?? 0;
+                const shortMsg = (m?: string) => (!m ? "" : m.length > 56 ? `${m.slice(0, 56)}…` : m);
+                const cfgPill =
+                  !row.enabled
+                    ? { bg: "#3f1f1f", color: "#fca5a5", text: "配置：已禁用" }
+                    : !specOk
+                      ? {
+                          bg: "#422006",
+                          color: "#fdba74",
+                          text: row.transport === "stdio" ? "配置：缺少 command" : "配置：缺少 url",
+                        }
+                      : { bg: "#14532d", color: "#86efac", text: "配置：就绪" };
+                const reachPill =
+                  probe?.status === "checking"
+                    ? { bg: "#1e3a8a", color: "#bfdbfe", text: "连通：检测中…" }
+                    : probe?.status === "ok"
+                      ? {
+                          bg: "#14532d",
+                          color: "#bbf7d0",
+                          text: `连通：可用${probe.message ? ` · ${shortMsg(probe.message)}` : ""}`,
+                        }
+                      : probe?.status === "error"
+                        ? {
+                            bg: "#3f1f1f",
+                            color: "#fca5a5",
+                            text: `连通：失败${probe.message ? ` · ${shortMsg(probe.message)}` : ""}`,
+                          }
+                        : specOk && bindCount > 0
+                          ? { bg: "#27272a", color: "#a1a1aa", text: "连通：打开卡片以检测" }
+                          : {
+                              bg: "#27272a",
+                              color: "#a1a1aa",
+                              text: bindCount === 0 ? "连通：需 binding" : "连通：待检测",
+                            };
+                const dotColor =
+                  probe?.status === "checking"
+                    ? "#60a5fa"
+                    : probe?.status === "ok"
+                      ? "#22c55e"
+                      : probe?.status === "error"
+                        ? "#ef4444"
+                        : !row.enabled
+                          ? "#52525b"
+                          : !specOk
+                            ? "#f97316"
+                            : bindCount === 0
+                              ? "#a1a1aa"
+                              : "#eab308";
+                const selected = focusedMcpServerId === row.id && mcpAdvancedEditorOpen;
+                return (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => openMcpAdvancedEditor(row)}
+                    title="点击打开高级 JSON 编辑"
+                    style={{
+                      ...styles.card,
+                      ...styles.mcpCardBtn,
+                      ...(selected ? styles.mcpCardBtnSelected : {}),
+                    }}
+                  >
+                    <div style={styles.mcpCardTopRow}>
+                      <span
+                        style={{
+                          ...styles.mcpStatusDot,
+                          background: dotColor,
+                          boxShadow:
+                            probe?.status === "checking" ? "0 0 0 3px rgba(96,165,250,0.35)" : undefined,
+                        }}
+                        aria-hidden
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={styles.cardName}>{row.name}</div>
+                        <div style={styles.cardDesc}>
+                          {row.transport} · {row.enabled ? "启用" : "禁用"} · {bindCount} 个工具绑定
+                        </div>
+                        <div style={styles.cardDesc}>
+                          {row.projectId ? `项目: ${row.projectId.slice(0, 8)}…` : "作用域: 全局"}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={styles.mcpCardPillRow}>
+                      <span style={{ ...styles.mcpCardPill, background: cfgPill.bg, color: cfgPill.color }}>{cfgPill.text}</span>
+                      <span style={{ ...styles.mcpCardPill, background: reachPill.bg, color: reachPill.color }}>
+                        {reachPill.text}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <details style={styles.mcpDetails}>
+              <summary style={styles.mcpDetailsSummary}>快速添加 MCP Server（表单）</summary>
+              <div style={{ ...styles.form, paddingBottom: 10 }}>
+                <input
+                  style={styles.input}
+                  value={newMcpServerName}
+                  onChange={(e) => setNewMcpServerName(e.target.value)}
+                  placeholder="server name"
+                />
+                <select
+                  style={styles.select}
+                  value={newMcpServerTransport}
+                  onChange={(e) => setNewMcpServerTransport(e.target.value as "stdio" | "http" | "ws")}
+                >
+                  <option value="stdio">stdio</option>
+                  <option value="http">http</option>
+                  <option value="ws">ws</option>
+                </select>
+                <input
+                  style={styles.input}
+                  value={newMcpServerCommand}
+                  onChange={(e) => setNewMcpServerCommand(e.target.value)}
+                  placeholder="command (stdio)"
+                />
+                <input
+                  style={styles.input}
+                  value={newMcpServerUrl}
+                  onChange={(e) => setNewMcpServerUrl(e.target.value)}
+                  placeholder="url (http/ws)"
+                />
+                <button className="qb-btn-secondary" type="button" onClick={() => void upsertMcpServerNow()}>
+                  保存 Server
+                </button>
               </div>
-              <div style={styles.cardDesc}>
-                {row.projectId ? `project: ${row.projectId}` : "project: 全局"}
+            </details>
+
+            <details style={styles.mcpDetails}>
+              <summary style={styles.mcpDetailsSummary}>表单：工具绑定与快速测试</summary>
+              <div style={{ ...styles.form, paddingBottom: 10, flexWrap: "wrap" }}>
+                <select
+                  style={styles.select}
+                  value={selectedMcpServer}
+                  onChange={(e) => setSelectedMcpServer(e.target.value)}
+                >
+                  {mcpServers.map((s) => (
+                    <option key={s.id} value={s.name}>
+                      {s.name} · {s.transport}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  style={styles.input}
+                  value={mcpToolName}
+                  onChange={(e) => setMcpToolName(e.target.value)}
+                  placeholder="tool name"
+                />
+                <input
+                  style={styles.input}
+                  type="number"
+                  value={mcpTimeoutMs}
+                  onChange={(e) => setMcpTimeoutMs(Number(e.target.value))}
+                  placeholder="timeout ms"
+                />
+                <button className="qb-btn-secondary" type="button" onClick={() => void saveMcpBindingNow()}>
+                  保存绑定
+                </button>
+                <button className="qb-btn-primary-brand" type="button" onClick={() => void testMcpNow()}>
+                  测试 MCP
+                </button>
               </div>
-              <div style={styles.mcpCardPillRow}>
-                <span style={{ ...styles.mcpCardPill, background: cfgPill.bg, color: cfgPill.color }}>{cfgPill.text}</span>
-                <span style={{ ...styles.mcpCardPill, background: reachPill.bg, color: reachPill.color }}>
-                  {reachPill.text}
-                </span>
+            </details>
+
+            <h3 style={{ ...styles.subTitle, marginTop: 18 }}>MCP 市场</h3>
+            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+              来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>（capabilities、默认工具、启动命令摘要）。点击卡片可选中后再用底部条安装，或直接在卡片上安装。
+            </p>
+
+            <details style={styles.mcpDetails}>
+              <summary style={styles.mcpDetailsSummary}>目录源与鉴权</summary>
+              <div style={{ ...styles.form, paddingBottom: 8, flexWrap: "wrap" }}>
+                <input
+                  style={styles.input}
+                  value={sourceName}
+                  onChange={(e) => setSourceName(e.target.value)}
+                  placeholder="source name"
+                />
+                <input
+                  style={styles.input}
+                  value={sourceBaseUrl}
+                  onChange={(e) => setSourceBaseUrl(e.target.value)}
+                  placeholder="source base url"
+                />
+                <select
+                  style={styles.select}
+                  value={sourceAuthType}
+                  onChange={(e) => setSourceAuthType(e.target.value as "none" | "bearer" | "api_key")}
+                >
+                  <option value="none">none</option>
+                  <option value="bearer">bearer</option>
+                  <option value="api_key">api_key</option>
+                </select>
+                <input
+                  style={styles.input}
+                  value={sourceAuthRef}
+                  onChange={(e) => setSourceAuthRef(e.target.value)}
+                  placeholder="auth ref (optional)"
+                />
+                <button className="qb-btn-secondary" type="button" onClick={() => void saveSourceNow()}>
+                  保存源
+                </button>
               </div>
-            </button>
-          );
-        })}
-      </div>
-      <h3 style={styles.subTitle}>MCP 市场</h3>
-      <div style={styles.form}>
-        <input style={styles.input} value={sourceName} onChange={(e) => setSourceName(e.target.value)} placeholder="source name" />
-        <input style={styles.input} value={sourceBaseUrl} onChange={(e) => setSourceBaseUrl(e.target.value)} placeholder="source base url" />
-        <select style={styles.select} value={sourceAuthType} onChange={(e) => setSourceAuthType(e.target.value as "none" | "bearer" | "api_key")}>
-          <option value="none">none</option>
-          <option value="bearer">bearer</option>
-          <option value="api_key">api_key</option>
-        </select>
-        <input style={styles.input} value={sourceAuthRef} onChange={(e) => setSourceAuthRef(e.target.value)} placeholder="auth ref (optional)" />
-        <button style={styles.buttonSecondary} onClick={() => void saveSourceNow()}>
-          保存源
-        </button>
-      </div>
-      <div style={styles.form}>
-        <select style={styles.select} value={selectedSourceId} onChange={(e) => setSelectedSourceId(e.target.value)}>
-          {mcpSources.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name} · {item.isDefault ? "default" : "custom"} · {item.enabled ? "enabled" : "disabled"}
-            </option>
-          ))}
-        </select>
-        <input style={styles.input} value={marketQuery} onChange={(e) => setMarketQuery(e.target.value)} placeholder="搜索市场工具" />
-        <button style={styles.buttonSecondary} onClick={() => void syncSourceNowAction()}>
-          同步目录
-        </button>
-        <button style={styles.button} onClick={() => void searchMarketNow()}>
-          刷新市场
-        </button>
-      </div>
-      <div style={styles.form}>
-        <select style={styles.select} value={selectedCatalogId} onChange={(e) => setSelectedCatalogId(e.target.value)}>
-          {mcpMarketItems.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name} · {item.riskLevel} · {item.transport} · {item.version}
-            </option>
-          ))}
-        </select>
-        <input
-          style={styles.input}
-          value={catalogServerName}
-          onChange={(e) => setCatalogServerName(e.target.value)}
-          placeholder="project scoped server name"
-        />
-        <button style={styles.buttonSecondary} onClick={() => void installMarketItemNow()} disabled={!currentProjectId}>
-          安装到当前项目
-        </button>
-        <button style={styles.button} onClick={() => void testProjectInstallNow()}>
-          测试最近安装
-        </button>
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {mcpMarketInstalls.map((row) => (
-          <div key={row.id} style={styles.form}>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              {row.serverName} · {row.installStatus}
-            </span>
-            <button
-              type="button"
-              style={styles.buttonSecondary}
-              onClick={() => void uninstallMarketInstallNow(row.id)}
-              disabled={!currentProjectId}
-            >
-              卸载
-            </button>
-          </div>
-        ))}
-      </div>
-      <pre style={styles.streamBox}>{JSON.stringify(mcpSources, null, 2)}</pre>
-      <pre style={styles.streamBox}>{JSON.stringify(mcpMarketItems, null, 2)}</pre>
-      <pre style={styles.streamBox}>{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
-      <pre style={styles.streamBox}>{mcpTestOutput || "暂无测试结果"}</pre>
-      <pre style={styles.streamBox}>{JSON.stringify(mcpBindings, null, 2)}</pre>
+            </details>
+
+            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10 }}>
+              <select style={styles.select} value={selectedSourceId} onChange={(e) => setSelectedSourceId(e.target.value)}>
+                {mcpSources.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.isDefault ? "default" : "custom"} · {item.enabled ? "enabled" : "disabled"}
+                  </option>
+                ))}
+              </select>
+              <input
+                style={styles.input}
+                value={marketQuery}
+                onChange={(e) => setMarketQuery(e.target.value)}
+                placeholder="搜索市场工具"
+              />
+              <button className="qb-btn-secondary" type="button" onClick={() => void syncSourceNowAction()}>
+                同步目录
+              </button>
+              <button className="qb-btn-primary-brand" type="button" onClick={() => void searchMarketNow()}>
+                刷新市场
+              </button>
+            </div>
+
+            <div style={styles.mcpMarketGrid}>
+              {mcpMarketItems.length === 0 ? (
+                <div style={{ ...styles.mcpMarketCard, color: "#a1a1aa" }}>暂无目录项，请先同步注册表或检查网络。</div>
+              ) : null}
+              {mcpMarketItems.map((item) => {
+                const spec = (item.specJson ?? {}) as Record<string, unknown>;
+                const caps = Array.isArray(spec["defaultCapabilitiesJson"])
+                  ? (spec["defaultCapabilitiesJson"] as unknown[]).filter((x): x is string => typeof x === "string")
+                  : [];
+                const defaultTool = typeof spec["defaultToolName"] === "string" ? spec["defaultToolName"] : "";
+                const cmdPreview = typeof spec["command"] === "string" ? spec["command"] : "";
+                const riskBorder =
+                  item.riskLevel === "high" ? "#991b1b" : item.riskLevel === "medium" ? "#a16207" : "#166534";
+                const selected = selectedCatalogId === item.id;
+                return (
+                  <div
+                    key={item.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setSelectedCatalogId(item.id);
+                      setCatalogServerName(item.slug.replace(/[^a-z0-9_-]/gi, "-"));
+                      if (defaultTool) setMcpToolName(defaultTool);
+                      const to = spec["defaultTimeoutMs"];
+                      if (typeof to === "number" && Number.isFinite(to)) setMcpTimeoutMs(to);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedCatalogId(item.id);
+                        setCatalogServerName(item.slug.replace(/[^a-z0-9_-]/gi, "-"));
+                      }
+                    }}
+                    style={{
+                      ...styles.mcpMarketCard,
+                      borderColor: selected ? "#7c3aed" : riskBorder,
+                      outline: selected ? "1px solid rgba(124,58,237,0.5)" : undefined,
+                    }}
+                  >
+                    <div style={styles.mcpMarketCardHeader}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ ...styles.cardName, color: "#e4e4e7" }}>{item.name}</div>
+                        <div style={styles.mcpMarketMeta}>
+                          {item.provider} · v{item.version} · {item.transport}{" "}
+                          <span
+                            style={{
+                              ...styles.mcpMarketRisk,
+                              background:
+                                item.riskLevel === "high"
+                                  ? "rgba(127,29,29,0.45)"
+                                  : item.riskLevel === "medium"
+                                    ? "rgba(133,77,14,0.45)"
+                                    : "rgba(22,101,52,0.45)",
+                            }}
+                          >
+                            风险 {item.riskLevel}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <p style={styles.mcpMarketDesc}>{item.description || "（无描述）"}</p>
+                    <div style={styles.mcpMarketChips}>
+                      {caps.length ? caps.map((c) => (
+                        <span key={c} style={styles.mcpMarketChip}>
+                          {c}
+                        </span>
+                      )) : (
+                        <span style={{ ...styles.mcpMarketChip, opacity: 0.75 }}>未声明 capabilities</span>
+                      )}
+                      {defaultTool ? (
+                        <span style={styles.mcpMarketChip}>默认工具: {defaultTool}</span>
+                      ) : null}
+                    </div>
+                    {cmdPreview ? (
+                      <div style={styles.mcpMarketCmd} title={cmdPreview}>
+                        {cmdPreview.length > 120 ? `${cmdPreview.slice(0, 120)}…` : cmdPreview}
+                      </div>
+                    ) : null}
+                    <div style={styles.mcpMarketCardActions}>
+                      <button
+                        type="button"
+                        className="qb-btn-primary-brand"
+                        disabled={!currentProjectId}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void installMarketCatalogItem(item);
+                        }}
+                      >
+                        安装到当前项目
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 10 }}>
+              <input
+                style={styles.input}
+                value={catalogServerName}
+                onChange={(e) => setCatalogServerName(e.target.value)}
+                placeholder="安装后的 server 名（可改）"
+              />
+              <button className="qb-btn-secondary" type="button" onClick={() => void installMarketItemNow()} disabled={!currentProjectId}>
+                安装当前选中条目
+              </button>
+              <button className="qb-btn-primary-brand" type="button" onClick={() => void testProjectInstallNow()}>
+                测试最近安装
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+              {mcpMarketInstalls.map((row) => (
+                <div key={row.id} style={styles.form}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    {row.serverName} · {row.installStatus}
+                  </span>
+                  <button
+                    type="button"
+                    className="qb-btn-secondary"
+                    onClick={() => void uninstallMarketInstallNow(row.id)}
+                    disabled={!currentProjectId}
+                  >
+                    卸载
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <details style={{ ...styles.mcpDetails, marginTop: 14 }}>
+              <summary style={styles.mcpDetailsSummary}>高级：诊断与原始 JSON</summary>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 10 }}>
+                <div style={{ fontSize: 12, color: "#a1a1aa" }}>最近一次操作 / 测试结果</div>
+                <pre style={styles.streamBox}>{mcpTestOutput || "暂无输出"}</pre>
+                <details style={styles.mcpDetailsNested}>
+                  <summary style={styles.mcpDetailsSummarySmall}>注册表源 (mcpSources)</summary>
+                  <pre style={styles.streamBox}>{JSON.stringify(mcpSources, null, 2)}</pre>
+                </details>
+                <details style={styles.mcpDetailsNested}>
+                  <summary style={styles.mcpDetailsSummarySmall}>市场安装记录</summary>
+                  <pre style={styles.streamBox}>{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
+                </details>
+                <details style={styles.mcpDetailsNested}>
+                  <summary style={styles.mcpDetailsSummarySmall}>工具绑定列表</summary>
+                  <pre style={styles.streamBox}>{JSON.stringify(mcpBindings, null, 2)}</pre>
+                </details>
+              </div>
+            </details>
+
+            {mcpAdvancedEditorOpen && focusedMcpServerId ? (
+              <div
+                style={styles.mcpModalBackdrop}
+                role="presentation"
+                onClick={() => {
+                  setMcpAdvancedEditorOpen(false);
+                }}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="mcp-adv-title"
+                  style={styles.mcpModal}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div style={styles.mcpModalHeader}>
+                    <h4 id="mcp-adv-title" style={{ margin: 0, fontSize: 15, color: "#e4e4e7" }}>
+                      高级编辑 · {mcpServers.find((s) => s.id === focusedMcpServerId)?.name ?? ""}
+                    </h4>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        onClick={() => {
+                          const row = mcpServers.find((s) => s.id === focusedMcpServerId);
+                          if (!row) return;
+                          void probeMcpServer(row, pickBindingForMcpServer(row.name));
+                        }}
+                      >
+                        探测连通性
+                      </button>
+                      <button type="button" className="qb-btn-secondary" onClick={() => setMcpAdvancedEditorOpen(false)}>
+                        关闭
+                      </button>
+                    </div>
+                  </div>
+                  <div style={styles.mcpModalBody}>
+                    <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
+                      编辑 <code style={{ fontSize: 11 }}>server</code> 与可选的 <code style={{ fontSize: 11 }}>binding</code>
+                      。保存将调用 upsert 接口写入数据库。将 <code style={{ fontSize: 11 }}>binding</code> 设为{" "}
+                      <code style={{ fontSize: 11 }}>null</code> 可仅更新 server（不删除已有绑定）。
+                    </p>
+                    {mcpAdvancedJsonError ? <div style={styles.errorBox}>{mcpAdvancedJsonError}</div> : null}
+                    <textarea
+                      style={styles.mcpJsonTextarea}
+                      value={mcpAdvancedJsonDraft}
+                      onChange={(e) => setMcpAdvancedJsonDraft(e.target.value)}
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div style={styles.mcpModalFooter}>
+                    <button type="button" className="qb-btn-secondary" onClick={() => setMcpAdvancedEditorOpen(false)}>
+                      取消
+                    </button>
+                    <button type="button" className="qb-btn-primary-brand" onClick={() => void saveMcpAdvancedJson()}>
+                      保存 JSON
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+        {activeConfigSubPage === "skills" ? (
+          <>
+            <h3 style={styles.subTitle}>Skills 与开源市场</h3>
+            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px", lineHeight: 1.55 }}>
+              市场数据来自开源项目{" "}
+              <a href="https://github.com/coolzwc/open-skill-market" target="_blank" rel="noreferrer">
+                Open Skill Market
+              </a>{" "}
+              （GitHub 上的 <code>market/skills.json</code> 及分片）。请先点击<strong>刷新索引</strong>拉取完整目录（体积较大，首次可能需数十秒）；安装到项目后，可将技能的{" "}
+              <code>name</code> 写入 Agent 的 <code>skills_json</code>（见 Agent 配置页），或使用下方「追加到草稿」。
+            </p>
+            <div style={styles.meta}>
+              <span>索引: {skillMarketStatus?.loaded ? "已加载" : "未加载"}</span>
+              <span>条目数: {skillMarketStatus?.skillCount ?? "—"}</span>
+              <span>项目安装: {skillInstalls.length}</span>
+            </div>
+            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 12 }}>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                disabled={skillRefreshBusy}
+                onClick={() => {
+                  setSkillRefreshBusy(true);
+                  void refreshSkillMarketRegistry()
+                    .then(setSkillMarketStatus)
+                    .finally(() => setSkillRefreshBusy(false));
+                }}
+              >
+                {skillRefreshBusy ? "刷新中…" : "从开源中心刷新索引"}
+              </button>
+              <button
+                type="button"
+                className="qb-btn-ghost qb-btn--compact"
+                onClick={() => void getSkillMarketStatus().then(setSkillMarketStatus)}
+              >
+                刷新状态
+              </button>
+            </div>
+            <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>搜索市场</h4>
+            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10 }}>
+              <input
+                style={{ ...styles.input, minWidth: 220, flex: "1 1 200px" }}
+                value={skillSearchQ}
+                onChange={(e) => setSkillSearchQ(e.target.value)}
+                placeholder="关键词：名称、描述、仓库、标签…"
+              />
+              <button
+                type="button"
+                className="qb-btn-primary-brand"
+                disabled={skillSearchBusy}
+                onClick={() => {
+                  setSkillSearchBusy(true);
+                  void searchSkillMarket(skillSearchQ, 50)
+                    .then(setSkillSearchHits)
+                    .finally(() => setSkillSearchBusy(false));
+                }}
+              >
+                {skillSearchBusy ? "搜索中…" : "搜索"}
+              </button>
+            </div>
+            <div style={{ overflowX: "auto", marginBottom: 18 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#a1a1aa" }}>
+                    <th style={{ padding: "6px 8px" }}>name</th>
+                    <th style={{ padding: "6px 8px" }}>描述</th>
+                    <th style={{ padding: "6px 8px" }}>仓库</th>
+                    <th style={{ padding: "6px 8px" }}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {skillSearchHits.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
+                        无结果。若尚未加载索引，请先「刷新索引」后再搜索。
+                      </td>
+                    </tr>
+                  ) : (
+                    skillSearchHits.map((row) => (
+                      <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "#e4e4e7" }}>
+                        <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                          {row.name}
+                        </td>
+                        <td style={{ padding: "8px", maxWidth: 360 }}>
+                          {row.description.length > 160 ? `${row.description.slice(0, 160)}…` : row.description}
+                        </td>
+                        <td style={{ padding: "8px", wordBreak: "break-all" }}>{row.repo ?? "—"}</td>
+                        <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                          <button
+                            type="button"
+                            className="qb-btn-ghost qb-btn--compact"
+                            disabled={!currentProjectId}
+                            title={!currentProjectId ? "需先加载工作区项目" : undefined}
+                            onClick={() =>
+                              currentProjectId &&
+                              void installSkillFromMarket({ projectId: currentProjectId, externalSkillId: row.id }).then(
+                                () => listSkillMarketInstalls(currentProjectId).then(setSkillInstalls)
+                              )
+                            }
+                          >
+                            安装到项目
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>本项目已安装</h4>
+            {!currentProjectId ? (
+              <p style={{ fontSize: 12, color: "#71717a" }}>加载配置后可按项目记录安装；请先进入配置中心触发加载。</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "#a1a1aa" }}>
+                      <th style={{ padding: "6px 8px" }}>skill_name</th>
+                      <th style={{ padding: "6px 8px" }}>说明</th>
+                      <th style={{ padding: "6px 8px" }}>registry id</th>
+                      <th style={{ padding: "6px 8px" }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {skillInstalls.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
+                          尚未从市场安装任何技能。
+                        </td>
+                      </tr>
+                    ) : (
+                      skillInstalls.map((row) => (
+                        <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "#e4e4e7" }}>
+                          <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace" }}>{row.skillName}</td>
+                          <td style={{ padding: "8px", maxWidth: 280 }}>
+                            {row.description.length > 120 ? `${row.description.slice(0, 120)}…` : row.description}
+                          </td>
+                          <td style={{ padding: "8px", wordBreak: "break-all", fontSize: 11 }}>{row.externalSkillId}</td>
+                          <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                            <button
+                              type="button"
+                              className="qb-btn-ghost qb-btn--compact"
+                              onClick={() => void navigator.clipboard.writeText(row.skillName)}
+                            >
+                              复制 name
+                            </button>
+                            <button
+                              type="button"
+                              className="qb-btn-secondary qb-btn--compact"
+                              disabled={
+                                !definitions.find((b) => b.definition.id === skillAppendDefinitionId)?.draft
+                              }
+                              title={
+                                !definitions.find((b) => b.definition.id === skillAppendDefinitionId)?.draft
+                                  ? "请先在 Agent 页为该定义保存草稿"
+                                  : undefined
+                              }
+                              onClick={() => {
+                                const defId = skillAppendDefinitionId;
+                                if (!defId) return;
+                                const bundle = definitions.find((b) => b.definition.id === defId);
+                                if (!bundle?.draft) return;
+                                void appendAgentDraftSkills(defId, [row.skillName])
+                                  .then(() => listAgentDefinitions())
+                                  .then(setDefinitions);
+                              }}
+                            >
+                              追加到草稿
+                            </button>
+                            <button
+                              type="button"
+                              className="qb-btn-ghost qb-btn--compact"
+                              onClick={() =>
+                                void deleteSkillMarketInstall(currentProjectId, row.id).then(() =>
+                                  listSkillMarketInstalls(currentProjectId).then(setSkillInstalls)
+                                )
+                              }
+                            >
+                              移除
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "#a1a1aa" }}>追加到 Agent 草稿时选择：</span>
+              {definitions.length === 0 ? (
+                <span style={{ fontSize: 12, color: "#71717a" }}>无 Agent 定义</span>
+              ) : (
+                <select
+                  style={styles.select}
+                  value={skillAppendDefinitionId}
+                  onChange={(e) => setSkillAppendDefinitionId(e.target.value)}
+                >
+                  {definitions.map((b) => (
+                    <option key={b.definition.id} value={b.definition.id}>
+                      {b.profile?.displayName?.trim() || b.definition.name} · {b.definition.role}
+                      {b.draft ? "" : "（无草稿）"}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </>
         ) : null}
         {activeConfigSubPage === "schedule" ? (
@@ -2040,10 +2377,10 @@ const ConfigPanel: FC = () => {
           <option value="live_with_confirm">live_with_confirm</option>
           <option value="live_direct">live_direct</option>
         </select>
-        <button style={styles.buttonSecondary} onClick={() => void createScheduledJobNow()}>
+        <button className="qb-btn-secondary" onClick={() => void createScheduledJobNow()}>
           创建定时任务
         </button>
-        <button style={styles.button} onClick={() => void runScheduledNow()} disabled={!selectedScheduledJobId}>
+        <button className="qb-btn-primary-brand" onClick={() => void runScheduledNow()} disabled={!selectedScheduledJobId}>
           立即执行
         </button>
       </div>
@@ -2071,14 +2408,14 @@ const ConfigPanel: FC = () => {
           ))}
         </select>
         <button
-          style={styles.buttonSecondary}
+          className="qb-btn-secondary"
           onClick={() => void toggleScheduledJob(false)}
           disabled={!selectedScheduledJobId}
         >
           停用
         </button>
         <button
-          style={styles.buttonSecondary}
+          className="qb-btn-secondary"
           onClick={() => void toggleScheduledJob(true)}
           disabled={!selectedScheduledJobId}
         >
@@ -2122,7 +2459,7 @@ const ConfigPanel: FC = () => {
           onChange={(e) => setIntegrationSecretRef(e.target.value)}
           placeholder="token / secret"
         />
-        <button style={styles.buttonSecondary} onClick={() => void saveIntegrationNow()}>
+        <button type="button" className="qb-btn-primary-brand" onClick={() => void saveIntegrationNow()}>
           保存集成配置
         </button>
       </div>
@@ -2131,60 +2468,53 @@ const ConfigPanel: FC = () => {
           </>
         ) : null}
         {activeConfigSubPage === "agent" ? (
-          <>
-      <h3 style={styles.subTitle}>Agent 配置</h3>
-      <div style={styles.form}>
-        <select
-          style={styles.select}
-          value={selectedDefinitionId}
-          onChange={(e) => setSelectedDefinitionId(e.target.value)}
-        >
-          {definitions.map((item) => (
-            <option key={item.definition.id} value={item.definition.id}>
-              {item.definition.role} · {item.definition.version}
-            </option>
-          ))}
-        </select>
-        <input style={styles.input} value={draftSoul} onChange={(e) => setDraftSoul(e.target.value)} />
-      </div>
-      <textarea style={styles.textarea} value={draftPrompt} onChange={(e) => setDraftPrompt(e.target.value)} />
-      <input style={styles.input} value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
-      <div style={styles.actions}>
-        <button
-          style={styles.button}
-          onClick={() =>
-            selectedBundle &&
-            void createAgentDraft({
-              definitionId: selectedBundle.definition.id,
-              systemPrompt: draftPrompt,
-              changeNote: draftNote,
-              profile: {
-                displayName: selectedBundle.profile?.displayName ?? selectedBundle.definition.name,
-                soulFileRef: draftSoul,
-                description: selectedBundle.profile?.description ?? "",
-              },
-            }).then(() => loadConfig())
-          }
-        >
-          保存草稿
-        </button>
-        <button
-          style={styles.buttonSecondary}
-          onClick={() =>
-            selectedBundle?.draft &&
-            void releaseAgentDraft({
-              definitionId: selectedBundle.definition.id,
-              draftId: selectedBundle.draft.id,
-              releasedVersion: selectedBundle.definition.version,
-              releaseNote: draftNote,
-            }).then(() => loadConfig())
-          }
-        >
-          发布草稿
-        </button>
-      </div>
-      <pre style={styles.streamBox}>{JSON.stringify(configData?.diffSummary ?? {}, null, 2)}</pre>
-          </>
+          <ConfigAgentPanel
+            definitions={definitions}
+            selectedDefinitionId={selectedDefinitionId}
+            onSelectDefinitionId={setSelectedDefinitionId}
+            onResetAgentSelectionRef={() => {
+              prevAgentDefId.current = "";
+            }}
+            onReloadAll={() => void loadConfig()}
+            onOpenMcpSubPage={setConfigSubPage}
+            agentUiTab={agentUiTab}
+            setAgentUiTab={setAgentUiTab}
+            selectedBundle={selectedBundle}
+            agentPack={agentPack}
+            agentMemoryStats={agentMemoryStats}
+            draftPrompt={draftPrompt}
+            setDraftPrompt={setDraftPrompt}
+            draftSoul={draftSoul}
+            setDraftSoul={setDraftSoul}
+            draftPromptTemplateRef={draftPromptTemplateRef}
+            setDraftPromptTemplateRef={setDraftPromptTemplateRef}
+            draftNote={draftNote}
+            setDraftNote={setDraftNote}
+            draftPromptMode={draftPromptMode}
+            setDraftPromptMode={setDraftPromptMode}
+            draftMemoryNamespace={draftMemoryNamespace}
+            setDraftMemoryNamespace={setDraftMemoryNamespace}
+            draftConfigRootUri={draftConfigRootUri}
+            setDraftConfigRootUri={setDraftConfigRootUri}
+            draftMcpServerNames={draftMcpServerNames}
+            setDraftMcpServerNames={setDraftMcpServerNames}
+            fileSoulMd={fileSoulMd}
+            setFileSoulMd={setFileSoulMd}
+            filePromptMd={filePromptMd}
+            setFilePromptMd={setFilePromptMd}
+            fileAgentMd={fileAgentMd}
+            setFileAgentMd={setFileAgentMd}
+            fileUserMd={fileUserMd}
+            setFileUserMd={setFileUserMd}
+            fileMemoryMd={fileMemoryMd}
+            setFileMemoryMd={setFileMemoryMd}
+            mcpServers={mcpServers}
+            mcpBindings={mcpBindings}
+            currentProjectId={currentProjectId}
+            pickBindingForMcpServer={pickBindingForMcpServer}
+            mcpServerBindingCount={mcpServerBindingCount}
+            syncSummary={configData?.diffSummary}
+          />
         ) : null}
       </div>
     </>
@@ -2192,7 +2522,19 @@ const ConfigPanel: FC = () => {
 };
 
 const styles: Record<string, CSSProperties> = {
-  main: { flex: 1, overflow: "auto", padding: 24 },
+  main: { flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", padding: 24 },
+  /** 对话页：占满主区、禁止整页横向滚动，三栏各自纵向滚动 */
+  mainChat: {
+    flex: 1,
+    width: "100%",
+    maxWidth: "100%",
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    padding: 16,
+  },
   /** 研究团队三栏工作台：与 IDE 一致占满主内容区，避免外层滚动条截断拖拽 */
   mainTeam: {
     flex: 1,
@@ -2204,6 +2546,16 @@ const styles: Record<string, CSSProperties> = {
     padding: 0,
   },
   mainIde: {
+    flex: 1,
+    display: "flex",
+    flexDirection: "column",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    padding: 0,
+  },
+  /** 实时交易 Agent：四段布局（配置 / 对话流 / K线+快捷） */
+  mainTrader: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
@@ -2241,7 +2593,7 @@ const styles: Record<string, CSSProperties> = {
     width: 6,
     flexShrink: 0,
     cursor: "col-resize",
-    background: "#27272a",
+    background: "var(--qb-ide-chrome-border, #27272a)",
     alignSelf: "stretch",
   },
   ideRightPane: {
@@ -2271,17 +2623,17 @@ const styles: Record<string, CSSProperties> = {
   ideQuickGutter: {
     width: 1,
     flexShrink: 0,
-    background: "#27272a",
+    background: "var(--qb-ide-chrome-border, #27272a)",
     alignSelf: "stretch",
   },
-  title: { fontSize: 26, fontWeight: 700, margin: "0 0 8px" },
-  subTitle: { fontSize: 16, margin: "16px 0 8px" },
+  title: { fontSize: 26, fontWeight: 700, margin: "0 0 8px", color: "var(--qb-body-fg)" },
+  subTitle: { fontSize: 16, margin: "16px 0 8px", color: "var(--qb-body-fg)" },
   form: { display: "flex", gap: 8, marginBottom: 10 },
   input: {
     flex: 1,
-    background: "#18181b",
-    border: "1px solid #27272a",
-    color: "#e4e4e7",
+    background: "var(--qb-main-input-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     borderRadius: 8,
     padding: "8px 10px",
   },
@@ -2289,38 +2641,22 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
     minHeight: 140,
     resize: "vertical",
-    background: "#18181b",
-    border: "1px solid #27272a",
-    color: "#e4e4e7",
+    background: "var(--qb-main-input-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     borderRadius: 8,
     padding: "8px 10px",
     marginBottom: 8,
   },
   select: {
-    background: "#18181b",
-    border: "1px solid #27272a",
-    color: "#e4e4e7",
+    background: "var(--qb-main-input-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     borderRadius: 8,
     padding: "8px 10px",
   },
-  button: {
-    background: "#7c3aed",
-    border: "none",
-    color: "#fff",
-    borderRadius: 8,
-    padding: "8px 12px",
-    cursor: "pointer",
-  },
-  buttonSecondary: {
-    background: "#27272a",
-    border: "1px solid #3f3f46",
-    color: "#e4e4e7",
-    borderRadius: 8,
-    padding: "8px 12px",
-    cursor: "pointer",
-  },
-  actions: { display: "flex", gap: 8, marginBottom: 8 },
-  meta: { display: "flex", gap: 12, fontSize: 12, color: "#a1a1aa" },
+  actions: { display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap", alignItems: "center" },
+  meta: { display: "flex", gap: 12, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
   configPageBody: {
     flex: 1,
     minWidth: 0,
@@ -2329,46 +2665,24 @@ const styles: Record<string, CSSProperties> = {
     gap: 0,
     width: "100%",
   },
-  configSubNav: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: 8,
-    marginBottom: 16,
-    padding: "10px 0",
-    borderBottom: "1px solid #27272a",
-  },
-  configSubTab: {
-    padding: "8px 14px",
-    borderRadius: 8,
-    border: "1px solid #3f3f46",
-    background: "#18181b",
-    color: "#a1a1aa",
-    fontSize: 13,
-    cursor: "pointer",
-  },
-  configSubTabActive: {
-    borderColor: "#7c3aed",
-    background: "#27272a",
-    color: "#e4e4e7",
-  },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(220px,1fr))", gap: 10 },
   card: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-main-card-bg, #18181b)",
+    border: "1px solid var(--qb-main-card-border, #27272a)",
     borderRadius: 8,
     padding: 12,
   },
   cardButton: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-main-card-bg, #18181b)",
+    border: "1px solid var(--qb-main-card-border, #27272a)",
     borderRadius: 8,
     padding: 12,
     textAlign: "left",
-    color: "#e4e4e7",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     cursor: "pointer",
   },
-  cardName: { fontSize: 13, fontWeight: 600, color: "#a78bfa" },
-  cardDesc: { fontSize: 12, color: "#a1a1aa" },
+  cardName: { fontSize: 13, fontWeight: 600, color: "var(--qb-card-name, #a78bfa)" },
+  cardDesc: { fontSize: 12, color: "var(--qb-card-desc, #a1a1aa)", overflowWrap: "anywhere", wordBreak: "break-word" },
   mcpCardBtn: {
     display: "flex",
     flexDirection: "column",
@@ -2380,8 +2694,8 @@ const styles: Record<string, CSSProperties> = {
     color: "inherit",
   },
   mcpCardBtnSelected: {
-    borderColor: "#3b82f6",
-    boxShadow: "0 0 0 1px rgba(59,130,246,0.35)",
+    borderColor: "var(--qb-blue)",
+    boxShadow: "0 0 0 1px var(--qb-focus-ring)",
   },
   mcpCardPillRow: {
     display: "flex",
@@ -2397,14 +2711,160 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.35,
     wordBreak: "break-word",
   },
+  mcpCardTopRow: { display: "flex", alignItems: "flex-start", gap: 10 },
+  mcpStatusDot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0, marginTop: 4 },
+  mcpDetails: {
+    marginBottom: 12,
+    border: "1px solid var(--qb-mcp-details-border, #27272a)",
+    borderRadius: 8,
+    padding: "0 12px",
+    background: "var(--qb-mcp-details-bg, #111114)",
+  },
+  mcpDetailsSummary: {
+    cursor: "pointer",
+    padding: "10px 0",
+    fontSize: 13,
+    color: "var(--qb-main-meta, #a1a1aa)",
+    userSelect: "none",
+    listStyle: "none",
+  } as CSSProperties,
+  mcpDetailsSummarySmall: {
+    cursor: "pointer",
+    padding: "6px 0",
+    fontSize: 12,
+    color: "var(--qb-main-meta, #71717a)",
+    userSelect: "none",
+  } as CSSProperties,
+  mcpDetailsNested: {
+    border: "1px solid var(--qb-mcp-details-border, #27272a)",
+    borderRadius: 6,
+    padding: "0 10px",
+    background: "var(--qb-mcp-details-nested-bg, #0c0c0e)",
+  },
+  mcpMarketGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))",
+    gap: 12,
+  },
+  mcpMarketCard: {
+    background: "var(--qb-mcp-market-card-bg, #18181b)",
+    border: "1px solid var(--qb-mcp-market-card-border, #27272a)",
+    borderRadius: 10,
+    padding: 12,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    cursor: "pointer",
+    textAlign: "left",
+    transition: "border-color 0.15s ease",
+  },
+  mcpMarketCardHeader: { display: "flex", alignItems: "flex-start", gap: 8 },
+  mcpMarketMeta: {
+    fontSize: 11,
+    color: "var(--qb-mcp-market-meta, #a1a1aa)",
+    marginTop: 4,
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    alignItems: "center",
+  },
+  mcpMarketRisk: {
+    fontSize: 10,
+    fontWeight: 600,
+    padding: "2px 6px",
+    borderRadius: 4,
+    color: "#fafafa",
+  },
+  mcpMarketDesc: {
+    fontSize: 12,
+    color: "var(--qb-mcp-market-desc, #d4d4d8)",
+    margin: 0,
+    lineHeight: 1.45,
+    display: "-webkit-box",
+    WebkitLineClamp: 3,
+    WebkitBoxOrient: "vertical",
+    overflow: "hidden",
+  } as CSSProperties,
+  mcpMarketChips: { display: "flex", flexWrap: "wrap", gap: 6 },
+  mcpMarketChip: {
+    fontSize: 10,
+    fontWeight: 600,
+    padding: "3px 8px",
+    borderRadius: 999,
+    background: "var(--qb-mcp-market-chip-bg, #27272a)",
+    color: "var(--qb-mcp-market-chip-fg, #e4e4e7)",
+    border: "1px solid var(--qb-mcp-market-chip-border, #3f3f46)",
+  },
+  mcpMarketCmd: {
+    fontSize: 11,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
+    color: "var(--qb-mcp-market-cmd-fg, #a1a1aa)",
+    background: "var(--qb-mcp-market-cmd-bg, #09090b)",
+    borderRadius: 6,
+    padding: "6px 8px",
+    border: "1px solid var(--qb-mcp-market-cmd-border, #27272a)",
+    wordBreak: "break-all",
+  },
+  mcpMarketCardActions: { marginTop: "auto", paddingTop: 4 },
+  mcpModalBackdrop: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 200,
+    background: "rgba(0,0,0,0.55)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  mcpModal: {
+    width: "min(760px, 100%)",
+    maxHeight: "88vh",
+    display: "flex",
+    flexDirection: "column",
+    background: "var(--qb-modal-bg, #111114)",
+    border: "1px solid var(--qb-modal-border, #3f3f46)",
+    borderRadius: 12,
+    boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
+  },
+  mcpModalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    flexWrap: "wrap",
+    padding: "12px 14px",
+    borderBottom: "1px solid var(--qb-modal-sep, #27272a)",
+  },
+  mcpModalBody: { padding: 12, overflow: "auto", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
+  mcpModalFooter: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 8,
+    padding: "10px 14px",
+    borderTop: "1px solid var(--qb-modal-sep, #27272a)",
+  },
+  mcpJsonTextarea: {
+    width: "100%",
+    minHeight: 320,
+    flex: 1,
+    resize: "vertical",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontSize: 12,
+    lineHeight: 1.45,
+    background: "var(--qb-mcp-json-bg, #09090b)",
+    border: "1px solid var(--qb-mcp-json-border, #27272a)",
+    color: "var(--qb-mcp-json-fg, #e4e4e7)",
+    borderRadius: 8,
+    padding: 10,
+  },
   streamBox: {
-    background: "#09090b",
-    border: "1px solid #27272a",
+    background: "var(--qb-stream-box-bg, #09090b)",
+    border: "1px solid var(--qb-stream-box-border, #27272a)",
     borderRadius: 8,
     padding: 10,
     maxHeight: 260,
     overflow: "auto",
-    color: "#d4d4d8",
+    color: "var(--qb-stream-box-fg, #d4d4d8)",
     fontSize: 12,
     whiteSpace: "pre-wrap",
   },
@@ -2416,11 +2876,42 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 10px",
     marginBottom: 10,
   },
-  chatLayout: { display: "grid", gridTemplateColumns: "260px 1fr 300px", gap: 10, minHeight: 520 },
+  chatPageRoot: {
+    display: "flex",
+    flexDirection: "column",
+    flex: 1,
+    width: "100%",
+    maxWidth: "100%",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  chatChrome: {
+    flexShrink: 0,
+    minWidth: 0,
+  },
+  chatLayout: {
+    display: "grid",
+    /** 两侧用 fr 随主区变窄，避免 min 宽之和把整行撑出横向滚动条 */
+    gridTemplateColumns: "minmax(140px, 1fr) minmax(0, 2.6fr) minmax(160px, 1fr)",
+    gridTemplateRows: "minmax(0, 1fr)",
+    gap: 10,
+    flex: 1,
+    width: "100%",
+    maxWidth: "100%",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    alignContent: "stretch",
+  },
   chatLayoutIde: {
     flex: 1,
     minHeight: 0,
-    gridTemplateColumns: "minmax(140px, 22%) minmax(0, 1fr) minmax(120px, 20%)",
+    minWidth: 0,
+    width: "100%",
+    maxWidth: "100%",
+    gridTemplateRows: "minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(120px, 22%) minmax(0, 1fr) minmax(120px, 20%)",
     gap: 8,
   },
   chatIdeRoot: {
@@ -2443,8 +2934,22 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8,
     padding: 10,
     background: "#111114",
+    minWidth: 0,
+    minHeight: 0,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
-  chatSessionList: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8 },
+  chatSessionList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    marginTop: 8,
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+  },
   chatSessionItem: {
     border: "1px solid #27272a",
     borderRadius: 8,
@@ -2463,11 +2968,37 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    flex: 1,
   },
-  chatMessages: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 },
-  chatBubble: { padding: "8px 10px", borderRadius: 8, border: "1px solid #27272a" },
-  chatBubbleUser: { background: "#27272a", alignSelf: "flex-end", maxWidth: "82%" },
-  chatBubbleAgent: { background: "#18181b", alignSelf: "flex-start", maxWidth: "90%" },
+  chatMessages: {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    marginBottom: 10,
+  },
+  chatForm: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 0,
+    flexShrink: 0,
+    minWidth: 0,
+  },
+  chatBubble: {
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid #27272a",
+    minWidth: 0,
+    boxSizing: "border-box",
+  },
+  chatBubbleUser: { background: "#27272a", alignSelf: "flex-end", maxWidth: "min(82%, 100%)" },
+  chatBubbleAgent: { background: "#18181b", alignSelf: "flex-start", maxWidth: "100%" },
   chatMeta: { fontSize: 11, color: "#a1a1aa", marginBottom: 4 },
   chartCtxBanner: {
     fontSize: 12,
@@ -2478,9 +3009,33 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 12px",
     marginBottom: 10,
   },
-  boardCol: { border: "1px solid #27272a", borderRadius: 8, padding: 10, background: "#111114" },
+  boardCol: {
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    padding: 10,
+    background: "#111114",
+    minWidth: 0,
+    minHeight: 0,
+    overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
+  },
+  boardColScroll: {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+  },
   boardList: { display: "flex", flexDirection: "column", gap: 8 },
-  boardCard: { background: "#18181b", border: "1px solid #27272a", borderRadius: 8, padding: 10 },
+  boardCard: {
+    background: "#18181b",
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    padding: 10,
+    minWidth: 0,
+    overflowWrap: "anywhere",
+  },
   errorText: { fontSize: 12, color: "#fca5a5", marginTop: 6 },
 };
 
@@ -2543,15 +3098,6 @@ const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
   history: History,
 };
 
-const TEAM_GROUPS = [
-  { key: "analyst", label: "分析师团队", color: "#3b82f6" },
-  { key: "researcher", label: "研究员团队", color: "#8b5cf6" },
-  { key: "risk", label: "风控团队", color: "#ef4444" },
-  { key: "portfolio", label: "组合管理", color: "#f59e0b" },
-  { key: "execution", label: "执行团队", color: "#10b981" },
-  { key: "ops", label: "运营支持", color: "#6b7280" },
-];
-
 /** 画布可多选高亮的分析师角色（与后端 MSA 四分析师一致；空集表示不过滤） */
 const TEAM_RESEARCH_ANALYST_ROLES = new Set([
   "analyst_fundamental",
@@ -2561,7 +3107,6 @@ const TEAM_RESEARCH_ANALYST_ROLES = new Set([
 ]);
 
 const TeamDashboardPanel: FC = () => {
-  const [roles, setRoles] = useState<AgentRoleCatalogItem[]>([]);
   const [ticker, setTicker] = useState("AAPL");
   /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认「请对 ticker 进行全面分析」 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
@@ -2631,6 +3176,9 @@ const TeamDashboardPanel: FC = () => {
   const [participatingAnalystRoles, setParticipatingAnalystRoles] = useState<string[]>([]);
   const [strategyScripts, setStrategyScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
   const [strategyScriptChoice, setStrategyScriptChoice] = useState<string>("");
+  const [agentDefBundles, setAgentDefBundles] = useState<AgentDefinitionBundle[] | null>(null);
+  const setActiveView = useAppStore((s) => s.setActiveView);
+  const setCfgSubPage = useAppStore((s) => s.setConfigSubPage);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -2730,10 +3278,46 @@ const TeamDashboardPanel: FC = () => {
     };
   }, [teamGraph, participatingAnalystRoles]);
 
-  const analystRoleCatalog = useMemo(
-    () => roles.filter((r) => TEAM_RESEARCH_ANALYST_ROLES.has(r.role)),
-    [roles]
-  );
+  const analystRoleCatalog = useMemo(() => {
+    const rows: { role: string; displayName: string }[] = [];
+    if (!agentDefBundles) return rows;
+    for (const role of TEAM_RESEARCH_ANALYST_ROLES) {
+      const b = agentDefBundles.find((x) => x.definition.role === role && x.definition.enabled !== false);
+      if (b) {
+        rows.push({
+          role,
+          displayName: b.profile?.displayName?.trim() || b.definition.name || role,
+        });
+      }
+    }
+    return rows;
+  }, [agentDefBundles]);
+
+  const enabledResearchAnalystDefCount = useMemo(() => {
+    if (agentDefBundles == null) return null;
+    return agentDefBundles.filter((b) => {
+      if (!TEAM_RESEARCH_ANALYST_ROLES.has(b.definition.role)) return false;
+      return b.definition.enabled !== false;
+    }).length;
+  }, [agentDefBundles]);
+
+  const teamRunDisabled = useMemo(() => {
+    if (running) return true;
+    if (!ticker.trim() || !workflowRunId) return true;
+    if (enabledResearchAnalystDefCount === null) return true;
+    if (enabledResearchAnalystDefCount === 0) return true;
+    return false;
+  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount]);
+
+  const teamRunDisabledTitle = useMemo(() => {
+    if (running) return "分析进行中";
+    if (!ticker.trim()) return "请先填写标的代码";
+    if (!workflowRunId) return "请先选择工作流 ID";
+    if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
+    if (enabledResearchAnalystDefCount === 0)
+      return "数据库中暂无已启用的 analyst_* 定义，请先到配置中心启用或执行种子";
+    return "";
+  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount]);
 
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
@@ -2742,9 +3326,12 @@ const TeamDashboardPanel: FC = () => {
   }, [workflowRunId, workflowOptions]);
 
   useEffect(() => {
-    if (analystRoleCatalog.length === 0) return;
-    setParticipatingAnalystRoles((prev) => (prev.length > 0 ? prev : analystRoleCatalog.map((r) => r.role)));
-  }, [analystRoleCatalog]);
+    if (agentDefBundles === null) return;
+    const rolesWithDefs = [...TEAM_RESEARCH_ANALYST_ROLES].filter((role) =>
+      agentDefBundles.some((b) => b.definition.role === role && b.definition.enabled !== false)
+    );
+    setParticipatingAnalystRoles((prev) => (prev.length > 0 ? prev : rolesWithDefs));
+  }, [agentDefBundles]);
 
   useEffect(() => {
     if (!workflowSessionId.trim()) {
@@ -2827,7 +3414,9 @@ const TeamDashboardPanel: FC = () => {
 
   useEffect(() => {
     void (async () => {
-      getAgentRoles().then(setRoles).catch(() => {});
+      void listAgentDefinitions()
+        .then(setAgentDefBundles)
+        .catch(() => setAgentDefBundles([]));
       void listAgentGroups()
         .then(setAnalystAgentGroupOptions)
         .catch(() => setAnalystAgentGroupOptions([]));
@@ -2963,6 +3552,10 @@ const TeamDashboardPanel: FC = () => {
         ticker: ticker.trim(),
         context: teamAnalysisContext.trim() || undefined,
         agentGroupId: analystAgentGroupId.trim() || undefined,
+        analystRoles: (() => {
+          const xs = participatingAnalystRoles.filter((r) => TEAM_RESEARCH_ANALYST_ROLES.has(r));
+          return xs.length > 0 ? xs : undefined;
+        })(),
         onProgress: (elapsedMs) => {
           const secs = Math.floor(elapsedMs / 1000);
           setRunProgress(`分析进行中… 已用时 ${secs}s（多 Agent LLM 推理，请耐心等待）`);
@@ -3238,11 +3831,6 @@ const TeamDashboardPanel: FC = () => {
     }
   };
 
-  const groupedRoles = TEAM_GROUPS.map((g) => ({
-    ...g,
-    members: roles.filter((r) => r.team === g.key),
-  }));
-
   return (
     <div style={teamStyles.container}>
       <div style={teamStyles.teamWorkbenchShell}>
@@ -3294,11 +3882,42 @@ const TeamDashboardPanel: FC = () => {
               ))}
             </select>
           </div>
+          {enabledResearchAnalystDefCount === 0 && agentDefBundles !== null ? (
+            <div className="qb-callout qb-callout--warning" role="status" style={{ marginTop: 12 }}>
+              <div>
+                当前数据库里没有<strong>已启用</strong>的分析师定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code> 等），无法启动
+                MSA。左侧「团队成员」来自角色目录，与是否已落库定义无关。
+              </div>
+              <div className="qb-callout__actions">
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                  onClick={() => {
+                    setActiveView("config");
+                    setCfgSubPage("agent");
+                  }}
+                >
+                  打开「配置中心 → Agent」
+                </button>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
+                  onClick={() => void listAgentDefinitions().then(setAgentDefBundles)}
+                >
+                  刷新定义列表
+                </button>
+              </div>
+            </div>
+          ) : null}
           <button
             type="button"
-            style={{ ...teamStyles.btn, marginTop: 12, width: "100%", ...(running ? teamStyles.btnDisabled : {}) }}
+            className="qb-btn-primary-brand"
+            style={{ marginTop: 12, width: "100%" }}
             onClick={handleRun}
-            disabled={running}
+            disabled={teamRunDisabled}
+            title={teamRunDisabledTitle}
           >
             {running ? "分析中…" : "启动团队分析"}
           </button>
@@ -3321,12 +3940,26 @@ const TeamDashboardPanel: FC = () => {
               <span>{runProgress}</span>
             </div>
           )}
-          {error && <div style={{ ...teamStyles.error, marginTop: 10, fontSize: 12 }}>{error}</div>}
+          {error ? (
+            <div className="qb-callout qb-callout--danger" role="alert" style={{ marginTop: 10 }}>
+              <div className="qb-callout__row">
+                <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
+                <button
+                  type="button"
+                  className="qb-callout__dismiss"
+                  onClick={() => setError(null)}
+                  aria-label="关闭提示"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>团队成员（画布）</div>
             <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
-              从目录加入或移出；仅影响中栏拓扑与实时流的展示范围（实际编排仍由后端与编组决定）。
+              从目录加入或移出参与本次「启动团队分析」的分析师（analyst_*）。未选时由后端使用全部已启用定义；与上方「分析师编组」取交集。
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
               {participatingAnalystRoles.length === 0 ? (
@@ -3352,7 +3985,7 @@ const TeamDashboardPanel: FC = () => {
                       <span>{meta?.displayName ?? role}</span>
                       <button
                         type="button"
-                        style={{ ...teamStyles.buttonSecondary, padding: "0 6px", fontSize: 10 }}
+                        className="qb-btn-secondary qb-btn--icon-xs"
                         onClick={() => setParticipatingAnalystRoles((prev) => prev.filter((x) => x !== role))}
                       >
                         −
@@ -3386,7 +4019,8 @@ const TeamDashboardPanel: FC = () => {
           <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
             <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
-              边由系统在分析过程中根据交互生成；无数据时请在「研究画布」刷新拓扑。
+              运行期轨迹：含 LLM 交互、Tool/MCP 及编组<strong>通信拓扑</strong>产生的 handoff（见成员目录保存的 relations_json）。
+              无数据时请在「研究画布」刷新。
             </p>
             {!teamGraph?.edges?.length ? (
               <div style={{ fontSize: 11, color: "#52525b" }}>暂无边记录</div>
@@ -3489,7 +4123,7 @@ const TeamDashboardPanel: FC = () => {
                 }
               />
             </div>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void saveDebateRuntimeConfig()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void saveDebateRuntimeConfig()}>
               保存辩论配置
             </button>
           </div>
@@ -3545,7 +4179,7 @@ const TeamDashboardPanel: FC = () => {
                 <option value="aggressive">aggressive</option>
               </select>
             </div>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void saveRiskRuntimeConfig()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void saveRiskRuntimeConfig()}>
               保存风控配置
             </button>
           </div>
@@ -3574,7 +4208,7 @@ const TeamDashboardPanel: FC = () => {
                 onChange={(e) => setScreenerTopN(Number(e.target.value))}
               />
             </div>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void runScreenerNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void runScreenerNow()}>
               运行选股
             </button>
           </div>
@@ -3612,10 +4246,10 @@ const TeamDashboardPanel: FC = () => {
                 onChange={(e) => setGeneMutationRate(Number(e.target.value))}
               />
             </div>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void initGenePoolNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void initGenePoolNow()}>
               初始化基因池
             </button>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void evolveNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void evolveNow()}>
               演化一代
             </button>
           </div>
@@ -3688,7 +4322,7 @@ const TeamDashboardPanel: FC = () => {
             </div>
             <button
               type="button"
-              style={teamStyles.buttonSecondary}
+              className="qb-btn-secondary"
               onClick={() => void saveExecutionSafetyRuntimeConfig()}
             >
               保存执行安全配置
@@ -3744,13 +4378,13 @@ const TeamDashboardPanel: FC = () => {
                 <option value="ib">ib</option>
               </select>
             </div>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void createIntentNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void createIntentNow()}>
               创建意图
             </button>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void executeIntentNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void executeIntentNow()}>
               安全确认后执行
             </button>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void refreshIntentOrders()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void refreshIntentOrders()}>
               刷新意图列表
             </button>
           </div>
@@ -3781,21 +4415,21 @@ const TeamDashboardPanel: FC = () => {
                 placeholder="http://broker-api"
               />
             </div>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void saveBrokerAccountNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void saveBrokerAccountNow()}>
               保存 Broker 账号
             </button>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void checkBrokerNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void checkBrokerNow()}>
               健康检查
             </button>
           </div>
           <div style={teamStyles.configRow}>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void refreshBrokerAndComp()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void refreshBrokerAndComp()}>
               刷新补偿与Broker状态
             </button>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void enqueueRetryNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void enqueueRetryNow()}>
               加入失败补偿队列
             </button>
-            <button type="button" style={teamStyles.buttonSecondary} onClick={() => void processCompNow()}>
+            <button type="button" className="qb-btn-secondary" onClick={() => void processCompNow()}>
               执行补偿队列
             </button>
           </div>
@@ -3827,28 +4461,18 @@ const TeamDashboardPanel: FC = () => {
       )}
 
 
-      {/* Roles Panel */}
+      {/* Roles Panel — 基于 Agent 定义 + 编组 + 可编辑通信拓扑 */}
       {activeTab === "roles" && (
-        <div style={teamStyles.panel}>
-          {groupedRoles.map((group) => (
-            <div key={group.key} style={teamStyles.groupBlock}>
-              <div style={{ ...teamStyles.groupTitle, color: group.color }}>
-                {group.label}（{group.members.length}）
-              </div>
-              <div style={teamStyles.memberGrid}>
-                {group.members.map((r) => (
-                  <div key={r.role} style={teamStyles.memberCard}>
-                    <div style={teamStyles.memberRole}>{r.displayName}</div>
-                    <div style={teamStyles.memberDesc}>{r.description}</div>
-                    <div style={teamStyles.memberTag}>{r.role}</div>
-                  </div>
-                ))}
-                {group.members.length === 0 && (
-                  <div style={teamStyles.memberEmpty}>暂无成员（需运行后端以加载数据）</div>
-                )}
-              </div>
-            </div>
-          ))}
+        <div style={{ ...teamStyles.panel, overflowY: "auto" }}>
+          <TeamResearchMemberDirectory
+            analystAgentGroupId={analystAgentGroupId}
+            setAnalystAgentGroupId={setAnalystAgentGroupId}
+            analystAgentGroupOptions={analystAgentGroupOptions}
+            setAnalystAgentGroupOptions={setAnalystAgentGroupOptions}
+            agentDefBundles={agentDefBundles}
+            participatingAnalystRoles={participatingAnalystRoles}
+            setParticipatingAnalystRoles={setParticipatingAnalystRoles}
+          />
         </div>
       )}
 
@@ -3900,7 +4524,8 @@ const TeamDashboardPanel: FC = () => {
               <div style={teamStyles.row}>
                 <button
                   type="button"
-                  style={teamStyles.btn}
+                  className="qb-btn-primary-brand"
+                  style={{ fontSize: 12, padding: "6px 12px" }}
                   disabled={graphLoading}
                   onClick={() => void loadTeamGraph({ preserveSelection: true })}
                 >
@@ -4016,7 +4641,7 @@ const TeamDashboardPanel: FC = () => {
                 <div style={teamStyles.row}>
                   <button
                     type="button"
-                    style={teamStyles.buttonSecondary}
+                    className="qb-btn-secondary"
                     onClick={() => void loadLatestFusion()}
                     disabled={!workflowRunId}
                   >
@@ -4393,35 +5018,6 @@ const teamStyles: Record<string, CSSProperties> = {
     padding: "6px 10px",
     fontSize: 13,
     outline: "none",
-  },
-  btn: {
-    background: "#7c3aed",
-    color: "#fff",
-    border: "none",
-    borderRadius: 6,
-    padding: "8px 18px",
-    cursor: "pointer",
-    fontSize: 13,
-    whiteSpace: "nowrap",
-  },
-  btnDisabled: { opacity: 0.5, cursor: "not-allowed" },
-  buttonSecondary: {
-    border: "1px solid #3f3f46",
-    color: "#e4e4e7",
-    background: "#18181b",
-    borderRadius: 6,
-    padding: "8px 12px",
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-  error: {
-    background: "#3f1d1d",
-    border: "1px solid #7f1d1d",
-    color: "#fca5a5",
-    borderRadius: 6,
-    padding: "8px 10px",
-    fontSize: 12,
-    marginBottom: 10,
   },
   resultBox: { marginTop: 12 },
   heroBox: {

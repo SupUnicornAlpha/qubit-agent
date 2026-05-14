@@ -4,6 +4,7 @@ import { getDb } from "../../db/sqlite/client";
 import { alertEvent, communicationMessageLog, scheduledJob, scheduledJobRun } from "../../db/sqlite/schema";
 import { runAutoExecution, type ScheduledExecutionPayload } from "../reia/auto-execution";
 import { createAndDispatchWorkflow } from "./workflow-service";
+import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 
 const DEFAULT_TICK_MS = 60_000;
 const DEFAULT_TRIGGER_LOOKBACK_MINUTES = 30;
@@ -235,6 +236,8 @@ async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: strin
         ? String(payload["goal"])
         : `Scheduled job ${job.name} @ ${triggerAtIso}`;
     const mode = (payload["mode"] as "research" | "backtest" | "simulation" | "live") ?? "research";
+    const loopKind = payload["loopKind"] as AgentLoopKind | undefined;
+    const loopOptionsJson = payload["loopOptionsJson"] as LoopOptionsJson | undefined;
 
     const created = await createAndDispatchWorkflow({
       projectId: job.projectId,
@@ -244,6 +247,8 @@ async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: strin
       mode,
       taskType: "scheduled_workflow_start",
       params: { scheduledJobId: job.id, triggerAt: triggerAtIso },
+      loopKind,
+      loopOptionsJson,
     });
 
     let intentOrderId: string | undefined;

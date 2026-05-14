@@ -1,20 +1,8 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useState } from "react";
+import type { StreamTimelineGroupData } from "../../lib/groupStreamEventsByRun";
 
-export interface StreamTimelineStep {
-  ts: number;
-  label: string;
-  detail: string;
-}
-
-export interface StreamTimelineGroupData {
-  workflowRunId: string;
-  runId: string;
-  at: number;
-  firstTs: number;
-  roleSummary: string;
-  steps: StreamTimelineStep[];
-}
+export type { StreamTimelineGroupData, StreamTimelineStep } from "../../lib/groupStreamEventsByRun";
 
 const btnReset: CSSProperties = {
   display: "flex",
@@ -76,6 +64,7 @@ const card: CSSProperties = {
   border: "1px solid #27272a",
   borderRadius: 8,
   padding: "10px 12px",
+  minWidth: 0,
 };
 
 const headerRow: CSSProperties = {

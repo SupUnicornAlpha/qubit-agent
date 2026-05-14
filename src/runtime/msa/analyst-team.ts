@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, asc } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentGroupMember, agentInstance, workflowRun } from "../../db/sqlite/schema";
+import { agentDefinition, agentGroup, agentGroupMember, agentInstance, workflowRun } from "../../db/sqlite/schema";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
 import { loadDebateConfig } from "../config/debate-config";
@@ -17,8 +17,9 @@ import { runDebateSession } from "../debate/debate-engine";
 import { evaluateRiskAndVeto } from "../risk/veto-engine";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
+import { parseTeamRelations, partitionSlotsIntoWaves, type TeamRelationEdge } from "./analyst-team-topology";
 
-const ANALYST_ROLES: AgentRole[] = [
+export const ANALYST_TEAM_ROLES: AgentRole[] = [
   "analyst_fundamental",
   "analyst_technical",
   "analyst_sentiment",
@@ -63,6 +64,7 @@ async function runAnalystLlm(params: {
   definitionId: string;
   systemPrompt: string;
   ticker: string;
+  /** 用户背景 + 可选：来自前置分析师（拓扑边）的摘要 */
   context: string;
 }): Promise<RawAnalystSignal & { agentInstanceId?: string }> {
   const modelConfig = (await loadModelConfig()) ?? {
@@ -140,7 +142,7 @@ async function resolveAnalystSlots(params: {
     for (const row of rows) {
       if (!row.d.enabled) continue;
       const role = row.d.role as AgentRole;
-      if (!ANALYST_ROLES.includes(role)) continue;
+      if (!ANALYST_TEAM_ROLES.includes(role)) continue;
       slots.push({ role, definitionId: row.d.id, systemPrompt: row.d.systemPrompt });
     }
     if (slots.length === 0) {
@@ -152,7 +154,7 @@ async function resolveAnalystSlots(params: {
   }
 
   const dbDefs = await db.select().from(agentDefinition).where(eq(agentDefinition.enabled, true));
-  const analystDefs = dbDefs.filter((d) => ANALYST_ROLES.includes(d.role as AgentRole));
+  const analystDefs = dbDefs.filter((d) => ANALYST_TEAM_ROLES.includes(d.role as AgentRole));
   const definitionIdByRole: Partial<Record<AgentRole, string>> = {};
   for (const def of analystDefs) {
     const r = def.role as AgentRole;
@@ -192,13 +194,15 @@ async function resolveAnalystSlots(params: {
   }
 
   const slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }> = [];
-  for (const role of ANALYST_ROLES) {
+  for (const role of ANALYST_TEAM_ROLES) {
     const defId = definitionIdByRole[role];
     if (!defId) continue;
     slots.push({ role, definitionId: defId, systemPrompt: prompts[role] });
   }
   if (slots.length === 0) {
-    throw new Error("未在数据库中找到已启用的 analyst_* 定义，无法运行研究团队分析");
+    throw new Error(
+      "未在数据库中找到已启用的 analyst_* 定义，无法运行研究团队分析。请到「配置中心 → Agent」发布并启用 analyst_fundamental / analyst_technical / analyst_sentiment / analyst_macro，或重启后端以加载种子定义。"
+    );
   }
   return slots;
 }
@@ -211,6 +215,8 @@ export async function runAnalystTeam(params: {
   ticker: string;
   context?: string;
   agentGroupId?: string | null;
+  /** 仅运行这些分析师角色（须为 analyst_*）；与编组解析结果取交集 */
+  analystRoles?: AgentRole[] | null;
 }): Promise<AnalystTeamResult> {
   const db = await getDb();
   const { workflowRunId, ticker } = params;
@@ -221,7 +227,25 @@ export async function runAnalystTeam(params: {
     .set({ agentGroupId: params.agentGroupId ?? null })
     .where(eq(workflowRun.id, workflowRunId));
 
-  const slots = await resolveAnalystSlots({ db, agentGroupId: params.agentGroupId });
+  let slots = await resolveAnalystSlots({ db, agentGroupId: params.agentGroupId });
+  if (params.analystRoles && params.analystRoles.length > 0) {
+    const allow = new Set(params.analystRoles);
+    slots = slots.filter((s) => allow.has(s.role));
+    if (slots.length === 0) {
+      throw new Error(
+        "所选「团队成员」与当前编组或可用分析师定义无交集。请调整左侧参与角色，或换一个分析师编组。"
+      );
+    }
+  }
+
+  let relationEdges: TeamRelationEdge[] = [];
+  if (params.agentGroupId) {
+    const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, params.agentGroupId)).limit(1);
+    if (grp[0]) {
+      relationEdges = parseTeamRelations(grp[0].relationsJson, ANALYST_TEAM_ROLES);
+    }
+  }
+  const waves = partitionSlotsIntoWaves(slots, relationEdges);
 
   const instanceBySlotIndex: string[] = [];
   for (let i = 0; i < slots.length; i++) {
@@ -237,49 +261,97 @@ export async function runAnalystTeam(params: {
     });
   }
 
-  const analystResults = await Promise.allSettled(
-    slots.map((slot, i) =>
-      runAnalystLlm({
-        role: slot.role,
-        definitionId: slot.definitionId,
-        systemPrompt: slot.systemPrompt,
-        ticker,
-        context,
-      }).then((result) => ({ ...result, agentInstanceId: instanceBySlotIndex[i] }))
-    )
-  );
+  type SlotRow = (typeof slots)[number];
+  const outputByRole = new Map<AgentRole, RawAnalystSignal>();
 
   const rawSignals: RawAnalystSignal[] = [];
   const persistSignals: Array<{ agentInstanceId?: string; signal: RawAnalystSignal }> = [];
 
-  for (let i = 0; i < slots.length; i++) {
-    const slot = slots[i];
-    const result = analystResults[i];
-    if (result.status === "fulfilled") {
-      const { agentInstanceId: _id, ...signal } = result.value;
-      rawSignals.push(signal);
-      persistSignals.push({ agentInstanceId: instanceBySlotIndex[i], signal });
-    } else {
-      const fallback: RawAnalystSignal = {
-        definitionId: slot.definitionId,
-        analystRole: slot.role,
-        ticker,
-        signal: "hold",
-        confidence: 0.2,
-        reasoning: `Analyst ${slot.role} failed: ${result.reason}`,
-      };
-      rawSignals.push(fallback);
-      persistSignals.push({ agentInstanceId: instanceBySlotIndex[i], signal: fallback });
-    }
+  const predsByTo = new Map<AgentRole, AgentRole[]>();
+  for (const e of relationEdges) {
+    const arr = predsByTo.get(e.to) ?? [];
+    arr.push(e.from);
+    predsByTo.set(e.to, arr);
+  }
 
-    const instanceId = instanceBySlotIndex[i];
-    if (instanceId) {
-      await db
-        .update(agentInstance)
-        .set({ status: "stopped", endedAt: new Date().toISOString() })
-        .where(eq(agentInstance.id, instanceId));
+  for (const wave of waves) {
+    const waveResults = await Promise.allSettled(
+      wave.map((slot) => {
+        const preds = (predsByTo.get(slot.role) ?? []).filter((pr) => outputByRole.has(pr));
+        const appendix =
+          preds.length > 0
+            ? `\n\n### 前置分析师结论（编组通信拓扑）\n${preds
+                .map((pr) => {
+                  const o = outputByRole.get(pr);
+                  if (!o) return "";
+                  return `- **${pr}**：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 600)}`;
+                })
+                .filter((line) => line.length > 0)
+                .join("\n")}\n`
+            : "";
+        const ctx = `${context}${appendix}`;
+        return (async () => {
+          for (const pr of preds) {
+            await logResearchTeamInteraction({
+              workflowRunId,
+              fromRole: pr,
+              toRole: slot.role,
+              kind: "llm_message",
+              contentText: `[topology handoff] ${pr} → ${slot.role}：将前置结论文本传入本轮推理上下文`,
+              payloadJson: { topology: true, ticker },
+            });
+          }
+          return runAnalystLlm({
+            role: slot.role,
+            definitionId: slot.definitionId,
+            systemPrompt: slot.systemPrompt,
+            ticker,
+            context: ctx,
+          });
+        })();
+      })
+    );
+
+    for (let wi = 0; wi < wave.length; wi++) {
+      const slot = wave[wi] as SlotRow;
+      const idx = slots.findIndex((s) => s.role === slot.role);
+      const instanceId = instanceBySlotIndex[idx];
+      const result = waveResults[wi];
+      if (result.status === "fulfilled") {
+        const { agentInstanceId: _id, ...signal } = result.value;
+        outputByRole.set(slot.role, signal);
+        rawSignals.push(signal);
+        persistSignals.push({ agentInstanceId: instanceId, signal });
+      } else {
+        const fallback: RawAnalystSignal = {
+          definitionId: slot.definitionId,
+          analystRole: slot.role,
+          ticker,
+          signal: "hold",
+          confidence: 0.2,
+          reasoning: `Analyst ${slot.role} failed: ${result.reason}`,
+        };
+        outputByRole.set(slot.role, fallback);
+        rawSignals.push(fallback);
+        persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
+      }
+
+      if (instanceId) {
+        await db
+          .update(agentInstance)
+          .set({ status: "stopped", endedAt: new Date().toISOString() })
+          .where(eq(agentInstance.id, instanceId));
+      }
     }
   }
+
+  /** 融合顺序与 slots 声明顺序一致（便于对照 UI） */
+  const orderKey = new Map(slots.map((s, i) => [s.role, i] as const));
+  rawSignals.sort((a, b) => (orderKey.get(a.analystRole as AgentRole) ?? 0) - (orderKey.get(b.analystRole as AgentRole) ?? 0));
+  persistSignals.sort(
+    (a, b) =>
+      (orderKey.get(a.signal.analystRole as AgentRole) ?? 0) - (orderKey.get(b.signal.analystRole as AgentRole) ?? 0)
+  );
 
   // Run MSA fusion
   const fusionResult = await fuseSignals({

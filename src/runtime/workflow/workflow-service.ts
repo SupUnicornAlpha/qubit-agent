@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { chatMessageWorkflowLink, workflowRun } from "../../db/sqlite/schema";
+import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
+import { normalizeLoopKind } from "../../types/loop";
 import { dispatchTaskToRole } from "../agent-pool";
 
 export interface CreateAndDispatchWorkflowInput {
@@ -14,6 +16,8 @@ export interface CreateAndDispatchWorkflowInput {
   reuseSessionWorkflow?: boolean;
   taskType?: string;
   params?: Record<string, unknown>;
+  loopKind?: AgentLoopKind;
+  loopOptionsJson?: LoopOptionsJson;
 }
 
 export async function createAndDispatchWorkflow(
@@ -22,13 +26,18 @@ export async function createAndDispatchWorkflow(
   const db = await getDb();
   let id = randomUUID();
 
+  const loopKind = normalizeLoopKind(input.loopKind);
+  const loopOpts = (input.loopOptionsJson ?? {}) as Record<string, unknown>;
+
   const shouldReuse =
     input.reuseSessionWorkflow !== false && input.source === "chat" && Boolean(input.sessionId);
   if (shouldReuse && input.sessionId) {
     const latest = await db
       .select()
       .from(workflowRun)
-      .where(and(eq(workflowRun.projectId, input.projectId), eq(workflowRun.sessionId, input.sessionId)))
+      .where(
+        and(eq(workflowRun.projectId, input.projectId), eq(workflowRun.sessionId, input.sessionId))
+      )
       .orderBy(desc(workflowRun.startedAt))
       .limit(1);
     if (latest[0]) {
@@ -42,6 +51,8 @@ export async function createAndDispatchWorkflow(
           source: input.source ?? latest[0].source,
           startedAt: new Date().toISOString(),
           endedAt: null,
+          loopKind,
+          loopOptionsJson: loopOpts,
         })
         .where(eq(workflowRun.id, id));
     } else {
@@ -53,6 +64,8 @@ export async function createAndDispatchWorkflow(
         mode: input.mode,
         source: input.source ?? "manual",
         status: "pending",
+        loopKind,
+        loopOptionsJson: loopOpts,
       });
     }
   } else {
@@ -64,6 +77,8 @@ export async function createAndDispatchWorkflow(
       mode: input.mode,
       source: input.source ?? "manual",
       status: "pending",
+      loopKind,
+      loopOptionsJson: loopOpts,
     });
   }
 

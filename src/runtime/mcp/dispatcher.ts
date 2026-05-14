@@ -1,4 +1,4 @@
-import { and, eq, or } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig, mcpToolBinding } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
@@ -11,6 +11,8 @@ export interface McpDispatchInput {
   toolName: string;
   arguments?: Record<string, unknown>;
   projectId?: string;
+  /** When set, prefers `mcp_tool_binding` rows scoped to this agent definition; falls back to rows with null definition_id. */
+  definitionId?: string;
 }
 
 export interface McpDispatchResult {
@@ -20,6 +22,8 @@ export interface McpDispatchResult {
   accepted: boolean;
   output: Record<string, unknown>;
 }
+
+type McpBindingRow = typeof mcpToolBinding.$inferSelect;
 
 function asRecord(v: unknown): Record<string, unknown> {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -31,43 +35,61 @@ function stringifyResult(result: unknown): Record<string, unknown> {
   return { value: result as string | number | boolean | null };
 }
 
+/** Higher = more specific for dispatch (definition → project → exact tool name). */
+function bindingSpecificityScore(row: McpBindingRow, toolName: string, projectId: string | undefined, definitionId: string | undefined): number {
+  let defS = 0;
+  if (definitionId) {
+    if (row.definitionId === definitionId) defS = 3;
+    else if (row.definitionId == null) defS = 1;
+    else return -1;
+  } else {
+    if (row.definitionId != null) return -1;
+    defS = 1;
+  }
+
+  let projS = 0;
+  if (projectId) {
+    if (row.projectId === projectId) projS = 3;
+    else if (row.projectId == null) projS = 1;
+    else return -1;
+  } else {
+    if (row.projectId != null) return -1;
+    projS = 1;
+  }
+
+  let toolS = 0;
+  if (row.toolName === toolName) toolS = 3;
+  else if (row.toolName === "*") toolS = 1;
+  else return -1;
+
+  return defS * 100 + projS * 10 + toolS;
+}
+
+function pickBestBindingRow(
+  rows: McpBindingRow[],
+  toolName: string,
+  projectId: string | undefined,
+  definitionId: string | undefined,
+  requireEnabled: boolean
+): McpBindingRow | undefined {
+  const candidates = rows
+    .map((row) => ({ row, score: bindingSpecificityScore(row, toolName, projectId, definitionId) }))
+    .filter((x) => x.score >= 0 && (!requireEnabled || x.row.enabled));
+  if (!candidates.length) return undefined;
+  candidates.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    if (a.row.enabled !== b.row.enabled) return a.row.enabled ? -1 : 1;
+    return 0;
+  });
+  return candidates[0]!.row;
+}
+
 async function resolveTimeoutMs(
   serverName: string,
   toolName: string,
-  projectId?: string
+  projectId?: string,
+  definitionId?: string
 ): Promise<number> {
-  const db = await getDb();
-  const exactRows = await db
-    .select()
-    .from(mcpToolBinding)
-    .where(
-      and(
-        eq(mcpToolBinding.serverName, serverName),
-        eq(mcpToolBinding.toolName, toolName),
-        eq(mcpToolBinding.enabled, true)
-      )
-    );
-  const exact =
-    exactRows.find((row) => row.projectId === projectId) ?? exactRows.find((row) => row.projectId == null);
-  if (exact?.timeoutMs) return exact.timeoutMs;
-  const wildcardRows = await db
-    .select()
-    .from(mcpToolBinding)
-    .where(
-      and(
-        eq(mcpToolBinding.serverName, serverName),
-        eq(mcpToolBinding.toolName, "*"),
-        eq(mcpToolBinding.enabled, true)
-      )
-    );
-  const wildcard =
-    wildcardRows.find((row) => row.projectId === projectId) ??
-    wildcardRows.find((row) => row.projectId == null);
-  if (wildcard?.timeoutMs) return wildcard.timeoutMs;
-  return 60_000;
-}
-
-async function assertToolBindingNotDisabled(serverName: string, toolName: string, projectId?: string) {
   const db = await getDb();
   const rows = await db
     .select()
@@ -75,12 +97,35 @@ async function assertToolBindingNotDisabled(serverName: string, toolName: string
     .where(
       and(
         eq(mcpToolBinding.serverName, serverName),
-        projectId ? or(eq(mcpToolBinding.projectId, projectId), eq(mcpToolBinding.projectId, null)) : undefined
+        eq(mcpToolBinding.enabled, true),
+        or(eq(mcpToolBinding.toolName, toolName), eq(mcpToolBinding.toolName, "*")),
+        projectId ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId)) : undefined
       )
     );
-  for (const row of rows) {
-    if (row.toolName !== toolName && row.toolName !== "*") continue;
-    if (!row.enabled) throw new Error(`mcp tool binding disabled: ${serverName}/${toolName}`);
+  const exact = pickBestBindingRow(rows, toolName, projectId, definitionId, true);
+  if (exact?.timeoutMs) return exact.timeoutMs;
+  return 60_000;
+}
+
+async function assertToolBindingNotDisabled(
+  serverName: string,
+  toolName: string,
+  projectId?: string,
+  definitionId?: string
+) {
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(mcpToolBinding)
+    .where(
+      and(
+        eq(mcpToolBinding.serverName, serverName),
+        projectId ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId)) : undefined
+      )
+    );
+  const best = pickBestBindingRow(rows, toolName, projectId, definitionId, false);
+  if (best && !best.enabled) {
+    throw new Error(`mcp tool binding disabled: ${serverName}/${toolName}`);
   }
 }
 
@@ -116,8 +161,13 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
         throw new Error(`mcp server "${input.serverName}" not found or disabled`);
       }
 
-      await assertToolBindingNotDisabled(input.serverName, input.toolName, input.projectId);
-      const timeoutMs = await resolveTimeoutMs(input.serverName, input.toolName, input.projectId);
+      await assertToolBindingNotDisabled(input.serverName, input.toolName, input.projectId, input.definitionId);
+      const timeoutMs = await resolveTimeoutMs(
+        input.serverName,
+        input.toolName,
+        input.projectId,
+        input.definitionId
+      );
       const caps = server.capabilitiesJson;
 
       let result: unknown;

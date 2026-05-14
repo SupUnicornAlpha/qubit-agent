@@ -20,7 +20,34 @@ export interface KlinesResponseMeta {
   returned: number;
 }
 
+/** `GET /api/v1/market/news-brief` 单条资讯 */
+export interface MarketNewsBriefItem {
+  id: string;
+  title: string;
+  content: string;
+  publishedAt: string;
+  source: string;
+  url?: string;
+}
+
+export interface MarketNewsBriefPayload {
+  sectorLabel: string | null;
+  sectorHeadlineTicker: string | null;
+  symbolNews: MarketNewsBriefItem[];
+  sectorNews: MarketNewsBriefItem[];
+}
+
 export type WorkflowMode = "research" | "backtest" | "simulation" | "live";
+
+export type AgentLoopKind = "native" | "claude_cli" | "codex_cli";
+
+export interface LoopOptionsJson {
+  command?: string;
+  extraArgs?: string[];
+  timeoutMs?: number;
+  injectMcpBridge?: boolean;
+  maxOutputBytes?: number;
+}
 
 export type StrategyScriptPurpose = "research" | "live_trading" | "both";
 
@@ -33,6 +60,8 @@ export interface WorkflowCreateInput {
   messageId?: string;
   /** Chat mode: reuse latest workflow in this session instead of creating one per message. */
   reuseSessionWorkflow?: boolean;
+  loopKind?: AgentLoopKind;
+  loopOptionsJson?: LoopOptionsJson;
 }
 
 export interface AgentSummary {
@@ -59,6 +88,8 @@ export interface StepStreamEvent {
   stepIndex: number;
   ts: number;
   payload: Record<string, unknown>;
+  loopKind?: AgentLoopKind;
+  source?: "native" | "cli";
 }
 
 export interface AgentsConfigResponse {
@@ -114,6 +145,7 @@ export interface AgentDefinitionRecord {
   llmProvider: string;
   maxIterations: number;
   sandboxPolicyId: string;
+  enabled: boolean;
   toolsJson: unknown;
   mcpServersJson: unknown;
   skillsJson: unknown;
@@ -127,6 +159,14 @@ export interface AgentDefinitionDraftRecord {
   systemPrompt: string;
   changeNote: string;
   createdAt: string;
+  /** 与 DB 行一致：最新草稿可能携带尚未发布的运行时字段 */
+  toolsJson?: unknown;
+  mcpServersJson?: unknown;
+  skillsJson?: unknown;
+  subscriptionsJson?: unknown;
+  llmProvider?: string;
+  maxIterations?: number;
+  sandboxPolicyId?: string;
 }
 
 export interface AgentProfileRecord {
@@ -134,7 +174,45 @@ export interface AgentProfileRecord {
   definitionId: string;
   displayName: string;
   soulFileRef: string;
+  promptTemplateRef?: string | null;
   description: string;
+  tagsJson?: unknown;
+  enabled?: boolean;
+  configRootUri?: string;
+  memoryNamespace?: string;
+  promptMode?: "db_primary" | "file_primary" | "merged";
+  configContentHash?: string;
+  configSyncedAt?: string;
+}
+
+export interface AgentPackResponse {
+  definitionId: string;
+  packRoot: string;
+  agentPath: string;
+  soulPath: string;
+  promptPath: string;
+  userPath: string;
+  memoryPath: string;
+  agentExists: boolean;
+  soulExists: boolean;
+  promptExists: boolean;
+  userExists: boolean;
+  memoryExists: boolean;
+  agentMarkdown: string;
+  soulMarkdown: string;
+  promptMarkdown: string;
+  userMarkdown: string;
+  memoryMarkdown: string;
+  contentHash: string;
+  profileHash: string;
+  promptMode: "db_primary" | "file_primary" | "merged";
+  memoryNamespace: string;
+}
+
+export interface AgentMemoryStatsResponse {
+  definitionId: string;
+  midtermCount: number;
+  longtermCount: number;
 }
 
 export interface AgentDefinitionBundle {
@@ -143,10 +221,50 @@ export interface AgentDefinitionBundle {
   draft: AgentDefinitionDraftRecord | null;
 }
 
+export interface SkillMarketStatusDto {
+  loaded: boolean;
+  loadedAt: number | null;
+  skillCount: number;
+  meta: Record<string, unknown> | null;
+  baseUrl: string | null;
+}
+
+/** Open Skill Market registry entry (compact JSON). */
+export interface OpenSkillMarketEntryDto {
+  id: string;
+  name: string;
+  description: string;
+  categories?: string[];
+  author?: string;
+  repo?: string;
+  path?: string;
+  commitHash?: string;
+  files?: string[];
+  version?: string;
+  tags?: string[];
+  compatibility?: Record<string, unknown>;
+}
+
+export interface SkillMarketInstallRecord {
+  id: string;
+  projectId: string;
+  registry: string;
+  externalSkillId: string;
+  skillName: string;
+  description: string;
+  metaJson: unknown;
+  installStatus: string;
+  installedBy: string;
+  createdAt: string;
+}
+
 export interface AgentGroupRecord {
   id: string;
   name: string;
   description: string;
+  /** 有向边：from 先执行，其结论文本传入 to 的上下文（须为编组内 analyst_* 角色） */
+  relationsJson?: Array<{ from: string; to: string }> | unknown[];
+  workspaceId?: string | null;
   createdAt: string;
   updatedAt: string;
   memberCount?: number;
@@ -572,6 +690,7 @@ export interface McpServerConfigRecord {
 export interface McpToolBindingRecord {
   id: string;
   projectId?: string | null;
+  definitionId?: string | null;
   serverName: string;
   toolName: string;
   enabled: boolean;

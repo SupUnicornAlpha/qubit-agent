@@ -58,6 +58,7 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
     } else if (metadata.layer === "midterm" && metadata.projectId) {
       await midtermStore.insert({
         projectId: metadata.projectId,
+        definitionId: typeof metadata.definitionId === "string" ? metadata.definitionId : null,
         memoryType: (metadata["memoryType"] as string ?? "strategy_iteration") as never,
         contentJson: { content, ...metadata },
         timeWindowStart: metadata["timeWindowStart"] as string ?? now,
@@ -69,6 +70,7 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
       await longtermStore.insert({
         scope: (metadata["scope"] as string ?? "project") as never,
         scopeId: metadata.projectId ?? metadata.strategyId ?? "default",
+        definitionId: typeof metadata.definitionId === "string" ? metadata.definitionId : null,
         memoryType: (metadata["memoryType"] as string ?? "playbook") as never,
         contentJson: { content, ...metadata },
         embeddingRef: null,
@@ -96,8 +98,8 @@ export class NativeMemoryConnector extends BaseMemoryConnector {
   ): Promise<MemoryRecord[]> {
     // V1: basic keyword search in longterm; vector search when embedding available
     const rows = await longtermStore.query({
-      scope: filters.layer === "longterm" ? undefined : undefined,
       scopeId: filters.projectId,
+      definitionId: filters.definitionId,
       limit: topK,
     });
 

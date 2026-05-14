@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
@@ -10,6 +10,7 @@ import {
 } from "../runtime/workflow/compensation-queue";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
+import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
 export const workflowRouter = new Hono();
 
@@ -28,6 +29,8 @@ workflowRouter.post("/", async (c) => {
     source?: "chat" | "manual" | "api";
     messageId?: string;
     reuseSessionWorkflow?: boolean;
+    loopKind?: AgentLoopKind;
+    loopOptionsJson?: LoopOptionsJson;
   }>();
 
   const created = await createAndDispatchWorkflow({
@@ -38,6 +41,8 @@ workflowRouter.post("/", async (c) => {
     source: body.source,
     messageId: body.messageId,
     reuseSessionWorkflow: body.reuseSessionWorkflow,
+    loopKind: body.loopKind,
+    loopOptionsJson: body.loopOptionsJson,
   });
   return c.json(created, 201);
 });
@@ -75,7 +80,9 @@ workflowRouter.get("/compensation/tasks", async (c) => {
 
 workflowRouter.post("/compensation/process", async (c) => {
   const body = await c.req.json<{ limit?: number }>().catch(() => ({}));
-  const data = await processCompensationQueue(body.limit ? Math.max(1, Math.min(50, body.limit)) : 10);
+  const data = await processCompensationQueue(
+    body.limit ? Math.max(1, Math.min(50, body.limit)) : 10
+  );
   return c.json({ ok: true, data });
 });
 

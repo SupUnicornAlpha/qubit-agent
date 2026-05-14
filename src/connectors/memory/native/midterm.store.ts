@@ -5,6 +5,7 @@ import type { MidtermMemory, MidtermMemoryType } from "../../../types/entities";
 
 export interface MidtermQueryParams {
   projectId: string;
+  definitionId?: string;
   memoryType?: MidtermMemoryType;
   windowStart?: string;
   windowEnd?: string;
@@ -33,6 +34,9 @@ export class MidtermMemoryStore {
     const db = await getDb();
     const conditions = [eq(midtermMemory.projectId, params.projectId)];
 
+    if (params.definitionId) {
+      conditions.push(eq(midtermMemory.definitionId, params.definitionId));
+    }
     if (params.memoryType) {
       conditions.push(eq(midtermMemory.memoryType, params.memoryType));
     }

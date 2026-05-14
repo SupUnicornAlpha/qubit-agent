@@ -4,6 +4,8 @@ import type {
   AgentDefinitionBundle,
   AgentGroupDetail,
   AgentGroupRecord,
+  AgentMemoryStatsResponse,
+  AgentPackResponse,
   AgentsConfigResponse,
   AgentRoleCatalogItem,
   DebateConfig,
@@ -62,6 +64,11 @@ import type {
   ScheduledJobRunRecord,
   KlineBar,
   KlinesResponseMeta,
+  MarketNewsBriefPayload,
+  AgentDefinitionDraftRecord,
+  OpenSkillMarketEntryDto,
+  SkillMarketInstallRecord,
+  SkillMarketStatusDto,
 } from "./types";
 import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 
@@ -82,6 +89,20 @@ export async function getKlines(params: {
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   return httpGet<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta }>(
     `/api/v1/market/klines?${q.toString()}`
+  );
+}
+
+export async function getMarketNewsBrief(params: {
+  symbol: string;
+  exchange?: string;
+  limit?: number;
+}): Promise<{ ok: boolean; data?: MarketNewsBriefPayload; error?: string }> {
+  const q = new URLSearchParams();
+  q.set("symbol", params.symbol);
+  if (params.exchange) q.set("exchange", params.exchange);
+  if (params.limit !== undefined) q.set("limit", String(params.limit));
+  return httpGet<{ ok: boolean; data?: MarketNewsBriefPayload; error?: string }>(
+    `/api/v1/market/news-brief?${q.toString()}`
   );
 }
 
@@ -269,8 +290,70 @@ export async function listAgentDefinitions(): Promise<AgentDefinitionBundle[]> {
   return res.data;
 }
 
+export async function getAgentDefinitionPack(definitionId: string): Promise<AgentPackResponse> {
+  const res = await httpGet<{ data: AgentPackResponse }>(`/api/v1/agents/definitions/${definitionId}/pack`);
+  return res.data;
+}
+
+export async function putAgentDefinitionPackFiles(
+  definitionId: string,
+  body: { agentMarkdown?: string; soulMarkdown: string; promptMarkdown: string }
+): Promise<{ packRoot: string; agentPath: string; soulPath: string; promptPath: string; hash: string }> {
+  const res = await httpPut<{
+    data: { packRoot: string; agentPath: string; soulPath: string; promptPath: string; hash: string };
+  }>(`/api/v1/agents/definitions/${definitionId}/pack/files`, body as unknown as Record<string, unknown>);
+  return res.data;
+}
+
+export async function putAgentDefinitionPackSessionSnapshot(
+  definitionId: string,
+  body: { userMarkdown: string; memoryMarkdown: string }
+): Promise<{ packRoot: string; userPath: string; memoryPath: string; hash: string }> {
+  const res = await httpPut<{
+    data: { packRoot: string; userPath: string; memoryPath: string; hash: string };
+  }>(`/api/v1/agents/definitions/${definitionId}/pack/session-snapshot`, body as unknown as Record<string, unknown>);
+  return res.data;
+}
+
+export async function postAgentDefinitionPackEnsureLayout(definitionId: string): Promise<{
+  packRoot: string;
+  created: string[];
+}> {
+  const res = await httpPost<{ data: { packRoot: string; created: string[] } }>(
+    `/api/v1/agents/definitions/${definitionId}/pack/ensure-layout`,
+    {}
+  );
+  return res.data;
+}
+
+export async function postAgentDefinitionPackSyncFromFs(definitionId: string): Promise<{
+  updatedDefinition: boolean;
+  systemPromptPreview: string;
+  contentHash: string;
+}> {
+  const res = await httpPost<{
+    data: { updatedDefinition: boolean; systemPromptPreview: string; contentHash: string };
+  }>(`/api/v1/agents/definitions/${definitionId}/pack/sync-from-fs`, {});
+  return res.data;
+}
+
+export async function getAgentDefinitionMemoryStats(definitionId: string): Promise<AgentMemoryStatsResponse> {
+  const res = await httpGet<{ data: AgentMemoryStatsResponse }>(
+    `/api/v1/agents/definitions/${definitionId}/memory-stats`
+  );
+  return res.data;
+}
+
 export async function listAgentGroups(): Promise<AgentGroupRecord[]> {
   const res = await httpGet<{ data: AgentGroupRecord[] }>("/api/v1/agents/agent-groups");
+  return res.data;
+}
+
+export async function patchAgentGroup(
+  id: string,
+  input: { name?: string; description?: string; relationsJson?: Array<{ from: string; to: string }> }
+): Promise<AgentGroupRecord> {
+  const res = await httpPatch<{ data: AgentGroupRecord }>(`/api/v1/agents/agent-groups/${id}`, input);
   return res.data;
 }
 
@@ -308,10 +391,19 @@ export async function createAgentDraft(params: {
   changeNote?: string;
   llmProvider?: string;
   maxIterations?: number;
+  sandboxPolicyId?: string;
+  toolsJson?: unknown;
+  mcpServersJson?: unknown;
+  skillsJson?: unknown;
+  subscriptionsJson?: unknown;
   profile?: {
     displayName?: string;
     soulFileRef?: string;
+    promptTemplateRef?: string;
     description?: string;
+    configRootUri?: string;
+    memoryNamespace?: string;
+    promptMode?: "db_primary" | "file_primary" | "merged";
   };
 }): Promise<{ id: string }> {
   const { definitionId, ...payload } = params;
@@ -671,6 +763,8 @@ export async function startAnalystTeam(params: {
   ticker: string;
   context?: string;
   agentGroupId?: string;
+  /** 仅运行这些 analyst_* 角色（与编组/定义取交集） */
+  analystRoles?: string[];
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
@@ -717,6 +811,7 @@ export async function runAnalystTeam(params: {
   context?: string;
   onProgress?: (elapsedMs: number) => void;
   agentGroupId?: string;
+  analystRoles?: string[];
 }): Promise<AnalystTeamResult> {
   const { jobId } = await startAnalystTeam(params);
   return pollAnalystJob(jobId, { onProgress: params.onProgress });
@@ -1287,14 +1382,19 @@ export async function upsertMcpServer(input: {
   return res.data;
 }
 
-export async function listMcpBindings(projectId?: string): Promise<McpToolBindingRecord[]> {
-  const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
+export async function listMcpBindings(projectId?: string, definitionId?: string): Promise<McpToolBindingRecord[]> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("projectId", projectId);
+  if (definitionId) params.set("definitionId", definitionId);
+  const q = params.toString();
+  const suffix = q ? `?${q}` : "";
   const res = await httpGet<{ data: McpToolBindingRecord[] }>(`/api/v1/agents/mcp/bindings${suffix}`);
   return res.data;
 }
 
 export async function upsertMcpBinding(input: {
   projectId?: string;
+  definitionId?: string | null;
   serverName: string;
   toolName: string;
   enabled?: boolean;
@@ -1308,6 +1408,7 @@ export async function upsertMcpBinding(input: {
 
 export async function testMcpCall(input: {
   projectId?: string;
+  definitionId?: string;
   serverName: string;
   toolName: string;
   arguments?: Record<string, unknown>;
@@ -1404,6 +1505,60 @@ export async function installMcpMarket(input: {
 export async function listMcpProjectInstalls(projectId: string): Promise<McpProjectInstallRecord[]> {
   const res = await httpGet<{ data: McpProjectInstallRecord[] }>(
     `/api/v1/agents/mcp/market/installs?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
+export async function getSkillMarketStatus(): Promise<SkillMarketStatusDto> {
+  const res = await httpGet<{ data: SkillMarketStatusDto }>("/api/v1/agents/skills/market/status");
+  return res.data;
+}
+
+export async function refreshSkillMarketRegistry(baseUrl?: string): Promise<SkillMarketStatusDto> {
+  const res = await httpPost<{ data: SkillMarketStatusDto }>("/api/v1/agents/skills/market/refresh", {
+    baseUrl: baseUrl?.trim() || undefined,
+  });
+  return res.data;
+}
+
+export async function searchSkillMarket(q: string, limit = 40): Promise<OpenSkillMarketEntryDto[]> {
+  const params = new URLSearchParams();
+  if (q.trim()) params.set("q", q.trim());
+  params.set("limit", String(limit));
+  const res = await httpGet<{ data: OpenSkillMarketEntryDto[] }>(
+    `/api/v1/agents/skills/market/search?${params.toString()}`
+  );
+  return res.data;
+}
+
+export async function listSkillMarketInstalls(projectId: string): Promise<SkillMarketInstallRecord[]> {
+  const res = await httpGet<{ data: SkillMarketInstallRecord[] }>(
+    `/api/v1/agents/skills/installs?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
+export async function installSkillFromMarket(input: {
+  projectId: string;
+  externalSkillId: string;
+}): Promise<SkillMarketInstallRecord> {
+  const res = await httpPost<{ data: SkillMarketInstallRecord }>("/api/v1/agents/skills/installs", input);
+  return res.data;
+}
+
+export async function deleteSkillMarketInstall(projectId: string, installId: string): Promise<void> {
+  await httpDelete<{ ok: boolean }>(
+    `/api/v1/agents/skills/installs/${encodeURIComponent(installId)}?projectId=${encodeURIComponent(projectId)}`
+  );
+}
+
+export async function appendAgentDraftSkills(
+  definitionId: string,
+  skillNames: string[]
+): Promise<AgentDefinitionDraftRecord> {
+  const res = await httpPost<{ data: AgentDefinitionDraftRecord }>(
+    `/api/v1/agents/definitions/${encodeURIComponent(definitionId)}/draft/append-skills`,
+    { skillNames }
   );
   return res.data;
 }

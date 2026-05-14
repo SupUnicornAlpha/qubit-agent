@@ -9,6 +9,7 @@ import {
   type IChartApi,
   type ISeriesApi,
   type LineData,
+  type SeriesMarker,
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
@@ -16,6 +17,7 @@ import { getKlines } from "../../api/backend";
 import type { KlineBar, KlinesResponseMeta } from "../../api/types";
 import { CHART_MARKET_OPTIONS, CHART_TIMEFRAMES, coerceChartMarketExchange } from "../../lib/chartSpec";
 import { useAppStore } from "../../store";
+import { NewsBriefSection } from "./NewsBriefSection";
 
 function toChartTime(bar: KlineBar, timeframe: string): Time {
   const tf = timeframe.toLowerCase();
@@ -92,7 +94,10 @@ function lineFromEma(bars: KlineBar[], timeframe: string, period: number): LineD
   return out;
 }
 
-export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
+export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }> = ({
+  embedded,
+  linkTraderMarkers,
+}) => {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const chartReloadNonce = useAppStore((s) => s.chartReloadNonce);
@@ -100,6 +105,7 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
   const setChartContext = useAppStore((s) => s.setChartContext);
   const setActiveView = useAppStore((s) => s.setActiveView);
   const activeView = useAppStore((s) => s.activeView);
+  const traderMarkers = useAppStore((s) => s.traderMarkers);
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -119,9 +125,7 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
     const chart = chartRef.current;
     if (!el || !chart) return;
     const w = el.clientWidth;
-    const h = embedded
-      ? Math.max(120, el.clientHeight)
-      : Math.max(360, Math.floor(window.innerHeight * 0.62));
+    const h = embedded ? Math.max(120, el.clientHeight) : Math.max(160, el.clientHeight);
     chart.applyOptions({ width: w, height: h });
     chart.timeScale().fitContent();
   }, [embedded]);
@@ -143,9 +147,7 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
       rightPriceScale: { borderColor: "#3f3f46" },
       timeScale: { borderColor: "#3f3f46", timeVisible: true, secondsVisible: false },
       width: el.clientWidth,
-      height: embedded
-        ? Math.max(120, el.clientHeight)
-        : Math.max(360, Math.floor(window.innerHeight * 0.62)),
+      height: embedded ? Math.max(120, el.clientHeight) : Math.max(200, el.clientHeight),
     });
 
     const candle = chart.addCandlestickSeries({
@@ -280,13 +282,37 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
     return () => window.removeEventListener("resize", layoutChart);
   }, [layoutChart]);
 
+  useEffect(() => {
+    const c = candleRef.current;
+    if (!c) return;
+    if (!linkTraderMarkers) {
+      c.setMarkers([]);
+      return;
+    }
+    if (lastBars.length === 0) {
+      c.setMarkers([]);
+      return;
+    }
+    const t = toChartTime(lastBars[lastBars.length - 1], chartSpec.timeframe);
+    const markers: SeriesMarker<Time>[] = traderMarkers.map((m) => ({
+      id: m.id,
+      time: t,
+      position: m.side === "buy" ? "belowBar" : "aboveBar",
+      shape: m.side === "buy" ? "arrowUp" : "arrowDown",
+      color:
+        m.source === "agent" ? "#a78bfa" : m.source === "strategy" ? "#38bdf8" : m.side === "buy" ? "#22c55e" : "#f87171",
+      text: m.text.length > 24 ? `${m.text.slice(0, 24)}…` : m.text,
+    }));
+    c.setMarkers(markers);
+  }, [linkTraderMarkers, traderMarkers, lastBars, chartSpec.timeframe]);
+
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     requestChartReload();
   };
 
   return (
-    <div style={styles.root}>
+    <div style={embedded ? styles.root : styles.rootPage}>
       {embedded ? (
         <div style={styles.embeddedBar}>
           {error ? <div style={styles.errCompact}>{error}</div> : null}
@@ -300,7 +326,7 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
           ) : null}
           <button
             type="button"
-            style={styles.btnSecondarySm}
+            className="qb-btn-secondary qb-btn--compact"
             disabled={loading || lastBars.length === 0}
             onClick={bringToChat}
           >
@@ -309,7 +335,7 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
         </div>
       ) : (
         <header style={styles.header}>
-          <h1 style={styles.title}>K 线</h1>
+          <h1 style={styles.title}>资讯</h1>
           <form style={styles.form} onSubmit={onSubmit}>
             <label style={styles.lab}>
               代码
@@ -359,12 +385,12 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
                 onChange={(e) => setChartSpec({ limit: Number(e.target.value) || 120 })}
               />
             </label>
-            <button type="submit" style={styles.btn} disabled={loading}>
+            <button type="submit" className="qb-btn-primary" disabled={loading}>
               {loading ? "加载中…" : "刷新"}
             </button>
             <button
               type="button"
-              style={styles.btnSecondary}
+              className="qb-btn-secondary"
               disabled={loading || lastBars.length === 0}
               onClick={bringToChat}
             >
@@ -373,20 +399,34 @@ export const KlinePanel: FC<{ embedded?: boolean }> = ({ embedded }) => {
           </form>
         </header>
       )}
-      {!embedded && error ? <div style={styles.err}>{error}</div> : null}
-      {!embedded && meta ? (
-        <div style={styles.meta}>
-          来源 {meta.dataSource} · 周期 {meta.timeframe} / {meta.period} · 返回 {meta.returned} / 请求{" "}
-          {meta.requestedLimit}
+      {!embedded ? (
+        <div style={styles.chartColumn}>
+          {error ? <div style={styles.err}>{error}</div> : null}
+          {meta ? (
+            <div style={styles.meta}>
+              来源 {meta.dataSource} · 周期 {meta.timeframe} / {meta.period} · 返回 {meta.returned} / 请求{" "}
+              {meta.requestedLimit}
+            </div>
+          ) : null}
+          <div ref={wrapRef} style={styles.chartCanvas} />
         </div>
+      ) : (
+        <div
+          ref={wrapRef}
+          style={{
+            ...styles.chartWrap,
+            minHeight: 0,
+            flex: 1,
+          }}
+        />
+      )}
+      {!embedded ? (
+        <NewsBriefSection
+          symbol={chartSpec.symbol}
+          exchange={chartSpec.exchange}
+          reloadNonce={chartReloadNonce}
+        />
       ) : null}
-      <div
-        ref={wrapRef}
-        style={{
-          ...styles.chartWrap,
-          ...(embedded ? { minHeight: 0, flex: 1 } : {}),
-        }}
-      />
     </div>
   );
 };
@@ -399,6 +439,28 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
     background: "#09090b",
     color: "#e4e4e7",
+  },
+  rootPage: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100%",
+    minHeight: 0,
+    overflow: "hidden",
+    background: "#09090b",
+    color: "#e4e4e7",
+  },
+  chartColumn: {
+    flex: "1 1 55%",
+    minHeight: 200,
+    display: "flex",
+    flexDirection: "column",
+    minWidth: 0,
+  },
+  chartCanvas: {
+    flex: 1,
+    minHeight: 160,
+    width: "100%",
+    position: "relative",
   },
   header: {
     flexShrink: 0,
@@ -417,24 +479,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#e4e4e7",
     fontSize: 13,
   },
-  btn: {
-    padding: "8px 16px",
-    borderRadius: 6,
-    border: "none",
-    background: "#3b82f6",
-    color: "#fff",
-    fontSize: 13,
-    cursor: "pointer",
-  },
-  btnSecondary: {
-    padding: "8px 16px",
-    borderRadius: 6,
-    border: "1px solid #52525b",
-    background: "#27272a",
-    color: "#e4e4e7",
-    fontSize: 13,
-    cursor: "pointer",
-  },
   err: { padding: "8px 16px", color: "#fca5a5", fontSize: 13 },
   errCompact: { fontSize: 11, color: "#fca5a5", flex: 1, minWidth: 0 },
   meta: { padding: "4px 16px 8px", fontSize: 12, color: "#71717a" },
@@ -450,15 +494,5 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#111114",
     flexWrap: "wrap",
   },
-  btnSecondarySm: {
-    padding: "5px 10px",
-    borderRadius: 6,
-    border: "1px solid #52525b",
-    background: "#27272a",
-    color: "#e4e4e7",
-    fontSize: 12,
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-  chartWrap: { flex: 1, minHeight: 360, width: "100%", position: "relative" },
+  chartWrap: { flex: 1, minHeight: 120, width: "100%", position: "relative" },
 };

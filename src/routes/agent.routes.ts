@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { and, asc, count, desc, eq, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, or } from "drizzle-orm";
 import { getRuntimeAgents } from "../runtime/agent-pool";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
@@ -11,11 +11,14 @@ import {
   agentGroup,
   agentGroupMember,
   agentProfile,
+  longtermMemory,
+  midtermMemory,
   mcpCatalog,
   mcpCatalogInstall,
   mcpServerConfig,
   mcpToolBinding,
   sandboxPolicy,
+  skillMarketInstall,
 } from "../db/sqlite/schema";
 import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
 import {
@@ -24,6 +27,17 @@ import {
 } from "../runtime/config/builtin-connector-settings";
 import { reloadBuiltinConnectorsFromSettings } from "../connectors/bootstrap";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
+import {
+  defaultMemoryNamespace,
+  ensureAgentPackLayout,
+  getDataDir,
+  hashPackContent,
+  mergeSystemPrompt,
+  readPackFiles,
+  writePackMarkdownFiles,
+  writePackSessionSnapshotFiles,
+  type PromptMode,
+} from "../runtime/agent/agent-pack-service";
 import {
   installCatalogItemToProject,
   listCatalogItems,
@@ -35,6 +49,15 @@ import {
   uninstallProjectCatalogInstall,
   upsertMcpSource,
 } from "../runtime/mcp/market-service";
+import {
+  DEFAULT_OPEN_SKILL_MARKET_BASE,
+  ensureOpenSkillMarketLoaded,
+  getOpenSkillMarketCacheSnapshot,
+  getOpenSkillMarketEntry,
+  loadOpenSkillMarketRegistry,
+  searchOpenSkillMarketEntries,
+} from "../runtime/skills/open-skill-market-registry";
+import type { AgentRole } from "../types/entities";
 
 export const agentRouter = new Hono();
 
@@ -44,6 +67,26 @@ const ANALYST_TEAM_MEMBER_ROLES: AgentRole[] = [
   "analyst_sentiment",
   "analyst_macro",
 ];
+
+function validateAgentGroupRelationsJson(relations: unknown, memberRoles: string[]): string | null {
+  if (!Array.isArray(relations)) return "relationsJson must be an array";
+  const set = new Set(memberRoles);
+  for (const row of relations) {
+    if (!row || typeof row !== "object") return "each relation must be an object { from, to }";
+    const rec = row as Record<string, unknown>;
+    const from = rec["from"];
+    const to = rec["to"];
+    if (typeof from !== "string" || typeof to !== "string") return "relation from/to must be strings";
+    if (from === to) return "relation from and to must differ";
+    if (!set.has(from) || !set.has(to)) {
+      return `relation endpoints must be roles of members in this group (got ${from} → ${to})`;
+    }
+    if (!ANALYST_TEAM_MEMBER_ROLES.includes(from as AgentRole) || !ANALYST_TEAM_MEMBER_ROLES.includes(to as AgentRole)) {
+      return `topology edges only support analyst roles: ${ANALYST_TEAM_MEMBER_ROLES.join(", ")}`;
+    }
+  }
+  return null;
+}
 
 function toJsonValue(input: unknown): unknown {
   if (typeof input !== "string") return input;
@@ -213,6 +256,232 @@ agentRouter.get("/definitions", async (c) => {
   });
 });
 
+agentRouter.get("/definitions/:id/pack", async (c) => {
+  const definitionId = c.req.param("id");
+  const db = await getDb();
+  const defRows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  if (!defRows[0]) return c.json({ error: "Agent definition not found" }, 404);
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profile = profRows[0];
+  const dataDir = getDataDir();
+  const read = await readPackFiles({
+    dataDir,
+    definitionId,
+    configRootUri: profile?.configRootUri ?? "",
+    soulFileRef: profile?.soulFileRef ?? "",
+    promptTemplateRef: profile?.promptTemplateRef,
+  });
+    const hash = hashPackContent(
+      read.agentText,
+      read.soulText,
+      read.userText,
+      read.memoryText,
+      read.promptText
+    );
+    const maxOut = 256 * 1024;
+    return c.json({
+      data: {
+        definitionId,
+        packRoot: read.packRoot,
+        agentPath: read.agentPath,
+        soulPath: read.soulPath,
+        promptPath: read.promptPath,
+        userPath: read.userPath,
+        memoryPath: read.memoryPath,
+        agentExists: read.agentExists,
+        soulExists: read.soulExists,
+        promptExists: read.promptExists,
+        userExists: read.userExists,
+        memoryExists: read.memoryExists,
+        agentMarkdown: read.agentText.slice(0, maxOut),
+        soulMarkdown: read.soulText.slice(0, maxOut),
+        promptMarkdown: read.promptText.slice(0, maxOut),
+        userMarkdown: read.userText.slice(0, maxOut),
+        memoryMarkdown: read.memoryText.slice(0, maxOut),
+        contentHash: hash,
+      profileHash: profile?.configContentHash ?? "",
+      promptMode: (profile?.promptMode as PromptMode | undefined) ?? "db_primary",
+      memoryNamespace: profile?.memoryNamespace?.trim()
+        ? profile.memoryNamespace
+        : defaultMemoryNamespace(definitionId),
+    },
+  });
+});
+
+agentRouter.put("/definitions/:id/pack/files", async (c) => {
+  const definitionId = c.req.param("id");
+  const body = await c.req.json<{
+    agentMarkdown?: string;
+    soulMarkdown?: string;
+    promptMarkdown?: string;
+  }>();
+  const db = await getDb();
+  const defRows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  if (!defRows[0]) return c.json({ error: "Agent definition not found" }, 404);
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profile = profRows[0];
+  const dataDir = getDataDir();
+  try {
+    const written = await writePackMarkdownFiles({
+      dataDir,
+      definitionId,
+      configRootUri: profile?.configRootUri ?? "",
+      agentMarkdown: body.agentMarkdown,
+      soulMarkdown: body.soulMarkdown ?? "",
+      promptMarkdown: body.promptMarkdown ?? "",
+    });
+    const now = new Date().toISOString();
+    if (profile) {
+      await db
+        .update(agentProfile)
+        .set({
+          configContentHash: written.hash,
+          configSyncedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(agentProfile.id, profile.id));
+    }
+    return c.json({ data: { ...written, hash: written.hash } });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: msg }, 400);
+  }
+});
+
+/** USER.md / MEMORY.md：可由归纳流程或受控工具更新；不得替代 agent.md 的治理 */
+agentRouter.put("/definitions/:id/pack/session-snapshot", async (c) => {
+  const definitionId = c.req.param("id");
+  const body = await c.req.json<{ userMarkdown?: string; memoryMarkdown?: string }>();
+  const db = await getDb();
+  const defRows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  if (!defRows[0]) return c.json({ error: "Agent definition not found" }, 404);
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profile = profRows[0];
+  const dataDir = getDataDir();
+  try {
+    const written = await writePackSessionSnapshotFiles({
+      dataDir,
+      definitionId,
+      configRootUri: profile?.configRootUri ?? "",
+      userMarkdown: body.userMarkdown ?? "",
+      memoryMarkdown: body.memoryMarkdown ?? "",
+    });
+    const now = new Date().toISOString();
+    if (profile) {
+      await db
+        .update(agentProfile)
+        .set({
+          configContentHash: written.hash,
+          configSyncedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(agentProfile.id, profile.id));
+    }
+    return c.json({ data: { ...written, hash: written.hash } });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: msg }, 400);
+  }
+});
+
+agentRouter.post("/definitions/:id/pack/ensure-layout", async (c) => {
+  const definitionId = c.req.param("id");
+  const db = await getDb();
+  const defRows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  if (!defRows[0]) return c.json({ error: "Agent definition not found" }, 404);
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profile = profRows[0];
+  const dataDir = getDataDir();
+  const { packRoot, created } = await ensureAgentPackLayout({
+    dataDir,
+    definitionId,
+    configRootUri: profile?.configRootUri ?? "",
+  });
+  return c.json({ data: { packRoot, created } });
+});
+
+agentRouter.post("/definitions/:id/pack/sync-from-fs", async (c) => {
+  const definitionId = c.req.param("id");
+  const db = await getDb();
+  const defRows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  if (!defRows[0]) return c.json({ error: "Agent definition not found" }, 404);
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profile = profRows[0];
+  const mode = (profile?.promptMode as PromptMode | undefined) ?? "db_primary";
+  const dataDir = getDataDir();
+  const read = await readPackFiles({
+    dataDir,
+    definitionId,
+    configRootUri: profile?.configRootUri ?? "",
+    soulFileRef: profile?.soulFileRef ?? "",
+    promptTemplateRef: profile?.promptTemplateRef,
+  });
+  const hash = hashPackContent(
+    read.agentText,
+    read.soulText,
+    read.userText,
+    read.memoryText,
+    read.promptText
+  );
+  const merged = mergeSystemPrompt({
+    mode,
+    dbPrompt: defRows[0].systemPrompt,
+    agentText: read.agentText,
+    soulText: read.soulText,
+    userText: read.userText,
+    memoryText: read.memoryText,
+    promptText: read.promptText,
+  });
+  const now = new Date().toISOString();
+  if (mode === "file_primary" || mode === "merged") {
+    await db
+      .update(agentDefinition)
+      .set({ systemPrompt: merged, updatedAt: now })
+      .where(eq(agentDefinition.id, definitionId));
+  }
+  if (profile) {
+    await db
+      .update(agentProfile)
+      .set({
+        configContentHash: hash,
+        configSyncedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(agentProfile.id, profile.id));
+  }
+  return c.json({
+    data: {
+      updatedDefinition: mode === "file_primary" || mode === "merged",
+      systemPromptPreview: merged.slice(0, 2000),
+      contentHash: hash,
+    },
+  });
+});
+
+agentRouter.get("/definitions/:id/memory-stats", async (c) => {
+  const definitionId = c.req.param("id");
+  const db = await getDb();
+  const defOk = await db.select({ id: agentDefinition.id }).from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1);
+  if (!defOk[0]) return c.json({ error: "Agent definition not found" }, 404);
+  const [mid, long] = await Promise.all([
+    db
+      .select({ n: count() })
+      .from(midtermMemory)
+      .where(eq(midtermMemory.definitionId, definitionId)),
+    db
+      .select({ n: count() })
+      .from(longtermMemory)
+      .where(eq(longtermMemory.definitionId, definitionId)),
+  ]);
+  return c.json({
+    data: {
+      definitionId,
+      midtermCount: Number(mid[0]?.n ?? 0),
+      longtermCount: Number(long[0]?.n ?? 0),
+    },
+  });
+});
+
 agentRouter.post("/definitions/:id/draft", async (c) => {
   const definitionId = c.req.param("id");
   const body = await c.req.json<{
@@ -234,6 +503,9 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
       description?: string;
       tagsJson?: unknown[];
       enabled?: boolean;
+      configRootUri?: string;
+      memoryNamespace?: string;
+      promptMode?: PromptMode;
     };
   }>();
   const db = await getDb();
@@ -276,6 +548,9 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
           description: body.profile.description ?? profileRows[0].description,
           tagsJson: toJsonValue(body.profile.tagsJson ?? profileRows[0].tagsJson),
           enabled: body.profile.enabled ?? profileRows[0].enabled,
+          configRootUri: body.profile.configRootUri ?? profileRows[0].configRootUri,
+          memoryNamespace: body.profile.memoryNamespace ?? profileRows[0].memoryNamespace,
+          promptMode: body.profile.promptMode ?? profileRows[0].promptMode,
           updatedAt: new Date().toISOString(),
         })
         .where(eq(agentProfile.id, profileRows[0].id));
@@ -289,6 +564,11 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
         description: body.profile.description ?? "",
         tagsJson: toJsonValue(body.profile.tagsJson ?? []),
         enabled: body.profile.enabled ?? source.enabled,
+        configRootUri: body.profile.configRootUri ?? "",
+        memoryNamespace: body.profile.memoryNamespace ?? "",
+        promptMode: body.profile.promptMode ?? "db_primary",
+        configContentHash: "",
+        configSyncedAt: "",
       });
     }
   }
@@ -298,6 +578,35 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
     .where(eq(agentDefinitionDraft.id, draftId))
     .limit(1);
   return c.json({ data: created[0] }, 201);
+});
+
+agentRouter.post("/definitions/:id/draft/append-skills", async (c) => {
+  const definitionId = c.req.param("id");
+  const body = await c.req.json<{ skillNames?: string[] }>();
+  const names = Array.isArray(body.skillNames)
+    ? body.skillNames
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .map((s) => s.trim())
+    : [];
+  if (!names.length) return c.json({ error: "skillNames is required" }, 400);
+  const db = await getDb();
+  const drafts = await db
+    .select()
+    .from(agentDefinitionDraft)
+    .where(eq(agentDefinitionDraft.definitionId, definitionId))
+    .orderBy(desc(agentDefinitionDraft.createdAt))
+    .limit(1);
+  if (!drafts[0]) return c.json({ error: "no draft for this definition" }, 404);
+  const d = drafts[0];
+  const raw = d.skillsJson as unknown;
+  const cur = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+  const next = [...new Set([...cur, ...names])];
+  await db
+    .update(agentDefinitionDraft)
+    .set({ skillsJson: toJsonValue(next) })
+    .where(eq(agentDefinitionDraft.id, d.id));
+  const latest = await db.select().from(agentDefinitionDraft).where(eq(agentDefinitionDraft.id, d.id)).limit(1);
+  return c.json({ data: latest[0] });
 });
 
 agentRouter.post("/definitions/:id/release", async (c) => {
@@ -319,11 +628,44 @@ agentRouter.post("/definitions/:id/release", async (c) => {
   }
   const draft = draftRows[0];
   const releaseId = crypto.randomUUID();
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const prof = profRows[0];
+  let systemPromptToSave = draft.systemPrompt;
+  if (prof && (prof.promptMode === "file_primary" || prof.promptMode === "merged")) {
+    const read = await readPackFiles({
+      dataDir: getDataDir(),
+      definitionId,
+      configRootUri: prof.configRootUri ?? "",
+      soulFileRef: prof.soulFileRef ?? "",
+      promptTemplateRef: prof.promptTemplateRef,
+    });
+    systemPromptToSave = mergeSystemPrompt({
+      mode: prof.promptMode as PromptMode,
+      dbPrompt: draft.systemPrompt,
+      agentText: read.agentText,
+      soulText: read.soulText,
+      userText: read.userText,
+      memoryText: read.memoryText,
+      promptText: read.promptText,
+    });
+    const now = new Date().toISOString();
+    const h = hashPackContent(
+      read.agentText,
+      read.soulText,
+      read.userText,
+      read.memoryText,
+      read.promptText
+    );
+    await db
+      .update(agentProfile)
+      .set({ configContentHash: h, configSyncedAt: now, updatedAt: now })
+      .where(eq(agentProfile.id, prof.id));
+  }
   await db
     .update(agentDefinition)
     .set({
       version: body.releasedVersion ?? draft.versionTag,
-      systemPrompt: draft.systemPrompt,
+      systemPrompt: systemPromptToSave,
       toolsJson: draft.toolsJson,
       mcpServersJson: draft.mcpServersJson,
       skillsJson: draft.skillsJson,
@@ -507,11 +849,17 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
 agentRouter.get("/mcp/bindings", async (c) => {
   const db = await getDb();
   const projectId = c.req.query("projectId");
+  const definitionId = c.req.query("definitionId");
   const rows = await db
     .select()
     .from(mcpToolBinding)
     .where(
-      projectId ? or(eq(mcpToolBinding.projectId, projectId), eq(mcpToolBinding.projectId, null)) : undefined
+      and(
+        projectId ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId)) : undefined,
+        definitionId
+          ? or(eq(mcpToolBinding.definitionId, definitionId), isNull(mcpToolBinding.definitionId))
+          : undefined
+      )
     )
     .orderBy(desc(mcpToolBinding.createdAt));
   return c.json({ data: rows });
@@ -520,6 +868,7 @@ agentRouter.get("/mcp/bindings", async (c) => {
 agentRouter.post("/mcp/bindings/upsert", async (c) => {
   const body = await c.req.json<{
     projectId?: string;
+    definitionId?: string | null;
     serverName: string;
     toolName: string;
     enabled?: boolean;
@@ -531,6 +880,12 @@ agentRouter.post("/mcp/bindings/upsert", async (c) => {
     return c.json({ error: "serverName and toolName are required" }, 400);
   }
   const db = await getDb();
+  const defKey =
+    body.definitionId === undefined
+      ? isNull(mcpToolBinding.definitionId)
+      : body.definitionId
+        ? eq(mcpToolBinding.definitionId, body.definitionId)
+        : isNull(mcpToolBinding.definitionId);
   const existing = await db
     .select()
     .from(mcpToolBinding)
@@ -538,7 +893,8 @@ agentRouter.post("/mcp/bindings/upsert", async (c) => {
       and(
         eq(mcpToolBinding.serverName, body.serverName),
         eq(mcpToolBinding.toolName, body.toolName),
-        body.projectId ? eq(mcpToolBinding.projectId, body.projectId) : eq(mcpToolBinding.projectId, null)
+        body.projectId ? eq(mcpToolBinding.projectId, body.projectId) : isNull(mcpToolBinding.projectId),
+        defKey
       )
     )
     .limit(1);
@@ -560,6 +916,7 @@ agentRouter.post("/mcp/bindings/upsert", async (c) => {
   await db.insert(mcpToolBinding).values({
     id,
     projectId: body.projectId ?? null,
+    definitionId: body.definitionId ?? null,
     serverName: body.serverName,
     toolName: body.toolName,
     enabled: body.enabled ?? true,
@@ -574,6 +931,7 @@ agentRouter.post("/mcp/bindings/upsert", async (c) => {
 agentRouter.post("/mcp/test", async (c) => {
   const body = await c.req.json<{
     projectId?: string;
+    definitionId?: string;
     serverName: string;
     toolName: string;
     arguments?: Record<string, unknown>;
@@ -584,6 +942,7 @@ agentRouter.post("/mcp/test", async (c) => {
   try {
     const data = await dispatchMcpToolCall({
       projectId: body.projectId,
+      definitionId: body.definitionId,
       serverName: body.serverName,
       toolName: body.toolName,
       arguments: body.arguments ?? {},
@@ -656,7 +1015,13 @@ agentRouter.post("/mcp/catalog/install", async (c) => {
   const bindingRows = await db
     .select()
     .from(mcpToolBinding)
-    .where(and(eq(mcpToolBinding.serverName, serverName), eq(mcpToolBinding.toolName, toolName)))
+    .where(
+      and(
+        eq(mcpToolBinding.serverName, serverName),
+        eq(mcpToolBinding.toolName, toolName),
+        isNull(mcpToolBinding.definitionId)
+      )
+    )
     .limit(1);
   if (bindingRows[0]) {
     await db
@@ -674,6 +1039,7 @@ agentRouter.post("/mcp/catalog/install", async (c) => {
       id: crypto.randomUUID(),
       serverName,
       toolName,
+      definitionId: null,
       enabled: true,
       timeoutMs: body.timeoutMs ?? catalog.defaultTimeoutMs,
       retryPolicyJson: catalog.defaultRetryPolicyJson,
@@ -838,6 +1204,103 @@ agentRouter.post("/mcp/market/installs/:id/test", async (c) => {
   return c.json({ ok: true, data });
 });
 
+agentRouter.get("/skills/market/status", (c) => {
+  return c.json({ data: getOpenSkillMarketCacheSnapshot() });
+});
+
+agentRouter.post("/skills/market/refresh", async (c) => {
+  const body = await c.req.json<{ baseUrl?: string }>().catch(() => ({}));
+  const baseUrl =
+    typeof body.baseUrl === "string" && body.baseUrl.trim() ? body.baseUrl.trim() : DEFAULT_OPEN_SKILL_MARKET_BASE;
+  try {
+    await loadOpenSkillMarketRegistry(baseUrl);
+    return c.json({ data: getOpenSkillMarketCacheSnapshot() });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 502);
+  }
+});
+
+agentRouter.get("/skills/market/search", async (c) => {
+  const q = c.req.query("q") ?? "";
+  const limitRaw = c.req.query("limit");
+  const limit = limitRaw ? Number(limitRaw) : 40;
+  const baseUrl = c.req.query("baseUrl");
+  try {
+    await ensureOpenSkillMarketLoaded(
+      typeof baseUrl === "string" && baseUrl.trim() ? baseUrl.trim() : DEFAULT_OPEN_SKILL_MARKET_BASE
+    );
+    const data = searchOpenSkillMarketEntries(q, Number.isFinite(limit) ? limit : 40);
+    return c.json({ data });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ error: message }, 502);
+  }
+});
+
+agentRouter.get("/skills/installs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(skillMarketInstall)
+    .where(eq(skillMarketInstall.projectId, projectId))
+    .orderBy(desc(skillMarketInstall.createdAt));
+  return c.json({ data: rows });
+});
+
+agentRouter.post("/skills/installs", async (c) => {
+  const body = await c.req.json<{ projectId?: string; externalSkillId?: string }>();
+  if (!body.projectId || !body.externalSkillId?.trim()) {
+    return c.json({ error: "projectId and externalSkillId are required" }, 400);
+  }
+  await ensureOpenSkillMarketLoaded();
+  const skill = getOpenSkillMarketEntry(body.externalSkillId.trim());
+  if (!skill) {
+    return c.json({ error: "skill not found in registry (try POST /skills/market/refresh)" }, 404);
+  }
+  const db = await getDb();
+  const dup = await db
+    .select()
+    .from(skillMarketInstall)
+    .where(
+      and(eq(skillMarketInstall.projectId, body.projectId), eq(skillMarketInstall.externalSkillId, skill.id))
+    )
+    .limit(1);
+  if (dup[0]) return c.json({ data: dup[0] });
+  const id = crypto.randomUUID();
+  await db.insert(skillMarketInstall).values({
+    id,
+    projectId: body.projectId,
+    registry: "open-skill-market",
+    externalSkillId: skill.id,
+    skillName: skill.name,
+    description: skill.description ?? "",
+    metaJson: {
+      repo: skill.repo,
+      path: skill.path,
+      commitHash: skill.commitHash,
+      categories: skill.categories,
+      tags: skill.tags,
+    },
+    installedBy: "user",
+  });
+  const created = await db.select().from(skillMarketInstall).where(eq(skillMarketInstall.id, id)).limit(1);
+  return c.json({ data: created[0] }, 201);
+});
+
+agentRouter.delete("/skills/installs/:id", async (c) => {
+  const id = c.req.param("id");
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const db = await getDb();
+  await db
+    .delete(skillMarketInstall)
+    .where(and(eq(skillMarketInstall.id, id), eq(skillMarketInstall.projectId, projectId)));
+  return c.json({ ok: true });
+});
+
 // ─── Agent groups（分析师等多定义编组）────────────────────────────────────────
 
 agentRouter.get("/agent-groups", async (c) => {
@@ -875,15 +1338,31 @@ agentRouter.post("/agent-groups", async (c) => {
 
 agentRouter.patch("/agent-groups/:id", async (c) => {
   const id = c.req.param("id");
-  const body = await c.req.json<{ name?: string; description?: string }>();
+  const body = await c.req.json<{ name?: string; description?: string; relationsJson?: unknown }>();
   const db = await getDb();
   const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
   if (!existing[0]) return c.json({ error: "not found" }, 404);
-  const patch: { name?: string; description?: string; updatedAt?: string } = {
+  const patch: {
+    name?: string;
+    description?: string;
+    relationsJson?: unknown;
+    updatedAt?: string;
+  } = {
     updatedAt: new Date().toISOString(),
   };
   if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
   if (typeof body.description === "string") patch.description = body.description;
+  if (body.relationsJson !== undefined) {
+    const members = await db
+      .select({ role: agentDefinition.role })
+      .from(agentGroupMember)
+      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+      .where(eq(agentGroupMember.groupId, id));
+    const memberRoles = members.map((m) => String(m.role));
+    const relErr = validateAgentGroupRelationsJson(body.relationsJson, memberRoles);
+    if (relErr) return c.json({ error: relErr }, 400);
+    patch.relationsJson = toJsonValue(body.relationsJson) as never;
+  }
   await db.update(agentGroup).set(patch).where(eq(agentGroup.id, id));
   const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
   return c.json({ data: row[0] });
@@ -1106,6 +1585,12 @@ agentRouter.post("/groups", async (c) => {
   const check = await assertAnalystGroupMembers(definitionIds);
   if (!check.ok) return c.json({ error: check.error }, 400);
 
+  if (body.relationsJson !== undefined) {
+    const memberRoles = check.definitions.map((d) => String(d.role));
+    const relErr = validateAgentGroupRelationsJson(body.relationsJson, memberRoles);
+    if (relErr) return c.json({ error: relErr }, 400);
+  }
+
   const groupId = crypto.randomUUID();
   await db.insert(agentGroup).values({
     id: groupId,
@@ -1157,6 +1642,16 @@ agentRouter.patch("/groups/:id", async (c) => {
       });
     }
   }
+  if (body.relationsJson !== undefined) {
+    const members = await db
+      .select({ role: agentDefinition.role })
+      .from(agentGroupMember)
+      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+      .where(eq(agentGroupMember.groupId, id));
+    const memberRoles = members.map((m) => String(m.role));
+    const relErr = validateAgentGroupRelationsJson(body.relationsJson, memberRoles);
+    if (relErr) return c.json({ error: relErr }, 400);
+  }
   const now = new Date().toISOString();
   await db
     .update(agentGroup)
@@ -1179,138 +1674,5 @@ agentRouter.delete("/groups/:id", async (c) => {
   const existed = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
   if (!existed[0]) return c.json({ error: "group not found" }, 404);
   await db.delete(agentGroup).where(eq(agentGroup.id, id));
-  return c.json({ ok: true });
-});
-
-// ─── Agent groups（分析师等多定义编组）────────────────────────────────────────
-
-agentRouter.get("/agent-groups", async (c) => {
-  const db = await getDb();
-  const groups = await db.select().from(agentGroup).orderBy(desc(agentGroup.updatedAt));
-  const memberCounts = await db
-    .select({
-      groupId: agentGroupMember.groupId,
-      n: count(agentGroupMember.id),
-    })
-    .from(agentGroupMember)
-    .groupBy(agentGroupMember.groupId);
-  const countByGroup = new Map(memberCounts.map((row) => [row.groupId, Number(row.n)]));
-  return c.json({
-    data: groups.map((g) => ({
-      ...g,
-      memberCount: countByGroup.get(g.id) ?? 0,
-    })),
-  });
-});
-
-agentRouter.post("/agent-groups", async (c) => {
-  const body = await c.req.json<{ name?: string; description?: string }>();
-  if (!body.name?.trim()) return c.json({ error: "name is required" }, 400);
-  const db = await getDb();
-  const id = crypto.randomUUID();
-  await db.insert(agentGroup).values({
-    id,
-    name: body.name.trim(),
-    description: (body.description ?? "").trim(),
-  });
-  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  return c.json({ data: row[0] }, 201);
-});
-
-agentRouter.patch("/agent-groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const body = await c.req.json<{ name?: string; description?: string }>();
-  const db = await getDb();
-  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!existing[0]) return c.json({ error: "not found" }, 404);
-  const patch: { name?: string; description?: string; updatedAt?: string } = {
-    updatedAt: new Date().toISOString(),
-  };
-  if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
-  if (typeof body.description === "string") patch.description = body.description;
-  await db.update(agentGroup).set(patch).where(eq(agentGroup.id, id));
-  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  return c.json({ data: row[0] });
-});
-
-agentRouter.delete("/agent-groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const db = await getDb();
-  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!existing[0]) return c.json({ error: "not found" }, 404);
-  await db.delete(agentGroup).where(eq(agentGroup.id, id));
-  return c.json({ ok: true });
-});
-
-agentRouter.get("/agent-groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const db = await getDb();
-  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!g[0]) return c.json({ error: "not found" }, 404);
-  const members = await db
-    .select({
-      id: agentGroupMember.id,
-      groupId: agentGroupMember.groupId,
-      definitionId: agentGroupMember.definitionId,
-      sortOrder: agentGroupMember.sortOrder,
-      role: agentDefinition.role,
-      definitionName: agentDefinition.name,
-    })
-    .from(agentGroupMember)
-    .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-    .where(eq(agentGroupMember.groupId, id))
-    .orderBy(asc(agentGroupMember.sortOrder), asc(agentGroupMember.id));
-  return c.json({ data: { group: g[0], members } });
-});
-
-agentRouter.post("/agent-groups/:id/members", async (c) => {
-  const groupId = c.req.param("id");
-  const body = await c.req.json<{ definitionId?: string; sortOrder?: number }>();
-  if (!body.definitionId?.trim()) return c.json({ error: "definitionId is required" }, 400);
-  const db = await getDb();
-  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, groupId)).limit(1);
-  if (!g[0]) return c.json({ error: "group not found" }, 404);
-  const def = await db
-    .select({ id: agentDefinition.id })
-    .from(agentDefinition)
-    .where(eq(agentDefinition.id, body.definitionId.trim()))
-    .limit(1);
-  if (!def[0]) return c.json({ error: "definition not found" }, 404);
-  const memberId = crypto.randomUUID();
-  const sortOrder =
-    typeof body.sortOrder === "number" && Number.isFinite(body.sortOrder) ? Math.trunc(body.sortOrder) : 0;
-  try {
-    await db.insert(agentGroupMember).values({
-      id: memberId,
-      groupId,
-      definitionId: body.definitionId.trim(),
-      sortOrder,
-    });
-  } catch {
-    return c.json({ error: "member already exists for this definition" }, 409);
-  }
-  await db
-    .update(agentGroup)
-    .set({ updatedAt: new Date().toISOString() })
-    .where(eq(agentGroup.id, groupId));
-  const row = await db.select().from(agentGroupMember).where(eq(agentGroupMember.id, memberId)).limit(1);
-  return c.json({ data: row[0] }, 201);
-});
-
-agentRouter.delete("/agent-groups/:id/members/:memberId", async (c) => {
-  const groupId = c.req.param("id");
-  const memberId = c.req.param("memberId");
-  const db = await getDb();
-  const row = await db
-    .select()
-    .from(agentGroupMember)
-    .where(and(eq(agentGroupMember.id, memberId), eq(agentGroupMember.groupId, groupId)))
-    .limit(1);
-  if (!row[0]) return c.json({ error: "not found" }, 404);
-  await db.delete(agentGroupMember).where(eq(agentGroupMember.id, memberId));
-  await db
-    .update(agentGroup)
-    .set({ updatedAt: new Date().toISOString() })
-    .where(eq(agentGroup.id, groupId));
   return c.json({ ok: true });
 });

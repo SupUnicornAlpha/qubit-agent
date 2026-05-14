@@ -1,6 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
-import { agentDefinition, llmProviderConfig, sandboxPolicy } from "../db/sqlite/schema";
+import { agentDefinition, agentGroup, agentGroupMember, llmProviderConfig, sandboxPolicy } from "../db/sqlite/schema";
 import type { RuntimeAgentDefinition } from "./types";
+
+/** 内置分析师编组 ID（与成员 definition id 一并由 seed 维护） */
+export const DEFAULT_ANALYST_AGENT_GROUP_ID = "grp-default-analyst-team";
 
 const DEFAULT_SANDBOX_POLICY = {
   id: "default-policy",
@@ -348,6 +353,50 @@ export async function seedAgentDefinitions(): Promise<void> {
   }
 
   console.log(`[Seed] Upserted ${DEFAULT_DEFINITIONS.length} agent definitions.`);
+  await ensureDefaultAnalystAgentGroup();
+}
+
+/**
+ * 保证存在「默认四名分析师」编组，便于前端下拉选用；成员与内置 definition id 对齐。
+ */
+export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
+  const db = await getDb();
+  const memberDefs = [
+    "def-analyst-fundamental",
+    "def-analyst-technical",
+    "def-analyst-sentiment",
+    "def-analyst-macro",
+  ] as const;
+
+  await db
+    .insert(agentGroup)
+    .values({
+      id: DEFAULT_ANALYST_AGENT_GROUP_ID,
+      workspaceId: null,
+      name: "默认（四名分析师）",
+      description: "启动时自动维护：基本面 / 技术面 / 情绪面 / 宏观；可在「配置中心 → Agent」调整成员。",
+      relationsJson: [],
+    })
+    .onConflictDoUpdate({
+      target: agentGroup.id,
+      set: {
+        name: "默认（四名分析师）",
+        description: "启动时自动维护：基本面 / 技术面 / 情绪面 / 宏观；可在「配置中心 → Agent」调整成员。",
+        updatedAt: new Date().toISOString(),
+      },
+    });
+
+  await db.delete(agentGroupMember).where(eq(agentGroupMember.groupId, DEFAULT_ANALYST_AGENT_GROUP_ID));
+  let sortOrder = 0;
+  for (const definitionId of memberDefs) {
+    await db.insert(agentGroupMember).values({
+      id: randomUUID(),
+      groupId: DEFAULT_ANALYST_AGENT_GROUP_ID,
+      definitionId,
+      sortOrder: sortOrder++,
+    });
+  }
+  console.log(`[Seed] Default analyst agent group ${DEFAULT_ANALYST_AGENT_GROUP_ID} refreshed (${memberDefs.length} members).`);
 }
 
 if (import.meta.main) {

@@ -15,6 +15,7 @@ import type {
 export interface LongtermQueryParams {
   scope?: LongtermScope;
   scopeId?: string;
+  definitionId?: string;
   memoryType?: LongtermMemoryType;
   validAsOf?: string;
   limit?: number;
@@ -24,6 +25,7 @@ export interface LongtermSemanticSearchParams {
   queryVector: number[];
   scope?: LongtermScope;
   scopeId?: string;
+  definitionId?: string;
   topK?: number;
   filter?: string;
 }
@@ -51,6 +53,7 @@ export class LongtermMemoryStore {
 
     if (params.scope) conditions.push(eq(longtermMemory.scope, params.scope));
     if (params.scopeId) conditions.push(eq(longtermMemory.scopeId, params.scopeId));
+    if (params.definitionId) conditions.push(eq(longtermMemory.definitionId, params.definitionId));
     if (params.memoryType) conditions.push(eq(longtermMemory.memoryType, params.memoryType));
 
     const rows = await db
@@ -67,11 +70,17 @@ export class LongtermMemoryStore {
    * Requires that embedding vectors have been written to LanceDB beforehand.
    */
   async semanticSearch(params: LongtermSemanticSearchParams): Promise<LongtermMemory[]> {
+    const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "''");
+    let lanceFilter = params.filter;
+    if (params.definitionId) {
+      const part = `definition_id = '${esc(params.definitionId)}'`;
+      lanceFilter = lanceFilter ? `(${lanceFilter}) AND (${part})` : part;
+    }
     const hits = await vectorSearch(
       LANCE_TABLES.LONGTERM_MEMORY,
       params.queryVector,
       params.topK ?? 10,
-      params.filter
+      lanceFilter
     );
 
     const ids = hits.map((h) => String(h["longtermMemoryId"])).filter(Boolean);
@@ -100,6 +109,7 @@ export class LongtermMemoryStore {
       memoryType: meta.memoryType,
       scope: meta.scope,
       scopeId: meta.scopeId,
+      definitionId: meta.definitionId ?? "",
       asofTime: meta.asofTime,
       createdAt: new Date().toISOString(),
     };

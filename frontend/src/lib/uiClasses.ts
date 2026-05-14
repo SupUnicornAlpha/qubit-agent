@@ -1,5 +1,5 @@
 /**
- * 与 `ide-theme.css` 中 `.qa-*` 规则配套，用于表单与按钮的统一外观（对齐暗色 IDE + 品牌紫点缀）。
+ * 与 `ide-theme.css` 中 `.qa-*` 规则配套（表单控件）；按钮请优先使用全局 `qb-btn-*` / `qb-chip` 以保持 IDE 一致外观。
  */
 export const qc = {
   input: "qa-input",

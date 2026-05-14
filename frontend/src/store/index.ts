@@ -18,7 +18,37 @@ export interface ChartContextPayload {
   fetchedAt: string;
 }
 
-export type ActiveView = "ide" | "chart" | "chat" | "team" | "trader" | "monitor" | "config";
+export type ActiveView = "ide" | "chart" | "chat" | "team" | "trader" | "monitor" | "broker" | "config";
+
+const UI_THEME_STORAGE_KEY = "qubit-ui-theme-v1";
+
+export const UI_THEME_IDS = [
+  "dark-purple",
+  "dark-gray",
+  "light-white",
+  "light-sky",
+  "light-mint",
+] as const;
+
+export type UiThemeId = (typeof UI_THEME_IDS)[number];
+
+function readUiTheme(): UiThemeId {
+  try {
+    const v = localStorage.getItem(UI_THEME_STORAGE_KEY);
+    if (UI_THEME_IDS.includes(v as UiThemeId)) return v as UiThemeId;
+  } catch {
+    /* ignore */
+  }
+  return "dark-purple";
+}
+
+function persistUiTheme(theme: UiThemeId) {
+  try {
+    localStorage.setItem(UI_THEME_STORAGE_KEY, theme);
+  } catch {
+    /* ignore */
+  }
+}
 
 export type ChartOverlayKey = "sma20" | "ema20" | "rsi14" | "macd" | "bb20";
 
@@ -37,20 +67,48 @@ export interface ChartOverlaysState {
   bb20: boolean;
 }
 
+export interface TraderMarkerRecord {
+  id: string;
+  side: "buy" | "sell";
+  text: string;
+  source: "agent" | "manual" | "strategy";
+}
+
+export interface TraderAgentLogRecord {
+  id: string;
+  ts: number;
+  kind: "info" | "decision" | "ingest" | "user" | "strategy";
+  title: string;
+  body: string;
+}
+
+export type TraderTriggerMode = "manual" | "interval" | "strategy_signal";
+
+export interface TraderAgentConfigState {
+  triggerMode: TraderTriggerMode;
+  intervalSec: number;
+  /** 选中的策略脚本 id（来自会话 strategy-scripts） */
+  strategyScriptIds: string[];
+}
+
 export interface IdePanelsState {
   left: boolean;
   chart: boolean;
   backtest: boolean;
 }
 
+
 /** 配置中心左侧 / 顶部分类（与 ConfigPanel 条件渲染一致） */
-export type ConfigSubPage = "llm" | "datasources" | "mcp" | "agent" | "integration" | "schedule";
+export type ConfigSubPage = "llm" | "datasources" | "mcp" | "skills" | "agent" | "integration" | "schedule";
 
 export interface AppState {
   backendConnected: boolean;
   setBackendConnected: (v: boolean) => void;
   backendHint: string | null;
   setBackendHint: (v: string | null) => void;
+  /** 全局 UI 主题（与 `html[data-qb-theme]` 同步） */
+  uiTheme: UiThemeId;
+  setUiTheme: (theme: UiThemeId) => void;
   activeView: ActiveView;
   setActiveView: (view: ActiveView) => void;
   chartContext: ChartContextPayload | null;
@@ -99,6 +157,17 @@ export interface AppState {
   setSelectedSessionId: (id: string | null) => void;
   chatMessages: ChatMessage[];
   setChatMessages: (messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
+  /** 实时交易页：K 线标记（与快捷交易 / Agent 演示联动） */
+  traderMarkers: TraderMarkerRecord[];
+  pushTraderMarker: (m: Omit<TraderMarkerRecord, "id"> & { id?: string }) => void;
+  clearTraderMarkers: () => void;
+  /** 实时交易页：Agent 决策与信息流 */
+  traderAgentLog: TraderAgentLogRecord[];
+  pushTraderAgentLog: (e: Omit<TraderAgentLogRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
+  clearTraderAgentLog: () => void;
+  traderAgentConfig: TraderAgentConfigState;
+  setTraderAgentConfig: (patch: Partial<TraderAgentConfigState>) => void;
+  toggleTraderStrategyScriptId: (id: string) => void;
 }
 
 const defaultChartOverlays: ChartOverlaysState = {
@@ -109,11 +178,55 @@ const defaultChartOverlays: ChartOverlaysState = {
   bb20: false,
 };
 
+const TRADER_CFG_KEY = "qubit-trader-agent-config-v1";
+
+function loadTraderConfig(): TraderAgentConfigState {
+  try {
+    const raw = sessionStorage.getItem(TRADER_CFG_KEY);
+    if (!raw) {
+      return { triggerMode: "manual", intervalSec: 60, strategyScriptIds: [] };
+    }
+    const j = JSON.parse(raw) as Partial<TraderAgentConfigState>;
+    return {
+      triggerMode:
+        j.triggerMode === "interval" || j.triggerMode === "strategy_signal" || j.triggerMode === "manual"
+          ? j.triggerMode
+          : "manual",
+      intervalSec: typeof j.intervalSec === "number" && j.intervalSec >= 10 ? j.intervalSec : 60,
+      strategyScriptIds: Array.isArray(j.strategyScriptIds)
+        ? j.strategyScriptIds.filter((x): x is string => typeof x === "string")
+        : [],
+    };
+  } catch {
+    return { triggerMode: "manual", intervalSec: 60, strategyScriptIds: [] };
+  }
+}
+
+function persistTraderConfig(cfg: TraderAgentConfigState) {
+  try {
+    sessionStorage.setItem(TRADER_CFG_KEY, JSON.stringify(cfg));
+  } catch {
+    /* ignore */
+  }
+}
+
+function newId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 export const useAppStore = create<AppState>((set) => ({
   backendConnected: false,
   setBackendConnected: (v) => set({ backendConnected: v }),
   backendHint: null,
   setBackendHint: (v) => set({ backendHint: v }),
+  uiTheme: readUiTheme(),
+  setUiTheme: (uiTheme) => {
+    persistUiTheme(uiTheme);
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-qb-theme", uiTheme);
+    }
+    set({ uiTheme });
+  },
   activeView: "chat",
   setActiveView: (view) => set({ activeView: view }),
   chartContext: null,
@@ -169,4 +282,45 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({
       chatMessages: typeof chatMessages === "function" ? chatMessages(state.chatMessages) : chatMessages,
     })),
+  traderMarkers: [],
+  pushTraderMarker: (m) =>
+    set((s) => {
+      const row: TraderMarkerRecord = {
+        id: m.id ?? newId(),
+        side: m.side,
+        text: m.text,
+        source: m.source,
+      };
+      return { traderMarkers: [...s.traderMarkers, row].slice(-24) };
+    }),
+  clearTraderMarkers: () => set({ traderMarkers: [] }),
+  traderAgentLog: [],
+  pushTraderAgentLog: (e) =>
+    set((s) => {
+      const row: TraderAgentLogRecord = {
+        id: e.id ?? newId(),
+        ts: e.ts ?? Date.now(),
+        kind: e.kind,
+        title: e.title,
+        body: e.body,
+      };
+      return { traderAgentLog: [...s.traderAgentLog, row].slice(-200) };
+    }),
+  clearTraderAgentLog: () => set({ traderAgentLog: [] }),
+  traderAgentConfig: loadTraderConfig(),
+  setTraderAgentConfig: (patch) =>
+    set((s) => {
+      const next = { ...s.traderAgentConfig, ...patch };
+      persistTraderConfig(next);
+      return { traderAgentConfig: next };
+    }),
+  toggleTraderStrategyScriptId: (id) =>
+    set((s) => {
+      const cur = s.traderAgentConfig.strategyScriptIds;
+      const has = cur.includes(id);
+      const strategyScriptIds = has ? cur.filter((x) => x !== id) : [...cur, id];
+      const next = { ...s.traderAgentConfig, strategyScriptIds };
+      persistTraderConfig(next);
+      return { traderAgentConfig: next };
+    }),
 }));

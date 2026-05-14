@@ -1,28 +1,984 @@
-/* IDE dark theme scrollbar tuning */
-#root,
-#root * {
-  scrollbar-width: thin;
-  scrollbar-color: #4c1d95 #111114;
+/* IDE dark theme + “系统级”控件质感。语义色（背景/分隔/蓝紫强调等）由 qb-themes.css 在 html 上定义。 */
+:root {
+  --qb-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --qb-radius-lg: 12px;
+  --qb-radius-md: 10px;
+  --qb-radius-sm: 8px;
 }
 
-#root *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* 应用根：平面化背景（语义色来自 qb-themes） */
+.qb-app-root {
+  background: var(--qb-bg-root);
 }
 
-#root *::-webkit-scrollbar-track {
-  background: #111114;
-  border-left: 1px solid #27272a;
+/* 顶栏 */
+.qb-topbar {
+  background: #1c1c1e;
+  border-bottom: 1px solid var(--qb-separator);
 }
 
-#root *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #374151 0%, #4c1d95 100%);
-  border: 2px solid #111114;
+.qb-topbar__divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: var(--qb-separator);
+  flex-shrink: 0;
+}
+
+.qb-topbar__subtitle {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: #636366;
+}
+
+/* 研究工作台顶栏：类似 Xcode 工具栏的分组与底部分隔 */
+.qb-workbench-toolbar {
+  background: #161618;
+  border-bottom: 1px solid var(--qb-separator);
+}
+
+.qb-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.qb-toolbar-vsep {
+  width: 1px;
+  height: 22px;
+  margin: 0 6px;
+  background: var(--qb-separator);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* SF Symbols 工具栏图标：中性填充 + 悬停/选中态 */
+.qb-icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8e8e93;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background 0.18s var(--qb-ease-out),
+    border-color 0.18s var(--qb-ease-out),
+    color 0.18s var(--qb-ease-out),
+    box-shadow 0.18s var(--qb-ease-out),
+    transform 0.12s var(--qb-ease-out);
+}
+
+.qb-icon-btn:hover {
+  color: #d1d1d6;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+.qb-icon-btn:active {
+  transform: scale(0.94);
+}
+
+.qb-icon-btn--active {
+  color: #f2f2f7;
+  background: rgba(59, 130, 246, 0.22);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.qb-icon-btn:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+.qb-explorer-panel {
+  background: var(--qb-sidebar-explorer-bg);
+}
+
+.qb-brand-mark {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.qb-logo-text {
+  color: #a5b4fc;
+  font-weight: 700;
+}
+
+.qb-status-pill {
+  padding: 5px 12px;
   border-radius: 999px;
+  background: #2c2c2e;
+  border: 1px solid rgba(72, 72, 76, 0.75);
 }
 
-#root *::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #4b5563 0%, #6d28d9 100%);
+.qb-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.qb-status-dot--ok {
+  color: #22c55e;
+  background: #22c55e;
+}
+
+.qb-status-dot--off {
+  color: #ef4444;
+  background: #ef4444;
+}
+
+@keyframes qb-status-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+.qb-status-dot--live {
+  animation: qb-status-breathe 2.4s var(--qb-ease-out) infinite;
+}
+
+/* 侧栏活动栏图标按钮 */
+.qb-nav-activity-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #71717a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition:
+    background 0.2s var(--qb-ease-out),
+    border-color 0.2s var(--qb-ease-out),
+    color 0.2s var(--qb-ease-out),
+    box-shadow 0.2s var(--qb-ease-out),
+    transform 0.16s var(--qb-ease-out);
+}
+
+.qb-nav-activity-btn:hover {
+  color: #d4d4d8;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.qb-nav-activity-btn:active {
+  transform: scale(0.94);
+}
+
+.qb-nav-activity-btn--active {
+  color: #f4f4f5;
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
+.qb-nav-activity-btn:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+.qb-nav-activity-brand {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--qb-sidebar-border);
+  color: var(--qb-brand-icon);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  margin-bottom: 4px;
+  background: var(--qb-sidebar-activity-bg);
+}
+
+/* Explorer 列表行 */
+.qb-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  text-decoration: none;
+  color: #a1a1aa;
+  font-size: 13px;
+  border-radius: var(--qb-radius-sm);
+  margin: 1px 0;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  width: 100%;
+  transition:
+    background 0.18s var(--qb-ease-out),
+    color 0.18s var(--qb-ease-out),
+    box-shadow 0.18s var(--qb-ease-out),
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-nav-row:hover {
+  color: #e4e4e7;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.qb-nav-row:active {
+  transform: scale(0.99);
+}
+
+.qb-nav-row--active {
+  background: #27272a;
+  color: #f4f4f5;
+  box-shadow: inset 3px 0 0 var(--qb-blue);
+}
+
+.qb-nav-row:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 0;
+}
+
+.qb-context-card {
+  border: 1px solid #27272a;
+  background: #111114;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* ----- 控件统一基底（IDE / SF Symbols 语义：字重、圆角、过渡一致） ----- */
+.qb-chip,
+.qb-btn-primary,
+.qb-btn-primary-brand,
+.qb-btn-secondary,
+.qb-btn-ghost,
+.qb-dock-tab,
+.qb-pill-tab,
+.qb-btn-mini,
+.qb-btn-card,
+.qb-btn-trade-long,
+.qb-btn-trade-short,
+.qb-btn-demo-buy,
+.qb-btn-demo-sell {
+  font-family: inherit;
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+}
+
+/* 工具栏 / 分段芯片 */
+.qb-chip {
+  padding: 5px 11px;
+  min-height: 28px;
+  box-sizing: border-box;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid rgba(63, 63, 70, 0.95);
+  background: #1f1f23;
+  color: #aeaeb2;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    background 0.18s var(--qb-ease-out),
+    border-color 0.18s var(--qb-ease-out),
+    color 0.18s var(--qb-ease-out),
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-chip--sm {
+  padding: 3px 8px;
+  min-height: 0;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.qb-chip:hover {
+  border-color: #636366;
+  color: #e5e5ea;
+}
+
+.qb-chip:active {
+  transform: scale(0.97);
+}
+
+.qb-chip--active {
+  background: var(--qb-blue);
+  border-color: #60a5fa;
+  color: #fff;
+  font-weight: 600;
+}
+
+.qb-chip:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 1px;
+}
+
+/* 主操作 · 蓝（图表 / 技术向 CTA） */
+.qb-btn-primary {
+  padding: 7px 14px;
+  min-height: 30px;
+  box-sizing: border-box;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid #2563eb;
+  background: var(--qb-blue);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-btn-primary:hover:not(:disabled) {
+  background: #3b82f6;
+  border-color: #60a5fa;
+}
+
+.qb-btn-primary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.qb-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.qb-btn-primary:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+/* 主操作 · 品牌紫（配置 / 保存 / 运行类 CTA） */
+.qb-btn-primary-brand {
+  padding: 7px 14px;
+  min-height: 30px;
+  box-sizing: border-box;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid #6d28d9;
+  background: #7c3aed;
+  color: #fafafa;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-btn-primary-brand:hover:not(:disabled) {
+  background: #8b5cf6;
+  border-color: #7c3aed;
+}
+
+.qb-btn-primary-brand:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.qb-btn-primary-brand:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.qb-btn-primary-brand:focus-visible {
+  outline: 2px solid rgba(167, 139, 250, 0.65);
+  outline-offset: 2px;
+}
+
+/* 次要：凹陷灰面（表单行内、研究团队面板） */
+.qb-btn-secondary {
+  padding: 7px 14px;
+  min-height: 30px;
+  box-sizing: border-box;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid rgba(72, 72, 76, 0.95);
+  background: #2a2a2e;
+  color: #e5e5ea;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-btn-secondary:hover:not(:disabled) {
+  border-color: #8e8e93;
+  color: #f2f2f7;
+  background: #34343a;
+}
+
+.qb-btn-secondary:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.qb-btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.qb-btn-secondary:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+/* 幽灵：透明底 + 发丝边（工具条次要、与主按钮并列时） */
+.qb-btn-ghost {
+  padding: 7px 14px;
+  min-height: 30px;
+  box-sizing: border-box;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid rgba(84, 84, 88, 0.55);
+  background: rgba(255, 255, 255, 0.04);
+  color: #d1d1d6;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(120, 120, 128, 0.75);
+  color: #f2f2f7;
+}
+
+.qb-btn-ghost:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.qb-btn-ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.qb-btn-ghost:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+.qb-btn--compact {
+  padding: 5px 10px;
+  min-height: 26px;
+  font-size: 11px;
+}
+
+.qb-btn--icon-xs {
+  padding: 0 6px;
+  min-width: 26px;
+  min-height: 26px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* 底栏 / Inspector 文档式 Tab */
+.qb-dock-tabstrip {
+  display: flex;
+  flex-direction: row;
+  border-bottom: 1px solid var(--qb-separator);
+  flex-shrink: 0;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.qb-dock-tab {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  color: #8e8e93;
+  cursor: pointer;
+  transition:
+    color 0.18s var(--qb-ease-out),
+    box-shadow 0.18s var(--qb-ease-out);
+}
+
+.qb-dock-tab:hover {
+  color: #e4e4e7;
+}
+
+.qb-dock-tab--active {
+  color: #f4f4f5;
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--qb-blue);
+}
+
+.qb-dock-tab:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: -2px;
+}
+
+/* 监控页等：胶囊分段 */
+.qb-pill-tab {
+  padding: 8px 14px;
+  border-radius: var(--qb-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(63, 63, 70, 0.95);
+  background: #232326;
+  color: #d1d1d6;
+  transition:
+    background 0.18s var(--qb-ease-out),
+    border-color 0.18s var(--qb-ease-out),
+    color 0.18s var(--qb-ease-out),
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-pill-tab:hover {
+  border-color: #71717a;
+  color: #f4f4f5;
+}
+
+.qb-pill-tab--active {
+  background: #4f46e5;
+  border-color: rgba(165, 180, 252, 0.65);
+  color: #fff;
+}
+
+.qb-pill-tab:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+.qb-btn-mini {
+  font-size: 11px;
+  padding: 4px 9px;
+  min-height: 26px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  border: 1px solid rgba(63, 63, 70, 0.95);
+  background: #252529;
+  color: #e4e4e7;
+  cursor: pointer;
+  font-weight: 500;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.12s var(--qb-ease-out);
+}
+
+.qb-btn-mini:hover:not(:disabled) {
+  border-color: #71717a;
+}
+
+.qb-btn-mini:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.qb-btn-card {
+  text-align: left;
+  width: 100%;
+  background: #1c1c1f;
+  border: 1px solid #2d2d32;
+  border-radius: var(--qb-radius-sm);
+  padding: 10px 12px;
+  color: #e4e4e7;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.12s var(--qb-ease-out);
+}
+
+.qb-btn-card:hover {
+  border-color: #52525b;
+  background: #252529;
+}
+
+.qb-btn-card:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+.qb-btn-trade-long {
+  flex: 1;
+  padding: 10px 0;
+  border-radius: var(--qb-radius-sm);
+  border: none;
+  background: #166534;
+  color: #dcfce7;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.qb-btn-trade-short {
+  flex: 1;
+  padding: 10px 0;
+  border-radius: var(--qb-radius-sm);
+  border: none;
+  background: #991b1b;
+  color: #fee2e2;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.qb-btn-demo-buy {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 6px;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid #166534;
+  background: #052e16;
+  color: #bbf7d0;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s var(--qb-ease-out);
+}
+
+.qb-btn-demo-buy:hover {
+  background: #065f46;
+}
+
+.qb-btn-demo-buy:active {
+  transform: scale(0.98);
+}
+
+.qb-btn-demo-sell {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 6px;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid #991b1b;
+  background: #450a0a;
+  color: #fecaca;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s var(--qb-ease-out);
+}
+
+.qb-btn-demo-sell:hover {
+  background: #7f1d1d;
+}
+
+.qb-btn-demo-sell:active {
+  transform: scale(0.98);
+}
+
+/* 配置中心 · Agent 身份卡（IDE Inspector 风格） */
+.qb-agent-shell {
+  border: 1px solid var(--qb-separator);
+  border-radius: var(--qb-radius-md);
+  background: #141416;
+  box-shadow: 0 1px 0 var(--qb-hairline);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.qb-agent-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(58, 58, 62, 0.85);
+  background: #18181b;
+}
+
+.qb-agent-hero__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #f4f4f5;
+}
+
+.qb-agent-hero__sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: #8e8e93;
+  line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+.qb-agent-hero__desc {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #c7c7cc;
+  line-height: 1.5;
+  max-width: 720px;
+}
+
+.qb-agent-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.qb-agent-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  color: #e0e7ff;
+  background: rgba(99, 102, 241, 0.18);
+}
+
+.qb-agent-badge--muted {
+  border-color: rgba(84, 84, 88, 0.65);
+  color: #aeaeb2;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.qb-agent-body {
+  padding: 14px 18px 18px;
+}
+
+.qb-agent-field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.qb-agent-help {
+  font-size: 11px;
+  color: #71717a;
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+
+.qb-mcp-pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.qb-mcp-chip {
+  font: inherit;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid rgba(72, 72, 76, 0.9);
+  background: rgba(255, 255, 255, 0.04);
+  color: #aeaeb2;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s var(--qb-ease-out);
+}
+
+.qb-mcp-chip:hover:not(:disabled) {
+  border-color: #71717a;
+  color: #e5e5ea;
+}
+
+.qb-mcp-chip--on {
+  border-color: rgba(129, 140, 248, 0.75);
+  background: rgba(99, 102, 241, 0.22);
+  color: #eef2ff;
+}
+
+.qb-mcp-chip:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.qb-json-preview {
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--qb-radius-sm);
+  border: 1px solid #2a2a2e;
+  background: #0a0a0c;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #a1a1aa;
+  overflow: auto;
+  max-height: 220px;
+}
+
+/* 提示条：比纯色 error 块更易读，贴近系统「重要信息」样式 */
+.qb-callout {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid transparent;
+}
+
+.qb-callout--warning {
+  background: rgba(113, 63, 18, 0.55);
+  border-color: rgba(245, 158, 11, 0.42);
+  color: #fde68a;
+}
+
+.qb-callout--danger {
+  background: rgba(69, 10, 10, 0.55);
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+.qb-callout__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.qb-callout__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.qb-callout__dismiss {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e4e4e7;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.qb-callout__dismiss:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* 配置子页：分段控件式 Tab */
+.qb-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px;
+  margin: 0 0 16px;
+  border-radius: 10px;
+  background: #121214;
+  border: 1px solid #2a2a2e;
+}
+
+.qb-segmented.qb-segmented--inline {
+  margin: 0;
+}
+
+.qb-segmented__tab {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background 0.2s var(--qb-ease-out),
+    color 0.2s var(--qb-ease-out),
+    box-shadow 0.2s var(--qb-ease-out),
+    transform 0.14s var(--qb-ease-out);
+}
+
+.qb-segmented__tab:hover {
+  color: #e4e4e7;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.qb-segmented__tab:active {
+  transform: scale(0.98);
+}
+
+.qb-segmented__tab--active {
+  color: #fafafa;
+  background: #5b21b6;
+  border: 1px solid rgba(167, 139, 250, 0.35);
+}
+
+#root :where(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
+}
+
+#root :where(button, input, select, textarea):focus:not(:focus-visible) {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qb-nav-activity-btn,
+  .qb-nav-row,
+  .qb-chip,
+  .qb-btn-primary,
+  .qb-btn-primary-brand,
+  .qb-btn-secondary,
+  .qb-btn-ghost,
+  .qb-segmented__tab,
+  .qb-callout,
+  .qb-status-dot--live,
+  .qb-icon-btn,
+  .qb-dock-tab,
+  .qb-pill-tab,
+  .qb-btn-mini,
+  .qb-btn-card,
+  .qb-btn-demo-buy,
+  .qb-btn-demo-sell,
+  .qb-mcp-chip {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .qb-nav-activity-btn:active,
+  .qb-nav-row:active,
+  .qb-chip:active,
+  .qb-btn-primary:active,
+  .qb-btn-primary-brand:active,
+  .qb-btn-secondary:active,
+  .qb-btn-ghost:active,
+  .qb-segmented__tab:active,
+  .qb-icon-btn:active,
+  .qb-pill-tab:active,
+  .qb-btn-mini:active,
+  .qb-btn-card:active,
+  .qb-btn-demo-buy:active,
+  .qb-btn-demo-sell:active,
+  .qb-mcp-chip:active {
+    transform: none;
+  }
 }
 
 @keyframes team-loader-spin {
@@ -33,4 +989,10 @@
 
 .team-loader-spin {
   animation: team-loader-spin 0.85s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .team-loader-spin {
+    animation: none;
+  }
 }

@@ -4,9 +4,10 @@ import { eq } from "drizzle-orm";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
-import { runAnalystTeam } from "../../msa/analyst-team";
+import { runAnalystTeam, ANALYST_TEAM_ROLES } from "../../msa/analyst-team";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
+import type { AgentRole } from "../../../types/entities";
 
 /** Builtin tools routed to ACP connectors (see registerBuiltinConnectors). */
 const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
@@ -294,6 +295,7 @@ export async function actNode(
       if (mcp) {
         const mcpResult = await dispatchMcpToolCall({
           projectId: projectId ?? undefined,
+          definitionId: state.agentDefinition.id,
           serverName: mcp.serverName,
           toolName: mcp.toolName,
           arguments: mcp.arguments,
@@ -328,10 +330,19 @@ export async function actNode(
           (state.inboundMessage.payload as Record<string, unknown>)?.["goal"] as string ||
           undefined;
 
+        const rolesRaw = toolParams["analyst_roles"];
+        const analystRoles =
+          Array.isArray(rolesRaw) && rolesRaw.length > 0
+            ? (rolesRaw.filter((r): r is AgentRole =>
+                typeof r === "string" && (ANALYST_TEAM_ROLES as readonly string[]).includes(r)
+              ) as AgentRole[])
+            : undefined;
+
         const teamResult = await runAnalystTeam({
           workflowRunId: state.workflowId,
           ticker,
           context,
+          analystRoles,
         });
         return { result: "ok" as const, analystTeamResult: teamResult };
       }

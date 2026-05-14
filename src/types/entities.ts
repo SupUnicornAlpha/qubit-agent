@@ -144,9 +144,9 @@ export interface AgentStep {
   agentInstanceId: string;
   workflowRunId: string;
   stepIndex: number;
-  phase: "perceive" | "reason" | "act" | "observe";
+  phase: "perceive" | "reason" | "act" | "observe" | "external";
   thought: string | null;
-  actionType: "tool_call" | "final_answer" | "memory_read" | "memory_write" | "a2a_send";
+  actionType: "tool_call" | "final_answer" | "memory_read" | "memory_write" | "a2a_send" | "cli_io";
   actionJson: unknown;
   observationJson: unknown | null;
   tokenCount: number | null;
@@ -535,6 +535,7 @@ export type MidtermMemoryType =
 export interface MidtermMemory {
   id: string;
   projectId: string;
+  definitionId?: string | null;
   memoryType: MidtermMemoryType;
   contentJson: unknown;
   timeWindowStart: string;
@@ -557,6 +558,7 @@ export interface LongtermMemory {
   id: string;
   scope: LongtermScope;
   scopeId: string;
+  definitionId?: string | null;
   memoryType: LongtermMemoryType;
   contentJson: unknown;
   embeddingRef: string | null;

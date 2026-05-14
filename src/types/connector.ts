@@ -127,6 +127,8 @@ export interface MemoryMetadata {
   asofTime: string;
   projectId?: string;
   strategyId?: string;
+  /** 绑定到 agent_definition.id，用于记忆隔离 */
+  definitionId?: string;
   tags?: string[];
   [key: string]: unknown;
 }
@@ -135,6 +137,7 @@ export interface MemoryFilters {
   layer?: "session" | "midterm" | "longterm";
   projectId?: string;
   strategyId?: string;
+  definitionId?: string;
   fromTime?: string;
   toTime?: string;
   tags?: string[];

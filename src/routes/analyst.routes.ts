@@ -12,7 +12,12 @@ import { Hono } from "hono";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import { analystSignal, agentGroup, agentRoleCatalog, signalFusionResult, workflowRun } from "../db/sqlite/schema";
-import { runAnalystTeam, type AnalystTeamResult } from "../runtime/msa/analyst-team";
+import {
+  ANALYST_TEAM_ROLES,
+  runAnalystTeam,
+  type AnalystTeamResult,
+} from "../runtime/msa/analyst-team";
+import type { AgentRole } from "../types/entities";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
 
@@ -40,6 +45,8 @@ analystRouter.post("/run", async (c) => {
     ticker: string;
     context?: string;
     agentGroupId?: string | null;
+    /** 仅运行这些 analyst_* 角色，与编组解析结果取交集 */
+    analystRoles?: string[] | null;
   }>();
 
   if (!body.workflowRunId || !body.ticker) {
@@ -71,12 +78,19 @@ analystRouter.post("/run", async (c) => {
   };
   analystJobs.set(jobId, job);
 
+  const roleSet = new Set(ANALYST_TEAM_ROLES);
+  const analystRoles =
+    Array.isArray(body.analystRoles) && body.analystRoles.length > 0
+      ? (body.analystRoles.filter((r): r is AgentRole => typeof r === "string" && roleSet.has(r as AgentRole)) as AgentRole[])
+      : undefined;
+
   // Fire-and-forget: run the heavy analysis in the background.
   void runAnalystTeam({
     workflowRunId: body.workflowRunId,
     ticker: body.ticker,
     context: body.context,
     agentGroupId: body.agentGroupId,
+    analystRoles,
   })
     .then((result) => {
       job.status = "completed";

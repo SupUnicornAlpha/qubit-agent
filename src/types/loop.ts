@@ -1,0 +1,41 @@
+import { z } from "zod";
+
+export const AgentLoopKindSchema = z.enum(["native", "claude_cli", "codex_cli"]);
+export type AgentLoopKind = z.infer<typeof AgentLoopKindSchema>;
+
+/** Per-workflow overrides for external CLI loops (stored in workflow_run.loop_options_json). */
+export const LoopOptionsJsonSchema = z
+  .object({
+    /** Full path or binary name on PATH */
+    command: z.string().optional(),
+    /** Extra CLI args inserted after command-specific defaults */
+    extraArgs: z.array(z.string()).optional(),
+    /** Subprocess timeout in ms (default 900_000) */
+    timeoutMs: z.number().int().positive().optional(),
+    /** When true, materialize MCP bridge manifest under the run directory */
+    injectMcpBridge: z.boolean().optional(),
+    /** Max bytes of combined stdout+stderr to buffer (default 8MB) */
+    maxOutputBytes: z.number().int().positive().optional(),
+  })
+  .strip();
+
+export type LoopOptionsJson = z.infer<typeof LoopOptionsJsonSchema>;
+
+export function parseLoopOptionsJson(raw: unknown): LoopOptionsJson {
+  let v: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      v = JSON.parse(raw) as unknown;
+    } catch {
+      return {};
+    }
+  }
+  if (v == null || typeof v !== "object") return {};
+  const parsed = LoopOptionsJsonSchema.safeParse(v);
+  return parsed.success ? parsed.data : {};
+}
+
+export function normalizeLoopKind(raw: unknown): AgentLoopKind {
+  const r = AgentLoopKindSchema.safeParse(raw);
+  return r.success ? r.data : "native";
+}

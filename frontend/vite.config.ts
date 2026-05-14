@@ -10,7 +10,9 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    /** 与 `src-tauri/tauri.conf.json` 的 `devUrl` 对齐；`strictPort` 避免端口漂移导致 Tauri 白屏 */
+    port: 3041,
+    strictPort: true,
     proxy: {
       "/api": {
         target: "http://localhost:3000",

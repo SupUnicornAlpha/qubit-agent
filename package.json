@@ -17,6 +17,7 @@
     "db:migrate": "bun run src/db/sqlite/migrate.ts",
     "seed:agent-definitions": "bun run src/runtime/seed-agent-definitions.ts",
     "acceptance:langgraph": "bun run src/runtime/langgraph/minimum-acceptance.ts",
+    "mcp-bridge": "bun run src/runtime/loop/mcp-bridge-server.ts",
     "lint": "biome lint src",
     "format": "biome format --write src",
     "check": "biome check src",

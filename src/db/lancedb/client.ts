@@ -40,6 +40,7 @@ export interface LongtermMemoryVector {
   memoryType: string;
   scope: string;
   scopeId: string;
+  definitionId: string;
   asofTime: string;
   createdAt: string;
 }

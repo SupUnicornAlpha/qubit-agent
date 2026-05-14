@@ -215,16 +215,16 @@ export const IdeIndicatorIdePanel: FC = () => {
           />
         </div>
         <div style={styles.btnRow}>
-          <button type="button" className={`qa-btn ${qc.btnGhost}`} onClick={() => void refreshScripts()} disabled={!selectedSessionId || loading}>
+          <button type="button" className="qb-btn-secondary" onClick={() => void refreshScripts()} disabled={!selectedSessionId || loading}>
             刷新列表
           </button>
-          <button type="button" className={`qa-btn ${qc.btnGhost}`} onClick={newDraft}>
+          <button type="button" className="qb-btn-secondary" onClick={newDraft}>
             新建草稿
           </button>
-          <button type="button" className={`qa-btn ${qc.btnAccent}`} onClick={() => void saveNow()} disabled={loading}>
+          <button type="button" className="qb-btn-primary-brand" onClick={() => void saveNow()} disabled={loading}>
             {ideActiveStrategyScriptId ? "保存更新" : "保存到会话"}
           </button>
-          <button type="button" className={`qa-btn ${qc.btnGhost}`} onClick={() => void deleteNow()} disabled={!ideActiveStrategyScriptId || loading}>
+          <button type="button" className="qb-btn-secondary" onClick={() => void deleteNow()} disabled={!ideActiveStrategyScriptId || loading}>
             删除
           </button>
         </div>
@@ -287,7 +287,7 @@ export const IdeIndicatorIdePanel: FC = () => {
           rows={3}
         />
         <div style={styles.aiActions}>
-          <button type="button" className={`qa-btn ${qc.btnAccent}`} onClick={sendToChat}>
+          <button type="button" className="qb-btn-primary-brand" onClick={sendToChat}>
             生成并带入对话
           </button>
           <span style={styles.hint}>保存时会一并记录此描述与当前图表标的，便于研究与交易模块复用。</span>

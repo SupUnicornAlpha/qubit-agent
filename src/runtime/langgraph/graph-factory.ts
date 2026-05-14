@@ -1,10 +1,10 @@
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { END, START, StateGraph } from "@langchain/langgraph";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
+import { agentDefinition, agentInstance, agentProfile, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { RuntimeAgentDefinition } from "../types";
@@ -21,6 +21,12 @@ import {
   type WorkspaceSandboxPolicy,
 } from "../config/workspace-config";
 import { syncWorkspaceConfigToDb } from "../config/config-sync";
+import {
+  getDataDir,
+  mergeSystemPrompt,
+  readPackFiles,
+  type PromptMode,
+} from "../agent/agent-pack-service";
 
 void registerBuiltinConnectors();
 
@@ -123,22 +129,51 @@ export class GraphRunner {
     await this.syncFromWorkspaceConfig();
     const db = await getDb();
     const dbDefs = await db.select().from(agentDefinition);
+    const defIds = dbDefs.map((d) => d.id);
+    const profiles =
+      defIds.length > 0
+        ? await db.select().from(agentProfile).where(inArray(agentProfile.definitionId, defIds))
+        : [];
+    const profileByDef = new Map(profiles.map((p) => [p.definitionId, p]));
+
     const sourceDefs = (dbDefs.length
-      ? dbDefs.map(
-          (d): RuntimeAgentDefinition => ({
-            id: d.id,
-            role: d.role,
-            name: d.name,
-            version: d.version,
-            systemPrompt: d.systemPrompt,
-            tools: d.toolsJson as string[],
-            mcpServers: d.mcpServersJson as string[],
-            skills: d.skillsJson as string[],
-            subscriptions: d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
-            llmProvider: d.llmProvider,
-            maxIterations: d.maxIterations,
-            sandboxPolicyId: d.sandboxPolicyId,
-            enabled: Boolean(d.enabled),
+      ? await Promise.all(
+          dbDefs.map(async (d): Promise<RuntimeAgentDefinition> => {
+            const prof = profileByDef.get(d.id);
+            let systemPrompt = d.systemPrompt;
+            if (prof && (prof.promptMode === "file_primary" || prof.promptMode === "merged")) {
+              const read = await readPackFiles({
+                dataDir: getDataDir(),
+                definitionId: d.id,
+                configRootUri: prof.configRootUri ?? "",
+                soulFileRef: prof.soulFileRef ?? "",
+                promptTemplateRef: prof.promptTemplateRef,
+              });
+              systemPrompt = mergeSystemPrompt({
+                mode: prof.promptMode as PromptMode,
+                dbPrompt: d.systemPrompt,
+                agentText: read.agentText,
+                soulText: read.soulText,
+                userText: read.userText,
+                memoryText: read.memoryText,
+                promptText: read.promptText,
+              });
+            }
+            return {
+              id: d.id,
+              role: d.role,
+              name: d.name,
+              version: d.version,
+              systemPrompt,
+              tools: d.toolsJson as string[],
+              mcpServers: d.mcpServersJson as string[],
+              skills: d.skillsJson as string[],
+              subscriptions: d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
+              llmProvider: d.llmProvider,
+              maxIterations: d.maxIterations,
+              sandboxPolicyId: d.sandboxPolicyId,
+              enabled: Boolean(d.enabled),
+            };
           })
         )
       : DEFAULT_DEFINITIONS
@@ -270,6 +305,8 @@ export class GraphRunner {
         stepIndex,
         ts: Date.now(),
         payload: { error: message },
+        loopKind: "native",
+        source: "native",
       });
     };
 
@@ -303,8 +340,9 @@ export class GraphRunner {
       state = initialState;
 
       const emit = (event: StepStreamEvent) => {
-        state!.events.push(event);
-        stepStreamBus.publish(event);
+        const enriched: StepStreamEvent = { ...event, loopKind: "native", source: "native" };
+        state!.events.push(enriched);
+        stepStreamBus.publish(enriched);
       };
 
       const graph = new StateGraph({

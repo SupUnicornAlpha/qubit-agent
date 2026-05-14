@@ -92,7 +92,7 @@ const App: FC = () => {
   }, [setBackendConnected, setBackendHint]);
 
   return (
-    <div style={styles.root}>
+    <div className="qb-app-root" style={styles.root}>
       <TopBar />
       <div style={styles.body}>
         <Sidebar />
@@ -107,12 +107,16 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     height: "100vh",
-    background: "#0d0d0f",
+    minWidth: 0,
+    maxWidth: "100vw",
     color: "#e4e4e7",
+    overflow: "hidden",
   },
   body: {
     display: "flex",
     flex: 1,
+    minWidth: 0,
+    minHeight: 0,
     overflow: "hidden",
   },
 };

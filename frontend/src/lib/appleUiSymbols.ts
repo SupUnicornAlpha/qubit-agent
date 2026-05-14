@@ -11,7 +11,7 @@
 
 /** 侧边栏 / 主导航（与 `Sidebar.tsx` 中 key 对齐） */
 export const navSfSymbolCandidates: Record<
-  "ide" | "chart" | "chat" | "team" | "trader" | "monitor" | "config",
+  "ide" | "chart" | "chat" | "team" | "trader" | "monitor" | "broker" | "config",
   readonly string[]
 > = {
   ide: ["macwindow", "square.grid.2x2", "sidebar.left"],
@@ -20,6 +20,7 @@ export const navSfSymbolCandidates: Record<
   team: ["person.3", "person.2", "person.crop.circle.badge.plus"],
   trader: ["bolt.horizontal", "cpu", "antenna.radiowaves.left.and.right", "wand.and.stars"],
   monitor: ["waveform.path.ecg", "clock.arrow.circlepath", "chart.xyaxis.line"],
+  broker: ["building.columns.fill", "banknote", "creditcard"],
   config: ["gearshape", "slider.horizontal.3", "wrench.and.screwdriver"],
 };
 

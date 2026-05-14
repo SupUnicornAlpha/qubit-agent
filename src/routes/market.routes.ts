@@ -11,6 +11,7 @@ import {
 } from "../runtime/market/klines-query";
 import { detectRegimeFromBars } from "../runtime/market/regime";
 import { runStructuredTune } from "../runtime/market/structured-tune";
+import { queryMarketNewsBrief } from "../runtime/market/news-brief-query";
 
 export const marketRouter = new Hono();
 
@@ -83,6 +84,30 @@ marketRouter.get("/klines", async (c) => {
       return c.json({ ok: false, error: msg }, 503);
     }
     console.error("[market/klines]", e);
+    return c.json({ ok: false, error: msg }, 500);
+  }
+});
+
+/**
+ * 资讯页：个股 Yahoo 头条 RSS + 配置中心 `qubit-news` 补充；板块侧为 Yahoo 行业/板块映射到 sector ETF 的 RSS 头条。
+ * Query: symbol（必填）, exchange, limit（默认 12，最大 30）。
+ */
+marketRouter.get("/news-brief", async (c) => {
+  try {
+    const symbol = (c.req.query("symbol") ?? "").trim();
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    const exchange = c.req.query("exchange") ?? "";
+    const limitRaw = c.req.query("limit");
+    const limit = limitRaw !== undefined && limitRaw !== "" ? Number(limitRaw) : undefined;
+    const data = await queryMarketNewsBrief({
+      symbol,
+      exchange,
+      limit: Number.isFinite(limit as number) ? (limit as number) : undefined,
+    });
+    return c.json({ ok: true, data });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[market/news-brief]", e);
     return c.json({ ok: false, error: msg }, 500);
   }
 });

@@ -173,17 +173,21 @@ export const IdeBacktestDock: FC = () => {
 
   return (
     <aside style={styles.dock} aria-label="回测与调参">
-      <div style={styles.tabs}>
+      <div className="qb-dock-tabstrip" role="tablist">
         <button
           type="button"
-          style={{ ...styles.tab, ...(tab === "backtest" ? styles.tabOn : {}) }}
+          role="tab"
+          aria-selected={tab === "backtest"}
+          className={`qb-dock-tab${tab === "backtest" ? " qb-dock-tab--active" : ""}`}
           onClick={() => setTab("backtest")}
         >
           回测参数
         </button>
         <button
           type="button"
-          style={{ ...styles.tab, ...(tab === "tune" ? styles.tabOn : {}) }}
+          role="tab"
+          aria-selected={tab === "tune"}
+          className={`qb-dock-tab${tab === "tune" ? " qb-dock-tab--active" : ""}`}
           onClick={() => setTab("tune")}
         >
           智能调参
@@ -256,7 +260,7 @@ export const IdeBacktestDock: FC = () => {
             </div>
           ) : null}
           <div style={styles.row}>
-            <button type="button" style={styles.btnPrimary} disabled={btLoading} onClick={() => void runBacktest()}>
+            <button type="button" className="qb-btn-primary" disabled={btLoading} onClick={() => void runBacktest()}>
               {btLoading ? "运行中…" : "运行回测"}
             </button>
             <span style={styles.muted}>标的取自工具条 · SMA 交叉 · POST /api/v1/market/backtests</span>
@@ -281,10 +285,10 @@ export const IdeBacktestDock: FC = () => {
             <input style={styles.inp} value={tuneSlow} onChange={(e) => setTuneSlow(e.target.value)} />
           </label>
           <div style={styles.row}>
-            <button type="button" style={styles.btnPrimary} disabled={tuneLoading} onClick={() => void runTune()}>
+            <button type="button" className="qb-btn-primary" disabled={tuneLoading} onClick={() => void runTune()}>
               {tuneLoading ? "扫描中…" : "运行智能调参（Grid）"}
             </button>
-            <button type="button" style={styles.btnGhost} disabled={regLoading} onClick={() => void runRegime()}>
+            <button type="button" className="qb-btn-ghost" disabled={regLoading} onClick={() => void runRegime()}>
               {regLoading ? "检测中…" : "盘势检测（Regime）"}
             </button>
           </div>
@@ -306,25 +310,6 @@ const styles: Record<string, CSSProperties> = {
     borderTop: "1px solid #27272a",
     background: "#0c0c0e",
     overflow: "hidden",
-  },
-  tabs: {
-    display: "flex",
-    flexDirection: "row",
-    borderBottom: "1px solid #27272a",
-    flexShrink: 0,
-  },
-  tab: {
-    padding: "10px 16px",
-    fontSize: 13,
-    border: "none",
-    background: "transparent",
-    color: "#71717a",
-    cursor: "pointer",
-  },
-  tabOn: {
-    color: "#e4e4e7",
-    fontWeight: 600,
-    boxShadow: "inset 0 -2px 0 #3b82f6",
   },
   body: {
     flex: 1,
@@ -351,25 +336,6 @@ const styles: Record<string, CSSProperties> = {
   },
   check: { display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#a1a1aa" },
   row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 },
-  btnPrimary: {
-    padding: "8px 18px",
-    borderRadius: 6,
-    border: "none",
-    background: "#3b82f6",
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: "pointer",
-  },
-  btnGhost: {
-    padding: "8px 14px",
-    borderRadius: 6,
-    border: "1px solid #3f3f46",
-    background: "#18181b",
-    color: "#e4e4e7",
-    fontSize: 12,
-    cursor: "pointer",
-  },
   muted: { fontSize: 11, color: "#52525b", flex: 1, minWidth: 120 },
   hint: { margin: 0, fontSize: 12, color: "#a1a1aa", lineHeight: 1.45 },
   err: { fontSize: 12, color: "#fca5a5" },

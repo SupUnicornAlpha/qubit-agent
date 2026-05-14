@@ -1,16 +1,18 @@
 import { config } from "./config";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
-import { createServer } from "./server";
-import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { runMigrations } from "./db/sqlite/migrate";
-import { workflowScheduler } from "./runtime/workflow/scheduler";
+import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { executionWorker } from "./runtime/execution/execution-worker";
+import { seedAgentDefinitions } from "./runtime/seed-agent-definitions";
+import { workflowScheduler } from "./runtime/workflow/scheduler";
+import { createServer } from "./server";
 
 async function main() {
   console.log(`[QUBIT] Starting in ${config.env} mode...`);
 
   // Apply DB migrations
   await runMigrations();
+  await seedAgentDefinitions();
 
   await registerBuiltinConnectors();
   await startAllAgents();
