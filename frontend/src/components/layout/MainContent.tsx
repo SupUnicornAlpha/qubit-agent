@@ -229,6 +229,32 @@ function shortWorkflowLabel(workflowRunId: string): string {
   return workflowRunId.length > 12 ? `${workflowRunId.slice(0, 8)}…` : workflowRunId;
 }
 
+const CHAT_SESSION_AGENT_BOARD_LS = "qubit:chatSessionAgentBoardOpen";
+const CHAT_SIDEBAR_WIDTH_LS = "qubit:chatSidebarWidthPx";
+
+function readChatSidebarWidthPx(): number {
+  if (typeof window === "undefined") return 220;
+  try {
+    const n = Number.parseInt(localStorage.getItem(CHAT_SIDEBAR_WIDTH_LS) ?? "", 10);
+    if (Number.isFinite(n) && n >= 120 && n <= 640) return n;
+  } catch {
+    /* ignore */
+  }
+  return 220;
+}
+
+function readSessionAgentBoardOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = localStorage.getItem(CHAT_SESSION_AGENT_BOARD_LS);
+    if (v === "false") return false;
+    if (v === "true") return true;
+  } catch {
+    /* ignore */
+  }
+  return true;
+}
+
 function groupAgentsBoardByRole(
   agents: SessionAgentBoardItem[]
 ): Array<{ role: string; displayName: string; instances: SessionAgentBoardItem[] }> {
@@ -286,6 +312,87 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const [expandedAgentRoles, setExpandedAgentRoles] = useState<Set<string>>(() => new Set());
   const [a2aMessages, setA2aMessages] = useState<SessionA2AMessageItem[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [sessionAgentBoardOpen, setSessionAgentBoardOpen] = useState(readSessionAgentBoardOpen);
+  const [chatSidebarWidthPx, setChatSidebarWidthPx] = useState(readChatSidebarWidthPx);
+  const chatLayoutRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CHAT_SESSION_AGENT_BOARD_LS, String(sessionAgentBoardOpen));
+    } catch {
+      /* ignore */
+    }
+  }, [sessionAgentBoardOpen]);
+
+  const chatGridTemplateColumns = useMemo(() => {
+    const w = chatSidebarWidthPx;
+    const grip = 6;
+    if (sessionAgentBoardOpen) {
+      return ideEmbedded
+        ? `minmax(120px, ${w}px) ${grip}px minmax(0, 1fr) minmax(120px, 20%)`
+        : `minmax(140px, ${w}px) ${grip}px minmax(0, 1fr) minmax(160px, 1fr)`;
+    }
+    return ideEmbedded
+      ? `minmax(120px, ${w}px) ${grip}px minmax(0, 1fr)`
+      : `minmax(140px, ${w}px) ${grip}px minmax(0, 1fr)`;
+  }, [sessionAgentBoardOpen, ideEmbedded, chatSidebarWidthPx]);
+
+  useLayoutEffect(() => {
+    const el = chatLayoutRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const clamp = () => {
+      const rect = el.getBoundingClientRect();
+      const ratioMax = sessionAgentBoardOpen ? 0.38 : 0.52;
+      const maxW = Math.min(560, Math.floor(rect.width * ratioMax));
+      const minW = ideEmbedded ? 120 : 140;
+      setChatSidebarWidthPx((prev) => Math.min(maxW, Math.max(minW, prev)));
+    };
+    const ro = new ResizeObserver(() => {
+      clamp();
+    });
+    ro.observe(el);
+    clamp();
+    return () => ro.disconnect();
+  }, [sessionAgentBoardOpen, ideEmbedded]);
+
+  const onChatSidebarResizeMouseDown = useCallback(
+    (e: ReactMouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const layout = chatLayoutRef.current;
+      if (!layout) return;
+      const startX = e.clientX;
+      const startW = chatSidebarWidthPx;
+      const clampW = (candidate: number) => {
+        const rect = layout.getBoundingClientRect();
+        const ratioMax = sessionAgentBoardOpen ? 0.38 : 0.52;
+        const maxW = Math.min(560, Math.floor(rect.width * ratioMax));
+        const minW = ideEmbedded ? 120 : 140;
+        return Math.min(maxW, Math.max(minW, Math.round(candidate)));
+      };
+      let lastW = startW;
+      const onMove = (ev: MouseEvent) => {
+        lastW = clampW(startW + (ev.clientX - startX));
+        setChatSidebarWidthPx(lastW);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        try {
+          localStorage.setItem(CHAT_SIDEBAR_WIDTH_LS, String(lastW));
+        } catch {
+          /* ignore */
+        }
+      };
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [chatSidebarWidthPx, sessionAgentBoardOpen, ideEmbedded]
+  );
 
   const agentsBoardByRole = useMemo(() => groupAgentsBoardByRole(agentsBoard), [agentsBoard]);
 
@@ -642,7 +749,14 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         ) : null}
         {errorText ? <div style={styles.errorBox}>{errorText}</div> : null}
       </div>
-      <div style={{ ...styles.chatLayout, ...(ideEmbedded ? styles.chatLayoutIde : {}) }}>
+      <div
+        ref={chatLayoutRef}
+        style={{
+          ...styles.chatLayout,
+          ...(ideEmbedded ? styles.chatLayoutIde : {}),
+          gridTemplateColumns: chatGridTemplateColumns,
+        }}
+      >
         <div style={styles.chatSidebar}>
           <button
             type="button"
@@ -670,7 +784,25 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           </div>
         </div>
 
+        <button
+          type="button"
+          aria-label="拖动调整会话列表与对话区宽度"
+          title="拖动调整宽度"
+          onMouseDown={onChatSidebarResizeMouseDown}
+          style={styles.chatColResizer}
+        />
+
         <div style={styles.chatMain}>
+          <div style={styles.chatBoardToggleRow}>
+            <button
+              type="button"
+              className="qb-btn-ghost qb-btn--compact"
+              onClick={() => setSessionAgentBoardOpen((o) => !o)}
+              title={sessionAgentBoardOpen ? "隐藏右侧会话 Agent 看板" : "显示会话 Agent 看板"}
+            >
+              {sessionAgentBoardOpen ? "隐藏会话看板" : "显示会话看板"}
+            </button>
+          </div>
           <div style={styles.chatMessages}>
             {chatMessages.map((msg) => (
               <div
@@ -721,9 +853,20 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           </form>
         </div>
 
+        {sessionAgentBoardOpen ? (
         <div style={styles.boardCol}>
+          <div style={styles.boardColHeader}>
+            <h3 style={{ ...styles.subTitle, margin: 0 }}>会话 Agent 看板</h3>
+            <button
+              type="button"
+              className="qb-btn-ghost qb-btn--compact"
+              onClick={() => setSessionAgentBoardOpen(false)}
+              title="隐藏右侧看板"
+            >
+              隐藏
+            </button>
+          </div>
           <div style={styles.boardColScroll}>
-            <h3 style={{ ...styles.subTitle, marginTop: 0 }}>会话 Agent 看板</h3>
             <div style={styles.boardList}>
               {agentsBoardByRole.map((group) => {
                 const expanded = expandedAgentRoles.has(group.role);
@@ -836,6 +979,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             </div>
           </div>
         </div>
+        ) : null}
       </div>
     </div>
   );
@@ -3013,8 +3157,7 @@ const styles: Record<string, CSSProperties> = {
   },
   chatLayout: {
     display: "grid",
-    /** 两侧用 fr 随主区变窄，避免 min 宽之和把整行撑出横向滚动条 */
-    gridTemplateColumns: "minmax(140px, 1fr) minmax(0, 2.6fr) minmax(160px, 1fr)",
+    /** 列宽由 ChatPanel 内联 gridTemplateColumns 控制（会话列表 px + 拖拽条 + 主区 + 可选看板） */
     gridTemplateRows: "minmax(0, 1fr)",
     gap: 10,
     flex: 1,
@@ -3032,9 +3175,23 @@ const styles: Record<string, CSSProperties> = {
     width: "100%",
     maxWidth: "100%",
     gridTemplateRows: "minmax(0, 1fr)",
-    gridTemplateColumns: "minmax(120px, 22%) minmax(0, 1fr) minmax(120px, 20%)",
     gap: 8,
   },
+  chatColResizer: {
+    margin: 0,
+    padding: 0,
+    border: "none",
+    width: 6,
+    minWidth: 6,
+    maxWidth: 6,
+    borderRadius: 4,
+    cursor: "col-resize",
+    touchAction: "none",
+    background: "var(--qb-chat-resizer-bg, #27272a)",
+    alignSelf: "stretch",
+    flexShrink: 0,
+    opacity: 0.55,
+  } satisfies CSSProperties,
   chatIdeRoot: {
     display: "flex",
     flexDirection: "column",
@@ -3093,6 +3250,14 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
     flex: 1,
   },
+  chatBoardToggleRow: {
+    display: "flex",
+    justifyContent: "flex-end",
+    alignItems: "center",
+    flexShrink: 0,
+    marginBottom: 6,
+    minWidth: 0,
+  },
   chatMessages: {
     flex: 1,
     minHeight: 0,
@@ -3150,6 +3315,15 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
+  },
+  boardColHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    flexShrink: 0,
+    marginBottom: 8,
+    minWidth: 0,
   },
   boardColScroll: {
     flex: 1,
