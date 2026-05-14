@@ -26,10 +26,12 @@ export function resolveEffectiveKlinesSource(params: {
   hasTushareToken: boolean;
 }): KlinesDataSourceMeta {
   const mode = parseKlinesDataSourceSetting(qubitDataSettings(params.settings).klinesDataSource);
-  if (params.period !== "1d") {
-    return "synthetic";
-  }
   if (mode === "synthetic") return "synthetic";
+  const intraday = params.period !== "1d";
+  if (intraday) {
+    /** 分钟/小时 K 仅接 Yahoo Chart；Tushare 当前连接器仅日线 */
+    return "yahoo_chart";
+  }
   if (mode === "yahoo_chart") return "yahoo_chart";
   if (mode === "tushare_daily") {
     return params.hasTushareToken ? "tushare_daily" : "synthetic";
@@ -123,24 +125,7 @@ interface YahooChartResponse {
   };
 }
 
-export async function fetchYahooFinanceDailyBars(params: FetchBarsParams): Promise<BarData[]> {
-  const ticker = symbolToYahooSymbol(params.symbol, params.exchange || "");
-  if (!ticker) throw new Error("yahoo_chart: empty symbol");
-  const startMs = Date.parse(params.startDate);
-  const endMs = Date.parse(params.endDate);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
-    throw new Error("yahoo_chart: invalid date range");
-  }
-  const period1 = Math.floor(startMs / 1000);
-  const period2 = Math.ceil(endMs / 1000) + 86_400;
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1}&period2=${period2}&interval=1d`;
-  const res = await fetch(url, {
-    headers: { "User-Agent": UA, Accept: "application/json" },
-  });
-  const json = (await res.json()) as YahooChartResponse;
-  if (!res.ok) {
-    throw new Error(`yahoo_chart: HTTP ${res.status}`);
-  }
+function parseYahooChartResultToBars(json: YahooChartResponse, params: FetchBarsParams): BarData[] {
   const err = json.chart?.error;
   if (err?.description) {
     throw new Error(`yahoo_chart: ${err.description}`);
@@ -175,4 +160,140 @@ export async function fetchYahooFinanceDailyBars(params: FetchBarsParams): Promi
   }
   bars.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   return bars;
+}
+
+async function fetchYahooChartJson(
+  ticker: string,
+  period1Sec: number,
+  period2Sec: number,
+  interval: string
+): Promise<YahooChartResponse> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1Sec}&period2=${period2Sec}&interval=${encodeURIComponent(interval)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": UA, Accept: "application/json" },
+  });
+  const json = (await res.json()) as YahooChartResponse;
+  if (!res.ok) {
+    throw new Error(`yahoo_chart: HTTP ${res.status}`);
+  }
+  return json;
+}
+
+/** Yahoo Chart `interval`：4h 无原生档位，先拉 60m 再按 4h 桶合并 */
+function yahooChartIntervalForPeriod(period: FetchBarsParams["period"]): string | null {
+  switch (period) {
+    case "1d":
+      return "1d";
+    case "1m":
+      return "1m";
+    case "5m":
+      return "5m";
+    case "15m":
+      return "15m";
+    case "30m":
+      return "30m";
+    case "1h":
+      return "60m";
+    case "4h":
+      return "60m";
+    default:
+      return null;
+  }
+}
+
+function aggregateBarsByMsWindow(
+  bars: BarData[],
+  windowMs: number,
+  symbol: string,
+  exchange: string
+): BarData[] {
+  if (bars.length === 0) return [];
+  const sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const out: BarData[] = [];
+  let bucketKey = Number.NaN;
+  let bucket: BarData[] = [];
+  const floorKey = (iso: string) => {
+    const t = new Date(iso).getTime();
+    return Math.floor(t / windowMs) * windowMs;
+  };
+  const flush = () => {
+    if (bucket.length === 0) return;
+    const o = bucket[0].open;
+    const c = bucket[bucket.length - 1].close;
+    const h = Math.max(...bucket.map((x) => x.high));
+    const l = Math.min(...bucket.map((x) => x.low));
+    const vol = bucket.reduce((s, x) => s + x.volume, 0);
+    out.push({
+      symbol,
+      exchange,
+      open: o,
+      high: h,
+      low: l,
+      close: c,
+      volume: vol,
+      turnover: 0,
+      timestamp: new Date(bucketKey).toISOString(),
+    });
+    bucket = [];
+  };
+  for (const b of sorted) {
+    const k = floorKey(b.timestamp);
+    if (bucket.length === 0) {
+      bucketKey = k;
+      bucket = [b];
+      continue;
+    }
+    if (k === bucketKey) {
+      bucket.push(b);
+    } else {
+      flush();
+      bucketKey = k;
+      bucket = [b];
+    }
+  }
+  flush();
+  return out;
+}
+
+/**
+ * Yahoo Finance v8 chart：日线 + 分钟/小时（`1m`…`4h`）。
+ * 历史深度受 Yahoo 对细周期限制，请求过长时返回条数可能少于 `limit`。
+ */
+export async function fetchYahooFinanceBars(params: FetchBarsParams): Promise<BarData[]> {
+  const ticker = symbolToYahooSymbol(params.symbol, params.exchange || "");
+  if (!ticker) throw new Error("yahoo_chart: empty symbol");
+  const startMs = Date.parse(params.startDate);
+  const endMs = Date.parse(params.endDate);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+    throw new Error("yahoo_chart: invalid date range");
+  }
+  const period1 = Math.floor(startMs / 1000);
+  let period2 = Math.ceil(endMs / 1000);
+  const period = params.period;
+
+  if (period === "1d") {
+    period2 += 86_400;
+    const json = await fetchYahooChartJson(ticker, period1, period2, "1d");
+    return parseYahooChartResultToBars(json, params);
+  }
+
+  const yahooIv = yahooChartIntervalForPeriod(period);
+  if (!yahooIv) return [];
+
+  const json = await fetchYahooChartJson(ticker, period1, period2, yahooIv);
+  let bars = parseYahooChartResultToBars(json, params);
+  if (period === "4h") {
+    bars = aggregateBarsByMsWindow(
+      bars,
+      4 * 60 * 60 * 1000,
+      params.symbol,
+      params.exchange || "UNKNOWN"
+    );
+  }
+  return bars;
+}
+
+/** @deprecated 使用 {@link fetchYahooFinanceBars}（已支持多周期） */
+export async function fetchYahooFinanceDailyBars(params: FetchBarsParams): Promise<BarData[]> {
+  return fetchYahooFinanceBars(params);
 }

@@ -5,7 +5,7 @@ import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { getDataDir, writePackSelfEditMarkdown, type AgentPackSelfEditTarget } from "../../agent/agent-pack-service";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
-import { runAnalystTeam, ANALYST_TEAM_ROLES } from "../../msa/analyst-team";
+import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../../msa/analyst-team";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import type { AgentRole } from "../../../types/entities";
@@ -359,15 +359,31 @@ export async function actNode(
         const analystRoles =
           Array.isArray(rolesRaw) && rolesRaw.length > 0
             ? (rolesRaw.filter((r): r is AgentRole =>
-                typeof r === "string" && (ANALYST_TEAM_ROLES as readonly string[]).includes(r)
+                typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
               ) as AgentRole[])
             : undefined;
+
+        const defIdsRaw = toolParams["analyst_definition_ids"];
+        const analystDefinitionIds =
+          Array.isArray(defIdsRaw) && defIdsRaw.length > 0
+            ? defIdsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+            : undefined;
+
+        const agRaw = toolParams["agent_group_id"];
+        const agentGroupId =
+          typeof agRaw === "string" && agRaw.trim()
+            ? agRaw.trim()
+            : agRaw === null || agRaw === ""
+              ? null
+              : undefined;
 
         const teamResult = await runAnalystTeam({
           workflowRunId: state.workflowId,
           ticker,
           context,
+          agentGroupId,
           analystRoles,
+          analystDefinitionIds,
         });
         return { result: "ok" as const, analystTeamResult: teamResult };
       }

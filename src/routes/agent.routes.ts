@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { reloadBuiltinConnectorsFromSettings } from "../connectors/bootstrap";
 import { getDb } from "../db/sqlite/client";
@@ -37,6 +37,7 @@ import {
 import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
+import { RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET } from "../runtime/msa/analyst-team";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
   installCatalogItemToProject,
@@ -61,32 +62,64 @@ import { ALL_AGENT_ROLES, type AgentRole } from "../types/entities";
 
 export const agentRouter = new Hono();
 
-const ANALYST_TEAM_MEMBER_ROLES: AgentRole[] = [
-  "analyst_fundamental",
-  "analyst_technical",
-  "analyst_sentiment",
-  "analyst_macro",
-];
-
 function validateAgentGroupRelationsJson(relations: unknown, memberRoles: string[]): string | null {
   if (!Array.isArray(relations)) return "relationsJson must be an array";
-  const set = new Set(memberRoles);
+  const roleSet = new Set(memberRoles);
+
+  const asEdgeString = (v: unknown): string | null => {
+    if (typeof v === "string") return v;
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+    return null;
+  };
+
   for (const row of relations) {
-    if (!row || typeof row !== "object") return "each relation must be an object { from, to }";
+    if (row == null) continue;
+    if (typeof row !== "object" || Array.isArray(row)) return "each relation entry must be a plain object";
     const rec = row as Record<string, unknown>;
-    const from = rec["from"];
-    const to = rec["to"];
-    if (typeof from !== "string" || typeof to !== "string")
-      return "relation from/to must be strings";
-    if (from === to) return "relation from and to must differ";
-    if (!set.has(from) || !set.has(to)) {
-      return `relation endpoints must be roles of members in this group (got ${from} → ${to})`;
+    if (Object.keys(rec).length === 0) continue;
+
+    if (rec["type"] === "topology_canvas") {
+      const np = rec["nodePositions"];
+      if (np !== undefined && (typeof np !== "object" || np === null || Array.isArray(np))) {
+        return "topology_canvas.nodePositions must be an object";
+      }
+      if (np && typeof np === "object" && !Array.isArray(np)) {
+        for (const [k, v] of Object.entries(np as Record<string, unknown>)) {
+          if (!roleSet.has(k)) return `topology layout key "${k}" is not a member role in this group`;
+          if (!v || typeof v !== "object" || Array.isArray(v)) return "each layout value must be {x,y}";
+          const o = v as Record<string, unknown>;
+          const x = o["x"];
+          const y = o["y"];
+          const xn = typeof x === "number" ? x : typeof x === "string" ? Number.parseFloat(x) : NaN;
+          const yn = typeof y === "number" ? y : typeof y === "string" ? Number.parseFloat(y) : NaN;
+          if (!Number.isFinite(xn) || !Number.isFinite(yn)) return "layout entries need numeric x,y";
+        }
+      }
+      continue;
     }
-    if (
-      !ANALYST_TEAM_MEMBER_ROLES.includes(from as AgentRole) ||
-      !ANALYST_TEAM_MEMBER_ROLES.includes(to as AgentRole)
-    ) {
-      return `topology edges only support analyst roles: ${ANALYST_TEAM_MEMBER_ROLES.join(", ")}`;
+
+    if (rec["kind"] === "broadcast") {
+      const from = asEdgeString(rec["from"]);
+      const targets = rec["targets"];
+      if (from === null) return "broadcast.from must be a string";
+      if (!Array.isArray(targets)) return "broadcast.targets must be an array";
+      if (!roleSet.has(from)) return `broadcast source "${from}" is not a member of this group`;
+      for (const t of targets) {
+        const ts = asEdgeString(t);
+        if (ts === null) return "broadcast target must be a string";
+        if (ts === from) return "broadcast from and target must differ";
+        if (!roleSet.has(ts)) return `broadcast target "${ts}" is not a member of this group`;
+      }
+      continue;
+    }
+
+    const from = asEdgeString(rec["from"]);
+    const to = asEdgeString(rec["to"]);
+    if (from === null && to === null) continue;
+    if (from === null || to === null) return "relation from/to must be strings";
+    if (from === to) return "relation from and to must differ";
+    if (!roleSet.has(from) || !roleSet.has(to)) {
+      return `relation endpoints must be roles of members in this group (got ${from} → ${to})`;
     }
   }
   return null;
@@ -1620,7 +1653,7 @@ agentRouter.delete("/agent-groups/:id/members/:memberId", async (c) => {
 
 // ─── Agent 组（研究团队可选）────────────────────────────────────────────────────
 
-async function assertAnalystGroupMembers(definitionIds: string[]) {
+async function assertResearchTeamGroupMembers(definitionIds: string[]) {
   const db = await getDb();
   if (definitionIds.length === 0) {
     return { ok: false as const, error: "members must include at least one agent definition" };
@@ -1632,24 +1665,13 @@ async function assertAnalystGroupMembers(definitionIds: string[]) {
   if (defs.length !== definitionIds.length) {
     return { ok: false as const, error: "one or more definition ids not found" };
   }
-  const roles = defs.map((d) => d.role as AgentRole);
-  for (const r of roles) {
-    if (!ANALYST_TEAM_MEMBER_ROLES.includes(r)) {
+  for (const d of defs) {
+    if (!RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET.has(d.role as string)) {
       return {
         ok: false as const,
-        error: `only analyst team roles allowed in group: ${ANALYST_TEAM_MEMBER_ROLES.join(", ")}; got ${r}`,
+        error: `only research-team / topology roles allowed in group; got ${d.role}`,
       };
     }
-  }
-  const seen = new Set<string>();
-  for (const r of roles) {
-    if (seen.has(r)) {
-      return {
-        ok: false as const,
-        error: `duplicate analyst role in group: ${r} (one definition per role)`,
-      };
-    }
-    seen.add(r);
   }
   return { ok: true as const, definitions: defs };
 }
@@ -1753,7 +1775,7 @@ agentRouter.post("/groups", async (c) => {
   }
   const ordered = [...body.members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   const definitionIds = ordered.map((m) => m.definitionId);
-  const check = await assertAnalystGroupMembers(definitionIds);
+  const check = await assertResearchTeamGroupMembers(definitionIds);
   if (!check.ok) return c.json({ error: check.error }, 400);
 
   if (body.relationsJson !== undefined) {
@@ -1801,7 +1823,7 @@ agentRouter.patch("/groups/:id", async (c) => {
   if (body.members) {
     const ordered = [...body.members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     const definitionIds = ordered.map((m) => m.definitionId);
-    const check = await assertAnalystGroupMembers(definitionIds);
+    const check = await assertResearchTeamGroupMembers(definitionIds);
     if (!check.ok) return c.json({ error: check.error }, 400);
     await db.delete(agentGroupMember).where(eq(agentGroupMember.groupId, id));
     for (let i = 0; i < ordered.length; i++) {

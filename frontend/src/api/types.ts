@@ -265,8 +265,8 @@ export interface AgentGroupRecord {
   id: string;
   name: string;
   description: string;
-  /** 有向边：from 先执行，其结论文本传入 to 的上下文（须为编组内 analyst_* 角色） */
-  relationsJson?: Array<{ from: string; to: string }> | unknown[];
+  /** 有向边 / 广播 / 画布布局（见 researchTeamTopology） */
+  relationsJson?: unknown[] | Array<{ from: string; to: string }>;
   workspaceId?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -349,6 +349,9 @@ export interface WorkflowTimeline {
 export interface SessionAgentBoardItem {
   instanceId: string;
   workflowRunId: string;
+  workflowStartedAt?: string | null;
+  workflowStatus?: string | null;
+  workflowMode?: string | null;
   role: string;
   name: string;
   status: "idle" | "running" | "error" | "stopped";

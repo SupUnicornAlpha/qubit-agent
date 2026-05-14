@@ -1,39 +1,35 @@
 /**
  * Analyst Team & MSA API Routes
  *
- * POST /api/v1/analyst/run          — 启动分析师团队分析（异步，立即返回 jobId）
+ * POST /api/v1/analyst/run          — 启动研究团队分析（异步，立即返回 jobId；经 Orchestrator 派发）
  * GET  /api/v1/analyst/job/:jobId   — 轮询分析任务状态与结果
  * GET  /api/v1/analyst/signals/:workflowId  — 查询工作流的所有分析师信号
  * GET  /api/v1/analyst/fusion/:workflowId   — 查询工作流的信号融合结果
  */
 
 import { randomUUID } from "node:crypto";
-import { Hono } from "hono";
 import { eq, sql } from "drizzle-orm";
+import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { analystSignal, agentGroup, agentRoleCatalog, signalFusionResult, workflowRun } from "../db/sqlite/schema";
 import {
-  ANALYST_TEAM_ROLES,
-  runAnalystTeam,
-  type AnalystTeamResult,
-} from "../runtime/msa/analyst-team";
-import type { AgentRole } from "../types/entities";
+  agentGroup,
+  agentRoleCatalog,
+  analystSignal,
+  signalFusionResult,
+  workflowRun,
+} from "../db/sqlite/schema";
+import { dispatchTaskToRole } from "../runtime/agent-pool";
+import {
+  failAnalystResearchJob,
+  getAnalystResearchJob,
+  registerAnalystResearchJob,
+} from "../runtime/msa/analyst-research-jobs";
+import { RESEARCH_TEAM_SLOT_SET } from "../runtime/msa/analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
+import type { AgentRole } from "../types/entities";
 
 export const analystRouter = new Hono();
-
-/** In-memory async job store (local single-process app, no persistence needed). */
-interface AnalystJob {
-  status: "running" | "completed" | "failed";
-  result?: AnalystTeamResult;
-  error?: string;
-  workflowRunId: string;
-  ticker: string;
-  startedAt: number;
-  endedAt?: number;
-}
-const analystJobs = new Map<string, AnalystJob>();
 
 /**
  * POST /api/v1/analyst/run
@@ -45,9 +41,9 @@ analystRouter.post("/run", async (c) => {
     ticker: string;
     context?: string;
     agentGroupId?: string | null;
-    /** 仅运行这些 analyst_* 角色，与编组解析结果取交集 */
+    /** 仅运行这些研究团队槽位角色，与编组解析结果取交集 */
     analystRoles?: string[] | null;
-    /** 仅运行这些 definition id（analyst_*），与编组解析结果取交集；若提供则优先于 analystRoles */
+    /** 仅运行这些 definition id（研究团队槽位），与编组解析结果取交集；若提供则优先于 analystRoles */
     analystDefinitionIds?: string[] | null;
   }>();
 
@@ -55,10 +51,13 @@ analystRouter.post("/run", async (c) => {
     return c.json({ error: "workflowRunId and ticker are required" }, 400);
   }
 
-  // Verify workflow exists
   const db = await getDb();
   if (body.agentGroupId) {
-    const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, body.agentGroupId)).limit(1);
+    const grp = await db
+      .select()
+      .from(agentGroup)
+      .where(eq(agentGroup.id, body.agentGroupId))
+      .limit(1);
     if (!grp[0]) return c.json({ error: "agent group not found" }, 404);
   }
   const wf = await db
@@ -72,46 +71,53 @@ analystRouter.post("/run", async (c) => {
   }
 
   const jobId = randomUUID();
-  const job: AnalystJob = {
+  registerAnalystResearchJob(jobId, {
     status: "running",
     workflowRunId: body.workflowRunId,
     ticker: body.ticker,
     startedAt: Date.now(),
-  };
-  analystJobs.set(jobId, job);
+  });
 
-  const roleSet = new Set(ANALYST_TEAM_ROLES);
   const analystRoles =
     Array.isArray(body.analystRoles) && body.analystRoles.length > 0
-      ? (body.analystRoles.filter((r): r is AgentRole => typeof r === "string" && roleSet.has(r as AgentRole)) as AgentRole[])
+      ? (body.analystRoles.filter(
+          (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
+        ) as AgentRole[])
       : undefined;
 
   const analystDefinitionIds =
     Array.isArray(body.analystDefinitionIds) && body.analystDefinitionIds.length > 0
-      ? body.analystDefinitionIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      ? body.analystDefinitionIds.filter(
+          (x): x is string => typeof x === "string" && x.trim().length > 0
+        )
       : undefined;
 
-  // Fire-and-forget: run the heavy analysis in the background.
-  void runAnalystTeam({
-    workflowRunId: body.workflowRunId,
-    ticker: body.ticker,
-    context: body.context,
-    agentGroupId: body.agentGroupId,
-    analystRoles,
-    analystDefinitionIds,
-  })
-    .then((result) => {
-      job.status = "completed";
-      job.result = result;
-      job.endedAt = Date.now();
-      console.log(`[AnalystRouter] job ${jobId} completed in ${job.endedAt - job.startedAt}ms`);
-    })
-    .catch((err) => {
-      job.status = "failed";
-      job.error = err instanceof Error ? err.message : String(err);
-      job.endedAt = Date.now();
-      console.error(`[AnalystRouter] job ${jobId} failed:`, err);
+  const taskId = randomUUID();
+  try {
+    await dispatchTaskToRole({
+      workflowId: body.workflowRunId,
+      role: "orchestrator",
+      payload: {
+        taskId,
+        taskType: "research_team_execute",
+        assignedRole: "orchestrator",
+        params: {
+          jobId,
+          ticker: body.ticker,
+          context: body.context,
+          agentGroupId: body.agentGroupId ?? undefined,
+          analystRoles: analystRoles ?? undefined,
+          analystDefinitionIds: analystDefinitionIds ?? undefined,
+        },
+      },
     });
+  } catch (err) {
+    failAnalystResearchJob(jobId, err);
+    return c.json(
+      { ok: false, error: err instanceof Error ? err.message : String(err), jobId },
+      500
+    );
+  }
 
   return c.json({ ok: true, jobId, status: "running" }, 202);
 });
@@ -122,7 +128,7 @@ analystRouter.post("/run", async (c) => {
  */
 analystRouter.get("/job/:jobId", (c) => {
   const jobId = c.req.param("jobId");
-  const job = analystJobs.get(jobId);
+  const job = getAnalystResearchJob(jobId);
   if (!job) return c.json({ error: "job not found" }, 404);
   return c.json({
     ok: true,

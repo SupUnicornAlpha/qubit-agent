@@ -1,0 +1,308 @@
+import type { FC, PointerEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { TeamTopologyEdge } from "../../lib/researchTeamTopology";
+
+const NODE_W = 112;
+const NODE_H = 48;
+const VB_W = 840;
+const VB_H = 480;
+
+function roleShortLabel(role: string): string {
+  return role.replace(/^analyst_/, "").replace(/_/g, " ");
+}
+
+function nodeRect(pos: { x: number; y: number }): { x: number; y: number; w: number; h: number } {
+  return { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2, w: NODE_W, h: NODE_H };
+}
+
+function centerBottom(pos: { x: number; y: number }): { x: number; y: number } {
+  return { x: pos.x, y: pos.y + NODE_H / 2 };
+}
+
+function centerTop(pos: { x: number; y: number }): { x: number; y: number } {
+  return { x: pos.x, y: pos.y - NODE_H / 2 };
+}
+
+export type TopologyDrawMode = "select" | "unicast" | "broadcast";
+
+export const ResearchTopologyCanvas: FC<{
+  roles: string[];
+  positions: Record<string, { x: number; y: number }>;
+  onPositionsChange: (next: Record<string, { x: number; y: number }>) => void;
+  edges: TeamTopologyEdge[];
+  onEdgesChange: (next: TeamTopologyEdge[]) => void;
+  drawMode: TopologyDrawMode;
+}> = ({ roles, positions, onPositionsChange, edges, onEdgesChange, drawMode }) => {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const markerId = `qb-topo-arrow-${useId().replace(/:/g, "")}`;
+  const [dragRole, setDragRole] = useState<string | null>(null);
+  const [uniSource, setUniSource] = useState<string | null>(null);
+  const [bcFrom, setBcFrom] = useState<string | null>(null);
+  const [bcPicks, setBcPicks] = useState<string[]>([]);
+
+  useEffect(() => {
+    setUniSource(null);
+    setBcFrom(null);
+    setBcPicks([]);
+  }, [drawMode]);
+
+  const removeEdgeAt = useCallback(
+    (i: number) => {
+      onEdgesChange(edges.filter((_, j) => j !== i));
+    },
+    [edges, onEdgesChange]
+  );
+
+  const onPointerDownRole = (role: string, e: PointerEvent<SVGRectElement>) => {
+    if (drawMode === "unicast") {
+      e.stopPropagation();
+      if (!uniSource) {
+        setUniSource(role);
+        return;
+      }
+      if (uniSource === role) {
+        setUniSource(null);
+        return;
+      }
+      const from = uniSource;
+      const to = role;
+      setUniSource(null);
+      if (from === to) return;
+      const exists = edges.some((x) => x.kind === "unicast" && x.from === from && x.to === to);
+      if (exists) {
+        onEdgesChange(edges.filter((x) => !(x.kind === "unicast" && x.from === from && x.to === to)));
+      } else {
+        onEdgesChange([...edges, { kind: "unicast", from, to }]);
+      }
+      return;
+    }
+    if (drawMode === "broadcast") {
+      e.stopPropagation();
+      if (!bcFrom) {
+        setBcFrom(role);
+        setBcPicks([]);
+        return;
+      }
+      if (role === bcFrom) return;
+      setBcPicks((prev) => (prev.includes(role) ? prev.filter((x) => x !== role) : [...prev, role]));
+      return;
+    }
+    if (drawMode === "select") {
+      e.stopPropagation();
+      svgRef.current?.setPointerCapture(e.pointerId);
+      setDragRole(role);
+    }
+  };
+
+  const onSvgPointerMove = (e: PointerEvent<SVGSVGElement>) => {
+    if (!dragRole || !svgRef.current) return;
+    const svg = svgRef.current;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+    const nx = Math.max(60, Math.min(VB_W - 60, p.x));
+    const ny = Math.max(36, Math.min(VB_H - 36, p.y));
+    onPositionsChange({ ...positions, [dragRole]: { x: nx, y: ny } });
+  };
+
+  const endDrag = (e: PointerEvent<SVGSVGElement>) => {
+    if (dragRole && svgRef.current?.hasPointerCapture(e.pointerId)) {
+      svgRef.current.releasePointerCapture(e.pointerId);
+    }
+    setDragRole(null);
+  };
+
+  const confirmBroadcast = () => {
+    if (!bcFrom || bcPicks.length === 0) return;
+    const targets = [...new Set(bcPicks)].filter((t) => t !== bcFrom);
+    if (targets.length === 0) return;
+    const next = edges.filter((e) => !(e.kind === "broadcast" && e.from === bcFrom));
+    next.push({ kind: "broadcast", from: bcFrom, targets });
+    onEdgesChange(next);
+    setBcFrom(null);
+    setBcPicks([]);
+  };
+
+  const cancelBroadcast = () => {
+    setBcFrom(null);
+    setBcPicks([]);
+  };
+
+  const edgeSegments = useMemo(() => {
+    const segs: Array<{
+      key: string;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      dashed?: boolean;
+      curve?: boolean;
+    }> = [];
+    for (const e of edges) {
+      const p1 = positions[e.from];
+      if (!p1) continue;
+      const start = centerBottom(p1);
+      if (e.kind === "unicast") {
+        const p2 = positions[e.to];
+        if (!p2) continue;
+        const end = centerTop(p2);
+        segs.push({
+          key: `u-${e.from}-${e.to}`,
+          x1: start.x,
+          y1: start.y,
+          x2: end.x,
+          y2: end.y,
+        });
+      } else {
+        e.targets.forEach((t, i) => {
+          const p2 = positions[t];
+          if (!p2) return;
+          const end = centerTop(p2);
+          segs.push({
+            key: `b-${e.from}-${t}-${i}`,
+            x1: start.x,
+            y1: start.y,
+            x2: end.x,
+            y2: end.y,
+            dashed: true,
+            curve: true,
+          });
+        });
+      }
+    }
+    return segs;
+  }, [edges, positions]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
+        {drawMode === "unicast" ? (
+          <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>
+            单向：先点<strong>起点</strong>，再点<strong>终点</strong>添加或移除连线；同起点再点一次可清除起点。
+            {uniSource ? ` 已选起点：${uniSource}` : ""}
+          </span>
+        ) : null}
+        {drawMode === "broadcast" ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>
+              广播：先点<strong>源</strong>，再点多个<strong>接收方</strong>（可多选），然后确认。同一源重复确认会覆盖该源的广播边。
+              {bcFrom ? ` 源=${bcFrom}，接收=${bcPicks.join(", ") || "（未选）"}` : ""}
+            </span>
+            <button type="button" className="qb-btn-secondary" style={{ fontSize: 11, padding: "4px 8px" }} onClick={confirmBroadcast} disabled={!bcFrom || bcPicks.length === 0}>
+              确认广播
+            </button>
+            <button type="button" className="qb-btn-secondary" style={{ fontSize: 11, padding: "4px 8px" }} onClick={cancelBroadcast}>
+              取消
+            </button>
+          </div>
+        ) : null}
+        {drawMode === "select" ? (
+          <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>选择：拖拽节点卡片调整布局。</span>
+        ) : null}
+      </div>
+
+      <svg
+        ref={svgRef}
+        width="100%"
+        height={VB_H}
+        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        style={{
+          background: "var(--qb-team-canvas-bg, #0c0c0e)",
+          border: "1px solid var(--qb-team-table-row-border, #27272a)",
+          borderRadius: 8,
+          touchAction: "none",
+        }}
+        onPointerMove={onSvgPointerMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      >
+        <defs>
+          <marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--qb-team-edge-fg, #71717a)" />
+          </marker>
+        </defs>
+
+        {edgeSegments.map((s) => {
+          const mx = (s.x1 + s.x2) / 2;
+          const my = (s.y1 + s.y2) / 2 - (s.curve ? 28 : 0);
+          const d = s.curve ? `M ${s.x1} ${s.y1} Q ${mx} ${my} ${s.x2} ${s.y2}` : `M ${s.x1} ${s.y1} L ${s.x2} ${s.y2}`;
+          return (
+            <path
+              key={s.key}
+              d={d}
+              fill="none"
+              stroke="var(--qb-team-edge-fg, #71717a)"
+              strokeWidth={1.5}
+              strokeDasharray={s.dashed ? "5 4" : undefined}
+              markerEnd={`url(#${markerId})`}
+            />
+          );
+        })}
+
+        {roles.map((role) => {
+          const pos = positions[role];
+          if (!pos) return null;
+          const { x, y, w, h } = nodeRect(pos);
+          const active = uniSource === role || bcFrom === role || (bcFrom !== null && bcPicks.includes(role));
+          return (
+            <g key={role}>
+              <rect
+                x={x}
+                y={y}
+                width={w}
+                height={h}
+                rx={8}
+                fill={active ? "rgba(59,130,246,0.25)" : "var(--qb-main-card-bg, #18181b)"}
+                stroke={active ? "#3b82f6" : "var(--qb-main-card-border, #3f3f46)"}
+                strokeWidth={active ? 2 : 1}
+                style={{ cursor: drawMode === "select" ? "grab" : "pointer" }}
+                onPointerDown={(e) => onPointerDownRole(role, e)}
+              />
+              <text
+                x={pos.x}
+                y={pos.y - 2}
+                textAnchor="middle"
+                fill="var(--qb-body-fg, #e4e4e7)"
+                fontSize={11}
+                fontWeight={600}
+                pointerEvents="none"
+              >
+                {roleShortLabel(role)}
+              </text>
+              <text x={pos.x} y={pos.y + 12} textAnchor="middle" fill="var(--qb-team-meta, #71717a)" fontSize={9} pointerEvents="none">
+                {role}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+
+      {edges.length > 0 ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>边列表</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", lineHeight: 1.6 }}>
+            {edges.map((e, i) => (
+              <li key={`e-${i}-${e.kind}`}>
+                {e.kind === "unicast" ? (
+                  <>
+                    单向 <code style={{ fontSize: 10 }}>{e.from}</code> → <code style={{ fontSize: 10 }}>{e.to}</code>{" "}
+                    <button type="button" className="qb-btn-secondary" style={{ fontSize: 10, padding: "2px 6px", marginLeft: 6 }} onClick={() => removeEdgeAt(i)}>
+                      删除
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    广播 <code style={{ fontSize: 10 }}>{e.from}</code> → [{e.targets.join(", ")}]{" "}
+                    <button type="button" className="qb-btn-secondary" style={{ fontSize: 10, padding: "2px 6px", marginLeft: 6 }} onClick={() => removeEdgeAt(i)}>
+                      删除
+                    </button>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+};

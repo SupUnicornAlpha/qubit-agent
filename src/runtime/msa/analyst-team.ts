@@ -75,6 +75,35 @@ export const ANALYST_TEAM_ROLES: AgentRole[] = [
   "analyst_macro",
 ];
 
+/** 研究团队画布可选角色：analyst_* 参与 MSA；其余产出 Markdown 辅助章节 */
+export const RESEARCH_TEAM_SLOT_ROLES: readonly AgentRole[] = [
+  "analyst_fundamental",
+  "analyst_technical",
+  "analyst_sentiment",
+  "analyst_macro",
+  "research",
+  "backtest",
+  "backtest_engineer",
+  "risk",
+  "risk_manager",
+] as const;
+
+/** 与 `RESEARCH_TEAM_SLOT_ROLES` 一致，供路由 / 图编排校验 */
+export const RESEARCH_TEAM_SLOT_SET = new Set<string>(RESEARCH_TEAM_SLOT_ROLES as readonly string[]);
+
+/**
+ * 可加入研究团队编组、可出现在 relations_json 拓扑中的角色（含 orchestrator）。
+ * orchestrator 仅用于编排/画布展示，不参与 `runAnalystTeam` 的并行 LLM 槽位。
+ */
+export const RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET = new Set<string>([
+  ...(RESEARCH_TEAM_SLOT_ROLES as readonly string[]),
+  "orchestrator",
+]);
+
+function isMsAnalystRole(role: AgentRole): boolean {
+  return (ANALYST_TEAM_ROLES as readonly string[]).includes(role);
+}
+
 export interface AnalystTeamResult {
   fusionId: string;
   ticker: string;
@@ -175,6 +204,39 @@ async function runAnalystLlm(params: {
   };
 }
 
+async function runAuxResearchLlm(params: {
+  role: AgentRole;
+  definitionId: string;
+  systemPrompt: string;
+  ticker: string;
+  context: string;
+}): Promise<string> {
+  const modelConfig = (await loadModelConfig()) ?? {
+    provider: "mock" as const,
+    model: "mock-analyst",
+    apiKey: "",
+  };
+  const userPrompt = `你是研究团队中的「${params.role}」专家。
+
+**标的**：${params.ticker}
+**团队上下文（含前置成员结论摘要）**：
+${params.context}
+
+请用 **Markdown** 输出一小节（不要输出 JSON），建议包含：要点列表、可执行建议、需关注的风险或回测注意点（视你的角色而定）。控制在 800 字以内。`;
+
+  try {
+    const answer = await runLlmGateway({
+      config: modelConfig,
+      systemPrompt: params.systemPrompt,
+      userPrompt,
+      onToken: () => {},
+    });
+    return answer.trim() || "（模型未返回内容）";
+  } catch (e) {
+    return `（${params.role} 推理失败：${(e as Error).message}）`;
+  }
+}
+
 async function resolveAnalystSlots(params: {
   db: Awaited<ReturnType<typeof getDb>>;
   agentGroupId?: string | null;
@@ -191,21 +253,21 @@ async function resolveAnalystSlots(params: {
     for (const row of rows) {
       if (!row.d.enabled) continue;
       const role = row.d.role as AgentRole;
-      if (!ANALYST_TEAM_ROLES.includes(role)) continue;
+      if (!RESEARCH_TEAM_SLOT_SET.has(role)) continue;
       slots.push({ role, definitionId: row.d.id, systemPrompt: row.d.systemPrompt });
     }
     if (slots.length === 0) {
       throw new Error(
-        "所选 Agent 组中没有可用的分析师定义（需为 analyst_fundamental / technical / sentiment / macro 且已启用）"
+        "所选 Agent 组中没有可用的研究团队槽位定义（需为 analyst_* / research / backtest / backtest_engineer / risk / risk_manager 之一且已启用）"
       );
     }
     return slots;
   }
 
   const dbDefs = await db.select().from(agentDefinition).where(eq(agentDefinition.enabled, true));
-  const analystDefs = dbDefs.filter((d) => ANALYST_TEAM_ROLES.includes(d.role as AgentRole));
+  const slotDefs = dbDefs.filter((d) => RESEARCH_TEAM_SLOT_SET.has(d.role as string));
   const definitionIdByRole: Partial<Record<AgentRole, string>> = {};
-  for (const def of analystDefs) {
+  for (const def of slotDefs) {
     const r = def.role as AgentRole;
     if (!definitionIdByRole[r]) definitionIdByRole[r] = def.id;
   }
@@ -219,38 +281,43 @@ async function resolveAnalystSlots(params: {
       "你是舆情分析师，分析新闻情绪/社媒/分析师评级，输出JSON：{signal,confidence,sentiment_score,reasoning,catalysts,risks}",
     analyst_macro:
       "你是宏观策略师，分析货币政策/经济周期/产业政策/全球联动，输出JSON：{signal,confidence,macro_cycle,policy_stance,reasoning}",
+    research:
+      "你是策略/研究撰写专家，将观点落实为可验证的策略纲要。输出 Markdown 小节（不要 JSON）。",
+    backtest:
+      "你是回测工程师，给出可执行的回测假设、数据窗口与评价指标。输出 Markdown（不要 JSON）。",
+    backtest_engineer:
+      "你是量化工程/实现专家，关注代码结构与可维护性。输出 Markdown（不要 JSON）。",
+    risk:
+      "你是风控专员，从规则与敞口角度审视当前结论。输出 Markdown（不要 JSON）。",
+    risk_manager:
+      "你是风控经理，综合评估尾部风险与合规边界。输出 Markdown（不要 JSON）。",
     orchestrator: "",
     market_data: "",
     news_event: "",
-    research: "",
-    backtest: "",
     simulation: "",
-    risk: "",
     execution: "",
     memory: "",
     audit: "",
     researcher_bull: "",
     researcher_bear: "",
-    risk_manager: "",
     portfolio_manager: "",
     stock_screener: "",
-    backtest_engineer: "",
     execution_trader: "",
     memory_curator: "",
   };
-  for (const def of analystDefs) {
+  for (const def of slotDefs) {
     prompts[def.role as AgentRole] = def.systemPrompt;
   }
 
   const slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }> = [];
-  for (const role of ANALYST_TEAM_ROLES) {
+  for (const role of RESEARCH_TEAM_SLOT_ROLES) {
     const defId = definitionIdByRole[role];
     if (!defId) continue;
     slots.push({ role, definitionId: defId, systemPrompt: prompts[role] });
   }
   if (slots.length === 0) {
     throw new Error(
-      "未在数据库中找到已启用的 analyst_* 定义，无法运行研究团队分析。请到「配置中心 → Agent」发布并启用 analyst_fundamental / analyst_technical / analyst_sentiment / analyst_macro，或重启后端以加载种子定义。"
+      "未在数据库中找到已启用的研究团队槽位定义。请到「配置中心 → Agent」启用 analyst_*、research、backtest、risk* 等角色，或重启后端加载种子。"
     );
   }
   return slots;
@@ -264,9 +331,9 @@ export async function runAnalystTeam(params: {
   ticker: string;
   context?: string;
   agentGroupId?: string | null;
-  /** 仅运行这些分析师角色（须为 analyst_*）；与编组解析结果取交集 */
+  /** 仅运行这些槽位角色；与编组解析结果取交集 */
   analystRoles?: AgentRole[] | null;
-  /** 仅运行这些 definition id（须为 analyst_* 且已启用）；与编组解析结果取交集；优先于 analystRoles */
+  /** 仅运行这些 definition id（研究团队槽位角色）；与编组解析结果取交集；优先于 analystRoles */
   analystDefinitionIds?: string[] | null;
 }): Promise<AnalystTeamResult> {
   const db = await getDb();
@@ -303,7 +370,7 @@ export async function runAnalystTeam(params: {
   if (params.agentGroupId) {
     const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, params.agentGroupId)).limit(1);
     if (grp[0]) {
-      relationEdges = parseTeamRelations(grp[0].relationsJson, ANALYST_TEAM_ROLES);
+      relationEdges = parseTeamRelations(grp[0].relationsJson, [...RESEARCH_TEAM_SLOT_ROLES]);
     }
   }
   const waves = partitionSlotsIntoWaves(slots, relationEdges);
@@ -324,6 +391,8 @@ export async function runAnalystTeam(params: {
 
   type SlotRow = (typeof slots)[number];
   const outputByRole = new Map<AgentRole, RawAnalystSignal>();
+  const auxDigestByRole = new Map<AgentRole, string>();
+  const auxSections: Array<{ role: AgentRole; body: string }> = [];
 
   const rawSignals: RawAnalystSignal[] = [];
   const persistSignals: Array<{ agentInstanceId?: string; signal: RawAnalystSignal }> = [];
@@ -338,21 +407,27 @@ export async function runAnalystTeam(params: {
   for (const wave of waves) {
     const waveResults = await Promise.allSettled(
       wave.map((slot) => {
-        const preds = (predsByTo.get(slot.role) ?? []).filter((pr) => outputByRole.has(pr));
+        const predChain = (predsByTo.get(slot.role) ?? []).filter(
+          (pr) => outputByRole.has(pr) || auxDigestByRole.has(pr)
+        );
         const appendix =
-          preds.length > 0
-            ? `\n\n### 前置分析师结论（编组通信拓扑）\n${preds
+          predChain.length > 0
+            ? `\n\n### 前置成员结论（编组通信拓扑）\n${predChain
                 .map((pr) => {
                   const o = outputByRole.get(pr);
-                  if (!o) return "";
-                  return `- **${pr}**：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 600)}`;
+                  if (o) {
+                    return `- **${pr}**（信号）：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 600)}`;
+                  }
+                  const md = auxDigestByRole.get(pr);
+                  if (md) return `- **${pr}**（辅助）：\n  ${md.slice(0, 600)}`;
+                  return "";
                 })
                 .filter((line) => line.length > 0)
                 .join("\n")}\n`
             : "";
         const ctx = `${context}${appendix}`;
         return (async () => {
-          for (const pr of preds) {
+          for (const pr of predChain) {
             await logResearchTeamInteraction({
               workflowRunId,
               fromRole: pr,
@@ -362,13 +437,24 @@ export async function runAnalystTeam(params: {
               payloadJson: { topology: true, ticker },
             });
           }
-          return runAnalystLlm({
+          if (isMsAnalystRole(slot.role)) {
+            const payload = await runAnalystLlm({
+              role: slot.role,
+              definitionId: slot.definitionId,
+              systemPrompt: slot.systemPrompt,
+              ticker,
+              context: ctx,
+            });
+            return { kind: "analyst" as const, payload };
+          }
+          const markdown = await runAuxResearchLlm({
             role: slot.role,
             definitionId: slot.definitionId,
             systemPrompt: slot.systemPrompt,
             ticker,
             context: ctx,
           });
+          return { kind: "aux" as const, markdown };
         })();
       })
     );
@@ -379,11 +465,17 @@ export async function runAnalystTeam(params: {
       const instanceId = instanceBySlotIndex[idx];
       const result = waveResults[wi];
       if (result.status === "fulfilled") {
-        const { agentInstanceId: _id, ...signal } = result.value;
-        outputByRole.set(slot.role, signal);
-        rawSignals.push(signal);
-        persistSignals.push({ agentInstanceId: instanceId, signal });
-      } else {
+        const val = result.value;
+        if (val.kind === "analyst") {
+          const { agentInstanceId: _id, ...signal } = val.payload;
+          outputByRole.set(slot.role, signal);
+          rawSignals.push(signal);
+          persistSignals.push({ agentInstanceId: instanceId, signal });
+        } else {
+          auxDigestByRole.set(slot.role, val.markdown);
+          auxSections.push({ role: slot.role, body: val.markdown });
+        }
+      } else if (isMsAnalystRole(slot.role)) {
         const fallback: RawAnalystSignal = {
           definitionId: slot.definitionId,
           analystRole: slot.role,
@@ -395,6 +487,10 @@ export async function runAnalystTeam(params: {
         outputByRole.set(slot.role, fallback);
         rawSignals.push(fallback);
         persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
+      } else {
+        const msg = `（${slot.role} 执行失败：${result.reason}）`;
+        auxDigestByRole.set(slot.role, msg);
+        auxSections.push({ role: slot.role, body: msg });
       }
 
       if (instanceId) {
@@ -414,11 +510,12 @@ export async function runAnalystTeam(params: {
       (orderKey.get(a.signal.analystRole as AgentRole) ?? 0) - (orderKey.get(b.signal.analystRole as AgentRole) ?? 0)
   );
 
-  // Run MSA fusion
+  // Run MSA fusion（仅 analyst_* 信号；无信号时由 tickerHint 生成占位融合）
   const fusionResult = await fuseSignals({
     workflowRunId,
     signals: rawSignals,
     persistSignals,
+    tickerHint: ticker,
   });
 
   for (const { signal } of persistSignals) {
@@ -432,8 +529,26 @@ export async function runAnalystTeam(params: {
     });
   }
 
-  // Build human-readable report
-  const report = buildTeamReport(ticker, fusionResult.fusedSignal, fusionResult.fusedConfidence, fusionResult.signalBreakdown);
+  // Build human-readable report + 辅助角色 Markdown 章节（按编组槽位顺序）
+  const roleOrder = new Map(slots.map((s, i) => [s.role, i] as const));
+  auxSections.sort((a, b) => (roleOrder.get(a.role) ?? 0) - (roleOrder.get(b.role) ?? 0));
+  const auxSectionTitle: Partial<Record<AgentRole, string>> = {
+    research: "策略撰写（research）",
+    backtest: "回测方案（backtest）",
+    backtest_engineer: "策略实现（backtest_engineer）",
+    risk: "风控视角（risk）",
+    risk_manager: "风控经理（risk_manager）",
+  };
+  let report = buildTeamReport(
+    ticker,
+    fusionResult.fusedSignal,
+    fusionResult.fusedConfidence,
+    fusionResult.signalBreakdown
+  );
+  for (const sec of auxSections) {
+    const title = auxSectionTitle[sec.role] ?? `研究团队辅助（${sec.role}）`;
+    report += `\n\n### ${title}\n\n${sec.body}`;
+  }
   let debate: AnalystTeamResult["debate"];
   const debateConfig = await loadDebateConfig();
   const shouldDebate = fusionResult.fusedConfidence < debateConfig.confidenceThreshold;

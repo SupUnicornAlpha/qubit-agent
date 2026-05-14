@@ -107,15 +107,20 @@ export async function seedAgentDefinitions(): Promise<void> {
 }
 
 /**
- * 保证存在「默认四名分析师」编组，便于前端下拉选用；成员与内置 definition id 对齐。
+ * 保证存在「默认研究团队」编组，便于前端下拉选用；成员与内置 definition id 对齐（含 orchestrator）。
  */
 export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
   const db = await getDb();
   const memberDefs = [
+    "def-orchestrator",
     "def-analyst-fundamental",
     "def-analyst-technical",
     "def-analyst-sentiment",
     "def-analyst-macro",
+    "def-research",
+    "def-backtest",
+    "def-risk",
+    "def-risk-manager",
   ] as const;
 
   await db
@@ -123,17 +128,17 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
     .values({
       id: DEFAULT_ANALYST_AGENT_GROUP_ID,
       workspaceId: null,
-      name: "默认（四名分析师）",
+      name: "默认研究团队（分析师 + 策略/回测/风控）",
       description:
-        "启动时自动维护：基本面 / 技术面 / 情绪面 / 宏观；可在「配置中心 → Agent」调整成员。",
+        "启动时自动维护：含 orchestrator（拓扑/编排节点）；四名 analyst_* 参与 MSA；research / backtest / risk / risk_manager 产出辅助章节。可在「配置中心 → Agent」调整。",
       relationsJson: [],
     })
     .onConflictDoUpdate({
       target: agentGroup.id,
       set: {
-        name: "默认（四名分析师）",
+        name: "默认研究团队（分析师 + 策略/回测/风控）",
         description:
-          "启动时自动维护：基本面 / 技术面 / 情绪面 / 宏观；可在「配置中心 → Agent」调整成员。",
+          "启动时自动维护：含 orchestrator（拓扑/编排节点）；四名 analyst_* 参与 MSA；research / backtest / risk / risk_manager 产出辅助章节。可在「配置中心 → Agent」调整。",
         updatedAt: new Date().toISOString(),
       },
     });
@@ -151,7 +156,7 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
     });
   }
   console.log(
-    `[Seed] Default analyst agent group ${DEFAULT_ANALYST_AGENT_GROUP_ID} refreshed (${memberDefs.length} members).`
+    `[Seed] Default research team agent group ${DEFAULT_ANALYST_AGENT_GROUP_ID} refreshed (${memberDefs.length} members).`
   );
 }
 

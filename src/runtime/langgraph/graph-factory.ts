@@ -13,6 +13,8 @@ import {
   ensureWorkspaceRuntimeConfigFiles,
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
+import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
+import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import { sandboxExecutor } from "../sandbox-executor";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
@@ -219,6 +221,95 @@ export class GraphRunner {
         currentIteration: 0,
         startedAt: new Date().toISOString(),
       });
+
+      /** 研究团队 HTTP 任务：统一走 Orchestrator 派发，在此短路执行，避免绕过编排器 */
+      if (
+        params.def.role === "orchestrator" &&
+        params.payload.taskType === "research_team_execute"
+      ) {
+        type ResearchTeamExecuteParams = {
+          jobId?: string;
+          ticker?: string;
+          context?: string;
+          agentGroupId?: string | null;
+          analystDefinitionIds?: string[];
+          analystRoles?: string[];
+        };
+        const pr = params.payload.params as ResearchTeamExecuteParams;
+        const jobId = typeof pr.jobId === "string" ? pr.jobId : "";
+        const ticker = typeof pr.ticker === "string" ? pr.ticker.trim() : "";
+        const context = typeof pr.context === "string" ? pr.context : undefined;
+        let agentGroupId: string | null | undefined;
+        if ("agentGroupId" in pr) {
+          const ag = pr.agentGroupId;
+          if (ag === null) agentGroupId = null;
+          else if (typeof ag === "string") agentGroupId = ag.trim() || null;
+        }
+        const rawDefIds = pr.analystDefinitionIds;
+        const analystDefinitionIds =
+          Array.isArray(rawDefIds) && rawDefIds.length > 0
+            ? rawDefIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+            : undefined;
+        const rawRoles = pr.analystRoles;
+        const analystRoles =
+          Array.isArray(rawRoles) && rawRoles.length > 0
+            ? (rawRoles.filter(
+                (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
+              ) as AgentRole[])
+            : undefined;
+
+        if (!jobId || !ticker) {
+          if (jobId) {
+            failAnalystResearchJob(jobId, new Error("research_team_execute: missing ticker"));
+          }
+          throw new Error("research_team_execute requires params.jobId and params.ticker");
+        }
+
+        try {
+          const teamResult = await runAnalystTeam({
+            workflowRunId: params.workflowId,
+            ticker,
+            context,
+            agentGroupId,
+            analystRoles,
+            analystDefinitionIds,
+          });
+          completeAnalystResearchJob(jobId, teamResult);
+          await db
+            .update(agentInstance)
+            .set({
+              status: "stopped",
+              endedAt: new Date().toISOString(),
+            })
+            .where(eq(agentInstance.id, agentInstanceId));
+          await db
+            .update(workflowRun)
+            .set({ status: "completed" })
+            .where(eq(workflowRun.id, params.workflowId));
+          stepStreamBus.publish({
+            runId: params.runId,
+            workflowId: params.workflowId,
+            traceId: params.traceId,
+            role: params.def.role,
+            type: "final",
+            stepIndex: 0,
+            ts: Date.now(),
+            payload: {
+              status: "completed",
+              taskType: "research_team_execute",
+              fusionId: teamResult.fusionId,
+              fusedSignal: teamResult.fusedSignal,
+              fusedConfidence: teamResult.fusedConfidence,
+            },
+            loopKind: "native",
+            source: "native",
+          });
+        } catch (teamErr) {
+          failAnalystResearchJob(jobId, teamErr);
+          throw teamErr;
+        }
+        return;
+      }
 
       const initialState = createInitialGraphState({
         runId: params.runId,

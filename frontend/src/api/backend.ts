@@ -379,7 +379,7 @@ export async function listAgentGroups(): Promise<AgentGroupRecord[]> {
 
 export async function patchAgentGroup(
   id: string,
-  input: { name?: string; description?: string; relationsJson?: Array<{ from: string; to: string }> }
+  input: { name?: string; description?: string; relationsJson?: unknown[] }
 ): Promise<AgentGroupRecord> {
   const res = await httpPatch<{ data: AgentGroupRecord }>(`/api/v1/agents/agent-groups/${id}`, input);
   return res.data;

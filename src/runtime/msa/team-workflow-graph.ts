@@ -2,6 +2,8 @@ import { eq, inArray, asc } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
+  agentGroup,
+  agentGroupMember,
   agentInstance,
   agentStep,
   analystSignal,
@@ -10,7 +12,10 @@ import {
   mcpCallLog,
   researchTeamInteraction,
   toolCallLog,
+  workflowRun,
 } from "../../db/sqlite/schema";
+import type { AgentRole } from "../../types/entities";
+import { parseTeamRelations } from "./analyst-team-topology";
 
 export interface TeamGraphNode {
   id: string;
@@ -74,11 +79,14 @@ function roleLabel(role: string): string {
     analyst_technical: "技术面",
     analyst_sentiment: "情绪面",
     analyst_macro: "宏观",
+    research: "策略撰写",
+    backtest: "回测",
+    backtest_engineer: "策略工程",
     researcher_bull: "多方辩论",
     researcher_bear: "空方辩论",
     orchestrator: "编排器",
     risk: "风控",
-    risk_manager: "风控",
+    risk_manager: "风控经理",
     __tools__: "Tool / MCP",
   };
   return map[role] ?? role;
@@ -167,6 +175,22 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     edgeMap.set(k, cur);
   };
 
+  /** 编组 relations_json：分析开始前即可显示「计划拓扑」边（计数为 0） */
+  const wfRow = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  const agentGroupId = wfRow[0]?.agentGroupId ?? null;
+  if (agentGroupId) {
+    const grpRows = await db.select().from(agentGroup).where(eq(agentGroup.id, agentGroupId)).limit(1);
+    const mems = await db
+      .select({ role: agentDefinition.role })
+      .from(agentGroupMember)
+      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
+      .where(eq(agentGroupMember.groupId, agentGroupId));
+    const uniqRoles = [...new Set(mems.map((m) => String(m.role)))];
+    const allow = [...uniqRoles, "msa", "signal_fusion", "orchestrator"] as unknown as readonly AgentRole[];
+    const topo = parseTeamRelations(grpRows[0]?.relationsJson ?? [], allow);
+    for (const e of topo) bumpEdge(String(e.from), String(e.to), 0, 0);
+  }
+
   const rows: TeamGraphInteractionRow[] = logged.map((r) => ({
     id: r.id,
     workflowRunId: r.workflowRunId,
@@ -228,6 +252,12 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   for (const t of toolCalls) nodeRoles.add(t.agentRole);
   for (const m of mcpCalls) nodeRoles.add(m.agentRole);
   nodeRoles.add("msa");
+
+  /** 本工作流实例上的角色（含 orchestrator、各 analyst 槽位等），避免仅有边外角色时漏节点 */
+  for (const inst of instances) {
+    const role = defRole.get(inst.definitionId);
+    if (role && role !== "unknown") nodeRoles.add(role);
+  }
 
   const nodes: TeamGraphNode[] = [...nodeRoles]
     .filter((r) => r !== "unknown")

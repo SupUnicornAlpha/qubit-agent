@@ -6,16 +6,37 @@ export interface TeamRelationEdge {
   to: AgentRole;
 }
 
-export function parseTeamRelations(raw: unknown, allowedRoles: readonly AgentRole[]): TeamRelationEdge[] {
+function asEdgeString(v: unknown): string | null {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return null;
+}
+
+export function parseTeamRelations(
+  raw: unknown,
+  allowedRoles: readonly AgentRole[]
+): TeamRelationEdge[] {
   const allow = new Set(allowedRoles);
   if (!Array.isArray(raw)) return [];
   const out: TeamRelationEdge[] = [];
   for (const row of raw) {
-    if (!row || typeof row !== "object") continue;
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
     const rec = row as Record<string, unknown>;
-    const from = rec["from"];
-    const to = rec["to"];
-    if (typeof from !== "string" || typeof to !== "string" || from === to) continue;
+    if (Object.keys(rec).length === 0) continue;
+    if (rec["type"] === "topology_canvas") continue;
+    if (rec["kind"] === "broadcast" && Array.isArray(rec["targets"])) {
+      const from = asEdgeString(rec["from"]);
+      if (from === null || !allow.has(from as AgentRole)) continue;
+      for (const t of rec["targets"] as unknown[]) {
+        const to = asEdgeString(t);
+        if (to === null || to === from || !allow.has(to as AgentRole)) continue;
+        out.push({ from: from as AgentRole, to: to as AgentRole });
+      }
+      continue;
+    }
+    const from = asEdgeString(rec["from"]);
+    const to = asEdgeString(rec["to"]);
+    if (from === null || to === null || from === to) continue;
     if (!allow.has(from as AgentRole) || !allow.has(to as AgentRole)) continue;
     out.push({ from: from as AgentRole, to: to as AgentRole });
   }

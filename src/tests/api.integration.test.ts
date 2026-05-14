@@ -203,6 +203,18 @@ describe("api minimal integration", () => {
     expect(["tushare_daily", "synthetic", "yahoo_chart"]).toContain(meta.dataSource);
   });
 
+  test("market: klines intraday resolves to Yahoo chart source", async () => {
+    const res = await app.request(
+      new Request("http://test/api/v1/market/klines?symbol=AAPL&exchange=US&timeframe=5m&limit=20")
+    );
+    expect(res.status).toBe(200);
+    const body = await jsonOf(res);
+    expect(body.ok).toBe(true);
+    const meta = body.meta as Record<string, unknown>;
+    expect(meta.period).toBe("5m");
+    expect(meta.dataSource).toBe("yahoo_chart");
+  });
+
   test("agents: agent-groups list and create", async () => {
     const listRes = await app.request(new Request("http://test/api/v1/agents/agent-groups"));
     expect(listRes.status).toBe(200);

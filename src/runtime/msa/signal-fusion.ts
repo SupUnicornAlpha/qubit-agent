@@ -103,12 +103,33 @@ export async function fuseSignals(params: {
     agentInstanceId?: string;
     signal: RawAnalystSignal;
   }>;
+  /** 当 signals 为空时仍写入一条占位融合记录（仅研究团队「无 analyst_*」场景） */
+  tickerHint?: string;
 }): Promise<FusionOutput> {
   const db = await getDb();
   const { workflowRunId, signals } = params;
 
   if (signals.length === 0) {
-    throw new Error("MSA: Cannot fuse empty signal list");
+    const ticker = (params.tickerHint ?? "").trim() || "UNKNOWN";
+    const fusionId = randomUUID();
+    await db.insert(signalFusionResult).values({
+      id: fusionId,
+      workflowRunId,
+      ticker,
+      fusedSignal: "hold",
+      fusedConfidence: 0.25,
+      weightsJson: {},
+      debateTriggered: true,
+    });
+    return {
+      fusionId,
+      ticker,
+      fusedSignal: "hold",
+      fusedConfidence: 0.25,
+      debateTriggered: true,
+      weights: {},
+      signalBreakdown: [],
+    };
   }
 
   const definitionIds = [...new Set(signals.map((s) => s.definitionId))];

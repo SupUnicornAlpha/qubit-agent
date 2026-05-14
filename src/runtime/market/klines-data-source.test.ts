@@ -56,13 +56,13 @@ describe("resolveEffectiveKlinesSource", () => {
     ).toBe("yahoo_chart");
   });
 
-  test("intraday resolves to synthetic", () => {
+  test("intraday uses Yahoo Chart when not synthetic mode", () => {
     expect(
       resolveEffectiveKlinesSource({
         settings: { ...base, "qubit-data": { klinesDataSource: "yahoo_chart" } },
         period: "5m",
         hasTushareToken: false,
       })
-    ).toBe("synthetic");
+    ).toBe("yahoo_chart");
   });
 });

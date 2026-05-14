@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
@@ -107,10 +107,17 @@ monitorRouter.get("/sessions/:id/agents-board", async (c) => {
     .limit(20);
   const workflowIds = workflows.map((w) => w.id);
   if (workflowIds.length === 0) return c.json({ data: { sessionId, agents: [] } });
+  const workflowMeta = new Map(
+    workflows.map((w) => [w.id, { startedAt: w.startedAt, status: w.status, mode: w.mode }] as const)
+  );
   const [instances, definitions, steps] = await Promise.all([
-    db.select().from(agentInstance),
+    db.select().from(agentInstance).where(inArray(agentInstance.workflowRunId, workflowIds)),
     db.select().from(agentDefinition),
-    db.select().from(agentStep).orderBy(desc(agentStep.createdAt)),
+    db
+      .select()
+      .from(agentStep)
+      .where(inArray(agentStep.workflowRunId, workflowIds))
+      .orderBy(desc(agentStep.createdAt)),
   ]);
   const definitionMap = new Map(definitions.map((item) => [item.id, item]));
   const latestStepByInstance = new Map<string, (typeof steps)[number]>();
@@ -119,16 +126,20 @@ monitorRouter.get("/sessions/:id/agents-board", async (c) => {
       latestStepByInstance.set(step.agentInstanceId, step);
     }
   }
-  const current = instances.filter((item) => workflowIds.includes(item.workflowRunId));
+  const current = instances;
   return c.json({
     data: {
       sessionId,
       agents: current.map((instance) => {
         const def = definitionMap.get(instance.definitionId);
         const latestStep = latestStepByInstance.get(instance.id);
+        const wf = workflowMeta.get(instance.workflowRunId);
         return {
           instanceId: instance.id,
           workflowRunId: instance.workflowRunId,
+          workflowStartedAt: wf?.startedAt ?? null,
+          workflowStatus: wf?.status ?? null,
+          workflowMode: wf?.mode ?? null,
           role: def?.role ?? "unknown",
           name: def?.name ?? "unknown",
           status: instance.status,

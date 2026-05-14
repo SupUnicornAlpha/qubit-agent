@@ -143,12 +143,13 @@ import type {
   AgentLoopKind,
 } from "../../api/types";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
+import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
 import { useAppStore, type ChartContextPayload } from "../../store";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import { StreamTimelineGroupCard } from "../chat/StreamTimelineGroupCard";
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
-import { TeamAgentGraph, type TeamGraphSelection } from "../ide/TeamAgentGraph";
+import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
 import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
 import { MonitorDashboard } from "../monitor/MonitorDashboard";
 import { TraderLivePanel } from "../trader/TraderLivePanel";
@@ -224,6 +225,38 @@ function formatChartContextBlock(ctx: ChartContextPayload): string {
   return lines.join("\n");
 }
 
+function shortWorkflowLabel(workflowRunId: string): string {
+  return workflowRunId.length > 12 ? `${workflowRunId.slice(0, 8)}…` : workflowRunId;
+}
+
+function groupAgentsBoardByRole(
+  agents: SessionAgentBoardItem[]
+): Array<{ role: string; displayName: string; instances: SessionAgentBoardItem[] }> {
+  const byRole = new Map<string, SessionAgentBoardItem[]>();
+  for (const a of agents) {
+    const list = byRole.get(a.role) ?? [];
+    list.push(a);
+    byRole.set(a.role, list);
+  }
+  for (const list of byRole.values()) {
+    list.sort((a, b) => {
+      const ta = a.workflowStartedAt ? new Date(a.workflowStartedAt).getTime() : 0;
+      const tb = b.workflowStartedAt ? new Date(b.workflowStartedAt).getTime() : 0;
+      if (tb !== ta) return tb - ta;
+      return b.instanceId.localeCompare(a.instanceId);
+    });
+  }
+  const roles = [...byRole.keys()].sort((a, b) => {
+    if (a === "orchestrator") return -1;
+    if (b === "orchestrator") return 1;
+    return a.localeCompare(b);
+  });
+  return roles.map((role) => {
+    const instances = byRole.get(role) ?? [];
+    return { role, displayName: instances[0]?.name ?? "unknown", instances };
+  });
+}
+
 const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const chartContext = useAppStore((s) => s.chartContext);
   const setChartContext = useAppStore((s) => s.setChartContext);
@@ -250,8 +283,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   }, [chatDraftPrefill, setChatDraftPrefill]);
 
   const [agentsBoard, setAgentsBoard] = useState<SessionAgentBoardItem[]>([]);
+  const [expandedAgentRoles, setExpandedAgentRoles] = useState<Set<string>>(() => new Set());
   const [a2aMessages, setA2aMessages] = useState<SessionA2AMessageItem[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const agentsBoardByRole = useMemo(() => groupAgentsBoardByRole(agentsBoard), [agentsBoard]);
 
   const sessionWorkflowIds = useMemo(() => {
     const ids = new Set<string>();
@@ -346,6 +382,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
 
   useEffect(() => {
     if (!selectedSessionId) return;
+    setExpandedAgentRoles(new Set());
     void getSessionAgentsBoard(selectedSessionId)
       .then(setAgentsBoard)
       .catch(() => setAgentsBoard([]));
@@ -353,6 +390,15 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       .then(setA2aMessages)
       .catch(() => setA2aMessages([]));
   }, [selectedSessionId, refreshKey]);
+
+  const toggleAgentRoleExpanded = (role: string) => {
+    setExpandedAgentRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
+  };
 
   const onSelectSession = async (sessionId: string) => {
     setSelectedSessionId(sessionId);
@@ -679,17 +725,62 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           <div style={styles.boardColScroll}>
             <h3 style={{ ...styles.subTitle, marginTop: 0 }}>会话 Agent 看板</h3>
             <div style={styles.boardList}>
-              {agentsBoard.map((item) => (
-                <div key={item.instanceId} style={styles.boardCard}>
-                  <div style={styles.cardName}>{item.role}</div>
-                  <div style={styles.cardDesc}>status: {item.status}</div>
-                  <div style={styles.cardDesc}>iteration: {item.currentIteration}</div>
-                  <div style={styles.cardDesc}>
-                    latest: {item.latestStep?.phase ?? "-"} #{item.latestStep?.stepIndex ?? "-"}
+              {agentsBoardByRole.map((group) => {
+                const expanded = expandedAgentRoles.has(group.role);
+                const newest = group.instances[0];
+                const runningN = group.instances.filter((i) => i.status === "running").length;
+                return (
+                  <div key={group.role} style={styles.boardCard}>
+                    <button
+                      type="button"
+                      onClick={() => toggleAgentRoleExpanded(group.role)}
+                      style={styles.boardRoleToggle}
+                    >
+                      <div style={styles.cardName}>{group.role}</div>
+                      <div style={styles.cardDesc}>
+                        {group.displayName !== group.role ? `${group.displayName} · ` : ""}
+                        {group.instances.length} 个 workflow
+                        {runningN > 0 ? ` · ${runningN} 运行中` : ""}
+                      </div>
+                      {!expanded && newest ? (
+                        <div style={styles.cardDesc}>
+                          最近: {newest.status} · {newest.latestStep?.phase ?? "-"} #
+                          {newest.latestStep?.stepIndex ?? "-"}
+                          {newest.workflowStartedAt
+                            ? ` · ${new Date(newest.workflowStartedAt).toLocaleString()}`
+                            : ""}
+                        </div>
+                      ) : null}
+                      <div style={{ ...styles.chatMeta, marginTop: 4 }}>{expanded ? "▼ 收起" : "▶ 展开各 workflow"}</div>
+                    </button>
+                    {expanded ? (
+                      <div style={styles.boardNested}>
+                        {group.instances.map((item) => (
+                          <div key={item.instanceId} style={styles.boardNestedRow}>
+                            <div style={styles.cardDesc} title={item.workflowRunId}>
+                              workflow: <code style={styles.boardMono}>{shortWorkflowLabel(item.workflowRunId)}</code>
+                              {item.workflowMode ? ` · ${item.workflowMode}` : ""}
+                              {item.workflowStatus ? ` · ${item.workflowStatus}` : ""}
+                            </div>
+                            <div style={styles.cardDesc}>
+                              {item.workflowStartedAt
+                                ? new Date(item.workflowStartedAt).toLocaleString()
+                                : "—"}
+                            </div>
+                            <div style={styles.cardDesc}>
+                              status: {item.status} · iteration: {item.currentIteration}
+                            </div>
+                            <div style={styles.cardDesc}>
+                              latest: {item.latestStep?.phase ?? "-"} #{item.latestStep?.stepIndex ?? "-"}
+                            </div>
+                            {item.lastError ? <div style={styles.errorText}>{item.lastError}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                  {item.lastError ? <div style={styles.errorText}>{item.lastError}</div> : null}
-                </div>
-              ))}
+                );
+              })}
             </div>
             <h3 style={{ ...styles.subTitle, marginTop: 14 }}>Agent 间对话（A2A）</h3>
             <div style={styles.boardList}>
@@ -1626,7 +1717,7 @@ const ConfigPanel: FC = () => {
               在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
               <br />
               K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为无 Tushare token 时使用{" "}
-              <strong>Yahoo Finance</strong>（免费、日线、无需 API key）；有 token 时自动走 Tushare 日线。
+              <strong>Yahoo Finance</strong>（免费、日线 + 分钟/小时 Chart、无需 API key）；有 token 时日线可走 Tushare。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#d4d4d8" }}>
@@ -1638,8 +1729,8 @@ const ConfigPanel: FC = () => {
                     setKlinesDataSource(e.target.value as "auto" | "tushare_daily" | "yahoo_chart" | "synthetic")
                   }
                 >
-                  <option value="auto">自动（有 Tushare → 日线 Tushare；否则 Yahoo）</option>
-                  <option value="yahoo_chart">Yahoo Finance（免费日线）</option>
+                  <option value="auto">自动（日线：有 Tushare → Tushare；否则 Yahoo；分钟/小时 → Yahoo）</option>
+                  <option value="yahoo_chart">Yahoo Finance（日线 + 分钟/小时）</option>
                   <option value="tushare_daily">Tushare 日线（需 token）</option>
                   <option value="synthetic">不拉外源（K 线为空，用于禁用行情）</option>
                 </select>
@@ -3076,6 +3167,36 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
     overflowWrap: "anywhere",
   },
+  boardRoleToggle: {
+    display: "block",
+    width: "100%",
+    margin: 0,
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    color: "inherit",
+    cursor: "pointer",
+    textAlign: "left" as const,
+    font: "inherit",
+  },
+  boardNested: {
+    marginTop: 10,
+    paddingLeft: 8,
+    borderLeft: "2px solid var(--qb-chat-border, #3f3f46)",
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 10,
+  },
+  boardNestedRow: {
+    paddingBottom: 8,
+    borderBottom: "1px solid var(--qb-chat-border, #27272a)",
+  },
+  boardMono: {
+    fontSize: 11,
+    background: "var(--qb-main-input-bg, #18181b)",
+    padding: "1px 4px",
+    borderRadius: 4,
+  },
   errorText: { fontSize: 12, color: "#fca5a5", marginTop: 6 },
 };
 
@@ -3135,7 +3256,8 @@ function extractFencedCodeBlocks(report: string): Array<{ lang: string; code: st
   return out;
 }
 
-const TEAM_CENTER_VIEWS = ["run", "research", "roles"] as const;
+/** 研究团队中间栏侧栏自上而下：研究画布、成员目录、工具与配置 */
+const TEAM_CENTER_VIEWS = ["research", "roles", "run"] as const;
 type TeamCenterView = (typeof TEAM_CENTER_VIEWS)[number];
 const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
   run: "发起分析 · 工具与配置",
@@ -3150,14 +3272,7 @@ const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
   roles: Users,
 };
 
-/** 画布可多选高亮的分析师角色（与后端 MSA 四分析师一致；空集表示不过滤） */
-const TEAM_RESEARCH_ANALYST_ROLES = new Set([
-  "analyst_fundamental",
-  "analyst_technical",
-  "analyst_sentiment",
-  "analyst_macro",
-]);
-
+/** 画布可多选高亮的团队成员角色（与后端研究团队槽位一致；空集表示不过滤） */
 const TeamDashboardPanel: FC = () => {
   const [ticker, setTicker] = useState("AAPL");
   /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认「请对 ticker 进行全面分析」 */
@@ -3288,7 +3403,7 @@ const TeamDashboardPanel: FC = () => {
     for (const b of agentDefBundles) {
       if (!idSet.has(b.definition.id)) continue;
       const r = b.definition.role;
-      if (TEAM_RESEARCH_ANALYST_ROLES.has(r)) roles.push(r);
+      if (RESEARCH_TEAM_SLOT_ROLE_SET.has(r)) roles.push(r);
     }
     return roles;
   }, [agentDefBundles, participatingAnalystDefinitionIds]);
@@ -3297,7 +3412,7 @@ const TeamDashboardPanel: FC = () => {
     const rows: { id: string; role: string; displayName: string }[] = [];
     if (!agentDefBundles) return rows;
     for (const b of agentDefBundles) {
-      if (!TEAM_RESEARCH_ANALYST_ROLES.has(b.definition.role)) continue;
+      if (!RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role)) continue;
       if (b.definition.enabled === false) continue;
       rows.push({
         id: b.definition.id,
@@ -3371,10 +3486,29 @@ const TeamDashboardPanel: FC = () => {
     };
   }, [teamGraph, participatingAnalystRoles]);
 
+  const teamGraphActivity = useMemo((): TeamGraphActivity => {
+    const intr = filteredGraphDisplay?.interactions ?? [];
+    const hotRoles = new Set<string>();
+    const hotEdgeKeys = new Set<string>();
+    const windowMs = running ? 14_000 : 90_000;
+    const cutoff = Date.now() - windowMs;
+    for (let i = intr.length - 1; i >= 0; i--) {
+      const row = intr[i];
+      if (row.kind === "tool_call") continue;
+      const t = new Date(row.createdAt).getTime();
+      if (!Number.isFinite(t)) continue;
+      if (t < cutoff) break;
+      hotRoles.add(row.fromRole);
+      hotRoles.add(row.toRole);
+      hotEdgeKeys.add(teamGraphUndirectedKey(row.fromRole, row.toRole));
+    }
+    return { hotRoles, hotEdgeKeys, isRunning: running };
+  }, [filteredGraphDisplay?.interactions, running]);
+
   const enabledResearchAnalystDefCount = useMemo(() => {
     if (agentDefBundles == null) return null;
     return agentDefBundles.filter((b) => {
-      if (!TEAM_RESEARCH_ANALYST_ROLES.has(b.definition.role)) return false;
+      if (!RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role)) return false;
       return b.definition.enabled !== false;
     }).length;
   }, [agentDefBundles]);
@@ -3394,7 +3528,7 @@ const TeamDashboardPanel: FC = () => {
     if (!workflowRunId) return "请先选择工作流 ID";
     if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
     if (enabledResearchAnalystDefCount === 0)
-      return "数据库中暂无已启用的 analyst_* 定义，请先到配置中心启用或执行种子";
+      return "数据库中暂无已启用的研究团队槽位定义（analyst_* / research / backtest / risk* 等），请先到配置中心启用或执行种子";
     if (participatingAnalystDefinitionIds.length === 0) return "请至少勾选一名参与分析的 Agent 定义";
     return "";
   }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
@@ -3408,7 +3542,7 @@ const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     if (agentDefBundles === null) return;
     const ids = agentDefBundles
-      .filter((b) => TEAM_RESEARCH_ANALYST_ROLES.has(b.definition.role) && b.definition.enabled !== false)
+      .filter((b) => RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role) && b.definition.enabled !== false)
       .map((b) => b.definition.id);
     setParticipatingAnalystDefinitionIds((prev) => (prev.length > 0 ? prev : ids));
   }, [agentDefBundles]);
@@ -4103,8 +4237,9 @@ const TeamDashboardPanel: FC = () => {
           {enabledResearchAnalystDefCount === 0 && agentDefBundles !== null ? (
             <div className="qb-callout qb-callout--warning" role="status" style={{ marginTop: 12 }}>
               <div>
-                当前数据库里没有<strong>已启用</strong>的分析师定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code> 等），无法启动
-                MSA。请在下方按<strong>Agent 定义</strong>勾选参与成员（与配置中心已发布定义一致）。
+                当前数据库里没有<strong>已启用</strong>的研究团队槽位定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code>、
+                <code style={{ fontSize: 11 }}>research</code>、<code style={{ fontSize: 11 }}>backtest</code>、
+                <code style={{ fontSize: 11 }}>risk</code> 等），无法启动分析。请在下方按<strong>Agent 定义</strong>勾选参与成员（与配置中心已发布定义一致）。
               </div>
               <div className="qb-callout__actions">
                 <button
@@ -4179,7 +4314,7 @@ const TeamDashboardPanel: FC = () => {
               团队成员（画布）
             </div>
             <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
-              勾选配置中心已发布且启用的 analyst_* <strong>Agent 定义</strong>参与本次分析；与上方「分析师编组」取交集（编组决定拓扑与槽位，勾选决定实际出场的定义）。
+              勾选配置中心已发布且启用的研究团队槽位（<code style={{ fontSize: 11 }}>analyst_*</code> 参与 MSA 融合；<code style={{ fontSize: 11 }}>research</code> / <code style={{ fontSize: 11 }}>backtest</code> / <code style={{ fontSize: 11 }}>risk*</code> 等产出辅助章节）<strong>Agent 定义</strong>参与本次分析；与上方「分析师编组」取交集（编组决定拓扑与槽位，勾选决定实际出场的定义）。
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
               {participatingAnalystDefinitionIds.length === 0 ? (
@@ -4718,10 +4853,12 @@ const TeamDashboardPanel: FC = () => {
                 >
                   {graphLoading ? "加载中…" : "刷新拓扑"}
                 </button>
-                <span style={{ fontSize: 12, color: "#71717a" }}>
-                  {participatingAnalystRoles.length > 0
-                    ? `展示 ${participatingAnalystRoles.length} 名分析师`
-                    : "画布：全部节点"}
+                <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
+                  {filteredGraphDisplay
+                    ? `展示 ${filteredGraphDisplay.nodes.length} 个角色节点${
+                        participatingAnalystRoles.length > 0 ? "（已按左侧勾选过滤）" : ""
+                      }`
+                    : ""}
                 </span>
               </div>
               {filteredGraphDisplay && filteredGraphDisplay.nodes.length > 0 ? (
@@ -4742,6 +4879,7 @@ const TeamDashboardPanel: FC = () => {
                       width={graphSize.w}
                       height={graphSize.h}
                       selection={graphSelection}
+                      activity={teamGraphActivity}
                       onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
                       onSelectEdge={(a, b) => setGraphSelection({ kind: "edge", a, b })}
                       onClear={() => setGraphSelection(null)}
@@ -5198,6 +5336,9 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     justifyContent: "center",
     alignItems: "center",
+    background: "var(--qb-team-canvas-bg, #0c0c0e)",
+    borderRadius: 8,
+    border: "1px solid var(--qb-team-table-row-border, #27272a)",
   },
   tabs: { display: "flex", gap: 8, marginBottom: 16 },
   tab: {
