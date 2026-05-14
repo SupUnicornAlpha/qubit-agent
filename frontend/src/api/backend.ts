@@ -221,9 +221,27 @@ export async function listAgents(): Promise<AgentSummary[]> {
 
 export async function createWorkflow(input: WorkflowCreateInput): Promise<{
   data: { id: string };
-  runId: string;
+  runId?: string;
 }> {
   return httpPost("/api/v1/workflows", input);
+}
+
+export async function patchWorkflow(
+  workflowId: string,
+  input: {
+    sessionId?: string | null;
+    goal?: string;
+    status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  }
+): Promise<{ data: Record<string, unknown> }> {
+  return httpPatch<{ data: Record<string, unknown> }>(
+    `/api/v1/workflows/${encodeURIComponent(workflowId)}`,
+    input as Record<string, unknown>
+  );
+}
+
+export async function deleteWorkflow(workflowId: string): Promise<{ ok: boolean; id: string }> {
+  return httpDelete<{ ok: boolean; id: string }>(`/api/v1/workflows/${encodeURIComponent(workflowId)}`);
 }
 
 export async function listScheduledJobs(input?: {
@@ -287,6 +305,16 @@ export async function listScheduledJobRuns(id: string, limit = 50): Promise<Sche
 
 export async function listAgentDefinitions(): Promise<AgentDefinitionBundle[]> {
   const res = await httpGet<{ data: AgentDefinitionBundle[] }>("/api/v1/agents/definitions");
+  return res.data;
+}
+
+export async function createAgentDefinition(input: {
+  role: string;
+  name?: string;
+  systemPrompt?: string;
+  displayName?: string;
+}): Promise<AgentDefinitionBundle> {
+  const res = await httpPost<{ data: AgentDefinitionBundle }>("/api/v1/agents/definitions", input);
   return res.data;
 }
 
@@ -765,6 +793,8 @@ export async function startAnalystTeam(params: {
   agentGroupId?: string;
   /** 仅运行这些 analyst_* 角色（与编组/定义取交集） */
   analystRoles?: string[];
+  /** 仅运行这些 definition id（与编组槽位取交集）；若提供则优先于 analystRoles */
+  analystDefinitionIds?: string[];
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
@@ -812,6 +842,7 @@ export async function runAnalystTeam(params: {
   onProgress?: (elapsedMs: number) => void;
   agentGroupId?: string;
   analystRoles?: string[];
+  analystDefinitionIds?: string[];
 }): Promise<AnalystTeamResult> {
   const { jobId } = await startAnalystTeam(params);
   return pollAnalystJob(jobId, { onProgress: params.onProgress });

@@ -2,8 +2,13 @@ import { config } from "./config";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { runMigrations } from "./db/sqlite/migrate";
 import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
+import {
+  buildDefaultSandboxPoliciesFromDefinitions,
+  ensureWorkspaceRuntimeConfigFiles,
+} from "./runtime/config/workspace-config";
 import { executionWorker } from "./runtime/execution/execution-worker";
 import { seedAgentDefinitions } from "./runtime/seed-agent-definitions";
+import { SEED_AGENT_DEFINITIONS } from "./runtime/seed-agent-definitions-data";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
 import { createServer } from "./server";
 
@@ -13,6 +18,10 @@ async function main() {
   // Apply DB migrations
   await runMigrations();
   await seedAgentDefinitions();
+  await ensureWorkspaceRuntimeConfigFiles({
+    definitions: SEED_AGENT_DEFINITIONS,
+    policies: buildDefaultSandboxPoliciesFromDefinitions(SEED_AGENT_DEFINITIONS),
+  });
 
   await registerBuiltinConnectors();
   await startAllAgents();

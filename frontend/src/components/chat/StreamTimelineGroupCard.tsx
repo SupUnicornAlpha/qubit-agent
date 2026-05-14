@@ -34,7 +34,7 @@ export const StreamTimelineGroupCard: FC<{ item: StreamTimelineGroupData }> = ({
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={title}>
               Stream · {timeStr} · {item.steps.length} 条 ·{" "}
-              <span style={{ color: "#71717a", fontWeight: 400 }}>workflow {wfShort}</span>
+              <span style={{ color: "var(--qb-main-meta, #71717a)", fontWeight: 400 }}>workflow {wfShort}</span>
             </div>
             <div style={sub}>{item.roleSummary}</div>
             {!open && last ? (
@@ -60,8 +60,8 @@ export const StreamTimelineGroupCard: FC<{ item: StreamTimelineGroupData }> = ({
 };
 
 const card: CSSProperties = {
-  background: "#18181b",
-  border: "1px solid #27272a",
+  background: "var(--qb-main-card-bg, #18181b)",
+  border: "1px solid var(--qb-main-card-border, #27272a)",
   borderRadius: 8,
   padding: "10px 12px",
   minWidth: 0,
@@ -77,7 +77,7 @@ const headerRow: CSSProperties = {
 const caret: CSSProperties = {
   flexShrink: 0,
   width: 18,
-  color: "#a78bfa",
+  color: "var(--qb-brand-icon, #a78bfa)",
   fontSize: 12,
   lineHeight: 1.6,
 };
@@ -85,18 +85,18 @@ const caret: CSSProperties = {
 const title: CSSProperties = {
   fontSize: 13,
   fontWeight: 600,
-  color: "#e4e4e7",
+  color: "var(--qb-body-fg, #e4e4e7)",
 };
 
 const sub: CSSProperties = {
   fontSize: 12,
-  color: "#a1a1aa",
+  color: "var(--qb-main-meta, #a1a1aa)",
   marginTop: 2,
 };
 
 const preview: CSSProperties = {
   fontSize: 11,
-  color: "#71717a",
+  color: "var(--qb-main-meta, #71717a)",
   marginTop: 6,
   whiteSpace: "nowrap",
   overflow: "hidden",
@@ -107,19 +107,19 @@ const bodyScroll: CSSProperties = {
   marginTop: 10,
   maxHeight: 380,
   overflow: "auto",
-  borderTop: "1px solid #27272a",
+  borderTop: "1px solid var(--qb-sidebar-border, #27272a)",
   paddingTop: 8,
 };
 
 const stepRow: CSSProperties = {
   paddingBottom: 10,
   marginBottom: 8,
-  borderBottom: "1px solid #1f1f23",
+  borderBottom: "1px solid var(--qb-sidebar-border, #1f1f23)",
 };
 
 const stepMeta: CSSProperties = {
   fontSize: 11,
-  color: "#71717a",
+  color: "var(--qb-main-meta, #71717a)",
   marginBottom: 4,
 };
 
@@ -129,5 +129,5 @@ const pre: CSSProperties = {
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
   whiteSpace: "pre-wrap",
   wordBreak: "break-word",
-  color: "#d4d4d8",
+  color: "var(--qb-mcp-json-fg, #d4d4d8)",
 };

@@ -14,6 +14,8 @@ export interface CreateAndDispatchWorkflowInput {
   source?: "chat" | "manual" | "api";
   messageId?: string;
   reuseSessionWorkflow?: boolean;
+  /** 仅插入 workflow_run，不向 orchestrator 派发（研究团队占位工作流等） */
+  skipDispatch?: boolean;
   taskType?: string;
   params?: Record<string, unknown>;
   loopKind?: AgentLoopKind;
@@ -22,7 +24,7 @@ export interface CreateAndDispatchWorkflowInput {
 
 export async function createAndDispatchWorkflow(
   input: CreateAndDispatchWorkflowInput
-): Promise<{ data: typeof workflowRun.$inferSelect; runId: string }> {
+): Promise<{ data: typeof workflowRun.$inferSelect; runId?: string }> {
   const db = await getDb();
   let id = randomUUID();
 
@@ -82,21 +84,25 @@ export async function createAndDispatchWorkflow(
     });
   }
 
-  const { runId } = await dispatchTaskToRole({
-    workflowId: id,
-    role: "orchestrator",
-    payload: {
-      taskId: randomUUID(),
-      taskType: input.taskType ?? "workflow_start",
-      params: {
-        workflowRunId: id,
-        goal: input.goal,
-        mode: input.mode,
-        ...(input.params ?? {}),
+  let runId: string | undefined;
+  if (!input.skipDispatch) {
+    const out = await dispatchTaskToRole({
+      workflowId: id,
+      role: "orchestrator",
+      payload: {
+        taskId: randomUUID(),
+        taskType: input.taskType ?? "workflow_start",
+        params: {
+          workflowRunId: id,
+          goal: input.goal,
+          mode: input.mode,
+          ...(input.params ?? {}),
+        },
+        assignedRole: "orchestrator",
       },
-      assignedRole: "orchestrator",
-    },
-  });
+    });
+    runId = out.runId;
+  }
 
   if (input.messageId) {
     await db.insert(chatMessageWorkflowLink).values({

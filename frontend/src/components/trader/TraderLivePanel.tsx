@@ -22,19 +22,19 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     minWidth: 0,
     overflow: "hidden",
-    background: "#09090b",
-    color: "#e4e4e7",
+    background: "var(--qb-bg-root, #09090b)",
+    color: "var(--qb-body-fg, #e4e4e7)",
   },
   details: {
     flexShrink: 0,
-    borderBottom: "1px solid #27272a",
-    background: "#111114",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
   },
   summary: {
     cursor: "pointer",
     padding: "10px 14px",
     fontSize: 13,
-    color: "#a1a1aa",
+    color: "var(--qb-main-meta, #a1a1aa)",
     listStyle: "none",
     userSelect: "none",
   },
@@ -46,35 +46,35 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: 900,
   },
   row: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" },
-  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#a1a1aa" },
+  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
   inp: {
     minWidth: 120,
     padding: "6px 10px",
     borderRadius: 6,
-    border: "1px solid #3f3f46",
-    background: "#18181b",
-    color: "#e4e4e7",
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-input-bg, #18181b)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     fontSize: 13,
   },
   select: {
     padding: "6px 10px",
     borderRadius: 6,
-    border: "1px solid #3f3f46",
-    background: "#18181b",
-    color: "#e4e4e7",
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-input-bg, #18181b)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     fontSize: 13,
   },
-  hint: { margin: 0, fontSize: 11, color: "#71717a", lineHeight: 1.45 },
+  hint: { margin: 0, fontSize: 11, color: "var(--qb-main-meta, #71717a)", lineHeight: 1.45 },
   scriptList: {
     display: "flex",
     flexDirection: "column",
     gap: 6,
     maxHeight: 160,
     overflow: "auto",
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-stream-box-border, #27272a)",
     borderRadius: 8,
     padding: 8,
-    background: "#0c0c0e",
+    background: "var(--qb-stream-box-bg, #0c0c0e)",
   },
   scriptRow: { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12 },
   mainRow: {
@@ -89,16 +89,16 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
-    borderRight: "1px solid #27272a",
+    borderRight: "1px solid var(--qb-ide-chrome-border, #27272a)",
   },
   flowHead: {
     flexShrink: 0,
     padding: "10px 12px",
-    borderBottom: "1px solid #27272a",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
     fontSize: 13,
     fontWeight: 600,
-    color: "#cbd5e1",
-    background: "#111114",
+    color: "var(--qb-team-titlebar-fg, #cbd5e1)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
   },
   flowActions: {
     flexShrink: 0,
@@ -106,8 +106,8 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     gap: 8,
     padding: "8px 12px",
-    borderBottom: "1px solid #27272a",
-    background: "#111114",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
   },
   flowScroll: {
     flex: 1,
@@ -117,16 +117,22 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 8,
     minHeight: 0,
+    background: "var(--qb-main-panel-bg, var(--qb-bg-root))",
   },
   logCard: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-main-card-border, #27272a)",
     borderRadius: 8,
     padding: "8px 10px",
-    background: "#18181b",
+    background: "var(--qb-main-card-bg, #18181b)",
   },
-  logMeta: { fontSize: 10, color: "#71717a", marginBottom: 4 },
-  logTitle: { fontSize: 12, fontWeight: 600, color: "#e4e4e7", marginBottom: 4 },
-  logBody: { fontSize: 12, color: "#a1a1aa", whiteSpace: "pre-wrap", lineHeight: 1.45 },
+  logMeta: { fontSize: 10, color: "var(--qb-main-meta, #71717a)", marginBottom: 4 },
+  logTitle: { fontSize: 12, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)", marginBottom: 4 },
+  logBody: {
+    fontSize: 12,
+    color: "var(--qb-card-desc, #a1a1aa)",
+    whiteSpace: "pre-wrap",
+    lineHeight: 1.45,
+  },
   rightCol: {
     display: "flex",
     flexDirection: "column",
@@ -140,8 +146,8 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     alignItems: "flex-end",
     padding: "8px 10px",
-    borderBottom: "1px solid #27272a",
-    background: "#111114",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
   },
   klineSlot: {
     flex: 1.25,
@@ -149,7 +155,7 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     minWidth: 0,
-    borderBottom: "1px solid #27272a",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
   },
   tradeSlot: {
     flex: "0 0 auto",
@@ -311,10 +317,10 @@ export const TraderLivePanel: FC = () => {
           </div>
           <div>
             <div style={{ ...styles.lab, marginBottom: 6 }}>运行策略（Python 策略库 · 多选）</div>
-            {scriptsErr ? <p style={{ ...styles.hint, color: "#fca5a5" }}>{scriptsErr}</p> : null}
+            {scriptsErr ? <p style={{ ...styles.hint, color: "#ef4444" }}>{scriptsErr}</p> : null}
             <div style={styles.scriptList}>
               {scripts.length === 0 ? (
-                <span style={{ fontSize: 12, color: "#71717a" }}>暂无脚本；请先在 IDE 保存策略或写入会话策略库。</span>
+                <span style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>暂无脚本；请先在 IDE 保存策略或写入会话策略库。</span>
               ) : (
                 scripts.map((s) => (
                   <label key={s.id} style={styles.scriptRow}>
@@ -324,8 +330,8 @@ export const TraderLivePanel: FC = () => {
                       onChange={() => toggleTraderStrategyScriptId(s.id)}
                     />
                     <span>
-                      <strong style={{ color: "#e4e4e7" }}>{s.name}</strong>
-                      <span style={{ color: "#52525b" }}> · {s.purpose}</span>
+                      <strong style={{ color: "var(--qb-body-fg, #e4e4e7)" }}>{s.name}</strong>
+                      <span style={{ color: "var(--qb-main-meta, #52525b)" }}> · {s.purpose}</span>
                     </span>
                   </label>
                 ))
@@ -351,7 +357,7 @@ export const TraderLivePanel: FC = () => {
           </div>
           <div style={styles.flowScroll}>
             {traderAgentLog.length === 0 ? (
-              <div style={{ fontSize: 12, color: "#71717a" }}>暂无事件。点击「模拟 Agent」或在下方面板做演示标记以查看联动。</div>
+              <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>暂无事件。点击「模拟 Agent」或在下方面板做演示标记以查看联动。</div>
             ) : (
               [...traderAgentLog].reverse().map((row) => (
                 <div key={row.id} style={styles.logCard}>

@@ -9,15 +9,15 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 180,
     display: "flex",
     flexDirection: "column",
-    borderTop: "1px solid #27272a",
-    background: "#0c0c0e",
+    borderTop: "1px solid var(--qb-main-input-border, #27272a)",
+    background: "var(--qb-news-wrap-bg, #0c0c0e)",
     minWidth: 0,
   },
   head: {
     flexShrink: 0,
     padding: "8px 16px 6px",
     fontSize: 11,
-    color: "#71717a",
+    color: "var(--qb-main-meta, #71717a)",
     letterSpacing: "0.04em",
   },
   grid: {
@@ -40,11 +40,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "10px 16px 6px",
     fontSize: 13,
     fontWeight: 600,
-    color: "#e4e4e7",
-    borderBottom: "1px solid #27272a",
-    background: "#111114",
+    color: "var(--qb-news-col-title-fg, #e4e4e7)",
+    borderBottom: "1px solid var(--qb-main-input-border, #27272a)",
+    background: "var(--qb-news-col-title-bg, #111114)",
   },
-  sub: { fontSize: 11, fontWeight: 400, color: "#71717a", marginTop: 4 },
+  sub: { fontSize: 11, fontWeight: 400, color: "var(--qb-main-meta, #71717a)", marginTop: 4 },
   list: {
     flex: 1,
     overflow: "auto",
@@ -56,14 +56,14 @@ const styles: Record<string, React.CSSProperties> = {
   item: {
     padding: "8px 10px",
     borderRadius: 6,
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-news-item-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
   },
-  itemTitle: { fontSize: 13, color: "#e4e4e7", lineHeight: 1.45, margin: 0 },
-  meta: { marginTop: 6, fontSize: 11, color: "#71717a", display: "flex", flexWrap: "wrap", gap: 8 },
-  link: { color: "#60a5fa", textDecoration: "none", fontSize: 12 },
+  itemTitle: { fontSize: 13, color: "var(--qb-body-fg, #e4e4e7)", lineHeight: 1.45, margin: 0 },
+  meta: { marginTop: 6, fontSize: 11, color: "var(--qb-main-meta, #71717a)", display: "flex", flexWrap: "wrap", gap: 8 },
+  link: { color: "var(--qb-blue, #60a5fa)", textDecoration: "none", fontSize: 12 },
   err: { padding: "12px 16px", color: "#fca5a5", fontSize: 13 },
-  empty: { padding: "16px", color: "#71717a", fontSize: 13 },
+  empty: { padding: "16px", color: "var(--qb-main-meta, #71717a)", fontSize: 13 },
 };
 
 function NewsCol(props: {
@@ -74,7 +74,7 @@ function NewsCol(props: {
   showDivider?: boolean;
 }) {
   return (
-    <div style={{ ...styles.col, borderRight: props.showDivider ? "1px solid #27272a" : undefined }}>
+    <div style={{ ...styles.col, borderRight: props.showDivider ? "1px solid var(--qb-main-input-border, #27272a)" : undefined }}>
       <div style={styles.colTitle}>
         {props.title}
         {props.subtitle ? <div style={styles.sub}>{props.subtitle}</div> : null}
@@ -95,7 +95,7 @@ function NewsCol(props: {
                   </a>
                 ) : null}
               </div>
-              {it.content ? <p style={{ ...styles.meta, marginTop: 8, color: "#a1a1aa" }}>{it.content}</p> : null}
+              {it.content ? <p style={{ ...styles.meta, marginTop: 8, color: "var(--qb-main-meta, #a1a1aa)" }}>{it.content}</p> : null}
             </article>
           ))
         )}

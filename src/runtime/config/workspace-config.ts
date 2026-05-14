@@ -2,20 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { ALL_AGENT_ROLES } from "../../types/entities";
 import type { RuntimeAgentDefinition } from "../types";
 
-const AgentRoleSchema = z.enum([
-  "orchestrator",
-  "market_data",
-  "news_event",
-  "research",
-  "backtest",
-  "simulation",
-  "risk",
-  "execution",
-  "memory",
-  "audit",
-]);
+const AgentRoleSchema = z.enum(ALL_AGENT_ROLES as unknown as [string, ...string[]]);
 
 const A2ATypeSchema = z.enum([
   "TASK_ASSIGN",
@@ -79,13 +69,42 @@ export interface WorkspaceRuntimeConfig {
 export interface WorkspaceRuntimeFileBundle {
   exists: boolean;
   config: WorkspaceRuntimeConfig | null;
+  /** 文件存在但 JSON 损坏或不符合 schema（例如旧版枚举不识别 analyst_*） */
+  parseError?: string;
   configDir: string;
   agentsFile: string;
   sandboxFile: string;
 }
 
-function parseJson<T>(raw: string, schema: z.ZodType<T>): T {
-  return schema.parse(JSON.parse(raw));
+/** 与 DB seed / sync-workspace-agents 一致：从 definition 汇总 default-policy 白名单 */
+export function buildDefaultSandboxPoliciesFromDefinitions(
+  definitions: RuntimeAgentDefinition[]
+): WorkspaceSandboxPolicy[] {
+  const tools = [...new Set(definitions.flatMap((d) => d.tools))].sort();
+  const mcps = [...new Set(definitions.flatMap((d) => d.mcpServers))].sort();
+  return [
+    {
+      id: "default-policy",
+      name: "default-policy",
+      description: "Generated from agent definitions (allowedTools / allowedMcpServers union).",
+      allowedTools: tools,
+      allowedMcpServers: mcps,
+      allowedConnectors: [],
+      allowedHosts: [],
+      allowedFsPaths: [],
+      maxToolCallMs: 30_000,
+      maxIterationsPerRun: 20,
+      maxOutputTokens: 4096,
+      isolationLevel: "none",
+      canWriteMemory: true,
+      canReadLiveMarket: false,
+      canSubmitOrder: false,
+    },
+  ];
+}
+
+function formatZodIssues(err: z.ZodError): string {
+  return err.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
 }
 
 export async function loadWorkspaceRuntimeConfig(
@@ -110,13 +129,57 @@ export async function loadWorkspaceRuntimeConfig(
     readFile(agentsFile, "utf-8"),
     readFile(sandboxFile, "utf-8"),
   ]);
-  const agents = parseJson(agentsRaw, AgentsFileSchema);
-  const sandbox = parseJson(sandboxRaw, SandboxFileSchema);
+
+  let agentsJson: unknown;
+  let sandboxJson: unknown;
+  try {
+    agentsJson = JSON.parse(agentsRaw);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      exists: true,
+      config: null,
+      parseError: `agents.json: invalid JSON (${msg})`,
+      configDir,
+      agentsFile,
+      sandboxFile,
+    };
+  }
+  try {
+    sandboxJson = JSON.parse(sandboxRaw);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      exists: true,
+      config: null,
+      parseError: `sandbox.json: invalid JSON (${msg})`,
+      configDir,
+      agentsFile,
+      sandboxFile,
+    };
+  }
+
+  const agentsParsed = AgentsFileSchema.safeParse(agentsJson);
+  const sandboxParsed = SandboxFileSchema.safeParse(sandboxJson);
+  if (!agentsParsed.success || !sandboxParsed.success) {
+    const parts: string[] = [];
+    if (!agentsParsed.success) parts.push(`agents.json: ${formatZodIssues(agentsParsed.error)}`);
+    if (!sandboxParsed.success) parts.push(`sandbox.json: ${formatZodIssues(sandboxParsed.error)}`);
+    return {
+      exists: true,
+      config: null,
+      parseError: parts.join(" | "),
+      configDir,
+      agentsFile,
+      sandboxFile,
+    };
+  }
+
   return {
     exists: true,
     config: {
-      definitions: agents.definitions as RuntimeAgentDefinition[],
-      policies: sandbox.policies,
+      definitions: agentsParsed.data.definitions as RuntimeAgentDefinition[],
+      policies: sandboxParsed.data.policies,
     },
     configDir,
     agentsFile,
@@ -142,11 +205,6 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
     );
   }
   if (!existsSync(sandboxFile)) {
-    await writeFile(
-      sandboxFile,
-      JSON.stringify({ policies: params.policies }, null, 2),
-      "utf-8"
-    );
+    await writeFile(sandboxFile, JSON.stringify({ policies: params.policies }, null, 2), "utf-8");
   }
 }
-

@@ -1,9 +1,15 @@
-import type { AgentGraphState, StepStreamEvent } from "../state";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import { chatMessage, workflowRun } from "../../../db/sqlite/schema";
+import { agentProfile, chatMessage, workflowRun } from "../../../db/sqlite/schema";
+import {
+  type PromptMode,
+  getDataDir,
+  mergeSystemPrompt,
+  readPackFiles,
+} from "../../agent/agent-pack-service";
 import { loadModelConfig } from "../../config/model-config";
 import { runLlmGateway } from "../../llm/gateway";
+import type { AgentGraphState, StepStreamEvent } from "../state";
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
   const db = await getDb();
@@ -32,6 +38,30 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
     .reverse()
     .map((m) => `[${m.role}/${m.status}] ${String(m.content ?? "").trim()}`)
     .filter((line) => line.length > 0);
+}
+
+/** 每次推理从磁盘读取 pack，与 `promptMode` 合并；这样 Agent 通过 edit_agent_pack 写入后下一轮即生效 */
+async function resolveEffectiveSystemPrompt(definitionId: string, dbSystemPrompt: string): Promise<string> {
+  const db = await getDb();
+  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const prof = profRows[0];
+  const read = await readPackFiles({
+    dataDir: getDataDir(),
+    definitionId,
+    configRootUri: prof?.configRootUri ?? "",
+    soulFileRef: prof?.soulFileRef ?? "",
+    promptTemplateRef: prof?.promptTemplateRef,
+  });
+  const mode = (prof?.promptMode as PromptMode | undefined) ?? "db_primary";
+  return mergeSystemPrompt({
+    mode,
+    dbPrompt: dbSystemPrompt,
+    agentText: read.agentText,
+    soulText: read.soulText,
+    userText: read.userText,
+    memoryText: read.memoryText,
+    promptText: read.promptText,
+  });
 }
 
 export async function reasonNode(
@@ -69,9 +99,13 @@ export async function reasonNode(
     .join("\n");
 
   try {
+    const systemPrompt = await resolveEffectiveSystemPrompt(
+      state.agentDefinition.id,
+      state.agentDefinition.systemPrompt
+    );
     answer = await runLlmGateway({
       config: modelConfig,
-      systemPrompt: state.agentDefinition.systemPrompt,
+      systemPrompt,
       userPrompt,
       onToken: (token) => {
         emit({

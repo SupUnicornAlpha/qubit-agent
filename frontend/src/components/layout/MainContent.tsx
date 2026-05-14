@@ -1,6 +1,6 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { History, Loader2, Network, Rocket, Users, type LucideIcon } from "lucide-react";
+import { Loader2, Network, Rocket, Users, type LucideIcon } from "lucide-react";
 import {
   chatHealth,
   checkBrokerHealth,
@@ -15,8 +15,8 @@ import {
   getDebateConfig,
   getDebateTurns,
   getDebateVerdict,
+  getDefaultProjectSession,
   getExecutionSafetyConfig,
-  getFusionHistory,
   getAnalystTeamGraph,
   getSignalFusion,
   initGenePool,
@@ -43,6 +43,7 @@ import {
   listScheduledJobs,
   appendAgentDraftSkills,
   deleteSkillMarketInstall,
+  deleteWorkflow,
   getSkillMarketStatus,
   installSkillFromMarket,
   listSkillMarketInstalls,
@@ -61,8 +62,10 @@ import {
   listProjects,
   listSessionMessages,
   listWorkspaces,
+  createStrategyScript,
   patchSessionMessage,
   patchScheduledJob,
+  patchWorkflow,
   reloadAgents,
   processWorkflowCompensations,
   evolveGenePool,
@@ -93,6 +96,7 @@ import {
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
+  AgentDefinitionRecord,
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentGroupRecord,
@@ -129,7 +133,6 @@ import type {
   WorkflowCompensationTaskRecord,
   ScheduledJobRecord,
   ScheduledJobRunRecord,
-  SignalFusionRecord,
   AnalystTeamGraphPayload,
   AnalystTeamGraphToolCall,
   AnalystTeamGraphMcpCall,
@@ -566,7 +569,9 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         workflowRunIds: [created.data.id],
       });
       await patchSessionMessage({ messageId: userMsg.id, status: "completed" });
-      bindStream(created.data.id, created.runId, assistantMsg.id);
+      if (created.runId) {
+        bindStream(created.data.id, created.runId, assistantMsg.id);
+      }
       setChatMessages(await listSessionMessages(selectedSessionId));
       setInput("");
       setChartContext(null);
@@ -633,7 +638,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                   {msg.role} · {msg.status}
                 </div>
                 <div style={{ marginTop: 6 }}>
-                  {msg.content ? <MarkdownBubble text={msg.content} /> : <span style={{ color: "#71717a" }}>(流式生成中…)</span>}
+                  {msg.content ? (
+                    <MarkdownBubble text={msg.content} />
+                  ) : (
+                    <span style={{ color: "var(--qb-main-meta, #71717a)" }}>(流式生成中…)</span>
+                  )}
                 </div>
                 {msg.workflowRunIds?.length ? (
                   <div style={styles.chatMeta}>workflow: {msg.workflowRunIds.join(", ")}</div>
@@ -742,7 +751,6 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
 };
 
 const ConfigPanel: FC = () => {
-  const configData = useAppStore((s) => s.configData);
   const setConfigData = useAppStore((s) => s.setConfigData);
   const reloadSummary = useAppStore((s) => s.reloadSummary);
   const setReloadSummary = useAppStore((s) => s.setReloadSummary);
@@ -882,6 +890,9 @@ const ConfigPanel: FC = () => {
     setNewsSyntheticWhenEmpty(typeof swe === "boolean" ? swe : String(swe) !== "false");
   };
 
+  const preferAgentDefinitionIdRef = useRef<string | null>(null);
+  const prevAgentDefId = useRef<string>("");
+
   const loadConfig = async () => {
     const workspaces = await listWorkspaces();
     const currentWorkspace = workspaces[0];
@@ -905,7 +916,14 @@ const ConfigPanel: FC = () => {
       currentProject ? listSkillMarketInstalls(currentProject.id) : Promise.resolve([]),
     ]);
     setConfigData(data);
-    setDefinitions(bundles);
+    let list: AgentDefinitionBundle[] = bundles ?? [];
+    if (list.length === 0 && Array.isArray(data.dbEffective?.definitions)) {
+      const raw = data.dbEffective.definitions as AgentDefinitionRecord[];
+      if (raw.length > 0) {
+        list = raw.map((definition) => ({ definition, profile: null, draft: null }));
+      }
+    }
+    setDefinitions(list);
     setMcpServers(servers);
     setMcpBindings(bindings);
     setMcpProbeByServer({});
@@ -936,17 +954,28 @@ const ConfigPanel: FC = () => {
       setSelectedScheduledJobId(jobs[0].id);
       setScheduledJobRuns(await listScheduledJobRuns(jobs[0].id));
     }
-    if (!selectedDefinitionId && bundles[0]) {
-      setSelectedDefinitionId(bundles[0].definition.id);
-      setDraftPrompt(bundles[0].draft?.systemPrompt ?? bundles[0].definition.systemPrompt);
-      setDraftSoul(bundles[0].profile?.soulFileRef ?? "");
-      setDraftPromptMode(
-        (bundles[0].profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary"
-      );
-      setDraftMemoryNamespace(bundles[0].profile?.memoryNamespace ?? "");
-      setDraftConfigRootUri(bundles[0].profile?.configRootUri ?? "");
-      setDraftMcpServerNames(parseAgentMcpServerNames(bundles[0].draft?.mcpServersJson ?? bundles[0].definition.mcpServersJson));
-      setDraftPromptTemplateRef(bundles[0].profile?.promptTemplateRef ?? "");
+    if (list.length === 0) {
+      setSelectedDefinitionId("");
+    } else {
+      const preferred = preferAgentDefinitionIdRef.current;
+      preferAgentDefinitionIdRef.current = null;
+      const resolvedId =
+        (preferred && list.some((x) => x.definition.id === preferred) ? preferred : null) ??
+        (selectedDefinitionId && list.some((x) => x.definition.id === selectedDefinitionId) ? selectedDefinitionId : null) ??
+        list[0]!.definition.id;
+      const b = list.find((x) => x.definition.id === resolvedId) ?? list[0]!;
+      const selectionChanged = resolvedId !== selectedDefinitionId;
+      setSelectedDefinitionId(resolvedId);
+      if (selectionChanged) {
+        prevAgentDefId.current = "";
+        setDraftPrompt(b.draft?.systemPrompt ?? b.definition.systemPrompt);
+        setDraftSoul(b.profile?.soulFileRef ?? "");
+        setDraftPromptMode((b.profile?.promptMode as "db_primary" | "file_primary" | "merged") ?? "db_primary");
+        setDraftMemoryNamespace(b.profile?.memoryNamespace ?? "");
+        setDraftConfigRootUri(b.profile?.configRootUri ?? "");
+        setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
+        setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
+      }
     }
     try {
       const bc = await getBuiltinConnectorConfig();
@@ -1012,7 +1041,6 @@ const ConfigPanel: FC = () => {
       });
   }, [selectedDefinitionId]);
 
-  const prevAgentDefId = useRef<string>("");
   useEffect(() => {
     if (!selectedDefinitionId) return;
     if (prevAgentDefId.current === selectedDefinitionId) return;
@@ -2476,6 +2504,9 @@ const ConfigPanel: FC = () => {
               prevAgentDefId.current = "";
             }}
             onReloadAll={() => void loadConfig()}
+            onPreferAgentAfterReload={(id) => {
+              preferAgentDefinitionIdRef.current = id;
+            }}
             onOpenMcpSubPage={setConfigSubPage}
             agentUiTab={agentUiTab}
             setAgentUiTab={setAgentUiTab}
@@ -2513,7 +2544,6 @@ const ConfigPanel: FC = () => {
             currentProjectId={currentProjectId}
             pickBindingForMcpServer={pickBindingForMcpServer}
             mcpServerBindingCount={mcpServerBindingCount}
-            syncSummary={configData?.diffSummary}
           />
         ) : null}
       </div>
@@ -2924,16 +2954,16 @@ const styles: Record<string, CSSProperties> = {
   chatIdeHeader: {
     flexShrink: 0,
     fontSize: 12,
-    color: "#a1a1aa",
+    color: "var(--qb-chat-ide-header-fg, #a1a1aa)",
     padding: "8px 12px",
-    borderBottom: "1px solid #27272a",
-    background: "#111114",
+    borderBottom: "1px solid var(--qb-chat-border, #27272a)",
+    background: "var(--qb-chat-ide-header-bg, #111114)",
   },
   chatSidebar: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-chat-border, #27272a)",
     borderRadius: 8,
     padding: 10,
-    background: "#111114",
+    background: "var(--qb-chat-sidebar-bg, #111114)",
     minWidth: 0,
     minHeight: 0,
     overflow: "hidden",
@@ -2951,20 +2981,20 @@ const styles: Record<string, CSSProperties> = {
     overflowX: "hidden",
   },
   chatSessionItem: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-chat-border, #27272a)",
     borderRadius: 8,
-    background: "#18181b",
-    color: "#e4e4e7",
+    background: "var(--qb-chat-session-item-bg, #18181b)",
+    color: "var(--qb-chat-session-item-fg, #e4e4e7)",
     textAlign: "left",
     padding: "8px 10px",
     cursor: "pointer",
   },
-  chatSessionItemActive: { borderColor: "#7c3aed" },
+  chatSessionItemActive: { borderColor: "var(--qb-chat-session-active-border, #7c3aed)" },
   chatMain: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-chat-border, #27272a)",
     borderRadius: 8,
     padding: 10,
-    background: "#111114",
+    background: "var(--qb-chat-main-bg, #111114)",
     display: "flex",
     flexDirection: "column",
     minHeight: 0,
@@ -2993,27 +3023,37 @@ const styles: Record<string, CSSProperties> = {
   chatBubble: {
     padding: "8px 10px",
     borderRadius: 8,
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-chat-bubble-border, #27272a)",
     minWidth: 0,
     boxSizing: "border-box",
   },
-  chatBubbleUser: { background: "#27272a", alignSelf: "flex-end", maxWidth: "min(82%, 100%)" },
-  chatBubbleAgent: { background: "#18181b", alignSelf: "flex-start", maxWidth: "100%" },
-  chatMeta: { fontSize: 11, color: "#a1a1aa", marginBottom: 4 },
+  chatBubbleUser: {
+    background: "var(--qb-chat-bubble-user-bg, #27272a)",
+    color: "var(--qb-chat-bubble-user-fg, #fafafa)",
+    alignSelf: "flex-end",
+    maxWidth: "min(82%, 100%)",
+  },
+  chatBubbleAgent: {
+    background: "var(--qb-chat-bubble-agent-bg, #18181b)",
+    color: "var(--qb-chat-bubble-agent-fg, #e4e4e7)",
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  chatMeta: { fontSize: 11, color: "var(--qb-main-meta, #a1a1aa)", marginBottom: 4 },
   chartCtxBanner: {
     fontSize: 12,
-    color: "#a5b4fc",
-    background: "#1e1b4b",
-    border: "1px solid #4338ca",
+    color: "var(--qb-chat-chart-banner-fg, #a5b4fc)",
+    background: "var(--qb-chat-chart-banner-bg, #1e1b4b)",
+    border: "1px solid var(--qb-chat-chart-banner-border, #4338ca)",
     borderRadius: 8,
     padding: "8px 12px",
     marginBottom: 10,
   },
   boardCol: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-chat-border, #27272a)",
     borderRadius: 8,
     padding: 10,
-    background: "#111114",
+    background: "var(--qb-board-col-bg, #111114)",
     minWidth: 0,
     minHeight: 0,
     overflow: "hidden",
@@ -3029,8 +3069,8 @@ const styles: Record<string, CSSProperties> = {
   },
   boardList: { display: "flex", flexDirection: "column", gap: 8 },
   boardCard: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-board-card-bg, #18181b)",
+    border: "1px solid var(--qb-chat-border, #27272a)",
     borderRadius: 8,
     padding: 10,
     minWidth: 0,
@@ -3081,13 +3121,26 @@ function formatDebateStreamLine(ev: DebateStreamEvent): string {
   }
 }
 
-const TEAM_CENTER_VIEWS = ["run", "research", "roles", "history"] as const;
+function extractFencedCodeBlocks(report: string): Array<{ lang: string; code: string }> {
+  if (!report?.trim()) return [];
+  const re = /```(\w+)?\s*\n([\s\S]*?)```/g;
+  const out: Array<{ lang: string; code: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(report)) !== null) {
+    const lang = ((m[1] ?? "").trim() || "text").toLowerCase();
+    const code = (m[2] ?? "").trim();
+    if (!code) continue;
+    out.push({ lang, code });
+  }
+  return out;
+}
+
+const TEAM_CENTER_VIEWS = ["run", "research", "roles"] as const;
 type TeamCenterView = (typeof TEAM_CENTER_VIEWS)[number];
 const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
   run: "发起分析 · 工具与配置",
   research: "研究画布 · 拓扑 / 实时流 / 结论",
   roles: "成员目录",
-  history: "历史信号",
 };
 
 /** 活动栏图标：Web 端用 Lucide 对齐 SF Symbols 语义（见 `appleUiSymbols.ts` 与 [SF Symbols](https://developer.apple.com/cn/sf-symbols/)）。 */
@@ -3095,7 +3148,6 @@ const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
   run: Rocket,
   research: Network,
   roles: Users,
-  history: History,
 };
 
 /** 画布可多选高亮的分析师角色（与后端 MSA 四分析师一致；空集表示不过滤） */
@@ -3116,7 +3168,6 @@ const TeamDashboardPanel: FC = () => {
   const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
-  const [history, setHistory] = useState<SignalFusionRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TeamCenterView>("run");
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
@@ -3173,17 +3224,32 @@ const TeamDashboardPanel: FC = () => {
   const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
-  const [participatingAnalystRoles, setParticipatingAnalystRoles] = useState<string[]>([]);
+  const [participatingAnalystDefinitionIds, setParticipatingAnalystDefinitionIds] = useState<string[]>([]);
   const [strategyScripts, setStrategyScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
-  const [strategyScriptChoice, setStrategyScriptChoice] = useState<string>("");
+  const [teamCodePick, setTeamCodePick] = useState<string>("");
   const [agentDefBundles, setAgentDefBundles] = useState<AgentDefinitionBundle[] | null>(null);
+  const [teamResearchProjectId, setTeamResearchProjectId] = useState("");
+  const [teamResearchSessionId, setTeamResearchSessionId] = useState("");
   const setActiveView = useAppStore((s) => s.setActiveView);
   const setCfgSubPage = useAppStore((s) => s.setConfigSubPage);
+  const setIdeSignalPythonCode = useAppStore((s) => s.setIdeSignalPythonCode);
+  const setIdeStrategySource = useAppStore((s) => s.setIdeStrategySource);
+  const setChartSpec = useAppStore((s) => s.setChartSpec);
+  const toggleIdePanelVisible = useAppStore((s) => s.toggleIdePanelVisible);
+  const setSelectedSessionId = useAppStore((s) => s.setSelectedSessionId);
+  const setTraderAgentConfig = useAppStore((s) => s.setTraderAgentConfig);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
   const [teamRightW, setTeamRightW] = useState(300);
   const teamColDrag = useRef<{ which: 1 | 2; startX: number; left0: number; right0: number } | null>(null);
+
+  const refreshWorkflowOptions = useCallback(async () => {
+    const wfRows = (await listMonitorWorkflows({})) as Array<Record<string, unknown>>;
+    const active = wfRows.filter((w) => String(w.status) !== "cancelled");
+    setWorkflowOptions(active);
+    return active;
+  }, []);
 
   const loadTeamGraph = useCallback(async (opts?: { preserveSelection?: boolean }) => {
     if (!workflowRunId.trim()) {
@@ -3214,6 +3280,33 @@ const TeamDashboardPanel: FC = () => {
     }, 2500);
     return () => window.clearInterval(id);
   }, [running, workflowRunId, loadTeamGraph]);
+
+  const participatingAnalystRoles = useMemo(() => {
+    if (!agentDefBundles?.length || participatingAnalystDefinitionIds.length === 0) return [];
+    const idSet = new Set(participatingAnalystDefinitionIds);
+    const roles: string[] = [];
+    for (const b of agentDefBundles) {
+      if (!idSet.has(b.definition.id)) continue;
+      const r = b.definition.role;
+      if (TEAM_RESEARCH_ANALYST_ROLES.has(r)) roles.push(r);
+    }
+    return roles;
+  }, [agentDefBundles, participatingAnalystDefinitionIds]);
+
+  const analystDefCatalog = useMemo(() => {
+    const rows: { id: string; role: string; displayName: string }[] = [];
+    if (!agentDefBundles) return rows;
+    for (const b of agentDefBundles) {
+      if (!TEAM_RESEARCH_ANALYST_ROLES.has(b.definition.role)) continue;
+      if (b.definition.enabled === false) continue;
+      rows.push({
+        id: b.definition.id,
+        role: b.definition.role,
+        displayName: b.profile?.displayName?.trim() || b.definition.name || b.definition.role,
+      });
+    }
+    return rows;
+  }, [agentDefBundles]);
 
   const graphToolsForNode = useMemo((): {
     tools: AnalystTeamGraphToolCall[];
@@ -3278,21 +3371,6 @@ const TeamDashboardPanel: FC = () => {
     };
   }, [teamGraph, participatingAnalystRoles]);
 
-  const analystRoleCatalog = useMemo(() => {
-    const rows: { role: string; displayName: string }[] = [];
-    if (!agentDefBundles) return rows;
-    for (const role of TEAM_RESEARCH_ANALYST_ROLES) {
-      const b = agentDefBundles.find((x) => x.definition.role === role && x.definition.enabled !== false);
-      if (b) {
-        rows.push({
-          role,
-          displayName: b.profile?.displayName?.trim() || b.definition.name || role,
-        });
-      }
-    }
-    return rows;
-  }, [agentDefBundles]);
-
   const enabledResearchAnalystDefCount = useMemo(() => {
     if (agentDefBundles == null) return null;
     return agentDefBundles.filter((b) => {
@@ -3306,8 +3384,9 @@ const TeamDashboardPanel: FC = () => {
     if (!ticker.trim() || !workflowRunId) return true;
     if (enabledResearchAnalystDefCount === null) return true;
     if (enabledResearchAnalystDefCount === 0) return true;
+    if (participatingAnalystDefinitionIds.length === 0) return true;
     return false;
-  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount]);
+  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
 
   const teamRunDisabledTitle = useMemo(() => {
     if (running) return "分析进行中";
@@ -3316,8 +3395,9 @@ const TeamDashboardPanel: FC = () => {
     if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
     if (enabledResearchAnalystDefCount === 0)
       return "数据库中暂无已启用的 analyst_* 定义，请先到配置中心启用或执行种子";
+    if (participatingAnalystDefinitionIds.length === 0) return "请至少勾选一名参与分析的 Agent 定义";
     return "";
-  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount]);
+  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
 
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
@@ -3327,28 +3407,24 @@ const TeamDashboardPanel: FC = () => {
 
   useEffect(() => {
     if (agentDefBundles === null) return;
-    const rolesWithDefs = [...TEAM_RESEARCH_ANALYST_ROLES].filter((role) =>
-      agentDefBundles.some((b) => b.definition.role === role && b.definition.enabled !== false)
-    );
-    setParticipatingAnalystRoles((prev) => (prev.length > 0 ? prev : rolesWithDefs));
+    const ids = agentDefBundles
+      .filter((b) => TEAM_RESEARCH_ANALYST_ROLES.has(b.definition.role) && b.definition.enabled !== false)
+      .map((b) => b.definition.id);
+    setParticipatingAnalystDefinitionIds((prev) => (prev.length > 0 ? prev : ids));
   }, [agentDefBundles]);
 
   useEffect(() => {
-    if (!workflowSessionId.trim()) {
+    const sid = workflowSessionId.trim() || teamResearchSessionId.trim();
+    if (!sid) {
       setStrategyScripts([]);
-      setStrategyScriptChoice("");
       return;
     }
-    void listStrategyScripts(workflowSessionId.trim()).then((all) => {
+    void listStrategyScripts(sid).then((all) => {
       const wf = workflowRunId.trim();
-      const rows = all.filter((s) => !s.workflowRunId || s.workflowRunId === wf);
+      const rows = all.filter((s) => !wf || !s.workflowRunId || s.workflowRunId === wf);
       setStrategyScripts(rows);
-      setStrategyScriptChoice((prev) => {
-        if (prev && rows.some((r) => r.id === prev)) return prev;
-        return rows[0]?.id ?? "";
-      });
     });
-  }, [workflowSessionId, workflowRunId]);
+  }, [workflowSessionId, teamResearchSessionId, workflowRunId]);
 
   useEffect(() => {
     const onMove = (e: globalThis.MouseEvent) => {
@@ -3421,90 +3497,39 @@ const TeamDashboardPanel: FC = () => {
         .then(setAnalystAgentGroupOptions)
         .catch(() => setAnalystAgentGroupOptions([]));
       try {
-        const hist = await getFusionHistory({ limit: 10 });
-        // #region agent log
-        fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
-          body: JSON.stringify({
-            sessionId: "6ea60d",
-            hypothesisId: "H2",
-            location: "MainContent.tsx:TeamDashboard:init:fusionHistory",
-            message: "getFusionHistory ok",
-            data: {
-              count: Array.isArray(hist) ? hist.length : -1,
-              sampleKeys: Array.isArray(hist) && hist[0] ? Object.keys(hist[0] as object) : [],
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-        setHistory(hist);
-      } catch (e) {
-        // #region agent log
-        fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
-          body: JSON.stringify({
-            sessionId: "6ea60d",
-            hypothesisId: "H2",
-            location: "MainContent.tsx:TeamDashboard:init:fusionHistory:err",
-            message: "getFusionHistory failed",
-            data: { err: (e as Error).message },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-        setHistory([]);
+        const workspaces = await listWorkspaces();
+        let wsId = workspaces[0]?.id;
+        if (!wsId) {
+          const cr = await createWorkspace({ name: "QUBIT Default Workspace", owner: "local-user" });
+          wsId = cr.data.id;
+        }
+        const projects = await listProjects(wsId);
+        let pid = projects[0]?.id;
+        if (!pid) {
+          const pr = await createProject({
+            workspaceId: wsId,
+            name: "QUBIT Default Project",
+            marketScope: "CN-A",
+          });
+          pid = pr.data.id;
+        }
+        setTeamResearchProjectId(pid);
+        const session = await getDefaultProjectSession(pid);
+        setTeamResearchSessionId(session.id);
+      } catch {
+        setTeamResearchProjectId("");
+        setTeamResearchSessionId("");
       }
       getDebateConfig().then(setDebateConfigState).catch(() => {});
       getRiskConfig().then(setRiskConfigState).catch(() => {});
       getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
-      const wfRows = (await listMonitorWorkflows({})) as Array<Record<string, unknown>>;
-      // #region agent log
-      fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
-        body: JSON.stringify({
-          sessionId: "6ea60d",
-          hypothesisId: "H4",
-          location: "MainContent.tsx:TeamDashboard:init:workflows",
-          message: "listMonitorWorkflows",
-          data: { wfCount: wfRows.length, firstId: wfRows[0]?.id ? String(wfRows[0].id) : null },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      setWorkflowOptions(wfRows);
+      const wfRows = await refreshWorkflowOptions();
       if (!workflowRunId && wfRows[0]?.id) {
         setWorkflowRunId(String(wfRows[0].id));
       }
       await refreshBrokerAndComp();
     })().catch(() => {});
   }, []);
-
-  useEffect(() => {
-    if (activeTab !== "history") return;
-    void (async () => {
-      const rows = await getFusionHistory({ limit: 50 }).catch(() => [] as SignalFusionRecord[]);
-      setHistory(rows);
-      // #region agent log
-      fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
-        body: JSON.stringify({
-          sessionId: "6ea60d",
-          hypothesisId: "H5",
-          location: "MainContent.tsx:TeamDashboard:tab:history",
-          message: "history tab refetch",
-          data: { fetchedLen: rows.length },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    })();
-  }, [activeTab]);
-
   useEffect(() => {
     const row = workflowOptions.find((item) => String(item.id) === workflowRunId);
     if (!row) return;
@@ -3552,10 +3577,8 @@ const TeamDashboardPanel: FC = () => {
         ticker: ticker.trim(),
         context: teamAnalysisContext.trim() || undefined,
         agentGroupId: analystAgentGroupId.trim() || undefined,
-        analystRoles: (() => {
-          const xs = participatingAnalystRoles.filter((r) => TEAM_RESEARCH_ANALYST_ROLES.has(r));
-          return xs.length > 0 ? xs : undefined;
-        })(),
+        analystDefinitionIds:
+          participatingAnalystDefinitionIds.length > 0 ? participatingAnalystDefinitionIds : undefined,
         onProgress: (elapsedMs) => {
           const secs = Math.floor(elapsedMs / 1000);
           setRunProgress(`分析进行中… 已用时 ${secs}s（多 Agent LLM 推理，请耐心等待）`);
@@ -3576,13 +3599,172 @@ const TeamDashboardPanel: FC = () => {
       }
       const vetoLogs = await getRiskVetoLogs(wfId);
       setRiskVetoLogs(vetoLogs);
-      const newHistory = await getFusionHistory({ limit: 10 });
-      setHistory(newHistory);
     } catch (e) {
       setError((e as Error).message);
       setRunProgress("");
     } finally {
       setRunning(false);
+    }
+  };
+
+  const reportCodeBlocks = useMemo(() => extractFencedCodeBlocks(result?.report ?? ""), [result?.report]);
+
+  const teamCodeSelectOptions = useMemo(() => {
+    const opts: { value: string; label: string }[] = [];
+    for (const s of strategyScripts) {
+      opts.push({ value: `script:${s.id}`, label: `已保存 · ${s.name}` });
+    }
+    reportCodeBlocks.forEach((b, i) => {
+      opts.push({
+        value: `snippet:${i}`,
+        label: `报告代码块 · ${b.lang} · ${(b.code.length / 1024).toFixed(1)} KB`,
+      });
+    });
+    return opts;
+  }, [strategyScripts, reportCodeBlocks]);
+
+  useEffect(() => {
+    const opts = teamCodeSelectOptions;
+    if (opts.length === 0) {
+      setTeamCodePick("");
+      return;
+    }
+    setTeamCodePick((prev) => (prev && opts.some((o) => o.value === prev) ? prev : opts[0].value));
+  }, [teamCodeSelectOptions]);
+
+  const getPickedTeamCode = useCallback((): { ide: string; signal: string } | null => {
+    if (!teamCodePick) return null;
+    if (teamCodePick.startsWith("script:")) {
+      const id = teamCodePick.slice("script:".length);
+      const s = strategyScripts.find((x) => x.id === id);
+      if (!s) return null;
+      return { ide: s.ideCode ?? "", signal: s.signalCode ?? "" };
+    }
+    if (teamCodePick.startsWith("snippet:")) {
+      const i = Number(teamCodePick.slice("snippet:".length));
+      const b = reportCodeBlocks[i];
+      if (!b) return null;
+      const isPy = b.lang === "python" || b.lang === "py";
+      return isPy ? { ide: "", signal: b.code } : { ide: b.code, signal: "" };
+    }
+    return null;
+  }, [teamCodePick, strategyScripts, reportCodeBlocks]);
+
+  const handleCreateTeamWorkflow = async () => {
+    if (!teamResearchProjectId || !teamResearchSessionId) {
+      setError("尚未解析到默认项目/会话，无法创建工作流。请检查工作区是否可用。");
+      return;
+    }
+    setError(null);
+    try {
+      const created = await createWorkflow({
+        projectId: teamResearchProjectId,
+        goal: `研究团队 · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`,
+        mode: "research",
+        sessionId: teamResearchSessionId,
+        source: "manual",
+        reuseSessionWorkflow: false,
+        skipDispatch: true,
+      });
+      await refreshWorkflowOptions();
+      setWorkflowRunId(String(created.data.id));
+      if (!geneProjectId && teamResearchProjectId) setGeneProjectId(teamResearchProjectId);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleCancelTeamWorkflow = async () => {
+    if (!workflowRunId.trim()) return;
+    if (!window.confirm("将当前工作流标记为已取消（软删除，保留记录）。确定？")) return;
+    setError(null);
+    try {
+      await deleteWorkflow(workflowRunId.trim());
+      const rows = await refreshWorkflowOptions();
+      setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
+      setResult(null);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleLinkWorkflowToDefaultSession = async () => {
+    if (!workflowRunId.trim() || !teamResearchSessionId) return;
+    setError(null);
+    try {
+      await patchWorkflow(workflowRunId.trim(), { sessionId: teamResearchSessionId });
+      await refreshWorkflowOptions();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleTeamOpenIde = () => {
+    const p = getPickedTeamCode();
+    if (!p) return;
+    const code = (p.signal || p.ide).trim();
+    if (!code) {
+      setError("当前选中项没有可写入 IDE 的代码内容");
+      return;
+    }
+    setError(null);
+    setIdeSignalPythonCode(code);
+    if (p.ide.trim()) setIdeStrategySource(p.ide);
+    setChartSpec({ symbol: ticker.trim() });
+    setActiveView("ide");
+    const { idePanels } = useAppStore.getState();
+    if (!idePanels.backtest) toggleIdePanelVisible("backtest");
+  };
+
+  const handleTeamSaveStrategyScript = async () => {
+    const sid = (workflowSessionId || teamResearchSessionId).trim();
+    const p = getPickedTeamCode();
+    if (!sid) {
+      setError("需要关联到聊天会话后才能保存策略脚本（请选择带 session 的工作流或先「关联默认会话」）。");
+      return;
+    }
+    if (!p) return;
+    setError(null);
+    try {
+      const wf = workflowRunId.trim() || undefined;
+      const created = await createStrategyScript(sid, {
+        name: `研究团队 · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`,
+        ideCode: p.ide || "",
+        signalCode: p.signal || p.ide || "",
+        workflowRunId: wf,
+        purpose: "both",
+      });
+      const all = await listStrategyScripts(sid);
+      const rows = all.filter((s) => !s.workflowRunId || !wf || s.workflowRunId === wf);
+      setStrategyScripts(rows);
+      setTeamCodePick(`script:${created.id}`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleTeamGoLive = async () => {
+    const sid = (workflowSessionId || teamResearchSessionId).trim();
+    const p = getPickedTeamCode();
+    if (!sid || !p) {
+      setError("需要会话与有效代码片段才能入库并跳转实盘页。");
+      return;
+    }
+    setError(null);
+    try {
+      const wf = workflowRunId.trim() || undefined;
+      const created = await createStrategyScript(sid, {
+        name: `研究团队实盘 · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`,
+        ideCode: p.ide || "",
+        signalCode: p.signal || p.ide || "",
+        workflowRunId: wf,
+        purpose: "live_trading",
+      });
+      setTraderAgentConfig({ strategyScriptIds: [created.id] });
+      setSelectedSessionId(sid);
+      setActiveView("trader");
+    } catch (e) {
+      setError((e as Error).message);
     }
   };
 
@@ -3833,7 +4015,7 @@ const TeamDashboardPanel: FC = () => {
 
   return (
     <div style={teamStyles.container}>
-      <div style={teamStyles.teamWorkbenchShell}>
+      <div data-qb-team-shell style={teamStyles.teamWorkbenchShell}>
         <div ref={teamTriRef} style={teamStyles.teamTriRow}>
         <aside style={{ ...teamStyles.leftRail, width: teamLeftW, flexShrink: 0, alignSelf: "stretch" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 10 }}>研究与工作流</div>
@@ -3857,7 +4039,7 @@ const TeamDashboardPanel: FC = () => {
             />
           </div>
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
-            <label style={teamStyles.label}>工作流 ID</label>
+            <label style={teamStyles.label}>工作流</label>
             <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
               <option value="">请选择 workflow</option>
               {workflowOptions.slice(0, 80).map((row) => (
@@ -3866,6 +4048,42 @@ const TeamDashboardPanel: FC = () => {
                 </option>
               ))}
             </select>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                style={{ fontSize: 12, padding: "6px 10px" }}
+                onClick={() => void handleCreateTeamWorkflow()}
+                disabled={!teamResearchProjectId || !teamResearchSessionId}
+                title={!teamResearchSessionId ? "正在解析默认会话…" : "创建仅用于研究团队的工作流（不触发总控编排）"}
+              >
+                新建工作流
+              </button>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                style={{ fontSize: 12, padding: "6px 10px" }}
+                onClick={() => void handleCancelTeamWorkflow()}
+                disabled={!workflowRunId.trim()}
+              >
+                取消当前工作流
+              </button>
+              {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 10px" }}
+                  onClick={() => void handleLinkWorkflowToDefaultSession()}
+                >
+                  关联默认会话
+                </button>
+              ) : null}
+            </div>
+            {workflowRunId.trim() && !workflowSessionId ? (
+              <p style={{ fontSize: 11, color: "#a78bfa", marginTop: 6, lineHeight: 1.45 }}>
+                当前工作流未绑定会话：右侧「保存脚本 / 实盘」需会话。可点「关联默认会话」或新建工作流（已自动带会话）。
+              </p>
+            ) : null}
           </div>
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
             <label style={teamStyles.label}>分析师编组（可选）</label>
@@ -3886,7 +4104,7 @@ const TeamDashboardPanel: FC = () => {
             <div className="qb-callout qb-callout--warning" role="status" style={{ marginTop: 12 }}>
               <div>
                 当前数据库里没有<strong>已启用</strong>的分析师定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code> 等），无法启动
-                MSA。左侧「团队成员」来自角色目录，与是否已落库定义无关。
+                MSA。请在下方按<strong>Agent 定义</strong>勾选参与成员（与配置中心已发布定义一致）。
               </div>
               <div className="qb-callout__actions">
                 <button
@@ -3956,37 +4174,41 @@ const TeamDashboardPanel: FC = () => {
             </div>
           ) : null}
 
-          <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>团队成员（画布）</div>
-            <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
-              从目录加入或移出参与本次「启动团队分析」的分析师（analyst_*）。未选时由后端使用全部已启用定义；与上方「分析师编组」取交集。
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-sidebar-border, #27272a)", paddingTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>
+              团队成员（画布）
+            </div>
+            <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
+              勾选配置中心已发布且启用的 analyst_* <strong>Agent 定义</strong>参与本次分析；与上方「分析师编组」取交集（编组决定拓扑与槽位，勾选决定实际出场的定义）。
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-              {participatingAnalystRoles.length === 0 ? (
-                <span style={{ fontSize: 11, color: "#71717a" }}>暂无成员，请从下方添加</span>
+              {participatingAnalystDefinitionIds.length === 0 ? (
+                <span style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)" }}>暂无成员，请从下方添加</span>
               ) : (
-                participatingAnalystRoles.map((role) => {
-                  const meta = analystRoleCatalog.find((x) => x.role === role);
+                participatingAnalystDefinitionIds.map((defId) => {
+                  const meta = analystDefCatalog.find((x) => x.id === defId);
                   return (
                     <div
-                      key={role}
+                      key={defId}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
                         gap: 6,
                         padding: "4px 8px",
                         borderRadius: 6,
-                        border: "1px solid #3f3f46",
+                        border: "1px solid var(--qb-team-input-border, #3f3f46)",
                         fontSize: 11,
-                        color: "#e4e4e7",
-                        background: "#18181b",
+                        color: "var(--qb-team-member-tag-fg, #e4e4e7)",
+                        background: "var(--qb-team-member-tag-bg, #18181b)",
                       }}
                     >
-                      <span>{meta?.displayName ?? role}</span>
+                      <span>{meta?.displayName ?? defId.slice(0, 8)}</span>
                       <button
                         type="button"
                         className="qb-btn-secondary qb-btn--icon-xs"
-                        onClick={() => setParticipatingAnalystRoles((prev) => prev.filter((x) => x !== role))}
+                        onClick={() =>
+                          setParticipatingAnalystDefinitionIds((prev) => prev.filter((x) => x !== defId))
+                        }
                       >
                         −
                       </button>
@@ -4001,15 +4223,15 @@ const TeamDashboardPanel: FC = () => {
               onChange={(e) => {
                 const v = e.target.value;
                 if (!v) return;
-                setParticipatingAnalystRoles((prev) => (prev.includes(v) ? prev : [...prev, v]));
+                setParticipatingAnalystDefinitionIds((prev) => (prev.includes(v) ? prev : [...prev, v]));
                 e.target.value = "";
               }}
             >
-              <option value="">＋ 添加分析师…</option>
-              {analystRoleCatalog
-                .filter((r) => !participatingAnalystRoles.includes(r.role))
+              <option value="">＋ 添加分析师（按定义）…</option>
+              {analystDefCatalog
+                .filter((r) => !participatingAnalystDefinitionIds.includes(r.id))
                 .map((r) => (
-                  <option key={r.role} value={r.role}>
+                  <option key={r.id} value={r.id}>
                     {r.displayName} ({r.role})
                   </option>
                 ))}
@@ -4470,44 +4692,9 @@ const TeamDashboardPanel: FC = () => {
             analystAgentGroupOptions={analystAgentGroupOptions}
             setAnalystAgentGroupOptions={setAnalystAgentGroupOptions}
             agentDefBundles={agentDefBundles}
-            participatingAnalystRoles={participatingAnalystRoles}
-            setParticipatingAnalystRoles={setParticipatingAnalystRoles}
+            participatingAnalystDefinitionIds={participatingAnalystDefinitionIds}
+            setParticipatingAnalystDefinitionIds={setParticipatingAnalystDefinitionIds}
           />
-        </div>
-      )}
-
-      {/* History Panel */}
-      {activeTab === "history" && (
-        <div style={teamStyles.panel}>
-          <h3 style={teamStyles.sectionTitle}>近期信号融合记录</h3>
-          {history.length === 0 ? (
-            <div style={teamStyles.empty}>暂无历史记录</div>
-          ) : (
-            <table style={teamStyles.table}>
-              <thead>
-                <tr>
-                  <th style={teamStyles.th}>时间</th>
-                  <th style={teamStyles.th}>标的</th>
-                  <th style={teamStyles.th}>融合信号</th>
-                  <th style={teamStyles.th}>置信度</th>
-                  <th style={teamStyles.th}>辩论</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((h) => (
-                  <tr key={h.id}>
-                    <td style={teamStyles.td}>{new Date(h.createdAt).toLocaleString()}</td>
-                    <td style={teamStyles.td}>{h.ticker}</td>
-                    <td style={{ ...teamStyles.td, color: SIGNAL_COLOR[h.fusedSignal] }}>
-                      {h.fusedSignal.toUpperCase()}
-                    </td>
-                    <td style={teamStyles.td}>{(h.fusedConfidence * 100).toFixed(0)}%</td>
-                    <td style={teamStyles.td}>{h.debateTriggered ? "是" : "否"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
         </div>
       )}
 
@@ -4580,14 +4767,14 @@ const TeamDashboardPanel: FC = () => {
                     flex: 1,
                     minHeight: 140,
                     overflow: "auto",
-                    background: "#08080a",
-                    border: "1px solid #2a2a30",
+                    background: "var(--qb-team-live-feed-bg, #08080a)",
+                    border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
                     borderRadius: 8,
                     padding: 10,
                     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
                     fontSize: 11,
                     lineHeight: 1.45,
-                    color: "#d4d4d8",
+                    color: "var(--qb-team-live-feed-fg, #d4d4d8)",
                     whiteSpace: "pre-wrap",
                   }}
                 >
@@ -4604,7 +4791,7 @@ const TeamDashboardPanel: FC = () => {
                         style={{
                           marginBottom: 10,
                           paddingBottom: 8,
-                          borderBottom: "1px solid #1a1a1f",
+                          borderBottom: "1px solid var(--qb-team-live-feed-row-border, #1a1a1f)",
                           borderLeft: row.kind === "debate" ? "3px solid #7c3aed" : "3px solid #2563eb",
                           paddingLeft: 8,
                         }}
@@ -4770,65 +4957,98 @@ const TeamDashboardPanel: FC = () => {
         <aside style={{ ...teamStyles.rightRail, width: teamRightW, flexShrink: 0, alignSelf: "stretch" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 8 }}>策略与代码</div>
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            来自聊天会话中保存的指标/策略脚本（按当前工作流过滤）。对话内容请在「研究画布」实时流查看。
+            汇总<strong>已入库脚本</strong>与本次<strong>分析报告</strong>中的 Markdown 代码块。选中后可在 IDE 打开做 SMA 回测坞演示，或保存为策略脚本、跳转实盘页勾选执行。
           </p>
-          {!workflowSessionId.trim() ? (
-            <div style={{ fontSize: 12, color: "#71717a" }}>当前工作流未关联会话，无法加载脚本。请选用从会话创建的工作流。</div>
-          ) : strategyScripts.length === 0 ? (
-            <div style={{ fontSize: 12, color: "#71717a" }}>暂无脚本；在 IDE 中保存策略后将出现在此。</div>
+          {teamCodeSelectOptions.length === 0 ? (
+            <div style={{ fontSize: 12, color: "#71717a" }}>
+              暂无可用片段：请先运行团队分析（报告含 ``` 代码块时会出现），或在绑定会话的工作流下于 IDE 保存策略脚本。
+            </div>
           ) : (
             <>
-              <label style={{ ...teamStyles.label, marginBottom: 4 }}>选择脚本</label>
+              <label style={{ ...teamStyles.label, marginBottom: 4 }}>选择代码来源</label>
               <select
                 style={{ ...teamStyles.input, width: "100%", marginBottom: 10 }}
-                value={strategyScriptChoice}
-                onChange={(e) => setStrategyScriptChoice(e.target.value)}
+                value={teamCodePick}
+                onChange={(e) => setTeamCodePick(e.target.value)}
               >
-                {strategyScripts.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} · {new Date(s.updatedAt).toLocaleString()}
+                {teamCodeSelectOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
               {(() => {
-                const s = strategyScripts.find((x) => x.id === strategyScriptChoice) ?? strategyScripts[0];
-                if (!s) return null;
+                const p = getPickedTeamCode();
+                if (!p) return null;
+                const hasIde = Boolean(p.ide.trim());
+                const hasSig = Boolean(p.signal.trim());
                 return (
                   <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <div style={{ fontSize: 11, color: "#a1a1aa" }}>
-                      更新于 {new Date(s.updatedAt).toLocaleString()}
-                      {s.workflowRunId ? ` · 关联 workflow` : ""}
-                    </div>
-                    <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>IDE / 指标代码</div>
-                      <pre
-                        style={{
-                          ...teamStyles.report,
-                          flex: 1,
-                          minHeight: 120,
-                          maxHeight: "42vh",
-                          overflow: "auto",
-                          margin: 0,
-                          fontSize: 11,
-                        }}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={{ fontSize: 12, padding: "6px 10px" }}
+                        onClick={() => handleTeamOpenIde()}
+                        disabled={!hasSig && !hasIde}
                       >
-                        {s.ideCode || "（空）"}
-                      </pre>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>Python 信号 / 回测代码</div>
-                      <pre
-                        style={{
-                          ...teamStyles.report,
-                          flex: 1,
-                          minHeight: 100,
-                          maxHeight: "36vh",
-                          overflow: "auto",
-                          margin: 0,
-                          fontSize: 11,
-                        }}
+                        在 IDE 中打开
+                      </button>
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={{ fontSize: 12, padding: "6px 10px" }}
+                        onClick={() => void handleTeamSaveStrategyScript()}
+                        disabled={!hasSig && !hasIde}
                       >
-                        {s.signalCode || "（空）"}
-                      </pre>
+                        保存为策略脚本
+                      </button>
+                      <button
+                        type="button"
+                        className="qb-btn-primary-brand"
+                        style={{ fontSize: 12, padding: "6px 10px" }}
+                        onClick={() => void handleTeamGoLive()}
+                        disabled={!hasSig && !hasIde}
+                      >
+                        去实盘页
+                      </button>
                     </div>
+                    {hasIde ? (
+                      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>IDE / 指标代码</div>
+                        <pre
+                          style={{
+                            ...teamStyles.report,
+                            flex: 1,
+                            minHeight: 80,
+                            maxHeight: "28vh",
+                            overflow: "auto",
+                            margin: 0,
+                            fontSize: 11,
+                          }}
+                        >
+                          {p.ide}
+                        </pre>
+                      </div>
+                    ) : null}
+                    {hasSig ? (
+                      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>Python 信号 / 回测代码</div>
+                        <pre
+                          style={{
+                            ...teamStyles.report,
+                            flex: 1,
+                            minHeight: 100,
+                            maxHeight: "36vh",
+                            overflow: "auto",
+                            margin: 0,
+                            fontSize: 11,
+                          }}
+                        >
+                          {p.signal}
+                        </pre>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })()}
@@ -4857,10 +5077,10 @@ const teamStyles: Record<string, CSSProperties> = {
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    border: "1px solid #3f3f46",
+    border: "1px solid var(--qb-team-shell-border, #3f3f46)",
     borderRadius: 10,
     overflow: "hidden",
-    background: "#070708",
+    background: "var(--qb-team-shell-bg, #070708)",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 40px rgba(0,0,0,0.45)",
   },
   teamTriRow: {
@@ -4874,12 +5094,12 @@ const teamStyles: Record<string, CSSProperties> = {
     width: 6,
     flexShrink: 0,
     cursor: "col-resize",
-    background: "#27272a",
+    background: "var(--qb-team-gutter-bg, #27272a)",
     alignSelf: "stretch",
   },
   leftRail: {
-    background: "#0c0c0f",
-    borderRight: "1px solid #2d2d32",
+    background: "var(--qb-team-left-bg, #0c0c0f)",
+    borderRight: "1px solid var(--qb-team-shell-border, #2d2d32)",
     borderRadius: 0,
     padding: 14,
     display: "flex",
@@ -4895,7 +5115,7 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",
-    background: "#0e0e12",
+    background: "var(--qb-team-center-bg, #0e0e12)",
     borderLeft: "none",
     borderRight: "none",
   },
@@ -4909,8 +5129,8 @@ const teamStyles: Record<string, CSSProperties> = {
   teamActivityBar: {
     width: 52,
     flexShrink: 0,
-    background: "#1a1a1f",
-    borderRight: "1px solid #2d2d32",
+    background: "var(--qb-team-activity-bg, #1a1a1f)",
+    borderRight: "1px solid var(--qb-team-shell-border, #2d2d32)",
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
@@ -4929,12 +5149,12 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    color: "#a1a1aa",
+    color: "var(--qb-team-act-btn-fg, #a1a1aa)",
   },
   teamActBtnActive: {
-    background: "#2d2d36",
-    borderColor: "#7c3aed",
-    color: "#f4f4f5",
+    background: "var(--qb-team-act-btn-active-bg, #2d2d36)",
+    borderColor: "var(--qb-team-act-btn-active-border, #7c3aed)",
+    color: "var(--qb-team-act-btn-active-fg, #f4f4f5)",
   },
   teamMainStage: {
     flex: 1,
@@ -4942,7 +5162,7 @@ const teamStyles: Record<string, CSSProperties> = {
     minHeight: 0,
     display: "flex",
     flexDirection: "column",
-    background: "#101014",
+    background: "var(--qb-team-stage-bg, #101014)",
   },
   teamEditorTitleBar: {
     height: 38,
@@ -4951,10 +5171,10 @@ const teamStyles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "space-between",
     padding: "0 14px",
-    borderBottom: "1px solid #2d2d32",
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
     fontSize: 12,
-    color: "#d4d4d8",
-    background: "#141418",
+    color: "var(--qb-team-titlebar-fg, #d4d4d8)",
+    background: "var(--qb-team-titlebar-bg, #141418)",
   },
   teamEditorBody: {
     flex: 1,
@@ -4963,8 +5183,8 @@ const teamStyles: Record<string, CSSProperties> = {
     padding: 14,
   },
   rightRail: {
-    background: "#0c0c0f",
-    borderLeft: "1px solid #2d2d32",
+    background: "var(--qb-team-right-bg, #0c0c0f)",
+    borderLeft: "1px solid var(--qb-team-shell-border, #2d2d32)",
     borderRadius: 0,
     padding: 14,
     display: "flex",
@@ -4983,23 +5203,32 @@ const teamStyles: Record<string, CSSProperties> = {
   tab: {
     padding: "6px 14px",
     borderRadius: 6,
-    border: "1px solid #27272a",
-    background: "#18181b",
-    color: "#a1a1aa",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
+    background: "var(--qb-team-tab-bg, #18181b)",
+    color: "var(--qb-team-tab-fg, #a1a1aa)",
     cursor: "pointer",
     fontSize: 13,
   },
-  tabActive: { background: "#27272a", color: "#e4e4e7", borderColor: "#7c3aed" },
-  panel: { background: "#121216", border: "1px solid #2a2a30", borderRadius: 10, padding: 16 },
+  tabActive: {
+    background: "var(--qb-team-tab-active-bg, #27272a)",
+    color: "var(--qb-team-tab-active-fg, #e4e4e7)",
+    borderColor: "var(--qb-team-tab-active-border, #7c3aed)",
+  },
+  panel: {
+    background: "var(--qb-team-panel-bg, #121216)",
+    border: "1px solid var(--qb-team-panel-border, #2a2a30)",
+    borderRadius: 10,
+    padding: 16,
+  },
   textarea: {
     width: "100%",
     boxSizing: "border-box",
     minHeight: 88,
     resize: "vertical" as const,
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-input-bg, #18181b)",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 6,
-    color: "#e4e4e7",
+    color: "var(--qb-team-input-fg, #e4e4e7)",
     padding: "8px 10px",
     fontSize: 12,
     lineHeight: 1.45,
@@ -5009,12 +5238,12 @@ const teamStyles: Record<string, CSSProperties> = {
   row: { display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 12 },
   configRow: { display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap", marginBottom: 14 },
   field: { display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 160 },
-  label: { fontSize: 12, color: "#a1a1aa" },
+  label: { fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)" },
   input: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-input-bg, #18181b)",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 6,
-    color: "#e4e4e7",
+    color: "var(--qb-team-input-fg, #e4e4e7)",
     padding: "6px 10px",
     fontSize: 13,
     outline: "none",
@@ -5024,14 +5253,14 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 16,
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-hero-bg, #18181b)",
+    border: "1px solid var(--qb-team-hero-border, #27272a)",
     borderRadius: 8,
     padding: "12px 16px",
     marginBottom: 16,
   },
   heroBadge: { fontSize: 28, fontWeight: 700 },
-  heroMeta: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "#a1a1aa" },
+  heroMeta: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--qb-team-meta, #a1a1aa)" },
   debateTag: {
     background: "#78350f",
     color: "#fde68a",
@@ -5040,32 +5269,32 @@ const teamStyles: Record<string, CSSProperties> = {
     fontSize: 12,
     width: "fit-content",
   },
-  sectionTitle: { color: "#e4e4e7", fontSize: 14, marginBottom: 10 },
+  sectionTitle: { color: "var(--qb-team-section-fg, #e4e4e7)", fontSize: 14, marginBottom: 10 },
   debateBox: {
-    background: "#1a1424",
-    border: "1px solid #3b2b63",
+    background: "var(--qb-team-debate-bg, #1a1424)",
+    border: "1px solid var(--qb-team-debate-border, #3b2b63)",
     borderRadius: 8,
     padding: 10,
     marginBottom: 16,
-    color: "#ddd6fe",
+    color: "var(--qb-team-debate-fg, #ddd6fe)",
     fontSize: 12,
     display: "grid",
     gap: 6,
   },
-  debateReason: { color: "#a78bfa" },
+  debateReason: { color: "var(--qb-team-debate-accent, #a78bfa)" },
   riskBox: {
     border: "1px solid",
     borderRadius: 8,
     padding: 10,
     marginBottom: 16,
-    color: "#e4e4e7",
+    color: "var(--qb-team-section-fg, #e4e4e7)",
     fontSize: 12,
     display: "grid",
     gap: 6,
   },
   replayBox: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-replay-bg, #18181b)",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
     padding: 10,
     marginBottom: 16,
@@ -5078,24 +5307,24 @@ const teamStyles: Record<string, CSSProperties> = {
     borderBottom: "1px dashed #3f3f46",
     paddingBottom: 6,
   },
-  replayMeta: { fontSize: 11, color: "#a1a1aa", marginBottom: 4 },
+  replayMeta: { fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 4 },
   replayVerdict: {
-    background: "#1a1424",
-    border: "1px solid #3b2b63",
+    background: "var(--qb-team-debate-bg, #1a1424)",
+    border: "1px solid var(--qb-team-debate-border, #3b2b63)",
     borderRadius: 6,
     padding: 8,
-    color: "#ddd6fe",
+    color: "var(--qb-team-debate-fg, #ddd6fe)",
     fontSize: 12,
   },
   trendBox: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
-    background: "#18181b",
+    background: "var(--qb-team-trend-bg, #18181b)",
     padding: 10,
     marginBottom: 16,
   },
   trendTitle: {
-    color: "#e4e4e7",
+    color: "var(--qb-team-section-fg, #e4e4e7)",
     fontSize: 12,
     marginBottom: 8,
   },
@@ -5106,9 +5335,9 @@ const teamStyles: Record<string, CSSProperties> = {
     marginBottom: 16,
   },
   screenerRunList: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
-    background: "#18181b",
+    background: "var(--qb-team-screener-bg, #18181b)",
     padding: 8,
     display: "flex",
     flexDirection: "column",
@@ -5117,23 +5346,23 @@ const teamStyles: Record<string, CSSProperties> = {
     overflow: "auto",
   },
   screenerRunBtn: {
-    border: "1px solid #3f3f46",
+    border: "1px solid var(--qb-team-input-border, #3f3f46)",
     borderRadius: 6,
-    background: "#111114",
-    color: "#d4d4d8",
+    background: "var(--qb-team-screener-btn-bg, #111114)",
+    color: "var(--qb-team-screener-btn-fg, #d4d4d8)",
     textAlign: "left",
     padding: "6px 8px",
     cursor: "pointer",
     fontSize: 12,
   },
   screenerRunBtnActive: {
-    borderColor: "#7c3aed",
-    background: "#221838",
+    borderColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
+    background: "var(--qb-team-screener-btn-active-bg, #221838)",
   },
   screenerCandidates: {
-    border: "1px solid #27272a",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
-    background: "#18181b",
+    background: "var(--qb-team-screener-bg, #18181b)",
     padding: 8,
     display: "grid",
     gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
@@ -5142,12 +5371,12 @@ const teamStyles: Record<string, CSSProperties> = {
     overflow: "auto",
   },
   screenerCard: {
-    border: "1px solid #3f3f46",
+    border: "1px solid var(--qb-team-input-border, #3f3f46)",
     borderRadius: 8,
-    background: "#111114",
+    background: "var(--qb-team-screener-btn-bg, #111114)",
     padding: 8,
     fontSize: 12,
-    color: "#e4e4e7",
+    color: "var(--qb-team-section-fg, #e4e4e7)",
   },
   screenerHead: {
     display: "flex",
@@ -5159,37 +5388,37 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     flexWrap: "wrap",
     gap: 6,
-    color: "#a1a1aa",
+    color: "var(--qb-team-meta, #a1a1aa)",
     marginTop: 4,
     fontSize: 11,
   },
   radarGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 },
   radarCard: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-radar-bg, #18181b)",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
     padding: "10px 12px",
     display: "flex",
     flexDirection: "column",
     gap: 4,
   },
-  radarRole: { fontSize: 12, color: "#a1a1aa" },
+  radarRole: { fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)" },
   radarSignal: { fontSize: 18, fontWeight: 700 },
   radarBar: {
     height: 4,
-    background: "#27272a",
+    background: "var(--qb-team-radar-bar-bg, #27272a)",
     borderRadius: 2,
     overflow: "hidden",
   },
   radarFill: { height: "100%", borderRadius: 2, transition: "width 0.4s" },
-  radarConf: { fontSize: 11, color: "#71717a" },
+  radarConf: { fontSize: 11, color: "var(--qb-team-meta, #71717a)" },
   report: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-report-bg, #18181b)",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
     padding: 12,
     fontSize: 12,
-    color: "#d4d4d8",
+    color: "var(--qb-team-table-cell-fg, #d4d4d8)",
     whiteSpace: "pre-wrap",
     maxHeight: 300,
     overflow: "auto",
@@ -5198,39 +5427,39 @@ const teamStyles: Record<string, CSSProperties> = {
   groupTitle: { fontSize: 14, fontWeight: 600, marginBottom: 8 },
   memberGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 },
   memberCard: {
-    background: "#18181b",
-    border: "1px solid #27272a",
+    background: "var(--qb-team-member-bg, #18181b)",
+    border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
     padding: "10px 12px",
     display: "flex",
     flexDirection: "column",
     gap: 4,
   },
-  memberRole: { fontSize: 13, color: "#e4e4e7", fontWeight: 500 },
-  memberDesc: { fontSize: 11, color: "#71717a" },
+  memberRole: { fontSize: 13, color: "var(--qb-team-section-fg, #e4e4e7)", fontWeight: 500 },
+  memberDesc: { fontSize: 11, color: "var(--qb-team-meta, #71717a)" },
   memberTag: {
     fontSize: 10,
-    color: "#52525b",
+    color: "var(--qb-team-member-tag-fg, #52525b)",
     fontFamily: "monospace",
-    background: "#27272a",
+    background: "var(--qb-team-member-tag-bg, #27272a)",
     borderRadius: 3,
     padding: "1px 5px",
     width: "fit-content",
   },
-  memberEmpty: { color: "#52525b", fontSize: 12 },
-  empty: { color: "#52525b", fontSize: 13, textAlign: "center", padding: 30 },
+  memberEmpty: { color: "var(--qb-team-member-tag-fg, #52525b)", fontSize: 12 },
+  empty: { color: "var(--qb-team-member-tag-fg, #52525b)", fontSize: 13, textAlign: "center", padding: 30 },
   table: { width: "100%", borderCollapse: "collapse" },
   th: {
     textAlign: "left",
     padding: "6px 10px",
-    borderBottom: "1px solid #27272a",
+    borderBottom: "1px solid var(--qb-team-table-row-border, #27272a)",
     fontSize: 12,
-    color: "#71717a",
+    color: "var(--qb-team-table-header-fg, #71717a)",
   },
   td: {
     padding: "8px 10px",
-    borderBottom: "1px solid #1e1e21",
+    borderBottom: "1px solid var(--qb-team-table-row-border, #1e1e21)",
     fontSize: 12,
-    color: "#d4d4d8",
+    color: "var(--qb-team-table-cell-fg, #d4d4d8)",
   },
 };

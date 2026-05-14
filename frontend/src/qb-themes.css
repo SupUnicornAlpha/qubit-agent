@@ -38,6 +38,23 @@ html[data-qb-theme="dark-purple"] {
 
   --qb-brand-icon: #a78bfa;
   --qb-brand-icon-glow: rgba(129, 140, 248, 0.85);
+
+  /* Markdown / 聊天气泡内正文（深色主题默认） */
+  --qb-chat-bubble-user-fg: #fafafa;
+  --qb-chat-bubble-agent-fg: var(--qb-body-fg);
+  --qb-md-prose-fg: var(--qb-body-fg);
+  --qb-md-prose-muted: #a1a1aa;
+  --qb-md-code-block-bg: #09090b;
+  --qb-md-code-block-border: #27272a;
+  --qb-md-code-inline-bg: #27272a;
+  --qb-md-th-bg: #27272a;
+  --qb-md-table-border: #3f3f46;
+  --qb-md-blockquote-border: #52525b;
+  --qb-md-blockquote-fg: #a1a1aa;
+  --qb-md-hr: #3f3f46;
+  --qb-md-em-fg: #d4d4d8;
+  --qb-md-link: #60a5fa;
+  --qb-md-pre-fg: #d4d4d8;
 }
 
 body {
@@ -77,6 +94,22 @@ html[data-qb-theme="dark-gray"] {
 
   --qb-brand-icon: #94a3b8;
   --qb-brand-icon-glow: rgba(148, 163, 184, 0.75);
+
+  --qb-chat-bubble-user-fg: #fafafa;
+  --qb-chat-bubble-agent-fg: var(--qb-body-fg);
+  --qb-md-prose-fg: var(--qb-body-fg);
+  --qb-md-prose-muted: #a1a1aa;
+  --qb-md-code-block-bg: #09090b;
+  --qb-md-code-block-border: #27272a;
+  --qb-md-code-inline-bg: #27272a;
+  --qb-md-th-bg: #27272a;
+  --qb-md-table-border: #3f3f46;
+  --qb-md-blockquote-border: #52525b;
+  --qb-md-blockquote-fg: #a1a1aa;
+  --qb-md-hr: #3f3f46;
+  --qb-md-em-fg: #d4d4d8;
+  --qb-md-link: #60a5fa;
+  --qb-md-pre-fg: #d4d4d8;
 }
 
 html[data-qb-theme="light-white"] {
@@ -411,6 +444,107 @@ html[data-qb-theme^="light"] {
   --qb-json-preview-border: var(--qb-sidebar-border);
   --qb-json-preview-fg: var(--qb-body-fg);
   --qb-ide-chrome-border: var(--qb-sidebar-border);
+
+  /* 聊天 / 资讯 / K 线 / 团队工作台（主内容区随主题） */
+  --qb-main-panel-bg: #f8fafc;
+  --qb-chat-sidebar-bg: #ffffff;
+  --qb-chat-main-bg: #ffffff;
+  --qb-chat-border: var(--qb-sidebar-border);
+  --qb-chat-ide-header-bg: var(--qb-sidebar-explorer-bg);
+  --qb-chat-ide-header-fg: var(--qb-sidebar-muted);
+  --qb-chat-session-item-bg: #ffffff;
+  --qb-chat-session-item-fg: var(--qb-body-fg);
+  --qb-chat-session-active-border: var(--qb-blue);
+  --qb-chat-bubble-agent-bg: #f1f5f9;
+  --qb-chat-bubble-user-bg: var(--qb-tint-strong);
+  --qb-chat-bubble-user-fg: var(--qb-body-fg);
+  --qb-chat-bubble-agent-fg: var(--qb-body-fg);
+  --qb-chat-bubble-border: var(--qb-sidebar-border);
+  --qb-md-prose-fg: var(--qb-body-fg);
+  --qb-md-prose-muted: var(--qb-sidebar-muted);
+  --qb-md-code-block-bg: #f1f5f9;
+  --qb-md-code-block-border: var(--qb-sidebar-border);
+  --qb-md-code-inline-bg: var(--qb-tint);
+  --qb-md-th-bg: var(--qb-tint);
+  --qb-md-table-border: var(--qb-sidebar-border);
+  --qb-md-blockquote-border: var(--qb-sidebar-border);
+  --qb-md-blockquote-fg: var(--qb-sidebar-muted);
+  --qb-md-hr: var(--qb-sidebar-border);
+  --qb-md-em-fg: var(--qb-body-fg);
+  --qb-md-link: var(--qb-blue-deep);
+  --qb-md-pre-fg: var(--qb-body-fg);
+  --qb-chat-chart-banner-bg: var(--qb-tint);
+  --qb-chat-chart-banner-fg: var(--qb-blue-deep);
+  --qb-chat-chart-banner-border: var(--qb-sidebar-border);
+  --qb-board-col-bg: #ffffff;
+  --qb-board-card-bg: #ffffff;
+  --qb-kline-root-bg: var(--qb-bg-root);
+  --qb-kline-header-border: var(--qb-sidebar-border);
+  --qb-kline-embedded-bar-bg: var(--qb-sidebar-explorer-bg);
+  --qb-news-wrap-bg: var(--qb-bg-root);
+  --qb-news-col-title-bg: var(--qb-sidebar-explorer-bg);
+  --qb-news-col-title-fg: var(--qb-body-fg);
+  --qb-news-item-bg: #ffffff;
+  --qb-monitor-title-fg: var(--qb-body-fg);
+  --qb-monitor-lead-fg: var(--qb-sidebar-muted);
+  --qb-monitor-code-bg: var(--qb-tint);
+
+  --qb-team-shell-bg: var(--qb-bg-root);
+  --qb-team-shell-border: var(--qb-sidebar-border);
+  --qb-team-left-bg: var(--qb-sidebar-nav-bg);
+  --qb-team-center-bg: #ffffff;
+  --qb-team-right-bg: var(--qb-sidebar-nav-bg);
+  --qb-team-activity-bg: var(--qb-sidebar-activity-bg);
+  --qb-team-stage-bg: #ffffff;
+  --qb-team-titlebar-bg: var(--qb-sidebar-explorer-bg);
+  --qb-team-titlebar-fg: var(--qb-body-fg);
+  --qb-team-gutter-bg: var(--qb-sidebar-border);
+  --qb-team-tab-bg: var(--qb-sidebar-explorer-bg);
+  --qb-team-tab-fg: var(--qb-sidebar-muted);
+  --qb-team-tab-active-bg: var(--qb-tint-strong);
+  --qb-team-tab-active-fg: var(--qb-body-fg);
+  --qb-team-tab-active-border: var(--qb-blue);
+  --qb-team-act-btn-fg: var(--qb-sidebar-muted);
+  --qb-team-act-btn-active-bg: var(--qb-tint);
+  --qb-team-act-btn-active-border: var(--qb-blue);
+  --qb-team-act-btn-active-fg: var(--qb-body-fg);
+  --qb-team-panel-bg: #ffffff;
+  --qb-team-panel-border: var(--qb-sidebar-border);
+  --qb-team-input-bg: #ffffff;
+  --qb-team-input-border: var(--qb-sidebar-border);
+  --qb-team-input-fg: var(--qb-body-fg);
+  --qb-team-hero-bg: var(--qb-tint);
+  --qb-team-hero-border: var(--qb-sidebar-border);
+  --qb-team-section-fg: var(--qb-body-fg);
+  --qb-team-meta: var(--qb-sidebar-muted);
+  --qb-team-replay-bg: #ffffff;
+  --qb-team-trend-bg: #ffffff;
+  --qb-team-screener-bg: #ffffff;
+  --qb-team-screener-btn-bg: var(--qb-sidebar-explorer-bg);
+  --qb-team-screener-btn-fg: var(--qb-body-fg);
+  --qb-team-screener-btn-active-bg: var(--qb-tint-strong);
+  --qb-team-screener-btn-active-border: var(--qb-blue);
+  --qb-team-radar-bg: #ffffff;
+  --qb-team-radar-bar-bg: var(--qb-tint);
+  --qb-team-report-bg: #ffffff;
+  --qb-team-member-bg: #ffffff;
+  --qb-team-member-tag-bg: var(--qb-tint);
+  --qb-team-member-tag-fg: var(--qb-sidebar-muted);
+  --qb-team-table-header-fg: var(--qb-sidebar-muted);
+  --qb-team-table-row-border: var(--qb-sidebar-border);
+  --qb-team-table-cell-fg: var(--qb-body-fg);
+  --qb-team-live-feed-bg: #f8fafc;
+  --qb-team-live-feed-border: var(--qb-sidebar-border);
+  --qb-team-live-feed-fg: var(--qb-body-fg);
+  --qb-team-live-feed-row-border: var(--qb-sidebar-border);
+  --qb-team-debate-bg: #faf5ff;
+  --qb-team-debate-border: #ddd6fe;
+  --qb-team-debate-fg: #5b21b6;
+  --qb-team-debate-accent: #7c3aed;
+}
+
+html[data-qb-theme^="light"] [data-qb-team-shell] {
+  box-shadow: none;
 }
 
 html[data-qb-theme^="light"] .qb-segmented {
@@ -620,4 +754,9 @@ html[data-qb-theme^="light"] .qb-btn-card {
 html[data-qb-theme^="light"] .qb-btn-card:hover {
   border-color: var(--qb-separator);
   background: var(--qb-tint);
+}
+
+html[data-qb-theme^="light"] .qb-workbench-toolbar {
+  background: var(--qb-sidebar-explorer-bg);
+  border-bottom-color: var(--qb-sidebar-border);
 }

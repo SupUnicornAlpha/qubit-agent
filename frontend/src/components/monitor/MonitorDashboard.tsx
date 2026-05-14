@@ -80,6 +80,15 @@ function asWorkflowRows(rows: unknown[]): WorkflowRow[] {
 
 const CHART_COLORS = ["#3b82f6", "#22c55e", "#eab308", "#f97316", "#a78bfa", "#ec4899"];
 
+const monitorTooltipStyle: CSSProperties = {
+  background: "var(--qb-main-card-bg, #18181b)",
+  border: "1px solid var(--qb-main-input-border, #3f3f46)",
+  color: "var(--qb-main-input-fg, #e4e4e7)",
+};
+
+const monitorGridStroke = "var(--qb-main-input-border, #27272a)";
+const monitorAxisTick = { fill: "var(--qb-main-meta, #a1a1aa)", fontSize: 11 };
+
 /** 监控视图维度：与数据粒度对应，便于扩展更多面板 */
 type MonitorScope = "overview" | "workflow" | "agent" | "stream" | "alerts_eval";
 
@@ -311,12 +320,14 @@ export const MonitorDashboard: FC = () => {
       source: "manual",
       loopKind: createLoopKind,
     });
-    subscribeWorkflowStream({
-      workflowId: created.data.id,
-      runId: created.runId,
-      onEvent: pushStreamEvent,
-      onError: () => {},
-    });
+    if (created.runId) {
+      subscribeWorkflowStream({
+        workflowId: created.data.id,
+        runId: created.runId,
+        onEvent: pushStreamEvent,
+        onError: () => {},
+      });
+    }
     const detail = await getWorkflowDetail(created.data.id);
     setDrawerDetail(JSON.stringify(detail, null, 2));
     setSelectedWorkflowId(created.data.id);
@@ -391,7 +402,7 @@ export const MonitorDashboard: FC = () => {
       <h2 style={styles.title}>运行监控</h2>
       <p style={styles.lead}>
         图表由开源库{" "}
-        <a href="https://github.com/recharts/recharts" target="_blank" rel="noreferrer" style={{ color: "#93c5fd" }}>
+        <a href="https://github.com/recharts/recharts" target="_blank" rel="noreferrer" style={{ color: "var(--qb-blue, #93c5fd)" }}>
           Recharts
         </a>{" "}
         （MIT）渲染；未嵌入 Grafana，避免 Tauri/前端再运维一套时序库。持久化指标来自 SQLite{" "}
@@ -436,7 +447,7 @@ export const MonitorDashboard: FC = () => {
                       <Cell key={String(i)} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+                  <Tooltip contentStyle={monitorTooltipStyle} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
@@ -445,10 +456,10 @@ export const MonitorDashboard: FC = () => {
               <div style={styles.chartTitle}>工作流列表 · 按模式数量</div>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={workflowModeBar}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="name" tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                  <YAxis allowDecimals={false} tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={monitorGridStroke} />
+                  <XAxis dataKey="name" tick={monitorAxisTick} />
+                  <YAxis allowDecimals={false} tick={monitorAxisTick} />
+                  <Tooltip contentStyle={monitorTooltipStyle} />
                   <Bar dataKey="count" name="数量" fill="#6366f1" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -580,10 +591,10 @@ export const MonitorDashboard: FC = () => {
                   </div>
                   <ResponsiveContainer width="100%" height={200}>
                     <LineChart data={qualityLineData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                      <XAxis dataKey="idx" tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                      <YAxis domain={[0, 1]} tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                      <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+                      <CartesianGrid strokeDasharray="3 3" stroke={monitorGridStroke} />
+                      <XAxis dataKey="idx" tick={monitorAxisTick} />
+                      <YAxis domain={[0, 1]} tick={monitorAxisTick} />
+                      <Tooltip contentStyle={monitorTooltipStyle} />
                       <Legend />
                       <Line type="monotone" dataKey="score" name="质量分" stroke="#22c55e" strokeWidth={2} dot={false} />
                       <Line type="monotone" dataKey="tools" name="工具调用数" stroke="#3b82f6" strokeWidth={1} dot={false} />
@@ -633,10 +644,17 @@ export const MonitorDashboard: FC = () => {
               <div style={styles.chartTitle}>P50 / P95 工具延迟（按 definition / 角色）</div>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={latencyBarData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="name" tick={{ fill: "#a1a1aa", fontSize: 10 }} interval={0} angle={-18} dy={8} height={60} />
-                  <YAxis tick={{ fill: "#a1a1aa", fontSize: 11 }} />
-                  <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+                  <CartesianGrid strokeDasharray="3 3" stroke={monitorGridStroke} />
+                  <XAxis
+                    dataKey="name"
+                    tick={{ ...monitorAxisTick, fontSize: 10 }}
+                    interval={0}
+                    angle={-18}
+                    dy={8}
+                    height={60}
+                  />
+                  <YAxis tick={monitorAxisTick} />
+                  <Tooltip contentStyle={monitorTooltipStyle} />
                   <Legend />
                   <Bar dataKey="p50" name="p50 ms" fill="#3b82f6" />
                   <Bar dataKey="p95" name="p95 ms" fill="#a78bfa" />
@@ -652,7 +670,7 @@ export const MonitorDashboard: FC = () => {
                       <Cell key={String(i)} fill={CHART_COLORS[i % CHART_COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }} />
+                  <Tooltip contentStyle={monitorTooltipStyle} />
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
@@ -771,91 +789,108 @@ export const MonitorDashboard: FC = () => {
 };
 
 const Kpi: FC<{ label: string; value: string; accent?: string }> = ({ label, value, accent }) => (
-  <div style={{ ...styles.kpi, borderColor: accent ?? "#3f3f46" }}>
+  <div style={{ ...styles.kpi, borderColor: accent ?? "var(--qb-main-input-border, #3f3f46)" }}>
     <div style={styles.kpiLabel}>{label}</div>
-    <div style={{ ...styles.kpiValue, color: accent ?? "#f4f4f5" }}>{value}</div>
+    <div style={{ ...styles.kpiValue, color: accent ?? "var(--qb-body-fg, #f4f4f5)" }}>{value}</div>
   </div>
 );
 
 const wrap: CSSProperties = { maxWidth: 1200, margin: "0 auto" };
 
 const styles: Record<string, CSSProperties> = {
-  title: { fontSize: 26, fontWeight: 700, margin: "0 0 8px" },
-  lead: { fontSize: 13, color: "#a1a1aa", lineHeight: 1.5, marginBottom: 16 },
+  title: { fontSize: 26, fontWeight: 700, margin: "0 0 8px", color: "var(--qb-monitor-title-fg, inherit)" },
+  lead: { fontSize: 13, color: "var(--qb-monitor-lead-fg, #a1a1aa)", lineHeight: 1.5, marginBottom: 16 },
   kpiRow: { display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 },
   kpi: {
     flex: "1 1 120px",
     minWidth: 100,
     padding: "12px 14px",
     borderRadius: 10,
-    border: "1px solid #3f3f46",
-    background: "#111114",
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-card-bg, #111114)",
   },
-  kpiLabel: { fontSize: 11, color: "#71717a", marginBottom: 4 },
+  kpiLabel: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", marginBottom: 4 },
   kpiValue: { fontSize: 22, fontWeight: 700 },
   form: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" },
   input: {
     flex: 1,
     minWidth: 160,
-    background: "#18181b",
-    border: "1px solid #27272a",
-    color: "#e4e4e7",
+    background: "var(--qb-main-input-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     borderRadius: 8,
     padding: "8px 10px",
   },
   select: {
     minWidth: 140,
-    background: "#18181b",
-    border: "1px solid #27272a",
-    color: "#e4e4e7",
+    background: "var(--qb-main-input-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     borderRadius: 8,
     padding: "8px 10px",
   },
-  check: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#a1a1aa" },
-  subTitle: { fontSize: 16, margin: "18px 0 8px", fontWeight: 600 },
+  check: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
+  subTitle: { fontSize: 16, margin: "18px 0 8px", fontWeight: 600, color: "var(--qb-monitor-title-fg, inherit)" },
   split: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.1fr)", gap: 20 },
   col: { minWidth: 0 },
-  tableWrap: { maxHeight: 320, overflow: "auto", border: "1px solid #27272a", borderRadius: 8 },
+  tableWrap: {
+    maxHeight: 320,
+    overflow: "auto",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    borderRadius: 8,
+  },
   table: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
-  th: { textAlign: "left", padding: "8px 10px", background: "#1f1f23", color: "#a1a1aa", position: "sticky", top: 0 },
-  td: { padding: "8px 10px", borderTop: "1px solid #27272a", color: "#e4e4e7" },
+  th: {
+    textAlign: "left",
+    padding: "8px 10px",
+    background: "var(--qb-stream-box-bg, #1f1f23)",
+    color: "var(--qb-main-meta, #a1a1aa)",
+    position: "sticky",
+    top: 0,
+  },
+  td: { padding: "8px 10px", borderTop: "1px solid var(--qb-main-input-border, #27272a)", color: "var(--qb-main-input-fg, #e4e4e7)" },
   tr: { cursor: "pointer" },
-  trSelected: { background: "rgba(99, 102, 241, 0.12)" },
-  empty: { padding: 16, color: "#71717a", fontSize: 13 },
+  trSelected: { background: "var(--qb-tint-strong, rgba(99, 102, 241, 0.12))" },
+  empty: { padding: 16, color: "var(--qb-main-meta, #71717a)", fontSize: 13 },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 },
-  card: { background: "#18181b", border: "1px solid #27272a", borderRadius: 8, padding: 10 },
-  cardName: { fontWeight: 600, fontSize: 13, marginBottom: 4 },
-  cardDesc: { fontSize: 12, color: "#a1a1aa" },
+  card: {
+    background: "var(--qb-main-card-bg, #18181b)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    borderRadius: 8,
+    padding: 10,
+  },
+  cardName: { fontWeight: 600, fontSize: 13, marginBottom: 4, color: "var(--qb-body-fg, inherit)" },
+  cardDesc: { fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
   chartGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginTop: 8 },
   chartBox: {
-    background: "#111114",
-    border: "1px solid #27272a",
+    background: "var(--qb-main-card-bg, #111114)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
     borderRadius: 10,
     padding: "10px 12px 4px",
     minHeight: 260,
   },
-  chartTitle: { fontSize: 12, color: "#a1a1aa", marginBottom: 6 },
+  chartTitle: { fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)", marginBottom: 6 },
   hint: { fontSize: 12, color: "#eab308", marginBottom: 8 },
   streamList: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 480, overflow: "auto" },
   streamBox: {
-    background: "#0c0c0e",
-    border: "1px solid #27272a",
+    background: "var(--qb-stream-box-bg, #0c0c0e)",
+    border: "1px solid var(--qb-main-input-border, #27272a)",
     borderRadius: 8,
     padding: 12,
     maxHeight: 280,
     overflow: "auto",
     fontSize: 11,
-    color: "#d4d4d8",
+    color: "var(--qb-stream-box-fg, #d4d4d8)",
     whiteSpace: "pre-wrap",
   },
   tabBar: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8, alignItems: "center" },
-  scopeHint: { fontSize: 12, color: "#71717a", marginBottom: 14 },
+  scopeHint: { fontSize: 12, color: "var(--qb-main-meta, #71717a)", marginBottom: 14 },
 };
 
 const codeInline: CSSProperties = {
   margin: "0 4px",
   padding: "1px 6px",
   borderRadius: 4,
-  background: "#27272a",
+  background: "var(--qb-monitor-code-bg, #27272a)",
   fontSize: 12,
 };

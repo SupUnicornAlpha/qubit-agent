@@ -101,7 +101,7 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     width: "100%",
     overflow: "hidden",
-    background: "#09090b",
+    background: "var(--qb-bg-root, #09090b)",
   },
   mainRow: {
     display: "flex",
@@ -124,7 +124,7 @@ const styles: Record<string, CSSProperties> = {
     width: 6,
     flexShrink: 0,
     cursor: "col-resize",
-    background: "#27272a",
+    background: "var(--qb-team-gutter-bg, #27272a)",
     alignSelf: "stretch",
   },
   rightPane: {
@@ -158,7 +158,7 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
-    color: "#71717a",
+    color: "var(--qb-main-meta, #71717a)",
     fontSize: 13,
     textAlign: "center",
     lineHeight: 1.5,
@@ -166,7 +166,7 @@ const styles: Record<string, CSSProperties> = {
   quickGutter: {
     width: 1,
     flexShrink: 0,
-    background: "#27272a",
+    background: "var(--qb-ide-chrome-border, #27272a)",
     alignSelf: "stretch",
   },
 };

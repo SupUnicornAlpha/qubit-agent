@@ -6,9 +6,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentGroup, agentGroupMember, agentInstance, workflowRun } from "../../db/sqlite/schema";
+import {
+  agentDefinition,
+  agentGroup,
+  agentGroupMember,
+  agentInstance,
+  agentProfile,
+  workflowRun,
+} from "../../db/sqlite/schema";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
 import { loadDebateConfig } from "../config/debate-config";
@@ -18,6 +25,48 @@ import { evaluateRiskAndVeto } from "../risk/veto-engine";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import { parseTeamRelations, partitionSlotsIntoWaves, type TeamRelationEdge } from "./analyst-team-topology";
+import {
+  type PromptMode,
+  getDataDir,
+  mergeSystemPrompt,
+  readPackFiles,
+} from "../agent/agent-pack-service";
+
+async function enrichAnalystSlotsWithPack(
+  db: Awaited<ReturnType<typeof getDb>>,
+  slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>
+): Promise<Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>> {
+  if (slots.length === 0) return slots;
+  const ids = [...new Set(slots.map((s) => s.definitionId))];
+  const profRows =
+    ids.length > 0 ? await db.select().from(agentProfile).where(inArray(agentProfile.definitionId, ids)) : [];
+  const profByDef = new Map(profRows.map((p) => [p.definitionId, p]));
+  return Promise.all(
+    slots.map(async (slot) => {
+      const prof = profByDef.get(slot.definitionId);
+      const read = await readPackFiles({
+        dataDir: getDataDir(),
+        definitionId: slot.definitionId,
+        configRootUri: prof?.configRootUri ?? "",
+        soulFileRef: prof?.soulFileRef ?? "",
+        promptTemplateRef: prof?.promptTemplateRef,
+      });
+      const mode = (prof?.promptMode as PromptMode | undefined) ?? "db_primary";
+      return {
+        ...slot,
+        systemPrompt: mergeSystemPrompt({
+          mode,
+          dbPrompt: slot.systemPrompt,
+          agentText: read.agentText,
+          soulText: read.soulText,
+          userText: read.userText,
+          memoryText: read.memoryText,
+          promptText: read.promptText,
+        }),
+      };
+    })
+  );
+}
 
 export const ANALYST_TEAM_ROLES: AgentRole[] = [
   "analyst_fundamental",
@@ -217,6 +266,8 @@ export async function runAnalystTeam(params: {
   agentGroupId?: string | null;
   /** 仅运行这些分析师角色（须为 analyst_*）；与编组解析结果取交集 */
   analystRoles?: AgentRole[] | null;
+  /** 仅运行这些 definition id（须为 analyst_* 且已启用）；与编组解析结果取交集；优先于 analystRoles */
+  analystDefinitionIds?: string[] | null;
 }): Promise<AnalystTeamResult> {
   const db = await getDb();
   const { workflowRunId, ticker } = params;
@@ -228,7 +279,15 @@ export async function runAnalystTeam(params: {
     .where(eq(workflowRun.id, workflowRunId));
 
   let slots = await resolveAnalystSlots({ db, agentGroupId: params.agentGroupId });
-  if (params.analystRoles && params.analystRoles.length > 0) {
+  if (params.analystDefinitionIds && params.analystDefinitionIds.length > 0) {
+    const allowIds = new Set(params.analystDefinitionIds);
+    slots = slots.filter((s) => allowIds.has(s.definitionId));
+    if (slots.length === 0) {
+      throw new Error(
+        "所选分析师定义与当前编组或可用分析师槽位无交集。请调整左侧勾选的 Agent，或更换分析师编组。"
+      );
+    }
+  } else if (params.analystRoles && params.analystRoles.length > 0) {
     const allow = new Set(params.analystRoles);
     slots = slots.filter((s) => allow.has(s.role));
     if (slots.length === 0) {
@@ -237,6 +296,8 @@ export async function runAnalystTeam(params: {
       );
     }
   }
+
+  slots = await enrichAnalystSlotsWithPack(db, slots);
 
   let relationEdges: TeamRelationEdge[] = [];
   if (params.agentGroupId) {

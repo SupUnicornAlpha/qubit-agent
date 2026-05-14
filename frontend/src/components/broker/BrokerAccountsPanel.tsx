@@ -7,9 +7,19 @@ const wrap: CSSProperties = {
   maxWidth: 960,
 };
 
-const title: CSSProperties = { fontSize: 26, fontWeight: 700, margin: "0 0 8px", color: "#fafafa" };
+const title: CSSProperties = {
+  fontSize: 26,
+  fontWeight: 700,
+  margin: "0 0 8px",
+  color: "var(--qb-body-fg, #fafafa)",
+};
 
-const lead: CSSProperties = { fontSize: 13, color: "#a1a1aa", margin: "0 0 20px", lineHeight: 1.55 };
+const lead: CSSProperties = {
+  fontSize: 13,
+  color: "var(--qb-main-meta, #a1a1aa)",
+  margin: "0 0 20px",
+  lineHeight: 1.55,
+};
 
 const row: CSSProperties = {
   display: "flex",
@@ -21,13 +31,18 @@ const row: CSSProperties = {
 
 const field: CSSProperties = { display: "flex", flexDirection: "column", gap: 4, minWidth: 120 };
 
-const label: CSSProperties = { fontSize: 11, color: "#a1a1aa", textTransform: "uppercase", letterSpacing: "0.06em" };
+const label: CSSProperties = {
+  fontSize: 11,
+  color: "var(--qb-main-meta, #a1a1aa)",
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+};
 
 const input: CSSProperties = {
-  background: "#18181b",
-  border: "1px solid #3f3f46",
+  background: "var(--qb-main-input-bg, #18181b)",
+  border: "1px solid var(--qb-main-input-border, #3f3f46)",
   borderRadius: 6,
-  color: "#e4e4e7",
+  color: "var(--qb-main-input-fg, #e4e4e7)",
   padding: "8px 10px",
   fontSize: 13,
   minWidth: 140,
@@ -38,19 +53,24 @@ const table: CSSProperties = { width: "100%", borderCollapse: "collapse", fontSi
 const th: CSSProperties = {
   textAlign: "left",
   padding: "8px 10px",
-  borderBottom: "1px solid #3f3f46",
-  color: "#a1a1aa",
+  borderBottom: "1px solid var(--qb-main-input-border, #3f3f46)",
+  color: "var(--qb-main-meta, #a1a1aa)",
   fontWeight: 600,
 };
 
 const td: CSSProperties = {
   padding: "8px 10px",
-  borderBottom: "1px solid #27272a",
-  color: "#d4d4d8",
+  borderBottom: "1px solid var(--qb-sidebar-border, #27272a)",
+  color: "var(--qb-body-fg, #d4d4d8)",
   verticalAlign: "top",
 };
 
-const sectionTitle: CSSProperties = { fontSize: 15, fontWeight: 600, color: "#e4e4e7", margin: "24px 0 8px" };
+const sectionTitle: CSSProperties = {
+  fontSize: 15,
+  fontWeight: 600,
+  color: "var(--qb-body-fg, #e4e4e7)",
+  margin: "24px 0 8px",
+};
 
 const statusColor = (s: BrokerAccountRecord["healthStatus"]): string => {
   switch (s) {
@@ -189,9 +209,9 @@ export const BrokerAccountsPanel: FC = () => {
             whiteSpace: "pre-wrap",
             padding: "10px 12px",
             borderRadius: 8,
-            background: "#18181b",
-            border: "1px solid #3f3f46",
-            color: "#d4d4d8",
+            background: "var(--qb-stream-box-bg, #18181b)",
+            border: "1px solid var(--qb-stream-box-border, #3f3f46)",
+            color: "var(--qb-stream-box-fg, #d4d4d8)",
             lineHeight: 1.5,
           }}
         >
@@ -201,7 +221,7 @@ export const BrokerAccountsPanel: FC = () => {
 
       <h3 style={sectionTitle}>已登记账户</h3>
       {accounts.length === 0 ? (
-        <p style={{ fontSize: 13, color: "#71717a" }}>暂无记录，填写上方表单并保存即可写入数据库。</p>
+        <p style={{ fontSize: 13, color: "var(--qb-main-meta, #71717a)" }}>暂无记录，填写上方表单并保存即可写入数据库。</p>
       ) : (
         <table style={table}>
           <thead>
@@ -234,7 +254,7 @@ export const BrokerAccountsPanel: FC = () => {
 
       <h3 style={sectionTitle}>近期 Broker 事件</h3>
       {events.length === 0 ? (
-        <p style={{ fontSize: 13, color: "#71717a" }}>暂无事件日志。</p>
+        <p style={{ fontSize: 13, color: "var(--qb-main-meta, #71717a)" }}>暂无事件日志。</p>
       ) : (
         <table style={table}>
           <thead>

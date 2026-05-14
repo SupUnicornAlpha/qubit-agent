@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { config } from "../../config";
 
 const MAX_PACK_BYTES = 256 * 1024;
 
-/** 与 Hermes 记忆快照类似：注入系统提示词时的 Unicode 码位上限（近似“字符数”） */
+/** 注入系统提示词时 USER / MEMORY 快照的 Unicode 码位上限（近似“字符数”） */
 export const PACK_MEMORY_SNAPSHOT_MAX_CP = 2200;
 export const PACK_USER_SNAPSHOT_MAX_CP = 1375;
 
@@ -34,7 +34,11 @@ function resolvePackRoot(dataDir: string, definitionId: string, configRootUri: s
   return resolve(join(dataDir, trimmed));
 }
 
-function resolveRefFile(packRoot: string, ref: string | null | undefined, fallbackName: string): string {
+function resolveRefFile(
+  packRoot: string,
+  ref: string | null | undefined,
+  fallbackName: string
+): string {
   const r = (ref ?? "").trim();
   if (!r) return join(packRoot, fallbackName);
   if (isAbsolute(r) || r.startsWith("file://")) {
@@ -47,22 +51,25 @@ export function defaultMemoryNamespace(definitionId: string): string {
   return `def:${definitionId}`;
 }
 
-export function effectiveMemoryNamespace(profileNamespace: string | null | undefined, definitionId: string): string {
+export function effectiveMemoryNamespace(
+  profileNamespace: string | null | undefined,
+  definitionId: string
+): string {
   const n = (profileNamespace ?? "").trim();
   return n || defaultMemoryNamespace(definitionId);
 }
 
 export interface ReadPackFilesResult {
   packRoot: string;
-  /** AGENT：行为契约 / 项目规则（Hermes 侧接近 AGENTS.md；建议仅由人或配置中心写入） */
   agentPath: string;
   agentText: string;
   agentExists: boolean;
   soulPath: string;
-  promptPath: string;
   soulText: string;
-  promptText: string;
   soulExists: boolean;
+  /** 实际读取到的主提示词文件路径（优先 `workspace/prompt.md`，否则为 `prompt_template_ref` 解析路径） */
+  promptPath: string;
+  promptText: string;
   promptExists: boolean;
   userPath: string;
   userText: string;
@@ -84,7 +91,8 @@ export async function readPackFiles(params: {
   const userPath = join(packRoot, "user.md");
   const memoryPath = join(packRoot, "memory.md");
   const soulPath = resolveRefFile(packRoot, params.soulFileRef, "soul.md");
-  const promptPath = resolveRefFile(packRoot, params.promptTemplateRef, "prompt.md");
+  const refPromptPath = resolveRefFile(packRoot, params.promptTemplateRef, "prompt.md");
+  const workspacePromptPath = join(packRoot, "workspace", "prompt.md");
 
   let agentText = "";
   let agentExists = false;
@@ -96,6 +104,7 @@ export async function readPackFiles(params: {
   let userExists = false;
   let memoryText = "";
   let memoryExists = false;
+  let effectivePromptPath = refPromptPath;
 
   if (existsSync(agentPath)) {
     agentText = await readFile(agentPath, "utf-8");
@@ -105,8 +114,12 @@ export async function readPackFiles(params: {
     soulText = await readFile(soulPath, "utf-8");
     soulExists = true;
   }
-  if (existsSync(promptPath)) {
-    promptText = await readFile(promptPath, "utf-8");
+  if (existsSync(workspacePromptPath)) {
+    promptText = await readFile(workspacePromptPath, "utf-8");
+    promptExists = true;
+    effectivePromptPath = workspacePromptPath;
+  } else if (existsSync(refPromptPath)) {
+    promptText = await readFile(refPromptPath, "utf-8");
     promptExists = true;
   }
   if (existsSync(userPath)) {
@@ -124,7 +137,7 @@ export async function readPackFiles(params: {
     agentText,
     agentExists,
     soulPath,
-    promptPath,
+    promptPath: effectivePromptPath,
     soulText,
     promptText,
     soulExists,
@@ -170,7 +183,10 @@ export function mergeSystemPrompt(params: {
   const agent = params.agentText.trim();
   const soul = params.soulText.trim();
   const user = truncateSnapshotByCodepoints(params.userText.trim(), PACK_USER_SNAPSHOT_MAX_CP);
-  const memory = truncateSnapshotByCodepoints(params.memoryText.trim(), PACK_MEMORY_SNAPSHOT_MAX_CP);
+  const memory = truncateSnapshotByCodepoints(
+    params.memoryText.trim(),
+    PACK_MEMORY_SNAPSHOT_MAX_CP
+  );
   const filePrompt = params.promptText.trim();
   const db = params.dbPrompt.trim();
 
@@ -184,7 +200,8 @@ export function mergeSystemPrompt(params: {
     .join("\n\n");
 
   if (params.mode === "db_primary") {
-    const core = db || filePrompt;
+    // 主任务提示：磁盘优先（workspace/prompt.md 或模板路径），DB system_prompt 为候补
+    const core = filePrompt || db;
     if (frozen && core) return `${frozen}\n\n---\n\n${core}`;
     return frozen || core || soul;
   }
@@ -214,7 +231,7 @@ export async function ensureAgentPackLayout(params: {
   const userPath = join(packRoot, "user.md");
   const memoryPath = join(packRoot, "memory.md");
   const soulPath = join(packRoot, "soul.md");
-  const promptPath = join(packRoot, "prompt.md");
+  const workspacePromptPath = join(packRoot, "workspace", "prompt.md");
   const workspaceDir = join(packRoot, "workspace");
   const memoryDir = join(packRoot, "memory");
   const created: string[] = [];
@@ -228,7 +245,7 @@ export async function ensureAgentPackLayout(params: {
       [
         "# Agent",
         "",
-        "本文件为 **Agent 行为契约**（对齐 Hermes 的 AGENTS.md / 项目规则层）。",
+        "本文件为 **Agent 行为契约**（项目规则 / 能力边界，类似代码库中的 AGENTS.md）。",
         "仅应由人或「配置中心」写入；运行时工具 **不得** 修改此文件。",
         "",
         "## 规则示例",
@@ -247,7 +264,7 @@ export async function ensureAgentPackLayout(params: {
       [
         "# User",
         "",
-        "提炼后的用户画像与会话偏好（Hermes 风格 `USER.md`）。",
+        "提炼后的用户画像与会话偏好。",
         `建议长度不超过约 ${PACK_USER_SNAPSHOT_MAX_CP} 个 Unicode 码位；超出部分在注入系统提示词时会被截断。`,
         "可由记忆归纳流程或受控 API 更新。",
         "",
@@ -262,7 +279,7 @@ export async function ensureAgentPackLayout(params: {
       [
         "# Memory",
         "",
-        "Agent 自身经验与会话级笔记（Hermes 风格 `MEMORY.md`）。",
+        "Agent 自身经验与会话级笔记。",
         `建议长度不超过约 ${PACK_MEMORY_SNAPSHOT_MAX_CP} 个 Unicode 码位；超出部分在注入系统提示词时会被截断。`,
         "可由记忆归纳流程或受控 API 更新。",
         "",
@@ -274,16 +291,25 @@ export async function ensureAgentPackLayout(params: {
 
   if (!existsSync(soulPath)) {
     await mkdir(dirname(soulPath), { recursive: true });
-    await writeFile(soulPath, "# Soul\n\nDescribe personality, values, and long-lived preferences.\n", "utf-8");
-    created.push(soulPath);
-  }
-  if (!existsSync(promptPath)) {
     await writeFile(
-      promptPath,
-      "# System prompt\n\nPrimary task instructions (file-primary / merged modes read this file).\n",
+      soulPath,
+      "# Soul\n\nDescribe personality, values, and long-lived preferences.\n",
       "utf-8"
     );
-    created.push(promptPath);
+    created.push(soulPath);
+  }
+  if (!existsSync(workspacePromptPath)) {
+    await writeFile(
+      workspacePromptPath,
+      [
+        "# 系统提示词",
+        "",
+        "在此编写该 Agent 的主要任务说明。默认模式下优先于数据库中的 `system_prompt`；仅当本文件为空时才使用数据库内容。",
+        "",
+      ].join("\n"),
+      "utf-8"
+    );
+    created.push(workspacePromptPath);
   }
   const readmeMemory = join(memoryDir, "README.md");
   if (!existsSync(readmeMemory)) {
@@ -311,18 +337,30 @@ export async function writePackMarkdownFiles(params: {
   agentMarkdown?: string;
   soulMarkdown: string;
   promptMarkdown: string;
-}): Promise<{ packRoot: string; agentPath: string; soulPath: string; promptPath: string; hash: string }> {
+}): Promise<{
+  packRoot: string;
+  agentPath: string;
+  soulPath: string;
+  promptPath: string;
+  hash: string;
+}> {
   const packRoot = resolvePackRoot(params.dataDir, params.definitionId, params.configRootUri);
   const agentPath = join(packRoot, "agent.md");
   const soulPath = join(packRoot, "soul.md");
-  const promptPath = join(packRoot, "prompt.md");
+  const workspacePromptPath = join(packRoot, "workspace", "prompt.md");
   const userPath = join(packRoot, "user.md");
   const memoryPath = join(packRoot, "memory.md");
 
-  if (Buffer.byteLength(params.soulMarkdown, "utf8") > MAX_PACK_BYTES || Buffer.byteLength(params.promptMarkdown, "utf8") > MAX_PACK_BYTES) {
+  if (
+    Buffer.byteLength(params.soulMarkdown, "utf8") > MAX_PACK_BYTES ||
+    Buffer.byteLength(params.promptMarkdown, "utf8") > MAX_PACK_BYTES
+  ) {
     throw new Error(`soul/prompt exceeds ${MAX_PACK_BYTES} bytes`);
   }
-  if (params.agentMarkdown !== undefined && Buffer.byteLength(params.agentMarkdown, "utf8") > MAX_PACK_BYTES) {
+  if (
+    params.agentMarkdown !== undefined &&
+    Buffer.byteLength(params.agentMarkdown, "utf8") > MAX_PACK_BYTES
+  ) {
     throw new Error(`agent exceeds ${MAX_PACK_BYTES} bytes`);
   }
 
@@ -335,16 +373,105 @@ export async function writePackMarkdownFiles(params: {
   }
 
   await writeFile(soulPath, params.soulMarkdown, "utf-8");
-  await writeFile(promptPath, params.promptMarkdown, "utf-8");
+  await writeFile(workspacePromptPath, params.promptMarkdown, "utf-8");
 
-  const agentSnap = params.agentMarkdown ?? (existsSync(agentPath) ? await readFile(agentPath, "utf-8") : "");
+  const agentSnap =
+    params.agentMarkdown ?? (existsSync(agentPath) ? await readFile(agentPath, "utf-8") : "");
   const userSnap = existsSync(userPath) ? await readFile(userPath, "utf-8") : "";
   const memSnap = existsSync(memoryPath) ? await readFile(memoryPath, "utf-8") : "";
-  const hash = hashPackContent(agentSnap, params.soulMarkdown, userSnap, memSnap, params.promptMarkdown);
-  return { packRoot, agentPath, soulPath, promptPath, hash };
+  const hash = hashPackContent(
+    agentSnap,
+    params.soulMarkdown,
+    userSnap,
+    memSnap,
+    params.promptMarkdown
+  );
+  return { packRoot, agentPath, soulPath, promptPath: workspacePromptPath, hash };
 }
 
 /** 会话可变的 USER / MEMORY 文件（Agent 工具或归纳流水线应只调用此写入，而非 agent.md） */
+/** Agent 自服务可改写的 pack 文件（禁止 `agent.md`，须走管理 API） */
+export type AgentPackSelfEditTarget = "soul" | "user" | "memory" | "prompt";
+
+function assertResolvedUnderPackRoot(packRoot: string, filePath: string): void {
+  const root = resolve(packRoot);
+  const resolved = resolve(filePath);
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (resolved !== root && !resolved.startsWith(prefix)) {
+    throw new Error("refused: target path escapes agent pack root");
+  }
+}
+
+/**
+ * 将 markdown 写入当前 definition 的 pack 内 soul / user / memory / prompt（含 soulFileRef / promptTemplateRef 解析路径）。
+ * `user` / `memory` 与 session-snapshot 一致按码位截断；`soul` / `prompt` 受 MAX_PACK_BYTES 约束。
+ */
+export async function writePackSelfEditMarkdown(params: {
+  dataDir: string;
+  definitionId: string;
+  configRootUri: string;
+  soulFileRef: string;
+  promptTemplateRef: string | null | undefined;
+  target: AgentPackSelfEditTarget;
+  markdown: string;
+}): Promise<{ writtenPath: string; hash: string; truncated: boolean }> {
+  const packRoot = resolvePackRoot(params.dataDir, params.definitionId, params.configRootUri);
+  let writtenPath: string;
+  let body: string;
+  let truncated = false;
+
+  if (params.target === "soul") {
+    writtenPath = resolveRefFile(packRoot, params.soulFileRef, "soul.md");
+    assertResolvedUnderPackRoot(packRoot, writtenPath);
+    body = params.markdown;
+    if (Buffer.byteLength(body, "utf8") > MAX_PACK_BYTES) {
+      throw new Error(`soul exceeds ${MAX_PACK_BYTES} bytes`);
+    }
+  } else if (params.target === "prompt") {
+    writtenPath = join(packRoot, "workspace", "prompt.md");
+    assertResolvedUnderPackRoot(packRoot, writtenPath);
+    body = params.markdown;
+    if (Buffer.byteLength(body, "utf8") > MAX_PACK_BYTES) {
+      throw new Error(`prompt exceeds ${MAX_PACK_BYTES} bytes`);
+    }
+  } else if (params.target === "user") {
+    writtenPath = join(packRoot, "user.md");
+    body = truncateSnapshotByCodepoints(params.markdown, PACK_USER_SNAPSHOT_MAX_CP);
+    truncated = [...params.markdown].length > PACK_USER_SNAPSHOT_MAX_CP;
+    if (Buffer.byteLength(body, "utf8") > MAX_PACK_BYTES) {
+      throw new Error(`user exceeds ${MAX_PACK_BYTES} bytes`);
+    }
+  } else {
+    writtenPath = join(packRoot, "memory.md");
+    body = truncateSnapshotByCodepoints(params.markdown, PACK_MEMORY_SNAPSHOT_MAX_CP);
+    truncated = [...params.markdown].length > PACK_MEMORY_SNAPSHOT_MAX_CP;
+    if (Buffer.byteLength(body, "utf8") > MAX_PACK_BYTES) {
+      throw new Error(`memory exceeds ${MAX_PACK_BYTES} bytes`);
+    }
+  }
+
+  await mkdir(dirname(writtenPath), { recursive: true });
+  await mkdir(join(packRoot, "workspace"), { recursive: true });
+  await mkdir(join(packRoot, "memory"), { recursive: true });
+  await writeFile(writtenPath, body, "utf-8");
+
+  const snap = await readPackFiles({
+    dataDir: params.dataDir,
+    definitionId: params.definitionId,
+    configRootUri: params.configRootUri,
+    soulFileRef: params.soulFileRef,
+    promptTemplateRef: params.promptTemplateRef,
+  });
+  const hash = hashPackContent(
+    snap.agentText,
+    snap.soulText,
+    snap.userText,
+    snap.memoryText,
+    snap.promptText
+  );
+  return { writtenPath, hash, truncated };
+}
+
 export async function writePackSessionSnapshotFiles(params: {
   dataDir: string;
   definitionId: string;
@@ -355,14 +482,18 @@ export async function writePackSessionSnapshotFiles(params: {
   const packRoot = resolvePackRoot(params.dataDir, params.definitionId, params.configRootUri);
   const agentPath = join(packRoot, "agent.md");
   const soulPath = join(packRoot, "soul.md");
-  const promptPath = join(packRoot, "prompt.md");
+  const workspacePromptPath = join(packRoot, "workspace", "prompt.md");
+  const legacyPromptPath = join(packRoot, "prompt.md");
   const userPath = join(packRoot, "user.md");
   const memoryPath = join(packRoot, "memory.md");
 
   const userTrim = truncateSnapshotByCodepoints(params.userMarkdown, PACK_USER_SNAPSHOT_MAX_CP);
   const memTrim = truncateSnapshotByCodepoints(params.memoryMarkdown, PACK_MEMORY_SNAPSHOT_MAX_CP);
 
-  if (Buffer.byteLength(userTrim, "utf8") > MAX_PACK_BYTES || Buffer.byteLength(memTrim, "utf8") > MAX_PACK_BYTES) {
+  if (
+    Buffer.byteLength(userTrim, "utf8") > MAX_PACK_BYTES ||
+    Buffer.byteLength(memTrim, "utf8") > MAX_PACK_BYTES
+  ) {
     throw new Error(`user/memory exceeds ${MAX_PACK_BYTES} bytes`);
   }
 
@@ -374,7 +505,11 @@ export async function writePackSessionSnapshotFiles(params: {
 
   const agentSnap = existsSync(agentPath) ? await readFile(agentPath, "utf-8") : "";
   const soulSnap = existsSync(soulPath) ? await readFile(soulPath, "utf-8") : "";
-  const promptSnap = existsSync(promptPath) ? await readFile(promptPath, "utf-8") : "";
+  const promptSnap = existsSync(workspacePromptPath)
+    ? await readFile(workspacePromptPath, "utf-8")
+    : existsSync(legacyPromptPath)
+      ? await readFile(legacyPromptPath, "utf-8")
+      : "";
   const hash = hashPackContent(agentSnap, soulSnap, userTrim, memTrim, promptSnap);
   return { packRoot, userPath, memoryPath, hash };
 }

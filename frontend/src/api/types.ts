@@ -1,4 +1,3 @@
-
 /** OHLCV bar from `GET /api/v1/market/klines`（与后端 BarData 对齐） */
 export interface KlineBar {
   symbol: string;
@@ -60,6 +59,8 @@ export interface WorkflowCreateInput {
   messageId?: string;
   /** Chat mode: reuse latest workflow in this session instead of creating one per message. */
   reuseSessionWorkflow?: boolean;
+  /** 为 true 时仅创建 workflow_run，不向 orchestrator 派发任务 */
+  skipDispatch?: boolean;
   loopKind?: AgentLoopKind;
   loopOptionsJson?: LoopOptionsJson;
 }
@@ -109,6 +110,8 @@ export interface AgentsConfigResponse {
   };
   workspace: {
     exists: boolean;
+    /** 工作区 JSON 校验失败时的可读原因（不阻塞 DB 列表） */
+    parseError?: string | null;
     configDir: string;
     agentsFile: string;
     sandboxFile: string;
@@ -964,4 +967,3 @@ export interface McpProjectInstallRecord {
   installedBy: string;
   createdAt: string;
 }
-

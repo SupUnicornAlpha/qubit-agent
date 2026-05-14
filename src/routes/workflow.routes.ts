@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
+import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
 import {
   enqueueCompensationTask,
   listCompensationTasks,
@@ -29,6 +29,8 @@ workflowRouter.post("/", async (c) => {
     source?: "chat" | "manual" | "api";
     messageId?: string;
     reuseSessionWorkflow?: boolean;
+    /** 为 true 时仅创建/复用 workflow_run，不向 orchestrator 派发 */
+    skipDispatch?: boolean;
     loopKind?: AgentLoopKind;
     loopOptionsJson?: LoopOptionsJson;
   }>();
@@ -41,6 +43,7 @@ workflowRouter.post("/", async (c) => {
     source: body.source,
     messageId: body.messageId,
     reuseSessionWorkflow: body.reuseSessionWorkflow,
+    skipDispatch: body.skipDispatch === true,
     loopKind: body.loopKind,
     loopOptionsJson: body.loopOptionsJson,
   });
@@ -205,6 +208,63 @@ workflowRouter.get("/scheduled-jobs/:id/runs", async (c) => {
     .orderBy(desc(scheduledJobRun.createdAt))
     .limit(limit);
   return c.json({ data: runs });
+});
+
+const workflowStatusEnum = ["pending", "running", "completed", "failed", "cancelled"] as const;
+
+workflowRouter.patch("/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req
+    .json<{
+      sessionId?: string | null;
+      goal?: string;
+      status?: (typeof workflowStatusEnum)[number];
+    }>()
+    .catch(() => ({}));
+  const db = await getDb();
+  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
+  if (!rows[0]) return c.json({ error: "Not found" }, 404);
+  const cur = rows[0];
+  const patch: Partial<typeof workflowRun.$inferInsert> = {};
+  if (body.goal !== undefined) {
+    const g = String(body.goal).trim();
+    if (g) patch.goal = g;
+  }
+  if (body.status !== undefined) {
+    if (!workflowStatusEnum.includes(body.status)) {
+      return c.json({ error: "invalid status", allowed: workflowStatusEnum }, 400);
+    }
+    patch.status = body.status;
+    if (body.status === "completed" || body.status === "failed" || body.status === "cancelled") {
+      patch.endedAt = new Date().toISOString();
+    }
+  }
+  if (body.sessionId !== undefined) {
+    if (body.sessionId) {
+      const s = await db.select().from(chatSession).where(eq(chatSession.id, body.sessionId)).limit(1);
+      if (!s[0]) return c.json({ error: "session not found", sessionId: body.sessionId }, 404);
+    }
+    patch.sessionId = body.sessionId;
+  }
+  if (Object.keys(patch).length === 0) {
+    return c.json({ data: cur });
+  }
+  await db.update(workflowRun).set(patch).where(eq(workflowRun.id, id));
+  const updated = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
+  return c.json({ data: updated[0] });
+});
+
+/** 软删除：将工作流标记为 cancelled（保留审计数据） */
+workflowRouter.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
+  if (!rows[0]) return c.json({ error: "Not found" }, 404);
+  await db
+    .update(workflowRun)
+    .set({ status: "cancelled", endedAt: new Date().toISOString() })
+    .where(eq(workflowRun.id, id));
+  return c.json({ ok: true, id });
 });
 
 workflowRouter.get("/:id", async (c) => {

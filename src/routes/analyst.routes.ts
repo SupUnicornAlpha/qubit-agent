@@ -47,6 +47,8 @@ analystRouter.post("/run", async (c) => {
     agentGroupId?: string | null;
     /** 仅运行这些 analyst_* 角色，与编组解析结果取交集 */
     analystRoles?: string[] | null;
+    /** 仅运行这些 definition id（analyst_*），与编组解析结果取交集；若提供则优先于 analystRoles */
+    analystDefinitionIds?: string[] | null;
   }>();
 
   if (!body.workflowRunId || !body.ticker) {
@@ -84,6 +86,11 @@ analystRouter.post("/run", async (c) => {
       ? (body.analystRoles.filter((r): r is AgentRole => typeof r === "string" && roleSet.has(r as AgentRole)) as AgentRole[])
       : undefined;
 
+  const analystDefinitionIds =
+    Array.isArray(body.analystDefinitionIds) && body.analystDefinitionIds.length > 0
+      ? body.analystDefinitionIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined;
+
   // Fire-and-forget: run the heavy analysis in the background.
   void runAnalystTeam({
     workflowRunId: body.workflowRunId,
@@ -91,6 +98,7 @@ analystRouter.post("/run", async (c) => {
     context: body.context,
     agentGroupId: body.agentGroupId,
     analystRoles,
+    analystDefinitionIds,
   })
     .then((result) => {
       job.status = "completed";
@@ -196,8 +204,8 @@ analystRouter.get("/fusion/history", async (c) => {
   const limitStr = c.req.query("limit") ?? "20";
   const offsetStr = c.req.query("offset") ?? "0";
 
-  const limit = Math.min(100, parseInt(limitStr, 10) || 20);
-  const offset = parseInt(offsetStr, 10) || 0;
+  const limit = Math.min(100, Number.parseInt(limitStr, 10) || 20);
+  const offset = Number.parseInt(offsetStr, 10) || 0;
 
   const query = db
     .select()
@@ -206,38 +214,15 @@ analystRouter.get("/fusion/history", async (c) => {
     .limit(limit)
     .offset(offset);
 
-  let results;
-  if (ticker) {
-    results = await db
-      .select()
-      .from(signalFusionResult)
-      .where(eq(signalFusionResult.ticker, ticker))
-      .orderBy(sql`created_at DESC`)
-      .limit(limit)
-      .offset(offset);
-  } else {
-    results = await query;
-  }
-
-  // #region agent log
-  const sample = results[0] as Record<string, unknown> | undefined;
-  fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
-    body: JSON.stringify({
-      sessionId: "6ea60d",
-      hypothesisId: "H2",
-      location: "analyst.routes.ts:fusion/history",
-      message: "fusion history query",
-      data: {
-        rowCount: results.length,
-        sampleKeys: sample ? Object.keys(sample) : [],
-        hasFusedSignal: Boolean(sample && "fusedSignal" in sample),
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
+  const results = ticker
+    ? await db
+        .select()
+        .from(signalFusionResult)
+        .where(eq(signalFusionResult.ticker, ticker))
+        .orderBy(sql`created_at DESC`)
+        .limit(limit)
+        .offset(offset)
+    : await query;
 
   return c.json({ ok: true, data: results });
 });

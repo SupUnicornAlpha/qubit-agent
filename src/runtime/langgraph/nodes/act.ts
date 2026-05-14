@@ -1,7 +1,8 @@
 import { getDb } from "../../../db/sqlite/client";
-import { acpCall, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
+import { acpCall, agentProfile, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
+import { getDataDir, writePackSelfEditMarkdown, type AgentPackSelfEditTarget } from "../../agent/agent-pack-service";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { runAnalystTeam, ANALYST_TEAM_ROLES } from "../../msa/analyst-team";
@@ -320,6 +321,30 @@ export async function actNode(
         }
         return { result: "ok" as const, connectorResult: response.result };
       }
+      if (toolName === "edit_agent_pack") {
+        const targetRaw = toolParams["target"];
+        const markdown = typeof toolParams["markdown"] === "string" ? toolParams["markdown"] : "";
+        const allowed: AgentPackSelfEditTarget[] = ["soul", "user", "memory", "prompt"];
+        if (typeof targetRaw !== "string" || !allowed.includes(targetRaw as AgentPackSelfEditTarget)) {
+          throw new Error(`edit_agent_pack: invalid target (use one of: ${allowed.join(", ")})`);
+        }
+        const profRows = await db
+          .select()
+          .from(agentProfile)
+          .where(eq(agentProfile.definitionId, state.agentDefinition.id))
+          .limit(1);
+        const prof = profRows[0];
+        const written = await writePackSelfEditMarkdown({
+          dataDir: getDataDir(),
+          definitionId: state.agentDefinition.id,
+          configRootUri: prof?.configRootUri ?? "",
+          soulFileRef: prof?.soulFileRef ?? "",
+          promptTemplateRef: prof?.promptTemplateRef,
+          target: targetRaw as AgentPackSelfEditTarget,
+          markdown,
+        });
+        return { result: "ok" as const, packEdit: { target: targetRaw, ...written } };
+      }
       // V2: dispatch run_analyst_team tool
       if (toolName === "run_analyst_team") {
         const ticker = (toolParams["ticker"] as string) ||
@@ -474,6 +499,9 @@ export async function actNode(
   }
   if (toolResult["connectorResult"] !== undefined) {
     nextObservations.push({ connectorResult: toolResult["connectorResult"] });
+  }
+  if (toolResult["packEdit"]) {
+    nextObservations.push({ packEdit: toolResult["packEdit"] });
   }
 
   return {

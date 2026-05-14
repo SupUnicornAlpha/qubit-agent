@@ -48,8 +48,8 @@ const styles: Record<string, CSSProperties> = {
   tabsWrap: {
     flexShrink: 0,
     padding: "8px 10px 6px",
-    borderBottom: "1px solid #27272a",
-    background: "#0c0c0e",
+    borderBottom: "1px solid var(--qb-main-input-border, #27272a)",
+    background: "var(--qb-team-stage-bg, #0c0c0e)",
   },
   segmented: {
     width: "100%",

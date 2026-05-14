@@ -29,6 +29,35 @@ function toChartTime(bar: KlineBar, timeframe: string): Time {
   return sec as UTCTimestamp;
 }
 
+function chartThemeOptions(light: boolean) {
+  if (light) {
+    return {
+      layout: {
+        background: { type: ColorType.Solid, color: "#ffffff" },
+        textColor: "#475569",
+      },
+      grid: {
+        vertLines: { color: "#e2e8f0" },
+        horzLines: { color: "#e2e8f0" },
+      },
+      rightPriceScale: { borderColor: "#cbd5e1" },
+      timeScale: { borderColor: "#cbd5e1", timeVisible: true, secondsVisible: false },
+    };
+  }
+  return {
+    layout: {
+      background: { type: ColorType.Solid, color: "#0c0c0e" },
+      textColor: "#a1a1aa",
+    },
+    grid: {
+      vertLines: { color: "#27272a" },
+      horzLines: { color: "#27272a" },
+    },
+    rightPriceScale: { borderColor: "#3f3f46" },
+    timeScale: { borderColor: "#3f3f46", timeVisible: true, secondsVisible: false },
+  };
+}
+
 function barsToCandles(bars: KlineBar[], timeframe: string): CandlestickData[] {
   const out: CandlestickData[] = [];
   let lastT: number | string | undefined;
@@ -114,6 +143,8 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   const emaLineRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const chartOverlays = useAppStore((s) => s.chartOverlays);
+  const uiTheme = useAppStore((s) => s.uiTheme);
+  const isLightChart = uiTheme.startsWith("light");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,17 +166,8 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     if (!el) return;
 
     const chart = createChart(el, {
-      layout: {
-        background: { type: ColorType.Solid, color: "#0c0c0e" },
-        textColor: "#a1a1aa",
-      },
-      grid: {
-        vertLines: { color: "#27272a" },
-        horzLines: { color: "#27272a" },
-      },
+      ...chartThemeOptions(isLightChart),
       crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: "#3f3f46" },
-      timeScale: { borderColor: "#3f3f46", timeVisible: true, secondsVisible: false },
       width: el.clientWidth,
       height: embedded ? Math.max(120, el.clientHeight) : Math.max(200, el.clientHeight),
     });
@@ -193,7 +215,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       smaLineRef.current = null;
       emaLineRef.current = null;
     };
-  }, [layoutChart, embedded]);
+  }, [layoutChart, embedded, isLightChart]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.applyOptions(chartThemeOptions(isLightChart));
+  }, [isLightChart]);
 
   const load = useCallback(async () => {
     const spec = useAppStore.getState().chartSpec;
@@ -437,8 +465,8 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     height: "100%",
     minHeight: 0,
-    background: "#09090b",
-    color: "#e4e4e7",
+    background: "var(--qb-kline-root-bg, #09090b)",
+    color: "var(--qb-body-fg, #e4e4e7)",
   },
   rootPage: {
     display: "flex",
@@ -446,8 +474,8 @@ const styles: Record<string, React.CSSProperties> = {
     height: "100%",
     minHeight: 0,
     overflow: "hidden",
-    background: "#09090b",
-    color: "#e4e4e7",
+    background: "var(--qb-kline-root-bg, #09090b)",
+    color: "var(--qb-body-fg, #e4e4e7)",
   },
   chartColumn: {
     flex: "1 1 55%",
@@ -465,24 +493,24 @@ const styles: Record<string, React.CSSProperties> = {
   header: {
     flexShrink: 0,
     padding: "12px 16px",
-    borderBottom: "1px solid #27272a",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
   },
   title: { margin: "0 0 10px", fontSize: 18, fontWeight: 600 },
   form: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" },
-  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "#a1a1aa" },
+  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
   inp: {
     minWidth: 100,
     padding: "6px 10px",
     borderRadius: 6,
-    border: "1px solid #3f3f46",
-    background: "#18181b",
-    color: "#e4e4e7",
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-input-bg, #18181b)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
     fontSize: 13,
   },
   err: { padding: "8px 16px", color: "#fca5a5", fontSize: 13 },
   errCompact: { fontSize: 11, color: "#fca5a5", flex: 1, minWidth: 0 },
-  meta: { padding: "4px 16px 8px", fontSize: 12, color: "#71717a" },
-  metaCompact: { fontSize: 11, color: "#71717a", flex: 1, minWidth: 0 },
+  meta: { padding: "4px 16px 8px", fontSize: 12, color: "var(--qb-main-meta, #71717a)" },
+  metaCompact: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", flex: 1, minWidth: 0 },
   embeddedBar: {
     flexShrink: 0,
     display: "flex",
@@ -490,8 +518,8 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 10,
     padding: "6px 12px",
-    borderBottom: "1px solid #27272a",
-    background: "#111114",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
     flexWrap: "wrap",
   },
   chartWrap: { flex: 1, minHeight: 120, width: "100%", position: "relative" },

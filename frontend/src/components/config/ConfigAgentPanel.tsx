@@ -1,14 +1,8 @@
+import { RefreshCw, Server } from "lucide-react";
 import type { CSSProperties, FC } from "react";
 import { useMemo, useState } from "react";
-import { RefreshCw, Server } from "lucide-react";
-import type {
-  AgentDefinitionBundle,
-  AgentMemoryStatsResponse,
-  AgentPackResponse,
-  McpServerConfigRecord,
-  McpToolBindingRecord,
-} from "../../api/types";
 import {
+  createAgentDefinition,
   createAgentDraft,
   postAgentDefinitionPackEnsureLayout,
   postAgentDefinitionPackSyncFromFs,
@@ -18,6 +12,14 @@ import {
   reloadAgents,
   upsertMcpBinding,
 } from "../../api/backend";
+import type {
+  AgentDefinitionBundle,
+  AgentMemoryStatsResponse,
+  AgentPackResponse,
+  McpServerConfigRecord,
+  McpToolBindingRecord,
+} from "../../api/types";
+import { AGENT_ROLE_OPTIONS } from "../../lib/agentRoles";
 import type { ConfigSubPage } from "../../store";
 import { IconToolbarButton } from "../ui/IconToolbarButton";
 
@@ -25,7 +27,9 @@ export type AgentConfigUiTab = "overview" | "prompts" | "workspace" | "memory" |
 
 export function parseAgentMcpServerNames(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((s) => s.trim());
+  return v
+    .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    .map((s) => s.trim());
 }
 
 function stringifyJson(v: unknown, max = 4000): string {
@@ -43,6 +47,8 @@ export type ConfigAgentPanelProps = {
   onSelectDefinitionId: (id: string) => void;
   onResetAgentSelectionRef: () => void;
   onReloadAll: () => void;
+  /** 在调用 `onReloadAll` 之前写入，以便刷新后仍选中新建的 definition。 */
+  onPreferAgentAfterReload: (definitionId: string) => void;
   onOpenMcpSubPage: (page: ConfigSubPage) => void;
   agentUiTab: AgentConfigUiTab;
   setAgentUiTab: (t: AgentConfigUiTab) => void;
@@ -80,10 +86,15 @@ export type ConfigAgentPanelProps = {
   currentProjectId: string;
   pickBindingForMcpServer: (serverName: string) => McpToolBindingRecord | undefined;
   mcpServerBindingCount: Map<string, number>;
-  syncSummary: unknown;
 };
 
-const tabRow: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 14, alignItems: "center" };
+const tabRow: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  marginBottom: 14,
+  alignItems: "center",
+};
 const label: CSSProperties = {
   fontSize: 12,
   color: "var(--qb-main-meta, #a1a1aa)",
@@ -122,6 +133,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   onSelectDefinitionId,
   onResetAgentSelectionRef,
   onReloadAll,
+  onPreferAgentAfterReload,
   onOpenMcpSubPage,
   agentUiTab,
   setAgentUiTab,
@@ -159,7 +171,6 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   currentProjectId,
   pickBindingForMcpServer,
   mcpServerBindingCount,
-  syncSummary,
 }) => {
   const def = selectedBundle?.definition;
   const profile = selectedBundle?.profile;
@@ -178,6 +189,11 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   const [regToolName, setRegToolName] = useState("");
   const [regTimeoutMs, setRegTimeoutMs] = useState("");
   const [regServer, setRegServer] = useState("");
+
+  const [newRole, setNewRole] = useState<string>(AGENT_ROLE_OPTIONS[0] ?? "research");
+  const [newDisplayName, setNewDisplayName] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createErr, setCreateErr] = useState<string | null>(null);
 
   const agentScopedBindings = useMemo(() => {
     const id = def?.id;
@@ -199,7 +215,9 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
     : (serverOptions[0] ?? "");
 
   const toggleMcp = (name: string) => {
-    setDraftMcpServerNames((prev) => (prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]));
+    setDraftMcpServerNames((prev) =>
+      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
+    );
   };
 
   const selectAllEnabledMcp = () => {
@@ -211,13 +229,27 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
 
   return (
     <>
-      <h3 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 600, color: "var(--qb-agent-h3, #f4f4f5)" }}>Agent 配置</h3>
+      <h3
+        style={{
+          margin: "0 0 6px",
+          fontSize: 18,
+          fontWeight: 600,
+          color: "var(--qb-agent-h3, #f4f4f5)",
+        }}
+      >
+        Agent 配置
+      </h3>
       <p className="qb-agent-help" style={{ maxWidth: 900 }}>
-        分层与常见 Agent Runtime（如带 Hermes 式分区的编排）对齐：<strong>概览</strong>管身份与 DB 草稿；
-        <strong>提示词与文件</strong>对应 pack 内 <code>agent.md</code>（契约/能力，建议仅人改）、<code>soul.md</code>（人格与表达）、
-        <code>prompt.md</code>（任务层）以及 <code>user.md</code> / <code>memory.md</code>（会话级 USER / MEMORY 快照，可经归纳或受控流程更新；注入系统提示前按码点截断）；
-        DB 侧仍有 <code>systemPrompt</code> 与 <code>prompt_template_ref</code>。<strong>工作区</strong>为沙箱目录；<strong>记忆</strong>按 definition 隔离；
-        <strong>MCP 与运行时</strong>从已在「MCP」页登记的服务端名中选择白名单（<code>mcp_servers_json</code>），并可在此登记<strong>带 definition_id 的工具绑定</strong>。
+        分层与常见「文件 + 数据库」双源 Agent 编排对齐：<strong>概览</strong>管身份与 DB 草稿；
+        <strong>提示词与文件</strong>对应 pack 内 <code>agent.md</code>（契约/能力，建议仅人改）、
+        <code>soul.md</code>（人格与表达）、
+        <code>workspace/prompt.md</code>（主任务说明，默认优先于 DB）以及 <code>user.md</code> /{" "}
+        <code>memory.md</code>（会话快照，可经归纳或受控流程更新；注入系统提示前按码点截断）； DB
+        侧仍有 <code>systemPrompt</code>（默认模式下作候补）与 <code>prompt_template_ref</code>
+        （可指向包内其它模板文件，仅当无 <code>workspace/prompt.md</code> 时使用）。
+        <strong>工作区</strong>目录含可写提示与沙箱文件；<strong>记忆</strong>按 definition 隔离；
+        <strong>MCP 与运行时</strong>从已在「MCP」页登记的服务端名中选择白名单（
+        <code>mcp_servers_json</code>），并可在此登记<strong>带 definition_id 的工具绑定</strong>。
       </p>
 
       <div className="qb-agent-shell">
@@ -226,27 +258,47 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
             <div style={{ flex: "1 1 220px", minWidth: 0 }}>
               <h4 className="qb-agent-hero__title">{displayTitle}</h4>
               <p className="qb-agent-hero__sub">
-                {def?.id} · role <strong style={{ color: "var(--qb-agent-strong, #d4d4d8)" }}>{def?.role}</strong> · v{def?.version}
+                {def?.id} · role{" "}
+                <strong style={{ color: "var(--qb-agent-strong, #d4d4d8)" }}>{def?.role}</strong> ·
+                v{def?.version}
                 {selectedBundle.draft ? (
                   <>
                     {" "}
-                    · 草稿 <strong style={{ color: "var(--qb-agent-draft-accent, #c4b5fd)" }}>{selectedBundle.draft.versionTag}</strong>
+                    · 草稿{" "}
+                    <strong style={{ color: "var(--qb-agent-draft-accent, #c4b5fd)" }}>
+                      {selectedBundle.draft.versionTag}
+                    </strong>
                   </>
                 ) : null}
               </p>
-              {profile?.description ? <p className="qb-agent-hero__desc">{profile.description}</p> : null}
+              {profile?.description ? (
+                <p className="qb-agent-hero__desc">{profile.description}</p>
+              ) : null}
             </div>
             <div className="qb-agent-badges">
               <span className={`qb-agent-badge${def?.enabled ? "" : " qb-agent-badge--muted"}`}>
                 {def?.enabled ? "已启用" : "已禁用"}
               </span>
-              <span className="qb-agent-badge--muted qb-agent-badge">LLM: {def?.llmProvider ?? "—"}</span>
-              <span className="qb-agent-badge--muted qb-agent-badge">迭代上限: {def?.maxIterations ?? "—"}</span>
+              <span className="qb-agent-badge--muted qb-agent-badge">
+                LLM: {def?.llmProvider ?? "—"}
+              </span>
+              <span className="qb-agent-badge--muted qb-agent-badge">
+                迭代上限: {def?.maxIterations ?? "—"}
+              </span>
             </div>
+          </div>
+        ) : definitions.length === 0 ? (
+          <div className="qb-agent-hero">
+            <p style={{ margin: 0, color: "var(--qb-agent-empty, #8e8e93)" }}>
+              当前没有可用的 Agent 定义。若数据库已有数据但列表为空，请检查{" "}
+              <code>/api/v1/agents/definitions</code>；也可在下方新建一条。
+            </p>
           </div>
         ) : (
           <div className="qb-agent-hero">
-            <p style={{ margin: 0, color: "var(--qb-agent-empty, #8e8e93)" }}>未加载到 Agent 定义，请先在后端种子数据或检查 API。</p>
+            <p style={{ margin: 0, color: "var(--qb-agent-empty, #8e8e93)" }}>
+              当前选中的 Agent 已不在列表中（可能为旧会话或数据已变更），请从左侧下拉重新选择。
+            </p>
           </div>
         )}
 
@@ -266,16 +318,91 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 </option>
               ))}
             </select>
-            <IconToolbarButton Icon={RefreshCw} label="重新加载配置与 MCP 列表" onClick={() => void onReloadAll()} />
-            <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={() => onOpenMcpSubPage("mcp")}>
+            <IconToolbarButton
+              Icon={RefreshCw}
+              label="重新加载配置与 MCP 列表"
+              onClick={() => void onReloadAll()}
+            />
+            <button
+              type="button"
+              className="qb-btn-ghost qb-btn--compact"
+              onClick={() => onOpenMcpSubPage("mcp")}
+            >
               打开 MCP 配置
             </button>
-            <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={() => onOpenMcpSubPage("skills")}>
+            <button
+              type="button"
+              className="qb-btn-ghost qb-btn--compact"
+              onClick={() => onOpenMcpSubPage("skills")}
+            >
               Skills 市场
             </button>
           </div>
 
-          <div className="qb-segmented qb-segmented--inline" style={{ width: "100%", marginBottom: 14 }}>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 10,
+              alignItems: "flex-end",
+              marginBottom: 14,
+              padding: "10px 12px",
+              borderRadius: 8,
+              border: "1px solid var(--qb-main-input-border, #3f3f46)",
+              background: "var(--qb-main-panel-bg, #18181b)",
+            }}
+          >
+            <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+              <span style={label}>新建 Agent（角色）</span>
+              <select style={input} value={newRole} onChange={(e) => setNewRole(e.target.value)}>
+                {AGENT_ROLE_OPTIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+              <span style={label}>显示名（可选）</span>
+              <input
+                style={input}
+                value={newDisplayName}
+                onChange={(e) => setNewDisplayName(e.target.value)}
+                placeholder="默认与后端生成的名称一致"
+              />
+            </div>
+            <button
+              type="button"
+              className="qb-btn-secondary qb-btn--compact"
+              disabled={createBusy}
+              onClick={() => {
+                setCreateErr(null);
+                setCreateBusy(true);
+                void createAgentDefinition({
+                  role: newRole,
+                  displayName: newDisplayName.trim() || undefined,
+                })
+                  .then((bundle) => {
+                    onPreferAgentAfterReload(bundle.definition.id);
+                    onReloadAll();
+                  })
+                  .catch((e) => setCreateErr(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setCreateBusy(false));
+              }}
+            >
+              {createBusy ? "创建中…" : "新建 Agent"}
+            </button>
+            {createErr ? (
+              <p style={{ margin: 0, flex: "1 1 100%", fontSize: 12, color: "#f87171" }}>
+                {createErr}
+              </p>
+            ) : null}
+          </div>
+
+          <div
+            className="qb-segmented qb-segmented--inline"
+            style={{ width: "100%", marginBottom: 14 }}
+          >
             {(
               [
                 ["overview", "概览"],
@@ -300,9 +427,17 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
             <div className="qb-agent-field-grid">
               <div>
                 <span style={label}>prompt_mode</span>
-                <select style={input} value={draftPromptMode} onChange={(e) => setDraftPromptMode(e.target.value as typeof draftPromptMode)}>
-                  <option value="db_primary">db_primary（仅数据库 systemPrompt）</option>
-                  <option value="file_primary">file_primary（磁盘 soul + prompt 为主）</option>
+                <select
+                  style={input}
+                  value={draftPromptMode}
+                  onChange={(e) => setDraftPromptMode(e.target.value as typeof draftPromptMode)}
+                >
+                  <option value="db_primary">
+                    db_primary（workspace/prompt.md 优先，DB system_prompt 候补）
+                  </option>
+                  <option value="file_primary">
+                    file_primary（磁盘契约层 + Instructions 为主）
+                  </option>
                   <option value="merged">merged（文件 + DB 叠加）</option>
                 </select>
               </div>
@@ -326,7 +461,11 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               </div>
               <div>
                 <span style={label}>soul_file_ref（相对包根或绝对路径）</span>
-                <input style={input} value={draftSoul} onChange={(e) => setDraftSoul(e.target.value)} />
+                <input
+                  style={input}
+                  value={draftSoul}
+                  onChange={(e) => setDraftSoul(e.target.value)}
+                />
               </div>
               <div>
                 <span style={label}>prompt_template_ref（可选，额外模板文件引用）</span>
@@ -339,18 +478,29 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               </div>
               <div>
                 <span style={label}>DB systemPrompt（草稿，随「保存草稿」写入）</span>
-                <textarea style={textarea} value={draftPrompt} onChange={(e) => setDraftPrompt(e.target.value)} />
+                <textarea
+                  style={textarea}
+                  value={draftPrompt}
+                  onChange={(e) => setDraftPrompt(e.target.value)}
+                />
               </div>
               <div>
                 <span style={label}>changeNote</span>
-                <input style={input} value={draftNote} onChange={(e) => setDraftNote(e.target.value)} />
+                <input
+                  style={input}
+                  value={draftNote}
+                  onChange={(e) => setDraftNote(e.target.value)}
+                />
               </div>
               {agentPack ? (
                 <div style={{ fontSize: 12, color: "var(--qb-sidebar-muted, #71717a)" }}>
                   磁盘 contentHash: {agentPack.contentHash.slice(0, 12)}… · profile 记录:{" "}
                   {(selectedBundle.profile?.configContentHash ?? "").slice(0, 12) || "—"}
                   {agentPack.contentHash !== (selectedBundle.profile?.configContentHash ?? "") ? (
-                    <span style={{ color: "#eab308" }}> （与库中 hash 不一致，可在「提示词与文件」从磁盘同步）</span>
+                    <span style={{ color: "#eab308" }}>
+                      {" "}
+                      （与库中 hash 不一致，可在「提示词与文件」从磁盘同步）
+                    </span>
                   ) : null}
                 </div>
               ) : null}
@@ -363,7 +513,11 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 <button
                   type="button"
                   className="qb-btn-secondary"
-                  onClick={() => void postAgentDefinitionPackEnsureLayout(selectedDefinitionId).then(() => onReloadAll())}
+                  onClick={() =>
+                    void postAgentDefinitionPackEnsureLayout(selectedDefinitionId).then(() =>
+                      onReloadAll()
+                    )
+                  }
                 >
                   初始化目录
                 </button>
@@ -405,49 +559,81 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 </button>
               </div>
               <p style={{ margin: 0, fontSize: 11, color: "var(--qb-sidebar-muted, #71717a)" }}>
-                路径：agent: {agentPack?.agentPath ?? "—"} · soul: {agentPack?.soulPath ?? "—"} · prompt:{" "}
-                {agentPack?.promptPath ?? "—"} · user: {agentPack?.userPath ?? "—"} · memory: {agentPack?.memoryPath ?? "—"}
+                路径：agent: {agentPack?.agentPath ?? "—"} · soul: {agentPack?.soulPath ?? "—"} ·
+                prompt: {agentPack?.promptPath ?? "—"} · user: {agentPack?.userPath ?? "—"} ·
+                memory: {agentPack?.memoryPath ?? "—"}
               </p>
               <div>
                 <span style={label}>
                   agent.md（契约层；建议仅由人或配置中心维护，勿交给 Agent 自改）
                 </span>
-                <textarea style={{ ...textarea, minHeight: 120 }} value={fileAgentMd} onChange={(e) => setFileAgentMd(e.target.value)} />
+                <textarea
+                  style={{ ...textarea, minHeight: 120 }}
+                  value={fileAgentMd}
+                  onChange={(e) => setFileAgentMd(e.target.value)}
+                />
               </div>
               <div>
                 <span style={label}>soul.md</span>
-                <textarea style={{ ...textarea, minHeight: 160 }} value={fileSoulMd} onChange={(e) => setFileSoulMd(e.target.value)} />
+                <textarea
+                  style={{ ...textarea, minHeight: 160 }}
+                  value={fileSoulMd}
+                  onChange={(e) => setFileSoulMd(e.target.value)}
+                />
               </div>
               <div>
-                <span style={label}>prompt.md</span>
-                <textarea style={{ ...textarea, minHeight: 160 }} value={filePromptMd} onChange={(e) => setFilePromptMd(e.target.value)} />
+                <span style={label}>workspace/prompt.md</span>
+                <textarea
+                  style={{ ...textarea, minHeight: 160 }}
+                  value={filePromptMd}
+                  onChange={(e) => setFilePromptMd(e.target.value)}
+                />
               </div>
               <div>
                 <span style={label}>
                   user.md（USER 快照，注入前截断至 {USER_SNAPSHOT_MAX_CP} 码点）
                   {cpLen(fileUserMd) > USER_SNAPSHOT_MAX_CP ? (
-                    <span style={{ color: "#f87171", marginLeft: 6 }}>（当前 {cpLen(fileUserMd)}，保存时服务端会截断）</span>
+                    <span style={{ color: "#f87171", marginLeft: 6 }}>
+                      （当前 {cpLen(fileUserMd)}，保存时服务端会截断）
+                    </span>
                   ) : (
-                    <span style={{ color: "var(--qb-sidebar-muted, #71717a)", marginLeft: 6 }}>（{cpLen(fileUserMd)} / {USER_SNAPSHOT_MAX_CP}）</span>
+                    <span style={{ color: "var(--qb-sidebar-muted, #71717a)", marginLeft: 6 }}>
+                      （{cpLen(fileUserMd)} / {USER_SNAPSHOT_MAX_CP}）
+                    </span>
                   )}
                 </span>
-                <textarea style={{ ...textarea, minHeight: 120 }} value={fileUserMd} onChange={(e) => setFileUserMd(e.target.value)} />
+                <textarea
+                  style={{ ...textarea, minHeight: 120 }}
+                  value={fileUserMd}
+                  onChange={(e) => setFileUserMd(e.target.value)}
+                />
               </div>
               <div>
                 <span style={label}>
                   memory.md（MEMORY 快照，注入前截断至 {MEMORY_SNAPSHOT_MAX_CP} 码点）
                   {cpLen(fileMemoryMd) > MEMORY_SNAPSHOT_MAX_CP ? (
-                    <span style={{ color: "#f87171", marginLeft: 6 }}>（当前 {cpLen(fileMemoryMd)}，保存时服务端会截断）</span>
+                    <span style={{ color: "#f87171", marginLeft: 6 }}>
+                      （当前 {cpLen(fileMemoryMd)}，保存时服务端会截断）
+                    </span>
                   ) : (
-                    <span style={{ color: "var(--qb-sidebar-muted, #71717a)", marginLeft: 6 }}>（{cpLen(fileMemoryMd)} / {MEMORY_SNAPSHOT_MAX_CP}）</span>
+                    <span style={{ color: "var(--qb-sidebar-muted, #71717a)", marginLeft: 6 }}>
+                      （{cpLen(fileMemoryMd)} / {MEMORY_SNAPSHOT_MAX_CP}）
+                    </span>
                   )}
                 </span>
-                <textarea style={{ ...textarea, minHeight: 120 }} value={fileMemoryMd} onChange={(e) => setFileMemoryMd(e.target.value)} />
+                <textarea
+                  style={{ ...textarea, minHeight: 120 }}
+                  value={fileMemoryMd}
+                  onChange={(e) => setFileMemoryMd(e.target.value)}
+                />
               </div>
               <p className="qb-agent-help" style={{ margin: 0, fontSize: 12, lineHeight: 1.55 }}>
-                与 Hermes 对照：<code>agent.md</code> + <code>soul.md</code> + <code>prompt.md</code> 对应契约 / 人格 / 任务层；<code>user.md</code> /{" "}
-                <code>memory.md</code> 对应冻结的 USER / MEMORY 片段。DB <code>systemPrompt</code> 与 <code>prompt_template_ref</code> 仍可按 promptMode
-                合并。仓库级 <code>AGENTS.md</code> 等若需要，可合并进 <code>agent.md</code> 或模板引用。
+                <code>agent.md</code> + <code>soul.md</code> + <code>workspace/prompt.md</code>{" "}
+                对应契约 / 人格 / 任务层；<code>user.md</code> / <code>memory.md</code>{" "}
+                为会话快照。默认 <code>db_primary</code> 下主任务以 <code>workspace/prompt.md</code>{" "}
+                为准，DB <code>systemPrompt</code> 为空时才作正文来源；
+                <code>prompt_template_ref</code> 仅在无
+                <code>workspace/prompt.md</code> 时参与解析。其它 promptMode 见选项说明。
               </p>
             </div>
           ) : null}
@@ -456,10 +642,19 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
             <div style={{ fontSize: 13, color: "var(--qb-body-fg, #d4d4d8)" }}>
               <p style={{ marginTop: 0 }}>
                 私有工作区路径：
-                <code style={{ background: "var(--qb-mcp-market-chip-bg, #27272a)", padding: "2px 6px", borderRadius: 4 }}>{agentPack.packRoot}/workspace/</code>
+                <code
+                  style={{
+                    background: "var(--qb-mcp-market-chip-bg, #27272a)",
+                    padding: "2px 6px",
+                    borderRadius: 4,
+                  }}
+                >
+                  {agentPack.packRoot}/workspace/
+                </code>
               </p>
               <p style={{ color: "var(--qb-main-meta, #a1a1aa)", fontSize: 12 }}>
-                工具沙箱可通过 sandbox 策略 <code>allowedFsPaths</code> 挂载该目录；初始化目录后会生成 <code>.gitkeep</code>。
+                工具沙箱可通过 sandbox 策略 <code>allowedFsPaths</code>{" "}
+                挂载该目录；初始化目录后会生成 <code>.gitkeep</code>。
               </p>
             </div>
           ) : null}
@@ -470,35 +665,54 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 逻辑命名空间：<strong>{agentPack?.memoryNamespace ?? "—"}</strong>
               </p>
               <p>
-                中期记忆条数（带 definition_id）：<strong>{agentMemoryStats?.midtermCount ?? 0}</strong>
+                中期记忆条数（带 definition_id）：
+                <strong>{agentMemoryStats?.midtermCount ?? 0}</strong>
               </p>
               <p>
-                长期记忆条数（带 definition_id）：<strong>{agentMemoryStats?.longtermCount ?? 0}</strong>
+                长期记忆条数（带 definition_id）：
+                <strong>{agentMemoryStats?.longtermCount ?? 0}</strong>
               </p>
               <p style={{ fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" }}>
-                写入 native memory 时在 metadata 中携带 <code>definitionId</code> 即可与条目标记关联。
+                写入 native memory 时在 metadata 中携带 <code>definitionId</code>{" "}
+                即可与条目标记关联。
               </p>
             </div>
           ) : null}
 
           {agentUiTab === "mcp" && selectedBundle ? (
             <div className="qb-agent-field-grid">
-              <p style={{ margin: 0, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)", lineHeight: 1.5 }}>
-                下列服务端名来自当前项目的 <strong>MCP</strong> 登记（与配置页「MCP」一致）。勾选即加入该 Agent 的{" "}
-                <code>mcp_servers_json</code>，运行时在 Graph 中作为可连 MCP 白名单；具体工具探测仍依赖各 Server 下的工具绑定。
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 12,
+                  color: "var(--qb-main-meta, #a1a1aa)",
+                  lineHeight: 1.5,
+                }}
+              >
+                下列服务端名来自当前项目的 <strong>MCP</strong>{" "}
+                登记（与配置页「MCP」一致）。勾选即加入该 Agent 的 <code>mcp_servers_json</code>
+                ，运行时在 Graph 中作为可连 MCP 白名单；具体工具探测仍依赖各 Server 下的工具绑定。
               </p>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={selectAllEnabledMcp}>
+                <button
+                  type="button"
+                  className="qb-btn-ghost qb-btn--compact"
+                  onClick={selectAllEnabledMcp}
+                >
                   勾选全部已启用
                 </button>
                 <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={clearMcp}>
                   清空
                 </button>
-                <span style={{ fontSize: 11, color: "var(--qb-sidebar-muted, #52525b)" }}>project: {currentProjectId || "—"}</span>
+                <span style={{ fontSize: 11, color: "var(--qb-sidebar-muted, #52525b)" }}>
+                  project: {currentProjectId || "—"}
+                </span>
               </div>
               <div className="qb-mcp-pool">
                 {mcpServers.length === 0 ? (
-                  <span style={{ fontSize: 12, color: "var(--qb-sidebar-muted, #71717a)" }}>暂无 MCP Server，请先到「MCP」页添加。</span>
+                  <span style={{ fontSize: 12, color: "var(--qb-sidebar-muted, #71717a)" }}>
+                    暂无 MCP Server，请先到「MCP」页添加。
+                  </span>
                 ) : (
                   mcpServers.map((s) => {
                     const on = draftMcpServerNames.includes(s.name);
@@ -527,14 +741,29 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               </div>
               {orphanMcp.length > 0 ? (
                 <p style={{ margin: 0, fontSize: 11, color: "#eab308" }}>
-                  以下名称已在白名单但当前项目未登记同名 Server（可保留或移除）：{orphanMcp.join(", ")}
+                  以下名称已在白名单但当前项目未登记同名 Server（可保留或移除）：
+                  {orphanMcp.join(", ")}
                 </p>
               ) : null}
               {def?.id && currentProjectId ? (
-                <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--qb-main-input-border, #27272a)" }}>
+                <div
+                  style={{
+                    marginTop: 14,
+                    paddingTop: 14,
+                    borderTop: "1px solid var(--qb-main-input-border, #27272a)",
+                  }}
+                >
                   <span style={label}>本 Agent 的 MCP 工具绑定（definition_id）</span>
-                  <p style={{ margin: "0 0 10px", fontSize: 11, color: "var(--qb-sidebar-muted, #71717a)", lineHeight: 1.5 }}>
-                    运行图里调用 MCP 时会优先匹配带当前 Agent id 的绑定，其次为 definition_id 为空的项目级绑定。请先勾选上方白名单并填写工具名（可用 <code>*</code>{" "}
+                  <p
+                    style={{
+                      margin: "0 0 10px",
+                      fontSize: 11,
+                      color: "var(--qb-sidebar-muted, #71717a)",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    运行图里调用 MCP 时会优先匹配带当前 Agent id 的绑定，其次为 definition_id
+                    为空的项目级绑定。请先勾选上方白名单并填写工具名（可用 <code>*</code>{" "}
                     表示通配）；登记后可在「MCP」页统一管理。
                   </p>
                   {agentScopedBindings.length > 0 ? (
@@ -551,7 +780,15 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                       )}
                     </pre>
                   ) : (
-                    <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--qb-sidebar-muted, #52525b)" }}>尚无仅本 Agent 的绑定。</p>
+                    <p
+                      style={{
+                        margin: "0 0 10px",
+                        fontSize: 12,
+                        color: "var(--qb-sidebar-muted, #52525b)",
+                      }}
+                    >
+                      尚无仅本 Agent 的绑定。
+                    </p>
                   )}
                   <div style={{ display: "grid", gap: 10, maxWidth: 480 }}>
                     <div>
@@ -621,23 +858,36 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               )}
               <div>
                 <span style={label}>当前 mcp_servers_json（将随草稿保存）</span>
-                <pre className="qb-json-preview">{JSON.stringify(draftMcpServerNames, null, 2)}</pre>
+                <pre className="qb-json-preview">
+                  {JSON.stringify(draftMcpServerNames, null, 2)}
+                </pre>
               </div>
               <div>
                 <span style={label}>tools_json（只读，来自已发布 definition）</span>
-                <pre className="qb-json-preview">{stringifyJson(selectedBundle.definition.toolsJson)}</pre>
+                <pre className="qb-json-preview">
+                  {stringifyJson(selectedBundle.definition.toolsJson)}
+                </pre>
               </div>
               <div>
                 <span style={label}>skills_json（只读）</span>
-                <pre className="qb-json-preview">{stringifyJson(selectedBundle.definition.skillsJson)}</pre>
+                <pre className="qb-json-preview">
+                  {stringifyJson(selectedBundle.definition.skillsJson)}
+                </pre>
               </div>
               <div>
                 <span style={label}>subscriptions_json（只读）</span>
-                <pre className="qb-json-preview">{stringifyJson(selectedBundle.definition.subscriptionsJson)}</pre>
+                <pre className="qb-json-preview">
+                  {stringifyJson(selectedBundle.definition.subscriptionsJson)}
+                </pre>
               </div>
               <p style={{ margin: 0, fontSize: 11, color: "var(--qb-sidebar-muted, #52525b)" }}>
                 绑定明细（当前项目，含各 Agent 的 definition_id）共{" "}
-                {mcpBindings.filter((b) => !currentProjectId || b.projectId === currentProjectId || b.projectId == null).length}{" "}
+                {
+                  mcpBindings.filter(
+                    (b) =>
+                      !currentProjectId || b.projectId === currentProjectId || b.projectId == null
+                  ).length
+                }{" "}
                 条；完整编辑可在「MCP」页或本页「登记本 Agent 绑定」。
               </p>
             </div>
@@ -688,11 +938,6 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
           发布草稿
         </button>
       </div>
-
-      <h4 style={{ margin: "18px 0 8px", fontSize: 14, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>DB / 工作区文件同步摘要</h4>
-      <pre className="qb-json-preview" style={{ maxHeight: 360 }}>
-        {JSON.stringify(syncSummary ?? {}, null, 2)}
-      </pre>
     </>
   );
 };
