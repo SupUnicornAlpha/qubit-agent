@@ -24,3 +24,13 @@
 #root *::-webkit-scrollbar-thumb:hover {
   background: linear-gradient(180deg, #4b5563 0%, #6d28d9 100%);
 }
+
+@keyframes team-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.team-loader-spin {
+  animation: team-loader-spin 0.85s linear infinite;
+}
