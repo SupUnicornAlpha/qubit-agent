@@ -7,6 +7,8 @@ import {
   ensureWorkspaceRuntimeConfigFiles,
 } from "./runtime/config/workspace-config";
 import { executionWorker } from "./runtime/execution/execution-worker";
+import { restoreRunningStrategies } from "./runtime/strategy/restore-running-strategies";
+import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worker";
 import { seedAgentDefinitions } from "./runtime/seed-agent-definitions";
 import { SEED_AGENT_DEFINITIONS } from "./runtime/seed-agent-definitions-data";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
@@ -25,8 +27,13 @@ async function main() {
 
   await registerBuiltinConnectors();
   await startAllAgents();
+  const restored = await restoreRunningStrategies();
+  if (restored > 0) {
+    console.log(`[QUBIT] Restored ${restored} strategy runtime(s)`);
+  }
   workflowScheduler.start();
   executionWorker.start();
+  strategyRuntimeWorker.start();
 
   // Start HTTP + WS server
   const server = createServer();
@@ -37,6 +44,7 @@ async function main() {
     console.log("\n[QUBIT] Shutting down...");
     workflowScheduler.stop();
     executionWorker.stop();
+    strategyRuntimeWorker.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);
@@ -45,6 +53,7 @@ async function main() {
   process.on("SIGTERM", async () => {
     workflowScheduler.stop();
     executionWorker.stop();
+    strategyRuntimeWorker.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);

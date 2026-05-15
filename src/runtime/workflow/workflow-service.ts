@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { chatMessageWorkflowLink, workflowRun } from "../../db/sqlite/schema";
+import { config } from "../../config";
+import type { AgentExecutionPath } from "../../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
-import { normalizeLoopKind } from "../../types/loop";
+import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
 import { dispatchTaskToRole } from "../agent-pool";
 
 export interface CreateAndDispatchWorkflowInput {
@@ -20,6 +22,8 @@ export interface CreateAndDispatchWorkflowInput {
   params?: Record<string, unknown>;
   loopKind?: AgentLoopKind;
   loopOptionsJson?: LoopOptionsJson;
+  /** native 循环：graph（LangGraph）或 a2a（总线）；默认见 QUBIT_AGENT_EXECUTION_PATH */
+  executionPath?: AgentExecutionPath;
 }
 
 export async function createAndDispatchWorkflow(
@@ -30,6 +34,9 @@ export async function createAndDispatchWorkflow(
 
   const loopKind = normalizeLoopKind(input.loopKind);
   const loopOpts = (input.loopOptionsJson ?? {}) as Record<string, unknown>;
+  const parsedOpts = parseLoopOptionsJson(loopOpts);
+  const executionPath =
+    input.executionPath ?? parsedOpts.executionPath ?? config.agentExecutionPath;
 
   const shouldReuse =
     input.reuseSessionWorkflow !== false && input.source === "chat" && Boolean(input.sessionId);
@@ -54,6 +61,7 @@ export async function createAndDispatchWorkflow(
           startedAt: new Date().toISOString(),
           endedAt: null,
           loopKind,
+          executionPath,
           loopOptionsJson: loopOpts,
         })
         .where(eq(workflowRun.id, id));
@@ -67,6 +75,7 @@ export async function createAndDispatchWorkflow(
         source: input.source ?? "manual",
         status: "pending",
         loopKind,
+        executionPath,
         loopOptionsJson: loopOpts,
       });
     }
@@ -80,6 +89,7 @@ export async function createAndDispatchWorkflow(
       source: input.source ?? "manual",
       status: "pending",
       loopKind,
+      executionPath,
       loopOptionsJson: loopOpts,
     });
   }

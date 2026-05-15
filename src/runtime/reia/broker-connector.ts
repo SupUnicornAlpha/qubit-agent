@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { BrokerProvider, BrokerProviderConfig } from "./broker-types";
 
-export type { BrokerProvider, BrokerProviderConfig, FutuProviderConfig, IbProviderConfig } from "./broker-types";
+export type {
+  BrokerProvider,
+  BrokerProviderConfig,
+  CcxtProviderConfig,
+  FutuProviderConfig,
+  IbProviderConfig,
+} from "./broker-types";
 
 export type BrokerOrderSide = "buy" | "sell";
 export type BrokerOrderType = "market" | "limit";
@@ -148,6 +154,71 @@ class MockFutuConnector implements BrokerConnector {
       message: "mock connector ready",
       checkedAt: new Date().toISOString(),
       latencyMs: Math.floor(20 + Math.random() * 25),
+      accountRef: this.accountRef,
+    };
+  }
+}
+
+class MockCcxtConnector implements BrokerConnector {
+  readonly provider: BrokerProvider = "ccxt";
+  readonly mode = "mock" as const;
+  readonly accountRef: string;
+
+  constructor(accountRef = "ccxt-mock") {
+    this.accountRef = accountRef;
+  }
+
+  async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
+    const latency = Math.floor(60 + Math.random() * 200);
+    const base = input.limitPrice ?? 100;
+    const slipPct = (Math.random() - 0.5) * 0.01;
+    const price = Number((base * (1 + slipPct)).toFixed(4));
+    return {
+      provider: this.provider,
+      brokerOrderId: `ccxt-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      status: "filled",
+      actualPrice: price,
+      actualQuantity: input.quantity,
+      executionTimeMs: latency,
+      raw: { venue: "MOCK_CCXT", ticker: input.ticker },
+    };
+  }
+
+  async cancelOrder(_brokerOrderId: string): Promise<void> {}
+
+  async getOrder(brokerOrderId: string): Promise<BrokerOrderResult> {
+    return {
+      provider: this.provider,
+      brokerOrderId,
+      status: "filled",
+      actualPrice: 100,
+      actualQuantity: 1,
+      executionTimeMs: 0,
+    };
+  }
+
+  async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
+    return [
+      {
+        brokerOrderId,
+        fillQty: 1,
+        fillPrice: 100,
+        filledAt: new Date().toISOString(),
+      },
+    ];
+  }
+
+  async getPositions(): Promise<BrokerPosition[]> {
+    return [];
+  }
+
+  async healthCheck(): Promise<BrokerHealthResult> {
+    return {
+      provider: this.provider,
+      status: "healthy",
+      message: "mock ccxt ready",
+      checkedAt: new Date().toISOString(),
+      latencyMs: 20,
       accountRef: this.accountRef,
     };
   }
@@ -380,6 +451,7 @@ class HttpBrokerConnector implements BrokerConnector {
 const DEFAULT_MOCK: Record<BrokerProvider, BrokerConnector> = {
   futu: new MockFutuConnector(),
   ib: new MockIbConnector(),
+  ccxt: new MockCcxtConnector(),
 };
 
 export function getBrokerConnector(provider: BrokerProvider): BrokerConnector {
@@ -388,9 +460,9 @@ export function getBrokerConnector(provider: BrokerProvider): BrokerConnector {
 
 export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnector {
   if (config.mode === "mock") {
-    return config.provider === "futu"
-      ? new MockFutuConnector(config.accountRef)
-      : new MockIbConnector(config.accountRef);
+    if (config.provider === "futu") return new MockFutuConnector(config.accountRef);
+    if (config.provider === "ccxt") return new MockCcxtConnector(config.accountRef);
+    return new MockIbConnector(config.accountRef);
   }
   if (!config.baseUrl) throw new Error(`missing broker baseUrl for ${config.provider}(${config.mode})`);
   return new HttpBrokerConnector({
@@ -400,6 +472,6 @@ export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnec
   });
 }
 
-export function paperFromBrokerMode(mode: "mock" | "sandbox" | "live"): boolean {
-  return paperFromMode(mode);
+export function paperFromBrokerMode(mode: "mock" | "sandbox" | "live", explicit?: boolean): boolean {
+  return paperFromMode(mode, explicit);
 }

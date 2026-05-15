@@ -1763,3 +1763,84 @@ export async function testMcpCatalog(input: {
   return res.data;
 }
 
+export type StrategyRuntimeRecord = {
+  id: string;
+  strategyScriptId: string;
+  brokerAccountId: string | null;
+  status: "stopped" | "starting" | "running" | "error" | "stopping";
+  executionMode: "paper" | "live";
+  market: string;
+  symbol: string;
+  timeframe: string;
+  paramsJson: Record<string, unknown>;
+  lastBarTime: string | null;
+  lastSignalAt: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export async function listStrategyRuntimes(input?: {
+  workflowRunId?: string;
+  sessionId?: string;
+  status?: string;
+}): Promise<StrategyRuntimeRecord[]> {
+  const q = new URLSearchParams();
+  if (input?.workflowRunId) q.set("workflowRunId", input.workflowRunId);
+  if (input?.sessionId) q.set("sessionId", input.sessionId);
+  if (input?.status) q.set("status", input.status);
+  const suffix = q.toString();
+  const res = await httpGet<{ ok: boolean; data: StrategyRuntimeRecord[] }>(
+    `/api/v1/strategy-runtimes${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function createStrategyRuntime(input: {
+  strategyScriptId: string;
+  market: string;
+  symbol: string;
+  timeframe?: string;
+  executionMode?: "paper" | "live";
+  brokerAccountId?: string;
+  params?: Record<string, unknown>;
+  autoStart?: boolean;
+}): Promise<StrategyRuntimeRecord> {
+  const res = await httpPost<{ ok: boolean; data: StrategyRuntimeRecord; error?: string }>(
+    "/api/v1/strategy-runtimes",
+    input
+  );
+  if (!res.ok) throw new Error(res.error ?? "create_strategy_runtime_failed");
+  return res.data;
+}
+
+export async function startStrategyRuntime(id: string): Promise<StrategyRuntimeRecord> {
+  const res = await httpPost<{ ok: boolean; data: StrategyRuntimeRecord }>(
+    `/api/v1/strategy-runtimes/${id}/start`,
+    {}
+  );
+  return res.data;
+}
+
+export async function stopStrategyRuntime(id: string): Promise<StrategyRuntimeRecord> {
+  const res = await httpPost<{ ok: boolean; data: StrategyRuntimeRecord }>(
+    `/api/v1/strategy-runtimes/${id}/stop`,
+    {}
+  );
+  return res.data;
+}
+
+export async function getStrategyRuntime(id: string): Promise<{
+  runtime: StrategyRuntimeRecord;
+  recentLogs: { id: string; level: string; message: string; createdAt: string }[];
+}> {
+  const res = await httpGet<{
+    ok: boolean;
+    data: {
+      runtime: StrategyRuntimeRecord;
+      recentLogs: { id: string; level: string; message: string; createdAt: string }[];
+    };
+  }>(`/api/v1/strategy-runtimes/${id}`);
+  return res.data;
+}
+

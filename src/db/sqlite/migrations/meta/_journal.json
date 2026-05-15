@@ -211,6 +211,27 @@
       "when": 1777352250000,
       "tag": "0029_broker_provider_config",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1777352260000,
+      "tag": "0030_unified_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1777352270000,
+      "tag": "0031_strategy_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1777352280000,
+      "tag": "0033_workflow_execution_path",
+      "breakpoints": true
     }
   ]
 }

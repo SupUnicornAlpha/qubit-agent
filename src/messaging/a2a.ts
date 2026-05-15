@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { A2AMessageType, AgentRole } from "../types/entities";
 import type { A2AMessageEnvelope } from "../types/a2a";
 import { A2A_GOVERNANCE } from "../types/a2a";
+import { persistA2AMessage } from "./a2a-persistence";
 import { messageBus } from "./bus";
 
 /**
@@ -30,6 +31,9 @@ export class A2ARouter {
   async route(message: A2AMessageEnvelope): Promise<void> {
     this._enforceGovernance(message);
     messageBus.publish(message);
+    void persistA2AMessage(message).catch((err) => {
+      console.error("[A2ARouter] failed to persist message:", err);
+    });
   }
 
   /**

@@ -1,4 +1,4 @@
-export type BrokerProvider = "futu" | "ib";
+export type BrokerProvider = "futu" | "ib" | "ccxt";
 
 export type FutuProviderConfig = {
   opendHost?: string;
@@ -14,7 +14,15 @@ export type IbProviderConfig = {
   accountId?: string;
 };
 
-export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig;
+export type CcxtProviderConfig = {
+  exchangeId?: string;
+  apiKeyRef?: string;
+  sandbox?: boolean;
+  defaultType?: "spot" | "future";
+  market?: "CRYPTO";
+};
+
+export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig | CcxtProviderConfig;
 
 export type BrokerAccountRow = {
   id: string;

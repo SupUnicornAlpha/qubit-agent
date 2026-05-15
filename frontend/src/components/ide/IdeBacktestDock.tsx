@@ -268,7 +268,9 @@ export const IdeBacktestDock: FC = () => {
           {btError ? <div style={styles.err}>{btError}</div> : null}
           {btSummary ? <div style={styles.ok}>{btSummary}</div> : null}
           <div style={styles.pillRow}>
-            <span style={styles.pillMuted}>杠杆 / 滑点 / 多空方向（QuantDinger）：UI 已预留，引擎侧后续扩展</span>
+            <span style={styles.pillMuted}>
+              纸面/实盘策略运行时：在「实时交易」页勾选策略后启动，或调用 POST /api/v1/strategy-runtimes
+            </span>
           </div>
         </div>
       ) : (

@@ -15,6 +15,7 @@ import {
   readWorkflowReportArtifact,
   saveWorkflowReportArtifact,
 } from "../runtime/strategy/strategy-script-files";
+import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
 export const workflowRouter = new Hono();
@@ -38,6 +39,7 @@ workflowRouter.post("/", async (c) => {
     skipDispatch?: boolean;
     loopKind?: AgentLoopKind;
     loopOptionsJson?: LoopOptionsJson;
+    executionPath?: AgentExecutionPath;
   }>();
 
   const created = await createAndDispatchWorkflow({
@@ -51,6 +53,7 @@ workflowRouter.post("/", async (c) => {
     skipDispatch: body.skipDispatch === true,
     loopKind: body.loopKind,
     loopOptionsJson: body.loopOptionsJson,
+    executionPath: body.executionPath,
   });
   return c.json(created, 201);
 });

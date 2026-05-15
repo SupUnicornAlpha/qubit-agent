@@ -238,6 +238,9 @@ async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: strin
     const mode = (payload["mode"] as "research" | "backtest" | "simulation" | "live") ?? "research";
     const loopKind = payload["loopKind"] as AgentLoopKind | undefined;
     const loopOptionsJson = payload["loopOptionsJson"] as LoopOptionsJson | undefined;
+    const executionPath = payload["executionPath"] as
+      | import("../../types/execution-path").AgentExecutionPath
+      | undefined;
 
     const created = await createAndDispatchWorkflow({
       projectId: job.projectId,
@@ -249,6 +252,7 @@ async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: strin
       params: { scheduledJobId: job.id, triggerAt: triggerAtIso },
       loopKind,
       loopOptionsJson,
+      executionPath,
     });
 
     let intentOrderId: string | undefined;

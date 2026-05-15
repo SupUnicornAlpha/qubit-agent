@@ -3,14 +3,13 @@ import { and, asc, eq, isNull, lte, or, lt } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import { getDb } from "../../db/sqlite/client";
 import {
-  BUILTIN_PAPER_CONNECTOR_INSTANCE_ID,
-  brokerOrder,
   executionTask,
   executionTaskEvent,
-  fill,
   orderIntent,
   riskReviewTicket,
 } from "../../db/sqlite/schema";
+import { dispatchExecutionTask } from "./execution-dispatcher";
+import { pollPendingBrokerOrders } from "./execution-dispatcher-poll";
 
 const DEFAULT_TICK_MS = 1500;
 const RETRY_DELAY_MS = 30_000;
@@ -74,58 +73,20 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
     await appendEvent(db, {
       executionTaskId: task.id,
       eventType: "dispatch",
-      payload: { taskId: task.id },
+      payload: { taskId: task.id, dispatchMode: task.dispatchMode },
     });
 
-    const intents = await db.select().from(orderIntent).where(eq(orderIntent.id, task.orderIntentId)).limit(1);
-    const intent = intents[0];
-    if (!intent) throw new Error("order_intent_missing");
-
-    const fillPrice = intent.price;
-    if (fillPrice === null || !Number.isFinite(fillPrice) || fillPrice <= 0) {
-      throw new Error("price_required_for_paper_execution");
-    }
-
-    const brokerOrderPk = randomUUID();
-    const externalOrderId = `paper-${brokerOrderPk.slice(0, 8)}`;
-
-    await appendEvent(db, {
+    const result = await dispatchExecutionTask(db, {
       executionTaskId: task.id,
-      eventType: "ack",
-      payload: { brokerOrderId: externalOrderId },
-    });
-
-    await db.insert(brokerOrder).values({
-      id: brokerOrderPk,
-      orderIntentId: intent.id,
+      orderIntentId: task.orderIntentId,
       accountId: task.accountId,
-      connectorInstanceId: BUILTIN_PAPER_CONNECTOR_INSTANCE_ID,
-      brokerOrderId: externalOrderId,
-      status: "submitted",
+      dispatchMode: task.dispatchMode ?? "paper",
+      brokerAccountId: task.brokerAccountId,
     });
 
-    await db
-      .update(brokerOrder)
-      .set({
-        status: "filled",
-        updatedAt: nowIso,
-      })
-      .where(eq(brokerOrder.id, brokerOrderPk));
-
-    const fillId = randomUUID();
-    await db.insert(fill).values({
-      id: fillId,
-      brokerOrderId: brokerOrderPk,
-      fillQty: intent.qty,
-      fillPrice,
-      fee: 0,
-    });
-
-    await appendEvent(db, {
-      executionTaskId: task.id,
-      eventType: "fill",
-      payload: { brokerOrderId: brokerOrderPk, fillId, qty: intent.qty, price: fillPrice },
-    });
+    if (result.status === "waiting_ack" || result.status === "partially_filled") {
+      return;
+    }
 
     await db
       .update(executionTask)
@@ -174,6 +135,7 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
 export async function processExecutionTasks(db: DbClient, now = new Date()): Promise<void> {
   const nowIso = now.toISOString();
   await expireStaleRiskReviews(db, nowIso);
+  await pollPendingBrokerOrders(db, nowIso);
 
   const due = await db
     .select()

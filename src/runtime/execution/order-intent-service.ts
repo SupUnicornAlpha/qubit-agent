@@ -12,6 +12,8 @@ import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 
 const REVIEW_TICKET_TTL_MS = 86_400_000;
 
+export type DispatchMode = "paper" | "live";
+
 export interface CreateOrderIntentInput {
   workflowRunId: string;
   strategyVersionId: string;
@@ -24,6 +26,14 @@ export interface CreateOrderIntentInput {
   /** Defaults to built-in paper account from migration 0019. */
   accountId?: string;
   traceId?: string;
+  market?: string | null;
+  symbol?: string | null;
+  timeframe?: string | null;
+  strategyRuntimeId?: string | null;
+  signalBarTime?: string | null;
+  /** paper (default) or live broker dispatch */
+  dispatchMode?: DispatchMode;
+  brokerAccountId?: string | null;
 }
 
 export interface CreateOrderIntentResult {
@@ -67,6 +77,7 @@ export async function createOrderIntentWithExecution(
   const accountId = input.accountId ?? BUILTIN_PAPER_TRADING_ACCOUNT_ID;
 
   const orderIntentId = randomUUID();
+  const dispatchMode = input.dispatchMode ?? "paper";
   await db.insert(orderIntent).values({
     id: orderIntentId,
     workflowRunId: input.workflowRunId,
@@ -77,6 +88,11 @@ export async function createOrderIntentWithExecution(
     orderType: input.orderType,
     price: input.price ?? null,
     timeInForce: input.timeInForce,
+    market: input.market ?? null,
+    symbol: input.symbol ?? null,
+    timeframe: input.timeframe ?? null,
+    strategyRuntimeId: input.strategyRuntimeId ?? null,
+    signalBarTime: input.signalBarTime ?? null,
   });
 
   await audit(db, {
@@ -104,6 +120,8 @@ export async function createOrderIntentWithExecution(
       lastError: risk.reason,
       retryCount: 0,
       maxRetries: 3,
+      dispatchMode,
+      brokerAccountId: input.brokerAccountId ?? null,
     });
     executionTaskId = tid;
     await audit(db, {
@@ -145,6 +163,8 @@ export async function createOrderIntentWithExecution(
       lastError: null,
       retryCount: 0,
       maxRetries: 3,
+      dispatchMode,
+      brokerAccountId: input.brokerAccountId ?? null,
     });
     executionTaskId = tid;
 
@@ -175,6 +195,8 @@ export async function createOrderIntentWithExecution(
     traceId,
     retryCount: 0,
     maxRetries: 3,
+    dispatchMode,
+    brokerAccountId: input.brokerAccountId ?? null,
   });
   executionTaskId = tid;
 

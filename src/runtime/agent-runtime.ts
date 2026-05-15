@@ -12,6 +12,11 @@ import type {
  * AgentRuntime
  * One shared runtime loop for all roles. Role behavior is injected by handler.
  */
+export interface AgentRuntimeOptions {
+  /** When set, must match agent_instance.id (used by A2A pool). */
+  instanceId?: string;
+}
+
 export class AgentRuntime {
   readonly definition: RuntimeAgentDefinition;
   readonly instance: RuntimeAgentInstance;
@@ -21,11 +26,15 @@ export class AgentRuntime {
   private readonly iterationByWorkflow = new Map<string, number>();
   private running = false;
 
-  constructor(definition: RuntimeAgentDefinition, handler: RuntimeRoleHandler) {
+  constructor(
+    definition: RuntimeAgentDefinition,
+    handler: RuntimeRoleHandler,
+    options?: AgentRuntimeOptions
+  ) {
     this.definition = definition;
     this.handler = handler;
     this.instance = {
-      instanceId: randomUUID(),
+      instanceId: options?.instanceId ?? randomUUID(),
       definitionId: definition.id,
       role: definition.role,
       status: "idle",
@@ -72,9 +81,10 @@ export class AgentRuntime {
   async processMessage(msg: A2AMessageEnvelope): Promise<void> {
     if (!this.running) return;
 
-    // receiverAgent is treated as runtime instance id in V1.2 runtime mode
-    if (msg.receiverAgent && msg.receiverAgent !== this.instance.instanceId) {
-      return;
+    if (msg.receiverAgent) {
+      const forInstance = msg.receiverAgent === this.instance.instanceId;
+      const forRole = msg.receiverAgent === this.definition.role;
+      if (!forInstance && !forRole) return;
     }
 
     try {

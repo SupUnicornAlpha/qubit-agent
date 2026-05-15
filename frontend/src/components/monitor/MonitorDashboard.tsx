@@ -43,6 +43,7 @@ import {
   listEvalRuns,
   listMonitorWorkflows,
   listProjects,
+  listStrategyRuntimes,
   listWorkflowQuality,
   listWorkspaces,
   runEval,
@@ -129,6 +130,9 @@ export const MonitorDashboard: FC = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricsHint, setMetricsHint] = useState<string | null>(null);
   const [scope, setScope] = useState<MonitorScope>("overview");
+  const [strategyRuntimes, setStrategyRuntimes] = useState<
+    Awaited<ReturnType<typeof listStrategyRuntimes>>
+  >([]);
 
   const monitorStreamGroups = useMemo(() => groupStreamEventsByRun(streamEvents, null), [streamEvents]);
 
@@ -199,8 +203,9 @@ export const MonitorDashboard: FC = () => {
       failed,
       openAlerts: alerts.filter((a) => a.status === "open").length,
       agents: agents.length,
+      strategyRunning: strategyRuntimes.filter((r) => r.status === "running").length,
     };
-  }, [workflowList, alerts, agents]);
+  }, [workflowList, alerts, agents, strategyRuntimes]);
 
   const workflowStatusPie = useMemo(() => {
     const c = new Map<string, number>();
@@ -254,6 +259,15 @@ export const MonitorDashboard: FC = () => {
       status: statusFilter || undefined,
     });
     setWorkflowList(asWorkflowRows(rows as unknown[]));
+    try {
+      setStrategyRuntimes(
+        await listStrategyRuntimes({
+          sessionId: sessionFilter || undefined,
+        })
+      );
+    } catch {
+      setStrategyRuntimes([]);
+    }
   }, [sessionFilter, statusFilter]);
 
   useEffect(() => {
@@ -435,7 +449,22 @@ export const MonitorDashboard: FC = () => {
             <Kpi label="失败" value={String(kpis.failed)} accent="#ef4444" />
             <Kpi label="未关闭告警" value={String(kpis.openAlerts)} accent="#eab308" />
             <Kpi label="已注册 Agent" value={String(kpis.agents)} />
+            <Kpi label="策略运行时" value={String(kpis.strategyRunning)} accent="#38bdf8" />
           </div>
+
+          {strategyRuntimes.length > 0 ? (
+            <div style={styles.chartBox}>
+              <div style={styles.chartTitle}>策略运行时（纸面/实盘）</div>
+              <ul style={{ margin: 0, padding: "8px 12px 8px 24px", fontSize: 12, lineHeight: 1.6 }}>
+                {strategyRuntimes.slice(0, 12).map((r) => (
+                  <li key={r.id}>
+                    {r.symbol} · {r.market} · {r.status} · {r.executionMode}
+                    {r.lastSignalAt ? ` · 最近信号 ${r.lastSignalAt}` : ""}
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          ) : null}
 
           <div style={styles.chartGrid}>
             <div style={styles.chartBox}>

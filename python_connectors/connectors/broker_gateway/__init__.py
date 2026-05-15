@@ -13,6 +13,7 @@ import os
 from typing import Any
 
 from connectors.base import BaseConnector
+from connectors.broker_gateway import ccxt_adapter
 from connectors.broker_gateway import futu as futu_adapter
 from connectors.broker_gateway import ib as ib_adapter
 
@@ -59,6 +60,8 @@ class BrokerGatewayConnector(BaseConnector):
             return futu_adapter.healthcheck(self._provider_config)
         if self._provider == "ib":
             return ib_adapter.healthcheck(self._provider_config)
+        if self._provider == "ccxt":
+            return ccxt_adapter.healthcheck(self._provider_config)
         return {"healthy": False, "message": f"unknown provider {self._provider}"}
 
     def execute(self, operation: str, payload: dict[str, Any]) -> Any:
@@ -99,6 +102,8 @@ class BrokerGatewayConnector(BaseConnector):
             return futu_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
         if self._provider == "ib":
             return ib_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
+        if self._provider == "ccxt":
+            return ccxt_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _cancel_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -109,6 +114,8 @@ class BrokerGatewayConnector(BaseConnector):
             return futu_adapter.cancel_order(broker_order_id, paper, cfg)
         if self._provider == "ib":
             return ib_adapter.cancel_order(broker_order_id, paper, cfg)
+        if self._provider == "ccxt":
+            return ccxt_adapter.cancel_order(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -119,6 +126,8 @@ class BrokerGatewayConnector(BaseConnector):
             return futu_adapter.get_order(broker_order_id, paper, cfg)
         if self._provider == "ib":
             return ib_adapter.get_order(broker_order_id, paper, cfg)
+        if self._provider == "ccxt":
+            return ccxt_adapter.get_order(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_fills(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -129,6 +138,8 @@ class BrokerGatewayConnector(BaseConnector):
             return futu_adapter.get_fills(broker_order_id, paper, cfg)
         if self._provider == "ib":
             return ib_adapter.get_fills(broker_order_id, paper, cfg)
+        if self._provider == "ccxt":
+            return ccxt_adapter.get_fills(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_positions(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -138,6 +149,8 @@ class BrokerGatewayConnector(BaseConnector):
             return futu_adapter.get_positions(paper, cfg)
         if self._provider == "ib":
             return ib_adapter.get_positions(paper, cfg)
+        if self._provider == "ccxt":
+            return ccxt_adapter.get_positions(paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
 

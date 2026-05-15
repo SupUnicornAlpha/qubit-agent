@@ -1,5 +1,8 @@
-import { createIntentOrder, executeIntentLive, executeIntentPaper } from "./intent-engine";
+import { createOrderIntentFromReiaPayload } from "../execution/reia-bridge";
+import { processExecutionTasks } from "../execution/execution-worker";
+import { getDb } from "../../db/sqlite/client";
 import { requestExecutionConfirmation } from "./safety-gate";
+import type { BrokerProvider } from "./broker-types";
 
 export interface ScheduledExecutionPayload {
   ticker: string;
@@ -9,46 +12,57 @@ export interface ScheduledExecutionPayload {
   rationale?: string;
   expectedReturn?: number;
   expectedRisk?: number;
-  brokerProvider?: "futu" | "ib";
+  brokerProvider?: BrokerProvider;
+  market?: string;
+  timeframe?: string;
 }
 
 export async function runAutoExecution(input: {
   workflowRunId: string;
   executionMode: "paper" | "live_with_confirm" | "live_direct";
   payload: ScheduledExecutionPayload;
-}): Promise<{ intentOrderId: string; executionReportId?: string }> {
-  const created = await createIntentOrder({
+}): Promise<{ intentOrderId: string; executionReportId?: string; orderIntentId?: string }> {
+  if (input.executionMode === "live_with_confirm") {
+    const pre = await createOrderIntentFromReiaPayload({
+      workflowRunId: input.workflowRunId,
+      ticker: input.payload.ticker,
+      direction: input.payload.direction,
+      quantity: input.payload.quantity,
+      targetPrice: input.payload.targetPrice,
+      rationale: input.payload.rationale,
+      market: input.payload.market,
+      timeframe: input.payload.timeframe,
+      executionMode: "paper",
+      brokerProvider: input.payload.brokerProvider,
+    });
+    if (pre.legacyIntentOrderId) {
+      await requestExecutionConfirmation(pre.legacyIntentOrderId);
+    }
+  }
+
+  const created = await createOrderIntentFromReiaPayload({
     workflowRunId: input.workflowRunId,
     ticker: input.payload.ticker,
     direction: input.payload.direction,
     quantity: input.payload.quantity,
     targetPrice: input.payload.targetPrice,
     rationale: input.payload.rationale,
-    expectedReturn: input.payload.expectedReturn,
-    expectedRisk: input.payload.expectedRisk,
+    market: input.payload.market,
+    timeframe: input.payload.timeframe,
+    executionMode:
+      input.executionMode === "paper"
+        ? "paper"
+        : input.executionMode === "live_direct" || input.executionMode === "live_with_confirm"
+          ? "live"
+          : "paper",
+    brokerProvider: input.payload.brokerProvider,
   });
 
-  if (input.executionMode === "paper") {
-    const executed = await executeIntentPaper({ intentOrderId: created.id });
-    return { intentOrderId: created.id, executionReportId: executed.executionReportId };
-  }
+  const db = await getDb();
+  await processExecutionTasks(db);
 
-  const provider = input.payload.brokerProvider ?? "futu";
-  if (input.executionMode === "live_with_confirm") {
-    await requestExecutionConfirmation(created.id);
-    const executed = await executeIntentLive({
-      intentOrderId: created.id,
-      provider,
-    });
-    return {
-      intentOrderId: created.id,
-      executionReportId: executed.executionReportId,
-    };
-  }
-
-  const executed = await executeIntentLive({
-    intentOrderId: created.id,
-    provider,
-  });
-  return { intentOrderId: created.id, executionReportId: executed.executionReportId };
+  return {
+    intentOrderId: created.legacyIntentOrderId ?? created.orderIntentId,
+    orderIntentId: created.orderIntentId,
+  };
 }

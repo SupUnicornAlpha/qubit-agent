@@ -1,6 +1,12 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { getDb } from "../../db/sqlite/client";
+import { workflowRun } from "../../db/sqlite/schema";
 import type { OrderIntentPayload, TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
+import { getA2APool } from "../a2a/a2a-pool";
+import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
+import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import type { RuntimeRoleHandler } from "../types";
 
 function buildTaskResult(taskId: string, role: AgentRole, extra?: Record<string, unknown>) {
@@ -13,6 +19,28 @@ function buildTaskResult(taskId: string, role: AgentRole, extra?: Record<string,
     },
     durationMs: 0,
   };
+}
+
+async function setWorkflowStatus(
+  workflowId: string,
+  status: "completed" | "failed" | "running"
+): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(workflowRun)
+    .set({
+      status,
+      endedAt: status === "running" ? null : new Date().toISOString(),
+    })
+    .where(eq(workflowRun.id, workflowId));
+}
+
+function receiverForRole(role: AgentRole, fallback: string): string {
+  try {
+    return getA2APool().getInstanceIdForRole(role);
+  } catch {
+    return fallback;
+  }
 }
 
 const noopHandler = (role: AgentRole): RuntimeRoleHandler => ({
@@ -40,19 +68,110 @@ const noopHandler = (role: AgentRole): RuntimeRoleHandler => ({
 const orchestratorHandler: RuntimeRoleHandler = {
   ...noopHandler("orchestrator"),
   onMessage: async (ctx, msg) => {
-    if (msg.messageType === "TASK_ASSIGN") {
-      const payload = msg.payload as TaskAssignPayload;
+    if (msg.messageType !== "TASK_ASSIGN") {
+      return noopHandler("orchestrator").onMessage(ctx, msg);
+    }
+
+    const payload = msg.payload as TaskAssignPayload;
+
+    if (payload.taskType === "research_team_execute") {
+      type ResearchTeamExecuteParams = {
+        jobId?: string;
+        ticker?: string;
+        context?: string;
+        agentGroupId?: string | null;
+        analystDefinitionIds?: string[];
+        analystRoles?: string[];
+      };
+      const pr = payload.params as ResearchTeamExecuteParams;
+      const jobId = typeof pr.jobId === "string" ? pr.jobId : "";
+      const ticker = typeof pr.ticker === "string" ? pr.ticker.trim() : "";
+      const context = typeof pr.context === "string" ? pr.context : undefined;
+      let agentGroupId: string | null | undefined;
+      if ("agentGroupId" in pr) {
+        const ag = pr.agentGroupId;
+        if (ag === null) agentGroupId = null;
+        else if (typeof ag === "string") agentGroupId = ag.trim() || null;
+      }
+      const rawDefIds = pr.analystDefinitionIds;
+      const analystDefinitionIds =
+        Array.isArray(rawDefIds) && rawDefIds.length > 0
+          ? rawDefIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+          : undefined;
+      const rawRoles = pr.analystRoles;
+      const analystRoles =
+        Array.isArray(rawRoles) && rawRoles.length > 0
+          ? (rawRoles.filter(
+              (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
+            ) as AgentRole[])
+          : undefined;
+
+      if (!jobId || !ticker) {
+        if (jobId) failAnalystResearchJob(jobId, new Error("research_team_execute: missing ticker"));
+        await setWorkflowStatus(msg.workflowId, "failed");
+        return;
+      }
+
+      try {
+        const teamResult = await runAnalystTeam({
+          workflowRunId: msg.workflowId,
+          ticker,
+          context,
+          agentGroupId,
+          analystRoles,
+          analystDefinitionIds,
+        });
+        completeAnalystResearchJob(jobId, teamResult);
+        await setWorkflowStatus(msg.workflowId, "completed");
+        await ctx.send({
+          workflowId: msg.workflowId,
+          traceId: msg.traceId,
+          receiverAgent: msg.senderAgent,
+          messageType: "TASK_RESULT",
+          payload: buildTaskResult(payload.taskId, "orchestrator", {
+            taskType: "research_team_execute",
+            fusionId: teamResult.fusionId,
+            fusedSignal: teamResult.fusedSignal,
+            fusedConfidence: teamResult.fusedConfidence,
+          }),
+          priority: msg.priority,
+        });
+      } catch (teamErr) {
+        failAnalystResearchJob(jobId, teamErr);
+        await setWorkflowStatus(msg.workflowId, "failed");
+        throw teamErr;
+      }
+      return;
+    }
+
+    const delegateRole = payload.assignedRole;
+    if (delegateRole && delegateRole !== "orchestrator") {
       await ctx.send({
         workflowId: msg.workflowId,
         traceId: msg.traceId,
-        receiverAgent: msg.senderAgent,
-        messageType: "TASK_RESULT",
-        payload: buildTaskResult(payload.taskId, "orchestrator", {
-          next: "role handler wiring complete",
-        }),
+        receiverAgent: receiverForRole(delegateRole, msg.senderAgent),
+        messageType: "TASK_ASSIGN",
+        payload,
         priority: msg.priority,
       });
+      return;
     }
+
+    if (payload.taskType === "workflow_start") {
+      await setWorkflowStatus(msg.workflowId, "completed");
+    }
+
+    await ctx.send({
+      workflowId: msg.workflowId,
+      traceId: msg.traceId,
+      receiverAgent: msg.senderAgent,
+      messageType: "TASK_RESULT",
+      payload: buildTaskResult(payload.taskId, "orchestrator", {
+        taskType: payload.taskType,
+        next: "orchestrator handled",
+      }),
+      priority: msg.priority,
+    });
   },
 };
 
@@ -69,11 +188,10 @@ const riskHandler: RuntimeRoleHandler = {
       .update(intent.orderIntentId)
       .digest("hex");
 
-    // V1.3 role handler: default allow path, full rule engine comes later.
     await ctx.send({
       workflowId: msg.workflowId,
       traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
+      receiverAgent: receiverForRole("execution", msg.senderAgent),
       messageType: "ORDER_INTENT",
       payload: { ...intent, riskSignature: signature },
       priority: msg.priority,
@@ -135,4 +253,3 @@ const handlers: Record<AgentRole, RuntimeRoleHandler> = {
 export function getRoleHandler(role: AgentRole): RuntimeRoleHandler {
   return handlers[role];
 }
-

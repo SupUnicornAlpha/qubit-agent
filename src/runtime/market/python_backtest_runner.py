@@ -64,10 +64,18 @@ def main() -> None:
         global_ctx: dict[str, Any] = {"__builtins__": SAFE_BUILTINS, "math": math}
         exec(code, global_ctx, local_ctx)
         out_obj = local_ctx.get("output", output)
-        if not isinstance(out_obj, dict):
-            raise ValueError("output must be dict and include buy/sell arrays")
-        buy = _normalize_signal(out_obj.get(buy_key), len(bars), buy_key)
-        sell = _normalize_signal(out_obj.get(sell_key), len(bars), sell_key)
+        if (
+            isinstance(out_obj, dict)
+            and buy_key in out_obj
+            and sell_key in out_obj
+        ):
+            buy = _normalize_signal(out_obj.get(buy_key), len(bars), buy_key)
+            sell = _normalize_signal(out_obj.get(sell_key), len(bars), sell_key)
+        elif buy_key in local_ctx and sell_key in local_ctx:
+            buy = _normalize_signal(local_ctx.get(buy_key), len(bars), buy_key)
+            sell = _normalize_signal(local_ctx.get(sell_key), len(bars), sell_key)
+        else:
+            raise ValueError("signal code must set output{buy,sell} or buy/sell arrays")
         sys.stdout.write(json.dumps({"ok": True, "buy": buy, "sell": sell}))
         return
     except Exception as e:

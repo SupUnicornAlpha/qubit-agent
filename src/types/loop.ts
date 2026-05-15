@@ -6,6 +6,8 @@ export type AgentLoopKind = z.infer<typeof AgentLoopKindSchema>;
 /** Per-workflow overrides for external CLI loops (stored in workflow_run.loop_options_json). */
 export const LoopOptionsJsonSchema = z
   .object({
+    /** Override workflow execution_path when loop_kind is native (graph | a2a). */
+    executionPath: z.enum(["graph", "a2a"]).optional(),
     /** Full path or binary name on PATH */
     command: z.string().optional(),
     /** Extra CLI args inserted after command-specific defaults */

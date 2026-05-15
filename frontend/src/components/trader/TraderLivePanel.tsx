@@ -2,12 +2,16 @@ import type { CSSProperties, FC } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   createProject,
+  createStrategyRuntime,
   createWorkspace,
   getDefaultProjectSession,
   listProjects,
+  listStrategyRuntimes,
   listStrategyScripts,
   listWorkspaces,
+  stopStrategyRuntime,
 } from "../../api/backend";
+import type { StrategyRuntimeRecord } from "../../api/backend";
 import type { IndicatorStrategyScriptRecord } from "../../api/types";
 import { CHART_MARKET_OPTIONS, CHART_TIMEFRAMES, coerceChartMarketExchange } from "../../lib/chartSpec";
 import { KlinePanel } from "../chart/KlinePanel";
@@ -167,6 +171,14 @@ const styles: Record<string, CSSProperties> = {
   },
 };
 
+function chartExchangeToMarket(exchange: string): string {
+  const u = exchange.trim().toUpperCase();
+  if (u === "HK") return "HK";
+  if (u === "US") return "US";
+  if (u === "CRYPTO") return "CRYPTO";
+  return "CN";
+}
+
 export const TraderLivePanel: FC = () => {
   const requestChartReload = useAppStore((s) => s.requestChartReload);
   const chartSpec = useAppStore((s) => s.chartSpec);
@@ -181,6 +193,9 @@ export const TraderLivePanel: FC = () => {
   const toggleTraderStrategyScriptId = useAppStore((s) => s.toggleTraderStrategyScriptId);
 
   const [scripts, setScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
+  const [runtimes, setRuntimes] = useState<StrategyRuntimeRecord[]>([]);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeMsg, setRuntimeMsg] = useState<string | null>(null);
   const [scriptsErr, setScriptsErr] = useState<string | null>(null);
   const booted = useRef(false);
 
@@ -208,6 +223,8 @@ export const TraderLivePanel: FC = () => {
         const session = await getDefaultProjectSession(pid);
         const rows = await listStrategyScripts(session.id);
         setScripts(rows);
+        const rt = await listStrategyRuntimes({ sessionId: session.id });
+        setRuntimes(rt);
         pushTraderAgentLog({
           kind: "ingest",
           title: "会话与策略库已连接",
@@ -232,6 +249,52 @@ export const TraderLivePanel: FC = () => {
       title: "行情上下文（与 K 线 / 快捷交易共用 chartSpec）",
       body: `symbol=${spec.symbol} exchange=${spec.exchange} tf=${spec.timeframe} limit=${spec.limit}`,
     });
+  };
+
+  const startSelectedStrategyRuntime = async () => {
+    const scriptId = traderAgentConfig.strategyScriptIds[0];
+    if (!scriptId) {
+      setRuntimeMsg("请先勾选一条策略脚本");
+      return;
+    }
+    const spec = useAppStore.getState().chartSpec;
+    setRuntimeBusy(true);
+    setRuntimeMsg(null);
+    try {
+      const row = await createStrategyRuntime({
+        strategyScriptId: scriptId,
+        market: chartExchangeToMarket(spec.exchange),
+        symbol: spec.symbol.trim(),
+        timeframe: spec.timeframe,
+        executionMode: "paper",
+        autoStart: true,
+        params: { orderQty: 100, barLimit: 120 },
+      });
+      setRuntimes((prev) => [row, ...prev.filter((r) => r.id !== row.id)]);
+      setRuntimeMsg(`已启动模拟运行时 ${row.id.slice(0, 8)}…`);
+      pushTraderAgentLog({
+        kind: "decision",
+        title: "策略运行时已启动",
+        body: `runtime=${row.id} mode=paper symbol=${row.symbol}`,
+      });
+    } catch (e) {
+      setRuntimeMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
+
+  const stopRuntimeById = async (id: string) => {
+    setRuntimeBusy(true);
+    try {
+      const row = await stopStrategyRuntime(id);
+      setRuntimes((prev) => prev.map((r) => (r.id === id ? row : r)));
+      setRuntimeMsg(`已停止 ${id.slice(0, 8)}…`);
+    } catch (e) {
+      setRuntimeMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRuntimeBusy(false);
+    }
   };
 
   const simulateAgentTick = () => {
@@ -338,6 +401,38 @@ export const TraderLivePanel: FC = () => {
               )}
             </div>
           </div>
+          <div style={styles.row}>
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              disabled={runtimeBusy}
+              onClick={() => void startSelectedStrategyRuntime()}
+            >
+              启动策略运行时（纸面）
+            </button>
+            {runtimeMsg ? <span style={styles.hint}>{runtimeMsg}</span> : null}
+          </div>
+          {runtimes.length > 0 ? (
+            <div style={styles.scriptList}>
+              {runtimes.slice(0, 5).map((r) => (
+                <div key={r.id} style={{ ...styles.scriptRow, justifyContent: "space-between" }}>
+                  <span>
+                    {r.symbol} · {r.status} · {r.executionMode}
+                  </span>
+                  {r.status === "running" ? (
+                    <button
+                      type="button"
+                      className="qb-btn-ghost qb-btn--compact"
+                      disabled={runtimeBusy}
+                      onClick={() => void stopRuntimeById(r.id)}
+                    >
+                      停止
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       </details>
 

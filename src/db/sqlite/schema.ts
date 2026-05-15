@@ -74,6 +74,10 @@ export const workflowRun = sqliteTable("workflow_run", {
   loopKind: text("loop_kind", { enum: ["native", "claude_cli", "codex_cli"] })
     .notNull()
     .default("native"),
+  /** native 循环下的执行路径：graph=LangGraph；a2a=内存总线 + AgentRuntime */
+  executionPath: text("execution_path", { enum: ["graph", "a2a"] })
+    .notNull()
+    .default("graph"),
   loopOptionsJson: text("loop_options_json", { mode: "json" }).notNull().default("{}"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
@@ -950,6 +954,11 @@ export const orderIntent = sqliteTable("order_intent", {
   timeInForce: text("time_in_force", {
     enum: ["day", "gtc", "ioc", "fok"],
   }).notNull(),
+  market: text("market"),
+  symbol: text("symbol"),
+  timeframe: text("timeframe"),
+  strategyRuntimeId: text("strategy_runtime_id"),
+  signalBarTime: text("signal_bar_time"),
   intentTime: createdAt(),
 });
 
@@ -1051,6 +1060,10 @@ export const executionTask = sqliteTable(
     nextRetryAt: text("next_retry_at"),
     lastError: text("last_error"),
     traceId: text("trace_id").notNull().default(""),
+    brokerAccountId: text("broker_account_id").references(() => brokerAccount.id),
+    dispatchMode: text("dispatch_mode", { enum: ["paper", "live"] })
+      .notNull()
+      .default("paper"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -1146,9 +1159,89 @@ export const executionReport = sqliteTable("execution_report", {
   createdAt: createdAt(),
 });
 
+export const strategyRuntime = sqliteTable("strategy_runtime", {
+  id: id(),
+  strategyScriptId: text("strategy_script_id")
+    .notNull()
+    .references(() => indicatorStrategyScript.id, { onDelete: "cascade" }),
+  brokerAccountId: text("broker_account_id").references(() => brokerAccount.id),
+  status: text("status", {
+    enum: ["stopped", "starting", "running", "error", "stopping"],
+  })
+    .notNull()
+    .default("stopped"),
+  executionMode: text("execution_mode", { enum: ["paper", "live"] })
+    .notNull()
+    .default("paper"),
+  market: text("market").notNull(),
+  symbol: text("symbol").notNull(),
+  timeframe: text("timeframe").notNull().default("1d"),
+  paramsJson: text("params_json", { mode: "json" }).notNull().default({}),
+  lastBarTime: text("last_bar_time"),
+  lastSignalAt: text("last_signal_at"),
+  errorMessage: text("error_message"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const strategyRuntimeLog = sqliteTable("strategy_runtime_log", {
+  id: id(),
+  strategyRuntimeId: text("strategy_runtime_id")
+    .notNull()
+    .references(() => strategyRuntime.id, { onDelete: "cascade" }),
+  level: text("level", { enum: ["debug", "info", "warn", "error"] })
+    .notNull()
+    .default("info"),
+  message: text("message").notNull(),
+  payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+});
+
+export const strategyPositionSnapshot = sqliteTable(
+  "strategy_position_snapshot",
+  {
+    id: id(),
+    strategyRuntimeId: text("strategy_runtime_id")
+      .notNull()
+      .references(() => strategyRuntime.id, { onDelete: "cascade" }),
+    symbol: text("symbol").notNull(),
+    qty: real("qty").notNull().default(0),
+    avgPrice: real("avg_price"),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    runtimeSymbolUnique: uniqueIndex("idx_strategy_position_runtime_symbol").on(
+      table.strategyRuntimeId,
+      table.symbol
+    ),
+  })
+);
+
+export const strategySignalDedup = sqliteTable(
+  "strategy_signal_dedup",
+  {
+    id: id(),
+    strategyRuntimeId: text("strategy_runtime_id")
+      .notNull()
+      .references(() => strategyRuntime.id, { onDelete: "cascade" }),
+    symbol: text("symbol").notNull(),
+    signalType: text("signal_type", { enum: ["buy", "sell"] }).notNull(),
+    signalBarTime: text("signal_bar_time").notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    dedupUnique: uniqueIndex("idx_strategy_signal_dedup_unique").on(
+      table.strategyRuntimeId,
+      table.symbol,
+      table.signalType,
+      table.signalBarTime
+    ),
+  })
+);
+
 export const brokerAccount = sqliteTable("broker_account", {
   id: id(),
-  provider: text("provider", { enum: ["futu", "ib"] }).notNull(),
+  provider: text("provider", { enum: ["futu", "ib", "ccxt"] }).notNull(),
   accountRef: text("account_ref").notNull(),
   mode: text("mode", { enum: ["mock", "sandbox", "live"] }).notNull().default("mock"),
   baseUrl: text("base_url"),
@@ -1168,7 +1261,7 @@ export const brokerOrderEvent = sqliteTable("broker_order_event", {
   id: id(),
   intentOrderId: text("intent_order_id").references(() => intentOrder.id),
   executionReportId: text("execution_report_id").references(() => executionReport.id),
-  provider: text("provider", { enum: ["futu", "ib"] }).notNull(),
+  provider: text("provider", { enum: ["futu", "ib", "ccxt"] }).notNull(),
   eventType: text("event_type", {
     enum: ["submit", "ack", "partial_fill", "fill", "cancel", "reject", "health_check"],
   }).notNull(),

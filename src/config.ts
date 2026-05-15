@@ -9,6 +9,8 @@ const ConfigSchema = z.object({
     .default(`${process.env["HOME"] ?? "~"}/.quant-agent`),
   logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
   riskSigningKey: z.string().default("dev-secret-change-in-production"),
+  /** Default agent execution path for new native workflows (graph | a2a). Per-workflow override on workflow_run. */
+  agentExecutionPath: z.enum(["graph", "a2a"]).default("graph"),
   memory: z.object({
     sessionTtlHours: z.coerce.number().default(24),
     external: z.object({
@@ -30,6 +32,7 @@ function loadConfig(): Config {
     dataDir: process.env["QUBIT_DATA_DIR"],
     logLevel: process.env["LOG_LEVEL"],
     riskSigningKey: process.env["QUBIT_RISK_SIGNING_KEY"],
+    agentExecutionPath: process.env["QUBIT_AGENT_EXECUTION_PATH"],
     memory: {
       sessionTtlHours: process.env["MEMORY_SESSION_TTL_HOURS"],
       external: {
