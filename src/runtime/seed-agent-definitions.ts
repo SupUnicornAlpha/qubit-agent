@@ -5,15 +5,37 @@ import {
   agentDefinition,
   agentGroup,
   agentGroupMember,
+  agentProfile,
   llmProviderConfig,
   sandboxPolicy,
 } from "../db/sqlite/schema";
+import { cleanupRedundantAgentDefinitions } from "./agent/delete-agent-definition";
 import { SEED_AGENT_DEFINITIONS } from "./seed-agent-definitions-data";
+import { seedBrokerMcpServer } from "./seed-broker-mcp";
+import {
+  defaultQuantMcpServers,
+  mergeMcpServers,
+  seedRecommendedMcpServers,
+} from "./seed-recommended-mcp-servers";
 
 export { SEED_AGENT_DEFINITIONS };
 
 /** 内置分析师编组 ID（与成员 definition id 一并由 seed 维护） */
 export const DEFAULT_ANALYST_AGENT_GROUP_ID = "grp-default-analyst-team";
+
+/** 挂载推荐数学/金融 MCP 的角色 */
+const QUANT_MCP_ROLES = new Set([
+  "orchestrator",
+  "market_data",
+  "research",
+  "backtest",
+  "analyst_fundamental",
+  "analyst_technical",
+  "analyst_sentiment",
+  "analyst_macro",
+  "risk",
+  "risk_manager",
+]);
 
 const DEFAULT_SANDBOX_POLICY = {
   id: "default-policy",
@@ -64,7 +86,12 @@ export async function seedAgentDefinitions(): Promise<void> {
     set: DEFAULT_LLM_PROVIDER,
   });
 
+  const quantMcps = defaultQuantMcpServers();
+
   for (const def of SEED_AGENT_DEFINITIONS) {
+    const mcpServers = QUANT_MCP_ROLES.has(def.role)
+      ? mergeMcpServers(def.mcpServers, quantMcps)
+      : def.mcpServers;
     await db
       .insert(agentDefinition)
       .values({
@@ -74,7 +101,7 @@ export async function seedAgentDefinitions(): Promise<void> {
         version: def.version,
         systemPrompt: def.systemPrompt,
         toolsJson: def.tools,
-        mcpServersJson: def.mcpServers,
+        mcpServersJson: mcpServers,
         skillsJson: def.skills,
         subscriptionsJson: def.subscriptions,
         llmProvider: def.llmProvider,
@@ -90,7 +117,7 @@ export async function seedAgentDefinitions(): Promise<void> {
           version: def.version,
           systemPrompt: def.systemPrompt,
           toolsJson: def.tools,
-          mcpServersJson: def.mcpServers,
+          mcpServersJson: mcpServers,
           skillsJson: def.skills,
           subscriptionsJson: def.subscriptions,
           llmProvider: def.llmProvider,
@@ -100,9 +127,44 @@ export async function seedAgentDefinitions(): Promise<void> {
           updatedAt: new Date().toISOString(),
         },
       });
+    const profRows = await db
+      .select()
+      .from(agentProfile)
+      .where(eq(agentProfile.definitionId, def.id))
+      .limit(1);
+    if (profRows[0]) {
+      await db
+        .update(agentProfile)
+        .set({
+          displayName: def.name,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(agentProfile.id, profRows[0].id));
+    } else {
+      await db.insert(agentProfile).values({
+        id: randomUUID(),
+        definitionId: def.id,
+        displayName: def.name,
+        soulFileRef: "",
+        description: "",
+        tagsJson: [],
+        enabled: true,
+        configRootUri: "",
+        memoryNamespace: "",
+        promptMode: "db_primary",
+        configContentHash: "",
+        configSyncedAt: "",
+      });
+    }
   }
 
   console.log(`[Seed] Upserted ${SEED_AGENT_DEFINITIONS.length} agent definitions.`);
+  const removedDupes = await cleanupRedundantAgentDefinitions(db);
+  if (removedDupes > 0) {
+    console.log(`[Seed] Removed ${removedDupes} redundant custom agent definition(s).`);
+  }
+  await seedRecommendedMcpServers();
+  await seedBrokerMcpServer();
   await ensureDefaultAnalystAgentGroup();
 }
 
@@ -123,6 +185,64 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
     "def-risk-manager",
   ] as const;
 
+  const memberRoles = [
+    "orchestrator",
+    "analyst_fundamental",
+    "analyst_technical",
+    "analyst_sentiment",
+    "analyst_macro",
+    "research",
+    "backtest",
+    "risk",
+    "risk_manager",
+  ];
+
+  // 默认拓扑：orchestrator 作为主导节点，向专家发布任务，并接收回报/裁判。
+  // 仅用于“展示与计划拓扑”；研究团队并行槽位执行仍由 analyst_* 等槽位主导。
+  const defaultNodePositions = (() => {
+    const cx = 420;
+    const cy = 240;
+    const rx = 200;
+    const ry = 160;
+    const others = memberRoles.filter((r) => r !== "orchestrator");
+    const out: Record<string, { x: number; y: number }> = {
+      orchestrator: { x: cx, y: 80 },
+    };
+    const n = Math.max(others.length, 1);
+    for (let i = 0; i < others.length; i++) {
+      const role = others[i];
+      if (!role) continue;
+      const ang = (2 * Math.PI * i) / n - Math.PI / 2;
+      out[role] = { x: cx + Math.cos(ang) * rx, y: cy + Math.sin(ang) * ry };
+    }
+    return out;
+  })();
+
+  const defaultRelationsJson = (() => {
+    const others = memberRoles.filter((r) => r !== "orchestrator");
+    const edges: Array<{ from: string; to: string; edgeKind: "unicast" }> = [];
+    for (const to of others) edges.push({ from: "orchestrator", to, edgeKind: "unicast" });
+    for (const from of others) edges.push({ from, to: "orchestrator", edgeKind: "unicast" });
+    return [{ type: "topology_canvas", nodePositions: defaultNodePositions }, ...edges];
+  })();
+
+  const existing = await db
+    .select({ relationsJson: agentGroup.relationsJson })
+    .from(agentGroup)
+    .where(eq(agentGroup.id, DEFAULT_ANALYST_AGENT_GROUP_ID))
+    .limit(1);
+
+  const currentRelationsJson = existing[0]?.relationsJson;
+  const shouldInjectDefaultTopo = (() => {
+    if (!currentRelationsJson) return true;
+    if (Array.isArray(currentRelationsJson)) return currentRelationsJson.length === 0;
+    try {
+      return !JSON.stringify(currentRelationsJson).includes("orchestrator");
+    } catch {
+      return true;
+    }
+  })();
+
   await db
     .insert(agentGroup)
     .values({
@@ -131,7 +251,7 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
       name: "默认研究团队（分析师 + 策略/回测/风控）",
       description:
         "启动时自动维护：含 orchestrator（拓扑/编排节点）；四名 analyst_* 参与 MSA；research / backtest / risk / risk_manager 产出辅助章节。可在「配置中心 → Agent」调整。",
-      relationsJson: [],
+      relationsJson: defaultRelationsJson,
     })
     .onConflictDoUpdate({
       target: agentGroup.id,
@@ -140,6 +260,7 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
         description:
           "启动时自动维护：含 orchestrator（拓扑/编排节点）；四名 analyst_* 参与 MSA；research / backtest / risk / risk_manager 产出辅助章节。可在「配置中心 → Agent」调整。",
         updatedAt: new Date().toISOString(),
+        ...(shouldInjectDefaultTopo ? { relationsJson: defaultRelationsJson } : {}),
       },
     });
 

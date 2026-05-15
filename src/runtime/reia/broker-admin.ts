@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount, brokerOrderEvent } from "../../db/sqlite/schema";
-import { createBrokerConnector, type BrokerProvider } from "./broker-connector";
+import type { BrokerProvider, BrokerProviderConfig } from "./broker-types";
+import { brokerHealthCheck, connectorForAccount, resolveBrokerAccount } from "./broker-service";
 
 export async function listBrokerAccounts(provider?: BrokerProvider) {
   const db = await getDb();
@@ -16,9 +17,19 @@ export async function upsertBrokerAccount(input: {
   accountRef: string;
   mode?: "mock" | "sandbox" | "live";
   baseUrl?: string;
+  providerConfig?: BrokerProviderConfig;
+  isDefault?: boolean;
   enabled?: boolean;
 }) {
   const db = await getDb();
+
+  if (input.isDefault) {
+    await db
+      .update(brokerAccount)
+      .set({ isDefault: false, updatedAt: new Date().toISOString() })
+      .where(eq(brokerAccount.provider, input.provider));
+  }
+
   const existed = await db
     .select()
     .from(brokerAccount)
@@ -30,6 +41,8 @@ export async function upsertBrokerAccount(input: {
       .set({
         mode: input.mode ?? existed[0].mode,
         baseUrl: input.baseUrl ?? existed[0].baseUrl,
+        providerConfigJson: input.providerConfig ?? existed[0].providerConfigJson,
+        isDefault: input.isDefault ?? existed[0].isDefault,
         enabled: input.enabled ?? existed[0].enabled,
         updatedAt: new Date().toISOString(),
       })
@@ -44,6 +57,8 @@ export async function upsertBrokerAccount(input: {
     accountRef: input.accountRef,
     mode: input.mode ?? "mock",
     baseUrl: input.baseUrl ?? null,
+    providerConfigJson: input.providerConfig ?? {},
+    isDefault: input.isDefault ?? false,
     enabled: input.enabled ?? true,
     healthStatus: "unknown",
   });
@@ -53,19 +68,10 @@ export async function upsertBrokerAccount(input: {
 
 export async function checkBrokerAccountHealth(input: { provider: BrokerProvider; accountRef: string }) {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(brokerAccount)
-    .where(and(eq(brokerAccount.provider, input.provider), eq(brokerAccount.accountRef, input.accountRef)))
-    .limit(1);
-  const account = rows[0];
+  const account = await resolveBrokerAccount(input.provider, input.accountRef);
   if (!account) throw new Error("broker account not found");
-  const connector = createBrokerConnector({
-    provider: account.provider,
-    mode: account.mode,
-    accountRef: account.accountRef,
-    baseUrl: account.baseUrl ?? undefined,
-  });
+
+  const connector = connectorForAccount(account);
   const health = await connector.healthCheck();
   await db
     .update(brokerAccount)
@@ -96,3 +102,5 @@ export async function listBrokerEvents(provider?: BrokerProvider, limit = 100) {
   if (!provider) return rows;
   return rows.filter((row) => row.provider === provider);
 }
+
+export { brokerHealthCheck, resolveBrokerAccount };

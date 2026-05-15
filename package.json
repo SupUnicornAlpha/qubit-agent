@@ -16,6 +16,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run src/db/sqlite/migrate.ts",
     "seed:agent-definitions": "bun run src/runtime/seed-agent-definitions.ts",
+    "seed:recommended-mcp": "bun run src/runtime/seed-recommended-mcp-servers.ts",
     "sync:workspace-agents": "bun run src/scripts/sync-workspace-agents-json.ts",
     "init:agent-packs": "bun run src/scripts/init-quant-agent-pack-prompts.ts",
     "acceptance:langgraph": "bun run src/runtime/langgraph/minimum-acceptance.ts",

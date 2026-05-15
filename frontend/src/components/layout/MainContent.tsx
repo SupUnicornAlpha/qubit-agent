@@ -56,6 +56,8 @@ import {
   listChatSessions,
   listMonitorWorkflows,
   listStrategyScripts,
+  getWorkflowArtifacts,
+  saveWorkflowReportArtifact,
   listIntegrationChannels,
   listIntegrationLogs,
   listIntentOrders,
@@ -153,6 +155,7 @@ import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type Te
 import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
 import { MonitorDashboard } from "../monitor/MonitorDashboard";
 import { TraderLivePanel } from "../trader/TraderLivePanel";
+import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 
@@ -227,6 +230,17 @@ function formatChartContextBlock(ctx: ChartContextPayload): string {
 
 function shortWorkflowLabel(workflowRunId: string): string {
   return workflowRunId.length > 12 ? `${workflowRunId.slice(0, 8)}…` : workflowRunId;
+}
+
+/** 工作流下拉可读标签：goal · status · mode（goal 为空时回退短 id） */
+function formatWorkflowOptionLabel(row: Record<string, unknown>): string {
+  const goal = typeof row.goal === "string" ? row.goal.trim() : "";
+  const status = String(row.status ?? "—");
+  const mode = String(row.mode ?? "—");
+  const id = String(row.id ?? "");
+  const shortId = id.length > 8 ? `${id.slice(0, 8)}…` : id;
+  const goalLabel = goal.length > 48 ? `${goal.slice(0, 48)}…` : goal || shortId;
+  return `${goalLabel} · ${status} · ${mode}`;
 }
 
 const CHAT_SESSION_AGENT_BOARD_LS = "qubit:chatSessionAgentBoardOpen";
@@ -1008,6 +1022,11 @@ const ConfigPanel: FC = () => {
   const [draftMemoryNamespace, setDraftMemoryNamespace] = useState("");
   const [draftConfigRootUri, setDraftConfigRootUri] = useState("");
   const [draftMcpServerNames, setDraftMcpServerNames] = useState<string[]>([]);
+  const [draftDisplayName, setDraftDisplayName] = useState("");
+  const [draftDescription, setDraftDescription] = useState("");
+  const [draftTools, setDraftTools] = useState<string[]>([]);
+  const [draftSkills, setDraftSkills] = useState<string[]>([]);
+  const [draftSubscriptions, setDraftSubscriptions] = useState<string[]>([]);
   const [draftPromptTemplateRef, setDraftPromptTemplateRef] = useState("");
   const [provider, setProvider] = useState<
     "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
@@ -1029,15 +1048,27 @@ const ConfigPanel: FC = () => {
   const [mcpSources, setMcpSources] = useState<McpRegistrySourceRecord[]>([]);
   const [selectedSourceId, setSelectedSourceId] = useState("");
   const [sourceName, setSourceName] = useState("MCP Official Registry");
-  const [sourceBaseUrl, setSourceBaseUrl] = useState("https://registry.modelcontextprotocol.io/v1/catalog.json");
+  const [sourceBaseUrl, setSourceBaseUrl] = useState(
+    "https://registry.modelcontextprotocol.io/v0.1/servers?version=latest&limit=100"
+  );
   const [sourceAuthType, setSourceAuthType] = useState<"none" | "bearer" | "api_key">("none");
   const [sourceAuthRef, setSourceAuthRef] = useState("");
   const [mcpMarketItems, setMcpMarketItems] = useState<McpCatalogItemRecord[]>([]);
+  const [mcpMarketPage, setMcpMarketPage] = useState(1);
+  const [mcpMarketTotal, setMcpMarketTotal] = useState(0);
+  const [mcpMarketTotalPages, setMcpMarketTotalPages] = useState(1);
+  const [mcpMarketLoading, setMcpMarketLoading] = useState(false);
+  const MCP_MARKET_PAGE_SIZE = 24;
   const [mcpMarketInstalls, setMcpMarketInstalls] = useState<McpProjectInstallRecord[]>([]);
   const [skillMarketStatus, setSkillMarketStatus] = useState<SkillMarketStatusDto | null>(null);
+  const [skillMarketProvider, setSkillMarketProvider] = useState<"skillsmp" | "open">("skillsmp");
   const [skillSearchQ, setSkillSearchQ] = useState("");
   const [skillSearchBusy, setSkillSearchBusy] = useState(false);
   const [skillSearchHits, setSkillSearchHits] = useState<OpenSkillMarketEntryDto[]>([]);
+  const [skillMarketPage, setSkillMarketPage] = useState(1);
+  const [skillMarketTotal, setSkillMarketTotal] = useState(0);
+  const [skillMarketTotalPages, setSkillMarketTotalPages] = useState(1);
+  const SKILL_MARKET_PAGE_SIZE = 24;
   const [skillInstalls, setSkillInstalls] = useState<SkillMarketInstallRecord[]>([]);
   const [skillRefreshBusy, setSkillRefreshBusy] = useState(false);
   const [skillAppendDefinitionId, setSkillAppendDefinitionId] = useState("");
@@ -1142,8 +1173,7 @@ const ConfigPanel: FC = () => {
       listIntegrationLogs(undefined, 50),
       listMcpSources(),
     ]);
-    const [marketItems, jobs, installs, skillInstallRows] = await Promise.all([
-      listMcpMarketCatalog({ sourceId: sources[0]?.id }),
+    const [jobs, installs, skillInstallRows] = await Promise.all([
       currentWorkspace && currentProject
         ? listScheduledJobs({ workspaceId: currentWorkspace.id, projectId: currentProject.id })
         : Promise.resolve([]),
@@ -1164,7 +1194,10 @@ const ConfigPanel: FC = () => {
     setMcpProbeByServer({});
     setFocusedMcpServerId((prev) => (prev && servers.some((s) => s.id === prev) ? prev : null));
     setMcpSources(sources);
-    setMcpMarketItems(marketItems);
+    setMcpMarketItems([]);
+    setMcpMarketPage(1);
+    setMcpMarketTotal(0);
+    setMcpMarketTotalPages(1);
     setMcpMarketInstalls(installs);
     setSkillInstalls(skillInstallRows);
     setIntegrationChannels(channels);
@@ -1173,10 +1206,6 @@ const ConfigPanel: FC = () => {
     if (currentProject) setCurrentProjectId(currentProject.id);
     if (!selectedMcpServer && servers[0]) {
       setSelectedMcpServer(servers[0].name);
-    }
-    if (!selectedCatalogId && marketItems[0]) {
-      setSelectedCatalogId(marketItems[0].id);
-      setCatalogServerName(marketItems[0].slug.replace(/[^a-z0-9_-]/gi, "-"));
     }
     if (!selectedSourceId && sources[0]) {
       setSelectedSourceId(sources[0].id);
@@ -1243,6 +1272,76 @@ const ConfigPanel: FC = () => {
     void listSkillMarketInstalls(currentProjectId).then(setSkillInstalls);
   }, [activeConfigSubPage, currentProjectId]);
 
+  const loadMcpMarketPage = useCallback(
+    async (page: number) => {
+      const sourceId = selectedSourceId || mcpSources[0]?.id;
+      if (!sourceId) {
+        setMcpMarketItems([]);
+        setMcpMarketTotal(0);
+        setMcpMarketTotalPages(1);
+        setMcpMarketPage(1);
+        return;
+      }
+      setMcpMarketLoading(true);
+      try {
+        const res = await listMcpMarketCatalog({
+          sourceId,
+          q: marketQuery.trim() || undefined,
+          page,
+          pageSize: MCP_MARKET_PAGE_SIZE,
+        });
+        const items = Array.isArray(res.items) ? res.items : [];
+        setMcpMarketItems(items);
+        setMcpMarketPage(res.page ?? page);
+        setMcpMarketTotal(res.total ?? items.length);
+        setMcpMarketTotalPages(Math.max(1, res.totalPages ?? 1));
+        if (items.length > 0) {
+          const first = items[0]!;
+          setSelectedCatalogId((prev) => {
+            const nextId = prev && items.some((x) => x.id === prev) ? prev : first.id;
+            const hit = items.find((x) => x.id === nextId) ?? first;
+            setCatalogServerName(hit.slug.replace(/[^a-z0-9_-]/gi, "-"));
+            return nextId;
+          });
+        }
+      } finally {
+        setMcpMarketLoading(false);
+      }
+    },
+    [selectedSourceId, mcpSources, marketQuery]
+  );
+
+  useEffect(() => {
+    if (activeConfigSubPage !== "mcp") return;
+    void loadMcpMarketPage(1);
+  }, [activeConfigSubPage, selectedSourceId, loadMcpMarketPage]);
+
+  const loadSkillMarketPage = useCallback(
+    async (page: number) => {
+      setSkillSearchBusy(true);
+      try {
+        const res = await searchSkillMarket({
+          q: skillSearchQ,
+          page,
+          pageSize: SKILL_MARKET_PAGE_SIZE,
+          provider: skillMarketProvider,
+        });
+        const items = Array.isArray(res.items) ? res.items : [];
+        setSkillSearchHits(items);
+        setSkillMarketPage(res.page ?? page);
+        setSkillMarketTotal(res.total ?? items.length);
+        setSkillMarketTotalPages(Math.max(1, res.totalPages ?? 1));
+      } finally {
+        setSkillSearchBusy(false);
+      }
+    },
+    [skillSearchQ, skillMarketProvider]
+  );
+
+  const searchSkillMarketNow = async () => {
+    await loadSkillMarketPage(1);
+  };
+
   useEffect(() => {
     if (!definitions.length) return;
     setSkillAppendDefinitionId((prev) =>
@@ -1288,8 +1387,30 @@ const ConfigPanel: FC = () => {
     setDraftMemoryNamespace(b.profile?.memoryNamespace ?? "");
     setDraftConfigRootUri(b.profile?.configRootUri ?? "");
     setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
+    setDraftDisplayName(b.profile?.displayName?.trim() || agentDisplayLabel(b));
+    setDraftDescription(b.profile?.description ?? "");
+    const parseStrList = (v: unknown): string[] =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        : [];
+    setDraftTools(parseStrList(b.draft?.toolsJson ?? b.definition.toolsJson));
+    setDraftSkills(parseStrList(b.draft?.skillsJson ?? b.definition.skillsJson));
+    setDraftSubscriptions(parseStrList(b.draft?.subscriptionsJson ?? b.definition.subscriptionsJson));
     setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
   }, [selectedDefinitionId, definitions]);
+
+  const knownToolPool = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of definitions) {
+      const raw = b.draft?.toolsJson ?? b.definition.toolsJson;
+      if (Array.isArray(raw)) {
+        for (const x of raw) {
+          if (typeof x === "string" && x.trim()) s.add(x.trim());
+        }
+      }
+    }
+    return Array.from(s).sort();
+  }, [definitions]);
 
   const mcpServerBindingCount = useMemo(() => {
     const map = new Map<string, number>();
@@ -1658,13 +1779,18 @@ const ConfigPanel: FC = () => {
 
   const syncSourceNowAction = async () => {
     if (!selectedSourceId) return;
-    const out = await syncMcpSource(selectedSourceId);
-    setMcpTestOutput(`source synced: ${out.syncedCount}, fallback=${out.usedFallback}`);
-    setMcpMarketItems(await listMcpMarketCatalog({ sourceId: selectedSourceId, q: marketQuery || undefined }));
+    setMcpMarketLoading(true);
+    try {
+      const out = await syncMcpSource(selectedSourceId);
+      setMcpTestOutput(`source synced: ${out.syncedCount}, fallback=${out.usedFallback}`);
+      await loadMcpMarketPage(1);
+    } finally {
+      setMcpMarketLoading(false);
+    }
   };
 
   const searchMarketNow = async () => {
-    setMcpMarketItems(await listMcpMarketCatalog({ sourceId: selectedSourceId, q: marketQuery || undefined }));
+    await loadMcpMarketPage(1);
   };
 
   const installMarketItemNow = async () => {
@@ -2131,7 +2257,7 @@ const ConfigPanel: FC = () => {
 
             <h3 style={{ ...styles.subTitle, marginTop: 18 }}>MCP 市场</h3>
             <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
-              来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>（capabilities、默认工具、启动命令摘要）。点击卡片可选中后再用底部条安装，或直接在卡片上安装。
+              来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>（capabilities、默认工具、启动命令摘要）。市场列表<strong>分页加载</strong>（每页 {MCP_MARKET_PAGE_SIZE} 条），避免一次渲染数千卡片卡顿。「同步目录」从官方 Registry 拉取元数据（可能较慢）；「搜索/刷新」仅查询本地已同步目录。
             </p>
 
             <details style={styles.mcpDetails}>
@@ -2182,18 +2308,37 @@ const ConfigPanel: FC = () => {
                 style={styles.input}
                 value={marketQuery}
                 onChange={(e) => setMarketQuery(e.target.value)}
-                placeholder="搜索市场工具"
+                placeholder="搜索名称 / slug / 描述"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void searchMarketNow();
+                }}
               />
-              <button className="qb-btn-secondary" type="button" onClick={() => void syncSourceNowAction()}>
-                同步目录
+              <button
+                className="qb-btn-secondary"
+                type="button"
+                disabled={mcpMarketLoading}
+                onClick={() => void syncSourceNowAction()}
+              >
+                {mcpMarketLoading ? "同步中…" : "同步目录"}
               </button>
-              <button className="qb-btn-primary-brand" type="button" onClick={() => void searchMarketNow()}>
-                刷新市场
+              <button
+                className="qb-btn-primary-brand"
+                type="button"
+                disabled={mcpMarketLoading}
+                onClick={() => void searchMarketNow()}
+              >
+                {mcpMarketLoading ? "加载中…" : "搜索"}
               </button>
             </div>
 
+            <div style={{ ...styles.meta, marginBottom: 8 }}>
+              {mcpMarketLoading
+                ? "正在加载市场列表…"
+                : `共 ${mcpMarketTotal.toLocaleString()} 条 · 第 ${mcpMarketPage} / ${mcpMarketTotalPages} 页`}
+            </div>
+
             <div style={styles.mcpMarketGrid}>
-              {mcpMarketItems.length === 0 ? (
+              {!mcpMarketLoading && mcpMarketItems.length === 0 ? (
                 <div style={{ ...styles.mcpMarketCard, color: "#a1a1aa" }}>暂无目录项，请先同步注册表或检查网络。</div>
               ) : null}
               {mcpMarketItems.map((item) => {
@@ -2287,6 +2432,30 @@ const ConfigPanel: FC = () => {
                 );
               })}
             </div>
+
+            {mcpMarketTotalPages > 1 ? (
+              <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 10, marginBottom: 4, alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="qb-btn-ghost qb-btn--compact"
+                  disabled={mcpMarketLoading || mcpMarketPage <= 1}
+                  onClick={() => void loadMcpMarketPage(mcpMarketPage - 1)}
+                >
+                  上一页
+                </button>
+                <span style={styles.chatMeta}>
+                  第 {mcpMarketPage} / {mcpMarketTotalPages} 页
+                </span>
+                <button
+                  type="button"
+                  className="qb-btn-ghost qb-btn--compact"
+                  disabled={mcpMarketLoading || mcpMarketPage >= mcpMarketTotalPages}
+                  onClick={() => void loadMcpMarketPage(mcpMarketPage + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            ) : null}
 
             <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 10 }}>
               <input
@@ -2406,18 +2575,26 @@ const ConfigPanel: FC = () => {
         ) : null}
         {activeConfigSubPage === "skills" ? (
           <>
-            <h3 style={styles.subTitle}>Skills 与开源市场</h3>
+            <h3 style={styles.subTitle}>Skills 与市场</h3>
             <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px", lineHeight: 1.55 }}>
-              市场数据来自开源项目{" "}
+              默认使用{" "}
+              <a href="https://skillsmp.com/docs/api" target="_blank" rel="noreferrer">
+                SkillsMP
+              </a>{" "}
+              实时搜索（与 Claude Code / Codex 等生态兼容）。可选加载{" "}
               <a href="https://github.com/coolzwc/open-skill-market" target="_blank" rel="noreferrer">
                 Open Skill Market
               </a>{" "}
-              （GitHub 上的 <code>market/skills.json</code> 及分片）。请先点击<strong>刷新索引</strong>拉取完整目录（体积较大，首次可能需数十秒）；安装到项目后，可将技能的{" "}
-              <code>name</code> 写入 Agent 的 <code>skills_json</code>（见 Agent 配置页），或使用下方「追加到草稿」。
+              全量 <code>skills.json</code>（体积大、首次较慢）。MCP 目录默认对接 Anthropic 官方{" "}
+              <a href="https://registry.modelcontextprotocol.io/docs" target="_blank" rel="noreferrer">
+                MCP Registry
+              </a>{" "}
+              （<code>v0.1/servers</code>）。服务端可配置环境变量 <code>SKILLSMP_API_KEY</code> 提高 SkillsMP 配额。
             </p>
             <div style={styles.meta}>
-              <span>索引: {skillMarketStatus?.loaded ? "已加载" : "未加载"}</span>
-              <span>条目数: {skillMarketStatus?.skillCount ?? "—"}</span>
+              <span>Open 索引: {skillMarketStatus?.loaded ? "已加载" : "未加载"}</span>
+              <span>Open 条目数: {skillMarketStatus?.skillCount ?? "—"}</span>
+              <span>SkillsMP 缓存 id: {skillMarketStatus?.skillsmpCacheSize ?? 0}</span>
               <span>项目安装: {skillInstalls.length}</span>
             </div>
             <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 12 }}>
@@ -2427,12 +2604,25 @@ const ConfigPanel: FC = () => {
                 disabled={skillRefreshBusy}
                 onClick={() => {
                   setSkillRefreshBusy(true);
-                  void refreshSkillMarketRegistry()
+                  void refreshSkillMarketRegistry({ provider: "skillsmp" })
                     .then(setSkillMarketStatus)
                     .finally(() => setSkillRefreshBusy(false));
                 }}
               >
-                {skillRefreshBusy ? "刷新中…" : "从开源中心刷新索引"}
+                {skillRefreshBusy ? "刷新中…" : "连通 SkillsMP"}
+              </button>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                disabled={skillRefreshBusy}
+                onClick={() => {
+                  setSkillRefreshBusy(true);
+                  void refreshSkillMarketRegistry({ provider: "open" })
+                    .then(setSkillMarketStatus)
+                    .finally(() => setSkillRefreshBusy(false));
+                }}
+              >
+                加载 Open Skill Market 全量索引
               </button>
               <button
                 type="button"
@@ -2443,26 +2633,43 @@ const ConfigPanel: FC = () => {
               </button>
             </div>
             <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>搜索市场</h4>
-            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10 }}>
+            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+              <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
+                来源
+                <select
+                  value={skillMarketProvider}
+                  onChange={(e) => setSkillMarketProvider(e.target.value as "skillsmp" | "open")}
+                  style={{ ...styles.input, maxWidth: 200 }}
+                >
+                  <option value="skillsmp">SkillsMP（默认）</option>
+                  <option value="open">Open Skill Market（本地索引）</option>
+                </select>
+              </label>
               <input
                 style={{ ...styles.input, minWidth: 220, flex: "1 1 200px" }}
                 value={skillSearchQ}
                 onChange={(e) => setSkillSearchQ(e.target.value)}
-                placeholder="关键词：名称、描述、仓库、标签…"
+                placeholder={
+                  skillMarketProvider === "skillsmp"
+                    ? "关键词（SkillsMP 实时搜索）"
+                    : "关键词：名称、描述、仓库、标签…（需先加载全量索引）"
+                }
               />
               <button
                 type="button"
                 className="qb-btn-primary-brand"
                 disabled={skillSearchBusy}
-                onClick={() => {
-                  setSkillSearchBusy(true);
-                  void searchSkillMarket(skillSearchQ, 50)
-                    .then(setSkillSearchHits)
-                    .finally(() => setSkillSearchBusy(false));
-                }}
+                onClick={() => void searchSkillMarketNow()}
               >
                 {skillSearchBusy ? "搜索中…" : "搜索"}
               </button>
+            </div>
+            <div style={{ ...styles.meta, marginBottom: 8 }}>
+              {skillSearchBusy
+                ? "正在搜索…"
+                : skillSearchHits.length > 0 || skillMarketTotal > 0
+                  ? `共 ${skillMarketTotal.toLocaleString()} 条 · 第 ${skillMarketPage} / ${skillMarketTotalPages} 页`
+                  : "输入关键词后搜索"}
             </div>
             <div style={{ overflowX: "auto", marginBottom: 18 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2475,10 +2682,16 @@ const ConfigPanel: FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {skillSearchHits.length === 0 ? (
+                  {skillSearchBusy ? (
                     <tr>
                       <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
-                        无结果。若尚未加载索引，请先「刷新索引」后再搜索。
+                        加载中…
+                      </td>
+                    </tr>
+                  ) : skillSearchHits.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
+                        无结果。SkillsMP 需网络可达；Open Skill Market 请先点击「加载全量索引」后再搜索。
                       </td>
                     </tr>
                   ) : (
@@ -2513,6 +2726,29 @@ const ConfigPanel: FC = () => {
                 </tbody>
               </table>
             </div>
+            {skillMarketTotalPages > 1 ? (
+              <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="qb-btn-ghost qb-btn--compact"
+                  disabled={skillSearchBusy || skillMarketPage <= 1}
+                  onClick={() => void loadSkillMarketPage(skillMarketPage - 1)}
+                >
+                  上一页
+                </button>
+                <span style={styles.chatMeta}>
+                  第 {skillMarketPage} / {skillMarketTotalPages} 页
+                </span>
+                <button
+                  type="button"
+                  className="qb-btn-ghost qb-btn--compact"
+                  disabled={skillSearchBusy || skillMarketPage >= skillMarketTotalPages}
+                  onClick={() => void loadSkillMarketPage(skillMarketPage + 1)}
+                >
+                  下一页
+                </button>
+              </div>
+            ) : null}
             <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>本项目已安装</h4>
             {!currentProjectId ? (
               <p style={{ fontSize: 12, color: "#71717a" }}>加载配置后可按项目记录安装；请先进入配置中心触发加载。</p>
@@ -2764,6 +3000,18 @@ const ConfigPanel: FC = () => {
             setDraftConfigRootUri={setDraftConfigRootUri}
             draftMcpServerNames={draftMcpServerNames}
             setDraftMcpServerNames={setDraftMcpServerNames}
+            draftDisplayName={draftDisplayName}
+            setDraftDisplayName={setDraftDisplayName}
+            draftDescription={draftDescription}
+            setDraftDescription={setDraftDescription}
+            draftTools={draftTools}
+            setDraftTools={setDraftTools}
+            draftSkills={draftSkills}
+            setDraftSkills={setDraftSkills}
+            draftSubscriptions={draftSubscriptions}
+            setDraftSubscriptions={setDraftSubscriptions}
+            skillInstalls={skillInstalls}
+            knownToolPool={knownToolPool}
             fileSoulMd={fileSoulMd}
             setFileSoulMd={setFileSoulMd}
             filePromptMd={filePromptMd}
@@ -3515,6 +3763,7 @@ const TeamDashboardPanel: FC = () => {
   const [graphLoading, setGraphLoading] = useState(false);
   const [participatingAnalystDefinitionIds, setParticipatingAnalystDefinitionIds] = useState<string[]>([]);
   const [strategyScripts, setStrategyScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
+  const [workflowArtifactHint, setWorkflowArtifactHint] = useState<string>("");
   const [teamCodePick, setTeamCodePick] = useState<string>("");
   const [agentDefBundles, setAgentDefBundles] = useState<AgentDefinitionBundle[] | null>(null);
   const [teamResearchProjectId, setTeamResearchProjectId] = useState("");
@@ -3699,7 +3948,7 @@ const TeamDashboardPanel: FC = () => {
   const teamRunDisabledTitle = useMemo(() => {
     if (running) return "分析进行中";
     if (!ticker.trim()) return "请先填写标的代码";
-    if (!workflowRunId) return "请先选择工作流 ID";
+    if (!workflowRunId) return "请先选择工作流";
     if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
     if (enabledResearchAnalystDefCount === 0)
       return "数据库中暂无已启用的研究团队槽位定义（analyst_* / research / backtest / risk* 等），请先到配置中心启用或执行种子";
@@ -3713,6 +3962,11 @@ const TeamDashboardPanel: FC = () => {
     return typeof sid === "string" && sid ? sid : "";
   }, [workflowRunId, workflowOptions]);
 
+  const selectedWorkflowRow = useMemo(
+    () => workflowOptions.find((w) => String(w.id) === workflowRunId) ?? null,
+    [workflowOptions, workflowRunId]
+  );
+
   useEffect(() => {
     if (agentDefBundles === null) return;
     const ids = agentDefBundles
@@ -3721,18 +3975,67 @@ const TeamDashboardPanel: FC = () => {
     setParticipatingAnalystDefinitionIds((prev) => (prev.length > 0 ? prev : ids));
   }, [agentDefBundles]);
 
+  /** 切换工作流：加载该工作流绑定的策略脚本、磁盘报告与融合摘要 */
   useEffect(() => {
-    const sid = workflowSessionId.trim() || teamResearchSessionId.trim();
-    if (!sid) {
+    const wf = workflowRunId.trim();
+    if (!wf) {
       setStrategyScripts([]);
+      setWorkflowArtifactHint("");
+      setResult(null);
       return;
     }
-    void listStrategyScripts(sid).then((all) => {
-      const wf = workflowRunId.trim();
-      const rows = all.filter((s) => !wf || !s.workflowRunId || s.workflowRunId === wf);
-      setStrategyScripts(rows);
-    });
-  }, [workflowSessionId, teamResearchSessionId, workflowRunId]);
+    const sid = workflowSessionId.trim() || teamResearchSessionId.trim();
+    if (sid) {
+      void listStrategyScripts(sid, { workflowRunId: wf }).then(setStrategyScripts);
+    } else {
+      setStrategyScripts([]);
+    }
+    let cancelled = false;
+    void (async () => {
+      setResult(null);
+      try {
+        const artifacts = await getWorkflowArtifacts(wf);
+        if (cancelled) return;
+        setWorkflowArtifactHint(artifacts.workflowDir);
+        const fusion = await getSignalFusion(wf).catch(() => null);
+        if (cancelled) return;
+        const reportBody =
+          fusion?.report?.trim() ||
+          artifacts.report?.trim() ||
+          "";
+        if (fusion) {
+          setResult({
+            fusionId: fusion.fusionId,
+            ticker: fusion.ticker,
+            fusedSignal: fusion.fusedSignal,
+            fusedConfidence: fusion.fusedConfidence,
+            debateTriggered: fusion.debateTriggered,
+            breakdown: fusion.breakdown ?? [],
+            report:
+              reportBody ||
+              "（已恢复融合摘要；完整报告见磁盘 report.md 或重新运行团队分析。）",
+            debate: fusion.debate,
+            risk: fusion.risk,
+          });
+        } else if (artifacts.report?.trim()) {
+          setResult({
+            fusionId: "",
+            ticker: ticker.trim() || "—",
+            fusedSignal: "hold",
+            fusedConfidence: 0,
+            debateTriggered: false,
+            breakdown: [],
+            report: artifacts.report,
+          });
+        }
+      } catch {
+        if (!cancelled) setWorkflowArtifactHint("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workflowRunId, workflowSessionId, teamResearchSessionId]);
 
   useEffect(() => {
     const onMove = (e: globalThis.MouseEvent) => {
@@ -3866,7 +4169,7 @@ const TeamDashboardPanel: FC = () => {
     try {
       const wfId = workflowRunId;
       if (!wfId) {
-        setError("请先选择 workflowRunId（可在下拉框直接选取最近工作流）");
+        setError("请先选择工作流");
         setRunning(false);
         return;
       }
@@ -3896,6 +4199,12 @@ const TeamDashboardPanel: FC = () => {
       setResult(res);
       setRunProgress("");
       setActiveTab("research");
+      if (wfId && res.report?.trim()) {
+        void saveWorkflowReportArtifact(wfId, {
+          report: res.report,
+          ticker: res.ticker || ticker.trim() || undefined,
+        }).catch(() => {});
+      }
       void loadTeamGraph();
       if (res.debate?.sessionId) {
         const [turns, verdict] = await Promise.all([
@@ -4042,9 +4351,11 @@ const TeamDashboardPanel: FC = () => {
         workflowRunId: wf,
         purpose: "both",
       });
-      const all = await listStrategyScripts(sid);
-      const rows = all.filter((s) => !s.workflowRunId || !wf || s.workflowRunId === wf);
+      const rows = wf
+        ? await listStrategyScripts(sid, { workflowRunId: wf })
+        : await listStrategyScripts(sid);
       setStrategyScripts(rows);
+      if (created.artifactDir) setWorkflowArtifactHint(created.artifactDir);
       setTeamCodePick(`script:${created.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -4349,13 +4660,24 @@ const TeamDashboardPanel: FC = () => {
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
             <label style={teamStyles.label}>工作流</label>
             <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
-              <option value="">请选择 workflow</option>
+              <option value="">请选择工作流</option>
               {workflowOptions.slice(0, 80).map((row) => (
-                <option key={String(row.id)} value={String(row.id)}>
-                  {String(row.id)} · {String(row.status)} · {String(row.mode)}
+                <option key={String(row.id)} value={String(row.id)} title={String(row.goal ?? row.id)}>
+                  {formatWorkflowOptionLabel(row)}
                 </option>
               ))}
             </select>
+            {selectedWorkflowRow ? (
+              <p style={{ fontSize: 11, color: "#71717a", marginTop: 6, lineHeight: 1.45, wordBreak: "break-all" }}>
+                ID: <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
+                {typeof selectedWorkflowRow.goal === "string" && selectedWorkflowRow.goal.trim() ? (
+                  <>
+                    <br />
+                    {String(selectedWorkflowRow.goal)}
+                  </>
+                ) : null}
+              </p>
+            ) : null}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
               <button
                 type="button"
@@ -5269,8 +5591,14 @@ const TeamDashboardPanel: FC = () => {
         <aside style={{ ...teamStyles.rightRail, width: teamRightW, flexShrink: 0, alignSelf: "stretch" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 8 }}>策略与代码</div>
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            汇总<strong>已入库脚本</strong>与本次<strong>分析报告</strong>中的 Markdown 代码块。选中后可在 IDE 打开做 SMA 回测坞演示，或保存为策略脚本、跳转实盘页勾选执行。
+            与<strong>当前工作流</strong>绑定：仅显示该工作流下已保存的脚本，以及本工作流分析报告中的代码块。保存脚本会写入数据库并同步到本机{" "}
+            <code>~/.quant-agent/projects/…/workflows/&lt;id&gt;/</code> 目录。
           </p>
+          {workflowArtifactHint ? (
+            <p style={{ fontSize: 10, color: "#52525b", marginBottom: 8, wordBreak: "break-all" }}>
+              工作流目录: {workflowArtifactHint}
+            </p>
+          ) : null}
           {teamCodeSelectOptions.length === 0 ? (
             <div style={{ fontSize: 12, color: "#71717a" }}>
               暂无可用片段：请先运行团队分析（报告含 ``` 代码块时会出现），或在绑定会话的工作流下于 IDE 保存策略脚本。

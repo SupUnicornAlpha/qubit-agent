@@ -6,6 +6,7 @@ import type {
   AgentGroupRecord,
   AgentMemoryStatsResponse,
   AgentPackResponse,
+  AgentPromptPreviewResponse,
   AgentsConfigResponse,
   AgentRoleCatalogItem,
   DebateConfig,
@@ -27,6 +28,7 @@ import type {
   McpServerConfigRecord,
   McpToolBindingRecord,
   McpRegistrySourceRecord,
+  McpCatalogPageResult,
   McpCatalogItemRecord,
   McpProjectInstallRecord,
   McpCatalogRecord,
@@ -59,6 +61,7 @@ import type {
   StepStreamEvent,
   WorkflowDetail,
   WorkflowTimeline,
+  WorkflowArtifactsDto,
   WorkflowCreateInput,
   ScheduledJobRecord,
   ScheduledJobRunRecord,
@@ -67,6 +70,7 @@ import type {
   MarketNewsBriefPayload,
   AgentDefinitionDraftRecord,
   OpenSkillMarketEntryDto,
+  SkillMarketPageResult,
   SkillMarketInstallRecord,
   SkillMarketStatusDto,
 } from "./types";
@@ -318,6 +322,30 @@ export async function createAgentDefinition(input: {
   return res.data;
 }
 
+export async function deleteAgentDefinition(definitionId: string): Promise<void> {
+  await httpDelete<{ ok: boolean; deletedId: string }>(
+    `/api/v1/agents/definitions/${encodeURIComponent(definitionId)}`
+  );
+}
+
+export async function postAgentPromptPreview(
+  definitionId: string,
+  body: {
+    systemPrompt?: string;
+    promptMode?: "db_primary" | "file_primary" | "merged";
+    toolsJson?: unknown;
+    mcpServersJson?: unknown;
+    skillsJson?: unknown;
+    subscriptionsJson?: unknown;
+  }
+): Promise<AgentPromptPreviewResponse> {
+  const res = await httpPost<{ ok: boolean; data: AgentPromptPreviewResponse }>(
+    `/api/v1/agents/definitions/${encodeURIComponent(definitionId)}/prompt-preview`,
+    body
+  );
+  return res.data;
+}
+
 export async function getAgentDefinitionPack(definitionId: string): Promise<AgentPackResponse> {
   const res = await httpGet<{ data: AgentPackResponse }>(`/api/v1/agents/definitions/${definitionId}/pack`);
   return res.data;
@@ -517,9 +545,33 @@ export async function listSessionMessages(sessionId: string): Promise<ChatMessag
   return res.data;
 }
 
-export async function listStrategyScripts(sessionId: string): Promise<IndicatorStrategyScriptRecord[]> {
+export async function listStrategyScripts(
+  sessionId: string,
+  opts?: { workflowRunId?: string }
+): Promise<IndicatorStrategyScriptRecord[]> {
+  const q = opts?.workflowRunId?.trim()
+    ? `?workflowRunId=${encodeURIComponent(opts.workflowRunId.trim())}`
+    : "";
   const res = await httpGet<{ data: IndicatorStrategyScriptRecord[] }>(
-    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/strategy-scripts`
+    `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/strategy-scripts${q}`
+  );
+  return res.data;
+}
+
+export async function getWorkflowArtifacts(workflowRunId: string): Promise<WorkflowArtifactsDto> {
+  const res = await httpGet<{ data: WorkflowArtifactsDto }>(
+    `/api/v1/workflows/${encodeURIComponent(workflowRunId)}/artifacts`
+  );
+  return res.data;
+}
+
+export async function saveWorkflowReportArtifact(
+  workflowRunId: string,
+  body: { report: string; ticker?: string }
+): Promise<{ reportPath: string }> {
+  const res = await httpPut<{ data: { reportPath: string } }>(
+    `/api/v1/workflows/${encodeURIComponent(workflowRunId)}/artifacts/report`,
+    body
   );
   return res.data;
 }
@@ -1198,6 +1250,8 @@ export async function upsertBrokerAccount(input: {
   accountRef: string;
   mode?: "mock" | "sandbox" | "live";
   baseUrl?: string;
+  providerConfig?: import("./types").BrokerProviderConfig;
+  isDefault?: boolean;
   enabled?: boolean;
 }): Promise<BrokerAccountRecord> {
   const res = await httpPost<{ ok: boolean; data: BrokerAccountRecord }>("/api/v1/reia/broker/accounts/upsert", input);
@@ -1507,16 +1561,30 @@ export async function listMcpMarketCatalog(input?: {
   sourceId?: string;
   q?: string;
   risk?: "low" | "medium" | "high";
-}): Promise<McpCatalogItemRecord[]> {
+  page?: number;
+  pageSize?: number;
+}): Promise<McpCatalogPageResult> {
   const query = new URLSearchParams();
   if (input?.sourceId) query.set("sourceId", input.sourceId);
-  if (input?.q) query.set("q", input.q);
+  if (input?.q?.trim()) query.set("q", input.q.trim());
   if (input?.risk) query.set("risk", input.risk);
+  if (input?.page != null) query.set("page", String(input.page));
+  if (input?.pageSize != null) query.set("pageSize", String(input.pageSize));
   const suffix = query.toString();
-  const res = await httpGet<{ data: McpCatalogItemRecord[] }>(
+  const res = await httpGet<{ data: McpCatalogPageResult | McpCatalogItemRecord[] }>(
     `/api/v1/agents/mcp/market/catalog${suffix ? `?${suffix}` : ""}`
   );
-  return res.data;
+  const data = res.data;
+  if (Array.isArray(data)) {
+    return { items: data, total: data.length, page: 1, pageSize: data.length, totalPages: 1 };
+  }
+  return {
+    items: data.items ?? [],
+    total: data.total ?? 0,
+    page: data.page ?? 1,
+    pageSize: data.pageSize ?? 24,
+    totalPages: data.totalPages ?? 1,
+  };
 }
 
 export async function installMcpMarket(input: {
@@ -1545,21 +1613,44 @@ export async function getSkillMarketStatus(): Promise<SkillMarketStatusDto> {
   return res.data;
 }
 
-export async function refreshSkillMarketRegistry(baseUrl?: string): Promise<SkillMarketStatusDto> {
+export async function refreshSkillMarketRegistry(input?: {
+  baseUrl?: string;
+  provider?: "skillsmp" | "open";
+  apiKey?: string;
+}): Promise<SkillMarketStatusDto> {
   const res = await httpPost<{ data: SkillMarketStatusDto }>("/api/v1/agents/skills/market/refresh", {
-    baseUrl: baseUrl?.trim() || undefined,
+    baseUrl: input?.baseUrl?.trim() || undefined,
+    provider: input?.provider,
+    apiKey: input?.apiKey?.trim() || undefined,
   });
   return res.data;
 }
 
-export async function searchSkillMarket(q: string, limit = 40): Promise<OpenSkillMarketEntryDto[]> {
+export async function searchSkillMarket(input?: {
+  q?: string;
+  page?: number;
+  pageSize?: number;
+  provider?: "skillsmp" | "open";
+}): Promise<SkillMarketPageResult> {
   const params = new URLSearchParams();
-  if (q.trim()) params.set("q", q.trim());
-  params.set("limit", String(limit));
-  const res = await httpGet<{ data: OpenSkillMarketEntryDto[] }>(
+  if (input?.q?.trim()) params.set("q", input.q.trim());
+  if (input?.page != null) params.set("page", String(input.page));
+  if (input?.pageSize != null) params.set("pageSize", String(input.pageSize));
+  params.set("provider", input?.provider ?? "skillsmp");
+  const res = await httpGet<{ data: SkillMarketPageResult | OpenSkillMarketEntryDto[] }>(
     `/api/v1/agents/skills/market/search?${params.toString()}`
   );
-  return res.data;
+  const data = res.data;
+  if (Array.isArray(data)) {
+    return { items: data, total: data.length, page: 1, pageSize: data.length, totalPages: 1 };
+  }
+  return {
+    items: data.items ?? [],
+    total: data.total ?? 0,
+    page: data.page ?? 1,
+    pageSize: data.pageSize ?? 24,
+    totalPages: data.totalPages ?? 1,
+  };
 }
 
 export async function listSkillMarketInstalls(projectId: string): Promise<SkillMarketInstallRecord[]> {

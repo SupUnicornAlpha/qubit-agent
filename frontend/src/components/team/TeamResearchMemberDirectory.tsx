@@ -8,15 +8,18 @@ import {
   removeAgentGroupMember,
 } from "../../api/backend";
 import type { AgentDefinitionBundle, AgentGroupDetail, AgentGroupRecord } from "../../api/types";
-import { RESEARCH_TEAM_GROUP_POOL_ROLE_SET, RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
 import {
+  RESEARCH_TEAM_GROUP_POOL_ROLE_SET,
+  RESEARCH_TEAM_SLOT_ROLE_SET,
+} from "../../lib/researchTeamRoles";
+import {
+  type TeamTopologyEdge,
+  type TopologyCanvasMeta,
   mergeLayoutWithRoles,
   parseRelationsFull,
   pruneLayoutForRoles,
   pruneTopologyForRoles,
   serializeRelationsPayload,
-  type TeamTopologyEdge,
-  type TopologyCanvasMeta,
 } from "../../lib/researchTeamTopology";
 import { ResearchTopologyCanvas, type TopologyDrawMode } from "./ResearchTopologyCanvas";
 
@@ -33,7 +36,8 @@ const BUCKET: Record<string, { label: string; color: string }> = {
 function bucketKey(role: string): keyof typeof BUCKET {
   if (role.startsWith("analyst_")) return "analyst";
   if (role.includes("researcher")) return "researcher";
-  if (role === "research" || role === "backtest" || role === "backtest_engineer") return "researcher";
+  if (role === "research" || role === "backtest" || role === "backtest_engineer")
+    return "researcher";
   if (role.includes("risk")) return "risk";
   if (role.includes("portfolio")) return "portfolio";
   if (role === "orchestrator") return "orchestration";
@@ -87,7 +91,9 @@ export const TeamResearchMemberDirectory: FC<{
   const [memberBusy, setMemberBusy] = useState(false);
 
   const refreshGroups = useCallback(() => {
-    void listAgentGroups().then(setAnalystAgentGroupOptions).catch(() => setAnalystAgentGroupOptions([]));
+    void listAgentGroups()
+      .then(setAnalystAgentGroupOptions)
+      .catch(() => setAnalystAgentGroupOptions([]));
   }, [setAnalystAgentGroupOptions]);
 
   const applyGroupDetail = useCallback((d: AgentGroupDetail) => {
@@ -155,7 +161,10 @@ export const TeamResearchMemberDirectory: FC<{
       const roleSet = new Set(roles);
       const prunedEdges = pruneTopologyForRoles(topologyEdges, roleSet);
       const prunedPos = pruneLayoutForRoles(nodePositions, roleSet);
-      const layoutMeta = mergeLayoutWithRoles(roles, { type: "topology_canvas", nodePositions: prunedPos });
+      const layoutMeta = mergeLayoutWithRoles(roles, {
+        type: "topology_canvas",
+        nodePositions: prunedPos,
+      });
       const meta: TopologyCanvasMeta = { type: "topology_canvas", nodePositions: layoutMeta };
       await patchAgentGroup(analystAgentGroupId.trim(), {
         relationsJson: serializeRelationsPayload(meta, prunedEdges) as never,
@@ -185,7 +194,9 @@ export const TeamResearchMemberDirectory: FC<{
     setMemberBusy(true);
     try {
       const nextOrder =
-        detail.members.length === 0 ? 0 : Math.max(...detail.members.map((m) => m.sortOrder), 0) + 1;
+        detail.members.length === 0
+          ? 0
+          : Math.max(...detail.members.map((m) => m.sortOrder), 0) + 1;
       await addAgentGroupMember(analystAgentGroupId.trim(), { definitionId, sortOrder: nextOrder });
       const d = await getAgentGroup(analystAgentGroupId.trim());
       applyGroupDetail(d);
@@ -205,7 +216,10 @@ export const TeamResearchMemberDirectory: FC<{
     const roleSet = new Set(rolesAfter);
     const nextEdges = pruneTopologyForRoles(topologyEdges, roleSet);
     const nextPos = pruneLayoutForRoles(nodePositions, roleSet);
-    const layoutMeta = mergeLayoutWithRoles(rolesAfter, { type: "topology_canvas", nodePositions: nextPos });
+    const layoutMeta = mergeLayoutWithRoles(rolesAfter, {
+      type: "topology_canvas",
+      nodePositions: nextPos,
+    });
     setTopologyMsg(null);
     setMemberBusy(true);
     try {
@@ -234,17 +248,37 @@ export const TeamResearchMemberDirectory: FC<{
 
   return (
     <div style={{ padding: "4px 0 24px", maxWidth: 1100 }}>
-      <p style={{ fontSize: 13, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 16, lineHeight: 1.55 }}>
-        成员与编组来自<strong>配置中心已发布的 Agent 定义</strong>及 <code style={{ fontSize: 12 }}>agent_group</code>。
-        在下方 <strong>Agent 池</strong>卡片上可「加入当前编组」；拓扑在 <strong>画布</strong>中编辑：<strong>单向</strong>为一条依赖边；
+      <p
+        style={{
+          fontSize: 13,
+          color: "var(--qb-team-meta, #a1a1aa)",
+          marginBottom: 16,
+          lineHeight: 1.55,
+        }}
+      >
+        成员与编组来自<strong>配置中心已发布的 Agent 定义</strong>及{" "}
+        <code style={{ fontSize: 12 }}>agent_group</code>。 在下方 <strong>Agent 池</strong>
+        卡片上可「加入当前编组」；拓扑在 <strong>画布</strong>中编辑：<strong>单向</strong>
+        为一条依赖边；
         <strong>广播</strong>为同一源并行指向多个接收方（运行期等价多条 from→to 边）。保存后写入{" "}
         <code style={{ fontSize: 12 }}>relations_json</code>。
       </p>
 
-      <h4 style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", margin: "0 0 8px" }}>Agent 编组</h4>
+      <h4
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--qb-team-section-fg, #e4e4e7)",
+          margin: "0 0 8px",
+        }}
+      >
+        Agent 编组
+      </h4>
       <div style={{ ...row, marginBottom: 16 }}>
         {analystAgentGroupOptions.length === 0 ? (
-          <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>暂无编组（可在配置中心或通过种子创建）</span>
+          <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
+            暂无编组（可在配置中心或通过种子创建）
+          </span>
         ) : (
           analystAgentGroupOptions.map((g) => (
             <button
@@ -264,27 +298,70 @@ export const TeamResearchMemberDirectory: FC<{
       {detail ? (
         <div style={{ marginBottom: 20 }}>
           <div style={{ ...row, marginBottom: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #fafafa)" }}>{detail.group.name}</span>
-            <button type="button" className="qb-btn-secondary" style={{ fontSize: 12 }} onClick={() => void saveTopology()} disabled={savingTopo || memberBusy}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #fafafa)" }}>
+              {detail.group.name}
+            </span>
+            <button
+              type="button"
+              className="qb-btn-secondary"
+              style={{ fontSize: 12 }}
+              onClick={() => void saveTopology()}
+              disabled={savingTopo || memberBusy}
+            >
               {savingTopo ? "保存中…" : "保存研究组拓扑"}
             </button>
           </div>
           {topologyMsg ? (
-            <div style={{ fontSize: 12, color: "var(--qb-agent-draft-accent, #93c5fd)", marginBottom: 8 }}>{topologyMsg}</div>
-          ) : null}
-          {duplicateRoleInGroup ? (
-            <div className="qb-callout qb-callout--warning" role="status" style={{ marginBottom: 10, fontSize: 12 }}>
-              编组内存在<strong>相同角色</strong>的多条定义，画布与调度仅以「角色」为节点，可能无法区分二者。建议每个角色只保留一条成员。
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--qb-agent-draft-accent, #93c5fd)",
+                marginBottom: 8,
+              }}
+            >
+              {topologyMsg}
             </div>
           ) : null}
-          <div style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>{detail.group.description || "无描述"}</div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>编组成员（可移除）</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+          {duplicateRoleInGroup ? (
+            <output
+              className="qb-callout qb-callout--warning"
+              style={{ marginBottom: 10, fontSize: 12 }}
+            >
+              编组内存在<strong>相同角色</strong>
+              的多条定义，画布与调度仅以「角色」为节点，可能无法区分二者。建议每个角色只保留一条成员。
+            </output>
+          ) : null}
+          <div style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
+            {detail.group.description || "无描述"}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--qb-team-section-fg, #cbd5e1)",
+              marginBottom: 6,
+            }}
+          >
+            编组成员（可移除）
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+              gap: 10,
+            }}
+          >
             {detail.members.map((m) => (
               <div key={m.id} style={card}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>{m.definitionName}</div>
-                <div style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginTop: 4 }}>{m.role}</div>
-                <div style={{ fontSize: 10, color: "var(--qb-team-meta, #52525b)", marginTop: 4 }}>definition: {m.definitionId.slice(0, 8)}…</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>
+                  {m.definitionName}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginTop: 4 }}>
+                  {m.role}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--qb-team-meta, #52525b)", marginTop: 4 }}>
+                  definition: {m.definitionId.slice(0, 8)}…
+                </div>
                 <button
                   type="button"
                   className="qb-btn-secondary"
@@ -300,11 +377,22 @@ export const TeamResearchMemberDirectory: FC<{
 
           {memberRolesOrdered.length > 0 ? (
             <div style={{ marginTop: 22 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 8 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--qb-team-section-fg, #cbd5e1)",
+                  marginBottom: 8,
+                }}
+              >
                 研究组通信拓扑（画布）
               </div>
               <div style={{ ...row, marginBottom: 10 }}>
-                <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginRight: 6 }}>工具：</span>
+                <span
+                  style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginRight: 6 }}
+                >
+                  工具：
+                </span>
                 {(
                   [
                     ["select", "调整布局"],
@@ -336,16 +424,31 @@ export const TeamResearchMemberDirectory: FC<{
               </p>
             </div>
           ) : (
-            <p style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginTop: 12 }}>当前编组暂无成员，请从下方 Agent 池加入。</p>
+            <p style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginTop: 12 }}>
+              当前编组暂无成员，请从下方 Agent 池加入。
+            </p>
           )}
         </div>
       ) : (
-        <p style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginBottom: 16 }}>请在上方选择一个编组，或回到左侧「发起分析」选择分析师编组。</p>
+        <p style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginBottom: 16 }}>
+          请在上方选择一个编组，或回到左侧「发起分析」选择分析师编组。
+        </p>
       )}
 
-      <h4 style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", margin: "20px 0 8px" }}>已启用 Agent 池（按职能分组）</h4>
+      <h4
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--qb-team-section-fg, #e4e4e7)",
+          margin: "20px 0 8px",
+        }}
+      >
+        已启用 Agent 池（按职能分组）
+      </h4>
       {agentDefBundles === null ? (
-        <div style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>正在加载 Agent 定义…</div>
+        <div style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
+          正在加载 Agent 定义…
+        </div>
       ) : (
         (Object.keys(BUCKET) as Array<keyof typeof BUCKET>).map((bk) => {
           const list = poolByBucket.get(bk) ?? [];
@@ -356,15 +459,44 @@ export const TeamResearchMemberDirectory: FC<{
               <div style={{ fontSize: 12, fontWeight: 600, color: meta.color, marginBottom: 6 }}>
                 {meta.label}（{list.length}）
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+                  gap: 8,
+                }}
+              >
                 {list.map((b) => {
                   const inGroup = defInGroup(b.definition.id);
                   const slot = RESEARCH_TEAM_GROUP_POOL_ROLE_SET.has(b.definition.role);
                   return (
                     <div key={b.definition.id} style={card}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>{b.definition.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginTop: 4 }}>{b.definition.role}</div>
-                      <div style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginTop: 6, lineHeight: 1.4 }}>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: "var(--qb-body-fg, #e4e4e7)",
+                        }}
+                      >
+                        {b.definition.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--qb-team-meta, #71717a)",
+                          marginTop: 4,
+                        }}
+                      >
+                        {b.definition.role}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--qb-team-meta, #a1a1aa)",
+                          marginTop: 6,
+                          lineHeight: 1.4,
+                        }}
+                      >
                         {b.profile?.description?.trim() || "（无 profile 描述）"}
                       </div>
                       {slot && analystAgentGroupId.trim() && detail ? (
@@ -379,7 +511,15 @@ export const TeamResearchMemberDirectory: FC<{
                           {inGroup ? "已在编组" : "加入当前编组"}
                         </button>
                       ) : slot ? (
-                        <p style={{ fontSize: 10, color: "var(--qb-team-meta, #71717a)", marginTop: 8 }}>请先选择上方编组</p>
+                        <p
+                          style={{
+                            fontSize: 10,
+                            color: "var(--qb-team-meta, #71717a)",
+                            marginTop: 8,
+                          }}
+                        >
+                          请先选择上方编组
+                        </p>
                       ) : null}
                     </div>
                   );
@@ -390,13 +530,25 @@ export const TeamResearchMemberDirectory: FC<{
         })
       )}
 
-      <h4 style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", margin: "20px 0 8px" }}>本次分析参与的研究团队槽位（按 Agent 定义勾选）</h4>
+      <h4
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          color: "var(--qb-team-section-fg, #e4e4e7)",
+          margin: "20px 0 8px",
+        }}
+      >
+        本次分析参与的研究团队槽位（按 Agent 定义勾选）
+      </h4>
       <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
-        与左侧「团队成员」联动；可选 analyst_*（MSA）、research / backtest / risk* 等（辅助章节）。与上方编组取交集。
+        与左侧「团队成员」联动；可选 analyst_*（MSA）、research / backtest / risk*
+        等（辅助章节）。与上方编组取交集。
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {analystDefsSelectable.length === 0 ? (
-          <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>暂无已启用的研究团队槽位定义</span>
+          <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
+            暂无已启用的研究团队槽位定义
+          </span>
         ) : (
           analystDefsSelectable.map((b) => {
             const id = b.definition.id;
@@ -422,10 +574,17 @@ export const TeamResearchMemberDirectory: FC<{
                   }}
                   style={{ marginTop: 3 }}
                 />
-                <span style={{ fontSize: 12, color: "var(--qb-body-fg, #e4e4e7)", lineHeight: 1.45 }}>
+                <span
+                  style={{ fontSize: 12, color: "var(--qb-body-fg, #e4e4e7)", lineHeight: 1.45 }}
+                >
                   <strong>{b.definition.name}</strong>
-                  <span style={{ color: "var(--qb-team-meta, #71717a)" }}> · {b.definition.role}</span>
-                  <div style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginTop: 4 }}>
+                  <span style={{ color: "var(--qb-team-meta, #71717a)" }}>
+                    {" "}
+                    · {b.definition.role}
+                  </span>
+                  <div
+                    style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginTop: 4 }}
+                  >
                     id {id.slice(0, 8)}…
                   </div>
                 </span>

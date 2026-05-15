@@ -23,19 +23,19 @@ export function parseTeamRelations(
     if (!row || typeof row !== "object" || Array.isArray(row)) continue;
     const rec = row as Record<string, unknown>;
     if (Object.keys(rec).length === 0) continue;
-    if (rec["type"] === "topology_canvas") continue;
-    if (rec["kind"] === "broadcast" && Array.isArray(rec["targets"])) {
-      const from = asEdgeString(rec["from"]);
+    if (rec.type === "topology_canvas") continue;
+    if (rec.kind === "broadcast" && Array.isArray(rec.targets)) {
+      const from = asEdgeString(rec.from);
       if (from === null || !allow.has(from as AgentRole)) continue;
-      for (const t of rec["targets"] as unknown[]) {
+      for (const t of rec.targets as unknown[]) {
         const to = asEdgeString(t);
         if (to === null || to === from || !allow.has(to as AgentRole)) continue;
         out.push({ from: from as AgentRole, to: to as AgentRole });
       }
       continue;
     }
-    const from = asEdgeString(rec["from"]);
-    const to = asEdgeString(rec["to"]);
+    const from = asEdgeString(rec.from);
+    const to = asEdgeString(rec.to);
     if (from === null || to === null || from === to) continue;
     if (!allow.has(from as AgentRole) || !allow.has(to as AgentRole)) continue;
     out.push({ from: from as AgentRole, to: to as AgentRole });

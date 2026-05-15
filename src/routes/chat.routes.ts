@@ -10,6 +10,7 @@ import {
   workflowRun,
   workspace,
 } from "../db/sqlite/schema";
+import { exportStrategyScriptToWorkflowDir } from "../runtime/strategy/strategy-script-files";
 
 export const chatRouter = new Hono();
 
@@ -91,13 +92,20 @@ async function assertWorkflowBelongsToSession(
 
 chatRouter.get("/sessions/:sessionId/strategy-scripts", async (c) => {
   const sessionId = c.req.param("sessionId");
+  const workflowRunId = c.req.query("workflowRunId")?.trim();
   const db = await getDb();
   const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
   if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
+  const whereClause = workflowRunId
+    ? and(
+        eq(indicatorStrategyScript.sessionId, sessionId),
+        eq(indicatorStrategyScript.workflowRunId, workflowRunId)
+      )
+    : eq(indicatorStrategyScript.sessionId, sessionId);
   const rows = await db
     .select()
     .from(indicatorStrategyScript)
-    .where(eq(indicatorStrategyScript.sessionId, sessionId))
+    .where(whereClause)
     .orderBy(desc(indicatorStrategyScript.updatedAt));
   return c.json({ data: rows });
 });
@@ -141,7 +149,26 @@ chatRouter.post("/sessions/:sessionId/strategy-scripts", async (c) => {
     updatedAt: now,
   });
   const created = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, id)).limit(1);
-  return c.json({ data: created[0] }, 201);
+  let artifactDir: string | undefined;
+  if (body.workflowRunId && created[0]) {
+    const wfRows = await db
+      .select({ projectId: workflowRun.projectId })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, body.workflowRunId))
+      .limit(1);
+    if (wfRows[0]) {
+      const exported = await exportStrategyScriptToWorkflowDir({
+        projectId: wfRows[0].projectId,
+        workflowRunId: body.workflowRunId,
+        scriptId: id,
+        name,
+        ideCode: String(body.ideCode ?? ""),
+        signalCode: String(body.signalCode ?? ""),
+      });
+      artifactDir = exported.scriptDir;
+    }
+  }
+  return c.json({ data: { ...created[0], artifactDir } }, 201);
 });
 
 chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
@@ -184,7 +211,27 @@ chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
   }
   await db.update(indicatorStrategyScript).set(patch).where(eq(indicatorStrategyScript.id, scriptId));
   const updated = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, scriptId)).limit(1);
-  return c.json({ data: updated[0] });
+  let artifactDir: string | undefined;
+  const wfId = updated[0]?.workflowRunId;
+  if (updated[0] && wfId) {
+    const wfRows = await db
+      .select({ projectId: workflowRun.projectId })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, wfId))
+      .limit(1);
+    if (wfRows[0]) {
+      const exported = await exportStrategyScriptToWorkflowDir({
+        projectId: wfRows[0].projectId,
+        workflowRunId: wfId,
+        scriptId: updated[0].id,
+        name: updated[0].name,
+        ideCode: updated[0].ideCode,
+        signalCode: updated[0].signalCode,
+      });
+      artifactDir = exported.scriptDir;
+    }
+  }
+  return c.json({ data: { ...updated[0], artifactDir } });
 });
 
 chatRouter.delete("/strategy-scripts/:scriptId", async (c) => {

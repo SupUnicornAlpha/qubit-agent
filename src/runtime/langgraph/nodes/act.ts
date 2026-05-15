@@ -19,6 +19,9 @@ const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
   fetch_news: "qubit-news",
   extract_event: "qubit-news",
   score_sentiment: "qubit-news",
+  submit_order: "qubit-broker",
+  cancel_order: "qubit-broker",
+  get_fills: "qubit-broker",
 };
 
 type ExtractedToolCall = {

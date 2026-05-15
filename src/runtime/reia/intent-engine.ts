@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { brokerAccount, brokerOrderEvent, executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
+import { brokerOrderEvent, executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
 import type { BrokerProvider } from "./broker-connector";
-import { createBrokerConnector, getBrokerConnector } from "./broker-connector";
+import { getBrokerConnector } from "./broker-connector";
+import { connectorForAccount, resolveBrokerAccount } from "./broker-service";
 import { executeWithPolicy } from "../external-call/policy";
 
 const DEFAULT_DEVIATION_THRESHOLD = 0.015; // 1.5%
@@ -102,6 +103,7 @@ export async function executeIntentPaper(input: {
 export async function executeIntentLive(input: {
   intentOrderId: string;
   provider: BrokerProvider;
+  accountRef?: string;
   deviationThreshold?: number;
 }) {
   const db = await getDb();
@@ -109,21 +111,8 @@ export async function executeIntentLive(input: {
   const intent = rows[0];
   if (!intent) throw new Error("intent order not found");
 
-  const accountRows = await db
-    .select()
-    .from(brokerAccount)
-    .where(and(eq(brokerAccount.provider, input.provider), eq(brokerAccount.enabled, true)))
-    .orderBy(desc(brokerAccount.updatedAt))
-    .limit(1);
-  const account = accountRows[0];
-  const connector = account
-    ? createBrokerConnector({
-        provider: input.provider,
-        mode: account.mode,
-        accountRef: account.accountRef,
-        baseUrl: account.baseUrl ?? undefined,
-      })
-    : getBrokerConnector(input.provider);
+  const account = await resolveBrokerAccount(input.provider, input.accountRef);
+  const connector = account ? connectorForAccount(account) : getBrokerConnector(input.provider);
   const side = intent.direction === "short" || intent.direction === "close" ? "sell" : "buy";
   const submittedAt = new Date().toISOString();
   await db.insert(brokerOrderEvent).values({

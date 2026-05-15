@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull, like, ne } from "drizzle-orm";
+import { and, count, desc, eq, isNull, like, ne, or } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   mcpCatalog,
@@ -94,17 +94,65 @@ export async function syncSourceNow(id: string) {
   return syncRegistrySource(id);
 }
 
-export async function listCatalogItems(input?: { sourceId?: string; q?: string; risk?: "low" | "medium" | "high" }) {
-  const db = await getDb();
+function catalogWhere(input?: { sourceId?: string; q?: string; risk?: "low" | "medium" | "high" }) {
   const filters = [];
   if (input?.sourceId) filters.push(eq(mcpCatalogItem.sourceId, input.sourceId));
-  if (input?.q) filters.push(like(mcpCatalogItem.name, `%${input.q}%`));
+  const q = input?.q?.trim();
+  if (q) {
+    const pattern = `%${q.replace(/[%_]/g, "")}%`;
+    filters.push(
+      or(
+        like(mcpCatalogItem.name, pattern),
+        like(mcpCatalogItem.slug, pattern),
+        like(mcpCatalogItem.description, pattern)
+      )
+    );
+  }
   if (input?.risk) filters.push(eq(mcpCatalogItem.riskLevel, input.risk));
-  return db
+  return filters.length ? and(...filters) : undefined;
+}
+
+export interface McpCatalogPageResult {
+  items: typeof mcpCatalogItem.$inferSelect[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export async function listCatalogItemsPaginated(input?: {
+  sourceId?: string;
+  q?: string;
+  risk?: "low" | "medium" | "high";
+  page?: number;
+  pageSize?: number;
+}): Promise<McpCatalogPageResult> {
+  const db = await getDb();
+  const pageSize = Math.min(Math.max(input?.pageSize ?? 24, 1), 100);
+  const page = Math.max(input?.page ?? 1, 1);
+  const where = catalogWhere(input);
+
+  const countRow = await db.select({ n: count() }).from(mcpCatalogItem).where(where);
+  const total = Number(countRow[0]?.n ?? 0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const offset = (safePage - 1) * pageSize;
+
+  const items = await db
     .select()
     .from(mcpCatalogItem)
-    .where(filters.length ? and(...filters) : undefined)
-    .orderBy(desc(mcpCatalogItem.updatedAt));
+    .where(where)
+    .orderBy(desc(mcpCatalogItem.updatedAt))
+    .limit(pageSize)
+    .offset(offset);
+
+  return { items, total, page: safePage, pageSize, totalPages };
+}
+
+/** @deprecated Prefer listCatalogItemsPaginated for UI lists */
+export async function listCatalogItems(input?: { sourceId?: string; q?: string; risk?: "low" | "medium" | "high" }) {
+  const { items } = await listCatalogItemsPaginated({ ...input, page: 1, pageSize: 10_000 });
+  return items;
 }
 
 function projectScopedServerName(projectId: string, requested: string): string {

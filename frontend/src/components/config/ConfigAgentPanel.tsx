@@ -1,16 +1,16 @@
-import { RefreshCw, Server } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { CSSProperties, FC } from "react";
 import { useMemo, useState } from "react";
 import {
   createAgentDefinition,
   createAgentDraft,
+  deleteAgentDefinition,
   postAgentDefinitionPackEnsureLayout,
   postAgentDefinitionPackSyncFromFs,
   putAgentDefinitionPackFiles,
   putAgentDefinitionPackSessionSnapshot,
   releaseAgentDraft,
   reloadAgents,
-  upsertMcpBinding,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
@@ -19,26 +19,19 @@ import type {
   McpServerConfigRecord,
   McpToolBindingRecord,
 } from "../../api/types";
-import { AGENT_ROLE_OPTIONS } from "../../lib/agentRoles";
+import { agentDisplayLabel, agentSelectOptionLabel } from "../../lib/agentDisplay";
+import { AGENT_ROLE_OPTIONS, isBuiltinAgentDefinitionId } from "../../lib/agentRoles";
 import type { ConfigSubPage } from "../../store";
+import { AgentRuntimeTab } from "./AgentRuntimeTab";
 import { IconToolbarButton } from "../ui/IconToolbarButton";
 
-export type AgentConfigUiTab = "overview" | "prompts" | "workspace" | "memory" | "mcp";
+export type AgentConfigUiTab = "overview" | "prompts" | "workspace" | "memory" | "runtime";
 
 export function parseAgentMcpServerNames(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v
     .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
     .map((s) => s.trim());
-}
-
-function stringifyJson(v: unknown, max = 4000): string {
-  try {
-    const s = JSON.stringify(v, null, 2);
-    return s.length > max ? `${s.slice(0, max)}\n…` : s;
-  } catch {
-    return String(v);
-  }
 }
 
 export type ConfigAgentPanelProps = {
@@ -71,6 +64,18 @@ export type ConfigAgentPanelProps = {
   setDraftConfigRootUri: (v: string) => void;
   draftMcpServerNames: string[];
   setDraftMcpServerNames: (v: string[] | ((prev: string[]) => string[])) => void;
+  draftDisplayName: string;
+  setDraftDisplayName: (v: string) => void;
+  draftDescription: string;
+  setDraftDescription: (v: string) => void;
+  draftTools: string[];
+  setDraftTools: (v: string[] | ((prev: string[]) => string[])) => void;
+  draftSkills: string[];
+  setDraftSkills: (v: string[] | ((prev: string[]) => string[])) => void;
+  draftSubscriptions: string[];
+  setDraftSubscriptions: (v: string[] | ((prev: string[]) => string[])) => void;
+  skillInstalls: import("../../api/types").SkillMarketInstallRecord[];
+  knownToolPool: string[];
   fileSoulMd: string;
   setFileSoulMd: (v: string) => void;
   filePromptMd: string;
@@ -156,6 +161,18 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   setDraftConfigRootUri,
   draftMcpServerNames,
   setDraftMcpServerNames,
+  draftDisplayName,
+  setDraftDisplayName,
+  draftDescription,
+  setDraftDescription,
+  draftTools,
+  setDraftTools,
+  draftSkills,
+  setDraftSkills,
+  draftSubscriptions,
+  setDraftSubscriptions,
+  skillInstalls,
+  knownToolPool,
   fileSoulMd,
   setFileSoulMd,
   filePromptMd,
@@ -174,58 +191,27 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
 }) => {
   const def = selectedBundle?.definition;
   const profile = selectedBundle?.profile;
-  const displayTitle = profile?.displayName?.trim() || def?.name || def?.role || "Agent";
-  const knownServerNames = new Set(mcpServers.map((s) => s.name));
-  const serverOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const n of draftMcpServerNames) s.add(n);
-    for (const r of mcpServers) {
-      if (r.enabled) s.add(r.name);
-    }
-    return Array.from(s);
-  }, [draftMcpServerNames, mcpServers]);
-  const orphanMcp = draftMcpServerNames.filter((n) => !knownServerNames.has(n));
-
-  const [regToolName, setRegToolName] = useState("");
-  const [regTimeoutMs, setRegTimeoutMs] = useState("");
-  const [regServer, setRegServer] = useState("");
-
+  const displayTitle =
+    draftDisplayName.trim() ||
+    (selectedBundle ? agentDisplayLabel(selectedBundle) : def?.name || def?.role || "Agent");
   const [newRole, setNewRole] = useState<string>(AGENT_ROLE_OPTIONS[0] ?? "research");
   const [newDisplayName, setNewDisplayName] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
-  const agentScopedBindings = useMemo(() => {
-    const id = def?.id;
-    if (!id) return [];
-    return mcpBindings.filter(
-      (b) =>
-        b.definitionId === id &&
-        (!currentProjectId || b.projectId === currentProjectId || b.projectId == null)
-    );
-  }, [mcpBindings, def?.id, currentProjectId]);
+  const sortedDefinitions = useMemo(() => {
+    return [...definitions].sort((a, b) => {
+      const ae = a.definition.enabled !== false ? 0 : 1;
+      const be = b.definition.enabled !== false ? 0 : 1;
+      if (ae !== be) return ae - be;
+      return a.definition.role.localeCompare(b.definition.role);
+    });
+  }, [definitions]);
 
-  const serverForBindingForm =
-    (regServer && serverOptions.includes(regServer) ? regServer : null) ??
-    draftMcpServerNames[0] ??
-    mcpServers.find((s) => s.enabled)?.name ??
-    "";
-  const effectiveBindServer = serverOptions.includes(serverForBindingForm)
-    ? serverForBindingForm
-    : (serverOptions[0] ?? "");
-
-  const toggleMcp = (name: string) => {
-    setDraftMcpServerNames((prev) =>
-      prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name]
-    );
-  };
-
-  const selectAllEnabledMcp = () => {
-    const names = mcpServers.filter((s) => s.enabled).map((s) => s.name);
-    setDraftMcpServerNames(Array.from(new Set([...draftMcpServerNames, ...names])));
-  };
-
-  const clearMcp = () => setDraftMcpServerNames([]);
+  const canDeleteSelected =
+    Boolean(selectedDefinitionId) && !isBuiltinAgentDefinitionId(selectedDefinitionId);
 
   return (
     <>
@@ -248,7 +234,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
         侧仍有 <code>systemPrompt</code>（默认模式下作候补）与 <code>prompt_template_ref</code>
         （可指向包内其它模板文件，仅当无 <code>workspace/prompt.md</code> 时使用）。
         <strong>工作区</strong>目录含可写提示与沙箱文件；<strong>记忆</strong>按 definition 隔离；
-        <strong>MCP 与运行时</strong>从已在「MCP」页登记的服务端名中选择白名单（
+        <strong>运行时</strong>页可配置工具 / MCP / Skills；从已在「MCP」页登记的服务端名中选择白名单（
         <code>mcp_servers_json</code>），并可在此登记<strong>带 definition_id 的工具绑定</strong>。
       </p>
 
@@ -312,9 +298,9 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 onSelectDefinitionId(e.target.value);
               }}
             >
-              {definitions.map((item) => (
+              {sortedDefinitions.map((item) => (
                 <option key={item.definition.id} value={item.definition.id}>
-                  {item.definition.role} · {item.definition.version} — {item.definition.name}
+                  {agentSelectOptionLabel(item)}
                 </option>
               ))}
             </select>
@@ -323,6 +309,31 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               label="重新加载配置与 MCP 列表"
               onClick={() => void onReloadAll()}
             />
+            {canDeleteSelected ? (
+              <button
+                type="button"
+                className="qb-btn-secondary qb-btn--compact"
+                style={{ color: "#f87171", borderColor: "#7f1d1d" }}
+                disabled={deleteBusy || createBusy}
+                onClick={() => {
+                  if (!selectedDefinitionId) return;
+                  const label = displayTitle;
+                  if (!window.confirm(`确定删除自定义 Agent「${label}」？此操作不可恢复。`)) return;
+                  setDeleteErr(null);
+                  setDeleteBusy(true);
+                  void deleteAgentDefinition(selectedDefinitionId)
+                    .then(() => {
+                      onResetAgentSelectionRef();
+                      onSelectDefinitionId("");
+                      onReloadAll();
+                    })
+                    .catch((e) => setDeleteErr(e instanceof Error ? e.message : String(e)))
+                    .finally(() => setDeleteBusy(false));
+                }}
+              >
+                {deleteBusy ? "删除中…" : "删除当前 Agent"}
+              </button>
+            ) : null}
             <button
               type="button"
               className="qb-btn-ghost qb-btn--compact"
@@ -397,6 +408,11 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 {createErr}
               </p>
             ) : null}
+            {deleteErr ? (
+              <p style={{ margin: 0, flex: "1 1 100%", fontSize: 12, color: "#f87171" }}>
+                {deleteErr}
+              </p>
+            ) : null}
           </div>
 
           <div
@@ -409,7 +425,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 ["prompts", "提示词与文件"],
                 ["workspace", "工作区"],
                 ["memory", "记忆"],
-                ["mcp", "MCP 与运行时"],
+                ["runtime", "运行时"],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -425,6 +441,28 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
 
           {agentUiTab === "overview" && selectedBundle ? (
             <div className="qb-agent-field-grid">
+              <div>
+                <span style={label}>中文显示名（保存草稿后生效）</span>
+                <input
+                  style={input}
+                  value={draftDisplayName}
+                  onChange={(e) => setDraftDisplayName(e.target.value)}
+                  placeholder={agentDisplayLabel(selectedBundle)}
+                />
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
+                  角色 <code>{selectedBundle.definition.role}</code> · 内置名{" "}
+                  {selectedBundle.definition.name}
+                </p>
+              </div>
+              <div>
+                <span style={label}>简介</span>
+                <input
+                  style={input}
+                  value={draftDescription}
+                  onChange={(e) => setDraftDescription(e.target.value)}
+                  placeholder="可选，用于配置中心与团队目录展示"
+                />
+              </div>
               <div>
                 <span style={label}>prompt_mode</span>
                 <select
@@ -679,221 +717,32 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
             </div>
           ) : null}
 
-          {agentUiTab === "mcp" && selectedBundle ? (
-            <div className="qb-agent-field-grid">
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 12,
-                  color: "var(--qb-main-meta, #a1a1aa)",
-                  lineHeight: 1.5,
-                }}
-              >
-                下列服务端名来自当前项目的 <strong>MCP</strong>{" "}
-                登记（与配置页「MCP」一致）。勾选即加入该 Agent 的 <code>mcp_servers_json</code>
-                ，运行时在 Graph 中作为可连 MCP 白名单；具体工具探测仍依赖各 Server 下的工具绑定。
-              </p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                <button
-                  type="button"
-                  className="qb-btn-ghost qb-btn--compact"
-                  onClick={selectAllEnabledMcp}
-                >
-                  勾选全部已启用
-                </button>
-                <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={clearMcp}>
-                  清空
-                </button>
-                <span style={{ fontSize: 11, color: "var(--qb-sidebar-muted, #52525b)" }}>
-                  project: {currentProjectId || "—"}
-                </span>
-              </div>
-              <div className="qb-mcp-pool">
-                {mcpServers.length === 0 ? (
-                  <span style={{ fontSize: 12, color: "var(--qb-sidebar-muted, #71717a)" }}>
-                    暂无 MCP Server，请先到「MCP」页添加。
-                  </span>
-                ) : (
-                  mcpServers.map((s) => {
-                    const on = draftMcpServerNames.includes(s.name);
-                    const bind = pickBindingForMcpServer(s.name);
-                    const nBind = mcpServerBindingCount.get(s.name) ?? 0;
-                    const disabled = !s.enabled;
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        disabled={disabled}
-                        title={
-                          disabled
-                            ? "该 Server 已禁用，请先在 MCP 页启用"
-                            : `${bind?.toolName ? `绑定工具 ${bind.toolName}` : "未绑定工具"} · 绑定条数 ${nBind}`
-                        }
-                        className={`qb-mcp-chip${on ? " qb-mcp-chip--on" : ""}`}
-                        onClick={() => !disabled && toggleMcp(s.name)}
-                      >
-                        <Server size={14} strokeWidth={2} aria-hidden />
-                        {s.name}
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-              {orphanMcp.length > 0 ? (
-                <p style={{ margin: 0, fontSize: 11, color: "#eab308" }}>
-                  以下名称已在白名单但当前项目未登记同名 Server（可保留或移除）：
-                  {orphanMcp.join(", ")}
-                </p>
-              ) : null}
-              {def?.id && currentProjectId ? (
-                <div
-                  style={{
-                    marginTop: 14,
-                    paddingTop: 14,
-                    borderTop: "1px solid var(--qb-main-input-border, #27272a)",
-                  }}
-                >
-                  <span style={label}>本 Agent 的 MCP 工具绑定（definition_id）</span>
-                  <p
-                    style={{
-                      margin: "0 0 10px",
-                      fontSize: 11,
-                      color: "var(--qb-sidebar-muted, #71717a)",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    运行图里调用 MCP 时会优先匹配带当前 Agent id 的绑定，其次为 definition_id
-                    为空的项目级绑定。请先勾选上方白名单并填写工具名（可用 <code>*</code>{" "}
-                    表示通配）；登记后可在「MCP」页统一管理。
-                  </p>
-                  {agentScopedBindings.length > 0 ? (
-                    <pre className="qb-json-preview" style={{ marginBottom: 10, maxHeight: 160 }}>
-                      {JSON.stringify(
-                        agentScopedBindings.map((b) => ({
-                          server: b.serverName,
-                          tool: b.toolName,
-                          enabled: b.enabled,
-                          timeoutMs: b.timeoutMs,
-                        })),
-                        null,
-                        2
-                      )}
-                    </pre>
-                  ) : (
-                    <p
-                      style={{
-                        margin: "0 0 10px",
-                        fontSize: 12,
-                        color: "var(--qb-sidebar-muted, #52525b)",
-                      }}
-                    >
-                      尚无仅本 Agent 的绑定。
-                    </p>
-                  )}
-                  <div style={{ display: "grid", gap: 10, maxWidth: 480 }}>
-                    <div>
-                      <span style={label}>Server</span>
-                      <select
-                        style={input}
-                        value={effectiveBindServer}
-                        onChange={(e) => setRegServer(e.target.value)}
-                      >
-                        {serverOptions.length === 0 ? (
-                          <option value="">请先在「MCP」页添加已启用的 Server</option>
-                        ) : null}
-                        {serverOptions.map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <span style={label}>tool_name</span>
-                      <input
-                        style={input}
-                        value={regToolName}
-                        onChange={(e) => setRegToolName(e.target.value)}
-                        placeholder="例如 tools/list 或 *"
-                      />
-                    </div>
-                    <div>
-                      <span style={label}>timeout_ms（可选）</span>
-                      <input
-                        style={input}
-                        value={regTimeoutMs}
-                        onChange={(e) => setRegTimeoutMs(e.target.value)}
-                        placeholder="留空则用默认"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="qb-btn-secondary"
-                      disabled={!effectiveBindServer.trim() || !regToolName.trim()}
-                      onClick={() => {
-                        const t = regToolName.trim();
-                        if (!def?.id || !currentProjectId || !effectiveBindServer || !t) return;
-                        const ms = regTimeoutMs.trim() ? Number(regTimeoutMs) : undefined;
-                        void upsertMcpBinding({
-                          projectId: currentProjectId,
-                          definitionId: def.id,
-                          serverName: effectiveBindServer,
-                          toolName: t,
-                          timeoutMs: ms !== undefined && !Number.isNaN(ms) ? ms : undefined,
-                        }).then(() => {
-                          setRegToolName("");
-                          setRegTimeoutMs("");
-                          void onReloadAll();
-                        });
-                      }}
-                    >
-                      登记本 Agent 绑定
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p style={{ margin: 0, fontSize: 11, color: "var(--qb-sidebar-muted, #52525b)" }}>
-                  {!currentProjectId ? "选择工作区项目后可登记带 definition_id 的绑定。" : null}
-                </p>
-              )}
-              <div>
-                <span style={label}>当前 mcp_servers_json（将随草稿保存）</span>
-                <pre className="qb-json-preview">
-                  {JSON.stringify(draftMcpServerNames, null, 2)}
-                </pre>
-              </div>
-              <div>
-                <span style={label}>tools_json（只读，来自已发布 definition）</span>
-                <pre className="qb-json-preview">
-                  {stringifyJson(selectedBundle.definition.toolsJson)}
-                </pre>
-              </div>
-              <div>
-                <span style={label}>skills_json（只读）</span>
-                <pre className="qb-json-preview">
-                  {stringifyJson(selectedBundle.definition.skillsJson)}
-                </pre>
-              </div>
-              <div>
-                <span style={label}>subscriptions_json（只读）</span>
-                <pre className="qb-json-preview">
-                  {stringifyJson(selectedBundle.definition.subscriptionsJson)}
-                </pre>
-              </div>
-              <p style={{ margin: 0, fontSize: 11, color: "var(--qb-sidebar-muted, #52525b)" }}>
-                绑定明细（当前项目，含各 Agent 的 definition_id）共{" "}
-                {
-                  mcpBindings.filter(
-                    (b) =>
-                      !currentProjectId || b.projectId === currentProjectId || b.projectId == null
-                  ).length
-                }{" "}
-                条；完整编辑可在「MCP」页或本页「登记本 Agent 绑定」。
-              </p>
-            </div>
+          {agentUiTab === "runtime" && selectedBundle ? (
+            <AgentRuntimeTab
+              selectedBundle={selectedBundle}
+              draftTools={draftTools}
+              setDraftTools={setDraftTools}
+              draftSkills={draftSkills}
+              setDraftSkills={setDraftSkills}
+              draftMcpServerNames={draftMcpServerNames}
+              setDraftMcpServerNames={setDraftMcpServerNames}
+              draftSubscriptions={draftSubscriptions}
+              setDraftSubscriptions={setDraftSubscriptions}
+              draftPrompt={draftPrompt}
+              draftPromptMode={draftPromptMode}
+              mcpServers={mcpServers}
+              mcpBindings={mcpBindings}
+              skillInstalls={skillInstalls}
+              currentProjectId={currentProjectId}
+              knownToolPool={knownToolPool}
+              onReloadAll={onReloadAll}
+              pickBindingForMcpServer={pickBindingForMcpServer}
+              mcpServerBindingCount={mcpServerBindingCount}
+            />
           ) : null}
         </div>
       </div>
+
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 4 }}>
         <button
@@ -906,12 +755,18 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               definitionId: selectedBundle.definition.id,
               systemPrompt: draftPrompt,
               changeNote: draftNote,
+              toolsJson: draftTools,
               mcpServersJson: draftMcpServerNames,
+              skillsJson: draftSkills,
+              subscriptionsJson: draftSubscriptions,
               profile: {
-                displayName: selectedBundle.profile?.displayName ?? selectedBundle.definition.name,
+                displayName:
+                  draftDisplayName.trim() ||
+                  selectedBundle.profile?.displayName ||
+                  selectedBundle.definition.name,
                 soulFileRef: draftSoul,
                 promptTemplateRef: draftPromptTemplateRef.trim() || undefined,
-                description: selectedBundle.profile?.description ?? "",
+                description: draftDescription,
                 configRootUri: draftConfigRootUri,
                 memoryNamespace: draftMemoryNamespace,
                 promptMode: draftPromptMode,

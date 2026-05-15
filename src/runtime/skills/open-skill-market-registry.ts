@@ -170,27 +170,57 @@ export async function ensureOpenSkillMarketLoaded(
   await loadPromise;
 }
 
-export function searchOpenSkillMarketEntries(q: string, limit: number): OpenSkillMarketEntry[] {
+export type SkillMarketPageResult = {
+  items: OpenSkillMarketEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+function filterOpenSkillMarketPool(q: string): OpenSkillMarketEntry[] {
   if (!cache) return [];
   const needle = q.trim().toLowerCase();
-  const pool = needle
-    ? cache.skills.filter((s) => {
-        const hay = [
-          s.id,
-          s.name,
-          s.description,
-          ...(s.categories ?? []),
-          ...(s.tags ?? []),
-          s.repo ?? "",
-          s.author ?? "",
-        ]
-          .join("\n")
-          .toLowerCase();
-        return hay.includes(needle);
-      })
-    : cache.skills;
+  if (!needle) return cache.skills;
+  return cache.skills.filter((s) => {
+    const hay = [
+      s.id,
+      s.name,
+      s.description,
+      ...(s.categories ?? []),
+      ...(s.tags ?? []),
+      s.repo ?? "",
+      s.author ?? "",
+    ]
+      .join("\n")
+      .toLowerCase();
+    return hay.includes(needle);
+  });
+}
 
-  return pool.slice(0, Math.min(Math.max(limit, 1), 200));
+export function searchOpenSkillMarketEntriesPaginated(
+  q: string,
+  page = 1,
+  pageSize = 24
+): SkillMarketPageResult {
+  const pool = filterOpenSkillMarketPool(q);
+  const ps = Math.min(Math.max(pageSize, 1), 100);
+  const total = pool.length;
+  const totalPages = Math.max(1, Math.ceil(total / ps));
+  const safePage = Math.min(Math.max(page, 1), totalPages);
+  const offset = (safePage - 1) * ps;
+  return {
+    items: pool.slice(offset, offset + ps),
+    total,
+    page: safePage,
+    pageSize: ps,
+    totalPages,
+  };
+}
+
+/** @deprecated Prefer searchOpenSkillMarketEntriesPaginated */
+export function searchOpenSkillMarketEntries(q: string, limit: number): OpenSkillMarketEntry[] {
+  return searchOpenSkillMarketEntriesPaginated(q, 1, limit).items;
 }
 
 export function getOpenSkillMarketEntry(id: string): OpenSkillMarketEntry | undefined {

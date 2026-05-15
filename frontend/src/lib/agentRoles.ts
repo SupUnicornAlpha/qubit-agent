@@ -1,27 +1,24 @@
-/** 与后端 `agent_definition.role` 枚举一致（用于配置 UI 新建 Agent） */
+/**
+ * 配置中心「新建 Agent」可选角色：与当前产品主路径（研究团队 + 编排）对齐。
+ * 完整枚举见后端 `ALL_AGENT_ROLES`；未列入的角色仍可通过 API 使用内置 `def-*` 定义。
+ */
 export const AGENT_ROLE_OPTIONS = [
   "orchestrator",
-  "market_data",
-  "news_event",
-  "research",
-  "backtest",
-  "simulation",
-  "risk",
-  "execution",
-  "memory",
-  "audit",
   "analyst_fundamental",
   "analyst_technical",
   "analyst_sentiment",
   "analyst_macro",
-  "researcher_bull",
-  "researcher_bear",
+  "research",
+  "backtest",
+  "risk",
   "risk_manager",
-  "portfolio_manager",
-  "stock_screener",
-  "backtest_engineer",
-  "execution_trader",
-  "memory_curator",
 ] as const;
 
 export type AgentRoleOption = (typeof AGENT_ROLE_OPTIONS)[number];
+
+/** 内置种子 definition id 前缀，UI 删除按钮据此隐藏 */
+export const BUILTIN_AGENT_DEFINITION_ID_PREFIX = "def-";
+
+export function isBuiltinAgentDefinitionId(id: string): boolean {
+  return id.startsWith(BUILTIN_AGENT_DEFINITION_ID_PREFIX);
+}

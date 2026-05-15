@@ -1152,6 +1152,8 @@ export const brokerAccount = sqliteTable("broker_account", {
   accountRef: text("account_ref").notNull(),
   mode: text("mode", { enum: ["mock", "sandbox", "live"] }).notNull().default("mock"),
   baseUrl: text("base_url"),
+  providerConfigJson: text("provider_config_json", { mode: "json" }).notNull().default({}),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   healthStatus: text("health_status", { enum: ["unknown", "healthy", "degraded", "down"] })
     .notNull()

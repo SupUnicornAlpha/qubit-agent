@@ -240,4 +240,39 @@ describe("api minimal integration", () => {
     expect(Array.isArray(data.members)).toBeTrue();
     expect((data.members as unknown[]).length).toBe(0);
   });
+
+  test("reia: broker account upsert and health-check (mock)", async () => {
+    const upsertRes = await app.request(
+      new Request("http://test/api/v1/reia/broker/accounts/upsert", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "futu",
+          accountRef: "test-default",
+          mode: "mock",
+          isDefault: true,
+          providerConfig: { opendHost: "127.0.0.1", opendPort: 11111, market: "HK" },
+        }),
+      })
+    );
+    expect(upsertRes.status).toBe(200);
+    const upsertJson = await jsonOf(upsertRes);
+    expect(upsertJson.ok).toBe(true);
+    const acc = upsertJson.data as Record<string, unknown>;
+    expect(acc.provider).toBe("futu");
+    expect(acc.accountRef).toBe("test-default");
+
+    const healthRes = await app.request(
+      new Request("http://test/api/v1/reia/broker/health-check", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "futu", accountRef: "test-default" }),
+      })
+    );
+    expect(healthRes.status).toBe(200);
+    const healthJson = await jsonOf(healthRes);
+    expect(healthJson.ok).toBe(true);
+    const health = healthJson.data as Record<string, unknown>;
+    expect(health.status).toBe("healthy");
+  });
 });

@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import type { BrokerProvider, BrokerProviderConfig } from "./broker-types";
 
-export type BrokerProvider = "futu" | "ib";
+export type { BrokerProvider, BrokerProviderConfig, FutuProviderConfig, IbProviderConfig } from "./broker-types";
+
 export type BrokerOrderSide = "buy" | "sell";
 export type BrokerOrderType = "market" | "limit";
 export type BrokerOrderStatus = "submitted" | "filled" | "rejected" | "cancelled";
@@ -23,6 +25,20 @@ export interface BrokerOrderResult {
   raw?: Record<string, unknown>;
 }
 
+export interface BrokerFill {
+  brokerOrderId: string;
+  fillQty: number;
+  fillPrice: number;
+  filledAt: string;
+}
+
+export interface BrokerPosition {
+  symbol: string;
+  qty: number;
+  avgPrice: number;
+  market?: string;
+}
+
 export interface BrokerHealthResult {
   provider: BrokerProvider;
   status: "healthy" | "degraded" | "down";
@@ -37,6 +53,8 @@ export interface BrokerRuntimeConfig {
   mode: "mock" | "sandbox" | "live";
   accountRef: string;
   baseUrl?: string;
+  providerConfig?: BrokerProviderConfig;
+  paper?: boolean;
 }
 
 export interface BrokerConnector {
@@ -44,13 +62,37 @@ export interface BrokerConnector {
   readonly mode: "mock" | "sandbox" | "live";
   readonly accountRef: string;
   submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult>;
+  cancelOrder(brokerOrderId: string): Promise<void>;
+  getOrder(brokerOrderId: string): Promise<BrokerOrderResult>;
+  getFills(brokerOrderId: string): Promise<BrokerFill[]>;
+  getPositions(): Promise<BrokerPosition[]>;
   healthCheck(): Promise<BrokerHealthResult>;
+}
+
+function paperFromMode(mode: BrokerRuntimeConfig["mode"], explicit?: boolean): boolean {
+  if (explicit !== undefined) return explicit;
+  if (mode === "sandbox") return true;
+  if (mode === "live") return false;
+  return true;
+}
+
+function httpBodyBase(config: BrokerRuntimeConfig): Record<string, unknown> {
+  return {
+    provider: config.provider,
+    accountRef: config.accountRef,
+    paper: paperFromMode(config.mode, config.paper),
+    providerConfig: config.providerConfig ?? {},
+  };
 }
 
 class MockFutuConnector implements BrokerConnector {
   readonly provider: BrokerProvider = "futu";
   readonly mode = "mock" as const;
-  readonly accountRef = "futu-mock";
+  readonly accountRef: string;
+
+  constructor(accountRef = "futu-mock") {
+    this.accountRef = accountRef;
+  }
 
   async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
     const latency = Math.floor(80 + Math.random() * 260);
@@ -68,6 +110,37 @@ class MockFutuConnector implements BrokerConnector {
     };
   }
 
+  async cancelOrder(_brokerOrderId: string): Promise<void> {
+    /* mock no-op */
+  }
+
+  async getOrder(brokerOrderId: string): Promise<BrokerOrderResult> {
+    return {
+      provider: this.provider,
+      brokerOrderId,
+      status: "filled",
+      actualPrice: 100,
+      actualQuantity: 0,
+      executionTimeMs: 1,
+      raw: { venue: "MOCK_FUTU" },
+    };
+  }
+
+  async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
+    return [
+      {
+        brokerOrderId,
+        fillQty: 100,
+        fillPrice: 100,
+        filledAt: new Date().toISOString(),
+      },
+    ];
+  }
+
+  async getPositions(): Promise<BrokerPosition[]> {
+    return [];
+  }
+
   async healthCheck(): Promise<BrokerHealthResult> {
     return {
       provider: this.provider,
@@ -83,7 +156,11 @@ class MockFutuConnector implements BrokerConnector {
 class MockIbConnector implements BrokerConnector {
   readonly provider: BrokerProvider = "ib";
   readonly mode = "mock" as const;
-  readonly accountRef = "ib-mock";
+  readonly accountRef: string;
+
+  constructor(accountRef = "ib-mock") {
+    this.accountRef = accountRef;
+  }
 
   async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
     const latency = Math.floor(120 + Math.random() * 320);
@@ -103,6 +180,37 @@ class MockIbConnector implements BrokerConnector {
     };
   }
 
+  async cancelOrder(_brokerOrderId: string): Promise<void> {
+    /* mock no-op */
+  }
+
+  async getOrder(brokerOrderId: string): Promise<BrokerOrderResult> {
+    return {
+      provider: this.provider,
+      brokerOrderId,
+      status: "filled",
+      actualPrice: 100,
+      actualQuantity: 0,
+      executionTimeMs: 1,
+      raw: { venue: "MOCK_IB" },
+    };
+  }
+
+  async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
+    return [
+      {
+        brokerOrderId,
+        fillQty: 100,
+        fillPrice: 100,
+        filledAt: new Date().toISOString(),
+      },
+    ];
+  }
+
+  async getPositions(): Promise<BrokerPosition[]> {
+    return [];
+  }
+
   async healthCheck(): Promise<BrokerHealthResult> {
     return {
       provider: this.provider,
@@ -120,23 +228,38 @@ class HttpBrokerConnector implements BrokerConnector {
   readonly mode: "sandbox" | "live";
   readonly accountRef: string;
   private readonly baseUrl: string;
+  private readonly runtime: BrokerRuntimeConfig;
 
-  constructor(input: { provider: BrokerProvider; mode: "sandbox" | "live"; baseUrl: string; accountRef: string }) {
-    this.provider = input.provider;
-    this.mode = input.mode;
-    this.baseUrl = input.baseUrl.replace(/\/$/, "");
-    this.accountRef = input.accountRef;
+  constructor(runtime: BrokerRuntimeConfig & { baseUrl: string }) {
+    this.provider = runtime.provider;
+    this.mode = runtime.mode as "sandbox" | "live";
+    this.accountRef = runtime.accountRef;
+    this.baseUrl = runtime.baseUrl.replace(/\/$/, "");
+    this.runtime = runtime;
+  }
+
+  private async requestJson(
+    method: string,
+    path: string,
+    body?: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const url = `${this.baseUrl}${path}`;
+    const res = await fetch(url, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) throw new Error(`broker ${method} ${path} failed: ${res.status} ${JSON.stringify(payload)}`);
+    return payload;
   }
 
   async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
     const started = Date.now();
-    const res = await fetch(`${this.baseUrl}/orders`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...input, provider: this.provider, accountRef: this.accountRef }),
+    const payload = await this.requestJson("POST", "/orders", {
+      ...input,
+      ...httpBodyBase(this.runtime),
     });
-    const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) throw new Error(`broker submit failed: ${res.status} ${JSON.stringify(payload)}`);
     return {
       provider: this.provider,
       brokerOrderId: String(payload.brokerOrderId ?? `${this.provider}-${Date.now()}-${randomUUID().slice(0, 8)}`),
@@ -148,10 +271,80 @@ class HttpBrokerConnector implements BrokerConnector {
     };
   }
 
+  async cancelOrder(brokerOrderId: string): Promise<void> {
+    await this.requestJson("POST", "/orders/cancel", {
+      brokerOrderId,
+      ...httpBodyBase(this.runtime),
+    });
+  }
+
+  async getOrder(brokerOrderId: string): Promise<BrokerOrderResult> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+      brokerOrderId,
+    });
+    const payload = await this.requestJson("GET", `/orders?${qs.toString()}`);
+    return {
+      provider: this.provider,
+      brokerOrderId: String(payload.brokerOrderId ?? brokerOrderId),
+      status: (payload.status as BrokerOrderStatus | undefined) ?? "submitted",
+      actualPrice: Number(payload.actualPrice ?? 0),
+      actualQuantity: Number(payload.actualQuantity ?? 0),
+      executionTimeMs: Number(payload.executionTimeMs ?? 0),
+      raw: payload,
+    };
+  }
+
+  async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+      brokerOrderId,
+    });
+    const payload = await this.requestJson("GET", `/fills?${qs.toString()}`);
+    const fills = payload.fills;
+    if (!Array.isArray(fills)) return [];
+    return fills.map((f) => {
+      const row = f as Record<string, unknown>;
+      return {
+        brokerOrderId: String(row.brokerOrderId ?? brokerOrderId),
+        fillQty: Number(row.fillQty ?? 0),
+        fillPrice: Number(row.fillPrice ?? 0),
+        filledAt: String(row.filledAt ?? new Date().toISOString()),
+      };
+    });
+  }
+
+  async getPositions(): Promise<BrokerPosition[]> {
+    const qs = new URLSearchParams({
+      provider: this.provider,
+      accountRef: this.accountRef,
+    });
+    const payload = await this.requestJson("GET", `/positions?${qs.toString()}`);
+    const positions = payload.positions;
+    if (!Array.isArray(positions)) return [];
+    return positions.map((p) => {
+      const row = p as Record<string, unknown>;
+      return {
+        symbol: String(row.symbol ?? ""),
+        qty: Number(row.qty ?? 0),
+        avgPrice: Number(row.avgPrice ?? 0),
+        market: row.market != null ? String(row.market) : undefined,
+      };
+    });
+  }
+
   async healthCheck(): Promise<BrokerHealthResult> {
     const started = Date.now();
     try {
-      const res = await fetch(`${this.baseUrl}/health?provider=${this.provider}&accountRef=${this.accountRef}`);
+      const cfg = this.runtime.providerConfig ?? {};
+      const qs = new URLSearchParams({
+        provider: this.provider,
+        accountRef: this.accountRef,
+        providerConfig: JSON.stringify(cfg),
+      });
+      const res = await fetch(`${this.baseUrl}/health?${qs.toString()}`);
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         return {
@@ -184,22 +377,29 @@ class HttpBrokerConnector implements BrokerConnector {
   }
 }
 
-const CONNECTORS: Record<BrokerProvider, BrokerConnector> = {
+const DEFAULT_MOCK: Record<BrokerProvider, BrokerConnector> = {
   futu: new MockFutuConnector(),
   ib: new MockIbConnector(),
 };
 
 export function getBrokerConnector(provider: BrokerProvider): BrokerConnector {
-  return CONNECTORS[provider];
+  return DEFAULT_MOCK[provider];
 }
 
 export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnector {
-  if (config.mode === "mock") return getBrokerConnector(config.provider);
+  if (config.mode === "mock") {
+    return config.provider === "futu"
+      ? new MockFutuConnector(config.accountRef)
+      : new MockIbConnector(config.accountRef);
+  }
   if (!config.baseUrl) throw new Error(`missing broker baseUrl for ${config.provider}(${config.mode})`);
   return new HttpBrokerConnector({
-    provider: config.provider,
-    mode: config.mode,
+    ...config,
     baseUrl: config.baseUrl,
-    accountRef: config.accountRef,
+    paper: paperFromMode(config.mode, config.paper),
   });
+}
+
+export function paperFromBrokerMode(mode: "mock" | "sandbox" | "live"): boolean {
+  return paperFromMode(mode);
 }

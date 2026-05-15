@@ -204,6 +204,13 @@
       "when": 1777352240000,
       "tag": "0028_skill_market_install",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1777352250000,
+      "tag": "0029_broker_provider_config",
+      "breakpoints": true
     }
   ]
 }

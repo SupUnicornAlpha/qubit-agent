@@ -5,7 +5,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   {
     id: "def-orchestrator",
     role: "orchestrator",
-    name: "Orchestrator",
+    name: "编排器",
     version: "2.0.0",
     systemPrompt: `你是 QUBIT 多 Agent 编排体系中的「投资/研究负责人」（Orchestrator），角色定位接近量化私募中的投研协调人或基金经理助理：承接用户或上游系统的研究/交易意图，拆解为可执行任务，并调度专业子 Agent 协同完成。
 
@@ -42,7 +42,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   {
     id: "def-market-data",
     role: "market_data",
-    name: "MarketData",
+    name: "行情数据",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「行情与数据工程」角色（Market Data），对应量化公司里数据组/行情岗：为投研、回测与风控提供干净、可追溯的市场数据快照，而不是做主观买卖判断。
 
@@ -63,12 +63,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "def-news-event",
     role: "news_event",
-    name: "NewsEvent",
+    name: "新闻事件",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「新闻与事件」专员（News & Event），接近量化公司的舆情研究/事件驱动岗：从新闻流中抽取结构化事件、评估情绪倾向，为投研与风控提供「发生了什么、可能影响什么」的输入。
 
@@ -87,12 +87,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "def-research",
     role: "research",
-    name: "Research",
+    name: "策略研究",
     version: "2.0.0",
     systemPrompt: `你是 QUBIT 体系中的「量化研究员 / Alpha 与策略研发」（Research Agent），对应量化私募的投研核心岗：在数据与约束给定的情况下，提出可检验的因子假设、实验设计与策略迭代路径，并推动版本化管理。
 
@@ -117,7 +117,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   {
     id: "def-backtest",
     role: "backtest",
-    name: "Backtest",
+    name: "回测",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「历史回测与策略验证工程师」（Backtest），对应量化公司的回测岗/投研验证环节：在**仅使用历史数据**的前提下，评估策略逻辑是否稳健，并向研究与风控提供可复核的绩效与风险分解。
 
@@ -141,7 +141,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   {
     id: "def-simulation",
     role: "simulation",
-    name: "Simulation",
+    name: "模拟交易",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「仿真 / 纸交易」角色（Simulation），接近量化公司的交易模拟与中台验证岗：在**非实盘资金**环境下验证下单链路、仓位逻辑与策略在近似真实约束下的行为。
 
@@ -159,12 +159,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "def-risk",
     role: "risk",
-    name: "Risk",
+    name: "风控",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「交易前风控 / 意图审核」（Pre-trade Risk），对应量化公司的风控岗：对**订单意图与策略参数**做规则与限额检查，加载并解释风险规则（load_rules），输出可签核或拒绝的结论（evaluate_risk, sign_intent）。
 
@@ -187,7 +187,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   {
     id: "def-execution",
     role: "execution",
-    name: "Execution",
+    name: "交易执行",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「交易执行 / 券商接入」（Execution），对应量化公司的交易台或算法交易岗：仅处理**已通过风控签署**的订单意图，完成下单、撤单与成交查询（submit_order, cancel_order, get_fills），并保证操作可审计。
 
@@ -205,12 +205,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "def-memory",
     role: "memory",
-    name: "Memory",
+    name: "记忆管理",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「记忆与知识中间层」（Memory Agent），类似量化公司内部的知识库/会话记忆服务：为各 Agent 提供可检索的短期与中期记忆能力，并维护 TTL 与清理策略（write_memory, search_memory, cleanup_ttl）。
 
@@ -228,12 +228,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "def-audit",
     role: "audit",
-    name: "Audit",
+    name: "审计",
     version: "1.0.0",
     systemPrompt: `你是 QUBIT 体系中的「合规审计与留痕」（Audit），对应量化公司合规/内审职能：对关键业务事件做不可抵赖的归档，并支持事后查询与报告（write_audit_log, generate_report）。
 
@@ -259,7 +259,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     llmProvider: "openai:gpt-4o",
     maxIterations: 20,
     sandboxPolicyId: "default-policy",
-    enabled: true,
+    enabled: false,
   },
   // ─── V2 分析师团队 ──────────────────────────────────────────────────────────
   {
@@ -411,3 +411,11 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     enabled: true,
   },
 ];
+
+/** 内置 definition id（`def-*`），删除 API 与冗余清理时保护 */
+export const BUILTIN_AGENT_DEFINITION_IDS = new Set(
+  SEED_AGENT_DEFINITIONS.map((d) => d.id)
+);
+
+/** 同一 `role` 仅保留一条内置定义时，用于判定可删的重复自定义行 */
+export const BUILTIN_AGENT_ROLES = new Set(SEED_AGENT_DEFINITIONS.map((d) => d.role));

@@ -15,8 +15,12 @@ python_connectors/__pycache__/
 python_connectors/.venv/
 *.pyc
 
-# Product docs (PRD / ERD) — tracked separately
+# Product docs (PRD / ERD) — tracked separately; README screenshots are public
 docs/
+!docs/screenshots/
+!docs/screenshots/**
+!docs/LOOP_DRIVERS.md
+.tmp-broker-test-home/
 
 # IDE metadata
 .idea/

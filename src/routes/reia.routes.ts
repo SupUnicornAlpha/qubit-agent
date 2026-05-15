@@ -122,6 +122,8 @@ reiaRouter.post("/broker/accounts/upsert", async (c) => {
     accountRef?: string;
     mode?: "mock" | "sandbox" | "live";
     baseUrl?: string;
+    providerConfig?: Record<string, unknown>;
+    isDefault?: boolean;
     enabled?: boolean;
   }>();
   if (!body.provider || !body.accountRef) {
@@ -132,6 +134,8 @@ reiaRouter.post("/broker/accounts/upsert", async (c) => {
     accountRef: body.accountRef,
     mode: body.mode,
     baseUrl: body.baseUrl,
+    providerConfig: body.providerConfig as import("../runtime/reia/broker-types").BrokerProviderConfig | undefined,
+    isDefault: body.isDefault,
     enabled: body.enabled,
   });
   return c.json({ ok: true, data });

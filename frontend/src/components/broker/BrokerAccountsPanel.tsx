@@ -1,7 +1,13 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { checkBrokerHealth, listBrokerAccounts, listBrokerEvents, upsertBrokerAccount } from "../../api/backend";
-import type { BrokerAccountRecord, BrokerOrderEventRecord } from "../../api/types";
+import type {
+  BrokerAccountRecord,
+  BrokerOrderEventRecord,
+  BrokerProviderConfig,
+  FutuProviderConfig,
+  IbProviderConfig,
+} from "../../api/types";
 
 const wrap: CSSProperties = {
   maxWidth: 960,
@@ -85,11 +91,43 @@ const statusColor = (s: BrokerAccountRecord["healthStatus"]): string => {
   }
 };
 
+function buildProviderConfig(
+  provider: "futu" | "ib",
+  futu: FutuProviderConfig,
+  ib: IbProviderConfig
+): BrokerProviderConfig {
+  if (provider === "futu") {
+    return {
+      opendHost: futu.opendHost?.trim() || "127.0.0.1",
+      opendPort: futu.opendPort ?? 11111,
+      market: futu.market,
+      accId: futu.accId?.trim() || undefined,
+    };
+  }
+  return {
+    host: ib.host?.trim() || "127.0.0.1",
+    port: ib.port ?? 7497,
+    clientId: ib.clientId ?? 1,
+    accountId: ib.accountId?.trim() || undefined,
+  };
+}
+
 export const BrokerAccountsPanel: FC = () => {
   const [provider, setProvider] = useState<"futu" | "ib">("futu");
   const [accountRef, setAccountRef] = useState("default");
   const [mode, setMode] = useState<"mock" | "sandbox" | "live">("mock");
-  const [baseUrl, setBaseUrl] = useState("");
+  const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:18765");
+  const [isDefault, setIsDefault] = useState(true);
+  const [futuConfig, setFutuConfig] = useState<FutuProviderConfig>({
+    opendHost: "127.0.0.1",
+    opendPort: 11111,
+    market: "HK",
+  });
+  const [ibConfig, setIbConfig] = useState<IbProviderConfig>({
+    host: "127.0.0.1",
+    port: 7497,
+    clientId: 1,
+  });
   const [accounts, setAccounts] = useState<BrokerAccountRecord[]>([]);
   const [events, setEvents] = useState<BrokerOrderEventRecord[]>([]);
   const [statusLine, setStatusLine] = useState<string | null>(null);
@@ -113,6 +151,30 @@ export const BrokerAccountsPanel: FC = () => {
     void refresh();
   }, [refresh]);
 
+  const loadAccountIntoForm = (a: BrokerAccountRecord) => {
+    setProvider(a.provider);
+    setAccountRef(a.accountRef);
+    setMode(a.mode);
+    setBaseUrl(a.baseUrl ?? "");
+    setIsDefault(a.isDefault ?? false);
+    const cfg = a.providerConfigJson ?? {};
+    if (a.provider === "futu") {
+      setFutuConfig({
+        opendHost: (cfg as FutuProviderConfig).opendHost ?? "127.0.0.1",
+        opendPort: (cfg as FutuProviderConfig).opendPort ?? 11111,
+        market: (cfg as FutuProviderConfig).market ?? "HK",
+        accId: (cfg as FutuProviderConfig).accId,
+      });
+    } else {
+      setIbConfig({
+        host: (cfg as IbProviderConfig).host ?? "127.0.0.1",
+        port: (cfg as IbProviderConfig).port ?? 7497,
+        clientId: (cfg as IbProviderConfig).clientId ?? 1,
+        accountId: (cfg as IbProviderConfig).accountId,
+      });
+    }
+  };
+
   const saveAccount = async () => {
     setStatusLine(null);
     try {
@@ -120,7 +182,9 @@ export const BrokerAccountsPanel: FC = () => {
         provider,
         accountRef: accountRef.trim() || "default",
         mode,
-        baseUrl: baseUrl.trim() || undefined,
+        baseUrl: mode === "mock" ? undefined : baseUrl.trim() || undefined,
+        providerConfig: buildProviderConfig(provider, futuConfig, ibConfig),
+        isDefault,
         enabled: true,
       });
       await refresh();
@@ -148,8 +212,11 @@ export const BrokerAccountsPanel: FC = () => {
     <div style={wrap}>
       <h2 style={title}>券商账户配置</h2>
       <p style={lead}>
-        在此登记富途（Futu）或盈透（IB）等券商连接参数，供 REIA 执行链路在 <strong>mock</strong>（本地模拟）、
-        <strong>sandbox</strong>（沙箱）与 <strong>live</strong>（实盘）模式下路由订单。保存后可在「研究团队」工作台联动意图执行；实盘前请在后端完成风控与双重确认策略。
+        登记富途（Futu OpenD）或盈透（IB Gateway）连接参数。{" "}
+        <strong>mock</strong> 为后端本地模拟；<strong>sandbox</strong> 对应富途模拟盘（TrdEnv.SIMULATE）；{" "}
+        <strong>live</strong> 为实盘。非 mock 模式需填写 HTTP 桥地址（默认{" "}
+        <code style={{ fontSize: 12 }}>http://127.0.0.1:18765</code>）并运行{" "}
+        <code style={{ fontSize: 12 }}>python broker_http_server.py</code>。
       </p>
 
       <div style={row}>
@@ -173,21 +240,104 @@ export const BrokerAccountsPanel: FC = () => {
         <div style={field}>
           <span style={label}>运行模式</span>
           <select style={input} value={mode} onChange={(e) => setMode(e.target.value as "mock" | "sandbox" | "live")}>
-            <option value="mock">mock · 模拟</option>
-            <option value="sandbox">sandbox · 沙箱</option>
+            <option value="mock">mock · 本地模拟</option>
+            <option value="sandbox">sandbox · 券商模拟盘</option>
             <option value="live">live · 实盘</option>
           </select>
         </div>
-        <div style={{ ...field, flex: 1, minWidth: 200 }}>
-          <span style={label}>网关 Base URL（可选）</span>
-          <input
-            style={{ ...input, width: "100%", minWidth: 200 }}
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="留空则使用后端默认 broker 适配地址"
-          />
-        </div>
+        <label style={{ ...field, flexDirection: "row", alignItems: "center", gap: 8, minWidth: "auto" }}>
+          <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
+          <span style={{ ...label, textTransform: "none" }}>默认账户</span>
+        </label>
       </div>
+
+      {provider === "futu" ? (
+        <div style={row}>
+          <div style={field}>
+            <span style={label}>OpenD Host</span>
+            <input
+              style={input}
+              value={futuConfig.opendHost ?? ""}
+              onChange={(e) => setFutuConfig((c) => ({ ...c, opendHost: e.target.value }))}
+              placeholder="127.0.0.1"
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>OpenD Port</span>
+            <input
+              style={input}
+              type="number"
+              value={futuConfig.opendPort ?? 11111}
+              onChange={(e) => setFutuConfig((c) => ({ ...c, opendPort: Number(e.target.value) }))}
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>市场</span>
+            <select
+              style={input}
+              value={futuConfig.market ?? "HK"}
+              onChange={(e) => setFutuConfig((c) => ({ ...c, market: e.target.value as "HK" | "US" | "CN" }))}
+            >
+              <option value="HK">HK</option>
+              <option value="US">US</option>
+              <option value="CN">CN</option>
+            </select>
+          </div>
+          <div style={{ ...field, flex: 1 }}>
+            <span style={label}>综合账户 ID（可选）</span>
+            <input
+              style={{ ...input, width: "100%" }}
+              value={futuConfig.accId ?? ""}
+              onChange={(e) => setFutuConfig((c) => ({ ...c, accId: e.target.value }))}
+              placeholder="acc_id"
+            />
+          </div>
+        </div>
+      ) : (
+        <div style={row}>
+          <div style={field}>
+            <span style={label}>IB Host</span>
+            <input
+              style={input}
+              value={ibConfig.host ?? ""}
+              onChange={(e) => setIbConfig((c) => ({ ...c, host: e.target.value }))}
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>IB Port</span>
+            <input
+              style={input}
+              type="number"
+              value={ibConfig.port ?? 7497}
+              onChange={(e) => setIbConfig((c) => ({ ...c, port: Number(e.target.value) }))}
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>Client ID</span>
+            <input
+              style={input}
+              type="number"
+              value={ibConfig.clientId ?? 1}
+              onChange={(e) => setIbConfig((c) => ({ ...c, clientId: Number(e.target.value) }))}
+            />
+          </div>
+        </div>
+      )}
+
+      {mode !== "mock" ? (
+        <div style={row}>
+          <div style={{ ...field, flex: 1, minWidth: 200 }}>
+            <span style={label}>HTTP 桥 Base URL</span>
+            <input
+              style={{ ...input, width: "100%", minWidth: 200 }}
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="http://127.0.0.1:18765"
+            />
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ ...row, marginBottom: 20 }}>
         <button type="button" className="qb-btn-primary-brand" onClick={() => void saveAccount()}>
           保存账户
@@ -229,9 +379,10 @@ export const BrokerAccountsPanel: FC = () => {
               <th style={th}>券商</th>
               <th style={th}>账户</th>
               <th style={th}>模式</th>
+              <th style={th}>默认</th>
               <th style={th}>健康</th>
               <th style={th}>Base URL</th>
-              <th style={th}>更新</th>
+              <th style={th}>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -240,12 +391,17 @@ export const BrokerAccountsPanel: FC = () => {
                 <td style={td}>{a.provider}</td>
                 <td style={td}>{a.accountRef}</td>
                 <td style={td}>{a.mode}</td>
+                <td style={td}>{a.isDefault ? "是" : "—"}</td>
                 <td style={{ ...td, color: statusColor(a.healthStatus) }}>
                   {a.healthStatus}
                   {a.healthMessage ? ` · ${a.healthMessage}` : ""}
                 </td>
                 <td style={td}>{a.baseUrl ?? "—"}</td>
-                <td style={td}>{new Date(a.updatedAt).toLocaleString()}</td>
+                <td style={td}>
+                  <button type="button" className="qb-btn-secondary" onClick={() => loadAccountIntoForm(a)}>
+                    载入
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>

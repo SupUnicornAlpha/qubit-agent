@@ -1,168 +1,219 @@
 # QUBIT Agent Platform
 
-QUBIT 是一个面向量化研究场景的多 Agent 平台，当前版本已经具备：
+**量化研究多 Agent 平台** — 对话驱动研究、多分析师协作、K 线 IDE、回测与实盘编排，一体化交付。
 
-- 统一 Agent Runtime（LangGraph perceive/reason/act/observe）
-- Sandbox 策略校验与违规审计
-- 前端运行监控（session/workflow/step/tool/sandbox 多层观测）
-- 配置中心（workspace 配置 diff、reload、模型配置、Agent 草稿/发布）
-- 对话工作台（session 管理、User/Agent 对话、消息关联 workflow 轨迹）
-- Tauri 客户端 sidecar（启动/停止/查询后端状态）
-- Broker 接入治理（账号配置、健康检查、事件审计；支持 mock/sandbox/live）
-- Workflow 失败补偿队列（入队、重试、批处理执行）
-- 集成管理中心（Telegram/Webhook 通道配置与消息日志）
-- 团队面板联动选择器（workflow/intents 去手填）
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun&logoColor=white)](https://bun.sh)
+[![Tauri](https://img.shields.io/badge/desktop-Tauri%20v2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
+
+---
+
+## 简介
+
+QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime**、**多角色分析师团队**、**MCP 工具市场** 与 **可视化 IDE** 整合在同一工作台中。你可以：
+
+- 在对话中带入 K 线上下文，由编排 Agent 调度研究 / 回测 / 风控等角色
+- 在「研究团队」画布上勾选参与分析的 Agent，查看拓扑与 A2A 协作轨迹
+- 在 IDE 中编辑指标与 Python 信号代码，运行 SMA 等回测
+- 通过配置中心接入 MCP（Anthropic Registry）、Skills（SkillsMP）与券商（Futu / IB）
+
+数据与策略脚本默认落在本地 `~/.quant-agent`（可通过 `QUBIT_DATA_DIR` 修改）。
+
+---
+
+## 截图
+
+### 研究工作台 · 对话 + K 线 + 回测
+
+对话会话、Agent 看板与 K 线、回测坞同屏协作；支持将行情上下文带入对话分析。
+
+![研究工作台：对话、K 线与回测](docs/screenshots/ide-workbench.png)
+
+### 研究团队 · 多 Agent 拓扑
+
+按工作流组织研究任务；可配置分析师编组、启动团队分析，并在右侧绑定策略与代码（落盘至工作流目录）。
+
+![研究团队：成员目录、拓扑画布与策略代码](docs/screenshots/research-team.png)
+
+### 资讯 · 个股与板块新闻
+
+个股 K 线叠加 Yahoo / 内置新闻源；支持「带入对话分析」与板块 ETF 资讯。
+
+![资讯页：行情与新闻简报](docs/screenshots/news-brief.png)
+
+---
+
+## 功能特性
+
+| 模块 | 说明 |
+|------|------|
+| **Agent Runtime** | LangGraph `perceive → reason → act → observe`，Sandbox 策略校验与违规审计 |
+| **研究团队** | 多分析师并行、辩论 / 风控、信号融合；工作流可读名称与策略脚本按 run 绑定 |
+| **QUBIT IDE** | K 线（QuantDigger）、指标编辑、Python 回测坞、策略脚本入库 |
+| **对话工作台** | Session 管理、消息关联 workflow、Agent 看板与执行时间线 |
+| **运行监控** | Session / Workflow / Step / Tool / Sandbox 多层观测 |
+| **配置中心** | Workspace diff、模型配置、Agent 草稿发布、MCP & Skills 市场 |
+| **实盘与券商** | Intent → 风控 → 执行；Futu / IB（mock / sandbox / live） |
+| **桌面端** | Tauri v2 客户端，Sidecar 拉起后端并显示连接状态 |
+
+---
 
 ## 技术栈
 
-- 后端：Bun + TypeScript + Hono + Drizzle + SQLite
-- 编排：LangGraph.js + OpenAI SDK
-- 前端：Vite + React + Zustand
-- 桌面端：Tauri v2（Rust）
+| 层级 | 技术 |
+|------|------|
+| 后端 | Bun · TypeScript · Hono · Drizzle · SQLite |
+| 编排 | LangGraph.js · OpenAI SDK（多 Provider） |
+| 前端 | Vite · React · Zustand |
+| 桌面 | Tauri v2（Rust） |
+| 连接器 | Python（`python_connectors/`，行情 / 券商桥） |
 
-## 目录结构
+---
 
-- `src/`: 后端服务、runtime、路由、数据库
-- `frontend/`: Web UI
-- `src-tauri/`: 桌面客户端
-- `python_connectors/`: Python 连接器骨架
+## 快速开始
 
-## 本地开发环境
+### 环境要求
 
-- Bun `>= 1.3`
-- Node.js `>= 20`（仅部分工具链依赖）
-- Rust/Cargo（Tauri 编译需要）
+- [Bun](https://bun.sh) `>= 1.3`
+- Node.js `>= 20`（部分工具链）
+- Rust / Cargo（仅构建 Tauri 时需要）
 
-## 快速启动（后端 + 前端）
-
-1. 安装根依赖
+### 安装与启动
 
 ```bash
+# 克隆后安装依赖
 bun install
-```
 
-2. 生成数据库 migration（首次或 schema 变更后）
-
-```bash
+# 首次或 schema 变更后生成迁移
 bun run db:generate
-```
+bun run db:migrate
 
-3. 启动后端
-
-```bash
+# 终端 1：后端（默认 http://localhost:3000）
 bun run dev
+
+# 终端 2：前端（默认 http://localhost:3041）
+bun run dev:frontend
 ```
 
-4. 启动前端
+浏览器打开 **http://localhost:3041**。顶部显示 `Backend Connected` 即表示 API 可用。
+
+### 桌面客户端（可选）
 
 ```bash
-bun run --cwd frontend dev
-```
-
-默认访问：
-
-- 前端：`http://localhost:5173`
-- 后端：`http://localhost:3000`
-
-## 启动 Tauri 客户端
-
-在项目根目录执行：
-
-```bash
+bun run dev:tauri
+# 或
 bun tauri dev
 ```
 
-客户端启动后会通过 Tauri command 拉起后端（sidecar 风格），并在 UI 顶部显示后端连接状态。
+客户端会通过 Tauri 命令拉起后端进程，并在 UI 中展示连接状态。
 
-## 模型配置（前端/客户端）
+### 种子数据（可选）
 
-在“配置中心”可以配置：
+```bash
+bun run seed:agent-definitions    # 预置 Agent 定义与研究团队编组
+bun run seed:recommended-mcp      # 推荐 MCP（数学 / 金融等）
+```
 
-- `model`（例如 `gpt-4o-mini`）
-- `apiKey`
-- `baseUrl`（可选）
+---
 
-保存后会写入本地：
+## 配置
 
-- `.qubit/model.json`
+### 模型（配置中心 / `.qubit/model.json`）
 
-`reason` 节点优先读取该文件；若未配置则回退到环境变量 `OPENAI_API_KEY`。
+支持 Provider：`openai` · `anthropic` · `ollama` · `deepseek` · `qwen` · `zhipu` · `mock`。
 
-当前支持 provider：
+未在前端保存时，将回退环境变量，例如 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`DASHSCOPE_API_KEY` 等。
 
-- `openai`
-- `anthropic`
-- `ollama`
-- `deepseek`
-- `qwen`（阿里云 DashScope 兼容模式）
-- `zhipu`
-- `mock`
+### 数据目录
 
-常见环境变量回退：
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `QUBIT_DATA_DIR` | `~/.quant-agent` | SQLite、Agent Pack、工作流策略落盘目录 |
+| `PORT` / `HOST` | `3000` / `localhost` | 后端监听 |
+| `SKILLSMP_API_KEY` | — | SkillsMP 搜索配额（可选） |
 
-- OpenAI：`OPENAI_API_KEY`
-- Anthropic：`ANTHROPIC_API_KEY`
-- DeepSeek：`DEEPSEEK_API_KEY`
-- Qwen：`DASHSCOPE_API_KEY`
-- Zhipu：`ZHIPU_API_KEY`
+工作流策略文件示例路径：
 
-## 常用 API
+`$QUBIT_DATA_DIR/projects/<projectId>/workflows/<workflowRunId>/report.md`  
+`$QUBIT_DATA_DIR/projects/<projectId>/workflows/<workflowRunId>/strategies/...`
 
-- `POST /api/v1/workflows`：创建 workflow（返回 `runId`）
-- `GET /api/v1/workflows/:id/stream/:runId`：订阅步骤流
-- `GET /api/v1/agents`：查询运行中 Agent
-- `POST /api/v1/agents/reload`：重载 runtime 配置
-- `GET /api/v1/agents/config`：查看 workspace/DB/runtime 配置对比
-- `GET /api/v1/agents/model-config`：读取模型配置
-- `POST /api/v1/agents/model-config`：保存模型配置
-- `GET /api/v1/agents/definitions`：读取 Agent 发布态/草稿态/角色 profile
-- `POST /api/v1/agents/definitions/:id/draft`：保存 Agent 草稿
-- `POST /api/v1/agents/definitions/:id/release`：发布草稿并触发 runtime reload
-- `GET /api/v1/chat/sessions?workspaceId=&projectId=`：查询会话列表
-- `POST /api/v1/chat/sessions`：创建会话
-- `GET /api/v1/chat/sessions/:id/messages`：查询会话消息
-- `POST /api/v1/chat/sessions/:id/messages`：写入会话消息
-- `GET /api/v1/monitor/sessions/:id/overview`：查询会话聚合监控
-- `GET /api/v1/monitor/workflows/:id/timeline`：查询 workflow 时间线
-- `GET /api/v1/monitor/workflows/:id/sandbox-violations`：查询 sandbox 违规记录
-- `GET /api/v1/reia/broker/accounts`：查询 Broker 账号配置
-- `POST /api/v1/reia/broker/accounts/upsert`：创建/更新 Broker 账号
-- `POST /api/v1/reia/broker/health-check`：执行 Broker 健康检查
-- `GET /api/v1/reia/broker/events`：查询 Broker 事件日志
-- `POST /api/v1/workflows/compensation/enqueue`：新增补偿任务
-- `GET /api/v1/workflows/compensation/tasks`：查询补偿任务队列
-- `POST /api/v1/workflows/compensation/process`：批量执行补偿任务
-- `GET /api/v1/integrations/channels`：查询集成通道配置
-- `POST /api/v1/integrations/channels/upsert`：保存集成通道配置
-- `GET /api/v1/integrations/logs`：查询集成消息日志
+---
 
-## 真券商接入（可选）
+## 项目结构
 
-是否使用**模拟盘 / 实盘**由你在券商侧与环境中自行决定；QUBIT 只提供统一 HTTP 桥与账号配置。
+```
+qubit-agent/
+├── src/                 # 后端 API、LangGraph runtime、路由
+├── frontend/            # Web UI（Vite + React）
+├── src-tauri/           # Tauri 桌面壳
+├── python_connectors/   # 行情 / 券商 HTTP 桥
+├── docs/
+│   ├── screenshots/     # README 用图
+│   └── LOOP_DRIVERS.md  # Loop 驱动说明
+└── drizzle/             # 迁移产物
+```
 
-1. （可选）安装 Python 依赖：`cd python_connectors && pip install futu-api ib-insync`（按你实际使用的券商安装其一或全部）。
-2. 启动本地 HTTP 桥：`python broker_http_server.py`（默认监听 `http://127.0.0.1:18765`，可用环境变量 `QUBIT_BROKER_PORT` 修改）。
-3. 在后端 `POST /api/v1/reia/broker/accounts/upsert` 或使用 UI 配置 Broker 账号：`baseUrl` 指向上述地址，`mode` 为 `sandbox` 或 `live`，`accountRef` 自定义标识即可。
-4. 环境变量提示：`QUBIT_BROKER_PROVIDER`（`futu` | `ib`）、`QUBIT_FUTU_OPEND_HOST` / `QUBIT_FUTU_OPEND_PORT`（富途 OpenD）、`QUBIT_IB_HOST` / `QUBIT_IB_PORT`、`QUBIT_BROKER_PAPER=1` 表示在支持模拟环境时走模拟（具体以各券商 API 为准）。
+---
 
-未安装 SDK 时桥接服务仍可对 `/health`、`/orders` 返回**模拟成功**，便于联调；接入真实交易前请务必阅读券商协议与风控要求。
+## 开发与质量
 
-## 外部 MCP（stdio / http / ws）
+```bash
+bun run lint          # Biome lint
+bun run check         # lint + format 检查
+bun test              # 集成测试
+bun run acceptance:langgraph
+```
 
-在 `mcp_server_config` 中为同一服务配置 `transport` 与连接信息：
+---
 
-- **stdio**：填写 `command`（可执行命令行），或通过 `capabilities_json.argv` 传入字符串数组；可选 `capabilities_json.env`、`cwd`。
-- **http**：填写 `url`（POST 接收 JSON-RPC `tools/call` 的端点）；可选 `capabilities_json.httpPath`、`capabilities_json.httpHeaders`。
-- **ws**：填写可建立 WebSocket 的 `url`，按行发送/接收 JSON-RPC。
+## 常用 API（节选）
 
-工具级超时可在 `mcp_tool_binding` 中按 `server_name` + `tool_name`（或 `*`）配置 `timeout_ms`。
+<details>
+<summary>展开 REST 端点列表</summary>
 
-## 说明
+- `POST /api/v1/workflows` — 创建 workflow
+- `GET /api/v1/workflows/:id/stream/:runId` — 步骤流
+- `GET /api/v1/agents/definitions` — Agent 定义与草稿
+- `GET /api/v1/chat/sessions` · `POST .../messages` — 对话
+- `GET /api/v1/monitor/sessions/:id/overview` — 会话监控聚合
+- `GET /api/v1/analyst/fusion/:workflowId` — 团队信号融合
+- `GET /api/v1/agents/mcp/market/catalog` — MCP 市场（分页）
+- `GET /api/v1/agents/skills/market/search` — Skills 市场（分页）
+- `POST /api/v1/reia/broker/accounts/upsert` — 券商账户
 
-- `.qubit/`、`.idea/` 已在 `.gitignore`，属于本地运行配置与 IDE 产物。
-- 当前实现以 MVP 为目标，重点在 runtime 与桌面端联通闭环。
+完整路由见 `src/routes/`。
 
-## 产品与数据设计文档
+</details>
 
-- PRD：`docs/PRD.md`
-- ERD：`docs/ERD.md`
+### 券商（Futu / IB）
+
+交易链路：`intent_order` → 风控 / 确认 → `executeIntentLive`。需先启动 OpenD 与 Python 桥：
+
+```bash
+cd python_connectors && pip install futu-api
+python broker_http_server.py   # 默认 http://127.0.0.1:18765
+```
+
+在 UI「券商账户配置」中设置 `mock` / `sandbox` / `live` 与 `baseUrl`。详见 [Futu OpenAPI 文档](https://openapi.futunn.com/futu-api-doc/intro/intro.html)。
+
+### 外部 MCP
+
+在 `mcp_server_config` 中配置 **stdio** / **http** / **ws** 传输；工具超时可在 `mcp_tool_binding` 按服务名配置。
+
+---
+
+## 文档
+
+- [Loop 驱动说明](docs/LOOP_DRIVERS.md)
+
+---
+
+## 参与贡献
+
+欢迎 Issue 与 Pull Request。提交前请尽量通过 `bun run check` 与 `bun test`。
+
+---
+
+## 许可证
+
+[Apache License 2.0](LICENSE)

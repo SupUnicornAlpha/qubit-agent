@@ -1,6 +1,7 @@
 import { connectorRegistry } from "./registry";
 import { QubitNativeDataConnector } from "./data/native-data.connector";
 import { QubitNativeNewsConnector } from "./data/native-news.connector";
+import { QubitBrokerConnector } from "./execution/qubit-broker.connector";
 import { runMigrations } from "../db/sqlite/migrate";
 import {
   loadBuiltinConnectorSettings,
@@ -32,6 +33,7 @@ export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConf
     const news = new QubitNativeNewsConnector();
     connectorRegistry.register("qubit-data", data);
     connectorRegistry.register("qubit-news", news);
+    connectorRegistry.register("qubit-broker", new QubitBrokerConnector());
     const configs = initConfigs ?? (await loadBuiltinConnectorSettings());
     await connectorRegistry.initAll(configs);
   })();

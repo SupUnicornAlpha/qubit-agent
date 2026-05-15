@@ -188,6 +188,38 @@ export interface AgentProfileRecord {
   configSyncedAt?: string;
 }
 
+export interface AgentPromptPreviewResponse {
+  mergedSystemPrompt: string;
+  promptMode: "db_primary" | "file_primary" | "merged";
+  sections: {
+    agent: string;
+    soul: string;
+    user: string;
+    memory: string;
+    workspacePrompt: string;
+    dbPrompt: string;
+  };
+  runtime: {
+    tools: string[];
+    mcpServers: string[];
+    skills: string[];
+    subscriptions: string[];
+    mcpBindings: Array<{
+      serverName: string;
+      toolName: string;
+      enabled: boolean;
+      timeoutMs: number | null;
+    }>;
+  };
+  packMeta: {
+    packRoot: string;
+    memoryNamespace: string;
+    agentExists: boolean;
+    soulExists: boolean;
+    promptExists: boolean;
+  };
+}
+
 export interface AgentPackResponse {
   definitionId: string;
   packRoot: string;
@@ -230,6 +262,12 @@ export interface SkillMarketStatusDto {
   skillCount: number;
   meta: Record<string, unknown> | null;
   baseUrl: string | null;
+  /** SkillsMP 已缓存的条目数（按搜索写入，非全量目录） */
+  skillsmpCacheSize?: number;
+  /** 默认使用 SkillsMP 实时搜索；Open Skill Market 为可选全量 JSON 源 */
+  defaultSkillProvider?: "skillsmp";
+  /** 最近一次「刷新索引」使用的提供方 */
+  lastRefreshProvider?: "skillsmp" | "open";
 }
 
 /** Open Skill Market registry entry (compact JSON). */
@@ -246,6 +284,14 @@ export interface OpenSkillMarketEntryDto {
   version?: string;
   tags?: string[];
   compatibility?: Record<string, unknown>;
+}
+
+export interface SkillMarketPageResult {
+  items: OpenSkillMarketEntryDto[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 export interface SkillMarketInstallRecord {
@@ -322,6 +368,15 @@ export interface IndicatorStrategyScriptRecord {
   purpose: StrategyScriptPurpose;
   createdAt: string;
   updatedAt: string;
+  /** 导出到 dataDir 下工作流目录的路径（仅 create/update 响应可能携带） */
+  artifactDir?: string;
+}
+
+export interface WorkflowArtifactsDto {
+  workflowDir: string;
+  reportPath: string | null;
+  strategyFolders: string[];
+  report: string | null;
 }
 
 export interface SessionOverview {
@@ -793,12 +848,30 @@ export interface EvalCaseResultRecord {
   createdAt: string;
 }
 
+export interface FutuProviderConfig {
+  opendHost?: string;
+  opendPort?: number;
+  market?: "HK" | "US" | "CN";
+  accId?: string;
+}
+
+export interface IbProviderConfig {
+  host?: string;
+  port?: number;
+  clientId?: number;
+  accountId?: string;
+}
+
+export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig;
+
 export interface BrokerAccountRecord {
   id: string;
   provider: "futu" | "ib";
   accountRef: string;
   mode: "mock" | "sandbox" | "live";
   baseUrl?: string | null;
+  providerConfigJson?: BrokerProviderConfig;
+  isDefault?: boolean;
   enabled: boolean;
   healthStatus: "unknown" | "healthy" | "degraded" | "down";
   healthMessage?: string | null;
@@ -954,6 +1027,14 @@ export interface McpCatalogItemRecord {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface McpCatalogPageResult {
+  items: McpCatalogItemRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 export interface McpProjectInstallRecord {

@@ -36,12 +36,16 @@ import {
 } from "../runtime/config/builtin-connector-settings";
 import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
+import {
+  deleteAgentDefinitionById,
+  isBuiltinAgentDefinitionId,
+} from "../runtime/agent/delete-agent-definition";
+import { buildAgentPromptPreview } from "../runtime/agent/agent-prompt-preview";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
-import { RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET } from "../runtime/msa/analyst-team";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
   installCatalogItemToProject,
-  listCatalogItems,
+  listCatalogItemsPaginated,
   listMcpSources,
   listProjectInstalls,
   setDefaultSource,
@@ -50,14 +54,21 @@ import {
   uninstallProjectCatalogInstall,
   upsertMcpSource,
 } from "../runtime/mcp/market-service";
+import { RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET } from "../runtime/msa/analyst-team";
 import {
   DEFAULT_OPEN_SKILL_MARKET_BASE,
   ensureOpenSkillMarketLoaded,
   getOpenSkillMarketCacheSnapshot,
   getOpenSkillMarketEntry,
   loadOpenSkillMarketRegistry,
-  searchOpenSkillMarketEntries,
+  searchOpenSkillMarketEntriesPaginated,
 } from "../runtime/skills/open-skill-market-registry";
+import {
+  getSkillsMpCacheSize,
+  resolveSkillsMpEntryForInstall,
+  searchSkillsMp,
+  searchSkillsMpPaginated,
+} from "../runtime/skills/skillsmp-client";
 import { ALL_AGENT_ROLES, type AgentRole } from "../types/entities";
 
 export const agentRouter = new Hono();
@@ -74,33 +85,39 @@ function validateAgentGroupRelationsJson(relations: unknown, memberRoles: string
 
   for (const row of relations) {
     if (row == null) continue;
-    if (typeof row !== "object" || Array.isArray(row)) return "each relation entry must be a plain object";
+    if (typeof row !== "object" || Array.isArray(row))
+      return "each relation entry must be a plain object";
     const rec = row as Record<string, unknown>;
     if (Object.keys(rec).length === 0) continue;
 
-    if (rec["type"] === "topology_canvas") {
-      const np = rec["nodePositions"];
+    if (rec.type === "topology_canvas") {
+      const np = rec.nodePositions;
       if (np !== undefined && (typeof np !== "object" || np === null || Array.isArray(np))) {
         return "topology_canvas.nodePositions must be an object";
       }
       if (np && typeof np === "object" && !Array.isArray(np)) {
         for (const [k, v] of Object.entries(np as Record<string, unknown>)) {
-          if (!roleSet.has(k)) return `topology layout key "${k}" is not a member role in this group`;
-          if (!v || typeof v !== "object" || Array.isArray(v)) return "each layout value must be {x,y}";
+          if (!roleSet.has(k))
+            return `topology layout key "${k}" is not a member role in this group`;
+          if (!v || typeof v !== "object" || Array.isArray(v))
+            return "each layout value must be {x,y}";
           const o = v as Record<string, unknown>;
-          const x = o["x"];
-          const y = o["y"];
-          const xn = typeof x === "number" ? x : typeof x === "string" ? Number.parseFloat(x) : NaN;
-          const yn = typeof y === "number" ? y : typeof y === "string" ? Number.parseFloat(y) : NaN;
-          if (!Number.isFinite(xn) || !Number.isFinite(yn)) return "layout entries need numeric x,y";
+          const x = o.x;
+          const y = o.y;
+          const xn =
+            typeof x === "number" ? x : typeof x === "string" ? Number.parseFloat(x) : Number.NaN;
+          const yn =
+            typeof y === "number" ? y : typeof y === "string" ? Number.parseFloat(y) : Number.NaN;
+          if (!Number.isFinite(xn) || !Number.isFinite(yn))
+            return "layout entries need numeric x,y";
         }
       }
       continue;
     }
 
-    if (rec["kind"] === "broadcast") {
-      const from = asEdgeString(rec["from"]);
-      const targets = rec["targets"];
+    if (rec.kind === "broadcast") {
+      const from = asEdgeString(rec.from);
+      const targets = rec.targets;
       if (from === null) return "broadcast.from must be a string";
       if (!Array.isArray(targets)) return "broadcast.targets must be an array";
       if (!roleSet.has(from)) return `broadcast source "${from}" is not a member of this group`;
@@ -113,8 +130,8 @@ function validateAgentGroupRelationsJson(relations: unknown, memberRoles: string
       continue;
     }
 
-    const from = asEdgeString(rec["from"]);
-    const to = asEdgeString(rec["to"]);
+    const from = asEdgeString(rec.from);
+    const to = asEdgeString(rec.to);
     if (from === null && to === null) continue;
     if (from === null || to === null) return "relation from/to must be strings";
     if (from === to) return "relation from and to must differ";
@@ -374,6 +391,47 @@ agentRouter.post("/definitions", async (c) => {
     },
     201
   );
+});
+
+agentRouter.delete("/definitions/:id", async (c) => {
+  const definitionId = c.req.param("id");
+  if (isBuiltinAgentDefinitionId(definitionId)) {
+    return c.json({ error: "built-in agent definitions cannot be deleted" }, 403);
+  }
+  const db = await getDb();
+  const result = await deleteAgentDefinitionById(db, definitionId);
+  if (!result.deleted) {
+    const status = result.reason === "not found" ? 404 : 409;
+    return c.json({ error: result.reason ?? "delete failed" }, status);
+  }
+  await graphRunner.reload();
+  return c.json({ ok: true, deletedId: definitionId });
+});
+
+agentRouter.post("/definitions/:id/prompt-preview", async (c) => {
+  const definitionId = c.req.param("id");
+  const body = await c.req.json<{
+    systemPrompt?: string;
+    promptMode?: PromptMode;
+    toolsJson?: unknown;
+    mcpServersJson?: unknown;
+    skillsJson?: unknown;
+    subscriptionsJson?: unknown;
+  }>().catch(() => ({}));
+  const db = await getDb();
+  const preview = await buildAgentPromptPreview(db, {
+    definitionId,
+    overrides: {
+      systemPrompt: body.systemPrompt,
+      promptMode: body.promptMode,
+      toolsJson: body.toolsJson,
+      mcpServersJson: body.mcpServersJson,
+      skillsJson: body.skillsJson,
+      subscriptionsJson: body.subscriptionsJson,
+    },
+  });
+  if (!preview) return c.json({ error: "Agent definition not found" }, 404);
+  return c.json({ ok: true, data: preview });
 });
 
 agentRouter.get("/definitions/:id/pack", async (c) => {
@@ -1323,7 +1381,17 @@ agentRouter.get("/mcp/market/catalog", async (c) => {
   const sourceId = c.req.query("sourceId");
   const q = c.req.query("q");
   const risk = c.req.query("risk") as "low" | "medium" | "high" | undefined;
-  const data = await listCatalogItems({ sourceId: sourceId || undefined, q: q || undefined, risk });
+  const pageRaw = c.req.query("page");
+  const pageSizeRaw = c.req.query("pageSize");
+  const page = pageRaw ? Number(pageRaw) : 1;
+  const pageSize = pageSizeRaw ? Number(pageSizeRaw) : 24;
+  const data = await listCatalogItemsPaginated({
+    sourceId: sourceId || undefined,
+    q: q || undefined,
+    risk,
+    page: Number.isFinite(page) ? page : 1,
+    pageSize: Number.isFinite(pageSize) ? pageSize : 24,
+  });
   return c.json({ data });
 });
 
@@ -1389,18 +1457,44 @@ agentRouter.post("/mcp/market/installs/:id/test", async (c) => {
 });
 
 agentRouter.get("/skills/market/status", (c) => {
-  return c.json({ data: getOpenSkillMarketCacheSnapshot() });
+  const open = getOpenSkillMarketCacheSnapshot();
+  return c.json({
+    data: {
+      ...open,
+      skillsmpCacheSize: getSkillsMpCacheSize(),
+      defaultSkillProvider: "skillsmp" as const,
+    },
+  });
 });
 
 agentRouter.post("/skills/market/refresh", async (c) => {
-  const body = await c.req.json<{ baseUrl?: string }>().catch(() => ({}));
-  const baseUrl =
-    typeof body.baseUrl === "string" && body.baseUrl.trim()
-      ? body.baseUrl.trim()
-      : DEFAULT_OPEN_SKILL_MARKET_BASE;
+  const body = await c.req
+    .json<{ baseUrl?: string; provider?: string; apiKey?: string }>()
+    .catch(() => ({}));
+  const provider = (body.provider ?? "skillsmp").toLowerCase();
   try {
-    await loadOpenSkillMarketRegistry(baseUrl);
-    return c.json({ data: getOpenSkillMarketCacheSnapshot() });
+    if (provider === "open") {
+      const baseUrl =
+        typeof body.baseUrl === "string" && body.baseUrl.trim()
+          ? body.baseUrl.trim()
+          : DEFAULT_OPEN_SKILL_MARKET_BASE;
+      await loadOpenSkillMarketRegistry(baseUrl);
+    } else {
+      const apiKey =
+        typeof body.apiKey === "string" && body.apiKey.trim()
+          ? body.apiKey.trim()
+          : process.env.SKILLSMP_API_KEY;
+      await searchSkillsMp("skill", 5, apiKey);
+    }
+    const open = getOpenSkillMarketCacheSnapshot();
+    return c.json({
+      data: {
+        ...open,
+        skillsmpCacheSize: getSkillsMpCacheSize(),
+        defaultSkillProvider: "skillsmp" as const,
+        lastRefreshProvider: provider === "open" ? ("open" as const) : ("skillsmp" as const),
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return c.json({ error: message }, 502);
@@ -1409,16 +1503,30 @@ agentRouter.post("/skills/market/refresh", async (c) => {
 
 agentRouter.get("/skills/market/search", async (c) => {
   const q = c.req.query("q") ?? "";
-  const limitRaw = c.req.query("limit");
-  const limit = limitRaw ? Number(limitRaw) : 40;
+  const pageRaw = c.req.query("page");
+  const pageSizeRaw = c.req.query("pageSize") ?? c.req.query("limit");
+  const page = pageRaw ? Number(pageRaw) : 1;
+  const pageSize = pageSizeRaw ? Number(pageSizeRaw) : 24;
   const baseUrl = c.req.query("baseUrl");
+  const provider = (c.req.query("provider") ?? "skillsmp").toLowerCase();
+  const safePage = Number.isFinite(page) ? Math.max(1, page) : 1;
+  const safePageSize = Number.isFinite(pageSize) ? pageSize : 24;
   try {
-    await ensureOpenSkillMarketLoaded(
-      typeof baseUrl === "string" && baseUrl.trim()
-        ? baseUrl.trim()
-        : DEFAULT_OPEN_SKILL_MARKET_BASE
-    );
-    const data = searchOpenSkillMarketEntries(q, Number.isFinite(limit) ? limit : 40);
+    if (provider === "open") {
+      await ensureOpenSkillMarketLoaded(
+        typeof baseUrl === "string" && baseUrl.trim()
+          ? baseUrl.trim()
+          : DEFAULT_OPEN_SKILL_MARKET_BASE
+      );
+      const data = searchOpenSkillMarketEntriesPaginated(q, safePage, safePageSize);
+      return c.json({ data });
+    }
+    const data = await searchSkillsMpPaginated({
+      q,
+      page: safePage,
+      pageSize: safePageSize,
+      apiKey: process.env.SKILLSMP_API_KEY,
+    });
     return c.json({ data });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1443,10 +1551,26 @@ agentRouter.post("/skills/installs", async (c) => {
   if (!body.projectId || !body.externalSkillId?.trim()) {
     return c.json({ error: "projectId and externalSkillId are required" }, 400);
   }
-  await ensureOpenSkillMarketLoaded();
-  const skill = getOpenSkillMarketEntry(body.externalSkillId.trim());
+  const extId = body.externalSkillId.trim();
+  let skill = getOpenSkillMarketEntry(extId);
+  let registry = "open-skill-market";
   if (!skill) {
-    return c.json({ error: "skill not found in registry (try POST /skills/market/refresh)" }, 404);
+    skill = await resolveSkillsMpEntryForInstall(extId, process.env.SKILLSMP_API_KEY);
+    if (skill) registry = "skillsmp";
+  }
+  if (!skill) {
+    await ensureOpenSkillMarketLoaded();
+    skill = getOpenSkillMarketEntry(extId);
+    if (skill) registry = "open-skill-market";
+  }
+  if (!skill) {
+    return c.json(
+      {
+        error:
+          "未找到该技能：请先用 SkillsMP 或 Open Skill Market 搜索命中条目，或确认 id 与列表一致（SkillsMP 需网络可达）。",
+      },
+      404
+    );
   }
   const db = await getDb();
   const dup = await db
@@ -1464,7 +1588,7 @@ agentRouter.post("/skills/installs", async (c) => {
   await db.insert(skillMarketInstall).values({
     id,
     projectId: body.projectId,
-    registry: "open-skill-market",
+    registry,
     externalSkillId: skill.id,
     skillName: skill.name,
     description: skill.description ?? "",
@@ -1474,6 +1598,9 @@ agentRouter.post("/skills/installs", async (c) => {
       commitHash: skill.commitHash,
       categories: skill.categories,
       tags: skill.tags,
+      ...(skill.compatibility && typeof skill.compatibility === "object"
+        ? (skill.compatibility as Record<string, unknown>)
+        : {}),
     },
     installedBy: "user",
   });

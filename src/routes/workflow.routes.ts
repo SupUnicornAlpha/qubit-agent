@@ -10,6 +10,11 @@ import {
 } from "../runtime/workflow/compensation-queue";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
+import {
+  listWorkflowArtifactSummary,
+  readWorkflowReportArtifact,
+  saveWorkflowReportArtifact,
+} from "../runtime/strategy/strategy-script-files";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
 export const workflowRouter = new Hono();
@@ -265,6 +270,33 @@ workflowRouter.delete("/:id", async (c) => {
     .set({ status: "cancelled", endedAt: new Date().toISOString() })
     .where(eq(workflowRun.id, id));
   return c.json({ ok: true, id });
+});
+
+workflowRouter.get("/:id/artifacts", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
+  if (!rows[0]) return c.json({ error: "Not found" }, 404);
+  const summary = await listWorkflowArtifactSummary(rows[0].projectId, id);
+  const report = await readWorkflowReportArtifact(rows[0].projectId, id);
+  return c.json({ data: { ...summary, report } });
+});
+
+workflowRouter.put("/:id/artifacts/report", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{ report?: string; ticker?: string }>().catch(() => ({}));
+  const report = typeof body.report === "string" ? body.report : "";
+  if (!report.trim()) return c.json({ error: "report is required" }, 400);
+  const db = await getDb();
+  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
+  if (!rows[0]) return c.json({ error: "Not found" }, 404);
+  const reportPath = await saveWorkflowReportArtifact({
+    projectId: rows[0].projectId,
+    workflowRunId: id,
+    report,
+    ticker: typeof body.ticker === "string" ? body.ticker : undefined,
+  });
+  return c.json({ data: { reportPath } });
 });
 
 workflowRouter.get("/:id", async (c) => {
