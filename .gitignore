@@ -20,6 +20,7 @@ docs/
 !docs/screenshots/
 !docs/screenshots/**
 !docs/LOOP_DRIVERS.md
+!docs/ARCHITECTURE.md
 .tmp-broker-test-home/
 
 # IDE metadata

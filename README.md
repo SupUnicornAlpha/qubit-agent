@@ -148,6 +148,7 @@ qubit-agent/
 ├── src-tauri/           # Tauri 桌面壳
 ├── python_connectors/   # 行情 / 券商 HTTP 桥
 ├── docs/
+│   ├── ARCHITECTURE.md  # 平台架构说明
 │   ├── screenshots/     # README 用图
 │   └── LOOP_DRIVERS.md  # Loop 驱动说明
 └── drizzle/             # 迁移产物
@@ -204,6 +205,7 @@ python broker_http_server.py   # 默认 http://127.0.0.1:18765
 
 ## 文档
 
+- [平台架构说明](docs/ARCHITECTURE.md)
 - [Loop 驱动说明](docs/LOOP_DRIVERS.md)
 
 ---
