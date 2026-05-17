@@ -22,24 +22,32 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
   >();
 
+  private readonly pythonBin: string;
+  private readonly cwd: string | undefined;
+
   constructor(opts: {
     scriptPath: string;
     connectorName: string;
     meta: typeof BaseConnector.prototype.meta;
+    pythonBin?: string;
+    cwd?: string;
   }) {
     super();
     this.scriptPath = opts.scriptPath;
     this.connectorName = opts.connectorName;
     this.meta = opts.meta;
+    this.pythonBin = opts.pythonBin ?? process.env["QUBIT_PYTHON"] ?? "python3";
+    this.cwd = opts.cwd;
   }
 
   protected async onInit(config: ConnectorConfig): Promise<void> {
     this.process = Bun.spawn(
-      ["python", this.scriptPath, "--connector", this.connectorName],
+      [this.pythonBin, this.scriptPath, "--connector", this.connectorName],
       {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
+        cwd: this.cwd,
       }
     );
 

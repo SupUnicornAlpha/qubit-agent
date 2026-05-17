@@ -126,6 +126,8 @@ export async function queryKlines(params: {
     settings,
     period,
     hasTushareToken: hasTushare,
+    symbol,
+    exchange,
   });
 
   const fetchParams: FetchBarsParams = {

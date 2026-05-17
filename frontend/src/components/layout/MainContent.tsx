@@ -149,6 +149,12 @@ import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
 import { useAppStore, type ChartContextPayload } from "../../store";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import { StreamTimelineGroupCard } from "../chat/StreamTimelineGroupCard";
+import {
+  clearChatStreamBinding,
+  hydrateStaleChatMessages,
+  persistChatStreamBinding,
+  reconnectActiveChatStreams,
+} from "../../lib/chatMessageHydration";
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
@@ -329,6 +335,9 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const [sessionAgentBoardOpen, setSessionAgentBoardOpen] = useState(readSessionAgentBoardOpen);
   const [chatSidebarWidthPx, setChatSidebarWidthPx] = useState(readChatSidebarWidthPx);
   const chatLayoutRef = useRef<HTMLDivElement | null>(null);
+  const bindStreamRef = useRef<
+    ((workflowId: string, runId: string, assistantMessageId: string) => void) | null
+  >(null);
 
   useEffect(() => {
     try {
@@ -465,6 +474,18 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     return [...streamGroups, ...a2aPart].sort((a, b) => b.at - a.at).slice(0, 60) as TimelineItem[];
   }, [streamEvents, a2aMessages, sessionWorkflowIds]);
 
+  const reloadSessionMessages = useCallback(
+    async (sessionId: string) => {
+      const raw = await listSessionMessages(sessionId);
+      const hydrated = await hydrateStaleChatMessages(raw);
+      setChatMessages(hydrated);
+      reconnectActiveChatStreams(hydrated, (workflowId, runId, assistantMessageId) => {
+        bindStreamRef.current?.(workflowId, runId, assistantMessageId);
+      });
+    },
+    [setChatMessages]
+  );
+
   useEffect(() => {
     const boot = async () => {
       await chatHealth();
@@ -487,10 +508,14 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       setWorkspaceId(wsId);
       setProjectId(pid);
       const sessions = await listChatSessions({ workspaceId: wsId, projectId: pid });
-      if (sessions[0]) {
+      if (sessions.length > 0) {
         setChatSessions(sessions);
-        setSelectedSessionId(sessions[0].id);
-        setChatMessages(await listSessionMessages(sessions[0].id));
+        const currentSelected = useAppStore.getState().selectedSessionId;
+        const keep =
+          currentSelected && sessions.some((s) => s.id === currentSelected)
+            ? currentSelected
+            : sessions[0].id;
+        setSelectedSessionId(keep);
       } else {
         const created = await createChatSession({ workspaceId: wsId, projectId: pid, title: "默认会话" });
         setChatSessions([created]);
@@ -499,7 +524,14 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       setErrorText("");
     };
     void boot().catch((err) => setErrorText(err instanceof Error ? err.message : "初始化失败"));
-  }, [setChatMessages, setChatSessions, setSelectedSessionId]);
+  }, [setChatSessions, setSelectedSessionId]);
+
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    void reloadSessionMessages(selectedSessionId).catch((err) =>
+      setErrorText(err instanceof Error ? err.message : "加载会话消息失败")
+    );
+  }, [selectedSessionId, reloadSessionMessages]);
 
   useEffect(() => {
     if (!selectedSessionId) return;
@@ -521,9 +553,8 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     });
   };
 
-  const onSelectSession = async (sessionId: string) => {
+  const onSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
-    setChatMessages(await listSessionMessages(sessionId));
   };
 
   const onCreateSession = async () => {
@@ -543,6 +574,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   };
 
   const bindStream = (workflowId: string, runId: string, assistantMessageId: string) => {
+    persistChatStreamBinding(assistantMessageId, workflowId, runId);
     let buffer = "";
     let streamDone = false;
     let failTimer: ReturnType<typeof setTimeout> | null = null;
@@ -558,6 +590,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     const stopStream = () => {
       clearFailTimer();
       esClose();
+      clearChatStreamBinding(assistantMessageId);
     };
 
     esClose = subscribeWorkflowStream({
@@ -699,6 +732,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       },
     });
   };
+  bindStreamRef.current = bindStream;
 
   const onSend = async (event: FormEvent) => {
     event.preventDefault();
@@ -739,7 +773,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       if (created.runId) {
         bindStream(created.data.id, created.runId, assistantMsg.id);
       }
-      setChatMessages(await listSessionMessages(selectedSessionId));
+      await reloadSessionMessages(selectedSessionId);
       setInput("");
       setChartContext(null);
       setErrorText("");
@@ -832,8 +866,10 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 <div style={{ marginTop: 6 }}>
                   {msg.content ? (
                     <MarkdownBubble text={msg.content} />
-                  ) : (
+                  ) : msg.status === "running" || msg.status === "queued" ? (
                     <span style={{ color: "var(--qb-main-meta, #71717a)" }}>(流式生成中…)</span>
+                  ) : (
+                    <span style={{ color: "var(--qb-main-meta, #71717a)" }}>（暂无回复内容）</span>
                   )}
                 </div>
                 {msg.workflowRunIds?.length ? (
@@ -1036,7 +1072,7 @@ const ConfigPanel: FC = () => {
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [tushareToken, setTushareToken] = useState("");
   const [klinesDataSource, setKlinesDataSource] = useState<
-    "auto" | "tushare_daily" | "yahoo_chart" | "synthetic"
+    "auto" | "tushare_daily" | "yahoo_chart" | "eastmoney" | "akshare" | "synthetic"
   >("auto");
   const [newsApiBaseUrl, setNewsApiBaseUrl] = useState("");
   const [newsApiKey, setNewsApiKey] = useState("");
@@ -1137,7 +1173,12 @@ const ConfigPanel: FC = () => {
     setTushareToken(typeof d.tushareToken === "string" ? d.tushareToken : "");
     const kds = d["klinesDataSource"];
     setKlinesDataSource(
-      kds === "tushare_daily" || kds === "yahoo_chart" || kds === "synthetic" || kds === "auto"
+      kds === "tushare_daily" ||
+      kds === "yahoo_chart" ||
+      kds === "eastmoney" ||
+      kds === "akshare" ||
+      kds === "synthetic" ||
+      kds === "auto"
         ? kds
         : "auto"
     );
@@ -1986,8 +2027,8 @@ const ConfigPanel: FC = () => {
             <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
               在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
               <br />
-              K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为无 Tushare token 时使用{" "}
-              <strong>Yahoo Finance</strong>（免费、日线 + 分钟/小时 Chart、无需 API key）；有 token 时日线可走 Tushare。
+              K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为 A 股优先{" "}
+              <strong>东方财富</strong>（免费、日线 + 分钟/小时，国内网络友好）；有 Tushare token 时日线可走 Tushare；美股等走 Yahoo。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#d4d4d8" }}>
@@ -1996,10 +2037,20 @@ const ConfigPanel: FC = () => {
                   style={styles.select}
                   value={klinesDataSource}
                   onChange={(e) =>
-                    setKlinesDataSource(e.target.value as "auto" | "tushare_daily" | "yahoo_chart" | "synthetic")
+                    setKlinesDataSource(
+                      e.target.value as
+                        | "auto"
+                        | "tushare_daily"
+                        | "yahoo_chart"
+                        | "eastmoney"
+                        | "akshare"
+                        | "synthetic"
+                    )
                   }
                 >
-                  <option value="auto">自动（日线：有 Tushare → Tushare；否则 Yahoo；分钟/小时 → Yahoo）</option>
+                  <option value="auto">自动（A 股 → 东方财富；有 Tushare token → 日线 Tushare；其它 → Yahoo）</option>
+                  <option value="eastmoney">东方财富（A 股日线 + 分钟/小时，免费）</option>
+                  <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
                   <option value="yahoo_chart">Yahoo Finance（日线 + 分钟/小时）</option>
                   <option value="tushare_daily">Tushare 日线（需 token）</option>
                   <option value="synthetic">不拉外源（K 线为空，用于禁用行情）</option>

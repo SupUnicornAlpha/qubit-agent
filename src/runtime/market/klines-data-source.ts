@@ -1,16 +1,36 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { isChinaAShareMarket } from "./eastmoney-klines";
+import { aggregateBarsByMsWindow } from "./klines-bars";
 
 /** User-selectable K-line upstream (配置中心 `qubit-data.klinesDataSource`). */
-export type KlinesDataSourceSetting = "auto" | "tushare_daily" | "yahoo_chart" | "synthetic";
+export type KlinesDataSourceSetting =
+  | "auto"
+  | "tushare_daily"
+  | "yahoo_chart"
+  | "eastmoney"
+  | "akshare"
+  | "synthetic";
 
 /** Value exposed in `GET /market/klines` meta and used internally after resolution. */
-export type KlinesDataSourceMeta = "tushare_daily" | "yahoo_chart" | "synthetic";
+export type KlinesDataSourceMeta =
+  | "tushare_daily"
+  | "yahoo_chart"
+  | "eastmoney"
+  | "akshare"
+  | "synthetic";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
 
 export function parseKlinesDataSourceSetting(raw: unknown): KlinesDataSourceSetting {
-  if (raw === "tushare_daily" || raw === "yahoo_chart" || raw === "synthetic" || raw === "auto") {
+  if (
+    raw === "tushare_daily" ||
+    raw === "yahoo_chart" ||
+    raw === "eastmoney" ||
+    raw === "akshare" ||
+    raw === "synthetic" ||
+    raw === "auto"
+  ) {
     return raw;
   }
   return "auto";
@@ -24,19 +44,26 @@ export function resolveEffectiveKlinesSource(params: {
   settings: BuiltinConnectorInitConfigs;
   period: FetchBarsParams["period"];
   hasTushareToken: boolean;
+  symbol?: string;
+  exchange?: string;
 }): KlinesDataSourceMeta {
   const mode = parseKlinesDataSourceSetting(qubitDataSettings(params.settings).klinesDataSource);
   if (mode === "synthetic") return "synthetic";
-  const intraday = params.period !== "1d";
-  if (intraday) {
-    /** 分钟/小时 K 仅接 Yahoo Chart；Tushare 当前连接器仅日线 */
-    return "yahoo_chart";
-  }
+  if (mode === "eastmoney") return "eastmoney";
+  if (mode === "akshare") return "akshare";
   if (mode === "yahoo_chart") return "yahoo_chart";
   if (mode === "tushare_daily") {
     return params.hasTushareToken ? "tushare_daily" : "synthetic";
   }
-  if (params.hasTushareToken) return "tushare_daily";
+
+  const china =
+    params.symbol !== undefined
+      ? isChinaAShareMarket(params.symbol, params.exchange ?? "")
+      : false;
+
+  /** auto：日线有 Tushare token → Tushare；A 股/北交所 → 东方财富；否则 Yahoo */
+  if (params.period === "1d" && params.hasTushareToken) return "tushare_daily";
+  if (china) return "eastmoney";
   return "yahoo_chart";
 }
 
@@ -199,60 +226,6 @@ function yahooChartIntervalForPeriod(period: FetchBarsParams["period"]): string 
     default:
       return null;
   }
-}
-
-function aggregateBarsByMsWindow(
-  bars: BarData[],
-  windowMs: number,
-  symbol: string,
-  exchange: string
-): BarData[] {
-  if (bars.length === 0) return [];
-  const sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-  const out: BarData[] = [];
-  let bucketKey = Number.NaN;
-  let bucket: BarData[] = [];
-  const floorKey = (iso: string) => {
-    const t = new Date(iso).getTime();
-    return Math.floor(t / windowMs) * windowMs;
-  };
-  const flush = () => {
-    if (bucket.length === 0) return;
-    const o = bucket[0].open;
-    const c = bucket[bucket.length - 1].close;
-    const h = Math.max(...bucket.map((x) => x.high));
-    const l = Math.min(...bucket.map((x) => x.low));
-    const vol = bucket.reduce((s, x) => s + x.volume, 0);
-    out.push({
-      symbol,
-      exchange,
-      open: o,
-      high: h,
-      low: l,
-      close: c,
-      volume: vol,
-      turnover: 0,
-      timestamp: new Date(bucketKey).toISOString(),
-    });
-    bucket = [];
-  };
-  for (const b of sorted) {
-    const k = floorKey(b.timestamp);
-    if (bucket.length === 0) {
-      bucketKey = k;
-      bucket = [b];
-      continue;
-    }
-    if (k === bucketKey) {
-      bucket.push(b);
-    } else {
-      flush();
-      bucketKey = k;
-      bucket = [b];
-    }
-  }
-  flush();
-  return out;
 }
 
 /**

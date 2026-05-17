@@ -2,6 +2,8 @@ import {
   type BuiltinConnectorInitConfigs,
   loadBuiltinConnectorSettings,
 } from "../../runtime/config/builtin-connector-settings";
+import { fetchAkshareBars } from "../../runtime/market/akshare-klines";
+import { fetchEastMoneyBars, isChinaAShareMarket } from "../../runtime/market/eastmoney-klines";
 import {
   fetchYahooFinanceBars,
   parseKlinesDataSourceSetting,
@@ -113,7 +115,7 @@ export class QubitNativeDataConnector extends DataConnector {
     assetClasses: ["stock"],
     latencyProfile: "batch",
     description:
-      "Built-in market data: daily (Tushare / Yahoo Finance) and intraday OHLCV via Yahoo Chart v8; empty when unavailable.",
+      "Built-in market data: daily (Tushare / East Money / Yahoo) and intraday OHLCV (East Money A-share / Yahoo); empty when unavailable.",
   };
 
   private tushareToken: string | undefined;
@@ -141,7 +143,20 @@ export class QubitNativeDataConnector extends DataConnector {
     if (daily === "tushare_daily") {
       return {
         status: "healthy",
-        message: `qubit-data: 日线 → Tushare（已配置 token）；日内 → ${intraday === "yahoo_chart" ? "Yahoo Chart" : intraday}`,
+        message: `qubit-data: 日线 → Tushare（已配置 token）；日内 → ${intraday}`,
+      };
+    }
+    if (daily === "eastmoney") {
+      return {
+        status: "healthy",
+        message: "qubit-data: A 股日线 / 分钟小时 K → 东方财富（免费，无需 API key）",
+      };
+    }
+    if (daily === "akshare") {
+      return {
+        status: "healthy",
+        message:
+          "qubit-data: A 股 K 线 → AKShare（Python，需 pip install akshare pandas；失败时 A 股回退东方财富）",
       };
     }
     if (daily === "yahoo_chart") {
@@ -213,10 +228,13 @@ export class QubitNativeDataConnector extends DataConnector {
     const klinesRaw =
       typeof dataCfg.klinesDataSource === "string" ? dataCfg.klinesDataSource : undefined;
 
+    const mode = parseKlinesDataSourceSetting(klinesRaw);
     const effective = resolveEffectiveKlinesSource({
       settings: liveSettings,
       period: params.period,
       hasTushareToken: hasTushare,
+      symbol: params.symbol,
+      exchange: params.exchange,
     });
 
     if (effective === "tushare_daily" && tokenLive) {
@@ -282,7 +300,53 @@ export class QubitNativeDataConnector extends DataConnector {
       }
     }
 
-    if (effective === "yahoo_chart") {
+    if (effective === "akshare") {
+      try {
+        const bars = await fetchAkshareBars(params);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `AKShare returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `AKShare request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+      }
+      if (isChinaAShareMarket(params.symbol, params.exchange || "")) {
+        try {
+          const fallback = await fetchEastMoneyBars(params);
+          if (fallback.length > 0) {
+            console.warn(
+              `[qubit-data] AKShare unavailable or empty; fell back to East Money for ${params.symbol}`
+            );
+            return fallback;
+          }
+        } catch {
+          /* logged below if still empty */
+        }
+      }
+      if (mode === "akshare") return [];
+    }
+
+    if (effective === "eastmoney") {
+      try {
+        const bars = await fetchEastMoneyBars(params);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `East Money returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+        if (mode !== "auto") return [];
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `East Money request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+        if (mode !== "auto") return [];
+      }
+    }
+
+    if (effective === "yahoo_chart" || (effective === "eastmoney" && mode === "auto")) {
       try {
         const ySym = symbolToYahooSymbol(params.symbol, params.exchange || "");
         const bars = await fetchYahooFinanceBars(params);
@@ -301,7 +365,6 @@ export class QubitNativeDataConnector extends DataConnector {
       }
     }
 
-    const mode = parseKlinesDataSourceSetting(klinesRaw);
     if (effective === "synthetic") {
       if (mode === "tushare_daily" && !tokenLive) {
         this.logFetchBarsEmpty(

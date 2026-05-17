@@ -463,7 +463,7 @@ export const MonitorDashboard: FC = () => {
                   </li>
                 ))}
               </ul>
-            </motion.div>
+            </div>
           ) : null}
 
           <div style={styles.chartGrid}>

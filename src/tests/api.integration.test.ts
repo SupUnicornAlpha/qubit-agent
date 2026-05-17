@@ -200,7 +200,9 @@ describe("api minimal integration", () => {
     const meta = body.meta as Record<string, unknown>;
     expect(meta.timeframe).toBe("1d");
     expect(meta.period).toBe("1d");
-    expect(["tushare_daily", "synthetic", "yahoo_chart"]).toContain(meta.dataSource);
+    expect(["tushare_daily", "synthetic", "yahoo_chart", "eastmoney", "akshare"]).toContain(
+      meta.dataSource
+    );
   });
 
   test("market: klines intraday resolves to Yahoo chart source", async () => {

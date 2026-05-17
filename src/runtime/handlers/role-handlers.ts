@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import type { OrderIntentPayload, TaskAssignPayload } from "../../types/a2a";
-import type { AgentRole } from "../../types/entities";
+import { ALL_AGENT_ROLES, type AgentRole } from "../../types/entities";
 import { getA2APool } from "../a2a/a2a-pool";
 import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
@@ -199,57 +199,95 @@ const riskHandler: RuntimeRoleHandler = {
   },
 };
 
-const executionHandler: RuntimeRoleHandler = {
-  ...noopHandler("execution"),
-  onMessage: async (ctx, msg) => {
-    if (msg.messageType !== "ORDER_INTENT") {
-      return noopHandler("execution").onMessage(ctx, msg);
-    }
+function createOrderIntentExecutionHandler(role: AgentRole): RuntimeRoleHandler {
+  const base = noopHandler(role);
+  return {
+    ...base,
+    onMessage: async (ctx, msg) => {
+      if (msg.messageType !== "ORDER_INTENT") {
+        return base.onMessage(ctx, msg);
+      }
 
-    const intent = msg.payload as OrderIntentPayload;
-    if (!intent.riskSignature) {
+      const intent = msg.payload as OrderIntentPayload;
+      if (!intent.riskSignature) {
+        await ctx.send({
+          workflowId: msg.workflowId,
+          traceId: msg.traceId,
+          receiverAgent: msg.senderAgent,
+          messageType: "ALERT",
+          payload: {
+            alertType: "execution_reject",
+            severity: "error",
+            message: `ORDER_INTENT ${intent.orderIntentId} rejected: missing riskSignature`,
+          },
+          priority: 90,
+        });
+        return;
+      }
+
       await ctx.send({
         workflowId: msg.workflowId,
         traceId: msg.traceId,
         receiverAgent: msg.senderAgent,
-        messageType: "ALERT",
-        payload: {
-          alertType: "execution_reject",
-          severity: "error",
-          message: `ORDER_INTENT ${intent.orderIntentId} rejected: missing riskSignature`,
-        },
-        priority: 90,
+        messageType: "TASK_RESULT",
+        payload: buildTaskResult(randomUUID(), role, {
+          orderIntentId: intent.orderIntentId,
+          executionStatus: "accepted_by_runtime_handler",
+        }),
+        priority: msg.priority,
       });
-      return;
-    }
+    },
+  };
+}
 
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: buildTaskResult(randomUUID(), "execution", {
-        orderIntentId: intent.orderIntentId,
-        executionStatus: "accepted_by_runtime_handler",
-      }),
-      priority: msg.priority,
-    });
-  },
-};
+const executionHandler = createOrderIntentExecutionHandler("execution");
+const executionTraderHandler = createOrderIntentExecutionHandler("execution_trader");
 
-const handlers: Record<AgentRole, RuntimeRoleHandler> = {
-  orchestrator: orchestratorHandler,
-  market_data: noopHandler("market_data"),
-  news_event: noopHandler("news_event"),
-  research: noopHandler("research"),
-  backtest: noopHandler("backtest"),
-  simulation: noopHandler("simulation"),
-  risk: riskHandler,
-  execution: executionHandler,
-  memory: noopHandler("memory"),
-  audit: noopHandler("audit"),
-};
+function createRiskSigningHandler(
+  role: AgentRole,
+  forwardExecutionRole: AgentRole
+): RuntimeRoleHandler {
+  const base = noopHandler(role);
+  return {
+    ...base,
+    onMessage: async (ctx, msg) => {
+      if (msg.messageType !== "ORDER_INTENT") {
+        return base.onMessage(ctx, msg);
+      }
+
+      const intent = msg.payload as OrderIntentPayload;
+      const signingKey = process.env["QUBIT_RISK_SIGNING_KEY"] ?? "dev-secret";
+      const signature = createHmac("sha256", signingKey)
+        .update(intent.orderIntentId)
+        .digest("hex");
+
+      await ctx.send({
+        workflowId: msg.workflowId,
+        traceId: msg.traceId,
+        receiverAgent: receiverForRole(
+          forwardExecutionRole,
+          receiverForRole("execution", msg.senderAgent)
+        ),
+        messageType: "ORDER_INTENT",
+        payload: { ...intent, riskSignature: signature },
+        priority: msg.priority,
+      });
+    },
+  };
+}
+
+const riskManagerHandler = createRiskSigningHandler("risk_manager", "execution_trader");
+
+const handlers = Object.fromEntries(
+  ALL_AGENT_ROLES.map((role) => [role, noopHandler(role)])
+) as Record<AgentRole, RuntimeRoleHandler>;
+
+handlers.orchestrator = orchestratorHandler;
+handlers.risk = riskHandler;
+handlers.risk_manager = riskManagerHandler;
+handlers.execution = executionHandler;
+handlers.execution_trader = executionTraderHandler;
 
 export function getRoleHandler(role: AgentRole): RuntimeRoleHandler {
-  return handlers[role];
+  return handlers[role] ?? noopHandler(role);
 }

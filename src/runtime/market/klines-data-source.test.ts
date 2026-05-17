@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { symbolToEastMoneySecId } from "./eastmoney-klines";
 import { resolveEffectiveKlinesSource, symbolToYahooSymbol } from "./klines-data-source";
 
 describe("symbolToYahooSymbol", () => {
@@ -46,23 +47,66 @@ describe("resolveEffectiveKlinesSource", () => {
     ).toBe("tushare_daily");
   });
 
-  test("auto + no token uses yahoo for 1d", () => {
+  test("auto + no token + A-share uses eastmoney for 1d", () => {
     expect(
       resolveEffectiveKlinesSource({
         settings: { ...base, "qubit-data": { klinesDataSource: "auto" } },
         period: "1d",
         hasTushareToken: false,
+        symbol: "600000",
+        exchange: "SH",
+      })
+    ).toBe("eastmoney");
+  });
+
+  test("auto + no token + US uses yahoo for 1d", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "auto" } },
+        period: "1d",
+        hasTushareToken: false,
+        symbol: "AAPL",
+        exchange: "US",
       })
     ).toBe("yahoo_chart");
   });
 
-  test("intraday uses Yahoo Chart when not synthetic mode", () => {
+  test("intraday auto + A-share uses eastmoney", () => {
     expect(
       resolveEffectiveKlinesSource({
-        settings: { ...base, "qubit-data": { klinesDataSource: "yahoo_chart" } },
+        settings: { ...base, "qubit-data": { klinesDataSource: "auto" } },
+        period: "5m",
+        hasTushareToken: false,
+        symbol: "600000",
+        exchange: "SH",
+      })
+    ).toBe("eastmoney");
+  });
+
+  test("explicit eastmoney mode", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "eastmoney" } },
         period: "5m",
         hasTushareToken: false,
       })
-    ).toBe("yahoo_chart");
+    ).toBe("eastmoney");
+  });
+
+  test("explicit akshare mode", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "akshare" } },
+        period: "1d",
+        hasTushareToken: false,
+      })
+    ).toBe("akshare");
+  });
+});
+
+describe("symbolToEastMoneySecId", () => {
+  test("SH / SZ", () => {
+    expect(symbolToEastMoneySecId("600000", "SH")).toBe("1.600000");
+    expect(symbolToEastMoneySecId("000001", "SZ")).toBe("0.000001");
   });
 });
