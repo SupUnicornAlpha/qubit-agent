@@ -9,6 +9,7 @@ import type {
   McpToolBindingRecord,
   SkillMarketInstallRecord,
 } from "../../api/types";
+import { TokyoCodeView } from "../code/TokyoCodeEditor";
 
 const label: CSSProperties = {
   fontSize: 12,
@@ -440,12 +441,12 @@ export const AgentRuntimeTab: FC<{
               运行时：工具 {preview.runtime.tools.length} · MCP {preview.runtime.mcpServers.join(", ") || "—"} · Skills{" "}
               {preview.runtime.skills.join(", ") || "—"}
             </div>
-            <pre
-              className="qb-json-preview"
-              style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", marginBottom: 10 }}
-            >
-              {preview.mergedSystemPrompt || "（空）"}
-            </pre>
+            <TokyoCodeView
+              code={preview.mergedSystemPrompt || "（空）"}
+              language="plaintext"
+              filename="merged-system-prompt.md"
+              maxHeight={320}
+            />
             <button
               type="button"
               className="qb-btn-ghost qb-btn--compact"
@@ -468,9 +469,14 @@ export const AgentRuntimeTab: FC<{
                   text.trim() ? (
                     <details key={title} style={{ fontSize: 12 }}>
                       <summary style={{ cursor: "pointer", color: "var(--qb-team-section-fg, #cbd5e1)" }}>{title}</summary>
-                      <pre className="qb-json-preview" style={{ maxHeight: 160, marginTop: 6, whiteSpace: "pre-wrap" }}>
-                        {text.slice(0, 8000)}
-                      </pre>
+                      <div style={{ marginTop: 6 }}>
+                        <TokyoCodeView
+                          code={text.slice(0, 8000)}
+                          language="plaintext"
+                          filename={title}
+                          maxHeight={160}
+                        />
+                      </div>
                     </details>
                   ) : null
                 )}
@@ -484,19 +490,19 @@ export const AgentRuntimeTab: FC<{
         <div style={{ display: "grid", gap: 10 }}>
           <div>
             <span style={label}>mcp_servers_json</span>
-            <pre className="qb-json-preview">{JSON.stringify(draftMcpServerNames, null, 2)}</pre>
+            <TokyoCodeView code={JSON.stringify(draftMcpServerNames, null, 2)} language="json" filename="mcp_servers.json" maxHeight={180} />
           </div>
           <div>
             <span style={label}>tools_json</span>
-            <pre className="qb-json-preview">{JSON.stringify(draftTools, null, 2)}</pre>
+            <TokyoCodeView code={JSON.stringify(draftTools, null, 2)} language="json" filename="tools.json" maxHeight={180} />
           </div>
           <div>
             <span style={label}>skills_json</span>
-            <pre className="qb-json-preview">{JSON.stringify(draftSkills, null, 2)}</pre>
+            <TokyoCodeView code={JSON.stringify(draftSkills, null, 2)} language="json" filename="skills.json" maxHeight={180} />
           </div>
           <div>
             <span style={label}>subscriptions_json</span>
-            <pre className="qb-json-preview">{JSON.stringify(draftSubscriptions, null, 2)}</pre>
+            <TokyoCodeView code={JSON.stringify(draftSubscriptions, null, 2)} language="json" filename="subscriptions.json" maxHeight={180} />
           </div>
         </div>
       </Collapsible>

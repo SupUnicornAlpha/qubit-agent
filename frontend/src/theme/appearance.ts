@@ -9,10 +9,12 @@ export type UiPaletteId = (typeof UI_PALETTE_IDS)[number];
 export const UI_STYLE_IDS = [
   "default",
   "glassmorphism",
-  "generative-art",
+  "retro-futurism",
   "industrial",
   "neon-cyberpunk",
   "bauhaus",
+  "sci-fi-hud",
+  "comic-book",
 ] as const;
 export type UiStyleId = (typeof UI_STYLE_IDS)[number];
 
@@ -29,10 +31,12 @@ export const PALETTE_LABELS: Record<UiPaletteId, string> = {
 export const STYLE_LABELS: Record<UiStyleId, string> = {
   default: "默认",
   glassmorphism: "Glassmorphism",
-  "generative-art": "生成艺术",
+  "retro-futurism": "复古未来主义",
   industrial: "工业设计",
   "neon-cyberpunk": "霓虹赛博朋克",
   bauhaus: "Bauhaus 包豪斯",
+  "sci-fi-hud": "科幻 HUD",
+  "comic-book": "Comic Book 漫画书",
 };
 
 export interface UiAppearance {
@@ -102,10 +106,14 @@ function normalizePalette(v: unknown): UiPaletteId | null {
   return LEGACY_PALETTE_MAP[v] ?? null;
 }
 
+const LEGACY_STYLE_MAP: Record<string, UiStyleId> = {
+  "generative-art": "retro-futurism",
+};
+
 function normalizeStyle(v: unknown): UiStyleId | null {
   if (typeof v !== "string") return null;
   if (UI_STYLE_IDS.includes(v as UiStyleId)) return v as UiStyleId;
-  return null;
+  return LEGACY_STYLE_MAP[v] ?? null;
 }
 
 /** index.html 防 FOUC：与 readUiAppearance 规则一致 */

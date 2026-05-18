@@ -1,0 +1,313 @@
+/**
+ * Tokyo Night Dark — 代码编辑 / 展示（#1a1b26 / #16161e）
+ */
+.qb-tokyo-editor {
+  --tokyo-bg: #1a1b26;
+  --tokyo-bg-deep: #16161e;
+  --tokyo-bg-line: #1e202e;
+  --tokyo-bg-selection: #364a82;
+  --tokyo-fg: #a9b1d6;
+  --tokyo-gutter: #565f89;
+  --tokyo-gutter-active: #7aa2f7;
+  --tokyo-border: #24283b;
+  --tokyo-title-fg: #c0caf5;
+  --tokyo-status-fg: #787c99;
+  --tokyo-hl-keyword: #bb9af7;
+  --tokyo-hl-function: #7aa2f7;
+  --tokyo-hl-string: #9ece6a;
+  --tokyo-hl-number: #ff9e64;
+  --tokyo-hl-comment: #565f89;
+  --tokyo-hl-builtin: #7dcfff;
+  --tokyo-hl-type: #2ac3de;
+  --tokyo-hl-operator: #89ddff;
+  --tokyo-hl-punctuation: #9aa5ce;
+  --tokyo-hl-property: #73daca;
+  --tokyo-hl-json-key: #7aa2f7;
+  --tokyo-hl-json-bool: #bb9af7;
+  --tokyo-hl-json-null: #565f89;
+  --tokyo-font: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+  --tokyo-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--tokyo-radius);
+  border: 1px solid var(--tokyo-border);
+  background: var(--tokyo-bg);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 12px 40px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.qb-tokyo-editor--flat {
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+}
+
+.qb-tokyo-editor__chrome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--tokyo-bg);
+  border-bottom: 1px solid var(--tokyo-border);
+  flex-shrink: 0;
+}
+
+.qb-tokyo-editor__traffic {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.qb-tokyo-editor__dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.qb-tokyo-editor__dot--close {
+  background: #ff5f57;
+}
+
+.qb-tokyo-editor__dot--min {
+  background: #febc2e;
+}
+
+.qb-tokyo-editor__dot--max {
+  background: #28c840;
+}
+
+.qb-tokyo-editor__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tokyo-title-fg);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qb-tokyo-editor__lang {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--tokyo-gutter);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--tokyo-border);
+  background: var(--tokyo-bg-deep);
+}
+
+.qb-tokyo-editor__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--tokyo-bg-deep);
+  position: relative;
+}
+
+.qb-tokyo-editor__gutter {
+  flex-shrink: 0;
+  width: 3.25rem;
+  padding: 10px 8px 10px 10px;
+  text-align: right;
+  font-family: var(--tokyo-font);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--tokyo-gutter);
+  background: var(--tokyo-bg);
+  border-right: 1px solid var(--tokyo-border);
+  overflow: hidden;
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.qb-tokyo-editor__gutter-line {
+  height: 18px;
+  line-height: 18px;
+}
+
+.qb-tokyo-editor__gutter-line--active {
+  color: var(--tokyo-gutter-active);
+  font-weight: 600;
+}
+
+.qb-tokyo-editor__scroll {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  overflow: auto;
+  scroll-behavior: smooth;
+}
+
+.qb-tokyo-editor__stack {
+  position: relative;
+}
+
+.qb-tokyo-editor__highlight,
+.qb-tokyo-editor__textarea {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--tokyo-font);
+  font-size: 12px;
+  line-height: 18px;
+  tab-size: 4;
+  white-space: pre;
+  word-wrap: normal;
+  overflow-wrap: normal;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.qb-tokyo-editor__highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none !important;
+  color: var(--tokyo-fg);
+  background: transparent;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.qb-tokyo-editor__highlight * {
+  pointer-events: none !important;
+}
+
+.qb-tokyo-editor__textarea {
+  position: relative;
+  z-index: 2;
+  display: block;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  caret-color: #c0caf5;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.qb-tokyo-editor__textarea::selection {
+  background: var(--tokyo-bg-selection);
+  color: transparent;
+}
+
+.qb-tokyo-editor__textarea:read-only {
+  cursor: default;
+}
+
+.qb-tokyo-editor__line {
+  min-height: 18px;
+  line-height: 18px;
+}
+
+.qb-tokyo-editor__line--active {
+  background: var(--tokyo-bg-line);
+  margin: 0 -12px;
+  padding: 0 12px;
+  border-radius: 0;
+}
+
+.qb-tokyo-editor__status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-family: var(--tokyo-font);
+  color: var(--tokyo-status-fg);
+  background: var(--tokyo-bg);
+  border-top: 1px solid var(--tokyo-border);
+  flex-shrink: 0;
+}
+
+.qb-tokyo-editor__status strong {
+  color: var(--tokyo-title-fg);
+  font-weight: 600;
+}
+
+/* 语法高亮 token */
+.tokyo-hl-keyword {
+  color: var(--tokyo-hl-keyword);
+}
+
+.tokyo-hl-function {
+  color: var(--tokyo-hl-function);
+}
+
+.tokyo-hl-string {
+  color: var(--tokyo-hl-string);
+}
+
+.tokyo-hl-number {
+  color: var(--tokyo-hl-number);
+}
+
+.tokyo-hl-comment {
+  color: var(--tokyo-hl-comment);
+  font-style: italic;
+}
+
+.tokyo-hl-builtin {
+  color: var(--tokyo-hl-builtin);
+}
+
+.tokyo-hl-type {
+  color: var(--tokyo-hl-type);
+}
+
+.tokyo-hl-operator {
+  color: var(--tokyo-hl-operator);
+}
+
+.tokyo-hl-punctuation {
+  color: var(--tokyo-hl-punctuation);
+}
+
+.tokyo-hl-property {
+  color: var(--tokyo-hl-property);
+}
+
+.tokyo-hl-json-key {
+  color: var(--tokyo-hl-json-key);
+}
+
+.tokyo-hl-json-bool {
+  color: var(--tokyo-hl-json-bool);
+}
+
+.tokyo-hl-json-null {
+  color: var(--tokyo-hl-json-null);
+}
+
+.tokyo-hl-plain {
+  color: var(--tokyo-fg);
+}
+
+/* 兼容旧 json-preview：包一层即得 Tokyo 外观 */
+.qb-json-preview.qb-tokyo-editor,
+pre.qb-json-preview {
+  margin: 0;
+}
+
+pre.qb-json-preview:not(.qb-tokyo-editor) {
+  border-radius: var(--tokyo-radius);
+  border: 1px solid var(--tokyo-border);
+  background: var(--tokyo-bg-deep);
+  color: var(--tokyo-fg);
+  font-family: var(--tokyo-font);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 12px;
+}

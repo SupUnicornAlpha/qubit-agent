@@ -59,7 +59,9 @@ body,
     transition: none;
   }
 
-  html[data-qb-style="generative-art"] .qb-app-root::before {
+  html[data-qb-style="retro-futurism"] .qb-app-root::before,
+  html[data-qb-style="retro-futurism"] .qb-app-root::after,
+  html[data-qb-style="sci-fi-hud"] .qb-app-root::after {
     animation: none;
   }
 }

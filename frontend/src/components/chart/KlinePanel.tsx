@@ -413,7 +413,10 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     : null;
 
   return (
-    <div style={embedded ? styles.root : styles.rootPage}>
+    <div
+      style={embedded ? styles.root : styles.rootPage}
+      {...(!embedded ? { "data-qb-news-page": true } : {})}
+    >
       {embedded ? (
         <div style={styles.embeddedBar}>
           {error ? <div style={styles.errCompact}>{error}</div> : null}

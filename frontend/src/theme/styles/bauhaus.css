@@ -38,10 +38,83 @@ html[data-qb-style="bauhaus"] {
   --qb-brand-icon-glow: rgba(229, 57, 53, 0.5);
 
   --qb-main-input-bg: #fff;
+  --qb-main-input-border: #111;
+  --qb-main-input-fg: #111;
   --qb-main-card-bg: #fff;
+  --qb-main-card-border: #111;
+  --qb-main-meta: #424242;
   --qb-main-panel-bg: #faf7f2;
+  --qb-ide-chrome-border: #111;
   --qb-chat-main-bg: #fff;
   --qb-chat-sidebar-bg: #fff;
+  --qb-chat-border: #111;
+
+  /* 研究工作台 · K 线 / 回测 */
+  --qb-kline-root-bg: #fff;
+  --qb-kline-header-border: #111;
+  --qb-kline-embedded-bar-bg: var(--qb-bauhaus-yellow);
+
+  /* 研究团队三栏工作台 */
+  --qb-team-shell-bg: var(--qb-bg-root);
+  --qb-team-shell-border: #111;
+  --qb-team-left-bg: #fff;
+  --qb-team-center-bg: #fff;
+  --qb-team-right-bg: #fff;
+  --qb-team-activity-bg: var(--qb-bauhaus-yellow);
+  --qb-team-stage-bg: #fff;
+  --qb-team-titlebar-bg: var(--qb-bauhaus-blue);
+  --qb-team-titlebar-fg: #fff;
+  --qb-team-gutter-bg: var(--qb-bauhaus-red);
+  --qb-team-tab-bg: #fff;
+  --qb-team-tab-fg: #424242;
+  --qb-team-tab-active-bg: var(--qb-bauhaus-red);
+  --qb-team-tab-active-fg: #fff;
+  --qb-team-tab-active-border: #111;
+  --qb-team-act-btn-fg: #111;
+  --qb-team-act-btn-active-bg: var(--qb-bauhaus-blue);
+  --qb-team-act-btn-active-border: #111;
+  --qb-team-act-btn-active-fg: #fff;
+  --qb-team-panel-bg: #fff;
+  --qb-team-panel-border: #111;
+  --qb-team-input-bg: #fff;
+  --qb-team-input-border: #111;
+  --qb-team-input-fg: #111;
+  --qb-team-hero-bg: rgba(30, 136, 229, 0.14);
+  --qb-team-hero-border: #111;
+  --qb-team-section-fg: #111;
+  --qb-team-meta: #424242;
+  --qb-team-replay-bg: #faf7f2;
+  --qb-team-trend-bg: #fff;
+  --qb-team-screener-bg: #fff;
+  --qb-team-screener-btn-bg: #fff;
+  --qb-team-screener-btn-fg: #111;
+  --qb-team-screener-btn-active-bg: var(--qb-bauhaus-yellow);
+  --qb-team-screener-btn-active-border: #111;
+  --qb-team-radar-bg: #fff;
+  --qb-team-radar-bar-bg: var(--qb-bauhaus-blue);
+  --qb-team-report-bg: #fff;
+  --qb-team-member-bg: #faf7f2;
+  --qb-team-member-tag-bg: var(--qb-bauhaus-yellow);
+  --qb-team-member-tag-fg: #111;
+  --qb-team-table-header-fg: #424242;
+  --qb-team-table-row-border: #111;
+  --qb-team-table-cell-fg: #111;
+  --qb-team-live-feed-bg: #fff;
+  --qb-team-live-feed-border: #111;
+  --qb-team-live-feed-fg: #111;
+  --qb-team-live-feed-row-border: #d4cfc4;
+  --qb-team-debate-bg: var(--qb-bauhaus-yellow);
+  --qb-team-debate-border: #111;
+  --qb-team-debate-fg: #111;
+  --qb-team-debate-accent: var(--qb-bauhaus-red);
+  --qb-team-canvas-bg: #faf7f2;
+  --qb-team-edge-fg: #757575;
+  --qb-team-edge-active: var(--qb-bauhaus-blue);
+  --qb-team-edge-hot: var(--qb-bauhaus-red);
+  --qb-team-node-selected-fill: rgba(30, 136, 229, 0.22);
+  --qb-team-node-selected-stroke: #111;
+  --qb-team-node-hot-fill: rgba(229, 57, 53, 0.18);
+  --qb-team-node-hot-stroke: var(--qb-bauhaus-red);
 }
 
 html[data-qb-style="bauhaus"] .qb-app-root {
@@ -122,4 +195,167 @@ html[data-qb-style="bauhaus"] .qb-btn-primary-brand {
 
 html[data-qb-style="bauhaus"] .qb-sidebar-activity {
   border-right: 3px solid #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-btn-secondary,
+html[data-qb-style="bauhaus"] .qb-btn-ghost,
+html[data-qb-style="bauhaus"] .qb-chip {
+  border: 2px solid #111;
+  border-radius: 0;
+  background: #fff;
+  color: #111;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-btn-secondary:hover:not(:disabled),
+html[data-qb-style="bauhaus"] .qb-btn-ghost:hover:not(:disabled) {
+  background: var(--qb-bauhaus-yellow);
+}
+
+html[data-qb-style="bauhaus"] .qb-icon-btn {
+  color: #424242;
+  border-radius: 0;
+}
+
+html[data-qb-style="bauhaus"] .qb-icon-btn:hover {
+  color: #111;
+  background: var(--qb-bauhaus-yellow);
+  border: 2px solid #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-icon-btn--active {
+  color: #111;
+  background: var(--qb-bauhaus-yellow);
+  border: 2px solid #111;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-workbench-toolbar {
+  border-bottom: 3px solid #111;
+  box-shadow: 0 4px 0 var(--qb-bauhaus-yellow);
+}
+
+html[data-qb-style="bauhaus"] .qb-toolbar-vsep {
+  background: #111;
+  width: 2px;
+}
+
+/* ── 研究工作台（IDE + K 线 + 指标 IDE） ── */
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] {
+  background: var(--qb-bg-root);
+  color: var(--qb-body-fg);
+}
+
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] [role="separator"] {
+  width: 4px;
+  background: var(--qb-bauhaus-red);
+}
+
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] .qb-segmented--inline {
+  border: 2px solid #111;
+  box-shadow: 3px 3px 0 #111;
+  background: #fff;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] .qb-segmented__tab {
+  color: #424242;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] .qb-segmented__tab--active {
+  background: var(--qb-bauhaus-red) !important;
+  color: #fff !important;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] input,
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] select,
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] textarea:not(.qb-tokyo-editor__textarea) {
+  border: 2px solid #111 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  color: #111 !important;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-ide-workbench] .qb-tokyo-editor {
+  border: 3px solid #111;
+  box-shadow: 4px 4px 0 #111;
+}
+
+/* ── 研究团队三栏工作台 ── */
+html[data-qb-style="bauhaus"] [data-qb-team-shell] {
+  position: relative;
+  border: 3px solid #111 !important;
+  border-radius: 0 !important;
+  box-shadow: 6px 6px 0 #111;
+  background: var(--qb-team-shell-bg) !important;
+  overflow: hidden;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell]::before {
+  content: "";
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--qb-bauhaus-red);
+  opacity: 0.15;
+  pointer-events: none;
+  z-index: 0;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] > div {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] > div > aside,
+html[data-qb-style="bauhaus"] [data-qb-team-shell] > div > div:nth-child(3),
+html[data-qb-style="bauhaus"] [data-qb-team-shell] > div > div:nth-child(5) {
+  border-color: #111 !important;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  border-right: 3px solid #111 !important;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] nav[aria-label="研究团队视图"] button[type="button"] {
+  border-radius: 0;
+  border: 2px solid transparent;
+  font-weight: 700;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] nav[aria-label="研究团队视图"] button[type="button"]:hover {
+  border-color: #111;
+  background: #fff !important;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] input,
+html[data-qb-style="bauhaus"] [data-qb-team-shell] select,
+html[data-qb-style="bauhaus"] [data-qb-team-shell] textarea {
+  border: 2px solid #111 !important;
+  border-radius: 0 !important;
+  background: var(--qb-team-input-bg) !important;
+  color: var(--qb-team-input-fg) !important;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-team-shell] button.qb-btn-primary-brand,
+html[data-qb-style="bauhaus"] [data-qb-team-shell] button.qb-btn-primary {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="bauhaus"] .qb-btn-primary-brand:hover:not(:disabled),
+  html[data-qb-style="bauhaus"] .qb-btn-secondary:hover:not(:disabled) {
+    transform: none;
+  }
 }

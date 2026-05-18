@@ -28,7 +28,7 @@ const styles: Record<string, CSSProperties> = {
     minHeight: 0,
     minWidth: 0,
     overflow: "hidden",
-    background: "var(--qb-bg-root, #09090b)",
+    background: "transparent",
     color: "var(--qb-body-fg, #e4e4e7)",
   },
   details: {
@@ -395,8 +395,8 @@ export const TraderLivePanel: FC = () => {
   };
 
   return (
-    <div style={styles.root}>
-      <details style={styles.details}>
+    <div data-qb-trader-root style={styles.root}>
+      <details style={styles.details} data-qb-trader-bar>
         <summary style={styles.summary}>交易 Agent 配置</summary>
         <div style={styles.configBody}>
           <p style={styles.hint}>
@@ -500,8 +500,10 @@ export const TraderLivePanel: FC = () => {
 
       <div style={styles.mainRow}>
         <div style={styles.flowCol}>
-          <div style={styles.flowHead}>交易 Agent 工作台</div>
-          <div style={styles.flowTabs}>
+          <div style={styles.flowHead} data-qb-trader-bar>
+            交易 Agent 工作台
+          </div>
+          <div style={styles.flowTabs} data-qb-trader-bar>
             {(
               [
                 ["decision", "决策流", traderAgentLog.length],
@@ -512,6 +514,8 @@ export const TraderLivePanel: FC = () => {
               <button
                 key={key}
                 type="button"
+                data-qb-trader-flow-tab
+                data-active={flowTab === key ? "true" : "false"}
                 style={{
                   ...styles.flowTab,
                   ...(flowTab === key ? styles.flowTabActive : {}),
@@ -523,7 +527,7 @@ export const TraderLivePanel: FC = () => {
               </button>
             ))}
           </div>
-          <div style={styles.flowActions}>
+          <div style={styles.flowActions} data-qb-trader-bar>
             <button
               type="button"
               className="qb-btn-primary-brand"
@@ -547,7 +551,7 @@ export const TraderLivePanel: FC = () => {
               清空 K 线标记
             </button>
           </div>
-          <div style={styles.flowScroll}>
+          <div style={styles.flowScroll} data-qb-trader-scroll>
             {flowTab === "decision" ? (
               traderAgentLog.length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
@@ -555,7 +559,7 @@ export const TraderLivePanel: FC = () => {
                 </div>
               ) : (
                 [...traderAgentLog].reverse().map((row) => (
-                  <div key={row.id} style={styles.logCard}>
+                  <div key={row.id} style={styles.logCard} data-qb-trader-card>
                     <div style={styles.logMeta}>
                       {new Date(row.ts).toLocaleString()} · {row.kind}
                     </div>
@@ -572,7 +576,7 @@ export const TraderLivePanel: FC = () => {
                 </div>
               ) : (
                 [...traderDrivers].reverse().map((row) => (
-                  <div key={row.id} style={styles.logCard}>
+                  <div key={row.id} style={styles.logCard} data-qb-trader-card>
                     <div style={styles.logMeta}>
                       {new Date(row.ts).toLocaleString()}
                       <span style={styles.driverKind}>{row.driverKind}</span>
@@ -590,7 +594,7 @@ export const TraderLivePanel: FC = () => {
                 </div>
               ) : (
                 [...traderAgentMessages].reverse().map((row) => (
-                  <div key={row.id} style={styles.logCard}>
+                  <div key={row.id} style={styles.logCard} data-qb-trader-card>
                     <div style={styles.logMeta}>
                       {new Date(row.ts).toLocaleString()}
                       <span style={styles.msgType}>{row.messageType}</span>
@@ -607,7 +611,7 @@ export const TraderLivePanel: FC = () => {
               )
             ) : null}
           </div>
-          <div style={styles.cmdRow}>
+          <div style={styles.cmdRow} data-qb-trader-bar>
             <input
               style={styles.cmdInp}
               value={userCmd}
@@ -630,7 +634,7 @@ export const TraderLivePanel: FC = () => {
 
         <div style={styles.rightCol}>
           <div style={styles.klineSlot}>
-            <div style={styles.klineToolbar}>
+            <div style={styles.klineToolbar} data-qb-trader-bar>
               <label style={styles.lab}>
                 代码
                 <input

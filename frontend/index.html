@@ -10,7 +10,7 @@
     <script>
       (function () {
         var PALETTES = ["dark-purple", "light-white", "light-sky"];
-        var STYLES = ["default", "glassmorphism", "generative-art", "industrial", "neon-cyberpunk", "bauhaus"];
+        var STYLES = ["default", "glassmorphism", "retro-futurism", "industrial", "neon-cyberpunk", "bauhaus", "sci-fi-hud", "comic-book"];
         var LEGACY = { "dark-gray": "dark-purple", "light-mint": "light-white" };
         var root = document.documentElement;
         function normPalette(v) {
@@ -19,6 +19,7 @@
           return "dark-purple";
         }
         function normStyle(v) {
+          if (v === "generative-art") return "retro-futurism";
           return STYLES.indexOf(v) >= 0 ? v : "default";
         }
         try {

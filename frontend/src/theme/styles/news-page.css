@@ -1,0 +1,289 @@
+/**
+ * 资讯页（KlinePanel 全页 + NewsBriefSection）— 各视觉风格令牌与结构样式
+ * 组件钩子：`data-qb-news-page`、`data-qb-news-section`
+ */
+
+/* ── Glassmorphism ── */
+html[data-qb-style="glassmorphism"] {
+  --qb-news-wrap-bg: rgba(255, 255, 255, 0.03);
+  --qb-news-col-title-bg: rgba(255, 255, 255, 0.06);
+  --qb-news-col-title-fg: #f1f5f9;
+  --qb-news-item-bg: rgba(255, 255, 255, 0.06);
+  --qb-news-expand-bg: rgba(0, 0, 0, 0.28);
+  --qb-news-open-btn-bg: rgba(129, 140, 248, 0.18);
+  --qb-news-open-btn-border: rgba(167, 139, 250, 0.55);
+  --qb-news-item-radius: var(--qb-radius-sm);
+}
+
+/* ── 复古未来主义 ── */
+html[data-qb-style="retro-futurism"] {
+  --qb-main-input-bg: rgba(5, 0, 24, 0.85);
+  --qb-main-input-border: rgba(0, 229, 255, 0.35);
+  --qb-main-input-fg: #f0e6ff;
+  --qb-main-meta: #7dd3fc;
+  --qb-kline-root-bg: #050014;
+  --qb-kline-header-border: rgba(255, 43, 214, 0.35);
+  --qb-kline-embedded-bar-bg: rgba(8, 0, 28, 0.78);
+
+  --qb-news-wrap-bg: rgba(5, 0, 20, 0.72);
+  --qb-news-col-title-bg: rgba(8, 0, 28, 0.85);
+  --qb-news-col-title-fg: #f0e6ff;
+  --qb-news-item-bg: rgba(8, 0, 32, 0.78);
+  --qb-news-expand-bg: rgba(255, 43, 214, 0.1);
+  --qb-news-open-btn-bg: rgba(255, 140, 0, 0.2);
+  --qb-news-open-btn-border: var(--qb-retro-orange);
+  --qb-news-item-radius: var(--qb-radius-sm);
+}
+
+/* ── 工业设计 ── */
+html[data-qb-style="industrial"] {
+  --qb-main-input-bg: #22262b;
+  --qb-main-input-border: #3f4348;
+  --qb-main-input-fg: #e7e5e4;
+  --qb-main-meta: #a8a29e;
+  --qb-kline-root-bg: #141618;
+  --qb-kline-header-border: #3f4348;
+  --qb-kline-embedded-bar-bg: #1f2226;
+
+  --qb-news-wrap-bg: #181a1d;
+  --qb-news-col-title-bg: #22262b;
+  --qb-news-col-title-fg: #fafaf9;
+  --qb-news-item-bg: #22262b;
+  --qb-news-expand-bg: #141618;
+  --qb-news-open-btn-bg: rgba(245, 158, 11, 0.15);
+  --qb-news-open-btn-border: #f59e0b;
+  --qb-news-item-radius: var(--qb-radius-sm);
+}
+
+/* ── 霓虹赛博朋克 ── */
+html[data-qb-style="neon-cyberpunk"] {
+  --qb-main-input-bg: rgba(10, 0, 24, 0.9);
+  --qb-main-input-border: rgba(0, 255, 249, 0.4);
+  --qb-main-input-fg: #e0f7fa;
+  --qb-main-meta: #7dd3fc;
+  --qb-kline-root-bg: #050008;
+  --qb-kline-header-border: rgba(0, 255, 249, 0.35);
+  --qb-kline-embedded-bar-bg: rgba(10, 0, 24, 0.92);
+
+  --qb-news-wrap-bg: rgba(5, 0, 12, 0.95);
+  --qb-news-col-title-bg: rgba(20, 0, 40, 0.88);
+  --qb-news-col-title-fg: #f0fdff;
+  --qb-news-item-bg: rgba(20, 0, 40, 0.82);
+  --qb-news-expand-bg: rgba(0, 255, 249, 0.06);
+  --qb-news-open-btn-bg: rgba(255, 0, 255, 0.15);
+  --qb-news-open-btn-border: var(--qb-neon-cyan);
+  --qb-news-item-radius: 0;
+}
+
+/* ── Bauhaus 包豪斯 ── */
+html[data-qb-style="bauhaus"] {
+  --qb-news-wrap-bg: #faf7f2;
+  --qb-news-col-title-bg: var(--qb-bauhaus-yellow);
+  --qb-news-col-title-fg: #111;
+  --qb-news-item-bg: #fff;
+  --qb-news-expand-bg: #fff;
+  --qb-news-open-btn-bg: rgba(30, 136, 229, 0.12);
+  --qb-news-open-btn-border: var(--qb-bauhaus-blue);
+  --qb-news-item-radius: 0;
+}
+
+/* ── 科幻 HUD ── */
+html[data-qb-style="sci-fi-hud"] {
+  --qb-main-input-bg: rgba(15, 23, 42, 0.85);
+  --qb-main-input-border: rgba(34, 211, 238, 0.35);
+  --qb-main-input-fg: #e5f2ff;
+  --qb-main-meta: #94a3b8;
+  --qb-kline-root-bg: #020617;
+  --qb-kline-header-border: rgba(34, 211, 238, 0.35);
+  --qb-kline-embedded-bar-bg: rgba(15, 23, 42, 0.82);
+
+  --qb-news-wrap-bg: rgba(2, 6, 23, 0.55);
+  --qb-news-col-title-bg: rgba(15, 23, 42, 0.88);
+  --qb-news-col-title-fg: #e5f2ff;
+  --qb-news-item-bg: var(--qb-glass-panel);
+  --qb-news-expand-bg: rgba(15, 23, 42, 0.92);
+  --qb-news-open-btn-bg: rgba(14, 165, 233, 0.2);
+  --qb-news-open-btn-border: var(--qb-hud-cyan);
+  --qb-news-item-radius: var(--qb-radius-sm);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   资讯列表区结构（各风格差异化）
+   ═══════════════════════════════════════════════════════════════ */
+
+html[data-qb-style] [data-qb-news-section] article {
+  border-radius: var(--qb-news-item-radius, 6px);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.12s ease;
+}
+
+html[data-qb-style] [data-qb-news-section] [data-qb-news-open-btn] {
+  background: var(--qb-news-open-btn-bg, rgba(59, 130, 246, 0.12));
+  border-color: var(--qb-news-open-btn-border, var(--qb-blue, #3b82f6));
+  border-radius: var(--qb-news-item-radius, 6px);
+}
+
+/* Glassmorphism */
+html[data-qb-style="glassmorphism"] [data-qb-news-section] article {
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border-color: var(--qb-main-input-border) !important;
+  box-shadow: var(--qb-glass-shadow);
+}
+
+html[data-qb-style="glassmorphism"] [data-qb-news-section] [data-qb-news-col-title] {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+html[data-qb-style="glassmorphism"] [data-qb-news-page] header {
+  backdrop-filter: blur(var(--qb-glass-blur)) saturate(var(--qb-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--qb-glass-blur)) saturate(var(--qb-glass-saturate));
+}
+
+/* 复古未来主义 */
+html[data-qb-style="retro-futurism"] [data-qb-news-section] article {
+  border: 1px solid rgba(0, 229, 255, 0.35);
+  box-shadow: 0 0 14px rgba(255, 43, 214, 0.12);
+}
+
+html[data-qb-style="retro-futurism"] [data-qb-news-section] [data-qb-news-col-title] {
+  font-family: var(--qb-font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-bottom-color: var(--qb-retro-magenta) !important;
+}
+
+html[data-qb-style="retro-futurism"] [data-qb-news-page] h1 {
+  color: var(--qb-retro-orange);
+  text-shadow: 0 0 12px rgba(255, 140, 0, 0.45);
+}
+
+/* 工业设计 */
+html[data-qb-style="industrial"] [data-qb-news-section] article {
+  border: 1px solid #3f4348;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+html[data-qb-style="industrial"] [data-qb-news-section] [data-qb-news-col-title] {
+  font-family: var(--qb-font-accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+  border-bottom: 2px solid #b45309;
+}
+
+/* 霓虹赛博朋克 */
+html[data-qb-style="neon-cyberpunk"] [data-qb-news-section] article {
+  border: 1px solid rgba(0, 255, 249, 0.45);
+  box-shadow:
+    0 0 10px rgba(0, 255, 249, 0.12),
+    inset 0 0 20px rgba(255, 0, 255, 0.04);
+}
+
+html[data-qb-style="neon-cyberpunk"] [data-qb-news-section] article:hover {
+  box-shadow: 0 0 18px rgba(0, 255, 249, 0.25);
+}
+
+html[data-qb-style="neon-cyberpunk"] [data-qb-news-section] [data-qb-news-col-title] {
+  text-shadow: 0 0 8px rgba(0, 255, 249, 0.4);
+  border-bottom-color: rgba(255, 0, 255, 0.45) !important;
+}
+
+html[data-qb-style="neon-cyberpunk"] [data-qb-news-page] h1 {
+  color: var(--qb-neon-cyan);
+  text-shadow: 0 0 12px rgba(0, 255, 249, 0.5);
+}
+
+/* Bauhaus */
+html[data-qb-style="bauhaus"] [data-qb-news-section] article {
+  border: 2px solid #111 !important;
+  box-shadow: 3px 3px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-news-section] [data-qb-news-expand] {
+  border: 2px solid #111 !important;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-news-page] header input,
+html[data-qb-style="bauhaus"] [data-qb-news-page] header select {
+  border: 2px solid #111 !important;
+  border-radius: 0 !important;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-news-page] h1 {
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* 科幻 HUD */
+html[data-qb-style="sci-fi-hud"] [data-qb-news-section] {
+  position: relative;
+}
+
+html[data-qb-style="sci-fi-hud"] [data-qb-news-section] article {
+  border: 1px solid var(--qb-glass-border);
+  position: relative;
+}
+
+html[data-qb-style="sci-fi-hud"] [data-qb-news-section] article::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--qb-hud-cyan);
+  border-left: 2px solid var(--qb-hud-cyan);
+  pointer-events: none;
+}
+
+html[data-qb-style="sci-fi-hud"] [data-qb-news-section] [data-qb-news-col-title] {
+  border-bottom-color: var(--qb-glass-border) !important;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 12px;
+}
+
+html[data-qb-style="sci-fi-hud"] [data-qb-news-page] h1 {
+  color: var(--qb-hud-cyan);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 16px;
+}
+
+/* Comic Book */
+html[data-qb-style="comic-book"] [data-qb-news-section] article {
+  border: var(--qb-comic-border, 3px solid #000) !important;
+  box-shadow: var(--qb-comic-shadow, 5px 5px 0 #000);
+  transform: rotate(-0.4deg);
+}
+
+html[data-qb-style="comic-book"] [data-qb-news-section] article:nth-child(even) {
+  transform: rotate(0.5deg);
+}
+
+html[data-qb-style="comic-book"] [data-qb-news-section] [data-qb-news-col-title] {
+  font-family: var(--qb-font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: var(--qb-comic-border, 3px solid #000) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-news-page] h1 {
+  font-family: var(--qb-font-display);
+  color: var(--qb-comic-red, #e23636);
+  text-shadow: 3px 3px 0 #000;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+html[data-qb-style="comic-book"] [data-qb-news-page] header {
+  border-bottom: var(--qb-comic-border, 3px solid #000);
+  box-shadow: 0 4px 0 #000;
+}

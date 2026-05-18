@@ -2,6 +2,8 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { CSSProperties, FC, ReactNode } from "react";
+import { TokyoCodeView } from "../code/TokyoCodeEditor";
+import { inferTokyoLanguage } from "../../lib/tokyoSyntaxHighlight";
 
 const mdBase: CSSProperties = {
   fontSize: 14,
@@ -87,25 +89,18 @@ const mdComponents: Components = {
   code: ({ className, children }) => {
     const isBlock = Boolean(className?.includes("language-"));
     if (isBlock) {
+      const text = String(children).replace(/\n$/, "");
+      const lang = className?.match(/language-(\w+)/)?.[1];
       return (
-        <code
-          className={className}
-          style={{
-            display: "block",
-            padding: "10px 12px",
-            margin: "0.5em 0",
-            borderRadius: 8,
-            background: "var(--qb-md-code-block-bg, #09090b)",
-            border: "1px solid var(--qb-md-code-block-border, #27272a)",
-            fontSize: 12,
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
-            overflowX: "auto",
-            whiteSpace: "pre",
-            color: "var(--qb-md-pre-fg, #d4d4d8)",
-          }}
-        >
-          {children}
-        </code>
+        <div style={{ margin: "0.5em 0" }}>
+          <TokyoCodeView
+            code={text}
+            language={inferTokyoLanguage(lang)}
+            filename={lang ? `snippet.${lang === "python" ? "py" : lang}` : "snippet.txt"}
+            minHeight={48}
+            maxHeight={360}
+          />
+        </div>
       );
     }
     return (
@@ -123,9 +118,7 @@ const mdComponents: Components = {
       </code>
     );
   },
-  pre: ({ children }) => (
-    <pre style={{ margin: "0.5em 0", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{children as ReactNode}</pre>
-  ),
+  pre: ({ children }) => <div style={{ margin: "0.5em 0" }}>{children as ReactNode}</div>,
   strong: ({ children }) => <strong style={{ fontWeight: 600 }}>{children}</strong>,
   em: ({ children }) => <em style={{ fontStyle: "italic", color: "var(--qb-md-em-fg, #d4d4d8)" }}>{children}</em>,
 };

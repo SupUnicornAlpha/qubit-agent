@@ -8,6 +8,7 @@ import {
   updateStrategyScript,
 } from "../../api/backend";
 import type { IndicatorStrategyScriptRecord } from "../../api/types";
+import { TokyoCodeEditor } from "../code/TokyoCodeEditor";
 import { qc } from "../../lib/uiClasses";
 import { useAppStore } from "../../store";
 
@@ -255,24 +256,31 @@ export const IdeIndicatorIdePanel: FC = () => {
         {error ? <div style={styles.err}>{error}</div> : null}
       </div>
 
-      <textarea
-        className="qa-code"
-        style={styles.code}
+      <TokyoCodeEditor
+        flat
+        showChrome={false}
+        showStatus
+        flex={1}
+        minHeight={140}
+        language="python"
+        filename={`${scriptName.trim() || "strategy"}.py`}
         value={ideStrategySource}
-        onChange={(e) => setIdeStrategySource(e.target.value)}
-        spellCheck={false}
-        aria-label="策略与指标源码"
+        onChange={setIdeStrategySource}
+        textareaProps={{ "aria-label": "策略与指标源码" }}
       />
 
       <details style={styles.details} open={showSignal} onToggle={(e) => setShowSignal((e.target as HTMLDetailsElement).open)}>
         <summary style={styles.sum}>Python 信号脚本（底部「代码策略」回测共用）</summary>
-        <textarea
-          className="qa-code"
-          style={styles.signalCode}
+        <TokyoCodeEditor
+          flat
+          showChrome={false}
+          showStatus={false}
+          minHeight={88}
+          language="python"
+          filename="signal.py"
           value={ideSignalPythonCode}
-          onChange={(e) => setIdeSignalPythonCode(e.target.value)}
-          spellCheck={false}
-          aria-label="Python 信号 buy sell"
+          onChange={setIdeSignalPythonCode}
+          textareaProps={{ "aria-label": "Python 信号 buy sell" }}
         />
       </details>
 
@@ -364,39 +372,8 @@ const styles: Record<string, CSSProperties> = {
   },
   btnRow: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 2 },
   err: { color: "#fca5a5", fontSize: 11 },
-  code: {
-    flex: 1,
-    minHeight: 100,
-    resize: "none",
-    margin: 0,
-    padding: "10px 12px",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 12,
-    lineHeight: 1.45,
-    border: "none",
-    borderBottom: "1px solid var(--qb-main-input-border, #27272a)",
-    background: "var(--qb-team-stage-bg, #0c0c0e)",
-    color: "var(--qb-stream-box-fg, #d4d4d8)",
-    outline: "none",
-  },
   details: { borderBottom: "1px solid var(--qb-main-input-border, #27272a)", background: "var(--qb-team-stage-bg, #0c0c0e)" },
   sum: { cursor: "pointer", padding: "6px 12px", fontSize: 11, color: "var(--qb-main-meta, #71717a)" },
-  signalCode: {
-    width: "100%",
-    minHeight: 88,
-    resize: "vertical",
-    margin: 0,
-    padding: "8px 12px",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    fontSize: 11,
-    lineHeight: 1.4,
-    border: "none",
-    borderTop: "1px solid var(--qb-main-input-border, #27272a)",
-    background: "var(--qb-kline-root-bg, #09090b)",
-    color: "var(--qb-stream-box-fg, #d4d4d8)",
-    outline: "none",
-    boxSizing: "border-box",
-  },
   aiBox: {
     flexShrink: 0,
     padding: "10px 12px 12px",

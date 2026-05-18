@@ -113,8 +113,8 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 6,
     padding: "6px 12px",
     borderRadius: 6,
-    border: "1px solid var(--qb-blue, #3b82f6)",
-    background: "rgba(59, 130, 246, 0.12)",
+    border: "1px solid var(--qb-news-open-btn-border, var(--qb-blue, #3b82f6))",
+    background: "var(--qb-news-open-btn-bg, rgba(59, 130, 246, 0.12))",
     color: "var(--qb-body-fg, #e4e4e7)",
     fontSize: 12,
     cursor: "pointer",
@@ -129,7 +129,7 @@ function NewsItemCard({ it }: { it: MarketNewsBriefItem }) {
   const urlTrim = it.url?.trim() ?? "";
 
   return (
-    <article style={styles.item}>
+    <article style={styles.item} data-qb-news-item>
       <h3 style={styles.itemTitle}>{it.title}</h3>
       <div style={styles.meta}>
         <span>{it.publishedAt}</span>
@@ -146,11 +146,16 @@ function NewsItemCard({ it }: { it: MarketNewsBriefItem }) {
         ) : null}
       </div>
       {expanded ? (
-        <div style={styles.expandPanel}>
+        <div style={styles.expandPanel} data-qb-news-expand>
           {urlTrim ? (
             <>
               <div style={styles.expandUrl}>{normalizeExternalHref(urlTrim)}</div>
-              <button type="button" style={styles.openBtn} onClick={() => openExternalUrl(urlTrim)}>
+              <button
+                type="button"
+                style={styles.openBtn}
+                data-qb-news-open-btn
+                onClick={() => openExternalUrl(urlTrim)}
+              >
                 在浏览器中打开
               </button>
             </>
@@ -180,7 +185,7 @@ function NewsCol(props: {
 }) {
   return (
     <div style={{ ...styles.col, borderRight: props.showDivider ? "1px solid var(--qb-main-input-border, #27272a)" : undefined }}>
-      <div style={styles.colTitle}>
+      <div style={styles.colTitle} data-qb-news-col-title>
         {props.title}
         {props.subtitle ? <div style={styles.sub}>{props.subtitle}</div> : null}
       </div>
@@ -241,7 +246,7 @@ export const NewsBriefSection: FC<{
   }, [load, reloadNonce]);
 
   return (
-    <section style={styles.wrap} aria-label="资讯列表">
+    <section style={styles.wrap} data-qb-news-section aria-label="资讯列表">
       <div style={styles.head}>
         {loading
           ? "资讯加载中…"

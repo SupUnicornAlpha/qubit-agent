@@ -164,6 +164,7 @@ import { TraderLivePanel } from "../trader/TraderLivePanel";
 import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
+import { TokyoCodeView } from "../code/TokyoCodeEditor";
 
 export const MainContent: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
@@ -5707,37 +5708,27 @@ const TeamDashboardPanel: FC = () => {
                     {hasIde ? (
                       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>IDE / 指标代码</div>
-                        <pre
-                          style={{
-                            ...teamStyles.report,
-                            flex: 1,
-                            minHeight: 80,
-                            maxHeight: "28vh",
-                            overflow: "auto",
-                            margin: 0,
-                            fontSize: 11,
-                          }}
-                        >
-                          {p.ide}
-                        </pre>
+                        <TokyoCodeView
+                          code={p.ide}
+                          language="python"
+                          filename="strategy_ide.py"
+                          flex={1}
+                          minHeight={80}
+                          maxHeight="28vh"
+                        />
                       </div>
                     ) : null}
                     {hasSig ? (
                       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>Python 信号 / 回测代码</div>
-                        <pre
-                          style={{
-                            ...teamStyles.report,
-                            flex: 1,
-                            minHeight: 100,
-                            maxHeight: "36vh",
-                            overflow: "auto",
-                            margin: 0,
-                            fontSize: 11,
-                          }}
-                        >
-                          {p.signal}
-                        </pre>
+                        <TokyoCodeView
+                          code={p.signal}
+                          language="python"
+                          filename="signal.py"
+                          flex={1}
+                          minHeight={100}
+                          maxHeight="36vh"
+                        />
                       </div>
                     ) : null}
                   </div>

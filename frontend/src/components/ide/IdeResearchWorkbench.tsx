@@ -47,7 +47,7 @@ export const IdeResearchWorkbench: FC<{ renderChat: () => ReactNode }> = ({ rend
   const showCenterContent = idePanels.chart || idePanels.backtest;
 
   return (
-    <div style={styles.root}>
+    <div data-qb-ide-workbench style={styles.root}>
       <IdeWorkbenchToolbar />
       <div ref={wrapRef} style={styles.mainRow}>
         {idePanels.left ? (

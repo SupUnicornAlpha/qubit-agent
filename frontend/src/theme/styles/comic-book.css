@@ -1,0 +1,492 @@
+/**
+ * Comic Book 漫画书 — Silver Age 漫威/DC：CMYK 原色、粗黑描边、硬阴影、半色调、动态分格
+ */
+@import url("https://fonts.googleapis.com/css2?family=Bangers&family=Comic+Neue:wght@400;700&display=swap");
+
+html[data-qb-style="comic-book"] {
+  color-scheme: light;
+
+  --qb-comic-red: #e23636;
+  --qb-comic-blue: #1e90ff;
+  --qb-comic-yellow: #ffd700;
+  --qb-comic-green: #2ecc40;
+  --qb-comic-paper: #fffef0;
+  --qb-comic-ink: #000000;
+  --qb-comic-shadow: 5px 5px 0 var(--qb-comic-ink);
+  --qb-comic-border: 3px solid var(--qb-comic-ink);
+  --qb-comic-halftone: radial-gradient(circle, rgba(0, 0, 0, 0.18) 1px, transparent 1px);
+  --qb-comic-halftone-size: 5px 5px;
+
+  --qb-bg-root: var(--qb-comic-blue);
+  --qb-bg-root-top: #4aa3ff;
+  --qb-tint: rgba(255, 215, 0, 0.25);
+  --qb-tint-strong: rgba(226, 54, 54, 0.2);
+  --qb-blue: var(--qb-comic-blue);
+  --qb-blue-deep: #1565c0;
+  --qb-focus-ring: rgba(226, 54, 54, 0.55);
+  --qb-hairline: var(--qb-comic-ink);
+  --qb-separator: var(--qb-comic-ink);
+  --qb-body-fg: var(--qb-comic-ink);
+
+  --qb-topbar-bg: var(--qb-comic-paper);
+  --qb-workbench-toolbar-bg: var(--qb-comic-yellow);
+  --qb-segmented-active-bg: var(--qb-comic-red);
+  --qb-radius-lg: 0;
+  --qb-radius-md: 0;
+  --qb-radius-sm: 0;
+
+  --qb-font-display: "Bangers", Impact, "Arial Black", sans-serif;
+  --qb-font-body: "Comic Neue", "Comic Sans MS", "PingFang SC", cursive, sans-serif;
+  --qb-comic-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --qb-comic-duration: 0.22s;
+
+  --qb-scrollbar-track: rgba(0, 0, 0, 0.12);
+  --qb-scrollbar-thumb-top: var(--qb-comic-red);
+  --qb-scrollbar-thumb-bot: var(--qb-comic-yellow);
+
+  --qb-sidebar-nav-bg: var(--qb-comic-paper);
+  --qb-sidebar-activity-bg: var(--qb-comic-yellow);
+  --qb-sidebar-explorer-bg: var(--qb-comic-paper);
+  --qb-sidebar-border: var(--qb-comic-ink);
+  --qb-sidebar-muted: #333;
+  --qb-sidebar-text: var(--qb-comic-ink);
+  --qb-brand-icon: var(--qb-comic-red);
+  --qb-brand-icon-glow: rgba(226, 54, 54, 0.45);
+
+  --qb-main-input-bg: var(--qb-comic-paper);
+  --qb-main-input-border: var(--qb-comic-ink);
+  --qb-main-input-fg: var(--qb-comic-ink);
+  --qb-main-card-bg: var(--qb-comic-paper);
+  --qb-main-card-border: var(--qb-comic-ink);
+  --qb-main-meta: #333;
+  --qb-main-panel-bg: rgba(255, 254, 240, 0.92);
+  --qb-ide-chrome-border: var(--qb-comic-ink);
+  --qb-chat-main-bg: var(--qb-comic-paper);
+  --qb-chat-sidebar-bg: var(--qb-comic-paper);
+  --qb-chat-border: var(--qb-comic-ink);
+  --qb-chat-bubble-agent-bg: #fff;
+  --qb-chat-bubble-user-bg: var(--qb-comic-yellow);
+  --qb-chat-bubble-user-fg: var(--qb-comic-ink);
+  --qb-chat-bubble-agent-fg: var(--qb-comic-ink);
+  --qb-chat-bubble-border: var(--qb-comic-ink);
+
+  --qb-kline-root-bg: var(--qb-comic-paper);
+  --qb-kline-header-border: var(--qb-comic-ink);
+  --qb-kline-embedded-bar-bg: var(--qb-comic-yellow);
+
+  --qb-news-wrap-bg: var(--qb-comic-paper);
+  --qb-news-col-title-bg: var(--qb-comic-yellow);
+  --qb-news-col-title-fg: var(--qb-comic-ink);
+  --qb-news-item-bg: #fff;
+  --qb-news-expand-bg: var(--qb-comic-paper);
+  --qb-news-open-btn-bg: rgba(30, 144, 255, 0.15);
+  --qb-news-open-btn-border: var(--qb-comic-blue);
+  --qb-news-item-radius: 0;
+
+  --qb-team-shell-bg: var(--qb-comic-blue);
+  --qb-team-shell-border: var(--qb-comic-ink);
+  --qb-team-left-bg: var(--qb-comic-paper);
+  --qb-team-center-bg: var(--qb-comic-paper);
+  --qb-team-right-bg: var(--qb-comic-paper);
+  --qb-team-activity-bg: var(--qb-comic-yellow);
+  --qb-team-stage-bg: var(--qb-comic-paper);
+  --qb-team-titlebar-bg: var(--qb-comic-red);
+  --qb-team-titlebar-fg: #fff;
+  --qb-team-gutter-bg: var(--qb-comic-red);
+  --qb-team-tab-bg: var(--qb-comic-paper);
+  --qb-team-tab-fg: #333;
+  --qb-team-tab-active-bg: var(--qb-comic-red);
+  --qb-team-tab-active-fg: #fff;
+  --qb-team-tab-active-border: var(--qb-comic-ink);
+  --qb-team-act-btn-fg: var(--qb-comic-ink);
+  --qb-team-act-btn-active-bg: var(--qb-comic-blue);
+  --qb-team-act-btn-active-border: var(--qb-comic-ink);
+  --qb-team-act-btn-active-fg: #fff;
+  --qb-team-panel-bg: var(--qb-comic-paper);
+  --qb-team-panel-border: var(--qb-comic-ink);
+  --qb-team-input-bg: #fff;
+  --qb-team-input-border: var(--qb-comic-ink);
+  --qb-team-input-fg: var(--qb-comic-ink);
+  --qb-team-hero-bg: rgba(255, 215, 0, 0.35);
+  --qb-team-hero-border: var(--qb-comic-ink);
+  --qb-team-section-fg: var(--qb-comic-ink);
+  --qb-team-meta: #333;
+  --qb-team-replay-bg: #fff;
+  --qb-team-trend-bg: var(--qb-comic-paper);
+  --qb-team-screener-bg: var(--qb-comic-paper);
+  --qb-team-screener-btn-bg: #fff;
+  --qb-team-screener-btn-fg: var(--qb-comic-ink);
+  --qb-team-screener-btn-active-bg: var(--qb-comic-yellow);
+  --qb-team-screener-btn-active-border: var(--qb-comic-ink);
+  --qb-team-radar-bg: #fff;
+  --qb-team-radar-bar-bg: var(--qb-comic-blue);
+  --qb-team-report-bg: #fff;
+  --qb-team-member-bg: var(--qb-comic-paper);
+  --qb-team-member-tag-bg: var(--qb-comic-yellow);
+  --qb-team-member-tag-fg: var(--qb-comic-ink);
+  --qb-team-table-header-fg: #333;
+  --qb-team-table-row-border: var(--qb-comic-ink);
+  --qb-team-table-cell-fg: var(--qb-comic-ink);
+  --qb-team-live-feed-bg: #fff;
+  --qb-team-live-feed-border: var(--qb-comic-ink);
+  --qb-team-live-feed-fg: var(--qb-comic-ink);
+  --qb-team-live-feed-row-border: rgba(0, 0, 0, 0.12);
+  --qb-team-debate-bg: var(--qb-comic-yellow);
+  --qb-team-debate-border: var(--qb-comic-ink);
+  --qb-team-debate-fg: var(--qb-comic-ink);
+  --qb-team-debate-accent: var(--qb-comic-red);
+  --qb-team-canvas-bg: var(--qb-comic-paper);
+  --qb-team-edge-fg: #555;
+  --qb-team-edge-active: var(--qb-comic-blue);
+  --qb-team-edge-hot: var(--qb-comic-red);
+  --qb-team-node-selected-fill: rgba(30, 144, 255, 0.25);
+  --qb-team-node-selected-stroke: var(--qb-comic-ink);
+  --qb-team-node-hot-fill: rgba(226, 54, 54, 0.2);
+  --qb-team-node-hot-stroke: var(--qb-comic-red);
+}
+
+@keyframes qb-comic-pow {
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+  40% {
+    transform: scale(1.08) rotate(-2deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes qb-comic-speedlines {
+  0% {
+    opacity: 0.4;
+    transform: rotate(0deg) scale(1);
+  }
+  100% {
+    opacity: 0.65;
+    transform: rotate(8deg) scale(1.05);
+  }
+}
+
+/* ── 全局：半色调英雄蓝底 + 速度线 ── */
+html[data-qb-style="comic-book"] body {
+  font-family: var(--qb-font-body);
+}
+
+html[data-qb-style="comic-book"] .qb-app-root {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--qb-comic-blue);
+  background-image:
+    var(--qb-comic-halftone),
+    repeating-conic-gradient(
+      from 0deg at 50% 50%,
+      transparent 0deg 8deg,
+      rgba(0, 0, 0, 0.04) 8deg 9deg
+    );
+  background-size: var(--qb-comic-halftone-size), 100% 100%;
+}
+
+html[data-qb-style="comic-book"] .qb-app-root::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    transparent 0deg 6deg,
+    rgba(255, 255, 255, 0.06) 6deg 7deg
+  );
+  animation: qb-comic-speedlines 18s linear infinite;
+}
+
+html[data-qb-style="comic-book"] .qb-app-root::after {
+  content: "";
+  position: fixed;
+  top: 10%;
+  right: 5%;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+  z-index: 0;
+}
+
+html[data-qb-style="comic-book"] .qb-app-root > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── 顶栏 / 侧栏 ── */
+html[data-qb-style="comic-book"] .qb-topbar {
+  border-bottom: var(--qb-comic-border);
+  box-shadow: 0 4px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-logo-text {
+  font-family: var(--qb-font-display);
+  font-size: 1.35rem;
+  letter-spacing: 0.06em;
+  color: var(--qb-comic-red);
+  text-shadow:
+    3px 3px 0 var(--qb-comic-ink),
+    -1px -1px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-topbar__subtitle {
+  font-family: var(--qb-font-display);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-sidebar-activity {
+  border-right: var(--qb-comic-border);
+}
+
+html[data-qb-style="comic-book"] .qb-sidebar-shell,
+html[data-qb-style="comic-book"] .qb-explorer-panel {
+  border-color: var(--qb-comic-ink);
+  box-shadow: var(--qb-comic-shadow);
+}
+
+html[data-qb-style="comic-book"] .qb-nav-row {
+  font-weight: 700;
+  border: 2px solid transparent;
+  margin: 2px 6px;
+  transition:
+    transform var(--qb-comic-duration) var(--qb-comic-ease),
+    box-shadow var(--qb-comic-duration) var(--qb-comic-ease),
+    background var(--qb-comic-duration) ease;
+}
+
+html[data-qb-style="comic-book"] .qb-nav-row:hover {
+  transform: skewX(-2deg) translateX(2px);
+  border-color: var(--qb-comic-ink);
+  background: #fff !important;
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-nav-row--active {
+  background: var(--qb-comic-yellow) !important;
+  color: var(--qb-comic-ink) !important;
+  border: var(--qb-comic-border);
+  box-shadow: var(--qb-comic-shadow);
+  transform: rotate(-1deg);
+}
+
+html[data-qb-style="comic-book"] .qb-nav-activity-btn--active {
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+/* ── 卡片 / 分格面板 ── */
+html[data-qb-style="comic-book"] .qb-context-card,
+html[data-qb-style="comic-book"] .qb-agent-shell,
+html[data-qb-style="comic-book"] .qb-segmented,
+html[data-qb-style="comic-book"] .qb-status-pill {
+  border: var(--qb-comic-border);
+  border-radius: 0;
+  background: var(--qb-comic-paper);
+  box-shadow: var(--qb-comic-shadow);
+  transition:
+    transform var(--qb-comic-duration) var(--qb-comic-ease),
+    box-shadow var(--qb-comic-duration) var(--qb-comic-ease);
+}
+
+html[data-qb-style="comic-book"] .qb-context-card:hover,
+html[data-qb-style="comic-book"] .qb-agent-shell:hover {
+  transform: rotate(-0.8deg) translateY(-2px);
+  box-shadow: 7px 7px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-agent-hero__title {
+  font-family: var(--qb-font-display);
+  font-size: 1.5rem;
+  letter-spacing: 0.05em;
+  color: var(--qb-comic-red);
+  text-shadow: 2px 2px 0 var(--qb-comic-ink);
+  text-transform: uppercase;
+}
+
+html[data-qb-style="comic-book"] .qb-segmented__tab {
+  font-family: var(--qb-font-display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html[data-qb-style="comic-book"] .qb-segmented__tab--active {
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  border: 2px solid var(--qb-comic-ink);
+  box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.2);
+}
+
+/* ── 按钮：硬阴影 + POW 反馈 ── */
+html[data-qb-style="comic-book"] .qb-btn-primary,
+html[data-qb-style="comic-book"] .qb-btn-primary-brand {
+  font-family: var(--qb-font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  border: var(--qb-comic-border) !important;
+  border-radius: 0;
+  box-shadow: var(--qb-comic-shadow);
+  transition:
+    transform var(--qb-comic-duration) var(--qb-comic-ease),
+    box-shadow var(--qb-comic-duration) var(--qb-comic-ease);
+}
+
+html[data-qb-style="comic-book"] .qb-btn-primary:hover:not(:disabled),
+html[data-qb-style="comic-book"] .qb-btn-primary-brand:hover:not(:disabled) {
+  transform: translate(-2px, -2px) rotate(-1deg);
+  box-shadow: 7px 7px 0 var(--qb-comic-ink);
+  animation: qb-comic-pow 0.35s var(--qb-comic-ease);
+}
+
+html[data-qb-style="comic-book"] .qb-btn-primary:active:not(:disabled),
+html[data-qb-style="comic-book"] .qb-btn-primary-brand:active:not(:disabled) {
+  transform: translate(3px, 3px);
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-btn-secondary,
+html[data-qb-style="comic-book"] .qb-btn-ghost,
+html[data-qb-style="comic-book"] .qb-chip {
+  font-family: var(--qb-font-display);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: var(--qb-comic-border) !important;
+  border-radius: 0;
+  background: var(--qb-comic-yellow) !important;
+  color: var(--qb-comic-ink) !important;
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-btn-secondary:hover:not(:disabled),
+html[data-qb-style="comic-book"] .qb-btn-ghost:hover:not(:disabled),
+html[data-qb-style="comic-book"] .qb-chip:hover {
+  transform: skewX(-2deg);
+  box-shadow: 5px 5px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-chip--active {
+  background: var(--qb-comic-blue) !important;
+  color: #fff !important;
+}
+
+html[data-qb-style="comic-book"] .qb-icon-btn {
+  border-radius: 0;
+  color: var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-icon-btn:hover {
+  background: var(--qb-comic-yellow);
+  border: 2px solid var(--qb-comic-ink);
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-icon-btn--active {
+  background: var(--qb-comic-red);
+  color: #fff;
+  border: 2px solid var(--qb-comic-ink);
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-workbench-toolbar {
+  border-bottom: var(--qb-comic-border);
+  box-shadow: 0 4px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] input,
+html[data-qb-style="comic-book"] select,
+html[data-qb-style="comic-book"] textarea:not(.qb-tokyo-editor__textarea) {
+  border: 2px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+  font-family: var(--qb-font-body);
+}
+
+html[data-qb-style="comic-book"] .qb-style-select,
+html[data-qb-style="comic-book"] .qb-theme-select {
+  border: 2px solid var(--qb-comic-ink);
+  font-weight: 700;
+}
+
+/* ── 研究工作台 ── */
+html[data-qb-style="comic-book"] [data-qb-ide-workbench] {
+  color: var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-ide-workbench] [role="separator"] {
+  width: 5px;
+  background: var(--qb-comic-red);
+  border-left: 2px solid var(--qb-comic-ink);
+  border-right: 2px solid var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-ide-workbench] .qb-segmented--inline {
+  transform: rotate(-0.5deg);
+  border: var(--qb-comic-border);
+  box-shadow: var(--qb-comic-shadow);
+}
+
+html[data-qb-style="comic-book"] [data-qb-ide-workbench] .qb-segmented__tab--active {
+  background: var(--qb-comic-red) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-ide-workbench] .qb-tokyo-editor {
+  border: var(--qb-comic-border);
+  box-shadow: var(--qb-comic-shadow);
+  transform: rotate(0.3deg);
+}
+
+/* ── 研究团队 ── */
+html[data-qb-style="comic-book"] [data-qb-team-shell] {
+  border: 4px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  box-shadow: 8px 8px 0 var(--qb-comic-ink);
+  transform: rotate(-0.4deg);
+}
+
+html[data-qb-style="comic-book"] [data-qb-team-shell] > div > aside,
+html[data-qb-style="comic-book"] [data-qb-team-shell] > div > div:nth-child(3),
+html[data-qb-style="comic-book"] [data-qb-team-shell] > div > div:nth-child(5) {
+  border-color: var(--qb-comic-ink) !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+html[data-qb-style="comic-book"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  border-right: var(--qb-comic-border) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-team-shell] nav[aria-label="研究团队视图"] button[type="button"]:hover {
+  transform: scale(1.05);
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] .qb-md-code-block,
+html[data-qb-style="comic-book"] pre:not(.qb-tokyo-editor__highlight) {
+  border: 2px solid var(--qb-comic-ink);
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="comic-book"] .qb-app-root::before {
+    animation: none;
+  }
+
+  html[data-qb-style="comic-book"] .qb-btn-primary:hover:not(:disabled),
+  html[data-qb-style="comic-book"] .qb-btn-primary-brand:hover:not(:disabled),
+  html[data-qb-style="comic-book"] .qb-context-card:hover,
+  html[data-qb-style="comic-book"] .qb-agent-shell:hover,
+  html[data-qb-style="comic-book"] .qb-nav-row:hover {
+    animation: none;
+    transform: none;
+  }
+}
