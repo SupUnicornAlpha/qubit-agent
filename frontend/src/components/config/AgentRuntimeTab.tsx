@@ -1,13 +1,15 @@
 import { ChevronDown, ChevronRight, Server } from "lucide-react";
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { postAgentPromptPreview, upsertMcpBinding } from "../../api/backend";
-import type {
-  AgentDefinitionBundle,
-  AgentPromptPreviewResponse,
-  McpServerConfigRecord,
-  McpToolBindingRecord,
-  SkillMarketInstallRecord,
+import { getAgentToolCatalog, postAgentPromptPreview, upsertMcpBinding } from "../../api/backend";
+import {
+  TOOL_CATEGORY_LABELS,
+  type AgentDefinitionBundle,
+  type AgentPromptPreviewResponse,
+  type McpServerConfigRecord,
+  type McpToolBindingRecord,
+  type SkillMarketInstallRecord,
+  type ToolCatalogEntry,
 } from "../../api/types";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 
@@ -41,6 +43,20 @@ function parseStringList(v: unknown): string[] {
 
 function toggleInList(list: string[], item: string): string[] {
   return list.includes(item) ? list.filter((x) => x !== item) : [...list, item];
+}
+
+function formatToolTooltip(entry: ToolCatalogEntry | undefined, toolName: string): string {
+  if (!entry) {
+    return `${toolName}\n（自定义工具，请确保运行时已实现）`;
+  }
+  const cat = entry.category ? TOOL_CATEGORY_LABELS[entry.category] : "其他";
+  const via =
+    entry.kind === "connector" && entry.connector
+      ? `经 ${entry.connector}`
+      : entry.kind === "builtin"
+        ? "内置实现"
+        : "MCP";
+  return `${entry.description}\n分类：${cat} · ${via}`;
 }
 
 const Collapsible: FC<{
@@ -131,6 +147,18 @@ export const AgentRuntimeTab: FC<{
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [showSectionPrompt, setShowSectionPrompt] = useState(false);
+  const [toolCatalog, setToolCatalog] = useState<ToolCatalogEntry[]>([]);
+
+  useEffect(() => {
+    void getAgentToolCatalog()
+      .then(setToolCatalog)
+      .catch(() => setToolCatalog([]));
+  }, []);
+
+  const toolCatalogByName = useMemo(
+    () => new Map(toolCatalog.map((e) => [e.name, e])),
+    [toolCatalog]
+  );
 
   const knownServerNames = new Set(mcpServers.map((s) => s.name));
   const serverOptions = useMemo(() => {
@@ -154,9 +182,10 @@ export const AgentRuntimeTab: FC<{
 
   const toolPool = useMemo(() => {
     const s = new Set<string>(knownToolPool);
+    for (const e of toolCatalog) s.add(e.name);
     for (const t of draftTools) s.add(t);
     return Array.from(s).sort();
-  }, [knownToolPool, draftTools]);
+  }, [knownToolPool, draftTools, toolCatalog]);
 
   const subscriptionPool = useMemo(
     () => ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK", "ORDER_INTENT", "MODEL_UPDATE", "MEMORY_WRITE"],
@@ -219,16 +248,20 @@ export const AgentRuntimeTab: FC<{
       <section>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>内置工具</span>
-          <span style={{ fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>勾选写入 tools_json（保存草稿后生效）</span>
+          <span style={{ fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
+            悬停查看简介 · 勾选写入 tools_json（保存草稿后生效）
+          </span>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
           {toolPool.map((t) => {
             const on = draftTools.includes(t);
+            const meta = toolCatalogByName.get(t);
             return (
               <button
                 key={t}
                 type="button"
                 className={`qb-mcp-chip${on ? " qb-mcp-chip--on" : ""}`}
+                title={formatToolTooltip(meta, t)}
                 onClick={() => setDraftTools((prev) => toggleInList(prev, t))}
               >
                 {t}
@@ -440,24 +473,46 @@ export const AgentRuntimeTab: FC<{
             <div style={{ fontSize: 11, color: "var(--qb-main-meta, #a1a1aa)", marginBottom: 8, lineHeight: 1.5 }}>
               运行时：工具 {preview.runtime.tools.length} · MCP {preview.runtime.mcpServers.join(", ") || "—"} · Skills{" "}
               {preview.runtime.skills.join(", ") || "—"}
+              {preview.toolsPromptBlock?.trim() ? " · 已注入工具/MCP 说明块" : ""}
             </div>
+            <p style={{ fontSize: 11, color: "var(--qb-main-meta, #71717a)", margin: "0 0 6px" }}>
+              下方为发给 LLM 的完整 system（pack 合并 + 工具/MCP 块，与 LangGraph reason 一致）
+            </p>
             <TokyoCodeView
               code={preview.mergedSystemPrompt || "（空）"}
               language="plaintext"
-              filename="merged-system-prompt.md"
-              maxHeight={320}
+              filename="full-system-prompt.md"
+              maxHeight={420}
             />
             <button
               type="button"
               className="qb-btn-ghost qb-btn--compact"
               onClick={() => setShowSectionPrompt((v) => !v)}
             >
-              {showSectionPrompt ? "收起" : "展开"}分块原文（agent / soul / workspace / DB）
+              {showSectionPrompt ? "收起" : "展开"}分块原文（pack / 工具块 / MCP 绑定）
             </button>
             {showSectionPrompt ? (
               <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                {preview.runtime.mcpBindings.length > 0 ? (
+                  <details style={{ fontSize: 12 }} open>
+                    <summary style={{ cursor: "pointer", color: "var(--qb-team-section-fg, #cbd5e1)" }}>
+                      MCP 工具绑定（{preview.runtime.mcpBindings.length}）
+                    </summary>
+                    <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "var(--qb-body-fg, #d4d4d8)" }}>
+                      {preview.runtime.mcpBindings.map((b) => (
+                        <li key={`${b.serverName}:${b.toolName}`}>
+                          {b.serverName} · {b.toolName}
+                          {b.enabled ? "" : "（已禁用）"}
+                          {b.timeoutMs != null ? ` · ${b.timeoutMs}ms` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
                 {(
                   [
+                    ["合并正文（不含工具）", preview.baseSystemPrompt],
+                    ["工具/MCP 注入块", preview.toolsPromptBlock],
                     ["agent.md", preview.sections.agent],
                     ["soul", preview.sections.soul],
                     ["workspace/prompt.md", preview.sections.workspacePrompt],

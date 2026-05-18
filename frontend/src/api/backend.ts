@@ -74,6 +74,7 @@ import type {
   SkillMarketPageResult,
   SkillMarketInstallRecord,
   SkillMarketStatusDto,
+  ToolCatalogEntry,
 } from "./types";
 import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 
@@ -492,6 +493,11 @@ export async function getAgentsConfig(): Promise<AgentsConfigResponse> {
   return httpGet<AgentsConfigResponse>("/api/v1/agents/config");
 }
 
+export async function getAgentToolCatalog(): Promise<ToolCatalogEntry[]> {
+  const res = await httpGet<{ ok: boolean; data: ToolCatalogEntry[] }>("/api/v1/agents/tools/catalog");
+  return res.data ?? [];
+}
+
 export async function getModelConfig(): Promise<ModelConfig> {
   const res = await httpGet<{ data: ModelConfig }>("/api/v1/agents/model-config");
   return res.data;
@@ -648,6 +654,55 @@ export async function patchSessionMessage(params: {
 
 export async function chatHealth(): Promise<{ ok: boolean }> {
   return httpGet<{ ok: boolean }>("/api/v1/chat/health");
+}
+
+export type MonitorSummary = {
+  sessionId: string | null;
+  workflowTotal: number;
+  statusCounts: Record<string, number>;
+  running: number;
+  failed: number;
+  completed24h: number;
+  failed24h: number;
+  stuckRunning: Array<{
+    id: string;
+    sessionId: string | null;
+    mode: string;
+    startedAt: string | null;
+    goal: string | null;
+  }>;
+  openAlerts: number;
+  recentAlerts: AlertEventRecord[];
+  avgQualityScore: number | null;
+  snapshotCount: number;
+  instanceErrors: number;
+  stuckThresholdMinutes: number;
+};
+
+export async function getMonitorSummary(params?: {
+  sessionId?: string;
+  stuckMinutes?: number;
+}): Promise<MonitorSummary> {
+  const query = new URLSearchParams();
+  if (params?.sessionId) query.set("sessionId", params.sessionId);
+  if (params?.stuckMinutes != null) query.set("stuckMinutes", String(params.stuckMinutes));
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: MonitorSummary }>(
+    `/api/v1/monitor/summary${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+export async function scanStuckWorkflowAlerts(stuckMinutes = 120): Promise<{
+  scanned: number;
+  created: number;
+  alertIds: string[];
+}> {
+  const res = await httpPost<{ ok: boolean; data: { scanned: number; created: number; alertIds: string[] } }>(
+    "/api/v1/monitor/alerts/scan-stuck",
+    { stuckMinutes }
+  );
+  return res.data;
 }
 
 export async function getSessionOverview(sessionId: string): Promise<SessionOverview> {

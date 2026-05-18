@@ -158,6 +158,10 @@ import {
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
+import {
+  buildFilteredTeamGraphDisplay,
+  filterInteractionsForEdge,
+} from "../../lib/teamGraphDisplay";
 import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
 import { MonitorDashboard } from "../monitor/MonitorDashboard";
 import { TraderLivePanel } from "../trader/TraderLivePanel";
@@ -165,6 +169,13 @@ import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
+import {
+  classifyWorkflow,
+  formatWorkflowOptionLabel,
+  groupWorkflowOptions,
+  WORKFLOW_KIND_LABEL,
+  type WorkflowKind,
+} from "../../lib/workflowKind";
 
 export const MainContent: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
@@ -237,17 +248,6 @@ function formatChartContextBlock(ctx: ChartContextPayload): string {
 
 function shortWorkflowLabel(workflowRunId: string): string {
   return workflowRunId.length > 12 ? `${workflowRunId.slice(0, 8)}…` : workflowRunId;
-}
-
-/** 工作流下拉可读标签：goal · status · mode（goal 为空时回退短 id） */
-function formatWorkflowOptionLabel(row: Record<string, unknown>): string {
-  const goal = typeof row.goal === "string" ? row.goal.trim() : "";
-  const status = String(row.status ?? "—");
-  const mode = String(row.mode ?? "—");
-  const id = String(row.id ?? "");
-  const shortId = id.length > 8 ? `${id.slice(0, 8)}…` : id;
-  const goalLabel = goal.length > 48 ? `${goal.slice(0, 48)}…` : goal || shortId;
-  return `${goalLabel} · ${status} · ${mode}`;
 }
 
 const CHAT_SESSION_AGENT_BOARD_LS = "qubit:chatSessionAgentBoardOpen";
@@ -784,7 +784,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   };
 
   return (
-    <div style={ideEmbedded ? styles.chatIdeRoot : styles.chatPageRoot}>
+    <div
+      data-qb-chat-panel
+      className="qb-chat-panel"
+      style={ideEmbedded ? styles.chatIdeRoot : styles.chatPageRoot}
+    >
       {ideEmbedded ? (
         <div style={styles.chatIdeHeader}>
           对话 · 与右侧 K 线联动；「带入对话分析」会附加行情上下文。
@@ -806,7 +810,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           gridTemplateColumns: chatGridTemplateColumns,
         }}
       >
-        <div style={styles.chatSidebar}>
+        <div className="qb-chat-sidebar" style={styles.chatSidebar}>
           <button
             type="button"
             className="qb-btn-primary-brand"
@@ -827,7 +831,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 onClick={() => void onSelectSession(session.id)}
               >
                 <div>{session.title}</div>
-                <div style={styles.chatMeta}>{new Date(session.updatedAt).toLocaleString()}</div>
+                <div className="qb-chat-bubble__meta">{new Date(session.updatedAt).toLocaleString()}</div>
               </button>
             ))}
           </div>
@@ -841,7 +845,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           style={styles.chatColResizer}
         />
 
-        <div style={styles.chatMain}>
+        <div className="qb-chat-main" style={styles.chatMain}>
           <div style={styles.chatBoardToggleRow}>
             <button
               type="button"
@@ -854,27 +858,21 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           </div>
           <div style={styles.chatMessages}>
             {chatMessages.map((msg) => (
-              <div
-                key={msg.id}
-                style={{
-                  ...styles.chatBubble,
-                  ...(msg.role === "user" ? styles.chatBubbleUser : styles.chatBubbleAgent),
-                }}
-              >
-                <div style={styles.chatMeta}>
+              <div key={msg.id} className={`qb-chat-bubble qb-chat-bubble--${msg.role}`}>
+                <div className="qb-chat-bubble__meta">
                   {msg.role} · {msg.status}
                 </div>
-                <div style={{ marginTop: 6 }}>
+                <div className="qb-chat-markdown">
                   {msg.content ? (
                     <MarkdownBubble text={msg.content} />
                   ) : msg.status === "running" || msg.status === "queued" ? (
-                    <span style={{ color: "var(--qb-main-meta, #71717a)" }}>(流式生成中…)</span>
+                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>(流式生成中…)</span>
                   ) : (
-                    <span style={{ color: "var(--qb-main-meta, #71717a)" }}>（暂无回复内容）</span>
+                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>（暂无回复内容）</span>
                   )}
                 </div>
                 {msg.workflowRunIds?.length ? (
-                  <div style={styles.chatMeta}>workflow: {msg.workflowRunIds.join(", ")}</div>
+                  <div className="qb-chat-bubble__meta">workflow: {msg.workflowRunIds.join(", ")}</div>
                 ) : null}
               </div>
             ))}
@@ -905,7 +903,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         </div>
 
         {sessionAgentBoardOpen ? (
-        <div style={styles.boardCol}>
+        <div className="qb-chat-board-col" style={styles.boardCol}>
           <div style={styles.boardColHeader}>
             <h3 style={{ ...styles.subTitle, margin: 0 }}>会话 Agent 看板</h3>
             <button
@@ -1932,7 +1930,7 @@ const ConfigPanel: FC = () => {
   };
 
   return (
-    <>
+    <div data-qb-config-center className="qb-config-center">
       <h2 style={styles.title}>配置中心</h2>
       <div style={styles.actions}>
         <button type="button" className="qb-btn-primary-brand" onClick={() => void loadConfig()}>
@@ -1982,7 +1980,7 @@ const ConfigPanel: FC = () => {
         {activeConfigSubPage === "llm" ? (
           <>
             <h3 style={styles.subTitle}>LLM（模型提供方）</h3>
-            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+            <p className="qb-config-hint">
               配置默认对话 / 编排使用的模型与鉴权；保存后由后端加载。
             </p>
             <div style={styles.form}>
@@ -2025,14 +2023,14 @@ const ConfigPanel: FC = () => {
         {activeConfigSubPage === "datasources" ? (
           <>
             <h3 style={styles.subTitle}>数据源（qubit-data / qubit-news）</h3>
-            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
+            <p className="qb-config-hint qb-config-hint--tight">
               在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
               <br />
               K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为 A 股优先{" "}
               <strong>东方财富</strong>（免费、日线 + 分钟/小时，国内网络友好）；有 Tushare token 时日线可走 Tushare；美股等走 Yahoo。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#d4d4d8" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
                 <span style={{ whiteSpace: "nowrap" }}>K 线数据源</span>
                 <select
                   style={styles.select}
@@ -2094,7 +2092,7 @@ const ConfigPanel: FC = () => {
                 onChange={(e) => setNewsTimeoutMs(Number(e.target.value))}
                 placeholder="超时 ms"
               />
-              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#d4d4d8" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--qb-body-fg)" }}>
                 <input
                   type="checkbox"
                   checked={newsSyntheticWhenEmpty}
@@ -2128,7 +2126,7 @@ const ConfigPanel: FC = () => {
         {activeConfigSubPage === "mcp" ? (
           <>
             <h3 style={styles.subTitle}>已注册的 MCP</h3>
-            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+            <p className="qb-config-hint">
               每张卡片展示连接规格与最近一次探测结果。点击卡片打开<strong>高级 JSON 编辑</strong>（含 server + binding）；打开时会尝试探测连通性。
             </p>
             <div style={styles.meta}>
@@ -2138,7 +2136,7 @@ const ConfigPanel: FC = () => {
             </div>
             <div style={styles.grid}>
               {mcpServers.length === 0 ? (
-                <div style={{ ...styles.card, color: "#a1a1aa", fontSize: 13 }}>暂无 MCP，可从下方市场安装或使用「快速添加」。</div>
+                <div style={{ ...styles.card, color: "var(--qb-main-meta)", fontSize: 13 }}>暂无 MCP，可从下方市场安装或使用「快速添加」。</div>
               ) : null}
               {mcpServers.map((row) => {
                 const probe = mcpProbeByServer[row.name];
@@ -2147,34 +2145,34 @@ const ConfigPanel: FC = () => {
                 const shortMsg = (m?: string) => (!m ? "" : m.length > 56 ? `${m.slice(0, 56)}…` : m);
                 const cfgPill =
                   !row.enabled
-                    ? { bg: "#3f1f1f", color: "#fca5a5", text: "配置：已禁用" }
+                    ? { bg: "var(--qb-pill-disabled-bg)", color: "var(--qb-pill-disabled-fg)", text: "配置：已禁用" }
                     : !specOk
                       ? {
-                          bg: "#422006",
-                          color: "#fdba74",
+                          bg: "var(--qb-pill-warn-bg)",
+                          color: "var(--qb-pill-warn-fg)",
                           text: row.transport === "stdio" ? "配置：缺少 command" : "配置：缺少 url",
                         }
-                      : { bg: "#14532d", color: "#86efac", text: "配置：就绪" };
+                      : { bg: "var(--qb-pill-ok-bg)", color: "var(--qb-pill-ok-fg)", text: "配置：就绪" };
                 const reachPill =
                   probe?.status === "checking"
-                    ? { bg: "#1e3a8a", color: "#bfdbfe", text: "连通：检测中…" }
+                    ? { bg: "var(--qb-pill-info-bg)", color: "var(--qb-pill-info-fg)", text: "连通：检测中…" }
                     : probe?.status === "ok"
                       ? {
-                          bg: "#14532d",
-                          color: "#bbf7d0",
+                          bg: "var(--qb-pill-success-bg)",
+                          color: "var(--qb-pill-success-fg)",
                           text: `连通：可用${probe.message ? ` · ${shortMsg(probe.message)}` : ""}`,
                         }
                       : probe?.status === "error"
                         ? {
-                            bg: "#3f1f1f",
-                            color: "#fca5a5",
+                            bg: "var(--qb-pill-error-bg)",
+                            color: "var(--qb-pill-error-fg)",
                             text: `连通：失败${probe.message ? ` · ${shortMsg(probe.message)}` : ""}`,
                           }
                         : specOk && bindCount > 0
-                          ? { bg: "#27272a", color: "#a1a1aa", text: "连通：打开卡片以检测" }
+                          ? { bg: "var(--qb-pill-muted-bg)", color: "var(--qb-pill-muted-fg)", text: "连通：打开卡片以检测" }
                           : {
-                              bg: "#27272a",
-                              color: "#a1a1aa",
+                              bg: "var(--qb-pill-muted-bg)",
+                              color: "var(--qb-pill-muted-fg)",
                               text: bindCount === 0 ? "连通：需 binding" : "连通：待检测",
                             };
                 const dotColor =
@@ -2308,7 +2306,7 @@ const ConfigPanel: FC = () => {
             </details>
 
             <h3 style={{ ...styles.subTitle, marginTop: 18 }}>MCP 市场</h3>
-            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+            <p className="qb-config-hint">
               来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>（capabilities、默认工具、启动命令摘要）。市场列表<strong>分页加载</strong>（每页 {MCP_MARKET_PAGE_SIZE} 条），避免一次渲染数千卡片卡顿。「同步目录」从官方 Registry 拉取元数据（可能较慢）；「搜索/刷新」仅查询本地已同步目录。
             </p>
 
@@ -2391,7 +2389,7 @@ const ConfigPanel: FC = () => {
 
             <div style={styles.mcpMarketGrid}>
               {!mcpMarketLoading && mcpMarketItems.length === 0 ? (
-                <div style={{ ...styles.mcpMarketCard, color: "#a1a1aa" }}>暂无目录项，请先同步注册表或检查网络。</div>
+                <div style={{ ...styles.mcpMarketCard, color: "var(--qb-main-meta)" }}>暂无目录项，请先同步注册表或检查网络。</div>
               ) : null}
               {mcpMarketItems.map((item) => {
                 const spec = (item.specJson ?? {}) as Record<string, unknown>;
@@ -2430,7 +2428,7 @@ const ConfigPanel: FC = () => {
                   >
                     <div style={styles.mcpMarketCardHeader}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ ...styles.cardName, color: "#e4e4e7" }}>{item.name}</div>
+                        <div style={{ ...styles.cardName, color: "var(--qb-body-fg)" }}>{item.name}</div>
                         <div style={styles.mcpMarketMeta}>
                           {item.provider} · v{item.version} · {item.transport}{" "}
                           <span
@@ -2545,19 +2543,19 @@ const ConfigPanel: FC = () => {
             <details style={{ ...styles.mcpDetails, marginTop: 14 }}>
               <summary style={styles.mcpDetailsSummary}>高级：诊断与原始 JSON</summary>
               <div style={{ display: "flex", flexDirection: "column", gap: 10, paddingBottom: 10 }}>
-                <div style={{ fontSize: 12, color: "#a1a1aa" }}>最近一次操作 / 测试结果</div>
-                <pre style={styles.streamBox}>{mcpTestOutput || "暂无输出"}</pre>
+                <div style={{ fontSize: 12, color: "var(--qb-main-meta)" }}>最近一次操作 / 测试结果</div>
+                <pre className="qb-config-stream-box">{mcpTestOutput || "暂无输出"}</pre>
                 <details style={styles.mcpDetailsNested}>
                   <summary style={styles.mcpDetailsSummarySmall}>注册表源 (mcpSources)</summary>
-                  <pre style={styles.streamBox}>{JSON.stringify(mcpSources, null, 2)}</pre>
+                  <pre className="qb-config-stream-box">{JSON.stringify(mcpSources, null, 2)}</pre>
                 </details>
                 <details style={styles.mcpDetailsNested}>
                   <summary style={styles.mcpDetailsSummarySmall}>市场安装记录</summary>
-                  <pre style={styles.streamBox}>{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
+                  <pre className="qb-config-stream-box">{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
                 </details>
                 <details style={styles.mcpDetailsNested}>
                   <summary style={styles.mcpDetailsSummarySmall}>工具绑定列表</summary>
-                  <pre style={styles.streamBox}>{JSON.stringify(mcpBindings, null, 2)}</pre>
+                  <pre className="qb-config-stream-box">{JSON.stringify(mcpBindings, null, 2)}</pre>
                 </details>
               </div>
             </details>
@@ -2578,7 +2576,7 @@ const ConfigPanel: FC = () => {
                   onClick={(e) => e.stopPropagation()}
                 >
                   <div style={styles.mcpModalHeader}>
-                    <h4 id="mcp-adv-title" style={{ margin: 0, fontSize: 15, color: "#e4e4e7" }}>
+                    <h4 id="mcp-adv-title" style={{ margin: 0, fontSize: 15, color: "var(--qb-body-fg)" }}>
                       高级编辑 · {mcpServers.find((s) => s.id === focusedMcpServerId)?.name ?? ""}
                     </h4>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2599,7 +2597,7 @@ const ConfigPanel: FC = () => {
                     </div>
                   </div>
                   <div style={styles.mcpModalBody}>
-                    <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 8px" }}>
+                    <p className="qb-config-hint qb-config-hint--tight">
                       编辑 <code style={{ fontSize: 11 }}>server</code> 与可选的 <code style={{ fontSize: 11 }}>binding</code>
                       。保存将调用 upsert 接口写入数据库。将 <code style={{ fontSize: 11 }}>binding</code> 设为{" "}
                       <code style={{ fontSize: 11 }}>null</code> 可仅更新 server（不删除已有绑定）。
@@ -2628,7 +2626,7 @@ const ConfigPanel: FC = () => {
         {activeConfigSubPage === "skills" ? (
           <>
             <h3 style={styles.subTitle}>Skills 与市场</h3>
-            <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px", lineHeight: 1.55 }}>
+            <p className="qb-config-hint">
               默认使用{" "}
               <a href="https://skillsmp.com/docs/api" target="_blank" rel="noreferrer">
                 SkillsMP
@@ -2726,7 +2724,7 @@ const ConfigPanel: FC = () => {
             <div style={{ overflowX: "auto", marginBottom: 18 }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
-                  <tr style={{ textAlign: "left", color: "#a1a1aa" }}>
+                  <tr style={{ textAlign: "left", color: "var(--qb-main-meta)" }}>
                     <th style={{ padding: "6px 8px" }}>name</th>
                     <th style={{ padding: "6px 8px" }}>描述</th>
                     <th style={{ padding: "6px 8px" }}>仓库</th>
@@ -2736,19 +2734,19 @@ const ConfigPanel: FC = () => {
                 <tbody>
                   {skillSearchBusy ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
+                      <td colSpan={4} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
                         加载中…
                       </td>
                     </tr>
                   ) : skillSearchHits.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
+                      <td colSpan={4} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
                         无结果。SkillsMP 需网络可达；Open Skill Market 请先点击「加载全量索引」后再搜索。
                       </td>
                     </tr>
                   ) : (
                     skillSearchHits.map((row) => (
-                      <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "#e4e4e7" }}>
+                      <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}>
                         <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
                           {row.name}
                         </td>
@@ -2803,12 +2801,12 @@ const ConfigPanel: FC = () => {
             ) : null}
             <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>本项目已安装</h4>
             {!currentProjectId ? (
-              <p style={{ fontSize: 12, color: "#71717a" }}>加载配置后可按项目记录安装；请先进入配置中心触发加载。</p>
+              <p className="qb-config-hint">加载配置后可按项目记录安装；请先进入配置中心触发加载。</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
-                    <tr style={{ textAlign: "left", color: "#a1a1aa" }}>
+                    <tr style={{ textAlign: "left", color: "var(--qb-main-meta)" }}>
                       <th style={{ padding: "6px 8px" }}>skill_name</th>
                       <th style={{ padding: "6px 8px" }}>说明</th>
                       <th style={{ padding: "6px 8px" }}>registry id</th>
@@ -2818,13 +2816,13 @@ const ConfigPanel: FC = () => {
                   <tbody>
                     {skillInstalls.length === 0 ? (
                       <tr>
-                        <td colSpan={4} style={{ padding: 12, color: "#71717a" }}>
+                        <td colSpan={4} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
                           尚未从市场安装任何技能。
                         </td>
                       </tr>
                     ) : (
                       skillInstalls.map((row) => (
-                        <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "#e4e4e7" }}>
+                        <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}>
                           <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace" }}>{row.skillName}</td>
                           <td style={{ padding: "8px", maxWidth: 280 }}>
                             {row.description.length > 120 ? `${row.description.slice(0, 120)}…` : row.description}
@@ -2881,9 +2879,9 @@ const ConfigPanel: FC = () => {
               </div>
             )}
             <div style={{ ...styles.form, flexWrap: "wrap", marginTop: 12, alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "#a1a1aa" }}>追加到 Agent 草稿时选择：</span>
+              <span style={{ fontSize: 12, color: "var(--qb-main-meta)" }}>追加到 Agent 草稿时选择：</span>
               {definitions.length === 0 ? (
-                <span style={{ fontSize: 12, color: "#71717a" }}>无 Agent 定义</span>
+                <span className="qb-config-hint">无 Agent 定义</span>
               ) : (
                 <select
                   style={styles.select}
@@ -2973,14 +2971,14 @@ const ConfigPanel: FC = () => {
           启用
         </button>
       </div>
-      <pre style={styles.streamBox}>{JSON.stringify(scheduledJobs, null, 2)}</pre>
-      <pre style={styles.streamBox}>{JSON.stringify(scheduledJobRuns, null, 2)}</pre>
+      <pre className="qb-config-stream-box">{JSON.stringify(scheduledJobs, null, 2)}</pre>
+      <pre className="qb-config-stream-box">{JSON.stringify(scheduledJobRuns, null, 2)}</pre>
           </>
         ) : null}
         {activeConfigSubPage === "integration" ? (
           <>
       <h3 style={styles.subTitle}>集成与 IM 工具（Telegram / Webhook）</h3>
-      <p style={{ fontSize: 12, color: "#a1a1aa", margin: "0 0 10px" }}>
+      <p className="qb-config-hint">
         配置外部消息通道与密钥引用，供编排向 IM 推送或接收 Webhook。
       </p>
       <div style={styles.form}>
@@ -3014,8 +3012,8 @@ const ConfigPanel: FC = () => {
           保存集成配置
         </button>
       </div>
-      <pre style={styles.streamBox}>{JSON.stringify(integrationChannels, null, 2)}</pre>
-      <pre style={styles.streamBox}>{JSON.stringify(integrationLogs, null, 2)}</pre>
+      <pre className="qb-config-stream-box">{JSON.stringify(integrationChannels, null, 2)}</pre>
+      <pre className="qb-config-stream-box">{JSON.stringify(integrationLogs, null, 2)}</pre>
           </>
         ) : null}
         {activeConfigSubPage === "agent" ? (
@@ -3082,7 +3080,7 @@ const ConfigPanel: FC = () => {
           />
         ) : null}
       </div>
-    </>
+    </div>
   );
 };
 
@@ -3434,17 +3432,24 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "pre-wrap",
   },
   errorBox: {
-    background: "#3f1d1d",
-    border: "1px solid #7f1d1d",
-    color: "#fecaca",
+    background: "var(--qb-config-error-bg, #3f1d1d)",
+    border: "1px solid var(--qb-config-error-border, #7f1d1d)",
+    color: "var(--qb-config-error-fg, #fecaca)",
     borderRadius: 8,
     padding: "8px 10px",
     marginBottom: 10,
+  },
+  configHint: {
+    fontSize: 12,
+    color: "var(--qb-main-meta, #a1a1aa)",
+    margin: "0 0 10px",
+    lineHeight: 1.5,
   },
   chatPageRoot: {
     display: "flex",
     flexDirection: "column",
     flex: 1,
+    background: "var(--qb-chat-page-bg)",
     width: "100%",
     maxWidth: "100%",
     minHeight: 0,
@@ -3537,7 +3542,10 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 10px",
     cursor: "pointer",
   },
-  chatSessionItemActive: { borderColor: "var(--qb-chat-session-active-border, #7c3aed)" },
+  chatSessionItemActive: {
+    borderColor: "var(--qb-chat-session-active-border, #7c3aed)",
+    background: "var(--qb-chat-session-active-bg, transparent)",
+  },
   chatMain: {
     border: "1px solid var(--qb-chat-border, #27272a)",
     borderRadius: 8,
@@ -3595,7 +3603,7 @@ const styles: Record<string, CSSProperties> = {
     alignSelf: "flex-start",
     maxWidth: "100%",
   },
-  chatMeta: { fontSize: 11, color: "var(--qb-main-meta, #a1a1aa)", marginBottom: 4 },
+  chatMeta: { fontSize: 11, color: "var(--qb-chat-meta-fg, var(--qb-main-meta, #a1a1aa))", marginBottom: 4 },
   chartCtxBanner: {
     fontSize: 12,
     color: "var(--qb-chat-chart-banner-fg, #a5b4fc)",
@@ -3747,12 +3755,16 @@ const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
 };
 
 /** 画布可多选高亮的团队成员角色（与后端研究团队槽位一致；空集表示不过滤） */
+/** 拓扑画布固定视口高度，避免 ResizeObserver↔SVG 高度互相撑开导致无限增高 */
+const TEAM_GRAPH_VIEWPORT_HEIGHT = 360;
+
 const TeamDashboardPanel: FC = () => {
   const [ticker, setTicker] = useState("AAPL");
   /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认「请对 ticker 进行全面分析」 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
+  const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
   const [analystAgentGroupId, setAnalystAgentGroupId] = useState("");
   const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
   const [running, setRunning] = useState(false);
@@ -3936,30 +3948,44 @@ const TeamDashboardPanel: FC = () => {
 
   const liveFeedScrollRef = useRef<HTMLDivElement | null>(null);
 
+  const filteredGraphDisplay = useMemo((): AnalystTeamGraphPayload | null => {
+    if (!teamGraph) return null;
+    if (!participatingAnalystRoles.length) return teamGraph;
+    return buildFilteredTeamGraphDisplay(teamGraph, participatingAnalystRoles);
+  }, [teamGraph, participatingAnalystRoles]);
+
+  const graphEdgeDetail = useMemo(() => {
+    if (graphSelection?.kind !== "edge" || !filteredGraphDisplay) return null;
+    const { a, b } = graphSelection;
+    const edge =
+      filteredGraphDisplay.edges.find((e) => e.key === teamGraphUndirectedKey(a, b)) ?? null;
+    const messages = filterInteractionsForEdge(filteredGraphDisplay.interactions, a, b);
+    return {
+      a,
+      b,
+      messageCount: edge?.messageCount ?? messages.length,
+      toolCount: edge?.toolCount ?? 0,
+      messages,
+    };
+  }, [graphSelection, filteredGraphDisplay]);
+
+  const displayedLiveFeedRows = useMemo(() => {
+    if (graphSelection?.kind === "edge" && graphEdgeDetail) {
+      return graphEdgeDetail.messages.map((row) => ({
+        key: `edge-i-${row.id}`,
+        t: new Date(row.createdAt).getTime() || 0,
+        kind: "interaction" as const,
+        body: `${row.fromRole} → ${row.toRole} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 4000)}`,
+      }));
+    }
+    return mergedLiveFeedRows;
+  }, [graphSelection, graphEdgeDetail, mergedLiveFeedRows]);
+
   useEffect(() => {
     const el = liveFeedScrollRef.current;
     if (!el || activeTab !== "research") return;
     el.scrollTop = el.scrollHeight;
-  }, [mergedLiveFeedRows, running, activeTab]);
-
-  const filteredGraphDisplay = useMemo((): AnalystTeamGraphPayload | null => {
-    if (!teamGraph) return null;
-    if (!participatingAnalystRoles.length) return teamGraph;
-    const allow = new Set(participatingAnalystRoles);
-    const nodes = teamGraph.nodes.filter((n) => allow.has(n.role));
-    const edges =
-      teamGraph.edges?.filter((e) => allow.has(e.a) && allow.has(e.b)) ?? [];
-    return {
-      ...teamGraph,
-      nodes,
-      edges,
-      interactions: (teamGraph.interactions ?? []).filter(
-        (i) => allow.has(i.fromRole) || allow.has(i.toRole)
-      ),
-      toolCalls: (teamGraph.toolCalls ?? []).filter((t) => allow.has(t.agentRole)),
-      mcpCalls: (teamGraph.mcpCalls ?? []).filter((m) => allow.has(m.agentRole)),
-    };
-  }, [teamGraph, participatingAnalystRoles]);
+  }, [displayedLiveFeedRows, running, activeTab]);
 
   const teamGraphActivity = useMemo((): TeamGraphActivity => {
     const intr = filteredGraphDisplay?.interactions ?? [];
@@ -4017,6 +4043,29 @@ const TeamDashboardPanel: FC = () => {
   const selectedWorkflowRow = useMemo(
     () => workflowOptions.find((w) => String(w.id) === workflowRunId) ?? null,
     [workflowOptions, workflowRunId]
+  );
+
+  const selectedWorkflowKind = useMemo(
+    () => (selectedWorkflowRow ? classifyWorkflow(selectedWorkflowRow) : null),
+    [selectedWorkflowRow]
+  );
+
+  const filteredWorkflowOptions = useMemo(() => {
+    if (workflowKindFilter === "all") return workflowOptions;
+    const filtered = workflowOptions.filter((row) => classifyWorkflow(row) === workflowKindFilter);
+    if (
+      selectedWorkflowRow &&
+      classifyWorkflow(selectedWorkflowRow) !== workflowKindFilter &&
+      !filtered.some((row) => String(row.id) === workflowRunId)
+    ) {
+      return [selectedWorkflowRow, ...filtered];
+    }
+    return filtered;
+  }, [workflowOptions, workflowKindFilter, selectedWorkflowRow, workflowRunId]);
+
+  const groupedWorkflowOptions = useMemo(
+    () => groupWorkflowOptions(filteredWorkflowOptions),
+    [filteredWorkflowOptions]
   );
 
   useEffect(() => {
@@ -4122,23 +4171,25 @@ const TeamDashboardPanel: FC = () => {
   );
 
   const graphWrapRef = useRef<HTMLDivElement | null>(null);
-  const [graphSize, setGraphSize] = useState({ w: 720, h: 420 });
+  const [graphSize, setGraphSize] = useState({ w: 720, h: TEAM_GRAPH_VIEWPORT_HEIGHT });
 
   useLayoutEffect(() => {
     const el = graphWrapRef.current;
     if (!el || activeTab !== "research") return;
+    const applyWidth = (width: number) => {
+      const w = Math.max(320, Math.floor(width));
+      setGraphSize((prev) =>
+        prev.w === w && prev.h === TEAM_GRAPH_VIEWPORT_HEIGHT ? prev : { w, h: TEAM_GRAPH_VIEWPORT_HEIGHT }
+      );
+    };
     const ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect;
-      if (!cr) return;
-      const w = Math.max(320, Math.floor(cr.width));
-      const h = Math.max(260, Math.floor(cr.height));
-      setGraphSize({ w, h });
+      if (cr) applyWidth(cr.width);
     });
     ro.observe(el);
-    const r = el.getBoundingClientRect();
-    setGraphSize({ w: Math.max(320, Math.floor(r.width)), h: Math.max(260, Math.floor(r.height)) });
+    applyWidth(el.getBoundingClientRect().width);
     return () => ro.disconnect();
-  }, [activeTab, teamGraph]);
+  }, [activeTab]);
 
   useEffect(() => {
     setGraphSelection(null);
@@ -4711,16 +4762,39 @@ const TeamDashboardPanel: FC = () => {
           </div>
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
             <label style={teamStyles.label}>工作流</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+              <select
+                style={{ ...teamStyles.input, flex: "1 1 140px", minWidth: 120 }}
+                value={workflowKindFilter}
+                onChange={(e) => setWorkflowKindFilter(e.target.value as WorkflowKind | "all")}
+                aria-label="工作流类型筛选"
+              >
+                <option value="all">全部类型</option>
+                {(Object.keys(WORKFLOW_KIND_LABEL) as WorkflowKind[]).map((k) => (
+                  <option key={k} value={k}>
+                    {WORKFLOW_KIND_LABEL[k]}
+                  </option>
+                ))}
+              </select>
+            </div>
             <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
               <option value="">请选择工作流</option>
-              {workflowOptions.slice(0, 80).map((row) => (
-                <option key={String(row.id)} value={String(row.id)} title={String(row.goal ?? row.id)}>
-                  {formatWorkflowOptionLabel(row)}
-                </option>
+              {groupedWorkflowOptions.map((group) => (
+                <optgroup key={group.kind} label={group.label}>
+                  {group.rows.slice(0, 40).map((row) => (
+                    <option key={String(row.id)} value={String(row.id)} title={String(row.goal ?? row.id)}>
+                      {formatWorkflowOptionLabel(row)}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             {selectedWorkflowRow ? (
               <p style={{ fontSize: 11, color: "#71717a", marginTop: 6, lineHeight: 1.45, wordBreak: "break-all" }}>
+                类型：
+                <strong style={{ color: "#a1a1aa", marginRight: 6 }}>
+                  {selectedWorkflowKind ? WORKFLOW_KIND_LABEL[selectedWorkflowKind] : "—"}
+                </strong>
                 ID: <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
                 {typeof selectedWorkflowRow.goal === "string" && selectedWorkflowRow.goal.trim() ? (
                   <>
@@ -4976,9 +5050,9 @@ const TeamDashboardPanel: FC = () => {
                 </button>
               ))}
             </nav>
-            <div style={teamStyles.teamMainStage}>
-              <header style={teamStyles.teamEditorTitleBar}>
-                <span style={{ fontWeight: 600, color: "#e4e4e7" }}>{TEAM_VIEW_TITLE[activeTab]}</span>
+            <div className="qb-team-main-stage" style={teamStyles.teamMainStage}>
+              <header className="qb-team-editor-titlebar" style={teamStyles.teamEditorTitleBar}>
+                <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>{TEAM_VIEW_TITLE[activeTab]}</span>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {running ? (
                     <span style={{ color: "#38bdf8", fontSize: 11 }}>
@@ -5382,9 +5456,12 @@ const TeamDashboardPanel: FC = () => {
       )}
 
       {activeTab === "research" && (
-        <div style={{ ...teamStyles.panel, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <div
+          data-qb-team-research-panel
+          style={{ ...teamStyles.panel, display: "flex", flexDirection: "column", minHeight: 0 }}
+        >
           <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>多 Agent 对话拓扑</h3>
-          <p style={{ fontSize: 12, color: "#a1a1aa", marginBottom: 12 }}>
+          <p style={{ fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 12 }}>
             拓扑与实时对话流同屏；下方为分析结论。选中节点时显示 Tool/MCP。分析进行中自动轮询。
           </p>
           {!workflowRunId.trim() ? (
@@ -5420,10 +5497,24 @@ const TeamDashboardPanel: FC = () => {
                     minHeight: 0,
                   }}
                 >
-                  <div ref={graphWrapRef} style={{ ...teamStyles.graphCanvasHost, flex: "1 1 50%", minHeight: 260 }}>
+                  <div
+                    ref={graphWrapRef}
+                    data-qb-team-graph-host
+                    style={{
+                      ...teamStyles.graphCanvasHost,
+                      flex: "0 0 auto",
+                      height: TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      minHeight: TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      maxHeight: TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      overflow: "hidden",
+                      flexDirection: "column",
+                    }}
+                  >
                     <TeamAgentGraph
                       nodes={filteredGraphDisplay.nodes}
-                      edges={filteredGraphDisplay.edges}
+                      edges={filteredGraphDisplay.edges.filter(
+                        (e) => e.messageCount > 0 || e.toolCount > 0
+                      )}
                       width={graphSize.w}
                       height={graphSize.h}
                       selection={graphSelection}
@@ -5432,6 +5523,9 @@ const TeamDashboardPanel: FC = () => {
                       onSelectEdge={(a, b) => setGraphSelection({ kind: "edge", a, b })}
                       onClear={() => setGraphSelection(null)}
                     />
+                    <p style={{ fontSize: 10, color: "var(--qb-team-meta, #71717a)", marginTop: 6 }}>
+                      点击连线查看交流次数与对话内容；实线表示已有对话或工具调用。
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -5443,12 +5537,41 @@ const TeamDashboardPanel: FC = () => {
                       : "暂无拓扑节点：分析刚开始或未落库时可能短暂为空；下方仍可查看实时对话流。"}
                 </div>
               )}
+              {graphEdgeDetail ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: "1px solid #3b82f6",
+                    background: "rgba(37, 99, 235, 0.08)",
+                    fontSize: 12,
+                    color: "#cbd5e1",
+                  }}
+                >
+                  已选连线：<strong>{graphEdgeDetail.a}</strong> ↔ <strong>{graphEdgeDetail.b}</strong>
+                  {" · "}
+                  对话 {graphEdgeDetail.messageCount} 条
+                  {graphEdgeDetail.toolCount > 0 ? ` · 工具 ${graphEdgeDetail.toolCount} 次` : ""}
+                  <button
+                    type="button"
+                    className="qb-btn-secondary"
+                    style={{ fontSize: 11, padding: "2px 8px", marginLeft: 10 }}
+                    onClick={() => setGraphSelection(null)}
+                  >
+                    显示全部对话
+                  </button>
+                </div>
+              ) : null}
               <div style={{ marginTop: 14, flex: "1 1 42%", minHeight: 180, display: "flex", flexDirection: "column" }}>
                 <div style={{ ...teamStyles.sectionTitle, marginBottom: 6 }}>
-                  实时对话流 {running ? "· 自动刷新" : ""}
+                  实时对话流
+                  {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
+                  {running ? " · 自动刷新" : ""}
                 </div>
                 <div
                   ref={liveFeedScrollRef}
+                  data-qb-team-live-feed
                   style={{
                     flex: 1,
                     minHeight: 140,
@@ -5464,14 +5587,16 @@ const TeamDashboardPanel: FC = () => {
                     whiteSpace: "pre-wrap",
                   }}
                 >
-                  {mergedLiveFeedRows.length === 0 ? (
+                  {displayedLiveFeedRows.length === 0 ? (
                     <span style={{ color: "#71717a" }}>
-                      {running
-                        ? "等待各分析师与系统写入交互记录（轮询中）…"
-                        : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"}
+                      {graphSelection?.kind === "edge"
+                        ? "该连线暂无对话记录。"
+                        : running
+                          ? "等待各分析师与系统写入交互记录（轮询中）…"
+                          : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"}
                     </span>
                   ) : (
-                    mergedLiveFeedRows.map((row) => (
+                    displayedLiveFeedRows.map((row) => (
                       <div
                         key={row.key}
                         style={{

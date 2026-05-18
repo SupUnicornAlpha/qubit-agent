@@ -1,0 +1,506 @@
+/**
+ * Holographic 全息彩膜 — 虹彩渐变、折射高光、流动光泽
+ */
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap");
+
+html[data-qb-style="holographic"] {
+  color-scheme: dark;
+
+  /* 黑灰蓝底 + 紫罗兰彩膜 */
+  --qb-holo-base: #0a0e16;
+  --qb-holo-base-mid: #121a28;
+  --qb-holo-base-light: #1a2438;
+  --qb-holo-violet: #8b5cf6;
+  --qb-holo-purple: #a78bfa;
+  --qb-holo-lilac: #c4b5fd;
+  --qb-holo-indigo: #6366f1;
+  --qb-holo-cyan: #7dd3fc;
+  --qb-holo-magenta: #e879f9;
+  --qb-holo-pink: #d8b4fe;
+  --qb-holo-silver: #e2e8f0;
+  --qb-holo-ink: var(--qb-holo-base);
+  --qb-holo-fg: #eef2ff;
+  --qb-holo-muted: #94a3b8;
+  --qb-holo-panel: rgba(26, 36, 56, 0.72);
+  --qb-holo-panel-strong: rgba(36, 48, 72, 0.82);
+  --qb-holo-border: rgba(148, 163, 184, 0.22);
+  --qb-holo-film-border: rgba(167, 139, 250, 0.35);
+  --qb-holo-accent-gradient: linear-gradient(
+    125deg,
+    #6d28d9 0%,
+    #8b5cf6 32%,
+    #a78bfa 52%,
+    #93c5fd 78%,
+    #c084fc 100%
+  );
+  --qb-holo-text-gradient: linear-gradient(90deg, #f1f5f9 0%, #c4b5fd 38%, #a78bfa 62%, #7dd3fc 100%);
+  --qb-holo-gradient: linear-gradient(
+    145deg,
+    rgba(99, 102, 241, 0.2) 0%,
+    rgba(139, 92, 246, 0.24) 40%,
+    rgba(56, 189, 248, 0.1) 70%,
+    rgba(192, 132, 252, 0.14) 100%
+  );
+  --qb-holo-shine: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.18) 45%,
+    transparent 55%
+  );
+  --qb-holo-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --qb-holo-duration: 0.18s;
+
+  --qb-bg-root: var(--qb-holo-base);
+  --qb-bg-root-top: var(--qb-holo-base-mid);
+  --qb-tint: rgba(139, 92, 246, 0.16);
+  --qb-tint-strong: rgba(125, 211, 252, 0.14);
+  --qb-blue: var(--qb-holo-purple);
+  --qb-blue-deep: #7c3aed;
+  --qb-focus-ring: rgba(167, 139, 250, 0.5);
+  --qb-hairline: rgba(255, 255, 255, 0.12);
+  --qb-separator: rgba(255, 255, 255, 0.18);
+  --qb-body-fg: var(--qb-holo-fg);
+  --qb-body-muted: var(--qb-holo-muted);
+
+  --qb-font-display: "Outfit", system-ui, sans-serif;
+  --qb-font-body: "Outfit", system-ui, sans-serif;
+
+  --qb-topbar-bg: rgba(14, 20, 34, 0.78);
+  --qb-workbench-toolbar-bg: rgba(16, 22, 38, 0.74);
+  --qb-segmented-active-bg: rgba(139, 92, 246, 0.32);
+  --qb-radius-lg: 14px;
+  --qb-radius-md: 12px;
+  --qb-radius-sm: 10px;
+
+  --qb-scrollbar-track: rgba(255, 255, 255, 0.04);
+  --qb-scrollbar-thumb-top: #8b7aa8;
+  --qb-scrollbar-thumb-bot: #5a6a8a;
+  --qb-scrollbar-corner: var(--qb-holo-base);
+
+  --qb-sidebar-nav-bg: rgba(14, 20, 34, 0.85);
+  --qb-sidebar-activity-bg: rgba(12, 18, 30, 0.9);
+  --qb-sidebar-explorer-bg: rgba(18, 26, 42, 0.8);
+  --qb-sidebar-border: var(--qb-holo-border);
+  --qb-sidebar-muted: var(--qb-holo-muted);
+  --qb-sidebar-text: var(--qb-holo-fg);
+  --qb-brand-icon: var(--qb-holo-lilac);
+
+  --qb-main-input-bg: rgba(255, 255, 255, 0.08);
+  --qb-main-input-border: var(--qb-holo-border);
+  --qb-main-input-fg: var(--qb-holo-fg);
+  --qb-main-card-bg: var(--qb-holo-panel);
+  --qb-main-card-border: var(--qb-holo-border);
+  --qb-main-meta: var(--qb-holo-muted);
+  --qb-main-panel-bg: rgba(255, 255, 255, 0.07);
+  --qb-stream-box-bg: rgba(255, 255, 255, 0.08);
+  --qb-stream-box-fg: var(--qb-holo-fg);
+  --qb-stream-box-border: var(--qb-holo-border);
+  --qb-mcp-details-bg: rgba(255, 255, 255, 0.07);
+  --qb-mcp-details-border: var(--qb-holo-border);
+  --qb-mcp-details-nested-bg: rgba(255, 255, 255, 0.05);
+  --qb-mcp-market-card-bg: var(--qb-holo-panel);
+  --qb-mcp-market-card-border: var(--qb-holo-border);
+  --qb-mcp-market-cmd-bg: rgba(0, 0, 0, 0.25);
+  --qb-mcp-json-bg: rgba(255, 255, 255, 0.06);
+  --qb-mcp-json-border: var(--qb-holo-border);
+  --qb-ide-chrome-border: var(--qb-holo-border);
+  --qb-chat-main-bg: rgba(255, 255, 255, 0.09);
+  --qb-chat-sidebar-bg: rgba(255, 255, 255, 0.11);
+  --qb-chat-border: var(--qb-holo-border);
+  --qb-chat-bubble-agent-bg: var(--qb-holo-panel-strong);
+  --qb-chat-bubble-user-bg: rgba(167, 139, 250, 0.28);
+  --qb-chat-bubble-user-fg: #fff;
+  --qb-chat-bubble-agent-fg: var(--qb-holo-fg);
+  --qb-chat-bubble-border: var(--qb-holo-border);
+  --qb-chat-session-item-bg: rgba(255, 255, 255, 0.06);
+  --qb-chat-session-active-border: var(--qb-holo-purple);
+  --qb-chat-session-active-bg: rgba(139, 92, 246, 0.18);
+  --qb-md-table-border: var(--qb-holo-border);
+  --qb-md-th-bg: rgba(167, 139, 250, 0.25);
+  --qb-board-col-bg: rgba(255, 255, 255, 0.06);
+  --qb-board-card-bg: var(--qb-holo-panel);
+
+  --qb-kline-root-bg: transparent;
+  --qb-kline-header-border: var(--qb-holo-border);
+  --qb-kline-embedded-bar-bg: rgba(255, 255, 255, 0.08);
+
+  --qb-news-wrap-bg: rgba(255, 255, 255, 0.04);
+  --qb-news-col-title-bg: rgba(167, 139, 250, 0.3);
+  --qb-news-col-title-fg: #fff;
+  --qb-news-item-bg: var(--qb-holo-panel);
+  --qb-news-expand-bg: rgba(255, 255, 255, 0.08);
+  --qb-news-open-btn-bg: rgba(139, 92, 246, 0.22);
+  --qb-news-open-btn-border: var(--qb-holo-purple);
+
+  --qb-team-shell-bg: rgba(14, 20, 34, 0.75);
+  --qb-team-shell-border: var(--qb-holo-film-border);
+  --qb-team-left-bg: rgba(18, 26, 42, 0.72);
+  --qb-team-center-bg: rgba(12, 18, 30, 0.68);
+  --qb-team-right-bg: rgba(18, 26, 42, 0.72);
+  --qb-team-stage-bg: rgba(10, 14, 26, 0.65);
+  --qb-team-activity-bg: rgba(12, 18, 30, 0.78);
+  --qb-team-titlebar-bg: rgba(255, 255, 255, 0.06);
+  --qb-team-titlebar-fg: #e8eaf0;
+  --qb-team-gutter-bg: rgba(255, 255, 255, 0.08);
+  --qb-team-tab-active-bg: rgba(139, 92, 246, 0.26);
+  --qb-team-tab-active-border: var(--qb-holo-purple);
+  --qb-team-panel-bg: rgba(255, 255, 255, 0.05);
+  --qb-team-meta: #a8b0c0;
+  --qb-team-section-fg: #d4d8e4;
+  --qb-team-input-bg: rgba(255, 255, 255, 0.07);
+  --qb-team-input-border: var(--qb-holo-border);
+  --qb-team-input-fg: var(--qb-holo-fg);
+  --qb-team-canvas-bg: rgba(10, 14, 26, 0.6);
+  --qb-team-live-feed-bg: rgba(10, 14, 26, 0.78);
+  --qb-team-live-feed-border: rgba(255, 255, 255, 0.14);
+  --qb-team-live-feed-fg: #e8eaf0;
+  --qb-team-member-tag-bg: rgba(255, 255, 255, 0.08);
+  --qb-team-member-tag-fg: #e8eaf0;
+  --qb-team-edge-fg: rgba(226, 232, 240, 0.55);
+  --qb-team-edge-active: var(--qb-holo-lilac);
+  --qb-team-edge-hot: var(--qb-holo-magenta);
+  --qb-team-node-selected-fill: rgba(139, 92, 246, 0.32);
+  --qb-team-node-selected-stroke: var(--qb-holo-lilac);
+  --qb-team-node-hot-fill: rgba(232, 121, 249, 0.22);
+  --qb-team-node-hot-stroke: var(--qb-holo-magenta);
+}
+
+@keyframes qb-holo-flow {
+  0% {
+    background-position: 0% 40%, 100% 60%, 70% 20%, 30% 80%, 0% 50%;
+  }
+  50% {
+    background-position: 100% 60%, 0% 40%, 20% 80%, 80% 20%, 100% 50%;
+  }
+  100% {
+    background-position: 0% 40%, 100% 60%, 70% 20%, 30% 80%, 200% 50%;
+  }
+}
+
+/** 彩膜光带扫过 */
+@keyframes qb-holo-film-sweep {
+  0% {
+    transform: translateX(-80%) skewX(-12deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.55;
+  }
+  85% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translateX(180%) skewX(-12deg);
+    opacity: 0;
+  }
+}
+
+/** 虹彩角向旋转（底层） */
+@keyframes qb-holo-aurora-spin {
+  0% {
+    transform: rotate(0deg) scale(1.1);
+  }
+  100% {
+    transform: rotate(360deg) scale(1.1);
+  }
+}
+
+@keyframes qb-holo-shimmer {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: translateX(220%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+html[data-qb-style="holographic"] body {
+  font-family: var(--qb-font-body);
+}
+
+html[data-qb-style="holographic"] .qb-app-root {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(165deg, var(--qb-holo-base) 0%, var(--qb-holo-base-mid) 48%, #0d1524 100%);
+}
+
+html[data-qb-style="holographic"] .qb-app-root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 65% 55% at 8% 12%, rgba(139, 92, 246, 0.42), transparent 62%),
+    radial-gradient(ellipse 58% 50% at 92% 10%, rgba(99, 102, 241, 0.32), transparent 58%),
+    radial-gradient(ellipse 52% 48% at 75% 88%, rgba(56, 189, 248, 0.16), transparent 55%),
+    radial-gradient(ellipse 48% 42% at 38% 55%, rgba(192, 132, 252, 0.2), transparent 52%),
+    var(--qb-holo-gradient);
+  background-size: auto, auto, auto, auto, 220% 220%;
+  animation: qb-holo-flow 28s ease-in-out infinite;
+  opacity: 0.5;
+}
+
+/* 动态虹彩膜：缓慢旋转 + 扫光 */
+html[data-qb-style="holographic"] .qb-app-root::after {
+  content: "";
+  position: fixed;
+  inset: -35%;
+  z-index: 0;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    transparent 0deg,
+    rgba(139, 92, 246, 0.14) 55deg,
+    rgba(196, 181, 253, 0.1) 110deg,
+    transparent 160deg,
+    rgba(125, 211, 252, 0.1) 220deg,
+    rgba(192, 132, 252, 0.12) 280deg,
+    transparent 360deg
+  );
+  animation: qb-holo-aurora-spin 48s linear infinite;
+  opacity: 0.55;
+  mix-blend-mode: screen;
+}
+
+html[data-qb-style="holographic"] .qb-app-root > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 偶发扫光层（挂 body，避免与 ::after 冲突） */
+html[data-qb-style="holographic"] body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 45%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 0%,
+    rgba(196, 181, 253, 0.06) 35%,
+    rgba(255, 255, 255, 0.14) 48%,
+    rgba(125, 211, 252, 0.08) 62%,
+    transparent 100%
+  );
+  animation: qb-holo-film-sweep 9s ease-in-out infinite;
+  opacity: 0.7;
+}
+
+/* 玻璃卡片 + 彩虹描边 */
+html[data-qb-style="holographic"] .qb-topbar,
+html[data-qb-style="holographic"] .qb-workbench-toolbar,
+html[data-qb-style="holographic"] .qb-sidebar-shell,
+html[data-qb-style="holographic"] .qb-sidebar-activity,
+html[data-qb-style="holographic"] .qb-explorer-panel,
+html[data-qb-style="holographic"] .qb-context-card,
+html[data-qb-style="holographic"] .qb-agent-shell,
+html[data-qb-style="holographic"] .qb-segmented,
+html[data-qb-style="holographic"] .qb-status-pill {
+  position: relative;
+  background: var(--qb-holo-panel) !important;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid var(--qb-holo-film-border) !important;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(196, 181, 253, 0.08);
+  overflow: hidden;
+  transition:
+    box-shadow var(--qb-holo-duration) var(--qb-holo-ease),
+    border-color var(--qb-holo-duration) var(--qb-holo-ease),
+    transform var(--qb-holo-duration) var(--qb-holo-ease);
+}
+
+/* 卡片边框虹彩流动 */
+html[data-qb-style="holographic"] .qb-topbar::before,
+html[data-qb-style="holographic"] .qb-context-card::before,
+html[data-qb-style="holographic"] .qb-agent-shell::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(139, 92, 246, 0.5),
+    rgba(196, 181, 253, 0.4),
+    rgba(125, 211, 252, 0.45),
+    rgba(192, 132, 252, 0.5),
+    rgba(139, 92, 246, 0.5)
+  );
+  background-size: 300% 100%;
+  animation: qb-holo-flow 6s linear infinite;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.45;
+}
+
+html[data-qb-style="holographic"] .qb-topbar::after,
+html[data-qb-style="holographic"] .qb-context-card::after,
+html[data-qb-style="holographic"] .qb-agent-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--qb-holo-shine);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 1;
+  transition: opacity var(--qb-holo-duration) var(--qb-holo-ease);
+}
+
+html[data-qb-style="holographic"] .qb-topbar:hover::after,
+html[data-qb-style="holographic"] .qb-context-card:hover::after,
+html[data-qb-style="holographic"] .qb-agent-shell:hover::after {
+  opacity: 1;
+  animation: qb-holo-shimmer 1.2s var(--qb-holo-ease);
+}
+
+html[data-qb-style="holographic"] .qb-logo-text {
+  font-weight: 700;
+  background: var(--qb-holo-text-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+html[data-qb-style="holographic"] .qb-topbar__subtitle {
+  color: var(--qb-holo-muted);
+}
+
+html[data-qb-style="holographic"] .qb-nav-row {
+  border-radius: var(--qb-radius-sm);
+  transition: all var(--qb-holo-duration) var(--qb-holo-ease);
+}
+
+html[data-qb-style="holographic"] .qb-nav-row:hover {
+  background: var(--qb-holo-panel-strong) !important;
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.18);
+}
+
+html[data-qb-style="holographic"] .qb-nav-row--active {
+  background: rgba(139, 92, 246, 0.24) !important;
+  border: 1px solid rgba(196, 181, 253, 0.45);
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.22);
+}
+
+html[data-qb-style="holographic"] .qb-segmented__tab--active {
+  background: var(--qb-holo-accent-gradient) !important;
+  color: #f8fafc !important;
+  font-weight: 700;
+  border-color: rgba(196, 181, 253, 0.5) !important;
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.28);
+}
+
+html[data-qb-style="holographic"] .qb-btn-primary,
+html[data-qb-style="holographic"] .qb-btn-primary-brand {
+  background: var(--qb-holo-accent-gradient) !important;
+  color: #f8fafc !important;
+  font-weight: 700;
+  border: 1px solid rgba(196, 181, 253, 0.45) !important;
+  box-shadow: 0 4px 22px rgba(109, 40, 217, 0.35);
+  transition: all var(--qb-holo-duration) var(--qb-holo-ease);
+}
+
+html[data-qb-style="holographic"] .qb-btn-primary:hover:not(:disabled),
+html[data-qb-style="holographic"] .qb-btn-primary-brand:hover:not(:disabled) {
+  box-shadow: 0 6px 26px rgba(139, 92, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+html[data-qb-style="holographic"] .qb-btn-primary:active:not(:disabled),
+html[data-qb-style="holographic"] .qb-btn-primary-brand:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 2px 12px rgba(167, 139, 250, 0.3);
+}
+
+html[data-qb-style="holographic"] .qb-btn-secondary,
+html[data-qb-style="holographic"] .qb-btn-ghost,
+html[data-qb-style="holographic"] .qb-chip {
+  background: var(--qb-holo-panel) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--qb-holo-border) !important;
+  color: var(--qb-holo-fg) !important;
+  transition: all var(--qb-holo-duration) var(--qb-holo-ease);
+}
+
+html[data-qb-style="holographic"] .qb-btn-secondary:hover:not(:disabled),
+html[data-qb-style="holographic"] .qb-btn-ghost:hover:not(:disabled),
+html[data-qb-style="holographic"] .qb-chip:hover {
+  border-color: rgba(167, 139, 250, 0.55) !important;
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.16);
+}
+
+html[data-qb-style="holographic"] input,
+html[data-qb-style="holographic"] select,
+html[data-qb-style="holographic"] textarea:not(.qb-tokyo-editor__textarea) {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border: 1px solid var(--qb-holo-border) !important;
+  color: var(--qb-holo-fg) !important;
+  backdrop-filter: blur(8px);
+}
+
+html[data-qb-style="holographic"] [data-qb-trader-root] [data-qb-trader-card] {
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--qb-holo-border);
+  transition: box-shadow var(--qb-holo-duration) var(--qb-holo-ease);
+}
+
+html[data-qb-style="holographic"] [data-qb-trader-root] [data-qb-trader-card]:hover {
+  box-shadow: 0 0 24px rgba(139, 92, 246, 0.24);
+}
+
+/* IDE / 对话区 — 黑灰蓝玻璃 + 紫膜描边 */
+html[data-qb-style="holographic"] [data-qb-chat-panel] .qb-chat-sidebar,
+html[data-qb-style="holographic"] [data-qb-chat-panel] .qb-chat-main,
+html[data-qb-style="holographic"] [data-qb-ide-workbench] .qb-explorer-panel {
+  background: rgba(18, 26, 42, 0.72) !important;
+  border-color: var(--qb-holo-film-border) !important;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+html[data-qb-style="holographic"] [data-qb-ide-workbench] {
+  background: transparent !important;
+}
+
+html[data-qb-style="holographic"] [data-qb-ide-workbench] > div {
+  background: rgba(14, 20, 34, 0.55);
+  border: 1px solid rgba(167, 139, 250, 0.12);
+  border-radius: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="holographic"] .qb-app-root::before,
+  html[data-qb-style="holographic"] .qb-app-root::after,
+  html[data-qb-style="holographic"] body::before {
+    animation: none !important;
+  }
+
+  html[data-qb-style="holographic"] .qb-topbar::before,
+  html[data-qb-style="holographic"] .qb-context-card::before,
+  html[data-qb-style="holographic"] .qb-agent-shell::before {
+    animation: none !important;
+    opacity: 0.25;
+  }
+
+  html[data-qb-style="holographic"] .qb-logo-text {
+    animation: none;
+  }
+}

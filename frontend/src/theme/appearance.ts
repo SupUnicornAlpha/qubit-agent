@@ -3,7 +3,15 @@
  * DOM：`html[data-qb-theme]` + `html[data-qb-style]`
  */
 
-export const UI_PALETTE_IDS = ["dark-purple", "light-white", "light-sky"] as const;
+/** 默认风格配色 */
+export const DEFAULT_PALETTE_IDS = ["dark-purple", "light-white", "light-sky"] as const;
+export type DefaultPaletteId = (typeof DEFAULT_PALETTE_IDS)[number];
+
+/** Glassmorphism 底色（冷 / 暖 / 彩虹） */
+export const GLASS_PALETTE_IDS = ["glass-cool", "glass-warm", "glass-rainbow"] as const;
+export type GlassPaletteId = (typeof GLASS_PALETTE_IDS)[number];
+
+export const UI_PALETTE_IDS = [...DEFAULT_PALETTE_IDS, ...GLASS_PALETTE_IDS] as const;
 export type UiPaletteId = (typeof UI_PALETTE_IDS)[number];
 
 export const UI_STYLE_IDS = [
@@ -15,6 +23,9 @@ export const UI_STYLE_IDS = [
   "bauhaus",
   "sci-fi-hud",
   "comic-book",
+  "anti-design",
+  "holographic",
+  "blueprint",
 ] as const;
 export type UiStyleId = (typeof UI_STYLE_IDS)[number];
 
@@ -26,7 +37,30 @@ export const PALETTE_LABELS: Record<UiPaletteId, string> = {
   "dark-purple": "黑紫",
   "light-white": "白",
   "light-sky": "天蓝",
+  "glass-cool": "冷色",
+  "glass-warm": "暖色",
+  "glass-rainbow": "彩虹",
 };
+
+export function isGlassPalette(palette: UiPaletteId): palette is GlassPaletteId {
+  return (GLASS_PALETTE_IDS as readonly string[]).includes(palette);
+}
+
+/** 当前风格下 TopBar 展示的配色项 */
+export function palettesForStyle(style: UiStyleId): readonly UiPaletteId[] {
+  if (style === "glassmorphism") return GLASS_PALETTE_IDS;
+  return DEFAULT_PALETTE_IDS;
+}
+
+/** 切换风格时把 palette 落到该风格合法取值 */
+export function coercePaletteForStyle(style: UiStyleId, palette: UiPaletteId): UiPaletteId {
+  if (style === "glassmorphism") {
+    if (isGlassPalette(palette)) return palette;
+    return "glass-cool";
+  }
+  if (isGlassPalette(palette)) return "dark-purple";
+  return palette;
+}
 
 export const STYLE_LABELS: Record<UiStyleId, string> = {
   default: "默认",
@@ -37,6 +71,9 @@ export const STYLE_LABELS: Record<UiStyleId, string> = {
   bauhaus: "Bauhaus 包豪斯",
   "sci-fi-hud": "科幻 HUD",
   "comic-book": "Comic Book 漫画书",
+  "anti-design": "反设计 Anti-Design",
+  holographic: "全息彩膜 Holographic",
+  blueprint: "Blueprint 工程蓝图",
 };
 
 export interface UiAppearance {
@@ -56,8 +93,10 @@ export function isLightPalette(palette: UiPaletteId): boolean {
   return palette.startsWith("light");
 }
 
-export function applyUiAppearance({ palette, style }: UiAppearance): void {
+export function applyUiAppearance(appearance: UiAppearance): void {
   if (typeof document === "undefined") return;
+  const { style } = appearance;
+  const palette = coercePaletteForStyle(style, appearance.palette);
   const root = document.documentElement;
   root.setAttribute("data-qb-theme", palette);
   root.setAttribute("data-qb-style", style);
@@ -72,7 +111,9 @@ export function readUiAppearance(): UiAppearance {
       const j = JSON.parse(raw) as Partial<UiAppearance>;
       const palette = normalizePalette(j.palette);
       const style = normalizeStyle(j.style);
-      if (palette && style) return { palette, style };
+      if (palette && style) {
+        return { palette: coercePaletteForStyle(style, palette), style };
+      }
     }
   } catch {
     /* ignore */
@@ -131,15 +172,27 @@ export function appearanceBootScript(): string {
     if (LEGACY[v]) return LEGACY[v];
     return "dark-purple";
   }
+  var GLASS_PALETTES = ${JSON.stringify([...GLASS_PALETTE_IDS])};
   function normStyle(v) {
+    if (v === "generative-art") return "retro-futurism";
     return STYLES.indexOf(v) >= 0 ? v : "default";
+  }
+  function normPaletteForStyle(style, v) {
+    var p = normPalette(v);
+    if (style === "glassmorphism") {
+      if (GLASS_PALETTES.indexOf(p) >= 0) return p;
+      return "glass-cool";
+    }
+    if (GLASS_PALETTES.indexOf(p) >= 0) return "dark-purple";
+    return p;
   }
   try {
     var raw = localStorage.getItem("qubit-ui-appearance-v2");
     if (raw) {
       var j = JSON.parse(raw);
-      root.setAttribute("data-qb-theme", normPalette(j.palette));
-      root.setAttribute("data-qb-style", normStyle(j.style));
+      var style = normStyle(j.style);
+      root.setAttribute("data-qb-theme", normPaletteForStyle(style, j.palette));
+      root.setAttribute("data-qb-style", style);
       return;
     }
     var legacy = localStorage.getItem("qubit-ui-theme-v1");

@@ -2349,6 +2349,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allow QUBIT desktop app to start/stop the Bun backend sidecar.",
+          "type": "string",
+          "const": "allow-backend-commands",
+          "markdownDescription": "Allow QUBIT desktop app to start/stop the Bun backend sidecar."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

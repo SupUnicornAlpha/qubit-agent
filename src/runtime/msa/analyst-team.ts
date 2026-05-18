@@ -31,6 +31,7 @@ import {
   mergeSystemPrompt,
   readPackFiles,
 } from "../agent/agent-pack-service";
+import { buildAnalystTeamDataContext } from "./analyst-team-context";
 
 async function enrichAnalystSlotsWithPack(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -338,7 +339,9 @@ export async function runAnalystTeam(params: {
 }): Promise<AnalystTeamResult> {
   const db = await getDb();
   const { workflowRunId, ticker } = params;
-  const context = params.context ?? `请对 ${ticker} 进行全面分析`;
+  const userContext = params.context ?? `请对 ${ticker} 进行全面分析`;
+  const dataContext = await buildAnalystTeamDataContext({ ticker });
+  const context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
 
   await db
     .update(workflowRun)

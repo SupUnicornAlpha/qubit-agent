@@ -2,22 +2,7 @@ import type { FC } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { getMarketNewsBrief } from "../../api/backend";
 import type { MarketNewsBriefItem, MarketNewsBriefPayload } from "../../api/types";
-
-function normalizeExternalHref(raw: string): string {
-  const u = raw.trim();
-  if (!u) return "";
-  return /^https?:\/\//i.test(u) ? u : `https://${u}`;
-}
-
-function openExternalUrl(raw: string): void {
-  const href = normalizeExternalHref(raw);
-  if (!href) return;
-  try {
-    window.open(href, "_blank", "noopener,noreferrer");
-  } catch {
-    window.location.assign(href);
-  }
-}
+import { normalizeExternalHref, openExternalUrl } from "../../lib/openExternalUrl";
 
 function newsItemHasExpandableBody(it: MarketNewsBriefItem): boolean {
   return Boolean((it.url && it.url.trim()) || (it.content && it.content.trim()));
@@ -154,7 +139,7 @@ function NewsItemCard({ it }: { it: MarketNewsBriefItem }) {
                 type="button"
                 style={styles.openBtn}
                 data-qb-news-open-btn
-                onClick={() => openExternalUrl(urlTrim)}
+                onClick={() => void openExternalUrl(urlTrim)}
               >
                 在浏览器中打开
               </button>

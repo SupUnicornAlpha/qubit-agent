@@ -1,6 +1,12 @@
 import type { FC, MouseEvent } from "react";
 import { useId, useMemo } from "react";
 import type { AnalystTeamGraphEdge, AnalystTeamGraphNode } from "../../api/types";
+import { buildTopologyEdgePath, sampleLine, type TopoRect } from "../../lib/topologyEdgeRouting";
+import {
+  computeTeamGraphNodePositions,
+  TEAM_GRAPH_NODE_H,
+  TEAM_GRAPH_NODE_W,
+} from "../../lib/teamGraphLayout";
 
 export type TeamGraphSelection =
   | null
@@ -25,6 +31,10 @@ const emptyActivity: TeamGraphActivity = {
   hotEdgeKeys: new Set(),
   isRunning: false,
 };
+
+function nodeRect(cx: number, cy: number): TopoRect {
+  return { cx, cy, w: TEAM_GRAPH_NODE_W, h: TEAM_GRAPH_NODE_H };
+}
 
 export const TeamAgentGraph: FC<{
   nodes: AnalystTeamGraphNode[];
@@ -51,15 +61,10 @@ export const TeamAgentGraph: FC<{
   const uid = useId().replace(/:/g, "");
   const markerId = `qb-team-arrow-${uid}`;
 
-  const cx = width / 2;
-  const cy = height / 2;
-  const radius = Math.min(width, height) * 0.34;
-  const pos = new Map<string, { x: number; y: number }>();
-  const n = Math.max(nodes.length, 1);
-  nodes.forEach((node, i) => {
-    const angle = (2 * Math.PI * i) / n - Math.PI / 2;
-    pos.set(node.role, { x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
-  });
+  const pos = useMemo(
+    () => computeTeamGraphNodePositions(nodes, width, height),
+    [nodes, width, height]
+  );
 
   const onBgClick = (e: MouseEvent<SVGSVGElement>) => {
     if (e.target === e.currentTarget) onClear();
@@ -81,6 +86,7 @@ export const TeamAgentGraph: FC<{
 
   return (
     <svg
+      data-qb-topology-canvas=""
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
@@ -89,14 +95,15 @@ export const TeamAgentGraph: FC<{
         maxWidth: "100%",
         cursor: "default",
         background: "var(--qb-team-canvas-bg, #0c0c0e)",
-        borderRadius: 8,
+        border: "1px solid var(--qb-topo-canvas-border, var(--qb-team-table-row-border, #27272a))",
+        borderRadius: "var(--qb-topo-canvas-radius, 8px)",
       }}
       onClick={onBgClick}
     >
       <defs>
         <style type="text/css">{css}</style>
         <marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
-          <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-team-edge-fg, #71717a)" />
+          <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-stroke, #71717a)" />
         </marker>
       </defs>
       <rect width={width} height={height} fill="transparent" />
@@ -104,42 +111,41 @@ export const TeamAgentGraph: FC<{
         const pa = pos.get(ed.a);
         const pb = pos.get(ed.b);
         if (!pa || !pb) return null;
+        const fromRect = nodeRect(pa.x, pa.y);
+        const toRect = nodeRect(pb.x, pb.y);
+        const d = buildTopologyEdgePath(fromRect, toRect, { curved: true, curveStrength: 0.65 });
         const selEdge = selection?.kind === "edge" && teamGraphUndirectedKey(selection.a, selection.b) === ed.key;
         const traffic = (ed.messageCount ?? 0) + (ed.toolCount ?? 0) > 0;
         const isHot = activity.hotEdgeKeys.has(ed.key);
-        const strokeMain = selEdge
-          ? "var(--qb-team-edge-active, #3b82f6)"
-          : isHot
-            ? "var(--qb-team-edge-hot, #60a5fa)"
-            : "var(--qb-team-edge-fg, #71717a)";
-        const strokeW = selEdge ? 2.4 : isHot ? 2 : traffic ? 1.6 : 1.25;
-        const dash = traffic ? undefined : "7 5";
-        const opacity = traffic ? (isHot ? 1 : 0.82) : 0.42;
-        const hitW = Math.max(14, strokeW + 10);
+        const edgeClass = [
+          "qb-topo-edge",
+          selEdge ? "qb-topo-edge--selected" : isHot ? "qb-topo-edge--hot" : "",
+          !traffic ? "qb-topo-edge--dashed" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        const hitW = 14;
+        const labelParts: string[] = [];
+        if (ed.messageCount) labelParts.push(`对话 ${ed.messageCount}`);
+        if (ed.toolCount) labelParts.push(`工具 ${ed.toolCount}`);
+        const labelText = labelParts.length > 0 ? labelParts.join(" · ") : traffic ? "" : "拓扑";
+        const labelPt = sampleLine(pa.x, pa.y, pb.x, pb.y, 0.45);
         return (
           <g key={ed.key}>
-            <line
-              x1={pa.x}
-              y1={pa.y}
-              x2={pb.x}
-              y2={pb.y}
+            <path
+              d={d}
+              fill="none"
               stroke="transparent"
               strokeWidth={hitW}
               style={{ cursor: "pointer" }}
-              onClick={(e: MouseEvent<SVGLineElement>) => {
+              onClick={(e: MouseEvent<SVGPathElement>) => {
                 e.stopPropagation();
                 onSelectEdge(ed.a, ed.b);
               }}
             />
-            <line
-              x1={pa.x}
-              y1={pa.y}
-              x2={pb.x}
-              y2={pb.y}
-              stroke={strokeMain}
-              strokeWidth={strokeW}
-              strokeDasharray={dash}
-              strokeOpacity={opacity}
+            <path
+              d={d}
+              className={edgeClass}
               markerEnd={`url(#${markerId})`}
               style={{
                 cursor: "pointer",
@@ -147,22 +153,18 @@ export const TeamAgentGraph: FC<{
                 animation: isHot && activity.isRunning ? "qb-team-edge-pulse 1.1s ease-in-out infinite" : undefined,
               }}
             />
-            <text
-              x={(pa.x + pb.x) / 2}
-              y={(pa.y + pb.y) / 2 - 8}
-              textAnchor="middle"
-              fill="var(--qb-team-meta, #a1a1aa)"
-              fontSize={10}
-              style={{ pointerEvents: "none" }}
-            >
-              {(() => {
-                const parts: string[] = [];
-                if (ed.messageCount) parts.push(`对话 ${ed.messageCount}`);
-                if (ed.toolCount) parts.push(`工具 ${ed.toolCount}`);
-                if (parts.length > 0) return parts.join(" · ");
-                return traffic ? "" : "拓扑";
-              })()}
-            </text>
+            {labelText ? (
+              <text
+                x={labelPt.x}
+                y={labelPt.y - 8}
+                textAnchor="middle"
+                className="qb-topo-sublabel"
+                fontSize={10}
+                style={{ pointerEvents: "none" }}
+              >
+                {labelText}
+              </text>
+            ) : null}
           </g>
         );
       })}
@@ -170,31 +172,22 @@ export const TeamAgentGraph: FC<{
         const p = pos.get(node.role);
         if (!p) return null;
         const sel = selection?.kind === "node" && selection.role === node.role;
-        const w = 108;
-        const h = 46;
         const hot = activity.hotRoles.has(node.role);
-        const fill = sel
-          ? "var(--qb-team-node-selected-fill, rgba(30,58,95,0.55))"
-          : hot
-            ? "var(--qb-team-node-hot-fill, rgba(59,130,246,0.18))"
-            : "var(--qb-main-card-bg, #18181b)";
-        const stroke = sel
-          ? "var(--qb-team-node-selected-stroke, #3b82f6)"
-          : hot
-            ? "var(--qb-team-node-hot-stroke, #60a5fa)"
-            : "var(--qb-main-card-border, #3f3f46)";
-        const sw = sel ? 2.2 : hot ? 2 : 1;
+        const nodeClass = [
+          "qb-topo-node",
+          sel ? "qb-topo-node--selected" : hot ? "qb-topo-node--hot" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
         return (
           <g key={node.role}>
             <rect
-              x={p.x - w / 2}
-              y={p.y - h / 2}
-              width={w}
-              height={h}
-              rx={10}
-              fill={fill}
-              stroke={stroke}
-              strokeWidth={sw}
+              className={nodeClass}
+              x={p.x - TEAM_GRAPH_NODE_W / 2}
+              y={p.y - TEAM_GRAPH_NODE_H / 2}
+              width={TEAM_GRAPH_NODE_W}
+              height={TEAM_GRAPH_NODE_H}
+              rx={8}
               style={{
                 cursor: "pointer",
                 animation: hot && activity.isRunning ? "qb-team-node-pulse 1.2s ease-in-out infinite" : undefined,
@@ -204,25 +197,10 @@ export const TeamAgentGraph: FC<{
                 onSelectNode(node.role);
               }}
             />
-            <text
-              x={p.x}
-              y={p.y - 5}
-              textAnchor="middle"
-              fill="var(--qb-body-fg, #e4e4e7)"
-              fontSize={11}
-              fontWeight={600}
-              style={{ pointerEvents: "none" }}
-            >
+            <text className="qb-topo-label" x={p.x} y={p.y - 5} textAnchor="middle">
               {node.label.length > 11 ? `${node.label.slice(0, 10)}…` : node.label}
             </text>
-            <text
-              x={p.x}
-              y={p.y + 11}
-              textAnchor="middle"
-              fill="var(--qb-team-meta, #71717a)"
-              fontSize={9}
-              style={{ pointerEvents: "none" }}
-            >
+            <text className="qb-topo-sublabel" x={p.x} y={p.y + 11} textAnchor="middle">
               {node.role}
             </text>
           </g>

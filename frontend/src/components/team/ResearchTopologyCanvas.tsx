@@ -1,6 +1,7 @@
 import type { FC, PointerEvent } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { TeamTopologyEdge } from "../../lib/researchTeamTopology";
+import { buildTopologyEdgePath, type TopoRect } from "../../lib/topologyEdgeRouting";
 
 const NODE_W = 112;
 const NODE_H = 48;
@@ -11,16 +12,8 @@ function roleShortLabel(role: string): string {
   return role.replace(/^analyst_/, "").replace(/_/g, " ");
 }
 
-function nodeRect(pos: { x: number; y: number }): { x: number; y: number; w: number; h: number } {
-  return { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2, w: NODE_W, h: NODE_H };
-}
-
-function centerBottom(pos: { x: number; y: number }): { x: number; y: number } {
-  return { x: pos.x, y: pos.y + NODE_H / 2 };
-}
-
-function centerTop(pos: { x: number; y: number }): { x: number; y: number } {
-  return { x: pos.x, y: pos.y - NODE_H / 2 };
+function nodeRect(pos: { x: number; y: number }): TopoRect {
+  return { cx: pos.x, cy: pos.y, w: NODE_W, h: NODE_H };
 }
 
 export type TopologyDrawMode = "select" | "unicast" | "broadcast";
@@ -129,43 +122,32 @@ export const ResearchTopologyCanvas: FC<{
   };
 
   const edgeSegments = useMemo(() => {
-    const segs: Array<{
-      key: string;
-      x1: number;
-      y1: number;
-      x2: number;
-      y2: number;
-      dashed?: boolean;
-      curve?: boolean;
-    }> = [];
+    const segs: Array<{ key: string; d: string; dashed?: boolean }> = [];
+
     for (const e of edges) {
       const p1 = positions[e.from];
       if (!p1) continue;
-      const start = centerBottom(p1);
+      const fromRect = nodeRect(p1);
+
       if (e.kind === "unicast") {
         const p2 = positions[e.to];
         if (!p2) continue;
-        const end = centerTop(p2);
         segs.push({
           key: `u-${e.from}-${e.to}`,
-          x1: start.x,
-          y1: start.y,
-          x2: end.x,
-          y2: end.y,
+          d: buildTopologyEdgePath(fromRect, nodeRect(p2), { curved: true, curveStrength: 0.85 }),
         });
       } else {
-        e.targets.forEach((t, i) => {
-          const p2 = positions[t];
-          if (!p2) return;
-          const end = centerTop(p2);
+        const validTargets = e.targets.filter((t) => positions[t]);
+        validTargets.forEach((t, i) => {
           segs.push({
             key: `b-${e.from}-${t}-${i}`,
-            x1: start.x,
-            y1: start.y,
-            x2: end.x,
-            y2: end.y,
+            d: buildTopologyEdgePath(fromRect, nodeRect(positions[t]!), {
+              curved: true,
+              fanIndex: i,
+              fanTotal: validTargets.length,
+              curveStrength: 1.1,
+            }),
             dashed: true,
-            curve: true,
           });
         });
       }
@@ -188,7 +170,13 @@ export const ResearchTopologyCanvas: FC<{
               广播：先点<strong>源</strong>，再点多个<strong>接收方</strong>（可多选），然后确认。同一源重复确认会覆盖该源的广播边。
               {bcFrom ? ` 源=${bcFrom}，接收=${bcPicks.join(", ") || "（未选）"}` : ""}
             </span>
-            <button type="button" className="qb-btn-secondary" style={{ fontSize: 11, padding: "4px 8px" }} onClick={confirmBroadcast} disabled={!bcFrom || bcPicks.length === 0}>
+            <button
+              type="button"
+              className="qb-btn-secondary"
+              style={{ fontSize: 11, padding: "4px 8px" }}
+              onClick={confirmBroadcast}
+              disabled={!bcFrom || bcPicks.length === 0}
+            >
               确认广播
             </button>
             <button type="button" className="qb-btn-secondary" style={{ fontSize: 11, padding: "4px 8px" }} onClick={cancelBroadcast}>
@@ -201,15 +189,18 @@ export const ResearchTopologyCanvas: FC<{
         ) : null}
       </div>
 
+      <div data-qb-team-graph-host style={{ position: "relative" }}>
       <svg
         ref={svgRef}
+        data-qb-topology-canvas=""
         width="100%"
         height={VB_H}
         viewBox={`0 0 ${VB_W} ${VB_H}`}
         style={{
+          display: "block",
           background: "var(--qb-team-canvas-bg, #0c0c0e)",
-          border: "1px solid var(--qb-team-table-row-border, #27272a)",
-          borderRadius: 8,
+          border: "1px solid var(--qb-topo-canvas-border, var(--qb-team-table-row-border, #27272a))",
+          borderRadius: "var(--qb-topo-canvas-radius, 8px)",
           touchAction: "none",
         }}
         onPointerMove={onSvgPointerMove}
@@ -218,64 +209,49 @@ export const ResearchTopologyCanvas: FC<{
       >
         <defs>
           <marker id={markerId} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-            <path d="M0,0 L8,4 L0,8 z" fill="var(--qb-team-edge-fg, #71717a)" />
+            <path d="M0,0 L8,4 L0,8 z" className="qb-topo-edge-marker" fill="var(--qb-topo-edge-stroke, #71717a)" />
           </marker>
         </defs>
 
-        {edgeSegments.map((s) => {
-          const mx = (s.x1 + s.x2) / 2;
-          const my = (s.y1 + s.y2) / 2 - (s.curve ? 28 : 0);
-          const d = s.curve ? `M ${s.x1} ${s.y1} Q ${mx} ${my} ${s.x2} ${s.y2}` : `M ${s.x1} ${s.y1} L ${s.x2} ${s.y2}`;
-          return (
-            <path
-              key={s.key}
-              d={d}
-              fill="none"
-              stroke="var(--qb-team-edge-fg, #71717a)"
-              strokeWidth={1.5}
-              strokeDasharray={s.dashed ? "5 4" : undefined}
-              markerEnd={`url(#${markerId})`}
-            />
-          );
-        })}
+        {edgeSegments.map((s) => (
+          <path
+            key={s.key}
+            d={s.d}
+            className={`qb-topo-edge${s.dashed ? " qb-topo-edge--dashed" : ""}`}
+            markerEnd={`url(#${markerId})`}
+          />
+        ))}
 
         {roles.map((role) => {
           const pos = positions[role];
           if (!pos) return null;
-          const { x, y, w, h } = nodeRect(pos);
+          const { cx, cy, w, h } = nodeRect(pos);
+          const x = cx - w / 2;
+          const y = cy - h / 2;
           const active = uniSource === role || bcFrom === role || (bcFrom !== null && bcPicks.includes(role));
           return (
             <g key={role}>
               <rect
+                className={`qb-topo-node${active ? " qb-topo-node--active" : ""}`}
                 x={x}
                 y={y}
                 width={w}
                 height={h}
                 rx={8}
-                fill={active ? "rgba(59,130,246,0.25)" : "var(--qb-main-card-bg, #18181b)"}
-                stroke={active ? "#3b82f6" : "var(--qb-main-card-border, #3f3f46)"}
-                strokeWidth={active ? 2 : 1}
                 style={{ cursor: drawMode === "select" ? "grab" : "pointer" }}
                 onPointerDown={(e) => onPointerDownRole(role, e)}
               />
-              <text
-                x={pos.x}
-                y={pos.y - 2}
-                textAnchor="middle"
-                fill="var(--qb-body-fg, #e4e4e7)"
-                fontSize={11}
-                fontWeight={600}
-                pointerEvents="none"
-              >
+              <text className="qb-topo-label" x={pos.x} y={pos.y - 2} textAnchor="middle">
                 {roleShortLabel(role)}
               </text>
-              <text x={pos.x} y={pos.y + 12} textAnchor="middle" fill="var(--qb-team-meta, #71717a)" fontSize={9} pointerEvents="none">
+              <text className="qb-topo-sublabel" x={pos.x} y={pos.y + 12} textAnchor="middle">
                 {role}
               </text>
             </g>
           );
         })}
       </svg>
+      </div>
 
       {edges.length > 0 ? (
         <div style={{ marginTop: 10 }}>

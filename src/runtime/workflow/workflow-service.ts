@@ -39,7 +39,9 @@ export async function createAndDispatchWorkflow(
     input.executionPath ?? parsedOpts.executionPath ?? config.agentExecutionPath;
 
   const shouldReuse =
-    input.reuseSessionWorkflow !== false && input.source === "chat" && Boolean(input.sessionId);
+    Boolean(input.sessionId) &&
+    (input.reuseSessionWorkflow === true ||
+      (input.reuseSessionWorkflow !== false && input.source === "chat"));
   if (shouldReuse && input.sessionId) {
     const latest = await db
       .select()

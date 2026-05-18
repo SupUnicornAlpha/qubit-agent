@@ -19,6 +19,7 @@ import {
   skillMarketInstall,
 } from "../db/sqlite/schema";
 import { getRuntimeAgents } from "../runtime/agent-pool";
+import { buildToolCatalog } from "../runtime/tools/tool-catalog";
 import {
   type PromptMode,
   defaultMemoryNamespace,
@@ -268,12 +269,20 @@ async function ensureBuiltinMcpCatalog(): Promise<void> {
   }
 }
 
+/** Agent 可配置工具目录（builtin + connector 路由） */
+agentRouter.get("/tools/catalog", (c) => {
+  return c.json({ ok: true, data: buildToolCatalog() });
+});
+
 agentRouter.get("/", (c) => {
   const agents = getRuntimeAgents().map((runtime) => ({
     id: runtime.instanceId,
     definitionId: runtime.definitionId,
     role: runtime.role,
+    name: runtime.name,
     version: runtime.version,
+    status: runtime.status,
+    executionPath: runtime.executionPath,
     running: runtime.status === "running",
   }));
   return c.json({ data: agents });

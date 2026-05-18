@@ -19,10 +19,12 @@ import {
 import {
   ackAlert,
   createAlertsFromWorkflowQuality,
+  createStuckWorkflowAlerts,
   listAlerts,
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
+import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
 import {
   createEvalDataset,
   getEvalRunDetail,
@@ -32,6 +34,22 @@ import {
 } from "../runtime/eval/pipeline";
 
 export const monitorRouter = new Hono();
+
+monitorRouter.get("/summary", async (c) => {
+  const sessionId = c.req.query("sessionId");
+  const stuckMinutes = c.req.query("stuckMinutes");
+  const data = await getMonitorSummary({
+    sessionId: sessionId || undefined,
+    stuckMinutes: stuckMinutes ? Number(stuckMinutes) : undefined,
+  });
+  return c.json({ ok: true, data });
+});
+
+monitorRouter.post("/alerts/scan-stuck", async (c) => {
+  const body = await c.req.json<{ stuckMinutes?: number }>().catch(() => ({}));
+  const data = await createStuckWorkflowAlerts(body.stuckMinutes ?? 120);
+  return c.json({ ok: true, data });
+});
 
 monitorRouter.get("/sessions/:id/overview", async (c) => {
   const db = await getDb();
@@ -65,10 +83,12 @@ monitorRouter.get("/workflows/:id/timeline", async (c) => {
       .orderBy(agentStep.createdAt),
   ]);
   const stepIds = steps.map((item) => item.id);
-  const tools = await db.select().from(toolCallLog);
+  const tools =
+    stepIds.length > 0
+      ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
+      : [];
   const toolsByStep = new Map<string, (typeof tools)>();
   for (const tool of tools) {
-    if (!stepIds.includes(tool.agentStepId)) continue;
     const bucket = toolsByStep.get(tool.agentStepId) ?? [];
     bucket.push(tool);
     toolsByStep.set(tool.agentStepId, bucket);
@@ -215,16 +235,19 @@ monitorRouter.get("/workflows", async (c) => {
 monitorRouter.get("/workflows/:id/detail", async (c) => {
   const db = await getDb();
   const workflowId = c.req.param("id");
-  const [workflowRows, instances, steps, tools, violations] = await Promise.all([
+  const [workflowRows, instances, steps, violations] = await Promise.all([
     db.select().from(workflowRun).where(eq(workflowRun.id, workflowId)).limit(1),
     db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowId)),
     db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowId)),
-    db.select().from(toolCallLog),
     db.select().from(sandboxViolationLog).where(eq(sandboxViolationLog.workflowRunId, workflowId)),
   ]);
   if (!workflowRows[0]) return c.json({ error: "workflow not found", workflowId }, 404);
-  const stepIds = new Set(steps.map((step) => step.id));
-  const usedTools = tools.filter((tool) => stepIds.has(tool.agentStepId));
+  const stepIds = steps.map((step) => step.id);
+  const tools =
+    stepIds.length > 0
+      ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
+      : [];
+  const usedTools = tools;
   return c.json({
     data: {
       workflow: workflowRows[0],
@@ -276,7 +299,13 @@ monitorRouter.get("/alerts", async (c) => {
   const scopeType = c.req.query("scopeType") as "workflow" | "agent" | "system" | undefined;
   const scopeId = c.req.query("scopeId");
   const status = c.req.query("status") as "open" | "ack" | "resolved" | undefined;
-  const data = await listAlerts({ scopeType, scopeId, status });
+  const limit = c.req.query("limit");
+  const data = await listAlerts({
+    scopeType,
+    scopeId,
+    status,
+    limit: limit ? Number(limit) : undefined,
+  });
   return c.json({ ok: true, data });
 });
 

@@ -48,6 +48,21 @@ html[data-qb-style="bauhaus"] {
   --qb-chat-main-bg: #fff;
   --qb-chat-sidebar-bg: #fff;
   --qb-chat-border: #111;
+  --qb-chat-bubble-user-bg: var(--qb-bauhaus-yellow);
+  --qb-chat-bubble-user-fg: #111;
+  --qb-chat-bubble-agent-bg: #fff;
+  --qb-chat-bubble-agent-fg: #111;
+  --qb-chat-bubble-border: #111;
+  --qb-chat-session-item-bg: #fff;
+  --qb-chat-session-item-fg: #111;
+  --qb-chat-session-active-border: var(--qb-bauhaus-red);
+  --qb-chat-session-active-bg: rgba(253, 216, 53, 0.55);
+  --qb-chat-meta-fg: #424242;
+  --qb-chat-ide-header-bg: #faf7f2;
+  --qb-chat-ide-header-fg: #424242;
+  --qb-chat-resizer-bg: var(--qb-bauhaus-blue);
+  --qb-board-col-bg: #fff;
+  --qb-board-card-bg: #fff;
 
   /* 研究工作台 · K 线 / 回测 */
   --qb-kline-root-bg: #fff;

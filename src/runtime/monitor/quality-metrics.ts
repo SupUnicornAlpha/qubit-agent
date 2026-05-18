@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
@@ -12,14 +12,14 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 
-function percentile(values: number[], p: number): number | null {
+export function percentile(values: number[], p: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[idx] ?? null;
 }
 
-function calcQualityScore(input: {
+export function calcQualityScore(input: {
   totalToolCalls: number;
   sandboxBlockCount: number;
   errorCount: number;
@@ -42,8 +42,10 @@ export async function createWorkflowQualitySnapshot(workflowId: string) {
   if (!workflow) throw new Error("workflow not found");
 
   const stepIds = steps.map((s) => s.id);
-  const allToolCalls = await db.select().from(toolCallLog);
-  const toolCalls = allToolCalls.filter((t) => stepIds.includes(t.agentStepId));
+  const toolCalls =
+    stepIds.length > 0
+      ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
+      : [];
   const sandboxBlockCount = toolCalls.filter((t) => t.status === "sandbox_blocked").length;
   const timeoutCount = toolCalls.filter((t) => t.status === "timeout").length;
   const toolErrorCount = toolCalls.filter((t) => t.status === "error").length;

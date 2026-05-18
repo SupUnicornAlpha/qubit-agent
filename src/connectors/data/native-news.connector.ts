@@ -71,7 +71,7 @@ export class QubitNativeNewsConnector extends BaseConnector {
     name: "qubit-news",
     version: "0.1.0",
     connectorType: "data",
-    capabilities: ["fetch_news", "extract_event", "score_sentiment"],
+    capabilities: ["fetch_news", "fetch_news_sentiment", "extract_event", "score_sentiment"],
     assetClasses: ["stock"],
     latencyProfile: "batch",
     description: "Built-in news: HTTP JSON when configured; otherwise stub rows.",
@@ -105,7 +105,8 @@ export class QubitNativeNewsConnector extends BaseConnector {
   protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     switch (operation) {
       case "fetch_news":
-        return (await this.fetchNewsResolved(payload)) as TOutput;
+      case "fetch_news_sentiment":
+        return (await this.fetchNewsWithSentiment(payload)) as TOutput;
       case "extract_event":
         return this.extractEvent(payload) as TOutput;
       case "score_sentiment":
@@ -113,6 +114,31 @@ export class QubitNativeNewsConnector extends BaseConnector {
       default:
         throw new Error(`qubit-news: unknown operation "${operation}"`);
     }
+  }
+
+  private async fetchNewsWithSentiment(payload: unknown): Promise<{
+    items: NewsData[];
+    aggregateSentiment: { score: number; label: string; sampleSize: number };
+  }> {
+    const items = await this.fetchNewsResolved(payload);
+    let scoreSum = 0;
+    let scored = 0;
+    for (const item of items) {
+      if (typeof item.sentimentScore === "number") {
+        scoreSum += item.sentimentScore;
+        scored++;
+      } else {
+        const s = this.scoreSentiment({ text: `${item.title} ${item.content}` });
+        scoreSum += s.score;
+        scored++;
+      }
+    }
+    const avg = scored > 0 ? scoreSum / scored : 0;
+    const label = avg > 0.15 ? "positive" : avg < -0.15 ? "negative" : "neutral";
+    return {
+      items,
+      aggregateSentiment: { score: avg, label, sampleSize: items.length },
+    };
   }
 
   private async fetchNewsResolved(payload: unknown): Promise<NewsData[]> {

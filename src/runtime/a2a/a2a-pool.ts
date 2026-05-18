@@ -68,10 +68,20 @@ export class A2APool {
     return this.entries.has(role);
   }
 
-  getViews(): Array<{ role: AgentRole; instanceId: string; status: string }> {
+  getViews(): Array<{
+    role: AgentRole;
+    instanceId: string;
+    definitionId: string;
+    name: string;
+    version: string;
+    status: "idle" | "running" | "error" | "stopped";
+  }> {
     return [...this.entries.values()].map((e) => ({
       role: e.role,
       instanceId: e.instanceId,
+      definitionId: e.runtime.definition.id,
+      name: e.runtime.definition.name,
+      version: e.runtime.definition.version,
       status: e.runtime.instance.status,
     }));
   }

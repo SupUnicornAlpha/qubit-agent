@@ -81,7 +81,10 @@ export interface AgentSummary {
   id: string;
   definitionId: string;
   role: string;
+  name?: string;
   version: string;
+  status?: "idle" | "running" | "error" | "stopped";
+  executionPath?: "graph" | "a2a";
   running: boolean;
 }
 
@@ -104,6 +107,39 @@ export interface StepStreamEvent {
   loopKind?: AgentLoopKind;
   source?: "native" | "cli";
 }
+
+export type ToolCatalogCategory =
+  | "orchestration"
+  | "market"
+  | "research"
+  | "backtest"
+  | "trading"
+  | "risk"
+  | "sentiment"
+  | "macro"
+  | "memory"
+  | "audit";
+
+export interface ToolCatalogEntry {
+  name: string;
+  kind: "builtin" | "connector" | "mcp";
+  connector?: string;
+  description: string;
+  category?: ToolCatalogCategory;
+}
+
+export const TOOL_CATEGORY_LABELS: Record<ToolCatalogCategory, string> = {
+  orchestration: "编排协作",
+  market: "行情数据",
+  research: "量化研究",
+  backtest: "回测验证",
+  trading: "交易执行",
+  risk: "风控合规",
+  sentiment: "舆情事件",
+  macro: "宏观策略",
+  memory: "记忆知识",
+  audit: "审计报告",
+};
 
 export interface AgentsConfigResponse {
   sourceOfTruth: string;
@@ -201,7 +237,10 @@ export interface AgentProfileRecord {
 }
 
 export interface AgentPromptPreviewResponse {
+  /** 完整 system（与 LangGraph reason 发给 LLM 的一致） */
   mergedSystemPrompt: string;
+  baseSystemPrompt: string;
+  toolsPromptBlock: string;
   promptMode: "db_primary" | "file_primary" | "merged";
   sections: {
     agent: string;

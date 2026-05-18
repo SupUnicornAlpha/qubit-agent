@@ -8,6 +8,7 @@ import { getA2APool } from "../a2a/a2a-pool";
 import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import type { RuntimeRoleHandler } from "../types";
+import { onWorkflowTerminal } from "../monitor/observability-hook";
 
 function buildTaskResult(taskId: string, role: AgentRole, extra?: Record<string, unknown>) {
   return {
@@ -33,6 +34,9 @@ async function setWorkflowStatus(
       endedAt: status === "running" ? null : new Date().toISOString(),
     })
     .where(eq(workflowRun.id, workflowId));
+  if (status === "completed" || status === "failed") {
+    onWorkflowTerminal(workflowId, status);
+  }
 }
 
 function receiverForRole(role: AgentRole, fallback: string): string {

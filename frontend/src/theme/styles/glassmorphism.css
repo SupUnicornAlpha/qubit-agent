@@ -70,6 +70,14 @@ html[data-qb-style="glassmorphism"] {
   --qb-stream-box-bg: rgba(255, 255, 255, 0.04);
   --qb-stream-box-border: rgba(255, 255, 255, 0.12);
   --qb-stream-box-fg: #e2e8f0;
+  --qb-mcp-details-bg: rgba(255, 255, 255, 0.05);
+  --qb-mcp-details-border: rgba(255, 255, 255, 0.14);
+  --qb-mcp-details-nested-bg: rgba(255, 255, 255, 0.03);
+  --qb-mcp-market-card-bg: rgba(255, 255, 255, 0.06);
+  --qb-mcp-market-card-border: rgba(255, 255, 255, 0.14);
+  --qb-mcp-market-cmd-bg: rgba(0, 0, 0, 0.25);
+  --qb-mcp-json-bg: rgba(255, 255, 255, 0.04);
+  --qb-mcp-json-border: rgba(255, 255, 255, 0.12);
   --qb-ide-chrome-border: rgba(255, 255, 255, 0.12);
   --qb-chat-main-bg: rgba(255, 255, 255, 0.04);
   --qb-chat-sidebar-bg: rgba(255, 255, 255, 0.05);
@@ -144,13 +152,107 @@ html[data-qb-style="glassmorphism"] {
   --qb-team-node-selected-stroke: #a78bfa;
   --qb-team-node-hot-fill: rgba(99, 102, 241, 0.2);
   --qb-team-node-hot-stroke: #818cf8;
+
+  /* 底色：由 data-qb-theme 覆盖（glass-cool / warm / rainbow） */
+  --qb-glass-bg-base: linear-gradient(165deg, #020617 0%, #0f172a 42%, #1e1b4b 100%);
+  --qb-glass-bg-orbs:
+    radial-gradient(ellipse 55% 45% at 8% 12%, rgba(59, 130, 246, 0.42), transparent 58%),
+    radial-gradient(ellipse 50% 40% at 92% 8%, rgba(236, 72, 153, 0.28), transparent 55%),
+    radial-gradient(ellipse 45% 50% at 72% 88%, rgba(124, 58, 237, 0.35), transparent 52%),
+    radial-gradient(ellipse 40% 35% at 18% 78%, rgba(34, 211, 238, 0.18), transparent 50%);
+  --qb-glass-bg-orb-motion: none;
 }
 
-/* ── 背景：多层紫/蓝/粉光斑（供 blur 折射） ── */
+/* ── 冷色（默认玻璃底 + 旧 dark-purple 兼容） ── */
+html[data-qb-style="glassmorphism"][data-qb-theme="glass-cool"],
+html[data-qb-style="glassmorphism"][data-qb-theme="dark-purple"] {
+  --qb-glass-bg-base: linear-gradient(165deg, #020617 0%, #0f172a 42%, #1e1b4b 100%);
+  --qb-glass-bg-orbs:
+    radial-gradient(ellipse 55% 45% at 8% 12%, rgba(59, 130, 246, 0.42), transparent 58%),
+    radial-gradient(ellipse 50% 40% at 92% 8%, rgba(236, 72, 153, 0.28), transparent 55%),
+    radial-gradient(ellipse 45% 50% at 72% 88%, rgba(124, 58, 237, 0.35), transparent 52%),
+    radial-gradient(ellipse 40% 35% at 18% 78%, rgba(34, 211, 238, 0.18), transparent 50%);
+}
+
+/* ── 暖色 ── */
+html[data-qb-style="glassmorphism"][data-qb-theme="glass-warm"] {
+  --qb-bg-root: #1a0f0a;
+  --qb-bg-root-top: #2a1810;
+  --qb-tint-strong: rgba(251, 191, 36, 0.24);
+  --qb-blue: #fb923c;
+  --qb-blue-deep: #ea580c;
+  --qb-focus-ring: rgba(251, 146, 60, 0.55);
+  --qb-brand-icon: #fdba74;
+  --qb-brand-icon-glow: rgba(251, 146, 60, 0.85);
+  --qb-segmented-active-bg: linear-gradient(135deg, rgba(234, 88, 12, 0.55), rgba(251, 191, 36, 0.45));
+  --qb-scrollbar-thumb-top: rgba(251, 146, 60, 0.55);
+  --qb-scrollbar-thumb-bot: rgba(234, 88, 12, 0.65);
+  --qb-scrollbar-thumb-hover-top: rgba(253, 186, 116, 0.7);
+  --qb-scrollbar-thumb-hover-bot: rgba(249, 115, 22, 0.8);
+  --qb-scrollbar-corner: #1a0f0a;
+  --qb-chat-bubble-user-bg: rgba(234, 88, 12, 0.28);
+  --qb-team-tab-active-bg: rgba(234, 88, 12, 0.3);
+  --qb-team-tab-active-border: rgba(251, 146, 60, 0.5);
+  --qb-team-hero-bg: rgba(234, 88, 12, 0.14);
+  --qb-team-hero-border: rgba(251, 146, 60, 0.28);
+  --qb-glass-bg-base: linear-gradient(165deg, #1a0f0a 0%, #2a1810 42%, #3d1f14 100%);
+  --qb-glass-bg-orbs:
+    radial-gradient(ellipse 52% 44% at 10% 14%, rgba(251, 146, 60, 0.4), transparent 58%),
+    radial-gradient(ellipse 48% 42% at 90% 10%, rgba(244, 63, 94, 0.32), transparent 55%),
+    radial-gradient(ellipse 46% 48% at 70% 86%, rgba(234, 88, 12, 0.34), transparent 52%),
+    radial-gradient(ellipse 42% 36% at 20% 76%, rgba(251, 191, 36, 0.22), transparent 50%);
+}
+
+/* ── 彩虹 ── */
+html[data-qb-style="glassmorphism"][data-qb-theme="glass-rainbow"] {
+  --qb-tint-strong: rgba(168, 85, 247, 0.26);
+  --qb-blue: #a78bfa;
+  --qb-blue-deep: #8b5cf6;
+  --qb-focus-ring: rgba(192, 132, 252, 0.55);
+  --qb-brand-icon: #e9d5ff;
+  --qb-brand-icon-glow: rgba(216, 180, 254, 0.9);
+  --qb-segmented-active-bg: linear-gradient(
+    135deg,
+    rgba(239, 68, 68, 0.5),
+    rgba(234, 179, 8, 0.45),
+    rgba(34, 197, 94, 0.4),
+    rgba(59, 130, 246, 0.45)
+  );
+  --qb-scrollbar-thumb-top: rgba(192, 132, 252, 0.55);
+  --qb-scrollbar-thumb-bot: rgba(59, 130, 246, 0.65);
+  --qb-chat-bubble-user-bg: rgba(139, 92, 246, 0.28);
+  --qb-team-tab-active-bg: rgba(139, 92, 246, 0.3);
+  --qb-team-tab-active-border: rgba(192, 132, 252, 0.5);
+  --qb-glass-bg-base: linear-gradient(165deg, #0a0614 0%, #12081a 48%, #0a1020 100%);
+  --qb-glass-bg-orbs:
+    radial-gradient(ellipse 50% 45% at 10% 20%, rgba(239, 68, 68, 0.36), transparent 55%),
+    radial-gradient(ellipse 45% 40% at 85% 15%, rgba(251, 191, 36, 0.34), transparent 52%),
+    radial-gradient(ellipse 50% 48% at 75% 82%, rgba(34, 197, 94, 0.32), transparent 55%),
+    radial-gradient(ellipse 42% 38% at 22% 78%, rgba(59, 130, 246, 0.38), transparent 52%),
+    radial-gradient(ellipse 38% 42% at 50% 48%, rgba(168, 85, 247, 0.3), transparent 48%);
+  --qb-glass-bg-orb-motion: qb-glass-rainbow-drift 20s ease-in-out infinite alternate;
+}
+
+@keyframes qb-glass-rainbow-drift {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: translate(2%, -1.5%) scale(1.03);
+    opacity: 0.92;
+  }
+  100% {
+    transform: translate(-1.5%, 2%) scale(1.02);
+    opacity: 1;
+  }
+}
+
+/* ── 背景：渐变底 + 光斑（供 blur 折射） ── */
 html[data-qb-style="glassmorphism"] .qb-app-root {
   position: relative;
   isolation: isolate;
-  background: linear-gradient(165deg, #020617 0%, #0f172a 42%, #1e1b4b 100%);
+  background: var(--qb-glass-bg-base);
 }
 
 html[data-qb-style="glassmorphism"] .qb-app-root::before {
@@ -159,12 +261,9 @@ html[data-qb-style="glassmorphism"] .qb-app-root::before {
   inset: -15%;
   z-index: 0;
   pointer-events: none;
-  background:
-    radial-gradient(ellipse 55% 45% at 8% 12%, rgba(59, 130, 246, 0.42), transparent 58%),
-    radial-gradient(ellipse 50% 40% at 92% 8%, rgba(236, 72, 153, 0.28), transparent 55%),
-    radial-gradient(ellipse 45% 50% at 72% 88%, rgba(124, 58, 237, 0.35), transparent 52%),
-    radial-gradient(ellipse 40% 35% at 18% 78%, rgba(34, 211, 238, 0.18), transparent 50%);
+  background: var(--qb-glass-bg-orbs);
   filter: blur(2px);
+  animation: var(--qb-glass-bg-orb-motion);
 }
 
 html[data-qb-style="glassmorphism"] .qb-app-root > * {

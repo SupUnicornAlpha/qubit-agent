@@ -1,0 +1,331 @@
+/**
+ * 配置中心：跨风格统一的表面色与语义状态色（依赖 --qb-main-* / --qb-body-fg）
+ */
+
+/* 深色默认（未声明的 style 回退） */
+html {
+  --qb-stream-box-bg: #09090b;
+  --qb-stream-box-fg: #d4d4d8;
+  --qb-stream-box-border: #27272a;
+  --qb-mcp-details-bg: #111114;
+  --qb-mcp-details-border: #27272a;
+  --qb-mcp-details-nested-bg: #0c0c0e;
+  --qb-mcp-market-card-bg: #18181b;
+  --qb-mcp-market-card-border: #27272a;
+  --qb-mcp-market-meta: #a1a1aa;
+  --qb-mcp-market-desc: #d4d4d8;
+  --qb-mcp-market-chip-bg: #27272a;
+  --qb-mcp-market-chip-fg: #e4e4e7;
+  --qb-mcp-market-chip-border: #3f3f46;
+  --qb-mcp-market-cmd-bg: #09090b;
+  --qb-mcp-market-cmd-fg: #a1a1aa;
+  --qb-mcp-market-cmd-border: #27272a;
+  --qb-mcp-json-bg: #09090b;
+  --qb-mcp-json-fg: #e4e4e7;
+  --qb-mcp-json-border: #27272a;
+  --qb-modal-bg: #111114;
+  --qb-modal-border: #3f3f46;
+  --qb-modal-sep: #27272a;
+  --qb-config-error-bg: #3f1d1d;
+  --qb-config-error-border: #7f1d1d;
+  --qb-config-error-fg: #fecaca;
+  --qb-pill-disabled-bg: #3f1f1f;
+  --qb-pill-disabled-fg: #fca5a5;
+  --qb-pill-warn-bg: #422006;
+  --qb-pill-warn-fg: #fdba74;
+  --qb-pill-ok-bg: #14532d;
+  --qb-pill-ok-fg: #86efac;
+  --qb-pill-info-bg: #1e3a8a;
+  --qb-pill-info-fg: #bfdbfe;
+  --qb-pill-success-bg: #052e16;
+  --qb-pill-success-fg: #bbf7d0;
+  --qb-pill-error-bg: #450a0a;
+  --qb-pill-error-fg: #fca5a5;
+  --qb-pill-muted-bg: #27272a;
+  --qb-pill-muted-fg: #a1a1aa;
+  --qb-config-table-header-fg: #a1a1aa;
+  --qb-config-table-row-fg: #e4e4e7;
+  --qb-config-table-border: #27272a;
+}
+
+/* 任意浅色配色（含 Bauhaus + 白/天蓝） */
+html[data-qb-theme^="light"] {
+  --qb-stream-box-bg: #f8fafc;
+  --qb-stream-box-fg: var(--qb-body-fg, #18181b);
+  --qb-stream-box-border: var(--qb-sidebar-border, #e4e4e7);
+  --qb-mcp-details-bg: var(--qb-main-panel-bg, #f8fafc);
+  --qb-mcp-details-border: var(--qb-main-input-border, #d4d4d8);
+  --qb-mcp-details-nested-bg: #ffffff;
+  --qb-mcp-market-card-bg: #ffffff;
+  --qb-mcp-market-card-border: var(--qb-main-input-border, #e4e4e7);
+  --qb-mcp-market-meta: var(--qb-main-meta, #71717a);
+  --qb-mcp-market-desc: var(--qb-body-fg, #18181b);
+  --qb-mcp-market-chip-bg: var(--qb-tint, rgba(99, 102, 241, 0.08));
+  --qb-mcp-market-chip-fg: var(--qb-body-fg, #18181b);
+  --qb-mcp-market-chip-border: var(--qb-sidebar-border, #e4e4e7);
+  --qb-mcp-market-cmd-bg: #f1f5f9;
+  --qb-mcp-market-cmd-fg: var(--qb-main-meta, #64748b);
+  --qb-mcp-market-cmd-border: var(--qb-sidebar-border, #e4e4e7);
+  --qb-mcp-json-bg: #f8fafc;
+  --qb-mcp-json-fg: var(--qb-body-fg, #18181b);
+  --qb-mcp-json-border: var(--qb-sidebar-border, #e4e4e7);
+  --qb-modal-bg: #ffffff;
+  --qb-modal-border: var(--qb-sidebar-border, #e4e4e7);
+  --qb-modal-sep: var(--qb-sidebar-border, #e4e4e7);
+  --qb-config-error-bg: #fef2f2;
+  --qb-config-error-border: #fecaca;
+  --qb-config-error-fg: #b91c1c;
+  --qb-pill-disabled-bg: #fee2e2;
+  --qb-pill-disabled-fg: #b91c1c;
+  --qb-pill-warn-bg: #ffedd5;
+  --qb-pill-warn-fg: #c2410c;
+  --qb-pill-ok-bg: #dcfce7;
+  --qb-pill-ok-fg: #15803d;
+  --qb-pill-info-bg: #dbeafe;
+  --qb-pill-info-fg: #1d4ed8;
+  --qb-pill-success-bg: #dcfce7;
+  --qb-pill-success-fg: #166534;
+  --qb-pill-error-bg: #fee2e2;
+  --qb-pill-error-fg: #b91c1c;
+  --qb-pill-muted-bg: #f4f4f5;
+  --qb-pill-muted-fg: #71717a;
+  --qb-config-table-header-fg: var(--qb-main-meta, #71717a);
+  --qb-config-table-row-fg: var(--qb-body-fg, #18181b);
+  --qb-config-table-border: var(--qb-sidebar-border, #e4e4e7);
+}
+
+[data-qb-config-center] {
+  color: var(--qb-body-fg);
+}
+
+[data-qb-config-center] .qb-config-hint {
+  font-size: 12px;
+  color: var(--qb-main-meta, #a1a1aa);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+
+[data-qb-config-center] .qb-config-hint--tight {
+  margin: 0 0 8px;
+}
+
+[data-qb-config-center] .qb-config-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--qb-body-fg);
+}
+
+[data-qb-config-center] .qb-config-stream-box {
+  background: var(--qb-stream-box-bg);
+  border: 1px solid var(--qb-stream-box-border);
+  border-radius: var(--qb-radius-md, 8px);
+  padding: 10px;
+  max-height: 260px;
+  overflow: auto;
+  color: var(--qb-stream-box-fg);
+  font-size: 12;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  margin: 0 0 10px;
+}
+
+[data-qb-config-center] .qb-config-error-box {
+  background: var(--qb-config-error-bg);
+  border: 1px solid var(--qb-config-error-border);
+  color: var(--qb-config-error-fg);
+  border-radius: var(--qb-radius-md, 8px);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 13;
+}
+
+[data-qb-config-center] .qb-config-table th {
+  color: var(--qb-config-table-header-fg);
+}
+
+[data-qb-config-center] .qb-config-table td {
+  color: var(--qb-config-table-row-fg);
+  border-top: 1px solid var(--qb-config-table-border);
+}
+
+/* Bauhaus：配置页与 IDE 工作台一致的粗描边 */
+html[data-qb-style="bauhaus"] {
+  --qb-stream-box-bg: #fff;
+  --qb-stream-box-fg: #111;
+  --qb-stream-box-border: #111;
+  --qb-mcp-details-bg: #faf7f2;
+  --qb-mcp-details-border: #111;
+  --qb-mcp-details-nested-bg: #fff;
+  --qb-mcp-market-card-bg: #fff;
+  --qb-mcp-market-card-border: #111;
+  --qb-mcp-market-cmd-bg: #faf7f2;
+  --qb-mcp-market-cmd-border: #111;
+  --qb-mcp-json-bg: #fff;
+  --qb-mcp-json-border: #111;
+  --qb-modal-bg: #fff;
+  --qb-modal-border: #111;
+  --qb-pill-ok-bg: rgba(30, 136, 229, 0.18);
+  --qb-pill-ok-fg: #0d47a1;
+  --qb-pill-warn-bg: var(--qb-bauhaus-yellow);
+  --qb-pill-warn-fg: #111;
+  --qb-pill-error-bg: rgba(229, 57, 53, 0.15);
+  --qb-pill-error-fg: #b71c1c;
+  --qb-pill-success-bg: rgba(30, 136, 229, 0.12);
+  --qb-pill-success-fg: #1565c0;
+  --qb-pill-info-bg: rgba(30, 136, 229, 0.22);
+  --qb-pill-info-fg: #0d47a1;
+  --qb-pill-muted-bg: #f5f0e8;
+  --qb-pill-muted-fg: #424242;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-config-center] input,
+html[data-qb-style="bauhaus"] [data-qb-config-center] select,
+html[data-qb-style="bauhaus"] [data-qb-config-center] textarea:not(.qb-tokyo-editor__textarea) {
+  border: 2px solid #111 !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  color: #111 !important;
+  box-shadow: 2px 2px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-config-center] .qb-config-stream-box,
+html[data-qb-style="bauhaus"] [data-qb-config-center] details {
+  border: 2px solid #111;
+  border-radius: 0;
+  box-shadow: 3px 3px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-config-center] summary {
+  color: #111;
+  font-weight: 700;
+}
+
+html[data-qb-style="comic-book"] [data-qb-config-center] .qb-config-stream-box,
+html[data-qb-style="comic-book"] [data-qb-config-center] details {
+  border-width: 3px;
+}
+
+/* Anti-Design */
+html[data-qb-style="anti-design"] {
+  --qb-stream-box-bg: var(--qb-ad-paper, #fff);
+  --qb-stream-box-fg: var(--qb-ad-ink, #000);
+  --qb-stream-box-border: var(--qb-ad-ink, #000);
+  --qb-mcp-details-bg: color-mix(in srgb, var(--qb-ad-yellow, #c9b070) 28%, var(--qb-ad-paper, #f8f6f1));
+  --qb-mcp-details-border: var(--qb-ad-ink, #000);
+  --qb-mcp-details-nested-bg: var(--qb-ad-paper, #fff);
+  --qb-mcp-market-card-bg: var(--qb-ad-paper, #fff);
+  --qb-mcp-market-card-border: var(--qb-ad-ink, #000);
+  --qb-mcp-market-cmd-bg: color-mix(in srgb, var(--qb-ad-green, #7a9f7a) 22%, var(--qb-ad-paper, #f8f6f1));
+  --qb-mcp-market-cmd-border: var(--qb-ad-ink, #000);
+  --qb-mcp-json-bg: var(--qb-ad-paper, #fff);
+  --qb-mcp-json-border: var(--qb-ad-ink, #000);
+  --qb-modal-bg: var(--qb-ad-paper, #fff);
+  --qb-modal-border: var(--qb-ad-ink, #000);
+  --qb-pill-ok-bg: color-mix(in srgb, var(--qb-ad-green, #7a9f7a) 45%, var(--qb-ad-paper, #f8f6f1));
+  --qb-pill-ok-fg: var(--qb-ad-ink, #1c1c1c);
+  --qb-pill-warn-bg: color-mix(in srgb, var(--qb-ad-yellow, #c9b070) 50%, var(--qb-ad-paper, #f8f6f1));
+  --qb-pill-warn-fg: var(--qb-ad-ink, #1c1c1c);
+  --qb-pill-error-bg: color-mix(in srgb, var(--qb-ad-red, #b86b6b) 55%, var(--qb-ad-paper, #f8f6f1));
+  --qb-pill-error-fg: var(--qb-ad-ink, #1c1c1c);
+  --qb-pill-success-bg: color-mix(in srgb, var(--qb-ad-blue, #6f8cad) 50%, var(--qb-ad-paper, #f8f6f1));
+  --qb-pill-success-fg: var(--qb-ad-ink, #1c1c1c);
+  --qb-pill-info-bg: color-mix(in srgb, var(--qb-ad-yellow, #c9b070) 40%, var(--qb-ad-paper, #f8f6f1));
+  --qb-pill-info-fg: var(--qb-ad-ink, #1c1c1c);
+  --qb-pill-muted-bg: var(--qb-ad-mist, #e6eaef);
+  --qb-pill-muted-fg: var(--qb-ad-ink, #1c1c1c);
+  --qb-config-error-bg: color-mix(in srgb, var(--qb-ad-red, #b86b6b) 60%, var(--qb-ad-paper, #f8f6f1));
+  --qb-config-error-border: var(--qb-ad-ink, #000);
+  --qb-config-error-fg: var(--qb-ad-paper, #fff);
+}
+
+html[data-qb-style="anti-design"] [data-qb-config-center] input,
+html[data-qb-style="anti-design"] [data-qb-config-center] select,
+html[data-qb-style="anti-design"] [data-qb-config-center] textarea:not(.qb-tokyo-editor__textarea) {
+  border: 6px solid var(--qb-ad-ink, #000) !important;
+  border-radius: 0 !important;
+  background: var(--qb-ad-paper, #fff) !important;
+  color: var(--qb-ad-ink, #000) !important;
+  box-shadow: 6px 6px 0 var(--qb-ad-ink, #000);
+  font-family: var(--qb-font-body);
+  font-weight: 600;
+}
+
+html[data-qb-style="anti-design"] [data-qb-config-center] .qb-config-stream-box,
+html[data-qb-style="anti-design"] [data-qb-config-center] details {
+  border: 6px solid var(--qb-ad-ink, #000);
+  border-radius: 0;
+  box-shadow: 8px 8px 0 var(--qb-ad-ink, #000);
+  transform: rotate(-0.4deg);
+}
+
+html[data-qb-style="anti-design"] [data-qb-config-center] summary {
+  font-family: var(--qb-font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+/* Holographic */
+html[data-qb-style="holographic"] {
+  --qb-stream-box-bg: rgba(14, 20, 34, 0.88);
+  --qb-mcp-details-bg: rgba(18, 26, 42, 0.82);
+  --qb-mcp-json-bg: rgba(12, 18, 30, 0.9);
+  --qb-modal-bg: rgba(10, 14, 26, 0.94);
+  --qb-modal-border: rgba(167, 139, 250, 0.32);
+  --qb-pill-ok-bg: rgba(139, 92, 246, 0.22);
+  --qb-pill-error-bg: rgba(232, 121, 249, 0.2);
+  --qb-config-error-bg: rgba(248, 113, 113, 0.2);
+  --qb-config-error-fg: #fecaca;
+}
+
+html[data-qb-style="holographic"] [data-qb-config-center] .qb-config-stream-box,
+html[data-qb-style="holographic"] [data-qb-config-center] details {
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: var(--qb-radius-md, 12px);
+}
+
+/* Blueprint */
+html[data-qb-style="blueprint"] {
+  --qb-stream-box-bg: rgba(10, 22, 40, 0.92);
+  --qb-stream-box-border: rgba(255, 255, 255, 0.22);
+  --qb-mcp-details-bg: rgba(10, 22, 40, 0.88);
+  --qb-mcp-market-cmd-bg: rgba(0, 0, 0, 0.4);
+  --qb-modal-bg: rgba(10, 22, 40, 0.96);
+  --qb-modal-border: rgba(255, 255, 255, 0.3);
+  --qb-pill-ok-bg: rgba(34, 211, 238, 0.18);
+  --qb-pill-ok-fg: #a5f3fc;
+  --qb-pill-warn-bg: rgba(249, 115, 22, 0.22);
+  --qb-pill-warn-fg: #fed7aa;
+  --qb-pill-error-bg: rgba(249, 115, 22, 0.28);
+  --qb-config-error-bg: rgba(249, 115, 22, 0.2);
+  --qb-config-error-border: rgba(249, 115, 22, 0.5);
+  --qb-config-error-fg: #ffedd5;
+}
+
+html[data-qb-style="blueprint"] [data-qb-config-center] input,
+html[data-qb-style="blueprint"] [data-qb-config-center] select,
+html[data-qb-style="blueprint"] [data-qb-config-center] textarea:not(.qb-tokyo-editor__textarea) {
+  border-radius: 0 !important;
+  font-family: var(--qb-font-body);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+html[data-qb-style="blueprint"] [data-qb-config-center] .qb-config-stream-box,
+html[data-qb-style="blueprint"] [data-qb-config-center] details {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 0;
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.08);
+}
+
+html[data-qb-style="blueprint"] [data-qb-config-center] summary {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  color: #94a3b8;
+}

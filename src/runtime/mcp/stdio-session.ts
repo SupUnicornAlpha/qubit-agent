@@ -33,13 +33,34 @@ export function stdioArgvFromServer(command: string | null | undefined, capabili
   return parseArgv(command, caps);
 }
 
+type StdinLineWriter = {
+  writeLine: (obj: Record<string, unknown>) => Promise<void>;
+};
+
 type Pooled = {
   proc: Subprocess;
-  writer: WritableStreamDefaultWriter<Uint8Array>;
+  writer: StdinLineWriter;
   lines: AsyncGenerator<string, void, unknown>;
   initialized: boolean;
   nextRpcId: number;
 };
+
+function createStdinLineWriter(stdin: NonNullable<Subprocess["stdin"]>): StdinLineWriter {
+  const stream = stdin as WritableStream<Uint8Array>;
+  if (typeof stream.getWriter === "function") {
+    const w = stream.getWriter();
+    return {
+      writeLine: async (obj) => {
+        await w.write(new TextEncoder().encode(`${JSON.stringify(obj)}\n`));
+      },
+    };
+  }
+  return {
+    writeLine: async (obj) => {
+      stdin.write(`${JSON.stringify(obj)}\n`);
+    },
+  };
+}
 
 const pools = new Map<string, Pooled>();
 const serialTail = new Map<string, Promise<unknown>>();
@@ -72,11 +93,6 @@ async function* readNdjsonLines(stream: ReadableStream<Uint8Array>): AsyncGenera
   } finally {
     reader.releaseLock();
   }
-}
-
-async function writeLine(writer: WritableStreamDefaultWriter<Uint8Array>, obj: Record<string, unknown>) {
-  const line = `${JSON.stringify(obj)}\n`;
-  await writer.write(new TextEncoder().encode(line));
 }
 
 async function ensurePool(key: string, argv: string[], env: Record<string, string>, cwd?: string): Promise<Pooled> {
@@ -112,7 +128,7 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
 
   if (!proc.stdin || !proc.stdout) throw new Error("stdio MCP: subprocess missing pipes");
 
-  const writer = proc.stdin.getWriter();
+  const writer = createStdinLineWriter(proc.stdin);
   const lines = readNdjsonLines(proc.stdout);
 
   void (async () => {
@@ -161,7 +177,7 @@ export async function callMcpStdioTool(
 
     if (!pool.initialized) {
       const initId = pool.nextRpcId++;
-      await writeLine(pool.writer, {
+      await pool.writer.writeLine({
         jsonrpc: "2.0",
         id: initId,
         method: "initialize",
@@ -174,7 +190,7 @@ export async function callMcpStdioTool(
       const rInit = await collectRpcResponse(pool.lines, initId, timeout);
       if (rInit.error) throw new Error(`MCP initialize failed: ${rInit.error.message}`);
 
-      await writeLine(pool.writer, {
+      await pool.writer.writeLine({
         jsonrpc: "2.0",
         method: "notifications/initialized",
         params: {},
@@ -183,7 +199,7 @@ export async function callMcpStdioTool(
     }
 
     const callId = pool.nextRpcId++;
-    await writeLine(pool.writer, {
+    await pool.writer.writeLine({
       jsonrpc: "2.0",
       id: callId,
       method: "tools/call",

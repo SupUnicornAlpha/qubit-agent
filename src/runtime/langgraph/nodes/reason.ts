@@ -9,6 +9,7 @@ import {
 } from "../../agent/agent-pack-service";
 import { loadModelConfig } from "../../config/model-config";
 import { runLlmGateway } from "../../llm/gateway";
+import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
@@ -21,7 +22,6 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
   const sessionId = wfRows[0]?.sessionId;
   if (!sessionId) return [];
 
-  // Latest N messages in the same chat session as conversation context.
   const rows = await db
     .select({
       role: chatMessage.role,
@@ -40,7 +40,6 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
     .filter((line) => line.length > 0);
 }
 
-/** 每次推理从磁盘读取 pack，与 `promptMode` 合并；这样 Agent 通过 edit_agent_pack 写入后下一轮即生效 */
 async function resolveEffectiveSystemPrompt(definitionId: string, dbSystemPrompt: string): Promise<string> {
   const db = await getDb();
   const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
@@ -76,14 +75,18 @@ export async function reasonNode(
   };
   let answer = "";
 
-  // Build a natural-language user prompt so the LLM can respond conversationally.
   const payloadGoal =
     (state.inboundMessage.payload as Record<string, unknown>)?.goal ??
     (state.inboundMessage.payload as Record<string, unknown>)?.message ??
     JSON.stringify(state.inboundMessage.payload);
-  const previousObservations = state.observations.slice(-3); // last 3 for context window
+  const previousObservations = state.observations.slice(-3);
   const sessionContext = await loadSessionContext(state.workflowId);
-  const userPrompt = [
+
+  const tools = state.agentDefinition.tools ?? [];
+  const mcpServers = state.agentDefinition.mcpServers ?? [];
+  const hasTools = tools.length > 0 || mcpServers.length > 0;
+
+  const userPromptParts = [
     `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
     ``,
     `**任务目标**：${payloadGoal}`,
@@ -94,15 +97,24 @@ export async function reasonNode(
       ? `\n**历史观测（最近 ${previousObservations.length} 步）**：\n${JSON.stringify(previousObservations, null, 2)}`
       : "",
     state.iteration > 1 ? `\n**当前迭代**：第 ${state.iteration} 轮` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ];
+
+  if (hasTools) {
+    userPromptParts.push(
+      "",
+      "若本步需要调用工具，请在分析文字之后附上**唯一一个** JSON 工具调用块（见系统提示中的格式）；若仅需文字结论则使用 `{\"tool\":\"none\"}`。"
+    );
+  }
+
+  const userPrompt = userPromptParts.filter(Boolean).join("\n");
 
   try {
-    const systemPrompt = await resolveEffectiveSystemPrompt(
+    const baseSystem = await resolveEffectiveSystemPrompt(
       state.agentDefinition.id,
       state.agentDefinition.systemPrompt
     );
+    const { full: systemPrompt } = assembleAgentSystemPrompt(baseSystem, { tools, mcpServers });
+
     answer = await runLlmGateway({
       config: modelConfig,
       systemPrompt,
@@ -140,7 +152,6 @@ export async function reasonNode(
 
   return {
     reasonText: answer,
-    plannedAction: "tool_call",
+    plannedAction: hasTools ? "tool_call" : "respond_only",
   };
 }
-

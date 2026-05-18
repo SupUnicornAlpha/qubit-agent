@@ -22,6 +22,7 @@ export type ActiveView = "ide" | "chart" | "chat" | "team" | "trader" | "monitor
 
 import {
   applyUiAppearance,
+  coercePaletteForStyle,
   persistUiAppearance,
   readUiAppearance,
   type UiAppearance,
@@ -259,10 +260,11 @@ export const useAppStore = create<AppState>((set) => ({
   },
   setUiStyle: (style) => {
     const { uiPalette } = useAppStore.getState();
-    const next: UiAppearance = { palette: uiPalette, style };
+    const palette = coercePaletteForStyle(style, uiPalette);
+    const next: UiAppearance = { palette, style };
     persistUiAppearance(next);
     applyUiAppearance(next);
-    set({ uiStyle: style });
+    set({ uiStyle: style, uiPalette: palette, uiTheme: palette });
   },
   setUiTheme: (palette) => {
     useAppStore.getState().setUiPalette(palette);

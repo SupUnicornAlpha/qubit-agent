@@ -1,105 +1,14 @@
 import { getDb } from "../../../db/sqlite/client";
-import { acpCall, agentProfile, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
+import { acpCall, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
-import { getDataDir, writePackSelfEditMarkdown, type AgentPackSelfEditTarget } from "../../agent/agent-pack-service";
 import { sandboxExecutor } from "../../sandbox-executor";
 import type { AgentGraphState, StepStreamEvent } from "../state";
-import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../../msa/analyst-team";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
-import type { AgentRole } from "../../../types/entities";
-
-/** Builtin tools routed to ACP connectors (see registerBuiltinConnectors). */
-const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
-  fetch_bars: "qubit-data",
-  fetch_klines: "qubit-data",
-  fetch_ticks: "qubit-data",
-  write_snapshot: "qubit-data",
-  fetch_news: "qubit-news",
-  extract_event: "qubit-news",
-  score_sentiment: "qubit-news",
-  submit_order: "qubit-broker",
-  cancel_order: "qubit-broker",
-  get_fills: "qubit-broker",
-};
-
-type ExtractedToolCall = {
-  toolName: string;
-  params: Record<string, unknown>;
-  mcp?: {
-    serverName: string;
-    toolName: string;
-    arguments: Record<string, unknown>;
-  };
-};
-
-/** Extract tool name and params from LLM reason text */
-function extractToolCall(reasonText: string, availableTools: string[]): ExtractedToolCall {
-  // Try to parse JSON tool call from reason text
-  try {
-    const match = reasonText.match(/\{[\s\S]*"tool"[\s\S]*\}/);
-    if (match) {
-      const parsed = JSON.parse(match[0]) as Record<string, unknown>;
-      const toolName = typeof parsed["tool"] === "string" ? parsed["tool"] : "";
-      if (toolName && availableTools.includes(toolName)) {
-        const params = (parsed["params"] ?? parsed["parameters"] ?? {}) as Record<string, unknown>;
-        const mcp =
-          toolName === "call_mcp" || toolName.startsWith("mcp:")
-            ? extractMcpMeta(toolName, params)
-            : undefined;
-        return { toolName, params, mcp };
-      }
-    }
-  } catch {
-    // fall through
-  }
-  // Try to find tool name mentioned in text
-  for (const tool of availableTools) {
-    if (reasonText.includes(tool)) {
-      const mcp = tool === "call_mcp" || tool.startsWith("mcp:") ? extractMcpMeta(tool, {}) : undefined;
-      return { toolName: tool, params: {}, mcp };
-    }
-  }
-  return { toolName: availableTools[0] ?? "noop_tool", params: {} };
-}
-
-function extractMcpMeta(
-  toolName: string,
-  params: Record<string, unknown>
-): ExtractedToolCall["mcp"] | undefined {
-  if (toolName.startsWith("mcp:")) {
-    // format: mcp:<server>:<tool>
-    const parts = toolName.split(":");
-    if (parts.length >= 3) {
-      return {
-        serverName: parts[1] ?? "unknown",
-        toolName: parts.slice(2).join(":"),
-        arguments: params,
-      };
-    }
-  }
-  const serverName =
-    (typeof params["serverName"] === "string" ? params["serverName"] : undefined) ??
-    (typeof params["server"] === "string" ? params["server"] : undefined);
-  const mcpToolName =
-    (typeof params["mcpTool"] === "string" ? params["mcpTool"] : undefined) ??
-    (typeof params["toolName"] === "string" ? params["toolName"] : undefined) ??
-    (typeof params["tool"] === "string" ? params["tool"] : undefined);
-  const argumentsValue = params["arguments"];
-  const argumentsObj =
-    argumentsValue && typeof argumentsValue === "object" && !Array.isArray(argumentsValue)
-      ? (argumentsValue as Record<string, unknown>)
-      : {};
-  if (serverName && mcpToolName) {
-    return {
-      serverName,
-      toolName: mcpToolName,
-      arguments: argumentsObj,
-    };
-  }
-  return undefined;
-}
+import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
+import { parseToolCallFromReason } from "../../tools/tool-call-format";
+import { resolveConnectorForTool } from "../../tools/tool-routes";
 
 export async function actNode(
   state: AgentGraphState,
@@ -107,11 +16,62 @@ export async function actNode(
   agentInstanceId: string,
   agentStepId: string
 ): Promise<Partial<AgentGraphState>> {
-  const { toolName, params: toolParams, mcp } = extractToolCall(
-    state.reasonText ?? "",
-    state.agentDefinition.tools
-  );
-  const connectorTarget = !mcp ? TOOL_CONNECTOR_ROUTES[toolName] : undefined;
+  const availableTools = state.agentDefinition.tools ?? [];
+  const parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
+
+  if (parsed.kind === "none") {
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: {
+        level: "info",
+        skippedToolCall: true,
+        summary: parsed.summary ?? "no tool requested",
+      },
+    });
+    return {
+      observations: [
+        ...state.observations,
+        {
+          level: "info",
+          skippedToolCall: true,
+          reasonText: state.reasonText,
+          summary: parsed.summary,
+        },
+      ],
+    };
+  }
+
+  if (parsed.kind === "parse_error") {
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: { level: "error", toolParseError: true, message: parsed.message },
+    });
+    return {
+      observations: [
+        ...state.observations,
+        { level: "error", toolParseError: true, message: parsed.message, reasonText: state.reasonText },
+      ],
+    };
+  }
+
+  const { toolName, params: toolParams, mcp } = parsed;
+  const enrichedToolParams: Record<string, unknown> = {
+    ...toolParams,
+    workflowRunId: (toolParams["workflowRunId"] as string | undefined) ?? state.workflowId,
+  };
+  const connectorTarget = !mcp ? resolveConnectorForTool(toolName) : undefined;
   const targetKind: "mcp" | "tool" | "connector" = mcp ? "mcp" : connectorTarget ? "connector" : "tool";
   const targetName = mcp
     ? `${mcp.serverName}/${mcp.toolName}`
@@ -205,7 +165,7 @@ export async function actNode(
           agentInstanceId,
           definition: state.agentDefinition,
           connectorName: connectorTarget,
-          payload: toolParams,
+          payload: enrichedToolParams,
         })
       : await sandboxExecutor.checkToolCall({
           runId: state.runId,
@@ -315,7 +275,7 @@ export async function actNode(
           targetKind: "connector",
           targetName: connectorTarget,
           intent: toolName,
-          payload: { operation: toolName, params: toolParams },
+          payload: { operation: toolName, params: enrichedToolParams },
           timeoutMs: policy.maxToolCallMs,
         });
         const response = await defaultAcpCaller.call(request);
@@ -324,74 +284,38 @@ export async function actNode(
         }
         return { result: "ok" as const, connectorResult: response.result };
       }
-      if (toolName === "edit_agent_pack") {
-        const targetRaw = toolParams["target"];
-        const markdown = typeof toolParams["markdown"] === "string" ? toolParams["markdown"] : "";
-        const allowed: AgentPackSelfEditTarget[] = ["soul", "user", "memory", "prompt"];
-        if (typeof targetRaw !== "string" || !allowed.includes(targetRaw as AgentPackSelfEditTarget)) {
-          throw new Error(`edit_agent_pack: invalid target (use one of: ${allowed.join(", ")})`);
+      if (isBuiltinTool(toolName)) {
+        const enrichedParams = {
+          ...enrichedToolParams,
+          ticker:
+            (enrichedToolParams["ticker"] as string | undefined) ??
+            (enrichedToolParams["symbol"] as string | undefined),
+        };
+        const toolCtx = {
+          workflowId: state.workflowId,
+          runId: state.runId,
+          traceId: state.traceId,
+          agentInstanceId,
+          projectId,
+          definition: state.agentDefinition,
+          reasonText: state.reasonText,
+          inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
+        };
+        const builtinResult = await dispatchBuiltinTool(toolName, toolCtx, enrichedParams);
+        if (toolName === "run_analyst_team") {
+          return { result: "ok" as const, analystTeamResult: builtinResult };
         }
-        const profRows = await db
-          .select()
-          .from(agentProfile)
-          .where(eq(agentProfile.definitionId, state.agentDefinition.id))
-          .limit(1);
-        const prof = profRows[0];
-        const written = await writePackSelfEditMarkdown({
-          dataDir: getDataDir(),
-          definitionId: state.agentDefinition.id,
-          configRootUri: prof?.configRootUri ?? "",
-          soulFileRef: prof?.soulFileRef ?? "",
-          promptTemplateRef: prof?.promptTemplateRef,
-          target: targetRaw as AgentPackSelfEditTarget,
-          markdown,
-        });
-        return { result: "ok" as const, packEdit: { target: targetRaw, ...written } };
+        if (toolName === "edit_agent_pack") {
+          return { result: "ok" as const, packEdit: builtinResult };
+        }
+        if (toolName === "fuse_signals") {
+          return { result: "ok" as const, fusionResult: builtinResult };
+        }
+        return { result: "ok" as const, builtinResult };
       }
-      // V2: dispatch run_analyst_team tool
-      if (toolName === "run_analyst_team") {
-        const ticker = (toolParams["ticker"] as string) ||
-          (state.inboundMessage.payload as Record<string, unknown>)?.["ticker"] as string ||
-          extractTickerFromText(state.reasonText ?? "") ||
-          "UNKNOWN";
-        const context = (toolParams["context"] as string) ||
-          (state.inboundMessage.payload as Record<string, unknown>)?.["goal"] as string ||
-          undefined;
-
-        const rolesRaw = toolParams["analyst_roles"];
-        const analystRoles =
-          Array.isArray(rolesRaw) && rolesRaw.length > 0
-            ? (rolesRaw.filter((r): r is AgentRole =>
-                typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
-              ) as AgentRole[])
-            : undefined;
-
-        const defIdsRaw = toolParams["analyst_definition_ids"];
-        const analystDefinitionIds =
-          Array.isArray(defIdsRaw) && defIdsRaw.length > 0
-            ? defIdsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-            : undefined;
-
-        const agRaw = toolParams["agent_group_id"];
-        const agentGroupId =
-          typeof agRaw === "string" && agRaw.trim()
-            ? agRaw.trim()
-            : agRaw === null || agRaw === ""
-              ? null
-              : undefined;
-
-        const teamResult = await runAnalystTeam({
-          workflowRunId: state.workflowId,
-          ticker,
-          context,
-          agentGroupId,
-          analystRoles,
-          analystDefinitionIds,
-        });
-        return { result: "ok" as const, analystTeamResult: teamResult };
-      }
-      await Bun.sleep(1);
-      return { result: "ok" as const };
+      throw new Error(
+        `Tool "${toolName}" is not implemented. Add it to builtin-tools or tool-routes (connector).`
+      );
     },
     meta: { toolName },
   });
@@ -522,18 +446,16 @@ export async function actNode(
   if (toolResult["packEdit"]) {
     nextObservations.push({ packEdit: toolResult["packEdit"] });
   }
+  if (toolResult["builtinResult"]) {
+    nextObservations.push({ builtinResult: toolResult["builtinResult"] });
+  }
+  if (toolResult["fusionResult"]) {
+    nextObservations.push({ fusionResult: toolResult["fusionResult"] });
+  }
 
   return {
     toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success", acpId }],
     observations: nextObservations,
   };
-}
-
-/** Try to extract a ticker symbol from free-form text */
-function extractTickerFromText(text: string): string | null {
-  // Match $SYMBOL, SYMBOL.SH, SYMBOL.SZ patterns
-  const match = text.match(/\$([A-Z]{1,6})|([A-Z0-9]{6})\.(SH|SZ)|([A-Z]{1,5})\b/);
-  if (match) return match[1] ?? match[2] ?? match[4] ?? null;
-  return null;
 }
 

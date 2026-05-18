@@ -11,6 +11,7 @@ import {
   symbolToYahooSymbol,
 } from "../../runtime/market/klines-data-source";
 import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
+import { snapshotIndicators } from "../../runtime/market/technical-indicators";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
 import {
   type BarData,
@@ -108,8 +109,10 @@ export class QubitNativeDataConnector extends DataConnector {
       "fetch_bars",
       "fetch_klines",
       "fetch_ticks",
-      "fetch_news",
+      "fetch_price_data",
+      "fetch_financial_data",
       "fetch_fundamentals",
+      "fetch_news",
       "write_snapshot",
     ],
     assetClasses: ["stock"],
@@ -180,7 +183,7 @@ export class QubitNativeDataConnector extends DataConnector {
         keys: Object.keys(p),
       } as TOutput;
     }
-    if (operation === "fetch_klines") {
+    if (operation === "fetch_klines" || operation === "fetch_price_data") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
       const p = raw as {
         symbol?: string;
@@ -189,18 +192,65 @@ export class QubitNativeDataConnector extends DataConnector {
         limit?: number;
       };
       const symbol = String(p.symbol ?? "").trim();
-      if (!symbol) throw new Error("fetch_klines: symbol is required");
+      if (!symbol) throw new Error(`${operation}: symbol is required`);
       const exchange = String(p.exchange ?? "");
       const timeframe = String(p.timeframe ?? "1d");
       const limit = Math.max(1, Math.min(Number(p.limit ?? 120), 2000));
       const { startDate, endDate, period } = computeDateRangeForLimit(timeframe, limit);
-      return this.fetchBars({
+      const bars = await this.fetchBars({
         symbol,
         exchange,
         period,
         startDate,
         endDate,
-      }) as TOutput;
+      });
+      if (operation === "fetch_price_data") {
+        return {
+          symbol,
+          exchange,
+          timeframe,
+          barCount: bars.length,
+          bars: bars.slice(-Math.min(30, bars.length)),
+          indicators: snapshotIndicators(bars, symbol),
+        } as TOutput;
+      }
+      return bars as TOutput;
+    }
+    if (operation === "fetch_financial_data") {
+      const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+      const p = raw as { symbol?: string; exchange?: string; limit?: number };
+      const symbol = String(p.symbol ?? "").trim();
+      if (!symbol) throw new Error("fetch_financial_data: symbol is required");
+      const exchange = String(p.exchange ?? "");
+      const limit = Math.max(30, Math.min(Number(p.limit ?? 120), 500));
+      const { startDate, endDate, period } = computeDateRangeForLimit("1d", limit);
+      const bars = await this.fetchBars({ symbol, exchange, period, startDate, endDate });
+      const fundamentals = await this.fetchFundamentals({
+        symbol,
+        exchange,
+        reportType: "annual",
+      });
+      const closes = bars.map((b) => b.close);
+      const last = closes[closes.length - 1] ?? 0;
+      const ret1y =
+        closes.length >= 252 && closes[closes.length - 252] > 0
+          ? (last - closes[closes.length - 252]) / closes[closes.length - 252]
+          : null;
+      return {
+        symbol,
+        exchange,
+        barCount: bars.length,
+        priceStats: {
+          lastClose: last,
+          return1y: ret1y,
+          volatility20d: snapshotIndicators(bars, symbol).return20d,
+        },
+        fundamentals,
+        note:
+          fundamentals.periods.length === 0
+            ? "财报明细需外接数据源；已附带价格统计与技术指标快照"
+            : undefined,
+      } as TOutput;
     }
     return super.onExecute<TOutput>(operation, payload);
   }

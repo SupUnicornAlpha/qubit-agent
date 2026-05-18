@@ -1,6 +1,6 @@
 import type { CSSProperties, FC } from "react";
-import { PALETTE_LABELS, STYLE_LABELS } from "../../theme/appearance";
-import { useAppStore, UI_PALETTE_IDS, UI_STYLE_IDS, type UiPaletteId, type UiStyleId } from "../../store";
+import { PALETTE_LABELS, palettesForStyle, STYLE_LABELS } from "../../theme/appearance";
+import { useAppStore, UI_STYLE_IDS, type UiPaletteId, type UiStyleId } from "../../store";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
@@ -9,7 +9,8 @@ export const TopBar: FC = () => {
   const uiStyle = useAppStore((s) => s.uiStyle);
   const setUiPalette = useAppStore((s) => s.setUiPalette);
   const setUiStyle = useAppStore((s) => s.setUiStyle);
-  const paletteLocked = uiStyle !== "default";
+  const paletteLocked = uiStyle !== "default" && uiStyle !== "glassmorphism";
+  const paletteOptions = palettesForStyle(uiStyle);
 
   return (
     <header className="qb-topbar" style={styles.bar}>
@@ -50,12 +51,18 @@ export const TopBar: FC = () => {
           id="qb-ui-palette"
           className="qb-theme-select"
           value={uiPalette}
-          title={paletteLocked ? "切换回「默认」风格后可改配色" : "配色（默认风格）"}
+          title={
+            paletteLocked
+              ? "切换回「默认」或 Glassmorphism 风格后可改配色"
+              : uiStyle === "glassmorphism"
+                ? "Glass 底色"
+                : "配色"
+          }
           aria-label="配色"
           disabled={paletteLocked}
           onChange={(e) => setUiPalette(e.target.value as UiPaletteId)}
         >
-          {UI_PALETTE_IDS.map((id) => (
+          {paletteOptions.map((id) => (
             <option key={id} value={id}>
               {PALETTE_LABELS[id]}
             </option>

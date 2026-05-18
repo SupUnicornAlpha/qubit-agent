@@ -30,6 +30,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "fuse_signals",
       "check_risk",
       "edit_agent_pack",
+      "call_mcp",
     ],
     mcpServers: [],
     skills: [],
@@ -105,8 +106,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 
 【输出习惯】
 中文；先给假设与可 falsify 的验证步骤，再给当前最佳结论与主要风险；引用技能（如 momentum-factor）时说明适用边界。`,
-    tools: ["compute_factors", "run_experiment", "version_strategy", "edit_agent_pack"],
-    mcpServers: ["qubit-research"],
+    tools: [
+      "fetch_klines",
+      "compute_factors",
+      "run_experiment",
+      "version_strategy",
+      "edit_agent_pack",
+    ],
+    mcpServers: ["qubit-data", "qubit-research"],
     skills: ["momentum-factor"],
     subscriptions: ["TASK_ASSIGN", "MODEL_UPDATE"],
     llmProvider: "openai:gpt-4o",
@@ -129,8 +136,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 
 【协作】
 承接 research 的策略版本与 market_data 的数据快照假设；为 simulation / risk 提供验证依据摘要。`,
-    tools: ["run_backtest", "get_backtest_status"],
-    mcpServers: ["qubit-backtest"],
+    tools: ["fetch_klines", "run_backtest", "get_backtest_status"],
+    mcpServers: ["qubit-data", "qubit-backtest"],
     skills: [],
     subscriptions: ["TASK_ASSIGN"],
     llmProvider: "openai:gpt-4o",
@@ -152,8 +159,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 
 【边界】
 不得绕过风控签署直接声称「已实盘成交」；发现风险事件或异常成交模式时，提示暂停并升级给 risk / risk_manager。`,
-    tools: ["submit_paper_order", "get_paper_position"],
-    mcpServers: ["qubit-sim"],
+    tools: ["submit_paper_order", "get_paper_position", "evaluate_risk"],
+    mcpServers: ["qubit-sim", "qubit-risk"],
     skills: [],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
     llmProvider: "openai:gpt-4o",
@@ -176,7 +183,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 【原则】
 保守默认：信息不足时倾向「拒绝或要求补充」而非放行；全程中文，结论可追溯。`,
     tools: ["evaluate_risk", "sign_intent", "load_rules"],
-    mcpServers: [],
+    mcpServers: ["qubit-risk"],
     skills: [],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
     llmProvider: "openai:gpt-4o",
@@ -283,8 +290,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 
 【边界】
 不杜撰财报数字；数据不足时列出待补数据项；最终交易授权不属于你单独决定。`,
-    tools: ["fetch_financial_data", "compute_valuation", "analyze_industry", "edit_agent_pack"],
-    mcpServers: [],
+    tools: [
+      "fetch_financial_data",
+      "fetch_klines",
+      "compute_valuation",
+      "analyze_industry",
+      "edit_agent_pack",
+    ],
+    mcpServers: ["qubit-data"],
     skills: ["fundamental-analysis"],
     subscriptions: ["TASK_ASSIGN"],
     llmProvider: "openai:gpt-4o",
@@ -309,8 +322,15 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 中文；在可用时输出 JSON：
 {"signal":"buy|sell|hold","confidence":0-1,"reasoning":"…","entry_zone":"…","stop_loss":"…"}
 并说明时间周期（如日线/60m）与失效条件（例如收盘跌破某价位则观点作废）。`,
-    tools: ["fetch_price_data", "compute_indicators", "detect_patterns", "edit_agent_pack"],
-    mcpServers: [],
+    tools: [
+      "fetch_price_data",
+      "fetch_klines",
+      "compute_indicators",
+      "detect_patterns",
+      "run_backtest",
+      "edit_agent_pack",
+    ],
+    mcpServers: ["qubit-data", "qubit-backtest"],
     skills: ["technical-analysis"],
     subscriptions: ["TASK_ASSIGN"],
     llmProvider: "openai:gpt-4o",
@@ -338,12 +358,13 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 【边界】
 不传播内幕或未经公开的重大信息；对单一匿名源保持审慎。`,
     tools: [
+      "fetch_news",
       "fetch_news_sentiment",
       "analyze_social_media",
       "get_analyst_ratings",
       "edit_agent_pack",
     ],
-    mcpServers: [],
+    mcpServers: ["qubit-news"],
     skills: ["sentiment-analysis"],
     subscriptions: ["TASK_ASSIGN"],
     llmProvider: "openai:gpt-4o",
@@ -368,8 +389,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 中文；在可用时输出 JSON：
 {"signal":"buy|sell|hold","confidence":0-1,"macro_cycle":"recovery|expansion|slowdown|recession","policy_stance":"easing|neutral|tightening","reasoning":"…"}
 说明主要假设与反证指标（何种数据若走坏将推翻当前判断）。`,
-    tools: ["fetch_macro_data", "analyze_policy", "compute_macro_indicators", "edit_agent_pack"],
-    mcpServers: [],
+    tools: [
+      "fetch_macro_data",
+      "fetch_klines",
+      "analyze_policy",
+      "compute_macro_indicators",
+      "edit_agent_pack",
+    ],
+    mcpServers: ["qubit-data"],
     skills: ["macro-analysis"],
     subscriptions: ["TASK_ASSIGN"],
     llmProvider: "openai:gpt-4o",
@@ -401,8 +428,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
 
 【原则】
 透明、可辩护、可追溯；避免主观情绪化措辞，用风险语言陈述。`,
-    tools: ["evaluate_risk", "check_concentration", "assess_liquidity"],
-    mcpServers: [],
+    tools: ["evaluate_risk", "check_concentration", "assess_liquidity", "load_rules"],
+    mcpServers: ["qubit-risk"],
     skills: ["risk-management"],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
     llmProvider: "openai:gpt-4o",

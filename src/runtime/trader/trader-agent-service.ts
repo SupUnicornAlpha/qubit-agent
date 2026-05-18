@@ -28,18 +28,42 @@ export interface TraderSessionContext {
   sessionId: string;
 }
 
+const TRADER_WORKFLOW_GOAL = "QUBIT 实时交易 Agent 执行上下文";
+
 export async function ensureTraderSession(input: {
   projectId: string;
   sessionId: string;
 }): Promise<TraderSessionContext> {
+  const db = await getDb();
+  const existing = await db
+    .select()
+    .from(workflowRun)
+    .where(
+      and(
+        eq(workflowRun.projectId, input.projectId),
+        eq(workflowRun.sessionId, input.sessionId),
+        eq(workflowRun.goal, TRADER_WORKFLOW_GOAL)
+      )
+    )
+    .orderBy(desc(workflowRun.startedAt))
+    .limit(1);
+
+  if (existing[0]) {
+    return {
+      workflowRunId: existing[0].id,
+      projectId: input.projectId,
+      sessionId: input.sessionId,
+    };
+  }
+
   const created = await createAndDispatchWorkflow({
     projectId: input.projectId,
-    goal: "QUBIT 实时交易 Agent 执行上下文",
+    goal: TRADER_WORKFLOW_GOAL,
     mode: "simulation",
     sessionId: input.sessionId,
     source: "api",
     skipDispatch: true,
-    reuseSessionWorkflow: true,
+    reuseSessionWorkflow: false,
   });
   return {
     workflowRunId: created.data.id,

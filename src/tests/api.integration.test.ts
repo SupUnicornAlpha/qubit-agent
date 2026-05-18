@@ -146,6 +146,18 @@ describe("api minimal integration", () => {
     expect(((detail.data as Record<string, unknown>).workflow as Record<string, unknown>).id).toBe(workflowId);
   });
 
+  test("monitor: summary endpoint", async () => {
+    const res = await app.request(
+      new Request(`http://test/api/v1/monitor/summary?sessionId=${sessionId}`)
+    );
+    expect(res.status).toBe(200);
+    const json = await jsonOf(res);
+    expect(json.ok).toBe(true);
+    const data = json.data as Record<string, unknown>;
+    expect(typeof data.workflowTotal).toBe("number");
+    expect(typeof data.openAlerts).toBe("number");
+  });
+
   test("telegram webhook: reject bad secret and skip non-text", async () => {
     process.env.QUBIT_TELEGRAM_WEBHOOK_SECRET = "secret";
     const unauthorized = await app.request(

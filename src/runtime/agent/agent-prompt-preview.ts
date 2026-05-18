@@ -6,6 +6,7 @@ import {
   agentProfile,
   mcpToolBinding,
 } from "../../db/sqlite/schema";
+import { assembleAgentSystemPrompt } from "../tools/tool-call-format";
 import {
   type PromptMode,
   defaultMemoryNamespace,
@@ -28,7 +29,12 @@ export interface AgentPromptPreviewInput {
 }
 
 export interface AgentPromptPreviewResult {
+  /** 发给 LLM 的完整 system（pack 合并 + 工具/MCP 块，与 reason 节点一致） */
   mergedSystemPrompt: string;
+  /** pack/DB 合并正文，不含工具块 */
+  baseSystemPrompt: string;
+  /** 注入的工具/MCP 说明块；无授权工具时为空字符串 */
+  toolsPromptBlock: string;
   promptMode: PromptMode;
   sections: {
     agent: string;
@@ -113,7 +119,7 @@ export async function buildAgentPromptPreview(
     promptTemplateRef: profile?.promptTemplateRef,
   });
 
-  const mergedSystemPrompt = mergeSystemPrompt({
+  const baseSystemPrompt = mergeSystemPrompt({
     mode: promptMode,
     dbPrompt,
     agentText: read.agentText,
@@ -122,6 +128,10 @@ export async function buildAgentPromptPreview(
     memoryText: read.memoryText,
     promptText: read.promptText,
   });
+  const { full: mergedSystemPrompt, toolsBlock: toolsPromptBlock } = assembleAgentSystemPrompt(
+    baseSystemPrompt,
+    { tools, mcpServers }
+  );
 
   const bindings = await db
     .select()
@@ -130,6 +140,8 @@ export async function buildAgentPromptPreview(
 
   return {
     mergedSystemPrompt,
+    baseSystemPrompt,
+    toolsPromptBlock,
     promptMode,
     sections: {
       agent: read.agentText,

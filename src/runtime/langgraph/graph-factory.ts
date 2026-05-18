@@ -18,6 +18,7 @@ import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import { sandboxExecutor } from "../sandbox-executor";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
+import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "./event-stream";
 import { actNode } from "./nodes/act";
 import { observeNode } from "./nodes/observe";
@@ -31,6 +32,7 @@ type GraphAgentView = {
   instanceId: string;
   definitionId: string;
   role: AgentRole;
+  name: string;
   version: string;
   status: "idle" | "running" | "error" | "stopped";
 };
@@ -76,6 +78,7 @@ export class GraphRunner {
         instanceId: `graph-${def.role}`,
         definitionId: def.id,
         role: def.role,
+        name: def.name,
         version: def.version,
         status: "running",
       });
@@ -284,8 +287,9 @@ export class GraphRunner {
             .where(eq(agentInstance.id, agentInstanceId));
           await db
             .update(workflowRun)
-            .set({ status: "completed" })
+            .set({ status: "completed", endedAt: new Date().toISOString() })
             .where(eq(workflowRun.id, params.workflowId));
+          onWorkflowTerminal(params.workflowId, "completed");
           stepStreamBus.publish({
             runId: params.runId,
             workflowId: params.workflowId,
@@ -500,10 +504,16 @@ export class GraphRunner {
           endedAt: new Date().toISOString(),
         })
         .where(eq(agentInstance.id, agentInstanceId));
+      const terminalStatus =
+        state.finalResponse?.["status"] === "terminated" ? "failed" : "completed";
       await db
         .update(workflowRun)
-        .set({ status: state.finalResponse?.["status"] === "terminated" ? "failed" : "completed" })
+        .set({
+          status: terminalStatus,
+          endedAt: new Date().toISOString(),
+        })
         .where(eq(workflowRun.id, params.workflowId));
+      onWorkflowTerminal(params.workflowId, terminalStatus);
 
       emit({
         runId: params.runId,
@@ -521,8 +531,9 @@ export class GraphRunner {
       try {
         await db
           .update(workflowRun)
-          .set({ status: "failed" })
+          .set({ status: "failed", endedAt: new Date().toISOString() })
           .where(eq(workflowRun.id, params.workflowId));
+        onWorkflowTerminal(params.workflowId, "failed");
       } catch {
         // ignore secondary failures
       }

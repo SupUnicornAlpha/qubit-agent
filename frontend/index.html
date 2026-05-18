@@ -9,8 +9,8 @@
     <title>QUBIT — 量化研究 Agent 平台</title>
     <script>
       (function () {
-        var PALETTES = ["dark-purple", "light-white", "light-sky"];
-        var STYLES = ["default", "glassmorphism", "retro-futurism", "industrial", "neon-cyberpunk", "bauhaus", "sci-fi-hud", "comic-book"];
+        var PALETTES = ["dark-purple", "light-white", "light-sky", "glass-cool", "glass-warm", "glass-rainbow"];
+        var STYLES = ["default", "glassmorphism", "retro-futurism", "industrial", "neon-cyberpunk", "bauhaus", "sci-fi-hud", "comic-book", "anti-design", "holographic", "blueprint"];
         var LEGACY = { "dark-gray": "dark-purple", "light-mint": "light-white" };
         var root = document.documentElement;
         function normPalette(v) {
@@ -22,12 +22,23 @@
           if (v === "generative-art") return "retro-futurism";
           return STYLES.indexOf(v) >= 0 ? v : "default";
         }
+        var GLASS_PALETTES = ["glass-cool", "glass-warm", "glass-rainbow"];
+        function normPaletteForStyle(style, v) {
+          var p = normPalette(v);
+          if (style === "glassmorphism") {
+            if (GLASS_PALETTES.indexOf(p) >= 0) return p;
+            return "glass-cool";
+          }
+          if (GLASS_PALETTES.indexOf(p) >= 0) return "dark-purple";
+          return p;
+        }
         try {
           var raw = localStorage.getItem("qubit-ui-appearance-v2");
           if (raw) {
             var j = JSON.parse(raw);
-            root.setAttribute("data-qb-theme", normPalette(j.palette));
-            root.setAttribute("data-qb-style", normStyle(j.style));
+            var style = normStyle(j.style);
+            root.setAttribute("data-qb-theme", normPaletteForStyle(style, j.palette));
+            root.setAttribute("data-qb-style", style);
             return;
           }
           var legacy = localStorage.getItem("qubit-ui-theme-v1");

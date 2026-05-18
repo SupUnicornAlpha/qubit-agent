@@ -1,0 +1,254 @@
+/**
+ * 研究团队 / 工作流拓扑画布 — 随 data-qb-style 切换节点与边视觉
+ */
+
+[data-qb-topology-canvas] {
+  --qb-topo-node-fill: var(--qb-main-card-bg, #18181b);
+  --qb-topo-node-stroke: var(--qb-main-card-border, #3f3f46);
+  --qb-topo-node-stroke-w: 1;
+  --qb-topo-node-rx: 8;
+  --qb-topo-node-active-fill: rgba(59, 130, 246, 0.25);
+  --qb-topo-node-active-stroke: var(--qb-team-edge-active, #3b82f6);
+  --qb-topo-edge-stroke: var(--qb-team-edge-fg, #71717a);
+  --qb-topo-edge-stroke-w: 1.5;
+  --qb-topo-edge-dash: none;
+  --qb-topo-canvas-border: var(--qb-team-table-row-border, #27272a);
+  --qb-topo-canvas-radius: 8px;
+  --qb-topo-label-fg: var(--qb-body-fg, #e4e4e7);
+  --qb-topo-sublabel-fg: var(--qb-team-meta, #71717a);
+}
+
+[data-qb-topology-canvas] .qb-topo-edge {
+  fill: none;
+  stroke: var(--qb-topo-edge-stroke);
+  stroke-width: var(--qb-topo-edge-stroke-w);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.2s ease, stroke-width 0.2s ease, opacity 0.2s ease;
+}
+
+[data-qb-topology-canvas] .qb-topo-edge--dashed {
+  stroke-dasharray: 6 5;
+}
+
+[data-qb-topology-canvas] .qb-topo-edge--hot {
+  stroke: var(--qb-team-edge-hot, #60a5fa);
+  stroke-width: 2;
+}
+
+[data-qb-topology-canvas] .qb-topo-edge--selected {
+  stroke: var(--qb-team-edge-active, #3b82f6);
+  stroke-width: 2.4;
+}
+
+[data-qb-topology-canvas] .qb-topo-node {
+  fill: var(--qb-topo-node-fill);
+  stroke: var(--qb-topo-node-stroke);
+  stroke-width: var(--qb-topo-node-stroke-w);
+  rx: var(--qb-topo-node-rx, 8px);
+  transition: fill 0.2s ease, stroke 0.2s ease, filter 0.2s ease;
+}
+
+[data-qb-topology-canvas] .qb-topo-edge--dashed {
+  opacity: 0.42;
+}
+
+[data-qb-topology-canvas] .qb-topo-node--active {
+  fill: var(--qb-topo-node-active-fill);
+  stroke: var(--qb-topo-node-active-stroke);
+  stroke-width: 2;
+}
+
+[data-qb-topology-canvas] .qb-topo-node--selected {
+  fill: var(--qb-team-node-selected-fill, rgba(30, 58, 95, 0.55));
+  stroke: var(--qb-team-node-selected-stroke, #3b82f6);
+  stroke-width: 2.2;
+}
+
+[data-qb-topology-canvas] .qb-topo-node--hot {
+  fill: var(--qb-team-node-hot-fill, rgba(59, 130, 246, 0.18));
+  stroke: var(--qb-team-node-hot-stroke, #60a5fa);
+  stroke-width: 2;
+}
+
+[data-qb-topology-canvas] .qb-topo-label {
+  fill: var(--qb-topo-label-fg);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+[data-qb-topology-canvas] .qb-topo-sublabel {
+  fill: var(--qb-topo-sublabel-fg);
+  font-size: 9px;
+  pointer-events: none;
+}
+
+/* ── Glassmorphism ── */
+html[data-qb-style="glassmorphism"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: rgba(255, 255, 255, 0.08);
+  --qb-topo-node-stroke: rgba(255, 255, 255, 0.28);
+  --qb-topo-node-rx: 14px;
+  --qb-topo-node-active-fill: rgba(124, 58, 237, 0.28);
+  --qb-topo-node-active-stroke: #a78bfa;
+  --qb-topo-edge-stroke: rgba(148, 163, 184, 0.72);
+  --qb-topo-canvas-border: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-qb-style="glassmorphism"] [data-qb-topology-canvas] .qb-topo-edge {
+  filter: drop-shadow(0 0 6px rgba(129, 140, 248, 0.25));
+}
+
+/* ── Bauhaus ── */
+html[data-qb-style="bauhaus"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: #fff;
+  --qb-topo-node-stroke: #111;
+  --qb-topo-node-stroke-w: 2;
+  --qb-topo-node-rx: 2px;
+  --qb-topo-node-active-fill: rgba(30, 136, 229, 0.2);
+  --qb-topo-node-active-stroke: var(--qb-bauhaus-blue, #1e88e5);
+  --qb-topo-edge-stroke: #424242;
+  --qb-topo-edge-stroke-w: 2;
+  --qb-topo-canvas-border: #111;
+  --qb-topo-canvas-radius: 0;
+}
+
+html[data-qb-style="bauhaus"] [data-qb-topology-canvas] .qb-topo-edge {
+  stroke-linecap: square;
+}
+
+/* ── Comic Book ── */
+html[data-qb-style="comic-book"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: #fffef5;
+  --qb-topo-node-stroke: #111;
+  --qb-topo-node-stroke-w: 2.5;
+  --qb-topo-node-rx: 4px;
+  --qb-topo-edge-stroke: #333;
+  --qb-topo-edge-stroke-w: 2.5;
+  --qb-topo-canvas-border: #111;
+}
+
+html[data-qb-style="comic-book"] [data-qb-topology-canvas] .qb-topo-node {
+  filter: drop-shadow(3px 3px 0 rgba(0, 0, 0, 0.35));
+}
+
+/* ── 霓虹赛博朋克 ── */
+html[data-qb-style="neon-cyberpunk"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: rgba(10, 10, 20, 0.85);
+  --qb-topo-node-stroke: #22d3ee;
+  --qb-topo-node-active-stroke: #f472b6;
+  --qb-topo-edge-stroke: rgba(34, 211, 238, 0.65);
+  --qb-topo-canvas-border: rgba(244, 114, 182, 0.45);
+}
+
+html[data-qb-style="neon-cyberpunk"] [data-qb-topology-canvas] .qb-topo-edge--hot,
+html[data-qb-style="neon-cyberpunk"] [data-qb-topology-canvas] .qb-topo-edge--selected {
+  filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.8));
+}
+
+/* ── 科幻 HUD ── */
+html[data-qb-style="sci-fi-hud"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: rgba(15, 23, 42, 0.75);
+  --qb-topo-node-stroke: rgba(34, 211, 238, 0.55);
+  --qb-topo-node-rx: 4px;
+  --qb-topo-edge-stroke: rgba(34, 211, 238, 0.5);
+  --qb-topo-edge-dash: 4 6;
+}
+
+html[data-qb-style="sci-fi-hud"] [data-qb-topology-canvas] .qb-topo-edge:not(.qb-topo-edge--dashed) {
+  stroke-dasharray: 4 6;
+}
+
+/* ── 复古未来主义 ── */
+html[data-qb-style="retro-futurism"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: rgba(20, 16, 32, 0.9);
+  --qb-topo-node-stroke: #c9a227;
+  --qb-topo-edge-stroke: rgba(201, 162, 39, 0.55);
+  --qb-topo-canvas-border: rgba(201, 162, 39, 0.35);
+}
+
+/* ── 工业设计 ── */
+html[data-qb-style="industrial"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: #1a1a1a;
+  --qb-topo-node-stroke: #ff5722;
+  --qb-topo-node-rx: 2px;
+  --qb-topo-node-active-fill: rgba(255, 87, 34, 0.2);
+  --qb-topo-node-active-stroke: #ff6b35;
+  --qb-topo-edge-stroke: #616161;
+  --qb-topo-edge-stroke-w: 1.25;
+  --qb-topo-label-fg: #f5f5f5;
+  --qb-topo-sublabel-fg: #9e9e9e;
+  --qb-topo-canvas-border: #3a3a3a;
+  background-color: #0d0d0d;
+  background-image:
+    linear-gradient(rgba(42, 42, 42, 0.5) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 42, 42, 0.5) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+
+/* ── 反设计 ── */
+html[data-qb-style="anti-design"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: var(--qb-ad-paper, #fff);
+  --qb-topo-node-stroke: var(--qb-ad-ink, #000);
+  --qb-topo-node-stroke-w: 3;
+  --qb-topo-node-rx: 0;
+  --qb-topo-node-active-fill: color-mix(in srgb, var(--qb-ad-green, #7a9f7a) 45%, var(--qb-ad-paper, #f8f6f1));
+  --qb-topo-node-active-stroke: var(--qb-ad-ink, #000);
+  --qb-topo-edge-stroke: var(--qb-ad-ink, #000);
+  --qb-topo-edge-stroke-w: 3;
+  --qb-topo-canvas-border: var(--qb-ad-ink, #000);
+  box-shadow: var(--qb-ad-shadow-sm, 6px 6px 0 #000);
+  transform: rotate(-0.5deg);
+}
+
+html[data-qb-style="anti-design"] [data-qb-topology-canvas] .qb-topo-node {
+  filter: drop-shadow(4px 4px 0 rgba(0, 0, 0, 0.35));
+}
+
+html[data-qb-style="anti-design"] [data-qb-topology-canvas] .qb-topo-edge {
+  stroke-linecap: square;
+}
+
+/* ── 全息彩膜 ── */
+html[data-qb-style="holographic"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: rgba(26, 36, 56, 0.85);
+  --qb-topo-node-stroke: rgba(196, 181, 253, 0.55);
+  --qb-topo-node-rx: 10px;
+  --qb-topo-node-active-fill: rgba(139, 92, 246, 0.32);
+  --qb-topo-node-active-stroke: #c4b5fd;
+  --qb-topo-edge-stroke: rgba(203, 213, 225, 0.48);
+  --qb-topo-canvas-border: rgba(167, 139, 250, 0.28);
+  backdrop-filter: blur(10px);
+}
+
+html[data-qb-style="holographic"] [data-qb-topology-canvas] .qb-topo-edge--hot {
+  stroke: #e879f9;
+  filter: drop-shadow(0 0 6px rgba(232, 121, 249, 0.35));
+}
+
+/* ── 工程蓝图 ── */
+html[data-qb-style="blueprint"] [data-qb-topology-canvas] {
+  --qb-topo-node-fill: rgba(10, 22, 40, 0.95);
+  --qb-topo-node-stroke: #22d3ee;
+  --qb-topo-node-rx: 2px;
+  --qb-topo-node-active-fill: rgba(34, 211, 238, 0.18);
+  --qb-topo-node-active-stroke: #22d3ee;
+  --qb-topo-edge-stroke: rgba(255, 255, 255, 0.5);
+  --qb-topo-label-fg: #f8fafc;
+  --qb-topo-sublabel-fg: #60a5fa;
+  --qb-topo-canvas-border: rgba(34, 211, 238, 0.35);
+  --qb-topo-canvas-radius: 0;
+  background-color: transparent;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.1) 1px, transparent 1px),
+    linear-gradient(rgba(96, 165, 250, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(96, 165, 250, 0.08) 1px, transparent 1px);
+  background-size: 80px 80px, 80px 80px, 20px 20px, 20px 20px;
+}
+
+html[data-qb-style="blueprint"] [data-qb-topology-canvas] .qb-topo-edge--selected,
+html[data-qb-style="blueprint"] [data-qb-topology-canvas] .qb-topo-edge--hot {
+  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.5));
+}

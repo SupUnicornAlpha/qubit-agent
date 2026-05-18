@@ -1,0 +1,425 @@
+/**
+ * Blueprint 工程蓝图 — 普鲁士蓝底、白线网格、青色高亮、技术标注感
+ */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+html[data-qb-style="blueprint"] {
+  color-scheme: dark;
+
+  --qb-bp-bg-deep: #0a1628;
+  --qb-bp-bg-mid: #1a365d;
+  --qb-bp-line: rgba(255, 255, 255, 0.88);
+  --qb-bp-line-dim: rgba(96, 165, 250, 0.42);
+  --qb-bp-grid-major: rgba(255, 255, 255, 0.22);
+  --qb-bp-grid-minor: rgba(96, 165, 250, 0.14);
+  --qb-bp-cyan: #22d3ee;
+  --qb-bp-cyan-glow: rgba(34, 211, 238, 0.45);
+  --qb-bp-warn: #f97316;
+  --qb-bp-panel: rgba(10, 22, 40, 0.82);
+  --qb-bp-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --qb-bp-duration: 0.16s;
+
+  --qb-bg-root: var(--qb-bp-bg-deep);
+  --qb-bg-root-top: var(--qb-bp-bg-mid);
+  --qb-tint: rgba(34, 211, 238, 0.1);
+  --qb-tint-strong: rgba(34, 211, 238, 0.18);
+  --qb-blue: var(--qb-bp-cyan);
+  --qb-blue-deep: #0891b2;
+  --qb-focus-ring: var(--qb-bp-cyan-glow);
+  --qb-hairline: rgba(255, 255, 255, 0.12);
+  --qb-separator: rgba(96, 165, 250, 0.35);
+  --qb-body-fg: #f8fafc;
+  --qb-body-muted: #94a3b8;
+
+  --qb-font-display: "IBM Plex Mono", "Courier New", ui-monospace, monospace;
+  --qb-font-body: "IBM Plex Mono", "Courier New", ui-monospace, monospace;
+
+  --qb-topbar-bg: rgba(10, 22, 40, 0.92);
+  --qb-workbench-toolbar-bg: rgba(10, 22, 40, 0.88);
+  --qb-segmented-active-bg: rgba(34, 211, 238, 0.22);
+  --qb-radius-lg: 2px;
+  --qb-radius-md: 2px;
+  --qb-radius-sm: 2px;
+
+  --qb-scrollbar-track: rgba(255, 255, 255, 0.04);
+  --qb-scrollbar-thumb-top: #60a5fa;
+  --qb-scrollbar-thumb-bot: #22d3ee;
+  --qb-scrollbar-corner: var(--qb-bp-bg-deep);
+
+  --qb-sidebar-nav-bg: var(--qb-bp-panel);
+  --qb-sidebar-activity-bg: rgba(10, 22, 40, 0.95);
+  --qb-sidebar-explorer-bg: rgba(26, 54, 93, 0.55);
+  --qb-sidebar-border: rgba(255, 255, 255, 0.2);
+  --qb-sidebar-muted: #94a3b8;
+  --qb-sidebar-text: #f1f5f9;
+  --qb-brand-icon: var(--qb-bp-cyan);
+
+  --qb-main-input-bg: rgba(10, 22, 40, 0.9);
+  --qb-main-input-border: rgba(255, 255, 255, 0.35);
+  --qb-main-input-fg: #f8fafc;
+  --qb-main-card-bg: var(--qb-bp-panel);
+  --qb-main-card-border: rgba(255, 255, 255, 0.28);
+  --qb-main-meta: #94a3b8;
+  --qb-main-panel-bg: rgba(10, 22, 40, 0.65);
+  --qb-stream-box-bg: rgba(10, 22, 40, 0.85);
+  --qb-stream-box-fg: #e2e8f0;
+  --qb-stream-box-border: rgba(255, 255, 255, 0.22);
+  --qb-mcp-details-bg: var(--qb-bp-panel);
+  --qb-mcp-details-border: rgba(255, 255, 255, 0.25);
+  --qb-mcp-details-nested-bg: rgba(10, 22, 40, 0.75);
+  --qb-mcp-market-card-bg: rgba(26, 54, 93, 0.45);
+  --qb-mcp-market-card-border: rgba(255, 255, 255, 0.22);
+  --qb-mcp-market-cmd-bg: rgba(0, 0, 0, 0.35);
+  --qb-mcp-json-bg: rgba(10, 22, 40, 0.9);
+  --qb-mcp-json-border: rgba(255, 255, 255, 0.2);
+  --qb-ide-chrome-border: rgba(255, 255, 255, 0.22);
+  --qb-chat-main-bg: rgba(10, 22, 40, 0.75);
+  --qb-chat-sidebar-bg: var(--qb-bp-panel);
+  --qb-chat-border: rgba(255, 255, 255, 0.22);
+  --qb-chat-bubble-agent-bg: rgba(26, 54, 93, 0.55);
+  --qb-chat-bubble-user-bg: rgba(34, 211, 238, 0.15);
+  --qb-chat-bubble-user-fg: #f0fdfa;
+  --qb-chat-bubble-agent-fg: #f1f5f9;
+  --qb-chat-bubble-border: rgba(255, 255, 255, 0.2);
+  --qb-chat-session-active-border: var(--qb-bp-cyan);
+  --qb-chat-session-active-bg: rgba(34, 211, 238, 0.12);
+  --qb-md-table-border: rgba(255, 255, 255, 0.25);
+  --qb-md-th-bg: rgba(34, 211, 238, 0.18);
+  --qb-board-col-bg: var(--qb-bp-panel);
+  --qb-board-card-bg: rgba(26, 54, 93, 0.5);
+
+  --qb-kline-root-bg: transparent;
+  --qb-kline-header-border: rgba(255, 255, 255, 0.22);
+  --qb-kline-embedded-bar-bg: rgba(10, 22, 40, 0.9);
+
+  --qb-news-wrap-bg: rgba(10, 22, 40, 0.6);
+  --qb-news-col-title-bg: rgba(34, 211, 238, 0.2);
+  --qb-news-col-title-fg: #f0fdfa;
+  --qb-news-item-bg: var(--qb-bp-panel);
+  --qb-news-expand-bg: rgba(26, 54, 93, 0.5);
+  --qb-news-open-btn-border: var(--qb-bp-cyan);
+
+  --qb-team-shell-bg: rgba(10, 22, 40, 0.88);
+  --qb-team-shell-border: rgba(255, 255, 255, 0.3);
+  --qb-team-left-bg: var(--qb-bp-panel);
+  --qb-team-center-bg: rgba(10, 22, 40, 0.7);
+  --qb-team-right-bg: var(--qb-bp-panel);
+  --qb-team-titlebar-bg: rgba(26, 54, 93, 0.85);
+  --qb-team-titlebar-fg: #f0fdfa;
+  --qb-team-gutter-bg: rgba(255, 255, 255, 0.12);
+  --qb-team-tab-active-bg: rgba(34, 211, 238, 0.2);
+  --qb-team-tab-active-border: var(--qb-bp-cyan);
+  --qb-team-input-bg: rgba(10, 22, 40, 0.9);
+  --qb-team-input-border: rgba(255, 255, 255, 0.3);
+  --qb-team-canvas-bg: rgba(6, 14, 28, 0.92);
+  --qb-team-stage-bg: rgba(8, 18, 36, 0.92);
+  --qb-team-meta: #94a3b8;
+  --qb-team-section-fg: #e2e8f0;
+  --qb-team-live-feed-bg: rgba(6, 14, 28, 0.95);
+  --qb-team-live-feed-border: rgba(34, 211, 238, 0.35);
+  --qb-team-live-feed-fg: #e2e8f0;
+  --qb-team-member-tag-bg: rgba(10, 22, 40, 0.9);
+  --qb-team-member-tag-fg: #f0fdfa;
+  --qb-team-edge-fg: rgba(255, 255, 255, 0.45);
+  --qb-team-edge-active: var(--qb-bp-cyan);
+  --qb-team-edge-hot: var(--qb-bp-warn);
+  --qb-team-node-selected-fill: rgba(34, 211, 238, 0.2);
+  --qb-team-node-selected-stroke: var(--qb-bp-cyan);
+  --qb-team-node-hot-fill: rgba(249, 115, 22, 0.2);
+  --qb-team-node-hot-stroke: var(--qb-bp-warn);
+}
+
+@keyframes qb-bp-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--qb-bp-cyan-glow);
+  }
+  50% {
+    box-shadow: 0 0 16px 2px var(--qb-bp-cyan-glow);
+  }
+}
+
+html[data-qb-style="blueprint"] body {
+  font-family: var(--qb-font-body);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+html[data-qb-style="blueprint"] .qb-app-root {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, var(--qb-bp-bg-deep) 0%, var(--qb-bp-bg-mid) 50%, var(--qb-bp-bg-deep) 100%);
+}
+
+/* 工程网格 */
+html[data-qb-style="blueprint"] .qb-app-root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--qb-bp-grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--qb-bp-grid-major) 1px, transparent 1px),
+    linear-gradient(var(--qb-bp-grid-minor) 1px, transparent 1px),
+    linear-gradient(90deg, var(--qb-bp-grid-minor) 1px, transparent 1px);
+  background-size:
+    100px 100px,
+    100px 100px,
+    20px 20px,
+    20px 20px;
+  opacity: 1;
+}
+
+/* 图框角标 */
+html[data-qb-style="blueprint"] .qb-app-root::after {
+  content: "ORIGIN 0,0 · SCALE 1:1 · QUBIT";
+  position: fixed;
+  bottom: 10px;
+  right: 14px;
+  z-index: 0;
+  pointer-events: none;
+  font-family: var(--qb-font-body);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+html[data-qb-style="blueprint"] .qb-app-root > * {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-qb-style="blueprint"] .qb-topbar,
+html[data-qb-style="blueprint"] .qb-workbench-toolbar,
+html[data-qb-style="blueprint"] .qb-sidebar-shell,
+html[data-qb-style="blueprint"] .qb-explorer-panel,
+html[data-qb-style="blueprint"] .qb-context-card,
+html[data-qb-style="blueprint"] .qb-agent-shell,
+html[data-qb-style="blueprint"] .qb-segmented,
+html[data-qb-style="blueprint"] .qb-status-pill {
+  background: var(--qb-bp-panel) !important;
+  border: 1px solid rgba(255, 255, 255, 0.28) !important;
+  border-radius: var(--qb-radius-md);
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.08);
+  transition:
+    box-shadow var(--qb-bp-duration) var(--qb-bp-ease),
+    border-color var(--qb-bp-duration) var(--qb-bp-ease);
+}
+
+/* L 角标 */
+html[data-qb-style="blueprint"] .qb-context-card::before,
+html[data-qb-style="blueprint"] .qb-agent-shell::before,
+html[data-qb-style="blueprint"] [data-qb-team-shell]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  border-top: 2px solid var(--qb-bp-cyan);
+  border-left: 2px solid var(--qb-bp-cyan);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+html[data-qb-style="blueprint"] .qb-logo-text {
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--qb-bp-line);
+}
+
+html[data-qb-style="blueprint"] .qb-topbar__subtitle {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--qb-bp-line-dim);
+}
+
+html[data-qb-style="blueprint"] .qb-nav-row {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  border-left: 2px solid transparent;
+  transition: all var(--qb-bp-duration) var(--qb-bp-ease);
+}
+
+html[data-qb-style="blueprint"] .qb-nav-row:hover {
+  border-left-color: var(--qb-bp-cyan);
+  background: rgba(34, 211, 238, 0.08) !important;
+  box-shadow: inset 0 0 24px rgba(34, 211, 238, 0.06);
+}
+
+html[data-qb-style="blueprint"] .qb-nav-row--active {
+  border-left-color: var(--qb-bp-cyan);
+  background: rgba(34, 211, 238, 0.14) !important;
+  color: var(--qb-bp-cyan) !important;
+  box-shadow: 0 0 12px var(--qb-bp-cyan-glow);
+}
+
+html[data-qb-style="blueprint"] .qb-agent-hero__title {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 1rem;
+  color: var(--qb-bp-cyan);
+}
+
+html[data-qb-style="blueprint"] .qb-segmented__tab {
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+html[data-qb-style="blueprint"] .qb-segmented__tab--active {
+  background: rgba(34, 211, 238, 0.2) !important;
+  color: var(--qb-bp-cyan) !important;
+  border: 1px solid var(--qb-bp-cyan);
+}
+
+html[data-qb-style="blueprint"] .qb-btn-primary,
+html[data-qb-style="blueprint"] .qb-btn-primary-brand {
+  background: rgba(34, 211, 238, 0.2) !important;
+  color: #f0fdfa !important;
+  border: 1px solid var(--qb-bp-cyan) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px;
+  box-shadow: 0 0 12px var(--qb-bp-cyan-glow);
+  transition: all var(--qb-bp-duration) var(--qb-bp-ease);
+}
+
+html[data-qb-style="blueprint"] .qb-btn-primary:hover:not(:disabled),
+html[data-qb-style="blueprint"] .qb-btn-primary-brand:hover:not(:disabled) {
+  background: rgba(34, 211, 238, 0.32) !important;
+  animation: qb-bp-pulse 1.2s ease-in-out infinite;
+}
+
+html[data-qb-style="blueprint"] .qb-btn-primary:active:not(:disabled),
+html[data-qb-style="blueprint"] .qb-btn-primary-brand:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 0 6px var(--qb-bp-cyan-glow);
+}
+
+html[data-qb-style="blueprint"] .qb-btn-secondary,
+html[data-qb-style="blueprint"] .qb-btn-ghost,
+html[data-qb-style="blueprint"] .qb-chip {
+  background: transparent !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: var(--qb-bp-line) !important;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+html[data-qb-style="blueprint"] .qb-btn-secondary:hover:not(:disabled),
+html[data-qb-style="blueprint"] .qb-btn-ghost:hover:not(:disabled) {
+  border-color: var(--qb-bp-cyan) !important;
+  color: var(--qb-bp-cyan) !important;
+  box-shadow: 0 0 10px var(--qb-bp-cyan-glow);
+}
+
+html[data-qb-style="blueprint"] input,
+html[data-qb-style="blueprint"] select,
+html[data-qb-style="blueprint"] textarea:not(.qb-tokyo-editor__textarea) {
+  background: rgba(10, 22, 40, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  border-radius: 0 !important;
+  font-family: var(--qb-font-body);
+  font-size: 12px;
+}
+
+html[data-qb-style="blueprint"] [data-qb-team-shell] {
+  border: 2px solid rgba(255, 255, 255, 0.35) !important;
+  outline: 1px solid rgba(34, 211, 238, 0.25);
+  outline-offset: 4px;
+}
+
+html[data-qb-style="blueprint"] [data-qb-ide-workbench] .qb-tokyo-editor {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(34, 211, 238, 0.1);
+}
+
+html[data-qb-style="blueprint"] .qb-callout--warning,
+html[data-qb-style="blueprint"] .qb-callout--danger {
+  border-color: var(--qb-bp-warn) !important;
+}
+
+/* 顶栏工程图号 */
+html[data-qb-style="blueprint"] .qb-topbar {
+  position: relative;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.35) !important;
+}
+
+html[data-qb-style="blueprint"] .qb-topbar::after {
+  content: "GRID: ON · COORD SYS WGS84";
+  position: absolute;
+  right: 220px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(96, 165, 250, 0.7);
+  pointer-events: none;
+}
+
+@media (max-width: 1100px) {
+  html[data-qb-style="blueprint"] .qb-topbar::after {
+    display: none;
+  }
+}
+
+/* 面板 L 角标（四边）+ 剖面斜线 */
+html[data-qb-style="blueprint"] .qb-explorer-panel,
+html[data-qb-style="blueprint"] .qb-sidebar-shell,
+html[data-qb-style="blueprint"] .qb-workbench-toolbar,
+html[data-qb-style="blueprint"] .qb-context-card,
+html[data-qb-style="blueprint"] .qb-agent-shell {
+  position: relative;
+  background: rgba(10, 22, 40, 0.72) !important;
+  border-radius: 0 !important;
+}
+
+html[data-qb-style="blueprint"] .qb-explorer-panel::after,
+html[data-qb-style="blueprint"] .qb-sidebar-shell::after,
+html[data-qb-style="blueprint"] .qb-context-card::after,
+html[data-qb-style="blueprint"] .qb-agent-shell::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  border-right: 2px solid var(--qb-bp-cyan);
+  border-bottom: 2px solid var(--qb-bp-cyan);
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+html[data-qb-style="blueprint"] .qb-explorer-panel,
+html[data-qb-style="blueprint"] .qb-context-card {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 6px,
+    rgba(34, 211, 238, 0.04) 6px,
+    rgba(34, 211, 238, 0.04) 7px
+  ) !important;
+}
+
+html[data-qb-style="blueprint"] h1,
+html[data-qb-style="blueprint"] h2,
+html[data-qb-style="blueprint"] h3,
+html[data-qb-style="blueprint"] h4 {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="blueprint"] .qb-btn-primary:hover:not(:disabled),
+  html[data-qb-style="blueprint"] .qb-btn-primary-brand:hover:not(:disabled) {
+    animation: none;
+  }
+}

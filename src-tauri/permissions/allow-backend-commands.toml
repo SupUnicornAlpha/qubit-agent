@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-backend-commands"
+description = "Allow QUBIT desktop app to start/stop the Bun backend sidecar."
+commands.allow = ["start_backend", "stop_backend", "backend_status"]

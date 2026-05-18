@@ -48,6 +48,18 @@ function dedupeByTitle(items: MarketNewsBriefItem[]): MarketNewsBriefItem[] {
   return out;
 }
 
+/** qubit-news `fetch_news` returns `{ items, aggregateSentiment }`, not a bare array. */
+function normalizeConnectorNewsResult(raw: unknown): NewsData[] {
+  if (Array.isArray(raw)) return raw as NewsData[];
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (Array.isArray(o.items)) return o.items as NewsData[];
+    if (Array.isArray(o.data)) return o.data as NewsData[];
+    if (Array.isArray(o.news)) return o.news as NewsData[];
+  }
+  return [];
+}
+
 async function fetchConnectorNews(partial: {
   symbols?: string[];
   keywords?: string[];
@@ -61,13 +73,14 @@ async function fetchConnectorNews(partial: {
   const startDate = start.toISOString().slice(0, 10);
   const endDate = end.toISOString().slice(0, 10);
   try {
-    return (await conn.execute("fetch_news", {
+    const raw = await conn.execute("fetch_news", {
       symbols: partial.symbols,
       keywords: partial.keywords,
       startDate,
       endDate,
       limit: partial.limit,
-    })) as NewsData[];
+    });
+    return normalizeConnectorNewsResult(raw);
   } catch {
     return [];
   }

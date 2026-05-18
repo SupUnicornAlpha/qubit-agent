@@ -60,6 +60,17 @@ html[data-qb-style="comic-book"] {
   --qb-main-card-border: var(--qb-comic-ink);
   --qb-main-meta: #333;
   --qb-main-panel-bg: rgba(255, 254, 240, 0.92);
+  --qb-stream-box-bg: #fff;
+  --qb-stream-box-fg: var(--qb-comic-ink);
+  --qb-stream-box-border: var(--qb-comic-ink);
+  --qb-mcp-details-bg: var(--qb-comic-paper);
+  --qb-mcp-details-border: var(--qb-comic-ink);
+  --qb-mcp-details-nested-bg: #fff;
+  --qb-mcp-market-card-bg: #fff;
+  --qb-mcp-market-card-border: var(--qb-comic-ink);
+  --qb-mcp-market-cmd-bg: var(--qb-comic-paper);
+  --qb-mcp-json-bg: #fff;
+  --qb-mcp-json-border: var(--qb-comic-ink);
   --qb-ide-chrome-border: var(--qb-comic-ink);
   --qb-chat-main-bg: var(--qb-comic-paper);
   --qb-chat-sidebar-bg: var(--qb-comic-paper);
@@ -69,6 +80,16 @@ html[data-qb-style="comic-book"] {
   --qb-chat-bubble-user-fg: var(--qb-comic-ink);
   --qb-chat-bubble-agent-fg: var(--qb-comic-ink);
   --qb-chat-bubble-border: var(--qb-comic-ink);
+  --qb-chat-session-item-bg: #fff;
+  --qb-chat-session-item-fg: var(--qb-comic-ink);
+  --qb-chat-session-active-border: var(--qb-comic-red);
+  --qb-chat-session-active-bg: var(--qb-comic-yellow);
+  --qb-chat-meta-fg: #333;
+  --qb-md-table-border: var(--qb-comic-ink);
+  --qb-md-th-bg: var(--qb-comic-yellow);
+  --qb-md-code-inline-bg: #fff;
+  --qb-board-col-bg: var(--qb-comic-paper);
+  --qb-board-card-bg: #fff;
 
   --qb-kline-root-bg: var(--qb-comic-paper);
   --qb-kline-header-border: var(--qb-comic-ink);
