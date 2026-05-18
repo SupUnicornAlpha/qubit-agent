@@ -5462,7 +5462,7 @@ const TeamDashboardPanel: FC = () => {
         >
           <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>多 Agent 对话拓扑</h3>
           <p style={{ fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 12 }}>
-            拓扑与实时对话流同屏；下方为分析结论。选中节点时显示 Tool/MCP。分析进行中自动轮询。
+            拓扑与实时对话流同屏；虚线/灰边为计划拓扑，实线为已发生对话。Orchestrator 在任务启动时向各成员派发。策略/回测在 MSA 融合后执行。分析进行中自动轮询。
           </p>
           {!workflowRunId.trim() ? (
             <div style={teamStyles.empty}>请先在左侧栏选择工作流 ID</div>
@@ -5512,9 +5512,7 @@ const TeamDashboardPanel: FC = () => {
                   >
                     <TeamAgentGraph
                       nodes={filteredGraphDisplay.nodes}
-                      edges={filteredGraphDisplay.edges.filter(
-                        (e) => e.messageCount > 0 || e.toolCount > 0
-                      )}
+                      edges={filteredGraphDisplay.edges}
                       width={graphSize.w}
                       height={graphSize.h}
                       selection={graphSelection}

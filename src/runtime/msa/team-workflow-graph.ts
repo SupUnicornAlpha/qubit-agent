@@ -252,6 +252,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   for (const t of toolCalls) nodeRoles.add(t.agentRole);
   for (const m of mcpCalls) nodeRoles.add(m.agentRole);
   nodeRoles.add("msa");
+  nodeRoles.add("orchestrator");
 
   /** 本工作流实例上的角色（含 orchestrator、各 analyst 槽位等），避免仅有边外角色时漏节点 */
   for (const inst of instances) {

@@ -32,6 +32,13 @@ import {
   readPackFiles,
 } from "../agent/agent-pack-service";
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
+import {
+  logOrchestratorKickoff,
+  parseGroupRelationsWithOrchestrator,
+  POST_FUSION_AUX_ROLES,
+  runPostFusionPipeline,
+  slotOnlyRelationEdges,
+} from "./analyst-team-pipeline";
 
 async function enrichAnalystSlotsWithPack(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -94,14 +101,14 @@ export const RESEARCH_TEAM_SLOT_SET = new Set<string>(RESEARCH_TEAM_SLOT_ROLES a
 
 /**
  * 可加入研究团队编组、可出现在 relations_json 拓扑中的角色（含 orchestrator）。
- * orchestrator 仅用于编排/画布展示，不参与 `runAnalystTeam` 的并行 LLM 槽位。
+ * orchestrator 在编组拓扑中作为调度中心：启动时向各槽位写入 kickoff 交互，并出现在对话拓扑中。
  */
 export const RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET = new Set<string>([
   ...(RESEARCH_TEAM_SLOT_ROLES as readonly string[]),
   "orchestrator",
 ]);
 
-function isMsAnalystRole(role: AgentRole): boolean {
+export function isMsAnalystRole(role: AgentRole): boolean {
   return (ANALYST_TEAM_ROLES as readonly string[]).includes(role);
 }
 
@@ -373,18 +380,33 @@ export async function runAnalystTeam(params: {
   if (params.agentGroupId) {
     const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, params.agentGroupId)).limit(1);
     if (grp[0]) {
-      relationEdges = parseTeamRelations(grp[0].relationsJson, [...RESEARCH_TEAM_SLOT_ROLES]);
+      relationEdges = parseGroupRelationsWithOrchestrator(grp[0].relationsJson);
     }
   }
-  const waves = partitionSlotsIntoWaves(slots, relationEdges);
+
+  const analystSlots = slots.filter((s) => isMsAnalystRole(s.role));
+  const auxSlots = slots.filter((s) => POST_FUSION_AUX_ROLES.has(s.role));
+  const slotRoleSet = new Set(slots.map((s) => s.role));
+
+  await logOrchestratorKickoff({
+    workflowRunId,
+    ticker,
+    slotRoles: slots.map((s) => s.role),
+    relationEdges,
+  });
+
+  let analystEdges = slotOnlyRelationEdges(relationEdges, slotRoleSet);
+  analystEdges = analystEdges.filter((e) => isMsAnalystRole(e.from) && isMsAnalystRole(e.to));
+  const waveSlots = analystSlots.length > 0 ? analystSlots : slots;
+  const waves = partitionSlotsIntoWaves(waveSlots, analystEdges);
 
   const instanceBySlotIndex: string[] = [];
-  for (let i = 0; i < slots.length; i++) {
+  for (let i = 0; i < waveSlots.length; i++) {
     const instanceId = randomUUID();
     instanceBySlotIndex[i] = instanceId;
     await db.insert(agentInstance).values({
       id: instanceId,
-      definitionId: slots[i].definitionId,
+      definitionId: waveSlots[i].definitionId,
       workflowRunId,
       status: "running",
       currentIteration: 0,
@@ -395,13 +417,13 @@ export async function runAnalystTeam(params: {
   type SlotRow = (typeof slots)[number];
   const outputByRole = new Map<AgentRole, RawAnalystSignal>();
   const auxDigestByRole = new Map<AgentRole, string>();
-  const auxSections: Array<{ role: AgentRole; body: string }> = [];
+  let auxSections: Array<{ role: AgentRole; body: string }> = [];
 
   const rawSignals: RawAnalystSignal[] = [];
   const persistSignals: Array<{ agentInstanceId?: string; signal: RawAnalystSignal }> = [];
 
   const predsByTo = new Map<AgentRole, AgentRole[]>();
-  for (const e of relationEdges) {
+  for (const e of analystEdges) {
     const arr = predsByTo.get(e.to) ?? [];
     arr.push(e.from);
     predsByTo.set(e.to, arr);
@@ -440,44 +462,29 @@ export async function runAnalystTeam(params: {
               payloadJson: { topology: true, ticker },
             });
           }
-          if (isMsAnalystRole(slot.role)) {
-            const payload = await runAnalystLlm({
-              role: slot.role,
-              definitionId: slot.definitionId,
-              systemPrompt: slot.systemPrompt,
-              ticker,
-              context: ctx,
-            });
-            return { kind: "analyst" as const, payload };
-          }
-          const markdown = await runAuxResearchLlm({
+          const payload = await runAnalystLlm({
             role: slot.role,
             definitionId: slot.definitionId,
             systemPrompt: slot.systemPrompt,
             ticker,
             context: ctx,
           });
-          return { kind: "aux" as const, markdown };
+          return { kind: "analyst" as const, payload };
         })();
       })
     );
 
     for (let wi = 0; wi < wave.length; wi++) {
       const slot = wave[wi] as SlotRow;
-      const idx = slots.findIndex((s) => s.role === slot.role);
-      const instanceId = instanceBySlotIndex[idx];
+      const idx = waveSlots.findIndex((s) => s.role === slot.role);
+      const instanceId = idx >= 0 ? instanceBySlotIndex[idx] : undefined;
       const result = waveResults[wi];
       if (result.status === "fulfilled") {
         const val = result.value;
-        if (val.kind === "analyst") {
-          const { agentInstanceId: _id, ...signal } = val.payload;
-          outputByRole.set(slot.role, signal);
-          rawSignals.push(signal);
-          persistSignals.push({ agentInstanceId: instanceId, signal });
-        } else {
-          auxDigestByRole.set(slot.role, val.markdown);
-          auxSections.push({ role: slot.role, body: val.markdown });
-        }
+        const { agentInstanceId: _id, ...signal } = val.payload;
+        outputByRole.set(slot.role, signal);
+        rawSignals.push(signal);
+        persistSignals.push({ agentInstanceId: instanceId, signal });
       } else if (isMsAnalystRole(slot.role)) {
         const fallback: RawAnalystSignal = {
           definitionId: slot.definitionId,
@@ -490,10 +497,6 @@ export async function runAnalystTeam(params: {
         outputByRole.set(slot.role, fallback);
         rawSignals.push(fallback);
         persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
-      } else {
-        const msg = `（${slot.role} 执行失败：${result.reason}）`;
-        auxDigestByRole.set(slot.role, msg);
-        auxSections.push({ role: slot.role, body: msg });
       }
 
       if (instanceId) {
@@ -532,6 +535,33 @@ export async function runAnalystTeam(params: {
     });
   }
 
+  let reportCore = buildTeamReport(
+    ticker,
+    fusionResult.fusedSignal,
+    fusionResult.fusedConfidence,
+    fusionResult.signalBreakdown
+  );
+
+  if (auxSlots.length > 0) {
+    const post = await runPostFusionPipeline({
+      workflowRunId,
+      ticker,
+      fusionReport: reportCore,
+      fusedSignal: fusionResult.fusedSignal,
+      fusedConfidence: fusionResult.fusedConfidence,
+      auxSlots,
+      runAuxLlm: (slot, ctx) =>
+        runAuxResearchLlm({
+          role: slot.role,
+          definitionId: slot.definitionId,
+          systemPrompt: slot.systemPrompt,
+          ticker,
+          context: ctx,
+        }),
+    });
+    auxSections = post.auxSections;
+  }
+
   // Build human-readable report + 辅助角色 Markdown 章节（按编组槽位顺序）
   const roleOrder = new Map(slots.map((s, i) => [s.role, i] as const));
   auxSections.sort((a, b) => (roleOrder.get(a.role) ?? 0) - (roleOrder.get(b.role) ?? 0));
@@ -542,12 +572,7 @@ export async function runAnalystTeam(params: {
     risk: "风控视角（risk）",
     risk_manager: "风控经理（risk_manager）",
   };
-  let report = buildTeamReport(
-    ticker,
-    fusionResult.fusedSignal,
-    fusionResult.fusedConfidence,
-    fusionResult.signalBreakdown
-  );
+  let report = reportCore;
   for (const sec of auxSections) {
     const title = auxSectionTitle[sec.role] ?? `研究团队辅助（${sec.role}）`;
     report += `\n\n### ${title}\n\n${sec.body}`;

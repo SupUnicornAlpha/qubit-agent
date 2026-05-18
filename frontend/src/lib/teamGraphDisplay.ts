@@ -52,6 +52,9 @@ export function aggregateEdgesFromInteractions(
 /**
  * 按左侧勾选的分析师过滤展示图，但保留与外部角色（如 msa）的实际通信边。
  */
+/** 对话拓扑中始终展示的系统角色（不受左侧分析师勾选过滤） */
+const ALWAYS_VISIBLE_GRAPH_ROLES = new Set(["orchestrator", "msa", "signal_fusion"]);
+
 export function buildFilteredTeamGraphDisplay(
   teamGraph: AnalystTeamGraphPayload,
   participatingRoles: string[]
@@ -59,6 +62,7 @@ export function buildFilteredTeamGraphDisplay(
   if (!participatingRoles.length) return teamGraph;
 
   const allow = new Set(participatingRoles);
+  for (const r of ALWAYS_VISIBLE_GRAPH_ROLES) allow.add(r);
   const interactions = (teamGraph.interactions ?? []).filter(
     (i) => allow.has(i.fromRole) || allow.has(i.toRole)
   );
@@ -118,7 +122,7 @@ export function buildFilteredTeamGraphDisplay(
     }
   }
 
-  const edges = [...edgeByKey.values()].filter((e) => e.messageCount > 0 || e.toolCount > 0);
+  const edges = [...edgeByKey.values()];
 
   return {
     ...teamGraph,
