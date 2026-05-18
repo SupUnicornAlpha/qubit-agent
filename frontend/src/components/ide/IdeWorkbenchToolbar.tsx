@@ -11,7 +11,8 @@ import {
   Waves,
 } from "lucide-react";
 import { useAppStore } from "../../store";
-import { CHART_MARKET_OPTIONS, CHART_TIMEFRAMES, coerceChartMarketExchange } from "../../lib/chartSpec";
+import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
+import { ChartMarketSelect } from "../chart/ChartMarketSelect";
 import { IconToolbarButton } from "../ui/IconToolbarButton";
 
 const chipLayout: CSSProperties = {
@@ -45,25 +46,18 @@ export const IdeWorkbenchToolbar: FC = () => {
         <div className="qb-toolbar-group">
           <span style={styles.lab}>自选</span>
           <input
-            style={styles.inpSm}
+            style={styles.fieldControl}
             value={chartSpec.symbol}
             onChange={(e) => setChartSpec({ symbol: e.target.value })}
             placeholder="代码"
             aria-label="品种代码"
           />
           <span style={styles.slash}>/</span>
-          <select
-            style={{ ...styles.select, minWidth: 128, maxWidth: 200, fontSize: 12 }}
-            value={coerceChartMarketExchange(chartSpec.exchange)}
-            onChange={(e) => setChartSpec({ exchange: e.target.value })}
-            aria-label="市场"
-          >
-            {CHART_MARKET_OPTIONS.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <ChartMarketSelect
+            style={{ ...styles.fieldControl, fontSize: 12 }}
+            value={chartSpec.exchange}
+            onChange={(exchange) => setChartSpec({ exchange })}
+          />
         </div>
         <span className="qb-toolbar-vsep" aria-hidden />
         <div className="qb-toolbar-group" role="group" aria-label="周期">
@@ -229,6 +223,16 @@ const styles: Record<string, CSSProperties> = {
     color: "#e4e4e7",
     fontSize: 12,
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+  },
+  fieldControl: {
+    padding: "6px 10px",
+    borderRadius: 8,
+    border: "1px solid rgba(63, 63, 70, 0.95)",
+    background: "rgba(24, 24, 27, 0.96)",
+    color: "#e4e4e7",
+    fontSize: 12,
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04)",
+    ...chartControlStyle,
   },
   select: {
     minWidth: 140,

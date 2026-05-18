@@ -9,15 +9,32 @@
     <title>QUBIT — 量化研究 Agent 平台</title>
     <script>
       (function () {
+        var PALETTES = ["dark-purple", "light-white", "light-sky"];
+        var STYLES = ["default", "glassmorphism", "generative-art", "industrial", "neon-cyberpunk", "bauhaus"];
+        var LEGACY = { "dark-gray": "dark-purple", "light-mint": "light-white" };
+        var root = document.documentElement;
+        function normPalette(v) {
+          if (PALETTES.indexOf(v) >= 0) return v;
+          if (LEGACY[v]) return LEGACY[v];
+          return "dark-purple";
+        }
+        function normStyle(v) {
+          return STYLES.indexOf(v) >= 0 ? v : "default";
+        }
         try {
-          var allowed = ["dark-purple", "dark-gray", "light-white", "light-sky", "light-mint"];
-          var v = localStorage.getItem("qubit-ui-theme-v1");
-          document.documentElement.setAttribute(
-            "data-qb-theme",
-            allowed.indexOf(v) >= 0 ? v : "dark-purple"
-          );
+          var raw = localStorage.getItem("qubit-ui-appearance-v2");
+          if (raw) {
+            var j = JSON.parse(raw);
+            root.setAttribute("data-qb-theme", normPalette(j.palette));
+            root.setAttribute("data-qb-style", normStyle(j.style));
+            return;
+          }
+          var legacy = localStorage.getItem("qubit-ui-theme-v1");
+          root.setAttribute("data-qb-theme", normPalette(legacy));
+          root.setAttribute("data-qb-style", "default");
         } catch {
-          document.documentElement.setAttribute("data-qb-theme", "dark-purple");
+          root.setAttribute("data-qb-theme", "dark-purple");
+          root.setAttribute("data-qb-style", "default");
         }
       })();
     </script>

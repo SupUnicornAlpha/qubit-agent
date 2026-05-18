@@ -14,8 +14,16 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { getKlines } from "../../api/backend";
-import type { KlineBar, KlinesResponseMeta } from "../../api/types";
-import { CHART_MARKET_OPTIONS, CHART_TIMEFRAMES, coerceChartMarketExchange } from "../../lib/chartSpec";
+import type { KlineBar, KlinesErrorPayload, KlinesResponseMeta } from "../../api/types";
+import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
+import {
+  formatKlinesErrorMessage,
+  formatKlinesErrorTail,
+  isKlinesErrorPayload,
+  parseKlinesApiError,
+} from "../../lib/klinesError";
+import { ChartMarketSelect } from "./ChartMarketSelect";
+import type { TraderMarkerRecord } from "../../store";
 import { useAppStore } from "../../store";
 import { NewsBriefSection } from "./NewsBriefSection";
 
@@ -27,6 +35,22 @@ function toChartTime(bar: KlineBar, timeframe: string): Time {
   }
   const sec = Math.floor(new Date(bar.timestamp).getTime() / 1000);
   return sec as UTCTimestamp;
+}
+
+function markerToChartTime(m: TraderMarkerRecord, lastBars: KlineBar[], timeframe: string): Time | null {
+  if (m.barTime) {
+    const tf = timeframe.toLowerCase();
+    if (tf === "1d" || tf === "1w") {
+      const d = m.barTime.slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d as Time;
+    }
+    const ms = Date.parse(m.barTime);
+    if (Number.isFinite(ms)) return Math.floor(ms / 1000) as UTCTimestamp;
+  }
+  const match = lastBars.find((b) => b.timestamp === m.barTime || b.timestamp.startsWith(m.barTime?.slice(0, 10) ?? ""));
+  if (match) return toChartTime(match, timeframe);
+  if (lastBars.length > 0) return toChartTime(lastBars[lastBars.length - 1]!, timeframe);
+  return null;
 }
 
 function chartThemeOptions(light: boolean) {
@@ -143,11 +167,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   const emaLineRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const chartOverlays = useAppStore((s) => s.chartOverlays);
-  const uiTheme = useAppStore((s) => s.uiTheme);
-  const isLightChart = uiTheme.startsWith("light");
+  const uiPalette = useAppStore((s) => s.uiPalette);
+  const uiStyle = useAppStore((s) => s.uiStyle);
+  const isLightChart = uiStyle === "bauhaus" || uiPalette.startsWith("light");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [klinesError, setKlinesError] = useState<KlinesErrorPayload | null>(null);
   const [meta, setMeta] = useState<KlinesResponseMeta | null>(null);
   const [lastBars, setLastBars] = useState<KlineBar[]>([]);
 
@@ -227,6 +253,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     const spec = useAppStore.getState().chartSpec;
     setLoading(true);
     setError(null);
+    setKlinesError(null);
     setLastBars([]);
     try {
       const res = await getKlines({
@@ -236,10 +263,28 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         limit: spec.limit,
       });
       if (!res.ok || !Array.isArray(res.data)) {
-        setError("Unexpected response");
+        const wrapped = parseKlinesApiError(res);
+        if (wrapped) {
+          setKlinesError(wrapped);
+          setError(formatKlinesErrorMessage(wrapped));
+        } else {
+          setError("Unexpected response");
+        }
         return;
       }
       setMeta(res.meta);
+      if (res.data.length === 0) {
+        const wrapped = isKlinesErrorPayload(res.error) ? res.error : null;
+        if (wrapped) {
+          setKlinesError(wrapped);
+          setError(formatKlinesErrorMessage(wrapped));
+        }
+        candleRef.current?.setData([]);
+        volRef.current?.setData([]);
+        smaLineRef.current?.setData([]);
+        emaLineRef.current?.setData([]);
+        return;
+      }
       setLastBars(res.data);
       const c = candleRef.current;
       const v = volRef.current;
@@ -258,7 +303,22 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         chartRef.current?.timeScale().fitContent();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      let msg = e instanceof Error ? e.message : String(e);
+      try {
+        const jsonStart = msg.indexOf("{");
+        if (jsonStart >= 0) {
+          const parsed = JSON.parse(msg.slice(jsonStart)) as { error?: unknown };
+          const wrapped = parseKlinesApiError(parsed);
+          if (wrapped) {
+            setKlinesError(wrapped);
+            setError(formatKlinesErrorMessage(wrapped));
+            return;
+          }
+        }
+      } catch {
+        /* use raw message */
+      }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -321,16 +381,19 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       c.setMarkers([]);
       return;
     }
-    const t = toChartTime(lastBars[lastBars.length - 1], chartSpec.timeframe);
-    const markers: SeriesMarker<Time>[] = traderMarkers.map((m) => ({
+    const markers: SeriesMarker<Time>[] = traderMarkers.flatMap((m) => {
+      const time = markerToChartTime(m, lastBars, chartSpec.timeframe);
+      if (time == null) return [];
+      return [{
       id: m.id,
-      time: t,
+      time,
       position: m.side === "buy" ? "belowBar" : "aboveBar",
       shape: m.side === "buy" ? "arrowUp" : "arrowDown",
       color:
         m.source === "agent" ? "#a78bfa" : m.source === "strategy" ? "#38bdf8" : m.side === "buy" ? "#22c55e" : "#f87171",
       text: m.text.length > 24 ? `${m.text.slice(0, 24)}…` : m.text,
-    }));
+    }];
+    });
     c.setMarkers(markers);
   }, [linkTraderMarkers, traderMarkers, lastBars, chartSpec.timeframe]);
 
@@ -339,16 +402,23 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     requestChartReload();
   };
 
+  const metaStatusLine = meta
+    ? embedded
+      ? `来源 ${meta.dataSource} · 返回 ${meta.returned}/${meta.requestedLimit}${loading ? " · 加载中…" : ""}${
+          klinesError ? ` · ${formatKlinesErrorTail(klinesError)}` : ""
+        }`
+      : `来源 ${meta.dataSource} · 周期 ${meta.timeframe} / ${meta.period} · 返回 ${meta.returned} / 请求 ${meta.requestedLimit}${
+          klinesError ? ` · ${formatKlinesErrorTail(klinesError)}` : ""
+        }`
+    : null;
+
   return (
     <div style={embedded ? styles.root : styles.rootPage}>
       {embedded ? (
         <div style={styles.embeddedBar}>
           {error ? <div style={styles.errCompact}>{error}</div> : null}
-          {meta ? (
-            <div style={styles.metaCompact}>
-              来源 {meta.dataSource} · 返回 {meta.returned}/{meta.requestedLimit}
-              {loading ? " · 加载中…" : ""}
-            </div>
+          {metaStatusLine ? (
+            <div style={styles.metaCompact}>{metaStatusLine}</div>
           ) : loading ? (
             <div style={styles.metaCompact}>加载中…</div>
           ) : null}
@@ -368,7 +438,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
             <label style={styles.lab}>
               代码
               <input
-                style={styles.inp}
+                style={styles.field}
                 value={chartSpec.symbol}
                 onChange={(e) => setChartSpec({ symbol: e.target.value })}
                 placeholder="600000"
@@ -376,22 +446,16 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
             </label>
             <label style={styles.lab}>
               市场
-              <select
-                style={styles.inp}
-                value={coerceChartMarketExchange(chartSpec.exchange)}
-                onChange={(e) => setChartSpec({ exchange: e.target.value })}
-              >
-                {CHART_MARKET_OPTIONS.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
+              <ChartMarketSelect
+                style={styles.field}
+                value={chartSpec.exchange}
+                onChange={(exchange) => setChartSpec({ exchange })}
+              />
             </label>
             <label style={styles.lab}>
               周期
               <select
-                style={styles.inp}
+                style={styles.field}
                 value={chartSpec.timeframe}
                 onChange={(e) => setChartSpec({ timeframe: e.target.value })}
               >
@@ -405,7 +469,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
             <label style={styles.lab}>
               条数
               <input
-                style={styles.inp}
+                style={styles.field}
                 type="number"
                 min={1}
                 max={2000}
@@ -430,12 +494,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       {!embedded ? (
         <div style={styles.chartColumn}>
           {error ? <div style={styles.err}>{error}</div> : null}
-          {meta ? (
-            <div style={styles.meta}>
-              来源 {meta.dataSource} · 周期 {meta.timeframe} / {meta.period} · 返回 {meta.returned} / 请求{" "}
-              {meta.requestedLimit}
-            </div>
-          ) : null}
+          {metaStatusLine ? <div style={styles.meta}>{metaStatusLine}</div> : null}
           <div ref={wrapRef} style={styles.chartCanvas} />
         </div>
       ) : (
@@ -499,13 +558,21 @@ const styles: Record<string, React.CSSProperties> = {
   form: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" },
   lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
   inp: {
-    minWidth: 100,
     padding: "6px 10px",
     borderRadius: 6,
     border: "1px solid var(--qb-main-input-border, #3f3f46)",
     background: "var(--qb-main-input-bg, #18181b)",
     color: "var(--qb-main-input-fg, #e4e4e7)",
     fontSize: 13,
+  },
+  field: {
+    padding: "6px 10px",
+    borderRadius: 6,
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-input-bg, #18181b)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
+    fontSize: 13,
+    ...chartControlStyle,
   },
   err: { padding: "8px 16px", color: "#fca5a5", fontSize: 13 },
   errCompact: { fontSize: 11, color: "#fca5a5", flex: 1, minWidth: 0 },

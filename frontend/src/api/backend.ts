@@ -66,6 +66,7 @@ import type {
   ScheduledJobRecord,
   ScheduledJobRunRecord,
   KlineBar,
+  KlinesErrorPayload,
   KlinesResponseMeta,
   MarketNewsBriefPayload,
   AgentDefinitionDraftRecord,
@@ -85,13 +86,13 @@ export async function getKlines(params: {
   exchange?: string;
   timeframe?: string;
   limit?: number;
-}): Promise<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta }> {
+}): Promise<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta; error?: KlinesErrorPayload }> {
   const q = new URLSearchParams();
   q.set("symbol", params.symbol);
   if (params.exchange) q.set("exchange", params.exchange);
   if (params.timeframe) q.set("timeframe", params.timeframe);
   if (params.limit !== undefined) q.set("limit", String(params.limit));
-  return httpGet<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta }>(
+  return httpGet<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta; error?: KlinesErrorPayload }>(
     `/api/v1/market/klines?${q.toString()}`
   );
 }
@@ -1760,6 +1761,193 @@ export async function testMcpCatalog(input: {
     toolName: input.toolName,
     arguments: input.arguments ?? { ping: true, ts: Date.now() },
   });
+  return res.data;
+}
+
+export type TraderSessionContext = {
+  workflowRunId: string;
+  projectId: string;
+  sessionId: string;
+};
+
+export type TraderDriverKind =
+  | "scheduled_job"
+  | "strategy_runtime"
+  | "news"
+  | "communication"
+  | "alert"
+  | "user_command"
+  | "interval_poll";
+
+export type TraderDriverEvent = {
+  type: "driver";
+  id: string;
+  ts: string;
+  driverKind: TraderDriverKind;
+  title: string;
+  detail: string;
+  payload?: Record<string, unknown>;
+};
+
+export type TraderAgentMessageEvent = {
+  type: "agent_message";
+  id: string;
+  ts: string;
+  workflowRunId: string;
+  messageType: string;
+  senderRole: string;
+  receiverRole: string | null;
+  summary: string;
+  payload: Record<string, unknown>;
+};
+
+export type TraderFeedEvent =
+  | {
+      type: "strategy_log";
+      id: string;
+      ts: string;
+      runtimeId: string;
+      level: string;
+      message: string;
+      payload: Record<string, unknown>;
+    }
+  | {
+      type: "order";
+      id: string;
+      ts: string;
+      side: string;
+      symbol: string;
+      qty: number;
+      status: string;
+      orderIntentId: string;
+    };
+
+export async function ensureTraderSession(input: {
+  projectId: string;
+  sessionId: string;
+}): Promise<TraderSessionContext> {
+  const res = await httpPost<{ ok: boolean; data: TraderSessionContext }>("/api/v1/trader/session", input);
+  return res.data;
+}
+
+export async function placeTraderOrder(input: {
+  workflowRunId: string;
+  symbol: string;
+  exchange: string;
+  side: "buy" | "sell";
+  qty: number;
+  price?: number | null;
+  orderType?: "market" | "limit";
+  timeframe?: string;
+  rationale?: string;
+  executionMode?: "paper" | "live";
+  strategyRuntimeId?: string;
+  signalBarTime?: string;
+}): Promise<{
+  orderIntentId: string;
+  executionTaskId: string | null;
+  riskOutcome: string;
+  riskReason: string;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      orderIntentId: string;
+      executionTaskId: string | null;
+      riskOutcome: string;
+      riskReason: string;
+    };
+    error?: string;
+  }>("/api/v1/trader/orders", input);
+  if (!res.ok) throw new Error(res.error ?? "place_order_failed");
+  return res.data;
+}
+
+export async function cancelTraderOrder(input: {
+  orderIntentId?: string;
+  brokerOrderId?: string;
+}): Promise<{ cancelled: boolean; detail: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { cancelled: boolean; detail: string };
+    error?: string;
+  }>("/api/v1/trader/orders/cancel", input);
+  if (!res.ok) throw new Error(res.error ?? "cancel_failed");
+  return res.data;
+}
+
+export async function pollTraderFeed(input: {
+  sessionId: string;
+  workflowRunId?: string;
+  symbol: string;
+  exchange: string;
+  since?: string;
+  includeNews?: boolean;
+}): Promise<{
+  events: TraderFeedEvent[];
+  drivers: TraderDriverEvent[];
+  agentMessages: TraderAgentMessageEvent[];
+  serverTime: string;
+}> {
+  const q = new URLSearchParams();
+  q.set("sessionId", input.sessionId);
+  q.set("symbol", input.symbol);
+  if (input.exchange) q.set("exchange", input.exchange);
+  if (input.workflowRunId) q.set("workflowRunId", input.workflowRunId);
+  if (input.since) q.set("since", input.since);
+  if (input.includeNews === false) q.set("includeNews", "false");
+  const res = await httpGet<{
+    ok: boolean;
+    data: {
+      events: TraderFeedEvent[];
+      drivers: TraderDriverEvent[];
+      agentMessages: TraderAgentMessageEvent[];
+      serverTime: string;
+    };
+  }>(`/api/v1/trader/feed?${q.toString()}`);
+  return res.data;
+}
+
+export async function runTraderCommand(input: {
+  workflowRunId: string;
+  sessionId: string;
+  symbol: string;
+  exchange: string;
+  timeframe?: string;
+  text: string;
+  executionMode?: "paper" | "live";
+}): Promise<{
+  data?: {
+    orderIntentId: string;
+    executionTaskId: string | null;
+    riskOutcome: string;
+    riskReason: string;
+  };
+  parsed: { action: string; qty?: number };
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data?: {
+      orderIntentId: string;
+      executionTaskId: string | null;
+      riskOutcome: string;
+      riskReason: string;
+    };
+    parsed: { action: string; qty?: number };
+    error?: string;
+  }>("/api/v1/trader/command", input);
+  if (!res.ok) throw new Error(res.error ?? "command_failed");
+  return { data: res.data, parsed: res.parsed };
+}
+
+export async function listStrategyRuntimeLogs(
+  runtimeId: string,
+  limit = 50
+): Promise<{ id: string; level: string; message: string; createdAt: string; payloadJson?: Record<string, unknown> }[]> {
+  const res = await httpGet<{
+    ok: boolean;
+    data: { id: string; level: string; message: string; createdAt: string; payloadJson?: Record<string, unknown> }[];
+  }>(`/api/v1/strategy-runtimes/${encodeURIComponent(runtimeId)}/logs?limit=${limit}`);
   return res.data;
 }
 

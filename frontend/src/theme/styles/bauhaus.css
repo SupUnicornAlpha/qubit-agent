@@ -1,0 +1,125 @@
+/**
+ * Bauhaus 包豪斯 — 原色几何、粗黑描边、功能主义排版
+ */
+html[data-qb-style="bauhaus"] {
+  color-scheme: light;
+
+  --qb-bg-root: #f5f0e8;
+  --qb-bg-root-top: #faf7f2;
+  --qb-tint: rgba(30, 136, 229, 0.1);
+  --qb-tint-strong: rgba(229, 57, 53, 0.12);
+  --qb-blue: #1e88e5;
+  --qb-blue-deep: #1565c0;
+  --qb-focus-ring: rgba(30, 136, 229, 0.5);
+  --qb-hairline: #111;
+  --qb-separator: #111;
+  --qb-body-fg: #111;
+  --qb-topbar-bg: #fff;
+  --qb-workbench-toolbar-bg: #faf7f2;
+  --qb-segmented-active-bg: #e53935;
+  --qb-bauhaus-red: #e53935;
+  --qb-bauhaus-blue: #1e88e5;
+  --qb-bauhaus-yellow: #fdd835;
+  --qb-radius-lg: 0;
+  --qb-radius-md: 0;
+  --qb-radius-sm: 0;
+
+  --qb-scrollbar-track: #e8e4dc;
+  --qb-scrollbar-thumb-top: var(--qb-bauhaus-blue);
+  --qb-scrollbar-thumb-bot: var(--qb-bauhaus-red);
+
+  --qb-sidebar-nav-bg: #fff;
+  --qb-sidebar-activity-bg: var(--qb-bauhaus-yellow);
+  --qb-sidebar-explorer-bg: #fff;
+  --qb-sidebar-border: #111;
+  --qb-sidebar-muted: #424242;
+  --qb-sidebar-text: #111;
+  --qb-brand-icon: var(--qb-bauhaus-red);
+  --qb-brand-icon-glow: rgba(229, 57, 53, 0.5);
+
+  --qb-main-input-bg: #fff;
+  --qb-main-card-bg: #fff;
+  --qb-main-panel-bg: #faf7f2;
+  --qb-chat-main-bg: #fff;
+  --qb-chat-sidebar-bg: #fff;
+}
+
+html[data-qb-style="bauhaus"] .qb-app-root {
+  background:
+    linear-gradient(135deg, transparent 48%, rgba(17, 17, 17, 0.04) 49%, rgba(17, 17, 17, 0.04) 51%, transparent 52%),
+    var(--qb-bg-root);
+}
+
+html[data-qb-style="bauhaus"] .qb-app-root::before {
+  content: "";
+  position: fixed;
+  top: 72px;
+  right: 8%;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: var(--qb-bauhaus-red);
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 0;
+}
+
+html[data-qb-style="bauhaus"] .qb-app-root::after {
+  content: "";
+  position: fixed;
+  bottom: 12%;
+  left: 6%;
+  width: 0;
+  height: 0;
+  border-left: 48px solid transparent;
+  border-right: 48px solid transparent;
+  border-bottom: 84px solid var(--qb-bauhaus-blue);
+  opacity: 0.1;
+  pointer-events: none;
+  z-index: 0;
+}
+
+html[data-qb-style="bauhaus"] .qb-topbar {
+  background: var(--qb-topbar-bg);
+  border-bottom: 3px solid #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-logo-text {
+  color: #111;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+html[data-qb-style="bauhaus"] .qb-context-card,
+html[data-qb-style="bauhaus"] .qb-agent-shell,
+html[data-qb-style="bauhaus"] .qb-segmented,
+html[data-qb-style="bauhaus"] .qb-status-pill {
+  border: 2px solid #111;
+  border-radius: 0;
+  box-shadow: 4px 4px 0 #111;
+  background: #fff;
+}
+
+html[data-qb-style="bauhaus"] .qb-segmented__tab--active {
+  background: var(--qb-segmented-active-bg);
+  color: #fff;
+  border: 2px solid #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-nav-row--active {
+  background: var(--qb-bauhaus-yellow);
+  color: #111;
+  box-shadow: inset 4px 0 0 var(--qb-bauhaus-blue);
+}
+
+html[data-qb-style="bauhaus"] .qb-btn-primary-brand {
+  background: var(--qb-bauhaus-blue);
+  border: 2px solid #111;
+  color: #fff;
+  border-radius: 0;
+  box-shadow: 3px 3px 0 #111;
+}
+
+html[data-qb-style="bauhaus"] .qb-sidebar-activity {
+  border-right: 3px solid #111;
+}

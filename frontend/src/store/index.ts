@@ -6,7 +6,7 @@ import type {
   ChatSession,
   StepStreamEvent,
 } from "../api/types";
-import { DEFAULT_CHART_SPEC } from "../lib/chartSpec";
+import { coerceChartMarketExchange, persistChartSpec, readPersistedChartSpec } from "../lib/chartSpec";
 import { DEFAULT_IDE_STRATEGY_SOURCE, DEFAULT_PYTHON_SIGNAL_STRATEGY } from "../lib/ideDefaults";
 
 export interface ChartContextPayload {
@@ -20,35 +20,20 @@ export interface ChartContextPayload {
 
 export type ActiveView = "ide" | "chart" | "chat" | "team" | "trader" | "monitor" | "broker" | "config";
 
-const UI_THEME_STORAGE_KEY = "qubit-ui-theme-v1";
+import {
+  applyUiAppearance,
+  persistUiAppearance,
+  readUiAppearance,
+  type UiAppearance,
+  type UiPaletteId,
+  type UiStyleId,
+  UI_PALETTE_IDS,
+  UI_STYLE_IDS,
+  type UiThemeId,
+} from "../theme/appearance";
 
-export const UI_THEME_IDS = [
-  "dark-purple",
-  "dark-gray",
-  "light-white",
-  "light-sky",
-  "light-mint",
-] as const;
-
-export type UiThemeId = (typeof UI_THEME_IDS)[number];
-
-function readUiTheme(): UiThemeId {
-  try {
-    const v = localStorage.getItem(UI_THEME_STORAGE_KEY);
-    if (UI_THEME_IDS.includes(v as UiThemeId)) return v as UiThemeId;
-  } catch {
-    /* ignore */
-  }
-  return "dark-purple";
-}
-
-function persistUiTheme(theme: UiThemeId) {
-  try {
-    localStorage.setItem(UI_THEME_STORAGE_KEY, theme);
-  } catch {
-    /* ignore */
-  }
-}
+export { UI_PALETTE_IDS, UI_STYLE_IDS, type UiPaletteId, type UiStyleId, type UiThemeId };
+export const UI_THEME_IDS = UI_PALETTE_IDS;
 
 export type ChartOverlayKey = "sma20" | "ema20" | "rsi14" | "macd" | "bb20";
 
@@ -72,6 +57,9 @@ export interface TraderMarkerRecord {
   side: "buy" | "sell";
   text: string;
   source: "agent" | "manual" | "strategy";
+  /** ISO 时间或 K 线 bar 时间，用于在图上定位 */
+  barTime?: string;
+  orderIntentId?: string;
 }
 
 export interface TraderAgentLogRecord {
@@ -79,6 +67,27 @@ export interface TraderAgentLogRecord {
   ts: number;
   kind: "info" | "decision" | "ingest" | "user" | "strategy";
   title: string;
+  body: string;
+}
+
+/** 驱动作业输入（策略 / 定时 / 资讯 / 通信 / 告警等） */
+export interface TraderDriverRecord {
+  id: string;
+  ts: number;
+  driverKind: string;
+  title: string;
+  body: string;
+}
+
+/** Agent 总线 A2A 消息 */
+export interface TraderAgentMessageRecord {
+  id: string;
+  ts: number;
+  messageType: string;
+  senderRole: string;
+  receiverRole: string | null;
+  workflowRunId: string;
+  summary: string;
   body: string;
 }
 
@@ -106,9 +115,16 @@ export interface AppState {
   setBackendConnected: (v: boolean) => void;
   backendHint: string | null;
   setBackendHint: (v: string | null) => void;
-  /** 全局 UI 主题（与 `html[data-qb-theme]` 同步） */
-  uiTheme: UiThemeId;
-  setUiTheme: (theme: UiThemeId) => void;
+  /** 默认风格下的配色（`html[data-qb-theme]`） */
+  uiPalette: UiPaletteId;
+  setUiPalette: (palette: UiPaletteId) => void;
+  /** 视觉风格（`html[data-qb-style]`，与配色正交） */
+  uiStyle: UiStyleId;
+  setUiStyle: (style: UiStyleId) => void;
+  /** @deprecated 使用 uiPalette */
+  uiTheme: UiPaletteId;
+  /** @deprecated 使用 setUiPalette */
+  setUiTheme: (palette: UiPaletteId) => void;
   activeView: ActiveView;
   setActiveView: (view: ActiveView) => void;
   chartContext: ChartContextPayload | null;
@@ -165,6 +181,12 @@ export interface AppState {
   traderAgentLog: TraderAgentLogRecord[];
   pushTraderAgentLog: (e: Omit<TraderAgentLogRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
   clearTraderAgentLog: () => void;
+  traderDrivers: TraderDriverRecord[];
+  pushTraderDriver: (e: Omit<TraderDriverRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
+  clearTraderDrivers: () => void;
+  traderAgentMessages: TraderAgentMessageRecord[];
+  pushTraderAgentMessage: (e: Omit<TraderAgentMessageRecord, "id" | "ts"> & { id?: string; ts?: number }) => void;
+  clearTraderAgentMessages: () => void;
   traderAgentConfig: TraderAgentConfigState;
   setTraderAgentConfig: (patch: Partial<TraderAgentConfigState>) => void;
   toggleTraderStrategyScriptId: (id: string) => void;
@@ -219,13 +241,31 @@ export const useAppStore = create<AppState>((set) => ({
   setBackendConnected: (v) => set({ backendConnected: v }),
   backendHint: null,
   setBackendHint: (v) => set({ backendHint: v }),
-  uiTheme: readUiTheme(),
-  setUiTheme: (uiTheme) => {
-    persistUiTheme(uiTheme);
-    if (typeof document !== "undefined") {
-      document.documentElement.setAttribute("data-qb-theme", uiTheme);
-    }
-    set({ uiTheme });
+  ...(() => {
+    const initial = readUiAppearance();
+    applyUiAppearance(initial);
+    return {
+      uiPalette: initial.palette,
+      uiStyle: initial.style,
+      uiTheme: initial.palette,
+    };
+  })(),
+  setUiPalette: (palette) => {
+    const { uiStyle } = useAppStore.getState();
+    const next: UiAppearance = { palette, style: uiStyle };
+    persistUiAppearance(next);
+    applyUiAppearance(next);
+    set({ uiPalette: palette, uiTheme: palette });
+  },
+  setUiStyle: (style) => {
+    const { uiPalette } = useAppStore.getState();
+    const next: UiAppearance = { palette: uiPalette, style };
+    persistUiAppearance(next);
+    applyUiAppearance(next);
+    set({ uiStyle: style });
+  },
+  setUiTheme: (palette) => {
+    useAppStore.getState().setUiPalette(palette);
   },
   activeView: "chat",
   setActiveView: (view) => set({ activeView: view }),
@@ -235,8 +275,16 @@ export const useAppStore = create<AppState>((set) => ({
   setConfigSubPage: (configSubPage) => set({ configSubPage }),
   chartReloadNonce: 0,
   requestChartReload: () => set((s) => ({ chartReloadNonce: s.chartReloadNonce + 1 })),
-  chartSpec: { ...DEFAULT_CHART_SPEC },
-  setChartSpec: (patch) => set((s) => ({ chartSpec: { ...s.chartSpec, ...patch } })),
+  chartSpec: readPersistedChartSpec(),
+  setChartSpec: (patch) =>
+    set((s) => {
+      const chartSpec = { ...s.chartSpec, ...patch };
+      if (patch.exchange !== undefined) {
+        chartSpec.exchange = coerceChartMarketExchange(chartSpec.exchange);
+      }
+      persistChartSpec(chartSpec);
+      return { chartSpec };
+    }),
   chartOverlays: { ...defaultChartOverlays },
   toggleChartOverlay: (key) =>
     set((s) => {
@@ -290,6 +338,8 @@ export const useAppStore = create<AppState>((set) => ({
         side: m.side,
         text: m.text,
         source: m.source,
+        barTime: m.barTime,
+        orderIntentId: m.orderIntentId,
       };
       return { traderMarkers: [...s.traderMarkers, row].slice(-24) };
     }),
@@ -307,6 +357,35 @@ export const useAppStore = create<AppState>((set) => ({
       return { traderAgentLog: [...s.traderAgentLog, row].slice(-200) };
     }),
   clearTraderAgentLog: () => set({ traderAgentLog: [] }),
+  traderDrivers: [],
+  pushTraderDriver: (e) =>
+    set((s) => {
+      const row: TraderDriverRecord = {
+        id: e.id ?? newId(),
+        ts: e.ts ?? Date.now(),
+        driverKind: e.driverKind,
+        title: e.title,
+        body: e.body,
+      };
+      return { traderDrivers: [...s.traderDrivers, row].slice(-200) };
+    }),
+  clearTraderDrivers: () => set({ traderDrivers: [] }),
+  traderAgentMessages: [],
+  pushTraderAgentMessage: (e) =>
+    set((s) => {
+      const row: TraderAgentMessageRecord = {
+        id: e.id ?? newId(),
+        ts: e.ts ?? Date.now(),
+        messageType: e.messageType,
+        senderRole: e.senderRole,
+        receiverRole: e.receiverRole ?? null,
+        workflowRunId: e.workflowRunId,
+        summary: e.summary,
+        body: e.body,
+      };
+      return { traderAgentMessages: [...s.traderAgentMessages, row].slice(-200) };
+    }),
+  clearTraderAgentMessages: () => set({ traderAgentMessages: [] }),
   traderAgentConfig: loadTraderConfig(),
   setTraderAgentConfig: (patch) =>
     set((s) => {

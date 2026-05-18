@@ -1,0 +1,98 @@
+/**
+ * Glassmorphism — 半透明磨砂玻璃、柔和体积光、层次模糊
+ * 参考 uiprompt.site 玻璃态风格提示词
+ */
+html[data-qb-style="glassmorphism"] {
+  color-scheme: dark;
+
+  --qb-bg-root: #0b1020;
+  --qb-bg-root-top: #121a2e;
+  --qb-tint: rgba(147, 197, 253, 0.16);
+  --qb-tint-strong: rgba(147, 197, 253, 0.28);
+  --qb-blue: #60a5fa;
+  --qb-blue-deep: #2563eb;
+  --qb-focus-ring: rgba(96, 165, 250, 0.65);
+  --qb-hairline: rgba(255, 255, 255, 0.12);
+  --qb-separator: rgba(148, 163, 184, 0.35);
+  --qb-body-fg: #e8eef9;
+  --qb-topbar-bg: rgba(18, 26, 46, 0.72);
+  --qb-workbench-toolbar-bg: rgba(15, 23, 42, 0.65);
+  --qb-segmented-active-bg: rgba(59, 130, 246, 0.55);
+  --qb-glass-blur: 18px;
+  --qb-glass-saturate: 160%;
+  --qb-glass-panel: rgba(255, 255, 255, 0.08);
+  --qb-glass-panel-strong: rgba(255, 255, 255, 0.14);
+  --qb-glass-border: rgba(255, 255, 255, 0.22);
+  --qb-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+
+  --qb-scrollbar-track: rgba(15, 23, 42, 0.5);
+  --qb-scrollbar-thumb-top: rgba(147, 197, 253, 0.45);
+  --qb-scrollbar-thumb-bot: rgba(59, 130, 246, 0.75);
+  --qb-scrollbar-thumb-hover-top: rgba(191, 219, 254, 0.55);
+  --qb-scrollbar-thumb-hover-bot: rgba(37, 99, 235, 0.85);
+  --qb-scrollbar-corner: #0b1020;
+  --qb-scrollbar-border: rgba(255, 255, 255, 0.08);
+  --qb-scrollbar-thumb-border: transparent;
+
+  --qb-sidebar-nav-bg: rgba(15, 23, 42, 0.55);
+  --qb-sidebar-activity-bg: rgba(11, 16, 32, 0.72);
+  --qb-sidebar-explorer-bg: rgba(30, 41, 59, 0.45);
+  --qb-sidebar-border: rgba(255, 255, 255, 0.14);
+  --qb-sidebar-muted: #94a3b8;
+  --qb-sidebar-text: #f1f5f9;
+  --qb-brand-icon: #93c5fd;
+  --qb-brand-icon-glow: rgba(147, 197, 253, 0.9);
+
+  --qb-main-input-bg: rgba(255, 255, 255, 0.06);
+  --qb-main-card-bg: rgba(255, 255, 255, 0.08);
+  --qb-main-panel-bg: rgba(15, 23, 42, 0.4);
+  --qb-chat-main-bg: rgba(255, 255, 255, 0.06);
+  --qb-chat-sidebar-bg: rgba(15, 23, 42, 0.5);
+  --qb-radius-lg: 16px;
+  --qb-radius-md: 14px;
+}
+
+html[data-qb-style="glassmorphism"] .qb-app-root {
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(59, 130, 246, 0.28), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 90% 0%, rgba(167, 139, 250, 0.22), transparent 50%),
+    var(--qb-bg-root);
+}
+
+html[data-qb-style="glassmorphism"] .qb-topbar,
+html[data-qb-style="glassmorphism"] .qb-workbench-toolbar {
+  backdrop-filter: blur(var(--qb-glass-blur)) saturate(var(--qb-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--qb-glass-blur)) saturate(var(--qb-glass-saturate));
+  background: var(--qb-topbar-bg);
+  border-color: var(--qb-glass-border);
+  box-shadow: var(--qb-glass-shadow);
+}
+
+html[data-qb-style="glassmorphism"] .qb-sidebar-shell,
+html[data-qb-style="glassmorphism"] .qb-sidebar-activity,
+html[data-qb-style="glassmorphism"] .qb-explorer-panel {
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+}
+
+html[data-qb-style="glassmorphism"] .qb-context-card,
+html[data-qb-style="glassmorphism"] .qb-agent-shell,
+html[data-qb-style="glassmorphism"] .qb-status-pill,
+html[data-qb-style="glassmorphism"] .qb-segmented {
+  background: var(--qb-glass-panel);
+  border-color: var(--qb-glass-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--qb-glass-shadow);
+}
+
+html[data-qb-style="glassmorphism"] .qb-segmented__tab--active {
+  background: var(--qb-segmented-active-bg);
+  border-color: rgba(147, 197, 253, 0.45);
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.35);
+}
+
+html[data-qb-style="glassmorphism"] .qb-logo-text {
+  color: #bfdbfe;
+  text-shadow: 0 0 24px rgba(147, 197, 253, 0.45);
+}

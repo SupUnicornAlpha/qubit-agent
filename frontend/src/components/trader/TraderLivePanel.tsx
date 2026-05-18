@@ -13,7 +13,9 @@ import {
 } from "../../api/backend";
 import type { StrategyRuntimeRecord } from "../../api/backend";
 import type { IndicatorStrategyScriptRecord } from "../../api/types";
-import { CHART_MARKET_OPTIONS, CHART_TIMEFRAMES, coerceChartMarketExchange } from "../../lib/chartSpec";
+import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
+import { ChartMarketSelect } from "../chart/ChartMarketSelect";
+import { useTraderAgentEngine } from "../../hooks/useTraderAgentEngine";
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeQuickTradePanel } from "../ide/IdeQuickTradePanel";
 import { useAppStore } from "../../store";
@@ -68,6 +70,15 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--qb-main-input-fg, #e4e4e7)",
     fontSize: 13,
   },
+  field: {
+    padding: "6px 10px",
+    borderRadius: 6,
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-input-bg, #18181b)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
+    fontSize: 13,
+    ...chartControlStyle,
+  },
   hint: { margin: 0, fontSize: 11, color: "var(--qb-main-meta, #71717a)", lineHeight: 1.45 },
   scriptList: {
     display: "flex",
@@ -104,6 +115,47 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--qb-team-titlebar-fg, #cbd5e1)",
     background: "var(--qb-kline-embedded-bar-bg, #111114)",
   },
+  flowTabs: {
+    flexShrink: 0,
+    display: "flex",
+    gap: 4,
+    padding: "6px 10px",
+    borderBottom: "1px solid var(--qb-kline-header-border, #27272a)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
+  },
+  flowTab: {
+    padding: "5px 12px",
+    borderRadius: 6,
+    border: "1px solid transparent",
+    background: "transparent",
+    color: "var(--qb-main-meta, #a1a1aa)",
+    fontSize: 12,
+    cursor: "pointer",
+  },
+  flowTabActive: {
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-card-bg, #18181b)",
+    color: "var(--qb-body-fg, #e4e4e7)",
+    fontWeight: 600,
+  },
+  driverKind: {
+    display: "inline-block",
+    marginRight: 6,
+    padding: "1px 6px",
+    borderRadius: 4,
+    fontSize: 10,
+    background: "rgba(59, 130, 246, 0.15)",
+    color: "#93c5fd",
+  },
+  msgType: {
+    display: "inline-block",
+    marginRight: 6,
+    padding: "1px 6px",
+    borderRadius: 4,
+    fontSize: 10,
+    background: "rgba(168, 85, 247, 0.15)",
+    color: "#d8b4fe",
+  },
   flowActions: {
     flexShrink: 0,
     display: "flex",
@@ -122,6 +174,23 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     minHeight: 0,
     background: "var(--qb-main-panel-bg, var(--qb-bg-root))",
+  },
+  cmdRow: {
+    flexShrink: 0,
+    display: "flex",
+    gap: 8,
+    padding: "8px 12px",
+    borderTop: "1px solid var(--qb-kline-header-border, #27272a)",
+    background: "var(--qb-kline-embedded-bar-bg, #111114)",
+  },
+  cmdInp: {
+    flex: 1,
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid var(--qb-main-input-border, #3f3f46)",
+    background: "var(--qb-main-input-bg, #18181b)",
+    color: "var(--qb-main-input-fg, #e4e4e7)",
+    fontSize: 13,
   },
   logCard: {
     border: "1px solid var(--qb-main-card-border, #27272a)",
@@ -186,8 +255,11 @@ export const TraderLivePanel: FC = () => {
   const traderAgentLog = useAppStore((s) => s.traderAgentLog);
   const pushTraderAgentLog = useAppStore((s) => s.pushTraderAgentLog);
   const clearTraderAgentLog = useAppStore((s) => s.clearTraderAgentLog);
+  const traderDrivers = useAppStore((s) => s.traderDrivers);
+  const clearTraderDrivers = useAppStore((s) => s.clearTraderDrivers);
+  const traderAgentMessages = useAppStore((s) => s.traderAgentMessages);
+  const clearTraderAgentMessages = useAppStore((s) => s.clearTraderAgentMessages);
   const clearTraderMarkers = useAppStore((s) => s.clearTraderMarkers);
-  const pushTraderMarker = useAppStore((s) => s.pushTraderMarker);
   const traderAgentConfig = useAppStore((s) => s.traderAgentConfig);
   const setTraderAgentConfig = useAppStore((s) => s.setTraderAgentConfig);
   const toggleTraderStrategyScriptId = useAppStore((s) => s.toggleTraderStrategyScriptId);
@@ -197,7 +269,14 @@ export const TraderLivePanel: FC = () => {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeMsg, setRuntimeMsg] = useState<string | null>(null);
   const [scriptsErr, setScriptsErr] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [userCmd, setUserCmd] = useState("");
+  const [lastOrderIntentId, setLastOrderIntentId] = useState<string | null>(null);
+  const [flowTab, setFlowTab] = useState<"decision" | "drivers" | "messages">("decision");
   const booted = useRef(false);
+
+  const engine = useTraderAgentEngine(projectId, sessionId);
 
   useEffect(() => {
     if (booted.current) return;
@@ -221,6 +300,8 @@ export const TraderLivePanel: FC = () => {
           pid = created.data.id;
         }
         const session = await getDefaultProjectSession(pid);
+        setProjectId(pid);
+        setSessionId(session.id);
         const rows = await listStrategyScripts(session.id);
         setScripts(rows);
         const rt = await listStrategyRuntimes({ sessionId: session.id });
@@ -228,7 +309,7 @@ export const TraderLivePanel: FC = () => {
         pushTraderAgentLog({
           kind: "ingest",
           title: "会话与策略库已连接",
-          body: `sessionId=${session.id}\n已加载 ${rows.length} 条策略脚本（IDE 生成或手写 Python 入库后可在此勾选）。`,
+          body: `sessionId=${session.id}\n已加载 ${rows.length} 条策略脚本。策略运行时、资讯轮询与用户指令将驱动纸面下单。`,
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -297,39 +378,20 @@ export const TraderLivePanel: FC = () => {
     }
   };
 
-  const simulateAgentTick = () => {
-    const spec = useAppStore.getState().chartSpec;
-    const cfg = useAppStore.getState().traderAgentConfig;
-    const names = cfg.strategyScriptIds
-      .map((id) => scripts.find((s) => s.id === id)?.name)
-      .filter(Boolean)
-      .join(", ");
-    pushTraderAgentLog({
-      kind: "ingest",
-      title: "观测输入",
-      body: `标的 ${spec.symbol}；启用策略: ${names || "（未勾选，使用内置占位推理）"}`,
-    });
-    pushTraderAgentLog({
-      kind: "decision",
-      title: "决策（演示）",
-      body:
-        cfg.triggerMode === "interval"
-          ? `触发模式=定时轮询（${cfg.intervalSec}s）；生成试探信号并等待风控闸（演示未调用后端）。`
-          : cfg.triggerMode === "strategy_signal"
-            ? "触发模式=策略信号（占位）：将监听所选 Python 策略输出 buy/sell 事件。"
-            : "触发模式=手动：以下标记来自演示按钮或快捷交易面板联动。",
-    });
-    const side = Math.random() > 0.45 ? "buy" : "sell";
-    pushTraderMarker({
-      side,
-      text: side === "buy" ? "Agent 试探做多" : "Agent 试探做空",
-      source: "agent",
-    });
-    pushTraderAgentLog({
-      kind: "decision",
-      title: "执行意图（演示）",
-      body: `已在 K 线末根叠加 ${side === "buy" ? "绿色↑" : "红色↓"} 标记；与下方快捷交易共用同一 chartSpec。`,
-    });
+  const submitUserCmd = async () => {
+    const text = userCmd.trim();
+    if (!text) return;
+    setUserCmd("");
+    try {
+      const data = await engine.runCommand(text);
+      if (data?.orderIntentId) setLastOrderIntentId(data.orderIntentId);
+    } catch (e) {
+      pushTraderAgentLog({
+        kind: "user",
+        title: "指令执行失败",
+        body: e instanceof Error ? e.message : String(e),
+      });
+    }
   };
 
   return (
@@ -338,8 +400,8 @@ export const TraderLivePanel: FC = () => {
         <summary style={styles.summary}>交易 Agent 配置</summary>
         <div style={styles.configBody}>
           <p style={styles.hint}>
-            触发方式与策略选择在会话内持久化（sessionStorage）。K 线与快捷交易共用全局{" "}
-            <code style={{ fontSize: 11 }}>chartSpec</code>，修改任一侧品种/周期会联动另一侧。
+            触发方式持久化于 sessionStorage。策略信号由后台 worker 评估并下单；定时/资讯由 Agent 轮询 feed
+            写入左侧流；用户可在下方输入「买入 100」「撤单 &lt;intentId&gt;」等指令。
           </p>
           <div style={styles.row}>
             <label style={styles.lab}>
@@ -353,9 +415,9 @@ export const TraderLivePanel: FC = () => {
                   })
                 }
               >
-                <option value="manual">手动（快捷交易 + 演示按钮）</option>
-                <option value="interval">定时轮询 Agent（占位）</option>
-                <option value="strategy_signal">策略信号触发（Python 输出，占位）</option>
+                <option value="manual">手动（快捷交易 + 用户指令）</option>
+                <option value="interval">定时轮询（资讯 + 策略日志 + K 线刷新）</option>
+                <option value="strategy_signal">策略信号（后台运行时自动下单）</option>
               </select>
             </label>
             {traderAgentConfig.triggerMode === "interval" ? (
@@ -438,32 +500,131 @@ export const TraderLivePanel: FC = () => {
 
       <div style={styles.mainRow}>
         <div style={styles.flowCol}>
-          <div style={styles.flowHead}>Agent 对话与决策流</div>
+          <div style={styles.flowHead}>交易 Agent 工作台</div>
+          <div style={styles.flowTabs}>
+            {(
+              [
+                ["decision", "决策流", traderAgentLog.length],
+                ["drivers", "策略驱动", traderDrivers.length],
+                ["messages", "Agent 消息", traderAgentMessages.length],
+              ] as const
+            ).map(([key, label, count]) => (
+              <button
+                key={key}
+                type="button"
+                style={{
+                  ...styles.flowTab,
+                  ...(flowTab === key ? styles.flowTabActive : {}),
+                }}
+                onClick={() => setFlowTab(key)}
+              >
+                {label}
+                {count > 0 ? ` (${count})` : ""}
+              </button>
+            ))}
+          </div>
           <div style={styles.flowActions}>
-            <button type="button" className="qb-btn-primary-brand" onClick={simulateAgentTick}>
-              模拟 Agent 一轮（演示）
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              disabled={engine.busy || !engine.session}
+              onClick={() => void engine.runAgentCycle()}
+            >
+              Agent 轮询一轮
             </button>
-            <button type="button" className="qb-btn-ghost" onClick={clearTraderAgentLog}>
-              清空日志
+            <button
+              type="button"
+              className="qb-btn-ghost"
+              onClick={() => {
+                if (flowTab === "decision") clearTraderAgentLog();
+                else if (flowTab === "drivers") clearTraderDrivers();
+                else clearTraderAgentMessages();
+              }}
+            >
+              清空当前页
             </button>
             <button type="button" className="qb-btn-ghost" onClick={clearTraderMarkers}>
               清空 K 线标记
             </button>
           </div>
           <div style={styles.flowScroll}>
-            {traderAgentLog.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>暂无事件。点击「模拟 Agent」或在下方面板做演示标记以查看联动。</div>
-            ) : (
-              [...traderAgentLog].reverse().map((row) => (
-                <div key={row.id} style={styles.logCard}>
-                  <div style={styles.logMeta}>
-                    {new Date(row.ts).toLocaleString()} · {row.kind}
-                  </div>
-                  <div style={styles.logTitle}>{row.title}</div>
-                  <div style={styles.logBody}>{row.body}</div>
+            {flowTab === "decision" ? (
+              traderAgentLog.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                  暂无决策记录。成交、风控结果与用户操作将显示在此。
                 </div>
-              ))
-            )}
+              ) : (
+                [...traderAgentLog].reverse().map((row) => (
+                  <div key={row.id} style={styles.logCard}>
+                    <div style={styles.logMeta}>
+                      {new Date(row.ts).toLocaleString()} · {row.kind}
+                    </div>
+                    <div style={styles.logTitle}>{row.title}</div>
+                    <div style={styles.logBody}>{row.body}</div>
+                  </div>
+                ))
+              )
+            ) : null}
+            {flowTab === "drivers" ? (
+              traderDrivers.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                  暂无策略驱动。来源包括：策略运行时评估、定时任务、资讯 RSS、外部通信、告警与用户指令。
+                </div>
+              ) : (
+                [...traderDrivers].reverse().map((row) => (
+                  <div key={row.id} style={styles.logCard}>
+                    <div style={styles.logMeta}>
+                      {new Date(row.ts).toLocaleString()}
+                      <span style={styles.driverKind}>{row.driverKind}</span>
+                    </div>
+                    <div style={styles.logTitle}>{row.title}</div>
+                    <div style={styles.logBody}>{row.body}</div>
+                  </div>
+                ))
+              )
+            ) : null}
+            {flowTab === "messages" ? (
+              traderAgentMessages.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                  暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN / ORDER_INTENT / RISK_BLOCK 等将显示在此。
+                </div>
+              ) : (
+                [...traderAgentMessages].reverse().map((row) => (
+                  <div key={row.id} style={styles.logCard}>
+                    <div style={styles.logMeta}>
+                      {new Date(row.ts).toLocaleString()}
+                      <span style={styles.msgType}>{row.messageType}</span>
+                    </div>
+                    <div style={styles.logTitle}>
+                      {row.senderRole} → {row.receiverRole ?? "—"}
+                    </div>
+                    <div style={styles.logBody}>{row.summary}</div>
+                    <div style={{ ...styles.logBody, marginTop: 4, fontSize: 11, opacity: 0.85 }}>
+                      {row.body}
+                    </div>
+                  </div>
+                ))
+              )
+            ) : null}
+          </div>
+          <div style={styles.cmdRow}>
+            <input
+              style={styles.cmdInp}
+              value={userCmd}
+              onChange={(e) => setUserCmd(e.target.value)}
+              placeholder="用户指令：买入 100 / 卖出 50 / 撤单 <intentId>"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submitUserCmd();
+              }}
+            />
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              disabled={engine.busy || !engine.session || !userCmd.trim()}
+              onClick={() => void submitUserCmd()}
+            >
+              执行
+            </button>
           </div>
         </div>
 
@@ -473,7 +634,7 @@ export const TraderLivePanel: FC = () => {
               <label style={styles.lab}>
                 代码
                 <input
-                  style={styles.inp}
+                  style={styles.field}
                   value={chartSpec.symbol}
                   onChange={(e) => setChartSpec({ symbol: e.target.value })}
                   placeholder="600000"
@@ -481,22 +642,16 @@ export const TraderLivePanel: FC = () => {
               </label>
               <label style={styles.lab}>
                 市场
-                <select
-                  style={styles.select}
-                  value={coerceChartMarketExchange(chartSpec.exchange)}
-                  onChange={(e) => setChartSpec({ exchange: e.target.value })}
-                >
-                  {CHART_MARKET_OPTIONS.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
+                <ChartMarketSelect
+                  style={styles.field}
+                  value={chartSpec.exchange}
+                  onChange={(exchange) => setChartSpec({ exchange })}
+                />
               </label>
               <label style={styles.lab}>
                 周期
                 <select
-                  style={styles.select}
+                  style={styles.field}
                   value={chartSpec.timeframe}
                   onChange={(e) => setChartSpec({ timeframe: e.target.value })}
                 >
@@ -516,7 +671,24 @@ export const TraderLivePanel: FC = () => {
             </div>
           </div>
           <div style={styles.tradeSlot}>
-            <IdeQuickTradePanel variant="trader" traderLinked />
+            <IdeQuickTradePanel
+              variant="trader"
+              traderLinked
+              traderBusy={engine.busy}
+              lastOrderIntentId={lastOrderIntentId}
+              onPlaceOrder={async (side, qty, orderKind) => {
+                const data = await engine.placeOrder({ side, qty, orderType: orderKind });
+                if (data?.orderIntentId) setLastOrderIntentId(data.orderIntentId);
+              }}
+              onCancelLast={
+                lastOrderIntentId
+                  ? async () => {
+                      await engine.cancelOrder(lastOrderIntentId);
+                      setLastOrderIntentId(null);
+                    }
+                  : undefined
+              }
+            />
           </div>
         </div>
       </div>

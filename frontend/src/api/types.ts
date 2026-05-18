@@ -19,6 +19,18 @@ export interface KlinesResponseMeta {
   returned: number;
 }
 
+/** `GET /market/klines` 无数据或失败时的包装错误 */
+export interface KlinesErrorPayload {
+  type:
+    | "klines_empty"
+    | "klines_invalid_request"
+    | "klines_connector_unavailable"
+    | "klines_upstream_failed";
+  code: string;
+  message: string;
+  hint?: string;
+}
+
 /** `GET /api/v1/market/news-brief` 单条资讯 */
 export interface MarketNewsBriefItem {
   id: string;

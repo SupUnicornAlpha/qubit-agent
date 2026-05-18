@@ -31,6 +31,12 @@ describe("symbolToYahooSymbol", () => {
     expect(symbolToYahooSymbol("2330", "TW")).toBe("2330.TW");
     expect(symbolToYahooSymbol("D05", "SG")).toBe("D05.SI");
     expect(symbolToYahooSymbol("RELIANCE", "IN")).toBe("RELIANCE.NS");
+    expect(symbolToYahooSymbol("ASML", "NL")).toBe("ASML.AS");
+    expect(symbolToYahooSymbol("NESN", "CH")).toBe("NESN.SW");
+    expect(symbolToYahooSymbol("ENI", "IT")).toBe("ENI.MI");
+    expect(symbolToYahooSymbol("SAN", "ES")).toBe("SAN.MC");
+    expect(symbolToYahooSymbol("BTC", "CRYPTO")).toBe("BTC-USD");
+    expect(symbolToYahooSymbol("ETH-USD", "CRYPTO")).toBe("ETH-USD");
   });
 });
 

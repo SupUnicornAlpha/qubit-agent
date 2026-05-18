@@ -13,7 +13,7 @@
 
 /* 顶栏 */
 .qb-topbar {
-  background: #1c1c1e;
+  background: var(--qb-topbar-bg, #1c1c1e);
   border-bottom: 1px solid var(--qb-separator);
 }
 
@@ -34,7 +34,7 @@
 
 /* 研究工作台顶栏：类似 Xcode 工具栏的分组与底部分隔 */
 .qb-workbench-toolbar {
-  background: #161618;
+  background: var(--qb-workbench-toolbar-bg, #161618);
   border-bottom: 1px solid var(--qb-separator);
 }
 
@@ -926,7 +926,7 @@
 
 .qb-segmented__tab--active {
   color: #fafafa;
-  background: #5b21b6;
+  background: var(--qb-segmented-active-bg, #5b21b6);
   border: 1px solid rgba(167, 139, 250, 0.35);
 }
 

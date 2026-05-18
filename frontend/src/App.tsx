@@ -109,7 +109,7 @@ const styles: Record<string, CSSProperties> = {
     height: "100vh",
     minWidth: 0,
     maxWidth: "100vw",
-    color: "#e4e4e7",
+    color: "var(--qb-body-fg, #e4e4e7)",
     overflow: "hidden",
   },
   body: {

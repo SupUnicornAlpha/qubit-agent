@@ -123,6 +123,23 @@ export function symbolToYahooSymbol(symbol: string, exchange: string): string {
   if (ex === "IN" || ex === "NSE") {
     return alnum ? `${alnum}.NS` : s;
   }
+  if (ex === "NL" || ex === "AMS") {
+    return alnum ? `${alnum}.AS` : s;
+  }
+  if (ex === "CH" || ex === "SIX") {
+    return alnum ? `${alnum}.SW` : s;
+  }
+  if (ex === "IT" || ex === "MIL") {
+    return alnum ? `${alnum}.MI` : s;
+  }
+  if (ex === "ES" || ex === "BME") {
+    return alnum ? `${alnum}.MC` : s;
+  }
+  if (ex === "CRYPTO" || ex === "CC" || ex === "BINANCE") {
+    const base = (alnum || "BTC").replace(/-USD$/i, "");
+    if (base.includes("-")) return base.toUpperCase();
+    return `${base.toUpperCase()}-USD`;
+  }
 
   if (!ex || ex === "UNKNOWN") {
     if (/^\d{6}$/.test(s)) return `${s}.SS`;

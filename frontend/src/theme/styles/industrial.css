@@ -1,0 +1,101 @@
+/**
+ * 工业设计 — 金属灰、功能网格、安全橙强调、硬朗直角
+ */
+html[data-qb-style="industrial"] {
+  color-scheme: dark;
+
+  --qb-bg-root: #141618;
+  --qb-bg-root-top: #1a1c1f;
+  --qb-tint: rgba(245, 158, 11, 0.12);
+  --qb-tint-strong: rgba(245, 158, 11, 0.22);
+  --qb-blue: #f59e0b;
+  --qb-blue-deep: #d97706;
+  --qb-focus-ring: rgba(245, 158, 11, 0.55);
+  --qb-hairline: rgba(255, 255, 255, 0.06);
+  --qb-separator: #3f4348;
+  --qb-body-fg: #e7e5e4;
+  --qb-topbar-bg: #1f2226;
+  --qb-workbench-toolbar-bg: #181a1d;
+  --qb-segmented-active-bg: #b45309;
+  --qb-radius-lg: 4px;
+  --qb-radius-md: 3px;
+  --qb-radius-sm: 2px;
+
+  --qb-scrollbar-track: #1a1c1f;
+  --qb-scrollbar-thumb-top: #57534e;
+  --qb-scrollbar-thumb-bot: #b45309;
+  --qb-scrollbar-thumb-hover-top: #78716c;
+  --qb-scrollbar-thumb-hover-bot: #d97706;
+
+  --qb-sidebar-nav-bg: #1c1f23;
+  --qb-sidebar-activity-bg: #141618;
+  --qb-sidebar-explorer-bg: #22262b;
+  --qb-sidebar-border: #3f4348;
+  --qb-sidebar-muted: #a8a29e;
+  --qb-sidebar-text: #fafaf9;
+  --qb-brand-icon: #fbbf24;
+  --qb-brand-icon-glow: rgba(251, 191, 36, 0.75);
+
+  --qb-main-card-bg: #22262b;
+  --qb-chat-main-bg: #1c1f23;
+  --qb-font-accent: "SF Mono", "JetBrains Mono", "Consolas", monospace;
+}
+
+html[data-qb-style="industrial"] .qb-app-root {
+  background:
+    linear-gradient(90deg, rgba(63, 67, 72, 0.15) 1px, transparent 1px),
+    linear-gradient(rgba(63, 67, 72, 0.15) 1px, transparent 1px),
+    var(--qb-bg-root);
+  background-size: 24px 24px, 24px 24px, auto;
+}
+
+html[data-qb-style="industrial"] .qb-topbar,
+html[data-qb-style="industrial"] .qb-workbench-toolbar {
+  background: var(--qb-topbar-bg);
+  border-bottom: 2px solid #3f4348;
+  box-shadow: inset 0 -1px 0 rgba(251, 191, 36, 0.15);
+}
+
+html[data-qb-style="industrial"] .qb-topbar__subtitle,
+html[data-qb-style="industrial"] .qb-sidebar-muted-text {
+  font-family: var(--qb-font-accent);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+html[data-qb-style="industrial"] .qb-logo-text {
+  color: #fbbf24;
+  letter-spacing: 0.12em;
+  font-weight: 800;
+}
+
+html[data-qb-style="industrial"] .qb-context-card,
+html[data-qb-style="industrial"] .qb-agent-shell,
+html[data-qb-style="industrial"] .qb-segmented {
+  border: 1px solid #3f4348;
+  border-radius: var(--qb-radius-md);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 2px 0 #0f1012;
+}
+
+html[data-qb-style="industrial"] .qb-segmented__tab--active {
+  background: var(--qb-segmented-active-bg);
+  border-color: #92400e;
+  color: #fffbeb;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+html[data-qb-style="industrial"] .qb-nav-row--active {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+html[data-qb-style="industrial"] .qb-btn-primary-brand,
+html[data-qb-style="industrial"] .qb-btn-primary {
+  border-radius: var(--qb-radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 11px;
+  font-weight: 700;
+}

@@ -2,6 +2,12 @@ import type { BarData, FetchBarsParams } from "../../connectors/data/data.connec
 import { connectorRegistry } from "../../connectors/registry";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
 import { resolveEffectiveKlinesSource, type KlinesDataSourceMeta } from "./klines-data-source";
+import {
+  buildKlinesConnectorUnavailableError,
+  buildKlinesEmptyError,
+  buildKlinesInvalidRequestError,
+  type KlinesErrorPayload,
+} from "./klines-error";
 
 /** Query token (case-insensitive). `1W` normalizes to daily bars spanning `limit` weeks. */
 const TIMEFRAME_TO_PERIOD: Record<string, FetchBarsParams["period"]> = {
@@ -103,10 +109,20 @@ export async function queryKlines(params: {
   exchange?: string;
   timeframe?: string;
   limit?: number;
-}): Promise<{ bars: BarData[]; meta: KlinesMeta }> {
+}): Promise<{ bars: BarData[]; meta: KlinesMeta; error?: KlinesErrorPayload }> {
   const symbol = params.symbol?.trim();
   if (!symbol) {
-    throw new Error("symbol is required");
+    return {
+      bars: [],
+      meta: {
+        timeframe: normalizeTimeframe(params.timeframe),
+        period: timeframeToPeriod(params.timeframe ?? DEFAULT_TIMEFRAME),
+        dataSource: "synthetic",
+        requestedLimit: Math.max(1, Math.min(params.limit ?? 300, 2000)),
+        returned: 0,
+      },
+      error: buildKlinesInvalidRequestError("symbol is required"),
+    };
   }
   const exchange = params.exchange?.trim() ?? "";
   const timeframe = normalizeTimeframe(params.timeframe);
@@ -116,7 +132,17 @@ export async function queryKlines(params: {
 
   const connector = connectorRegistry.get("qubit-data");
   if (!connector) {
-    throw new Error("qubit-data connector is not registered");
+    return {
+      bars: [],
+      meta: {
+        timeframe,
+        period,
+        dataSource: "synthetic",
+        requestedLimit,
+        returned: 0,
+      },
+      error: buildKlinesConnectorUnavailableError(),
+    };
   }
 
   const settings = await loadBuiltinConnectorSettings();
@@ -143,16 +169,30 @@ export async function queryKlines(params: {
   const trimmed =
     sorted.length > requestedLimit ? sorted.slice(sorted.length - requestedLimit) : sorted;
 
-  return {
-    bars: trimmed,
-    meta: {
-      timeframe,
-      period,
-      dataSource,
-      requestedLimit,
-      returned: trimmed.length,
-    },
+  const meta: KlinesMeta = {
+    timeframe,
+    period,
+    dataSource,
+    requestedLimit,
+    returned: trimmed.length,
   };
+
+  if (trimmed.length === 0) {
+    return {
+      bars: trimmed,
+      meta,
+      error: buildKlinesEmptyError({
+        symbol,
+        exchange,
+        timeframe,
+        period,
+        dataSource,
+        requestedLimit,
+      }),
+    };
+  }
+
+  return { bars: trimmed, meta };
 }
 
 /** Fetch sorted OHLCV bars for an explicit window (backtests / experiments). */

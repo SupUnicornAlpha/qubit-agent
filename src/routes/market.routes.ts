@@ -11,6 +11,7 @@ import {
 } from "../runtime/market/klines-query";
 import { detectRegimeFromBars } from "../runtime/market/regime";
 import { runStructuredTune } from "../runtime/market/structured-tune";
+import { wrapKlinesThrownError } from "../runtime/market/klines-error";
 import { queryMarketNewsBrief } from "../runtime/market/news-brief-query";
 
 export const marketRouter = new Hono();
@@ -67,24 +68,24 @@ marketRouter.get("/klines", async (c) => {
     const limitRaw = c.req.query("limit");
     const limit = limitRaw !== undefined && limitRaw !== "" ? Number(limitRaw) : undefined;
 
-    const { bars, meta } = await queryKlines({
+    const { bars, meta, error } = await queryKlines({
       symbol,
       exchange: exchange || undefined,
       timeframe,
       limit: Number.isFinite(limit as number) ? (limit as number) : undefined,
     });
 
-    return c.json({ ok: true, data: bars, meta });
+    return c.json({ ok: true, data: bars, meta, ...(error ? { error } : {}) });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes("required") || msg.includes("symbol")) {
-      return c.json({ ok: false, error: msg }, 400);
-    }
-    if (msg.includes("not registered")) {
-      return c.json({ ok: false, error: msg }, 503);
-    }
+    const wrapped = wrapKlinesThrownError(e);
+    const status =
+      wrapped.type === "klines_invalid_request"
+        ? 400
+        : wrapped.type === "klines_connector_unavailable"
+          ? 503
+          : 500;
     console.error("[market/klines]", e);
-    return c.json({ ok: false, error: msg }, 500);
+    return c.json({ ok: false, error: wrapped }, status);
   }
 });
 

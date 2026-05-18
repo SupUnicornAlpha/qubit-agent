@@ -1,19 +1,16 @@
 import type { CSSProperties, FC } from "react";
-import { useAppStore, UI_THEME_IDS, type UiThemeId } from "../../store";
-
-const THEME_LABELS: Record<UiThemeId, string> = {
-  "dark-purple": "深色 · 黑紫",
-  "dark-gray": "深色 · 黑灰",
-  "light-white": "亮色 · 白",
-  "light-sky": "亮色 · 天蓝",
-  "light-mint": "亮色 · 浅绿",
-};
+import { PALETTE_LABELS, STYLE_LABELS } from "../../theme/appearance";
+import { useAppStore, UI_PALETTE_IDS, UI_STYLE_IDS, type UiPaletteId, type UiStyleId } from "../../store";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
   const backendHint = useAppStore((s) => s.backendHint);
-  const uiTheme = useAppStore((s) => s.uiTheme);
-  const setUiTheme = useAppStore((s) => s.setUiTheme);
+  const uiPalette = useAppStore((s) => s.uiPalette);
+  const uiStyle = useAppStore((s) => s.uiStyle);
+  const setUiPalette = useAppStore((s) => s.setUiPalette);
+  const setUiStyle = useAppStore((s) => s.setUiStyle);
+  const paletteLocked = uiStyle !== "default";
+
   return (
     <header className="qb-topbar" style={styles.bar}>
       <div style={styles.brand}>
@@ -28,23 +25,43 @@ export const TopBar: FC = () => {
       </span>
       {backendHint ? <span style={styles.hint}>{backendHint}</span> : null}
       <div style={styles.spacer} />
-      <label className="qb-visually-hidden" htmlFor="qb-ui-theme">
-        界面主题
-      </label>
-      <select
-        id="qb-ui-theme"
-        className="qb-theme-select"
-        value={uiTheme}
-        title="界面主题"
-        aria-label="界面主题"
-        onChange={(e) => setUiTheme(e.target.value as UiThemeId)}
-      >
-        {UI_THEME_IDS.map((id) => (
-          <option key={id} value={id}>
-            {THEME_LABELS[id]}
-          </option>
-        ))}
-      </select>
+      <div className="qb-appearance-controls">
+        <label className="qb-visually-hidden" htmlFor="qb-ui-style">
+          界面风格
+        </label>
+        <select
+          id="qb-ui-style"
+          className="qb-style-select"
+          value={uiStyle}
+          title="界面风格"
+          aria-label="界面风格"
+          onChange={(e) => setUiStyle(e.target.value as UiStyleId)}
+        >
+          {UI_STYLE_IDS.map((id) => (
+            <option key={id} value={id}>
+              {STYLE_LABELS[id]}
+            </option>
+          ))}
+        </select>
+        <label className="qb-visually-hidden" htmlFor="qb-ui-palette">
+          配色
+        </label>
+        <select
+          id="qb-ui-palette"
+          className="qb-theme-select"
+          value={uiPalette}
+          title={paletteLocked ? "切换回「默认」风格后可改配色" : "配色（默认风格）"}
+          aria-label="配色"
+          disabled={paletteLocked}
+          onChange={(e) => setUiPalette(e.target.value as UiPaletteId)}
+        >
+          {UI_PALETTE_IDS.map((id) => (
+            <option key={id} value={id}>
+              {PALETTE_LABELS[id]}
+            </option>
+          ))}
+        </select>
+      </div>
       <span className="qb-topbar__divider" aria-hidden />
       <StatusDot connected={connected} />
     </header>

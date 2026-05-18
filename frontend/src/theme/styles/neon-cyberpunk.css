@@ -1,0 +1,107 @@
+/**
+ * 霓虹赛博朋克 — 深空底、霓虹青/品红、发光描边
+ */
+html[data-qb-style="neon-cyberpunk"] {
+  color-scheme: dark;
+
+  --qb-bg-root: #050008;
+  --qb-bg-root-top: #0a0014;
+  --qb-tint: rgba(0, 255, 249, 0.12);
+  --qb-tint-strong: rgba(255, 0, 255, 0.18);
+  --qb-blue: #00fff9;
+  --qb-blue-deep: #ff00ff;
+  --qb-focus-ring: rgba(0, 255, 249, 0.65);
+  --qb-hairline: rgba(0, 255, 249, 0.12);
+  --qb-separator: rgba(255, 0, 255, 0.35);
+  --qb-body-fg: #e0f7fa;
+  --qb-topbar-bg: rgba(10, 0, 20, 0.92);
+  --qb-workbench-toolbar-bg: rgba(5, 0, 12, 0.95);
+  --qb-segmented-active-bg: rgba(255, 0, 255, 0.35);
+  --qb-neon-cyan: #00fff9;
+  --qb-neon-magenta: #ff00ff;
+  --qb-neon-yellow: #ffff00;
+
+  --qb-scrollbar-track: #0a0014;
+  --qb-scrollbar-thumb-top: #00fff9;
+  --qb-scrollbar-thumb-bot: #ff00ff;
+  --qb-scrollbar-thumb-hover-top: #5ffffc;
+  --qb-scrollbar-thumb-hover-bot: #ff5cff;
+
+  --qb-sidebar-nav-bg: rgba(10, 0, 24, 0.88);
+  --qb-sidebar-activity-bg: #050008;
+  --qb-sidebar-explorer-bg: rgba(20, 0, 40, 0.75);
+  --qb-sidebar-border: rgba(0, 255, 249, 0.35);
+  --qb-sidebar-muted: #7dd3fc;
+  --qb-sidebar-text: #f0fdff;
+  --qb-brand-icon: var(--qb-neon-cyan);
+  --qb-brand-icon-glow: rgba(0, 255, 249, 0.95);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-app-root {
+  background:
+    linear-gradient(180deg, rgba(255, 0, 255, 0.06) 0%, transparent 40%),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 255, 249, 0.03) 2px,
+      rgba(0, 255, 249, 0.03) 4px
+    ),
+    var(--qb-bg-root);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-topbar {
+  background: var(--qb-topbar-bg);
+  border-bottom: 1px solid var(--qb-neon-cyan);
+  box-shadow:
+    0 0 20px rgba(0, 255, 249, 0.25),
+    inset 0 -1px 0 rgba(255, 0, 255, 0.2);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-logo-text {
+  color: var(--qb-neon-cyan);
+  text-shadow:
+    0 0 8px var(--qb-neon-cyan),
+    0 0 20px rgba(0, 255, 249, 0.5),
+    0 0 40px rgba(255, 0, 255, 0.25);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-context-card,
+html[data-qb-style="neon-cyberpunk"] .qb-agent-shell,
+html[data-qb-style="neon-cyberpunk"] .qb-status-pill {
+  border: 1px solid rgba(0, 255, 249, 0.45);
+  box-shadow:
+    0 0 12px rgba(0, 255, 249, 0.15),
+    inset 0 0 24px rgba(255, 0, 255, 0.06);
+  background: rgba(10, 0, 24, 0.75);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-segmented__tab--active {
+  background: var(--qb-segmented-active-bg);
+  color: #fff;
+  border-color: var(--qb-neon-magenta);
+  box-shadow:
+    0 0 16px rgba(255, 0, 255, 0.45),
+    inset 0 0 12px rgba(0, 255, 249, 0.12);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-nav-row--active {
+  box-shadow: inset 3px 0 0 var(--qb-neon-magenta);
+  text-shadow: 0 0 8px rgba(0, 255, 249, 0.5);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-btn-primary-brand,
+html[data-qb-style="neon-cyberpunk"] .qb-btn-primary {
+  background: transparent;
+  border: 1px solid var(--qb-neon-cyan);
+  color: var(--qb-neon-cyan);
+  box-shadow: 0 0 14px rgba(0, 255, 249, 0.35);
+}
+
+html[data-qb-style="neon-cyberpunk"] .qb-btn-primary-brand:hover:not(:disabled),
+html[data-qb-style="neon-cyberpunk"] .qb-btn-primary:hover:not(:disabled) {
+  background: rgba(0, 255, 249, 0.12);
+  border-color: var(--qb-neon-magenta);
+  color: #fff;
+  box-shadow: 0 0 20px rgba(255, 0, 255, 0.4);
+}
