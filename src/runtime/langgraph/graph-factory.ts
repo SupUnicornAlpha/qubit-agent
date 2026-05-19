@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
-import { END, START, StateGraph } from "@langchain/langgraph";
 import { eq } from "drizzle-orm";
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
+import { agentDefinition, agentInstance, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { syncWorkspaceConfigToDb } from "../config/config-sync";
@@ -15,16 +14,12 @@ import {
 } from "../config/workspace-config";
 import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
-import { sandboxExecutor } from "../sandbox-executor";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "./event-stream";
-import { actNode } from "./nodes/act";
-import { observeNode } from "./nodes/observe";
-import { perceiveNode } from "./nodes/perceive";
-import { reasonNode } from "./nodes/reason";
-import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
+import { executeAgentReact } from "./execute-agent-react";
+import type { AgentGraphState } from "./state";
 
 void registerBuiltinConnectors();
 
@@ -216,15 +211,6 @@ export class GraphRunner {
     };
 
     try {
-      await db.insert(agentInstance).values({
-        id: agentInstanceId,
-        definitionId: params.def.id,
-        workflowRunId: params.workflowId,
-        status: "running",
-        currentIteration: 0,
-        startedAt: new Date().toISOString(),
-      });
-
       /** 研究团队 HTTP 任务：统一走 Orchestrator 派发，在此短路执行，避免绕过编排器 */
       if (
         params.def.role === "orchestrator" &&
@@ -267,6 +253,15 @@ export class GraphRunner {
           }
           throw new Error("research_team_execute requires params.jobId and params.ticker");
         }
+
+        await db.insert(agentInstance).values({
+          id: agentInstanceId,
+          definitionId: params.def.id,
+          workflowRunId: params.workflowId,
+          status: "running",
+          currentIteration: 0,
+          startedAt: new Date().toISOString(),
+        });
 
         try {
           const teamResult = await runAnalystTeam({
@@ -315,216 +310,20 @@ export class GraphRunner {
         return;
       }
 
-      const initialState = createInitialGraphState({
+      const { finalState, terminalStatus } = await executeAgentReact({
         runId: params.runId,
         workflowId: params.workflowId,
         traceId: params.traceId,
-        agentDefinition: params.def,
-        inboundMessage: {
-          messageId: randomUUID(),
-          workflowId: params.workflowId,
-          traceId: params.traceId,
-          senderAgent: "system",
-          receiverAgent: agentInstanceId,
-          messageType: "TASK_ASSIGN",
-          payload: params.payload,
-          priority: 50,
-          createdAt: new Date().toISOString(),
-        },
+        def: params.def,
+        payload: params.payload,
+        receiverAgent: agentInstanceId,
+        agentInstanceId,
+        streamLoopKind: "native",
+        streamSource: "native",
+        updateWorkflowStatus: true,
       });
-      state = initialState;
-
-      const emit = (event: StepStreamEvent) => {
-        const enriched: StepStreamEvent = { ...event, loopKind: "native", source: "native" };
-        state!.events.push(enriched);
-        stepStreamBus.publish(enriched);
-      };
-
-      const graph = new StateGraph({
-        channels: {
-          state: {
-            value: (x: AgentGraphState, y: Partial<AgentGraphState>) => ({ ...x, ...y }),
-            default: () => initialState,
-          },
-        },
-      }) as any;
-
-      graph.addNode("perceive", async (input: { state: AgentGraphState }) => {
-        const s = input.state;
-        const perceiveStepId = randomUUID();
-        await db.insert(agentStep).values({
-          id: perceiveStepId,
-          agentInstanceId,
-          workflowRunId: params.workflowId,
-          stepIndex: 0,
-          phase: "perceive",
-          thought: "Read inbound message and memory context",
-          actionType: "memory_read",
-          actionJson: { payload: params.payload },
-        });
-        const partial = await perceiveNode(s);
-        return { state: { ...s, ...partial } };
-      });
-
-      graph.addNode("reason", async (input: { state: AgentGraphState }) => {
-        const nextIteration = input.state.iteration + 1;
-        const iterationCheck = await sandboxExecutor.checkIterationLimit({
-          runId: params.runId,
-          workflowId: params.workflowId,
-          traceId: params.traceId,
-          agentInstanceId,
-          definition: params.def,
-          currentIteration: nextIteration,
-        });
-        if (!iterationCheck.allowed) {
-          emit({
-            runId: params.runId,
-            workflowId: params.workflowId,
-            traceId: params.traceId,
-            role: params.def.role,
-            type: "observe",
-            stepIndex: input.state.iteration,
-            ts: Date.now(),
-            payload: {
-              code: "SANDBOX_ITERATION_LIMIT",
-              alertType: "iteration_exceeded",
-              message: iterationCheck.reason ?? "iteration blocked by sandbox",
-            },
-          });
-          return {
-            state: {
-              ...input.state,
-              finalResponse: {
-                status: "terminated",
-                reason: "sandbox_iteration_limit",
-                iteration: input.state.iteration,
-              },
-            },
-          };
-        }
-        await db
-          .update(agentInstance)
-          .set({ currentIteration: nextIteration })
-          .where(eq(agentInstance.id, agentInstanceId));
-        const reasonStepId = randomUUID();
-        await db.insert(agentStep).values({
-          id: reasonStepId,
-          agentInstanceId,
-          workflowRunId: params.workflowId,
-          stepIndex: nextIteration,
-          phase: "reason",
-          thought: "Reasoning with LLM provider",
-          actionType: "tool_call",
-          actionJson: { llmProvider: params.def.llmProvider },
-        });
-        const partial = await reasonNode({ ...input.state, iteration: nextIteration }, emit);
-        return { state: { ...input.state, iteration: nextIteration, ...partial } };
-      });
-
-      graph.addNode("act", async (input: { state: AgentGraphState }) => {
-        const s = input.state;
-        const actStepId = randomUUID();
-        await db.insert(agentStep).values({
-          id: actStepId,
-          agentInstanceId,
-          workflowRunId: params.workflowId,
-          stepIndex: s.iteration,
-          phase: "act",
-          thought: "Execute selected tool",
-          actionType: "tool_call",
-          actionJson: { plannedAction: s.plannedAction },
-        });
-        const partial = await actNode(s, emit, agentInstanceId, actStepId);
-        return { state: { ...s, ...partial } };
-      });
-
-      graph.addNode("observe", async (input: { state: AgentGraphState }) => {
-        const s = input.state;
-        const partial = await observeNode(s, emit, agentInstanceId);
-        return { state: { ...s, ...partial } };
-      });
-
-      graph.addNode("finalize", async (input: { state: AgentGraphState }) => {
-        const s = input.state;
-        const forceLoop = Boolean(params.payload.params?.["forceLoop"]);
-        const exceeded = forceLoop && s.iteration >= params.def.maxIterations;
-        if (exceeded) {
-          emit({
-            runId: params.runId,
-            workflowId: params.workflowId,
-            traceId: params.traceId,
-            role: params.def.role,
-            type: "observe",
-            stepIndex: s.iteration,
-            ts: Date.now(),
-            payload: {
-              code: "MAX_ITERATIONS",
-              alertType: "iteration_exceeded",
-              message: "graph terminated by max iterations",
-            },
-          });
-        }
-        const finalResponse = exceeded
-          ? { status: "terminated", reason: "max_iterations", iteration: s.iteration }
-          : {
-              status: "completed",
-              role: params.def.role,
-              iteration: s.iteration,
-              observation: s.observations.at(-1) ?? {},
-            };
-        return { state: { ...s, finalResponse } };
-      });
-
-      graph.addEdge(START, "perceive");
-      graph.addEdge("perceive", "reason");
-      graph.addEdge("reason", "act");
-      graph.addEdge("act", "observe");
-      graph.addConditionalEdges(
-        "observe",
-        (input: { state: AgentGraphState }) => {
-          if (input.state.finalResponse) return "finalize";
-          const forceLoop = Boolean(params.payload.params?.["forceLoop"]);
-          if (forceLoop && input.state.iteration < params.def.maxIterations) {
-            return "reason";
-          }
-          return "finalize";
-        },
-        { reason: "reason", finalize: "finalize" }
-      );
-      graph.addEdge("finalize", END);
-
-      const app = graph.compile();
-      const result = (await app.invoke({ state: initialState })) as { state: AgentGraphState };
-      state = result.state;
-
-      await db
-        .update(agentInstance)
-        .set({
-          status: "stopped",
-          endedAt: new Date().toISOString(),
-        })
-        .where(eq(agentInstance.id, agentInstanceId));
-      const terminalStatus =
-        state.finalResponse?.["status"] === "terminated" ? "failed" : "completed";
-      await db
-        .update(workflowRun)
-        .set({
-          status: terminalStatus,
-          endedAt: new Date().toISOString(),
-        })
-        .where(eq(workflowRun.id, params.workflowId));
+      state = finalState;
       onWorkflowTerminal(params.workflowId, terminalStatus);
-
-      emit({
-        runId: params.runId,
-        workflowId: params.workflowId,
-        traceId: params.traceId,
-        role: params.def.role,
-        type: "final",
-        stepIndex: state.iteration,
-        ts: Date.now(),
-        payload: state.finalResponse ?? { status: "completed" },
-      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       publishError(message, state?.iteration ?? 0);

@@ -1,0 +1,388 @@
+{
+  "id": "anthropic-fsi",
+  "version": "1.0.0",
+  "description": "Anthropic Claude for Financial Services — 内置 vendor/ 内容包；可通过 scripts/sync-fsi-vendor.sh 从上游 git 更新。",
+  "defaults": {
+    "enabled": true,
+    "enabledBundles": ["quant-research"]
+  },
+  "upstream": {
+    "repository": "https://github.com/anthropics/financial-services.git",
+    "license": "Apache-2.0"
+  },
+  "bundles": {
+    "equity-research": {
+      "label": "权益研究",
+      "description": "财报、行业、覆盖启动与模型更新",
+      "skillIds": [
+        "fsi/earnings-analysis",
+        "fsi/earnings-preview",
+        "fsi/sector-overview",
+        "fsi/initiating-coverage",
+        "fsi/model-update",
+        "fsi/morning-note",
+        "fsi/thesis-tracker",
+        "fsi/idea-generation"
+      ]
+    },
+    "financial-analysis-core": {
+      "label": "财务建模核心",
+      "description": "可比公司、DCF、模型审计与表格产出",
+      "skillIds": [
+        "fsi/comps-analysis",
+        "fsi/dcf-model",
+        "fsi/audit-xls",
+        "fsi/xlsx-author",
+        "fsi/clean-data-xls",
+        "fsi/competitive-analysis"
+      ]
+    },
+    "quant-research": {
+      "label": "量化研究推荐包",
+      "description": "权益研究 + 建模核心（默认推荐启用）",
+      "skillIds": []
+    },
+    "operations-compliance": {
+      "label": "合规与运营",
+      "description": "KYC、总账对账（默认关闭）",
+      "skillIds": ["fsi/kyc-rules", "fsi/kyc-doc-parse", "fsi/gl-recon"]
+    }
+  },
+  "skills": {
+    "fsi/earnings-analysis": {
+      "path": "plugins/vertical-plugins/equity-research/skills/earnings-analysis/SKILL.md",
+      "maxInjectChars": 12000
+    },
+    "fsi/earnings-preview": {
+      "path": "plugins/vertical-plugins/equity-research/skills/earnings-preview/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/sector-overview": {
+      "path": "plugins/vertical-plugins/equity-research/skills/sector-overview/SKILL.md",
+      "maxInjectChars": 10000
+    },
+    "fsi/initiating-coverage": {
+      "path": "plugins/vertical-plugins/equity-research/skills/initiating-coverage/SKILL.md",
+      "maxInjectChars": 12000
+    },
+    "fsi/model-update": {
+      "path": "plugins/vertical-plugins/equity-research/skills/model-update/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/morning-note": {
+      "path": "plugins/vertical-plugins/equity-research/skills/morning-note/SKILL.md",
+      "maxInjectChars": 6000
+    },
+    "fsi/thesis-tracker": {
+      "path": "plugins/vertical-plugins/equity-research/skills/thesis-tracker/SKILL.md",
+      "maxInjectChars": 6000
+    },
+    "fsi/idea-generation": {
+      "path": "plugins/vertical-plugins/equity-research/skills/idea-generation/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/comps-analysis": {
+      "path": "plugins/vertical-plugins/financial-analysis/skills/comps-analysis/SKILL.md",
+      "maxInjectChars": 10000
+    },
+    "fsi/dcf-model": {
+      "path": "plugins/vertical-plugins/financial-analysis/skills/dcf-model/SKILL.md",
+      "maxInjectChars": 10000
+    },
+    "fsi/audit-xls": {
+      "path": "plugins/vertical-plugins/financial-analysis/skills/audit-xls/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/xlsx-author": {
+      "path": "plugins/vertical-plugins/financial-analysis/skills/xlsx-author/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/clean-data-xls": {
+      "path": "plugins/vertical-plugins/financial-analysis/skills/clean-data-xls/SKILL.md",
+      "maxInjectChars": 6000
+    },
+    "fsi/competitive-analysis": {
+      "path": "plugins/vertical-plugins/financial-analysis/skills/competitive-analysis/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/kyc-rules": {
+      "path": "plugins/vertical-plugins/operations/skills/kyc-rules/SKILL.md",
+      "maxInjectChars": 8000
+    },
+    "fsi/kyc-doc-parse": {
+      "path": "plugins/vertical-plugins/operations/skills/kyc-doc-parse/SKILL.md",
+      "maxInjectChars": 6000
+    },
+    "fsi/gl-recon": {
+      "path": "plugins/vertical-plugins/fund-admin/skills/gl-recon/SKILL.md",
+      "maxInjectChars": 8000
+    }
+  },
+  "agentWorkflows": {
+    "earnings-reviewer": {
+      "label": "财报回顾",
+      "playbookPath": "plugins/agent-plugins/earnings-reviewer/agents/earnings-reviewer.md",
+      "playbookMaxChars": 4000,
+      "fuseIntoRoles": ["analyst_sentiment", "news_event"],
+      "skillIds": [
+        "fsi/earnings-analysis",
+        "fsi/model-update",
+        "fsi/audit-xls",
+        "fsi/morning-note"
+      ],
+      "steeringExamples": [
+        {
+          "event": "Process earnings: AAPL Q4 2025",
+          "description": "单标的财报后更新"
+        },
+        {
+          "event": "Post-earnings note for MSFT, focus on cloud margin guidance",
+          "description": "指定关注点的财报笔记"
+        }
+      ]
+    },
+    "market-researcher": {
+      "label": "市场/行业研究",
+      "playbookPath": "plugins/agent-plugins/market-researcher/agents/market-researcher.md",
+      "playbookMaxChars": 3500,
+      "fuseIntoRoles": ["analyst_macro", "research"],
+      "skillIds": ["fsi/sector-overview", "fsi/initiating-coverage", "fsi/idea-generation"],
+      "steeringExamples": [
+        {
+          "event": "Primer: semiconductor equipment, angle: China capex cycle",
+          "description": "行业 primer"
+        }
+      ]
+    },
+    "model-builder": {
+      "label": "模型构建",
+      "playbookPath": "plugins/agent-plugins/model-builder/agents/model-builder.md",
+      "playbookMaxChars": 3500,
+      "fuseIntoRoles": ["research", "backtest", "analyst_fundamental"],
+      "skillIds": ["fsi/dcf-model", "fsi/comps-analysis", "fsi/audit-xls", "fsi/xlsx-author"],
+      "steeringExamples": [
+        {
+          "event": "Build DCF for NVDA, assumptions: terminal growth 3%, WACC 9%",
+          "description": "DCF 建模"
+        }
+      ]
+    },
+    "pitch-agent": {
+      "label": "路演编排（轻量）",
+      "playbookPath": "plugins/agent-plugins/pitch-agent/agents/pitch-agent.md",
+      "playbookMaxChars": 2500,
+      "fuseIntoRoles": ["orchestrator"],
+      "skillIds": ["fsi/comps-analysis"],
+      "steeringExamples": [
+        {
+          "event": "Research plan: compare cloud security peers for CRWD, output comps summary",
+          "description": "量化场景下的可比研究编排"
+        }
+      ]
+    },
+    "gl-reconciler": {
+      "label": "总账对账",
+      "playbookPath": "plugins/agent-plugins/gl-reconciler/agents/gl-reconciler.md",
+      "playbookMaxChars": 3000,
+      "fuseIntoRoles": ["audit"],
+      "skillIds": ["fsi/gl-recon"],
+      "sandboxPreset": "fsi-untrusted-reader",
+      "steeringExamples": [
+        {
+          "event": "Reconcile GL vs subledger, trade date 2025-03-31",
+          "description": "GL 对账"
+        }
+      ]
+    },
+    "kyc-screener": {
+      "label": "KYC 筛查",
+      "playbookPath": "plugins/agent-plugins/kyc-screener/agents/kyc-screener.md",
+      "playbookMaxChars": 3000,
+      "fuseIntoRoles": ["audit"],
+      "skillIds": ["fsi/kyc-rules", "fsi/kyc-doc-parse"],
+      "sandboxPreset": "fsi-untrusted-reader",
+      "steeringExamples": [
+        {
+          "event": "Screen onboarding packet client-8842",
+          "description": "KYC 包筛查"
+        }
+      ]
+    }
+  },
+  "roleSkillDefaults": {
+    "analyst_fundamental": ["fsi/comps-analysis", "fsi/competitive-analysis"],
+    "analyst_technical": [],
+    "analyst_sentiment": ["fsi/earnings-analysis"],
+    "analyst_macro": ["fsi/sector-overview"],
+    "research": ["fsi/dcf-model", "fsi/comps-analysis"],
+    "backtest": ["fsi/audit-xls"],
+    "orchestrator": [],
+    "news_event": ["fsi/earnings-preview"],
+    "audit": []
+  },
+  "mcpCatalog": [
+    {
+      "name": "fsi-daloopa",
+      "transport": "http",
+      "url": "https://mcp.daloopa.com/server/mcp",
+      "envVar": "FSI_DALOOPA_MCP_URL",
+      "description": "Daloopa 财务数据 MCP（需订阅）",
+      "vertical": "financial-analysis"
+    },
+    {
+      "name": "fsi-factset",
+      "transport": "http",
+      "url": "https://mcp.factset.com/mcp",
+      "envVar": "FSI_FACTSET_MCP_URL",
+      "description": "FactSet MCP（需订阅）",
+      "vertical": "financial-analysis"
+    },
+    {
+      "name": "fsi-sp-global",
+      "transport": "http",
+      "url": "https://kfinance.kensho.com/integrations/mcp",
+      "envVar": "FSI_SP_GLOBAL_MCP_URL",
+      "description": "S&P Global / Kensho MCP",
+      "vertical": "financial-analysis"
+    },
+    {
+      "name": "fsi-morningstar",
+      "transport": "http",
+      "url": "https://mcp.morningstar.com/mcp",
+      "envVar": "FSI_MORNINGSTAR_MCP_URL",
+      "description": "Morningstar MCP",
+      "vertical": "financial-analysis"
+    },
+    {
+      "name": "fsi-lseg",
+      "transport": "http",
+      "url": "https://api.analytics.lseg.com/lfa/mcp",
+      "envVar": "FSI_LSEG_MCP_URL",
+      "description": "LSEG 分析 MCP",
+      "vertical": "financial-analysis"
+    },
+    {
+      "name": "fsi-aiera",
+      "transport": "http",
+      "url": "https://mcp-pub.aiera.com",
+      "envVar": "FSI_AIERA_MCP_URL",
+      "description": "Aiera 财报/电话会 MCP",
+      "vertical": "equity-research"
+    },
+    {
+      "name": "fsi-mtnewswires",
+      "transport": "http",
+      "url": "https://vast-mcp.blueskyapi.com/mtnewswires",
+      "envVar": "FSI_MTNEWS_MCP_URL",
+      "description": "MT Newswires MCP",
+      "vertical": "equity-research"
+    }
+  ],
+  "sandboxPresets": {
+    "fsi-untrusted-reader": {
+      "name": "fsi-untrusted-reader",
+      "description": "FSI 模式：仅读不可信文档，无 MCP、无写、无下单",
+      "canWriteMemory": false,
+      "canReadLiveMarket": false,
+      "canSubmitOrder": false,
+      "isolationLevel": "none",
+      "maxIterationsPerRun": 8,
+      "maxOutputTokens": 2048,
+      "denyMcp": true,
+      "denyWriteTools": true
+    },
+    "fsi-verifier": {
+      "name": "fsi-verifier",
+      "description": "FSI 模式：只读验证，允许只读 MCP",
+      "canWriteMemory": false,
+      "canReadLiveMarket": true,
+      "canSubmitOrder": false,
+      "isolationLevel": "none",
+      "maxIterationsPerRun": 10,
+      "maxOutputTokens": 3072,
+      "denyMcp": false,
+      "denyWriteTools": true
+    },
+    "fsi-writer": {
+      "name": "fsi-writer",
+      "description": "FSI 模式：唯一写入者，可 edit_agent_pack，无 MCP",
+      "canWriteMemory": true,
+      "canReadLiveMarket": false,
+      "canSubmitOrder": false,
+      "isolationLevel": "none",
+      "maxIterationsPerRun": 12,
+      "maxOutputTokens": 4096,
+      "denyMcp": true,
+      "denyWriteTools": false
+    }
+  },
+  "outputSchemas": {
+    "analyst_fundamental": {
+      "type": "object",
+      "required": ["signal", "confidence", "reasoning"],
+      "properties": {
+        "signal": { "enum": ["buy", "sell", "hold"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reasoning": { "type": "string", "maxLength": 4000 },
+        "key_drivers": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 256 } },
+        "key_risks": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 256 } }
+      }
+    },
+    "analyst_technical": {
+      "type": "object",
+      "required": ["signal", "confidence", "reasoning"],
+      "properties": {
+        "signal": { "enum": ["buy", "sell", "hold"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "reasoning": { "type": "string", "maxLength": 4000 },
+        "entry_zone": { "type": "string", "maxLength": 128 },
+        "stop_loss": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "analyst_sentiment": {
+      "type": "object",
+      "required": ["signal", "confidence", "reasoning"],
+      "properties": {
+        "signal": { "enum": ["buy", "sell", "hold"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "sentiment_score": { "type": "number", "minimum": -1, "maximum": 1 },
+        "reasoning": { "type": "string", "maxLength": 4000 },
+        "catalysts": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 256 } },
+        "risks": { "type": "array", "maxItems": 10, "items": { "type": "string", "maxLength": 256 } }
+      }
+    },
+    "analyst_macro": {
+      "type": "object",
+      "required": ["signal", "confidence", "reasoning"],
+      "properties": {
+        "signal": { "enum": ["buy", "sell", "hold"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "macro_cycle": { "enum": ["recovery", "expansion", "slowdown", "recession"] },
+        "policy_stance": { "enum": ["easing", "neutral", "tightening"] },
+        "reasoning": { "type": "string", "maxLength": 4000 }
+      }
+    },
+    "risk_manager": {
+      "type": "object",
+      "required": ["verdict", "risk_score", "reasoning"],
+      "properties": {
+        "verdict": { "enum": ["approved", "rejected", "conditional"] },
+        "risk_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rules_triggered": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 128 } },
+        "reasoning": { "type": "string", "maxLength": 4000 }
+      }
+    }
+  },
+  "globalSteeringExamples": [
+    {
+      "event": "Analyze AAPL: run analyst team with fundamental + sentiment + macro, then fuse signals",
+      "description": "MSA 研究团队默认流程",
+      "workflowSlug": "analyst-team"
+    },
+    {
+      "event": "Build comps for semiconductor equipment peers, export summary table",
+      "description": "可比公司分析",
+      "workflowSlug": "model-builder"
+    }
+  ]
+}

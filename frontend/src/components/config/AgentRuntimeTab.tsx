@@ -100,6 +100,8 @@ export const AgentRuntimeTab: FC<{
   selectedBundle: AgentDefinitionBundle;
   draftTools: string[];
   setDraftTools: (v: string[] | ((p: string[]) => string[])) => void;
+  draftMaxIterations: number;
+  setDraftMaxIterations: (v: number) => void;
   draftSkills: string[];
   setDraftSkills: (v: string[] | ((p: string[]) => string[])) => void;
   draftMcpServerNames: string[];
@@ -120,6 +122,8 @@ export const AgentRuntimeTab: FC<{
   selectedBundle,
   draftTools,
   setDraftTools,
+  draftMaxIterations,
+  setDraftMaxIterations,
   draftSkills,
   setDraftSkills,
   draftMcpServerNames,
@@ -176,9 +180,13 @@ export const AgentRuntimeTab: FC<{
     for (const row of skillInstalls) {
       if (row.skillName?.trim()) s.add(row.skillName.trim());
     }
-    for (const x of parseStringList(selectedBundle.definition.skillsJson)) s.add(x);
+    for (const x of parseStringList(
+      selectedBundle.draft?.skillsJson ?? selectedBundle.definition.skillsJson
+    )) {
+      s.add(x);
+    }
     return Array.from(s).sort();
-  }, [draftSkills, skillInstalls, selectedBundle.definition.skillsJson]);
+  }, [draftSkills, skillInstalls, selectedBundle]);
 
   const toolPool = useMemo(() => {
     const s = new Set<string>(knownToolPool);
@@ -245,6 +253,31 @@ export const AgentRuntimeTab: FC<{
 
   return (
     <div className="qb-agent-field-grid" style={{ gap: 16 }}>
+      <section>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)", display: "block", marginBottom: 8 }}>
+          ReAct 循环
+        </span>
+        <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)", lineHeight: 1.45 }}>
+          ReAct 是 Agent 内建运行方式（Graph / A2A 相同）：perceive → reason → act → observe。
+          迭代上限 &gt; 1 时可在模型未给出最终结论前继续循环；设为 1 则只跑一轮。
+        </p>
+        <label style={{ display: "block", maxWidth: 200 }}>
+          <span style={label}>迭代上限</span>
+          <input
+            style={input}
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            value={draftMaxIterations}
+            onChange={(e) => {
+              const n = Number.parseInt(e.target.value, 10);
+              if (Number.isFinite(n)) setDraftMaxIterations(Math.min(100, Math.max(1, n)));
+            }}
+          />
+        </label>
+      </section>
+
       <section>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>内置工具</span>

@@ -257,11 +257,11 @@ export const TeamResearchMemberDirectory: FC<{
         }}
       >
         成员与编组来自<strong>配置中心已发布的 Agent 定义</strong>及{" "}
-        <code style={{ fontSize: 12 }}>agent_group</code>。 在下方 <strong>Agent 池</strong>
-        卡片上可「加入当前编组」；拓扑在 <strong>画布</strong>中编辑：<strong>单向</strong>
-        为一条依赖边；
-        <strong>广播</strong>为同一源并行指向多个接收方（运行期等价多条 from→to 边）。保存后写入{" "}
-        <code style={{ fontSize: 12 }}>relations_json</code>。
+        <code style={{ fontSize: 12 }}>agent_group</code>。拓扑边语义：<strong>from 先完成，结论传给 to</strong>。
+        <strong>推荐流程</strong>：① Orchestrator 广播派发任务 → ② 分析师之间用单向边串行加深信息（如 macro→fundamental→technical）→
+        ③ 分析师回报 Orchestrator（运行期自动落库）→ ④ MSA 融合 → ⑤ Orchestrator 买/卖/观望决策 →
+        ⑥ 画布配置 <code>research → backtest</code> 单向边控制策略与回测顺序。仅 Orchestrator 星型边时分析师会并行且信息较浅。
+        保存后写入 <code style={{ fontSize: 12 }}>relations_json</code>。
       </p>
 
       <h4

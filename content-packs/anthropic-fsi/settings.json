@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "enabledBundles": ["quant-research"],
+  "applyAgentMappings": true,
+  "validateOutput": true,
+  "seedMcpCatalog": true
+}

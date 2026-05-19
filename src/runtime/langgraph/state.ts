@@ -21,7 +21,7 @@ export interface StepStreamEvent {
   payload: Record<string, unknown>;
   /** When set, identifies which agent loop produced this frame (native vs external CLI). */
   loopKind?: import("../../types/loop").AgentLoopKind;
-  source?: "native" | "cli";
+  source?: "native" | "cli" | "a2a";
 }
 
 export interface AgentGraphState {

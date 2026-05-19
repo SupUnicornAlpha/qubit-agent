@@ -4,6 +4,7 @@ import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import type { OrderIntentPayload, TaskAssignPayload } from "../../types/a2a";
 import { ALL_AGENT_ROLES, type AgentRole } from "../../types/entities";
+import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
 import { getA2APool } from "../a2a/a2a-pool";
 import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
@@ -53,15 +54,7 @@ const noopHandler = (role: AgentRole): RuntimeRoleHandler => ({
   },
   onMessage: async (ctx, msg) => {
     if (msg.messageType === "TASK_ASSIGN") {
-      const payload = msg.payload as TaskAssignPayload;
-      await ctx.send({
-        workflowId: msg.workflowId,
-        traceId: msg.traceId,
-        receiverAgent: msg.senderAgent,
-        messageType: "TASK_RESULT",
-        payload: buildTaskResult(payload.taskId, role),
-        priority: msg.priority,
-      });
+      await runA2aReactTaskAssign(ctx, msg);
     }
   },
   onShutdown: async () => {

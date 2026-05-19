@@ -11,6 +11,10 @@ import {
 } from "../db/sqlite/schema";
 import { cleanupRedundantAgentDefinitions } from "./agent/delete-agent-definition";
 import { SEED_AGENT_DEFINITIONS } from "./seed-agent-definitions-data";
+import { isFsiActive } from "./fsi/fsi-config";
+import { mergeFsiSkillsForRole } from "./fsi/fsi-prompt-enricher";
+import { runFsiSeedIntegration } from "./fsi/seed-fsi-integration";
+import { shouldApplyFsiAgentMappings } from "./fsi/fsi-config";
 import { seedBrokerMcpServer } from "./seed-broker-mcp";
 import {
   defaultQuantMcpServers,
@@ -92,6 +96,10 @@ export async function seedAgentDefinitions(): Promise<void> {
     const mcpServers = QUANT_MCP_ROLES.has(def.role)
       ? mergeMcpServers(def.mcpServers, quantMcps)
       : def.mcpServers;
+    const skillsJson =
+      isFsiActive() && shouldApplyFsiAgentMappings()
+        ? await mergeFsiSkillsForRole(def.role, def.skills)
+        : def.skills;
     await db
       .insert(agentDefinition)
       .values({
@@ -102,7 +110,7 @@ export async function seedAgentDefinitions(): Promise<void> {
         systemPrompt: def.systemPrompt,
         toolsJson: def.tools,
         mcpServersJson: mcpServers,
-        skillsJson: def.skills,
+        skillsJson,
         subscriptionsJson: def.subscriptions,
         llmProvider: def.llmProvider,
         maxIterations: def.maxIterations,
@@ -118,7 +126,7 @@ export async function seedAgentDefinitions(): Promise<void> {
           systemPrompt: def.systemPrompt,
           toolsJson: def.tools,
           mcpServersJson: mcpServers,
-          skillsJson: def.skills,
+          skillsJson,
           subscriptionsJson: def.subscriptions,
           llmProvider: def.llmProvider,
           maxIterations: def.maxIterations,
@@ -165,6 +173,7 @@ export async function seedAgentDefinitions(): Promise<void> {
   }
   await seedRecommendedMcpServers();
   await seedBrokerMcpServer();
+  await runFsiSeedIntegration(SEED_AGENT_DEFINITIONS);
   await ensureDefaultAnalystAgentGroup();
 }
 

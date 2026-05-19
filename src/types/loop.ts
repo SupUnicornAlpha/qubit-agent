@@ -18,6 +18,8 @@ export const LoopOptionsJsonSchema = z
     injectMcpBridge: z.boolean().optional(),
     /** Max bytes of combined stdout+stderr to buffer (default 8MB) */
     maxOutputBytes: z.number().int().positive().optional(),
+    /** native Agent 内建 ReAct；false 时强制单轮（仍走 perceive→reason→act→observe 一次） */
+    reactLoop: z.boolean().optional(),
   })
   .strip();
 

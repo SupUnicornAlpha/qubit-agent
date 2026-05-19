@@ -32,13 +32,46 @@ import {
   readPackFiles,
 } from "../agent/agent-pack-service";
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
+import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
+import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
 import {
   logOrchestratorKickoff,
   parseGroupRelationsWithOrchestrator,
   POST_FUSION_AUX_ROLES,
+  resolveOrchestratorSlot,
+  runOrchestratorDecision,
+  runOrchestratorPlanning,
   runPostFusionPipeline,
   slotOnlyRelationEdges,
 } from "./analyst-team-pipeline";
+
+async function enrichAnalystSlotsWithFsi(
+  db: Awaited<ReturnType<typeof getDb>>,
+  slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>
+): Promise<Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>> {
+  if (slots.length === 0) return slots;
+  const ids = [...new Set(slots.map((s) => s.definitionId))];
+  const defs =
+    ids.length > 0
+      ? await db
+          .select({ id: agentDefinition.id, skillsJson: agentDefinition.skillsJson })
+          .from(agentDefinition)
+          .where(inArray(agentDefinition.id, ids))
+      : [];
+  const skillsByDef = new Map(
+    defs.map((d) => [d.id, (d.skillsJson as string[]) ?? []])
+  );
+  return Promise.all(
+    slots.map(async (slot) => ({
+      ...slot,
+      systemPrompt: await enrichSystemPromptWithFsi({
+        role: slot.role,
+        basePrompt: slot.systemPrompt,
+        declaredSkillIds: skillsByDef.get(slot.definitionId) ?? [],
+      }),
+    }))
+  );
+}
 
 async function enrichAnalystSlotsWithPack(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -160,12 +193,16 @@ async function runAnalystLlm(params: {
   };
 
   const userPrompt = `
-请分析以下投资标的并给出你的专业判断：
+请分析以下投资标的并给出你的专业判断。
+
+**要求**：
+1. 必须先阅读「自动数据快照」与 Orchestrator 任务简报、前置成员结论（若有），在信息充分后再输出结论。
+2. 若数据明显不足，signal 用 hold、confidence 低于 0.4，并在 reasoning 中说明缺什么。
+3. 严格按角色输出格式，只输出一段 JSON。
 
 **标的代码**：${params.ticker}
-**背景信息**：${params.context}
-
-请严格按照你角色的输出格式输出 JSON，不要添加其他内容。
+**背景信息**：
+${params.context}
 `;
 
   let answer = "";
@@ -189,16 +226,19 @@ async function runAnalystLlm(params: {
     parsed = {};
   }
 
-  const signal = (["buy", "sell", "hold"].includes(parsed["signal"] as string)
-    ? parsed["signal"]
+  const validated = await validateFsiRoleOutput(params.role, parsed);
+  const p = validated.sanitized;
+
+  const signal = (["buy", "sell", "hold"].includes(p["signal"] as string)
+    ? p["signal"]
     : "hold") as AnalystSignalValue;
 
-  const confidence = typeof parsed["confidence"] === "number"
-    ? Math.max(0, Math.min(1, parsed["confidence"]))
+  const confidence = typeof p["confidence"] === "number"
+    ? Math.max(0, Math.min(1, p["confidence"]))
     : 0.4;
 
-  const reasoning = typeof parsed["reasoning"] === "string"
-    ? parsed["reasoning"]
+  const reasoning = typeof p["reasoning"] === "string"
+    ? p["reasoning"]
     : answer.slice(0, 500);
 
   return {
@@ -348,7 +388,9 @@ export async function runAnalystTeam(params: {
   const { workflowRunId, ticker } = params;
   const userContext = params.context ?? `请对 ${ticker} 进行全面分析`;
   const dataContext = await buildAnalystTeamDataContext({ ticker });
-  const context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
+  let context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
+
+  const orchestratorSlot = await resolveOrchestratorSlot(db, params.agentGroupId);
 
   await db
     .update(workflowRun)
@@ -375,6 +417,7 @@ export async function runAnalystTeam(params: {
   }
 
   slots = await enrichAnalystSlotsWithPack(db, slots);
+  slots = await enrichAnalystSlotsWithFsi(db, slots);
 
   let relationEdges: TeamRelationEdge[] = [];
   if (params.agentGroupId) {
@@ -394,6 +437,17 @@ export async function runAnalystTeam(params: {
     slotRoles: slots.map((s) => s.role),
     relationEdges,
   });
+
+  if (orchestratorSlot) {
+    const planBrief = await runOrchestratorPlanning({
+      workflowRunId,
+      ticker,
+      slotRoles: slots.map((s) => s.role),
+      dataAndUserContext: context,
+      orchestrator: orchestratorSlot,
+    });
+    context = `${context}\n\n## Orchestrator 任务简报\n${planBrief}`;
+  }
 
   let analystEdges = slotOnlyRelationEdges(relationEdges, slotRoleSet);
   analystEdges = analystEdges.filter((e) => isMsAnalystRole(e.from) && isMsAnalystRole(e.to));
@@ -485,6 +539,14 @@ export async function runAnalystTeam(params: {
         outputByRole.set(slot.role, signal);
         rawSignals.push(signal);
         persistSignals.push({ agentInstanceId: instanceId, signal });
+        await logResearchTeamInteraction({
+          workflowRunId,
+          fromRole: slot.role,
+          toRole: "orchestrator",
+          kind: "llm_message",
+          contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 3500)}`,
+          payloadJson: { phase: "analyst_report", ticker },
+        });
       } else if (isMsAnalystRole(slot.role)) {
         const fallback: RawAnalystSignal = {
           definitionId: slot.definitionId,
@@ -542,6 +604,29 @@ export async function runAnalystTeam(params: {
     fusionResult.signalBreakdown
   );
 
+  let orchestratorDecision = null;
+  if (orchestratorSlot) {
+    orchestratorDecision = await runOrchestratorDecision({
+      workflowRunId,
+      ticker,
+      orchestrator: orchestratorSlot,
+      fusionSummary: reportCore,
+      msaSignal: fusionResult.fusedSignal,
+      msaConfidence: fusionResult.fusedConfidence,
+    });
+    reportCore += `\n\n### Orchestrator 汇总决策\n\n**${orchestratorDecision.signal.toUpperCase()}**（${(orchestratorDecision.confidence * 100).toFixed(0)}%）\n\n${orchestratorDecision.reasoning}`;
+    if (orchestratorDecision.proceedToStrategy) {
+      await logResearchTeamInteraction({
+        workflowRunId,
+        fromRole: "orchestrator",
+        toRole: "research",
+        kind: "llm_message",
+        contentText: "Orchestrator 批准进入策略撰写与回测阶段。",
+        payloadJson: { phase: "orchestrator_to_research" },
+      });
+    }
+  }
+
   if (auxSlots.length > 0) {
     const post = await runPostFusionPipeline({
       workflowRunId,
@@ -549,6 +634,8 @@ export async function runAnalystTeam(params: {
       fusionReport: reportCore,
       fusedSignal: fusionResult.fusedSignal,
       fusedConfidence: fusionResult.fusedConfidence,
+      orchestratorDecision,
+      relationEdges,
       auxSlots,
       runAuxLlm: (slot, ctx) =>
         runAuxResearchLlm({

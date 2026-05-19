@@ -20,6 +20,11 @@ const ConfigSchema = z.object({
         .default("native_only"),
     }),
   }).default({}),
+  /**
+   * FSI 内容包：运行时以 content-packs/anthropic-fsi/settings.json 为准；
+   * 此处仅保留占位，实际逻辑见 src/runtime/fsi/fsi-config.ts
+   */
+  fsi: z.object({}).default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

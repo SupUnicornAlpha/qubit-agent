@@ -1,0 +1,4 @@
+[submodule "content-packs/anthropic-fsi/financial-services"]
+	path = content-packs/anthropic-fsi/financial-services
+	url = https://github.com/anthropics/financial-services.git
+	shallow = true

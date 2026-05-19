@@ -70,6 +70,8 @@ export type ConfigAgentPanelProps = {
   setDraftDescription: (v: string) => void;
   draftTools: string[];
   setDraftTools: (v: string[] | ((prev: string[]) => string[])) => void;
+  draftMaxIterations: number;
+  setDraftMaxIterations: (v: number) => void;
   draftSkills: string[];
   setDraftSkills: (v: string[] | ((prev: string[]) => string[])) => void;
   draftSubscriptions: string[];
@@ -167,6 +169,8 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   setDraftDescription,
   draftTools,
   setDraftTools,
+  draftMaxIterations,
+  setDraftMaxIterations,
   draftSkills,
   setDraftSkills,
   draftSubscriptions,
@@ -269,7 +273,13 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 LLM: {def?.llmProvider ?? "—"}
               </span>
               <span className="qb-agent-badge--muted qb-agent-badge">
-                迭代上限: {def?.maxIterations ?? "—"}
+                迭代上限: {draftMaxIterations}
+                {selectedBundle.draft?.maxIterations != null &&
+                selectedBundle.draft.maxIterations !== draftMaxIterations
+                  ? `（已发布 ${def?.maxIterations ?? "—"}）`
+                  : def?.maxIterations != null && def.maxIterations !== draftMaxIterations
+                    ? `（已发布 ${def.maxIterations}）`
+                    : null}
               </span>
             </div>
           </div>
@@ -722,6 +732,8 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               selectedBundle={selectedBundle}
               draftTools={draftTools}
               setDraftTools={setDraftTools}
+              draftMaxIterations={draftMaxIterations}
+              setDraftMaxIterations={setDraftMaxIterations}
               draftSkills={draftSkills}
               setDraftSkills={setDraftSkills}
               draftMcpServerNames={draftMcpServerNames}
@@ -756,6 +768,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               systemPrompt: draftPrompt,
               changeNote: draftNote,
               toolsJson: draftTools,
+              maxIterations: draftMaxIterations,
               mcpServersJson: draftMcpServerNames,
               skillsJson: draftSkills,
               subscriptionsJson: draftSubscriptions,

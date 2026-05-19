@@ -1060,6 +1060,7 @@ const ConfigPanel: FC = () => {
   const [draftDisplayName, setDraftDisplayName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
   const [draftTools, setDraftTools] = useState<string[]>([]);
+  const [draftMaxIterations, setDraftMaxIterations] = useState(20);
   const [draftSkills, setDraftSkills] = useState<string[]>([]);
   const [draftSubscriptions, setDraftSubscriptions] = useState<string[]>([]);
   const [draftPromptTemplateRef, setDraftPromptTemplateRef] = useState("");
@@ -1434,6 +1435,7 @@ const ConfigPanel: FC = () => {
         ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
         : [];
     setDraftTools(parseStrList(b.draft?.toolsJson ?? b.definition.toolsJson));
+    setDraftMaxIterations(b.draft?.maxIterations ?? b.definition.maxIterations ?? 20);
     setDraftSkills(parseStrList(b.draft?.skillsJson ?? b.definition.skillsJson));
     setDraftSubscriptions(parseStrList(b.draft?.subscriptionsJson ?? b.definition.subscriptionsJson));
     setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
@@ -3056,6 +3058,8 @@ const ConfigPanel: FC = () => {
             setDraftDescription={setDraftDescription}
             draftTools={draftTools}
             setDraftTools={setDraftTools}
+            draftMaxIterations={draftMaxIterations}
+            setDraftMaxIterations={setDraftMaxIterations}
             draftSkills={draftSkills}
             setDraftSkills={setDraftSkills}
             draftSubscriptions={draftSubscriptions}

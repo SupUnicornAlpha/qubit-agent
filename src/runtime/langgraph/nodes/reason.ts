@@ -10,6 +10,7 @@ import {
 import { loadModelConfig } from "../../config/model-config";
 import { runLlmGateway } from "../../llm/gateway";
 import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
+import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
@@ -113,7 +114,12 @@ export async function reasonNode(
       state.agentDefinition.id,
       state.agentDefinition.systemPrompt
     );
-    const { full: systemPrompt } = assembleAgentSystemPrompt(baseSystem, { tools, mcpServers });
+    const fsiSystem = await enrichSystemPromptWithFsi({
+      role: state.agentDefinition.role,
+      basePrompt: baseSystem,
+      declaredSkillIds: state.agentDefinition.skills ?? [],
+    });
+    const { full: systemPrompt } = assembleAgentSystemPrompt(fsiSystem, { tools, mcpServers });
 
     answer = await runLlmGateway({
       config: modelConfig,

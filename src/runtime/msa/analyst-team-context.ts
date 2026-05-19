@@ -20,7 +20,7 @@ export async function buildAnalystTeamDataContext(params: {
       symbol: ticker,
       exchange: exchange || undefined,
       timeframe: "1d",
-      limit: 120,
+      limit: 250,
     });
     if (error) {
       blocks.push(`[行情] 拉取失败：${error.message}`);
