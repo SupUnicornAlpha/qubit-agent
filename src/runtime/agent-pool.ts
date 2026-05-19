@@ -23,6 +23,10 @@ export function getRuntimeAgents() {
 
 export async function startAllAgents(): Promise<void> {
   await graphRunner.start();
+  if (graphRunner.getViews().length === 0) {
+    console.warn("[AgentPool] GraphRunner empty after start; forcing reload.");
+    await graphRunner.reload();
+  }
   await getA2APool().start();
   console.log(
     `[AgentPool] GraphRunner=${graphRunner.getViews().length} roles, A2APool=${getA2APool().getViews().length} roles.`

@@ -1,17 +1,43 @@
 import type { CSSProperties, FC } from "react";
+import { useState } from "react";
+import { getHealth } from "../../api/backend";
+import { PACKAGED_BACKEND_URL } from "../../api/packaged-backend";
+import { isTauriEnv, tauriRestartBackend } from "../../api/tauri";
 import { PALETTE_LABELS, palettesForStyle, STYLE_LABELS } from "../../theme/appearance";
 import { useAppStore, UI_STYLE_IDS, type UiPaletteId, type UiStyleId } from "../../store";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
   const backendHint = useAppStore((s) => s.backendHint);
+  const setBackendConnected = useAppStore((s) => s.setBackendConnected);
+  const setBackendHint = useAppStore((s) => s.setBackendHint);
   const uiPalette = useAppStore((s) => s.uiPalette);
   const uiStyle = useAppStore((s) => s.uiStyle);
   const setUiPalette = useAppStore((s) => s.setUiPalette);
   const setUiStyle = useAppStore((s) => s.setUiStyle);
+  const [restarting, setRestarting] = useState(false);
+  const inTauri = isTauriEnv();
   const paletteLocked =
     uiStyle !== "default" && uiStyle !== "glass-holographic" && uiStyle !== "biophilic";
   const paletteOptions = palettesForStyle(uiStyle);
+
+  const onRestartBackend = async () => {
+    if (!inTauri || restarting) return;
+    setRestarting(true);
+    setBackendHint("正在重启内置后端…");
+    try {
+      await tauriRestartBackend();
+      await new Promise((r) => setTimeout(r, 800));
+      await getHealth();
+      setBackendConnected(true);
+      setBackendHint(null);
+    } catch {
+      setBackendConnected(false);
+      setBackendHint(`重启失败，请确认本机未占用 ${PACKAGED_BACKEND_URL} 对应端口。`);
+    } finally {
+      setRestarting(false);
+    }
+  };
 
   return (
     <header className="qb-topbar" style={styles.bar}>
@@ -72,7 +98,19 @@ export const TopBar: FC = () => {
         </select>
       </div>
       <span className="qb-topbar__divider" aria-hidden />
-      <StatusDot connected={connected} />
+      <StatusDot connected={connected} inTauri={inTauri} />
+      {inTauri ? (
+        <button
+          type="button"
+          className="qb-backend-restart-btn"
+          style={styles.restartBtn}
+          disabled={restarting}
+          title={`重启内置后端（${PACKAGED_BACKEND_URL}）`}
+          onClick={() => void onRestartBackend()}
+        >
+          {restarting ? "重启中…" : "重启后端"}
+        </button>
+      ) : null}
       {uiStyle === "ambient-3d" ? (
         <span className="qb-topbar__spatial-badge" aria-hidden>
           SPATIAL UI
@@ -82,10 +120,18 @@ export const TopBar: FC = () => {
   );
 };
 
-const StatusDot: FC<{ connected: boolean }> = ({ connected }) => (
+const StatusDot: FC<{ connected: boolean; inTauri: boolean }> = ({ connected, inTauri }) => (
   <div
     className="qb-status-pill"
-    title={connected ? "后端健康检查通过，可正常调用 API" : "后端未响应：请检查本机是否已启动开发服务"}
+    title={
+      connected
+        ? inTauri
+          ? "内置后端已连接（127.0.0.1:38473）"
+          : "后端健康检查通过，可正常调用 API"
+        : inTauri
+          ? "内置后端未响应，可点击「重启后端」"
+          : "后端未响应：请检查本机是否已启动开发服务"
+    }
     style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#a1a1aa" }}
   >
     <span
@@ -148,5 +194,15 @@ const styles: Record<string, CSSProperties> = {
     marginLeft: "auto",
     flexShrink: 0,
     minWidth: 0,
+  },
+  restartBtn: {
+    flexShrink: 0,
+    fontSize: 11,
+    padding: "4px 10px",
+    borderRadius: 6,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)",
+    color: "#d4d4d8",
+    cursor: "pointer",
   },
 };

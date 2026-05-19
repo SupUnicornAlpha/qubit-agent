@@ -11,6 +11,8 @@
     "dev:frontend": "bun run --cwd frontend dev",
     "dev:tauri": "tauri dev",
     "build": "bun build --compile src/cli.ts --outfile dist/qubit",
+    "build:app": "bash scripts/build-app.sh",
+    "build:app:release": "bash scripts/build-app.sh --tauri",
     "build:tauri": "tauri build",
     "tauri": "tauri",
     "db:generate": "drizzle-kit generate",

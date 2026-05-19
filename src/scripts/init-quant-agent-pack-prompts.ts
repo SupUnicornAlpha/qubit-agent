@@ -14,7 +14,7 @@ const PACK_NOTES: Partial<Record<string, string>> = {
     "## 编排备忘",
     "",
     "- 数据层：market_data + news_event",
-    "- 研究层：run_analyst_team（grp-default-analyst-team）",
+    "- 研究层：run_analyst_team（grp-full-analyst-team → grp-strategy-pipeline）",
     "- 深化：research → backtest",
     "- 风控：risk（规则+组合）",
   ].join("\n"),

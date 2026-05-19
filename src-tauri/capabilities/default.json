@@ -8,6 +8,24 @@
     "shell:default",
     "fs:default",
     "http:default",
-    "allow-backend-commands"
+    "allow-backend-commands",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "qubit",
+          "sidecar": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "qubit",
+          "sidecar": true
+        }
+      ]
+    }
   ]
 }

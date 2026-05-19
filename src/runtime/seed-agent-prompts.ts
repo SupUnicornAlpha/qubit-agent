@@ -44,7 +44,7 @@ export const PROMPT_ORCHESTRATOR = `你是 QUBIT 多 Agent 体系的 **Orchestra
 - **拓扑派单**：见系统提示中的「团队拓扑调度」表，使用 \`call_team_<role>\`（goal 必填）。
 - **行情/K线/快照** → call_team_market_data
 - **新闻/财报事件/情绪** → call_team_news_event；或 run_analyst_team 含 analyst_sentiment
-- **四维投研信号** → run_analyst_team（默认编组 grp-default-analyst-team）
+- **四维投研信号** → run_analyst_team（推荐编组 grp-full-analyst-team；策略阶段用 grp-strategy-pipeline）
 - **因子/策略/多空论证** → call_team_research（含原 bull/bear 视角）
 - **回测与稳健性验证** → call_team_backtest（含原 backtest_engineer 能力）
 - **风控（规则+组合）** → call_team_risk

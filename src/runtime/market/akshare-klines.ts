@@ -1,13 +1,15 @@
 import { join } from "node:path";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
+import { config } from "../../config";
+import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 import { isChinaAShareMarket } from "./eastmoney-klines";
 
 let bridge: PythonConnectorBridgeImpl | null = null;
 let bridgeInit: Promise<PythonConnectorBridgeImpl> | null = null;
 
 function pythonConnectorsDir(): string {
-  return join(process.cwd(), "python_connectors");
+  return getPythonConnectorsDir();
 }
 
 function connectorRunnerPath(): string {
@@ -23,6 +25,7 @@ async function getAkshareBridge(): Promise<PythonConnectorBridgeImpl> {
       scriptPath: connectorRunnerPath(),
       connectorName: "akshare",
       cwd: pythonConnectorsDir(),
+      pythonBin: resolvePythonBin(config.dataDir),
       meta: {
         name: "akshare-python",
         version: "1.0.0",

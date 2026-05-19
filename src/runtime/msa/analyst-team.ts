@@ -50,6 +50,7 @@ import {
   slotOnlyRelationEdges,
 } from "./analyst-team-pipeline";
 import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
+import { STRATEGY_PIPELINE_GROUP } from "../seed-agent-catalog";
 
 async function enrichAnalystSlotsWithFsi(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -149,6 +150,17 @@ export const RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET = new Set<string>([
 
 export function isMsAnalystRole(role: AgentRole): boolean {
   return (ANALYST_TEAM_ROLES as readonly string[]).includes(role);
+}
+
+/** 策略专岗编组：无 analyst_*，直接进入 research → backtest → risk */
+export function isStrategyPipelineGroup(agentGroupId?: string | null): boolean {
+  return agentGroupId === STRATEGY_PIPELINE_GROUP.id;
+}
+
+function isStrategyFocusedSlots(slots: Array<{ role: AgentRole }>): boolean {
+  const hasAnalyst = slots.some((s) => isMsAnalystRole(s.role));
+  const hasAux = slots.some((s) => POST_FUSION_AUX_ROLES.has(s.role));
+  return hasAux && !hasAnalyst;
 }
 
 export interface AnalystTeamResult {
@@ -443,6 +455,8 @@ async function runAnalystTeamCore(params: {
 
   const analystSlots = slots.filter((s) => isMsAnalystRole(s.role));
   const auxSlots = slots.filter((s) => POST_FUSION_AUX_ROLES.has(s.role));
+  const strategyPipelineMode =
+    isStrategyPipelineGroup(params.agentGroupId) || isStrategyFocusedSlots(slots);
   const slotRoleSet = new Set(slots.map((s) => s.role));
 
   await logOrchestratorKickoff({
@@ -465,8 +479,9 @@ async function runAnalystTeamCore(params: {
 
   let analystEdges = slotOnlyRelationEdges(relationEdges, slotRoleSet);
   analystEdges = analystEdges.filter((e) => isMsAnalystRole(e.from) && isMsAnalystRole(e.to));
-  const waveSlots = analystSlots.length > 0 ? analystSlots : slots;
-  const waves = partitionSlotsIntoWaves(waveSlots, analystEdges);
+  const waveSlots = analystSlots;
+  const waves =
+    waveSlots.length > 0 ? partitionSlotsIntoWaves(waveSlots, analystEdges) : [];
 
   const instanceBySlotIndex: string[] = [];
   for (let i = 0; i < waveSlots.length; i++) {
@@ -628,7 +643,24 @@ async function runAnalystTeamCore(params: {
   );
 
   let orchestratorDecision = null;
-  if (orchestratorSlot) {
+  if (strategyPipelineMode && auxSlots.length > 0) {
+    orchestratorDecision = {
+      signal: fusionResult.fusedSignal,
+      confidence: Math.max(fusionResult.fusedConfidence, 0.55),
+      reasoning:
+        "策略专岗编组：基于当前工作流上下文（建议粘贴全分析师/MSA 报告）直接进入策略撰写与回测。",
+      proceedToStrategy: true,
+    };
+    reportCore += `\n\n### Orchestrator 汇总决策\n\n**${orchestratorDecision.signal.toUpperCase()}**（${(orchestratorDecision.confidence * 100).toFixed(0)}%）\n\n${orchestratorDecision.reasoning}`;
+    await logResearchTeamInteraction({
+      workflowRunId,
+      fromRole: "orchestrator",
+      toRole: "research",
+      kind: "llm_message",
+      contentText: "策略专岗编组：进入策略撰写与回测阶段。",
+      payloadJson: { phase: "strategy_pipeline_mode" },
+    });
+  } else if (orchestratorSlot) {
     orchestratorDecision = await runOrchestratorDecision({
       workflowRunId,
       ticker,

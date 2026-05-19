@@ -4,6 +4,7 @@ import { Sidebar } from "./components/layout/Sidebar";
 import { TopBar } from "./components/layout/TopBar";
 import { MainContent } from "./components/layout/MainContent";
 import { getHealth } from "./api/backend";
+import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
 import { useAppStore } from "./store";
 import { useAmbient3dTilt } from "./hooks/useAmbient3dTilt";
@@ -38,8 +39,10 @@ const App: FC = () => {
       if (disposed) return;
       try {
         if (inTauri) {
-          // Subprocess flag can be stale/false while HTTP is up (e.g. manual `bun run`). Always verify with getHealth.
-          await tauriBackendStatus().catch(() => null);
+          const st = await tauriBackendStatus().catch(() => null);
+          if (st && !st.running) {
+            await tauriStartBackend().catch(() => null);
+          }
         }
         await getHealth();
         lastConnected = true;
@@ -48,21 +51,9 @@ const App: FC = () => {
       } catch {
         lastConnected = false;
         setBackendConnected(false);
-        // #region agent log
-        fetch("http://127.0.0.1:7617/ingest/82ec5b74-0b73-4815-bb8d-d6f541a02c64", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "6ea60d" },
-          body: JSON.stringify({
-            sessionId: "6ea60d",
-            hypothesisId: "H1",
-            location: "App.tsx:probeHealth:fail",
-            message: "backend health probe failed",
-            data: { inTauri },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
-        if (!inTauri) {
+        if (inTauri) {
+          setBackendHint("内置后端未就绪，可点击顶部「重启后端」或稍候自动重试。");
+        } else {
           setBackendHint("后端未连接：请在项目根目录启动 `bun run dev`。");
         }
       } finally {
@@ -78,6 +69,7 @@ const App: FC = () => {
     };
 
     if (isTauriEnv()) {
+      syncBackendUrlForDesktop();
       setBackendHint(null);
       void tauriStartBackend();
     } else {
@@ -95,26 +87,28 @@ const App: FC = () => {
 
   return (
     <div className="qb-app-root" style={styles.root}>
-      <div className="qb-gh-bg-layer" aria-hidden>
-        <span className="qb-gh-bg-layer__base" />
-        <span className="qb-gh-bg-layer__orbs" />
-        <span className="qb-gh-bg-layer__aurora" />
-        <span className="qb-a3d-spatial-grid" />
-        <span className="qb-gh-bg-layer__sweep" />
-        <span className="qb-gh-bg-layer__wave" />
-        <span className="qb-a3d-scene-deco" aria-hidden>
-          <span className="qb-a3d-prism-shadow" />
-          <span className="qb-a3d-prism" />
-        </span>
-      </div>
-      <TopBar />
-      <div className="qb-a3d-stage" style={styles.body}>
-        <Sidebar />
-        <MainContent />
-      </div>
+    <div className="qb-gh-bg-layer" aria-hidden>
+      <span className="qb-gh-bg-layer__base" />
+      <span className="qb-gh-bg-layer__orbs" />
+      <span className="qb-gh-bg-layer__aurora" />
+      <span className="qb-a3d-spatial-grid" />
+      <span className="qb-gh-bg-layer__sweep" />
+      <span className="qb-gh-bg-layer__wave" />
+      <span className="qb-a3d-scene-deco" aria-hidden>
+        <span className="qb-a3d-prism-shadow" />
+        <span className="qb-a3d-prism" />
+      </span>
     </div>
+    <TopBar />
+    <div className="qb-a3d-stage" style={styles.body}>
+      <Sidebar />
+      <MainContent />
+    </div>
+  </div>
   );
 };
+
+export default App;
 
 const styles: Record<string, CSSProperties> = {
   root: {
@@ -134,5 +128,3 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
   },
 };
-
-export default App;

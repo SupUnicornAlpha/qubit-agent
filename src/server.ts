@@ -20,6 +20,7 @@ import { marketRouter } from "./routes/market.routes";
 import { strategyRuntimeRouter } from "./routes/strategy-runtime.routes";
 import { traderRouter } from "./routes/trader.routes";
 import { fsiRouter } from "./routes/fsi.routes";
+import { systemRouter } from "./routes/system.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
@@ -53,6 +54,7 @@ app.route("/api/v1/market", marketRouter);
 app.route("/api/v1/strategy-runtimes", strategyRuntimeRouter);
 app.route("/api/v1/trader", traderRouter);
 app.route("/api/v1/fsi", fsiRouter);
+app.route("/api/v1/system", systemRouter);
 app.get("/api/v1/workflows/:id/stream", (c) => {
   const runId = c.req.query("runId");
   if (!runId) return c.json({ error: "runId is required" }, 400);

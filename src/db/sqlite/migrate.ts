@@ -1,10 +1,14 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { getBundledMigrationsDir } from "../../runtime/app-paths";
 import { getDb } from "./client";
 
-/** Resolve migrations next to this file so `bun run dev` works from any cwd. */
+/** 开发：源码旁 migrations；安装包：`$QUBIT_APP_ROOT/db/migrations` */
 function migrationsDir(): string {
+  const bundled = getBundledMigrationsDir();
+  if (existsSync(bundled)) return bundled;
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, "migrations");
 }

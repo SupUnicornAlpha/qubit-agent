@@ -1,5 +1,6 @@
 const BACKEND_URL_KEY = "qubit_backend_url";
-const DEFAULT_BACKEND_URL = "http://localhost:3000";
+const DEFAULT_BACKEND_URL =
+  (import.meta.env.VITE_BACKEND_URL as string | undefined)?.trim() || "http://localhost:3000";
 
 /** 后端根地址（不含路径）。若 localStorage 为空则默认 `localhost:3000`。 */
 export function getBackendBaseUrl(): string {

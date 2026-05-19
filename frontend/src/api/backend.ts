@@ -79,6 +79,30 @@ import type {
 } from "./types";
 import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 
+export async function runSystemBootstrap(input?: {
+  skipPython?: boolean;
+}): Promise<{
+  migrations: boolean;
+  seed: boolean;
+  pythonVenv: string;
+  pythonMessage?: string;
+  dataDir: string;
+  appRoot: string;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      migrations: boolean;
+      seed: boolean;
+      pythonVenv: string;
+      pythonMessage?: string;
+      dataDir: string;
+      appRoot: string;
+    };
+  }>("/api/v1/system/bootstrap", input ?? {});
+  return res.data;
+}
+
 export async function getHealth(): Promise<{ status: string }> {
   return httpGet<{ status: string }>("/health");
 }
@@ -817,11 +841,13 @@ export async function listAlerts(input?: {
   scopeType?: "workflow" | "agent" | "system";
   scopeId?: string;
   status?: "open" | "ack" | "resolved";
+  limit?: number;
 }): Promise<AlertEventRecord[]> {
   const query = new URLSearchParams();
   if (input?.scopeType) query.set("scopeType", input.scopeType);
   if (input?.scopeId) query.set("scopeId", input.scopeId);
   if (input?.status) query.set("status", input.status);
+  if (input?.limit != null) query.set("limit", String(input.limit));
   const suffix = query.toString();
   const res = await httpGet<{ ok: boolean; data: AlertEventRecord[] }>(
     `/api/v1/monitor/alerts${suffix ? `?${suffix}` : ""}`
@@ -1310,7 +1336,7 @@ export async function listBrokerAccounts(provider?: "futu" | "ib"): Promise<Brok
 }
 
 export async function upsertBrokerAccount(input: {
-  provider: "futu" | "ib";
+  provider: "futu" | "ib" | "ccxt";
   accountRef: string;
   mode?: "mock" | "sandbox" | "live";
   baseUrl?: string;
@@ -1323,12 +1349,22 @@ export async function upsertBrokerAccount(input: {
 }
 
 export async function checkBrokerHealth(input: {
-  provider: "futu" | "ib";
+  provider: "futu" | "ib" | "ccxt";
   accountRef: string;
-}): Promise<{ provider: "futu" | "ib"; status: "healthy" | "degraded" | "down"; message: string; checkedAt: string }> {
+}): Promise<{
+  provider: "futu" | "ib" | "ccxt";
+  status: "healthy" | "degraded" | "down";
+  message: string;
+  checkedAt: string;
+}> {
   const res = await httpPost<{
     ok: boolean;
-    data: { provider: "futu" | "ib"; status: "healthy" | "degraded" | "down"; message: string; checkedAt: string };
+    data: {
+      provider: "futu" | "ib" | "ccxt";
+      status: "healthy" | "degraded" | "down";
+      message: string;
+      checkedAt: string;
+    };
   }>("/api/v1/reia/broker/health-check", input);
   return res.data;
 }

@@ -1526,6 +1526,20 @@ const ConfigPanel: FC = () => {
     return Boolean(row.url?.trim());
   };
 
+  const formatMcpProbeDetail = (e: unknown): string => {
+    const raw = e instanceof Error ? e.message : String(e);
+    const jsonMatch = raw.match(/^HTTP \d+:([\s\S]*)$/);
+    if (jsonMatch?.[1]) {
+      try {
+        const body = JSON.parse(jsonMatch[1].trim()) as unknown;
+        return typeof body === "string" ? body : JSON.stringify(body, null, 2);
+      } catch {
+        return raw;
+      }
+    }
+    return raw;
+  };
+
   const probeMcpServer = async (row: McpServerConfigRecord, binding?: McpToolBindingRecord) => {
     const key = row.name;
     if (!mcpConnectionSpecOk(row)) {
@@ -1572,7 +1586,7 @@ const ConfigPanel: FC = () => {
         },
       }));
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = formatMcpProbeDetail(e);
       setMcpTestOutput(msg);
       setMcpProbeByServer((prev) => ({
         ...prev,
@@ -1610,6 +1624,7 @@ const ConfigPanel: FC = () => {
     const bind = pickBindingForMcpServer(row.name);
     setMcpAdvancedJsonDraft(JSON.stringify(buildMcpAdvancedPayload(row, bind), null, 2));
     setMcpAdvancedJsonError("");
+    setMcpTestOutput("");
     setSelectedMcpServer(row.name);
     setFocusedMcpServerId(row.id);
     setMcpAdvancedEditorOpen(true);
@@ -2638,6 +2653,75 @@ const ConfigPanel: FC = () => {
                       <code style={{ fontSize: 11 }}>null</code> 可仅更新 server（不删除已有绑定）。
                     </p>
                     {mcpAdvancedJsonError ? <div style={styles.errorBox}>{mcpAdvancedJsonError}</div> : null}
+                    {(() => {
+                      const row = mcpServers.find((s) => s.id === focusedMcpServerId);
+                      const probe = row ? mcpProbeByServer[row.name] : undefined;
+                      const showProbePanel =
+                        probe?.status === "checking" ||
+                        probe?.status === "ok" ||
+                        probe?.status === "error" ||
+                        Boolean(mcpTestOutput.trim());
+                      if (!showProbePanel) return null;
+                      const statusLabel =
+                        probe?.status === "checking"
+                          ? "检测中…"
+                          : probe?.status === "ok"
+                            ? "可用"
+                            : probe?.status === "error"
+                              ? "失败"
+                              : "—";
+                      const statusColor =
+                        probe?.status === "checking"
+                          ? "var(--qb-pill-info-fg, #93c5fd)"
+                          : probe?.status === "ok"
+                            ? "var(--qb-pill-success-fg, #86efac)"
+                            : probe?.status === "error"
+                              ? "var(--qb-pill-error-fg, #fca5a5)"
+                              : "var(--qb-main-meta, #a1a1aa)";
+                      const detailText =
+                        mcpTestOutput.trim() || probe?.message?.trim() || "暂无详情";
+                      return (
+                        <div
+                          style={{
+                            ...styles.mcpProbePanel,
+                            borderColor:
+                              probe?.status === "error"
+                                ? "var(--qb-config-error-border, #7f1d1d)"
+                                : probe?.status === "ok"
+                                  ? "var(--qb-pill-success-border, #14532d)"
+                                  : "var(--qb-mcp-json-border, #27272a)",
+                          }}
+                        >
+                          <div style={styles.mcpProbePanelHeader}>
+                            <span style={{ fontWeight: 600, color: "var(--qb-body-fg)" }}>连通性探测</span>
+                            <span style={{ color: statusColor, fontWeight: 600 }}>{statusLabel}</span>
+                            {probe?.checkedAt ? (
+                              <span style={{ color: "var(--qb-main-meta)", fontSize: 11 }}>
+                                {new Date(probe.checkedAt).toLocaleString()}
+                              </span>
+                            ) : null}
+                          </div>
+                          <pre style={styles.mcpProbeFullMsg}>{detailText}</pre>
+                          {mcpTestOutput.trim() &&
+                          probe?.message?.trim() &&
+                          mcpTestOutput.trim() !== probe.message.trim() ? (
+                            <>
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  color: "var(--qb-main-meta)",
+                                  marginTop: 8,
+                                  marginBottom: 4,
+                                }}
+                              >
+                                原始响应
+                              </div>
+                              <pre style={styles.mcpProbeFullMsg}>{mcpTestOutput}</pre>
+                            </>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     <textarea
                       style={styles.mcpJsonTextarea}
                       value={mcpAdvancedJsonDraft}
@@ -3442,6 +3526,33 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     padding: "10px 14px",
     borderTop: "1px solid var(--qb-modal-sep, #27272a)",
+  },
+  mcpProbePanel: {
+    marginBottom: 10,
+    padding: "10px 12px",
+    borderRadius: 8,
+    border: "1px solid var(--qb-mcp-json-border, #27272a)",
+    background: "var(--qb-stream-box-bg, #09090b)",
+    flexShrink: 0,
+  },
+  mcpProbePanelHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+    marginBottom: 8,
+    fontSize: 12,
+  },
+  mcpProbeFullMsg: {
+    margin: 0,
+    maxHeight: 220,
+    overflow: "auto",
+    fontSize: 11,
+    lineHeight: 1.5,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    color: "var(--qb-stream-box-fg, #d4d4d8)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
   },
   mcpJsonTextarea: {
     width: "100%",
@@ -4296,7 +4407,18 @@ const TeamDashboardPanel: FC = () => {
         .then(setAgentDefBundles)
         .catch(() => setAgentDefBundles([]));
       void listAgentGroups()
-        .then(setAnalystAgentGroupOptions)
+        .then((rows) => {
+          setAnalystAgentGroupOptions(rows);
+          setAnalystAgentGroupId((cur) => {
+            if (cur.trim()) return cur;
+            return (
+              rows.find((g) => g.id === "grp-full-analyst-team")?.id ??
+              rows.find((g) => g.id === "grp-default-analyst-team")?.id ??
+              rows[0]?.id ??
+              ""
+            );
+          });
+        })
         .catch(() => setAnalystAgentGroupOptions([]));
       try {
         const workspaces = await listWorkspaces();

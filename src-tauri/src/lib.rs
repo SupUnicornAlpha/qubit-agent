@@ -1,87 +1,270 @@
-use tauri::Manager;
-use tauri::State;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use serde::Serialize;
+use std::time::Duration;
 
-#[derive(Default)]
+use serde::Serialize;
+use tauri::Manager;
+use tauri_plugin_shell::process::CommandChild;
+use tauri_plugin_shell::ShellExt;
+
+/// 桌面安装包专用端口，避免与常见开发服务（3000 等）冲突。
+pub const BACKEND_PORT: &str = "38473";
+
 struct BackendState {
-    child: Mutex<Option<Child>>,
+    child: Mutex<Option<CommandChild>>,
+    pid: Mutex<Option<u32>>,
+    #[cfg(debug_assertions)]
+    dev_child: Mutex<Option<Child>>,
 }
 
-#[derive(Serialize)]
+impl Default for BackendState {
+    fn default() -> Self {
+        Self {
+            child: Mutex::new(None),
+            pid: Mutex::new(None),
+            #[cfg(debug_assertions)]
+            dev_child: Mutex::new(None),
+        }
+    }
+}
+
+#[derive(Serialize, Clone)]
 struct BackendStatus {
     running: bool,
     pid: Option<u32>,
+    port: &'static str,
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
-#[tauri::command]
-fn start_backend(state: State<'_, BackendState>) -> Result<BackendStatus, String> {
-    let mut child_guard = state.child.lock().map_err(|_| "backend lock poisoned".to_string())?;
-    if let Some(existing) = child_guard.as_mut() {
-        match existing.try_wait() {
-            Ok(None) => {
-                return Ok(BackendStatus {
-                    running: true,
-                    pid: Some(existing.id()),
-                });
-            }
-            Ok(Some(_)) | Err(_) => {
-                *child_guard = None;
+fn backend_url() -> String {
+    format!("http://127.0.0.1:{BACKEND_PORT}")
+}
+
+fn status_ok(pid: u32) -> BackendStatus {
+    BackendStatus {
+        running: true,
+        pid: Some(pid),
+        port: BACKEND_PORT,
+        url: backend_url(),
+        error: None,
+    }
+}
+
+fn status_stopped() -> BackendStatus {
+    BackendStatus {
+        running: false,
+        pid: None,
+        port: BACKEND_PORT,
+        url: backend_url(),
+        error: None,
+    }
+}
+
+fn data_dir_path(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))
+}
+
+fn pid_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn migrations_present(root: &Path) -> bool {
+    root.join("db/migrations").is_dir()
+}
+
+/// 解析只读资源根（含 migrations、python_connectors、content-packs）。
+fn resolve_app_root(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Ok(dir) = handle.path().resource_dir() {
+        let bundle = dir.join("bundle");
+        if migrations_present(&bundle) {
+            return Ok(bundle);
+        }
+    }
+
+    if let Ok(root) = std::env::var("QUBIT_APP_ROOT") {
+        let p = PathBuf::from(root.trim());
+        if migrations_present(&p) {
+            return Ok(p);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for rel in ["../dist/bundle/resources", "../../dist/bundle/resources"] {
+            let p = manifest.join(rel);
+            if migrations_present(&p) {
+                return Ok(p);
             }
         }
     }
 
+    Err(
+        "app resources not found (db/migrations missing). Run `bun run build:app` before `tauri build`."
+            .to_string(),
+    )
+}
+
+#[cfg(debug_assertions)]
+fn spawn_dev_bun_backend(state: &BackendState) -> Result<BackendStatus, String> {
+    let mut dev_guard = state
+        .dev_child
+        .lock()
+        .map_err(|_| "backend lock poisoned".to_string())?;
+
     let child = Command::new("bash")
         .arg("-lc")
-        .arg("source ~/.bash_profile && bun run src/index.ts")
+        .arg(format!(
+            "PORT={} HOST=127.0.0.1 bun run src/index.ts",
+            BACKEND_PORT
+        ))
         .current_dir("..")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("failed to spawn backend: {e}"))?;
+        .map_err(|e| format!("dev bun spawn: {e}"))?;
 
     let pid = child.id();
-    *child_guard = Some(child);
-    Ok(BackendStatus {
-        running: true,
-        pid: Some(pid),
-    })
+    *dev_guard = Some(child);
+    Ok(status_ok(pid))
 }
 
-#[tauri::command]
-fn stop_backend(state: State<'_, BackendState>) -> Result<BackendStatus, String> {
-    let mut child_guard = state.child.lock().map_err(|_| "backend lock poisoned".to_string())?;
-    if let Some(mut child) = child_guard.take() {
+fn stop_backend_internal(state: &BackendState) -> Result<(), String> {
+    let mut child_guard = state
+        .child
+        .lock()
+        .map_err(|_| "backend lock poisoned".to_string())?;
+    let mut pid_guard = state
+        .pid
+        .lock()
+        .map_err(|_| "backend lock poisoned".to_string())?;
+    if let Some(child) = child_guard.take() {
         let _ = child.kill();
-        let _ = child.wait();
     }
-    Ok(BackendStatus {
-        running: false,
-        pid: None,
-    })
-}
-
-#[tauri::command]
-fn backend_status(state: State<'_, BackendState>) -> Result<BackendStatus, String> {
-    let mut child_guard = state.child.lock().map_err(|_| "backend lock poisoned".to_string())?;
-    if let Some(child) = child_guard.as_mut() {
-        match child.try_wait() {
-            Ok(None) => {
-                return Ok(BackendStatus {
-                    running: true,
-                    pid: Some(child.id()),
-                });
-            }
-            Ok(Some(_)) | Err(_) => {
-                *child_guard = None;
-            }
+    *pid_guard = None;
+    #[cfg(debug_assertions)]
+    {
+        let mut dev_guard = state
+            .dev_child
+            .lock()
+            .map_err(|_| "backend lock poisoned".to_string())?;
+        if let Some(mut dev) = dev_guard.take() {
+            let _ = dev.kill();
+            let _ = dev.wait();
         }
     }
-    Ok(BackendStatus {
-        running: false,
-        pid: None,
-    })
+    Ok(())
+}
+
+fn spawn_backend_sidecar(
+    handle: &tauri::AppHandle,
+    state: &BackendState,
+) -> Result<BackendStatus, String> {
+    let mut child_guard = state
+        .child
+        .lock()
+        .map_err(|_| "backend lock poisoned".to_string())?;
+    let mut pid_guard = state
+        .pid
+        .lock()
+        .map_err(|_| "backend lock poisoned".to_string())?;
+
+    if let Some(pid) = *pid_guard {
+        if pid_alive(pid) {
+            return Ok(status_ok(pid));
+        }
+        *child_guard = None;
+        *pid_guard = None;
+    }
+
+    let app_root = resolve_app_root(handle)?;
+    let data_dir = data_dir_path(handle)?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("create data_dir: {e}"))?;
+
+    let sidecar = handle.shell().sidecar("qubit");
+    let Ok(sidecar) = sidecar else {
+        #[cfg(debug_assertions)]
+        {
+            return spawn_dev_bun_backend(state);
+        }
+        #[cfg(not(debug_assertions))]
+        return Err("qubit sidecar binary missing; run `bun run build:app` before packaging".to_string());
+    };
+
+    let app_root_str = app_root
+        .to_str()
+        .ok_or_else(|| "app_root path is not UTF-8".to_string())?
+        .to_string();
+    let data_dir_str = data_dir
+        .to_str()
+        .ok_or_else(|| "data_dir path is not UTF-8".to_string())?
+        .to_string();
+
+    let (_rx, child) = sidecar
+        .env("QUBIT_APP_ROOT", app_root_str)
+        .env("QUBIT_DATA_DIR", data_dir_str)
+        .env("PORT", BACKEND_PORT)
+        .env("HOST", "127.0.0.1")
+        .env("NODE_ENV", "production")
+        .spawn()
+        .map_err(|e| format!("sidecar spawn: {e}"))?;
+
+    let pid = child.pid();
+    *child_guard = Some(child);
+    *pid_guard = Some(pid);
+
+    Ok(status_ok(pid))
+}
+
+#[tauri::command]
+fn start_backend(
+    handle: tauri::AppHandle,
+    state: tauri::State<'_, BackendState>,
+) -> Result<BackendStatus, String> {
+    spawn_backend_sidecar(&handle, &state)
+}
+
+#[tauri::command]
+fn stop_backend(state: tauri::State<'_, BackendState>) -> Result<BackendStatus, String> {
+    stop_backend_internal(&state)?;
+    Ok(status_stopped())
+}
+
+#[tauri::command]
+fn restart_backend(
+    handle: tauri::AppHandle,
+    state: tauri::State<'_, BackendState>,
+) -> Result<BackendStatus, String> {
+    stop_backend_internal(&state)?;
+    std::thread::sleep(Duration::from_millis(400));
+    spawn_backend_sidecar(&handle, &state)
+}
+
+#[tauri::command]
+fn backend_status(state: tauri::State<'_, BackendState>) -> Result<BackendStatus, String> {
+    let pid_guard = state
+        .pid
+        .lock()
+        .map_err(|_| "backend lock poisoned".to_string())?;
+    if let Some(pid) = *pid_guard {
+        if pid_alive(pid) {
+            return Ok(status_ok(pid));
+        }
+    }
+    Ok(status_stopped())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -94,14 +277,27 @@ pub fn run() {
         .setup(|app| {
             #[cfg(debug_assertions)]
             {
-                let window = app.get_webview_window("main").unwrap();
-                window.open_devtools();
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
             }
+
+            let handle = app.handle().clone();
+            let state = app.state::<BackendState>();
+            match spawn_backend_sidecar(&handle, &state) {
+                Ok(s) => eprintln!(
+                    "[QUBIT] backend sidecar started pid={:?} url={}",
+                    s.pid, s.url
+                ),
+                Err(e) => eprintln!("[QUBIT] failed to start backend sidecar: {e}"),
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             start_backend,
             stop_backend,
+            restart_backend,
             backend_status
         ])
         .run(tauri::generate_context!())

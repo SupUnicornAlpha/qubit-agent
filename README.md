@@ -99,13 +99,19 @@ bun run dev:frontend
 
 ### 桌面客户端（可选）
 
+开发调试（仍建议 `bun run dev` + `bun run dev:frontend`，Tauri 仅作壳）：
+
 ```bash
 bun run dev:tauri
-# 或
-bun tauri dev
 ```
 
-客户端会通过 Tauri 命令拉起后端进程，并在 UI 中展示连接状态。
+**打包成可安装应用**（含后端二进制、迁移、Python 连接器、内容包；详见 [docs/PACKAGING.md](docs/PACKAGING.md)）：
+
+```bash
+bun run build:app:release
+```
+
+安装后首次启动会自动：数据库迁移、种子 Agent/MCP/Tool、按需创建 Python venv。亦可调用 `POST /api/v1/system/bootstrap` 或 `./dist/bundle/bin/qubit bootstrap`。
 
 ### 种子数据（可选）
 

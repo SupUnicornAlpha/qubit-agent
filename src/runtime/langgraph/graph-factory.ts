@@ -104,6 +104,15 @@ export class GraphRunner {
     return [...this.views.values()];
   }
 
+  /** 派发前确保已从 DB 加载角色定义（避免 HTTP 已就绪但 Agent 池未 warm-up） */
+  async ensureReady(requiredRole?: AgentRole): Promise<void> {
+    const missingRole = requiredRole != null && !this.definitions.has(requiredRole);
+    if (!this.started || this.definitions.size === 0 || missingRole) {
+      if (this.started) await this.reload();
+      else await this.start();
+    }
+  }
+
   private async syncFromWorkspaceConfig(): Promise<void> {
     const loaded = await loadWorkspaceRuntimeConfig();
     if (loaded.parseError) {
@@ -172,8 +181,14 @@ export class GraphRunner {
     payload: TaskAssignPayload;
     traceId?: string;
   }): Promise<{ runId: string }> {
+    await this.ensureReady(params.role);
     const def = this.definitions.get(params.role);
-    if (!def) throw new Error(`No graph definition for role=${params.role}`);
+    if (!def) {
+      throw new Error(
+        `No graph definition for role=${params.role} (enabled definition missing in DB). ` +
+          `Try POST /api/v1/agents/reload or restart the backend.`
+      );
+    }
 
     const runId = randomUUID();
     const traceId = params.traceId ?? randomUUID();

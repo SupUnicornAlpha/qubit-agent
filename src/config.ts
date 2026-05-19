@@ -1,12 +1,11 @@
 import { z } from "zod";
+import { defaultDataDir } from "./runtime/app-paths";
 
 const ConfigSchema = z.object({
   port: z.coerce.number().int().min(1).max(65535).default(3000),
   host: z.string().default("localhost"),
   env: z.enum(["development", "production", "test"]).default("development"),
-  dataDir: z
-    .string()
-    .default(`${process.env["HOME"] ?? "~"}/.quant-agent`),
+  dataDir: z.string().default(defaultDataDir()),
   logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
   riskSigningKey: z.string().default("dev-secret-change-in-production"),
   /** Default agent execution path for new native workflows (graph | a2a). Per-workflow override on workflow_run. */

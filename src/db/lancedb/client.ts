@@ -1,12 +1,13 @@
 import * as lancedb from "@lancedb/lancedb";
 import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { config } from "../../config";
 import type { Schema } from "apache-arrow";
 
 let _db: lancedb.Connection | null = null;
 
 function getDbPath(): string {
-  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? ".";
-  return `${home}/.quant-agent/db/memory.lance`;
+  return join(config.dataDir, "db", "memory.lance");
 }
 
 export async function getLanceDb(): Promise<lancedb.Connection> {

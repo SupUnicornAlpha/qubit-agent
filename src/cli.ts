@@ -17,6 +17,13 @@ async function main() {
       await (await import("./db/sqlite/migrate")).runMigrations();
       break;
 
+    case "bootstrap": {
+      const { runPlatformBootstrap } = await import("./runtime/bootstrap/packaged-setup");
+      const result = await runPlatformBootstrap();
+      console.log(JSON.stringify(result, null, 2));
+      break;
+    }
+
     case "version":
       console.log("QUBIT v0.1.0");
       break;
@@ -29,6 +36,7 @@ Usage: qubit <command>
 Commands:
   start     Start the QUBIT platform (default)
   migrate   Run database migrations
+  bootstrap Migrate DB, seed agents/MCP/tools, setup Python venv if needed
   version   Show version
 `);
       process.exit(1);

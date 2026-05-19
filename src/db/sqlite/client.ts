@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { config } from "../../config";
 import * as schema from "./schema";
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
@@ -9,8 +10,7 @@ export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 let _db: DbClient | null = null;
 
 function getDbPath(): string {
-  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? ".";
-  return `${home}/.quant-agent/db/core.sqlite`;
+  return join(config.dataDir, "db", "core.sqlite");
 }
 
 export async function getDb(): Promise<DbClient> {

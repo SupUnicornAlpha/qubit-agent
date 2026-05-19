@@ -88,8 +88,16 @@ export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[]
   return out;
 }
 
+export type BuiltinAgentGroupSpec = {
+  id: string;
+  name: string;
+  description: string;
+  memberDefinitionIds: readonly string[];
+  memberRoles: readonly AgentRole[];
+};
+
 /** 默认编排团队（10 成员 = Orchestrator + 9 专家） */
-export const DEFAULT_ORCHESTRATION_GROUP = {
+export const DEFAULT_ORCHESTRATION_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-default-analyst-team",
   name: "默认编排团队（10 Agent）",
   description:
@@ -105,7 +113,7 @@ export const DEFAULT_ORCHESTRATION_GROUP = {
     "def-research",
     "def-backtest",
     "def-risk",
-  ] as const,
+  ],
   memberRoles: [
     "orchestrator",
     "market_data",
@@ -117,8 +125,51 @@ export const DEFAULT_ORCHESTRATION_GROUP = {
     "research",
     "backtest",
     "risk",
-  ] as const,
+  ],
 };
+
+/** 全分析师编组：四维 MSA + 多空博弈，不进入策略/回测 */
+export const FULL_ANALYST_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-full-analyst-team",
+  name: "全分析师（MSA + 辩论）",
+  description:
+    "Orchestrator + 四维分析师：宏观→基本面→技术面→情绪面串行加深，MSA 融合与多空辩论；不含策略撰写。完成后再选「策略撰写」编组接续。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-analyst-fundamental",
+    "def-analyst-technical",
+    "def-analyst-sentiment",
+    "def-analyst-macro",
+  ],
+  memberRoles: [
+    "orchestrator",
+    "analyst_fundamental",
+    "analyst_technical",
+    "analyst_sentiment",
+    "analyst_macro",
+  ],
+};
+
+/** 策略撰写编组：MSA/辩论之后专门产出可回测策略 */
+export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-strategy-pipeline",
+  name: "策略撰写（研究→回测→风控）",
+  description:
+    "Orchestrator + research/backtest/risk：基于上游研究报告或本页「补充上下文」直接进入策略撰写与回测，跳过 proceedToStrategy 闸门。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-research",
+    "def-backtest",
+    "def-risk",
+  ],
+  memberRoles: ["orchestrator", "research", "backtest", "risk"],
+};
+
+export const BUILTIN_AGENT_GROUPS: readonly BuiltinAgentGroupSpec[] = [
+  DEFAULT_ORCHESTRATION_GROUP,
+  FULL_ANALYST_GROUP,
+  STRATEGY_PIPELINE_GROUP,
+];
 
 export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
   orchestrator: skills(S.compsAnalysis),

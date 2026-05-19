@@ -1,12 +1,12 @@
 import { DuckDBInstance } from "@duckdb/node-api";
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { config } from "../../config";
 
 let _instance: DuckDBInstance | null = null;
 
 function getDbPath(): string {
-  const home = process.env["HOME"] ?? process.env["USERPROFILE"] ?? ".";
-  return `${home}/.quant-agent/db/analytics.duckdb`;
+  return join(config.dataDir, "db", "analytics.duckdb");
 }
 
 export async function getDuckDb(): Promise<DuckDBInstance> {

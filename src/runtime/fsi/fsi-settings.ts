@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { getContentPacksDir } from "../app-paths";
 
 const FsiSettingsSchema = z.object({
   enabled: z.boolean().optional(),
@@ -23,7 +24,7 @@ let cachedPackSettings: FsiSettings | null | undefined;
 let cachedManifestDefaults: { enabled?: boolean; enabledBundles?: string[] } | null | undefined;
 
 export function getFsiPackDir(): string {
-  return join(process.cwd(), "content-packs", "anthropic-fsi");
+  return join(getContentPacksDir(), "anthropic-fsi");
 }
 
 export function getFsiVendorDir(): string {
