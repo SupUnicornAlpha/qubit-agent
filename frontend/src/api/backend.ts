@@ -904,12 +904,11 @@ export async function getEvalRunDetail(runId: string): Promise<{
  */
 export async function startAnalystTeam(params: {
   workflowRunId: string;
-  ticker: string;
+  ticker?: string;
+  scope?: import("./types").ResearchScopeInput;
   context?: string;
   agentGroupId?: string;
-  /** 仅运行这些 analyst_* 角色（与编组/定义取交集） */
   analystRoles?: string[];
-  /** 仅运行这些 definition id（与编组槽位取交集）；若提供则优先于 analystRoles */
   analystDefinitionIds?: string[];
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
@@ -953,7 +952,8 @@ export async function pollAnalystJob(
 /** 保留旧名称向后兼容 */
 export async function runAnalystTeam(params: {
   workflowRunId: string;
-  ticker: string;
+  ticker?: string;
+  scope?: import("./types").ResearchScopeInput;
   context?: string;
   onProgress?: (elapsedMs: number) => void;
   agentGroupId?: string;

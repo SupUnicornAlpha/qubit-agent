@@ -20,6 +20,12 @@ import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
 import { loadDebateConfig } from "../config/debate-config";
 import { fuseSignals, type RawAnalystSignal } from "./signal-fusion";
+import {
+  resolveResearchScope,
+  type NormalizedResearchScope,
+  type ResearchScopeInput,
+} from "../../types/research-scope";
+import { defaultResearchUserContext } from "./analyst-team-scope";
 import { runDebateSession } from "../debate/debate-engine";
 import { evaluateRiskAndVeto } from "../risk/veto-engine";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
@@ -148,6 +154,10 @@ export function isMsAnalystRole(role: AgentRole): boolean {
 export interface AnalystTeamResult {
   fusionId: string;
   ticker: string;
+  /** 多标的/板块时的结构化范围（可选） */
+  scope?: NormalizedResearchScope;
+  /** 篮子模式下各标的子结果 */
+  perSymbol?: Array<{ symbol: string; result: Omit<AnalystTeamResult, "perSymbol" | "scope"> }>;
   fusedSignal: AnalystSignalValue;
   fusedConfidence: number;
   debateTriggered: boolean;
@@ -294,23 +304,104 @@ async function resolveAnalystSlots(params: {
   return slots;
 }
 
+function mergeMultiSymbolAnalystResults(
+  scope: NormalizedResearchScope,
+  results: AnalystTeamResult[]
+): AnalystTeamResult {
+  if (results.length === 0) {
+    throw new Error("mergeMultiSymbolAnalystResults: empty results");
+  }
+  if (results.length === 1) {
+    return { ...results[0], scope, perSymbol: [{ symbol: results[0].ticker, result: stripScopeFields(results[0]) }] };
+  }
+
+  const buy = results.filter((r) => r.fusedSignal === "buy").length;
+  const sell = results.filter((r) => r.fusedSignal === "sell").length;
+  let fusedSignal: AnalystSignalValue = "hold";
+  if (buy > sell && buy > results.length / 2) fusedSignal = "buy";
+  else if (sell > buy && sell > results.length / 2) fusedSignal = "sell";
+
+  const fusedConfidence =
+    Math.round((results.reduce((a, r) => a + r.fusedConfidence, 0) / results.length) * 100) / 100;
+
+  const report = [
+    `# 多标的研究报告`,
+    ``,
+    `**范围**：${scope.displayLabel}`,
+    `**标的数**：${results.length}`,
+    `**组合倾向**：${fusedSignal.toUpperCase()}（各标的信号均值置信度 ${(fusedConfidence * 100).toFixed(0)}%）`,
+    ``,
+    ...results.map(
+      (r) =>
+        `### ${r.ticker}\n\n**${r.fusedSignal.toUpperCase()}**（${(r.fusedConfidence * 100).toFixed(0)}%）\n\n${r.report.split("\n").slice(2).join("\n").slice(0, 4000)}`
+    ),
+  ].join("\n\n");
+
+  return {
+    fusionId: results.map((r) => r.fusionId).join(","),
+    ticker: scope.displayLabel,
+    scope,
+    perSymbol: results.map((r) => ({ symbol: r.ticker, result: stripScopeFields(r) })),
+    fusedSignal,
+    fusedConfidence,
+    debateTriggered: results.some((r) => r.debateTriggered),
+    breakdown: results.flatMap((r) =>
+      r.breakdown.map((b) => ({
+        ...b,
+        reasoning: `[${r.ticker}] ${b.reasoning}`,
+      }))
+    ),
+    report,
+    debate: results.find((r) => r.debate)?.debate,
+    risk: results.find((r) => r.risk)?.risk,
+  };
+}
+
+function stripScopeFields(r: AnalystTeamResult): Omit<AnalystTeamResult, "perSymbol" | "scope"> {
+  const { perSymbol: _p, scope: _s, ...rest } = r;
+  return rest;
+}
+
 /**
  * 主入口：并行运行 Analyst Agent（默认四类；可选用 Agent 组子集/顺序），收集信号，执行 MSA 融合
  */
 export async function runAnalystTeam(params: {
   workflowRunId: string;
-  ticker: string;
+  /** 兼容：单标的代码；多标的请用 scope.symbols 或逗号分隔 */
+  ticker?: string;
+  scope?: ResearchScopeInput | null;
   context?: string;
   agentGroupId?: string | null;
-  /** 仅运行这些槽位角色；与编组解析结果取交集 */
   analystRoles?: AgentRole[] | null;
-  /** 仅运行这些 definition id（研究团队槽位角色）；与编组解析结果取交集；优先于 analystRoles */
+  analystDefinitionIds?: string[] | null;
+}): Promise<AnalystTeamResult> {
+  const scope = resolveResearchScope({ ticker: params.ticker, scope: params.scope });
+
+  if (scope.symbols.length > 1 && scope.kind === "basket") {
+    const perSymbolResults: AnalystTeamResult[] = [];
+    for (const sym of scope.symbols) {
+      const sub = await runAnalystTeamCore({ ...params, ticker: sym, scope });
+      perSymbolResults.push(sub);
+    }
+    return mergeMultiSymbolAnalystResults(scope, perSymbolResults);
+  }
+
+  return runAnalystTeamCore({ ...params, ticker: scope.primarySymbol, scope });
+}
+
+async function runAnalystTeamCore(params: {
+  workflowRunId: string;
+  ticker: string;
+  scope: NormalizedResearchScope;
+  context?: string;
+  agentGroupId?: string | null;
+  analystRoles?: AgentRole[] | null;
   analystDefinitionIds?: string[] | null;
 }): Promise<AnalystTeamResult> {
   const db = await getDb();
-  const { workflowRunId, ticker } = params;
-  const userContext = params.context ?? `请对 ${ticker} 进行全面分析`;
-  const dataContext = await buildAnalystTeamDataContext({ ticker });
+  const { workflowRunId, ticker, scope } = params;
+  const userContext = params.context ?? defaultResearchUserContext(scope);
+  const dataContext = await buildAnalystTeamDataContext({ scope });
   let context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
 
   const orchestratorSlot = await resolveOrchestratorSlot(db, params.agentGroupId);
@@ -364,7 +455,7 @@ export async function runAnalystTeam(params: {
   if (orchestratorSlot) {
     const planBrief = await runOrchestratorPlanning({
       workflowRunId,
-      ticker,
+      ticker: scope.displayLabel,
       slotRoles: slots.map((s) => s.role),
       dataAndUserContext: context,
       orchestrator: orchestratorSlot,
@@ -447,6 +538,7 @@ export async function runAnalystTeam(params: {
             role: slot.role,
             systemPrompt: slot.systemPrompt,
             ticker,
+            scope,
             context: ctx,
             agentInstanceId: preInstanceId,
             expectJsonSignal: true,
@@ -575,6 +667,7 @@ export async function runAnalystTeam(params: {
           role: slot.role,
           systemPrompt: slot.systemPrompt,
           ticker,
+          scope,
           context: ctx,
           expectJsonSignal: false,
         });
@@ -632,7 +725,8 @@ export async function runAnalystTeam(params: {
 
   return {
     fusionId: fusionResult.fusionId,
-    ticker,
+    ticker: scope.displayLabel,
+    scope,
     fusedSignal: fusionResult.fusedSignal,
     fusedConfidence: fusionResult.fusedConfidence,
     debateTriggered: shouldDebate,

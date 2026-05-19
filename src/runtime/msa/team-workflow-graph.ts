@@ -25,10 +25,18 @@ export interface TeamGraphNode {
 
 export interface TeamGraphEdge {
   key: string;
+  /** 字典序较小的端点 */
   a: string;
+  /** 字典序较大的端点 */
   b: string;
   messageCount: number;
   toolCount: number;
+  /** 有向消息 a → b */
+  messagesAtoB: number;
+  /** 有向消息 b → a */
+  messagesBtoA: number;
+  toolSuccessCount: number;
+  toolFailCount: number;
 }
 
 export interface TeamGraphToolCall {
@@ -199,15 +207,53 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     };
   });
 
-  type EdgeAgg = { messageCount: number; toolCount: number };
+  type EdgeAgg = {
+    messageCount: number;
+    toolCount: number;
+    messagesAtoB: number;
+    messagesBtoA: number;
+    toolSuccessCount: number;
+    toolFailCount: number;
+  };
   const edgeMap = new Map<string, EdgeAgg>();
+
+  const emptyAgg = (): EdgeAgg => ({
+    messageCount: 0,
+    toolCount: 0,
+    messagesAtoB: 0,
+    messagesBtoA: 0,
+    toolSuccessCount: 0,
+    toolFailCount: 0,
+  });
 
   const bumpEdge = (x: string, y: string, messages: number, tools: number) => {
     if (!x || !y || x === y) return;
     const k = undirectedKey(x, y);
-    const cur = edgeMap.get(k) ?? { messageCount: 0, toolCount: 0 };
+    const cur = edgeMap.get(k) ?? emptyAgg();
     cur.messageCount += messages;
     cur.toolCount += tools;
+    edgeMap.set(k, cur);
+  };
+
+  const bumpDirectedMessage = (from: string, to: string) => {
+    if (!from || !to || from === to) return;
+    const a = from < to ? from : to;
+    const b = from < to ? to : from;
+    const k = undirectedKey(a, b);
+    const cur = edgeMap.get(k) ?? emptyAgg();
+    cur.messageCount += 1;
+    if (from === a) cur.messagesAtoB += 1;
+    else cur.messagesBtoA += 1;
+    edgeMap.set(k, cur);
+  };
+
+  const bumpToolEdge = (agentRole: string, success: boolean) => {
+    if (!agentRole || agentRole === "__tools__") return;
+    const k = undirectedKey(agentRole, "__tools__");
+    const cur = edgeMap.get(k) ?? emptyAgg();
+    cur.toolCount += 1;
+    if (success) cur.toolSuccessCount += 1;
+    else cur.toolFailCount += 1;
     edgeMap.set(k, cur);
   };
 
@@ -242,13 +288,13 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
 
   for (const r of rows) {
     if (r.kind === "tool_call") continue;
-    bumpEdge(r.fromRole, r.toRole, 1, 0);
+    bumpDirectedMessage(r.fromRole, r.toRole);
   }
 
   /** 历史数据：无 interaction 表记录时，从 analyst_signal / debate 推断边 */
   if (rows.length === 0) {
     for (const s of signals) {
-      bumpEdge(String(s.analystRole), "msa", 1, 0);
+      bumpDirectedMessage(String(s.analystRole), "msa");
     }
     const sessionIds = sessions.map((s) => s.id);
     if (sessionIds.length > 0) {
@@ -263,16 +309,17 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       };
       for (const t of turns) {
         const other = peer[t.speakerRole] ?? "debate_panel";
-        bumpEdge(t.speakerRole, other, 1, 0);
+        bumpDirectedMessage(t.speakerRole, other);
       }
     }
   }
 
+  const toolOk = (status: string) => status === "success";
   for (const t of toolCalls) {
-    bumpEdge(t.agentRole, "__tools__", 0, 1);
+    bumpToolEdge(t.agentRole, toolOk(t.status));
   }
   for (const m of mcpCalls) {
-    bumpEdge(m.agentRole, "__tools__", 0, 1);
+    bumpToolEdge(m.agentRole, toolOk(m.status));
   }
 
   const nodeRoles = new Set<string>();
@@ -307,7 +354,17 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
 
   const edges: TeamGraphEdge[] = [...edgeMap.entries()].map(([key, agg]) => {
     const [a, b] = key.split("||");
-    return { key, a, b, messageCount: agg.messageCount, toolCount: agg.toolCount };
+    return {
+      key,
+      a,
+      b,
+      messageCount: agg.messageCount,
+      toolCount: agg.toolCount,
+      messagesAtoB: agg.messagesAtoB,
+      messagesBtoA: agg.messagesBtoA,
+      toolSuccessCount: agg.toolSuccessCount,
+      toolFailCount: agg.toolFailCount,
+    };
   });
 
   return { nodes, edges, interactions: rows, toolCalls, mcpCalls, agentSteps };

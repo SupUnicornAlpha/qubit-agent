@@ -22,6 +22,8 @@ const DATA_SOURCE_HINTS: Partial<Record<KlinesDataSourceMeta, string>> = {
     "AKShare 主要覆盖 A 股；美股/港股/加密等请在配置中心将 K 线数据源设为 auto 或 yahoo_chart。",
   eastmoney: "东方财富适用于 A 股/北交所；其它市场请使用 auto 或 yahoo_chart。",
   tushare_daily: "请确认 Tushare Token 有效，且标的为 A 股日线。",
+  binance_crypto:
+    "Binance 未返回数据：请确认交易对（如 BTCUSDT）、市场 CRYPTO，以及网络可访问 api.binance.com；测试网可在配置中启用 cryptoUseTestnet。",
   synthetic: "当前配置禁用了外部 K 线（synthetic）；请在配置中心调整 qubit-data.klinesDataSource。",
   yahoo_chart: "Yahoo 未返回数据：请检查代码、市场与周期是否匹配（如美股代码 + 市场 US）。",
 };

@@ -1,6 +1,14 @@
 import type { FC, MouseEvent } from "react";
 import { useId, useMemo } from "react";
 import type { AnalystTeamGraphEdge, AnalystTeamGraphNode } from "../../api/types";
+import {
+  edgeMessagesAtoB,
+  edgeMessagesBtoA,
+  formatEdgeLabel,
+  isToolGraphEdge,
+  toolAgentOnEdge,
+  toolEdgeStroke,
+} from "../../lib/teamGraphEdgeVisual";
 import { buildTopologyEdgePath, sampleLine, type TopoRect } from "../../lib/topologyEdgeRouting";
 import {
   computeTeamGraphNodePositions,
@@ -36,6 +44,101 @@ function nodeRect(cx: number, cy: number): TopoRect {
   return { cx, cy, w: TEAM_GRAPH_NODE_W, h: TEAM_GRAPH_NODE_H };
 }
 
+type DrawnEdge = {
+  key: string;
+  d: string;
+  className: string;
+  dashed: boolean;
+  stroke?: string;
+  showArrow: boolean;
+  label: string;
+  labelPt: { x: number; y: number };
+};
+
+function buildDrawnEdges(
+  ed: AnalystTeamGraphEdge,
+  pa: { x: number; y: number },
+  pb: { x: number; y: number }
+): DrawnEdge[] {
+  const fromRectA = nodeRect(pa.x, pa.y);
+  const toRectB = nodeRect(pb.x, pb.y);
+  const traffic = (ed.messageCount ?? 0) + (ed.toolCount ?? 0) > 0;
+  const label = formatEdgeLabel(ed);
+
+  if (isToolGraphEdge(ed)) {
+    const agent = toolAgentOnEdge(ed);
+    const agentPos = agent === ed.a ? pa : pb;
+    const toolsPos = agent === ed.a ? pb : pa;
+    const d = buildTopologyEdgePath(nodeRect(agentPos.x, agentPos.y), nodeRect(toolsPos.x, toolsPos.y), {
+      curved: true,
+      curveStrength: 0.55,
+    });
+    const labelPt = sampleLine(agentPos.x, agentPos.y, toolsPos.x, toolsPos.y, 0.42);
+    return [
+      {
+        key: `${ed.key}-tool`,
+        d,
+        className: "qb-topo-edge qb-topo-edge--tool",
+        dashed: !traffic,
+        stroke: toolEdgeStroke(ed),
+        showArrow: true,
+        label,
+        labelPt,
+      },
+    ];
+  }
+
+  const ab = edgeMessagesAtoB(ed);
+  const ba = edgeMessagesBtoA(ed);
+  const out: DrawnEdge[] = [];
+
+  const addDirected = (from: { x: number; y: number }, to: { x: number; y: number }, suffix: string, fanIndex: number, fanTotal: number) => {
+    const d = buildTopologyEdgePath(nodeRect(from.x, from.y), nodeRect(to.x, to.y), {
+      curved: true,
+      curveStrength: 0.65,
+      fanIndex,
+      fanTotal,
+    });
+    const labelPt = sampleLine(from.x, from.y, to.x, to.y, 0.45);
+    out.push({
+      key: `${ed.key}-${suffix}`,
+      d,
+      className: "qb-topo-edge",
+      dashed: !traffic,
+      showArrow: true,
+      label: fanTotal > 1 ? "" : label,
+      labelPt,
+    });
+  };
+
+  if (ab > 0 && ba > 0) {
+    addDirected(pa, pb, "ab", 0, 2);
+    addDirected(pb, pa, "ba", 1, 2);
+    const labelPt = sampleLine(pa.x, pa.y, pb.x, pb.y, 0.5);
+    out[0]!.label = label;
+    out[0]!.labelPt = labelPt;
+    out[1]!.label = "";
+  } else if (ab > 0) {
+    addDirected(pa, pb, "ab", 0, 1);
+  } else if (ba > 0) {
+    addDirected(pb, pa, "ba", 0, 1);
+  } else {
+    const d = buildTopologyEdgePath(fromRectA, toRectB, { curved: true, curveStrength: 0.65 });
+    const labelPt = sampleLine(pa.x, pa.y, pb.x, pb.y, 0.45);
+    out.push({
+      key: `${ed.key}-plan`,
+      d,
+      className: "qb-topo-edge",
+      dashed: !traffic,
+      showArrow: false,
+      label,
+      labelPt,
+    });
+  }
+
+  return out;
+}
+
 export const TeamAgentGraph: FC<{
   nodes: AnalystTeamGraphNode[];
   edges: AnalystTeamGraphEdge[];
@@ -45,7 +148,6 @@ export const TeamAgentGraph: FC<{
   onSelectNode: (role: string) => void;
   onSelectEdge: (a: string, b: string) => void;
   onClear: () => void;
-  /** 由父组件根据 interactions 时间窗计算，用于高亮「正在通信」的边与节点 */
   activity?: TeamGraphActivity;
 }> = ({
   nodes,
@@ -60,6 +162,8 @@ export const TeamAgentGraph: FC<{
 }) => {
   const uid = useId().replace(/:/g, "");
   const markerId = `qb-team-arrow-${uid}`;
+  const markerSuccessId = `qb-team-arrow-ok-${uid}`;
+  const markerFailId = `qb-team-arrow-fail-${uid}`;
 
   const pos = useMemo(
     () => computeTeamGraphNodePositions(nodes, width, height),
@@ -105,35 +209,29 @@ export const TeamAgentGraph: FC<{
         <marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
           <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-stroke, #71717a)" />
         </marker>
+        <marker id={markerSuccessId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-success, #4ade80)" />
+        </marker>
+        <marker id={markerFailId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-fail, #f87171)" />
+        </marker>
       </defs>
       <rect width={width} height={height} fill="transparent" />
       {edges.map((ed) => {
         const pa = pos.get(ed.a);
         const pb = pos.get(ed.b);
         if (!pa || !pb) return null;
-        const fromRect = nodeRect(pa.x, pa.y);
-        const toRect = nodeRect(pb.x, pb.y);
-        const d = buildTopologyEdgePath(fromRect, toRect, { curved: true, curveStrength: 0.65 });
-        const selEdge = selection?.kind === "edge" && teamGraphUndirectedKey(selection.a, selection.b) === ed.key;
-        const traffic = (ed.messageCount ?? 0) + (ed.toolCount ?? 0) > 0;
+        const selEdge =
+          selection?.kind === "edge" && teamGraphUndirectedKey(selection.a, selection.b) === ed.key;
         const isHot = activity.hotEdgeKeys.has(ed.key);
-        const edgeClass = [
-          "qb-topo-edge",
-          selEdge ? "qb-topo-edge--selected" : isHot ? "qb-topo-edge--hot" : "",
-          !traffic ? "qb-topo-edge--dashed" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
         const hitW = 14;
-        const labelParts: string[] = [];
-        if (ed.messageCount) labelParts.push(`对话 ${ed.messageCount}`);
-        if (ed.toolCount) labelParts.push(`工具 ${ed.toolCount}`);
-        const labelText = labelParts.length > 0 ? labelParts.join(" · ") : traffic ? "" : "拓扑";
-        const labelPt = sampleLine(pa.x, pa.y, pb.x, pb.y, 0.45);
+        const drawn = buildDrawnEdges(ed, pa, pb);
+        const toolEdge = isToolGraphEdge(ed);
+
         return (
           <g key={ed.key}>
             <path
-              d={d}
+              d={drawn[0]?.d ?? buildTopologyEdgePath(nodeRect(pa.x, pa.y), nodeRect(pb.x, pb.y))}
               fill="none"
               stroke="transparent"
               strokeWidth={hitW}
@@ -143,28 +241,53 @@ export const TeamAgentGraph: FC<{
                 onSelectEdge(ed.a, ed.b);
               }}
             />
-            <path
-              d={d}
-              className={edgeClass}
-              markerEnd={`url(#${markerId})`}
-              style={{
-                cursor: "pointer",
-                pointerEvents: "none",
-                animation: isHot && activity.isRunning ? "qb-team-edge-pulse 1.1s ease-in-out infinite" : undefined,
-              }}
-            />
-            {labelText ? (
-              <text
-                x={labelPt.x}
-                y={labelPt.y - 8}
-                textAnchor="middle"
-                className="qb-topo-sublabel"
-                fontSize={10}
-                style={{ pointerEvents: "none" }}
-              >
-                {labelText}
-              </text>
-            ) : null}
+            {drawn.map((seg) => {
+              const edgeClass = [
+                seg.className,
+                selEdge ? "qb-topo-edge--selected" : isHot ? "qb-topo-edge--hot" : "",
+                seg.dashed ? "qb-topo-edge--dashed" : "",
+                toolEdge && seg.stroke ? "qb-topo-edge--tool-status" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
+              const markerEnd = seg.showArrow
+                ? toolEdge
+                  ? seg.stroke?.includes("f87171")
+                    ? `url(#${markerFailId})`
+                    : seg.stroke?.includes("fbbf24")
+                      ? `url(#${markerId})`
+                      : `url(#${markerSuccessId})`
+                  : `url(#${markerId})`
+                : undefined;
+              return (
+                <g key={seg.key}>
+                  <path
+                    d={seg.d}
+                    className={edgeClass}
+                    markerEnd={markerEnd}
+                    style={{
+                      cursor: "pointer",
+                      pointerEvents: "none",
+                      stroke: seg.stroke,
+                      animation:
+                        isHot && activity.isRunning ? "qb-team-edge-pulse 1.1s ease-in-out infinite" : undefined,
+                    }}
+                  />
+                  {seg.label ? (
+                    <text
+                      x={seg.labelPt.x}
+                      y={seg.labelPt.y - 8}
+                      textAnchor="middle"
+                      className="qb-topo-sublabel"
+                      fontSize={10}
+                      style={{ pointerEvents: "none" }}
+                    >
+                      {seg.label}
+                    </text>
+                  ) : null}
+                </g>
+              );
+            })}
           </g>
         );
       })}

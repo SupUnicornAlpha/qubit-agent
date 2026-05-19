@@ -1,11 +1,13 @@
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
+import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
 import { completeAnalystResearchJob, failAnalystResearchJob } from "./analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam, type AnalystTeamResult } from "./analyst-team";
 
 export type ParsedResearchTeamExecute = {
   jobId: string;
   ticker: string;
+  scope?: ResearchScopeInput | null;
   context?: string;
   agentGroupId?: string | null;
   analystDefinitionIds?: string[];
@@ -22,12 +24,14 @@ export function parseResearchTeamExecutePayload(
   const pr = payload.params as Record<string, unknown>;
   const jobId = typeof pr.jobId === "string" ? pr.jobId : "";
   const ticker = typeof pr.ticker === "string" ? pr.ticker.trim() : "";
+  const scope = (pr.scope as ResearchScopeInput | null | undefined) ?? undefined;
+  const resolved = resolveResearchScope({ ticker, scope });
 
-  if (!jobId || !ticker) {
+  if (!jobId || (!ticker && !scope && resolved.primarySymbol === "UNKNOWN")) {
     return {
       ok: false,
       jobId,
-      error: new Error("research_team_execute requires params.jobId and params.ticker"),
+      error: new Error("research_team_execute requires params.jobId and params.ticker or scope"),
     };
   }
 
@@ -58,7 +62,8 @@ export function parseResearchTeamExecutePayload(
     ok: true,
     params: {
       jobId,
-      ticker,
+      ticker: ticker || resolved.primarySymbol,
+      scope,
       context,
       agentGroupId,
       analystDefinitionIds,
@@ -80,6 +85,7 @@ export async function executeResearchTeamWorkflow(input: {
   const teamResult = await runAnalystTeam({
     workflowRunId: input.workflowRunId,
     ticker: input.params.ticker,
+    scope: input.params.scope,
     context: input.params.context,
     agentGroupId: input.params.agentGroupId,
     analystRoles: input.params.analystRoles,

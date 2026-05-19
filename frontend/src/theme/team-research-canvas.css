@@ -470,3 +470,14 @@ html[data-qb-style="ambient-3d"] [data-qb-team-shell] aside {
 [data-qb-team-research-panel] .qb-team-live-feed-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(212, 212, 216, 0.75);
 }
+
+/* 拓扑边：工具/MCP 成功/失败着色 */
+[data-qb-team-graph-host] [data-qb-topology-canvas] {
+  --qb-topo-edge-success: #4ade80;
+  --qb-topo-edge-fail: #f87171;
+  --qb-topo-edge-mixed: #fbbf24;
+}
+
+[data-qb-team-graph-host] .qb-topo-edge--tool-status {
+  stroke-width: 2px;
+}

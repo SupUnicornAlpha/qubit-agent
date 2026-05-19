@@ -532,6 +532,10 @@ export interface AnalystTeamGraphEdge {
   b: string;
   messageCount: number;
   toolCount: number;
+  messagesAtoB?: number;
+  messagesBtoA?: number;
+  toolSuccessCount?: number;
+  toolFailCount?: number;
 }
 
 export interface AnalystTeamGraphInteraction {
@@ -624,9 +628,30 @@ export interface SignalFusionRecord {
   createdAt: string;
 }
 
+/** POST /analyst/run scope（与后端 research-scope 一致） */
+export type ResearchScopeInput = {
+  kind?: "single" | "basket" | "sector";
+  symbols?: string[];
+  ticker?: string;
+  sector?: string;
+  peers?: string[];
+  instrument?: "equity" | "option";
+  positionSide?: "long" | "short";
+  exchange?: string;
+  option?: {
+    underlying?: string;
+    contractSymbol?: string;
+    expiry?: string;
+    strike?: number;
+    right?: "call" | "put";
+  };
+};
+
 export interface AnalystTeamResult {
   fusionId: string;
   ticker: string;
+  scope?: ResearchScopeInput & { displayLabel?: string; symbols?: string[] };
+  perSymbol?: Array<{ symbol: string; result: AnalystTeamResult }>;
   fusedSignal: AnalystSignalValue;
   fusedConfidence: number;
   debateTriggered: boolean;
@@ -959,11 +984,19 @@ export interface IbProviderConfig {
   accountId?: string;
 }
 
-export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig;
+export interface CcxtProviderConfig {
+  exchangeId?: string;
+  apiKeyRef?: string;
+  sandbox?: boolean;
+  defaultType?: "spot" | "future";
+  market?: "CRYPTO";
+}
+
+export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig | CcxtProviderConfig;
 
 export interface BrokerAccountRecord {
   id: string;
-  provider: "futu" | "ib";
+  provider: "futu" | "ib" | "ccxt";
   accountRef: string;
   mode: "mock" | "sandbox" | "live";
   baseUrl?: string | null;
@@ -981,7 +1014,7 @@ export interface BrokerOrderEventRecord {
   id: string;
   intentOrderId?: string | null;
   executionReportId?: string | null;
-  provider: "futu" | "ib";
+  provider: "futu" | "ib" | "ccxt";
   eventType: "submit" | "ack" | "partial_fill" | "fill" | "cancel" | "reject" | "health_check";
   brokerOrderId?: string | null;
   status: string;

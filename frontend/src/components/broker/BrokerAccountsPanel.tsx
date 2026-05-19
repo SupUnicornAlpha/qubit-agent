@@ -5,6 +5,7 @@ import type {
   BrokerAccountRecord,
   BrokerOrderEventRecord,
   BrokerProviderConfig,
+  CcxtProviderConfig,
   FutuProviderConfig,
   IbProviderConfig,
 } from "../../api/types";
@@ -92,9 +93,10 @@ const statusColor = (s: BrokerAccountRecord["healthStatus"]): string => {
 };
 
 function buildProviderConfig(
-  provider: "futu" | "ib",
+  provider: "futu" | "ib" | "ccxt",
   futu: FutuProviderConfig,
-  ib: IbProviderConfig
+  ib: IbProviderConfig,
+  ccxt: CcxtProviderConfig
 ): BrokerProviderConfig {
   if (provider === "futu") {
     return {
@@ -102,6 +104,15 @@ function buildProviderConfig(
       opendPort: futu.opendPort ?? 11111,
       market: futu.market,
       accId: futu.accId?.trim() || undefined,
+    };
+  }
+  if (provider === "ccxt") {
+    return {
+      exchangeId: ccxt.exchangeId?.trim() || "binance",
+      sandbox: ccxt.sandbox ?? false,
+      defaultType: ccxt.defaultType ?? "spot",
+      market: "CRYPTO",
+      apiKeyRef: ccxt.apiKeyRef?.trim() || undefined,
     };
   }
   return {
@@ -113,7 +124,7 @@ function buildProviderConfig(
 }
 
 export const BrokerAccountsPanel: FC = () => {
-  const [provider, setProvider] = useState<"futu" | "ib">("futu");
+  const [provider, setProvider] = useState<"futu" | "ib" | "ccxt">("futu");
   const [accountRef, setAccountRef] = useState("default");
   const [mode, setMode] = useState<"mock" | "sandbox" | "live">("mock");
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:18765");
@@ -127,6 +138,12 @@ export const BrokerAccountsPanel: FC = () => {
     host: "127.0.0.1",
     port: 7497,
     clientId: 1,
+  });
+  const [ccxtConfig, setCcxtConfig] = useState<CcxtProviderConfig>({
+    exchangeId: "binance",
+    sandbox: true,
+    defaultType: "spot",
+    market: "CRYPTO",
   });
   const [accounts, setAccounts] = useState<BrokerAccountRecord[]>([]);
   const [events, setEvents] = useState<BrokerOrderEventRecord[]>([]);
@@ -165,6 +182,14 @@ export const BrokerAccountsPanel: FC = () => {
         market: (cfg as FutuProviderConfig).market ?? "HK",
         accId: (cfg as FutuProviderConfig).accId,
       });
+    } else if (a.provider === "ccxt") {
+      setCcxtConfig({
+        exchangeId: (cfg as CcxtProviderConfig).exchangeId ?? "binance",
+        sandbox: (cfg as CcxtProviderConfig).sandbox ?? true,
+        defaultType: (cfg as CcxtProviderConfig).defaultType ?? "spot",
+        market: "CRYPTO",
+        apiKeyRef: (cfg as CcxtProviderConfig).apiKeyRef,
+      });
     } else {
       setIbConfig({
         host: (cfg as IbProviderConfig).host ?? "127.0.0.1",
@@ -183,7 +208,7 @@ export const BrokerAccountsPanel: FC = () => {
         accountRef: accountRef.trim() || "default",
         mode,
         baseUrl: mode === "mock" ? undefined : baseUrl.trim() || undefined,
-        providerConfig: buildProviderConfig(provider, futuConfig, ibConfig),
+        providerConfig: buildProviderConfig(provider, futuConfig, ibConfig, ccxtConfig),
         isDefault,
         enabled: true,
       });
@@ -212,7 +237,7 @@ export const BrokerAccountsPanel: FC = () => {
     <div style={wrap}>
       <h2 style={title}>券商账户配置</h2>
       <p style={lead}>
-        登记富途（Futu OpenD）或盈透（IB Gateway）连接参数。{" "}
+        登记富途（Futu OpenD）、盈透（IB Gateway）或加密货币（CCXT / Binance 等）连接参数。{" "}
         <strong>mock</strong> 为后端本地模拟；<strong>sandbox</strong> 对应富途模拟盘（TrdEnv.SIMULATE）；{" "}
         <strong>live</strong> 为实盘。非 mock 模式需填写 HTTP 桥地址（默认{" "}
         <code style={{ fontSize: 12 }}>http://127.0.0.1:18765</code>）并运行{" "}
@@ -222,9 +247,14 @@ export const BrokerAccountsPanel: FC = () => {
       <div style={row}>
         <div style={field}>
           <span style={label}>券商</span>
-          <select style={input} value={provider} onChange={(e) => setProvider(e.target.value as "futu" | "ib")}>
+          <select
+            style={input}
+            value={provider}
+            onChange={(e) => setProvider(e.target.value as "futu" | "ib" | "ccxt")}
+          >
             <option value="futu">Futu 富途</option>
             <option value="ib">Interactive Brokers</option>
+            <option value="ccxt">CCXT 加密货币</option>
           </select>
         </div>
         <div style={field}>
@@ -290,6 +320,48 @@ export const BrokerAccountsPanel: FC = () => {
               value={futuConfig.accId ?? ""}
               onChange={(e) => setFutuConfig((c) => ({ ...c, accId: e.target.value }))}
               placeholder="acc_id"
+            />
+          </div>
+        </div>
+      ) : provider === "ccxt" ? (
+        <div style={row}>
+          <div style={field}>
+            <span style={label}>交易所 ID</span>
+            <input
+              style={input}
+              value={ccxtConfig.exchangeId ?? "binance"}
+              onChange={(e) => setCcxtConfig((c) => ({ ...c, exchangeId: e.target.value }))}
+              placeholder="binance"
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>合约类型</span>
+            <select
+              style={input}
+              value={ccxtConfig.defaultType ?? "spot"}
+              onChange={(e) =>
+                setCcxtConfig((c) => ({ ...c, defaultType: e.target.value as "spot" | "future" }))
+              }
+            >
+              <option value="spot">spot · 现货</option>
+              <option value="future">future · 合约</option>
+            </select>
+          </div>
+          <label style={{ ...field, flexDirection: "row", alignItems: "center", gap: 8, minWidth: "auto" }}>
+            <input
+              type="checkbox"
+              checked={ccxtConfig.sandbox ?? false}
+              onChange={(e) => setCcxtConfig((c) => ({ ...c, sandbox: e.target.checked }))}
+            />
+            <span style={{ ...label, textTransform: "none" }}>沙盒 / 测试网</span>
+          </label>
+          <div style={{ ...field, flex: 1 }}>
+            <span style={label}>API Key 引用（可选）</span>
+            <input
+              style={{ ...input, width: "100%" }}
+              value={ccxtConfig.apiKeyRef ?? ""}
+              onChange={(e) => setCcxtConfig((c) => ({ ...c, apiKeyRef: e.target.value }))}
+              placeholder="QUBIT_CCXT_API_KEY"
             />
           </div>
         </div>

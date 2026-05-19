@@ -1,5 +1,6 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { isCryptoMarket } from "./crypto-market";
 import { isChinaAShareMarket } from "./eastmoney-klines";
 import { aggregateBarsByMsWindow } from "./klines-bars";
 
@@ -10,6 +11,7 @@ export type KlinesDataSourceSetting =
   | "yahoo_chart"
   | "eastmoney"
   | "akshare"
+  | "binance_crypto"
   | "synthetic";
 
 /** Value exposed in `GET /market/klines` meta and used internally after resolution. */
@@ -18,6 +20,7 @@ export type KlinesDataSourceMeta =
   | "yahoo_chart"
   | "eastmoney"
   | "akshare"
+  | "binance_crypto"
   | "synthetic";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
@@ -28,6 +31,7 @@ export function parseKlinesDataSourceSetting(raw: unknown): KlinesDataSourceSett
     raw === "yahoo_chart" ||
     raw === "eastmoney" ||
     raw === "akshare" ||
+    raw === "binance_crypto" ||
     raw === "synthetic" ||
     raw === "auto"
   ) {
@@ -49,6 +53,7 @@ export function resolveEffectiveKlinesSource(params: {
 }): KlinesDataSourceMeta {
   const mode = parseKlinesDataSourceSetting(qubitDataSettings(params.settings).klinesDataSource);
   if (mode === "synthetic") return "synthetic";
+  if (mode === "binance_crypto") return "binance_crypto";
   if (mode === "eastmoney") return "eastmoney";
   if (mode === "akshare") return "akshare";
   if (mode === "yahoo_chart") return "yahoo_chart";
@@ -56,12 +61,17 @@ export function resolveEffectiveKlinesSource(params: {
     return params.hasTushareToken ? "tushare_daily" : "synthetic";
   }
 
+  const crypto =
+    params.symbol !== undefined
+      ? isCryptoMarket(params.symbol, params.exchange ?? "")
+      : false;
   const china =
     params.symbol !== undefined
       ? isChinaAShareMarket(params.symbol, params.exchange ?? "")
       : false;
 
-  /** auto：日线有 Tushare token → Tushare；A 股/北交所 → 东方财富；否则 Yahoo */
+  /** auto：加密 → Binance；日线有 Tushare token → Tushare；A 股/北交所 → 东方财富；否则 Yahoo */
+  if (crypto) return "binance_crypto";
   if (params.period === "1d" && params.hasTushareToken) return "tushare_daily";
   if (china) return "eastmoney";
   return "yahoo_chart";
@@ -136,6 +146,7 @@ export function symbolToYahooSymbol(symbol: string, exchange: string): string {
     return alnum ? `${alnum}.MC` : s;
   }
   if (ex === "CRYPTO" || ex === "CC" || ex === "BINANCE") {
+    if (/^[A-Z0-9]{2,12}-USD$/i.test(s)) return s.toUpperCase();
     const base = (alnum || "BTC").replace(/-USD$/i, "");
     if (base.includes("-")) return base.toUpperCase();
     return `${base.toUpperCase()}-USD`;

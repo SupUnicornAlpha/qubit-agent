@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { symbolToEastMoneySecId } from "./eastmoney-klines";
+import { isCryptoMarket } from "./crypto-market";
 import { resolveEffectiveKlinesSource, symbolToYahooSymbol } from "./klines-data-source";
 
 describe("symbolToYahooSymbol", () => {
@@ -107,6 +108,34 @@ describe("resolveEffectiveKlinesSource", () => {
         hasTushareToken: false,
       })
     ).toBe("akshare");
+  });
+
+  test("auto + crypto uses binance_crypto", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "auto" } },
+        period: "1h",
+        hasTushareToken: true,
+        symbol: "BTCUSDT",
+        exchange: "CRYPTO",
+      })
+    ).toBe("binance_crypto");
+  });
+
+  test("explicit binance_crypto mode", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "binance_crypto" } },
+        period: "5m",
+        hasTushareToken: false,
+      })
+    ).toBe("binance_crypto");
+  });
+});
+
+describe("isCryptoMarket integration", () => {
+  test("BTCUSDT without exchange", () => {
+    expect(isCryptoMarket("BTCUSDT", "")).toBe(true);
   });
 });
 

@@ -28,6 +28,7 @@ import { RESEARCH_TEAM_SLOT_SET } from "../runtime/msa/analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
 import type { AgentRole } from "../types/entities";
+import { resolveResearchScope, type ResearchScopeInput } from "../types/research-scope";
 
 export const analystRouter = new Hono();
 
@@ -38,17 +39,21 @@ export const analystRouter = new Hono();
 analystRouter.post("/run", async (c) => {
   const body = await c.req.json<{
     workflowRunId: string;
-    ticker: string;
+    ticker?: string;
+    scope?: ResearchScopeInput | null;
     context?: string;
     agentGroupId?: string | null;
-    /** 仅运行这些研究团队槽位角色，与编组解析结果取交集 */
     analystRoles?: string[] | null;
-    /** 仅运行这些 definition id（研究团队槽位），与编组解析结果取交集；若提供则优先于 analystRoles */
     analystDefinitionIds?: string[] | null;
   }>();
 
-  if (!body.workflowRunId || !body.ticker) {
-    return c.json({ error: "workflowRunId and ticker are required" }, 400);
+  if (!body.workflowRunId) {
+    return c.json({ error: "workflowRunId is required" }, 400);
+  }
+
+  const scope = resolveResearchScope({ ticker: body.ticker, scope: body.scope });
+  if (!body.ticker?.trim() && !body.scope && scope.primarySymbol === "UNKNOWN") {
+    return c.json({ error: "ticker or scope.symbols is required" }, 400);
   }
 
   const db = await getDb();
@@ -74,7 +79,7 @@ analystRouter.post("/run", async (c) => {
   registerAnalystResearchJob(jobId, {
     status: "running",
     workflowRunId: body.workflowRunId,
-    ticker: body.ticker,
+    ticker: scope.displayLabel,
     startedAt: Date.now(),
   });
 
@@ -103,7 +108,8 @@ analystRouter.post("/run", async (c) => {
         assignedRole: "orchestrator",
         params: {
           jobId,
-          ticker: body.ticker,
+          ticker: body.ticker ?? scope.primarySymbol,
+          scope: body.scope ?? undefined,
           context: body.context,
           agentGroupId: body.agentGroupId ?? undefined,
           analystRoles: analystRoles ?? undefined,

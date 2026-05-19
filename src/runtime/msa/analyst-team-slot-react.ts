@@ -8,6 +8,8 @@ import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers
 import type { RuntimeAgentDefinition } from "../types";
 import type { RawAnalystSignal } from "./signal-fusion";
 import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
+import type { NormalizedResearchScope } from "../../types/research-scope";
+import { formatResearchScopePreamble } from "./analyst-team-scope";
 
 const TEAM_SLOT_MAX_ITERATIONS = 6;
 
@@ -81,6 +83,7 @@ export async function runResearchTeamSlotReact(params: {
   role: AgentRole;
   systemPrompt: string;
   ticker: string;
+  scope?: NormalizedResearchScope;
   context: string;
   /** 与 analyst-team 预创建的 instance 对齐，便于 tool_call_log 关联 */
   agentInstanceId?: string;
@@ -97,9 +100,14 @@ export async function runResearchTeamSlotReact(params: {
   const runId = randomUUID();
   const traceId = randomUUID();
 
+  const scopeHint = params.scope ? `\n\n${formatResearchScopePreamble(params.scope)}` : "";
+  const targetLabel =
+    params.scope && params.scope.symbols.length > 1
+      ? `标的组合 ${params.scope.symbols.join(", ")}（主标的 ${params.ticker}）`
+      : `标的 ${params.ticker}`;
   const userGoal = params.expectJsonSignal
-    ? `分析标的 ${params.ticker}，先使用授权工具拉取数据/指标，再输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。`
-    : `分析标的 ${params.ticker}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。`;
+    ? `分析${targetLabel}，先使用授权工具拉取数据/指标，再输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}`
+    : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}`;
 
   const result = await executeAgentReact({
     runId,
@@ -115,6 +123,7 @@ export async function runResearchTeamSlotReact(params: {
       params: {
         goal: userGoal,
         ticker: params.ticker,
+        scope: params.scope,
         context: params.context,
         forceLoop: true,
         teamSlot: true,

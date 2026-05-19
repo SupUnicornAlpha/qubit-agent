@@ -3,6 +3,8 @@ import {
   loadBuiltinConnectorSettings,
 } from "../../runtime/config/builtin-connector-settings";
 import { fetchAkshareBars } from "../../runtime/market/akshare-klines";
+import { fetchBinanceBars, fetchBinanceTicker } from "../../runtime/market/binance-klines";
+import { isCryptoMarket } from "../../runtime/market/crypto-market";
 import { fetchEastMoneyBars, isChinaAShareMarket } from "../../runtime/market/eastmoney-klines";
 import {
   fetchYahooFinanceBars,
@@ -115,7 +117,7 @@ export class QubitNativeDataConnector extends DataConnector {
       "fetch_news",
       "write_snapshot",
     ],
-    assetClasses: ["stock"],
+    assetClasses: ["stock", "crypto"],
     latencyProfile: "batch",
     description:
       "Built-in market data: daily (Tushare / East Money / Yahoo) and intraday OHLCV (East Money A-share / Yahoo); empty when unavailable.",
@@ -350,6 +352,37 @@ export class QubitNativeDataConnector extends DataConnector {
       }
     }
 
+    if (effective === "binance_crypto") {
+      try {
+        const bars = await fetchBinanceBars(params, dataCfg);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `Binance returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `Binance request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+      }
+      if (mode === "binance_crypto") return [];
+      if (mode === "auto" && isCryptoMarket(params.symbol, params.exchange || "")) {
+        try {
+          const ySym = symbolToYahooSymbol(params.symbol, params.exchange || "");
+          const bars = await fetchYahooFinanceBars(params);
+          if (bars.length > 0) {
+            console.warn(`[qubit-data] Binance empty; fell back to Yahoo (${ySym})`);
+            return bars;
+          }
+        } catch {
+          /* logged below */
+        }
+      }
+      if (mode === "binance_crypto" || (mode === "auto" && isCryptoMarket(params.symbol, params.exchange || ""))) {
+        return [];
+      }
+    }
+
     if (effective === "akshare") {
       try {
         const bars = await fetchAkshareBars(params);
@@ -440,6 +473,31 @@ export class QubitNativeDataConnector extends DataConnector {
 
   async fetchTicks(params: FetchTicksParams): Promise<TickData[]> {
     if (!params.symbol?.trim()) throw new Error("fetch_ticks: symbol is required");
+    if (isCryptoMarket(params.symbol, params.exchange || "")) {
+      try {
+        const liveSettings = await loadBuiltinConnectorSettings();
+        const dataCfg = (liveSettings["qubit-data"] ?? {}) as Record<string, unknown>;
+        const t = await fetchBinanceTicker(params.symbol, params.exchange, dataCfg);
+        return [
+          {
+            symbol: params.symbol,
+            exchange: params.exchange || "CRYPTO",
+            lastPrice: t.lastPrice,
+            bidPrice: t.bidPrice,
+            askPrice: t.askPrice,
+            bidVolume: 0,
+            askVolume: 0,
+            volume: t.volume,
+            timestamp: t.timestamp,
+          },
+        ];
+      } catch (e) {
+        console.warn(
+          `[qubit-data] fetch_ticks Binance failed for ${params.symbol}`,
+          e instanceof Error ? e.message : e
+        );
+      }
+    }
     return [
       {
         symbol: params.symbol,

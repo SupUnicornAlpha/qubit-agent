@@ -13,47 +13,96 @@ function matchesEdge(a: string, b: string, fromRole: string, toRole: string): bo
   return teamGraphUndirectedKey(a, b) === teamGraphUndirectedKey(fromRole, toRole);
 }
 
-/** 从交互记录聚合无向边（对话次数 / 工具次数） */
+type EdgeAgg = {
+  messageCount: number;
+  toolCount: number;
+  messagesAtoB: number;
+  messagesBtoA: number;
+  toolSuccessCount: number;
+  toolFailCount: number;
+};
+
+function emptyAgg(): EdgeAgg {
+  return {
+    messageCount: 0,
+    toolCount: 0,
+    messagesAtoB: 0,
+    messagesBtoA: 0,
+    toolSuccessCount: 0,
+    toolFailCount: 0,
+  };
+}
+
+function toEdge(key: string, agg: EdgeAgg): AnalystTeamGraphEdge {
+  const [a, b] = key.split("||");
+  return {
+    key,
+    a,
+    b,
+    messageCount: agg.messageCount,
+    toolCount: agg.toolCount,
+    messagesAtoB: agg.messagesAtoB,
+    messagesBtoA: agg.messagesBtoA,
+    toolSuccessCount: agg.toolSuccessCount,
+    toolFailCount: agg.toolFailCount,
+  };
+}
+
+/** 从交互记录聚合无向边（含有向计数） */
 export function aggregateEdgesFromInteractions(
   interactions: AnalystTeamGraphInteraction[],
-  toolCallsByRole?: Map<string, number>
+  toolCallsByRole?: Map<string, { total: number; success: number; fail: number }>
 ): AnalystTeamGraphEdge[] {
-  const map = new Map<string, { messageCount: number; toolCount: number }>();
+  const map = new Map<string, EdgeAgg>();
 
-  const bump = (x: string, y: string, msg: number, tools: number) => {
-    if (!x || !y || x === y) return;
-    const key = teamGraphUndirectedKey(x, y);
-    const cur = map.get(key) ?? { messageCount: 0, toolCount: 0 };
-    cur.messageCount += msg;
-    cur.toolCount += tools;
+  const bumpMessage = (from: string, to: string) => {
+    if (!from || !to || from === to) return;
+    const a = from < to ? from : to;
+    const b = from < to ? to : from;
+    const key = teamGraphUndirectedKey(a, b);
+    const cur = map.get(key) ?? emptyAgg();
+    cur.messageCount += 1;
+    if (from === a) cur.messagesAtoB += 1;
+    else cur.messagesBtoA += 1;
     map.set(key, cur);
   };
 
   for (const row of interactions) {
-    if (row.kind === "tool_call") {
-      bump(row.fromRole, row.toRole, 0, 1);
-    } else {
-      bump(row.fromRole, row.toRole, 1, 0);
-    }
+    if (row.kind === "tool_call") continue;
+    bumpMessage(row.fromRole, row.toRole);
   }
 
   if (toolCallsByRole) {
-    for (const [role, n] of toolCallsByRole) {
-      if (n > 0) bump(role, "__tools__", 0, n);
+    for (const [role, stats] of toolCallsByRole) {
+      if (stats.total <= 0) continue;
+      const key = teamGraphUndirectedKey(role, "__tools__");
+      const cur = map.get(key) ?? emptyAgg();
+      cur.toolCount += stats.total;
+      cur.toolSuccessCount += stats.success;
+      cur.toolFailCount += stats.fail;
+      map.set(key, cur);
     }
   }
 
-  return [...map.entries()].map(([key, agg]) => {
-    const [a, b] = key.split("||");
-    return { key, a, b, messageCount: agg.messageCount, toolCount: agg.toolCount };
-  });
+  return [...map.entries()].map(([key, agg]) => toEdge(key, agg));
 }
 
 /**
  * 按左侧勾选的分析师过滤展示图，但保留与外部角色（如 msa）的实际通信边。
  */
-/** 对话拓扑中始终展示的系统角色（不受左侧分析师勾选过滤） */
 const ALWAYS_VISIBLE_GRAPH_ROLES = new Set(["orchestrator", "msa", "signal_fusion"]);
+
+function mergeEdge(prev: AnalystTeamGraphEdge, next: AnalystTeamGraphEdge): AnalystTeamGraphEdge {
+  return {
+    ...prev,
+    messageCount: Math.max(prev.messageCount, next.messageCount),
+    toolCount: Math.max(prev.toolCount, next.toolCount),
+    messagesAtoB: Math.max(prev.messagesAtoB ?? 0, next.messagesAtoB ?? 0),
+    messagesBtoA: Math.max(prev.messagesBtoA ?? 0, next.messagesBtoA ?? 0),
+    toolSuccessCount: Math.max(prev.toolSuccessCount ?? 0, next.toolSuccessCount ?? 0),
+    toolFailCount: Math.max(prev.toolFailCount ?? 0, next.toolFailCount ?? 0),
+  };
+}
 
 export function buildFilteredTeamGraphDisplay(
   teamGraph: AnalystTeamGraphPayload,
@@ -94,13 +143,26 @@ export function buildFilteredTeamGraphDisplay(
       );
     });
 
-  const toolCountByRole = new Map<string, number>();
+  const toolStatsByRole = new Map<string, { total: number; success: number; fail: number }>();
+  const toolOk = (status: string) => status === "success";
   for (const t of teamGraph.toolCalls ?? []) {
     if (!allow.has(t.agentRole)) continue;
-    toolCountByRole.set(t.agentRole, (toolCountByRole.get(t.agentRole) ?? 0) + 1);
+    const cur = toolStatsByRole.get(t.agentRole) ?? { total: 0, success: 0, fail: 0 };
+    cur.total += 1;
+    if (toolOk(t.status)) cur.success += 1;
+    else cur.fail += 1;
+    toolStatsByRole.set(t.agentRole, cur);
+  }
+  for (const m of teamGraph.mcpCalls ?? []) {
+    if (!allow.has(m.agentRole)) continue;
+    const cur = toolStatsByRole.get(m.agentRole) ?? { total: 0, success: 0, fail: 0 };
+    cur.total += 1;
+    if (toolOk(m.status)) cur.success += 1;
+    else cur.fail += 1;
+    toolStatsByRole.set(m.agentRole, cur);
   }
 
-  const edgesFromLog = aggregateEdgesFromInteractions(interactions, toolCountByRole);
+  const edgesFromLog = aggregateEdgesFromInteractions(interactions, toolStatsByRole);
 
   const edgeByKey = new Map<string, AnalystTeamGraphEdge>();
   for (const e of teamGraph.edges ?? []) {
@@ -111,15 +173,7 @@ export function buildFilteredTeamGraphDisplay(
   }
   for (const e of edgesFromLog) {
     const prev = edgeByKey.get(e.key);
-    if (prev) {
-      edgeByKey.set(e.key, {
-        ...prev,
-        messageCount: Math.max(prev.messageCount, e.messageCount),
-        toolCount: Math.max(prev.toolCount, e.toolCount),
-      });
-    } else {
-      edgeByKey.set(e.key, e);
-    }
+    edgeByKey.set(e.key, prev ? mergeEdge(prev, e) : e);
   }
 
   const edges = [...edgeByKey.values()];

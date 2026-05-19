@@ -21,7 +21,9 @@ import type { BrokerProvider } from "../../runtime/reia/broker-types";
 import { ExecutionConnector, type ModifyOrderParams } from "./execution.connector";
 
 function asProvider(v: unknown): BrokerProvider {
-  return v === "ib" ? "ib" : "futu";
+  if (v === "ib") return "ib";
+  if (v === "ccxt") return "ccxt";
+  return "futu";
 }
 
 export class QubitBrokerConnector extends ExecutionConnector {
@@ -30,9 +32,9 @@ export class QubitBrokerConnector extends ExecutionConnector {
     version: "0.1.0",
     connectorType: "execution",
     capabilities: ["submit_order", "cancel_order", "get_fills", "get_positions", "health_check"],
-    assetClasses: ["stock"],
+    assetClasses: ["stock", "crypto"],
     latencyProfile: "low",
-    description: "QUBIT broker execution via configured broker_account (Futu/IB).",
+    description: "QUBIT broker execution via configured broker_account (Futu/IB/CCXT).",
   };
 
   protected async onInit(): Promise<void> {

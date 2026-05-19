@@ -67,7 +67,12 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
 
   run_analyst_team: async (ctx, params) => {
     const ticker =
-      String(params.ticker ?? ctx.inboundPayload?.["ticker"] ?? "").trim() || "UNKNOWN";
+      String(params.ticker ?? ctx.inboundPayload?.["ticker"] ?? "").trim() || undefined;
+    const scopeRaw = params.scope ?? ctx.inboundPayload?.["scope"];
+    const scope =
+      scopeRaw && typeof scopeRaw === "object" && !Array.isArray(scopeRaw)
+        ? (scopeRaw as Record<string, unknown>)
+        : undefined;
     const context = String(params.context ?? ctx.inboundPayload?.["goal"] ?? "");
     const rolesRaw = params.analyst_roles;
     const analystRoles =
@@ -91,6 +96,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     return runAnalystTeam({
       workflowRunId: ctx.workflowId,
       ticker,
+      scope: scope as import("../../types/research-scope").ResearchScopeInput | undefined,
       context: context || undefined,
       agentGroupId,
       analystRoles,

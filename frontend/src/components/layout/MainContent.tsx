@@ -160,6 +160,14 @@ import {
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
+import { formatEdgeSelectionSummary, isToolGraphEdge } from "../../lib/teamGraphEdgeVisual";
+import {
+  buildResearchScopePayload,
+  instrumentLabel,
+  scopeModeLabel,
+  type ResearchInstrumentUi,
+  type ResearchScopeMode,
+} from "../../lib/researchScope";
 import {
   buildFilteredTeamGraphDisplay,
   filterInteractionsForEdge,
@@ -1074,8 +1082,15 @@ const ConfigPanel: FC = () => {
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [tushareToken, setTushareToken] = useState("");
   const [klinesDataSource, setKlinesDataSource] = useState<
-    "auto" | "tushare_daily" | "yahoo_chart" | "eastmoney" | "akshare" | "synthetic"
+    | "auto"
+    | "tushare_daily"
+    | "yahoo_chart"
+    | "eastmoney"
+    | "akshare"
+    | "binance_crypto"
+    | "synthetic"
   >("auto");
+  const [cryptoUseTestnet, setCryptoUseTestnet] = useState(false);
   const [newsApiBaseUrl, setNewsApiBaseUrl] = useState("");
   const [newsApiKey, setNewsApiKey] = useState("");
   const [newsFetchPath, setNewsFetchPath] = useState("/");
@@ -1179,11 +1194,14 @@ const ConfigPanel: FC = () => {
       kds === "yahoo_chart" ||
       kds === "eastmoney" ||
       kds === "akshare" ||
+      kds === "binance_crypto" ||
       kds === "synthetic" ||
       kds === "auto"
         ? kds
         : "auto"
     );
+    const testnet = d["cryptoUseTestnet"];
+    setCryptoUseTestnet(testnet === true || testnet === "true");
     setNewsApiBaseUrl(typeof n.newsApiBaseUrl === "string" ? n.newsApiBaseUrl : "");
     setNewsApiKey(typeof n.newsApiKey === "string" ? n.newsApiKey : "");
     setNewsFetchPath(typeof n.newsFetchPath === "string" ? n.newsFetchPath : "/");
@@ -2031,7 +2049,8 @@ const ConfigPanel: FC = () => {
               在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
               <br />
               K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为 A 股优先{" "}
-              <strong>东方财富</strong>（免费、日线 + 分钟/小时，国内网络友好）；有 Tushare token 时日线可走 Tushare；美股等走 Yahoo。
+              <strong>东方财富</strong>；加密货币（市场 CRYPTO / 如 BTCUSDT）走 <strong>Binance</strong> 公开 API；
+              有 Tushare token 时 A 股日线可走 Tushare；美股等走 Yahoo。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
@@ -2047,17 +2066,27 @@ const ConfigPanel: FC = () => {
                         | "yahoo_chart"
                         | "eastmoney"
                         | "akshare"
+                        | "binance_crypto"
                         | "synthetic"
                     )
                   }
                 >
-                  <option value="auto">自动（A 股 → 东方财富；有 Tushare token → 日线 Tushare；其它 → Yahoo）</option>
+                  <option value="auto">自动（A 股 → 东方财富；加密 → Binance；有 Tushare → 日线；其它 → Yahoo）</option>
                   <option value="eastmoney">东方财富（A 股日线 + 分钟/小时，免费）</option>
+                  <option value="binance_crypto">Binance（加密货币 K 线 / 报价，公开 API）</option>
                   <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
                   <option value="yahoo_chart">Yahoo Finance（日线 + 分钟/小时）</option>
                   <option value="tushare_daily">Tushare 日线（需 token）</option>
                   <option value="synthetic">不拉外源（K 线为空，用于禁用行情）</option>
                 </select>
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--qb-body-fg)" }}>
+                <input
+                  type="checkbox"
+                  checked={cryptoUseTestnet}
+                  onChange={(e) => setCryptoUseTestnet(e.target.checked)}
+                />
+                Binance 测试网
               </label>
               <input
                 style={{ ...styles.input, minWidth: 200 }}
@@ -2111,6 +2140,7 @@ const ConfigPanel: FC = () => {
                     "qubit-data": {
                       klinesDataSource,
                       tushareToken: tushareToken.trim() || undefined,
+                      cryptoUseTestnet: cryptoUseTestnet || undefined,
                     },
                     "qubit-news": {
                       newsApiBaseUrl: newsApiBaseUrl.trim() || undefined,
@@ -3767,8 +3797,48 @@ const TEAM_GRAPH_VIEWPORT_HEIGHT = 360;
 
 const TeamDashboardPanel: FC = () => {
   const [ticker, setTicker] = useState("AAPL");
-  /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认「请对 ticker 进行全面分析」 */
+  const [scopeMode, setScopeMode] = useState<ResearchScopeMode>("single");
+  const [basketTickers, setBasketTickers] = useState("AAPL,MSFT,NVDA");
+  const [sectorName, setSectorName] = useState("半导体");
+  const [sectorPeers, setSectorPeers] = useState("NVDA,AMD,AVGO");
+  const [researchInstrument, setResearchInstrument] = useState<ResearchInstrumentUi>("equity_long");
+  const [optionUnderlying, setOptionUnderlying] = useState("");
+  const [optionContract, setOptionContract] = useState("");
+  const [optionExpiry, setOptionExpiry] = useState("");
+  const [optionStrike, setOptionStrike] = useState("");
+  const [optionRight, setOptionRight] = useState<"call" | "put" | "">("call");
+  /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
+
+  const researchScopePayload = useMemo(
+    () =>
+      buildResearchScopePayload({
+        mode: scopeMode,
+        ticker,
+        basketTickers,
+        sectorName,
+        sectorPeers,
+        instrument: researchInstrument,
+        optionUnderlying,
+        optionContract,
+        optionExpiry,
+        optionStrike,
+        optionRight,
+      }),
+    [
+      scopeMode,
+      ticker,
+      basketTickers,
+      sectorName,
+      sectorPeers,
+      researchInstrument,
+      optionUnderlying,
+      optionContract,
+      optionExpiry,
+      optionStrike,
+      optionRight,
+    ]
+  );
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
@@ -3951,17 +4021,20 @@ const TeamDashboardPanel: FC = () => {
 
   const graphNodeDetail = useMemo((): {
     inbound: AnalystTeamGraphInteraction[];
+    outbound: AnalystTeamGraphInteraction[];
     steps: AnalystTeamGraphAgentStep[];
     tools: AnalystTeamGraphToolCall[];
     mcps: AnalystTeamGraphMcpCall[];
   } => {
     if (!teamGraph || graphSelection?.kind !== "node") {
-      return { inbound: [], steps: [], tools: [], mcps: [] };
+      return { inbound: [], outbound: [], steps: [], tools: [], mcps: [] };
     }
     const r = graphSelection.role;
     const interactions = filteredGraphDisplay?.interactions ?? teamGraph.interactions;
+    const llmRows = interactions.filter((row) => row.kind === "llm_message");
     return {
-      inbound: interactions.filter((row) => row.toRole === r && row.kind === "llm_message"),
+      inbound: llmRows.filter((row) => row.toRole === r),
+      outbound: llmRows.filter((row) => row.fromRole === r),
       steps: (teamGraph.agentSteps ?? []).filter((s) => s.agentRole === r),
       tools: teamGraph.toolCalls.filter((t) => t.agentRole === r),
       mcps: teamGraph.mcpCalls.filter((m) => m.agentRole === r),
@@ -3977,6 +4050,7 @@ const TeamDashboardPanel: FC = () => {
     return {
       a,
       b,
+      edge,
       messageCount: edge?.messageCount ?? messages.length,
       toolCount: edge?.toolCount ?? 0,
       messages,
@@ -4030,23 +4104,23 @@ const TeamDashboardPanel: FC = () => {
 
   const teamRunDisabled = useMemo(() => {
     if (running) return true;
-    if (!ticker.trim() || !workflowRunId) return true;
+    if (!researchScopePayload || !workflowRunId) return true;
     if (enabledResearchAnalystDefCount === null) return true;
     if (enabledResearchAnalystDefCount === 0) return true;
     if (participatingAnalystDefinitionIds.length === 0) return true;
     return false;
-  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
+  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
 
   const teamRunDisabledTitle = useMemo(() => {
     if (running) return "分析进行中";
-    if (!ticker.trim()) return "请先填写标的代码";
+    if (!researchScopePayload) return "请先填写研究范围（标的/篮子/板块）";
     if (!workflowRunId) return "请先选择工作流";
     if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
     if (enabledResearchAnalystDefCount === 0)
       return "数据库中暂无已启用的研究团队槽位定义（analyst_* / research / backtest / risk* 等），请先到配置中心启用或执行种子";
     if (participatingAnalystDefinitionIds.length === 0) return "请至少勾选一名参与分析的 Agent 定义";
     return "";
-  }, [running, ticker, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
+  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
 
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
@@ -4275,7 +4349,7 @@ const TeamDashboardPanel: FC = () => {
   const [runProgress, setRunProgress] = useState<string>("");
 
   const handleRun = async () => {
-    if (!ticker.trim()) return;
+    if (!researchScopePayload) return;
     setError(null);
     setRunning(true);
     setResult(null);
@@ -4302,7 +4376,8 @@ const TeamDashboardPanel: FC = () => {
       // 使用异步轮询，避免浏览器 60s 系统级超时
       const res = await runAnalystTeam({
         workflowRunId: wfId,
-        ticker: ticker.trim(),
+        ticker: researchScopePayload.symbols?.[0] ?? ticker.trim(),
+        scope: researchScopePayload,
         context: teamAnalysisContext.trim() || undefined,
         agentGroupId: analystAgentGroupId.trim() || undefined,
         analystDefinitionIds:
@@ -4393,7 +4468,7 @@ const TeamDashboardPanel: FC = () => {
     try {
       const created = await createWorkflow({
         projectId: teamResearchProjectId,
-        goal: `研究团队 · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`,
+        goal: `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || sectorName || "标的"} · ${new Date().toLocaleString()}`,
         mode: "research",
         sessionId: teamResearchSessionId,
         source: "manual",
@@ -4756,14 +4831,99 @@ const TeamDashboardPanel: FC = () => {
         <aside style={{ ...teamStyles.leftRail, width: teamLeftW, flexShrink: 0, alignSelf: "stretch" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", marginBottom: 10 }}>研究与工作流</div>
           <div style={teamStyles.field}>
-            <label style={teamStyles.label}>标的代码</label>
-            <input
+            <label style={teamStyles.label}>研究范围</label>
+            <select
               style={teamStyles.input}
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value)}
-              placeholder="e.g. AAPL / 600519"
-            />
+              value={scopeMode}
+              onChange={(e) => setScopeMode(e.target.value as ResearchScopeMode)}
+            >
+              <option value="single">单标的</option>
+              <option value="basket">多标的篮子</option>
+              <option value="sector">板块</option>
+            </select>
           </div>
+          <div style={{ ...teamStyles.field, marginTop: 8 }}>
+            <label style={teamStyles.label}>工具类型</label>
+            <select
+              style={teamStyles.input}
+              value={researchInstrument}
+              onChange={(e) => setResearchInstrument(e.target.value as ResearchInstrumentUi)}
+            >
+              <option value="equity_long">股票多头</option>
+              <option value="equity_short">股票做空</option>
+              <option value="option">期权</option>
+            </select>
+          </div>
+          {scopeMode === "single" ? (
+            <div style={{ ...teamStyles.field, marginTop: 8 }}>
+              <label style={teamStyles.label}>标的代码</label>
+              <input
+                style={teamStyles.input}
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value)}
+                placeholder={researchInstrument === "option" ? "标的或 OCC 合约" : "e.g. AAPL / 600519"}
+              />
+            </div>
+          ) : null}
+          {scopeMode === "basket" ? (
+            <div style={{ ...teamStyles.field, marginTop: 8 }}>
+              <label style={teamStyles.label}>篮子标的（逗号分隔）</label>
+              <textarea
+                style={teamStyles.textarea}
+                rows={2}
+                value={basketTickers}
+                onChange={(e) => setBasketTickers(e.target.value)}
+                placeholder="AAPL, MSFT, NVDA"
+              />
+            </div>
+          ) : null}
+          {scopeMode === "sector" ? (
+            <>
+              <div style={{ ...teamStyles.field, marginTop: 8 }}>
+                <label style={teamStyles.label}>板块名称</label>
+                <input
+                  style={teamStyles.input}
+                  value={sectorName}
+                  onChange={(e) => setSectorName(e.target.value)}
+                  placeholder="半导体 / 新能源"
+                />
+              </div>
+              <div style={{ ...teamStyles.field, marginTop: 8 }}>
+                <label style={teamStyles.label}>成分股（逗号分隔）</label>
+                <textarea
+                  style={teamStyles.textarea}
+                  rows={2}
+                  value={sectorPeers}
+                  onChange={(e) => setSectorPeers(e.target.value)}
+                  placeholder="NVDA, AMD, AVGO"
+                />
+              </div>
+            </>
+          ) : null}
+          {researchInstrument === "option" && scopeMode === "single" ? (
+            <div style={{ ...teamStyles.field, marginTop: 8 }}>
+              <label style={teamStyles.label}>期权（可选）</label>
+              <input
+                style={teamStyles.input}
+                value={optionUnderlying}
+                onChange={(e) => setOptionUnderlying(e.target.value)}
+                placeholder="标的 NVDA"
+              />
+              <input
+                style={{ ...teamStyles.input, marginTop: 6 }}
+                value={optionContract}
+                onChange={(e) => setOptionContract(e.target.value)}
+                placeholder="合约 OCC"
+              />
+              <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                <input style={{ ...teamStyles.input, flex: "1 1 90px" }} value={optionExpiry} onChange={(e) => setOptionExpiry(e.target.value)} placeholder="到期" />
+                <input style={{ ...teamStyles.input, flex: "1 1 70px" }} value={optionStrike} onChange={(e) => setOptionStrike(e.target.value)} placeholder="行权价" />
+                <select style={{ ...teamStyles.input, flex: "0 0 72px" }} value={optionRight} onChange={(e) => setOptionRight(e.target.value as "call" | "put" | "")}>
+                  <option value="call">Call</option><option value="put">Put</option>
+                </select>
+              </div>
+            </div>
+          ) : null}
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
             <label style={teamStyles.label}>分析提示（可选）</label>
             <textarea
@@ -4771,7 +4931,7 @@ const TeamDashboardPanel: FC = () => {
               rows={4}
               value={teamAnalysisContext}
               onChange={(e) => setTeamAnalysisContext(e.target.value)}
-              placeholder={`留空则使用默认：请对 ${ticker.trim() || "标的"} 进行全面分析。可写侧重点、假设或约束。`}
+              placeholder={`留空则使用默认分析提示。当前：${scopeModeLabel(scopeMode)} · ${instrumentLabel(researchInstrument)}`}
             />
           </div>
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
@@ -5537,7 +5697,7 @@ const TeamDashboardPanel: FC = () => {
                       onClear={() => setGraphSelection(null)}
                     />
                     <p style={{ fontSize: 10, color: "var(--qb-team-meta, #71717a)", marginTop: 6 }}>
-                      点击连线查看交流次数与对话内容；实线表示已有对话或工具调用。
+                      箭头表示消息方向；双向为两条弧线。工具/MCP 连线：绿色=成功、红色=全失败、琥珀=部分失败。
                     </p>
                   </div>
                 </div>
@@ -5562,10 +5722,16 @@ const TeamDashboardPanel: FC = () => {
                     color: "#cbd5e1",
                   }}
                 >
-                  已选连线：<strong>{graphEdgeDetail.a}</strong> ↔ <strong>{graphEdgeDetail.b}</strong>
+                  已选连线：<strong>{graphEdgeDetail.a}</strong>
+                  {graphEdgeDetail.edge && isToolGraphEdge(graphEdgeDetail.edge) ? " → " : " · "}
+                  <strong>{graphEdgeDetail.b}</strong>
                   {" · "}
-                  对话 {graphEdgeDetail.messageCount} 条
-                  {graphEdgeDetail.toolCount > 0 ? ` · 工具 ${graphEdgeDetail.toolCount} 次` : ""}
+                  {formatEdgeSelectionSummary(
+                    graphEdgeDetail.a,
+                    graphEdgeDetail.b,
+                    graphEdgeDetail.edge,
+                    graphEdgeDetail.messageCount
+                  )}
                   <button
                     type="button"
                     className="qb-btn-secondary"
@@ -5644,8 +5810,8 @@ const TeamDashboardPanel: FC = () => {
                     Agent 运行 · {graphSelection.role}
                   </div>
                   <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 8 }}>
-                    收到消息 {graphNodeDetail.inbound.length} 条 · 执行步 {graphNodeDetail.steps.length} · 工具{" "}
-                    {graphNodeDetail.tools.length} · MCP {graphNodeDetail.mcps.length}
+                    收到消息 {graphNodeDetail.inbound.length} 条 · 发出消息 {graphNodeDetail.outbound.length} 条 · 执行步{" "}
+                    {graphNodeDetail.steps.length} · 工具 {graphNodeDetail.tools.length} · MCP {graphNodeDetail.mcps.length}
                   </div>
                   {graphNodeDetail.tools.length === 0 && graphNodeDetail.mcps.length === 0 ? (
                     <div style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
@@ -5665,8 +5831,14 @@ const TeamDashboardPanel: FC = () => {
                       <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>工具 / MCP</div>
                       {graphNodeDetail.tools.map((t) => (
                         <details key={t.id} style={{ marginBottom: 6 }}>
-                          <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
-                            [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status}
+                          <summary
+                            style={{
+                              cursor: "pointer",
+                              color: t.status === "success" ? "#86efac" : "#f87171",
+                            }}
+                          >
+                            [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status === "success" ? "✓" : "✗"}{" "}
+                            {t.status}
                             {t.latencyMs != null ? ` · ${t.latencyMs}ms` : ""}
                           </summary>
                           {t.errorMessage ? (
@@ -5688,8 +5860,13 @@ const TeamDashboardPanel: FC = () => {
                       ))}
                       {graphNodeDetail.mcps.map((m) => (
                         <details key={m.id} style={{ marginBottom: 6 }}>
-                          <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
-                            [MCP] {m.serverName}/{m.toolName} · {m.status}
+                          <summary
+                            style={{
+                              cursor: "pointer",
+                              color: m.status === "success" ? "#86efac" : "#f87171",
+                            }}
+                          >
+                            [MCP] {m.serverName}/{m.toolName} · {m.status === "success" ? "✓" : "✗"} {m.status}
                             {m.latencyMs != null ? ` · ${m.latencyMs}ms` : ""}
                           </summary>
                         </details>
@@ -5704,7 +5881,23 @@ const TeamDashboardPanel: FC = () => {
                           key={row.id}
                           style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
                         >
-                          {row.fromRole} → {row.toRole}
+                          <span style={{ color: "#93c5fd" }}>{row.fromRole} → {row.toRole}</span>
+                          <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
+                            {row.contentText.slice(0, 2000)}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {graphNodeDetail.outbound.length > 0 ? (
+                    <div style={{ maxHeight: 140, overflow: "auto", fontSize: 10, color: "#d4d4d8", marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>发出的消息</div>
+                      {graphNodeDetail.outbound.map((row) => (
+                        <div
+                          key={row.id}
+                          style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
+                        >
+                          <span style={{ color: "#fcd34d" }}>{row.fromRole} → {row.toRole}</span>
                           <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
                             {row.contentText.slice(0, 2000)}
                           </pre>
