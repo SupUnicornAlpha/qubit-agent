@@ -12,6 +12,7 @@ import { runLlmGateway } from "../../llm/gateway";
 import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { resolveEnabledMcpServerNames } from "../../mcp/resolve-enabled-mcp-servers";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
@@ -93,7 +94,7 @@ export async function reasonNode(
 
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
   const tools = effective.tools;
-  const mcpServers = state.agentDefinition.mcpServers ?? [];
+  const mcpServers = await resolveEnabledMcpServerNames(state.agentDefinition.mcpServers ?? []);
   const hasTools = tools.length > 0 || mcpServers.length > 0;
 
   const userPromptParts = [

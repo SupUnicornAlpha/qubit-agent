@@ -4,6 +4,7 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import { executeAgentReact } from "../langgraph/execute-agent-react";
+import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers";
 import type { RuntimeAgentDefinition } from "../types";
 import type { RawAnalystSignal } from "./signal-fusion";
 import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
@@ -91,6 +92,7 @@ export async function runResearchTeamSlotReact(params: {
 > {
   const def = await loadRuntimeDefinition(params.definitionId);
   def.systemPrompt = params.systemPrompt;
+  def.mcpServers = await resolveEnabledMcpServerNames(def.mcpServers ?? []);
 
   const runId = randomUUID();
   const traceId = randomUUID();

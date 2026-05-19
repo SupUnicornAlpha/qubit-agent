@@ -9,7 +9,9 @@ import { logResearchTeamInteraction } from "../../research-team/interaction-log"
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { parseToolCallFromReason } from "../../tools/tool-call-format";
-import { resolveConnectorForTool } from "../../tools/tool-routes";
+import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../tools/tool-routes";
+import { registerBuiltinConnectors } from "../../connectors/bootstrap";
+import { connectorRegistry } from "../../connectors/registry";
 
 export async function actNode(
   state: AgentGraphState,
@@ -68,18 +70,35 @@ export async function actNode(
     };
   }
 
-  const { toolName, params: toolParams, mcp } = parsed;
+  const { toolName, params: toolParams, mcp: parsedMcp } = parsed;
   const enrichedToolParams: Record<string, unknown> = {
     ...toolParams,
     workflowRunId: (toolParams["workflowRunId"] as string | undefined) ?? state.workflowId,
   };
-  const connectorTarget = !mcp ? resolveConnectorForTool(toolName) : undefined;
+
+  /** LLM 误用 call_mcp(serverName=qubit-news) 时转 connector 执行 */
+  let mcp = parsedMcp;
+  let effectiveToolName = toolName;
+  if (parsedMcp) {
+    await registerBuiltinConnectors();
+    const connectorAlias = resolveConnectorForServerAlias(parsedMcp.serverName);
+    if (connectorAlias && connectorRegistry.get(connectorAlias)) {
+      mcp = undefined;
+      effectiveToolName = parsedMcp.toolName;
+      enrichedToolParams["operation"] = parsedMcp.toolName;
+      Object.assign(enrichedToolParams, parsedMcp.arguments ?? {});
+    }
+  }
+
+  const connectorTarget = !mcp
+    ? resolveConnectorForTool(effectiveToolName) ?? (parsedMcp ? resolveConnectorForServerAlias(parsedMcp.serverName) : undefined)
+    : undefined;
   const targetKind: "mcp" | "tool" | "connector" = mcp ? "mcp" : connectorTarget ? "connector" : "tool";
   const targetName = mcp
     ? `${mcp.serverName}/${mcp.toolName}`
     : connectorTarget
-      ? `${connectorTarget}/${toolName}`
-      : toolName;
+      ? `${connectorTarget}/${effectiveToolName}`
+      : effectiveToolName;
   const toolKind: "mcp" | "builtin" | "acp_connector" = mcp
     ? "mcp"
     : connectorTarget
@@ -164,7 +183,7 @@ export async function actNode(
           workflowId: state.workflowId,
           traceId: state.traceId,
           agentInstanceId,
-          toolName,
+          toolName: effectiveToolName,
           payload: { plannedAction: state.plannedAction ?? "unknown" },
           definition: state.agentDefinition,
         });
@@ -266,8 +285,8 @@ export async function actNode(
           senderAgent: agentInstanceId,
           targetKind: "connector",
           targetName: connectorTarget,
-          intent: toolName,
-          payload: { operation: toolName, params: enrichedToolParams },
+          intent: effectiveToolName,
+          payload: { operation: effectiveToolName, params: enrichedToolParams },
           timeoutMs: policy.maxToolCallMs,
         });
         const response = await defaultAcpCaller.call(request);
@@ -276,7 +295,7 @@ export async function actNode(
         }
         return { result: "ok" as const, connectorResult: response.result };
       }
-      if (isBuiltinTool(toolName)) {
+      if (isBuiltinTool(effectiveToolName)) {
         const enrichedParams = {
           ...enrichedToolParams,
           ticker:
@@ -293,23 +312,23 @@ export async function actNode(
           reasonText: state.reasonText,
           inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
         };
-        const builtinResult = await dispatchBuiltinTool(toolName, toolCtx, enrichedParams);
-        if (toolName === "run_analyst_team") {
+        const builtinResult = await dispatchBuiltinTool(effectiveToolName, toolCtx, enrichedParams);
+        if (effectiveToolName === "run_analyst_team") {
           return { result: "ok" as const, analystTeamResult: builtinResult };
         }
-        if (toolName === "edit_agent_pack") {
+        if (effectiveToolName === "edit_agent_pack") {
           return { result: "ok" as const, packEdit: builtinResult };
         }
-        if (toolName === "fuse_signals") {
+        if (effectiveToolName === "fuse_signals") {
           return { result: "ok" as const, fusionResult: builtinResult };
         }
         return { result: "ok" as const, builtinResult };
       }
       throw new Error(
-        `Tool "${toolName}" is not implemented. Add it to builtin-tools or tool-routes (connector).`
+        `Tool "${effectiveToolName}" is not implemented. Add it to builtin-tools or tool-routes (connector).`
       );
     },
-    meta: { toolName },
+    meta: { toolName: effectiveToolName },
   });
 
   if (!execution.ok) {

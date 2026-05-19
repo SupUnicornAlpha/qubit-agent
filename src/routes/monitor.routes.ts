@@ -25,6 +25,7 @@ import {
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
+import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
 import {
   createEvalDataset,
   getEvalRunDetail,
@@ -230,6 +231,12 @@ monitorRouter.get("/workflows", async (c) => {
     return true;
   });
   return c.json({ data: filtered.slice(0, 200) });
+});
+
+monitorRouter.get("/workflows/:id/observability", async (c) => {
+  const workflowId = c.req.param("id");
+  const data = await getWorkflowObservability(workflowId);
+  return c.json({ ok: true, data });
 });
 
 monitorRouter.get("/workflows/:id/detail", async (c) => {

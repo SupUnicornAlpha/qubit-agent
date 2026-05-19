@@ -491,6 +491,34 @@ export interface WorkflowDetail {
   sandboxViolations: Array<Record<string, unknown>>;
 }
 
+/** GET /monitor/workflows/:id/observability */
+export interface WorkflowObservability {
+  workflowRunId: string;
+  llm: {
+    reasonSteps: number;
+    totalTokenCount: number | null;
+    totalReasonLatencyMs: number | null;
+  };
+  tools: {
+    total: number;
+    byKind: Record<string, number>;
+    byStatus: Record<string, number>;
+    topTools: Array<{ name: string; count: number }>;
+  };
+  mcp: {
+    total: number;
+    byStatus: Record<string, number>;
+    byServer: Array<{ server: string; count: number; success: number; failed: number }>;
+  };
+  byAgentRole: Array<{
+    role: string;
+    reasonSteps: number;
+    toolCalls: number;
+    mcpCalls: number;
+    tokens: number | null;
+  }>;
+}
+
 /** GET /analyst/workflow/:id/team-graph */
 export interface AnalystTeamGraphNode {
   id: string;

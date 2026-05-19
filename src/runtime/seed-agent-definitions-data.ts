@@ -17,10 +17,10 @@ function def(
   partial: RuntimeAgentDefinition & { enabled?: boolean }
 ): RuntimeAgentDefinition {
   const role = partial.role;
-  const baseMcp = ROLE_CONNECTOR_MCPS[role] ?? [];
   return {
     ...partial,
-    mcpServers: resolveSeedMcpServers(role, partial.mcpServers ?? baseMcp),
+    /** 仅真实 MCP（mathjs / mcp-financex / 已启用的 fsi-*）；connector 走 tools 列表，勿写入 mcpServers */
+    mcpServers: resolveSeedMcpServers(role, partial.mcpServers ?? []),
     skills: partial.skills ?? ROLE_SKILLS[role] ?? [],
     subscriptions: partial.subscriptions ?? ["TASK_ASSIGN"],
     llmProvider: partial.llmProvider ?? "openai:gpt-4o",

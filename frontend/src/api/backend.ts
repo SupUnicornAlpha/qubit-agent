@@ -60,6 +60,7 @@ import type {
   SignalFusionRecord,
   StepStreamEvent,
   WorkflowDetail,
+  WorkflowObservability,
   WorkflowTimeline,
   WorkflowArtifactsDto,
   WorkflowCreateInput,
@@ -737,6 +738,13 @@ export async function listMonitorWorkflows(params: {
 
 export async function getWorkflowDetail(workflowId: string): Promise<WorkflowDetail> {
   const res = await httpGet<{ data: WorkflowDetail }>(`/api/v1/monitor/workflows/${workflowId}/detail`);
+  return res.data;
+}
+
+export async function getWorkflowObservability(workflowId: string): Promise<WorkflowObservability> {
+  const res = await httpGet<{ ok: boolean; data: WorkflowObservability }>(
+    `/api/v1/monitor/workflows/${workflowId}/observability`
+  );
   return res.data;
 }
 

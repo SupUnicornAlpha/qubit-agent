@@ -42,3 +42,9 @@ export const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
 export function resolveConnectorForTool(toolName: string): string | undefined {
   return TOOL_CONNECTOR_ROUTES[toolName];
 }
+
+/** call_mcp 误用 connector 名作为 serverName 时，映射到内置 connector */
+export function resolveConnectorForServerAlias(serverName: string): string | undefined {
+  const known = new Set(Object.values(TOOL_CONNECTOR_ROUTES));
+  return known.has(serverName) ? serverName : undefined;
+}

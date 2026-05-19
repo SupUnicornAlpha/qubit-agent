@@ -25,6 +25,7 @@ import type {
   EvalRunRecord,
   SessionAgentBoardItem,
   WorkflowMode,
+  WorkflowObservability,
   WorkflowQualitySnapshotRecord,
 } from "../../api/types";
 import {
@@ -40,6 +41,7 @@ import {
   getMonitorSummary,
   getSessionAgentsBoard,
   getWorkflowDetail,
+  getWorkflowObservability,
   listAgents,
   listAgentQuality,
   listAlerts,
@@ -265,6 +267,7 @@ export const MonitorDashboard: FC = () => {
   const [workflowList, setWorkflowList] = useState<WorkflowRow[]>([]);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [drawerDetail, setDrawerDetail] = useState("");
+  const [workflowObservability, setWorkflowObservability] = useState<WorkflowObservability | null>(null);
   const [qualitySnapshots, setQualitySnapshots] = useState<WorkflowQualitySnapshotRecord[]>([]);
   const [agentQuality, setAgentQuality] = useState<AgentRuntimeMetricRecord[]>([]);
   const [alerts, setAlerts] = useState<AlertEventRecord[]>([]);
@@ -573,12 +576,17 @@ export const MonitorDashboard: FC = () => {
   const onSelectWorkflow = async (workflowId: string) => {
     setSelectedWorkflowId(workflowId);
     try {
-      const detail = await getWorkflowDetail(workflowId);
+      const [detail, obs] = await Promise.all([
+        getWorkflowDetail(workflowId),
+        getWorkflowObservability(workflowId),
+      ]);
       setDrawerDetail(JSON.stringify(detail, null, 2));
+      setWorkflowObservability(obs);
       const snaps = await listWorkflowQuality(workflowId);
       setQualitySnapshots(snaps);
     } catch (e) {
       setDrawerDetail(e instanceof Error ? e.message : "加载失败");
+      setWorkflowObservability(null);
     }
   };
 
@@ -921,6 +929,77 @@ export const MonitorDashboard: FC = () => {
                 </div>
               ) : (
                 <div style={styles.hint}>选中一行并生成快照后显示趋势</div>
+              )}
+              <h3 className="qb-monitor__section" style={styles.subTitle}>
+                工作流 · 可观测性（LLM / 工具 / MCP）
+              </h3>
+              {!workflowObservability ? (
+                <div style={styles.hint}>选中工作流后加载 LLM、工具与 MCP 调用统计…</div>
+              ) : (
+                <>
+                  <div className="qb-monitor__kpi-row" style={styles.kpiRow}>
+                    <Kpi label="LLM reason 步" value={String(workflowObservability.llm.reasonSteps)} accent="#a78bfa" />
+                    <Kpi
+                      label="Token 合计"
+                      value={
+                        workflowObservability.llm.totalTokenCount != null
+                          ? String(workflowObservability.llm.totalTokenCount)
+                          : "—"
+                      }
+                    />
+                    <Kpi
+                      label="Reason 延迟(ms)"
+                      value={
+                        workflowObservability.llm.totalReasonLatencyMs != null
+                          ? String(workflowObservability.llm.totalReasonLatencyMs)
+                          : "—"
+                      }
+                    />
+                    <Kpi label="工具调用" value={String(workflowObservability.tools.total)} accent="#3b82f6" />
+                    <Kpi label="MCP 调用" value={String(workflowObservability.mcp.total)} accent="#22c55e" />
+                  </div>
+                  {workflowObservability.byAgentRole.length > 0 ? (
+                    <div className="qb-monitor__panel qb-a3d-tilt" style={styles.chartBox}>
+                      <div style={styles.chartTitle}>按角色</div>
+                      <div style={styles.tableWrap}>
+                        <table style={styles.table}>
+                          <thead>
+                            <tr>
+                              <th style={styles.th}>角色</th>
+                              <th style={styles.th}>LLM</th>
+                              <th style={styles.th}>工具</th>
+                              <th style={styles.th}>MCP</th>
+                              <th style={styles.th}>Tokens</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {workflowObservability.byAgentRole.map((r) => (
+                              <tr key={r.role} style={styles.tr}>
+                                <td style={styles.td}>{r.role}</td>
+                                <td style={styles.td}>{r.reasonSteps}</td>
+                                <td style={styles.td}>{r.toolCalls}</td>
+                                <td style={styles.td}>{r.mcpCalls}</td>
+                                <td style={styles.td}>{r.tokens ?? "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : null}
+                  {workflowObservability.mcp.byServer.length > 0 ? (
+                    <div className="qb-monitor__panel qb-a3d-tilt" style={{ ...styles.chartBox, marginTop: 8 }}>
+                      <div style={styles.chartTitle}>MCP 按服务</div>
+                      <ul style={{ margin: 0, padding: "8px 12px 8px 24px", fontSize: 12, lineHeight: 1.6 }}>
+                        {workflowObservability.mcp.byServer.map((s) => (
+                          <li key={s.server}>
+                            {s.server} · {s.count} 次 · 成功 {s.success} / 失败 {s.failed}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </>
               )}
               <h3 className="qb-monitor__section"
             style={styles.subTitle}>工作流 · 详情（JSON）</h3>
