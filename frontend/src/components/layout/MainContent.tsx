@@ -137,6 +137,7 @@ import type {
   ScheduledJobRunRecord,
   AnalystTeamGraphPayload,
   AnalystTeamGraphInteraction,
+  AnalystTeamGraphAgentStep,
   AnalystTeamGraphToolCall,
   AnalystTeamGraphMcpCall,
   StrategyGenomeRecord,
@@ -3948,22 +3949,22 @@ const TeamDashboardPanel: FC = () => {
     return buildFilteredTeamGraphDisplay(teamGraph, participatingAnalystRoles);
   }, [teamGraph, participatingAnalystRoles]);
 
-  const graphToolsForNode = useMemo((): {
+  const graphNodeDetail = useMemo((): {
+    inbound: AnalystTeamGraphInteraction[];
+    steps: AnalystTeamGraphAgentStep[];
     tools: AnalystTeamGraphToolCall[];
     mcps: AnalystTeamGraphMcpCall[];
-    interactions: AnalystTeamGraphInteraction[];
   } => {
     if (!teamGraph || graphSelection?.kind !== "node") {
-      return { tools: [], mcps: [], interactions: [] };
+      return { inbound: [], steps: [], tools: [], mcps: [] };
     }
     const r = graphSelection.role;
-    const interactions = (filteredGraphDisplay?.interactions ?? teamGraph.interactions).filter(
-      (row) => row.fromRole === r || row.toRole === r
-    );
+    const interactions = filteredGraphDisplay?.interactions ?? teamGraph.interactions;
     return {
+      inbound: interactions.filter((row) => row.toRole === r && row.kind === "llm_message"),
+      steps: (teamGraph.agentSteps ?? []).filter((s) => s.agentRole === r),
       tools: teamGraph.toolCalls.filter((t) => t.agentRole === r),
       mcps: teamGraph.mcpCalls.filter((m) => m.agentRole === r),
-      interactions,
     };
   }, [teamGraph, graphSelection, filteredGraphDisplay?.interactions]);
 
@@ -5640,15 +5641,15 @@ const TeamDashboardPanel: FC = () => {
               {graphSelection?.kind === "node" ? (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ ...teamStyles.sectionTitle, marginBottom: 6 }}>
-                    Agent 详情 · {graphSelection.role}
+                    Agent 运行 · {graphSelection.role}
                   </div>
                   <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 8 }}>
-                    工具 {graphToolsForNode.tools.length} 次 · MCP {graphToolsForNode.mcps.length} 次 · 交互{" "}
-                    {graphToolsForNode.interactions.length} 条
+                    收到消息 {graphNodeDetail.inbound.length} 条 · 执行步 {graphNodeDetail.steps.length} · 工具{" "}
+                    {graphNodeDetail.tools.length} · MCP {graphNodeDetail.mcps.length}
                   </div>
-                  {graphToolsForNode.tools.length === 0 && graphToolsForNode.mcps.length === 0 ? (
+                  {graphNodeDetail.tools.length === 0 && graphNodeDetail.mcps.length === 0 ? (
                     <div style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
-                      暂无工具调用记录。研究团队槽位现已走 ReAct 循环；请重新运行分析后查看。
+                      暂无工具 / MCP 调用记录。
                     </div>
                   ) : (
                     <div
@@ -5661,7 +5662,8 @@ const TeamDashboardPanel: FC = () => {
                         fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
                       }}
                     >
-                      {graphToolsForNode.tools.map((t) => (
+                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>工具 / MCP</div>
+                      {graphNodeDetail.tools.map((t) => (
                         <details key={t.id} style={{ marginBottom: 6 }}>
                           <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
                             [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status}
@@ -5684,7 +5686,7 @@ const TeamDashboardPanel: FC = () => {
                           ) : null}
                         </details>
                       ))}
-                      {graphToolsForNode.mcps.map((m) => (
+                      {graphNodeDetail.mcps.map((m) => (
                         <details key={m.id} style={{ marginBottom: 6 }}>
                           <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
                             [MCP] {m.serverName}/{m.toolName} · {m.status}
@@ -5694,24 +5696,41 @@ const TeamDashboardPanel: FC = () => {
                       ))}
                     </div>
                   )}
-                  {graphToolsForNode.interactions.length > 0 ? (
-                    <div style={{ maxHeight: 160, overflow: "auto", fontSize: 10, color: "#d4d4d8" }}>
-                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>相关对话</div>
-                      {graphToolsForNode.interactions.map((row) => (
+                  {graphNodeDetail.inbound.length > 0 ? (
+                    <div style={{ maxHeight: 140, overflow: "auto", fontSize: 10, color: "#d4d4d8", marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>收到的消息</div>
+                      {graphNodeDetail.inbound.map((row) => (
                         <div
                           key={row.id}
-                          style={{
-                            marginBottom: 6,
-                            paddingBottom: 4,
-                            borderBottom: "1px solid #27272a",
-                          }}
+                          style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
                         >
-                          {row.fromRole} → {row.toRole} · {row.kind}
-                          {row.toolName ? ` · ${row.toolName}` : ""}
+                          {row.fromRole} → {row.toRole}
                           <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
-                            {row.contentText.slice(0, 1500)}
+                            {row.contentText.slice(0, 2000)}
                           </pre>
                         </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {graphNodeDetail.steps.length > 0 ? (
+                    <div style={{ maxHeight: 160, overflow: "auto", fontSize: 10, color: "#d4d4d8", marginBottom: 8 }}>
+                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>执行轨迹（ReAct）</div>
+                      {graphNodeDetail.steps.map((s) => (
+                        <details key={s.id} style={{ marginBottom: 6 }}>
+                          <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
+                            [{s.createdAt}] {s.phase} · {s.actionType} · step {s.stepIndex}
+                          </summary>
+                          {s.thought ? (
+                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#a1a1aa" }}>
+                              {s.thought.slice(0, 2500)}
+                            </pre>
+                          ) : null}
+                          {s.observationJson != null && typeof s.observationJson === "object" ? (
+                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#86efac" }}>
+                              {JSON.stringify(s.observationJson, null, 2).slice(0, 2000)}
+                            </pre>
+                          ) : null}
+                        </details>
                       ))}
                     </div>
                   ) : null}

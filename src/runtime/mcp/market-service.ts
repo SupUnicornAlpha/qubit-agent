@@ -149,12 +149,6 @@ export async function listCatalogItemsPaginated(input?: {
   return { items, total, page: safePage, pageSize, totalPages };
 }
 
-/** @deprecated Prefer listCatalogItemsPaginated for UI lists */
-export async function listCatalogItems(input?: { sourceId?: string; q?: string; risk?: "low" | "medium" | "high" }) {
-  const { items } = await listCatalogItemsPaginated({ ...input, page: 1, pageSize: 10_000 });
-  return items;
-}
-
 function projectScopedServerName(projectId: string, requested: string): string {
   return `${projectId.slice(0, 8)}-${requested}`.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
@@ -348,11 +342,4 @@ export async function testProjectInstall(input: {
     toolName,
     arguments: input.arguments ?? { ping: true, ts: Date.now() },
   });
-}
-
-export async function backfillLegacyCatalogItem(): Promise<void> {
-  const db = await getDb();
-  const legacy = await db.select().from(mcpCatalog).limit(1);
-  if (!legacy[0]) return;
-  await ensureDefaultRegistrySource();
 }

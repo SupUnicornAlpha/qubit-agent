@@ -218,11 +218,6 @@ export function searchOpenSkillMarketEntriesPaginated(
   };
 }
 
-/** @deprecated Prefer searchOpenSkillMarketEntriesPaginated */
-export function searchOpenSkillMarketEntries(q: string, limit: number): OpenSkillMarketEntry[] {
-  return searchOpenSkillMarketEntriesPaginated(q, 1, limit).items;
-}
-
 export function getOpenSkillMarketEntry(id: string): OpenSkillMarketEntry | undefined {
   return cache?.byId.get(id);
 }

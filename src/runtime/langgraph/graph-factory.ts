@@ -12,8 +12,11 @@ import {
   ensureWorkspaceRuntimeConfigFiles,
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
-import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
-import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
+import {
+  executeResearchTeamWorkflow,
+  failResearchTeamExecuteJob,
+  parseResearchTeamExecutePayload,
+} from "../msa/research-team-execute";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
@@ -216,42 +219,10 @@ export class GraphRunner {
         params.def.role === "orchestrator" &&
         params.payload.taskType === "research_team_execute"
       ) {
-        type ResearchTeamExecuteParams = {
-          jobId?: string;
-          ticker?: string;
-          context?: string;
-          agentGroupId?: string | null;
-          analystDefinitionIds?: string[];
-          analystRoles?: string[];
-        };
-        const pr = params.payload.params as ResearchTeamExecuteParams;
-        const jobId = typeof pr.jobId === "string" ? pr.jobId : "";
-        const ticker = typeof pr.ticker === "string" ? pr.ticker.trim() : "";
-        const context = typeof pr.context === "string" ? pr.context : undefined;
-        let agentGroupId: string | null | undefined;
-        if ("agentGroupId" in pr) {
-          const ag = pr.agentGroupId;
-          if (ag === null) agentGroupId = null;
-          else if (typeof ag === "string") agentGroupId = ag.trim() || null;
-        }
-        const rawDefIds = pr.analystDefinitionIds;
-        const analystDefinitionIds =
-          Array.isArray(rawDefIds) && rawDefIds.length > 0
-            ? rawDefIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-            : undefined;
-        const rawRoles = pr.analystRoles;
-        const analystRoles =
-          Array.isArray(rawRoles) && rawRoles.length > 0
-            ? (rawRoles.filter(
-                (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
-              ) as AgentRole[])
-            : undefined;
-
-        if (!jobId || !ticker) {
-          if (jobId) {
-            failAnalystResearchJob(jobId, new Error("research_team_execute: missing ticker"));
-          }
-          throw new Error("research_team_execute requires params.jobId and params.ticker");
+        const parsed = parseResearchTeamExecutePayload(params.payload);
+        if (!parsed.ok) {
+          failResearchTeamExecuteJob(parsed.jobId, parsed.error);
+          throw parsed.error;
         }
 
         await db.insert(agentInstance).values({
@@ -264,15 +235,10 @@ export class GraphRunner {
         });
 
         try {
-          const teamResult = await runAnalystTeam({
+          const teamResult = await executeResearchTeamWorkflow({
             workflowRunId: params.workflowId,
-            ticker,
-            context,
-            agentGroupId,
-            analystRoles,
-            analystDefinitionIds,
+            params: parsed.params,
           });
-          completeAnalystResearchJob(jobId, teamResult);
           await db
             .update(agentInstance)
             .set({
@@ -304,7 +270,7 @@ export class GraphRunner {
             source: "native",
           });
         } catch (teamErr) {
-          failAnalystResearchJob(jobId, teamErr);
+          failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
           throw teamErr;
         }
         return;

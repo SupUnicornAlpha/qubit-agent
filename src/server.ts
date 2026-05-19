@@ -92,19 +92,6 @@ interface WsData {
 
 const wsClients = new Map<string, ServerWebSocket<WsData>>();
 
-export function broadcastWs(topic: string, payload: unknown): void {
-  const message = JSON.stringify({ topic, payload, ts: Date.now() });
-  for (const client of wsClients.values()) {
-    if (!client.data.topic || client.data.topic === topic) {
-      try {
-        client.send(message);
-      } catch {
-        // client disconnected
-      }
-    }
-  }
-}
-
 // ─── Server startup ───────────────────────────────────────────────────────────
 
 export function createServer() {

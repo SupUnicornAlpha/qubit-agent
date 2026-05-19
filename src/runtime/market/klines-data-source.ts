@@ -282,8 +282,3 @@ export async function fetchYahooFinanceBars(params: FetchBarsParams): Promise<Ba
   }
   return bars;
 }
-
-/** @deprecated 使用 {@link fetchYahooFinanceBars}（已支持多周期） */
-export async function fetchYahooFinanceDailyBars(params: FetchBarsParams): Promise<BarData[]> {
-  return fetchYahooFinanceBars(params);
-}

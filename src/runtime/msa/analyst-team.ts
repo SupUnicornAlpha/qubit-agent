@@ -33,7 +33,6 @@ import {
 } from "../agent/agent-pack-service";
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
 import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
-import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
 import {
   logOrchestratorKickoff,
   parseGroupRelationsWithOrchestrator,
@@ -173,83 +172,6 @@ export interface AnalystTeamResult {
     reason: string;
     severity: "warning" | "block" | "critical";
     rulesTriggered: string[];
-  };
-}
-
-/**
- * 模拟单个 Analyst Agent 的 LLM 推理，返回结构化信号。
- */
-async function runAnalystLlm(params: {
-  role: AgentRole;
-  definitionId: string;
-  systemPrompt: string;
-  ticker: string;
-  /** 用户背景 + 可选：来自前置分析师（拓扑边）的摘要 */
-  context: string;
-}): Promise<RawAnalystSignal & { agentInstanceId?: string }> {
-  const modelConfig = (await loadModelConfig()) ?? {
-    provider: "mock" as const,
-    model: "mock-analyst",
-    apiKey: "",
-  };
-
-  const userPrompt = `
-请分析以下投资标的并给出你的专业判断。
-
-**要求**：
-1. 必须先阅读「自动数据快照」与 Orchestrator 任务简报、前置成员结论（若有），在信息充分后再输出结论。
-2. 若数据明显不足，signal 用 hold、confidence 低于 0.4，并在 reasoning 中说明缺什么。
-3. 严格按角色输出格式，只输出一段 JSON。
-
-**标的代码**：${params.ticker}
-**背景信息**：
-${params.context}
-`;
-
-  let answer = "";
-  try {
-    answer = await runLlmGateway({
-      config: modelConfig,
-      systemPrompt: params.systemPrompt,
-      userPrompt,
-      onToken: () => {},
-    });
-  } catch (e) {
-    answer = `{"signal":"hold","confidence":0.3,"reasoning":"LLM error: ${(e as Error).message}"}`;
-  }
-
-  // Extract JSON from the LLM response
-  let parsed: Record<string, unknown> = {};
-  try {
-    const match = answer.match(/\{[\s\S]*\}/);
-    if (match) parsed = JSON.parse(match[0]);
-  } catch {
-    parsed = {};
-  }
-
-  const validated = await validateFsiRoleOutput(params.role, parsed);
-  const p = validated.sanitized;
-
-  const signal = (["buy", "sell", "hold"].includes(p["signal"] as string)
-    ? p["signal"]
-    : "hold") as AnalystSignalValue;
-
-  const confidence = typeof p["confidence"] === "number"
-    ? Math.max(0, Math.min(1, p["confidence"]))
-    : 0.4;
-
-  const reasoning = typeof p["reasoning"] === "string"
-    ? p["reasoning"]
-    : answer.slice(0, 500);
-
-  return {
-    definitionId: params.definitionId,
-    analystRole: params.role,
-    ticker: params.ticker,
-    signal,
-    confidence,
-    reasoning,
-    dataSnapshot: { rawResponse: answer },
   };
 }
 

@@ -5,23 +5,15 @@ import { workflowRun } from "../../db/sqlite/schema";
 import type { OrderIntentPayload, TaskAssignPayload } from "../../types/a2a";
 import { ALL_AGENT_ROLES, type AgentRole } from "../../types/entities";
 import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
+import { buildTaskResult } from "../a2a/task-result";
 import { getA2APool } from "../a2a/a2a-pool";
-import { completeAnalystResearchJob, failAnalystResearchJob } from "../msa/analyst-research-jobs";
-import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
+import {
+  executeResearchTeamWorkflow,
+  failResearchTeamExecuteJob,
+  parseResearchTeamExecutePayload,
+} from "../msa/research-team-execute";
 import type { RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
-
-function buildTaskResult(taskId: string, role: AgentRole, extra?: Record<string, unknown>) {
-  return {
-    taskId,
-    success: true,
-    result: {
-      handledByRole: role,
-      ...extra,
-    },
-    durationMs: 0,
-  };
-}
 
 async function setWorkflowStatus(
   workflowId: string,
@@ -72,53 +64,18 @@ const orchestratorHandler: RuntimeRoleHandler = {
     const payload = msg.payload as TaskAssignPayload;
 
     if (payload.taskType === "research_team_execute") {
-      type ResearchTeamExecuteParams = {
-        jobId?: string;
-        ticker?: string;
-        context?: string;
-        agentGroupId?: string | null;
-        analystDefinitionIds?: string[];
-        analystRoles?: string[];
-      };
-      const pr = payload.params as ResearchTeamExecuteParams;
-      const jobId = typeof pr.jobId === "string" ? pr.jobId : "";
-      const ticker = typeof pr.ticker === "string" ? pr.ticker.trim() : "";
-      const context = typeof pr.context === "string" ? pr.context : undefined;
-      let agentGroupId: string | null | undefined;
-      if ("agentGroupId" in pr) {
-        const ag = pr.agentGroupId;
-        if (ag === null) agentGroupId = null;
-        else if (typeof ag === "string") agentGroupId = ag.trim() || null;
-      }
-      const rawDefIds = pr.analystDefinitionIds;
-      const analystDefinitionIds =
-        Array.isArray(rawDefIds) && rawDefIds.length > 0
-          ? rawDefIds.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-          : undefined;
-      const rawRoles = pr.analystRoles;
-      const analystRoles =
-        Array.isArray(rawRoles) && rawRoles.length > 0
-          ? (rawRoles.filter(
-              (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
-            ) as AgentRole[])
-          : undefined;
-
-      if (!jobId || !ticker) {
-        if (jobId) failAnalystResearchJob(jobId, new Error("research_team_execute: missing ticker"));
+      const parsed = parseResearchTeamExecutePayload(payload);
+      if (!parsed.ok) {
+        failResearchTeamExecuteJob(parsed.jobId, parsed.error);
         await setWorkflowStatus(msg.workflowId, "failed");
         return;
       }
 
       try {
-        const teamResult = await runAnalystTeam({
+        const teamResult = await executeResearchTeamWorkflow({
           workflowRunId: msg.workflowId,
-          ticker,
-          context,
-          agentGroupId,
-          analystRoles,
-          analystDefinitionIds,
+          params: parsed.params,
         });
-        completeAnalystResearchJob(jobId, teamResult);
         await setWorkflowStatus(msg.workflowId, "completed");
         await ctx.send({
           workflowId: msg.workflowId,
@@ -126,15 +83,17 @@ const orchestratorHandler: RuntimeRoleHandler = {
           receiverAgent: msg.senderAgent,
           messageType: "TASK_RESULT",
           payload: buildTaskResult(payload.taskId, "orchestrator", {
-            taskType: "research_team_execute",
-            fusionId: teamResult.fusionId,
-            fusedSignal: teamResult.fusedSignal,
-            fusedConfidence: teamResult.fusedConfidence,
+            result: {
+              taskType: "research_team_execute",
+              fusionId: teamResult.fusionId,
+              fusedSignal: teamResult.fusedSignal,
+              fusedConfidence: teamResult.fusedConfidence,
+            },
           }),
           priority: msg.priority,
         });
       } catch (teamErr) {
-        failAnalystResearchJob(jobId, teamErr);
+        failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
         await setWorkflowStatus(msg.workflowId, "failed");
         throw teamErr;
       }
@@ -164,8 +123,10 @@ const orchestratorHandler: RuntimeRoleHandler = {
       receiverAgent: msg.senderAgent,
       messageType: "TASK_RESULT",
       payload: buildTaskResult(payload.taskId, "orchestrator", {
-        taskType: payload.taskType,
-        next: "orchestrator handled",
+        result: {
+          taskType: payload.taskType,
+          next: "orchestrator handled",
+        },
       }),
       priority: msg.priority,
     });
@@ -228,8 +189,10 @@ function createOrderIntentExecutionHandler(role: AgentRole): RuntimeRoleHandler 
         receiverAgent: msg.senderAgent,
         messageType: "TASK_RESULT",
         payload: buildTaskResult(randomUUID(), role, {
-          orderIntentId: intent.orderIntentId,
-          executionStatus: "accepted_by_runtime_handler",
+          result: {
+            orderIntentId: intent.orderIntentId,
+            executionStatus: "accepted_by_runtime_handler",
+          },
         }),
         priority: msg.priority,
       });

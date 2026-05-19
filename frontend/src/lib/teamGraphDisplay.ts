@@ -131,6 +131,7 @@ export function buildFilteredTeamGraphDisplay(
     interactions,
     toolCalls: (teamGraph.toolCalls ?? []).filter((t) => allow.has(t.agentRole)),
     mcpCalls: (teamGraph.mcpCalls ?? []).filter((m) => allow.has(m.agentRole)),
+    agentSteps: (teamGraph.agentSteps ?? []).filter((s) => allow.has(s.agentRole)),
   };
 }
 

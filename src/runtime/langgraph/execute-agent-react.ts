@@ -65,14 +65,33 @@ export async function executeAgentReact(
     loopOptions,
   });
 
-  await db.insert(agentInstance).values({
-    id: agentInstanceId,
-    definitionId: params.def.id,
-    workflowRunId: params.workflowId,
-    status: "running",
-    currentIteration: 0,
-    startedAt: new Date().toISOString(),
-  });
+  const nowIso = new Date().toISOString();
+  const existingInst = await db
+    .select({ id: agentInstance.id })
+    .from(agentInstance)
+    .where(eq(agentInstance.id, agentInstanceId))
+    .limit(1);
+  if (existingInst[0]) {
+    await db
+      .update(agentInstance)
+      .set({
+        status: "running",
+        currentIteration: 0,
+        startedAt: nowIso,
+        endedAt: null,
+        errorMessage: null,
+      })
+      .where(eq(agentInstance.id, agentInstanceId));
+  } else {
+    await db.insert(agentInstance).values({
+      id: agentInstanceId,
+      definitionId: params.def.id,
+      workflowRunId: params.workflowId,
+      status: "running",
+      currentIteration: 0,
+      startedAt: nowIso,
+    });
+  }
 
   const initialState = createInitialGraphState({
     runId: params.runId,

@@ -70,6 +70,21 @@ export interface TeamGraphInteractionRow {
   createdAt: string;
 }
 
+/** Agent 执行轨迹（ReAct step），供节点详情展示 stream / 推理 */
+export interface TeamGraphAgentStep {
+  id: string;
+  agentRole: string;
+  agentInstanceId: string;
+  stepIndex: number;
+  phase: string;
+  actionType: string;
+  thought: string | null;
+  actionJson: unknown;
+  observationJson: unknown;
+  latencyMs: number | null;
+  createdAt: string;
+}
+
 function undirectedKey(a: string, b: string): string {
   return a < b ? `${a}||${b}` : `${b}||${a}`;
 }
@@ -104,6 +119,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   interactions: TeamGraphInteractionRow[];
   toolCalls: TeamGraphToolCall[];
   mcpCalls: TeamGraphMcpCall[];
+  agentSteps: TeamGraphAgentStep[];
 }> {
   const db = await getDb();
 
@@ -135,6 +151,20 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       : [];
 
   const stepById = new Map(steps.map((s) => [s.id, s]));
+  const agentSteps: TeamGraphAgentStep[] = steps.map((s) => ({
+    id: s.id,
+    agentRole: instanceRole.get(s.agentInstanceId) ?? "unknown",
+    agentInstanceId: s.agentInstanceId,
+    stepIndex: s.stepIndex,
+    phase: s.phase,
+    actionType: s.actionType,
+    thought: s.thought,
+    actionJson: s.actionJson,
+    observationJson: s.observationJson,
+    latencyMs: s.latencyMs,
+    createdAt: s.createdAt,
+  }));
+
   const toolCalls: TeamGraphToolCall[] = allTools.map((t) => {
     const st = stepById.get(t.agentStepId);
     const ar = st ? (instanceRole.get(st.agentInstanceId) ?? "unknown") : "unknown";
@@ -280,5 +310,5 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     return { key, a, b, messageCount: agg.messageCount, toolCount: agg.toolCount };
   });
 
-  return { nodes, edges, interactions: rows, toolCalls, mcpCalls };
+  return { nodes, edges, interactions: rows, toolCalls, mcpCalls, agentSteps };
 }

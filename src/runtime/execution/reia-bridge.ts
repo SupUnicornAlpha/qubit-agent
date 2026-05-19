@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import { getDb } from "../../db/sqlite/client";
 import {
-  executionReport,
   instrument,
   intentOrder,
   strategy,
@@ -167,39 +166,4 @@ export async function createOrderIntentFromReiaPayload(
   });
 
   return { ...result, legacyIntentOrderId: legacyId };
-}
-
-/** Mirror execution_report for legacy REIA views when task fills. */
-export async function syncLegacyIntentFromExecution(
-  db: DbClient,
-  legacyIntentOrderId: string,
-  orderIntentId: string
-): Promise<void> {
-  const intents = await db.select().from(intentOrder).where(eq(intentOrder.id, legacyIntentOrderId)).limit(1);
-  const legacy = intents[0];
-  if (!legacy) return;
-
-  const reports = await db
-    .select()
-    .from(executionReport)
-    .where(eq(executionReport.intentOrderId, legacyIntentOrderId))
-    .limit(1);
-  if (reports.length) return;
-
-  await db.insert(executionReport).values({
-    id: randomUUID(),
-    intentOrderId: legacyIntentOrderId,
-    executorInstanceId: null,
-    actualPrice: legacy.targetPrice,
-    actualQuantity: legacy.quantity,
-    slippage: 0,
-    executionTimeMs: 0,
-    brokerOrderId: `unified-${orderIntentId.slice(0, 8)}`,
-    status: "filled",
-  });
-
-  await db
-    .update(intentOrder)
-    .set({ status: "executed" })
-    .where(eq(intentOrder.id, legacyIntentOrderId));
 }

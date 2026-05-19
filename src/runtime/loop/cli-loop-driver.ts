@@ -15,18 +15,6 @@ const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;
 
 const activeCliByRunId = new Map<string, ReturnType<typeof Bun.spawn>>();
 
-export function cancelCliLoopRun(runId: string): boolean {
-  const proc = activeCliByRunId.get(runId);
-  if (!proc) return false;
-  try {
-    proc.kill("SIGTERM");
-  } catch {
-    // ignore
-  }
-  activeCliByRunId.delete(runId);
-  return true;
-}
-
 async function readOrchestratorDefinitionId(): Promise<string> {
   const db = await getDb();
   const rows = await db

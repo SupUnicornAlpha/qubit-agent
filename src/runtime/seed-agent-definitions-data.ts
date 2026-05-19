@@ -197,6 +197,3 @@ export const RETIRED_BUILTIN_DEFINITION_IDS = [
   "def-portfolio-manager",
   "def-stock-screener",
 ] as const;
-
-/** @deprecated 使用 RETIRED_BUILTIN_DEFINITION_IDS */
-export const DEPRECATED_MERGED_DEFINITION_IDS = RETIRED_BUILTIN_DEFINITION_IDS;

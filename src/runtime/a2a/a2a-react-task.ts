@@ -4,23 +4,7 @@ import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { executeAgentReact } from "../langgraph/execute-agent-react";
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { RuntimeHandlerContext } from "../types";
-
-function buildTaskResult(
-  taskId: string,
-  role: string,
-  success: boolean,
-  result: Record<string, unknown>
-) {
-  return {
-    taskId,
-    success,
-    result: {
-      handledByRole: role,
-      ...result,
-    },
-    durationMs: 0,
-  };
-}
+import { buildTaskResult } from "./task-result";
 
 /**
  * Run the shared ReAct loop for an A2A TASK_ASSIGN, then reply with TASK_RESULT.
@@ -53,12 +37,10 @@ export async function runA2aReactTaskAssign(
       traceId,
       receiverAgent: msg.senderAgent,
       messageType: "TASK_RESULT",
-      payload: buildTaskResult(
-        payload.taskId,
-        ctx.definition.role,
-        terminalStatus !== "failed",
-        finalResponse
-      ),
+      payload: buildTaskResult(payload.taskId, ctx.definition.role, {
+        success: terminalStatus !== "failed",
+        result: finalResponse,
+      }),
       priority: msg.priority,
     });
   } catch (err) {
@@ -82,12 +64,11 @@ export async function runA2aReactTaskAssign(
       traceId,
       receiverAgent: msg.senderAgent,
       messageType: "TASK_RESULT",
-      payload: {
-        taskId: payload.taskId,
+      payload: buildTaskResult(payload.taskId, ctx.definition.role, {
         success: false,
-        result: { error: message, handledByRole: ctx.definition.role },
-        durationMs: 0,
-      },
+        result: { error: message },
+        errorMessage: message,
+      }),
       priority: msg.priority,
     });
   } finally {

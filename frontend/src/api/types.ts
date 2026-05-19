@@ -545,12 +545,27 @@ export interface AnalystTeamGraphMcpCall {
   createdAt: string;
 }
 
+export interface AnalystTeamGraphAgentStep {
+  id: string;
+  agentRole: string;
+  agentInstanceId: string;
+  stepIndex: number;
+  phase: string;
+  actionType: string;
+  thought: string | null;
+  actionJson: unknown;
+  observationJson: unknown;
+  latencyMs: number | null;
+  createdAt: string;
+}
+
 export interface AnalystTeamGraphPayload {
   nodes: AnalystTeamGraphNode[];
   edges: AnalystTeamGraphEdge[];
   interactions: AnalystTeamGraphInteraction[];
   toolCalls: AnalystTeamGraphToolCall[];
   mcpCalls: AnalystTeamGraphMcpCall[];
+  agentSteps?: AnalystTeamGraphAgentStep[];
 }
 
 // ─── V2 分析师团队与 MSA 类型 ─────────────────────────────────────────────────

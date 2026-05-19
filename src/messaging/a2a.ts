@@ -81,15 +81,3 @@ export class A2ARouter {
 }
 
 export const a2aRouter = A2ARouter.getInstance();
-
-// ─── Convenience builders ─────────────────────────────────────────────────────
-
-export function buildA2AMessage(
-  params: Omit<A2AMessageEnvelope, "messageId" | "createdAt">
-): A2AMessageEnvelope {
-  return {
-    ...params,
-    messageId: randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
-}

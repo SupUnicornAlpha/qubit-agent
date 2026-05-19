@@ -23,10 +23,11 @@ export interface AppendTraderContextInput {
 
 export async function appendTraderContextMessage(
   input: AppendTraderContextInput,
-  db: DbClient = await getDb()
+  db?: DbClient
 ): Promise<{ id: string; appended: boolean; compressed: boolean }> {
+  const client = db ?? (await getDb());
   if (input.sourceId) {
-    const dup = await db
+    const dup = await client
       .select({ id: traderContextMessage.id })
       .from(traderContextMessage)
       .where(
@@ -42,7 +43,7 @@ export async function appendTraderContextMessage(
   }
 
   const id = randomUUID();
-  await db.insert(traderContextMessage).values({
+  await client.insert(traderContextMessage).values({
     id,
     workflowRunId: input.workflowRunId,
     sourceId: input.sourceId ?? null,
@@ -53,16 +54,17 @@ export async function appendTraderContextMessage(
     payloadJson: input.payload ?? {},
   });
 
-  const compressed = await maybeCompressTraderContext(input.workflowRunId, db);
+  const compressed = await maybeCompressTraderContext(input.workflowRunId, client);
   return { id, appended: true, compressed };
 }
 
 export async function listTraderContextMessages(
   workflowRunId: string,
   limit = 200,
-  db: DbClient = await getDb()
+  db?: DbClient
 ): Promise<Array<typeof traderContextMessage.$inferSelect>> {
-  return db
+  const client = db ?? (await getDb());
+  return client
     .select()
     .from(traderContextMessage)
     .where(eq(traderContextMessage.workflowRunId, workflowRunId))
@@ -102,14 +104,15 @@ function buildCompressionSummary(
 /** 将较早消息合并为一条 compressed 记录 */
 export async function maybeCompressTraderContext(
   workflowRunId: string,
-  db: DbClient = await getDb()
+  db?: DbClient
 ): Promise<boolean> {
-  const stats = await contextStats(workflowRunId, db);
+  const client = db ?? (await getDb());
+  const stats = await contextStats(workflowRunId, client);
   if (stats.total <= MAX_MESSAGES && stats.chars <= MAX_TOTAL_CHARS) {
     return false;
   }
 
-  const all = await db
+  const all = await client
     .select()
     .from(traderContextMessage)
     .where(eq(traderContextMessage.workflowRunId, workflowRunId))
@@ -124,9 +127,9 @@ export async function maybeCompressTraderContext(
   const summaryBody = buildCompressionSummary(toCompress);
   const deleteIds = toCompress.map((r) => r.id);
 
-  await db.delete(traderContextMessage).where(inArray(traderContextMessage.id, deleteIds));
+  await client.delete(traderContextMessage).where(inArray(traderContextMessage.id, deleteIds));
 
-  await db.insert(traderContextMessage).values({
+  await client.insert(traderContextMessage).values({
     id: randomUUID(),
     workflowRunId,
     sourceId: `compressed-${Date.now()}`,
@@ -143,9 +146,10 @@ export async function maybeCompressTraderContext(
 export async function getTraderContextTail(
   workflowRunId: string,
   limit = 80,
-  db: DbClient = await getDb()
+  db?: DbClient
 ): Promise<Array<typeof traderContextMessage.$inferSelect>> {
-  const rows = await db
+  const client = db ?? (await getDb());
+  const rows = await client
     .select()
     .from(traderContextMessage)
     .where(eq(traderContextMessage.workflowRunId, workflowRunId))
