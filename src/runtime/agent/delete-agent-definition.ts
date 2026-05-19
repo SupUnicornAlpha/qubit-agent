@@ -21,7 +21,7 @@ export function isBuiltinAgentDefinitionId(id: string): boolean {
   return BUILTIN_AGENT_DEFINITION_IDS.has(id);
 }
 
-async function deleteAgentInstancesForDefinition(
+export async function deleteAgentInstancesForDefinition(
   db: DbClient,
   definitionId: string
 ): Promise<void> {

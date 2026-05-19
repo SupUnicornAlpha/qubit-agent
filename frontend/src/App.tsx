@@ -6,10 +6,12 @@ import { MainContent } from "./components/layout/MainContent";
 import { getHealth } from "./api/backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
 import { useAppStore } from "./store";
+import { useAmbient3dTilt } from "./hooks/useAmbient3dTilt";
 
 const App: FC = () => {
   const setBackendConnected = useAppStore((s) => s.setBackendConnected);
   const setBackendHint = useAppStore((s) => s.setBackendHint);
+  useAmbient3dTilt();
 
   useEffect(() => {
     const CONNECTED_INTERVAL_MS = 15_000;
@@ -93,8 +95,20 @@ const App: FC = () => {
 
   return (
     <div className="qb-app-root" style={styles.root}>
+      <div className="qb-gh-bg-layer" aria-hidden>
+        <span className="qb-gh-bg-layer__base" />
+        <span className="qb-gh-bg-layer__orbs" />
+        <span className="qb-gh-bg-layer__aurora" />
+        <span className="qb-a3d-spatial-grid" />
+        <span className="qb-gh-bg-layer__sweep" />
+        <span className="qb-gh-bg-layer__wave" />
+        <span className="qb-a3d-scene-deco" aria-hidden>
+          <span className="qb-a3d-prism-shadow" />
+          <span className="qb-a3d-prism" />
+        </span>
+      </div>
       <TopBar />
-      <div style={styles.body}>
+      <div className="qb-a3d-stage" style={styles.body}>
         <Sidebar />
         <MainContent />
       </div>

@@ -44,6 +44,7 @@ import {
   runPostFusionPipeline,
   slotOnlyRelationEdges,
 } from "./analyst-team-pipeline";
+import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
 
 async function enrichAnalystSlotsWithFsi(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -118,15 +119,15 @@ export const ANALYST_TEAM_ROLES: AgentRole[] = [
 
 /** 研究团队画布可选角色：analyst_* 参与 MSA；其余产出 Markdown 辅助章节 */
 export const RESEARCH_TEAM_SLOT_ROLES: readonly AgentRole[] = [
+  "market_data",
+  "news_event",
   "analyst_fundamental",
   "analyst_technical",
   "analyst_sentiment",
   "analyst_macro",
   "research",
   "backtest",
-  "backtest_engineer",
   "risk",
-  "risk_manager",
 ] as const;
 
 /** 与 `RESEARCH_TEAM_SLOT_ROLES` 一致，供路由 / 图编排校验 */
@@ -306,7 +307,7 @@ async function resolveAnalystSlots(params: {
     }
     if (slots.length === 0) {
       throw new Error(
-        "所选 Agent 组中没有可用的研究团队槽位定义（需为 analyst_* / research / backtest / backtest_engineer / risk / risk_manager 之一且已启用）"
+        "所选 Agent 组中没有可用的研究团队槽位定义（需为 analyst_* / research / backtest / risk 之一且已启用）"
       );
     }
     return slots;
@@ -516,14 +517,19 @@ export async function runAnalystTeam(params: {
               payloadJson: { topology: true, ticker },
             });
           }
-          const payload = await runAnalystLlm({
-            role: slot.role,
+          const slotIdx = waveSlots.findIndex((s) => s.role === slot.role);
+          const preInstanceId = slotIdx >= 0 ? instanceBySlotIndex[slotIdx] : undefined;
+          const reactOut = await runResearchTeamSlotReact({
+            workflowRunId,
             definitionId: slot.definitionId,
+            role: slot.role,
             systemPrompt: slot.systemPrompt,
             ticker,
             context: ctx,
+            agentInstanceId: preInstanceId,
+            expectJsonSignal: true,
           });
-          return { kind: "analyst" as const, payload };
+          return { kind: "analyst" as const, payload: reactOut.payload };
         })();
       })
     );
@@ -535,10 +541,13 @@ export async function runAnalystTeam(params: {
       const result = waveResults[wi];
       if (result.status === "fulfilled") {
         const val = result.value;
-        const { agentInstanceId: _id, ...signal } = val.payload;
+        const { agentInstanceId: reactInstId, ...signal } = val.payload;
         outputByRole.set(slot.role, signal);
         rawSignals.push(signal);
-        persistSignals.push({ agentInstanceId: instanceId, signal });
+        persistSignals.push({
+          agentInstanceId: reactInstId ?? instanceId,
+          signal,
+        });
         await logResearchTeamInteraction({
           workflowRunId,
           fromRole: slot.role,
@@ -637,14 +646,18 @@ export async function runAnalystTeam(params: {
       orchestratorDecision,
       relationEdges,
       auxSlots,
-      runAuxLlm: (slot, ctx) =>
-        runAuxResearchLlm({
-          role: slot.role,
+      runAuxLlm: async (slot, ctx) => {
+        const out = await runResearchTeamSlotReact({
+          workflowRunId,
           definitionId: slot.definitionId,
+          role: slot.role,
           systemPrompt: slot.systemPrompt,
           ticker,
           context: ctx,
-        }),
+          expectJsonSignal: false,
+        });
+        return out.kind === "markdown" ? out.body : "";
+      },
     });
     auxSections = post.auxSections;
   }

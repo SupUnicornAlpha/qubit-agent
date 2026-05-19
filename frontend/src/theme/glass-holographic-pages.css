@@ -1,0 +1,351 @@
+/**
+ * Glass Holographic — 研究工作台 / 对话 / 研究团队 页面级适配
+ * 依赖 glass-holographic.css 中的 token；在 team-research-canvas 之后加载以覆盖硬编码色。
+ */
+
+/* ═══════════════════════════════════════════════════════════════
+   研究工作台（IDE）
+   ═══════════════════════════════════════════════════════════════ */
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] {
+  background: transparent;
+  color: var(--qb-body-fg);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [role="separator"] {
+  width: 6px;
+  background: var(--qb-team-gutter-bg);
+  opacity: 0.75;
+  transition: opacity 0.18s ease, box-shadow 0.18s ease;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [role="separator"]:hover {
+  opacity: 1;
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.35);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] .qb-workbench-toolbar {
+  border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] .qb-segmented--inline {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] .qb-segmented__tab {
+  color: var(--qb-body-muted);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] .qb-segmented__tab--active {
+  color: #f8fafc !important;
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.35);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] > div > div:first-of-type > div:first-child {
+  background: var(--qb-ide-left-tabs-bg, rgba(255, 255, 255, 0.04)) !important;
+  border-bottom: 1px solid var(--qb-ide-left-tabs-border, rgba(255, 255, 255, 0.12)) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] .qb-tokyo-editor {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: var(--qb-radius-md) !important;
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: var(--qb-glass-shadow);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] input,
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] select,
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] textarea:not(.qb-tokyo-editor__textarea) {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  color: var(--qb-body-fg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [data-qb-chat-panel] {
+  background: transparent !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [data-qb-chat-panel] .qb-chat-sidebar,
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [data-qb-chat-panel] .qb-chat-main,
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [data-qb-chat-panel] .qb-chat-board-col {
+  border-radius: var(--qb-radius-md) !important;
+}
+
+/* K 线嵌入条（研究工作台右侧，使用 --qb-kline-embedded-bar-bg） */
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] div[style*="--qb-kline-embedded-bar-bg"] {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   对话（全页 + IDE 内嵌）
+   ═══════════════════════════════════════════════════════════════ */
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] {
+  color: var(--qb-body-fg);
+  background: var(--qb-chat-page-bg, transparent);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-sidebar,
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-main,
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-board-col {
+  background: rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(var(--qb-glass-blur)) saturate(var(--qb-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--qb-glass-blur)) saturate(var(--qb-glass-saturate));
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: var(--qb-radius-md) !important;
+  box-shadow: var(--qb-glass-shadow);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-bubble {
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border-color: var(--qb-chat-bubble-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-bubble--user {
+  background: var(--qb-chat-bubble-user-bg) !important;
+  color: var(--qb-chat-bubble-user-fg) !important;
+  border-color: rgba(167, 139, 250, 0.28) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-bubble--agent {
+  background: var(--qb-chat-bubble-agent-bg) !important;
+  color: var(--qb-chat-bubble-agent-fg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-session-list button[type="button"] {
+  background: var(--qb-chat-session-item-bg) !important;
+  color: var(--qb-chat-session-item-fg) !important;
+  border: 1px solid var(--qb-chat-border) !important;
+  border-radius: var(--qb-radius-sm) !important;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-session-list button[type="button"]:hover {
+  border-color: rgba(167, 139, 250, 0.4) !important;
+  box-shadow: 0 0 12px rgba(124, 58, 237, 0.15);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] textarea,
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] input:not([type="checkbox"]):not([type="radio"]),
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] select {
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  color: var(--qb-body-fg) !important;
+  border-radius: var(--qb-radius-sm) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] textarea:focus,
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] input:focus,
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] select:focus {
+  border-color: rgba(167, 139, 250, 0.5) !important;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.2);
+  outline: none;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] div[style*="--qb-chat-chart-banner-bg"] {
+  backdrop-filter: blur(10px);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-board-col div[style*="--qb-board-card-bg"] {
+  background: var(--qb-board-card-bg) !important;
+  border-color: var(--qb-chat-border) !important;
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-markdown th {
+  background: var(--qb-md-th-bg) !important;
+  color: #f8fafc;
+  border-color: var(--qb-md-table-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-markdown td {
+  border-color: var(--qb-md-table-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-markdown code {
+  background: var(--qb-md-code-inline-bg) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-markdown a {
+  color: #c4b5fd;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-chat-panel] .qb-chat-markdown blockquote {
+  border-left-color: rgba(167, 139, 250, 0.55);
+  color: var(--qb-body-muted);
+}
+
+/* IDE 内嵌对话顶栏 */
+html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [data-qb-chat-panel] > div:first-child {
+  background: var(--qb-chat-ide-header-bg) !important;
+  color: var(--qb-chat-ide-header-fg) !important;
+  border-bottom-color: var(--qb-chat-border) !important;
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   研究团队三栏工作台
+   ═══════════════════════════════════════════════════════════════ */
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] > div > aside:first-of-type,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] > div > aside:last-of-type {
+  background: var(--qb-team-left-bg) !important;
+  border-color: var(--qb-team-shell-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] > div > div:nth-child(3) {
+  background: var(--qb-team-center-bg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  background: var(--qb-team-activity-bg) !important;
+  border-color: var(--qb-team-shell-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-main-stage,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] > div > div:nth-child(3) > div:last-child {
+  background: var(--qb-team-stage-bg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-titlebar {
+  background: var(--qb-team-titlebar-bg) !important;
+  border-color: var(--qb-team-shell-border) !important;
+  color: var(--qb-team-titlebar-fg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] label {
+  color: var(--qb-team-meta) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] aside input,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] aside select,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] aside textarea,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body input,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body select,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body textarea {
+  background: var(--qb-team-input-bg) !important;
+  border: 1px solid var(--qb-team-input-border) !important;
+  color: var(--qb-team-input-fg) !important;
+  border-radius: var(--qb-radius-sm) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] aside input:focus,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] aside select:focus,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] aside textarea:focus,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body input:focus,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body select:focus,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body textarea:focus {
+  border-color: rgba(167, 139, 250, 0.5) !important;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.18);
+  outline: none;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-research-panel] {
+  border-radius: var(--qb-radius-md);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] div[style*="--qb-team-panel-bg"] {
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+  box-shadow: var(--qb-glass-shadow);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-research-panel] h3,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] h3 {
+  color: var(--qb-team-section-fg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-research-panel] p,
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] p {
+  color: var(--qb-team-meta) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] nav[aria-label="研究团队视图"] button[type="button"] {
+  border-radius: var(--qb-radius-sm);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] nav[aria-label="研究团队视图"] button[type="button"]:focus-visible {
+  box-shadow: 0 0 14px rgba(124, 58, 237, 0.25);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] div[style*="--qb-team-hero-bg"] {
+  backdrop-filter: blur(10px);
+  border-color: var(--qb-team-hero-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] div[style*="--qb-team-radar-bg"] {
+  background: var(--qb-team-radar-bg) !important;
+  border: 1px solid var(--qb-team-panel-border) !important;
+  backdrop-filter: blur(10px);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] div[style*="--qb-team-debate-bg"],
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] div[style*="--qb-team-replay-bg"],
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] div[style*="--qb-team-trend-bg"] {
+  backdrop-filter: blur(10px) saturate(140%);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] .qb-team-editor-body pre,
+html[data-qb-style="glass-holographic"] [data-qb-team-research-panel] pre {
+  background: var(--qb-team-report-bg) !important;
+  border: 1px solid var(--qb-team-panel-border) !important;
+  color: var(--qb-team-table-cell-fg) !important;
+  border-radius: var(--qb-radius-sm);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] > div > div[role="separator"],
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] > div > div[style*="col-resize"] {
+  background: var(--qb-team-gutter-bg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-graph-host] {
+  background: rgba(10, 14, 26, 0.55) !important;
+  border-color: rgba(167, 139, 250, 0.28) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-research-panel] [data-qb-team-live-feed] {
+  background: var(--qb-team-live-feed-bg) !important;
+  border: 1px solid var(--qb-team-live-feed-border) !important;
+  color: var(--qb-team-live-feed-fg) !important;
+  backdrop-filter: blur(12px) saturate(150%);
+  -webkit-backdrop-filter: blur(12px) saturate(150%);
+  border-radius: var(--qb-radius-sm);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-research-panel] [data-qb-team-live-feed] > div {
+  border-bottom-color: var(--qb-team-live-feed-row-border) !important;
+}
+
+/* 成员目录（TeamResearchMemberDirectory） */
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] table {
+  border-color: var(--qb-team-table-row-border);
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] th {
+  color: var(--qb-team-table-header-fg) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] td {
+  color: var(--qb-team-table-cell-fg) !important;
+  border-color: var(--qb-team-table-row-border) !important;
+}
+
+html[data-qb-style="glass-holographic"] [data-qb-team-shell] tr {
+  border-color: var(--qb-team-table-row-border);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="glass-holographic"] [data-qb-ide-workbench] [role="separator"]:hover {
+    box-shadow: none;
+  }
+}

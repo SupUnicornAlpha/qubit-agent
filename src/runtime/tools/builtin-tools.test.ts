@@ -22,6 +22,7 @@ describe("tool routes", () => {
     expect(isRoutedTool("task_decompose")).toBe(false);
     expect(isBuiltinTool("task_decompose")).toBe(true);
     expect(isBuiltinTool("fetch_klines")).toBe(false);
+    expect(isBuiltinTool("call_team_research")).toBe(true);
   });
 });
 

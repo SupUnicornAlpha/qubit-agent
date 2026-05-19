@@ -11,6 +11,7 @@ import { loadModelConfig } from "../../config/model-config";
 import { runLlmGateway } from "../../llm/gateway";
 import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
+import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
@@ -76,14 +77,22 @@ export async function reasonNode(
   };
   let answer = "";
 
+  const payload = state.inboundMessage.payload as Record<string, unknown>;
+  const payloadParams = (payload["params"] ?? {}) as Record<string, unknown>;
   const payloadGoal =
-    (state.inboundMessage.payload as Record<string, unknown>)?.goal ??
-    (state.inboundMessage.payload as Record<string, unknown>)?.message ??
+    payloadParams["goal"] ??
+    payload["goal"] ??
+    payload["message"] ??
     JSON.stringify(state.inboundMessage.payload);
+  const slotContext =
+    typeof payloadParams["context"] === "string" ? payloadParams["context"].trim() : "";
+  const slotTicker =
+    typeof payloadParams["ticker"] === "string" ? payloadParams["ticker"].trim() : "";
   const previousObservations = state.observations.slice(-3);
   const sessionContext = await loadSessionContext(state.workflowId);
 
-  const tools = state.agentDefinition.tools ?? [];
+  const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
+  const tools = effective.tools;
   const mcpServers = state.agentDefinition.mcpServers ?? [];
   const hasTools = tools.length > 0 || mcpServers.length > 0;
 
@@ -91,6 +100,8 @@ export async function reasonNode(
     `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
     ``,
     `**任务目标**：${payloadGoal}`,
+    slotTicker ? `**标的**：${slotTicker}` : "",
+    slotContext ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 12000)}` : "",
     sessionContext.length
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "",
@@ -119,7 +130,11 @@ export async function reasonNode(
       basePrompt: baseSystem,
       declaredSkillIds: state.agentDefinition.skills ?? [],
     });
-    const { full: systemPrompt } = assembleAgentSystemPrompt(fsiSystem, { tools, mcpServers });
+    const topologyOrCollab = effective.topologyPromptBlock || effective.collaborationHint;
+    const systemWithTopology = topologyOrCollab
+      ? `${fsiSystem}\n\n---\n${topologyOrCollab}`
+      : fsiSystem;
+    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithTopology, { tools, mcpServers });
 
     answer = await runLlmGateway({
       config: modelConfig,

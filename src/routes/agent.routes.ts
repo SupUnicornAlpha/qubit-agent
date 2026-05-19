@@ -1695,6 +1695,14 @@ agentRouter.patch("/agent-groups/:id", async (c) => {
     patch.relationsJson = toJsonValue(body.relationsJson) as never;
   }
   await db.update(agentGroup).set(patch).where(eq(agentGroup.id, id));
+  if (body.relationsJson !== undefined) {
+    const { syncOrchestratorTopologyToolsForGroup } = await import(
+      "../runtime/orchestration/sync-orchestrator-topology-tools"
+    );
+    await syncOrchestratorTopologyToolsForGroup(id).catch((err) => {
+      console.warn("[agent-groups] sync orchestrator topology tools failed:", err);
+    });
+  }
   const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
   return c.json({ data: row[0] });
 });

@@ -5,6 +5,13 @@ import { analystSignal, auditLog, midtermMemory } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { dispatchTaskToRole } from "../agent-pool";
+import {
+  assertTopologyTargetAllowed,
+  isTopologyTeamTool,
+  loadOrchestratorTopologyForWorkflow,
+  parseRoleFromTopologyTeamTool,
+  resolveDispatchRole,
+} from "../orchestration/topology-dispatch";
 import { getDataDir, writePackSelfEditMarkdown, type AgentPackSelfEditTarget } from "../agent/agent-pack-service";
 import { agentProfile } from "../../db/sqlite/schema";
 import { detectRegimeFromBars } from "../market/regime";
@@ -33,9 +40,21 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       String(params.goal ?? params.task ?? ctx.inboundPayload?.["goal"] ?? ctx.reasonText ?? "").trim();
     const steps = [
       { id: "1", role: "market_data", action: "拉取行情与数据快照", tool: "fetch_klines" },
-      { id: "2", role: "orchestrator", action: "启动研究团队分析", tool: "run_analyst_team" },
-      { id: "3", role: "backtest", action: "验证策略假设（SMA 或自定义）", tool: "run_backtest" },
-      { id: "4", role: "risk", action: "风控评估与签核", tool: "evaluate_risk" },
+      { id: "2", role: "news_event", action: "抓取新闻与事件情绪", tool: "fetch_news" },
+      {
+        id: "3",
+        role: "orchestrator",
+        action: "启动四维分析师团队（MSA）",
+        tool: "run_analyst_team",
+      },
+      { id: "4", role: "research", action: "因子/策略深化与实验", tool: "run_experiment" },
+      { id: "5", role: "backtest", action: "历史回测验证", tool: "run_backtest" },
+      {
+        id: "6",
+        role: "risk",
+        action: "规则签核与组合风险审查",
+        tool: "evaluate_risk",
+      },
     ];
     return { goal, steps, workflowId: ctx.workflowId };
   },
@@ -43,21 +62,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   assign_task: async (ctx, params) => {
     const role = String(params.role ?? params.targetRole ?? "").trim() as AgentRole;
     if (!role) throw new Error("assign_task: role is required");
-    const payload: TaskAssignPayload = {
-      taskType: String(params.taskType ?? "task_assign"),
-      goal: String(params.goal ?? params.message ?? ""),
-      ...(typeof params.payload === "object" && params.payload
-        ? (params.payload as Record<string, unknown>)
-        : {}),
-    };
-    const { runId } = await dispatchTaskToRole({
-      workflowId: ctx.workflowId,
-      role,
-      payload,
-      traceId: ctx.traceId,
-      senderId: ctx.agentInstanceId,
-    });
-    return { dispatched: true, role, runId };
+    return dispatchTeamAgentTask(ctx, role, params);
   },
 
   run_analyst_team: async (ctx, params) => {
@@ -280,10 +285,11 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       exchange: String(params.exchange ?? ""),
       limit: 8,
     });
+    const items = [...brief.symbolNews, ...brief.sectorNews];
     return {
       keywords,
-      discussionVolume: brief.items.length,
-      headlines: brief.items.slice(0, 5).map((i) => i.title),
+      discussionVolume: items.length,
+      headlines: items.slice(0, 5).map((i) => i.title),
       note: "基于新闻头条的舆情代理；完整社交数据需外接 API",
     };
   },
@@ -388,7 +394,44 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 };
 
+async function dispatchTeamAgentTask(
+  ctx: BuiltinToolContext,
+  role: AgentRole,
+  params: Record<string, unknown>
+): Promise<{ dispatched: boolean; role: AgentRole; runId: string; via: string }> {
+  const targetRole = resolveDispatchRole(role);
+  const topology = await loadOrchestratorTopologyForWorkflow(ctx.workflowId);
+  if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
+    assertTopologyTargetAllowed(topology, targetRole);
+  }
+
+  const goal = String(params.goal ?? params.message ?? "").trim();
+  if (!goal) throw new Error("dispatch team agent: goal is required");
+
+  const extra =
+    typeof params.params === "object" && params.params && !Array.isArray(params.params)
+      ? (params.params as Record<string, unknown>)
+      : {};
+
+  const payload: TaskAssignPayload = {
+    taskId: String(params.taskId ?? randomUUID()),
+    taskType: String(params.taskType ?? "topology_dispatch"),
+    assignedRole: targetRole,
+    params: { goal, ...extra, ...(role !== targetRole ? { requestedRole: role } : {}) },
+  };
+
+  const { runId } = await dispatchTaskToRole({
+    workflowId: ctx.workflowId,
+    role: targetRole,
+    payload,
+    traceId: ctx.traceId,
+    senderId: ctx.agentInstanceId,
+  });
+  return { dispatched: true, role: targetRole, runId, via: "topology_dispatch" };
+}
+
 export function isBuiltinTool(toolName: string): boolean {
+  if (isTopologyTeamTool(toolName)) return true;
   return toolName in BUILTIN_HANDLERS;
 }
 
@@ -401,6 +444,11 @@ export async function dispatchBuiltinTool(
   ctx: BuiltinToolContext,
   params: Record<string, unknown>
 ): Promise<unknown> {
+  if (isTopologyTeamTool(toolName)) {
+    const role = parseRoleFromTopologyTeamTool(toolName);
+    if (!role) throw new Error(`Invalid topology tool name: ${toolName}`);
+    return dispatchTeamAgentTask(ctx, role, params);
+  }
   const handler = BUILTIN_HANDLERS[toolName];
   if (!handler) {
     throw new Error(

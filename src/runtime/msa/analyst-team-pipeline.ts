@@ -25,25 +25,19 @@ export type AnalystTeamSlot = {
   systemPrompt: string;
 };
 
-export const POST_FUSION_AUX_ROLES = new Set<AgentRole>([
-  "research",
-  "backtest",
-  "backtest_engineer",
-  "risk",
-  "risk_manager",
-]);
+export const POST_FUSION_AUX_ROLES = new Set<AgentRole>(["research", "backtest", "risk"]);
 
 const TOPOLOGY_ROLES_WITH_ORCHESTRATOR: readonly AgentRole[] = [
   "orchestrator",
+  "market_data",
+  "news_event",
   "analyst_fundamental",
   "analyst_technical",
   "analyst_sentiment",
   "analyst_macro",
   "research",
   "backtest",
-  "backtest_engineer",
   "risk",
-  "risk_manager",
 ] as AgentRole[];
 
 export { TOPOLOGY_ROLES_WITH_ORCHESTRATOR };
@@ -103,6 +97,22 @@ export interface OrchestratorDecision {
   proceedToStrategy: boolean;
 }
 
+/** 从 Orchestrator 全量简报中截取 `## <role>` 段落；若无则回退通用段 + 角色提示 */
+export function extractRoleBriefSection(fullBrief: string, role: AgentRole): string {
+  const escaped = role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const sectionRe = new RegExp(
+    `(?:^|\\n)##\\s*${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`,
+    "i"
+  );
+  const m = fullBrief.match(sectionRe);
+  if (m?.[1]?.trim()) {
+    return `## 你的角色：${role}\n\n${m[1].trim()}`;
+  }
+  const intro = fullBrief.split(/\n##\s/m)[0]?.trim() ?? "";
+  const tail = intro.length > 0 ? `${intro}\n\n---\n` : "";
+  return `${tail}## 你的角色：${role}\n\n（全团队简报未单独列出本角色小节，请仅完成 **${role}** 职责范围内的分析，勿重复其他角色工作。）\n\n${fullBrief.slice(0, 2800)}`;
+}
+
 /** 运行前：Orchestrator 阅读数据快照并生成对各角色的任务说明 */
 export async function runOrchestratorPlanning(input: {
   workflowRunId: string;
@@ -121,8 +131,8 @@ export async function runOrchestratorPlanning(input: {
 参与角色：${targets}
 
 请阅读下方数据与用户背景，输出 **Markdown 任务简报**（不要 JSON），包含：
-1. 本轮研究重点与待回答问题
-2. 对各分析师角色的具体关注点（逐条列出角色名）
+1. 开篇：本轮研究重点与待回答问题（通用，≤15 行）
+2. **对每个参与角色单独一节**，标题必须为 \`## <role>\`（role 使用英文角色 id，如 analyst_fundamental、research、backtest、risk），节内只写该角色本回合要做什么、调用哪些工具、交付什么
 3. 要求：在引用下方数据快照前提下再下结论，信息不足时明确写「需补充」
 
 ---
@@ -142,13 +152,14 @@ ${input.dataAndUserContext}`;
   const brief = answer.trim() || "（无编排简报）";
   for (const role of input.slotRoles) {
     if (role === "orchestrator") continue;
+    const roleBrief = extractRoleBriefSection(brief, role).slice(0, 4000);
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
       fromRole: "orchestrator",
       toRole: role,
       kind: "llm_message",
-      contentText: brief.slice(0, 4000),
-      payloadJson: { phase: "orchestrator_plan", ticker: input.ticker },
+      contentText: roleBrief,
+      payloadJson: { phase: "orchestrator_plan", ticker: input.ticker, targetRole: role },
     });
   }
   return brief;
@@ -261,7 +272,7 @@ export function orderPostFusionSlotsByTopology(
 export function defaultAuxPipelineEdges(slots: AnalystTeamSlot[]): TeamRelationEdge[] {
   const roles = new Set(slots.map((s) => s.role));
   const edges: TeamRelationEdge[] = [];
-  const chain: AgentRole[] = ["research", "backtest", "backtest_engineer", "risk", "risk_manager"];
+  const chain: AgentRole[] = ["research", "backtest", "risk"];
   let prev: AgentRole | null = null;
   for (const r of chain) {
     if (!roles.has(r)) continue;
@@ -299,8 +310,8 @@ export async function logOrchestratorKickoff(input: {
       fromRole: "orchestrator",
       toRole,
       kind: "llm_message",
-      contentText: plan,
-      payloadJson: { phase: "kickoff", ticker: input.ticker },
+      contentText: `${plan}\n\n**你的角色**：${toRole}`,
+      payloadJson: { phase: "kickoff", ticker: input.ticker, targetRole: toRole },
     });
   }
 }

@@ -41,6 +41,9 @@ export interface TeamGraphToolCall {
   latencyMs: number | null;
   createdAt: string;
   agentStepId: string;
+  requestJson: unknown;
+  responseJson: unknown;
+  errorMessage: string | null;
 }
 
 export interface TeamGraphMcpCall {
@@ -145,6 +148,9 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       latencyMs: t.latencyMs,
       createdAt: t.createdAt,
       agentStepId: t.agentStepId,
+      requestJson: t.requestJson,
+      responseJson: t.responseJson,
+      errorMessage: t.errorMessage,
     };
   });
 

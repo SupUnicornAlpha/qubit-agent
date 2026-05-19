@@ -9,7 +9,8 @@ export const TopBar: FC = () => {
   const uiStyle = useAppStore((s) => s.uiStyle);
   const setUiPalette = useAppStore((s) => s.setUiPalette);
   const setUiStyle = useAppStore((s) => s.setUiStyle);
-  const paletteLocked = uiStyle !== "default" && uiStyle !== "glassmorphism";
+  const paletteLocked =
+    uiStyle !== "default" && uiStyle !== "glass-holographic" && uiStyle !== "biophilic";
   const paletteOptions = palettesForStyle(uiStyle);
 
   return (
@@ -25,8 +26,7 @@ export const TopBar: FC = () => {
         量化研究 Agent 平台
       </span>
       {backendHint ? <span style={styles.hint}>{backendHint}</span> : null}
-      <div style={styles.spacer} />
-      <div className="qb-appearance-controls">
+      <div className="qb-appearance-controls" style={styles.appearance}>
         <label className="qb-visually-hidden" htmlFor="qb-ui-style">
           界面风格
         </label>
@@ -53,10 +53,12 @@ export const TopBar: FC = () => {
           value={uiPalette}
           title={
             paletteLocked
-              ? "切换回「默认」或 Glassmorphism 风格后可改配色"
-              : uiStyle === "glassmorphism"
-                ? "Glass 底色"
-                : "配色"
+              ? "切换回「默认」、Glass Holographic 或 Biophilic 风格后可改配色"
+              : uiStyle === "glass-holographic"
+                ? "Glass 底色（冷 / 暖 / 彩虹）"
+                : uiStyle === "biophilic"
+                  ? "亲自然配色（绿植绿涨 / 柔和红涨）"
+                  : "配色"
           }
           aria-label="配色"
           disabled={paletteLocked}
@@ -71,6 +73,11 @@ export const TopBar: FC = () => {
       </div>
       <span className="qb-topbar__divider" aria-hidden />
       <StatusDot connected={connected} />
+      {uiStyle === "ambient-3d" ? (
+        <span className="qb-topbar__spatial-badge" aria-hidden>
+          SPATIAL UI
+        </span>
+      ) : null}
     </header>
   );
 };
@@ -93,11 +100,13 @@ const styles: Record<string, CSSProperties> = {
   bar: {
     display: "flex",
     alignItems: "center",
+    flexWrap: "nowrap",
     height: 52,
     padding: "0 22px",
     gap: 10,
     flexShrink: 0,
     minWidth: 0,
+    overflow: "hidden",
   },
   brand: {
     display: "flex",
@@ -132,5 +141,12 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
-  spacer: { flex: 1, minWidth: 0 },
+  appearance: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginLeft: "auto",
+    flexShrink: 0,
+    minWidth: 0,
+  },
 };

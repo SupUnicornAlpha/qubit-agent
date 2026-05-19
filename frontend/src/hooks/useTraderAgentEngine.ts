@@ -134,8 +134,8 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
           setSession(ctx);
           pushTraderAgentLog({
             kind: "info",
-            title: "交易 Agent 已连接执行上下文",
-            body: `workflowRunId=${ctx.workflowRunId}\n纸面下单、策略运行时、资讯与 A2A 消息将分别展示在三个面板。`,
+            title: ctx.created ? "交易上下文已创建" : "交易上下文已连接",
+            body: `workflowRunId=${ctx.workflowRunId}\n单 workflow 模式：新事件以消息追加，过长时自动压缩。`,
           });
         }
       } catch (e) {
@@ -152,11 +152,11 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
   }, [projectId, sessionId, pushTraderAgentLog]);
 
   const pollOnce = useCallback(async () => {
-    if (!sessionId || !chartSpec.symbol.trim()) return;
+    if (!sessionId || !session?.workflowRunId || !chartSpec.symbol.trim()) return;
     try {
-      const { events, drivers, agentMessages, serverTime } = await pollTraderFeed({
+      const { events, drivers, agentMessages, contextMessages, serverTime } = await pollTraderFeed({
         sessionId,
-        workflowRunId: session?.workflowRunId,
+        workflowRunId: session.workflowRunId,
         symbol: chartSpec.symbol.trim(),
         exchange: chartSpec.exchange,
         since: sinceRef.current,
@@ -176,6 +176,23 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
         if (seenIds.current.has(m.id)) continue;
         seenIds.current.add(m.id);
         ingestAgentMessage(m, pushTraderAgentMessage);
+      }
+      for (const cm of contextMessages) {
+        if (seenIds.current.has(cm.id)) continue;
+        seenIds.current.add(cm.id);
+        const kind =
+          cm.role === "user"
+            ? "user"
+            : cm.role === "compressed"
+              ? "ingest"
+              : cm.kind.includes("order")
+                ? "decision"
+                : "ingest";
+        pushTraderAgentLog({
+          kind,
+          title: cm.title,
+          body: cm.body,
+        });
       }
       sinceRef.current = serverTime;
       persistSince(serverTime);
@@ -274,7 +291,10 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
           title: "用户驱动 · 撤单",
           body: orderIntentId,
         });
-        const data = await cancelTraderOrder({ orderIntentId });
+        const data = await cancelTraderOrder({
+          orderIntentId,
+          workflowRunId: session?.workflowRunId,
+        });
         pushTraderAgentLog({
           kind: "user",
           title: data.cancelled ? "撤单成功" : "撤单未执行",

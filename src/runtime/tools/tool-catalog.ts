@@ -1,3 +1,8 @@
+import {
+  isTopologyTeamTool,
+  parseRoleFromTopologyTeamTool,
+  topologyTeamToolDescription,
+} from "../orchestration/topology-dispatch";
 import { listRegisteredBuiltinTools } from "./builtin-tools";
 import { TOOL_CONNECTOR_ROUTES } from "./tool-routes";
 import type { ToolCatalogEntry, ToolCatalogCategory } from "./types";
@@ -93,6 +98,15 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
 };
 
 function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: string): ToolCatalogEntry {
+  if (isTopologyTeamTool(name)) {
+    const role = parseRoleFromTopologyTeamTool(name);
+    return {
+      name,
+      kind: "builtin",
+      description: role ? topologyTeamToolDescription(role) : "编组拓扑派单",
+      category: "orchestration",
+    };
+  }
   const m = TOOL_META[name];
   const description =
     m?.description ??

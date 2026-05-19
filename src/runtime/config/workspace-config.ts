@@ -191,20 +191,22 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
   rootDir?: string;
   definitions: RuntimeAgentDefinition[];
   policies: WorkspaceSandboxPolicy[];
+  /** 为 true 时用种子定义覆盖 workspace 文件（与 DB seed 对齐） */
+  refresh?: boolean;
 }): Promise<void> {
   const rootDir = params.rootDir ?? process.cwd();
   const configDir = join(rootDir, ".qubit");
   const agentsFile = join(configDir, "agents.json");
   const sandboxFile = join(configDir, "sandbox.json");
   await mkdir(configDir, { recursive: true });
-  if (!existsSync(agentsFile)) {
+  if (params.refresh || !existsSync(agentsFile)) {
     await writeFile(
       agentsFile,
       JSON.stringify({ definitions: params.definitions }, null, 2),
       "utf-8"
     );
   }
-  if (!existsSync(sandboxFile)) {
+  if (params.refresh || !existsSync(sandboxFile)) {
     await writeFile(sandboxFile, JSON.stringify({ policies: params.policies }, null, 2), "utf-8");
   }
 }

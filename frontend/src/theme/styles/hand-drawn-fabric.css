@@ -1,0 +1,562 @@
+/**
+ * Hand-Drawn Fabric 手绘涂鸦 · 织物 — 亚麻织纹、缝线描边、柔和阴影
+ * 在手绘涂鸦结构之上叠加织物质感（温暖中性色 + 手写字体）
+ */
+@import url("https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Nunito:wght@400;500;600;700&display=swap");
+
+html[data-qb-style="hand-drawn-fabric"] {
+  color-scheme: light;
+
+  --qb-fabric-ink: #3d3832;
+  --qb-fabric-ink-muted: #6b6358;
+  --qb-fabric-linen: #f4efe6;
+  --qb-fabric-linen-dark: #e8e0d4;
+  --qb-fabric-weave-a: rgba(108, 92, 72, 0.055);
+  --qb-fabric-weave-b: rgba(88, 78, 64, 0.04);
+  --qb-fabric-stitch: rgba(255, 252, 248, 0.75);
+  --qb-fabric-border: 1px solid rgba(98, 82, 64, 0.32);
+  --qb-fabric-border-strong: 1.5px solid rgba(74, 62, 48, 0.42);
+  --qb-fabric-shadow: 0 2px 6px rgba(62, 52, 42, 0.1), 0 1px 2px rgba(62, 52, 42, 0.06);
+  --qb-fabric-shadow-hover: 0 6px 16px rgba(62, 52, 42, 0.13), 0 2px 4px rgba(62, 52, 42, 0.07);
+  --qb-fabric-shadow-press: 0 1px 3px rgba(62, 52, 42, 0.14), inset 0 1px 2px rgba(62, 52, 42, 0.08);
+  --qb-fabric-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  --qb-fabric-ease: cubic-bezier(0.33, 1.02, 0.52, 1);
+  --qb-fabric-duration: 0.22s;
+
+  --qb-fabric-oat: #f0e8dc;
+  --qb-fabric-wheat: #ebe3d4;
+  --qb-fabric-sage: #dde8dc;
+  --qb-fabric-dusty-rose: #ead9d4;
+  --qb-fabric-denim: #ebe4d8;
+  --qb-fabric-terracotta: #b86b4f;
+  --qb-fabric-terracotta-deep: #9a5840;
+  --qb-fabric-sage-deep: #6d8b72;
+
+  --qb-bg-root: var(--qb-fabric-linen);
+  --qb-bg-root-top: #faf6f0;
+  --qb-tint: rgba(221, 232, 220, 0.65);
+  --qb-tint-strong: rgba(240, 232, 220, 0.85);
+  --qb-blue: #6d8fa8;
+  --qb-blue-deep: #4a6d85;
+  --qb-focus-ring: rgba(109, 143, 168, 0.45);
+  --qb-hairline: rgba(98, 82, 64, 0.16);
+  --qb-separator: rgba(98, 82, 64, 0.2);
+  --qb-body-fg: var(--qb-fabric-ink);
+  --qb-body-muted: var(--qb-fabric-ink-muted);
+
+  --qb-font-display: "Caveat", "KaiTi", "STKaiti", cursive;
+  --qb-font-body: "Nunito", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  --qb-font-ui: var(--qb-font-body);
+
+  --qb-radius-lg: 10px 14px 12px 16px / 14px 12px 16px 10px;
+  --qb-radius-md: 8px 12px 10px 14px / 12px 10px 14px 8px;
+  --qb-radius-sm: 6px 10px 8px 12px / 10px 8px 12px 6px;
+
+  --qb-topbar-bg: var(--qb-fabric-wheat);
+  --qb-workbench-toolbar-bg: var(--qb-fabric-denim);
+  --qb-segmented-active-bg: var(--qb-fabric-dusty-rose);
+
+  --qb-scrollbar-track: rgba(98, 82, 64, 0.06);
+  --qb-scrollbar-thumb-top: #a8b8c4;
+  --qb-scrollbar-thumb-bot: #c4a89e;
+  --qb-scrollbar-corner: var(--qb-fabric-linen);
+
+  --qb-sidebar-nav-bg: rgba(252, 249, 245, 0.92);
+  --qb-sidebar-activity-bg: var(--qb-fabric-sage);
+  --qb-sidebar-explorer-bg: rgba(252, 249, 245, 0.92);
+  --qb-sidebar-border: rgba(98, 82, 64, 0.28);
+  --qb-sidebar-muted: var(--qb-fabric-ink-muted);
+  --qb-sidebar-text: var(--qb-fabric-ink);
+  --qb-brand-icon: var(--qb-fabric-terracotta);
+  --qb-brand-icon-glow: rgba(196, 120, 90, 0.28);
+
+  --qb-main-input-bg: rgba(255, 252, 248, 0.88);
+  --qb-main-input-border: rgba(98, 82, 64, 0.35);
+  --qb-main-input-fg: var(--qb-fabric-ink);
+  --qb-main-card-bg: rgba(255, 252, 248, 0.9);
+  --qb-main-card-border: rgba(98, 82, 64, 0.3);
+  --qb-main-meta: var(--qb-fabric-ink-muted);
+  --qb-main-panel-bg: transparent;
+  --qb-stream-box-bg: rgba(255, 252, 248, 0.92);
+  --qb-stream-box-border: rgba(98, 82, 64, 0.28);
+  --qb-mcp-details-bg: var(--qb-fabric-sage);
+  --qb-mcp-details-border: rgba(98, 82, 64, 0.28);
+  --qb-mcp-details-nested-bg: rgba(255, 252, 248, 0.96);
+  --qb-mcp-market-card-bg: rgba(255, 252, 248, 0.94);
+  --qb-mcp-market-card-border: rgba(98, 82, 64, 0.26);
+  --qb-mcp-market-meta: #6b6358;
+  --qb-mcp-market-desc: #3d3832;
+  --qb-mcp-market-chip-bg: rgba(235, 227, 212, 0.85);
+  --qb-mcp-market-chip-fg: #3d3832;
+  --qb-mcp-market-chip-border: rgba(98, 82, 64, 0.2);
+  --qb-mcp-market-cmd-bg: #f5f0e8;
+  --qb-mcp-market-cmd-fg: #5c5248;
+  --qb-mcp-market-cmd-border: rgba(98, 82, 64, 0.18);
+  --qb-mcp-json-bg: rgba(255, 252, 248, 0.92);
+  --qb-mcp-json-fg: #3d3832;
+  --qb-mcp-json-border: rgba(98, 82, 64, 0.26);
+  --qb-stream-box-fg: #3d3832;
+  --qb-stream-box-border: rgba(98, 82, 64, 0.26);
+  --qb-modal-sep: rgba(98, 82, 64, 0.16);
+  --qb-segmented-active-bg: rgba(255, 252, 248, 0.96);
+  --qb-segmented-track-bg: #e8e0d4;
+  --qb-segmented-tab-fg: #6b6358;
+  --qb-segmented-tab-fg-hover: #3d3832;
+  --qb-segmented-tab-fg-active: #3d3832;
+  --qb-pill-muted-bg: var(--qb-fabric-oat);
+  --qb-pill-muted-fg: #6b6358;
+  --qb-pill-info-bg: #e4ebe8;
+  --qb-pill-info-fg: #4a5f52;
+  --qb-pill-warn-bg: #f3e8d8;
+  --qb-pill-warn-fg: #8a5c38;
+  --qb-pill-error-bg: #f0ddd8;
+  --qb-pill-error-fg: #8a4038;
+  --qb-pill-success-bg: #dde8dc;
+  --qb-pill-success-fg: #4a5f48;
+  --qb-config-table-header-fg: #6b6358;
+  --qb-config-table-row-fg: #3d3832;
+  --qb-config-table-border: rgba(98, 82, 64, 0.14);
+  --qb-ide-chrome-border: rgba(98, 82, 64, 0.28);
+  --qb-ide-left-tabs-bg: var(--qb-fabric-oat);
+  --qb-ide-left-tabs-border: rgba(98, 82, 64, 0.28);
+
+  --qb-chat-page-bg: transparent;
+  --qb-chat-border: rgba(98, 82, 64, 0.28);
+  --qb-chat-main-bg: rgba(255, 252, 248, 0.9);
+  --qb-chat-sidebar-bg: var(--qb-fabric-sage);
+  --qb-chat-session-item-bg: rgba(255, 252, 248, 0.88);
+  --qb-chat-session-active-bg: var(--qb-fabric-wheat);
+  --qb-chat-bubble-user-bg: var(--qb-fabric-dusty-rose);
+  --qb-chat-bubble-agent-bg: rgba(255, 252, 248, 0.92);
+  --qb-board-col-bg: var(--qb-fabric-oat);
+  --qb-board-card-bg: rgba(255, 252, 248, 0.92);
+  --qb-md-th-bg: var(--qb-fabric-denim);
+  --qb-md-code-inline-bg: var(--qb-fabric-wheat);
+
+  --qb-kline-embedded-bar-bg: var(--qb-fabric-wheat);
+
+  --qb-team-shell-bg: transparent;
+  --qb-team-shell-border: rgba(98, 82, 64, 0.32);
+  --qb-team-left-bg: var(--qb-fabric-dusty-rose);
+  --qb-team-center-bg: rgba(255, 252, 248, 0.9);
+  --qb-team-right-bg: var(--qb-fabric-denim);
+  --qb-team-activity-bg: var(--qb-fabric-sage);
+  --qb-team-stage-bg: rgba(255, 252, 248, 0.88);
+  --qb-team-titlebar-bg: var(--qb-fabric-wheat);
+  --qb-team-titlebar-fg: var(--qb-fabric-ink);
+  --qb-team-gutter-bg: #c9bfb0;
+  --qb-team-tab-active-bg: var(--qb-fabric-dusty-rose);
+  --qb-team-panel-bg: rgba(255, 252, 248, 0.9);
+  --qb-team-panel-border: rgba(98, 82, 64, 0.28);
+  --qb-team-input-bg: rgba(255, 252, 248, 0.88);
+  --qb-team-input-border: rgba(98, 82, 64, 0.32);
+  --qb-team-hero-bg: var(--qb-fabric-denim);
+  --qb-team-hero-border: rgba(98, 82, 64, 0.28);
+  --qb-team-replay-bg: var(--qb-fabric-oat);
+  --qb-team-radar-bg: var(--qb-fabric-wheat);
+  --qb-team-member-bg: var(--qb-fabric-oat);
+  --qb-team-member-tag-bg: var(--qb-fabric-dusty-rose);
+  --qb-team-debate-bg: var(--qb-fabric-wheat);
+  --qb-team-debate-accent: var(--qb-fabric-terracotta);
+  --qb-team-debate-tag-bg: var(--qb-fabric-dusty-rose);
+  --qb-team-canvas-bg: rgba(255, 252, 248, 0.92);
+  --qb-team-live-feed-bg: rgba(255, 252, 248, 0.9);
+  --qb-team-live-feed-border: rgba(98, 82, 64, 0.26);
+  --qb-team-edge-active: #6d8fa8;
+  --qb-team-edge-hot: var(--qb-fabric-terracotta);
+  --qb-team-node-selected-fill: rgba(216, 224, 232, 0.95);
+  --qb-team-node-hot-fill: rgba(234, 217, 212, 0.95);
+}
+
+/* ── 亚麻织纹底 + 细噪点 ── */
+html[data-qb-style="hand-drawn-fabric"] .qb-app-root {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--qb-fabric-linen);
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      var(--qb-fabric-weave-a),
+      var(--qb-fabric-weave-a) 1px,
+      transparent 1px,
+      transparent 6px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      var(--qb-fabric-weave-b),
+      var(--qb-fabric-weave-b) 1px,
+      transparent 1px,
+      transparent 6px
+    ),
+    repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 3px,
+      rgba(108, 92, 72, 0.028) 3px,
+      rgba(108, 92, 72, 0.028) 4px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      transparent,
+      transparent 3px,
+      rgba(88, 78, 64, 0.025) 3px,
+      rgba(88, 78, 64, 0.025) 4px
+    );
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-app-root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-app-root::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(ellipse 80% 60% at 18% 8%, rgba(255, 255, 255, 0.35), transparent 55%);
+  opacity: 0.7;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-app-root > *:not(.qb-gh-bg-layer) {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-gh-bg-layer {
+  display: none !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"],
+html[data-qb-style="hand-drawn-fabric"] body {
+  font-family: var(--qb-font-body);
+}
+
+/* 缝线面板 mixin：柔和阴影 + 内高光 + 虚线缝 */
+html[data-qb-style="hand-drawn-fabric"] .qb-topbar,
+html[data-qb-style="hand-drawn-fabric"] .qb-sidebar-shell,
+html[data-qb-style="hand-drawn-fabric"] .qb-context-card,
+html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell,
+html[data-qb-style="hand-drawn-fabric"] .qb-explorer-panel,
+html[data-qb-style="hand-drawn-fabric"] .qb-workbench-toolbar,
+html[data-qb-style="hand-drawn-fabric"] .qb-segmented,
+html[data-qb-style="hand-drawn-fabric"] [data-qb-team-shell],
+html[data-qb-style="hand-drawn-fabric"] [data-qb-team-graph-host] {
+  position: relative;
+  border: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+  transition:
+    transform var(--qb-fabric-duration) var(--qb-fabric-ease),
+    box-shadow var(--qb-fabric-duration) var(--qb-fabric-ease),
+    filter var(--qb-fabric-duration) ease;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-topbar::after,
+html[data-qb-style="hand-drawn-fabric"] .qb-context-card::after,
+html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell::after,
+html[data-qb-style="hand-drawn-fabric"] .qb-sidebar-shell::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: inherit;
+  border: 1px dashed rgba(255, 252, 248, 0.55);
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-topbar {
+  background: var(--qb-fabric-wheat) !important;
+  transform: rotate(-0.15deg);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-logo-text {
+  font-family: var(--qb-font-display);
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--qb-fabric-ink);
+  letter-spacing: 0.02em;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-sidebar-shell {
+  background: rgba(252, 249, 245, 0.92) !important;
+  transform: rotate(0.2deg);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-sidebar-activity {
+  background: var(--qb-fabric-sage) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-nav-row {
+  font-family: var(--qb-font-body);
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: var(--qb-radius-sm);
+  transition:
+    transform var(--qb-fabric-duration) var(--qb-fabric-ease),
+    box-shadow var(--qb-fabric-duration) var(--qb-fabric-ease),
+    background var(--qb-fabric-duration) ease,
+    border-color var(--qb-fabric-duration) ease;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-nav-row:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--qb-fabric-shadow-hover);
+  background: rgba(255, 252, 248, 0.95);
+  border-color: rgba(98, 82, 64, 0.22);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-nav-row--active {
+  background: var(--qb-fabric-dusty-rose) !important;
+  border: var(--qb-fabric-border-strong) !important;
+  box-shadow: var(--qb-fabric-shadow-hover), var(--qb-fabric-highlight) !important;
+  font-weight: 700;
+  transform: rotate(0.25deg);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-context-card:nth-child(3n + 1),
+html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell:nth-child(3n + 1) {
+  background: var(--qb-fabric-wheat) !important;
+  transform: rotate(-0.45deg);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-context-card:nth-child(3n + 2),
+html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell:nth-child(3n + 2) {
+  background: var(--qb-fabric-denim) !important;
+  transform: rotate(0.35deg);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-context-card:nth-child(3n),
+html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell:nth-child(3n) {
+  background: var(--qb-fabric-dusty-rose) !important;
+  transform: rotate(-0.2deg);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-context-card:hover,
+html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell:hover {
+  transform: translateY(-3px) rotate(0deg);
+  box-shadow: var(--qb-fabric-shadow-hover), var(--qb-fabric-highlight) !important;
+  filter: brightness(1.02);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary,
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary-brand {
+  font-family: var(--qb-font-body);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fffef9 !important;
+  background: linear-gradient(180deg, #c98262 0%, var(--qb-fabric-terracotta) 100%) !important;
+  border: var(--qb-fabric-border-strong) !important;
+  border-radius: var(--qb-radius-md) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+  transition:
+    transform var(--qb-fabric-duration) var(--qb-fabric-ease),
+    box-shadow var(--qb-fabric-duration) var(--qb-fabric-ease),
+    filter var(--qb-fabric-duration) ease;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary:hover:not(:disabled),
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary-brand:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--qb-fabric-shadow-hover), var(--qb-fabric-highlight) !important;
+  filter: brightness(1.05);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary:active:not(:disabled),
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary-brand:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: var(--qb-fabric-shadow-press) !important;
+  filter: brightness(0.98);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-secondary,
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-ghost,
+html[data-qb-style="hand-drawn-fabric"] .qb-chip,
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-card,
+html[data-qb-style="hand-drawn-fabric"] .qb-icon-btn {
+  font-family: var(--qb-font-body);
+  background: rgba(255, 252, 248, 0.9) !important;
+  color: var(--qb-fabric-ink) !important;
+  border: var(--qb-fabric-border) !important;
+  border-radius: var(--qb-radius-sm) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+  transition:
+    transform var(--qb-fabric-duration) var(--qb-fabric-ease),
+    box-shadow var(--qb-fabric-duration) var(--qb-fabric-ease);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-secondary:hover:not(:disabled),
+html[data-qb-style="hand-drawn-fabric"] .qb-btn-ghost:hover:not(:disabled),
+html[data-qb-style="hand-drawn-fabric"] .qb-chip:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--qb-fabric-shadow-hover), var(--qb-fabric-highlight) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-chip--active {
+  background: var(--qb-fabric-sage) !important;
+  font-weight: 700;
+}
+
+/* 配置中心 Tab：暖色轨道，避免默认深色条 */
+html[data-qb-style="hand-drawn-fabric"] .qb-segmented {
+  background: var(--qb-segmented-track-bg, #e8e0d4) !important;
+  border: var(--qb-fabric-border) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-segmented__tab {
+  color: var(--qb-segmented-tab-fg, #6b6358) !important;
+  font-family: var(--qb-font-body);
+  font-weight: 600;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-segmented__tab:hover {
+  color: var(--qb-segmented-tab-fg-hover, #3d3832) !important;
+  background: rgba(255, 252, 248, 0.55) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-segmented__tab--active {
+  color: var(--qb-segmented-tab-fg-active, #3d3832) !important;
+  background: var(--qb-segmented-active-bg, rgba(255, 252, 248, 0.96)) !important;
+  border: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+  font-weight: 700;
+}
+
+/* MCP 标签池 */
+html[data-qb-style="hand-drawn-fabric"] .qb-mcp-chip {
+  font-family: var(--qb-font-body);
+  background: rgba(255, 252, 248, 0.88) !important;
+  color: var(--qb-fabric-ink-muted) !important;
+  border: var(--qb-fabric-border) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-mcp-chip:hover:not(:disabled) {
+  color: var(--qb-fabric-ink) !important;
+  background: rgba(255, 252, 248, 0.98) !important;
+  border-color: rgba(98, 82, 64, 0.35) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-mcp-chip--on {
+  background: var(--qb-fabric-sage) !important;
+  color: var(--qb-fabric-ink) !important;
+  border-color: rgba(109, 139, 114, 0.45) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-config-center] h2 {
+  font-family: var(--qb-font-display);
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--qb-fabric-ink);
+  letter-spacing: 0.02em;
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-config-center] .qb-config-hint,
+html[data-qb-style="hand-drawn-fabric"] [data-qb-config-center] .qb-config-label {
+  font-family: var(--qb-font-body);
+  color: var(--qb-fabric-ink-muted);
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-config-center] .qb-config-label {
+  color: var(--qb-fabric-ink);
+  font-weight: 600;
+}
+
+html[data-qb-style="hand-drawn-fabric"] input,
+html[data-qb-style="hand-drawn-fabric"] select,
+html[data-qb-style="hand-drawn-fabric"] textarea:not(.qb-tokyo-editor__textarea) {
+  font-family: var(--qb-font-body);
+  background: rgba(255, 252, 248, 0.88) !important;
+  color: var(--qb-fabric-ink) !important;
+  border: var(--qb-fabric-border) !important;
+  border-radius: var(--qb-radius-sm) !important;
+  box-shadow: inset 0 1px 2px rgba(62, 52, 42, 0.06), 0 1px 0 rgba(255, 255, 255, 0.5);
+  transition:
+    border-color var(--qb-fabric-duration) ease,
+    box-shadow var(--qb-fabric-duration) var(--qb-fabric-ease),
+    transform var(--qb-fabric-duration) var(--qb-fabric-ease);
+}
+
+html[data-qb-style="hand-drawn-fabric"] input:focus,
+html[data-qb-style="hand-drawn-fabric"] select:focus,
+html[data-qb-style="hand-drawn-fabric"] textarea:focus {
+  outline: none;
+  border-color: rgba(109, 143, 168, 0.55) !important;
+  box-shadow:
+    0 0 0 2px rgba(109, 143, 168, 0.2),
+    inset 0 1px 2px rgba(62, 52, 42, 0.06),
+    0 1px 0 rgba(255, 255, 255, 0.55);
+  transform: translateY(-1px);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-tokyo-editor {
+  background: rgba(255, 252, 248, 0.92) !important;
+  border: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-tokyo-editor__textarea {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-team-shell] .qb-team-editor-titlebar {
+  font-family: var(--qb-font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-team-shell] nav[aria-label="研究团队视图"] button[type="button"]:hover {
+  transform: translateY(-2px) rotate(2deg);
+  box-shadow: var(--qb-fabric-shadow-hover);
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-team-shell] {
+  border: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-team-graph-host] {
+  border: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] [data-qb-ide-workbench] > div > div:first-child > div:first-child {
+  border-bottom: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow);
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-style-select,
+html[data-qb-style="hand-drawn-fabric"] .qb-theme-select {
+  font-family: var(--qb-font-body);
+  background: rgba(255, 252, 248, 0.92) !important;
+  border: var(--qb-fabric-border) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+}
+
+html[data-qb-style="hand-drawn-fabric"] .qb-md-code-block,
+html[data-qb-style="hand-drawn-fabric"] pre {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  background: rgba(255, 252, 248, 0.95) !important;
+  border: var(--qb-fabric-border) !important;
+  border-radius: var(--qb-radius-sm) !important;
+  box-shadow: var(--qb-fabric-shadow), var(--qb-fabric-highlight) !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="hand-drawn-fabric"] .qb-nav-row,
+  html[data-qb-style="hand-drawn-fabric"] .qb-context-card,
+  html[data-qb-style="hand-drawn-fabric"] .qb-agent-shell,
+  html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary,
+  html[data-qb-style="hand-drawn-fabric"] .qb-btn-primary-brand,
+  html[data-qb-style="hand-drawn-fabric"] [data-qb-chat-panel] .qb-chat-bubble {
+    transition: none !important;
+  }
+}

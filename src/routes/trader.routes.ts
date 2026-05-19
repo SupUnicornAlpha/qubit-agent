@@ -1,12 +1,16 @@
 import { Hono } from "hono";
 import {
+  appendTraderUserMessage,
   cancelTraderOrder,
   ensureTraderSession,
+  getTraderContext,
   parseTraderUserCommand,
   placeTraderOrder,
   pollTraderFeed,
 } from "../runtime/trader/trader-agent-service";
+import { cancelTraderWorkflows } from "../runtime/trader/trader-workflow";
 import { queryKlines } from "../runtime/market/klines-query";
+import { getDb } from "../db/sqlite/client";
 
 export const traderRouter = new Hono();
 
@@ -23,6 +27,46 @@ traderRouter.post("/session", async (c) => {
     sessionId: body.sessionId.trim(),
   });
   return c.json({ ok: true, data: session });
+});
+
+/** 取消全部历史实时交易 workflow（软删除，保留审计） */
+traderRouter.post("/purge-workflows", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    sessionId?: string;
+    projectId?: string;
+  };
+  const db = await getDb();
+  const cancelled = await cancelTraderWorkflows(db, {
+    sessionId: body.sessionId?.trim() || undefined,
+    projectId: body.projectId?.trim() || undefined,
+  });
+  return c.json({ ok: true, data: { cancelledIds: cancelled, count: cancelled.length } });
+});
+
+traderRouter.get("/context", async (c) => {
+  const workflowRunId = c.req.query("workflowRunId")?.trim() ?? "";
+  if (!workflowRunId) {
+    return c.json({ ok: false, error: "workflowRunId is required" }, 400);
+  }
+  const messages = await getTraderContext({ workflowRunId });
+  return c.json({ ok: true, data: { messages } });
+});
+
+traderRouter.post("/context/message", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    workflowRunId?: string;
+    text?: string;
+    kind?: string;
+  };
+  if (!body.workflowRunId?.trim() || !body.text?.trim()) {
+    return c.json({ ok: false, error: "workflowRunId and text are required" }, 400);
+  }
+  const data = await appendTraderUserMessage({
+    workflowRunId: body.workflowRunId.trim(),
+    text: body.text,
+    kind: body.kind,
+  });
+  return c.json({ ok: true, data });
 });
 
 traderRouter.post("/orders", async (c) => {
@@ -87,6 +131,7 @@ traderRouter.post("/orders/cancel", async (c) => {
     orderIntentId?: string;
     brokerOrderId?: string;
     provider?: "futu" | "ib" | "ccxt";
+    workflowRunId?: string;
   };
   try {
     const data = await cancelTraderOrder(body);
@@ -99,14 +144,14 @@ traderRouter.post("/orders/cancel", async (c) => {
 
 traderRouter.get("/feed", async (c) => {
   const sessionId = c.req.query("sessionId") ?? "";
-  const workflowRunId = c.req.query("workflowRunId") ?? undefined;
+  const workflowRunId = c.req.query("workflowRunId") ?? "";
   const symbol = c.req.query("symbol") ?? "";
   const exchange = c.req.query("exchange") ?? "";
   const since = c.req.query("since") ?? undefined;
   const includeNews = c.req.query("includeNews") !== "false";
 
-  if (!sessionId || !symbol) {
-    return c.json({ ok: false, error: "sessionId and symbol are required" }, 400);
+  if (!sessionId || !workflowRunId || !symbol) {
+    return c.json({ ok: false, error: "sessionId, workflowRunId and symbol are required" }, 400);
   }
 
   const data = await pollTraderFeed({
@@ -135,6 +180,12 @@ traderRouter.post("/command", async (c) => {
     return c.json({ ok: false, error: "workflowRunId and text are required" }, 400);
   }
 
+  await appendTraderUserMessage({
+    workflowRunId: body.workflowRunId,
+    text: body.text,
+    kind: "user_command",
+  });
+
   const parsed = parseTraderUserCommand(body.text);
   if (parsed.action === "unknown") {
     return c.json({ ok: false, error: "unrecognized_command", parsed }, 400);
@@ -150,7 +201,10 @@ traderRouter.post("/command", async (c) => {
     if (!parsed.orderIntentId) {
       return c.json({ ok: false, error: "cancel_requires_order_intent_id", parsed }, 400);
     }
-    const data = await cancelTraderOrder({ orderIntentId: parsed.orderIntentId });
+    const data = await cancelTraderOrder({
+      orderIntentId: parsed.orderIntentId,
+      workflowRunId: body.workflowRunId,
+    });
     return c.json({ ok: true, data, parsed });
   }
 

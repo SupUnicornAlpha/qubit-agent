@@ -10,36 +10,27 @@ import {
   sandboxPolicy,
 } from "../db/sqlite/schema";
 import { cleanupRedundantAgentDefinitions } from "./agent/delete-agent-definition";
-import { SEED_AGENT_DEFINITIONS } from "./seed-agent-definitions-data";
+import { purgeRetiredBuiltinDefinitions } from "./agent/purge-retired-builtin-definitions";
+import {
+  getDataDir,
+  syncWorkspacePromptFromCanonical,
+} from "./agent/agent-pack-service";
+import { DEFAULT_ORCHESTRATION_GROUP } from "./seed-agent-catalog";
+import {
+  SEED_AGENT_DEFINITIONS,
+} from "./seed-agent-definitions-data";
+import { syncOrchestratorTopologyToolsForGroup } from "./orchestration/sync-orchestrator-topology-tools";
 import { isFsiActive } from "./fsi/fsi-config";
 import { mergeFsiSkillsForRole } from "./fsi/fsi-prompt-enricher";
-import { runFsiSeedIntegration } from "./fsi/seed-fsi-integration";
+import { runFsiSeedIntegration, seedFsiSandboxPresets } from "./fsi/seed-fsi-integration";
 import { shouldApplyFsiAgentMappings } from "./fsi/fsi-config";
 import { seedBrokerMcpServer } from "./seed-broker-mcp";
-import {
-  defaultQuantMcpServers,
-  mergeMcpServers,
-  seedRecommendedMcpServers,
-} from "./seed-recommended-mcp-servers";
+import { seedRecommendedMcpServers } from "./seed-recommended-mcp-servers";
 
 export { SEED_AGENT_DEFINITIONS };
 
-/** 内置分析师编组 ID（与成员 definition id 一并由 seed 维护） */
-export const DEFAULT_ANALYST_AGENT_GROUP_ID = "grp-default-analyst-team";
-
-/** 挂载推荐数学/金融 MCP 的角色 */
-const QUANT_MCP_ROLES = new Set([
-  "orchestrator",
-  "market_data",
-  "research",
-  "backtest",
-  "analyst_fundamental",
-  "analyst_technical",
-  "analyst_sentiment",
-  "analyst_macro",
-  "risk",
-  "risk_manager",
-]);
+/** 内置编排团队编组 ID */
+export const DEFAULT_ANALYST_AGENT_GROUP_ID = DEFAULT_ORCHESTRATION_GROUP.id;
 
 const DEFAULT_SANDBOX_POLICY = {
   id: "default-policy",
@@ -90,12 +81,10 @@ export async function seedAgentDefinitions(): Promise<void> {
     set: DEFAULT_LLM_PROVIDER,
   });
 
-  const quantMcps = defaultQuantMcpServers();
+  await seedFsiSandboxPresets();
 
   for (const def of SEED_AGENT_DEFINITIONS) {
-    const mcpServers = QUANT_MCP_ROLES.has(def.role)
-      ? mergeMcpServers(def.mcpServers, quantMcps)
-      : def.mcpServers;
+    const mcpServers = def.mcpServers;
     const skillsJson =
       isFsiActive() && shouldApplyFsiAgentMappings()
         ? await mergeFsiSkillsForRole(def.role, def.skills)
@@ -145,6 +134,7 @@ export async function seedAgentDefinitions(): Promise<void> {
         .update(agentProfile)
         .set({
           displayName: def.name,
+          promptMode: "db_primary",
           updatedAt: new Date().toISOString(),
         })
         .where(eq(agentProfile.id, profRows[0].id));
@@ -154,8 +144,8 @@ export async function seedAgentDefinitions(): Promise<void> {
         definitionId: def.id,
         displayName: def.name,
         soulFileRef: "",
-        description: "",
-        tagsJson: [],
+        description: `QUBIT 内置 ${def.role} Agent`,
+        tagsJson: ["builtin", def.role],
         enabled: true,
         configRootUri: "",
         memoryNamespace: "",
@@ -164,6 +154,18 @@ export async function seedAgentDefinitions(): Promise<void> {
         configSyncedAt: "",
       });
     }
+
+    const profAfter = await db
+      .select({ configRootUri: agentProfile.configRootUri })
+      .from(agentProfile)
+      .where(eq(agentProfile.definitionId, def.id))
+      .limit(1);
+    await syncWorkspacePromptFromCanonical({
+      dataDir: getDataDir(),
+      definitionId: def.id,
+      systemPrompt: def.systemPrompt,
+      configRootUri: profAfter[0]?.configRootUri ?? "",
+    });
   }
 
   console.log(`[Seed] Upserted ${SEED_AGENT_DEFINITIONS.length} agent definitions.`);
@@ -174,7 +176,12 @@ export async function seedAgentDefinitions(): Promise<void> {
   await seedRecommendedMcpServers();
   await seedBrokerMcpServer();
   await runFsiSeedIntegration(SEED_AGENT_DEFINITIONS);
+  const purged = await purgeRetiredBuiltinDefinitions(db);
+  if (purged > 0) {
+    console.log(`[Seed] Purged ${purged} retired built-in agent definition(s).`);
+  }
   await ensureDefaultAnalystAgentGroup();
+  await syncOrchestratorTopologyToolsForGroup(DEFAULT_ANALYST_AGENT_GROUP_ID);
 }
 
 /**
@@ -182,57 +189,42 @@ export async function seedAgentDefinitions(): Promise<void> {
  */
 export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
   const db = await getDb();
-  const memberDefs = [
-    "def-orchestrator",
-    "def-analyst-fundamental",
-    "def-analyst-technical",
-    "def-analyst-sentiment",
-    "def-analyst-macro",
-    "def-research",
-    "def-backtest",
-    "def-risk",
-    "def-risk-manager",
-  ] as const;
+  const memberDefs = [...DEFAULT_ORCHESTRATION_GROUP.memberDefinitionIds];
+  const memberRoles = [...DEFAULT_ORCHESTRATION_GROUP.memberRoles];
 
-  const memberRoles = [
-    "orchestrator",
-    "analyst_fundamental",
-    "analyst_technical",
-    "analyst_sentiment",
-    "analyst_macro",
-    "research",
-    "backtest",
-    "risk",
-    "risk_manager",
-  ];
-
-  // 默认拓扑：orchestrator 作为主导节点，向专家发布任务，并接收回报/裁判。
-  // 仅用于“展示与计划拓扑”；研究团队并行槽位执行仍由 analyst_* 等槽位主导。
-  const defaultNodePositions = (() => {
-    const cx = 420;
-    const cy = 240;
-    const rx = 200;
-    const ry = 160;
-    const others = memberRoles.filter((r) => r !== "orchestrator");
-    const out: Record<string, { x: number; y: number }> = {
-      orchestrator: { x: cx, y: 80 },
-    };
-    const n = Math.max(others.length, 1);
-    for (let i = 0; i < others.length; i++) {
-      const role = others[i];
-      if (!role) continue;
-      const ang = (2 * Math.PI * i) / n - Math.PI / 2;
-      out[role] = { x: cx + Math.cos(ang) * rx, y: cy + Math.sin(ang) * ry };
-    }
-    return out;
-  })();
+  const defaultNodePositions: Record<string, { x: number; y: number }> = {
+    orchestrator: { x: 420, y: 60 },
+    market_data: { x: 180, y: 160 },
+    news_event: { x: 660, y: 160 },
+    analyst_fundamental: { x: 120, y: 280 },
+    analyst_technical: { x: 280, y: 320 },
+    analyst_sentiment: { x: 560, y: 320 },
+    analyst_macro: { x: 720, y: 280 },
+    research: { x: 240, y: 400 },
+    backtest: { x: 400, y: 400 },
+    risk: { x: 600, y: 400 },
+  };
 
   const defaultRelationsJson = (() => {
     const others = memberRoles.filter((r) => r !== "orchestrator");
     const edges: Array<{ from: string; to: string; edgeKind: "unicast" }> = [];
     for (const to of others) edges.push({ from: "orchestrator", to, edgeKind: "unicast" });
     for (const from of others) edges.push({ from, to: "orchestrator", edgeKind: "unicast" });
-    return [{ type: "topology_canvas", nodePositions: defaultNodePositions }, ...edges];
+    const pipeline = {
+      type: "orchestration_pipeline",
+      phases: [
+        { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+        { id: "data", label: "数据层", roles: ["market_data", "news_event"] },
+        { id: "msa", label: "四维分析", roles: ["analyst_fundamental", "analyst_technical", "analyst_sentiment", "analyst_macro"] },
+        { id: "deepen", label: "策略深化", roles: ["research", "backtest"] },
+        { id: "risk", label: "风控闸门", roles: ["risk"] },
+      ],
+    };
+    return [
+      { type: "topology_canvas", nodePositions: defaultNodePositions },
+      pipeline,
+      ...edges,
+    ];
   })();
 
   const existing = await db
@@ -246,10 +238,14 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
     if (!currentRelationsJson) return true;
     if (Array.isArray(currentRelationsJson)) return currentRelationsJson.length === 0;
     try {
-      return !JSON.stringify(currentRelationsJson).includes("orchestrator");
+      const s = JSON.stringify(currentRelationsJson);
+      if (!s.includes("orchestrator")) return true;
+      if (s.includes("risk_manager")) return true;
+      if (memberRoles.some((r) => !s.includes(`"${r}"`))) return true;
     } catch {
       return true;
     }
+    return false;
   })();
 
   await db
@@ -257,17 +253,15 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
     .values({
       id: DEFAULT_ANALYST_AGENT_GROUP_ID,
       workspaceId: null,
-      name: "默认研究团队（分析师 + 策略/回测/风控）",
-      description:
-        "启动时自动维护：含 orchestrator（拓扑/编排节点）；四名 analyst_* 参与 MSA；research / backtest / risk / risk_manager 产出辅助章节。可在「配置中心 → Agent」调整。",
+      name: DEFAULT_ORCHESTRATION_GROUP.name,
+      description: DEFAULT_ORCHESTRATION_GROUP.description,
       relationsJson: defaultRelationsJson,
     })
     .onConflictDoUpdate({
       target: agentGroup.id,
       set: {
-        name: "默认研究团队（分析师 + 策略/回测/风控）",
-        description:
-          "启动时自动维护：含 orchestrator（拓扑/编排节点）；四名 analyst_* 参与 MSA；research / backtest / risk / risk_manager 产出辅助章节。可在「配置中心 → Agent」调整。",
+        name: DEFAULT_ORCHESTRATION_GROUP.name,
+        description: DEFAULT_ORCHESTRATION_GROUP.description,
         updatedAt: new Date().toISOString(),
         ...(shouldInjectDefaultTopo ? { relationsJson: defaultRelationsJson } : {}),
       },
@@ -289,6 +283,8 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
     `[Seed] Default research team agent group ${DEFAULT_ANALYST_AGENT_GROUP_ID} refreshed (${memberDefs.length} members).`
   );
 }
+
+export { syncOrchestratorTopologyToolsForGroup };
 
 if (import.meta.main) {
   void seedAgentDefinitions().catch((err) => {

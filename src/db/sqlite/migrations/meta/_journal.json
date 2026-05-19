@@ -232,6 +232,13 @@
       "when": 1777352280000,
       "tag": "0033_workflow_execution_path",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1777352290000,
+      "tag": "0034_trader_context_message",
+      "breakpoints": true
     }
   ]
 }

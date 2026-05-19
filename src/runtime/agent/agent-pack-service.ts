@@ -12,6 +12,10 @@ export const PACK_USER_SNAPSHOT_MAX_CP = 1375;
 
 export type PromptMode = "db_primary" | "file_primary" | "merged";
 
+/** 写入 workspace/prompt.md 时附加；标明与 DB 同源 */
+export const PACK_PROMPT_SYNC_HEADER =
+  "<!-- QUBIT: 与 DB system_prompt 同步自 seed-agent-prompts.ts；修改请改 seed 后执行 bun run seed:agent-definitions -->\n\n";
+
 export function truncateSnapshotByCodepoints(input: string, maxCodepoints: number): string {
   const s = [...input];
   if (s.length <= maxCodepoints) return input;
@@ -200,8 +204,8 @@ export function mergeSystemPrompt(params: {
     .join("\n\n");
 
   if (params.mode === "db_primary") {
-    // 主任务提示：磁盘优先（workspace/prompt.md 或模板路径），DB system_prompt 为候补
-    const core = filePrompt || db;
+    // 主任务提示：DB system_prompt 为权威；workspace/prompt.md 为 seed 镜像（空时才读文件）
+    const core = db || filePrompt;
     if (frozen && core) return `${frozen}\n\n---\n\n${core}`;
     return frozen || core || soul;
   }
@@ -302,9 +306,10 @@ export async function ensureAgentPackLayout(params: {
     await writeFile(
       workspacePromptPath,
       [
+        PACK_PROMPT_SYNC_HEADER,
         "# 系统提示词",
         "",
-        "在此编写该 Agent 的主要任务说明。默认模式下优先于数据库中的 `system_prompt`；仅当本文件为空时才使用数据库内容。",
+        "由 `bun run seed:agent-definitions` 从 seed-agent-prompts.ts 写入，与 DB `system_prompt` 保持一致。",
         "",
       ].join("\n"),
       "utf-8"
@@ -516,4 +521,28 @@ export async function writePackSessionSnapshotFiles(params: {
 
 export function getDataDir(): string {
   return config.dataDir;
+}
+
+/** 将权威 system_prompt 同步到 Pack 的 workspace/prompt.md（与 DB 一致） */
+export async function syncWorkspacePromptFromCanonical(params: {
+  dataDir: string;
+  definitionId: string;
+  systemPrompt: string;
+  configRootUri?: string;
+}): Promise<string> {
+  const packRoot = resolvePackRoot(
+    params.dataDir,
+    params.definitionId,
+    params.configRootUri ?? ""
+  );
+  const workspaceDir = join(packRoot, "workspace");
+  const workspacePromptPath = join(workspaceDir, "prompt.md");
+  await mkdir(workspaceDir, { recursive: true });
+  const body = params.systemPrompt.trim();
+  await writeFile(
+    workspacePromptPath,
+    body ? `${PACK_PROMPT_SYNC_HEADER}${body}\n` : PACK_PROMPT_SYNC_HEADER,
+    "utf-8"
+  );
+  return workspacePromptPath;
 }

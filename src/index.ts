@@ -12,6 +12,7 @@ import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worke
 import { seedAgentDefinitions } from "./runtime/seed-agent-definitions";
 import { SEED_AGENT_DEFINITIONS } from "./runtime/seed-agent-definitions-data";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
+import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
 import { createServer } from "./server";
 
 async function main() {
@@ -23,9 +24,11 @@ async function main() {
   await ensureWorkspaceRuntimeConfigFiles({
     definitions: SEED_AGENT_DEFINITIONS,
     policies: buildDefaultSandboxPoliciesFromDefinitions(SEED_AGENT_DEFINITIONS),
+    refresh: true,
   });
 
   await registerBuiltinConnectors();
+  await purgeAllTraderWorkflowsOnce();
   await startAllAgents();
   const restored = await restoreRunningStrategies();
   if (restored > 0) {

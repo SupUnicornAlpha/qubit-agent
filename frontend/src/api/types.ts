@@ -529,6 +529,9 @@ export interface AnalystTeamGraphToolCall {
   latencyMs: number | null;
   createdAt: string;
   agentStepId: string;
+  requestJson?: unknown;
+  responseJson?: unknown;
+  errorMessage?: string | null;
 }
 
 export interface AnalystTeamGraphMcpCall {

@@ -396,7 +396,7 @@ export const TraderLivePanel: FC = () => {
 
   return (
     <div data-qb-trader-root style={styles.root}>
-      <details style={styles.details} data-qb-trader-bar>
+      <details className="qb-a3d-tilt" style={styles.details} data-qb-trader-bar>
         <summary style={styles.summary}>交易 Agent 配置</summary>
         <div style={styles.configBody}>
           <p style={styles.hint}>
@@ -499,7 +499,7 @@ export const TraderLivePanel: FC = () => {
       </details>
 
       <div style={styles.mainRow}>
-        <div style={styles.flowCol}>
+        <div className="qb-trader-module qb-a3d-tilt" style={styles.flowCol}>
           <div style={styles.flowHead} data-qb-trader-bar>
             交易 Agent 工作台
           </div>
@@ -632,7 +632,7 @@ export const TraderLivePanel: FC = () => {
           </div>
         </div>
 
-        <div style={styles.rightCol}>
+        <div className="qb-trader-module qb-a3d-tilt" style={styles.rightCol}>
           <div style={styles.klineSlot}>
             <div style={styles.klineToolbar} data-qb-trader-bar>
               <label style={styles.lab}>

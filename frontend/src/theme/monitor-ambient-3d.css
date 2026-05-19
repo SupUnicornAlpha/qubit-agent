@@ -1,0 +1,58 @@
+/**
+ * Ambient 3D · 运行监控页：模块透视 + 收紧留白
+ */
+/* main 透视见 ambient-3d.css 全局规则 */
+
+html[data-qb-style="ambient-3d"] [data-qb-monitor-root] {
+  max-width: none !important;
+  width: 100%;
+  margin: 0 !important;
+  padding: 4px 8px 16px !important;
+  perspective: 960px;
+  transform-style: preserve-3d;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor__kpi-row {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 12px !important;
+  margin-bottom: 14px !important;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor__chart-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)) !important;
+  gap: 14px !important;
+  margin-top: 10px !important;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor__kpi,
+html[data-qb-style="ambient-3d"] .qb-monitor__panel {
+  --qb-a3d-base-rx: -6deg;
+  --qb-a3d-base-ry: 9deg;
+  background: var(--qb-a3d-glass-bg-raised) !important;
+  backdrop-filter: blur(var(--qb-a3d-glass-blur)) saturate(160%);
+  -webkit-backdrop-filter: blur(var(--qb-a3d-glass-blur)) saturate(160%);
+  border: 1px solid var(--qb-a3d-glass-border) !important;
+  border-radius: var(--qb-radius-md) !important;
+  box-shadow: var(--qb-a3d-shadow) !important;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor__kpi:nth-child(even) {
+  --qb-a3d-base-rx: 6deg;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor__panel:nth-child(odd) {
+  --qb-a3d-base-rx: -4deg;
+  --qb-a3d-base-ry: 7deg;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor__panel:nth-child(even) {
+  --qb-a3d-base-rx: 4deg;
+  --qb-a3d-base-ry: 7deg;
+}
+
+html[data-qb-style="ambient-3d"] .qb-monitor .qb-pill-tab {
+  --qb-a3d-base-rx: 0deg;
+  --qb-a3d-base-ry: 0deg;
+}

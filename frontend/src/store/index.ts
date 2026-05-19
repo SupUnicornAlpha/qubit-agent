@@ -128,6 +128,10 @@ export interface AppState {
   setUiTheme: (palette: UiPaletteId) => void;
   activeView: ActiveView;
   setActiveView: (view: ActiveView) => void;
+  /** 侧栏 Explorer 面板（导航树）是否展开 */
+  explorerOpen: boolean;
+  setExplorerOpen: (open: boolean) => void;
+  toggleExplorerOpen: () => void;
   chartContext: ChartContextPayload | null;
   setChartContext: (v: ChartContextPayload | null) => void;
   configSubPage: ConfigSubPage;
@@ -202,6 +206,23 @@ const defaultChartOverlays: ChartOverlaysState = {
 };
 
 const TRADER_CFG_KEY = "qubit-trader-agent-config-v1";
+const EXPLORER_OPEN_LS = "qubit:explorerOpen";
+
+function readExplorerOpen(): boolean {
+  try {
+    return localStorage.getItem(EXPLORER_OPEN_LS) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function persistExplorerOpen(open: boolean) {
+  try {
+    localStorage.setItem(EXPLORER_OPEN_LS, open ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
 
 function loadTraderConfig(): TraderAgentConfigState {
   try {
@@ -271,6 +292,16 @@ export const useAppStore = create<AppState>((set) => ({
   },
   activeView: "chat",
   setActiveView: (view) => set({ activeView: view }),
+  explorerOpen: readExplorerOpen(),
+  setExplorerOpen: (explorerOpen) => {
+    persistExplorerOpen(explorerOpen);
+    set({ explorerOpen });
+  },
+  toggleExplorerOpen: () => {
+    const next = !useAppStore.getState().explorerOpen;
+    persistExplorerOpen(next);
+    set({ explorerOpen: next });
+  },
   chartContext: null,
   setChartContext: (chartContext) => set({ chartContext }),
   configSubPage: "llm",

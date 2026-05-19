@@ -193,15 +193,33 @@
 .qb-nav-activity-brand {
   width: 30px;
   height: 30px;
+  padding: 0;
+  margin: 0;
   border-radius: 8px;
   border: 1px solid var(--qb-sidebar-border);
+  background: transparent;
   color: var(--qb-brand-icon);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
   margin-bottom: 4px;
   background: var(--qb-sidebar-activity-bg);
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.qb-nav-activity-brand:hover {
+  border-color: var(--qb-blue, #3b82f6);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.qb-nav-activity-brand:focus-visible {
+  outline: 2px solid var(--qb-focus-ring);
+  outline-offset: 2px;
 }
 
 /* Explorer 列表行 */

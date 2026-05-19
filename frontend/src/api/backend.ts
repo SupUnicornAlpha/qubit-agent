@@ -1823,6 +1823,7 @@ export type TraderSessionContext = {
   workflowRunId: string;
   projectId: string;
   sessionId: string;
+  created?: boolean;
 };
 
 export type TraderDriverKind =
@@ -1921,6 +1922,7 @@ export async function placeTraderOrder(input: {
 export async function cancelTraderOrder(input: {
   orderIntentId?: string;
   brokerOrderId?: string;
+  workflowRunId?: string;
 }): Promise<{ cancelled: boolean; detail: string }> {
   const res = await httpPost<{
     ok: boolean;
@@ -1931,9 +1933,19 @@ export async function cancelTraderOrder(input: {
   return res.data;
 }
 
+export type TraderContextMessageDto = {
+  id: string;
+  ts: string;
+  role: string;
+  kind: string;
+  title: string;
+  body: string;
+  payload: Record<string, unknown>;
+};
+
 export async function pollTraderFeed(input: {
   sessionId: string;
-  workflowRunId?: string;
+  workflowRunId: string;
   symbol: string;
   exchange: string;
   since?: string;
@@ -1942,13 +1954,14 @@ export async function pollTraderFeed(input: {
   events: TraderFeedEvent[];
   drivers: TraderDriverEvent[];
   agentMessages: TraderAgentMessageEvent[];
+  contextMessages: TraderContextMessageDto[];
   serverTime: string;
 }> {
   const q = new URLSearchParams();
   q.set("sessionId", input.sessionId);
+  q.set("workflowRunId", input.workflowRunId);
   q.set("symbol", input.symbol);
   if (input.exchange) q.set("exchange", input.exchange);
-  if (input.workflowRunId) q.set("workflowRunId", input.workflowRunId);
   if (input.since) q.set("since", input.since);
   if (input.includeNews === false) q.set("includeNews", "false");
   const res = await httpGet<{
@@ -1957,6 +1970,7 @@ export async function pollTraderFeed(input: {
       events: TraderFeedEvent[];
       drivers: TraderDriverEvent[];
       agentMessages: TraderAgentMessageEvent[];
+      contextMessages: TraderContextMessageDto[];
       serverTime: string;
     };
   }>(`/api/v1/trader/feed?${q.toString()}`);

@@ -48,11 +48,14 @@ export async function buildAnalystTeamDataContext(params: {
       exchange: exchange || undefined,
       limit: 6,
     });
-    if (brief.items.length === 0) {
+    const newsItems = [...brief.symbolNews, ...brief.sectorNews];
+    if (newsItems.length === 0) {
       blocks.push("[资讯] 暂无头条（可配置 qubit-news 或检查 RSS）");
     } else {
-      blocks.push(`[资讯] 共 ${brief.items.length} 条：`);
-      for (const item of brief.items.slice(0, 6)) {
+      const sectorHint =
+        brief.sectorLabel != null ? `，板块 ${brief.sectorLabel}` : "";
+      blocks.push(`[资讯] 共 ${newsItems.length} 条${sectorHint}：`);
+      for (const item of newsItems.slice(0, 6)) {
         blocks.push(`- ${item.title}${item.source ? `（${item.source}）` : ""}`);
       }
     }

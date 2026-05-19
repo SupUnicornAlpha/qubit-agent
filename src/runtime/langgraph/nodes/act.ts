@@ -7,6 +7,7 @@ import type { AgentGraphState, StepStreamEvent } from "../state";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
+import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import { resolveConnectorForTool } from "../../tools/tool-routes";
 
@@ -16,7 +17,8 @@ export async function actNode(
   agentInstanceId: string,
   agentStepId: string
 ): Promise<Partial<AgentGraphState>> {
-  const availableTools = state.agentDefinition.tools ?? [];
+  const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
+  const availableTools = effective.tools;
   const parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
 
   if (parsed.kind === "none") {
@@ -116,16 +118,6 @@ export async function actNode(
     },
     status: "success",
     latencyMs: 1,
-  });
-  void logResearchTeamInteraction({
-    workflowRunId: state.workflowId,
-    fromRole: state.agentDefinition.role,
-    toRole: "__tools__",
-    kind: "tool_call",
-    toolKind,
-    toolName: targetName,
-    contentText: `${String(targetKind)} → ${targetName}`,
-    payloadJson: { toolCallId, toolName, targetKind },
   });
   if (mcp) {
     await db.insert(mcpCallLog).values({
@@ -430,6 +422,24 @@ export async function actNode(
     stepIndex: state.iteration,
     ts: Date.now(),
     payload: { toolCallId, status: "success", acpId, targetKind, targetName },
+  });
+
+  const resultPreview = (() => {
+    try {
+      return JSON.stringify(execution.value).slice(0, 1200);
+    } catch {
+      return String(execution.value).slice(0, 1200);
+    }
+  })();
+  void logResearchTeamInteraction({
+    workflowRunId: state.workflowId,
+    fromRole: state.agentDefinition.role,
+    toRole: "__tools__",
+    kind: "tool_call",
+    toolKind,
+    toolName: targetName,
+    contentText: `✓ ${targetName} (${latencyMs}ms)\n${resultPreview}`,
+    payloadJson: { toolCallId, toolName, targetKind, status: "success", result: execution.value },
   });
 
   const toolResult = execution.ok && execution.value ? execution.value : {};

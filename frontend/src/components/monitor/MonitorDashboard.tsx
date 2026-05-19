@@ -678,7 +678,7 @@ export const MonitorDashboard: FC = () => {
             role="tab"
             aria-selected={scope === t.id}
             title={t.hint}
-            className={`qb-pill-tab${scope === t.id ? " qb-pill-tab--active" : ""}`}
+            className={`qb-pill-tab qb-a3d-tilt${scope === t.id ? " qb-pill-tab--active" : ""}`}
             onClick={() => setScope(t.id)}
           >
             {t.label}
@@ -714,7 +714,7 @@ export const MonitorDashboard: FC = () => {
           </div>
 
           {summary && summary.stuckRunning.length > 0 ? (
-            <div className="qb-monitor__panel"
+            <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
               <div style={styles.chartTitle}>
                 长时间 running 的工作流（超过 {summary.stuckThresholdMinutes} 分钟）
@@ -734,7 +734,7 @@ export const MonitorDashboard: FC = () => {
           ) : null}
 
           {strategyRuntimes.length > 0 ? (
-            <div className="qb-monitor__panel"
+            <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
               <div style={styles.chartTitle}>策略运行时（纸面/实盘）</div>
               <ul style={{ margin: 0, padding: "8px 12px 8px 24px", fontSize: 12, lineHeight: 1.6 }}>
@@ -750,7 +750,7 @@ export const MonitorDashboard: FC = () => {
 
           <div className="qb-monitor__chart-grid"
             style={styles.chartGrid}>
-            <div className="qb-monitor__panel"
+            <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
               <div style={styles.chartTitle}>工作流列表 · 按状态分布（当前筛选结果）</div>
               <ResponsiveContainer width="100%" height={220}>
@@ -765,7 +765,7 @@ export const MonitorDashboard: FC = () => {
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="qb-monitor__panel"
+            <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
               <div style={styles.chartTitle}>工作流列表 · 按模式数量</div>
               <ResponsiveContainer width="100%" height={220}>
@@ -902,7 +902,7 @@ export const MonitorDashboard: FC = () => {
             <section style={styles.col}>
               <h3 style={{ ...styles.subTitle, marginTop: 0 }}>工作流 · 质量快照趋势</h3>
               {qualityLineData.length > 0 ? (
-                <div className="qb-monitor__panel"
+                <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
                   <div style={styles.chartTitle}>
                     {selectedWorkflowId ? `已选 ${selectedWorkflowId.slice(0, 8)}…` : "未选中"} · qualityScore
@@ -962,7 +962,7 @@ export const MonitorDashboard: FC = () => {
 
           <div className="qb-monitor__chart-grid"
             style={styles.chartGrid}>
-            <div className="qb-monitor__panel"
+            <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
               <div style={styles.chartTitle}>P50 / P95 工具延迟（按 definition / 角色）</div>
               <ResponsiveContainer width="100%" height={220}>
@@ -984,7 +984,7 @@ export const MonitorDashboard: FC = () => {
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <div className="qb-monitor__panel"
+            <div className="qb-monitor__panel qb-a3d-tilt"
             style={styles.chartBox}>
               <div style={styles.chartTitle}>成功 vs 错误（聚合窗口汇总）</div>
               <ResponsiveContainer width="100%" height={220}>
@@ -1221,7 +1221,7 @@ export const MonitorDashboard: FC = () => {
 };
 
 const Kpi: FC<{ label: string; value: string; accent?: string }> = ({ label, value, accent }) => (
-  <div className="qb-monitor__kpi" style={{ ...styles.kpi, borderColor: accent ?? "var(--qb-main-input-border, #3f3f46)" }}>
+  <div className="qb-monitor__kpi qb-a3d-tilt" style={{ ...styles.kpi, borderColor: accent ?? "var(--qb-main-input-border, #3f3f46)" }}>
     <div style={styles.kpiLabel}>{label}</div>
     <div style={{ ...styles.kpiValue, color: accent ?? "var(--qb-body-fg, #f4f4f5)" }}>{value}</div>
   </div>

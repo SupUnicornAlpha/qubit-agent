@@ -1,10 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
-  a2aMessage,
-  agentDefinition,
-  agentInstance,
   alertEvent,
   brokerOrder,
   communicationMessageLog,
@@ -12,7 +8,6 @@ import {
   orderIntent,
   scheduledJob,
   scheduledJobRun,
-  workflowRun,
 } from "../../db/sqlite/schema";
 import { processExecutionTasks } from "../execution/execution-worker";
 import { createOrderIntentFromReiaPayload } from "../execution/reia-bridge";
@@ -20,55 +15,44 @@ import { brokerCancelOrder } from "../reia/broker-service";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { listStrategyRuntimeLogs } from "../strategy/strategy-runtime-log";
 import { listStrategyRuntimes } from "../strategy/strategy-runtime-service";
-import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import {
+  appendTraderContextMessage,
+  getTraderContextTail,
+  listTraderContextMessages,
+} from "./trader-context-store";
+import { getOrCreateTraderWorkflow, TRADER_WORKFLOW_GOAL } from "./trader-workflow";
 
 export interface TraderSessionContext {
   workflowRunId: string;
   projectId: string;
   sessionId: string;
+  created: boolean;
 }
 
-const TRADER_WORKFLOW_GOAL = "QUBIT 实时交易 Agent 执行上下文";
+export { TRADER_WORKFLOW_GOAL };
 
 export async function ensureTraderSession(input: {
   projectId: string;
   sessionId: string;
 }): Promise<TraderSessionContext> {
-  const db = await getDb();
-  const existing = await db
-    .select()
-    .from(workflowRun)
-    .where(
-      and(
-        eq(workflowRun.projectId, input.projectId),
-        eq(workflowRun.sessionId, input.sessionId),
-        eq(workflowRun.goal, TRADER_WORKFLOW_GOAL)
-      )
-    )
-    .orderBy(desc(workflowRun.startedAt))
-    .limit(1);
+  const { workflowRunId, created } = await getOrCreateTraderWorkflow(input);
 
-  if (existing[0]) {
-    return {
-      workflowRunId: existing[0].id,
-      projectId: input.projectId,
-      sessionId: input.sessionId,
-    };
+  if (created) {
+    await appendTraderContextMessage({
+      workflowRunId,
+      sourceId: `session-init-${workflowRunId}`,
+      role: "system",
+      kind: "session_init",
+      title: "实时交易上下文已建立",
+      body: `projectId=${input.projectId}\nsessionId=${input.sessionId}\n后续驱动与指令将追加为消息，不再新建 workflow。`,
+    });
   }
 
-  const created = await createAndDispatchWorkflow({
-    projectId: input.projectId,
-    goal: TRADER_WORKFLOW_GOAL,
-    mode: "simulation",
-    sessionId: input.sessionId,
-    source: "api",
-    skipDispatch: true,
-    reuseSessionWorkflow: false,
-  });
   return {
-    workflowRunId: created.data.id,
+    workflowRunId,
     projectId: input.projectId,
     sessionId: input.sessionId,
+    created,
   };
 }
 
@@ -136,6 +120,21 @@ export async function placeTraderOrder(input: {
 
   await processExecutionTasks(db);
 
+  await appendTraderContextMessage({
+    workflowRunId: input.workflowRunId,
+    sourceId: `order-${result.orderIntentId}`,
+    role: "user",
+    kind: "order",
+    title: `${input.side === "buy" ? "买入" : "卖出"} ${sym} × ${qty}`,
+    body: `risk=${result.riskOutcome}\n${result.riskReason}\nintent=${result.orderIntentId}`,
+    payload: {
+      orderIntentId: result.orderIntentId,
+      side: input.side,
+      symbol: sym,
+      qty,
+    },
+  });
+
   return {
     orderIntentId: result.orderIntentId,
     executionTaskId: result.executionTaskId,
@@ -149,6 +148,7 @@ export async function cancelTraderOrder(input: {
   orderIntentId?: string;
   brokerOrderId?: string;
   provider?: "futu" | "ib" | "ccxt";
+  workflowRunId?: string;
 }): Promise<{ cancelled: boolean; detail: string }> {
   const db = await getDb();
 
@@ -157,6 +157,16 @@ export async function cancelTraderOrder(input: {
       provider: input.provider ?? "futu",
       brokerOrderId: input.brokerOrderId,
     });
+    if (input.workflowRunId) {
+      await appendTraderContextMessage({
+        workflowRunId: input.workflowRunId,
+        sourceId: `cancel-broker-${input.brokerOrderId}`,
+        role: "user",
+        kind: "cancel",
+        title: "撤单（券商单）",
+        body: input.brokerOrderId,
+      });
+    }
     return { cancelled: true, detail: `broker_order ${input.brokerOrderId}` };
   }
 
@@ -184,6 +194,16 @@ export async function cancelTraderOrder(input: {
       .update(executionTask)
       .set({ status: "cancelled", updatedAt: new Date().toISOString() })
       .where(eq(executionTask.id, task.id));
+    if (input.workflowRunId) {
+      await appendTraderContextMessage({
+        workflowRunId: input.workflowRunId,
+        sourceId: `cancel-intent-${input.orderIntentId}`,
+        role: "user",
+        kind: "cancel",
+        title: "撤单（未报券商）",
+        body: input.orderIntentId,
+      });
+    }
     return { cancelled: true, detail: "task_cancelled_before_broker_submit" };
   }
 
@@ -199,6 +219,17 @@ export async function cancelTraderOrder(input: {
     .update(brokerOrder)
     .set({ status: "cancelled", updatedAt: new Date().toISOString() })
     .where(eq(brokerOrder.id, bo.id));
+
+  if (input.workflowRunId) {
+    await appendTraderContextMessage({
+      workflowRunId: input.workflowRunId,
+      sourceId: `cancel-intent-${input.orderIntentId}`,
+      role: "user",
+      kind: "cancel",
+      title: "撤单成功",
+      body: bo.brokerOrderId,
+    });
+  }
   return { cancelled: true, detail: `broker_order ${bo.brokerOrderId}` };
 }
 
@@ -261,9 +292,43 @@ export type TraderFeedEvent =
       orderIntentId: string;
     };
 
+export type TraderContextMessageDto = {
+  id: string;
+  ts: string;
+  role: string;
+  kind: string;
+  title: string;
+  body: string;
+  payload: Record<string, unknown>;
+};
+
+async function recordFeedToContext(
+  workflowRunId: string,
+  items: Array<{
+    sourceId: string;
+    role: "driver" | "agent" | "system";
+    kind: string;
+    title: string;
+    body: string;
+    payload?: Record<string, unknown>;
+  }>
+): Promise<void> {
+  for (const item of items) {
+    await appendTraderContextMessage({
+      workflowRunId,
+      sourceId: item.sourceId,
+      role: item.role,
+      kind: item.kind,
+      title: item.title,
+      body: item.body,
+      payload: item.payload,
+    });
+  }
+}
+
 export async function pollTraderFeed(input: {
   sessionId: string;
-  workflowRunId?: string;
+  workflowRunId: string;
   symbol: string;
   exchange: string;
   since?: string;
@@ -272,6 +337,7 @@ export async function pollTraderFeed(input: {
   events: TraderFeedEvent[];
   drivers: TraderDriverEvent[];
   agentMessages: TraderAgentMessageEvent[];
+  contextMessages: TraderContextMessageDto[];
   serverTime: string;
 }> {
   const db = await getDb();
@@ -280,6 +346,7 @@ export async function pollTraderFeed(input: {
   const events: TraderFeedEvent[] = [];
   const drivers: TraderDriverEvent[] = [];
   const agentMessages: TraderAgentMessageEvent[] = [];
+  const toContext: Parameters<typeof recordFeedToContext>[1] = [];
 
   const runtimes = await listStrategyRuntimes({ sessionId: input.sessionId });
   for (const rt of runtimes) {
@@ -300,6 +367,14 @@ export async function pollTraderFeed(input: {
           message: log.message,
           payload,
         });
+        toContext.push({
+          sourceId: `rtlog-${log.id}`,
+          role: "driver",
+          kind: "strategy_signal",
+          title: isExec ? `策略${log.message === "buy_signal_executed" ? "买入" : "卖出"}` : log.message,
+          body: `${rt.symbol} · ${rt.timeframe}`,
+          payload,
+        });
       } else {
         drivers.push({
           type: "driver",
@@ -308,6 +383,14 @@ export async function pollTraderFeed(input: {
           driverKind: "strategy_runtime",
           title: `策略运行时 · ${log.message}`,
           detail: `${rt.symbol} · ${rt.timeframe} · status=${rt.status}`,
+          payload: { runtimeId: rt.id, level: log.level, ...payload },
+        });
+        toContext.push({
+          sourceId: `rtlog-${log.id}`,
+          role: "driver",
+          kind: "strategy_runtime",
+          title: `策略运行时 · ${log.message}`,
+          body: `${rt.symbol} · ${rt.timeframe} · status=${rt.status}`,
           payload: { runtimeId: rt.id, level: log.level, ...payload },
         });
       }
@@ -353,6 +436,14 @@ export async function pollTraderFeed(input: {
           payloadJson: job.payloadJson,
         },
       });
+      toContext.push({
+        sourceId: `jobrun-${run.id}`,
+        role: "driver",
+        kind: "scheduled_job",
+        title: `定时任务 · ${job.name}`,
+        body: `status=${run.status}`,
+        payload: { jobId: job.id, cronExpr: job.cronExpr },
+      });
     }
   }
 
@@ -384,6 +475,14 @@ export async function pollTraderFeed(input: {
       detail: text,
       payload: p,
     });
+    toContext.push({
+      sourceId: `comm-${row.id}`,
+      role: "driver",
+      kind: "communication",
+      title: `外部消息 · ${row.channelKind}`,
+      body: text,
+      payload: p,
+    });
   }
 
   const alerts = await db
@@ -404,16 +503,22 @@ export async function pollTraderFeed(input: {
       detail: row.title,
       payload: (row.detailsJson ?? {}) as Record<string, unknown>,
     });
+    toContext.push({
+      sourceId: `alert-${row.id}`,
+      role: "driver",
+      kind: "alert",
+      title: `告警 · ${row.alertType}`,
+      body: row.title,
+      payload: (row.detailsJson ?? {}) as Record<string, unknown>,
+    });
   }
-
-  const intentWhere = input.workflowRunId
-    ? and(eq(orderIntent.workflowRunId, input.workflowRunId), gt(orderIntent.intentTime, since))
-    : and(eq(orderIntent.symbol, sym), gt(orderIntent.intentTime, since));
 
   const intents = await db
     .select()
     .from(orderIntent)
-    .where(intentWhere)
+    .where(
+      and(eq(orderIntent.workflowRunId, input.workflowRunId), gt(orderIntent.intentTime, since))
+    )
     .orderBy(desc(orderIntent.intentTime))
     .limit(20);
 
@@ -453,83 +558,72 @@ export async function pollTraderFeed(input: {
           detail: n.title,
           payload: { url: n.url, content: n.content?.slice(0, 200) },
         });
+        toContext.push({
+          sourceId: `news-${n.id}`,
+          role: "driver",
+          kind: "news",
+          title: `资讯 · ${n.source}`,
+          body: n.title,
+          payload: { url: n.url },
+        });
       }
     } catch {
       /* news optional */
     }
   }
 
-  const workflows = await db
-    .select({ id: workflowRun.id })
-    .from(workflowRun)
-    .where(eq(workflowRun.sessionId, input.sessionId))
-    .orderBy(desc(workflowRun.startedAt))
-    .limit(30);
-  const workflowIds = new Set(workflows.map((w) => w.id));
-  if (input.workflowRunId) workflowIds.add(input.workflowRunId);
+  await recordFeedToContext(input.workflowRunId, toContext);
 
-  if (workflowIds.size > 0) {
-    const [instances, definitions, messages] = await Promise.all([
-      db.select().from(agentInstance),
-      db.select().from(agentDefinition),
-      db.select().from(a2aMessage).orderBy(desc(a2aMessage.createdAt)).limit(200),
-    ]);
-    const defById = new Map(definitions.map((d) => [d.id, d]));
-    const roleByInst = new Map(
-      instances.map((i) => [i.id, defById.get(i.definitionId)?.role ?? "unknown"])
-    );
-
-    for (const m of messages) {
-      if (!workflowIds.has(m.workflowRunId)) continue;
-      if (m.createdAt <= since) continue;
-      const payload = (m.payloadJson ?? {}) as Record<string, unknown>;
-      const senderRole = roleByInst.get(m.senderInstanceId) ?? "unknown";
-      const receiverRole = m.receiverInstanceId
-        ? (roleByInst.get(m.receiverInstanceId) ?? "unknown")
-        : null;
-      const summary = summarizeA2APayload(m.messageType, payload);
-      agentMessages.push({
-        type: "agent_message",
-        id: m.id,
-        ts: m.createdAt,
-        workflowRunId: m.workflowRunId,
-        messageType: m.messageType,
-        senderRole,
-        receiverRole,
-        summary,
-        payload,
-      });
-    }
-  }
+  const ctxRows = await getTraderContextTail(input.workflowRunId, 120);
+  const contextMessages: TraderContextMessageDto[] = ctxRows.map((r) => ({
+    id: r.id,
+    ts: r.createdAt,
+    role: r.role,
+    kind: r.kind,
+    title: r.title,
+    body: r.body,
+    payload: (r.payloadJson ?? {}) as Record<string, unknown>,
+  }));
 
   events.sort((a, b) => a.ts.localeCompare(b.ts));
   drivers.sort((a, b) => a.ts.localeCompare(b.ts));
-  agentMessages.sort((a, b) => a.ts.localeCompare(b.ts));
   return {
     events,
     drivers: drivers.slice(-80),
     agentMessages: agentMessages.slice(-80),
+    contextMessages,
     serverTime: new Date().toISOString(),
   };
 }
 
-function summarizeA2APayload(messageType: string, payload: Record<string, unknown>): string {
-  if (messageType === "ORDER_INTENT") {
-    const p = payload as { ticker?: string; direction?: string; quantity?: number };
-    return `订单意图 ${p.ticker ?? "?"} ${p.direction ?? ""} × ${p.quantity ?? "?"}`;
-  }
-  if (messageType === "TASK_ASSIGN") {
-    const p = payload as { taskType?: string; goal?: string };
-    return `任务分配 ${p.taskType ?? ""} ${(p.goal ?? "").slice(0, 80)}`;
-  }
-  if (messageType === "TASK_RESULT") {
-    const p = payload as { status?: string; summary?: string };
-    return `任务结果 ${p.status ?? ""} ${(p.summary ?? "").slice(0, 80)}`;
-  }
-  if (messageType === "RISK_BLOCK") {
-    return `风控拦截 ${JSON.stringify(payload).slice(0, 120)}`;
-  }
-  return JSON.stringify(payload).slice(0, 160);
+export async function appendTraderUserMessage(input: {
+  workflowRunId: string;
+  text: string;
+  kind?: string;
+}): Promise<{ id: string; compressed: boolean }> {
+  const { id, compressed } = await appendTraderContextMessage({
+    workflowRunId: input.workflowRunId,
+    role: "user",
+    kind: input.kind ?? "user_text",
+    title: "用户指令",
+    body: input.text.trim(),
+  });
+  return { id, compressed };
+}
+
+export async function getTraderContext(input: {
+  workflowRunId: string;
+}): Promise<TraderContextMessageDto[]> {
+  const rows = await listTraderContextMessages(input.workflowRunId);
+  return rows.map((r) => ({
+    id: r.id,
+    ts: r.createdAt,
+    role: r.role,
+    kind: r.kind,
+    title: r.title,
+    body: r.body,
+    payload: (r.payloadJson ?? {}) as Record<string, unknown>,
+  }));
 }
 
 /** 解析用户自然语言指令（轻量规则） */

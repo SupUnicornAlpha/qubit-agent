@@ -25,9 +25,15 @@ const NAV_ITEMS: readonly { label: string; key: NavKey }[] = [
   { label: "配置中心", key: "config" },
 ];
 
+const ACTIVITY_BAR_WIDTH = 52;
+const EXPLORER_WIDTH = 208;
+const SIDEBAR_WIDTH_OPEN = ACTIVITY_BAR_WIDTH + EXPLORER_WIDTH;
+
 export const Sidebar: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
   const setActiveView = useAppStore((s) => s.setActiveView);
+  const explorerOpen = useAppStore((s) => s.explorerOpen);
+  const setExplorerOpen = useAppStore((s) => s.setExplorerOpen);
   const configSubPage = useAppStore((s) => s.configSubPage);
   const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
   const activeItem = NAV_ITEMS.find((n) => n.key === activeView) ?? NAV_ITEMS[0];
@@ -37,19 +43,56 @@ export const Sidebar: FC = () => {
     if (key === "config") setConfigSubPage("llm");
   };
 
+  /** 活动栏：仅再次点击当前图标时切换 Explorer；切换其他视图不改变 Explorer 开闭 */
+  const onActivityClick = (key: NavKey) => {
+    if (activeView === key) {
+      setExplorerOpen(!explorerOpen);
+      return;
+    }
+    goNav(key);
+  };
+
+  const activityTitle = (label: string, key: NavKey) => {
+    if (activeView !== key) return label;
+    return explorerOpen ? `${label}（再次点击收起 Explorer）` : `${label}（点击展开 Explorer）`;
+  };
+
   return (
-    <nav className="qb-sidebar-shell" style={styles.nav}>
+    <nav
+      className={`qb-sidebar-shell${explorerOpen ? "" : " qb-sidebar-shell--explorer-collapsed"}`}
+      style={{
+        ...styles.nav,
+        width: explorerOpen ? SIDEBAR_WIDTH_OPEN : ACTIVITY_BAR_WIDTH,
+        minWidth: explorerOpen ? SIDEBAR_WIDTH_OPEN : ACTIVITY_BAR_WIDTH,
+      }}
+      aria-label="主导航"
+    >
       <div className="qb-sidebar-activity" style={styles.activityBar}>
-        <div className="qb-nav-activity-brand" title="QUBIT" aria-hidden>
+        <button
+          type="button"
+          className="qb-nav-activity-brand"
+          title={explorerOpen ? "收起 Explorer" : "展开 Explorer"}
+          aria-label={explorerOpen ? "收起 Explorer" : "展开 Explorer"}
+          onClick={() => setExplorerOpen(!explorerOpen)}
+        >
           <Sparkles className="qb-nav-activity-brand-icon" size={17} strokeWidth={2.25} />
-        </div>
+        </button>
         {NAV_ITEMS.map((item) => (
           <button
             key={item.key}
             type="button"
-            onClick={() => goNav(item.key)}
-            title={item.label}
-            className={`qb-nav-activity-btn${activeView === item.key ? " qb-nav-activity-btn--active" : ""}`}
+            onClick={() => onActivityClick(item.key)}
+            title={activityTitle(item.label, item.key)}
+            aria-label={item.label}
+            aria-current={activeView === item.key ? "page" : undefined}
+            aria-expanded={activeView === item.key ? explorerOpen : undefined}
+            className={[
+              "qb-nav-activity-btn",
+              activeView === item.key ? "qb-nav-activity-btn--active" : "",
+              activeView === item.key && !explorerOpen ? "qb-nav-activity-btn--explorer-collapsed" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           >
             <span style={styles.activityIcon}>
               <NavGlyph navKey={item.key} size={18} />
@@ -57,88 +100,91 @@ export const Sidebar: FC = () => {
           </button>
         ))}
       </div>
-      <div className="qb-explorer-panel" style={styles.explorer}>
-        <div className="qb-sidebar-brand-line" style={styles.brand}>
-          <div className="qb-sidebar-muted-text" style={styles.brandTitle}>
-            Explorer
+      {explorerOpen ? (
+        <div className="qb-explorer-panel" style={styles.explorer}>
+          <div className="qb-sidebar-brand-line" style={styles.brand}>
+            <div className="qb-sidebar-muted-text" style={styles.brandTitle}>
+              Explorer
+            </div>
+            <div className="qb-sidebar-strong-text" style={styles.brandMeta}>
+              QUBIT IDE
+            </div>
           </div>
-          <div className="qb-sidebar-strong-text" style={styles.brandMeta}>
-            QUBIT IDE
-          </div>
-        </div>
-        <div style={styles.group}>
-          <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-            导航
-          </div>
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              onClick={() => goNav(item.key)}
-              className={`qb-nav-row${activeView === item.key ? " qb-nav-row--active" : ""}`}
-            >
-              <span style={styles.icon}>
-                <NavGlyph navKey={item.key} size={16} />
-              </span>
-              <span style={styles.label}>{item.label}</span>
-            </button>
-          ))}
-        </div>
-        {activeView === "config" ? (
           <div style={styles.group}>
             <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-              配置子项
+              导航
             </div>
-            {CONFIG_CENTER_SUB.map((sub) => (
+            {NAV_ITEMS.map((item) => (
               <button
-                key={sub.id}
+                key={item.key}
                 type="button"
-                onClick={() => {
-                  setActiveView("config");
-                  setConfigSubPage(sub.id);
-                }}
-                className={`qb-nav-row${configSubPage === sub.id ? " qb-nav-row--active" : ""}`}
+                onClick={() => goNav(item.key)}
+                className={`qb-nav-row${activeView === item.key ? " qb-nav-row--active" : ""}`}
               >
-                <span style={styles.label}>{sub.label}</span>
+                <span style={styles.icon}>
+                  <NavGlyph navKey={item.key} size={16} />
+                </span>
+                <span style={styles.label}>{item.label}</span>
               </button>
             ))}
           </div>
-        ) : null}
-        <div style={styles.group}>
-          <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-            当前上下文
-          </div>
-          <div className="qb-context-card">
-            <div className="qb-sidebar-strong-text" style={styles.contextTitle}>
-              {activeItem.label}
+          {activeView === "config" ? (
+            <div style={styles.group}>
+              <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+                配置子项
+              </div>
+              {CONFIG_CENTER_SUB.map((sub) => (
+                <button
+                  key={sub.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveView("config");
+                    setConfigSubPage(sub.id);
+                  }}
+                  className={`qb-nav-row${configSubPage === sub.id ? " qb-nav-row--active" : ""}`}
+                >
+                  <span style={styles.label}>{sub.label}</span>
+                </button>
+              ))}
             </div>
-            <div className="qb-sidebar-muted-text" style={styles.contextMeta}>
-              模块：{activeItem.label}
-              {activeView === "config" ? ` · ${configSubPage}` : ""}
+          ) : null}
+          <div style={styles.group}>
+            <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+              当前上下文
+            </div>
+            <div className="qb-context-card">
+              <div className="qb-sidebar-strong-text" style={styles.contextTitle}>
+                {activeItem.label}
+              </div>
+              <div className="qb-sidebar-muted-text" style={styles.contextMeta}>
+                模块：{activeItem.label}
+                {activeView === "config" ? ` · ${configSubPage}` : ""}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : null}
     </nav>
   );
 };
 
 const styles: Record<string, React.CSSProperties> = {
   nav: {
-    width: 260,
-    minWidth: 260,
     display: "flex",
     flexDirection: "row",
     padding: 0,
     flexShrink: 0,
+    transition: "width 0.18s ease, min-width 0.18s ease",
   },
   activityBar: {
-    width: 52,
+    width: ACTIVITY_BAR_WIDTH,
+    minWidth: ACTIVITY_BAR_WIDTH,
     display: "flex",
     flexDirection: "column",
     alignItems: "center",
     gap: 8,
     padding: "10px 6px",
+    flexShrink: 0,
   },
   activityIcon: {
     display: "flex",
@@ -147,10 +193,12 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 0,
   },
   explorer: {
-    flex: 1,
-    minWidth: 0,
+    width: EXPLORER_WIDTH,
+    minWidth: EXPLORER_WIDTH,
+    flex: "0 0 auto",
     display: "flex",
     flexDirection: "column",
+    overflow: "hidden",
   },
   brand: {
     padding: "10px 12px 10px",

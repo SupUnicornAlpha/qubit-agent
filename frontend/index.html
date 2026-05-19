@@ -9,8 +9,9 @@
     <title>QUBIT — 量化研究 Agent 平台</title>
     <script>
       (function () {
-        var PALETTES = ["dark-purple", "light-white", "light-sky", "glass-cool", "glass-warm", "glass-rainbow"];
-        var STYLES = ["default", "glassmorphism", "retro-futurism", "industrial", "neon-cyberpunk", "bauhaus", "sci-fi-hud", "comic-book", "anti-design", "holographic", "blueprint"];
+        var PALETTES = ["dark-purple", "light-white", "light-sky", "glass-cool", "glass-warm", "glass-rainbow", "bio-green", "bio-red"];
+        var STYLES = ["default", "glass-holographic", "retro-futurism", "industrial", "neon-cyberpunk", "bauhaus", "sci-fi-hud", "comic-book", "anti-design", "blueprint", "hand-drawn-fabric", "ambient-3d", "biophilic"];
+        var LEGACY_STYLE = { "generative-art": "retro-futurism", "glassmorphism": "glass-holographic", "holographic": "glass-holographic", "hand-drawn-sketch": "hand-drawn-fabric", "claymorphism": "ambient-3d", "neo-brutalism": "ambient-3d" };
         var LEGACY = { "dark-gray": "dark-purple", "light-mint": "light-white" };
         var root = document.documentElement;
         function normPalette(v) {
@@ -19,17 +20,29 @@
           return "dark-purple";
         }
         function normStyle(v) {
-          if (v === "generative-art") return "retro-futurism";
+          if (LEGACY_STYLE[v]) return LEGACY_STYLE[v];
           return STYLES.indexOf(v) >= 0 ? v : "default";
         }
         var GLASS_PALETTES = ["glass-cool", "glass-warm", "glass-rainbow"];
+        var BIO_PALETTES = ["bio-green", "bio-red"];
         function normPaletteForStyle(style, v) {
           var p = normPalette(v);
-          if (style === "glassmorphism") {
+          if (style === "glass-holographic") {
             if (GLASS_PALETTES.indexOf(p) >= 0) return p;
             return "glass-cool";
           }
+          if (style === "biophilic") {
+            if (BIO_PALETTES.indexOf(p) >= 0) return p;
+            return "bio-green";
+          }
+          if (BIO_PALETTES.indexOf(p) >= 0) return "dark-purple";
           if (GLASS_PALETTES.indexOf(p) >= 0) return "dark-purple";
+          if (style === "hand-drawn-fabric") {
+            if (p === "dark-purple" || GLASS_PALETTES.indexOf(p) >= 0 || BIO_PALETTES.indexOf(p) >= 0) return "light-white";
+          }
+          if (style === "ambient-3d") {
+            if (BIO_PALETTES.indexOf(p) >= 0 || GLASS_PALETTES.indexOf(p) >= 0 || p.indexOf("light") === 0) return "dark-purple";
+          }
           return p;
         }
         try {

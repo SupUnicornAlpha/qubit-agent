@@ -1747,6 +1747,28 @@ export const evalCaseResult = sqliteTable("eval_case_result", {
   createdAt: createdAt(),
 });
 
+/** 实时交易 Agent 单 workflow 上下文消息（追加写入，过长时压缩） */
+export const traderContextMessage = sqliteTable(
+  "trader_context_message",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    /** 外部事件 id，用于 poll/下单 等去重 */
+    sourceId: text("source_id"),
+    role: text("role", {
+      enum: ["user", "system", "driver", "agent", "compressed"],
+    }).notNull(),
+    kind: text("kind").notNull(),
+    title: text("title").notNull().default(""),
+    body: text("body").notNull().default(""),
+    payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("idx_trader_ctx_wf_source").on(t.workflowRunId, t.sourceId)]
+);
+
 export const auditLog = sqliteTable("audit_log", {
   id: id(),
   traceId: text("trace_id").notNull(),

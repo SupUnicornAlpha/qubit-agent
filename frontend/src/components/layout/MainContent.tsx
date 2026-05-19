@@ -136,6 +136,7 @@ import type {
   ScheduledJobRecord,
   ScheduledJobRunRecord,
   AnalystTeamGraphPayload,
+  AnalystTeamGraphInteraction,
   AnalystTeamGraphToolCall,
   AnalystTeamGraphMcpCall,
   StrategyGenomeRecord,
@@ -819,7 +820,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           >
             新建会话
           </button>
-          <div style={styles.chatSessionList}>
+          <div className="qb-chat-session-list" style={styles.chatSessionList}>
             {chatSessions.map((session) => (
               <button
                 key={session.id}
@@ -2235,7 +2236,7 @@ const ConfigPanel: FC = () => {
               })}
             </div>
 
-            <details style={styles.mcpDetails}>
+            <details className="qb-mcp-details" style={styles.mcpDetails}>
               <summary style={styles.mcpDetailsSummary}>快速添加 MCP Server（表单）</summary>
               <div style={{ ...styles.form, paddingBottom: 10 }}>
                 <input
@@ -2271,7 +2272,7 @@ const ConfigPanel: FC = () => {
               </div>
             </details>
 
-            <details style={styles.mcpDetails}>
+            <details className="qb-mcp-details" style={styles.mcpDetails}>
               <summary style={styles.mcpDetailsSummary}>表单：工具绑定与快速测试</summary>
               <div style={{ ...styles.form, paddingBottom: 10, flexWrap: "wrap" }}>
                 <select
@@ -2312,7 +2313,7 @@ const ConfigPanel: FC = () => {
               来自开放注册表的条目；卡片展示目录中的<strong>能力声明</strong>（capabilities、默认工具、启动命令摘要）。市场列表<strong>分页加载</strong>（每页 {MCP_MARKET_PAGE_SIZE} 条），避免一次渲染数千卡片卡顿。「同步目录」从官方 Registry 拉取元数据（可能较慢）；「搜索/刷新」仅查询本地已同步目录。
             </p>
 
-            <details style={styles.mcpDetails}>
+            <details className="qb-mcp-details" style={styles.mcpDetails}>
               <summary style={styles.mcpDetailsSummary}>目录源与鉴权</summary>
               <div style={{ ...styles.form, paddingBottom: 8, flexWrap: "wrap" }}>
                 <input
@@ -2389,9 +2390,9 @@ const ConfigPanel: FC = () => {
                 : `共 ${mcpMarketTotal.toLocaleString()} 条 · 第 ${mcpMarketPage} / ${mcpMarketTotalPages} 页`}
             </div>
 
-            <div style={styles.mcpMarketGrid}>
+            <div className="qb-mcp-market-grid" style={styles.mcpMarketGrid}>
               {!mcpMarketLoading && mcpMarketItems.length === 0 ? (
-                <div style={{ ...styles.mcpMarketCard, color: "var(--qb-main-meta)" }}>暂无目录项，请先同步注册表或检查网络。</div>
+                <div className="qb-mcp-market-card qb-mcp-market-card--empty" style={{ ...styles.mcpMarketCard, color: "var(--qb-main-meta)" }}>暂无目录项，请先同步注册表或检查网络。</div>
               ) : null}
               {mcpMarketItems.map((item) => {
                 const spec = (item.specJson ?? {}) as Record<string, unknown>;
@@ -2407,6 +2408,7 @@ const ConfigPanel: FC = () => {
                   <div
                     key={item.id}
                     role="button"
+                    className={`qb-mcp-market-card${selected ? " qb-mcp-market-card--selected" : ""}`}
                     tabIndex={0}
                     onClick={() => {
                       setSelectedCatalogId(item.id);
@@ -2424,16 +2426,16 @@ const ConfigPanel: FC = () => {
                     }}
                     style={{
                       ...styles.mcpMarketCard,
-                      borderColor: selected ? "#7c3aed" : riskBorder,
-                      outline: selected ? "1px solid rgba(124,58,237,0.5)" : undefined,
+                      ...(selected ? {} : { borderColor: riskBorder }),
                     }}
                   >
                     <div style={styles.mcpMarketCardHeader}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ ...styles.cardName, color: "var(--qb-body-fg)" }}>{item.name}</div>
-                        <div style={styles.mcpMarketMeta}>
+                        <div className="qb-mcp-market-card__title" style={{ ...styles.cardName, color: "var(--qb-body-fg)" }}>{item.name}</div>
+                        <div className="qb-mcp-market-meta" style={styles.mcpMarketMeta}>
                           {item.provider} · v{item.version} · {item.transport}{" "}
                           <span
+                            className="qb-mcp-market-risk"
                             style={{
                               ...styles.mcpMarketRisk,
                               background:
@@ -2449,21 +2451,21 @@ const ConfigPanel: FC = () => {
                         </div>
                       </div>
                     </div>
-                    <p style={styles.mcpMarketDesc}>{item.description || "（无描述）"}</p>
+                    <p className="qb-mcp-market-desc" style={styles.mcpMarketDesc}>{item.description || "（无描述）"}</p>
                     <div style={styles.mcpMarketChips}>
                       {caps.length ? caps.map((c) => (
-                        <span key={c} style={styles.mcpMarketChip}>
+                        <span key={c} className="qb-mcp-market-chip" style={styles.mcpMarketChip}>
                           {c}
                         </span>
                       )) : (
-                        <span style={{ ...styles.mcpMarketChip, opacity: 0.75 }}>未声明 capabilities</span>
+                        <span className="qb-mcp-market-chip" style={{ ...styles.mcpMarketChip, opacity: 0.75 }}>未声明 capabilities</span>
                       )}
                       {defaultTool ? (
-                        <span style={styles.mcpMarketChip}>默认工具: {defaultTool}</span>
+                        <span className="qb-mcp-market-chip" style={styles.mcpMarketChip}>默认工具: {defaultTool}</span>
                       ) : null}
                     </div>
                     {cmdPreview ? (
-                      <div style={styles.mcpMarketCmd} title={cmdPreview}>
+                      <div className="qb-mcp-market-cmd" style={styles.mcpMarketCmd} title={cmdPreview}>
                         {cmdPreview.length > 120 ? `${cmdPreview.slice(0, 120)}…` : cmdPreview}
                       </div>
                     ) : null}
@@ -3914,18 +3916,6 @@ const TeamDashboardPanel: FC = () => {
     return rows;
   }, [agentDefBundles]);
 
-  const graphToolsForNode = useMemo((): {
-    tools: AnalystTeamGraphToolCall[];
-    mcps: AnalystTeamGraphMcpCall[];
-  } => {
-    if (!teamGraph || graphSelection?.kind !== "node") return { tools: [], mcps: [] };
-    const r = graphSelection.role;
-    return {
-      tools: teamGraph.toolCalls.filter((t) => t.agentRole === r),
-      mcps: teamGraph.mcpCalls.filter((m) => m.agentRole === r),
-    };
-  }, [teamGraph, graphSelection]);
-
   const mergedLiveFeedRows = useMemo(() => {
     type Row = { key: string; t: number; kind: "interaction" | "debate"; body: string };
     const rows: Row[] = [];
@@ -3957,6 +3947,25 @@ const TeamDashboardPanel: FC = () => {
     if (!participatingAnalystRoles.length) return teamGraph;
     return buildFilteredTeamGraphDisplay(teamGraph, participatingAnalystRoles);
   }, [teamGraph, participatingAnalystRoles]);
+
+  const graphToolsForNode = useMemo((): {
+    tools: AnalystTeamGraphToolCall[];
+    mcps: AnalystTeamGraphMcpCall[];
+    interactions: AnalystTeamGraphInteraction[];
+  } => {
+    if (!teamGraph || graphSelection?.kind !== "node") {
+      return { tools: [], mcps: [], interactions: [] };
+    }
+    const r = graphSelection.role;
+    const interactions = (filteredGraphDisplay?.interactions ?? teamGraph.interactions).filter(
+      (row) => row.fromRole === r || row.toRole === r
+    );
+    return {
+      tools: teamGraph.toolCalls.filter((t) => t.agentRole === r),
+      mcps: teamGraph.mcpCalls.filter((m) => m.agentRole === r),
+      interactions,
+    };
+  }, [teamGraph, graphSelection, filteredGraphDisplay?.interactions]);
 
   const graphEdgeDetail = useMemo(() => {
     if (graphSelection?.kind !== "edge" || !filteredGraphDisplay) return null;
@@ -4744,7 +4753,7 @@ const TeamDashboardPanel: FC = () => {
       <div data-qb-team-shell style={teamStyles.teamWorkbenchShell}>
         <div ref={teamTriRef} style={teamStyles.teamTriRow}>
         <aside style={{ ...teamStyles.leftRail, width: teamLeftW, flexShrink: 0, alignSelf: "stretch" }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 10 }}>研究与工作流</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", marginBottom: 10 }}>研究与工作流</div>
           <div style={teamStyles.field}>
             <label style={teamStyles.label}>标的代码</label>
             <input
@@ -5034,6 +5043,7 @@ const TeamDashboardPanel: FC = () => {
                   key={t}
                   type="button"
                   title={TEAM_VIEW_TITLE[t]}
+                  aria-current={activeTab === t ? "page" : undefined}
                   style={{
                     ...teamStyles.teamActBtn,
                     ...(activeTab === t ? teamStyles.teamActBtnActive : {}),
@@ -5565,8 +5575,18 @@ const TeamDashboardPanel: FC = () => {
                   </button>
                 </div>
               ) : null}
-              <div style={{ marginTop: 14, flex: "1 1 42%", minHeight: 180, display: "flex", flexDirection: "column" }}>
-                <div style={{ ...teamStyles.sectionTitle, marginBottom: 6 }}>
+              <div
+                style={{
+                  marginTop: 14,
+                  flex: "1 1 0",
+                  minHeight: 180,
+                  maxHeight: "min(42vh, 420px)",
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <div style={{ ...teamStyles.sectionTitle, marginBottom: 6, flexShrink: 0 }}>
                   实时对话流
                   {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
                   {running ? " · 自动刷新" : ""}
@@ -5574,10 +5594,12 @@ const TeamDashboardPanel: FC = () => {
                 <div
                   ref={liveFeedScrollRef}
                   data-qb-team-live-feed
+                  className="qb-team-live-feed-scroll"
                   style={{
-                    flex: 1,
-                    minHeight: 140,
-                    overflow: "auto",
+                    flex: "1 1 0",
+                    minHeight: 0,
+                    overflowY: "auto",
+                    overflowX: "hidden",
                     background: "var(--qb-team-live-feed-bg, #08080a)",
                     border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
                     borderRadius: 8,
@@ -5617,23 +5639,82 @@ const TeamDashboardPanel: FC = () => {
               </div>
               {graphSelection?.kind === "node" ? (
                 <div style={{ marginTop: 10 }}>
-                  <div style={{ ...teamStyles.sectionTitle, marginBottom: 6 }}>Tool / MCP（{graphSelection.role}）</div>
+                  <div style={{ ...teamStyles.sectionTitle, marginBottom: 6 }}>
+                    Agent 详情 · {graphSelection.role}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 8 }}>
+                    工具 {graphToolsForNode.tools.length} 次 · MCP {graphToolsForNode.mcps.length} 次 · 交互{" "}
+                    {graphToolsForNode.interactions.length} 条
+                  </div>
                   {graphToolsForNode.tools.length === 0 && graphToolsForNode.mcps.length === 0 ? (
-                    <div style={{ fontSize: 11, color: "#71717a" }}>无工具记录</div>
+                    <div style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
+                      暂无工具调用记录。研究团队槽位现已走 ReAct 循环；请重新运行分析后查看。
+                    </div>
                   ) : (
-                    <div style={{ maxHeight: 120, overflow: "auto", fontSize: 10, color: "#d4d4d8" }}>
+                    <div
+                      style={{
+                        maxHeight: 200,
+                        overflow: "auto",
+                        fontSize: 10,
+                        color: "#d4d4d8",
+                        marginBottom: 8,
+                        fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+                      }}
+                    >
                       {graphToolsForNode.tools.map((t) => (
-                        <div key={t.id} style={{ marginBottom: 4 }}>
-                          [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status}
-                        </div>
+                        <details key={t.id} style={{ marginBottom: 6 }}>
+                          <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
+                            [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status}
+                            {t.latencyMs != null ? ` · ${t.latencyMs}ms` : ""}
+                          </summary>
+                          {t.errorMessage ? (
+                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#f87171" }}>
+                              {t.errorMessage}
+                            </pre>
+                          ) : null}
+                          {t.requestJson != null ? (
+                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#a1a1aa" }}>
+                              请求: {JSON.stringify(t.requestJson, null, 2).slice(0, 2000)}
+                            </pre>
+                          ) : null}
+                          {t.responseJson != null ? (
+                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#86efac" }}>
+                              结果: {JSON.stringify(t.responseJson, null, 2).slice(0, 3000)}
+                            </pre>
+                          ) : null}
+                        </details>
                       ))}
                       {graphToolsForNode.mcps.map((m) => (
-                        <div key={m.id} style={{ marginBottom: 4 }}>
-                          [MCP] {m.serverName}/{m.toolName} · {m.status}
-                        </div>
+                        <details key={m.id} style={{ marginBottom: 6 }}>
+                          <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
+                            [MCP] {m.serverName}/{m.toolName} · {m.status}
+                            {m.latencyMs != null ? ` · ${m.latencyMs}ms` : ""}
+                          </summary>
+                        </details>
                       ))}
                     </div>
                   )}
+                  {graphToolsForNode.interactions.length > 0 ? (
+                    <div style={{ maxHeight: 160, overflow: "auto", fontSize: 10, color: "#d4d4d8" }}>
+                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>相关对话</div>
+                      {graphToolsForNode.interactions.map((row) => (
+                        <div
+                          key={row.id}
+                          style={{
+                            marginBottom: 6,
+                            paddingBottom: 4,
+                            borderBottom: "1px solid #27272a",
+                          }}
+                        >
+                          {row.fromRole} → {row.toRole} · {row.kind}
+                          {row.toolName ? ` · ${row.toolName}` : ""}
+                          <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
+                            {row.contentText.slice(0, 1500)}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <div style={{ marginTop: 18, borderTop: "1px solid #2a2a30", paddingTop: 12 }}>
@@ -6074,8 +6155,8 @@ const teamStyles: Record<string, CSSProperties> = {
   heroBadge: { fontSize: 28, fontWeight: 700 },
   heroMeta: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--qb-team-meta, #a1a1aa)" },
   debateTag: {
-    background: "#78350f",
-    color: "#fde68a",
+    background: "var(--qb-team-debate-tag-bg, #78350f)",
+    color: "var(--qb-team-debate-tag-fg, #fde68a)",
     borderRadius: 4,
     padding: "2px 8px",
     fontSize: 12,
@@ -6116,7 +6197,7 @@ const teamStyles: Record<string, CSSProperties> = {
     overflow: "auto",
   },
   replayTurn: {
-    borderBottom: "1px dashed #3f3f46",
+    borderBottom: "1px dashed var(--qb-team-table-row-border, #3f3f46)",
     paddingBottom: 6,
   },
   replayMeta: { fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 4 },

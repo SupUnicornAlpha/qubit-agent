@@ -9,9 +9,7 @@ export const RESEARCH_TEAM_SLOT_ROLES = [
   "analyst_macro",
   "research",
   "backtest",
-  "backtest_engineer",
   "risk",
-  "risk_manager",
 ] as const;
 
 export type ResearchTeamSlotRole = (typeof RESEARCH_TEAM_SLOT_ROLES)[number];

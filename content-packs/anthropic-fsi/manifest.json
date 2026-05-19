@@ -122,7 +122,7 @@
     "earnings-reviewer": {
       "label": "财报回顾",
       "playbookPath": "plugins/agent-plugins/earnings-reviewer/agents/earnings-reviewer.md",
-      "playbookMaxChars": 4000,
+      "playbookMaxChars": 6000,
       "fuseIntoRoles": ["analyst_sentiment", "news_event"],
       "skillIds": [
         "fsi/earnings-analysis",
@@ -144,7 +144,7 @@
     "market-researcher": {
       "label": "市场/行业研究",
       "playbookPath": "plugins/agent-plugins/market-researcher/agents/market-researcher.md",
-      "playbookMaxChars": 3500,
+      "playbookMaxChars": 5500,
       "fuseIntoRoles": ["analyst_macro", "research"],
       "skillIds": ["fsi/sector-overview", "fsi/initiating-coverage", "fsi/idea-generation"],
       "steeringExamples": [
@@ -157,7 +157,7 @@
     "model-builder": {
       "label": "模型构建",
       "playbookPath": "plugins/agent-plugins/model-builder/agents/model-builder.md",
-      "playbookMaxChars": 3500,
+      "playbookMaxChars": 5500,
       "fuseIntoRoles": ["research", "backtest", "analyst_fundamental"],
       "skillIds": ["fsi/dcf-model", "fsi/comps-analysis", "fsi/audit-xls", "fsi/xlsx-author"],
       "steeringExamples": [
@@ -170,7 +170,7 @@
     "pitch-agent": {
       "label": "路演编排（轻量）",
       "playbookPath": "plugins/agent-plugins/pitch-agent/agents/pitch-agent.md",
-      "playbookMaxChars": 2500,
+      "playbookMaxChars": 4500,
       "fuseIntoRoles": ["orchestrator"],
       "skillIds": ["fsi/comps-analysis"],
       "steeringExamples": [

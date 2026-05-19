@@ -1,7 +1,7 @@
 /**
  * QUBIT 主题：在 `html` 上挂 `--qb-*` 变量，供 ide-theme 与侧栏壳层使用。
  * 配色：`data-qb-theme`（dark-purple | light-white | light-sky）
- * 风格：`data-qb-style`（default | glassmorphism | …，见 theme/styles/）
+ * 风格：`data-qb-style`（default | glass-holographic | hand-drawn-fabric | ambient-3d | biophilic | …，见 theme/styles/）
  */
 
 /* ─── 默认 = 黑紫（与显式 dark-purple 一致）─── */
@@ -201,6 +201,15 @@ html[data-qb-theme="light-sky"] {
 .qb-sidebar-shell {
   background: var(--qb-sidebar-nav-bg);
   border-right: 1px solid var(--qb-sidebar-border);
+  overflow: hidden;
+}
+
+.qb-sidebar-shell--explorer-collapsed .qb-sidebar-activity {
+  border-right: none;
+}
+
+.qb-nav-activity-btn--explorer-collapsed.qb-nav-activity-btn--active {
+  box-shadow: inset 0 0 0 1px var(--qb-blue, #3b82f6);
 }
 
 .qb-sidebar-activity {
@@ -294,7 +303,7 @@ html[data-qb-style="default"][data-qb-theme="light-sky"] .qb-logo-text {
   max-width: 72px;
 }
 
-html[data-qb-style="glassmorphism"] .qb-theme-select {
+html[data-qb-style="glass-holographic"] .qb-theme-select {
   max-width: 88px;
 }
 
@@ -302,9 +311,12 @@ html[data-qb-style="anti-design"] .qb-style-select {
   max-width: 168px;
 }
 
-html[data-qb-style="holographic"] .qb-style-select,
-html[data-qb-style="blueprint"] .qb-style-select {
-  max-width: 180px;
+html[data-qb-style="glass-holographic"] .qb-style-select,
+html[data-qb-style="blueprint"] .qb-style-select,
+html[data-qb-style="hand-drawn-fabric"] .qb-style-select,
+html[data-qb-style="ambient-3d"] .qb-style-select,
+html[data-qb-style="biophilic"] .qb-style-select {
+  max-width: 200px;
 }
 
 .qb-theme-select:disabled {
