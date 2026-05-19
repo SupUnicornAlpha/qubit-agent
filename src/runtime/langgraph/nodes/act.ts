@@ -10,8 +10,8 @@ import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../tools/tool-routes";
-import { registerBuiltinConnectors } from "../../connectors/bootstrap";
-import { connectorRegistry } from "../../connectors/registry";
+import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
+import { connectorRegistry } from "../../../connectors/registry";
 
 export async function actNode(
   state: AgentGraphState,
