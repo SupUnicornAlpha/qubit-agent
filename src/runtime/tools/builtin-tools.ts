@@ -31,6 +31,9 @@ import { NativeMemoryConnector } from "../../connectors/memory/native/native.mem
 import { factorService } from "../factor/factor-service";
 import { ruleService } from "../rule/rule-service";
 import { strategyComposer } from "../strategy/strategy-composer";
+import { backtestJobService } from "../backtest/backtest-job-service";
+import { discoveryService } from "../discovery/discovery-service";
+import type { DiscoveryKind } from "../discovery/discovery-service";
 import type {
   FactorCategory,
   FactorLang,
@@ -503,6 +506,144 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     return ruleService.evaluate({
       ruleId,
       context: contextRaw as unknown as RuleEvalContext,
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "factor.list": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("factor.list: project_id is required");
+    return factorService.list({
+      projectId,
+      ...(params.category ? { category: String(params.category) as FactorCategory } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+    });
+  },
+
+  "factor.autoEvaluate": async (_ctx, params) => {
+    const factorId = String(params.factor_id ?? "").trim();
+    if (!factorId) throw new Error("factor.autoEvaluate: factor_id is required");
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.autoEvaluate: start_date and end_date are required");
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : undefined;
+    const decayRaw = params.decay_horizons;
+    const decayHorizons = Array.isArray(decayRaw)
+      ? decayRaw.filter((n): n is number => typeof n === "number")
+      : undefined;
+    return factorService.autoEvaluate({
+      factorId,
+      startDate,
+      endDate,
+      ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.horizon_days !== undefined ? { horizonDays: Number(params.horizon_days) } : {}),
+      ...(decayHorizons && decayHorizons.length > 0 ? { decayHorizons } : {}),
+      ...(params.group_count !== undefined ? { groupCount: Number(params.group_count) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "discovery.run": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("discovery.run: project_id is required");
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (symbols.length === 0) throw new Error("discovery.run: symbols is required");
+    return discoveryService.submitAndRun({
+      projectId,
+      kind: String(params.kind ?? "factor_alpha101") as DiscoveryKind,
+      symbols,
+      startDate: String(params.start_date ?? "").trim(),
+      endDate: String(params.end_date ?? "").trim(),
+      ...(params.horizon_days !== undefined ? { horizonDays: Number(params.horizon_days) } : {}),
+      ...(params.top_k !== undefined ? { topK: Number(params.top_k) } : {}),
+      ...(params.candidate_count !== undefined
+        ? { candidateCount: Number(params.candidate_count) }
+        : {}),
+      ...(params.seed !== undefined && typeof params.seed === "number"
+        ? { seed: params.seed }
+        : {}),
+    });
+  },
+
+  "discovery.promote": async (_ctx, params) => {
+    const jobId = String(params.job_id ?? "").trim();
+    const candidateId = String(params.candidate_id ?? "").trim();
+    const name = String(params.name ?? "").trim();
+    if (!jobId) throw new Error("discovery.promote: job_id is required");
+    if (!candidateId) throw new Error("discovery.promote: candidate_id is required");
+    if (!name) throw new Error("discovery.promote: name is required");
+    return discoveryService.promoteCandidate(jobId, candidateId, {
+      name,
+      ...(params.category ? { category: String(params.category) as FactorCategory } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+    });
+  },
+
+  "backtest.run": async (_ctx, params) => {
+    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    if (!strategyVersionId) throw new Error("backtest.run: strategy_version_id is required");
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (symbols.length === 0) throw new Error("backtest.run: symbols is required");
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) throw new Error("backtest.run: start_date / end_date are required");
+
+    const compositionId = params.composition_id ? String(params.composition_id) : undefined;
+    const rawSignal = params.signals;
+    const signals =
+      !compositionId && rawSignal && typeof rawSignal === "object" && !Array.isArray(rawSignal)
+        ? (rawSignal as Record<string, unknown>)
+        : undefined;
+    if (!compositionId && !signals) {
+      throw new Error("backtest.run: composition_id or signals is required");
+    }
+
+    const costsRaw = params.costs;
+    const costs =
+      costsRaw && typeof costsRaw === "object" && !Array.isArray(costsRaw)
+        ? {
+            commissionBps: Number((costsRaw as Record<string, unknown>)["commissionBps"] ?? 5),
+            slippageBps: Number((costsRaw as Record<string, unknown>)["slippageBps"] ?? 5),
+          }
+        : undefined;
+
+    return backtestJobService.submitAndRun({
+      strategyVersionId,
+      symbols,
+      startDate,
+      endDate,
+      ...(compositionId ? { compositionId } : {}),
+      ...(signals
+        ? {
+            signals: {
+              kind: String((signals as Record<string, unknown>)["kind"] ?? "factor_score"),
+              expr: String((signals as Record<string, unknown>)["expr"] ?? ""),
+              lang: String((signals as Record<string, unknown>)["lang"] ?? "qlib_expr"),
+              ...((signals as Record<string, unknown>)["reverse"]
+                ? { reverse: true }
+                : {}),
+            } as never,
+          }
+        : {}),
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.capital !== undefined ? { capital: Number(params.capital) } : {}),
+      ...(costs ? { costs } : {}),
+      ...(params.rebalance
+        ? { rebalance: String(params.rebalance) as "daily" | "weekly" | "monthly" }
+        : {}),
+      ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
+      ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
     });
   },

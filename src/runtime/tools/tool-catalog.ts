@@ -121,6 +121,32 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
     description: "组合 factor + rule 为可执行策略组合（落 strategy_composition）",
     category: "research",
   },
+
+  // M6：Agent 直通量化工坊
+  "factor.list": {
+    description: "列出项目下因子（支持 category / status 过滤），用于 Agent 自助查询可用因子池",
+    category: "research",
+  },
+  "factor.autoEvaluate": {
+    description:
+      "自动评估因子：从 DuckDB 取因子值 + 市场连接器取价格 → 计算 IC/RankIC/IR/衰减/分组收益/换手率",
+    category: "research",
+  },
+  "discovery.run": {
+    description:
+      "提交并运行因子挖掘任务（factor_alpha101 模板 / factor_gp 符号回归 / 其他 kind），返回候选 + IC 评估",
+    category: "research",
+  },
+  "discovery.promote": {
+    description:
+      "把挖掘出的候选表达式 promote 为项目下正式 factor_definition（保留 lineage 到 discovery_job）",
+    category: "research",
+  },
+  "backtest.run": {
+    description:
+      "运行事件驱动回测：传 composition_id 或手写 signals，返回 metrics + equity_curve + trades 并落 backtest_run",
+    category: "research",
+  },
 };
 
 function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: string): ToolCatalogEntry {
