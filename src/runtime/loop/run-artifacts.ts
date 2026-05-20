@@ -53,11 +53,16 @@ You may emit **one JSON object per line** (NDJSON) using schema \`qubit.loop.v1\
 \`\`\`json
 {"v":"qubit.loop.v1","type":"log","message":"..."}
 {"v":"qubit.loop.v1","type":"tool","tool":"name","payload":{}}
+{"v":"qubit.loop.v1","type":"session","sessionId":"<your-session-id>"}
 {"v":"qubit.loop.v1","type":"final","payload":{"status":"completed"}}
 {"v":"qubit.loop.v1","type":"error","message":"..."}
 \`\`\`
 
 Plain text lines are recorded as unstructured logs.
+
+If you emit a \`session\` line early, QUBIT will persist it on \`workflow_run.cli_session_id\` and, on
+process restart, resume your CLI with the same session (\`claude --resume <id>\` / \`codex exec resume <id>\`).
+QUBIT also best-effort sniffs the native \`session_id\` field from your CLI's first JSON line.
 
 ${
   input.injectMcpBridge

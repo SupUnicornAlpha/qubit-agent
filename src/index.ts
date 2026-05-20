@@ -33,7 +33,8 @@ async function main() {
   if (wfRestore.scanned > 0) {
     console.log(
       `[QUBIT] Workflow sweep: scanned=${wfRestore.scanned} resumed=${wfRestore.resumed} ` +
-        `enqueuedRetry=${wfRestore.enqueuedRetry} markedFailed=${wfRestore.markedFailed}`
+        `cliResumed=${wfRestore.cliResumed} enqueuedRetry=${wfRestore.enqueuedRetry} ` +
+        `markedFailed=${wfRestore.markedFailed}`
     );
   }
   workflowScheduler.start();

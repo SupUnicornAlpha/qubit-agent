@@ -285,7 +285,7 @@ export const IdeIndicatorIdePanel: FC = () => {
       </details>
 
       <div style={styles.aiBox}>
-        <div style={styles.aiTitle}>AI 生成（QuantDinger 式）</div>
+          <div style={styles.aiTitle}>AI 生成（自然语言 → 策略）</div>
         <textarea
           className={qc.textarea}
           style={styles.aiIn}

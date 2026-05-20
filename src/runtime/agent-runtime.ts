@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { A2AMessageEnvelope } from "../types/a2a";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { getDb } from "../db/sqlite/client";
+import { a2aMessage, workflowRun } from "../db/sqlite/schema";
 import { a2aRouter } from "../messaging/a2a";
+import type { A2AMessageEnvelope } from "../types/a2a";
+import { A2A_POOL_WORKFLOW_ID } from "./a2a/constants";
 import type {
   RuntimeAgentDefinition,
   RuntimeAgentInstance,
@@ -44,6 +48,10 @@ export class AgentRuntime {
   async start(): Promise<void> {
     if (this.running) return;
 
+    // Phase 2.6：进程重启后，把"还没结束的 workflow"在本 instance 上累计接收过的消息数
+    // 回填到 iterationByWorkflow，让 max-iterations 防护跨重启依然有效。
+    await this.restoreIterationCounters();
+
     for (const type of this.definition.subscriptions) {
       const unsub = a2aRouter.on(type, async (msg) => this.processMessage(msg));
       this.unsubscribeFns.push(unsub);
@@ -56,9 +64,55 @@ export class AgentRuntime {
       await this.handler.onInit(this.buildContext());
     }
 
+    const restoredSuffix =
+      this.iterationByWorkflow.size > 0
+        ? ` Restored ${this.iterationByWorkflow.size} iteration counter(s).`
+        : "";
     console.log(
-      `[AgentRuntime:${this.definition.role}] instance=${this.instance.instanceId} started.`
+      `[AgentRuntime:${this.definition.role}] instance=${this.instance.instanceId} started.${restoredSuffix}`
     );
+  }
+
+  /**
+   * Phase 2.6：用 `a2a_message` 表里发给本 instance 的消息数作为 iteration 计数底数。
+   *
+   * 严格意义上，`markIteration` 在内存中每收到一条 A2A 消息 +1；持久层等价于
+   * `SELECT count(*) FROM a2a_message WHERE receiver_instance_id = self GROUP BY workflow_run_id`。
+   * 仅回填还在跑的 workflow（status in pending/running 且 ended_at IS NULL）。
+   *
+   * 注：persistA2AMessage 会跳过 sender 为非 UUID 的消息（如 "system"），所以是 best-effort
+   * 下限——重启后再来的几条消息可能再加 1~2，仍能正确触发 max-iterations 兜底。
+   */
+  private async restoreIterationCounters(): Promise<void> {
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select({
+          workflowRunId: a2aMessage.workflowRunId,
+          cnt: sql<number>`count(*)`.as("cnt"),
+        })
+        .from(a2aMessage)
+        .innerJoin(workflowRun, eq(workflowRun.id, a2aMessage.workflowRunId))
+        .where(
+          and(
+            eq(a2aMessage.receiverInstanceId, this.instance.instanceId),
+            or(eq(workflowRun.status, "running"), eq(workflowRun.status, "pending")),
+            isNull(workflowRun.endedAt),
+            ne(workflowRun.id, A2A_POOL_WORKFLOW_ID)
+          )
+        )
+        .groupBy(a2aMessage.workflowRunId);
+      for (const row of rows) {
+        if (row.workflowRunId && row.cnt > 0) {
+          this.iterationByWorkflow.set(row.workflowRunId, row.cnt);
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[AgentRuntime:${this.definition.role}] failed to restore iteration counters:`,
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
   async stop(): Promise<void> {
@@ -143,4 +197,3 @@ export class AgentRuntime {
     };
   }
 }
-

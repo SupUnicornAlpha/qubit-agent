@@ -142,7 +142,7 @@ export async function getMarketNewsBrief(params: {
 export type MarketBacktestJobStatus = "queued" | "running" | "completed" | "failed";
 
 export interface MarketBacktestPostBody {
-  kind?: string;
+  kind?: "sma_crossover" | "python_strategy" | string;
   symbol: string;
   exchange?: string;
   timeframe?: string;
@@ -153,6 +153,8 @@ export interface MarketBacktestPostBody {
   slowPeriod?: number;
   initialCapital?: number;
   commission?: number;
+  /** kind=python_strategy 时携带的 Python on_init/on_bar 源码（=IDE 左侧代码）。 */
+  strategyCode?: string;
 }
 
 export interface MarketBacktestPostResponse {

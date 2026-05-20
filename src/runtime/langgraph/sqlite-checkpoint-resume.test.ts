@@ -63,6 +63,19 @@ describe("LangGraph + SqliteCheckpointSaver resume contract", () => {
     mkdirSync(tmpDir, { recursive: true });
     process.env.QUBIT_DATA_DIR = tmpDir;
     await runMigrations();
+    // 全量 suite 跑时 config.dataDir 会被先到的测试冻结，本测试可能复用同一个 DB；
+    // 清掉 wf-resume-1 / wf-resume-2 上的历史 checkpoint，避免 trace 反复累加。
+    const { getDb } = await import("../../db/sqlite/client");
+    const { langgraphCheckpoint, langgraphCheckpointWrite } = await import(
+      "../../db/sqlite/schema"
+    );
+    const { inArray } = await import("drizzle-orm");
+    const db = await getDb();
+    const threads = ["wf-resume-1", "wf-resume-2"];
+    await db.delete(langgraphCheckpoint).where(inArray(langgraphCheckpoint.threadId, threads));
+    await db
+      .delete(langgraphCheckpointWrite)
+      .where(inArray(langgraphCheckpointWrite.threadId, threads));
   });
 
   afterAll(() => {

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // ─── Helper: default nanoid-style text PK ────────────────────────────────────
 
@@ -88,6 +88,12 @@ export const workflowRun = sqliteTable("workflow_run", {
   lastCheckpointAt: text("last_checkpoint_at"),
   /** 累计被续跑/重试次数（Phase 1 用于幂等限流） */
   resumeCount: integer("resume_count").notNull().default(0),
+  /** Phase 2.5：CLI loop（claude_cli/codex_cli）的 session id，用于 `--resume`。 */
+  cliSessionId: text("cli_session_id"),
+  /** Phase 2.5：CLI loop 首次启动用的可执行（便于 restore 时拼出一致的命令）。 */
+  cliLoopCommand: text("cli_loop_command"),
+  /** Phase 2.5：CLI session 累计 resume 次数。 */
+  cliSessionResumedCount: integer("cli_session_resumed_count").notNull().default(0),
 });
 
 /** Saved from IDE: indicator draft + optional Python signal (buy/sell) for backtest / live reuse. */
@@ -1832,6 +1838,34 @@ export const langgraphCheckpoint = sqliteTable(
   },
   (t) => [
     uniqueIndex("idx_langgraph_checkpoint_pk").on(t.threadId, t.checkpointNs, t.checkpointId),
+  ]
+);
+
+/**
+ * Phase 2.2：旁路 ReAct GraphState snapshot。
+ * 节点边界写一行；与 langgraph_checkpoint 的二进制 blob 互为冗余。
+ */
+export const agentCheckpointSnapshot = sqliteTable(
+  "agent_checkpoint_snapshot",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id),
+    agentInstanceId: text("agent_instance_id")
+      .notNull()
+      .references(() => agentInstance.id),
+    runId: text("run_id").notNull(),
+    stepIndex: integer("step_index").notNull(),
+    phase: text("phase").notNull(),
+    iteration: integer("iteration").notNull().default(0),
+    snapshotJson: text("snapshot_json", { mode: "json" }).notNull(),
+    stateHash: text("state_hash"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_agent_checkpoint_snapshot_workflow").on(t.workflowRunId, t.stepIndex),
+    index("idx_agent_checkpoint_snapshot_run").on(t.runId, t.stepIndex),
   ]
 );
 

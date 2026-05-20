@@ -2,6 +2,8 @@ import type { CSSProperties, Dispatch, FC, SetStateAction } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addAgentGroupMember,
+  createAgentGroup,
+  deleteAgentGroup,
   getAgentGroup,
   listAgentGroups,
   patchAgentGroup,
@@ -89,6 +91,18 @@ export const TeamResearchMemberDirectory: FC<{
   const [topologyMsg, setTopologyMsg] = useState<string | null>(null);
   const [savingTopo, setSavingTopo] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
+  const [groupOpBusy, setGroupOpBusy] = useState(false);
+  /** 二次确认的目标编组 id；为空表示无待确认。4s 内未确认自动取消。 */
+  const [pendingDeleteGroupId, setPendingDeleteGroupId] = useState<string | null>(null);
+  /** 新建编组的内联输入框（null 表示折叠） */
+  const [creatingGroupName, setCreatingGroupName] = useState<string | null>(null);
+
+  // pendingDelete 4 秒自动撤销，避免按钮"卡红"
+  useEffect(() => {
+    if (!pendingDeleteGroupId) return;
+    const timer = window.setTimeout(() => setPendingDeleteGroupId(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [pendingDeleteGroupId]);
 
   const refreshGroups = useCallback(() => {
     void listAgentGroups()
@@ -246,6 +260,59 @@ export const TeamResearchMemberDirectory: FC<{
     [detail]
   );
 
+  const submitCreateGroup = async () => {
+    const name = (creatingGroupName ?? "").trim();
+    if (!name) {
+      setTopologyMsg("编组名不能为空");
+      return;
+    }
+    setTopologyMsg(null);
+    setGroupOpBusy(true);
+    try {
+      const created = await createAgentGroup({ name });
+      const rows = await listAgentGroups();
+      setAnalystAgentGroupOptions(rows);
+      setAnalystAgentGroupId(created.id);
+      setCreatingGroupName(null);
+      setTopologyMsg(`已新建编组「${created.name}」。`);
+    } catch (e) {
+      setTopologyMsg(`新建失败：${(e as Error).message}`);
+    } finally {
+      setGroupOpBusy(false);
+    }
+  };
+
+  const performDeleteGroup = async (groupId: string, groupName: string) => {
+    setPendingDeleteGroupId(null);
+    setTopologyMsg(null);
+    setGroupOpBusy(true);
+    try {
+      await deleteAgentGroup(groupId);
+      const rows = await listAgentGroups();
+      setAnalystAgentGroupOptions(rows);
+      if (groupId === analystAgentGroupId) {
+        setAnalystAgentGroupId("");
+        setDetail(null);
+        setTopologyEdges([]);
+        setNodePositions({});
+      }
+      setTopologyMsg(`已删除编组「${groupName}」。`);
+    } catch (e) {
+      setTopologyMsg(`删除失败：${(e as Error).message}`);
+    } finally {
+      setGroupOpBusy(false);
+    }
+  };
+
+  const handleClickDelete = (groupId: string, groupName: string) => {
+    if (pendingDeleteGroupId === groupId) {
+      void performDeleteGroup(groupId, groupName);
+    } else {
+      setPendingDeleteGroupId(groupId);
+      setTopologyMsg(`再次点击「${groupName}」右侧 × 即可删除（4 秒内有效）。`);
+    }
+  };
+
   return (
     <div style={{ padding: "4px 0 24px", maxWidth: 1100 }}>
       <p
@@ -277,21 +344,141 @@ export const TeamResearchMemberDirectory: FC<{
       <div style={{ ...row, marginBottom: 16 }}>
         {analystAgentGroupOptions.length === 0 ? (
           <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
-            暂无编组（可在配置中心或通过种子创建）
+            暂无编组（请点击右侧「+ 新建编组」创建）
           </span>
         ) : (
-          analystAgentGroupOptions.map((g) => (
+          analystAgentGroupOptions.map((g) => {
+            const active = g.id === analystAgentGroupId;
+            const pendingDelete = pendingDeleteGroupId === g.id;
+            return (
+              <span
+                key={g.id}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "stretch",
+                  borderRadius: 6,
+                  overflow: "hidden",
+                }}
+              >
+                <button
+                  type="button"
+                  className={active ? "qb-btn-primary-brand" : "qb-btn-secondary"}
+                  style={{
+                    fontSize: 12,
+                    padding: "6px 10px",
+                    borderTopRightRadius: 0,
+                    borderBottomRightRadius: 0,
+                  }}
+                  disabled={groupOpBusy}
+                  onClick={() => {
+                    setPendingDeleteGroupId(null);
+                    setAnalystAgentGroupId(g.id);
+                  }}
+                >
+                  {g.name}
+                  {typeof g.memberCount === "number" ? ` · ${g.memberCount} 人` : ""}
+                </button>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  title={
+                    pendingDelete
+                      ? `再次点击确认删除「${g.name}」`
+                      : `删除编组「${g.name}」（需点 2 次）`
+                  }
+                  aria-label={`删除编组「${g.name}」`}
+                  style={{
+                    fontSize: 12,
+                    padding: "6px 8px",
+                    borderTopLeftRadius: 0,
+                    borderBottomLeftRadius: 0,
+                    borderLeft: "1px solid var(--qb-main-card-border, #27272a)",
+                    color: pendingDelete ? "#fff" : "var(--qb-danger-fg, #f87171)",
+                    background: pendingDelete
+                      ? "var(--qb-danger-bg, #b91c1c)"
+                      : undefined,
+                    fontWeight: pendingDelete ? 700 : undefined,
+                  }}
+                  disabled={groupOpBusy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleClickDelete(g.id, g.name);
+                  }}
+                >
+                  {pendingDelete ? "再次点击确认" : "×"}
+                </button>
+              </span>
+            );
+          })
+        )}
+        {creatingGroupName === null ? (
+          <button
+            type="button"
+            className="qb-btn-primary-brand"
+            style={{ fontSize: 12, padding: "6px 12px" }}
+            disabled={groupOpBusy}
+            onClick={() => {
+              setPendingDeleteGroupId(null);
+              setTopologyMsg(null);
+              setCreatingGroupName("");
+            }}
+          >
+            + 新建编组
+          </button>
+        ) : (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "stretch",
+              borderRadius: 6,
+              overflow: "hidden",
+              border: "1px solid var(--qb-main-card-border, #27272a)",
+            }}
+          >
+            <input
+              type="text"
+              value={creatingGroupName}
+              autoFocus
+              disabled={groupOpBusy}
+              placeholder="编组名称"
+              onChange={(e) => setCreatingGroupName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void submitCreateGroup();
+                } else if (e.key === "Escape") {
+                  setCreatingGroupName(null);
+                }
+              }}
+              style={{
+                fontSize: 12,
+                padding: "6px 10px",
+                background: "var(--qb-main-card-bg, #18181b)",
+                color: "var(--qb-body-fg, #e4e4e7)",
+                border: "none",
+                outline: "none",
+                minWidth: 160,
+              }}
+            />
             <button
-              key={g.id}
               type="button"
-              className={g.id === analystAgentGroupId ? "qb-btn-primary-brand" : "qb-btn-secondary"}
-              style={{ fontSize: 12, padding: "6px 12px" }}
-              onClick={() => setAnalystAgentGroupId(g.id)}
+              className="qb-btn-primary-brand"
+              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 0 }}
+              disabled={groupOpBusy || !creatingGroupName.trim()}
+              onClick={() => void submitCreateGroup()}
             >
-              {g.name}
-              {typeof g.memberCount === "number" ? ` · ${g.memberCount} 人` : ""}
+              保存
             </button>
-          ))
+            <button
+              type="button"
+              className="qb-btn-secondary"
+              style={{ fontSize: 12, padding: "6px 10px", borderRadius: 0 }}
+              disabled={groupOpBusy}
+              onClick={() => setCreatingGroupName(null)}
+            >
+              取消
+            </button>
+          </span>
         )}
       </div>
 

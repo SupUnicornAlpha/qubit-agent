@@ -1,9 +1,11 @@
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
+import { normalizeLoopKind } from "../../types/loop";
+import { loadLatestCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
 import { graphRunner } from "../langgraph/graph-factory";
 import { getCheckpointSaver } from "../langgraph/sqlite-checkpoint-saver";
-import { normalizeLoopKind } from "../../types/loop";
+import { ClaudeCliLoopDriver, CodexCliLoopDriver } from "../loop/cli-loop-driver";
 import { enqueueCompensationTask } from "./compensation-queue";
 
 export type RestoreOutcome = {
@@ -11,7 +13,20 @@ export type RestoreOutcome = {
   resumed: number;
   enqueuedRetry: number;
   markedFailed: number;
+  cliResumed: number;
 };
+
+let _claudeDriver: ClaudeCliLoopDriver | null = null;
+let _codexDriver: CodexCliLoopDriver | null = null;
+
+function getCliDriver(kind: "claude_cli" | "codex_cli") {
+  if (kind === "claude_cli") {
+    if (!_claudeDriver) _claudeDriver = new ClaudeCliLoopDriver();
+    return _claudeDriver;
+  }
+  if (!_codexDriver) _codexDriver = new CodexCliLoopDriver();
+  return _codexDriver;
+}
 
 /**
  * 进程启动时扫描"未结束"工作流：
@@ -37,6 +52,7 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
     resumed: 0,
     enqueuedRetry: 0,
     markedFailed: 0,
+    cliResumed: 0,
   };
   if (candidates.length === 0) return outcome;
 
@@ -55,38 +71,54 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
         continue;
       }
 
-      // 无 checkpoint：交给补偿队列，依赖原 orchestrator 重跑
+      // 无 LangGraph checkpoint：先看看旁路 snapshot 是否能提供线索（仅用作运营日志），
+      // 再交给补偿队列 retry_from_start。
       if (loopKind === "native") {
+        const sidecar = await loadLatestCheckpointSnapshot(wf.id);
+        const hint = sidecar
+          ? ` last_snapshot=phase:${sidecar.phase} step:${sidecar.stepIndex} iter:${sidecar.iteration}`
+          : "";
         await enqueueCompensationTask({
           workflowRunId: wf.id,
           actionType: "retry_from_start",
-          reason: "process_restart_no_checkpoint",
+          reason: sidecar
+            ? `process_restart_no_lg_checkpoint_but_snapshot:${sidecar.phase}@step${sidecar.stepIndex}`
+            : "process_restart_no_checkpoint",
           maxRetries: 1,
         });
         outcome.enqueuedRetry += 1;
         console.log(
-          `[restoreRunningWorkflows] no checkpoint for workflow=${wf.id}, enqueued retry_from_start`
+          `[restoreRunningWorkflows] no LG checkpoint for workflow=${wf.id}, enqueued retry_from_start${hint}`
         );
         continue;
       }
 
-      // CLI loop（claude_cli / codex_cli）目前没有跨进程恢复能力 → 直接标 failed，
-      // 由 Phase 2.5 引入 --resume 后再升级为真续跑。
+      // CLI loop（claude_cli / codex_cli）：Phase 2.5 起，若上次落了 cli_session_id 就续跑，
+      // 没落就回退为标 failed 等人工介入。
+      if ((loopKind === "claude_cli" || loopKind === "codex_cli") && wf.cliSessionId) {
+        const driver = getCliDriver(loopKind);
+        const res = await driver.resumeWorkflow({ workflowId: wf.id });
+        if (res.resumed) {
+          outcome.cliResumed += 1;
+          console.log(
+            `[restoreRunningWorkflows] cli-resumed workflow=${wf.id} ` +
+              `kind=${loopKind} sessionId=${res.sessionId} runId=${res.runId}`
+          );
+          continue;
+        }
+      }
+
       await db
         .update(workflowRun)
         .set({
           status: "failed",
           endedAt: new Date().toISOString(),
+          resumeCount: sql`${workflowRun.resumeCount} + 1`,
         })
-        .where(eq(workflowRun.id, wf.id));
-      // 同步标记累计字段，便于运营查询此次重启造成的中断
-      await db
-        .update(workflowRun)
-        .set({ resumeCount: sql`${workflowRun.resumeCount} + 1` })
         .where(eq(workflowRun.id, wf.id));
       outcome.markedFailed += 1;
       console.warn(
-        `[restoreRunningWorkflows] CLI workflow=${wf.id} (${wf.loopKind}) marked failed; manual rerun required`
+        `[restoreRunningWorkflows] CLI workflow=${wf.id} (${wf.loopKind}) no session_id; marked failed`
       );
     } catch (error) {
       console.error(

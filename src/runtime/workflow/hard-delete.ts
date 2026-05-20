@@ -36,6 +36,9 @@ function getRawSqlite(db: Awaited<ReturnType<typeof getDb>>): RawSqlite {
 const WORKFLOW_DIRECT_TABLES = [
   "a2a_message",
   "acp_call",
+  // Phase 2.2: agent_checkpoint_snapshot FK 引用了 workflow_run.id 和 agent_instance.id；
+  // 必须排在 agent_instance 之前删，否则 defer_foreign_keys 在 COMMIT 时报 FK 违规。
+  "agent_checkpoint_snapshot",
   "agent_step",
   "mcp_call_log",
   "agent_instance",

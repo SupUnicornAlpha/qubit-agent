@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import { backtestJob } from "../db/sqlite/schema";
-import { runSmaCrossoverBacktestJob } from "../runtime/market/backtest-job-runner";
+import {
+  runPythonStrategyBacktestJob,
+  runSmaCrossoverBacktestJob,
+} from "../runtime/market/backtest-job-runner";
 import {
   computeDateRangeForLimit,
   queryBarsRange,
@@ -28,6 +31,8 @@ interface SmaBacktestPost {
   commission?: number;
   startDate?: string;
   endDate?: string;
+  /** kind=python_strategy 时使用，user-provided Python on_init/on_bar 源码。 */
+  strategyCode?: string;
 }
 
 interface RegimeDetectPost {
@@ -113,15 +118,24 @@ marketRouter.get("/news-brief", async (c) => {
   }
 });
 
-/** Submit server-side SMA crossover backtest (sync execution, persisted job row). */
+/**
+ * Submit server-side backtest (sync execution, persisted job row).
+ *
+ * 支持两种 kind：
+ *   - "sma_crossover"（默认）：固定 SMA 双均线策略，参数从 fastPeriod/slowPeriod 读取。
+ *   - "python_strategy"：执行 body.strategyCode 中的 on_init/on_bar，bar-by-bar 真实回测。
+ */
 marketRouter.post("/backtests", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as SmaBacktestPost;
   const kind = String(body.kind ?? "sma_crossover");
-  if (kind !== "sma_crossover") {
+  if (kind !== "sma_crossover" && kind !== "python_strategy") {
     return c.json({ ok: false, error: `Unsupported kind: ${kind}` }, 400);
   }
   const symbol = String(body.symbol ?? "").trim();
   if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+  if (kind === "python_strategy" && !String(body.strategyCode ?? "").trim()) {
+    return c.json({ ok: false, error: "strategyCode is required for python_strategy" }, 400);
+  }
 
   const jobId = crypto.randomUUID();
   const db = await getDb();
@@ -133,7 +147,11 @@ marketRouter.post("/backtests", async (c) => {
   });
 
   try {
-    await runSmaCrossoverBacktestJob(jobId, body as Record<string, unknown>);
+    if (kind === "python_strategy") {
+      await runPythonStrategyBacktestJob(jobId, body as Record<string, unknown>);
+    } else {
+      await runSmaCrossoverBacktestJob(jobId, body as Record<string, unknown>);
+    }
     const row = await db.select().from(backtestJob).where(eq(backtestJob.id, jobId)).limit(1);
     const r = row[0];
     return c.json(

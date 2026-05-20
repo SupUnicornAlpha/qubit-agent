@@ -8,6 +8,7 @@ import { parseLoopOptionsJson } from "../../types/loop";
 import type { AgentLoopKind } from "../../types/loop";
 import { sandboxExecutor } from "../sandbox-executor";
 import type { RuntimeAgentDefinition } from "../types";
+import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
 import { stepStreamBus } from "./event-stream";
 import { actNode } from "./nodes/act";
 import { observeNode } from "./nodes/observe";
@@ -136,6 +137,19 @@ export async function executeAgentReact(
     },
   }) as any;
 
+  // Phase 2.2：每个节点退出时写一份旁路 snapshot，best-effort 不阻塞节点。
+  const snapshot = (phase: string, stepIndex: number, mergedState: AgentGraphState): void => {
+    void writeCheckpointSnapshot({
+      runId: params.runId,
+      workflowId: params.workflowId,
+      traceId: params.traceId,
+      agentInstanceId,
+      stepIndex,
+      phase,
+      state: mergedState,
+    });
+  };
+
   graph.addNode("perceive", async (input: { state: AgentGraphState }) => {
     const s = input.state;
     const perceiveStepId = randomUUID();
@@ -150,7 +164,9 @@ export async function executeAgentReact(
       actionJson: { payload: params.payload },
     });
     const partial = await perceiveNode(s);
-    return { state: { ...s, ...partial } };
+    const merged = { ...s, ...partial };
+    snapshot("perceive", 0, merged);
+    return { state: merged };
   });
 
   graph.addNode("reason", async (input: { state: AgentGraphState }) => {
@@ -178,16 +194,16 @@ export async function executeAgentReact(
           message: iterationCheck.reason ?? "iteration blocked by sandbox",
         },
       });
-      return {
-        state: {
-          ...input.state,
-          finalResponse: {
-            status: "terminated",
-            reason: "sandbox_iteration_limit",
-            iteration: input.state.iteration,
-          },
+      const blocked = {
+        ...input.state,
+        finalResponse: {
+          status: "terminated",
+          reason: "sandbox_iteration_limit",
+          iteration: input.state.iteration,
         },
       };
+      snapshot("reason", input.state.iteration, blocked);
+      return { state: blocked };
     }
     await db
       .update(agentInstance)
@@ -205,7 +221,9 @@ export async function executeAgentReact(
       actionJson: { llmProvider: params.def.llmProvider },
     });
     const partial = await reasonNode({ ...input.state, iteration: nextIteration }, emit);
-    return { state: { ...input.state, iteration: nextIteration, ...partial } };
+    const merged = { ...input.state, iteration: nextIteration, ...partial };
+    snapshot("reason", nextIteration, merged);
+    return { state: merged };
   });
 
   graph.addNode("act", async (input: { state: AgentGraphState }) => {
@@ -222,13 +240,17 @@ export async function executeAgentReact(
       actionJson: { plannedAction: s.plannedAction },
     });
     const partial = await actNode(s, emit, agentInstanceId, actStepId);
-    return { state: { ...s, ...partial } };
+    const merged = { ...s, ...partial };
+    snapshot("act", s.iteration, merged);
+    return { state: merged };
   });
 
   graph.addNode("observe", async (input: { state: AgentGraphState }) => {
     const s = input.state;
     const partial = await observeNode(s, emit, agentInstanceId);
-    return { state: { ...s, ...partial } };
+    const merged = { ...s, ...partial };
+    snapshot("observe", s.iteration, merged);
+    return { state: merged };
   });
 
   graph.addNode("finalize", async (input: { state: AgentGraphState }) => {
@@ -258,7 +280,9 @@ export async function executeAgentReact(
           iteration: s.iteration,
           observation: s.observations.at(-1) ?? {},
         };
-    return { state: { ...s, finalResponse } };
+    const merged = { ...s, finalResponse };
+    snapshot("finalize", s.iteration, merged);
+    return { state: merged };
   });
 
   graph.addEdge(START, "perceive");

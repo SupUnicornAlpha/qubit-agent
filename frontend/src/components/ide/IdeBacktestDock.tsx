@@ -8,6 +8,7 @@ import {
 import { useAppStore } from "../../store";
 
 type DockTab = "backtest" | "tune";
+type BacktestKind = "python_strategy" | "sma_crossover";
 
 function parseNumList(raw: string, fallback: number[]): number[] {
   const xs = raw
@@ -19,7 +20,9 @@ function parseNumList(raw: string, fallback: number[]): number[] {
 
 export const IdeBacktestDock: FC = () => {
   const chartSpec = useAppStore((s) => s.chartSpec);
+  const ideStrategySource = useAppStore((s) => s.ideStrategySource);
   const [tab, setTab] = useState<DockTab>("backtest");
+  const [kind, setKind] = useState<BacktestKind>("python_strategy");
   const [fastPeriod, setFastPeriod] = useState(5);
   const [slowPeriod, setSlowPeriod] = useState(20);
   const [initialCapital, setInitialCapital] = useState(10_000);
@@ -30,6 +33,7 @@ export const IdeBacktestDock: FC = () => {
   const [btLoading, setBtLoading] = useState(false);
   const [btError, setBtError] = useState<string | null>(null);
   const [btSummary, setBtSummary] = useState<string | null>(null);
+  const [btStderr, setBtStderr] = useState<string | null>(null);
   const [tuneFast, setTuneFast] = useState("3, 5, 8");
   const [tuneSlow, setTuneSlow] = useState("15, 20, 30");
   const [tuneLoading, setTuneLoading] = useState(false);
@@ -41,19 +45,30 @@ export const IdeBacktestDock: FC = () => {
     setBtLoading(true);
     setBtError(null);
     setBtSummary(null);
+    setBtStderr(null);
     try {
-      const body = {
-        kind: "sma_crossover",
+      const baseBody = {
         symbol: chartSpec.symbol.trim(),
         exchange: chartSpec.exchange.trim() || undefined,
         timeframe: chartSpec.timeframe,
         limit: chartSpec.limit,
-        fastPeriod,
-        slowPeriod,
         initialCapital,
         commission,
         ...(useCustomRange && startDate && endDate ? { startDate, endDate } : {}),
       };
+      const body =
+        kind === "python_strategy"
+          ? {
+              ...baseBody,
+              kind: "python_strategy" as const,
+              strategyCode: ideStrategySource,
+            }
+          : {
+              ...baseBody,
+              kind: "sma_crossover" as const,
+              fastPeriod,
+              slowPeriod,
+            };
       const res = await postMarketBacktest(body);
       if (!res.ok) {
         setBtError(res.error ?? "回测失败");
@@ -68,17 +83,26 @@ export const IdeBacktestDock: FC = () => {
                 sharpeApprox?: number;
                 tradeCount?: number;
                 bars?: number;
+                lastPosition?: number;
               };
             };
+            stderrText?: string;
           }
         | undefined;
       const m = r?.backtest?.metrics;
       if (m) {
+        const posTail =
+          kind === "python_strategy" && typeof m.lastPosition === "number"
+            ? ` · 末仓位 ${m.lastPosition.toFixed(4)}`
+            : "";
         setBtSummary(
-          `收益 ${(m.totalReturnPct ?? 0).toFixed(2)}% · 最大回撤 ${(m.maxDrawdownPct ?? 0).toFixed(2)}% · Sharpe≈${(m.sharpeApprox ?? 0).toFixed(2)} · 成交 ${m.tradeCount ?? 0} 笔 · K线 ${m.bars ?? 0} 根`
+          `收益 ${(m.totalReturnPct ?? 0).toFixed(2)}% · 最大回撤 ${(m.maxDrawdownPct ?? 0).toFixed(2)}% · Sharpe≈${(m.sharpeApprox ?? 0).toFixed(2)} · 成交 ${m.tradeCount ?? 0} 笔 · K线 ${m.bars ?? 0} 根${posTail}`
         );
       } else {
         setBtSummary(JSON.stringify(res.data?.result ?? res.data, null, 2).slice(0, 800));
+      }
+      if (kind === "python_strategy" && r?.stderrText) {
+        setBtStderr(r.stderrText);
       }
     } catch (e) {
       setBtError(e instanceof Error ? e.message : String(e));
@@ -93,7 +117,9 @@ export const IdeBacktestDock: FC = () => {
     commission,
     endDate,
     fastPeriod,
+    ideStrategySource,
     initialCapital,
+    kind,
     slowPeriod,
     startDate,
     useCustomRange,
@@ -195,27 +221,52 @@ export const IdeBacktestDock: FC = () => {
       </div>
       {tab === "backtest" ? (
         <div style={styles.body}>
+          <div style={styles.kindRow}>
+            <span style={styles.kindLabel}>策略来源</span>
+            <label style={styles.kindOpt}>
+              <input
+                type="radio"
+                name="bt-kind"
+                checked={kind === "python_strategy"}
+                onChange={() => setKind("python_strategy")}
+              />
+              <span>左侧 Python 脚本（on_init/on_bar）</span>
+            </label>
+            <label style={styles.kindOpt}>
+              <input
+                type="radio"
+                name="bt-kind"
+                checked={kind === "sma_crossover"}
+                onChange={() => setKind("sma_crossover")}
+              />
+              <span>固定 SMA 双均线（fast/slow）</span>
+            </label>
+          </div>
           <div style={styles.grid}>
-            <label style={styles.field}>
-              <span>快线周期</span>
-              <input
-                type="number"
-                style={styles.inp}
-                min={1}
-                value={fastPeriod}
-                onChange={(e) => setFastPeriod(Number(e.target.value) || 5)}
-              />
-            </label>
-            <label style={styles.field}>
-              <span>慢线周期</span>
-              <input
-                type="number"
-                style={styles.inp}
-                min={2}
-                value={slowPeriod}
-                onChange={(e) => setSlowPeriod(Number(e.target.value) || 20)}
-              />
-            </label>
+            {kind === "sma_crossover" ? (
+              <>
+                <label style={styles.field}>
+                  <span>快线周期</span>
+                  <input
+                    type="number"
+                    style={styles.inp}
+                    min={1}
+                    value={fastPeriod}
+                    onChange={(e) => setFastPeriod(Number(e.target.value) || 5)}
+                  />
+                </label>
+                <label style={styles.field}>
+                  <span>慢线周期</span>
+                  <input
+                    type="number"
+                    style={styles.inp}
+                    min={2}
+                    value={slowPeriod}
+                    onChange={(e) => setSlowPeriod(Number(e.target.value) || 20)}
+                  />
+                </label>
+              </>
+            ) : null}
             <label style={styles.field}>
               <span>初始资金</span>
               <input
@@ -263,10 +314,22 @@ export const IdeBacktestDock: FC = () => {
             <button type="button" className="qb-btn-primary" disabled={btLoading} onClick={() => void runBacktest()}>
               {btLoading ? "运行中…" : "运行回测"}
             </button>
-            <span style={styles.muted}>标的取自工具条 · SMA 交叉 · POST /api/v1/market/backtests</span>
+            <span style={styles.muted}>
+              标的取自工具条 ·{" "}
+              {kind === "python_strategy"
+                ? "执行左侧 on_init/on_bar（真实 bar-by-bar 撮合）"
+                : "固定 SMA 双均线（左侧代码不参与）"}
+              · POST /api/v1/market/backtests
+            </span>
           </div>
           {btError ? <div style={styles.err}>{btError}</div> : null}
           {btSummary ? <div style={styles.ok}>{btSummary}</div> : null}
+          {btStderr ? (
+            <details style={styles.stdoutBox}>
+              <summary style={styles.stdoutSum}>策略 print 输出（{btStderr.length} 字符）</summary>
+              <pre style={styles.pre}>{btStderr}</pre>
+            </details>
+          ) : null}
           <div style={styles.pillRow}>
             <span style={styles.pillMuted}>
               纸面/实盘策略运行时：在「实时交易」页勾选策略后启动，或调用 POST /api/v1/strategy-runtimes
@@ -369,4 +432,34 @@ const styles: Record<string, CSSProperties> = {
   },
   pillRow: { display: "flex", flexWrap: "wrap", gap: 6 },
   pillMuted: { fontSize: 10, color: "var(--qb-main-input-border, #3f3f46)" },
+  kindRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 12,
+    padding: "6px 8px",
+    border: "1px dashed var(--qb-main-input-border, #27272a)",
+    borderRadius: 6,
+    background: "var(--qb-stream-box-bg, #09090b)",
+  },
+  kindLabel: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", flexShrink: 0 },
+  kindOpt: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 12,
+    color: "var(--qb-main-fg, #e4e4e7)",
+    cursor: "pointer",
+  },
+  stdoutBox: {
+    border: "1px solid var(--qb-main-input-border, #27272a)",
+    borderRadius: 6,
+    background: "var(--qb-stream-box-bg, #09090b)",
+  },
+  stdoutSum: {
+    cursor: "pointer",
+    padding: "4px 8px",
+    fontSize: 11,
+    color: "var(--qb-main-meta, #a1a1aa)",
+  },
 };

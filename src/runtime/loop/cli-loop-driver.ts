@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
@@ -7,13 +7,49 @@ import { parseLoopOptionsJson } from "../../types/loop";
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { StepStreamEvent } from "../langgraph/state";
 import type { DispatchToLoopParams, LoopDriver } from "./loop-driver";
-import { parseCliLoopLine } from "./loop-protocol";
+import { parseCliLoopLine, sniffNativeSessionId } from "./loop-protocol";
 import { writeLoopRunArtifacts } from "./run-artifacts";
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;
 
 const activeCliByRunId = new Map<string, ReturnType<typeof Bun.spawn>>();
+
+/**
+ * Phase 2.5：根据 CLI 类型和是否 resume 拼出 base args。
+ * - 启动新会话：claude_cli -> `-p <prompt>`；codex_cli -> `exec <prompt>`
+ * - 续跑：claude_cli -> `--resume <sessionId> -p <prompt>`；codex_cli -> `exec resume <sessionId>`
+ */
+function buildBaseCliArgs(
+  kind: "claude_cli" | "codex_cli",
+  promptPath: string,
+  resumeSessionId?: string
+): string[] {
+  if (kind === "claude_cli") {
+    return resumeSessionId ? ["--resume", resumeSessionId, "-p", promptPath] : ["-p", promptPath];
+  }
+  // codex_cli
+  return resumeSessionId ? ["exec", "resume", resumeSessionId] : ["exec", promptPath];
+}
+
+async function persistCliSession(
+  workflowId: string,
+  sessionId: string,
+  command: string
+): Promise<void> {
+  try {
+    const db = await getDb();
+    await db
+      .update(workflowRun)
+      .set({ cliSessionId: sessionId, cliLoopCommand: command })
+      .where(eq(workflowRun.id, workflowId));
+  } catch (err) {
+    console.warn(
+      "[cli-loop-driver] failed to persist cli_session_id:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
 
 async function readOrchestratorDefinitionId(): Promise<string> {
   const db = await getDb();
@@ -79,6 +115,8 @@ async function runExternalCli(params: {
   runId: string;
   traceId: string;
   opts: LoopOptionsJson;
+  /** Phase 2.5：当前是从持久化的 session 续跑还是全新启动。 */
+  resumeSessionId?: string;
 }): Promise<void> {
   const db = await getDb();
   const definitionId = await readOrchestratorDefinitionId();
@@ -109,8 +147,31 @@ async function runExternalCli(params: {
   });
 
   const command = params.opts.command ?? (params.kind === "claude_cli" ? "claude" : "codex");
-  const baseArgs = params.kind === "claude_cli" ? ["-p", promptPath] : ["exec", promptPath];
+  const baseArgs = buildBaseCliArgs(params.kind, promptPath, params.resumeSessionId);
   const args = [...(params.opts.extraArgs ?? []), ...baseArgs];
+
+  // Phase 2.5：第一次启动时把命令字符串落库（resume 命令不覆盖，保留 fresh-start 的 cli_loop_command）。
+  if (!params.resumeSessionId) {
+    try {
+      await db
+        .update(workflowRun)
+        .set({ cliLoopCommand: `${command} ${args.join(" ")}` })
+        .where(eq(workflowRun.id, params.workflowId));
+    } catch {
+      /* best-effort */
+    }
+  } else {
+    try {
+      await db
+        .update(workflowRun)
+        .set({
+          cliSessionResumedCount: sql`${workflowRun.cliSessionResumedCount} + 1`,
+        })
+        .where(eq(workflowRun.id, params.workflowId));
+    } catch {
+      /* best-effort */
+    }
+  }
 
   const timeoutMs = params.opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxOut = params.opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
@@ -128,7 +189,13 @@ async function runExternalCli(params: {
     });
   };
 
-  publish("observe", { phase: "cli_spawn", command, args, runDir });
+  publish("observe", {
+    phase: "cli_spawn",
+    command,
+    args,
+    runDir,
+    ...(params.resumeSessionId ? { resumeSessionId: params.resumeSessionId } : {}),
+  });
 
   let proc: ReturnType<typeof Bun.spawn>;
   try {
@@ -172,6 +239,8 @@ async function runExternalCli(params: {
   let outBytes = 0;
   let errBuf = "";
 
+  let capturedSessionId: string | null = params.resumeSessionId ?? null;
+
   const processChunk = async (text: string, isErr: boolean) => {
     if (isErr) {
       errBuf += text;
@@ -191,8 +260,30 @@ async function runExternalCli(params: {
     const lines = text.split(/\r?\n/);
     for (const line of lines) {
       if (!line.trim()) continue;
+      // Phase 2.5：先嗅探原生 stream-json 行的 session_id（Claude/Codex 均会产生），
+      // 任意行命中就落一次库；后续重复命中相同 id 时跳过。
+      if (!capturedSessionId) {
+        const nativeSid = sniffNativeSessionId(line);
+        if (nativeSid) {
+          capturedSessionId = nativeSid;
+          await persistCliSession(params.workflowId, nativeSid, command);
+          publish("observe", { phase: "cli_session_captured", sessionId: nativeSid });
+        }
+      }
       const parsed = parseCliLoopLine(line);
       if (parsed) {
+        // Phase 2.5：QUBIT 协议显式声明的 session 行——覆盖之前嗅到的 id，权威性更高
+        if (parsed.type === "session" && parsed.sessionId) {
+          if (capturedSessionId !== parsed.sessionId) {
+            capturedSessionId = parsed.sessionId;
+            await persistCliSession(params.workflowId, parsed.sessionId, command);
+            publish("observe", {
+              phase: "cli_session_declared",
+              sessionId: parsed.sessionId,
+            });
+          }
+          continue;
+        }
         await appendAgentStep({
           agentInstanceId,
           workflowId: params.workflowId,
@@ -366,6 +457,44 @@ abstract class BaseCliLoopDriver implements LoopDriver {
     });
 
     return { runId };
+  }
+
+  /**
+   * Phase 2.5：用持久化的 cli_session_id 拉起 CLI 续跑。
+   * - 若 workflow_run.cli_session_id 为空，返回 { resumed: false } 由调用方降级处理；
+   * - 不抛 workflow not found 之类的硬错误，sweep 调用方需要尽量保持鲁棒。
+   */
+  async resumeWorkflow(params: {
+    workflowId: string;
+    traceId?: string;
+  }): Promise<{ runId: string; resumed: boolean; sessionId?: string }> {
+    const db = await getDb();
+    const wfRows = await db
+      .select()
+      .from(workflowRun)
+      .where(eq(workflowRun.id, params.workflowId))
+      .limit(1);
+    const wf = wfRows[0];
+    if (!wf) return { runId: "", resumed: false };
+    if (!wf.cliSessionId) return { runId: "", resumed: false };
+
+    const runId = randomUUID();
+    const traceId = params.traceId ?? randomUUID();
+    const opts = parseLoopOptionsJson(wf.loopOptionsJson);
+
+    void runExternalCli({
+      kind: this.kind,
+      workflowId: params.workflowId,
+      projectId: wf.projectId,
+      goal: wf.goal,
+      mode: wf.mode,
+      runId,
+      traceId,
+      opts,
+      resumeSessionId: wf.cliSessionId,
+    });
+
+    return { runId, resumed: true, sessionId: wf.cliSessionId };
   }
 }
 
