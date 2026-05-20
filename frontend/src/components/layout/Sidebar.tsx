@@ -1,8 +1,14 @@
 import type { FC } from "react";
 import { Sparkles } from "lucide-react";
-import { useAppStore, type ConfigSubPage } from "../../store";
+import { useAppStore, type ConfigSubPage, type QuantTab } from "../../store";
 import type { NavKey } from "../../lib/navIcons";
 import { NavGlyph } from "../../lib/navIcons";
+
+const QUANT_SUB: readonly { id: QuantTab; label: string }[] = [
+  { id: "factor", label: "因子工坊" },
+  { id: "discovery", label: "挖掘工坊" },
+  { id: "backtest", label: "回测工坊" },
+];
 
 const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; label: string }[] = [
   { id: "llm", label: "LLM" },
@@ -10,6 +16,7 @@ const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; label: string }[] = [
   { id: "mcp", label: "MCP" },
   { id: "skills", label: "Skills" },
   { id: "agent", label: "Agent" },
+  { id: "providers", label: "Providers" },
   { id: "integration", label: "集成 / IM" },
   { id: "schedule", label: "定时任务" },
 ];
@@ -18,6 +25,7 @@ const NAV_ITEMS: readonly { label: string; key: NavKey }[] = [
   { label: "研究工作台", key: "ide" },
   { label: "研究团队", key: "team" },
   { label: "实时交易Agent", key: "trader" },
+  { label: "量化工作台", key: "quant" },
   { label: "资讯", key: "chart" },
   { label: "对话", key: "chat" },
   { label: "运行监控", key: "monitor" },
@@ -36,6 +44,8 @@ export const Sidebar: FC = () => {
   const setExplorerOpen = useAppStore((s) => s.setExplorerOpen);
   const configSubPage = useAppStore((s) => s.configSubPage);
   const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
+  const quantTab = useAppStore((s) => s.quantTab);
+  const setQuantTab = useAppStore((s) => s.setQuantTab);
   const activeItem = NAV_ITEMS.find((n) => n.key === activeView) ?? NAV_ITEMS[0];
 
   const goNav = (key: NavKey) => {
@@ -148,6 +158,26 @@ export const Sidebar: FC = () => {
               ))}
             </div>
           ) : null}
+          {activeView === "quant" ? (
+            <div style={styles.group}>
+              <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+                量化子项
+              </div>
+              {QUANT_SUB.map((sub) => (
+                <button
+                  key={sub.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveView("quant");
+                    setQuantTab(sub.id);
+                  }}
+                  className={`qb-nav-row${quantTab === sub.id ? " qb-nav-row--active" : ""}`}
+                >
+                  <span style={styles.label}>{sub.label}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div style={styles.group}>
             <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
               当前上下文
@@ -159,6 +189,7 @@ export const Sidebar: FC = () => {
               <div className="qb-sidebar-muted-text" style={styles.contextMeta}>
                 模块：{activeItem.label}
                 {activeView === "config" ? ` · ${configSubPage}` : ""}
+                {activeView === "quant" ? ` · ${quantTab}` : ""}
               </div>
             </div>
           </div>

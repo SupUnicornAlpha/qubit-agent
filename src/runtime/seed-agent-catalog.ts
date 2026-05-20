@@ -165,10 +165,144 @@ export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
   memberRoles: ["orchestrator", "research", "backtest", "risk"],
 };
 
+// ─── M1：研究场景化新增编组（详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6.4） ───
+// 复用已有 22 个 AgentRole；不实装专门 handler 的角色用通用 ReAct
+// 各场景的 inputSchema / 工具 preset / Provider 需求由 research_scenario 表承载
+
+/** 因子研究：orchestrator + research + 两个分析师，配 factor.* 工具 */
+export const FACTOR_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-factor-research",
+  name: "因子研究",
+  description:
+    "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-research",
+    "def-analyst-fundamental",
+    "def-analyst-technical",
+  ],
+  memberRoles: [
+    "orchestrator",
+    "research",
+    "analyst_fundamental",
+    "analyst_technical",
+  ],
+};
+
+/** 规则研究：orchestrator + research + risk_manager */
+export const RULE_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-rule-research",
+  name: "规则研究",
+  description: "基于现有因子库生成可解释的 JSON-DSL 规则并入库。",
+  memberDefinitionIds: ["def-orchestrator", "def-research", "def-risk"],
+  memberRoles: ["orchestrator", "research", "risk_manager"],
+};
+
+/** 选股研究：orchestrator + stock_screener + 两个分析师 */
+export const STOCK_SCREENING_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-stock-screening",
+  name: "选股研究",
+  description: "基于因子打分与规则过滤产出候选股池。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-research",
+    "def-analyst-fundamental",
+    "def-analyst-sentiment",
+  ],
+  memberRoles: [
+    "orchestrator",
+    "stock_screener",
+    "analyst_fundamental",
+    "analyst_sentiment",
+  ],
+};
+
+/** 风控审查：orchestrator + risk_manager + audit */
+export const RISK_REVIEW_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-risk-review",
+  name: "风控审查",
+  description: "审查策略历史与现有限额，产出新的风控规则建议。",
+  memberDefinitionIds: ["def-orchestrator", "def-risk", "def-research"],
+  memberRoles: ["orchestrator", "risk_manager", "audit"],
+};
+
+/** PM 组合管理：orchestrator + portfolio_manager + risk_manager + research */
+export const PORTFOLIO_MANAGEMENT_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-portfolio-management",
+  name: "PM 组合管理",
+  description: "多策略权重分配、再平衡方案、暴露报告。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-research",
+    "def-risk",
+    "def-backtest",
+  ],
+  memberRoles: ["orchestrator", "portfolio_manager", "risk_manager", "research"],
+};
+
+/** 因子/规则/策略 挖掘：orchestrator + research + backtest_engineer */
+export const DISCOVERY_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-discovery",
+  name: "因子/规则/策略 挖掘",
+  description:
+    "自动生成候选因子+规则+策略，演化筛选 Sharpe>阈值 的优胜者，入库到 gene pool。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-research",
+    "def-backtest",
+  ],
+  memberRoles: ["orchestrator", "research", "backtest_engineer"],
+};
+
+/** 实盘交易：orchestrator + execution_trader + risk_manager */
+export const LIVE_TRADING_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-live-trading",
+  name: "实盘交易",
+  description: "实盘下单、监控、风控记录；走 Live 闸门与 HMAC 签名。",
+  memberDefinitionIds: ["def-orchestrator", "def-risk"],
+  memberRoles: ["orchestrator", "execution_trader", "risk_manager"],
+};
+
+/** 复盘归因：orchestrator + research + analyst_macro */
+export const POSTMORTEM_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-postmortem",
+  name: "复盘归因",
+  description: "因子归因 / 行业归因 / 事件归因，输出复盘报告。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-research",
+    "def-analyst-macro",
+  ],
+  memberRoles: ["orchestrator", "research", "analyst_macro"],
+};
+
+/** 事件雷达：orchestrator + news_event + analyst_sentiment */
+export const NEWS_EVENT_RADAR_GROUP: BuiltinAgentGroupSpec = {
+  id: "grp-news-event-radar",
+  name: "事件雷达",
+  description: "扫描新闻流，识别可交易事件，输出影响评估与预警。",
+  memberDefinitionIds: [
+    "def-orchestrator",
+    "def-news-event",
+    "def-analyst-sentiment",
+  ],
+  memberRoles: ["orchestrator", "news_event", "analyst_sentiment"],
+};
+
 export const BUILTIN_AGENT_GROUPS: readonly BuiltinAgentGroupSpec[] = [
   DEFAULT_ORCHESTRATION_GROUP,
   FULL_ANALYST_GROUP,
   STRATEGY_PIPELINE_GROUP,
+  // M1 新增 9 个场景化编组
+  FACTOR_RESEARCH_GROUP,
+  RULE_RESEARCH_GROUP,
+  STOCK_SCREENING_GROUP,
+  RISK_REVIEW_GROUP,
+  PORTFOLIO_MANAGEMENT_GROUP,
+  DISCOVERY_GROUP,
+  LIVE_TRADING_GROUP,
+  POSTMORTEM_GROUP,
+  NEWS_EVENT_RADAR_GROUP,
 ];
 
 export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {

@@ -57,12 +57,12 @@ async function initAnalyticsTables(instance: DuckDBInstance): Promise<void> {
     );
   `);
 
-  conn.close();
+  conn.disconnectSync();
 }
 
 export async function closeDuckDb(): Promise<void> {
   if (_instance) {
-    await _instance.close();
+    _instance.closeSync();
     _instance = null;
   }
 }
@@ -83,13 +83,9 @@ export async function queryAnalytics<T = Record<string, unknown>>(
       prepared.bindVarchar(i + 1, String(params[i]));
     }
     const result = await prepared.run();
-    const rows: T[] = [];
-    const reader = await result.fetchAllRows();
-    for (const row of reader) {
-      rows.push(row as T);
-    }
-    return rows;
+    const rows = await result.getRowObjects();
+    return rows as T[];
   } finally {
-    conn.close();
+    conn.disconnectSync();
   }
 }

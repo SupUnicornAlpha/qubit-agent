@@ -168,6 +168,8 @@ import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
 import { IntegrationCenterPanel } from "../config/IntegrationCenterPanel";
 import { ScheduledJobsPanel } from "../config/ScheduledJobsPanel";
+import { ProvidersPanel } from "../config/ProvidersPanel";
+import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
@@ -219,6 +221,13 @@ export const MainContent: FC = () => {
     return (
       <main style={styles.main}>
         <BrokerAccountsPanel />
+      </main>
+    );
+  }
+  if (activeView === "quant") {
+    return (
+      <main style={styles.main}>
+        <QuantStudioPanel />
       </main>
     );
   }
@@ -3004,6 +3013,7 @@ const ConfigPanel: FC = () => {
         {activeConfigSubPage === "schedule" ? (
           <ScheduledJobsPanel workspaceId={currentWorkspaceId || undefined} projectId={currentProjectId || null} />
         ) : null}
+        {activeConfigSubPage === "providers" ? <ProvidersPanel /> : null}
         {activeConfigSubPage === "integration" ? (
           <IntegrationCenterPanel
             workspaceId={currentWorkspaceId || undefined}

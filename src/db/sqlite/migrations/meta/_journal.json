@@ -267,6 +267,27 @@
       "when": 1777352330000,
       "tag": "0038_recovery_phase2",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1777352340000,
+      "tag": "0039_provider_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1777352350000,
+      "tag": "0040_research_scenario",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1777352360000,
+      "tag": "0041_factor_rule_strategy",
+      "breakpoints": true
     }
   ]
 }

@@ -22,12 +22,13 @@ python_connectors/.venv/
 *.pyc
 
 # Product docs (PRD / ERD) — tracked separately; README screenshots are public
-docs/
+docs/*
 !docs/screenshots/
 !docs/screenshots/**
 !docs/LOOP_DRIVERS.md
 !docs/ARCHITECTURE.md
 !docs/QUANT_READINESS_ASSESSMENT.md
+!docs/FACTOR_RULE_STRATEGY_DESIGN.md
 .tmp-broker-test-home/
 
 # IDE metadata

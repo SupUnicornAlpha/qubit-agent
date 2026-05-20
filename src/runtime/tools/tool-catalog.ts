@@ -95,6 +95,32 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
   // 审计
   write_audit_log: { description: "关键操作写入 audit_log 留痕", category: "audit" },
   generate_report: { description: "汇总分析师信号生成 Markdown 研报", category: "audit" },
+
+  // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
+  "factor.register": {
+    description: "注册因子（落 factor_definition；走 Provider.validateExpr 做语法校验）",
+    category: "research",
+  },
+  "factor.compute": {
+    description: "计算因子值（走 FactorComputeProvider；P0 返回 in-memory rows）",
+    category: "research",
+  },
+  "factor.evaluate": {
+    description: "评估因子（IC/RankIC/IR/衰减/换手），结果写 factor_evaluation 留痕",
+    category: "research",
+  },
+  "rule.register": {
+    description: "注册规则（落 rule_definition；走 RuleEngineProvider.parse 校验 DSL）",
+    category: "research",
+  },
+  "rule.evaluate": {
+    description: "执行规则（走 RuleEngineProvider.evaluate；写 rule_evaluation_log 留痕）",
+    category: "research",
+  },
+  "strategy.compose": {
+    description: "组合 factor + rule 为可执行策略组合（落 strategy_composition）",
+    category: "research",
+  },
 };
 
 function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: string): ToolCatalogEntry {

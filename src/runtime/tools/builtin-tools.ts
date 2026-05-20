@@ -28,6 +28,24 @@ import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import { fuseSignals, type RawAnalystSignal } from "../msa/signal-fusion";
 import { runStockScreener } from "../screener/stock-screener";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
+import { factorService } from "../factor/factor-service";
+import { ruleService } from "../rule/rule-service";
+import { strategyComposer } from "../strategy/strategy-composer";
+import type {
+  FactorCategory,
+  FactorLang,
+  FactorStatus,
+} from "../factor/factor-service";
+import type {
+  RuleAppliesTo,
+  RuleLang,
+  RuleStatus,
+} from "../rule/rule-service";
+import type {
+  StrategyKind,
+  WeightMethod,
+} from "../strategy/strategy-composer";
+import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 import { resolveConnectorForTool } from "./tool-routes";
 
@@ -396,6 +414,134 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       universe: params.universe as "CN-A" | "US" | "HK" | undefined,
       criteria: params.criteria as Record<string, number> | undefined,
       topN: Number(params.topN ?? 10),
+    });
+  },
+
+  // ─── M2：因子/规则/策略 三段式 Agent 工具 ────────────────────────────────
+  // 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3
+  // 调用方向：handler → Service → ProviderResolver → 具体 Provider 实现
+
+  "factor.register": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("factor.register: project_id is required");
+    const definitionRaw = params.definition;
+    const definition =
+      definitionRaw && typeof definitionRaw === "object" && !Array.isArray(definitionRaw)
+        ? (definitionRaw as Record<string, unknown>)
+        : undefined;
+    return factorService.register({
+      projectId,
+      name: String(params.name ?? "").trim(),
+      category: String(params.category ?? "momentum") as FactorCategory,
+      expr: String(params.expr ?? "").trim(),
+      ...(params.lang ? { lang: String(params.lang) as FactorLang } : {}),
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      ...(definition ? { definition } : {}),
+    });
+  },
+
+  "factor.compute": async (_ctx, params) => {
+    const factorId = String(params.factor_id ?? "").trim();
+    if (!factorId) throw new Error("factor.compute: factor_id is required");
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : undefined;
+    return factorService.compute({
+      factorId,
+      startDate: String(params.start_date ?? "").trim(),
+      endDate: String(params.end_date ?? "").trim(),
+      ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "factor.evaluate": async (_ctx, params) => {
+    const factorId = String(params.factor_id ?? "").trim();
+    if (!factorId) throw new Error("factor.evaluate: factor_id is required");
+    const valuesRaw = params.values;
+    const values = Array.isArray(valuesRaw) ? (valuesRaw as FactorComputeRow[]) : [];
+    const futureRaw = params.future_returns;
+    const futureReturns = Array.isArray(futureRaw)
+      ? (futureRaw as FactorComputeRow[])
+      : undefined;
+    return factorService.evaluate({
+      factorId,
+      values,
+      ...(futureReturns ? { futureReturns } : {}),
+      ...(params.asof ? { asof: String(params.asof) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "rule.register": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("rule.register: project_id is required");
+    if (params.dsl === undefined) throw new Error("rule.register: dsl is required");
+    return ruleService.register({
+      projectId,
+      name: String(params.name ?? "").trim(),
+      ...(params.description ? { description: String(params.description) } : {}),
+      ...(params.applies_to ? { appliesTo: String(params.applies_to) as RuleAppliesTo } : {}),
+      ...(params.lang ? { lang: String(params.lang) as RuleLang } : {}),
+      dsl: params.dsl,
+      ...(params.status ? { status: String(params.status) as RuleStatus } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "rule.evaluate": async (_ctx, params) => {
+    const ruleId = String(params.rule_id ?? "").trim();
+    if (!ruleId) throw new Error("rule.evaluate: rule_id is required");
+    const contextRaw = params.context;
+    if (!contextRaw || typeof contextRaw !== "object" || Array.isArray(contextRaw)) {
+      throw new Error("rule.evaluate: context object is required");
+    }
+    return ruleService.evaluate({
+      ruleId,
+      context: contextRaw as unknown as RuleEvalContext,
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "strategy.compose": async (_ctx, params) => {
+    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    if (!strategyVersionId) {
+      throw new Error("strategy.compose: strategy_version_id is required");
+    }
+    const factorIdsRaw = params.factor_ids;
+    const ruleIdsRaw = params.rule_ids;
+    const factorIds = Array.isArray(factorIdsRaw)
+      ? factorIdsRaw.filter((s): s is string => typeof s === "string")
+      : undefined;
+    const ruleIds = Array.isArray(ruleIdsRaw)
+      ? ruleIdsRaw.filter((s): s is string => typeof s === "string")
+      : undefined;
+    const weightsRaw = params.factor_weights;
+    const factorWeights =
+      weightsRaw && typeof weightsRaw === "object" && !Array.isArray(weightsRaw)
+        ? (weightsRaw as Record<string, number>)
+        : undefined;
+    const paramsRaw = params.params;
+    const extraParams =
+      paramsRaw && typeof paramsRaw === "object" && !Array.isArray(paramsRaw)
+        ? (paramsRaw as Record<string, unknown>)
+        : undefined;
+    return strategyComposer.define({
+      strategyVersionId,
+      kind: String(params.kind ?? "factor_score") as StrategyKind,
+      ...(factorIds && factorIds.length > 0 ? { factorIds } : {}),
+      ...(ruleIds && ruleIds.length > 0 ? { ruleIds } : {}),
+      ...(params.weight_method
+        ? { weightMethod: String(params.weight_method) as WeightMethod }
+        : {}),
+      ...(factorWeights ? { factorWeights } : {}),
+      ...(params.rebalance_freq ? { rebalanceFreq: String(params.rebalance_freq) } : {}),
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(extraParams ? { params: extraParams } : {}),
     });
   },
 };

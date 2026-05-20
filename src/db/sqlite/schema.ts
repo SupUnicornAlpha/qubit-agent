@@ -94,6 +94,8 @@ export const workflowRun = sqliteTable("workflow_run", {
   cliLoopCommand: text("cli_loop_command"),
   /** Phase 2.5：CLI session 累计 resume 次数。 */
   cliSessionResumedCount: integer("cli_session_resumed_count").notNull().default(0),
+  /** 研究场景标签（见迁移 0040_research_scenario；Drizzle 侧不声明 FK 避免循环） */
+  researchScenarioId: text("research_scenario_id"),
 });
 
 /** Saved from IDE: indicator draft + optional Python signal (buy/sell) for backtest / live reuse. */
@@ -759,7 +761,25 @@ export const factorDefinition = sqliteTable("factor_definition", {
     enum: ["value", "momentum", "volatility", "news", "quality", "macro"],
   }).notNull(),
   definitionJson: text("definition_json", { mode: "json" }).notNull(),
+  /** 因子表达式（与 lang 配合）：qlib_expr / python / sql / jsonlogic */
+  expr: text("expr").notNull().default(""),
+  lang: text("lang", {
+    enum: ["qlib_expr", "python", "sql", "jsonlogic"],
+  })
+    .notNull()
+    .default("python"),
+  universe: text("universe").notNull().default("CN-A"),
+  /** 预测周期（天） */
+  horizon: integer("horizon").notNull().default(5),
+  status: text("status", {
+    enum: ["draft", "active", "archived"],
+  })
+    .notNull()
+    .default("draft"),
+  /** 计算用 Provider key（factor_compute kind），ProviderResolver 解析时使用 */
+  providerKey: text("provider_key").notNull().default("python_inline"),
   createdAt: createdAt(),
+  updatedAt: updatedAt(),
 });
 
 export const researchExperiment = sqliteTable("research_experiment", {
@@ -789,6 +809,9 @@ export const backtestRun = sqliteTable("backtest_run", {
   })
     .notNull()
     .default("pending"),
+  /** 回测 Provider 留痕：哪个 BacktestProvider 跑出了这次结果（sma_legacy / backtrader / veighna_bt …） */
+  providerId: text("provider_id"),
+  engineKey: text("engine_key").notNull().default("sma_legacy"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
 });
@@ -1892,3 +1915,215 @@ export const langgraphCheckpointWrite = sqliteTable(
     ),
   ]
 );
+
+// ─── M1：Provider 抽象层 ──────────────────────────────────────────────────────
+// 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §5.4：所有外部能力通过 Provider 接口隔离
+
+/**
+ * Provider 注册中心：因子计算 / 因子评估 / 规则引擎 / 回测引擎 / 实盘 EMS / 行情源 / LLM / 因子挖掘
+ * - status=enabled 且 priority 最高的同 kind Provider 默认被解析
+ * - is_builtin=1 标识 bootstrap 注册的内置 Provider（不可删除，可禁用）
+ * - is_fallback=1 标识最低保真 fallback（任何 kind 至少 1 个）
+ */
+export const providerRegistry = sqliteTable("provider_registry", {
+  id: id(),
+  kind: text("kind", {
+    enum: [
+      "factor_compute",
+      "factor_eval",
+      "rule_engine",
+      "backtest",
+      "live_ems",
+      "market_data",
+      "llm",
+      "factor_miner",
+    ],
+  }).notNull(),
+  providerKey: text("provider_key").notNull(),
+  displayName: text("display_name").notNull(),
+  description: text("description").notNull().default(""),
+  capabilityJson: text("capability_json", { mode: "json" }).notNull().default("{}"),
+  configJson: text("config_json", { mode: "json" }).notNull().default("{}"),
+  status: text("status", { enum: ["enabled", "disabled"] })
+    .notNull()
+    .default("enabled"),
+  priority: integer("priority").notNull().default(50),
+  version: text("version").notNull().default("0.1.0"),
+  isBuiltin: integer("is_builtin", { mode: "boolean" }).notNull().default(false),
+  isFallback: integer("is_fallback", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Provider 与业务对象的绑定，支持 project/workflow/strategy_version/global 粒度选型 */
+export const providerBinding = sqliteTable("provider_binding", {
+  id: id(),
+  scope: text("scope", {
+    enum: ["global", "project", "workflow", "strategy_version"],
+  }).notNull(),
+  scopeId: text("scope_id"),
+  kind: text("kind").notNull(),
+  providerId: text("provider_id")
+    .notNull()
+    .references(() => providerRegistry.id, { onDelete: "cascade" }),
+  paramsJson: text("params_json", { mode: "json" }).notNull().default("{}"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+// ─── M1：研究场景注册中心 ────────────────────────────────────────────────────
+// 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6：研究团队多场景化
+
+/** 研究场景：分析辩论 / 策略撰写 / 因子研究 / 规则研究 / 风控审查 / PM 组合 / 挖掘 / 选股 / 实盘 / 复盘 / 事件雷达 */
+export const researchScenario = sqliteTable("research_scenario", {
+  id: id(),
+  key: text("key").notNull(),
+  displayName: text("display_name").notNull(),
+  description: text("description").notNull().default(""),
+  /** 默认编组（agent_group.id）；不声明 FK 以避免循环 */
+  defaultAgentGroupId: text("default_agent_group_id"),
+  /** schema-driven 表单（字段 → FieldSchema） */
+  inputSchemaJson: text("input_schema_json", { mode: "json" }).notNull().default("{}"),
+  /** 主/副产物契约：{primary: 'factor_definition_batch', secondary: [...]} */
+  outputContractJson: text("output_contract_json", { mode: "json" }).notNull().default("{}"),
+  /** [{kind: 'factor_compute', level: 'required'}, ...] */
+  requiredCapabilitiesJson: text("required_capabilities_json", { mode: "json" })
+    .notNull()
+    .default("[]"),
+  /** 默认工具：builtinTools / connectors / mcpServers / defaultParams */
+  toolPresetJson: text("tool_preset_json", { mode: "json" }).notNull().default("{}"),
+  /** maxIterations / reactLoop / requireDebate / requireRiskVeto / requirePmApproval */
+  loopDefaultsJson: text("loop_defaults_json", { mode: "json" }).notNull().default("{}"),
+  status: text("status", { enum: ["enabled", "disabled"] })
+    .notNull()
+    .default("enabled"),
+  sortOrder: integer("sort_order").notNull().default(100),
+  isBuiltin: integer("is_builtin", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** 场景 → 编组：同一场景可绑定多个编组（默认 / 轻量 / 深度 / 用户自建） */
+export const researchScenarioGroup = sqliteTable("research_scenario_group", {
+  id: id(),
+  scenarioId: text("scenario_id")
+    .notNull()
+    .references(() => researchScenario.id, { onDelete: "cascade" }),
+  agentGroupId: text("agent_group_id").notNull(),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(100),
+  createdAt: createdAt(),
+});
+
+// ─── M1：因子-规则-策略 三段式骨架 ────────────────────────────────────────────
+// 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.1 §6.2 §6.3 §6.4
+// 因子值（symbol×date×factor 高基数）由 DuckDB+Parquet 承载，本表只存控制面/评估面
+
+/** 因子质量评估：IC / RankIC / IR / 衰减 / 换手率 */
+export const factorEvaluation = sqliteTable("factor_evaluation", {
+  id: id(),
+  factorId: text("factor_id")
+    .notNull()
+    .references(() => factorDefinition.id, { onDelete: "cascade" }),
+  asof: text("asof").notNull(),
+  universe: text("universe").notNull(),
+  providerId: text("provider_id"),
+  ic: real("ic"),
+  rankIc: real("rank_ic"),
+  ir: real("ir"),
+  turnover: real("turnover"),
+  decayCurveJson: text("decay_curve_json", { mode: "json" }).notNull().default("[]"),
+  groupReturnsJson: text("group_returns_json", { mode: "json" }).notNull().default("[]"),
+  sampleSize: integer("sample_size").notNull().default(0),
+  latencyMs: integer("latency_ms").notNull().default(0),
+  error: text("error"),
+  createdAt: createdAt(),
+});
+
+/** 规则定义：JSONLogic 子集 / Python；applies_to 决定挂在选股/过滤/打分/排序/风控的哪一段 */
+export const ruleDefinition = sqliteTable("rule_definition", {
+  id: id(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  appliesTo: text("applies_to", {
+    enum: ["select", "filter", "score", "order", "risk"],
+  })
+    .notNull()
+    .default("score"),
+  lang: text("lang", { enum: ["jsonlogic", "python"] })
+    .notNull()
+    .default("jsonlogic"),
+  dslJson: text("dsl_json", { mode: "json" }).notNull().default("{}"),
+  status: text("status", { enum: ["draft", "active", "archived"] })
+    .notNull()
+    .default("draft"),
+  providerKey: text("provider_key").notNull().default("jsonlogic"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** 规则评估留痕：方便 debug 与归因 */
+export const ruleEvaluationLog = sqliteTable("rule_evaluation_log", {
+  id: id(),
+  ruleId: text("rule_id")
+    .notNull()
+    .references(() => ruleDefinition.id, { onDelete: "cascade" }),
+  asof: text("asof").notNull(),
+  inputHash: text("input_hash").notNull().default(""),
+  outputJson: text("output_json", { mode: "json" }).notNull().default("{}"),
+  sampleSize: integer("sample_size").notNull().default(0),
+  latencyMs: integer("latency_ms").notNull().default(0),
+  error: text("error"),
+  createdAt: createdAt(),
+});
+
+/** 策略组合：factor_ids + rule_ids + 权重方法 + 调仓频率 + 选股域 */
+export const strategyComposition = sqliteTable("strategy_composition", {
+  id: id(),
+  strategyVersionId: text("strategy_version_id")
+    .notNull()
+    .references(() => strategyVersion.id, { onDelete: "cascade" }),
+  kind: text("kind", {
+    enum: ["factor_score", "rule", "hybrid", "script"],
+  })
+    .notNull()
+    .default("factor_score"),
+  factorIdsJson: text("factor_ids_json", { mode: "json" }).notNull().default("[]"),
+  ruleIdsJson: text("rule_ids_json", { mode: "json" }).notNull().default("[]"),
+  weightMethod: text("weight_method", {
+    enum: ["equal", "rank_ic_weighted", "ic_ir_weighted", "manual"],
+  })
+    .notNull()
+    .default("equal"),
+  rebalanceFreq: text("rebalance_freq").notNull().default("1d"),
+  universe: text("universe").notNull().default("CN-A"),
+  paramsJson: text("params_json", { mode: "json" }).notNull().default("{}"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** 挖掘任务编排留痕：因子挖掘 / 规则挖掘 / 协演化 */
+export const discoveryJob = sqliteTable("discovery_job", {
+  id: id(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id),
+  workflowRunId: text("workflow_run_id"),
+  kind: text("kind", {
+    enum: ["factor_gp", "factor_alpha101", "factor_llm", "rule_llm", "genome_evolve"],
+  }).notNull(),
+  inputJson: text("input_json", { mode: "json" }).notNull().default("{}"),
+  outputJson: text("output_json", { mode: "json" }).notNull().default("{}"),
+  status: text("status", {
+    enum: ["pending", "running", "succeeded", "failed", "cancelled", "stopped_early"],
+  })
+    .notNull()
+    .default("pending"),
+  error: text("error"),
+  startedAt: createdAt(),
+  endedAt: text("ended_at"),
+  createdAt: createdAt(),
+});

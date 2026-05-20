@@ -11,6 +11,8 @@ import {
   loadBuiltinConnectorSettings,
   type BuiltinConnectorInitConfigs,
 } from "../runtime/config/builtin-connector-settings";
+import { bootstrapProviders } from "../runtime/provider/bootstrap";
+import { bootstrapResearchScenarios } from "../runtime/research-scenario/bootstrap";
 
 export type { BuiltinConnectorInitConfigs };
 
@@ -33,6 +35,11 @@ export async function reloadBuiltinConnectorsFromSettings(): Promise<BuiltinConn
 export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConfigs): Promise<void> {
   bootstrapPromise ??= (async () => {
     await runMigrations();
+    // M1: Provider 抽象层与研究场景注册中心；先于 connector init，
+    // 这样后续 connector / runtime 都可直接走 providerResolver。
+    await bootstrapProviders();
+    await bootstrapResearchScenarios();
+
     const data = new QubitNativeDataConnector();
     const news = new QubitNativeNewsConnector();
     connectorRegistry.register("qubit-data", data);

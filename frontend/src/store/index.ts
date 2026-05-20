@@ -18,7 +18,19 @@ export interface ChartContextPayload {
   fetchedAt: string;
 }
 
-export type ActiveView = "ide" | "chart" | "chat" | "team" | "trader" | "monitor" | "broker" | "config";
+export type ActiveView =
+  | "ide"
+  | "chart"
+  | "chat"
+  | "team"
+  | "trader"
+  | "quant"
+  | "monitor"
+  | "broker"
+  | "config";
+
+/** 量化工作台 tab */
+export type QuantTab = "factor" | "discovery" | "backtest";
 
 import {
   applyUiAppearance,
@@ -109,7 +121,15 @@ export interface IdePanelsState {
 
 
 /** 配置中心左侧 / 顶部分类（与 ConfigPanel 条件渲染一致） */
-export type ConfigSubPage = "llm" | "datasources" | "mcp" | "skills" | "agent" | "integration" | "schedule";
+export type ConfigSubPage =
+  | "llm"
+  | "datasources"
+  | "mcp"
+  | "skills"
+  | "agent"
+  | "integration"
+  | "schedule"
+  | "providers";
 
 export interface AppState {
   backendConnected: boolean;
@@ -136,6 +156,8 @@ export interface AppState {
   setChartContext: (v: ChartContextPayload | null) => void;
   configSubPage: ConfigSubPage;
   setConfigSubPage: (page: ConfigSubPage) => void;
+  quantTab: QuantTab;
+  setQuantTab: (tab: QuantTab) => void;
   /** 图表请求版本号，供 IDE 内嵌 K 线监听刷新 */
   chartReloadNonce: number;
   requestChartReload: () => void;
@@ -306,6 +328,8 @@ export const useAppStore = create<AppState>((set) => ({
   setChartContext: (chartContext) => set({ chartContext }),
   configSubPage: "llm",
   setConfigSubPage: (configSubPage) => set({ configSubPage }),
+  quantTab: "factor",
+  setQuantTab: (quantTab) => set({ quantTab }),
   chartReloadNonce: 0,
   requestChartReload: () => set((s) => ({ chartReloadNonce: s.chartReloadNonce + 1 })),
   chartSpec: readPersistedChartSpec(),

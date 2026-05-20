@@ -2230,3 +2230,496 @@ export async function getStrategyRuntime(id: string): Promise<{
   return res.data;
 }
 
+// ─── M4: Provider registry ──────────────────────────────────────────────────
+
+export type ProviderKind =
+  | "factor_compute"
+  | "factor_eval"
+  | "rule_engine"
+  | "backtest"
+  | "live_ems"
+  | "market_data"
+  | "llm"
+  | "factor_miner";
+
+export interface ProviderRecord {
+  id: string;
+  kind: ProviderKind;
+  providerKey: string;
+  displayName: string;
+  description?: string;
+  capability: Record<string, unknown>;
+  status: "enabled" | "disabled";
+  priority: number;
+  version: string;
+  isBuiltin: boolean;
+  isFallback: boolean;
+  updatedAt: string;
+}
+
+export interface ProviderHealthRecord {
+  kind: ProviderKind;
+  providerKey: string;
+  ok: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
+export async function listProviders(kind?: ProviderKind): Promise<ProviderRecord[]> {
+  const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  const res = await httpGet<{ ok: boolean; data: ProviderRecord[] }>(
+    `/api/v1/providers${q}`
+  );
+  return res.data;
+}
+
+export async function patchProvider(
+  id: string,
+  patch: { status?: "enabled" | "disabled"; priority?: number }
+): Promise<void> {
+  await httpPatch<{ ok: boolean }>(`/api/v1/providers/${id}`, patch);
+}
+
+export async function listProviderHealth(): Promise<ProviderHealthRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: ProviderHealthRecord[] }>(
+    "/api/v1/providers/health"
+  );
+  return res.data;
+}
+
+// ─── M4: Factor / Composition / Backtest Job / Discovery ────────────────────
+
+export type FactorCategory = "value" | "momentum" | "volatility" | "news" | "quality" | "macro";
+export type FactorLang = "qlib_expr" | "python" | "sql" | "jsonlogic";
+export type FactorStatus = "draft" | "active" | "archived";
+
+export interface FactorRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  category: FactorCategory;
+  expr: string;
+  lang: FactorLang;
+  universe: string;
+  horizon: number;
+  status: FactorStatus;
+  providerKey: string;
+  definition: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FactorValueRow {
+  symbol: string;
+  date: string;
+  value: number | null;
+}
+
+export interface FactorValueStats {
+  rowCount: number;
+  symbolCount: number;
+  minDate: string | null;
+  maxDate: string | null;
+}
+
+export interface FactorComputeResultDto {
+  rows: FactorValueRow[];
+  meta: { factorId?: string; rowCount: number; latencyMs: number };
+}
+
+export interface FactorEvalResultDto {
+  ic: number;
+  rankIc: number;
+  ir: number;
+  turnover: number;
+  decayCurve: number[];
+  groupReturns: number[];
+  sampleSize: number;
+  latencyMs: number;
+  evaluationId?: string;
+  meta?: { horizonDays: number; decayHorizons: number[] };
+  error?: string;
+}
+
+export interface FactorEvaluationLogRow {
+  id: string;
+  factorId: string;
+  asof: string;
+  universe: string;
+  providerId: string | null;
+  ic: number | null;
+  rankIc: number | null;
+  ir: number | null;
+  turnover: number | null;
+  sampleSize: number;
+  latencyMs: number;
+  error: string | null;
+  createdAt: string;
+}
+
+export async function listFactors(filter?: {
+  projectId?: string;
+  category?: FactorCategory;
+  status?: FactorStatus;
+}): Promise<FactorRecord[]> {
+  const qs: string[] = [];
+  if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
+  if (filter?.category) qs.push(`category=${encodeURIComponent(filter.category)}`);
+  if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
+  const q = qs.length ? `?${qs.join("&")}` : "";
+  const res = await httpGet<{ ok: boolean; data: FactorRecord[] }>(`/api/v1/factors${q}`);
+  return res.data;
+}
+
+export async function getFactor(id: string): Promise<FactorRecord> {
+  const res = await httpGet<{ ok: boolean; data: FactorRecord }>(`/api/v1/factors/${id}`);
+  return res.data;
+}
+
+export async function registerFactor(body: {
+  projectId: string;
+  name: string;
+  category: FactorCategory;
+  expr: string;
+  lang?: FactorLang;
+  universe?: string;
+  horizon?: number;
+  status?: FactorStatus;
+  providerKey?: string;
+  definition?: Record<string, unknown>;
+}): Promise<FactorRecord> {
+  const res = await httpPost<{ ok: boolean; data: FactorRecord }>(`/api/v1/factors`, body);
+  return res.data;
+}
+
+export async function setFactorStatus(id: string, status: FactorStatus): Promise<void> {
+  await httpPatch<{ ok: boolean }>(`/api/v1/factors/${id}`, { status });
+}
+
+export async function computeFactor(
+  id: string,
+  body: { startDate: string; endDate: string; symbols?: string[]; providerKey?: string }
+): Promise<FactorComputeResultDto> {
+  const res = await httpPost<{ ok: boolean; data: FactorComputeResultDto }>(
+    `/api/v1/factors/${id}/compute`,
+    body
+  );
+  return res.data;
+}
+
+export async function autoEvaluateFactor(
+  id: string,
+  body: {
+    startDate: string;
+    endDate: string;
+    symbols?: string[];
+    horizonDays?: number;
+    decayHorizons?: number[];
+    groupCount?: number;
+    providerKey?: string;
+  }
+): Promise<FactorEvalResultDto> {
+  const res = await httpPost<{ ok: boolean; data: FactorEvalResultDto }>(
+    `/api/v1/factors/${id}/auto-evaluate`,
+    body
+  );
+  return res.data;
+}
+
+export async function loadFactorValues(
+  id: string,
+  q?: { symbols?: string[]; startDate?: string; endDate?: string; latestN?: number }
+): Promise<FactorValueRow[]> {
+  const qs: string[] = [];
+  if (q?.symbols && q.symbols.length > 0) qs.push(`symbols=${encodeURIComponent(q.symbols.join(","))}`);
+  if (q?.startDate) qs.push(`startDate=${encodeURIComponent(q.startDate)}`);
+  if (q?.endDate) qs.push(`endDate=${encodeURIComponent(q.endDate)}`);
+  if (typeof q?.latestN === "number") qs.push(`latestN=${q.latestN}`);
+  const url = `/api/v1/factors/${id}/values${qs.length ? `?${qs.join("&")}` : ""}`;
+  const res = await httpGet<{ ok: boolean; data: FactorValueRow[] }>(url);
+  return res.data;
+}
+
+export async function factorValuesStats(id: string): Promise<FactorValueStats> {
+  const res = await httpGet<{ ok: boolean; data: FactorValueStats }>(
+    `/api/v1/factors/${id}/values/stats`
+  );
+  return res.data;
+}
+
+export async function listFactorEvaluations(id: string, limit = 20): Promise<FactorEvaluationLogRow[]> {
+  const res = await httpGet<{ ok: boolean; data: FactorEvaluationLogRow[] }>(
+    `/api/v1/factors/${id}/evaluations?limit=${limit}`
+  );
+  return res.data;
+}
+
+// ── Backtest Job ──
+
+export type BacktestJobStatus = "pending" | "running" | "completed" | "failed";
+
+export interface BacktestSignalSpecFactorScore {
+  kind: "factor_score";
+  factorId?: string;
+  expr: string;
+  lang: "qlib_expr" | "python" | "sql" | "jsonlogic";
+  reverse?: boolean;
+}
+export type BacktestSignalSpec = BacktestSignalSpecFactorScore | { kind: string; [k: string]: unknown };
+
+export interface BacktestRequestDto {
+  strategyVersionId?: string;
+  signals: BacktestSignalSpec;
+  universe: string;
+  symbols: string[];
+  startDate: string;
+  endDate: string;
+  capital: number;
+  costs: { commissionBps: number; slippageBps: number; minCommission?: number };
+  rebalance?: "daily" | "weekly" | "monthly";
+  topN?: number;
+  longShort?: boolean;
+  benchmark?: string;
+}
+
+export interface BacktestMetricsDto {
+  totalReturn: number;
+  annualReturn: number;
+  annualVol: number;
+  sharpe: number;
+  maxDrawdown: number;
+  winRate: number;
+  tradeCount: number;
+  turnover: number;
+}
+
+export interface BacktestEquityPoint {
+  date: string;
+  equity: number;
+  benchmarkEquity?: number;
+}
+
+export interface BacktestTradeDto {
+  date: string;
+  symbol: string;
+  side: "buy" | "sell";
+  qty: number;
+  price: number;
+  commission: number;
+}
+
+export interface BacktestResultDto {
+  equityCurve: BacktestEquityPoint[];
+  trades: BacktestTradeDto[];
+  metrics: BacktestMetricsDto;
+  meta: { latencyMs: number; sampleSize: number; barCount: number; skippedDays: number };
+  error?: string;
+}
+
+export interface BacktestJobRecord {
+  id: string;
+  strategyVersionId: string;
+  status: BacktestJobStatus;
+  engineKey: string;
+  providerId: string | null;
+  config: BacktestRequestDto;
+  result: BacktestResultDto | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export interface BacktestJobSubmitBody {
+  strategyVersionId: string;
+  compositionId?: string;
+  signals?: BacktestSignalSpec;
+  symbols: string[];
+  universe?: string;
+  startDate: string;
+  endDate: string;
+  capital?: number;
+  costs?: { commissionBps: number; slippageBps: number; minCommission?: number };
+  rebalance?: "daily" | "weekly" | "monthly";
+  topN?: number;
+  longShort?: boolean;
+  benchmark?: string;
+  providerKey?: string;
+}
+
+export async function listBacktestJobs(filter?: {
+  strategyVersionId?: string;
+  status?: BacktestJobStatus;
+}): Promise<BacktestJobRecord[]> {
+  const qs: string[] = [];
+  if (filter?.strategyVersionId)
+    qs.push(`strategy_version_id=${encodeURIComponent(filter.strategyVersionId)}`);
+  if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
+  const url = `/api/v1/backtest-jobs${qs.length ? `?${qs.join("&")}` : ""}`;
+  const res = await httpGet<{ ok: boolean; data: BacktestJobRecord[] }>(url);
+  return res.data;
+}
+
+export async function getBacktestJob(id: string): Promise<BacktestJobRecord> {
+  const res = await httpGet<{ ok: boolean; data: BacktestJobRecord }>(
+    `/api/v1/backtest-jobs/${id}`
+  );
+  return res.data;
+}
+
+export async function runBacktestJobNow(body: BacktestJobSubmitBody): Promise<BacktestJobRecord> {
+  const res = await httpPost<{ ok: boolean; data: BacktestJobRecord }>(
+    `/api/v1/backtest-jobs/run-now`,
+    body
+  );
+  return res.data;
+}
+
+// ── Discovery ──
+
+export type DiscoveryKind =
+  | "factor_alpha101"
+  | "factor_gp"
+  | "factor_llm"
+  | "rule_llm"
+  | "genome_evolve";
+export type DiscoveryStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "stopped_early";
+
+export interface DiscoveryCandidateDto {
+  id: string;
+  expr: string;
+  lang: "qlib_expr";
+  description?: string;
+  category?: string;
+  metrics: { ic: number; rankIc: number; sampleSize: number; score: number };
+  error?: string;
+}
+
+export interface DiscoveryJobRecord {
+  id: string;
+  projectId: string;
+  workflowRunId: string | null;
+  kind: DiscoveryKind;
+  status: DiscoveryStatus;
+  input: {
+    projectId: string;
+    kind: DiscoveryKind;
+    symbols: string[];
+    startDate: string;
+    endDate: string;
+    horizonDays?: number;
+    topK?: number;
+    candidateCount?: number;
+    seed?: number;
+  };
+  candidates: DiscoveryCandidateDto[];
+  startedAt: string;
+  endedAt: string | null;
+  error: string | null;
+}
+
+export interface DiscoverySubmitBody {
+  projectId: string;
+  kind: DiscoveryKind;
+  symbols: string[];
+  startDate: string;
+  endDate: string;
+  horizonDays?: number;
+  topK?: number;
+  candidateCount?: number;
+  seed?: number;
+  workflowRunId?: string;
+}
+
+export async function listDiscoveryJobs(filter?: {
+  projectId?: string;
+  kind?: DiscoveryKind;
+}): Promise<DiscoveryJobRecord[]> {
+  const qs: string[] = [];
+  if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
+  if (filter?.kind) qs.push(`kind=${encodeURIComponent(filter.kind)}`);
+  const url = `/api/v1/discovery-jobs${qs.length ? `?${qs.join("&")}` : ""}`;
+  const res = await httpGet<{ ok: boolean; data: DiscoveryJobRecord[] }>(url);
+  return res.data;
+}
+
+export async function getDiscoveryJob(id: string): Promise<DiscoveryJobRecord> {
+  const res = await httpGet<{ ok: boolean; data: DiscoveryJobRecord }>(
+    `/api/v1/discovery-jobs/${id}`
+  );
+  return res.data;
+}
+
+export async function runDiscoveryNow(body: DiscoverySubmitBody): Promise<DiscoveryJobRecord> {
+  const res = await httpPost<{ ok: boolean; data: DiscoveryJobRecord }>(
+    `/api/v1/discovery-jobs/run-now`,
+    body
+  );
+  return res.data;
+}
+
+export async function promoteDiscoveryCandidate(
+  jobId: string,
+  candidateId: string,
+  body: { name: string; category?: FactorCategory; status?: FactorStatus }
+): Promise<FactorRecord> {
+  const res = await httpPost<{ ok: boolean; data: FactorRecord }>(
+    `/api/v1/discovery-jobs/${jobId}/candidates/${encodeURIComponent(candidateId)}/promote`,
+    body
+  );
+  return res.data;
+}
+
+// ── Strategy + StrategyVersion (前端选择用) ──
+
+export interface StrategyVersionFlatRecord {
+  id: string;
+  strategyId: string;
+  versionTag: string;
+  createdAt: string;
+  strategyName: string;
+  strategyStyle: string;
+  projectId: string;
+}
+
+export async function listStrategyVersions(projectId?: string): Promise<StrategyVersionFlatRecord[]> {
+  const url = projectId
+    ? `/api/v1/strategies/versions?project_id=${encodeURIComponent(projectId)}`
+    : `/api/v1/strategies/versions`;
+  const res = await httpGet<{ ok: boolean; data: StrategyVersionFlatRecord[] }>(url);
+  return res.data;
+}
+
+// ── Strategy Composition ──
+
+export type StrategyKind = "factor_only" | "rule_only" | "factor_with_rule" | "ensemble" | "ml_model";
+export type WeightMethod = "equal" | "fixed" | "ic_weighted" | "ml_optimized";
+
+export interface StrategyCompositionRecord {
+  id: string;
+  strategyVersionId: string;
+  kind: StrategyKind;
+  factorIds: string[];
+  ruleIds: string[];
+  weightMethod: WeightMethod;
+  factorWeights: Record<string, number> | null;
+  rebalanceFreq: string;
+  universe: string;
+  params: Record<string, unknown>;
+  createdAt: string;
+}
+
+export async function listStrategyCompositions(
+  strategyVersionId: string
+): Promise<StrategyCompositionRecord[]> {
+  const res = await httpGet<{ ok: boolean; data: StrategyCompositionRecord[] }>(
+    `/api/v1/strategy-compositions?strategy_version_id=${encodeURIComponent(strategyVersionId)}`
+  );
+  return res.data;
+}
+
+

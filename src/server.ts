@@ -21,6 +21,14 @@ import { strategyRuntimeRouter } from "./routes/strategy-runtime.routes";
 import { traderRouter } from "./routes/trader.routes";
 import { fsiRouter } from "./routes/fsi.routes";
 import { systemRouter } from "./routes/system.routes";
+import { providerRouter } from "./routes/provider.routes";
+import { researchScenarioRouter } from "./routes/research-scenario.routes";
+import { factorRouter } from "./routes/factor.routes";
+import { ruleRouter } from "./routes/rule.routes";
+import { backtestJobRouter } from "./routes/backtest-job.routes";
+import { discoveryRouter } from "./routes/discovery.routes";
+import { strategyRouter } from "./routes/strategy.routes";
+import { strategyCompositionRouter } from "./routes/strategy-composition.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
@@ -55,6 +63,15 @@ app.route("/api/v1/strategy-runtimes", strategyRuntimeRouter);
 app.route("/api/v1/trader", traderRouter);
 app.route("/api/v1/fsi", fsiRouter);
 app.route("/api/v1/system", systemRouter);
+// M1 + M2：Provider 抽象层 / 研究场景 / 因子-规则-策略 三段式
+app.route("/api/v1/providers", providerRouter);
+app.route("/api/v1/research-scenarios", researchScenarioRouter);
+app.route("/api/v1/factors", factorRouter);
+app.route("/api/v1/rules", ruleRouter);
+app.route("/api/v1/backtest-jobs", backtestJobRouter);
+app.route("/api/v1/discovery-jobs", discoveryRouter);
+app.route("/api/v1/strategies", strategyRouter);
+app.route("/api/v1/strategy-compositions", strategyCompositionRouter);
 app.get("/api/v1/workflows/:id/stream", (c) => {
   const runId = c.req.query("runId");
   if (!runId) return c.json({ error: "runId is required" }, 400);
