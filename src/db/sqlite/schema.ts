@@ -81,6 +81,13 @@ export const workflowRun = sqliteTable("workflow_run", {
   loopOptionsJson: text("loop_options_json", { mode: "json" }).notNull().default("{}"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
+  /** LangGraph checkpointer 的 thread_id（一般等于 workflow_run.id；显式存储便于跨表查询） */
+  langgraphThreadId: text("langgraph_thread_id"),
+  /** 最近一次写入的 LangGraph checkpoint id；用于 sweep 时判断断点存在性 */
+  lastCheckpointId: text("last_checkpoint_id"),
+  lastCheckpointAt: text("last_checkpoint_at"),
+  /** 累计被续跑/重试次数（Phase 1 用于幂等限流） */
+  resumeCount: integer("resume_count").notNull().default(0),
 });
 
 /** Saved from IDE: indicator draft + optional Python signal (buy/sell) for backtest / live reuse. */
@@ -1499,16 +1506,37 @@ export const backtestJob = sqliteTable("backtest_job", {
   updatedAt: updatedAt(),
 });
 
+/**
+ * 即时通讯渠道枚举：
+ * - telegram  / feishu  / wecom (企业微信)
+ * - whatsapp  / dingtalk
+ * - webhook    （通用 outbound HTTP）
+ */
+export const COMMUNICATION_CHANNEL_KINDS = [
+  "telegram",
+  "feishu",
+  "wecom",
+  "whatsapp",
+  "dingtalk",
+  "webhook",
+] as const;
+export type CommunicationChannelKind = (typeof COMMUNICATION_CHANNEL_KINDS)[number];
+
 export const communicationChannel = sqliteTable("communication_channel", {
   id: id(),
   workspaceId: text("workspace_id")
     .notNull()
     .references(() => workspace.id),
   projectId: text("project_id").references(() => project.id),
-  kind: text("kind", { enum: ["telegram", "webhook"] }).notNull(),
+  kind: text("kind", { enum: COMMUNICATION_CHANNEL_KINDS }).notNull(),
   name: text("name").notNull(),
   externalChatId: text("external_chat_id").notNull(),
   secretRef: text("secret_ref").notNull().default(""),
+  /**
+   * 各 provider 私有配置（webhook URL / app_id / corp_id / agent_id / phone_number_id / sign 等）。
+   * 与 secretRef 互补：通用敏感凭证放 secretRef，结构化参数放此处。
+   */
+  metaJson: text("meta_json", { mode: "json" }).notNull().default("{}"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -1517,7 +1545,8 @@ export const communicationChannel = sqliteTable("communication_channel", {
 export const communicationMessageLog = sqliteTable("communication_message_log", {
   id: id(),
   direction: text("direction", { enum: ["inbound", "outbound"] }).notNull(),
-  channelKind: text("channel_kind", { enum: ["telegram", "webhook"] }).notNull(),
+  channelKind: text("channel_kind", { enum: COMMUNICATION_CHANNEL_KINDS }).notNull(),
+  channelId: text("channel_id").references(() => communicationChannel.id),
   externalChatId: text("external_chat_id").notNull(),
   externalMessageId: text("external_message_id"),
   payloadJson: text("payload_json", { mode: "json" }).notNull(),
@@ -1784,3 +1813,48 @@ export const auditLog = sqliteTable("audit_log", {
   detailJson: text("detail_json", { mode: "json" }).notNull(),
   createdAt: createdAt(),
 });
+
+// ─── LangGraph checkpointer 持久化 ────────────────────────────────────────────
+// 每个 ReAct 节点完成后 LangGraph 会调用 `put`，把当前 channel state 落到这里。
+// pending writes 在节点中断时存放未提交的写入，便于重启后恢复同一节点。
+
+export const langgraphCheckpoint = sqliteTable(
+  "langgraph_checkpoint",
+  {
+    threadId: text("thread_id").notNull(),
+    checkpointNs: text("checkpoint_ns").notNull().default(""),
+    checkpointId: text("checkpoint_id").notNull(),
+    parentCheckpointId: text("parent_checkpoint_id"),
+    type: text("type").notNull().default("json"),
+    checkpointBlob: text("checkpoint_blob").notNull(),
+    metadataBlob: text("metadata_blob").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("idx_langgraph_checkpoint_pk").on(t.threadId, t.checkpointNs, t.checkpointId),
+  ]
+);
+
+export const langgraphCheckpointWrite = sqliteTable(
+  "langgraph_checkpoint_write",
+  {
+    threadId: text("thread_id").notNull(),
+    checkpointNs: text("checkpoint_ns").notNull().default(""),
+    checkpointId: text("checkpoint_id").notNull(),
+    taskId: text("task_id").notNull(),
+    idx: integer("idx").notNull(),
+    channel: text("channel").notNull(),
+    type: text("type").notNull().default("json"),
+    valueBlob: text("value_blob").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("idx_langgraph_checkpoint_write_pk").on(
+      t.threadId,
+      t.checkpointNs,
+      t.checkpointId,
+      t.taskId,
+      t.idx
+    ),
+  ]
+);

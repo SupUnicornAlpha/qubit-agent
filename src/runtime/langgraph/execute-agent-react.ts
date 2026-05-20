@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { END, START, StateGraph } from "@langchain/langgraph";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
@@ -13,10 +13,8 @@ import { actNode } from "./nodes/act";
 import { observeNode } from "./nodes/observe";
 import { perceiveNode } from "./nodes/perceive";
 import { reasonNode } from "./nodes/reason";
-import {
-  resolveForceReactLoop,
-  shouldStopReactLoopAfterObserve,
-} from "./react-loop-policy";
+import { resolveForceReactLoop, shouldStopReactLoopAfterObserve } from "./react-loop-policy";
+import { getCheckpointSaver } from "./sqlite-checkpoint-saver";
 import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
 
 export type ExecuteAgentReactParams = {
@@ -33,6 +31,12 @@ export type ExecuteAgentReactParams = {
   streamSource?: "native" | "a2a";
   /** When true, mark workflow_run completed/failed on exit */
   updateWorkflowStatus?: boolean;
+  /**
+   * Resume an existing LangGraph checkpoint (thread_id=workflowId).
+   * - false (default): fresh execution; LangGraph 仍写 checkpoint，但首次调用使用 initialState
+   * - true: 跳过 initialState，使用 `app.invoke(null, ...)` 从最近的 checkpoint 续跑
+   */
+  resume?: boolean;
 };
 
 export type ExecuteAgentReactResult = {
@@ -276,14 +280,30 @@ export async function executeAgentReact(
   );
   graph.addEdge("finalize", END);
 
-  const app = graph.compile();
-  const result = (await app.invoke({ state: initialState })) as { state: AgentGraphState };
+  const app = graph.compile({ checkpointer: getCheckpointSaver() });
+  const runnableConfig = {
+    configurable: { thread_id: params.workflowId },
+    recursionLimit: Math.max(50, params.def.maxIterations * 8),
+  };
+
+  let invokeInput: { state: AgentGraphState } | null = { state: initialState };
+  if (params.resume) {
+    const tuple = await getCheckpointSaver().getTuple({
+      configurable: { thread_id: params.workflowId },
+    });
+    if (tuple) {
+      invokeInput = null;
+      await db
+        .update(workflowRun)
+        .set({ resumeCount: sql`${workflowRun.resumeCount} + 1` })
+        .where(eq(workflowRun.id, params.workflowId));
+    }
+  }
+
+  const result = (await app.invoke(invokeInput, runnableConfig)) as { state: AgentGraphState };
   state = result.state;
 
-  const finalResponse = (state.finalResponse ?? { status: "completed" }) as Record<
-    string,
-    unknown
-  >;
+  const finalResponse = (state.finalResponse ?? { status: "completed" }) as Record<string, unknown>;
   const terminalStatus = finalResponse["status"] === "terminated" ? "failed" : "completed";
 
   await db

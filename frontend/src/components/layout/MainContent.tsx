@@ -6,7 +6,6 @@ import {
   checkBrokerHealth,
   createChatSession,
   createProject,
-  createScheduledJob,
   createSessionMessage,
   createIntentOrder,
   createWorkflow,
@@ -39,9 +38,8 @@ import {
   listMcpProjectInstalls,
   listMcpSources,
   listMcpServers,
-  listScheduledJobRuns,
-  listScheduledJobs,
   appendAgentDraftSkills,
+  deleteChatSession,
   deleteSkillMarketInstall,
   deleteWorkflow,
   getSkillMarketStatus,
@@ -58,15 +56,12 @@ import {
   listStrategyScripts,
   getWorkflowArtifacts,
   saveWorkflowReportArtifact,
-  listIntegrationChannels,
-  listIntegrationLogs,
   listIntentOrders,
   listProjects,
   listSessionMessages,
   listWorkspaces,
   createStrategyScript,
   patchSessionMessage,
-  patchScheduledJob,
   patchWorkflow,
   reloadAgents,
   processWorkflowCompensations,
@@ -82,7 +77,6 @@ import {
   testMcpCall,
   testMcpProjectInstall,
   upsertBrokerAccount,
-  upsertIntegrationChannel,
   upsertMcpBinding,
   upsertMcpSource,
   upsertMcpServer,
@@ -92,7 +86,6 @@ import {
   listWorkflowCompensations,
   enqueueWorkflowCompensation,
   installMcpMarket,
-  runScheduledJobNow,
   syncMcpSource,
   uninstallMcpProjectInstall,
 } from "../../api/backend";
@@ -130,11 +123,7 @@ import type {
   SessionA2AMessageItem,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
-  CommunicationChannelRecord,
-  CommunicationMessageLogRecord,
   WorkflowCompensationTaskRecord,
-  ScheduledJobRecord,
-  ScheduledJobRunRecord,
   AnalystTeamGraphPayload,
   AnalystTeamGraphInteraction,
   AnalystTeamGraphAgentStep,
@@ -177,6 +166,8 @@ import { MonitorDashboard } from "../monitor/MonitorDashboard";
 import { TraderLivePanel } from "../trader/TraderLivePanel";
 import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
+import { IntegrationCenterPanel } from "../config/IntegrationCenterPanel";
+import { ScheduledJobsPanel } from "../config/ScheduledJobsPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
@@ -584,6 +575,34 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     }
   };
 
+  /**
+   * 硬删除一个会话。
+   * 二次确认通过 window.confirm —— 因为是硬删除，必须明确告知用户：将一并清理该会话下的
+   * 所有工作流与 agent / a2a / intent_order 等衍生数据，无法恢复。
+   */
+  const onHardDeleteSession = async (sessionId: string, sessionTitle: string) => {
+    const ok = window.confirm(
+      `确认硬删除会话「${sessionTitle}」？\n\n` +
+        "将一并删除该会话下的所有工作流（含 agent / 步骤 / 工具调用 / langgraph checkpoint）、" +
+        "聊天消息、IDE 策略脚本和绑定的定时任务，且【不可恢复】。\n\n" +
+        "如只是想归档保留数据，请取消并改用「归档」。"
+    );
+    if (!ok) return;
+    try {
+      const result = await deleteChatSession(sessionId, { hard: true });
+      const remaining = chatSessions.filter((s) => s.id !== sessionId);
+      setChatSessions(remaining);
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(remaining[0]?.id ?? "");
+      }
+      setErrorText(
+        `已硬删除会话「${sessionTitle}」（同时清理 ${result.workflowRunIds?.length ?? 0} 个工作流）`
+      );
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : "硬删除会话失败");
+    }
+  };
+
   const bindStream = (workflowId: string, runId: string, assistantMessageId: string) => {
     persistChatStreamBinding(assistantMessageId, workflowId, runId);
     let buffer = "";
@@ -831,18 +850,67 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           </button>
           <div className="qb-chat-session-list" style={styles.chatSessionList}>
             {chatSessions.map((session) => (
-              <button
+              <div
                 key={session.id}
-                type="button"
                 style={{
                   ...styles.chatSessionItem,
                   ...(selectedSessionId === session.id ? styles.chatSessionItemActive : {}),
+                  display: "flex",
+                  alignItems: "stretch",
+                  gap: 4,
+                  padding: 0,
                 }}
-                onClick={() => void onSelectSession(session.id)}
               >
-                <div>{session.title}</div>
-                <div className="qb-chat-bubble__meta">{new Date(session.updatedAt).toLocaleString()}</div>
-              </button>
+                <button
+                  type="button"
+                  style={{
+                    flex: 1,
+                    background: "transparent",
+                    border: 0,
+                    color: "inherit",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    padding: "8px 10px",
+                    minWidth: 0,
+                  }}
+                  onClick={() => void onSelectSession(session.id)}
+                  title={session.title}
+                >
+                  <div
+                    style={{
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {session.title}
+                  </div>
+                  <div className="qb-chat-bubble__meta">
+                    {new Date(session.updatedAt).toLocaleString()}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`硬删除会话 ${session.title}`}
+                  title="硬删除会话（不可恢复）"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void onHardDeleteSession(session.id, session.title);
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: 0,
+                    color: "#a1a1aa",
+                    cursor: "pointer",
+                    padding: "0 8px",
+                    fontSize: 16,
+                    lineHeight: 1,
+                    alignSelf: "stretch",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -1127,6 +1195,7 @@ const ConfigPanel: FC = () => {
   const [skillAppendDefinitionId, setSkillAppendDefinitionId] = useState("");
   const [marketQuery, setMarketQuery] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState("");
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useState("");
   const [selectedCatalogId, setSelectedCatalogId] = useState("");
   const [catalogServerName, setCatalogServerName] = useState("");
   const [selectedMcpServer, setSelectedMcpServer] = useState("");
@@ -1144,45 +1213,8 @@ const ConfigPanel: FC = () => {
   const [mcpProbeByServer, setMcpProbeByServer] = useState<
     Record<string, { status: "idle" | "checking" | "ok" | "error"; message?: string; checkedAt?: string }>
   >({});
-  const [scheduledJobs, setScheduledJobs] = useState<ScheduledJobRecord[]>([]);
-  const [selectedScheduledJobId, setSelectedScheduledJobId] = useState("");
-  const [scheduledJobRuns, setScheduledJobRuns] = useState<ScheduledJobRunRecord[]>([]);
-  const [scheduledJobName, setScheduledJobName] = useState("定时任务");
-  const [scheduledCronExpr, setScheduledCronExpr] = useState("*/5 * * * *");
-  const [scheduledExecutionMode, setScheduledExecutionMode] = useState<
-    "paper" | "live_with_confirm" | "live_direct"
-  >("paper");
-  const [scheduledPayload, setScheduledPayload] = useState(
-    JSON.stringify(
-      {
-        goal: "交易时段内，基于新闻/重大事件/K线异动触发分析并决定是否挂单",
-        mode: "research",
-        triggerDriven: true,
-        triggerSources: ["news", "event", "kline"],
-        newsLookbackMinutes: 30,
-        eventLookbackMinutes: 60,
-        klineLookbackMinutes: 15,
-        klineKeywords: ["kline", "price_break", "volatility_spike"],
-        timezone: "Asia/Shanghai",
-        tradingDays: [1, 2, 3, 4, 5],
-        tradingStart: "09:30",
-        tradingEnd: "16:00",
-        ticker: "AAPL",
-        direction: "long",
-        quantity: 1,
-        targetPrice: 100,
-        brokerProvider: "futu",
-      },
-      null,
-      2
-    )
-  );
-  const [integrationKind, setIntegrationKind] = useState<"telegram" | "webhook">("telegram");
-  const [integrationName, setIntegrationName] = useState("default-telegram");
-  const [integrationExternalChatId, setIntegrationExternalChatId] = useState("");
-  const [integrationSecretRef, setIntegrationSecretRef] = useState("");
-  const [integrationChannels, setIntegrationChannels] = useState<CommunicationChannelRecord[]>([]);
-  const [integrationLogs, setIntegrationLogs] = useState<CommunicationMessageLogRecord[]>([]);
+  // 定时任务 / 集成 / IM：状态由各自的子面板（ScheduledJobsPanel / IntegrationCenterPanel）自管，
+  // 这里只透传 workspace/project 上下文。
 
   const hydrateBuiltinConnectorForm = (cfg: BuiltinConnectorConfig) => {
     const d = cfg["qubit-data"] ?? {};
@@ -1225,19 +1257,14 @@ const ConfigPanel: FC = () => {
     const currentWorkspace = workspaces[0];
     const projects = currentWorkspace ? await listProjects(currentWorkspace.id) : [];
     const currentProject = projects[0];
-    const [data, bundles, servers, bindings, channels, logs, sources] = await Promise.all([
+    const [data, bundles, servers, bindings, sources] = await Promise.all([
       getAgentsConfig(),
       listAgentDefinitions(),
       listMcpServers(currentProject?.id),
       listMcpBindings(currentProject?.id),
-      listIntegrationChannels(),
-      listIntegrationLogs(undefined, 50),
       listMcpSources(),
     ]);
-    const [jobs, installs, skillInstallRows] = await Promise.all([
-      currentWorkspace && currentProject
-        ? listScheduledJobs({ workspaceId: currentWorkspace.id, projectId: currentProject.id })
-        : Promise.resolve([]),
+    const [installs, skillInstallRows] = await Promise.all([
       currentProject ? listMcpProjectInstalls(currentProject.id) : Promise.resolve([]),
       currentProject ? listSkillMarketInstalls(currentProject.id) : Promise.resolve([]),
     ]);
@@ -1261,9 +1288,7 @@ const ConfigPanel: FC = () => {
     setMcpMarketTotalPages(1);
     setMcpMarketInstalls(installs);
     setSkillInstalls(skillInstallRows);
-    setIntegrationChannels(channels);
-    setIntegrationLogs(logs);
-    setScheduledJobs(jobs);
+    if (currentWorkspace) setCurrentWorkspaceId(currentWorkspace.id);
     if (currentProject) setCurrentProjectId(currentProject.id);
     if (!selectedMcpServer && servers[0]) {
       setSelectedMcpServer(servers[0].name);
@@ -1274,10 +1299,6 @@ const ConfigPanel: FC = () => {
       setSourceBaseUrl(sources[0].baseUrl);
       setSourceAuthType(sources[0].authType);
       setSourceAuthRef(sources[0].authRef ?? "");
-    }
-    if (!selectedScheduledJobId && jobs[0]) {
-      setSelectedScheduledJobId(jobs[0].id);
-      setScheduledJobRuns(await listScheduledJobRuns(jobs[0].id));
     }
     if (list.length === 0) {
       setSelectedDefinitionId("");
@@ -1903,68 +1924,7 @@ const ConfigPanel: FC = () => {
     setMcpTestOutput(`已卸载安装记录 ${installId}`);
   };
 
-  const createScheduledJobNow = async () => {
-    const workspaces = await listWorkspaces();
-    const ws = workspaces[0];
-    if (!ws) return;
-    const projects = await listProjects(ws.id);
-    const project = projects[0];
-    if (!project) return;
-    const parsedPayload = JSON.parse(scheduledPayload || "{}") as Record<string, unknown>;
-    const created = await createScheduledJob({
-      workspaceId: ws.id,
-      projectId: project.id,
-      name: scheduledJobName,
-      cronExpr: scheduledCronExpr,
-      timezone: "UTC",
-      payloadJson: parsedPayload,
-      executionMode: scheduledExecutionMode,
-      enabled: true,
-    });
-    const jobs = await listScheduledJobs({ workspaceId: ws.id, projectId: project.id });
-    setScheduledJobs(jobs);
-    setSelectedScheduledJobId(created.id);
-    setScheduledJobRuns(await listScheduledJobRuns(created.id));
-  };
-
-  const runScheduledNow = async () => {
-    if (!selectedScheduledJobId) return;
-    await runScheduledJobNow(selectedScheduledJobId);
-    setScheduledJobRuns(await listScheduledJobRuns(selectedScheduledJobId));
-    const workspaces = await listWorkspaces();
-    const ws = workspaces[0];
-    if (!ws) return;
-    const projects = await listProjects(ws.id);
-    const project = projects[0];
-    if (!project) return;
-    setScheduledJobs(await listScheduledJobs({ workspaceId: ws.id, projectId: project.id }));
-  };
-
-  const toggleScheduledJob = async (enabled: boolean) => {
-    if (!selectedScheduledJobId) return;
-    await patchScheduledJob(selectedScheduledJobId, { enabled });
-    const job = scheduledJobs.find((item) => item.id === selectedScheduledJobId);
-    if (!job) return;
-    setScheduledJobs(await listScheduledJobs({ workspaceId: job.workspaceId, projectId: job.projectId }));
-  };
-
-  const saveIntegrationNow = async () => {
-    const workspaces = await listWorkspaces();
-    const ws = workspaces[0];
-    if (!ws) return;
-    const projects = await listProjects(ws.id);
-    const data = await upsertIntegrationChannel({
-      workspaceId: ws.id,
-      projectId: projects[0]?.id ?? null,
-      kind: integrationKind,
-      name: integrationName || `${integrationKind}-channel`,
-      externalChatId: integrationExternalChatId || "default",
-      secretRef: integrationSecretRef,
-      enabled: true,
-    });
-    setIntegrationName(data.name);
-    setIntegrationChannels(await listIntegrationChannels());
-  };
+  // 定时任务 / 集成的 CRUD 逻辑已下沉到 ScheduledJobsPanel 与 IntegrationCenterPanel。
 
   return (
     <div data-qb-config-center className="qb-config-center">
@@ -3019,121 +2979,13 @@ const ConfigPanel: FC = () => {
           </>
         ) : null}
         {activeConfigSubPage === "schedule" ? (
-          <>
-      <h3 style={styles.subTitle}>定时任务</h3>
-      <div style={styles.form}>
-        <input
-          style={styles.input}
-          value={scheduledJobName}
-          onChange={(e) => setScheduledJobName(e.target.value)}
-          placeholder="job name"
-        />
-        <input
-          style={styles.input}
-          value={scheduledCronExpr}
-          onChange={(e) => setScheduledCronExpr(e.target.value)}
-          placeholder="cron (e.g. */5 * * * *)"
-        />
-        <select
-          style={styles.select}
-          value={scheduledExecutionMode}
-          onChange={(e) =>
-            setScheduledExecutionMode(e.target.value as "paper" | "live_with_confirm" | "live_direct")
-          }
-        >
-          <option value="paper">paper</option>
-          <option value="live_with_confirm">live_with_confirm</option>
-          <option value="live_direct">live_direct</option>
-        </select>
-        <button className="qb-btn-secondary" onClick={() => void createScheduledJobNow()}>
-          创建定时任务
-        </button>
-        <button className="qb-btn-primary-brand" onClick={() => void runScheduledNow()} disabled={!selectedScheduledJobId}>
-          立即执行
-        </button>
-      </div>
-      <textarea
-        style={{ ...styles.input, minHeight: 120, width: "100%" }}
-        value={scheduledPayload}
-        onChange={(e) => setScheduledPayload(e.target.value)}
-      />
-      <div style={styles.form}>
-        <select
-          style={styles.select}
-          value={selectedScheduledJobId}
-          onChange={async (e) => {
-            const nextId = e.target.value;
-            setSelectedScheduledJobId(nextId);
-            if (!nextId) return;
-            setScheduledJobRuns(await listScheduledJobRuns(nextId));
-          }}
-        >
-          <option value="">选择任务</option>
-          {scheduledJobs.map((job) => (
-            <option key={job.id} value={job.id}>
-              {job.name} · {job.enabled ? "enabled" : "disabled"} · {job.cronExpr}
-            </option>
-          ))}
-        </select>
-        <button
-          className="qb-btn-secondary"
-          onClick={() => void toggleScheduledJob(false)}
-          disabled={!selectedScheduledJobId}
-        >
-          停用
-        </button>
-        <button
-          className="qb-btn-secondary"
-          onClick={() => void toggleScheduledJob(true)}
-          disabled={!selectedScheduledJobId}
-        >
-          启用
-        </button>
-      </div>
-      <pre className="qb-config-stream-box">{JSON.stringify(scheduledJobs, null, 2)}</pre>
-      <pre className="qb-config-stream-box">{JSON.stringify(scheduledJobRuns, null, 2)}</pre>
-          </>
+          <ScheduledJobsPanel workspaceId={currentWorkspaceId || undefined} projectId={currentProjectId || null} />
         ) : null}
         {activeConfigSubPage === "integration" ? (
-          <>
-      <h3 style={styles.subTitle}>集成与 IM 工具（Telegram / Webhook）</h3>
-      <p className="qb-config-hint">
-        配置外部消息通道与密钥引用，供编排向 IM 推送或接收 Webhook。
-      </p>
-      <div style={styles.form}>
-        <select
-          style={styles.select}
-          value={integrationKind}
-          onChange={(e) => setIntegrationKind(e.target.value as "telegram" | "webhook")}
-        >
-          <option value="telegram">telegram</option>
-          <option value="webhook">webhook</option>
-        </select>
-        <input
-          style={styles.input}
-          value={integrationName}
-          onChange={(e) => setIntegrationName(e.target.value)}
-          placeholder="channel name"
-        />
-        <input
-          style={styles.input}
-          value={integrationExternalChatId}
-          onChange={(e) => setIntegrationExternalChatId(e.target.value)}
-          placeholder="chatId / webhook target"
-        />
-        <input
-          style={styles.input}
-          value={integrationSecretRef}
-          onChange={(e) => setIntegrationSecretRef(e.target.value)}
-          placeholder="token / secret"
-        />
-        <button type="button" className="qb-btn-primary-brand" onClick={() => void saveIntegrationNow()}>
-          保存集成配置
-        </button>
-      </div>
-      <pre className="qb-config-stream-box">{JSON.stringify(integrationChannels, null, 2)}</pre>
-      <pre className="qb-config-stream-box">{JSON.stringify(integrationLogs, null, 2)}</pre>
-          </>
+          <IntegrationCenterPanel
+            workspaceId={currentWorkspaceId || undefined}
+            projectId={currentProjectId || null}
+          />
         ) : null}
         {activeConfigSubPage === "agent" ? (
           <ConfigAgentPanel
@@ -4619,6 +4471,38 @@ const TeamDashboardPanel: FC = () => {
     }
   };
 
+  /**
+   * 硬删除当前工作流。
+   * 与软删除（取消）的区别是：会级联清理 agent_instance / agent_step / tool_call_log /
+   * a2a_message / order_intent / intent_order / langgraph_checkpoint 等所有衍生数据，
+   * 并把 audit_log / scheduled_job_run 等保留型反向引用置空。【不可恢复】。
+   */
+  const handleHardDeleteTeamWorkflow = async () => {
+    const id = workflowRunId.trim();
+    if (!id) return;
+    const row = workflowOptions.find((w) => String(w.id) === id);
+    const goal = typeof row?.goal === "string" ? row.goal : id;
+    const ok = window.confirm(
+      `确认硬删除工作流？\n\n` +
+        `ID: ${id}\n目标: ${goal}\n\n` +
+        "将连带删除该工作流的所有 agent 实例 / 步骤 / 工具调用 / a2a 消息 / 订单意图 / " +
+        "LangGraph checkpoint 等衍生数据，且【不可恢复】。\n\n" +
+        "如只是想保留记录、停止执行，请取消并改用「取消当前工作流」。"
+    );
+    if (!ok) return;
+    setError(null);
+    try {
+      const result = await deleteWorkflow(id, { hard: true });
+      const rows = await refreshWorkflowOptions();
+      setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
+      setResult(null);
+      const affected = Object.values(result.details ?? {}).reduce((a, b) => a + b, 0);
+      setError(`已硬删除工作流（共清理 ${affected} 行衍生数据）。`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const handleLinkWorkflowToDefaultSession = async () => {
     if (!workflowRunId.trim() || !teamResearchSessionId) return;
     setError(null);
@@ -5119,6 +5003,21 @@ const TeamDashboardPanel: FC = () => {
                 disabled={!workflowRunId.trim()}
               >
                 取消当前工作流
+              </button>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                style={{
+                  fontSize: 12,
+                  padding: "6px 10px",
+                  color: "#fecaca",
+                  borderColor: "#7f1d1d",
+                }}
+                onClick={() => void handleHardDeleteTeamWorkflow()}
+                disabled={!workflowRunId.trim()}
+                title="硬删除当前工作流（连同 agent / 步骤 / 消息 / 订单 / checkpoint 等全部衍生数据），不可恢复"
+              >
+                硬删除工作流
               </button>
               {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
                 <button

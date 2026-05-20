@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance, workflowRun } from "../../db/sqlite/schema";
@@ -22,6 +22,7 @@ import type { RuntimeAgentDefinition } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "./event-stream";
 import { executeAgentReact } from "./execute-agent-react";
+import { getCheckpointSaver } from "./sqlite-checkpoint-saver";
 import type { AgentGraphState } from "./state";
 
 void registerBuiltinConnectors();
@@ -202,15 +203,96 @@ export class GraphRunner {
     return { runId };
   }
 
+  /**
+   * 续跑：用 workflowId 作为 LangGraph thread_id，从最近一次 checkpoint 继续。
+   * - 若无 checkpoint，将回退到一次干净启动；
+   * - 复用最后一个未结束的 agent_instance（若存在），否则新建。
+   */
+  async resumeRoleTask(params: {
+    workflowId: string;
+    role?: AgentRole;
+    payload?: TaskAssignPayload;
+    traceId?: string;
+  }): Promise<{ runId: string; resumed: boolean }> {
+    const db = await getDb();
+
+    const wfRows = await db
+      .select()
+      .from(workflowRun)
+      .where(eq(workflowRun.id, params.workflowId))
+      .limit(1);
+    const wf = wfRows[0];
+    if (!wf) throw new Error(`workflow_run not found: ${params.workflowId}`);
+
+    const tuple = await getCheckpointSaver().getTuple({
+      configurable: { thread_id: params.workflowId },
+    });
+    const hasCheckpoint = Boolean(tuple);
+
+    // 复用未结束的 agent_instance；若无则下面 executeAgentReact 会自动新建。
+    const aiRows = await db
+      .select()
+      .from(agentInstance)
+      .where(
+        and(eq(agentInstance.workflowRunId, params.workflowId), ne(agentInstance.status, "stopped"))
+      )
+      .orderBy(desc(agentInstance.startedAt))
+      .limit(1);
+    const reuseInstanceId = aiRows[0]?.id;
+
+    // 没有显式 role/payload 时从既有 agent_instance.definitionId 回推 role
+    let def: RuntimeAgentDefinition | undefined;
+    if (params.role) {
+      def = this.definitions.get(params.role);
+    } else if (aiRows[0]?.definitionId) {
+      const defRow = await db
+        .select()
+        .from(agentDefinition)
+        .where(eq(agentDefinition.id, aiRows[0].definitionId))
+        .limit(1);
+      if (defRow[0]) {
+        def = this.definitions.get(defRow[0].role) ?? undefined;
+      }
+    }
+    if (!def) def = this.definitions.get("orchestrator");
+    if (!def) {
+      throw new Error("resumeRoleTask: no resolvable agent definition (orchestrator missing)");
+    }
+
+    const runId = randomUUID();
+    const traceId = params.traceId ?? randomUUID();
+    const payload: TaskAssignPayload = params.payload ?? {
+      taskId: randomUUID(),
+      taskType: "workflow_resume",
+      assignedRole: def.role,
+      params: { workflowRunId: params.workflowId, goal: wf.goal, mode: wf.mode },
+    };
+
+    void this.executeGraph({
+      runId,
+      traceId,
+      def,
+      workflowId: params.workflowId,
+      payload,
+      agentInstanceId: reuseInstanceId,
+      resume: hasCheckpoint,
+    });
+    return { runId, resumed: hasCheckpoint };
+  }
+
   private async executeGraph(params: {
     runId: string;
     traceId: string;
     def: RuntimeAgentDefinition;
     workflowId: string;
     payload: TaskAssignPayload;
+    /** Resume 时复用既有 agent_instance.id；不传则新建。 */
+    agentInstanceId?: string;
+    /** True 表示从 LangGraph checkpoint 续跑。 */
+    resume?: boolean;
   }): Promise<void> {
     const db = await getDb();
-    const agentInstanceId = randomUUID();
+    const agentInstanceId = params.agentInstanceId ?? randomUUID();
     let state: AgentGraphState | undefined;
 
     const publishError = (message: string, stepIndex: number) => {
@@ -302,6 +384,7 @@ export class GraphRunner {
         streamLoopKind: "native",
         streamSource: "native",
         updateWorkflowStatus: true,
+        resume: params.resume === true,
       });
       state = finalState;
       onWorkflowTerminal(params.workflowId, terminalStatus);

@@ -11,6 +11,7 @@ import {
   workspace,
 } from "../db/sqlite/schema";
 import { exportStrategyScriptToWorkflowDir } from "../runtime/strategy/strategy-script-files";
+import { hardDeleteChatSession } from "../runtime/workflow/hard-delete";
 
 export const chatRouter = new Hono();
 
@@ -21,7 +22,10 @@ chatRouter.get("/health", async (c) => {
     await db.select().from(chatMessage).limit(1);
     return c.json({ ok: true, tables: ["chat_session", "chat_message"] });
   } catch (err) {
-    return c.json({ ok: false, error: err instanceof Error ? err.message : "chat health failed" }, 500);
+    return c.json(
+      { ok: false, error: err instanceof Error ? err.message : "chat health failed" },
+      500
+    );
   }
 });
 
@@ -33,7 +37,11 @@ chatRouter.get("/sessions", async (c) => {
   const whereClause = projectId
     ? and(eq(chatSession.workspaceId, workspaceId), eq(chatSession.projectId, projectId))
     : eq(chatSession.workspaceId, workspaceId);
-  const rows = await db.select().from(chatSession).where(whereClause).orderBy(desc(chatSession.updatedAt));
+  const rows = await db
+    .select()
+    .from(chatSession)
+    .where(whereClause)
+    .orderBy(desc(chatSession.updatedAt));
   return c.json({ data: rows });
 });
 
@@ -50,14 +58,16 @@ chatRouter.post("/sessions", async (c) => {
     .from(workspace)
     .where(eq(workspace.id, body.workspaceId))
     .limit(1);
-  if (!wsRows[0]) return c.json({ error: "workspace not found", workspaceId: body.workspaceId }, 404);
+  if (!wsRows[0])
+    return c.json({ error: "workspace not found", workspaceId: body.workspaceId }, 404);
   if (body.projectId) {
     const projectRows = await db
       .select({ id: project.id, workspaceId: project.workspaceId })
       .from(project)
       .where(eq(project.id, body.projectId))
       .limit(1);
-    if (!projectRows[0]) return c.json({ error: "project not found", projectId: body.projectId }, 404);
+    if (!projectRows[0])
+      return c.json({ error: "project not found", projectId: body.projectId }, 404);
     if (projectRows[0].workspaceId !== body.workspaceId) {
       return c.json({ error: "project does not belong to workspace" }, 400);
     }
@@ -83,9 +93,14 @@ async function assertWorkflowBelongsToSession(
 ): Promise<{ ok: true } | { ok: false; status: number; body: Record<string, unknown> }> {
   if (!workflowRunId) return { ok: true };
   const wf = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
-  if (!wf[0]) return { ok: false, status: 404, body: { error: "workflow run not found", workflowRunId } };
+  if (!wf[0])
+    return { ok: false, status: 404, body: { error: "workflow run not found", workflowRunId } };
   if (wf[0].sessionId !== sessionId) {
-    return { ok: false, status: 400, body: { error: "workflow run does not belong to this session", workflowRunId } };
+    return {
+      ok: false,
+      status: 400,
+      body: { error: "workflow run does not belong to this session", workflowRunId },
+    };
   }
   return { ok: true };
 }
@@ -94,7 +109,11 @@ chatRouter.get("/sessions/:sessionId/strategy-scripts", async (c) => {
   const sessionId = c.req.param("sessionId");
   const workflowRunId = c.req.query("workflowRunId")?.trim();
   const db = await getDb();
-  const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
+  const sessionRows = await db
+    .select()
+    .from(chatSession)
+    .where(eq(chatSession.id, sessionId))
+    .limit(1);
   if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
   const whereClause = workflowRunId
     ? and(
@@ -122,11 +141,19 @@ chatRouter.post("/sessions/:sessionId/strategy-scripts", async (c) => {
     purpose?: (typeof purposeEnum)[number];
   }>();
   const db = await getDb();
-  const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
+  const sessionRows = await db
+    .select()
+    .from(chatSession)
+    .where(eq(chatSession.id, sessionId))
+    .limit(1);
   if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
   const name = String(body.name ?? "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
-  const wfCheck = await assertWorkflowBelongsToSession(db, sessionId, body.workflowRunId ?? undefined);
+  const wfCheck = await assertWorkflowBelongsToSession(
+    db,
+    sessionId,
+    body.workflowRunId ?? undefined
+  );
   if (!wfCheck.ok) return c.json(wfCheck.body, wfCheck.status);
   const purpose = body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : "both";
   const chartJson =
@@ -148,7 +175,11 @@ chatRouter.post("/sessions/:sessionId/strategy-scripts", async (c) => {
     createdAt: now,
     updatedAt: now,
   });
-  const created = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, id)).limit(1);
+  const created = await db
+    .select()
+    .from(indicatorStrategyScript)
+    .where(eq(indicatorStrategyScript.id, id))
+    .limit(1);
   let artifactDir: string | undefined;
   if (body.workflowRunId && created[0]) {
     const wfRows = await db
@@ -183,7 +214,11 @@ chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
     purpose?: (typeof purposeEnum)[number];
   }>();
   const db = await getDb();
-  const rows = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, scriptId)).limit(1);
+  const rows = await db
+    .select()
+    .from(indicatorStrategyScript)
+    .where(eq(indicatorStrategyScript.id, scriptId))
+    .limit(1);
   const row = rows[0];
   if (!row) return c.json({ error: "strategy script not found", scriptId }, 404);
   const wfCheck = await assertWorkflowBelongsToSession(
@@ -192,8 +227,7 @@ chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
     body.workflowRunId !== undefined ? body.workflowRunId : row.workflowRunId
   );
   if (!wfCheck.ok) return c.json(wfCheck.body, wfCheck.status);
-  const purpose =
-    body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : row.purpose;
+  const purpose = body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : row.purpose;
   const patch: Partial<typeof indicatorStrategyScript.$inferInsert> = {
     updatedAt: new Date().toISOString(),
     purpose,
@@ -209,8 +243,15 @@ chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
   if (body.chartSnapshotJson !== undefined && typeof body.chartSnapshotJson === "object") {
     patch.chartSnapshotJson = JSON.stringify(body.chartSnapshotJson);
   }
-  await db.update(indicatorStrategyScript).set(patch).where(eq(indicatorStrategyScript.id, scriptId));
-  const updated = await db.select().from(indicatorStrategyScript).where(eq(indicatorStrategyScript.id, scriptId)).limit(1);
+  await db
+    .update(indicatorStrategyScript)
+    .set(patch)
+    .where(eq(indicatorStrategyScript.id, scriptId));
+  const updated = await db
+    .select()
+    .from(indicatorStrategyScript)
+    .where(eq(indicatorStrategyScript.id, scriptId))
+    .limit(1);
   let artifactDir: string | undefined;
   const wfId = updated[0]?.workflowRunId;
   if (updated[0] && wfId) {
@@ -244,7 +285,11 @@ chatRouter.delete("/strategy-scripts/:scriptId", async (c) => {
 chatRouter.get("/sessions/:id/messages", async (c) => {
   const db = await getDb();
   const sessionId = c.req.param("id");
-  const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
+  const sessionRows = await db
+    .select()
+    .from(chatSession)
+    .where(eq(chatSession.id, sessionId))
+    .limit(1);
   if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
   const messages = await db
     .select()
@@ -276,7 +321,11 @@ chatRouter.post("/sessions/:id/messages", async (c) => {
     workflowRunIds?: string[];
   }>();
   const db = await getDb();
-  const sessionRows = await db.select().from(chatSession).where(eq(chatSession.id, sessionId)).limit(1);
+  const sessionRows = await db
+    .select()
+    .from(chatSession)
+    .where(eq(chatSession.id, sessionId))
+    .limit(1);
   if (!sessionRows[0]) return c.json({ error: "session not found", sessionId }, 404);
   const id = crypto.randomUUID();
   await db.insert(chatMessage).values({
@@ -320,6 +369,39 @@ chatRouter.post("/sessions/:id/messages", async (c) => {
     .where(eq(chatSession.id, sessionId));
   const created = await db.select().from(chatMessage).where(eq(chatMessage.id, id)).limit(1);
   return c.json({ data: created[0] }, 201);
+});
+
+/**
+ * 删除会话。
+ * - 默认（`?hard` 不提供）：软删除，置为 `archived`，保留消息与衍生数据。
+ * - `?hard=true`：硬删除，级联删除该会话下所有 workflow_run（含 agent_*、a2a/acp 等）、
+ *   chat_message、chat_message_workflow_link、indicator_strategy_script、scheduled_job。
+ *
+ * 前端调用 hard=true 前必须二次确认。
+ */
+chatRouter.delete("/sessions/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const rows = await db.select().from(chatSession).where(eq(chatSession.id, id)).limit(1);
+  if (!rows[0]) return c.json({ error: "session not found", sessionId: id }, 404);
+
+  const hardQuery = (c.req.query("hard") ?? "").toLowerCase();
+  const bodyHard = await c.req
+    .json<{ hard?: boolean }>()
+    .then((b) => b?.hard === true)
+    .catch(() => false);
+  const isHard = hardQuery === "true" || hardQuery === "1" || bodyHard;
+
+  if (isHard) {
+    const result = await hardDeleteChatSession(id);
+    return c.json({ ok: true, id, hard: true, ...result });
+  }
+
+  await db
+    .update(chatSession)
+    .set({ status: "archived", updatedAt: new Date().toISOString() })
+    .where(eq(chatSession.id, id));
+  return c.json({ ok: true, id, hard: false });
 });
 
 chatRouter.patch("/sessions/:id", async (c) => {
@@ -366,7 +448,10 @@ chatRouter.patch("/messages/:id", async (c) => {
         .select()
         .from(chatMessageWorkflowLink)
         .where(
-          and(eq(chatMessageWorkflowLink.chatMessageId, id), eq(chatMessageWorkflowLink.workflowRunId, runId))
+          and(
+            eq(chatMessageWorkflowLink.chatMessageId, id),
+            eq(chatMessageWorkflowLink.workflowRunId, runId)
+          )
         )
         .limit(1);
       if (existing[0]) continue;

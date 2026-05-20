@@ -5,6 +5,7 @@ import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { executionWorker } from "./runtime/execution/execution-worker";
 import { restoreRunningStrategies } from "./runtime/strategy/restore-running-strategies";
 import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worker";
+import { restoreRunningWorkflows } from "./runtime/workflow/restore-running-workflows";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
 import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
 import { createServer } from "./server";
@@ -27,6 +28,13 @@ async function main() {
   const restored = await restoreRunningStrategies();
   if (restored > 0) {
     console.log(`[QUBIT] Restored ${restored} strategy runtime(s)`);
+  }
+  const wfRestore = await restoreRunningWorkflows();
+  if (wfRestore.scanned > 0) {
+    console.log(
+      `[QUBIT] Workflow sweep: scanned=${wfRestore.scanned} resumed=${wfRestore.resumed} ` +
+        `enqueuedRetry=${wfRestore.enqueuedRetry} markedFailed=${wfRestore.markedFailed}`
+    );
   }
   workflowScheduler.start();
   executionWorker.start();

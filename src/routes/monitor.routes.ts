@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
@@ -11,11 +11,12 @@ import {
   workflowRun,
 } from "../db/sqlite/schema";
 import {
-  aggregateAgentRuntimeMetrics,
-  createWorkflowQualitySnapshot,
-  listAgentRuntimeMetrics,
-  listWorkflowQualitySnapshots,
-} from "../runtime/monitor/quality-metrics";
+  createEvalDataset,
+  getEvalRunDetail,
+  listEvalDatasets,
+  listEvalRuns,
+  runEval,
+} from "../runtime/eval/pipeline";
 import {
   ackAlert,
   createAlertsFromWorkflowQuality,
@@ -25,14 +26,13 @@ import {
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
-import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
 import {
-  createEvalDataset,
-  getEvalRunDetail,
-  listEvalDatasets,
-  listEvalRuns,
-  runEval,
-} from "../runtime/eval/pipeline";
+  aggregateAgentRuntimeMetrics,
+  createWorkflowQualitySnapshot,
+  listAgentRuntimeMetrics,
+  listWorkflowQualitySnapshots,
+} from "../runtime/monitor/quality-metrics";
+import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
 
 export const monitorRouter = new Hono();
 
@@ -88,7 +88,7 @@ monitorRouter.get("/workflows/:id/timeline", async (c) => {
     stepIds.length > 0
       ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
       : [];
-  const toolsByStep = new Map<string, (typeof tools)>();
+  const toolsByStep = new Map<string, typeof tools>();
   for (const tool of tools) {
     const bucket = toolsByStep.get(tool.agentStepId) ?? [];
     bucket.push(tool);
@@ -129,7 +129,9 @@ monitorRouter.get("/sessions/:id/agents-board", async (c) => {
   const workflowIds = workflows.map((w) => w.id);
   if (workflowIds.length === 0) return c.json({ data: { sessionId, agents: [] } });
   const workflowMeta = new Map(
-    workflows.map((w) => [w.id, { startedAt: w.startedAt, status: w.status, mode: w.mode }] as const)
+    workflows.map(
+      (w) => [w.id, { startedAt: w.startedAt, status: w.status, mode: w.mode }] as const
+    )
   );
   const [instances, definitions, steps] = await Promise.all([
     db.select().from(agentInstance).where(inArray(agentInstance.workflowRunId, workflowIds)),
@@ -195,7 +197,11 @@ monitorRouter.get("/sessions/:id/a2a-messages", async (c) => {
   const [instances, definitions, messages] = await Promise.all([
     db.select().from(agentInstance),
     db.select().from(agentDefinition),
-    db.select().from(a2aMessage).orderBy(desc(a2aMessage.createdAt)).limit(limit * 4),
+    db
+      .select()
+      .from(a2aMessage)
+      .orderBy(desc(a2aMessage.createdAt))
+      .limit(limit * 4),
   ]);
 
   const defById = new Map(definitions.map((d) => [d.id, d]));
@@ -218,19 +224,63 @@ monitorRouter.get("/sessions/:id/a2a-messages", async (c) => {
   });
 });
 
+/**
+ * 工作流列表（用于前端工作流选择器 / 监控页）。
+ *
+ * 性能优化：
+ *   - 过滤与排序全部下推到 SQL（之前是 SELECT * + JS 内存过滤 + slice(200)，
+ *     在 workflow_run 表行数膨胀时极慢；新版严格 LIMIT，并依赖 0037 迁移新增的索引）。
+ *   - 仅选取下拉框 / 监控列表实际需要的字段（goal、mode、status、startedAt、endedAt、source、sessionId、projectId 等），
+ *     避免拉取 loop_options_json / langgraph_thread_id 等较长 JSON 文本字段。
+ *   - 默认 LIMIT 200，可通过 `?limit=` 调整，上限 500。
+ */
 monitorRouter.get("/workflows", async (c) => {
   const db = await getDb();
   const sessionId = c.req.query("sessionId");
   const status = c.req.query("status");
   const mode = c.req.query("mode");
-  const rows = await db.select().from(workflowRun).orderBy(desc(workflowRun.startedAt));
-  const filtered = rows.filter((item) => {
-    if (sessionId && item.sessionId !== sessionId) return false;
-    if (status && item.status !== status) return false;
-    if (mode && item.mode !== mode) return false;
-    return true;
-  });
-  return c.json({ data: filtered.slice(0, 200) });
+  const projectId = c.req.query("projectId");
+  const includeCancelled = c.req.query("includeCancelled") === "true";
+  const limitParam = Number(c.req.query("limit") ?? "200");
+  const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(500, limitParam)) : 200;
+
+  const conds = [
+    sessionId ? eq(workflowRun.sessionId, sessionId) : undefined,
+    status ? eq(workflowRun.status, status as typeof workflowRun.$inferSelect.status) : undefined,
+    mode ? eq(workflowRun.mode, mode as typeof workflowRun.$inferSelect.mode) : undefined,
+    projectId ? eq(workflowRun.projectId, projectId) : undefined,
+  ].filter(Boolean);
+
+  const where =
+    conds.length === 0
+      ? undefined
+      : conds.length === 1
+        ? (conds[0] as ReturnType<typeof eq>)
+        : and(...(conds as ReturnType<typeof eq>[]));
+
+  const baseQuery = db
+    .select({
+      id: workflowRun.id,
+      projectId: workflowRun.projectId,
+      sessionId: workflowRun.sessionId,
+      goal: workflowRun.goal,
+      mode: workflowRun.mode,
+      source: workflowRun.source,
+      status: workflowRun.status,
+      startedAt: workflowRun.startedAt,
+      endedAt: workflowRun.endedAt,
+      agentGroupId: workflowRun.agentGroupId,
+      loopKind: workflowRun.loopKind,
+      executionPath: workflowRun.executionPath,
+    })
+    .from(workflowRun);
+
+  const rows = where
+    ? await baseQuery.where(where).orderBy(desc(workflowRun.startedAt)).limit(limit)
+    : await baseQuery.orderBy(desc(workflowRun.startedAt)).limit(limit);
+
+  const filtered = includeCancelled ? rows : rows.filter((r) => r.status !== "cancelled");
+  return c.json({ data: filtered });
 });
 
 monitorRouter.get("/workflows/:id/observability", async (c) => {
@@ -279,9 +329,7 @@ monitorRouter.get("/quality/workflows/:id/snapshots", async (c) => {
 });
 
 monitorRouter.post("/quality/agents/aggregate", async (c) => {
-  const body = await c.req
-    .json<{ windowStart?: string; windowEnd?: string }>()
-    .catch(() => ({}));
+  const body = await c.req.json<{ windowStart?: string; windowEnd?: string }>().catch(() => ({}));
   const data = await aggregateAgentRuntimeMetrics({
     windowStart: body.windowStart,
     windowEnd: body.windowEnd,

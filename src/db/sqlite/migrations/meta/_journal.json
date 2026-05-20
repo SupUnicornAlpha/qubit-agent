@@ -239,6 +239,27 @@
       "when": 1777352290000,
       "tag": "0034_trader_context_message",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1777352300000,
+      "tag": "0035_im_channels_meta",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1777352310000,
+      "tag": "0036_agent_checkpoint",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1777352320000,
+      "tag": "0037_workflow_listing_indexes",
+      "breakpoints": true
     }
   ]
 }

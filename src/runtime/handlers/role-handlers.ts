@@ -7,6 +7,7 @@ import { ALL_AGENT_ROLES, type AgentRole } from "../../types/entities";
 import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
 import { buildTaskResult } from "../a2a/task-result";
 import { getA2APool } from "../a2a/a2a-pool";
+import { graphRunner } from "../langgraph/graph-factory";
 import {
   executeResearchTeamWorkflow,
   failResearchTeamExecuteJob,
@@ -62,6 +63,50 @@ const orchestratorHandler: RuntimeRoleHandler = {
     }
 
     const payload = msg.payload as TaskAssignPayload;
+
+    if (payload.taskType === "workflow_resume" || payload.taskType === "workflow_retry") {
+      // 用 LangGraph checkpointer 续跑/重跑（A2A 自己不存 graph state）。
+      try {
+        const result = await graphRunner.resumeRoleTask({
+          workflowId: msg.workflowId,
+          role: "orchestrator",
+          payload,
+          traceId: msg.traceId,
+        });
+        await ctx.send({
+          workflowId: msg.workflowId,
+          traceId: msg.traceId,
+          receiverAgent: msg.senderAgent,
+          messageType: "TASK_RESULT",
+          payload: buildTaskResult(payload.taskId, "orchestrator", {
+            result: {
+              taskType: payload.taskType,
+              runId: result.runId,
+              resumed: result.resumed,
+            },
+          }),
+          priority: msg.priority,
+        });
+      } catch (err) {
+        await setWorkflowStatus(msg.workflowId, "failed");
+        await ctx.send({
+          workflowId: msg.workflowId,
+          traceId: msg.traceId,
+          receiverAgent: msg.senderAgent,
+          messageType: "TASK_RESULT",
+          payload: buildTaskResult(payload.taskId, "orchestrator", {
+            success: false,
+            result: {
+              taskType: payload.taskType,
+              error: err instanceof Error ? err.message : String(err),
+            },
+            errorMessage: err instanceof Error ? err.message : String(err),
+          }),
+          priority: msg.priority,
+        });
+      }
+      return;
+    }
 
     if (payload.taskType === "research_team_execute") {
       const parsed = parseResearchTeamExecutePayload(payload);
@@ -142,9 +187,7 @@ const riskHandler: RuntimeRoleHandler = {
 
     const intent = msg.payload as OrderIntentPayload;
     const signingKey = process.env["QUBIT_RISK_SIGNING_KEY"] ?? "dev-secret";
-    const signature = createHmac("sha256", signingKey)
-      .update(intent.orderIntentId)
-      .digest("hex");
+    const signature = createHmac("sha256", signingKey).update(intent.orderIntentId).digest("hex");
 
     await ctx.send({
       workflowId: msg.workflowId,
@@ -217,9 +260,7 @@ function createRiskSigningHandler(
 
       const intent = msg.payload as OrderIntentPayload;
       const signingKey = process.env["QUBIT_RISK_SIGNING_KEY"] ?? "dev-secret";
-      const signature = createHmac("sha256", signingKey)
-        .update(intent.orderIntentId)
-        .digest("hex");
+      const signature = createHmac("sha256", signingKey).update(intent.orderIntentId).digest("hex");
 
       await ctx.send({
         workflowId: msg.workflowId,

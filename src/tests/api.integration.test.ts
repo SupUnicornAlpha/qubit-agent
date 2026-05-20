@@ -1,7 +1,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
-import { runMigrations } from "../db/sqlite/migrate";
+import { eq } from "drizzle-orm";
 import { closeDb, getDb } from "../db/sqlite/client";
+import { runMigrations } from "../db/sqlite/migrate";
 import { workflowRun } from "../db/sqlite/schema";
 
 async function jsonOf(res: Response) {
@@ -101,7 +102,9 @@ describe("api minimal integration", () => {
     const scriptId = (postJson.data as Record<string, unknown>).id as string;
     expect(scriptId.length).toBeGreaterThan(10);
 
-    const list = await app.request(new Request(`http://test/api/v1/chat/sessions/${sessionId}/strategy-scripts`));
+    const list = await app.request(
+      new Request(`http://test/api/v1/chat/sessions/${sessionId}/strategy-scripts`)
+    );
     expect(list.status).toBe(200);
     const listJson = await jsonOf(list);
     const rows = listJson.data as unknown[];
@@ -116,7 +119,9 @@ describe("api minimal integration", () => {
     );
     expect(patch.status).toBe(200);
 
-    const del = await app.request(new Request(`http://test/api/v1/chat/strategy-scripts/${scriptId}`, { method: "DELETE" }));
+    const del = await app.request(
+      new Request(`http://test/api/v1/chat/strategy-scripts/${scriptId}`, { method: "DELETE" })
+    );
     expect(del.status).toBe(200);
   });
 
@@ -140,10 +145,14 @@ describe("api minimal integration", () => {
     const listJson = await jsonOf(listRes);
     expect(Array.isArray(listJson.data)).toBeTrue();
 
-    const detailRes = await app.request(new Request(`http://test/api/v1/monitor/workflows/${workflowId}/detail`));
+    const detailRes = await app.request(
+      new Request(`http://test/api/v1/monitor/workflows/${workflowId}/detail`)
+    );
     expect(detailRes.status).toBe(200);
     const detail = await jsonOf(detailRes);
-    expect(((detail.data as Record<string, unknown>).workflow as Record<string, unknown>).id).toBe(workflowId);
+    expect(((detail.data as Record<string, unknown>).workflow as Record<string, unknown>).id).toBe(
+      workflowId
+    );
   });
 
   test("monitor: summary endpoint", async () => {
@@ -172,7 +181,10 @@ describe("api minimal integration", () => {
     const skip = await app.request(
       new Request("http://test/api/v1/integrations/telegram/webhook", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "secret" },
+        headers: {
+          "content-type": "application/json",
+          "x-telegram-bot-api-secret-token": "secret",
+        },
         body: JSON.stringify({ update_id: 1 }),
       })
     );
@@ -188,12 +200,247 @@ describe("api minimal integration", () => {
     expect(payload.ok).toBe(true);
   });
 
+  test("integrations: catalog lists all IM kinds", async () => {
+    const res = await app.request(new Request("http://test/api/v1/integrations/catalog"));
+    expect(res.status).toBe(200);
+    const payload = await jsonOf(res);
+    expect(payload.ok).toBe(true);
+    const kinds = (payload.data as Array<{ kind: string }>).map((row) => row.kind);
+    for (const required of ["telegram", "feishu", "wecom", "whatsapp", "dingtalk", "webhook"]) {
+      expect(kinds).toContain(required);
+    }
+  });
+
+  test("integrations: rejects unsupported kind on upsert", async () => {
+    const res = await app.request(
+      new Request("http://test/api/v1/integrations/channels/upsert", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          kind: "not_a_real_kind",
+          name: "x",
+          externalChatId: "x",
+        }),
+      })
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("integrations: upsert/list/delete generic webhook channel", async () => {
+    const created = await app.request(
+      new Request("http://test/api/v1/integrations/channels/upsert", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          projectId,
+          kind: "webhook",
+          name: "ci-webhook",
+          externalChatId: "https://example.com/sink",
+          secretRef: "",
+          metaJson: { url: "https://example.com/sink" },
+          enabled: true,
+        }),
+      })
+    );
+    expect(created.status).toBe(200);
+    const createdPayload = await jsonOf(created);
+    expect(createdPayload.ok).toBe(true);
+    const channel = createdPayload.data as { id: string; metaJson: Record<string, unknown> };
+    expect(typeof channel.id).toBe("string");
+    expect(channel.metaJson.url).toBe("https://example.com/sink");
+
+    const list = await app.request(
+      new Request("http://test/api/v1/integrations/channels?kind=webhook")
+    );
+    expect(list.status).toBe(200);
+    const listPayload = await jsonOf(list);
+    const rows = listPayload.data as Array<{ id: string }>;
+    expect(rows.some((row) => row.id === channel.id)).toBe(true);
+
+    const removed = await app.request(
+      new Request(`http://test/api/v1/integrations/channels/${channel.id}`, { method: "DELETE" })
+    );
+    expect(removed.status).toBe(200);
+  });
+
+  test("workflow: hard delete cascades through derived rows", async () => {
+    const db = await getDb();
+    const wfId = crypto.randomUUID();
+    await db.insert(workflowRun).values({
+      id: wfId,
+      projectId,
+      sessionId,
+      goal: "to-be-hard-deleted",
+      mode: "research",
+      source: "api",
+      status: "completed",
+    });
+
+    // 写入一些常见的衍生数据（workflow_compensation_task 只依赖 workflow_run_id），验证级联清理。
+    const { workflowCompensationTask } = await import("../db/sqlite/schema");
+    await db.insert(workflowCompensationTask).values({
+      id: crypto.randomUUID(),
+      workflowRunId: wfId,
+      actionType: "retry_from_start",
+      reason: "test",
+    });
+
+    // 软删除（默认）
+    const softRes = await app.request(
+      new Request(`http://test/api/v1/workflows/${wfId}`, { method: "DELETE" })
+    );
+    expect(softRes.status).toBe(200);
+    const softJson = await jsonOf(softRes);
+    expect(softJson.hard).toBe(false);
+    // 软删除后行还在
+    const stillExists = await db
+      .select()
+      .from(workflowRun)
+      .where(eq(workflowRun.id, wfId))
+      .limit(1);
+    expect(stillExists.length).toBe(1);
+
+    // 硬删除
+    const hardRes = await app.request(
+      new Request(`http://test/api/v1/workflows/${wfId}?hard=true`, { method: "DELETE" })
+    );
+    expect(hardRes.status).toBe(200);
+    const hardJson = await jsonOf(hardRes);
+    expect(hardJson.hard).toBe(true);
+    const details = (hardJson.details ?? {}) as Record<string, number>;
+    expect(details.workflow_run).toBe(1);
+    expect(details.workflow_compensation_task).toBeGreaterThanOrEqual(1);
+    const gone = await db.select().from(workflowRun).where(eq(workflowRun.id, wfId)).limit(1);
+    expect(gone.length).toBe(0);
+  });
+
+  test("chat session: hard delete removes session + workflows + messages", async () => {
+    // 创建独立会话与挂载工作流/消息
+    const sessRes = await app.request(
+      new Request("http://test/api/v1/chat/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workspaceId, projectId, title: "to-be-deleted" }),
+      })
+    );
+    expect(sessRes.status).toBe(201);
+    const sessJson = await jsonOf(sessRes);
+    const sessId = ((sessJson.data as Record<string, unknown>).id as string) ?? "";
+
+    const db = await getDb();
+    const wfId = crypto.randomUUID();
+    await db.insert(workflowRun).values({
+      id: wfId,
+      projectId,
+      sessionId: sessId,
+      goal: "session-hard-delete",
+      mode: "research",
+      source: "chat",
+      status: "completed",
+    });
+
+    const msgRes = await app.request(
+      new Request(`http://test/api/v1/chat/sessions/${sessId}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: "user", content: "hi", status: "completed" }),
+      })
+    );
+    expect(msgRes.status).toBe(201);
+
+    const del = await app.request(
+      new Request(`http://test/api/v1/chat/sessions/${sessId}?hard=true`, { method: "DELETE" })
+    );
+    expect(del.status).toBe(200);
+    const delJson = await jsonOf(del);
+    expect(delJson.hard).toBe(true);
+    expect((delJson.workflowRunIds as string[]).length).toBeGreaterThanOrEqual(1);
+
+    // 验证会话/工作流/消息都没了
+    const { chatSession: chatSessionTable, chatMessage } = await import("../db/sqlite/schema");
+    const s = await db
+      .select()
+      .from(chatSessionTable)
+      .where(eq(chatSessionTable.id, sessId))
+      .limit(1);
+    expect(s.length).toBe(0);
+    const w = await db.select().from(workflowRun).where(eq(workflowRun.id, wfId)).limit(1);
+    expect(w.length).toBe(0);
+    const m = await db.select().from(chatMessage).where(eq(chatMessage.sessionId, sessId));
+    expect(m.length).toBe(0);
+  });
+
+  test("monitor: workflows list respects limit/filter and excludes cancelled", async () => {
+    // 创建一个 cancelled、一个 completed
+    const db = await getDb();
+    const wfA = crypto.randomUUID();
+    const wfB = crypto.randomUUID();
+    await db.insert(workflowRun).values([
+      {
+        id: wfA,
+        projectId,
+        sessionId,
+        goal: "perf-A",
+        mode: "research",
+        source: "api",
+        status: "cancelled",
+      },
+      {
+        id: wfB,
+        projectId,
+        sessionId,
+        goal: "perf-B",
+        mode: "research",
+        source: "api",
+        status: "completed",
+      },
+    ]);
+
+    const res = await app.request(
+      new Request(`http://test/api/v1/monitor/workflows?sessionId=${sessionId}&limit=10`)
+    );
+    expect(res.status).toBe(200);
+    const json = await jsonOf(res);
+    const rows = json.data as Array<{ id: string; status: string; goal: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.status !== "cancelled")).toBe(true);
+    expect(rows.some((r) => r.id === wfB)).toBe(true);
+    expect(rows.some((r) => r.id === wfA)).toBe(false);
+
+    // includeCancelled=true 时能看到
+    const allRes = await app.request(
+      new Request(
+        `http://test/api/v1/monitor/workflows?sessionId=${sessionId}&includeCancelled=true&limit=10`
+      )
+    );
+    expect(allRes.status).toBe(200);
+    const allRows = ((await jsonOf(allRes)).data as Array<{ id: string }>) ?? [];
+    expect(allRows.some((r) => r.id === wfA)).toBe(true);
+  });
+
+  test("integrations: feishu webhook responds to url_verification challenge", async () => {
+    const res = await app.request(
+      new Request("http://test/api/v1/integrations/feishu/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "url_verification", challenge: "abc-xyz" }),
+      })
+    );
+    expect(res.status).toBe(200);
+    const payload = await jsonOf(res);
+    expect(payload.challenge).toBe("abc-xyz");
+  });
+
   test("market: klines returns OHLCV array", async () => {
     const bad = await app.request(new Request("http://test/api/v1/market/klines"));
     expect(bad.status).toBe(400);
 
     const res = await app.request(
-      new Request("http://test/api/v1/market/klines?symbol=600000&exchange=SH&timeframe=1d&limit=10")
+      new Request(
+        "http://test/api/v1/market/klines?symbol=600000&exchange=SH&timeframe=1d&limit=10"
+      )
     );
     expect(res.status).toBe(200);
     const body = await jsonOf(res);
@@ -247,7 +494,9 @@ describe("api minimal integration", () => {
     const gid = String((created.data as Record<string, unknown>).id ?? "");
     expect(gid.length).toBeGreaterThan(4);
 
-    const detailRes = await app.request(new Request(`http://test/api/v1/agents/agent-groups/${gid}`));
+    const detailRes = await app.request(
+      new Request(`http://test/api/v1/agents/agent-groups/${gid}`)
+    );
     expect(detailRes.status).toBe(200);
     const detailJson = await jsonOf(detailRes);
     const data = detailJson.data as Record<string, unknown>;

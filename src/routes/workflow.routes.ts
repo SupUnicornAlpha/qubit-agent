@@ -4,17 +4,18 @@ import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
 import {
-  enqueueCompensationTask,
-  listCompensationTasks,
-  processCompensationQueue,
-} from "../runtime/workflow/compensation-queue";
-import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
-import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
-import {
   listWorkflowArtifactSummary,
   readWorkflowReportArtifact,
   saveWorkflowReportArtifact,
 } from "../runtime/strategy/strategy-script-files";
+import {
+  enqueueCompensationTask,
+  listCompensationTasks,
+  processCompensationQueue,
+} from "../runtime/workflow/compensation-queue";
+import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
+import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
+import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -218,6 +219,17 @@ workflowRouter.get("/scheduled-jobs/:id/runs", async (c) => {
   return c.json({ data: runs });
 });
 
+workflowRouter.delete("/scheduled-jobs/:id", async (c) => {
+  const id = c.req.param("id");
+  const db = await getDb();
+  const existed = await db.select().from(scheduledJob).where(eq(scheduledJob.id, id)).limit(1);
+  if (!existed[0]) return c.json({ error: "scheduled job not found" }, 404);
+  // 先删除执行记录，避免外键约束；保留 workflow_run 用于审计。
+  await db.delete(scheduledJobRun).where(eq(scheduledJobRun.jobId, id));
+  await db.delete(scheduledJob).where(eq(scheduledJob.id, id));
+  return c.json({ ok: true, id });
+});
+
 const workflowStatusEnum = ["pending", "running", "completed", "failed", "cancelled"] as const;
 
 workflowRouter.patch("/:id", async (c) => {
@@ -249,7 +261,11 @@ workflowRouter.patch("/:id", async (c) => {
   }
   if (body.sessionId !== undefined) {
     if (body.sessionId) {
-      const s = await db.select().from(chatSession).where(eq(chatSession.id, body.sessionId)).limit(1);
+      const s = await db
+        .select()
+        .from(chatSession)
+        .where(eq(chatSession.id, body.sessionId))
+        .limit(1);
       if (!s[0]) return c.json({ error: "session not found", sessionId: body.sessionId }, 404);
     }
     patch.sessionId = body.sessionId;
@@ -262,17 +278,39 @@ workflowRouter.patch("/:id", async (c) => {
   return c.json({ data: updated[0] });
 });
 
-/** 软删除：将工作流标记为 cancelled（保留审计数据） */
+/**
+ * 删除工作流。
+ * - 默认：软删除（status -> cancelled，保留审计数据）。
+ * - 当 query 中带 `?hard=true` 或请求体 `{ hard: true }`：硬删除，
+ *   通过 hardDeleteWorkflowRun 级联清理所有衍生数据（agent_*、a2a/acp、screener、order_intent、
+ *   intent_order、quality、langgraph_checkpoint 等），并把 audit_log / scheduled_job_run 等
+ *   保留型反向引用置空。
+ *
+ * 注意：前端 UI 必须在调用 hard=true 前做二次确认。
+ */
 workflowRouter.delete("/:id", async (c) => {
   const id = c.req.param("id");
   const db = await getDb();
   const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
   if (!rows[0]) return c.json({ error: "Not found" }, 404);
+
+  const hardQuery = (c.req.query("hard") ?? "").toLowerCase();
+  const bodyHard = await c.req
+    .json<{ hard?: boolean }>()
+    .then((b) => b?.hard === true)
+    .catch(() => false);
+  const isHard = hardQuery === "true" || hardQuery === "1" || bodyHard;
+
+  if (isHard) {
+    const result = await hardDeleteWorkflowRun(id);
+    return c.json({ ok: true, id, hard: true, ...result });
+  }
+
   await db
     .update(workflowRun)
     .set({ status: "cancelled", endedAt: new Date().toISOString() })
     .where(eq(workflowRun.id, id));
-  return c.json({ ok: true, id });
+  return c.json({ ok: true, id, hard: false });
 });
 
 workflowRouter.get("/:id/artifacts", async (c) => {

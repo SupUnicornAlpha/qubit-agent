@@ -25,6 +25,8 @@ import type {
   BrokerOrderEventRecord,
   CommunicationChannelRecord,
   CommunicationMessageLogRecord,
+  IntegrationAdapterDescriptor,
+  IntegrationKind,
   McpServerConfigRecord,
   McpToolBindingRecord,
   McpRegistrySourceRecord,
@@ -271,8 +273,22 @@ export async function patchWorkflow(
   );
 }
 
-export async function deleteWorkflow(workflowId: string): Promise<{ ok: boolean; id: string }> {
-  return httpDelete<{ ok: boolean; id: string }>(`/api/v1/workflows/${encodeURIComponent(workflowId)}`);
+/**
+ * 删除工作流。
+ * - `{ hard: false }`（默认）：软删除，置为 cancelled，保留审计数据。
+ * - `{ hard: true }`：硬删除，级联清理所有衍生数据（agent_*、a2a/acp、screener、order_intent、
+ *   intent_order、langgraph_checkpoint 等），并把 audit_log / scheduled_job_run 等保留型反向引用置空。
+ *
+ * 调用前必须在 UI 上做二次确认。
+ */
+export async function deleteWorkflow(
+  workflowId: string,
+  options?: { hard?: boolean }
+): Promise<{ ok: boolean; id: string; hard?: boolean; details?: Record<string, number> }> {
+  const url = options?.hard
+    ? `/api/v1/workflows/${encodeURIComponent(workflowId)}?hard=true`
+    : `/api/v1/workflows/${encodeURIComponent(workflowId)}`;
+  return httpDelete<{ ok: boolean; id: string; hard?: boolean; details?: Record<string, number> }>(url);
 }
 
 export async function listScheduledJobs(input?: {
@@ -565,6 +581,30 @@ export async function createChatSession(input: {
 }): Promise<ChatSession> {
   const res = await httpPost<{ data: ChatSession }>("/api/v1/chat/sessions", input);
   return res.data;
+}
+
+/**
+ * 删除会话。
+ * - `{ hard: false }`（默认）：软删除，标记为 archived，保留消息与衍生数据。
+ * - `{ hard: true }`：硬删除，级联删除该会话下的所有 workflow_run、chat_message、
+ *   chat_message_workflow_link、indicator_strategy_script、scheduled_job 等。
+ *
+ * 调用前必须在 UI 上做二次确认（不可恢复）。
+ */
+export async function deleteChatSession(
+  sessionId: string,
+  options?: { hard?: boolean }
+): Promise<{ ok: boolean; id: string; hard?: boolean; details?: Record<string, number>; workflowRunIds?: string[] }> {
+  const url = options?.hard
+    ? `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}?hard=true`
+    : `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`;
+  return httpDelete<{
+    ok: boolean;
+    id: string;
+    hard?: boolean;
+    details?: Record<string, number>;
+    workflowRunIds?: string[];
+  }>(url);
 }
 
 export async function getDefaultProjectSession(projectId: string): Promise<ChatSession> {
@@ -1417,9 +1457,18 @@ export async function processWorkflowCompensations(limit = 10): Promise<{ picked
   return res.data;
 }
 
-export async function listIntegrationChannels(kind?: "telegram" | "webhook"): Promise<CommunicationChannelRecord[]> {
+export async function listIntegrationCatalog(): Promise<IntegrationAdapterDescriptor[]> {
+  const res = await httpGet<{ ok: boolean; data: IntegrationAdapterDescriptor[] }>(
+    "/api/v1/integrations/catalog"
+  );
+  return res.data;
+}
+
+export async function listIntegrationChannels(kind?: IntegrationKind): Promise<CommunicationChannelRecord[]> {
   const suffix = kind ? `?kind=${kind}` : "";
-  const res = await httpGet<{ ok: boolean; data: CommunicationChannelRecord[] }>(`/api/v1/integrations/channels${suffix}`);
+  const res = await httpGet<{ ok: boolean; data: CommunicationChannelRecord[] }>(
+    `/api/v1/integrations/channels${suffix}`
+  );
   return res.data;
 }
 
@@ -1427,10 +1476,11 @@ export async function upsertIntegrationChannel(input: {
   id?: string;
   workspaceId: string;
   projectId?: string | null;
-  kind: "telegram" | "webhook";
+  kind: IntegrationKind;
   name: string;
   externalChatId: string;
   secretRef?: string;
+  metaJson?: Record<string, unknown> | null;
   enabled?: boolean;
 }): Promise<CommunicationChannelRecord> {
   const res = await httpPost<{ ok: boolean; data: CommunicationChannelRecord }>(
@@ -1440,14 +1490,47 @@ export async function upsertIntegrationChannel(input: {
   return res.data;
 }
 
-export async function listIntegrationLogs(kind?: "telegram" | "webhook", limit = 100): Promise<CommunicationMessageLogRecord[]> {
+export async function deleteIntegrationChannel(id: string): Promise<void> {
+  await httpDelete(`/api/v1/integrations/channels/${encodeURIComponent(id)}`);
+}
+
+export interface IntegrationSendResult {
+  ok: boolean;
+  externalMessageId?: string;
+  payload?: unknown;
+  errorMessage?: string;
+  logId: string;
+}
+
+export async function sendIntegrationMessage(
+  channelId: string,
+  text: string,
+  extra?: Record<string, unknown>
+): Promise<IntegrationSendResult> {
+  const res = await httpPost<{ ok: boolean; data: IntegrationSendResult }>(
+    `/api/v1/integrations/channels/${encodeURIComponent(channelId)}/send`,
+    extra ? { text, extra } : { text }
+  );
+  return res.data;
+}
+
+export async function listIntegrationLogs(
+  kind?: IntegrationKind,
+  limit = 100,
+  channelId?: string
+): Promise<CommunicationMessageLogRecord[]> {
   const query = new URLSearchParams();
   if (kind) query.set("kind", kind);
+  if (channelId) query.set("channelId", channelId);
   query.set("limit", String(limit));
   const res = await httpGet<{ ok: boolean; data: CommunicationMessageLogRecord[] }>(
     `/api/v1/integrations/logs?${query.toString()}`
   );
   return res.data;
+}
+
+export async function deleteScheduledJob(id: string): Promise<void> {
+  await httpDelete(`/api/v1/workflows/scheduled-jobs/${encodeURIComponent(id)}`);
 }
 
 /** Parse one SSE block (lines between blank lines). */

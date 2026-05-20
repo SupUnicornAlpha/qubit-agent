@@ -61,6 +61,17 @@ export async function dispatchTaskToRole(params: {
       })
     : "graph";
 
+  // 续跑请求：无论原 executionPath 是 graph 还是 a2a，都强制走 graphRunner，
+  // 因为只有 LangGraph 路径有 checkpointer，可以从断点继续。
+  if (params.payload.taskType === "workflow_resume" && kind === "native") {
+    return graphRunner.resumeRoleTask({
+      workflowId: params.workflowId,
+      role: params.role,
+      payload: params.payload,
+      ...(params.traceId ? { traceId: params.traceId } : {}),
+    });
+  }
+
   if (path === "a2a" && kind === "native") {
     return a2aLoopDriver.dispatchTask({
       workflowId: params.workflowId,

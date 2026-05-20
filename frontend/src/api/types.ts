@@ -1038,14 +1038,32 @@ export interface WorkflowCompensationTaskRecord {
   updatedAt: string;
 }
 
+/** 与后端 COMMUNICATION_CHANNEL_KINDS 保持一致。 */
+export const INTEGRATION_KINDS = [
+  "telegram",
+  "feishu",
+  "wecom",
+  "whatsapp",
+  "dingtalk",
+  "webhook",
+] as const;
+export type IntegrationKind = (typeof INTEGRATION_KINDS)[number];
+
+export interface IntegrationAdapterDescriptor {
+  kind: IntegrationKind;
+  displayName: string;
+  docsUrl?: string;
+}
+
 export interface CommunicationChannelRecord {
   id: string;
   workspaceId: string;
   projectId?: string | null;
-  kind: "telegram" | "webhook";
+  kind: IntegrationKind;
   name: string;
   externalChatId: string;
   secretRef: string;
+  metaJson: Record<string, unknown>;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1054,7 +1072,8 @@ export interface CommunicationChannelRecord {
 export interface CommunicationMessageLogRecord {
   id: string;
   direction: "inbound" | "outbound";
-  channelKind: "telegram" | "webhook";
+  channelKind: IntegrationKind;
+  channelId?: string | null;
   externalChatId: string;
   externalMessageId?: string | null;
   payloadJson: Record<string, unknown>;
