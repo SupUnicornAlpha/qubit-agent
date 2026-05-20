@@ -32,6 +32,7 @@ import {
   type FactorValueStats,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 
 const CATEGORY_LABELS: Record<FactorCategory, string> = {
   value: "Value",
@@ -104,6 +105,12 @@ export const FactorWorkbenchTab: FC = () => {
 
   // last evaluation result
   const [lastEval, setLastEval] = useState<FactorEvalResultDto | null>(null);
+
+  // 对比模式：多选因子在 IC 时序图上叠加
+  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  const [compareEvalsByFactor, setCompareEvalsByFactor] = useState<
+    Record<string, FactorEvaluationLogRow[]>
+  >({});
 
   const reloadList = useCallback(async () => {
     if (!projectId) return;
@@ -264,6 +271,84 @@ export const FactorWorkbenchTab: FC = () => {
     }
   }, [selectedId, symbolsList, opStart, opEnd]);
 
+  const toggleCompare = useCallback((id: string) => {
+    setCompareIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 拉取对比组的评估历史
+  useEffect(() => {
+    if (compareIds.size === 0) {
+      setCompareEvalsByFactor({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const idsArr = Array.from(compareIds);
+      try {
+        const results = await Promise.all(
+          idsArr.map((id) =>
+            listFactorEvaluations(id, 60)
+              .then((rows) => ({ id, rows }))
+              .catch(() => ({ id, rows: [] as FactorEvaluationLogRow[] }))
+          )
+        );
+        if (cancelled) return;
+        const next: Record<string, FactorEvaluationLogRow[]> = {};
+        for (const r of results) next[r.id] = r.rows;
+        setCompareEvalsByFactor(next);
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [compareIds]);
+
+  // 单因子 IC 时序图
+  const singleICSeries = useMemo<ChartSeries[]>(() => {
+    if (!selected || evaluations.length === 0) return [];
+    const sorted = [...evaluations].sort((a, b) => a.asof.localeCompare(b.asof));
+    return [
+      {
+        name: `${selected.name} · IC`,
+        color: pickColor(0),
+        points: sorted.map((e) => ({ x: e.asof, y: e.ic ?? null })),
+      },
+      {
+        name: `${selected.name} · RankIC`,
+        color: pickColor(1),
+        points: sorted.map((e) => ({ x: e.asof, y: e.rankIc ?? null })),
+        dashed: true,
+      },
+    ];
+  }, [selected, evaluations]);
+
+  // 多因子 IC 对比时序图
+  const compareSeries = useMemo<ChartSeries[]>(() => {
+    const out: ChartSeries[] = [];
+    let i = 0;
+    for (const f of factors) {
+      if (!compareIds.has(f.id)) continue;
+      const rows = (compareEvalsByFactor[f.id] ?? []).slice().sort((a, b) =>
+        a.asof.localeCompare(b.asof)
+      );
+      if (rows.length === 0) continue;
+      out.push({
+        name: f.name,
+        color: pickColor(i),
+        points: rows.map((e) => ({ x: e.asof, y: e.ic ?? null })),
+      });
+      i += 1;
+    }
+    return out;
+  }, [factors, compareIds, compareEvalsByFactor]);
+
   const onToggleStatus = useCallback(
     async (next: FactorStatus) => {
       if (!selected) return;
@@ -413,22 +498,45 @@ export const FactorWorkbenchTab: FC = () => {
             <div style={styles.empty}>暂无因子，点击右上「+ 注册」新增。</div>
           ) : null}
           {filtered.map((f) => (
-            <button
+            <div
               key={f.id}
-              type="button"
-              onClick={() => setSelectedId(f.id)}
               style={{
                 ...styles.listItem,
                 ...(f.id === selectedId ? styles.listItemActive : null),
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
               }}
             >
-              <div style={styles.listItemTitle}>{f.name}</div>
-              <div style={styles.listItemMeta}>
-                <span style={{ color: STATUS_TONES[f.status] }}>{STATUS_LABELS[f.status]}</span>
-                <span> · {CATEGORY_LABELS[f.category]}</span>
-                <span> · {f.lang}</span>
-              </div>
-            </button>
+              <input
+                type="checkbox"
+                checked={compareIds.has(f.id)}
+                onChange={() => toggleCompare(f.id)}
+                onClick={(e) => e.stopPropagation()}
+                title="加入对比"
+                style={{ flexShrink: 0 }}
+              />
+              <button
+                type="button"
+                onClick={() => setSelectedId(f.id)}
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "none",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: "inherit",
+                  padding: 0,
+                }}
+              >
+                <div style={styles.listItemTitle}>{f.name}</div>
+                <div style={styles.listItemMeta}>
+                  <span style={{ color: STATUS_TONES[f.status] }}>{STATUS_LABELS[f.status]}</span>
+                  <span> · {CATEGORY_LABELS[f.category]}</span>
+                  <span> · {f.lang}</span>
+                </div>
+              </button>
+            </div>
           ))}
         </div>
       </aside>
@@ -572,6 +680,25 @@ export const FactorWorkbenchTab: FC = () => {
                   <div style={styles.errorPanel}>评估警告：{lastEval.error}</div>
                 ) : null}
               </div>
+            ) : null}
+
+            {singleICSeries.length > 0 ? (
+              <SvgLineChart
+                title="评估历史 — IC / RankIC 时序"
+                series={singleICSeries}
+                baseline={0}
+                yFormatter={(v) => v.toFixed(3)}
+              />
+            ) : null}
+
+            {compareSeries.length > 0 ? (
+              <SvgLineChart
+                title={`对比模式 — 多因子 IC 时序（${compareSeries.length} factors）`}
+                series={compareSeries}
+                baseline={0}
+                height={200}
+                yFormatter={(v) => v.toFixed(3)}
+              />
             ) : null}
 
             {valueStats ? (

@@ -17,13 +17,13 @@ import {
   listStrategyCompositions,
   listStrategyVersions,
   runBacktestJobNow,
-  type BacktestEquityPoint,
   type BacktestJobRecord,
   type BacktestSignalSpec,
   type StrategyCompositionRecord,
   type StrategyVersionFlatRecord,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 
 type Source = "composition" | "raw";
 type Rebalance = "daily" | "weekly" | "monthly";
@@ -59,6 +59,10 @@ export const BacktestStudioTab: FC = () => {
   const [jobs, setJobs] = useState<BacktestJobRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<BacktestJobRecord | null>(null);
+
+  // 对比模式：多选历史任务在同一 equity 图叠加
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,6 +142,35 @@ export const BacktestStudioTab: FC = () => {
   useEffect(() => {
     void reloadSelected();
   }, [reloadSelected]);
+
+  const toggleCompare = useCallback((id: string) => {
+    setCompareIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // 比较任务 series
+  const compareJobs = useMemo(
+    () => jobs.filter((j) => compareIds.has(j.id) && j.result),
+    [jobs, compareIds]
+  );
+
+  const compareEquitySeries = useMemo<ChartSeries[]>(() => {
+    if (compareJobs.length === 0) return [];
+    const out: ChartSeries[] = [];
+    compareJobs.forEach((j, idx) => {
+      const eq = j.result?.equityCurve ?? [];
+      out.push({
+        name: `${j.id.slice(0, 6)}… (${(((j.result?.metrics.totalReturn ?? 0) * 100).toFixed(1))}%)`,
+        color: pickColor(idx),
+        points: eq.map((p) => ({ x: p.date, y: p.equity })),
+      });
+    });
+    return out;
+  }, [compareJobs]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -398,36 +431,73 @@ export const BacktestStudioTab: FC = () => {
         </form>
         <div style={styles.colHeader}>
           <strong>历史任务</strong>
-          <span style={styles.muted}>{jobs.length}</span>
+          <button
+            type="button"
+            onClick={() => setCompareMode((v) => !v)}
+            style={{
+              ...styles.btnGhost,
+              ...(compareMode ? { background: "var(--qb-bg-elevated)", color: "inherit" } : null),
+            }}
+          >
+            {compareMode ? `对比中 (${compareIds.size})` : "对比模式"}
+          </button>
         </div>
         <div style={styles.list}>
           {jobs.length === 0 ? <div style={styles.empty}>暂无任务</div> : null}
           {jobs.map((j) => (
-            <button
+            <div
               key={j.id}
-              type="button"
-              onClick={() => setSelectedId(j.id)}
               style={{
                 ...styles.listItem,
                 ...(j.id === selectedId ? styles.listItemActive : null),
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
               }}
             >
-              <div style={styles.listItemTop}>
-                <span style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
-                <span style={styles.muted}>
-                  {j.result ? `${(j.result.metrics.totalReturn * 100).toFixed(2)}%` : "—"}
-                </span>
-              </div>
-              <div style={styles.listItemMeta}>
-                {j.engineKey} · {new Date(j.startedAt).toLocaleString()}
-              </div>
-            </button>
+              {compareMode ? (
+                <input
+                  type="checkbox"
+                  checked={compareIds.has(j.id)}
+                  onChange={() => toggleCompare(j.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  disabled={!j.result}
+                  title={j.result ? "加入对比" : "任务无结果不可对比"}
+                  style={{ flexShrink: 0 }}
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setSelectedId(j.id)}
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "none",
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: "inherit",
+                  padding: 0,
+                }}
+              >
+                <div style={styles.listItemTop}>
+                  <span style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
+                  <span style={styles.muted}>
+                    {j.result ? `${(j.result.metrics.totalReturn * 100).toFixed(2)}%` : "—"}
+                  </span>
+                </div>
+                <div style={styles.listItemMeta}>
+                  {j.engineKey} · {new Date(j.startedAt).toLocaleString()}
+                </div>
+              </button>
+            </div>
           ))}
         </div>
       </aside>
 
       <section style={styles.colMid}>
-        {selected ? (
+        {compareMode && compareJobs.length >= 2 ? (
+          <CompareView jobs={compareJobs} equitySeries={compareEquitySeries} />
+        ) : selected ? (
           <BacktestResultView job={selected} onRefresh={reloadSelected} />
         ) : (
           <div style={styles.empty}>左侧选择历史任务或新建回测。</div>
@@ -468,6 +538,29 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
   const m = job.result?.metrics;
   const equity = job.result?.equityCurve ?? [];
 
+  const equitySeries = useMemo<ChartSeries[]>(() => {
+    if (equity.length === 0) return [];
+    const hasBench = equity.some(
+      (p) => typeof p.benchmarkEquity === "number" && Number.isFinite(p.benchmarkEquity)
+    );
+    const series: ChartSeries[] = [
+      {
+        name: "Strategy",
+        color: "var(--qb-success, #36ad6a)",
+        points: equity.map((p) => ({ x: p.date, y: p.equity })),
+      },
+    ];
+    if (hasBench) {
+      series.push({
+        name: "Benchmark",
+        color: "#94a3b8",
+        dashed: true,
+        points: equity.map((p) => ({ x: p.date, y: p.benchmarkEquity ?? null })),
+      });
+    }
+    return series;
+  }, [equity]);
+
   return (
     <>
       <div style={styles.detailHeader}>
@@ -498,7 +591,75 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
           <Metric label="换手率" value={m.turnover} />
         </div>
       ) : null}
-      {equity.length > 1 ? <EquityChart data={equity} capital={job.config.capital} /> : null}
+      {equitySeries.length > 0 ? (
+        <SvgLineChart
+          title="Equity Curve"
+          series={equitySeries}
+          baseline={job.config.capital}
+          yFormatter={(v) => v.toFixed(0)}
+        />
+      ) : null}
+    </>
+  );
+};
+
+/** 多回测对比视图：equity 叠加 + metrics 横向对比 */
+const CompareView: FC<{ jobs: BacktestJobRecord[]; equitySeries: ChartSeries[] }> = ({
+  jobs,
+  equitySeries,
+}) => {
+  return (
+    <>
+      <div style={styles.detailHeader}>
+        <div>
+          <div style={styles.detailTitle}>对比模式 — {jobs.length} 个回测同图</div>
+          <div style={styles.detailMeta}>
+            勾选左侧任务加入或移除；至少 2 个才会显示对比图
+          </div>
+        </div>
+      </div>
+      {equitySeries.length > 0 ? (
+        <SvgLineChart
+          title="Equity Curves (overlay)"
+          series={equitySeries}
+          yFormatter={(v) => v.toFixed(0)}
+        />
+      ) : null}
+      <div style={styles.tableWrap}>
+        <table style={styles.compTable}>
+          <thead>
+            <tr>
+              <th style={styles.th}>Job</th>
+              <th style={styles.thNum}>总收益</th>
+              <th style={styles.thNum}>年化</th>
+              <th style={styles.thNum}>波动</th>
+              <th style={styles.thNum}>Sharpe</th>
+              <th style={styles.thNum}>MDD</th>
+              <th style={styles.thNum}>胜率</th>
+              <th style={styles.thNum}>笔数</th>
+              <th style={styles.thNum}>换手</th>
+            </tr>
+          </thead>
+          <tbody>
+            {jobs.map((j) => {
+              const m = j.result!.metrics;
+              return (
+                <tr key={j.id}>
+                  <td style={styles.tdMono}>{j.id.slice(0, 8)}…</td>
+                  <td style={styles.tdNum}>{(m.totalReturn * 100).toFixed(2)}%</td>
+                  <td style={styles.tdNum}>{(m.annualReturn * 100).toFixed(2)}%</td>
+                  <td style={styles.tdNum}>{(m.annualVol * 100).toFixed(2)}%</td>
+                  <td style={styles.tdNum}>{m.sharpe.toFixed(2)}</td>
+                  <td style={styles.tdNum}>{(m.maxDrawdown * 100).toFixed(2)}%</td>
+                  <td style={styles.tdNum}>{(m.winRate * 100).toFixed(2)}%</td>
+                  <td style={styles.tdNum}>{m.tradeCount}</td>
+                  <td style={styles.tdNum}>{m.turnover.toFixed(2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 };
@@ -526,62 +687,6 @@ const Metric: FC<{ label: string; value: number; pct?: boolean; digits?: number 
   );
 };
 
-const EquityChart: FC<{ data: BacktestEquityPoint[]; capital: number }> = ({ data, capital }) => {
-  const w = 720;
-  const h = 220;
-  const padL = 40;
-  const padR = 12;
-  const padT = 10;
-  const padB = 24;
-  const innerW = w - padL - padR;
-  const innerH = h - padT - padB;
-
-  const minV = Math.min(...data.map((d) => d.equity));
-  const maxV = Math.max(...data.map((d) => d.equity));
-  const range = Math.max(1e-6, maxV - minV);
-
-  const pts = data.map((d, i) => {
-    const x = padL + (i / (data.length - 1)) * innerW;
-    const y = padT + (1 - (d.equity - minV) / range) * innerH;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-
-  const baselineY = padT + (1 - (capital - minV) / range) * innerH;
-
-  return (
-    <div style={styles.chartWrap}>
-      <div style={styles.chartTitle}>Equity Curve</div>
-      <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-        <line
-          x1={padL}
-          y1={baselineY}
-          x2={w - padR}
-          y2={baselineY}
-          stroke="var(--qb-border-subtle)"
-          strokeDasharray="4 4"
-        />
-        <polyline
-          points={pts.join(" ")}
-          fill="none"
-          stroke="var(--qb-success, #36ad6a)"
-          strokeWidth={1.5}
-        />
-        <text x={padL} y={padT + 10} fontSize="10" fill="var(--qb-text-muted)">
-          {maxV.toFixed(0)}
-        </text>
-        <text x={padL} y={padT + innerH - 2} fontSize="10" fill="var(--qb-text-muted)">
-          {minV.toFixed(0)}
-        </text>
-        <text x={padL} y={h - 6} fontSize="10" fill="var(--qb-text-muted)">
-          {data[0]!.date}
-        </text>
-        <text x={w - padR - 60} y={h - 6} fontSize="10" fill="var(--qb-text-muted)">
-          {data[data.length - 1]!.date}
-        </text>
-      </svg>
-    </div>
-  );
-};
 
 const styles: Record<string, CSSProperties> = {
   root: {
@@ -742,12 +847,39 @@ const styles: Record<string, CSSProperties> = {
   },
   metricLabel: { fontSize: 10, color: "var(--qb-text-muted)" },
   metricValue: { fontSize: 13, fontWeight: 600, marginTop: 2 },
-  chartWrap: {
+  compTable: { width: "100%", borderCollapse: "collapse", fontSize: 11 },
+  tableWrap: {
     border: "1px solid var(--qb-border-subtle)",
     borderRadius: 6,
-    padding: "8px 12px",
+    overflow: "auto",
   },
-  chartTitle: { fontSize: 11, color: "var(--qb-text-muted)", marginBottom: 4 },
+  th: {
+    textAlign: "left",
+    padding: "6px 10px",
+    borderBottom: "1px solid var(--qb-border-subtle)",
+    background: "var(--qb-bg-elevated)",
+    position: "sticky",
+    top: 0,
+  },
+  thNum: {
+    textAlign: "right",
+    padding: "6px 10px",
+    borderBottom: "1px solid var(--qb-border-subtle)",
+    background: "var(--qb-bg-elevated)",
+    position: "sticky",
+    top: 0,
+  },
+  tdMono: {
+    padding: "4px 10px",
+    borderBottom: "1px solid var(--qb-border-subtle)",
+    fontFamily: "var(--qb-font-mono, ui-monospace, monospace)",
+  },
+  tdNum: {
+    padding: "4px 10px",
+    borderBottom: "1px solid var(--qb-border-subtle)",
+    textAlign: "right",
+    fontFamily: "var(--qb-font-mono, ui-monospace, monospace)",
+  },
   tradesList: { flex: 1, minHeight: 0, overflow: "auto", padding: "6px 10px" },
   tradeRow: {
     display: "grid",
