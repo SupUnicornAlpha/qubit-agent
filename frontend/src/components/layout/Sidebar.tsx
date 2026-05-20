@@ -7,6 +7,7 @@ import { NavGlyph } from "../../lib/navIcons";
 const QUANT_SUB: readonly { id: QuantTab; label: string }[] = [
   { id: "factor", label: "因子工坊" },
   { id: "discovery", label: "挖掘工坊" },
+  { id: "composer", label: "组合工坊" },
   { id: "backtest", label: "回测工坊" },
 ];
 

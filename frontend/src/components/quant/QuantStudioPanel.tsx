@@ -13,11 +13,13 @@ import type { CSSProperties, FC } from "react";
 import { useAppStore, type QuantTab } from "../../store";
 import { FactorWorkbenchTab } from "./FactorWorkbenchTab";
 import { DiscoveryStudioTab } from "./DiscoveryStudioTab";
+import { ComposerTab } from "./ComposerTab";
 import { BacktestStudioTab } from "./BacktestStudioTab";
 
 const TABS: readonly { id: QuantTab; label: string; desc: string }[] = [
   { id: "factor", label: "因子工坊", desc: "FactorWorkbench" },
   { id: "discovery", label: "挖掘工坊", desc: "DiscoveryStudio" },
+  { id: "composer", label: "组合工坊", desc: "Composer" },
   { id: "backtest", label: "回测工坊", desc: "BacktestStudio" },
 ];
 
@@ -57,6 +59,7 @@ export const QuantStudioPanel: FC = () => {
       <div style={styles.body}>
         {tab === "factor" ? <FactorWorkbenchTab /> : null}
         {tab === "discovery" ? <DiscoveryStudioTab /> : null}
+        {tab === "composer" ? <ComposerTab /> : null}
         {tab === "backtest" ? <BacktestStudioTab /> : null}
       </div>
     </div>

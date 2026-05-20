@@ -30,7 +30,7 @@ export type ActiveView =
   | "config";
 
 /** 量化工作台 tab */
-export type QuantTab = "factor" | "discovery" | "backtest";
+export type QuantTab = "factor" | "discovery" | "composer" | "backtest";
 
 import {
   applyUiAppearance,

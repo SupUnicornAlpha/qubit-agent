@@ -2722,4 +2722,69 @@ export async function listStrategyCompositions(
   return res.data;
 }
 
+export async function createStrategyComposition(body: {
+  strategyVersionId: string;
+  kind: StrategyKind;
+  factorIds?: string[];
+  ruleIds?: string[];
+  weightMethod?: WeightMethod;
+  factorWeights?: Record<string, number>;
+  rebalanceFreq?: string;
+  universe?: string;
+  params?: Record<string, unknown>;
+}): Promise<StrategyCompositionRecord> {
+  const res = await httpPost<{ ok: boolean; data: StrategyCompositionRecord }>(
+    `/api/v1/strategy-compositions`,
+    body
+  );
+  return res.data;
+}
+
+// ─── Rules ──────────────────────────────────────────────────────────────────
+
+export type RuleAppliesTo = "screening" | "risk" | "execution" | "alert";
+export type RuleLang = "jsonlogic" | "python" | "dsl";
+export type RuleStatus = "draft" | "active" | "archived";
+
+export interface RuleRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  description: string;
+  appliesTo: RuleAppliesTo;
+  lang: RuleLang;
+  dsl: unknown;
+  status: RuleStatus;
+  providerKey: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listRules(filter?: {
+  projectId?: string;
+  appliesTo?: RuleAppliesTo;
+  status?: RuleStatus;
+}): Promise<RuleRecord[]> {
+  const qs: string[] = [];
+  if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
+  if (filter?.appliesTo) qs.push(`applies_to=${encodeURIComponent(filter.appliesTo)}`);
+  if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
+  const url = `/api/v1/rules${qs.length ? `?${qs.join("&")}` : ""}`;
+  const res = await httpGet<{ ok: boolean; data: RuleRecord[] }>(url);
+  return res.data;
+}
+
+export async function registerRule(body: {
+  projectId: string;
+  name: string;
+  description?: string;
+  appliesTo?: RuleAppliesTo;
+  lang?: RuleLang;
+  dsl: unknown;
+  status?: RuleStatus;
+}): Promise<RuleRecord> {
+  const res = await httpPost<{ ok: boolean; data: RuleRecord }>(`/api/v1/rules`, body);
+  return res.data;
+}
+
 
