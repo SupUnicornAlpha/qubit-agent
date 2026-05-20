@@ -66,6 +66,34 @@ const WORKFLOW_SET_NULL_TABLES = [
 ] as const;
 
 /**
+ * 二级 FK 链：父表本身用 workflow_run_id 关联，但其子表只通过父表 PK 关联（NO ACTION）。
+ * 必须在删父表前先按 `IN (SELECT id FROM 父表 WHERE workflow_run_id=?)` 清子表，
+ * 否则 `defer_foreign_keys = ON` 在 COMMIT 时会报 FK violation。
+ *
+ * 现有链路：
+ *   debate_session   ← debate_turn / debate_verdict
+ *   acp_call         ← connector_call_log
+ *   order_intent     ← broker_order / execution_task / risk_decision / risk_hit_log / risk_review_ticket
+ *   intent_order     ← broker_order_event / execution_confirm_ticket / execution_report / intent_deviation
+ *   screener_run     ← screener_candidate
+ */
+const WORKFLOW_INDIRECT_TABLES: ReadonlyArray<{ table: string; via: string; viaColumn: string }> = [
+  { table: "debate_turn", via: "debate_session", viaColumn: "debate_session_id" },
+  { table: "debate_verdict", via: "debate_session", viaColumn: "debate_session_id" },
+  { table: "connector_call_log", via: "acp_call", viaColumn: "acp_call_id" },
+  { table: "broker_order", via: "order_intent", viaColumn: "order_intent_id" },
+  { table: "execution_task", via: "order_intent", viaColumn: "order_intent_id" },
+  { table: "risk_decision", via: "order_intent", viaColumn: "order_intent_id" },
+  { table: "risk_hit_log", via: "order_intent", viaColumn: "order_intent_id" },
+  { table: "risk_review_ticket", via: "order_intent", viaColumn: "order_intent_id" },
+  { table: "broker_order_event", via: "intent_order", viaColumn: "intent_order_id" },
+  { table: "execution_confirm_ticket", via: "intent_order", viaColumn: "intent_order_id" },
+  { table: "execution_report", via: "intent_order", viaColumn: "intent_order_id" },
+  { table: "intent_deviation", via: "intent_order", viaColumn: "intent_order_id" },
+  { table: "screener_candidate", via: "screener_run", viaColumn: "screener_run_id" },
+];
+
+/**
  * 硬删除单个 workflow_run，连带清理所有引用它的衍生数据（agent_*、a2a/acp、screener、order/intent、quality、langgraph_checkpoint 等）。
  */
 export async function hardDeleteWorkflowRun(
@@ -102,6 +130,17 @@ export async function hardDeleteWorkflowRun(
       )
       .run(workflowRunId);
     details.sandbox_violation_log = sandboxDel.changes;
+
+    // 1.5) 二级 FK 链：子表通过父表 PK 关联（NO ACTION），必须在删父表前显式清掉，
+    // 否则 COMMIT 阶段的 FK check 仍会报 "FOREIGN KEY constraint failed"。
+    for (const { table, via, viaColumn } of WORKFLOW_INDIRECT_TABLES) {
+      const r = sqlite
+        .prepare(
+          `DELETE FROM ${table} WHERE ${viaColumn} IN (SELECT id FROM ${via} WHERE workflow_run_id = ?)`
+        )
+        .run(workflowRunId);
+      details[table] = (details[table] ?? 0) + r.changes;
+    }
 
     // 2) 直接以 workflow_run_id 引用的表（defer_foreign_keys 下顺序不强制要求）。
     for (const table of WORKFLOW_DIRECT_TABLES) {

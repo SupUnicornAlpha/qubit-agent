@@ -1,5 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type FSWatcher, watch } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { and, desc, eq, ne } from "drizzle-orm";
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { getDb } from "../../db/sqlite/client";
@@ -43,9 +45,61 @@ export class GraphRunner {
   private configWatcher: FSWatcher | null = null;
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private reloading = false;
+  /** 上一次成功 reload 时 .qubit/agents.json + sandbox.json 的内容哈希；mtime 跳但内容没变就不再 reload */
+  private lastConfigHash: string | null = null;
 
   async start(): Promise<void> {
     if (this.started) return;
+    const next = await this.buildNextSnapshot();
+    this.definitions = next.definitions;
+    this.views = next.views;
+    this.started = true;
+    this.startConfigWatcher();
+  }
+
+  async stop(): Promise<void> {
+    for (const view of this.views.values()) view.status = "stopped";
+    this.stopConfigWatcher();
+    this.definitions.clear();
+    this.views.clear();
+    this.started = false;
+  }
+
+  /**
+   * Reload：原子换入——先在内存里构建新的 definitions/views 快照，构建成功后一把替换。
+   * 这样 watcher 抖动或 `.qubit/loop-runs/...` 噪声触发 reload 时，
+   * GET /api/v1/agents 不会再短暂返回空池（修复"Graph 长驻池又空了"）。
+   * 失败时旧快照保持原样，避免半成品状态。
+   */
+  async reload(): Promise<{ before: number; after: number }> {
+    const before = this.getViews().length;
+    try {
+      const next = await this.buildNextSnapshot();
+      this.definitions = next.definitions;
+      this.views = next.views;
+      // 成功 reload 后记下本次 .qubit 内容指纹；下一次 watcher 抖动若指纹未变将直接跳过整池 reload。
+      this.lastConfigHash = (await this.computeConfigHash()) ?? this.lastConfigHash;
+      if (!this.started) {
+        this.started = true;
+        this.startConfigWatcher();
+      }
+    } catch (err) {
+      console.warn(
+        "[GraphRunner] reload failed; keeping previous snapshot:",
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+    return { before, after: this.getViews().length };
+  }
+
+  /**
+   * 读取 .qubit 配置 + DB（不修改 this.* 任何字段），返回一份完整的 definitions+views 快照。
+   * 调用方决定何时换入，从而避免 reload 中间窗口被外部观察到空池。
+   */
+  private async buildNextSnapshot(): Promise<{
+    definitions: Map<AgentRole, RuntimeAgentDefinition>;
+    views: Map<AgentRole, GraphAgentView>;
+  }> {
     await this.syncFromWorkspaceConfig();
     const db = await getDb();
     const dbDefs = await db.select().from(agentDefinition);
@@ -71,9 +125,11 @@ export class GraphRunner {
         : SEED_AGENT_DEFINITIONS
     ).filter((d) => d.enabled);
 
+    const definitions = new Map<AgentRole, RuntimeAgentDefinition>();
+    const views = new Map<AgentRole, GraphAgentView>();
     for (const def of sourceDefs) {
-      this.definitions.set(def.role, def);
-      this.views.set(def.role, {
+      definitions.set(def.role, def);
+      views.set(def.role, {
         instanceId: `graph-${def.role}`,
         definitionId: def.id,
         role: def.role,
@@ -82,35 +138,74 @@ export class GraphRunner {
         status: "running",
       });
     }
-    this.started = true;
-    this.startConfigWatcher();
-  }
-
-  async stop(): Promise<void> {
-    for (const view of this.views.values()) view.status = "stopped";
-    this.stopConfigWatcher();
-    this.definitions.clear();
-    this.views.clear();
-    this.started = false;
-  }
-
-  async reload(): Promise<{ before: number; after: number }> {
-    const before = this.getViews().length;
-    await this.stop();
-    await this.start();
-    return { before, after: this.getViews().length };
+    return { definitions, views };
   }
 
   getViews(): GraphAgentView[] {
     return [...this.views.values()];
   }
 
-  /** 派发前确保已从 DB 加载角色定义（避免 HTTP 已就绪但 Agent 池未 warm-up） */
+  /**
+   * 只读 DB 拿单角色的 enabled definition（不触发 .qubit/agents.json 写、不抢锁）。
+   * 用于 runRoleTask 在 ensureReady 撞锁后做的最终兜底，避免 "No graph definition" 错误。
+   */
+  private async fastResolveDefinitionFromDb(
+    role: AgentRole
+  ): Promise<RuntimeAgentDefinition | undefined> {
+    try {
+      const db = await getDb();
+      const rows = await db
+        .select()
+        .from(agentDefinition)
+        .where(eq(agentDefinition.role, role))
+        .limit(1);
+      const row = rows[0];
+      if (!row || !row.enabled) return undefined;
+      return {
+        id: row.id,
+        role: row.role,
+        name: row.name,
+        version: row.version,
+        systemPrompt: row.systemPrompt,
+        tools: row.toolsJson as string[],
+        mcpServers: row.mcpServersJson as string[],
+        skills: row.skillsJson as string[],
+        subscriptions: row.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
+        llmProvider: row.llmProvider,
+        maxIterations: row.maxIterations,
+        sandboxPolicyId: row.sandboxPolicyId,
+        enabled: Boolean(row.enabled),
+      };
+    } catch (err) {
+      console.warn(
+        `[GraphRunner] fastResolveDefinitionFromDb(${role}) failed:`,
+        err instanceof Error ? err.message : String(err)
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * 派发前确保已从 DB 加载角色定义（避免 HTTP 已就绪但 Agent 池未 warm-up）。
+   * 撞到 SQLITE_BUSY 时做有界重试（指数退避），避免 watcher 抖动+并发请求导致
+   * `runRoleTask` 拿到空 definitions 直接报 "No graph definition for role=..."。
+   */
   async ensureReady(requiredRole?: AgentRole): Promise<void> {
-    const missingRole = requiredRole != null && !this.definitions.has(requiredRole);
-    if (!this.started || this.definitions.size === 0 || missingRole) {
-      if (this.started) await this.reload();
-      else await this.start();
+    const needsWarmup = () => {
+      const missingRole = requiredRole != null && !this.definitions.has(requiredRole);
+      return !this.started || this.definitions.size === 0 || missingRole;
+    };
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!needsWarmup()) return;
+      try {
+        if (this.started) await this.reload();
+        else await this.start();
+      } catch (err) {
+        if (attempt === 2) throw err;
+      }
+      if (!needsWarmup()) return;
+      await new Promise((res) => setTimeout(res, 80 * (attempt + 1)));
     }
   }
 
@@ -141,15 +236,61 @@ export class GraphRunner {
     await syncWorkspaceConfigToDb(loaded.config);
   }
 
+  /**
+   * 只关心 .qubit/ 顶层的几份配置（agents.json / sandbox.json / model.json 等），
+   * 忽略 loop-runs/<workflowId>/*.json 这类执行 artifacts；
+   * macOS 的 fsevents 即便 recursive:false 也会把子目录写入冒泡到这里（fileName 形如
+   * "loop-runs/<id>/qubit-mcp-bridge.json"），过去会无意义地触发整池 reload。
+   */
+  private static readonly WORKSPACE_CONFIG_WATCH_ALLOW = new Set([
+    "agents.json",
+    "sandbox.json",
+    "model.json",
+    "debate.json",
+    "risk.json",
+    "execution-safety.json",
+  ]);
+
   private startConfigWatcher(): void {
     if (this.configWatcher) return;
     this.configWatcher = watch(".qubit", { recursive: false }, (_, fileName) => {
       if (!fileName || !fileName.endsWith(".json")) return;
+      if (fileName.includes("/") || fileName.includes("\\")) return; // 拒绝子目录冒泡
+      if (!GraphRunner.WORKSPACE_CONFIG_WATCH_ALLOW.has(fileName)) return;
       if (this.reloadTimer) clearTimeout(this.reloadTimer);
       this.reloadTimer = setTimeout(() => {
-        void this.reloadFromWatcher();
+        void this.reloadFromWatcherIfContentChanged();
       }, 250);
     });
+  }
+
+  /** 计算 agents.json + sandbox.json 的内容指纹；mtime 跳但内容相同的情况就不会触发 reload。 */
+  private async computeConfigHash(): Promise<string | null> {
+    try {
+      const root = process.cwd();
+      const agentsPath = join(root, ".qubit", "agents.json");
+      const sandboxPath = join(root, ".qubit", "sandbox.json");
+      const [a, s] = await Promise.all([
+        readFile(agentsPath, "utf-8").catch(() => ""),
+        readFile(sandboxPath, "utf-8").catch(() => ""),
+      ]);
+      const h = createHash("sha1");
+      h.update(a);
+      h.update("|");
+      h.update(s);
+      return h.digest("hex");
+    } catch {
+      return null;
+    }
+  }
+
+  private async reloadFromWatcherIfContentChanged(): Promise<void> {
+    const hash = await this.computeConfigHash();
+    if (hash && this.lastConfigHash === hash) {
+      // mtime 抖动但内容没变（macOS APFS 经常这样），不必整池 reload。
+      return;
+    }
+    await this.reloadFromWatcher();
   }
 
   private stopConfigWatcher(): void {
@@ -183,7 +324,23 @@ export class GraphRunner {
     traceId?: string;
   }): Promise<{ runId: string }> {
     await this.ensureReady(params.role);
-    const def = this.definitions.get(params.role);
+    let def = this.definitions.get(params.role);
+    if (!def) {
+      // 最后兜底：直接读 DB 单条记录（不抢 .qubit JSON 写锁），插入到 definitions/views，
+      // 解决 ensureReady 撞 SQLITE_BUSY 后仍拿不到 def 的极端时序。
+      def = await this.fastResolveDefinitionFromDb(params.role);
+      if (def) {
+        this.definitions.set(def.role, def);
+        this.views.set(def.role, {
+          instanceId: `graph-${def.role}`,
+          definitionId: def.id,
+          role: def.role,
+          name: def.name,
+          version: def.version,
+          status: "running",
+        });
+      }
+    }
     if (!def) {
       throw new Error(
         `No graph definition for role=${params.role} (enabled definition missing in DB). ` +

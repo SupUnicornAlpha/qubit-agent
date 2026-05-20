@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(debug_assertions)]
+use std::process::Child;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -119,17 +121,36 @@ fn resolve_app_root(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(debug_assertions)]
-fn spawn_dev_bun_backend(state: &BackendState) -> Result<BackendStatus, String> {
+fn spawn_dev_bun_backend(
+    handle: &tauri::AppHandle,
+    state: &BackendState,
+) -> Result<BackendStatus, String> {
     let mut dev_guard = state
         .dev_child
         .lock()
         .map_err(|_| "backend lock poisoned".to_string())?;
 
+    let app_root = resolve_app_root(handle)?;
+    let data_dir = data_dir_path(handle)?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| format!("create data_dir: {e}"))?;
+
+    let app_root_str = app_root
+        .to_str()
+        .ok_or_else(|| "app_root path is not UTF-8".to_string())?
+        .to_string();
+    let data_dir_str = data_dir
+        .to_str()
+        .ok_or_else(|| "data_dir path is not UTF-8".to_string())?
+        .to_string();
+
+    // sidecar binary 缺失（开发期常态：未跑 `bun run build:app`）时直接拉 `bun run src/index.ts`，
+    // 同时通过 QUBIT_APP_ROOT/QUBIT_DATA_DIR 让 dev fallback 复用与 sidecar 模式一致的数据目录，
+    // 避免来回切换时看到不同的 chat_session / workflow_run。
     let child = Command::new("bash")
         .arg("-lc")
         .arg(format!(
-            "PORT={} HOST=127.0.0.1 bun run src/index.ts",
-            BACKEND_PORT
+            "PORT={} HOST=127.0.0.1 QUBIT_APP_ROOT='{}' QUBIT_DATA_DIR='{}' bun run src/index.ts",
+            BACKEND_PORT, app_root_str, data_dir_str
         ))
         .current_dir("..")
         .stdout(Stdio::null())
@@ -194,11 +215,23 @@ fn spawn_backend_sidecar(
     let data_dir = data_dir_path(handle)?;
     std::fs::create_dir_all(&data_dir).map_err(|e| format!("create data_dir: {e}"))?;
 
+    // debug build 期间，预编译 sidecar binary 几乎总是落后于当前源码（每次都得 `bun run build:app` 才能同步），
+    // 默认强制 fallback 到 `bun run src/index.ts`，保证开发期改代码立即生效；
+    // 如果确实需要在 debug 模式下也测预编译 binary，可以设 QUBIT_USE_SIDECAR_BIN=1。
+    #[cfg(debug_assertions)]
+    if std::env::var("QUBIT_USE_SIDECAR_BIN").as_deref() != Ok("1") {
+        drop(child_guard);
+        drop(pid_guard);
+        return spawn_dev_bun_backend(handle, state);
+    }
+
     let sidecar = handle.shell().sidecar("qubit");
     let Ok(sidecar) = sidecar else {
         #[cfg(debug_assertions)]
         {
-            return spawn_dev_bun_backend(state);
+            drop(child_guard);
+            drop(pid_guard);
+            return spawn_dev_bun_backend(handle, state);
         }
         #[cfg(not(debug_assertions))]
         return Err("qubit sidecar binary missing; run `bun run build:app` before packaging".to_string());

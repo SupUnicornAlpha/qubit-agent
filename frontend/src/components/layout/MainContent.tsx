@@ -324,6 +324,9 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
   const [chatLoopKind, setChatLoopKind] = useState<AgentLoopKind>("native");
+  // Tauri webview 屏蔽了 window.confirm/prompt（点击没反应），所以走 inline 2-click 兜底：
+  // 第一下点击进入 pending（按钮变红+变文案），第二下才真正执行硬删除；3 秒后自动取消。
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
   useEffect(() => {
     if (chatDraftPrefill === null) return;
     setInput(chatDraftPrefill);
@@ -576,18 +579,12 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   };
 
   /**
-   * 硬删除一个会话。
-   * 二次确认通过 window.confirm —— 因为是硬删除，必须明确告知用户：将一并清理该会话下的
-   * 所有工作流与 agent / a2a / intent_order 等衍生数据，无法恢复。
+   * 硬删除一个会话（实际执行）。
+   * 由 inline 2-click 流程触发：UI 上第一次点 × 进 pending 态、提示"再次点击确认"，
+   * 第二次点 × 才会调到这里——Tauri webview 屏蔽了 window.confirm，无法走原生弹窗。
    */
-  const onHardDeleteSession = async (sessionId: string, sessionTitle: string) => {
-    const ok = window.confirm(
-      `确认硬删除会话「${sessionTitle}」？\n\n` +
-        "将一并删除该会话下的所有工作流（含 agent / 步骤 / 工具调用 / langgraph checkpoint）、" +
-        "聊天消息、IDE 策略脚本和绑定的定时任务，且【不可恢复】。\n\n" +
-        "如只是想归档保留数据，请取消并改用「归档」。"
-    );
-    if (!ok) return;
+  const performHardDeleteSession = async (sessionId: string, sessionTitle: string) => {
+    setPendingDeleteSessionId(null);
     try {
       const result = await deleteChatSession(sessionId, { hard: true });
       const remaining = chatSessions.filter((s) => s.id !== sessionId);
@@ -601,6 +598,22 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : "硬删除会话失败");
     }
+  };
+
+  /**
+   * × 按钮单击：第一次设 pending、3 秒后自动撤销；第二次（pending 命中）才真正硬删。
+   * 通过 setTimeout + 闭包 id 比对，避免不同会话之间互相干扰。
+   */
+  const handleClickDeleteSession = (sessionId: string, sessionTitle: string) => {
+    if (pendingDeleteSessionId === sessionId) {
+      void performHardDeleteSession(sessionId, sessionTitle);
+      return;
+    }
+    setPendingDeleteSessionId(sessionId);
+    setErrorText("");
+    setTimeout(() => {
+      setPendingDeleteSessionId((cur) => (cur === sessionId ? null : cur));
+    }, 3000);
   };
 
   const bindStream = (workflowId: string, runId: string, assistantMessageId: string) => {
@@ -891,24 +904,34 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 </button>
                 <button
                   type="button"
-                  aria-label={`硬删除会话 ${session.title}`}
-                  title="硬删除会话（不可恢复）"
+                  aria-label={
+                    pendingDeleteSessionId === session.id
+                      ? `再次点击确认硬删除会话 ${session.title}`
+                      : `硬删除会话 ${session.title}`
+                  }
+                  title={
+                    pendingDeleteSessionId === session.id
+                      ? "再次点击确认硬删除（含全部工作流/消息/checkpoint，不可恢复）。3 秒内未确认将自动取消。"
+                      : "硬删除会话（含全部工作流，不可恢复）"
+                  }
                   onClick={(e) => {
                     e.stopPropagation();
-                    void onHardDeleteSession(session.id, session.title);
+                    handleClickDeleteSession(session.id, session.title);
                   }}
                   style={{
-                    background: "transparent",
+                    background:
+                      pendingDeleteSessionId === session.id ? "#7f1d1d" : "transparent",
                     border: 0,
-                    color: "#a1a1aa",
+                    color: pendingDeleteSessionId === session.id ? "#fecaca" : "#a1a1aa",
                     cursor: "pointer",
                     padding: "0 8px",
-                    fontSize: 16,
+                    fontSize: pendingDeleteSessionId === session.id ? 11 : 16,
                     lineHeight: 1,
                     alignSelf: "stretch",
+                    fontWeight: pendingDeleteSessionId === session.id ? 600 : 400,
                   }}
                 >
-                  ×
+                  {pendingDeleteSessionId === session.id ? "再次确认" : "×"}
                 </button>
               </div>
             ))}
