@@ -13,11 +13,13 @@
 import { providerRegistry } from "./registry";
 import { PythonInlineFactorProvider } from "./impls/factor/python-inline-factor-provider";
 import { QlibExprFactorProvider } from "./impls/factor/qlib-expr-factor-provider";
+import { QlibPythonFactorProvider } from "./impls/factor/qlib-python-factor-provider";
 import { BuiltinFactorEvalProvider } from "./impls/factor/builtin-factor-eval-provider";
 import { JsonLogicRuleProvider } from "./impls/rule/jsonlogic-rule-provider";
 import { SmaLegacyBacktestProvider } from "./impls/backtest/sma-legacy-backtest-provider";
 import { EventDrivenBacktestProvider } from "./impls/backtest/event-driven-backtest-provider";
 import { LegacyHttpEmsProvider } from "./impls/live-ems/legacy-http-ems-provider";
+import { VeighnaEmsProvider } from "./impls/live-ems/veighna-ems-provider";
 import { LegacyRestMarketDataProvider } from "./impls/market-data/legacy-rest-md-provider";
 
 let bootstrapPromise: Promise<void> | null = null;
@@ -32,11 +34,13 @@ export function bootstrapProviders(): Promise<void> {
     // 1. 注册内置实现到内存 registry
     providerRegistry.register(new PythonInlineFactorProvider());
     providerRegistry.register(new QlibExprFactorProvider());
+    providerRegistry.register(new QlibPythonFactorProvider());
     providerRegistry.register(new BuiltinFactorEvalProvider());
     providerRegistry.register(new JsonLogicRuleProvider());
     providerRegistry.register(new SmaLegacyBacktestProvider());
     providerRegistry.register(new EventDrivenBacktestProvider());
     providerRegistry.register(new LegacyHttpEmsProvider());
+    providerRegistry.register(new VeighnaEmsProvider());
     providerRegistry.register(new LegacyRestMarketDataProvider());
 
     // 2. 同步 DB
@@ -45,7 +49,7 @@ export function bootstrapProviders(): Promise<void> {
     // 3. 反向回读 DB 上的 status/priority（用户在 UI 改过的）
     await providerRegistry.reload();
 
-    console.log("[Provider] bootstrap done: 8 builtin providers registered");
+    console.log("[Provider] bootstrap done: 10 builtin providers registered");
   })();
   return bootstrapPromise;
 }

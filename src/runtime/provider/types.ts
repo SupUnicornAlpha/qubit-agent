@@ -260,9 +260,93 @@ export interface BacktestProvider extends BaseProvider {
   run?(input: BacktestRequest): Promise<BacktestResult>;
 }
 
-// ─── live_ems / market_data / llm / factor_miner ───
-// 后续阶段补 specialized contract
-export interface LiveEmsProvider extends BaseProvider {}
+// ─── live_ems ───
+
+export type LiveOrderSide = "buy" | "sell";
+export type LiveOrderType = "market" | "limit";
+export type LiveOrderStatus =
+  | "pending"
+  | "submitted"
+  | "partial_filled"
+  | "filled"
+  | "cancelled"
+  | "rejected";
+
+export interface LiveOrderIntent {
+  /** 系统侧的 intent_order_id（关联 OMS） */
+  intentOrderId: string;
+  /** broker 账户标识（如 "ibkr_paper" / "veighna_simnow"） */
+  accountRef: string;
+  symbol: string;
+  exchange: string;
+  side: LiveOrderSide;
+  orderType: LiveOrderType;
+  quantity: number;
+  limitPrice?: number;
+  /** 自由扩展字段（如 timeInForce / clientOrderRef） */
+  meta?: Record<string, unknown>;
+}
+
+export interface LiveOrderAck {
+  brokerOrderId: string;
+  status: LiveOrderStatus;
+  acceptedAt: string;
+  /** 部分券商在 ack 即返回成交（市价单 + paper） */
+  filledQty?: number;
+  avgPrice?: number;
+}
+
+export interface LiveOrderStatusInfo {
+  brokerOrderId: string;
+  status: LiveOrderStatus;
+  filledQty: number;
+  avgPrice: number;
+  updatedAt: string;
+}
+
+export interface LivePosition {
+  symbol: string;
+  exchange: string;
+  quantity: number;
+  avgCost: number;
+  marketPrice?: number;
+  unrealizedPnl?: number;
+}
+
+export interface LiveAccountSnapshot {
+  accountRef: string;
+  cash: number;
+  equity: number;
+  marginUsed: number;
+  positions: LivePosition[];
+  updatedAt: string;
+}
+
+/**
+ * LiveEmsProvider —— 实盘 EMS（订单管理） Provider
+ *
+ * 可实现方包括：
+ *   - VeighNa 子进程（接入国内/期货 broker）
+ *   - 直连 broker REST/FIX（IBKR / Tiger / 老虎模拟盘）
+ *   - 内存 paper-trade（MVP / 单测）
+ */
+export interface LiveEmsProvider extends BaseProvider {
+  /** 提交订单到 broker；返回 brokerOrderId + 初始状态 */
+  submitOrder?(intent: LiveOrderIntent): Promise<LiveOrderAck>;
+  /** 撤单 */
+  cancelOrder?(input: { brokerOrderId: string; accountRef: string }): Promise<{
+    ok: boolean;
+    status: LiveOrderStatus;
+  }>;
+  /** 查询订单状态 */
+  getOrderStatus?(input: {
+    brokerOrderId: string;
+    accountRef: string;
+  }): Promise<LiveOrderStatusInfo>;
+  /** 拉取账户快照 + 持仓 */
+  getAccountSnapshot?(input: { accountRef: string }): Promise<LiveAccountSnapshot>;
+}
+
 export interface MarketDataProvider extends BaseProvider {}
 export interface LlmProvider extends BaseProvider {}
 export interface FactorMinerProvider extends BaseProvider {}
