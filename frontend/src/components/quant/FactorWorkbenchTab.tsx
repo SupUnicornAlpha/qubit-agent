@@ -379,15 +379,15 @@ export const FactorWorkbenchTab: FC = () => {
   }
 
   return (
-    <div style={styles.root}>
-      <aside style={styles.colLeft}>
-        <div style={styles.colHeader}>
+    <div className="qb-quant-tab-root qb-quant-tab-root--factor" data-qb-quant-tab="factor" style={styles.root}>
+      <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>因子列表</strong>
-          <button type="button" onClick={() => setShowForm((s) => !s)} style={styles.btnPrimary}>
+          <button type="button" onClick={() => setShowForm((s) => !s)} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary}>
             {showForm ? "取消" : "+ 注册"}
           </button>
         </div>
-        <div style={styles.filterRow}>
+        <div className="qb-quant-filter-row" style={styles.filterRow}>
           <select
             value={filterCategory}
             onChange={(e) => setFilterCategory(e.target.value as FactorCategory | "all")}
@@ -414,7 +414,7 @@ export const FactorWorkbenchTab: FC = () => {
           </select>
         </div>
         {showForm ? (
-          <form onSubmit={onSubmitRegister} style={styles.form}>
+          <form onSubmit={onSubmitRegister} className="qb-quant-form" style={styles.form}>
             <label style={styles.formLabel}>
               名称
               <input
@@ -488,18 +488,20 @@ export const FactorWorkbenchTab: FC = () => {
                 />
               </label>
             </div>
-            <button type="submit" disabled={busy} style={styles.btnPrimary}>
+            <button type="submit" disabled={busy} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary}>
               提交
             </button>
           </form>
         ) : null}
-        <div style={styles.list}>
+        <div className="qb-quant-list" style={styles.list}>
           {filtered.length === 0 ? (
-            <div style={styles.empty}>暂无因子，点击右上「+ 注册」新增。</div>
+            <div className="qb-quant-empty" style={styles.empty}>暂无因子，点击右上「+ 注册」新增。</div>
           ) : null}
           {filtered.map((f) => (
             <div
               key={f.id}
+              className={`qb-quant-list-item${f.id === selectedId ? " qb-quant-list-item--active" : ""}`}
+              data-qb-quant-status={f.status}
               style={{
                 ...styles.listItem,
                 ...(f.id === selectedId ? styles.listItemActive : null),
@@ -529,9 +531,9 @@ export const FactorWorkbenchTab: FC = () => {
                   padding: 0,
                 }}
               >
-                <div style={styles.listItemTitle}>{f.name}</div>
-                <div style={styles.listItemMeta}>
-                  <span style={{ color: STATUS_TONES[f.status] }}>{STATUS_LABELS[f.status]}</span>
+                <div className="qb-quant-list-item-title" style={styles.listItemTitle}>{f.name}</div>
+                <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
+                  <span className="qb-quant-status-tag" data-qb-quant-status={f.status} style={{ color: STATUS_TONES[f.status] }}>{STATUS_LABELS[f.status]}</span>
                   <span> · {CATEGORY_LABELS[f.category]}</span>
                   <span> · {f.lang}</span>
                 </div>
@@ -541,25 +543,27 @@ export const FactorWorkbenchTab: FC = () => {
         </div>
       </aside>
 
-      <section style={styles.colMid}>
+      <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
         {selected ? (
           <>
-            <div style={styles.detailHeader}>
+            <div className="qb-quant-detail-header" style={styles.detailHeader}>
               <div>
-                <div style={styles.detailTitle}>{selected.name}</div>
-                <div style={styles.detailMeta}>
+                <div className="qb-quant-detail-title" style={styles.detailTitle}>{selected.name}</div>
+                <div className="qb-quant-detail-meta" style={styles.detailMeta}>
                   {CATEGORY_LABELS[selected.category]} · {selected.lang} · horizon={selected.horizon}
                   {" · "}
                   provider={selected.providerKey}
                 </div>
               </div>
-              <div style={styles.statusActions}>
+              <div className="qb-quant-status-actions" style={styles.statusActions}>
                 {(Object.keys(STATUS_LABELS) as FactorStatus[]).map((s) => (
                   <button
                     key={s}
                     type="button"
                     disabled={busy || selected.status === s}
                     onClick={() => onToggleStatus(s)}
+                    className={`qb-quant-btn qb-quant-btn--ghost${selected.status === s ? " qb-quant-btn--ghost-active" : ""}`}
+                    data-qb-quant-status={s}
                     style={{
                       ...styles.btnGhost,
                       ...(selected.status === s ? styles.btnGhostActive : null),
@@ -570,9 +574,9 @@ export const FactorWorkbenchTab: FC = () => {
                 ))}
               </div>
             </div>
-            <pre style={styles.exprBox}>{selected.expr}</pre>
+            <pre className="qb-quant-expr-box" style={styles.exprBox}>{selected.expr}</pre>
 
-            <div style={styles.opPanel}>
+            <div className="qb-quant-op-panel" style={styles.opPanel}>
               <strong>操作</strong>
               <div style={styles.opRow}>
                 <label style={styles.formLabel}>
@@ -627,14 +631,14 @@ export const FactorWorkbenchTab: FC = () => {
                     style={styles.input}
                   />
                 </label>
-                <div style={styles.opBtnRow}>
-                  <button type="button" disabled={busy} onClick={onCompute} style={styles.btnPrimary}>
+                <div className="qb-quant-op-btn-row" style={styles.opBtnRow}>
+                  <button type="button" disabled={busy} onClick={onCompute} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary}>
                     Compute
                   </button>
-                  <button type="button" disabled={busy} onClick={onAutoEvaluate} style={styles.btnPrimary}>
+                  <button type="button" disabled={busy} onClick={onAutoEvaluate} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary}>
                     Auto-Evaluate
                   </button>
-                  <button type="button" disabled={busy} onClick={onLoadValues} style={styles.btnGhost}>
+                  <button type="button" disabled={busy} onClick={onLoadValues} className="qb-quant-btn qb-quant-btn--ghost" style={styles.btnGhost}>
                     Load Values
                   </button>
                 </div>
@@ -642,9 +646,9 @@ export const FactorWorkbenchTab: FC = () => {
             </div>
 
             {lastEval ? (
-              <div style={styles.evalPanel}>
+              <div className="qb-quant-eval-panel" style={styles.evalPanel}>
                 <strong>最近一次评估</strong>
-                <div style={styles.evalGrid}>
+                <div className="qb-quant-eval-grid" style={styles.evalGrid}>
                   <MetricCell label="IC" value={lastEval.ic} />
                   <MetricCell label="RankIC" value={lastEval.rankIc} />
                   <MetricCell label="IR" value={lastEval.ir} />
@@ -677,7 +681,7 @@ export const FactorWorkbenchTab: FC = () => {
                   </div>
                 ) : null}
                 {lastEval.error ? (
-                  <div style={styles.errorPanel}>评估警告：{lastEval.error}</div>
+                  <div className="qb-quant-error-panel" style={styles.errorPanel}>评估警告：{lastEval.error}</div>
                 ) : null}
               </div>
             ) : null}
@@ -702,7 +706,7 @@ export const FactorWorkbenchTab: FC = () => {
             ) : null}
 
             {valueStats ? (
-              <div style={styles.statsBar}>
+              <div className="qb-quant-stats-bar" style={styles.statsBar}>
                 <span>已写入 {valueStats.rowCount} 行</span>
                 <span> · {valueStats.symbolCount} symbols</span>
                 <span>
@@ -713,8 +717,8 @@ export const FactorWorkbenchTab: FC = () => {
             ) : null}
 
             {valuePreview.length > 0 ? (
-              <div style={styles.tableWrap}>
-                <table style={styles.table}>
+              <div className="qb-quant-table-wrap" style={styles.tableWrap}>
+                <table className="qb-quant-table" style={styles.table}>
                   <thead>
                     <tr>
                       <th style={styles.th}>Date</th>
@@ -736,36 +740,36 @@ export const FactorWorkbenchTab: FC = () => {
             ) : null}
           </>
         ) : (
-          <div style={styles.empty}>左侧选择或注册一个因子。</div>
+          <div className="qb-quant-empty" style={styles.empty}>左侧选择或注册一个因子。</div>
         )}
       </section>
 
-      <aside style={styles.colRight}>
-        <div style={styles.colHeader}>
+      <aside className="qb-quant-col qb-quant-col--right" style={styles.colRight}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>评估历史</strong>
-          <span style={styles.muted}>{evaluations.length} 条</span>
+          <span className="qb-quant-muted" style={styles.muted}>{evaluations.length} 条</span>
         </div>
-        <div style={styles.evalList}>
-          {evaluations.length === 0 ? <div style={styles.empty}>暂无</div> : null}
+        <div className="qb-quant-eval-list" style={styles.evalList}>
+          {evaluations.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无</div> : null}
           {evaluations.map((e) => (
-            <div key={e.id} style={styles.evalRow}>
-              <div style={styles.evalRowTop}>
-                <span style={styles.muted}>{e.asof}</span>
-                <span style={styles.muted}>n={e.sampleSize}</span>
+            <div key={e.id} className="qb-quant-eval-row" style={styles.evalRow}>
+              <div className="qb-quant-eval-row-top" style={styles.evalRowTop}>
+                <span className="qb-quant-muted" style={styles.muted}>{e.asof}</span>
+                <span className="qb-quant-muted" style={styles.muted}>n={e.sampleSize}</span>
               </div>
-              <div style={styles.evalRowMid}>
+              <div className="qb-quant-eval-row-mid" style={styles.evalRowMid}>
                 <span>IC {(e.ic ?? 0).toFixed(4)}</span>
                 <span>RankIC {(e.rankIc ?? 0).toFixed(4)}</span>
                 <span>IR {(e.ir ?? 0).toFixed(4)}</span>
               </div>
-              {e.error ? <div style={styles.evalErr}>{e.error}</div> : null}
+              {e.error ? <div className="qb-quant-eval-err" style={styles.evalErr}>{e.error}</div> : null}
             </div>
           ))}
         </div>
       </aside>
 
-      {error ? <div style={styles.toastErr}>{error}</div> : null}
-      {info ? <div style={styles.toastInfo}>{info}</div> : null}
+      {error ? <div className="qb-quant-toast qb-quant-toast--err" style={styles.toastErr}>{error}</div> : null}
+      {info ? <div className="qb-quant-toast qb-quant-toast--info" style={styles.toastInfo}>{info}</div> : null}
     </div>
   );
 };
@@ -775,9 +779,9 @@ const MetricCell: FC<{ label: string; value: number; digits?: number }> = ({
   value,
   digits = 4,
 }) => (
-  <div style={styles.metric}>
-    <div style={styles.metricLabel}>{label}</div>
-    <div style={styles.metricValue}>
+  <div className="qb-quant-metric" style={styles.metric}>
+    <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
+    <div className="qb-quant-metric-value" style={styles.metricValue}>
       {Number.isFinite(value) ? value.toFixed(digits) : "—"}
     </div>
   </div>

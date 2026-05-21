@@ -1,0 +1,388 @@
+/**
+ * Biophilic · 量化工作台 — 亲自然，纸纤维 + 有机圆角 + 自然光感
+ */
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] {
+  background: var(--qb-bio-paper) !important;
+  color: var(--qb-bio-ink) !important;
+  font-family: var(--qb-font-body, "DM Sans", system-ui);
+  position: relative;
+}
+
+/* 纸纤维纹理 */
+html[data-qb-style="biophilic"] [data-qb-quant-shell]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 20% 30%, var(--qb-bio-leaf-light) 0.5px, transparent 1.5px),
+    radial-gradient(circle at 80% 70%, var(--qb-bio-earth-light) 0.5px, transparent 1.5px),
+    radial-gradient(circle at 50% 90%, var(--qb-bio-leaf-light) 0.5px, transparent 1.5px);
+  background-size: 60px 60px, 80px 80px, 100px 100px;
+  opacity: 0.45;
+  pointer-events: none;
+  z-index: 0;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] > * {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-header {
+  background: var(--qb-bio-cream) !important;
+  border-bottom: var(--qb-bio-border) !important;
+  padding: 18px 24px 14px !important;
+  border-radius: 0 0 var(--qb-radius-md) var(--qb-radius-md);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-title {
+  font-family: var(--qb-font-display, "Cormorant Garamond", serif) !important;
+  font-size: 26px !important;
+  font-weight: 600 !important;
+  font-style: italic;
+  color: var(--qb-bio-moss-deep) !important;
+  letter-spacing: 0.01em;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-subtitle {
+  color: var(--qb-bio-ink-muted) !important;
+  font-size: 12px !important;
+  font-style: italic;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-tab {
+  border-radius: var(--qb-radius-pill, 999px) !important;
+  background: var(--qb-bio-paper) !important;
+  border: var(--qb-bio-border) !important;
+  color: var(--qb-bio-moss) !important;
+  padding: 6px 18px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  font-family: var(--qb-font-body) !important;
+  box-shadow: var(--qb-bio-shadow);
+  transition: all 0.18s cubic-bezier(0.33, 1.02, 0.52, 1);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-tab:hover {
+  background: var(--qb-bio-leaf-light) !important;
+  color: var(--qb-bio-moss-deep) !important;
+  border-color: var(--qb-bio-moss) !important;
+  box-shadow: var(--qb-bio-shadow-hover);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-tab--active {
+  background: var(--qb-bio-moss) !important;
+  color: var(--qb-bio-paper) !important;
+  border-color: var(--qb-bio-moss-deep) !important;
+  font-weight: 600 !important;
+  box-shadow:
+    var(--qb-bio-shadow),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.08);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-body {
+  background: transparent !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-col {
+  background: var(--qb-bio-paper) !important;
+  border-color: rgba(74, 107, 82, 0.18) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-col-header {
+  background: var(--qb-bio-cream) !important;
+  border-bottom: var(--qb-bio-border) !important;
+  padding: 10px 14px !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-col-header strong {
+  font-family: var(--qb-font-display, "Cormorant Garamond", serif) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  font-style: italic;
+  color: var(--qb-bio-moss-deep) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-form,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-op-panel,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-eval-panel,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-editor {
+  background: var(--qb-bio-cream) !important;
+  border: var(--qb-bio-border) !important;
+  border-radius: var(--qb-radius-md) !important;
+  padding: 14px 16px !important;
+  box-shadow: var(--qb-bio-shadow);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] input,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] select,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] textarea {
+  background: var(--qb-bio-paper) !important;
+  border: var(--qb-bio-border) !important;
+  border-radius: var(--qb-radius-sm) !important;
+  color: var(--qb-bio-ink) !important;
+  font-family: var(--qb-font-body) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] input:focus,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] select:focus,
+html[data-qb-style="biophilic"] [data-qb-quant-shell] textarea:focus {
+  outline: none;
+  border-color: var(--qb-bio-moss) !important;
+  box-shadow: 0 0 0 3px var(--qb-bio-focus-ring) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] form label {
+  color: var(--qb-bio-ink-muted) !important;
+  font-size: 11px !important;
+  font-weight: 500;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-btn {
+  border-radius: var(--qb-radius-pill, 999px) !important;
+  font-family: var(--qb-font-body) !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em;
+  transition: all 0.18s cubic-bezier(0.33, 1.02, 0.52, 1);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-btn--primary {
+  background: var(--qb-bio-moss) !important;
+  color: var(--qb-bio-paper) !important;
+  border: 1px solid var(--qb-bio-moss-deep) !important;
+  box-shadow: var(--qb-bio-shadow);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-btn--primary:hover:not(:disabled) {
+  background: var(--qb-bio-moss-deep) !important;
+  transform: translateY(-1px);
+  box-shadow: var(--qb-bio-shadow-hover);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-btn--run {
+  background: linear-gradient(135deg, var(--qb-bio-moss), var(--qb-bio-leaf)) !important;
+  color: var(--qb-bio-paper) !important;
+  border: 1px solid var(--qb-bio-moss-deep) !important;
+  font-weight: 700 !important;
+  box-shadow:
+    var(--qb-bio-shadow-hover),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.08);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-btn--ghost {
+  background: var(--qb-bio-paper) !important;
+  border: var(--qb-bio-border) !important;
+  color: var(--qb-bio-moss) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-btn--ghost:hover:not(:disabled) {
+  background: var(--qb-bio-leaf-light) !important;
+  border-color: var(--qb-bio-moss) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-toggle-bar {
+  background: var(--qb-bio-paper);
+  border: var(--qb-bio-border);
+  border-radius: var(--qb-radius-pill, 999px);
+  padding: 4px;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-toggle-btn {
+  border-radius: var(--qb-radius-pill, 999px) !important;
+  border: none !important;
+  background: transparent !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-toggle-btn--active {
+  background: var(--qb-bio-moss) !important;
+  color: var(--qb-bio-paper) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-list-item {
+  border-bottom: 1px solid rgba(74, 107, 82, 0.14) !important;
+  border-left: 3px solid transparent !important;
+  padding: 10px 14px !important;
+  transition: all 0.18s cubic-bezier(0.33, 1.02, 0.52, 1);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-list-item:hover {
+  background: rgba(168, 201, 168, 0.18) !important;
+  border-left-color: var(--qb-bio-leaf) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-list-item--active {
+  background: rgba(168, 201, 168, 0.32) !important;
+  border-left-color: var(--qb-bio-moss-deep) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-list-item-title {
+  font-family: var(--qb-font-display, "Cormorant Garamond", serif) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  font-style: italic;
+  color: var(--qb-bio-ink) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-list-item-meta {
+  font-style: italic;
+  color: var(--qb-bio-ink-muted) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-status-tag {
+  border-radius: var(--qb-radius-pill, 999px);
+  padding: 1px 9px;
+  font-weight: 600;
+  font-style: italic;
+  border: 1px solid currentColor;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="running"] {
+  color: var(--qb-bio-moss-deep) !important;
+  background: rgba(168, 201, 168, 0.45);
+}
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="completed"],
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="succeeded"],
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="active"] {
+  color: var(--qb-bio-moss-deep) !important;
+  background: rgba(168, 201, 168, 0.55);
+}
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="failed"] {
+  color: #9a5c5c !important;
+  background: rgba(232, 200, 200, 0.55);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-detail-title {
+  font-family: var(--qb-font-display, "Cormorant Garamond", serif) !important;
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  font-style: italic;
+  color: var(--qb-bio-moss-deep) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-detail-meta {
+  color: var(--qb-bio-ink-muted) !important;
+  font-style: italic;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-metric {
+  background: var(--qb-bio-paper) !important;
+  border: var(--qb-bio-border) !important;
+  border-radius: var(--qb-radius-md) !important;
+  padding: 14px 16px !important;
+  box-shadow: var(--qb-bio-shadow);
+  position: relative;
+  overflow: hidden;
+  transition: all 0.18s cubic-bezier(0.33, 1.02, 0.52, 1);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-metric::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--qb-bio-moss), var(--qb-bio-leaf));
+  border-radius: var(--qb-radius-md) var(--qb-radius-md) 0 0;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-metric:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--qb-bio-shadow-hover);
+  border-color: var(--qb-bio-leaf) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-metric-label {
+  font-family: var(--qb-font-body) !important;
+  font-size: 11px !important;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--qb-bio-ink-muted) !important;
+  letter-spacing: 0.02em;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-metric-value {
+  font-family: var(--qb-font-display, "Cormorant Garamond", serif) !important;
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  color: var(--qb-bio-moss-deep) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-expr-box {
+  background: var(--qb-bio-paper) !important;
+  border: var(--qb-bio-border) !important;
+  border-radius: var(--qb-radius-sm) !important;
+  color: var(--qb-bio-moss-deep) !important;
+  font-family: "DM Sans", monospace !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-bucket {
+  background: var(--qb-bio-cream) !important;
+  border: 1px dashed var(--qb-bio-moss) !important;
+  border-radius: var(--qb-radius-md) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-chip {
+  background: var(--qb-bio-leaf-light) !important;
+  border: 1px solid var(--qb-bio-moss) !important;
+  border-radius: var(--qb-radius-pill, 999px) !important;
+  color: var(--qb-bio-moss-deep) !important;
+  font-family: var(--qb-font-body) !important;
+  box-shadow: var(--qb-bio-shadow);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-pool-summary {
+  font-family: var(--qb-font-display, "Cormorant Garamond", serif) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  font-style: italic;
+  color: var(--qb-bio-moss-deep) !important;
+  padding: 10px 14px !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-table-wrap {
+  background: var(--qb-bio-paper) !important;
+  border: var(--qb-bio-border) !important;
+  border-radius: var(--qb-radius-md) !important;
+  box-shadow: var(--qb-bio-shadow);
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-table th {
+  background: var(--qb-bio-leaf-light) !important;
+  color: var(--qb-bio-moss-deep) !important;
+  border-bottom: 1px solid var(--qb-bio-moss) !important;
+  font-style: italic;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-trade-row {
+  border-bottom: 1px solid rgba(74, 107, 82, 0.12) !important;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-side--buy {
+  color: var(--qb-bio-moss-deep) !important;
+  font-weight: 700;
+}
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-side--sell {
+  color: #9a5c5c !important;
+  font-weight: 700;
+}
+
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-toast {
+  border-radius: var(--qb-radius-md) !important;
+  font-style: italic;
+  box-shadow: var(--qb-bio-shadow-hover);
+}
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-toast--err {
+  background: rgba(232, 200, 200, 0.55) !important;
+  border: 1px solid #9a5c5c !important;
+  color: #7a4848 !important;
+}
+html[data-qb-style="biophilic"] [data-qb-quant-shell] .qb-quant-toast--info {
+  background: rgba(168, 201, 168, 0.55) !important;
+  border: 1px solid var(--qb-bio-moss) !important;
+  color: var(--qb-bio-moss-deep) !important;
+}

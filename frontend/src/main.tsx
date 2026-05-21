@@ -29,6 +29,14 @@ import "./theme/monitor-industrial.css";
 import "./theme/team-industrial.css";
 import "./theme/config-industrial.css";
 import "./theme/monitor-ambient-3d.css";
+import "./theme/quant-industrial.css";
+import "./theme/quant-blueprint.css";
+import "./theme/quant-glass-holographic.css";
+import "./theme/quant-neon-cyberpunk.css";
+import "./theme/quant-ambient-3d.css";
+import "./theme/quant-biophilic.css";
+import "./theme/quant-comic-book.css";
+import "./theme/quant-sci-fi-hud.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");

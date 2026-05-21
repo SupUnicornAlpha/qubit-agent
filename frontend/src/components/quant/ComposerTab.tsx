@@ -218,12 +218,12 @@ export const ComposerTab: FC = () => {
   }
 
   return (
-    <div style={styles.root}>
-      <aside style={styles.colLeft}>
-        <div style={styles.colHeader}>
+    <div className="qb-quant-tab-root qb-quant-tab-root--composer" data-qb-quant-tab="composer" style={styles.root}>
+      <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>Strategy Version</strong>
         </div>
-        <div style={styles.panelPad}>
+        <div className="qb-quant-panel-pad" style={styles.panelPad}>
           <select
             value={versionId}
             onChange={(e) => setVersionId(e.target.value)}
@@ -237,22 +237,22 @@ export const ComposerTab: FC = () => {
             ))}
           </select>
         </div>
-        <div style={styles.colHeader}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>已有 Composition</strong>
-          <span style={styles.muted}>{compositions.length}</span>
+          <span className="qb-quant-muted" style={styles.muted}>{compositions.length}</span>
         </div>
-        <div style={styles.list}>
-          {compositions.length === 0 ? <div style={styles.empty}>暂无</div> : null}
+        <div className="qb-quant-list" style={styles.list}>
+          {compositions.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无</div> : null}
           {compositions.map((c) => (
-            <div key={c.id} style={styles.compRow}>
-              <div style={styles.compRowTop}>
-                <span style={styles.compKind}>{c.kind}</span>
-                <span style={styles.muted}>{c.weightMethod}</span>
+            <div key={c.id} className="qb-quant-comp-row" style={styles.compRow}>
+              <div className="qb-quant-comp-row-top" style={styles.compRowTop}>
+                <span className="qb-quant-comp-kind" style={styles.compKind}>{c.kind}</span>
+                <span className="qb-quant-muted" style={styles.muted}>{c.weightMethod}</span>
               </div>
-              <div style={styles.muted}>
+              <div className="qb-quant-muted" style={styles.muted}>
                 {c.factorIds.length} factors · {c.ruleIds.length} rules · {c.rebalanceFreq}
               </div>
-              <div style={styles.compRowMeta}>
+              <div className="qb-quant-comp-row-meta" style={styles.compRowMeta}>
                 {new Date(c.createdAt).toLocaleString()}
               </div>
             </div>
@@ -260,13 +260,14 @@ export const ComposerTab: FC = () => {
         </div>
       </aside>
 
-      <section style={styles.colMid}>
-        <form onSubmit={onSubmit} style={styles.editor}>
-          <div style={styles.editorHeader}>
+      <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
+        <form onSubmit={onSubmit} className="qb-quant-editor" style={styles.editor}>
+          <div className="qb-quant-editor-header" style={styles.editorHeader}>
             <strong>新建 Composition</strong>
             <button
               type="button"
               onClick={reset}
+              className="qb-quant-btn qb-quant-btn--ghost"
               style={styles.btnGhost}
             >
               清空
@@ -326,16 +327,16 @@ export const ComposerTab: FC = () => {
             </label>
           </div>
 
-          <div style={styles.bucket}>
-            <div style={styles.bucketHeader}>
+          <div className="qb-quant-bucket" data-qb-quant-bucket="factor" style={styles.bucket}>
+            <div className="qb-quant-bucket-header" style={styles.bucketHeader}>
               <strong>已选因子（{selectedFactors.length}）</strong>
             </div>
             {selectedFactors.length === 0 ? (
-              <div style={styles.empty}>从右侧候选池勾选</div>
+              <div className="qb-quant-empty" style={styles.empty}>从右侧候选池勾选</div>
             ) : (
-              <div style={styles.chipList}>
+              <div className="qb-quant-chip-list" style={styles.chipList}>
                 {selectedFactors.map((f) => (
-                  <div key={f.id} style={styles.chip}>
+                  <div key={f.id} className="qb-quant-chip" style={styles.chip}>
                     <span>{f.name}</span>
                     {weightMethod === "fixed" ? (
                       <input
@@ -348,12 +349,14 @@ export const ComposerTab: FC = () => {
                             [f.id]: Number.parseFloat(e.target.value) || 0,
                           }))
                         }
+                        className="qb-quant-chip-input"
                         style={styles.chipInput}
                       />
                     ) : null}
                     <button
                       type="button"
                       onClick={() => toggleFactor(f.id)}
+                      className="qb-quant-chip-rm"
                       style={styles.chipRm}
                       aria-label="移除"
                     >
@@ -365,22 +368,23 @@ export const ComposerTab: FC = () => {
             )}
           </div>
 
-          <div style={styles.bucket}>
-            <div style={styles.bucketHeader}>
+          <div className="qb-quant-bucket" data-qb-quant-bucket="rule" style={styles.bucket}>
+            <div className="qb-quant-bucket-header" style={styles.bucketHeader}>
               <strong>已选规则（{selectedRules.length}）</strong>
             </div>
             {selectedRules.length === 0 ? (
-              <div style={styles.empty}>从右侧候选池勾选</div>
+              <div className="qb-quant-empty" style={styles.empty}>从右侧候选池勾选</div>
             ) : (
-              <div style={styles.chipList}>
+              <div className="qb-quant-chip-list" style={styles.chipList}>
                 {selectedRules.map((r) => (
-                  <div key={r.id} style={styles.chip}>
+                  <div key={r.id} className="qb-quant-chip" style={styles.chip}>
                     <span>
-                      {r.name} <span style={styles.muted}>· {r.appliesTo}</span>
+                      {r.name} <span className="qb-quant-muted" style={styles.muted}>· {r.appliesTo}</span>
                     </span>
                     <button
                       type="button"
                       onClick={() => toggleRule(r.id)}
+                      className="qb-quant-chip-rm"
                       style={styles.chipRm}
                       aria-label="移除"
                     >
@@ -395,6 +399,7 @@ export const ComposerTab: FC = () => {
           <button
             type="submit"
             disabled={busy || !versionId}
+            className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--submit"
             style={styles.btnPrimary}
           >
             {busy ? "提交中…" : "提交并创建"}
@@ -402,48 +407,48 @@ export const ComposerTab: FC = () => {
         </form>
       </section>
 
-      <aside style={styles.colRight}>
-        <div style={styles.colHeader}>
+      <aside className="qb-quant-col qb-quant-col--right" style={styles.colRight}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>候选池</strong>
         </div>
-        <details open style={styles.poolPanel}>
-          <summary style={styles.poolSummary}>因子（{factors.length}）</summary>
-          <div style={styles.poolList}>
-            {factors.length === 0 ? <div style={styles.empty}>暂无</div> : null}
+        <details open className="qb-quant-pool-panel" style={styles.poolPanel}>
+          <summary className="qb-quant-pool-summary" style={styles.poolSummary}>因子（{factors.length}）</summary>
+          <div className="qb-quant-pool-list" style={styles.poolList}>
+            {factors.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无</div> : null}
             {factors.map((f) => (
-              <label key={f.id} style={styles.poolRow}>
+              <label key={f.id} className="qb-quant-pool-row" style={styles.poolRow}>
                 <input
                   type="checkbox"
                   checked={selectedFactorIds.has(f.id)}
                   onChange={() => toggleFactor(f.id)}
                 />
-                <span style={styles.poolName}>{f.name}</span>
-                <span style={styles.muted}>{f.category}</span>
+                <span className="qb-quant-pool-name" style={styles.poolName}>{f.name}</span>
+                <span className="qb-quant-muted" style={styles.muted}>{f.category}</span>
               </label>
             ))}
           </div>
         </details>
-        <details style={styles.poolPanel}>
-          <summary style={styles.poolSummary}>规则（{rules.length}）</summary>
-          <div style={styles.poolList}>
-            {rules.length === 0 ? <div style={styles.empty}>暂无</div> : null}
+        <details className="qb-quant-pool-panel" style={styles.poolPanel}>
+          <summary className="qb-quant-pool-summary" style={styles.poolSummary}>规则（{rules.length}）</summary>
+          <div className="qb-quant-pool-list" style={styles.poolList}>
+            {rules.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无</div> : null}
             {rules.map((r) => (
-              <label key={r.id} style={styles.poolRow}>
+              <label key={r.id} className="qb-quant-pool-row" style={styles.poolRow}>
                 <input
                   type="checkbox"
                   checked={selectedRuleIds.has(r.id)}
                   onChange={() => toggleRule(r.id)}
                 />
-                <span style={styles.poolName}>{r.name}</span>
-                <span style={styles.muted}>{r.appliesTo}</span>
+                <span className="qb-quant-pool-name" style={styles.poolName}>{r.name}</span>
+                <span className="qb-quant-muted" style={styles.muted}>{r.appliesTo}</span>
               </label>
             ))}
           </div>
         </details>
       </aside>
 
-      {error ? <div style={styles.toastErr}>{error}</div> : null}
-      {info ? <div style={styles.toastInfo}>{info}</div> : null}
+      {error ? <div className="qb-quant-toast qb-quant-toast--err" style={styles.toastErr}>{error}</div> : null}
+      {info ? <div className="qb-quant-toast qb-quant-toast--info" style={styles.toastInfo}>{info}</div> : null}
     </div>
   );
 };

@@ -185,12 +185,12 @@ export const DiscoveryStudioTab: FC = () => {
   }
 
   return (
-    <div style={styles.root}>
-      <aside style={styles.colLeft}>
-        <div style={styles.colHeader}>
+    <div className="qb-quant-tab-root qb-quant-tab-root--discovery" data-qb-quant-tab="discovery" style={styles.root}>
+      <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>发起挖掘</strong>
         </div>
-        <form onSubmit={onSubmit} style={styles.form}>
+        <form onSubmit={onSubmit} className="qb-quant-form" style={styles.form}>
           <label style={styles.formLabel}>
             Kind
             <select
@@ -285,48 +285,50 @@ export const DiscoveryStudioTab: FC = () => {
               </label>
             ) : null}
           </div>
-          <button type="submit" disabled={busy || symbolsList.length === 0} style={styles.btnPrimary}>
+          <button type="submit" disabled={busy || symbolsList.length === 0} className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--run" style={styles.btnPrimary}>
             {busy ? "运行中…" : "Run Now"}
           </button>
         </form>
-        <div style={styles.colHeader}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>历史任务</strong>
-          <span style={styles.muted}>{jobs.length}</span>
+          <span className="qb-quant-muted" style={styles.muted}>{jobs.length}</span>
         </div>
-        <div style={styles.list}>
+        <div className="qb-quant-list" style={styles.list}>
           {jobs.map((j) => (
             <button
               key={j.id}
               type="button"
               onClick={() => setSelectedId(j.id)}
+              className={`qb-quant-list-item${j.id === selectedId ? " qb-quant-list-item--active" : ""}`}
+              data-qb-quant-status={j.status}
               style={{
                 ...styles.listItem,
                 ...(j.id === selectedId ? styles.listItemActive : null),
               }}
             >
-              <div style={styles.listItemTop}>
-                <span style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
-                <span style={styles.muted}>{j.kind}</span>
+              <div className="qb-quant-list-item-top" style={styles.listItemTop}>
+                <span className="qb-quant-status-tag" data-qb-quant-status={j.status} style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
+                <span className="qb-quant-muted" style={styles.muted}>{j.kind}</span>
               </div>
-              <div style={styles.listItemMeta}>
+              <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
                 {j.candidates.length} 候选 · {new Date(j.startedAt).toLocaleString()}
               </div>
             </button>
           ))}
-          {jobs.length === 0 ? <div style={styles.empty}>暂无任务</div> : null}
+          {jobs.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无任务</div> : null}
         </div>
       </aside>
 
-      <section style={styles.colMid}>
+      <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
         {selected ? (
           <>
-            <div style={styles.detailHeader}>
+            <div className="qb-quant-detail-header" style={styles.detailHeader}>
               <div>
-                <div style={styles.detailTitle}>
+                <div className="qb-quant-detail-title" style={styles.detailTitle}>
                   {KIND_LABELS[selected.kind]} ·{" "}
-                  <span style={{ color: STATUS_TONES[selected.status] }}>{selected.status}</span>
+                  <span className="qb-quant-status-tag" data-qb-quant-status={selected.status} style={{ color: STATUS_TONES[selected.status] }}>{selected.status}</span>
                 </div>
-                <div style={styles.detailMeta}>
+                <div className="qb-quant-detail-meta" style={styles.detailMeta}>
                   {selected.input.startDate} ~ {selected.input.endDate} · symbols=
                   {selected.input.symbols.length} · horizon={selected.input.horizonDays ?? 5}
                 </div>
@@ -335,14 +337,15 @@ export const DiscoveryStudioTab: FC = () => {
                 type="button"
                 onClick={reloadSelected}
                 disabled={busy}
+                className="qb-quant-btn qb-quant-btn--ghost"
                 style={styles.btnGhost}
               >
                 刷新
               </button>
             </div>
-            {selected.error ? <div style={styles.errorPanel}>错误：{selected.error}</div> : null}
-            <div style={styles.tableWrap}>
-              <table style={styles.table}>
+            {selected.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>错误：{selected.error}</div> : null}
+            <div className="qb-quant-table-wrap" style={styles.tableWrap}>
+              <table className="qb-quant-table qb-quant-table--candidates" style={styles.table}>
                 <thead>
                   <tr>
                     <th style={styles.th}>#</th>
@@ -378,6 +381,7 @@ export const DiscoveryStudioTab: FC = () => {
                                 (c.category as FactorCategory | undefined) ?? "momentum"
                               );
                             }}
+                            className="qb-quant-btn qb-quant-btn--primary"
                             style={styles.btnPrimary}
                           >
                             Promote
@@ -388,7 +392,7 @@ export const DiscoveryStudioTab: FC = () => {
                   ))}
                   {selected.candidates.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={styles.empty}>
+                      <td colSpan={7} className="qb-quant-empty" style={styles.empty}>
                         没有候选
                       </td>
                     </tr>
@@ -398,20 +402,20 @@ export const DiscoveryStudioTab: FC = () => {
             </div>
           </>
         ) : (
-          <div style={styles.empty}>左侧选择任务，或先发起一个挖掘任务。</div>
+          <div className="qb-quant-empty" style={styles.empty}>左侧选择任务，或先发起一个挖掘任务。</div>
         )}
       </section>
 
-      <aside style={styles.colRight}>
-        <div style={styles.colHeader}>
+      <aside className="qb-quant-col qb-quant-col--right" style={styles.colRight}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>Promote</strong>
         </div>
         {promoteCandidate ? (
-          <form onSubmit={onPromote} style={styles.formPad}>
-            <div style={styles.candidateBlock}>
-              <div style={styles.muted}>候选表达式</div>
-              <pre style={styles.exprBox}>{promoteCandidate.expr}</pre>
-              <div style={styles.candidateMetrics}>
+          <form onSubmit={onPromote} className="qb-quant-form qb-quant-form--promote" style={styles.formPad}>
+            <div className="qb-quant-candidate-block" style={styles.candidateBlock}>
+              <div className="qb-quant-muted" style={styles.muted}>候选表达式</div>
+              <pre className="qb-quant-expr-box" style={styles.exprBox}>{promoteCandidate.expr}</pre>
+              <div className="qb-quant-candidate-metrics" style={styles.candidateMetrics}>
                 IC {promoteCandidate.metrics.ic.toFixed(4)} · RankIC{" "}
                 {promoteCandidate.metrics.rankIc.toFixed(4)} · n={promoteCandidate.metrics.sampleSize}
               </div>
@@ -440,24 +444,25 @@ export const DiscoveryStudioTab: FC = () => {
                 ))}
               </select>
             </label>
-            <button type="submit" disabled={busy} style={styles.btnPrimary}>
+            <button type="submit" disabled={busy} className="qb-quant-btn qb-quant-btn--primary" style={styles.btnPrimary}>
               提交为草稿因子
             </button>
             <button
               type="button"
               onClick={() => setPromoteCandidate(null)}
+              className="qb-quant-btn qb-quant-btn--ghost"
               style={styles.btnGhost}
             >
               取消
             </button>
           </form>
         ) : (
-          <div style={styles.empty}>从中间表格点击 “Promote” 选择候选。</div>
+          <div className="qb-quant-empty" style={styles.empty}>从中间表格点击 “Promote” 选择候选。</div>
         )}
       </aside>
 
-      {error ? <div style={styles.toastErr}>{error}</div> : null}
-      {info ? <div style={styles.toastInfo}>{info}</div> : null}
+      {error ? <div className="qb-quant-toast qb-quant-toast--err" style={styles.toastErr}>{error}</div> : null}
+      {info ? <div className="qb-quant-toast qb-quant-toast--info" style={styles.toastInfo}>{info}</div> : null}
     </div>
   );
 };

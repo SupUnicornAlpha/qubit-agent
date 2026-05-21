@@ -1,0 +1,757 @@
+/**
+ * 工业设计 · 量化工作台 — STRATAOS 工控研究台
+ *
+ * 设计语言：警示斜纹顶带 + L 角标 + 模块编号 + 橙色高亮轨 + 内凹阴影 + 网格底纹
+ * 与 monitor-industrial / config-industrial 视觉一致
+ */
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] {
+  background: var(--qb-ind-bg) !important;
+  font-family: var(--qb-font-body);
+}
+
+/* —— 顶部 header —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-header {
+  position: relative;
+  background: linear-gradient(180deg, #141414, #0f0f0f) !important;
+  border-bottom: 2px solid var(--qb-ind-border-strong) !important;
+  padding: 14px 20px 12px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(255, 87, 34, 0.18);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--qb-ind-hazard);
+  opacity: 0.85;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-header::after {
+  content: "QUANT_LAB // R&D";
+  position: absolute;
+  bottom: 6px;
+  right: 16px;
+  font-family: var(--qb-font-body);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: var(--qb-ind-dim);
+  pointer-events: none;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-title {
+  font-family: var(--qb-font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 20px !important;
+  color: var(--qb-ind-text) !important;
+  padding-left: 14px;
+  border-left: 4px solid var(--qb-ind-orange);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.7);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-subtitle {
+  font-family: var(--qb-font-body);
+  font-size: 9px !important;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--qb-ind-muted) !important;
+  margin-top: 6px !important;
+  padding-left: 14px;
+}
+
+/* —— Tab 按钮 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-tab {
+  font-family: var(--qb-font-body) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-radius: 0 !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  background: var(--qb-ind-panel-inset) !important;
+  color: var(--qb-ind-muted) !important;
+  font-size: 10px !important;
+  font-weight: 600;
+  padding: 6px 14px !important;
+  position: relative;
+  transition:
+    border-color var(--qb-ind-duration) var(--qb-ind-ease),
+    color var(--qb-ind-duration) var(--qb-ind-ease),
+    box-shadow var(--qb-ind-duration) var(--qb-ind-ease);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-tab:hover {
+  border-color: var(--qb-ind-cyan) !important;
+  color: var(--qb-ind-cyan) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-tab--active {
+  background: rgba(255, 87, 34, 0.16) !important;
+  border-color: var(--qb-ind-orange) !important;
+  color: var(--qb-ind-orange-bright) !important;
+  box-shadow:
+    inset 0 0 14px rgba(255, 87, 34, 0.12),
+    0 0 10px rgba(255, 87, 34, 0.18);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-tab--active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid var(--qb-ind-orange-bright);
+  border-left: 2px solid var(--qb-ind-orange-bright);
+}
+
+/* —— body 网格底纹 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-body {
+  background-color: var(--qb-ind-bg) !important;
+  background-image:
+    radial-gradient(circle at center, rgba(120, 120, 120, 0.18) 0.5px, transparent 0.5px),
+    linear-gradient(rgba(38, 38, 38, 0.4) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(38, 38, 38, 0.4) 1px, transparent 1px) !important;
+  background-size: 20px 20px, 20px 20px, 20px 20px !important;
+}
+
+/* —— 三栏 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col {
+  position: relative;
+  background: var(--qb-ind-panel) !important;
+  border-color: var(--qb-ind-border-strong) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col--left {
+  border-right-width: 2px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col--right {
+  border-left-width: 2px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col--left::before,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col--right::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--qb-ind-hazard);
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 1;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col-header {
+  background: var(--qb-ind-panel-inset) !important;
+  border-bottom: 1px solid var(--qb-ind-border-strong) !important;
+  padding: 8px 12px !important;
+  font-family: var(--qb-font-body);
+  position: relative;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col-header strong {
+  font-family: var(--qb-font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px !important;
+  color: var(--qb-ind-cyan) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-col-header::after {
+  content: "MOD";
+  font-family: var(--qb-font-body);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--qb-ind-dim);
+  margin-left: auto;
+}
+
+/* tab 各模块编号 */
+html[data-qb-style="industrial"] [data-qb-quant-tab="factor"] .qb-quant-col--left .qb-quant-col-header::after {
+  content: "FACT-01";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="factor"] .qb-quant-col--right .qb-quant-col-header::after {
+  content: "EVAL-LOG";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="discovery"] .qb-quant-col--left .qb-quant-col-header::after {
+  content: "DISC-02";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="discovery"] .qb-quant-col--right .qb-quant-col-header::after {
+  content: "PROMO-03";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="composer"] .qb-quant-col--left .qb-quant-col-header::after {
+  content: "VER-04";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="composer"] .qb-quant-col--right .qb-quant-col-header::after {
+  content: "POOL-05";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="backtest"] .qb-quant-col--left .qb-quant-col-header::after {
+  content: "BT-06";
+}
+html[data-qb-style="industrial"] [data-qb-quant-tab="backtest"] .qb-quant-col--right .qb-quant-col-header::after {
+  content: "TRADES";
+}
+
+/* —— 表单 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-form {
+  background: var(--qb-ind-panel-inset) !important;
+  border-bottom: 1px solid var(--qb-ind-border-strong) !important;
+  padding: 12px !important;
+  position: relative;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-form::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-top: 2px solid var(--qb-ind-orange);
+  border-left: 2px solid var(--qb-ind-orange);
+  pointer-events: none;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-form input,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-form select,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-form textarea,
+html[data-qb-style="industrial"] [data-qb-quant-shell] input[type="text"],
+html[data-qb-style="industrial"] [data-qb-quant-shell] input[type="number"],
+html[data-qb-style="industrial"] [data-qb-quant-shell] input[type="date"],
+html[data-qb-style="industrial"] [data-qb-quant-shell] select,
+html[data-qb-style="industrial"] [data-qb-quant-shell] textarea {
+  background: #0a0a0a !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  border-radius: 0 !important;
+  color: var(--qb-ind-text) !important;
+  font-family: var(--qb-font-body);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] input:focus,
+html[data-qb-style="industrial"] [data-qb-quant-shell] select:focus,
+html[data-qb-style="industrial"] [data-qb-quant-shell] textarea:focus {
+  outline: none;
+  border-color: var(--qb-ind-orange) !important;
+  box-shadow:
+    inset 0 1px 4px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 87, 34, 0.4) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-form-label,
+html[data-qb-style="industrial"] [data-qb-quant-shell] form label {
+  text-transform: uppercase !important;
+  letter-spacing: 0.1em;
+  font-size: 9px !important;
+  color: var(--qb-ind-muted) !important;
+}
+
+/* —— 按钮 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn {
+  border-radius: 0 !important;
+  font-family: var(--qb-font-body) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  padding: 6px 12px !important;
+  transition:
+    background var(--qb-ind-duration) var(--qb-ind-ease),
+    color var(--qb-ind-duration) var(--qb-ind-ease),
+    box-shadow var(--qb-ind-duration) var(--qb-ind-ease);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--primary {
+  background: #f5f5f5 !important;
+  color: #0d0d0d !important;
+  border: 1px solid #e0e0e0 !important;
+  box-shadow: 0 2px 0 #0a0a0a;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--primary:hover:not(:disabled) {
+  background: var(--qb-ind-orange) !important;
+  color: #fff !important;
+  box-shadow:
+    0 0 14px rgba(255, 87, 34, 0.45),
+    0 2px 0 #0a0a0a;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--run {
+  background: var(--qb-ind-orange) !important;
+  color: #0d0d0d !important;
+  border-color: var(--qb-ind-orange-dim) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 12px rgba(255, 87, 34, 0.4),
+    0 2px 0 #0a0a0a;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--run:hover:not(:disabled) {
+  background: var(--qb-ind-orange-bright) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--ghost {
+  background: #1a1a1a !important;
+  color: var(--qb-ind-muted) !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--ghost:hover:not(:disabled) {
+  border-color: var(--qb-ind-cyan) !important;
+  color: var(--qb-ind-cyan) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn--ghost-active {
+  background: rgba(255, 87, 34, 0.18) !important;
+  border-color: var(--qb-ind-orange) !important;
+  color: var(--qb-ind-orange-bright) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* —— 上下/左右切换条 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-toggle-bar {
+  border: 1px solid var(--qb-ind-border-strong);
+  background: #080808;
+  padding: 3px;
+  gap: 3px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-toggle-btn {
+  border-radius: 0 !important;
+  font-family: var(--qb-font-body) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--qb-ind-muted) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-toggle-btn--active {
+  background: var(--qb-ind-orange) !important;
+  color: #0d0d0d !important;
+  font-weight: 700;
+  box-shadow: inset 0 0 10px rgba(255, 255, 255, 0.15);
+}
+
+/* —— 列表 item —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-list-item {
+  border-bottom: 1px solid var(--qb-ind-border) !important;
+  padding: 10px 12px !important;
+  border-left: 3px solid transparent !important;
+  position: relative;
+  transition: background 0.16s ease, border-left-color 0.16s ease;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-list-item:hover {
+  background: var(--qb-ind-panel-hover) !important;
+  border-left-color: rgba(255, 87, 34, 0.4) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-list-item--active {
+  background: rgba(255, 87, 34, 0.12) !important;
+  border-left-color: var(--qb-ind-orange) !important;
+  box-shadow: inset 0 0 24px rgba(255, 87, 34, 0.06);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-list-item-title {
+  font-family: var(--qb-font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px !important;
+  color: var(--qb-ind-text);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-list-item-meta {
+  font-family: var(--qb-font-body);
+  font-size: 9px !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--qb-ind-muted) !important;
+}
+
+/* —— 状态徽章 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  font-family: var(--qb-font-body) !important;
+  font-size: 9px !important;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  border-radius: 0 !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="running"] {
+  color: var(--qb-ind-cyan) !important;
+  background: rgba(38, 198, 218, 0.1);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="completed"],
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="succeeded"],
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="active"] {
+  color: var(--qb-ind-green) !important;
+  background: rgba(67, 160, 71, 0.12);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="failed"] {
+  color: var(--qb-ind-red) !important;
+  background: rgba(229, 57, 53, 0.12);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="pending"],
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="draft"] {
+  color: var(--qb-ind-amber) !important;
+  background: rgba(255, 179, 0, 0.1);
+}
+
+/* —— 详情区 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-detail-header {
+  border-bottom: 2px dashed var(--qb-ind-border);
+  padding-bottom: 10px;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-detail-title {
+  font-family: var(--qb-font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 16px !important;
+  color: var(--qb-ind-text) !important;
+  padding-left: 10px;
+  border-left: 4px solid var(--qb-ind-orange);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-detail-meta {
+  font-family: var(--qb-font-body);
+  font-size: 10px !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--qb-ind-muted) !important;
+  padding-left: 10px;
+  margin-top: 6px;
+}
+
+/* —— Metric 卡片 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metrics-grid,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-grid {
+  gap: 8px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metric {
+  position: relative;
+  background-color: var(--qb-ind-panel) !important;
+  background-image:
+    radial-gradient(circle at 6px 6px, rgba(255, 255, 255, 0.07) 1.5px, transparent 1.5px),
+    radial-gradient(circle at calc(100% - 6px) calc(100% - 6px), rgba(255, 255, 255, 0.05) 1.5px, transparent 1.5px) !important;
+  border: 1px solid var(--qb-ind-border) !important;
+  border-radius: 0 !important;
+  padding: 12px 14px 10px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 2px 0 rgba(0, 0, 0, 0.4);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metric::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  border-top: 2px solid var(--qb-ind-orange);
+  border-left: 2px solid var(--qb-ind-orange);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metric::after {
+  content: "MTR";
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  font-family: var(--qb-font-body);
+  font-size: 8px;
+  letter-spacing: 0.14em;
+  color: var(--qb-ind-dim);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metric:hover {
+  border-color: var(--qb-ind-orange) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 1px rgba(255, 87, 34, 0.2),
+    0 4px 10px rgba(0, 0, 0, 0.4);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metric-label {
+  font-family: var(--qb-font-body) !important;
+  font-size: 9px !important;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--qb-ind-muted) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-metric-value {
+  font-family: var(--qb-font-body) !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  font-variant-numeric: tabular-nums;
+  color: var(--qb-ind-text) !important;
+  text-shadow: 0 0 14px rgba(255, 255, 255, 0.06);
+  margin-top: 4px;
+}
+
+/* —— 表达式 / 评估面板 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-expr-box {
+  border-radius: 0 !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  background: #080808 !important;
+  font-family: var(--qb-font-body) !important;
+  color: var(--qb-ind-green) !important;
+  padding: 10px 12px !important;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-op-panel,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-panel,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-editor {
+  position: relative;
+  border-radius: 0 !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  background: var(--qb-ind-panel) !important;
+  padding: 12px 14px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-op-panel::before,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-panel::before,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-editor::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--qb-ind-hazard);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-op-panel::after,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-panel::after,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-editor::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  border-bottom: 2px solid var(--qb-ind-orange);
+  border-right: 2px solid var(--qb-ind-orange);
+  pointer-events: none;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-op-panel > strong,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-panel > strong,
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-editor-header > strong {
+  font-family: var(--qb-font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 11px !important;
+  color: var(--qb-ind-cyan) !important;
+  display: inline-block;
+  margin-top: 4px;
+}
+
+/* —— Bucket / Chip —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-bucket {
+  border-radius: 0 !important;
+  border: 1px dashed var(--qb-ind-border-strong) !important;
+  background: var(--qb-ind-panel-inset) !important;
+  padding: 10px 12px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-bucket-header strong {
+  font-family: var(--qb-font-body) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 9px !important;
+  color: var(--qb-ind-muted) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-chip {
+  border-radius: 0 !important;
+  background: #1a1a1a !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  font-family: var(--qb-font-body) !important;
+  font-size: 10px !important;
+  letter-spacing: 0.04em;
+  color: var(--qb-ind-text) !important;
+  padding: 3px 8px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-chip-input {
+  background: #080808 !important;
+  border: 1px solid var(--qb-ind-border) !important;
+  border-radius: 0 !important;
+  color: var(--qb-ind-cyan) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-chip-rm {
+  color: var(--qb-ind-red) !important;
+}
+
+/* —— 候选池 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-pool-panel {
+  border-bottom: 1px solid var(--qb-ind-border) !important;
+  padding: 0 !important;
+  background: var(--qb-ind-panel-inset);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-pool-summary {
+  font-family: var(--qb-font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 11px !important;
+  color: var(--qb-ind-cyan) !important;
+  padding: 8px 12px !important;
+  border-left: 3px solid var(--qb-ind-orange);
+  list-style: none;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-pool-summary::-webkit-details-marker {
+  display: none;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-pool-row {
+  font-family: var(--qb-font-body);
+  font-size: 11px !important;
+  padding: 4px 0 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* —— 表格 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-table-wrap {
+  border-radius: 0 !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  background: var(--qb-ind-panel) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-table th {
+  font-family: var(--qb-font-body) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px !important;
+  color: var(--qb-ind-muted) !important;
+  background: #1a1a1a !important;
+  border-bottom: 2px solid var(--qb-ind-orange) !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-table td {
+  border-color: var(--qb-ind-border) !important;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--qb-font-body);
+}
+
+/* —— Trades 列 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-trades-list {
+  background: var(--qb-ind-panel-inset);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-trade-row {
+  border-bottom: 1px solid var(--qb-ind-border) !important;
+  padding: 4px 8px !important;
+  font-family: var(--qb-font-body);
+  font-size: 10px !important;
+  letter-spacing: 0.04em;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-side--buy {
+  color: var(--qb-ind-green) !important;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-side--sell {
+  color: var(--qb-ind-red) !important;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+/* —— Eval 历史卡 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-row {
+  border-bottom: 1px solid var(--qb-ind-border) !important;
+  padding: 8px 10px !important;
+  border-left: 3px solid transparent;
+  background: var(--qb-ind-panel-inset);
+  transition: border-left-color 0.16s ease;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-row:hover {
+  border-left-color: var(--qb-ind-cyan);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-eval-row-mid {
+  font-family: var(--qb-font-body) !important;
+  font-size: 10px !important;
+  color: var(--qb-ind-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* —— Toast —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-toast {
+  border-radius: 0 !important;
+  font-family: var(--qb-font-body) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px !important;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-toast--err {
+  background: rgba(229, 57, 53, 0.18) !important;
+  border: 1px solid var(--qb-ind-red) !important;
+  color: #ffcdd2 !important;
+  box-shadow: inset 0 0 14px rgba(229, 57, 53, 0.18);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-toast--info {
+  background: var(--qb-ind-panel-inset) !important;
+  border: 1px solid var(--qb-ind-border-strong) !important;
+  border-left: 4px solid var(--qb-ind-cyan) !important;
+  color: var(--qb-ind-text) !important;
+}
+
+/* —— Composition 行 —— */
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-comp-row {
+  border-bottom: 1px solid var(--qb-ind-border) !important;
+  padding: 10px 12px !important;
+  border-left: 3px solid transparent;
+  transition: border-left-color 0.16s ease;
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-comp-row:hover {
+  border-left-color: var(--qb-ind-orange);
+  background: var(--qb-ind-panel-hover);
+}
+
+html[data-qb-style="industrial"] [data-qb-quant-shell] .qb-quant-comp-kind {
+  font-family: var(--qb-font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px !important;
+  color: var(--qb-ind-orange-bright) !important;
+}

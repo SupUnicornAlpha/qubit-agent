@@ -28,15 +28,17 @@ export const QuantStudioPanel: FC = () => {
   const setTab = useAppStore((s) => s.setQuantTab);
 
   return (
-    <div style={styles.root}>
-      <header style={styles.header}>
-        <div>
-          <div style={styles.title}>量化工作台</div>
-          <div style={styles.subtitle}>
+    <div data-qb-quant-shell className="qb-quant-shell" style={styles.root}>
+      <header className="qb-quant-header" style={styles.header}>
+        <div className="qb-quant-header-titles">
+          <div className="qb-quant-title" style={styles.title}>
+            量化工作台
+          </div>
+          <div className="qb-quant-subtitle" style={styles.subtitle}>
             因子研究 · 自动挖掘 · 策略回测 — 后端由 Provider 抽象层驱动，可在「配置中心 · Providers」切换实现
           </div>
         </div>
-        <div role="tablist" style={styles.tabbar} aria-label="量化工作台子模块">
+        <div role="tablist" className="qb-quant-tabbar" style={styles.tabbar} aria-label="量化工作台子模块">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -44,6 +46,7 @@ export const QuantStudioPanel: FC = () => {
               role="tab"
               aria-selected={tab === t.id}
               onClick={() => setTab(t.id)}
+              data-qb-quant-tab-id={t.id}
               className={`qb-quant-tab${tab === t.id ? " qb-quant-tab--active" : ""}`}
               style={{
                 ...styles.tabBtn,
@@ -56,7 +59,7 @@ export const QuantStudioPanel: FC = () => {
           ))}
         </div>
       </header>
-      <div style={styles.body}>
+      <div className="qb-quant-body" data-qb-quant-active={tab} style={styles.body}>
         {tab === "factor" ? <FactorWorkbenchTab /> : null}
         {tab === "discovery" ? <DiscoveryStudioTab /> : null}
         {tab === "composer" ? <ComposerTab /> : null}

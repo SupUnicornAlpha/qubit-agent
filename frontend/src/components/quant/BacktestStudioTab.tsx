@@ -245,12 +245,12 @@ export const BacktestStudioTab: FC = () => {
   }
 
   return (
-    <div style={styles.root}>
-      <aside style={styles.colLeft}>
-        <div style={styles.colHeader}>
+    <div className="qb-quant-tab-root qb-quant-tab-root--backtest" data-qb-quant-tab="backtest" style={styles.root}>
+      <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>发起回测</strong>
         </div>
-        <form onSubmit={onSubmit} style={styles.form}>
+        <form onSubmit={onSubmit} className="qb-quant-form" style={styles.form}>
           <label style={styles.formLabel}>
             Strategy Version
             <select
@@ -271,10 +271,11 @@ export const BacktestStudioTab: FC = () => {
               ))}
             </select>
           </label>
-          <div style={styles.sourceToggle}>
+          <div className="qb-quant-toggle-bar" style={styles.sourceToggle}>
             <button
               type="button"
               onClick={() => setSource("composition")}
+              className={`qb-quant-toggle-btn${source === "composition" ? " qb-quant-toggle-btn--active" : ""}`}
               style={{
                 ...styles.toggleBtn,
                 ...(source === "composition" ? styles.toggleBtnActive : null),
@@ -285,6 +286,7 @@ export const BacktestStudioTab: FC = () => {
             <button
               type="button"
               onClick={() => setSource("raw")}
+              className={`qb-quant-toggle-btn${source === "raw" ? " qb-quant-toggle-btn--active" : ""}`}
               style={{
                 ...styles.toggleBtn,
                 ...(source === "raw" ? styles.toggleBtnActive : null),
@@ -424,16 +426,18 @@ export const BacktestStudioTab: FC = () => {
           <button
             type="submit"
             disabled={busy || symbolsList.length === 0 || !versionId}
+            className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--run"
             style={styles.btnPrimary}
           >
             {busy ? "运行中…" : "Run Now"}
           </button>
         </form>
-        <div style={styles.colHeader}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>历史任务</strong>
           <button
             type="button"
             onClick={() => setCompareMode((v) => !v)}
+            className={`qb-quant-btn qb-quant-btn--ghost${compareMode ? " qb-quant-btn--ghost-active" : ""}`}
             style={{
               ...styles.btnGhost,
               ...(compareMode ? { background: "var(--qb-bg-elevated)", color: "inherit" } : null),
@@ -442,11 +446,13 @@ export const BacktestStudioTab: FC = () => {
             {compareMode ? `对比中 (${compareIds.size})` : "对比模式"}
           </button>
         </div>
-        <div style={styles.list}>
-          {jobs.length === 0 ? <div style={styles.empty}>暂无任务</div> : null}
+        <div className="qb-quant-list" style={styles.list}>
+          {jobs.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无任务</div> : null}
           {jobs.map((j) => (
             <div
               key={j.id}
+              className={`qb-quant-list-item${j.id === selectedId ? " qb-quant-list-item--active" : ""}`}
+              data-qb-quant-status={j.status}
               style={{
                 ...styles.listItem,
                 ...(j.id === selectedId ? styles.listItemActive : null),
@@ -479,13 +485,13 @@ export const BacktestStudioTab: FC = () => {
                   padding: 0,
                 }}
               >
-                <div style={styles.listItemTop}>
-                  <span style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
-                  <span style={styles.muted}>
+                <div className="qb-quant-list-item-top" style={styles.listItemTop}>
+                  <span className="qb-quant-status-tag" data-qb-quant-status={j.status} style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
+                  <span className="qb-quant-muted" style={styles.muted}>
                     {j.result ? `${(j.result.metrics.totalReturn * 100).toFixed(2)}%` : "—"}
                   </span>
                 </div>
-                <div style={styles.listItemMeta}>
+                <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
                   {j.engineKey} · {new Date(j.startedAt).toLocaleString()}
                 </div>
               </button>
@@ -494,39 +500,39 @@ export const BacktestStudioTab: FC = () => {
         </div>
       </aside>
 
-      <section style={styles.colMid}>
+      <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
         {compareMode && compareJobs.length >= 2 ? (
           <CompareView jobs={compareJobs} equitySeries={compareEquitySeries} />
         ) : selected ? (
           <BacktestResultView job={selected} onRefresh={reloadSelected} />
         ) : (
-          <div style={styles.empty}>左侧选择历史任务或新建回测。</div>
+          <div className="qb-quant-empty" style={styles.empty}>左侧选择历史任务或新建回测。</div>
         )}
       </section>
 
-      <aside style={styles.colRight}>
-        <div style={styles.colHeader}>
+      <aside className="qb-quant-col qb-quant-col--right" style={styles.colRight}>
+        <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>Trades</strong>
-          <span style={styles.muted}>{selected?.result?.trades.length ?? 0}</span>
+          <span className="qb-quant-muted" style={styles.muted}>{selected?.result?.trades.length ?? 0}</span>
         </div>
-        <div style={styles.tradesList}>
+        <div className="qb-quant-trades-list" style={styles.tradesList}>
           {(selected?.result?.trades ?? []).slice(0, 200).map((t, i) => (
-            <div key={i} style={styles.tradeRow}>
-              <span style={styles.muted}>{t.date}</span>
-              <span style={t.side === "buy" ? styles.buy : styles.sell}>{t.side}</span>
+            <div key={i} className="qb-quant-trade-row" data-qb-quant-side={t.side} style={styles.tradeRow}>
+              <span className="qb-quant-muted" style={styles.muted}>{t.date}</span>
+              <span className={t.side === "buy" ? "qb-quant-side qb-quant-side--buy" : "qb-quant-side qb-quant-side--sell"} style={t.side === "buy" ? styles.buy : styles.sell}>{t.side}</span>
               <span>{t.symbol}</span>
-              <span style={styles.tradeNum}>{t.qty.toFixed(4)}</span>
-              <span style={styles.tradeNum}>${t.price.toFixed(2)}</span>
+              <span className="qb-quant-num" style={styles.tradeNum}>{t.qty.toFixed(4)}</span>
+              <span className="qb-quant-num" style={styles.tradeNum}>${t.price.toFixed(2)}</span>
             </div>
           ))}
           {(selected?.result?.trades.length ?? 0) === 0 ? (
-            <div style={styles.empty}>—</div>
+            <div className="qb-quant-empty" style={styles.empty}>—</div>
           ) : null}
         </div>
       </aside>
 
-      {error ? <div style={styles.toastErr}>{error}</div> : null}
-      {info ? <div style={styles.toastInfo}>{info}</div> : null}
+      {error ? <div className="qb-quant-toast qb-quant-toast--err" style={styles.toastErr}>{error}</div> : null}
+      {info ? <div className="qb-quant-toast qb-quant-toast--info" style={styles.toastInfo}>{info}</div> : null}
     </div>
   );
 };
@@ -563,24 +569,24 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
 
   return (
     <>
-      <div style={styles.detailHeader}>
+      <div className="qb-quant-detail-header" style={styles.detailHeader}>
         <div>
-          <div style={styles.detailTitle}>
-            <span style={{ color: STATUS_TONES[job.status] }}>{job.status.toUpperCase()}</span> ·{" "}
+          <div className="qb-quant-detail-title" style={styles.detailTitle}>
+            <span className="qb-quant-status-tag" data-qb-quant-status={job.status} style={{ color: STATUS_TONES[job.status] }}>{job.status.toUpperCase()}</span> ·{" "}
             {job.engineKey}
           </div>
-          <div style={styles.detailMeta}>
+          <div className="qb-quant-detail-meta" style={styles.detailMeta}>
             {job.config.startDate} ~ {job.config.endDate} · capital=${job.config.capital} ·{" "}
             {job.config.symbols.length} symbols · rebalance={job.config.rebalance ?? "daily"}
           </div>
         </div>
-        <button type="button" onClick={onRefresh} style={styles.btnGhost}>
+        <button type="button" onClick={onRefresh} className="qb-quant-btn qb-quant-btn--ghost" style={styles.btnGhost}>
           刷新
         </button>
       </div>
-      {job.result?.error ? <div style={styles.errorPanel}>{job.result.error}</div> : null}
+      {job.result?.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>{job.result.error}</div> : null}
       {m ? (
-        <div style={styles.metricsGrid}>
+        <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
           <Metric label="总收益" value={m.totalReturn} pct />
           <Metric label="年化收益" value={m.annualReturn} pct />
           <Metric label="年化波动" value={m.annualVol} pct />
@@ -610,10 +616,10 @@ const CompareView: FC<{ jobs: BacktestJobRecord[]; equitySeries: ChartSeries[] }
 }) => {
   return (
     <>
-      <div style={styles.detailHeader}>
+      <div className="qb-quant-detail-header" style={styles.detailHeader}>
         <div>
-          <div style={styles.detailTitle}>对比模式 — {jobs.length} 个回测同图</div>
-          <div style={styles.detailMeta}>
+          <div className="qb-quant-detail-title" style={styles.detailTitle}>对比模式 — {jobs.length} 个回测同图</div>
+          <div className="qb-quant-detail-meta" style={styles.detailMeta}>
             勾选左侧任务加入或移除；至少 2 个才会显示对比图
           </div>
         </div>
@@ -625,8 +631,8 @@ const CompareView: FC<{ jobs: BacktestJobRecord[]; equitySeries: ChartSeries[] }
           yFormatter={(v) => v.toFixed(0)}
         />
       ) : null}
-      <div style={styles.tableWrap}>
-        <table style={styles.compTable}>
+      <div className="qb-quant-table-wrap" style={styles.tableWrap}>
+        <table className="qb-quant-table qb-quant-table--compare" style={styles.compTable}>
           <thead>
             <tr>
               <th style={styles.th}>Job</th>
@@ -672,17 +678,17 @@ const Metric: FC<{ label: string; value: number; pct?: boolean; digits?: number 
 }) => {
   if (!Number.isFinite(value)) {
     return (
-      <div style={styles.metric}>
-        <div style={styles.metricLabel}>{label}</div>
-        <div style={styles.metricValue}>—</div>
+      <div className="qb-quant-metric" style={styles.metric}>
+        <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
+        <div className="qb-quant-metric-value" style={styles.metricValue}>—</div>
       </div>
     );
   }
   const text = pct ? `${(value * 100).toFixed(2)}%` : value.toFixed(digits);
   return (
-    <div style={styles.metric}>
-      <div style={styles.metricLabel}>{label}</div>
-      <div style={styles.metricValue}>{text}</div>
+    <div className="qb-quant-metric" style={styles.metric}>
+      <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
+      <div className="qb-quant-metric-value" style={styles.metricValue}>{text}</div>
     </div>
   );
 };

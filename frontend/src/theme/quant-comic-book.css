@@ -1,0 +1,409 @@
+/**
+ * Comic Book · 量化工作台 — Silver Age 漫画：粗黑描边、CMYK 原色、半色调、硬阴影
+ */
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] {
+  background: var(--qb-comic-blue) !important;
+  color: var(--qb-comic-ink) !important;
+  font-family: var(--qb-font-body, "Comic Neue", sans-serif);
+  background-image: var(--qb-comic-halftone);
+  background-size: var(--qb-comic-halftone-size);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-header {
+  background: var(--qb-comic-yellow) !important;
+  border-bottom: 4px solid var(--qb-comic-ink) !important;
+  padding: 18px 22px 14px !important;
+  box-shadow: 0 6px 0 var(--qb-comic-ink);
+  position: relative;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-header::before {
+  content: "POW!";
+  position: absolute;
+  top: -18px;
+  right: 26px;
+  background: var(--qb-comic-red);
+  color: #fff;
+  padding: 6px 14px;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  border: 3px solid var(--qb-comic-ink);
+  box-shadow: var(--qb-comic-shadow);
+  transform: rotate(-6deg);
+  text-shadow: 2px 2px 0 var(--qb-comic-ink);
+  pointer-events: none;
+  z-index: 2;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-title {
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 32px !important;
+  font-weight: 400 !important;
+  color: var(--qb-comic-ink) !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-shadow: 3px 3px 0 var(--qb-comic-red);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-subtitle {
+  color: var(--qb-comic-ink) !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  font-family: var(--qb-font-body) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-tab {
+  border-radius: 0 !important;
+  background: var(--qb-comic-paper) !important;
+  border: 3px solid var(--qb-comic-ink) !important;
+  color: var(--qb-comic-ink) !important;
+  padding: 6px 14px !important;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 13px !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  box-shadow: 4px 4px 0 var(--qb-comic-ink);
+  transition: all 0.18s cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-tab:hover {
+  background: var(--qb-comic-yellow) !important;
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-tab--active {
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-body {
+  background: transparent !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-col {
+  background: var(--qb-comic-paper) !important;
+  border-color: var(--qb-comic-ink) !important;
+  border-width: 3px !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-col-header {
+  background: var(--qb-comic-yellow) !important;
+  border-bottom: 3px solid var(--qb-comic-ink) !important;
+  padding: 10px 14px !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-col-header strong {
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 16px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--qb-comic-ink) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-form,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-op-panel,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-eval-panel,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-editor {
+  background: #fff !important;
+  border: 3px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  padding: 14px 16px !important;
+  box-shadow: var(--qb-comic-shadow);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] input,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] select,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] textarea {
+  background: #fff !important;
+  border: 2px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  color: var(--qb-comic-ink) !important;
+  font-family: var(--qb-font-body) !important;
+  font-weight: 600;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] input:focus,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] select:focus,
+html[data-qb-style="comic-book"] [data-qb-quant-shell] textarea:focus {
+  outline: none;
+  border-color: var(--qb-comic-red) !important;
+  box-shadow: 3px 3px 0 var(--qb-comic-ink) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] form label {
+  color: var(--qb-comic-ink) !important;
+  font-family: var(--qb-font-body) !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  font-size: 11px !important;
+  letter-spacing: 0.04em;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-btn {
+  border-radius: 0 !important;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  border: 3px solid var(--qb-comic-ink) !important;
+  box-shadow: 4px 4px 0 var(--qb-comic-ink);
+  transition: all 0.18s cubic-bezier(0.34, 1.45, 0.64, 1);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-btn--primary {
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-btn--primary:hover:not(:disabled) {
+  background: var(--qb-comic-yellow) !important;
+  color: var(--qb-comic-ink) !important;
+  text-shadow: none;
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-btn--primary:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-btn--run {
+  background: var(--qb-comic-yellow) !important;
+  color: var(--qb-comic-ink) !important;
+  font-size: 14px !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-btn--ghost {
+  background: var(--qb-comic-paper) !important;
+  color: var(--qb-comic-ink) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-toggle-bar {
+  background: var(--qb-comic-paper);
+  border: 3px solid var(--qb-comic-ink);
+  padding: 3px;
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-toggle-btn {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  box-shadow: none !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-toggle-btn--active {
+  background: var(--qb-comic-blue) !important;
+  color: #fff !important;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-list-item {
+  border-bottom: 2px solid var(--qb-comic-ink) !important;
+  border-left: 4px solid transparent !important;
+  padding: 10px 14px !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-list-item:hover {
+  background: var(--qb-comic-yellow) !important;
+  border-left-color: var(--qb-comic-red) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-list-item--active {
+  background: var(--qb-comic-yellow) !important;
+  border-left-color: var(--qb-comic-red) !important;
+  box-shadow: inset 0 0 0 3px var(--qb-comic-red);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-list-item-title {
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 16px !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--qb-comic-ink) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-list-item-meta {
+  color: var(--qb-comic-ink) !important;
+  font-weight: 700 !important;
+  font-family: var(--qb-font-body) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-status-tag {
+  border: 2px solid var(--qb-comic-ink);
+  padding: 1px 7px;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 12px !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 0 !important;
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="running"] {
+  background: var(--qb-comic-blue) !important;
+  color: #fff !important;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="completed"],
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="succeeded"],
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="active"] {
+  background: var(--qb-comic-green) !important;
+  color: var(--qb-comic-ink) !important;
+}
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-status-tag[data-qb-quant-status="failed"] {
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-detail-title {
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 24px !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--qb-comic-ink) !important;
+  text-shadow: 2px 2px 0 var(--qb-comic-yellow);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-metric {
+  background: #fff !important;
+  border: 3px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  padding: 14px 16px !important;
+  box-shadow: var(--qb-comic-shadow);
+  position: relative;
+  background-image: var(--qb-comic-halftone);
+  background-size: 6px 6px;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-metric:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 7px 7px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-metric-label {
+  font-family: var(--qb-font-body) !important;
+  font-weight: 700 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px !important;
+  color: var(--qb-comic-ink) !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-metric-value {
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 22px !important;
+  font-weight: 400 !important;
+  color: var(--qb-comic-red) !important;
+  text-shadow: 2px 2px 0 var(--qb-comic-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-expr-box {
+  background: var(--qb-comic-paper) !important;
+  border: 3px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  color: var(--qb-comic-ink) !important;
+  font-family: "Comic Neue", monospace !important;
+  font-weight: 700;
+  box-shadow: 3px 3px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-bucket {
+  background: #fff !important;
+  border: 3px dashed var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-chip {
+  background: var(--qb-comic-yellow) !important;
+  border: 2px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  color: var(--qb-comic-ink) !important;
+  font-family: var(--qb-font-body) !important;
+  font-weight: 700 !important;
+  box-shadow: 2px 2px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-pool-summary {
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 16px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--qb-comic-ink) !important;
+  background: var(--qb-comic-yellow);
+  border-bottom: 2px solid var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-table-wrap {
+  background: #fff !important;
+  border: 3px solid var(--qb-comic-ink) !important;
+  border-radius: 0 !important;
+  box-shadow: var(--qb-comic-shadow);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-table th {
+  background: var(--qb-comic-yellow) !important;
+  color: var(--qb-comic-ink) !important;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 3px solid var(--qb-comic-ink) !important;
+  font-size: 12px !important;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-table td {
+  border-color: var(--qb-comic-ink) !important;
+  font-family: var(--qb-font-body) !important;
+  font-weight: 600;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-trade-row {
+  border-bottom: 2px solid var(--qb-comic-ink) !important;
+  font-weight: 700;
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-side--buy {
+  color: var(--qb-comic-green) !important;
+  text-transform: uppercase;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-side--sell {
+  color: var(--qb-comic-red) !important;
+  text-transform: uppercase;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-toast {
+  border-radius: 0 !important;
+  font-family: var(--qb-font-display, "Bangers"), Impact, sans-serif !important;
+  font-size: 14px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 3px solid var(--qb-comic-ink) !important;
+  box-shadow: var(--qb-comic-shadow);
+}
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-toast--err {
+  background: var(--qb-comic-red) !important;
+  color: #fff !important;
+  text-shadow: 1px 1px 0 var(--qb-comic-ink);
+}
+html[data-qb-style="comic-book"] [data-qb-quant-shell] .qb-quant-toast--info {
+  background: var(--qb-comic-yellow) !important;
+  color: var(--qb-comic-ink) !important;
+}
