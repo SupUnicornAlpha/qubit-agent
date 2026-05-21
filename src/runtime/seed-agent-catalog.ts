@@ -306,9 +306,9 @@ export const BUILTIN_AGENT_GROUPS: readonly BuiltinAgentGroupSpec[] = [
 ];
 
 export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
-  orchestrator: skills(S.compsAnalysis),
-  market_data: skills(),
-  news_event: skills("sentiment-analysis", S.earningsPreview),
+  orchestrator: skills(S.compsAnalysis, S.thesisTracker),
+  market_data: skills(S.cleanDataXls),
+  news_event: skills("sentiment-analysis", S.earningsPreview, S.morningNote),
   research: skills(
     "momentum-factor",
     "fundamental-analysis",
@@ -316,24 +316,49 @@ export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
     S.compsAnalysis,
     S.xlsxAuthor,
     S.ideaGeneration,
-    S.competitiveAnalysis
+    S.competitiveAnalysis,
+    /** M9.P3：研究产出长期跟踪 */
+    S.thesisTracker
   ),
-  backtest: skills(S.auditXls, "technical-analysis"),
-  risk: skills("risk-management"),
+  backtest: skills(
+    S.auditXls,
+    "technical-analysis",
+    /** M9.P3：回测前要做数据清洗 */
+    S.cleanDataXls
+  ),
+  risk: skills(
+    "risk-management",
+    /** M9.P3：风控也覆盖 KYC/合规规则 */
+    S.kycRules
+  ),
   analyst_fundamental: skills(
     "fundamental-analysis",
     S.compsAnalysis,
     S.competitiveAnalysis,
-    S.dcfModel
+    S.dcfModel,
+    /** M9.P3：财报准入与持续跟踪 */
+    S.earningsPreview,
+    S.thesisTracker
   ),
-  analyst_technical: skills("technical-analysis"),
+  analyst_technical: skills(
+    "technical-analysis",
+    /** M9.P3：技术面也是动量因子家族最常用 */
+    "momentum-factor"
+  ),
   analyst_sentiment: skills(
     "sentiment-analysis",
     S.earningsAnalysis,
+    S.earningsPreview,
     S.modelUpdate,
     S.morningNote
   ),
-  analyst_macro: skills("macro-analysis", S.sectorOverview, S.initiatingCoverage),
+  analyst_macro: skills(
+    "macro-analysis",
+    S.sectorOverview,
+    S.initiatingCoverage,
+    /** M9.P3：宏观也用 morning-note 输出格式 */
+    S.morningNote
+  ),
 };
 
 export const ROLE_CONNECTOR_MCPS: Partial<Record<AgentRole, string[]>> = {
