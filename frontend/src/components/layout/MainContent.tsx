@@ -3843,7 +3843,7 @@ const TeamDashboardPanel: FC = () => {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TeamCenterView>("run");
+  const [activeTab, setActiveTab] = useState<TeamCenterView>("research");
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
     confidenceThreshold: 0.55,
     maxRounds: 2,
