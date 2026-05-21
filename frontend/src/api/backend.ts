@@ -373,6 +373,23 @@ export async function deleteAgentDefinition(definitionId: string): Promise<void>
   );
 }
 
+export type ReloadBuiltinSeedResponse = {
+  ok: boolean;
+  report: {
+    definitions: { total: number; reset: number; preserved: number };
+    groups: { total: number; reset: number; preserved: number };
+    force: boolean;
+  };
+  runtime: { before: number; after: number };
+};
+
+/**
+ * 强制把所有内置 Agent 定义与编组重置回系统预设（会覆盖用户对内置项的改动）。
+ */
+export async function reloadBuiltinAgentSeed(): Promise<ReloadBuiltinSeedResponse> {
+  return httpPost<ReloadBuiltinSeedResponse>("/api/v1/agents/builtin/reload", {});
+}
+
 export async function postAgentPromptPreview(
   definitionId: string,
   body: {

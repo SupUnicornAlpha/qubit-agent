@@ -42,6 +42,7 @@ import {
   isBuiltinAgentDefinitionId,
 } from "../runtime/agent/delete-agent-definition";
 import { buildAgentPromptPreview } from "../runtime/agent/agent-prompt-preview";
+import { seedAgentDefinitions } from "../runtime/seed-agent-definitions";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
@@ -294,6 +295,21 @@ agentRouter.post("/reload", async (c) => {
     ok: true,
     before: result.before,
     after: result.after,
+  });
+});
+
+/**
+ * 手动「重载系统预设」：把所有内置 Agent 定义 / 编组 强制重置回 SEED。
+ * - 正常启动会保留用户改动；这个接口是唯一显式破坏用户改动的入口。
+ * - 调用后会自动 graphRunner.reload()，让 runtime 立刻拿到新定义。
+ */
+agentRouter.post("/builtin/reload", async (c) => {
+  const report = await seedAgentDefinitions({ force: true });
+  const runtimeReload = await graphRunner.reload();
+  return c.json({
+    ok: true,
+    report,
+    runtime: { before: runtimeReload.before, after: runtimeReload.after },
   });
 });
 

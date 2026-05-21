@@ -11,6 +11,8 @@ import {
   putAgentDefinitionPackSessionSnapshot,
   releaseAgentDraft,
   reloadAgents,
+  reloadBuiltinAgentSeed,
+  type ReloadBuiltinSeedResponse,
 } from "../../api/backend";
 import type {
   AgentDefinitionBundle,
@@ -204,6 +206,33 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   const [createErr, setCreateErr] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const [reloadSeedBusy, setReloadSeedBusy] = useState(false);
+  const [reloadSeedMsg, setReloadSeedMsg] = useState<string | null>(null);
+
+  const handleReloadBuiltinSeed = () => {
+    if (
+      !window.confirm(
+        "重载系统预设将把所有内置 Agent 与编组重置回出厂配置，覆盖你对内置项的发布版改动。\n\n你自定义创建的 Agent / 编组不会受影响。\n\n确定继续？"
+      )
+    ) {
+      return;
+    }
+    setReloadSeedMsg(null);
+    setReloadSeedBusy(true);
+    void reloadBuiltinAgentSeed()
+      .then((res: ReloadBuiltinSeedResponse) => {
+        const d = res.report.definitions;
+        const g = res.report.groups;
+        setReloadSeedMsg(
+          `已重载：Agent ${d.reset}/${d.total}，编组 ${g.reset}/${g.total}。运行时 ${res.runtime.before} → ${res.runtime.after}。`
+        );
+        onReloadAll();
+      })
+      .catch((e) => {
+        setReloadSeedMsg(e instanceof Error ? `失败：${e.message}` : `失败：${String(e)}`);
+      })
+      .finally(() => setReloadSeedBusy(false));
+  };
 
   const sortedDefinitions = useMemo(() => {
     return [...definitions].sort((a, b) => {
@@ -358,7 +387,34 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
             >
               Skills 市场
             </button>
+            <button
+              type="button"
+              className="qb-btn-ghost qb-btn--compact"
+              style={{ color: "#fbbf24", borderColor: "#78350f" }}
+              disabled={reloadSeedBusy}
+              title="把所有内置 Agent / 编组重置回出厂配置（不影响你自建的 Agent 与编组）"
+              onClick={handleReloadBuiltinSeed}
+            >
+              {reloadSeedBusy ? "重载中…" : "重载系统预设"}
+            </button>
           </div>
+          {reloadSeedMsg ? (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: "6px 10px",
+                borderRadius: 6,
+                fontSize: 12,
+                color: reloadSeedMsg.startsWith("失败")
+                  ? "var(--qb-agent-warn, #f87171)"
+                  : "var(--qb-agent-hint, #a1a1aa)",
+                background: "var(--qb-main-panel-bg, #18181b)",
+                border: "1px solid var(--qb-main-input-border, #3f3f46)",
+              }}
+            >
+              {reloadSeedMsg}
+            </div>
+          ) : null}
 
           <div
             style={{

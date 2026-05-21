@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, count } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import {
   agentDefinition,
+  agentDefinitionRelease,
   agentGroup,
   agentGroupMember,
   agentProfile,
@@ -71,7 +72,41 @@ const DEFAULT_LLM_PROVIDER = {
   enabled: true,
 };
 
-export async function seedAgentDefinitions(): Promise<void> {
+export type SeedOptions = {
+  /**
+   * 是否强制覆盖：
+   * - `false`（默认，正常启动）：对用户已经"发布过"的 builtin Agent / 已经增删过成员的 builtin 编组，
+   *   跳过覆盖，保留用户改动；
+   * - `true`（手动 Reload 按钮）：忽略用户改动，把所有内置 Agent / 编组重置回 SEED。
+   */
+  force?: boolean;
+};
+
+export type SeedReport = {
+  definitions: { total: number; reset: number; preserved: number };
+  groups: { total: number; reset: number; preserved: number };
+  force: boolean;
+};
+
+/**
+ * 判断某个内置 Agent 是否被用户"发布过"：
+ * 只要 `agent_definition_release` 表里存在该 definitionId 的至少一条 release，
+ * 就视为用户改动过，不应被启动期 seed 覆盖。
+ * 草稿（draft）阶段不算"已改"，仍然跟随 SEED。
+ */
+async function hasUserPublishedRelease(
+  db: Awaited<ReturnType<typeof getDb>>,
+  definitionId: string
+): Promise<boolean> {
+  const rows = await db
+    .select({ c: count() })
+    .from(agentDefinitionRelease)
+    .where(eq(agentDefinitionRelease.definitionId, definitionId));
+  return (rows[0]?.c ?? 0) > 0;
+}
+
+export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<SeedReport> {
+  const force = options.force === true;
   const db = await getDb();
 
   await db
@@ -92,7 +127,23 @@ export async function seedAgentDefinitions(): Promise<void> {
 
   await seedFsiSandboxPresets();
 
+  let resetCount = 0;
+  let preservedCount = 0;
+
   for (const def of SEED_AGENT_DEFINITIONS) {
+    const existing = await db
+      .select({ id: agentDefinition.id })
+      .from(agentDefinition)
+      .where(eq(agentDefinition.id, def.id))
+      .limit(1);
+    const isExisting = existing.length > 0;
+    const userOwned = isExisting && !force && (await hasUserPublishedRelease(db, def.id));
+
+    if (userOwned) {
+      preservedCount += 1;
+      continue;
+    }
+
     const mcpServers = def.mcpServers;
     const skillsJson =
       isFsiActive() && shouldApplyFsiAgentMappings()
@@ -133,6 +184,8 @@ export async function seedAgentDefinitions(): Promise<void> {
           updatedAt: new Date().toISOString(),
         },
       });
+    resetCount += 1;
+
     const profRows = await db
       .select()
       .from(agentProfile)
@@ -177,7 +230,15 @@ export async function seedAgentDefinitions(): Promise<void> {
     });
   }
 
-  console.log(`[Seed] Upserted ${SEED_AGENT_DEFINITIONS.length} agent definitions.`);
+  const total = SEED_AGENT_DEFINITIONS.length;
+  if (preservedCount > 0) {
+    console.log(
+      `[Seed] Agent definitions: reset=${resetCount}, preserved=${preservedCount} (user-published), total=${total}${force ? " [force]" : ""}.`
+    );
+  } else {
+    console.log(`[Seed] Upserted ${resetCount}/${total} agent definitions${force ? " [force]" : ""}.`);
+  }
+
   const removedDupes = await cleanupRedundantAgentDefinitions(db);
   if (removedDupes > 0) {
     console.log(`[Seed] Removed ${removedDupes} redundant custom agent definition(s).`);
@@ -189,8 +250,14 @@ export async function seedAgentDefinitions(): Promise<void> {
   if (purged > 0) {
     console.log(`[Seed] Purged ${purged} retired built-in agent definition(s).`);
   }
-  await ensureBuiltinAgentGroups();
+  const groupReport = await ensureBuiltinAgentGroups({ force });
   await syncOrchestratorTopologyToolsForGroup(DEFAULT_ANALYST_AGENT_GROUP_ID);
+
+  return {
+    definitions: { total, reset: resetCount, preserved: preservedCount },
+    groups: groupReport,
+    force,
+  };
 }
 
 type GroupRelationsLayout = {
@@ -455,7 +522,28 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
   },
 };
 
-async function upsertBuiltinAgentGroup(db: Awaited<ReturnType<typeof getDb>>, spec: BuiltinAgentGroupSpec): Promise<void> {
+async function memberSetMatchesSeed(
+  db: Awaited<ReturnType<typeof getDb>>,
+  groupId: string,
+  expectedMemberDefs: readonly string[]
+): Promise<boolean> {
+  const rows = await db
+    .select({ definitionId: agentGroupMember.definitionId })
+    .from(agentGroupMember)
+    .where(eq(agentGroupMember.groupId, groupId));
+  if (rows.length !== expectedMemberDefs.length) return false;
+  const actual = new Set(rows.map((r) => r.definitionId));
+  for (const id of expectedMemberDefs) {
+    if (!actual.has(id)) return false;
+  }
+  return true;
+}
+
+async function upsertBuiltinAgentGroup(
+  db: Awaited<ReturnType<typeof getDb>>,
+  spec: BuiltinAgentGroupSpec,
+  options: { force: boolean }
+): Promise<"reset" | "preserved" | "created"> {
   const memberDefs = [...spec.memberDefinitionIds];
   const memberRoles = [...spec.memberRoles];
   const layout = BUILTIN_GROUP_LAYOUTS[spec.id];
@@ -469,6 +557,14 @@ async function upsertBuiltinAgentGroup(db: Awaited<ReturnType<typeof getDb>>, sp
     .from(agentGroup)
     .where(eq(agentGroup.id, spec.id))
     .limit(1);
+  const isExisting = existing.length > 0;
+
+  if (isExisting && !options.force) {
+    const memberMatches = await memberSetMatchesSeed(db, spec.id, memberDefs);
+    if (!memberMatches) {
+      return "preserved";
+    }
+  }
 
   const shouldInjectTopo = relationsNeedsRefresh(existing[0]?.relationsJson, memberRoles);
 
@@ -487,7 +583,7 @@ async function upsertBuiltinAgentGroup(db: Awaited<ReturnType<typeof getDb>>, sp
         name: spec.name,
         description: spec.description,
         updatedAt: new Date().toISOString(),
-        ...(shouldInjectTopo ? { relationsJson } : {}),
+        ...(shouldInjectTopo || options.force ? { relationsJson } : {}),
       },
     });
 
@@ -501,7 +597,7 @@ async function upsertBuiltinAgentGroup(db: Awaited<ReturnType<typeof getDb>>, sp
       sortOrder: sortOrder++,
     });
   }
-  console.log(`[Seed] Builtin agent group ${spec.id} refreshed (${memberDefs.length} members).`);
+  return isExisting ? "reset" : "created";
 }
 
 /** @deprecated 使用 ensureBuiltinAgentGroups */
@@ -511,12 +607,33 @@ export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
 
 /**
  * 保证存在内置研究团队编组，便于前端成员目录选用。
+ * - 默认（`force=false`）：用户改过成员集合的编组会被原样保留；
+ * - 手动 Reload（`force=true`）：忽略用户改动全量重置。
  */
-export async function ensureBuiltinAgentGroups(): Promise<void> {
+export async function ensureBuiltinAgentGroups(
+  options: SeedOptions = {}
+): Promise<{ total: number; reset: number; preserved: number }> {
+  const force = options.force === true;
   const db = await getDb();
+  let reset = 0;
+  let preserved = 0;
   for (const spec of BUILTIN_AGENT_GROUPS) {
-    await upsertBuiltinAgentGroup(db, spec);
+    const outcome = await upsertBuiltinAgentGroup(db, spec, { force });
+    if (outcome === "preserved") {
+      preserved += 1;
+    } else {
+      reset += 1;
+    }
   }
+  const total = BUILTIN_AGENT_GROUPS.length;
+  if (preserved > 0) {
+    console.log(
+      `[Seed] Builtin agent groups: reset=${reset}, preserved=${preserved} (user-modified members), total=${total}${force ? " [force]" : ""}.`
+    );
+  } else {
+    console.log(`[Seed] Builtin agent groups refreshed: ${reset}/${total}${force ? " [force]" : ""}.`);
+  }
+  return { total, reset, preserved };
 }
 
 export { syncOrchestratorTopologyToolsForGroup };
