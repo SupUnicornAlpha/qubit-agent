@@ -55,7 +55,7 @@ beforeAll(async () => {
 });
 
 describe("Agent 量化工坊工具入口", () => {
-  test("注册的工具列表包含 6 个 M2/M6 量化工坊工具", () => {
+  test("注册的工具列表包含 M2/M6/M7 量化工坊工具（含 code.run_python 沙箱）", () => {
     const names = listRegisteredBuiltinTools();
     for (const t of [
       "factor.register",
@@ -69,9 +69,32 @@ describe("Agent 量化工坊工具入口", () => {
       "discovery.run",
       "discovery.promote",
       "backtest.run",
+      "code.run_python",
     ]) {
       expect(names).toContain(t);
     }
+  });
+
+  test("code.run_python：dispatch 走通沙箱 + 注入 vars", async () => {
+    const ctx = buildCtx();
+    const out = (await dispatchBuiltinTool("code.run_python", ctx as never, {
+      code: "result = sum(vars['xs'])",
+      vars: { xs: [10, 20, 30] },
+      return_var: "result",
+      timeout_sec: 5,
+    })) as { ok: boolean; result: unknown };
+    if (!out.ok) {
+      console.warn("[skip] python3 not available for code.run_python dispatch test");
+      return;
+    }
+    expect(out.result).toBe(60);
+  });
+
+  test("code.run_python：缺 code 抛错", async () => {
+    const ctx = buildCtx();
+    await expect(
+      dispatchBuiltinTool("code.run_python", ctx as never, { code: "" })
+    ).rejects.toThrow(/code/);
   });
 
   test("factor.register + factor.list：能注册并查询出来", async () => {

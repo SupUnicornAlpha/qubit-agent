@@ -34,6 +34,7 @@ import { strategyComposer } from "../strategy/strategy-composer";
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
+import { runPythonSandbox } from "../sandbox/python-sandbox";
 import type {
   FactorCategory,
   FactorLang,
@@ -645,6 +646,37 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
       ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "code.run_python": async (_ctx, params) => {
+    const code = typeof params.code === "string" ? params.code : "";
+    if (!code.trim()) throw new Error("code.run_python: code is required");
+
+    const varsRaw = params.vars;
+    const vars =
+      varsRaw && typeof varsRaw === "object" && !Array.isArray(varsRaw)
+        ? (varsRaw as Record<string, unknown>)
+        : {};
+    const timeoutSec =
+      typeof params.timeout_sec === "number" && params.timeout_sec > 0
+        ? params.timeout_sec
+        : 30;
+    const maxStdoutBytes =
+      typeof params.max_stdout_bytes === "number" && params.max_stdout_bytes > 0
+        ? params.max_stdout_bytes
+        : 65_536;
+    const returnVar =
+      typeof params.return_var === "string" && params.return_var.length > 0
+        ? params.return_var
+        : undefined;
+
+    return runPythonSandbox({
+      code,
+      vars,
+      timeoutSec,
+      maxStdoutBytes,
+      ...(returnVar ? { returnVar } : {}),
     });
   },
 

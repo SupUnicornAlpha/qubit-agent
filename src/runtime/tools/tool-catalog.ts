@@ -147,6 +147,13 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
       "运行事件驱动回测：传 composition_id 或手写 signals，返回 metrics + equity_curve + trades 并落 backtest_run",
     category: "research",
   },
+
+  // M7：沙箱代码执行（Agent 在 chat 里跑 pandas / 算 IC 矩阵 / 算相关性等）
+  "code.run_python": {
+    description:
+      "受限沙箱内执行 Python：白名单 builtins + 仅放行 numpy/pandas/scipy/math 等；可注入 vars (含 factor 值/价格序列等)，可指定 return_var 取回结构化结果（DataFrame→records）；30s 超时，禁 import os/sys/socket，禁 open / 网络 / 子进程。",
+    category: "research",
+  },
 };
 
 function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: string): ToolCatalogEntry {
