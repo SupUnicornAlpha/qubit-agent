@@ -91,6 +91,18 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
   write_memory: { description: "写入项目/Agent 中期或长期记忆", category: "memory" },
   search_memory: { description: "按关键词检索记忆条目", category: "memory" },
   cleanup_ttl: { description: "预览过期记忆清理（TTL）", category: "memory" },
+  "memory.summarize_workflow": {
+    description: "主动归纳当前工作流为 midterm（通常 workflow 结束自动触发）",
+    category: "memory",
+  },
+  "memory.consolidate_longterm": {
+    description: "把多条 midterm 提炼为 longterm（factor_archive / regime / playbook 等）",
+    category: "memory",
+  },
+  "memory.refresh_workspace": {
+    description: "把当前 Agent 的长期记忆同步到 workspace/memory.md（让用户可见）",
+    category: "memory",
+  },
 
   // 审计
   write_audit_log: { description: "关键操作写入 audit_log 留痕", category: "audit" },

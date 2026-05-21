@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { analystSignal, auditLog, midtermMemory } from "../../db/sqlite/schema";
+import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { dispatchTaskToRole } from "../agent-pool";
@@ -373,6 +373,73 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       scanned: rows.length,
       staleCount: stale.length,
       note: "TTL 清理预览；物理删除可在后续版本启用",
+    };
+  },
+
+  /**
+   * M10.A2: 主动归纳当前工作流 → midterm_memory
+   * 通常 workflow 结束时会自动触发，这个工具让 Agent 在执行中也能主动总结。
+   */
+  "memory.summarize_workflow": async (ctx, params) => {
+    const { consolidateFromWorkflow } = await import("../memory/memory-consolidation");
+    const workflowId = String(params.workflowId ?? ctx.workflowId ?? "");
+    if (!workflowId) throw new Error("memory.summarize_workflow: workflowId is required");
+    const result = await consolidateFromWorkflow(workflowId);
+    return result;
+  },
+
+  /**
+   * M10.A2: 把指定 agent 在指定 project 的多条 midterm_memory 提炼成一条 longterm_memory
+   * 适用于：Agent 跑完一系列工作流后，主动把"反复出现的有效因子/规则/Playbook"沉淀为长期记忆。
+   */
+  "memory.consolidate_longterm": async (ctx, params) => {
+    const db = await getDb();
+    const definitionId = String(params.definitionId ?? ctx.definition.id ?? "");
+    const projectId = String(params.projectId ?? ctx.projectId ?? "");
+    const memoryType = String(params.memoryType ?? "playbook"); // factor_archive/regime/playbook/postmortem/execution_profile
+    const scopeStr = String(params.scope ?? "project") as "org" | "project" | "strategy";
+    const content = String(params.content ?? "");
+    const confidenceScore = params.confidenceScore != null ? Number(params.confidenceScore) : null;
+    if (!content.trim())
+      throw new Error("memory.consolidate_longterm: content is required (LLM-generated summary)");
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    await db.insert(longtermMemory).values({
+      id,
+      scope: scopeStr as never,
+      scopeId: scopeStr === "org" ? "default" : (projectId || "default"),
+      definitionId: definitionId || null,
+      memoryType: memoryType as never,
+      contentJson: { content, ...params, source: "agent_consolidation" },
+      embeddingRef: null,
+      artifactUri: null,
+      validFrom: now,
+      validTo: null,
+      asofTime: now,
+      confidenceScore,
+    });
+    // 同时刷新 memory.md 让下次启动能读到
+    if (definitionId) {
+      const { syncMemoryFromDb } = await import("../memory/memory-workspace-sync");
+      await syncMemoryFromDb(definitionId);
+    }
+    return { longtermMemoryId: id, memoryType, scope: scopeStr };
+  },
+
+  /**
+   * M10.A2: 把当前 Agent 的长期记忆从 DB 刷新到 workspace/memory.md
+   * Agent 可以主动调，确保 workspace 文件最新。
+   */
+  "memory.refresh_workspace": async (ctx, _params) => {
+    const { syncMemoryFromDb } = await import("../memory/memory-workspace-sync");
+    const result = await syncMemoryFromDb(ctx.definition.id);
+    if (!result) return { ok: false, error: "definition not found" };
+    return {
+      ok: true,
+      packMemoryPath: result.packMemoryPath,
+      workspaceMemoryPath: result.workspaceMemoryPath,
+      longtermCount: result.longtermCount,
+      midtermCount: result.midtermCount,
     };
   },
 

@@ -30,7 +30,7 @@ export function definitionPackDir(dataDir: string, definitionId: string): string
   return join(defaultAgentPackRoot(dataDir), definitionId);
 }
 
-function resolvePackRoot(dataDir: string, definitionId: string, configRootUri: string): string {
+export function resolvePackRoot(dataDir: string, definitionId: string, configRootUri: string): string {
   const trimmed = (configRootUri ?? "").trim();
   if (!trimmed) return definitionPackDir(dataDir, definitionId);
   if (trimmed.startsWith("file://")) return resolve(trimmed.slice("file://".length));

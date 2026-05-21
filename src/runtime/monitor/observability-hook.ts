@@ -1,6 +1,7 @@
 import { createAlertsFromWorkflowQuality } from "./alert-service";
 import { createWorkflowQualitySnapshot } from "./quality-metrics";
 import { consolidateFromWorkflow } from "../memory/memory-consolidation";
+import { syncMemoryForWorkflow } from "../memory/memory-workspace-sync";
 
 export type WorkflowTerminalStatus = "completed" | "failed";
 
@@ -21,7 +22,7 @@ export function onWorkflowTerminal(workflowId: string, status: WorkflowTerminalS
       );
     }
 
-    // M10.A1: only consolidate for *completed* workflows
+    // M10.A1 + A2: only consolidate for *completed* workflows
     if (status === "completed") {
       try {
         const result = await consolidateFromWorkflow(workflowId);
@@ -29,6 +30,11 @@ export function onWorkflowTerminal(workflowId: string, status: WorkflowTerminalS
           console.log(
             `[memory] consolidated workflow ${workflowId} → ${result.midtermInserted} midterm records`
           );
+          // A2: 同步参与的 agent 的 memory.md 让 Agent 下次启动能拿到上次的长期记忆
+          const synced = await syncMemoryForWorkflow(workflowId);
+          if (synced > 0) {
+            console.log(`[memory] synced memory.md for ${synced} agents`);
+          }
         }
       } catch (err) {
         console.warn(
