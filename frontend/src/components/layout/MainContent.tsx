@@ -169,6 +169,7 @@ import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } fro
 import { IntegrationCenterPanel } from "../config/IntegrationCenterPanel";
 import { ScheduledJobsPanel } from "../config/ScheduledJobsPanel";
 import { ProvidersPanel } from "../config/ProvidersPanel";
+import { LlmProvidersList } from "../config/LlmProvidersList";
 import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { AgentGeneratedFactorsBlock } from "../team/AgentGeneratedFactorsBlock";
@@ -2010,9 +2011,10 @@ const ConfigPanel: FC = () => {
       <div style={styles.configPageBody}>
         {activeConfigSubPage === "llm" ? (
           <>
-            <h3 style={styles.subTitle}>LLM（模型提供方）</h3>
+            <h3 style={styles.subTitle}>默认 LLM 配置（降级模型）</h3>
             <p className="qb-config-hint">
-              配置默认对话 / 编排使用的模型与鉴权；保存后由后端加载。
+              此处配置的模型作为<strong>系统默认</strong>，当 Agent 未指定 provider 或
+              指定 provider 不可用时自动降级到这里。保存写入 <code>.qubit/model.json</code>。
             </p>
             <div style={styles.form}>
               <select
@@ -2046,9 +2048,17 @@ const ConfigPanel: FC = () => {
                   })
                 }
               >
-                保存 LLM 配置
+                保存默认配置
               </button>
             </div>
+
+            <h3 style={{ ...styles.subTitle, marginTop: 24 }}>多 LLM Provider（per-Agent 路由）</h3>
+            <p className="qb-config-hint">
+              新增不同的模型 provider 后，可在 Agent 编辑页把指定 Agent 路由到不同模型
+              （如 def-research 用 Claude、def-orchestrator 用 GPT）。任一 provider 失败
+              会自动降级到上方的默认模型。
+            </p>
+            <LlmProvidersList />
           </>
         ) : null}
         {activeConfigSubPage === "datasources" ? (
