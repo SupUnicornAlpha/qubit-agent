@@ -63,32 +63,49 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-news-event",
     role: "news_event",
     name: "新闻事件",
-    version: "2.1.0",
+    /** 3.0.0：M9.P2 装上事件→因子链路（聚合 daily event_score 用） */
+    version: "3.0.0",
     systemPrompt: PROMPT_NEWS_EVENT,
-    tools: ["fetch_news", "extract_event", "score_sentiment", "call_mcp"],
+    tools: [
+      "fetch_news",
+      "fetch_news_sentiment",
+      "extract_event",
+      "score_sentiment",
+      // M9.P2：把事件聚合成 daily event_score 时间序列
+      "code.run_python",
+      "call_mcp",
+    ],
     maxIterations: 12,
   }),
   def({
     id: "def-analyst-fundamental",
     role: "analyst_fundamental",
     name: "基本面研究员",
-    version: "2.1.0",
+    /** 3.0.0：M9.P2 装上量化锚点工具（factor.list value/quality + autoEvaluate + 沙箱） */
+    version: "3.0.0",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
       "fetch_financial_data",
+      "fetch_fundamentals",
       "fetch_klines",
       "compute_valuation",
       "analyze_industry",
+      // M9.P2：量化锚点 — 看现成价值/质量因子的 RankIC
+      "factor.list",
+      "factor.autoEvaluate",
+      // M9.P2：沙箱 — DCF / 敏感度表 / 同业百分位
+      "code.run_python",
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 10,
+    maxIterations: 14,
   }),
   def({
     id: "def-analyst-technical",
     role: "analyst_technical",
     name: "量化策略师",
-    version: "2.1.0",
+    /** 3.0.0：M9.P2 装上量化工坊全套（动量/反转/波动因子 + run_experiment + 沙箱） */
+    version: "3.0.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
       "fetch_price_data",
@@ -96,42 +113,63 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "compute_indicators",
       "detect_patterns",
       "run_backtest",
+      // M9.P2：量化锚点 — 看现成动量/反转/波动因子的 RankIC
+      "factor.list",
+      "factor.autoEvaluate",
+      "run_experiment",
+      // M9.P2：沙箱 — RSI 截面排名、量价相关性
+      "code.run_python",
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 10,
+    maxIterations: 14,
   }),
   def({
     id: "def-analyst-sentiment",
     role: "analyst_sentiment",
     name: "舆情分析师",
-    version: "2.1.0",
+    /** 3.0.0：M9.P2 装上事件→sentiment 因子工具（factor.register + autoEvaluate + 沙箱） */
+    version: "3.0.0",
     systemPrompt: PROMPT_ANALYST_SENTIMENT,
     tools: [
       "fetch_news",
       "fetch_news_sentiment",
       "analyze_social_media",
       "get_analyst_ratings",
+      "extract_event",
+      "score_sentiment",
+      // M9.P2：把事件聚合成情绪因子入库
+      "factor.list",
+      "factor.register",
+      "factor.autoEvaluate",
+      // M9.P2：沙箱 — 大批量新闻聚合 / 情绪 decay 曲线
+      "code.run_python",
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 10,
+    maxIterations: 14,
   }),
   def({
     id: "def-analyst-macro",
     role: "analyst_macro",
     name: "宏观策略师",
-    version: "2.1.0",
+    /** 3.0.0：M9.P2 装上跨市场相关性 + regime 量化工具（factor.list macro + 沙箱） */
+    version: "3.0.0",
     systemPrompt: PROMPT_ANALYST_MACRO,
     tools: [
       "fetch_macro_data",
       "fetch_klines",
       "analyze_policy",
       "compute_macro_indicators",
+      // M9.P2：量化锚点 — 看现成宏观因子（如果项目里 promote 过）
+      "factor.list",
+      "factor.autoEvaluate",
+      // M9.P2：沙箱 — 跨市场相关性矩阵 + regime 检测
+      "code.run_python",
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 10,
+    maxIterations: 14,
   }),
   def({
     id: "def-research",
