@@ -137,32 +137,68 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-research",
     role: "research",
     name: "策略研究",
-    version: "3.2.0",
+    /** 4.0.0：装齐 M2/M6 量化工坊全套工具，可在 chat 流程驱动「因子→评估→挖掘→promote→组合→回测」完整闭环 */
+    version: "4.0.0",
     systemPrompt: PROMPT_RESEARCH,
     tools: [
+      // 基础数据
       "fetch_klines",
       "compute_factors",
+      "compute_indicators",
+      // M2 因子三段式
+      "factor.register",
+      "factor.compute",
+      "factor.evaluate",
+      // M6.2 自动评估 + 挖掘 + 组合 + 回测一键
+      "factor.list",
+      "factor.autoEvaluate",
+      "rule.register",
+      "rule.evaluate",
+      "strategy.compose",
+      "discovery.run",
+      "discovery.promote",
+      "backtest.run",
+      // M7.3 沙箱代码执行（拿大量数据做自由分析 / 算 IC 矩阵 / 算相关性等）
+      "code.run_python",
+      // 兼容旧链路
       "run_experiment",
       "version_strategy",
       "edit_agent_pack",
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "MODEL_UPDATE"],
+    /** 因子研究迭代步数较多（list→evaluate→promote 多次） */
+    maxIterations: 28,
   }),
   def({
     id: "def-backtest",
     role: "backtest",
+    /** 4.0.0：装上事件驱动回测 backtest.run + 沙箱代码执行 */
+    version: "4.0.0",
     name: "回测",
-    version: "3.1.0",
     systemPrompt: PROMPT_BACKTEST,
-    tools: ["fetch_klines", "run_backtest", "get_backtest_status", "compute_indicators", "call_mcp"],
-    maxIterations: 16,
+    tools: [
+      "fetch_klines",
+      "run_backtest",
+      "get_backtest_status",
+      "compute_indicators",
+      // M2/M6 事件驱动回测
+      "backtest.run",
+      // 拉因子列表，配合 backtest.run 手写 signals
+      "factor.list",
+      "factor.compute",
+      // 自由分析（如计算多回测同图 metrics、回归归因）
+      "code.run_python",
+      "call_mcp",
+    ],
+    maxIterations: 20,
   }),
   def({
     id: "def-risk",
     role: "risk",
+    /** 4.0.0：可在 chat 中调用 rule.register/evaluate 直接生成入库风控规则 */
+    version: "4.0.0",
     name: "风控",
-    version: "3.1.0",
     systemPrompt: PROMPT_RISK,
     tools: [
       "evaluate_risk",
@@ -170,9 +206,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "load_rules",
       "check_concentration",
       "assess_liquidity",
+      // M2 规则三段式
+      "rule.register",
+      "rule.evaluate",
+      // 沙箱：跑暴露 / 集中度 / VaR 计算
+      "code.run_python",
     ],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
-    maxIterations: 12,
+    maxIterations: 14,
   }),
 ];
 
