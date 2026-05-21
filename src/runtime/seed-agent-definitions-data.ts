@@ -37,7 +37,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-orchestrator",
     role: "orchestrator",
     name: "编排器",
-    version: "3.3.0",
+    /** 3.4.0：长期记忆使用规约（M10.A2）— playbook 复用 + postmortem 沉淀 */
+    version: "3.4.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       "task_decompose",
@@ -46,6 +47,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "fuse_signals",
       "check_risk",
       "edit_agent_pack",
+      // M10.A2：playbook 复用 + postmortem 沉淀
+      "search_memory",
+      "memory.consolidate_longterm",
+      "memory.refresh_workspace",
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
@@ -176,8 +181,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-research",
     role: "research",
     name: "策略研究",
-    /** 4.0.0：装齐 M2/M6 量化工坊全套工具，可在 chat 流程驱动「因子→评估→挖掘→promote→组合→回测」完整闭环 */
-    version: "4.0.0",
+    /** 4.0.0：装齐 M2/M6 量化工坊全套工具；4.1.0：长期记忆使用规约（M10.A2）— factor_archive/playbook 复用 + consolidation */
+    version: "4.1.0",
     systemPrompt: PROMPT_RESEARCH,
     tools: [
       // 基础数据
@@ -199,6 +204,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "backtest.run",
       // M7.3 沙箱代码执行（拿大量数据做自由分析 / 算 IC 矩阵 / 算相关性等）
       "code.run_python",
+      // M10.A2 长期记忆 — factor_archive / playbook 复用 + 主动 consolidate
+      "search_memory",
+      "memory.consolidate_longterm",
+      "memory.refresh_workspace",
       // 兼容旧链路
       "run_experiment",
       "version_strategy",

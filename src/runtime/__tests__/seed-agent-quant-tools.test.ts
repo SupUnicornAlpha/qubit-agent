@@ -149,4 +149,34 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     }
     expect(broken).toEqual([]);
   });
+
+  // M10.A2 契约：核心 Agent 需要装上长期记忆使用工具
+  test("M10.A2 升级：def-orchestrator 装上长期记忆工具（search/consolidate/refresh）", () => {
+    expectTools("def-orchestrator", [
+      "search_memory",
+      "memory.consolidate_longterm",
+      "memory.refresh_workspace",
+    ]);
+    const def = BY_ID.get("def-orchestrator");
+    expect(def!.version).toMatch(/^3\.4/);
+  });
+
+  test("M10.A2 升级：def-research 装上长期记忆工具", () => {
+    expectTools("def-research", [
+      "search_memory",
+      "memory.consolidate_longterm",
+      "memory.refresh_workspace",
+    ]);
+    const def = BY_ID.get("def-research");
+    expect(def!.version).toMatch(/^4\.1/);
+  });
+
+  test("M10.A2 升级：所有装上 consolidate_longterm 的 agent 必须也装 search_memory（确保闭环）", () => {
+    for (const def of SEED_AGENT_DEFINITIONS) {
+      const hasConsolidate = def.tools.includes("memory.consolidate_longterm");
+      if (hasConsolidate) {
+        expect(def.tools).toContain("search_memory");
+      }
+    }
+  });
 });
