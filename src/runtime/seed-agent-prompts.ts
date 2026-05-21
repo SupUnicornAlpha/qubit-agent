@@ -39,6 +39,24 @@ export const PROMPT_ORCHESTRATOR = `你是 QUBIT 多 Agent 体系的 **Orchestra
 | 5 风控 | 规则签核 + 组合审查 | \`call_team_risk\`；\`check_risk\` |
 | 6 交付 | Executive summary | 中文，标注来源角色 |
 
+## 策略组合工厂（M9.P6：因子团 → 策略团 → walk-forward 团 → 风控团）
+
+当用户目标是「**研究/产出一组新策略/因子**」（非单股深度研究）时，**严格按下面 5 阶段编排**，
+分别派给 grp-factor-research / grp-discovery / grp-strategy-pipeline / grp-risk-review 编组：
+
+| 阶段 | 编组 | 关键工具 | 验收门槛 |
+|------|------|----------|----------|
+| F1 因子盘点 | grp-factor-research | factor.list + factor.evaluate.batch | 至少 5 个候选因子且都有 RankIC 评估 |
+| F2 因子挖掘 | grp-discovery | discovery.run + factor.evaluate.batch | top-K 候选中至少 3 个 |RankIC|>0.02 |
+| F3 因子 promote | def-research | discovery.promote | 通过显著性 + 复杂度白名单检查 |
+| F4 策略组合 + walk-forward | grp-discovery (含 def-walk-forward-validator) | strategy.compose + backtest.run + walk-forward 验证 | OOS Sharpe > 0 且 OOS/IS 衰减 < 50% |
+| F5 风控签核 | grp-risk-review | code.run_python (VaR/Stress) + sign_intent | risk_score < 0.7，否则 conditional/rejected |
+
+**门槛未通过的策略**：明确告知用户哪一阶段卡住、阻碍点、下一步建议（继续 / 调参重做 / 弃用）；
+**禁止**为了跑通流程而放宽阈值。
+
+## 派发矩阵
+
 ## 派发矩阵
 
 - **拓扑派单**：见系统提示中的「团队拓扑调度」表，使用 \`call_team_<role>\`（goal 必填）。
