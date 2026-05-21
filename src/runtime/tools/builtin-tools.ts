@@ -549,6 +549,124 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     });
   },
 
+  /**
+   * M9.P5：批量评估多个因子 + 自动聚合统计。
+   *
+   * 用途：当 Agent 在 factor.list 拿到一组候选因子（如 5-10 个）后，
+   *   一次性评估全部并按 RankIC 排序、识别最佳/最差因子；避免多轮工具调用。
+   *
+   * 实现：串行 autoEvaluate（避免 DuckDB 连接竞争），错误的因子单独标 error
+   *   但不中断整批；返回聚合 summary（平均 RankIC、approve 候选数等）。
+   *
+   * 真要算因子间相关性矩阵：让 Agent 在拿到 batch 结果后用 code.run_python +
+   *   factor.compute 取值矩阵自己算（避免本工具变得过重）。
+   */
+  "factor.evaluate.batch": async (_ctx, params) => {
+    const idsRaw = params.factor_ids;
+    const factorIds = Array.isArray(idsRaw)
+      ? idsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (factorIds.length === 0) {
+      throw new Error("factor.evaluate.batch: factor_ids (string[]) is required and non-empty");
+    }
+    if (factorIds.length > 30) {
+      throw new Error(
+        `factor.evaluate.batch: max 30 factors per batch (got ${factorIds.length}); 拆分多批调用`
+      );
+    }
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.evaluate.batch: start_date and end_date are required");
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : undefined;
+    const horizonDays =
+      params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
+
+    type BatchItem = {
+      factor_id: string;
+      ic?: number;
+      rank_ic?: number;
+      ir?: number;
+      turnover?: number;
+      sample_size?: number;
+      latency_ms?: number;
+      evaluation_id?: string;
+      error?: string;
+    };
+    const items: BatchItem[] = [];
+    let totalLatency = 0;
+    for (const fid of factorIds) {
+      try {
+        const r = await factorService.autoEvaluate({
+          factorId: fid,
+          startDate,
+          endDate,
+          ...(symbols && symbols.length > 0 ? { symbols } : {}),
+          ...(horizonDays !== undefined ? { horizonDays } : {}),
+        });
+        items.push({
+          factor_id: fid,
+          ic: r.ic,
+          rank_ic: r.rankIc,
+          ir: r.ir,
+          turnover: r.turnover,
+          sample_size: r.sampleSize,
+          latency_ms: r.latencyMs,
+          ...(r.evaluationId ? { evaluation_id: r.evaluationId } : {}),
+        });
+        totalLatency += r.latencyMs ?? 0;
+      } catch (e) {
+        items.push({
+          factor_id: fid,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    // 显著性判读阈值（对齐 PROMPT_RESEARCH 中的 HAC 显著性约束）
+    const finite = items.filter(
+      (i): i is BatchItem & { rank_ic: number; ir: number; sample_size: number } =>
+        i.error === undefined &&
+        typeof i.rank_ic === "number" &&
+        typeof i.ir === "number" &&
+        typeof i.sample_size === "number" &&
+        Number.isFinite(i.rank_ic) &&
+        Number.isFinite(i.ir)
+    );
+    const significant = finite.filter(
+      (i) => Math.abs(i.rank_ic) > 0.02 && Math.abs(i.ir) > 0.5 && i.sample_size >= 60
+    );
+    const sortedByRankIc = [...finite].sort((a, b) => Math.abs(b.rank_ic) - Math.abs(a.rank_ic));
+    const meanRankIc =
+      finite.length > 0
+        ? finite.reduce((sum, i) => sum + i.rank_ic, 0) / finite.length
+        : 0;
+    const meanIr =
+      finite.length > 0 ? finite.reduce((sum, i) => sum + i.ir, 0) / finite.length : 0;
+
+    return {
+      ok: true,
+      requested: factorIds.length,
+      succeeded: items.length - items.filter((i) => i.error).length,
+      failed: items.filter((i) => i.error).length,
+      total_latency_ms: totalLatency,
+      summary: {
+        mean_rank_ic: meanRankIc,
+        mean_ir: meanIr,
+        significant_count: significant.length,
+        significant_factor_ids: significant.map((s) => s.factor_id),
+        best_factor: sortedByRankIc[0]?.factor_id ?? null,
+        worst_factor:
+          sortedByRankIc.length > 0 ? sortedByRankIc[sortedByRankIc.length - 1]!.factor_id : null,
+      },
+      results: items,
+    };
+  },
+
   "discovery.run": async (ctx, params) => {
     const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
     if (!projectId) throw new Error("discovery.run: project_id is required");

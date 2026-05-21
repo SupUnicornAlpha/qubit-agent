@@ -245,13 +245,16 @@ export const DISCOVERY_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-discovery",
   name: "因子/规则/策略 挖掘",
   description:
-    "自动生成候选因子+规则+策略，演化筛选 Sharpe>阈值 的优胜者，入库到 gene pool。",
+    "自动生成候选因子+规则+策略，演化筛选 Sharpe>阈值 的优胜者，入库到 gene pool。" +
+    "M9.P5：含专项 walk-forward 验证师，对候选必须跑 cross-regime + walk-forward 才能入库。",
   memberDefinitionIds: [
     "def-orchestrator",
     "def-research",
     "def-backtest",
+    /** M9.P5: 专项 walk-forward / regime 验证师 */
+    "def-walk-forward-validator",
   ],
-  memberRoles: ["orchestrator", "research", "backtest_engineer"],
+  memberRoles: ["orchestrator", "research", "backtest", "backtest_engineer"],
 };
 
 /** 实盘交易：orchestrator + execution_trader + risk_manager */

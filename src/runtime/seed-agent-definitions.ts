@@ -402,15 +402,17 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
   "grp-discovery": {
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
-      research: { x: 280, y: 240 },
-      backtest_engineer: { x: 560, y: 240 },
+      research: { x: 200, y: 240 },
+      backtest: { x: 420, y: 240 },
+      backtest_engineer: { x: 640, y: 240 },
     },
     phases: [
       { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
       { id: "evolve", label: "候选演化", roles: ["research"] },
-      { id: "select", label: "回测筛选", roles: ["backtest_engineer"] },
+      { id: "select", label: "回测筛选", roles: ["backtest"] },
+      { id: "validate", label: "Walk-Forward 验证", roles: ["backtest_engineer"] },
     ],
-    auxChain: ["research", "backtest_engineer"],
+    auxChain: ["research", "backtest", "backtest_engineer"],
   },
   "grp-live-trading": {
     nodePositions: {

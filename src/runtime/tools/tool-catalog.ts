@@ -132,6 +132,11 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
       "自动评估因子：从 DuckDB 取因子值 + 市场连接器取价格 → 计算 IC/RankIC/IR/衰减/分组收益/换手率",
     category: "research",
   },
+  "factor.evaluate.batch": {
+    description:
+      "批量自动评估多个因子（≤30 个）：串行调 autoEvaluate，返回每个因子的 IC/RankIC/IR + 聚合 summary（mean RankIC、显著因子数、最佳/最差因子）。一次拿一组候选因子的 RankIC 排名时优先用这个，比循环调 autoEvaluate 节省工具调用轮数。",
+    category: "research",
+  },
   "discovery.run": {
     description:
       "提交并运行因子挖掘任务（factor_alpha101 模板 / factor_gp 符号回归 / 其他 kind），返回候选 + IC 评估",

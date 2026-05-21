@@ -85,6 +85,50 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     }
   });
 
+  test("M9.P2 升级：4 个分析师 + news 都装上 factor.list + factor.autoEvaluate + code.run_python", () => {
+    const M9_ANALYSTS = [
+      "def-analyst-fundamental",
+      "def-analyst-technical",
+      "def-analyst-sentiment",
+      "def-analyst-macro",
+    ];
+    for (const id of M9_ANALYSTS) {
+      expectTools(id, ["factor.list", "factor.autoEvaluate", "code.run_python"]);
+    }
+    expectTools("def-news-event", ["code.run_python"]);
+  });
+
+  test("M9.P2 升级：4 个分析师 + news 版本号跳到 3.x", () => {
+    for (const id of [
+      "def-analyst-fundamental",
+      "def-analyst-technical",
+      "def-analyst-sentiment",
+      "def-analyst-macro",
+      "def-news-event",
+    ]) {
+      const def = BY_ID.get(id)!;
+      expect(def.version.startsWith("3.")).toBe(true);
+    }
+  });
+
+  test("M9.P5 升级：新增 def-walk-forward-validator agent，装齐 backtest.run + factor.evaluate.batch + code.run_python", () => {
+    const def = BY_ID.get("def-walk-forward-validator");
+    expect(def).toBeDefined();
+    expect(def!.role).toBe("backtest_engineer");
+    expectTools("def-walk-forward-validator", [
+      "backtest.run",
+      "factor.list",
+      "factor.autoEvaluate",
+      "factor.evaluate.batch",
+      "code.run_python",
+    ]);
+  });
+
+  test("M9.P5 升级：grp-discovery 包含 def-walk-forward-validator 成员", () => {
+    expect(DISCOVERY_GROUP.memberDefinitionIds).toContain("def-walk-forward-validator");
+    expect(DISCOVERY_GROUP.memberRoles).toContain("backtest_engineer");
+  });
+
   test("BUILTIN_AGENT_GROUPS 中的每个 group 都必须有 BUILTIN_GROUP_LAYOUTS（防止 seed 时崩溃）", () => {
     // 历史回归：M1 一次性引入 9 个新 group 但忘配 layout，导致首个 group
     // 在 seed 阶段直接抛 "Missing builtin layout for agent group ..." 让整个 backend 启动失败。

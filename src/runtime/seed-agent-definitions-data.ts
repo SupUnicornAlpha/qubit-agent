@@ -11,6 +11,7 @@ import {
   PROMPT_ORCHESTRATOR,
   PROMPT_RESEARCH,
   PROMPT_RISK,
+  PROMPT_WALK_FORWARD_VALIDATOR,
 } from "./seed-agent-prompts";
 
 function def(
@@ -253,6 +254,35 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
     maxIterations: 14,
   }),
+  /**
+   * M9.P5：专项 Walk-Forward / Regime 验证 Agent，复用 backtest_engineer role
+   * （在 RETIRED_BUILTIN_DEFINITION_IDS 里复活，因为 walk-forward 与一般 backtest 关注点不同）
+   */
+  def({
+    id: "def-walk-forward-validator",
+    role: "backtest_engineer",
+    name: "Walk-Forward 验证师",
+    version: "1.0.0",
+    systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
+    tools: [
+      // 多次跑回测（不同区间 / symbols）
+      "backtest.run",
+      "run_backtest",
+      "get_backtest_status",
+      // 看现成因子 RankIC 做 cross-section check
+      "factor.list",
+      "factor.autoEvaluate",
+      "factor.evaluate.batch",
+      // 拉行情做 regime detection
+      "fetch_klines",
+      "fetch_bars",
+      // 沙箱：跨段比对 / Fama-French 归因 / Realized vol
+      "code.run_python",
+      "call_mcp",
+    ],
+    /** Walk-forward 至少跑 3 段，每段独立 backtest.run → 工具调用轮数较多 */
+    maxIterations: 24,
+  }),
 ];
 
 export const BUILTIN_AGENT_DEFINITION_IDS = new Set(
@@ -265,6 +295,7 @@ export const BUILTIN_AGENT_ROLES = new Set(SEED_AGENT_DEFINITIONS.map((d) => d.r
 export const RETIRED_BUILTIN_DEFINITION_IDS = [
   "def-researcher-bull",
   "def-researcher-bear",
+  /** M9.P5: def-backtest-engineer 已退役，但 backtest_engineer role 被 def-walk-forward-validator 复用 */
   "def-backtest-engineer",
   "def-execution-trader",
   "def-memory-curator",
