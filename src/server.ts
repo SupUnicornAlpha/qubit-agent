@@ -29,6 +29,7 @@ import { backtestJobRouter } from "./routes/backtest-job.routes";
 import { discoveryRouter } from "./routes/discovery.routes";
 import { strategyRouter } from "./routes/strategy.routes";
 import { strategyCompositionRouter } from "./routes/strategy-composition.routes";
+import { llmProviderRouter } from "./routes/llm-provider.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
@@ -72,6 +73,8 @@ app.route("/api/v1/backtest-jobs", backtestJobRouter);
 app.route("/api/v1/discovery-jobs", discoveryRouter);
 app.route("/api/v1/strategies", strategyRouter);
 app.route("/api/v1/strategy-compositions", strategyCompositionRouter);
+// M10: LLM Provider 配置（per-Agent 模型路由 + 默认降级）
+app.route("/api/v1/llm-providers", llmProviderRouter);
 app.get("/api/v1/workflows/:id/stream", (c) => {
   const runId = c.req.query("runId");
   if (!runId) return c.json({ error: "runId is required" }, 400);
