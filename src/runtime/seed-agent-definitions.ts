@@ -254,7 +254,7 @@ function relationsNeedsRefresh(
   return false;
 }
 
-const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
+export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
   [DEFAULT_ORCHESTRATION_GROUP.id]: {
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
@@ -328,6 +328,128 @@ const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
       { id: "risk", label: "风控复核", roles: ["risk"] },
     ],
     auxChain: ["research", "backtest", "risk"],
+  },
+  // ─── M1：研究场景化编组 layout（与 seed-agent-catalog.ts 中的 9 个 GROUP 一一对应） ───
+  "grp-factor-research": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      research: { x: 420, y: 220 },
+      analyst_fundamental: { x: 240, y: 360 },
+      analyst_technical: { x: 600, y: 360 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "generate", label: "候选因子生成", roles: ["research"] },
+      { id: "evaluate", label: "因子评估", roles: ["analyst_fundamental", "analyst_technical"] },
+    ],
+    auxChain: ["research", "analyst_fundamental", "analyst_technical"],
+  },
+  "grp-rule-research": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      research: { x: 280, y: 240 },
+      risk_manager: { x: 560, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "draft", label: "规则草拟", roles: ["research"] },
+      { id: "review", label: "风控复核", roles: ["risk_manager"] },
+    ],
+    auxChain: ["research", "risk_manager"],
+  },
+  "grp-stock-screening": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      stock_screener: { x: 420, y: 220 },
+      analyst_fundamental: { x: 240, y: 360 },
+      analyst_sentiment: { x: 600, y: 360 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "screen", label: "因子+规则过滤", roles: ["stock_screener"] },
+      { id: "deepen", label: "候选股复核", roles: ["analyst_fundamental", "analyst_sentiment"] },
+    ],
+    auxChain: ["stock_screener", "analyst_fundamental", "analyst_sentiment"],
+  },
+  "grp-risk-review": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      risk_manager: { x: 280, y: 240 },
+      audit: { x: 560, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "review", label: "限额/策略审查", roles: ["risk_manager"] },
+      { id: "audit", label: "审计与建议", roles: ["audit"] },
+    ],
+    auxChain: ["risk_manager", "audit"],
+  },
+  "grp-portfolio-management": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      portfolio_manager: { x: 180, y: 240 },
+      risk_manager: { x: 420, y: 300 },
+      research: { x: 660, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "allocate", label: "权重分配", roles: ["portfolio_manager"] },
+      { id: "validate", label: "风控核验", roles: ["risk_manager"] },
+      { id: "report", label: "暴露报告", roles: ["research"] },
+    ],
+    auxChain: ["portfolio_manager", "risk_manager", "research"],
+  },
+  "grp-discovery": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      research: { x: 280, y: 240 },
+      backtest_engineer: { x: 560, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "evolve", label: "候选演化", roles: ["research"] },
+      { id: "select", label: "回测筛选", roles: ["backtest_engineer"] },
+    ],
+    auxChain: ["research", "backtest_engineer"],
+  },
+  "grp-live-trading": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      execution_trader: { x: 280, y: 240 },
+      risk_manager: { x: 560, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "确认信号", roles: ["orchestrator"] },
+      { id: "execute", label: "下单执行", roles: ["execution_trader"] },
+      { id: "guard", label: "风控闸门", roles: ["risk_manager"] },
+    ],
+    auxChain: ["execution_trader", "risk_manager"],
+  },
+  "grp-postmortem": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      research: { x: 280, y: 240 },
+      analyst_macro: { x: 560, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "attribute", label: "归因分析", roles: ["research"] },
+      { id: "macro", label: "宏观/行业归因", roles: ["analyst_macro"] },
+    ],
+    auxChain: ["research", "analyst_macro"],
+  },
+  "grp-news-event-radar": {
+    nodePositions: {
+      orchestrator: { x: 420, y: 60 },
+      news_event: { x: 280, y: 240 },
+      analyst_sentiment: { x: 560, y: 240 },
+    },
+    phases: [
+      { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
+      { id: "scan", label: "事件扫描", roles: ["news_event"] },
+      { id: "assess", label: "影响评估", roles: ["analyst_sentiment"] },
+    ],
+    auxChain: ["news_event", "analyst_sentiment"],
   },
 };
 

@@ -126,7 +126,7 @@ const StatusDot: FC<{ connected: boolean; inTauri: boolean }> = ({ connected, in
     title={
       connected
         ? inTauri
-          ? "内置后端已连接（127.0.0.1:38473）"
+          ? "内置后端已连接（127.0.0.1:17385）"
           : "后端健康检查通过，可正常调用 API"
         : inTauri
           ? "内置后端未响应，可点击「重启后端」"

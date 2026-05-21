@@ -12,7 +12,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "${ROOT}"
 
-PACKAGED_PORT=38473
+PACKAGED_PORT=17385
 RUN_TAURI=false
 if [[ "${1:-}" == "--tauri" ]]; then
   RUN_TAURI=true

@@ -15,7 +15,7 @@ export interface TauriBackendStatus {
 
 export async function tauriStartBackend(): Promise<TauriBackendStatus> {
   if (!isTauriEnv()) {
-    return { running: false, pid: null, port: "38473", url: PACKAGED_BACKEND_URL };
+    return { running: false, pid: null, port: "17385", url: PACKAGED_BACKEND_URL };
   }
   syncBackendUrlForDesktop();
   return invoke<TauriBackendStatus>("start_backend");
@@ -23,14 +23,14 @@ export async function tauriStartBackend(): Promise<TauriBackendStatus> {
 
 export async function tauriStopBackend(): Promise<TauriBackendStatus> {
   if (!isTauriEnv()) {
-    return { running: false, pid: null, port: "38473", url: PACKAGED_BACKEND_URL };
+    return { running: false, pid: null, port: "17385", url: PACKAGED_BACKEND_URL };
   }
   return invoke<TauriBackendStatus>("stop_backend");
 }
 
 export async function tauriRestartBackend(): Promise<TauriBackendStatus> {
   if (!isTauriEnv()) {
-    return { running: false, pid: null, port: "38473", url: PACKAGED_BACKEND_URL };
+    return { running: false, pid: null, port: "17385", url: PACKAGED_BACKEND_URL };
   }
   syncBackendUrlForDesktop();
   return invoke<TauriBackendStatus>("restart_backend");
@@ -38,7 +38,7 @@ export async function tauriRestartBackend(): Promise<TauriBackendStatus> {
 
 export async function tauriBackendStatus(): Promise<TauriBackendStatus> {
   if (!isTauriEnv()) {
-    return { running: false, pid: null, port: "38473", url: PACKAGED_BACKEND_URL };
+    return { running: false, pid: null, port: "17385", url: PACKAGED_BACKEND_URL };
   }
   return invoke<TauriBackendStatus>("backend_status");
 }

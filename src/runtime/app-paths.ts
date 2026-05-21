@@ -2,8 +2,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-/** 桌面安装包内后端固定端口（与 `scripts/build-app.sh`、Tauri sidecar 一致） */
-export const PACKAGED_BACKEND_PORT = 38_473;
+/**
+ * 桌面安装包内后端固定端口（与 `scripts/build-app.sh`、Tauri sidecar、`frontend/src/api/packaged-backend.ts` 一致）。
+ * 必须 <49152，避免落入 macOS 临时端口区间被其它进程随机抢占。
+ */
+export const PACKAGED_BACKEND_PORT = 17_385;
 
 /**
  * 应用资源根目录：含 `python_connectors`、`content-packs`、`db/migrations` 等。

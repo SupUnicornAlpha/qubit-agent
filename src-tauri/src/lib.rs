@@ -10,8 +10,11 @@ use tauri::Manager;
 use tauri_plugin_shell::process::CommandChild;
 use tauri_plugin_shell::ShellExt;
 
-/// 桌面安装包专用端口，避免与常见开发服务（3000 等）冲突。
-pub const BACKEND_PORT: &str = "38473";
+/// 桌面安装包专用端口。
+/// 选 17385 而非 49152+ 范围：macOS 临时端口范围默认 49152-65535，
+/// 落在该区间的固定端口会被其它进程（如 Cursor 派生的 npx mcp 工具）随机抢占，
+/// 出现「端口被占但 health check 误判为 connected」的故障。
+pub const BACKEND_PORT: &str = "17385";
 
 struct BackendState {
     child: Mutex<Option<CommandChild>>,
@@ -146,6 +149,18 @@ fn spawn_dev_bun_backend(
     // sidecar binary 缺失（开发期常态：未跑 `bun run build:app`）时直接拉 `bun run src/index.ts`，
     // 同时通过 QUBIT_APP_ROOT/QUBIT_DATA_DIR 让 dev fallback 复用与 sidecar 模式一致的数据目录，
     // 避免来回切换时看到不同的 chat_session / workflow_run。
+    // 把 stdout/stderr 重定向到日志文件，方便定位 bun 启动失败（之前 piped to /dev/null
+    // 导致 seed 阶段崩溃时只能看到 UI 的「重启失败」无任何细节）。
+    let log_path = data_dir.join("dev-backend.log");
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(|e| format!("open dev-backend log: {e}"))?;
+    let log_file_err = log_file
+        .try_clone()
+        .map_err(|e| format!("clone dev-backend log: {e}"))?;
+
     let child = Command::new("bash")
         .arg("-lc")
         .arg(format!(
@@ -153,8 +168,8 @@ fn spawn_dev_bun_backend(
             BACKEND_PORT, app_root_str, data_dir_str
         ))
         .current_dir("..")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_err))
         .spawn()
         .map_err(|e| format!("dev bun spawn: {e}"))?;
 
