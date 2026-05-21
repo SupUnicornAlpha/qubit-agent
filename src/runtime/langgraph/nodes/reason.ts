@@ -7,8 +7,7 @@ import {
   mergeSystemPrompt,
   readPackFiles,
 } from "../../agent/agent-pack-service";
-import { loadModelConfig } from "../../config/model-config";
-import { runLlmGateway } from "../../llm/gateway";
+import { resolveLlmForAgent, invokeWithFallback } from "../../llm/llm-router";
 import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
@@ -70,13 +69,16 @@ export async function reasonNode(
   state: AgentGraphState,
   emit: (event: StepStreamEvent) => void
 ): Promise<Partial<AgentGraphState>> {
-  const runtimeModel = await loadModelConfig();
-  const modelConfig = runtimeModel ?? {
-    provider: "mock" as const,
-    model: "mock-reasoner",
-    apiKey: "",
-  };
+  /**
+   * M10.B1: per-Agent 模型路由 + 默认模型降级。
+   * - 先按 def.llmProvider 在 llm_provider_config 表/env 里找；
+   * - 找不到/未配 apiKey → 走全局 .qubit/model.json 默认模型；
+   * - 都不可用 → mock 兜底（不阻塞工作流）。
+   */
+  const resolved = await resolveLlmForAgent(state.agentDefinition);
+  const modelConfig = resolved.config;
   let answer = "";
+  let modelFallbackUsed = false;
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
   const payloadParams = (payload["params"] ?? {}) as Record<string, unknown>;
@@ -137,8 +139,7 @@ export async function reasonNode(
       : fsiSystem;
     const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithTopology, { tools, mcpServers });
 
-    answer = await runLlmGateway({
-      config: modelConfig,
+    const llmResult = await invokeWithFallback(modelConfig, {
       systemPrompt,
       userPrompt,
       onToken: (token) => {
@@ -154,6 +155,15 @@ export async function reasonNode(
         });
       },
     });
+    answer = llmResult.answer;
+    modelFallbackUsed = llmResult.fallbackUsed;
+    if (modelFallbackUsed) {
+      console.warn(
+        `[reason] agent ${state.agentDefinition.id} fell back from ` +
+          `${modelConfig.provider}:${modelConfig.model} → ` +
+          `${llmResult.modelUsed.provider}:${llmResult.modelUsed.model}`
+      );
+    }
   } catch (error) {
     const fallback = `LLM gateway error: ${(error as Error).message}`;
     for (const token of fallback.split(/\s+/).filter(Boolean)) {
