@@ -12,8 +12,7 @@ import {
 import { checkBrokerAccountHealth } from "../reia/broker-admin";
 import { executeIntentLive, executeIntentPaper } from "../reia/intent-engine";
 import type { BrokerProvider } from "../reia/broker-types";
-
-const PROTOCOL_VERSION = "2024-11-05";
+import { negotiateServerProtocolVersion } from "./mcp-protocol";
 
 function writeMcpMessage(obj: Record<string, unknown>): void {
   const body = JSON.stringify(obj);
@@ -169,11 +168,13 @@ async function handleRequest(msg: Record<string, unknown>): Promise<Record<strin
   const id = inbound.id;
 
   if (method === "initialize") {
+    const params = inbound.params ?? {};
+    const negotiated = negotiateServerProtocolVersion(params.protocolVersion);
     return {
       jsonrpc: "2.0",
       id,
       result: {
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: negotiated,
         capabilities: { tools: {} },
         serverInfo: { name: "qubit-broker", version: "0.1.0" },
       },

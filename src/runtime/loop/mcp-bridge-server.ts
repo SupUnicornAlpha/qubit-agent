@@ -7,8 +7,7 @@
 import { Buffer } from "node:buffer";
 import { getDb } from "../../db/sqlite/client";
 import { dispatchMcpToolCall } from "../mcp/dispatcher";
-
-const PROTOCOL_VERSION = "2024-11-05";
+import { negotiateServerProtocolVersion } from "../mcp/mcp-protocol";
 
 function writeMcpMessage(obj: Record<string, unknown>): void {
   const body = JSON.stringify(obj);
@@ -68,11 +67,13 @@ async function handleRequest(
   const id = inbound.id;
 
   if (method === "initialize") {
+    const params = inbound.params ?? {};
+    const negotiated = negotiateServerProtocolVersion(params.protocolVersion);
     return {
       jsonrpc: "2.0",
       id,
       result: {
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: negotiated,
         capabilities: { tools: {} },
         serverInfo: { name: "qubit-mcp-bridge", version: "0.1.0" },
       },

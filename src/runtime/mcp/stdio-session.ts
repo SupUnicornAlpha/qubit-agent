@@ -1,5 +1,11 @@
 import type { Subprocess } from "bun";
-import { collectRpcResponse } from "./jsonrpc-ndjson";
+import { McpStreamClosedError, collectRpcResponse } from "./jsonrpc-ndjson";
+import {
+  MCP_SUPPORTED_PROTOCOL_VERSIONS,
+  type McpProtocolVersion,
+  isSupportedMcpProtocolVersion,
+  isUnsupportedProtocolVersionError,
+} from "./mcp-protocol";
 
 export type McpStdioSessionOptions = {
   serverKey: string;
@@ -25,7 +31,10 @@ function parseArgv(command: string | null | undefined, caps: Record<string, unkn
   return raw.split(/\s+/).filter(Boolean);
 }
 
-export function stdioArgvFromServer(command: string | null | undefined, capabilitiesJson: unknown): string[] {
+export function stdioArgvFromServer(
+  command: string | null | undefined,
+  capabilitiesJson: unknown
+): string[] {
   const caps =
     capabilitiesJson && typeof capabilitiesJson === "object" && !Array.isArray(capabilitiesJson)
       ? (capabilitiesJson as Record<string, unknown>)
@@ -43,6 +52,9 @@ type Pooled = {
   lines: AsyncGenerator<string, void, unknown>;
   initialized: boolean;
   nextRpcId: number;
+  /** Last ~20 stderr lines, used to enrich error messages on crashes. */
+  stderrBuf: string[];
+  protocolVersion?: McpProtocolVersion;
 };
 
 function createStdinLineWriter(stdin: NonNullable<Subprocess["stdin"]>): StdinLineWriter {
@@ -68,11 +80,16 @@ const serialTail = new Map<string, Promise<unknown>>();
 function runSerialized<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = serialTail.get(key) ?? Promise.resolve();
   const p = prev.then(fn);
-  serialTail.set(key, p.then(() => undefined).catch(() => undefined));
+  serialTail.set(
+    key,
+    p.then(() => undefined).catch(() => undefined)
+  );
   return p as Promise<T>;
 }
 
-async function* readNdjsonLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string, void, unknown> {
+async function* readNdjsonLines(
+  stream: ReadableStream<Uint8Array>
+): AsyncGenerator<string, void, unknown> {
   const reader = stream.getReader();
   const dec = new TextDecoder();
   let buf = "";
@@ -95,18 +112,71 @@ async function* readNdjsonLines(stream: ReadableStream<Uint8Array>): AsyncGenera
   }
 }
 
-async function ensurePool(key: string, argv: string[], env: Record<string, string>, cwd?: string): Promise<Pooled> {
+const STDERR_RING_MAX = 20;
+
+function isEnoentLikeError(errno: unknown, raw: string): boolean {
+  if (errno === "ENOENT") return true;
+  return /ENOENT|not found|No such file or directory|command not found/i.test(raw);
+}
+
+function spawnFailureHint(argv: string[], rawMessage: string, errno: unknown): string {
+  const cmd = argv[0] ?? "?";
+  const uvxRelated = cmd === "uvx" || argv.join(" ").includes("uvx");
+  const npxRelated = cmd === "npx" || argv.join(" ").includes("npx");
+  if (isEnoentLikeError(errno, rawMessage)) {
+    const base = `命令 \`${cmd}\` 在当前 PATH 中找不到。请先安装并确保启动后端的环境里可执行（终端中 \`which ${cmd}\` 应能成功），或在配置里使用绝对路径。`;
+    if (uvxRelated) {
+      return `${base} 这是依赖 uvx 的 MCP，请安装 uv（https://docs.astral.sh/uv/getting-started/installation/）。`;
+    }
+    if (npxRelated) {
+      return `${base} 这是依赖 npx 的 MCP，请安装 Node.js（含 npm/npx）。`;
+    }
+    return base;
+  }
+  if (uvxRelated) {
+    return "依赖 uvx 的 MCP 启动失败，请安装 uv 并把 uvx 加入 PATH（https://docs.astral.sh/uv/getting-started/installation/）。";
+  }
+  return "请检查 command 第一个可执行文件是否已安装、是否在当前进程 PATH 中可用，或改为绝对路径。";
+}
+
+function exitErrorMessage(pool: Pooled, code: number | null, phase: string): string {
+  const stderrTail = pool.stderrBuf.slice(-10).join("").trim();
+  const stderrPart = stderrTail ? `\nstderr (tail): ${stderrTail.slice(-1200)}` : "";
+  return `MCP stdio: 子进程在 ${phase} 阶段提前退出 (exit code=${code ?? "?"})${stderrPart}`;
+}
+
+/**
+ * Race a JSON-RPC response against subprocess exit. If the subprocess dies first
+ * we surface a precise error (exit code + tail of stderr) instead of letting the
+ * line stream silently close and producing a generic timeout.
+ */
+async function raceRpcOrExit<T>(rpcPromise: Promise<T>, pool: Pooled, phase: string): Promise<T> {
+  const exitPromise: Promise<never> = pool.proc.exited.then((code) => {
+    throw new Error(exitErrorMessage(pool, code ?? null, phase));
+  });
+  try {
+    return await Promise.race([rpcPromise, exitPromise]);
+  } catch (e) {
+    if (e instanceof McpStreamClosedError) {
+      // Stdout closed first — try to wait briefly for proc.exited so we can attach exit code.
+      const code = await Promise.race<number | undefined>([
+        pool.proc.exited,
+        new Promise<undefined>((r) => setTimeout(() => r(undefined), 250)),
+      ]).catch(() => undefined);
+      throw new Error(exitErrorMessage(pool, code ?? null, phase));
+    }
+    throw e;
+  }
+}
+
+async function ensurePool(
+  key: string,
+  argv: string[],
+  env: Record<string, string>,
+  cwd?: string
+): Promise<Pooled> {
   const existing = pools.get(key);
   if (existing) return existing;
-
-  if (existing?.proc.kill) {
-    try {
-      existing.proc.kill();
-    } catch {
-      // ignore
-    }
-    pools.delete(key);
-  }
 
   let proc: Subprocess;
   try {
@@ -118,11 +188,9 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
       cwd,
     });
   } catch (e) {
-    const hint =
-      argv[0] === "uvx" || argv.join(" ").includes("uvx")
-        ? " 这些内置 MCP 的 command 依赖 uvx。请安装 uv（https://docs.astral.sh/uv/getting-started/installation/），并确保启动本服务时的 PATH 包含 uvx（例如在终端里 `which uvx` 能成功后再启动后端），或在配置里把 command 改成 uvx 的绝对路径。"
-        : " 请检查 command 第一个可执行文件是否已安装，并在当前进程的 PATH 中可用，或改为绝对路径。";
+    const errno = (e as NodeJS.ErrnoException | undefined)?.code;
     const raw = e instanceof Error ? e.message : String(e);
+    const hint = spawnFailureHint(argv, raw, errno);
     throw new Error(`MCP stdio 无法启动子进程（${argv[0] ?? "?"}）：${raw}。${hint}`);
   }
 
@@ -130,6 +198,7 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
 
   const writer = createStdinLineWriter(proc.stdin);
   const lines = readNdjsonLines(proc.stdout);
+  const stderrBuf: string[] = [];
 
   void (async () => {
     const errReader = proc.stderr?.getReader();
@@ -140,7 +209,12 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
         const { done, value } = await errReader.read();
         if (done) break;
         const t = dec.decode(value);
-        if (t.trim()) console.error(`[mcp stderr ${key}]`, t.trimEnd());
+        if (t.trim()) {
+          console.error(`[mcp stderr ${key}]`, t.trimEnd());
+          stderrBuf.push(t);
+          if (stderrBuf.length > STDERR_RING_MAX)
+            stderrBuf.splice(0, stderrBuf.length - STDERR_RING_MAX);
+        }
       }
     } finally {
       errReader.releaseLock();
@@ -153,6 +227,7 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
     lines,
     initialized: false,
     nextRpcId: 1,
+    stderrBuf,
   };
   pools.set(key, pooled);
   void proc.exited.then(() => {
@@ -160,6 +235,55 @@ async function ensurePool(key: string, argv: string[], env: Record<string, strin
     if (cur?.proc === proc) pools.delete(key);
   });
   return pooled;
+}
+
+async function tryInitializeStdioAcrossVersions(
+  pool: Pooled,
+  timeout: number
+): Promise<McpProtocolVersion> {
+  let lastError: unknown;
+  for (const ver of MCP_SUPPORTED_PROTOCOL_VERSIONS) {
+    const initId = pool.nextRpcId++;
+    try {
+      await pool.writer.writeLine({
+        jsonrpc: "2.0",
+        id: initId,
+        method: "initialize",
+        params: {
+          protocolVersion: ver,
+          capabilities: {},
+          clientInfo: { name: "qubit-agent", version: "0.1.0" },
+        },
+      });
+      const rInit = await raceRpcOrExit(
+        collectRpcResponse(pool.lines, initId, timeout),
+        pool,
+        "initialize"
+      );
+      if (rInit.error) {
+        const msg = rInit.error.message ?? "";
+        if (isUnsupportedProtocolVersionError(msg)) {
+          lastError = new Error(msg);
+          continue;
+        }
+        throw new Error(`MCP initialize failed: ${msg}`);
+      }
+      const serverVer = (rInit.result as { protocolVersion?: unknown } | undefined)
+        ?.protocolVersion;
+      return isSupportedMcpProtocolVersion(serverVer) ? serverVer : ver;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (isUnsupportedProtocolVersionError(msg)) {
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  const last = lastError instanceof Error ? lastError.message : String(lastError ?? "");
+  throw new Error(
+    `MCP initialize failed: 子进程拒绝了我们支持的全部 protocolVersion (${MCP_SUPPORTED_PROTOCOL_VERSIONS.join(", ")})。最后一次错误: ${last}`
+  );
 }
 
 export async function callMcpStdioTool(
@@ -170,26 +294,16 @@ export async function callMcpStdioTool(
 ): Promise<unknown> {
   const timeout = opts.requestTimeoutMs ?? 60_000;
   const argv = opts.argv;
-  if (argv.length === 0) throw new Error("MCP stdio: empty argv (set mcp_server_config.command or capabilitiesJson.argv)");
+  if (argv.length === 0)
+    throw new Error(
+      "MCP stdio: empty argv (set mcp_server_config.command or capabilitiesJson.argv)"
+    );
 
   return runSerialized(opts.serverKey, async () => {
     const pool = await ensurePool(opts.serverKey, argv, opts.env ?? {}, opts.cwd);
 
     if (!pool.initialized) {
-      const initId = pool.nextRpcId++;
-      await pool.writer.writeLine({
-        jsonrpc: "2.0",
-        id: initId,
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "qubit-agent", version: "0.1.0" },
-        },
-      });
-      const rInit = await collectRpcResponse(pool.lines, initId, timeout);
-      if (rInit.error) throw new Error(`MCP initialize failed: ${rInit.error.message}`);
-
+      pool.protocolVersion = await tryInitializeStdioAcrossVersions(pool, timeout);
       await pool.writer.writeLine({
         jsonrpc: "2.0",
         method: "notifications/initialized",
@@ -208,7 +322,11 @@ export async function callMcpStdioTool(
         arguments: opts.arguments ?? {},
       },
     });
-    const rCall = await collectRpcResponse(pool.lines, callId, timeout);
+    const rCall = await raceRpcOrExit(
+      collectRpcResponse(pool.lines, callId, timeout),
+      pool,
+      "tools/call"
+    );
     if (rCall.error) throw new Error(rCall.error.message);
     return rCall.result;
   });
