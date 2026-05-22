@@ -1,13 +1,25 @@
 import { getRenderConfig } from "../config";
 import { drawBuiltinSceneBackground } from "../sceneBackground";
 import { drawCitySkyline } from "../skylineArt";
+import { drawSkylineImage, preloadSkylineImages } from "../skylineImages";
 import { getSpriteAtlas } from "../spriteAtlas";
-import type { PixelOfficeRegistry } from "../registry";
+import type { PixelOfficeRegistry, SkylineDrawContext } from "../registry";
+import type { CitySkyline } from "../types";
+
+function skylineWithImageFallback(city: CitySkyline) {
+  return (c: SkylineDrawContext) => {
+    if (!drawSkylineImage(c, city)) {
+      drawCitySkyline(c, city);
+    }
+  };
+}
 
 export function registerBuiltinPlugins(reg: PixelOfficeRegistry): void {
-  reg.registerSkyline("nyc", (c) => drawCitySkyline(c, "nyc"));
-  reg.registerSkyline("shanghai", (c) => drawCitySkyline(c, "shanghai"));
-  reg.registerSkyline("hongkong", (c) => drawCitySkyline(c, "hongkong"));
+  preloadSkylineImages();
+
+  reg.registerSkyline("shanghai", skylineWithImageFallback("shanghai"));
+  reg.registerSkyline("nyc", skylineWithImageFallback("nyc"));
+  reg.registerSkyline("hongkong", skylineWithImageFallback("hongkong"));
 
   reg.setSceneBackgroundRenderer((ctx, w, h, cityId, now) => {
     drawBuiltinSceneBackground(ctx, w, h, cityId, now, reg);

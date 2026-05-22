@@ -1,16 +1,18 @@
 import type { AtlasSprites } from "./spriteAtlas";
 import { blitSprite, drawMonitorSprite } from "./spriteAtlas";
 import { getRenderConfig } from "./config";
+import { computeOfficePerspective, depthScale, drawDeskFloorShadow } from "./officePerspective";
 import { getPixelOfficeRegistry } from "./runtime";
-import type { CatAction, CatActor, ChatBeam, CitySkyline, OfficeLayout, Particle, ScreenMode } from "./types";
+import type { CatAction, CatActor, ChatBeam, CitySkyline, DeskSlot, OfficeLayout, Particle, ScreenMode } from "./types";
 
-function scales() {
+function scales(depth = 0.5) {
   const c = getRenderConfig();
+  const d = depthScale(depth);
   return {
-    cat: c.catScale,
-    desk: c.deskScale,
-    furniture: c.furnitureScale,
-    monitor: c.monitorScale,
+    cat: c.catScale * d,
+    desk: c.deskScale * d,
+    furniture: c.furnitureScale * d,
+    monitor: c.monitorScale * d,
   };
 }
 
@@ -75,31 +77,23 @@ export function drawOfficeScene(
   const bg = reg.getSceneBackgroundRenderer();
   if (bg) bg(ctx, w, h, city, now);
 
-  const { furniture } = scales();
   const atlas = getAtlas();
 
-  blitSprite(
-    ctx,
-    atlas,
-    atlas.shelf,
-    layout.shelf.x - (atlas.shelf.w * furniture) / 2,
-    layout.shelf.y - atlas.shelf.h * furniture + 8,
-    furniture
-  );
-  blitSprite(
-    ctx,
-    atlas,
-    atlas.rack,
-    layout.rack.x - (atlas.rack.w * furniture) / 2,
-    layout.rack.y - atlas.rack.h * furniture + 8,
-    furniture
-  );
+  const persp = computeOfficePerspective(w, h, layout.windowH);
+  const drawFurniture = (slot: DeskSlot, rect: AtlasSprites["shelf"], label: string, labelDy: number) => {
+    const sc = scales(slot.depth).furniture;
+    const dx = slot.x - (rect.w * sc) / 2;
+    const dy = slot.y - rect.h * sc + 8;
+    drawDeskFloorShadow(ctx, slot.x, slot.y, rect.w * sc, 12, persp);
+    blitSprite(ctx, atlas, rect, dx, dy, sc);
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = `${Math.max(9, Math.floor(11 * depthScale(slot.depth)))}px monospace`;
+    ctx.textAlign = "center";
+    ctx.fillText(label, slot.x, slot.y + labelDy * depthScale(slot.depth));
+  };
 
-  ctx.fillStyle = "#94a3b8";
-  ctx.font = "11px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("技能书架", layout.shelf.x, layout.shelf.y + 42);
-  ctx.fillText("MCP / 工具机架", layout.rack.x, layout.rack.y + 46);
+  drawFurniture(layout.shelf, atlas.shelf, "技能书架", 42);
+  drawFurniture(layout.rack, atlas.rack, "MCP / 工具机架", 46);
 
   for (const layer of reg.getOverlays()) {
     layer.render(ctx, { width: w, height: h, now, cityId: city, isRunning });
@@ -113,12 +107,19 @@ export function drawWorkstation(
   screenMode: ScreenMode,
   now: number,
   hot: boolean,
-  selected: boolean
+  selected: boolean,
+  depth = 0.5,
+  persp?: ReturnType<typeof computeOfficePerspective>
 ) {
   const atlas = getAtlas();
-  const { desk, monitor } = scales();
+  const { desk, monitor } = scales(depth);
   const deskW = atlas.desk.w * desk;
   const deskH = atlas.desk.h * desk;
+
+  if (persp) {
+    drawDeskFloorShadow(ctx, x, y, deskW, deskH * 0.4, persp);
+  }
+
   if (selected) {
     ctx.strokeStyle = "#60a5fa";
     ctx.lineWidth = 2;
@@ -129,12 +130,13 @@ export function drawWorkstation(
     ctx.fillRect(x - deskW / 2 - 8, y - deskH - 42, deskW + 16, deskH + 52);
   }
   blitSprite(ctx, atlas, atlas.desk, x - deskW / 2, y - 10, desk);
-  drawMonitorSprite(ctx, atlas, x, y - 28, screenMode, now, monitor);
+  drawMonitorSprite(ctx, atlas, x, y - 26 * depthScale(depth), screenMode, now, monitor);
 }
 
-export function drawCatSprite(ctx: CanvasRenderingContext2D, cat: CatActor, now: number) {
+export function drawCatSprite(ctx: CanvasRenderingContext2D, cat: CatActor, now: number, depth?: number) {
   const atlas = getAtlas();
-  const { cat: catScale } = scales();
+  const d = depth ?? cat.depth ?? 0.5;
+  const { cat: catScale } = scales(d);
   const rect = catSpriteRect(atlas, cat);
   const bob =
     cat.action === "success"
@@ -153,7 +155,7 @@ export function drawCatSprite(ctx: CanvasRenderingContext2D, cat: CatActor, now:
   );
 
   if (cat.bubble && cat.bubbleUntil && now < cat.bubbleUntil) {
-    drawBubble(ctx, cat.x, cat.y - 48, cat.bubble, cat.facing);
+    drawBubble(ctx, cat.x, cat.y - 48 * depthScale(d), cat.bubble, cat.facing);
   }
 }
 
@@ -181,16 +183,18 @@ export function drawRoleLabel(
   y: number,
   label: string,
   role: string,
-  selected: boolean
+  selected: boolean,
+  depth = 0.5
 ) {
+  const fs = depthScale(depth);
   ctx.textAlign = "center";
-  ctx.font = selected ? "bold 12px system-ui,sans-serif" : "11px system-ui,sans-serif";
+  ctx.font = selected ? `bold ${Math.floor(12 * fs)}px system-ui,sans-serif` : `${Math.floor(11 * fs)}px system-ui,sans-serif`;
   ctx.fillStyle = selected ? "#93c5fd" : "#cbd5e1";
   const short = label.length > 14 ? `${label.slice(0, 13)}…` : label;
-  ctx.fillText(short, x, y + 38);
-  ctx.font = "10px monospace";
+  ctx.fillText(short, x, y + 38 * fs);
+  ctx.font = `${Math.floor(10 * fs)}px monospace`;
   ctx.fillStyle = "#64748b";
-  ctx.fillText(role, x, y + 52);
+  ctx.fillText(role, x, y + 52 * fs);
 }
 
 export function drawChatBeam(

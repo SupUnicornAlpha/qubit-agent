@@ -10,7 +10,9 @@ import { classifyInteractionKind } from "../../lib/pixelOffice/classify";
 import { getRenderConfig } from "../../lib/pixelOffice/config";
 import { mapGraphToOfficeEventsExtended } from "../../lib/pixelOffice/eventMapper";
 import { getPixelOfficeRegistry } from "../../lib/pixelOffice/runtime";
-import { computeOfficeLayout } from "../../lib/pixelOffice/officeLayout";
+import { preloadSkylineImages } from "../../lib/pixelOffice/skylineImages";
+import { computeOfficeLayout, deskHitRadius } from "../../lib/pixelOffice/officeLayout";
+import { computeOfficePerspective, depthAtY } from "../../lib/pixelOffice/officePerspective";
 import {
   actionLabel,
   drawCatSprite,
@@ -35,10 +37,9 @@ import { ACTION_MS, WALK_MS } from "../../lib/pixelOffice/types";
 import type { TeamGraphActivity, TeamGraphSelection } from "../ide/TeamAgentGraph";
 
 const SERVER_ROLE = "__tools__";
-const DESK_HIT_R = 64;
 const CITY_OPTIONS: { id: CitySkyline; label: string }[] = [
-  { id: "nyc", label: "纽约" },
   { id: "shanghai", label: "上海" },
+  { id: "nyc", label: "纽约" },
   { id: "hongkong", label: "香港" },
 ];
 
@@ -249,6 +250,10 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   );
 
   useEffect(() => {
+    preloadSkylineImages();
+  }, []);
+
+  useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const apply = () => {
@@ -300,6 +305,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         existing.label = n.label;
         existing.homeX = desk.x;
         existing.homeY = desk.y - 8;
+        existing.depth = desk.depth;
         if (existing.action === "idle") {
           existing.x = desk.x;
           existing.y = desk.y - 8;
@@ -313,6 +319,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
           homeY: desk.y - 8,
           x: desk.x,
           y: desk.y - 8,
+          depth: desk.depth,
           action: "idle",
           actionUntil: 0,
           frame: 0,
@@ -363,20 +370,36 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       }
       beamsRef.current = beamsRef.current.filter((b) => b.until > now);
 
-      for (const n of agentNodes) {
-        const desk = layout.desks.get(n.role);
-        const cat = catsRef.current.get(n.role);
-        if (!desk || !cat) continue;
+      const persp = computeOfficePerspective(w, h, layout.windowH);
+      const drawLayers = agentNodes
+        .map((n) => ({
+          n,
+          desk: layout.desks.get(n.role),
+          cat: catsRef.current.get(n.role),
+        }))
+        .filter((row): row is { n: (typeof agentNodes)[0]; desk: NonNullable<typeof row.desk>; cat: CatActor } =>
+          Boolean(row.desk && row.cat)
+        )
+        .sort((a, b) => {
+          const da = a.cat.action === "walk" ? depthAtY(persp, a.cat.y) : a.desk.depth;
+          const db = b.cat.action === "walk" ? depthAtY(persp, b.cat.y) : b.desk.depth;
+          return da - db;
+        });
+
+      for (const { n, desk, cat } of drawLayers) {
+        const depth = cat.action === "walk" ? depthAtY(persp, cat.y) : desk.depth;
+        cat.depth = depth;
         const sel = selection?.kind === "node" && selection.role === n.role;
         const hot = hotRoles.has(n.role);
-        drawWorkstation(ctx, desk.x, desk.y, cat.screenMode, now, hot, sel);
+        drawWorkstation(ctx, desk.x, desk.y, cat.screenMode, now, hot, sel, depth, persp);
       }
 
-      for (const cat of catsRef.current.values()) {
+      for (const { desk, cat } of drawLayers) {
         cat.frame = Math.floor(now / 140) % 2;
-        drawCatSprite(ctx, cat, now);
+        const depth = cat.depth ?? desk.depth;
+        drawCatSprite(ctx, cat, now, depth);
         const sel = selection?.kind === "node" && selection.role === cat.role;
-        drawRoleLabel(ctx, cat.homeX, cat.homeY, cat.label, cat.role, sel);
+        drawRoleLabel(ctx, cat.homeX, cat.homeY, cat.label, cat.role, sel, depth);
       }
 
       particlesRef.current = tickParticles(particlesRef.current, 16);
@@ -415,12 +438,13 @@ export const TeamAgentPixelOffice: FC<Props> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     let hit: string | null = null;
-    let best = DESK_HIT_R * DESK_HIT_R;
+    let best = Infinity;
     for (const [role, desk] of layout.desks) {
+      const r = deskHitRadius(desk.depth);
       const dx = x - desk.x;
       const dy = y - (desk.y - 8);
       const d2 = dx * dx + dy * dy;
-      if (d2 < best) {
+      if (d2 < r * r && d2 < best) {
         best = d2;
         hit = role;
       }

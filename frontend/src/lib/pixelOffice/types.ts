@@ -85,6 +85,8 @@ export type CatActor = {
   walkToY?: number;
   walkOnDone?: CatAction;
   walkStart?: number;
+  /** 纵深 0=远 1=近，用于透视缩放 */
+  depth?: number;
 };
 
 export type ChatBeam = {
@@ -110,14 +112,21 @@ export type PixelOfficeGraphInput = {
   mcpCalls: AnalystTeamGraphMcpCall[];
 };
 
+export type DeskSlot = {
+  x: number;
+  y: number;
+  /** 纵深 0=靠窗远 1=镜头近 */
+  depth: number;
+};
+
 export type OfficeLayout = {
   floorY: number;
   windowH: number;
   cellW: number;
   cellH: number;
-  rack: { x: number; y: number };
-  shelf: { x: number; y: number };
-  desks: Map<string, { x: number; y: number }>;
+  rack: DeskSlot;
+  shelf: DeskSlot;
+  desks: Map<string, DeskSlot>;
 };
 
 export const ACTION_MS: Record<CatAction, number> = {
