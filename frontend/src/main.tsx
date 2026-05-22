@@ -21,6 +21,7 @@ import "./theme/styles/ambient-3d.css";
 import "./theme/styles/biophilic.css";
 import "./theme/styles/news-page.css";
 import "./theme/topology-canvas.css";
+import "./theme/styles/pixel-office.css";
 import "./theme/team-research-canvas.css";
 import "./theme/glass-holographic-pages.css";
 import "./theme/monitor-blueprint.css";

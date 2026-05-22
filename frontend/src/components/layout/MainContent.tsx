@@ -154,6 +154,7 @@ import {
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
+import { TeamAgentPixelOffice } from "../team/TeamAgentPixelOffice";
 import { formatEdgeSelectionSummary, isToolGraphEdge } from "../../lib/teamGraphEdgeVisual";
 import {
   buildResearchScopePayload,
@@ -4303,6 +4304,7 @@ const TeamDashboardPanel: FC = () => {
   const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
+  const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
   const [participatingAnalystDefinitionIds, setParticipatingAnalystDefinitionIds] = useState<string[]>([]);
   const [strategyScripts, setStrategyScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
   const [workflowArtifactHint, setWorkflowArtifactHint] = useState<string>("");
@@ -6262,7 +6264,7 @@ const TeamDashboardPanel: FC = () => {
             <div style={teamStyles.empty}>请先在左侧栏选择工作流 ID</div>
           ) : (
             <>
-              <div style={teamStyles.row}>
+              <div style={{ ...teamStyles.row, flexWrap: "wrap", gap: 8 }}>
                 <button
                   type="button"
                   className="qb-btn-primary-brand"
@@ -6272,9 +6274,29 @@ const TeamDashboardPanel: FC = () => {
                 >
                   {graphLoading ? "加载中…" : "刷新拓扑"}
                 </button>
+                <div className="qb-team-graph-view-toggle" role="tablist" aria-label="拓扑视图切换">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={teamGraphView === "topology"}
+                    className={teamGraphView === "topology" ? "is-active" : ""}
+                    onClick={() => setTeamGraphView("topology")}
+                  >
+                    拓扑图
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={teamGraphView === "office"}
+                    className={teamGraphView === "office" ? "is-active" : ""}
+                    onClick={() => setTeamGraphView("office")}
+                  >
+                    像素办公室
+                  </button>
+                </div>
                 <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
                   {filteredGraphDisplay
-                    ? `展示 ${filteredGraphDisplay.nodes.length} 个角色节点${
+                    ? `展示 ${filteredGraphDisplay.nodes.filter((n) => n.role !== "__tools__").length} 个 Agent${
                         participatingAnalystRoles.length > 0 ? "（已按左侧勾选过滤）" : ""
                       }`
                     : ""}
@@ -6296,28 +6318,46 @@ const TeamDashboardPanel: FC = () => {
                     data-qb-team-graph-host
                     style={{
                       ...teamStyles.graphCanvasHost,
-                      flex: "0 0 auto",
-                      height: TEAM_GRAPH_VIEWPORT_HEIGHT,
-                      minHeight: TEAM_GRAPH_VIEWPORT_HEIGHT,
-                      maxHeight: TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      flex: teamGraphView === "office" ? "1 1 auto" : "0 0 auto",
+                      height: teamGraphView === "office" ? "min(72vh, 860px)" : TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      minHeight: teamGraphView === "office" ? 520 : TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      maxHeight: teamGraphView === "office" ? "min(72vh, 860px)" : TEAM_GRAPH_VIEWPORT_HEIGHT,
                       overflow: "hidden",
                       flexDirection: "column",
+                      justifyContent: teamGraphView === "office" ? "stretch" : "center",
+                      alignItems: teamGraphView === "office" ? "stretch" : "center",
                     }}
                   >
-                    <TeamAgentGraph
-                      nodes={filteredGraphDisplay.nodes}
-                      edges={filteredGraphDisplay.edges}
-                      width={graphSize.w}
-                      height={graphSize.h}
-                      selection={graphSelection}
-                      activity={teamGraphActivity}
-                      onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
-                      onSelectEdge={(a, b) => setGraphSelection({ kind: "edge", a, b })}
-                      onClear={() => setGraphSelection(null)}
-                    />
-                    <p style={{ fontSize: 10, color: "var(--qb-team-meta, #71717a)", marginTop: 6 }}>
-                      箭头表示消息方向；双向为两条弧线。工具/MCP 连线：绿色=成功、红色=全失败、琥珀=部分失败。
-                    </p>
+                    {teamGraphView === "topology" ? (
+                      <TeamAgentGraph
+                        nodes={filteredGraphDisplay.nodes}
+                        edges={filteredGraphDisplay.edges}
+                        width={graphSize.w}
+                        height={graphSize.h}
+                        selection={graphSelection}
+                        activity={teamGraphActivity}
+                        onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
+                        onSelectEdge={(a, b) => setGraphSelection({ kind: "edge", a, b })}
+                        onClear={() => setGraphSelection(null)}
+                      />
+                    ) : (
+                      <TeamAgentPixelOffice
+                        key={workflowRunId}
+                        graph={filteredGraphDisplay}
+                        nodes={filteredGraphDisplay.nodes}
+                        edges={filteredGraphDisplay.edges}
+                        selection={graphSelection}
+                        activity={teamGraphActivity}
+                        isRunning={running}
+                        onSelectNode={(role) => setGraphSelection({ kind: "node", role })}
+                        onClear={() => setGraphSelection(null)}
+                      />
+                    )}
+                    {teamGraphView === "topology" ? (
+                      <p style={{ fontSize: 10, color: "var(--qb-team-meta, #71717a)", marginTop: 6 }}>
+                        箭头表示消息方向；双向为两条弧线。工具/MCP 连线：绿色=成功、红色=全失败、琥珀=部分失败。
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : (
