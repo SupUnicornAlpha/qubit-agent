@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq, count } from "drizzle-orm";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { count, eq } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import {
   agentDefinition,
@@ -10,28 +12,22 @@ import {
   llmProviderConfig,
   sandboxPolicy,
 } from "../db/sqlite/schema";
+import type { AgentRole } from "../types/entities";
+import { getDataDir, syncWorkspacePromptFromCanonical } from "./agent/agent-pack-service";
 import { cleanupRedundantAgentDefinitions } from "./agent/delete-agent-definition";
 import { purgeRetiredBuiltinDefinitions } from "./agent/purge-retired-builtin-definitions";
-import {
-  getDataDir,
-  syncWorkspacePromptFromCanonical,
-} from "./agent/agent-pack-service";
+import { isFsiActive, shouldApplyFsiAgentMappings } from "./fsi/fsi-config";
+import { mergeFsiSkillsForRole } from "./fsi/fsi-prompt-enricher";
+import { runFsiSeedIntegration, seedFsiSandboxPresets } from "./fsi/seed-fsi-integration";
+import { syncOrchestratorTopologyToolsForGroup } from "./orchestration/sync-orchestrator-topology-tools";
 import {
   BUILTIN_AGENT_GROUPS,
+  type BuiltinAgentGroupSpec,
   DEFAULT_ORCHESTRATION_GROUP,
   FULL_ANALYST_GROUP,
   STRATEGY_PIPELINE_GROUP,
-  type BuiltinAgentGroupSpec,
 } from "./seed-agent-catalog";
-import type { AgentRole } from "../types/entities";
-import {
-  SEED_AGENT_DEFINITIONS,
-} from "./seed-agent-definitions-data";
-import { syncOrchestratorTopologyToolsForGroup } from "./orchestration/sync-orchestrator-topology-tools";
-import { isFsiActive } from "./fsi/fsi-config";
-import { mergeFsiSkillsForRole } from "./fsi/fsi-prompt-enricher";
-import { runFsiSeedIntegration, seedFsiSandboxPresets } from "./fsi/seed-fsi-integration";
-import { shouldApplyFsiAgentMappings } from "./fsi/fsi-config";
+import { SEED_AGENT_DEFINITIONS } from "./seed-agent-definitions-data";
 import { seedBrokerMcpServer } from "./seed-broker-mcp";
 import { seedRecommendedMcpServers } from "./seed-recommended-mcp-servers";
 
@@ -72,6 +68,8 @@ const DEFAULT_LLM_PROVIDER = {
   enabled: true,
 };
 
+const LLM_PROVIDER_SEED_MARKER = "llm-provider-seed.json";
+
 export type SeedOptions = {
   /**
    * 是否强制覆盖：
@@ -105,6 +103,38 @@ async function hasUserPublishedRelease(
   return (rows[0]?.c ?? 0) > 0;
 }
 
+async function hasSeededDefaultLlmProvider(): Promise<boolean> {
+  try {
+    const raw = await readFile(join(getDataDir(), "config", LLM_PROVIDER_SEED_MARKER), "utf8");
+    const parsed = JSON.parse(raw) as { defaultProviderSeeded?: boolean };
+    return parsed.defaultProviderSeeded === true;
+  } catch {
+    return false;
+  }
+}
+
+async function markDefaultLlmProviderSeeded(): Promise<void> {
+  const dir = join(getDataDir(), "config");
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    join(dir, LLM_PROVIDER_SEED_MARKER),
+    JSON.stringify({ defaultProviderSeeded: true, updatedAt: new Date().toISOString() }, null, 2)
+  );
+}
+
+async function seedDefaultLlmProviderOnce(db: Awaited<ReturnType<typeof getDb>>): Promise<void> {
+  if (await hasSeededDefaultLlmProvider()) return;
+
+  const existingRows = await db.select({ c: count() }).from(llmProviderConfig);
+  const existingCount = existingRows[0]?.c ?? 0;
+
+  if (existingCount === 0) {
+    await db.insert(llmProviderConfig).values(DEFAULT_LLM_PROVIDER);
+  }
+
+  await markDefaultLlmProviderSeeded();
+}
+
 export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<SeedReport> {
   const force = options.force === true;
   const db = await getDb();
@@ -120,10 +150,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
       },
     });
 
-  await db.insert(llmProviderConfig).values(DEFAULT_LLM_PROVIDER).onConflictDoUpdate({
-    target: llmProviderConfig.id,
-    set: DEFAULT_LLM_PROVIDER,
-  });
+  await seedDefaultLlmProviderOnce(db);
 
   await seedFsiSandboxPresets();
 
