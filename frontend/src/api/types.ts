@@ -362,6 +362,34 @@ export interface SkillMarketInstallRecord {
   createdAt: string;
 }
 
+/** `agent_skill` 表里的统一 skill 行：覆盖市场镜像 + 本地归纳 + 演化产物。 */
+export type AgentSkillSource = "agent_created" | "user_authored" | "open_skill_market" | "evolved";
+export type AgentSkillState = "active" | "stale" | "archived" | "pending_review";
+
+export interface AgentSkillRecord {
+  id: string;
+  projectId: string;
+  definitionId: string | null;
+  name: string;
+  description: string;
+  bodyMd: string;
+  category: string;
+  version: string;
+  parentSkillId: string | null;
+  source: AgentSkillSource;
+  externalInstallId: string | null;
+  state: AgentSkillState;
+  pinned: boolean;
+  useCount: number;
+  successCount: number;
+  failCount: number;
+  lastUsedAt: string | null;
+  metadataJson: unknown;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgentGroupRecord {
   id: string;
   name: string;

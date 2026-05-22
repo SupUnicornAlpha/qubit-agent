@@ -1,5 +1,7 @@
 import { backendFetchUrl, httpDelete, httpGet, httpPatch, httpPost, httpPut } from "./client";
 import type {
+  AgentSkillRecord,
+  AgentSkillState,
   AgentSummary,
   AgentDefinitionBundle,
   AgentGroupDetail,
@@ -1987,6 +1989,42 @@ export async function deleteSkillMarketInstall(projectId: string, installId: str
   await httpDelete<{ ok: boolean }>(
     `/api/v1/agents/skills/installs/${encodeURIComponent(installId)}?projectId=${encodeURIComponent(projectId)}`
   );
+}
+
+/**
+ * 拉取 `agent_skill` 库（覆盖 curator 归纳 / GEPA 演化 / 市场镜像 / 用户手写），
+ * 用于"配置中心 → SKILLS → 归纳与演化"指示表。
+ */
+export async function listSkillLibrary(
+  projectId: string,
+  opts?: { includeArchived?: boolean; state?: AgentSkillState }
+): Promise<AgentSkillRecord[]> {
+  const params = new URLSearchParams({ projectId });
+  if (opts?.includeArchived) params.set("includeArchived", "true");
+  if (opts?.state) params.set("state", opts.state);
+  const res = await httpGet<{ data: AgentSkillRecord[] }>(
+    `/api/v1/agents/skills/library?${params.toString()}`
+  );
+  return res.data;
+}
+
+/** PATCH 单条 agent_skill（归档 / pin / 修改描述等）。 */
+export async function patchAgentSkill(
+  skillId: string,
+  patch: Partial<{
+    description: string;
+    bodyMd: string;
+    category: string;
+    pinned: boolean;
+    state: AgentSkillState;
+    bumpVersion: boolean;
+  }>
+): Promise<AgentSkillRecord> {
+  const res = await httpPatch<{ data: AgentSkillRecord }>(
+    `/api/v1/agents/skills/library/${encodeURIComponent(skillId)}`,
+    patch
+  );
+  return res.data;
 }
 
 export async function appendAgentDraftSkills(

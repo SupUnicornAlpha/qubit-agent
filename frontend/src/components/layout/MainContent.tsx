@@ -45,7 +45,9 @@ import {
   getSkillMarketStatus,
   installManualSkill,
   installSkillFromMarket,
+  listSkillLibrary,
   listSkillMarketInstalls,
+  patchAgentSkill,
   listAgentDefinitions,
   refreshSkillMarketRegistry,
   searchSkillMarket,
@@ -97,6 +99,7 @@ import type {
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentGroupRecord,
+  AgentSkillRecord,
   AnalystTeamResult,
   DebateConfig,
   DebateStreamEvent,
@@ -1236,6 +1239,9 @@ const ConfigPanel: FC = () => {
   const [skillMarketTotalPages, setSkillMarketTotalPages] = useState(1);
   const SKILL_MARKET_PAGE_SIZE = 24;
   const [skillInstalls, setSkillInstalls] = useState<SkillMarketInstallRecord[]>([]);
+  /** 由 curator / evolver / 用户手写 / 市场镜像汇总到 agent_skill 表的统一 skill 库。 */
+  const [skillLibrary, setSkillLibrary] = useState<AgentSkillRecord[]>([]);
+  const [skillLibraryIncludeArchived, setSkillLibraryIncludeArchived] = useState(false);
   const [skillRefreshBusy, setSkillRefreshBusy] = useState(false);
   const [skillAppendDefinitionId, setSkillAppendDefinitionId] = useState("");
   const [manualSkillName, setManualSkillName] = useState("");
@@ -1405,6 +1411,13 @@ const ConfigPanel: FC = () => {
     if (activeConfigSubPage !== "skills" || !currentProjectId) return;
     void listSkillMarketInstalls(currentProjectId).then(setSkillInstalls);
   }, [activeConfigSubPage, currentProjectId]);
+
+  useEffect(() => {
+    if (activeConfigSubPage !== "skills" || !currentProjectId) return;
+    void listSkillLibrary(currentProjectId, { includeArchived: skillLibraryIncludeArchived })
+      .then(setSkillLibrary)
+      .catch(() => setSkillLibrary([]));
+  }, [activeConfigSubPage, currentProjectId, skillLibraryIncludeArchived]);
 
   const loadMcpMarketPage = useCallback(
     async (page: number) => {
@@ -3162,6 +3175,209 @@ const ConfigPanel: FC = () => {
                 </select>
               )}
             </div>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                margin: "20px 0 8px",
+              }}
+            >
+              <h4 style={{ ...styles.subTitle, fontSize: 14, margin: 0 }}>
+                归纳与演化（agent_skill）
+              </h4>
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  color: "var(--qb-main-meta)",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={skillLibraryIncludeArchived}
+                  onChange={(e) => setSkillLibraryIncludeArchived(e.target.checked)}
+                />
+                显示已归档
+              </label>
+            </div>
+            <p className="qb-config-hint" style={{ margin: "0 0 8px" }}>
+              Agent 在执行复杂任务后由 curator 沉淀的程序性记忆，以及 evolver
+              基于 baseline 突变得到的演化版本（类 Hermes / GEPA 机制）。pending_review
+              的演化产物需要审批后才会转 active。
+            </p>
+            {!currentProjectId ? (
+              <p className="qb-config-hint">加载配置后可按项目记录归纳；请先进入配置中心触发加载。</p>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "var(--qb-main-meta)" }}>
+                      <th style={{ padding: "6px 8px" }}>name</th>
+                      <th style={{ padding: "6px 8px" }}>描述</th>
+                      <th style={{ padding: "6px 8px" }}>来源</th>
+                      <th style={{ padding: "6px 8px" }}>状态</th>
+                      <th style={{ padding: "6px 8px" }}>version</th>
+                      <th style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>使用 / 成功</th>
+                      <th style={{ padding: "6px 8px" }}>最近使用</th>
+                      <th style={{ padding: "6px 8px" }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {skillLibrary.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
+                          暂无 agent_skill 记录。等待 Agent 在工作流里触发 curator/evolver，或在
+                          运维脚本里执行 `bun run src/scripts/run-skill-curator.ts`。
+                        </td>
+                      </tr>
+                    ) : (
+                      skillLibrary.map((s) => {
+                        const reviewing = s.state === "pending_review";
+                        return (
+                          <tr
+                            key={s.id}
+                            style={{
+                              borderTop: "1px solid #27272a",
+                              color: "var(--qb-body-fg)",
+                              opacity: s.state === "archived" ? 0.55 : 1,
+                            }}
+                          >
+                            <td
+                              style={{
+                                padding: "8px",
+                                fontFamily: "ui-monospace, monospace",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {s.pinned ? "★ " : ""}
+                              {s.name}
+                            </td>
+                            <td style={{ padding: "8px", maxWidth: 320 }}>
+                              {s.description.length > 140
+                                ? `${s.description.slice(0, 140)}…`
+                                : s.description}
+                            </td>
+                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                              <OriginBadge origin={s.source} style={{ marginLeft: 0 }} />
+                            </td>
+                            <td
+                              style={{
+                                padding: "8px",
+                                whiteSpace: "nowrap",
+                                color: reviewing
+                                  ? "#f87171"
+                                  : s.state === "archived"
+                                    ? "var(--qb-main-meta)"
+                                    : "var(--qb-body-fg)",
+                              }}
+                            >
+                              {s.state}
+                            </td>
+                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>{s.version}</td>
+                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                              {s.useCount} / {s.successCount}
+                              {s.failCount > 0 ? (
+                                <span style={{ color: "#fca5a5" }}> · 失败 {s.failCount}</span>
+                              ) : null}
+                            </td>
+                            <td
+                              style={{
+                                padding: "8px",
+                                whiteSpace: "nowrap",
+                                color: "var(--qb-main-meta)",
+                              }}
+                            >
+                              {s.lastUsedAt ? new Date(s.lastUsedAt).toLocaleString() : "—"}
+                            </td>
+                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                              <button
+                                type="button"
+                                className="qb-btn-ghost qb-btn--compact"
+                                onClick={() => {
+                                  const preview = s.bodyMd?.slice(0, 4000) || "(empty)";
+                                  window.alert(`# ${s.name}\n\n${preview}`);
+                                }}
+                              >
+                                查看
+                              </button>
+                              <button
+                                type="button"
+                                className="qb-btn-ghost qb-btn--compact"
+                                onClick={() =>
+                                  void patchAgentSkill(s.id, { pinned: !s.pinned })
+                                    .then(() =>
+                                      listSkillLibrary(currentProjectId, {
+                                        includeArchived: skillLibraryIncludeArchived,
+                                      })
+                                    )
+                                    .then(setSkillLibrary)
+                                }
+                              >
+                                {s.pinned ? "取消置顶" : "置顶"}
+                              </button>
+                              {reviewing ? (
+                                <button
+                                  type="button"
+                                  className="qb-btn-secondary qb-btn--compact"
+                                  onClick={() =>
+                                    void patchAgentSkill(s.id, { state: "active" })
+                                      .then(() =>
+                                        listSkillLibrary(currentProjectId, {
+                                          includeArchived: skillLibraryIncludeArchived,
+                                        })
+                                      )
+                                      .then(setSkillLibrary)
+                                  }
+                                >
+                                  审批通过
+                                </button>
+                              ) : null}
+                              {s.state !== "archived" ? (
+                                <button
+                                  type="button"
+                                  className="qb-btn-ghost qb-btn--compact"
+                                  onClick={() =>
+                                    void patchAgentSkill(s.id, { state: "archived" })
+                                      .then(() =>
+                                        listSkillLibrary(currentProjectId, {
+                                          includeArchived: skillLibraryIncludeArchived,
+                                        })
+                                      )
+                                      .then(setSkillLibrary)
+                                  }
+                                >
+                                  归档
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="qb-btn-ghost qb-btn--compact"
+                                  onClick={() =>
+                                    void patchAgentSkill(s.id, { state: "active" })
+                                      .then(() =>
+                                        listSkillLibrary(currentProjectId, {
+                                          includeArchived: skillLibraryIncludeArchived,
+                                        })
+                                      )
+                                      .then(setSkillLibrary)
+                                  }
+                                >
+                                  恢复
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         ) : null}
         {activeConfigSubPage === "schedule" ? (
