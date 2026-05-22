@@ -12,6 +12,14 @@ import {
   type ToolCatalogEntry,
 } from "../../api/types";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
+import { OriginBadge } from "../common/OriginBadge";
+
+/* MCP 白名单分组顺序：内置在最上方（默认信任）、市场在中间、用户手填的在底部 */
+const MCP_ORIGIN_ORDER: Record<NonNullable<McpServerConfigRecord["origin"]>, number> = {
+  builtin: 0,
+  market: 1,
+  manual: 2,
+};
 
 const label: CSSProperties = {
   fontSize: 12,
@@ -339,24 +347,36 @@ export const AgentRuntimeTab: FC<{
           {mcpServers.length === 0 ? (
             <span style={{ fontSize: 12, color: "var(--qb-sidebar-muted, #71717a)" }}>暂无 MCP，请先到「MCP」页添加。</span>
           ) : (
-            mcpServers.map((s) => {
-              const on = draftMcpServerNames.includes(s.name);
-              const bind = pickBindingForMcpServer(s.name);
-              const nBind = mcpServerBindingCount.get(s.name) ?? 0;
-              return (
-                <button
-                  key={s.id}
-                  type="button"
-                  disabled={!s.enabled}
-                  title={`${bind?.toolName ? `工具 ${bind.toolName}` : "未绑定"} · 绑定 ${nBind} 条`}
-                  className={`qb-mcp-chip${on ? " qb-mcp-chip--on" : ""}`}
-                  onClick={() => !s.enabled || setDraftMcpServerNames((p) => toggleInList(p, s.name))}
-                >
-                  <Server size={14} strokeWidth={2} aria-hidden />
-                  {s.name}
-                </button>
-              );
-            })
+            /*
+             * 按 origin 分组并固定显示顺序：内置 → 市场 → 手动。
+             * 同组内保留后端返回顺序（按 createdAt desc），让"最近添加的手动配置"
+             * 自然浮到自己分组的最上面。
+             */
+            [...mcpServers]
+              .sort((a, b) => {
+                const orderA = MCP_ORIGIN_ORDER[a.origin ?? "manual"] ?? 3;
+                const orderB = MCP_ORIGIN_ORDER[b.origin ?? "manual"] ?? 3;
+                return orderA - orderB;
+              })
+              .map((s) => {
+                const on = draftMcpServerNames.includes(s.name);
+                const bind = pickBindingForMcpServer(s.name);
+                const nBind = mcpServerBindingCount.get(s.name) ?? 0;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    disabled={!s.enabled}
+                    title={`${bind?.toolName ? `工具 ${bind.toolName}` : "未绑定"} · 绑定 ${nBind} 条`}
+                    className={`qb-mcp-chip${on ? " qb-mcp-chip--on" : ""}`}
+                    onClick={() => !s.enabled || setDraftMcpServerNames((p) => toggleInList(p, s.name))}
+                  >
+                    <Server size={14} strokeWidth={2} aria-hidden />
+                    {s.name}
+                    <OriginBadge origin={s.origin} />
+                  </button>
+                );
+              })
           )}
         </div>
         {orphanMcp.length > 0 ? (

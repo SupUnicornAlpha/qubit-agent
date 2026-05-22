@@ -875,6 +875,13 @@ export interface McpServerConfigRecord {
   capabilitiesJson: unknown;
   enabled: boolean;
   createdAt: string;
+  /**
+   * 后端派生（详见 src/runtime/mcp/origin.ts）：
+   *   - 'builtin'：seed 进 DB 的官方 MCP（mathjs / tradingcalc / mcp-financex / qubit-broker 等）
+   *   - 'market' ：从 MCP Registry 安装且 install 未 removed
+   *   - 'manual' ：用户在"快速添加 MCP SERVER"表单手填的
+   */
+  origin?: "builtin" | "market" | "manual";
 }
 
 export interface McpToolBindingRecord {

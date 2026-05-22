@@ -56,6 +56,7 @@ import {
   uninstallProjectCatalogInstall,
   upsertMcpSource,
 } from "../runtime/mcp/market-service";
+import { deriveMcpServerOrigin } from "../runtime/mcp/origin";
 import { RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET } from "../runtime/msa/analyst-team";
 import {
   DEFAULT_OPEN_SKILL_MARKET_BASE,
@@ -1025,7 +1026,34 @@ agentRouter.get("/mcp/servers", async (c) => {
         : undefined
     )
     .orderBy(desc(mcpServerConfig.createdAt));
-  return c.json({ data: rows });
+
+  /*
+   * 派生 origin（builtin / market / manual）—— 详见 runtime/mcp/origin.ts。
+   * 关键点：只把"未移除"的市场安装算作 market 来源；用户卸载后该 server 应回退到
+   * "manual"（如果还存在配置）或不再出现，避免徽标永远不变。
+   */
+  const installRows = projectId
+    ? await db
+        .select({
+          serverName: mcpCatalogInstall.serverName,
+          installStatus: mcpCatalogInstall.installStatus,
+        })
+        .from(mcpCatalogInstall)
+        .where(eq(mcpCatalogInstall.projectId, projectId))
+    : [];
+  const marketNames = new Set<string>();
+  for (const r of installRows) {
+    if (r.installStatus !== "removed") marketNames.add(r.serverName);
+  }
+
+  const data = rows.map((r) => ({
+    ...r,
+    origin: deriveMcpServerOrigin(
+      { name: r.name, projectId: r.projectId ?? null, capabilitiesJson: r.capabilitiesJson },
+      marketNames
+    ),
+  }));
+  return c.json({ data });
 });
 
 agentRouter.post("/mcp/servers/upsert", async (c) => {

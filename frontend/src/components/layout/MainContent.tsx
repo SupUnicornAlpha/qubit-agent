@@ -170,10 +170,17 @@ import { IntegrationCenterPanel } from "../config/IntegrationCenterPanel";
 import { ScheduledJobsPanel } from "../config/ScheduledJobsPanel";
 import { ProvidersPanel } from "../config/ProvidersPanel";
 import { LlmProvidersList } from "../config/LlmProvidersList";
+import { OriginBadge } from "../common/OriginBadge";
 import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { AgentGeneratedFactorsBlock } from "../team/AgentGeneratedFactorsBlock";
 import { AgentGeneratedStrategiesBlock } from "../team/AgentGeneratedStrategiesBlock";
+import { AgentRunPanel } from "../team/AgentRunChatView";
+import {
+  LiveConversationView,
+  type LiveConversationEvent,
+} from "../team/LiveConversationView";
+import { ResizableY } from "../team/ResizableY";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
   classifyWorkflow,
@@ -2966,6 +2973,7 @@ const ConfigPanel: FC = () => {
                     <tr style={{ textAlign: "left", color: "var(--qb-main-meta)" }}>
                       <th style={{ padding: "6px 8px" }}>skill_name</th>
                       <th style={{ padding: "6px 8px" }}>说明</th>
+                      <th style={{ padding: "6px 8px" }}>来源</th>
                       <th style={{ padding: "6px 8px" }}>registry id</th>
                       <th style={{ padding: "6px 8px" }}>操作</th>
                     </tr>
@@ -2973,7 +2981,7 @@ const ConfigPanel: FC = () => {
                   <tbody>
                     {skillInstalls.length === 0 ? (
                       <tr>
-                        <td colSpan={4} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
+                        <td colSpan={5} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
                           尚未从市场安装任何技能。
                         </td>
                       </tr>
@@ -2983,6 +2991,10 @@ const ConfigPanel: FC = () => {
                           <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace" }}>{row.skillName}</td>
                           <td style={{ padding: "8px", maxWidth: 280 }}>
                             {row.description.length > 120 ? `${row.description.slice(0, 120)}…` : row.description}
+                          </td>
+                          <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                            {/* 直接复用 OriginBadge 的 SkillsMP / Open Skill Market 预设；其它 registry 名也能兜底渲染 */}
+                            <OriginBadge origin={row.registry} style={{ marginLeft: 0 }} />
                           </td>
                           <td style={{ padding: "8px", wordBreak: "break-all", fontSize: 11 }}>{row.externalSkillId}</td>
                           <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
