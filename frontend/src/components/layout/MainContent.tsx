@@ -6160,10 +6160,12 @@ const TeamDashboardPanel: FC = () => {
                   minHeight={200}
                   maxHeight={1200}
                   storageKey="qb.live-feed-h"
+                  wrapperData={{ "data-qb-team-live-feed-shell": "" }}
                   style={{
-                    border: "1px solid #2a2a30",
+                    border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
                     borderRadius: 8,
-                    background: "#08080a",
+                    background: "var(--qb-team-live-feed-bg, #08080a)",
+                    color: "var(--qb-team-live-feed-fg, #e4e4e7)",
                   }}
                 >
                   <div
@@ -6172,7 +6174,8 @@ const TeamDashboardPanel: FC = () => {
                       margin: 0,
                       padding: "8px 10px",
                       flexShrink: 0,
-                      borderBottom: "1px solid #2a2a30",
+                      borderBottom:
+                        "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #2a2a30))",
                       display: "flex",
                       alignItems: "center",
                       gap: 6,
@@ -6185,7 +6188,7 @@ const TeamDashboardPanel: FC = () => {
                       style={{
                         marginLeft: "auto",
                         fontSize: 10,
-                        color: "#71717a",
+                        color: "var(--qb-team-meta, #71717a)",
                         fontWeight: 400,
                       }}
                     >
@@ -6227,10 +6230,12 @@ const TeamDashboardPanel: FC = () => {
                     minHeight={220}
                     maxHeight={1400}
                     storageKey="qb.agent-run-h"
+                    wrapperData={{ "data-qb-team-live-feed-shell": "" }}
                     style={{
-                      border: "1px solid #2a2a30",
+                      border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
                       borderRadius: 8,
-                      background: "#08080a",
+                      background: "var(--qb-team-live-feed-bg, #08080a)",
+                      color: "var(--qb-team-live-feed-fg, #e4e4e7)",
                     }}
                   >
                     <AgentRunPanel
@@ -6246,7 +6251,14 @@ const TeamDashboardPanel: FC = () => {
                   </ResizableY>
                 </div>
               ) : null}
-              <div style={{ marginTop: 18, borderTop: "1px solid #2a2a30", paddingTop: 12 }}>
+              <div
+                style={{
+                  marginTop: 18,
+                  borderTop:
+                    "1px solid var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, #2a2a30))",
+                  paddingTop: 12,
+                }}
+              >
                 <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>分析结论</h3>
                 <div style={teamStyles.row}>
                   <button

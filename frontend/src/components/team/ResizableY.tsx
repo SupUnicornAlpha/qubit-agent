@@ -18,6 +18,12 @@ export type ResizableYProps = {
   maxHeight?: number;
   storageKey?: string;
   style?: CSSProperties;
+  className?: string;
+  /**
+   * Extra `data-*` / aria attributes to spread on the outer wrapper.
+   * 用来让主题 CSS 可以通过 `[data-qb-*]` 选择器精确命中这层容器。
+   */
+  wrapperData?: Record<string, string>;
   children: ReactNode;
 };
 
@@ -27,6 +33,8 @@ export const ResizableY: FC<ResizableYProps> = ({
   maxHeight = 2000,
   storageKey,
   style,
+  className,
+  wrapperData,
   children,
 }) => {
   const [height, setHeight] = useState<number>(() => {
@@ -81,6 +89,8 @@ export const ResizableY: FC<ResizableYProps> = ({
 
   return (
     <div
+      className={className}
+      {...wrapperData}
       style={{
         ...style,
         height,

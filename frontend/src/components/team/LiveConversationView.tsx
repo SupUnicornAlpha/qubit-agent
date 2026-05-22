@@ -82,14 +82,21 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
 
   if (sorted.length === 0) {
     return (
-      <div style={{ fontSize: 12, color: "#71717a", padding: "16px 8px" }}>
+      <div
+        data-qb-live-conv-empty
+        style={{
+          fontSize: 12,
+          color: "var(--qb-team-meta, #71717a)",
+          padding: "16px 8px",
+        }}
+      >
         {emptyText ?? "暂无对话记录。"}
       </div>
     );
   }
 
   return (
-    <div style={containerStyle}>
+    <div data-qb-live-conv style={containerStyle}>
       {sorted.map((ev) => {
         switch (ev.kind) {
           case "message":
@@ -140,7 +147,7 @@ const Avatar: FC<{ role: string; size?: number }> = ({ role, size = 28 }) => {
 
 const tsLabel: CSSProperties = {
   fontSize: 10,
-  color: "#71717a",
+  color: "var(--qb-team-meta, #71717a)",
   fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
 };
 
@@ -164,6 +171,7 @@ const MessageRow: FC<{
 
   return (
     <div
+      data-qb-live-conv-row={isSelf ? "self" : "other"}
       style={{
         display: "flex",
         flexDirection: isSelf ? "row-reverse" : "row",
@@ -185,12 +193,13 @@ const MessageRow: FC<{
           {formatTs(ev.ts)} · {tagText}
         </div>
         <div
+          data-qb-live-conv-bubble={isSelf ? "self" : "other"}
           style={{
             padding: "8px 12px",
             borderRadius: 10,
             background: bubbleBg,
             border: `1px solid ${safeBorder}`,
-            color: "#e4e4e7",
+            color: "var(--qb-team-live-feed-fg, var(--qb-body-fg, #e4e4e7))",
             fontSize: 12,
             lineHeight: 1.55,
             whiteSpace: "pre-wrap",
@@ -238,16 +247,24 @@ const DebateBanner: FC<{ ev: LiveConversationDebateEvent; maxLen: number }> = ({
   return (
     <div style={bannerWrapStyle}>
       <div
+        data-qb-live-conv-banner="debate"
         style={{
           ...bannerStyle,
-          borderColor: "rgba(124,58,237,0.45)",
-          background: "rgba(124,58,237,0.08)",
+          borderColor: "var(--qb-team-debate-border, rgba(124,58,237,0.45))",
+          background: "var(--qb-team-debate-bg, rgba(124,58,237,0.08))",
+          color: "var(--qb-team-debate-fg, #e9d5ff)",
         }}
       >
-        <div style={{ ...tsLabel, marginBottom: 4, color: "#c4b5fd" }}>
+        <div
+          style={{
+            ...tsLabel,
+            marginBottom: 4,
+            color: "var(--qb-team-debate-accent, var(--qb-team-debate-fg, #c4b5fd))",
+          }}
+        >
           {formatTs(ev.ts)} · {debateTitle(ev)}
         </div>
-        <div style={{ fontSize: 12, color: "#e9d5ff", whiteSpace: "pre-wrap" }}>
+        <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "inherit" }}>
           {truncate(ev.text || "", maxLen)}
         </div>
       </div>
@@ -259,14 +276,18 @@ const SystemBanner: FC<{ ev: LiveConversationSystemEvent; maxLen: number }> = ({
   return (
     <div style={bannerWrapStyle}>
       <div
+        data-qb-live-conv-banner="system"
         style={{
           ...bannerStyle,
-          borderColor: "rgba(161,161,170,0.35)",
-          background: "rgba(63,63,70,0.25)",
+          borderColor:
+            "var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, rgba(161,161,170,0.35)))",
+          background:
+            "var(--qb-main-card-bg, var(--qb-sidebar-explorer-bg, rgba(63,63,70,0.25)))",
+          color: "var(--qb-body-fg, #d4d4d8)",
         }}
       >
         <div style={{ ...tsLabel, marginBottom: 4 }}>{formatTs(ev.ts)} · 系统</div>
-        <div style={{ fontSize: 12, color: "#d4d4d8", whiteSpace: "pre-wrap" }}>
+        <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "inherit" }}>
           {truncate(ev.text || "", maxLen)}
         </div>
       </div>
