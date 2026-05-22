@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { config } from "../../config";
 import { runMigrations } from "../../db/sqlite/migrate";
-import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
+import { getPythonConnectorsDir, getPythonWheelsDir, resolvePythonBin } from "../app-paths";
 import { seedAgentDefinitions } from "../seed-agent-definitions";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import {
@@ -75,6 +75,30 @@ async function ensurePythonVenv(dataDir: string): Promise<{
     };
   }
 
+  /*
+   * 优先离线装：如果 python_connectors/wheels/ 里有 .whl 文件（通常由
+   * scripts/build-python-wheels.sh 在 CI / 发版前预下载），就用
+   * `pip install --no-index --find-links wheels/`，避免触网；
+   * 失败或没 wheel 时回退到联网安装（保持向后兼容）。
+   */
+  const wheelsDir = getPythonWheelsDir();
+  const hasWheels =
+    existsSync(wheelsDir) && readdirSync(wheelsDir).some((f) => f.endsWith(".whl"));
+  let pipMessage = "";
+  if (hasWheels) {
+    const offline = await runProcess(
+      venvPython,
+      ["-m", "pip", "install", "--no-index", "--find-links", wheelsDir, "-r", reqPath],
+      { cwd: getPythonConnectorsDir() }
+    );
+    if (offline.code === 0) {
+      process.env["QUBIT_PYTHON"] = venvPython;
+      return { status: "created", message: "installed from offline wheels" };
+    }
+    pipMessage = `offline pip install failed (${offline.stderr.slice(0, 200)}), falling back to network`;
+    console.warn(`[bootstrap] ${pipMessage}`);
+  }
+
   const pip = await runProcess(venvPython, ["-m", "pip", "install", "-r", reqPath], {
     cwd: getPythonConnectorsDir(),
   });
@@ -86,7 +110,7 @@ async function ensurePythonVenv(dataDir: string): Promise<{
   }
 
   process.env["QUBIT_PYTHON"] = venvPython;
-  return { status: "created" };
+  return { status: "created", ...(pipMessage ? { message: pipMessage } : {}) };
 }
 
 /**
@@ -120,7 +144,7 @@ export async function runPlatformBootstrap(options?: {
     migrations: true,
     seed: true,
     pythonVenv,
-    pythonMessage,
+    ...(pythonMessage !== undefined ? { pythonMessage } : {}),
     dataDir,
     appRoot: process.env["QUBIT_APP_ROOT"]?.trim() || process.cwd(),
   };

@@ -19,6 +19,9 @@ src-tauri/resources/bundle/
 dist/bundle/
 python_connectors/__pycache__/
 python_connectors/.venv/
+# 预下载的 wheel 通常 100MB+，不进 git；发版时由打包流水线 / 用户本地脚本生成
+python_connectors/wheels/*
+!python_connectors/wheels/README.md
 *.pyc
 
 # Product docs (PRD / ERD) — tracked separately; README screenshots are public

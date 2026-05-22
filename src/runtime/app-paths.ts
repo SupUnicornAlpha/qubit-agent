@@ -22,6 +22,15 @@ export function getPythonConnectorsDir(): string {
   return join(getAppRoot(), "python_connectors");
 }
 
+/**
+ * 预下载的 Python wheel 仓库；与 `requirements.txt` 同目录的 `wheels/`。
+ * bootstrap 时若该目录存在且包含 .whl，会优先走 `pip install --no-index --find-links`，
+ * 实现离线 / 弱网首次装机。脚本 `scripts/build-python-wheels.sh` 负责生成。
+ */
+export function getPythonWheelsDir(): string {
+  return join(getPythonConnectorsDir(), "wheels");
+}
+
 export function getContentPacksDir(): string {
   return join(getAppRoot(), "content-packs");
 }
