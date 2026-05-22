@@ -1600,9 +1600,74 @@ agentRouter.get("/skills/installs", async (c) => {
 });
 
 agentRouter.post("/skills/installs", async (c) => {
-  const body = await c.req.json<{ projectId?: string; externalSkillId?: string }>();
-  if (!body.projectId || !body.externalSkillId?.trim()) {
-    return c.json({ error: "projectId and externalSkillId are required" }, 400);
+  const body = await c.req.json<{
+    projectId?: string;
+    externalSkillId?: string;
+    registry?: string;
+    skillName?: string;
+    description?: string;
+    repo?: string;
+    path?: string;
+    localPath?: string;
+    tags?: string[];
+  }>();
+  if (!body.projectId) {
+    return c.json({ error: "projectId is required" }, 400);
+  }
+
+  const registryInput = (body.registry ?? "").trim().toLowerCase();
+  if (registryInput === "manual") {
+    const skillName = body.skillName?.trim();
+    if (!skillName) return c.json({ error: "skillName is required" }, 400);
+
+    const normalizedManualId = skillName
+      .toLowerCase()
+      .replace(/[^a-z0-9._:-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const externalSkillId = body.externalSkillId?.trim() || `manual:${normalizedManualId || skillName}`;
+    const tags = Array.isArray(body.tags)
+      ? body.tags.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+    const db = await getDb();
+    const dup = await db
+      .select()
+      .from(skillMarketInstall)
+      .where(
+        and(
+          eq(skillMarketInstall.projectId, body.projectId),
+          eq(skillMarketInstall.externalSkillId, externalSkillId)
+        )
+      )
+      .limit(1);
+    if (dup[0]) return c.json({ data: dup[0] });
+
+    const id = crypto.randomUUID();
+    await db.insert(skillMarketInstall).values({
+      id,
+      projectId: body.projectId,
+      registry: "manual",
+      externalSkillId,
+      skillName,
+      description: body.description?.trim() ?? "",
+      metaJson: {
+        source: "manual",
+        ...(body.repo?.trim() ? { repo: body.repo.trim() } : {}),
+        ...(body.path?.trim() ? { path: body.path.trim() } : {}),
+        ...(body.localPath?.trim() ? { localPath: body.localPath.trim() } : {}),
+        ...(tags.length ? { tags } : {}),
+      },
+      installedBy: "user",
+    });
+    const created = await db
+      .select()
+      .from(skillMarketInstall)
+      .where(eq(skillMarketInstall.id, id))
+      .limit(1);
+    return c.json({ data: created[0] }, 201);
+  }
+
+  if (!body.externalSkillId?.trim()) {
+    return c.json({ error: "externalSkillId is required" }, 400);
   }
   const extId = body.externalSkillId.trim();
   let skill = getOpenSkillMarketEntry(extId);

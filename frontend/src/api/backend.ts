@@ -1966,6 +1966,23 @@ export async function installSkillFromMarket(input: {
   return res.data;
 }
 
+export async function installManualSkill(input: {
+  projectId: string;
+  skillName: string;
+  description?: string;
+  externalSkillId?: string;
+  repo?: string;
+  path?: string;
+  localPath?: string;
+  tags?: string[];
+}): Promise<SkillMarketInstallRecord> {
+  const res = await httpPost<{ data: SkillMarketInstallRecord }>("/api/v1/agents/skills/installs", {
+    ...input,
+    registry: "manual",
+  });
+  return res.data;
+}
+
 export async function deleteSkillMarketInstall(projectId: string, installId: string): Promise<void> {
   await httpDelete<{ ok: boolean }>(
     `/api/v1/agents/skills/installs/${encodeURIComponent(installId)}?projectId=${encodeURIComponent(projectId)}`
@@ -2899,5 +2916,4 @@ export async function registerRule(body: {
   const res = await httpPost<{ ok: boolean; data: RuleRecord }>(`/api/v1/rules`, body);
   return res.data;
 }
-
 

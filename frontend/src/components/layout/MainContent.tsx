@@ -43,6 +43,7 @@ import {
   deleteSkillMarketInstall,
   deleteWorkflow,
   getSkillMarketStatus,
+  installManualSkill,
   installSkillFromMarket,
   listSkillMarketInstalls,
   listAgentDefinitions,
@@ -1237,6 +1238,13 @@ const ConfigPanel: FC = () => {
   const [skillInstalls, setSkillInstalls] = useState<SkillMarketInstallRecord[]>([]);
   const [skillRefreshBusy, setSkillRefreshBusy] = useState(false);
   const [skillAppendDefinitionId, setSkillAppendDefinitionId] = useState("");
+  const [manualSkillName, setManualSkillName] = useState("");
+  const [manualSkillDescription, setManualSkillDescription] = useState("");
+  const [manualSkillRepo, setManualSkillRepo] = useState("");
+  const [manualSkillPath, setManualSkillPath] = useState("");
+  const [manualSkillLocalPath, setManualSkillLocalPath] = useState("");
+  const [manualSkillTags, setManualSkillTags] = useState("");
+  const [manualSkillError, setManualSkillError] = useState("");
   const [marketQuery, setMarketQuery] = useState("");
   const [currentProjectId, setCurrentProjectId] = useState("");
   const [currentWorkspaceId, setCurrentWorkspaceId] = useState("");
@@ -1466,6 +1474,42 @@ const ConfigPanel: FC = () => {
 
   const searchSkillMarketNow = async () => {
     await loadSkillMarketPage(1);
+  };
+
+  const installManualSkillNow = async () => {
+    if (!currentProjectId) {
+      setManualSkillError("请先加载项目后再添加 Skill。");
+      return;
+    }
+    const skillName = manualSkillName.trim();
+    if (!skillName) {
+      setManualSkillError("请填写 skill 名称。");
+      return;
+    }
+    try {
+      setManualSkillError("");
+      await installManualSkill({
+        projectId: currentProjectId,
+        skillName,
+        description: manualSkillDescription.trim() || undefined,
+        repo: manualSkillRepo.trim() || undefined,
+        path: manualSkillPath.trim() || undefined,
+        localPath: manualSkillLocalPath.trim() || undefined,
+        tags: manualSkillTags
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean),
+      });
+      setManualSkillName("");
+      setManualSkillDescription("");
+      setManualSkillRepo("");
+      setManualSkillPath("");
+      setManualSkillLocalPath("");
+      setManualSkillTags("");
+      await listSkillMarketInstalls(currentProjectId).then(setSkillInstalls);
+    } catch (e) {
+      setManualSkillError(e instanceof Error ? e.message : "添加 Skill 失败");
+    }
   };
 
   useEffect(() => {
@@ -2815,6 +2859,54 @@ const ConfigPanel: FC = () => {
                 刷新状态
               </button>
             </div>
+            <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>手工添加 Skill</h4>
+            <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+              <input
+                style={{ ...styles.input, minWidth: 180 }}
+                value={manualSkillName}
+                onChange={(e) => setManualSkillName(e.target.value)}
+                placeholder="skill name / id"
+              />
+              <input
+                style={{ ...styles.input, minWidth: 260, flex: "1 1 260px" }}
+                value={manualSkillDescription}
+                onChange={(e) => setManualSkillDescription(e.target.value)}
+                placeholder="说明（可选）"
+              />
+              <input
+                style={{ ...styles.input, minWidth: 220 }}
+                value={manualSkillRepo}
+                onChange={(e) => setManualSkillRepo(e.target.value)}
+                placeholder="repo URL（可选）"
+              />
+              <input
+                style={{ ...styles.input, minWidth: 180 }}
+                value={manualSkillPath}
+                onChange={(e) => setManualSkillPath(e.target.value)}
+                placeholder="repo path（可选）"
+              />
+              <input
+                style={{ ...styles.input, minWidth: 220 }}
+                value={manualSkillLocalPath}
+                onChange={(e) => setManualSkillLocalPath(e.target.value)}
+                placeholder="local path（可选）"
+              />
+              <input
+                style={{ ...styles.input, minWidth: 180 }}
+                value={manualSkillTags}
+                onChange={(e) => setManualSkillTags(e.target.value)}
+                placeholder="tags，逗号分隔"
+              />
+              <button
+                type="button"
+                className="qb-btn-primary-brand"
+                disabled={!currentProjectId || !manualSkillName.trim()}
+                onClick={() => void installManualSkillNow()}
+              >
+                添加到项目
+              </button>
+            </div>
+            {manualSkillError ? <div style={styles.errorBox}>{manualSkillError}</div> : null}
             <h4 style={{ ...styles.subTitle, fontSize: 14, margin: "14px 0 8px" }}>搜索市场</h4>
             <div style={{ ...styles.form, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
               <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
