@@ -3448,10 +3448,13 @@ const styles: Record<string, CSSProperties> = {
   mcpStatusDot: { width: 10, height: 10, borderRadius: "50%", flexShrink: 0, marginTop: 4 },
   mcpDetails: {
     marginBottom: 12,
-    border: "1px solid var(--qb-mcp-details-border, #27272a)",
+    border:
+      "1px solid var(--qb-mcp-details-border, var(--qb-sidebar-border, #27272a))",
     borderRadius: 8,
     padding: "0 12px",
-    background: "var(--qb-mcp-details-bg, #111114)",
+    background:
+      "var(--qb-mcp-details-bg, var(--qb-sidebar-nav-bg, #111114))",
+    color: "var(--qb-body-fg, #e4e4e7)",
   },
   mcpDetailsSummary: {
     cursor: "pointer",
@@ -3469,10 +3472,13 @@ const styles: Record<string, CSSProperties> = {
     userSelect: "none",
   } as CSSProperties,
   mcpDetailsNested: {
-    border: "1px solid var(--qb-mcp-details-border, #27272a)",
+    border:
+      "1px solid var(--qb-mcp-details-border, var(--qb-sidebar-border, #27272a))",
     borderRadius: 6,
     padding: "0 10px",
-    background: "var(--qb-mcp-details-nested-bg, #0c0c0e)",
+    background:
+      "var(--qb-mcp-details-nested-bg, var(--qb-main-card-bg, #0c0c0e))",
+    color: "var(--qb-body-fg, #e4e4e7)",
   },
   mcpMarketGrid: {
     display: "grid",
@@ -3480,8 +3486,11 @@ const styles: Record<string, CSSProperties> = {
     gap: 12,
   },
   mcpMarketCard: {
-    background: "var(--qb-mcp-market-card-bg, #18181b)",
-    border: "1px solid var(--qb-mcp-market-card-border, #27272a)",
+    background:
+      "var(--qb-mcp-market-card-bg, var(--qb-main-card-bg, #18181b))",
+    border:
+      "1px solid var(--qb-mcp-market-card-border, var(--qb-main-card-border, var(--qb-sidebar-border, #27272a)))",
+    color: "var(--qb-body-fg, #e4e4e7)",
     borderRadius: 10,
     padding: 12,
     display: "flex",
@@ -3494,7 +3503,7 @@ const styles: Record<string, CSSProperties> = {
   mcpMarketCardHeader: { display: "flex", alignItems: "flex-start", gap: 8 },
   mcpMarketMeta: {
     fontSize: 11,
-    color: "var(--qb-mcp-market-meta, #a1a1aa)",
+    color: "var(--qb-mcp-market-meta, var(--qb-main-meta, #a1a1aa))",
     marginTop: 4,
     display: "flex",
     flexWrap: "wrap",
@@ -3510,7 +3519,7 @@ const styles: Record<string, CSSProperties> = {
   },
   mcpMarketDesc: {
     fontSize: 12,
-    color: "var(--qb-mcp-market-desc, #d4d4d8)",
+    color: "var(--qb-mcp-market-desc, var(--qb-body-fg, #d4d4d8))",
     margin: 0,
     lineHeight: 1.45,
     display: "-webkit-box",
@@ -3524,18 +3533,22 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 600,
     padding: "3px 8px",
     borderRadius: 999,
-    background: "var(--qb-mcp-market-chip-bg, #27272a)",
-    color: "var(--qb-mcp-market-chip-fg, #e4e4e7)",
-    border: "1px solid var(--qb-mcp-market-chip-border, #3f3f46)",
+    background:
+      "var(--qb-mcp-market-chip-bg, var(--qb-pill-muted-bg, #27272a))",
+    color: "var(--qb-mcp-market-chip-fg, var(--qb-body-fg, #e4e4e7))",
+    border:
+      "1px solid var(--qb-mcp-market-chip-border, var(--qb-sidebar-border, #3f3f46))",
   },
   mcpMarketCmd: {
     fontSize: 11,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, monospace",
-    color: "var(--qb-mcp-market-cmd-fg, #a1a1aa)",
-    background: "var(--qb-mcp-market-cmd-bg, #09090b)",
+    color: "var(--qb-mcp-market-cmd-fg, var(--qb-main-meta, #a1a1aa))",
+    background:
+      "var(--qb-mcp-market-cmd-bg, var(--qb-sidebar-explorer-bg, #09090b))",
     borderRadius: 6,
     padding: "6px 8px",
-    border: "1px solid var(--qb-mcp-market-cmd-border, #27272a)",
+    border:
+      "1px solid var(--qb-mcp-market-cmd-border, var(--qb-sidebar-border, #27272a))",
     wordBreak: "break-all",
   },
   mcpMarketCardActions: { marginTop: "auto", paddingTop: 4 },
@@ -3554,8 +3567,10 @@ const styles: Record<string, CSSProperties> = {
     maxHeight: "88vh",
     display: "flex",
     flexDirection: "column",
-    background: "var(--qb-modal-bg, #111114)",
-    border: "1px solid var(--qb-modal-border, #3f3f46)",
+    background: "var(--qb-modal-bg, var(--qb-main-card-bg, #111114))",
+    border:
+      "1px solid var(--qb-modal-border, var(--qb-main-card-border, var(--qb-sidebar-border, #3f3f46)))",
+    color: "var(--qb-body-fg, #e4e4e7)",
     borderRadius: 12,
     boxShadow: "0 24px 48px rgba(0,0,0,0.45)",
   },
@@ -3566,7 +3581,8 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     flexWrap: "wrap",
     padding: "12px 14px",
-    borderBottom: "1px solid var(--qb-modal-sep, #27272a)",
+    borderBottom:
+      "1px solid var(--qb-modal-sep, var(--qb-sidebar-border, #27272a))",
   },
   mcpModalBody: { padding: 12, overflow: "auto", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" },
   mcpModalFooter: {
@@ -3574,14 +3590,17 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "flex-end",
     gap: 8,
     padding: "10px 14px",
-    borderTop: "1px solid var(--qb-modal-sep, #27272a)",
+    borderTop:
+      "1px solid var(--qb-modal-sep, var(--qb-sidebar-border, #27272a))",
   },
   mcpProbePanel: {
     marginBottom: 10,
     padding: "10px 12px",
     borderRadius: 8,
-    border: "1px solid var(--qb-mcp-json-border, #27272a)",
-    background: "var(--qb-stream-box-bg, #09090b)",
+    border:
+      "1px solid var(--qb-mcp-json-border, var(--qb-sidebar-border, #27272a))",
+    background: "var(--qb-stream-box-bg, var(--qb-sidebar-explorer-bg, #09090b))",
+    color: "var(--qb-stream-box-fg, var(--qb-body-fg, #d4d4d8))",
     flexShrink: 0,
   },
   mcpProbePanelHeader: {
@@ -3599,7 +3618,7 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.5,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-    color: "var(--qb-stream-box-fg, #d4d4d8)",
+    color: "var(--qb-stream-box-fg, var(--qb-body-fg, #d4d4d8))",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
@@ -3611,27 +3630,33 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     fontSize: 12,
     lineHeight: 1.45,
-    background: "var(--qb-mcp-json-bg, #09090b)",
-    border: "1px solid var(--qb-mcp-json-border, #27272a)",
-    color: "var(--qb-mcp-json-fg, #e4e4e7)",
+    background:
+      "var(--qb-mcp-json-bg, var(--qb-main-input-bg, var(--qb-sidebar-explorer-bg, #09090b)))",
+    border:
+      "1px solid var(--qb-mcp-json-border, var(--qb-main-input-border, var(--qb-sidebar-border, #27272a)))",
+    color: "var(--qb-mcp-json-fg, var(--qb-body-fg, #e4e4e7))",
     borderRadius: 8,
     padding: 10,
   },
   streamBox: {
-    background: "var(--qb-stream-box-bg, #09090b)",
-    border: "1px solid var(--qb-stream-box-border, #27272a)",
+    background:
+      "var(--qb-stream-box-bg, var(--qb-sidebar-explorer-bg, #09090b))",
+    border:
+      "1px solid var(--qb-stream-box-border, var(--qb-sidebar-border, #27272a))",
     borderRadius: 8,
     padding: 10,
     maxHeight: 260,
     overflow: "auto",
-    color: "var(--qb-stream-box-fg, #d4d4d8)",
+    color: "var(--qb-stream-box-fg, var(--qb-body-fg, #d4d4d8))",
     fontSize: 12,
     whiteSpace: "pre-wrap",
   },
   errorBox: {
-    background: "var(--qb-config-error-bg, #3f1d1d)",
-    border: "1px solid var(--qb-config-error-border, #7f1d1d)",
-    color: "var(--qb-config-error-fg, #fecaca)",
+    background:
+      "var(--qb-config-error-bg, var(--qb-pill-error-bg, rgba(239,68,68,0.18)))",
+    border:
+      "1px solid var(--qb-config-error-border, var(--qb-pill-error-fg, rgba(239,68,68,0.5)))",
+    color: "var(--qb-config-error-fg, var(--qb-pill-error-fg, #fecaca))",
     borderRadius: 8,
     padding: "8px 10px",
     marginBottom: 10,

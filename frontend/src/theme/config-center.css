@@ -203,6 +203,12 @@ html[data-qb-style="bauhaus"] [data-qb-config-center] summary {
   font-weight: 700;
 }
 
+html[data-qb-style="comic-book"] {
+  --qb-modal-bg: #fff;
+  --qb-modal-border: var(--qb-comic-ink, #000000);
+  --qb-modal-sep: color-mix(in srgb, var(--qb-comic-ink, #000000) 14%, transparent);
+}
+
 html[data-qb-style="comic-book"] [data-qb-config-center] .qb-config-stream-box,
 html[data-qb-style="comic-book"] [data-qb-config-center] details {
   border-width: 3px;
@@ -275,6 +281,7 @@ html[data-qb-style="glass-holographic"] {
   --qb-mcp-json-bg: rgba(12, 18, 30, 0.9);
   --qb-modal-bg: rgba(10, 14, 26, 0.94);
   --qb-modal-border: rgba(167, 139, 250, 0.32);
+  --qb-modal-sep: rgba(167, 139, 250, 0.22);
   --qb-pill-ok-bg: rgba(139, 92, 246, 0.22);
   --qb-pill-error-bg: rgba(232, 121, 249, 0.2);
   --qb-config-error-bg: rgba(248, 113, 113, 0.2);
@@ -354,6 +361,7 @@ html[data-qb-style="hand-drawn-fabric"] {
   --qb-mcp-json-border: rgba(98, 82, 64, 0.26);
   --qb-modal-bg: rgba(255, 252, 248, 0.95);
   --qb-modal-border: rgba(98, 82, 64, 0.32);
+  --qb-modal-sep: rgba(98, 82, 64, 0.18);
   --qb-pill-ok-bg: var(--qb-fabric-sage, #dde8dc);
   --qb-pill-ok-fg: var(--qb-fabric-ink, #3d3832);
   --qb-pill-warn-bg: #f3e8d8;
@@ -405,6 +413,9 @@ html[data-qb-style="hand-drawn-fabric"] [data-qb-config-center] .qb-config-hint 
 /* Ambient 3D */
 html[data-qb-style="ambient-3d"] {
   color-scheme: dark;
+  --qb-modal-bg: var(--qb-a3d-glass-bg-raised, rgba(15, 23, 42, 0.85));
+  --qb-modal-border: var(--qb-a3d-glass-border, rgba(255, 255, 255, 0.14));
+  --qb-modal-sep: var(--qb-a3d-glass-border, rgba(255, 255, 255, 0.1));
 }
 
 html[data-qb-style="ambient-3d"] [data-qb-config-center] .qb-config-stream-box,
@@ -437,6 +448,9 @@ html[data-qb-style="ambient-3d"] [data-qb-config-center] summary {
 /* Biophilic */
 html[data-qb-style="biophilic"] {
   color-scheme: light;
+  --qb-modal-bg: var(--qb-bio-paper, #faf9f6);
+  --qb-modal-border: color-mix(in srgb, var(--qb-bio-ink, #1a241c) 18%, transparent);
+  --qb-modal-sep: color-mix(in srgb, var(--qb-bio-ink, #1a241c) 14%, transparent);
 }
 
 html[data-qb-style="biophilic"] [data-qb-config-center] .qb-config-stream-box,
@@ -470,4 +484,29 @@ html[data-qb-style="biophilic"] [data-qb-config-center] summary {
 
 html[data-qb-style="biophilic"] [data-qb-config-center] .qb-config-hint {
   color: var(--qb-bio-ink-muted);
+}
+
+/* Retro Futurism / Industrial / Neon Cyberpunk / Sci-Fi HUD：保持深色，但用主题专色描边 */
+html[data-qb-style="retro-futurism"] {
+  --qb-modal-bg: #050912;
+  --qb-modal-border: rgba(0, 229, 255, 0.4);
+  --qb-modal-sep: rgba(0, 229, 255, 0.2);
+}
+
+html[data-qb-style="industrial"] {
+  --qb-modal-bg: var(--qb-ind-panel, #141414);
+  --qb-modal-border: var(--qb-ind-border, rgba(255, 255, 255, 0.15));
+  --qb-modal-sep: var(--qb-ind-border, rgba(255, 255, 255, 0.1));
+}
+
+html[data-qb-style="neon-cyberpunk"] {
+  --qb-modal-bg: rgba(15, 5, 35, 0.96);
+  --qb-modal-border: rgba(255, 0, 255, 0.35);
+  --qb-modal-sep: rgba(255, 0, 255, 0.18);
+}
+
+html[data-qb-style="sci-fi-hud"] {
+  --qb-modal-bg: rgba(8, 14, 26, 0.96);
+  --qb-modal-border: rgba(0, 200, 255, 0.32);
+  --qb-modal-sep: rgba(0, 200, 255, 0.16);
 }
