@@ -5,6 +5,12 @@
  *   - 按 kind 分组列出所有 Provider（factor_compute / factor_eval / rule_engine / backtest / ...）
  *   - 支持 enable/disable、priority 调整、健康检查
  *
+ * 样式约定：
+ *   - 所有颜色走 CSS 变量（--qb-body-fg / --qb-main-panel-bg / --qb-sidebar-border /
+ *     --qb-config-table-* / --qb-pill-*），跨风格 (dark / light / glass / biophilic / industrial …)
+ *     自动适配；不再写死 #1a1a1c 这类深色 fallback
+ *   - 按钮复用 .qb-btn-secondary / .qb-btn-primary-brand 等全局类
+ *
  * 参考 docs/FACTOR_RULE_STRATEGY_DESIGN.md §5.4 §7.7
  */
 
@@ -141,14 +147,19 @@ export const ProvidersPanel: FC = () => {
               </option>
             ))}
           </select>
-          <button type="button" onClick={() => void reload()} disabled={busy} style={styles.btn}>
+          <button
+            type="button"
+            className="qb-btn-secondary"
+            onClick={() => void reload()}
+            disabled={busy}
+          >
             刷新
           </button>
           <button
             type="button"
+            className="qb-btn-secondary"
             onClick={() => void refreshHealth()}
             disabled={busy}
-            style={styles.btn}
           >
             健康检查
           </button>
@@ -171,112 +182,116 @@ export const ProvidersPanel: FC = () => {
               {rows.length === 0 ? (
                 <div style={styles.empty}>暂无注册</div>
               ) : (
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.thLeft}>providerKey</th>
-                      <th style={styles.thLeft}>显示名 / 版本</th>
-                      <th>状态</th>
-                      <th>priority</th>
-                      <th>健康</th>
-                      <th style={styles.thLeft}>能力</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((p) => {
-                      const h = healthByKey[`${p.kind}|${p.providerKey}`];
-                      const cap = p.capability as { features?: string[] } | null;
-                      const features = cap?.features ?? [];
-                      return (
-                        <tr key={p.id}>
-                          <td style={styles.tdMono}>
-                            {p.providerKey}
-                            {p.isFallback ? <span style={styles.fallback}>· fallback</span> : null}
-                            {p.isBuiltin ? <span style={styles.builtin}>· builtin</span> : null}
-                          </td>
-                          <td style={styles.tdLeft}>
-                            <div style={styles.cellTitle}>{p.displayName}</div>
-                            <div style={styles.cellSub}>v{p.version}</div>
-                          </td>
-                          <td style={styles.tdCenter}>
-                            <span
-                              style={{
-                                ...styles.statusPill,
-                                background:
-                                  p.status === "enabled" ? "rgba(16,185,129,.15)" : "rgba(239,68,68,.15)",
-                                color: p.status === "enabled" ? "#10b981" : "#ef4444",
-                              }}
-                            >
-                              {p.status}
-                            </span>
-                          </td>
-                          <td style={styles.tdCenter}>
-                            <div style={styles.priorityRow}>
-                              <button
-                                style={styles.priBtn}
-                                onClick={() => void bumpPriority(p, -5)}
-                                disabled={busy}
-                                aria-label="降低 priority"
-                              >
-                                −
-                              </button>
-                              <span style={styles.priorityValue}>{p.priority}</span>
-                              <button
-                                style={styles.priBtn}
-                                onClick={() => void bumpPriority(p, +5)}
-                                disabled={busy}
-                                aria-label="提高 priority"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </td>
-                          <td style={styles.tdCenter}>
-                            {h ? (
-                              h.ok ? (
-                                <span style={{ color: "#10b981" }}>OK{h.latencyMs ? ` · ${h.latencyMs}ms` : ""}</span>
-                              ) : (
-                                <span style={{ color: "#ef4444" }} title={h.error}>
-                                  failed
-                                </span>
-                              )
-                            ) : (
-                              <span style={{ color: "#a1a1aa" }}>—</span>
-                            )}
-                          </td>
-                          <td style={styles.tdLeft}>
-                            <div style={styles.featuresRow}>
-                              {features.slice(0, 5).map((f) => (
-                                <span key={f} style={styles.featurePill}>
-                                  {f}
-                                </span>
-                              ))}
-                              {features.length > 5 ? (
-                                <span style={styles.cellSub}>+{features.length - 5}</span>
-                              ) : null}
-                            </div>
-                            {p.description ? (
-                              <div style={styles.cellSub} title={p.description}>
-                                {p.description.slice(0, 80)}
-                                {p.description.length > 80 ? "…" : ""}
+                <div style={styles.tableWrap}>
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.thLeft}>providerKey</th>
+                        <th style={styles.thLeft}>显示名 / 版本</th>
+                        <th style={styles.thCenter}>状态</th>
+                        <th style={styles.thCenter}>priority</th>
+                        <th style={styles.thCenter}>健康</th>
+                        <th style={styles.thLeft}>能力</th>
+                        <th style={styles.thCenter}>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((p) => {
+                        const h = healthByKey[`${p.kind}|${p.providerKey}`];
+                        const cap = p.capability as { features?: string[] } | null;
+                        const features = cap?.features ?? [];
+                        const statusPill =
+                          p.status === "enabled"
+                            ? { background: "var(--qb-pill-success-bg)", color: "var(--qb-pill-success-fg)" }
+                            : { background: "var(--qb-pill-disabled-bg)", color: "var(--qb-pill-disabled-fg)" };
+                        return (
+                          <tr key={p.id} style={styles.tr}>
+                            <td style={styles.tdMono}>
+                              {p.providerKey}
+                              {p.isFallback ? <span style={styles.fallback}>· fallback</span> : null}
+                              {p.isBuiltin ? <span style={styles.builtin}>· builtin</span> : null}
+                            </td>
+                            <td style={styles.tdLeft}>
+                              <div style={styles.cellTitle}>{p.displayName}</div>
+                              <div style={styles.cellSub}>v{p.version}</div>
+                            </td>
+                            <td style={styles.tdCenter}>
+                              <span style={{ ...styles.statusPill, ...statusPill }}>{p.status}</span>
+                            </td>
+                            <td style={styles.tdCenter}>
+                              <div style={styles.priorityRow}>
+                                <button
+                                  type="button"
+                                  className="qb-btn-secondary"
+                                  style={styles.priBtn}
+                                  onClick={() => void bumpPriority(p, -5)}
+                                  disabled={busy}
+                                  aria-label="降低 priority"
+                                >
+                                  −
+                                </button>
+                                <span style={styles.priorityValue}>{p.priority}</span>
+                                <button
+                                  type="button"
+                                  className="qb-btn-secondary"
+                                  style={styles.priBtn}
+                                  onClick={() => void bumpPriority(p, +5)}
+                                  disabled={busy}
+                                  aria-label="提高 priority"
+                                >
+                                  +
+                                </button>
                               </div>
-                            ) : null}
-                          </td>
-                          <td style={styles.tdCenter}>
-                            <button
-                              style={styles.btn}
-                              disabled={busy}
-                              onClick={() => void togglesStatus(p)}
-                            >
-                              {p.status === "enabled" ? "disable" : "enable"}
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                            </td>
+                            <td style={styles.tdCenter}>
+                              {h ? (
+                                h.ok ? (
+                                  <span style={styles.healthOk}>
+                                    OK{h.latencyMs ? ` · ${h.latencyMs}ms` : ""}
+                                  </span>
+                                ) : (
+                                  <span style={styles.healthFail} title={h.error}>
+                                    failed
+                                  </span>
+                                )
+                              ) : (
+                                <span style={styles.healthNone}>—</span>
+                              )}
+                            </td>
+                            <td style={styles.tdLeft}>
+                              <div style={styles.featuresRow}>
+                                {features.slice(0, 5).map((f) => (
+                                  <span key={f} style={styles.featurePill}>
+                                    {f}
+                                  </span>
+                                ))}
+                                {features.length > 5 ? (
+                                  <span style={styles.cellSub}>+{features.length - 5}</span>
+                                ) : null}
+                              </div>
+                              {p.description ? (
+                                <div style={styles.cellSub} title={p.description}>
+                                  {p.description.slice(0, 80)}
+                                  {p.description.length > 80 ? "…" : ""}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td style={styles.tdCenter}>
+                              <button
+                                type="button"
+                                className="qb-btn-secondary"
+                                disabled={busy}
+                                onClick={() => void togglesStatus(p)}
+                              >
+                                {p.status === "enabled" ? "disable" : "enable"}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </section>
           );
@@ -287,7 +302,13 @@ export const ProvidersPanel: FC = () => {
 };
 
 const styles: Record<string, CSSProperties> = {
-  shell: { padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 },
+  shell: {
+    padding: "16px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+    color: "var(--qb-body-fg, inherit)",
+  },
   header: {
     display: "flex",
     alignItems: "flex-start",
@@ -295,98 +316,172 @@ const styles: Record<string, CSSProperties> = {
     gap: 16,
     flexWrap: "wrap",
   },
-  title: { fontSize: 16, fontWeight: 600 },
-  subtitle: { fontSize: 12, opacity: 0.7, marginTop: 4, maxWidth: 720 },
-  actions: { display: "flex", gap: 8, alignItems: "center" },
+  title: {
+    fontSize: 16,
+    fontWeight: 600,
+    color: "var(--qb-body-fg, inherit)",
+  },
+  subtitle: {
+    fontSize: 12,
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+    marginTop: 4,
+    maxWidth: 720,
+    lineHeight: 1.6,
+  },
+  actions: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" },
   select: {
     padding: "6px 10px",
     borderRadius: 6,
-    background: "var(--qb-bg-elev, #1c1c1f)",
-    color: "inherit",
-    border: "1px solid var(--qb-border, #303035)",
+    background: "var(--qb-input-bg, var(--qb-main-panel-bg, transparent))",
+    color: "var(--qb-body-fg, inherit)",
+    border: "1px solid var(--qb-sidebar-border, var(--qb-border, rgba(127,127,127,0.3)))",
     fontSize: 12,
-  },
-  btn: {
-    padding: "6px 12px",
-    fontSize: 12,
-    borderRadius: 6,
-    background: "var(--qb-bg-elev, #2a2a30)",
-    color: "inherit",
-    border: "1px solid var(--qb-border, #404048)",
-    cursor: "pointer",
   },
   error: {
     padding: "8px 12px",
     borderRadius: 6,
-    background: "rgba(239,68,68,.15)",
-    color: "#fca5a5",
+    background: "var(--qb-config-error-bg, rgba(239,68,68,.15))",
+    color: "var(--qb-config-error-fg, #b91c1c)",
+    border: "1px solid var(--qb-config-error-border, rgba(239,68,68,.35))",
     fontSize: 12,
   },
   ok: {
     padding: "8px 12px",
     borderRadius: 6,
-    background: "rgba(16,185,129,.15)",
-    color: "#a7f3d0",
+    background: "var(--qb-pill-success-bg, rgba(16,185,129,.15))",
+    color: "var(--qb-pill-success-fg, #047857)",
+    border: "1px solid var(--qb-sidebar-border, transparent)",
     fontSize: 12,
   },
   kindsCol: { display: "flex", flexDirection: "column", gap: 16 },
   kindSection: {
-    border: "1px solid var(--qb-border, #303035)",
+    border: "1px solid var(--qb-sidebar-border, var(--qb-border, rgba(127,127,127,0.3)))",
     borderRadius: 8,
     padding: 12,
-    background: "var(--qb-bg-elev, #1a1a1c)",
+    background: "var(--qb-card-bg, var(--qb-main-panel-bg, transparent))",
   },
-  kindHeader: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 },
+  kindHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+    color: "var(--qb-body-fg, inherit)",
+  },
   kindBadge: {
     padding: "2px 8px",
     borderRadius: 4,
-    background: "rgba(96,165,250,.15)",
-    color: "#93c5fd",
+    background: "var(--qb-pill-info-bg, rgba(96,165,250,.15))",
+    color: "var(--qb-pill-info-fg, #1d4ed8)",
     fontSize: 12,
     fontWeight: 600,
   },
-  kindKey: { fontFamily: "ui-monospace, monospace", fontSize: 11, opacity: 0.6 },
-  kindCount: { fontSize: 11, opacity: 0.5, marginLeft: "auto" },
-  empty: { padding: "16px", textAlign: "center", opacity: 0.5, fontSize: 12 },
-  table: { width: "100%", fontSize: 12, borderCollapse: "collapse" },
-  thLeft: { textAlign: "left", padding: "6px 8px", fontWeight: 500, opacity: 0.7 },
+  kindKey: {
+    fontFamily: "ui-monospace, monospace",
+    fontSize: 11,
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+  },
+  kindCount: {
+    fontSize: 11,
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+    marginLeft: "auto",
+  },
+  empty: {
+    padding: 16,
+    textAlign: "center",
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+    fontSize: 12,
+  },
+  tableWrap: { width: "100%", overflowX: "auto" },
+  table: {
+    width: "100%",
+    fontSize: 12,
+    borderCollapse: "collapse",
+    color: "var(--qb-config-table-row-fg, var(--qb-body-fg, inherit))",
+  },
+  tr: {
+    borderTop: "1px solid var(--qb-config-table-border, var(--qb-sidebar-border, rgba(127,127,127,0.2)))",
+  },
+  thLeft: {
+    textAlign: "left",
+    padding: "8px",
+    fontWeight: 500,
+    color: "var(--qb-config-table-header-fg, var(--qb-main-meta, var(--qb-muted-fg, #71717a)))",
+    borderBottom: "1px solid var(--qb-config-table-border, var(--qb-sidebar-border, rgba(127,127,127,0.2)))",
+  },
+  thCenter: {
+    textAlign: "center",
+    padding: "8px",
+    fontWeight: 500,
+    color: "var(--qb-config-table-header-fg, var(--qb-main-meta, var(--qb-muted-fg, #71717a)))",
+    borderBottom: "1px solid var(--qb-config-table-border, var(--qb-sidebar-border, rgba(127,127,127,0.2)))",
+  },
   tdMono: {
     padding: "8px",
     fontFamily: "ui-monospace, monospace",
     fontSize: 12,
     whiteSpace: "nowrap",
+    color: "var(--qb-body-fg, inherit)",
   },
-  tdLeft: { padding: "8px", verticalAlign: "top" },
-  tdCenter: { padding: "8px", verticalAlign: "middle", textAlign: "center" },
-  cellTitle: { fontSize: 12, fontWeight: 500 },
-  cellSub: { fontSize: 11, opacity: 0.6, marginTop: 2 },
-  fallback: { fontSize: 10, opacity: 0.6, marginLeft: 6 },
-  builtin: { fontSize: 10, opacity: 0.6, marginLeft: 6 },
+  tdLeft: { padding: "8px", verticalAlign: "top", color: "var(--qb-body-fg, inherit)" },
+  tdCenter: {
+    padding: "8px",
+    verticalAlign: "middle",
+    textAlign: "center",
+    color: "var(--qb-body-fg, inherit)",
+  },
+  cellTitle: { fontSize: 12, fontWeight: 500, color: "var(--qb-body-fg, inherit)" },
+  cellSub: {
+    fontSize: 11,
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+    marginTop: 2,
+  },
+  fallback: {
+    fontSize: 10,
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+    marginLeft: 6,
+  },
+  builtin: {
+    fontSize: 10,
+    color: "var(--qb-main-meta, var(--qb-muted-fg, #71717a))",
+    marginLeft: 6,
+  },
   statusPill: {
     padding: "2px 8px",
     borderRadius: 999,
     fontSize: 11,
     fontWeight: 500,
+    display: "inline-block",
+    minWidth: 56,
+    textAlign: "center",
   },
   priorityRow: { display: "inline-flex", gap: 6, alignItems: "center" },
   priBtn: {
-    width: 22,
-    height: 22,
+    width: 24,
+    height: 24,
+    padding: 0,
     borderRadius: 4,
-    background: "var(--qb-bg-elev, #2a2a30)",
-    color: "inherit",
-    border: "1px solid var(--qb-border, #404048)",
-    cursor: "pointer",
     fontSize: 13,
     lineHeight: 1,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  priorityValue: { fontFamily: "ui-monospace, monospace", minWidth: 28, textAlign: "center" },
+  priorityValue: {
+    fontFamily: "ui-monospace, monospace",
+    minWidth: 28,
+    textAlign: "center",
+    color: "var(--qb-body-fg, inherit)",
+  },
+  healthOk: { color: "var(--qb-pill-success-fg, #047857)", fontWeight: 500 },
+  healthFail: { color: "var(--qb-pill-error-fg, #b91c1c)", fontWeight: 500 },
+  healthNone: { color: "var(--qb-main-meta, var(--qb-muted-fg, #a1a1aa))" },
   featuresRow: { display: "flex", flexWrap: "wrap", gap: 4 },
   featurePill: {
     padding: "1px 6px",
     borderRadius: 4,
-    background: "rgba(148,163,184,.15)",
-    color: "#cbd5e1",
+    background: "var(--qb-pill-muted-bg, rgba(148,163,184,.15))",
+    color: "var(--qb-pill-muted-fg, var(--qb-body-fg, #475569))",
+    border: "1px solid var(--qb-sidebar-border, transparent)",
     fontSize: 10,
     fontFamily: "ui-monospace, monospace",
   },

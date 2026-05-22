@@ -2045,6 +2045,7 @@ const ConfigPanel: FC = () => {
             ["mcp", "MCP"],
             ["skills", "Skills"],
             ["agent", "Agent"],
+            ["providers", "Providers"],
             ["integration", "集成 / IM"],
             ["schedule", "定时任务"],
             ["runtime", "运行时"],
