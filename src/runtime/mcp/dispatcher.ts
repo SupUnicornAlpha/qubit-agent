@@ -3,6 +3,7 @@ import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig, mcpToolBinding } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
 import { callMcpHttpTool, httpEndpointFromServer, httpHeadersFromCaps } from "./http-transport";
+import { resolveMcpStdioArgv } from "./package-manager";
 import { callMcpStdioTool, stdioArgvFromServer } from "./stdio-session";
 import { callMcpWsTool } from "./ws-transport";
 
@@ -172,7 +173,13 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
 
       let result: unknown;
       if (server.transport === "stdio") {
-        const argv = stdioArgvFromServer(server.command, caps);
+        const rawArgv = stdioArgvFromServer(server.command, caps);
+        /*
+         * 把 `npx -y pkg@ver` 替换成绝对路径的 .bin。首次会触发 npm install 到
+         * <dataDir>/mcp-bin，后续直接秒级启动。失败时 fallback 原 argv，让旧的
+         * npx 行为继续可用（package-manager 内部已 console.warn 给运维定位）。
+         */
+        const resolved = await resolveMcpStdioArgv(rawArgv);
         const envObj = asRecord(asRecord(caps).env);
         const env: Record<string, string> = {};
         for (const [k, v] of Object.entries(envObj)) {
@@ -181,7 +188,7 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
         const cwd = typeof asRecord(caps).cwd === "string" ? (asRecord(caps).cwd as string) : undefined;
         result = await callMcpStdioTool({
           serverKey: input.serverName,
-          argv,
+          argv: resolved.argv,
           env,
           cwd,
           requestTimeoutMs: timeoutMs,
