@@ -67,6 +67,7 @@ import {
   processWorkflowCompensations,
   evolveGenePool,
   runAnalystTeam,
+  AnalystJobPollError,
   runScreener,
   executeIntentConfirmed,
   saveModelConfig,
@@ -4136,6 +4137,89 @@ const TeamDashboardPanel: FC = () => {
     return mergedLiveFeedRows;
   }, [graphSelection, graphEdgeDetail, mergedLiveFeedRows]);
 
+  /**
+   * 结构化版本的对话事件，用于 IM 风格渲染。
+   * - 边筛选下：只取该边上的消息。
+   * - 全局视图：合并 interactions + 辩论事件，按 ts 排序后取最近 200 条。
+   */
+  const displayedLiveFeedEvents = useMemo<LiveConversationEvent[]>(() => {
+    const events: LiveConversationEvent[] = [];
+    if (graphSelection?.kind === "edge" && graphEdgeDetail) {
+      for (const row of graphEdgeDetail.messages) {
+        events.push({
+          kind: "message",
+          id: `edge-i-${row.id}`,
+          ts: row.createdAt,
+          fromRole: row.fromRole,
+          toRole: row.toRole,
+          messageKind: row.kind,
+          toolName: row.toolName,
+          contentText: row.contentText,
+        });
+      }
+      return events;
+    }
+    const allow = participatingAnalystRoles.length > 0 ? new Set(participatingAnalystRoles) : null;
+    for (const row of teamGraph?.interactions ?? []) {
+      if (allow && !allow.has(row.fromRole) && !allow.has(row.toRole)) continue;
+      events.push({
+        kind: "message",
+        id: `i-${row.id}`,
+        ts: row.createdAt,
+        fromRole: row.fromRole,
+        toRole: row.toRole,
+        messageKind: row.kind,
+        toolName: row.toolName,
+        contentText: row.contentText,
+      });
+    }
+    liveDebateEvents.forEach((ev, i) => {
+      const p = (ev.payload ?? {}) as {
+        topic?: string;
+        maxRounds?: number;
+        roundNumber?: number;
+        speakerRole?: string;
+        statement?: string;
+        stance?: string;
+        reasoning?: string;
+        finalStance?: string;
+        verdict?: string;
+      };
+      let text = "";
+      switch (ev.type) {
+        case "debate_start":
+          text = `${String(p.topic ?? "").slice(0, 200)}（最多 ${p.maxRounds ?? "?"} 轮）`;
+          break;
+        case "debate_turn":
+          text = String(p.statement ?? "").slice(0, 1200);
+          break;
+        case "debate_verdict":
+          text = `${String(p.finalStance ?? "")} / ${String(p.verdict ?? "")}\n${String(
+            p.reasoning ?? ""
+          ).slice(0, 800)}`;
+          break;
+        case "debate_end":
+          text = "";
+          break;
+        default:
+          text = JSON.stringify(p).slice(0, 400);
+      }
+      events.push({
+        kind: "debate",
+        id: `d-${i}-${ev.ts}-${ev.type}`,
+        ts: new Date(ev.ts).toISOString(),
+        debateType: ev.type,
+        speakerRole: p.speakerRole ?? null,
+        round: p.roundNumber ?? null,
+        stance: p.stance ?? null,
+        text,
+      });
+    });
+    return events
+      .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
+      .slice(-200);
+  }, [graphSelection, graphEdgeDetail, teamGraph, participatingAnalystRoles, liveDebateEvents]);
+
   useEffect(() => {
     const el = liveFeedScrollRef.current;
     if (!el || activeTab !== "research") return;
@@ -4426,6 +4510,27 @@ const TeamDashboardPanel: FC = () => {
 
   const [runProgress, setRunProgress] = useState<string>("");
 
+  /**
+   * 「等待上限（分钟）」：前端轮询多久后停止等待。注意：超时后**后端任务仍在运行**，
+   * 只是前端不再等结果；用户可在拓扑/对话流刷新查看，或调大上限重新启动。
+   * 0 表示「不超时」，一直轮询直到完成 / 失败 / 用户点击「停止等待」。
+   */
+  const [pollTimeoutMin, setPollTimeoutMin] = useState<number>(() => {
+    if (typeof window === "undefined") return 30;
+    const raw = window.localStorage.getItem("qb.analyst-poll-timeout-min");
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0) return n;
+    return 30;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("qb.analyst-poll-timeout-min", String(pollTimeoutMin));
+  }, [pollTimeoutMin]);
+  const pollAbortRef = useRef<AbortController | null>(null);
+  const handleStopWaiting = () => {
+    pollAbortRef.current?.abort();
+  };
+
   const handleRun = async () => {
     if (!researchScopePayload) return;
     setError(null);
@@ -4451,7 +4556,9 @@ const TeamDashboardPanel: FC = () => {
         onError: () => {},
       });
       void loadTeamGraph({ preserveSelection: true });
-      // 使用异步轮询，避免浏览器 60s 系统级超时
+      const abortCtl = new AbortController();
+      pollAbortRef.current = abortCtl;
+      const timeoutMs = pollTimeoutMin > 0 ? pollTimeoutMin * 60_000 : 0;
       const res = await runAnalystTeam({
         workflowRunId: wfId,
         ticker: researchScopePayload.symbols?.[0] ?? ticker.trim(),
@@ -4460,9 +4567,14 @@ const TeamDashboardPanel: FC = () => {
         agentGroupId: analystAgentGroupId.trim() || undefined,
         analystDefinitionIds:
           participatingAnalystDefinitionIds.length > 0 ? participatingAnalystDefinitionIds : undefined,
+        timeoutMs,
+        signal: abortCtl.signal,
         onProgress: (elapsedMs) => {
           const secs = Math.floor(elapsedMs / 1000);
-          setRunProgress(`分析进行中… 已用时 ${secs}s（多 Agent LLM 推理，请耐心等待）`);
+          const limitText = pollTimeoutMin > 0 ? `（等待上限 ${pollTimeoutMin}m）` : "（不限时）";
+          setRunProgress(
+            `分析进行中… 已用时 ${secs}s${limitText} · 多 Agent LLM 推理，请耐心等待`
+          );
         },
       });
       unsubscribe();
@@ -4487,9 +4599,20 @@ const TeamDashboardPanel: FC = () => {
       const vetoLogs = await getRiskVetoLogs(wfId);
       setRiskVetoLogs(vetoLogs);
     } catch (e) {
-      setError((e as Error).message);
-      setRunProgress("");
+      if (e instanceof AnalystJobPollError && (e.reason === "timeout" || e.reason === "aborted")) {
+        // 这两种都不算"任务失败"——后端可能还在跑，只是前端不再等了。
+        setError(e.message);
+        setRunProgress(
+          e.reason === "aborted"
+            ? "已停止等待（任务可能仍在后台运行；可在拓扑/对话流刷新查看）"
+            : `等待上限 ${pollTimeoutMin}m 已到（任务可能仍在后台运行；可调大上限或刷新查看）`
+        );
+      } else {
+        setError((e as Error).message);
+        setRunProgress("");
+      }
     } finally {
+      pollAbortRef.current = null;
       setRunning(false);
     }
   };
@@ -5185,16 +5308,87 @@ const TeamDashboardPanel: FC = () => {
               </div>
             </div>
           ) : null}
-          <button
-            type="button"
-            className="qb-btn-primary-brand"
-            style={{ marginTop: 12, width: "100%" }}
-            onClick={handleRun}
-            disabled={teamRunDisabled}
-            title={teamRunDisabledTitle}
+          <div
+            style={{
+              marginTop: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              flexWrap: "wrap",
+              fontSize: 11,
+              color: "var(--qb-team-meta, #a1a1aa)",
+            }}
           >
-            {running ? "分析中…" : "启动团队分析"}
-          </button>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              等待上限
+              <input
+                type="number"
+                min={0}
+                max={720}
+                step={5}
+                value={pollTimeoutMin}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setPollTimeoutMin(Number.isFinite(n) && n >= 0 ? n : 0);
+                }}
+                style={{
+                  width: 56,
+                  padding: "2px 6px",
+                  background: "transparent",
+                  color: "#e4e4e7",
+                  border: "1px solid #3f3f46",
+                  borderRadius: 4,
+                  fontSize: 11,
+                }}
+                title="前端等多少分钟还没结果就停止轮询。后端任务不受影响，仍会跑完并落库。0 = 不超时。"
+              />
+              分钟
+            </label>
+            {[15, 30, 60, 120, 0].map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setPollTimeoutMin(m)}
+                style={{
+                  padding: "2px 8px",
+                  fontSize: 11,
+                  background: pollTimeoutMin === m ? "#27272a" : "transparent",
+                  color: pollTimeoutMin === m ? "#f4f4f5" : "#a1a1aa",
+                  border: "1px solid #3f3f46",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                }}
+              >
+                {m === 0 ? "不超时" : `${m}m`}
+              </button>
+            ))}
+            <span style={{ marginLeft: "auto", color: "#71717a" }}>
+              超时只是不再轮询，后端任务仍会继续
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              style={{ flex: 1 }}
+              onClick={handleRun}
+              disabled={teamRunDisabled}
+              title={teamRunDisabledTitle}
+            >
+              {running ? "分析中…" : "启动团队分析"}
+            </button>
+            {running ? (
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                style={{ fontSize: 12, padding: "6px 12px" }}
+                onClick={handleStopWaiting}
+                title="立即停止前端轮询。后端任务不会被中断；如需中断请用「取消当前工作流」"
+              >
+                停止等待
+              </button>
+            ) : null}
+          </div>
           {running && runProgress && (
             <div
               style={{
@@ -5867,191 +6061,96 @@ const TeamDashboardPanel: FC = () => {
                   </button>
                 </div>
               ) : null}
-              <div
-                style={{
-                  marginTop: 14,
-                  flex: "1 1 0",
-                  minHeight: 180,
-                  maxHeight: "min(42vh, 420px)",
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                }}
-              >
-                <div style={{ ...teamStyles.sectionTitle, marginBottom: 6, flexShrink: 0 }}>
-                  实时对话流
-                  {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
-                  {running ? " · 自动刷新" : ""}
-                </div>
-                <div
-                  ref={liveFeedScrollRef}
-                  data-qb-team-live-feed
-                  className="qb-team-live-feed-scroll"
+              <div style={{ marginTop: 14 }}>
+                <ResizableY
+                  defaultHeight={360}
+                  minHeight={200}
+                  maxHeight={1200}
+                  storageKey="qb.live-feed-h"
                   style={{
-                    flex: "1 1 0",
-                    minHeight: 0,
-                    overflowY: "auto",
-                    overflowX: "hidden",
-                    background: "var(--qb-team-live-feed-bg, #08080a)",
-                    border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                    border: "1px solid #2a2a30",
                     borderRadius: 8,
-                    padding: 10,
-                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                    fontSize: 11,
-                    lineHeight: 1.45,
-                    color: "var(--qb-team-live-feed-fg, #d4d4d8)",
-                    whiteSpace: "pre-wrap",
+                    background: "#08080a",
                   }}
                 >
-                  {displayedLiveFeedRows.length === 0 ? (
-                    <span style={{ color: "#71717a" }}>
-                      {graphSelection?.kind === "edge"
-                        ? "该连线暂无对话记录。"
-                        : running
-                          ? "等待各分析师与系统写入交互记录（轮询中）…"
-                          : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"}
-                    </span>
-                  ) : (
-                    displayedLiveFeedRows.map((row) => (
-                      <div
-                        key={row.key}
-                        style={{
-                          marginBottom: 10,
-                          paddingBottom: 8,
-                          borderBottom: "1px solid var(--qb-team-live-feed-row-border, #1a1a1f)",
-                          borderLeft: row.kind === "debate" ? "3px solid #7c3aed" : "3px solid #2563eb",
-                          paddingLeft: 8,
-                        }}
-                      >
-                        {row.body}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-              {graphSelection?.kind === "node" ? (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ ...teamStyles.sectionTitle, marginBottom: 6 }}>
-                    Agent 运行 · {graphSelection.role}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 8 }}>
-                    收到消息 {graphNodeDetail.inbound.length} 条 · 发出消息 {graphNodeDetail.outbound.length} 条 · 执行步{" "}
-                    {graphNodeDetail.steps.length} · 工具 {graphNodeDetail.tools.length} · MCP {graphNodeDetail.mcps.length}
-                  </div>
-                  {graphNodeDetail.tools.length === 0 && graphNodeDetail.mcps.length === 0 ? (
-                    <div style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
-                      暂无工具 / MCP 调用记录。
-                    </div>
-                  ) : (
-                    <div
+                  <div
+                    style={{
+                      ...teamStyles.sectionTitle,
+                      margin: 0,
+                      padding: "8px 10px",
+                      flexShrink: 0,
+                      borderBottom: "1px solid #2a2a30",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    实时对话流
+                    {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
+                    {running ? " · 自动刷新" : ""}
+                    <span
                       style={{
-                        maxHeight: 200,
-                        overflow: "auto",
+                        marginLeft: "auto",
                         fontSize: 10,
-                        color: "#d4d4d8",
-                        marginBottom: 8,
-                        fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+                        color: "#71717a",
+                        fontWeight: 400,
                       }}
                     >
-                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>工具 / MCP</div>
-                      {graphNodeDetail.tools.map((t) => (
-                        <details key={t.id} style={{ marginBottom: 6 }}>
-                          <summary
-                            style={{
-                              cursor: "pointer",
-                              color: t.status === "success" ? "#86efac" : "#f87171",
-                            }}
-                          >
-                            [{t.createdAt}] {t.toolKind} · {t.toolName} · {t.status === "success" ? "✓" : "✗"}{" "}
-                            {t.status}
-                            {t.latencyMs != null ? ` · ${t.latencyMs}ms` : ""}
-                          </summary>
-                          {t.errorMessage ? (
-                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#f87171" }}>
-                              {t.errorMessage}
-                            </pre>
-                          ) : null}
-                          {t.requestJson != null ? (
-                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#a1a1aa" }}>
-                              请求: {JSON.stringify(t.requestJson, null, 2).slice(0, 2000)}
-                            </pre>
-                          ) : null}
-                          {t.responseJson != null ? (
-                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#86efac" }}>
-                              结果: {JSON.stringify(t.responseJson, null, 2).slice(0, 3000)}
-                            </pre>
-                          ) : null}
-                        </details>
-                      ))}
-                      {graphNodeDetail.mcps.map((m) => (
-                        <details key={m.id} style={{ marginBottom: 6 }}>
-                          <summary
-                            style={{
-                              cursor: "pointer",
-                              color: m.status === "success" ? "#86efac" : "#f87171",
-                            }}
-                          >
-                            [MCP] {m.serverName}/{m.toolName} · {m.status === "success" ? "✓" : "✗"} {m.status}
-                            {m.latencyMs != null ? ` · ${m.latencyMs}ms` : ""}
-                          </summary>
-                        </details>
-                      ))}
-                    </div>
-                  )}
-                  {graphNodeDetail.inbound.length > 0 ? (
-                    <div style={{ maxHeight: 140, overflow: "auto", fontSize: 10, color: "#d4d4d8", marginBottom: 8 }}>
-                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>收到的消息</div>
-                      {graphNodeDetail.inbound.map((row) => (
-                        <div
-                          key={row.id}
-                          style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
-                        >
-                          <span style={{ color: "#93c5fd" }}>{row.fromRole} → {row.toRole}</span>
-                          <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
-                            {row.contentText.slice(0, 2000)}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {graphNodeDetail.outbound.length > 0 ? (
-                    <div style={{ maxHeight: 140, overflow: "auto", fontSize: 10, color: "#d4d4d8", marginBottom: 8 }}>
-                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>发出的消息</div>
-                      {graphNodeDetail.outbound.map((row) => (
-                        <div
-                          key={row.id}
-                          style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
-                        >
-                          <span style={{ color: "#fcd34d" }}>{row.fromRole} → {row.toRole}</span>
-                          <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
-                            {row.contentText.slice(0, 2000)}
-                          </pre>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {graphNodeDetail.steps.length > 0 ? (
-                    <div style={{ maxHeight: 160, overflow: "auto", fontSize: 10, color: "#d4d4d8", marginBottom: 8 }}>
-                      <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>执行轨迹（ReAct）</div>
-                      {graphNodeDetail.steps.map((s) => (
-                        <details key={s.id} style={{ marginBottom: 6 }}>
-                          <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
-                            [{s.createdAt}] {s.phase} · {s.actionType} · step {s.stepIndex}
-                          </summary>
-                          {s.thought ? (
-                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#a1a1aa" }}>
-                              {s.thought.slice(0, 2500)}
-                            </pre>
-                          ) : null}
-                          {s.observationJson != null && typeof s.observationJson === "object" ? (
-                            <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap", color: "#86efac" }}>
-                              {JSON.stringify(s.observationJson, null, 2).slice(0, 2000)}
-                            </pre>
-                          ) : null}
-                        </details>
-                      ))}
-                    </div>
-                  ) : null}
+                      拖底边调整高度
+                    </span>
+                  </div>
+                  <div
+                    ref={liveFeedScrollRef}
+                    data-qb-team-live-feed
+                    className="qb-team-live-feed-scroll"
+                    style={{
+                      flex: "1 1 0",
+                      minHeight: 0,
+                      overflowY: "auto",
+                      overflowX: "hidden",
+                      padding: 10,
+                      paddingBottom: 16,
+                    }}
+                  >
+                    <LiveConversationView
+                      events={displayedLiveFeedEvents}
+                      selfRole="orchestrator"
+                      contentMaxLength={4000}
+                      emptyText={
+                        graphSelection?.kind === "edge"
+                          ? "该连线暂无对话记录。"
+                          : running
+                            ? "等待各分析师与系统写入交互记录（轮询中）…"
+                            : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
+                      }
+                    />
+                  </div>
+                </ResizableY>
+              </div>
+              {graphSelection?.kind === "node" ? (
+                <div style={{ marginTop: 14 }}>
+                  <ResizableY
+                    defaultHeight={420}
+                    minHeight={220}
+                    maxHeight={1400}
+                    storageKey="qb.agent-run-h"
+                    style={{
+                      border: "1px solid #2a2a30",
+                      borderRadius: 8,
+                      background: "#08080a",
+                    }}
+                  >
+                    <AgentRunPanel
+                      data={{
+                        role: graphSelection.role,
+                        inbound: graphNodeDetail.inbound,
+                        outbound: graphNodeDetail.outbound,
+                        steps: graphNodeDetail.steps,
+                        tools: graphNodeDetail.tools,
+                        mcps: graphNodeDetail.mcps,
+                      }}
+                    />
+                  </ResizableY>
                 </div>
               ) : null}
               <div style={{ marginTop: 18, borderTop: "1px solid #2a2a30", paddingTop: 12 }}>

@@ -1032,16 +1032,53 @@ export async function startAnalystTeam(params: {
   return { jobId: res.jobId };
 }
 
-/** 轮询分析任务状态，直到完成或失败 */
+/**
+ * 轮询服务端 analyst job 状态，直到完成 / 失败 / 超时 / 调用方主动取消。
+ *
+ * 重要语义：
+ *  - 这里的 `timeoutMs` 是**前端轮询超时**，超时后只是不再发 GET，**后端任务仍在运行**，
+ *    结果会照常落库，可在「研究画布」刷新拓扑或重新轮询查看。
+ *  - `signal` 用于让调用方主动「停止等待」（同样不会终止后端任务）。
+ *  - 抛错时把 `jobId` 一并带在 message 里方便排查；调用方可通过 try/catch + jobId 自行决定后续动作。
+ */
+export class AnalystJobPollError extends Error {
+  jobId: string;
+  reason: "timeout" | "aborted" | "failed";
+  elapsedMs?: number;
+  constructor(opts: { message: string; jobId: string; reason: "timeout" | "aborted" | "failed"; elapsedMs?: number }) {
+    super(opts.message);
+    this.name = "AnalystJobPollError";
+    this.jobId = opts.jobId;
+    this.reason = opts.reason;
+    if (opts.elapsedMs !== undefined) this.elapsedMs = opts.elapsedMs;
+  }
+}
+
 export async function pollAnalystJob(
   jobId: string,
-  opts?: { intervalMs?: number; timeoutMs?: number; onProgress?: (elapsedMs: number) => void }
+  opts?: {
+    intervalMs?: number;
+    /** 默认 30 分钟。设置为 0 或负数表示不超时（直到完成 / 失败 / abort）。 */
+    timeoutMs?: number;
+    onProgress?: (elapsedMs: number) => void;
+    signal?: AbortSignal;
+  }
 ): Promise<AnalystTeamResult> {
   const intervalMs = opts?.intervalMs ?? 3000;
-  const timeoutMs = opts?.timeoutMs ?? 900_000; // 15 minutes
-  const deadline = Date.now() + timeoutMs;
+  const timeoutMs = opts?.timeoutMs ?? 1_800_000; // 30 分钟
+  const noTimeout = !Number.isFinite(timeoutMs) || timeoutMs <= 0;
+  const start = Date.now();
+  const deadline = noTimeout ? Number.POSITIVE_INFINITY : start + timeoutMs;
 
   while (Date.now() < deadline) {
+    if (opts?.signal?.aborted) {
+      throw new AnalystJobPollError({
+        message: `已停止等待（jobId=${jobId}）。后端任务可能仍在运行，结果将继续落库；可在拓扑/对话流刷新查看。`,
+        jobId,
+        reason: "aborted",
+        elapsedMs: Date.now() - start,
+      });
+    }
     const res = await httpGet<{
       ok: boolean;
       jobId: string;
@@ -1055,12 +1092,34 @@ export async function pollAnalystJob(
       return res.result;
     }
     if (res.status === "failed") {
-      throw new Error(res.error ?? "analyst team job failed");
+      throw new AnalystJobPollError({
+        message: res.error ?? "analyst team job failed",
+        jobId,
+        reason: "failed",
+        elapsedMs: res.elapsedMs,
+      });
     }
     opts?.onProgress?.(res.elapsedMs);
-    await new Promise((r) => setTimeout(r, intervalMs));
+    // 等下一轮，但中途也响应 abort
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, intervalMs);
+      opts?.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(t);
+          resolve();
+        },
+        { once: true }
+      );
+    });
   }
-  throw new Error("analyst team job timed out after 15 minutes");
+  const minutes = Math.round(timeoutMs / 60_000);
+  throw new AnalystJobPollError({
+    message: `前端轮询已超时（${minutes} 分钟未完成，jobId=${jobId}）。后端任务可能仍在运行，结果将继续落库；可在拓扑/对话流刷新查看，或下次启动前调大「等待上限」。`,
+    jobId,
+    reason: "timeout",
+    elapsedMs: Date.now() - start,
+  });
 }
 
 /** 保留旧名称向后兼容 */
@@ -1073,9 +1132,17 @@ export async function runAnalystTeam(params: {
   agentGroupId?: string;
   analystRoles?: string[];
   analystDefinitionIds?: string[];
+  /** 前端轮询超时（毫秒），<=0 表示不超时。默认 30 分钟。 */
+  timeoutMs?: number;
+  /** 主动停止等待。 */
+  signal?: AbortSignal;
 }): Promise<AnalystTeamResult> {
   const { jobId } = await startAnalystTeam(params);
-  return pollAnalystJob(jobId, { onProgress: params.onProgress });
+  return pollAnalystJob(jobId, {
+    onProgress: params.onProgress,
+    ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
+    ...(params.signal !== undefined ? { signal: params.signal } : {}),
+  });
 }
 
 export async function getAnalystSignals(workflowId: string): Promise<AnalystSignalRecord[]> {
