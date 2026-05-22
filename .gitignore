@@ -32,6 +32,7 @@ docs/*
 !docs/ARCHITECTURE.md
 !docs/QUANT_READINESS_ASSESSMENT.md
 !docs/FACTOR_RULE_STRATEGY_DESIGN.md
+!docs/AGENT_STABILITY_REVIEW.md
 .tmp-broker-test-home/
 
 # IDE metadata

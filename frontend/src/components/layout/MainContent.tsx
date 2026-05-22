@@ -5357,40 +5357,6 @@ const TeamDashboardPanel: FC = () => {
     await refreshBrokerAndComp();
   };
 
-  const loadLatestFusion = async () => {
-    if (!workflowRunId.trim()) {
-      setError("请先选择工作流");
-      return;
-    }
-    setError(null);
-    try {
-      const data = await getSignalFusion(workflowRunId);
-      if (!data) {
-        setError("数据库中暂无该工作流的融合记录");
-        return;
-      }
-      const d = data as unknown as AnalystTeamResult & {
-        signalBreakdown?: AnalystTeamResult["breakdown"];
-      };
-      setResult({
-        fusionId: d.fusionId,
-        ticker: d.ticker,
-        fusedSignal: d.fusedSignal,
-        fusedConfidence: d.fusedConfidence,
-        debateTriggered: d.debateTriggered,
-        breakdown: d.breakdown?.length ? d.breakdown : d.signalBreakdown ?? [],
-        report:
-          d.report?.trim() ||
-          "（从数据库恢复：仅含融合与分项信号，完整文字报告需重新「启动团队分析」。）",
-        debate: d.debate,
-        risk: d.risk,
-      });
-      setActiveTab("research");
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
   return (
     <div style={teamStyles.container}>
       <div data-qb-team-shell style={teamStyles.teamWorkbenchShell}>
@@ -6501,18 +6467,10 @@ const TeamDashboardPanel: FC = () => {
                 }}
               >
                 <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>分析结论</h3>
-                <div style={teamStyles.row}>
-                  <button
-                    type="button"
-                    className="qb-btn-secondary"
-                    onClick={() => void loadLatestFusion()}
-                    disabled={!workflowRunId}
-                  >
-                    从数据库加载融合结果
-                  </button>
-                </div>
                 {!result && (
-                  <div style={{ ...teamStyles.empty, marginTop: 8 }}>暂无结论；运行分析或从库加载。</div>
+                  <div style={{ ...teamStyles.empty, marginTop: 8 }}>
+                    暂无结论；切换工作流后会自动加载该工作流已落库的融合结果。
+                  </div>
                 )}
                 {result && (
                   <div style={{ marginTop: 10 }}>
@@ -6522,7 +6480,6 @@ const TeamDashboardPanel: FC = () => {
                       </span>
                       <div style={teamStyles.heroMeta}>
                         <span>置信度：{(result.fusedConfidence * 100).toFixed(0)}%</span>
-                        {result.debateTriggered ? <span style={teamStyles.debateTag}>⚠️ 建议触发辩论</span> : null}
                       </div>
                     </div>
                     <h3 style={teamStyles.sectionTitle}>多信号融合 (MSA)</h3>
@@ -6608,8 +6565,6 @@ const TeamDashboardPanel: FC = () => {
                         </div>
                       </>
                     ) : null}
-                    <h3 style={teamStyles.sectionTitle}>分析报告</h3>
-                    <pre style={teamStyles.report}>{result.report}</pre>
                   </div>
                 )}
               </div>
