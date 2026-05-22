@@ -19,6 +19,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { queryBarsRange } from "../../../market/klines-query";
+import { getPythonBin } from "../../../sandbox/python-runtime";
 import type { BarData } from "../../../../connectors/data/data.connector";
 import {
   type FactorComputeProvider,
@@ -82,9 +83,9 @@ export class QlibPythonFactorProvider implements FactorComputeProvider {
   }
 
   async healthCheck(): Promise<{ ok: boolean }> {
-    // 启动一个空 expr 来快速 ping；如果 python3 不可用直接 false
+    // 启动一个 --version 来快速 ping；走统一的 getPythonBin 以匹配 venv
     try {
-      const proc = Bun.spawn(["python3", "--version"], {
+      const proc = Bun.spawn([getPythonBin(), "--version"], {
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -188,7 +189,7 @@ export class QlibPythonFactorProvider implements FactorComputeProvider {
     expr: string;
     bars: RawBar[];
   }): Promise<PythonResponse> {
-    const proc = Bun.spawn(["python3", RUNNER_PATH], {
+    const proc = Bun.spawn([getPythonBin(), RUNNER_PATH], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",

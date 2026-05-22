@@ -5,10 +5,13 @@
  *
  * - 与 `runSmaCrossoverBacktest` 字段对齐（equityCurve / metrics.totalReturnPct 等），
  *   方便前端复用现有汇总语句。
- * - Python 解释器优先级：python3 → python（packaged 环境通常自带 python3）。
+ * - Python 解释器优先级：getPythonBin() → "python" 兜底。
+ *   getPythonBin 会按 QUBIT_PYTHON env → 资源 venv → 数据目录 venv → 系统 python3 解析，
+ *   保证与 bootstrap 创建的 venv 一致，避免落到没装 pandas 的系统 python。
  */
 import { resolve } from "node:path";
 import type { BarData } from "../../connectors/data/data.connector";
+import { getPythonBin } from "../sandbox/python-runtime";
 
 export interface StrategyBacktestInput {
   strategyCode: string;
@@ -103,9 +106,17 @@ async function runWithBinary(bin: string, input: StrategyBacktestInput): Promise
 export async function runPythonStrategyBacktest(
   input: StrategyBacktestInput
 ): Promise<StrategyBacktestResult> {
+  const primary = getPythonBin();
   try {
-    return await runWithBinary("python3", input);
+    return await runWithBinary(primary, input);
   } catch (e1) {
+    /*
+     * primary 已经覆盖了 venv → 系统 python3，再退一档到 "python"
+     * 仅用于 Windows / 某些极简镜像（python3 不存在但 python 是 3.x）的兜底。
+     */
+    if (primary === "python") {
+      throw e1;
+    }
     try {
       return await runWithBinary("python", input);
     } catch (e2) {

@@ -1,7 +1,7 @@
 /**
  * Python 沙箱执行 — TS 端胶水
  *
- * 协议：spawn `python3 python_connectors/code_sandbox_runner.py`，
+ * 协议：spawn `<python-bin> python_connectors/code_sandbox_runner.py`，
  * stdin 写 JSON，stdout 读 JSON，与 qlib_compute_runner 同风格。
  *
  * 调用方：runtime/tools/builtin-tools.ts 的 `code.run_python` handler，
@@ -11,11 +11,17 @@
  *   - 临时回归分析
  *
  * 安全约束在 Python 侧（受限 builtins + import 白名单 + audit hook + SIGALRM 超时）；
- * 这里 TS 侧仅做参数封装 + 超时 wall-clock 兜底 + spawn 失败优雅降级。
+ * 这里 TS 侧职责：
+ *   - 参数封装 + 超时 wall-clock 兜底
+ *   - 通过 `getPythonBin()` 解析解释器（优先 venv，避免落到系统 python 没有 pandas）
+ *   - 首次调用前调 `checkPythonHealth()` fail-fast，并把结构化错误码 + 修复建议
+ *     回传给上层（写入 tool_call_log.error_message），运维和 LLM 都能直接看到
+ *     "缺 pandas" 这种系统级故障而非一长串 ModuleNotFoundError trace。
  */
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkPythonHealth, getPythonBin } from "./python-runtime";
 
 const RUNNER_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -72,9 +78,29 @@ export async function runPythonSandbox(
     ...(req.returnVar ? { return_var: req.returnVar } : {}),
   };
 
+  /*
+   * 启动期自检：60s 内缓存。如果解释器不存在 / 缺 pandas / numpy，直接 fail-fast，
+   * 把 hint 透传给上层，避免把 sandbox runner 内部的 ModuleNotFoundError trace
+   * 当作"用户代码错误"误导 LLM。
+   */
+  const health = await checkPythonHealth();
+  if (!health.ok) {
+    return {
+      ok: false,
+      stdout: "",
+      result: null,
+      elapsedMs: 0,
+      rowsInResult: 0,
+      error: health.errorCode ?? "python_unavailable",
+      trace: health.hint ?? `python bin: ${health.binPath}`,
+    };
+  }
+
+  const pythonBin = getPythonBin();
+
   let proc: ReturnType<typeof Bun.spawn>;
   try {
-    proc = Bun.spawn(["python3", RUNNER_PATH], {
+    proc = Bun.spawn([pythonBin, RUNNER_PATH], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
@@ -91,8 +117,9 @@ export async function runPythonSandbox(
     };
   }
 
-  proc.stdin.write(JSON.stringify(payload));
-  proc.stdin.end();
+  const stdin = proc.stdin as { write: (data: string) => void; end: () => void };
+  stdin.write(JSON.stringify(payload));
+  stdin.end();
 
   const wallTimeoutMs = (payload.timeout_sec + 1) * 1000 + WALL_CLOCK_BUFFER_MS;
   const wall = new Promise<"timeout">((resolve) => {
@@ -100,8 +127,8 @@ export async function runPythonSandbox(
   });
 
   const work = Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
+    new Response(proc.stdout as ReadableStream<Uint8Array>).text(),
+    new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
     proc.exited,
   ]);
 

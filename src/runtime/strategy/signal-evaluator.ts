@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BarData } from "../../connectors/data/data.connector";
+import { getPythonBin } from "../sandbox/python-runtime";
 
 export interface SignalEvaluationResult {
   buy: boolean;
@@ -38,7 +39,7 @@ export async function evaluateScriptOnBar(
     return { buy: false, sell: false, barTime: null, error: "no_bars" };
   }
 
-  const proc = Bun.spawn(["python3", SCRIPT_RUNNER_PATH], {
+  const proc = Bun.spawn([getPythonBin(), SCRIPT_RUNNER_PATH], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -110,7 +111,7 @@ export async function evaluateSignalCode(
     return { buy: false, sell: false, barTime: null, error: "no_bars" };
   }
 
-  const proc = Bun.spawn(["python3", RUNNER_PATH], {
+  const proc = Bun.spawn([getPythonBin(), RUNNER_PATH], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",

@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { BarData } from "../../connectors/data/data.connector";
+import { getPythonBin } from "../sandbox/python-runtime";
 
 export interface PythonSignalRunInput {
   bars: BarData[];
@@ -48,9 +49,11 @@ async function runWithBinary(bin: string, input: PythonSignalRunInput): Promise<
 }
 
 export async function runPythonSignalGenerator(input: PythonSignalRunInput): Promise<PythonSignalRunOutput> {
+  const primary = getPythonBin();
   try {
-    return await runWithBinary("python3", input);
+    return await runWithBinary(primary, input);
   } catch (e1) {
+    if (primary === "python") throw e1;
     try {
       return await runWithBinary("python", input);
     } catch (e2) {

@@ -47,11 +47,15 @@ from __future__ import annotations
 import builtins as _builtins
 import io
 import json
+import os
 import signal
 import sys
 import time
 import traceback
 from typing import Any
+
+# 避免 import pandas/numpy 时尝试写 __pycache__，否则 audit hook 会把写文件也拦掉。
+sys.dont_write_bytecode = True
 
 # ─── 受限 builtins 白名单 ───
 SAFE_BUILTINS_NAMES = {
@@ -111,7 +115,6 @@ SAFE_BUILTINS["__import__"] = _safe_import
 
 # ─── audit hook：拦截高危 io / 网络 / 进程操作 ───
 DENIED_AUDIT_EVENTS = {
-    "open",
     "socket.connect", "socket.bind",
     "subprocess.Popen", "os.system", "os.exec", "os.spawn",
     "shutil.rmtree", "shutil.move", "shutil.copy",
@@ -120,8 +123,58 @@ DENIED_AUDIT_EVENTS = {
     "smtplib.SMTP",
 }
 
+# pandas/numpy import 需要读取 venv / stdlib / site-packages 下的 .py/.so 资源。
+# 允许这些“解释器自身加载代码”的只读 open；用户态文件读写仍然拦截。
+ALLOWED_OPEN_ROOTS = tuple(
+    os.path.realpath(p)
+    for p in {
+        sys.prefix,
+        sys.base_prefix,
+        sys.exec_prefix,
+        getattr(sys, "base_exec_prefix", sys.base_prefix),
+    }
+    if p
+)
+ALLOWED_DEVICE_READS = {"/dev/urandom", "/dev/random"}
+
+
+def _is_write_open(mode: Any, flags: Any) -> bool:
+    if isinstance(mode, str) and any(ch in mode for ch in ("w", "a", "+", "x")):
+        return True
+    if isinstance(flags, int):
+        write_flags = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+        return (flags & write_flags) != 0
+    return False
+
+
+def _is_allowed_runtime_read(path: Any) -> bool:
+    try:
+        fs_path = os.fspath(path)
+    except TypeError:
+        return False
+    if isinstance(fs_path, bytes):
+        fs_path = fs_path.decode(errors="ignore")
+    if not isinstance(fs_path, str):
+        return False
+    real = os.path.realpath(fs_path)
+    if real in ALLOWED_DEVICE_READS:
+        return True
+    return any(real == root or real.startswith(root + os.sep) for root in ALLOWED_OPEN_ROOTS)
+
+
+def _check_open(args: tuple) -> None:
+    path = args[0] if len(args) > 0 else None
+    mode = args[1] if len(args) > 1 else None
+    flags = args[2] if len(args) > 2 else None
+    if not _is_write_open(mode, flags) and _is_allowed_runtime_read(path):
+        return
+    raise PermissionError("sandbox denied: open")
+
 
 def _audit(event: str, args: tuple) -> None:
+    if event == "open":
+        _check_open(args)
+        return
     for denied in DENIED_AUDIT_EVENTS:
         if event == denied or event.startswith(denied):
             raise PermissionError(f"sandbox denied: {event}")
