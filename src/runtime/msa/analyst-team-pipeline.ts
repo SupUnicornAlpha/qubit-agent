@@ -140,12 +140,13 @@ ${input.dataAndUserContext}`;
 
   let answer = "";
   try {
-    answer = await runLlmGateway({
+    const result = await runLlmGateway({
       config: modelConfig,
       systemPrompt: input.orchestrator.systemPrompt,
       userPrompt,
       onToken: () => {},
     });
+    answer = result.answer;
   } catch (e) {
     answer = `（编排计划生成失败：${e instanceof Error ? e.message : String(e)}）`;
   }
@@ -191,12 +192,13 @@ ${input.fusionSummary}`;
 
   let answer = "";
   try {
-    answer = await runLlmGateway({
+    const result = await runLlmGateway({
       config: modelConfig,
       systemPrompt: input.orchestrator.systemPrompt,
       userPrompt,
       onToken: () => {},
     });
+    answer = result.answer;
   } catch (e) {
     return {
       signal: input.msaSignal,

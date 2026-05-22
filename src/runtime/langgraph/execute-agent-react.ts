@@ -220,8 +220,31 @@ export async function executeAgentReact(
       actionType: "tool_call",
       actionJson: { llmProvider: params.def.llmProvider },
     });
-    const partial = await reasonNode({ ...input.state, iteration: nextIteration }, emit);
-    const merged = { ...input.state, iteration: nextIteration, ...partial };
+    const reasonResult = await reasonNode(
+      { ...input.state, iteration: nextIteration },
+      emit
+    );
+    // 写回 token 消耗 + reason 延迟，供 /workflow/observability 聚合渲染。
+    const usage = reasonResult.meta.usage;
+    const tokenCount =
+      usage?.totalTokens ??
+      (usage ? (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0) : 0);
+    try {
+      await db
+        .update(agentStep)
+        .set({
+          tokenCount: tokenCount > 0 ? tokenCount : null,
+          latencyMs: reasonResult.meta.latencyMs,
+        })
+        .where(eq(agentStep.id, reasonStepId));
+    } catch (err) {
+      // 写监控字段失败不应阻塞工作流，仅打印警告
+      console.warn(
+        `[reason] failed to persist token/latency for step ${reasonStepId}:`,
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+    const merged = { ...input.state, iteration: nextIteration, ...reasonResult.stateUpdate };
     snapshot("reason", nextIteration, merged);
     return { state: merged };
   });

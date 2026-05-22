@@ -9,16 +9,61 @@ export interface LlmGatewayInput {
   onToken: (token: string) => void;
 }
 
+export interface LlmTokenUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+export interface LlmGatewayResult {
+  answer: string;
+  /** Token consumption reported by provider (when available). */
+  usage?: LlmTokenUsage;
+  /** Wall-clock latency of the LLM call, measured at gateway boundary. */
+  latencyMs: number;
+}
+
 function splitForPseudoStreaming(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
 }
 
-async function runOpenAI(input: LlmGatewayInput): Promise<string> {
+/**
+ * Rough fallback estimator when provider does not report usage (e.g. Ollama
+ * without prompt_eval_count, partial Anthropic streams, mock). 4 chars≈1 token
+ * is the conventional OpenAI rule of thumb.
+ */
+function estimateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function normalizeUsage(usage: LlmTokenUsage | undefined): LlmTokenUsage | undefined {
+  if (!usage) return undefined;
+  const { promptTokens, completionTokens, totalTokens } = usage;
+  if (
+    (promptTokens === undefined || promptTokens === 0) &&
+    (completionTokens === undefined || completionTokens === 0) &&
+    (totalTokens === undefined || totalTokens === 0)
+  ) {
+    return undefined;
+  }
+  const total =
+    totalTokens ??
+    ((promptTokens ?? 0) + (completionTokens ?? 0) || undefined);
+  return {
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(total !== undefined ? { totalTokens: total } : {}),
+  };
+}
+
+async function runOpenAI(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const apiKey = input.config.apiKey || process.env["OPENAI_API_KEY"];
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for openai provider");
   }
   const client = new OpenAI({ apiKey, baseURL: input.config.baseUrl });
+  const startedAt = Date.now();
   const stream = await client.chat.completions.create({
     model: input.config.model,
     messages: [
@@ -27,18 +72,33 @@ async function runOpenAI(input: LlmGatewayInput): Promise<string> {
     ],
     temperature: 0.1,
     stream: true,
+    stream_options: { include_usage: true },
   });
   let answer = "";
+  let usage: LlmTokenUsage | undefined;
   for await (const chunk of stream) {
     const token = chunk.choices[0]?.delta?.content ?? "";
-    if (!token) continue;
-    answer += token;
-    input.onToken(token);
+    if (token) {
+      answer += token;
+      input.onToken(token);
+    }
+    const chunkUsage = (chunk as { usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }).usage;
+    if (chunkUsage) {
+      usage = {
+        ...(chunkUsage.prompt_tokens !== undefined ? { promptTokens: chunkUsage.prompt_tokens } : {}),
+        ...(chunkUsage.completion_tokens !== undefined ? { completionTokens: chunkUsage.completion_tokens } : {}),
+        ...(chunkUsage.total_tokens !== undefined ? { totalTokens: chunkUsage.total_tokens } : {}),
+      };
+    }
   }
-  return answer;
+  return {
+    answer,
+    ...(normalizeUsage(usage) ? { usage: normalizeUsage(usage)! } : {}),
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
-async function runOpenAICompatible(input: LlmGatewayInput): Promise<string> {
+async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const provider = input.config.provider;
   const defaults: Record<string, { envKey: string; baseUrl: string; model: string }> = {
     deepseek: {
@@ -66,6 +126,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<string> {
     apiKey,
     baseURL: input.config.baseUrl ?? def.baseUrl,
   });
+  const startedAt = Date.now();
   const stream = await client.chat.completions.create({
     model: input.config.model || def.model,
     messages: [
@@ -74,23 +135,39 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<string> {
     ],
     temperature: 0.1,
     stream: true,
+    stream_options: { include_usage: true },
   });
   let answer = "";
+  let usage: LlmTokenUsage | undefined;
   for await (const chunk of stream) {
     const token = chunk.choices[0]?.delta?.content ?? "";
-    if (!token) continue;
-    answer += token;
-    input.onToken(token);
+    if (token) {
+      answer += token;
+      input.onToken(token);
+    }
+    const chunkUsage = (chunk as { usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }).usage;
+    if (chunkUsage) {
+      usage = {
+        ...(chunkUsage.prompt_tokens !== undefined ? { promptTokens: chunkUsage.prompt_tokens } : {}),
+        ...(chunkUsage.completion_tokens !== undefined ? { completionTokens: chunkUsage.completion_tokens } : {}),
+        ...(chunkUsage.total_tokens !== undefined ? { totalTokens: chunkUsage.total_tokens } : {}),
+      };
+    }
   }
-  return answer;
+  return {
+    answer,
+    ...(normalizeUsage(usage) ? { usage: normalizeUsage(usage)! } : {}),
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
-async function runAnthropic(input: LlmGatewayInput): Promise<string> {
+async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const apiKey = input.config.apiKey || process.env["ANTHROPIC_API_KEY"];
   if (!apiKey) {
     throw new Error("ANTHROPIC_API_KEY is required for anthropic provider");
   }
   const baseUrl = input.config.baseUrl ?? "https://api.anthropic.com";
+  const startedAt = Date.now();
   const res = await fetch(`${baseUrl}/v1/messages`, {
     method: "POST",
     headers: {
@@ -111,17 +188,30 @@ async function runAnthropic(input: LlmGatewayInput): Promise<string> {
   }
   const json = (await res.json()) as {
     content?: Array<{ type: string; text?: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
   };
   const answer =
     json.content?.filter((c) => c.type === "text").map((c) => c.text ?? "").join("") ?? "";
   for (const token of splitForPseudoStreaming(answer)) {
     input.onToken(token);
   }
-  return answer;
+  const rawUsage = json.usage;
+  const usage: LlmTokenUsage | undefined = rawUsage
+    ? {
+        ...(rawUsage.input_tokens !== undefined ? { promptTokens: rawUsage.input_tokens } : {}),
+        ...(rawUsage.output_tokens !== undefined ? { completionTokens: rawUsage.output_tokens } : {}),
+      }
+    : undefined;
+  return {
+    answer,
+    ...(normalizeUsage(usage) ? { usage: normalizeUsage(usage)! } : {}),
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
-async function runOllama(input: LlmGatewayInput): Promise<string> {
+async function runOllama(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const baseUrl = input.config.baseUrl ?? "http://127.0.0.1:11434";
+  const startedAt = Date.now();
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: {
@@ -142,16 +232,29 @@ async function runOllama(input: LlmGatewayInput): Promise<string> {
   const json = (await res.json()) as {
     message?: { content?: string };
     response?: string;
+    prompt_eval_count?: number;
+    eval_count?: number;
   };
   const answer = json.message?.content ?? json.response ?? "";
   for (const token of splitForPseudoStreaming(answer)) {
     input.onToken(token);
   }
-  return answer;
+  const usage: LlmTokenUsage | undefined =
+    json.prompt_eval_count !== undefined || json.eval_count !== undefined
+      ? {
+          ...(json.prompt_eval_count !== undefined ? { promptTokens: json.prompt_eval_count } : {}),
+          ...(json.eval_count !== undefined ? { completionTokens: json.eval_count } : {}),
+        }
+      : undefined;
+  return {
+    answer,
+    ...(normalizeUsage(usage) ? { usage: normalizeUsage(usage)! } : {}),
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
-function runMock(input: LlmGatewayInput): string {
-  // Extract goal/task from userPrompt for a more helpful placeholder response.
+function runMock(input: LlmGatewayInput): LlmGatewayResult {
+  const startedAt = Date.now();
   const goalMatch = input.userPrompt.match(/\*\*任务目标\*\*：(.*)/);
   const goal = goalMatch?.[1]?.trim().slice(0, 80) ?? input.userPrompt.slice(0, 60);
 
@@ -168,10 +271,20 @@ function runMock(input: LlmGatewayInput): string {
   for (const token of splitForPseudoStreaming(answer)) {
     input.onToken(token);
   }
-  return answer;
+  const promptTokens = estimateTokens(`${input.systemPrompt}\n${input.userPrompt}`);
+  const completionTokens = estimateTokens(answer);
+  return {
+    answer,
+    usage: {
+      promptTokens,
+      completionTokens,
+      totalTokens: promptTokens + completionTokens,
+    },
+    latencyMs: Date.now() - startedAt,
+  };
 }
 
-export async function runLlmGateway(input: LlmGatewayInput): Promise<string> {
+export async function runLlmGateway(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const provider = input.config.provider;
   return executeWithPolicy(
     {
@@ -191,4 +304,3 @@ export async function runLlmGateway(input: LlmGatewayInput): Promise<string> {
     }
   );
 }
-

@@ -34,7 +34,7 @@ async function runRole(role: "bull" | "bear", topic: string, summary: string): P
     role === "bull"
       ? "你是多方研究员，请提出支持买入的论据，重点强调上行空间、催化剂和风险补偿。"
       : "你是空方研究员，请提出反对买入的论据，重点强调下行风险、估值泡沫和不确定性。";
-  const answer = await runLlmGateway({
+  const { answer } = await runLlmGateway({
     config: modelConfig,
     systemPrompt,
     userPrompt: `辩题：${topic}\n\n当前信号摘要：\n${summary}\n\n请输出：\n1) 核心观点（200字内）\n2) 置信度（0-1）`,

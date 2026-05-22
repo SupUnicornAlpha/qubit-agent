@@ -8,11 +8,28 @@ import {
   readPackFiles,
 } from "../../agent/agent-pack-service";
 import { resolveLlmForAgent, invokeWithFallback } from "../../llm/llm-router";
+import type { LlmTokenUsage } from "../../llm/gateway";
 import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { resolveEnabledMcpServerNames } from "../../mcp/resolve-enabled-mcp-servers";
 import type { AgentGraphState, StepStreamEvent } from "../state";
+
+export interface ReasonStepMeta {
+  /** Wall-clock latency of the LLM round-trip (including streaming). */
+  latencyMs: number;
+  /** Token usage reported by provider (or estimated for mock). */
+  usage?: LlmTokenUsage;
+  /** True when the primary model failed and the call was retried via default. */
+  fallbackUsed: boolean;
+}
+
+export interface ReasonNodeOutput {
+  /** State delta to merge into the LangGraph workflow state. */
+  stateUpdate: Partial<AgentGraphState>;
+  /** Observability metadata used by execute-agent-react to fill agent_step. */
+  meta: ReasonStepMeta;
+}
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
   const db = await getDb();
@@ -68,7 +85,7 @@ async function resolveEffectiveSystemPrompt(definitionId: string, dbSystemPrompt
 export async function reasonNode(
   state: AgentGraphState,
   emit: (event: StepStreamEvent) => void
-): Promise<Partial<AgentGraphState>> {
+): Promise<ReasonNodeOutput> {
   /**
    * M10.B1: per-Agent 模型路由 + 默认模型降级。
    * - 先按 def.llmProvider 在 llm_provider_config 表/env 里找；
@@ -79,6 +96,10 @@ export async function reasonNode(
   const modelConfig = resolved.config;
   let answer = "";
   let modelFallbackUsed = false;
+  let usage: LlmTokenUsage | undefined;
+  // 兜底：当 LLM 抛错时 gateway 返回不到 latency，这里以节点入口为起点。
+  const nodeStartedAt = Date.now();
+  let measuredLatencyMs = 0;
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
   const payloadParams = (payload["params"] ?? {}) as Record<string, unknown>;
@@ -157,6 +178,8 @@ export async function reasonNode(
     });
     answer = llmResult.answer;
     modelFallbackUsed = llmResult.fallbackUsed;
+    usage = llmResult.usage;
+    measuredLatencyMs = llmResult.latencyMs;
     if (modelFallbackUsed) {
       console.warn(
         `[reason] agent ${state.agentDefinition.id} fell back from ` +
@@ -180,10 +203,18 @@ export async function reasonNode(
       });
     }
     answer = fallback;
+    measuredLatencyMs = Date.now() - nodeStartedAt;
   }
 
   return {
-    reasonText: answer,
-    plannedAction: hasTools ? "tool_call" : "respond_only",
+    stateUpdate: {
+      reasonText: answer,
+      plannedAction: hasTools ? "tool_call" : "respond_only",
+    },
+    meta: {
+      latencyMs: measuredLatencyMs,
+      ...(usage ? { usage } : {}),
+      fallbackUsed: modelFallbackUsed,
+    },
   };
 }

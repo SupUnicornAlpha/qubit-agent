@@ -218,7 +218,7 @@ ${params.context}
 请用 **Markdown** 输出一小节（不要输出 JSON），建议包含：要点列表、可执行建议、需关注的风险或回测注意点（视你的角色而定）。控制在 800 字以内。`;
 
   try {
-    const answer = await runLlmGateway({
+    const { answer } = await runLlmGateway({
       config: modelConfig,
       systemPrompt: params.systemPrompt,
       userPrompt,

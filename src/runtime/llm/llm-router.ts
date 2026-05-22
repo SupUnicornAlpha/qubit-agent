@@ -19,7 +19,7 @@ import { getDb } from "../../db/sqlite/client";
 import { llmProviderConfig } from "../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { loadModelConfig, type RuntimeModelConfig } from "../config/model-config";
-import { runLlmGateway, type LlmGatewayInput } from "./gateway";
+import { runLlmGateway, type LlmGatewayInput, type LlmTokenUsage } from "./gateway";
 
 export type LlmProvider = RuntimeModelConfig["provider"];
 
@@ -176,15 +176,30 @@ export function providerEnvKey(provider: LlmProvider): string | null {
  * 2. 失败 → 拿 default model 再试一次（如果 default != primary）
  * 3. 都失败 → 抛错
  *
- * 返回 { answer, modelUsed, fallbackUsed }
+ * 返回 { answer, usage, latencyMs, modelUsed, fallbackUsed }
  */
+export interface InvokeWithFallbackResult {
+  answer: string;
+  usage?: LlmTokenUsage;
+  /** Gateway-measured latency of the actually-executed model call. */
+  latencyMs: number;
+  modelUsed: RuntimeModelConfig;
+  fallbackUsed: boolean;
+}
+
 export async function invokeWithFallback(
   primaryConfig: RuntimeModelConfig,
   input: Omit<LlmGatewayInput, "config">
-): Promise<{ answer: string; modelUsed: RuntimeModelConfig; fallbackUsed: boolean }> {
+): Promise<InvokeWithFallbackResult> {
   try {
-    const answer = await runLlmGateway({ ...input, config: primaryConfig });
-    return { answer, modelUsed: primaryConfig, fallbackUsed: false };
+    const result = await runLlmGateway({ ...input, config: primaryConfig });
+    return {
+      answer: result.answer,
+      ...(result.usage ? { usage: result.usage } : {}),
+      latencyMs: result.latencyMs,
+      modelUsed: primaryConfig,
+      fallbackUsed: false,
+    };
   } catch (err) {
     const defaultCfg = await loadModelConfig();
     // 没有 default 或 default == primary → 直接抛
@@ -199,8 +214,14 @@ export async function invokeWithFallback(
         `falling back to default (${defaultCfg.provider}:${defaultCfg.model}): ` +
         (err instanceof Error ? err.message : String(err))
     );
-    const answer = await runLlmGateway({ ...input, config: defaultCfg });
-    return { answer, modelUsed: defaultCfg, fallbackUsed: true };
+    const result = await runLlmGateway({ ...input, config: defaultCfg });
+    return {
+      answer: result.answer,
+      ...(result.usage ? { usage: result.usage } : {}),
+      latencyMs: result.latencyMs,
+      modelUsed: defaultCfg,
+      fallbackUsed: true,
+    };
   }
 }
 
