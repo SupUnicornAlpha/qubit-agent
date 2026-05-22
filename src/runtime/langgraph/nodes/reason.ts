@@ -13,6 +13,7 @@ import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { resolveEnabledMcpServerNames } from "../../mcp/resolve-enabled-mcp-servers";
+import { skillService, renderSkillsBlockForPrompt } from "../../skills/skill-service";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 export interface ReasonStepMeta {
@@ -29,6 +30,19 @@ export interface ReasonNodeOutput {
   stateUpdate: Partial<AgentGraphState>;
   /** Observability metadata used by execute-agent-react to fill agent_step. */
   meta: ReasonStepMeta;
+}
+
+async function loadWorkflowMeta(
+  workflowId: string
+): Promise<{ projectId: string | null; sessionId: string | null }> {
+  const db = await getDb();
+  const wfRows = await db
+    .select({ projectId: workflowRun.projectId, sessionId: workflowRun.sessionId })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowId))
+    .limit(1);
+  if (!wfRows[0]) return { projectId: null, sessionId: null };
+  return { projectId: wfRows[0].projectId ?? null, sessionId: wfRows[0].sessionId ?? null };
 }
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
@@ -120,12 +134,47 @@ export async function reasonNode(
   const mcpServers = await resolveEnabledMcpServerNames(state.agentDefinition.mcpServers ?? []);
   const hasTools = tools.length > 0 || mcpServers.length > 0;
 
+  // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
+  let recalledSkillsBlock = "";
+  try {
+    const meta = await loadWorkflowMeta(state.workflowId);
+    if (meta.projectId) {
+      const query = [
+        typeof payloadGoal === "string" ? payloadGoal : String(payloadGoal ?? ""),
+        slotTicker,
+        slotContext.slice(0, 240),
+      ]
+        .filter((s) => typeof s === "string" && s.length > 0)
+        .join(" ");
+      const hits = await skillService.search({
+        projectId: meta.projectId,
+        query,
+        definitionId: state.agentDefinition.id,
+        topK: 3,
+      });
+      if (hits.length > 0) {
+        recalledSkillsBlock = renderSkillsBlockForPrompt(hits);
+        if (process.env.DEBUG_SKILLS) {
+          console.log(
+            `[reason] recalled skills for ${state.agentDefinition.role}: ${hits.map((s) => s.name).join(", ")}`
+          );
+        }
+      }
+    }
+  } catch (err) {
+    // 表不存在 / 项目无 skill 都属于正常分支，仅 debug 日志
+    if (process.env.DEBUG_SKILLS) {
+      console.warn("[reason] skill recall failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
   const userPromptParts = [
     `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
     ``,
     `**任务目标**：${payloadGoal}`,
     slotTicker ? `**标的**：${slotTicker}` : "",
     slotContext ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 12000)}` : "",
+    recalledSkillsBlock ? `\n${recalledSkillsBlock}` : "",
     sessionContext.length
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "",

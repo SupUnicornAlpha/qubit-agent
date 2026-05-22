@@ -2127,3 +2127,140 @@ export const discoveryJob = sqliteTable("discovery_job", {
   endedAt: text("ended_at"),
   createdAt: createdAt(),
 });
+
+// ─── M11: Agent 自进化（agent_skill / agent_skill_run / skill_curator_run / skill_evolution_run）─
+
+export const agentSkill = sqliteTable(
+  "agent_skill",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    bodyMd: text("body_md").notNull().default(""),
+    category: text("category").notNull().default("general"),
+    version: text("version").notNull().default("v1"),
+    parentSkillId: text("parent_skill_id"),
+    source: text("source", {
+      enum: ["agent_created", "user_authored", "open_skill_market", "evolved"],
+    })
+      .notNull()
+      .default("agent_created"),
+    externalInstallId: text("external_install_id").references(() => skillMarketInstall.id, {
+      onDelete: "set null",
+    }),
+    state: text("state", { enum: ["active", "stale", "archived", "pending_review"] })
+      .notNull()
+      .default("active"),
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
+    useCount: integer("use_count").notNull().default(0),
+    successCount: integer("success_count").notNull().default(0),
+    failCount: integer("fail_count").notNull().default(0),
+    lastUsedAt: text("last_used_at"),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default("{}"),
+    createdBy: text("created_by").notNull().default("agent"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("idx_agent_skill_project_name").on(t.projectId, t.name),
+    index("idx_agent_skill_project_state").on(t.projectId, t.state, t.lastUsedAt),
+    index("idx_agent_skill_definition").on(t.definitionId, t.state),
+    index("idx_agent_skill_parent").on(t.parentSkillId),
+  ]
+);
+
+export const agentSkillRun = sqliteTable(
+  "agent_skill_run",
+  {
+    id: id(),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => agentSkill.id, { onDelete: "cascade" }),
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, { onDelete: "set null" }),
+    agentInstanceId: text("agent_instance_id").references(() => agentInstance.id, {
+      onDelete: "set null",
+    }),
+    definitionId: text("definition_id").references(() => agentDefinition.id, {
+      onDelete: "set null",
+    }),
+    outcome: text("outcome", { enum: ["success", "fail", "partial", "unknown"] })
+      .notNull()
+      .default("unknown"),
+    score: real("score"),
+    notes: text("notes").notNull().default(""),
+    startedAt: text("started_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [
+    index("idx_agent_skill_run_skill").on(t.skillId, t.startedAt),
+    index("idx_agent_skill_run_workflow").on(t.workflowRunId),
+  ]
+);
+
+export const skillCuratorRun = sqliteTable(
+  "skill_curator_run",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    mode: text("mode", { enum: ["dry_run", "live"] }).notNull().default("dry_run"),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    triggeredBy: text("triggered_by").notNull().default("cron"),
+    totalChecked: integer("total_checked").notNull().default(0),
+    markedStale: integer("marked_stale").notNull().default(0),
+    archived: integer("archived").notNull().default(0),
+    consolidated: integer("consolidated").notNull().default(0),
+    pruned: integer("pruned").notNull().default(0),
+    summaryText: text("summary_text").notNull().default(""),
+    summaryYaml: text("summary_yaml").notNull().default(""),
+    actionsJson: text("actions_json", { mode: "json" }).notNull().default("[]"),
+    errorMessage: text("error_message"),
+    startedAt: text("started_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [index("idx_skill_curator_run_project").on(t.projectId, t.startedAt)]
+);
+
+export const skillEvolutionRun = sqliteTable(
+  "skill_evolution_run",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    baseSkillId: text("base_skill_id")
+      .notNull()
+      .references(() => agentSkill.id, { onDelete: "cascade" }),
+    datasetId: text("dataset_id").references(() => evalDataset.id),
+    iterations: integer("iterations").notNull().default(5),
+    candidatesEvaluated: integer("candidates_evaluated").notNull().default(0),
+    baselineScore: real("baseline_score"),
+    bestScore: real("best_score"),
+    winningSkillId: text("winning_skill_id"),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    reportJson: text("report_json", { mode: "json" }).notNull().default("{}"),
+    errorMessage: text("error_message"),
+    triggeredBy: text("triggered_by").notNull().default("user"),
+    startedAt: text("started_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [
+    index("idx_skill_evolution_base").on(t.baseSkillId, t.startedAt),
+    index("idx_skill_evolution_project").on(t.projectId, t.startedAt),
+  ]
+);

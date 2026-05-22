@@ -673,3 +673,88 @@ export interface MetricTimeseries {
   metricValue: number;
   timestamp: string;
 }
+
+// ─── M11: Agent 自进化（skill 程序性记忆 + curator + evolution）────────────────
+
+export type AgentSkillSource = "agent_created" | "user_authored" | "open_skill_market" | "evolved";
+export type AgentSkillState = "active" | "stale" | "archived" | "pending_review";
+export type AgentSkillOutcome = "success" | "fail" | "partial" | "unknown";
+
+export interface AgentSkill {
+  id: string;
+  projectId: string;
+  definitionId: string | null;
+  name: string;
+  description: string;
+  bodyMd: string;
+  category: string;
+  version: string;
+  parentSkillId: string | null;
+  source: AgentSkillSource;
+  externalInstallId: string | null;
+  state: AgentSkillState;
+  pinned: boolean;
+  useCount: number;
+  successCount: number;
+  failCount: number;
+  lastUsedAt: string | null;
+  metadataJson: unknown;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentSkillRun {
+  id: string;
+  skillId: string;
+  workflowRunId: string | null;
+  agentInstanceId: string | null;
+  definitionId: string | null;
+  outcome: AgentSkillOutcome;
+  score: number | null;
+  notes: string;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export type SkillCuratorMode = "dry_run" | "live";
+export type SkillCuratorStatus = "running" | "completed" | "failed";
+
+export interface SkillCuratorRun {
+  id: string;
+  projectId: string;
+  mode: SkillCuratorMode;
+  status: SkillCuratorStatus;
+  triggeredBy: string;
+  totalChecked: number;
+  markedStale: number;
+  archived: number;
+  consolidated: number;
+  pruned: number;
+  summaryText: string;
+  summaryYaml: string;
+  actionsJson: unknown;
+  errorMessage: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export type SkillEvolutionStatus = "running" | "completed" | "failed";
+
+export interface SkillEvolutionRun {
+  id: string;
+  projectId: string;
+  baseSkillId: string;
+  datasetId: string | null;
+  iterations: number;
+  candidatesEvaluated: number;
+  baselineScore: number | null;
+  bestScore: number | null;
+  winningSkillId: string | null;
+  status: SkillEvolutionStatus;
+  reportJson: unknown;
+  errorMessage: string | null;
+  triggeredBy: string;
+  startedAt: string;
+  endedAt: string | null;
+}

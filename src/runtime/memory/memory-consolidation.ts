@@ -27,13 +27,19 @@ import {
   midtermMemory,
   workflowRun,
 } from "../../db/sqlite/schema";
+import { skillService } from "../skills/skill-service";
 
 export interface ConsolidationResult {
   workflowId: string;
   status: "completed" | "skipped" | "failed";
   midtermInserted: number;
+  skillCandidatesProposed?: number;
   reason?: string;
 }
+
+/** 触发"sklill candidate"的最低门槛（参考 Hermes：≥5 tool 调用 + ≥3 distinct + 有 final_answer） */
+const SKILL_MIN_TOOL_CALLS = 5;
+const SKILL_MIN_DISTINCT_TOOLS = 3;
 
 export interface AgentStepRow {
   id: string;
@@ -109,6 +115,7 @@ export async function consolidateFromWorkflow(
   }
 
   let inserted = 0;
+  let skillCandidatesProposed = 0;
   const now = new Date().toISOString();
   const timeWindowStart = wf.startedAt ?? now;
   const timeWindowEnd = wf.endedAt ?? now;
@@ -143,9 +150,190 @@ export async function consolidateFromWorkflow(
       updatedAt: now,
     });
     inserted += 1;
+
+    // M11.A2: 如果这是一段「值得复用的程序性流程」，把它作为 pending_review skill 候选写入
+    // agent_skill 表，待 Curator/用户审批后再激活。
+    try {
+      const proposed = await proposeSkillCandidate({
+        projectId: wf.projectId,
+        definitionId: instance.definitionId,
+        role: instance.role,
+        goal: wf.goal,
+        steps: agentSteps,
+        summary,
+      });
+      if (proposed) skillCandidatesProposed += 1;
+    } catch (err) {
+      console.warn(
+        `[memory-consolidation] proposeSkillCandidate failed for instance ${instanceId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
   }
 
-  return { workflowId, status: "completed", midtermInserted: inserted };
+  return {
+    workflowId,
+    status: "completed",
+    midtermInserted: inserted,
+    skillCandidatesProposed,
+  };
+}
+
+interface ProposeSkillInput {
+  projectId: string;
+  definitionId: string | null;
+  role: string;
+  goal: string;
+  steps: AgentStepRow[];
+  summary: AgentStepSummary;
+}
+
+/**
+ * 从一段 agent_step 序列里抽出"可复用流程"候选（program of work）。
+ *
+ * 启发式规则（参考 Hermes Phase 1 skills heuristic）：
+ *   - 至少 5 次 tool_call
+ *   - 至少 3 种不同 tool（避免 N 连发同一 tool 这种无意义循环）
+ *   - 有 final_answer（说明此路径"跑通"了，不是中途夭折）
+ *   - 同一 (definitionId, tool_chain_signature) 不重复落 skill
+ *
+ * 命中后写一条 state=pending_review 的 agent_skill，等 Curator 或用户审批。
+ * 这样既能积累候选，又不污染 active skill 池。
+ */
+export async function proposeSkillCandidate(input: ProposeSkillInput): Promise<boolean> {
+  const totalToolCalls = Object.values(input.summary.toolsUsed).reduce((a, b) => a + b, 0);
+  const distinctTools = Object.keys(input.summary.toolsUsed).length;
+  if (totalToolCalls < SKILL_MIN_TOOL_CALLS) return false;
+  if (distinctTools < SKILL_MIN_DISTINCT_TOOLS) return false;
+  if (!input.summary.finalAnswer) return false;
+  if (!input.projectId) return false;
+
+  // 工具调用序列（去重连续相同的）→ 用作 skill 的"签名"
+  const toolChain = extractToolChain(input.steps);
+  if (toolChain.length < SKILL_MIN_DISTINCT_TOOLS) return false;
+  const signature = toolChain.join(">");
+
+  // 用 signature + role 做幂等 key
+  const candidateName = buildSkillCandidateName(input.role, toolChain);
+
+  const existing = await skillService.findByName(input.projectId, candidateName);
+  if (existing) {
+    // 已有同签名 skill — 跳过，但更新 use_count（说明这条 play 又被跑通了一次）
+    // 仅当现有 skill state ≠ archived 时刷新
+    if (existing.state !== "archived") {
+      try {
+        await skillService.recordUsage({
+          skillId: existing.id,
+          definitionId: input.definitionId,
+          outcome: "success",
+          notes: `re-observed via workflow consolidation: ${input.goal.slice(0, 200)}`,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  }
+
+  const description = `（自动候选）${input.role} 在「${input.goal.slice(0, 80)}」类目标下成功跑通的 ${toolChain.length}-step 工具链：${toolChain.slice(0, 6).join(" → ")}${toolChain.length > 6 ? " → …" : ""}。等待 Curator/用户审批；审批后改 state=active 即生效。`.slice(0, 500);
+
+  const bodyMd = renderSkillCandidateBody({
+    role: input.role,
+    goal: input.goal,
+    toolChain,
+    signature,
+    summary: input.summary,
+  });
+
+  try {
+    await skillService.create({
+      projectId: input.projectId,
+      definitionId: input.definitionId,
+      name: candidateName,
+      description,
+      bodyMd,
+      category: "auto_candidate",
+      source: "agent_created",
+      state: "pending_review",
+      createdBy: `consolidator:${input.role}`,
+      metadata: {
+        signature,
+        toolChain,
+        toolsUsed: input.summary.toolsUsed,
+        goal: input.goal,
+        autoExtracted: true,
+        proposeReason: "workflow_meets_skill_heuristic",
+      },
+    });
+    return true;
+  } catch (err) {
+    // 表不存在（migration 未跑） / 并发冲突 — 静默忽略
+    if (process.env.DEBUG_SKILLS) {
+      console.warn(
+        "[memory-consolidation] proposeSkillCandidate insert failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
+    return false;
+  }
+}
+
+function extractToolChain(steps: AgentStepRow[]): string[] {
+  const chain: string[] = [];
+  for (const step of steps) {
+    if (step.actionType !== "tool_call") continue;
+    const action = step.actionJson as Record<string, unknown> | null;
+    const tool = action?.["tool"] ?? action?.["name"];
+    if (typeof tool !== "string") continue;
+    // 折叠相邻重复（同一 tool 连续 N 次只记一次）
+    if (chain[chain.length - 1] !== tool) chain.push(tool);
+  }
+  return chain;
+}
+
+function buildSkillCandidateName(role: string, toolChain: string[]): string {
+  // role:tool1-tool2-tool3（取前 3 个 tool，确保唯一且可读）
+  const head = toolChain
+    .slice(0, 3)
+    .map((t) => t.replace(/\./g, "_").replace(/[^a-zA-Z0-9_]/g, "").toLowerCase())
+    .filter(Boolean)
+    .join("-");
+  const cleanedRole = role.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  return `auto-${cleanedRole}-${head}`.slice(0, 80);
+}
+
+function renderSkillCandidateBody(input: {
+  role: string;
+  goal: string;
+  toolChain: string[];
+  signature: string;
+  summary: AgentStepSummary;
+}): string {
+  const lines: string[] = [];
+  lines.push(`# 自动候选 Skill — ${input.role}`);
+  lines.push("");
+  lines.push(`> **审批前请人工核对**：以下流程由 MemoryConsolidationService 从一次成功 workflow 自动抽取。`);
+  lines.push(`> 通过 \`skill.patch({skillId, state:"active"})\` 即可启用；不合用调 \`skill.archive\`。`);
+  lines.push("");
+  lines.push("## 适用场景");
+  lines.push(`此 skill 由"${input.goal.slice(0, 200)}"类目标触发；当你拿到相似目标时可复用。`);
+  lines.push("");
+  lines.push("## 关键步骤（折叠相邻重复 tool 后）");
+  for (let i = 0; i < input.toolChain.length; i++) {
+    lines.push(`${i + 1}. \`${input.toolChain[i]}\``);
+  }
+  lines.push("");
+  lines.push("## 验收信号");
+  lines.push("- 全链跑完应能产出 final_answer / 通过下游 risk 签核");
+  lines.push("- 若某一步连续失败 → 调 `skill.patch` 把这一步的 fallback 加进去");
+  lines.push("");
+  lines.push("## 当次执行摘要（仅供参考，不要照搬数字）");
+  lines.push("```");
+  lines.push(input.summary.text);
+  lines.push("```");
+  lines.push("");
+  lines.push(`<!-- signature: ${input.signature} -->`);
+  return lines.join("\n");
 }
 
 export interface AgentStepSummary {

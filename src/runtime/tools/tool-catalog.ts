@@ -104,6 +104,40 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
     category: "memory",
   },
 
+  // M11 自进化：skill 程序性记忆（可被检索、复用、自我迭代；区别于 memory 的事实/约束）
+  "skill.create": {
+    description:
+      "完成 5+ 步复杂任务/修复 tricky 错误/发现非平凡流程后调；落 agent_skill。description 用于 LLM 检索（≤500 字），bodyMd 为完整流程（≤16KB）。下次匹配 goal 时会被自动召回到 user prompt。",
+    category: "memory",
+  },
+  "skill.view": { description: "按 id 或 name 查看完整 skill（含 bodyMd / 使用计数）", category: "memory" },
+  "skill.list": {
+    description: "列出当前项目的全部 skill（默认排除 archived；可传 state 过滤）",
+    category: "memory",
+  },
+  "skill.search": {
+    description: "按关键词检索 skill（pinned > 当前 def > 近期使用 > 命中次数 加权）",
+    category: "memory",
+  },
+  "skill.patch": {
+    description:
+      "使用中发现 skill 过时/不全/错误时立即修补；自动 bumpVersion（v1→v1.1）。可改 description/bodyMd/category/pinned/state。",
+    category: "memory",
+  },
+  "skill.archive": {
+    description: "软删（state=archived，可通过 skill.patch state=active 恢复）；从不物理删除",
+    category: "memory",
+  },
+  "skill.use_record": {
+    description:
+      "调用某 skill 完成任务后记录用量：outcome(success|fail|partial)，score，notes。Curator 与 Evolution 都看这条信号。",
+    category: "memory",
+  },
+  "skill.import_market": {
+    description: "把已 install 的 open_skill_market 条目镜像到 agent_skill，统一走 skill 检索",
+    category: "memory",
+  },
+
   // 审计
   write_audit_log: { description: "关键操作写入 audit_log 留痕", category: "audit" },
   generate_report: { description: "汇总分析师信号生成 Markdown 研报", category: "audit" },

@@ -1663,6 +1663,16 @@ agentRouter.post("/skills/installs", async (c) => {
       .from(skillMarketInstall)
       .where(eq(skillMarketInstall.id, id))
       .limit(1);
+    // M11.B3: 镜像到 agent_skill，让 reason 节点能召回
+    try {
+      const { skillService } = await import("../runtime/skills/skill-service");
+      await skillService.mirrorFromMarketInstall(id);
+    } catch (err) {
+      console.warn(
+        "[agent.routes] mirror manual skill install failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
     return c.json({ data: created[0] }, 201);
   }
 
@@ -1727,6 +1737,16 @@ agentRouter.post("/skills/installs", async (c) => {
     .from(skillMarketInstall)
     .where(eq(skillMarketInstall.id, id))
     .limit(1);
+  // M11.B3: 镜像到 agent_skill，统一走 skill 检索
+  try {
+    const { skillService } = await import("../runtime/skills/skill-service");
+    await skillService.mirrorFromMarketInstall(id);
+  } catch (err) {
+    console.warn(
+      "[agent.routes] mirror open-market skill install failed:",
+      err instanceof Error ? err.message : err
+    );
+  }
   return c.json({ data: created[0] }, 201);
 });
 
@@ -1739,6 +1759,119 @@ agentRouter.delete("/skills/installs/:id", async (c) => {
     .delete(skillMarketInstall)
     .where(and(eq(skillMarketInstall.id, id), eq(skillMarketInstall.projectId, projectId)));
   return c.json({ ok: true });
+});
+
+// ─── M11 自进化：agent_skill / curator / evolution REST 入口 ───────────────────
+
+agentRouter.get("/skills/library", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const includeArchived = c.req.query("includeArchived") === "true";
+  const stateRaw = c.req.query("state") ?? "";
+  const { skillService } = await import("../runtime/skills/skill-service");
+  const opts: { includeArchived?: boolean; state?: "active" | "stale" | "archived" | "pending_review" } = {};
+  if (includeArchived) opts.includeArchived = true;
+  if (["active", "stale", "archived", "pending_review"].includes(stateRaw)) {
+    opts.state = stateRaw as "active" | "stale" | "archived" | "pending_review";
+  }
+  const rows = await skillService.list(projectId, opts);
+  return c.json({ count: rows.length, data: rows });
+});
+
+agentRouter.get("/skills/library/:id", async (c) => {
+  const id = c.req.param("id");
+  const { skillService } = await import("../runtime/skills/skill-service");
+  const skill = await skillService.findById(id);
+  if (!skill) return c.json({ error: "skill not found" }, 404);
+  return c.json({ data: skill });
+});
+
+agentRouter.patch("/skills/library/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json<{
+    description?: string;
+    bodyMd?: string;
+    category?: string;
+    pinned?: boolean;
+    state?: "active" | "stale" | "archived" | "pending_review";
+    metadata?: Record<string, unknown>;
+    bumpVersion?: boolean;
+  }>();
+  const { skillService } = await import("../runtime/skills/skill-service");
+  try {
+    const patchInput: Parameters<typeof skillService.patch>[0] = { skillId: id };
+    if (typeof body.description === "string") patchInput.description = body.description;
+    if (typeof body.bodyMd === "string") patchInput.bodyMd = body.bodyMd;
+    if (typeof body.category === "string") patchInput.category = body.category;
+    if (typeof body.pinned === "boolean") patchInput.pinned = body.pinned;
+    if (typeof body.state === "string") patchInput.state = body.state;
+    if (body.metadata) patchInput.metadata = body.metadata;
+    if (typeof body.bumpVersion === "boolean") patchInput.bumpVersion = body.bumpVersion;
+    const updated = await skillService.patch(patchInput);
+    return c.json({ data: updated });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+agentRouter.post("/skills/curator/run", async (c) => {
+  const body = await c.req.json<{
+    projectId: string;
+    mode?: "dry_run" | "live";
+    useLlm?: boolean;
+    triggeredBy?: string;
+  }>();
+  if (!body.projectId) return c.json({ error: "projectId is required" }, 400);
+  const { skillCurator } = await import("../runtime/skills/skill-curator");
+  const result = await skillCurator.run({
+    projectId: body.projectId,
+    mode: body.mode ?? "dry_run",
+    ...(body.useLlm !== undefined ? { useLlm: body.useLlm } : {}),
+    triggeredBy: body.triggeredBy ?? "api",
+  });
+  return c.json({ data: result });
+});
+
+agentRouter.get("/skills/curator/runs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 20), 1), 100);
+  const { skillCurator } = await import("../runtime/skills/skill-curator");
+  const rows = await skillCurator.listRecentRuns(projectId, limit);
+  return c.json({ count: rows.length, data: rows });
+});
+
+agentRouter.post("/skills/evolve", async (c) => {
+  const body = await c.req.json<{
+    projectId: string;
+    baseSkillId: string;
+    datasetId?: string;
+    iterations?: number;
+    candidatesPerIteration?: number;
+    triggeredBy?: string;
+  }>();
+  if (!body.projectId || !body.baseSkillId) {
+    return c.json({ error: "projectId and baseSkillId are required" }, 400);
+  }
+  const { skillEvolver } = await import("../runtime/skills/skill-evolve");
+  const result = await skillEvolver.evolve({
+    projectId: body.projectId,
+    baseSkillId: body.baseSkillId,
+    ...(body.datasetId ? { datasetId: body.datasetId } : {}),
+    ...(body.iterations !== undefined ? { iterations: body.iterations } : {}),
+    ...(body.candidatesPerIteration !== undefined ? { candidatesPerIteration: body.candidatesPerIteration } : {}),
+    triggeredBy: body.triggeredBy ?? "api",
+  });
+  return c.json({ data: result });
+});
+
+agentRouter.get("/skills/evolve/runs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ error: "projectId is required" }, 400);
+  const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 20), 1), 100);
+  const { skillEvolver } = await import("../runtime/skills/skill-evolve");
+  const rows = await skillEvolver.listRecentRuns(projectId, limit);
+  return c.json({ count: rows.length, data: rows });
 });
 
 // ─── Agent groups（分析师等多定义编组）────────────────────────────────────────
