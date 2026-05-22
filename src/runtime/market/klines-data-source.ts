@@ -257,33 +257,125 @@ function yahooChartIntervalForPeriod(period: FetchBarsParams["period"]): string 
 }
 
 /**
+ * Yahoo v8 chart 的非官方限制：每个 `interval` 都有"单次窗口"和"最远可回溯历史"。
+ * 超出单次窗口直接拿到的数据会被截短；超出历史深度则该段时间根本不存在数据。
+ * 这里的取值是社区/实测共识，留有一定裕量。
+ */
+interface YahooIntervalCaps {
+  /** 单次 chart 调用允许的最大时间窗口（毫秒）。 */
+  maxChunkMs: number;
+  /** Yahoo 该 interval 能回溯的最远历史（毫秒）。 */
+  maxHistoryMs: number;
+}
+
+const D_MS = 24 * 60 * 60 * 1000;
+const YAHOO_INTERVAL_CAPS: Record<string, YahooIntervalCaps> = {
+  "1m": { maxChunkMs: 7 * D_MS, maxHistoryMs: 30 * D_MS },
+  "5m": { maxChunkMs: 60 * D_MS, maxHistoryMs: 60 * D_MS },
+  "15m": { maxChunkMs: 60 * D_MS, maxHistoryMs: 60 * D_MS },
+  "30m": { maxChunkMs: 60 * D_MS, maxHistoryMs: 60 * D_MS },
+  "60m": { maxChunkMs: 60 * D_MS, maxHistoryMs: 730 * D_MS },
+  "1d": { maxChunkMs: Number.POSITIVE_INFINITY, maxHistoryMs: Number.POSITIVE_INFINITY },
+};
+
+function getYahooIntervalCaps(interval: string): YahooIntervalCaps {
+  return YAHOO_INTERVAL_CAPS[interval] ?? YAHOO_INTERVAL_CAPS["1d"];
+}
+
+/** 把 `[startMs, endMs)` 按最大窗口切成连续片段，输入非法则返回空数组。 */
+export function splitRangeForYahoo(
+  startMs: number,
+  endMs: number,
+  maxChunkMs: number
+): Array<{ startMs: number; endMs: number }> {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return [];
+  }
+  if (!Number.isFinite(maxChunkMs) || maxChunkMs <= 0 || endMs - startMs <= maxChunkMs) {
+    return [{ startMs, endMs }];
+  }
+  const chunks: Array<{ startMs: number; endMs: number }> = [];
+  let cursor = startMs;
+  while (cursor < endMs) {
+    const next = Math.min(cursor + maxChunkMs, endMs);
+    chunks.push({ startMs: cursor, endMs: next });
+    cursor = next;
+  }
+  return chunks;
+}
+
+function dedupeBarsByTimestamp(bars: BarData[]): BarData[] {
+  if (bars.length <= 1) return [...bars];
+  const sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const out: BarData[] = [];
+  let lastTs = "";
+  for (const b of sorted) {
+    if (b.timestamp === lastTs) continue;
+    out.push(b);
+    lastTs = b.timestamp;
+  }
+  return out;
+}
+
+/**
  * Yahoo Finance v8 chart：日线 + 分钟/小时（`1m`…`4h`）。
- * 历史深度受 Yahoo 对细周期限制，请求过长时返回条数可能少于 `limit`。
+ *
+ * 内部对 Yahoo 的"单次窗口"硬限做了透明分段：
+ * - `1m`：每段 7 天，历史 30 天；`5m`/`15m`/`30m`：每段 60 天，历史 60 天；
+ * - `60m`(对应 `1h`/`4h`)：每段 60 天，历史 730 天；`1d`：单次直拉。
+ *
+ * 起点超出 Yahoo 历史窗口时会被静默 clamp，避免发出注定为空的请求；
+ * 单段失败不影响其它段。返回的 K 线会按时间戳去重并升序排列。
  */
 export async function fetchYahooFinanceBars(params: FetchBarsParams): Promise<BarData[]> {
   const ticker = symbolToYahooSymbol(params.symbol, params.exchange || "");
   if (!ticker) throw new Error("yahoo_chart: empty symbol");
-  const startMs = Date.parse(params.startDate);
-  const endMs = Date.parse(params.endDate);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+  const startMsRaw = Date.parse(params.startDate);
+  const endMsRaw = Date.parse(params.endDate);
+  if (!Number.isFinite(startMsRaw) || !Number.isFinite(endMsRaw)) {
     throw new Error("yahoo_chart: invalid date range");
   }
-  const period1 = Math.floor(startMs / 1000);
-  let period2 = Math.ceil(endMs / 1000);
-  const period = params.period;
 
-  if (period === "1d") {
-    period2 += 86_400;
-    const json = await fetchYahooChartJson(ticker, period1, period2, "1d");
-    return parseYahooChartResultToBars(json, params);
-  }
-
-  const yahooIv = yahooChartIntervalForPeriod(period);
+  const yahooIv = yahooChartIntervalForPeriod(params.period);
   if (!yahooIv) return [];
 
-  const json = await fetchYahooChartJson(ticker, period1, period2, yahooIv);
-  let bars = parseYahooChartResultToBars(json, params);
-  if (period === "4h") {
+  const caps = getYahooIntervalCaps(yahooIv);
+  const nowMs = Date.now();
+  const minStartMs = Number.isFinite(caps.maxHistoryMs)
+    ? nowMs - caps.maxHistoryMs
+    : Number.NEGATIVE_INFINITY;
+  const startMs = Math.max(startMsRaw, minStartMs);
+  let endMs = endMsRaw;
+  if (params.period === "1d") {
+    endMs += D_MS;
+  }
+  if (endMs <= startMs) return [];
+
+  const chunks = splitRangeForYahoo(startMs, endMs, caps.maxChunkMs);
+  const merged: BarData[] = [];
+  let lastChunkError: unknown;
+  for (const c of chunks) {
+    const p1 = Math.floor(c.startMs / 1000);
+    const p2 = Math.ceil(c.endMs / 1000);
+    try {
+      const json = await fetchYahooChartJson(ticker, p1, p2, yahooIv);
+      const bars = parseYahooChartResultToBars(json, params);
+      if (bars.length > 0) merged.push(...bars);
+    } catch (e) {
+      lastChunkError = e;
+      console.warn(
+        `[yahoo_chart] chunk ${new Date(c.startMs).toISOString()}..${new Date(c.endMs).toISOString()} failed (${ticker}, ${yahooIv})`,
+        e instanceof Error ? e.message : e
+      );
+    }
+  }
+
+  if (merged.length === 0 && lastChunkError && chunks.length === 1) {
+    throw lastChunkError;
+  }
+
+  let bars = dedupeBarsByTimestamp(merged);
+  if (params.period === "4h") {
     bars = aggregateBarsByMsWindow(
       bars,
       4 * 60 * 60 * 1000,

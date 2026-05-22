@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { symbolToEastMoneySecId } from "./eastmoney-klines";
 import { isCryptoMarket } from "./crypto-market";
-import { resolveEffectiveKlinesSource, symbolToYahooSymbol } from "./klines-data-source";
+import { symbolToEastMoneySecId } from "./eastmoney-klines";
+import {
+  resolveEffectiveKlinesSource,
+  splitRangeForYahoo,
+  symbolToYahooSymbol,
+} from "./klines-data-source";
 
 describe("symbolToYahooSymbol", () => {
   test("A-share SH / SZ", () => {
@@ -143,5 +147,47 @@ describe("symbolToEastMoneySecId", () => {
   test("SH / SZ", () => {
     expect(symbolToEastMoneySecId("600000", "SH")).toBe("1.600000");
     expect(symbolToEastMoneySecId("000001", "SZ")).toBe("0.000001");
+  });
+});
+
+describe("splitRangeForYahoo", () => {
+  const D = 24 * 60 * 60 * 1000;
+
+  test("invalid or empty window returns []", () => {
+    expect(splitRangeForYahoo(Number.NaN, 100, D)).toEqual([]);
+    expect(splitRangeForYahoo(100, Number.NaN, D)).toEqual([]);
+    expect(splitRangeForYahoo(500, 500, D)).toEqual([]);
+    expect(splitRangeForYahoo(500, 100, D)).toEqual([]);
+  });
+
+  test("window <= max returns single chunk", () => {
+    expect(splitRangeForYahoo(0, 5 * D, 7 * D)).toEqual([{ startMs: 0, endMs: 5 * D }]);
+    expect(splitRangeForYahoo(0, 7 * D, 7 * D)).toEqual([{ startMs: 0, endMs: 7 * D }]);
+  });
+
+  test("infinite or non-positive max returns single chunk", () => {
+    expect(splitRangeForYahoo(0, 365 * D, Number.POSITIVE_INFINITY)).toEqual([
+      { startMs: 0, endMs: 365 * D },
+    ]);
+    expect(splitRangeForYahoo(0, 365 * D, 0)).toEqual([{ startMs: 0, endMs: 365 * D }]);
+  });
+
+  test("splits oversized window into contiguous chunks", () => {
+    const chunks = splitRangeForYahoo(0, 20 * D, 7 * D);
+    expect(chunks).toEqual([
+      { startMs: 0, endMs: 7 * D },
+      { startMs: 7 * D, endMs: 14 * D },
+      { startMs: 14 * D, endMs: 20 * D },
+    ]);
+    for (let i = 1; i < chunks.length; i++) {
+      expect(chunks[i].startMs).toBe(chunks[i - 1].endMs);
+    }
+  });
+
+  test("180d / 60d window for 60m-style cap", () => {
+    const chunks = splitRangeForYahoo(0, 180 * D, 60 * D);
+    expect(chunks.length).toBe(3);
+    expect(chunks[0]).toEqual({ startMs: 0, endMs: 60 * D });
+    expect(chunks[2].endMs).toBe(180 * D);
   });
 });
