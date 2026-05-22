@@ -171,6 +171,7 @@ import { ScheduledJobsPanel } from "../config/ScheduledJobsPanel";
 import { ProvidersPanel } from "../config/ProvidersPanel";
 import { LlmProvidersList } from "../config/LlmProvidersList";
 import { OriginBadge } from "../common/OriginBadge";
+import { PythonRuntimeCard } from "../common/PythonRuntimeCard";
 import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { AgentGeneratedFactorsBlock } from "../team/AgentGeneratedFactorsBlock";
@@ -2001,6 +2002,7 @@ const ConfigPanel: FC = () => {
             ["agent", "Agent"],
             ["integration", "集成 / IM"],
             ["schedule", "定时任务"],
+            ["runtime", "运行时"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -3070,6 +3072,16 @@ const ConfigPanel: FC = () => {
         ) : null}
         {activeConfigSubPage === "schedule" ? (
           <ScheduledJobsPanel workspaceId={currentWorkspaceId || undefined} projectId={currentProjectId || null} />
+        ) : null}
+        {activeConfigSubPage === "runtime" ? (
+          <>
+            <h3 style={styles.subTitle}>系统运行时</h3>
+            <p className="qb-config-hint">
+              展示 Python 沙箱（code.run_python 与 qlib/signal/backtest 算子共用）的解释器路径和关键依赖。
+              红灯时沙箱会 fail-fast 拒绝执行；黄灯（可选依赖缺失）只影响部分高级能力。
+            </p>
+            <PythonRuntimeCard />
+          </>
         ) : null}
         {activeConfigSubPage === "providers" ? <ProvidersPanel /> : null}
         {activeConfigSubPage === "integration" ? (

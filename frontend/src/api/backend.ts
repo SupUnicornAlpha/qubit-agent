@@ -105,6 +105,35 @@ export async function runSystemBootstrap(input?: {
   return res.data;
 }
 
+export interface SystemPythonDepStatus {
+  name: string;
+  available: boolean;
+  required: boolean;
+  version?: string;
+  error?: string;
+}
+
+export interface SystemPythonHealthReport {
+  ok: boolean;
+  binPath: string;
+  binKind: "system" | "venv" | "explicit";
+  pythonVersion?: string;
+  dependencies: SystemPythonDepStatus[];
+  errorCode?: "python_unavailable" | "python_exit_nonzero" | "python_deps_missing" | "probe_timeout";
+  hint?: string;
+  checkedAt: string;
+}
+
+/**
+ * Python 沙箱/算子运行时健康自检：解释器路径、版本、必需(pandas/numpy)与可选(scipy)依赖。
+ * 默认会命中后端 60s 缓存；force=true 强制重新探测（venv 冷启可能 10-30s）。
+ */
+export async function getSystemPythonHealth(force?: boolean): Promise<SystemPythonHealthReport> {
+  const path = force ? "/api/v1/system/python-health?force=true" : "/api/v1/system/python-health";
+  const res = await httpGet<{ ok: boolean; data: SystemPythonHealthReport }>(path);
+  return res.data;
+}
+
 export async function getHealth(): Promise<{ status: string }> {
   return httpGet<{ status: string }>("/health");
 }

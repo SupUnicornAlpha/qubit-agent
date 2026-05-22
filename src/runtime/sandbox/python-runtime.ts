@@ -22,6 +22,11 @@ export interface PythonDepStatus {
   available: boolean;
   version?: string;
   error?: string;
+  /**
+   * `true`：必需依赖（pandas / numpy），缺失则 `report.ok = false`，沙箱 fail-fast。
+   * `false`：可选依赖（scipy 等），缺失只在 hint 里提示，不阻断沙箱启动。
+   */
+  required: boolean;
 }
 
 export interface PythonHealthReport {
@@ -156,6 +161,7 @@ async function probeOnce(): Promise<PythonHealthReport> {
   const probe = await runProbe(binPath);
 
   if (probe.spawnError) {
+    const requiredSet = new Set<string>(REQUIRED_DEPS);
     const base: Omit<PythonHealthReport, "hint"> = {
       ok: false,
       binPath,
@@ -163,6 +169,7 @@ async function probeOnce(): Promise<PythonHealthReport> {
       dependencies: [...REQUIRED_DEPS, ...OPTIONAL_DEPS].map((name) => ({
         name,
         available: false,
+        required: requiredSet.has(name),
         error: "python_unavailable",
       })),
       errorCode: "python_unavailable",
@@ -214,11 +221,13 @@ async function probeOnce(): Promise<PythonHealthReport> {
   }
 
   const depsRaw = parsed.deps ?? {};
+  const requiredSet = new Set<string>(REQUIRED_DEPS);
   const dependencies: PythonDepStatus[] = [...REQUIRED_DEPS, ...OPTIONAL_DEPS].map((name) => {
     const info = depsRaw[name];
+    const required = requiredSet.has(name);
     return info?.ok
-      ? { name, available: true, ...withOpt("version", info.version) }
-      : { name, available: false, ...withOpt("error", info?.error) };
+      ? { name, available: true, required, ...withOpt("version", info.version) }
+      : { name, available: false, required, ...withOpt("error", info?.error) };
   });
 
   const requiredMissing = dependencies.filter(
@@ -238,12 +247,23 @@ async function probeOnce(): Promise<PythonHealthReport> {
     return { ...base, ...withOpt("hint", buildHint(base)) };
   }
 
+  /*
+   * 必需依赖齐全的情况下：即使 ok=true，也帮用户补一个 hint 提示可选依赖缺失。
+   * 这样运行时卡片只看 ok 是绿灯，但 hint 字段把"可以但建议补装"的细节也传出去。
+   */
+  const optionalMissing = dependencies.filter((d) => !d.available && !d.required);
+  const okHint =
+    optionalMissing.length > 0
+      ? `必需依赖已就绪；可选依赖缺失：${optionalMissing.map((d) => d.name).join(", ")}（不影响沙箱基本运行）`
+      : undefined;
+
   return {
     ok: true,
     binPath,
     binKind,
     ...withOpt("pythonVersion", parsed.version),
     dependencies,
+    ...withOpt("hint", okHint),
     checkedAt,
   };
 }
