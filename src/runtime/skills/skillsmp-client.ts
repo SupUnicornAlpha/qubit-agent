@@ -46,17 +46,32 @@ function mapRow(row: Record<string, unknown>): OpenSkillMarketEntry | null {
   const author = typeof row.author === "string" ? row.author : "";
   const githubUrl = typeof row.githubUrl === "string" ? row.githubUrl : "";
   const skillUrl = typeof row.skillUrl === "string" ? row.skillUrl : "";
+  /*
+   * SkillsMP 直接返回 GitHub stars 和 updatedAt（Unix 秒字符串）。
+   * 之前的 mapRow 只取了 url/author，把这两个有信息量的字段丢掉了 →
+   * 前端无法显示 stars，也无法做"按 stars 排序"这种常用筛选。
+   */
+  const starsNum =
+    typeof row.stars === "number"
+      ? row.stars
+      : typeof row.stars === "string" && row.stars.trim() !== ""
+        ? Number(row.stars)
+        : undefined;
+  const stars = typeof starsNum === "number" && Number.isFinite(starsNum) ? starsNum : undefined;
+  const updatedAt =
+    typeof row.updatedAt === "string" || typeof row.updatedAt === "number" ? row.updatedAt : undefined;
+  const compatibility: Record<string, unknown> = { skillsmp: true };
+  if (skillUrl) compatibility.skillUrl = skillUrl;
+  if (githubUrl) compatibility.githubUrl = githubUrl;
   return {
     id,
     name,
     description,
-    author: author || undefined,
-    repo: githubUrl || undefined,
-    compatibility: {
-      skillsmp: true,
-      skillUrl: skillUrl || undefined,
-      githubUrl: githubUrl || undefined,
-    },
+    ...(author ? { author } : {}),
+    ...(githubUrl ? { repo: githubUrl } : {}),
+    ...(stars !== undefined ? { stars } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+    compatibility,
   };
 }
 
@@ -130,7 +145,12 @@ export async function searchSkillsMp(
   limit: number,
   apiKey?: string
 ): Promise<OpenSkillMarketEntry[]> {
-  const { items } = await searchSkillsMpPaginated({ q, page: 1, pageSize: limit, apiKey });
+  const { items } = await searchSkillsMpPaginated({
+    q,
+    page: 1,
+    pageSize: limit,
+    ...(apiKey !== undefined ? { apiKey } : {}),
+  });
   return items;
 }
 

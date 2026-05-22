@@ -326,6 +326,10 @@ export interface OpenSkillMarketEntryDto {
   id: string;
   name: string;
   description: string;
+  /** GitHub stars（SkillsMP 直接返回；Open registry 由后端从 repositories map 回填） */
+  stars?: number;
+  /** ISO 字符串或 Unix 秒/毫秒（取决于上游） */
+  updatedAt?: string | number;
   categories?: string[];
   author?: string;
   repo?: string;
@@ -575,6 +579,9 @@ export interface AnalystTeamGraphMcpCall {
   status: string;
   latencyMs: number | null;
   createdAt: string;
+  requestJson?: unknown;
+  responseJson?: unknown;
+  errorCode?: string | null;
 }
 
 export interface AnalystTeamGraphAgentStep {

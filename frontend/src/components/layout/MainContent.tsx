@@ -2850,6 +2850,7 @@ const ConfigPanel: FC = () => {
                   <tr style={{ textAlign: "left", color: "var(--qb-main-meta)" }}>
                     <th style={{ padding: "6px 8px" }}>name</th>
                     <th style={{ padding: "6px 8px" }}>描述</th>
+                    <th style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>★ Stars</th>
                     <th style={{ padding: "6px 8px" }}>仓库</th>
                     <th style={{ padding: "6px 8px" }}>操作</th>
                   </tr>
@@ -2857,44 +2858,77 @@ const ConfigPanel: FC = () => {
                 <tbody>
                   {skillSearchBusy ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
+                      <td colSpan={5} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
                         加载中…
                       </td>
                     </tr>
                   ) : skillSearchHits.length === 0 ? (
                     <tr>
-                      <td colSpan={4} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
+                      <td colSpan={5} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
                         无结果。SkillsMP 需网络可达；Open Skill Market 请先点击「加载全量索引」后再搜索。
                       </td>
                     </tr>
                   ) : (
-                    skillSearchHits.map((row) => (
-                      <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}>
-                        <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
-                          {row.name}
-                        </td>
-                        <td style={{ padding: "8px", maxWidth: 360 }}>
-                          {row.description.length > 160 ? `${row.description.slice(0, 160)}…` : row.description}
-                        </td>
-                        <td style={{ padding: "8px", wordBreak: "break-all" }}>{row.repo ?? "—"}</td>
-                        <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
-                          <button
-                            type="button"
-                            className="qb-btn-ghost qb-btn--compact"
-                            disabled={!currentProjectId}
-                            title={!currentProjectId ? "需先加载工作区项目" : undefined}
-                            onClick={() =>
-                              currentProjectId &&
-                              void installSkillFromMarket({ projectId: currentProjectId, externalSkillId: row.id }).then(
-                                () => listSkillMarketInstalls(currentProjectId).then(setSkillInstalls)
-                              )
-                            }
+                    /*
+                     * 按 stars 降序展示。SkillsMP API 本身已按 stars 排序，但 Open Skill Market
+                     * 的本地索引是任意顺序，统一在前端做一次排序，保证两种来源体验一致。
+                     */
+                    [...skillSearchHits]
+                      .sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1))
+                      .map((row) => (
+                        <tr key={row.id} style={{ borderTop: "1px solid #27272a", color: "var(--qb-body-fg)" }}>
+                          <td style={{ padding: "8px", fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                            {row.name}
+                          </td>
+                          <td style={{ padding: "8px", maxWidth: 360 }}>
+                            {row.description.length > 160 ? `${row.description.slice(0, 160)}…` : row.description}
+                          </td>
+                          <td
+                            style={{
+                              padding: "8px",
+                              whiteSpace: "nowrap",
+                              fontVariantNumeric: "tabular-nums",
+                              color: row.stars != null ? "var(--qb-body-fg)" : "var(--qb-main-meta)",
+                            }}
+                            title={row.stars != null ? `GitHub stars: ${row.stars}` : "GitHub stars 未知"}
                           >
-                            安装到项目
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                            {row.stars != null ? row.stars.toLocaleString() : "—"}
+                          </td>
+                          <td style={{ padding: "8px", wordBreak: "break-all", maxWidth: 320 }}>
+                            {row.repo ? (
+                              <a
+                                href={row.repo}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: "var(--qb-link, #60a5fa)" }}
+                              >
+                                {row.repo.replace(/^https?:\/\/(www\.)?github\.com\//, "")}
+                              </a>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                          <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
+                            <button
+                              type="button"
+                              className="qb-btn-ghost qb-btn--compact"
+                              disabled={!currentProjectId}
+                              title={!currentProjectId ? "需先加载工作区项目" : undefined}
+                              onClick={() =>
+                                currentProjectId &&
+                                void installSkillFromMarket({
+                                  projectId: currentProjectId,
+                                  externalSkillId: row.id,
+                                }).then(() =>
+                                  listSkillMarketInstalls(currentProjectId).then(setSkillInstalls)
+                                )
+                              }
+                            >
+                              安装到项目
+                            </button>
+                          </td>
+                        </tr>
+                      ))
                   )}
                 </tbody>
               </table>

@@ -38,6 +38,14 @@ export type OpenSkillMarketEntry = {
   version?: string;
   tags?: string[];
   compatibility?: Record<string, unknown>;
+  /**
+   * GitHub stars。SkillsMP 的 API 直接返回；
+   * Open Skill Market 的 compact JSON 把 stars 放在 `repositories[repo]` 里，
+   * 我们在 `loadOpenSkillMarketRegistry` 末尾回填到每个 entry，方便前端直接按 stars 排序/展示。
+   */
+  stars?: number;
+  /** ISO 字符串或 Unix 秒/毫秒（取决于上游 API） */
+  updatedAt?: string | number;
 };
 
 type RegistryPayload = {
@@ -114,6 +122,18 @@ export async function loadOpenSkillMarketRegistry(
   }
 
   skills = dedupeSkills(skills);
+  /*
+   * Open Skill Market 的 compact JSON 把 GitHub 元数据（stars/forks/lastUpdated）放在
+   * 顶层 `repositories[repo]` 里，每条 skill 只引用了 repo URL。这里做一次扁平化回填，
+   * 让前端无须再拿 repositories map 做二次 join。
+   */
+  for (const s of skills) {
+    if (s.stars !== undefined) continue;
+    const meta = s.repo ? repositories[s.repo] : undefined;
+    if (!meta) continue;
+    if (typeof meta.stars === "number") s.stars = meta.stars;
+    if (meta.lastUpdated) s.updatedAt = meta.lastUpdated;
+  }
   const byId = new Map(skills.map((s) => [s.id, s]));
 
   cache = {
