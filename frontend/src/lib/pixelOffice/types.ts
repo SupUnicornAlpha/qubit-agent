@@ -87,6 +87,10 @@ export type CatActor = {
   walkStart?: number;
   /** 纵深 0=远 1=近，用于透视缩放 */
   depth?: number;
+  /** 空闲漫步：下次触发时间 */
+  nextIdleWander?: number;
+  /** 漫步结束后回工位时间 */
+  returnHomeAt?: number;
 };
 
 export type ChatBeam = {
@@ -126,6 +130,12 @@ export type OfficeLayout = {
   cellH: number;
   rack: DeskSlot;
   shelf: DeskSlot;
+  /** 休息角（靠窗） */
+  lounge: DeskSlot;
+  /** 咖啡角（侧墙） */
+  coffee: DeskSlot;
+  /** 工作区标识点 */
+  workZone: DeskSlot;
   desks: Map<string, DeskSlot>;
 };
 

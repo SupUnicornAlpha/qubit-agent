@@ -91,6 +91,9 @@ export function computeOfficeLayout(
   const midV = 0.52;
   const shelfPos = perspectiveGridPosition(p, 0.06, midV);
   const rackPos = perspectiveGridPosition(p, 0.94, midV);
+  const loungePos = perspectiveGridPosition(p, 0.5, 0.12);
+  const coffeePos = perspectiveGridPosition(p, 0.12, 0.72);
+  const workZonePos = perspectiveGridPosition(p, 0.5, 0.42);
 
   const sample = slotAt(p, 0, 0, grid.cols, grid.rows);
   const sample2 = slotAt(p, Math.min(1, grid.cols - 1), 0, grid.cols, grid.rows);
@@ -113,6 +116,9 @@ export function computeOfficeLayout(
       y: rackPos.y,
       depth: rackPos.depth,
     },
+    lounge: { x: loungePos.x, y: loungePos.y, depth: loungePos.depth },
+    coffee: { x: coffeePos.x, y: coffeePos.y, depth: coffeePos.depth },
+    workZone: { x: workZonePos.x, y: workZonePos.y - 20, depth: workZonePos.depth },
     desks,
   };
 }

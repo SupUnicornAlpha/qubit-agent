@@ -1,5 +1,5 @@
 import type { FC, MouseEvent } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AnalystTeamGraphEdge,
   AnalystTeamGraphNode,
@@ -9,17 +9,22 @@ import { breedForRole } from "../../lib/pixelOffice/catAppearance";
 import { classifyInteractionKind } from "../../lib/pixelOffice/classify";
 import { getRenderConfig } from "../../lib/pixelOffice/config";
 import { mapGraphToOfficeEventsExtended } from "../../lib/pixelOffice/eventMapper";
+import { ensureArkPixelLoaded } from "../../lib/pixelOffice/fonts";
 import { getPixelOfficeRegistry } from "../../lib/pixelOffice/runtime";
 import { preloadSkylineImages } from "../../lib/pixelOffice/skylineImages";
 import { computeOfficeLayout, deskHitRadius } from "../../lib/pixelOffice/officeLayout";
 import { computeOfficePerspective, depthAtY } from "../../lib/pixelOffice/officePerspective";
+import {
+  drawDeskNameplate,
+  drawStatusBadge,
+  statusEmojiForAction,
+} from "../../lib/pixelOffice/officeProps";
 import {
   actionLabel,
   drawCatSprite,
   drawChatBeam,
   drawOfficeScene,
   drawParticles,
-  drawRoleLabel,
   drawWorkstation,
   screenModeForAction,
   spawnParticles,
@@ -36,6 +41,11 @@ import type {
 import { ACTION_MS, WALK_MS } from "../../lib/pixelOffice/types";
 import type { TeamGraphActivity, TeamGraphSelection } from "../ide/TeamAgentGraph";
 
+const TeamAgentPhaserOffice = lazy(() =>
+  import("./TeamAgentPhaserOffice").then((m) => ({ default: m.TeamAgentPhaserOffice }))
+);
+
+type Engine = "canvas" | "phaser";
 const SERVER_ROLE = "__tools__";
 const CITY_OPTIONS: { id: CitySkyline; label: string }[] = [
   { id: "shanghai", label: "上海" },
@@ -166,7 +176,12 @@ function applyOfficeEvent(
   }
 }
 
-function tickCats(cats: Map<string, CatActor>, layout: ReturnType<typeof computeOfficeLayout>, now: number) {
+function tickCats(
+  cats: Map<string, CatActor>,
+  layout: ReturnType<typeof computeOfficeLayout>,
+  now: number,
+  isRunning: boolean
+) {
   for (const cat of cats.values()) {
     if (cat.action === "walk" && cat.walkToX != null && cat.walkFromX != null && cat.walkStart != null) {
       const t = Math.min(1, (now - cat.walkStart) / WALK_MS);
@@ -209,6 +224,26 @@ function tickCats(cats: Map<string, CatActor>, layout: ReturnType<typeof compute
         cat.y = cat.homeY;
       }
     }
+
+    if (!isRunning && cat.action === "idle" && cat.actionUntil === 0) {
+      if (cat.returnHomeAt && now >= cat.returnHomeAt) {
+        const dist = Math.hypot(cat.x - cat.homeX, cat.y - (cat.homeY - 8));
+        if (dist > 10) startWalk(cat, cat.homeX, cat.homeY - 8, "idle", now);
+        cat.returnHomeAt = undefined;
+      } else if (!cat.returnHomeAt) {
+        if (cat.nextIdleWander == null) {
+          cat.nextIdleWander = now + 7000 + Math.random() * 9000;
+        }
+        if (now >= cat.nextIdleWander) {
+          cat.nextIdleWander = now + 16000 + Math.random() * 14000;
+          if (Math.random() < 0.38) {
+            const dest = Math.random() < 0.5 ? layout.coffee : layout.lounge;
+            startWalk(cat, dest.x, dest.y - 6, "idle", now);
+            cat.returnHomeAt = now + WALK_MS + 1600 + Math.random() * 1400;
+          }
+        }
+      }
+    }
   }
 }
 
@@ -225,6 +260,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 360 });
   const [city, setCity] = useState<CitySkyline>("shanghai");
+  const [engine, setEngine] = useState<Engine>("canvas");
 
   const catsRef = useRef<Map<string, CatActor>>(new Map());
   const beamsRef = useRef<ChatBeam[]>([]);
@@ -251,6 +287,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
 
   useEffect(() => {
     preloadSkylineImages();
+    void ensureArkPixelLoaded();
   }, []);
 
   useEffect(() => {
@@ -352,7 +389,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       if (!ctx) return;
       const { w, h } = size;
 
-      tickCats(catsRef.current, layout, now);
+      tickCats(catsRef.current, layout, now, Boolean(isRunning));
 
       const cfg = getRenderConfig();
       const dpr = Math.min(window.devicePixelRatio || 1, cfg.maxDevicePixelRatio);
@@ -399,7 +436,11 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         const depth = cat.depth ?? desk.depth;
         drawCatSprite(ctx, cat, now, depth);
         const sel = selection?.kind === "node" && selection.role === cat.role;
-        drawRoleLabel(ctx, cat.homeX, cat.homeY, cat.label, cat.role, sel, depth);
+        drawDeskNameplate(ctx, cat.homeX, cat.homeY, cat.label, cat.role, sel, depth);
+        const emoji = statusEmojiForAction(cat.action, cat.screenMode);
+        if (emoji) {
+          drawStatusBadge(ctx, cat.x + 16 * (cat.facing === 1 ? 1 : -1), cat.y - 36, emoji, depth);
+        }
       }
 
       particlesRef.current = tickParticles(particlesRef.current, 16);
@@ -453,16 +494,74 @@ export const TeamAgentPixelOffice: FC<Props> = ({
     else onClear();
   };
 
+  const statusLine = useMemo(() => {
+    if (isRunning) return "[团队分析] 工作中";
+    if (selection?.kind === "node") {
+      const node = agentNodes.find((n) => n.role === selection.role);
+      const label = node?.label || node?.role || selection.role;
+      return `[${label}] 已选中`;
+    }
+    return "[待命] 休息角待命中";
+  }, [isRunning, selection, agentNodes]);
+
   return (
     <div ref={wrapRef} className="qb-pixel-office qb-pixel-office--fill" data-qb-topology-canvas="">
-      <canvas
-        ref={canvasRef}
-        className="qb-pixel-office-canvas"
-        style={{ width: "100%", height: "100%" }}
-        onClick={onClick}
-      />
+      {engine === "canvas" ? (
+        <>
+          <canvas
+            ref={canvasRef}
+            className="qb-pixel-office-canvas"
+            style={{ width: "100%", height: "100%" }}
+            onClick={onClick}
+          />
+          <div className="qb-pixel-office-status">{statusLine}</div>
+          <div className="qb-pixel-office-plaque">
+            <span className="qb-pixel-office-plaque-star">⭐</span>
+            <span className="qb-pixel-office-plaque-title">Qubit Agent 办公室</span>
+            <span className="qb-pixel-office-plaque-star">⭐</span>
+          </div>
+        </>
+      ) : (
+        <Suspense
+          fallback={
+            <div className="qb-pixel-office-loading">
+              <span>正在加载 Phaser 引擎…</span>
+            </div>
+          }
+        >
+          <TeamAgentPhaserOffice
+            graph={graph}
+            nodes={nodes}
+            edges={[]}
+            selection={selection}
+            onSelectNode={onSelectNode}
+            onClear={onClear}
+            activity={activity}
+            isRunning={isRunning}
+            city={city}
+          />
+        </Suspense>
+      )}
       <div className="qb-pixel-office-toolbar">
-        <span className="qb-pixel-office-toolbar-label">窗外景观</span>
+        <span className="qb-pixel-office-toolbar-label">引擎</span>
+        <button
+          type="button"
+          className={engine === "canvas" ? "is-active" : ""}
+          onClick={() => setEngine("canvas")}
+          title="原生 Canvas 渲染（默认）"
+        >
+          Canvas
+        </button>
+        <button
+          type="button"
+          className={engine === "phaser" ? "is-active" : ""}
+          onClick={() => setEngine("phaser")}
+          title="Phaser 3 引擎 + ArkPixel"
+        >
+          Phaser
+        </button>
+        <span className="qb-pixel-office-toolbar-divider" />
+        <span className="qb-pixel-office-toolbar-label">窗外</span>
         {CITY_OPTIONS.map((c) => (
           <button
             key={c.id}

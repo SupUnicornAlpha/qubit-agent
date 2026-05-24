@@ -37,7 +37,7 @@ const PRESETS: Record<RenderTier, RenderConfig> = {
   hd: {
     tier: "hd",
     spriteUnit: 8,
-    atlasBuild: 6,
+    atlasBuild: 8,
     catScale: 3.25,
     monitorScale: 3.2,
     deskScale: 3.2,

@@ -43,3 +43,12 @@ docs/*
 
 # Runtime workspace config (local)
 .qubit/
+
+# Bun compile build cache
+.*.bun-build
+
+# Pixel office font subset debug output
+frontend/src/assets/fonts/.subset-chars.txt
+
+# Agent runtime snapshots
+.tmp-agent-snapshot-test/

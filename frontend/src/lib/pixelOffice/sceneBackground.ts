@@ -1,3 +1,4 @@
+import { pixelFont } from "./fonts";
 import type { PixelOfficeRegistry } from "./registry";
 import {
   computeOfficePerspective,
@@ -45,7 +46,7 @@ export function drawBuiltinSceneBackground(
   const labelX = (win.bl.x + win.br.x) / 2;
   const labelY = win.bl.y - 12;
   ctx.fillStyle = "rgba(226, 232, 240, 0.92)";
-  ctx.font = "12px system-ui, sans-serif";
+  ctx.font = pixelFont(12);
   ctx.textAlign = "center";
   ctx.shadowColor = "rgba(0,0,0,0.55)";
   ctx.shadowBlur = 4;

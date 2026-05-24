@@ -131,8 +131,10 @@ function drawMonitorPixels(
   fill(ctx, ox, oy, mw, mh, "#1e293b");
   fill(ctx, ox + 1, oy + 1, mw - 2, 4, "#334155");
   fill(ctx, ox + 2, oy + 2, 10, 1, "#64748b");
+  fill(ctx, ox + mw - 8, oy + 2, 5, 1, "#94a3b8");
   fill(ctx, ox + 1, oy + 5, mw - 2, mh - 6, "#020617");
   fill(ctx, ox + 2, oy + 6, mw - 4, mh - 8, "#0f172a");
+  fill(ctx, ox + 3, oy + 7, 2, mh - 10, "rgba(148,163,184,0.35)");
 
   switch (mode) {
     case "idle":
@@ -290,12 +292,20 @@ function drawCatPixels(
 }
 
 function drawDeskSprite(fill: ReturnType<typeof makeFill>, ctx: CanvasRenderingContext2D, ox: number, oy: number, hd: boolean) {
-  const dw = hd ? 52 : 36;
-  fill(ctx, ox, oy + 18, dw, 5, "#5c4a32");
-  fill(ctx, ox + 2, oy + 16, dw - 4, 2, "#6d5a43");
-  fill(ctx, ox + 4, oy + 5, dw - 8, 13, "#3d3020");
-  fill(ctx, ox + 6, oy + 7, dw - 12, 8, "#2a2218");
-  fill(ctx, ox + 8, oy + 8, dw - 16, 1, "#4a4038");
+  const dw = hd ? 56 : 40;
+  const ch = hd ? 10 : 8;
+  fill(ctx, ox + Math.floor(dw * 0.26), oy + 1, Math.floor(dw * 0.48), ch, "#4a4038");
+  fill(ctx, ox + Math.floor(dw * 0.3), oy + 3, Math.floor(dw * 0.4), ch - 4, "#5c5048");
+  fill(ctx, ox, oy + 20, dw, 5, "#5c4a32");
+  fill(ctx, ox + 2, oy + 18, dw - 4, 2, "#6d5a43");
+  fill(ctx, ox + 4, oy + 6, dw - 8, 14, "#3d3020");
+  fill(ctx, ox + 6, oy + 8, dw - 12, 9, "#2a2218");
+  fill(ctx, ox + 8, oy + 9, dw - 16, 1, "#4a4038");
+  fill(ctx, ox + 10, oy + 11, hd ? 22 : 16, hd ? 7 : 5, "#1e293b");
+  fill(ctx, ox + 11, oy + 12, hd ? 20 : 14, hd ? 5 : 3, "#334155");
+  fill(ctx, ox + dw - (hd ? 14 : 10), oy + 12, hd ? 8 : 6, hd ? 5 : 4, "#475569");
+  fill(ctx, ox + 3, oy + 22, 3, hd ? 6 : 5, "#3d3020");
+  fill(ctx, ox + dw - 6, oy + 22, 3, hd ? 6 : 5, "#3d3020");
 }
 
 function drawRackSprite(fill: ReturnType<typeof makeFill>, ctx: CanvasRenderingContext2D, ox: number, oy: number, hd: boolean) {
@@ -420,7 +430,7 @@ export function getSpriteAtlas(config = getRenderConfig()): AtlasSprites {
     }
   }
 
-  const desk = place(hd ? 56 : 40, hd ? 26 : 20);
+  const desk = place(hd ? 60 : 44, hd ? 30 : 24);
   drawDeskSprite(fill, ctx, desk.x, desk.y, hd);
   const rack = place(hd ? 38 : 30, hd ? 48 : 38);
   drawRackSprite(fill, ctx, rack.x, rack.y, hd);

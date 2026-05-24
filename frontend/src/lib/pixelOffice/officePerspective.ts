@@ -188,43 +188,62 @@ function drawWallPanel(
 function drawSideWalls(ctx: CanvasRenderingContext2D, p: OfficePerspective, win: WindowQuad) {
   const cy = p.ceilingY;
 
-  drawWallPanel(ctx, 0, cy, win.tl.x, win.tl.y, win.bl.x, win.bl.y, 0, p.floorFront, [38, 50, 66], true);
-  drawWallPanel(ctx, p.w, cy, win.tr.x, win.tr.y, win.br.x, win.br.y, p.w, p.floorFront, [34, 46, 62], true);
+  drawWallPanel(ctx, 0, cy, win.tl.x, win.tl.y, win.bl.x, win.bl.y, 0, p.floorFront, [92, 82, 72], true);
+  drawWallPanel(ctx, p.w, cy, win.tr.x, win.tr.y, win.br.x, win.br.y, p.w, p.floorFront, [88, 78, 68], true);
 
+  const wainscotY = p.windowH + 28;
   for (let y = cy; y < win.tl.y; y++) {
     const lx = wallEdgeX(p, y, "left");
     const rx = wallEdgeX(p, y, "right");
     const t = (y - cy) / Math.max(1, win.tl.y - cy);
-    ctx.fillStyle = `rgb(${Math.floor(48 + t * 6)}, ${Math.floor(58 + t * 8)}, ${Math.floor(72 + t * 10)})`;
+    const warm = y >= wainscotY;
+    const [r, g, b] = warm
+      ? [Math.floor(118 + t * 8), Math.floor(98 + t * 6), Math.floor(78 + t * 4)]
+      : [Math.floor(148 + t * 10), Math.floor(138 + t * 8), Math.floor(122 + t * 6)];
+    ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
     ctx.fillRect(lx, y, win.tl.x - lx, 1);
     ctx.fillRect(win.tr.x, y, rx - win.tr.x, 1);
   }
 
-  ctx.fillStyle = "#4a5568";
-  ctx.fillRect(0, win.bl.y - 2, win.tl.x, 4);
-  ctx.fillRect(win.tr.x, win.br.y - 2, p.w - win.tr.x, 4);
+  for (let y = wainscotY; y < p.floorFront; y += 18) {
+    const lx = wallEdgeX(p, y, "left");
+    const rx = wallEdgeX(p, y, "right");
+    ctx.fillStyle = "rgba(62, 39, 35, 0.18)";
+    ctx.fillRect(lx, y, win.tl.x - lx, 1);
+    ctx.fillRect(win.tr.x, y, rx - win.tr.x, 1);
+  }
+
+  ctx.fillStyle = "#6d5a48";
+  ctx.fillRect(0, win.bl.y - 2, win.tl.x, 5);
+  ctx.fillRect(win.tr.x, win.br.y - 2, p.w - win.tr.x, 5);
 }
 
 function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, p: OfficePerspective) {
-  const plankStep = 14;
   const y0 = p.windowH;
+  const tileStep = 10;
 
   for (let y = y0; y < p.floorFront; y++) {
     const lx = floorEdgeX(p, y, "left");
     const rx = floorEdgeX(p, y, "right");
+    const rowW = rx - lx;
     const t = (y - y0) / (p.floorFront - y0);
-    const row = Math.floor(y / plankStep);
-    const lift = Math.floor(t * 12);
-    const [r, g, b] = row % 2 === 0 ? [62, 58, 54] : [56, 52, 48];
-    ctx.fillStyle = `rgb(${r + lift}, ${g + lift}, ${b + lift + 2})`;
-    ctx.fillRect(lx, y, rx - lx, 1);
+    const cols = Math.max(6, Math.floor(8 + t * 6));
+    const tileW = rowW / cols;
+    const row = Math.floor(y / tileStep);
+    for (let c = 0; c < cols; c++) {
+      const even = (row + c) % 2 === 0;
+      const [r, g, b] = even ? [212, 196, 168] : [196, 178, 148];
+      const lift = Math.floor(t * 10);
+      ctx.fillStyle = `rgb(${r + lift}, ${g + lift}, ${b + lift})`;
+      ctx.fillRect(lx + c * tileW, y, tileW + 1, 1);
+    }
   }
 
-  for (let y = y0; y < p.floorFront; y += plankStep) {
+  for (let y = y0; y < p.floorFront; y += tileStep * 2) {
     const lx = floorEdgeX(p, y, "left");
     const rx = floorEdgeX(p, y, "right");
-    ctx.fillStyle = "rgba(0,0,0,0.14)";
-    ctx.fillRect(lx, y, rx - lx, 2);
+    ctx.fillStyle = "rgba(62, 39, 35, 0.08)";
+    ctx.fillRect(lx, y, rx - lx, 1);
   }
 
   const gridN = 10;
@@ -234,24 +253,11 @@ function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, p: OfficePerspectiv
     const t = i / gridN;
     const bx = p.winLeft + (p.winRight - p.winLeft) * t;
     const fx = frontL + (frontR - frontL) * t;
-    ctx.strokeStyle = "rgba(30,40,55,0.2)";
+    ctx.strokeStyle = "rgba(93, 64, 55, 0.12)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(bx, y0);
     ctx.lineTo(fx, p.floorFront);
-    ctx.stroke();
-  }
-
-  const depthLines = 7;
-  for (let i = 1; i < depthLines; i++) {
-    const t = i / depthLines;
-    const y = y0 + (p.floorFront - y0) * t;
-    const lx = floorEdgeX(p, y, "left");
-    const rx = floorEdgeX(p, y, "right");
-    ctx.strokeStyle = "rgba(30,40,55,0.12)";
-    ctx.beginPath();
-    ctx.moveTo(lx, y);
-    ctx.lineTo(rx, y);
     ctx.stroke();
   }
 }
@@ -267,13 +273,13 @@ function drawCenterCarpet(ctx: CanvasRenderingContext2D, p: OfficePerspective) {
     const rx0 = floorEdgeX(p, y0, "right");
     const w0 = rx0 - lx0;
     const cx0 = (lx0 + rx0) / 2;
-    const carpetW0 = w0 * (0.22 + t0 * 0.18);
+    const carpetW0 = w0 * (0.18 + t0 * 0.14);
     const lx1 = floorEdgeX(p, y1, "left");
     const rx1 = floorEdgeX(p, y1, "right");
     const w1 = rx1 - lx1;
     const cx1 = (lx1 + rx1) / 2;
-    const carpetW1 = w1 * (0.22 + t1 * 0.18);
-    ctx.fillStyle = i % 2 === 0 ? "#3a4858" : "#364452";
+    const carpetW1 = w1 * (0.18 + t1 * 0.14);
+    ctx.fillStyle = i % 2 === 0 ? "#e8dcc8" : "#ddd0bc";
     ctx.beginPath();
     ctx.moveTo(cx0 - carpetW0 / 2, y0);
     ctx.lineTo(cx0 + carpetW0 / 2, y0);
@@ -281,6 +287,11 @@ function drawCenterCarpet(ctx: CanvasRenderingContext2D, p: OfficePerspective) {
     ctx.lineTo(cx1 - carpetW1 / 2, y1);
     ctx.closePath();
     ctx.fill();
+    if (i === 0) {
+      ctx.strokeStyle = "rgba(93, 64, 55, 0.3)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
   }
 }
 
@@ -445,10 +456,10 @@ function drawFloorDecor(ctx: CanvasRenderingContext2D, p: OfficePerspective, now
 }
 
 function drawFrontBaseboard(ctx: CanvasRenderingContext2D, p: OfficePerspective) {
-  ctx.fillStyle = "#3a4250";
+  ctx.fillStyle = "#5d4037";
   ctx.fillRect(0, p.floorFront, p.w, 34);
   for (let x = 0; x < p.w; x += 52) {
-    ctx.fillStyle = "#4a5568";
+    ctx.fillStyle = "#6d5040";
     ctx.fillRect(x, p.floorFront, 32, 4);
   }
 }
@@ -464,7 +475,7 @@ export function drawOfficeInterior(
   const p = computeOfficePerspective(w, h, windowH);
   const win = computeWindowQuad(p);
 
-  ctx.fillStyle = "#181c24";
+  ctx.fillStyle = "#2a2520";
   ctx.fillRect(0, 0, w, h);
 
   drawCeiling(ctx, p, win, now);

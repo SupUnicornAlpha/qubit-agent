@@ -1,6 +1,13 @@
 import type { AtlasSprites } from "./spriteAtlas";
 import { blitSprite, drawMonitorSprite } from "./spriteAtlas";
 import { getRenderConfig } from "./config";
+import { pixelFont } from "./fonts";
+import {
+  drawDeskLampForWorkstation,
+  drawMonitorGlow,
+  drawOfficeAmbience,
+} from "./officeProps";
+import { drawDropShadow } from "./starOfficeStyle";
 import { computeOfficePerspective, depthScale, drawDeskFloorShadow } from "./officePerspective";
 import { getPixelOfficeRegistry } from "./runtime";
 import type { CatAction, CatActor, ChatBeam, CitySkyline, DeskSlot, OfficeLayout, Particle, ScreenMode } from "./types";
@@ -80,6 +87,8 @@ export function drawOfficeScene(
   const atlas = getAtlas();
 
   const persp = computeOfficePerspective(w, h, layout.windowH);
+  drawOfficeAmbience(ctx, persp, layout, now, isRunning);
+
   const drawFurniture = (slot: DeskSlot, rect: AtlasSprites["shelf"], label: string, labelDy: number) => {
     const sc = scales(slot.depth).furniture;
     const dx = slot.x - (rect.w * sc) / 2;
@@ -87,7 +96,7 @@ export function drawOfficeScene(
     drawDeskFloorShadow(ctx, slot.x, slot.y, rect.w * sc, 12, persp);
     blitSprite(ctx, atlas, rect, dx, dy, sc);
     ctx.fillStyle = "#94a3b8";
-    ctx.font = `${Math.max(9, Math.floor(11 * depthScale(slot.depth)))}px monospace`;
+    ctx.font = pixelFont(Math.max(9, 11 * depthScale(slot.depth)));
     ctx.textAlign = "center";
     ctx.fillText(label, slot.x, slot.y + labelDy * depthScale(slot.depth));
   };
@@ -129,8 +138,11 @@ export function drawWorkstation(
     ctx.fillStyle = "rgba(56, 189, 248, 0.1)";
     ctx.fillRect(x - deskW / 2 - 8, y - deskH - 42, deskW + 16, deskH + 52);
   }
+
+  drawMonitorGlow(ctx, x, y - 26 * depthScale(depth), depth, screenMode, now);
   blitSprite(ctx, atlas, atlas.desk, x - deskW / 2, y - 10, desk);
   drawMonitorSprite(ctx, atlas, x, y - 26 * depthScale(depth), screenMode, now, monitor);
+  drawDeskLampForWorkstation(ctx, x, y, depth, screenMode !== "idle" || hot, now);
 }
 
 export function drawCatSprite(ctx: CanvasRenderingContext2D, cat: CatActor, now: number, depth?: number) {
@@ -144,6 +156,8 @@ export function drawCatSprite(ctx: CanvasRenderingContext2D, cat: CatActor, now:
       : cat.action === "fail"
         ? Math.sin((now % 200) / 50) * 3
         : 0;
+  const catScaleD = depthScale(d);
+  drawDropShadow(ctx, cat.x, cat.y, rect.w * catScale * 0.85, 7 * catScaleD, 0.24);
   blitSprite(
     ctx,
     atlas,
@@ -162,18 +176,29 @@ export function drawCatSprite(ctx: CanvasRenderingContext2D, cat: CatActor, now:
 function drawBubble(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, facing: 1 | -1) {
   const label = text.length > 18 ? `${text.slice(0, 17)}…` : text;
   ctx.save();
-  ctx.font = "11px monospace";
-  const bw = ctx.measureText(label).width + 14;
-  const bx = x + (facing === 1 ? 12 : -12 - bw);
-  ctx.fillStyle = "rgba(15, 23, 42, 0.94)";
-  ctx.strokeStyle = "#64748b";
+  ctx.font = pixelFont(11);
+  const bw = ctx.measureText(label).width + 16;
+  const bh = 22;
+  const bx = x + (facing === 1 ? 14 : -14 - bw);
+  const by = y - bh - 4;
+  ctx.fillStyle = "rgba(45, 35, 28, 0.94)";
+  ctx.strokeStyle = "#8b7355";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.roundRect(bx, y, bw, 20, 5);
+  ctx.roundRect(bx, by, bw, bh, 6);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = "#e2e8f0";
-  ctx.fillText(label, bx + 7, y + 14);
+  ctx.beginPath();
+  const tailX = facing === 1 ? bx + 10 : bx + bw - 10;
+  ctx.moveTo(tailX, by + bh);
+  ctx.lineTo(x + facing * 6, y - 6);
+  ctx.lineTo(tailX + facing * 8, by + bh);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#f5efe4";
+  ctx.textAlign = "left";
+  ctx.fillText(label, bx + 8, by + 15);
   ctx.restore();
 }
 
@@ -188,11 +213,11 @@ export function drawRoleLabel(
 ) {
   const fs = depthScale(depth);
   ctx.textAlign = "center";
-  ctx.font = selected ? `bold ${Math.floor(12 * fs)}px system-ui,sans-serif` : `${Math.floor(11 * fs)}px system-ui,sans-serif`;
+  ctx.font = selected ? pixelFont(12 * fs, "bold") : pixelFont(11 * fs);
   ctx.fillStyle = selected ? "#93c5fd" : "#cbd5e1";
   const short = label.length > 14 ? `${label.slice(0, 13)}…` : label;
   ctx.fillText(short, x, y + 38 * fs);
-  ctx.font = `${Math.floor(10 * fs)}px monospace`;
+  ctx.font = pixelFont(10 * fs);
   ctx.fillStyle = "#64748b";
   ctx.fillText(role, x, y + 52 * fs);
 }
