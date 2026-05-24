@@ -1057,12 +1057,23 @@ export async function startAnalystTeam(params: {
   agentGroupId?: string;
   analystRoles?: string[];
   analystDefinitionIds?: string[];
+  /** 启用 Orchestrator 规划后的 HITL（团队场景）；后端会写入 workflow.loopOptionsJson */
+  hitlTeam?: boolean;
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
     params
   );
   return { jobId: res.jobId };
+}
+
+/** 团队研究 HITL 的待审批状态，供前端展示批准/拒绝卡片 */
+export interface AnalystTeamAwaitingApproval {
+  jobId: string;
+  workflowRunId: string;
+  requestId: string;
+  title: string;
+  summary: string;
 }
 
 /**
@@ -1094,6 +1105,10 @@ export async function pollAnalystJob(
     /** 默认 30 分钟。设置为 0 或负数表示不超时（直到完成 / 失败 / abort）。 */
     timeoutMs?: number;
     onProgress?: (elapsedMs: number) => void;
+    /** 团队 HITL 命中时持续被回调；前端据此渲染审批卡片。同一 requestId 只会触发一次。 */
+    onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
+    /** awaiting_approval 状态下转回 running 时回调一次（用户已批准） */
+    onResume?: () => void;
     signal?: AbortSignal;
   }
 ): Promise<AnalystTeamResult> {
@@ -1102,8 +1117,11 @@ export async function pollAnalystJob(
   const noTimeout = !Number.isFinite(timeoutMs) || timeoutMs <= 0;
   const start = Date.now();
   const deadline = noTimeout ? Number.POSITIVE_INFINITY : start + timeoutMs;
+  // HITL 暂停时不计入「等待上限」——人工审批可能花很久。
+  let awaitingStartedAt: number | null = null;
+  let lastAwaitingRequestId: string | null = null;
 
-  while (Date.now() < deadline) {
+  while (true) {
     if (opts?.signal?.aborted) {
       throw new AnalystJobPollError({
         message: `已停止等待（jobId=${jobId}）。后端任务可能仍在运行，结果将继续落库；可在拓扑/对话流刷新查看。`,
@@ -1115,10 +1133,14 @@ export async function pollAnalystJob(
     const res = await httpGet<{
       ok: boolean;
       jobId: string;
-      status: "running" | "completed" | "failed";
+      status: "running" | "completed" | "failed" | "awaiting_approval";
       result?: AnalystTeamResult;
       error?: string;
       elapsedMs: number;
+      workflowRunId?: string;
+      hitlRequestId?: string;
+      hitlTitle?: string;
+      hitlSummary?: string;
     }>(`/api/v1/analyst/job/${jobId}`);
 
     if (res.status === "completed" && res.result) {
@@ -1132,7 +1154,28 @@ export async function pollAnalystJob(
         elapsedMs: res.elapsedMs,
       });
     }
-    opts?.onProgress?.(res.elapsedMs);
+    if (res.status === "awaiting_approval" && res.hitlRequestId) {
+      if (awaitingStartedAt === null) awaitingStartedAt = Date.now();
+      if (lastAwaitingRequestId !== res.hitlRequestId) {
+        lastAwaitingRequestId = res.hitlRequestId;
+        opts?.onAwaitingApproval?.({
+          jobId,
+          workflowRunId: res.workflowRunId ?? "",
+          requestId: res.hitlRequestId,
+          title: res.hitlTitle ?? "",
+          summary: res.hitlSummary ?? "",
+        });
+      }
+    } else {
+      if (awaitingStartedAt !== null) {
+        // 由 awaiting_approval 转回 running —— 用户已批准，把这段挂起时长从 deadline 里"补回去"。
+        opts?.onResume?.();
+        awaitingStartedAt = null;
+        lastAwaitingRequestId = null;
+      }
+      opts?.onProgress?.(res.elapsedMs);
+      if (!noTimeout && Date.now() >= deadline) break;
+    }
     // 等下一轮，但中途也响应 abort
     await new Promise<void>((resolve) => {
       const t = setTimeout(resolve, intervalMs);
@@ -1169,12 +1212,20 @@ export async function runAnalystTeam(params: {
   timeoutMs?: number;
   /** 主动停止等待。 */
   signal?: AbortSignal;
+  /** 启用 Orchestrator 规划后人工审批；命中后 onAwaitingApproval 回调 */
+  hitlTeam?: boolean;
+  onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
+  onResume?: () => void;
 }): Promise<AnalystTeamResult> {
   const { jobId } = await startAnalystTeam(params);
   return pollAnalystJob(jobId, {
     onProgress: params.onProgress,
     ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
     ...(params.signal !== undefined ? { signal: params.signal } : {}),
+    ...(params.onAwaitingApproval !== undefined
+      ? { onAwaitingApproval: params.onAwaitingApproval }
+      : {}),
+    ...(params.onResume !== undefined ? { onResume: params.onResume } : {}),
   });
 }
 

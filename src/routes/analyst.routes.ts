@@ -45,6 +45,8 @@ analystRouter.post("/run", async (c) => {
     agentGroupId?: string | null;
     analystRoles?: string[] | null;
     analystDefinitionIds?: string[] | null;
+    /** 启用 Orchestrator 规划后的人工审批（HITL）；写入 workflow.loopOptionsJson.hitlTeam */
+    hitlTeam?: boolean;
   }>();
 
   if (!body.workflowRunId) {
@@ -66,13 +68,24 @@ analystRouter.post("/run", async (c) => {
     if (!grp[0]) return c.json({ error: "agent group not found" }, 404);
   }
   const wf = await db
-    .select({ id: workflowRun.id })
+    .select()
     .from(workflowRun)
     .where(eq(workflowRun.id, body.workflowRunId))
     .limit(1);
 
   if (!wf[0]) {
     return c.json({ error: "workflow not found" }, 404);
+  }
+
+  // 当请求显式带 hitlTeam 字段时同步写回 workflow.loopOptionsJson，让 resolveTeamOrchestratorHitl 读取到。
+  if (typeof body.hitlTeam === "boolean") {
+    const currentLoopOptions =
+      (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
+    const nextLoopOptions = { ...currentLoopOptions, hitlTeam: body.hitlTeam };
+    await db
+      .update(workflowRun)
+      .set({ loopOptionsJson: nextLoopOptions as never })
+      .where(eq(workflowRun.id, body.workflowRunId));
   }
 
   const jobId = randomUUID();
@@ -145,6 +158,9 @@ analystRouter.get("/job/:jobId", (c) => {
     elapsedMs: Date.now() - job.startedAt,
     result: job.result,
     error: job.error,
+    hitlRequestId: job.hitlRequestId,
+    hitlTitle: job.hitlTitle,
+    hitlSummary: job.hitlSummary,
   });
 });
 

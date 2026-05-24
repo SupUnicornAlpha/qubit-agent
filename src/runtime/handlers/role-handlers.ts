@@ -14,6 +14,8 @@ import {
   failResearchTeamExecuteJob,
   parseResearchTeamExecutePayload,
 } from "../msa/research-team-execute";
+import { parseHitlApproval } from "../workflow/hitl-service";
+import { pauseAnalystResearchJobForHitl } from "../msa/analyst-research-jobs";
 import type { RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 
@@ -117,10 +119,15 @@ const orchestratorHandler: RuntimeRoleHandler = {
         return;
       }
 
+      const hitlApproval = parseHitlApproval(
+        (payload.params as Record<string, unknown>).hitlApproval
+      );
+
       try {
         const teamResult = await executeResearchTeamWorkflow({
           workflowRunId: msg.workflowId,
           params: parsed.params,
+          hitlApproval,
         });
         await setWorkflowStatus(msg.workflowId, "completed");
         await ctx.send({
@@ -140,6 +147,13 @@ const orchestratorHandler: RuntimeRoleHandler = {
         });
       } catch (teamErr) {
         if (teamErr instanceof HitlAwaitingApprovalError) {
+          // 把 analyst job 标 awaiting_approval 并缓存 resumePayload；前端轮询会拿到 requestId / 摘要。
+          pauseAnalystResearchJobForHitl(parsed.params.jobId, {
+            requestId: teamErr.requestId,
+            title: teamErr.message,
+            summary: teamErr.message,
+            resumePayload: parsed.params,
+          });
           await setWorkflowStatus(msg.workflowId, "awaiting_approval");
           return;
         }

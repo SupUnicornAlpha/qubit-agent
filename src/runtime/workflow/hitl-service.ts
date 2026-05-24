@@ -7,6 +7,11 @@ import { parseLoopOptionsJson } from "../../types/loop";
 import { graphRunner } from "../langgraph/graph-factory";
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { StepStreamEvent } from "../langgraph/state";
+import {
+  findPendingAnalystJobByWorkflow,
+  resumeAnalystResearchJob,
+} from "../msa/analyst-research-jobs";
+import { dispatchTaskToRole } from "../agent-pool";
 
 export type HitlScope = "chat_orchestrator" | "team_orchestrator";
 export type HitlRequestKind = "tool_call" | "team_research_plan";
@@ -50,14 +55,19 @@ export function resolveChatOrchestratorHitl(
   return wf.source === "chat";
 }
 
-/** 团队研究：仅 Orchestrator 规划完成后、分析师并行前 HITL。 */
+/**
+ * 团队研究：仅 Orchestrator 规划完成后、分析师并行前 HITL。
+ *
+ * 默认 opt-in：团队研究面板目前没有内嵌的批准/拒绝按钮，所以仅在
+ * `loopOptions.hitlTeam === true` 时启用，避免独立面板触发的工作流
+ * 在没有 UI 可介入的情况下被卡死。chat 流如果通过 `run_analyst_team`
+ * 跑团队研究，会沿用对话 orchestrator 的 HITL gate。
+ */
 export function resolveTeamOrchestratorHitl(
-  wf: { source: string; mode: string },
+  _wf: { source: string; mode: string },
   loopOptions: LoopOptionsJson
 ): boolean {
-  if (loopOptions.hitlTeam === false) return false;
-  if (loopOptions.hitlTeam === true) return true;
-  return wf.source === "chat" || wf.mode === "research";
+  return loopOptions.hitlTeam === true;
 }
 
 export function shouldHitlGateToolCall(toolName: string): boolean {
@@ -257,6 +267,13 @@ export async function resolveHitlRequest(input: {
       .update(workflowRun)
       .set({ status: "failed", endedAt: now })
       .where(eq(workflowRun.id, row.workflowRunId));
+    if (row.scope === "team_orchestrator") {
+      const { failAnalystResearchJob } = await import("../msa/analyst-research-jobs");
+      const pending = findPendingAnalystJobByWorkflow(row.workflowRunId);
+      if (pending) {
+        failAnalystResearchJob(pending.jobId, new Error("rejected by human reviewer"));
+      }
+    }
     return { workflowRunId: row.workflowRunId, resumed: false };
   }
 
@@ -272,6 +289,46 @@ export async function resolveHitlRequest(input: {
     .limit(1);
   const wf = wfRows[0];
   if (!wf) throw new Error("workflow_run missing after hitl approve");
+
+  // 团队研究：runAnalystTeam 不经 LangGraph，没法走 resumeRoleTask；
+  // 改为从 analyst job 缓存里取回原 research_team_execute params，重派给 orchestrator handler，
+  // 让它带 hitlApproval 重新跑 runAnalystTeam（pauseForTeamOrchestratorHitl 会因 requestId 已批准直接放行）。
+  if (row.scope === "team_orchestrator") {
+    const pending = findPendingAnalystJobByWorkflow(row.workflowRunId);
+    const resumePayload = pending ? resumeAnalystResearchJob(pending.jobId) : undefined;
+    if (!pending || !resumePayload) {
+      // 没找到缓存（进程重启等）：把 workflow 标 failed，让用户重新发起。
+      await db
+        .update(workflowRun)
+        .set({ status: "failed", endedAt: new Date().toISOString() })
+        .where(eq(workflowRun.id, row.workflowRunId));
+      throw new Error(
+        "research_team_execute resume payload missing (job state lost); please re-run the analysis"
+      );
+    }
+
+    await dispatchTaskToRole({
+      workflowId: row.workflowRunId,
+      role: "orchestrator",
+      payload: {
+        taskId: randomUUID(),
+        taskType: "research_team_execute",
+        assignedRole: "orchestrator",
+        params: {
+          jobId: pending.jobId,
+          ticker: resumePayload.ticker,
+          scope: resumePayload.scope ?? undefined,
+          context: resumePayload.context,
+          agentGroupId: resumePayload.agentGroupId ?? undefined,
+          analystRoles: resumePayload.analystRoles ?? undefined,
+          analystDefinitionIds: resumePayload.analystDefinitionIds ?? undefined,
+          hitlApproval: { requestId: input.requestId, decision: "approved" },
+        },
+      },
+    });
+
+    return { workflowRunId: row.workflowRunId, resumed: true, runId: pending.jobId };
+  }
 
   const result = await graphRunner.resumeRoleTask({
     workflowId: row.workflowRunId,

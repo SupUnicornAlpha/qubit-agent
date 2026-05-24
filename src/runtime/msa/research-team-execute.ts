@@ -81,6 +81,7 @@ export function failResearchTeamExecuteJob(jobId: string, error: unknown): void 
 export async function executeResearchTeamWorkflow(input: {
   workflowRunId: string;
   params: ParsedResearchTeamExecute;
+  hitlApproval?: import("../workflow/hitl-service").HitlApprovalPayload | null;
 }): Promise<AnalystTeamResult> {
   const teamResult = await runAnalystTeam({
     workflowRunId: input.workflowRunId,
@@ -90,6 +91,7 @@ export async function executeResearchTeamWorkflow(input: {
     agentGroupId: input.params.agentGroupId,
     analystRoles: input.params.analystRoles,
     analystDefinitionIds: input.params.analystDefinitionIds,
+    hitlApproval: input.hitlApproval ?? null,
   });
   completeAnalystResearchJob(input.params.jobId, teamResult);
   return teamResult;
