@@ -10,7 +10,9 @@ import { sandboxExecutor } from "../sandbox-executor";
 import type { RuntimeAgentDefinition } from "../types";
 import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
 import { stepStreamBus } from "./event-stream";
+import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { actNode } from "./nodes/act";
+import { hitlGateNode } from "./nodes/hitl-gate";
 import { observeNode } from "./nodes/observe";
 import { perceiveNode } from "./nodes/perceive";
 import { reasonNode } from "./nodes/reason";
@@ -43,7 +45,7 @@ export type ExecuteAgentReactParams = {
 export type ExecuteAgentReactResult = {
   finalState: AgentGraphState;
   finalResponse: Record<string, unknown>;
-  terminalStatus: "completed" | "failed";
+  terminalStatus: "completed" | "failed" | "awaiting_approval";
 };
 
 /**
@@ -229,10 +231,12 @@ export async function executeAgentReact(
     const tokenCount =
       usage?.totalTokens ??
       (usage ? (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0) : 0);
+    const reasonText = (reasonResult.stateUpdate.reasonText ?? "").trim();
     try {
       await db
         .update(agentStep)
         .set({
+          thought: reasonText.length > 0 ? reasonText.slice(0, 12000) : "Reasoning with LLM provider",
           tokenCount: tokenCount > 0 ? tokenCount : null,
           latencyMs: reasonResult.meta.latencyMs,
         })
@@ -249,8 +253,17 @@ export async function executeAgentReact(
     return { state: merged };
   });
 
+  graph.addNode("hitl_gate", async (input: { state: AgentGraphState }) => {
+    const s = input.state;
+    const partial = await hitlGateNode(s, emit, agentInstanceId);
+    const merged = { ...s, ...partial };
+    snapshot("hitl_gate", s.iteration, merged);
+    return { state: merged };
+  });
+
   graph.addNode("act", async (input: { state: AgentGraphState }) => {
     const s = input.state;
+    if (s.finalResponse) return { state: s };
     const actStepId = randomUUID();
     await db.insert(agentStep).values({
       id: actStepId,
@@ -262,10 +275,36 @@ export async function executeAgentReact(
       actionType: "tool_call",
       actionJson: { plannedAction: s.plannedAction },
     });
-    const partial = await actNode(s, emit, agentInstanceId, actStepId);
-    const merged = { ...s, ...partial };
-    snapshot("act", s.iteration, merged);
-    return { state: merged };
+    try {
+      const partial = await actNode(s, emit, agentInstanceId, actStepId);
+      const merged = { ...s, ...partial };
+      snapshot("act", s.iteration, merged);
+      return { state: merged };
+    } catch (err) {
+      if (err instanceof HitlAwaitingApprovalError) {
+        const awaiting = {
+          status: "awaiting_approval",
+          hitlRequestId: err.requestId,
+          title: err.message,
+          iteration: s.iteration,
+          role: params.def.role,
+        };
+        emit({
+          runId: params.runId,
+          workflowId: params.workflowId,
+          traceId: params.traceId,
+          role: params.def.role,
+          type: "final",
+          stepIndex: s.iteration,
+          ts: Date.now(),
+          payload: awaiting,
+        });
+        const merged = { ...s, finalResponse: awaiting };
+        snapshot("act", s.iteration, merged);
+        return { state: merged };
+      }
+      throw err;
+    }
   });
 
   graph.addNode("observe", async (input: { state: AgentGraphState }) => {
@@ -278,6 +317,10 @@ export async function executeAgentReact(
 
   graph.addNode("finalize", async (input: { state: AgentGraphState }) => {
     const s = input.state;
+    if (s.finalResponse) {
+      snapshot("finalize", s.iteration, s);
+      return { state: s };
+    }
     const exceeded = forceReactLoop && s.iteration >= params.def.maxIterations;
     if (exceeded) {
       emit({
@@ -310,8 +353,25 @@ export async function executeAgentReact(
 
   graph.addEdge(START, "perceive");
   graph.addEdge("perceive", "reason");
-  graph.addEdge("reason", "act");
-  graph.addEdge("act", "observe");
+  graph.addEdge("reason", "hitl_gate");
+  graph.addConditionalEdges(
+    "hitl_gate",
+    (input: { state: AgentGraphState }) => {
+      const st = input.state.finalResponse?.status;
+      if (st === "awaiting_approval" || st === "terminated") return "finalize";
+      return "act";
+    },
+    { act: "act", finalize: "finalize" }
+  );
+  graph.addConditionalEdges(
+    "act",
+    (input: { state: AgentGraphState }) => {
+      const st = input.state.finalResponse?.status;
+      if (st === "awaiting_approval" || st === "terminated") return "finalize";
+      return "observe";
+    },
+    { observe: "observe", finalize: "finalize" }
+  );
   graph.addConditionalEdges(
     "observe",
     (input: { state: AgentGraphState }) => {
@@ -351,13 +411,24 @@ export async function executeAgentReact(
   state = result.state;
 
   const finalResponse = (state.finalResponse ?? { status: "completed" }) as Record<string, unknown>;
-  const terminalStatus = finalResponse["status"] === "terminated" ? "failed" : "completed";
+  const frStatus = String(finalResponse["status"] ?? "completed");
+  const terminalStatus: ExecuteAgentReactResult["terminalStatus"] =
+    frStatus === "awaiting_approval"
+      ? "awaiting_approval"
+      : frStatus === "terminated"
+        ? "failed"
+        : "completed";
 
   await db
     .update(agentInstance)
     .set({
-      status: terminalStatus === "failed" ? "error" : "stopped",
-      endedAt: new Date().toISOString(),
+      status:
+        terminalStatus === "failed"
+          ? "error"
+          : terminalStatus === "awaiting_approval"
+            ? "running"
+            : "stopped",
+      endedAt: terminalStatus === "awaiting_approval" ? null : new Date().toISOString(),
     })
     .where(eq(agentInstance.id, agentInstanceId));
 
@@ -366,7 +437,7 @@ export async function executeAgentReact(
       .update(workflowRun)
       .set({
         status: terminalStatus,
-        endedAt: new Date().toISOString(),
+        endedAt: terminalStatus === "awaiting_approval" ? null : new Date().toISOString(),
       })
       .where(eq(workflowRun.id, params.workflowId));
   }

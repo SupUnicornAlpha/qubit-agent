@@ -86,6 +86,9 @@ import {
   upsertMcpServer,
   requestExecutionConfirmation,
   subscribeDebateStream,
+  approveWorkflowHitl,
+  listPendingWorkflowHitl,
+  rejectWorkflowHitl,
   subscribeWorkflowStream,
   listWorkflowCompensations,
   enqueueWorkflowCompensation,
@@ -150,6 +153,8 @@ import {
   hydrateStaleChatMessages,
   persistChatStreamBinding,
   reconnectActiveChatStreams,
+  buildFinalAssistantText,
+  messageStatusFromFinalPayload,
 } from "../../lib/chatMessageHydration";
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
@@ -350,6 +355,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
   const [chatLoopKind, setChatLoopKind] = useState<AgentLoopKind>("native");
+  const [hitlRequestByMessageId, setHitlRequestByMessageId] = useState<Record<string, string>>({});
   // Tauri webview 屏蔽了 window.confirm/prompt（点击没反应），所以走 inline 2-click 兜底：
   // 第一下点击进入 pending（按钮变红+变文案），第二下才真正执行硬删除；3 秒后自动取消。
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
@@ -510,6 +516,19 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       const raw = await listSessionMessages(sessionId);
       const hydrated = await hydrateStaleChatMessages(raw);
       setChatMessages(hydrated);
+      const hitlMap: Record<string, string> = {};
+      for (const msg of hydrated) {
+        if (msg.status !== "awaiting_approval" || !msg.workflowRunIds?.[0]) continue;
+        try {
+          const pending = await listPendingWorkflowHitl(msg.workflowRunIds[0]);
+          if (pending[0]?.id) hitlMap[msg.id] = pending[0].id;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (Object.keys(hitlMap).length > 0) {
+        setHitlRequestByMessageId((prev) => ({ ...prev, ...hitlMap }));
+      }
       reconnectActiveChatStreams(hydrated, (workflowId, runId, assistantMessageId) => {
         bindStreamRef.current?.(workflowId, runId, assistantMessageId);
       });
@@ -683,7 +702,17 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               event.type === "tool_call_start"
                 ? `🔧 调用工具: ${String(event.payload.toolName ?? "")}`
                 : event.type === "tool_call_end"
-                  ? `✅ 工具完成: ${String(event.payload.toolName ?? event.payload.targetName ?? "")}`
+                  ? (() => {
+                      const st = String(event.payload.status ?? "success");
+                      const name = String(event.payload.toolName ?? event.payload.targetName ?? "");
+                      if (st === "blocked_by_sandbox" || st === "failed") {
+                        return `❌ 工具失败: ${name} — ${String(event.payload.reason ?? st)}`;
+                      }
+                      if (st === "timeout") {
+                        return `⏱ 工具超时: ${name}`;
+                      }
+                      return `✅ 工具完成: ${name}`;
+                    })()
                   : `👁 观测第 ${event.stepIndex} 步`;
             setChatMessages((prev) =>
               prev.map((m) =>
@@ -694,26 +723,29 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             );
           }
         }
+        if (event.type === "hitl_request") {
+          const requestId = String(event.payload.requestId ?? "");
+          if (requestId) {
+            setHitlRequestByMessageId((prev) => ({ ...prev, [assistantMessageId]: requestId }));
+          }
+        }
         if (event.type === "final") {
           clearFailTimer();
           streamDone = true;
-          // event.payload IS the finalResponse object; payload.finalResponse does not exist
-          const role = String(event.payload.role ?? "agent");
-          const obs = event.payload.observation as Record<string, unknown> | undefined;
-          let obsText = "";
-          if (obs && Object.keys(obs).length > 0) {
-            const obsStr = JSON.stringify(obs, null, 2);
-            obsText = `\n\n📎 观测结果:\n\`\`\`json\n${obsStr}\n\`\`\``;
+          const msgStatus = messageStatusFromFinalPayload(event.payload);
+          const requestId = String(event.payload.hitlRequestId ?? "");
+          if (requestId) {
+            setHitlRequestByMessageId((prev) => ({ ...prev, [assistantMessageId]: requestId }));
           }
-          const finalText = buffer || `✅ ${role} 已完成（第 ${event.stepIndex} 轮）${obsText}`;
+          const finalText = buildFinalAssistantText(buffer, event.payload, event.stepIndex);
           void patchSessionMessage({
             messageId: assistantMessageId,
             content: finalText,
-            status: "completed",
+            status: msgStatus,
           });
           setChatMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantMessageId ? { ...m, content: finalText, status: "completed" } : m
+              m.id === assistantMessageId ? { ...m, content: finalText, status: msgStatus } : m
             )
           );
           setRefreshKey((v) => v + 1);
@@ -802,6 +834,49 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     });
   };
   bindStreamRef.current = bindStream;
+
+  const handleHitlDecision = async (
+    messageId: string,
+    workflowId: string,
+    requestId: string,
+    decision: "approved" | "rejected"
+  ) => {
+    try {
+      if (decision === "approved") {
+        const result = await approveWorkflowHitl(workflowId, requestId);
+        await patchSessionMessage({ messageId, status: "running", content: "▶️ 已批准，继续执行…" });
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId ? { ...m, status: "running", content: "▶️ 已批准，继续执行…" } : m
+          )
+        );
+        if (result.runId) {
+          bindStream(workflowId, result.runId, messageId);
+        }
+      } else {
+        await rejectWorkflowHitl(workflowId, requestId);
+        await patchSessionMessage({
+          messageId,
+          status: "failed",
+          content: "🚫 已拒绝本次 Agent 操作",
+        });
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === messageId
+              ? { ...m, status: "failed", content: "🚫 已拒绝本次 Agent 操作" }
+              : m
+          )
+        );
+      }
+      setHitlRequestByMessageId((prev) => {
+        const next = { ...prev };
+        delete next[messageId];
+        return next;
+      });
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : "HITL 操作失败");
+    }
+  };
 
   const onSend = async (event: FormEvent) => {
     event.preventDefault();
@@ -1000,6 +1075,40 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 </div>
                 {msg.workflowRunIds?.length ? (
                   <div className="qb-chat-bubble__meta">workflow: {msg.workflowRunIds.join(", ")}</div>
+                ) : null}
+                {msg.status === "awaiting_approval" &&
+                msg.workflowRunIds?.[0] &&
+                hitlRequestByMessageId[msg.id] ? (
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="qb-btn-primary-brand"
+                      onClick={() =>
+                        void handleHitlDecision(
+                          msg.id,
+                          msg.workflowRunIds![0]!,
+                          hitlRequestByMessageId[msg.id]!,
+                          "approved"
+                        )
+                      }
+                    >
+                      批准继续
+                    </button>
+                    <button
+                      type="button"
+                      className="qb-btn-ghost"
+                      onClick={() =>
+                        void handleHitlDecision(
+                          msg.id,
+                          msg.workflowRunIds![0]!,
+                          hitlRequestByMessageId[msg.id]!,
+                          "rejected"
+                        )
+                      }
+                    >
+                      拒绝
+                    </button>
+                  </div>
                 ) : null}
               </div>
             ))}

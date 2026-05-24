@@ -8,6 +8,7 @@ import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
 import { buildTaskResult } from "../a2a/task-result";
 import { getA2APool } from "../a2a/a2a-pool";
 import { graphRunner } from "../langgraph/graph-factory";
+import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import {
   executeResearchTeamWorkflow,
   failResearchTeamExecuteJob,
@@ -18,14 +19,14 @@ import { onWorkflowTerminal } from "../monitor/observability-hook";
 
 async function setWorkflowStatus(
   workflowId: string,
-  status: "completed" | "failed" | "running"
+  status: "completed" | "failed" | "running" | "awaiting_approval"
 ): Promise<void> {
   const db = await getDb();
   await db
     .update(workflowRun)
     .set({
       status,
-      endedAt: status === "running" ? null : new Date().toISOString(),
+      endedAt: status === "running" || status === "awaiting_approval" ? null : new Date().toISOString(),
     })
     .where(eq(workflowRun.id, workflowId));
   if (status === "completed" || status === "failed") {
@@ -138,6 +139,10 @@ const orchestratorHandler: RuntimeRoleHandler = {
           priority: msg.priority,
         });
       } catch (teamErr) {
+        if (teamErr instanceof HitlAwaitingApprovalError) {
+          await setWorkflowStatus(msg.workflowId, "awaiting_approval");
+          return;
+        }
         failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
         await setWorkflowStatus(msg.workflowId, "failed");
         throw teamErr;

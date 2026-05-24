@@ -7,6 +7,7 @@ export type StepEventType =
   | "tool_call_end"
   | "observe"
   | "step_persisted"
+  | "hitl_request"
   | "final"
   | "error";
 

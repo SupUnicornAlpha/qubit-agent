@@ -16,6 +16,7 @@ import {
 import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
+import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -338,6 +339,34 @@ workflowRouter.put("/:id/artifacts/report", async (c) => {
     ticker: typeof body.ticker === "string" ? body.ticker : undefined,
   });
   return c.json({ data: { reportPath } });
+});
+
+workflowRouter.get("/:id/hitl/pending", async (c) => {
+  const id = c.req.param("id");
+  const data = await listPendingHitlRequests(id);
+  return c.json({ data });
+});
+
+workflowRouter.post("/:id/hitl/:requestId/approve", async (c) => {
+  const requestId = c.req.param("requestId");
+  const body = await c.req.json<{ resolvedBy?: string }>().catch(() => ({}));
+  const result = await resolveHitlRequest({
+    requestId,
+    decision: "approved",
+    resolvedBy: body.resolvedBy,
+  });
+  return c.json({ ok: true, data: result });
+});
+
+workflowRouter.post("/:id/hitl/:requestId/reject", async (c) => {
+  const requestId = c.req.param("requestId");
+  const body = await c.req.json<{ resolvedBy?: string }>().catch(() => ({}));
+  const result = await resolveHitlRequest({
+    requestId,
+    decision: "rejected",
+    resolvedBy: body.resolvedBy,
+  });
+  return c.json({ ok: true, data: result });
 });
 
 workflowRouter.get("/:id", async (c) => {

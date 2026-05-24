@@ -24,7 +24,7 @@ import {
   snapshotIndicators,
 } from "../market/technical-indicators";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
-import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
+import { parseHitlApproval } from "../workflow/hitl-service";
 import { fuseSignals, type RawAnalystSignal } from "../msa/signal-fusion";
 import { runStockScreener } from "../screener/stock-screener";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
@@ -125,6 +125,11 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       agentGroupId,
       analystRoles,
       analystDefinitionIds,
+      runId: ctx.runId,
+      traceId: ctx.traceId,
+      hitlApproval: parseHitlApproval(
+        (ctx.inboundPayload?.["params"] as Record<string, unknown> | undefined)?.["hitlApproval"]
+      ),
     });
   },
 

@@ -14,11 +14,7 @@ import {
   ensureWorkspaceRuntimeConfigFiles,
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
-import {
-  executeResearchTeamWorkflow,
-  failResearchTeamExecuteJob,
-  parseResearchTeamExecutePayload,
-} from "../msa/research-team-execute";
+import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
@@ -524,6 +520,29 @@ export class GraphRunner {
             source: "native",
           });
         } catch (teamErr) {
+          if (teamErr instanceof HitlAwaitingApprovalError) {
+            await db
+              .update(workflowRun)
+              .set({ status: "awaiting_approval", endedAt: null })
+              .where(eq(workflowRun.id, params.workflowId));
+            stepStreamBus.publish({
+              runId: params.runId,
+              workflowId: params.workflowId,
+              traceId: params.traceId,
+              role: params.def.role,
+              type: "final",
+              stepIndex: 0,
+              ts: Date.now(),
+              payload: {
+                status: "awaiting_approval",
+                hitlRequestId: teamErr.requestId,
+                title: teamErr.message,
+              },
+              loopKind: "native",
+              source: "native",
+            });
+            return;
+          }
           failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
           throw teamErr;
         }
@@ -544,8 +563,37 @@ export class GraphRunner {
         resume: params.resume === true,
       });
       state = finalState;
-      onWorkflowTerminal(params.workflowId, terminalStatus);
+      if (terminalStatus === "completed" || terminalStatus === "failed") {
+        onWorkflowTerminal(params.workflowId, terminalStatus);
+      }
     } catch (err) {
+      if (err instanceof HitlAwaitingApprovalError) {
+        try {
+          await db
+            .update(workflowRun)
+            .set({ status: "awaiting_approval", endedAt: null })
+            .where(eq(workflowRun.id, params.workflowId));
+        } catch {
+          /* ignore */
+        }
+        stepStreamBus.publish({
+          runId: params.runId,
+          workflowId: params.workflowId,
+          traceId: params.traceId,
+          role: params.def.role,
+          type: "final",
+          stepIndex: state?.iteration ?? 0,
+          ts: Date.now(),
+          payload: {
+            status: "awaiting_approval",
+            hitlRequestId: err.requestId,
+            title: err.message,
+          },
+          loopKind: "native",
+          source: "native",
+        });
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       publishError(message, state?.iteration ?? 0);
       try {

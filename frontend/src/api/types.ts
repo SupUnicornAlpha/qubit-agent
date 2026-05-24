@@ -99,6 +99,7 @@ export interface StepStreamEvent {
     | "tool_call_end"
     | "observe"
     | "step_persisted"
+    | "hitl_request"
     | "final"
     | "error";
   stepIndex: number;
@@ -432,7 +433,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   sender: "user" | "orchestrator" | "agent" | "system";
   content: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
   createdAt: string;
   workflowRunIds?: string[];
   errorMessage?: string | null;

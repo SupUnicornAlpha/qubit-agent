@@ -268,14 +268,19 @@ export async function actNode(
     definition: state.agentDefinition,
     action: async () => {
       if (mcp) {
-        const mcpResult = await dispatchMcpToolCall({
-          projectId: projectId ?? undefined,
-          definitionId: state.agentDefinition.id,
-          serverName: mcp.serverName,
-          toolName: mcp.toolName,
-          arguments: mcp.arguments,
-        });
-        return { result: "ok" as const, mcpResult };
+        try {
+          const mcpResult = await dispatchMcpToolCall({
+            projectId: projectId ?? undefined,
+            definitionId: state.agentDefinition.id,
+            serverName: mcp.serverName,
+            toolName: mcp.toolName,
+            arguments: mcp.arguments,
+          });
+          return { result: "ok" as const, mcpResult };
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          return { result: "error" as const, mcpError: true, errorMessage };
+        }
       }
       if (connectorTarget) {
         const policy = await sandboxExecutor.loadPolicy(state.agentDefinition);
@@ -394,6 +399,87 @@ export async function actNode(
       observations: [
         ...state.observations,
         { level: "error", message: execution.result.reason ?? "tool timeout" },
+      ],
+    };
+  }
+
+  const execValue = execution.value as {
+    result?: string;
+    mcpError?: boolean;
+    errorMessage?: string;
+  };
+  if (execValue.result === "error" && execValue.mcpError) {
+    const latencyMs = Date.now() - startedAt;
+    const errMsg = execValue.errorMessage ?? "mcp call failed";
+    const failAcpId = crypto.randomUUID();
+    await db.insert(acpCall).values({
+      id: failAcpId,
+      workflowRunId: state.workflowId,
+      traceId: state.traceId,
+      agentStepId,
+      callerInstanceId: agentInstanceId,
+      targetKind,
+      targetName,
+      intent: state.plannedAction ?? "tool_call",
+      status: "error",
+      latencyMs,
+      errorCode: "mcp_call_failed",
+    });
+    await db
+      .update(toolCallLog)
+      .set({
+        status: "error",
+        latencyMs,
+        errorMessage: errMsg,
+        responseJson: { mcpError: true, errorMessage: errMsg },
+      })
+      .where(eq(toolCallLog.id, toolCallId));
+    if (mcp) {
+      await db
+        .update(mcpCallLog)
+        .set({
+          status: "failed",
+          latencyMs,
+          errorCode: "mcp_call_failed",
+          responseJson: { errorMessage: errMsg },
+        })
+        .where(eq(mcpCallLog.id, toolCallId));
+    }
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "tool_call_end",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: {
+        toolCallId,
+        status: "failed",
+        reason: errMsg,
+        mcpError: true,
+        targetKind,
+        targetName,
+      },
+    });
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: { level: "error", mcpError: true, message: errMsg },
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        { toolCallId, toolName: targetName, status: "failed", reason: errMsg, mcpError: true },
+      ],
+      observations: [
+        ...state.observations,
+        { level: "error", mcpError: true, message: errMsg, reasonText: state.reasonText },
       ],
     };
   }

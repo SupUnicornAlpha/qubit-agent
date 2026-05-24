@@ -20,6 +20,10 @@ export const LoopOptionsJsonSchema = z
     maxOutputBytes: z.number().int().positive().optional(),
     /** native Agent 内建 ReAct；false 时强制单轮（仍走 perceive→reason→act→observe 一次） */
     reactLoop: z.boolean().optional(),
+    /** 对话 orchestrator 工具执行前 HITL；默认 chat 来源开启 */
+    hitlChat: z.boolean().optional(),
+    /** 团队研究 Orchestrator 规划完成后 HITL；默认 research/chat 开启 */
+    hitlTeam: z.boolean().optional(),
   })
   .strip();
 

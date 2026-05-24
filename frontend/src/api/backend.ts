@@ -292,6 +292,37 @@ export async function createWorkflow(input: WorkflowCreateInput): Promise<{
   return httpPost("/api/v1/workflows", input);
 }
 
+export async function approveWorkflowHitl(
+  workflowId: string,
+  requestId: string
+): Promise<{ workflowRunId: string; resumed: boolean; runId?: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { workflowRunId: string; resumed: boolean; runId?: string };
+  }>(`/api/v1/workflows/${workflowId}/hitl/${requestId}/approve`, {});
+  return res.data;
+}
+
+export async function rejectWorkflowHitl(
+  workflowId: string,
+  requestId: string
+): Promise<{ workflowRunId: string; resumed: boolean }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { workflowRunId: string; resumed: boolean };
+  }>(`/api/v1/workflows/${workflowId}/hitl/${requestId}/reject`, {});
+  return res.data;
+}
+
+export async function listPendingWorkflowHitl(
+  workflowId: string
+): Promise<Array<{ id: string; title: string; summary: string }>> {
+  const res = await httpGet<{
+    data: Array<{ id: string; title: string; summary: string }>;
+  }>(`/api/v1/workflows/${workflowId}/hitl/pending`);
+  return res.data;
+}
+
 export async function patchWorkflow(
   workflowId: string,
   input: {
@@ -747,7 +778,7 @@ export async function createSessionMessage(params: {
   role: "user" | "assistant" | "system";
   content: string;
   sender?: "user" | "orchestrator" | "agent" | "system";
-  status?: "queued" | "running" | "completed" | "failed";
+  status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
   workflowRunIds?: string[];
 }): Promise<ChatMessage> {
   const { sessionId, ...payload } = params;
@@ -758,7 +789,7 @@ export async function createSessionMessage(params: {
 export async function patchSessionMessage(params: {
   messageId: string;
   content?: string;
-  status?: "queued" | "running" | "completed" | "failed";
+  status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
   errorMessage?: string | null;
   workflowRunIds?: string[];
 }): Promise<ChatMessage> {

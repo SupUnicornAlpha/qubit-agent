@@ -56,6 +56,7 @@ export function messageNeedsHydration(msg: ChatMessage): boolean {
   if (!msg.workflowRunIds?.length) return false;
   const hasContent = Boolean(msg.content?.trim());
   if (msg.status === "running" || msg.status === "queued") return true;
+  if (msg.status === "awaiting_approval") return false;
   if (!hasContent) return true;
   return false;
 }
@@ -76,6 +77,36 @@ function parseObservationJson(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
   }
   return null;
+}
+
+export function messageStatusFromFinalPayload(payload: Record<string, unknown>): ChatMessage["status"] {
+  const s = String(payload.status ?? "completed");
+  if (s === "awaiting_approval") return "awaiting_approval";
+  if (s === "terminated") return "failed";
+  return "completed";
+}
+
+export function buildFinalAssistantText(
+  buffer: string,
+  payload: Record<string, unknown>,
+  stepIndex: number
+): string {
+  const frStatus = String(payload.status ?? "completed");
+  const role = String(payload.role ?? "agent");
+  const obs = payload.observation as Record<string, unknown> | undefined;
+  let obsText = "";
+  if (obs && Object.keys(obs).length > 0) {
+    obsText = `\n\n📎 观测结果:\n\`\`\`json\n${JSON.stringify(obs, null, 2)}\n\`\`\``;
+  }
+  if (frStatus === "awaiting_approval") {
+    const title = String(payload.title ?? "待人工确认");
+    const summary = String(payload.summary ?? buffer).trim();
+    return `⏸️ **待确认**：${title}\n\n${summary || "（无摘要）"}`;
+  }
+  if (frStatus === "terminated") {
+    return buffer.trim() || `❌ ${role} 已终止（第 ${stepIndex} 轮）${obsText}`;
+  }
+  return buffer || `✅ ${role} 已完成（第 ${stepIndex} 轮）${obsText}`;
 }
 
 export function buildContentFromWorkflowDetail(detail: WorkflowDetail): string {
@@ -99,6 +130,7 @@ export function buildContentFromWorkflowDetail(detail: WorkflowDetail): string {
     const thought = step.thought?.trim();
     if (!thought) continue;
     if (step.phase === "reason") {
+      if (thought === "Reasoning with LLM provider") continue;
       thoughtParts.push(thought);
     }
   }
@@ -116,6 +148,9 @@ export function buildContentFromWorkflowDetail(detail: WorkflowDetail): string {
   if (wfStatus === "failed" || wfStatus === "cancelled") {
     return `❌ 工作流执行失败${obsText}`;
   }
+  if (wfStatus === "awaiting_approval") {
+    return `⏸️ 等待人工确认${obsText}`;
+  }
   if (wfStatus === "completed") {
     return `✅ orchestrator 已完成${obsText}`;
   }
@@ -128,12 +163,21 @@ async function hydrateAssistantMessage(
 ): Promise<ChatMessage | null> {
   const detail = await getWorkflowDetail(workflowId);
   const wfStatus = String(detail.workflow.status ?? "");
-  const terminal = wfStatus === "completed" || wfStatus === "failed" || wfStatus === "cancelled";
+  const terminal =
+    wfStatus === "completed" ||
+    wfStatus === "failed" ||
+    wfStatus === "cancelled" ||
+    wfStatus === "awaiting_approval";
 
   if (!terminal) return null;
 
   if (msg.content?.trim()) {
-    const nextStatus = wfStatus === "completed" ? "completed" : "failed";
+    const nextStatus =
+      wfStatus === "completed"
+        ? "completed"
+        : wfStatus === "awaiting_approval"
+          ? "awaiting_approval"
+          : "failed";
     if (msg.status === nextStatus) return null;
     const patched = await patchSessionMessage({
       messageId: msg.id,
@@ -162,7 +206,12 @@ async function hydrateAssistantMessage(
         : "✅ 已完成（无文本输出）";
   }
 
-  const nextStatus = wfStatus === "completed" ? "completed" : "failed";
+  const nextStatus =
+    wfStatus === "completed"
+      ? "completed"
+      : wfStatus === "awaiting_approval"
+        ? "awaiting_approval"
+        : "failed";
   if (content === msg.content && msg.status === nextStatus) return null;
 
   const patched = await patchSessionMessage({

@@ -317,7 +317,7 @@ chatRouter.post("/sessions/:id/messages", async (c) => {
     role: "user" | "assistant" | "system";
     sender?: "user" | "orchestrator" | "agent" | "system";
     content: string;
-    status?: "queued" | "running" | "completed" | "failed";
+    status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
     workflowRunIds?: string[];
   }>();
   const db = await getDb();
@@ -425,7 +425,7 @@ chatRouter.patch("/messages/:id", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{
     content?: string;
-    status?: "queued" | "running" | "completed" | "failed";
+    status?: "queued" | "running" | "completed" | "failed" | "awaiting_approval";
     errorMessage?: string | null;
     workflowRunIds?: string[];
   }>();

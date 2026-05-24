@@ -63,7 +63,7 @@ export const workflowRun = sqliteTable("workflow_run", {
     .notNull()
     .default("manual"),
   status: text("status", {
-    enum: ["pending", "running", "completed", "failed", "cancelled"],
+    enum: ["pending", "running", "completed", "failed", "cancelled", "awaiting_approval"],
   })
     .notNull()
     .default("pending"),
@@ -115,6 +115,31 @@ export const indicatorStrategyScript = sqliteTable("indicator_strategy_script", 
     .default("both"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
+});
+
+export const workflowHitlRequest = sqliteTable("workflow_hitl_request", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id, { onDelete: "cascade" }),
+  runId: text("run_id"),
+  agentInstanceId: text("agent_instance_id"),
+  stepIndex: integer("step_index").notNull().default(0),
+  scope: text("scope", { enum: ["chat_orchestrator", "team_orchestrator"] })
+    .notNull()
+    .default("chat_orchestrator"),
+  requestKind: text("request_kind", { enum: ["tool_call", "team_research_plan"] })
+    .notNull()
+    .default("tool_call"),
+  status: text("status", { enum: ["pending", "approved", "rejected"] })
+    .notNull()
+    .default("pending"),
+  title: text("title").notNull().default(""),
+  summary: text("summary").notNull().default(""),
+  payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+  resolvedAt: text("resolved_at"),
+  resolvedBy: text("resolved_by"),
 });
 
 export const workflowCompensationTask = sqliteTable("workflow_compensation_task", {
@@ -201,7 +226,9 @@ export const chatMessage = sqliteTable("chat_message", {
     .notNull()
     .default("user"),
   content: text("content").notNull(),
-  status: text("status", { enum: ["queued", "running", "completed", "failed"] })
+  status: text("status", {
+    enum: ["queued", "running", "completed", "failed", "awaiting_approval"],
+  })
     .notNull()
     .default("queued"),
   errorMessage: text("error_message"),

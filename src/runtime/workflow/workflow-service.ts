@@ -6,6 +6,7 @@ import { config } from "../../config";
 import type { AgentExecutionPath } from "../../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
+import { clearWorkflowCheckpointForNewTurn } from "./checkpoint-turn";
 import { dispatchTaskToRole } from "../agent-pool";
 
 export interface CreateAndDispatchWorkflowInput {
@@ -98,12 +99,16 @@ export async function createAndDispatchWorkflow(
 
   let runId: string | undefined;
   if (!input.skipDispatch) {
+    const taskType = input.taskType ?? "workflow_start";
+    if (taskType === "workflow_start" && shouldReuse) {
+      await clearWorkflowCheckpointForNewTurn(id);
+    }
     const out = await dispatchTaskToRole({
       workflowId: id,
       role: "orchestrator",
       payload: {
         taskId: randomUUID(),
-        taskType: input.taskType ?? "workflow_start",
+        taskType,
         params: {
           workflowRunId: id,
           goal: input.goal,

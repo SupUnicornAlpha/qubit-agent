@@ -49,7 +49,9 @@ import {
   runPostFusionPipeline,
   slotOnlyRelationEdges,
 } from "./analyst-team-pipeline";
-import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
+import {
+  pauseForTeamOrchestratorHitl,
+} from "../workflow/hitl-service";
 import { STRATEGY_PIPELINE_GROUP } from "../seed-agent-catalog";
 
 async function enrichAnalystSlotsWithFsi(
@@ -386,6 +388,9 @@ export async function runAnalystTeam(params: {
   agentGroupId?: string | null;
   analystRoles?: AgentRole[] | null;
   analystDefinitionIds?: string[] | null;
+  runId?: string;
+  traceId?: string;
+  hitlApproval?: import("../workflow/hitl-service").HitlApprovalPayload | null;
 }): Promise<AnalystTeamResult> {
   const scope = resolveResearchScope({ ticker: params.ticker, scope: params.scope });
 
@@ -409,6 +414,9 @@ async function runAnalystTeamCore(params: {
   agentGroupId?: string | null;
   analystRoles?: AgentRole[] | null;
   analystDefinitionIds?: string[] | null;
+  runId?: string;
+  traceId?: string;
+  hitlApproval?: import("../workflow/hitl-service").HitlApprovalPayload | null;
 }): Promise<AnalystTeamResult> {
   const db = await getDb();
   const { workflowRunId, ticker, scope } = params;
@@ -473,6 +481,15 @@ async function runAnalystTeamCore(params: {
       slotRoles: slots.map((s) => s.role),
       dataAndUserContext: context,
       orchestrator: orchestratorSlot,
+    });
+    await pauseForTeamOrchestratorHitl({
+      workflowRunId,
+      runId: params.runId ?? workflowRunId,
+      traceId: params.traceId ?? workflowRunId,
+      ticker: scope.displayLabel,
+      planBrief,
+      slotRoles: slots.map((s) => s.role),
+      hitlApproval: params.hitlApproval ?? null,
     });
     context = `${context}\n\n## Orchestrator 任务简报\n${planBrief}`;
   }
