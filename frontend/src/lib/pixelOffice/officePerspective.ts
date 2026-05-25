@@ -212,10 +212,10 @@ function drawSideWalls(ctx: CanvasRenderingContext2D, p: OfficePerspective, win:
     ctx.fillRect(lx, y, win.tl.x - lx, 1);
     ctx.fillRect(win.tr.x, y, rx - win.tr.x, 1);
   }
-
-  ctx.fillStyle = "#6d5a48";
-  ctx.fillRect(0, win.bl.y - 2, win.tl.x, 5);
-  ctx.fillRect(win.tr.x, win.br.y - 2, p.w - win.tr.x, 5);
+  // 注意：不再画水平木条 skirt board ——
+  // 之前 fillRect(0, win.bl.y-2, win.tl.x, 5) 会画一条水平线从画面边缘延伸到窗户底角，
+  // 视觉上像"窗户底沿向两侧延长出去"，破坏了侧墙的一点透视收敛。
+  // 窗台正面的木条已经在 drawWindowSillRect 里画过了，这里删掉即可。
 }
 
 function drawPerspectiveFloor(ctx: CanvasRenderingContext2D, p: OfficePerspective) {

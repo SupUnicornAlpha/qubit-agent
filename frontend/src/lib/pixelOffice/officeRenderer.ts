@@ -139,9 +139,13 @@ export function drawWorkstation(
     ctx.fillRect(x - deskW / 2 - 8, y - deskH - 42, deskW + 16, deskH + 52);
   }
 
-  drawMonitorGlow(ctx, x, y - 26 * depthScale(depth), depth, screenMode, now);
+  // Monitor anchor 是「显示器底部中心」，让它坐在桌面台面上而不是悬空。
+  // 之前的 -26 让显示器底部远在桌面之上 ~27px（高悬），缩小 monitorScale 后这种悬空更显眼，
+  // 改成 -8 让显示器贴住桌面，视觉自然不少。台灯跟着调整保持相对位置。
+  const monitorBaseY = y - 8 * depthScale(depth);
+  drawMonitorGlow(ctx, x, monitorBaseY, depth, screenMode, now);
   blitSprite(ctx, atlas, atlas.desk, x - deskW / 2, y - 10, desk);
-  drawMonitorSprite(ctx, atlas, x, y - 26 * depthScale(depth), screenMode, now, monitor);
+  drawMonitorSprite(ctx, atlas, x, monitorBaseY, screenMode, now, monitor);
   drawDeskLampForWorkstation(ctx, x, y, depth, screenMode !== "idle" || hot, now);
 }
 

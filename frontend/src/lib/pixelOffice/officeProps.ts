@@ -445,7 +445,8 @@ export function drawDeskLampForWorkstation(
   active: boolean,
   now: number
 ) {
-  drawDeskLamp(ctx, x + 22 * depthScale(depth), y - 32 * depthScale(depth), depth, active, now);
+  // 桌面台面约在 y - 8*depthScale（与 monitorBaseY 对齐），台灯比桌面再高 6px
+  drawDeskLamp(ctx, x + 22 * depthScale(depth), y - 14 * depthScale(depth), depth, active, now);
 }
 
 /**
