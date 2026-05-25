@@ -22,8 +22,23 @@ export const LoopOptionsJsonSchema = z
     reactLoop: z.boolean().optional(),
     /** 对话 orchestrator 工具执行前 HITL；默认 chat 来源开启 */
     hitlChat: z.boolean().optional(),
-    /** 团队研究 Orchestrator 规划完成后 HITL；默认 research/chat 开启 */
+    /**
+     * v1 兼容：团队研究 Orchestrator 规划完成后 HITL 总开关。
+     * v2 起推荐改用 `hitlMode`；仍设置 `hitlTeam:true` 等价于 `hitlMode:'always'`。
+     */
     hitlTeam: z.boolean().optional(),
+    /**
+     * v2：团队 HITL 三档触发策略（详见 docs/HITL_REDESIGN.md）。
+     *   - 'off'     ：永不主动询问；硬规则（资金 / 规模 / 失败重试）仍触发
+     *   - 'ai'      ：默认 — Orchestrator hitlNeeded=true 或命中硬规则才询问
+     *   - 'always'  ：每次规划都问（v1 行为）
+     */
+    hitlMode: z.enum(["off", "ai", "always"]).optional(),
+    /**
+     * 资金类硬规则阈值（单笔下单金额，单位美元）；仅 `mode === 'trade'` 生效。
+     * 默认 1000；超过则即便 hitlMode='off' 也强制触发 HITL。
+     */
+    hitlMoneyThreshold: z.number().positive().optional(),
   })
   .strip();
 

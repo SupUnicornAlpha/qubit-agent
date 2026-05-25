@@ -146,7 +146,7 @@ async function evolveFromGeneration(generationId: string) {
   const nextGenerationId = randomUUID();
   await db.insert(geneGeneration).values({
     id: nextGenerationId,
-    projectId: input.projectId,
+    projectId: cur.projectId,
     generationNumber: cur.generationNumber + 1,
     populationSize: cur.populationSize,
     mutationRate: cur.mutationRate,

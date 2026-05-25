@@ -51,7 +51,31 @@ import {
 } from "./analyst-team-pipeline";
 import {
   pauseForTeamOrchestratorHitl,
+  type HitlApprovalPayload,
 } from "../workflow/hitl-service";
+import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
+
+/**
+ * v2：把用户在 HITL 卡片提交的 response 拼成给下游分析师的上下文片段。
+ * - approve_only / null → 空串
+ * - single_choice → "用户选择了：{label or value}"
+ * - multi_choice → "用户勾选了：{labels[]}"
+ * - free_form → "用户给出指引：{text}"
+ */
+function formatHitlResponseForContext(approval: HitlApprovalPayload | null): string {
+  if (!approval || approval.decision !== "approved" || !approval.response) return "";
+  const r = approval.response;
+  if (typeof r.text === "string" && r.text.trim()) {
+    return `\n\n## 用户在审批环节追加指引\n${r.text.trim().slice(0, 1000)}`;
+  }
+  if (Array.isArray(r.values) && r.values.length > 0) {
+    return `\n\n## 用户在审批环节勾选\n${r.values.map(String).join("、")}`;
+  }
+  if (typeof r.value === "string") {
+    return `\n\n## 用户在审批环节选择\n${r.value}`;
+  }
+  return "";
+}
 import { STRATEGY_PIPELINE_GROUP } from "../seed-agent-catalog";
 
 async function enrichAnalystSlotsWithFsi(
@@ -475,7 +499,7 @@ async function runAnalystTeamCore(params: {
   });
 
   if (orchestratorSlot) {
-    const planBrief = await runOrchestratorPlanning({
+    const planResult = await runOrchestratorPlanning({
       workflowRunId,
       ticker: scope.displayLabel,
       slotRoles: slots.map((s) => s.role),
@@ -487,11 +511,15 @@ async function runAnalystTeamCore(params: {
       runId: params.runId ?? workflowRunId,
       traceId: params.traceId ?? workflowRunId,
       ticker: scope.displayLabel,
-      planBrief,
+      planBrief: planResult.brief,
       slotRoles: slots.map((s) => s.role),
+      symbols: Array.isArray(scope.symbols) ? scope.symbols : [scope.displayLabel],
+      hitlHint: planResult.hitlHint,
       hitlApproval: params.hitlApproval ?? null,
     });
-    context = `${context}\n\n## Orchestrator 任务简报\n${planBrief}`;
+    // v2：若用户在 HITL 中填了 response（single_choice/free_form），注入给后续分析师上下文。
+    const respText = formatHitlResponseForContext(params.hitlApproval ?? null);
+    context = `${context}\n\n## Orchestrator 任务简报\n${planResult.brief}${respText}`;
   }
 
   let analystEdges = slotOnlyRelationEdges(relationEdges, slotRoleSet);

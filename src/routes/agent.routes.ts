@@ -17,6 +17,7 @@ import {
   midtermMemory,
   sandboxPolicy,
   skillMarketInstall,
+  workspace,
 } from "../db/sqlite/schema";
 import { getRuntimeAgents } from "../runtime/agent-pool";
 import { buildToolCatalog } from "../runtime/tools/tool-catalog";

@@ -193,6 +193,7 @@ import {
   type LiveConversationEvent,
 } from "../team/LiveConversationView";
 import { ResizableY } from "../team/ResizableY";
+import { TeamHitlBanner } from "../team/TeamHitlBanner";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
   classifyWorkflow,
@@ -4977,51 +4978,34 @@ const TeamDashboardPanel: FC = () => {
   };
 
   /**
-   * Orchestrator 规划后人工审批开关（HITL）。开启后：
-   * - 启动分析时把 hitlTeam=true 透传给后端，后端会把它写入 workflow.loopOptionsJson；
-   * - Orchestrator 规划完成后会暂停在 awaiting_approval，前端展示审批卡片；
-   * - 点「批准」恢复执行，点「拒绝」工作流标 failed。
+   * v2：Orchestrator 规划后 HITL 三档模式（参考 docs/HITL_REDESIGN.md）。
+   *   - 'off'：永不主动询问；硬规则（资金/规模/失败重试）仍触发
+   *   - 'ai'：默认 — Orchestrator 自评 needed=true 或硬规则命中才触发
+   *   - 'always'：每次规划都触发（v1 行为）
+   * 兼容：老 key `qb.analyst-team-hitl` = '1' → 映射到 'always'，否则取 'ai' 为默认。
    */
-  const [teamHitlEnabled, setTeamHitlEnabled] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem("qb.analyst-team-hitl") === "1";
+  const [teamHitlMode, setTeamHitlMode] = useState<"off" | "ai" | "always">(() => {
+    if (typeof window === "undefined") return "ai";
+    const v2 = window.localStorage.getItem("qb.analyst-team-hitl-mode");
+    if (v2 === "off" || v2 === "ai" || v2 === "always") return v2;
+    const legacy = window.localStorage.getItem("qb.analyst-team-hitl");
+    if (legacy === "1") return "always";
+    return "ai";
   });
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem("qb.analyst-team-hitl", teamHitlEnabled ? "1" : "0");
-  }, [teamHitlEnabled]);
+    window.localStorage.setItem("qb.analyst-team-hitl-mode", teamHitlMode);
+  }, [teamHitlMode]);
+  /**
+   * v2：审批卡片已移到画布下 <TeamHitlBanner />，本组件仅保留触发态用于左侧"↑ 跳到画布"锚点。
+   * banner 内部用 resolveWorkflowHitl 提交，提交后通过 onResolved 回调清空本 state。
+   */
   const [teamPendingHitl, setTeamPendingHitl] = useState<{
     jobId: string;
     requestId: string;
     title: string;
     summary: string;
   } | null>(null);
-  const [hitlBusy, setHitlBusy] = useState(false);
-  const handleApproveTeamHitl = async () => {
-    if (!teamPendingHitl || !workflowRunId.trim() || hitlBusy) return;
-    setHitlBusy(true);
-    try {
-      await approveWorkflowHitl(workflowRunId.trim(), teamPendingHitl.requestId);
-      setTeamPendingHitl(null);
-      setRunProgress("已批准，恢复执行…");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setHitlBusy(false);
-    }
-  };
-  const handleRejectTeamHitl = async () => {
-    if (!teamPendingHitl || !workflowRunId.trim() || hitlBusy) return;
-    setHitlBusy(true);
-    try {
-      await rejectWorkflowHitl(workflowRunId.trim(), teamPendingHitl.requestId);
-      setTeamPendingHitl(null);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setHitlBusy(false);
-    }
-  };
 
   const handleRun = async () => {
     if (!researchScopePayload) return;
@@ -5061,7 +5045,8 @@ const TeamDashboardPanel: FC = () => {
           participatingAnalystDefinitionIds.length > 0 ? participatingAnalystDefinitionIds : undefined,
         timeoutMs,
         signal: abortCtl.signal,
-        hitlTeam: teamHitlEnabled,
+        hitlMode: teamHitlMode,
+        hitlTeam: teamHitlMode === "always",
         onAwaitingApproval: (info) => {
           setTeamPendingHitl({
             jobId: info.jobId,
@@ -5838,37 +5823,61 @@ const TeamDashboardPanel: FC = () => {
               超时只是不再轮询，后端任务仍会继续
             </span>
           </div>
-          <label
+          <div
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
               marginTop: 10,
               padding: "8px 10px",
               border: "1px solid #3f3f46",
               borderRadius: 6,
-              background: teamHitlEnabled ? "#1c1917" : "transparent",
+              background: teamHitlMode === "off" ? "transparent" : "#1c1917",
               fontSize: 12,
               color: "#d4d4d8",
-              cursor: "pointer",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
             }}
-            title="开启后 Orchestrator 完成规划会暂停，本面板出现「批准 / 拒绝」按钮，决定是否继续派发分析师"
           >
-            <input
-              type="checkbox"
-              checked={teamHitlEnabled}
-              onChange={(e) => setTeamHitlEnabled(e.target.checked)}
-              disabled={running}
-            />
-            <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: teamHitlEnabled ? "#fde68a" : "#d4d4d8" }}>
-                Orchestrator 规划后人工审批（HITL）
-              </span>
-              <span style={{ color: "#71717a", fontSize: 11 }}>
-                启用后任务会在 Orchestrator 规划完成时暂停；你可以查看规划摘要后决定批准或拒绝
-              </span>
+            <span style={{ color: "#fde68a", fontWeight: 500 }}>
+              Orchestrator 人工介入（HITL）
             </span>
-          </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(
+                [
+                  { id: "off", label: "关闭", hint: "仅资金/规模/重试硬规则触发" },
+                  { id: "ai", label: "由 AI 决定", hint: "默认 — AI 觉得需要才问" },
+                  { id: "always", label: "每次都问", hint: "每次规划都人工确认" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setTeamHitlMode(opt.id)}
+                  disabled={running}
+                  title={opt.hint}
+                  style={{
+                    flex: 1,
+                    padding: "4px 6px",
+                    fontSize: 11,
+                    border: "1px solid",
+                    borderColor: teamHitlMode === opt.id ? "#fbbf24" : "#3f3f46",
+                    background: teamHitlMode === opt.id ? "#3f2d11" : "transparent",
+                    color: teamHitlMode === opt.id ? "#fde68a" : "#a1a1aa",
+                    borderRadius: 4,
+                    cursor: running ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <span style={{ color: "#71717a", fontSize: 11 }}>
+              {teamHitlMode === "off"
+                ? "AI 主动询问已关闭；高风险（交易/大规模/重试）仍会暂停"
+                : teamHitlMode === "ai"
+                  ? "Orchestrator 自评 + 硬规则共同决定是否暂停"
+                  : "每次规划完成都暂停，等你批准/拒绝"}
+            </span>
+          </div>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button
               type="button"
@@ -5912,81 +5921,36 @@ const TeamDashboardPanel: FC = () => {
             </div>
           )}
           {teamPendingHitl ? (
-            <div
+            <button
+              type="button"
               role="alert"
+              onClick={() => {
+                if (activeTab !== "research") setActiveTab("research");
+                const el = document.querySelector("[data-qb-team-hitl-banner]");
+                if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
               style={{
                 marginTop: 10,
-                padding: "12px 12px",
-                borderRadius: 8,
+                padding: "10px 12px",
+                borderRadius: 6,
                 background: "#1f1d12",
                 border: "1px solid #b45309",
                 color: "#fde68a",
                 fontSize: 12,
-                lineHeight: 1.5,
+                textAlign: "left",
+                cursor: "pointer",
                 display: "flex",
-                flexDirection: "column",
+                alignItems: "center",
                 gap: 8,
               }}
+              title="跳到画布查看完整 HITL 卡片"
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }}>
-                <span aria-hidden>⏸</span>
-                <span>等待人工审批</span>
-              </div>
-              <div style={{ color: "#fef3c7", wordBreak: "break-word" }}>
-                {teamPendingHitl.title}
-              </div>
-              {teamPendingHitl.summary ? (
-                <details
-                  style={{
-                    background: "#0f0e08",
-                    border: "1px solid #78350f",
-                    borderRadius: 6,
-                    padding: "6px 8px",
-                  }}
-                >
-                  <summary style={{ cursor: "pointer", color: "#fbbf24" }}>
-                    Orchestrator 规划摘要
-                  </summary>
-                  <pre
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                      margin: "6px 0 0",
-                      color: "#fde68a",
-                      fontSize: 11,
-                      maxHeight: 220,
-                      overflow: "auto",
-                    }}
-                  >
-                    {teamPendingHitl.summary}
-                  </pre>
-                </details>
-              ) : null}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  type="button"
-                  className="qb-btn-primary-brand"
-                  style={{ flex: 1 }}
-                  onClick={() => void handleApproveTeamHitl()}
-                  disabled={hitlBusy}
-                >
-                  {hitlBusy ? "处理中…" : "批准并继续"}
-                </button>
-                <button
-                  type="button"
-                  className="qb-btn-secondary"
-                  style={{
-                    flex: 1,
-                    color: "#fecaca",
-                    borderColor: "#7f1d1d",
-                  }}
-                  onClick={() => void handleRejectTeamHitl()}
-                  disabled={hitlBusy}
-                >
-                  拒绝（中止）
-                </button>
-              </div>
-            </div>
+              <span aria-hidden>⏸</span>
+              <span style={{ flex: 1, minWidth: 0, color: "#fef3c7" }}>
+                {teamPendingHitl.title || "Orchestrator 规划待人工确认"}
+              </span>
+              <span style={{ color: "#fbbf24", fontSize: 11 }}>↑ 跳到画布</span>
+            </button>
           ) : null}
           {error ? (
             <div className="qb-callout qb-callout--danger" role="alert" style={{ marginTop: 10 }}>
@@ -6679,7 +6643,19 @@ const TeamDashboardPanel: FC = () => {
                   </button>
                 </div>
               ) : null}
-              <div style={{ marginTop: 14 }}>
+              <div style={{ marginTop: 14 }} data-qb-team-hitl-banner>
+                {workflowRunId.trim() && teamPendingHitl ? (
+                  <TeamHitlBanner
+                    workflowRunId={workflowRunId.trim()}
+                    triggerKey={teamPendingHitl.requestId}
+                    onResolved={(decision) => {
+                      setTeamPendingHitl(null);
+                      setRunProgress(
+                        decision === "approved" ? "已批准，分析师团队继续执行…" : "已拒绝，工作流终止"
+                      );
+                    }}
+                  />
+                ) : null}
                 <ResizableY
                   defaultHeight={360}
                   minHeight={200}

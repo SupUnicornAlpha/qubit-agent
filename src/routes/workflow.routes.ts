@@ -347,24 +347,61 @@ workflowRouter.get("/:id/hitl/pending", async (c) => {
   return c.json({ data });
 });
 
+/**
+ * v2 统一端点 — 推荐使用。
+ * body: { decision: 'approved'|'rejected', response?: Record<string,unknown>, resolvedBy?: string }
+ *   - approve_only：response 可省略
+ *   - single_choice：response = { value: string }
+ *   - multi_choice：response = { values: string[] }
+ *   - free_form：response = { text: string }
+ * 详见 docs/HITL_REDESIGN.md。
+ */
+workflowRouter.post("/:id/hitl/:requestId/resolve", async (c) => {
+  const requestId = c.req.param("requestId");
+  const body = await c.req
+    .json<{
+      decision?: "approved" | "rejected";
+      response?: Record<string, unknown> | null;
+      resolvedBy?: string;
+    }>()
+    .catch(() => ({}));
+  if (body.decision !== "approved" && body.decision !== "rejected") {
+    return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
+  }
+  const result = await resolveHitlRequest({
+    requestId,
+    decision: body.decision,
+    resolvedBy: body.resolvedBy,
+    response: body.response ?? null,
+  });
+  return c.json({ ok: true, data: result });
+});
+
+/** v1 兼容：approve_only 形态保留，内部转 /resolve。前端老代码不需要改。 */
 workflowRouter.post("/:id/hitl/:requestId/approve", async (c) => {
   const requestId = c.req.param("requestId");
-  const body = await c.req.json<{ resolvedBy?: string }>().catch(() => ({}));
+  const body = await c.req
+    .json<{ resolvedBy?: string; response?: Record<string, unknown> | null }>()
+    .catch(() => ({}));
   const result = await resolveHitlRequest({
     requestId,
     decision: "approved",
     resolvedBy: body.resolvedBy,
+    response: body.response ?? null,
   });
   return c.json({ ok: true, data: result });
 });
 
 workflowRouter.post("/:id/hitl/:requestId/reject", async (c) => {
   const requestId = c.req.param("requestId");
-  const body = await c.req.json<{ resolvedBy?: string }>().catch(() => ({}));
+  const body = await c.req
+    .json<{ resolvedBy?: string; response?: Record<string, unknown> | null }>()
+    .catch(() => ({}));
   const result = await resolveHitlRequest({
     requestId,
     decision: "rejected",
     resolvedBy: body.resolvedBy,
+    response: body.response ?? null,
   });
   return c.json({ ok: true, data: result });
 });

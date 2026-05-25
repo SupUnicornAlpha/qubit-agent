@@ -45,8 +45,16 @@ analystRouter.post("/run", async (c) => {
     agentGroupId?: string | null;
     analystRoles?: string[] | null;
     analystDefinitionIds?: string[] | null;
-    /** 启用 Orchestrator 规划后的人工审批（HITL）；写入 workflow.loopOptionsJson.hitlTeam */
+    /** v1 兼容：启用 Orchestrator 规划后的人工审批；写入 workflow.loopOptionsJson.hitlTeam */
     hitlTeam?: boolean;
+    /**
+     * v2 推荐：HITL 三档模式，写入 workflow.loopOptionsJson.hitlMode
+     *   - 'off'：永不主动；仅硬规则（资金/规模/失败重试）触发
+     *   - 'ai'：默认 — Orchestrator 自评 needed=true 或硬规则命中才触发
+     *   - 'always'：每次规划都触发（v1 行为）
+     * 详见 docs/HITL_REDESIGN.md
+     */
+    hitlMode?: "off" | "ai" | "always";
   }>();
 
   if (!body.workflowRunId) {
@@ -77,11 +85,19 @@ analystRouter.post("/run", async (c) => {
     return c.json({ error: "workflow not found" }, 404);
   }
 
-  // 当请求显式带 hitlTeam 字段时同步写回 workflow.loopOptionsJson，让 resolveTeamOrchestratorHitl 读取到。
-  if (typeof body.hitlTeam === "boolean") {
+  // 把 hitl 偏好（v1 hitlTeam / v2 hitlMode）同步到 workflow.loopOptionsJson，
+  // 让 evaluateTeamHitlTrigger 读取到；v2 字段优先，但保留 v1 兼容写法。
+  const haveHitlFields =
+    typeof body.hitlTeam === "boolean" ||
+    body.hitlMode === "off" ||
+    body.hitlMode === "ai" ||
+    body.hitlMode === "always";
+  if (haveHitlFields) {
     const currentLoopOptions =
       (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
-    const nextLoopOptions = { ...currentLoopOptions, hitlTeam: body.hitlTeam };
+    const nextLoopOptions: Record<string, unknown> = { ...currentLoopOptions };
+    if (typeof body.hitlTeam === "boolean") nextLoopOptions.hitlTeam = body.hitlTeam;
+    if (body.hitlMode) nextLoopOptions.hitlMode = body.hitlMode;
     await db
       .update(workflowRun)
       .set({ loopOptionsJson: nextLoopOptions as never })

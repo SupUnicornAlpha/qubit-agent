@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import type { LoopOptionsJson } from "../../types/loop";
@@ -29,9 +29,20 @@ export class HitlAwaitingApprovalError extends Error {
   }
 }
 
+export type HitlInputKind = "approve_only" | "single_choice" | "multi_choice" | "free_form";
+
 export type HitlApprovalPayload = {
   requestId: string;
   decision: "approved" | "rejected";
+  /**
+   * HITL v2：用户实际选择/输入的内容。
+   *   - approve_only / rejected → null
+   *   - single_choice → { value: string }
+   *   - multi_choice → { values: string[] }
+   *   - free_form → { text: string }
+   * 沿 hitlApproval 链路透传给下一轮 Orchestrator prompt，让规划吸收人工反馈。
+   */
+  response?: Record<string, unknown> | null;
 };
 
 export function parseHitlApproval(raw: unknown): HitlApprovalPayload | null {
@@ -40,7 +51,9 @@ export function parseHitlApproval(raw: unknown): HitlApprovalPayload | null {
   const requestId = typeof o.requestId === "string" ? o.requestId : "";
   const decision = o.decision === "approved" || o.decision === "rejected" ? o.decision : null;
   if (!requestId || !decision) return null;
-  return { requestId, decision };
+  const response =
+    o.response && typeof o.response === "object" ? (o.response as Record<string, unknown>) : null;
+  return { requestId, decision, response };
 }
 
 /** 对话 orchestrator：工具执行前 HITL（run_analyst_team 走团队编排内 HITL）。 */
@@ -58,16 +71,130 @@ export function resolveChatOrchestratorHitl(
 /**
  * 团队研究：仅 Orchestrator 规划完成后、分析师并行前 HITL。
  *
- * 默认 opt-in：团队研究面板目前没有内嵌的批准/拒绝按钮，所以仅在
- * `loopOptions.hitlTeam === true` 时启用，避免独立面板触发的工作流
- * 在没有 UI 可介入的情况下被卡死。chat 流如果通过 `run_analyst_team`
- * 跑团队研究，会沿用对话 orchestrator 的 HITL gate。
+ * v1 简版（保留兼容）：只判断 `loopOptions.hitlTeam === true`，命中即触发。
+ * v2 推荐使用 `evaluateTeamHitlTrigger` —— 三档模式 + LLM 主动判断 + 硬规则兜底。
+ * 详见 docs/HITL_REDESIGN.md。
  */
 export function resolveTeamOrchestratorHitl(
   _wf: { source: string; mode: string },
   loopOptions: LoopOptionsJson
 ): boolean {
-  return loopOptions.hitlTeam === true;
+  return resolveHitlMode(loopOptions) === "always";
+}
+
+/** v1 `hitlTeam:true` 等价于 v2 `hitlMode:'always'`；缺省取 'ai' 作为默认。 */
+function resolveHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" {
+  if (loopOptions.hitlMode) return loopOptions.hitlMode;
+  if (loopOptions.hitlTeam === true) return "always";
+  if (loopOptions.hitlTeam === false) return "off";
+  return "ai";
+}
+
+/**
+ * v2 评估输入：LLM 自评 + 上下文信号；用于 evaluateTeamHitlTrigger 决策。
+ */
+export type HitlHint = {
+  /** Orchestrator 自评是否需要 HITL；undefined 时按 mode 默认 */
+  needed?: boolean;
+  /** 自评原因（短句，写入 UI 给用户看） */
+  reason?: string;
+  /** 自评推荐的交互形态；缺省 approve_only */
+  inputKind?: HitlInputKind;
+  /** 自评配套的选项（single/multi_choice 形态用） */
+  options?: Array<{ label: string; value: string; description?: string }>;
+};
+
+export type HitlTriggerDecision = {
+  trigger: boolean;
+  reason: string;
+  /** 命中的硬规则类型；纯 LLM 决定时为 'ai'；'always' 模式为 'mode_always'；off 模式无规则命中时 trigger=false */
+  source: "mode_always" | "ai" | "rule_money" | "rule_scale" | "rule_retry" | "none";
+  inputKind: HitlInputKind;
+  options?: Array<{ label: string; value: string; description?: string }>;
+};
+
+/**
+ * 评估"该不该 HITL"：三档模式 × 硬规则 × LLM 自评。
+ *
+ * 优先级：硬规则（无视 mode 都触发）> mode='always'（每次都触发）> mode='ai' 时看 LLM hint > mode='off' 不触发。
+ *
+ * 硬规则覆盖范围（v2 P1）：money / scale / retry；详见 docs/HITL_REDESIGN.md §4。
+ */
+export function evaluateTeamHitlTrigger(input: {
+  workflow: { mode: string };
+  loopOptions: LoopOptionsJson;
+  symbols: string[];
+  analystSlotCount: number;
+  /** 同 (ticker, mode) 最近一次状态；'failed' 触发 retry 规则 */
+  recentSameTickerStatus?: "completed" | "failed" | null;
+  hitlHint?: HitlHint | null;
+}): HitlTriggerDecision {
+  const mode = resolveHitlMode(input.loopOptions);
+
+  // 1) 硬规则：资金 — trade mode + 金额超阈值（v2 P1 取阈值默认 1000）
+  if (input.workflow.mode === "trade") {
+    const threshold = input.loopOptions.hitlMoneyThreshold ?? 1000;
+    // TODO(v2-P2)：amount 当前未从 loopOptions 拿到，先以 mode=trade 作必触发，避免假阴；后续接 broker order ticket
+    void threshold;
+    return {
+      trigger: true,
+      source: "rule_money",
+      reason: "涉及真实下单：mode=trade，需人工确认资金类操作",
+      inputKind: "approve_only",
+    };
+  }
+
+  // 2) 硬规则：规模 — symbols>5 或 analystSlotCount>6
+  if (input.symbols.length > 5 || input.analystSlotCount > 6) {
+    return {
+      trigger: true,
+      source: "rule_scale",
+      reason: `规模较大：${input.symbols.length} 标的 / ${input.analystSlotCount} 分析师`,
+      inputKind: input.hitlHint?.inputKind ?? "approve_only",
+      options: input.hitlHint?.options,
+    };
+  }
+
+  // 3) 硬规则：失败重试 — 同标的最近一次 failed
+  if (input.recentSameTickerStatus === "failed") {
+    return {
+      trigger: true,
+      source: "rule_retry",
+      reason: "上次同标的分析失败，建议确认本次规划",
+      inputKind: input.hitlHint?.inputKind ?? "approve_only",
+      options: input.hitlHint?.options,
+    };
+  }
+
+  // 4) mode='always'：每次都问（v1 行为兼容）
+  if (mode === "always") {
+    return {
+      trigger: true,
+      source: "mode_always",
+      reason: "用户设置每次规划都人工确认",
+      inputKind: input.hitlHint?.inputKind ?? "approve_only",
+      options: input.hitlHint?.options,
+    };
+  }
+
+  // 5) mode='ai'：看 LLM 自评
+  if (mode === "ai" && input.hitlHint?.needed === true) {
+    return {
+      trigger: true,
+      source: "ai",
+      reason: input.hitlHint.reason ?? "Orchestrator 判定本次规划需要人工确认",
+      inputKind: input.hitlHint.inputKind ?? "approve_only",
+      options: input.hitlHint.options,
+    };
+  }
+
+  // 6) 其他 — 不触发
+  return {
+    trigger: false,
+    source: "none",
+    reason: "",
+    inputKind: "approve_only",
+  };
 }
 
 export function shouldHitlGateToolCall(toolName: string): boolean {
@@ -154,6 +281,13 @@ export async function createHitlRequest(input: {
   title: string;
   summary: string;
   payloadJson: Record<string, unknown>;
+  /** HITL v2：交互形态分发；不指定默认 approve_only（向后兼容） */
+  inputKind?: HitlInputKind;
+  /**
+   * v2：渲染所需 schema —— single_choice/multi_choice 必带 `options: [{label,value,description?}]`；
+   * free_form 可带 `placeholder/maxLength`；approve_only 留 `{}`。
+   */
+  inputSchema?: Record<string, unknown>;
 }): Promise<{ id: string }> {
   const db = await getDb();
   const id = randomUUID();
@@ -169,6 +303,8 @@ export async function createHitlRequest(input: {
     title: input.title.slice(0, 500),
     summary: input.summary.slice(0, 8000),
     payloadJson: input.payloadJson,
+    inputKind: input.inputKind ?? "approve_only",
+    inputSchemaJson: (input.inputSchema ?? {}) as never,
   });
   await db
     .update(workflowRun)
@@ -199,6 +335,10 @@ export async function pauseForTeamOrchestratorHitl(input: {
   ticker: string;
   planBrief: string;
   slotRoles: string[];
+  /** 涉及的标的列表（basket 多标的）；用于硬规则 scale 判定 */
+  symbols?: string[];
+  /** Orchestrator LLM 自评的 HITL 提示（v2 P1）；undefined 时按 mode 默认 */
+  hitlHint?: HitlHint | null;
   hitlApproval?: HitlApprovalPayload | null;
 }): Promise<void> {
   if (input.hitlApproval?.decision === "rejected") {
@@ -217,10 +357,40 @@ export async function pauseForTeamOrchestratorHitl(input: {
   }
 
   const { workflow, loopOptions } = await loadWorkflowLoopContext(input.workflowRunId);
-  if (!resolveTeamOrchestratorHitl(workflow, loopOptions)) return;
 
-  const title = `研究团队 Orchestrator 规划待确认：${input.ticker}`;
-  const summary = input.planBrief.slice(0, 6000);
+  // v2：硬规则 retry — 查同 ticker 最近一次状态
+  const recentSameTickerStatus = await getRecentSameTickerStatus(input.ticker, workflow.mode);
+
+  const decision = evaluateTeamHitlTrigger({
+    workflow: { mode: workflow.mode },
+    loopOptions,
+    symbols: input.symbols ?? [input.ticker],
+    analystSlotCount: input.slotRoles.length,
+    recentSameTickerStatus,
+    hitlHint: input.hitlHint ?? null,
+  });
+  if (!decision.trigger) return;
+
+  const titlePrefix =
+    decision.source === "rule_money"
+      ? "[资金风险] "
+      : decision.source === "rule_scale"
+        ? "[大规模任务] "
+        : decision.source === "rule_retry"
+          ? "[重试确认] "
+          : "";
+  const title = `${titlePrefix}研究团队 Orchestrator 规划待确认：${input.ticker}`;
+  // 把触发原因拼进 summary 顶部，让用户立刻看到"为什么这次需要审批"。
+  const reasonHeader = decision.reason ? `[HITL 原因] ${decision.reason}\n\n` : "";
+  const summary = (reasonHeader + input.planBrief).slice(0, 8000);
+
+  const inputSchema =
+    decision.inputKind === "single_choice" || decision.inputKind === "multi_choice"
+      ? { options: decision.options ?? [] }
+      : decision.inputKind === "free_form"
+        ? { placeholder: "请用一句话告诉 Orchestrator 你的侧重点", maxLength: 500 }
+        : {};
+
   const { id } = await createHitlRequest({
     workflowRunId: input.workflowRunId,
     runId: input.runId,
@@ -233,17 +403,58 @@ export async function pauseForTeamOrchestratorHitl(input: {
     summary,
     payloadJson: {
       ticker: input.ticker,
+      symbols: input.symbols ?? [input.ticker],
       slotRoles: input.slotRoles,
       planBrief: input.planBrief,
+      triggerSource: decision.source,
+      triggerReason: decision.reason,
     },
+    inputKind: decision.inputKind,
+    inputSchema,
   });
   throw new HitlAwaitingApprovalError(id, input.workflowRunId, title);
+}
+
+/**
+ * 查询同 (ticker, mode) 最近一次 workflow 的状态（24h 内）。
+ *
+ * 现状：workflow_run 没有 ticker 字段，goal 文本里通常含 "· TICKER ·" 串
+ * （见 analyst.routes.ts 的 displayLabel 拼装）；用 LIKE 兜底匹配，精确性后续
+ * 加 ticker 列时再升级（v2-P2）。仅取最近"已结束"的状态，跳过 running 等。
+ */
+async function getRecentSameTickerStatus(
+  ticker: string,
+  mode: string
+): Promise<"completed" | "failed" | null> {
+  if (!ticker.trim()) return null;
+  const db = await getDb();
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const pattern = `%${ticker.trim()}%`;
+  const rows = await db
+    .select({ status: workflowRun.status, createdAt: workflowRun.createdAt })
+    .from(workflowRun)
+    .where(
+      and(
+        eq(workflowRun.mode, mode),
+        sql`${workflowRun.goal} LIKE ${pattern}`,
+        sql`${workflowRun.createdAt} >= ${oneDayAgo}`
+      )
+    )
+    .orderBy(desc(workflowRun.createdAt))
+    .limit(5);
+  for (const r of rows) {
+    if (r.status === "completed") return "completed";
+    if (r.status === "failed") return "failed";
+  }
+  return null;
 }
 
 export async function resolveHitlRequest(input: {
   requestId: string;
   decision: "approved" | "rejected";
   resolvedBy?: string;
+  /** v2：用户在 single_choice/free_form 等形态下提交的内容，会写入 response_json 并透传给下一轮 Orchestrator */
+  response?: Record<string, unknown> | null;
 }): Promise<{ workflowRunId: string; resumed: boolean; runId?: string }> {
   const db = await getDb();
   const row = await getHitlRequest(input.requestId);
@@ -259,6 +470,7 @@ export async function resolveHitlRequest(input: {
       status: input.decision,
       resolvedAt: now,
       resolvedBy: input.resolvedBy ?? "user",
+      responseJson: (input.response ?? null) as never,
     })
     .where(eq(workflowHitlRequest.id, input.requestId));
 
@@ -322,7 +534,11 @@ export async function resolveHitlRequest(input: {
           agentGroupId: resumePayload.agentGroupId ?? undefined,
           analystRoles: resumePayload.analystRoles ?? undefined,
           analystDefinitionIds: resumePayload.analystDefinitionIds ?? undefined,
-          hitlApproval: { requestId: input.requestId, decision: "approved" },
+          hitlApproval: {
+            requestId: input.requestId,
+            decision: "approved",
+            response: input.response ?? null,
+          },
         },
       },
     });
@@ -341,7 +557,11 @@ export async function resolveHitlRequest(input: {
         workflowRunId: row.workflowRunId,
         goal: wf.goal,
         mode: wf.mode,
-        hitlApproval: { requestId: input.requestId, decision: "approved" },
+        hitlApproval: {
+          requestId: input.requestId,
+          decision: "approved",
+          response: input.response ?? null,
+        },
         hitlPayload: row.payloadJson as Record<string, unknown>,
       },
     },

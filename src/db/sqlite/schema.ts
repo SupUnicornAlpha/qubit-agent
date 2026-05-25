@@ -137,6 +137,27 @@ export const workflowHitlRequest = sqliteTable("workflow_hitl_request", {
   title: text("title").notNull().default(""),
   summary: text("summary").notNull().default(""),
   payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+  /**
+   * HITL v2：交互类型分发器，前端按此渲染对应组件。
+   *   - approve_only：批准 / 拒绝（v1 兼容默认值）
+   *   - single_choice：单选（inputSchemaJson.options 给选项数组）
+   *   - multi_choice：多选（同上 + minSelect/maxSelect）
+   *   - free_form：自由文本（inputSchemaJson.placeholder/maxLength）
+   * 详见 docs/HITL_REDESIGN.md
+   */
+  inputKind: text("input_kind", {
+    enum: ["approve_only", "single_choice", "multi_choice", "free_form"],
+  })
+    .notNull()
+    .default("approve_only"),
+  /** 渲染所需 schema（options 列表、placeholder、maxLength 等）。approve_only 为 {}. */
+  inputSchemaJson: text("input_schema_json", { mode: "json" }).notNull().default({}),
+  /**
+   * 用户实际选择 / 输入的内容；approve_only 时保持 NULL。
+   * single_choice → { value: string }；multi_choice → { values: string[] }；
+   * free_form → { text: string }
+   */
+  responseJson: text("response_json", { mode: "json" }),
   createdAt: createdAt(),
   resolvedAt: text("resolved_at"),
   resolvedBy: text("resolved_by"),

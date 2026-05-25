@@ -26,6 +26,7 @@ import {
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { parseHitlApproval } from "../workflow/hitl-service";
 import { fuseSignals, type RawAnalystSignal } from "../msa/signal-fusion";
+import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import { runStockScreener } from "../screener/stock-screener";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { factorService } from "../factor/factor-service";

@@ -113,14 +113,77 @@ export function extractRoleBriefSection(fullBrief: string, role: AgentRole): str
   return `${tail}## 你的角色：${role}\n\n（全团队简报未单独列出本角色小节，请仅完成 **${role}** 职责范围内的分析，勿重复其他角色工作。）\n\n${fullBrief.slice(0, 2800)}`;
 }
 
-/** 运行前：Orchestrator 阅读数据快照并生成对各角色的任务说明 */
+/**
+ * v2：Orchestrator LLM 自评的 HITL 提示。
+ * - needed：是否建议人工介入；undefined / false = 默认不打扰
+ * - reason：≤60 字短句，写入 UI 给用户看
+ * - inputKind：推荐的交互形态；缺省 approve_only
+ * - options：single_choice / multi_choice 形态的选项
+ * 详见 docs/HITL_REDESIGN.md §5
+ */
+export type OrchestratorHitlHint = {
+  needed?: boolean;
+  reason?: string;
+  inputKind?: "approve_only" | "single_choice" | "multi_choice" | "free_form";
+  options?: Array<{ label: string; value: string; description?: string }>;
+};
+
+export type OrchestratorPlanResult = {
+  brief: string;
+  hitlHint: OrchestratorHitlHint | null;
+};
+
+const HITL_HINT_DELIMITER = "---HITL_HINT_JSON---";
+
+/**
+ * v2：从 LLM 全文里抠出尾部的 HITL JSON 块；同时返回 markdown brief（已去掉 hint 段）。
+ * 解析容错：找不到分隔符或 JSON 无效都视为 hitlHint=null（让 evaluator 走 mode 默认）。
+ */
+export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
+  const idx = answer.indexOf(HITL_HINT_DELIMITER);
+  if (idx < 0) return { brief: answer.trim() || "（无编排简报）", hitlHint: null };
+  const brief = answer.slice(0, idx).trim() || "（无编排简报）";
+  const rest = answer.slice(idx + HITL_HINT_DELIMITER.length);
+  const m = rest.match(/\{[\s\S]*\}/);
+  if (!m) return { brief, hitlHint: null };
+  try {
+    const raw = JSON.parse(m[0]) as Record<string, unknown>;
+    const needed = raw.needed === true ? true : raw.needed === false ? false : undefined;
+    const reason = typeof raw.reason === "string" ? raw.reason.slice(0, 200) : undefined;
+    const inputKindRaw = raw.inputKind;
+    const inputKind: OrchestratorHitlHint["inputKind"] =
+      inputKindRaw === "single_choice" ||
+      inputKindRaw === "multi_choice" ||
+      inputKindRaw === "free_form" ||
+      inputKindRaw === "approve_only"
+        ? inputKindRaw
+        : undefined;
+    const options =
+      Array.isArray(raw.options) &&
+      raw.options.every(
+        (o) =>
+          o && typeof o === "object" && typeof (o as Record<string, unknown>).value === "string"
+      )
+        ? (raw.options as Array<Record<string, unknown>>).map((o) => ({
+            label: String(o.label ?? o.value ?? ""),
+            value: String(o.value ?? ""),
+            description: typeof o.description === "string" ? o.description : undefined,
+          }))
+        : undefined;
+    return { brief, hitlHint: { needed, reason, inputKind, options } };
+  } catch {
+    return { brief, hitlHint: null };
+  }
+}
+
+/** 运行前：Orchestrator 阅读数据快照并生成对各角色的任务说明 + v2 HITL 自评。 */
 export async function runOrchestratorPlanning(input: {
   workflowRunId: string;
   ticker: string;
   slotRoles: AgentRole[];
   dataAndUserContext: string;
   orchestrator: AnalystTeamSlot;
-}): Promise<string> {
+}): Promise<OrchestratorPlanResult> {
   const modelConfig = (await loadModelConfig()) ?? {
     provider: "mock" as const,
     model: "mock-orchestrator",
@@ -134,6 +197,26 @@ export async function runOrchestratorPlanning(input: {
 1. 开篇：本轮研究重点与待回答问题（通用，≤15 行）
 2. **对每个参与角色单独一节**，标题必须为 \`## <role>\`（role 使用英文角色 id，如 analyst_fundamental、research、backtest、risk），节内只写该角色本回合要做什么、调用哪些工具、交付什么
 3. 要求：在引用下方数据快照前提下再下结论，信息不足时明确写「需补充」
+
+**【HITL 自评 — 必带】** 在 Markdown 简报结束后，**必须**追加分隔符 \`${HITL_HINT_DELIMITER}\` 与一段 JSON：
+\`\`\`
+${HITL_HINT_DELIMITER}
+{"needed": false, "reason": "短句说明为什么（不）需要人工", "inputKind": "approve_only", "options": []}
+\`\`\`
+
+判定依据（needed 何时 = true）：
+- 计划涉及做空、杠杆、衍生品或非常规策略组合
+- 标的属于你不熟悉/数据匮乏的领域，置信度低
+- 用户原始意图含糊，存在多种合理执行路径需要用户选
+- 数据快照中出现风险信号（如近期大幅波动 / 财报临近 / 监管事件）
+
+inputKind 选择：
+- "approve_only"：你确信路径但希望用户确认 → 提供原因即可
+- "single_choice"：有 2-4 条合理路径，让用户选一条 → 必带 options=[{label,value}]
+- "free_form"：需要用户给一句话指引 → options 为空
+- "multi_choice"：让用户勾选要包含/排除的角色或步骤 → 必带 options
+
+如确信无需人工，输出 \`{"needed": false, "reason": "常规多头 + 4 个标准分析师", "inputKind": "approve_only"}\` 即可。
 
 ---
 ${input.dataAndUserContext}`;
@@ -150,10 +233,10 @@ ${input.dataAndUserContext}`;
   } catch (e) {
     answer = `（编排计划生成失败：${e instanceof Error ? e.message : String(e)}）`;
   }
-  const brief = answer.trim() || "（无编排简报）";
+  const parsed = parsePlanWithHitlHint(answer);
   for (const role of input.slotRoles) {
     if (role === "orchestrator") continue;
-    const roleBrief = extractRoleBriefSection(brief, role).slice(0, 4000);
+    const roleBrief = extractRoleBriefSection(parsed.brief, role).slice(0, 4000);
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
       fromRole: "orchestrator",
@@ -163,7 +246,7 @@ ${input.dataAndUserContext}`;
       payloadJson: { phase: "orchestrator_plan", ticker: input.ticker, targetRole: role },
     });
   }
-  return brief;
+  return parsed;
 }
 
 /** MSA 之后：Orchestrator 汇总并给出买/卖/观望与是否进入策略阶段 */

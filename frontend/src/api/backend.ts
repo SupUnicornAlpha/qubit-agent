@@ -314,12 +314,65 @@ export async function rejectWorkflowHitl(
   return res.data;
 }
 
+/**
+ * v2：HITL 卡片支持的 4 种交互形态。
+ * - approve_only：批准 / 拒绝（v1 兼容默认值）
+ * - single_choice：单选（inputSchema.options 列出选项）
+ * - multi_choice：多选（同上 + 可选 min/maxSelect）
+ * - free_form：自由文本（inputSchema.placeholder/maxLength）
+ */
+export type HitlInputKind = "approve_only" | "single_choice" | "multi_choice" | "free_form";
+
+export interface HitlInputSchema {
+  options?: Array<{ label: string; value: string; description?: string }>;
+  placeholder?: string;
+  maxLength?: number;
+  minSelect?: number;
+  maxSelect?: number;
+}
+
+export interface HitlPendingRequest {
+  id: string;
+  title: string;
+  summary: string;
+  /** v2：交互形态；后端 drizzle 返回字段名为 inputKind */
+  inputKind?: HitlInputKind;
+  /** v2：渲染所需 schema；drizzle 返回字段名为 inputSchemaJson */
+  inputSchemaJson?: HitlInputSchema;
+  /** 已批准/拒绝时回填的用户内容（drizzle responseJson） */
+  responseJson?: Record<string, unknown> | null;
+}
+
 export async function listPendingWorkflowHitl(
   workflowId: string
-): Promise<Array<{ id: string; title: string; summary: string }>> {
+): Promise<HitlPendingRequest[]> {
   const res = await httpGet<{
-    data: Array<{ id: string; title: string; summary: string }>;
+    data: HitlPendingRequest[];
   }>(`/api/v1/workflows/${workflowId}/hitl/pending`);
+  return res.data;
+}
+
+/**
+ * v2 统一端点 — 推荐前端使用。
+ *   - approve_only：response 省略
+ *   - single_choice：response = { value: string }
+ *   - multi_choice：response = { values: string[] }
+ *   - free_form：response = { text: string }
+ * 详见 docs/HITL_REDESIGN.md §8。
+ */
+export async function resolveWorkflowHitl(
+  workflowId: string,
+  requestId: string,
+  decision: "approved" | "rejected",
+  response?: Record<string, unknown> | null
+): Promise<{ workflowRunId: string; resumed: boolean; runId?: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { workflowRunId: string; resumed: boolean; runId?: string };
+  }>(`/api/v1/workflows/${workflowId}/hitl/${requestId}/resolve`, {
+    decision,
+    response: response ?? null,
+  });
   return res.data;
 }
 
@@ -1057,8 +1110,15 @@ export async function startAnalystTeam(params: {
   agentGroupId?: string;
   analystRoles?: string[];
   analystDefinitionIds?: string[];
-  /** 启用 Orchestrator 规划后的 HITL（团队场景）；后端会写入 workflow.loopOptionsJson */
+  /** v1 兼容：启用 Orchestrator 规划后的 HITL；后端会写入 workflow.loopOptionsJson.hitlTeam */
   hitlTeam?: boolean;
+  /**
+   * v2 推荐：HITL 三档模式。
+   *   - 'off'：永不主动；仅硬规则触发
+   *   - 'ai'：默认 — Orchestrator 自评 needed=true 或硬规则命中才触发
+   *   - 'always'：每次规划都触发（v1 行为）
+   */
+  hitlMode?: "off" | "ai" | "always";
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
@@ -1212,8 +1272,10 @@ export async function runAnalystTeam(params: {
   timeoutMs?: number;
   /** 主动停止等待。 */
   signal?: AbortSignal;
-  /** 启用 Orchestrator 规划后人工审批；命中后 onAwaitingApproval 回调 */
+  /** v1 兼容：启用 Orchestrator 规划后人工审批；命中后 onAwaitingApproval 回调 */
   hitlTeam?: boolean;
+  /** v2：HITL 三档模式 */
+  hitlMode?: "off" | "ai" | "always";
   onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
   onResume?: () => void;
 }): Promise<AnalystTeamResult> {

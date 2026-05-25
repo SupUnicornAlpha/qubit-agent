@@ -14,7 +14,7 @@ import {
   ensureWorkspaceRuntimeConfigFiles,
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
-import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
+import { HitlAwaitingApprovalError, parseHitlApproval } from "../workflow/hitl-service";
 import { pauseAnalystResearchJobForHitl } from "../msa/analyst-research-jobs";
 import {
   executeResearchTeamWorkflow,
@@ -490,10 +490,19 @@ export class GraphRunner {
           startedAt: new Date().toISOString(),
         });
 
+        // 透传 hitlApproval：批准后 resolveHitlRequest 重派 task 时会把 approved requestId
+        // 塞进 params.hitlApproval；不在这里 parse 并传给 executeResearchTeamWorkflow，
+        // 下一次 pauseForTeamOrchestratorHitl 就无法 short-circuit，会再创建一个新的 HITL 请求
+        // → 用户陷入"approve → 新 HITL → approve → 新 HITL"死循环（2026-05-25 故障）。
+        const hitlApproval = parseHitlApproval(
+          (params.payload.params as Record<string, unknown>).hitlApproval
+        );
+
         try {
           const teamResult = await executeResearchTeamWorkflow({
             workflowRunId: params.workflowId,
             params: parsed.params,
+            hitlApproval,
           });
           await db
             .update(agentInstance)
