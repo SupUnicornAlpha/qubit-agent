@@ -6,7 +6,8 @@
  * 设计：
  * - 顶部"默认/降级模型"卡片复用现有 saveModelConfig（写 .qubit/model.json）
  * - 下面是 provider 列表（来自 /api/v1/llm-providers）
- * - 每行支持：编辑 modelName/baseUrl/apiKey/enabled、删除、连通性测试
+ * - 每行支持：内联「编辑」表单（modelName/baseUrl/providerType/apiKey/contextWindow/...）
+ * - 删除走 2 步内联确认；Tauri Webview 屏蔽 prompt()/confirm()，因此一律不依赖原生弹窗
  * - apiKey 输入框默认 password 类型，提交后立即清空（前端不缓存）
  */
 
@@ -14,10 +15,12 @@ import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { httpGet, httpPost, httpPatch, httpDelete } from "../../api/client";
 
+type ProviderType = "openai" | "anthropic" | "ollama" | "custom";
+
 interface ProviderRow {
   id: string;
   providerId: string;
-  providerType: "openai" | "anthropic" | "ollama" | "custom";
+  providerType: ProviderType;
   modelName: string;
   baseUrl: string | null;
   apiKeyRef: string | null;
@@ -26,6 +29,15 @@ interface ProviderRow {
   supportsFunctionCalling: boolean;
   enabled: boolean;
   createdAt: string;
+}
+
+interface EditForm {
+  providerType: ProviderType;
+  modelName: string;
+  baseUrl: string;
+  apiKey: string;
+  contextWindow: string;
+  supportsFunctionCalling: boolean;
 }
 
 interface DefaultInfo {
@@ -108,9 +120,18 @@ const styles: Record<string, CSSProperties> = {
     color: "var(--qb-muted-fg)",
     border: "1px solid var(--qb-border)",
   },
+  row: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr 1fr 110px 120px 240px",
+    gap: 8,
+    padding: "8px",
+    fontSize: 13,
+    alignItems: "center",
+    borderBottom: "1px solid var(--qb-border-subtle, rgba(255,255,255,0.04))",
+  },
   tableHead: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr 1fr 110px 120px 200px",
+    gridTemplateColumns: "1fr 1fr 1fr 110px 120px 240px",
     gap: 8,
     padding: "6px 8px",
     fontSize: 11,
@@ -120,14 +141,56 @@ const styles: Record<string, CSSProperties> = {
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
-  row: {
+  editPanel: {
+    padding: "12px",
+    background: "var(--qb-tint, rgba(99,102,241,0.06))",
+    border: "1px solid var(--qb-border)",
+    borderRadius: 8,
+    margin: "4px 0 12px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  editGrid: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr 1fr 110px 120px 200px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    gap: 10,
+  },
+  editLabel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    fontSize: 11,
+    color: "var(--qb-muted-fg)",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    fontWeight: 600,
+  },
+  editFooter: {
+    display: "flex",
     gap: 8,
-    padding: "8px",
-    fontSize: 13,
     alignItems: "center",
-    borderBottom: "1px solid var(--qb-border-subtle, rgba(255,255,255,0.04))",
+    flexWrap: "wrap",
+  },
+  btnDanger: {
+    fontSize: 11,
+    padding: "4px 8px",
+    background: "rgba(220, 38, 38, 0.08)",
+    color: "rgb(220, 38, 38)",
+    border: "1px solid rgba(220, 38, 38, 0.4)",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontWeight: 500,
+  },
+  btnDangerSolid: {
+    fontSize: 11,
+    padding: "4px 8px",
+    background: "rgb(220, 38, 38)",
+    color: "#fff",
+    border: "1px solid rgb(185, 28, 28)",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontWeight: 600,
   },
   errorBox: {
     color: "rgb(255, 99, 71)",
@@ -153,6 +216,15 @@ function badgeLabel(row: ProviderRow): string {
   return "缺 apiKey";
 }
 
+const EMPTY_EDIT_FORM: EditForm = {
+  providerType: "openai",
+  modelName: "",
+  baseUrl: "",
+  apiKey: "",
+  contextWindow: "",
+  supportsFunctionCalling: true,
+};
+
 export const LlmProvidersList: FC = () => {
   const [rows, setRows] = useState<ProviderRow[]>([]);
   const [defaultInfo, setDefaultInfo] = useState<DefaultInfo | null>(null);
@@ -165,6 +237,13 @@ export const LlmProvidersList: FC = () => {
   const [newModelName, setNewModelName] = useState("gpt-4o-mini");
   const [newBaseUrl, setNewBaseUrl] = useState("");
   const [newApiKey, setNewApiKey] = useState("");
+
+  // 内联编辑 / 删除确认（Tauri Webview 屏蔽了 prompt/confirm）
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>(EMPTY_EDIT_FORM);
+  const [editSaving, setEditSaving] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [focusApiKey, setFocusApiKey] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -217,24 +296,70 @@ export const LlmProvidersList: FC = () => {
     }
   };
 
-  const handleDelete = async (row: ProviderRow) => {
-    if (!confirm(`删除 ${row.providerId}？`)) return;
+  const handleDeleteConfirm = async (row: ProviderRow) => {
     try {
       await httpDelete(`/api/v1/llm-providers/${row.id}`);
+      setPendingDeleteId(null);
+      if (editingId === row.id) setEditingId(null);
       await reload();
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const handleRekey = async (row: ProviderRow) => {
-    const key = prompt(`为 ${row.providerId} 输入新 apiKey（明文）`);
-    if (!key) return;
+  const handleStartEdit = (row: ProviderRow, focusKey = false) => {
+    setEditingId(row.id);
+    setFocusApiKey(focusKey);
+    setEditForm({
+      providerType: row.providerType,
+      modelName: row.modelName,
+      baseUrl: row.baseUrl ?? "",
+      apiKey: "",
+      contextWindow: String(row.contextWindow ?? ""),
+      supportsFunctionCalling: row.supportsFunctionCalling,
+    });
+    setPendingDeleteId(null);
+    setError(null);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditForm(EMPTY_EDIT_FORM);
+    setFocusApiKey(false);
+  };
+
+  const handleSaveEdit = async (row: ProviderRow) => {
+    if (!editForm.modelName.trim()) {
+      setError("modelName 不能为空");
+      return;
+    }
+    const ctxNum = editForm.contextWindow.trim() ? Number(editForm.contextWindow.trim()) : NaN;
+    if (editForm.contextWindow.trim() && (!Number.isFinite(ctxNum) || ctxNum <= 0)) {
+      setError("contextWindow 必须是正整数");
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      providerType: editForm.providerType,
+      modelName: editForm.modelName.trim(),
+      baseUrl: editForm.baseUrl.trim() || null,
+      supportsFunctionCalling: editForm.supportsFunctionCalling,
+    };
+    if (editForm.contextWindow.trim()) payload.contextWindow = ctxNum;
+    if (editForm.apiKey.trim()) payload.apiKey = editForm.apiKey.trim();
+
     try {
-      await httpPatch(`/api/v1/llm-providers/${row.id}`, { apiKey: key });
+      setEditSaving(true);
+      setError(null);
+      await httpPatch(`/api/v1/llm-providers/${row.id}`, payload);
+      setEditingId(null);
+      setEditForm(EMPTY_EDIT_FORM);
+      setFocusApiKey(false);
       await reload();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -360,57 +485,184 @@ export const LlmProvidersList: FC = () => {
               暂无配置；新建一个 provider 后，可在 Agent 编辑页让指定 Agent 使用此模型。
             </div>
           ) : null}
-          {sortedRows.map((row) => (
-            <div key={row.id} style={styles.row}>
-              <span>
-                <strong>{row.providerId}</strong>
-                <br />
-                <small style={{ color: "var(--qb-muted-fg)" }}>{row.modelName}</small>
-              </span>
-              <span>
-                <code style={{ fontSize: 12 }}>{row.providerType}</code>
-                <br />
-                <small style={{ color: "var(--qb-muted-fg)" }}>{row.baseUrl ?? "—"}</small>
-              </span>
-              <span>
-                <code style={{ fontSize: 11 }}>{row.apiKeyRef ?? "—"}</code>
-              </span>
-              <span style={badgeStatus(row)}>{badgeLabel(row)}</span>
-              <span>
-                <label style={{ fontSize: 12, color: "var(--qb-muted-fg)" }}>
-                  <input
-                    type="checkbox"
-                    checked={row.enabled}
-                    onChange={() => void handleToggle(row)}
-                  />{" "}
-                  {row.enabled ? "启用" : "禁用"}
-                </label>
-              </span>
-              <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                <button
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 11, padding: "4px 8px" }}
-                  onClick={() => void handleRekey(row)}
-                >
-                  重设 apiKey
-                </button>
-                <button
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 11, padding: "4px 8px" }}
-                  onClick={() => void handleTest(row)}
-                >
-                  测试
-                </button>
-                <button
-                  className="qb-btn-danger"
-                  style={{ fontSize: 11, padding: "4px 8px" }}
-                  onClick={() => void handleDelete(row)}
-                >
-                  删除
-                </button>
-              </span>
-            </div>
-          ))}
+          {sortedRows.map((row) => {
+            const isEditing = editingId === row.id;
+            const isPendingDelete = pendingDeleteId === row.id;
+            return (
+              <div key={row.id}>
+                <div style={styles.row}>
+                  <span>
+                    <strong>{row.providerId}</strong>
+                    <br />
+                    <small style={{ color: "var(--qb-muted-fg)" }}>{row.modelName}</small>
+                  </span>
+                  <span>
+                    <code style={{ fontSize: 12 }}>{row.providerType}</code>
+                    <br />
+                    <small style={{ color: "var(--qb-muted-fg)" }}>{row.baseUrl ?? "—"}</small>
+                  </span>
+                  <span>
+                    <code style={{ fontSize: 11 }}>{row.apiKeyRef ?? "—"}</code>
+                  </span>
+                  <span style={badgeStatus(row)}>{badgeLabel(row)}</span>
+                  <span>
+                    <label style={{ fontSize: 12, color: "var(--qb-muted-fg)" }}>
+                      <input
+                        type="checkbox"
+                        checked={row.enabled}
+                        onChange={() => void handleToggle(row)}
+                      />{" "}
+                      {row.enabled ? "启用" : "禁用"}
+                    </label>
+                  </span>
+                  <span style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    <button
+                      className="qb-btn-secondary"
+                      style={{ fontSize: 11, padding: "4px 8px" }}
+                      onClick={() => (isEditing ? handleCancelEdit() : handleStartEdit(row))}
+                    >
+                      {isEditing ? "收起" : "编辑"}
+                    </button>
+                    <button
+                      className="qb-btn-secondary"
+                      style={{ fontSize: 11, padding: "4px 8px" }}
+                      onClick={() => handleStartEdit(row, true)}
+                      title="展开编辑面板并定位到 apiKey"
+                    >
+                      重设 apiKey
+                    </button>
+                    <button
+                      className="qb-btn-secondary"
+                      style={{ fontSize: 11, padding: "4px 8px" }}
+                      onClick={() => void handleTest(row)}
+                    >
+                      测试
+                    </button>
+                    {isPendingDelete ? (
+                      <>
+                        <button
+                          style={styles.btnDangerSolid}
+                          onClick={() => void handleDeleteConfirm(row)}
+                        >
+                          确认删除
+                        </button>
+                        <button
+                          className="qb-btn-secondary"
+                          style={{ fontSize: 11, padding: "4px 8px" }}
+                          onClick={() => setPendingDeleteId(null)}
+                        >
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        style={styles.btnDanger}
+                        onClick={() => {
+                          setPendingDeleteId(row.id);
+                          if (editingId === row.id) handleCancelEdit();
+                        }}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </span>
+                </div>
+                {isEditing ? (
+                  <div style={styles.editPanel}>
+                    <p style={{ ...styles.cardHint, margin: 0 }}>
+                      编辑 <strong>{row.providerId}</strong> · 仅 apiKey 留空时表示「保持不变」；其它字段会覆盖。
+                    </p>
+                    <div style={styles.editGrid}>
+                      <label style={styles.editLabel}>
+                        类型
+                        <select
+                          style={styles.select}
+                          value={editForm.providerType}
+                          onChange={(e) =>
+                            setEditForm((f) => ({ ...f, providerType: e.target.value as ProviderType }))
+                          }
+                        >
+                          <option value="openai">openai</option>
+                          <option value="anthropic">anthropic</option>
+                          <option value="ollama">ollama</option>
+                          <option value="custom">custom（DeepSeek/Qwen/Zhipu）</option>
+                        </select>
+                      </label>
+                      <label style={styles.editLabel}>
+                        modelName
+                        <input
+                          style={styles.input}
+                          placeholder="如 gpt-4o"
+                          value={editForm.modelName}
+                          onChange={(e) => setEditForm((f) => ({ ...f, modelName: e.target.value }))}
+                        />
+                      </label>
+                      <label style={styles.editLabel}>
+                        baseUrl
+                        <input
+                          style={styles.input}
+                          placeholder="留空使用 provider 默认值"
+                          value={editForm.baseUrl}
+                          onChange={(e) => setEditForm((f) => ({ ...f, baseUrl: e.target.value }))}
+                        />
+                      </label>
+                      <label style={styles.editLabel}>
+                        apiKey（留空保持不变）
+                        <input
+                          style={styles.input}
+                          type="password"
+                          autoComplete="off"
+                          autoFocus={focusApiKey}
+                          placeholder={row.apiKeyConfigured ? "已配置，输入新值覆盖" : "未配置，输入明文"}
+                          value={editForm.apiKey}
+                          onChange={(e) => setEditForm((f) => ({ ...f, apiKey: e.target.value }))}
+                        />
+                      </label>
+                      <label style={styles.editLabel}>
+                        contextWindow
+                        <input
+                          style={styles.input}
+                          inputMode="numeric"
+                          placeholder="如 128000"
+                          value={editForm.contextWindow}
+                          onChange={(e) => setEditForm((f) => ({ ...f, contextWindow: e.target.value }))}
+                        />
+                      </label>
+                      <label style={{ ...styles.editLabel, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={editForm.supportsFunctionCalling}
+                          onChange={(e) =>
+                            setEditForm((f) => ({ ...f, supportsFunctionCalling: e.target.checked }))
+                          }
+                        />
+                        supportsFunctionCalling
+                      </label>
+                    </div>
+                    <div style={styles.editFooter}>
+                      <button
+                        className="qb-btn-primary-brand"
+                        onClick={() => void handleSaveEdit(row)}
+                        disabled={editSaving}
+                      >
+                        {editSaving ? "保存中..." : "保存"}
+                      </button>
+                      <button
+                        className="qb-btn-secondary"
+                        onClick={handleCancelEdit}
+                        disabled={editSaving}
+                      >
+                        取消
+                      </button>
+                      <span style={{ ...styles.cardHint, marginLeft: "auto" }}>
+                        修改 providerId 需要新建一条 provider 后删除旧的（providerId 是唯一键）
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
