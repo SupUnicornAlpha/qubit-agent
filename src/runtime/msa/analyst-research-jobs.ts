@@ -110,3 +110,21 @@ export function findPendingAnalystJobByWorkflow(workflowRunId: string):
   }
   return undefined;
 }
+
+/**
+ * 通过 workflowRunId 反查所有"活着"（running / awaiting_approval）的 job。
+ * 用于 workflow cancel / hard-delete 时打断 in-memory 任务，否则前端 UI 已经清，
+ * 后端任务还在 spinning（继续写 DB / 调 LLM / 烧 token），还会让前端轮询看到"任务还在跑"。
+ */
+export function findActiveAnalystJobsByWorkflow(workflowRunId: string): string[] {
+  const ids: string[] = [];
+  for (const [jobId, job] of jobs.entries()) {
+    if (
+      job.workflowRunId === workflowRunId &&
+      (job.status === "running" || job.status === "awaiting_approval")
+    ) {
+      ids.push(jobId);
+    }
+  }
+  return ids;
+}

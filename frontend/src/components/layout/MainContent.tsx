@@ -5181,6 +5181,14 @@ const TeamDashboardPanel: FC = () => {
     setError(null);
     try {
       await deleteWorkflow(workflowRunId.trim());
+      // 立即把"分析中"相关 UI 状态全清，否则用户感觉"按钮没生效"：
+      //   - pollAbortRef.abort() 让前端轮询循环退出
+      //   - setRunning(false) 让"分析中…"按钮恢复为"启动团队分析"
+      //   - 后端 in-memory analyst job 由后端 cancel 路由内 best-effort 标 failed
+      pollAbortRef.current?.abort();
+      setRunning(false);
+      setRunProgress("");
+      setTeamPendingHitl(null);
       const rows = await refreshWorkflowOptions();
       setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
       setResult(null);
@@ -5211,6 +5219,11 @@ const TeamDashboardPanel: FC = () => {
     setError(null);
     try {
       const result = await deleteWorkflow(id, { hard: true });
+      // 与 cancel 同样：清掉"分析中"状态 + 让轮询退出，避免轮询打到已删 workflow 拿到 404。
+      pollAbortRef.current?.abort();
+      setRunning(false);
+      setRunProgress("");
+      setTeamPendingHitl(null);
       const rows = await refreshWorkflowOptions();
       setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
       setResult(null);

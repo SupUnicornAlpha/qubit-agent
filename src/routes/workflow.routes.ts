@@ -17,6 +17,10 @@ import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
+import {
+  failAnalystResearchJob,
+  findActiveAnalystJobsByWorkflow,
+} from "../runtime/msa/analyst-research-jobs";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -302,16 +306,40 @@ workflowRouter.delete("/:id", async (c) => {
     .catch(() => false);
   const isHard = hardQuery === "true" || hardQuery === "1" || bodyHard;
 
+  // Best-effort 终止 in-memory analyst job：避免软删 / 硬删后后台任务还在 spinning，
+  // 继续写 DB / 烧 token，并让前端轮询看到"任务还在跑"的错觉。
+  // 软删时尤其关键 —— 仅 update workflow_run.status='cancelled' 不会让 in-memory job 自己停。
+  const activeJobIds = findActiveAnalystJobsByWorkflow(id);
+  for (const jobId of activeJobIds) {
+    failAnalystResearchJob(jobId, new Error("workflow cancelled / hard-deleted by user"));
+  }
+  if (activeJobIds.length > 0) {
+    console.log(
+      `[workflow.delete] aborted ${activeJobIds.length} in-memory analyst job(s) for workflow=${id} (hard=${isHard})`
+    );
+  }
+
   if (isHard) {
     const result = await hardDeleteWorkflowRun(id);
-    return c.json({ ok: true, id, hard: true, ...result });
+    return c.json({
+      ok: true,
+      id,
+      hard: true,
+      abortedAnalystJobs: activeJobIds.length,
+      ...result,
+    });
   }
 
   await db
     .update(workflowRun)
     .set({ status: "cancelled", endedAt: new Date().toISOString() })
     .where(eq(workflowRun.id, id));
-  return c.json({ ok: true, id, hard: false });
+  return c.json({
+    ok: true,
+    id,
+    hard: false,
+    abortedAnalystJobs: activeJobIds.length,
+  });
 });
 
 workflowRouter.get("/:id/artifacts", async (c) => {
