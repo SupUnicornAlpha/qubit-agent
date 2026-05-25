@@ -304,9 +304,9 @@ function drawBreedMarkings(
       fill(ctx, ox + 13, oy + 17, 2, 1, pal.stripe ?? "#8a5028");
       break;
     case "calico":
-      // 不规则三色斑块（头黑 + 身橙）
-      fill(ctx, ox + 4, oy + 2, 3, 3, "#2a2a2a");
-      fill(ctx, ox + 5, oy + 5, 2, 2, "#2a2a2a");
+      // 不规则三色斑块（头黑 + 身橙）—— 头部斑块下移避开 row 2 圆切角
+      fill(ctx, ox + 5, oy + 3, 3, 3, "#2a2a2a");
+      fill(ctx, ox + 5, oy + 6, 2, 2, "#2a2a2a");
       fill(ctx, ox + 12, oy + 4, 4, 3, "#c87840");
       fill(ctx, ox + 4, oy + 15, 4, 4, "#2a2a2a");
       fill(ctx, ox + 12, oy + 16, 4, 4, "#c87840");
@@ -529,26 +529,43 @@ function drawCatPixels(
   // 尾巴尖
   fill(ctx, ox + tailCol, oy + tailRows[tailRows.length - 1]! + 1, 1, 1, pal.bodyDark);
 
-  // === Body block ===
-  fill(ctx, ox + 3, oy + bodyY, bodyW, bodyH, pal.body);
+  // === Body block (V2: 肩部内收，与圆脸过渡更自然) ===
+  // 肩膀行 row 13 内收 1 列两侧 → 不再是矩形断面
+  fill(ctx, ox + 4, oy + bodyY, bodyW - 2, 1, pal.body);
+  // 身体主体 row 14..22 (9 rows, 16 wide)
+  fill(ctx, ox + 3, oy + bodyY + 1, bodyW, bodyH - 1, pal.body);
   // 腹部高光（梯形）
   fill(ctx, ox + 5, oy + bodyY + 3, bodyW - 4, bodyH - 5, pal.belly);
   fill(ctx, ox + 6, oy + bodyY + bodyH - 2, bodyW - 6, 1, pal.belly);
 
-  // === Head ===
-  fill(ctx, ox + 3, oy + 2, 16, 12, pal.body);
-  // 头部下颌阴影
-  fill(ctx, ox + 4, oy + 12, 14, 1, pal.bodyDark);
+  // === Head V2 圆脸（阶梯切角实现近似圆形轮廓） ===
+  // row 2 头顶 12w（最窄）
+  fill(ctx, ox + 5, oy + 2, 12, 1, pal.body);
+  // row 3 14w
+  fill(ctx, ox + 4, oy + 3, 14, 1, pal.body);
+  // row 4..10 主体 16w (7 rows)
+  fill(ctx, ox + 3, oy + 4, 16, 7, pal.body);
+  // row 11 14w（脸颊收）
+  fill(ctx, ox + 4, oy + 11, 14, 1, pal.body);
+  // row 12 下颌 12w（最窄）
+  fill(ctx, ox + 5, oy + 12, 12, 1, pal.body);
 
-  // === Ears (triangle pixels) ===
+  // 脸颊圆鼓阴影：左右各 1px 深色（让平面感升为立体感）
+  fill(ctx, ox + 3, oy + 8, 1, 2, pal.bodyDark);
+  fill(ctx, ox + 18, oy + 8, 1, 2, pal.bodyDark);
+  // 下巴轻阴影
+  fill(ctx, ox + 7, oy + 12, 8, 1, pal.bodyDark);
+
+  // === Ears (与圆脸耳根衔接) ===
+  // 左耳：尖在 col 2 row 0，根延伸到 col 5 接 head row 2 (12w 起点)
   fill(ctx, ox + 2, oy + 0, 1, 1, pal.body);
   fill(ctx, ox + 2, oy + 1, 2, 1, pal.body);
-  fill(ctx, ox + 3, oy + 2, 2, 1, pal.body);
-  fill(ctx, ox + 3, oy + 1, 1, 1, pal.ear); // 内耳
-  // 右耳
+  fill(ctx, ox + 3, oy + 2, 3, 1, pal.body); // 3w 耳根，与 head row 2 col 5 重叠 1px
+  fill(ctx, ox + 3, oy + 1, 1, 1, pal.ear); // 内耳粉色
+  // 右耳：镜像
   fill(ctx, ox + 19, oy + 0, 1, 1, pal.body);
   fill(ctx, ox + 18, oy + 1, 2, 1, pal.body);
-  fill(ctx, ox + 17, oy + 2, 2, 1, pal.body);
+  fill(ctx, ox + 16, oy + 2, 3, 1, pal.body);
   fill(ctx, ox + 18, oy + 1, 1, 1, pal.ear);
 
   // === 品种花纹（在 base body 之上） ===

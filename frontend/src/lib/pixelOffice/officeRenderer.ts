@@ -6,6 +6,8 @@ import {
   drawDeskLampForWorkstation,
   drawMonitorGlow,
   drawOfficeAmbience,
+  drawRackPerspective,
+  drawShelfPerspective,
 } from "./officeProps";
 import { drawDropShadow } from "./starOfficeStyle";
 import { computeOfficePerspective, depthScale, drawDeskFloorShadow } from "./officePerspective";
@@ -84,25 +86,25 @@ export function drawOfficeScene(
   const bg = reg.getSceneBackgroundRenderer();
   if (bg) bg(ctx, w, h, city, now);
 
-  const atlas = getAtlas();
-
   const persp = computeOfficePerspective(w, h, layout.windowH);
   drawOfficeAmbience(ctx, persp, layout, now, isRunning);
 
-  const drawFurniture = (slot: DeskSlot, rect: AtlasSprites["shelf"], label: string, labelDy: number) => {
-    const sc = scales(slot.depth).furniture;
-    const dx = slot.x - (rect.w * sc) / 2;
-    const dy = slot.y - rect.h * sc + 8;
-    drawDeskFloorShadow(ctx, slot.x, slot.y, rect.w * sc, 12, persp);
-    blitSprite(ctx, atlas, rect, dx, dy, sc);
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = pixelFont(Math.max(9, 11 * depthScale(slot.depth)));
-    ctx.textAlign = "center";
-    ctx.fillText(label, slot.x, slot.y + labelDy * depthScale(slot.depth));
-  };
+  // === V4: 程序化透视书架/机架 ===
+  // 决定哪一侧的厚度对镜头可见：以画面中线为 VP，
+  // 左半屏的家具显示右侧面（facing="right"），右半屏反之。
+  const facingFor = (slot: DeskSlot): "left" | "right" => (slot.x < w / 2 ? "right" : "left");
 
-  drawFurniture(layout.shelf, atlas.shelf, "技能书架", 42);
-  drawFurniture(layout.rack, atlas.rack, "MCP / 工具机架", 46);
+  drawShelfPerspective(ctx, layout.shelf.x, layout.shelf.y, layout.shelf.depth, facingFor(layout.shelf), now);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = pixelFont(Math.max(9, 11 * depthScale(layout.shelf.depth)));
+  ctx.textAlign = "center";
+  ctx.fillText("技能书架", layout.shelf.x, layout.shelf.y + 42 * depthScale(layout.shelf.depth));
+
+  drawRackPerspective(ctx, layout.rack.x, layout.rack.y, layout.rack.depth, facingFor(layout.rack), now);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = pixelFont(Math.max(9, 11 * depthScale(layout.rack.depth)));
+  ctx.textAlign = "center";
+  ctx.fillText("MCP / 工具机架", layout.rack.x, layout.rack.y + 46 * depthScale(layout.rack.depth));
 
   for (const layer of reg.getOverlays()) {
     layer.render(ctx, { width: w, height: h, now, cityId: city, isRunning });

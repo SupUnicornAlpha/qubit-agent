@@ -403,20 +403,103 @@ function drawWallDecor(ctx: CanvasRenderingContext2D, p: OfficePerspective, win:
   const lx = wallEdgeX(p, wallY + 20, "left");
   const rx = wallEdgeX(p, wallY + 20, "right");
 
-  px(ctx, lx + 14, wallY + 12, 28, 28, "#2a3548");
-  px(ctx, lx + 16, wallY + 14, 24, 22, "#3d4f68");
-  px(ctx, lx + 24, wallY + 20, 8, 8, "#e8eef8");
+  // === 左墙：风景相框（深框 + 内画山+太阳）===
+  const frameX = lx + 14;
+  const frameY = wallY + 12;
+  px(ctx, frameX, frameY, 28, 28, "#1f2937");
+  px(ctx, frameX + 2, frameY + 2, 24, 22, "#3d4f68");
+  // 内画：山顶
+  px(ctx, frameX + 6, frameY + 14, 6, 6, "#475569");
+  px(ctx, frameX + 14, frameY + 12, 8, 8, "#64748b");
+  px(ctx, frameX + 4, frameY + 18, 22, 4, "#334155");
+  // 太阳
+  px(ctx, frameX + 18, frameY + 6, 4, 4, "#fbbf24");
+  // 相框小高光
+  px(ctx, frameX, frameY, 28, 1, "#374151");
 
-  const bx = rx - 88;
+  // === 左墙下方：墙面挂钟（圆形）===
+  const clockX = frameX + 14;
+  const clockY = frameY + 38;
+  ctx.fillStyle = "#1f2937";
+  ctx.beginPath();
+  ctx.arc(clockX, clockY, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#f8fafc";
+  ctx.beginPath();
+  ctx.arc(clockX, clockY, 7, 0, Math.PI * 2);
+  ctx.fill();
+  // 12 / 3 / 6 / 9 时刻
+  ctx.fillStyle = "#1f2937";
+  ctx.fillRect(clockX - 1, clockY - 6, 1, 2);
+  ctx.fillRect(clockX + 5, clockY, 2, 1);
+  ctx.fillRect(clockX - 1, clockY + 4, 1, 2);
+  ctx.fillRect(clockX - 6, clockY, 2, 1);
+  // 指针
+  ctx.fillRect(clockX, clockY - 4, 1, 4);
+  ctx.fillRect(clockX, clockY, 4, 1);
+  ctx.fillStyle = "#dc2626";
+  ctx.fillRect(clockX, clockY, 1, 1);
+
+  // === 中部白板（窗户右上方）===
+  const bx = rx - 92;
   if (bx > win.tr.x + 16) {
     px(ctx, bx, wallY + 8, 72, 40, "#e8e4dc");
-    px(ctx, bx + 4, wallY + 12, 64, 30, "#f8fafc");
-    px(ctx, bx + 8, wallY + 16, 20, 3, "#3b82f6");
-    px(ctx, bx + 8, wallY + 22, 28, 3, "#22c55e");
+    px(ctx, bx + 4, wallY + 12, 64, 32, "#f8fafc");
+    // 标题行
+    px(ctx, bx + 8, wallY + 14, 32, 2, "#1f2937");
+    // 任务条 1（蓝 完成）
+    px(ctx, bx + 8, wallY + 18, 22, 3, "#3b82f6");
+    px(ctx, bx + 32, wallY + 19, 2, 1, "#22c55e");
+    // 任务条 2（绿 完成）
+    px(ctx, bx + 8, wallY + 23, 30, 3, "#22c55e");
+    // 任务条 3（黄 进行中）
+    px(ctx, bx + 8, wallY + 28, 18, 3, "#facc15");
+    // 任务条 4（红 阻塞）
+    px(ctx, bx + 8, wallY + 33, 12, 3, "#ef4444");
+    // 右下贴一个 sticky note
+    px(ctx, bx + 50, wallY + 28, 16, 14, "#fcd34d");
+    px(ctx, bx + 52, wallY + 31, 12, 1, "#1f2937");
+    px(ctx, bx + 52, wallY + 34, 10, 1, "#1f2937");
+    px(ctx, bx + 52, wallY + 37, 8, 1, "#1f2937");
   }
 
-  px(ctx, rx - 36, wallY + 4, 28, 48, "#dc2626");
-  px(ctx, rx - 32, wallY + 8, 20, 36, "#ef4444");
+  // === 右墙：海报（NOW HIRING + 猫头）===
+  const posterX = rx - 36;
+  const posterY = wallY + 4;
+  px(ctx, posterX, posterY, 28, 48, "#dc2626");
+  px(ctx, posterX + 2, posterY + 2, 24, 44, "#ef4444");
+  // 海报顶部"NOW"
+  px(ctx, posterX + 6, posterY + 6, 4, 3, "#fef3c7");
+  px(ctx, posterX + 12, posterY + 6, 4, 3, "#fef3c7");
+  px(ctx, posterX + 18, posterY + 6, 4, 3, "#fef3c7");
+  // 海报中部猫头剪影
+  const cyOff = posterY + 18;
+  px(ctx, posterX + 8, cyOff + 2, 12, 10, "#1f2937");
+  // 双耳
+  px(ctx, posterX + 8, cyOff, 3, 3, "#1f2937");
+  px(ctx, posterX + 17, cyOff, 3, 3, "#1f2937");
+  // 双眼（黄色）
+  px(ctx, posterX + 11, cyOff + 6, 2, 2, "#fde047");
+  px(ctx, posterX + 15, cyOff + 6, 2, 2, "#fde047");
+  // 鼻子
+  px(ctx, posterX + 13, cyOff + 9, 2, 1, "#fbbf24");
+  // 底部 HIRING
+  px(ctx, posterX + 4, posterY + 38, 20, 2, "#fef3c7");
+  px(ctx, posterX + 6, posterY + 42, 16, 2, "#fef3c7");
+
+  // === 右墙再加一个小相框（团队合照）===
+  const teamFrameX = posterX - 22;
+  const teamFrameY = posterY + 6;
+  if (teamFrameX > win.tr.x + 16) {
+    px(ctx, teamFrameX, teamFrameY, 18, 14, "#a16207");
+    px(ctx, teamFrameX + 1, teamFrameY + 1, 16, 12, "#fef3c7");
+    // 4 个小人头
+    const heads = ["#3b82f6", "#22c55e", "#dc2626", "#facc15"];
+    for (let i = 0; i < 4; i++) {
+      px(ctx, teamFrameX + 2 + i * 4, teamFrameY + 4, 3, 4, heads[i]!);
+      px(ctx, teamFrameX + 2 + i * 4, teamFrameY + 9, 3, 3, "#1f2937");
+    }
+  }
 }
 
 function drawFloorDecor(ctx: CanvasRenderingContext2D, p: OfficePerspective, now: number) {

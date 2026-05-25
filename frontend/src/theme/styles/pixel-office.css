@@ -95,17 +95,21 @@
 
 .qb-pixel-office-legend {
   position: absolute;
-  top: 8px;
-  left: 8px;
-  right: auto;
-  bottom: auto;
+  /* 之前固定在 top:8px left:8px，与 right:8px 的 toolbar（引擎/主题/窗外/署名 共 ~520px）
+     在顶部水平撞车。现在挪到右下，避开左下 status (bottom:12px left:12px)、
+     底部居中 plaque、左下 attribution (bottom:56px left:12px)。 */
+  top: auto;
+  left: auto;
+  right: 12px;
+  bottom: 56px;
   z-index: 3;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px 8px;
+  justify-content: flex-end;
+  gap: 4px 6px;
   padding: 4px 8px;
-  max-width: calc(100% - 180px);
+  max-width: calc(100% - 24px);
   font-size: 10px;
   color: #cbd5e1;
   background: rgba(26, 26, 46, 0.82);

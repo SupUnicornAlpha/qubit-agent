@@ -458,7 +458,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         const hot = hotRoles.has(n.role);
         drawWorkstation(ctx, desk.x, desk.y, cat.screenMode, now, hot, sel, depth, persp);
         // 桌面个性化装饰（Folders/Books/Papers/Bin，按 role hash 确定性放置）
-        drawDeskDressing(ctx, desk.x, desk.y, depth, n.role);
+        drawDeskDressing(ctx, desk.x, desk.y, depth, n.role, now);
       }
 
       for (const { desk, cat } of drawLayers) {
