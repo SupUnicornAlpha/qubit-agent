@@ -1,6 +1,7 @@
 import { getDb } from "../../../db/sqlite/client";
 import { agentStep } from "../../../db/sqlite/schema";
 import type { AgentGraphState, StepStreamEvent } from "../state";
+import { stripToolCallSentinels } from "../../tools/tool-call-format";
 
 export async function observeNode(
   state: AgentGraphState,
@@ -9,10 +10,12 @@ export async function observeNode(
 ): Promise<Partial<AgentGraphState>> {
   const db = await getDb();
   const stepId = crypto.randomUUID();
+  /** 持久化与广播给前端的 reasonText 都剥掉 sentinel 块，避免泄漏到 UI / 审计 */
+  const displayReasonText = stripToolCallSentinels(state.reasonText);
   const observation = {
     iteration: state.iteration,
     toolCalls: state.toolCalls.slice(-1),
-    reasonText: state.reasonText,
+    reasonText: displayReasonText,
   };
 
   await db.insert(agentStep).values({
@@ -21,7 +24,7 @@ export async function observeNode(
     workflowRunId: state.workflowId,
     stepIndex: state.iteration,
     phase: "observe",
-    thought: state.reasonText,
+    thought: displayReasonText,
     actionType: "tool_call",
     actionJson: { plannedAction: state.plannedAction },
     observationJson: observation,

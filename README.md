@@ -189,6 +189,32 @@ python broker_http_server.py             # 默认 http://127.0.0.1:18765
 | 桌面客户端调试 | `bun run dev` | — | `bun run dev:tauri` |
 | 完整链路（含实盘桥） | `bun run dev` | `bun run dev:frontend` | `python broker_http_server.py` |
 
+### 修改后端代码后什么会发生？
+
+| 方式 | ts 改动如何生效 | 适用 |
+|------|-----------------|------|
+| `bun run dev` | **不会自动重载**，改完要手动 Ctrl-C 重启 | 不推荐 |
+| `bun run dev:backend` | **自动**，bun --watch 监听 `src/**`，1~2s graceful restart | 推荐（独立终端运行后端） |
+| `bun run dev:tauri` | **自动**，Tauri sidecar 已切到 `bun --watch`（含数据目录与 Tauri 完全一致） | 推荐（桌面壳） |
+
+**怎么确认后端跑的是不是最新代码？**
+
+```bash
+curl -s http://localhost:17385/api/v1/_meta/build-info | jq
+# 返回 pid / startedAt / commit / indexMtime / watchMode 等
+```
+
+- `dev-backend.log` 头部每次重启都会打 banner 横线 + `pid / commit / watchMode`，`tail -f` 一眼可数；
+- 如果你需要**关闭** watch（例如长时间跑回测不想被改文件打断），加 `QUBIT_DEV_NO_WATCH=1`：
+  ```bash
+  QUBIT_DEV_NO_WATCH=1 bash scripts/dev-backend.sh    # 独立后端
+  QUBIT_DEV_NO_WATCH=1 bun run dev:tauri              # Tauri 壳
+  ```
+- 极端情况下端口被旧进程占住（macOS Tauri 关窗口不一定 kill sidecar）：
+  ```bash
+  kill $(lsof -ti :17385)
+  ```
+
 ---
 
 ## 配置

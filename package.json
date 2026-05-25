@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "dev": "bun run src/index.ts",
+    "dev:backend": "bash scripts/dev-backend.sh",
     "dev:frontend": "bun run --cwd frontend dev",
     "dev:tauri": "tauri dev",
     "build": "bun build --compile src/cli.ts --outfile dist/qubit",

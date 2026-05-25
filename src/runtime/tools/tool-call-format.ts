@@ -246,3 +246,24 @@ export function isToolImplemented(toolName: string): boolean {
   if (toolName === "none" || toolName === "call_mcp" || toolName.startsWith("mcp:")) return true;
   return isBuiltinTool(toolName) || Boolean(resolveConnectorForTool(toolName));
 }
+
+/** sentinel 含前后换行一并吃掉，避免产生连续空行残留 */
+const TOOL_CALL_SENTINEL_REGEX = /\n*<TOOL_CALL>[\s\S]*?<\/TOOL_CALL>\n*/gi;
+const TOOL_CALL_OPEN_TAIL_REGEX = /\n*<TOOL_CALL>[\s\S]*$/i;
+const JSON_TOOL_FENCE_REGEX = /\n*```(?:json)?\s*\{[\s\S]*?"tool"\s*:[\s\S]*?\}\s*```\n*/gi;
+
+/**
+ * 从 LLM 文本中剥掉所有 `<TOOL_CALL>...</TOOL_CALL>` sentinel 块、未闭合的尾部
+ * sentinel，以及带 `"tool"` 字段的 fenced JSON 代码块，避免泄漏到用户可见消息。
+ *
+ * 仅用于"展示给用户"路径；工具解析必须使用原始文本。
+ */
+export function stripToolCallSentinels(text: string | null | undefined): string {
+  if (!text) return "";
+  let out = String(text);
+  out = out.replace(TOOL_CALL_SENTINEL_REGEX, "\n");
+  out = out.replace(TOOL_CALL_OPEN_TAIL_REGEX, "");
+  out = out.replace(JSON_TOOL_FENCE_REGEX, "\n");
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}

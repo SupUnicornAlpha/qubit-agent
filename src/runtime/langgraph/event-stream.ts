@@ -5,6 +5,16 @@ type StreamController = ReadableStreamDefaultController<Uint8Array>;
 /** How long (ms) to keep buffered events after the run is closed, for late subscribers. */
 const BUFFER_TTL_MS = 120_000; // 2 minutes
 
+/**
+ * SSE 心跳间隔。Bun.serve idleTimeout 上限 255s；这里取一个明显小于它的值
+ * （25s），保证：
+ *   - 即使后端 LLM 推理长时间无 token 输出（reason 节点跑 60s+ 完全正常），
+ *     连接也不会被 Bun 或上游代理判定为 idle。
+ *   - 发送的是 SSE 注释行 `: hb\n\n`，EventSource 客户端按规范会直接忽略，
+ *     不会冒充成 event。
+ */
+const SSE_HEARTBEAT_MS = 25_000;
+
 interface RunBuffer {
   events: StepStreamEvent[];
   /** null = still running; number = timestamp when close() was called */
@@ -16,14 +26,39 @@ class StepStreamBus {
   private controllersByRun = new Map<string, Set<StreamController>>();
   /** Per-run event ring buffer for late-joining SSE subscribers. */
   private bufferByRun = new Map<string, RunBuffer>();
+  /** 每个 controller 的 heartbeat timer，用于 cancel / close 时清理。 */
+  private heartbeatByController = new WeakMap<StreamController, ReturnType<typeof setInterval>>();
   private encoder = new TextEncoder();
 
   private safeClose(controller: StreamController): void {
+    /** 关连接前先把 heartbeat timer 停掉，避免 timer leak / 触发 enqueue-on-closed */
+    const timer = this.heartbeatByController.get(controller);
+    if (timer !== undefined) {
+      clearInterval(timer);
+      this.heartbeatByController.delete(controller);
+    }
     try {
       controller.close();
     } catch {
       // Ignore already-closed stream errors.
     }
+  }
+
+  /**
+   * 每 SSE_HEARTBEAT_MS 给 controller 推一行 SSE 注释；客户端 EventSource 会忽略，
+   * 但 Bun 和上游代理认为连接还活着 → 不会触发 idleTimeout 切断。
+   */
+  private startHeartbeat(controller: StreamController): void {
+    const timer = setInterval(() => {
+      try {
+        controller.enqueue(this.encoder.encode(`: hb ${Date.now()}\n\n`));
+      } catch {
+        /** stream 已被对端关闭：直接停 timer，下一轮 enqueue 也跑不动 */
+        clearInterval(timer);
+        this.heartbeatByController.delete(controller);
+      }
+    }, SSE_HEARTBEAT_MS);
+    this.heartbeatByController.set(controller, timer);
   }
 
   private encodeEvent(event: StepStreamEvent): Uint8Array {
@@ -64,6 +99,8 @@ class StepStreamBus {
         const set = this.controllersByRun.get(runId) ?? new Set<StreamController>();
         set.add(controller);
         this.controllersByRun.set(runId, set);
+        /** 启动 heartbeat：让连接绝不触达 Bun.serve idleTimeout 上限 */
+        this.startHeartbeat(controller);
       },
       cancel: () => {
         if (!currentController) return;

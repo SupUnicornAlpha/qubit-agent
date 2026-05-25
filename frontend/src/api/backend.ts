@@ -295,10 +295,10 @@ export async function createWorkflow(input: WorkflowCreateInput): Promise<{
 export async function approveWorkflowHitl(
   workflowId: string,
   requestId: string
-): Promise<{ workflowRunId: string; resumed: boolean; runId?: string }> {
+): Promise<{ workflowRunId: string; resumed: boolean; runId?: string; idempotent?: boolean }> {
   const res = await httpPost<{
     ok: boolean;
-    data: { workflowRunId: string; resumed: boolean; runId?: string };
+    data: { workflowRunId: string; resumed: boolean; runId?: string; idempotent?: boolean };
   }>(`/api/v1/workflows/${workflowId}/hitl/${requestId}/approve`, {});
   return res.data;
 }
@@ -306,10 +306,10 @@ export async function approveWorkflowHitl(
 export async function rejectWorkflowHitl(
   workflowId: string,
   requestId: string
-): Promise<{ workflowRunId: string; resumed: boolean }> {
+): Promise<{ workflowRunId: string; resumed: boolean; idempotent?: boolean }> {
   const res = await httpPost<{
     ok: boolean;
-    data: { workflowRunId: string; resumed: boolean };
+    data: { workflowRunId: string; resumed: boolean; idempotent?: boolean };
   }>(`/api/v1/workflows/${workflowId}/hitl/${requestId}/reject`, {});
   return res.data;
 }
@@ -365,10 +365,10 @@ export async function resolveWorkflowHitl(
   requestId: string,
   decision: "approved" | "rejected",
   response?: Record<string, unknown> | null
-): Promise<{ workflowRunId: string; resumed: boolean; runId?: string }> {
+): Promise<{ workflowRunId: string; resumed: boolean; runId?: string; idempotent?: boolean }> {
   const res = await httpPost<{
     ok: boolean;
-    data: { workflowRunId: string; resumed: boolean; runId?: string };
+    data: { workflowRunId: string; resumed: boolean; runId?: string; idempotent?: boolean };
   }>(`/api/v1/workflows/${workflowId}/hitl/${requestId}/resolve`, {
     decision,
     response: response ?? null,

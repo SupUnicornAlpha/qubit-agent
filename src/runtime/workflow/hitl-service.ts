@@ -430,17 +430,20 @@ async function getRecentSameTickerStatus(
   const db = await getDb();
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const pattern = `%${ticker.trim()}%`;
+  // 注意：workflowRun schema 字段是 `startedAt`（列名 created_at），表对象上**没有**
+  // `createdAt` 属性。若写成 workflowRun.createdAt 会得到 undefined，drizzle 在
+  // _prepare → orderSelectedFields 递归时会触发 `Object.entries(undefined)` → boom。
   const rows = await db
-    .select({ status: workflowRun.status, createdAt: workflowRun.createdAt })
+    .select({ status: workflowRun.status, startedAt: workflowRun.startedAt })
     .from(workflowRun)
     .where(
       and(
         eq(workflowRun.mode, mode),
         sql`${workflowRun.goal} LIKE ${pattern}`,
-        sql`${workflowRun.createdAt} >= ${oneDayAgo}`
+        sql`${workflowRun.startedAt} >= ${oneDayAgo}`
       )
     )
-    .orderBy(desc(workflowRun.createdAt))
+    .orderBy(desc(workflowRun.startedAt))
     .limit(5);
   for (const r of rows) {
     if (r.status === "completed") return "completed";
@@ -455,12 +458,21 @@ export async function resolveHitlRequest(input: {
   resolvedBy?: string;
   /** v2：用户在 single_choice/free_form 等形态下提交的内容，会写入 response_json 并透传给下一轮 Orchestrator */
   response?: Record<string, unknown> | null;
-}): Promise<{ workflowRunId: string; resumed: boolean; runId?: string }> {
+}): Promise<{ workflowRunId: string; resumed: boolean; runId?: string; idempotent?: boolean }> {
   const db = await getDb();
   const row = await getHitlRequest(input.requestId);
   if (!row) throw new Error("hitl request not found");
+  /**
+   * 幂等：用户/前端可能因双击、UI 状态未同步、SSE 重连等原因发起重复 POST。
+   * 已经 approved/rejected 时不抛 500，而是返回 idempotent=true 让前端正常清状态；
+   * 这样既不会让前端卡在"按钮还在 + 撞 already approved 500"的死状态，
+   * 也不重复触发 resume 逻辑（避免重派一次 graphRunner.resumeRoleTask 导致 graph 跑两遍）。
+   */
   if (row.status !== "pending") {
-    throw new Error(`hitl request already ${row.status}`);
+    console.warn(
+      `[hitl] resolveHitlRequest idempotent: request=${input.requestId} already ${row.status} (caller decision=${input.decision})`
+    );
+    return { workflowRunId: row.workflowRunId, resumed: false, idempotent: true };
   }
 
   const now = new Date().toISOString();

@@ -20,11 +20,23 @@ export function resolveForceReactLoop(input: {
   return input.def.maxIterations > 1;
 }
 
-/** 本轮 observe 后是否应结束循环（模型未请求工具且已有文字结论） */
+/**
+ * 本轮 observe 后是否应结束循环。
+ *
+ * 触发条件（任一即停）：
+ * 1. 最近一次 observation 标记了 `skippedToolCall`：即 LLM 明确输出
+ *    `tool:"none"`，文字结论已就绪，不应再走 reason→act 重跑。
+ * 2. `finalResponse` 已被 act / hitl_gate 写入终态（兜底，正常 execute-agent-react
+ *    的条件边也会 finalize，这里再次保险）。
+ *
+ * 注意：旧实现额外要求 `plannedAction !== "tool_call"`，但 reason 节点会在
+ * `hasTools=true` 时无条件写 `plannedAction="tool_call"`，导致条件永不成立，
+ * ReAct 死循环。该字段仅反映 reason 阶段的预测，不该用来判断 observe 后是否
+ * 应该收敛，已移除。
+ */
 export function shouldStopReactLoopAfterObserve(state: AgentGraphState): boolean {
+  if (state.finalResponse) return true;
   const last = state.observations.at(-1) as { skippedToolCall?: boolean } | undefined;
-  if (last?.skippedToolCall && state.plannedAction !== "tool_call") {
-    return true;
-  }
+  if (last?.skippedToolCall) return true;
   return false;
 }

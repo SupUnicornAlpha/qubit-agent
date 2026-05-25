@@ -8,7 +8,7 @@ import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
-import { parseToolCallFromReason } from "../../tools/tool-call-format";
+import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
@@ -24,6 +24,8 @@ export async function actNode(
   const parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
 
   if (parsed.kind === "none") {
+    const cleanedReason = stripToolCallSentinels(state.reasonText ?? "");
+    const summary = parsed.summary?.trim() || cleanedReason.slice(0, 2000) || "no tool requested";
     emit({
       runId: state.runId,
       workflowId: state.workflowId,
@@ -35,9 +37,17 @@ export async function actNode(
       payload: {
         level: "info",
         skippedToolCall: true,
-        summary: parsed.summary ?? "no tool requested",
+        summary,
       },
     });
+    /**
+     * 关键修复（防 ReAct 死循环）：
+     * LLM 明确表达"无需调用工具"时，应将 reason 阶段的文字结论作为本轮终态
+     * 直接 finalize。先前实现只产生 observation，但 reason 节点会强制把
+     * `plannedAction` 写成 `"tool_call"`（只要 hasTools），导致
+     * `shouldStopReactLoopAfterObserve` 永远不命中 stop，ReAct 反复重跑同一
+     * 提示，token 持续累积，前端看到的就是「Orchestrator 一直循环」的现象。
+     */
     return {
       observations: [
         ...state.observations,
@@ -48,6 +58,13 @@ export async function actNode(
           summary: parsed.summary,
         },
       ],
+      finalResponse: {
+        status: "completed",
+        role: state.agentDefinition.role,
+        iteration: state.iteration,
+        skippedToolCall: true,
+        summary,
+      },
     };
   }
 

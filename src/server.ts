@@ -30,6 +30,7 @@ import { discoveryRouter } from "./routes/discovery.routes";
 import { strategyRouter } from "./routes/strategy.routes";
 import { strategyCompositionRouter } from "./routes/strategy-composition.routes";
 import { llmProviderRouter } from "./routes/llm-provider.routes";
+import { metaRouter } from "./routes/meta.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 
@@ -75,6 +76,8 @@ app.route("/api/v1/strategies", strategyRouter);
 app.route("/api/v1/strategy-compositions", strategyCompositionRouter);
 // M10: LLM Provider 配置（per-Agent 模型路由 + 默认降级）
 app.route("/api/v1/llm-providers", llmProviderRouter);
+// 后端元信息：commit / startedAt / pid / watchMode，便于"代码到底有没有生效"快速排查
+app.route("/api/v1/_meta", metaRouter);
 app.get("/api/v1/workflows/:id/stream", (c) => {
   const runId = c.req.query("runId");
   if (!runId) return c.json({ error: "runId is required" }, 400);
@@ -120,6 +123,15 @@ export function createServer() {
   return Bun.serve<WsData>({
     port: config.port,
     hostname: config.host,
+    /**
+     * Bun.serve 默认 `idleTimeout = 10s`，对本平台两类长连接是致命的：
+     *   1. SSE workflow stream（chat / 团队研究的实时事件流）一旦 10s 无数据就被切断，
+     *      前端会看到 "request timed out after 10 seconds" + "一直在流式生成中" 卡死。
+     *   2. 长 LLM 调用（多 agent 协同时单步 reason 走云端模型 30~60s 很常见）也会被砍。
+     * Bun 上限是 255s；额外配合 `createSseStream` 内的 25s heartbeat，最大空闲连接也
+     * 永远不会触达这个上限。
+     */
+    idleTimeout: 255,
 
     async fetch(req, server) {
       // Upgrade WebSocket connections

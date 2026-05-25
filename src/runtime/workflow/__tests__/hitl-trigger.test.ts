@@ -4,6 +4,23 @@
  */
 import { describe, expect, test } from "bun:test";
 import { evaluateTeamHitlTrigger } from "../hitl-service";
+import { workflowRun } from "../../../db/sqlite/schema";
+
+/**
+ * 防御：`getRecentSameTickerStatus` 历史上误用 `workflowRun.createdAt`（不存在），
+ * 导致 drizzle `_prepare → orderSelectedFields(undefined)` 抛
+ * "Object.entries requires that input parameter not be null or undefined"。
+ * 这里强制断言 schema 字段：用 `startedAt`，不要再写 `createdAt`。
+ */
+describe("workflowRun schema 字段（防御回归）", () => {
+  test("有 startedAt（drizzle column object）", () => {
+    expect(workflowRun.startedAt).toBeDefined();
+  });
+
+  test("没有 createdAt（避免 drizzle 拿到 undefined 字段递归抛错）", () => {
+    expect((workflowRun as unknown as Record<string, unknown>).createdAt).toBeUndefined();
+  });
+});
 
 const baseInput = {
   workflow: { mode: "long" },

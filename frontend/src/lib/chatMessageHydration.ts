@@ -86,6 +86,22 @@ export function messageStatusFromFinalPayload(payload: Record<string, unknown>):
   return "completed";
 }
 
+/** 剥掉 LLM 流式输出里的 `<TOOL_CALL>` sentinel / fenced JSON 工具块（含未闭合尾部），
+ * 与后端 `stripToolCallSentinels` 行为保持一致，避免泄漏到聊天 UI。 */
+const TOOL_CALL_SENTINEL_REGEX = /\n*<TOOL_CALL>[\s\S]*?<\/TOOL_CALL>\n*/gi;
+const TOOL_CALL_OPEN_TAIL_REGEX = /\n*<TOOL_CALL>[\s\S]*$/i;
+const JSON_TOOL_FENCE_REGEX = /\n*```(?:json)?\s*\{[\s\S]*?"tool"\s*:[\s\S]*?\}\s*```\n*/gi;
+
+export function stripToolCallSentinels(text: string | null | undefined): string {
+  if (!text) return "";
+  let out = String(text);
+  out = out.replace(TOOL_CALL_SENTINEL_REGEX, "\n");
+  out = out.replace(TOOL_CALL_OPEN_TAIL_REGEX, "");
+  out = out.replace(JSON_TOOL_FENCE_REGEX, "\n");
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+  return out;
+}
+
 export function buildFinalAssistantText(
   buffer: string,
   payload: Record<string, unknown>,
@@ -94,19 +110,20 @@ export function buildFinalAssistantText(
   const frStatus = String(payload.status ?? "completed");
   const role = String(payload.role ?? "agent");
   const obs = payload.observation as Record<string, unknown> | undefined;
+  const cleanedBuffer = stripToolCallSentinels(buffer);
   let obsText = "";
   if (obs && Object.keys(obs).length > 0) {
     obsText = `\n\n📎 观测结果:\n\`\`\`json\n${JSON.stringify(obs, null, 2)}\n\`\`\``;
   }
   if (frStatus === "awaiting_approval") {
     const title = String(payload.title ?? "待人工确认");
-    const summary = String(payload.summary ?? buffer).trim();
+    const summary = stripToolCallSentinels(String(payload.summary ?? cleanedBuffer));
     return `⏸️ **待确认**：${title}\n\n${summary || "（无摘要）"}`;
   }
   if (frStatus === "terminated") {
-    return buffer.trim() || `❌ ${role} 已终止（第 ${stepIndex} 轮）${obsText}`;
+    return cleanedBuffer || `❌ ${role} 已终止（第 ${stepIndex} 轮）${obsText}`;
   }
-  return buffer || `✅ ${role} 已完成（第 ${stepIndex} 轮）${obsText}`;
+  return cleanedBuffer || `✅ ${role} 已完成（第 ${stepIndex} 轮）${obsText}`;
 }
 
 export function buildContentFromWorkflowDetail(detail: WorkflowDetail): string {
@@ -134,7 +151,7 @@ export function buildContentFromWorkflowDetail(detail: WorkflowDetail): string {
       thoughtParts.push(thought);
     }
   }
-  const buffer = thoughtParts.join("\n\n").trim();
+  const buffer = stripToolCallSentinels(thoughtParts.join("\n\n"));
 
   const lastObserve = [...steps].reverse().find((s) => s.phase === "observe");
   const obs = parseObservationJson(lastObserve?.observationJson);

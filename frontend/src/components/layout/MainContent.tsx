@@ -155,6 +155,7 @@ import {
   reconnectActiveChatStreams,
   buildFinalAssistantText,
   messageStatusFromFinalPayload,
+  stripToolCallSentinels,
 } from "../../lib/chatMessageHydration";
 import { KlinePanel } from "../chart/KlinePanel";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
@@ -357,6 +358,13 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const [errorText, setErrorText] = useState("");
   const [chatLoopKind, setChatLoopKind] = useState<AgentLoopKind>("native");
   const [hitlRequestByMessageId, setHitlRequestByMessageId] = useState<Record<string, string>>({});
+  /**
+   * 正在被用户操作（点击 approve/reject 中）的 HITL request 锁。
+   * 防止双击 / Tauri webview 延迟 / SSE 状态尚未同步导致重复 POST：第一次点击立刻入锁，
+   * 按钮变 disabled + 文案改"处理中…"，直到 backend 返回（成功 → 真清状态；
+   * idempotent → 静默清；失败 → 清锁并报错让用户重试）。
+   */
+  const [hitlInflightRequestIds, setHitlInflightRequestIds] = useState<Set<string>>(() => new Set());
   // Tauri webview 屏蔽了 window.confirm/prompt（点击没反应），所以走 inline 2-click 兜底：
   // 第一下点击进入 pending（按钮变红+变文案），第二下才真正执行硬删除；3 秒后自动取消。
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
@@ -691,8 +699,13 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           const piece = String(event.payload.token ?? event.payload.text ?? "");
           if (piece) {
             buffer += piece;
+            const displayContent = stripToolCallSentinels(buffer);
             setChatMessages((prev) =>
-              prev.map((m) => (m.id === assistantMessageId ? { ...m, content: buffer, status: "running" } : m))
+              prev.map((m) =>
+                m.id === assistantMessageId
+                  ? { ...m, content: displayContent, status: "running" }
+                  : m
+              )
             );
           }
         }
@@ -756,9 +769,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           clearFailTimer();
           streamDone = true;
           const errMsg = String(event.payload.error ?? "unknown error");
+          const cleaned = stripToolCallSentinels(buffer);
+          const errorContent = cleaned || `❌ 执行出错: ${errMsg}`;
           void patchSessionMessage({
             messageId: assistantMessageId,
-            content: buffer || `❌ 执行出错: ${errMsg}`,
+            content: errorContent,
             status: "failed",
             errorMessage: errMsg,
           });
@@ -767,7 +782,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               m.id === assistantMessageId
                 ? {
                     ...m,
-                    content: buffer || `❌ 执行出错: ${errMsg}`,
+                    content: errorContent,
                     status: "failed",
                     errorMessage: errMsg,
                   }
@@ -783,19 +798,20 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           stopStream();
           return;
         }
+        const cleanedBuffer = stripToolCallSentinels(buffer);
         // If we already have some buffer content, the stream likely ended cleanly
         // just without a proper final event — treat as completed rather than failed.
-        if (buffer.trim()) {
+        if (cleanedBuffer.trim()) {
           clearFailTimer();
           streamDone = true;
           void patchSessionMessage({
             messageId: assistantMessageId,
-            content: buffer,
+            content: cleanedBuffer,
             status: "completed",
           });
           setChatMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantMessageId ? { ...m, content: buffer, status: "completed" } : m
+              m.id === assistantMessageId ? { ...m, content: cleanedBuffer, status: "completed" } : m
             )
           );
           setRefreshKey((v) => v + 1);
@@ -810,9 +826,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           failTimer = null;
           if (streamDone) return;
           streamDone = true;
+          const cleanedLate = stripToolCallSentinels(buffer);
+          const lateContent = cleanedLate || "⚠️ 流式连接中断，请重试";
           void patchSessionMessage({
             messageId: assistantMessageId,
-            content: buffer || "⚠️ 流式连接中断，请重试",
+            content: lateContent,
             status: "failed",
             errorMessage: "workflow stream disconnected",
           });
@@ -821,7 +839,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               m.id === assistantMessageId
                 ? {
                     ...m,
-                    content: buffer || "⚠️ 流式连接中断，请重试",
+                    content: lateContent,
                     status: "failed",
                     errorMessage: "workflow stream disconnected",
                   }
@@ -842,32 +860,52 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     requestId: string,
     decision: "approved" | "rejected"
   ) => {
+    /**
+     * 入锁——避免双击 / Tauri webview 延迟 / SSE 还没把状态推回来时用户再点一次：
+     * 第二次点击会被按钮的 disabled + 这里的早返兜底。
+     */
+    if (hitlInflightRequestIds.has(requestId)) return;
+    setHitlInflightRequestIds((prev) => {
+      const next = new Set(prev);
+      next.add(requestId);
+      return next;
+    });
     try {
       if (decision === "approved") {
         const result = await approveWorkflowHitl(workflowId, requestId);
-        await patchSessionMessage({ messageId, status: "running", content: "▶️ 已批准，继续执行…" });
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === messageId ? { ...m, status: "running", content: "▶️ 已批准，继续执行…" } : m
-          )
-        );
-        if (result.runId) {
-          bindStream(workflowId, result.runId, messageId);
+        /**
+         * idempotent=true 说明请求已经被处理过（典型：双击导致两次 POST，第二次后端命中
+         * "already approved" 的幂等分支）。仍然按"成功"处理：清掉本地 hitl 状态，
+         * 但不重复 patchSessionMessage 写 "▶️ 已批准…"，也不重新 bindStream，
+         * 避免一个工作流被订阅两次（看到双倍流式 token）。
+         */
+        if (!result.idempotent) {
+          await patchSessionMessage({ messageId, status: "running", content: "▶️ 已批准，继续执行…" });
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId ? { ...m, status: "running", content: "▶️ 已批准，继续执行…" } : m
+            )
+          );
+          if (result.runId) {
+            bindStream(workflowId, result.runId, messageId);
+          }
         }
       } else {
-        await rejectWorkflowHitl(workflowId, requestId);
-        await patchSessionMessage({
-          messageId,
-          status: "failed",
-          content: "🚫 已拒绝本次 Agent 操作",
-        });
-        setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === messageId
-              ? { ...m, status: "failed", content: "🚫 已拒绝本次 Agent 操作" }
-              : m
-          )
-        );
+        const result = await rejectWorkflowHitl(workflowId, requestId);
+        if (!result.idempotent) {
+          await patchSessionMessage({
+            messageId,
+            status: "failed",
+            content: "🚫 已拒绝本次 Agent 操作",
+          });
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId
+                ? { ...m, status: "failed", content: "🚫 已拒绝本次 Agent 操作" }
+                : m
+            )
+          );
+        }
       }
       setHitlRequestByMessageId((prev) => {
         const next = { ...prev };
@@ -876,6 +914,13 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       });
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : "HITL 操作失败");
+    } finally {
+      setHitlInflightRequestIds((prev) => {
+        if (!prev.has(requestId)) return prev;
+        const next = new Set(prev);
+        next.delete(requestId);
+        return next;
+      });
     }
   };
 
@@ -1080,36 +1125,44 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 {msg.status === "awaiting_approval" &&
                 msg.workflowRunIds?.[0] &&
                 hitlRequestByMessageId[msg.id] ? (
-                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                    <button
-                      type="button"
-                      className="qb-btn-primary-brand"
-                      onClick={() =>
-                        void handleHitlDecision(
-                          msg.id,
-                          msg.workflowRunIds![0]!,
-                          hitlRequestByMessageId[msg.id]!,
-                          "approved"
-                        )
-                      }
-                    >
-                      批准继续
-                    </button>
-                    <button
-                      type="button"
-                      className="qb-btn-ghost"
-                      onClick={() =>
-                        void handleHitlDecision(
-                          msg.id,
-                          msg.workflowRunIds![0]!,
-                          hitlRequestByMessageId[msg.id]!,
-                          "rejected"
-                        )
-                      }
-                    >
-                      拒绝
-                    </button>
-                  </div>
+                  (() => {
+                    const reqId = hitlRequestByMessageId[msg.id]!;
+                    const inflight = hitlInflightRequestIds.has(reqId);
+                    return (
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="qb-btn-primary-brand"
+                          disabled={inflight}
+                          onClick={() =>
+                            void handleHitlDecision(
+                              msg.id,
+                              msg.workflowRunIds![0]!,
+                              reqId,
+                              "approved"
+                            )
+                          }
+                        >
+                          {inflight ? "处理中…" : "批准继续"}
+                        </button>
+                        <button
+                          type="button"
+                          className="qb-btn-ghost"
+                          disabled={inflight}
+                          onClick={() =>
+                            void handleHitlDecision(
+                              msg.id,
+                              msg.workflowRunIds![0]!,
+                              reqId,
+                              "rejected"
+                            )
+                          }
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    );
+                  })()
                 ) : null}
               </div>
             ))}

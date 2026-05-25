@@ -146,9 +146,16 @@ fn spawn_dev_bun_backend(
         .ok_or_else(|| "data_dir path is not UTF-8".to_string())?
         .to_string();
 
-    // sidecar binary 缺失（开发期常态：未跑 `bun run build:app`）时直接拉 `bun run src/index.ts`，
+    // sidecar binary 缺失（开发期常态：未跑 `bun run build:app`）时直接拉 `bun --watch run src/index.ts`，
     // 同时通过 QUBIT_APP_ROOT/QUBIT_DATA_DIR 让 dev fallback 复用与 sidecar 模式一致的数据目录，
     // 避免来回切换时看到不同的 chat_session / workflow_run。
+    //
+    // **关键**：用 `bun --watch`，src/** 任何 ts 改动 → bun 自己 graceful restart，
+    // 开发期不再需要"改完代码 → 手动 kill 17385 → 等 Tauri respawn"。
+    // - QUBIT_BUN_WATCH=1：让后端 `/api/v1/_meta/build-info` 能告知调用方"我跑在 watch 模式"
+    // - 退出 watch 模式需求：env 设 QUBIT_DEV_NO_WATCH=1 即可（hot-reload 引起 in-memory
+    //   状态丢失或不希望频繁重连的场景，比如长时间跑 backtest 时）
+    //
     // 把 stdout/stderr 重定向到日志文件，方便定位 bun 启动失败（之前 piped to /dev/null
     // 导致 seed 阶段崩溃时只能看到 UI 的「重启失败」无任何细节）。
     let log_path = data_dir.join("dev-backend.log");
@@ -161,11 +168,17 @@ fn spawn_dev_bun_backend(
         .try_clone()
         .map_err(|e| format!("clone dev-backend log: {e}"))?;
 
+    let no_watch = std::env::var("QUBIT_DEV_NO_WATCH")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+    let bun_cmd = if no_watch { "bun run" } else { "bun --watch run" };
+    let watch_flag = if no_watch { "0" } else { "1" };
+
     let child = Command::new("bash")
         .arg("-lc")
         .arg(format!(
-            "PORT={} HOST=127.0.0.1 QUBIT_APP_ROOT='{}' QUBIT_DATA_DIR='{}' bun run src/index.ts",
-            BACKEND_PORT, app_root_str, data_dir_str
+            "PORT={} HOST=127.0.0.1 QUBIT_APP_ROOT='{}' QUBIT_DATA_DIR='{}' QUBIT_BUN_WATCH={} {} src/index.ts",
+            BACKEND_PORT, app_root_str, data_dir_str, watch_flag, bun_cmd
         ))
         .current_dir("..")
         .stdout(Stdio::from(log_file))

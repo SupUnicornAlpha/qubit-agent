@@ -8,9 +8,12 @@ import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worke
 import { restoreRunningWorkflows } from "./runtime/workflow/restore-running-workflows";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
 import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
+import { formatStartupBanner } from "./routes/meta.routes";
 import { createServer } from "./server";
 
 async function main() {
+  /** banner 单独打一行明显的分隔，便于 `tail -f dev-backend.log` 数重启次数 / 看 commit */
+  console.log(formatStartupBanner());
   console.log(`[QUBIT] Starting in ${config.env} mode...`);
   if (isPackagedRuntime()) {
     console.log(`[QUBIT] Packaged app root: ${process.env["QUBIT_APP_ROOT"]}`);

@@ -19,6 +19,7 @@ import { reasonNode } from "./nodes/reason";
 import { resolveForceReactLoop, shouldStopReactLoopAfterObserve } from "./react-loop-policy";
 import { getCheckpointSaver } from "./sqlite-checkpoint-saver";
 import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
+import { stripToolCallSentinels } from "../tools/tool-call-format";
 
 export type ExecuteAgentReactParams = {
   runId: string;
@@ -232,11 +233,16 @@ export async function executeAgentReact(
       usage?.totalTokens ??
       (usage ? (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0) : 0);
     const reasonText = (reasonResult.stateUpdate.reasonText ?? "").trim();
+    /** 写入 agentStep.thought 前剥掉 sentinel/JSON 工具块，避免泄漏到 UI / 审计 */
+    const displayThought = stripToolCallSentinels(reasonText);
     try {
       await db
         .update(agentStep)
         .set({
-          thought: reasonText.length > 0 ? reasonText.slice(0, 12000) : "Reasoning with LLM provider",
+          thought:
+            displayThought.length > 0
+              ? displayThought.slice(0, 12000)
+              : "Reasoning with LLM provider",
           tokenCount: tokenCount > 0 ? tokenCount : null,
           latencyMs: reasonResult.meta.latencyMs,
         })

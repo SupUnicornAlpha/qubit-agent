@@ -61,6 +61,10 @@ export function failAnalystResearchJob(jobId: string, err: unknown): void {
   job.error = err instanceof Error ? err.message : String(err);
   job.endedAt = Date.now();
   console.error(`[AnalystResearchJobs] job ${jobId} failed:`, err);
+  if (err instanceof Error && err.stack) {
+    /** 完整堆栈写到 stderr，便于 Tauri sidecar 控制台 / dev-backend.log 排查 */
+    console.error(`[AnalystResearchJobs] stack:\n${err.stack}`);
+  }
 }
 
 export function pauseAnalystResearchJobForHitl(

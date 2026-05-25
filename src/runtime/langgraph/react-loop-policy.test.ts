@@ -53,11 +53,41 @@ describe("resolveForceReactLoop", () => {
 });
 
 describe("shouldStopReactLoopAfterObserve", () => {
-  test("stops when tool none", () => {
+  test("stops when last observation is skippedToolCall", () => {
     const state = {
       plannedAction: "respond_only",
       observations: [{ skippedToolCall: true }],
     } as unknown as AgentGraphState;
     expect(shouldStopReactLoopAfterObserve(state)).toBe(true);
+  });
+
+  test("stops even when plannedAction='tool_call' (regression: avoid orchestrator loop)", () => {
+    /**
+     * 这是核心回归：旧实现要求 plannedAction !== 'tool_call' 才停，但 reason
+     * 节点在 hasTools=true 时强制写 tool_call → 死循环。fix 后只要观测到
+     * skippedToolCall 就停。
+     */
+    const state = {
+      plannedAction: "tool_call",
+      observations: [{ skippedToolCall: true }],
+    } as unknown as AgentGraphState;
+    expect(shouldStopReactLoopAfterObserve(state)).toBe(true);
+  });
+
+  test("stops when finalResponse has been set", () => {
+    const state = {
+      plannedAction: "tool_call",
+      observations: [],
+      finalResponse: { status: "completed" },
+    } as unknown as AgentGraphState;
+    expect(shouldStopReactLoopAfterObserve(state)).toBe(true);
+  });
+
+  test("does not stop on bare observation without skippedToolCall", () => {
+    const state = {
+      plannedAction: "tool_call",
+      observations: [{ level: "info" }],
+    } as unknown as AgentGraphState;
+    expect(shouldStopReactLoopAfterObserve(state)).toBe(false);
   });
 });

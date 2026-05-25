@@ -3,6 +3,7 @@ import {
   assembleAgentSystemPrompt,
   buildAgentToolsPromptBlock,
   parseToolCallFromReason,
+  stripToolCallSentinels,
 } from "./tool-call-format";
 
 describe("parseToolCallFromReason", () => {
@@ -135,5 +136,48 @@ describe("assembleAgentSystemPrompt", () => {
     const { full, toolsBlock } = assembleAgentSystemPrompt("仅正文。", { tools: [], mcpServers: [] });
     expect(toolsBlock).toBe("");
     expect(full).toBe("仅正文。");
+  });
+});
+
+describe("stripToolCallSentinels", () => {
+  test("剥掉单个 sentinel 块，保留正文", () => {
+    const text =
+      "你好！我是 Orchestrator。\n<TOOL_CALL>\n{\"tool\":\"none\",\"summary\":\"用户只是打招呼\"}\n</TOOL_CALL>";
+    expect(stripToolCallSentinels(text)).toBe("你好！我是 Orchestrator。");
+  });
+
+  test("剥掉多个 sentinel 块（避免循环累积）", () => {
+    const text = [
+      "你好！👋",
+      "<TOOL_CALL>{\"tool\":\"none\",\"summary\":\"hi\"}</TOOL_CALL>",
+      "我还在等任务。",
+      "<TOOL_CALL>{\"tool\":\"none\",\"summary\":\"again\"}</TOOL_CALL>",
+    ].join("\n");
+    expect(stripToolCallSentinels(text)).toBe("你好！👋\n我还在等任务。");
+  });
+
+  test("剥掉未闭合的尾部 sentinel（流式输出半截）", () => {
+    const text = "分析结论：估值合理。\n<TOOL_CALL>\n{\"tool\":\"non";
+    expect(stripToolCallSentinels(text)).toBe("分析结论：估值合理。");
+  });
+
+  test("剥掉 fenced JSON tool 块", () => {
+    const text =
+      "分析中。\n```json\n{\"tool\":\"fetch_klines\",\"params\":{\"symbol\":\"AAPL\"}}\n```\n继续。";
+    const out = stripToolCallSentinels(text);
+    expect(out).not.toContain("fetch_klines");
+    expect(out).toContain("分析中");
+    expect(out).toContain("继续。");
+  });
+
+  test("空/null 输入返回空字符串", () => {
+    expect(stripToolCallSentinels(null)).toBe("");
+    expect(stripToolCallSentinels(undefined)).toBe("");
+    expect(stripToolCallSentinels("")).toBe("");
+  });
+
+  test("无 sentinel 时只做空行压缩", () => {
+    const text = "段落 1\n\n\n\n段落 2";
+    expect(stripToolCallSentinels(text)).toBe("段落 1\n\n段落 2");
   });
 });
