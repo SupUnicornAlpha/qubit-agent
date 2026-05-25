@@ -20,6 +20,7 @@ export type UiPaletteId = (typeof UI_PALETTE_IDS)[number];
 
 export const UI_STYLE_IDS = [
   "default",
+  "feishu-clean",
   "glass-holographic",
   "retro-futurism",
   "industrial",
@@ -88,6 +89,7 @@ export function coercePaletteForStyle(style: UiStyleId, palette: UiPaletteId): U
 
 export const STYLE_LABELS: Record<UiStyleId, string> = {
   default: "默认",
+  "feishu-clean": "简洁",
   "glass-holographic": "Glass Holographic",
   "retro-futurism": "复古未来主义 · CLI",
   industrial: "工业设计",

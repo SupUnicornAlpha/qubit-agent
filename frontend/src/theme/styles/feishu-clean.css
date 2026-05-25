@@ -1,0 +1,712 @@
+/**
+ * 简洁 · 飞书风
+ * - 大面积留白 + 极浅灰底（#f7f8fa）
+ * - 飞书蓝 #3370FF 作为主品牌色
+ * - 弱阴影、12px 大圆角、1px 细描边
+ * - 顶部 backdrop-filter 毛玻璃，主体扁平
+ * - 无衬线字体 + 清晰字号层级
+ */
+
+html[data-qb-style="feishu-clean"] {
+  color-scheme: light;
+
+  /* ── 基础色板（飞书） ── */
+  --qb-bg-root: #f7f8fa;
+  --qb-bg-root-top: #ffffff;
+  --qb-tint: rgba(51, 112, 255, 0.08);
+  --qb-tint-strong: rgba(51, 112, 255, 0.14);
+  --qb-blue: #3370ff;
+  --qb-blue-deep: #245bff;
+  --qb-focus-ring: rgba(51, 112, 255, 0.45);
+  --qb-hairline: #e7e9ec;
+  --qb-separator: #dee0e3;
+  --qb-body-fg: #1f2329;
+
+  /* 字体（无衬线，明确层级） */
+  --qb-fs-font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", "Source Han Sans CN",
+    "Noto Sans CJK SC", "WenQuanYi Micro Hei", Arial, sans-serif;
+
+  /* 圆角（飞书：大圆角 12 / 8 / 6） */
+  --qb-radius-lg: 12px;
+  --qb-radius-md: 8px;
+  --qb-radius-sm: 6px;
+
+  /* 阴影（极轻） */
+  --qb-fs-shadow-card: 0 1px 2px rgba(31, 35, 41, 0.04), 0 2px 8px rgba(31, 35, 41, 0.05);
+  --qb-fs-shadow-elev: 0 4px 16px rgba(31, 35, 41, 0.08), 0 1px 4px rgba(31, 35, 41, 0.04);
+  --qb-fs-shadow-glass: 0 1px 0 rgba(31, 35, 41, 0.04), 0 4px 16px rgba(31, 35, 41, 0.04);
+
+  /* ── 滚动条 ── */
+  --qb-scrollbar-track: #f2f3f5;
+  --qb-scrollbar-thumb-top: #c9cdd4;
+  --qb-scrollbar-thumb-bot: #a9aeb8;
+  --qb-scrollbar-thumb-hover-top: #a9aeb8;
+  --qb-scrollbar-thumb-hover-bot: #8f959e;
+  --qb-scrollbar-corner: #f7f8fa;
+  --qb-scrollbar-border: #e7e9ec;
+  --qb-scrollbar-thumb-border: #f2f3f5;
+
+  /* ── 顶部导航 / 侧栏 ── */
+  --qb-topbar-bg: rgba(255, 255, 255, 0.72);
+  --qb-workbench-toolbar-bg: #ffffff;
+  --qb-segmented-active-bg: #3370ff;
+  --qb-sidebar-nav-bg: #ffffff;
+  --qb-sidebar-activity-bg: #f7f8fa;
+  --qb-sidebar-explorer-bg: #ffffff;
+  --qb-sidebar-border: #e7e9ec;
+  --qb-sidebar-muted: #646a73;
+  --qb-sidebar-text: #1f2329;
+  --qb-brand-icon: #3370ff;
+  --qb-brand-icon-glow: rgba(51, 112, 255, 0.5);
+
+  /* Markdown / 聊天气泡 */
+  --qb-chat-bubble-user-fg: #ffffff;
+  --qb-chat-bubble-agent-fg: var(--qb-body-fg);
+  --qb-md-prose-fg: var(--qb-body-fg);
+  --qb-md-prose-muted: #646a73;
+  --qb-md-code-block-bg: #f2f3f5;
+  --qb-md-code-block-border: #e7e9ec;
+  --qb-md-code-inline-bg: rgba(51, 112, 255, 0.08);
+  --qb-md-th-bg: #f2f3f5;
+  --qb-md-table-border: #e7e9ec;
+  --qb-md-blockquote-border: #dee0e3;
+  --qb-md-blockquote-fg: #646a73;
+  --qb-md-hr: #e7e9ec;
+  --qb-md-em-fg: var(--qb-body-fg);
+  --qb-md-link: #3370ff;
+  --qb-md-pre-fg: var(--qb-body-fg);
+
+  /* 主内容卡片 / 输入 */
+  --qb-main-input-bg: #ffffff;
+  --qb-main-input-border: #dee0e3;
+  --qb-main-input-fg: var(--qb-body-fg);
+  --qb-main-card-bg: #ffffff;
+  --qb-main-card-border: #e7e9ec;
+  --qb-main-meta: #646a73;
+  --qb-main-panel-bg: #f7f8fa;
+  --qb-card-name: #1f2329;
+  --qb-card-desc: #646a73;
+
+  --qb-mcp-details-bg: #ffffff;
+  --qb-mcp-details-border: #e7e9ec;
+  --qb-mcp-details-nested-bg: #f7f8fa;
+  --qb-stream-box-bg: #f7f8fa;
+  --qb-stream-box-fg: var(--qb-body-fg);
+  --qb-stream-box-border: #e7e9ec;
+  --qb-mcp-market-card-bg: #ffffff;
+  --qb-mcp-market-card-border: #e7e9ec;
+  --qb-mcp-market-desc: var(--qb-body-fg);
+  --qb-mcp-market-meta: #646a73;
+  --qb-mcp-market-chip-bg: var(--qb-tint);
+  --qb-mcp-market-chip-border: #e7e9ec;
+  --qb-mcp-market-chip-fg: var(--qb-body-fg);
+  --qb-mcp-market-cmd-bg: #f2f3f5;
+  --qb-mcp-market-cmd-fg: #646a73;
+  --qb-mcp-market-cmd-border: #e7e9ec;
+  --qb-modal-bg: #ffffff;
+  --qb-modal-border: #e7e9ec;
+  --qb-modal-sep: #e7e9ec;
+  --qb-mcp-json-bg: #f7f8fa;
+  --qb-mcp-json-fg: var(--qb-body-fg);
+  --qb-mcp-json-border: #e7e9ec;
+  --qb-agent-h3: var(--qb-body-fg);
+  --qb-agent-strong: var(--qb-body-fg);
+  --qb-agent-draft-accent: #3370ff;
+  --qb-agent-empty: #8f959e;
+  --qb-json-preview-bg: #f7f8fa;
+  --qb-json-preview-border: #e7e9ec;
+  --qb-json-preview-fg: var(--qb-body-fg);
+  --qb-ide-chrome-border: #e7e9ec;
+
+  /* 聊天 / IDE / 资讯 / K线 */
+  --qb-chat-sidebar-bg: #ffffff;
+  --qb-chat-main-bg: #ffffff;
+  --qb-chat-border: #e7e9ec;
+  --qb-chat-ide-header-bg: #f7f8fa;
+  --qb-chat-ide-header-fg: #646a73;
+  --qb-chat-session-item-bg: #ffffff;
+  --qb-chat-session-item-fg: var(--qb-body-fg);
+  --qb-chat-session-active-border: #3370ff;
+  --qb-chat-session-active-bg: rgba(51, 112, 255, 0.08);
+  --qb-chat-bubble-agent-bg: #f7f8fa;
+  --qb-chat-bubble-user-bg: #3370ff;
+  --qb-chat-bubble-user-fg: #ffffff;
+  --qb-chat-bubble-agent-fg: var(--qb-body-fg);
+  --qb-chat-bubble-border: #e7e9ec;
+  --qb-chat-meta-fg: #646a73;
+  --qb-chat-resizer-bg: #e7e9ec;
+  --qb-chat-chart-banner-bg: var(--qb-tint);
+  --qb-chat-chart-banner-fg: #245bff;
+  --qb-chat-chart-banner-border: #e7e9ec;
+  --qb-board-col-bg: #ffffff;
+  --qb-board-card-bg: #ffffff;
+  --qb-kline-root-bg: #ffffff;
+  --qb-kline-header-border: #e7e9ec;
+  --qb-kline-embedded-bar-bg: #f7f8fa;
+  --qb-news-wrap-bg: #f7f8fa;
+  --qb-news-col-title-bg: #ffffff;
+  --qb-news-col-title-fg: var(--qb-body-fg);
+  --qb-news-item-bg: #ffffff;
+  --qb-news-expand-bg: #f7f8fa;
+  --qb-news-open-btn-bg: var(--qb-tint);
+  --qb-news-open-btn-border: #3370ff;
+  --qb-monitor-title-fg: var(--qb-body-fg);
+  --qb-monitor-lead-fg: #646a73;
+  --qb-monitor-code-bg: var(--qb-tint);
+
+  /* 研究团队三栏 */
+  --qb-team-shell-bg: #f7f8fa;
+  --qb-team-shell-border: #e7e9ec;
+  --qb-team-left-bg: #ffffff;
+  --qb-team-center-bg: #ffffff;
+  --qb-team-right-bg: #ffffff;
+  --qb-team-activity-bg: #f7f8fa;
+  --qb-team-stage-bg: #ffffff;
+  --qb-team-titlebar-bg: #ffffff;
+  --qb-team-titlebar-fg: var(--qb-body-fg);
+  --qb-team-gutter-bg: #e7e9ec;
+  --qb-team-tab-bg: #f7f8fa;
+  --qb-team-tab-fg: #646a73;
+  --qb-team-tab-active-bg: var(--qb-tint);
+  --qb-team-tab-active-fg: #245bff;
+  --qb-team-tab-active-border: #3370ff;
+  --qb-team-act-btn-fg: #646a73;
+  --qb-team-act-btn-active-bg: var(--qb-tint);
+  --qb-team-act-btn-active-border: #3370ff;
+  --qb-team-act-btn-active-fg: #245bff;
+  --qb-team-panel-bg: #ffffff;
+  --qb-team-panel-border: #e7e9ec;
+  --qb-team-input-bg: #ffffff;
+  --qb-team-input-border: #dee0e3;
+  --qb-team-input-fg: var(--qb-body-fg);
+  --qb-team-hero-bg: var(--qb-tint);
+  --qb-team-hero-border: #e7e9ec;
+  --qb-team-section-fg: var(--qb-body-fg);
+  --qb-team-meta: #646a73;
+  --qb-team-replay-bg: #ffffff;
+  --qb-team-trend-bg: #ffffff;
+  --qb-team-screener-bg: #ffffff;
+  --qb-team-screener-btn-bg: #f7f8fa;
+  --qb-team-screener-btn-fg: var(--qb-body-fg);
+  --qb-team-screener-btn-active-bg: var(--qb-tint);
+  --qb-team-screener-btn-active-border: #3370ff;
+  --qb-team-radar-bg: #ffffff;
+  --qb-team-radar-bar-bg: var(--qb-tint);
+  --qb-team-report-bg: #ffffff;
+  --qb-team-member-bg: #ffffff;
+  --qb-team-member-tag-bg: var(--qb-tint);
+  --qb-team-member-tag-fg: #245bff;
+  --qb-team-table-header-fg: #646a73;
+  --qb-team-table-row-border: #e7e9ec;
+  --qb-team-table-cell-fg: var(--qb-body-fg);
+  --qb-team-live-feed-bg: #f7f8fa;
+  --qb-team-live-feed-border: #e7e9ec;
+  --qb-team-live-feed-fg: var(--qb-body-fg);
+  --qb-team-live-feed-row-border: #e7e9ec;
+  --qb-team-debate-bg: rgba(51, 112, 255, 0.06);
+  --qb-team-debate-border: #c4d2ff;
+  --qb-team-debate-fg: #245bff;
+  --qb-team-debate-accent: #3370ff;
+  --qb-team-canvas-bg: #f7f8fa;
+  --qb-team-edge-fg: #c9cdd4;
+  --qb-team-edge-active: #3370ff;
+  --qb-team-edge-hot: #ff7d00;
+  --qb-team-node-selected-fill: rgba(51, 112, 255, 0.18);
+  --qb-team-node-selected-stroke: #3370ff;
+  --qb-team-node-hot-fill: rgba(255, 125, 0, 0.16);
+  --qb-team-node-hot-stroke: #ff7d00;
+}
+
+/* ─── 全局背景：大面积留白 ─── */
+html[data-qb-style="feishu-clean"] body,
+html[data-qb-style="feishu-clean"] .qb-app-root {
+  background: var(--qb-bg-root);
+  color: var(--qb-body-fg);
+  font-family: var(--qb-fs-font-family);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0;
+}
+
+html[data-qb-style="feishu-clean"] {
+  font-family: var(--qb-fs-font-family);
+}
+
+/* ─── 顶部导航：subtle glassmorphism ─── */
+html[data-qb-style="feishu-clean"] .qb-topbar {
+  background: var(--qb-topbar-bg);
+  border-bottom: 1px solid var(--qb-hairline);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: var(--qb-fs-shadow-glass);
+}
+
+html[data-qb-style="feishu-clean"] .qb-logo-text {
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  color: var(--qb-body-fg);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-shadow: none;
+}
+
+html[data-qb-style="feishu-clean"] .qb-topbar__subtitle {
+  color: var(--qb-sidebar-muted);
+  font-weight: 500;
+}
+
+html[data-qb-style="feishu-clean"] .qb-topbar__divider {
+  background: var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] .qb-status-pill {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: #646a73;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-weight: 500;
+  box-shadow: none;
+}
+
+html[data-qb-style="feishu-clean"] .qb-status-dot--ok {
+  background: #00b42a;
+}
+
+html[data-qb-style="feishu-clean"] .qb-status-dot--off {
+  background: #f53f3f;
+}
+
+/* 外观下拉控件 */
+html[data-qb-style="feishu-clean"] .qb-style-select,
+html[data-qb-style="feishu-clean"] .qb-theme-select {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: #1f2329;
+  border-radius: 8px;
+}
+
+/* ─── 卡片与容器：弱阴影 + 大圆角 + 细描边 ─── */
+html[data-qb-style="feishu-clean"] .qb-context-card,
+html[data-qb-style="feishu-clean"] .qb-agent-shell {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  border-radius: var(--qb-radius-lg);
+  box-shadow: var(--qb-fs-shadow-card);
+}
+
+html[data-qb-style="feishu-clean"] .qb-agent-hero {
+  background: #f7f8fa;
+  border-bottom: 1px solid var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] .qb-agent-hero__title {
+  color: var(--qb-body-fg);
+  font-weight: 600;
+}
+
+html[data-qb-style="feishu-clean"] .qb-agent-hero__sub,
+html[data-qb-style="feishu-clean"] .qb-agent-hero__desc,
+html[data-qb-style="feishu-clean"] .qb-agent-help {
+  color: #646a73;
+}
+
+/* ─── 侧栏导航 ─── */
+html[data-qb-style="feishu-clean"] .qb-sidebar-shell,
+html[data-qb-style="feishu-clean"] .qb-sidebar-activity {
+  border-right-color: var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] .qb-sidebar-brand-line {
+  border-bottom-color: var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] .qb-nav-row {
+  color: #4e5969;
+  border-radius: 6px;
+}
+
+html[data-qb-style="feishu-clean"] .qb-nav-row:hover {
+  color: var(--qb-body-fg);
+  background: #f2f3f5;
+}
+
+html[data-qb-style="feishu-clean"] .qb-nav-row--active {
+  color: #245bff;
+  background: var(--qb-tint);
+  box-shadow: inset 3px 0 0 #3370ff;
+  font-weight: 600;
+}
+
+html[data-qb-style="feishu-clean"] .qb-nav-activity-btn {
+  color: #646a73;
+  border-radius: 8px;
+}
+
+html[data-qb-style="feishu-clean"] .qb-nav-activity-btn:hover {
+  color: var(--qb-body-fg);
+  background: #f2f3f5;
+}
+
+html[data-qb-style="feishu-clean"] .qb-nav-activity-btn--active {
+  color: #245bff;
+  background: var(--qb-tint-strong);
+  border-color: #3370ff;
+}
+
+/* ─── 主按钮（CTA 改为飞书蓝） ─── */
+html[data-qb-style="feishu-clean"] .qb-btn-primary-brand,
+html[data-qb-style="feishu-clean"] .qb-btn-primary {
+  background: #3370ff;
+  border: 1px solid #3370ff;
+  color: #ffffff;
+  border-radius: var(--qb-radius-sm);
+  font-weight: 500;
+  box-shadow: 0 1px 2px rgba(51, 112, 255, 0.12);
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-primary-brand:hover:not(:disabled),
+html[data-qb-style="feishu-clean"] .qb-btn-primary:hover:not(:disabled) {
+  background: #4080ff;
+  border-color: #4080ff;
+  box-shadow: 0 2px 6px rgba(51, 112, 255, 0.2);
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-primary-brand:active:not(:disabled),
+html[data-qb-style="feishu-clean"] .qb-btn-primary:active:not(:disabled) {
+  background: #245bff;
+  border-color: #245bff;
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-secondary {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: var(--qb-body-fg);
+  border-radius: var(--qb-radius-sm);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-secondary:hover:not(:disabled) {
+  background: #f2f3f5;
+  border-color: #c9cdd4;
+  color: var(--qb-body-fg);
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-ghost {
+  background: transparent;
+  border: 1px solid var(--qb-hairline);
+  color: #4e5969;
+  border-radius: var(--qb-radius-sm);
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-ghost:hover:not(:disabled) {
+  background: #f2f3f5;
+  border-color: #c9cdd4;
+  color: var(--qb-body-fg);
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-mini {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: var(--qb-body-fg);
+  border-radius: 6px;
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-mini:hover:not(:disabled) {
+  background: #f2f3f5;
+  border-color: #c9cdd4;
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-card {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: var(--qb-body-fg);
+  border-radius: var(--qb-radius-md);
+  box-shadow: var(--qb-fs-shadow-card);
+}
+
+html[data-qb-style="feishu-clean"] .qb-btn-card:hover {
+  background: #f7f8fa;
+  border-color: #c9cdd4;
+  box-shadow: var(--qb-fs-shadow-elev);
+}
+
+/* ─── 分段控件 / Tab ─── */
+html[data-qb-style="feishu-clean"] .qb-segmented {
+  background: #f2f3f5;
+  border: 1px solid var(--qb-hairline);
+  border-radius: var(--qb-radius-sm);
+}
+
+html[data-qb-style="feishu-clean"] .qb-segmented__tab {
+  color: #646a73;
+  font-weight: 500;
+}
+
+html[data-qb-style="feishu-clean"] .qb-segmented__tab:hover {
+  color: var(--qb-body-fg);
+  background: rgba(31, 35, 41, 0.04);
+}
+
+html[data-qb-style="feishu-clean"] .qb-segmented__tab--active {
+  background: #ffffff;
+  color: #245bff;
+  border-color: var(--qb-hairline);
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.06);
+  font-weight: 600;
+}
+
+html[data-qb-style="feishu-clean"] .qb-pill-tab {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: var(--qb-body-fg);
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+html[data-qb-style="feishu-clean"] .qb-pill-tab:hover {
+  border-color: #c9cdd4;
+  background: #f7f8fa;
+}
+
+html[data-qb-style="feishu-clean"] .qb-pill-tab--active {
+  background: #3370ff;
+  border-color: #3370ff;
+  color: #ffffff;
+}
+
+html[data-qb-style="feishu-clean"] .qb-chip {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: #646a73;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+html[data-qb-style="feishu-clean"] .qb-chip:hover {
+  color: var(--qb-body-fg);
+  border-color: #c9cdd4;
+}
+
+html[data-qb-style="feishu-clean"] .qb-chip--active {
+  background: #3370ff;
+  border-color: #3370ff;
+  color: #ffffff;
+}
+
+/* MCP chip / agent badge */
+html[data-qb-style="feishu-clean"] .qb-mcp-chip {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: #646a73;
+  border-radius: 6px;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip:hover:not(:disabled) {
+  color: var(--qb-body-fg);
+  border-color: #c9cdd4;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--on {
+  background: var(--qb-tint-strong);
+  border-color: #3370ff;
+  color: #245bff;
+}
+
+html[data-qb-style="feishu-clean"] .qb-agent-badge {
+  background: var(--qb-tint-strong);
+  border-color: #3370ff;
+  color: #245bff;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+html[data-qb-style="feishu-clean"] .qb-agent-badge--muted {
+  background: #f7f8fa;
+  border-color: var(--qb-hairline);
+  color: #646a73;
+}
+
+/* ─── 图标按钮 ─── */
+html[data-qb-style="feishu-clean"] .qb-icon-btn {
+  color: #646a73;
+  border-radius: 6px;
+}
+
+html[data-qb-style="feishu-clean"] .qb-icon-btn:hover {
+  color: var(--qb-body-fg);
+  background: #f2f3f5;
+  border-color: var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] .qb-icon-btn--active {
+  color: #245bff;
+  background: var(--qb-tint-strong);
+  border-color: #3370ff;
+}
+
+/* ─── 工具栏 ─── */
+html[data-qb-style="feishu-clean"] .qb-workbench-toolbar {
+  background: #ffffff;
+  border-bottom: 1px solid var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] .qb-toolbar-vsep {
+  background: var(--qb-hairline);
+}
+
+/* ─── 表单输入 ─── */
+html[data-qb-style="feishu-clean"] input:not(.qb-tokyo-editor__textarea):not([type="checkbox"]):not([type="radio"]):not(
+    [type="range"]
+  ),
+html[data-qb-style="feishu-clean"] select,
+html[data-qb-style="feishu-clean"] textarea:not(.qb-tokyo-editor__textarea) {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  color: var(--qb-body-fg);
+  border-radius: 6px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+html[data-qb-style="feishu-clean"] input:not(.qb-tokyo-editor__textarea):not([type="checkbox"]):not([type="radio"]):not(
+    [type="range"]
+  ):focus,
+html[data-qb-style="feishu-clean"] select:focus,
+html[data-qb-style="feishu-clean"] textarea:not(.qb-tokyo-editor__textarea):focus {
+  outline: none;
+  border-color: #3370ff;
+  box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.12);
+}
+
+/* ─── 聊天气泡：扁平、圆角大 ─── */
+html[data-qb-style="feishu-clean"] [data-qb-chat-panel] .qb-chat-bubble {
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+html[data-qb-style="feishu-clean"] [data-qb-chat-panel] .qb-chat-bubble--user {
+  background: #3370ff;
+  color: #ffffff;
+  border-color: #3370ff;
+}
+
+html[data-qb-style="feishu-clean"] [data-qb-chat-panel] .qb-chat-bubble--agent {
+  background: #f7f8fa;
+  color: var(--qb-body-fg);
+  border-color: var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] [data-qb-chat-panel] .qb-chat-sidebar,
+html[data-qb-style="feishu-clean"] [data-qb-chat-panel] .qb-chat-main {
+  background: #ffffff;
+  border-color: var(--qb-hairline);
+}
+
+html[data-qb-style="feishu-clean"] [data-qb-chat-panel] .qb-chat-session-item--active {
+  background: var(--qb-tint);
+  border-left: 3px solid #3370ff;
+  color: #245bff;
+}
+
+/* ─── 研究团队工作台：去掉重阴影 ─── */
+html[data-qb-style="feishu-clean"] [data-qb-team-shell] {
+  background: var(--qb-team-shell-bg) !important;
+  border: 1px solid var(--qb-hairline) !important;
+  border-radius: var(--qb-radius-lg) !important;
+  box-shadow: var(--qb-fs-shadow-card) !important;
+}
+
+html[data-qb-style="feishu-clean"] [data-qb-team-shell] nav[aria-label="研究团队视图"] {
+  border-right: 1px solid var(--qb-hairline) !important;
+}
+
+/* ─── K 线 / 资讯页 ─── */
+html[data-qb-style="feishu-clean"] .qb-news-item {
+  background: #ffffff;
+  border: 1px solid var(--qb-hairline);
+  border-radius: var(--qb-radius-md);
+  box-shadow: 0 1px 2px rgba(31, 35, 41, 0.03);
+}
+
+html[data-qb-style="feishu-clean"] .qb-news-item:hover {
+  box-shadow: var(--qb-fs-shadow-card);
+}
+
+/* ─── 标题层级 ─── */
+html[data-qb-style="feishu-clean"] h1 {
+  letter-spacing: -0.01em;
+}
+
+html[data-qb-style="feishu-clean"] h2,
+html[data-qb-style="feishu-clean"] h3 {
+  font-weight: 600;
+  color: var(--qb-body-fg);
+}
+
+/* ─── Markdown ─── */
+html[data-qb-style="feishu-clean"] .qb-chat-markdown {
+  font-family: var(--qb-fs-font-family);
+}
+
+html[data-qb-style="feishu-clean"] .qb-chat-markdown a {
+  color: #3370ff;
+  text-decoration: none;
+}
+
+html[data-qb-style="feishu-clean"] .qb-chat-markdown a:hover {
+  text-decoration: underline;
+}
+
+html[data-qb-style="feishu-clean"] .qb-chat-markdown code {
+  background: #f2f3f5;
+  border: 1px solid var(--qb-hairline);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+html[data-qb-style="feishu-clean"] .qb-chat-markdown pre {
+  background: #f7f8fa;
+  border: 1px solid var(--qb-hairline);
+  border-radius: var(--qb-radius-md);
+  box-shadow: none;
+}
+
+/* ─── Modal / 弹层 ─── */
+html[data-qb-style="feishu-clean"] [role="dialog"],
+html[data-qb-style="feishu-clean"] .qb-modal,
+html[data-qb-style="feishu-clean"] .qb-popover {
+  border-radius: var(--qb-radius-lg);
+  box-shadow: var(--qb-fs-shadow-elev);
+}
+
+/* ─── Callout ─── */
+html[data-qb-style="feishu-clean"] .qb-callout--warning {
+  background: #fff7e6;
+  border-color: #ffd591;
+  color: #874d00;
+}
+
+html[data-qb-style="feishu-clean"] .qb-callout--danger {
+  background: #ffece8;
+  border-color: #ffbab1;
+  color: #ad2914;
+}
+
+/* ─── 状态点动画保留极简 ─── */
+html[data-qb-style="feishu-clean"] .qb-status-dot--live {
+  box-shadow: 0 0 0 3px rgba(0, 180, 42, 0.12);
+}
+
+/* ─── 减少动画偏好 ─── */
+@media (prefers-reduced-motion: reduce) {
+  html[data-qb-style="feishu-clean"] .qb-btn-primary-brand:hover:not(:disabled),
+  html[data-qb-style="feishu-clean"] .qb-btn-primary:hover:not(:disabled),
+  html[data-qb-style="feishu-clean"] .qb-btn-secondary:hover:not(:disabled) {
+    transform: none;
+  }
+}
