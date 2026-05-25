@@ -15,6 +15,7 @@ import {
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
+import { pauseAnalystResearchJobForHitl } from "../msa/analyst-research-jobs";
 import {
   executeResearchTeamWorkflow,
   failResearchTeamExecuteJob,
@@ -526,10 +527,26 @@ export class GraphRunner {
           });
         } catch (teamErr) {
           if (teamErr instanceof HitlAwaitingApprovalError) {
+            // 与 a2a 路径 role-handlers.ts 对齐：把 analyst job 标 awaiting_approval 并缓存
+            // resumePayload，前端轮询 /analyst/job/:jobId 才能拿到 hitlRequestId/title 渲染审批卡片。
+            // 不调这步的话 UI 会一直看到 status=running、HITL 卡片永远不弹（2026-05-25 故障）。
+            pauseAnalystResearchJobForHitl(parsed.params.jobId, {
+              requestId: teamErr.requestId,
+              title: teamErr.message,
+              summary: teamErr.message,
+              resumePayload: parsed.params,
+            });
+            console.log(
+              `[GraphRunner] workflow=${params.workflowId} research_team paused awaiting HITL requestId=${teamErr.requestId} job=${parsed.params.jobId}`
+            );
             await db
               .update(workflowRun)
               .set({ status: "awaiting_approval", endedAt: null })
               .where(eq(workflowRun.id, params.workflowId));
+            await db
+              .update(agentInstance)
+              .set({ status: "stopped", endedAt: new Date().toISOString() })
+              .where(eq(agentInstance.id, agentInstanceId));
             stepStreamBus.publish({
               runId: params.runId,
               workflowId: params.workflowId,
