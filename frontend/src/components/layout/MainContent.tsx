@@ -5982,7 +5982,14 @@ const TeamDashboardPanel: FC = () => {
               </p>
             ) : null}
             {workflowRunId.trim() && !workflowSessionId ? (
-              <p style={{ fontSize: 11, color: "#a78bfa", marginTop: 6, lineHeight: 1.45 }}>
+              <p
+                style={{
+                  fontSize: 11,
+                  color: "var(--qb-hint-accent-fg, #a78bfa)",
+                  marginTop: 6,
+                  lineHeight: 1.45,
+                }}
+              >
                 当前工作流未绑定会话：右侧「保存脚本 / 实盘」需会话。可点「关联默认会话」或新建工作流（已自动带会话）。
               </p>
             ) : null}
@@ -7859,13 +7866,46 @@ const workflowListStyles: Record<string, CSSProperties> = {
   },
 };
 
-/** 状态徽章配色：按 workflow_run.status 区分。 */
+/**
+ * 状态徽章配色：按 workflow_run.status 区分。
+ *
+ * 颜色用 css 变量（带 fallback 兜底），让各主题（默认深色 / 简洁 / glass …）
+ * 都能从样式表里 override，而不需要碰这里的 inline style。
+ */
 const workflowStatusBadgeStyle: Record<string, CSSProperties> = {
-  running: { color: "#86efac", borderColor: "#166534", background: "rgba(22,101,52,0.25)" },
-  pending: { color: "#fde68a", borderColor: "#854d0e", background: "rgba(133,77,14,0.25)" },
-  awaiting_review: { color: "#fde68a", borderColor: "#854d0e", background: "rgba(133,77,14,0.25)" },
-  completed: { color: "#a5b4fc", borderColor: "#3730a3", background: "rgba(55,48,163,0.25)" },
-  failed: { color: "#fecaca", borderColor: "#7f1d1d", background: "rgba(127,29,29,0.30)" },
-  cancelled: { color: "#a1a1aa", borderColor: "#3f3f46", background: "rgba(63,63,70,0.30)" },
-  _default: { color: "#d4d4d8", borderColor: "#3f3f46", background: "rgba(63,63,70,0.25)" },
+  running: {
+    color: "var(--qb-wf-status-running-fg, #86efac)",
+    borderColor: "var(--qb-wf-status-running-border, #166534)",
+    background: "var(--qb-wf-status-running-bg, rgba(22,101,52,0.25))",
+  },
+  pending: {
+    color: "var(--qb-wf-status-pending-fg, #fde68a)",
+    borderColor: "var(--qb-wf-status-pending-border, #854d0e)",
+    background: "var(--qb-wf-status-pending-bg, rgba(133,77,14,0.25))",
+  },
+  awaiting_review: {
+    color: "var(--qb-wf-status-pending-fg, #fde68a)",
+    borderColor: "var(--qb-wf-status-pending-border, #854d0e)",
+    background: "var(--qb-wf-status-pending-bg, rgba(133,77,14,0.25))",
+  },
+  completed: {
+    color: "var(--qb-wf-status-done-fg, #a5b4fc)",
+    borderColor: "var(--qb-wf-status-done-border, #3730a3)",
+    background: "var(--qb-wf-status-done-bg, rgba(55,48,163,0.25))",
+  },
+  failed: {
+    color: "var(--qb-wf-status-failed-fg, #fecaca)",
+    borderColor: "var(--qb-wf-status-failed-border, #7f1d1d)",
+    background: "var(--qb-wf-status-failed-bg, rgba(127,29,29,0.30))",
+  },
+  cancelled: {
+    color: "var(--qb-wf-status-cancelled-fg, #a1a1aa)",
+    borderColor: "var(--qb-wf-status-cancelled-border, #3f3f46)",
+    background: "var(--qb-wf-status-cancelled-bg, rgba(63,63,70,0.30))",
+  },
+  _default: {
+    color: "var(--qb-wf-status-default-fg, #d4d4d8)",
+    borderColor: "var(--qb-wf-status-default-border, #3f3f46)",
+    background: "var(--qb-wf-status-default-bg, rgba(63,63,70,0.25))",
+  },
 };

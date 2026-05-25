@@ -1,16 +1,19 @@
 /**
- * 简洁 · 飞书风
+ * 简洁
  * - 大面积留白 + 极浅灰底（#f7f8fa）
- * - 飞书蓝 #3370FF 作为主品牌色
+ * - 主蓝 #3370FF 作为品牌色（与冷静、扁平的整体调性匹配）
  * - 弱阴影、12px 大圆角、1px 细描边
  * - 顶部 backdrop-filter 毛玻璃，主体扁平
  * - 无衬线字体 + 清晰字号层级
+ *
+ * 注意：用户面向的标签是「简洁」（不再带"飞书风"字样），但 style id /
+ * data-qb-style 选择器仍然保留 "feishu-clean"，以兼容已有的 localStorage 落盘。
  */
 
 html[data-qb-style="feishu-clean"] {
   color-scheme: light;
 
-  /* ── 基础色板（飞书） ── */
+  /* ── 基础色板 ── */
   --qb-bg-root: #f7f8fa;
   --qb-bg-root-top: #ffffff;
   --qb-tint: rgba(51, 112, 255, 0.08);
@@ -27,7 +30,7 @@ html[data-qb-style="feishu-clean"] {
     -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", "Source Han Sans CN",
     "Noto Sans CJK SC", "WenQuanYi Micro Hei", Arial, sans-serif;
 
-  /* 圆角（飞书：大圆角 12 / 8 / 6） */
+  /* 圆角（大圆角 12 / 8 / 6） */
   --qb-radius-lg: 12px;
   --qb-radius-md: 8px;
   --qb-radius-sm: 6px;
@@ -356,7 +359,7 @@ html[data-qb-style="feishu-clean"] .qb-nav-activity-btn--active {
   border-color: #3370ff;
 }
 
-/* ─── 主按钮（CTA 改为飞书蓝） ─── */
+/* ─── 主按钮（CTA 用主蓝 #3370FF） ─── */
 html[data-qb-style="feishu-clean"] .qb-btn-primary-brand,
 html[data-qb-style="feishu-clean"] .qb-btn-primary {
   background: #3370ff;
@@ -709,4 +712,155 @@ html[data-qb-style="feishu-clean"] .qb-status-dot--live {
   html[data-qb-style="feishu-clean"] .qb-btn-secondary:hover:not(:disabled) {
     transform: none;
   }
+}
+
+/* ─── 简洁补丁 V2：把仍然偏深色 / 偏紫的元素拉回浅色调 ───
+ * 这部分是"补漏"：上面的规则覆盖了 CSS 类，但代码里还有些 inline style 用了
+ * CSS var fallback；这里把那些 var 在简洁主题下重新定义成浅色友好的取值。
+ */
+
+/* 1. 工作流状态徽章 & 列表左侧状态色条
+ *    旧值：rgba(127,29,29,0.30) 暗红 / rgba(133,77,14,0.25) 深棕等。
+ *    新值：飞书风的浅底 + 主色边框。
+ */
+html[data-qb-style="feishu-clean"] {
+  /* running：稳健绿 (#00B42A 是飞书的安全色) */
+  --qb-wf-status-running-fg: #0a7a26;
+  --qb-wf-status-running-border: #00b42a;
+  --qb-wf-status-running-bg: rgba(0, 180, 42, 0.1);
+
+  /* pending / awaiting_review：飞书风的 amber */
+  --qb-wf-status-pending-fg: #ad6d00;
+  --qb-wf-status-pending-border: #ff9a2e;
+  --qb-wf-status-pending-bg: rgba(255, 154, 46, 0.12);
+
+  /* completed：用主蓝（在简洁主题里所有"完成"语义都是主蓝） */
+  --qb-wf-status-done-fg: #245bff;
+  --qb-wf-status-done-border: #3370ff;
+  --qb-wf-status-done-bg: rgba(51, 112, 255, 0.1);
+
+  /* failed：飞书红 #F53F3F，但 background 拉得很淡 */
+  --qb-wf-status-failed-fg: #cb272d;
+  --qb-wf-status-failed-border: #f53f3f;
+  --qb-wf-status-failed-bg: rgba(245, 63, 63, 0.08);
+
+  /* cancelled / _default：中性灰 */
+  --qb-wf-status-cancelled-fg: #646a73;
+  --qb-wf-status-cancelled-border: #c9cdd4;
+  --qb-wf-status-cancelled-bg: rgba(31, 35, 41, 0.04);
+  --qb-wf-status-default-fg: #4e5969;
+  --qb-wf-status-default-border: #c9cdd4;
+  --qb-wf-status-default-bg: rgba(31, 35, 41, 0.04);
+
+  /* 工作流绑定会话提示语：原本是紫色 #a78bfa，在白底上对比度差 */
+  --qb-hint-accent-fg: #245bff;
+
+  /* 工作流列表 "selected"（之前是深紫 #7c3aed → 现在用主蓝 + 浅蓝底） */
+  --qb-team-screener-btn-active-bg: rgba(51, 112, 255, 0.08);
+  --qb-team-screener-btn-active-border: #3370ff;
+
+  /* 列表容器 / 头分组背景 */
+  --qb-team-input-border: #e7e9ec;
+  --qb-team-input-bg: #ffffff;
+  --qb-team-table-row-border: #e7e9ec;
+}
+
+/* 2. 侧栏品牌图标（Sparkles）：默认是 brand 紫，在简洁里应该是主蓝 */
+html[data-qb-style="feishu-clean"] .qb-nav-activity-brand {
+  color: #3370ff;
+}
+html[data-qb-style="feishu-clean"] .qb-nav-activity-brand-icon {
+  color: #3370ff;
+  filter: none;
+}
+
+/* 3. lucide 图标默认用 currentColor stroke，确保侧栏 nav 按钮里的图标
+ *    不在 active 时跟着背景一起被蓝色淹没 */
+html[data-qb-style="feishu-clean"] .qb-nav-activity-btn svg {
+  color: inherit;
+}
+
+/* 4. 拓扑画布的红/紫节点装饰色：让 hot 边走橙色（保留语义）但默认
+ *    边走主蓝（之前是深紫 #7c3aed）。已在 --qb-team-edge-* 中处理，
+ *    此处兜底 .qb-topology-canvas / svg path 颜色 */
+html[data-qb-style="feishu-clean"] .qb-team-graph-edge--default {
+  stroke: var(--qb-team-edge-fg, #c9cdd4);
+}
+html[data-qb-style="feishu-clean"] .qb-team-graph-edge--active {
+  stroke: var(--qb-team-edge-active, #3370ff);
+}
+
+/* 5. 通用 destructive 红按钮：用浅红 outline 而不是实色填充，避免冲撞
+ *    （只覆盖 outline 变体，实色 danger 保留以便危险确认） */
+html[data-qb-style="feishu-clean"] .qb-btn-danger-outline,
+html[data-qb-style="feishu-clean"] .qb-btn-destructive-outline {
+  background: #ffffff;
+  border: 1px solid #ffbab1;
+  color: #cb272d;
+  border-radius: var(--qb-radius-sm);
+}
+html[data-qb-style="feishu-clean"] .qb-btn-danger-outline:hover:not(:disabled),
+html[data-qb-style="feishu-clean"] .qb-btn-destructive-outline:hover:not(:disabled) {
+  background: #fff1f0;
+  border-color: #f53f3f;
+}
+
+/* 6. 拓扑 / 团队画布等深色背景 fallback 颜色（很多地方写了
+ *    "var(--qb-team-canvas-bg, #18181b)"，简洁主题里改成浅色） */
+html[data-qb-style="feishu-clean"] [data-qb-team-shell] *[style*="#18181b"],
+html[data-qb-style="feishu-clean"] [data-qb-team-shell] *[style*="#27272a"] {
+  /* 这条 selector 本身不能直接改 inline style，但配合具体 class 时有用；
+     作为兜底，建议用代码里改成 var() —— 这里仅作占位说明。 */
+}
+
+/* 7. 顶部 toolbar 上的 "暖橙午后" / "窗外" 标签（像素办公室主题选择器）
+ *    要跟整体浅色一致 */
+html[data-qb-style="feishu-clean"] .qb-pixel-office-toolbar {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: var(--qb-hairline);
+  color: #1f2329;
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-toolbar-label,
+html[data-qb-style="feishu-clean"] .qb-pixel-office-toolbar button {
+  color: #4e5969;
+  background: #ffffff;
+  border-color: var(--qb-hairline);
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-toolbar button.is-active {
+  color: #245bff;
+  background: rgba(51, 112, 255, 0.1);
+  border-color: #3370ff;
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-toolbar-divider {
+  background: var(--qb-hairline);
+}
+
+/* 8. 像素办公室的 legend / status / attribution 在简洁主题下也调亮 */
+html[data-qb-style="feishu-clean"] .qb-pixel-office-legend {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid var(--qb-hairline);
+  color: #4e5969;
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-legend-actions span {
+  background: var(--qb-tint);
+  color: #245bff;
+  border: 1px solid var(--qb-hairline);
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-hint {
+  color: #646a73;
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-attribution {
+  color: rgba(100, 106, 115, 0.7);
+}
+html[data-qb-style="feishu-clean"] .qb-pixel-office-status {
+  background: rgba(31, 35, 41, 0.86);
+  color: #ffffff;
+}
+
+/* 9. 操作按钮中的 muted 色调（很多地方写死 #71717a / #a1a1aa） */
+html[data-qb-style="feishu-clean"] [style*="--qb-team-meta"][style*="#71717a"],
+html[data-qb-style="feishu-clean"] [style*="--qb-team-meta"][style*="#a1a1aa"] {
+  color: #646a73;
 }
