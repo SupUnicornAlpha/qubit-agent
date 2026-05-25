@@ -15,6 +15,7 @@ import type {
 } from "../../api/types";
 import { breedForRole } from "./catAppearance";
 import { classifyInteractionKind } from "./classify";
+import { getRenderConfig } from "./config";
 import { mapGraphToOfficeEventsExtended } from "./eventMapper";
 import { ARK_PIXEL_FAMILY, ensureArkPixelLoaded } from "./fonts";
 import {
@@ -463,6 +464,18 @@ export async function createPhaserOffice(
   let sceneRef: PhaserScene | null = null;
   let themeUnsub: (() => void) | null = null;
 
+  /**
+   * Phaser 端猫精灵的最终屏幕缩放。
+   * Phaser 的 setScale 是相对 sprite 原始像素 (frameW = logicalW * spriteUnit)，
+   * 而 Canvas 渲染用 `rect.w * catScale * depthScale(depth)` 算最终像素宽度。
+   * 等价化：scale = (logicalW * catScale * d) / (logicalW * spriteUnit) = catScale / spriteUnit * d
+   * （之前是常量 `d * 2.4`，在 hd 模式下放大 ≈6 倍，导致猫巨大化。）
+   */
+  const catSpriteScale = (depth: number) => {
+    const cfg = getRenderConfig();
+    return (cfg.catScale / cfg.spriteUnit) * depthScale(depth);
+  };
+
   function ensureCatRuntime(scene: PhaserScene, n: AnalystTeamGraphNode, desk: DeskSlot) {
     let rt = state.cats.get(n.role);
     if (rt) {
@@ -473,8 +486,7 @@ export async function createPhaserOffice(
       if (rt.actor.action === "idle") {
         teleportTo(rt, desk.x, desk.y - 8);
       }
-      const d = depthScale(desk.depth);
-      rt.sprite.setScale(d * 2.4);
+      rt.sprite.setScale(catSpriteScale(desk.depth));
       return;
     }
     const breed = breedForRole(n.role);
@@ -495,7 +507,7 @@ export async function createPhaserOffice(
     };
     const sprite = scene.add.sprite(desk.x, desk.y - 8, CAT_ATLAS_KEY, catFrameName(breed, "idle"));
     sprite.setOrigin(0.5, 1);
-    sprite.setScale(depthScale(desk.depth) * 2.4);
+    sprite.setScale(catSpriteScale(desk.depth));
     sprite.setDepth(1000);
     rt = { actor, sprite, bubble: null, currentAnim: "", walkSeq: 0 };
     state.cats.set(n.role, rt);
@@ -587,8 +599,7 @@ export async function createPhaserOffice(
         const v =
           rt.actor.action === "walk" ? depthAtY(persp, rt.sprite.y) : (rt.actor.depth ?? 0.5);
         rt.actor.depth = v;
-        const d = depthScale(v);
-        rt.sprite.setScale(d * 2.4);
+        rt.sprite.setScale(catSpriteScale(v));
         rt.sprite.setDepth(1000 + Math.floor(rt.sprite.y));
         if (rt.actor.action !== "walk") {
           rt.actor.x = rt.sprite.x;
