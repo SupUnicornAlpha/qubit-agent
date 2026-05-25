@@ -684,6 +684,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       ...(definition ? { definition } : {}),
+      // ctx.workflowId 在 langgraph act 节点保证非空；落库后用于研究产出严格过滤
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       dryRun,
     });
   },
@@ -971,6 +973,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       expressions,
       topK,
       ...(horizonDays !== undefined ? { horizonDays } : {}),
+      // 落到 discovery_job.workflow_run_id；promoteCandidate 再透传到 factor.workflow_run_id
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
     });
 
     // 候选闸门：只 promote 通过 IC 阈值的
@@ -1065,6 +1069,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.seed !== undefined && typeof params.seed === "number"
         ? { seed: params.seed }
         : {}),
+      // 关联到本工作流：promoteCandidate 时把 workflowRunId 透传给 factor.register
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
     });
   },
 

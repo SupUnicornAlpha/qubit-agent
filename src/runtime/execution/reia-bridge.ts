@@ -79,6 +79,7 @@ async function resolveStrategyContext(
       versionTag: "v1",
       logicHash: "reia-bridge",
       paramSchemaJson: {},
+      workflowRunId,
     });
     version = {
       id: vid,
@@ -86,6 +87,7 @@ async function resolveStrategyContext(
       versionTag: "v1",
       logicHash: "reia-bridge",
       paramSchemaJson: {},
+      workflowRunId,
     } as typeof strategyVersion.$inferSelect;
   }
 

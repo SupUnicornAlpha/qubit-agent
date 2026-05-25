@@ -2616,6 +2616,8 @@ export interface FactorRecord {
   horizon: number;
   status: FactorStatus;
   providerKey: string;
+  /** 产出该 factor 的 workflow_run.id；NULL = IDE / REST / 历史数据 */
+  workflowRunId: string | null;
   definition: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -2673,11 +2675,18 @@ export async function listFactors(filter?: {
   projectId?: string;
   category?: FactorCategory;
   status?: FactorStatus;
+  /**
+   * 严格按工作流过滤；研究产出侧栏专用，仅显示"本工作流期间 Agent 产出"的因子。
+   * 不传则返回项目下全部（量化工坊 / 因子工坊场景）。
+   */
+  workflowRunId?: string;
 }): Promise<FactorRecord[]> {
   const qs: string[] = [];
   if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
   if (filter?.category) qs.push(`category=${encodeURIComponent(filter.category)}`);
   if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
+  if (filter?.workflowRunId)
+    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
   const q = qs.length ? `?${qs.join("&")}` : "";
   const res = await httpGet<{ ok: boolean; data: FactorRecord[] }>(`/api/v1/factors${q}`);
   return res.data;
@@ -2993,15 +3002,30 @@ export interface StrategyVersionFlatRecord {
   strategyId: string;
   versionTag: string;
   createdAt: string;
+  /** 产出该版本的 workflow_run.id；NULL = IDE / REST / 历史数据 */
+  workflowRunId: string | null;
   strategyName: string;
   strategyStyle: string;
   projectId: string;
 }
 
-export async function listStrategyVersions(projectId?: string): Promise<StrategyVersionFlatRecord[]> {
-  const url = projectId
-    ? `/api/v1/strategies/versions?project_id=${encodeURIComponent(projectId)}`
-    : `/api/v1/strategies/versions`;
+export async function listStrategyVersions(
+  filterOrProjectId?: string | { projectId?: string; workflowRunId?: string }
+): Promise<StrategyVersionFlatRecord[]> {
+  /**
+   * 兼容旧 caller 的字符串 projectId 形式（ComposerTab / BacktestStudioTab 都靠这个）。
+   * 新 caller 传 { projectId, workflowRunId } 走严格匹配，用于研究产出侧栏。
+   */
+  const filter =
+    typeof filterOrProjectId === "string" || filterOrProjectId === undefined
+      ? { projectId: filterOrProjectId }
+      : filterOrProjectId;
+
+  const qs: string[] = [];
+  if (filter.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
+  if (filter.workflowRunId)
+    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  const url = qs.length ? `/api/v1/strategies/versions?${qs.join("&")}` : `/api/v1/strategies/versions`;
   const res = await httpGet<{ ok: boolean; data: StrategyVersionFlatRecord[] }>(url);
   return res.data;
 }

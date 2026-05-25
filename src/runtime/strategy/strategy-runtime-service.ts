@@ -111,6 +111,7 @@ async function ensureStrategyVersionForScript(
     versionTag: "v1",
     logicHash: `script-${script.id.slice(0, 8)}`,
     paramSchemaJson: {},
+    workflowRunId,
   });
   return { strategyVersionId: vid, workflowRunId };
 }

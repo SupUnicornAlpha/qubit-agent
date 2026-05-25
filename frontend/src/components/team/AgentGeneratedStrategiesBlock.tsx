@@ -9,7 +9,11 @@ import {
 
 export interface AgentGeneratedStrategiesBlockProps {
   projectId: string;
-  workflowStartedAt: string;
+  /**
+   * 当前选中的工作流 ID（workflow_run.id）。
+   * - 非空：严格按 workflow_run_id 过滤
+   * - 空：组件展示「请先选择工作流」空态，不发请求
+   */
   workflowRunId: string;
   onOpenInComposer?: (version: StrategyVersionFlatRecord) => void;
   defaultOpen?: boolean;
@@ -25,19 +29,24 @@ interface StrategyRow {
 /**
  * 研究团队右侧栏 — 「Agent 生成的策略」可折叠块。
  *
- * 数据通路：
- *   1. listStrategyVersions(projectId)       → 拿当前项目下所有 strategy_version
- *   2. （仅对选中的 version）listStrategyCompositions(versionId) → 拿 composition 详情
- *   3. 客户端按 version.createdAt >= workflowStartedAt 过滤 "本工作流期间生成的"
+ * 数据契约（migration 0047 之后）：
+ *   strategy_version.workflow_run_id 在 strategy-runtime-service /
+ *   reia-bridge / native-research(version_strategy) 三条写入链路上都已落库。
+ *   这里走 `listStrategyVersions({ projectId, workflowRunId })` 严格匹配，
+ *   命中 `idx_strategy_version_workflow` 索引。
  *
  * 为什么走 version 维度而不是 composition 维度：
- *   - Agent 通过 strategy.compose / discovery.promote 写入 strategy_version
+ *   - Agent 通过 strategy.compose / discovery.promote 产出 strategy_version
  *   - 一个 version 可能对应多个 composition（不同 weight method 等），用户多选时
  *     展开看到每个 version 下的 composition 即可
+ *
+ * 与历史时间过滤方案的差异：
+ *   - 不再用 createdAt >= workflowStartedAt 做近似过滤
+ *   - 不再暴露「全部 / 仅本工作流期间」下拉
+ *   - workflow_run_id IS NULL 的存量数据直接不展示
  */
 export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProps> = ({
   projectId,
-  workflowStartedAt,
   workflowRunId,
   onOpenInComposer,
   defaultOpen = true,
@@ -46,18 +55,17 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [scope, setScope] = useState<"workflow" | "all">(workflowStartedAt ? "workflow" : "all");
   const [keyword, setKeyword] = useState("");
 
   const reload = useCallback(async () => {
-    if (!projectId) {
+    if (!projectId || !workflowRunId) {
       setRows([]);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const versions = await listStrategyVersions(projectId);
+      const versions = await listStrategyVersions({ projectId, workflowRunId });
       setRows(
         versions.map((v) => ({
           version: v,
@@ -70,7 +78,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, workflowRunId]);
 
   useEffect(() => {
     void reload();
@@ -80,20 +88,10 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
     setSelectedIds(new Set());
   }, [workflowRunId, projectId]);
 
-  useEffect(() => {
-    setScope(workflowStartedAt ? "workflow" : "all");
-  }, [workflowStartedAt]);
-
   const filtered = useMemo(() => {
-    const baselineMs =
-      scope === "workflow" && workflowStartedAt ? new Date(workflowStartedAt).getTime() : 0;
     const kw = keyword.trim().toLowerCase();
     return rows
       .filter((r) => {
-        if (baselineMs > 0) {
-          const t = new Date(r.version.createdAt).getTime();
-          if (!Number.isFinite(t) || t < baselineMs) return false;
-        }
         if (!kw) return true;
         return (
           r.version.strategyName.toLowerCase().includes(kw) ||
@@ -105,7 +103,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
         (a, b) =>
           new Date(b.version.createdAt).getTime() - new Date(a.version.createdAt).getTime()
       );
-  }, [rows, scope, workflowStartedAt, keyword]);
+  }, [rows, keyword]);
 
   const selected = useMemo(
     () => filtered.filter((r) => selectedIds.has(r.version.id)),
@@ -166,28 +164,20 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
       <summary style={styles.summary}>{summaryLabel}</summary>
       <div style={styles.body}>
         <div style={styles.toolbar}>
-          <select
-            style={styles.smallSelect}
-            value={scope}
-            onChange={(e) => setScope(e.target.value as "workflow" | "all")}
-          >
-            <option value="workflow" disabled={!workflowStartedAt}>
-              仅本工作流期间
-            </option>
-            <option value="all">全部</option>
-          </select>
+          <span style={styles.scopeHint}>仅本工作流</span>
           <input
             style={styles.searchInput}
             placeholder="按策略名 / 版本 / 风格搜索"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
+            disabled={!workflowRunId}
           />
           <button
             type="button"
             className="qb-btn-secondary"
             style={styles.refreshBtn}
             onClick={() => void reload()}
-            disabled={loading}
+            disabled={loading || !workflowRunId}
           >
             {loading ? "刷新中…" : "刷新"}
           </button>
@@ -196,11 +186,11 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
         {error ? <div style={styles.error}>{error}</div> : null}
         {!error && filtered.length === 0 ? (
           <div style={styles.empty}>
-            {projectId
-              ? scope === "workflow"
-                ? "本工作流期间还没有 Agent 生成的策略。让 Agent 调用 strategy.compose 或 discovery.promote 即可入库。"
-                : "该项目下还没有策略版本。"
-              : "请先在左侧选择项目并启动工作流。"}
+            {!projectId
+              ? "请先在左侧选择研究项目。"
+              : !workflowRunId
+                ? "请先选择或启动一个工作流；研究产出仅展示当前工作流的策略。"
+                : "本工作流暂未产出策略。让 Agent 调用 strategy.compose / discovery.promote 即可入库。"}
           </div>
         ) : null}
 
@@ -335,13 +325,14 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     flexWrap: "wrap",
   },
-  smallSelect: {
-    background: "#0a0a0c",
-    border: "1px solid #3f3f46",
-    color: "#e4e4e7",
-    borderRadius: 6,
-    padding: "4px 6px",
-    fontSize: 11,
+  scopeHint: {
+    fontSize: 10,
+    color: "#a1a1aa",
+    background: "rgba(139, 92, 246, 0.12)",
+    border: "1px solid rgba(139, 92, 246, 0.35)",
+    padding: "3px 8px",
+    borderRadius: 10,
+    flexShrink: 0,
   },
   searchInput: {
     flex: 1,

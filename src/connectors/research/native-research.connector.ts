@@ -136,6 +136,8 @@ export class QubitNativeResearchConnector extends ResearchConnector {
         exchange?: string;
         hypothesis?: string;
         projectId?: string;
+        /** act 节点统一注入；写入 factor.workflow_run_id 用于研究产出严格过滤 */
+        workflowRunId?: string;
       };
       const symbol = String(p.symbol ?? "").trim();
       const factors = await this.computeFactors({
@@ -152,6 +154,7 @@ export class QubitNativeResearchConnector extends ResearchConnector {
           name: factors.factorName,
           category: "momentum",
           definitionJson: { hypothesis: p.hypothesis ?? "", ic: factors.ic },
+          workflowRunId: p.workflowRunId?.trim() || null,
         });
       }
       return {
@@ -168,6 +171,8 @@ export class QubitNativeResearchConnector extends ResearchConnector {
         versionTag?: string;
         params?: Record<string, unknown>;
         code?: string;
+        /** act 节点统一注入；写入 strategy_version.workflow_run_id */
+        workflowRunId?: string;
       };
       const db = await getDb();
       const projectId = String(p.projectId ?? "").trim();
@@ -191,6 +196,7 @@ export class QubitNativeResearchConnector extends ResearchConnector {
         versionTag: String(p.versionTag ?? "v1"),
         logicHash,
         paramSchemaJson: p.params ?? {},
+        workflowRunId: p.workflowRunId?.trim() || null,
       });
       return { strategyId, versionId, logicHash } as unknown as TOutput;
     }

@@ -269,6 +269,11 @@ export class DiscoveryService {
       horizon: job.input.horizonDays ?? 5,
       status: body.status ?? "draft",
       providerKey: "qlib_expr",
+      /**
+       * 把发起 discovery 时记下的 workflow_run.id 透传给 factor，使前端「研究产出」
+       * 侧栏能严格按工作流过滤。NULL → discovery 是脚本 / API 触发的，没有 workflow。
+       */
+      ...(job.workflowRunId ? { workflowRunId: job.workflowRunId } : {}),
       definition: {
         promotedFrom: {
           discoveryJobId: jobId,

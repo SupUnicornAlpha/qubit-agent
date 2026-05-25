@@ -23,7 +23,12 @@ function asError(e: unknown) {
   return { ok: false, code: "internal_error", error: (e as Error).message } as const;
 }
 
-/** GET /api/v1/factors?project_id=&category=&status= */
+/**
+ * GET /api/v1/factors?project_id=&category=&status=&workflow_run_id=
+ *
+ * `workflow_run_id` 用于研究产出侧栏严格按"本工作流"过滤，避免历史 / manual 产物串栏。
+ * 命中 `idx_factor_definition_project_workflow` covering index（migration 0047）。
+ */
 factorRouter.get("/", async (c) => {
   try {
     const data = await factorService.list({
@@ -33,6 +38,9 @@ factorRouter.get("/", async (c) => {
         : {}),
       ...(c.req.query("status")
         ? { status: c.req.query("status") as FactorStatus }
+        : {}),
+      ...(c.req.query("workflow_run_id")
+        ? { workflowRunId: c.req.query("workflow_run_id")! }
         : {}),
     });
     return c.json({ ok: true, data });
@@ -64,6 +72,7 @@ factorRouter.post("/", async (c) => {
       horizon?: number;
       status?: FactorStatus;
       providerKey?: string;
+      workflowRunId?: string;
       definition?: Record<string, unknown>;
     }>();
     const data = await factorService.register({
@@ -76,6 +85,7 @@ factorRouter.post("/", async (c) => {
       ...(body.horizon !== undefined ? { horizon: body.horizon } : {}),
       ...(body.status ? { status: body.status } : {}),
       ...(body.providerKey ? { providerKey: body.providerKey } : {}),
+      ...(body.workflowRunId ? { workflowRunId: body.workflowRunId } : {}),
       ...(body.definition ? { definition: body.definition } : {}),
     });
     return c.json({ ok: true, data });

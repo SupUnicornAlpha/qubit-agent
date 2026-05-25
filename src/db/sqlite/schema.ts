@@ -845,6 +845,12 @@ export const strategyVersion = sqliteTable("strategy_version", {
   versionTag: text("version_tag").notNull(),
   logicHash: text("logic_hash").notNull(),
   paramSchemaJson: text("param_schema_json", { mode: "json" }).notNull(),
+  /**
+   * 产出该 strategy_version 的 workflow_run.id；nullable 保留给 IDE / REST API /
+   * 历史数据（M8 之前的产物没有 workflow 上下文）。
+   * 用于研究产出侧栏严格按"本工作流"过滤；详见 migration 0047。
+   */
+  workflowRunId: text("workflow_run_id"),
   createdAt: createdAt(),
 });
 
@@ -875,6 +881,12 @@ export const factorDefinition = sqliteTable("factor_definition", {
     .default("draft"),
   /** 计算用 Provider key（factor_compute kind），ProviderResolver 解析时使用 */
   providerKey: text("provider_key").notNull().default("python_inline"),
+  /**
+   * 产出该 factor 的 workflow_run.id；nullable 保留给 IDE / REST API / 历史数据
+   * （M8 之前的产物没有 workflow 上下文）。
+   * 用于研究产出侧栏严格按"本工作流"过滤；详见 migration 0047。
+   */
+  workflowRunId: text("workflow_run_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

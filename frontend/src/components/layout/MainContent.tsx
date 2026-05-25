@@ -6955,9 +6955,6 @@ const TeamDashboardPanel: FC = () => {
 
           <AgentGeneratedFactorsBlock
             projectId={teamResearchProjectId}
-            workflowStartedAt={
-              typeof selectedWorkflowRow?.createdAt === "string" ? selectedWorkflowRow.createdAt : ""
-            }
             workflowRunId={workflowRunId}
             onOpenInWorkbench={() => {
               setActiveView("quant");
@@ -6967,9 +6964,6 @@ const TeamDashboardPanel: FC = () => {
 
           <AgentGeneratedStrategiesBlock
             projectId={teamResearchProjectId}
-            workflowStartedAt={
-              typeof selectedWorkflowRow?.createdAt === "string" ? selectedWorkflowRow.createdAt : ""
-            }
             workflowRunId={workflowRunId}
             onOpenInComposer={() => {
               setActiveView("quant");

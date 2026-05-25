@@ -5,7 +5,7 @@
  */
 
 import { Hono } from "hono";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import { strategy as strategyTable, strategyVersion as strategyVersionTable } from "../db/sqlite/schema";
 
@@ -53,39 +53,43 @@ strategyRouter.get("/", async (c) => {
 });
 
 /**
- * GET /api/v1/strategies/versions?project_id=
+ * GET /api/v1/strategies/versions?project_id=&workflow_run_id=
  *
  * 扁平 list strategy_version + 关联 strategy.name，便于前端单层下拉。
+ *
+ * `workflow_run_id` 用于研究产出侧栏严格按"本工作流"过滤；命中
+ * `idx_strategy_version_workflow`（migration 0047）。
  */
 strategyRouter.get("/versions", async (c) => {
   try {
     const db = await getDb();
     const projectId = c.req.query("project_id");
-    const rows = projectId
+    const workflowRunId = c.req.query("workflow_run_id");
+
+    const baseSelect = {
+      id: strategyVersionTable.id,
+      strategyId: strategyVersionTable.strategyId,
+      versionTag: strategyVersionTable.versionTag,
+      createdAt: strategyVersionTable.createdAt,
+      workflowRunId: strategyVersionTable.workflowRunId,
+      strategyName: strategyTable.name,
+      strategyStyle: strategyTable.style,
+      projectId: strategyTable.projectId,
+    };
+
+    const conds = [];
+    if (projectId) conds.push(eq(strategyTable.projectId, projectId));
+    if (workflowRunId) conds.push(eq(strategyVersionTable.workflowRunId, workflowRunId));
+
+    const rows = conds.length
       ? await db
-          .select({
-            id: strategyVersionTable.id,
-            strategyId: strategyVersionTable.strategyId,
-            versionTag: strategyVersionTable.versionTag,
-            createdAt: strategyVersionTable.createdAt,
-            strategyName: strategyTable.name,
-            strategyStyle: strategyTable.style,
-            projectId: strategyTable.projectId,
-          })
+          .select(baseSelect)
           .from(strategyVersionTable)
           .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
-          .where(eq(strategyTable.projectId, projectId))
+          .where(conds.length === 1 ? conds[0] : and(...conds))
           .orderBy(desc(strategyVersionTable.createdAt))
       : await db
-          .select({
-            id: strategyVersionTable.id,
-            strategyId: strategyVersionTable.strategyId,
-            versionTag: strategyVersionTable.versionTag,
-            createdAt: strategyVersionTable.createdAt,
-            strategyName: strategyTable.name,
-            strategyStyle: strategyTable.style,
-            projectId: strategyTable.projectId,
-          })
+          .select(baseSelect)
           .from(strategyVersionTable)
           .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
           .orderBy(desc(strategyVersionTable.createdAt));

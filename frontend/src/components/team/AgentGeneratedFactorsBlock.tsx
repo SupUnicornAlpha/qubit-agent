@@ -5,9 +5,11 @@ import { listFactors, type FactorRecord } from "../../api/backend";
 export interface AgentGeneratedFactorsBlockProps {
   /** 当前研究项目 ID（teamResearchProjectId）。空字符串则不拉取。 */
   projectId: string;
-  /** 当前 workflow 启动时间 ISO 字符串；非空时默认开启"仅本工作流期间"过滤。 */
-  workflowStartedAt: string;
-  /** 当前 workflowRunId，仅用于副作用 key（切换 workflow 时重置选中）。 */
+  /**
+   * 当前选中的工作流 ID（workflow_run.id）。
+   * - 非空：严格按 workflow_run_id 过滤，仅显示本工作流期间 Agent 产出的因子
+   * - 空：组件展示「请先选择工作流」空态，不发请求
+   */
   workflowRunId: string;
   /** 点击单条因子时的跳转回调，例如打开量化工坊的因子工坊 tab 并定位到该因子。 */
   onOpenInWorkbench?: (factor: FactorRecord) => void;
@@ -18,14 +20,20 @@ export interface AgentGeneratedFactorsBlockProps {
 /**
  * 研究团队右侧栏 — 「Agent 生成的因子」可折叠块。
  *
- * 数据通路（M8 当前不动 schema 的最小落地方案）：
- *   listFactors({ projectId })  → 客户端按 createdAt >= workflowStartedAt 过滤
- * 后续如果给 factor / strategy 表加上 workflow_run_id 字段，可在 listFactors 加 filter，
- * 这层组件无需改动。
+ * 数据契约（migration 0047 之后）：
+ *   factor_definition.workflow_run_id 在 builtin tools / discovery.promote /
+ *   native-research.connector 三条 Agent 写入链路上都由 act 节点透传 ctx.workflowId
+ *   写入。这里走 `listFactors({ projectId, workflowRunId })` 严格匹配，命中
+ *   `idx_factor_definition_project_workflow` 索引。
+ *
+ * 与历史时间过滤方案的差异：
+ *   - 不再用 createdAt >= workflowStartedAt 做近似过滤（并发 workflow 会串栏）
+ *   - 不再暴露「全部 / 仅本工作流期间」下拉：本侧栏的语义就是「本工作流产物」，
+ *     想看项目全量请去量化工坊 → 因子工坊
+ *   - workflow_run_id IS NULL 的存量 / IDE 注册因子直接不展示，避免误导
  */
 export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = ({
   projectId,
-  workflowStartedAt,
   workflowRunId,
   onOpenInWorkbench,
   defaultOpen = true,
@@ -34,25 +42,24 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [scope, setScope] = useState<"workflow" | "all">(workflowStartedAt ? "workflow" : "all");
   const [keyword, setKeyword] = useState("");
 
   const reload = useCallback(async () => {
-    if (!projectId) {
+    if (!projectId || !workflowRunId) {
       setFactors([]);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const rows = await listFactors({ projectId });
+      const rows = await listFactors({ projectId, workflowRunId });
       setFactors(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, workflowRunId]);
 
   useEffect(() => {
     void reload();
@@ -62,20 +69,10 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
     setSelectedIds(new Set());
   }, [workflowRunId, projectId]);
 
-  useEffect(() => {
-    setScope(workflowStartedAt ? "workflow" : "all");
-  }, [workflowStartedAt]);
-
   const filtered = useMemo(() => {
-    const baselineMs =
-      scope === "workflow" && workflowStartedAt ? new Date(workflowStartedAt).getTime() : 0;
     const kw = keyword.trim().toLowerCase();
     return factors
       .filter((f) => {
-        if (baselineMs > 0) {
-          const t = new Date(f.createdAt).getTime();
-          if (!Number.isFinite(t) || t < baselineMs) return false;
-        }
         if (!kw) return true;
         return (
           f.name.toLowerCase().includes(kw) ||
@@ -84,7 +81,7 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
         );
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [factors, scope, workflowStartedAt, keyword]);
+  }, [factors, keyword]);
 
   const selected = useMemo(
     () => filtered.filter((f) => selectedIds.has(f.id)),
@@ -109,28 +106,20 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
       <summary style={styles.summary}>{summaryLabel}</summary>
       <div style={styles.body}>
         <div style={styles.toolbar}>
-          <select
-            style={styles.smallSelect}
-            value={scope}
-            onChange={(e) => setScope(e.target.value as "workflow" | "all")}
-          >
-            <option value="workflow" disabled={!workflowStartedAt}>
-              仅本工作流期间
-            </option>
-            <option value="all">全部</option>
-          </select>
+          <span style={styles.scopeHint}>仅本工作流</span>
           <input
             style={styles.searchInput}
             placeholder="按名称 / 表达式 / 类别搜索"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
+            disabled={!workflowRunId}
           />
           <button
             type="button"
             className="qb-btn-secondary"
             style={styles.refreshBtn}
             onClick={() => void reload()}
-            disabled={loading}
+            disabled={loading || !workflowRunId}
           >
             {loading ? "刷新中…" : "刷新"}
           </button>
@@ -139,11 +128,11 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
         {error ? <div style={styles.error}>{error}</div> : null}
         {!error && filtered.length === 0 ? (
           <div style={styles.empty}>
-            {projectId
-              ? scope === "workflow"
-                ? "本工作流期间还没有 Agent 生成的因子。让 Agent 调用 factor.register 或 discovery.promote 即可入库。"
-                : "该项目下还没有因子。"
-              : "请先在左侧选择项目并启动工作流。"}
+            {!projectId
+              ? "请先在左侧选择研究项目。"
+              : !workflowRunId
+                ? "请先选择或启动一个工作流；研究产出仅展示当前工作流的因子。"
+                : "本工作流暂未产出因子。让 Agent 调用 factor.register / discovery.promote 即可入库。"}
           </div>
         ) : null}
 
@@ -272,13 +261,14 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     flexWrap: "wrap",
   },
-  smallSelect: {
-    background: "#0a0a0c",
-    border: "1px solid #3f3f46",
-    color: "#e4e4e7",
-    borderRadius: 6,
-    padding: "4px 6px",
-    fontSize: 11,
+  scopeHint: {
+    fontSize: 10,
+    color: "#a1a1aa",
+    background: "rgba(59, 130, 246, 0.12)",
+    border: "1px solid rgba(59, 130, 246, 0.35)",
+    padding: "3px 8px",
+    borderRadius: 10,
+    flexShrink: 0,
   },
   searchInput: {
     flex: 1,

@@ -53,6 +53,12 @@ export interface FactorRegisterInput {
   horizon?: number;
   status?: FactorStatus;
   providerKey?: string;
+  /**
+   * 产出该 factor 的 workflow_run.id；走 builtin tool / discovery 链路时由 act 节点
+   * 透传 ctx.workflowId。IDE / REST 直接调用可不传（会落 NULL）。
+   * 落库后用于研究产出侧栏严格按"本工作流"过滤，避免历史 / manual 产物串栏。
+   */
+  workflowRunId?: string | null;
   /** 任意补充元数据（写入 definition_json） */
   definition?: Record<string, unknown>;
   /**
@@ -82,6 +88,8 @@ export interface FactorRecord {
   horizon: number;
   status: FactorStatus;
   providerKey: string;
+  /** 来源 workflow_run.id；NULL = IDE / REST / 历史数据 */
+  workflowRunId: string | null;
   definition: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -214,6 +222,7 @@ export class FactorService {
     // 通过 dry-run 后默认进入 draft 池（让上游评估器决定何时 promote 到 active）；
     // 用户显式传 status 时尊重用户输入
     const status: FactorStatus = input.status ?? "draft";
+    const workflowRunId = input.workflowRunId?.trim() || null;
     await db.insert(factorDefTable).values({
       id,
       projectId: input.projectId,
@@ -230,6 +239,7 @@ export class FactorService {
       horizon: input.horizon ?? 5,
       status,
       providerKey,
+      workflowRunId,
     });
 
     return this.get(id);
@@ -343,13 +353,21 @@ export class FactorService {
   }
 
   async list(
-    filter: { projectId?: string; category?: FactorCategory; status?: FactorStatus } = {}
+    filter: {
+      projectId?: string;
+      category?: FactorCategory;
+      status?: FactorStatus;
+      /** 严格按工作流过滤；命中 (project_id, workflow_run_id) 索引，详见 migration 0047 */
+      workflowRunId?: string;
+    } = {}
   ): Promise<FactorRecord[]> {
     const db = await getDb();
     const conds = [];
     if (filter.projectId) conds.push(eq(factorDefTable.projectId, filter.projectId));
     if (filter.category) conds.push(eq(factorDefTable.category, filter.category));
     if (filter.status) conds.push(eq(factorDefTable.status, filter.status));
+    if (filter.workflowRunId)
+      conds.push(eq(factorDefTable.workflowRunId, filter.workflowRunId));
 
     const rows = conds.length
       ? await db
@@ -637,6 +655,7 @@ export class FactorService {
       horizon: r.horizon,
       status: r.status,
       providerKey: r.providerKey,
+      workflowRunId: r.workflowRunId ?? null,
       definition: (r.definitionJson as Record<string, unknown>) ?? {},
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,

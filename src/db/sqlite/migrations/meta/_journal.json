@@ -323,6 +323,13 @@
       "when": 1777352410000,
       "tag": "0046_analyst_research_job",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1777352420000,
+      "tag": "0047_factor_strategy_workflow_run",
+      "breakpoints": true
     }
   ]
 }
