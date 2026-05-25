@@ -73,7 +73,7 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
     { kind: "llm", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["run_analyst_team", "queryBars", "newsBrief"],
+    builtinTools: ["run_analyst_team", "fetch_bars", "fetch_news"],
     connectors: ["qubit-data", "qubit-news", "qubit-research"],
     mcpServers: [],
     defaultParams: {},
@@ -120,7 +120,7 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
     { kind: "llm", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["queryBars", "runSmaBacktest"],
+    builtinTools: ["fetch_bars", "run_backtest"],
     connectors: ["qubit-data", "qubit-backtest", "qubit-risk"],
     mcpServers: [],
     defaultParams: {},
@@ -253,7 +253,7 @@ export const RULE_RESEARCH_SCENARIO: ResearchScenarioSpec = {
     { kind: "llm", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["rule.register", "rule.evaluate", "factor.query"],
+    builtinTools: ["rule.register", "rule.evaluate", "factor.list"],
     connectors: ["qubit-research"],
     mcpServers: [],
     defaultParams: {},
@@ -304,7 +304,7 @@ export const STOCK_SCREENING_SCENARIO: ResearchScenarioSpec = {
     { kind: "market_data", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["factor.query", "rule.evaluate", "runStockScreener"],
+    builtinTools: ["factor.list", "rule.evaluate", "run_screener"],
     connectors: ["qubit-data", "qubit-research"],
     mcpServers: [],
     defaultParams: {},
@@ -355,7 +355,9 @@ export const RISK_REVIEW_SCENARIO: ResearchScenarioSpec = {
     { kind: "llm", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["rule.register", "rule.evaluate", "queryAuditLog"],
+    // NOTE: 暂无专门的「读取审计日志」builtin；用 load_rules 读当前规则配置代替
+    // TODO: 后续如需 audit log 检索，新增 audit.query builtin（参考 builtin-tools.ts）
+    builtinTools: ["rule.register", "rule.evaluate", "load_rules"],
     connectors: ["qubit-risk"],
     mcpServers: [],
     defaultParams: {},
@@ -413,7 +415,10 @@ export const PORTFOLIO_MANAGEMENT_SCENARIO: ResearchScenarioSpec = {
     { kind: "backtest", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["portfolio.optimize", "portfolio.rebalance", "factor.query"],
+    // NOTE: portfolio.optimize / portfolio.rebalance 尚未实装（FACTOR_RULE_STRATEGY_DESIGN.md §3.6 / P3）
+    // 过渡：先用 compute_factors 看暴露 + run_backtest 跑历史；factor.list 选可用因子
+    // TODO: P3 落地后切回 portfolio.optimize / portfolio.rebalance
+    builtinTools: ["factor.list", "compute_factors", "run_backtest"],
     connectors: ["qubit-research", "qubit-backtest"],
     mcpServers: [],
     defaultParams: {},
@@ -480,7 +485,16 @@ export const DISCOVERY_SCENARIO: ResearchScenarioSpec = {
     { kind: "backtest", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["factor.mine.llm", "rule.mine.llm", "discovery.evolve"],
+    // M4 已实装：discovery.run（alpha101 模板 / factor_gp 符号回归）+ discovery.promote
+    // P0-4 增补：factor.mine.llm（LLM 一次产 N 个 + 评估闸门）
+    // rule.mine.llm / discovery.evolve 留待 P3
+    builtinTools: [
+      "factor.mine.llm",
+      "discovery.run",
+      "discovery.promote",
+      "factor.evaluate.batch",
+      "backtest.run",
+    ],
     connectors: ["qubit-research", "qubit-backtest"],
     mcpServers: [],
     defaultParams: {},
@@ -541,7 +555,8 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
     { kind: "rule_engine", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["broker.placeOrder", "broker.cancelOrder", "broker.getPositions", "rule.evaluate"],
+    // 走 qubit-broker connector：submit_order / cancel_order / get_fills（tool-routes.ts）
+    builtinTools: ["submit_order", "cancel_order", "get_fills", "rule.evaluate"],
     connectors: ["qubit-broker", "qubit-risk"],
     mcpServers: [],
     defaultParams: {},
@@ -592,7 +607,7 @@ export const POSTMORTEM_SCENARIO: ResearchScenarioSpec = {
     { kind: "llm", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["factor.query", "queryFills", "queryBars"],
+    builtinTools: ["factor.list", "get_fills", "fetch_bars"],
     connectors: ["qubit-data", "qubit-research"],
     mcpServers: [],
     defaultParams: {},
@@ -649,7 +664,7 @@ export const NEWS_EVENT_RADAR_SCENARIO: ResearchScenarioSpec = {
     { kind: "llm", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["newsBrief", "queryBars"],
+    builtinTools: ["fetch_news", "fetch_bars"],
     connectors: ["qubit-news", "qubit-data"],
     mcpServers: [],
     defaultParams: {},

@@ -313,6 +313,33 @@ src/runtime/gene/gene-pool.ts: 当前只演化 4 个固定权重
 
 再之上才是 Best-of-N、Critic 节点、gene-pool 升级这种更系统化的改造（P2 / P3 / P4）。
 
+### 6.1 实施记录（2026-05-25 闭环）
+
+下表记录第六章 5 项 P0 任务的落地状态、关键变更点和单元测试覆盖。**全部 90/90 测试通过**。
+
+| # | 任务 | 状态 | 关键变更 | 单测 |
+|---|------|------|----------|------|
+| 1 | scenarios-seed 工具名对齐 | ✅ | analyst_debate / strategy_authoring / rule_research / stock_screening / risk_review / portfolio_management / discovery / live_trading / postmortem / news_event_radar 中 11 处"不存在的工具名"全部替换为 builtin/connector 真实注册名（如 `queryBars`→`fetch_bars`、`broker.placeOrder`→`submit_order`、`factor.query`→`factor.list`）；`portfolio.optimize`/`portfolio.rebalance` 标 TODO 待 P3 | 新增 `tool-preset-contract.test.ts`（11 个场景的契约测试，未来再脱钩会直接 fail） |
+| 2 | factor.register dry-run 闸门 | ✅ | `FactorRegisterInput.dryRun` 新字段；`runRegistrationDryRun` 用合成 GBM 序列 + qlib-expr parser/evaluator 离线跑表达式，拒绝 parse_error / insufficient_values / degenerate_constant；builtin tool `factor.register` 默认开启 dryRun（Agent 路径强制） | 4 条新增：dry-run pass / parse-error reject / 常数表达式 reject / 非 qlib_expr 跳过 |
+| 3 | strategy-composer 真接 IC 权重 | ✅ | `computeWeights` 改为 async；`rank_ic_weighted` / `ic_ir_weighted` 从 `factor_evaluation` 取每个因子最近一次 `rankIc` / `ir`，按 \|metric\| 归一化；**所有因子缺评估 → 直接抛 `validation_failed`**（不再 silently 退到 equal）；全为 0 才退 equal 并 console.warn | 3 条新增：缺评估 reject / 部分缺值按 0 / 全 0 退 equal |
+| 4 | factor.mine.llm 新工具 | ✅ | `DiscoveryService` 解锁 `factor_llm` kind + 新增 `expressions[]` 字段 + `runLlm()`（复用 `loadPriceData`+`evaluateOne`）；builtin tool `factor.mine.llm` 强制 `expressions.length >= min_count`（默认 5）、跑 IC、按 `ic_threshold`（默认 0.02）自动 promote 为 draft 因子并保留 lineage；注册到 `tool-catalog` + `discovery` scenario | 6 条新增：discovery 层 3 条（happy / 空 expressions reject / 语法错混合）+ builtin 层 3 条（min_count / 缺 symbols / 端到端 promote） |
+| 5 | ReAct 解析层 sentinel + 重试 | ✅ | `tool-call-format` 引入 `<TOOL_CALL>…</TOOL_CALL>` sentinel 作为首选格式（解析优先级最高，取最后一个），fenced JSON 取最后含 `"tool"` 的块作为 fallback；`reason.ts` 在 LLM 第一轮返回 `parse_error` 时**单次重试**（带"上一轮无法解析"提示），可由 `QUBIT_REASON_RETRY_DISABLED=1` 关闭，重试用量计入 `parseRetryUsed` meta | 3 条新增：sentinel 优先 / sentinel none / 多 fenced 取最后含 tool 字段 |
+
+#### 关键累积效应
+
+- **闸门 ×2**：P0-2（register dry-run）+ P0-4（mine.llm IC 阈值）= Agent 生成的"垃圾因子"在入库前两道闸门拦截
+- **权重透明**：P0-3 + UI（如未来加 weight provenance）= 用户可解释"为什么这个因子权重是 0.42"
+- **格式收敛**：P0-1（工具名）+ P0-5（sentinel）= "LLM 在 prompt → tool call 之间走丢"的概率显著降低
+
+#### 后续观测点（建议接入 Datadog 监控）
+
+| Metric | 数据源 | 期望趋势 |
+|--------|--------|----------|
+| `agent.reason.parse_retry_count` | `reason.ts` meta.parseRetryUsed | 上线后短期可能↑（监控 LLM 输出质量），稳定后应↓ |
+| `factor.register.dry_run_reject_rate` | `FactorServiceError.code=validation_failed` + `dry_run_failed` 前缀 | 上线后应快速上升再回落（早期挡掉烂表达式 → 后期 LLM 学会生成更好的） |
+| `factor.mine.llm.promote_rate` | tool 返回的 `promoted_count / requested` | 持续 > 0.2 视为健康 |
+| `strategy.composer.weight_method_distribution` | composition 落库时的 weightMethod 字段 | `rank_ic_weighted` / `ic_ir_weighted` 占比上升说明 Agent 真的在用 IC 信息 |
+
 ---
 
 ## 七、相关代码地图

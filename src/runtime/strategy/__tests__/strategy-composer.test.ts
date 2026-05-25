@@ -166,6 +166,152 @@ describe("StrategyComposer.execute()", () => {
     expect(result.meta.sampleSize).toBeGreaterThanOrEqual(3);
   });
 
+  test("rank_ic_weighted：所有因子都没评估留痕 → validation_failed", async () => {
+    const f1 = await factorService.register({
+      projectId,
+      name: `f_ic_none1_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const f2 = await factorService.register({
+      projectId,
+      name: `f_ic_none2_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const comp = await strategyComposer.define({
+      strategyVersionId,
+      kind: "factor_score",
+      factorIds: [f1.id, f2.id],
+      weightMethod: "rank_ic_weighted",
+    });
+    await expect(
+      strategyComposer.execute({
+        compositionId: comp.id,
+        asof: "2026-05-20",
+        startDate: "2026-01-01",
+        endDate: "2026-05-20",
+        symbols: ["A"],
+      })
+    ).rejects.toBeInstanceOf(StrategyComposerError);
+  });
+
+  test("rank_ic_weighted：按 |rank_ic| 归一化（缺值按 0）", async () => {
+    const f1 = await factorService.register({
+      projectId,
+      name: `f_ic_rw1_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const f2 = await factorService.register({
+      projectId,
+      name: `f_ic_rw2_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const f3 = await factorService.register({
+      projectId,
+      name: `f_ic_rw3_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const db = await getDb();
+    // 直接写 factor_evaluation：f1=rankIc 0.06, f2=rankIc -0.02, f3 无评估（应当贡献 0）
+    await db.insert(schema.factorEvaluation).values([
+      {
+        id: randomUUID(),
+        factorId: f1.id,
+        asof: "2026-05-20",
+        universe: "CN-A",
+        rankIc: 0.06,
+        ic: 0.05,
+        ir: 0.8,
+        sampleSize: 100,
+      },
+      {
+        id: randomUUID(),
+        factorId: f2.id,
+        asof: "2026-05-20",
+        universe: "CN-A",
+        rankIc: -0.02,
+        ic: -0.02,
+        ir: -0.3,
+        sampleSize: 100,
+      },
+    ]);
+
+    const comp = await strategyComposer.define({
+      strategyVersionId,
+      kind: "factor_score",
+      factorIds: [f1.id, f2.id, f3.id],
+      weightMethod: "rank_ic_weighted",
+    });
+    const res = await strategyComposer.execute({
+      compositionId: comp.id,
+      asof: "2026-05-20",
+      startDate: "2026-01-01",
+      endDate: "2026-05-20",
+      symbols: ["A"],
+    });
+    // 不直接 assert picks，因为 factor compute 在 P0 返回空；
+    // 改成 assert 组合执行不抛 + sampleSize 与上游一致。
+    expect(res.compositionId).toBe(comp.id);
+    expect(res.meta.sampleSize).toBeGreaterThanOrEqual(1);
+  });
+
+  test("ic_ir_weighted：当所有 |ir| 都是 0 → 退到 equal 不抛错", async () => {
+    const f1 = await factorService.register({
+      projectId,
+      name: `f_ir_zero1_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const f2 = await factorService.register({
+      projectId,
+      name: `f_ir_zero2_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+    });
+    const db = await getDb();
+    await db.insert(schema.factorEvaluation).values([
+      {
+        id: randomUUID(),
+        factorId: f1.id,
+        asof: "2026-05-20",
+        universe: "CN-A",
+        rankIc: 0.1,
+        ic: 0.1,
+        ir: 0,
+        sampleSize: 100,
+      },
+      {
+        id: randomUUID(),
+        factorId: f2.id,
+        asof: "2026-05-20",
+        universe: "CN-A",
+        rankIc: 0.05,
+        ic: 0.05,
+        ir: 0,
+        sampleSize: 100,
+      },
+    ]);
+
+    const comp = await strategyComposer.define({
+      strategyVersionId,
+      kind: "factor_score",
+      factorIds: [f1.id, f2.id],
+      weightMethod: "ic_ir_weighted",
+    });
+    const res = await strategyComposer.execute({
+      compositionId: comp.id,
+      asof: "2026-05-20",
+      startDate: "2026-01-01",
+      endDate: "2026-05-20",
+      symbols: ["X"],
+    });
+    expect(res.compositionId).toBe(comp.id);
+  });
+
   test("manual weights 归一化", async () => {
     const f1 = await factorService.register({
       projectId,

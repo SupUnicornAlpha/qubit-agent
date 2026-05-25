@@ -188,6 +188,11 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
       "提交并运行因子挖掘任务（factor_alpha101 模板 / factor_gp 符号回归 / 其他 kind），返回候选 + IC 评估",
     category: "research",
   },
+  "factor.mine.llm": {
+    description:
+      "LLM 一次性产 N 个 qlib_expr 因子表达式 + 内置评估闸门：传 expressions[] (>=min_count，默认 5) → 跑 IC → 取 top_k → 自动 promote |IC|≥ic_threshold(默认 0.02) 的为 draft 因子。返回 job_id + top_candidates + promoted。详见 AGENT_STABILITY_REVIEW.md §四-P0-4。",
+    category: "research",
+  },
   "discovery.promote": {
     description:
       "把挖掘出的候选表达式 promote 为项目下正式 factor_definition（保留 lineage 到 discovery_job）",

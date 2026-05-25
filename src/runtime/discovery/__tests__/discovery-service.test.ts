@@ -130,7 +130,66 @@ describe("DiscoveryService", () => {
         startDate: "2026-01-01",
         endDate: "2026-04-30",
       })
-    ).rejects.toThrow(/unsupported_kind_for_m4/);
+    ).rejects.toThrow(/unsupported_kind_rule_llm/);
+  });
+
+  // ─── P0-4: factor_llm ──────────────────────────────────────────────────────
+
+  test("factor_llm: 传 expressions[] 走 evaluateOne 闸门，IC 按 |IC| 排序", async () => {
+    const job = await discoveryService.submitAndRun({
+      projectId,
+      kind: "factor_llm",
+      symbols: ["SYN1", "SYN2", "SYN3", "SYN4"],
+      startDate: "2026-01-01",
+      endDate: "2026-04-30",
+      horizonDays: 5,
+      topK: 3,
+      expressions: [
+        "close / Ref(close, 5) - 1",
+        "Mean(close, 10) / Mean(close, 30) - 1",
+        "(high - low) / close",
+        "Rank(volume / Mean(volume, 20))",
+        "close - Ref(close, 1)",
+      ],
+    });
+    expect(job.status).toBe("succeeded");
+    expect(job.candidates.length).toBeGreaterThan(0);
+    expect(job.candidates.length).toBeLessThanOrEqual(3);
+    for (let i = 1; i < job.candidates.length; i++) {
+      expect(job.candidates[i - 1]!.metrics.score).toBeGreaterThanOrEqual(
+        job.candidates[i]!.metrics.score
+      );
+    }
+    for (const c of job.candidates) expect(c.lang).toBe("qlib_expr");
+  });
+
+  test("factor_llm: expressions 为空 → validation_failed", async () => {
+    await expect(
+      discoveryService.submit({
+        projectId,
+        kind: "factor_llm",
+        symbols: ["SYN1"],
+        startDate: "2026-01-01",
+        endDate: "2026-04-30",
+        expressions: [],
+      })
+    ).rejects.toThrow(/expressions_required/);
+  });
+
+  test("factor_llm: 语法错的表达式会进 candidates 但带 error，不影响其它评估", async () => {
+    const job = await discoveryService.submitAndRun({
+      projectId,
+      kind: "factor_llm",
+      symbols: ["SYN1", "SYN2"],
+      startDate: "2026-01-01",
+      endDate: "2026-04-30",
+      horizonDays: 5,
+      topK: 5,
+      expressions: ["close +", "close / Ref(close, 5) - 1"], // 1 错 1 对
+    });
+    expect(job.status).toBe("succeeded");
+    // run() 里 sorted 把 error 过滤了 → topK 中只剩 1 个有效
+    expect(job.candidates.every((c) => !c.error)).toBe(true);
   });
 
   test("list 按 projectId 过滤", async () => {

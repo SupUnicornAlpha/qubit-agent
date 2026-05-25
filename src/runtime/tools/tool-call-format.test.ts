@@ -40,6 +40,56 @@ describe("parseToolCallFromReason", () => {
     expect(r.kind).toBe("parse_error");
   });
 
+  test("优先匹配 <TOOL_CALL> sentinel（即便前面有示例 fenced JSON 也不被误抓）", () => {
+    const r = parseToolCallFromReason(
+      [
+        "我先想一下…例如可以这样调用：",
+        "```json",
+        '{"tool":"fetch_klines","params":{"symbol":"OLD"}}',
+        "```",
+        "实际本轮决定：",
+        "<TOOL_CALL>",
+        '{"tool":"fetch_klines","params":{"symbol":"NEW","limit":30}}',
+        "</TOOL_CALL>",
+      ].join("\n"),
+      tools
+    );
+    expect(r.kind).toBe("tool");
+    if (r.kind === "tool") {
+      expect(r.toolName).toBe("fetch_klines");
+      expect(r.params["symbol"]).toBe("NEW");
+    }
+  });
+
+  test("sentinel 内 tool=none 也能解析", () => {
+    const r = parseToolCallFromReason(
+      "结论清楚，不需要工具。\n<TOOL_CALL>\n{\"tool\":\"none\",\"summary\":\"已答\"}\n</TOOL_CALL>",
+      tools
+    );
+    expect(r.kind).toBe("none");
+  });
+
+  test("多个 fenced JSON 时取最后一个含 tool 字段的（修复示例 JSON 优先级 bug）", () => {
+    const r = parseToolCallFromReason(
+      [
+        "可以参考这个示例：",
+        "```json",
+        '{"explanation":"only示例","x":1}',
+        "```",
+        "我决定调用：",
+        "```json",
+        '{"tool":"fetch_klines","params":{"symbol":"600519"}}',
+        "```",
+      ].join("\n"),
+      tools
+    );
+    expect(r.kind).toBe("tool");
+    if (r.kind === "tool") {
+      expect(r.toolName).toBe("fetch_klines");
+      expect(r.params["symbol"]).toBe("600519");
+    }
+  });
+
   test("parses call_mcp", () => {
     const r = parseToolCallFromReason(
       '```json\n{"tool":"call_mcp","params":{"serverName":"mathjs","mcpTool":"add","arguments":{"a":1,"b":2}}}\n```',
@@ -62,6 +112,12 @@ describe("buildAgentToolsPromptBlock", () => {
     expect(block).toContain("fetch_klines");
     expect(block).toContain("call_mcp");
     expect(block).toContain("mathjs");
+  });
+
+  test("提示中包含 <TOOL_CALL> sentinel 首选格式", () => {
+    const block = buildAgentToolsPromptBlock({ tools: ["fetch_klines"] });
+    expect(block).toContain("<TOOL_CALL>");
+    expect(block).toContain("</TOOL_CALL>");
   });
 });
 

@@ -650,6 +650,28 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       definitionRaw && typeof definitionRaw === "object" && !Array.isArray(definitionRaw)
         ? (definitionRaw as Record<string, unknown>)
         : undefined;
+    /**
+     * P0-2: Agent 触发的因子注册默认启用 dry-run 闸门（详见 AGENT_STABILITY_REVIEW.md §四-P0-2）。
+     * - LLM 显式传 dry_run=false / 0 / "off" 时可关闭（仅供 IDE / 调试场景；不建议生产路径关）
+     * - 自定义阈值：dry_run = { minRows: 20, minVariance: 1e-10 }
+     */
+    const dryRunParam = params.dry_run ?? params.dryRun;
+    let dryRun: boolean | { minRows?: number; minVariance?: number } = true;
+    if (dryRunParam === false || dryRunParam === "false" || dryRunParam === 0 || dryRunParam === "off") {
+      dryRun = false;
+    } else if (
+      dryRunParam &&
+      typeof dryRunParam === "object" &&
+      !Array.isArray(dryRunParam)
+    ) {
+      const cfg: { minRows?: number; minVariance?: number } = {};
+      const dr = dryRunParam as Record<string, unknown>;
+      if (dr.min_rows !== undefined) cfg.minRows = Number(dr.min_rows);
+      if (dr.minRows !== undefined) cfg.minRows = Number(dr.minRows);
+      if (dr.min_variance !== undefined) cfg.minVariance = Number(dr.min_variance);
+      if (dr.minVariance !== undefined) cfg.minVariance = Number(dr.minVariance);
+      dryRun = cfg;
+    }
     return factorService.register({
       projectId,
       name: String(params.name ?? "").trim(),
@@ -661,6 +683,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       ...(definition ? { definition } : {}),
+      dryRun,
     });
   },
 
@@ -881,6 +904,141 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
           sortedByRankIc.length > 0 ? sortedByRankIc[sortedByRankIc.length - 1]!.factor_id : null,
       },
       results: items,
+    };
+  },
+
+  /**
+   * factor.mine.llm —— P0-4：LLM 一次产 N 个 + 内置评估闸门
+   *
+   * 详见 docs/AGENT_STABILITY_REVIEW.md §四-P0-4
+   *
+   * 工作流：
+   *   1. 接收 LLM 在 reason 节点一次性生成的 `expressions: string[]`（>= min_count，默认 5）
+   *   2. 走 discoveryService(kind=factor_llm)：合成 / 真实数据 → 算每个的 IC + RankIC
+   *   3. 按 |IC| 排序，取 top_k（默认 5）
+   *   4. 若 `auto_promote=true`（默认 true）：把 |IC| >= ic_threshold（默认 0.02）的候选自动注册为
+   *      项目下 `draft` 因子（带 lineage，走 factor.register 同一通道，保留 dry-run 闸门）
+   *   5. 返回 jobId + candidates + promoted（包含失败原因，便于 LLM 下一轮调整表达式）
+   *
+   * 关键稳定性保证：
+   *   - expressions.length < min_count → reject（强制 LLM 多产，避免"一次只敢产 1 个但选不到好的"）
+   *   - 所有候选 |IC| 都低于阈值 → 仍返回 candidates 但 promoted=0 + warning，让 LLM 重产
+   *   - 失败候选（parse/insufficient/error）也回传，**不**计入 promote
+   */
+  "factor.mine.llm": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("factor.mine.llm: project_id is required");
+
+    const exprsRaw = params.expressions;
+    const expressions = Array.isArray(exprsRaw)
+      ? exprsRaw.map((e) => String(e ?? "").trim()).filter(Boolean)
+      : [];
+    const minCount = Number(params.min_count ?? 5);
+    if (expressions.length < minCount) {
+      throw new Error(
+        `factor.mine.llm: expressions.length(${expressions.length}) < min_count(${minCount}); ` +
+          "一次至少产" + minCount + "个 qlib_expr 表达式以充分利用评估闸门"
+      );
+    }
+
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (symbols.length === 0) throw new Error("factor.mine.llm: symbols is required");
+
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.mine.llm: start_date and end_date are required");
+    }
+
+    const topK = Number(params.top_k ?? 5);
+    const horizonDays =
+      params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
+    const icThreshold = Number(params.ic_threshold ?? 0.02);
+    const autoPromote = params.auto_promote === false ? false : true;
+    const namePrefix = String(params.name_prefix ?? "llm_mined").trim() || "llm_mined";
+    const category = (params.category ? String(params.category) : "momentum") as FactorCategory;
+
+    const job = await discoveryService.submitAndRun({
+      projectId,
+      kind: "factor_llm",
+      symbols,
+      startDate,
+      endDate,
+      expressions,
+      topK,
+      ...(horizonDays !== undefined ? { horizonDays } : {}),
+    });
+
+    // 候选闸门：只 promote 通过 IC 阈值的
+    const eligible = job.candidates.filter(
+      (c) => !c.error && Math.abs(c.metrics.ic) >= icThreshold
+    );
+
+    const promoted: Array<{
+      candidate_id: string;
+      factor_id: string;
+      name: string;
+      ic: number;
+      rank_ic: number;
+    }> = [];
+    const promote_errors: Array<{ candidate_id: string; error: string }> = [];
+
+    if (autoPromote) {
+      const ts = Date.now().toString(36);
+      for (let i = 0; i < eligible.length; i++) {
+        const cand = eligible[i]!;
+        const factorName = `${namePrefix}_${ts}_${i + 1}`;
+        try {
+          const rec = await discoveryService.promoteCandidate(job.id, cand.id, {
+            name: factorName,
+            category,
+            status: "draft",
+          });
+          promoted.push({
+            candidate_id: cand.id,
+            factor_id: rec.id,
+            name: rec.name,
+            ic: cand.metrics.ic,
+            rank_ic: cand.metrics.rankIc,
+          });
+        } catch (e) {
+          promote_errors.push({
+            candidate_id: cand.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      job_id: job.id,
+      requested: expressions.length,
+      evaluated: job.candidates.length,
+      eligible: eligible.length,
+      promoted_count: promoted.length,
+      ic_threshold: icThreshold,
+      top_candidates: job.candidates.slice(0, topK).map((c) => ({
+        candidate_id: c.id,
+        expr: c.expr,
+        ic: c.metrics.ic,
+        rank_ic: c.metrics.rankIc,
+        sample_size: c.metrics.sampleSize,
+        score: c.metrics.score,
+        ...(c.error ? { error: c.error } : {}),
+      })),
+      promoted,
+      ...(promote_errors.length > 0 ? { promote_errors } : {}),
+      ...(eligible.length === 0
+        ? {
+            warning:
+              `no_candidate_passed_ic_threshold(${icThreshold}); ` +
+              "建议：(1) 检查表达式是否过于简单 (2) 降低 ic_threshold (3) 让 LLM 重新生成一组",
+          }
+        : {}),
     };
   },
 

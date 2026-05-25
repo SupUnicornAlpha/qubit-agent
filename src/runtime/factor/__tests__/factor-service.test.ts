@@ -177,4 +177,66 @@ describe("FactorService", () => {
     expect(rec.lang).toBe("qlib_expr");
     expect(rec.providerKey).toBe("qlib_expr");
   });
+
+  // ─── P0-2: dry-run 闸门 ────────────────────────────────────────────────────
+
+  test("dry-run pass: 正常 qlib_expr 表达式注册成功，definition.dryRun.ok=true", async () => {
+    const rec = await factorService.register({
+      projectId,
+      name: `dr_pass_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close / Ref(close, 20) - 1",
+      lang: "qlib_expr",
+      dryRun: true,
+    });
+    expect(rec.id).toBeTruthy();
+    const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;
+    expect(dr).toBeTruthy();
+    expect(dr?.["ok"]).toBe(true);
+    expect(typeof dr?.["sampleSize"]).toBe("number");
+  });
+
+  test("dry-run reject: 语法错的表达式被拒（不入库）", async () => {
+    const name = `dr_synerr_${randomUUID().slice(0, 6)}`;
+    await expect(
+      factorService.register({
+        projectId,
+        name,
+        category: "momentum",
+        expr: "close +",
+        lang: "qlib_expr",
+        dryRun: true,
+      })
+    ).rejects.toThrow(/dry_run_failed: parse_error/);
+    const after = await factorService.list({ projectId });
+    expect(after.some((f) => f.name === name)).toBe(false);
+  });
+
+  test("dry-run reject: 表达式退化为常数 → degenerate_constant 被拒", async () => {
+    // close / close == 1，恒为常数
+    await expect(
+      factorService.register({
+        projectId,
+        name: `dr_const_${randomUUID().slice(0, 6)}`,
+        category: "momentum",
+        expr: "close / close",
+        lang: "qlib_expr",
+        dryRun: true,
+      })
+    ).rejects.toThrow(/dry_run_failed: degenerate_constant/);
+  });
+
+  test("dry-run skipped: lang=python（非 qlib_expr）走 lang_unsupported 路径，注册仍成功", async () => {
+    const rec = await factorService.register({
+      projectId,
+      name: `dr_skip_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "anything",
+      lang: "python",
+      dryRun: true,
+    });
+    const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;
+    expect(dr?.["skipped"]).toBe(true);
+    expect(String(dr?.["reason"] ?? "")).toContain("lang_unsupported");
+  });
 });

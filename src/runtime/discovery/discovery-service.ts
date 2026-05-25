@@ -67,6 +67,11 @@ export interface DiscoverySubmitInput {
   candidateCount?: number;
   /** kind=factor_gp 时：seed */
   seed?: number;
+  /**
+   * kind=factor_llm 时：由 LLM 一次性产出的 qlib_expr 表达式列表
+   * 详见 AGENT_STABILITY_REVIEW.md §四-P0-4
+   */
+  expressions?: string[];
   /** workflow 关联 */
   workflowRunId?: string;
 }
@@ -119,11 +124,21 @@ export class DiscoveryService {
     if (!input.symbols || input.symbols.length === 0) {
       throw new DiscoveryError("validation_failed", "symbols_required");
     }
-    if (input.kind !== "factor_alpha101" && input.kind !== "factor_gp") {
+    const supported: DiscoveryKind[] = ["factor_alpha101", "factor_gp", "factor_llm"];
+    if (!supported.includes(input.kind)) {
       throw new DiscoveryError(
         "validation_failed",
-        `unsupported_kind_for_m4_${input.kind}; M4 只支持 factor_alpha101 / factor_gp`
+        `unsupported_kind_${input.kind}; 当前支持: ${supported.join(" / ")}`
       );
+    }
+    if (input.kind === "factor_llm") {
+      const exprs = (input.expressions ?? []).map((e) => String(e ?? "").trim()).filter(Boolean);
+      if (exprs.length === 0) {
+        throw new DiscoveryError(
+          "validation_failed",
+          "expressions_required: factor_llm 至少需要 1 个 qlib_expr 表达式"
+        );
+      }
     }
     const id = randomUUID();
     const db = await getDb();
@@ -154,6 +169,8 @@ export class DiscoveryService {
         candidates = await this.runAlpha101(job.input);
       } else if (job.kind === "factor_gp") {
         candidates = await this.runGp(job.input);
+      } else if (job.kind === "factor_llm") {
+        candidates = await this.runLlm(job.input);
       } else {
         throw new DiscoveryError("validation_failed", `unsupported_kind_${job.kind}`);
       }
@@ -296,6 +313,36 @@ export class DiscoveryService {
         evaluator
       );
       out.push(cand);
+    }
+    return out;
+  }
+
+  /**
+   * P0-4: LLM 一次性产出 N 个表达式 → 内置评估闸门
+   *
+   * 与 alpha101 / gp 共享 loadPriceData + evaluateOne，所以同样有：
+   *   - dry-run（在 evaluateOne 里：parse 失败 / 全 NaN / sampleSize<10 → 候选自带 error）
+   *   - IC 评估（合成或真实数据，按 |IC| 排序，run() 里 topK 截断）
+   *
+   * 调用方（builtin tool `factor.mine.llm`）负责把 LLM 的输出 split 成 expressions[]。
+   */
+  private async runLlm(input: DiscoverySubmitInput): Promise<DiscoveryCandidate[]> {
+    const seriesBySymbol = await this.loadPriceData(input);
+    const evaluator = await this.resolveEvaluator();
+    const exprs = (input.expressions ?? [])
+      .map((e) => String(e ?? "").trim())
+      .filter(Boolean);
+    const out: DiscoveryCandidate[] = [];
+    let idx = 0;
+    for (const expr of exprs) {
+      out.push(
+        await this.evaluateOne(
+          { id: `llm_${idx++}`, expr, description: "LLM candidate" },
+          seriesBySymbol,
+          input.horizonDays ?? 5,
+          evaluator
+        )
+      );
     }
     return out;
   }

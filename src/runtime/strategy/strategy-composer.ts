@@ -13,9 +13,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
+  factorEvaluation as factorEvalTable,
   strategyComposition as compositionTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
@@ -208,8 +209,8 @@ export class StrategyComposer {
       for (const s of input.symbols) factorContext[s] ??= {};
     }
 
-    // 2. 决定权重
-    const weights = this.computeWeights(comp, factorMeta);
+    // 2. 决定权重（rank_ic_weighted / ic_ir_weighted 会真查 factor_evaluation）
+    const weights = await this.computeWeights(comp, factorMeta);
 
     // 3. 跑规则：拿到每个规则的 per-symbol 结果
     const ruleByName = new Map<string, Record<string, { passed: boolean; score?: number }>>();
@@ -304,15 +305,30 @@ export class StrategyComposer {
 
   // ── private ──
 
-  private computeWeights(
+  /**
+   * 计算因子权重。支持四种 `weightMethod`：
+   *   - `equal`：等权
+   *   - `manual`：用户在 `params.factorWeights` 指定，按绝对值归一化
+   *   - `rank_ic_weighted`：从 `factor_evaluation` 取每个因子最近一次的 `rank_ic`，按 |rank_ic| 归一化
+   *   - `ic_ir_weighted`：同上，但用 `ir`
+   *
+   * 重要：当 `rank_ic_weighted` / `ic_ir_weighted` 时——
+   *   - **所有因子都没评估记录** → 抛 `validation_failed`（之前会 silently 退到 equal，导致 Agent
+   *     声明"我用 IC 加权"但实际行为完全等同 equal，不可复现）
+   *   - 部分因子缺评估 → 缺值按 0；只用有评估的因子做权重分配
+   *   - 全部评估都为 0 → 退到 equal，并 console.warn 提示
+   */
+  private async computeWeights(
     comp: CompositionRecord,
     factorMeta: Map<string, { name: string; weight: number }>
-  ): Record<string, number> {
+  ): Promise<Record<string, number>> {
     const out: Record<string, number> = {};
     const ids = comp.factorIds;
     if (ids.length === 0) return out;
 
-    if (comp.weightMethod === "manual") {
+    const method = comp.weightMethod;
+
+    if (method === "manual") {
       const manual = (comp.params["factorWeights"] as Record<string, number>) ?? {};
       let total = 0;
       for (const fid of ids) {
@@ -327,9 +343,79 @@ export class StrategyComposer {
       return out;
     }
 
-    // P0 阶段：rank_ic_weighted / ic_ir_weighted 暂回退到 equal（待 P1 接 factor_evaluation 自动权重）
+    if (method === "rank_ic_weighted" || method === "ic_ir_weighted") {
+      return this.computeIcWeights(ids, method);
+    }
+
+    if (method === "equal") {
+      const equal = 1 / ids.length;
+      for (const fid of ids) out[fid] = equal;
+      return out;
+    }
+
+    throw new StrategyComposerError(
+      "validation_failed",
+      `unknown_weight_method: ${method as string}; 支持 equal / manual / rank_ic_weighted / ic_ir_weighted`
+    );
+  }
+
+  /** 从 factor_evaluation 拉每个因子最近一次的指标，按 |metric| 归一化 */
+  private async computeIcWeights(
+    ids: string[],
+    method: "rank_ic_weighted" | "ic_ir_weighted"
+  ): Promise<Record<string, number>> {
+    const db = await getDb();
+    const metricKey = method === "rank_ic_weighted" ? "rankIc" : "ir";
+
+    const rows = await db
+      .select({
+        factorId: factorEvalTable.factorId,
+        rankIc: factorEvalTable.rankIc,
+        ir: factorEvalTable.ir,
+        asof: factorEvalTable.asof,
+      })
+      .from(factorEvalTable)
+      .where(inArray(factorEvalTable.factorId, ids))
+      .orderBy(desc(factorEvalTable.asof));
+
+    // 每个 factorId 取最近一条
+    const latest = new Map<string, number>();
+    for (const r of rows) {
+      if (latest.has(r.factorId)) continue;
+      const v = r[metricKey];
+      latest.set(
+        r.factorId,
+        typeof v === "number" && Number.isFinite(v) ? Math.abs(v) : 0
+      );
+    }
+
+    if (latest.size === 0) {
+      throw new StrategyComposerError(
+        "validation_failed",
+        `${method}_no_factor_evaluation: 所有因子都没有 factor_evaluation 留痕，无法用 IC 权重；` +
+          `请先调 factor.evaluate / factor.autoEvaluate，或切回 weight_method=equal`
+      );
+    }
+
+    const out: Record<string, number> = {};
+    let total = 0;
+    for (const id of ids) {
+      const w = latest.get(id) ?? 0;
+      out[id] = w;
+      total += w;
+    }
+
+    if (total > 0) {
+      for (const id of ids) out[id] = (out[id] ?? 0) / total;
+      return out;
+    }
+
+    // 全部为 0：退到 equal 并发警告，便于 Agent 监控
+    console.warn(
+      `[StrategyComposer] weight_method=${method} 但所有因子最近一次评估指标都为 0；退到 equal 权重`
+    );
     const equal = 1 / ids.length;
-    for (const fid of ids) out[fid] = equal;
+    for (const id of ids) out[id] = equal;
     return out;
   }
 

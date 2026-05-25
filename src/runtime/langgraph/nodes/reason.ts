@@ -9,7 +9,7 @@ import {
 } from "../../agent/agent-pack-service";
 import { resolveLlmForAgent, invokeWithFallback } from "../../llm/llm-router";
 import type { LlmTokenUsage } from "../../llm/gateway";
-import { assembleAgentSystemPrompt } from "../../tools/tool-call-format";
+import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { resolveEnabledMcpServerNames } from "../../mcp/resolve-enabled-mcp-servers";
@@ -17,12 +17,18 @@ import { skillService, renderSkillsBlockForPrompt } from "../../skills/skill-ser
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 export interface ReasonStepMeta {
-  /** Wall-clock latency of the LLM round-trip (including streaming). */
+  /** Wall-clock latency of the LLM round-trip (including streaming and any retry). */
   latencyMs: number;
   /** Token usage reported by provider (or estimated for mock). */
   usage?: LlmTokenUsage;
   /** True when the primary model failed and the call was retried via default. */
   fallbackUsed: boolean;
+  /**
+   * True when the first LLM round produced an unparsable tool-call block and we
+   * re-prompted once with a strict instruction to use `<TOOL_CALL>…</TOOL_CALL>`.
+   * 由 QUBIT_REASON_RETRY_DISABLED=1 关闭。
+   */
+  parseRetryUsed?: boolean;
 }
 
 export interface ReasonNodeOutput {
@@ -110,6 +116,7 @@ export async function reasonNode(
   const modelConfig = resolved.config;
   let answer = "";
   let modelFallbackUsed = false;
+  let parseRetryUsed = false;
   let usage: LlmTokenUsage | undefined;
   // 兜底：当 LLM 抛错时 gateway 返回不到 latency，这里以节点入口为起点。
   const nodeStartedAt = Date.now();
@@ -236,6 +243,80 @@ export async function reasonNode(
           `${llmResult.modelUsed.provider}:${llmResult.modelUsed.model}`
       );
     }
+
+    // P0-5: 解析失败时单次重试。仅当本轮真有可调用工具，且解析器认为
+    // 输出"既不是合法工具调用、也不是合法 none"时才触发，避免无意义的重调。
+    if (hasTools && process.env.QUBIT_REASON_RETRY_DISABLED !== "1") {
+      const parsed = parseToolCallFromReason(answer, tools);
+      if (parsed.kind === "parse_error") {
+        const retryStartedAt = Date.now();
+        const retryUserPrompt = [
+          userPrompt,
+          "",
+          "---",
+          "**上一轮你的输出无法被解析为合法工具调用**：",
+          `> ${parsed.message}`,
+          "",
+          "请**严格**按以下格式重写整段回复（分析文字 + 末尾**唯一一个** <TOOL_CALL> 块）：",
+          "",
+          "<TOOL_CALL>",
+          '{"tool":"<工具名 或 none>","params":{...}}',
+          "</TOOL_CALL>",
+          "",
+          "不要再使用任何其他格式（包括 ```json``` fenced 代码块），不要附带多个 JSON。",
+        ].join("\n");
+
+        try {
+          const retryResult = await invokeWithFallback(modelConfig, {
+            systemPrompt,
+            userPrompt: retryUserPrompt,
+            onToken: (token) => {
+              emit({
+                runId: state.runId,
+                workflowId: state.workflowId,
+                traceId: state.traceId,
+                role: state.agentDefinition.role,
+                type: "token",
+                stepIndex: state.iteration,
+                ts: Date.now(),
+                payload: { token, provider: modelConfig.provider, model: modelConfig.model, retry: true },
+              });
+            },
+          });
+          // 仅当重试解析得动才接受；否则保留原 answer，把决定权交给 act 节点报 parse_error
+          const retriedParsed = parseToolCallFromReason(retryResult.answer, tools);
+          if (retriedParsed.kind !== "parse_error") {
+            answer = retryResult.answer;
+            parseRetryUsed = true;
+            // 累加 latency / usage（保持观测口径与单次调用一致）
+            measuredLatencyMs += Date.now() - retryStartedAt;
+            if (retryResult.usage && usage) {
+              usage = {
+                promptTokens: (usage.promptTokens ?? 0) + (retryResult.usage.promptTokens ?? 0),
+                completionTokens:
+                  (usage.completionTokens ?? 0) + (retryResult.usage.completionTokens ?? 0),
+                totalTokens: (usage.totalTokens ?? 0) + (retryResult.usage.totalTokens ?? 0),
+              };
+            } else if (retryResult.usage) {
+              usage = retryResult.usage;
+            }
+            console.log(
+              `[reason] agent ${state.agentDefinition.role} parse-retry succeeded ` +
+                `(orig parse_error → retried OK)`
+            );
+          } else {
+            console.warn(
+              `[reason] agent ${state.agentDefinition.role} parse-retry also failed: ${retriedParsed.message}`
+            );
+          }
+        } catch (retryErr) {
+          console.warn(
+            `[reason] agent ${state.agentDefinition.role} parse-retry threw: ` +
+              (retryErr instanceof Error ? retryErr.message : String(retryErr))
+          );
+        }
+      }
+    }
   } catch (error) {
     const fallback = `LLM gateway error: ${(error as Error).message}`;
     for (const token of fallback.split(/\s+/).filter(Boolean)) {
@@ -264,6 +345,7 @@ export async function reasonNode(
       latencyMs: measuredLatencyMs,
       ...(usage ? { usage } : {}),
       fallbackUsed: modelFallbackUsed,
+      ...(parseRetryUsed ? { parseRetryUsed } : {}),
     },
   };
 }

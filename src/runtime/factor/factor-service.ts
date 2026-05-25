@@ -31,6 +31,11 @@ import type {
 } from "../provider/types";
 import { factorValueStore } from "./factor-value-store";
 import { queryBarsRange } from "../market/klines-query";
+import { parse as parseQlibExpr } from "../provider/impls/factor/qlib-expr/parser";
+import {
+  evalExpr as evalQlibExpr,
+  type PriceSeries,
+} from "../provider/impls/factor/qlib-expr/evaluator";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -50,6 +55,20 @@ export interface FactorRegisterInput {
   providerKey?: string;
   /** 任意补充元数据（写入 definition_json） */
   definition?: Record<string, unknown>;
+  /**
+   * P0-2: 注册前 dry-run 闸门（详见 AGENT_STABILITY_REVIEW.md §四-P0-2）
+   *
+   * - `false` / 未传：跳过 dry-run（向后兼容；脚本/API/IDE 路径默认行为）
+   * - `true` 或对象：注册前在合成 GBM 数据上跑一遍表达式，
+   *   - 抛错 / 返回行 < `minRows`（默认 10）/ 全 NaN / 方差 < `minVariance`（默认 1e-12）
+   *     → 拒绝注册（抛 validation_failed）
+   *   - 通过：注册成功；除非显式传 `status`，否则**强制**为 `draft`，由后续 evaluate 决定是否 active
+   *
+   * Agent 触发的注册（`builtin-tools.factor.register`）默认开启，避免无效因子污染 `factor_definition` 表。
+   *
+   * **注意**：dry-run 当前仅对 `lang='qlib_expr'` 真正执行；其他 lang 的 dry-run 会被跳过并写一条 warning 元数据。
+   */
+  dryRun?: boolean | { minRows?: number; minVariance?: number };
 }
 
 export interface FactorRecord {
@@ -168,8 +187,33 @@ export class FactorService {
       // Provider 不可达不阻塞注册：保留 draft 让 UI 提示
     }
 
+    // P0-2: 强制 dry-run 闸门
+    let dryRunMeta: Record<string, unknown> | undefined;
+    if (input.dryRun) {
+      const opts =
+        typeof input.dryRun === "object"
+          ? input.dryRun
+          : ({} as { minRows?: number; minVariance?: number });
+      const dryRunResult = this.runRegistrationDryRun(input.expr, lang, opts);
+      if (!dryRunResult.ok) {
+        throw new FactorServiceError(
+          "validation_failed",
+          `dry_run_failed: ${dryRunResult.reason}`,
+          { expr: input.expr, lang, ...dryRunResult.detail }
+        );
+      }
+      dryRunMeta = {
+        dryRun: {
+          ok: true,
+          ...dryRunResult.detail,
+        },
+      };
+    }
+
     const id = randomUUID();
-    const now = new Date().toISOString();
+    // 通过 dry-run 后默认进入 draft 池（让上游评估器决定何时 promote 到 active）；
+    // 用户显式传 status 时尊重用户输入
+    const status: FactorStatus = input.status ?? "draft";
     await db.insert(factorDefTable).values({
       id,
       projectId: input.projectId,
@@ -178,16 +222,112 @@ export class FactorService {
       definitionJson: {
         ...(input.definition ?? {}),
         ...(providerHint.error ? { providerValidationWarning: providerHint.error } : {}),
+        ...(dryRunMeta ?? {}),
       },
       expr: input.expr,
       lang,
       universe: input.universe ?? "CN-A",
       horizon: input.horizon ?? 5,
-      status: input.status ?? "draft",
+      status,
       providerKey,
     });
 
     return this.get(id);
+  }
+
+  /**
+   * 注册前 dry-run：在合成 GBM 序列上跑一遍表达式，验证可执行性 + 区分度
+   *
+   * - `qlib_expr` lang：用内置 parser+evaluator 真跑（不依赖任何外部数据源 / Provider）
+   * - 其他 lang：当前跳过（在 detail 里写明 reason=lang_unsupported）
+   *
+   * 检查项（按顺序短路）：
+   *   1. 语法解析失败 → `parse_error`
+   *   2. 评估抛错 → `eval_error`
+   *   3. 有限值行数 < `minRows`（默认 10）→ `insufficient_values`
+   *   4. 全常数（方差 < `minVariance`，默认 1e-12）→ `degenerate_constant`
+   */
+  private runRegistrationDryRun(
+    expr: string,
+    lang: FactorLang,
+    opts: { minRows?: number; minVariance?: number }
+  ):
+    | { ok: true; detail: Record<string, unknown> }
+    | { ok: false; reason: string; detail?: Record<string, unknown> } {
+    const minRows = opts.minRows ?? 10;
+    const minVariance = opts.minVariance ?? 1e-12;
+
+    if (lang !== "qlib_expr") {
+      return {
+        ok: true,
+        detail: { skipped: true, reason: `lang_unsupported_for_dry_run:${lang}` },
+      };
+    }
+
+    let ast;
+    try {
+      ast = parseQlibExpr(expr);
+    } catch (e) {
+      return { ok: false, reason: `parse_error: ${(e as Error).message}` };
+    }
+
+    const symbols = ["__DR_A__", "__DR_B__", "__DR_C__"];
+    const finiteCounts: number[] = [];
+    const flatValues: number[] = [];
+
+    for (const sym of symbols) {
+      const series = synthGbmSeries(sym, 90);
+      let factorSeries: Array<number | null>;
+      try {
+        factorSeries = evalQlibExpr(ast, series);
+      } catch (e) {
+        return {
+          ok: false,
+          reason: `eval_error: ${(e as Error).message}`,
+          detail: { symbol: sym },
+        };
+      }
+      let n = 0;
+      for (const v of factorSeries) {
+        if (typeof v === "number" && Number.isFinite(v)) {
+          flatValues.push(v);
+          n++;
+        }
+      }
+      finiteCounts.push(n);
+    }
+
+    if (flatValues.length < minRows) {
+      return {
+        ok: false,
+        reason: "insufficient_values",
+        detail: { finiteValues: flatValues.length, minRows, perSymbol: finiteCounts },
+      };
+    }
+
+    // 方差检查：所有 dry-run symbol 合并后的值方差必须 > minVariance（否则因子完全无区分度）
+    let sum = 0;
+    for (const v of flatValues) sum += v;
+    const mean = sum / flatValues.length;
+    let sse = 0;
+    for (const v of flatValues) sse += (v - mean) * (v - mean);
+    const variance = sse / flatValues.length;
+    if (variance < minVariance) {
+      return {
+        ok: false,
+        reason: "degenerate_constant",
+        detail: { variance, minVariance, sampleSize: flatValues.length },
+      };
+    }
+
+    return {
+      ok: true,
+      detail: {
+        sampleSize: flatValues.length,
+        variance: Number(variance.toFixed(8)),
+        perSymbolFiniteCounts: finiteCounts,
+      },
+    };
   }
 
   async get(id: string): Promise<FactorRecord> {
@@ -505,3 +645,46 @@ export class FactorService {
 }
 
 export const factorService = new FactorService();
+
+/**
+ * 合成 GBM 价格序列（90 天默认），用于 register 时的 dry-run。
+ * 与 discovery-service.synthesizeBars 同构（seed 基于 symbol 字符串哈希，确保可重复）。
+ * 仅产出 OHLCV 字段，不模拟停牌、涨跌停、复权。
+ */
+function synthGbmSeries(symbol: string, days: number): PriceSeries {
+  const n = Math.max(40, days);
+  let seed = 0;
+  for (const c of symbol) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x1_0000_0000;
+  };
+  let px = 50 + (seed % 80);
+  const open: number[] = [];
+  const high: number[] = [];
+  const low: number[] = [];
+  const close: number[] = [];
+  const volume: number[] = [];
+  const turnover: number[] = [];
+  const vwap: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const ret = (rand() - 0.5) * 0.04;
+    const o = px;
+    px = Math.max(1, px * (1 + ret));
+    const c = px;
+    const h = Math.max(o, c) * (1 + rand() * 0.01);
+    const l = Math.min(o, c) * (1 - rand() * 0.01);
+    const v = 1_000_000 * (0.5 + rand());
+    open.push(o);
+    high.push(h);
+    low.push(l);
+    close.push(c);
+    volume.push(v);
+    turnover.push(v * c);
+    vwap.push(c);
+  }
+  return {
+    length: n,
+    fields: { open, high, low, close, volume, turnover, vwap },
+  };
+}

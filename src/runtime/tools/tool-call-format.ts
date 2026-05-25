@@ -29,18 +29,23 @@ export function buildAgentToolsPromptBlock(params: {
   const catalog = getToolCatalogMap();
   const lines: string[] = [
     "## 可用工具（本轮已授权）",
-    "若需要拉取数据、回测、派单或风控，**必须**在回复末尾输出且仅输出一个 JSON 代码块，格式如下：",
+    "回复末尾必须输出**且仅输出一个**工具调用块。**首选** sentinel 格式（最稳）：",
+    "<TOOL_CALL>",
+    '{"tool":"<工具名>","params":{...}}',
+    "</TOOL_CALL>",
+    "也接受 fenced JSON 作为兼容格式（解析器会先找 sentinel）：",
     "```json",
     '{"tool":"<工具名>","params":{...}}',
     "```",
     "若仅需文字结论、无需调用任何工具，输出：",
-    "```json",
+    "<TOOL_CALL>",
     '{"tool":"none","summary":"一句话说明为何不需要工具"}',
-    "```",
+    "</TOOL_CALL>",
     "规则：",
     "- `tool` 必须是下列「工具名」之一，或 `none`；不要使用未列出的名称。",
     "- `params` 为对象；需要标的时传 `symbol` 或 `ticker`，需要工作流时传 `workflowRunId`。",
     "- 不要编造工具执行结果；未调用工具前不得声称「已回测/已拉取行情」。",
+    "- 一次只能调用一个工具；多个工具调用请分多轮。",
     "",
   ];
 
@@ -90,12 +95,31 @@ export function assembleAgentSystemPrompt(
   return { full, toolsBlock };
 }
 
+/**
+ * 提取工具调用 JSON。优先级（高→低）：
+ *   1. `<TOOL_CALL>…</TOOL_CALL>` sentinel —— 取**最后一个**，最稳，不会与 reasoning 中
+ *      的示例 JSON 冲突
+ *   2. fenced ```json …``` —— 取**最后一个**含 `"tool"` 的代码块
+ *   3. 启发式：扫描所有 `{…}`，取最后一个含 `"tool"` 的（兼容老模型）
+ *
+ * 注意：取 last 而非 first，是因为模型常先写示例再写真正的调用。
+ */
 function extractJsonToolBlock(text: string): string | null {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) {
-    const inner = fenced[1].trim();
-    if (inner.startsWith("{")) return inner;
+  // 1. sentinel
+  const sentinels = [...text.matchAll(/<TOOL_CALL>\s*([\s\S]*?)\s*<\/TOOL_CALL>/gi)];
+  if (sentinels.length > 0) {
+    const inner = sentinels[sentinels.length - 1][1]?.trim();
+    if (inner && inner.startsWith("{")) return inner;
   }
+
+  // 2. fenced —— 取最后一个含 "tool" 的
+  const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
+  for (let i = fences.length - 1; i >= 0; i--) {
+    const inner = fences[i][1]?.trim();
+    if (inner && inner.startsWith("{") && inner.includes('"tool"')) return inner;
+  }
+
+  // 3. 启发式
   const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
   for (let i = matches.length - 1; i >= 0; i--) {
     const candidate = matches[i][0];
