@@ -15,7 +15,7 @@ describe("fetchWithTimeout", () => {
      */
     const original = globalThis.fetch;
     try {
-      globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      globalThis.fetch = (async (_input: unknown, _init?: RequestInit) => {
         return new Response("ok", { status: 200 });
       }) as typeof fetch;
       const res = await fetchWithTimeout("https://example.test/x");
@@ -30,7 +30,7 @@ describe("fetchWithTimeout", () => {
     const original = globalThis.fetch;
     try {
       /** mock fetch 永远不返回 —— 模拟 TCP 挂起；靠 signal abort 触发 reject */
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
         return new Promise((_, reject) => {
           init?.signal?.addEventListener("abort", () => {
             const err = new Error("aborted");
@@ -51,7 +51,7 @@ describe("fetchWithTimeout", () => {
   test("外部 AbortSignal 也能触发 abort（保留原 reason）", async () => {
     const original = globalThis.fetch;
     try {
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      globalThis.fetch = ((_input: unknown, init?: RequestInit) => {
         return new Promise((_, reject) => {
           init?.signal?.addEventListener("abort", () => {
             const err = new Error("aborted by external");
