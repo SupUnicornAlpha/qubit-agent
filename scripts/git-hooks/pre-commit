@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# QUBIT pre-commit guard:
+#   防御性扫描"用了但没 import 的标识符"（TS2304 / TS2552），
+#   避免重蹈 fa4c33f / c6099d4 那种"组件被自动 organize imports 误删，
+#   测试又没覆盖到该分支，最后线上跑到那行才 ReferenceError"的覆辙。
+#
+#   设计依据：连续 3 次同类故障后（graph-factory / analyst-team /
+#   builtin-tools / agent.routes / gene-pool），决定在 pre-commit 钩一道
+#   全量 tsc 检查（约 5-6s），仅看 TS2304/TS2552，过滤其它历史 lint。
+#
+#   bypass：紧急修复或不相关分支跑 tsc 失败时可用
+#       git commit --no-verify
+#
+set -euo pipefail
+
+# 仅本地 commit 拦截；CI 不应跑（CI 跑全量 tsc）。
+if [[ "${CI:-}" == "true" ]]; then
+  exit 0
+fi
+
+# bun 必须在 PATH；项目用 bun 跑 tsc，不依赖全局 typescript。
+if ! command -v bun >/dev/null 2>&1; then
+  echo "[pre-commit] bun not found in PATH; skipping tsc guard (consider installing bun)" >&2
+  exit 0
+fi
+
+# 仅扫 TS2304（Cannot find name）和 TS2552（Cannot find name, did you mean...）；
+# 其它 tsc 错误（如本仓库历史的 connectors / config 等）不在本 hook 拦截范围。
+ERRORS=$(bun run --silent tsc --noEmit 2>&1 | grep -E "TS2304|TS2552" || true)
+
+if [[ -n "$ERRORS" ]]; then
+  cat <<EOF >&2
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ✘ pre-commit guard: 发现 ReferenceError 候选（用了但没 import 的标识符）     │
+├──────────────────────────────────────────────────────────────────────────────┤
+$(echo "$ERRORS" | sed 's/^/│ /' | awk '{printf "%-80s│\n", $0}')
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 这些标识符运行到该分支会抛 ReferenceError。请补 import 或修正符号名。       │
+│ 紧急 bypass：git commit --no-verify                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+EOF
+  exit 1
+fi
+
+exit 0
