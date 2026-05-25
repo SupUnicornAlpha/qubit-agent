@@ -198,7 +198,6 @@ import { TeamHitlBanner } from "../team/TeamHitlBanner";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
   classifyWorkflow,
-  formatWorkflowOptionLabel,
   groupWorkflowOptions,
   WORKFLOW_KIND_LABEL,
   type WorkflowKind,
@@ -4412,6 +4411,16 @@ const TeamDashboardPanel: FC = () => {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 工作流面板的成功/中性提示（区别于上方红色 error callout）。 */
+  const [workflowNotice, setWorkflowNotice] = useState<string | null>(null);
+  /**
+   * 行内"硬删除"双击确认状态：第一次点变 pending，3 秒内再点才真正执行；
+   * 避免 window.confirm 在某些 webview / 浏览器下被静默拦截、用户误以为按钮失效。
+   */
+  const [pendingHardDeleteWfId, setPendingHardDeleteWfId] = useState<string | null>(null);
+  /** 列表展示对话框：搜索关键字 + 状态筛选（status="all" 表示不过滤） */
+  const [workflowListQuery, setWorkflowListQuery] = useState("");
+  const [workflowStatusFilter, setWorkflowStatusFilter] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<TeamCenterView>("research");
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
     confidenceThreshold: 0.55,
@@ -4805,6 +4814,30 @@ const TeamDashboardPanel: FC = () => {
     () => groupWorkflowOptions(filteredWorkflowOptions),
     [filteredWorkflowOptions]
   );
+
+  /**
+   * 列表视图实际渲染用的分组结果：在 `groupedWorkflowOptions` 之上再叠加
+   *   - 状态筛选（cancelled 已经在 refreshWorkflowOptions 时过滤掉，此处仅过滤 running/completed/failed/awaiting_review/pending 等）
+   *   - 关键字搜索（在 goal / id 上 includes）
+   * 空组会被丢掉，避免列表里出现一堆空标题。
+   */
+  const filteredGroupedWorkflowList = useMemo(() => {
+    const query = workflowListQuery.trim().toLowerCase();
+    return groupedWorkflowOptions
+      .map((group) => {
+        const rows = group.rows.filter((row) => {
+          if (workflowStatusFilter !== "all" && String(row.status ?? "") !== workflowStatusFilter) {
+            return false;
+          }
+          if (!query) return true;
+          const goal = typeof row.goal === "string" ? row.goal.toLowerCase() : "";
+          const id = String(row.id ?? "").toLowerCase();
+          return goal.includes(query) || id.includes(query);
+        });
+        return { ...group, rows };
+      })
+      .filter((group) => group.rows.length > 0);
+  }, [groupedWorkflowOptions, workflowListQuery, workflowStatusFilter]);
 
   useEffect(() => {
     if (agentDefBundles === null) return;
@@ -5228,64 +5261,91 @@ const TeamDashboardPanel: FC = () => {
     }
   };
 
-  const handleCancelTeamWorkflow = async () => {
-    if (!workflowRunId.trim()) return;
-    if (!window.confirm("将当前工作流标记为已取消（软删除，保留记录）。确定？")) return;
+  /**
+   * 软删除（取消）任意工作流。被取消的工作流会从列表（默认隐藏 cancelled）中消失。
+   *
+   * 旧实现依赖 window.confirm() 二次确认，但 Tauri/WebView 下可能被静默拦截，体感"按钮没反应"。
+   * 改成列表行内直接调用 —— 取消是软删除可恢复，无需再加 confirm；硬删除则在按钮处用双击确认。
+   */
+  const handleCancelOneWorkflow = async (id: string) => {
+    const target = id.trim();
+    if (!target) return;
     setError(null);
+    setWorkflowNotice(null);
     try {
-      await deleteWorkflow(workflowRunId.trim());
-      // 立即把"分析中"相关 UI 状态全清，否则用户感觉"按钮没生效"：
-      //   - pollAbortRef.abort() 让前端轮询循环退出
-      //   - setRunning(false) 让"分析中…"按钮恢复为"启动团队分析"
-      //   - 后端 in-memory analyst job 由后端 cancel 路由内 best-effort 标 failed
-      pollAbortRef.current?.abort();
-      setRunning(false);
-      setRunProgress("");
-      setTeamPendingHitl(null);
+      await deleteWorkflow(target);
+      // 当前正在分析的就是被取消的那个时，要让"分析中"轮询/按钮立即收手。
+      if (target === workflowRunId.trim()) {
+        pollAbortRef.current?.abort();
+        setRunning(false);
+        setRunProgress("");
+        setTeamPendingHitl(null);
+        setResult(null);
+      }
       const rows = await refreshWorkflowOptions();
-      setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
-      setResult(null);
+      if (target === workflowRunId.trim()) {
+        setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
+      }
+      setWorkflowNotice(`已取消工作流 ${target.slice(0, 8)}…（软删除，记录仍保留）。`);
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
   /**
-   * 硬删除当前工作流。
-   * 与软删除（取消）的区别是：会级联清理 agent_instance / agent_step / tool_call_log /
-   * a2a_message / order_intent / intent_order / langgraph_checkpoint 等所有衍生数据，
+   * 真正执行硬删除（已通过二次点击确认）。
+   * 会级联清理 agent_instance / agent_step / tool_call_log / a2a_message /
+   * order_intent / intent_order / langgraph_checkpoint 等所有衍生数据，
    * 并把 audit_log / scheduled_job_run 等保留型反向引用置空。【不可恢复】。
    */
-  const handleHardDeleteTeamWorkflow = async () => {
-    const id = workflowRunId.trim();
-    if (!id) return;
-    const row = workflowOptions.find((w) => String(w.id) === id);
-    const goal = typeof row?.goal === "string" ? row.goal : id;
-    const ok = window.confirm(
-      `确认硬删除工作流？\n\n` +
-        `ID: ${id}\n目标: ${goal}\n\n` +
-        "将连带删除该工作流的所有 agent 实例 / 步骤 / 工具调用 / a2a 消息 / 订单意图 / " +
-        "LangGraph checkpoint 等衍生数据，且【不可恢复】。\n\n" +
-        "如只是想保留记录、停止执行，请取消并改用「取消当前工作流」。"
-    );
-    if (!ok) return;
+  const performHardDeleteWorkflow = async (id: string) => {
+    setPendingHardDeleteWfId(null);
     setError(null);
+    setWorkflowNotice(null);
     try {
       const result = await deleteWorkflow(id, { hard: true });
       // 与 cancel 同样：清掉"分析中"状态 + 让轮询退出，避免轮询打到已删 workflow 拿到 404。
-      pollAbortRef.current?.abort();
-      setRunning(false);
-      setRunProgress("");
-      setTeamPendingHitl(null);
+      if (id === workflowRunId.trim()) {
+        pollAbortRef.current?.abort();
+        setRunning(false);
+        setRunProgress("");
+        setTeamPendingHitl(null);
+        setResult(null);
+      }
       const rows = await refreshWorkflowOptions();
-      setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
-      setResult(null);
+      if (id === workflowRunId.trim()) {
+        setWorkflowRunId(rows[0]?.id ? String(rows[0].id) : "");
+      }
       const affected = Object.values(result.details ?? {}).reduce((a, b) => a + b, 0);
-      setError(`已硬删除工作流（共清理 ${affected} 行衍生数据）。`);
+      setWorkflowNotice(`已硬删除工作流 ${id.slice(0, 8)}…（共清理 ${affected} 行衍生数据）。`);
     } catch (e) {
       setError((e as Error).message);
     }
   };
+
+  /**
+   * 行内"硬删除"按钮点击：第一次进入 pending（按钮文案变成"再次点击确认"），
+   * 3 秒内再点才真正执行；3 秒未点击自动撤销。
+   *
+   * 旧实现用 `window.confirm()` 阻塞弹窗，但部分 Tauri/WebView 环境下 confirm 会被静默
+   * 拒绝（直接返回 false），用户外观上就是"硬删除按钮没反应"。改成行内确认状态后
+   * 完全在 React 状态机内闭环，不依赖宿主的弹窗能力。
+   */
+  const handleClickHardDeleteWorkflow = (id: string) => {
+    const target = id.trim();
+    if (!target) return;
+    if (pendingHardDeleteWfId === target) {
+      void performHardDeleteWorkflow(target);
+      return;
+    }
+    setError(null);
+    setWorkflowNotice(null);
+    setPendingHardDeleteWfId(target);
+    setTimeout(() => {
+      setPendingHardDeleteWfId((cur) => (cur === target ? null : cur));
+    }, 3000);
+  };
+
 
   const handleLinkWorkflowToDefaultSession = async () => {
     if (!workflowRunId.trim() || !teamResearchSessionId) return;
@@ -5691,10 +5751,30 @@ const TeamDashboardPanel: FC = () => {
             />
           </div>
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
-            <label style={teamStyles.label}>工作流</label>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                marginBottom: 6,
+              }}
+            >
+              <label style={teamStyles.label}>工作流</label>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                style={{ fontSize: 11, padding: "3px 8px" }}
+                onClick={() => void refreshWorkflowOptions()}
+                title="刷新工作流列表"
+              >
+                刷新
+              </button>
+            </div>
+            {/* 筛选条：类型 + 状态 + 关键字。所有筛选都在前端 useMemo 中做，避免每次都打后端。 */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
               <select
-                style={{ ...teamStyles.input, flex: "1 1 140px", minWidth: 120 }}
+                style={{ ...teamStyles.input, flex: "1 1 110px", minWidth: 110, fontSize: 12 }}
                 value={workflowKindFilter}
                 onChange={(e) => setWorkflowKindFilter(e.target.value as WorkflowKind | "all")}
                 aria-label="工作流类型筛选"
@@ -5706,34 +5786,151 @@ const TeamDashboardPanel: FC = () => {
                   </option>
                 ))}
               </select>
+              <select
+                style={{ ...teamStyles.input, flex: "1 1 100px", minWidth: 100, fontSize: 12 }}
+                value={workflowStatusFilter}
+                onChange={(e) => setWorkflowStatusFilter(e.target.value)}
+                aria-label="工作流状态筛选"
+              >
+                <option value="all">全部状态</option>
+                <option value="running">running</option>
+                <option value="completed">completed</option>
+                <option value="failed">failed</option>
+                <option value="awaiting_review">awaiting_review</option>
+                <option value="pending">pending</option>
+              </select>
+              <input
+                type="search"
+                style={{ ...teamStyles.input, flex: "2 1 140px", minWidth: 120, fontSize: 12 }}
+                value={workflowListQuery}
+                onChange={(e) => setWorkflowListQuery(e.target.value)}
+                placeholder="搜索 goal / ID…"
+                aria-label="工作流关键字搜索"
+              />
             </div>
-            <select style={teamStyles.input} value={workflowRunId} onChange={(e) => setWorkflowRunId(e.target.value)}>
-              <option value="">请选择工作流</option>
-              {groupedWorkflowOptions.map((group) => (
-                <optgroup key={group.kind} label={group.label}>
-                  {group.rows.slice(0, 40).map((row) => (
-                    <option key={String(row.id)} value={String(row.id)} title={String(row.goal ?? row.id)}>
-                      {formatWorkflowOptionLabel(row)}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-            {selectedWorkflowRow ? (
-              <p style={{ fontSize: 11, color: "#71717a", marginTop: 6, lineHeight: 1.45, wordBreak: "break-all" }}>
-                类型：
-                <strong style={{ color: "#a1a1aa", marginRight: 6 }}>
-                  {selectedWorkflowKind ? WORKFLOW_KIND_LABEL[selectedWorkflowKind] : "—"}
-                </strong>
-                ID: <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
-                {typeof selectedWorkflowRow.goal === "string" && selectedWorkflowRow.goal.trim() ? (
-                  <>
-                    <br />
-                    {String(selectedWorkflowRow.goal)}
-                  </>
-                ) : null}
-              </p>
-            ) : null}
+            {/* 滚动 list，按 kind 分组（沿用既有 groupedWorkflowOptions），但每组用关键字进一步过滤。 */}
+            <div
+              role="listbox"
+              aria-label="工作流列表"
+              style={workflowListStyles.list}
+            >
+              {filteredGroupedWorkflowList.length === 0 ? (
+                <div style={workflowListStyles.empty}>
+                  {workflowOptions.length === 0
+                    ? "暂无工作流。点击下方「新建工作流」开始一次研究团队任务。"
+                    : "没有匹配的工作流。试试清空搜索 / 切换筛选条件。"}
+                </div>
+              ) : (
+                filteredGroupedWorkflowList.map((group) => (
+                  <div key={group.kind} style={workflowListStyles.group}>
+                    <div style={workflowListStyles.groupHeader}>
+                      <span>{group.label}</span>
+                      <span style={workflowListStyles.groupCount}>{group.rows.length}</span>
+                    </div>
+                    {group.rows.map((row) => {
+                      const id = String(row.id ?? "");
+                      const goal = typeof row.goal === "string" ? row.goal.trim() : "";
+                      const status = String(row.status ?? "—");
+                      const mode = String(row.mode ?? "—");
+                      const sid = typeof row.sessionId === "string" ? row.sessionId.trim() : "";
+                      const startedAt =
+                        typeof row.startedAt === "string" && row.startedAt
+                          ? new Date(row.startedAt).toLocaleString()
+                          : "";
+                      const selected = id === workflowRunId;
+                      const pendingDel = pendingHardDeleteWfId === id;
+                      const statusAccent =
+                        workflowStatusBadgeStyle[status] ?? workflowStatusBadgeStyle._default;
+                      return (
+                        <div
+                          key={id}
+                          style={{
+                            ...workflowListStyles.item,
+                            // 未选中时也根据状态点一道左色条（failed=红、running=绿…）；
+                            // 选中时再被 itemSelected 的紫色覆盖，紫色优先表达"当前选中"。
+                            borderLeftColor: String(statusAccent.borderColor ?? "transparent"),
+                            ...(selected ? workflowListStyles.itemSelected : null),
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setWorkflowRunId(id);
+                              setWorkflowNotice(null);
+                            }}
+                            style={workflowListStyles.itemMain}
+                            title={goal || id}
+                            aria-pressed={selected}
+                          >
+                            {/*
+                              状态徽章独占一行（在标题之上）：
+                                - 之前放在标题前同一行时，"awaiting_approval" 这种长徽章会占走一大块宽度，
+                                  把标题挤掉一截
+                                - 现在抬到顶部独立成行，标题获得整行宽度可用 + ellipsis 兜底
+                            */}
+                            <span
+                              style={{
+                                ...workflowListStyles.statusBadge,
+                                ...(workflowStatusBadgeStyle[status] ?? workflowStatusBadgeStyle._default),
+                              }}
+                              title={`状态：${status}`}
+                            >
+                              {status}
+                            </span>
+                            <div style={workflowListStyles.itemTitleRow}>
+                              <span style={workflowListStyles.itemTitle}>
+                                {goal || `(no goal) ${id.slice(0, 8)}`}
+                              </span>
+                            </div>
+                            <div style={workflowListStyles.itemMeta}>
+                              <code style={workflowListStyles.itemId}>{id.slice(0, 8)}…</code>
+                              <span>mode: {mode}</span>
+                              {startedAt ? <span>{startedAt}</span> : null}
+                              {!sid ? (
+                                <span style={{ color: "#a78bfa" }} title="该工作流尚未关联会话">
+                                  no-session
+                                </span>
+                              ) : null}
+                            </div>
+                          </button>
+                          <div style={workflowListStyles.itemActions}>
+                            <button
+                              type="button"
+                              className="qb-btn-secondary"
+                              style={workflowListStyles.actionBtn}
+                              onClick={() => void handleCancelOneWorkflow(id)}
+                              disabled={status === "cancelled"}
+                              title="软删除：标记 cancelled，保留审计数据"
+                            >
+                              取消
+                            </button>
+                            <button
+                              type="button"
+                              className="qb-btn-secondary"
+                              style={{
+                                ...workflowListStyles.actionBtn,
+                                color: pendingDel ? "#fff" : "#fecaca",
+                                background: pendingDel ? "#7f1d1d" : "transparent",
+                                borderColor: "#7f1d1d",
+                              }}
+                              onClick={() => handleClickHardDeleteWorkflow(id)}
+                              title={
+                                pendingDel
+                                  ? "再次点击执行硬删除（3 秒内未点击自动撤销）"
+                                  : "硬删除：连同 agent / 步骤 / a2a / 订单 / checkpoint 等衍生数据一并清理，不可恢复"
+                              }
+                            >
+                              {pendingDel ? "再次点击确认" : "硬删除"}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
+            {/* 列表下方的二级操作（新建 / 关联默认会话）。"取消 / 硬删除"已下放到 list 行内。 */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
               <button
                 type="button"
@@ -5744,30 +5941,6 @@ const TeamDashboardPanel: FC = () => {
                 title={!teamResearchSessionId ? "正在解析默认会话…" : "创建仅用于研究团队的工作流（不触发总控编排）"}
               >
                 新建工作流
-              </button>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                style={{ fontSize: 12, padding: "6px 10px" }}
-                onClick={() => void handleCancelTeamWorkflow()}
-                disabled={!workflowRunId.trim()}
-              >
-                取消当前工作流
-              </button>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                style={{
-                  fontSize: 12,
-                  padding: "6px 10px",
-                  color: "#fecaca",
-                  borderColor: "#7f1d1d",
-                }}
-                onClick={() => void handleHardDeleteTeamWorkflow()}
-                disabled={!workflowRunId.trim()}
-                title="硬删除当前工作流（连同 agent / 步骤 / 消息 / 订单 / checkpoint 等全部衍生数据），不可恢复"
-              >
-                硬删除工作流
               </button>
               {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
                 <button
@@ -5780,6 +5953,34 @@ const TeamDashboardPanel: FC = () => {
                 </button>
               ) : null}
             </div>
+            {workflowNotice ? (
+              <div
+                className="qb-callout qb-callout--success"
+                role="status"
+                style={{ marginTop: 10 }}
+              >
+                <div className="qb-callout__row">
+                  <span style={{ flex: 1, minWidth: 0 }}>{workflowNotice}</span>
+                  <button
+                    type="button"
+                    className="qb-callout__dismiss"
+                    onClick={() => setWorkflowNotice(null)}
+                    aria-label="关闭提示"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {selectedWorkflowRow ? (
+              <p style={{ fontSize: 11, color: "#71717a", marginTop: 6, lineHeight: 1.45, wordBreak: "break-all" }}>
+                当前选中：
+                <strong style={{ color: "#a1a1aa", marginRight: 6 }}>
+                  {selectedWorkflowKind ? WORKFLOW_KIND_LABEL[selectedWorkflowKind] : "—"}
+                </strong>
+                <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
+              </p>
+            ) : null}
             {workflowRunId.trim() && !workflowSessionId ? (
               <p style={{ fontSize: 11, color: "#a78bfa", marginTop: 6, lineHeight: 1.45 }}>
                 当前工作流未绑定会话：右侧「保存脚本 / 实盘」需会话。可点「关联默认会话」或新建工作流（已自动带会话）。
@@ -7510,4 +7711,161 @@ const teamStyles: Record<string, CSSProperties> = {
     fontSize: 12,
     color: "var(--qb-team-table-cell-fg, #d4d4d8)",
   },
+};
+
+/**
+ * 工作流列表样式：单独抽出避免与 teamStyles 中其它共用样式互相污染。
+ * 设计目标：
+ *   - 列表容器有固定 maxHeight + overflow，避免一旦工作流多起来把左栏撑爆
+ *   - 每行 item 是一个"主区按钮 + 末尾操作按钮组"的两段式布局
+ *   - 选中态用左侧的紫色色条 + 背景变化突出，区别于 hover
+ */
+const workflowListStyles: Record<string, CSSProperties> = {
+  list: {
+    border: "1px solid var(--qb-team-input-border, #27272a)",
+    borderRadius: 8,
+    background: "var(--qb-team-input-bg, #111114)",
+    padding: 4,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    maxHeight: 320,
+    overflowY: "auto",
+    /**
+     * 禁止水平方向溢出滚动：之前长标题（如 "研究团队·单标的·AAPL·2026/5/25 18:23:38"）
+     * 会把卡片撑宽、状态徽章被推到视野外，必须拖动横向滚动条才能看到。
+     * 现在状态徽章已移到标题行最前面，再加一层兜底保险。
+     */
+    overflowX: "hidden",
+  },
+  empty: {
+    padding: "16px 12px",
+    textAlign: "center",
+    fontSize: 12,
+    color: "var(--qb-team-meta, #71717a)",
+    lineHeight: 1.5,
+  },
+  group: { display: "flex", flexDirection: "column", gap: 4 },
+  groupHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "4px 6px",
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    color: "var(--qb-team-meta, #a1a1aa)",
+    textTransform: "uppercase" as const,
+    background: "var(--qb-team-table-row-border, #1a1a1d)",
+    borderRadius: 4,
+  },
+  groupCount: {
+    background: "rgba(255,255,255,0.06)",
+    borderRadius: 8,
+    padding: "0 6px",
+    fontSize: 10,
+  },
+  item: {
+    /**
+     * 改为纵向布局：上方是文字（标题 + 元信息），下方是操作按钮行。
+     * 之前用左右两段式时，操作按钮列会以"按钮内容宽度"占用空间，
+     * 在左栏宽度只有 ~268px 时，按钮区压占了标题行导致文字被遮挡。
+     */
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 6,
+    padding: "8px 10px",
+    border: "1px solid transparent",
+    borderLeft: "3px solid transparent",
+    borderRadius: 6,
+    background: "transparent",
+    minWidth: 0,
+  },
+  itemSelected: {
+    background: "var(--qb-team-screener-btn-active-bg, #221838)",
+    borderColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
+    borderLeftColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
+  },
+  /** 主区按钮：撑满一行，display:block 让内部 flex 子元素自由排列。 */
+  itemMain: {
+    width: "100%",
+    minWidth: 0,
+    border: "none",
+    background: "transparent",
+    color: "var(--qb-team-input-fg, #e4e4e7)",
+    textAlign: "left" as const,
+    cursor: "pointer",
+    padding: 0,
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 3,
+  },
+  itemTitleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 12,
+    fontWeight: 500,
+    minWidth: 0,
+  },
+  itemTitle: {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
+  },
+  itemMeta: {
+    display: "flex",
+    flexWrap: "wrap" as const,
+    gap: 8,
+    fontSize: 10.5,
+    color: "var(--qb-team-meta, #71717a)",
+    minWidth: 0,
+  },
+  itemId: {
+    fontSize: 10,
+    color: "var(--qb-team-meta, #a1a1aa)",
+  },
+  /** 操作按钮行：横向、右对齐，紧贴卡片底部，不再与文字争空间。 */
+  itemActions: {
+    display: "flex",
+    flexDirection: "row" as const,
+    gap: 6,
+    justifyContent: "flex-end",
+    alignItems: "center",
+    paddingTop: 2,
+    borderTop: "1px dashed var(--qb-team-table-row-border, #27272a)",
+  },
+  statusBadge: {
+    fontSize: 10,
+    padding: "1px 8px",
+    borderRadius: 10,
+    border: "1px solid transparent",
+    fontWeight: 600,
+    flexShrink: 0,
+    /**
+     * 在 flex column 父容器里默认会被 stretch 到整行宽度，
+     * 显式 alignSelf 让胶囊保持紧贴文字的尺寸（fit-content 行为）。
+     */
+    alignSelf: "flex-start",
+    letterSpacing: "0.02em",
+  },
+  actionBtn: {
+    fontSize: 11,
+    padding: "3px 10px",
+    minWidth: 0,
+    lineHeight: 1.4,
+  },
+};
+
+/** 状态徽章配色：按 workflow_run.status 区分。 */
+const workflowStatusBadgeStyle: Record<string, CSSProperties> = {
+  running: { color: "#86efac", borderColor: "#166534", background: "rgba(22,101,52,0.25)" },
+  pending: { color: "#fde68a", borderColor: "#854d0e", background: "rgba(133,77,14,0.25)" },
+  awaiting_review: { color: "#fde68a", borderColor: "#854d0e", background: "rgba(133,77,14,0.25)" },
+  completed: { color: "#a5b4fc", borderColor: "#3730a3", background: "rgba(55,48,163,0.25)" },
+  failed: { color: "#fecaca", borderColor: "#7f1d1d", background: "rgba(127,29,29,0.30)" },
+  cancelled: { color: "#a1a1aa", borderColor: "#3f3f46", background: "rgba(63,63,70,0.30)" },
+  _default: { color: "#d4d4d8", borderColor: "#3f3f46", background: "rgba(63,63,70,0.25)" },
 };

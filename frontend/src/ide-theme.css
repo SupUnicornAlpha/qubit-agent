@@ -866,6 +866,12 @@
   color: #fecaca;
 }
 
+.qb-callout--success {
+  background: rgba(6, 78, 59, 0.55);
+  border-color: rgba(52, 211, 153, 0.45);
+  color: #bbf7d0;
+}
+
 .qb-callout__row {
   display: flex;
   justify-content: space-between;

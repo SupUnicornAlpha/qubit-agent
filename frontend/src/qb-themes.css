@@ -687,6 +687,12 @@ html[data-qb-style="default"][data-qb-theme^="light"] .qb-callout--danger {
   color: #991b1b;
 }
 
+html[data-qb-style="default"][data-qb-theme^="light"] .qb-callout--success {
+  background: rgba(220, 252, 231, 0.95);
+  border-color: rgba(74, 222, 128, 0.5);
+  color: #166534;
+}
+
 html[data-qb-style="default"][data-qb-theme^="light"] .qb-pill-tab {
   background: var(--qb-sidebar-explorer-bg);
   border-color: var(--qb-sidebar-border);
