@@ -72,53 +72,122 @@ QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime
 
 ## 快速开始
 
-### 环境要求
+### 0. 前置条件
 
-- [Bun](https://bun.sh) `>= 1.3`
-- Node.js `>= 20`（部分工具链）
-- Rust / Cargo（仅构建 Tauri 时需要）
+| 组件 | 必须 | 用途 |
+|------|------|------|
+| [Bun](https://bun.sh) `>= 1.3` | 是 | 后端运行时 + 包管理 + 前端 dev server |
+| Node.js `>= 20` | 推荐 | 部分构建工具链（Vite / Drizzle Kit） |
+| Git | 是 | 克隆与 FSI vendor 同步 |
+| Rust / Cargo（stable） | 仅构建 Tauri 客户端 | `bun run dev:tauri` / `bun run build:tauri` |
+| Xcode Command Line Tools / MSVC Build Tools | 同上 | Tauri 编译原生壳 |
+| Python `>= 3.10` + pip | 可选 | 行情 / 回测 / 券商 HTTP 桥（`python_connectors/`） |
+| OpenD（富途）/ IB Gateway | 可选 | 实盘交易时使用 |
 
-### 安装与启动
+> 数据与策略脚本默认落在 `~/.quant-agent`，可通过 `QUBIT_DATA_DIR` 修改；macOS 桌面打包后默认为 `~/Library/Application Support/app.qubit.agent/`。
+
+### 1. 公共步骤：克隆与安装依赖
 
 ```bash
-# 克隆后安装依赖
+git clone <your-fork-or-this-repo>.git qubit-agent
+cd qubit-agent
+
+# 安装根（后端）+ 前端 workspace 依赖
 bun install
 
-# 首次或 schema 变更后生成迁移
+# 首次启动或 schema 变更后生成迁移并初始化 SQLite
 bun run db:generate
 bun run db:migrate
-
-# 终端 1：后端（默认 http://localhost:3000）
-bun run dev
-
-# 终端 2：前端（默认 http://localhost:3041）
-bun run dev:frontend
 ```
 
-浏览器打开 **http://localhost:3041**。顶部显示 `Backend Connected` 即表示 API 可用。
-
-### 桌面客户端（可选）
-
-开发调试（仍建议 `bun run dev` + `bun run dev:frontend`，Tauri 仅作壳）：
-
-```bash
-bun run dev:tauri
-```
-
-**打包成可安装应用**（含后端二进制、迁移、Python 连接器、内容包；详见 [docs/PACKAGING.md](docs/PACKAGING.md)）：
-
-```bash
-bun run build:app:release
-```
-
-安装后首次启动会自动：数据库迁移、种子 Agent/MCP/Tool、按需创建 Python venv。亦可调用 `POST /api/v1/system/bootstrap` 或 `./dist/bundle/bin/qubit bootstrap`。
-
-### 种子数据（可选）
+可选种子数据（推荐首次执行，以便配置中心 / 研究团队有内容可用）：
 
 ```bash
 bun run seed:agent-definitions    # 预置 Agent 定义与研究团队编组
 bun run seed:recommended-mcp      # 推荐 MCP（数学 / 金融等）
 ```
+
+### 2. 后端（必启）
+
+LangGraph runtime + Hono HTTP/WS 服务，默认 **http://localhost:3000**。
+
+**前置条件**：完成步骤 1；如需调用云端大模型，至少配置一个 Provider 的 Key（见下文「[配置](#配置)」）。
+
+```bash
+# 终端 1
+bun run dev
+```
+
+可通过环境变量覆盖监听地址：
+
+```bash
+PORT=3000 HOST=localhost bun run dev
+```
+
+启动成功后会看到 `Server listening on http://localhost:3000`，并可访问 `GET /api/v1/system/health`。
+
+### 3. 前端（Web 调试）
+
+Vite + React，默认 **http://localhost:3041**。`/api` 与 `/ws` 已在 `frontend/vite.config.ts` 中代理到后端 `:3000`。
+
+**前置条件**：后端已在 `:3000` 启动。
+
+```bash
+# 终端 2
+bun run dev:frontend
+```
+
+浏览器打开 **http://localhost:3041**，顶部显示 `Backend Connected` 即表示 API 可用。
+
+### 4. 桌面客户端（Tauri v2，可选）
+
+Tauri 仅作为壳，**开发态依旧需要 Web 后端 + 前端 dev server**，`tauri dev` 会自动 `bun run --cwd frontend dev` 并加载 `http://localhost:3041`。
+
+**前置条件**：
+- 已安装 Rust（`rustup` 推荐）与平台原生编译工具链
+- 步骤 1 完成依赖与迁移
+- 已在另一个终端跑 `bun run dev`（或使用打包态 Sidecar，见下）
+
+```bash
+# 终端 3（保持 终端 1 的 bun run dev 运行）
+bun run dev:tauri
+```
+
+**打包成可分发的安装包**（含 Bun 编译的后端 sidecar、SQLite 迁移、`python_connectors/`、`content-packs/`；详见 [docs/PACKAGING.md](docs/PACKAGING.md)）：
+
+```bash
+bun run build:app:release
+```
+
+产物：`src-tauri/target/release/bundle/`（`.dmg` / `.app` / `.msi` 等）。
+
+打包态客户端首次启动会自动：拉起内置 sidecar（监听 `127.0.0.1:38473`）→ 数据库迁移 → 种子 Agent/MCP/Tool → 按需创建 Python venv。亦可手动 `POST /api/v1/system/bootstrap` 或 `./dist/bundle/bin/qubit bootstrap`。
+
+### 5. Python 连接器（可选）
+
+仅当需要 **行情数据（AKShare）、Python 回测、券商实盘桥（Futu/IB/CCXT）** 时启动；后端会在缺失时优雅降级。
+
+**前置条件**：本机 `python3 >= 3.10`，建议使用 venv 隔离。
+
+```bash
+cd python_connectors
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # 基础：numpy / pandas / akshare / pytest
+
+# 实盘 Futu 示例（需额外依赖与 OpenD）
+pip install futu-api
+python broker_http_server.py             # 默认 http://127.0.0.1:18765
+```
+
+启动后在 UI「券商账户配置」中登记 `mock` / `sandbox` / `live` 与 `baseUrl`。打包态下 venv 在数据目录自动创建，无需手工 `pip install`。
+
+### 速查：三种最常见的开发组合
+
+| 场景 | 终端 1 | 终端 2 | 终端 3 |
+|------|--------|--------|--------|
+| 仅 Web 调试 | `bun run dev` | `bun run dev:frontend` | — |
+| 桌面客户端调试 | `bun run dev` | — | `bun run dev:tauri` |
+| 完整链路（含实盘桥） | `bun run dev` | `bun run dev:frontend` | `python broker_http_server.py` |
 
 ---
 
@@ -194,14 +263,7 @@ bun run acceptance:langgraph
 
 ### 券商（Futu / IB）
 
-交易链路：`intent_order` → 风控 / 确认 → `executeIntentLive`。需先启动 OpenD 与 Python 桥：
-
-```bash
-cd python_connectors && pip install futu-api
-python broker_http_server.py   # 默认 http://127.0.0.1:18765
-```
-
-在 UI「券商账户配置」中设置 `mock` / `sandbox` / `live` 与 `baseUrl`。详见 [Futu OpenAPI 文档](https://openapi.futunn.com/futu-api-doc/intro/intro.html)。
+交易链路：`intent_order` → 风控 / 确认 → `executeIntentLive`。需先启动 OpenD 与 Python 桥（启动方式见上文「[Python 连接器](#5-python-连接器可选)」），并在 UI「券商账户配置」中设置 `mock` / `sandbox` / `live` 与 `baseUrl`。详见 [Futu OpenAPI 文档](https://openapi.futunn.com/futu-api-doc/intro/intro.html)。
 
 ### 外部 MCP
 
