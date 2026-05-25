@@ -112,7 +112,7 @@ const orchestratorHandler: RuntimeRoleHandler = {
     if (payload.taskType === "research_team_execute") {
       const parsed = parseResearchTeamExecutePayload(payload);
       if (!parsed.ok) {
-        failResearchTeamExecuteJob(parsed.jobId, parsed.error);
+        await failResearchTeamExecuteJob(parsed.jobId, parsed.error);
         await setWorkflowStatus(msg.workflowId, "failed");
         return;
       }

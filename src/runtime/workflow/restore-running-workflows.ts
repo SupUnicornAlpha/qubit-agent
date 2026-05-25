@@ -6,6 +6,7 @@ import { loadLatestCheckpointSnapshot } from "../langgraph/agent-checkpoint-snap
 import { graphRunner } from "../langgraph/graph-factory";
 import { getCheckpointSaver } from "../langgraph/sqlite-checkpoint-saver";
 import { ClaudeCliLoopDriver, CodexCliLoopDriver } from "../loop/cli-loop-driver";
+import { rehydrateAnalystResearchJobsCache } from "../msa/analyst-research-jobs";
 import { enqueueCompensationTask } from "./compensation-queue";
 
 export type RestoreOutcome = {
@@ -14,6 +15,14 @@ export type RestoreOutcome = {
   enqueuedRetry: number;
   markedFailed: number;
   cliResumed: number;
+  /**
+   * 从 analyst_research_job DB 回填到 in-memory cache 的 job 条数。
+   * P0-2：HITL 审批 + 长跑 analyst 任务需要这条线，否则进程重启会让前端轮询
+   * GET /analyst/job/:jobId 404 / resolveHitlRequest 找不到 resumePayload。
+   */
+  analystJobsRehydrated: number;
+  /** 扫到的 awaiting_approval 工作流条数（仅记账，状态保持等用户操作） */
+  awaitingApproval: number;
 };
 
 let _claudeDriver: ClaudeCliLoopDriver | null = null;
@@ -30,13 +39,28 @@ function getCliDriver(kind: "claude_cli" | "codex_cli") {
 
 /**
  * 进程启动时扫描"未结束"工作流：
- * 1. 有 LangGraph checkpoint 的 → 调 graphRunner.resumeRoleTask 续跑；
+ * 1. 有 LangGraph checkpoint 的 `running` / `pending` → 调 graphRunner.resumeRoleTask 续跑；
  * 2. 没有 checkpoint 的 → 入补偿队列 retry_from_start（或对 CLI 工作流标 failed，等用户/告警决定）；
+ * 3. `awaiting_approval` → 不主动续跑（要等人审批），但要把 analyst job cache 回填，
+ *    让 resolveHitlRequest 一调用就能拿到 resumePayload 重派。
  *
  * 在 `startAllAgents()` 之后调用，确保 GraphRunner 已 ready。
  */
 export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
   const db = await getDb();
+
+  /**
+   * P0-2：先回填 analyst job cache。重启后任何 GET /analyst/job/:jobId、
+   * resolveHitlRequest 调用都依赖这步，必须比 candidates 处理更早做。
+   */
+  const analystJobsRehydrated = await rehydrateAnalystResearchJobsCache().catch((err) => {
+    console.error(
+      "[restoreRunningWorkflows] failed to rehydrate analyst job cache:",
+      err instanceof Error ? err.message : err
+    );
+    return 0;
+  });
+
   const candidates = await db
     .select()
     .from(workflowRun)
@@ -47,13 +71,30 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
       )
     );
 
+  /**
+   * 仅记账，不动状态：awaiting_approval 的工作流等用户操作，
+   * 这里查一下数量便于启动日志可观测。
+   */
+  const awaitingRows = await db
+    .select({ id: workflowRun.id })
+    .from(workflowRun)
+    .where(eq(workflowRun.status, "awaiting_approval"));
+
   const outcome: RestoreOutcome = {
     scanned: candidates.length,
     resumed: 0,
     enqueuedRetry: 0,
     markedFailed: 0,
     cliResumed: 0,
+    analystJobsRehydrated,
+    awaitingApproval: awaitingRows.length,
   };
+  if (analystJobsRehydrated > 0 || awaitingRows.length > 0) {
+    console.log(
+      `[restoreRunningWorkflows] rehydrated ${analystJobsRehydrated} analyst job(s); ` +
+        `${awaitingRows.length} workflow(s) in awaiting_approval (no auto-resume)`
+    );
+  }
   if (candidates.length === 0) return outcome;
 
   const saver = getCheckpointSaver();

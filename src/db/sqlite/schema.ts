@@ -184,6 +184,55 @@ export const workflowCompensationTask = sqliteTable("workflow_compensation_task"
   updatedAt: updatedAt(),
 });
 
+/**
+ * P0-2：研究团队异步任务的持久化真相源。
+ *
+ * 旧设计：`src/runtime/msa/analyst-research-jobs.ts` 全靠进程内存 Map，重启就丢；
+ * `restoreRunningWorkflows` 也不扫 awaiting_approval，所以「审批中遇到 backend 重启
+ * → resolveHitlRequest 找不到 resumePayload → workflow 被标 failed」是必然路径。
+ *
+ * 现在把 register / pause / resume / complete / fail 全落到这张表，Map 仅作热路径
+ * cache。重启后 restoreRunningWorkflows 从这里回填 cache，HITL 审批链路就能跨重启续跑。
+ */
+export const analystResearchJob = sqliteTable(
+  "analyst_research_job",
+  {
+    /** 与轮询 GET /analyst/job/:jobId 的 jobId 同源；由 analyst.routes 生成 */
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["running", "completed", "failed", "awaiting_approval"],
+    })
+      .notNull()
+      .default("running"),
+    ticker: text("ticker").notNull().default(""),
+    /** ParsedResearchTeamExecute JSON；pause/resume 用以让 HITL 批准后重派 */
+    resumePayloadJson: text("resume_payload_json", { mode: "json" }),
+    /** AnalystTeamResult JSON；completed 时填，前端轮询 GET /job/:jobId 读 */
+    resultJson: text("result_json", { mode: "json" }),
+    errorMessage: text("error_message"),
+    /** awaiting_approval 时挂上的 HITL 请求 ID（与 workflow_hitl_request.id 对应） */
+    hitlRequestId: text("hitl_request_id"),
+    hitlTitle: text("hitl_title"),
+    hitlSummary: text("hitl_summary"),
+    /** 不用 createdAt() helper：那个 helper 把 SQL 列名硬编码成 `created_at`，
+     *  这里列名必须叫 `started_at` 与 migration 0046 对齐。 */
+    startedAt: text("started_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    byWorkflowStatus: index("idx_analyst_research_job_workflow").on(
+      table.workflowRunId,
+      table.status
+    ),
+  })
+);
+
 export const scheduledJob = sqliteTable("scheduled_job", {
   id: id(),
   workspaceId: text("workspace_id")

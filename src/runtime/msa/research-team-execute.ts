@@ -84,9 +84,12 @@ export function parseResearchTeamExecutePayload(
   };
 }
 
-export function failResearchTeamExecuteJob(jobId: string, error: unknown): void {
+export async function failResearchTeamExecuteJob(jobId: string, error: unknown): Promise<void> {
   if (!jobId) return;
-  failAnalystResearchJob(jobId, error instanceof Error ? error : new Error(String(error)));
+  await failAnalystResearchJob(
+    jobId,
+    error instanceof Error ? error : new Error(String(error))
+  );
 }
 
 /** 运行研究团队并标记 job 完成（不含 workflow / A2A 消息副作用） */
@@ -105,7 +108,7 @@ export async function executeResearchTeamWorkflow(input: {
     analystDefinitionIds: input.params.analystDefinitionIds,
     hitlApproval: input.hitlApproval ?? null,
   });
-  completeAnalystResearchJob(input.params.jobId, teamResult);
+  await completeAnalystResearchJob(input.params.jobId, teamResult);
   return teamResult;
 }
 
@@ -215,7 +218,7 @@ export async function runTeamResearchAndPersist(
     return { kind: "completed", teamResult };
   } catch (err) {
     if (err instanceof HitlAwaitingApprovalError) {
-      pauseJob(input.parsed.jobId, {
+      await pauseJob(input.parsed.jobId, {
         requestId: err.requestId,
         title: err.message,
         summary: err.message,
@@ -248,7 +251,7 @@ export async function runTeamResearchAndPersist(
       `[research-team] workflow=${input.workflowRunId} research_team_execute FAILED:`,
       wrapped.stack ?? wrapped.message,
     );
-    failJob(input.parsed.jobId, wrapped);
+    await failJob(input.parsed.jobId, wrapped);
     await setStatus(input.workflowRunId, "failed");
     terminal(input.workflowRunId, "failed");
     return { kind: "failed", error: wrapped };

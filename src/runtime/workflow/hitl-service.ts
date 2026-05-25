@@ -493,9 +493,9 @@ export async function resolveHitlRequest(input: {
       .where(eq(workflowRun.id, row.workflowRunId));
     if (row.scope === "team_orchestrator") {
       const { failAnalystResearchJob } = await import("../msa/analyst-research-jobs");
-      const pending = findPendingAnalystJobByWorkflow(row.workflowRunId);
+      const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
       if (pending) {
-        failAnalystResearchJob(pending.jobId, new Error("rejected by human reviewer"));
+        await failAnalystResearchJob(pending.jobId, new Error("rejected by human reviewer"));
       }
     }
     return { workflowRunId: row.workflowRunId, resumed: false };
@@ -515,19 +515,23 @@ export async function resolveHitlRequest(input: {
   if (!wf) throw new Error("workflow_run missing after hitl approve");
 
   // 团队研究：runAnalystTeam 不经 LangGraph，没法走 resumeRoleTask；
-  // 改为从 analyst job 缓存里取回原 research_team_execute params，重派给 orchestrator handler，
-  // 让它带 hitlApproval 重新跑 runAnalystTeam（pauseForTeamOrchestratorHitl 会因 requestId 已批准直接放行）。
+  // 改为从 analyst job（DB 真相源，P0-2）取回原 research_team_execute params，
+  // 重派给 orchestrator handler，让它带 hitlApproval 重新跑 runAnalystTeam
+  // （pauseForTeamOrchestratorHitl 会因 requestId 已批准直接放行）。
   if (row.scope === "team_orchestrator") {
-    const pending = findPendingAnalystJobByWorkflow(row.workflowRunId);
-    const resumePayload = pending ? resumeAnalystResearchJob(pending.jobId) : undefined;
+    const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
+    const resumePayload = pending ? await resumeAnalystResearchJob(pending.jobId) : undefined;
     if (!pending || !resumePayload) {
-      // 没找到缓存（进程重启等）：把 workflow 标 failed，让用户重新发起。
+      /**
+       * P0-2 之后 DB 永远存着 resumePayload，理论上不该走到这里；
+       * 极端情况（DB 行被外部 manual 删除 / migration 故障）才会触达 → 仍然 fail-safe 标 failed。
+       */
       await db
         .update(workflowRun)
         .set({ status: "failed", endedAt: new Date().toISOString() })
         .where(eq(workflowRun.id, row.workflowRunId));
       throw new Error(
-        "research_team_execute resume payload missing (job state lost); please re-run the analysis"
+        "research_team_execute resume payload missing (analyst_research_job row absent or corrupt); please re-run the analysis"
       );
     }
 

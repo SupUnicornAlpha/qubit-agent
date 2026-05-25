@@ -309,9 +309,10 @@ workflowRouter.delete("/:id", async (c) => {
   // Best-effort 终止 in-memory analyst job：避免软删 / 硬删后后台任务还在 spinning，
   // 继续写 DB / 烧 token，并让前端轮询看到"任务还在跑"的错觉。
   // 软删时尤其关键 —— 仅 update workflow_run.status='cancelled' 不会让 in-memory job 自己停。
-  const activeJobIds = findActiveAnalystJobsByWorkflow(id);
+  // P0-2：DB 真相源后 findActiveAnalystJobsByWorkflow 也覆盖重启后 cache 还没回填的 job。
+  const activeJobIds = await findActiveAnalystJobsByWorkflow(id);
   for (const jobId of activeJobIds) {
-    failAnalystResearchJob(jobId, new Error("workflow cancelled / hard-deleted by user"));
+    await failAnalystResearchJob(jobId, new Error("workflow cancelled / hard-deleted by user"));
   }
   if (activeJobIds.length > 0) {
     console.log(

@@ -105,7 +105,7 @@ analystRouter.post("/run", async (c) => {
   }
 
   const jobId = randomUUID();
-  registerAnalystResearchJob(jobId, {
+  await registerAnalystResearchJob(jobId, {
     status: "running",
     workflowRunId: body.workflowRunId,
     ticker: scope.displayLabel,
@@ -147,7 +147,7 @@ analystRouter.post("/run", async (c) => {
       },
     });
   } catch (err) {
-    failAnalystResearchJob(jobId, err);
+    await failAnalystResearchJob(jobId, err);
     return c.json(
       { ok: false, error: err instanceof Error ? err.message : String(err), jobId },
       500
@@ -159,11 +159,12 @@ analystRouter.post("/run", async (c) => {
 
 /**
  * GET /api/v1/analyst/job/:jobId
- * 轮询分析任务状态与结果
+ * 轮询分析任务状态与结果。
+ * P0-2 起 `getAnalystResearchJob` 是 async（DB 兜底），handler 也必须 async。
  */
-analystRouter.get("/job/:jobId", (c) => {
+analystRouter.get("/job/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
-  const job = getAnalystResearchJob(jobId);
+  const job = await getAnalystResearchJob(jobId);
   if (!job) return c.json({ error: "job not found" }, 404);
   return c.json({
     ok: true,

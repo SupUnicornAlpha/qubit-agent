@@ -481,7 +481,7 @@ export class GraphRunner {
       ) {
         const parsed = parseResearchTeamExecutePayload(params.payload);
         if (!parsed.ok) {
-          failResearchTeamExecuteJob(parsed.jobId, parsed.error);
+          await failResearchTeamExecuteJob(parsed.jobId, parsed.error);
           throw parsed.error;
         }
 
