@@ -1,12 +1,15 @@
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { workflowRun } from "../../db/sqlite/schema";
+import { analystResearchJob, workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import { normalizeLoopKind } from "../../types/loop";
 import { loadLatestCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
 import { graphRunner } from "../langgraph/graph-factory";
 import { getCheckpointSaver } from "../langgraph/sqlite-checkpoint-saver";
 import { ClaudeCliLoopDriver, CodexCliLoopDriver } from "../loop/cli-loop-driver";
-import { rehydrateAnalystResearchJobsCache } from "../msa/analyst-research-jobs";
+import {
+  failAnalystResearchJob,
+  rehydrateAnalystResearchJobsCache,
+} from "../msa/analyst-research-jobs";
 import { enqueueCompensationTask } from "./compensation-queue";
 
 export type RestoreOutcome = {
@@ -23,6 +26,12 @@ export type RestoreOutcome = {
   analystJobsRehydrated: number;
   /** 扫到的 awaiting_approval 工作流条数（仅记账，状态保持等用户操作） */
   awaitingApproval: number;
+  /**
+   * P0-3：扫到的「stale awaiting_approval」修复条数 —— hitl_request 已 approved/rejected
+   * 但 analyst_research_job / workflow_run 还卡在 awaiting_approval 的死锁残留。
+   * 来源：resolveHitlRequest 跑到一半 backend 崩溃。
+   */
+  hitlStaleRepaired: number;
 };
 
 let _claudeDriver: ClaudeCliLoopDriver | null = null;
@@ -42,7 +51,10 @@ function getCliDriver(kind: "claude_cli" | "codex_cli") {
  * 1. 有 LangGraph checkpoint 的 `running` / `pending` → 调 graphRunner.resumeRoleTask 续跑；
  * 2. 没有 checkpoint 的 → 入补偿队列 retry_from_start（或对 CLI 工作流标 failed，等用户/告警决定）；
  * 3. `awaiting_approval` → 不主动续跑（要等人审批），但要把 analyst job cache 回填，
- *    让 resolveHitlRequest 一调用就能拿到 resumePayload 重派。
+ *    让 resolveHitlRequest 一调用就能拿到 resumePayload 重派；
+ * 4. **P0-3 新增**：扫"stale awaiting_approval"——hitl_request 已 approved/rejected 但
+ *    analyst job 还停在 awaiting_approval 的死锁残留（resolveHitlRequest 跑到一半崩溃），
+ *    按 hitl_request.status 决策修复。
  *
  * 在 `startAllAgents()` 之后调用，确保 GraphRunner 已 ready。
  */
@@ -56,6 +68,25 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
   const analystJobsRehydrated = await rehydrateAnalystResearchJobsCache().catch((err) => {
     console.error(
       "[restoreRunningWorkflows] failed to rehydrate analyst job cache:",
+      err instanceof Error ? err.message : err
+    );
+    return 0;
+  });
+
+  /**
+   * P0-3 S5：sweep 半成品 HITL 死锁。
+   *
+   * resolveHitlRequest 已经包了事务，但旧版本/旧崩溃留下的 stale 行仍需修：
+   *   - analyst_research_job.status='awaiting_approval'
+   *   - AND 对应 workflowRunId 上没有 pending hitl_request
+   *     （hitl_request 已 approved 或 rejected，或被外部清掉）
+   * 对这些 job：能找到 resolved hitl_request 就按它的最终决策走（rejected→fail；
+   * approved→留给后续 sweep + 重派，这里只标 fail 让用户重发起，更稳妥）；找不到就 fail。
+   * 这里**只 fail**不主动续跑：用户在前端能立刻看到「失败需重发」的状态，比悄悄重派稳。
+   */
+  const hitlStaleRepaired = await repairStaleHitlAwaitingApproval(db).catch((err) => {
+    console.error(
+      "[restoreRunningWorkflows] HITL stale sweep failed:",
       err instanceof Error ? err.message : err
     );
     return 0;
@@ -88,11 +119,13 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
     cliResumed: 0,
     analystJobsRehydrated,
     awaitingApproval: awaitingRows.length,
+    hitlStaleRepaired,
   };
-  if (analystJobsRehydrated > 0 || awaitingRows.length > 0) {
+  if (analystJobsRehydrated > 0 || awaitingRows.length > 0 || hitlStaleRepaired > 0) {
     console.log(
       `[restoreRunningWorkflows] rehydrated ${analystJobsRehydrated} analyst job(s); ` +
-        `${awaitingRows.length} workflow(s) in awaiting_approval (no auto-resume)`
+        `${awaitingRows.length} workflow(s) in awaiting_approval (no auto-resume); ` +
+        `repaired ${hitlStaleRepaired} stale HITL job(s)`
     );
   }
   if (candidates.length === 0) return outcome;
@@ -170,4 +203,71 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
   }
 
   return outcome;
+}
+
+/**
+ * P0-3 S5：扫 stale awaiting_approval analyst_research_job —— 对应的 hitl_request
+ * 已经不是 pending（说明 resolveHitlRequest 跑到一半崩溃，状态机半成品），按最终
+ * 决策修复。
+ *
+ * 保守策略：发现 stale 就 fail 这个 analyst job + 把 workflow_run 标 failed。
+ * 不主动 resume 让 analyst 继续跑 —— 因为用户已经看不到原 HITL banner 了，没法再
+ * 选择，再跑可能违背用户原意（比如审批时勾的 options 没透传过来）；告诉用户
+ * "请重发起" 比悄悄重跑稳。
+ */
+async function repairStaleHitlAwaitingApproval(
+  db: Awaited<ReturnType<typeof getDb>>
+): Promise<number> {
+  const staleJobs = await db
+    .select({
+      jobId: analystResearchJob.id,
+      workflowRunId: analystResearchJob.workflowRunId,
+      hitlRequestId: analystResearchJob.hitlRequestId,
+    })
+    .from(analystResearchJob)
+    .where(eq(analystResearchJob.status, "awaiting_approval"));
+  if (staleJobs.length === 0) return 0;
+
+  let repaired = 0;
+  for (const job of staleJobs) {
+    try {
+      const pendingHitl = await db
+        .select({ id: workflowHitlRequest.id })
+        .from(workflowHitlRequest)
+        .where(
+          and(
+            eq(workflowHitlRequest.workflowRunId, job.workflowRunId),
+            eq(workflowHitlRequest.status, "pending")
+          )
+        )
+        .limit(1);
+      if (pendingHitl.length > 0) continue;
+
+      const reason =
+        "stale HITL state detected on boot (resolveHitlRequest interrupted before commit?); please re-run";
+      await failAnalystResearchJob(job.jobId, new Error(reason));
+      await db
+        .update(workflowRun)
+        .set({
+          status: "failed",
+          endedAt: new Date().toISOString(),
+        })
+        .where(
+          and(
+            eq(workflowRun.id, job.workflowRunId),
+            inArray(workflowRun.status, ["awaiting_approval", "running", "pending"])
+          )
+        );
+      repaired += 1;
+      console.warn(
+        `[restoreRunningWorkflows] repaired stale HITL analyst job=${job.jobId} workflow=${job.workflowRunId}`
+      );
+    } catch (err) {
+      console.error(
+        `[restoreRunningWorkflows] failed to repair stale job=${job.jobId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  return repaired;
 }

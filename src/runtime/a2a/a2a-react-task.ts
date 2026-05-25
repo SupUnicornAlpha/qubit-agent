@@ -30,6 +30,23 @@ export async function runA2aReactTaskAssign(
       streamSource: "a2a",
       updateWorkflowStatus: true,
     });
+
+    /**
+     * P0-3 R4：awaiting_approval 不是终态，不能调 onWorkflowTerminal —— 之前那样调
+     * 会把"等审批"的工作流跑进 quality snapshot / alert 评估，污染监控指标，
+     * 而且类型上 onWorkflowTerminal 只接受 completed/failed，是借 union 宽度蒙混过的。
+     *
+     * P0-3 R5：同理也不能发 TASK_RESULT(success=true) —— 那是个半成品消息，
+     * 让上游 handler 误以为任务跑完了。awaiting_approval 时本任务挂起，等用户审批
+     * 之后由 resolveHitlRequest 重新派发，此处直接 return 让本次 invocation 结束即可。
+     */
+    if (terminalStatus === "awaiting_approval") {
+      console.log(
+        `[a2a-react] workflow=${workflowId} agent=${ctx.definition.role} suspended awaiting HITL; skip TASK_RESULT / onWorkflowTerminal`
+      );
+      return;
+    }
+
     onWorkflowTerminal(workflowId, terminalStatus);
 
     await ctx.send({

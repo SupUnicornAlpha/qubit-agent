@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
+import { getDb, runInTransaction } from "../../db/sqlite/client";
 import { workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import type { LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
@@ -291,25 +291,37 @@ export async function createHitlRequest(input: {
 }): Promise<{ id: string }> {
   const db = await getDb();
   const id = randomUUID();
-  await db.insert(workflowHitlRequest).values({
-    id,
-    workflowRunId: input.workflowRunId,
-    runId: input.runId,
-    agentInstanceId: input.agentInstanceId ?? null,
-    stepIndex: input.stepIndex,
-    scope: input.scope,
-    requestKind: input.requestKind,
-    status: "pending",
-    title: input.title.slice(0, 500),
-    summary: input.summary.slice(0, 8000),
-    payloadJson: input.payloadJson,
-    inputKind: input.inputKind ?? "approve_only",
-    inputSchemaJson: (input.inputSchema ?? {}) as never,
+
+  /**
+   * P0-3：原本是「insert hitl_request → update workflow_run」两条裸 SQL，第二步
+   * SQLITE_BUSY 抖动失败会留下「hitl_request=pending 但 workflow_run.status 还在
+   * running」的半成品（前端 banner 看到 pending、但状态条不显示审批中），
+   * 之后只能靠 graph-factory.ts:559 / research-team-execute.ts:230 的兜底再补写。
+   * 这里直接放进事务消灭这道偏差。
+   *
+   * SSE event 留在事务**之外**发：commit 后再 publish，避免事务回滚但前端已经看到 banner。
+   */
+  await runInTransaction(db, async () => {
+    await db.insert(workflowHitlRequest).values({
+      id,
+      workflowRunId: input.workflowRunId,
+      runId: input.runId,
+      agentInstanceId: input.agentInstanceId ?? null,
+      stepIndex: input.stepIndex,
+      scope: input.scope,
+      requestKind: input.requestKind,
+      status: "pending",
+      title: input.title.slice(0, 500),
+      summary: input.summary.slice(0, 8000),
+      payloadJson: input.payloadJson,
+      inputKind: input.inputKind ?? "approve_only",
+      inputSchemaJson: (input.inputSchema ?? {}) as never,
+    });
+    await db
+      .update(workflowRun)
+      .set({ status: "awaiting_approval", endedAt: null })
+      .where(eq(workflowRun.id, input.workflowRunId));
   });
-  await db
-    .update(workflowRun)
-    .set({ status: "awaiting_approval", endedAt: null })
-    .where(eq(workflowRun.id, input.workflowRunId));
 
   publishHitlStreamEvent({
     runId: input.runId,
@@ -476,65 +488,110 @@ export async function resolveHitlRequest(input: {
   }
 
   const now = new Date().toISOString();
-  await db
-    .update(workflowHitlRequest)
-    .set({
-      status: input.decision,
-      resolvedAt: now,
-      resolvedBy: input.resolvedBy ?? "user",
-      responseJson: (input.response ?? null) as never,
-    })
-    .where(eq(workflowHitlRequest.id, input.requestId));
 
-  if (input.decision === "rejected") {
-    await db
-      .update(workflowRun)
-      .set({ status: "failed", endedAt: now })
-      .where(eq(workflowRun.id, row.workflowRunId));
-    if (row.scope === "team_orchestrator") {
-      const { failAnalystResearchJob } = await import("../msa/analyst-research-jobs");
-      const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
-      if (pending) {
-        await failAnalystResearchJob(pending.jobId, new Error("rejected by human reviewer"));
+  /**
+   * P0-3：原本是 4 张表（workflow_hitl_request / workflow_run / analyst_research_job /
+   * 进程内 cache）依次裸 update，中间任意一步崩溃会留下「hitl_request 已 approved 但
+   * analyst job 还卡 awaiting_approval」式的死锁 —— restoreRunningWorkflows 也救不了，
+   * 因为 hitl_request 已经不是 pending。
+   *
+   * 这里把 3 张表的 status 写入合并进事务：要么一起成功，要么一起 rollback。
+   * 副作用（A2A dispatch / graphRunner.resumeRoleTask）放事务**之外**，留给
+   * restoreRunningWorkflows 兜底 sweep 在重启后补救。
+   */
+  type ResolveTxOutcome =
+    | { kind: "rejected" }
+    | {
+        kind: "approved_team";
+        jobId: string;
+        resumePayload: import("../msa/analyst-research-jobs").AnalystResearchJob["resumePayload"];
+        workflowRow: typeof workflowRun.$inferSelect;
       }
-    }
-    return { workflowRunId: row.workflowRunId, resumed: false };
-  }
+    | {
+        kind: "approved_chat";
+        workflowRow: typeof workflowRun.$inferSelect;
+      }
+    | { kind: "missing_resume_payload" };
 
-  await db
-    .update(workflowRun)
-    .set({ status: "running", endedAt: null })
-    .where(eq(workflowRun.id, row.workflowRunId));
+  const outcome = await runInTransaction(db, async (): Promise<ResolveTxOutcome> => {
+    await db
+      .update(workflowHitlRequest)
+      .set({
+        status: input.decision,
+        resolvedAt: now,
+        resolvedBy: input.resolvedBy ?? "user",
+        responseJson: (input.response ?? null) as never,
+      })
+      .where(eq(workflowHitlRequest.id, input.requestId));
 
-  const wfRows = await db
-    .select()
-    .from(workflowRun)
-    .where(eq(workflowRun.id, row.workflowRunId))
-    .limit(1);
-  const wf = wfRows[0];
-  if (!wf) throw new Error("workflow_run missing after hitl approve");
-
-  // 团队研究：runAnalystTeam 不经 LangGraph，没法走 resumeRoleTask；
-  // 改为从 analyst job（DB 真相源，P0-2）取回原 research_team_execute params，
-  // 重派给 orchestrator handler，让它带 hitlApproval 重新跑 runAnalystTeam
-  // （pauseForTeamOrchestratorHitl 会因 requestId 已批准直接放行）。
-  if (row.scope === "team_orchestrator") {
-    const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
-    const resumePayload = pending ? await resumeAnalystResearchJob(pending.jobId) : undefined;
-    if (!pending || !resumePayload) {
-      /**
-       * P0-2 之后 DB 永远存着 resumePayload，理论上不该走到这里；
-       * 极端情况（DB 行被外部 manual 删除 / migration 故障）才会触达 → 仍然 fail-safe 标 failed。
-       */
+    if (input.decision === "rejected") {
       await db
         .update(workflowRun)
-        .set({ status: "failed", endedAt: new Date().toISOString() })
+        .set({ status: "failed", endedAt: now })
         .where(eq(workflowRun.id, row.workflowRunId));
-      throw new Error(
-        "research_team_execute resume payload missing (analyst_research_job row absent or corrupt); please re-run the analysis"
-      );
+      if (row.scope === "team_orchestrator") {
+        const { failAnalystResearchJob } = await import("../msa/analyst-research-jobs");
+        const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
+        if (pending) {
+          await failAnalystResearchJob(pending.jobId, new Error("rejected by human reviewer"));
+        }
+      }
+      return { kind: "rejected" };
     }
 
+    await db
+      .update(workflowRun)
+      .set({ status: "running", endedAt: null })
+      .where(eq(workflowRun.id, row.workflowRunId));
+
+    const wfRows = await db
+      .select()
+      .from(workflowRun)
+      .where(eq(workflowRun.id, row.workflowRunId))
+      .limit(1);
+    const wfInner = wfRows[0];
+    if (!wfInner) throw new Error("workflow_run missing after hitl approve");
+
+    if (row.scope === "team_orchestrator") {
+      const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
+      const resumePayload = pending ? await resumeAnalystResearchJob(pending.jobId) : undefined;
+      if (!pending || !resumePayload) {
+        /**
+         * P0-2 之后 DB 永远存着 resumePayload，只有 DB 行被外部 manual 删除 /
+         * migration 故障才会到这；此时把 workflow_run 在同一事务内回到 failed，
+         * 不再像旧代码那样在事务外再发一条 UPDATE 让状态串到 running→failed。
+         */
+        await db
+          .update(workflowRun)
+          .set({ status: "failed", endedAt: new Date().toISOString() })
+          .where(eq(workflowRun.id, row.workflowRunId));
+        return { kind: "missing_resume_payload" };
+      }
+      return {
+        kind: "approved_team",
+        jobId: pending.jobId,
+        resumePayload,
+        workflowRow: wfInner,
+      };
+    }
+    return { kind: "approved_chat", workflowRow: wfInner };
+  });
+
+  // 事务提交后再做副作用（dispatch / resume / SSE）。崩溃只会丢"派发动作"，状态机一致。
+  if (outcome.kind === "rejected") {
+    return { workflowRunId: row.workflowRunId, resumed: false };
+  }
+  if (outcome.kind === "missing_resume_payload") {
+    throw new Error(
+      "research_team_execute resume payload missing (analyst_research_job row absent or corrupt); please re-run the analysis"
+    );
+  }
+
+  if (outcome.kind === "approved_team") {
+    const { jobId, resumePayload } = outcome;
+    if (!resumePayload) {
+      throw new Error("invariant: approved_team outcome must have resumePayload");
+    }
     await dispatchTaskToRole({
       workflowId: row.workflowRunId,
       role: "orchestrator",
@@ -543,7 +600,7 @@ export async function resolveHitlRequest(input: {
         taskType: "research_team_execute",
         assignedRole: "orchestrator",
         params: {
-          jobId: pending.jobId,
+          jobId,
           ticker: resumePayload.ticker,
           scope: resumePayload.scope ?? undefined,
           context: resumePayload.context,
@@ -559,9 +616,10 @@ export async function resolveHitlRequest(input: {
       },
     });
 
-    return { workflowRunId: row.workflowRunId, resumed: true, runId: pending.jobId };
+    return { workflowRunId: row.workflowRunId, resumed: true, runId: jobId };
   }
 
+  const wf = outcome.workflowRow;
   const result = await graphRunner.resumeRoleTask({
     workflowId: row.workflowRunId,
     role: "orchestrator",

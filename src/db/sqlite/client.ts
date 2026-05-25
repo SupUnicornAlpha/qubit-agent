@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -44,4 +45,35 @@ export async function getDb(): Promise<DbClient> {
 
 export function closeDb(): void {
   _db = null;
+}
+
+/**
+ * 以串行事务跑一组 async 写操作 —— 任意一步抛错都 ROLLBACK，避免半成品。
+ *
+ * 为什么不用 `db.transaction(...)`：
+ *   drizzle bun-sqlite 的 transaction wrapper 是**同步** callback（依赖 bun:sqlite 原生
+ *   `Database.transaction(() => ...)`），把 async 函数塞进去会在第一个 await 之前就
+ *   立刻 commit，事务等于没开。所以我们改用手动 `BEGIN IMMEDIATE / COMMIT / ROLLBACK`。
+ *
+ * 并发：bun:sqlite 单连接同一时刻只能一个 BEGIN，并发 caller 第二个会撞
+ * SQLITE_BUSY；靠 client.ts 已经设的 `busy_timeout=10000` 让 SQLite 自动重试。
+ * 业务上一个 workflow 的 HITL resolve 同时只有一个，所以 IMMEDIATE 锁等待几乎不出现。
+ */
+export async function runInTransaction<T>(db: DbClient, fn: () => Promise<T>): Promise<T> {
+  await db.run(sql`BEGIN IMMEDIATE`);
+  try {
+    const result = await fn();
+    await db.run(sql`COMMIT`);
+    return result;
+  } catch (err) {
+    try {
+      await db.run(sql`ROLLBACK`);
+    } catch (rollbackErr) {
+      console.error(
+        "[db] ROLLBACK failed after transaction error:",
+        rollbackErr instanceof Error ? rollbackErr.message : rollbackErr
+      );
+    }
+    throw err;
+  }
 }
