@@ -8,14 +8,12 @@ import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
 import { buildTaskResult } from "../a2a/task-result";
 import { getA2APool } from "../a2a/a2a-pool";
 import { graphRunner } from "../langgraph/graph-factory";
-import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import {
-  executeResearchTeamWorkflow,
   failResearchTeamExecuteJob,
   parseResearchTeamExecutePayload,
+  runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
 import { parseHitlApproval } from "../workflow/hitl-service";
-import { pauseAnalystResearchJobForHitl } from "../msa/analyst-research-jobs";
 import type { RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 
@@ -123,13 +121,20 @@ const orchestratorHandler: RuntimeRoleHandler = {
         (payload.params as Record<string, unknown>).hitlApproval
       );
 
-      try {
-        const teamResult = await executeResearchTeamWorkflow({
-          workflowRunId: msg.workflowId,
-          params: parsed.params,
-          hitlApproval,
-        });
-        await setWorkflowStatus(msg.workflowId, "completed");
+      /**
+       * 与 GraphRunner.executeGraph 短路共用同一份持久化 helper。
+       * helper 负责 workflow_run.status / HITL pause / SSE final / analyst job 状态；
+       * 这里只负责把 outcome 翻译成 A2A TASK_RESULT 消息。
+       */
+      const outcome = await runTeamResearchAndPersist({
+        workflowRunId: msg.workflowId,
+        runId: msg.workflowId, // A2A 没有独立 runId，复用 workflowId 让 SSE 仍可订阅
+        traceId: msg.traceId,
+        parsed: parsed.params,
+        hitlApproval,
+      });
+
+      if (outcome.kind === "completed") {
         await ctx.send({
           workflowId: msg.workflowId,
           traceId: msg.traceId,
@@ -138,36 +143,37 @@ const orchestratorHandler: RuntimeRoleHandler = {
           payload: buildTaskResult(payload.taskId, "orchestrator", {
             result: {
               taskType: "research_team_execute",
-              fusionId: teamResult.fusionId,
-              fusedSignal: teamResult.fusedSignal,
-              fusedConfidence: teamResult.fusedConfidence,
+              fusionId: outcome.teamResult.fusionId,
+              fusedSignal: outcome.teamResult.fusedSignal,
+              fusedConfidence: outcome.teamResult.fusedConfidence,
             },
           }),
           priority: msg.priority,
         });
-      } catch (teamErr) {
-        if (teamErr instanceof HitlAwaitingApprovalError) {
-          console.log(
-            `[RoleHandler:orchestrator] workflow=${msg.workflowId} paused awaiting HITL requestId=${teamErr.requestId}`
-          );
-          // 把 analyst job 标 awaiting_approval 并缓存 resumePayload；前端轮询会拿到 requestId / 摘要。
-          pauseAnalystResearchJobForHitl(parsed.params.jobId, {
-            requestId: teamErr.requestId,
-            title: teamErr.message,
-            summary: teamErr.message,
-            resumePayload: parsed.params,
-          });
-          await setWorkflowStatus(msg.workflowId, "awaiting_approval");
-          return;
-        }
-        console.error(
-          `[RoleHandler:orchestrator] workflow=${msg.workflowId} research_team_execute FAILED:`,
-          teamErr instanceof Error ? (teamErr.stack ?? teamErr.message) : teamErr
-        );
-        failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
-        await setWorkflowStatus(msg.workflowId, "failed");
-        throw teamErr;
+        return;
       }
+
+      if (outcome.kind === "awaiting_approval") {
+        /** 仅 SSE 通知（helper 已发 final/awaiting_approval）；A2A sender 不需要 TASK_RESULT */
+        return;
+      }
+
+      /** failed：发一个失败 TASK_RESULT，避免 sender 永远等待（旧版只 throw，调用方收不到） */
+      await ctx.send({
+        workflowId: msg.workflowId,
+        traceId: msg.traceId,
+        receiverAgent: msg.senderAgent,
+        messageType: "TASK_RESULT",
+        payload: buildTaskResult(payload.taskId, "orchestrator", {
+          success: false,
+          result: {
+            taskType: "research_team_execute",
+            error: outcome.error.message,
+          },
+          errorMessage: outcome.error.message,
+        }),
+        priority: msg.priority,
+      });
       return;
     }
 

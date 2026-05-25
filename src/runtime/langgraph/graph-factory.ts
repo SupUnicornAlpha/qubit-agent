@@ -15,11 +15,10 @@ import {
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
 import { HitlAwaitingApprovalError, parseHitlApproval } from "../workflow/hitl-service";
-import { pauseAnalystResearchJobForHitl } from "../msa/analyst-research-jobs";
 import {
-  executeResearchTeamWorkflow,
   failResearchTeamExecuteJob,
   parseResearchTeamExecutePayload,
+  runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
@@ -470,7 +469,12 @@ export class GraphRunner {
     };
 
     try {
-      /** 研究团队 HTTP 任务：统一走 Orchestrator 派发，在此短路执行，避免绕过编排器 */
+      /**
+       * 研究团队 HTTP 任务：统一走 Orchestrator 派发，在此短路执行（避免绕过编排器）。
+       * 真正的"执行 + workflow_run 状态 + HITL pause + SSE final"全部下沉到
+       * `runTeamResearchAndPersist`（唯一真理源，与 A2A orchestratorHandler 共享）。
+       * 这里只剩 GraphRunner 自身的副作用：agent_instance 行 + 把 outcome 标到 instance 状态上。
+       */
       if (
         params.def.role === "orchestrator" &&
         params.payload.taskType === "research_team_execute"
@@ -490,93 +494,42 @@ export class GraphRunner {
           startedAt: new Date().toISOString(),
         });
 
-        // 透传 hitlApproval：批准后 resolveHitlRequest 重派 task 时会把 approved requestId
-        // 塞进 params.hitlApproval；不在这里 parse 并传给 executeResearchTeamWorkflow，
-        // 下一次 pauseForTeamOrchestratorHitl 就无法 short-circuit，会再创建一个新的 HITL 请求
-        // → 用户陷入"approve → 新 HITL → approve → 新 HITL"死循环（2026-05-25 故障）。
+        /**
+         * 透传 hitlApproval：批准后 resolveHitlRequest 重派 task 时会把 approved requestId
+         * 塞进 params.hitlApproval；helper 内会把它喂给 executeResearchTeamWorkflow，下一次
+         * pauseForTeamOrchestratorHitl 才能 short-circuit；不传就会回到 "approve → 新 HITL"
+         * 死循环（2026-05-25 故障）。
+         */
         const hitlApproval = parseHitlApproval(
           (params.payload.params as Record<string, unknown>).hitlApproval
         );
 
-        try {
-          const teamResult = await executeResearchTeamWorkflow({
-            workflowRunId: params.workflowId,
-            params: parsed.params,
-            hitlApproval,
-          });
+        const outcome = await runTeamResearchAndPersist({
+          workflowRunId: params.workflowId,
+          runId: params.runId,
+          traceId: params.traceId,
+          parsed: parsed.params,
+          hitlApproval,
+        });
+
+        if (outcome.kind === "failed") {
+          /** 让 instance 行也带上 error；workflow_run.status='failed' helper 已写。 */
           await db
             .update(agentInstance)
             .set({
-              status: "stopped",
+              status: "error",
               endedAt: new Date().toISOString(),
+              errorMessage: outcome.error.message.slice(0, 2000),
             })
             .where(eq(agentInstance.id, agentInstanceId));
-          await db
-            .update(workflowRun)
-            .set({ status: "completed", endedAt: new Date().toISOString() })
-            .where(eq(workflowRun.id, params.workflowId));
-          onWorkflowTerminal(params.workflowId, "completed");
-          stepStreamBus.publish({
-            runId: params.runId,
-            workflowId: params.workflowId,
-            traceId: params.traceId,
-            role: params.def.role,
-            type: "final",
-            stepIndex: 0,
-            ts: Date.now(),
-            payload: {
-              status: "completed",
-              taskType: "research_team_execute",
-              fusionId: teamResult.fusionId,
-              fusedSignal: teamResult.fusedSignal,
-              fusedConfidence: teamResult.fusedConfidence,
-            },
-            loopKind: "native",
-            source: "native",
-          });
-        } catch (teamErr) {
-          if (teamErr instanceof HitlAwaitingApprovalError) {
-            // 与 a2a 路径 role-handlers.ts 对齐：把 analyst job 标 awaiting_approval 并缓存
-            // resumePayload，前端轮询 /analyst/job/:jobId 才能拿到 hitlRequestId/title 渲染审批卡片。
-            // 不调这步的话 UI 会一直看到 status=running、HITL 卡片永远不弹（2026-05-25 故障）。
-            pauseAnalystResearchJobForHitl(parsed.params.jobId, {
-              requestId: teamErr.requestId,
-              title: teamErr.message,
-              summary: teamErr.message,
-              resumePayload: parsed.params,
-            });
-            console.log(
-              `[GraphRunner] workflow=${params.workflowId} research_team paused awaiting HITL requestId=${teamErr.requestId} job=${parsed.params.jobId}`
-            );
-            await db
-              .update(workflowRun)
-              .set({ status: "awaiting_approval", endedAt: null })
-              .where(eq(workflowRun.id, params.workflowId));
-            await db
-              .update(agentInstance)
-              .set({ status: "stopped", endedAt: new Date().toISOString() })
-              .where(eq(agentInstance.id, agentInstanceId));
-            stepStreamBus.publish({
-              runId: params.runId,
-              workflowId: params.workflowId,
-              traceId: params.traceId,
-              role: params.def.role,
-              type: "final",
-              stepIndex: 0,
-              ts: Date.now(),
-              payload: {
-                status: "awaiting_approval",
-                hitlRequestId: teamErr.requestId,
-                title: teamErr.message,
-              },
-              loopKind: "native",
-              source: "native",
-            });
-            return;
-          }
-          failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
-          throw teamErr;
+          return;
         }
+
+        /** completed 与 awaiting_approval 都把 instance 标 stopped；HITL 暂停时也算"此轮跑完"。 */
+        await db
+          .update(agentInstance)
+          .set({ status: "stopped", endedAt: new Date().toISOString() })
+          .where(eq(agentInstance.id, agentInstanceId));
         return;
       }
 
