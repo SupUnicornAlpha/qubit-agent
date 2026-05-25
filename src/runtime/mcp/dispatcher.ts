@@ -85,12 +85,44 @@ function pickBestBindingRow(
   return candidates[0]!.row;
 }
 
-async function resolveTimeoutMs(
+/**
+ * P0-4：从 `mcp_tool_binding.timeoutMs` + `mcp_tool_binding.retryPolicyJson` 一次性
+ * 取出最特定 binding 行的执行策略；同时返回 row 让 caller 不必再查一次。
+ */
+interface ResolvedMcpPolicy {
+  timeoutMs: number;
+  retry: { maxAttempts: number; backoffMs: number; backoffMultiplier: number };
+}
+
+const DEFAULT_MCP_POLICY: ResolvedMcpPolicy = {
+  timeoutMs: 60_000,
+  retry: { maxAttempts: 2, backoffMs: 150, backoffMultiplier: 2 },
+};
+
+function parseRetryPolicy(raw: unknown): ResolvedMcpPolicy["retry"] {
+  if (!raw || typeof raw !== "object") return DEFAULT_MCP_POLICY.retry;
+  const o = raw as Record<string, unknown>;
+  const max = Number(o["maxAttempts"]);
+  const backoff = Number(o["backoffMs"]);
+  const mult = Number(o["backoffMultiplier"]);
+  return {
+    maxAttempts:
+      Number.isFinite(max) && max >= 1 ? Math.min(Math.floor(max), 10) : DEFAULT_MCP_POLICY.retry.maxAttempts,
+    backoffMs:
+      Number.isFinite(backoff) && backoff >= 0
+        ? Math.min(Math.floor(backoff), 10_000)
+        : DEFAULT_MCP_POLICY.retry.backoffMs,
+    backoffMultiplier:
+      Number.isFinite(mult) && mult >= 1 ? Math.min(mult, 5) : DEFAULT_MCP_POLICY.retry.backoffMultiplier,
+  };
+}
+
+async function resolveMcpPolicy(
   serverName: string,
   toolName: string,
   projectId?: string,
   definitionId?: string
-): Promise<number> {
+): Promise<ResolvedMcpPolicy> {
   const db = await getDb();
   const rows = await db
     .select()
@@ -104,8 +136,11 @@ async function resolveTimeoutMs(
       )
     );
   const exact = pickBestBindingRow(rows, toolName, projectId, definitionId, true);
-  if (exact?.timeoutMs) return exact.timeoutMs;
-  return 60_000;
+  if (!exact) return DEFAULT_MCP_POLICY;
+  return {
+    timeoutMs: exact.timeoutMs ?? DEFAULT_MCP_POLICY.timeoutMs,
+    retry: parseRetryPolicy(exact.retryPolicyJson),
+  };
 }
 
 async function assertToolBindingNotDisabled(
@@ -131,10 +166,22 @@ async function assertToolBindingNotDisabled(
 }
 
 export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpDispatchResult> {
+  /**
+   * P0-4：retry 不再硬编码 —— 真正读 `mcp_tool_binding.retryPolicyJson` 让用户在 UI
+   * 改的策略生效。binding 没行 / 字段缺失就退回 DEFAULT_MCP_POLICY.retry。
+   *
+   * 在进 executeWithPolicy 之前就要查 binding，让 retry 策略和 timeoutMs 同步生效。
+   */
+  const policy = await resolveMcpPolicy(
+    input.serverName,
+    input.toolName,
+    input.projectId,
+    input.definitionId
+  );
   return executeWithPolicy(
     {
       scopeKey: `mcp:${input.serverName}:${input.toolName}`,
-      retry: { maxAttempts: 2, backoffMs: 150, backoffMultiplier: 2 },
+      retry: policy.retry,
       circuitBreaker: { failureThreshold: 3, cooldownMs: 30_000 },
       idempotency: {
         enabled: true,
@@ -163,12 +210,7 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
       }
 
       await assertToolBindingNotDisabled(input.serverName, input.toolName, input.projectId, input.definitionId);
-      const timeoutMs = await resolveTimeoutMs(
-        input.serverName,
-        input.toolName,
-        input.projectId,
-        input.definitionId
-      );
+      const timeoutMs = policy.timeoutMs;
       const caps = server.capabilitiesJson;
 
       let result: unknown;

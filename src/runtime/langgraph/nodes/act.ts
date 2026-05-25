@@ -12,6 +12,7 @@ import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/too
 import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
+import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 
 export async function actNode(
   state: AgentGraphState,
@@ -425,6 +426,12 @@ export async function actNode(
     mcpError?: boolean;
     errorMessage?: string;
   };
+  /**
+   * P0-4 W1 mini-fix：MCP 错误目前在 sandbox.action 里被 catch 后返回 `{result:"error"}`，
+   * 不抛出（保留 ReAct 继续跑的能力），但 observation 加结构化错误字段
+   * （errorClass / retryable / hint），让下一轮 LLM 能基于此换工具/换参，
+   * 而不是反复重试同一个错误直到 maxIterations。
+   */
   if (execValue.result === "error" && execValue.mcpError) {
     const latencyMs = Date.now() - startedAt;
     const errMsg = execValue.errorMessage ?? "mcp call failed";
@@ -479,6 +486,9 @@ export async function actNode(
         targetName,
       },
     });
+    const errorClass = classifyToolError(errMsg);
+    const retryable = errorClass === "transient";
+    const hint = buildMcpRetryHint(errorClass, errMsg, targetName);
     emit({
       runId: state.runId,
       workflowId: state.workflowId,
@@ -487,7 +497,14 @@ export async function actNode(
       type: "observe",
       stepIndex: state.iteration,
       ts: Date.now(),
-      payload: { level: "error", mcpError: true, message: errMsg },
+      payload: {
+        level: "error",
+        mcpError: true,
+        message: errMsg,
+        errorClass,
+        retryable,
+        hint,
+      },
     });
     return {
       toolCalls: [
@@ -496,7 +513,15 @@ export async function actNode(
       ],
       observations: [
         ...state.observations,
-        { level: "error", mcpError: true, message: errMsg, reasonText: state.reasonText },
+        {
+          level: "error",
+          mcpError: true,
+          message: errMsg,
+          errorClass,
+          retryable,
+          hint,
+          reasonText: state.reasonText,
+        },
       ],
     };
   }

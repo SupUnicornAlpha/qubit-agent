@@ -1,4 +1,5 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
+import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 import { isCryptoMarket, symbolToBinancePair } from "./crypto-market";
 
 const DEFAULT_BASE = "https://api.binance.com";
@@ -69,7 +70,7 @@ export async function fetchBinanceBars(
   url.searchParams.set("endTime", String(endMs));
   url.searchParams.set("limit", String(limit));
 
-  const res = await fetch(url.toString(), {
+  const res = await fetchWithTimeout(url.toString(), {
     headers: { Accept: "application/json", "User-Agent": "QubitAgent/1.0" },
   });
   const text = await res.text();
@@ -127,7 +128,7 @@ export async function fetchBinanceTicker(
   const baseUrl = resolveBinanceBaseUrl(settings);
   const pair = symbolToBinancePair(symbol, exchange);
   const url = `${baseUrl}/api/v3/ticker/bookTicker?symbol=${encodeURIComponent(pair)}`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } });
   const json = (await res.json()) as {
     symbol?: string;
     bidPrice?: string;
@@ -141,7 +142,7 @@ export async function fetchBinanceTicker(
   const last = bid && ask ? (bid + ask) / 2 : bid || ask;
 
   const statUrl = `${baseUrl}/api/v3/ticker/24hr?symbol=${encodeURIComponent(pair)}`;
-  const statRes = await fetch(statUrl);
+  const statRes = await fetchWithTimeout(statUrl);
   const stat = (await statRes.json()) as { volume?: string; lastPrice?: string };
   const volume = Number(stat.volume ?? 0);
   const lastFromStat = Number(stat.lastPrice ?? 0);

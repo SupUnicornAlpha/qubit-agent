@@ -1,4 +1,5 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
+import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 import { aggregateBarsByMsWindow } from "./klines-bars";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
@@ -138,7 +139,7 @@ async function fetchEastMoneyKlineJson(
     lmt: String(Math.min(Math.max(lmt, 1), 5000)),
   });
   const url = `${EM_KLINE_URL}?${qs.toString()}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       "User-Agent": UA,
       Accept: "application/json",

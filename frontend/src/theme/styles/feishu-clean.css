@@ -721,15 +721,15 @@ html[data-qb-style="feishu-clean"] .qb-status-dot--live {
 
 /* 1. 工作流状态徽章 & 列表左侧状态色条
  *    旧值：rgba(127,29,29,0.30) 暗红 / rgba(133,77,14,0.25) 深棕等。
- *    新值：飞书风的浅底 + 主色边框。
+ *    新值：低饱和浅底 + 主色边框，与白底协调。
  */
 html[data-qb-style="feishu-clean"] {
-  /* running：稳健绿 (#00B42A 是飞书的安全色) */
+  /* running：稳健绿 #00B42A */
   --qb-wf-status-running-fg: #0a7a26;
   --qb-wf-status-running-border: #00b42a;
   --qb-wf-status-running-bg: rgba(0, 180, 42, 0.1);
 
-  /* pending / awaiting_review：飞书风的 amber */
+  /* pending / awaiting_review：温和 amber */
   --qb-wf-status-pending-fg: #ad6d00;
   --qb-wf-status-pending-border: #ff9a2e;
   --qb-wf-status-pending-bg: rgba(255, 154, 46, 0.12);
@@ -739,7 +739,7 @@ html[data-qb-style="feishu-clean"] {
   --qb-wf-status-done-border: #3370ff;
   --qb-wf-status-done-bg: rgba(51, 112, 255, 0.1);
 
-  /* failed：飞书红 #F53F3F，但 background 拉得很淡 */
+  /* failed：警示红 #F53F3F，背景拉得很淡（不抢镜） */
   --qb-wf-status-failed-fg: #cb272d;
   --qb-wf-status-failed-border: #f53f3f;
   --qb-wf-status-failed-bg: rgba(245, 63, 63, 0.08);

@@ -11,6 +11,10 @@ import { BaseConnector } from "./base.connector";
  *   stdout ← JSON-RPC Response {"id":1,"result":{...}}
  *   stderr ← log stream (ignored from protocol, forwarded to platform logger)
  */
+
+/** P0-4：单笔 _call 等 stdout 响应的最长时间。 30s 对所有 connector 都足够。 */
+const PYTHON_CALL_TIMEOUT_MS = 30_000;
+
 export class PythonConnectorBridgeImpl extends BaseConnector {
   readonly meta;
   protected readonly scriptPath: string;
@@ -19,8 +23,17 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
   private process: ReturnType<typeof Bun.spawn> | null = null;
   private pendingRequests = new Map<
     string,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void }
+    {
+      resolve: (v: unknown) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
+  /**
+   * P0-4：跟踪子进程退出 promise；exit 时把所有还挂着的 pending request 全 reject，
+   * 不让任何一笔 _call 因为子进程崩了而永远 pending（旧实现的最大 wedged 源）。
+   */
+  private exitWatcher: Promise<void> | null = null;
 
   private readonly pythonBin: string;
   private readonly cwd: string | undefined;
@@ -53,6 +66,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
 
     this._pipeStderr();
     this._readStdout();
+    this._watchExit();
 
     // Send init command
     await this._call("init", config);
@@ -78,25 +92,78 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
 
   protected async onShutdown(): Promise<void> {
     try {
-      await this._call("shutdown", {});
+      /** shutdown 超时不要再阻塞，子进程可能已经退出；catch 后强 kill */
+      await this._call("shutdown", {}).catch(() => undefined);
     } finally {
       this.process?.kill();
       this.process = null;
+      this._rejectAllPending(new Error("connector shutdown"));
     }
   }
 
   private _call<T>(method: string, params: unknown): Promise<T> {
     return new Promise((resolve, reject) => {
       const id = randomUUID();
+
+      /**
+       * P0-4：所有 _call 都强加 timeout。超时后从 pendingRequests 移除，让后续
+       * stdout 即使迟来也找不到 entry（被 #_readStdout 忽略），不会重复 resolve。
+       */
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.delete(id)) {
+          reject(
+            new Error(
+              `python-bridge[${this.connectorName}] ${method} timed out after ${PYTHON_CALL_TIMEOUT_MS}ms (subprocess likely hung)`
+            )
+          );
+        }
+      }, PYTHON_CALL_TIMEOUT_MS);
+
       this.pendingRequests.set(id, {
         resolve: resolve as (v: unknown) => void,
         reject,
+        timer,
       });
 
       const request: JsonRpcRequest = { id, method, params };
       const line = JSON.stringify(request) + "\n";
-      this.process?.stdin?.write(line);
+      try {
+        this.process?.stdin?.write(line);
+      } catch (err) {
+        /** stdin 写挂（pipe 关闭）也立刻 reject，不要等 timeout */
+        if (this.pendingRequests.delete(id)) {
+          clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        }
+      }
     });
+  }
+
+  /**
+   * P0-4：子进程崩 / 退出时把所有还 pending 的 _call 全部 reject。
+   * 等同 pendingRequests 的"安全网"——只要子进程死了，没有任何一笔会永远卡住。
+   */
+  private _watchExit(): void {
+    const proc = this.process;
+    if (!proc) return;
+    const exited = proc.exited;
+    if (!exited) return;
+    this.exitWatcher = exited.then((code) => {
+      const reason = new Error(
+        `python-bridge[${this.connectorName}] subprocess exited unexpectedly (code=${code ?? "null"})`
+      );
+      this._rejectAllPending(reason);
+    });
+  }
+
+  private _rejectAllPending(err: Error): void {
+    if (this.pendingRequests.size === 0) return;
+    const entries = [...this.pendingRequests.entries()];
+    this.pendingRequests.clear();
+    for (const [, p] of entries) {
+      clearTimeout(p.timer);
+      p.reject(err);
+    }
   }
 
   private _readStdout(): void {
@@ -121,6 +188,7 @@ export class PythonConnectorBridgeImpl extends BaseConnector {
             const pending = this.pendingRequests.get(String(response.id));
             if (pending) {
               this.pendingRequests.delete(String(response.id));
+              clearTimeout(pending.timer);
               if (response.error) {
                 pending.reject(new Error(response.error.message));
               } else {

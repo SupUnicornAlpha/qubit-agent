@@ -1,4 +1,5 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
+import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { isCryptoMarket } from "./crypto-market";
 import { isChinaAShareMarket } from "./eastmoney-klines";
@@ -224,7 +225,7 @@ async function fetchYahooChartJson(
   interval: string
 ): Promise<YahooChartResponse> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1Sec}&period2=${period2Sec}&interval=${encodeURIComponent(interval)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { "User-Agent": UA, Accept: "application/json" },
   });
   const json = (await res.json()) as YahooChartResponse;
