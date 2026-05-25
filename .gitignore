@@ -50,5 +50,11 @@ docs/*
 # Pixel office font subset debug output
 frontend/src/assets/fonts/.subset-chars.txt
 
+# Pixel office raw art packs (downloaded from itch.io; CC-BY/CC0)
+# 仅入库构建后的 atlas（themes/<id>/atlas.{png,json}）与 manifest.ts，
+# 原始 zip 解压目录不入库。下载与解压步骤见：
+#   frontend/src/assets/pixel-office/README.md
+frontend/src/assets/pixel-office/raw/
+
 # Agent runtime snapshots
 .tmp-agent-snapshot-test/

@@ -128,69 +128,158 @@ function drawMonitorPixels(
   const mw = hd ? 48 : 32;
   const mh = hd ? 36 : 24;
   const blink = Math.floor(t / 350) % 2;
-  fill(ctx, ox, oy, mw, mh, "#1e293b");
-  fill(ctx, ox + 1, oy + 1, mw - 2, 4, "#334155");
-  fill(ctx, ox + 2, oy + 2, 10, 1, "#64748b");
-  fill(ctx, ox + mw - 8, oy + 2, 5, 1, "#94a3b8");
-  fill(ctx, ox + 1, oy + 5, mw - 2, mh - 6, "#020617");
-  fill(ctx, ox + 2, oy + 6, mw - 4, mh - 8, "#0f172a");
-  fill(ctx, ox + 3, oy + 7, 2, mh - 10, "rgba(148,163,184,0.35)");
 
+  // === 边框：双层金属感 ===
+  fill(ctx, ox, oy, mw, mh, "#0f172a");
+  fill(ctx, ox + 1, oy + 1, mw - 2, mh - 2, "#1e293b");
+
+  // 顶部状态条（含 LED）
+  fill(ctx, ox + 1, oy + 1, mw - 2, 3, "#334155");
+  fill(ctx, ox + 3, oy + 2, 1, 1, "#22c55e"); // 电源 LED
+  fill(ctx, ox + 5, oy + 2, 1, 1, "#475569"); // 待机
+  fill(ctx, ox + mw - 8, oy + 2, 5, 1, "#64748b"); // 品牌带
+
+  // 屏幕内凹
+  fill(ctx, ox + 1, oy + 4, mw - 2, mh - 7, "#020617");
+  fill(ctx, ox + 2, oy + 5, mw - 4, mh - 9, "#0f172a");
+
+  // === 静态内容（运行时叠加在此基础上） ===
   switch (mode) {
     case "idle":
+      // 屏保点阵
       fill(ctx, ox + 12, oy + 12, 8, 2, "#334155");
+      fill(ctx, ox + 16, oy + 16, 4, 2, "#1e293b");
       break;
     case "chat":
-      fill(ctx, ox + 4, oy + 8, 20, 2, "#38bdf8");
-      fill(ctx, ox + 6, oy + 11, 16, 2, "#7dd3fc");
-      fill(ctx, ox + 8, oy + 14, 12, 2, "#0ea5e9");
-      miniText(fill, ctx, ox + (hd ? 32 : 22), oy + 8, "MSG", "#7dd3fc");
+      // 消息气泡群（蓝紫渐变）
+      fill(ctx, ox + 3, oy + 7, 14, 3, "#1e3a8a");
+      fill(ctx, ox + 3, oy + 7, 13, 1, "#3b82f6");
+      fill(ctx, ox + mw - 18, oy + 12, 14, 3, "#1e40af");
+      fill(ctx, ox + mw - 18, oy + 12, 13, 1, "#60a5fa");
+      fill(ctx, ox + 3, oy + 17, 12, 3, "#1e3a8a");
+      fill(ctx, ox + 3, oy + 17, 11, 1, "#3b82f6");
+      miniText(fill, ctx, ox + 4, oy + 23, "MSG", "#93c5fd");
       break;
     case "code":
-      for (let i = 0; i < 6; i++) {
-        fill(ctx, ox + 4, oy + 7 + i * 2, 10 + (i % 3) * 2, 1, blink ? "#4ade80" : "#22c55e");
+      // 多行代码（绿色行 + 行号）
+      for (let i = 0; i < 7; i++) {
+        fill(ctx, ox + 3, oy + 6 + i * 2, 1, 1, "#475569"); // 行号
+        fill(ctx, ox + 5, oy + 6 + i * 2, 8 + (i % 4) * 2, 1, blink ? "#4ade80" : "#22c55e");
+        if (i % 3 === 1) {
+          fill(ctx, ox + 15, oy + 6 + i * 2, 5, 1, "#facc15"); // 关键字高亮
+        }
       }
-      miniText(fill, ctx, ox + (hd ? 32 : 22), oy + 8, "PY", "#4ade80");
+      miniText(fill, ctx, ox + mw - 12, oy + 6, "PY", "#4ade80");
       break;
     case "mcp":
-      fill(ctx, ox + 5, oy + 8, 6, 6, "#166534");
-      fill(ctx, ox + 7, oy + 10, 2, 2, "#4ade80");
-      fill(ctx, ox + 18, oy + 12, 8, 2, "#22c55e");
-      miniText(fill, ctx, ox + 6, oy + (hd ? 22 : 16), "MCP", "#4ade80");
+      // 网络节点 + 连线（拓扑图）
+      fill(ctx, ox + 4, oy + 8, 3, 3, "#166534");
+      fill(ctx, ox + 5, oy + 9, 1, 1, "#4ade80");
+      fill(ctx, ox + mw - 8, oy + 7, 3, 3, "#166534");
+      fill(ctx, ox + mw - 7, oy + 8, 1, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2), oy + 14, 3, 3, "#166534");
+      fill(ctx, ox + Math.floor(mw / 2) + 1, oy + 15, 1, 1, "#4ade80");
+      // 节点连线
+      for (let i = 0; i < 6; i++) {
+        fill(ctx, ox + 7 + i * 2, oy + 11 + (i % 2), 1, 1, "#22c55e");
+        fill(ctx, ox + mw - 9 - i * 2, oy + 10 + (i % 2), 1, 1, "#22c55e");
+      }
+      miniText(fill, ctx, ox + 3, oy + mh - 7, "MCP", "#4ade80");
       break;
     case "skill":
-      fill(ctx, ox + 10, oy + 7, 10, 12, "#b45309");
-      fill(ctx, ox + 11, oy + 8, 8, 2, "#fef3c7");
-      fill(ctx, ox + 12, oy + 11, 6, 6, "#fbbf24");
-      miniText(fill, ctx, ox + 6, oy + (hd ? 22 : 16), "SKL", "#fbbf24");
+      // 翻开的书 + 页面文字行
+      fill(ctx, ox + 6, oy + 6, mw - 12, mh - 14, "#b45309");
+      fill(ctx, ox + 7, oy + 7, mw - 14, mh - 16, "#fef3c7");
+      // 中缝
+      fill(ctx, ox + Math.floor(mw / 2), oy + 7, 1, mh - 16, "#92400e");
+      // 文字行
+      for (let i = 0; i < 4; i++) {
+        fill(ctx, ox + 8, oy + 9 + i * 2, 6, 1, "#78350f");
+        fill(ctx, ox + Math.floor(mw / 2) + 2, oy + 9 + i * 2, 6, 1, "#78350f");
+      }
+      miniText(fill, ctx, ox + 3, oy + mh - 7, "SKL", "#fbbf24");
       break;
     case "sandbox":
-      fill(ctx, ox + 4, oy + 7, 22, 12, "#1e3a5f");
-      fill(ctx, ox + 6 + blink, oy + 9, 4, 1, "#38bdf8");
-      fill(ctx, ox + 14, oy + 14, 8, 2, "#7dd3fc");
-      miniText(fill, ctx, ox + 6, oy + (hd ? 22 : 16), "SH", "#38bdf8");
+      // 终端：提示符 + 命令历史
+      fill(ctx, ox + 2, oy + 5, mw - 4, mh - 11, "#0c1929");
+      // 提示符 $
+      fill(ctx, ox + 4, oy + 7, 1, 1, "#22d3ee");
+      fill(ctx, ox + 4, oy + 8, 1, 1, "#22d3ee");
+      fill(ctx, ox + 4, oy + 9, 1, 1, "#22d3ee");
+      // 命令行（多行）
+      fill(ctx, ox + 6, oy + 7, 8, 1, "#7dd3fc");
+      fill(ctx, ox + 6, oy + 9, 6, 1, "#94a3b8");
+      fill(ctx, ox + 4, oy + 11, 1, 1, "#22d3ee");
+      fill(ctx, ox + 6, oy + 11, 10, 1, "#7dd3fc");
+      fill(ctx, ox + 4, oy + 13, 1, 1, "#22d3ee");
+      fill(ctx, ox + 6, oy + 13, 4, 1, "#7dd3fc");
+      // 光标（静态版；runtime 会再叠一个闪烁的）
+      fill(ctx, ox + 11, oy + 13, 1, 1, "#22d3ee");
+      miniText(fill, ctx, ox + mw - 10, oy + mh - 7, "SH", "#38bdf8");
       break;
     case "ok":
-      fill(ctx, ox + 8, oy + 8, 14, 10, "#14532d");
-      miniText(fill, ctx, ox + 12, oy + 12, "OK", "#4ade80");
-      fill(ctx, ox + (hd ? 34 : 22), oy + 10, 4, 6, "#166534");
-      miniText(fill, ctx, ox + (hd ? 34 : 22), oy + 11, "✓", "#4ade80");
+      // 大勾 + 庆祝条幅
+      fill(ctx, ox + 4, oy + 6, mw - 8, mh - 12, "#052e16");
+      fill(ctx, ox + 5, oy + 7, mw - 10, mh - 14, "#14532d");
+      // 大对勾
+      fill(ctx, ox + Math.floor(mw / 2) - 4, oy + 12, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2) - 3, oy + 13, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2) - 2, oy + 14, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2) - 1, oy + 13, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2), oy + 12, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2) + 1, oy + 11, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2) + 2, oy + 10, 2, 1, "#4ade80");
+      fill(ctx, ox + Math.floor(mw / 2) + 3, oy + 9, 1, 1, "#4ade80");
+      miniText(fill, ctx, ox + 4, oy + mh - 7, "OK!", "#86efac");
       break;
     case "err":
-      fill(ctx, ox + 8, oy + 8, 14, 10, "#7f1d1d");
-      miniText(fill, ctx, ox + 10, oy + 12, "ERR", "#f87171");
-      miniText(fill, ctx, ox + (hd ? 34 : 22), oy + 11, "✗", "#f87171");
+      // 大叉 + 红色警告
+      fill(ctx, ox + 4, oy + 6, mw - 8, mh - 12, "#450a0a");
+      fill(ctx, ox + 5, oy + 7, mw - 10, mh - 14, "#7f1d1d");
+      // 大 X
+      for (let i = 0; i < 7; i++) {
+        fill(ctx, ox + Math.floor(mw / 2) - 3 + i, oy + 9 + i, 1, 1, "#f87171");
+        fill(ctx, ox + Math.floor(mw / 2) + 3 - i, oy + 9 + i, 1, 1, "#f87171");
+      }
+      miniText(fill, ctx, ox + 4, oy + mh - 7, "ERR", "#fca5a5");
       break;
     case "empty":
-      fill(ctx, ox + 8, oy + 8, 14, 10, "#422006");
-      fill(ctx, ox + 12, oy + 11, 6, 4, "#fbbf24");
-      miniText(fill, ctx, ox + 14, oy + (hd ? 20 : 16), "?", "#fbbf24");
+      // 空集 / 大问号
+      fill(ctx, ox + 4, oy + 6, mw - 8, mh - 12, "#422006");
+      fill(ctx, ox + 5, oy + 7, mw - 10, mh - 14, "#78350f");
+      // 大 ?
+      fill(ctx, ox + Math.floor(mw / 2) - 2, oy + 9, 4, 1, "#fbbf24");
+      fill(ctx, ox + Math.floor(mw / 2) + 1, oy + 10, 1, 2, "#fbbf24");
+      fill(ctx, ox + Math.floor(mw / 2), oy + 12, 1, 1, "#fbbf24");
+      fill(ctx, ox + Math.floor(mw / 2), oy + 14, 1, 1, "#fbbf24");
+      miniText(fill, ctx, ox + 4, oy + mh - 7, "NIL", "#fde68a");
       break;
   }
-  fill(ctx, ox + Math.floor(mw / 2) - 4, oy + mh - 4, 8, 2, "#475569");
-  fill(ctx, ox + Math.floor(mw / 2) - 6, oy + mh - 2, 12, 1, "#334155");
+
+  // === 扫描线（CRT 感觉，所有 mode 共享） ===
+  for (let y = 5; y < mh - 4; y += 2) {
+    fill(ctx, ox + 2, oy + y, mw - 4, 1, "rgba(0,0,0,0.13)");
+  }
+
+  // === 玻璃反光（左上角斜光） ===
+  fill(ctx, ox + 3, oy + 5, 3, 1, "rgba(255,255,255,0.18)");
+  fill(ctx, ox + 4, oy + 6, 2, 1, "rgba(255,255,255,0.12)");
+  fill(ctx, ox + 5, oy + 7, 1, 1, "rgba(255,255,255,0.08)");
+
+  // === 底座（带圆形按钮） ===
+  fill(ctx, ox + Math.floor(mw / 2) - 5, oy + mh - 3, 10, 2, "#475569");
+  fill(ctx, ox + Math.floor(mw / 2) - 7, oy + mh - 1, 14, 1, "#334155");
+  fill(ctx, ox + Math.floor(mw / 2) - 1, oy + mh - 2, 2, 1, "#22c55e");
 }
 
+type CatPose = "idle" | "walk1" | "walk2" | "work" | "success" | "fail" | "empty";
+type EyeMood = "open" | "narrow" | "happyCurve" | "starry" | "closedX" | "wideEmpty";
+type MouthMood = "smile" | "neutral" | "frown" | "openO";
+
+/**
+ * 在头部 (rows 3-13) 上画品种独有花纹：条纹、斑块、面罩、对比色等。
+ * 全部叠加在 base body 之上，因此调用顺序很重要（必须在 base body 之后调用）。
+ */
 function drawBreedMarkings(
   fill: ReturnType<typeof makeFill>,
   ctx: CanvasRenderingContext2D,
@@ -201,38 +290,175 @@ function drawBreedMarkings(
 ) {
   switch (breed) {
     case "tabby":
-      fill(ctx, ox + 5, oy + 2, 4, 1, pal.stripe ?? "#8a5028");
-      fill(ctx, ox + 6, oy + 3, 1, 1, pal.stripe ?? "#8a5028");
-      fill(ctx, ox + 8, oy + 3, 1, 1, pal.stripe ?? "#8a5028");
+      // 头顶 M 形条纹（虎斑标志）+ 身体侧条纹
+      fill(ctx, ox + 7, oy + 3, 1, 2, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 9, oy + 3, 1, 2, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 11, oy + 3, 1, 2, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 13, oy + 3, 1, 2, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 5, oy + 5, 1, 1, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 15, oy + 5, 1, 1, pal.stripe ?? "#8a5028");
+      // 身体条纹
+      fill(ctx, ox + 5, oy + 15, 2, 1, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 13, oy + 15, 2, 1, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 5, oy + 17, 2, 1, pal.stripe ?? "#8a5028");
+      fill(ctx, ox + 13, oy + 17, 2, 1, pal.stripe ?? "#8a5028");
       break;
     case "calico":
-      fill(ctx, ox + 2, oy + 6, 3, 3, "#2a2a2a");
-      fill(ctx, ox + 8, oy + 7, 3, 2, "#e87840");
+      // 不规则三色斑块（头黑 + 身橙）
+      fill(ctx, ox + 4, oy + 2, 3, 3, "#2a2a2a");
+      fill(ctx, ox + 5, oy + 5, 2, 2, "#2a2a2a");
+      fill(ctx, ox + 12, oy + 4, 4, 3, "#c87840");
+      fill(ctx, ox + 4, oy + 15, 4, 4, "#2a2a2a");
+      fill(ctx, ox + 12, oy + 16, 4, 4, "#c87840");
       break;
     case "tuxedo":
-      fill(ctx, ox + 3, oy + 7, 6, 4, pal.stripe ?? "#f0ece4");
+      // 胸前白色「围兜」+ 鼻梁白线（典型 tuxedo 标志）
+      fill(ctx, ox + 8, oy + 7, 4, 5, pal.stripe ?? "#f0ece4");
+      fill(ctx, ox + 9, oy + 6, 2, 1, pal.stripe ?? "#f0ece4");
+      // 围兜延伸到胸前
+      fill(ctx, ox + 8, oy + 13, 5, 5, pal.stripe ?? "#f0ece4");
+      // 4 只白爪
+      fill(ctx, ox + 5, oy + 22, 2, 4, pal.stripe ?? "#f0ece4");
+      fill(ctx, ox + 14, oy + 22, 2, 4, pal.stripe ?? "#f0ece4");
       break;
     case "siamese":
-      fill(ctx, ox + 2, oy + 2, 8, 5, pal.mask ?? "#4a3828");
-      fill(ctx, ox + 4, oy + 4, 4, 2, pal.body);
+      // 重点色：脸/耳/腿/尾深色（colorpoint）
+      fill(ctx, ox + 5, oy + 3, 11, 4, pal.mask ?? "#4a3828");
+      fill(ctx, ox + 6, oy + 5, 2, 2, pal.body); // 留眼睛位
+      fill(ctx, ox + 13, oy + 5, 2, 2, pal.body);
+      fill(ctx, ox + 4, oy + 22, 2, 4, pal.mask ?? "#4a3828"); // 前腿
+      fill(ctx, ox + 15, oy + 22, 2, 4, pal.mask ?? "#4a3828");
       break;
     case "british":
-      fill(ctx, ox + 2, oy + 5, 2, 2, pal.bodyDark);
-      fill(ctx, ox + 10, oy + 5, 2, 2, pal.bodyDark);
+      // 短毛圆脸：腮部加深色阴影
+      fill(ctx, ox + 4, oy + 9, 2, 2, pal.bodyDark);
+      fill(ctx, ox + 15, oy + 9, 2, 2, pal.bodyDark);
+      // 蓝灰体色细节
+      fill(ctx, ox + 9, oy + 17, 2, 2, pal.bodyDark);
       break;
     case "white":
-      fill(ctx, ox + 1, oy + 1, 1, 1, "#fce7f3");
-      fill(ctx, ox + 12, oy + 1, 1, 1, "#fce7f3");
+      // 白猫加点粉色腮红
+      fill(ctx, ox + 5, oy + 9, 1, 1, "#fce7f3");
+      fill(ctx, ox + 15, oy + 9, 1, 1, "#fce7f3");
       break;
     case "black":
-      fill(ctx, ox + 5, oy + 3, 2, 1, "#a8f0b0");
+      // 全黑猫加额头反光
+      fill(ctx, ox + 9, oy + 4, 2, 1, pal.belly);
       break;
     case "ginger":
-      fill(ctx, ox + 1, oy + 9, 2, 4, pal.bodyDark);
+      // 橘猫常见的颈环深色 + 头部细条纹
+      fill(ctx, ox + 6, oy + 3, 1, 1, pal.bodyDark);
+      fill(ctx, ox + 10, oy + 3, 1, 1, pal.bodyDark);
+      fill(ctx, ox + 13, oy + 3, 1, 1, pal.bodyDark);
+      // 腹环
+      fill(ctx, ox + 7, oy + 18, 5, 1, pal.bodyDark);
       break;
   }
 }
 
+/** 画眼睛（含高光），返回眼睛颜色 */
+function drawEye(
+  fill: ReturnType<typeof makeFill>,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  pal: CatPalette,
+  mood: EyeMood
+) {
+  switch (mood) {
+    case "open":
+      // 椭圆瞳 + 顶部高光
+      fill(ctx, cx, cy, 2, 2, pal.eye);
+      fill(ctx, cx, cy, 1, 1, "#ffffff");
+      break;
+    case "narrow":
+      // 工作中，眯眼专注（一道）
+      fill(ctx, cx, cy + 1, 2, 1, pal.eye);
+      break;
+    case "happyCurve":
+      // 成功：弯月眼 ^
+      fill(ctx, cx, cy + 1, 1, 1, pal.bodyDark);
+      fill(ctx, cx + 1, cy, 1, 1, pal.bodyDark);
+      fill(ctx, cx + 2, cy + 1, 1, 1, pal.bodyDark);
+      break;
+    case "starry":
+      // 大成功：星星眼
+      fill(ctx, cx, cy, 2, 2, "#fbbf24");
+      fill(ctx, cx, cy, 1, 1, "#ffffff");
+      break;
+    case "closedX":
+      // 失败：>< 眼
+      fill(ctx, cx, cy, 1, 1, pal.bodyDark);
+      fill(ctx, cx + 1, cy + 1, 1, 1, pal.bodyDark);
+      fill(ctx, cx + 2, cy, 1, 1, pal.bodyDark);
+      break;
+    case "wideEmpty":
+      // 空结果：大圆瞪眼
+      fill(ctx, cx - 1, cy - 1, 3, 3, "#ffffff");
+      fill(ctx, cx, cy, 1, 1, pal.eye);
+      break;
+  }
+}
+
+/** 画嘴巴（W 形 / 平 / 蹙眉 / O） */
+function drawMouth(
+  fill: ReturnType<typeof makeFill>,
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  pal: CatPalette,
+  mood: MouthMood
+) {
+  switch (mood) {
+    case "smile":
+      // W 形小嘴（猫嘴标志）
+      fill(ctx, cx - 1, cy, 1, 1, pal.bodyDark);
+      fill(ctx, cx, cy + 1, 1, 1, pal.bodyDark);
+      fill(ctx, cx + 1, cy, 1, 1, pal.bodyDark);
+      break;
+    case "neutral":
+      fill(ctx, cx, cy + 1, 1, 1, pal.bodyDark);
+      break;
+    case "frown":
+      fill(ctx, cx - 1, cy + 1, 1, 1, pal.bodyDark);
+      fill(ctx, cx, cy, 1, 1, pal.bodyDark);
+      fill(ctx, cx + 1, cy + 1, 1, 1, pal.bodyDark);
+      break;
+    case "openO":
+      fill(ctx, cx, cy, 1, 2, "#3a2418");
+      break;
+  }
+}
+
+/** 画胡须（脸两侧 3 根） */
+function drawWhiskers(
+  fill: ReturnType<typeof makeFill>,
+  ctx: CanvasRenderingContext2D,
+  ox: number,
+  oy: number,
+  pal: CatPalette
+) {
+  const whisker = pal.bodyDark;
+  // 左侧
+  fill(ctx, ox + 1, oy + 8, 2, 1, whisker);
+  fill(ctx, ox + 0, oy + 9, 2, 1, whisker);
+  fill(ctx, ox + 1, oy + 10, 2, 1, whisker);
+  // 右侧
+  fill(ctx, ox + 18, oy + 8, 2, 1, whisker);
+  fill(ctx, ox + 19, oy + 9, 2, 1, whisker);
+  fill(ctx, ox + 18, oy + 10, 2, 1, whisker);
+}
+
+/**
+ * 重写猫咪绘制 V2：22x30 sprite rect 内，眼睛/胡须/品种/动作全套精修。
+ * 通用结构：
+ *   rows 0-2   ears (triangles)
+ *   rows 2-12  head (16 wide @ col 3-18) + eyes (rows 7-8) + nose/mouth (rows 9-11)
+ *   rows 8-11  whiskers (extend left/right of face)
+ *   rows 12-22 body block (18 wide @ col 2-19) + belly highlight
+ *   rows 22-27 legs (4 visible)
+ *   rows 14-26 tail (col 0-3 or 19-22, pose-dependent)
+ */
 function drawCatPixels(
   fill: ReturnType<typeof makeFill>,
   ctx: CanvasRenderingContext2D,
@@ -240,54 +466,173 @@ function drawCatPixels(
   oy: number,
   breed: CatBreed,
   pal: CatPalette,
-  pose: "idle" | "walk1" | "walk2" | "work" | "success" | "fail" | "empty",
-  frame: number,
-  hd: boolean
+  pose: CatPose,
+  _frame: number,
+  _hd: boolean
 ) {
-  const bw = hd ? 18 : 12;
-  const bh = hd ? 10 : 8;
-  const tail = pose === "walk1" ? 1 : pose === "walk2" ? 0 : frame;
-  fill(ctx, ox - 1 + tail, oy + 16, 2, 6, pal.bodyDark);
-  fill(ctx, ox, oy + 10, bw, bh, pal.body);
-  fill(ctx, ox + 2, oy + 12, bw - 4, bh - 3, pal.belly);
-  if (pal.stripe && breed !== "tuxedo") {
-    fill(ctx, ox + 2, oy + 8, 2, 3, pal.stripe);
-    fill(ctx, ox + 8, oy + 9, 2, 3, pal.stripe);
-  }
-  fill(ctx, ox + 2, oy + 2, bw - 4, 9, pal.body);
-  fill(ctx, ox + 1, oy + 1, 2, 4, pal.ear);
-  fill(ctx, ox + bw - 3, oy + 1, 2, 4, pal.ear);
-  drawBreedMarkings(fill, ctx, ox, oy, breed, pal);
-  const eyeY = hd ? 6 : 5;
-  fill(ctx, ox + 4, oy + eyeY, 2, 2, pal.eye);
-  fill(ctx, ox + bw - 6, oy + eyeY, 2, 2, pal.eye);
-  fill(ctx, ox + Math.floor(bw / 2) - 1, oy + 8, 2, 1, pal.nose);
+  const bodyY = 13;
+  const bodyW = 16; // cols 3..18
+  const bodyH = 10; // rows 13..22
 
-  if (pose === "work") {
-    fill(ctx, ox + 1 + frame, oy + 15, 3, 2, pal.bodyDark);
-    fill(ctx, ox + 8 - frame, oy + 15, 3, 2, pal.bodyDark);
-  }
+  // === Tail (画在最底层 so body 覆盖根部) ===
+  let tailCol = 1;
+  let tailRows = [16, 17, 18, 19, 20];
   if (pose === "walk1") {
-    fill(ctx, ox + 2, oy + 16, 3, 2, pal.bodyDark);
-    fill(ctx, ox + 7, oy + 14, 3, 2, pal.bodyDark);
+    tailCol = 0;
+    tailRows = [14, 15, 16, 17, 18];
+  } else if (pose === "walk2") {
+    tailCol = 2;
+    tailRows = [15, 16, 17, 18, 19];
+  } else if (pose === "success") {
+    tailCol = 0;
+    tailRows = [13, 14, 15, 16];
+  } else if (pose === "fail") {
+    tailCol = 1;
+    tailRows = [20, 21, 22, 23];
   }
-  if (pose === "walk2") {
-    fill(ctx, ox + 4, oy + 14, 3, 2, pal.bodyDark);
-    fill(ctx, ox + 5, oy + 16, 3, 2, pal.bodyDark);
+  for (const ty of tailRows) {
+    fill(ctx, ox + tailCol, oy + ty, 2, 1, pal.body);
+    fill(ctx, ox + tailCol + 1, oy + ty + 1, 1, 1, pal.bodyDark);
   }
-  if (pose === "success") {
-    fill(ctx, ox + 11, oy, 2, 2, "#fbbf24");
-    fill(ctx, ox + 13, oy + 1, 2, 2, "#4ade80");
-    fill(ctx, ox + 5, oy + 7, 3, 2, "#f0a8b0");
+  // 尾巴尖
+  fill(ctx, ox + tailCol, oy + tailRows[tailRows.length - 1]! + 1, 1, 1, pal.bodyDark);
+
+  // === Body block ===
+  fill(ctx, ox + 3, oy + bodyY, bodyW, bodyH, pal.body);
+  // 腹部高光（梯形）
+  fill(ctx, ox + 5, oy + bodyY + 3, bodyW - 4, bodyH - 5, pal.belly);
+  fill(ctx, ox + 6, oy + bodyY + bodyH - 2, bodyW - 6, 1, pal.belly);
+
+  // === Head ===
+  fill(ctx, ox + 3, oy + 2, 16, 12, pal.body);
+  // 头部下颌阴影
+  fill(ctx, ox + 4, oy + 12, 14, 1, pal.bodyDark);
+
+  // === Ears (triangle pixels) ===
+  fill(ctx, ox + 2, oy + 0, 1, 1, pal.body);
+  fill(ctx, ox + 2, oy + 1, 2, 1, pal.body);
+  fill(ctx, ox + 3, oy + 2, 2, 1, pal.body);
+  fill(ctx, ox + 3, oy + 1, 1, 1, pal.ear); // 内耳
+  // 右耳
+  fill(ctx, ox + 19, oy + 0, 1, 1, pal.body);
+  fill(ctx, ox + 18, oy + 1, 2, 1, pal.body);
+  fill(ctx, ox + 17, oy + 2, 2, 1, pal.body);
+  fill(ctx, ox + 18, oy + 1, 1, 1, pal.ear);
+
+  // === 品种花纹（在 base body 之上） ===
+  drawBreedMarkings(fill, ctx, ox, oy, breed, pal);
+
+  // === 脚 (4 只) — 走路时左右交替前迈 ===
+  const legY = oy + 22;
+  const legColor = pal.bodyDark;
+  if (pose === "walk1") {
+    // 左前 + 右后
+    fill(ctx, ox + 5, legY, 2, 4, legColor);
+    fill(ctx, ox + 5, legY + 4, 3, 1, legColor); // 脚掌
+    fill(ctx, ox + 9, legY + 2, 2, 3, legColor);
+    fill(ctx, ox + 13, legY, 2, 4, legColor);
+    fill(ctx, ox + 13, legY + 4, 3, 1, legColor);
+    fill(ctx, ox + 16, legY + 2, 2, 3, legColor);
+  } else if (pose === "walk2") {
+    // 右前 + 左后
+    fill(ctx, ox + 6, legY + 2, 2, 3, legColor);
+    fill(ctx, ox + 9, legY, 2, 4, legColor);
+    fill(ctx, ox + 9, legY + 4, 3, 1, legColor);
+    fill(ctx, ox + 13, legY + 2, 2, 3, legColor);
+    fill(ctx, ox + 15, legY, 2, 4, legColor);
+    fill(ctx, ox + 15, legY + 4, 3, 1, legColor);
+  } else {
+    // 站立：4 只对称
+    fill(ctx, ox + 5, legY, 2, 4, legColor);
+    fill(ctx, ox + 5, legY + 4, 3, 1, legColor);
+    fill(ctx, ox + 9, legY, 2, 4, legColor);
+    fill(ctx, ox + 9, legY + 4, 3, 1, legColor);
+    fill(ctx, ox + 12, legY, 2, 4, legColor);
+    fill(ctx, ox + 12, legY + 4, 3, 1, legColor);
+    fill(ctx, ox + 15, legY, 2, 4, legColor);
+    fill(ctx, ox + 15, legY + 4, 3, 1, legColor);
   }
-  if (pose === "fail") {
-    fill(ctx, ox + 3, oy, 2, 2, "#f87171");
-    fill(ctx, ox + 8, oy, 2, 2, "#f87171");
-    fill(ctx, ox + 4, oy + 9, 4, 1, "#f87171");
+
+  // === 表情：眼+鼻+嘴+胡须 ===
+  let leftEye: EyeMood = "open";
+  let rightEye: EyeMood = "open";
+  let mouth: MouthMood = "smile";
+  let showWhiskers = true;
+  switch (pose) {
+    case "work":
+      leftEye = "narrow";
+      rightEye = "narrow";
+      mouth = "neutral";
+      break;
+    case "success":
+      leftEye = "starry";
+      rightEye = "starry";
+      mouth = "smile";
+      break;
+    case "fail":
+      leftEye = "closedX";
+      rightEye = "closedX";
+      mouth = "frown";
+      showWhiskers = false;
+      break;
+    case "empty":
+      leftEye = "wideEmpty";
+      rightEye = "wideEmpty";
+      mouth = "openO";
+      break;
+    case "walk1":
+    case "walk2":
+      mouth = "smile";
+      break;
+    case "idle":
+    default:
+      mouth = "smile";
+      break;
   }
-  if (pose === "empty") {
-    fill(ctx, ox + 11, oy + 6, 3, 3, "#fbbf24");
-    fill(ctx, ox + 12, oy + 8, 1, 1, "#0f172a");
+  drawEye(fill, ctx, ox + 5, oy + 7, pal, leftEye);
+  drawEye(fill, ctx, ox + 14, oy + 7, pal, rightEye);
+  // 鼻子（粉色三角）
+  fill(ctx, ox + 10, oy + 9, 2, 1, pal.nose);
+  fill(ctx, ox + 10, oy + 10, 1, 1, pal.nose);
+  // 嘴巴
+  drawMouth(fill, ctx, ox + 10, oy + 10, pal, mouth);
+  // 胡须
+  if (showWhiskers) drawWhiskers(fill, ctx, ox, oy, pal);
+
+  // === Pose-specific 装饰叠加 ===
+  if (pose === "work") {
+    // 前爪伸前（在键盘上）
+    fill(ctx, ox + 6, oy + 21, 2, 2, pal.bodyDark);
+    fill(ctx, ox + 14, oy + 21, 2, 2, pal.bodyDark);
+    // 头顶汗滴（专注思考）
+    fill(ctx, ox + 16, oy + 4, 1, 2, "#7dd3fc");
+  } else if (pose === "success") {
+    // 头顶 ✨
+    fill(ctx, ox + 0, oy + 4, 1, 1, "#fbbf24");
+    fill(ctx, ox + 1, oy + 3, 1, 1, "#ffffff");
+    fill(ctx, ox + 0, oy + 2, 1, 1, "#fbbf24");
+    fill(ctx, ox + 20, oy + 5, 1, 1, "#fbbf24");
+    fill(ctx, ox + 21, oy + 4, 1, 1, "#ffffff");
+    // 脸颊红晕
+    fill(ctx, ox + 4, oy + 9, 1, 1, "#f0a8b0");
+    fill(ctx, ox + 17, oy + 9, 1, 1, "#f0a8b0");
+  } else if (pose === "fail") {
+    // 头顶汗滴
+    fill(ctx, ox + 19, oy + 2, 1, 1, "#60a5fa");
+    fill(ctx, ox + 19, oy + 3, 2, 2, "#60a5fa");
+    fill(ctx, ox + 20, oy + 5, 1, 1, "#60a5fa");
+    // 沮丧线
+    fill(ctx, ox + 8, oy + 2, 1, 1, pal.bodyDark);
+    fill(ctx, ox + 11, oy + 2, 1, 1, pal.bodyDark);
+    fill(ctx, ox + 13, oy + 2, 1, 1, pal.bodyDark);
+  } else if (pose === "empty") {
+    // 头顶 ？
+    fill(ctx, ox + 18, oy + 1, 3, 1, "#fbbf24");
+    fill(ctx, ox + 20, oy + 2, 1, 2, "#fbbf24");
+    fill(ctx, ox + 19, oy + 3, 1, 1, "#fbbf24");
+    fill(ctx, ox + 19, oy + 5, 1, 1, "#fbbf24");
+  } else if (pose === "idle") {
+    // 偶尔眨眼？这里不动态，但身体微微偏（已在 walk pose 处理动效）
   }
 }
 
@@ -510,12 +855,77 @@ export function drawMonitorSprite(
   scale = 4
 ) {
   const rect = atlas.monitor[mode];
-  blitSprite(ctx, atlas, rect, x - (rect.w * scale) / 2, y - rect.h * scale - 4, scale);
-  if (mode === "code" || mode === "mcp") {
-    const blink = Math.floor(now / 400) % 2;
+  const dx = x - (rect.w * scale) / 2;
+  const dy = y - rect.h * scale - 4;
+  blitSprite(ctx, atlas, rect, dx, dy, scale);
+
+  // === 运行时动态叠加：增强生气 ===
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+
+  if (mode === "sandbox") {
+    // 闪烁光标（命令行）
+    const blink = Math.floor(now / 480) % 2;
     if (blink) {
-      ctx.fillStyle = "rgba(56, 189, 248, 0.12)";
-      ctx.fillRect(x - 28, y - rect.h * scale - 8, 56, rect.h * scale + 4);
+      ctx.fillStyle = "#22d3ee";
+      ctx.fillRect(dx + 12 * scale, dy + 13 * scale, 1 * scale, 1 * scale);
     }
+  } else if (mode === "code") {
+    // 滑动闪烁字符（模拟打字）
+    const phase = Math.floor(now / 220) % 8;
+    ctx.fillStyle = "rgba(74, 222, 128, 0.55)";
+    ctx.fillRect(dx + (5 + phase * 2) * scale, dy + 18 * scale, 1 * scale, 1 * scale);
+    // 边缘 bloom
+    const bloomPulse = 0.45 + Math.sin(now / 380) * 0.15;
+    ctx.fillStyle = `rgba(74, 222, 128, ${0.15 * bloomPulse})`;
+    ctx.fillRect(dx - 4, dy - 4, rect.w * scale + 8, rect.h * scale + 8);
+  } else if (mode === "chat") {
+    // 滚动消息条 + 输入指示
+    const t = (now / 600) % 1;
+    ctx.fillStyle = "rgba(125, 211, 252, 0.6)";
+    ctx.fillRect(dx + 3 * scale, dy + (7 + t * 14) * scale, 2 * scale, 1 * scale);
+    // 输入中点
+    const dotPhase = Math.floor(now / 280) % 3;
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = i === dotPhase ? "#7dd3fc" : "rgba(125, 211, 252, 0.35)";
+      ctx.fillRect(dx + (6 + i * 3) * scale, dy + 25 * scale, 2 * scale, 1 * scale);
+    }
+  } else if (mode === "mcp") {
+    // 节点脉冲（径向呼吸）
+    const pulse = 0.55 + Math.sin(now / 320) * 0.45;
+    ctx.fillStyle = `rgba(74, 222, 128, ${0.35 * pulse})`;
+    ctx.beginPath();
+    ctx.arc(dx + Math.floor(rect.w / 2) * scale + scale, dy + 15 * scale, 3 * scale, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (mode === "skill") {
+    // 书页高光（缓慢扫光）
+    const sweep = (now / 1400) % 1;
+    ctx.fillStyle = "rgba(254, 243, 199, 0.35)";
+    ctx.fillRect(dx + (4 + sweep * 28) * scale, dy + 6 * scale, 2 * scale, (rect.h - 14) * scale);
+  } else if (mode === "ok") {
+    // 庆祝粒子闪烁（小金点）
+    const phase = Math.floor(now / 200) % 4;
+    ctx.fillStyle = "#fde68a";
+    for (let i = 0; i < 3; i++) {
+      const seed = (i + phase) % 4;
+      ctx.fillRect(dx + (6 + seed * 8) * scale, dy + (8 + i * 2) * scale, 1 * scale, 1 * scale);
+    }
+  } else if (mode === "err") {
+    // 红色警告外晕（缓慢呼吸）
+    const pulse = 0.4 + Math.sin(now / 220) * 0.3;
+    ctx.fillStyle = `rgba(248, 113, 113, ${0.18 * pulse})`;
+    ctx.fillRect(dx - 6, dy - 6, rect.w * scale + 12, rect.h * scale + 12);
+  } else if (mode === "empty") {
+    // 问号缓慢闪烁
+    const blink = (Math.sin(now / 400) + 1) / 2;
+    ctx.fillStyle = `rgba(251, 191, 36, ${0.18 + blink * 0.25})`;
+    ctx.fillRect(dx - 2, dy - 2, rect.w * scale + 4, rect.h * scale + 4);
+  } else if (mode === "idle") {
+    // 待机：屏幕极弱呼吸（电源指示）
+    const pulse = 0.5 + Math.sin(now / 1200) * 0.5;
+    ctx.fillStyle = `rgba(34, 197, 94, ${0.3 + pulse * 0.5})`;
+    ctx.fillRect(dx + 3 * scale, dy + 2 * scale, 1 * scale, 1 * scale);
   }
+
+  ctx.restore();
 }

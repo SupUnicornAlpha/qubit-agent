@@ -72,9 +72,22 @@ export function buildPathGrid(layout: OfficeLayout, persp: OfficePerspective): P
   paintCircle(grid, layout.shelf.x, layout.shelf.y - 8, 36 * depthScale(layout.shelf.depth));
   paintCircle(grid, layout.rack.x, layout.rack.y - 8, 36 * depthScale(layout.rack.depth));
 
-  // 5. 休息角沙发 + 咖啡桌
-  paintCircle(grid, layout.lounge.x, layout.lounge.y, 60 * depthScale(layout.lounge.depth));
-  paintCircle(grid, layout.coffee.x, layout.coffee.y, 32 * depthScale(layout.coffee.depth));
+  // 5. 休息角沙发 + 咖啡桌（含主题模式下 Big-Round-Table 右侧偏移）
+  const loungeS = depthScale(layout.lounge.depth);
+  paintCircle(grid, layout.lounge.x, layout.lounge.y, 64 * loungeS);
+  paintCircle(grid, layout.lounge.x + 30 * loungeS, layout.lounge.y + 6 * loungeS, 28 * loungeS);
+
+  const coffeeS = depthScale(layout.coffee.depth);
+  paintCircle(grid, layout.coffee.x, layout.coffee.y, 34 * coffeeS);
+  paintCircle(grid, layout.coffee.x - 30 * coffeeS, layout.coffee.y + 2 * coffeeS, 22 * coffeeS);
+
+  // 6. 主题装饰散落家具（rack/shelf 右侧延伸的 Cabinet/Printer/Vending 等）
+  const rackS = depthScale(layout.rack.depth);
+  paintCircle(grid, layout.rack.x + 64 * rackS, layout.rack.y + 10, 28 * rackS);
+  const shelfS = depthScale(layout.shelf.depth);
+  paintCircle(grid, layout.shelf.x + 64 * shelfS, layout.shelf.y + 10, 28 * shelfS);
+  // 书架旁植物
+  paintCircle(grid, layout.shelf.x - 24, layout.shelf.y - 4, 18 * shelfS);
 
   return grid;
 }

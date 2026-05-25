@@ -1,7 +1,35 @@
 import { pixelFont } from "./fonts";
 import { depthScale, floorEdgeX, type OfficePerspective } from "./officePerspective";
 import { drawDropShadow, drawPerspectiveRug } from "./starOfficeStyle";
+import { drawThemeSprite } from "./themeAssets";
+import { ensureActiveAtlasLoaded, getActiveAtlasSync, getActiveTheme } from "./themes";
+import type { LoadedThemeAtlas } from "./themes/types";
 import type { OfficeLayout } from "./types";
+
+/** 主题 sprite 渲染基准缩放：让 16/32 px raw 资产在 720p 舞台呈现近似程序化家具的视觉尺寸。 */
+const THEME_SPRITE_SCALE = 2.4;
+
+/**
+ * 用主题 atlas 画一件家具：底中锚点 + 椭圆地面阴影 + 透视缩放。
+ * 找不到 sprite 名返回 false，调用方应 fallback 到程序化绘制。
+ */
+function drawThemedFurniture(
+  ctx: CanvasRenderingContext2D,
+  atlas: LoadedThemeAtlas,
+  spriteName: string,
+  x: number,
+  y: number,
+  depth: number,
+  opts: { shadowW?: number; scaleMul?: number; flipX?: boolean } = {}
+): boolean {
+  const frame = atlas.manifest.frames[spriteName];
+  if (!frame) return false;
+  const scale = THEME_SPRITE_SCALE * (opts.scaleMul ?? 1) * depthScale(depth);
+  const visW = frame.w * scale;
+  const shadowW = opts.shadowW ?? visW * 0.7;
+  drawDropShadow(ctx, x, y, shadowW, Math.max(5, visW * 0.18));
+  return drawThemeSprite(ctx, atlas, spriteName, x, y, scale, opts.flipX);
+}
 
 function px(
   ctx: CanvasRenderingContext2D,
@@ -269,6 +297,97 @@ export function drawMonitorGlow(
   ctx.restore();
 }
 
+/** 用主题 atlas 重绘休息角 + 咖啡角 + 角落植物 + 墙饰；返回是否成功用了 sprite。 */
+function drawThemedAmbience(
+  ctx: CanvasRenderingContext2D,
+  atlas: LoadedThemeAtlas,
+  p: OfficePerspective,
+  layout: OfficeLayout,
+  now: number
+): boolean {
+  const theme = getActiveTheme();
+  const decor = theme.decorations;
+
+  const lounge = layout.lounge;
+  const ls = depthScale(lounge.depth);
+  drawThemedFurniture(ctx, atlas, decor.loungeSofa, lounge.x - 4 * ls, lounge.y, lounge.depth, {
+    scaleMul: 1.1,
+  });
+  drawThemedFurniture(ctx, atlas, decor.loungeTable, lounge.x + 30 * ls, lounge.y + 6 * ls, lounge.depth, {
+    scaleMul: 0.85,
+    shadowW: 36 * ls,
+  });
+  drawFloorLamp(ctx, lounge.x + 64 * ls, lounge.y - 4, lounge.depth, now);
+  drawCatBed(ctx, lounge.x - 60 * ls, lounge.y + 6, lounge.depth);
+
+  drawThemedFurniture(ctx, atlas, decor.coffeeMachine, layout.coffee.x, layout.coffee.y, layout.coffee.depth, {
+    scaleMul: 1.15,
+  });
+  const cs = depthScale(layout.coffee.depth);
+  drawThemedFurniture(
+    ctx,
+    atlas,
+    decor.cornerPlants[0] ?? "Big-Plant",
+    layout.coffee.x - 30 * cs,
+    layout.coffee.y + 2 * cs,
+    layout.coffee.depth,
+    { scaleMul: 0.9 }
+  );
+
+  // 书架旁植物
+  drawThemedFurniture(
+    ctx,
+    atlas,
+    decor.cornerPlants[1] ?? "Small-Plant",
+    layout.shelf.x - 24,
+    layout.shelf.y - 4,
+    layout.shelf.depth,
+    { scaleMul: 0.85 }
+  );
+
+  // 前景角落植物
+  const frontY = p.floorFront - 28;
+  const plx = floorEdgeX(p, frontY, "left") + 24;
+  drawThemedFurniture(
+    ctx,
+    atlas,
+    decor.cornerPlants[2] ?? "Big-Plant",
+    plx,
+    frontY,
+    0.85,
+    { scaleMul: 1 }
+  );
+
+  // 额外散落家具：在 rack 附近（已被寻路阻挡），不会影响通道
+  const ed = depthScale(layout.rack.depth);
+  if (decor.extras[0]) {
+    drawThemedFurniture(ctx, atlas, decor.extras[0], layout.rack.x + 64 * ed, layout.rack.y + 10, layout.rack.depth, {
+      scaleMul: 0.95,
+    });
+  }
+  if (decor.extras[1]) {
+    drawThemedFurniture(ctx, atlas, decor.extras[1], layout.shelf.x + 64 * ed, layout.shelf.y + 10, layout.shelf.depth, {
+      scaleMul: 0.95,
+    });
+  }
+
+  // 墙饰：替换为主题 wallDecor sprite（top 处沿窗户左右两侧分布）
+  const wallY = p.windowH + 18;
+  const winLeft = p.winLeft;
+  const winRight = p.winRight;
+  if (decor.wallDecor[0]) {
+    drawThemedFurniture(ctx, atlas, decor.wallDecor[0], winLeft + 36, wallY + 18, 0.05, { scaleMul: 0.9 });
+  }
+  if (decor.wallDecor[1]) {
+    drawThemedFurniture(ctx, atlas, decor.wallDecor[1], winLeft + 86, wallY + 14, 0.05, { scaleMul: 0.85 });
+  }
+  if (decor.wallDecor[2]) {
+    drawThemedFurniture(ctx, atlas, decor.wallDecor[2], winRight - 56, wallY + 16, 0.05, { scaleMul: 0.85 });
+  }
+
+  return true;
+}
+
 /** 绘制环境道具与区域标识（在工位之前、地板之后） */
 export function drawOfficeAmbience(
   ctx: CanvasRenderingContext2D,
@@ -277,26 +396,32 @@ export function drawOfficeAmbience(
   now: number,
   isRunning: boolean
 ) {
-  drawPerspectiveRug(ctx, p, 0.5, 0.08, 0.55, 0.38, "#f5efe4", "#ebe3d4");
-  drawPerspectiveRug(ctx, p, 0.35, 0.35, 0.82, 0.32, "#ede4d4", "#e2d8c8");
-  drawPerspectiveRug(ctx, p, 0.92, 0.38, 0.72, 0.22, "#e8e0d8", "#ddd4cc");
+  const theme = getActiveTheme();
+  ensureActiveAtlasLoaded();
+  const atlas = getActiveAtlasSync();
 
-  drawWallArt(ctx, p, p.winLeft);
+  // 主题色板驱动的地毯（保留分层结构，色彩走当前主题）
+  drawPerspectiveRug(ctx, p, 0.5, 0.08, 0.55, 0.38, theme.palette.floor, theme.palette.floorAlt);
+  drawPerspectiveRug(ctx, p, 0.35, 0.35, 0.82, 0.32, theme.palette.floor, theme.palette.floorAlt);
+  drawPerspectiveRug(ctx, p, 0.92, 0.38, 0.72, 0.22, theme.palette.floor, theme.palette.floorAlt);
 
-  const lounge = layout.lounge;
-  drawCoffeeTable(ctx, lounge.x, lounge.y + 8, lounge.depth, now);
-  drawLoungeArmchair(ctx, lounge.x - 36 * depthScale(lounge.depth), lounge.y, lounge.depth);
-  drawLoungeArmchair(ctx, lounge.x + 36 * depthScale(lounge.depth), lounge.y, lounge.depth);
-  drawFloorLamp(ctx, lounge.x + 52 * depthScale(lounge.depth), lounge.y - 4, lounge.depth, now);
-  drawCatBed(ctx, lounge.x - 58 * depthScale(lounge.depth), lounge.y + 6, lounge.depth);
-
-  drawCoffeeStation(ctx, layout.coffee.x, layout.coffee.y, layout.coffee.depth, now);
-  drawPottedPlant(ctx, layout.coffee.x - 28 * depthScale(layout.coffee.depth), layout.coffee.y, layout.coffee.depth);
-  drawPottedPlant(ctx, layout.shelf.x - 18, layout.shelf.y - 8, layout.shelf.depth);
-
-  const frontY = p.floorFront - 28;
-  const plx = floorEdgeX(p, frontY, "left") + 24;
-  drawPottedPlant(ctx, plx, frontY, 0.85);
+  if (atlas) {
+    drawThemedAmbience(ctx, atlas, p, layout, now);
+  } else {
+    drawWallArt(ctx, p, p.winLeft);
+    const lounge = layout.lounge;
+    drawCoffeeTable(ctx, lounge.x, lounge.y + 8, lounge.depth, now);
+    drawLoungeArmchair(ctx, lounge.x - 36 * depthScale(lounge.depth), lounge.y, lounge.depth);
+    drawLoungeArmchair(ctx, lounge.x + 36 * depthScale(lounge.depth), lounge.y, lounge.depth);
+    drawFloorLamp(ctx, lounge.x + 52 * depthScale(lounge.depth), lounge.y - 4, lounge.depth, now);
+    drawCatBed(ctx, lounge.x - 58 * depthScale(lounge.depth), lounge.y + 6, lounge.depth);
+    drawCoffeeStation(ctx, layout.coffee.x, layout.coffee.y, layout.coffee.depth, now);
+    drawPottedPlant(ctx, layout.coffee.x - 28 * depthScale(layout.coffee.depth), layout.coffee.y, layout.coffee.depth);
+    drawPottedPlant(ctx, layout.shelf.x - 18, layout.shelf.y - 8, layout.shelf.depth);
+    const frontY = p.floorFront - 28;
+    const plx = floorEdgeX(p, frontY, "left") + 24;
+    drawPottedPlant(ctx, plx, frontY, 0.85);
+  }
 
   drawZoneMarkers(ctx, layout);
 
@@ -321,4 +446,69 @@ export function drawDeskLampForWorkstation(
   now: number
 ) {
   drawDeskLamp(ctx, x + 22 * depthScale(depth), y - 32 * depthScale(depth), depth, active, now);
+}
+
+/**
+ * 按 role hash 在每张桌上放 1-2 件桌面小物（Folders/Books/Papers），偶尔加 Bin 在桌旁地面。
+ * 完全确定性：同一个 role 永远摆同样的物件 → 每只猫的工位有自己的"个性"。
+ * Atlas 未加载时静默 fallback（不画）——零成本影响。
+ *
+ * 桌面坐标系：drawWorkstation 调用前定位锚点 (x, y)，其中:
+ *   - x 是工位水平中心
+ *   - y 是桌底 / 椅子坐姿基准
+ *   - 桌面台面约在 y - 28 * depthScale(depth)（与显示器底座等高）
+ */
+export function drawDeskDressing(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  depth: number,
+  role: string
+): void {
+  ensureActiveAtlasLoaded();
+  const atlas = getActiveAtlasSync();
+  if (!atlas) return;
+
+  let seed = 2166136261 >>> 0;
+  for (let i = 0; i < role.length; i++) {
+    seed = (seed ^ role.charCodeAt(i)) >>> 0;
+    seed = Math.imul(seed, 16777619) >>> 0;
+  }
+  const pick = (n: number) => {
+    seed = (Math.imul(seed, 16777619) ^ 0x9e3779b9) >>> 0;
+    return seed % n;
+  };
+  const chance = (pct: number) => pick(100) < pct;
+
+  const d = depthScale(depth);
+  const deskTopY = y - 10; // 与显示器底座 / 桌面平齐
+  const leftX = x - 26 * d;
+  const rightX = x + 26 * d;
+
+  // 主桌面物件：左右各 1 件（不重复）
+  const leftOptions = ["Folders", "Folders-2", "Books", "Papers"];
+  const rightOptions = ["Books", "Papers", "Folders", "Folders-2"];
+  const leftPick = leftOptions[pick(leftOptions.length)]!;
+  const rightPick = (() => {
+    const opts = rightOptions.filter((s) => s !== leftPick);
+    return opts[pick(opts.length)]!;
+  })();
+
+  // 桌面物件比桌子小（缩到 80%）
+  drawThemedFurniture(ctx, atlas, leftPick, leftX, deskTopY, depth, {
+    scaleMul: 0.55,
+    shadowW: 14 * d,
+  });
+  drawThemedFurniture(ctx, atlas, rightPick, rightX, deskTopY, depth, {
+    scaleMul: 0.55,
+    shadowW: 14 * d,
+  });
+
+  // 偶尔（25%）加 Bin 在桌子右下角地面（不阻挡 pathfinding，因桌椅本身已是障碍）
+  if (chance(25)) {
+    drawThemedFurniture(ctx, atlas, "Bin", x + 36 * d, y + 4 * d, depth, {
+      scaleMul: 0.62,
+      shadowW: 12 * d,
+    });
+  }
 }

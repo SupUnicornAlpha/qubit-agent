@@ -5,8 +5,13 @@
  * 动画命名：`cat_${breed}_idle|walk|work|success|fail|empty`。
  */
 import type Phaser from "phaser";
+import { getRenderConfig } from "./config";
 import { getSpriteAtlas, type AtlasSprites } from "./spriteAtlas";
 import type { CatAction, CatBreed } from "./types";
+
+type SceneWithBuildTag = Phaser.Scene & {
+  [CAT_ATLAS_BUILD_KEY]?: number;
+};
 
 const BREEDS: readonly CatBreed[] = [
   "tabby",
@@ -62,9 +67,16 @@ export function ensureCatAtlasInScene(scene: Phaser.Scene): { atlas: AtlasSprite
   const frameH = ref.h * su;
 
   const textures = scene.textures;
-  if (textures.exists(CAT_ATLAS_KEY)) {
+  const cfg = getRenderConfig();
+  const sceneTag = scene as SceneWithBuildTag;
+  const lastBuild = sceneTag[CAT_ATLAS_BUILD_KEY];
+  if (textures.exists(CAT_ATLAS_KEY) && lastBuild === cfg.atlasBuild) {
     return { atlas, frameW, frameH };
   }
+  if (textures.exists(CAT_ATLAS_KEY)) {
+    textures.remove(CAT_ATLAS_KEY);
+  }
+  sceneTag[CAT_ATLAS_BUILD_KEY] = cfg.atlasBuild;
 
   const cTex = textures.addCanvas(CAT_ATLAS_KEY, atlas.canvas);
   if (!cTex) return { atlas, frameW, frameH };

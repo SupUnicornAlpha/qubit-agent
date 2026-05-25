@@ -66,12 +66,15 @@
 
 ## 4. 目录结构（实施后）
 
+> 命名约定：**assets 目录用 kebab-case** (`pixel-office`)，**lib/源码模块用 camelCase** (`pixelOffice`)，与现有 `frontend/src/assets/pixel-office/skyline-*.png` 和 `frontend/src/lib/pixelOffice/` 保持一致。
+
 ```
 frontend/
   scripts/
     build-office-atlas.ts          # 资产构建：raw PNG → atlas + manifest
   src/
-    assets/pixelOffice/
+    assets/pixel-office/
+      README.md                      # 本地下载/解压指引（入库）
       raw/                           # 用户下载的 zip 解压目录（gitignore）
         antea-furniture/
         2dpig-office/
@@ -95,10 +98,10 @@ docs/
   PIXEL_OFFICE_CREDITS.md            # 实施时：完整 attribution
 ```
 
-### 4.1 `.gitignore` 补充（实施时）
+### 4.1 `.gitignore` 补充（**已落地** 2026-05-25）
 
 ```
-frontend/src/assets/pixelOffice/raw/
+frontend/src/assets/pixel-office/raw/
 ```
 
 仅入库 `themes/modern/atlas.*` 与 `manifest.ts`，不入库原始 zip。
@@ -185,8 +188,11 @@ Night / Cozy **不增加 atlas 体积**，仅滤镜与布置差异。
 
 1. 下载两个 itch.io 包（见 §3.1）
 2. 解压到：
-   - `frontend/src/assets/pixelOffice/raw/antea-furniture/`
-   - `frontend/src/assets/pixelOffice/raw/2dpig-office/`
+   - `frontend/src/assets/pixel-office/raw/antea-furniture/`
+   - `frontend/src/assets/pixel-office/raw/2dpig-office/`
+
+> 详细步骤与协议提示见：[`frontend/src/assets/pixel-office/README.md`](../frontend/src/assets/pixel-office/README.md)（已落地，2026-05-25）。
+> `raw/` 目录已加入 `.gitignore`，不会误提交。
 
 ### Phase 1：资产管线（~60 min）
 

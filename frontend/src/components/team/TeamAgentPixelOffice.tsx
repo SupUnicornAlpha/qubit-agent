@@ -5,6 +5,11 @@ import type {
   AnalystTeamGraphNode,
   AnalystTeamGraphPayload,
 } from "../../api/types";
+import {
+  drawAmbientLayer,
+  drawWorkstationAmbient,
+  resetAmbientEffects,
+} from "../../lib/pixelOffice/ambientEffects";
 import { breedForRole } from "../../lib/pixelOffice/catAppearance";
 import { classifyInteractionKind } from "../../lib/pixelOffice/classify";
 import { getRenderConfig } from "../../lib/pixelOffice/config";
@@ -15,6 +20,7 @@ import { preloadSkylineImages } from "../../lib/pixelOffice/skylineImages";
 import { computeOfficeLayout, deskHitRadius } from "../../lib/pixelOffice/officeLayout";
 import { computeOfficePerspective, depthAtY } from "../../lib/pixelOffice/officePerspective";
 import {
+  drawDeskDressing,
   drawDeskNameplate,
   drawStatusBadge,
   statusEmojiForAction,
@@ -30,6 +36,14 @@ import {
   spawnParticles,
   tickParticles,
 } from "../../lib/pixelOffice/officeRenderer";
+import {
+  applyThemeOverlay,
+  ensureActiveAtlasLoaded,
+  getActiveTheme,
+  listThemes,
+  setActiveTheme,
+  subscribeThemeChange,
+} from "../../lib/pixelOffice/themes";
 import type {
   CatAction,
   CatActor,
@@ -40,6 +54,7 @@ import type {
 } from "../../lib/pixelOffice/types";
 import { ACTION_MS, WALK_MS } from "../../lib/pixelOffice/types";
 import type { TeamGraphActivity, TeamGraphSelection } from "../ide/TeamAgentGraph";
+import { PixelOfficeCredits } from "./PixelOfficeCredits";
 
 const TeamAgentPhaserOffice = lazy(() =>
   import("./TeamAgentPhaserOffice").then((m) => ({ default: m.TeamAgentPhaserOffice }))
@@ -261,6 +276,9 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   const [size, setSize] = useState({ w: 800, h: 360 });
   const [city, setCity] = useState<CitySkyline>("shanghai");
   const [engine, setEngine] = useState<Engine>("canvas");
+  const [themeId, setThemeId] = useState<string>(() => getActiveTheme().id);
+  const [creditsOpen, setCreditsOpen] = useState(false);
+  const themes = useMemo(() => listThemes(), []);
 
   const catsRef = useRef<Map<string, CatActor>>(new Map());
   const beamsRef = useRef<ChatBeam[]>([]);
@@ -288,6 +306,16 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   useEffect(() => {
     preloadSkylineImages();
     void ensureArkPixelLoaded();
+    ensureActiveAtlasLoaded();
+  }, []);
+
+  useEffect(() => {
+    const unsub = subscribeThemeChange((next) => {
+      setThemeId(next.id);
+      ensureActiveAtlasLoaded();
+      resetAmbientEffects();
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {
@@ -429,6 +457,23 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         const sel = selection?.kind === "node" && selection.role === n.role;
         const hot = hotRoles.has(n.role);
         drawWorkstation(ctx, desk.x, desk.y, cat.screenMode, now, hot, sel, depth, persp);
+        // 桌面个性化装饰（Folders/Books/Papers/Bin，按 role hash 确定性放置）
+        drawDeskDressing(ctx, desk.x, desk.y, depth, n.role);
+      }
+
+      for (const { desk, cat } of drawLayers) {
+        const depth = cat.depth ?? desk.depth;
+        const isWorking =
+          cat.action === "chat_send" ||
+          cat.action === "chat_recv" ||
+          cat.action === "tool" ||
+          cat.action === "mcp" ||
+          cat.action === "skill" ||
+          cat.action === "sandbox" ||
+          cat.action === "builtin" ||
+          cat.action === "at_rack" ||
+          cat.action === "at_shelf";
+        drawWorkstationAmbient(ctx, desk.x, desk.y, depth, cat.screenMode, now, isWorking);
       }
 
       for (const { desk, cat } of drawLayers) {
@@ -445,6 +490,12 @@ export const TeamAgentPixelOffice: FC<Props> = ({
 
       particlesRef.current = tickParticles(particlesRef.current, 16);
       drawParticles(ctx, particlesRef.current);
+
+      // 全局环境层（尘粒 / 雨）放在所有 sprite 之上、主题滤镜之下
+      drawAmbientLayer(ctx, w, h, persp, now);
+
+      // 主题滤镜：覆盖背景 + 工位 + 猫咪 + 粒子 + 环境层，但不覆盖 status 文字
+      applyThemeOverlay(ctx, w, h);
 
       if (isRunning) {
         ctx.fillStyle = "rgba(74, 222, 128, 0.9)";
@@ -561,6 +612,20 @@ export const TeamAgentPixelOffice: FC<Props> = ({
           Phaser
         </button>
         <span className="qb-pixel-office-toolbar-divider" />
+        <span className="qb-pixel-office-toolbar-label">主题</span>
+        <select
+          className="qb-pixel-office-theme-select"
+          value={themeId}
+          onChange={(e) => setActiveTheme(e.target.value)}
+          title="像素办公室画风主题"
+        >
+          {themes.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <span className="qb-pixel-office-toolbar-divider" />
         <span className="qb-pixel-office-toolbar-label">窗外</span>
         {CITY_OPTIONS.map((c) => (
           <button
@@ -572,7 +637,21 @@ export const TeamAgentPixelOffice: FC<Props> = ({
             {c.label}
           </button>
         ))}
+        <span className="qb-pixel-office-toolbar-divider" />
+        <button
+          type="button"
+          className="qb-pixel-office-credits-trigger"
+          onClick={() => setCreditsOpen(true)}
+          title="美术与字体署名"
+          aria-label="美术与字体署名"
+        >
+          ⓘ
+        </button>
       </div>
+      <div className="qb-pixel-office-attribution" aria-hidden="true">
+        Art: Antea, 2dPig · Font: Ark Pixel
+      </div>
+      <PixelOfficeCredits open={creditsOpen} onClose={() => setCreditsOpen(false)} />
       <div className="qb-pixel-office-legend">
         <span>像素办公室 · 点击工位选中 Agent</span>
         <span className="qb-pixel-office-legend-actions">

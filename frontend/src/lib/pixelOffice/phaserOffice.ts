@@ -49,6 +49,7 @@ import {
   tickParticles,
 } from "./officeRenderer";
 import { getPixelOfficeRegistry } from "./runtime";
+import { ensureActiveAtlasLoaded, getActiveTheme, subscribeThemeChange } from "./themes";
 import {
   ACTION_MS,
   WALK_MS,
@@ -390,6 +391,27 @@ function showBubble(scene: PhaserScene, rt: CatRuntime, text: string, untilMs: n
   void Phaser;
 }
 
+function parseCssColor(css: string): number {
+  const s = css.trim();
+  if (s.startsWith("#")) {
+    const hex = s.slice(1);
+    if (hex.length === 3) {
+      const r = parseInt(hex[0]! + hex[0]!, 16);
+      const g = parseInt(hex[1]! + hex[1]!, 16);
+      const b = parseInt(hex[2]! + hex[2]!, 16);
+      return (r << 16) | (g << 8) | b;
+    }
+    if (hex.length === 6) return parseInt(hex, 16);
+  }
+  const m = s.match(/^rgba?\(([^)]+)\)$/i);
+  if (m) {
+    const parts = m[1]!.split(",").map((p) => parseFloat(p.trim()));
+    const [r = 0, g = 0, b = 0] = parts;
+    return ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff);
+  }
+  return 0x000000;
+}
+
 function updateBubbles(state: PhaserRuntimeState, now: number) {
   for (const rt of state.cats.values()) {
     if (rt.bubble) {
@@ -436,8 +458,10 @@ export async function createPhaserOffice(
   let plaqueText: import("phaser").GameObjects.Text | null = null;
   let statusText: import("phaser").GameObjects.Text | null = null;
   let selectionRect: import("phaser").GameObjects.Rectangle | null = null;
+  let themeOverlay: import("phaser").GameObjects.Rectangle | null = null;
   let hitZones = new Map<string, import("phaser").GameObjects.Zone>();
   let sceneRef: PhaserScene | null = null;
+  let themeUnsub: (() => void) | null = null;
 
   function ensureCatRuntime(scene: PhaserScene, n: AnalystTeamGraphNode, desk: DeskSlot) {
     let rt = state.cats.get(n.role);
@@ -486,6 +510,7 @@ export async function createPhaserOffice(
     create() {
       sceneRef = this;
       ensureCatAtlasInScene(this);
+      ensureActiveAtlasLoaded();
 
       const tex = this.textures.addCanvas(BG_TEXTURE_KEY, off);
       if (tex) {
@@ -500,6 +525,16 @@ export async function createPhaserOffice(
 
       selectionRect = this.add.rectangle(0, 0, 0, 0).setStrokeStyle(3, 0xffd700);
       selectionRect.setDepth(2500).setVisible(false);
+
+      // 主题滤镜：覆盖背景 + 工位 + 猫咪，位于 plaque/status 之下
+      themeOverlay = this.add
+        .rectangle(STAGE_W / 2, STAGE_H / 2, STAGE_W, STAGE_H, 0x000000, 0)
+        .setDepth(2900);
+
+      themeUnsub = subscribeThemeChange(() => {
+        // 主题变更：背景层下一帧自动重绘（drawOfficeScene 读最新 atlas 与色板）
+        ensureActiveAtlasLoaded();
+      });
 
       const plaqueX = STAGE_W / 2;
       const plaqueY = STAGE_H - 36;
@@ -580,6 +615,17 @@ export async function createPhaserOffice(
           } else selectionRect.setVisible(false);
         } else selectionRect.setVisible(false);
       }
+
+      if (themeOverlay) {
+        const filter = getActiveTheme().filter;
+        const alpha = filter.overlayAlpha ?? 0;
+        if (alpha > 0 && filter.overlayColor) {
+          themeOverlay.setFillStyle(parseCssColor(filter.overlayColor), Math.min(1, alpha));
+          themeOverlay.setVisible(true);
+        } else {
+          themeOverlay.setVisible(false);
+        }
+      }
     }
   }
 
@@ -614,6 +660,10 @@ export async function createPhaserOffice(
   return {
     destroy: () => {
       try {
+        themeUnsub?.();
+        themeUnsub = null;
+        themeOverlay?.destroy();
+        themeOverlay = null;
         for (const rt of state.cats.values()) {
           rt.bubble?.destroy();
           rt.sprite.destroy();
