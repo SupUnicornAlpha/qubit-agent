@@ -23,25 +23,58 @@ import { config } from "../../config";
 import { getBundledMigrationsDir } from "../../runtime/app-paths";
 import { getDb } from "./client";
 
-/** 开发：源码旁 migrations；安装包：`$QUBIT_APP_ROOT/db/migrations` */
+/**
+ * 选择 migrations 目录。两个候选：
+ *   1. `getBundledMigrationsDir()` = `$QUBIT_APP_ROOT/db/migrations`（Tauri sidecar 注入）
+ *   2. 源码旁 `src/db/sqlite/migrations`（dev 模式下永远是最新的）
+ *
+ * 规则：如果两边都存在，**取 `_journal.json` entries 更多的那个**，避免 Tauri debug
+ * build 把 `QUBIT_APP_ROOT` 指向陈旧 bundle 时，新 .sql 文件被吞掉（2026-05-25 故障的
+ * 直接成因之一）。
+ */
 function migrationsDir(): string {
   const bundled = getBundledMigrationsDir();
-  if (existsSync(bundled)) return bundled;
   const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, "migrations");
+  const source = join(here, "migrations");
+
+  const bundledExists = existsSync(bundled);
+  const sourceExists = existsSync(source);
+
+  if (bundledExists && sourceExists) {
+    const bundledCount = readJournalEntryCount(bundled);
+    const sourceCount = readJournalEntryCount(source);
+    if (sourceCount > bundledCount) {
+      console.log(
+        `[DB] dev override: using source migrations (${sourceCount} entries) instead of stale bundled (${bundledCount}) at ${bundled}`
+      );
+      return source;
+    }
+    return bundled;
+  }
+  if (bundledExists) return bundled;
+  return source;
 }
+
+export type MigrationDriftDirection = "missing" | "ahead";
 
 export class MigrationDriftError extends Error {
   constructor(
     public readonly expected: number,
     public readonly actual: number,
-    public readonly migrationsDir: string
+    public readonly migrationsDir: string,
+    public readonly direction: MigrationDriftDirection
   ) {
+    const base =
+      direction === "missing"
+        ? `_journal.json has ${expected} entries but __drizzle_migrations only ${actual} rows. ` +
+          `DDL 未真正 apply（drizzle.migrate 可能被静默跳过）。`
+        : `__drizzle_migrations has ${actual} rows but bundled _journal.json only ${expected} entries. ` +
+          `典型成因：Tauri sidecar bundle 比当前数据库老 —— 需重新构建 bundle 或回滚 DB。`;
     super(
-      `migration_drift: drizzle _journal.json has ${expected} entries but ` +
-        `__drizzle_migrations table has only ${actual} rows. ` +
-        `检查 ${migrationsDir}/meta/_journal.json 是否登记完整；` +
-        `修复：QUBIT_DATA_DIR=... bun run db:migrate（停掉 backend 再跑）。`
+      `migration_drift[${direction}]: ${base} ` +
+        `journal=${migrationsDir}/meta/_journal.json；` +
+        `修复（缺 migration）：QUBIT_DATA_DIR=... bun run db:migrate；` +
+        `修复（bundle 落后）：重新构建 Tauri sidecar 或临时用 \`bun run dev\` 跑源码 backend。`
     );
     this.name = "MigrationDriftError";
   }
@@ -54,8 +87,9 @@ export async function runMigrations(): Promise<void> {
 
   const expected = readJournalEntryCount(dir);
   const actual = readAppliedMigrationCount();
-  if (expected > 0 && actual < expected) {
-    throw new MigrationDriftError(expected, actual, dir);
+  if (expected > 0 && actual !== expected) {
+    const direction: MigrationDriftDirection = actual < expected ? "missing" : "ahead";
+    throw new MigrationDriftError(expected, actual, dir, direction);
   }
   console.log(`[DB] SQLite migrations applied (${actual}/${expected}).`);
 }

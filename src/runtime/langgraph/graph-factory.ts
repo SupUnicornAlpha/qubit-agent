@@ -15,6 +15,11 @@ import {
   loadWorkspaceRuntimeConfig,
 } from "../config/workspace-config";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
+import {
+  executeResearchTeamWorkflow,
+  failResearchTeamExecuteJob,
+  parseResearchTeamExecutePayload,
+} from "../msa/research-team-execute";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import type { RuntimeAgentDefinition } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
@@ -568,6 +573,9 @@ export class GraphRunner {
       }
     } catch (err) {
       if (err instanceof HitlAwaitingApprovalError) {
+        console.log(
+          `[GraphRunner] workflow=${params.workflowId} role=${params.def.role} paused awaiting HITL requestId=${err.requestId}`
+        );
         try {
           await db
             .update(workflowRun)
@@ -595,6 +603,10 @@ export class GraphRunner {
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[GraphRunner] workflow=${params.workflowId} role=${params.def.role} task=${params.payload.taskType} FAILED:`,
+        err instanceof Error ? (err.stack ?? err.message) : err
+      );
       publishError(message, state?.iteration ?? 0);
       try {
         await db

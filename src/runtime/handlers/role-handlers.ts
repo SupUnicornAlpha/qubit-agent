@@ -147,6 +147,9 @@ const orchestratorHandler: RuntimeRoleHandler = {
         });
       } catch (teamErr) {
         if (teamErr instanceof HitlAwaitingApprovalError) {
+          console.log(
+            `[RoleHandler:orchestrator] workflow=${msg.workflowId} paused awaiting HITL requestId=${teamErr.requestId}`
+          );
           // 把 analyst job 标 awaiting_approval 并缓存 resumePayload；前端轮询会拿到 requestId / 摘要。
           pauseAnalystResearchJobForHitl(parsed.params.jobId, {
             requestId: teamErr.requestId,
@@ -157,6 +160,10 @@ const orchestratorHandler: RuntimeRoleHandler = {
           await setWorkflowStatus(msg.workflowId, "awaiting_approval");
           return;
         }
+        console.error(
+          `[RoleHandler:orchestrator] workflow=${msg.workflowId} research_team_execute FAILED:`,
+          teamErr instanceof Error ? (teamErr.stack ?? teamErr.message) : teamErr
+        );
         failResearchTeamExecuteJob(parsed.params.jobId, teamErr);
         await setWorkflowStatus(msg.workflowId, "failed");
         throw teamErr;

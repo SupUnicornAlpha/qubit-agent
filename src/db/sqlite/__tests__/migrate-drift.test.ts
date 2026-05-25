@@ -21,13 +21,13 @@ beforeAll(async () => {
 });
 
 describe("runMigrations sanity drift check", () => {
-  test("正常路径：__drizzle_migrations 行数 >= journal entries 数", () => {
+  test("正常路径：__drizzle_migrations 行数 === journal entries 数", () => {
     const here = new URL(".", import.meta.url).pathname;
     const dir = join(here, "..", "migrations");
     const journalCount = readJournalEntryCount(dir);
     const appliedCount = readAppliedMigrationCount();
     expect(journalCount).toBeGreaterThan(0);
-    expect(appliedCount).toBeGreaterThanOrEqual(journalCount);
+    expect(appliedCount).toBe(journalCount);
   });
 
   test("journal 文件不存在 → readJournalEntryCount 返回 0（不抛错）", () => {
@@ -62,14 +62,23 @@ describe("runMigrations sanity drift check", () => {
     }
   });
 
-  test("MigrationDriftError 包含 expected/actual + 修复提示", () => {
-    const err = new MigrationDriftError(43, 41, "/tmp/migrations");
+  test("MigrationDriftError(missing) — DB 落后 journal", () => {
+    const err = new MigrationDriftError(43, 41, "/tmp/migrations", "missing");
     expect(err).toBeInstanceOf(Error);
     expect(err.expected).toBe(43);
     expect(err.actual).toBe(41);
-    expect(err.message).toContain("43");
-    expect(err.message).toContain("41");
+    expect(err.direction).toBe("missing");
+    expect(err.message).toContain("missing");
+    expect(err.message).toContain("DDL 未真正 apply");
     expect(err.message).toContain("bun run db:migrate");
+  });
+
+  test("MigrationDriftError(ahead) — DB 比 bundle journal 新（典型于 Tauri 老 sidecar）", () => {
+    const err = new MigrationDriftError(41, 43, "/tmp/old-bundle/migrations", "ahead");
+    expect(err.direction).toBe("ahead");
+    expect(err.message).toContain("ahead");
+    expect(err.message).toContain("Tauri sidecar bundle");
+    expect(err.message).toContain("重新构建");
   });
 
   test("smoke: 实际 migrations 目录里 0042 / 0043 entries 都在 journal 中", () => {
