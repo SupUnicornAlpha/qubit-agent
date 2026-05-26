@@ -30,12 +30,14 @@ import {
   scanMcpCircuitOpenAlerts,
   scanTokenAnomalyAlerts,
 } from "../runtime/monitor/alert-scanners";
+import { getConnectorsSummary } from "../runtime/monitor/connector-summary";
 import { listFailures, type FailureScope } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
 import { getMcpDiagnostics } from "../runtime/monitor/mcp-diagnostics";
 import { getMcpSummary } from "../runtime/monitor/mcp-summary";
 import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
+import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
 import { getToolsSummary, type ToolKind } from "../runtime/monitor/tools-summary";
 import {
@@ -440,6 +442,34 @@ monitorRouter.get("/skills/summary", async (c) => {
   if (windowMinutes) input.windowMinutes = Number(windowMinutes);
   if (sessionId) input.sessionId = sessionId;
   const data = await getSkillsSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * P2-H：Skill 召回事件聚合（reason 节点召回→是否执行的命中率）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §6.4 与 runtime/monitor/skill-recall-summary.ts。
+ */
+monitorRouter.get("/skills/recalls", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const definitionId = c.req.query("definitionId");
+  const input: Parameters<typeof getSkillRecallSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (definitionId) input.definitionId = definitionId;
+  const data = await getSkillRecallSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * P2-H：Connector 调用聚合（ACP→connector 调用次数 / 成功率 / 延迟）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.5 与 runtime/monitor/connector-summary.ts。
+ */
+monitorRouter.get("/connectors/summary", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const workflowRunId = c.req.query("workflowRunId");
+  const input: Parameters<typeof getConnectorsSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (workflowRunId) input.workflowRunId = workflowRunId;
+  const data = await getConnectorsSummary(input);
   return c.json({ ok: true, data });
 });
 
