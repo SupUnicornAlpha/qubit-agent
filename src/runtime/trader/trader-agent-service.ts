@@ -9,6 +9,7 @@ import {
   scheduledJob,
   scheduledJobRun,
 } from "../../db/sqlite/schema";
+import type { OrderSide, OrderType } from "../../types/entities";
 import { processExecutionTasks } from "../execution/execution-worker";
 import { createOrderIntentFromReiaPayload } from "../execution/reia-bridge";
 import { brokerCancelOrder } from "../reia/broker-service";
@@ -68,10 +69,11 @@ export async function placeTraderOrder(input: {
   workflowRunId: string;
   symbol: string;
   exchange: string;
-  side: "buy" | "sell";
+  side: OrderSide;
   qty: number;
   price?: number | null;
-  orderType?: "market" | "limit";
+  /** P2-E：与 entities.OrderType 子集对齐（trader 暂只支持市价/限价） */
+  orderType?: Extract<OrderType, "market" | "limit">;
   timeframe?: string;
   rationale?: string;
   executionMode?: "paper" | "live";

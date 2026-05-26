@@ -8,6 +8,12 @@ import {
   orderIntent,
   riskReviewTicket,
 } from "../../db/sqlite/schema";
+import type {
+  OrderSide,
+  OrderType,
+  RiskDecisionResult,
+  TimeInForce,
+} from "../../types/entities";
 import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 
 const REVIEW_TICKET_TTL_MS = 86_400_000;
@@ -18,11 +24,11 @@ export interface CreateOrderIntentInput {
   workflowRunId: string;
   strategyVersionId: string;
   instrumentId: string;
-  side: "buy" | "sell";
+  side: OrderSide;
   qty: number;
-  orderType: "market" | "limit" | "stop" | "stop_limit";
+  orderType: OrderType;
   price?: number | null;
-  timeInForce: "day" | "gtc" | "ioc" | "fok";
+  timeInForce: TimeInForce;
   /** Defaults to built-in paper account from migration 0019. */
   accountId?: string;
   traceId?: string;
@@ -39,7 +45,7 @@ export interface CreateOrderIntentInput {
 export interface CreateOrderIntentResult {
   orderIntentId: string;
   executionTaskId: string | null;
-  riskOutcome: "allow" | "block" | "review";
+  riskOutcome: RiskDecisionResult;
   riskReason: string;
   riskReviewTicketId: string | null;
 }

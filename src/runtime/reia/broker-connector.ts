@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { BrokerProvider, BrokerProviderConfig } from "../../types/broker";
+import type {
+  BrokerOrderStatus as CoreBrokerOrderStatus,
+  OrderSide as CoreOrderSide,
+  OrderType as CoreOrderType,
+} from "../../types/entities";
 import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 
 /**
@@ -16,9 +21,20 @@ export type {
   IbProviderConfig,
 } from "../../types/broker";
 
-export type BrokerOrderSide = "buy" | "sell";
-export type BrokerOrderType = "market" | "limit";
-export type BrokerOrderStatus = "submitted" | "filled" | "rejected" | "cancelled";
+/**
+ * P2-E 类型收敛：原本 broker 层独立定义 OrderSide/OrderType/OrderStatus 与 entities
+ * 重复。现在改为 entities 别名 / 严格子集，确保编译期就发现口径漂移。
+ *
+ * - BrokerOrderSide   = OrderSide （完全等价）
+ * - BrokerOrderType   ⊂ OrderType（broker 层只支持 market/limit，stop/stop_limit 未实现）
+ * - BrokerOrderStatus ⊂ BrokerOrderStatus(core)（broker 层不返回 partially_filled/expired）
+ */
+export type BrokerOrderSide = CoreOrderSide;
+export type BrokerOrderType = Extract<CoreOrderType, "market" | "limit">;
+export type BrokerOrderStatus = Extract<
+  CoreBrokerOrderStatus,
+  "submitted" | "filled" | "rejected" | "cancelled"
+>;
 
 export interface BrokerSubmitOrderInput {
   ticker: string;

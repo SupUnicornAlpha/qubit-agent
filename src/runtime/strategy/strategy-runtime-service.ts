@@ -14,6 +14,7 @@ import {
 } from "../../db/sqlite/schema";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { resolveInstrument } from "../market/instrument-router";
+import type { OrderSide } from "../../types/entities";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
 
 export interface CreateStrategyRuntimeInput {
@@ -238,7 +239,8 @@ export async function recordSignalDedup(
   input: {
     strategyRuntimeId: string;
     symbol: string;
-    signalType: "buy" | "sell";
+    /** P2-E：与 OrderSide 对齐（信号方向等同于下单方向） */
+    signalType: OrderSide;
     signalBarTime: string;
   }
 ): Promise<boolean> {
@@ -260,7 +262,7 @@ export async function submitRuntimeOrder(
   db: DbClient,
   runtime: typeof strategyRuntime.$inferSelect,
   input: {
-    side: "buy" | "sell";
+    side: OrderSide;
     qty: number;
     price: number;
     signalBarTime: string;

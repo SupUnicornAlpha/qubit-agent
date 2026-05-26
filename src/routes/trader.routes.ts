@@ -11,6 +11,7 @@ import {
 import { cancelTraderWorkflows } from "../runtime/trader/trader-workflow";
 import { queryKlines } from "../runtime/market/klines-query";
 import { getDb } from "../db/sqlite/client";
+import type { OrderSide, OrderType } from "../types/entities";
 
 export const traderRouter = new Hono();
 
@@ -74,10 +75,10 @@ traderRouter.post("/orders", async (c) => {
     workflowRunId?: string;
     symbol?: string;
     exchange?: string;
-    side?: "buy" | "sell";
+    side?: OrderSide;
     qty?: number;
     price?: number | null;
-    orderType?: "market" | "limit";
+    orderType?: Extract<OrderType, "market" | "limit">;
     timeframe?: string;
     rationale?: string;
     executionMode?: "paper" | "live";

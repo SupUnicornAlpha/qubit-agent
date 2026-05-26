@@ -1,4 +1,13 @@
-import type { AssetClass, ConnectorType, LatencyProfile } from "./entities";
+import type {
+  AssetClass,
+  BrokerOrderStatus,
+  ConnectorType,
+  LatencyProfile,
+  OrderSide,
+  OrderType,
+  RiskDecisionResult,
+  TimeInForce,
+} from "./entities";
 
 // ─── Connector Meta ──────────────────────────────────────────────────────────
 
@@ -64,22 +73,27 @@ export interface QuoteTick {
   timestamp: string;
 }
 
+/**
+ * P2-E 类型收敛：side/orderType/timeInForce/status 等字面量类型不再 inline，
+ * 改 import entities 中的别名（SoT），避免 6 套类型之间口径漂移。
+ */
 export interface ConnectorOrderIntent {
   id: string;
   symbol: string;
   exchange: string;
-  side: "buy" | "sell";
+  side: OrderSide;
   qty: number;
-  orderType: "market" | "limit" | "stop" | "stop_limit";
+  orderType: OrderType;
   price?: number;
-  timeInForce: "day" | "gtc" | "ioc" | "fok";
+  timeInForce: TimeInForce;
   riskSignature?: string;
 }
 
 export interface ConnectorOrder {
   brokerOrderId: string;
   orderIntentId: string;
-  status: "submitted" | "partially_filled" | "filled" | "cancelled" | "rejected";
+  /** 注意：BrokerOrderStatus 比此处历史值多了 `expired`，向后兼容 */
+  status: BrokerOrderStatus;
   submittedAt: string;
 }
 
@@ -105,7 +119,7 @@ export interface RiskCheckRequest {
   orderIntentId: string;
   strategyVersionId: string;
   instrumentId: string;
-  side: "buy" | "sell";
+  side: OrderSide;
   qty: number;
   price: number | null;
   currentPositions: ConnectorPosition[];
@@ -114,7 +128,7 @@ export interface RiskCheckRequest {
 
 export interface RiskCheckResponse {
   orderIntentId: string;
-  decision: "allow" | "block" | "review";
+  decision: RiskDecisionResult;
   reason: string;
   signature: string;
   evaluatedAt: string;
