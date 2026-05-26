@@ -323,6 +323,10 @@ export async function executeAgentReact(
       return { state: merged };
     } catch (err) {
       if (err instanceof HitlAwaitingApprovalError) {
+        /**
+         * P0-C：HITL pause 只设置 finalResponse，让 `executeAgentReact` 的 finally
+         * 统一 emit final 帧（避免与 finalize 节点后的 emit 形成"双 final"）。
+         */
         const awaiting = {
           status: "awaiting_approval",
           hitlRequestId: err.requestId,
@@ -330,16 +334,6 @@ export async function executeAgentReact(
           iteration: s.iteration,
           role: params.def.role,
         };
-        emit({
-          runId: params.runId,
-          workflowId: params.workflowId,
-          traceId: params.traceId,
-          role: params.def.role,
-          type: "final",
-          stepIndex: s.iteration,
-          ts: Date.now(),
-          payload: awaiting,
-        });
         const merged = { ...s, finalResponse: awaiting };
         snapshot("act", s.iteration, merged);
         return { state: merged };
@@ -448,8 +442,63 @@ export async function executeAgentReact(
     }
   }
 
-  const result = (await app.invoke(invokeInput, runnableConfig)) as { state: AgentGraphState };
-  state = result.state;
+  /**
+   * P0-C：把 `app.invoke` 包进 try/catch，让"成功/HITL pause/失败"三种退出
+   * 路径都汇聚到下面的统一出口（status 写 + final 帧 emit），从而：
+   *   - SSE final 帧每个 runId 只发 1 次（修复"双 final"导致前端闪烁/重复处理）
+   *   - workflow_run.status / agent_instance.status 写入收敛到一个地方（修复
+   *     graph-factory / a2a-react-task / executeAgentReact 三处分别写、容易
+   *     漂移的问题）
+   *   - HitlAwaitingApprovalError 不再抛到 caller —— graph 内的 act 节点已经
+   *     把它转 finalResponse，这里的 catch 是兜底（极端情况 finalize 之外的
+   *     节点抛 HITL）
+   *
+   * caller 的 try/catch 仍保留 rethrow 行为：除 HitlAwaitingApprovalError 之外
+   * 的异常继续上抛，caller 用来发 fail TASK_RESULT / 写 agent_instance.errorMessage。
+   */
+  let rethrow: unknown = null;
+  try {
+    const result = (await app.invoke(invokeInput, runnableConfig)) as {
+      state: AgentGraphState;
+    };
+    state = result.state;
+  } catch (err) {
+    if (err instanceof HitlAwaitingApprovalError) {
+      state = {
+        ...state,
+        finalResponse: {
+          status: "awaiting_approval",
+          hitlRequestId: err.requestId,
+          title: err.message,
+          iteration: state.iteration,
+          role: params.def.role,
+        },
+      };
+    } else {
+      const message = err instanceof Error ? err.message : String(err);
+      emit({
+        runId: params.runId,
+        workflowId: params.workflowId,
+        traceId: params.traceId,
+        role: params.def.role,
+        type: "error",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: { error: message },
+      });
+      state = {
+        ...state,
+        finalResponse: {
+          status: "terminated",
+          reason: "exception",
+          error: message,
+          iteration: state.iteration,
+          role: params.def.role,
+        },
+      };
+      rethrow = err;
+    }
+  }
 
   const finalResponse = (state.finalResponse ?? { status: "completed" }) as Record<string, unknown>;
   const frStatus = String(finalResponse["status"] ?? "completed");
@@ -470,6 +519,12 @@ export async function executeAgentReact(
             ? "running"
             : "stopped",
       endedAt: terminalStatus === "awaiting_approval" ? null : new Date().toISOString(),
+      ...(terminalStatus === "failed" && rethrow
+        ? {
+            errorMessage:
+              (rethrow instanceof Error ? rethrow.message : String(rethrow)).slice(0, 2000),
+          }
+        : {}),
     })
     .where(eq(agentInstance.id, agentInstanceId));
 
@@ -494,5 +549,6 @@ export async function executeAgentReact(
     payload: finalResponse,
   });
 
+  if (rethrow) throw rethrow;
   return { finalState: state, finalResponse, terminalStatus };
 }

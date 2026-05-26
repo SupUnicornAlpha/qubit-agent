@@ -61,19 +61,13 @@ export async function runA2aReactTaskAssign(
       priority: msg.priority,
     });
   } catch (err) {
+    /**
+     * P0-C：error 帧 + workflow_run.status='failed' + agent_instance.status='error' 现在
+     * 全部由 executeAgentReact 内部统一负责。这里只保留 A2A 协议层副作用：
+     *   - onWorkflowTerminal(failed)：监控/告警 hook（workflow-level）
+     *   - TASK_RESULT(success=false)：A2A 上游 handler 需要的失败回执
+     */
     const message = err instanceof Error ? err.message : String(err);
-    stepStreamBus.publish({
-      runId,
-      workflowId,
-      traceId,
-      role: ctx.definition.role,
-      type: "error",
-      stepIndex: 0,
-      ts: Date.now(),
-      payload: { error: message },
-      loopKind: "native",
-      source: "a2a",
-    });
     onWorkflowTerminal(workflowId, "failed");
 
     await ctx.send({

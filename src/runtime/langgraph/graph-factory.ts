@@ -26,7 +26,6 @@ import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "./event-stream";
 import { executeAgentReact } from "./execute-agent-react";
 import { getCheckpointSaver } from "./sqlite-checkpoint-saver";
-import type { AgentGraphState } from "./state";
 
 void registerBuiltinConnectors();
 
@@ -464,22 +463,6 @@ export class GraphRunner {
   }): Promise<void> {
     const db = await getDb();
     const agentInstanceId = params.agentInstanceId ?? randomUUID();
-    let state: AgentGraphState | undefined;
-
-    const publishError = (message: string, stepIndex: number) => {
-      stepStreamBus.publish({
-        runId: params.runId,
-        workflowId: params.workflowId,
-        traceId: params.traceId,
-        role: params.def.role,
-        type: "error",
-        stepIndex,
-        ts: Date.now(),
-        payload: { error: message },
-        loopKind: "native",
-        source: "native",
-      });
-    };
 
     try {
       /**
@@ -546,7 +529,7 @@ export class GraphRunner {
         return;
       }
 
-      const { finalState, terminalStatus } = await executeAgentReact({
+      const { terminalStatus } = await executeAgentReact({
         runId: params.runId,
         workflowId: params.workflowId,
         traceId: params.traceId,
@@ -559,39 +542,23 @@ export class GraphRunner {
         updateWorkflowStatus: true,
         resume: params.resume === true,
       });
-      state = finalState;
       if (terminalStatus === "completed" || terminalStatus === "failed") {
         onWorkflowTerminal(params.workflowId, terminalStatus);
       }
     } catch (err) {
+      /**
+       * P0-C：workflow_run.status / agent_instance.status / SSE final 帧的写入现在全部
+       * 由 executeAgentReact 内部统一处理，这里只保留 GraphRunner 自身的副作用：
+       *   - HitlAwaitingApprovalError：日志（理论上 graph 内 act 节点已 catch 不会传到此，
+       *     这条 catch 仅作兜底，状态写也已在 executeAgentReact finally 完成）
+       *   - 其他错误：onWorkflowTerminal 调用 + 控制台日志
+       *
+       * publishError 仍由 executeAgentReact 内部 emit（type='error'），这里不再重复发。
+       */
       if (err instanceof HitlAwaitingApprovalError) {
         console.log(
-          `[GraphRunner] workflow=${params.workflowId} role=${params.def.role} paused awaiting HITL requestId=${err.requestId}`
+          `[GraphRunner] workflow=${params.workflowId} role=${params.def.role} paused awaiting HITL requestId=${err.requestId} (status & final frame already written by executeAgentReact)`
         );
-        try {
-          await db
-            .update(workflowRun)
-            .set({ status: "awaiting_approval", endedAt: null })
-            .where(eq(workflowRun.id, params.workflowId));
-        } catch {
-          /* ignore */
-        }
-        stepStreamBus.publish({
-          runId: params.runId,
-          workflowId: params.workflowId,
-          traceId: params.traceId,
-          role: params.def.role,
-          type: "final",
-          stepIndex: state?.iteration ?? 0,
-          ts: Date.now(),
-          payload: {
-            status: "awaiting_approval",
-            hitlRequestId: err.requestId,
-            title: err.message,
-          },
-          loopKind: "native",
-          source: "native",
-        });
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -599,28 +566,8 @@ export class GraphRunner {
         `[GraphRunner] workflow=${params.workflowId} role=${params.def.role} task=${params.payload.taskType} FAILED:`,
         err instanceof Error ? (err.stack ?? err.message) : err
       );
-      publishError(message, state?.iteration ?? 0);
-      try {
-        await db
-          .update(workflowRun)
-          .set({ status: "failed", endedAt: new Date().toISOString() })
-          .where(eq(workflowRun.id, params.workflowId));
-        onWorkflowTerminal(params.workflowId, "failed");
-      } catch {
-        // ignore secondary failures
-      }
-      try {
-        await db
-          .update(agentInstance)
-          .set({
-            status: "error",
-            endedAt: new Date().toISOString(),
-            errorMessage: message.slice(0, 2000),
-          })
-          .where(eq(agentInstance.id, agentInstanceId));
-      } catch {
-        // ignore if instance row never committed
-      }
+      void message; // 状态/帧由 executeAgentReact 已写
+      onWorkflowTerminal(params.workflowId, "failed");
     } finally {
       // Defer close so the browser can process the last SSE frame before FIN;
       // otherwise EventSource often fires onerror before the "final" handler runs.

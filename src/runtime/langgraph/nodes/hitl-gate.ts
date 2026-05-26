@@ -92,29 +92,22 @@ export async function hitlGateNode(
     },
   });
 
-  emit({
-    runId: state.runId,
-    workflowId: state.workflowId,
-    traceId: state.traceId,
-    role: state.agentDefinition.role,
-    type: "final",
-    stepIndex: state.iteration,
-    ts: Date.now(),
-    payload: {
-      status: "awaiting_approval",
-      hitlRequestId: requestId,
-      title,
-      summary: summary.slice(0, 1200),
-      iteration: state.iteration,
-      role: state.agentDefinition.role,
-    },
-  });
+  /**
+   * P0-C：HITL pause 只设置 finalResponse，让 `executeAgentReact` 的 finally 统一
+   * emit final 帧。原 emit 与 graph 跑完后的 finally emit 形成"双 final"，前端会
+   * 看到 awaiting_approval 帧出现两次（hitl-gate / hitl_gate-as-final）。
+   *
+   * graph 的边路由保证 hitl_gate → finalize 几乎瞬时（finalize 节点对已设
+   * finalResponse short-circuit），不会引入显著延迟。
+   */
+  void emit; // intentionally unused after P0-C 收敛
 
   return {
     finalResponse: {
       status: "awaiting_approval",
       hitlRequestId: requestId,
       title,
+      summary: summary.slice(0, 1200),
       iteration: state.iteration,
       role: state.agentDefinition.role,
     },
