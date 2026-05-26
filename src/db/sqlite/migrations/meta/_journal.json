@@ -365,6 +365,13 @@
       "when": 1777352470000,
       "tag": "0052_drop_provider_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1777352480000,
+      "tag": "0053_normalize_loop_options_hitl_v2",
+      "breakpoints": true
     }
   ]
 }

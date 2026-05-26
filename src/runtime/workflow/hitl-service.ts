@@ -170,23 +170,23 @@ export function evaluateChatHitlTrigger(input: {
 }
 
 /**
- * v1 兼容映射：
+ * Chat orchestrator HITL 模式解析：
  *   - 显式设置过 `hitlChatMode` 优先；
- *   - 否则 `hitlChat:true → 'always'`，`hitlChat:false → 'off'`；
- *   - 都没设置 → 'ai'（v2 默认）。
+ *   - 否则取 v2 默认 'ai'。
+ *
+ * v1 字段 `hitlChat` 已通过 migration 0053 统一改写为 `hitlChatMode`，frontend 自
+ * P1-H 起也不再写入，因此这里不再需要 v1 fallback 分支。
  */
 function resolveChatHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" {
   if (loopOptions.hitlChatMode) return loopOptions.hitlChatMode;
-  if (loopOptions.hitlChat === true) return "always";
-  if (loopOptions.hitlChat === false) return "off";
   return "ai";
 }
 
-/** v1 `hitlTeam:true` 等价于 v2 `hitlMode:'always'`；缺省取 'ai' 作为默认。 */
+/**
+ * Team research HITL 模式解析；同理，`hitlTeam` 在 migration 0053 后退场，不再做 fallback。
+ */
 function resolveHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" {
   if (loopOptions.hitlMode) return loopOptions.hitlMode;
-  if (loopOptions.hitlTeam === true) return "always";
-  if (loopOptions.hitlTeam === false) return "off";
   return "ai";
 }
 

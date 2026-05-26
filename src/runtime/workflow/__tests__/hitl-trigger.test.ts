@@ -71,13 +71,7 @@ describe("evaluateTeamHitlTrigger - 三档模式", () => {
     expect(d.inputKind).toBe("approve_only");
   });
 
-  test("v1 兼容：hitlTeam=true 等价 mode='always'", () => {
-    const d = evaluateTeamHitlTrigger({ ...baseInput, loopOptions: { hitlTeam: true } });
-    expect(d.trigger).toBe(true);
-    expect(d.source).toBe("mode_always");
-  });
-
-  test("默认（未设 hitlMode 也未设 hitlTeam）= 'ai'，LLM 没说要 → 不触发", () => {
+  test("默认（未设 hitlMode）= 'ai'，LLM 没说要 → 不触发", () => {
     const d = evaluateTeamHitlTrigger({ ...baseInput, loopOptions: {} });
     expect(d.trigger).toBe(false);
   });
@@ -207,7 +201,7 @@ describe("evaluateChatHitlTrigger - 三档模式 × 高危工具", () => {
     role: "orchestrator",
   };
 
-  test("默认（未设 hitlChatMode 也未设 hitlChat）= 'ai'，普通工具不触发", () => {
+  test("默认（未设 hitlChatMode）= 'ai'，普通工具不触发", () => {
     const d = evaluateChatHitlTrigger({
       ...chatBase,
       loopOptions: {},
@@ -256,7 +250,7 @@ describe("evaluateChatHitlTrigger - 三档模式 × 高危工具", () => {
     expect(d.source).toBe("rule_high_risk");
   });
 
-  test("'always' 模式 + 任意工具都触发（v1 行为）", () => {
+  test("'always' 模式 + 任意工具都触发", () => {
     const d = evaluateChatHitlTrigger({
       ...chatBase,
       loopOptions: { hitlChatMode: "always" },
@@ -264,26 +258,6 @@ describe("evaluateChatHitlTrigger - 三档模式 × 高危工具", () => {
     });
     expect(d.trigger).toBe(true);
     expect(d.source).toBe("mode_always");
-  });
-
-  test("v1 兼容：hitlChat=true 等价 mode='always'", () => {
-    const d = evaluateChatHitlTrigger({
-      ...chatBase,
-      loopOptions: { hitlChat: true },
-      toolName: "fetch_klines",
-    });
-    expect(d.trigger).toBe(true);
-    expect(d.source).toBe("mode_always");
-  });
-
-  test("v1 兼容：hitlChat=false 等价 mode='off'", () => {
-    const d = evaluateChatHitlTrigger({
-      ...chatBase,
-      loopOptions: { hitlChat: false },
-      toolName: "fetch_klines",
-    });
-    expect(d.trigger).toBe(false);
-    expect(d.source).toBe("mode_off");
   });
 
   test("非 orchestrator 角色一律不触发（防止误拦其他 agent）", () => {
