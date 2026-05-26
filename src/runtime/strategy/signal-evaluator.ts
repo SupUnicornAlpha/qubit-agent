@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BarData } from "../../connectors/data/data.connector";
+import { PythonOneShotError, runPythonOneShot } from "../../util/python-oneshot";
 import { getPythonBin } from "../sandbox/python-runtime";
 
 export interface SignalEvaluationResult {
@@ -39,64 +40,53 @@ export async function evaluateScriptOnBar(
     return { buy: false, sell: false, barTime: null, error: "no_bars" };
   }
 
-  const proc = Bun.spawn([getPythonBin(), SCRIPT_RUNNER_PATH], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  proc.stdin.write(
-    JSON.stringify({
-      strategyCode,
-      bars: bars.map(barToPayload),
-    })
-  );
-  proc.stdin.end();
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  if (exitCode !== 0) {
-    return {
-      buy: false,
-      sell: false,
-      barTime: bars[bars.length - 1]?.time ?? null,
-      error: stderr.trim() || `python_exit_${exitCode}`,
-    };
-  }
-
+  const lastTime = bars[bars.length - 1]?.time ?? null;
+  let out: {
+    ok?: boolean;
+    buy?: boolean;
+    sell?: boolean;
+    barTime?: string;
+    error?: string;
+  };
   try {
-    const out = JSON.parse(stdout) as {
-      ok?: boolean;
-      buy?: boolean;
-      sell?: boolean;
-      barTime?: string;
-      error?: string;
-    };
-    if (!out.ok) {
-      return {
-        buy: false,
-        sell: false,
-        barTime: bars[bars.length - 1]?.time ?? null,
-        error: out.error ?? "script_eval_failed",
-      };
+    const r = await runPythonOneShot<typeof out>({
+      bin: getPythonBin(),
+      scriptPath: SCRIPT_RUNNER_PATH,
+      stdinPayload: {
+        strategyCode,
+        bars: bars.map(barToPayload),
+      },
+    });
+    out = r.parsed;
+  } catch (err) {
+    if (err instanceof PythonOneShotError) {
+      const errMsg =
+        err.source === "exit"
+          ? err.stderr.trim() || `python_exit_${err.exitCode}`
+          : err.message;
+      return { buy: false, sell: false, barTime: lastTime, error: errMsg };
     }
     return {
-      buy: Boolean(out.buy),
-      sell: Boolean(out.sell),
-      barTime: out.barTime ?? bars[bars.length - 1]?.time ?? null,
+      buy: false,
+      sell: false,
+      barTime: lastTime,
+      error: err instanceof Error ? err.message : String(err),
     };
-  } catch (e) {
+  }
+
+  if (!out.ok) {
     return {
       buy: false,
       sell: false,
-      barTime: bars[bars.length - 1]?.time ?? null,
-      error: e instanceof Error ? e.message : String(e),
+      barTime: lastTime,
+      error: out.error ?? "script_eval_failed",
     };
   }
+  return {
+    buy: Boolean(out.buy),
+    sell: Boolean(out.sell),
+    barTime: out.barTime ?? lastTime,
+  };
 }
 
 export async function evaluateSignalCode(
@@ -111,66 +101,55 @@ export async function evaluateSignalCode(
     return { buy: false, sell: false, barTime: null, error: "no_bars" };
   }
 
-  const proc = Bun.spawn([getPythonBin(), RUNNER_PATH], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const payload = {
-    bars: bars.map(barToPayload),
-    indicatorCode: signalCode,
-    buyKey: "buy",
-    sellKey: "sell",
+  const lastIdx = bars.length - 1;
+  const lastTime = bars[lastIdx]?.time ?? null;
+  let out: {
+    ok?: boolean;
+    buy?: boolean[];
+    sell?: boolean[];
+    error?: string;
   };
-
-  proc.stdin.write(JSON.stringify(payload));
-  proc.stdin.end();
-
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-
-  if (exitCode !== 0) {
-    return {
-      buy: false,
-      sell: false,
-      barTime: bars[bars.length - 1]?.time ?? null,
-      error: stderr.trim() || `python_exit_${exitCode}`,
-    };
-  }
-
   try {
-    const out = JSON.parse(stdout) as {
-      ok?: boolean;
-      buy?: boolean[];
-      sell?: boolean[];
-      error?: string;
-    };
-    if (!out.ok) {
-      return {
-        buy: false,
-        sell: false,
-        barTime: bars[bars.length - 1]?.time ?? null,
-        error: out.error ?? "signal_eval_failed",
-      };
+    const r = await runPythonOneShot<typeof out>({
+      bin: getPythonBin(),
+      scriptPath: RUNNER_PATH,
+      stdinPayload: {
+        bars: bars.map(barToPayload),
+        indicatorCode: signalCode,
+        buyKey: "buy",
+        sellKey: "sell",
+      },
+    });
+    out = r.parsed;
+  } catch (err) {
+    if (err instanceof PythonOneShotError) {
+      const errMsg =
+        err.source === "exit"
+          ? err.stderr.trim() || `python_exit_${err.exitCode}`
+          : err.message;
+      return { buy: false, sell: false, barTime: lastTime, error: errMsg };
     }
-    const buyArr = out.buy ?? [];
-    const sellArr = out.sell ?? [];
-    const lastIdx = bars.length - 1;
-    return {
-      buy: Boolean(buyArr[lastIdx]),
-      sell: Boolean(sellArr[lastIdx]),
-      barTime: bars[lastIdx]?.time ?? null,
-    };
-  } catch (e) {
     return {
       buy: false,
       sell: false,
-      barTime: bars[bars.length - 1]?.time ?? null,
-      error: e instanceof Error ? e.message : String(e),
+      barTime: lastTime,
+      error: err instanceof Error ? err.message : String(err),
     };
   }
+
+  if (!out.ok) {
+    return {
+      buy: false,
+      sell: false,
+      barTime: lastTime,
+      error: out.error ?? "signal_eval_failed",
+    };
+  }
+  const buyArr = out.buy ?? [];
+  const sellArr = out.sell ?? [];
+  return {
+    buy: Boolean(buyArr[lastIdx]),
+    sell: Boolean(sellArr[lastIdx]),
+    barTime: lastTime,
+  };
 }

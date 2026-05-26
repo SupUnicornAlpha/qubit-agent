@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import type { BarData } from "../../connectors/data/data.connector";
+import { runPythonOneShot } from "../../util/python-oneshot";
 import { getPythonBin } from "../sandbox/python-runtime";
 
 export interface PythonSignalRunInput {
@@ -16,32 +17,21 @@ export interface PythonSignalRunOutput {
 
 async function runWithBinary(bin: string, input: PythonSignalRunInput): Promise<PythonSignalRunOutput> {
   const script = resolve(import.meta.dir, "python_backtest_runner.py");
-  const proc = Bun.spawn([bin, script], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  proc.stdin.write(
-    JSON.stringify({
-      bars: input.bars,
-      indicatorCode: input.indicatorCode,
-      buyKey: input.buyKey ?? "buy",
-      sellKey: input.sellKey ?? "sell",
-    })
-  );
-  proc.stdin.end();
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0) throw new Error(`python exited ${code}: ${stderr || stdout}`);
-  const parsed = JSON.parse(stdout) as {
+  const { parsed } = await runPythonOneShot<{
     ok: boolean;
     error?: string;
     buy?: boolean[];
     sell?: boolean[];
-  };
+  }>({
+    bin,
+    scriptPath: script,
+    stdinPayload: {
+      bars: input.bars,
+      indicatorCode: input.indicatorCode,
+      buyKey: input.buyKey ?? "buy",
+      sellKey: input.sellKey ?? "sell",
+    },
+  });
   if (!parsed.ok) throw new Error(parsed.error || "python signal runner failed");
   const buy = Array.isArray(parsed.buy) ? parsed.buy.map(Boolean) : [];
   const sell = Array.isArray(parsed.sell) ? parsed.sell.map(Boolean) : [];

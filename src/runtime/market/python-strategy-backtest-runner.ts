@@ -11,6 +11,7 @@
  */
 import { resolve } from "node:path";
 import type { BarData } from "../../connectors/data/data.connector";
+import { PythonOneShotError, runPythonOneShot } from "../../util/python-oneshot";
 import { getPythonBin } from "../sandbox/python-runtime";
 
 export interface StrategyBacktestInput {
@@ -50,36 +51,46 @@ interface RawErr {
 
 async function runWithBinary(bin: string, input: StrategyBacktestInput): Promise<StrategyBacktestResult> {
   const script = resolve(import.meta.dir, "python_strategy_backtest_runner.py");
-  const proc = Bun.spawn([bin, script], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  proc.stdin.write(
-    JSON.stringify({
-      strategyCode: input.strategyCode,
-      bars: input.bars,
-      initialCapital: input.initialCapital,
-      commission: input.commission,
-    })
-  );
-  proc.stdin.end();
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  if (code !== 0 && !stdout) {
-    throw new Error(`python exited ${code}: ${stderr || "(no output)"}`);
-  }
+  const payload = {
+    strategyCode: input.strategyCode,
+    bars: input.bars,
+    initialCapital: input.initialCapital,
+    commission: input.commission,
+  };
 
+  /**
+   * 特殊语义：Python 端在业务异常时（如策略代码报错）也会 `print({ok:false, error:...})`
+   * 然后 exit 1。所以这里允许"exit !=0 但 stdout 是合法 JSON"被解析。
+   * 用 try/catch 区分 util 抛出的 exit/parse 错误 vs. 真正的"既没退 0 又没 JSON"。
+   */
   let parsed: RawOk | RawErr;
   try {
-    parsed = JSON.parse(stdout) as RawOk | RawErr;
-  } catch (e) {
-    throw new Error(
-      `python output not JSON (exit=${code}): ${stderr || stdout.slice(0, 400)}`
-    );
+    const result = await runPythonOneShot<RawOk | RawErr>({
+      bin,
+      scriptPath: script,
+      stdinPayload: payload,
+    });
+    parsed = result.parsed;
+  } catch (err) {
+    if (err instanceof PythonOneShotError) {
+      if (err.source === "exit" && err.stdout) {
+        try {
+          parsed = JSON.parse(err.stdout) as RawOk | RawErr;
+        } catch {
+          throw new Error(
+            `python output not JSON (exit=${err.exitCode}): ${err.stderr || err.stdout.slice(0, 400)}`
+          );
+        }
+      } else if (err.source === "exit") {
+        throw new Error(`python exited ${err.exitCode}: ${err.stderr || "(no output)"}`);
+      } else if (err.source === "parse") {
+        throw new Error(`python output not JSON (exit=${err.exitCode}): ${err.stderr || err.stdout.slice(0, 400)}`);
+      } else {
+        throw err;
+      }
+    } else {
+      throw err;
+    }
   }
 
   if (!parsed.ok) {

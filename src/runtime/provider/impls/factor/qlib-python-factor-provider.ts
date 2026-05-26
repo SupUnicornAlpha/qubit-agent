@@ -22,6 +22,11 @@ import { queryBarsRange } from "../../../market/klines-query";
 import { getPythonBin } from "../../../sandbox/python-runtime";
 import type { BarData } from "../../../../connectors/data/data.connector";
 import {
+  PythonOneShotError,
+  runPythonOneShot,
+  runPythonOneShotRaw,
+} from "../../../../util/python-oneshot";
+import {
   type FactorComputeProvider,
   type FactorComputeRequest,
   type FactorComputeResult,
@@ -85,12 +90,12 @@ export class QlibPythonFactorProvider implements FactorComputeProvider {
   async healthCheck(): Promise<{ ok: boolean }> {
     // 启动一个 --version 来快速 ping；走统一的 getPythonBin 以匹配 venv
     try {
-      const proc = Bun.spawn([getPythonBin(), "--version"], {
-        stdout: "pipe",
-        stderr: "pipe",
+      await runPythonOneShotRaw({
+        bin: getPythonBin(),
+        scriptPath: "--version",
+        timeoutMs: 5_000,
       });
-      const code = await proc.exited;
-      return { ok: code === 0 };
+      return { ok: true };
     } catch {
       return { ok: false };
     }
@@ -189,24 +194,23 @@ export class QlibPythonFactorProvider implements FactorComputeProvider {
     expr: string;
     bars: RawBar[];
   }): Promise<PythonResponse> {
-    const proc = Bun.spawn([getPythonBin(), RUNNER_PATH], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    proc.stdin.write(JSON.stringify(payload));
-    proc.stdin.end();
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (exitCode !== 0) {
-      return { ok: false, error: stderr.trim() || `python_exit_${exitCode}` };
-    }
     try {
-      return JSON.parse(stdout) as PythonResponse;
+      const { parsed } = await runPythonOneShot<PythonResponse>({
+        bin: getPythonBin(),
+        scriptPath: RUNNER_PATH,
+        stdinPayload: payload,
+      });
+      return parsed;
     } catch (e) {
+      if (e instanceof PythonOneShotError) {
+        if (e.source === "exit") {
+          return { ok: false, error: e.stderr.trim() || `python_exit_${e.exitCode}` };
+        }
+        if (e.source === "parse") {
+          return { ok: false, error: `parse_response_failed: ${e.message}` };
+        }
+        return { ok: false, error: e.message };
+      }
       return { ok: false, error: `parse_response_failed: ${(e as Error).message}` };
     }
   }
