@@ -3,7 +3,11 @@
  * 参考 docs/HITL_REDESIGN.md §3-§5。
  */
 import { describe, expect, test } from "bun:test";
-import { evaluateTeamHitlTrigger } from "../hitl-service";
+import {
+  evaluateChatHitlTrigger,
+  evaluateTeamHitlTrigger,
+  isHighRiskChatTool,
+} from "../hitl-service";
 import { workflowRun } from "../../../db/sqlite/schema";
 
 /**
@@ -189,5 +193,152 @@ describe("evaluateTeamHitlTrigger - LLM hint 传 inputKind/options", () => {
     });
     expect(d.source).toBe("rule_money");
     expect(d.inputKind).toBe("approve_only");
+  });
+});
+
+/**
+ * v2 对话 HITL 触发器：高危工具硬规则 + 三档模式。
+ * 关键回归：默认 'ai' 模式下，普通读数据 / 计算 / 报告生成不应触发；只有下单、自修改 prompt、
+ * 删除类工具才走 HITL，避免"每调一个工具都得点确认"。
+ */
+describe("evaluateChatHitlTrigger - 三档模式 × 高危工具", () => {
+  const chatBase = {
+    workflow: { source: "chat", mode: "research" },
+    role: "orchestrator",
+  };
+
+  test("默认（未设 hitlChatMode 也未设 hitlChat）= 'ai'，普通工具不触发", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: {},
+      toolName: "fetch_klines",
+    });
+    expect(d.trigger).toBe(false);
+    expect(d.source).toBe("none");
+  });
+
+  test("'ai' 模式 + fetch_news 不触发（常规读数据）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "ai" },
+      toolName: "fetch_news",
+    });
+    expect(d.trigger).toBe(false);
+  });
+
+  test("'ai' 模式 + 高危工具 place_order 仍触发（硬规则兜底）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "ai" },
+      toolName: "broker_place_order",
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("rule_high_risk");
+  });
+
+  test("'off' 模式 + 普通工具不触发", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "off" },
+      toolName: "compute_indicators",
+    });
+    expect(d.trigger).toBe(false);
+    expect(d.source).toBe("mode_off");
+  });
+
+  test("'off' 模式 + 高危工具仍触发（硬规则无视 mode）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "off" },
+      toolName: "edit_agent_pack",
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("rule_high_risk");
+  });
+
+  test("'always' 模式 + 任意工具都触发（v1 行为）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "always" },
+      toolName: "fetch_klines",
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("mode_always");
+  });
+
+  test("v1 兼容：hitlChat=true 等价 mode='always'", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChat: true },
+      toolName: "fetch_klines",
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("mode_always");
+  });
+
+  test("v1 兼容：hitlChat=false 等价 mode='off'", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChat: false },
+      toolName: "fetch_klines",
+    });
+    expect(d.trigger).toBe(false);
+    expect(d.source).toBe("mode_off");
+  });
+
+  test("非 orchestrator 角色一律不触发（防止误拦其他 agent）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      role: "analyst_fundamental",
+      loopOptions: { hitlChatMode: "always" },
+      toolName: "fetch_klines",
+    });
+    expect(d.trigger).toBe(false);
+    expect(d.source).toBe("none");
+  });
+});
+
+describe("isHighRiskChatTool - 高危工具识别", () => {
+  test("识别下单类（broker / place_order / submit_order / cancel_order）", () => {
+    expect(isHighRiskChatTool("place_order")).toBe(true);
+    expect(isHighRiskChatTool("submit_order")).toBe(true);
+    expect(isHighRiskChatTool("cancel_order")).toBe(true);
+    expect(isHighRiskChatTool("broker_place_order")).toBe(true);
+    expect(isHighRiskChatTool("broker_order_create")).toBe(true);
+    expect(isHighRiskChatTool("futu/place_order")).toBe(true);
+  });
+
+  test("识别自修改 prompt / agent 定义类", () => {
+    expect(isHighRiskChatTool("edit_agent_pack")).toBe(true);
+    expect(isHighRiskChatTool("update_agent_definition")).toBe(true);
+  });
+
+  test("识别删除 / 清理类", () => {
+    expect(isHighRiskChatTool("delete_strategy")).toBe(true);
+    expect(isHighRiskChatTool("purge_workflow")).toBe(true);
+    expect(isHighRiskChatTool("wipe_session")).toBe(true);
+    expect(isHighRiskChatTool("reset_pipeline")).toBe(true);
+  });
+
+  test("不误伤常规读数据 / 计算 / 报告类（关键回归 — 避免每个工具都拦）", () => {
+    expect(isHighRiskChatTool("fetch_klines")).toBe(false);
+    expect(isHighRiskChatTool("fetch_news")).toBe(false);
+    expect(isHighRiskChatTool("compute_indicators")).toBe(false);
+    expect(isHighRiskChatTool("detect_patterns")).toBe(false);
+    expect(isHighRiskChatTool("run_backtest")).toBe(false);
+    expect(isHighRiskChatTool("run_screener")).toBe(false);
+    expect(isHighRiskChatTool("generate_report")).toBe(false);
+    expect(isHighRiskChatTool("call_team_market_data")).toBe(false);
+    expect(isHighRiskChatTool("run_analyst_team")).toBe(false);
+    expect(isHighRiskChatTool("task_decompose")).toBe(false);
+    expect(isHighRiskChatTool("assign_task")).toBe(false);
+    expect(isHighRiskChatTool("fuse_signals")).toBe(false);
+    expect(isHighRiskChatTool("write_memory")).toBe(false); // 写内存非外部状态变更
+    expect(isHighRiskChatTool("search_memory")).toBe(false);
+  });
+
+  test("空 / 空白工具名不算高危", () => {
+    expect(isHighRiskChatTool("")).toBe(false);
+    expect(isHighRiskChatTool("   ")).toBe(false);
   });
 });

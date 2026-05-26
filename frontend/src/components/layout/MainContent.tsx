@@ -337,6 +337,61 @@ function groupAgentsBoardByRole(
   });
 }
 
+/**
+ * 兜底渲染：消息显示 awaiting_approval 但前端 hitlRequestByMessageId 还没收到 requestId。
+ *
+ * - 挂载即触发一次 listPendingWorkflowHitl；命中后回写到父组件 state，下次渲染会落到
+ *   正常的 approve/reject 按钮分支
+ * - 找不到时显示一个轻量"加载中…"占位，避免气泡看上去"卡死"
+ * - 每 5s 重试一次（典型场景：刷新页 / 切 session 后 SSE 还没追上）
+ */
+const PendingHitlFetchRow: FC<{
+  workflowRunId: string;
+  onFound: (requestId: string) => void;
+}> = ({ workflowRunId, onFound }) => {
+  const [tries, setTries] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const probe = async () => {
+      try {
+        const list = await listPendingWorkflowHitl(workflowRunId);
+        if (cancelled) return;
+        if (list[0]?.id) onFound(list[0].id);
+        else if (tries >= 5) setExhausted(true);
+      } catch {
+        if (!cancelled && tries >= 5) setExhausted(true);
+      }
+    };
+    void probe();
+    const t = setInterval(() => {
+      if (cancelled) return;
+      setTries((n) => n + 1);
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowRunId, tries]);
+
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        fontSize: 11,
+        color: "var(--qb-chat-meta-fg, #71717a)",
+        fontStyle: "italic",
+      }}
+    >
+      {exhausted
+        ? "⚠️ 未找到待审批请求（可能已被处理或会话已切换）。可重发指令继续。"
+        : "⏳ 加载待审批请求…"}
+    </div>
+  );
+};
+
 const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const chartContext = useAppStore((s) => s.chartContext);
   const setChartContext = useAppStore((s) => s.setChartContext);
@@ -356,6 +411,25 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
   const [errorText, setErrorText] = useState("");
   const [chatLoopKind, setChatLoopKind] = useState<AgentLoopKind>("native");
+  /**
+   * 对话 HITL 三档触发策略，与后端 LoopOptionsJson.hitlChatMode 对齐：
+   *   - 'off'    ：永不主动；仅高危工具（下单 / 写入外部状态）硬规则触发
+   *   - 'ai'     ：默认 — 仅高危工具触发，普通调用不打扰
+   *   - 'always' ：每次工具调用都问（v1 旧行为，等价老 `qb.chat-hitl='1'`）
+   * 兼容：老 key `qb.chat-hitl='1'` → 映射到 'always'；否则取 'ai' 为默认。
+   */
+  const [chatHitlMode, setChatHitlMode] = useState<"off" | "ai" | "always">(() => {
+    if (typeof window === "undefined") return "ai";
+    const v2 = window.localStorage.getItem("qb.chat-hitl-mode");
+    if (v2 === "off" || v2 === "ai" || v2 === "always") return v2;
+    const legacy = window.localStorage.getItem("qb.chat-hitl");
+    if (legacy === "1") return "always";
+    return "ai";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("qb.chat-hitl-mode", chatHitlMode);
+  }, [chatHitlMode]);
   const [hitlRequestByMessageId, setHitlRequestByMessageId] = useState<Record<string, string>>({});
   /**
    * 正在被用户操作（点击 approve/reject 中）的 HITL request 锁。
@@ -953,6 +1027,12 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         messageId: userMsg.id,
         reuseSessionWorkflow: true,
         loopKind: chatLoopKind,
+        // 把对话 HITL 三档策略落到 workflow_run.loop_options_json，hitl-gate.ts 会读它。
+        // 同时写一个 hitlChat 布尔做兼容（旧 reuseSessionWorkflow 复用的老 workflow 行可能没 hitlChatMode）。
+        loopOptionsJson: {
+          hitlChatMode: chatHitlMode,
+          hitlChat: chatHitlMode === "always",
+        },
       });
       await patchSessionMessage({
         messageId: assistantMsg.id,
@@ -1123,6 +1203,23 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 ) : null}
                 {msg.status === "awaiting_approval" &&
                 msg.workflowRunIds?.[0] &&
+                !hitlRequestByMessageId[msg.id] ? (
+                  /**
+                   * 兜底：消息状态卡在 awaiting_approval 但我们手里没 requestId（典型场景：
+                   * 用户刷新页 / 切换 session 后 SSE 没收到 hitl_request 事件；或者多次发送
+                   * 同会话工作流被复用，老 requestId 早已 resolved）。这种情况展示一个"加载/
+                   * 重试"按钮主动去后端拉 pending，命中后下次渲染会落到下面正常按钮分支。
+                   * 这样用户至少不会面对一个看上去"卡死"的 awaiting 气泡。
+                   */
+                  <PendingHitlFetchRow
+                    workflowRunId={msg.workflowRunIds[0]!}
+                    onFound={(requestId) =>
+                      setHitlRequestByMessageId((prev) => ({ ...prev, [msg.id]: requestId }))
+                    }
+                  />
+                ) : null}
+                {msg.status === "awaiting_approval" &&
+                msg.workflowRunIds?.[0] &&
                 hitlRequestByMessageId[msg.id] ? (
                   (() => {
                     const reqId = hitlRequestByMessageId[msg.id]!;
@@ -1177,6 +1274,26 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 <option value="native">Native</option>
                 <option value="claude_cli">Claude CLI</option>
                 <option value="codex_cli">Codex CLI</option>
+              </select>
+            </label>
+            <label
+              style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}
+              title={
+                "对话 HITL 触发策略：\n" +
+                "  • 智能（默认）：仅高危工具（下单 / 写入外部状态）触发，普通调用不打扰\n" +
+                "  • 关闭：完全跳过；高危工具仍走硬规则兜底\n" +
+                "  • 每次：每个工具调用都需要人工确认（旧版行为）"
+              }
+            >
+              HITL
+              <select
+                value={chatHitlMode}
+                onChange={(e) => setChatHitlMode(e.target.value as "off" | "ai" | "always")}
+                style={{ ...styles.input, maxWidth: 110 }}
+              >
+                <option value="ai">智能</option>
+                <option value="off">关闭</option>
+                <option value="always">每次</option>
               </select>
             </label>
             <input
@@ -6918,10 +7035,20 @@ const TeamDashboardPanel: FC = () => {
                 </div>
               ) : null}
               <div style={{ marginTop: 14 }} data-qb-team-hitl-banner>
-                {workflowRunId.trim() && teamPendingHitl ? (
+                {workflowRunId.trim() ? (
+                  /**
+                   * v2 修复：Banner 只要 workflowRunId 有效就常驻挂载，由 banner 内部用
+                   * listPendingWorkflowHitl 自动发现 pending。这样即使 `teamPendingHitl`
+                   * state 还没被 onAwaitingApproval 回调填充（例如刷新页面 / 切换工作流 /
+                   * 自动触发的硬规则 HITL 没走 runAnalystTeam pollAnalystJob 链路），
+                   * 红框位置也能看到询问卡片，而不是"看不到按钮只能再输一句继续"。
+                   *
+                   * triggerKey 用 workflowRunId 兜底；当 onAwaitingApproval 回调发生时
+                   * 优先用 requestId 触发 banner 内部 refresh，拿到最新 pending 内容。
+                   */
                   <TeamHitlBanner
                     workflowRunId={workflowRunId.trim()}
-                    triggerKey={teamPendingHitl.requestId}
+                    triggerKey={teamPendingHitl?.requestId ?? workflowRunId.trim()}
                     onResolved={(decision) => {
                       setTeamPendingHitl(null);
                       setRunProgress(

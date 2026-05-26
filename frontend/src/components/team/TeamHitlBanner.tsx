@@ -60,6 +60,23 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
     void refresh();
   }, [refresh, triggerKey]);
 
+  /**
+   * 轻量轮询：每 4s 重新拉一次 pending 列表。
+   *
+   * 这样即便 banner 已挂载且当前没 pending，新触发的 HITL（包括硬规则自动触发的）也能
+   * 在几秒内自动出现在画布上，而不是依赖父组件 onAwaitingApproval 回调或手动刷新。
+   * 4s 既能压低后端压力（pending 是个简单 SELECT，无连接），又能保证用户感知。
+   * 用户正在操作 banner（busy=true）时不刷新，避免提交期间 pending 被清掉造成抖动。
+   */
+  useEffect(() => {
+    if (!workflowRunId.trim()) return;
+    const t = setInterval(() => {
+      if (state.busy) return;
+      void refresh();
+    }, 4000);
+    return () => clearInterval(t);
+  }, [refresh, workflowRunId, state.busy]);
+
   if (!state.pending && !state.error) return null;
   if (state.error) {
     return (

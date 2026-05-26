@@ -58,6 +58,22 @@ export interface LoopOptionsJson {
   timeoutMs?: number;
   injectMcpBridge?: boolean;
   maxOutputBytes?: number;
+  /**
+   * v1 兼容：对话 orchestrator 工具执行前 HITL；true=每次都问，false=完全关闭。
+   * v2 起推荐用 `hitlChatMode`。
+   */
+  hitlChat?: boolean;
+  /**
+   * v2：对话 HITL 三档（off / ai / always）。
+   *   - 'off'    ：永不主动；仅高危工具（下单 / 写入外部状态）硬规则触发
+   *   - 'ai'     ：默认 — 仅高危工具或 LLM hint 触发
+   *   - 'always' ：每次工具调用都问（v1 行为）
+   */
+  hitlChatMode?: "off" | "ai" | "always";
+  /** v1 兼容：团队 HITL 总开关；推荐用 `hitlMode` */
+  hitlTeam?: boolean;
+  /** v2：团队 HITL 三档（off / ai / always） */
+  hitlMode?: "off" | "ai" | "always";
 }
 
 export type StrategyScriptPurpose = "research" | "live_trading" | "both";

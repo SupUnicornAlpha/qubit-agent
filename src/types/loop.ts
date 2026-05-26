@@ -20,8 +20,22 @@ export const LoopOptionsJsonSchema = z
     maxOutputBytes: z.number().int().positive().optional(),
     /** native Agent 内建 ReAct；false 时强制单轮（仍走 perceive→reason→act→observe 一次） */
     reactLoop: z.boolean().optional(),
-    /** 对话 orchestrator 工具执行前 HITL；默认 chat 来源开启 */
+    /**
+     * v1 兼容：对话 orchestrator 工具执行前 HITL；true=每次工具调用都问、false=完全关闭。
+     * v2 起推荐改用 `hitlChatMode`；保留此布尔以兼容旧 workflow_run 行。
+     *
+     * 历史问题：v1 在 workflow.source==='chat' 时默认每次工具调用都拦截，体验为"每调一个工具
+     * 都得点确认"。v2 改为三档（off/ai/always）+ 高危工具白名单兜底；详见
+     * docs/HITL_REDESIGN.md §3 与 hitl-service.ts:evaluateChatHitlTrigger。
+     */
     hitlChat: z.boolean().optional(),
+    /**
+     * v2：对话 orchestrator HITL 三档触发策略（与团队 HITL `hitlMode` 同义）。
+     *   - 'off'     ：永不主动询问；高危工具硬规则（下单 / 写入外部状态）仍触发
+     *   - 'ai'      ：默认 — 仅高危工具或 LLM 显式 hint 才询问
+     *   - 'always'  ：每次工具调用都问（v1 行为 / 旧 `hitlChat:true`）
+     */
+    hitlChatMode: z.enum(["off", "ai", "always"]).optional(),
     /**
      * v1 兼容：团队研究 Orchestrator 规划完成后 HITL 总开关。
      * v2 起推荐改用 `hitlMode`；仍设置 `hitlTeam:true` 等价于 `hitlMode:'always'`。

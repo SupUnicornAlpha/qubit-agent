@@ -56,16 +56,119 @@ export function parseHitlApproval(raw: unknown): HitlApprovalPayload | null {
   return { requestId, decision, response };
 }
 
-/** 对话 orchestrator：工具执行前 HITL（run_analyst_team 走团队编排内 HITL）。 */
+/**
+ * 高危工具：即便用户把 `hitlChatMode` 设为 'off'，命中以下名单也强制走 HITL。
+ *
+ * 入选标准（v2）：
+ *   - **下单 / 交易类**：直接动钱、动仓位；任何形式的 broker/order/place_*
+ *   - **修改外部状态**：自我修改 prompt（影响后续所有调用）、写入审计 / 配置类
+ *   - **删除 / 清理类**：cleanup/delete/purge —— 不可逆
+ *
+ * 反过来，**常规读数据 / 计算 / 回测 / 报告生成** 都不在此列，'ai' 模式下不打扰。
+ *
+ * 这是"硬规则"而非穷举：用前缀 / 子串匹配兜住没注册到 BUILTIN_HANDLERS 的 MCP 工具
+ * （如三方下单 MCP）；命名约定见 docs/HITL_REDESIGN.md §4。
+ */
+const HIGH_RISK_CHAT_TOOL_PATTERNS: ReadonlyArray<RegExp> = [
+  // 下单 / 交易（broker_place_order / place_order / order_submit / ...）
+  /(^|[_\-./])(place_order|submit_order|create_order|cancel_order|modify_order)([_\-./]|$)/i,
+  /(^|[_\-./])(broker_[a-z]+_order|broker_order_[a-z]+)([_\-./]|$)/i,
+  // 自修改 prompt / agent 定义（一旦改了影响所有后续推理）
+  /(^|[_\-./])edit_agent_pack([_\-./]|$)/i,
+  /(^|[_\-./])update_agent_definition([_\-./]|$)/i,
+  // 删除 / 清理
+  /(^|[_\-./])(delete|purge|wipe|reset)_[a-z_]+([_\-./]|$)/i,
+];
+
+export function isHighRiskChatTool(toolName: string): boolean {
+  const name = toolName.trim();
+  if (!name) return false;
+  return HIGH_RISK_CHAT_TOOL_PATTERNS.some((re) => re.test(name));
+}
+
+export type ChatHitlTriggerDecision = {
+  trigger: boolean;
+  /** 'mode_always' 模式总是问；'rule_high_risk' 高危工具兜底；'mode_off' 关闭；'none' 不触发 */
+  source: "mode_always" | "rule_high_risk" | "mode_off" | "none";
+  reason: string;
+};
+
+/**
+ * v2：对话 orchestrator HITL 评估器 —— 三档模式 + 高危工具硬规则兜底。
+ *
+ * 优先级：
+ *   1. 高危工具命中 → 必触发（无视 mode）
+ *   2. mode='always' → 触发（含 v1 旧行为 hitlChat:true）
+ *   3. mode='off' → 不触发（含 v1 旧行为 hitlChat:false）
+ *   4. mode='ai'（默认）→ 不触发（常规工具不打扰）
+ *
+ * 取代旧的 `resolveChatOrchestratorHitl` —— 后者无脑按 source==='chat' 全拦，
+ * 导致用户体验"每调一个工具都得确认"。
+ */
+export function evaluateChatHitlTrigger(input: {
+  workflow: { source: string; mode: string };
+  loopOptions: LoopOptionsJson;
+  role: string;
+  toolName: string;
+}): ChatHitlTriggerDecision {
+  if (input.role !== "orchestrator") {
+    return { trigger: false, source: "none", reason: "" };
+  }
+  // 高危工具：硬规则兜底，无视 mode
+  if (isHighRiskChatTool(input.toolName)) {
+    return {
+      trigger: true,
+      source: "rule_high_risk",
+      reason: `高危工具需人工确认：${input.toolName}`,
+    };
+  }
+  const mode = resolveChatHitlMode(input.loopOptions);
+  if (mode === "always") {
+    return {
+      trigger: true,
+      source: "mode_always",
+      reason: "用户设置每次工具调用都需要人工确认",
+    };
+  }
+  if (mode === "off") {
+    return { trigger: false, source: "mode_off", reason: "" };
+  }
+  // 'ai' 模式：默认不打扰；常规工具直接放行。
+  // 未来可扩展：让 LLM 在 reasonText 中输出结构化 hitl hint，命中即触发。
+  return { trigger: false, source: "none", reason: "" };
+}
+
+/**
+ * v1 兼容映射：
+ *   - 显式设置过 `hitlChatMode` 优先；
+ *   - 否则 `hitlChat:true → 'always'`，`hitlChat:false → 'off'`；
+ *   - 都没设置 → 'ai'（v2 默认）。
+ */
+function resolveChatHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" {
+  if (loopOptions.hitlChatMode) return loopOptions.hitlChatMode;
+  if (loopOptions.hitlChat === true) return "always";
+  if (loopOptions.hitlChat === false) return "off";
+  return "ai";
+}
+
+/**
+ * @deprecated v1 兼容入口。新代码请用 `evaluateChatHitlTrigger`。
+ * 保留是因为外部测试 / 路由可能仍在 import；逐步迁移后再移除。
+ */
 export function resolveChatOrchestratorHitl(
   wf: { source: string; mode: string },
   loopOptions: LoopOptionsJson,
   role: string
 ): boolean {
-  if (role !== "orchestrator") return false;
-  if (loopOptions.hitlChat === false) return false;
-  if (loopOptions.hitlChat === true) return true;
-  return wf.source === "chat";
+  // 透传给 v2 评估器，但不带 toolName —— 永远走"非高危"分支。
+  // 想要"按工具名分别判断"必须改调 evaluateChatHitlTrigger（hitl-gate.ts 已迁）。
+  const d = evaluateChatHitlTrigger({
+    workflow: wf,
+    loopOptions,
+    role,
+    toolName: "",
+  });
+  return d.trigger;
 }
 
 /**

@@ -2,8 +2,8 @@ import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import {
   createHitlRequest,
+  evaluateChatHitlTrigger,
   parseHitlApproval,
-  resolveChatOrchestratorHitl,
   shouldHitlGateToolCall,
   verifyHitlApproval,
 } from "../../workflow/hitl-service";
@@ -49,17 +49,26 @@ export async function hitlGateNode(
   const parsed = parseToolCallFromReason(state.reasonText ?? "", effective.tools);
   if (parsed.kind === "none" || parsed.kind === "parse_error") return {};
 
-  const { workflow, loopOptions } = await loadWorkflowLoopContext(state.workflowId);
-  if (!resolveChatOrchestratorHitl(workflow, loopOptions, state.agentDefinition.role)) {
-    return {};
-  }
+  // run_analyst_team 走团队编排内部 HITL（pauseForTeamOrchestratorHitl），这里要让路。
   if (!shouldHitlGateToolCall(parsed.toolName)) return {};
+
+  const { workflow, loopOptions } = await loadWorkflowLoopContext(state.workflowId);
+  const decision = evaluateChatHitlTrigger({
+    workflow,
+    loopOptions,
+    role: state.agentDefinition.role,
+    toolName: parsed.toolName,
+  });
+  if (!decision.trigger) return {};
 
   const toolLabel = parsed.mcp
     ? `MCP ${parsed.mcp.serverName}/${parsed.mcp.toolName}`
     : parsed.toolName;
-  const title = `Orchestrator 请求执行工具：${toolLabel}`;
-  const summary = (state.reasonText ?? "").slice(0, 6000);
+  const titlePrefix = decision.source === "rule_high_risk" ? "[高危操作] " : "";
+  const title = `${titlePrefix}Orchestrator 请求执行工具：${toolLabel}`;
+  // 把触发原因拼进 summary 顶部，让用户立刻看到"为什么这次需要审批"。
+  const reasonHeader = decision.reason ? `[HITL 原因] ${decision.reason}\n\n` : "";
+  const summary = (reasonHeader + (state.reasonText ?? "")).slice(0, 6000);
 
   const { id: requestId } = await createHitlRequest({
     workflowRunId: state.workflowId,
@@ -78,6 +87,8 @@ export async function hitlGateNode(
       mcp: parsed.mcp ?? null,
       reasonText: state.reasonText,
       iteration: state.iteration,
+      triggerSource: decision.source,
+      triggerReason: decision.reason,
     },
   });
 
