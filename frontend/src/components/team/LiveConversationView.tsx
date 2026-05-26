@@ -1,5 +1,6 @@
 import type { CSSProperties, FC, ReactNode } from "react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { MarkdownBubble } from "../chat/MarkdownBubble";
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
 
 /**
@@ -8,6 +9,7 @@ import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAv
  * - `selfRole`：左右气泡的判定依据，self → 右侧黄；其他 → 左侧带头像。
  * - `events`：归一化后的对话事件，按 ts 升序排列；外部已过滤过的事件直接喂进来。
  * - debate / system 事件渲染成居中横幅卡，避免和正常 message 混淆。
+ * - tool_call 消息单独走 ToolCallCard，跟普通 LLM 对话区分开，避免 JSON 把视线挤垮。
  */
 export type LiveConversationMessageEvent = {
   kind: "message";
@@ -100,6 +102,9 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
       {sorted.map((ev) => {
         switch (ev.kind) {
           case "message":
+            if (ev.messageKind === "tool_call") {
+              return <ToolCallCard key={ev.id} ev={ev} maxLen={contentMaxLength} />;
+            }
             return <MessageRow key={ev.id} ev={ev} selfRole={selfRole} maxLen={contentMaxLength} />;
           case "debate":
             return <DebateBanner key={ev.id} ev={ev} maxLen={contentMaxLength} />;
@@ -151,6 +156,33 @@ const tsLabel: CSSProperties = {
   fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
 };
 
+/**
+ * 启发式判断 LLM 消息是否值得走 Markdown 渲染：
+ * - GFM 表格：连续两行都出现 `|`；
+ * - 标题：行首 `# ` ~ `###### `；
+ * - 引用：行首 `> `；
+ * - 有序/无序列表：行首 `- ` / `* ` / `1. `；
+ * - 围栏代码块：``` 或 ~~~；
+ * - 链接：`[text](url)`；
+ * 任一命中即视为 markdown。否则走更省渲染开销的 plain text 分支。
+ */
+function looksLikeMarkdown(text: string): boolean {
+  if (!text) return false;
+  if (/```|~~~/.test(text)) return true;
+  if (/\[[^\]]+\]\([^)]+\)/.test(text)) return true;
+  if (/(^|\n)#{1,6}\s/.test(text)) return true;
+  if (/(^|\n)>\s/.test(text)) return true;
+  if (/(^|\n)\s*([-*+]\s|\d+\.\s)/.test(text)) return true;
+  // GFM table 需要至少表头 + 分隔行两行 `|`：
+  const lines = text.split("\n");
+  let pipeLines = 0;
+  for (const line of lines) {
+    if (line.includes("|")) pipeLines++;
+    if (pipeLines >= 2) return true;
+  }
+  return false;
+}
+
 const MessageRow: FC<{
   ev: LiveConversationMessageEvent;
   selfRole: string;
@@ -167,7 +199,16 @@ const MessageRow: FC<{
     : `rgba(${hexToRgbStr(avatarColorFor(ev.fromRole).bg)}, 0.32)`;
   const safeBorder = bubbleBorder.includes("rgba(NaN") ? "rgba(96,165,250,0.32)" : bubbleBorder;
 
-  const content = truncate(ev.contentText || "(无文本内容)", maxLen);
+  const rawContent = ev.contentText || "(无文本内容)";
+  const content = truncate(rawContent, maxLen);
+  /**
+   * llm_message 消息往往是分析师的结构化输出，里面带 GFM 表格 / 标题 / 列表，
+   * 直接 `pre-wrap` 显示会把 `|` 当原始字符——所以这里启发式切到 MarkdownBubble，
+   * 让表格 / 标题 / 代码块走我们改良过的样式。
+   * 其它种类（handoff、纯 ack 等短文本）继续走更轻量的内联文本分支。
+   */
+  const useMarkdown =
+    (ev.messageKind === "llm_message" || ev.messageKind == null) && looksLikeMarkdown(content);
 
   return (
     <div
@@ -185,7 +226,7 @@ const MessageRow: FC<{
           display: "flex",
           flexDirection: "column",
           alignItems: isSelf ? "flex-end" : "flex-start",
-          maxWidth: "82%",
+          maxWidth: useMarkdown ? "92%" : "82%",
           minWidth: 0,
         }}
       >
@@ -194,34 +235,302 @@ const MessageRow: FC<{
         </div>
         <div
           data-qb-live-conv-bubble={isSelf ? "self" : "other"}
+          data-qb-live-conv-md={useMarkdown ? "1" : undefined}
           style={{
-            padding: "8px 12px",
+            padding: useMarkdown ? "6px 12px" : "8px 12px",
             borderRadius: 10,
             background: bubbleBg,
             border: `1px solid ${safeBorder}`,
             color: "var(--qb-team-live-feed-fg, var(--qb-body-fg, #e4e4e7))",
-            fontSize: 12,
+            fontSize: useMarkdown ? 13 : 12,
             lineHeight: 1.55,
-            whiteSpace: "pre-wrap",
+            whiteSpace: useMarkdown ? "normal" : "pre-wrap",
             wordBreak: "break-word",
             position: "relative",
+            minWidth: 0,
+            width: useMarkdown ? "100%" : undefined,
           }}
         >
-          {!isSelf ? (
-            <span
-              style={{
-                color: accent,
-                fontWeight: 600,
-                fontSize: 11,
-                marginRight: 6,
-              }}
-            >
-              {formatRoleName(ev.fromRole)}
-            </span>
-          ) : null}
-          {content}
+          {useMarkdown ? (
+            <>
+              {!isSelf ? (
+                <div
+                  style={{
+                    display: "block",
+                    color: accent,
+                    fontWeight: 600,
+                    fontSize: 11,
+                    marginBottom: 2,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {formatRoleName(ev.fromRole)}
+                </div>
+              ) : null}
+              <MarkdownBubble text={content} />
+            </>
+          ) : (
+            <>
+              {!isSelf ? (
+                <span
+                  style={{
+                    color: accent,
+                    fontWeight: 600,
+                    fontSize: 11,
+                    marginRight: 6,
+                  }}
+                >
+                  {formatRoleName(ev.fromRole)}
+                </span>
+              ) : null}
+              {content}
+            </>
+          )}
         </div>
       </div>
+    </div>
+  );
+};
+
+/** 把 tool_call 的 contentText（首行 "✓ name (123ms)\n{json}"）解构出来。 */
+type ToolCallPieces = {
+  statusIcon: string | null;
+  /** 'ok' | 'warn' | 'fail' | 'unknown'。 */
+  status: "ok" | "warn" | "fail" | "unknown";
+  latencyMs: number | null;
+  body: string;
+};
+
+function parseToolCallText(text: string, fallbackName: string | null | undefined): ToolCallPieces {
+  if (!text) {
+    return { statusIcon: null, status: "unknown", latencyMs: null, body: "" };
+  }
+  const firstNl = text.indexOf("\n");
+  const head = firstNl === -1 ? text : text.slice(0, firstNl);
+  const rest = firstNl === -1 ? "" : text.slice(firstNl + 1);
+
+  /**
+   * 兼容 logResearchTeamInteraction 写入的格式： `✓ name (123ms)\n{json}` /
+   * `✗ name (123ms)\n{...}` / `⚠ name ...`。第二个分组 `(?:⚠️|.)` 单独把 `⚠️`
+   * (U+26A0 U+FE0F) 这种带 variation selector 的双字符 emoji 放在外面，避免
+   * 把多字符 emoji 塞进字符类（biome noMisleadingCharacterClass 会报）。
+   */
+  const m = head.match(/^(⚠️|[✓✗⚠ℹ])\s*([^\s].*?)\s*(?:\((\d+)ms\))?\s*$/);
+  if (!m) {
+    return { statusIcon: null, status: "unknown", latencyMs: null, body: text };
+  }
+  const icon = m[1] ?? null;
+  const name = m[2] ?? fallbackName ?? "";
+  const latency = m[3] ? Number(m[3]) : null;
+  let status: ToolCallPieces["status"] = "unknown";
+  if (icon === "✓") status = "ok";
+  else if (icon === "✗") status = "fail";
+  else if (icon === "⚠" || icon === "⚠️") status = "warn";
+
+  if (rest.trim().length === 0 && name) {
+    return { statusIcon: icon, status, latencyMs: latency, body: "" };
+  }
+  return { statusIcon: icon, status, latencyMs: latency, body: rest };
+}
+
+function tryPrettyJson(body: string): { isJson: boolean; pretty: string } {
+  const trimmed = body.trim();
+  if (!trimmed) return { isJson: false, pretty: "" };
+  const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (!looksJson) return { isJson: false, pretty: body };
+  try {
+    const parsed = JSON.parse(trimmed);
+    return { isJson: true, pretty: JSON.stringify(parsed, null, 2) };
+  } catch {
+    return { isJson: false, pretty: body };
+  }
+}
+
+const STATUS_PALETTE: Record<
+  ToolCallPieces["status"],
+  { bg: string; border: string; fg: string; chip: string; label: string }
+> = {
+  ok: {
+    bg: "rgba(34,197,94,0.07)",
+    border: "rgba(34,197,94,0.35)",
+    fg: "#86efac",
+    chip: "rgba(34,197,94,0.16)",
+    label: "成功",
+  },
+  warn: {
+    bg: "rgba(245,158,11,0.07)",
+    border: "rgba(245,158,11,0.32)",
+    fg: "#fbbf24",
+    chip: "rgba(245,158,11,0.18)",
+    label: "警告",
+  },
+  fail: {
+    bg: "rgba(239,68,68,0.07)",
+    border: "rgba(239,68,68,0.35)",
+    fg: "#fca5a5",
+    chip: "rgba(239,68,68,0.18)",
+    label: "失败",
+  },
+  unknown: {
+    bg: "rgba(148,163,184,0.07)",
+    border: "rgba(148,163,184,0.32)",
+    fg: "#cbd5e1",
+    chip: "rgba(148,163,184,0.18)",
+    label: "调用",
+  },
+};
+
+const COLLAPSED_BODY_LINES = 8;
+
+const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = ({ ev, maxLen }) => {
+  const pieces = parseToolCallText(ev.contentText, ev.toolName);
+  const palette = STATUS_PALETTE[pieces.status];
+  const toolName = ev.toolName || "tool";
+  const { isJson, pretty } = tryPrettyJson(pieces.body);
+  const fullBody = truncate(pretty, maxLen);
+  const lines = fullBody.split("\n");
+  const collapsable = lines.length > COLLAPSED_BODY_LINES;
+  const [expanded, setExpanded] = useState(false);
+  const visibleBody = expanded || !collapsable ? fullBody : lines.slice(0, COLLAPSED_BODY_LINES).join("\n");
+
+  return (
+    <div
+      data-qb-live-conv-toolcall={pieces.status}
+      style={{
+        alignSelf: "stretch",
+        margin: "0 auto",
+        width: "min(96%, 720px)",
+        padding: "8px 12px 10px",
+        borderRadius: 10,
+        background: palette.bg,
+        border: `1px solid ${palette.border}`,
+        boxShadow: "0 1px 0 rgba(0,0,0,0.18) inset",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "wrap",
+          marginBottom: pieces.body ? 6 : 0,
+        }}
+      >
+        <span style={{ ...tsLabel }}>{formatTs(ev.ts)}</span>
+        <span
+          style={{
+            fontSize: 10,
+            color: "var(--qb-team-meta, #71717a)",
+            fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+          }}
+        >
+          ·
+        </span>
+        <span
+          title={formatRoleName(ev.fromRole)}
+          style={{
+            fontSize: 11,
+            color: avatarColorFor(ev.fromRole).bg,
+            fontWeight: 600,
+          }}
+        >
+          {formatRoleName(ev.fromRole)}
+        </span>
+        <span
+          aria-label="工具调用"
+          title="工具调用"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "1px 6px",
+            borderRadius: 4,
+            background: "rgba(0,0,0,0.18)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            fontSize: 10,
+            color: "var(--qb-team-meta, #a1a1aa)",
+            fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+            letterSpacing: 0.2,
+          }}
+        >
+          <span aria-hidden style={{ opacity: 0.85 }}>{"⚙"}</span>
+          tool
+        </span>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: "var(--qb-body-fg, #e4e4e7)",
+            fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+          }}
+        >
+          {toolName}
+        </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "1px 7px",
+            borderRadius: 999,
+            background: palette.chip,
+            color: palette.fg,
+            border: `1px solid ${palette.border}`,
+            fontSize: 10,
+            fontWeight: 600,
+            letterSpacing: 0.2,
+          }}
+        >
+          {pieces.statusIcon ? <span aria-hidden>{pieces.statusIcon}</span> : null}
+          {palette.label}
+          {pieces.latencyMs != null ? (
+            <span style={{ opacity: 0.75 }}>· {pieces.latencyMs}ms</span>
+          ) : null}
+        </span>
+        {collapsable ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            style={{
+              marginLeft: "auto",
+              fontSize: 10,
+              padding: "2px 7px",
+              borderRadius: 4,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "transparent",
+              color: "var(--qb-team-meta, #a1a1aa)",
+              cursor: "pointer",
+              fontFamily: "ui-sans-serif, system-ui, sans-serif",
+            }}
+          >
+            {expanded ? "收起" : `展开 (${lines.length} 行)`}
+          </button>
+        ) : null}
+      </div>
+      {pieces.body ? (
+        <pre
+          style={{
+            margin: 0,
+            padding: "8px 10px",
+            borderRadius: 6,
+            background: "rgba(0,0,0,0.28)",
+            border: "1px solid rgba(255,255,255,0.05)",
+            color: isJson ? "#e4e4e7" : "#d4d4d8",
+            fontSize: 11,
+            lineHeight: 1.5,
+            fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: expanded ? "60vh" : undefined,
+            overflowY: expanded ? "auto" : "hidden",
+          }}
+        >
+          {visibleBody}
+          {!expanded && collapsable ? (
+            <span style={{ color: "var(--qb-team-meta, #71717a)" }}>{"\n…"}</span>
+          ) : null}
+        </pre>
+      ) : null}
     </div>
   );
 };
