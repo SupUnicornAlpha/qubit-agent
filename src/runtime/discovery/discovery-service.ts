@@ -24,6 +24,7 @@ import {
 } from "../../db/sqlite/schema";
 import { parse } from "../provider/impls/factor/qlib-expr/parser";
 import { evalExpr, type PriceSeries } from "../provider/impls/factor/qlib-expr/evaluator";
+import { generateGbmTicks } from "../../util/synthesize-gbm";
 import { providerResolver } from "../provider/resolver";
 import { queryBarsRange } from "../market/klines-query";
 import type { BarData } from "../../connectors/data/data.connector";
@@ -513,37 +514,18 @@ function synthesizeBars(symbol: string, startDate: string, endDate: string): Bar
   const d1 = new Date(endDate + "T00:00:00Z").getTime();
   const dayMs = 86_400_000;
   const n = Math.max(40, Math.floor((d1 - d0) / dayMs) + 1);
-  const bars: BarData[] = [];
-  // seeded RNG via symbol hash
-  let seed = 0;
-  for (const c of symbol) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 0x1_0000_0000;
-  };
-  let px = 50 + (seed % 80);
-  for (let i = 0; i < n; i++) {
-    const d = new Date(d0 + i * dayMs);
-    const ret = (rand() - 0.5) * 0.04; // ±2%
-    const open = px;
-    px = Math.max(1, px * (1 + ret));
-    const close = px;
-    const high = Math.max(open, close) * (1 + rand() * 0.01);
-    const low = Math.min(open, close) * (1 - rand() * 0.01);
-    const vol = 1_000_000 * (0.5 + rand());
-    bars.push({
-      symbol,
-      exchange: "",
-      open,
-      high,
-      low,
-      close,
-      volume: vol,
-      turnover: vol * close,
-      timestamp: d.toISOString(),
-    });
-  }
-  return bars;
+  const ticks = generateGbmTicks(symbol, n);
+  return ticks.map((t, i) => ({
+    symbol,
+    exchange: "",
+    open: t.open,
+    high: t.high,
+    low: t.low,
+    close: t.close,
+    volume: t.volume,
+    turnover: t.turnover,
+    timestamp: new Date(d0 + i * dayMs).toISOString(),
+  }));
 }
 
 export const discoveryService = new DiscoveryService();

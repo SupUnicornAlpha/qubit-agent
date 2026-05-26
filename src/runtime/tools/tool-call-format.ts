@@ -242,11 +242,6 @@ export function parseToolCallFromReason(
   return { kind: "tool", toolName, params, mcp };
 }
 
-export function isToolImplemented(toolName: string): boolean {
-  if (toolName === "none" || toolName === "call_mcp" || toolName.startsWith("mcp:")) return true;
-  return isBuiltinTool(toolName) || Boolean(resolveConnectorForTool(toolName));
-}
-
 /** sentinel 含前后换行一并吃掉，避免产生连续空行残留 */
 const TOOL_CALL_SENTINEL_REGEX = /\n*<TOOL_CALL>[\s\S]*?<\/TOOL_CALL>\n*/gi;
 const TOOL_CALL_OPEN_TAIL_REGEX = /\n*<TOOL_CALL>[\s\S]*$/i;

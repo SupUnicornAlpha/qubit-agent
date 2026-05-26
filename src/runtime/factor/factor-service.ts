@@ -36,6 +36,7 @@ import {
   evalExpr as evalQlibExpr,
   type PriceSeries,
 } from "../provider/impls/factor/qlib-expr/evaluator";
+import { generateGbmTicks } from "../../util/synthesize-gbm";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -667,43 +668,21 @@ export const factorService = new FactorService();
 
 /**
  * 合成 GBM 价格序列（90 天默认），用于 register 时的 dry-run。
- * 与 discovery-service.synthesizeBars 同构（seed 基于 symbol 字符串哈希，确保可重复）。
+ * 与 discovery-service.synthesizeBars 共享 `util/synthesize-gbm`。
  * 仅产出 OHLCV 字段，不模拟停牌、涨跌停、复权。
  */
 function synthGbmSeries(symbol: string, days: number): PriceSeries {
-  const n = Math.max(40, days);
-  let seed = 0;
-  for (const c of symbol) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 0x1_0000_0000;
-  };
-  let px = 50 + (seed % 80);
-  const open: number[] = [];
-  const high: number[] = [];
-  const low: number[] = [];
-  const close: number[] = [];
-  const volume: number[] = [];
-  const turnover: number[] = [];
-  const vwap: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const ret = (rand() - 0.5) * 0.04;
-    const o = px;
-    px = Math.max(1, px * (1 + ret));
-    const c = px;
-    const h = Math.max(o, c) * (1 + rand() * 0.01);
-    const l = Math.min(o, c) * (1 - rand() * 0.01);
-    const v = 1_000_000 * (0.5 + rand());
-    open.push(o);
-    high.push(h);
-    low.push(l);
-    close.push(c);
-    volume.push(v);
-    turnover.push(v * c);
-    vwap.push(c);
-  }
+  const ticks = generateGbmTicks(symbol, days);
   return {
-    length: n,
-    fields: { open, high, low, close, volume, turnover, vwap },
+    length: ticks.length,
+    fields: {
+      open: ticks.map((t) => t.open),
+      high: ticks.map((t) => t.high),
+      low: ticks.map((t) => t.low),
+      close: ticks.map((t) => t.close),
+      volume: ticks.map((t) => t.volume),
+      turnover: ticks.map((t) => t.turnover),
+      vwap: ticks.map((t) => t.close),
+    },
   };
 }

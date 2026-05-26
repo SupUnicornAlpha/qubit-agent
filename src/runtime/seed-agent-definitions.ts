@@ -35,8 +35,6 @@ export { SEED_AGENT_DEFINITIONS };
 
 /** 内置编排团队编组 ID */
 export const DEFAULT_ANALYST_AGENT_GROUP_ID = DEFAULT_ORCHESTRATION_GROUP.id;
-export const FULL_ANALYST_AGENT_GROUP_ID = FULL_ANALYST_GROUP.id;
-export const STRATEGY_PIPELINE_AGENT_GROUP_ID = STRATEGY_PIPELINE_GROUP.id;
 
 const DEFAULT_SANDBOX_POLICY = {
   id: "default-policy",
@@ -625,11 +623,6 @@ async function upsertBuiltinAgentGroup(
     });
   }
   return isExisting ? "reset" : "created";
-}
-
-/** @deprecated 使用 ensureBuiltinAgentGroups */
-export async function ensureDefaultAnalystAgentGroup(): Promise<void> {
-  await ensureBuiltinAgentGroups();
 }
 
 /**

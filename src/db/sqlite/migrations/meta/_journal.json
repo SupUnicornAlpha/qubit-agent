@@ -344,6 +344,13 @@
       "when": 1777352440000,
       "tag": "0049_monitoring_v2_p1_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1777352450000,
+      "tag": "0050_drop_orphan_columns",
+      "breakpoints": true
     }
   ]
 }

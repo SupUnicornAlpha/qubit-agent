@@ -151,40 +151,6 @@ function resolveChatHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "alwa
   return "ai";
 }
 
-/**
- * @deprecated v1 兼容入口。新代码请用 `evaluateChatHitlTrigger`。
- * 保留是因为外部测试 / 路由可能仍在 import；逐步迁移后再移除。
- */
-export function resolveChatOrchestratorHitl(
-  wf: { source: string; mode: string },
-  loopOptions: LoopOptionsJson,
-  role: string
-): boolean {
-  // 透传给 v2 评估器，但不带 toolName —— 永远走"非高危"分支。
-  // 想要"按工具名分别判断"必须改调 evaluateChatHitlTrigger（hitl-gate.ts 已迁）。
-  const d = evaluateChatHitlTrigger({
-    workflow: wf,
-    loopOptions,
-    role,
-    toolName: "",
-  });
-  return d.trigger;
-}
-
-/**
- * 团队研究：仅 Orchestrator 规划完成后、分析师并行前 HITL。
- *
- * v1 简版（保留兼容）：只判断 `loopOptions.hitlTeam === true`，命中即触发。
- * v2 推荐使用 `evaluateTeamHitlTrigger` —— 三档模式 + LLM 主动判断 + 硬规则兜底。
- * 详见 docs/HITL_REDESIGN.md。
- */
-export function resolveTeamOrchestratorHitl(
-  _wf: { source: string; mode: string },
-  loopOptions: LoopOptionsJson
-): boolean {
-  return resolveHitlMode(loopOptions) === "always";
-}
-
 /** v1 `hitlTeam:true` 等价于 v2 `hitlMode:'always'`；缺省取 'ai' 作为默认。 */
 function resolveHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" {
   if (loopOptions.hitlMode) return loopOptions.hitlMode;

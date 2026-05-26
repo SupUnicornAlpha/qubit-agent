@@ -16,8 +16,6 @@ import {
   agentProfile,
   workflowRun,
 } from "../../db/sqlite/schema";
-import { runLlmGateway } from "../llm/gateway";
-import { loadModelConfig } from "../config/model-config";
 import { loadDebateConfig } from "../config/debate-config";
 import { fuseSignals, type RawAnalystSignal } from "./signal-fusion";
 import {
@@ -221,39 +219,6 @@ export interface AnalystTeamResult {
     severity: "warning" | "block" | "critical";
     rulesTriggered: string[];
   };
-}
-
-async function runAuxResearchLlm(params: {
-  role: AgentRole;
-  definitionId: string;
-  systemPrompt: string;
-  ticker: string;
-  context: string;
-}): Promise<string> {
-  const modelConfig = (await loadModelConfig()) ?? {
-    provider: "mock" as const,
-    model: "mock-analyst",
-    apiKey: "",
-  };
-  const userPrompt = `你是研究团队中的「${params.role}」专家。
-
-**标的**：${params.ticker}
-**团队上下文（含前置成员结论摘要）**：
-${params.context}
-
-请用 **Markdown** 输出一小节（不要输出 JSON），建议包含：要点列表、可执行建议、需关注的风险或回测注意点（视你的角色而定）。控制在 800 字以内。`;
-
-  try {
-    const { answer } = await runLlmGateway({
-      config: modelConfig,
-      systemPrompt: params.systemPrompt,
-      userPrompt,
-      onToken: () => {},
-    });
-    return answer.trim() || "（模型未返回内容）";
-  } catch (e) {
-    return `（${params.role} 推理失败：${(e as Error).message}）`;
-  }
 }
 
 async function resolveAnalystSlots(params: {

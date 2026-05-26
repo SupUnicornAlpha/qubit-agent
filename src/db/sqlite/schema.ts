@@ -67,7 +67,6 @@ export const workflowRun = sqliteTable("workflow_run", {
   })
     .notNull()
     .default("pending"),
-  signalFusionId: text("signal_fusion_id"),
   /** 研究团队分析选用的 Agent 组（见迁移 0023_agent_group；Drizzle 侧不声明 FK 避免表定义顺序循环） */
   agentGroupId: text("agent_group_id"),
   /** Agent 执行循环：native=LangGraph；claude_cli / codex_cli=外部 CLI（见 src/runtime/loop） */
