@@ -1831,22 +1831,42 @@ export const riskVetoLog = sqliteTable("risk_veto_log", {
 
 // ─── 2.8 审计与可观测域 ──────────────────────────────────────────────────────
 
-export const agentRuntimeMetric = sqliteTable("agent_runtime_metric", {
-  id: id(),
-  definitionId: text("definition_id")
-    .notNull()
-    .references(() => agentDefinition.id),
-  windowStart: text("window_start").notNull(),
-  windowEnd: text("window_end").notNull(),
-  runCount: integer("run_count").notNull().default(0),
-  successCount: integer("success_count").notNull().default(0),
-  errorCount: integer("error_count").notNull().default(0),
-  timeoutCount: integer("timeout_count").notNull().default(0),
-  p50LatencyMs: real("p50_latency_ms"),
-  p95LatencyMs: real("p95_latency_ms"),
-  avgTokenCount: real("avg_token_count"),
-  createdAt: createdAt(),
-});
+export const agentRuntimeMetric = sqliteTable(
+  "agent_runtime_metric",
+  {
+    id: id(),
+    definitionId: text("definition_id")
+      .notNull()
+      .references(() => agentDefinition.id),
+    windowStart: text("window_start").notNull(),
+    windowEnd: text("window_end").notNull(),
+    runCount: integer("run_count").notNull().default(0),
+    successCount: integer("success_count").notNull().default(0),
+    errorCount: integer("error_count").notNull().default(0),
+    timeoutCount: integer("timeout_count").notNull().default(0),
+    p50LatencyMs: real("p50_latency_ms"),
+    p95LatencyMs: real("p95_latency_ms"),
+    avgTokenCount: real("avg_token_count"),
+    /**
+     * 拆分聚合（v2 增加，迁移 0048）：
+     *   { byTool: {...}, byMcp: {...}, bySkill: {...}, errorTopN: [...] }
+     * 旧行默认 '{}'。前端 JSON.parse 失败时降级为空对象。
+     */
+    breakdownJson: text("breakdown_json", { mode: "json" }).notNull().default("{}"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    /**
+     * v2 起 aggregateAgentRuntimeMetrics 使用 UPSERT 而非 INSERT；
+     * 此唯一索引保证同 (definition, window) 只产生一行（迁移 0048 已 dedupe）。
+     */
+    uniqueIndex("idx_agent_runtime_metric_def_window").on(
+      t.definitionId,
+      t.windowStart,
+      t.windowEnd
+    ),
+  ]
+);
 
 export const workflowQualitySnapshot = sqliteTable("workflow_quality_snapshot", {
   id: id(),

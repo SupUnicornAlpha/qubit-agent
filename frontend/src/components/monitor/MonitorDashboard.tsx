@@ -1,20 +1,18 @@
-import type { CSSProperties, FC } from "react";
+/**
+ * 监控总入口：状态/数据加载 + tab 路由协调器。
+ *
+ * 历史：本文件曾达 1481 行。2026-05 拆分为：
+ *   - monitor-shared.tsx   通用类型 / 工具 / styles / Kpi / AgentRuntimeCard / AgentPoolSection
+ *   - OverviewTab.tsx      整体 KPI 与新建工作流
+ *   - WorkflowTab.tsx      列表 / 详情 / 质量 / observability / scoped 流
+ *   - AgentTab.tsx         持久化指标 / 长驻池 / 会话工作流实例
+ *   - StreamTab.tsx        全局 SSE
+ *   - AlertsEvalTab.tsx    告警与评测
+ *
+ * 本次拆分仅做机械搬迁；逻辑与渲染输出与拆分前完全等价。
+ */
+import type { FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import type {
   AgentLoopKind,
   AgentRuntimeMetricRecord,
@@ -61,194 +59,22 @@ import {
 } from "../../api/backend";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { useAppStore } from "../../store";
-import { StreamTimelineGroupCard } from "../chat/StreamTimelineGroupCard";
-
-type WorkflowRow = {
-  id: string;
-  status: string;
-  mode: string;
-  loopKind?: string;
-  sessionId?: string | null;
-  startedAt?: string | null;
-  goal?: string | null;
-};
-
-function asWorkflowRows(rows: unknown[]): WorkflowRow[] {
-  return rows.map((r) => {
-    const o = r as Record<string, unknown>;
-    return {
-      id: String(o.id ?? ""),
-      status: String(o.status ?? ""),
-      mode: String(o.mode ?? ""),
-      loopKind: o.loopKind != null ? String(o.loopKind) : "native",
-      sessionId: o.sessionId != null ? String(o.sessionId) : null,
-      startedAt: o.startedAt != null ? String(o.startedAt) : null,
-      goal: o.goal != null ? String(o.goal) : null,
-    };
-  });
-}
-
-const CHART_COLORS = ["#3b82f6", "#22c55e", "#eab308", "#f97316", "#a78bfa", "#ec4899"];
-
-function shortId(id: string, head = 8, tail = 4): string {
-  if (id.length <= head + tail + 1) return id;
-  return `${id.slice(0, head)}…${id.slice(-tail)}`;
-}
-
-function agentStatusColor(status: string | undefined, running: boolean): string {
-  if (status === "error") return "#f87171";
-  if (status === "running" || running) return "#4ade80";
-  if (status === "idle") return "#a1a1aa";
-  return "#eab308";
-}
-
-/** API 未带 executionPath 时（旧后端）按实例 ID 推断所属长驻池 */
-function resolvePoolExecutionPath(agent: AgentSummary): "graph" | "a2a" | null {
-  if (agent.executionPath === "graph" || agent.executionPath === "a2a") {
-    return agent.executionPath;
-  }
-  if (agent.id.startsWith("graph-")) return "graph";
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agent.id)) {
-    return "a2a";
-  }
-  return null;
-}
-
-type AgentCardView = AgentSummary & {
-  metrics?: AgentRuntimeMetricRecord;
-};
-
-function buildAgentCardViews(
-  agents: AgentSummary[],
-  metricsByDef: Map<string, AgentRuntimeMetricRecord>
-): AgentCardView[] {
-  return agents.map((a) => ({
-    ...a,
-    metrics: metricsByDef.get(a.definitionId),
-  }));
-}
-
-const POOL_SECTION_META = {
-  graph: {
-    title: "Graph 长驻池",
-    hint: "LangGraph 编排：native loop 的 workflow 默认经此池按角色执行（实例 ID 形如 graph-<role>）",
-    accent: "#60a5fa",
-    panelBorder: "rgba(59, 130, 246, 0.45)",
-    badgeBg: "rgba(59, 130, 246, 0.15)",
-  },
-  a2a: {
-    title: "A2A 长驻池",
-    hint: "A2A 消息总线：executionPath=a2a 的 workflow 经此池订阅并派发（实例 ID 为 DB 中的 UUID）",
-    accent: "#c4b5fd",
-    panelBorder: "rgba(167, 139, 250, 0.45)",
-    badgeBg: "rgba(167, 139, 250, 0.15)",
-  },
-} as const;
-
-const AgentRuntimeCard: FC<{
-  agent: AgentCardView;
-  pathLabel: string;
-  pathAccent: string;
-  pathBadgeBg: string;
-}> = ({ agent: a, pathLabel, pathAccent, pathBadgeBg }) => {
-  const status = a.status ?? (a.running ? "running" : "stopped");
-  const statusColor = agentStatusColor(status, a.running);
-  return (
-    <div
-      style={{
-        ...styles.agentCard,
-        borderLeft: `3px solid ${pathAccent}`,
-      }}
-    >
-      <div style={styles.agentCardHeader}>
-        <div style={styles.cardName}>{a.role}</div>
-        <span style={{ ...styles.statusBadge, color: statusColor, borderColor: statusColor }}>{status}</span>
-      </div>
-      <span
-        style={{
-          ...styles.pathBadge,
-          color: pathAccent,
-          background: pathBadgeBg,
-          borderColor: pathAccent,
-        }}
-      >
-        {pathLabel}
-      </span>
-      {a.name && a.name !== a.role ? <div style={styles.cardDesc}>{a.name}</div> : null}
-      <div style={styles.cardDesc}>v{a.version || "—"}</div>
-      <div style={styles.cardDesc} title={a.id}>
-        实例 <code style={codeInline}>{shortId(a.id)}</code>
-      </div>
-      {a.metrics ? (
-        <div style={styles.agentMetrics}>
-          <span>24h 运行 {a.metrics.runCount ?? 0}</span>
-          <span>成功 {a.metrics.successCount ?? 0}</span>
-          <span>错误 {a.metrics.errorCount ?? 0}</span>
-          {a.metrics.p50LatencyMs != null ? <span>p50 {Math.round(a.metrics.p50LatencyMs)}ms</span> : null}
-        </div>
-      ) : (
-        <div style={styles.cardDescMuted}>暂无聚合指标</div>
-      )}
-    </div>
-  );
-};
-
-const AgentPoolSection: FC<{
-  poolKey: keyof typeof POOL_SECTION_META;
-  agents: AgentCardView[];
-}> = ({ poolKey, agents }) => {
-  const meta = POOL_SECTION_META[poolKey];
-  const pathLabel = poolKey.toUpperCase();
-  return (
-    <section
-      style={{
-        ...styles.poolPanel,
-        borderColor: meta.panelBorder,
-      }}
-    >
-      <div style={styles.poolPanelHeader}>
-        <h4 style={{ ...styles.poolTitle, color: meta.accent }}>{meta.title}</h4>
-        <span style={styles.poolCount}>{agents.length} 角色</span>
-      </div>
-      <p style={styles.poolHint}>{meta.hint}</p>
-      {agents.length === 0 ? (
-        <div style={styles.empty}>该池暂无已注册角色</div>
-      ) : (
-        <div style={styles.agentGrid}>
-          {agents.map((a) => (
-            <AgentRuntimeCard
-              key={`${poolKey}-${a.id}`}
-              agent={a}
-              pathLabel={pathLabel}
-              pathAccent={meta.accent}
-              pathBadgeBg={meta.badgeBg}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-};
-
-const monitorTooltipStyle: CSSProperties = {
-  background: "var(--qb-main-card-bg, #18181b)",
-  border: "1px solid var(--qb-main-input-border, #3f3f46)",
-  color: "var(--qb-main-input-fg, #e4e4e7)",
-};
-
-const monitorGridStroke = "var(--qb-main-input-border, #27272a)";
-const monitorAxisTick = { fill: "var(--qb-main-meta, #a1a1aa)", fontSize: 11 };
-
-/** 监控视图维度：与数据粒度对应，便于扩展更多面板 */
-type MonitorScope = "overview" | "workflow" | "agent" | "stream" | "alerts_eval";
-
-const SCOPE_TABS: { id: MonitorScope; label: string; hint: string }[] = [
-  { id: "overview", label: "整体", hint: "全局 KPI、工作流分布、指标聚合" },
-  { id: "workflow", label: "工作流", hint: "列表、详情、质量快照、按工作流过滤 SSE" },
-  { id: "agent", label: "Agent", hint: "注册实例、延迟与健康度（持久化指标）" },
-  { id: "stream", label: "实时流", hint: "全局 SSE 折叠时间线" },
-  { id: "alerts_eval", label: "告警与评测", hint: "告警确认、评测数据集与 run" },
-];
+import {
+  SCOPE_TABS,
+  asWorkflowRows,
+  buildAgentCardViews,
+  resolvePoolExecutionPath,
+  styles,
+  wrap,
+  type MonitorScope,
+  type WorkflowRow,
+} from "./monitor-shared";
+import { OverviewTab, type StrategyRuntime } from "./OverviewTab";
+import { WorkflowTab } from "./WorkflowTab";
+import { AgentTab } from "./AgentTab";
+import { SkillsTab } from "./SkillsTab";
+import { StreamTab } from "./StreamTab";
+import { AlertsEvalTab, type AlertStatusFilter } from "./AlertsEvalTab";
 
 export const MonitorDashboard: FC = () => {
   const agents = useAppStore((s) => s.agents);
@@ -280,11 +106,9 @@ export const MonitorDashboard: FC = () => {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [metricsHint, setMetricsHint] = useState<string | null>(null);
   const [scope, setScope] = useState<MonitorScope>("overview");
-  const [strategyRuntimes, setStrategyRuntimes] = useState<
-    Awaited<ReturnType<typeof listStrategyRuntimes>>
-  >([]);
+  const [strategyRuntimes, setStrategyRuntimes] = useState<StrategyRuntime[]>([]);
   const [summary, setSummary] = useState<MonitorSummary | null>(null);
-  const [alertStatusFilter, setAlertStatusFilter] = useState<"open" | "ack" | "resolved" | "">("open");
+  const [alertStatusFilter, setAlertStatusFilter] = useState<AlertStatusFilter>("open");
   const [sessionAgentsBoard, setSessionAgentsBoard] = useState<SessionAgentBoardItem[]>([]);
 
   const monitorStreamGroups = useMemo(() => groupStreamEventsByRun(streamEvents, null), [streamEvents]);
@@ -345,9 +169,7 @@ export const MonitorDashboard: FC = () => {
       err += r.errorCount ?? 0;
     }
     if (ok === 0 && err === 0) {
-      return [
-        { name: "无聚合数据", value: 1 },
-      ];
+      return [{ name: "无聚合数据", value: 1 }];
     }
     return [
       { name: "成功/停止", value: ok },
@@ -379,7 +201,7 @@ export const MonitorDashboard: FC = () => {
       strategyRunning: strategyRuntimes.filter((r) => r.status === "running").length,
       completed24h: summary?.completed24h ?? 0,
       failed24h: summary?.failed24h ?? 0,
-      avgQuality: summary?.avgQualityScore,
+      avgQuality: summary?.avgQualityScore ?? undefined,
       stuckCount: summary?.stuckRunning.length ?? 0,
     };
   }, [workflowList, alerts, agents, strategyRuntimes, summary]);
@@ -463,7 +285,7 @@ export const MonitorDashboard: FC = () => {
     try {
       const rows = await listAgents();
       setAgents(
-        rows.map((a) => {
+        rows.map((a: AgentSummary) => {
           const path = resolvePoolExecutionPath(a);
           return path ? { ...a, executionPath: path } : a;
         })
@@ -666,15 +488,41 @@ export const MonitorDashboard: FC = () => {
     }
   };
 
+  /**
+   * 保持原行为：alert filter select 变更时立即重拉一次（用旧的内联 fetch 写法）。
+   * 拆出到 AlertsEvalTab 后无法访问 setAlerts，由父组件包装。
+   */
+  const onAlertFilterChange = (v: AlertStatusFilter) => {
+    void listAlerts({ status: v || undefined, limit: 50 }).then(setAlerts);
+  };
+
+  /**
+   * 失败列表点击行 → 跳到工作流 tab 并选中。
+   * 用 setTimeout 让 scope 切换先生效避免 detail 加载与 tab 切换竞争。
+   */
+  const onJumpToWorkflow = (workflowRunId: string) => {
+    setScope("workflow");
+    window.setTimeout(() => {
+      void onSelectWorkflow(workflowRunId);
+    }, 0);
+  };
+
   return (
     <div className="qb-monitor" data-qb-monitor-root style={wrap}>
-      <h2 className="qb-monitor__title" style={styles.title}>运行监控</h2>
+      <h2 className="qb-monitor__title" style={styles.title}>
+        运行监控
+      </h2>
       <p style={styles.lead}>
         图表由开源库{" "}
-        <a href="https://github.com/recharts/recharts" target="_blank" rel="noreferrer" style={{ color: "var(--qb-blue, #93c5fd)" }}>
+        <a
+          href="https://github.com/recharts/recharts"
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--qb-blue, #93c5fd)" }}
+        >
           Recharts
         </a>{" "}
-        （MIT）        渲染；未嵌入 Grafana，避免 Tauri/前端再运维一套时序库。工作流结束时会自动写入质量快照并评估告警；Agent
+        （MIT）渲染；未嵌入 Grafana，避免 Tauri/前端再运维一套时序库。工作流结束时会自动写入质量快照并评估告警；Agent
         维度指标需手动「聚合过去24h」或调用聚合 API。
       </p>
 
@@ -696,786 +544,104 @@ export const MonitorDashboard: FC = () => {
       <div style={styles.scopeHint}>{SCOPE_TABS.find((x) => x.id === scope)?.hint}</div>
 
       {scope === "overview" ? (
-        <>
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>整体 · 运行态势</h3>
-          <div className="qb-monitor__kpi-row"
-            style={styles.kpiRow}>
-            <Kpi label="工作流总数" value={String(kpis.total)} />
-            <Kpi label="运行中" value={String(kpis.running)} accent="#22c55e" />
-            <Kpi label="失败" value={String(kpis.failed)} accent="#ef4444" />
-            <Kpi label="未关闭告警" value={String(kpis.openAlerts)} accent="#eab308" />
-            <Kpi label="24h 完成" value={String(kpis.completed24h)} />
-            <Kpi label="24h 失败" value={String(kpis.failed24h)} accent="#f97316" />
-            <Kpi
-              label="平均质量分"
-              value={kpis.avgQuality != null ? kpis.avgQuality.toFixed(3) : "—"}
-              accent="#a78bfa"
-            />
-            <Kpi
-              label="卡住运行中"
-              value={String(kpis.stuckCount)}
-              accent={kpis.stuckCount > 0 ? "#ef4444" : undefined}
-            />
-            <Kpi label="已注册 Agent" value={String(kpis.agents)} />
-            <Kpi label="策略运行时" value={String(kpis.strategyRunning)} accent="#38bdf8" />
-          </div>
-
-          {summary && summary.stuckRunning.length > 0 ? (
-            <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-              <div style={styles.chartTitle}>
-                长时间 running 的工作流（超过 {summary.stuckThresholdMinutes} 分钟）
-              </div>
-              <ul style={{ margin: 0, padding: "8px 12px 8px 24px", fontSize: 12, lineHeight: 1.6 }}>
-                {summary.stuckRunning.slice(0, 8).map((w) => (
-                  <li key={w.id}>
-                    {w.id.slice(0, 10)}… · {w.mode} · 始于{" "}
-                    {w.startedAt ? new Date(w.startedAt).toLocaleString() : "—"}
-                  </li>
-                ))}
-              </ul>
-              <button className="qb-btn-secondary" type="button" disabled={loading} onClick={() => void onScanStuck()}>
-                扫描并生成卡住告警
-              </button>
-            </div>
-          ) : null}
-
-          {strategyRuntimes.length > 0 ? (
-            <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-              <div style={styles.chartTitle}>策略运行时（纸面/实盘）</div>
-              <ul style={{ margin: 0, padding: "8px 12px 8px 24px", fontSize: 12, lineHeight: 1.6 }}>
-                {strategyRuntimes.slice(0, 12).map((r) => (
-                  <li key={r.id}>
-                    {r.symbol} · {r.market} · {r.status} · {r.executionMode}
-                    {r.lastSignalAt ? ` · 最近信号 ${r.lastSignalAt}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="qb-monitor__chart-grid"
-            style={styles.chartGrid}>
-            <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-              <div style={styles.chartTitle}>工作流列表 · 按状态分布（当前筛选结果）</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={workflowStatusPie} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={72} label>
-                    {workflowStatusPie.map((_, i) => (
-                      <Cell key={String(i)} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={monitorTooltipStyle} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-              <div style={styles.chartTitle}>工作流列表 · 按模式数量</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={workflowModeBar}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={monitorGridStroke} />
-                  <XAxis dataKey="name" tick={monitorAxisTick} />
-                  <YAxis allowDecimals={false} tick={monitorAxisTick} />
-                  <Tooltip contentStyle={monitorTooltipStyle} />
-                  <Bar dataKey="count" name="数量" fill="#6366f1" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>整体 · 指标聚合（写入 Agent 维度指标）</h3>
-          <div style={styles.form}>
-            <button className="qb-btn-secondary" type="button" onClick={() => void onSearch()}>
-              刷新工作流列表
-            </button>
-            <button className="qb-btn-secondary" type="button" onClick={() => void refreshMetrics()}>
-              刷新指标
-            </button>
-            <button className="qb-btn-primary-brand" type="button" disabled={loading} onClick={() => void onAggregateMetrics()}>
-              {loading ? "聚合中…" : "聚合过去24h并刷新"}
-            </button>
-          </div>
-          {metricsHint ? <div style={styles.hint}>{metricsHint}</div> : null}
-
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>整体 · 新建工作流并订阅 SSE</h3>
-          <form style={styles.form} onSubmit={(e) => void onCreate(e)}>
-            <input style={styles.input} value={goal} onChange={(e) => setGoal(e.target.value)} placeholder="工作流目标" />
-            <select style={styles.select} value={mode} onChange={(e) => setMode(e.target.value as WorkflowMode)}>
-              <option value="research">research</option>
-              <option value="backtest">backtest</option>
-              <option value="simulation">simulation</option>
-              <option value="live">live</option>
-            </select>
-            <select
-              style={styles.select}
-              value={createLoopKind}
-              onChange={(e) => setCreateLoopKind(e.target.value as AgentLoopKind)}
-              title="Agent 执行循环"
-            >
-              <option value="native">loop: native</option>
-              <option value="claude_cli">loop: claude_cli</option>
-              <option value="codex_cli">loop: codex_cli</option>
-            </select>
-            <button className="qb-btn-primary-brand" type="submit" disabled={!projectId}>
-              创建并订阅 SSE
-            </button>
-            <label style={styles.check}>
-              <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
-              每 12s 自动刷新列表
-            </label>
-          </form>
-        </>
+        <OverviewTab
+          kpis={kpis}
+          summary={summary}
+          loading={loading}
+          metricsHint={metricsHint}
+          strategyRuntimes={strategyRuntimes}
+          workflowStatusPie={workflowStatusPie}
+          workflowModeBar={workflowModeBar}
+          goal={goal}
+          setGoal={setGoal}
+          mode={mode}
+          setMode={setMode}
+          createLoopKind={createLoopKind}
+          setCreateLoopKind={setCreateLoopKind}
+          autoRefresh={autoRefresh}
+          setAutoRefresh={setAutoRefresh}
+          projectId={projectId}
+          sessionFilter={sessionFilter || undefined}
+          onJumpToWorkflow={onJumpToWorkflow}
+          onScanStuck={onScanStuck}
+          onSearch={onSearch}
+          onRefreshMetrics={refreshMetrics}
+          onAggregateMetrics={onAggregateMetrics}
+          onCreate={onCreate}
+        />
       ) : null}
 
       {scope === "workflow" ? (
-        <>
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>工作流 · 筛选与列表</h3>
-          <div style={styles.form}>
-            <input
-              style={styles.input}
-              placeholder="sessionId"
-              value={sessionFilter}
-              onChange={(e) => setSessionFilter(e.target.value)}
-            />
-            <input
-              style={styles.input}
-              placeholder="status (running/failed/...)"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            />
-            <button className="qb-btn-secondary" type="button" onClick={() => void onSearch()}>
-              查询
-            </button>
-          </div>
-
-          <div style={styles.split}>
-            <section style={styles.col}>
-              <div style={styles.tableWrap}>
-                <table style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={styles.th}>状态</th>
-                      <th style={styles.th}>模式</th>
-                      <th style={styles.th}>Loop</th>
-                      <th style={styles.th}>开始时间</th>
-                      <th style={styles.th}>ID</th>
-                      <th style={styles.th}>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {workflowList.map((row) => (
-                      <tr
-                        key={row.id}
-                        style={{
-                          ...styles.tr,
-                          ...(selectedWorkflowId === row.id ? styles.trSelected : {}),
-                        }}
-                        onClick={() => void onSelectWorkflow(row.id)}
-                      >
-                        <td style={styles.td}>{row.status}</td>
-                        <td style={styles.td}>{row.mode}</td>
-                        <td style={styles.td}>{row.loopKind ?? "native"}</td>
-                        <td style={styles.td}>{row.startedAt ? new Date(row.startedAt).toLocaleString() : "—"}</td>
-                        <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 11 }} title={row.id}>
-                          {row.id.slice(0, 10)}…
-                        </td>
-                        <td style={styles.td}>
-                          <button
-                            type="button"
-                            className="qb-btn-mini"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void onCreateQuality(row.id);
-                            }}
-                          >
-                            快照+告警
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {workflowList.length === 0 ? <div style={styles.empty}>暂无数据，请调整筛选或在「整体」中新建</div> : null}
-              </div>
-            </section>
-
-            <section style={styles.col}>
-              <h3 style={{ ...styles.subTitle, marginTop: 0 }}>工作流 · 质量快照趋势</h3>
-              {qualityLineData.length > 0 ? (
-                <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-                  <div style={styles.chartTitle}>
-                    {selectedWorkflowId ? `已选 ${selectedWorkflowId.slice(0, 8)}…` : "未选中"} · qualityScore
-                  </div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <LineChart data={qualityLineData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={monitorGridStroke} />
-                      <XAxis dataKey="idx" tick={monitorAxisTick} />
-                      <YAxis domain={[0, 1]} tick={monitorAxisTick} />
-                      <Tooltip contentStyle={monitorTooltipStyle} />
-                      <Legend />
-                      <Line type="monotone" dataKey="score" name="质量分" stroke="#22c55e" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="tools" name="工具调用数" stroke="#3b82f6" strokeWidth={1} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              ) : (
-                <div style={styles.hint}>选中一行并生成快照后显示趋势</div>
-              )}
-              <h3 className="qb-monitor__section" style={styles.subTitle}>
-                工作流 · 可观测性（LLM / 工具 / MCP）
-              </h3>
-              {!workflowObservability ? (
-                <div style={styles.hint}>选中工作流后加载 LLM、工具与 MCP 调用统计…</div>
-              ) : (
-                <>
-                  <div className="qb-monitor__kpi-row" style={styles.kpiRow}>
-                    <Kpi label="LLM reason 步" value={String(workflowObservability.llm.reasonSteps)} accent="#a78bfa" />
-                    <Kpi
-                      label="Token 合计"
-                      value={
-                        workflowObservability.llm.totalTokenCount != null
-                          ? String(workflowObservability.llm.totalTokenCount)
-                          : "—"
-                      }
-                    />
-                    <Kpi
-                      label="Reason 延迟(ms)"
-                      value={
-                        workflowObservability.llm.totalReasonLatencyMs != null
-                          ? String(workflowObservability.llm.totalReasonLatencyMs)
-                          : "—"
-                      }
-                    />
-                    <Kpi label="工具调用" value={String(workflowObservability.tools.total)} accent="#3b82f6" />
-                    <Kpi label="MCP 调用" value={String(workflowObservability.mcp.total)} accent="#22c55e" />
-                  </div>
-                  {workflowObservability.byAgentRole.length > 0 ? (
-                    <div className="qb-monitor__panel qb-a3d-tilt" style={styles.chartBox}>
-                      <div style={styles.chartTitle}>按角色</div>
-                      <div style={styles.tableWrap}>
-                        <table style={styles.table}>
-                          <thead>
-                            <tr>
-                              <th style={styles.th}>角色</th>
-                              <th style={styles.th}>LLM</th>
-                              <th style={styles.th}>工具</th>
-                              <th style={styles.th}>MCP</th>
-                              <th style={styles.th}>Tokens</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {workflowObservability.byAgentRole.map((r) => (
-                              <tr key={r.role} style={styles.tr}>
-                                <td style={styles.td}>{r.role}</td>
-                                <td style={styles.td}>{r.reasonSteps}</td>
-                                <td style={styles.td}>{r.toolCalls}</td>
-                                <td style={styles.td}>{r.mcpCalls}</td>
-                                <td style={styles.td}>{r.tokens ?? "—"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : null}
-                  {workflowObservability.mcp.byServer.length > 0 ? (
-                    <div className="qb-monitor__panel qb-a3d-tilt" style={{ ...styles.chartBox, marginTop: 8 }}>
-                      <div style={styles.chartTitle}>MCP 按服务</div>
-                      <ul style={{ margin: 0, padding: "8px 12px 8px 24px", fontSize: 12, lineHeight: 1.6 }}>
-                        {workflowObservability.mcp.byServer.map((s) => (
-                          <li key={s.server}>
-                            {s.server} · {s.count} 次 · 成功 {s.success} / 失败 {s.failed}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                </>
-              )}
-              <h3 className="qb-monitor__section"
-            style={styles.subTitle}>工作流 · 详情（JSON）</h3>
-              <pre style={styles.streamBox}>{drawerDetail || "点击表格一行加载详情…"}</pre>
-            </section>
-          </div>
-
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>工作流 · SSE（仅当前选中 workflow）</h3>
-          <div style={styles.streamList}>
-            {!selectedWorkflowId ? (
-              <div style={styles.empty}>请先在表格中选择一条工作流</div>
-            ) : workflowScopedStreamGroups.length === 0 ? (
-              <div style={styles.empty}>该工作流暂无本地缓存的流事件（可在「整体」新建并订阅或从对话触发）</div>
-            ) : (
-              workflowScopedStreamGroups
-                .slice()
-                .sort((a, b) => b.at - a.at)
-                .slice(0, 20)
-                .map((g) => <StreamTimelineGroupCard key={`${g.workflowRunId}-${g.runId}`} item={g} />)
-            )}
-          </div>
-        </>
+        <WorkflowTab
+          workflowList={workflowList}
+          selectedWorkflowId={selectedWorkflowId}
+          drawerDetail={drawerDetail}
+          workflowObservability={workflowObservability}
+          qualitySnapshots={qualitySnapshots}
+          qualityLineData={qualityLineData}
+          sessionFilter={sessionFilter}
+          setSessionFilter={setSessionFilter}
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          workflowScopedStreamGroups={workflowScopedStreamGroups}
+          onSearch={onSearch}
+          onSelectWorkflow={onSelectWorkflow}
+          onCreateQuality={onCreateQuality}
+        />
       ) : null}
 
       {scope === "agent" ? (
-        <>
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>Agent · 持久化指标</h3>
-          <div style={styles.form}>
-            <button className="qb-btn-secondary" type="button" onClick={() => void refreshMetrics()}>
-              刷新指标
-            </button>
-            <button className="qb-btn-primary-brand" type="button" disabled={loading} onClick={() => void onAggregateMetrics()}>
-              {loading ? "聚合中…" : "聚合过去24h并刷新"}
-            </button>
-          </div>
-          {metricsHint ? <div style={styles.hint}>{metricsHint}</div> : null}
+        <AgentTab
+          graphAgentCards={graphAgentCards}
+          a2aAgentCards={a2aAgentCards}
+          legacyAgentCards={legacyAgentCards}
+          latencyBarData={latencyBarData}
+          healthPieData={healthPieData}
+          sessionFilter={sessionFilter}
+          sessionAgentsBoard={sessionAgentsBoard}
+          loading={loading}
+          metricsHint={metricsHint}
+          onJumpToWorkflow={onJumpToWorkflow}
+          onRefreshMetrics={refreshMetrics}
+          onAggregateMetrics={onAggregateMetrics}
+        />
+      ) : null}
 
-          <div className="qb-monitor__chart-grid"
-            style={styles.chartGrid}>
-            <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-              <div style={styles.chartTitle}>P50 / P95 工具延迟（按 definition / 角色）</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={latencyBarData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={monitorGridStroke} />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ ...monitorAxisTick, fontSize: 10 }}
-                    interval={0}
-                    angle={-18}
-                    dy={8}
-                    height={60}
-                  />
-                  <YAxis tick={monitorAxisTick} />
-                  <Tooltip contentStyle={monitorTooltipStyle} />
-                  <Legend />
-                  <Bar dataKey="p50" name="p50 ms" fill="#3b82f6" />
-                  <Bar dataKey="p95" name="p95 ms" fill="#a78bfa" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="qb-monitor__panel qb-a3d-tilt"
-            style={styles.chartBox}>
-              <div style={styles.chartTitle}>成功 vs 错误（聚合窗口汇总）</div>
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Pie data={healthPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={72} label>
-                    {healthPieData.map((_, i) => (
-                      <Cell key={String(i)} fill={CHART_COLORS[i % CHART_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={monitorTooltipStyle} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>Agent · 注册实例（运行时列表）</h3>
-          <p style={styles.scopeHint}>
-            同一角色会在 Graph、A2A 各注册一次（两套执行通道，并非重复故障）。下方「会话工作流实例」为某次
-            workflow 上的真实任务实例。
-          </p>
-          <div style={styles.poolSplit}>
-            <AgentPoolSection poolKey="graph" agents={graphAgentCards} />
-            <AgentPoolSection poolKey="a2a" agents={a2aAgentCards} />
-          </div>
-          {legacyAgentCards.length > 0 ? (
-            <>
-              <h4 style={styles.poolTitle}>未标注执行路径</h4>
-              <div style={styles.agentGrid}>
-                {legacyAgentCards.map((a) => (
-                  <AgentRuntimeCard
-                    key={a.id}
-                    agent={a}
-                    pathLabel="?"
-                    pathAccent="#a1a1aa"
-                    pathBadgeBg="rgba(161, 161, 170, 0.12)"
-                  />
-                ))}
-              </div>
-            </>
-          ) : null}
-
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>会话工作流实例</h3>
-          {!sessionFilter ? (
-            <div style={styles.empty}>在「整体」页选择 Session 筛选后，此处展示该会话内各 workflow 的 Agent 实例</div>
-          ) : sessionAgentsBoard.length === 0 ? (
-            <div style={styles.empty}>当前 session 暂无 workflow 实例记录</div>
-          ) : (
-            <div style={styles.sessionBoardTable}>
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>角色</th>
-                    <th style={styles.th}>Workflow</th>
-                    <th style={styles.th}>状态</th>
-                    <th style={styles.th}>迭代</th>
-                    <th style={styles.th}>最近步骤</th>
-                    <th style={styles.th}>开始时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessionAgentsBoard.slice(0, 80).map((item) => (
-                    <tr key={item.instanceId}>
-                      <td style={styles.td}>
-                        <div style={styles.cardName}>{item.role}</div>
-                        {item.name !== item.role ? (
-                          <div style={styles.cardDescMuted}>{item.name}</div>
-                        ) : null}
-                      </td>
-                      <td style={styles.td} title={item.workflowRunId}>
-                        <code style={codeInline}>{shortId(item.workflowRunId)}</code>
-                        {item.workflowMode ? ` · ${item.workflowMode}` : ""}
-                        {item.workflowStatus ? ` · ${item.workflowStatus}` : ""}
-                      </td>
-                      <td style={styles.td}>
-                        <span
-                          style={{
-                            color: agentStatusColor(item.status, item.status === "running"),
-                          }}
-                        >
-                          {item.status}
-                        </span>
-                        {item.lastError ? (
-                          <div style={styles.errorLine} title={item.lastError}>
-                            {item.lastError.slice(0, 60)}
-                            {item.lastError.length > 60 ? "…" : ""}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td style={styles.td}>{item.currentIteration}</td>
-                      <td style={styles.td}>
-                        {item.latestStep
-                          ? `${item.latestStep.phase} #${item.latestStep.stepIndex}`
-                          : "—"}
-                      </td>
-                      <td style={styles.td}>
-                        {item.workflowStartedAt
-                          ? new Date(item.workflowStartedAt).toLocaleString()
-                          : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
+      {scope === "skills" ? (
+        <SkillsTab
+          sessionFilter={sessionFilter || undefined}
+          onJumpToWorkflow={onJumpToWorkflow}
+        />
       ) : null}
 
       {scope === "stream" ? (
-        <>
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>实时流 · 全局 SSE（按 run 折叠）</h3>
-          <div style={styles.form}>
-            <button className="qb-btn-secondary" type="button" onClick={() => clearStreamEvents()}>
-              清空本地流
-            </button>
-          </div>
-          <div style={styles.streamList}>
-            {monitorStreamGroups.length === 0 ? (
-              <div style={styles.empty}>暂无事件，在「整体」创建并订阅工作流后将在此显示</div>
-            ) : (
-              monitorStreamGroups
-                .slice()
-                .sort((a, b) => b.at - a.at)
-                .slice(0, 20)
-                .map((g) => <StreamTimelineGroupCard key={`${g.workflowRunId}-${g.runId}`} item={g} />)
-            )}
-          </div>
-        </>
+        <StreamTab monitorStreamGroups={monitorStreamGroups} clearStreamEvents={clearStreamEvents} />
       ) : null}
 
       {scope === "alerts_eval" ? (
-        <>
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>告警中心</h3>
-          <div style={styles.form}>
-            <select
-              style={styles.select}
-              value={alertStatusFilter}
-              onChange={(e) => {
-                const v = e.target.value as "open" | "ack" | "resolved" | "";
-                setAlertStatusFilter(v);
-                void listAlerts({ status: v || undefined, limit: 50 }).then(setAlerts);
-              }}
-            >
-              <option value="open">open</option>
-              <option value="ack">ack</option>
-              <option value="resolved">resolved</option>
-              <option value="">全部</option>
-            </select>
-            <button className="qb-btn-secondary" type="button" onClick={() => void refreshAlerts()}>
-              刷新告警
-            </button>
-            <button className="qb-btn-secondary" type="button" disabled={loading} onClick={() => void onScanStuck()}>
-              扫描卡住工作流
-            </button>
-          </div>
-          <div style={styles.grid}>
-            {alerts.slice(0, 30).map((alert) => (
-              <div key={alert.id} style={styles.card}>
-                <div style={styles.cardName}>
-                  [{alert.severity}] {alert.title}
-                </div>
-                <div style={styles.cardDesc}>
-                  {alert.scopeType}:{alert.scopeId} · {alert.status}
-                </div>
-                <div style={styles.form}>
-                  {alert.status === "open" ? (
-                    <button className="qb-btn-secondary" type="button" onClick={() => void onAckAlert(alert.id)}>
-                      确认 (ack)
-                    </button>
-                  ) : null}
-                  {alert.status !== "resolved" ? (
-                    <button className="qb-btn-secondary" type="button" onClick={() => void onResolveAlert(alert.id)}>
-                      关闭 (resolve)
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <h3 className="qb-monitor__section"
-            style={styles.subTitle}>评测报告</h3>
-          <div style={styles.form}>
-            <input style={styles.input} value={datasetName} onChange={(e) => setDatasetName(e.target.value)} />
-            <button className="qb-btn-secondary" type="button" onClick={() => void onCreateDataset()}>
-              新建数据集
-            </button>
-            <select
-              style={styles.select}
-              value={selectedDatasetId}
-              onChange={(e) => {
-                setSelectedDatasetId(e.target.value);
-                void loadEvalBoard(e.target.value);
-              }}
-            >
-              <option value="">选择评测数据集</option>
-              {evalDatasets.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}@{d.version}
-                </option>
-              ))}
-            </select>
-            <button className="qb-btn-primary-brand" type="button" onClick={() => void onRunEval()} disabled={!selectedDatasetId}>
-              发起对照评测
-            </button>
-          </div>
-          <div style={styles.grid}>
-            {evalRuns.slice(0, 20).map((run) => (
-              <button key={run.id} type="button" className="qb-btn-card" onClick={() => void onOpenEvalRun(run.id)}>
-                <div style={styles.cardName}>{run.id.slice(0, 12)}…</div>
-                <div style={styles.cardDesc}>
-                  {run.status} · {JSON.stringify(run.summaryMetricsJson)}
-                </div>
-              </button>
-            ))}
-          </div>
-          <pre style={styles.streamBox}>
-            {evalRunCases.length === 0
-              ? "点击评测 run 查看样本…"
-              : evalRunCases
-                  .slice(0, 20)
-                  .map((c) => `${c.caseKey} score=${c.score.toFixed(3)} pass=${String(c.pass)}`)
-                  .join("\n")}
-          </pre>
-        </>
+        <AlertsEvalTab
+          alerts={alerts}
+          alertStatusFilter={alertStatusFilter}
+          setAlertStatusFilter={setAlertStatusFilter}
+          evalDatasets={evalDatasets}
+          selectedDatasetId={selectedDatasetId}
+          setSelectedDatasetId={setSelectedDatasetId}
+          evalRuns={evalRuns}
+          evalRunCases={evalRunCases}
+          datasetName={datasetName}
+          setDatasetName={setDatasetName}
+          loading={loading}
+          onRefreshAlerts={refreshAlerts}
+          onScanStuck={onScanStuck}
+          onAckAlert={onAckAlert}
+          onResolveAlert={onResolveAlert}
+          onCreateDataset={onCreateDataset}
+          loadEvalBoard={loadEvalBoard}
+          onRunEval={onRunEval}
+          onOpenEvalRun={onOpenEvalRun}
+          onAlertFilterChange={onAlertFilterChange}
+        />
       ) : null}
     </div>
   );
-};
-
-const Kpi: FC<{ label: string; value: string; accent?: string }> = ({ label, value, accent }) => (
-  <div className="qb-monitor__kpi qb-a3d-tilt" style={{ ...styles.kpi, borderColor: accent ?? "var(--qb-main-input-border, #3f3f46)" }}>
-    <div style={styles.kpiLabel}>{label}</div>
-    <div style={{ ...styles.kpiValue, color: accent ?? "var(--qb-body-fg, #f4f4f5)" }}>{value}</div>
-  </div>
-);
-
-const wrap: CSSProperties = { maxWidth: 1200, margin: "0 auto" };
-
-const styles: Record<string, CSSProperties> = {
-  title: { fontSize: 26, fontWeight: 700, margin: "0 0 8px", color: "var(--qb-monitor-title-fg, inherit)" },
-  lead: { fontSize: 13, color: "var(--qb-monitor-lead-fg, #a1a1aa)", lineHeight: 1.5, marginBottom: 16 },
-  kpiRow: { display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 },
-  kpi: {
-    flex: "1 1 120px",
-    minWidth: 100,
-    padding: "12px 14px",
-    borderRadius: 10,
-    border: "1px solid var(--qb-main-input-border, #3f3f46)",
-    background: "var(--qb-main-card-bg, #111114)",
-  },
-  kpiLabel: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", marginBottom: 4 },
-  kpiValue: { fontSize: 22, fontWeight: 700 },
-  form: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12, alignItems: "center" },
-  input: {
-    flex: 1,
-    minWidth: 160,
-    background: "var(--qb-main-input-bg, #18181b)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    color: "var(--qb-main-input-fg, #e4e4e7)",
-    borderRadius: 8,
-    padding: "8px 10px",
-  },
-  select: {
-    minWidth: 140,
-    background: "var(--qb-main-input-bg, #18181b)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    color: "var(--qb-main-input-fg, #e4e4e7)",
-    borderRadius: 8,
-    padding: "8px 10px",
-  },
-  check: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
-  subTitle: { fontSize: 16, margin: "18px 0 8px", fontWeight: 600, color: "var(--qb-monitor-title-fg, inherit)" },
-  split: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1.1fr)", gap: 20 },
-  col: { minWidth: 0 },
-  tableWrap: {
-    maxHeight: 320,
-    overflow: "auto",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 8,
-  },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: 12 },
-  th: {
-    textAlign: "left",
-    padding: "8px 10px",
-    background: "var(--qb-stream-box-bg, #1f1f23)",
-    color: "var(--qb-main-meta, #a1a1aa)",
-    position: "sticky",
-    top: 0,
-  },
-  td: { padding: "8px 10px", borderTop: "1px solid var(--qb-main-input-border, #27272a)", color: "var(--qb-main-input-fg, #e4e4e7)" },
-  tr: { cursor: "pointer" },
-  trSelected: { background: "var(--qb-tint-strong, rgba(99, 102, 241, 0.12))" },
-  empty: { padding: 16, color: "var(--qb-main-meta, #71717a)", fontSize: 13 },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10 },
-  poolSplit: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: 16,
-    marginBottom: 8,
-  },
-  poolPanel: {
-    background: "var(--qb-main-card-bg, #111114)",
-    border: "1px solid",
-    borderRadius: 10,
-    padding: "12px 14px",
-  },
-  poolPanelHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 6,
-  },
-  poolTitle: { fontSize: 14, fontWeight: 600, margin: 0 },
-  poolCount: { fontSize: 11, color: "var(--qb-main-meta, #71717a)" },
-  poolHint: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", lineHeight: 1.45, margin: "0 0 10px" },
-  pathBadge: {
-    display: "inline-block",
-    fontSize: 9,
-    fontWeight: 700,
-    letterSpacing: "0.06em",
-    padding: "2px 6px",
-    borderRadius: 4,
-    border: "1px solid",
-    marginBottom: 6,
-  },
-  agentGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 },
-  card: {
-    background: "var(--qb-main-card-bg, #18181b)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 8,
-    padding: 10,
-  },
-  agentCard: {
-    background: "var(--qb-main-card-bg, #18181b)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 8,
-    padding: "10px 12px",
-    minHeight: 120,
-  },
-  agentCardHeader: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 8,
-    marginBottom: 4,
-  },
-  statusBadge: {
-    fontSize: 10,
-    fontWeight: 600,
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-    padding: "2px 6px",
-    borderRadius: 4,
-    border: "1px solid",
-    flexShrink: 0,
-  },
-  agentMetrics: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "6px 10px",
-    marginTop: 8,
-    fontSize: 11,
-    color: "var(--qb-main-meta, #a1a1aa)",
-  },
-  cardDescMuted: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", marginTop: 4 },
-  sessionBoardTable: {
-    maxHeight: 360,
-    overflow: "auto",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  errorLine: { fontSize: 11, color: "#f87171", marginTop: 4 },
-  cardName: { fontWeight: 600, fontSize: 13, marginBottom: 4, color: "var(--qb-body-fg, inherit)" },
-  cardDesc: { fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
-  chartGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16, marginTop: 8 },
-  chartBox: {
-    background: "var(--qb-main-card-bg, #111114)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 10,
-    padding: "10px 12px 4px",
-    minHeight: 260,
-  },
-  chartTitle: { fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)", marginBottom: 6 },
-  hint: { fontSize: 12, color: "#eab308", marginBottom: 8 },
-  streamList: { display: "flex", flexDirection: "column", gap: 8, maxHeight: 480, overflow: "auto" },
-  streamBox: {
-    background: "var(--qb-stream-box-bg, #0c0c0e)",
-    border: "1px solid var(--qb-main-input-border, #27272a)",
-    borderRadius: 8,
-    padding: 12,
-    maxHeight: 280,
-    overflow: "auto",
-    fontSize: 11,
-    color: "var(--qb-stream-box-fg, #d4d4d8)",
-    whiteSpace: "pre-wrap",
-  },
-  tabBar: { display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8, alignItems: "center" },
-  scopeHint: { fontSize: 12, color: "var(--qb-main-meta, #71717a)", marginBottom: 14 },
-};
-
-const codeInline: CSSProperties = {
-  margin: "0 4px",
-  padding: "1px 6px",
-  borderRadius: 4,
-  background: "var(--qb-monitor-code-bg, #27272a)",
-  fontSize: 12,
 };

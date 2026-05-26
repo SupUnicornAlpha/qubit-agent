@@ -892,6 +892,126 @@ export async function getMonitorSummary(params?: {
   return res.data;
 }
 
+/**
+ * Agent 下钻详情：byTool / byMcp / bySkill / errorTopN + 最近实例。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.3 与 src/runtime/monitor/quality-metrics.ts。
+ */
+export type AgentMetricBreakdownView = {
+  byTool: Record<string, { count: number; error: number; avgLatencyMs: number | null }>;
+  byMcp: Record<string, { count: number; error: number; avgLatencyMs: number | null }>;
+  bySkill: Record<string, { count: number; fail: number }>;
+  errorTopN: Array<{ message: string; count: number }>;
+};
+
+export type AgentRuntimeDetail = {
+  definition: {
+    id: string;
+    role: string;
+    name: string;
+    version: string | number | null;
+  } | null;
+  window: { windowStart: string; windowEnd: string };
+  metric: AgentRuntimeMetricRecord | null;
+  breakdown: AgentMetricBreakdownView | null;
+  recentInstances: Array<{
+    id: string;
+    workflowRunId: string;
+    status: string;
+    currentIteration: number;
+    startedAt: string | null;
+    endedAt: string | null;
+    errorMessage: string | null;
+  }>;
+  failedInstances: Array<{
+    id: string;
+    workflowRunId: string;
+    status: string;
+    errorMessage: string | null;
+    endedAt: string | null;
+  }>;
+};
+
+export async function getAgentRuntimeDetail(
+  definitionId: string,
+  params?: { windowStart?: string; windowEnd?: string }
+): Promise<AgentRuntimeDetail> {
+  const query = new URLSearchParams();
+  if (params?.windowStart) query.set("windowStart", params.windowStart);
+  if (params?.windowEnd) query.set("windowEnd", params.windowEnd);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: AgentRuntimeDetail }>(
+    `/api/v1/monitor/agents/${encodeURIComponent(definitionId)}/detail${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+/**
+ * 监控 · Skills 聚合（按 skill）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.4 与 src/runtime/monitor/skills-summary.ts。
+ */
+export type MonitorSkillSummaryRow = {
+  skillId: string;
+  skillName: string;
+  category: string;
+  totalRuns: number;
+  successCount: number;
+  failCount: number;
+  partialCount: number;
+  unknownCount: number;
+  successRate: number;
+  avgScore: number | null;
+  lastUsedAt: string | null;
+};
+
+export async function listMonitorSkillsSummary(input?: {
+  windowMinutes?: number;
+  sessionId?: string;
+}): Promise<MonitorSkillSummaryRow[]> {
+  const query = new URLSearchParams();
+  if (input?.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input?.sessionId) query.set("sessionId", input.sessionId);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: MonitorSkillSummaryRow[] }>(
+    `/api/v1/monitor/skills/summary${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+/**
+ * 监控失败列表（跨 tool / mcp / skill / agent）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.2 与 src/runtime/monitor/failure-list.ts。
+ */
+export type MonitorFailureScope = "tool" | "mcp" | "skill" | "agent";
+
+export type MonitorFailureRow = {
+  id: string;
+  scope: MonitorFailureScope;
+  name: string;
+  status: string;
+  errorMessage: string | null;
+  stepIndex: number | null;
+  workflowRunId: string | null;
+  ts: string;
+};
+
+export async function listMonitorFailures(input?: {
+  scope?: MonitorFailureScope;
+  windowMinutes?: number;
+  limit?: number;
+  sessionId?: string;
+}): Promise<MonitorFailureRow[]> {
+  const query = new URLSearchParams();
+  if (input?.scope) query.set("scope", input.scope);
+  if (input?.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input?.limit != null) query.set("limit", String(input.limit));
+  if (input?.sessionId) query.set("sessionId", input.sessionId);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: MonitorFailureRow[] }>(
+    `/api/v1/monitor/failures${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
 export async function scanStuckWorkflowAlerts(stuckMinutes = 120): Promise<{
   scanned: number;
   created: number;

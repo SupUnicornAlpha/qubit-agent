@@ -25,10 +25,13 @@ import {
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
+import { listFailures, type FailureScope } from "../runtime/monitor/failure-list";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
+import { getSkillsSummary } from "../runtime/monitor/skills-summary";
 import {
   aggregateAgentRuntimeMetrics,
   createWorkflowQualitySnapshot,
+  getAgentRuntimeDetail,
   listAgentRuntimeMetrics,
   listWorkflowQualitySnapshots,
 } from "../runtime/monitor/quality-metrics";
@@ -341,6 +344,63 @@ monitorRouter.get("/quality/agents/metrics", async (c) => {
   const windowStart = c.req.query("windowStart");
   const windowEnd = c.req.query("windowEnd");
   const data = await listAgentRuntimeMetrics({ windowStart, windowEnd });
+  return c.json({ ok: true, data });
+});
+
+/**
+ * Agent 维度下钻详情：byTool / byMcp / bySkill / errorTopN + 最近实例。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.3 / quality-metrics.ts:getAgentRuntimeDetail。
+ */
+monitorRouter.get("/agents/:definitionId/detail", async (c) => {
+  const definitionId = c.req.param("definitionId");
+  const windowStart = c.req.query("windowStart");
+  const windowEnd = c.req.query("windowEnd");
+  const input: Parameters<typeof getAgentRuntimeDetail>[1] = {};
+  if (windowStart) input.windowStart = windowStart;
+  if (windowEnd) input.windowEnd = windowEnd;
+  const data = await getAgentRuntimeDetail(definitionId, input);
+  if (!data.definition) {
+    return c.json({ ok: false, error: "agent definition not found", definitionId }, 404);
+  }
+  return c.json({ ok: true, data });
+});
+
+/**
+ * Skills 维度聚合（窗口内按 skill 聚合成功率 / 平均分等）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.4 / runtime/monitor/skills-summary.ts。
+ */
+monitorRouter.get("/skills/summary", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const input: Parameters<typeof getSkillsSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  const data = await getSkillsSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * 失败列表（summary level，跨 tool / mcp / skill / agent）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.2 与 runtime/monitor/failure-list.ts。
+ */
+monitorRouter.get("/failures", async (c) => {
+  const scopeRaw = c.req.query("scope");
+  const allowed: FailureScope[] = ["tool", "mcp", "skill", "agent"];
+  const windowMinutes = c.req.query("windowMinutes");
+  const limit = c.req.query("limit");
+  const sessionId = c.req.query("sessionId");
+  /**
+   * 与同文件其它路由的模式保持一致：用条件构造避免显式传 undefined
+   * （tsconfig 启用 exactOptionalPropertyTypes，传 undefined 会触发 TS2379）。
+   */
+  const input: Parameters<typeof listFailures>[0] = {};
+  if (scopeRaw && (allowed as string[]).includes(scopeRaw)) {
+    input.scope = scopeRaw as FailureScope;
+  }
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (limit) input.limit = Number(limit);
+  if (sessionId) input.sessionId = sessionId;
+  const data = await listFailures(input);
   return c.json({ ok: true, data });
 });
 
