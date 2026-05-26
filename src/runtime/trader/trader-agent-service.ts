@@ -12,7 +12,7 @@ import {
 import type { OrderSide, OrderType } from "../../types/entities";
 import { processExecutionTasks } from "../execution/execution-worker";
 import { createOrderIntentFromReiaPayload } from "../execution/reia-bridge";
-import { brokerCancelOrder } from "../reia/broker-service";
+import { brokerCancelOrder } from "../execution/broker/broker-service";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { listStrategyRuntimeLogs } from "../strategy/strategy-runtime-log";
 import { listStrategyRuntimes } from "../strategy/strategy-runtime-service";

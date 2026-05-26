@@ -12,7 +12,7 @@ import {
   orderIntent,
 } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
-import { connectorForAccount, resolveBrokerAccount } from "../reia/broker-service";
+import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import type { BrokerProvider } from "../../types/broker";
 import { isLiveTradingEnabled } from "./live-trading-gate";
 

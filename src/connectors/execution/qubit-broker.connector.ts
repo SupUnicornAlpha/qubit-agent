@@ -16,7 +16,7 @@ import {
   brokerGetPositions,
   brokerHealthCheck,
   resolveBrokerAccount,
-} from "../../runtime/reia/broker-service";
+} from "../../runtime/execution/broker/broker-service";
 import type { BrokerProvider } from "../../types/broker";
 import { ExecutionConnector, type ModifyOrderParams } from "./execution.connector";
 

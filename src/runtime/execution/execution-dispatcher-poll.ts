@@ -8,7 +8,7 @@ import {
   executionTaskEvent,
   fill,
 } from "../../db/sqlite/schema";
-import { connectorForAccount, resolveBrokerAccount } from "../reia/broker-service";
+import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import type { BrokerProvider } from "../../types/broker";
 
 /** Poll broker for orders in waiting_ack / partially_filled (Phase 3). */

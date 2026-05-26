@@ -8,8 +8,8 @@ import {
   brokerCancelOrder,
   brokerGetFills,
   brokerGetPositions,
-} from "../reia/broker-service";
-import { checkBrokerAccountHealth } from "../reia/broker-admin";
+} from "../execution/broker/broker-service";
+import { checkBrokerAccountHealth } from "../execution/broker/broker-admin";
 import { executeIntentLive, executeIntentPaper } from "../reia/intent-engine";
 import type { BrokerProvider } from "../../types/broker";
 import { negotiateServerProtocolVersion } from "./mcp-protocol";
