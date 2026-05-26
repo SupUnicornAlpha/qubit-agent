@@ -12,6 +12,7 @@ import {
   resumeAnalystResearchJob,
 } from "../msa/analyst-research-jobs";
 import { dispatchTaskToRole } from "../agent-pool";
+import { setWorkflowState } from "./workflow-state-machine";
 
 export type HitlScope = "chat_orchestrator" | "team_orchestrator";
 export type HitlRequestKind = "tool_call" | "team_research_plan";
@@ -88,19 +89,34 @@ export function isHighRiskChatTool(toolName: string): boolean {
 
 export type ChatHitlTriggerDecision = {
   trigger: boolean;
-  /** 'mode_always' 模式总是问；'rule_high_risk' 高危工具兜底；'mode_off' 关闭；'none' 不触发 */
-  source: "mode_always" | "rule_high_risk" | "mode_off" | "none";
+  /**
+   * - 'mode_always'：模式=每次都问
+   * - 'rule_high_risk'：高危工具兜底
+   * - 'ai_hint'：mode='ai' 时 LLM 自评 `hitlHint.needed===true` 主动要求
+   * - 'mode_off' / 'none'：不触发
+   */
+  source: "mode_always" | "rule_high_risk" | "ai_hint" | "mode_off" | "none";
   reason: string;
+  /**
+   * v2 HITL：交互形态。
+   * - 高危工具（rule_high_risk）固定 approve_only —— 高风险操作不该让 LLM 拆成
+   *   选择题分散注意力，最稳是「确认 / 拒绝」
+   * - mode_always / ai_hint 路径透传 hitlHint.inputKind（若 LLM 没指明则 approve_only）
+   */
+  inputKind?: HitlInputKind;
+  /** single_choice / multi_choice 形态的选项；透传自 hitlHint.options */
+  options?: Array<{ label: string; value: string; description?: string }>;
 };
 
 /**
- * v2：对话 orchestrator HITL 评估器 —— 三档模式 + 高危工具硬规则兜底。
+ * v2：对话 orchestrator HITL 评估器 —— 三档模式 + 高危工具硬规则兜底 + LLM 自评。
  *
  * 优先级：
- *   1. 高危工具命中 → 必触发（无视 mode）
- *   2. mode='always' → 触发（含 v1 旧行为 hitlChat:true）
+ *   1. 高危工具命中 → 必触发 approve_only（无视 mode / hitlHint）
+ *   2. mode='always' → 触发；inputKind/options 取自 hitlHint（缺省 approve_only）
  *   3. mode='off' → 不触发（含 v1 旧行为 hitlChat:false）
- *   4. mode='ai'（默认）→ 不触发（常规工具不打扰）
+ *   4. mode='ai'（默认）→ hitlHint.needed===true 时触发 + 透传 inputKind/options；
+ *      否则不打扰。这一档让对话 orchestrator 能主动出"选择题"。
  *
  * 取代旧的 `resolveChatOrchestratorHitl` —— 后者无脑按 source==='chat' 全拦，
  * 导致用户体验"每调一个工具都得确认"。
@@ -110,16 +126,19 @@ export function evaluateChatHitlTrigger(input: {
   loopOptions: LoopOptionsJson;
   role: string;
   toolName: string;
+  /** v2：LLM 在 reasonText 里的自评提示，由 hitl-gate 调 `extractHitlHintFromText` 注入 */
+  hitlHint?: HitlHint | null;
 }): ChatHitlTriggerDecision {
   if (input.role !== "orchestrator") {
     return { trigger: false, source: "none", reason: "" };
   }
-  // 高危工具：硬规则兜底，无视 mode
+  // 高危工具：硬规则兜底，无视 mode / hitlHint，固定 approve_only
   if (isHighRiskChatTool(input.toolName)) {
     return {
       trigger: true,
       source: "rule_high_risk",
       reason: `高危工具需人工确认：${input.toolName}`,
+      inputKind: "approve_only",
     };
   }
   const mode = resolveChatHitlMode(input.loopOptions);
@@ -128,13 +147,25 @@ export function evaluateChatHitlTrigger(input: {
       trigger: true,
       source: "mode_always",
       reason: "用户设置每次工具调用都需要人工确认",
+      inputKind: input.hitlHint?.inputKind ?? "approve_only",
+      options: input.hitlHint?.options,
     };
   }
   if (mode === "off") {
     return { trigger: false, source: "mode_off", reason: "" };
   }
-  // 'ai' 模式：默认不打扰；常规工具直接放行。
-  // 未来可扩展：让 LLM 在 reasonText 中输出结构化 hitl hint，命中即触发。
+  // 'ai' 模式：LLM 在 reasonText 里输出 hitlHint.needed===true 即触发；
+  // 默认不打扰常规工具调用。
+  if (mode === "ai" && input.hitlHint?.needed === true) {
+    return {
+      trigger: true,
+      source: "ai_hint",
+      reason:
+        input.hitlHint.reason ?? "Orchestrator 主动请求人工确认（reason 缺省）",
+      inputKind: input.hitlHint.inputKind ?? "approve_only",
+      options: input.hitlHint.options,
+    };
+  }
   return { trigger: false, source: "none", reason: "" };
 }
 
@@ -386,10 +417,9 @@ export async function createHitlRequest(input: {
       inputKind: input.inputKind ?? "approve_only",
       inputSchemaJson: (input.inputSchema ?? {}) as never,
     });
-    await db
-      .update(workflowRun)
-      .set({ status: "awaiting_approval", endedAt: null })
-      .where(eq(workflowRun.id, input.workflowRunId));
+    await setWorkflowState(input.workflowRunId, "awaiting_approval", {
+      reason: "hitl:create-request",
+    });
   });
 
   publishHitlStreamEvent({
@@ -594,10 +624,7 @@ export async function resolveHitlRequest(input: {
       .where(eq(workflowHitlRequest.id, input.requestId));
 
     if (input.decision === "rejected") {
-      await db
-        .update(workflowRun)
-        .set({ status: "failed", endedAt: now })
-        .where(eq(workflowRun.id, row.workflowRunId));
+      await setWorkflowState(row.workflowRunId, "failed", { reason: "hitl:reject" });
       if (row.scope === "team_orchestrator") {
         const { failAnalystResearchJob } = await import("../msa/analyst-research-jobs");
         const pending = await findPendingAnalystJobByWorkflow(row.workflowRunId);
@@ -608,10 +635,7 @@ export async function resolveHitlRequest(input: {
       return { kind: "rejected" };
     }
 
-    await db
-      .update(workflowRun)
-      .set({ status: "running", endedAt: null })
-      .where(eq(workflowRun.id, row.workflowRunId));
+    await setWorkflowState(row.workflowRunId, "running", { reason: "hitl:approve" });
 
     const wfRows = await db
       .select()
@@ -630,10 +654,9 @@ export async function resolveHitlRequest(input: {
          * migration 故障才会到这；此时把 workflow_run 在同一事务内回到 failed，
          * 不再像旧代码那样在事务外再发一条 UPDATE 让状态串到 running→failed。
          */
-        await db
-          .update(workflowRun)
-          .set({ status: "failed", endedAt: new Date().toISOString() })
-          .where(eq(workflowRun.id, row.workflowRunId));
+        await setWorkflowState(row.workflowRunId, "failed", {
+          reason: "hitl:missing-resume-payload",
+        });
         return { kind: "missing_resume_payload" };
       }
       return {

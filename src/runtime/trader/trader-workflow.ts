@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 
 export const TRADER_WORKFLOW_GOAL = "QUBIT 实时交易 Agent 执行上下文";
 
@@ -31,17 +32,13 @@ export async function cancelTraderWorkflows(
 ): Promise<string[]> {
   const rows = await db.select().from(workflowRun).orderBy(desc(workflowRun.startedAt));
   const ids: string[] = [];
-  const now = new Date().toISOString();
 
   for (const row of rows) {
     if (row.status === "cancelled") continue;
     if (!isTraderWorkflowRow(row)) continue;
     if (filter?.sessionId && row.sessionId !== filter.sessionId) continue;
     if (filter?.projectId && row.projectId !== filter.projectId) continue;
-    await db
-      .update(workflowRun)
-      .set({ status: "cancelled", endedAt: now })
-      .where(eq(workflowRun.id, row.id));
+    await setWorkflowState(row.id, "cancelled", { reason: "trader:cancel" });
     ids.push(row.id);
   }
   return ids;
@@ -68,28 +65,27 @@ export async function consolidateTraderWorkflowsForSession(
   if (active.length === 0) return null;
 
   const keep = active[0]!;
-  const now = new Date().toISOString();
   const dupIds = active.slice(1).map((r) => r.id);
-  if (dupIds.length > 0) {
-    await db
-      .update(workflowRun)
-      .set({ status: "cancelled", endedAt: now })
-      .where(inArray(workflowRun.id, dupIds));
+  for (const dupId of dupIds) {
+    await setWorkflowState(dupId, "cancelled", { reason: "trader:consolidate-dup" });
   }
 
+  /**
+   * P1-A：保留多字段直写（goal/mode/loopKind/...），但 status 单独经状态机：
+   * 既能跟踪迁移又能保留批量字段更新性能。
+   */
   await db
     .update(workflowRun)
     .set({
       goal: TRADER_WORKFLOW_GOAL,
       mode: "simulation",
       source: "api",
-      status: "running",
       loopKind: "native",
       executionPath: "graph",
       loopOptionsJson: TRADER_LOOP_OPTIONS,
-      endedAt: null,
     })
     .where(eq(workflowRun.id, keep.id));
+  await setWorkflowState(keep.id, "running", { reason: "trader:consolidate-keep" });
 
   return keep.id;
 }
@@ -135,10 +131,10 @@ export async function getOrCreateTraderWorkflow(input: {
   await db
     .update(workflowRun)
     .set({
-      status: "running",
       loopOptionsJson: TRADER_LOOP_OPTIONS,
     })
     .where(eq(workflowRun.id, created.data.id));
+  await setWorkflowState(created.data.id, "running", { reason: "trader:create" });
 
   return { workflowRunId: created.data.id, created: true };
 }

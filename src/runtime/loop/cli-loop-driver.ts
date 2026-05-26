@@ -9,6 +9,7 @@ import type { StepStreamEvent } from "../langgraph/state";
 import type { DispatchToLoopParams, LoopDriver } from "./loop-driver";
 import { parseCliLoopLine, sniffNativeSessionId } from "./loop-protocol";
 import { writeLoopRunArtifacts } from "./run-artifacts";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;
@@ -124,10 +125,7 @@ async function runExternalCli(params: {
   const definitionId = await readOrchestratorDefinitionId();
   const agentInstanceId = randomUUID();
 
-  await db
-    .update(workflowRun)
-    .set({ status: "running" })
-    .where(eq(workflowRun.id, params.workflowId));
+  await setWorkflowState(params.workflowId, "running", { reason: "cli-loop-driver:start" });
 
   await db.insert(agentInstance).values({
     id: agentInstanceId,
@@ -211,10 +209,7 @@ async function runExternalCli(params: {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     publish("error", { message: `spawn failed: ${message}` });
-    await db
-      .update(workflowRun)
-      .set({ status: "failed", endedAt: new Date().toISOString() })
-      .where(eq(workflowRun.id, params.workflowId));
+    await setWorkflowState(params.workflowId, "failed", { reason: "cli-loop-driver:spawn-fail" });
     await db
       .update(agentInstance)
       .set({
@@ -419,20 +414,18 @@ async function runExternalCli(params: {
         message: `cli exited with code ${exit}`,
         stderrTail: errBuf.slice(-4000),
       });
-      await db
-        .update(workflowRun)
-        .set({ status: "failed", endedAt: new Date().toISOString() })
-        .where(eq(workflowRun.id, params.workflowId));
+      await setWorkflowState(params.workflowId, "failed", {
+        reason: `cli-loop-driver:exit=${exit}`,
+      });
       await db
         .update(agentInstance)
         .set({ status: "error", endedAt: new Date().toISOString(), errorMessage: `exit ${exit}` })
         .where(eq(agentInstance.id, agentInstanceId));
       publish("final", { status: "failed", exitCode: exit });
     } else {
-      await db
-        .update(workflowRun)
-        .set({ status: "completed", endedAt: new Date().toISOString() })
-        .where(eq(workflowRun.id, params.workflowId));
+      await setWorkflowState(params.workflowId, "completed", {
+        reason: "cli-loop-driver:exit=0",
+      });
       await db
         .update(agentInstance)
         .set({ status: "stopped", endedAt: new Date().toISOString() })
@@ -444,10 +437,9 @@ async function runExternalCli(params: {
     activeCliByRunId.delete(params.runId);
     const message = e instanceof Error ? e.message : String(e);
     publish("error", { message });
-    await db
-      .update(workflowRun)
-      .set({ status: "failed", endedAt: new Date().toISOString() })
-      .where(eq(workflowRun.id, params.workflowId));
+    await setWorkflowState(params.workflowId, "failed", {
+      reason: "cli-loop-driver:runtime-error",
+    });
     await db
       .update(agentInstance)
       .set({

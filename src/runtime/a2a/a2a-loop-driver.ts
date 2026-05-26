@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
-import { workflowRun } from "../../db/sqlite/schema";
 import { a2aRouter } from "../../messaging/a2a";
 import type { DispatchToLoopParams, LoopDriver } from "../loop/loop-driver";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 import { getA2APool } from "./a2a-pool";
 
 export class A2ALoopDriver implements LoopDriver {
@@ -36,11 +34,7 @@ export class A2ALoopDriver implements LoopDriver {
       priority: 50,
     });
 
-    const db = await getDb();
-    await db
-      .update(workflowRun)
-      .set({ status: "running" })
-      .where(eq(workflowRun.id, params.workflowId));
+    await setWorkflowState(params.workflowId, "running", { reason: "a2a-loop-driver:dispatch" });
 
     return { runId };
   }

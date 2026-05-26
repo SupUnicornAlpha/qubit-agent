@@ -17,6 +17,7 @@ import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
+import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
 import {
   failAnalystResearchJob,
   findActiveAnalystJobsByWorkflow,
@@ -255,14 +256,12 @@ workflowRouter.patch("/:id", async (c) => {
     const g = String(body.goal).trim();
     if (g) patch.goal = g;
   }
+  let pendingStatus: (typeof workflowStatusEnum)[number] | null = null;
   if (body.status !== undefined) {
     if (!workflowStatusEnum.includes(body.status)) {
       return c.json({ error: "invalid status", allowed: workflowStatusEnum }, 400);
     }
-    patch.status = body.status;
-    if (body.status === "completed" || body.status === "failed" || body.status === "cancelled") {
-      patch.endedAt = new Date().toISOString();
-    }
+    pendingStatus = body.status;
   }
   if (body.sessionId !== undefined) {
     if (body.sessionId) {
@@ -275,10 +274,15 @@ workflowRouter.patch("/:id", async (c) => {
     }
     patch.sessionId = body.sessionId;
   }
-  if (Object.keys(patch).length === 0) {
+  if (Object.keys(patch).length === 0 && pendingStatus === null) {
     return c.json({ data: cur });
   }
-  await db.update(workflowRun).set(patch).where(eq(workflowRun.id, id));
+  if (Object.keys(patch).length > 0) {
+    await db.update(workflowRun).set(patch).where(eq(workflowRun.id, id));
+  }
+  if (pendingStatus !== null) {
+    await setWorkflowState(id, pendingStatus, { reason: "workflow.routes.patch" });
+  }
   const updated = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
   return c.json({ data: updated[0] });
 });
@@ -331,10 +335,7 @@ workflowRouter.delete("/:id", async (c) => {
     });
   }
 
-  await db
-    .update(workflowRun)
-    .set({ status: "cancelled", endedAt: new Date().toISOString() })
-    .where(eq(workflowRun.id, id));
+  await setWorkflowState(id, "cancelled", { reason: "workflow.delete:soft" });
   return c.json({
     ok: true,
     id,

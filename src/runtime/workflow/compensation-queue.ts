@@ -3,6 +3,7 @@ import { and, asc, desc, eq, lte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowCompensationTask, workflowRun } from "../../db/sqlite/schema";
 import { dispatchTaskToRole } from "../agent-pool";
+import { setWorkflowState } from "./workflow-state-machine";
 
 export async function enqueueCompensationTask(input: {
   workflowRunId: string;
@@ -64,10 +65,7 @@ export async function processCompensationQueue(limit = 10) {
       const workflowRows = await db.select().from(workflowRun).where(eq(workflowRun.id, task.workflowRunId)).limit(1);
       const workflow = workflowRows[0];
       if (!workflow) throw new Error("workflow not found");
-      await db
-        .update(workflowRun)
-        .set({ status: "pending", endedAt: null })
-        .where(eq(workflowRun.id, workflow.id));
+      await setWorkflowState(workflow.id, "pending", { reason: "compensation-queue:retry" });
       await dispatchTaskToRole({
         workflowId: workflow.id,
         role: "orchestrator",

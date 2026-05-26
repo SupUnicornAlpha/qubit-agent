@@ -1,6 +1,3 @@
-import { eq } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
-import { workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
@@ -9,6 +6,7 @@ import type { StepStreamEvent } from "../langgraph/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import type { HitlApprovalPayload } from "../workflow/hitl-service";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 import {
   completeAnalystResearchJob,
   failAnalystResearchJob,
@@ -158,14 +156,7 @@ async function defaultSetWorkflowStatus(
   workflowRunId: string,
   status: "completed" | "failed" | "awaiting_approval",
 ): Promise<void> {
-  const db = await getDb();
-  await db
-    .update(workflowRun)
-    .set({
-      status,
-      endedAt: status === "awaiting_approval" ? null : new Date().toISOString(),
-    })
-    .where(eq(workflowRun.id, workflowRunId));
+  await setWorkflowState(workflowRunId, status, { reason: "research-team-execute" });
 }
 
 /**

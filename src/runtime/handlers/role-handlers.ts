@@ -1,7 +1,4 @@
 import { createHmac, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { getDb } from "../../db/sqlite/client";
-import { workflowRun } from "../../db/sqlite/schema";
 import type { OrderIntentPayload, TaskAssignPayload } from "../../types/a2a";
 import { ALL_AGENT_ROLES, type AgentRole } from "../../types/entities";
 import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
@@ -16,19 +13,13 @@ import {
 import { parseHitlApproval } from "../workflow/hitl-service";
 import type { RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 
 async function setWorkflowStatus(
   workflowId: string,
-  status: "completed" | "failed" | "running" | "awaiting_approval"
+  status: "completed" | "failed" | "running" | "awaiting_approval",
 ): Promise<void> {
-  const db = await getDb();
-  await db
-    .update(workflowRun)
-    .set({
-      status,
-      endedAt: status === "running" || status === "awaiting_approval" ? null : new Date().toISOString(),
-    })
-    .where(eq(workflowRun.id, workflowId));
+  await setWorkflowState(workflowId, status, { reason: "role-handlers" });
   if (status === "completed" || status === "failed") {
     onWorkflowTerminal(workflowId, status);
   }

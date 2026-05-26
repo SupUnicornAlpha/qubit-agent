@@ -12,6 +12,7 @@ import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
 import { stepStreamBus } from "./event-stream";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 import { actNode } from "./nodes/act";
 import { hitlGateNode } from "./nodes/hitl-gate";
 import { observeNode } from "./nodes/observe";
@@ -529,13 +530,9 @@ export async function executeAgentReact(
     .where(eq(agentInstance.id, agentInstanceId));
 
   if (params.updateWorkflowStatus) {
-    await db
-      .update(workflowRun)
-      .set({
-        status: terminalStatus,
-        endedAt: terminalStatus === "awaiting_approval" ? null : new Date().toISOString(),
-      })
-      .where(eq(workflowRun.id, params.workflowId));
+    await setWorkflowState(params.workflowId, terminalStatus, {
+      reason: "execute-agent-react",
+    });
   }
 
   emit({
