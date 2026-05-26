@@ -14,6 +14,7 @@ import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { resolveEnabledMcpServerNames } from "../../mcp/resolve-enabled-mcp-servers";
 import { skillService, renderSkillsBlockForPrompt } from "../../skills/skill-service";
+import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 export interface ReasonStepMeta {
@@ -53,15 +54,27 @@ export interface ReasonNodeOutput {
 
 async function loadWorkflowMeta(
   workflowId: string
-): Promise<{ projectId: string | null; sessionId: string | null }> {
+): Promise<{ projectId: string | null; sessionId: string | null; source: string | null }> {
   const db = await getDb();
   const wfRows = await db
-    .select({ projectId: workflowRun.projectId, sessionId: workflowRun.sessionId })
+    .select({
+      projectId: workflowRun.projectId,
+      sessionId: workflowRun.sessionId,
+      source: workflowRun.source,
+    })
     .from(workflowRun)
     .where(eq(workflowRun.id, workflowId))
     .limit(1);
-  if (!wfRows[0]) return { projectId: null, sessionId: null };
-  return { projectId: wfRows[0].projectId ?? null, sessionId: wfRows[0].sessionId ?? null };
+  if (!wfRows[0]) return { projectId: null, sessionId: null, source: null };
+  return {
+    projectId: wfRows[0].projectId ?? null,
+    sessionId: wfRows[0].sessionId ?? null,
+    /**
+     * v2 HITL：reason 节点会按 source==='chat' 判定是否注入"HITL 自评 prompt"。
+     * 其它 source（manual/api/scheduler/trader/research-team 直接派的）不需要这段提示。
+     */
+    source: wfRows[0].source ?? null,
+  };
 }
 
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
@@ -160,10 +173,28 @@ export async function reasonNode(
   const mcpServers = await resolveEnabledMcpServerNames(state.agentDefinition.mcpServers ?? []);
   const hasTools = tools.length > 0 || mcpServers.length > 0;
 
+  /**
+   * v2 HITL：source 用于决定是否注入"对话 HITL 自评 prompt"，所以从这里开始
+   * 整个函数都需要 workflowMeta。skill 召回里也会用到 projectId，下面 try 块
+   * 直接复用同一个 meta，避免对 workflow_run 表二次查询。
+   *
+   * 查询失败不阻塞（典型场景：异步 cleanup 后 workflow 被删），降级到没注入。
+   */
+  let workflowMeta: { projectId: string | null; sessionId: string | null; source: string | null } = {
+    projectId: null,
+    sessionId: null,
+    source: null,
+  };
+  try {
+    workflowMeta = await loadWorkflowMeta(state.workflowId);
+  } catch {
+    // 静默：缺 meta 时直接走默认路径（不注入 HITL 自评 + skill 召回也会自动跳过）
+  }
+
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
   try {
-    const meta = await loadWorkflowMeta(state.workflowId);
+    const meta = workflowMeta;
     if (meta.projectId) {
       const query = [
         typeof payloadGoal === "string" ? payloadGoal : String(payloadGoal ?? ""),
@@ -249,7 +280,21 @@ export async function reasonNode(
     const systemWithTopology = topologyOrCollab
       ? `${fsiSystem}\n\n---\n${topologyOrCollab}`
       : fsiSystem;
-    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithTopology, { tools, mcpServers });
+    /**
+     * v2 HITL：仅对话 orchestrator + chat 工作流注入 HITL 自评指令。
+     *
+     * - role 过滤：只 orchestrator 写出来的 hitlHint 才会被 hitl-gate 用到；
+     *   分析师 / research 等次级 agent 注入只会噪声化输出，也无人接住。
+     * - source 过滤：研究团队 plan 走的是 `runOrchestratorPlanning`（不经 reasonNode），
+     *   这里读 workflow_run.loop_options_json 拿到的源头是 'chat'；非 chat 工作流
+     *   （manual/api/scheduler/trader）不需要这段指令。
+     */
+    const isChatOrchestrator =
+      state.agentDefinition.role === "orchestrator" && workflowMeta.source === "chat";
+    const systemWithHitl = isChatOrchestrator
+      ? `${systemWithTopology}\n\n---\n${buildChatHitlSelfCheckPromptBlock()}`
+      : systemWithTopology;
+    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithHitl, { tools, mcpServers });
     systemPromptLen = systemPrompt.length;
     userPromptLen = userPrompt.length;
 

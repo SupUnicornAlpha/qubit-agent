@@ -296,6 +296,115 @@ describe("evaluateChatHitlTrigger - 三档模式 × 高危工具", () => {
     expect(d.trigger).toBe(false);
     expect(d.source).toBe("none");
   });
+
+  /**
+   * v2 P1：对话 orchestrator 的 hitlHint 透传不变式。
+   *
+   * - 'ai' 模式下，普通工具默认不打扰；但 LLM 在 reasonText 里明确说 needed=true 必须触发
+   * - 高危工具（rule_high_risk）路径**永远** approve_only —— hitlHint 不允许把高危
+   *   操作降级成选择题，避免"分散注意力"
+   * - 'always' 模式下，inputKind/options 透传 hitlHint（让用户既被强制每次都问，
+   *   又能看到 LLM 列出来的具体选项）
+   *
+   * 修复前：ChatHitlTriggerDecision 完全没有 inputKind 字段，对话窗口 HITL 都是
+   * approve_only，前端两按钮死路径。
+   */
+  test("'ai' 模式 + LLM hitlHint.needed=true + single_choice → 触发 ai_hint + 透传 options", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "ai" },
+      toolName: "run_analyst_team",
+      hitlHint: {
+        needed: true,
+        reason: "用户意图含糊，需要二选一",
+        inputKind: "single_choice",
+        options: [
+          { label: "侧重技术面", value: "tech" },
+          { label: "侧重基本面", value: "fund" },
+        ],
+      },
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("ai_hint");
+    expect(d.inputKind).toBe("single_choice");
+    expect(d.options).toHaveLength(2);
+    expect(d.options?.[0]?.value).toBe("tech");
+  });
+
+  test("'ai' 模式 + LLM hitlHint.needed=true + free_form → 触发 ai_hint，options 空", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "ai" },
+      toolName: "report_generate",
+      hitlHint: { needed: true, reason: "需要一句话指引", inputKind: "free_form" },
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("ai_hint");
+    expect(d.inputKind).toBe("free_form");
+    expect(d.options).toBeUndefined();
+  });
+
+  test("'ai' 模式 + LLM hitlHint.needed=false 不触发（即便 inputKind 给了也忽略）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "ai" },
+      toolName: "fetch_klines",
+      hitlHint: { needed: false, inputKind: "single_choice" },
+    });
+    expect(d.trigger).toBe(false);
+    expect(d.source).toBe("none");
+  });
+
+  test("高危工具 + hitlHint 想降级成 single_choice 仍被锁回 approve_only", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "ai" },
+      toolName: "broker_place_order",
+      hitlHint: {
+        needed: true,
+        inputKind: "single_choice",
+        options: [
+          { label: "下单", value: "go" },
+          { label: "略过", value: "skip" },
+        ],
+      },
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("rule_high_risk");
+    expect(d.inputKind).toBe("approve_only");
+    expect(d.options).toBeUndefined();
+  });
+
+  test("'always' 模式 + hitlHint.inputKind=multi_choice → 触发 mode_always + 透传 inputKind/options", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "always" },
+      toolName: "fetch_klines",
+      hitlHint: {
+        needed: true,
+        inputKind: "multi_choice",
+        options: [
+          { label: "包含日线", value: "1d" },
+          { label: "包含周线", value: "1w" },
+        ],
+      },
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("mode_always");
+    expect(d.inputKind).toBe("multi_choice");
+    expect(d.options).toHaveLength(2);
+  });
+
+  test("'off' 模式 + hitlHint.needed=true 仍不触发（off 是显式关掉，AI 没权力越级）", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlChatMode: "off" },
+      toolName: "fetch_klines",
+      hitlHint: { needed: true, inputKind: "single_choice" },
+    });
+    expect(d.trigger).toBe(false);
+    expect(d.source).toBe("mode_off");
+  });
 });
 
 describe("isHighRiskChatTool - 高危工具识别", () => {

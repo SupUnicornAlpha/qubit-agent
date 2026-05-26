@@ -86,9 +86,8 @@ import {
   upsertMcpServer,
   requestExecutionConfirmation,
   subscribeDebateStream,
-  approveWorkflowHitl,
   listPendingWorkflowHitl,
-  rejectWorkflowHitl,
+  resolveWorkflowHitl,
   subscribeWorkflowStream,
   listWorkflowCompensations,
   enqueueWorkflowCompensation,
@@ -195,6 +194,7 @@ import {
 } from "../team/LiveConversationView";
 import { ResizableY } from "../team/ResizableY";
 import { TeamHitlBanner } from "../team/TeamHitlBanner";
+import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
 import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
   classifyWorkflow,
@@ -457,6 +457,22 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const bindStreamRef = useRef<
     ((workflowId: string, runId: string, assistantMessageId: string) => void) | null
   >(null);
+  /**
+   * 当前正在为哪些 assistantMessageId 维护着 SSE 订阅。
+   *
+   * 历史 bug：onSend 里 `bindStream(...)` 之后立刻 `await reloadSessionMessages(...)`，
+   * 后者会走 `reconnectActiveChatStreams` 把所有 `status='running' && content==''` 的消息
+   * 重新 bind 一次（用来恢复 panel remount 后的 SSE）。而 `bindStream` 进入函数体就
+   * `persistChatStreamBinding` 写 sessionStorage，于是刚才那条 assistantMsg 立刻被
+   * 二次匹配，**同一条消息上挂了两路 SSE 订阅**。后端 stepStreamBus 对每个新订阅都会
+   * replay 已 buffer 的事件 —— 用户感受就是"流式输出突然从头重来一遍"。HITL approve
+   * 后再 `bindStream(workflowId, result.runId, messageId)` 会把这个错叠再放大一次，
+   * 看起来就像"HITL 死循环 / 一直在流式输出相似内容"。
+   *
+   * 用 useRef 而不是 useState：纯副作用簿记，避免 setState 触发渲染；也保证 onSend
+   * 同步链路内（bindStream → reloadSessionMessages）能立刻读到最新值。
+   */
+  const activeStreamMessageIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     try {
@@ -744,6 +760,20 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   };
 
   const bindStream = (workflowId: string, runId: string, assistantMessageId: string) => {
+    /**
+     * 防重订阅：同一 assistantMessageId 已经有 active SSE 时，直接 short-circuit。
+     *
+     * 这条护栏既挡 onSend → reloadSessionMessages → reconnectActiveChatStreams
+     * 在同一次 tick 内的二次 bind（详见 activeStreamMessageIdsRef 上的注释），也挡
+     * HITL approve 后用户快速重复点击 / SSE 还没收 final 时 reload 又来一次的并发场景。
+     *
+     * 注意一定要在 `persistChatStreamBinding` 之前判，否则二次调用仍会刷
+     * sessionStorage —— 看起来无害，但会让后续 panel remount 走错的 runId。
+     */
+    if (activeStreamMessageIdsRef.current.has(assistantMessageId)) {
+      return;
+    }
+    activeStreamMessageIdsRef.current.add(assistantMessageId);
     persistChatStreamBinding(assistantMessageId, workflowId, runId);
     let buffer = "";
     let streamDone = false;
@@ -761,6 +791,12 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       clearFailTimer();
       esClose();
       clearChatStreamBinding(assistantMessageId);
+      /**
+       * 释放占位：让后续合法的 re-bind（panel remount / 用户主动重连 / 新一轮
+       * HITL approve 起的新 runId）能够正常进入。与 onEvent 内的 final / error /
+       * grace-timeout 三个出口共用同一个 stopStream，保证占位永远被释放。
+       */
+      activeStreamMessageIdsRef.current.delete(assistantMessageId);
     };
 
     esClose = subscribeWorkflowStream({
@@ -931,7 +967,14 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
     messageId: string,
     workflowId: string,
     requestId: string,
-    decision: "approved" | "rejected"
+    decision: "approved" | "rejected",
+    /**
+     * v2：用户在 single_choice / multi_choice / free_form 形态下提交的内容。
+     * - approve_only / rejected：保持 null（后端的 response_json 会落空，下一轮
+     *   prompt 不注入"用户在第 N 步告诉你"，与旧行为一致）
+     * - 其它形态：来自 ChatHitlPromptControls 校验后的 buildHitlResponsePayload
+     */
+    response: Record<string, unknown> | null = null
   ) => {
     /**
      * 入锁——避免双击 / Tauri webview 延迟 / SSE 还没把状态推回来时用户再点一次：
@@ -944,8 +987,16 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       return next;
     });
     try {
+      /**
+       * 统一走 v2 端点 `POST /api/v1/workflows/:id/hitl/:reqId/resolve`：
+       *   - 兼容老 approve_only（response = null）
+       *   - 支持 single_choice / multi_choice / free_form 把 response 带回后端，
+       *     再透传给 Orchestrator 下一轮 prompt（参见 hitl-service.resolveHitlRequest）
+       *
+       * 老 approveWorkflowHitl/rejectWorkflowHitl 端点保留服务端兼容，前端不再使用。
+       */
+      const result = await resolveWorkflowHitl(workflowId, requestId, decision, response);
       if (decision === "approved") {
-        const result = await approveWorkflowHitl(workflowId, requestId);
         /**
          * idempotent=true 说明请求已经被处理过（典型：双击导致两次 POST，第二次后端命中
          * "already approved" 的幂等分支）。仍然按"成功"处理：清掉本地 hitl 状态，
@@ -960,11 +1011,19 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             )
           );
           if (result.runId) {
+            /**
+             * 防御：HITL 走完一轮后，理论上前一个 runId 的 SSE 会通过 `final`
+             * 事件触发 stopStream → 释放 activeStreamMessageIdsRef 占位。但极端
+             * 场景下（网络断流 / final 未抵达 / 用户在 grace timer 触发前快速点了
+             * approve）占位可能还卡着，会让接下来的 bindStream 被去重短路，导致
+             * "approve 之后界面再也没有新 token 进来"。这里在新 runId bind 前
+             * 强制清一次，配合 bindStream 自己的占位重新加上，保证状态一致。
+             */
+            activeStreamMessageIdsRef.current.delete(messageId);
             bindStream(workflowId, result.runId, messageId);
           }
         }
       } else {
-        const result = await rejectWorkflowHitl(workflowId, requestId);
         if (!result.idempotent) {
           await patchSessionMessage({
             messageId,
@@ -1223,40 +1282,29 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 hitlRequestByMessageId[msg.id] ? (
                   (() => {
                     const reqId = hitlRequestByMessageId[msg.id]!;
+                    const workflowId = msg.workflowRunIds![0]!;
                     const inflight = hitlInflightRequestIds.has(reqId);
+                    /**
+                     * v2：原本这里硬编码两个按钮 + 调老 `approveWorkflowHitl` / `rejectWorkflowHitl`
+                     * 端点，永远不带 response。导致**对话窗口里**所有 HITL 都只能画 approve_only，
+                     * 即便后端 hitl-gate.ts 已经按 LLM 的 hitlHint 写出了 single_choice /
+                     * multi_choice / free_form。改造为 `<ChatHitlPromptControls />`：
+                     *   1. 内部 `listPendingWorkflowHitl` 拉到 inputKind/inputSchemaJson
+                     *   2. 按 inputKind 复用 `<HitlInputArea />` 渲染对应输入
+                     *   3. 提交时把 decision + response 经回调交回 `handleHitlDecision`，
+                     *      统一走 `resolveWorkflowHitl`，与团队画布同协议。
+                     * 父组件的"防重订阅 / SSE 重绑 / patch 消息状态"逻辑都保留在
+                     * handleHitlDecision，不被这个改造打断。
+                     */
                     return (
-                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <button
-                          type="button"
-                          className="qb-btn-primary-brand"
-                          disabled={inflight}
-                          onClick={() =>
-                            void handleHitlDecision(
-                              msg.id,
-                              msg.workflowRunIds![0]!,
-                              reqId,
-                              "approved"
-                            )
-                          }
-                        >
-                          {inflight ? "处理中…" : "批准继续"}
-                        </button>
-                        <button
-                          type="button"
-                          className="qb-btn-ghost"
-                          disabled={inflight}
-                          onClick={() =>
-                            void handleHitlDecision(
-                              msg.id,
-                              msg.workflowRunIds![0]!,
-                              reqId,
-                              "rejected"
-                            )
-                          }
-                        >
-                          拒绝
-                        </button>
-                      </div>
+                      <ChatHitlPromptControls
+                        workflowRunId={workflowId}
+                        requestId={reqId}
+                        inflight={inflight}
+                        onDecision={(decision, response) =>
+                          void handleHitlDecision(msg.id, workflowId, reqId, decision, response)
+                        }
+                      />
                     );
                   })()
                 ) : null}

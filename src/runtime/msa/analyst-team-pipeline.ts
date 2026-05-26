@@ -17,7 +17,21 @@ import { exportStrategyScriptToWorkflowDir } from "../strategy/strategy-script-f
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import {
+  HITL_HINT_DELIMITER,
+  parsePlanWithHitlHint,
+  type OrchestratorHitlHint,
+  type OrchestratorPlanResult,
+} from "../workflow/hitl-hint-parse";
 import { partitionSlotsIntoWaves, parseTeamRelations, type TeamRelationEdge } from "./analyst-team-topology";
+
+/**
+ * 历史这里直接定义了 hitlHint 的协议（分隔符 + parse + 类型）；现在被对话 orchestrator
+ * 也复用，所以挪到 `runtime/workflow/hitl-hint-parse.ts` 统一管理。这里只 re-export
+ * 旧名字，避免破坏既有 import；后续逻辑（含单测）一切照旧。
+ */
+export type { OrchestratorHitlHint, OrchestratorPlanResult };
+export { HITL_HINT_DELIMITER, parsePlanWithHitlHint };
 
 export type AnalystTeamSlot = {
   role: AgentRole;
@@ -111,69 +125,6 @@ export function extractRoleBriefSection(fullBrief: string, role: AgentRole): str
   const intro = fullBrief.split(/\n##\s/m)[0]?.trim() ?? "";
   const tail = intro.length > 0 ? `${intro}\n\n---\n` : "";
   return `${tail}## 你的角色：${role}\n\n（全团队简报未单独列出本角色小节，请仅完成 **${role}** 职责范围内的分析，勿重复其他角色工作。）\n\n${fullBrief.slice(0, 2800)}`;
-}
-
-/**
- * v2：Orchestrator LLM 自评的 HITL 提示。
- * - needed：是否建议人工介入；undefined / false = 默认不打扰
- * - reason：≤60 字短句，写入 UI 给用户看
- * - inputKind：推荐的交互形态；缺省 approve_only
- * - options：single_choice / multi_choice 形态的选项
- * 详见 docs/HITL_REDESIGN.md §5
- */
-export type OrchestratorHitlHint = {
-  needed?: boolean;
-  reason?: string;
-  inputKind?: "approve_only" | "single_choice" | "multi_choice" | "free_form";
-  options?: Array<{ label: string; value: string; description?: string }>;
-};
-
-export type OrchestratorPlanResult = {
-  brief: string;
-  hitlHint: OrchestratorHitlHint | null;
-};
-
-const HITL_HINT_DELIMITER = "---HITL_HINT_JSON---";
-
-/**
- * v2：从 LLM 全文里抠出尾部的 HITL JSON 块；同时返回 markdown brief（已去掉 hint 段）。
- * 解析容错：找不到分隔符或 JSON 无效都视为 hitlHint=null（让 evaluator 走 mode 默认）。
- */
-export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
-  const idx = answer.indexOf(HITL_HINT_DELIMITER);
-  if (idx < 0) return { brief: answer.trim() || "（无编排简报）", hitlHint: null };
-  const brief = answer.slice(0, idx).trim() || "（无编排简报）";
-  const rest = answer.slice(idx + HITL_HINT_DELIMITER.length);
-  const m = rest.match(/\{[\s\S]*\}/);
-  if (!m) return { brief, hitlHint: null };
-  try {
-    const raw = JSON.parse(m[0]) as Record<string, unknown>;
-    const needed = raw.needed === true ? true : raw.needed === false ? false : undefined;
-    const reason = typeof raw.reason === "string" ? raw.reason.slice(0, 200) : undefined;
-    const inputKindRaw = raw.inputKind;
-    const inputKind: OrchestratorHitlHint["inputKind"] =
-      inputKindRaw === "single_choice" ||
-      inputKindRaw === "multi_choice" ||
-      inputKindRaw === "free_form" ||
-      inputKindRaw === "approve_only"
-        ? inputKindRaw
-        : undefined;
-    const options =
-      Array.isArray(raw.options) &&
-      raw.options.every(
-        (o) =>
-          o && typeof o === "object" && typeof (o as Record<string, unknown>).value === "string"
-      )
-        ? (raw.options as Array<Record<string, unknown>>).map((o) => ({
-            label: String(o.label ?? o.value ?? ""),
-            value: String(o.value ?? ""),
-            description: typeof o.description === "string" ? o.description : undefined,
-          }))
-        : undefined;
-    return { brief, hitlHint: { needed, reason, inputKind, options } };
-  } catch {
-    return { brief, hitlHint: null };
-  }
 }
 
 /** 运行前：Orchestrator 阅读数据快照并生成对各角色的任务说明 + v2 HITL 自评。 */

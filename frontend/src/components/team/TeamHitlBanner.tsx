@@ -15,6 +15,12 @@ import {
   listPendingWorkflowHitl,
   resolveWorkflowHitl,
 } from "../../api/backend";
+import {
+  HitlInputArea,
+  buildHitlResponsePayload,
+  hitlKindLabel,
+  hitlSubmitLabel,
+} from "./HitlInputArea";
 
 export interface TeamHitlBannerProps {
   workflowRunId: string;
@@ -101,35 +107,10 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
     if (state.busy) return;
     setState((s) => ({ ...s, busy: true, error: null }));
     try {
-      let response: Record<string, unknown> | null = null;
-      if (decision === "approved") {
-        if (inputKind === "single_choice") {
-          if (!choice) {
-            throw new Error("请先选择一项");
-          }
-          response = { value: choice };
-        } else if (inputKind === "multi_choice") {
-          if (
-            schema.minSelect !== undefined &&
-            multiChoice.length < schema.minSelect
-          ) {
-            throw new Error(`至少选择 ${schema.minSelect} 项`);
-          }
-          if (
-            schema.maxSelect !== undefined &&
-            multiChoice.length > schema.maxSelect
-          ) {
-            throw new Error(`最多选择 ${schema.maxSelect} 项`);
-          }
-          response = { values: multiChoice };
-        } else if (inputKind === "free_form") {
-          const text = freeText.trim();
-          if (!text) {
-            throw new Error("请输入指引内容");
-          }
-          response = { text };
-        }
-      }
+      const response =
+        decision === "approved"
+          ? buildHitlResponsePayload({ inputKind, schema, choice, multiChoice, freeText })
+          : null;
       await resolveWorkflowHitl(workflowRunId.trim(), p.id, decision, response);
       setState({ pending: null, busy: false, error: null });
       onResolved(decision);
@@ -143,7 +124,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
       <div style={headerStyle}>
         <span aria-hidden>⏸</span>
         <span style={{ fontWeight: 600 }}>{p.title || "等待人工审批"}</span>
-        <span style={kindTagStyle}>{kindLabel(inputKind)}</span>
+        <span style={kindTagStyle}>{hitlKindLabel(inputKind)}</span>
       </div>
 
       {p.summary ? (
@@ -155,7 +136,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
         </details>
       ) : null}
 
-      <InputArea
+      <HitlInputArea
         inputKind={inputKind}
         schema={schema}
         choice={choice}
@@ -177,7 +158,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
           onClick={() => void submit("approved")}
           disabled={state.busy}
         >
-          {state.busy ? "处理中…" : submitLabel(inputKind)}
+          {state.busy ? "处理中…" : hitlSubmitLabel(inputKind)}
         </button>
         <button
           type="button"
@@ -194,132 +175,6 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
         </button>
       </div>
     </div>
-  );
-}
-
-function kindLabel(kind: HitlInputKind): string {
-  switch (kind) {
-    case "approve_only":
-      return "确认";
-    case "single_choice":
-      return "单选";
-    case "multi_choice":
-      return "多选";
-    case "free_form":
-      return "输入指引";
-  }
-}
-
-function submitLabel(kind: HitlInputKind): string {
-  switch (kind) {
-    case "approve_only":
-      return "批准并继续";
-    case "single_choice":
-    case "multi_choice":
-      return "提交选择";
-    case "free_form":
-      return "提交指引";
-  }
-}
-
-interface InputAreaProps {
-  inputKind: HitlInputKind;
-  schema: HitlInputSchema;
-  choice: string;
-  setChoice: (v: string) => void;
-  multiChoice: string[];
-  setMultiChoice: (v: string[]) => void;
-  freeText: string;
-  setFreeText: (v: string) => void;
-  disabled: boolean;
-}
-
-function InputArea(props: InputAreaProps) {
-  const { inputKind, schema, disabled } = props;
-  const options = schema.options ?? [];
-
-  if (inputKind === "approve_only") return null;
-
-  if (inputKind === "single_choice") {
-    if (options.length === 0) {
-      return <div style={hintStyle}>（缺少选项，仅可批准/拒绝）</div>;
-    }
-    return (
-      <div style={optionListStyle}>
-        {options.map((opt) => (
-          <label key={opt.value} style={optionRowStyle}>
-            <input
-              type="radio"
-              name="hitl-single"
-              checked={props.choice === opt.value}
-              onChange={() => props.setChoice(opt.value)}
-              disabled={disabled}
-            />
-            <div>
-              <div style={{ color: "#fef3c7" }}>{opt.label}</div>
-              {opt.description ? (
-                <div style={{ color: "#a1a1aa", fontSize: 11 }}>{opt.description}</div>
-              ) : null}
-            </div>
-          </label>
-        ))}
-      </div>
-    );
-  }
-
-  if (inputKind === "multi_choice") {
-    if (options.length === 0) {
-      return <div style={hintStyle}>（缺少选项，仅可批准/拒绝）</div>;
-    }
-    return (
-      <div style={optionListStyle}>
-        {options.map((opt) => {
-          const checked = props.multiChoice.includes(opt.value);
-          return (
-            <label key={opt.value} style={optionRowStyle}>
-              <input
-                type="checkbox"
-                checked={checked}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    props.setMultiChoice([...props.multiChoice, opt.value]);
-                  } else {
-                    props.setMultiChoice(props.multiChoice.filter((v) => v !== opt.value));
-                  }
-                }}
-                disabled={disabled}
-              />
-              <div>
-                <div style={{ color: "#fef3c7" }}>{opt.label}</div>
-                {opt.description ? (
-                  <div style={{ color: "#a1a1aa", fontSize: 11 }}>{opt.description}</div>
-                ) : null}
-              </div>
-            </label>
-          );
-        })}
-        {schema.minSelect || schema.maxSelect ? (
-          <div style={hintStyle}>
-            {schema.minSelect ? `至少 ${schema.minSelect} 项` : ""}
-            {schema.minSelect && schema.maxSelect ? "，" : ""}
-            {schema.maxSelect ? `最多 ${schema.maxSelect} 项` : ""}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
-
-  // free_form
-  return (
-    <textarea
-      value={props.freeText}
-      onChange={(e) => props.setFreeText(e.target.value)}
-      placeholder={schema.placeholder ?? "请输入对 Orchestrator 的指引（≤500 字符）"}
-      maxLength={schema.maxLength ?? 500}
-      disabled={disabled}
-      rows={3}
-      style={textareaStyle}
-    />
   );
 }
 
@@ -369,43 +224,10 @@ const preStyle: React.CSSProperties = {
   overflow: "auto",
 };
 
-const optionListStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 6,
-  padding: "8px 0",
-};
-
-const optionRowStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 8,
-  alignItems: "flex-start",
-  cursor: "pointer",
-  padding: "4px 6px",
-  borderRadius: 4,
-};
-
-const textareaStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "8px 10px",
-  background: "#0f0e08",
-  border: "1px solid #78350f",
-  borderRadius: 6,
-  color: "#fde68a",
-  fontSize: 12,
-  resize: "vertical",
-};
-
 const btnRowStyle: React.CSSProperties = {
   display: "flex",
   gap: 8,
   marginTop: 4,
-};
-
-const hintStyle: React.CSSProperties = {
-  color: "#a1a1aa",
-  fontSize: 11,
-  padding: "4px 0",
 };
 
 const inlineErrorStyle: React.CSSProperties = {
