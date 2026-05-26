@@ -1,5 +1,5 @@
 import { getDb } from "../../../db/sqlite/client";
-import { acpCall, mcpCallLog, toolCallLog, workflowRun } from "../../../db/sqlite/schema";
+import { workflowRun } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { sandboxExecutor } from "../../sandbox-executor";
@@ -13,6 +13,13 @@ import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../t
 import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
+import {
+  recordToolCallError,
+  recordToolCallSandboxBlocked,
+  recordToolCallStart,
+  recordToolCallSuccess,
+  recordToolCallTimeout,
+} from "../../tools/tool-call-log-service";
 
 export async function actNode(
   state: AgentGraphState,
@@ -142,46 +149,18 @@ export async function actNode(
     payload: { toolCallId, toolName, targetKind, targetName },
   });
 
-  await db.insert(toolCallLog).values({
-    id: toolCallId,
+  await recordToolCallStart({
+    toolCallId,
     agentStepId,
-    /**
-     * 监控 V2 P1：直接写 workflow_run_id / trace_id，避免 /tools/summary 等
-     * 跨工作流查询被迫 join agent_step。retry_count 暂为 0；act 后续重试场景由 P2
-     * 在外层 wrapper 累加。
-     */
     workflowRunId: state.workflowId,
     traceId: state.traceId,
-    retryCount: 0,
-    toolName: targetName,
+    targetName,
     toolKind,
-    requestJson: {
-      reasonText: state.reasonText,
-      contextMemory: state.contextMemory,
-      targetKind,
-      mcp: mcp ?? null,
-    },
-    status: "success",
-    latencyMs: 1,
+    targetKind,
+    ...(mcp ? { mcp } : {}),
+    reasonText: state.reasonText ?? "",
+    contextMemory: state.contextMemory,
   });
-  if (mcp) {
-    await db.insert(mcpCallLog).values({
-      id: toolCallId,
-      workflowRunId: state.workflowId,
-      agentStepId,
-      serverName: mcp.serverName,
-      toolName: mcp.toolName,
-      /** 监控 V2 P1：traceId 跨表对齐 tool_call_log，便于「同次工具调用」聚合 */
-      traceId: state.traceId,
-      retryCount: 0,
-      requestJson: {
-        reasonText: state.reasonText,
-        arguments: mcp.arguments,
-      },
-      status: "success",
-      latencyMs: 1,
-    });
-  }
 
   const check = mcp
     ? await sandboxExecutor.checkMcpCall({
@@ -219,8 +198,9 @@ export async function actNode(
 
   if (!check.allowed) {
     const acpId = crypto.randomUUID();
-    await db.insert(acpCall).values({
-      id: acpId,
+    await recordToolCallSandboxBlocked({
+      acpId,
+      toolCallId,
       workflowRunId: state.workflowId,
       traceId: state.traceId,
       agentStepId,
@@ -228,27 +208,10 @@ export async function actNode(
       targetKind,
       targetName,
       intent: state.plannedAction ?? "tool_call",
-      status: "blocked_by_sandbox",
-        errorCode: check.violationType ?? (mcp ? "mcp_not_allowed" : connectorTarget ? "connector_not_allowed" : "tool_not_allowed"),
+      hasMcp: Boolean(mcp),
+      reason: check.reason ?? "blocked by sandbox",
+      ...(check.violationType ? { violationType: check.violationType } : {}),
     });
-
-    await db
-      .update(toolCallLog)
-      .set({
-        status: "sandbox_blocked",
-        errorMessage: check.reason ?? "blocked by sandbox",
-      })
-      .where(eq(toolCallLog.id, toolCallId));
-    if (mcp) {
-      await db
-        .update(mcpCallLog)
-        .set({
-          status: "sandbox_blocked",
-          errorCode: check.violationType ?? "mcp_not_allowed",
-          responseJson: { reason: check.reason ?? "blocked by sandbox" },
-        })
-        .where(eq(mcpCallLog.id, toolCallId));
-    }
 
     emit({
       runId: state.runId,
@@ -411,8 +374,9 @@ export async function actNode(
   if (!execution.ok) {
     const latencyMs = Date.now() - startedAt;
     const timeoutAcpId = crypto.randomUUID();
-    await db.insert(acpCall).values({
-      id: timeoutAcpId,
+    await recordToolCallTimeout({
+      acpId: timeoutAcpId,
+      toolCallId,
       workflowRunId: state.workflowId,
       traceId: state.traceId,
       agentStepId,
@@ -420,29 +384,11 @@ export async function actNode(
       targetKind,
       targetName,
       intent: state.plannedAction ?? "tool_call",
-      status: "timeout",
+      hasMcp: Boolean(mcp),
       latencyMs,
-      errorCode: execution.result.violationType ?? "timeout",
+      reason: execution.result.reason ?? "tool timeout",
+      ...(execution.result.violationType ? { violationType: execution.result.violationType } : {}),
     });
-    await db
-      .update(toolCallLog)
-      .set({
-        status: "timeout",
-        latencyMs,
-        errorMessage: execution.result.reason ?? "tool timeout",
-      })
-      .where(eq(toolCallLog.id, toolCallId));
-    if (mcp) {
-      await db
-        .update(mcpCallLog)
-        .set({
-          status: "timeout",
-          latencyMs,
-          errorCode: execution.result.violationType ?? "timeout",
-          responseJson: { reason: execution.result.reason ?? "tool timeout" },
-        })
-        .where(eq(mcpCallLog.id, toolCallId));
-    }
     emit({
       runId: state.runId,
       workflowId: state.workflowId,
@@ -496,10 +442,10 @@ export async function actNode(
     const latencyMs = Date.now() - startedAt;
     const errMsg = execValue.errorMessage ?? "tool call failed";
     const errorSource = execValue.errorSource ?? "unknown";
-    const errorCode = `${errorSource}_call_failed`;
     const failAcpId = crypto.randomUUID();
-    await db.insert(acpCall).values({
-      id: failAcpId,
+    await recordToolCallError({
+      acpId: failAcpId,
+      toolCallId,
       workflowRunId: state.workflowId,
       traceId: state.traceId,
       agentStepId,
@@ -507,30 +453,11 @@ export async function actNode(
       targetKind,
       targetName,
       intent: state.plannedAction ?? "tool_call",
-      status: "error",
+      hasMcp: Boolean(mcp),
       latencyMs,
-      errorCode,
+      errorSource,
+      errorMessage: errMsg,
     });
-    await db
-      .update(toolCallLog)
-      .set({
-        status: "error",
-        latencyMs,
-        errorMessage: errMsg,
-        responseJson: { toolError: true, errorSource, errorMessage: errMsg },
-      })
-      .where(eq(toolCallLog.id, toolCallId));
-    if (mcp) {
-      await db
-        .update(mcpCallLog)
-        .set({
-          status: "failed",
-          latencyMs,
-          errorCode,
-          responseJson: { errorMessage: errMsg },
-        })
-        .where(eq(mcpCallLog.id, toolCallId));
-    }
     emit({
       runId: state.runId,
       workflowId: state.workflowId,
@@ -600,8 +527,9 @@ export async function actNode(
 
   const latencyMs = Date.now() - startedAt;
   const acpId = crypto.randomUUID();
-  await db.insert(acpCall).values({
-    id: acpId,
+  await recordToolCallSuccess({
+    acpId,
+    toolCallId,
     workflowRunId: state.workflowId,
     traceId: state.traceId,
     agentStepId,
@@ -609,28 +537,10 @@ export async function actNode(
     targetKind,
     targetName,
     intent: state.plannedAction ?? "tool_call",
-    status: "success",
+    hasMcp: Boolean(mcp),
     latencyMs,
+    responsePayload: execution.value as Record<string, unknown>,
   });
-
-  await db
-    .update(toolCallLog)
-    .set({
-      status: "success",
-      latencyMs,
-      responseJson: { ...execution.value, acpId },
-    })
-    .where(eq(toolCallLog.id, toolCallId));
-  if (mcp) {
-    await db
-      .update(mcpCallLog)
-      .set({
-        status: "success",
-        latencyMs,
-        responseJson: { ...execution.value, acpId },
-      })
-      .where(eq(mcpCallLog.id, toolCallId));
-  }
 
   emit({
     runId: state.runId,
