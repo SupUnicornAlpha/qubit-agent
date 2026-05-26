@@ -73,6 +73,7 @@ import { OverviewTab, type StrategyRuntime } from "./OverviewTab";
 import { WorkflowTab } from "./WorkflowTab";
 import { AgentTab } from "./AgentTab";
 import { SkillsTab } from "./SkillsTab";
+import { DiagnosticsTab } from "./DiagnosticsTab";
 import { StreamTab } from "./StreamTab";
 import { AlertsEvalTab, type AlertStatusFilter } from "./AlertsEvalTab";
 
@@ -609,6 +610,13 @@ export const MonitorDashboard: FC = () => {
 
       {scope === "skills" ? (
         <SkillsTab
+          sessionFilter={sessionFilter || undefined}
+          onJumpToWorkflow={onJumpToWorkflow}
+        />
+      ) : null}
+
+      {scope === "diagnostics" ? (
+        <DiagnosticsTab
           sessionFilter={sessionFilter || undefined}
           onJumpToWorkflow={onJumpToWorkflow}
         />

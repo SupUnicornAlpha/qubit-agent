@@ -12,7 +12,14 @@ import type {
 
 // ------------------------------ 类型 ------------------------------
 
-export type MonitorScope = "overview" | "workflow" | "agent" | "skills" | "stream" | "alerts_eval";
+export type MonitorScope =
+  | "overview"
+  | "workflow"
+  | "agent"
+  | "skills"
+  | "diagnostics"
+  | "stream"
+  | "alerts_eval";
 
 export type WorkflowRow = {
   id: string;
@@ -33,6 +40,11 @@ export const SCOPE_TABS: { id: MonitorScope; label: string; hint: string }[] = [
   { id: "workflow", label: "工作流", hint: "列表、详情、质量快照、按工作流过滤 SSE" },
   { id: "agent", label: "Agent", hint: "注册实例、延迟与健康度、点击卡片下钻指标" },
   { id: "skills", label: "Skills", hint: "Skill 召回成功率、失败列表（显式 agent_skill_run 归因）" },
+  {
+    id: "diagnostics",
+    label: "工具/MCP 排障",
+    hint: "按单一工具或 MCP server 下钻：错误 Top、沙箱阻断分类、熔断状态、最近调用流水",
+  },
   { id: "stream", label: "实时流", hint: "全局 SSE 折叠时间线" },
   { id: "alerts_eval", label: "告警与评测", hint: "告警确认、评测数据集与 run" },
 ];

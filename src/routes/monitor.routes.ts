@@ -32,7 +32,9 @@ import {
 } from "../runtime/monitor/alert-scanners";
 import { listFailures, type FailureScope } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
+import { getMcpDiagnostics } from "../runtime/monitor/mcp-diagnostics";
 import { getMcpSummary } from "../runtime/monitor/mcp-summary";
+import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
 import { getToolsSummary, type ToolKind } from "../runtime/monitor/tools-summary";
@@ -496,6 +498,54 @@ monitorRouter.get("/mcp/summary", async (c) => {
   if (windowMinutes) input.windowMinutes = Number(windowMinutes);
   if (sessionId) input.sessionId = sessionId;
   const data = await getMcpSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * 单一 tool 排障详情 — /tools/:toolName/detail。
+ *
+ * 用于"工具/MCP 排障 tab"右侧详情面板：给定 toolName 返回该工具窗口内的
+ * summary + latency 分位 + recent calls + error top + sandbox 阻断分类。
+ * toolKind 可选，避免同名工具（如 builtin / mcp 都叫 "search"）混计。
+ *
+ * 详见 src/runtime/monitor/tools-diagnostics.ts。
+ */
+monitorRouter.get("/tools/:toolName/detail", async (c) => {
+  const toolName = c.req.param("toolName");
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const toolKindRaw = c.req.query("toolKind");
+  const recentLimit = c.req.query("recentLimit");
+  const errorTopLimit = c.req.query("errorTopLimit");
+  const allowedKinds: ToolKind[] = ["acp_connector", "mcp", "skill", "builtin"];
+  const input: Parameters<typeof getToolDiagnostics>[0] = { toolName };
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  if (recentLimit) input.recentLimit = Number(recentLimit);
+  if (errorTopLimit) input.errorTopLimit = Number(errorTopLimit);
+  if (toolKindRaw && (allowedKinds as string[]).includes(toolKindRaw)) {
+    input.toolKind = toolKindRaw as ToolKind;
+  }
+  const data = await getToolDiagnostics(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * 单一 MCP server 排障详情 — /mcp/:serverName/detail。
+ * 详见 src/runtime/monitor/mcp-diagnostics.ts。
+ */
+monitorRouter.get("/mcp/:serverName/detail", async (c) => {
+  const serverName = c.req.param("serverName");
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const recentLimit = c.req.query("recentLimit");
+  const errorTopLimit = c.req.query("errorTopLimit");
+  const input: Parameters<typeof getMcpDiagnostics>[0] = { serverName };
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  if (recentLimit) input.recentLimit = Number(recentLimit);
+  if (errorTopLimit) input.errorTopLimit = Number(errorTopLimit);
+  const data = await getMcpDiagnostics(input);
   return c.json({ ok: true, data });
 });
 

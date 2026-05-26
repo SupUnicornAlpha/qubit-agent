@@ -1094,6 +1094,156 @@ export async function listMonitorMcpSummary(input?: {
 }
 
 /**
+ * 监控 · 单一 Tool 排障详情（"工具/MCP 排障 tab"右侧详情面板用）。
+ * 详见 src/runtime/monitor/tools-diagnostics.ts。
+ */
+export type MonitorToolDiagCall = {
+  id: string;
+  status: "success" | "error" | "timeout" | "sandbox_blocked";
+  errorMessage: string | null;
+  latencyMs: number | null;
+  retryCount: number;
+  workflowRunId: string | null;
+  agentStepId: string;
+  stepIndex: number | null;
+  createdAt: string;
+};
+
+export type MonitorErrorTopRow = {
+  errorMessage: string;
+  count: number;
+  lastSeenAt: string;
+  sampleWorkflowRunId: string | null;
+};
+
+export type MonitorSandboxViolationGroup = {
+  violationType: string;
+  count: number;
+  lastSeenAt: string;
+  sampleWorkflowRunId: string | null;
+  samplePolicyId: string | null;
+};
+
+export type MonitorToolDiagnostics = {
+  summary: MonitorToolSummaryRow;
+  latency: {
+    p50: number | null;
+    p95: number | null;
+    p99: number | null;
+    samples: number;
+  };
+  recentCalls: MonitorToolDiagCall[];
+  errorTop: MonitorErrorTopRow[];
+  sandboxViolations: MonitorSandboxViolationGroup[];
+};
+
+export async function getMonitorToolDiagnostics(input: {
+  toolName: string;
+  toolKind?: MonitorToolKind;
+  windowMinutes?: number;
+  recentLimit?: number;
+  errorTopLimit?: number;
+  sessionId?: string;
+}): Promise<MonitorToolDiagnostics> {
+  const query = new URLSearchParams();
+  if (input.toolKind) query.set("toolKind", input.toolKind);
+  if (input.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input.recentLimit != null) query.set("recentLimit", String(input.recentLimit));
+  if (input.errorTopLimit != null) query.set("errorTopLimit", String(input.errorTopLimit));
+  if (input.sessionId) query.set("sessionId", input.sessionId);
+  const suffix = query.toString();
+  const path = `/api/v1/monitor/tools/${encodeURIComponent(input.toolName)}/detail${
+    suffix ? `?${suffix}` : ""
+  }`;
+  const res = await httpGet<{ ok: boolean; data: MonitorToolDiagnostics }>(path);
+  return res.data;
+}
+
+/**
+ * 监控 · 单一 MCP server 排障详情。
+ * 详见 src/runtime/monitor/mcp-diagnostics.ts。
+ */
+export type MonitorMcpDiagCall = {
+  id: string;
+  toolName: string;
+  status: "success" | "timeout" | "failed" | "sandbox_blocked";
+  errorCode: string | null;
+  latencyMs: number | null;
+  retryCount: number;
+  workflowRunId: string;
+  agentStepId: string;
+  createdAt: string;
+};
+
+export type MonitorMcpErrorTopRow = {
+  errorCode: string;
+  sampleMessage: string | null;
+  count: number;
+  lastSeenAt: string;
+  sampleWorkflowRunId: string | null;
+};
+
+export type MonitorMcpByToolStat = {
+  toolName: string;
+  totalCalls: number;
+  successCount: number;
+  failedCount: number;
+  timeoutCount: number;
+  sandboxBlockedCount: number;
+  avgLatencyMs: number | null;
+};
+
+export type MonitorMcpDiagnostics = {
+  serverName: string;
+  windowMinutes: number;
+  summary: {
+    totalCalls: number;
+    successCount: number;
+    failedCount: number;
+    timeoutCount: number;
+    sandboxBlockedCount: number;
+    successRate: number;
+    avgLatencyMs: number | null;
+    lastCalledAt: string | null;
+  };
+  health: {
+    circuitState: "closed" | "open" | "half_open";
+    failureCount: number;
+    successCount: number;
+    lastFailureAt: string | null;
+    lastSuccessAt: string | null;
+    openedAt: string | null;
+    lastErrorMessage: string | null;
+    updatedAt: string;
+    cooldownMs: number;
+  } | null;
+  latency: { p50: number | null; p95: number | null; p99: number | null; samples: number };
+  recentCalls: MonitorMcpDiagCall[];
+  errorTop: MonitorMcpErrorTopRow[];
+  byTool: MonitorMcpByToolStat[];
+};
+
+export async function getMonitorMcpDiagnostics(input: {
+  serverName: string;
+  windowMinutes?: number;
+  recentLimit?: number;
+  errorTopLimit?: number;
+  sessionId?: string;
+}): Promise<MonitorMcpDiagnostics> {
+  const query = new URLSearchParams();
+  if (input.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input.recentLimit != null) query.set("recentLimit", String(input.recentLimit));
+  if (input.errorTopLimit != null) query.set("errorTopLimit", String(input.errorTopLimit));
+  if (input.sessionId) query.set("sessionId", input.sessionId);
+  const suffix = query.toString();
+  const path = `/api/v1/monitor/mcp/${encodeURIComponent(input.serverName)}/detail${
+    suffix ? `?${suffix}` : ""
+  }`;
+  const res = await httpGet<{ ok: boolean; data: MonitorMcpDiagnostics }>(path);
+  return res.data;
+}
+
+/**
  * 监控 · LLM 用量聚合（24h token / cost / 错误 top）。
  * 详见 docs/MONITORING_V2_DESIGN.md §4.1.1 / §7.5 / src/runtime/monitor/llm-usage.ts。
  */
