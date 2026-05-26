@@ -105,7 +105,11 @@ export interface AnalystSignal {
   createdAt: string;
 }
 
-export interface SignalFusionResult {
+/**
+ * P2-F 命名空间化：原 `SignalFusionResult` 名字泛化，与 backtest signal 域容易混。
+ * 这里特指多 Analyst 信号经 MSA 融合后的最终结果（DB row 视图）。
+ */
+export interface AnalystSignalFusionResult {
   id: string;
   workflowRunId: string;
   ticker: string;
@@ -115,6 +119,9 @@ export interface SignalFusionResult {
   debateTriggered: boolean;
   createdAt: string;
 }
+
+/** @deprecated 用 `AnalystSignalFusionResult` */
+export type SignalFusionResult = AnalystSignalFusionResult;
 
 export interface AgentRoleCatalog {
   role: string;

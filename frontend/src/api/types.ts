@@ -672,7 +672,11 @@ export interface AnalystSignalRecord {
   createdAt: string;
 }
 
-export interface SignalFusionRecord {
+/**
+ * P2-F 命名空间化：原名 `SignalFusionRecord` 太泛化。本接口特指 MSA Analyst 信号
+ * 融合结果在前端的 row 视图。
+ */
+export interface AnalystSignalFusionRecord {
   id: string;
   workflowRunId: string;
   ticker: string;
@@ -682,6 +686,9 @@ export interface SignalFusionRecord {
   debateTriggered: boolean;
   createdAt: string;
 }
+
+/** @deprecated 用 `AnalystSignalFusionRecord` */
+export type SignalFusionRecord = AnalystSignalFusionRecord;
 
 /** POST /analyst/run scope（与后端 research-scope 一致） */
 export type ResearchScopeInput = {

@@ -9,7 +9,7 @@ type FusionBreakdownRow = {
 };
 
 /**
- * 将 GET /analyst/fusion/:id 返回的 FusionOutput（含 signalBreakdown）规范为 AnalystTeamResult。
+ * 将 GET /analyst/fusion/:id 返回的 AnalystSignalFusionOutput（含 signalBreakdown）规范为 AnalystTeamResult。
  */
 export function normalizeFusionApiToTeamResult(data: unknown): AnalystTeamResult | null {
   if (!data || typeof data !== "object") return null;

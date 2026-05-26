@@ -32,7 +32,12 @@ export interface RawAnalystSignal {
   dataSnapshot?: Record<string, unknown>;
 }
 
-export interface FusionOutput {
+/**
+ * P2-F 命名空间化：原名 `FusionOutput` 过于泛化。本接口特指 MSA Analyst 信号融合
+ * 结果（in-memory 结构，含 signalBreakdown 明细）。注意与 entities 里
+ * `AnalystSignalFusionResult`（DB row 视图）区分。
+ */
+export interface AnalystSignalFusionOutput {
   fusionId: string;
   ticker: string;
   fusedSignal: AnalystSignalValue;
@@ -105,7 +110,7 @@ export async function fuseSignals(params: {
   }>;
   /** 当 signals 为空时仍写入一条占位融合记录（仅研究团队「无 analyst_*」场景） */
   tickerHint?: string;
-}): Promise<FusionOutput> {
+}): Promise<AnalystSignalFusionOutput> {
   const db = await getDb();
   const { workflowRunId, signals } = params;
 
@@ -155,7 +160,7 @@ export async function fuseSignals(params: {
   // Compute weighted average
   let weightedSum = 0;
   let totalWeight = 0;
-  const breakdown: FusionOutput["signalBreakdown"] = [];
+  const breakdown: AnalystSignalFusionOutput["signalBreakdown"] = [];
   const weightsSnapshot: Record<string, number> = {};
 
   for (const s of signals) {
@@ -230,7 +235,7 @@ export async function fuseSignals(params: {
  */
 export async function getLatestFusionForWorkflow(
   workflowRunId: string
-): Promise<FusionOutput | null> {
+): Promise<AnalystSignalFusionOutput | null> {
   const db = await getDb();
 
   const fusion = await db

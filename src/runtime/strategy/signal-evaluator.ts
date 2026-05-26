@@ -4,7 +4,17 @@ import type { BarData } from "../../connectors/data/data.connector";
 import { PythonOneShotError, runPythonOneShot } from "../../util/python-oneshot";
 import { getPythonBin } from "../sandbox/python-runtime";
 
-export interface SignalEvaluationResult {
+/**
+ * P2-F 命名空间化：`Signal*` 系列名字泛化，区分三个域：
+ *   - AnalystSignal*       （多 Agent 投研结论 buy/sell/hold + confidence）
+ *   - BacktestSignalSpec*  （回测策略表达式规则）
+ *   - IndicatorSignal*     （技术指标/Python 因子的 boolean buy/sell 序列）
+ *
+ * 本接口属于 indicator/script 评估结果（一根 bar 的最新 buy/sell 布尔）。
+ *
+ * 注意：此处 `buy/sell` 是布尔值（指标触发与否），不是 AnalystSignalValue("buy"|"sell"|"hold")。
+ */
+export interface IndicatorSignalEvaluationResult {
   buy: boolean;
   sell: boolean;
   barTime: string | null;
@@ -32,10 +42,16 @@ const SCRIPT_RUNNER_PATH = join(
   "../market/python_strategy_script_runtime.py"
 );
 
+/**
+ * @deprecated 旧名字，保留作 type alias 让外部 import { SignalEvaluationResult } 不立刻断裂。
+ * 新代码请用 `IndicatorSignalEvaluationResult`。
+ */
+export type SignalEvaluationResult = IndicatorSignalEvaluationResult;
+
 export async function evaluateScriptOnBar(
   strategyCode: string,
   bars: BarData[]
-): Promise<SignalEvaluationResult> {
+): Promise<IndicatorSignalEvaluationResult> {
   if (!bars.length) {
     return { buy: false, sell: false, barTime: null, error: "no_bars" };
   }
@@ -93,7 +109,7 @@ export async function evaluateSignalCode(
   signalCode: string,
   bars: BarData[],
   mode: "indicator" | "script" = "indicator"
-): Promise<SignalEvaluationResult> {
+): Promise<IndicatorSignalEvaluationResult> {
   if (mode === "script") {
     return evaluateScriptOnBar(signalCode, bars);
   }

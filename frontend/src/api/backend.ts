@@ -61,7 +61,7 @@ import type {
   AgentRuntimeMetricRecord,
   SessionAgentBoardItem,
   SessionA2AMessageItem,
-  SignalFusionRecord,
+  AnalystSignalFusionRecord,
   StepStreamEvent,
   WorkflowDetail,
   WorkflowObservability,
@@ -1735,16 +1735,16 @@ export async function getFusionHistory(params?: {
   ticker?: string;
   limit?: number;
   offset?: number;
-}): Promise<SignalFusionRecord[]> {
+}): Promise<AnalystSignalFusionRecord[]> {
   const query = new URLSearchParams();
   if (params?.ticker) query.set("ticker", params.ticker);
   if (params?.limit) query.set("limit", String(params.limit));
   if (params?.offset) query.set("offset", String(params.offset));
-  const res = await httpGet<{ ok?: boolean; data?: SignalFusionRecord[] | null }>(
+  const res = await httpGet<{ ok?: boolean; data?: AnalystSignalFusionRecord[] | null }>(
     `/api/v1/analyst/fusion/history?${query.toString()}`
   );
   const rows = (res as { data?: unknown } | null)?.data;
-  return Array.isArray(rows) ? (rows as SignalFusionRecord[]) : [];
+  return Array.isArray(rows) ? (rows as AnalystSignalFusionRecord[]) : [];
 }
 
 export async function getDebateConfig(): Promise<DebateConfig> {
