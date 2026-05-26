@@ -137,10 +137,17 @@ export type ResearchTeamOutcome =
 export interface RunTeamResearchPersistDeps {
   /** 跑 LLM/wave 的核心；默认 `executeResearchTeamWorkflow` */
   execute?: typeof executeResearchTeamWorkflow;
-  /** 将 workflow_run.status 写到 DB；默认走 drizzle */
+  /**
+   * 将 workflow_run.status 写到 DB；默认走 drizzle。
+   *
+   * "running" 是 2026-05-26 新增：研究团队 graph 短路路径既不经
+   * `executeAgentReact` 也不经 `a2aLoopDriver.dispatchTask`，没人把 status
+   * 从 `pending` 切到 `running`，导致前端 sidebar 一直显示 pending。helper
+   * 是唯一真理源，所以在这里补这一次幂等写入。
+   */
   setWorkflowStatus?: (
     workflowRunId: string,
-    status: "completed" | "failed" | "awaiting_approval",
+    status: "completed" | "failed" | "awaiting_approval" | "running",
   ) => Promise<void>;
   /** SSE 事件汇；默认 `stepStreamBus.publish` */
   publishEvent?: (event: StepStreamEvent) => void;
@@ -154,7 +161,7 @@ export interface RunTeamResearchPersistDeps {
 
 async function defaultSetWorkflowStatus(
   workflowRunId: string,
-  status: "completed" | "failed" | "awaiting_approval",
+  status: "completed" | "failed" | "awaiting_approval" | "running",
 ): Promise<void> {
   await setWorkflowState(workflowRunId, status, { reason: "research-team-execute" });
 }
@@ -181,6 +188,18 @@ export async function runTeamResearchAndPersist(
   const failJob = deps.failJob ?? failResearchTeamExecuteJob;
 
   try {
+    /**
+     * 2026-05-26 修复 "在跑但 sidebar 一直显示 pending"：
+     *   - Graph 短路路径（research_team_execute）不经 executeAgentReact，
+     *     也不经 a2aLoopDriver.dispatchTask，所以没人把 status 从 pending
+     *     切到 running。helper 是唯一真理源，这里补一次。
+     *   - 合法迁移：pending → running（首派）、running → running（幂等，
+     *     HITL approve 后 orchestrator-handler 会再次走到这里）、
+     *     awaiting_approval → running、failed → running（compensation 重试）
+     *     都在 ALLOWED_TRANSITIONS 内，不会触发非法 transition warn。
+     */
+    await setStatus(input.workflowRunId, "running");
+
     const teamResult = await execute({
       workflowRunId: input.workflowRunId,
       params: input.parsed,

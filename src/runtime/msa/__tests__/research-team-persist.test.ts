@@ -137,7 +137,15 @@ describe("runTeamResearchAndPersist", () => {
     if (outcome.kind === "completed") {
       expect(outcome.teamResult.fusionId).toBe("fusion-x");
     }
-    expect(m.setStatusCalls).toEqual([["wf-1", "completed"]]);
+    /**
+     * 2026-05-26: helper 现在在进入 execute 前会先把 status 写成 running，
+     * 修掉 "research_team graph 短路时 sidebar 一直显示 pending" 的回归。
+     * 详见 research-team-execute.ts 里 setStatus(workflowRunId, "running") 的注释。
+     */
+    expect(m.setStatusCalls).toEqual([
+      ["wf-1", "running"],
+      ["wf-1", "completed"],
+    ]);
     expect(m.terminalCalls).toEqual([["wf-1", "completed"]]);
     expect(m.pauseJobCalls.length).toBe(0);
     expect(m.failJobCalls.length).toBe(0);
@@ -171,7 +179,10 @@ describe("runTeamResearchAndPersist", () => {
       expect(outcome.requestId).toBe("hitl-req-9");
       expect(outcome.title).toContain("AAPL");
     }
-    expect(m.setStatusCalls).toEqual([["wf-2", "awaiting_approval"]]);
+    expect(m.setStatusCalls).toEqual([
+      ["wf-2", "running"],
+      ["wf-2", "awaiting_approval"],
+    ]);
     /** awaiting_approval 不算 terminal，绝不能调 onWorkflowTerminal */
     expect(m.terminalCalls.length).toBe(0);
     expect(m.pauseJobCalls.length).toBe(1);
@@ -209,7 +220,10 @@ describe("runTeamResearchAndPersist", () => {
     if (outcome.kind === "failed") {
       expect(outcome.error.message).toContain("boom: provider 429");
     }
-    expect(m.setStatusCalls).toEqual([["wf-3", "failed"]]);
+    expect(m.setStatusCalls).toEqual([
+      ["wf-3", "running"],
+      ["wf-3", "failed"],
+    ]);
     expect(m.terminalCalls).toEqual([["wf-3", "failed"]]);
     expect(m.pauseJobCalls.length).toBe(0);
     expect(m.failJobCalls.length).toBe(1);
