@@ -34,6 +34,7 @@ docs/*
 !docs/FACTOR_RULE_STRATEGY_DESIGN.md
 !docs/AGENT_STABILITY_REVIEW.md
 !docs/HITL_REDESIGN.md
+!docs/MONITORING_V2_DESIGN.md
 .tmp-broker-test-home/
 
 # IDE metadata
