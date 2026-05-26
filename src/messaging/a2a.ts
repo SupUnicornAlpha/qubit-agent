@@ -1,9 +1,45 @@
 import { randomUUID } from "node:crypto";
 import type { A2AMessageType, AgentRole } from "../types/entities";
-import type { A2AMessageEnvelope } from "../types/a2a";
-import { A2A_GOVERNANCE } from "../types/a2a";
+import {
+  A2A_GOVERNANCE,
+  A2AMessageSchema,
+  AlertPayloadSchema,
+  MemoryWritePayloadSchema,
+  OrderIntentPayloadSchema,
+  RiskBlockPayloadSchema,
+  TaskAssignPayloadSchema,
+  TaskResultPayloadSchema,
+  type A2AMessageEnvelope,
+} from "../types/a2a";
 import { persistA2AMessage } from "./a2a-persistence";
 import { messageBus } from "./bus";
+
+/**
+ * P2-A：A2A envelope payload schema 分发表。
+ *
+ * 之前 router 只跑 `_enforceGovernance`（只看 ORDER_INTENT.riskSignature），
+ * payload 形状漂移没有任何防护。这里挂回 types/a2a.ts 已有的 zod schema，
+ * 按 messageType 派发对应 payload schema 做 .safeParse。
+ *
+ * 失败行为：开发模式 throw、生产模式 warn 不挡（避免单条破消息把总线打死）。
+ * 由 env 变量 `A2A_STRICT_PAYLOAD` 控制；CI / 单测默认 strict。
+ */
+const PAYLOAD_SCHEMAS: Record<A2AMessageType, { parse: (v: unknown) => unknown }> = {
+  TASK_ASSIGN: TaskAssignPayloadSchema,
+  TASK_RESULT: TaskResultPayloadSchema,
+  RISK_BLOCK: RiskBlockPayloadSchema,
+  ORDER_INTENT: OrderIntentPayloadSchema,
+  MODEL_UPDATE: { parse: (v: unknown) => v }, // 暂无 schema，原样放行
+  MEMORY_WRITE: MemoryWritePayloadSchema,
+  ALERT: AlertPayloadSchema,
+};
+
+function isStrictMode(): boolean {
+  // 显式关闭：A2A_STRICT_PAYLOAD=false / 0；默认 strict
+  const raw = process.env.A2A_STRICT_PAYLOAD ?? "";
+  if (raw === "false" || raw === "0") return false;
+  return true;
+}
 
 /**
  * A2A (Agent-to-Agent) router.
@@ -26,9 +62,10 @@ export class A2ARouter {
   }
 
   /**
-   * Route a message through governance checks then dispatch to the bus.
+   * Route a message through schema + governance checks then dispatch to the bus.
    */
   async route(message: A2AMessageEnvelope): Promise<void> {
+    this._validateEnvelopeAndPayload(message);
     this._enforceGovernance(message);
     messageBus.publish(message);
     void persistA2AMessage(message).catch((err) => {
@@ -59,6 +96,41 @@ export class A2ARouter {
     handler: (msg: A2AMessageEnvelope) => void | Promise<void>
   ): () => void {
     return messageBus.subscribe(type, handler);
+  }
+
+  /**
+   * P2-A：Envelope + payload schema 双层校验。
+   *
+   * 错误处理：
+   *   - envelope schema 失败 → 总是 throw（消息格式坏掉，无法 fallback）
+   *   - payload schema 失败 → strict 模式 throw；非 strict 模式只 console.warn 不挡
+   *     （避免一条 payload 异常把整条总线打死，让上层 handler 自己 catch）
+   */
+  private _validateEnvelopeAndPayload(message: A2AMessageEnvelope): void {
+    /** envelope 自身先过 schema（type / sender / receiver / messageType 等） */
+    const envelopeCheck = A2AMessageSchema.safeParse(message);
+    if (!envelopeCheck.success) {
+      throw new Error(
+        `A2A envelope schema mismatch: ${envelopeCheck.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; ")}`,
+      );
+    }
+
+    /** 按 messageType 找 payload schema */
+    const payloadSchema = PAYLOAD_SCHEMAS[message.messageType];
+    if (!payloadSchema) return;
+    try {
+      payloadSchema.parse(message.payload);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const msg = `A2A payload schema mismatch (messageType=${message.messageType}, id=${message.messageId}): ${detail}`;
+      if (isStrictMode()) {
+        throw new Error(msg);
+      } else {
+        console.warn("[A2ARouter]", msg);
+      }
+    }
   }
 
   /**
