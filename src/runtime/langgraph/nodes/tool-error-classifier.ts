@@ -15,6 +15,7 @@ const TRANSIENT_PATTERNS: RegExp[] = [
   /\bAbortError\b/i,
   /\bECONNRESET\b/i,
   /\bECONNREFUSED\b/i,
+  /\bETIMEDOUT\b/i,
   /\bENETUNREACH\b/i,
   /\bEAI_AGAIN\b/i,
   /\bENOENT\b/i,
@@ -37,6 +38,8 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bunauthorized\b/i,
   /\bforbidden\b/i,
   /\brequired\b.*\b(missing|absent|empty)/i,
+  /\bis\s+required\b/i,
+  /\bis\s+not\s+implemented\b/i,
 ];
 
 const BLOCKED_PATTERNS: RegExp[] = [

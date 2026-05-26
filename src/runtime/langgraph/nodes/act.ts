@@ -295,6 +295,12 @@ export async function actNode(
     traceId: state.traceId,
     agentInstanceId,
     definition: state.agentDefinition,
+    /**
+     * P1-D：3 个分支（mcp/connector/builtin）的错误处理统一为
+     * `{result:"error", toolError:true, errorSource, errorMessage}`，让 ReAct 后续
+     * 走 classifier + hint 回写 observation，不再让 connector/builtin 错误
+     * 打爆整个 graph（在 P0-C 之前会被 executeAgentReact catch 标 status=failed）。
+     */
     action: async () => {
       if (mcp) {
         try {
@@ -308,59 +314,96 @@ export async function actNode(
           return { result: "ok" as const, mcpResult };
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
-          return { result: "error" as const, mcpError: true, errorMessage };
+          return {
+            result: "error" as const,
+            toolError: true,
+            errorSource: "mcp" as const,
+            errorMessage,
+          };
         }
       }
       if (connectorTarget) {
-        const policy = await sandboxExecutor.loadPolicy(state.agentDefinition);
-        const request = buildAcpRequest({
-          sessionId: state.inboundMessage.messageId,
-          workflowId: state.workflowId,
-          senderAgent: agentInstanceId,
-          targetKind: "connector",
-          targetName: connectorTarget,
-          intent: effectiveToolName,
-          payload: { operation: effectiveToolName, params: enrichedToolParams },
-          timeoutMs: policy.maxToolCallMs,
-        });
-        const response = await defaultAcpCaller.call(request);
-        if (response.status !== "success") {
-          throw new Error(response.errorCode ?? response.status ?? "connector_call_failed");
+        try {
+          const policy = await sandboxExecutor.loadPolicy(state.agentDefinition);
+          const request = buildAcpRequest({
+            sessionId: state.inboundMessage.messageId,
+            workflowId: state.workflowId,
+            senderAgent: agentInstanceId,
+            targetKind: "connector",
+            targetName: connectorTarget,
+            intent: effectiveToolName,
+            payload: { operation: effectiveToolName, params: enrichedToolParams },
+            timeoutMs: policy.maxToolCallMs,
+          });
+          const response = await defaultAcpCaller.call(request);
+          if (response.status !== "success") {
+            return {
+              result: "error" as const,
+              toolError: true,
+              errorSource: "connector" as const,
+              errorMessage: response.errorCode ?? response.status ?? "connector_call_failed",
+            };
+          }
+          return { result: "ok" as const, connectorResult: response.result };
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          return {
+            result: "error" as const,
+            toolError: true,
+            errorSource: "connector" as const,
+            errorMessage,
+          };
         }
-        return { result: "ok" as const, connectorResult: response.result };
       }
       if (isBuiltinTool(effectiveToolName)) {
-        const enrichedParams = {
-          ...enrichedToolParams,
-          ticker:
-            (enrichedToolParams["ticker"] as string | undefined) ??
-            (enrichedToolParams["symbol"] as string | undefined),
-        };
-        const toolCtx = {
-          workflowId: state.workflowId,
-          runId: state.runId,
-          traceId: state.traceId,
-          agentInstanceId,
-          projectId,
-          definition: state.agentDefinition,
-          reasonText: state.reasonText,
-          inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
-        };
-        const builtinResult = await dispatchBuiltinTool(effectiveToolName, toolCtx, enrichedParams);
-        if (effectiveToolName === "run_analyst_team") {
-          return { result: "ok" as const, analystTeamResult: builtinResult };
+        try {
+          const enrichedParams = {
+            ...enrichedToolParams,
+            ticker:
+              (enrichedToolParams["ticker"] as string | undefined) ??
+              (enrichedToolParams["symbol"] as string | undefined),
+          };
+          const toolCtx = {
+            workflowId: state.workflowId,
+            runId: state.runId,
+            traceId: state.traceId,
+            agentInstanceId,
+            projectId,
+            definition: state.agentDefinition,
+            reasonText: state.reasonText,
+            inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
+          };
+          const builtinResult = await dispatchBuiltinTool(
+            effectiveToolName,
+            toolCtx,
+            enrichedParams,
+          );
+          if (effectiveToolName === "run_analyst_team") {
+            return { result: "ok" as const, analystTeamResult: builtinResult };
+          }
+          if (effectiveToolName === "edit_agent_pack") {
+            return { result: "ok" as const, packEdit: builtinResult };
+          }
+          if (effectiveToolName === "fuse_signals") {
+            return { result: "ok" as const, fusionResult: builtinResult };
+          }
+          return { result: "ok" as const, builtinResult };
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          return {
+            result: "error" as const,
+            toolError: true,
+            errorSource: "builtin" as const,
+            errorMessage,
+          };
         }
-        if (effectiveToolName === "edit_agent_pack") {
-          return { result: "ok" as const, packEdit: builtinResult };
-        }
-        if (effectiveToolName === "fuse_signals") {
-          return { result: "ok" as const, fusionResult: builtinResult };
-        }
-        return { result: "ok" as const, builtinResult };
       }
-      throw new Error(
-        `Tool "${effectiveToolName}" is not implemented. Add it to builtin-tools or tool-routes (connector).`
-      );
+      return {
+        result: "error" as const,
+        toolError: true,
+        errorSource: "unknown" as const,
+        errorMessage: `Tool "${effectiveToolName}" is not implemented. Add it to builtin-tools or tool-routes (connector).`,
+      };
     },
     meta: { toolName: effectiveToolName },
   });
@@ -434,18 +477,26 @@ export async function actNode(
 
   const execValue = execution.value as {
     result?: string;
-    mcpError?: boolean;
+    toolError?: boolean;
+    errorSource?: "mcp" | "connector" | "builtin" | "unknown";
     errorMessage?: string;
   };
   /**
-   * P0-4 W1 mini-fix：MCP 错误目前在 sandbox.action 里被 catch 后返回 `{result:"error"}`，
-   * 不抛出（保留 ReAct 继续跑的能力），但 observation 加结构化错误字段
-   * （errorClass / retryable / hint），让下一轮 LLM 能基于此换工具/换参，
-   * 而不是反复重试同一个错误直到 maxIterations。
+   * P1-D：把 P0-4 的"MCP 错误转 observation"扩展到 connector / builtin / unknown
+   * 所有 toolError 分支。LLM 看到结构化 hint 后能换工具/换参，而不是让整个 graph
+   * 因为一次 connector_call_failed 就被打爆 status=failed（P0-C 之后 throw 会被
+   * executeAgentReact catch 标 failed，对用户体验最差）。
+   *
+   * 行为差异：
+   *   - mcp：同时更新 mcp_call_log 与 tool_call_log
+   *   - connector / builtin：只更 tool_call_log（acp_call 也会写一条 error）
+   *   - errorClass / hint 文案对所有 source 通用（classifier 只看 errorMessage）
    */
-  if (execValue.result === "error" && execValue.mcpError) {
+  if (execValue.result === "error" && execValue.toolError) {
     const latencyMs = Date.now() - startedAt;
-    const errMsg = execValue.errorMessage ?? "mcp call failed";
+    const errMsg = execValue.errorMessage ?? "tool call failed";
+    const errorSource = execValue.errorSource ?? "unknown";
+    const errorCode = `${errorSource}_call_failed`;
     const failAcpId = crypto.randomUUID();
     await db.insert(acpCall).values({
       id: failAcpId,
@@ -458,7 +509,7 @@ export async function actNode(
       intent: state.plannedAction ?? "tool_call",
       status: "error",
       latencyMs,
-      errorCode: "mcp_call_failed",
+      errorCode,
     });
     await db
       .update(toolCallLog)
@@ -466,7 +517,7 @@ export async function actNode(
         status: "error",
         latencyMs,
         errorMessage: errMsg,
-        responseJson: { mcpError: true, errorMessage: errMsg },
+        responseJson: { toolError: true, errorSource, errorMessage: errMsg },
       })
       .where(eq(toolCallLog.id, toolCallId));
     if (mcp) {
@@ -475,7 +526,7 @@ export async function actNode(
         .set({
           status: "failed",
           latencyMs,
-          errorCode: "mcp_call_failed",
+          errorCode,
           responseJson: { errorMessage: errMsg },
         })
         .where(eq(mcpCallLog.id, toolCallId));
@@ -492,7 +543,8 @@ export async function actNode(
         toolCallId,
         status: "failed",
         reason: errMsg,
-        mcpError: true,
+        toolError: true,
+        errorSource,
         targetKind,
         targetName,
       },
@@ -510,7 +562,8 @@ export async function actNode(
       ts: Date.now(),
       payload: {
         level: "error",
-        mcpError: true,
+        toolError: true,
+        errorSource,
         message: errMsg,
         errorClass,
         retryable,
@@ -520,13 +573,21 @@ export async function actNode(
     return {
       toolCalls: [
         ...state.toolCalls,
-        { toolCallId, toolName: targetName, status: "failed", reason: errMsg, mcpError: true },
+        {
+          toolCallId,
+          toolName: targetName,
+          status: "failed",
+          reason: errMsg,
+          toolError: true,
+          errorSource,
+        },
       ],
       observations: [
         ...state.observations,
         {
           level: "error",
-          mcpError: true,
+          toolError: true,
+          errorSource,
           message: errMsg,
           errorClass,
           retryable,

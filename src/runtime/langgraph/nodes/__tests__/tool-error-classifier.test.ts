@@ -40,6 +40,14 @@ describe("classifyToolError", () => {
     expect(classifyToolError("")).toBe("unknown");
     expect(classifyToolError("something weird happened")).toBe("unknown");
   });
+
+  test("P1-D：connector / builtin 常见错误归类", () => {
+    expect(classifyToolError("connector_call_failed")).toBe("unknown");
+    expect(classifyToolError("connector qubit-news returned errorCode=timeout")).toBe("transient");
+    expect(classifyToolError("Tool \"factor.query\" is not implemented")).toBe("permanent");
+    expect(classifyToolError("factor.register: project_id is required")).toBe("permanent");
+    expect(classifyToolError("ETIMEDOUT during connector call")).toBe("transient");
+  });
 });
 
 describe("buildMcpRetryHint", () => {
