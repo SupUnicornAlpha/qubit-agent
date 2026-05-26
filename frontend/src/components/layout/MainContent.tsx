@@ -1087,10 +1087,9 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         reuseSessionWorkflow: true,
         loopKind: chatLoopKind,
         // 把对话 HITL 三档策略落到 workflow_run.loop_options_json，hitl-gate.ts 会读它。
-        // 同时写一个 hitlChat 布尔做兼容（旧 reuseSessionWorkflow 复用的老 workflow 行可能没 hitlChatMode）。
+        // P1-H：v1 hitlChat 字段不再前端写入；后端 resolveChatHitlMode 仍读老 DB row 的 v1 字段。
         loopOptionsJson: {
           hitlChatMode: chatHitlMode,
-          hitlChat: chatHitlMode === "always",
         },
       });
       await patchSessionMessage({
@@ -5297,7 +5296,6 @@ const TeamDashboardPanel: FC = () => {
         timeoutMs,
         signal: abortCtl.signal,
         hitlMode: teamHitlMode,
-        hitlTeam: teamHitlMode === "always",
         onAwaitingApproval: (info) => {
           setTeamPendingHitl({
             jobId: info.jobId,

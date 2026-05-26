@@ -1513,7 +1513,10 @@ export async function startAnalystTeam(params: {
   agentGroupId?: string;
   analystRoles?: string[];
   analystDefinitionIds?: string[];
-  /** v1 兼容：启用 Orchestrator 规划后的 HITL；后端会写入 workflow.loopOptionsJson.hitlTeam */
+  /**
+   * @deprecated v1 兼容；前端自 P1-H 起不再写入。后端 resolveTeamHitlMode 仍兼容
+   * 老调用方。新代码请用 `hitlMode`。
+   */
   hitlTeam?: boolean;
   /**
    * v2 推荐：HITL 三档模式。
@@ -1675,7 +1678,9 @@ export async function runAnalystTeam(params: {
   timeoutMs?: number;
   /** 主动停止等待。 */
   signal?: AbortSignal;
-  /** v1 兼容：启用 Orchestrator 规划后人工审批；命中后 onAwaitingApproval 回调 */
+  /**
+   * @deprecated v1 兼容；前端自 P1-H 起不再写入。新代码请用 `hitlMode`。
+   */
   hitlTeam?: boolean;
   /** v2：HITL 三档模式 */
   hitlMode?: "off" | "ai" | "always";

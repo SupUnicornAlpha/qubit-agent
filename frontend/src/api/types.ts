@@ -59,8 +59,8 @@ export interface LoopOptionsJson {
   injectMcpBridge?: boolean;
   maxOutputBytes?: number;
   /**
-   * v1 兼容：对话 orchestrator 工具执行前 HITL；true=每次都问，false=完全关闭。
-   * v2 起推荐用 `hitlChatMode`。
+   * @deprecated v1 兼容字段，前端自 P1-H 起不再写入。后端 resolveChatHitlMode
+   * 仍读老 DB row。新代码请使用 `hitlChatMode`。
    */
   hitlChat?: boolean;
   /**
@@ -70,7 +70,10 @@ export interface LoopOptionsJson {
    *   - 'always' ：每次工具调用都问（v1 行为）
    */
   hitlChatMode?: "off" | "ai" | "always";
-  /** v1 兼容：团队 HITL 总开关；推荐用 `hitlMode` */
+  /**
+   * @deprecated v1 兼容字段，前端自 P1-H 起不再写入。后端 resolveTeamHitlMode
+   * 仍读老 DB row。新代码请使用 `hitlMode`。
+   */
   hitlTeam?: boolean;
   /** v2：团队 HITL 三档（off / ai / always） */
   hitlMode?: "off" | "ai" | "always";
