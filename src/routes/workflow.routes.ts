@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
+import {
+  agentDefinition,
+  agentInstance,
+  agentStep,
+  chatSession,
+  scheduledJob,
+  scheduledJobRun,
+  workflowRun,
+} from "../db/sqlite/schema";
 import {
   listWorkflowArtifactSummary,
   readWorkflowReportArtifact,
@@ -445,4 +453,125 @@ workflowRouter.get("/:id", async (c) => {
     .limit(1);
   if (!rows[0]) return c.json({ error: "Not found" }, 404);
   return c.json({ data: rows[0] });
+});
+
+/**
+ * Agent 心跳：把一个 workflow 里所有 agent_instance 的"活跃度"暴露给前端，让
+ * 拓扑画布 / 会话流能实时看到"哪个 Agent 还在 loop 中、最近一次 step 是什么阶段、
+ * 沉默了多久"。
+ *
+ * 数据来源：agent_instance + 该 instance 最近一条 agent_step。silenceMs 越大 →
+ * 该 agent 越像"卡住"；前端可按阈值（如 60s）变色或弹 toast。
+ *
+ * 这里不引入新表也不改 schema —— 用现有 agent_step.createdAt 作为隐含心跳；
+ * 单次 join 控制在 N=活跃 instance 数量级（典型 ≤ 10），性能足够。
+ */
+workflowRouter.get("/:id/agent-heartbeats", async (c) => {
+  const workflowRunId = c.req.param("id");
+  const db = await getDb();
+
+  const wfRow = await db
+    .select({ id: workflowRun.id, status: workflowRun.status })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
+  if (!wfRow[0]) return c.json({ error: "workflow_not_found" }, 404);
+
+  const instances = await db
+    .select({
+      instanceId: agentInstance.id,
+      definitionId: agentInstance.definitionId,
+      status: agentInstance.status,
+      currentIteration: agentInstance.currentIteration,
+      startedAt: agentInstance.startedAt,
+      endedAt: agentInstance.endedAt,
+      role: agentDefinition.role,
+      name: agentDefinition.name,
+    })
+    .from(agentInstance)
+    .innerJoin(agentDefinition, eq(agentDefinition.id, agentInstance.definitionId))
+    .where(eq(agentInstance.workflowRunId, workflowRunId));
+
+  const nowMs = Date.now();
+  const heartbeats: Array<{
+    instanceId: string;
+    role: string;
+    name: string;
+    status: string;
+    currentIteration: number;
+    lastPhase: string | null;
+    lastStepIndex: number | null;
+    lastStepAt: string | null;
+    silenceMs: number | null;
+    startedAt: string | null;
+    endedAt: string | null;
+    alive: boolean;
+  }> = [];
+
+  for (const inst of instances) {
+    const lastStepRows = await db
+      .select({
+        phase: agentStep.phase,
+        stepIndex: agentStep.stepIndex,
+        createdAt: agentStep.createdAt,
+      })
+      .from(agentStep)
+      .where(
+        and(
+          eq(agentStep.agentInstanceId, inst.instanceId),
+          eq(agentStep.workflowRunId, workflowRunId)
+        )
+      )
+      .orderBy(desc(agentStep.createdAt))
+      .limit(1);
+    const last = lastStepRows[0];
+    const lastStepAt = last?.createdAt ?? inst.startedAt ?? null;
+    const silenceMs =
+      lastStepAt && !inst.endedAt ? Math.max(0, nowMs - new Date(lastStepAt).getTime()) : null;
+    const alive = inst.status !== "stopped" && !inst.endedAt;
+    heartbeats.push({
+      instanceId: inst.instanceId,
+      role: inst.role,
+      name: inst.name,
+      status: inst.status,
+      currentIteration: inst.currentIteration ?? 0,
+      lastPhase: last?.phase ?? null,
+      lastStepIndex: last?.stepIndex ?? null,
+      lastStepAt: lastStepAt ?? null,
+      silenceMs,
+      startedAt: inst.startedAt ?? null,
+      endedAt: inst.endedAt ?? null,
+      alive,
+    });
+  }
+
+  /**
+   * workflow 级别聚合，便于前端单值显示"研究团队还在跑吗 / 已沉默多久"。
+   */
+  const aliveCount = heartbeats.filter((h) => h.alive).length;
+  const summaryRow = await db
+    .select({
+      lastStepAt: sql<string | null>`MAX(${agentStep.createdAt})`,
+      totalSteps: sql<number>`COUNT(*)`,
+    })
+    .from(agentStep)
+    .where(eq(agentStep.workflowRunId, workflowRunId));
+  const wfLastStepAt = summaryRow[0]?.lastStepAt ?? null;
+  const wfSilenceMs = wfLastStepAt
+    ? Math.max(0, nowMs - new Date(wfLastStepAt).getTime())
+    : null;
+
+  return c.json({
+    workflowRunId,
+    status: wfRow[0].status,
+    heartbeats,
+    summary: {
+      aliveAgents: aliveCount,
+      totalAgents: heartbeats.length,
+      lastStepAt: wfLastStepAt,
+      silenceMs: wfSilenceMs,
+      totalSteps: Number(summaryRow[0]?.totalSteps ?? 0),
+      asOf: new Date(nowMs).toISOString(),
+    },
+  });
 });

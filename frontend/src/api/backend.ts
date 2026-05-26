@@ -292,6 +292,54 @@ export async function createWorkflow(input: WorkflowCreateInput): Promise<{
   return httpPost("/api/v1/workflows", input);
 }
 
+/**
+ * Agent 心跳 / loop 活跃度。
+ *
+ * 用法：前端在拓扑画布 / 会话流 / 工作流列表 旁边定时 poll（建议 3-5s 一次）
+ * 来显示"Agent 还在跑吗、第几轮、最后一步是什么阶段、沉默了多久"。
+ *
+ * 沉默阈值建议：
+ *   - silenceMs < 30_000  → 绿色（健康）
+ *   - 30_000-120_000     → 橙色（缓慢但仍活跃）
+ *   - > 120_000          → 红色（疑似卡住，建议给提示）
+ */
+export type AgentHeartbeat = {
+  instanceId: string;
+  role: string;
+  name: string;
+  status: string;
+  currentIteration: number;
+  lastPhase: "perceive" | "reason" | "act" | "observe" | "finalize" | null;
+  lastStepIndex: number | null;
+  lastStepAt: string | null;
+  silenceMs: number | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  alive: boolean;
+};
+
+export type WorkflowAgentHeartbeatsResponse = {
+  workflowRunId: string;
+  status: string;
+  heartbeats: AgentHeartbeat[];
+  summary: {
+    aliveAgents: number;
+    totalAgents: number;
+    lastStepAt: string | null;
+    silenceMs: number | null;
+    totalSteps: number;
+    asOf: string;
+  };
+};
+
+export async function getWorkflowAgentHeartbeats(
+  workflowId: string
+): Promise<WorkflowAgentHeartbeatsResponse> {
+  return httpGet<WorkflowAgentHeartbeatsResponse>(
+    `/api/v1/workflows/${encodeURIComponent(workflowId)}/agent-heartbeats`
+  );
+}
+
 export async function approveWorkflowHitl(
   workflowId: string,
   requestId: string

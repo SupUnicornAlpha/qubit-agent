@@ -6,13 +6,22 @@ export type ResearchPositionSide = "long" | "short";
 export type ResearchInstrumentKind = "equity" | "option";
 
 export type ResearchScopeInput = {
-  kind?: "single" | "basket" | "sector";
+  /**
+   * - "single"   单标的
+   * - "basket"   多标的篮子
+   * - "sector"   板块（含可选成分股）
+   * - "explore"  无标的自由探索：交给 Orchestrator 自主选标的 / 选板块 / 选主题。
+   *              **必须提供 `theme`**（用户给的主题描述），不强制 symbols。
+   */
+  kind?: "single" | "basket" | "sector" | "explore";
   /** 单标的或篮子逗号分隔（与 ticker 二选一） */
   symbols?: string[];
   ticker?: string;
   sector?: string;
   /** 板块成分股 / 对比标的 */
   peers?: string[];
+  /** explore 模式专用：用户给的研究主题（"AI 半导体的轮动" / "美联储会议前的避险" 等） */
+  theme?: string;
   instrument?: ResearchInstrumentKind;
   positionSide?: ResearchPositionSide;
   exchange?: string;
@@ -26,11 +35,12 @@ export type ResearchScopeInput = {
 };
 
 export type NormalizedResearchScope = {
-  kind: "single" | "basket" | "sector";
+  kind: "single" | "basket" | "sector" | "explore";
   symbols: string[];
   primarySymbol: string;
   displayLabel: string;
   sector?: string;
+  theme?: string;
   instrument: ResearchInstrumentKind;
   positionSide: ResearchPositionSide;
   exchange?: string;
@@ -64,6 +74,7 @@ export function resolveResearchScope(input: {
   let kind: NormalizedResearchScope["kind"] = scope?.kind ?? "single";
   let symbols: string[] = [];
   let sector: string | undefined;
+  const theme = scope?.theme?.trim() || undefined;
 
   if (scope?.symbols && scope.symbols.length > 0) {
     symbols = scope.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -89,8 +100,14 @@ export function resolveResearchScope(input: {
     sector = scope.sector.trim();
   }
 
-  if (symbols.length > 1) kind = "basket";
-  else if (symbols.length === 1) kind = kind === "sector" && sector ? "sector" : "single";
+  /**
+   * explore 模式：保留 kind，不强制 symbols。symbols 可空（让 orchestrator 自己选），
+   * 但 displayLabel 与 primarySymbol 仍需可读 —— 取 theme 或 "AUTO_EXPLORE"。
+   */
+  if (kind !== "explore") {
+    if (symbols.length > 1) kind = "basket";
+    else if (symbols.length === 1) kind = kind === "sector" && sector ? "sector" : "single";
+  }
 
   if (kind === "basket" && symbols.length > MAX_BASKET_SYMBOLS) {
     symbols = symbols.slice(0, MAX_BASKET_SYMBOLS);
@@ -108,16 +125,20 @@ export function resolveResearchScope(input: {
     }
   }
 
-  const primarySymbol = symbols[0] ?? (input.ticker?.trim().toUpperCase() || "UNKNOWN");
+  const primarySymbol =
+    symbols[0] ??
+    (input.ticker?.trim().toUpperCase() ||
+      (kind === "explore" ? "AUTO_EXPLORE" : "UNKNOWN"));
 
   const displayLabel = buildDisplayLabel({
     kind,
     symbols,
-    sector,
     instrument,
     positionSide,
-    option,
     primarySymbol,
+    ...(sector !== undefined ? { sector } : {}),
+    ...(theme !== undefined ? { theme } : {}),
+    ...(option !== undefined ? { option } : {}),
   });
 
   return {
@@ -125,11 +146,12 @@ export function resolveResearchScope(input: {
     symbols: symbols.length > 0 ? symbols : [primarySymbol],
     primarySymbol,
     displayLabel,
-    sector,
     instrument,
     positionSide,
-    exchange,
-    option,
+    ...(sector !== undefined ? { sector } : {}),
+    ...(theme !== undefined ? { theme } : {}),
+    ...(exchange !== undefined ? { exchange } : {}),
+    ...(option !== undefined ? { option } : {}),
   };
 }
 
@@ -137,6 +159,7 @@ function buildDisplayLabel(p: {
   kind: NormalizedResearchScope["kind"];
   symbols: string[];
   sector?: string;
+  theme?: string;
   instrument: ResearchInstrumentKind;
   positionSide: ResearchPositionSide;
   option?: ResearchScopeInput["option"];
@@ -144,6 +167,11 @@ function buildDisplayLabel(p: {
 }): string {
   const side =
     p.positionSide === "short" ? "做空" : p.instrument === "option" ? "期权" : "多头";
+  if (p.kind === "explore") {
+    const theme = p.theme && p.theme.length > 0 ? p.theme : "自由探索";
+    const hint = p.symbols.length > 0 ? `（候选 ${p.symbols.slice(0, 4).join(", ")}）` : "";
+    return `探索·${theme}${hint}·${side}`;
+  }
   if (p.kind === "sector" && p.sector) {
     const peers =
       p.symbols.length > 0 ? `（${p.symbols.slice(0, 6).join(", ")}${p.symbols.length > 6 ? "…" : ""}）` : "";

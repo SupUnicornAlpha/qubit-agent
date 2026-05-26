@@ -122,9 +122,93 @@ export function extractRoleBriefSection(fullBrief: string, role: AgentRole): str
   if (m?.[1]?.trim()) {
     return `## 你的角色：${role}\n\n${m[1].trim()}`;
   }
+  /**
+   * 2026-05-26 复盘：旧 fallback 把整段 brief（≤2800 字）抄给每个角色 → 数据库
+   * 里 4 个分析师收到的"任务说明"前 2800 字一字不差，前端 UI 看起来就像
+   * "Orchestrator 给所有人发了同一条消息"。
+   *
+   * 新 fallback：只透传 brief 开头（通用前言，≤800 字）+ 一段**角色专属脚手架**，
+   * 让每个角色拿到的 brief 即使没有 LLM 生成的小节也是差异化的。脚手架明确写明
+   * 该角色的职责边界、可用工具方向、不要做什么，避免角色之间互相代劳。
+   */
   const intro = fullBrief.split(/\n##\s/m)[0]?.trim() ?? "";
-  const tail = intro.length > 0 ? `${intro}\n\n---\n` : "";
-  return `${tail}## 你的角色：${role}\n\n（全团队简报未单独列出本角色小节，请仅完成 **${role}** 职责范围内的分析，勿重复其他角色工作。）\n\n${fullBrief.slice(0, 2800)}`;
+  const truncatedIntro = intro.slice(0, 800);
+  const scaffold = buildRoleScaffold(role);
+  return [
+    truncatedIntro,
+    truncatedIntro ? "---" : "",
+    `## 你的角色：${role}`,
+    `（注：Orchestrator 简报未单独列出本角色小节，以下为系统补全的角色任务脚手架）`,
+    "",
+    scaffold,
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n\n");
+}
+
+/**
+ * 角色专属任务脚手架。Orchestrator 没产出 per-role 段落时由系统兜底注入。
+ * 关键点：每个角色拿到的文本必须**显著不同**（否则 4 个分析师又会跑一样的路径）。
+ */
+function buildRoleScaffold(role: AgentRole | string): string {
+  const r = role as string;
+  if (r === "analyst_fundamental") {
+    return [
+      "**职责**：盈利质量 + 估值偏离 + 资产负债表健康度。",
+      "**工具方向**：fetch_fundamentals → compute_valuation → fetch_financial_data。",
+      "**不要做**：技术指标 / 情绪 / 宏观（其它角色负责）。",
+      "**交付**：一段 JSON 信号 `{signal:'buy|sell|hold', confidence:0-1, reasoning:'...'}`。",
+    ].join("\n");
+  }
+  if (r === "analyst_technical") {
+    return [
+      "**职责**：价格结构、动量、波动率、关键支撑/阻力位。",
+      "**工具方向**：fetch_klines → compute_indicators（RSI/MACD/ATR）→ factor.list。",
+      "**不要做**：基本面估值 / 新闻情绪 / 宏观（其它角色负责）。",
+      "**交付**：一段 JSON 信号 `{signal:'buy|sell|hold', confidence:0-1, reasoning:'...'}`。",
+    ].join("\n");
+  }
+  if (r === "analyst_sentiment") {
+    return [
+      "**职责**：新闻情绪、社媒热度、机构持仓变化、做空利息。",
+      "**工具方向**：fetch_news_sentiment → analyze_social_media → score_sentiment。",
+      "**不要做**：估值计算 / K 线技术分析（其它角色负责）。",
+      "**交付**：一段 JSON 信号 `{signal:'buy|sell|hold', confidence:0-1, reasoning:'...'}`。",
+    ].join("\n");
+  }
+  if (r === "analyst_macro") {
+    return [
+      "**职责**：宏观 regime（利率 / 通胀 / 风险偏好）、行业 beta、跨市场相关性。",
+      "**工具方向**：fetch_macro_data → compute_macro_indicators → fetch_klines（指数对比）。",
+      "**不要做**：单标的基本面 / 技术指标 / 公司层情绪（其它角色负责）。",
+      "**交付**：一段 JSON 信号 `{signal:'buy|sell|hold', confidence:0-1, reasoning:'...'}`。",
+    ].join("\n");
+  }
+  if (r === "research") {
+    return [
+      "**职责**：综合各分析师结论，输出量化研究假设 + 可回测的因子/规则草案。",
+      "**工具方向**：search_memory → factor.register → factor.compute → factor.autoEvaluate。",
+      "**调用顺序约束**：autoEvaluate 之前必须先 register + compute，否则会报 no_factor_values。",
+      "**交付**：Markdown 研究纪要 + 至少 1 个 `active` 状态因子（或写明为何无法产出）。",
+    ].join("\n");
+  }
+  if (r === "backtest") {
+    return [
+      "**职责**：将 research 给的策略草案转为可执行回测，产出指标与稳健性结论。",
+      "**工具方向**：先 strategy.publish_version（拿到 strategy_version_id），再 backtest.run。",
+      "**调用顺序约束**：backtest.run 必须显式带 strategy_version_id，否则会报 required 错误。",
+      "**交付**：Markdown 回测纪要（含 Sharpe / MaxDD / 胜率）+ 至少 1 条 backtest_run。",
+    ].join("\n");
+  }
+  if (r === "risk") {
+    return [
+      "**职责**：规则签核 + 组合层面风险审查（集中度、流动性、杠杆、合规）。",
+      "**工具方向**：load_rules → check_concentration → assess_liquidity → evaluate_risk。",
+      "**否决权**：发现硬约束违反时必须返回 `veto`，让 orchestrator 中断或调整。",
+      "**交付**：Markdown 风险报告 + 明确的通过 / 否决结论。",
+    ].join("\n");
+  }
+  return `请仅完成 **${role}** 职责范围内的工作，使用授权工具，最后给出 Markdown 小结。`;
 }
 
 /** 运行前：Orchestrator 阅读数据快照并生成对各角色的任务说明 + v2 HITL 自评。 */
@@ -318,6 +402,17 @@ export function defaultAuxPipelineEdges(slots: AnalystTeamSlot[]): TeamRelationE
   return edges;
 }
 
+/**
+ * Orchestrator 开场广播。
+ *
+ * 2026-05-26 复盘：旧实现给每个目标角色都复制一份完全相同的 plan，仅追加"你的角色：X"
+ * 一行 —— 数据库里每个 workflow 出现 6+ 条几乎雷同的 llm_message，UI 里"Orchestrator
+ * 把同样的话又说了一遍"造成"消息串台"的错觉。
+ *
+ * 新实现只发**一条** kickoff 广播，from=orchestrator → to='__team__'，含一份明确的
+ * targetRoles 列表；前端在拓扑画布里显示一条"全员广播"边即可。差异化的 brief
+ * 由 `runOrchestratorPlanning` 真正按角色生成。
+ */
 export async function logOrchestratorKickoff(input: {
   workflowRunId: string;
   ticker: string;
@@ -331,25 +426,31 @@ export async function logOrchestratorKickoff(input: {
     fromOrch.length > 0
       ? [...new Set(fromOrch)]
       : input.slotRoles.filter((r) => r !== "orchestrator");
+  const filteredTargets = targets.filter((r) => r !== "orchestrator");
+  if (filteredTargets.length === 0) return;
 
   const plan = [
     `【Orchestrator 编排】研究团队任务已启动`,
     `标的：${input.ticker}`,
     `参与槽位：${input.slotRoles.join("、")}`,
+    `广播对象：${filteredTargets.join("、")}`,
     `流程：分析师并行 → MSA 融合 → 策略撰写 → 回测执行 → 风控复核`,
+    `（详细按角色任务由后续 plan 简报下发，避免重复转发）`,
   ].join("\n");
 
-  for (const toRole of targets) {
-    if (toRole === "orchestrator") continue;
-    await logResearchTeamInteraction({
-      workflowRunId: input.workflowRunId,
-      fromRole: "orchestrator",
-      toRole,
-      kind: "llm_message",
-      contentText: `${plan}\n\n**你的角色**：${toRole}`,
-      payloadJson: { phase: "kickoff", ticker: input.ticker, targetRole: toRole },
-    });
-  }
+  await logResearchTeamInteraction({
+    workflowRunId: input.workflowRunId,
+    fromRole: "orchestrator",
+    toRole: "__team__",
+    kind: "llm_message",
+    contentText: plan,
+    payloadJson: {
+      phase: "kickoff",
+      ticker: input.ticker,
+      targetRoles: filteredTargets,
+      fanout: filteredTargets.length,
+    },
+  });
 }
 
 function extractPythonBlock(markdown: string): string {

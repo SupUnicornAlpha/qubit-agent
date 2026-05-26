@@ -67,29 +67,58 @@ async function loadRuntimeDefinition(definitionId: string): Promise<RuntimeAgent
   };
 }
 
+/**
+ * 解析分析师 LLM 输出里的 JSON 信号。
+ *
+ * 2026-05-26 数据复盘发现：21 条 analyst_signal 全部塌缩成 `hold @ 0.4`，原因是
+ * 旧实现把"LLM 没输出 JSON / signal 字段缺失"都兜底成 `hold @ 0.4`，让上游 fusion
+ * 误以为 4 个分析师都"低置信观望"，进而触发辩论 → 全链路无信号产物。
+ *
+ * 新合约：
+ *   - **真正解析到合法 signal**（'buy'|'sell'|'hold' 且 confidence 是 number）→ 返回正常 RawAnalystSignal
+ *   - **任何环节失败**（JSON 抽取不到 / signal 不在合法集合 / confidence 不是 number）
+ *     → 返回 `null`，调用方应跳过这条 signal（不写 analyst_signal 表，
+ *     不参与 fusion 加权），并把原始 text 落到 markdown body 供人工检视
+ *
+ * 这样真正"模型表达不出信号"的 case 会被 fusion 看见（signals 数变少）
+ * 而不是被一堆假 hold 淹没。
+ */
 function parseJsonSignalFromText(
   role: AgentRole,
   definitionId: string,
   ticker: string,
   text: string
-): Promise<RawAnalystSignal> {
+): Promise<RawAnalystSignal | null> {
   return (async () => {
     let parsed: Record<string, unknown> = {};
+    let parseSucceeded = false;
     try {
       const match = text.match(/\{[\s\S]*\}/);
-      if (match) parsed = JSON.parse(match[0]);
+      if (match) {
+        parsed = JSON.parse(match[0]);
+        parseSucceeded = true;
+      }
     } catch {
-      parsed = {};
+      parseSucceeded = false;
     }
+    if (!parseSucceeded) return null;
+
     const validated = await validateFsiRoleOutput(role, parsed);
     const p = validated.sanitized;
-    const signal = (["buy", "sell", "hold"].includes(p["signal"] as string)
-      ? p["signal"]
-      : "hold") as AnalystSignalValue;
-    const confidence =
-      typeof p["confidence"] === "number" ? Math.max(0, Math.min(1, p["confidence"])) : 0.4;
+
+    const rawSignal = p["signal"];
+    if (!["buy", "sell", "hold"].includes(rawSignal as string)) return null;
+    const signal = rawSignal as AnalystSignalValue;
+
+    const rawConfidence = p["confidence"];
+    if (typeof rawConfidence !== "number" || !Number.isFinite(rawConfidence)) return null;
+    const confidence = Math.max(0, Math.min(1, rawConfidence));
+
     const reasoning =
-      typeof p["reasoning"] === "string" ? p["reasoning"] : text.slice(0, 500);
+      typeof p["reasoning"] === "string" && p["reasoning"].trim().length > 0
+        ? p["reasoning"]
+        : text.slice(0, 500);
+
     return {
       definitionId,
       analystRole: role,
@@ -142,7 +171,7 @@ export async function runResearchTeamSlotReact(params: {
     workflowId: params.workflowRunId,
     traceId,
     def,
-    agentInstanceId: params.agentInstanceId,
+    ...(params.agentInstanceId !== undefined ? { agentInstanceId: params.agentInstanceId } : {}),
     receiverAgent: `team-slot-${params.role}`,
     payload: {
       taskId: runId,
@@ -160,6 +189,13 @@ export async function runResearchTeamSlotReact(params: {
     streamLoopKind: "native",
     streamSource: "native",
     updateWorkflowStatus: false,
+    /**
+     * MSA fan-out 隔离：4 个 analyst slot 并发执行时必须用 per-slot 的 LangGraph
+     * thread_id，避免共用 `workflowRunId` 导致 checkpoint 互相覆盖（reason/act
+     * state 串台 → "Orchestrator 收到的不是自己分析师的回复"）。
+     * suffix 用 `role:definitionId` 既保证人类可读，又避免同 role 多 instance 冲突。
+     */
+    threadSuffix: `${params.role}:${params.definitionId}`,
   });
 
   const text =
@@ -187,8 +223,30 @@ export async function runResearchTeamSlotReact(params: {
       params.ticker,
       text
     );
-    return { kind: "analyst", payload: { ...signal, agentInstanceId } };
+    if (signal === null) {
+      /**
+       * LLM 没产出合法 signal JSON：不让它塌缩成 `hold @ 0.4`（旧 bug），
+       * 改为退化成 markdown 输出 —— fusion 会看到这个角色 missing，下游辩论
+       * 触发器才能正确反映"信号缺失"，而不是"4 个角色都低置信"的假象。
+       */
+      return {
+        kind: "markdown",
+        body: `[signal_parse_failed for ${params.role}] ${text || "（模型未返回内容）"}`,
+        ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
+      };
+    }
+    return {
+      kind: "analyst",
+      payload: {
+        ...signal,
+        ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
+      },
+    };
   }
 
-  return { kind: "markdown", body: text || "（模型未返回内容）", agentInstanceId };
+  return {
+    kind: "markdown",
+    body: text || "（模型未返回内容）",
+    ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
+  };
 }

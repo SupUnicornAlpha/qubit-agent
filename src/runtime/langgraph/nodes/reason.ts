@@ -1,6 +1,11 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import { agentProfile, chatMessage, workflowRun } from "../../../db/sqlite/schema";
+import {
+  agentProfile,
+  chatMessage,
+  chatMessageWorkflowLink,
+  workflowRun,
+} from "../../../db/sqlite/schema";
 import {
   type PromptMode,
   getDataDir,
@@ -77,16 +82,22 @@ async function loadWorkflowMeta(
   };
 }
 
+/**
+ * 严格隔离：只取**显式关联到当前 workflow** 的 chat_message，避免同一 chat_session
+ * 下多个 workflow 互相窥见对方的对话历史（2026-05-26 复盘的"板块·AAPL 却被注入
+ * NVDA+AMD+AVGO 期权篮子上下文"事故根因）。
+ *
+ * - 旧实现按 `chatMessage.sessionId = workflowRun.sessionId` 拉所有消息 ——
+ *   一个 chat session 下挂 N 个 workflow 时，第 K 个 workflow 的 reason 会看到
+ *   前 K-1 个 workflow 留下的全部对话，跨任务泄漏。
+ * - 新实现 INNER JOIN `chat_message_workflow_link`，按 `workflow_run_id` 精确过滤：
+ *   • chat workflow（loop driver = chat）：每条 user/assistant 消息都会被 chat
+ *     routes / workflow-service 写入 link，能拉到本 workflow 的对话上下文；
+ *   • research / scheduler / api 等独立 workflow：没有 link，直接返回空 —— 杜绝
+ *     "Orchestrator 给分析师发的 brief 莫名其妙带上前一个任务的标的"。
+ */
 async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
   const db = await getDb();
-  const wfRows = await db
-    .select({ sessionId: workflowRun.sessionId })
-    .from(workflowRun)
-    .where(eq(workflowRun.id, workflowId))
-    .limit(1);
-  const sessionId = wfRows[0]?.sessionId;
-  if (!sessionId) return [];
-
   const rows = await db
     .select({
       role: chatMessage.role,
@@ -95,7 +106,11 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
       createdAt: chatMessage.createdAt,
     })
     .from(chatMessage)
-    .where(eq(chatMessage.sessionId, sessionId))
+    .innerJoin(
+      chatMessageWorkflowLink,
+      eq(chatMessageWorkflowLink.chatMessageId, chatMessage.id)
+    )
+    .where(eq(chatMessageWorkflowLink.workflowRunId, workflowId))
     .orderBy(desc(chatMessage.createdAt))
     .limit(limit);
 

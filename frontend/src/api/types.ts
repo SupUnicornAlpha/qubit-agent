@@ -704,11 +704,19 @@ export type SignalFusionRecord = AnalystSignalFusionRecord;
 
 /** POST /analyst/run scope（与后端 research-scope 一致） */
 export type ResearchScopeInput = {
-  kind?: "single" | "basket" | "sector";
+  /**
+   * - "single"   单标的
+   * - "basket"   多标的篮子
+   * - "sector"   板块（含可选成分股）
+   * - "explore"  无标的自由探索（**必须提供 `theme`**，由 Orchestrator 自主筛选标的）
+   */
+  kind?: "single" | "basket" | "sector" | "explore";
   symbols?: string[];
   ticker?: string;
   sector?: string;
   peers?: string[];
+  /** explore 模式专用：用户给的研究主题 */
+  theme?: string;
   instrument?: "equity" | "option";
   positionSide?: "long" | "short";
   exchange?: string;

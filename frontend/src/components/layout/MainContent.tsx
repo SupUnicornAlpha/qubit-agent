@@ -163,6 +163,7 @@ import { TeamAgentPixelOffice } from "../team/TeamAgentPixelOffice";
 import { formatEdgeSelectionSummary, isToolGraphEdge } from "../../lib/teamGraphEdgeVisual";
 import {
   buildResearchScopePayload,
+  filterPromptTemplates,
   instrumentLabel,
   scopeModeLabel,
   type ResearchInstrumentUi,
@@ -4524,11 +4525,18 @@ const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
 const TEAM_GRAPH_VIEWPORT_HEIGHT = 360;
 
 const TeamDashboardPanel: FC = () => {
-  const [ticker, setTicker] = useState("AAPL");
+  const [ticker, setTicker] = useState("");
   const [scopeMode, setScopeMode] = useState<ResearchScopeMode>("single");
-  const [basketTickers, setBasketTickers] = useState("AAPL,MSFT,NVDA");
-  const [sectorName, setSectorName] = useState("半导体");
-  const [sectorPeers, setSectorPeers] = useState("NVDA,AMD,AVGO");
+  const [basketTickers, setBasketTickers] = useState("");
+  const [sectorName, setSectorName] = useState("");
+  const [sectorPeers, setSectorPeers] = useState("");
+  /**
+   * 2026-05-26 修复：scope 模式各自独立 state，**不再用预填默认值**（旧实现把
+   * sectorPeers 默认为 "NVDA,AMD,AVGO" 导致 goal=板块·AAPL 时实际跑 NVDA 系列）。
+   * 用户在每个模式下都得自己输入，避免跨模式数据残留。
+   */
+  const [exploreTheme, setExploreTheme] = useState("");
+  const [exploreCandidates, setExploreCandidates] = useState("");
   const [researchInstrument, setResearchInstrument] = useState<ResearchInstrumentUi>("equity_long");
   const [optionUnderlying, setOptionUnderlying] = useState("");
   const [optionContract, setOptionContract] = useState("");
@@ -4537,6 +4545,19 @@ const TeamDashboardPanel: FC = () => {
   const [optionRight, setOptionRight] = useState<"call" | "put" | "">("call");
   /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
+  const [promptTemplateId, setPromptTemplateId] = useState("");
+
+  /**
+   * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
+   * 这是用户在 Q3 抱怨"goal 是 AAPL 实际跑 NVDA" 的另一道防线。
+   */
+  const handleScopeModeChange = (next: ResearchScopeMode) => {
+    if (next === scopeMode) return;
+    if (scopeMode !== next) {
+      setPromptTemplateId("");
+    }
+    setScopeMode(next);
+  };
 
   const researchScopePayload = useMemo(
     () =>
@@ -4546,6 +4567,8 @@ const TeamDashboardPanel: FC = () => {
         basketTickers,
         sectorName,
         sectorPeers,
+        exploreTheme,
+        exploreCandidates,
         instrument: researchInstrument,
         optionUnderlying,
         optionContract,
@@ -4559,6 +4582,8 @@ const TeamDashboardPanel: FC = () => {
       basketTickers,
       sectorName,
       sectorPeers,
+      exploreTheme,
+      exploreCandidates,
       researchInstrument,
       optionUnderlying,
       optionContract,
@@ -4567,6 +4592,56 @@ const TeamDashboardPanel: FC = () => {
       optionRight,
     ]
   );
+
+  const availablePromptTemplates = useMemo(
+    () => filterPromptTemplates(scopeMode, researchInstrument),
+    [scopeMode, researchInstrument]
+  );
+  const applyPromptTemplate = (id: string) => {
+    setPromptTemplateId(id);
+    if (!id) return;
+    const tpl = availablePromptTemplates.find((t) => t.id === id);
+    if (tpl) setTeamAnalysisContext(tpl.prompt);
+  };
+
+  /**
+   * Agent 心跳轮询。
+   *
+   * 解决用户反馈"我们无法看到一个 Agent 是否正在 loop 中"。每 4 秒拉一次
+   * 当前选中 workflow 下所有 agent instance 的活跃度，给拓扑画布 / 当前选中
+   * 卡片提供"还在跑 / 沉默多久"信号。
+   *
+   * - 仅当 workflowRunId 非空时启动；切换 workflow 自动重新订阅
+   * - 当 workflow 已 terminal（completed/failed/cancelled）时停止轮询，最后一帧已可读
+   */
+  const [agentHeartbeats, setAgentHeartbeats] =
+    useState<import("../../api/backend").WorkflowAgentHeartbeatsResponse | null>(null);
+  useEffect(() => {
+    if (!workflowRunId.trim()) {
+      setAgentHeartbeats(null);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const { getWorkflowAgentHeartbeats } = await import("../../api/backend");
+        const res = await getWorkflowAgentHeartbeats(workflowRunId);
+        if (!cancelled) setAgentHeartbeats(res);
+      } catch {
+        if (!cancelled) setAgentHeartbeats(null);
+      }
+    };
+    void tick();
+    const handle = setInterval(() => {
+      const status = agentHeartbeats?.status;
+      if (status === "completed" || status === "failed" || status === "cancelled") return;
+      void tick();
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [workflowRunId, agentHeartbeats?.status]);
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
@@ -4752,6 +4827,39 @@ const TeamDashboardPanel: FC = () => {
   }, [teamGraph, participatingAnalystRoles, liveDebateEvents]);
 
   const liveFeedScrollRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 实时对话流的自动跟随开关：
+   * - 默认开启，新消息进来时滚到底；
+   * - 用户主动往上滚（离底部 > 64px）会自动暂停，便于回看上方对话；
+   * - 用户再滚回底部附近自动恢复；
+   * - 标题栏也提供显式 checkbox 控制。
+   * `liveFeedAtBottom` 仅用于决定是否显示"↓ 跳到最新"浮按钮。
+   */
+  const [liveFeedAutoFollow, setLiveFeedAutoFollow] = useState(true);
+  const [liveFeedAtBottom, setLiveFeedAtBottom] = useState(true);
+  const liveFeedAutoFollowRef = useRef(true);
+  useEffect(() => {
+    liveFeedAutoFollowRef.current = liveFeedAutoFollow;
+  }, [liveFeedAutoFollow]);
+  const scrollLiveFeedToBottom = useCallback(() => {
+    const el = liveFeedScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    setLiveFeedAtBottom(true);
+    setLiveFeedAutoFollow(true);
+  }, []);
+  const handleLiveFeedScroll = useCallback(() => {
+    const el = liveFeedScrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom < 24;
+    setLiveFeedAtBottom(atBottom);
+    if (atBottom) {
+      if (!liveFeedAutoFollowRef.current) setLiveFeedAutoFollow(true);
+    } else if (distanceFromBottom > 64 && liveFeedAutoFollowRef.current) {
+      setLiveFeedAutoFollow(false);
+    }
+  }, []);
 
   const filteredGraphDisplay = useMemo((): AnalystTeamGraphPayload | null => {
     if (!teamGraph) return null;
@@ -4895,8 +5003,13 @@ const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     const el = liveFeedScrollRef.current;
     if (!el || activeTab !== "research") return;
+    /**
+     * 关闭自动跟随时不再强制滚到底，否则用户翻回去看上方对话立刻又被
+     * 新事件挤回最底部，体验非常差。仅当 autoFollow=true 时执行滚动。
+     */
+    if (!liveFeedAutoFollowRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [displayedLiveFeedRows, running, activeTab]);
+  }, [displayedLiveFeedRows, running, activeTab, liveFeedAutoFollow]);
 
   const teamGraphActivity = useMemo((): TeamGraphActivity => {
     const intr = filteredGraphDisplay?.interactions ?? [];
@@ -5814,11 +5927,12 @@ const TeamDashboardPanel: FC = () => {
             <select
               style={teamStyles.input}
               value={scopeMode}
-              onChange={(e) => setScopeMode(e.target.value as ResearchScopeMode)}
+              onChange={(e) => handleScopeModeChange(e.target.value as ResearchScopeMode)}
             >
               <option value="single">单标的</option>
               <option value="basket">多标的篮子</option>
               <option value="sector">板块</option>
+              <option value="explore">自由探索（无固定标的）</option>
             </select>
           </div>
           <div style={{ ...teamStyles.field, marginTop: 8 }}>
@@ -5846,13 +5960,13 @@ const TeamDashboardPanel: FC = () => {
           ) : null}
           {scopeMode === "basket" ? (
             <div style={{ ...teamStyles.field, marginTop: 8 }}>
-              <label style={teamStyles.label}>篮子标的（逗号分隔）</label>
+              <label style={teamStyles.label}>篮子标的（逗号分隔，至少 2 个）</label>
               <textarea
                 style={teamStyles.textarea}
                 rows={2}
                 value={basketTickers}
                 onChange={(e) => setBasketTickers(e.target.value)}
-                placeholder="AAPL, MSFT, NVDA"
+                placeholder="e.g. AAPL, MSFT, NVDA"
               />
             </div>
           ) : null}
@@ -5864,17 +5978,41 @@ const TeamDashboardPanel: FC = () => {
                   style={teamStyles.input}
                   value={sectorName}
                   onChange={(e) => setSectorName(e.target.value)}
-                  placeholder="半导体 / 新能源"
+                  placeholder="e.g. 半导体 / 新能源"
                 />
               </div>
               <div style={{ ...teamStyles.field, marginTop: 8 }}>
-                <label style={teamStyles.label}>成分股（逗号分隔）</label>
+                <label style={teamStyles.label}>成分股（逗号分隔，必填）</label>
                 <textarea
                   style={teamStyles.textarea}
                   rows={2}
                   value={sectorPeers}
                   onChange={(e) => setSectorPeers(e.target.value)}
-                  placeholder="NVDA, AMD, AVGO"
+                  placeholder="e.g. NVDA, AMD, AVGO"
+                />
+              </div>
+            </>
+          ) : null}
+          {scopeMode === "explore" ? (
+            <>
+              <div style={{ ...teamStyles.field, marginTop: 8 }}>
+                <label style={teamStyles.label}>研究主题（必填，越具体越好）</label>
+                <textarea
+                  style={teamStyles.textarea}
+                  rows={2}
+                  value={exploreTheme}
+                  onChange={(e) => setExploreTheme(e.target.value)}
+                  placeholder="e.g. AI 推理芯片的轮动机会 / 美联储会议前后的避险标的"
+                />
+              </div>
+              <div style={{ ...teamStyles.field, marginTop: 8 }}>
+                <label style={teamStyles.label}>候选标的（可选，留空则由 Orchestrator 自主筛选）</label>
+                <textarea
+                  style={teamStyles.textarea}
+                  rows={2}
+                  value={exploreCandidates}
+                  onChange={(e) => setExploreCandidates(e.target.value)}
+                  placeholder="可写也可留空，e.g. NVDA, AMD, AVGO, TSM"
                 />
               </div>
             </>
@@ -5904,12 +6042,41 @@ const TeamDashboardPanel: FC = () => {
             </div>
           ) : null}
           <div style={{ ...teamStyles.field, marginTop: 10 }}>
-            <label style={teamStyles.label}>分析提示（可选）</label>
+            <label style={teamStyles.label}>分析提示模板（可选，选中后自动填入下方文本框）</label>
+            <select
+              style={teamStyles.input}
+              value={promptTemplateId}
+              onChange={(e) => applyPromptTemplate(e.target.value)}
+            >
+              <option value="">— 不使用模板 —</option>
+              {availablePromptTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label} · {t.summary}
+                </option>
+              ))}
+            </select>
+            {availablePromptTemplates.length === 0 ? (
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--qb-team-muted-fg, #71717a)",
+                  marginTop: 4,
+                }}
+              >
+                当前 {scopeModeLabel(scopeMode)} + {instrumentLabel(researchInstrument)} 组合暂无内置模板，可自行填写下方提示。
+              </div>
+            ) : null}
+          </div>
+          <div style={{ ...teamStyles.field, marginTop: 10 }}>
+            <label style={teamStyles.label}>分析提示（可选，覆盖默认）</label>
             <textarea
               style={teamStyles.textarea}
-              rows={4}
+              rows={6}
               value={teamAnalysisContext}
-              onChange={(e) => setTeamAnalysisContext(e.target.value)}
+              onChange={(e) => {
+                setTeamAnalysisContext(e.target.value);
+                if (promptTemplateId) setPromptTemplateId("");
+              }}
               placeholder={`留空则使用默认分析提示。当前：${scopeModeLabel(scopeMode)} · ${instrumentLabel(researchInstrument)}`}
             />
           </div>
@@ -6143,6 +6310,75 @@ const TeamDashboardPanel: FC = () => {
                 </strong>
                 <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
               </p>
+            ) : null}
+            {agentHeartbeats && agentHeartbeats.heartbeats.length > 0 ? (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  background: "var(--qb-team-heartbeat-bg, #1a1a1f)",
+                  border: "1px solid var(--qb-team-heartbeat-border, #2a2a2f)",
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: 6,
+                  }}
+                >
+                  <strong style={{ color: "#a1a1aa" }}>
+                    Agent 心跳（{agentHeartbeats.summary.aliveAgents}/{agentHeartbeats.summary.totalAgents} 活跃）
+                  </strong>
+                  <span style={{ fontSize: 10, color: "#71717a" }}>
+                    总 steps {agentHeartbeats.summary.totalSteps}
+                    {agentHeartbeats.summary.silenceMs != null
+                      ? ` · ${Math.round(agentHeartbeats.summary.silenceMs / 1000)}s 前`
+                      : ""}
+                  </span>
+                </div>
+                {agentHeartbeats.heartbeats.map((hb) => {
+                  const sec = hb.silenceMs != null ? Math.round(hb.silenceMs / 1000) : null;
+                  const color = !hb.alive
+                    ? "#52525b"
+                    : sec == null
+                      ? "#71717a"
+                      : sec < 30
+                        ? "#22c55e"
+                        : sec < 120
+                          ? "#f59e0b"
+                          : "#ef4444";
+                  return (
+                    <div
+                      key={hb.instanceId}
+                      style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}
+                    >
+                      <span
+                        style={{
+                          display: "inline-block",
+                          width: 8,
+                          height: 8,
+                          borderRadius: "50%",
+                          background: color,
+                          flexShrink: 0,
+                        }}
+                      />
+                      <span style={{ flex: 1, color: "#d4d4d8", fontWeight: 500 }}>{hb.role}</span>
+                      <span style={{ color: "#a1a1aa" }}>iter {hb.currentIteration ?? 0}</span>
+                      <span style={{ color: "#71717a", minWidth: 56, textAlign: "right" }}>
+                        {hb.lastPhase ?? "—"}
+                      </span>
+                      <span style={{ color, minWidth: 48, textAlign: "right" }}>
+                        {!hb.alive ? "已结束" : sec == null ? "—" : `${sec}s`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             ) : null}
             {workflowRunId.trim() && !workflowSessionId ? (
               <p
@@ -7126,15 +7362,56 @@ const TeamDashboardPanel: FC = () => {
                         "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #2a2a30))",
                       display: "flex",
                       alignItems: "center",
-                      gap: 6,
+                      gap: 8,
+                      flexWrap: "wrap",
                     }}
                   >
                     实时对话流
                     {graphSelection?.kind === "edge" ? "（已按连线筛选）" : ""}
-                    {running ? " · 自动刷新" : ""}
-                    <span
+                    {running ? (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 999,
+                          border: "1px solid rgba(34,197,94,0.45)",
+                          background: "rgba(34,197,94,0.12)",
+                          color: "#86efac",
+                          fontWeight: 600,
+                          letterSpacing: 0.2,
+                        }}
+                      >
+                        正在轮询
+                      </span>
+                    ) : null}
+                    <label
+                      title="关闭后新消息进来不会再自动滚到底，便于回看上方对话"
                       style={{
                         marginLeft: "auto",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11,
+                        fontWeight: 400,
+                        color: "var(--qb-team-meta, #a1a1aa)",
+                        cursor: "pointer",
+                        userSelect: "none",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={liveFeedAutoFollow}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setLiveFeedAutoFollow(next);
+                          if (next) scrollLiveFeedToBottom();
+                        }}
+                        style={{ accentColor: "#3b82f6", cursor: "pointer" }}
+                      />
+                      自动跟随{liveFeedAutoFollow ? "" : "（已暂停）"}
+                    </label>
+                    <span
+                      style={{
                         fontSize: 10,
                         color: "var(--qb-team-meta, #71717a)",
                         fontWeight: 400,
@@ -7144,30 +7421,71 @@ const TeamDashboardPanel: FC = () => {
                     </span>
                   </div>
                   <div
-                    ref={liveFeedScrollRef}
-                    data-qb-team-live-feed
-                    className="qb-team-live-feed-scroll"
                     style={{
+                      position: "relative",
                       flex: "1 1 0",
                       minHeight: 0,
-                      overflowY: "auto",
-                      overflowX: "hidden",
-                      padding: 10,
-                      paddingBottom: 16,
+                      display: "flex",
+                      flexDirection: "column",
                     }}
                   >
-                    <LiveConversationView
-                      events={displayedLiveFeedEvents}
-                      selfRole="orchestrator"
-                      contentMaxLength={4000}
-                      emptyText={
-                        graphSelection?.kind === "edge"
-                          ? "该连线暂无对话记录。"
-                          : running
-                            ? "等待各分析师与系统写入交互记录（轮询中）…"
-                            : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
-                      }
-                    />
+                    <div
+                      ref={liveFeedScrollRef}
+                      onScroll={handleLiveFeedScroll}
+                      data-qb-team-live-feed
+                      className="qb-team-live-feed-scroll"
+                      style={{
+                        flex: "1 1 0",
+                        minHeight: 0,
+                        overflowY: "auto",
+                        overflowX: "hidden",
+                        padding: 10,
+                        paddingBottom: 16,
+                      }}
+                    >
+                      <LiveConversationView
+                        events={displayedLiveFeedEvents}
+                        selfRole="orchestrator"
+                        contentMaxLength={4000}
+                        emptyText={
+                          graphSelection?.kind === "edge"
+                            ? "该连线暂无对话记录。"
+                            : running
+                              ? "等待各分析师与系统写入交互记录（轮询中）…"
+                              : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
+                        }
+                      />
+                    </div>
+                    {!liveFeedAtBottom ? (
+                      <button
+                        type="button"
+                        onClick={scrollLiveFeedToBottom}
+                        title="跳到最新消息并恢复自动跟随"
+                        style={{
+                          position: "absolute",
+                          right: 16,
+                          bottom: 14,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          padding: "5px 11px",
+                          borderRadius: 999,
+                          border: "1px solid rgba(59,130,246,0.55)",
+                          background: "rgba(15,23,42,0.85)",
+                          color: "#bfdbfe",
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                          backdropFilter: "blur(4px)",
+                        }}
+                      >
+                        <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>
+                          ↓
+                        </span>
+                        跳到最新
+                      </button>
+                    ) : null}
                   </div>
                 </ResizableY>
               </div>

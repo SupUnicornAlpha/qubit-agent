@@ -556,7 +556,10 @@ async function runAnalystTeamCore(params: {
                 .join("\n")}\n`
             : "";
         const ctx = `${context}${appendix}`;
-        return (async () => {
+        type SlotResult =
+          | { kind: "analyst"; payload: RawAnalystSignal & { agentInstanceId?: string } }
+          | { kind: "missing_signal"; agentInstanceId?: string; body: string };
+        return (async (): Promise<SlotResult> => {
           for (const pr of predChain) {
             await logResearchTeamInteraction({
               workflowRunId,
@@ -577,10 +580,26 @@ async function runAnalystTeamCore(params: {
             ticker,
             scope,
             context: ctx,
-            agentInstanceId: preInstanceId,
+            ...(preInstanceId !== undefined ? { agentInstanceId: preInstanceId } : {}),
             expectJsonSignal: true,
           });
-          return { kind: "analyst" as const, payload: reactOut.payload };
+          /**
+           * 2026-05-26 修复：旧逻辑无脑 cast 成 analyst payload，遇到 LLM 输出
+           * 不是合法 JSON 时 parseJsonSignalFromText 会塌缩为 hold@0.4，污染整批
+           * 信号。新逻辑：当 slot ReAct 返回 markdown（即 signal_parse_failed），
+           * 不再生成假 RawAnalystSignal，把它降级为 "missing_signal" 让上层 fusion
+           * 看到真实的"信号缺失"状态。
+           */
+          if (reactOut.kind === "analyst") {
+            return { kind: "analyst", payload: reactOut.payload };
+          }
+          return {
+            kind: "missing_signal",
+            ...(reactOut.agentInstanceId !== undefined
+              ? { agentInstanceId: reactOut.agentInstanceId }
+              : {}),
+            body: reactOut.body,
+          };
         })();
       })
     );
@@ -590,14 +609,15 @@ async function runAnalystTeamCore(params: {
       const idx = waveSlots.findIndex((s) => s.role === slot.role);
       const instanceId = idx >= 0 ? instanceBySlotIndex[idx] : undefined;
       const result = waveResults[wi];
-      if (result.status === "fulfilled") {
-        const val = result.value;
-        const { agentInstanceId: reactInstId, ...signal } = val.payload;
+      if (!result) continue;
+      if (result.status === "fulfilled" && result.value.kind === "analyst") {
+        const { agentInstanceId: reactInstId, ...signal } = result.value.payload;
         outputByRole.set(slot.role, signal);
         rawSignals.push(signal);
+        const persistInstanceId = reactInstId ?? instanceId;
         persistSignals.push({
-          agentInstanceId: reactInstId ?? instanceId,
           signal,
+          ...(persistInstanceId !== undefined ? { agentInstanceId: persistInstanceId } : {}),
         });
         await logResearchTeamInteraction({
           workflowRunId,
@@ -607,18 +627,50 @@ async function runAnalystTeamCore(params: {
           contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 3500)}`,
           payloadJson: { phase: "analyst_report", ticker },
         });
-      } else if (isMsAnalystRole(slot.role)) {
+      } else if (
+        result.status === "fulfilled" &&
+        result.value.kind === "missing_signal" &&
+        isMsAnalystRole(slot.role)
+      ) {
+        /**
+         * Analyst slot 跑完但 LLM 输出无法解析为合法 JSON 信号。
+         * 不再塌缩 hold@0.4 —— 改为不向 fusion 提供假信号，但记录互动事件
+         * 让前端 / 用户能看到"X 分析师没产出有效信号"。下游 fusion 会因为
+         * 信号数变少而触发更高优先级的辩论 / 数据补充。
+         */
+        await logResearchTeamInteraction({
+          workflowRunId,
+          fromRole: slot.role,
+          toRole: "orchestrator",
+          kind: "llm_message",
+          contentText: `[signal_parse_failed] ${result.value.body.slice(0, 3500)}`,
+          payloadJson: { phase: "analyst_report", ticker, missingSignal: true },
+        });
+      } else if (result.status === "rejected" && isMsAnalystRole(slot.role)) {
+        /**
+         * Slot 整体抛错（异常路径）：保留 fallback 信号但 confidence=0，
+         * 让 fusion 加权时这个信号无投票力，同时在 reasoning 里记录原因。
+         * 不再使用 0.2 这种"看似有效但实际只是兜底"的置信度。
+         */
         const fallback: RawAnalystSignal = {
           definitionId: slot.definitionId,
           analystRole: slot.role,
           ticker,
           signal: "hold",
-          confidence: 0.2,
-          reasoning: `Analyst ${slot.role} failed: ${result.reason}`,
+          confidence: 0,
+          reasoning: `[slot_runtime_error] Analyst ${slot.role} failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason).slice(0, 400)}`,
         };
         outputByRole.set(slot.role, fallback);
         rawSignals.push(fallback);
         persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
+        await logResearchTeamInteraction({
+          workflowRunId,
+          fromRole: slot.role,
+          toRole: "orchestrator",
+          kind: "llm_message",
+          contentText: `[slot_runtime_error] ${fallback.reasoning.slice(0, 3500)}`,
+          payloadJson: { phase: "analyst_report", ticker, slotError: true },
+        });
       }
 
       if (instanceId) {

@@ -43,6 +43,15 @@ export type ExecuteAgentReactParams = {
    * - true: 跳过 initialState，使用 `app.invoke(null, ...)` 从最近的 checkpoint 续跑
    */
   resume?: boolean;
+  /**
+   * Slot 隔离用：当一个 workflow 同时跑多个并发 ReAct（典型 MSA fan-out 场景），
+   * 4 个 analyst slot 不能共用同一个 LangGraph thread —— 否则 checkpointer 主键
+   * `(thread_id, checkpoint_ns, checkpoint_id)` 会让后写入的 slot 覆盖前一个的状态。
+   *
+   * 传入这个 suffix 后，effective thread_id = `${workflowId}:${threadSuffix}`，
+   * 每个 slot 拥有独立 checkpoint 轨迹。默认空 = 单 ReAct 工作流维持原行为。
+   */
+  threadSuffix?: string;
 };
 
 export type ExecuteAgentReactResult = {
@@ -424,8 +433,11 @@ export async function executeAgentReact(
   graph.addEdge("finalize", END);
 
   const app = graph.compile({ checkpointer: getCheckpointSaver() });
+  const effectiveThreadId = params.threadSuffix
+    ? `${params.workflowId}:${params.threadSuffix}`
+    : params.workflowId;
   const runnableConfig = {
-    configurable: { thread_id: params.workflowId },
+    configurable: { thread_id: effectiveThreadId },
     recursionLimit: Math.max(50, params.def.maxIterations * 8),
   };
 

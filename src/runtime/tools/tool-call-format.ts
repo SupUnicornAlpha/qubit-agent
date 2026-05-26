@@ -69,7 +69,10 @@ export function buildAgentToolsPromptBlock(params: {
 
   const mcps = (params.mcpServers ?? []).filter((s) => s.trim().length > 0);
   if (mcps.length > 0) {
-    lines.push("### MCP 服务（白名单）");
+    lines.push("### MCP 服务（本工作流当前真实可用，强约束）");
+    lines.push(
+      "⚠️ **以下是本轮唯一被启用的 MCP server 列表**。即便 system prompt 中提到其它 server 名（如历史 seed 的示例），**也禁止调用**——未在此列表的 server 一律会返回 `mcp server not found or disabled`，浪费一轮 reason。"
+    );
     for (const server of mcps) {
       lines.push(`- **${server}**：使用工具名 \`call_mcp\`，params 示例：`);
       lines.push(
@@ -78,6 +81,17 @@ export function buildAgentToolsPromptBlock(params: {
     }
     lines.push(
       "- 或使用 `mcp:<serverName>:<toolName>` 作为 tool 名，params 为 arguments 对象。",
+      ""
+    );
+  } else {
+    /**
+     * 0 个 MCP server 时也必须显式告知 LLM，否则 deepseek/glm 等模型会
+     * 从 system_prompt 历史示例（mcp-financex / fsi-factset 等名字）里
+     * "想象"出 server 并发起 call_mcp —— 数据库实测 5 次失败全是这种幻调。
+     */
+    lines.push(
+      "### MCP 服务",
+      "⚠️ **本轮没有任何 MCP server 启用**。**严禁使用** `call_mcp` 或 `mcp:*:*` 工具名，即便 system prompt 中提到 mcp-financex / fsi-factset / mathjs 等名字也不要尝试调用——会直接失败浪费一轮 reason。需要外部数据时，请使用上方「工具名列表」中的 builtin / connector 工具。",
       ""
     );
   }
