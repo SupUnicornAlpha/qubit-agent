@@ -41,6 +41,13 @@ const WORKFLOW_DIRECT_TABLES = [
   "agent_checkpoint_snapshot",
   "agent_step",
   "mcp_call_log",
+  // 监控 V2 P1 / P2 新增 (migrations 0049 / 0051)：
+  //   llm_call_log / skill_recall_log 用 NOT NULL FK 引用 workflow_run，无 ON DELETE CASCADE；
+  //   connector_call_log 新增 nullable workflow_run_id 直连（旧路径仍走下方 INDIRECT via acp_call）。
+  // 不显式清理 research 类工作流硬删时会在 COMMIT 阶段报 "FOREIGN KEY constraint failed"。
+  "llm_call_log",
+  "skill_recall_log",
+  "connector_call_log",
   "agent_instance",
   "analyst_signal",
   "chat_message_workflow_link",
@@ -143,9 +150,10 @@ export async function hardDeleteWorkflowRun(
     }
 
     // 2) 直接以 workflow_run_id 引用的表（defer_foreign_keys 下顺序不强制要求）。
+    // 用 `+=` 而非赋值，避免与 INDIRECT 阶段重复清理同表（如 connector_call_log）时统计被覆盖。
     for (const table of WORKFLOW_DIRECT_TABLES) {
       const r = sqlite.prepare(`DELETE FROM ${table} WHERE workflow_run_id = ?`).run(workflowRunId);
-      details[table] = r.changes;
+      details[table] = (details[table] ?? 0) + r.changes;
     }
 
     // 3) 仅置空 workflow_run_id 的反向引用（保留历史）。
