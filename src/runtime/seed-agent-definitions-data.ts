@@ -41,16 +41,21 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.4.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
-      "task_decompose",
       "assign_task",
       "run_analyst_team",
       "fuse_signals",
-      "check_risk",
+      "evaluate_risk",
       "edit_agent_pack",
       // M10.A2：playbook 复用 + postmortem 沉淀
       "search_memory",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
+      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
@@ -95,12 +100,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "fetch_fundamentals",
       "fetch_klines",
       "compute_valuation",
-      "analyze_industry",
       // M9.P2：量化锚点 — 看现成价值/质量因子的 RankIC
       "factor.list",
       "factor.autoEvaluate",
       // M9.P2：沙箱 — DCF / 敏感度表 / 同业百分位
       "code.run_python",
+      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
+      "skill.search",
+      "skill.use_record",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -125,6 +132,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "run_experiment",
       // M9.P2：沙箱 — RSI 截面排名、量价相关性
       "code.run_python",
+      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
+      "skill.search",
+      "skill.use_record",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -141,7 +151,6 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "fetch_news",
       "fetch_news_sentiment",
       "analyze_social_media",
-      "get_analyst_ratings",
       "extract_event",
       "score_sentiment",
       // M9.P2：把事件聚合成情绪因子入库
@@ -150,6 +159,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.autoEvaluate",
       // M9.P2：沙箱 — 大批量新闻聚合 / 情绪 decay 曲线
       "code.run_python",
+      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
+      "skill.search",
+      "skill.use_record",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -163,15 +175,16 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.0.0",
     systemPrompt: PROMPT_ANALYST_MACRO,
     tools: [
-      "fetch_macro_data",
       "fetch_klines",
-      "analyze_policy",
       "compute_macro_indicators",
       // M9.P2：量化锚点 — 看现成宏观因子（如果项目里 promote 过）
       "factor.list",
       "factor.autoEvaluate",
       // M9.P2：沙箱 — 跨市场相关性矩阵 + regime 检测
       "code.run_python",
+      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
+      "skill.search",
+      "skill.use_record",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -208,6 +221,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "search_memory",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
+      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
       // 兼容旧链路
       "run_experiment",
       "version_strategy",
@@ -237,6 +256,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.compute",
       // 自由分析（如计算多回测同图 metrics、回归归因）
       "code.run_python",
+      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
       "call_mcp",
     ],
     maxIterations: 20,
@@ -259,6 +284,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "rule.evaluate",
       // 沙箱：跑暴露 / 集中度 / VaR 计算
       "code.run_python",
+      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
     ],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
     maxIterations: 14,
@@ -284,9 +315,11 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.evaluate.batch",
       // 拉行情做 regime detection
       "fetch_klines",
-      "fetch_bars",
       // 沙箱：跨段比对 / Fama-French 归因 / Realized vol
       "code.run_python",
+      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
+      "skill.search",
+      "skill.use_record",
       "call_mcp",
     ],
     /** Walk-forward 至少跑 3 段，每段独立 backtest.run → 工具调用轮数较多 */

@@ -140,12 +140,17 @@ export type ToolCatalogCategory =
   | "memory"
   | "audit";
 
+export type ToolLifecycle = "stable" | "experimental" | "stub" | "deprecated";
+
 export interface ToolCatalogEntry {
   name: string;
   kind: "builtin" | "connector" | "mcp";
   connector?: string;
   description: string;
   category?: ToolCatalogCategory;
+  lifecycle?: ToolLifecycle;
+  replacedBy?: string;
+  deprecationReason?: string;
 }
 
 export const TOOL_CATEGORY_LABELS: Record<ToolCatalogCategory, string> = {
@@ -159,6 +164,13 @@ export const TOOL_CATEGORY_LABELS: Record<ToolCatalogCategory, string> = {
   macro: "宏观策略",
   memory: "记忆知识",
   audit: "审计报告",
+};
+
+export const TOOL_LIFECYCLE_LABELS: Record<ToolLifecycle, string> = {
+  stable: "稳定",
+  experimental: "实验",
+  stub: "占位",
+  deprecated: "已废弃",
 };
 
 export interface AgentsConfigResponse {

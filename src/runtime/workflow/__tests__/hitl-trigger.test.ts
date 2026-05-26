@@ -413,7 +413,6 @@ describe("isHighRiskChatTool - 高危工具识别", () => {
     expect(isHighRiskChatTool("generate_report")).toBe(false);
     expect(isHighRiskChatTool("call_team_market_data")).toBe(false);
     expect(isHighRiskChatTool("run_analyst_team")).toBe(false);
-    expect(isHighRiskChatTool("task_decompose")).toBe(false);
     expect(isHighRiskChatTool("assign_task")).toBe(false);
     expect(isHighRiskChatTool("fuse_signals")).toBe(false);
     expect(isHighRiskChatTool("write_memory")).toBe(false); // 写内存非外部状态变更

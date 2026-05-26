@@ -519,6 +519,50 @@ html[data-qb-style="feishu-clean"] .qb-mcp-chip--on {
   color: #245bff;
 }
 
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--deprecated {
+  border-style: dashed;
+  border-color: #f6a04d;
+  color: #8a5a1e;
+  background: #fff8ee;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--deprecated.qb-mcp-chip--on {
+  background: #fce5c4;
+  border-color: #d97706;
+  color: #7c2d12;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--stub {
+  border-color: #d1d5db;
+  background: #f5f5f5;
+  color: #9ca3af;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--stub.qb-mcp-chip--on {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+  color: #4b5563;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--experimental {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip--experimental.qb-mcp-chip--on {
+  background: #dbeafe;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+}
+
+html[data-qb-style="feishu-clean"] .qb-mcp-chip__badge {
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid currentColor;
+  color: inherit;
+  opacity: 0.8;
+}
+
 html[data-qb-style="feishu-clean"] .qb-agent-badge {
   background: var(--qb-tint-strong);
   border-color: #3370ff;

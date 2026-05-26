@@ -5,7 +5,15 @@ import {
 } from "../orchestration/topology-dispatch";
 import { listRegisteredBuiltinTools } from "./builtin-tools";
 import { TOOL_CONNECTOR_ROUTES } from "./tool-routes";
-import type { ToolCatalogEntry, ToolCatalogCategory } from "./types";
+import type { ToolCatalogEntry, ToolCatalogCategory, ToolLifecycle } from "./types";
+
+type ToolMetaEntry = {
+  description: string;
+  category: ToolCatalogCategory;
+  lifecycle?: ToolLifecycle;
+  replacedBy?: string;
+  deprecationReason?: string;
+};
 
 /** 工具分类（配置中心 hover / 筛选） */
 export const TOOL_CATALOG_CATEGORIES: Record<
@@ -24,23 +32,39 @@ export const TOOL_CATALOG_CATEGORIES: Record<
   audit: { label: "审计报告", hint: "留痕与报告生成" },
 };
 
-const TOOL_META: Record<string, { description: string; category: ToolCatalogCategory }> = {
+const TOOL_META: Record<string, ToolMetaEntry> = {
   // 编排
-  task_decompose: { description: "将用户目标拆解为：拉数据 → 团队分析 → 回测 → 风控", category: "orchestration" },
   assign_task: { description: "向指定角色 Agent 派发工作流任务", category: "orchestration" },
   run_analyst_team: { description: "并行运行分析师编组，MSA 融合 + 可选辩论/风控", category: "orchestration" },
   fuse_signals: { description: "合并多分析师 buy/sell/hold 信号为统一结论", category: "orchestration" },
-  check_risk: { description: "编排链路中的风控检查（调用 qubit-risk）", category: "orchestration" },
+  check_risk: {
+    description: "编排链路中的风控检查（调用 qubit-risk）",
+    category: "orchestration",
+    lifecycle: "deprecated",
+    replacedBy: "evaluate_risk",
+    deprecationReason: "与 evaluate_risk 编排重复，统一走规范风控入口",
+  },
   edit_agent_pack: { description: "编辑本 Agent 的 soul/user/memory/prompt 文件", category: "orchestration" },
   call_mcp: {
     description: "调用 MCP 白名单中的外部工具（params: serverName, mcpTool, arguments）",
     category: "orchestration",
   },
-  run_screener: { description: "按条件筛选股票候选（当前为演示股票池）", category: "research" },
+  run_screener: {
+    description: "按条件筛选股票候选（当前为演示股票池）",
+    category: "research",
+    lifecycle: "stub",
+    deprecationReason: "返回固定演示股票池，未对接实际筛选服务",
+  },
 
   // 行情
-  fetch_bars: { description: "拉取 OHLCV K 线（多数据源：Yahoo/东财/AkShare 等）", category: "market" },
-  fetch_klines: { description: "同 fetch_bars，面向图表/Agent 的 K 线接口", category: "market" },
+  fetch_bars: {
+    description: "拉取 OHLCV K 线（多数据源：Yahoo/东财/AkShare 等）",
+    category: "market",
+    lifecycle: "deprecated",
+    replacedBy: "fetch_klines",
+    deprecationReason: "与 fetch_klines 是同一接口的两个名字，统一使用 fetch_klines",
+  },
+  fetch_klines: { description: "拉取 OHLCV K 线（多数据源：Yahoo/东财/AkShare 等）", category: "market" },
   fetch_ticks: { description: "拉取 Tick/盘口快照（简化实现）", category: "market" },
   fetch_price_data: { description: "K 线 + 最新技术指标快照（SMA/RSI/MACD/布林）", category: "market" },
   fetch_financial_data: { description: "价格统计 + 基本面占位；完整财报需外接数据源", category: "market" },
@@ -48,13 +72,30 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
   write_snapshot: { description: "写入行情/研究数据快照供下游复用", category: "market" },
 
   // 研究
-  compute_factors: { description: "从 K 线计算动量等因子及 IC 代理", category: "research" },
-  run_experiment: { description: "记录假设并跑单因子实验，写入 factor_definition", category: "research" },
-  version_strategy: { description: "创建 strategy / strategy_version 版本记录", category: "research" },
+  compute_factors: {
+    description: "从 K 线计算动量等因子及 IC 代理",
+    category: "research",
+    lifecycle: "deprecated",
+    replacedBy: "factor.compute",
+    deprecationReason: "旧因子链路，已被 M2 三段式因子套件取代",
+  },
+  run_experiment: {
+    description: "记录假设并跑单因子实验，写入 factor_definition",
+    category: "research",
+    lifecycle: "deprecated",
+    replacedBy: "factor.autoEvaluate",
+    deprecationReason: "旧实验链路，已被 M6 factor.autoEvaluate 取代",
+  },
+  version_strategy: {
+    description: "创建 strategy / strategy_version 版本记录",
+    category: "research",
+    lifecycle: "deprecated",
+    replacedBy: "strategy.compose",
+    deprecationReason: "旧策略版本链路，已被 M2 strategy.compose 取代",
+  },
   compute_indicators: { description: "计算 SMA/RSI/MACD/布林带等指标序列", category: "research" },
   detect_patterns: { description: "识别市场状态（趋势/震荡）与金叉/死叉", category: "research" },
   compute_valuation: { description: "估值代理：现价相对 252 日均价（非财报 PE）", category: "research" },
-  analyze_industry: { description: "输出行业分析框架（产业链/竞争/政策）", category: "research" },
 
   // 回测
   run_backtest: { description: "SMA 金叉死叉多空回测，写入 backtest_job", category: "backtest" },
@@ -77,20 +118,43 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
   // 舆情
   fetch_news: { description: "抓取新闻列表（HTTP 源或 stub）", category: "sentiment" },
   fetch_news_sentiment: { description: "新闻列表 + 聚合情绪得分", category: "sentiment" },
-  extract_event: { description: "从文本抽取结构化事件（简化 stub）", category: "sentiment" },
-  score_sentiment: { description: "对单条文本做情绪打分", category: "sentiment" },
-  analyze_social_media: { description: "基于新闻头条的舆情热度代理", category: "sentiment" },
-  get_analyst_ratings: { description: "卖方评级（需外接数据源，当前为空）", category: "sentiment" },
-
+  extract_event: {
+    description: "从文本抽取结构化事件（简化 stub）",
+    category: "sentiment",
+    lifecycle: "stub",
+    deprecationReason: "返回与输入文本无关的硬编码事件，未对接 NER/事件抽取服务",
+  },
+  score_sentiment: {
+    description: "对单条文本做情绪打分",
+    category: "sentiment",
+    lifecycle: "stub",
+    deprecationReason: "返回固定 0/正/负三档，未对接真实情绪模型",
+  },
+  analyze_social_media: {
+    description: "基于新闻头条的舆情热度代理",
+    category: "sentiment",
+    lifecycle: "stub",
+    deprecationReason: "实际仅基于新闻头条做关键词计数，非真实社媒数据",
+  },
   // 宏观
-  fetch_macro_data: { description: "基准指数 K 线推导宏观 regime 与风险偏好", category: "macro" },
-  analyze_policy: { description: "货币政策/财政政策分析框架", category: "macro" },
-  compute_macro_indicators: { description: "同 fetch_macro_data，输出 risk_on/off 标签", category: "macro" },
+  fetch_macro_data: {
+    description: "基准指数 K 线推导宏观 regime 与风险偏好",
+    category: "macro",
+    lifecycle: "deprecated",
+    replacedBy: "compute_macro_indicators",
+    deprecationReason: "1 行别名，统一走 compute_macro_indicators",
+  },
+  compute_macro_indicators: { description: "基准指数推导宏观 regime（risk_on/off 标签）", category: "macro" },
 
   // 记忆
   write_memory: { description: "写入项目/Agent 中期或长期记忆", category: "memory" },
   search_memory: { description: "按关键词检索记忆条目", category: "memory" },
-  cleanup_ttl: { description: "预览过期记忆清理（TTL）", category: "memory" },
+  cleanup_ttl: {
+    description: "预览过期记忆清理（TTL）",
+    category: "memory",
+    lifecycle: "stub",
+    deprecationReason: "仅返回预览，未真正执行清理；后台 ttl-sweeper 已自动处理",
+  },
   "memory.summarize_workflow": {
     description: "主动归纳当前工作流为 midterm（通常 workflow 结束自动触发）",
     category: "memory",
@@ -154,6 +218,9 @@ const TOOL_META: Record<string, { description: string; category: ToolCatalogCate
   "factor.evaluate": {
     description: "评估因子（IC/RankIC/IR/衰减/换手），结果写 factor_evaluation 留痕",
     category: "research",
+    lifecycle: "deprecated",
+    replacedBy: "factor.autoEvaluate",
+    deprecationReason: "factor.autoEvaluate 已包含 evaluate 能力且自动接入市场数据",
   },
   "rule.register": {
     description: "注册规则（落 rule_definition；走 RuleEngineProvider.parse 校验 DSL）",
@@ -228,13 +295,17 @@ function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: strin
     (kind === "connector" && connector
       ? `经 ${connector} 连接器执行`
       : "内置工具");
-  return {
+  const entry: ToolCatalogEntry = {
     name,
     kind,
-    connector,
     description,
     category: m?.category ?? (kind === "connector" ? "market" : "orchestration"),
   };
+  if (connector !== undefined) entry.connector = connector;
+  if (m?.lifecycle !== undefined) entry.lifecycle = m.lifecycle;
+  if (m?.replacedBy !== undefined) entry.replacedBy = m.replacedBy;
+  if (m?.deprecationReason !== undefined) entry.deprecationReason = m.deprecationReason;
+  return entry;
 }
 
 /** Full catalog for config UI / agent authoring. */
@@ -265,4 +336,33 @@ export function buildToolCatalog(): ToolCatalogEntry[] {
 
 export function getToolCatalogMap(): Map<string, ToolCatalogEntry> {
   return new Map(buildToolCatalog().map((e) => [e.name, e]));
+}
+
+/**
+ * 把 deprecated 别名工具解析到 `replacedBy` 指向的工具。
+ * 仅当 TOOL_META 中标了 `lifecycle: "deprecated"` 且 `replacedBy` 也在 TOOL_META 中存在时生效，
+ * 避免链式跳转或指向不存在的工具。
+ *
+ * 用法：在 act 节点 dispatch 前调用，让旧 prompt 调用 deprecated 工具时透明走到 replacement。
+ */
+export function resolveToolAlias(name: string): {
+  resolved: string;
+  aliased: boolean;
+  originalName: string;
+  replacedBy?: string;
+} {
+  const meta = TOOL_META[name];
+  if (meta?.lifecycle === "deprecated" && meta.replacedBy) {
+    const target = TOOL_META[meta.replacedBy];
+    // 防御：target 必须存在且本身不是 deprecated（避免链式跳转）
+    if (target && target.lifecycle !== "deprecated") {
+      return {
+        resolved: meta.replacedBy,
+        aliased: true,
+        originalName: name,
+        replacedBy: meta.replacedBy,
+      };
+    }
+  }
+  return { resolved: name, aliased: false, originalName: name };
 }

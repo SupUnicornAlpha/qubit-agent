@@ -1,4 +1,4 @@
-import { getToolCatalogMap } from "./tool-catalog";
+import { getToolCatalogMap, resolveToolAlias } from "./tool-catalog";
 import { isBuiltinTool } from "./builtin-tools";
 import { resolveConnectorForTool } from "./tool-routes";
 
@@ -166,6 +166,9 @@ function extractMcpMeta(
 function isAllowedTool(toolName: string, availableTools: string[]): boolean {
   if (availableTools.includes(toolName)) return true;
   if (toolName === "call_mcp" && availableTools.includes("call_mcp")) return true;
+  // Step 3：兼容 deprecated 别名 — 只要 replacedBy 在订阅里就放行（act 节点会做透明跳转）
+  const alias = resolveToolAlias(toolName);
+  if (alias.aliased && availableTools.includes(alias.resolved)) return true;
   if (toolName.startsWith("mcp:")) {
     return availableTools.some((t) => t === "call_mcp" || t.startsWith("mcp:"));
   }

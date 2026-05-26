@@ -102,6 +102,28 @@ describe("parseToolCallFromReason", () => {
       expect(r.mcp?.toolName).toBe("add");
     }
   });
+
+  test("Step 3：deprecated 别名只要 replacedBy 在订阅里就放行（兼容旧 prompt）", () => {
+    // 订阅里只有 fetch_klines（新名字），LLM 调老名字 fetch_bars 也应该通过 parse
+    const r = parseToolCallFromReason(
+      '```json\n{"tool":"fetch_bars","params":{"symbol":"600519"}}\n```',
+      ["fetch_klines"]
+    );
+    expect(r.kind).toBe("tool");
+    if (r.kind === "tool") {
+      // parse 阶段保留原名 — act 节点会做透明 resolve 到 fetch_klines
+      expect(r.toolName).toBe("fetch_bars");
+    }
+  });
+
+  test("Step 3：replacedBy 不在订阅里时，deprecated 别名仍被拒（安全）", () => {
+    // 订阅里没有 fetch_klines，调 fetch_bars 应该被拒
+    const r = parseToolCallFromReason(
+      '```json\n{"tool":"fetch_bars","params":{}}\n```',
+      ["run_analyst_team"]
+    );
+    expect(r.kind).toBe("parse_error");
+  });
 });
 
 describe("buildAgentToolsPromptBlock", () => {

@@ -179,4 +179,38 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
       }
     }
   });
+
+  test("M11 升级：9 个核心 role 默认订阅 skill.search + skill.use_record（让 LLM 能复用历史 skill）", () => {
+    const minimalSkillRoles = [
+      "def-orchestrator",
+      "def-analyst-fundamental",
+      "def-analyst-technical",
+      "def-analyst-sentiment",
+      "def-analyst-macro",
+      "def-research",
+      "def-backtest",
+      "def-risk",
+      "def-walk-forward-validator",
+    ];
+    for (const id of minimalSkillRoles) {
+      const def = BY_ID.get(id);
+      expect(def, `${id} missing from seed definitions`).toBeDefined();
+      expect(def!.tools, `${id} missing skill.search`).toContain("skill.search");
+      expect(def!.tools, `${id} missing skill.use_record`).toContain("skill.use_record");
+    }
+  });
+
+  test("M11 升级：orchestrator/research/backtest/risk 装齐 skill 全套（与 SKILLS_NUDGE 提示词自洽）", () => {
+    // 这 4 个 role 的 systemPrompt 都注入了完整 SKILLS_NUDGE（含 skill.create/patch/archive 引导），
+    // 必须配套订阅这 3 个工具，否则 LLM 会调到一个没订阅的工具。
+    const fullSkillRoles = ["def-orchestrator", "def-research", "def-backtest", "def-risk"];
+    const fullToolset = ["skill.search", "skill.use_record", "skill.create", "skill.patch", "skill.archive"];
+    for (const id of fullSkillRoles) {
+      const def = BY_ID.get(id);
+      expect(def, `${id} missing from seed definitions`).toBeDefined();
+      for (const tool of fullToolset) {
+        expect(def!.tools, `${id} missing ${tool}`).toContain(tool);
+      }
+    }
+  });
 });

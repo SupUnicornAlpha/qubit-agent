@@ -19,8 +19,8 @@ describe("tool routes", () => {
   });
 
   test("builtin tools are not double-routed", () => {
-    expect(isRoutedTool("task_decompose")).toBe(false);
-    expect(isBuiltinTool("task_decompose")).toBe(true);
+    expect(isRoutedTool("assign_task")).toBe(false);
+    expect(isBuiltinTool("assign_task")).toBe(true);
     expect(isBuiltinTool("fetch_klines")).toBe(false);
     expect(isBuiltinTool("call_team_research")).toBe(true);
   });
@@ -38,7 +38,7 @@ const ctx = {
     name: "test",
     version: "1",
     systemPrompt: "",
-    tools: ["task_decompose"],
+    tools: ["assign_task"],
     mcpServers: [],
     skills: [],
     subscriptions: [],
@@ -52,20 +52,18 @@ const ctx = {
 };
 
 describe("builtin tool handlers", () => {
-  test("task_decompose returns steps", async () => {
-    const result = (await dispatchBuiltinTool("task_decompose", ctx, {})) as {
-      steps: unknown[];
-      goal: string;
-    };
-    expect(result.steps.length).toBeGreaterThan(0);
-    expect(result.goal).toContain("AAPL");
-  });
-
   test("catalog includes builtin and connector entries", () => {
     const catalog = buildToolCatalog();
     expect(catalog.some((e) => e.name === "fetch_klines" && e.kind === "connector")).toBe(true);
     expect(catalog.some((e) => e.name === "run_analyst_team" && e.kind === "builtin")).toBe(true);
     expect(listRegisteredBuiltinTools().length).toBeGreaterThan(10);
+  });
+
+  test("4 deleted stubs are no longer registered as builtin handlers", () => {
+    expect(isBuiltinTool("task_decompose")).toBe(false);
+    expect(isBuiltinTool("analyze_industry")).toBe(false);
+    expect(isBuiltinTool("analyze_policy")).toBe(false);
+    expect(isBuiltinTool("get_analyst_ratings")).toBe(false);
   });
 });
 

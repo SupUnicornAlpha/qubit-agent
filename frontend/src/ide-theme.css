@@ -832,6 +832,58 @@
   cursor: not-allowed;
 }
 
+/* Lifecycle badges & states for tool chips */
+.qb-mcp-chip--deprecated {
+  border-style: dashed;
+  border-color: rgba(249, 115, 22, 0.55);
+  color: #d4d4d8;
+  opacity: 0.75;
+}
+
+.qb-mcp-chip--deprecated.qb-mcp-chip--on {
+  border-color: rgba(249, 115, 22, 0.85);
+  background: rgba(249, 115, 22, 0.18);
+  color: #fff7ed;
+}
+
+.qb-mcp-chip--stub {
+  border-color: rgba(113, 113, 122, 0.55);
+  color: #a1a1aa;
+  opacity: 0.7;
+}
+
+.qb-mcp-chip--stub.qb-mcp-chip--on {
+  border-color: rgba(161, 161, 170, 0.85);
+  background: rgba(82, 82, 91, 0.35);
+  color: #f4f4f5;
+}
+
+.qb-mcp-chip--experimental {
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #cbd5e1;
+}
+
+.qb-mcp-chip--experimental.qb-mcp-chip--on {
+  border-color: rgba(56, 189, 248, 0.85);
+  background: rgba(56, 189, 248, 0.18);
+  color: #ecfeff;
+}
+
+.qb-mcp-chip__badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  border: 1px solid currentColor;
+  opacity: 0.75;
+}
+
 .qb-json-preview {
   margin: 0;
   padding: 12px;

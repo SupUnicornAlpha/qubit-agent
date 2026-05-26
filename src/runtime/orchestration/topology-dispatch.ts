@@ -175,11 +175,10 @@ export function buildTopologyToolsPromptBlock(ctx: OrchestratorTopologyContext |
 
 /** Orchestrator 静态基础工具（不含拓扑边，拓扑工具由 sync 写入 DB） */
 export const ORCHESTRATOR_BASE_TOOLS = [
-  "task_decompose",
   "assign_task",
   "run_analyst_team",
   "fuse_signals",
-  "check_risk",
+  "evaluate_risk",
   "edit_agent_pack",
   "call_mcp",
 ] as const;

@@ -273,8 +273,6 @@ function runMock(input: LlmGatewayInput): LlmGatewayResult {
     `当前 LLM 提供商为 mock，未调用真实 AI 模型。`,
     `请在「配置中心 → 模型配置」中填写真实 API Key（支持 OpenAI / DeepSeek / Qwen 等），`,
     `保存后重新发送消息即可获得真实 AI 回复。`,
-    ``,
-    `计划执行：task_decompose`,
   ].join("\n");
 
   for (const token of splitForPseudoStreaming(answer)) {

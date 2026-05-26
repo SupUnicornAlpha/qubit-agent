@@ -234,7 +234,7 @@ async function main() {
         name: "Orchestrator",
         version: "3.0.0",
         systemPrompt: "Workspace configured orchestrator.",
-        tools: ["task_decompose", "assign_task"],
+        tools: ["assign_task", "run_analyst_team"],
         mcpServers: [],
         skills: [],
         subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
@@ -280,8 +280,8 @@ async function main() {
         name: "default-policy",
         description: "workspace default policy",
         allowedTools: [
-          "task_decompose",
           "assign_task",
+          "run_analyst_team",
           "compute_factors",
           "run_experiment",
           "version_strategy",
@@ -308,8 +308,8 @@ async function main() {
   await upsertPolicy({
     id: "default-policy",
     allowedTools: [
-      "task_decompose",
       "assign_task",
+      "run_analyst_team",
       "compute_factors",
       "run_experiment",
       "version_strategy",
@@ -347,7 +347,7 @@ async function main() {
   const maxIterationWorkflow = await createWorkflow(projectId, "acceptance-max-iterations");
   await upsertPolicy({
     id: "acceptance-iteration-tight",
-    allowedTools: ["task_decompose", "assign_task"],
+    allowedTools: ["assign_task", "run_analyst_team"],
     maxIterationsPerRun: 1,
   });
   await setDefinitionPolicy("def-orchestrator", "acceptance-iteration-tight");

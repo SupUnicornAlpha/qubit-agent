@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAgentToolCatalog, postAgentPromptPreview, upsertMcpBinding } from "../../api/backend";
 import {
   TOOL_CATEGORY_LABELS,
+  TOOL_LIFECYCLE_LABELS,
   type AgentDefinitionBundle,
   type AgentPromptPreviewResponse,
   type McpServerConfigRecord,
@@ -64,7 +65,28 @@ function formatToolTooltip(entry: ToolCatalogEntry | undefined, toolName: string
       : entry.kind === "builtin"
         ? "内置实现"
         : "MCP";
-  return `${entry.description}\n分类：${cat} · ${via}`;
+  const lines = [entry.description, `分类：${cat} · ${via}`];
+  if (entry.lifecycle && entry.lifecycle !== "stable") {
+    const label = TOOL_LIFECYCLE_LABELS[entry.lifecycle];
+    if (entry.lifecycle === "deprecated" && entry.replacedBy) {
+      lines.push(`⚠ ${label}：建议改用 ${entry.replacedBy}`);
+    } else {
+      lines.push(`⚠ ${label}`);
+    }
+    if (entry.deprecationReason) {
+      lines.push(`原因：${entry.deprecationReason}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function toolChipClassName(entry: ToolCatalogEntry | undefined, selected: boolean): string {
+  const cls = ["qb-mcp-chip"];
+  if (selected) cls.push("qb-mcp-chip--on");
+  if (entry?.lifecycle === "deprecated") cls.push("qb-mcp-chip--deprecated");
+  if (entry?.lifecycle === "stub") cls.push("qb-mcp-chip--stub");
+  if (entry?.lifecycle === "experimental") cls.push("qb-mcp-chip--experimental");
+  return cls.join(" ");
 }
 
 const Collapsible: FC<{
@@ -290,7 +312,8 @@ export const AgentRuntimeTab: FC<{
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>内置工具</span>
           <span style={{ fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
-            悬停查看简介 · 勾选写入 tools_json（保存草稿后生效）
+            悬停查看简介 · 勾选写入 tools_json（保存草稿后生效）·
+            <span style={{ opacity: 0.7 }}> deprecated/stub 的工具仍可调用，但不建议新订阅</span>
           </span>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
@@ -301,11 +324,14 @@ export const AgentRuntimeTab: FC<{
               <button
                 key={t}
                 type="button"
-                className={`qb-mcp-chip${on ? " qb-mcp-chip--on" : ""}`}
+                className={toolChipClassName(meta, on)}
                 title={formatToolTooltip(meta, t)}
                 onClick={() => setDraftTools((prev) => toggleInList(prev, t))}
               >
                 {t}
+                {meta?.lifecycle === "deprecated" ? <span className="qb-mcp-chip__badge">deprecated</span> : null}
+                {meta?.lifecycle === "stub" ? <span className="qb-mcp-chip__badge">stub</span> : null}
+                {meta?.lifecycle === "experimental" ? <span className="qb-mcp-chip__badge">experimental</span> : null}
               </button>
             );
           })}

@@ -7,6 +7,7 @@ import type { AgentGraphState, StepStreamEvent } from "../state";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
+import { resolveToolAlias } from "../../tools/tool-catalog";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../tools/tool-routes";
@@ -112,6 +113,35 @@ export async function actNode(
       effectiveToolName = parsedMcp.toolName;
       enrichedToolParams["operation"] = parsedMcp.toolName;
       Object.assign(enrichedToolParams, parsedMcp.arguments ?? {});
+    }
+  }
+
+  /**
+   * Step 3：deprecated 别名工具透明跳转到 `replacedBy` 指向的工具。
+   * 旧 prompt / 旧 agent 定义仍可调用 fetch_bars / fetch_macro_data 等老名字，
+   * 但实际执行的是 fetch_klines / compute_macro_indicators，让链路自动收敛。
+   * 只对 mcp=undefined 的情况生效（mcp 工具名不在 catalog 中，不需要 alias 跳转）。
+   */
+  if (!mcp) {
+    const aliasResolution = resolveToolAlias(effectiveToolName);
+    if (aliasResolution.aliased) {
+      emit({
+        runId: state.runId,
+        workflowId: state.workflowId,
+        traceId: state.traceId,
+        role: state.agentDefinition.role,
+        type: "observe",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: {
+          level: "warn",
+          toolAlias: true,
+          originalTool: aliasResolution.originalName,
+          resolvedTool: aliasResolution.resolved,
+          message: `tool '${aliasResolution.originalName}' is deprecated; routed to '${aliasResolution.resolved}'`,
+        },
+      });
+      effectiveToolName = aliasResolution.resolved;
     }
   }
 

@@ -60,30 +60,6 @@ const memoryConnector = new NativeMemoryConnector();
 
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
-  task_decompose: async (ctx, params) => {
-    const goal =
-      String(params.goal ?? params.task ?? ctx.inboundPayload?.["goal"] ?? ctx.reasonText ?? "").trim();
-    const steps = [
-      { id: "1", role: "market_data", action: "拉取行情与数据快照", tool: "fetch_klines" },
-      { id: "2", role: "news_event", action: "抓取新闻与事件情绪", tool: "fetch_news" },
-      {
-        id: "3",
-        role: "orchestrator",
-        action: "启动四维分析师团队（MSA）",
-        tool: "run_analyst_team",
-      },
-      { id: "4", role: "research", action: "因子/策略深化与实验", tool: "run_experiment" },
-      { id: "5", role: "backtest", action: "历史回测验证", tool: "run_backtest" },
-      {
-        id: "6",
-        role: "risk",
-        action: "规则签核与组合风险审查",
-        tool: "evaluate_risk",
-      },
-    ];
-    return { goal, steps, workflowId: ctx.workflowId };
-  },
-
   assign_task: async (ctx, params) => {
     const role = String(params.role ?? params.targetRole ?? "").trim() as AgentRole;
     if (!role) throw new Error("assign_task: role is required");
@@ -261,28 +237,6 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 
-  analyze_industry: async (_ctx, params) => {
-    const industry = String(params.industry ?? params.sector ?? "未知行业");
-    const symbol = String(params.symbol ?? "");
-    return {
-      industry,
-      symbol,
-      framework: ["产业链位置", "竞争格局", "政策敏感度", "景气度"],
-      note: "结构化行业分析框架；可结合 fetch_news / fetch_financial_data 填充事实",
-    };
-  },
-
-  analyze_policy: async (_ctx, params) => {
-    const region = String(params.region ?? "CN");
-    const topic = String(params.topic ?? params.policy ?? "货币政策");
-    return {
-      region,
-      topic,
-      dimensions: ["利率路径", "流动性", "财政刺激", "监管取向"],
-      note: "政策分析提纲；建议配合新闻工具与宏观数据验证",
-    };
-  },
-
   compute_macro_indicators: async (_ctx, params) => {
     const benchmark = String(params.benchmark ?? params.symbol ?? "000300");
     const exchange = String(params.exchange ?? "SH");
@@ -327,15 +281,6 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       discussionVolume: items.length,
       headlines: items.slice(0, 5).map((i) => i.title),
       note: "基于新闻头条的舆情代理；完整社交数据需外接 API",
-    };
-  },
-
-  get_analyst_ratings: async (_ctx, params) => {
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
-    return {
-      symbol,
-      ratings: [],
-      note: "卖方评级需外接数据源；当前返回空列表并提示接入方式",
     };
   },
 
