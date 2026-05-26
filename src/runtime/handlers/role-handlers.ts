@@ -190,23 +190,16 @@ const orchestratorHandler: RuntimeRoleHandler = {
       return;
     }
 
-    if (payload.taskType === "workflow_start") {
-      await setWorkflowStatus(msg.workflowId, "completed");
-    }
-
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, "orchestrator", {
-        result: {
-          taskType: payload.taskType,
-          next: "orchestrator handled",
-        },
-      }),
-      priority: msg.priority,
-    });
+    /**
+     * 默认路径（含 workflow_start 等所有 orchestrator 自己执行的任务）：跑 ReAct。
+     *
+     * P0-A 修复：历史上这里把 workflow_start 直接 setWorkflowStatus("completed")
+     * + 发一条"orchestrator handled" 的假 TASK_RESULT 就退出，相当于 A2A 路径下
+     * orchestrator 根本不跑推理 —— 任何 `executionPath='a2a'` 的工作流默认派给
+     * orchestrator 都等于"什么都不做"。改成与 noopHandler 行为一致：交给
+     * `runA2aReactTaskAssign` 真跑 ReAct，由它写状态 + 发 TASK_RESULT。
+     */
+    await runA2aReactTaskAssign(ctx, msg);
   },
 };
 

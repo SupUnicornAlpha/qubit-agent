@@ -426,6 +426,19 @@ export class GraphRunner {
       params: { workflowRunId: params.workflowId, goal: wf.goal, mode: wf.mode },
     };
 
+    /**
+     * P0-B：续跑/重跑全部硬编码走 LangGraph，但 `workflow_run.executionPath` 字段不变。
+     * 这会让原本是 `a2a` 路径的工作流在重启 / HITL approve 后悄悄被回到 `graph` 路径，
+     * 前端 / 监控 / 运营看到的"执行路径"与实际不符。
+     * 这里把 db 上的 executionPath 显式更新为 `graph`，让"事实 = 字段"。
+     */
+    if (wf.executionPath !== "graph") {
+      await db
+        .update(workflowRun)
+        .set({ executionPath: "graph" })
+        .where(eq(workflowRun.id, params.workflowId));
+    }
+
     void this.executeGraph({
       runId,
       traceId,
