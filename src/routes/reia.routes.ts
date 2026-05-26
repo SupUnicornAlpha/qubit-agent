@@ -134,7 +134,7 @@ reiaRouter.post("/broker/accounts/upsert", async (c) => {
     accountRef: body.accountRef,
     mode: body.mode,
     baseUrl: body.baseUrl,
-    providerConfig: body.providerConfig as import("../runtime/reia/broker-types").BrokerProviderConfig | undefined,
+    providerConfig: body.providerConfig as import("../types/broker").BrokerProviderConfig | undefined,
     isDefault: body.isDefault,
     enabled: body.enabled,
   });

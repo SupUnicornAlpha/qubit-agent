@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   factorDefinition as factorDefTable,
@@ -31,11 +31,11 @@ import type {
 } from "../provider/types";
 import { factorValueStore } from "./factor-value-store";
 import { queryBarsRange } from "../market/klines-query";
-import { parse as parseQlibExpr } from "../provider/impls/factor/qlib-expr/parser";
 import {
-  evalExpr as evalQlibExpr,
+  parseQlibExpr,
+  evalQlibExpr,
   type PriceSeries,
-} from "../provider/impls/factor/qlib-expr/evaluator";
+} from "../provider";
 import { generateGbmTicks } from "../../util/synthesize-gbm";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
@@ -582,6 +582,41 @@ export class FactorService {
       .where(eq(factorEvalTable.factorId, factorId))
       .orderBy(desc(factorEvalTable.asof))
       .limit(limit);
+  }
+
+  /**
+   * 取一批因子各自"最近一次评估"中的某个指标，返回 `factorId → metric value` 的 Map。
+   *
+   * - `metric = 'rankIc' | 'ir'`：分别对应 `factor_evaluation.rankIc` / `ir`
+   * - 未跑过评估的 factor 不会出现在 Map 里（caller 自行决定 default 行为）
+   * - 指标若为 NaN / null / 非有限数，按 `0` 写入并保留键（让 caller 知道"评估过但无效"）
+   *
+   * 给 `strategy-composer.computeIcWeights` 等"按 IC 权重打分"的用法使用，
+   * 让 strategy 层不必直接 import `factor_evaluation` 表。
+   */
+  async getLatestEvaluationMetric(
+    factorIds: string[],
+    metric: "rankIc" | "ir"
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (factorIds.length === 0) return out;
+    const db = await getDb();
+    const rows = await db
+      .select({
+        factorId: factorEvalTable.factorId,
+        rankIc: factorEvalTable.rankIc,
+        ir: factorEvalTable.ir,
+        asof: factorEvalTable.asof,
+      })
+      .from(factorEvalTable)
+      .where(inArray(factorEvalTable.factorId, factorIds))
+      .orderBy(desc(factorEvalTable.asof));
+    for (const r of rows) {
+      if (out.has(r.factorId)) continue;
+      const v = r[metric];
+      out.set(r.factorId, typeof v === "number" && Number.isFinite(v) ? v : 0);
+    }
+    return out;
   }
 
   // ── private ──

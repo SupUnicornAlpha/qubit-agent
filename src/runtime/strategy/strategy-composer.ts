@@ -13,10 +13,9 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
-  factorEvaluation as factorEvalTable,
   strategyComposition as compositionTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
@@ -359,37 +358,20 @@ export class StrategyComposer {
     );
   }
 
-  /** 从 factor_evaluation 拉每个因子最近一次的指标，按 |metric| 归一化 */
+  /**
+   * 从 factorService 拉每个因子最近一次的指标，按 |metric| 归一化。
+   *
+   * 不直接读 `factor_evaluation` 表（之前 P0 阶段为了赶进度跨域 SELECT，破坏了
+   * "strategy 不应直接读 factor 数据表"的边界约束）。
+   */
   private async computeIcWeights(
     ids: string[],
     method: "rank_ic_weighted" | "ic_ir_weighted"
   ): Promise<Record<string, number>> {
-    const db = await getDb();
     const metricKey = method === "rank_ic_weighted" ? "rankIc" : "ir";
+    const latestRaw = await factorService.getLatestEvaluationMetric(ids, metricKey);
 
-    const rows = await db
-      .select({
-        factorId: factorEvalTable.factorId,
-        rankIc: factorEvalTable.rankIc,
-        ir: factorEvalTable.ir,
-        asof: factorEvalTable.asof,
-      })
-      .from(factorEvalTable)
-      .where(inArray(factorEvalTable.factorId, ids))
-      .orderBy(desc(factorEvalTable.asof));
-
-    // 每个 factorId 取最近一条
-    const latest = new Map<string, number>();
-    for (const r of rows) {
-      if (latest.has(r.factorId)) continue;
-      const v = r[metricKey];
-      latest.set(
-        r.factorId,
-        typeof v === "number" && Number.isFinite(v) ? Math.abs(v) : 0
-      );
-    }
-
-    if (latest.size === 0) {
+    if (latestRaw.size === 0) {
       throw new StrategyComposerError(
         "validation_failed",
         `${method}_no_factor_evaluation: 所有因子都没有 factor_evaluation 留痕，无法用 IC 权重；` +
@@ -400,7 +382,7 @@ export class StrategyComposer {
     const out: Record<string, number> = {};
     let total = 0;
     for (const id of ids) {
-      const w = latest.get(id) ?? 0;
+      const w = Math.abs(latestRaw.get(id) ?? 0);
       out[id] = w;
       total += w;
     }

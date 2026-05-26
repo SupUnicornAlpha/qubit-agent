@@ -9,7 +9,7 @@ import {
   strategyVersion,
   workflowRun,
 } from "../../db/sqlite/schema";
-import type { BrokerProvider } from "../reia/broker-types";
+import type { BrokerProvider } from "../../types/broker";
 import { createOrderIntentWithExecution, type CreateOrderIntentResult } from "./order-intent-service";
 
 export interface ReiaOrderPayload {

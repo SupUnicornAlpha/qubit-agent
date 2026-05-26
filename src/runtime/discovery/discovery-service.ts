@@ -23,7 +23,7 @@ import {
   discoveryJob as discoveryJobTable,
 } from "../../db/sqlite/schema";
 import { parse } from "../provider/impls/factor/qlib-expr/parser";
-import { evalExpr, type PriceSeries } from "../provider/impls/factor/qlib-expr/evaluator";
+import { evalQlibExpr as evalExpr, type PriceSeries } from "../provider";
 import { generateGbmTicks } from "../../util/synthesize-gbm";
 import { providerResolver } from "../provider/resolver";
 import { queryBarsRange } from "../market/klines-query";

@@ -1,7 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount } from "../../db/sqlite/schema";
-import type { BrokerProvider, CcxtProviderConfig, FutuProviderConfig } from "../reia/broker-types";
+import type { BrokerProvider, CcxtProviderConfig, FutuProviderConfig } from "../../types/broker";
 import { getTradingSession, type MarketCode, type TradingSessionConfig } from "./trading-calendar";
 
 export interface ResolvedInstrument {

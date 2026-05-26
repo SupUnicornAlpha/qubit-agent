@@ -17,7 +17,7 @@ import {
   brokerHealthCheck,
   resolveBrokerAccount,
 } from "../../runtime/reia/broker-service";
-import type { BrokerProvider } from "../../runtime/reia/broker-types";
+import type { BrokerProvider } from "../../types/broker";
 import { ExecutionConnector, type ModifyOrderParams } from "./execution.connector";
 
 function asProvider(v: unknown): BrokerProvider {

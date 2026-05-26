@@ -13,7 +13,7 @@ import {
 } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
 import { connectorForAccount, resolveBrokerAccount } from "../reia/broker-service";
-import type { BrokerProvider } from "../reia/broker-types";
+import type { BrokerProvider } from "../../types/broker";
 import { isLiveTradingEnabled } from "./live-trading-gate";
 
 export type DispatchMode = "paper" | "live";

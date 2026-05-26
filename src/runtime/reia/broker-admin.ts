@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { brokerAccount, brokerOrderEvent } from "../../db/sqlite/schema";
-import type { BrokerProvider, BrokerProviderConfig } from "./broker-types";
+import type { BrokerProvider, BrokerProviderConfig } from "../../types/broker";
 import { brokerHealthCheck, connectorForAccount, resolveBrokerAccount } from "./broker-service";
 
 export async function listBrokerAccounts(provider?: BrokerProvider) {

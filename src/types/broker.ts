@@ -1,3 +1,14 @@
+/**
+ * 经纪 / 交易适配的共享类型定义。
+ *
+ * 历史：此文件原本在 `src/runtime/reia/broker-types.ts`，但被 `market`、`execution`、
+ * `mcp` 三个非 reia 层反向引用，破坏分层（数据层不该认识"哪些券商类型存在"）。
+ * 本轮架构盘点 (P0-H) 把它挪到中性的 `src/types/`，让上层模块都从这里读。
+ *
+ * 注：仅类型；运行时实现（broker-connector / broker-service / broker-admin）仍在
+ * `runtime/reia/`，未来 P2 阶段可考虑迁移到 `runtime/execution/broker/`。
+ */
+
 export type BrokerProvider = "futu" | "ib" | "ccxt";
 
 export type FutuProviderConfig = {

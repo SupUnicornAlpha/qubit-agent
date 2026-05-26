@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BrokerProvider, BrokerProviderConfig } from "./broker-types";
+import type { BrokerProvider, BrokerProviderConfig } from "../../types/broker";
 
 export type {
   BrokerProvider,
@@ -7,7 +7,7 @@ export type {
   CcxtProviderConfig,
   FutuProviderConfig,
   IbProviderConfig,
-} from "./broker-types";
+} from "../../types/broker";
 
 export type BrokerOrderSide = "buy" | "sell";
 export type BrokerOrderType = "market" | "limit";

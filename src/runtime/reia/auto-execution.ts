@@ -2,7 +2,7 @@ import { createOrderIntentFromReiaPayload } from "../execution/reia-bridge";
 import { processExecutionTasks } from "../execution/execution-worker";
 import { getDb } from "../../db/sqlite/client";
 import { requestExecutionConfirmation } from "./safety-gate";
-import type { BrokerProvider } from "./broker-types";
+import type { BrokerProvider } from "../../types/broker";
 
 export interface ScheduledExecutionPayload {
   ticker: string;

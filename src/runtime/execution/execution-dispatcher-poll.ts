@@ -9,7 +9,7 @@ import {
   fill,
 } from "../../db/sqlite/schema";
 import { connectorForAccount, resolveBrokerAccount } from "../reia/broker-service";
-import type { BrokerProvider } from "../reia/broker-types";
+import type { BrokerProvider } from "../../types/broker";
 
 /** Poll broker for orders in waiting_ack / partially_filled (Phase 3). */
 export async function pollPendingBrokerOrders(db: DbClient, nowIso: string): Promise<void> {
