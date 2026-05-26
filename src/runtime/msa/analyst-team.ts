@@ -3,6 +3,18 @@
  *
  * 封装"并行驱动四位分析师 → 等待信号 → MSA 融合"的完整流程。
  * 供 Orchestrator 在 act 阶段调用 run_analyst_team 工具时使用。
+ *
+ * —— MSA × ReAct 边界 ADR (P2-C 定型) ——
+ * 本文件是 MSA「Batch LLM Job 协调器」实现的主体。每个 analyst slot 在
+ * `runResearchTeamSlotReact` 内是独立 ReAct loop；本协调器只负责：
+ *   1) 解析编组拓扑 (`parseTeamRelations`) 划 wave
+ *   2) 在每个 wave 内 Promise.allSettled fan-out
+ *   3) 把前置 wave 的 outputByRole / auxDigestByRole 注入下一 wave 的 ctx
+ *   4) 收集 RawAnalystSignal 调 fuseSignals 做 MSA 融合
+ *
+ * 不采用 LangGraph subgraph 方案的理由见 analyst-team-slot-react.ts 顶部
+ * ADR。后续若再有人提议"把 MSA 实现为 subgraph"，请先阅读两处 ADR 并准备
+ * 反驳上面三条拒绝理由。
  */
 
 import { randomUUID } from "node:crypto";

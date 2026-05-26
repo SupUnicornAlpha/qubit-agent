@@ -363,4 +363,45 @@ src/runtime/gene/gene-pool.ts: 当前只演化 4 个固定权重
 
 ---
 
+## 七、ADR：MSA × ReAct 边界（P2-C 定型）
+
+### 7.1 现状
+
+- 每个 analyst slot 通过 `runResearchTeamSlotReact` 走 `executeAgentReact`，
+  即每个 slot 都是独立的 ReAct loop（perceive → reason → act → observe）
+- MSA `analyst-team.ts` 是「Batch LLM Job 协调器」：
+  解析编组拓扑 → 划 wave → `Promise.allSettled` fan-out → 收集
+  `RawAnalystSignal` → `fuseSignals` MSA 融合
+- Slot 之间不共享 LangGraph thread / state；前置 wave 的结论通过
+  `outputByRole / auxDigestByRole` 两个内存 map 注入下一 wave 的 ctx 字符串
+
+### 7.2 决定
+
+**保留方案 B：Batch LLM Job + 独立 slot ReAct loop**
+
+### 7.3 拒绝方案 A（LangGraph subgraph）的理由
+
+1. **资源 / 复杂度**：subgraph 嵌套要为每个 slot hash 子图、共享 checkpointer，
+   timeline / 监控复杂度爆炸；当前 wave fan-out 已经能用 `Promise.allSettled`
+   做到 / 失败隔离 / 部分成功，没有抓痒不到的痛点。
+2. **独立观点原则**：MSA 的核心价值是「四位分析师独立给出观点 → 后置融合」，
+   slot 之间本就不该共享 state，subgraph 强行共享反而破坏独立性。
+3. **已落地稳定性**：B 方案已通过 P0/P1/P2 全部 batch 验证（含 HITL pause /
+   resume / 失败重试），改 A 没有对应的稳定性收益。
+
+### 7.4 不变量（违反请拒绝合并）
+
+- 每个 slot 必须经 `executeAgentReact`（享受 schema / tool / mcp / sandbox 公共体系）
+- 不在 slot 内复用 orchestrator 的 LangGraph thread（thread id 不共享）
+- slot 之间只通过 `analyst-team.ts:outputByRole / auxDigestByRole`
+  这两个内存 map 串接前置结论（不通过 LangGraph 状态）
+- Fan-out 顶层用 `Promise.allSettled`，单 slot 失败不阻塞整批
+  （详见 `analyst-team.ts` 525-720）
+
+代码内同步注释位置：
+- `src/runtime/msa/analyst-team-slot-react.ts` 顶部
+- `src/runtime/msa/analyst-team.ts` 顶部
+
+---
+
 *本文档为分析快照（2026-05-22）。若代码已演进，请以实际实现为准。*

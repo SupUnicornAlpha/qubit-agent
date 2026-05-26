@@ -1,3 +1,31 @@
+/**
+ * MSA × ReAct 边界 ADR（P2-C 定型）：
+ *
+ * 选定方案：**B - Batch LLM Job**。
+ *
+ * 含义：MSA 团队协调（fan-out → wait → fuse）是一个"批调度协调层"，
+ * 每个 analyst slot 是一个独立的 ReAct loop（本文件就是这个 ReAct loop
+ * 的封装入口）。Slot 之间不共享 LangGraph state；并行执行由
+ * `analyst-team.ts:Promise.allSettled` 做。
+ *
+ * 拒绝方案：A - LangGraph subgraph（即把 MSA fan-out 实现为 LangGraph
+ * 的 subgraph 节点）。理由：
+ *   1. LangGraph 的 subgraph 嵌套需要为每个 slot hash 子图、共享
+ *      checkpointer，资源开销显著且会让 timeline / 监控复杂度爆炸；
+ *   2. MSA 的核心价值是"独立观点 + 后置融合"，slot 之间本就不该共享
+ *      state — subgraph 强行共享反而破坏独立性；
+ *   3. 已经走通的 B 方案已支撑 P0/P1/P2 全部稳定性需求，没有抓痒不到的痛点
+ *      需要靠 A 来解决。
+ *
+ * 不变量（违反请拒绝合并）：
+ *   - 每个 slot 必须经 `executeAgentReact`（享受 schema / tool / mcp / sandbox 公共体系）
+ *   - 不在 slot 内复用 orchestrator 的 LangGraph thread（thread id 不共享）
+ *   - slot 之间只通过 `analyst-team.ts:outputByRole / auxDigestByRole`
+ *     这两个内存 map 串接前置结论（不通过 LangGraph 状态）
+ *   - Fan-out 顶层用 `Promise.allSettled`，单 slot 失败不阻塞整批（详见
+ *     analyst-team.ts 525-720）
+ */
+
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
