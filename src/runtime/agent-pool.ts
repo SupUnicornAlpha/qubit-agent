@@ -61,9 +61,18 @@ export async function dispatchTaskToRole(params: {
       })
     : "graph";
 
-  // 续跑请求：无论原 executionPath 是 graph 还是 a2a，都强制走 graphRunner，
-  // 因为只有 LangGraph 路径有 checkpointer，可以从断点继续。
-  if (params.payload.taskType === "workflow_resume" && kind === "native") {
+  // P2-A Batch 2：续跑路径不再硬编码走 graphRunner。
+  //
+  // 历史行为（已废止）：任何 workflow_resume 都强制走 graphRunner，理由是"只有
+  // LangGraph 有 checkpointer"。但这会让原本 a2a 的 workflow 被静默切换到 graph
+  // 路径，破坏 A2A 自洽性 —— A2A 是事件驱动的多 agent 总线，不应该被迫退化成
+  // graph state machine。
+  //
+  // 新行为：a2a workflow 的 resume = 重新派发一条 TASK_ASSIGN(workflow_resume) 给
+  // orchestrator，由 orchestrator-handler.handleWorkflowResume 按 path 自行选择
+  // graphRunner.resumeRoleTask 还是 runA2aReactTaskAssign（详见该 handler）。这样
+  // graph workflow 续跑路径保持不变，a2a workflow 续跑也是真·A2A。
+  if (params.payload.taskType === "workflow_resume" && kind === "native" && path === "graph") {
     return graphRunner.resumeRoleTask({
       workflowId: params.workflowId,
       role: params.role,

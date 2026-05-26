@@ -4,7 +4,8 @@ import { getDb, runInTransaction } from "../../db/sqlite/client";
 import { workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import type { LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
-import { graphRunner } from "../langgraph/graph-factory";
+// P2-A Batch 2：续跑改走 dispatchTaskToRole（由 agent-pool 按 path 决定），
+// 不再直接调 graphRunner.resumeRoleTask；保留 import 注释作为历史指引。
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { StepStreamEvent } from "../langgraph/state";
 import {
@@ -712,11 +713,19 @@ export async function resolveHitlRequest(input: {
   }
 
   const wf = outcome.workflowRow;
-  const result = await graphRunner.resumeRoleTask({
+
+  /**
+   * P2-A Batch 2：非 team HITL 续跑也不再硬编码 graphRunner.resumeRoleTask。
+   * 改走 dispatchTaskToRole，让 agent-pool 按 executionPath 自动选 graph /
+   * a2a 路径（详见 agent-pool.ts 与 orchestrator-handler.handleWorkflowResume）。
+   * graph workflow 行为完全等价（agent-pool 内部仍走 graphRunner.resumeRoleTask）。
+   */
+  const taskId = randomUUID();
+  const dispatchResult = await dispatchTaskToRole({
     workflowId: row.workflowRunId,
     role: "orchestrator",
     payload: {
-      taskId: randomUUID(),
+      taskId,
       taskType: "workflow_resume",
       assignedRole: "orchestrator",
       params: {
@@ -733,7 +742,7 @@ export async function resolveHitlRequest(input: {
     },
   });
 
-  return { workflowRunId: row.workflowRunId, resumed: result.resumed, runId: result.runId };
+  return { workflowRunId: row.workflowRunId, resumed: true, runId: dispatchResult.runId };
 }
 
 export async function listPendingHitlRequests(workflowRunId: string) {
