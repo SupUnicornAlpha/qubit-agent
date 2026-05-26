@@ -68,10 +68,7 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
     },
   },
   outputContract: { primary: "analyst_signal_fusion", secondary: ["debate_transcript"] },
-  requiredCapabilities: [
-    { kind: "market_data", level: "required" },
-    { kind: "llm", level: "required" },
-  ],
+  requiredCapabilities: [],
   toolPreset: {
     builtinTools: ["run_analyst_team", "fetch_bars", "fetch_news"],
     connectors: ["qubit-data", "qubit-news", "qubit-research"],
@@ -115,9 +112,7 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
   },
   outputContract: { primary: "strategy_script", secondary: ["backtest_metrics"] },
   requiredCapabilities: [
-    { kind: "market_data", level: "required" },
     { kind: "backtest", level: "required" },
-    { kind: "llm", level: "required" },
   ],
   toolPreset: {
     builtinTools: ["fetch_bars", "run_backtest"],
@@ -190,8 +185,6 @@ export const FACTOR_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   requiredCapabilities: [
     { kind: "factor_compute", level: "required" },
     { kind: "factor_eval", level: "required" },
-    { kind: "market_data", level: "required" },
-    { kind: "llm", level: "required" },
   ],
   toolPreset: {
     builtinTools: ["factor.register", "factor.compute", "factor.evaluate"],
@@ -250,7 +243,6 @@ export const RULE_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   requiredCapabilities: [
     { kind: "rule_engine", level: "required" },
     { kind: "factor_compute", level: "required" },
-    { kind: "llm", level: "required" },
   ],
   toolPreset: {
     builtinTools: ["rule.register", "rule.evaluate", "factor.list"],
@@ -301,7 +293,6 @@ export const STOCK_SCREENING_SCENARIO: ResearchScenarioSpec = {
   requiredCapabilities: [
     { kind: "factor_compute", level: "required" },
     { kind: "rule_engine", level: "optional" },
-    { kind: "market_data", level: "required" },
   ],
   toolPreset: {
     builtinTools: ["factor.list", "rule.evaluate", "run_screener"],
@@ -352,7 +343,6 @@ export const RISK_REVIEW_SCENARIO: ResearchScenarioSpec = {
   outputContract: { primary: "rule_definition_batch", secondary: ["risk_audit_report"] },
   requiredCapabilities: [
     { kind: "rule_engine", level: "required" },
-    { kind: "llm", level: "required" },
   ],
   toolPreset: {
     // NOTE: 暂无专门的「读取审计日志」builtin；用 load_rules 读当前规则配置代替
@@ -479,7 +469,6 @@ export const DISCOVERY_SCENARIO: ResearchScenarioSpec = {
     secondary: ["factor_definition_batch", "rule_definition_batch", "strategy_composition_batch"],
   },
   requiredCapabilities: [
-    { kind: "factor_miner", level: "required" },
     { kind: "factor_compute", level: "required" },
     { kind: "factor_eval", level: "required" },
     { kind: "backtest", level: "required" },
@@ -550,8 +539,6 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
   },
   outputContract: { primary: "live_session_summary", secondary: ["risk_event_log"] },
   requiredCapabilities: [
-    { kind: "live_ems", level: "required" },
-    { kind: "market_data", level: "required" },
     { kind: "rule_engine", level: "required" },
   ],
   toolPreset: {
@@ -604,7 +591,6 @@ export const POSTMORTEM_SCENARIO: ResearchScenarioSpec = {
   outputContract: { primary: "attribution_report" },
   requiredCapabilities: [
     { kind: "factor_compute", level: "required" },
-    { kind: "llm", level: "required" },
   ],
   toolPreset: {
     builtinTools: ["factor.list", "get_fills", "fetch_bars"],
@@ -659,10 +645,7 @@ export const NEWS_EVENT_RADAR_SCENARIO: ResearchScenarioSpec = {
     },
   },
   outputContract: { primary: "event_radar_report", secondary: ["impact_alerts"] },
-  requiredCapabilities: [
-    { kind: "market_data", level: "required" },
-    { kind: "llm", level: "required" },
-  ],
+  requiredCapabilities: [],
   toolPreset: {
     builtinTools: ["fetch_news", "fetch_bars"],
     connectors: ["qubit-news", "qubit-data"],

@@ -2164,16 +2164,7 @@ export const langgraphCheckpointWrite = sqliteTable(
 export const providerRegistry = sqliteTable("provider_registry", {
   id: id(),
   kind: text("kind", {
-    enum: [
-      "factor_compute",
-      "factor_eval",
-      "rule_engine",
-      "backtest",
-      "live_ems",
-      "market_data",
-      "llm",
-      "factor_miner",
-    ],
+    enum: ["factor_compute", "factor_eval", "rule_engine", "backtest"],
   }).notNull(),
   providerKey: text("provider_key").notNull(),
   displayName: text("display_name").notNull(),

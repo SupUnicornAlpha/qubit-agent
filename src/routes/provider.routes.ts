@@ -14,16 +14,7 @@ import { providerRegistry } from "../runtime/provider/registry";
 import { providerResolver } from "../runtime/provider/resolver";
 import type { ProviderKind } from "../runtime/provider/types";
 
-const ALL_KINDS: ProviderKind[] = [
-  "factor_compute",
-  "factor_eval",
-  "rule_engine",
-  "backtest",
-  "live_ems",
-  "market_data",
-  "llm",
-  "factor_miner",
-];
+const ALL_KINDS: ProviderKind[] = ["factor_compute", "factor_eval", "rule_engine", "backtest"];
 
 export const providerRouter = new Hono();
 
