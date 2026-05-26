@@ -1012,6 +1012,139 @@ export async function listMonitorFailures(input?: {
   return res.data;
 }
 
+/**
+ * 监控 · 工具维度聚合（跨工作流，窗口内）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.2 / src/runtime/monitor/tools-summary.ts。
+ */
+export type MonitorToolKind = "acp_connector" | "mcp" | "skill" | "builtin";
+
+export type MonitorToolSummaryRow = {
+  toolKind: MonitorToolKind;
+  toolName: string;
+  totalCalls: number;
+  successCount: number;
+  errorCount: number;
+  timeoutCount: number;
+  sandboxBlockedCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  lastCalledAt: string | null;
+};
+
+export async function listMonitorToolsSummary(input?: {
+  windowMinutes?: number;
+  sessionId?: string;
+  toolKind?: MonitorToolKind;
+}): Promise<MonitorToolSummaryRow[]> {
+  const query = new URLSearchParams();
+  if (input?.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input?.sessionId) query.set("sessionId", input.sessionId);
+  if (input?.toolKind) query.set("toolKind", input.toolKind);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: MonitorToolSummaryRow[] }>(
+    `/api/v1/monitor/tools/summary${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+/**
+ * 监控 · MCP 维度聚合（含熔断态）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.3 / src/runtime/monitor/mcp-summary.ts。
+ */
+export type MonitorMcpSummaryRow = {
+  serverName: string;
+  totalCalls: number;
+  successCount: number;
+  failedCount: number;
+  timeoutCount: number;
+  sandboxBlockedCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  health: {
+    circuitState: "closed" | "open" | "half_open";
+    failureCount: number;
+    successCount: number;
+    lastFailureAt: string | null;
+    lastSuccessAt: string | null;
+    openedAt: string | null;
+    lastErrorMessage: string | null;
+    updatedAt: string;
+  } | null;
+  byTool: Array<{
+    toolName: string;
+    totalCalls: number;
+    successCount: number;
+    failedCount: number;
+  }>;
+  lastCalledAt: string | null;
+};
+
+export async function listMonitorMcpSummary(input?: {
+  windowMinutes?: number;
+  sessionId?: string;
+}): Promise<MonitorMcpSummaryRow[]> {
+  const query = new URLSearchParams();
+  if (input?.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input?.sessionId) query.set("sessionId", input.sessionId);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: MonitorMcpSummaryRow[] }>(
+    `/api/v1/monitor/mcp/summary${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
+/**
+ * 监控 · LLM 用量聚合（24h token / cost / 错误 top）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.1 / §7.5 / src/runtime/monitor/llm-usage.ts。
+ */
+export type MonitorLlmUsageGroup = {
+  provider: string;
+  model: string;
+  totalCalls: number;
+  successCount: number;
+  errorCount: number;
+  fallbackCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  costUsd: number;
+  avgLatencyMs: number | null;
+  successRate: number;
+  lastCalledAt: string | null;
+};
+
+export type MonitorLlmUsageSummary = {
+  windowMinutes: number;
+  totals: {
+    totalCalls: number;
+    successCount: number;
+    errorCount: number;
+    fallbackCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    costUsd: number;
+    avgLatencyMs: number | null;
+    successRate: number;
+  };
+  byProviderModel: MonitorLlmUsageGroup[];
+  errorTopN: Array<{ message: string; count: number }>;
+};
+
+export async function getMonitorLlmUsage(input?: {
+  windowMinutes?: number;
+  sessionId?: string;
+}): Promise<MonitorLlmUsageSummary> {
+  const query = new URLSearchParams();
+  if (input?.windowMinutes != null) query.set("windowMinutes", String(input.windowMinutes));
+  if (input?.sessionId) query.set("sessionId", input.sessionId);
+  const suffix = query.toString();
+  const res = await httpGet<{ ok: boolean; data: MonitorLlmUsageSummary }>(
+    `/api/v1/monitor/llm/usage${suffix ? `?${suffix}` : ""}`
+  );
+  return res.data;
+}
+
 export async function scanStuckWorkflowAlerts(stuckMinutes = 120): Promise<{
   scanned: number;
   created: number;

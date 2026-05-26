@@ -29,6 +29,19 @@ export interface ReasonStepMeta {
    * 由 QUBIT_REASON_RETRY_DISABLED=1 关闭。
    */
   parseRetryUsed?: boolean;
+  /**
+   * 监控 V2 P1：LLM 调用粒度（reason 实际请求的 provider/model；fallback 仍用 primary 口径）。
+   * caller 用这些字段写 llm_call_log；缺失时表示 reason 还没真正调到 LLM（被 sandbox 拦截）。
+   */
+  provider?: string;
+  model?: string;
+  /** redacted：仅传长度，避免 prompt 原文落库 */
+  systemPromptLen?: number;
+  userPromptLen?: number;
+  /** 若 LLM 抛错 / gateway throws，这里记错误消息（已被截断到 500 字） */
+  errorMessage?: string;
+  /** 'success' | 'error' | 'fallback'：success+fallbackUsed=true 即 'fallback' 路径 */
+  llmStatus?: "success" | "error" | "fallback";
 }
 
 export interface ReasonNodeOutput {
@@ -121,6 +134,12 @@ export async function reasonNode(
   // 兜底：当 LLM 抛错时 gateway 返回不到 latency，这里以节点入口为起点。
   const nodeStartedAt = Date.now();
   let measuredLatencyMs = 0;
+  // 监控 V2 P1：从 catch 兜底拿到的 LLM 错误信息（在 finally 时回填进 meta）
+  let llmErrorMessage: string | undefined;
+  let llmCallSucceeded = false;
+  // 监控 V2 P1：prompt 长度（不存原文，仅用于 llm_call_log.requestMetaJson）
+  let systemPromptLen = 0;
+  let userPromptLen = 0;
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
   const payloadParams = (payload["params"] ?? {}) as Record<string, unknown>;
@@ -215,6 +234,8 @@ export async function reasonNode(
       ? `${fsiSystem}\n\n---\n${topologyOrCollab}`
       : fsiSystem;
     const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithTopology, { tools, mcpServers });
+    systemPromptLen = systemPrompt.length;
+    userPromptLen = userPrompt.length;
 
     const llmResult = await invokeWithFallback(modelConfig, {
       systemPrompt,
@@ -236,6 +257,7 @@ export async function reasonNode(
     modelFallbackUsed = llmResult.fallbackUsed;
     usage = llmResult.usage;
     measuredLatencyMs = llmResult.latencyMs;
+    llmCallSucceeded = true;
     if (modelFallbackUsed) {
       console.warn(
         `[reason] agent ${state.agentDefinition.id} fell back from ` +
@@ -318,7 +340,8 @@ export async function reasonNode(
       }
     }
   } catch (error) {
-    const fallback = `LLM gateway error: ${(error as Error).message}`;
+    const errMsg = (error as Error).message ?? String(error);
+    const fallback = `LLM gateway error: ${errMsg}`;
     for (const token of fallback.split(/\s+/).filter(Boolean)) {
       if (!token) continue;
       emit({
@@ -334,7 +357,15 @@ export async function reasonNode(
     }
     answer = fallback;
     measuredLatencyMs = Date.now() - nodeStartedAt;
+    // 留给 execute-agent-react.ts 写 llm_call_log（status='error'）使用
+    llmErrorMessage = errMsg.slice(0, 500);
   }
+
+  const llmStatus: "success" | "error" | "fallback" = !llmCallSucceeded
+    ? "error"
+    : modelFallbackUsed
+      ? "fallback"
+      : "success";
 
   return {
     stateUpdate: {
@@ -346,6 +377,12 @@ export async function reasonNode(
       ...(usage ? { usage } : {}),
       fallbackUsed: modelFallbackUsed,
       ...(parseRetryUsed ? { parseRetryUsed } : {}),
+      provider: modelConfig.provider,
+      model: modelConfig.model,
+      systemPromptLen,
+      userPromptLen,
+      llmStatus,
+      ...(llmErrorMessage ? { errorMessage: llmErrorMessage } : {}),
     },
   };
 }

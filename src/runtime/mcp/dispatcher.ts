@@ -2,6 +2,7 @@ import { and, eq, isNull, or } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig, mcpToolBinding } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
+import { assertMcpServerNotOpen, recordMcpCallResult } from "../monitor/mcp-health-tracker";
 import { callMcpHttpTool, httpEndpointFromServer, httpHeadersFromCaps } from "./http-transport";
 import { resolveMcpStdioArgv } from "./package-manager";
 import { callMcpStdioTool, stdioArgvFromServer } from "./stdio-session";
@@ -178,7 +179,19 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     input.projectId,
     input.definitionId
   );
-  return executeWithPolicy(
+  /**
+   * 监控 V2 P1：在内存熔断器之前再加一层 DB-层 fail-fast。
+   *
+   * 为什么两层都要：
+   *   - 内存熔断（executeWithPolicy）：高频 / 低延迟，进程内反应敏捷；
+   *   - DB 熔断（assertMcpServerNotOpen）：跨进程持久；前端能看到熔断态；
+   *     重启后不会"假装健康"再被打到上游 RST。
+   *
+   * DB 异常时 assert 内部会自己 warn 并放行，所以不会因为监控故障误伤业务。
+   */
+  await assertMcpServerNotOpen(input.serverName);
+  try {
+    const dispatchResult = await executeWithPolicy(
     {
       scopeKey: `mcp:${input.serverName}:${input.toolName}`,
       retry: policy.retry,
@@ -268,4 +281,24 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
       };
     }
   );
+    // 调用成功（含 idempotency cache 命中）：刷新 health 行为 closed + 累计 success
+    await recordMcpCallResult(input.serverName, "success");
+    return dispatchResult;
+  } catch (err) {
+    /**
+     * 失败分类：
+     *   - timeout：错误消息含 'timeout'（http-transport / stdio-session 抛错惯例）
+     *   - 其他：failed
+     * sandbox_blocked / 二级业务错误目前在 act.ts 那一层做更细分类，dispatcher 只看
+     * 「请求是否打通」即可。
+     */
+    const msg = (err as Error)?.message ?? String(err);
+    const status: "failed" | "timeout" = /timeout/i.test(msg) ? "timeout" : "failed";
+    // assertMcpServerNotOpen 抛的"mcp circuit breaker open"不该再次记录（它本来就因为
+    // health 是 open；再 recordMcpCallResult 会让 failureCount 二次膨胀）。
+    if (!msg.startsWith("mcp circuit breaker open")) {
+      await recordMcpCallResult(input.serverName, status, msg);
+    }
+    throw err;
+  }
 }

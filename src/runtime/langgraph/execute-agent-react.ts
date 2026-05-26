@@ -10,6 +10,7 @@ import { sandboxExecutor } from "../sandbox-executor";
 import type { RuntimeAgentDefinition } from "../types";
 import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
 import { stepStreamBus } from "./event-stream";
+import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { actNode } from "./nodes/act";
 import { hitlGateNode } from "./nodes/hitl-gate";
@@ -253,6 +254,40 @@ export async function executeAgentReact(
         `[reason] failed to persist token/latency for step ${reasonStepId}:`,
         err instanceof Error ? err.message : String(err)
       );
+    }
+    /**
+     * 监控 V2 P1：在 reason step 写完之后，把这次 LLM 调用单独落 `llm_call_log`。
+     *
+     * 与 agent_step.tokenCount 的关系：
+     *   - agent_step.tokenCount 仍是聚合视图（保兼容）
+     *   - llm_call_log 提供按 provider/model 跨工作流统计 + cost 估算
+     *
+     * 失败兜底由 writeLlmCallLog 自己 try/catch；这里**不**额外包 try，让 worker 路径
+     * 看起来干净（与 act/observe 的写监控调用一致）。
+     */
+    if (reasonResult.meta.provider && reasonResult.meta.model) {
+      await writeLlmCallLog({
+        workflowRunId: params.workflowId,
+        agentStepId: reasonStepId,
+        provider: reasonResult.meta.provider,
+        model: reasonResult.meta.model,
+        ...(reasonResult.meta.usage ? { usage: reasonResult.meta.usage } : {}),
+        latencyMs: reasonResult.meta.latencyMs,
+        status: reasonResult.meta.llmStatus ?? "success",
+        ...(reasonResult.meta.errorMessage ? { errorMessage: reasonResult.meta.errorMessage } : {}),
+        ...(reasonResult.meta.systemPromptLen !== undefined
+          ? { systemPromptLen: reasonResult.meta.systemPromptLen }
+          : {}),
+        ...(reasonResult.meta.userPromptLen !== undefined
+          ? { userPromptLen: reasonResult.meta.userPromptLen }
+          : {}),
+        extraMeta: {
+          fallbackUsed: reasonResult.meta.fallbackUsed,
+          ...(reasonResult.meta.parseRetryUsed ? { parseRetryUsed: true } : {}),
+          iteration: nextIteration,
+          agentRole: params.def.role,
+        },
+      });
     }
     const merged = { ...input.state, iteration: nextIteration, ...reasonResult.stateUpdate };
     snapshot("reason", nextIteration, merged);

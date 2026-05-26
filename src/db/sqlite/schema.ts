@@ -766,6 +766,14 @@ export const toolCallLog = sqliteTable("tool_call_log", {
   agentStepId: text("agent_step_id")
     .notNull()
     .references(() => agentStep.id),
+  /**
+   * v2 P1 起新写入端直接落 workflow_run_id，避免老路径必须 join agent_step；
+   * 旧行保持 NULL，前端 fallback 走 join 兼容。
+   */
+  workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+  /** v2 P1：retry 上下文跨记录关联（idempotency / 多次 retry 同一 trace） */
+  traceId: text("trace_id"),
+  retryCount: integer("retry_count").notNull().default(0),
   toolName: text("tool_name").notNull(),
   toolKind: text("tool_kind", { enum: ["acp_connector", "mcp", "skill", "builtin"] }).notNull(),
   requestJson: text("request_json", { mode: "json" }).notNull(),
@@ -788,11 +796,101 @@ export const mcpCallLog = sqliteTable("mcp_call_log", {
     .references(() => agentStep.id),
   serverName: text("server_name").notNull(),
   toolName: text("tool_name").notNull(),
+  /** v2 P1：与 tool_call_log 对齐，便于跨表 union 与重试关联 */
+  traceId: text("trace_id"),
+  retryCount: integer("retry_count").notNull().default(0),
   requestJson: text("request_json", { mode: "json" }).notNull(),
   responseJson: text("response_json", { mode: "json" }),
   status: text("status", { enum: ["success", "timeout", "failed", "sandbox_blocked"] }).notNull(),
   errorCode: text("error_code"),
   latencyMs: integer("latency_ms"),
+  createdAt: createdAt(),
+});
+
+/**
+ * 监控 V2 P1：LLM 调用粒度落库（每次 reason 节点的 LLM 调用一行）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.1 / §4.3。
+ *
+ * 与 `agent_step.tokenCount` 的关系：
+ *   - agent_step.tokenCount 仍保留为「步级别 token 聚合」（兼容旧前端）
+ *   - llm_call_log 提供按 provider/model/24h 的跨工作流查询能力，并写 costUsd
+ */
+export const llmCallLog = sqliteTable("llm_call_log", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  agentStepId: text("agent_step_id").references(() => agentStep.id),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  totalTokens: integer("total_tokens"),
+  latencyMs: integer("latency_ms").notNull(),
+  status: text("status", {
+    enum: ["success", "error", "timeout", "fallback"],
+  }).notNull(),
+  errorMessage: text("error_message"),
+  costUsd: real("cost_usd"),
+  /** secret-redacted 元信息（system/user prompt 长度等），不存原文。 */
+  requestMetaJson: text("request_meta_json", { mode: "json" }).notNull().default("{}"),
+  createdAt: createdAt(),
+});
+
+/**
+ * 监控 V2 P1：MCP 熔断状态持久化。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.3 / §7.2 / §7.4。
+ *
+ * 与内存熔断（src/runtime/external-call/policy.ts:circuitByKey）的关系：
+ *   - 内存为主：dispatcher 入口仍读 Map 做快速判定
+ *   - DB 为辅：进程启动时还原 / 每 30s flush；让前端能看到「现在 datadog server 熔断中」
+ */
+export const mcpServerHealth = sqliteTable(
+  "mcp_server_health",
+  {
+    id: id(),
+    serverName: text("server_name").notNull(),
+    circuitState: text("circuit_state", { enum: ["closed", "open", "half_open"] })
+      .notNull()
+      .default("closed"),
+    failureCount: integer("failure_count").notNull().default(0),
+    successCount: integer("success_count").notNull().default(0),
+    lastFailureAt: text("last_failure_at"),
+    lastSuccessAt: text("last_success_at"),
+    openedAt: text("opened_at"),
+    lastCheckAt: text("last_check_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    cooldownMs: integer("cooldown_ms").notNull().default(30_000),
+    lastErrorMessage: text("last_error_message"),
+    createdAt: createdAt(),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [uniqueIndex("idx_mcp_server_health_name").on(t.serverName)]
+);
+
+/**
+ * 监控 V2 P1：Skill 召回日志（reason 节点检索出来的候选 skill）。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.4。
+ *
+ * 与 agent_skill_run（显式执行）的对偶：本表抓「召回侧」，
+ * agent_skill_run 抓「执行侧」；前端通过 executed 比较召回质量。
+ */
+export const skillRecallLog = sqliteTable("skill_recall_log", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  agentStepId: text("agent_step_id").references(() => agentStep.id),
+  definitionId: text("definition_id").references(() => agentDefinition.id),
+  skillId: text("skill_id")
+    .notNull()
+    .references(() => agentSkill.id),
+  recallRank: integer("recall_rank"),
+  score: real("score"),
+  executed: integer("executed", { mode: "boolean" }).notNull().default(false),
   createdAt: createdAt(),
 });
 

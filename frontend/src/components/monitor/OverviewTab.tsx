@@ -27,6 +27,7 @@ import {
   styles,
 } from "./monitor-shared";
 import { FailuresPanel } from "./FailuresPanel";
+import { LlmUsagePanel } from "./LlmUsagePanel";
 
 export type StrategyRuntime = Awaited<ReturnType<typeof listStrategyRuntimes>>[number];
 
@@ -194,6 +195,15 @@ export const OverviewTab: FC<OverviewTabProps> = ({
         autoRefreshMs={30_000}
         onSelectWorkflow={onJumpToWorkflow}
         title="跨维度失败"
+      />
+
+      <h3 className="qb-monitor__section" style={styles.subTitle}>
+        整体 · LLM 用量（24h / provider × model / cost & token / 错误 top）
+      </h3>
+      <LlmUsagePanel
+        sessionId={sessionFilter || undefined}
+        defaultWindowMinutes={1440}
+        autoRefreshMs={60_000}
       />
 
       <h3 className="qb-monitor__section" style={styles.subTitle}>

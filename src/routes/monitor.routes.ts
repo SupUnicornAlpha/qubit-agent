@@ -26,8 +26,11 @@ import {
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
 import { listFailures, type FailureScope } from "../runtime/monitor/failure-list";
+import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
+import { getMcpSummary } from "../runtime/monitor/mcp-summary";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
+import { getToolsSummary, type ToolKind } from "../runtime/monitor/tools-summary";
 import {
   aggregateAgentRuntimeMetrics,
   createWorkflowQualitySnapshot,
@@ -401,6 +404,53 @@ monitorRouter.get("/failures", async (c) => {
   if (limit) input.limit = Number(limit);
   if (sessionId) input.sessionId = sessionId;
   const data = await listFailures(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * 工具维度聚合 — /tools/summary。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.2 与 runtime/monitor/tools-summary.ts。
+ */
+monitorRouter.get("/tools/summary", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const toolKindRaw = c.req.query("toolKind");
+  const allowedKinds: ToolKind[] = ["acp_connector", "mcp", "skill", "builtin"];
+  const input: Parameters<typeof getToolsSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  if (toolKindRaw && (allowedKinds as string[]).includes(toolKindRaw)) {
+    input.toolKind = toolKindRaw as ToolKind;
+  }
+  const data = await getToolsSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * MCP 维度聚合 — /mcp/summary。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.3 与 runtime/monitor/mcp-summary.ts。
+ */
+monitorRouter.get("/mcp/summary", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const input: Parameters<typeof getMcpSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  const data = await getMcpSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * LLM 用量聚合 — /llm/usage。
+ * 详见 docs/MONITORING_V2_DESIGN.md §4.1.1 / §7.5 与 runtime/monitor/llm-usage.ts。
+ */
+monitorRouter.get("/llm/usage", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const input: Parameters<typeof getLlmUsageSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  const data = await getLlmUsageSummary(input);
   return c.json({ ok: true, data });
 });
 

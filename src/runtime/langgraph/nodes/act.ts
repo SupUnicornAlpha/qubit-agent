@@ -145,6 +145,14 @@ export async function actNode(
   await db.insert(toolCallLog).values({
     id: toolCallId,
     agentStepId,
+    /**
+     * 监控 V2 P1：直接写 workflow_run_id / trace_id，避免 /tools/summary 等
+     * 跨工作流查询被迫 join agent_step。retry_count 暂为 0；act 后续重试场景由 P2
+     * 在外层 wrapper 累加。
+     */
+    workflowRunId: state.workflowId,
+    traceId: state.traceId,
+    retryCount: 0,
     toolName: targetName,
     toolKind,
     requestJson: {
@@ -163,6 +171,9 @@ export async function actNode(
       agentStepId,
       serverName: mcp.serverName,
       toolName: mcp.toolName,
+      /** 监控 V2 P1：traceId 跨表对齐 tool_call_log，便于「同次工具调用」聚合 */
+      traceId: state.traceId,
+      retryCount: 0,
       requestJson: {
         reasonText: state.reasonText,
         arguments: mcp.arguments,

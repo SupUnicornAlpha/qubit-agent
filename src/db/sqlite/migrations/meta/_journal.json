@@ -337,6 +337,13 @@
       "when": 1777352430000,
       "tag": "0048_agent_runtime_metric_breakdown",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1777352440000,
+      "tag": "0049_monitoring_v2_p1_tables",
+      "breakpoints": true
     }
   ]
 }
