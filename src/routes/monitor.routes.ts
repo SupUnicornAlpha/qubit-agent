@@ -25,6 +25,11 @@ import {
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
+import {
+  scanAllSystemAlerts,
+  scanMcpCircuitOpenAlerts,
+  scanTokenAnomalyAlerts,
+} from "../runtime/monitor/alert-scanners";
 import { listFailures, type FailureScope } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
 import { getMcpSummary } from "../runtime/monitor/mcp-summary";
@@ -55,6 +60,60 @@ monitorRouter.get("/summary", async (c) => {
 monitorRouter.post("/alerts/scan-stuck", async (c) => {
   const body = await c.req.json<{ stuckMinutes?: number }>().catch(() => ({}));
   const data = await createStuckWorkflowAlerts(body.stuckMinutes ?? 120);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * 监控 V2 P2：系统级 alert 扫描（mcp_circuit_open + token_anomaly）。
+ *
+ * 详见 docs/MONITORING_V2_DESIGN.md §6.9 与 src/runtime/monitor/alert-scanners.ts。
+ * 推荐 5min/次定时调用；body 各参数可选。
+ */
+monitorRouter.post("/alerts/scan-system", async (c) => {
+  type Body = {
+    mcpStuckMinutes?: number;
+    tokenRatioThreshold?: number;
+    tokenWindowMinutes?: number;
+  };
+  /**
+   * `c.req.json<T>().catch(() => ({}))` 会被 TS 推断成 `T | {}`，必须显式 cast 成 T；
+   * 否则 exactOptionalPropertyTypes 下访问可选字段会触发 TS2339。
+   */
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
+  const input: Parameters<typeof scanAllSystemAlerts>[0] = {};
+  if (body.mcpStuckMinutes !== undefined) input.mcpStuckMinutes = body.mcpStuckMinutes;
+  if (body.tokenRatioThreshold !== undefined)
+    input.tokenRatioThreshold = body.tokenRatioThreshold;
+  if (body.tokenWindowMinutes !== undefined)
+    input.tokenWindowMinutes = body.tokenWindowMinutes;
+  const data = await scanAllSystemAlerts(input);
+  return c.json({ ok: true, data });
+});
+
+/** 单独触发 mcp_circuit_open 扫描（运维 / 测试用） */
+monitorRouter.post("/alerts/scan-mcp", async (c) => {
+  type Body = { stuckMinutes?: number };
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
+  const input: Parameters<typeof scanMcpCircuitOpenAlerts>[0] = {};
+  if (body.stuckMinutes !== undefined) input.stuckMinutes = body.stuckMinutes;
+  const data = await scanMcpCircuitOpenAlerts(input);
+  return c.json({ ok: true, data });
+});
+
+/** 单独触发 token_anomaly 扫描 */
+monitorRouter.post("/alerts/scan-token", async (c) => {
+  type Body = {
+    ratioThreshold?: number;
+    windowMinutes?: number;
+    baselineMinTokens?: number;
+  };
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
+  const input: Parameters<typeof scanTokenAnomalyAlerts>[0] = {};
+  if (body.ratioThreshold !== undefined) input.ratioThreshold = body.ratioThreshold;
+  if (body.windowMinutes !== undefined) input.windowMinutes = body.windowMinutes;
+  if (body.baselineMinTokens !== undefined)
+    input.baselineMinTokens = body.baselineMinTokens;
+  const data = await scanTokenAnomalyAlerts(input);
   return c.json({ ok: true, data });
 });
 

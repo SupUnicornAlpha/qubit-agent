@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
+import { agentDefinition, agentInstance, agentStep, toolCallLog, workflowRun } from "../../db/sqlite/schema";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { stepStreamBus } from "../langgraph/event-stream";
@@ -92,10 +92,11 @@ async function appendAgentStep(input: {
   stepIndex: number;
   thought: string;
   actionJson: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<string> {
   const db = await getDb();
+  const id = randomUUID();
   await db.insert(agentStep).values({
-    id: randomUUID(),
+    id,
     agentInstanceId: input.agentInstanceId,
     workflowRunId: input.workflowId,
     stepIndex: input.stepIndex,
@@ -104,6 +105,7 @@ async function appendAgentStep(input: {
     actionType: "cli_io",
     actionJson: input.actionJson,
   });
+  return id;
 }
 
 async function runExternalCli(params: {
@@ -284,7 +286,7 @@ async function runExternalCli(params: {
           }
           continue;
         }
-        await appendAgentStep({
+        const stepId = await appendAgentStep({
           agentInstanceId,
           workflowId: params.workflowId,
           stepIndex: seq,
@@ -302,6 +304,38 @@ async function runExternalCli(params: {
             payload: { cli: "log", message: parsed.message },
           });
         } else if (parsed.type === "tool") {
+          /**
+           * 监控 V2 P2：CLI loop（claude_cli / codex_cli）通过 qubit.loop.v1 NDJSON
+           * 发出的 tool 事件之前只发 SSE，不入 tool_call_log；监控页因此看不到
+           * 外部 CLI loop 的工具调用统计。这里补一次最小写入：
+           *   - toolKind 固定 'builtin'（无法精确区分 acp_connector/mcp/skill；
+           *     仅说明这是 CLI loop 内部的工具调用）
+           *   - status 'success' — CLI 行级粒度看不到执行成败，由后续 'error' 行兜底
+           *   - latencyMs 1（占位；CLI 协议未携带）
+           * 同 act.ts 已有的 tool_call_log 写入风格保持一致：失败仅 warn。
+           */
+          try {
+            const db = await getDb();
+            await db.insert(toolCallLog).values({
+              id: randomUUID(),
+              agentStepId: stepId,
+              workflowRunId: params.workflowId,
+              traceId: params.traceId,
+              retryCount: 0,
+              toolName: parsed.tool ?? "unknown",
+              toolKind: "builtin",
+              requestJson: {
+                source: `cli_loop:${params.kind}`,
+                payload: parsed.payload ?? null,
+              },
+              status: "success",
+              latencyMs: 1,
+            });
+          } catch (e) {
+            console.warn(
+              `[cli-loop] tool_call_log insert failed (tool=${parsed.tool}): ${(e as Error).message}`
+            );
+          }
           seq = emitLine({
             runId: params.runId,
             workflowId: params.workflowId,

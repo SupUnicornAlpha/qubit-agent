@@ -1582,9 +1582,17 @@ export const connectorInstance = sqliteTable("connector_instance", {
 
 export const connectorCallLog = sqliteTable("connector_call_log", {
   id: id(),
-  connectorInstanceId: text("connector_instance_id")
-    .notNull()
-    .references(() => connectorInstance.id),
+  /**
+   * 监控 V2 P2 起 NULLABLE：
+   * ACP 调用上下文（act.ts → AcpCaller → registry.dispatchAcpCall）只知道 connector 名字，
+   * 不一定有持久化 connector_instance 行（市场行情 / 新闻类无状态 connector 永远没 instance）。
+   * 详见 migration 0051。
+   */
+  connectorInstanceId: text("connector_instance_id").references(() => connectorInstance.id),
+  /** 监控 V2 P2 新增：每条 log 都明确记录 connector 名字（不依赖 instance 反查） */
+  connectorName: text("connector_name").notNull().default(""),
+  /** 监控 V2 P2 新增：与 tool_call_log / mcp_call_log 对齐，便于跨表查询同一工作流的所有外部调用 */
+  workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
   acpCallId: text("acp_call_id").references(() => acpCall.id),
   traceId: text("trace_id").notNull(),
   operation: text("operation", {
@@ -1594,6 +1602,8 @@ export const connectorCallLog = sqliteTable("connector_call_log", {
   responseJson: text("response_json", { mode: "json" }),
   latencyMs: integer("latency_ms").notNull(),
   status: text("status", { enum: ["success", "error", "timeout"] }).notNull(),
+  /** 监控 V2 P2：失败 / timeout 时的错误消息摘要，最长 500 字 */
+  errorMessage: text("error_message"),
   createdAt: createdAt(),
 });
 

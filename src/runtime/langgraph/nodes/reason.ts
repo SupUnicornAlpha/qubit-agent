@@ -172,14 +172,30 @@ export async function reasonNode(
       ]
         .filter((s) => typeof s === "string" && s.length > 0)
         .join(" ");
-      const hits = await skillService.search({
+      const hitsMeta = await skillService.searchWithMeta({
         projectId: meta.projectId,
         query,
         definitionId: state.agentDefinition.id,
         topK: 3,
       });
+      const hits = hitsMeta.map((h) => h.skill);
       if (hits.length > 0) {
         recalledSkillsBlock = renderSkillsBlockForPrompt(hits);
+        /**
+         * 监控 V2 P2：召回日志（fire-and-forget；不 await 阻塞主链路，但 recordSkillRecall
+         * 内部已 try/catch + warn，不会 unhandled promise）。
+         * recordUsage 时通过 (workflowRunId, skillId) 翻 executed=true。
+         */
+        const recallLogger = await import("../../monitor/skill-recall-logger");
+        void recallLogger.recordSkillRecall({
+          workflowRunId: state.workflowId,
+          definitionId: state.agentDefinition.id,
+          hits: hitsMeta.map((h) => ({
+            skillId: h.skill.id,
+            rank: h.rank,
+            score: h.score,
+          })),
+        });
         if (process.env.DEBUG_SKILLS) {
           console.log(
             `[reason] recalled skills for ${state.agentDefinition.role}: ${hits.map((s) => s.name).join(", ")}`

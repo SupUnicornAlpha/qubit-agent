@@ -218,6 +218,18 @@ export class SkillService {
 
   /** 软排序检索：pinned > active.last_used desc > use_count > created_at */
   async search(input: SkillSearchInput): Promise<AgentSkill[]> {
+    return (await this.searchWithMeta(input)).map((h) => h.skill);
+  }
+
+  /**
+   * 监控 V2 P2：带评分 / 排名的检索结果，供 `skill_recall_log` 写入侧使用。
+   *
+   * 与 `search()` 共享同一套打分逻辑；纯函数 + 返回排名后的 `{ skill, score, rank }[]`。
+   * 不破坏 `search()` 旧契约（其它 caller 不变）。
+   */
+  async searchWithMeta(
+    input: SkillSearchInput
+  ): Promise<Array<{ skill: AgentSkill; score: number; rank: number }>> {
     const db = await getDb();
     const topK = Math.min(Math.max(input.topK ?? DEFAULT_SEARCH_TOPK, 1), 20);
     const includeArchived = Boolean(input.includeArchived);
@@ -254,7 +266,7 @@ export class SkillService {
       };
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK).map((x) => x.skill);
+    return scored.slice(0, topK).map((x, idx) => ({ skill: x.skill, score: x.score, rank: idx }));
   }
 
   /** 列出指定项目下的全部 skill；用于 Curator / UI */
@@ -299,6 +311,25 @@ export class SkillService {
     // active → 复活：被 Curator 标 stale 的 skill 再次被用 → 重新激活
     if (skill.state === "stale") setters["state"] = "active";
     await db.update(agentSkill).set(setters).where(eq(agentSkill.id, input.skillId));
+
+    /**
+     * 监控 V2 P2：把 (workflowRunId, skillId) 对应的最近一条 skill_recall_log
+     * 翻 executed=true。lazy import 避免 skill-service 强依赖 monitor 子树（互测 / 单测时可独立 mock）。
+     * 失败仅 warn 不抛。
+     */
+    if (input.workflowRunId) {
+      try {
+        const recallLogger = await import("../monitor/skill-recall-logger");
+        await recallLogger.markSkillRecallExecuted({
+          workflowRunId: input.workflowRunId,
+          skillId: input.skillId,
+        });
+      } catch (e) {
+        console.warn(
+          `[skillService.recordUsage] markSkillRecallExecuted failed: ${(e as Error).message}`
+        );
+      }
+    }
   }
 
   /**

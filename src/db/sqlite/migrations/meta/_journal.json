@@ -351,6 +351,13 @@
       "when": 1777352450000,
       "tag": "0050_drop_orphan_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1777352460000,
+      "tag": "0051_connector_call_log_p2",
+      "breakpoints": true
     }
   ]
 }

@@ -3,6 +3,8 @@ import { isPackagedRuntime } from "./runtime/app-paths";
 import { runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
 import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { executionWorker } from "./runtime/execution/execution-worker";
+import { installAcpMonitoringHook } from "./runtime/monitor/acp-monitoring-hook";
+import { monitorAggregatorWorker } from "./runtime/monitor/monitor-aggregator-worker";
 import { restoreRunningStrategies } from "./runtime/strategy/restore-running-strategies";
 import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worker";
 import { restoreRunningWorkflows } from "./runtime/workflow/restore-running-workflows";
@@ -43,6 +45,11 @@ async function main() {
   workflowScheduler.start();
   executionWorker.start();
   strategyRuntimeWorker.start();
+  // 监控聚合 + 告警扫描 worker（P2-4）：每 5min 跑一次 aggregateMetrics +
+  // stuckWorkflowAlerts + scanAllSystemAlerts；任一阶段失败仅 warn，不影响主链路。
+  monitorAggregatorWorker.start();
+  // 监控 V2 P2：在 ACP caller 注入 connector_call_log 写入 hook。幂等。
+  installAcpMonitoringHook();
 
   // Start HTTP + WS server
   const server = createServer();
@@ -54,6 +61,7 @@ async function main() {
     workflowScheduler.stop();
     executionWorker.stop();
     strategyRuntimeWorker.stop();
+    monitorAggregatorWorker.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);
@@ -63,6 +71,7 @@ async function main() {
     workflowScheduler.stop();
     executionWorker.stop();
     strategyRuntimeWorker.stop();
+    monitorAggregatorWorker.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);
