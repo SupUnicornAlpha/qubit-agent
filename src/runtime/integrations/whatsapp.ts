@@ -7,6 +7,7 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
+import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * WhatsApp Cloud API (Meta Graph)：
@@ -52,20 +53,24 @@ export const whatsappAdapter: IIntegrationAdapter = {
     const version =
       typeof meta.graphVersion === "string" ? String(meta.graphVersion) : DEFAULT_GRAPH_VERSION;
     const url = `https://graph.facebook.com/${version}/${encodeURIComponent(phoneNumberId)}/messages`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ctx.secret}`,
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${ctx.secret}`,
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: ctx.externalChatId,
+          type: "text",
+          text: { body: text, preview_url: false },
+        }),
       },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
-        to: ctx.externalChatId,
-        type: "text",
-        text: { body: text, preview_url: false },
-      }),
-    });
+      IM_WEBHOOK_TIMEOUT_MS,
+    );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const result: SendResult = { ok: res.ok, payload };
     if (Array.isArray(payload?.messages) && payload.messages[0]?.id) {

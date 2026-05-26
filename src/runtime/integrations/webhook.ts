@@ -6,6 +6,7 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
+import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 通用 outbound Webhook：
@@ -47,7 +48,7 @@ export const webhookAdapter: IIntegrationAdapter = {
       headers: isRawText ? { ...headers, "Content-Type": "text/plain" } : headers,
       body: isRawText ? text : JSON.stringify({ text }),
     };
-    const res = await fetch(url, init);
+    const res = await fetchWithTimeout(url, init, IM_WEBHOOK_TIMEOUT_MS);
     const raw = await res.text().catch(() => "");
     let payload: unknown = raw;
     try {

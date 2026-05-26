@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, like } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCatalogItem, mcpRegistrySource } from "../../db/sqlite/schema";
+import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 export interface RegistryCatalogPayload {
   items: Array<{
@@ -210,7 +211,7 @@ async function fetchCatalogFromSource(
   }
 
   const listUrl = ensureServersListUrl(source.baseUrl);
-  const response = await fetch(listUrl, { headers });
+  const response = await fetchWithTimeout(listUrl, { headers }, DEFAULT_FETCH_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`registry source responded ${response.status}`);
   }
@@ -237,7 +238,11 @@ async function fetchCatalogFromSource(
 
     const nextUrl = new URL(listUrl);
     nextUrl.searchParams.set("cursor", String(cursor));
-    const nextRes = await fetch(nextUrl.toString(), { headers });
+    const nextRes = await fetchWithTimeout(
+      nextUrl.toString(),
+      { headers },
+      DEFAULT_FETCH_TIMEOUT_MS,
+    );
     if (!nextRes.ok) {
       throw new Error(`registry source responded ${nextRes.status} (page ${page + 2})`);
     }

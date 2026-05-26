@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
 import type { BrokerProvider, BrokerProviderConfig } from "../../types/broker";
+import { fetchWithTimeout } from "../../util/fetch-with-timeout";
+
+/**
+ * Broker HTTP 调用超时（30s）：撮合/查询接口在正常情况下应 << 30s 返回；
+ * 实盘下游卡住时优先在 fetch 层抛出，由上层 retry 策略决定是否重试/转人工。
+ */
+const BROKER_HTTP_TIMEOUT_MS = 30_000;
 
 export type {
   BrokerProvider,
@@ -315,11 +322,15 @@ class HttpBrokerConnector implements BrokerConnector {
     body?: Record<string, unknown>
   ): Promise<Record<string, unknown>> {
     const url = `${this.baseUrl}${path}`;
-    const res = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method,
+        headers: { "content-type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      },
+      BROKER_HTTP_TIMEOUT_MS,
+    );
     const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) throw new Error(`broker ${method} ${path} failed: ${res.status} ${JSON.stringify(payload)}`);
     return payload;
@@ -415,7 +426,11 @@ class HttpBrokerConnector implements BrokerConnector {
         accountRef: this.accountRef,
         providerConfig: JSON.stringify(cfg),
       });
-      const res = await fetch(`${this.baseUrl}/health?${qs.toString()}`);
+      const res = await fetchWithTimeout(
+        `${this.baseUrl}/health?${qs.toString()}`,
+        undefined,
+        BROKER_HTTP_TIMEOUT_MS,
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         return {

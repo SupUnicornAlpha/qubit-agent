@@ -7,6 +7,7 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
+import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 飞书（Lark）自定义机器人 / 应用消息：
@@ -51,11 +52,15 @@ export const feishuAdapter: IIntegrationAdapter = {
         body.timestamp = String(ts);
         body.sign = feishuSign(ts, ctx.secret);
       }
-      const res = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const res = await fetchWithTimeout(
+        webhookUrl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+        IM_WEBHOOK_TIMEOUT_MS,
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
       const okFlag =
         res.ok && (payload?.code === 0 || payload?.StatusCode === 0 || payload?.code === undefined);
@@ -73,18 +78,22 @@ export const feishuAdapter: IIntegrationAdapter = {
     const receiveIdType =
       typeof meta.receiveIdType === "string" ? String(meta.receiveIdType) : "chat_id";
     const url = `${base}/open-apis/im/v1/messages?receive_id_type=${encodeURIComponent(receiveIdType)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json; charset=utf-8",
-        Authorization: `Bearer ${ctx.secret}`,
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          Authorization: `Bearer ${ctx.secret}`,
+        },
+        body: JSON.stringify({
+          receive_id: ctx.externalChatId,
+          msg_type: "text",
+          content: JSON.stringify({ text }),
+        }),
       },
-      body: JSON.stringify({
-        receive_id: ctx.externalChatId,
-        msg_type: "text",
-        content: JSON.stringify({ text }),
-      }),
-    });
+      IM_WEBHOOK_TIMEOUT_MS,
+    );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const okFlag = res.ok && payload?.code === 0;
     const result: SendResult = { ok: okFlag, payload };

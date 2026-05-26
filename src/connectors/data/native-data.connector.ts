@@ -13,6 +13,7 @@ import {
   symbolToYahooSymbol,
 } from "../../runtime/market/klines-data-source";
 import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
+import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
 import {
@@ -65,11 +66,15 @@ async function tushareCall(
   apiName: string,
   params: Record<string, string>
 ): Promise<TushareDailyPayload> {
-  const res = await fetch(TUSHARE_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_name: apiName, token, params }),
-  });
+  const res = await fetchWithTimeout(
+    TUSHARE_ENDPOINT,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_name: apiName, token, params }),
+    },
+    DEFAULT_FETCH_TIMEOUT_MS,
+  );
   const json = (await res.json()) as {
     code?: number;
     msg?: string;

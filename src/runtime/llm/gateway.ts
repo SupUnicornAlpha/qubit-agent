@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { RuntimeModelConfig } from "../config/model-config";
 import { executeWithPolicy } from "../external-call/policy";
+import { fetchWithTimeout, LLM_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 export interface LlmGatewayInput {
   config: RuntimeModelConfig;
@@ -168,21 +169,25 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   }
   const baseUrl = input.config.baseUrl ?? "https://api.anthropic.com";
   const startedAt = Date.now();
-  const res = await fetch(`${baseUrl}/v1/messages`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+  const res = await fetchWithTimeout(
+    `${baseUrl}/v1/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: input.config.model || "claude-3-5-sonnet-latest",
+        max_tokens: 1024,
+        temperature: 0.1,
+        system: input.systemPrompt,
+        messages: [{ role: "user", content: input.userPrompt }],
+      }),
     },
-    body: JSON.stringify({
-      model: input.config.model || "claude-3-5-sonnet-latest",
-      max_tokens: 1024,
-      temperature: 0.1,
-      system: input.systemPrompt,
-      messages: [{ role: "user", content: input.userPrompt }],
-    }),
-  });
+    LLM_FETCH_TIMEOUT_MS,
+  );
   if (!res.ok) {
     throw new Error(`Anthropic request failed: ${res.status} ${await res.text()}`);
   }
@@ -212,20 +217,24 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
 async function runOllama(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const baseUrl = input.config.baseUrl ?? "http://127.0.0.1:11434";
   const startedAt = Date.now();
-  const res = await fetch(`${baseUrl}/api/chat`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
+  const res = await fetchWithTimeout(
+    `${baseUrl}/api/chat`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: input.config.model || "llama3.1",
+        stream: false,
+        messages: [
+          { role: "system", content: input.systemPrompt },
+          { role: "user", content: input.userPrompt },
+        ],
+      }),
     },
-    body: JSON.stringify({
-      model: input.config.model || "llama3.1",
-      stream: false,
-      messages: [
-        { role: "system", content: input.systemPrompt },
-        { role: "user", content: input.userPrompt },
-      ],
-    }),
-  });
+    LLM_FETCH_TIMEOUT_MS,
+  );
   if (!res.ok) {
     throw new Error(`Ollama request failed: ${res.status} ${await res.text()}`);
   }

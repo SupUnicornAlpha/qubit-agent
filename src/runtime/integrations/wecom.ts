@@ -6,6 +6,7 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
+import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 企业微信（WeCom / WeChat Work）：
@@ -35,11 +36,15 @@ export const wecomAdapter: IIntegrationAdapter = {
 
     // 路线 1：群机器人
     if (webhookUrl) {
-      const res = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ msgtype: "text", text: { content: text } }),
-      });
+      const res = await fetchWithTimeout(
+        webhookUrl,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ msgtype: "text", text: { content: text } }),
+        },
+        IM_WEBHOOK_TIMEOUT_MS,
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
       const okFlag = res.ok && payload?.errcode === 0;
       const result: SendResult = { ok: okFlag, payload };
@@ -56,17 +61,21 @@ export const wecomAdapter: IIntegrationAdapter = {
     if (!ctx.externalChatId)
       return { ok: false, errorMessage: "missing touser/toparty (externalChatId)" };
     const url = `${base}/cgi-bin/message/send?access_token=${encodeURIComponent(ctx.secret)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        touser: ctx.externalChatId,
-        msgtype: "text",
-        agentid: Number(agentId),
-        text: { content: text },
-        safe: 0,
-      }),
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          touser: ctx.externalChatId,
+          msgtype: "text",
+          agentid: Number(agentId),
+          text: { content: text },
+          safe: 0,
+        }),
+      },
+      IM_WEBHOOK_TIMEOUT_MS,
+    );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const okFlag = res.ok && payload?.errcode === 0;
     const result: SendResult = { ok: okFlag, payload };

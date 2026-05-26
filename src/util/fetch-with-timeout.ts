@@ -27,6 +27,22 @@ export class FetchTimeoutError extends Error {
 
 export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
 
+/**
+ * LLM 提供商专用超时（约 4 分钟）：
+ * - Anthropic / Ollama 非流式响应在 60-180s 内常见，复杂推理可能更长
+ * - 与 `Bun.serve` 的 `idleTimeout: 255s`（server.ts）对齐，超时优先在 fetch 层抛出
+ * - 流式 API（OpenAI 走 SDK）不走此值；该常量给 gateway.ts 中的非流式 Anthropic / Ollama 用
+ */
+export const LLM_FETCH_TIMEOUT_MS = 240_000;
+
+/**
+ * IM webhook 推送 / 业务级 HTTP 调用专用超时（30s）：
+ * - DingTalk / Feishu / WeCom / Telegram / WhatsApp / 自定义 Webhook
+ * - 业务侧通常希望 IM 推送在合理时间内返回（30s 已远超 P95），失败后由
+ *   integration 上层做重试/回包
+ */
+export const IM_WEBHOOK_TIMEOUT_MS = 30_000;
+
 export async function fetchWithTimeout(
   url: string | URL,
   init?: RequestInit,

@@ -7,6 +7,7 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
+import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 /**
  * 钉钉 / DingTalk：
@@ -46,11 +47,15 @@ export const dingtalkAdapter: IIntegrationAdapter = {
         const sign = encodeURIComponent(dingTalkSign(ts, ctx.secret));
         target += `${target.includes("?") ? "&" : "?"}timestamp=${ts}&sign=${sign}`;
       }
-      const res = await fetch(target, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ msgtype: "text", text: { content: text } }),
-      });
+      const res = await fetchWithTimeout(
+        target,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ msgtype: "text", text: { content: text } }),
+        },
+        IM_WEBHOOK_TIMEOUT_MS,
+      );
       const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
       const okFlag = res.ok && (payload?.errcode === 0 || payload?.errcode === undefined);
       const result: SendResult = { ok: okFlag, payload };
@@ -68,15 +73,19 @@ export const dingtalkAdapter: IIntegrationAdapter = {
     if (!ctx.externalChatId)
       return { ok: false, errorMessage: "missing userid_list (externalChatId)" };
     const url = `${base}/topapi/message/corpconversation/asyncsend_v2?access_token=${encodeURIComponent(ctx.secret)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        agent_id: Number(agentId),
-        userid_list: ctx.externalChatId,
-        msg: { msgtype: "text", text: { content: text } },
-      }),
-    });
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_id: Number(agentId),
+          userid_list: ctx.externalChatId,
+          msg: { msgtype: "text", text: { content: text } },
+        }),
+      },
+      IM_WEBHOOK_TIMEOUT_MS,
+    );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const okFlag = res.ok && payload?.errcode === 0;
     const result: SendResult = { ok: okFlag, payload };

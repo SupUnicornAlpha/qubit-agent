@@ -6,6 +6,7 @@ import type {
   WebhookVerifyContext,
   WebhookVerifyResult,
 } from "./types";
+import { fetchWithTimeout, IM_WEBHOOK_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 
 const TELEGRAM_API = "https://api.telegram.org";
 
@@ -23,11 +24,15 @@ export const telegramAdapter: IIntegrationAdapter = {
       };
     if (!ctx.externalChatId) return { ok: false, errorMessage: "missing telegram chat_id" };
 
-    const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: ctx.externalChatId, text }),
-    });
+    const res = await fetchWithTimeout(
+      `${TELEGRAM_API}/bot${token}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: ctx.externalChatId, text }),
+      },
+      IM_WEBHOOK_TIMEOUT_MS,
+    );
     const payload = (await res.json().catch(() => ({}))) as Record<string, any>;
     const messageId = payload?.result?.message_id;
     const result: SendResult = { ok: res.ok, payload };
