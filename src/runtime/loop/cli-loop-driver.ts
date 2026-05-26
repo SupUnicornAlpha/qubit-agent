@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentDefinition, agentInstance, agentStep, toolCallLog, workflowRun } from "../../db/sqlite/schema";
+import { agentDefinition, workflowRun } from "../../db/sqlite/schema";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { stepStreamBus } from "../langgraph/event-stream";
@@ -10,6 +10,19 @@ import type { DispatchToLoopParams, LoopDriver } from "./loop-driver";
 import { parseCliLoopLine, sniffNativeSessionId } from "./loop-protocol";
 import { writeLoopRunArtifacts } from "./run-artifacts";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
+/**
+ * P2-B：cli-loop-driver 不再直接 `db.insert(agentStep) / .insert(agentInstance) /
+ * .update(agentInstance) / .insert(toolCallLog)`；统一通过 external-loop-state
+ * 五个 helper 写入。这样 cli driver / 未来其他外部 loop driver 看到的状态
+ * 一致，update agent_instance 的字段拼写也不会再漂移。
+ */
+import {
+  appendExternalLoopStep,
+  markExternalLoopInstanceError,
+  markExternalLoopInstanceStopped,
+  recordExternalLoopToolCall,
+  startExternalLoopInstance,
+} from "./external-loop-state";
 
 const DEFAULT_TIMEOUT_MS = 900_000;
 const DEFAULT_MAX_OUTPUT = 8 * 1024 * 1024;
@@ -94,19 +107,13 @@ async function appendAgentStep(input: {
   thought: string;
   actionJson: Record<string, unknown>;
 }): Promise<string> {
-  const db = await getDb();
-  const id = randomUUID();
-  await db.insert(agentStep).values({
-    id,
+  return appendExternalLoopStep({
     agentInstanceId: input.agentInstanceId,
     workflowRunId: input.workflowId,
     stepIndex: input.stepIndex,
-    phase: "external",
     thought: input.thought,
-    actionType: "cli_io",
     actionJson: input.actionJson,
   });
-  return id;
 }
 
 async function runExternalCli(params: {
@@ -123,17 +130,12 @@ async function runExternalCli(params: {
 }): Promise<void> {
   const db = await getDb();
   const definitionId = await readOrchestratorDefinitionId();
-  const agentInstanceId = randomUUID();
 
   await setWorkflowState(params.workflowId, "running", { reason: "cli-loop-driver:start" });
 
-  await db.insert(agentInstance).values({
-    id: agentInstanceId,
+  const agentInstanceId = await startExternalLoopInstance({
     definitionId,
     workflowRunId: params.workflowId,
-    status: "running",
-    currentIteration: 0,
-    startedAt: new Date().toISOString(),
   });
 
   const inject = params.opts.injectMcpBridge !== false;
@@ -210,14 +212,7 @@ async function runExternalCli(params: {
     const message = e instanceof Error ? e.message : String(e);
     publish("error", { message: `spawn failed: ${message}` });
     await setWorkflowState(params.workflowId, "failed", { reason: "cli-loop-driver:spawn-fail" });
-    await db
-      .update(agentInstance)
-      .set({
-        status: "error",
-        endedAt: new Date().toISOString(),
-        errorMessage: message.slice(0, 2000),
-      })
-      .where(eq(agentInstance.id, agentInstanceId));
+    await markExternalLoopInstanceError({ instanceId: agentInstanceId, message });
     publish("final", { status: "failed", reason: "spawn_error" });
     setTimeout(() => stepStreamBus.close(params.runId), 250);
     return;
@@ -309,28 +304,14 @@ async function runExternalCli(params: {
            *   - latencyMs 1（占位；CLI 协议未携带）
            * 同 act.ts 已有的 tool_call_log 写入风格保持一致：失败仅 warn。
            */
-          try {
-            const db = await getDb();
-            await db.insert(toolCallLog).values({
-              id: randomUUID(),
-              agentStepId: stepId,
-              workflowRunId: params.workflowId,
-              traceId: params.traceId,
-              retryCount: 0,
-              toolName: parsed.tool ?? "unknown",
-              toolKind: "builtin",
-              requestJson: {
-                source: `cli_loop:${params.kind}`,
-                payload: parsed.payload ?? null,
-              },
-              status: "success",
-              latencyMs: 1,
-            });
-          } catch (e) {
-            console.warn(
-              `[cli-loop] tool_call_log insert failed (tool=${parsed.tool}): ${(e as Error).message}`
-            );
-          }
+          await recordExternalLoopToolCall({
+            agentStepId: stepId,
+            workflowRunId: params.workflowId,
+            traceId: params.traceId,
+            source: `cli_loop:${params.kind}`,
+            toolName: parsed.tool ?? "unknown",
+            payload: parsed.payload ?? null,
+          });
           seq = emitLine({
             runId: params.runId,
             workflowId: params.workflowId,
@@ -417,19 +398,16 @@ async function runExternalCli(params: {
       await setWorkflowState(params.workflowId, "failed", {
         reason: `cli-loop-driver:exit=${exit}`,
       });
-      await db
-        .update(agentInstance)
-        .set({ status: "error", endedAt: new Date().toISOString(), errorMessage: `exit ${exit}` })
-        .where(eq(agentInstance.id, agentInstanceId));
+      await markExternalLoopInstanceError({
+        instanceId: agentInstanceId,
+        message: `exit ${exit}`,
+      });
       publish("final", { status: "failed", exitCode: exit });
     } else {
       await setWorkflowState(params.workflowId, "completed", {
         reason: "cli-loop-driver:exit=0",
       });
-      await db
-        .update(agentInstance)
-        .set({ status: "stopped", endedAt: new Date().toISOString() })
-        .where(eq(agentInstance.id, agentInstanceId));
+      await markExternalLoopInstanceStopped(agentInstanceId);
       publish("final", { status: "completed", exitCode: exit });
     }
   } catch (e) {
@@ -440,14 +418,7 @@ async function runExternalCli(params: {
     await setWorkflowState(params.workflowId, "failed", {
       reason: "cli-loop-driver:runtime-error",
     });
-    await db
-      .update(agentInstance)
-      .set({
-        status: "error",
-        endedAt: new Date().toISOString(),
-        errorMessage: message.slice(0, 2000),
-      })
-      .where(eq(agentInstance.id, agentInstanceId));
+    await markExternalLoopInstanceError({ instanceId: agentInstanceId, message });
     publish("final", { status: "failed", reason: "runtime_error" });
   } finally {
     setTimeout(() => stepStreamBus.close(params.runId), 250);
