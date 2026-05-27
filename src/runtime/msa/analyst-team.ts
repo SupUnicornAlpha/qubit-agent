@@ -50,6 +50,7 @@ import {
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
 import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
 import {
+  decideShouldDebate,
   logOrchestratorKickoff,
   parseGroupRelationsWithOrchestrator,
   POST_FUSION_AUX_ROLES,
@@ -718,12 +719,19 @@ async function runAnalystTeamCore(params: {
 
   let orchestratorDecision = null;
   if (strategyPipelineMode && auxSlots.length > 0) {
+    /**
+     * 策略专岗编组没有 MSA 分析师 → signalBreakdown 必然为空 / 仅 1 条，
+     * 显式 shouldDebate=false 让下游守门逻辑短路，避免空辩论（bull/bear
+     * 没有可对立的分析师观点可争）。
+     */
     orchestratorDecision = {
       signal: fusionResult.fusedSignal,
       confidence: Math.max(fusionResult.fusedConfidence, 0.55),
       reasoning:
         "策略专岗编组：基于当前工作流上下文（建议粘贴全分析师/MSA 报告）直接进入策略撰写与回测。",
       proceedToStrategy: true,
+      shouldDebate: false,
+      debateReason: "策略专岗编组：无 MSA 分析师，无对立视角可辩论",
     };
     reportCore += `\n\n### Orchestrator 汇总决策\n\n**${orchestratorDecision.signal.toUpperCase()}**（${(orchestratorDecision.confidence * 100).toFixed(0)}%）\n\n${orchestratorDecision.reasoning}`;
     await logResearchTeamInteraction({
@@ -800,7 +808,37 @@ async function runAnalystTeamCore(params: {
   }
   let debate: AnalystTeamResult["debate"];
   const debateConfig = await loadDebateConfig();
-  const shouldDebate = fusionResult.fusedConfidence < debateConfig.confidenceThreshold;
+  /**
+   * 是否触发 Bull/Bear 辩论：
+   *   - 硬守门 `signalBreakdown.length < 2`：无对手可辩
+   *   - Orchestrator 显式表态：优先于阈值
+   *   - 兜底：置信度低于阈值才辩
+   * 详见 `decideShouldDebate` 注释。无论结果如何都写一条 __team__ 广播留痕，
+   * 便于前端拓扑 / 日志解释"为什么辩 / 为什么没辩"。
+   */
+  const debateDecision = decideShouldDebate({
+    fusedConfidence: fusionResult.fusedConfidence,
+    signalBreakdownCount: fusionResult.signalBreakdown.length,
+    orchestratorDecision,
+    confidenceThreshold: debateConfig.confidenceThreshold,
+  });
+  const shouldDebate = debateDecision.shouldDebate;
+  await logResearchTeamInteraction({
+    workflowRunId,
+    fromRole: "orchestrator",
+    toRole: "__team__",
+    kind: "llm_message",
+    contentText: shouldDebate
+      ? `触发 Bull/Bear 辩论：${debateDecision.reason}`
+      : `跳过 Bull/Bear 辩论：${debateDecision.reason}`,
+    payloadJson: {
+      phase: "debate_decision",
+      shouldDebate,
+      source: debateDecision.source,
+      reason: debateDecision.reason,
+      targetRoles: ["researcher_bull", "researcher_bear", "research"],
+    },
+  });
   if (shouldDebate) {
     const analystSummary = fusionResult.signalBreakdown
       .map((s) => `${s.role}: ${s.signal} (${(s.confidence * 100).toFixed(0)}%) ${s.reasoning.slice(0, 120)}`)

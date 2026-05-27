@@ -109,6 +109,75 @@ export interface OrchestratorDecision {
   confidence: number;
   reasoning: string;
   proceedToStrategy: boolean;
+  /**
+   * 编排器对"是否触发 Bull/Bear 辩论"的显式表态。
+   *   - `true`  → 强制辩论（即使置信度高）
+   *   - `false` → 强制跳过辩论（即使置信度低于阈值）
+   *   - `null` / 未给出 → 沿用置信度阈值兜底
+   *
+   * 设计动机：辩论 SDP 本来是给「分析师之间观点显著分歧」准备的，但
+   * 原先实现只看 fusedConfidence 阈值就触发，导致：
+   *   1. 策略专岗编组（grp-strategy-pipeline）没有 MSA 分析师，breakdown 为空，
+   *      却依然机械触发 bull/bear（无对手可辩 → 纯空跑）
+   *   2. 用户明确不需要时也无法关闭
+   * 把决策权交给 Orchestrator，让它根据当前 task 类型与 breakdown 是否真分歧
+   * 来决定。
+   */
+  shouldDebate?: boolean | null;
+  /** 辩论决策的人类可读理由（无论 true/false 都建议带上，便于日志/UI 解释） */
+  debateReason?: string;
+}
+
+/**
+ * 是否触发 Bull/Bear 辩论的最终判定逻辑（纯函数，便于单测）。
+ *
+ * 判定优先级（由高到低）：
+ *   1. **硬守门**：`signalBreakdown.length < 2` → 强制不辩。
+ *      bull/bear 需要至少 2 个不同来源的分析师意见，否则没有对手可辩论。
+ *      策略专岗编组（无 MSA 分析师）走这条路径。
+ *   2. **Orchestrator 显式表态**：`orchestratorDecision.shouldDebate` 为 boolean → 直接采用。
+ *      把话语权交给 Orchestrator，避免阈值机械触发。
+ *   3. **默认置信度阈值**：兜底 `fusedConfidence < confidenceThreshold`。
+ */
+export interface DecideDebateInput {
+  fusedConfidence: number;
+  signalBreakdownCount: number;
+  orchestratorDecision: OrchestratorDecision | null;
+  confidenceThreshold: number;
+}
+
+export interface DecideDebateResult {
+  shouldDebate: boolean;
+  reason: string;
+  source: "hard_guard" | "orchestrator" | "confidence_threshold";
+}
+
+export function decideShouldDebate(input: DecideDebateInput): DecideDebateResult {
+  if (input.signalBreakdownCount < 2) {
+    return {
+      shouldDebate: false,
+      reason: `signal_breakdown<2: 仅 ${input.signalBreakdownCount} 个分析师产出，无对立观点可辩论`,
+      source: "hard_guard",
+    };
+  }
+  const orch = input.orchestratorDecision;
+  if (orch && typeof orch.shouldDebate === "boolean") {
+    return {
+      shouldDebate: orch.shouldDebate,
+      reason: orch.debateReason
+        ? `orchestrator_decision: ${orch.debateReason}`
+        : `orchestrator_decision: ${orch.shouldDebate ? "强制辩论" : "强制跳过"}`,
+      source: "orchestrator",
+    };
+  }
+  const triggered = input.fusedConfidence < input.confidenceThreshold;
+  return {
+    shouldDebate: triggered,
+    reason: triggered
+      ? `confidence_threshold: fused=${(input.fusedConfidence * 100).toFixed(0)}% < threshold=${(input.confidenceThreshold * 100).toFixed(0)}%`
+      : `confidence_threshold: fused=${(input.fusedConfidence * 100).toFixed(0)}% >= threshold=${(input.confidenceThreshold * 100).toFixed(0)}%`,
+    source: "confidence_threshold",
+  };
 }
 
 /** 从 Orchestrator 全量简报中截取 `## <role>` 段落；若无则回退通用段 + 角色提示 */
@@ -302,8 +371,15 @@ export async function runOrchestratorDecision(input: {
 MSA 融合信号：${input.msaSignal}（置信度 ${(input.msaConfidence * 100).toFixed(0)}%）
 
 请阅读各分析师与融合报告，输出 **唯一一段 JSON**：
-{"signal":"buy|sell|hold","confidence":0.0-1.0,"reasoning":"…","proceedToStrategy":true|false}
+{"signal":"buy|sell|hold","confidence":0.0-1.0,"reasoning":"…","proceedToStrategy":true|false,"shouldDebate":true|false|null,"debateReason":"…"}
+
 - proceedToStrategy：仅当信息充分且值得生成可回测策略时为 true
+- shouldDebate：是否需要触发 Bull/Bear 辩论 SDP
+    * true  → 分析师之间存在显著分歧（如 bull 与 bear 信号、置信度差>30%）或单边证据不足
+    * false → 信号一致 / 数据充分 / 单边证据明显 / 仅做策略落地无需辩论
+    * null  → 没明确意见，交由系统按置信度阈值默认判定
+  注意：辩论本身耗时 1-3 分钟且会消耗大量 token，没有真分歧时**应明确给 false**。
+- debateReason：辩论决策的简短说明（≤ 50 字），无论选 true/false/null 都建议带上。
 
 ---
 ${input.fusionSummary}`;
@@ -323,6 +399,8 @@ ${input.fusionSummary}`;
       confidence: input.msaConfidence,
       reasoning: `Orchestrator 决策失败，沿用 MSA：${(e as Error).message}`,
       proceedToStrategy: input.msaConfidence >= 0.5,
+      shouldDebate: null,
+      debateReason: "orchestrator_llm_failed: 沿用默认阈值判定",
     };
   }
   let parsed: Record<string, unknown> = {};
@@ -346,16 +424,46 @@ ${input.fusionSummary}`;
       ? parsed["proceedToStrategy"]
       : confidence >= 0.45 && signal !== "hold";
 
+  /**
+   * shouldDebate 容忍三种语义：
+   *   - boolean → 直接采用
+   *   - null    → 显式表示"没意见，走默认"
+   *   - 字段缺失 → 同 null
+   * 避免把"模型忘了写"和"模型明确说 false"混为一谈。
+   */
+  let shouldDebate: boolean | null = null;
+  if (typeof parsed["shouldDebate"] === "boolean") {
+    shouldDebate = parsed["shouldDebate"];
+  } else if (parsed["shouldDebate"] === null) {
+    shouldDebate = null;
+  }
+  const debateReason =
+    typeof parsed["debateReason"] === "string" && parsed["debateReason"].trim().length > 0
+      ? parsed["debateReason"].trim().slice(0, 200)
+      : undefined;
+
   await logResearchTeamInteraction({
     workflowRunId: input.workflowRunId,
     fromRole: "orchestrator",
     toRole: "msa",
     kind: "llm_message",
     contentText: `[Orchestrator 决策] ${signal} ${(confidence * 100).toFixed(0)}% — ${reasoning.slice(0, 3500)}`,
-    payloadJson: { phase: "orchestrator_decision", proceedToStrategy },
+    payloadJson: {
+      phase: "orchestrator_decision",
+      proceedToStrategy,
+      shouldDebate,
+      ...(debateReason ? { debateReason } : {}),
+    },
   });
 
-  return { signal, confidence, reasoning, proceedToStrategy };
+  return {
+    signal,
+    confidence,
+    reasoning,
+    proceedToStrategy,
+    shouldDebate,
+    ...(debateReason ? { debateReason } : {}),
+  };
 }
 
 /**
