@@ -44,6 +44,14 @@ export interface AnalystSignalFusionOutput {
   fusedConfidence: number;
   debateTriggered: boolean;
   weights: Record<string, number>;
+  /**
+   * P2b 标记：本次"融合"实际是占位 / 跳过状态。
+   *
+   * 设置场景：策略专岗编组（grp-strategy-pipeline）没有 analyst_* 角色，
+   * 不存在可融合的信号 —— 下游应识别此标记，把 fusedSignal/fusedConfidence
+   * 当作"未评估"而非真实 MSA 共识，并相应改报告文案 / risk 置信度规则。
+   */
+  noAnalystSignals?: boolean;
   signalBreakdown: Array<{
     role: AgentRole;
     signal: AnalystSignalValue;
@@ -110,6 +118,20 @@ export async function fuseSignals(params: {
   }>;
   /** 当 signals 为空时仍写入一条占位融合记录（仅研究团队「无 analyst_*」场景） */
   tickerHint?: string;
+  /**
+   * P2b：跳过空信号场景下的 db 占位写入。
+   *
+   * 之前空 signals 会强行 INSERT 一条 `hold@25%, debateTriggered=true` 到
+   * signal_fusion_result —— 这条假数据：
+   *   1. 污染 MSA 共识统计 / 监控面板
+   *   2. 让 risk LOW_CONFIDENCE_BLOCK 规则被错误触发（0.25 < 0.35）
+   *   3. 让报告里出现 "**HOLD**（25%）⚠️ 置信度不足" 的误导文案
+   *
+   * 策略专岗编组（grp-strategy-pipeline）调用方传 true，跳过写入。
+   * 仍返回一个 in-memory stub fusionResult（含 noAnalystSignals=true 标记），
+   * 让下游报告文案 / orchestrator decision 走专门路径。
+   */
+  skipPlaceholderForNoSignals?: boolean;
 }): Promise<AnalystSignalFusionOutput> {
   const db = await getDb();
   const { workflowRunId, signals } = params;
@@ -117,23 +139,34 @@ export async function fuseSignals(params: {
   if (signals.length === 0) {
     const ticker = (params.tickerHint ?? "").trim() || "UNKNOWN";
     const fusionId = randomUUID();
-    await db.insert(signalFusionResult).values({
-      id: fusionId,
-      workflowRunId,
-      ticker,
-      fusedSignal: "hold",
-      fusedConfidence: 0.25,
-      weightsJson: {},
-      debateTriggered: true,
-    });
+    if (!params.skipPlaceholderForNoSignals) {
+      await db.insert(signalFusionResult).values({
+        id: fusionId,
+        workflowRunId,
+        ticker,
+        fusedSignal: "hold",
+        fusedConfidence: 0.25,
+        weightsJson: {},
+        debateTriggered: true,
+      });
+    }
     return {
       fusionId,
       ticker,
+      /**
+       * 仍返回中性 hold 字段以兼容 TS 类型 `AnalystSignalValue`；上游
+       * 通过 `noAnalystSignals=true` 识别"这不是真共识"。
+       */
       fusedSignal: "hold",
-      fusedConfidence: 0.25,
-      debateTriggered: true,
+      /**
+       * 0.55 = "未评估，给出中性数值避免下游 risk LOW_CONFIDENCE_BLOCK 误判"。
+       * 之前用 0.25 会污染下游 risk 规则；现在跳过占位时给中性值。
+       */
+      fusedConfidence: params.skipPlaceholderForNoSignals ? 0.55 : 0.25,
+      debateTriggered: params.skipPlaceholderForNoSignals ? false : true,
       weights: {},
       signalBreakdown: [],
+      ...(params.skipPlaceholderForNoSignals ? { noAnalystSignals: true } : {}),
     };
   }
 

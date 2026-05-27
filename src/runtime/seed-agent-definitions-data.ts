@@ -269,8 +269,19 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-risk",
     role: "risk",
-    /** 4.0.0：可在 chat 中调用 rule.register/evaluate 直接生成入库风控规则 */
-    version: "4.0.0",
+    /**
+     * 4.1.0：补 fetch_klines 工具授权。
+     *
+     * 之前 risk 在 strategy-pipeline 末端跑时 thought 反复说"本角色的授权工具集
+     * 中没有任何行情/查询工具（无 fetch_klines、无 search_asset）"——只能拉规则
+     * 就 stopped，无法独立验证标的真实性、估算波动率、跑 VaR / Stress Test
+     * 所需的历史 pnl 序列。
+     *
+     * 现在加入 fetch_klines：风控角色仍以"签核 / 否决"为主，但允许它在数据
+     * 不足时主动拉单标的日线，自行估算波动率分位 / 流动性 / 尾部风险，
+     * 输出更可执行的 conditional 条件。
+     */
+    version: "4.1.0",
     name: "风控",
     systemPrompt: PROMPT_RISK,
     tools: [
@@ -284,6 +295,11 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "rule.evaluate",
       // 沙箱：跑暴露 / 集中度 / VaR 计算
       "code.run_python",
+      /**
+       * 4.1.0 新增：行情数据查询。让 risk 在 portfolio pnl 序列缺失时也能
+       * 主动拉单标的日线、自行估算历史波动率 + VaR，避免"无数据就不出意见"。
+       */
+      "fetch_klines",
       // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
       "skill.search",
       "skill.use_record",

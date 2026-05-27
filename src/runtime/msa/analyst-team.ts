@@ -691,12 +691,20 @@ async function runAnalystTeamCore(params: {
       (orderKey.get(a.signal.analystRole as AgentRole) ?? 0) - (orderKey.get(b.signal.analystRole as AgentRole) ?? 0)
   );
 
-  // Run MSA fusion（仅 analyst_* 信号；无信号时由 tickerHint 生成占位融合）
+  /**
+   * Run MSA fusion（仅 analyst_* 信号；无信号时由 tickerHint 生成占位融合）。
+   *
+   * P2b：策略专岗编组没有 analyst_* 角色，rawSignals 必为空。这种场景下
+   * 强行写一条 `hold@25%, debateTriggered=true` 到 signal_fusion_result 是
+   * 垃圾数据 —— 通过 skipPlaceholderForNoSignals 告知 fuseSignals 跳过 db 写入，
+   * 同时返回 `noAnalystSignals: true` 让下游识别"未跑共识"。
+   */
   const fusionResult = await fuseSignals({
     workflowRunId,
     signals: rawSignals,
     persistSignals,
     tickerHint: ticker,
+    skipPlaceholderForNoSignals: strategyPipelineMode && rawSignals.length === 0,
   });
 
   for (const { signal } of persistSignals) {
@@ -714,33 +722,45 @@ async function runAnalystTeamCore(params: {
     ticker,
     fusionResult.fusedSignal,
     fusionResult.fusedConfidence,
-    fusionResult.signalBreakdown
+    fusionResult.signalBreakdown,
+    fusionResult.noAnalystSignals === true
   );
 
   let orchestratorDecision = null;
   if (strategyPipelineMode && auxSlots.length > 0) {
     /**
-     * 策略专岗编组没有 MSA 分析师 → signalBreakdown 必然为空 / 仅 1 条，
-     * 显式 shouldDebate=false 让下游守门逻辑短路，避免空辩论（bull/bear
-     * 没有可对立的分析师观点可争）。
+     * 策略专岗编组没有 MSA 分析师 → signalBreakdown 必然为空 / 仅 1 条。
+     *
+     * P2b：之前这个分支强行把 confidence 抬到 0.55、reasoning 还说"建议粘贴
+     * 全分析师/MSA 报告"，结果数据库里就出现假的 "Orchestrator 决策 HOLD@55%"
+     * 假信号 + 误导用户去找根本不存在的 MSA 报告。
+     *
+     * 现在显式表达"未运行 MSA"：reasoning 去掉对 MSA 报告的依赖，confidence
+     * 保留中性 0.55（避免触发下游 risk LOW_CONFIDENCE_BLOCK，但绝不假装是高
+     * 置信度共识）。配合 buildTeamReport 的 noAnalystSignals 分支，
+     * 整份报告里都不再出现"分析师团队结论 HOLD@25%"这种伪造文案。
      */
     orchestratorDecision = {
       signal: fusionResult.fusedSignal,
-      confidence: Math.max(fusionResult.fusedConfidence, 0.55),
+      confidence: 0.55,
       reasoning:
-        "策略专岗编组：基于当前工作流上下文（建议粘贴全分析师/MSA 报告）直接进入策略撰写与回测。",
+        "策略专岗编组：本工作流未配置 MSA 分析师角色，跳过共识评估，直接进入 research → backtest → risk 串行 pipeline。",
       proceedToStrategy: true,
       shouldDebate: false,
-      debateReason: "策略专岗编组：无 MSA 分析师，无对立视角可辩论",
+      debateReason: "策略专岗编组：未配置 MSA 分析师，无对立视角可辩论",
     };
-    reportCore += `\n\n### Orchestrator 汇总决策\n\n**${orchestratorDecision.signal.toUpperCase()}**（${(orchestratorDecision.confidence * 100).toFixed(0)}%）\n\n${orchestratorDecision.reasoning}`;
+    reportCore += `\n\n### Orchestrator 调度决策\n\n⏭️ **跳过 MSA 共识评估**（${(orchestratorDecision.confidence * 100).toFixed(0)}% 中性置信度，仅作 downstream 风控阈值占位）\n\n${orchestratorDecision.reasoning}`;
     await logResearchTeamInteraction({
       workflowRunId,
       fromRole: "orchestrator",
       toRole: "research",
       kind: "llm_message",
-      contentText: "策略专岗编组：进入策略撰写与回测阶段。",
-      payloadJson: { phase: "strategy_pipeline_mode" },
+      contentText: "策略专岗编组：跳过 MSA 共识评估，进入策略撰写与回测阶段。",
+      payloadJson: {
+        phase: "strategy_pipeline_mode",
+        msaSkipped: true,
+        confidence: 0.55,
+      },
     });
   } else if (orchestratorSlot) {
     orchestratorDecision = await runOrchestratorDecision({
@@ -890,7 +910,8 @@ function buildTeamReport(
   ticker: string,
   fusedSignal: AnalystSignalValue,
   fusedConfidence: number,
-  breakdown: Array<{ role: AgentRole; signal: AnalystSignalValue; confidence: number; reasoning: string }>
+  breakdown: Array<{ role: AgentRole; signal: AnalystSignalValue; confidence: number; reasoning: string }>,
+  noAnalystSignals = false
 ): string {
   const signalEmoji: Record<AnalystSignalValue, string> = {
     buy: "📈",
@@ -903,6 +924,22 @@ function buildTeamReport(
     analyst_sentiment: "情绪面",
     analyst_macro: "宏观面",
   };
+
+  /**
+   * P2b：策略专岗编组（无 MSA 分析师）专用报告头。
+   * 不再骗用户/Agent 说"分析师团队结论 HOLD@25%, 建议辩论"——明示"未跑共识"。
+   */
+  if (noAnalystSignals) {
+    return [
+      `## ${ticker} 策略 pipeline 调度报告`,
+      ``,
+      `**MSA 共识评估**：⏭️ **未运行**（当前 agent group 未配置 analyst_* 角色）`,
+      `> 直接进入 research → backtest → risk 串行 pipeline，跳过 Bull/Bear 辩论。`,
+      ``,
+      `### 各分析师信号`,
+      `- _无_（请由 research 角色基于行情数据自主形成假设）`,
+    ].join("\n");
+  }
 
   const lines = [
     `## ${ticker} 分析师团队研究报告`,
