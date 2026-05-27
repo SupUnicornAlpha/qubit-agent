@@ -68,6 +68,84 @@ async function loadRuntimeDefinition(definitionId: string): Promise<RuntimeAgent
 }
 
 /**
+ * 从分析师 LLM 文本里抽取**含 `signal` 字段的 JSON 对象**。
+ *
+ * 2026-05-27 P0 修复：旧实现用 `/\{[\s\S]*\}/` 贪婪匹配，会从文本第一个 `{`
+ * 一直吃到最后一个 `}`，跨越 ```json 围栏、markdown 解说、`<TOOL_CALL>` 块
+ * 等多段非 JSON 内容 → `JSON.parse` 必然抛错 → 所有合法 signal 全被打成
+ * `signal_parse_failed`（WF a09e90c5/9adf5d91 实测 100% 误失败）.
+ *
+ * 新策略（按优先级从可信到兜底）：
+ *   1. 先抓所有 ```json ... ``` 围栏代码块
+ *   2. 再抓所有 ``` ... ``` 围栏（无语言标记）
+ *   3. fallback 抓所有"扁平"含 `"signal"` 字段的 `{...}` 候选
+ *   4. 从尾部反向尝试 JSON.parse，挑第一个 parse 成功 + 含 `signal` 字段的
+ *
+ * 注意 `<TOOL_CALL>{...}</TOOL_CALL>` 一般在尾部，所以反向匹配先碰到它，
+ * 我们需要 **跳过 tool 字段、挑 signal 字段** —— 用 "signal" in obj 守门.
+ */
+export function extractSignalJsonFromText(text: string): Record<string, unknown> | null {
+  if (!text) return null;
+  const candidates: string[] = [];
+  for (const m of text.matchAll(/```json\s*([\s\S]*?)\s*```/gi)) {
+    if (m[1]) candidates.push(m[1]);
+  }
+  for (const m of text.matchAll(/```\s*([\s\S]*?)\s*```/g)) {
+    if (m[1] && !candidates.includes(m[1])) candidates.push(m[1]);
+  }
+  const balancedScan = (src: string): string[] => {
+    const out: string[] = [];
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escape = false;
+    for (let i = 0; i < src.length; i += 1) {
+      const ch = src[i];
+      if (inString) {
+        if (escape) escape = false;
+        else if (ch === "\\") escape = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === "{") {
+        if (depth === 0) start = i;
+        depth += 1;
+      } else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0 && start >= 0) {
+          out.push(src.slice(start, i + 1));
+          start = -1;
+        } else if (depth < 0) {
+          depth = 0;
+          start = -1;
+        }
+      }
+    }
+    return out;
+  };
+  for (const blob of balancedScan(text)) {
+    if (blob.includes('"signal"') && !candidates.includes(blob)) candidates.push(blob);
+  }
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const raw = candidates[i]?.trim();
+    if (!raw) continue;
+    try {
+      const obj = JSON.parse(raw) as unknown;
+      if (obj && typeof obj === "object" && !Array.isArray(obj) && "signal" in (obj as Record<string, unknown>)) {
+        return obj as Record<string, unknown>;
+      }
+    } catch {
+      // ignore, try next candidate
+    }
+  }
+  return null;
+}
+
+/**
  * 解析分析师 LLM 输出里的 JSON 信号。
  *
  * 2026-05-26 数据复盘发现：21 条 analyst_signal 全部塌缩成 `hold @ 0.4`，原因是
@@ -90,18 +168,8 @@ function parseJsonSignalFromText(
   text: string
 ): Promise<RawAnalystSignal | null> {
   return (async () => {
-    let parsed: Record<string, unknown> = {};
-    let parseSucceeded = false;
-    try {
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        parsed = JSON.parse(match[0]);
-        parseSucceeded = true;
-      }
-    } catch {
-      parseSucceeded = false;
-    }
-    if (!parseSucceeded) return null;
+    const parsed = extractSignalJsonFromText(text);
+    if (!parsed) return null;
 
     const validated = await validateFsiRoleOutput(role, parsed);
     const p = validated.sanitized;

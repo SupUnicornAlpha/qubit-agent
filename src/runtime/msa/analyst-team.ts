@@ -763,6 +763,17 @@ async function runAnalystTeamCore(params: {
       },
     });
   } else if (orchestratorSlot) {
+    /**
+     * 2026-05-27 P2 修复：把"实际签到分析师"传给 orchestrator decision，
+     * 否则 LLM 在零有效信号（或只有 2 个签到时）会幻觉编造"四维信号"——
+     * WF a09e90c5 实测：只签到 fundamental + technical 且都 signal_parse_failed，
+     * orchestrator 居然写出"综合基本面、技术、情绪及宏观四维信号"和
+     * "情绪面散户关注度高但机构持仓谨慎、宏观层面航天板块政策顺风..."的
+     * 完整伪造叙事。把签到清单作为 hard fact 拼进 prompt 能根治这类幻觉。
+     */
+    const attendedRoles = fusionResult.signalBreakdown.map((s) => s.role);
+    const allAnalystRoles = analystSlots.map((s) => s.role);
+    const missingRoles = allAnalystRoles.filter((r) => !attendedRoles.includes(r));
     orchestratorDecision = await runOrchestratorDecision({
       workflowRunId,
       ticker,
@@ -770,6 +781,8 @@ async function runAnalystTeamCore(params: {
       fusionSummary: reportCore,
       msaSignal: fusionResult.fusedSignal,
       msaConfidence: fusionResult.fusedConfidence,
+      attendedRoles,
+      missingRoles,
     });
     reportCore += `\n\n### Orchestrator 汇总决策\n\n**${orchestratorDecision.signal.toUpperCase()}**（${(orchestratorDecision.confidence * 100).toFixed(0)}%）\n\n${orchestratorDecision.reasoning}`;
     if (orchestratorDecision.proceedToStrategy) {

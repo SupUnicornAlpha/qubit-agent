@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -43,6 +44,41 @@ export function migrationsDirAvailable(): boolean {
   return existsSync(getBundledMigrationsDir());
 }
 
+/**
+ * 进程级缓存："这个候选路径试过没有"。
+ *   - undefined: 没试过
+ *   - true: 跑得通（exit 0）
+ *   - false: 跑挂（dyld error / 非零退出 / spawn 失败）
+ *
+ * 为什么需要：candidates 里第一项 `${appRoot}/python-venv/bin/python3` 在打包构建后
+ * 会落一个**坏 venv 软链**（`dyld: Library not loaded: @executable_path/../Python3`），
+ * `existsSync` 看到文件就直接返回 → `code.run_python` 跑起来必报 `python_exit_nonzero`。
+ * 增加一次性 `--version` 探针，spawn 失败的候选自动跳过，进程内缓存避免每次都试。
+ */
+const pythonBinValidityCache = new Map<string, boolean>();
+
+function pythonBinUsable(bin: string): boolean {
+  const cached = pythonBinValidityCache.get(bin);
+  if (cached !== undefined) return cached;
+  let usable = false;
+  try {
+    const r = spawnSync(bin, ["--version"], {
+      timeout: 5_000,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    usable = r.status === 0;
+  } catch {
+    usable = false;
+  }
+  pythonBinValidityCache.set(bin, usable);
+  return usable;
+}
+
+/** 测试钩子 */
+export function _resetPythonBinCacheForTest(): void {
+  pythonBinValidityCache.clear();
+}
+
 /** 解析 Python 解释器：显式 env → 资源内 venv → 数据目录 venv → 系统 python3 */
 export function resolvePythonBin(dataDir: string): string {
   const explicit = process.env["QUBIT_PYTHON"]?.trim();
@@ -54,8 +90,15 @@ export function resolvePythonBin(dataDir: string): string {
     join(dataDir, "python-venv", "bin", "python3"),
     join(dataDir, "python-venv", "Scripts", "python.exe"),
   ];
+  /**
+   * 2026-05-27 P2 修复：之前只判 existsSync，遇到坏 venv 软链（如 src-tauri/target/
+   * debug/bundle 下的 python3 软链，dyld 找不到 Python3 framework）会被选中，
+   * 结果 `code.run_python` 永远报 python_exit_nonzero。改为 existsSync + 一次性
+   * `--version` 探针，spawn 失败的候选自动跳过，让 fallback 链路真正发挥作用。
+   */
   for (const p of candidates) {
-    if (existsSync(p)) return p;
+    if (!existsSync(p)) continue;
+    if (pythonBinUsable(p)) return p;
   }
   return process.platform === "win32" ? "python" : "python3";
 }

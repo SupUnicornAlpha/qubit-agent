@@ -379,14 +379,55 @@ export async function runOrchestratorDecision(input: {
   fusionSummary: string;
   msaSignal: AnalystSignalValue;
   msaConfidence: number;
+  /**
+   * 2026-05-27 P2 加固：实际产出**合法 signal** 的分析师角色清单（来自 fusion 的 signalBreakdown）。
+   * 用于硬约束 LLM 的 reasoning —— 不允许编造未签到角色的观点。
+   */
+  attendedRoles?: AgentRole[];
+  /**
+   * 实际签到但**未给出 signal**（或 signal_parse_failed）的分析师角色清单。
+   * 用于在 prompt 里明示哪些角色"缺席"，避免 LLM 把它们的"沉默"误读为"中性"或编造观点。
+   */
+  missingRoles?: AgentRole[];
 }): Promise<OrchestratorDecision> {
   const modelConfig = (await loadModelConfig()) ?? {
     provider: "mock" as const,
     model: "mock-orchestrator",
     apiKey: "",
   };
+
+  /**
+   * 把"实际签到清单"作为 hard fact 拼进 prompt，是这次 P2 修复的核心 —— 否则
+   * LLM 在零信号/部分签到场景会编造"四维信号"或"情绪/宏观维度认为..."等
+   * 不存在的观点（WF a09e90c5 实测）。
+   */
+  const attended = input.attendedRoles ?? [];
+  const missing = input.missingRoles ?? [];
+  const attendanceBlock =
+    attended.length === 0 && missing.length === 0
+      ? ""
+      : [
+          "",
+          "## 本轮签到事实（**严禁伪造**）",
+          attended.length > 0
+            ? `- ✅ 实际产出合法 signal 的分析师：${attended.join("、")}（仅这些维度有发言权）`
+            : "- ⚠️ **没有任何分析师产出合法 signal**（signal_parse_failed 或未签到）",
+          missing.length > 0
+            ? `- ❌ 缺席 / signal_parse_failed：${missing.join("、")}（**不得在 reasoning 中引用这些角色的观点**）`
+            : "",
+          "",
+          "硬约束：",
+          "1. reasoning 只能引用上面 ✅ 角色的实际产出。**禁止**写「情绪面如何」「宏观面如何」等若这些角色未在签到列表。",
+          "2. 若 ✅ 角色为 0，直接给 `signal=hold, confidence<=0.4, proceedToStrategy=false, shouldDebate=false`，",
+          "   reasoning 说明「本轮无有效信号、建议补充至少 2 个分析师后重跑」，**不要**伪造任何分析叙事。",
+          "3. 不得编造数字（如「+74% RSI 71」），所有数字必须能在下方 fusionSummary 中溯源。",
+        ]
+          .filter((s) => s.length > 0 || s === "")
+          .join("\n");
+
   const userPrompt = `标的：${input.ticker}
 MSA 融合信号：${input.msaSignal}（置信度 ${(input.msaConfidence * 100).toFixed(0)}%）
+${attendanceBlock}
 
 请阅读各分析师与融合报告，输出 **唯一一段 JSON**：
 {"signal":"buy|sell|hold","confidence":0.0-1.0,"reasoning":"…","proceedToStrategy":true|false,"shouldDebate":true|false|null,"debateReason":"…"}
@@ -615,7 +656,58 @@ export async function runPostFusionPipeline(input: {
       : "",
   ].join("\n");
 
+  /**
+   * 2026-05-27 P3：分析师全部缺席 / proceedToStrategy=false 时不再直接放弃。
+   * 若 auxSlots 含 research，跑一次"explore fallback"产出**候选因子方向草稿**
+   * （不写 strategy_script，不跑 backtest，不跑 risk）。这样即使分析师全 fail，
+   * 研究 pipeline 也能给出可执行的下一步建议（如"建议研究反转因子 X+Y 组合"），
+   * 而不是输出空报告让用户花了 5 分钟 250k token 还啥都没拿到（WF a09e90c5 实测）.
+   */
   if (orch && !orch.proceedToStrategy) {
+    const researchSlot = input.auxSlots.find((s) => s.role === "research");
+    if (researchSlot) {
+      const fallbackCtx = [
+        input.fusionReport,
+        "",
+        `MSA 结论：${input.fusedSignal}（置信度 ${(input.fusedConfidence * 100).toFixed(0)}%）`,
+        "",
+        `Orchestrator 汇总决策：${orch.signal}（${(orch.confidence * 100).toFixed(0)}%）`,
+        orch.reasoning,
+        "→ Orchestrator 判断信息不足，**不要**输出可执行策略代码。",
+        "",
+        "## explore fallback 任务",
+        "本轮分析师未产出合法信号 / 信息不足。请**改做候选研究方向草稿**：",
+        "1. 基于现有数据快照（不要凭空臆造），列 3-5 个**值得下一轮深挖**的因子方向，",
+        "   每条注明：因子名 + 数据依赖（要拉哪些 connector）+ 检验指标（IC / RankIC / 分组收益）+ 预计耗时。",
+        "2. 列 1-2 个**值得追加**的分析师角色（如缺技术分析建议加 analyst_technical），并给出理由。",
+        "3. **不要**写 Python 代码块、不要写策略实现，仅输出方向性建议。下游 backtest / risk 本轮跳过。",
+      ].join("\n");
+      const draftBody = await input.runAuxLlm(researchSlot, fallbackCtx);
+      await logResearchTeamInteraction({
+        workflowRunId: input.workflowRunId,
+        fromRole: "research",
+        toRole: "orchestrator",
+        kind: "llm_message",
+        contentText: `[explore fallback] ${draftBody.slice(0, 3000)}`,
+        payloadJson: { phase: "research_explore_fallback", noStrategy: true },
+      });
+      return {
+        auxSections: [
+          {
+            role: "research",
+            body: [
+              `Orchestrator 判断暂不进入策略/回测阶段，已切到 explore fallback 模式输出研究方向草稿。`,
+              ``,
+              orch.reasoning,
+              ``,
+              `### 候选研究方向草稿`,
+              ``,
+              draftBody,
+            ].join("\n"),
+          },
+        ],
+      };
+    }
     return {
       auxSections: [
         {

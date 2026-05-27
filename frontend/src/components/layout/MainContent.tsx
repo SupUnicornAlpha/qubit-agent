@@ -4552,13 +4552,58 @@ const TeamDashboardPanel: FC = () => {
   /**
    * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
    * 这是用户在 Q3 抱怨"goal 是 AAPL 实际跑 NVDA" 的另一道防线。
+   *
+   * 2026-05-27 P0-2 加固：之前实现只清 promptTemplateId，导致 `instrument='option'
+   * + optionContract='ASTSCall 2026.5.29'` 残留到下一次"单标的 RKLB"提交，
+   * `buildResearchScopePayload` 看到 `instrument==='option'` 直接用 optionContract
+   * 当 ticker，结果 workflow_run.goal=RKLB 但 analyst_research_job.ticker=
+   * "期权·ASTSCall 2026.5.29" —— Orchestrator kickoff 标的也错（WF 9adf5d91 实测）。
+   *
+   * 现在切 mode 时一并：
+   *   - basket → 切到非 basket 时清空 basketTickers
+   *   - sector → 切到非 sector 时清空 sectorName / sectorPeers
+   *   - explore → 切到非 explore 时清空 exploreTheme / exploreCandidates
+   *   - instrument: 切到 basket / sector / explore 时强制回 equity_long，
+   *     避免"篮子 + 期权"这种非法组合穿透
+   *   - 期权字段：所有非 single 模式都清空（option 模式只在 single 下有意义）
    */
   const handleScopeModeChange = (next: ResearchScopeMode) => {
     if (next === scopeMode) return;
-    if (scopeMode !== next) {
-      setPromptTemplateId("");
+    setPromptTemplateId("");
+    if (scopeMode === "basket" && next !== "basket") setBasketTickers("");
+    if (scopeMode === "sector" && next !== "sector") {
+      setSectorName("");
+      setSectorPeers("");
+    }
+    if (scopeMode === "explore" && next !== "explore") {
+      setExploreTheme("");
+      setExploreCandidates("");
+    }
+    if (next !== "single") {
+      setResearchInstrument("equity_long");
+      setOptionUnderlying("");
+      setOptionContract("");
+      setOptionExpiry("");
+      setOptionStrike("");
+      setOptionRight("call");
     }
     setScopeMode(next);
+  };
+
+  /**
+   * 工具类型切换：从 option 切回 equity_long / equity_short 时清空 option_* 残留，
+   * 同样为防止跨次提交污染 scope payload。
+   */
+  const handleResearchInstrumentChange = (next: ResearchInstrumentUi) => {
+    if (next === researchInstrument) return;
+    if (researchInstrument === "option" && next !== "option") {
+      setOptionUnderlying("");
+      setOptionContract("");
+      setOptionExpiry("");
+      setOptionStrike("");
+      setOptionRight("call");
+    }
+    setResearchInstrument(next);
   };
 
   const researchScopePayload = useMemo(
@@ -5985,7 +6030,7 @@ const TeamDashboardPanel: FC = () => {
             <select
               style={teamStyles.input}
               value={researchInstrument}
-              onChange={(e) => setResearchInstrument(e.target.value as ResearchInstrumentUi)}
+              onChange={(e) => handleResearchInstrumentChange(e.target.value as ResearchInstrumentUi)}
             >
               <option value="equity_long">股票多头</option>
               <option value="equity_short">股票做空</option>

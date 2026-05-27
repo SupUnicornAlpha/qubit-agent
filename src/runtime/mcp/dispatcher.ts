@@ -204,6 +204,15 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     },
     async () => {
       const db = await getDb();
+      /**
+       * 2026-05-27 P1 修复：之前 `eq(mcpServerConfig.projectId, null)` 在 SQL
+       * 里展开成 `project_id = NULL`（NULL 三值逻辑下永远不为 true），导致
+       * project-scoped workflow 调用 **global**（projectId IS NULL）的 mcp
+       * server 时永远查不到 → 报 `not found or disabled`。
+       * WF 9adf5d91 实测：def-analyst-fundamental 通过 call_mcp 调
+       * mcp-financex 时被这条 bug 拦住，agent 误判"该 server 不可用"。
+       * 改用 drizzle 的 `isNull()` 帮手生成正确的 `project_id IS NULL`.
+       */
       const rows = await db
         .select()
         .from(mcpServerConfig)
@@ -212,7 +221,7 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
             eq(mcpServerConfig.name, input.serverName),
             eq(mcpServerConfig.enabled, true),
             input.projectId
-              ? or(eq(mcpServerConfig.projectId, input.projectId), eq(mcpServerConfig.projectId, null))
+              ? or(eq(mcpServerConfig.projectId, input.projectId), isNull(mcpServerConfig.projectId))
               : undefined
           )
         );
