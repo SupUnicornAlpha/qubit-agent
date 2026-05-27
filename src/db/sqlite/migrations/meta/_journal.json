@@ -379,6 +379,13 @@
       "when": 1777352490000,
       "tag": "0054_cleanup_dangling_mcp_and_stale_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1777352500000,
+      "tag": "0055_redo_0054_with_breakpoints",
+      "breakpoints": true
     }
   ]
 }
