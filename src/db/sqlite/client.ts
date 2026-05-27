@@ -1,14 +1,15 @@
 import { Database } from "bun:sqlite";
-import { sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { config } from "../../config";
 import * as schema from "./schema";
 
 export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
 let _db: DbClient | null = null;
+let _sqlite: Database | null = null;
 
 function getDbPath(): string {
   return join(config.dataDir, "db", "core.sqlite");
@@ -21,6 +22,7 @@ export async function getDb(): Promise<DbClient> {
   await mkdir(dirname(dbPath), { recursive: true });
 
   const sqlite = new Database(dbPath);
+  _sqlite = sqlite;
 
   // === SQLite 并发与性能调优 ===
   //
@@ -45,6 +47,21 @@ export async function getDb(): Promise<DbClient> {
 
 export function closeDb(): void {
   _db = null;
+  _sqlite = null;
+}
+
+/**
+ * 拿到底层 bun:sqlite Database 句柄。**仅供测试 / migration 数据修复脚本使用**：
+ * 业务代码请走 drizzle (`getDb()`)，不要直接拿 sqlite —— 否则会绕过 schema 类型
+ * 校验、绕过 ORM 的 returning 处理。
+ *
+ * 使用前必须先 `await getDb()` 一次完成连接初始化与 PRAGMA。
+ */
+export function getSqliteForTesting(): Database {
+  if (!_sqlite) {
+    throw new Error("[db] sqlite not initialized; call getDb() first");
+  }
+  return _sqlite;
 }
 
 /**
