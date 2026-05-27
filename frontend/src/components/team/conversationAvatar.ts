@@ -5,6 +5,11 @@
  * - 颜色对每个 role 是稳定确定的（基于 hash），新 role 加进来不需要改 mapping。
  * - 已知 role 直接命中预设色，让常用角色有更"品牌化"的辨识度。
  * - 缩写：优先用中文短名（基本面/技术面/...），否则取拉丁字符首字母。
+ *
+ * 特殊伪角色：
+ * - `__team__`：Orchestrator 的 fan-out 广播目标（runtime 会展开成各 role），
+ *   UI 展示成"全员"虚拟节点。
+ * - `__tools__`：拓扑画布把 connector / mcp 工具调用聚合到这个伪角色上。
  */
 
 const PRESET_COLORS: Record<string, { bg: string; fg: string }> = {
@@ -19,6 +24,8 @@ const PRESET_COLORS: Record<string, { bg: string; fg: string }> = {
   msa: { bg: "#64748b", fg: "#f1f5f9" },
   audit: { bg: "#71717a", fg: "#fafafa" },
   memory_curator: { bg: "#0ea5e9", fg: "#082f49" },
+  __team__: { bg: "#475569", fg: "#f8fafc" },
+  __tools__: { bg: "#374151", fg: "#e5e7eb" },
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -40,7 +47,17 @@ const ROLE_LABEL: Record<string, string> = {
   execution: "执行",
   simulation: "仿真",
   memory: "记忆",
+  __team__: "全员",
+  __tools__: "工具",
 };
+
+/** 伪 role：runtime 用来表示一对多广播或工具调用聚合，前端 UI 需要特殊渲染。 */
+export const TEAM_BROADCAST_ROLE = "__team__" as const;
+export const TOOLS_PSEUDO_ROLE = "__tools__" as const;
+const PSEUDO_ROLES: ReadonlySet<string> = new Set([TEAM_BROADCAST_ROLE, TOOLS_PSEUDO_ROLE]);
+export function isPseudoRole(role: string | null | undefined): boolean {
+  return role != null && PSEUDO_ROLES.has(role);
+}
 
 function hashString(s: string): number {
   let h = 0;

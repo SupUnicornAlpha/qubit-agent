@@ -1,16 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
+import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
+import { computeWorkflowHeartbeat, heartbeatStreamBus } from "../runtime/heartbeat/agent-heartbeat";
 import {
-  agentDefinition,
-  agentInstance,
-  agentStep,
-  chatSession,
-  scheduledJob,
-  scheduledJobRun,
-  workflowRun,
-} from "../db/sqlite/schema";
+  failAnalystResearchJob,
+  findActiveAnalystJobsByWorkflow,
+} from "../runtime/msa/analyst-research-jobs";
 import {
   listWorkflowArtifactSummary,
   readWorkflowReportArtifact,
@@ -22,14 +19,10 @@ import {
   processCompensationQueue,
 } from "../runtime/workflow/compensation-queue";
 import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
+import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
-import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
-import {
-  failAnalystResearchJob,
-  findActiveAnalystJobsByWorkflow,
-} from "../runtime/msa/analyst-research-jobs";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -460,118 +453,36 @@ workflowRouter.get("/:id", async (c) => {
  * 拓扑画布 / 会话流能实时看到"哪个 Agent 还在 loop 中、最近一次 step 是什么阶段、
  * 沉默了多久"。
  *
- * 数据来源：agent_instance + 该 instance 最近一条 agent_step。silenceMs 越大 →
- * 该 agent 越像"卡住"；前端可按阈值（如 60s）变色或弹 toast。
- *
- * 这里不引入新表也不改 schema —— 用现有 agent_step.createdAt 作为隐含心跳；
- * 单次 join 控制在 N=活跃 instance 数量级（典型 ≤ 10），性能足够。
+ * 此路由保留作为 polling 兜底（不支持 SSE 的客户端 / 单次拉取场景）。
+ * 实时订阅请走 GET /:id/agent-heartbeats/stream 的 SSE 推流。
  */
 workflowRouter.get("/:id/agent-heartbeats", async (c) => {
   const workflowRunId = c.req.param("id");
-  const db = await getDb();
-
-  const wfRow = await db
-    .select({ id: workflowRun.id, status: workflowRun.status })
-    .from(workflowRun)
-    .where(eq(workflowRun.id, workflowRunId))
-    .limit(1);
-  if (!wfRow[0]) return c.json({ error: "workflow_not_found" }, 404);
-
-  const instances = await db
-    .select({
-      instanceId: agentInstance.id,
-      definitionId: agentInstance.definitionId,
-      status: agentInstance.status,
-      currentIteration: agentInstance.currentIteration,
-      startedAt: agentInstance.startedAt,
-      endedAt: agentInstance.endedAt,
-      role: agentDefinition.role,
-      name: agentDefinition.name,
-    })
-    .from(agentInstance)
-    .innerJoin(agentDefinition, eq(agentDefinition.id, agentInstance.definitionId))
-    .where(eq(agentInstance.workflowRunId, workflowRunId));
-
-  const nowMs = Date.now();
-  const heartbeats: Array<{
-    instanceId: string;
-    role: string;
-    name: string;
-    status: string;
-    currentIteration: number;
-    lastPhase: string | null;
-    lastStepIndex: number | null;
-    lastStepAt: string | null;
-    silenceMs: number | null;
-    startedAt: string | null;
-    endedAt: string | null;
-    alive: boolean;
-  }> = [];
-
-  for (const inst of instances) {
-    const lastStepRows = await db
-      .select({
-        phase: agentStep.phase,
-        stepIndex: agentStep.stepIndex,
-        createdAt: agentStep.createdAt,
-      })
-      .from(agentStep)
-      .where(
-        and(
-          eq(agentStep.agentInstanceId, inst.instanceId),
-          eq(agentStep.workflowRunId, workflowRunId)
-        )
-      )
-      .orderBy(desc(agentStep.createdAt))
-      .limit(1);
-    const last = lastStepRows[0];
-    const lastStepAt = last?.createdAt ?? inst.startedAt ?? null;
-    const silenceMs =
-      lastStepAt && !inst.endedAt ? Math.max(0, nowMs - new Date(lastStepAt).getTime()) : null;
-    const alive = inst.status !== "stopped" && !inst.endedAt;
-    heartbeats.push({
-      instanceId: inst.instanceId,
-      role: inst.role,
-      name: inst.name,
-      status: inst.status,
-      currentIteration: inst.currentIteration ?? 0,
-      lastPhase: last?.phase ?? null,
-      lastStepIndex: last?.stepIndex ?? null,
-      lastStepAt: lastStepAt ?? null,
-      silenceMs,
-      startedAt: inst.startedAt ?? null,
-      endedAt: inst.endedAt ?? null,
-      alive,
-    });
+  const result = await computeWorkflowHeartbeat(workflowRunId);
+  if (result.kind === "not_found") {
+    return c.json({ error: "workflow_not_found" }, 404);
   }
+  return c.json(result.snapshot);
+});
 
-  /**
-   * workflow 级别聚合，便于前端单值显示"研究团队还在跑吗 / 已沉默多久"。
-   */
-  const aliveCount = heartbeats.filter((h) => h.alive).length;
-  const summaryRow = await db
-    .select({
-      lastStepAt: sql<string | null>`MAX(${agentStep.createdAt})`,
-      totalSteps: sql<number>`COUNT(*)`,
-    })
-    .from(agentStep)
-    .where(eq(agentStep.workflowRunId, workflowRunId));
-  const wfLastStepAt = summaryRow[0]?.lastStepAt ?? null;
-  const wfSilenceMs = wfLastStepAt
-    ? Math.max(0, nowMs - new Date(wfLastStepAt).getTime())
-    : null;
-
-  return c.json({
-    workflowRunId,
-    status: wfRow[0].status,
-    heartbeats,
-    summary: {
-      aliveAgents: aliveCount,
-      totalAgents: heartbeats.length,
-      lastStepAt: wfLastStepAt,
-      silenceMs: wfSilenceMs,
-      totalSteps: Number(summaryRow[0]?.totalSteps ?? 0),
-      asOf: new Date(nowMs).toISOString(),
+/**
+ * Agent 心跳 SSE 推流：替代前端 4s polling，多个 tab 订阅同一 workflow 时
+ * 后端只跑一份 4s tick；workflow 落入终态时自动发 heartbeat_end + 延迟关流。
+ *
+ * 事件名：
+ *   - heartbeat        每 4s 推一次，data 是 WorkflowHeartbeatSnapshot
+ *   - heartbeat_end    workflow 终态时推一条，data 含 workflowRunId + status
+ *   - heartbeat_error  workflow 不存在等错误
+ */
+workflowRouter.get("/:id/agent-heartbeats/stream", (c) => {
+  const workflowRunId = c.req.param("id");
+  const stream = heartbeatStreamBus.createSseStream(workflowRunId);
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 });

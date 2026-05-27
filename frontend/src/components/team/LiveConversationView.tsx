@@ -1,7 +1,12 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
-import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
+import {
+  avatarColorFor,
+  avatarLabelFor,
+  formatRoleName,
+  TEAM_BROADCAST_ROLE,
+} from "./conversationAvatar";
 
 /**
  * 通用 IM 风格对话流。
@@ -104,6 +109,15 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
           case "message":
             if (ev.messageKind === "tool_call") {
               return <ToolCallCard key={ev.id} ev={ev} maxLen={contentMaxLength} />;
+            }
+            /**
+             * Orchestrator 的"全员广播"消息（runtime 写入 toRole=__team__，避免对 N 个
+             * 分析师重复落 N 条几乎一样的 llm_message）渲染成居中横幅，跟 1-1 message
+             * 区分开 —— 否则前端硬编码识别 "to ∈ role 集合" 会把它当成普通 message 显示，
+             * 头像 / 路由都对不上。
+             */
+            if (ev.toRole === TEAM_BROADCAST_ROLE) {
+              return <BroadcastBanner key={ev.id} ev={ev} maxLen={contentMaxLength} />;
             }
             return <MessageRow key={ev.id} ev={ev} selfRole={selfRole} maxLen={contentMaxLength} />;
           case "debate":
@@ -576,6 +590,67 @@ const DebateBanner: FC<{ ev: LiveConversationDebateEvent; maxLen: number }> = ({
         <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "inherit" }}>
           {truncate(ev.text || "", maxLen)}
         </div>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Orchestrator 的"全员广播"消息（toRole=__team__）。
+ *
+ * 视觉上跟 DebateBanner / SystemBanner 一样走居中横幅，但保留：
+ *   - 发送者头像（Orchestrator 一般是橙色）
+ *   - "→ 全员（N 个角色）"的 routing tag
+ *   - 真正的 plan / brief 正文，按需走 markdown 渲染（Orchestrator 多半输出 GFM）
+ *
+ * 这样原本会被错误染成 `__team__` 灰色头像 / 雷同 N 条的画面，被收敛成一条
+ * 突出的"团队公告"，对用户阅读 + 拓扑画布展开 fan-out 都更直观。
+ */
+const BroadcastBanner: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = ({
+  ev,
+  maxLen,
+}) => {
+  const accent = avatarColorFor(ev.fromRole).bg;
+  /** payloadJson.targetRoles 在前端 hydration 已扁平到 contentText 之外；这里没拿到结构化字段，
+   *  退化成只显示「→ 全员」，但保留正文。后续若要展示 N 个角色名，把 hydration 多透一个字段即可。 */
+  const tagText = `${formatRoleName(ev.fromRole)} → 全员广播${
+    ev.messageKind ? ` · ${ev.messageKind}` : ""
+  }`;
+  const rawContent = ev.contentText || "(无文本内容)";
+  const content = truncate(rawContent, maxLen);
+  const useMarkdown = looksLikeMarkdown(content);
+
+  return (
+    <div style={bannerWrapStyle}>
+      <div
+        data-qb-live-conv-banner="broadcast"
+        style={{
+          ...bannerStyle,
+          width: "min(96%, 720px)",
+          borderStyle: "solid",
+          borderColor: "rgba(245,158,11,0.45)",
+          background: "rgba(245,158,11,0.06)",
+          color: "var(--qb-body-fg, #f4f4f5)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 4,
+          }}
+        >
+          <Avatar role={ev.fromRole} size={20} />
+          <div style={{ ...tsLabel }}>
+            {formatTs(ev.ts)} · <span style={{ color: accent, fontWeight: 600 }}>{tagText}</span>
+          </div>
+        </div>
+        {useMarkdown ? (
+          <MarkdownBubble text={content} />
+        ) : (
+          <div style={{ fontSize: 12, whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{content}</div>
+        )}
       </div>
     </div>
   );

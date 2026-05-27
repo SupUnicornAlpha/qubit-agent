@@ -666,7 +666,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
               style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
             >
               <span style={{ color: "#93c5fd" }}>
-                {row.fromRole} → {row.toRole}
+                {formatRoleName(row.fromRole)} → {formatRoleName(row.toRole)}
               </span>
               <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
                 {truncate(row.contentText, 2000)}
@@ -684,7 +684,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
               style={{ marginBottom: 6, paddingBottom: 4, borderBottom: "1px solid #27272a" }}
             >
               <span style={{ color: "#fcd34d" }}>
-                {row.fromRole} → {row.toRole}
+                {formatRoleName(row.fromRole)} → {formatRoleName(row.toRole)}
               </span>
               <pre style={{ margin: "4px 0", whiteSpace: "pre-wrap" }}>
                 {truncate(row.contentText, 2000)}

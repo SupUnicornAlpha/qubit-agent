@@ -171,7 +171,9 @@ import {
 } from "../../lib/researchScope";
 import {
   buildFilteredTeamGraphDisplay,
+  describeInteractionRouting,
   filterInteractionsForEdge,
+  interactionMatchesAllow,
 } from "../../lib/teamGraphDisplay";
 import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
 import { MonitorDashboard } from "../monitor/MonitorDashboard";
@@ -4616,32 +4618,62 @@ const TeamDashboardPanel: FC = () => {
    */
   const [agentHeartbeats, setAgentHeartbeats] =
     useState<import("../../api/backend").WorkflowAgentHeartbeatsResponse | null>(null);
+  /**
+   * 心跳数据现在走 SSE 推流（GET /agent-heartbeats/stream），替代原来的 4s polling。
+   *
+   * 优点：
+   *   - 多 tab 订阅同一 workflow 时后端只跑一份 4s tick（共享 controller）
+   *   - workflow 终态时服务端主动 close，前端不需要再 polling 已结束的工作流
+   *   - 跟 debate stream / step stream 风格一致，便于以后做实时拓扑高亮
+   *
+   * 兜底：SSE 失败时降级到一次性 polling，保证至少能展示静态快照。
+   */
   useEffect(() => {
     if (!workflowRunId.trim()) {
       setAgentHeartbeats(null);
       return;
     }
     let cancelled = false;
-    const tick = async () => {
-      try {
-        const { getWorkflowAgentHeartbeats } = await import("../../api/backend");
-        const res = await getWorkflowAgentHeartbeats(workflowRunId);
-        if (!cancelled) setAgentHeartbeats(res);
-      } catch {
-        if (!cancelled) setAgentHeartbeats(null);
-      }
-    };
-    void tick();
-    const handle = setInterval(() => {
-      const status = agentHeartbeats?.status;
-      if (status === "completed" || status === "failed" || status === "cancelled") return;
-      void tick();
-    }, 4000);
+    let unsubscribe: (() => void) | null = null;
+    let didFallbackToPoll = false;
+
+    void (async () => {
+      const {
+        subscribeWorkflowHeartbeatStream,
+        getWorkflowAgentHeartbeats,
+      } = await import("../../api/backend");
+      if (cancelled) return;
+
+      unsubscribe = subscribeWorkflowHeartbeatStream({
+        workflowId: workflowRunId,
+        callbacks: {
+          onSnapshot: (snap) => {
+            if (cancelled) return;
+            setAgentHeartbeats(snap);
+          },
+          onEnd: () => {
+            /** 服务端会在 onEnd 后再延迟关流；这里不主动 abort，让最后一帧到位。 */
+          },
+          onError: async () => {
+            if (cancelled || didFallbackToPoll) return;
+            didFallbackToPoll = true;
+            /** SSE 失败 → 单次 polling 兜底（不再继续轮询，避免回到老的浪费节奏）。 */
+            try {
+              const fallback = await getWorkflowAgentHeartbeats(workflowRunId);
+              if (!cancelled) setAgentHeartbeats(fallback);
+            } catch {
+              if (!cancelled) setAgentHeartbeats(null);
+            }
+          },
+        },
+      });
+    })();
+
     return () => {
       cancelled = true;
-      clearInterval(handle);
+      if (unsubscribe) unsubscribe();
     };
-  }, [workflowRunId, agentHeartbeats?.status]);
+  }, [workflowRunId]);
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
@@ -4807,12 +4839,12 @@ const TeamDashboardPanel: FC = () => {
     const rows: Row[] = [];
     const allow = participatingAnalystRoles.length > 0 ? new Set(participatingAnalystRoles) : null;
     for (const row of teamGraph?.interactions ?? []) {
-      if (allow && !allow.has(row.fromRole) && !allow.has(row.toRole)) continue;
+      if (!interactionMatchesAllow(row, allow)) continue;
       rows.push({
         key: `i-${row.id}`,
         t: new Date(row.createdAt).getTime() || 0,
         kind: "interaction",
-        body: `${row.fromRole} → ${row.toRole} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 1200)}`,
+        body: `${describeInteractionRouting(row)} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 1200)}`,
       });
     }
     liveDebateEvents.forEach((ev, i) => {
@@ -4911,7 +4943,7 @@ const TeamDashboardPanel: FC = () => {
         key: `edge-i-${row.id}`,
         t: new Date(row.createdAt).getTime() || 0,
         kind: "interaction" as const,
-        body: `${row.fromRole} → ${row.toRole} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 4000)}`,
+        body: `${describeInteractionRouting(row)} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 4000)}`,
       }));
     }
     return mergedLiveFeedRows;
@@ -4941,7 +4973,7 @@ const TeamDashboardPanel: FC = () => {
     }
     const allow = participatingAnalystRoles.length > 0 ? new Set(participatingAnalystRoles) : null;
     for (const row of teamGraph?.interactions ?? []) {
-      if (allow && !allow.has(row.fromRole) && !allow.has(row.toRole)) continue;
+      if (!interactionMatchesAllow(row, allow)) continue;
       events.push({
         kind: "message",
         id: `i-${row.id}`,
@@ -5019,11 +5051,30 @@ const TeamDashboardPanel: FC = () => {
     const cutoff = Date.now() - windowMs;
     for (let i = intr.length - 1; i >= 0; i--) {
       const row = intr[i];
+      if (!row) continue;
       if (row.kind === "tool_call") continue;
       const t = new Date(row.createdAt).getTime();
       if (!Number.isFinite(t)) continue;
       if (t < cutoff) break;
       hotRoles.add(row.fromRole);
+      /**
+       * fan-out 广播 (toRole=__team__) 不画"orchestrator → __team__"高亮 —— 而是
+       * 展开 payloadJson.targetRoles 为多个真实 role 的高亮边，跟拓扑画布
+       * `aggregateEdgesFromInteractions` 的 fan-out 行为保持一致。
+       */
+      if (row.toRole === "__team__") {
+        const payload = row.payloadJson;
+        const targets =
+          payload && typeof payload === "object" && Array.isArray((payload as { targetRoles?: unknown }).targetRoles)
+            ? ((payload as { targetRoles?: unknown }).targetRoles as unknown[])
+                .filter((v): v is string => typeof v === "string" && v.length > 0)
+            : [];
+        for (const t of targets) {
+          hotRoles.add(t);
+          hotEdgeKeys.add(teamGraphUndirectedKey(row.fromRole, t));
+        }
+        continue;
+      }
       hotRoles.add(row.toRole);
       hotEdgeKeys.add(teamGraphUndirectedKey(row.fromRole, row.toRole));
     }

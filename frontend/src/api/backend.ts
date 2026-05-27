@@ -340,6 +340,109 @@ export async function getWorkflowAgentHeartbeats(
   );
 }
 
+export type WorkflowHeartbeatStreamCallbacks = {
+  onSnapshot: (snapshot: WorkflowAgentHeartbeatsResponse) => void;
+  /** workflow 落入终态时收到一次（status='completed' / 'failed' / ...）。
+   *  之后 SSE 流会被服务端关闭，前端可停止等待新事件。 */
+  onEnd?: (info: { workflowRunId: string; status: string }) => void;
+  /** 网络错误 / workflow 不存在时收到一次。前端可降级到 polling。 */
+  onError?: (info: { reason: "http_error" | "fetch_error" | "workflow_not_found" }) => void;
+};
+
+/**
+ * 订阅 workflow 心跳 SSE 推流，替代 4s polling。
+ *
+ * - 使用 fetch + ReadableStream（跟 subscribeWorkflowStream 一致），避免 EventSource 在
+ *   Tauri/WebView 下的伪 reconnect / "error on close" 问题。
+ * - 服务端在 workflow 终态时会主动 close；前端 onEnd 回调先触发再结束。
+ * - 返回的 unsubscribe 可在组件 unmount 时调用。
+ */
+export function subscribeWorkflowHeartbeatStream(params: {
+  workflowId: string;
+  callbacks: WorkflowHeartbeatStreamCallbacks;
+}): () => void {
+  const { workflowId, callbacks } = params;
+  const url = backendFetchUrl(
+    `/api/v1/workflows/${encodeURIComponent(workflowId)}/agent-heartbeats/stream`
+  );
+  const ac = new AbortController();
+  let active = true;
+
+  const run = async (): Promise<void> => {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal: ac.signal,
+        cache: "no-store",
+      });
+      if (!res.ok || !res.body) {
+        if (active) callbacks.onError?.({ reason: "http_error" });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (active) {
+        const { done, value } = await reader.read();
+        if (value) buf += decoder.decode(value, { stream: true });
+        if (done) {
+          buf += decoder.decode();
+          break;
+        }
+        buf = buf.replace(/\r\n/g, "\n");
+        for (;;) {
+          const sep = buf.indexOf("\n\n");
+          if (sep < 0) break;
+          const block = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          dispatchHeartbeatEvent(parsed.eventName, parsed.data, callbacks);
+        }
+      }
+    } catch (e) {
+      if (!active) return;
+      const name = e instanceof Error ? e.name : "";
+      if (name === "AbortError") return;
+      callbacks.onError?.({ reason: "fetch_error" });
+    }
+  };
+
+  void run();
+
+  return () => {
+    active = false;
+    ac.abort();
+  };
+}
+
+function dispatchHeartbeatEvent(
+  eventName: string,
+  rawData: string,
+  callbacks: WorkflowHeartbeatStreamCallbacks
+): void {
+  try {
+    const data = JSON.parse(rawData) as unknown;
+    if (eventName === "heartbeat") {
+      callbacks.onSnapshot(data as WorkflowAgentHeartbeatsResponse);
+    } else if (eventName === "heartbeat_end") {
+      const info = data as { workflowRunId: string; status: string };
+      callbacks.onEnd?.(info);
+    } else if (eventName === "heartbeat_error") {
+      const info = data as { workflowRunId: string; error: string };
+      if (info.error === "workflow_not_found") {
+        callbacks.onError?.({ reason: "workflow_not_found" });
+      } else {
+        callbacks.onError?.({ reason: "fetch_error" });
+      }
+    }
+    /** 其他事件名静默忽略（兼容服务端将来加新事件） */
+  } catch {
+    /** malformed JSON：忽略，下一帧再说 */
+  }
+}
+
 export async function approveWorkflowHitl(
   workflowId: string,
   requestId: string
