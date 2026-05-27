@@ -7,7 +7,7 @@ export function formatResearchScopePreamble(scope: NormalizedResearchScope): str
   if (scope.kind === "explore") {
     lines.push(`- **类型**：自由探索（无固定标的）`);
     lines.push(`- **研究主题**：${scope.theme || "（未明确，请按 Orchestrator 简报与已有数据自行收敛）"}`);
-    if (scope.symbols.length > 0 && scope.symbols[0] !== "AUTO_EXPLORE") {
+    if (scope.symbols.length > 0) {
       lines.push(`- **候选标的**（用户提供的初步线索，可保留可剔除）：${scope.symbols.join(", ")}`);
     }
     lines.push(
@@ -62,7 +62,7 @@ export function defaultResearchUserContext(scope: NormalizedResearchScope): stri
     const themePart = scope.theme ? `「${scope.theme}」` : "用户未明确主题";
     const sidePart = scope.positionSide === "short" ? "（偏向空头机会）" : "（偏向多头机会）";
     const candidates =
-      scope.symbols.length > 0 && scope.symbols[0] !== "AUTO_EXPLORE"
+      scope.symbols.length > 0
         ? `用户提供的候选线索：${scope.symbols.join(", ")}。`
         : "";
     return [

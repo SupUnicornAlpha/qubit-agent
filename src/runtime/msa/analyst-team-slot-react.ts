@@ -158,10 +158,32 @@ export async function runResearchTeamSlotReact(params: {
   const traceId = randomUUID();
 
   const scopeHint = params.scope ? `\n\n${formatResearchScopePreamble(params.scope)}` : "";
-  const targetLabel =
-    params.scope && params.scope.symbols.length > 1
-      ? `标的组合 ${params.scope.symbols.join(", ")}（主标的 ${params.ticker}）`
-      : `标的 ${params.ticker}`;
+  /**
+   * targetLabel 拼接策略：
+   *   - explore 且无 ticker  → "就主题 X 自主选标"（不再出现 AUTO_EXPLORE 字面）
+   *   - explore 且有候选     → "围绕候选 [A, B] 自主收敛"
+   *   - 单标的               → "标的 X"
+   *   - 多标的               → "标的组合 A, B, C（主标的 X）"
+   * 关键：explore 分支决不能出现 `params.ticker = "AUTO_EXPLORE"` 这种字面值
+   * 被拼到 user goal 里 —— 那会让 agent 把它当真 ticker 试图调 fetch_klines。
+   */
+  const trimmedTicker = (params.ticker ?? "").trim();
+  const isExplore = params.scope?.kind === "explore";
+  const exploreTheme = params.scope?.theme?.trim();
+  let targetLabel: string;
+  if (isExplore) {
+    if (params.scope && params.scope.symbols.length > 0) {
+      targetLabel = `围绕主题「${exploreTheme || "自由探索"}」（候选 ${params.scope.symbols.slice(0, 6).join(", ")}）自主收敛标的`;
+    } else {
+      targetLabel = `就主题「${exploreTheme || "自由探索"}」自主选定 1-3 个真实标的`;
+    }
+  } else if (params.scope && params.scope.symbols.length > 1) {
+    targetLabel = `标的组合 ${params.scope.symbols.join(", ")}（主标的 ${trimmedTicker || params.scope.primarySymbol}）`;
+  } else if (trimmedTicker) {
+    targetLabel = `标的 ${trimmedTicker}`;
+  } else {
+    targetLabel = `标的 ${params.scope?.primarySymbol || "（待确认）"}`;
+  }
   const userGoal = params.expectJsonSignal
     ? `分析${targetLabel}，先使用授权工具拉取数据/指标，再输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}`
     : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}`;

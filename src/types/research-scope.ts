@@ -102,7 +102,13 @@ export function resolveResearchScope(input: {
 
   /**
    * explore 模式：保留 kind，不强制 symbols。symbols 可空（让 orchestrator 自己选），
-   * 但 displayLabel 与 primarySymbol 仍需可读 —— 取 theme 或 "AUTO_EXPLORE"。
+   * primarySymbol 也保持空字符串 —— 用 "AUTO_EXPLORE" 哨兵字符串会污染下游：
+   *   1. 行情快照工具拿 "AUTO_EXPLORE" 去 fetch_klines → 报红色错误 → 误导 LLM
+   *   2. task 简报里 "分析标的 AUTO_EXPLORE" 让 agent 困惑
+   *   3. orchestrator 在简报里复述 "未绑定固定标的；行情快照返回为空"
+   *      把 LLM 引向"信息不足，不能做"的死循环
+   * 现在改为：explore 模式所有下游函数自己检查 `symbols.length === 0` /
+   * `primarySymbol === ""`，并走"让 LLM 主动选标"的路径。
    */
   if (kind !== "explore") {
     if (symbols.length > 1) kind = "basket";
@@ -125,10 +131,15 @@ export function resolveResearchScope(input: {
     }
   }
 
+  /**
+   * primarySymbol：
+   *   - explore 模式且无 symbols → 空字符串（下游必须检查）
+   *   - 其他模式 → 沿用第一个 symbol / ticker / "UNKNOWN" 兜底
+   */
   const primarySymbol =
     symbols[0] ??
     (input.ticker?.trim().toUpperCase() ||
-      (kind === "explore" ? "AUTO_EXPLORE" : "UNKNOWN"));
+      (kind === "explore" ? "" : "UNKNOWN"));
 
   const displayLabel = buildDisplayLabel({
     kind,
@@ -141,9 +152,24 @@ export function resolveResearchScope(input: {
     ...(option !== undefined ? { option } : {}),
   });
 
+  /**
+   * symbols 输出策略：
+   *   - explore 模式 → 保持原数组（可为空），不再用 primarySymbol 强行兜底
+   *     —— 之前 fallback 成 ["AUTO_EXPLORE"] 是所有问题的根源
+   *   - 其他模式 → 沿用 fallback 行为，保证至少有 1 个元素（避免下游误判）
+   */
+  const finalSymbols =
+    kind === "explore"
+      ? symbols
+      : symbols.length > 0
+        ? symbols
+        : primarySymbol
+          ? [primarySymbol]
+          : [];
+
   return {
     kind,
-    symbols: symbols.length > 0 ? symbols : [primarySymbol],
+    symbols: finalSymbols,
     primarySymbol,
     displayLabel,
     instrument,

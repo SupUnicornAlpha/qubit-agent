@@ -88,12 +88,38 @@ export async function buildAnalystTeamDataContext(params: {
     formatResearchScopePreamble(scope),
   ];
 
-  const symbolsToFetch =
-    scope.symbols.length > 0 ? scope.symbols : [scope.primarySymbol];
+  /**
+   * explore 模式 + 空 symbols → 跳过自动行情快照。
+   *
+   * 之前 fallback 到 [primarySymbol] = ["AUTO_EXPLORE"]，结果 fetch_klines
+   * 必然失败，然后 orchestrator 简报顶部就显示"拉取失败：未获取到 K 线：
+   * AUTO_EXPLORE"，把 LLM 引向"无数据 → 不能做"的死循环。
+   *
+   * 正确做法：explore 没指定标的就显式告诉 LLM"请自主选标 + 用 fetch_klines
+   * 验证存在性"，不要去 fetch 一个空 ticker。
+   */
+  const symbolsToFetch = scope.symbols.filter(
+    (s) => typeof s === "string" && s.trim().length > 0
+  );
+  const skipSnapshotForExplore =
+    scope.kind === "explore" && symbolsToFetch.length === 0;
 
-  for (const sym of symbolsToFetch.slice(0, 12)) {
-    const snap = await buildSingleSymbolSnapshot(sym, exchange);
-    blocks.push(...snap, "");
+  if (skipSnapshotForExplore) {
+    blocks.push(
+      "### 自由探索：标的池待 LLM 自主选择",
+      "[提示] 当前任务未绑定固定标的，**请勿在此处期待任何系统拉取的行情/新闻**。",
+      "请按以下步骤自主推进：",
+      "1. 调用 `factor.list` / `skill.search` / `search_memory` 复用历史成功路径；",
+      "2. 自主提出 1-3 个候选 ticker；",
+      "3. 用 `fetch_klines` 验证每个 ticker 真实存在 + 有足够日均成交额，无法验证立即剔除；",
+      "4. 选定后再开展基本面/技术面/情绪面分析。",
+      ""
+    );
+  } else {
+    for (const sym of symbolsToFetch.slice(0, 12)) {
+      const snap = await buildSingleSymbolSnapshot(sym, exchange);
+      blocks.push(...snap, "");
+    }
   }
 
   if (scope.kind === "sector" && scope.sector && symbolsToFetch.length === 0) {

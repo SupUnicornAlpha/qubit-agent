@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { BacktestConnector } from "../../connectors/backtest/backtest.connector";
 import { connectorRegistry } from "../../connectors/registry";
 import { runSmaCrossoverBacktestJob } from "../market/backtest-job-runner";
@@ -7,6 +7,9 @@ import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
   agentGroupMember,
+  agentInstance,
+  agentStep,
+  analystSignal,
   backtestJob,
   indicatorStrategyScript,
   workflowRun,
@@ -325,12 +328,22 @@ inputKind 选择：
 ---
 ${input.dataAndUserContext}`;
 
+  /**
+   * 注入同 workflow 历史产出：让 Orchestrator 看到第一波 research/backtest/risk 已经
+   * 做了什么，避免第二波重启时回到"标的池未知 → 死循环"。
+   * 空字符串表示首次 planning，不会膨胀 prompt。
+   */
+  const priorOutputs = await buildWorkflowPriorOutputsContext(input.workflowRunId);
+  const enrichedUserPrompt = priorOutputs
+    ? `${userPrompt}\n\n---\n\n${priorOutputs}`
+    : userPrompt;
+
   let answer = "";
   try {
     const result = await runLlmGateway({
       config: modelConfig,
       systemPrompt: input.orchestrator.systemPrompt,
-      userPrompt,
+      userPrompt: enrichedUserPrompt,
       onToken: () => {},
     });
     answer = result.answer;
@@ -347,7 +360,12 @@ ${input.dataAndUserContext}`;
       toRole: role,
       kind: "llm_message",
       contentText: roleBrief,
-      payloadJson: { phase: "orchestrator_plan", ticker: input.ticker, targetRole: role },
+      payloadJson: {
+        phase: "orchestrator_plan",
+        ticker: input.ticker,
+        targetRole: role,
+        priorOutputsInjected: priorOutputs.length > 0,
+      },
     });
   }
   return parsed;
@@ -611,6 +629,18 @@ export async function runPostFusionPipeline(input: {
   let strategyScriptId: string | undefined;
   let backtestSummary: string | undefined;
   let prevRole: AgentRole | null = "orchestrator";
+  /**
+   * P0-2 handoff：累积已跑完的角色 body，作为下一个角色的额外 context。
+   *
+   * 之前实现把同一份 `fusionCtx` 喂给每个 aux slot，slot 之间无传递：
+   *   - backtest 跑的时候完全看不到 research 实际写了什么策略草案
+   *   - risk 跑的时候完全看不到 backtest 的指标
+   * 结果在 DB 里看到的就是"每个角色独立从 fusion 报告再推一遍"，浪费 token
+   * 且产出之间无依赖（research 推荐 NVDA 动量，backtest 自己又选了 LMT）。
+   *
+   * 现在把上游 body 截断后塞进下一个 slot 的 context，让链路真正串起来。
+   */
+  const handoffSections: Array<{ role: AgentRole; body: string }> = [];
 
   const orderedAux = orderPostFusionSlotsByTopology(input.auxSlots, input.relationEdges);
 
@@ -635,7 +665,8 @@ export async function runPostFusionPipeline(input: {
             : "\n\n请基于上游策略结论给出回测方案与参数建议。"
           : "";
 
-    let body = await input.runAuxLlm(slot, `${fusionCtx}${extra}`);
+    const handoffBlock = formatHandoffSections(handoffSections);
+    let body = await input.runAuxLlm(slot, `${fusionCtx}${handoffBlock}${extra}`);
 
     if (slot.role === "research") {
       const py = extractPythonBlock(body);
@@ -677,6 +708,7 @@ export async function runPostFusionPipeline(input: {
     }
 
     auxSections.push({ role: slot.role, body });
+    handoffSections.push({ role: slot.role, body });
 
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
@@ -691,6 +723,38 @@ export async function runPostFusionPipeline(input: {
   }
 
   return { auxSections, strategyScriptId, backtestSummary };
+}
+
+/**
+ * 把上游角色的 body 累积成一段标准 handoff 段落注入下一个 slot 的 context。
+ *
+ * 截断策略：单角色 body 最多 4000 字（防止整体 prompt 爆掉 token 上限），
+ * 同时保留最后产出（research 的策略代码 / backtest 的指标）这些"决策依据"。
+ *
+ * 导出以便单测覆盖 handoff 拼接格式 / 截断逻辑。
+ */
+export function formatHandoffSections(
+  sections: Array<{ role: AgentRole; body: string }>
+): string {
+  if (sections.length === 0) return "";
+  const blocks = sections.map((s) => {
+    const trimmed = s.body.trim();
+    const max = 4000;
+    const clipped =
+      trimmed.length > max
+        ? `${trimmed.slice(0, max)}\n\n（...为节省 token 已截断，完整 body 见数据库 research_team_interaction 表）`
+        : trimmed;
+    return `### 来自 ${s.role}\n\n${clipped}`;
+  });
+  return [
+    "",
+    "",
+    "## 上游角色已产出（请基于此推进，不要重复造）",
+    "",
+    blocks.join("\n\n"),
+    "",
+    "**重要**：以上是本工作流内、当前 fusion 之后已运行完的角色产出。请你直接消费这些信息（如 research 已推荐的标的 / 因子 / 策略草案），不要重新选标的、不要重新构造因子。",
+  ].join("\n");
 }
 
 async function persistStrategyScript(input: {
@@ -787,4 +851,149 @@ async function runNativeBacktestForTicker(
   } catch (e) {
     return `（回测引擎执行失败：${e instanceof Error ? e.message : String(e)}）`;
   }
+}
+
+/**
+ * 同一 workflow_run 内的"已跑产出摘要"。
+ *
+ * 解决用户反馈"workflow d0a41743 第二波 orchestrator 重启时丢失第一波 context"：
+ *   - 第一波 research 已经 fetch_klines(NVDA) 拿了 80 个交易日 + factor.compute(momentum_20)
+ *   - 但第二波 orchestrator 派的简报却说"标的池未知，无行情数据 → 死循环"
+ *
+ * 这是因为 orchestrator planning 阶段 prompt 只看 `dataAndUserContext`（系统自动快照
+ * + 用户原始 prompt），没看本 workflow 已有的 step / signal / strategy。
+ *
+ * 这个 helper 从 DB 拉同 workflow 已落库的产出（agent_step reason 末态 / analyst_signal /
+ * strategy_script），拼成一段 Markdown 注入到 planning 上下文里。
+ *
+ * 返回空字符串表示"无历史产出"——首次 planning 不会额外膨胀 prompt。
+ */
+export async function buildWorkflowPriorOutputsContext(
+  workflowRunId: string
+): Promise<string> {
+  const db = await getDb();
+
+  const [signals, scripts, lastSteps] = await Promise.all([
+    db
+      .select()
+      .from(analystSignal)
+      .where(eq(analystSignal.workflowRunId, workflowRunId))
+      .orderBy(desc(analystSignal.createdAt))
+      .limit(20),
+    db
+      .select()
+      .from(indicatorStrategyScript)
+      .where(eq(indicatorStrategyScript.workflowRunId, workflowRunId))
+      .orderBy(desc(indicatorStrategyScript.createdAt))
+      .limit(5),
+    /**
+     * 取每个 agent_instance 最后一条 reason 阶段 thought。"最后一条 reason" 通常
+     * 是该实例的总结性思考，比 act/observe 阶段更有信息量。
+     * 限制 16 条避免 prompt 膨胀。
+     */
+    db
+      .select({
+        thought: agentStep.thought,
+        createdAt: agentStep.createdAt,
+        definitionId: agentInstance.definitionId,
+        instanceId: agentInstance.id,
+      })
+      .from(agentStep)
+      .innerJoin(agentInstance, eq(agentInstance.id, agentStep.agentInstanceId))
+      .where(
+        and(
+          eq(agentStep.workflowRunId, workflowRunId),
+          eq(agentStep.phase, "reason")
+        )
+      )
+      .orderBy(desc(agentStep.createdAt))
+      .limit(64),
+  ]);
+
+  if (signals.length === 0 && scripts.length === 0 && lastSteps.length === 0) {
+    return "";
+  }
+
+  /** 把 step 按 instanceId 去重，每个 instance 仅取最新一条 reason thought */
+  const seenInstances = new Set<string>();
+  const lastReasonPerInstance: Array<{
+    instanceId: string;
+    definitionId: string;
+    thought: string;
+    createdAt: string;
+  }> = [];
+  for (const step of lastSteps) {
+    if (seenInstances.has(step.instanceId)) continue;
+    seenInstances.add(step.instanceId);
+    if (step.thought && step.thought.trim().length > 0) {
+      lastReasonPerInstance.push({
+        instanceId: step.instanceId,
+        definitionId: step.definitionId,
+        thought: step.thought.trim(),
+        createdAt: step.createdAt,
+      });
+    }
+    if (lastReasonPerInstance.length >= 6) break;
+  }
+
+  /** definitionId → role 映射，避免一次 N+1 查询 */
+  const defIds = [...new Set(lastReasonPerInstance.map((r) => r.definitionId))];
+  const defs =
+    defIds.length > 0
+      ? await db
+          .select({ id: agentDefinition.id, role: agentDefinition.role, name: agentDefinition.name })
+          .from(agentDefinition)
+          .where(
+            defIds.length === 1
+              ? eq(agentDefinition.id, defIds[0]!)
+              : inArray(agentDefinition.id, defIds)
+          )
+      : [];
+  const defMap = new Map(defs.map((d) => [d.id, { role: d.role, name: d.name }]));
+
+  const lines: string[] = [
+    "## 本工作流已跑历史产出（请直接消费，不要重复劳动）",
+    "",
+  ];
+
+  if (signals.length > 0) {
+    lines.push("### 已落库分析师信号");
+    for (const s of signals.slice(0, 8)) {
+      const reasoning = (s.reasoning ?? "").trim().slice(0, 160);
+      lines.push(
+        `- [${s.analystRole}] ticker=${s.ticker} signal=${s.signal} confidence=${(s.confidence * 100).toFixed(0)}% — ${reasoning}`
+      );
+    }
+    lines.push("");
+  }
+
+  if (scripts.length > 0) {
+    lines.push("### 已发布策略脚本");
+    for (const sc of scripts) {
+      const codeHead = (sc.signalCode ?? "").trim().slice(0, 200).replace(/\n/g, " ");
+      lines.push(
+        `- id=${sc.id} name=${sc.name} purpose=${sc.purpose} code≈"${codeHead}..."`
+      );
+    }
+    lines.push("");
+  }
+
+  if (lastReasonPerInstance.length > 0) {
+    lines.push("### 各角色最后一次思考摘要（按时间倒序）");
+    for (const r of lastReasonPerInstance) {
+      const meta = defMap.get(r.definitionId);
+      const role = meta?.role ?? "unknown";
+      const head = r.thought.slice(0, 600);
+      lines.push(`#### ${role} @ ${r.createdAt}`, "", head, "");
+    }
+  }
+
+  lines.push(
+    "**关键约束**：",
+    "1. 如果上面信号 / 策略 / 思考里已经选定标的池，请**直接采用**，不要再说'标的池未知 → 无法执行'。",
+    "2. 如果上一波 research 已经 register / compute 过某些因子，下一波 research 不要重新造同名因子，**复用即可**。",
+    "3. 如果某个 role 的最后思考是'数据不足'但其他 role 已经拉到数据，请把数据传递路径明确写到本轮简报里。"
+  );
+
+  return lines.join("\n");
 }
