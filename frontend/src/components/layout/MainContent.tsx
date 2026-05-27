@@ -4606,28 +4606,32 @@ const TeamDashboardPanel: FC = () => {
     if (tpl) setTeamAnalysisContext(tpl.prompt);
   };
 
+  const [workflowRunId, setWorkflowRunId] = useState("");
+  const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
+  const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
+  const [analystAgentGroupId, setAnalystAgentGroupId] = useState("");
+  const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<AnalystTeamResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** 工作流面板的成功/中性提示（区别于上方红色 error callout）。 */
+  const [workflowNotice, setWorkflowNotice] = useState<string | null>(null);
+
   /**
-   * Agent 心跳轮询。
+   * Agent 心跳：把当前选中 workflow 下所有 agent instance 的活跃度暴露给前端，
+   * 解决"无法看到 Agent 是否还在 loop 中"的问题。
    *
-   * 解决用户反馈"我们无法看到一个 Agent 是否正在 loop 中"。每 4 秒拉一次
-   * 当前选中 workflow 下所有 agent instance 的活跃度，给拓扑画布 / 当前选中
-   * 卡片提供"还在跑 / 沉默多久"信号。
-   *
-   * - 仅当 workflowRunId 非空时启动；切换 workflow 自动重新订阅
-   * - 当 workflow 已 terminal（completed/failed/cancelled）时停止轮询，最后一帧已可读
-   */
-  const [agentHeartbeats, setAgentHeartbeats] =
-    useState<import("../../api/backend").WorkflowAgentHeartbeatsResponse | null>(null);
-  /**
-   * 心跳数据现在走 SSE 推流（GET /agent-heartbeats/stream），替代原来的 4s polling。
-   *
-   * 优点：
+   * 心跳数据走 SSE 推流（GET /agent-heartbeats/stream），替代原来的 4s polling。
    *   - 多 tab 订阅同一 workflow 时后端只跑一份 4s tick（共享 controller）
    *   - workflow 终态时服务端主动 close，前端不需要再 polling 已结束的工作流
    *   - 跟 debate stream / step stream 风格一致，便于以后做实时拓扑高亮
+   * SSE 连接失败时降级到一次性 polling，保证至少能展示静态快照。
    *
-   * 兜底：SSE 失败时降级到一次性 polling，保证至少能展示静态快照。
+   * 注意：这块必须放在 `workflowRunId` 的 useState 之后，因为 useEffect 依赖
+   * 该变量；之前一次重构把 useState 放到了下方导致 TDZ 错误（TS2448/TS2454）。
    */
+  const [agentHeartbeats, setAgentHeartbeats] =
+    useState<import("../../api/backend").WorkflowAgentHeartbeatsResponse | null>(null);
   useEffect(() => {
     if (!workflowRunId.trim()) {
       setAgentHeartbeats(null);
@@ -4674,16 +4678,6 @@ const TeamDashboardPanel: FC = () => {
       if (unsubscribe) unsubscribe();
     };
   }, [workflowRunId]);
-  const [workflowRunId, setWorkflowRunId] = useState("");
-  const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
-  const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
-  const [analystAgentGroupId, setAnalystAgentGroupId] = useState("");
-  const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<AnalystTeamResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  /** 工作流面板的成功/中性提示（区别于上方红色 error callout）。 */
-  const [workflowNotice, setWorkflowNotice] = useState<string | null>(null);
   /**
    * 行内"硬删除"双击确认状态：第一次点变 pending，3 秒内再点才真正执行；
    * 避免 window.confirm 在某些 webview / 浏览器下被静默拦截、用户误以为按钮失效。
