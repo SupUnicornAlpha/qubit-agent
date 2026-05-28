@@ -751,13 +751,58 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     });
   },
 
-  "factor.autoEvaluate": async (_ctx, params) => {
-    const factorId = pickFactorId(params);
-    if (!factorId) throw new Error("factor.autoEvaluate: factor_id is required");
+  "factor.autoEvaluate": async (ctx, params) => {
+    /**
+     * 一步式自动评估入参兼容（E1 修复）。
+     *
+     * 历史 bug（WF 44ca3acf 实测）：LLM 沿用旧 `run_experiment` 风格，传入
+     *   `{name, description, factor_expression, symbols, start_date, end_date, horizon_days}`
+     * alias resolver 把 `run_experiment` 翻成 `factor.autoEvaluate`，
+     * 但参数 schema 完全不同 —— autoEvaluate 要 `factor_id`，旧 run_experiment
+     * 是"传 expr 直接跑"。结果 LLM 收到 3 次 `factor_id is required`，
+     * 整个 fundamental/technical 因子链路断掉。
+     *
+     * 兼容方案：当 LLM 传了 expr/factor_expression 但没传 factor_id，
+     * 我们就**先 factor.register（dryRun=false）** 拿 id，再 autoEvaluate，
+     * 把"一步式"对外暴露的语义补回去。
+     */
+    let factorId = pickFactorId(params);
+    const exprRaw =
+      typeof params["factor_expression"] === "string"
+        ? params["factor_expression"]
+        : typeof params["expr"] === "string"
+          ? (params["expr"] as string)
+          : "";
+
     const startDate = pickDateParam(params, "start_date");
     const endDate = pickDateParam(params, "end_date");
     if (!startDate || !endDate) {
       throw new Error("factor.autoEvaluate: start_date and end_date are required");
+    }
+
+    if (!factorId && exprRaw.trim().length > 0) {
+      const projectId = String(params["project_id"] ?? ctx.projectId ?? "").trim();
+      if (!projectId) {
+        throw new Error(
+          "factor.autoEvaluate: factor_id 缺失且无 project_id，无法自动注册因子。请先 factor.register 拿到 factor_id，再调 factor.autoEvaluate。"
+        );
+      }
+      const name = String(params["name"] ?? `auto_${Date.now()}`).trim();
+      const registered = await factorService.register({
+        projectId,
+        name,
+        category: String(params["category"] ?? "momentum") as FactorCategory,
+        expr: exprRaw.trim(),
+        ...(params["lang"] ? { lang: String(params["lang"]) as FactorLang } : { lang: "qlib_expr" as FactorLang }),
+        ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      });
+      factorId = registered.id;
+    }
+
+    if (!factorId) {
+      throw new Error(
+        "factor.autoEvaluate: factor_id is required（也接受 factor_expression / expr 自动注册，但需附带 name + project_id）"
+      );
     }
     const symbolsRaw = params.symbols;
     const symbols = Array.isArray(symbolsRaw)

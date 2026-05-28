@@ -11,6 +11,7 @@ import {
   agentStep,
   analystSignal,
   backtestJob,
+  factorDefinition,
   indicatorStrategyScript,
   workflowRun,
 } from "../../db/sqlite/schema";
@@ -683,13 +684,44 @@ export async function runPostFusionPipeline(input: {
         "3. **不要**写 Python 代码块、不要写策略实现，仅输出方向性建议。下游 backtest / risk 本轮跳过。",
       ].join("\n");
       const draftBody = await input.runAuxLlm(researchSlot, fallbackCtx);
+
+      /**
+       * A 修复：把 LLM 写的"研究方向草稿"解析成 factor.draft，落 DB。
+       *
+       * 不影响 fallback 自身行为（不跑 backtest / risk），只是让"研究产出"
+       * 侧栏能看到本工作流真的产出了草稿因子（不是 0 个因子的空报告）。
+       * 解析失败 / 0 条提取时也不抛错（前端依然能看到 fallback markdown）。
+       */
+      const draftFactors = await persistExploreFallbackDrafts({
+        workflowRunId: input.workflowRunId,
+        ticker: input.ticker,
+        draftBody,
+      });
+      if (draftFactors.length > 0) {
+        await logResearchTeamInteraction({
+          workflowRunId: input.workflowRunId,
+          fromRole: "research",
+          toRole: "__team__",
+          kind: "tool_call",
+          contentText: `[explore fallback] 已落 ${draftFactors.length} 条 draft 因子: ${draftFactors.map((f) => f.name).join(", ")}`,
+          payloadJson: {
+            phase: "research_explore_fallback",
+            draftFactorIds: draftFactors.map((f) => f.id),
+          },
+        });
+      }
+
       await logResearchTeamInteraction({
         workflowRunId: input.workflowRunId,
         fromRole: "research",
         toRole: "orchestrator",
         kind: "llm_message",
         contentText: `[explore fallback] ${draftBody.slice(0, 3000)}`,
-        payloadJson: { phase: "research_explore_fallback", noStrategy: true },
+        payloadJson: {
+          phase: "research_explore_fallback",
+          noStrategy: true,
+          draftFactorCount: draftFactors.length,
+        },
       });
       return {
         auxSections: [
@@ -703,6 +735,9 @@ export async function runPostFusionPipeline(input: {
               `### 候选研究方向草稿`,
               ``,
               draftBody,
+              draftFactors.length > 0
+                ? `\n\n> 已自动落 ${draftFactors.length} 条 draft 因子到本工作流产出列表：${draftFactors.map((f) => f.name).join(", ")}`
+                : "",
             ].join("\n"),
           },
         ],
@@ -1095,4 +1130,133 @@ export async function buildWorkflowPriorOutputsContext(
   );
 
   return lines.join("\n");
+}
+
+// ─── explore fallback draft 因子解析与落库 ───────────────────────────────────
+
+/**
+ * 从 LLM 输出的"研究方向草稿"markdown 中提取因子名清单。
+ *
+ * 期望格式（来自 explore fallback prompt）：
+ * ```
+ *   1. **MOM_20**：动量因子 20 日 ...
+ *   - PE_REVERSAL：低估反转 ...
+ *   2) news_intensity （新闻强度）...
+ * ```
+ *
+ * 解析策略：
+ *   - 抓首列（编号 / 项目符号）开头的行
+ *   - 优先取"加粗 ** **"中的名字；其次取冒号 / 中文冒号 / 中文括号前的标识符
+ *   - 用 `^[A-Z][A-Z0-9_]{1,31}` 作为最严的"因子名"形状（snake-upper），
+ *     再放宽到 alnum + `_`/`-` 形状
+ *   - 0 条提取 → 返回空数组（调用方降级，不会写假数据）
+ *
+ * 该函数是 export 的，便于单测覆盖 / 后续 prompt 微调时回归。
+ */
+export function extractFactorNamesFromDraft(draftBody: string): string[] {
+  if (!draftBody || draftBody.trim().length === 0) return [];
+  const names = new Set<string>();
+  const lines = draftBody.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    /** 必须是编号 / 项目符号开头才认为是"因子方向条目" */
+    const leadMatch = line.match(/^(?:\d+[.)、]|[-*•])\s*(\S.*)$/);
+    if (!leadMatch) continue;
+    const rest = leadMatch[1] ?? "";
+
+    /** 优先取首个 **加粗** 内容 */
+    const boldMatch = rest.match(/\*\*([^*\n]+?)\*\*/);
+    let candidate = boldMatch?.[1]?.trim();
+
+    /** 没加粗：取冒号 / 中文括号 / 空格分号前的首段 */
+    if (!candidate) {
+      const sliced = rest.split(/[:：（(\s—,，。;；]/)[0]?.trim();
+      candidate = sliced;
+    }
+    if (!candidate) continue;
+
+    /** 清洗：去掉左右 markdown 残留 */
+    candidate = candidate.replace(/^[`*"'\s]+|[`*"'\s]+$/g, "");
+    if (candidate.length === 0 || candidate.length > 40) continue;
+
+    /** 必须含 alnum，避免抓到中文标题如"动量类" */
+    if (!/[A-Za-z0-9]/.test(candidate)) continue;
+
+    /** 标识符化：保留 letters/digits/_/- */
+    const normalized = candidate.replace(/[^A-Za-z0-9_\-]/g, "").trim();
+    if (normalized.length < 2) continue;
+    names.add(normalized);
+  }
+  return [...names].slice(0, 8);
+}
+
+/**
+ * 把 explore fallback 草稿 markdown 解析出的因子方向写成 factor_definition draft 记录。
+ *
+ * 关键约束：
+ *   - status = "draft"（前端通过 factor 列表 + status filter 区分草稿和正式因子）
+ *   - expr = "" + lang = "qlib_expr"（不被 provider 计算；后续 research 真正写表达式后转 active）
+ *   - workflowRunId 落库，确保侧栏只在"本工作流产出"里出现
+ *   - definitionJson 把原始 draft 文本片段 + ticker 留作上下文，方便用户 review
+ *   - 同 project + 同名重复时跳过（duplicate_name 不影响整体落库）
+ *
+ * 返回成功落库的 factor 列表（id + name），便于上层 logResearchTeamInteraction。
+ */
+async function persistExploreFallbackDrafts(input: {
+  workflowRunId: string;
+  ticker: string;
+  draftBody: string;
+}): Promise<Array<{ id: string; name: string }>> {
+  const names = extractFactorNamesFromDraft(input.draftBody);
+  if (names.length === 0) return [];
+
+  const db = await getDb();
+  const wf = await db
+    .select({ projectId: workflowRun.projectId })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, input.workflowRunId))
+    .limit(1);
+  const projectId = wf[0]?.projectId;
+  if (!projectId) return [];
+
+  const persisted: Array<{ id: string; name: string }> = [];
+  for (const name of names) {
+    /** 同 project 内同名因子已存在则跳过（factor_definition.name unique within project，
+     *  早于 schema 约束，DB 自身没有 unique 索引，但 factorService.register 有 dup 检查）*/
+    const dup = await db
+      .select({ id: factorDefinition.id })
+      .from(factorDefinition)
+      .where(
+        and(eq(factorDefinition.projectId, projectId), eq(factorDefinition.name, name)),
+      )
+      .limit(1);
+    if (dup[0]) continue;
+
+    const id = randomUUID();
+    try {
+      await db.insert(factorDefinition).values({
+        id,
+        projectId,
+        name,
+        category: "momentum",
+        definitionJson: {
+          source: "explore_fallback",
+          ticker: input.ticker,
+          workflowRunId: input.workflowRunId,
+          /** 截断保留前 500 字符的 draft 上下文，方便 UI 上 hover 看 */
+          rawDraft: input.draftBody.slice(0, 500),
+        },
+        expr: "",
+        lang: "qlib_expr",
+        status: "draft",
+        providerKey: "python_inline",
+        workflowRunId: input.workflowRunId,
+      });
+      persisted.push({ id, name });
+    } catch {
+      /** 不阻塞其他 draft 写入 —— 哪怕个别行违反 schema 约束也继续 */
+      continue;
+    }
+  }
+  return persisted;
 }

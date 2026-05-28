@@ -17,7 +17,7 @@ import type { LlmTokenUsage } from "../../llm/gateway";
 import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
-import { resolveEnabledMcpServerNames } from "../../mcp/resolve-enabled-mcp-servers";
+import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
 import { skillService, renderSkillsBlockForPrompt } from "../../skills/skill-service";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
 import type { AgentGraphState, StepStreamEvent } from "../state";
@@ -185,7 +185,13 @@ export async function reasonNode(
 
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
   const tools = effective.tools;
-  const mcpServers = await resolveEnabledMcpServerNames(state.agentDefinition.mcpServers ?? []);
+  /**
+   * 拉取 enabled MCP server **+ 真实工具清单**（capabilities_json.tools），
+   * 注入 prompt 让 LLM 看到 mcp-financex 真实可调的工具名（如 `get_financial_statements`），
+   * 而不是凭训练记忆瞎喊 `get_financials` / `list_available_tools`。
+   * 详见 resolve-enabled-mcp-servers.ts 与 tool-call-format.ts。
+   */
+  const mcpServers = await resolveEnabledMcpServers(state.agentDefinition.mcpServers ?? []);
   const hasTools = tools.length > 0 || mcpServers.length > 0;
 
   /**

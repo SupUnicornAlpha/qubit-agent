@@ -49,6 +49,46 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
       command: "npx -y mcp-financex@1.0.11",
       registrySlug: "npm:mcp-financex",
       description: "股票/加密行情、技术指标、期权、SEC 披露与 DCF（Yahoo，免 API Key）",
+      /**
+       * mcp-financex 1.0.11 真实暴露的工具清单。
+       *
+       * 历史 bug：LLM 凭训练记忆把基本面工具喊成 `get_financials` /
+       * `list_available_tools`（这两个都不存在），mcp-financex 抛
+       * "Unknown tool" 直接断分析师推理一轮。
+       *
+       * 这里把真实工具名注入 capabilitiesJson.tools，让 prompt 拼装层
+       * （buildAgentToolsPromptBlock）能列出真实清单，LLM 不再瞎猜。
+       */
+      capabilitiesJson: {
+        tools: [
+          { name: "get_quote", desc: "单标的实时行情快照" },
+          { name: "get_quote_batch", desc: "批量标的实时行情" },
+          { name: "get_historical_data", desc: "历史 OHLCV（日线/分钟）" },
+          { name: "search_ticker", desc: "按关键词搜索 ticker" },
+          { name: "get_market_news", desc: "标的新闻头条" },
+          { name: "calculate_indicator", desc: "技术指标计算（RSI/MACD/MA…）" },
+          { name: "get_extended_hours_data", desc: "盘前/盘后行情" },
+          { name: "get_short_interest", desc: "做空利息与挤空指数" },
+          { name: "get_analyst_ratings", desc: "分析师评级与目标价" },
+          { name: "analyze_news_impact", desc: "新闻情绪与股价关联分析" },
+          { name: "get_options_chain", desc: "期权链（到期日 + 行权价）" },
+          { name: "get_earnings_calendar", desc: "财报日历" },
+          { name: "get_dividend_info", desc: "股息历史与下次派息" },
+          { name: "calculate_greeks", desc: "期权希腊字母计算" },
+          { name: "calculate_historical_volatility", desc: "历史波动率（多窗口）" },
+          { name: "calculate_max_pain", desc: "Max Pain 期权痛点价" },
+          { name: "get_implied_volatility", desc: "隐含波动率/IV Rank" },
+          { name: "analyze_options_strategy", desc: "期权组合策略评估" },
+          { name: "get_13f_institutional_holdings", desc: "13F 机构持仓" },
+          { name: "get_13dg_ownership_changes", desc: "13D/13G 大宗持股变化" },
+          { name: "get_8k_material_events", desc: "8-K 重大事件" },
+          { name: "get_sec_form4_filings", desc: "SEC Form 4 内部人交易（首选名）" },
+          { name: "get_insider_trades", desc: "Form 4 内部人交易（legacy alias）" },
+          { name: "get_financial_statements", desc: "财报三表 + 比率（不叫 get_financials）" },
+          { name: "calculate_dcf_valuation", desc: "DCF 内在价值估算" },
+          { name: "compare_peer_companies", desc: "可比公司估值/财务对比" },
+        ],
+      },
     },
   ];
   const fmpKey = process.env.FMP_API_KEY?.trim();

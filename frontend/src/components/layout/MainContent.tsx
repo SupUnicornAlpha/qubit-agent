@@ -190,6 +190,7 @@ import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { AgentGeneratedFactorsBlock } from "../team/AgentGeneratedFactorsBlock";
 import { AgentGeneratedStrategiesBlock } from "../team/AgentGeneratedStrategiesBlock";
+import { ResearchExploreFallbackBlock } from "../team/ResearchExploreFallbackBlock";
 import { AgentRunPanel } from "../team/AgentRunChatView";
 import {
   LiveConversationView,
@@ -7741,6 +7742,8 @@ const TeamDashboardPanel: FC = () => {
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
             展示当前研究项目下 Agent 生成的<strong>因子 / 策略</strong>，以及当前工作流下保存的代码片段。每块支持折叠，专注当前关注的问题。
           </p>
+
+          <ResearchExploreFallbackBlock workflowRunId={workflowRunId} />
 
           <AgentGeneratedFactorsBlock
             projectId={teamResearchProjectId}

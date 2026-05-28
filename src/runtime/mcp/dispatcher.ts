@@ -308,6 +308,48 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     if (!msg.startsWith("mcp circuit breaker open")) {
       await recordMcpCallResult(input.serverName, status, msg);
     }
-    throw err;
+    /**
+     * E1 错误增强：当 MCP server 抛 `Unknown tool: <X>` 时，
+     * 把 capabilities_json.tools 真实工具清单拼进错误消息，让 LLM 下一轮自纠正。
+     * 不阻塞错误链路（即便查 DB 失败也保留原始 error）。
+     */
+    const enrichedErr = await tryEnrichUnknownToolError(err, input.serverName);
+    throw enrichedErr ?? err;
+  }
+}
+
+/**
+ * 检测 MCP server 返回的 `Unknown tool` / UNKNOWN_TOOL 错误，
+ * 把该 server 在 mcp_server_config.capabilities_json.tools 里登记的
+ * 真实工具列表（如果有）追加到 error message 末尾，作为 LLM 下一轮的纠正线索。
+ */
+async function tryEnrichUnknownToolError(err: unknown, serverName: string): Promise<Error | null> {
+  const msg = (err as Error)?.message ?? String(err);
+  if (!/Unknown tool|UNKNOWN_TOOL/i.test(msg)) return null;
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select({ capabilitiesJson: mcpServerConfig.capabilitiesJson })
+      .from(mcpServerConfig)
+      .where(and(eq(mcpServerConfig.name, serverName), isNull(mcpServerConfig.projectId)))
+      .limit(1);
+    const caps = rows[0]?.capabilitiesJson;
+    if (!caps || typeof caps !== "object" || Array.isArray(caps)) return null;
+    const toolsRaw = (caps as Record<string, unknown>)["tools"];
+    if (!Array.isArray(toolsRaw) || toolsRaw.length === 0) return null;
+    const names: string[] = [];
+    for (const item of toolsRaw) {
+      if (item && typeof item === "object") {
+        const name = (item as Record<string, unknown>)["name"];
+        if (typeof name === "string" && name.trim()) names.push(name.trim());
+      }
+    }
+    if (names.length === 0) return null;
+    const enriched = new Error(
+      `${msg}\n\n[mcp ${serverName} 真实工具清单] ${names.join(", ")}\n请从上述清单里选一个最匹配的 mcpTool 重试，不要再喊未列出的工具名。`
+    );
+    return enriched;
+  } catch {
+    return null;
   }
 }

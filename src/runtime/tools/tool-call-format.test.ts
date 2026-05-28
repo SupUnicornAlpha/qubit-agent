@@ -142,6 +142,43 @@ describe("buildAgentToolsPromptBlock", () => {
     expect(block).toContain("<TOOL_CALL>");
     expect(block).toContain("</TOOL_CALL>");
   });
+
+  /**
+   * E1 回归：mcp_server_config.capabilities_json.tools 注入的真实工具清单
+   * 必须在 prompt 里完整列出，让 LLM 不再瞎喊不存在的工具名
+   * （如把 mcp-financex 的 get_financial_statements 喊成 get_financials）。
+   */
+  test("注入 MCP server 的真实工具清单", () => {
+    const block = buildAgentToolsPromptBlock({
+      tools: [],
+      mcpServers: [
+        {
+          name: "mcp-financex",
+          tools: [
+            { name: "get_quote", desc: "实时行情" },
+            { name: "get_financial_statements", desc: "财报三表" },
+          ],
+        },
+      ],
+    });
+    expect(block).toContain("mcp-financex");
+    expect(block).toContain("真实工具清单");
+    expect(block).toContain("`get_quote`");
+    expect(block).toContain("`get_financial_statements`");
+    expect(block).toContain("实时行情");
+    expect(block).toContain("财报三表");
+  });
+
+  test("string 形态 mcpServers 仍可用（向后兼容）", () => {
+    const block = buildAgentToolsPromptBlock({
+      tools: [],
+      mcpServers: ["mathjs", "tradingcalc"],
+    });
+    expect(block).toContain("mathjs");
+    expect(block).toContain("tradingcalc");
+    /** 没有 tools 字段时不应该出现"真实工具清单"标题 */
+    expect(block).not.toContain("真实工具清单");
+  });
 });
 
 describe("assembleAgentSystemPrompt", () => {

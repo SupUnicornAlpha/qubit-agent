@@ -393,6 +393,13 @@
       "when": 1777435200000,
       "tag": "0056_risk_add_fetch_klines",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1777608000000,
+      "tag": "0057_mcp_financex_tools_capabilities",
+      "breakpoints": true
     }
   ]
 }

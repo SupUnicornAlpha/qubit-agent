@@ -462,7 +462,11 @@ export class GraphRunner {
     resume?: boolean;
   }): Promise<void> {
     const db = await getDb();
-    const agentInstanceId = params.agentInstanceId ?? randomUUID();
+    /**
+     * 注意：`let` 而非 `const` —— research_team_execute 的 HITL resume 路径可能
+     * 把它复指向上一次的 orchestrator instance id（D 修复，参见下方）。
+     */
+    let agentInstanceId = params.agentInstanceId ?? randomUUID();
 
     try {
       /**
@@ -481,15 +485,6 @@ export class GraphRunner {
           throw parsed.error;
         }
 
-        await db.insert(agentInstance).values({
-          id: agentInstanceId,
-          definitionId: params.def.id,
-          workflowRunId: params.workflowId,
-          status: "running",
-          currentIteration: 0,
-          startedAt: new Date().toISOString(),
-        });
-
         /**
          * 透传 hitlApproval：批准后 resolveHitlRequest 重派 task 时会把 approved requestId
          * 塞进 params.hitlApproval；helper 内会把它喂给 executeResearchTeamWorkflow，下一次
@@ -499,6 +494,57 @@ export class GraphRunner {
         const hitlApproval = parseHitlApproval(
           (params.payload.params as Record<string, unknown>).hitlApproval
         );
+
+        /**
+         * D 修复（WF 44ca3acf 复盘）：HITL approve 后重派 research_team_execute 时，
+         * 默认每次都 randomUUID() 新建 orchestrator instance —— DB 里同一个 workflow
+         * 出现 2 条 def-orchestrator instance，第一条 stopped/无 step（plan→HITL pause），
+         * 第二条 stopped/14min（resume→full pipeline），看起来像"二次重跑"。
+         *
+         * HITL approve resume 本质是**同一个 plan 阶段的续跑**，应复用既有 instance
+         * 而不是开新的。这里检测：hitlApproval 存在 + 上一个同 workflow 的 orchestrator
+         * instance 处于"已停止但 step=0"状态（即"plan 阶段抛 HITL pause"留下的占位行），
+         * 就复用它的 id。其它路径维持新建（避免影响首次启动）。
+         */
+        if (hitlApproval && !params.agentInstanceId) {
+          const reusable = await db
+            .select({ id: agentInstance.id })
+            .from(agentInstance)
+            .where(
+              and(
+                eq(agentInstance.workflowRunId, params.workflowId),
+                eq(agentInstance.definitionId, params.def.id),
+                eq(agentInstance.status, "stopped"),
+              ),
+            )
+            .orderBy(desc(agentInstance.startedAt))
+            .limit(1);
+          if (reusable[0]) {
+            agentInstanceId = reusable[0].id;
+            await db
+              .update(agentInstance)
+              .set({ status: "running", endedAt: null })
+              .where(eq(agentInstance.id, agentInstanceId));
+          } else {
+            await db.insert(agentInstance).values({
+              id: agentInstanceId,
+              definitionId: params.def.id,
+              workflowRunId: params.workflowId,
+              status: "running",
+              currentIteration: 0,
+              startedAt: new Date().toISOString(),
+            });
+          }
+        } else {
+          await db.insert(agentInstance).values({
+            id: agentInstanceId,
+            definitionId: params.def.id,
+            workflowRunId: params.workflowId,
+            status: "running",
+            currentIteration: 0,
+            startedAt: new Date().toISOString(),
+          });
+        }
 
         const outcome = await runTeamResearchAndPersist({
           workflowRunId: params.workflowId,

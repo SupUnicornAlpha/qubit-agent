@@ -2,6 +2,18 @@ import { getToolCatalogMap, resolveToolAlias } from "./tool-catalog";
 import { isBuiltinTool } from "./builtin-tools";
 import { resolveConnectorForTool } from "./tool-routes";
 
+/**
+ * 每个 MCP server 在 prompt 块里展示的真实工具清单。
+ * 入参可以是字符串（旧用法，仅 server 名）或对象（推荐，含 tools 清单），
+ * tool-call-format 在拼装 prompt 时分支处理。
+ */
+export type McpServerPromptHint =
+  | string
+  | {
+      name: string;
+      tools?: Array<{ name: string; desc?: string }>;
+    };
+
 export type ParsedToolCall =
   | {
       kind: "tool";
@@ -19,7 +31,13 @@ export type ParsedToolCall =
 /** 构建注入 LLM 的「可用工具」说明块（缺口 A） */
 export function buildAgentToolsPromptBlock(params: {
   tools: string[];
-  mcpServers?: string[];
+  /**
+   * MCP server 列表。
+   * - 旧用法：`["mathjs", "mcp-financex"]` —— 仅注入 server 名，LLM 需自己猜工具
+   * - 推荐：`[{name:"mcp-financex", tools:[{name:"get_quote", desc:"..."}, ...]}]`
+   *   —— 注入真实工具清单，LLM 不再瞎喊不存在的工具名
+   */
+  mcpServers?: Array<McpServerPromptHint>;
 }): string {
   const tools = params.tools.filter((t) => typeof t === "string" && t.trim().length > 0);
   if (tools.length === 0 && (params.mcpServers?.length ?? 0) === 0) {
@@ -67,17 +85,46 @@ export function buildAgentToolsPromptBlock(params: {
     lines.push("");
   }
 
-  const mcps = (params.mcpServers ?? []).filter((s) => s.trim().length > 0);
+  /** 同时接受 string[] 与 {name,tools}[] 两种形态；做归一化便于后续渲染 */
+  const mcps: Array<{ name: string; tools?: Array<{ name: string; desc?: string }> }> = (
+    params.mcpServers ?? []
+  )
+    .map((entry) => {
+      if (typeof entry === "string") {
+        return entry.trim() ? { name: entry.trim() } : null;
+      }
+      const name = entry?.name?.trim() ?? "";
+      if (!name) return null;
+      const tools = Array.isArray(entry?.tools)
+        ? entry.tools.filter((t) => typeof t?.name === "string" && t.name.trim().length > 0)
+        : undefined;
+      return tools && tools.length > 0 ? { name, tools } : { name };
+    })
+    .filter((s): s is { name: string; tools?: Array<{ name: string; desc?: string }> } => s != null);
+
   if (mcps.length > 0) {
     lines.push("### MCP 服务（本工作流当前真实可用，强约束）");
     lines.push(
       "⚠️ **以下是本轮唯一被启用的 MCP server 列表**。即便 system prompt 中提到其它 server 名（如历史 seed 的示例），**也禁止调用**——未在此列表的 server 一律会返回 `mcp server not found or disabled`，浪费一轮 reason。"
     );
     for (const server of mcps) {
-      lines.push(`- **${server}**：使用工具名 \`call_mcp\`，params 示例：`);
+      lines.push(`- **${server.name}**：使用工具名 \`call_mcp\`，params 示例：`);
       lines.push(
-        `  \`{"tool":"call_mcp","params":{"serverName":"${server}","mcpTool":"<工具名>","arguments":{}}}\``
+        `  \`{"tool":"call_mcp","params":{"serverName":"${server.name}","mcpTool":"<工具名>","arguments":{}}}\``
       );
+      /**
+       * 当 capabilities_json.tools 注入了真实工具清单（如 mcp-financex），
+       * 把每个工具名 + 简要描述列出，**严禁 LLM 调用未列出的工具名**。
+       * 历史 bug：LLM 凭训练记忆把 mcp-financex 的工具喊成 `get_financials` /
+       * `list_available_tools`（这两个都不存在），server 抛 "Unknown tool"
+       * 直接断分析师推理一轮（WF 44ca3acf 实测 2 次）。
+       */
+      if (server.tools && server.tools.length > 0) {
+        lines.push(`  - **${server.name} 真实工具清单**（仅可调用以下 \`mcpTool\` 名，不要瞎猜）:`);
+        for (const t of server.tools) {
+          lines.push(`    - \`${t.name}\`${t.desc ? `：${t.desc}` : ""}`);
+        }
+      }
     }
     lines.push(
       "- 或使用 `mcp:<serverName>:<toolName>` 作为 tool 名，params 为 arguments 对象。",
@@ -102,7 +149,7 @@ export function buildAgentToolsPromptBlock(params: {
 /** 与 LangGraph reason 节点一致：pack/DB 合并正文 + 工具/MCP 说明块 */
 export function assembleAgentSystemPrompt(
   baseSystemPrompt: string,
-  params: { tools: string[]; mcpServers?: string[] }
+  params: { tools: string[]; mcpServers?: Array<McpServerPromptHint> }
 ): { full: string; toolsBlock: string } {
   const toolsBlock = buildAgentToolsPromptBlock(params);
   const full = toolsBlock ? `${baseSystemPrompt}\n\n${toolsBlock}` : baseSystemPrompt;
