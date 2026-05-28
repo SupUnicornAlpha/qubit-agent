@@ -58,6 +58,35 @@ import type { AgentSkillOutcome } from "../../types/entities";
 
 const memoryConnector = new NativeMemoryConnector();
 
+/**
+ * LLM 经常把 `factor.compute / factor.evaluate / factor.autoEvaluate` 的入参写成：
+ *   - factor_ids: ["..."]（复数，模仿其他批量接口）
+ *   - factorId（camelCase，模仿 JS 命名风格）
+ * 现实工具签名是单数 `factor_id`。这里做防御性别名回退，避免把"猜错参数风格"
+ * 的良性错误升级成"硬性 fail"。
+ *
+ * 优先级：factor_id > factorId > factor_ids[0] > factorIds[0]。
+ */
+function pickFactorId(params: Record<string, unknown>): string {
+  const direct = params["factor_id"] ?? params["factorId"];
+  if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
+  for (const key of ["factor_ids", "factorIds"]) {
+    const arr = params[key];
+    if (Array.isArray(arr)) {
+      const first = arr.find((v): v is string => typeof v === "string" && v.trim().length > 0);
+      if (first) return first.trim();
+    }
+  }
+  return "";
+}
+
+/** start_date / startDate；end_date / endDate 等下划线/驼峰双兼容取值。 */
+function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "end_date"): string {
+  const camel = snake === "start_date" ? "startDate" : "endDate";
+  const v = params[snake] ?? params[camel];
+  return typeof v === "string" ? v.trim() : "";
+}
+
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   assign_task: async (ctx, params) => {
@@ -636,23 +665,36 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   "factor.compute": async (_ctx, params) => {
-    const factorId = String(params.factor_id ?? "").trim();
-    if (!factorId) throw new Error("factor.compute: factor_id is required");
+    /**
+     * 入参兼容：
+     *   - factor_id（推荐）/ factorId（camelCase）/ factor_ids[0]（LLM 误用复数）
+     *   - start_date / startDate ；end_date / endDate
+     *
+     * 历史 bug：LLM 凭训练记忆把 factor.compute 写成
+     *   `compute_factors({factor_ids:[..], startDate, endDate})`
+     * 直接抛"factor_id is required"，整条 research → backtest 流水线断掉。
+     * 工具层做防御性别名映射 + builtin alias 已把 compute_factors 路由到 factor.compute，
+     * 这样 LLM 即使猜错参数风格也能跑通。
+     */
+    const factorId = pickFactorId(params);
+    if (!factorId) {
+      throw new Error("factor.compute: factor_id (or factor_ids[0]) is required");
+    }
     const symbolsRaw = params.symbols;
     const symbols = Array.isArray(symbolsRaw)
       ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       : undefined;
     return factorService.compute({
       factorId,
-      startDate: String(params.start_date ?? "").trim(),
-      endDate: String(params.end_date ?? "").trim(),
+      startDate: pickDateParam(params, "start_date"),
+      endDate: pickDateParam(params, "end_date"),
       ...(symbols && symbols.length > 0 ? { symbols } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
     });
   },
 
   "factor.evaluate": async (_ctx, params) => {
-    const factorId = String(params.factor_id ?? "").trim();
+    const factorId = pickFactorId(params);
     if (!factorId) throw new Error("factor.evaluate: factor_id is required");
     const valuesRaw = params.values;
     const values = Array.isArray(valuesRaw) ? (valuesRaw as FactorComputeRow[]) : [];
@@ -710,10 +752,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   "factor.autoEvaluate": async (_ctx, params) => {
-    const factorId = String(params.factor_id ?? "").trim();
+    const factorId = pickFactorId(params);
     if (!factorId) throw new Error("factor.autoEvaluate: factor_id is required");
-    const startDate = String(params.start_date ?? "").trim();
-    const endDate = String(params.end_date ?? "").trim();
+    const startDate = pickDateParam(params, "start_date");
+    const endDate = pickDateParam(params, "end_date");
     if (!startDate || !endDate) {
       throw new Error("factor.autoEvaluate: start_date and end_date are required");
     }

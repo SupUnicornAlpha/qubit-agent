@@ -49,11 +49,25 @@ export type NormalizedResearchScope = {
 
 const MAX_BASKET_SYMBOLS = 8;
 
+/**
+ * 拆分用户输入的多标的字符串。
+ *
+ * 分隔符白名单：英文逗号 `,` / 中文逗号 `，` / 分号 `;` / 中文顿号 `、` /
+ * 中文分号 `；` / 斜杠 `/` / 反斜杠 `\` / 竖线 `|` / 空格 / 制表符 / 换行。
+ *
+ * 历史 bug：前端把"NVDA、AMD"（中文顿号）作为单个 string 传进 scope.symbols
+ * 数组（即 `scope.symbols = ["NVDA、AMD"]`），由于 resolveResearchScope 对
+ * `scope.symbols` 直接 trim().toUpperCase() 不再 parseSymbolList，
+ * 下游 primarySymbol 就变成 "NVDA、AMD"，内置 SMA 兜底回测取数失败、
+ * Risk 分析时 fetch_klines 也按 "NVDA、AMD" 走拿不到数据。
+ * 解决方式：分隔符里加 `、`，且 resolveResearchScope 对 scope.symbols 元素
+ * 再做一次 parseSymbolList 兜底拆分。
+ */
 export function parseSymbolList(raw: string): string[] {
   return [
     ...new Set(
       raw
-        .split(/[,，;\s\n]+/)
+        .split(/[,，;；、\/\\|\s\n]+/)
         .map((s) => s.trim().toUpperCase())
         .filter((s) => s.length > 0 && s.length <= 24)
     ),
@@ -77,7 +91,12 @@ export function resolveResearchScope(input: {
   const theme = scope?.theme?.trim() || undefined;
 
   if (scope?.symbols && scope.symbols.length > 0) {
-    symbols = scope.symbols.map((s) => s.trim().toUpperCase()).filter(Boolean);
+    /**
+     * 前端有可能把"NVDA、AMD"或"NVDA, AMD"塞进 symbols 数组的单元素
+     * （例如板块快捷选项里"成分股"输入框被当作整段字符串提交）。
+     * 这里对每个元素再走一遍 parseSymbolList，确保拿到的是真正的 ticker 列表。
+     */
+    symbols = [...new Set(scope.symbols.flatMap((s) => parseSymbolList(String(s ?? ""))))];
   } else if (scope?.ticker?.trim()) {
     symbols = parseSymbolList(scope.ticker);
   } else if (input.ticker?.trim()) {
@@ -86,7 +105,9 @@ export function resolveResearchScope(input: {
 
   if (kind === "sector") {
     sector = (scope?.sector ?? "").trim() || undefined;
-    const peers = (scope?.peers ?? []).map((s) => s.trim().toUpperCase()).filter(Boolean);
+    const peers = [
+      ...new Set((scope?.peers ?? []).flatMap((s) => parseSymbolList(String(s ?? "")))),
+    ];
     if (peers.length > 0) {
       symbols = [...new Set([...symbols, ...peers])];
     }

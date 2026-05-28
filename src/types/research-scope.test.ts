@@ -32,6 +32,45 @@ describe("research-scope", () => {
   });
 
   /**
+   * P0-A 回归：a65848b7 workflow 复盘 —— 板块快捷选项把"NVDA、AMD"（中文顿号）
+   * 当一个 string 塞进 scope.symbols 单元素，导致 primarySymbol="NVDA、AMD"，
+   * 下游 fetch_klines / 内置 SMA 兜底回测全军覆没。
+   */
+  describe("symbol 分隔符容错", () => {
+    test("parseSymbolList 识别中文顿号 / 分号 / 斜杠 / 竖线", () => {
+      expect(parseSymbolList("NVDA、AMD")).toEqual(["NVDA", "AMD"]);
+      expect(parseSymbolList("NVDA；AMD；INTC")).toEqual(["NVDA", "AMD", "INTC"]);
+      expect(parseSymbolList("NVDA/AMD")).toEqual(["NVDA", "AMD"]);
+      expect(parseSymbolList("NVDA|AMD")).toEqual(["NVDA", "AMD"]);
+      expect(parseSymbolList("NVDA  AMD\tINTC")).toEqual(["NVDA", "AMD", "INTC"]);
+    });
+
+    test("scope.symbols 单元素含顿号 → 自动拆开", () => {
+      const s = resolveResearchScope({
+        scope: {
+          kind: "sector",
+          sector: "半导体",
+          symbols: ["NVDA、AMD"],
+        },
+      });
+      expect(s.symbols).toEqual(["NVDA", "AMD"]);
+      expect(s.primarySymbol).toBe("NVDA");
+      expect(s.primarySymbol).not.toContain("、");
+    });
+
+    test("scope.peers 同样兜底拆分", () => {
+      const s = resolveResearchScope({
+        scope: {
+          kind: "sector",
+          sector: "半导体",
+          peers: ["NVDA、AMD、INTC"],
+        },
+      });
+      expect(s.symbols).toEqual(["NVDA", "AMD", "INTC"]);
+    });
+  });
+
+  /**
    * P0-1 回归：explore 模式不能再产生 "AUTO_EXPLORE" 哨兵字符串。
    * 见 d0a41743 workflow 复盘 —— 哨兵被当真 ticker 一路传到 fetch_klines 红错。
    */

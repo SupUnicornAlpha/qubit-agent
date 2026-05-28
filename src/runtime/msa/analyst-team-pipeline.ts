@@ -802,10 +802,17 @@ export async function runPostFusionPipeline(input: {
     auxSections.push({ role: slot.role, body });
     handoffSections.push({ role: slot.role, body });
 
+    /**
+     * 这条 interaction 记录的是 **当前 slot 跑完后的输出 body**。
+     * 历史 bug：fromRole 写成 prevRole，于是 DB 里出现 "research → backtest" 但
+     * content 实际是 backtest 的输出，前端拓扑画布把 backtest 的论述错误归到 research，
+     * 也导致 buildWorkflowPriorOutputsContext 用 from_role 过滤时拿不到正确的角色产出。
+     * 正确语义：本轮 slot.role 把成果汇报给 msa（后续 fuseSignals / report 阶段）。
+     */
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
-      fromRole: prevRole ?? "orchestrator",
-      toRole: slot.role,
+      fromRole: slot.role,
+      toRole: "msa",
       kind: "llm_message",
       contentText: body.slice(0, 4000),
       payloadJson: { phase: "post_fusion", role: slot.role },
