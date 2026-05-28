@@ -2,6 +2,7 @@ import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAnalystTeamGraph } from "../../api/backend";
 import type { AnalystTeamGraphInteraction } from "../../api/types";
+import { MarkdownBubble } from "../chat/MarkdownBubble";
 
 export interface ResearchExploreFallbackBlockProps {
   /**
@@ -11,6 +12,17 @@ export interface ResearchExploreFallbackBlockProps {
   workflowRunId: string;
   /** 默认是否展开；当本块**有内容**时建议默认展开，方便用户立即看到 fallback 原因。 */
   defaultOpen?: boolean;
+  /**
+   * 渲染外壳样式：
+   *   - "details"（默认）：`<details>` 折叠器，summary 显示数量徽章
+   *   - "bare"：去掉外壳，仅渲染 body —— 由父级（如 ResearchOutputTabs）控制可见性
+   */
+  chrome?: "details" | "bare";
+  /**
+   * 当条目数变化时回调上抛 —— 父级 tab 能在 tab badge 上显示真实 count，
+   * 而不必重新拉一遍数据。
+   */
+  onCountChange?: (count: number) => void;
 }
 
 /**
@@ -33,6 +45,8 @@ export interface ResearchExploreFallbackBlockProps {
 export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps> = ({
   workflowRunId,
   defaultOpen = true,
+  chrome = "details",
+  onCountChange,
 }) => {
   const [interactions, setInteractions] = useState<AnalystTeamGraphInteraction[]>([]);
   const [loading, setLoading] = useState(false);
@@ -66,7 +80,6 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
   }, [reload]);
 
   const draftFactorCount = useMemo(() => {
-    /** 从 [explore fallback] 已落 N 条 ... 互动里抓汇总数字 */
     let total = 0;
     for (const row of interactions) {
       const payload = row.payloadJson;
@@ -77,7 +90,88 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
     return total;
   }, [interactions]);
 
-  /** 没有 fallback 互动直接不渲染 —— 不占空间 */
+  const llmMessages = useMemo(
+    () => interactions.filter((row) => row.kind === "llm_message"),
+    [interactions],
+  );
+
+  /** count 上抛：tab 形态下父级用这个值显示 tab 徽章 */
+  useEffect(() => {
+    onCountChange?.(llmMessages.length);
+  }, [llmMessages.length, onCountChange]);
+
+  const body = (
+    <div style={styles.body}>
+      <div style={styles.toolbar}>
+        <span style={styles.scopeHint}>explore fallback</span>
+        <span style={styles.scopeHintMuted}>
+          置信度不足或信息不充分时 Orchestrator 切到这条 fallback 链路，
+          产出研究方向建议而非可执行策略
+        </span>
+        <button
+          type="button"
+          className="qb-btn-secondary"
+          style={styles.refreshBtn}
+          onClick={() => void reload()}
+          disabled={loading}
+        >
+          {loading ? "刷新中…" : "刷新"}
+        </button>
+      </div>
+
+      {error ? <div style={styles.error}>{error}</div> : null}
+
+      {!error && llmMessages.length === 0 && !loading ? (
+        <div style={styles.empty}>
+          {!workflowRunId
+            ? "请先选择或启动一个工作流。"
+            : "本工作流未触发 explore fallback。当 Orchestrator 决定不进入策略撰写时，研究方向草稿会出现在这里。"}
+        </div>
+      ) : null}
+
+      {llmMessages.map((row) => (
+        <article key={row.id} style={styles.card}>
+          <header style={styles.cardHead}>
+            <span style={styles.cardBadge}>
+              {row.fromRole} → {row.toRole}
+            </span>
+            <span style={styles.cardTime}>{new Date(row.createdAt).toLocaleString()}</span>
+          </header>
+          {/**
+           * 用 MarkdownBubble 渲染（含 GFM 表格、代码块、列表）。
+           * LLM 经常用 markdown 表格列因子方向 / 数据源 / 检验指标，
+           * 用 <pre> 是不会被解析的。
+           */}
+          <div style={styles.mdHost}>
+            <MarkdownBubble text={stripBracketTag(row.contentText)} />
+          </div>
+        </article>
+      ))}
+
+      {interactions.some((row) => row.kind === "tool_call") ? (
+        <div style={styles.draftHint}>
+          部分研究方向已经被解析为 <code style={styles.codeInline}>factor.draft</code>
+          ，落入「因子产出」tab（status=draft）。
+          {draftFactorCount > 0 ? `本轮共 ${draftFactorCount} 条。` : ""}
+          后续可手动转 active 或让下一轮 research 续写表达式。
+        </div>
+      ) : null}
+    </div>
+  );
+
+  if (chrome === "bare") {
+    /** 没有 workflowRunId 时 bare 也至少给一段提示，不要纯空白 */
+    if (!workflowRunId) {
+      return (
+        <div style={styles.body}>
+          <div style={styles.empty}>请先选择或启动一个工作流。</div>
+        </div>
+      );
+    }
+    return body;
+  }
+
+  /** details 形态（旧默认）：无内容时不渲染，避免占空间 */
   if (!workflowRunId || (interactions.length === 0 && !loading && !error)) {
     return null;
   }
@@ -89,48 +183,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
   return (
     <details className="qb-mcp-details" style={styles.details} open={defaultOpen}>
       <summary style={styles.summary}>{summaryLabel}</summary>
-      <div style={styles.body}>
-        <div style={styles.toolbar}>
-          <span style={styles.scopeHint}>explore fallback</span>
-          <span style={styles.scopeHintMuted}>
-            置信度不足或信息不充分时 Orchestrator 切到这条 fallback 链路，
-            产出**研究方向建议**而非可执行策略
-          </span>
-          <button
-            type="button"
-            className="qb-btn-secondary"
-            style={styles.refreshBtn}
-            onClick={() => void reload()}
-            disabled={loading}
-          >
-            {loading ? "刷新中…" : "刷新"}
-          </button>
-        </div>
-
-        {error ? <div style={styles.error}>{error}</div> : null}
-
-        {interactions
-          .filter((row) => row.kind === "llm_message")
-          .map((row) => (
-            <article key={row.id} style={styles.card}>
-              <header style={styles.cardHead}>
-                <span style={styles.cardBadge}>
-                  {row.fromRole} → {row.toRole}
-                </span>
-                <span style={styles.cardTime}>{new Date(row.createdAt).toLocaleString()}</span>
-              </header>
-              <pre style={styles.body_md}>{stripBracketTag(row.contentText)}</pre>
-            </article>
-          ))}
-
-        {interactions.some((row) => row.kind === "tool_call") ? (
-          <div style={styles.draftHint}>
-            部分研究方向已经被解析为 <code style={styles.codeInline}>factor.draft</code>
-            ，落入「Agent 生成的因子」block（status=draft）。后续可手动转 active
-            或让下一轮 research 续写表达式。
-          </div>
-        ) : null}
-      </div>
+      {body}
     </details>
   );
 };
@@ -197,6 +250,12 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6,
     padding: "6px 8px",
   },
+  empty: {
+    fontSize: 11,
+    color: "#71717a",
+    padding: "8px 4px",
+    lineHeight: 1.5,
+  },
   card: {
     background: "#111114",
     border: "1px solid #27272a",
@@ -224,17 +283,17 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 10,
     color: "#71717a",
   },
-  body_md: {
-    margin: 0,
-    fontSize: 11,
+  mdHost: {
+    /**
+     * MarkdownBubble 的字号默认 14 偏大，加一层包装把字体局部缩到 12.5
+     * 与侧栏其它组件 (factor list / strategy list) 视觉对齐。
+     * 同时给一个 maxHeight + 内滚，避免单条草稿撑垮整个 tab。
+     */
+    fontSize: 12.5,
     color: "#e4e4e7",
-    lineHeight: 1.55,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    fontFamily:
-      'ui-sans-serif, system-ui, "PingFang SC", "Helvetica Neue", Arial, sans-serif',
-    maxHeight: 360,
+    maxHeight: 520,
     overflow: "auto",
+    paddingRight: 4,
   },
   draftHint: {
     fontSize: 11,

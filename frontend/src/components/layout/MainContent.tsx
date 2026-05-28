@@ -188,9 +188,7 @@ import { OriginBadge } from "../common/OriginBadge";
 import { PythonRuntimeCard } from "../common/PythonRuntimeCard";
 import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
-import { AgentGeneratedFactorsBlock } from "../team/AgentGeneratedFactorsBlock";
-import { AgentGeneratedStrategiesBlock } from "../team/AgentGeneratedStrategiesBlock";
-import { ResearchExploreFallbackBlock } from "../team/ResearchExploreFallbackBlock";
+import { ResearchOutputTabs } from "../team/ResearchOutputTabs";
 import { AgentRunPanel } from "../team/AgentRunChatView";
 import {
   LiveConversationView,
@@ -6012,6 +6010,11 @@ const TeamDashboardPanel: FC = () => {
       <div data-qb-team-shell style={teamStyles.teamWorkbenchShell}>
         <div ref={teamTriRef} style={teamStyles.teamTriRow}>
         <aside style={{ ...teamStyles.leftRail, width: teamLeftW, flexShrink: 0, alignSelf: "stretch" }}>
+          {/**
+           * 上半设置区独立滚动容器：标题 + scope/instrument/标的/模板/分析提示。
+           * maxHeight: 55%（来自 teamStyles.leftRailSettings）—— 留 45% 给下半工作流区。
+           */}
+          <div style={teamStyles.leftRailSettings}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", marginBottom: 10 }}>研究与工作流</div>
           <div style={teamStyles.field}>
             <label style={teamStyles.label}>研究范围</label>
@@ -6171,7 +6174,14 @@ const TeamDashboardPanel: FC = () => {
               placeholder={`留空则使用默认分析提示。当前：${scopeModeLabel(scopeMode)} · ${instrumentLabel(researchInstrument)}`}
             />
           </div>
-          <div style={{ ...teamStyles.field, marginTop: 10 }}>
+          </div>
+          {/**
+           * 下半工作流区独立滚动容器：工作流筛选 + 列表 + 新建按钮 + 分析师编组 + 拓扑。
+           * flex: 1 占据余高。
+           * 子组件 workflow list / 拓扑 ul 取消了自身 maxHeight —— 让本容器作为唯一滚动条。
+           */}
+          <div style={teamStyles.leftRailWorkflows}>
+          <div style={{ ...teamStyles.field }}>
             <div
               style={{
                 display: "flex",
@@ -6805,7 +6815,7 @@ const TeamDashboardPanel: FC = () => {
             {!teamGraph?.edges?.length ? (
               <div style={{ fontSize: 11, color: "#52525b" }}>暂无边记录</div>
             ) : (
-              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "#d4d4d8", maxHeight: 160, overflow: "auto" }}>
+              <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11, color: "#d4d4d8" }}>
                 {teamGraph.edges.slice(0, 24).map((ed) => (
                   <li key={ed.key} style={{ marginBottom: 4 }}>
                     {ed.a} ↔ {ed.b} · 消息 {ed.messageCount} · 工具 {ed.toolCount}
@@ -6813,6 +6823,7 @@ const TeamDashboardPanel: FC = () => {
                 ))}
               </ul>
             )}
+          </div>
           </div>
         </aside>
         <div
@@ -7743,21 +7754,14 @@ const TeamDashboardPanel: FC = () => {
             展示当前研究项目下 Agent 生成的<strong>因子 / 策略</strong>，以及当前工作流下保存的代码片段。每块支持折叠，专注当前关注的问题。
           </p>
 
-          <ResearchExploreFallbackBlock workflowRunId={workflowRunId} />
-
-          <AgentGeneratedFactorsBlock
+          <ResearchOutputTabs
             projectId={teamResearchProjectId}
             workflowRunId={workflowRunId}
-            onOpenInWorkbench={() => {
+            onOpenFactorInWorkbench={() => {
               setActiveView("quant");
               setQuantTab("factor");
             }}
-          />
-
-          <AgentGeneratedStrategiesBlock
-            projectId={teamResearchProjectId}
-            workflowRunId={workflowRunId}
-            onOpenInComposer={() => {
+            onOpenStrategyInComposer={() => {
               setActiveView("quant");
               setQuantTab("composer");
             }}
@@ -7943,7 +7947,31 @@ const teamStyles: Record<string, CSSProperties> = {
     flexDirection: "column",
     alignSelf: "stretch",
     minHeight: 0,
-    overflow: "auto",
+    /**
+     * 改 hidden（曾是 auto）：让内部分两段独立滚动 —— 上半「设置区」单独
+     * 滚动、下半「工作流列表」单独滚动，避免整个左栏成为一条超长滚动条
+     * （之前 settings 高度 + workflow list 高度叠起来动辄 1200+px）。
+     * 子区域用 leftRailScroll / leftRailFlex 两个新样式表达。
+     */
+    overflow: "hidden",
+  },
+  /** 上半「设置区」滚动容器：标题 / scope / instrument / 标的输入 / 模板 / 分析提示 */
+  leftRailSettings: {
+    flex: "0 1 auto",
+    minHeight: 0,
+    maxHeight: "55%",
+    overflowY: "auto",
+    paddingRight: 4,
+  },
+  /** 下半「工作流 + 分析师编组」滚动容器：占余高，独立滚动 */
+  leftRailWorkflows: {
+    flex: "1 1 auto",
+    minHeight: 200,
+    overflowY: "auto",
+    paddingRight: 4,
+    paddingTop: 8,
+    borderTop: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    marginTop: 8,
   },
   centerCol: {
     flex: 1,
@@ -8320,8 +8348,10 @@ const workflowListStyles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 6,
-    maxHeight: 320,
-    overflowY: "auto",
+    /**
+     * 不再设 maxHeight：列表跟随父级 leftRailWorkflows 一起滚动，
+     * 避免「外层 + 内层」两个滚动条同时存在导致 thumb 卡顿、视觉上左栏满是滚动条。
+     */
     /**
      * 禁止水平方向溢出滚动：之前长标题（如 "研究团队·单标的·AAPL·2026/5/25 18:23:38"）
      * 会把卡片撑宽、状态徽章被推到视野外，必须拖动横向滚动条才能看到。

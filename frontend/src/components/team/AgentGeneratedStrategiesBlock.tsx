@@ -17,6 +17,14 @@ export interface AgentGeneratedStrategiesBlockProps {
   workflowRunId: string;
   onOpenInComposer?: (version: StrategyVersionFlatRecord) => void;
   defaultOpen?: boolean;
+  /**
+   * 渲染外壳：
+   *   - "details"（默认）：`<details>` 折叠器
+   *   - "bare"：去掉外壳，仅渲染 body（父级 tab 控制可见性）
+   */
+  chrome?: "details" | "bare";
+  /** 策略数量变化时回调，给父级 tab 显示真实徽章 count。 */
+  onCountChange?: (count: number) => void;
 }
 
 interface StrategyRow {
@@ -50,6 +58,8 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
   workflowRunId,
   onOpenInComposer,
   defaultOpen = true,
+  chrome = "details",
+  onCountChange,
 }) => {
   const [rows, setRows] = useState<StrategyRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -155,13 +165,16 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
     [ensureCompositionsLoaded]
   );
 
+  /** count 上抛给父级 tab badge */
+  useEffect(() => {
+    onCountChange?.(rows.length);
+  }, [rows.length, onCountChange]);
+
   const summaryLabel = `Agent 生成的策略（${filtered.length}${
     selected.length > 0 ? ` · 已选 ${selected.length}` : ""
   }）`;
 
-  return (
-    <details className="qb-mcp-details" style={styles.details} open={defaultOpen}>
-      <summary style={styles.summary}>{summaryLabel}</summary>
+  const body = (
       <div style={styles.body}>
         <div style={styles.toolbar}>
           <span style={styles.scopeHint}>仅本工作流</span>
@@ -292,6 +305,16 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
           </div>
         ) : null}
       </div>
+  );
+
+  if (chrome === "bare") {
+    return body;
+  }
+
+  return (
+    <details className="qb-mcp-details" style={styles.details} open={defaultOpen}>
+      <summary style={styles.summary}>{summaryLabel}</summary>
+      {body}
     </details>
   );
 };

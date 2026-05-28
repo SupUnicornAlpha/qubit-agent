@@ -15,6 +15,14 @@ export interface AgentGeneratedFactorsBlockProps {
   onOpenInWorkbench?: (factor: FactorRecord) => void;
   /** 默认是否展开；不传则 `true`。 */
   defaultOpen?: boolean;
+  /**
+   * 渲染外壳：
+   *   - "details"（默认）：`<details>` 折叠器
+   *   - "bare"：去掉外壳，仅渲染 body（父级 tab 控制可见性）
+   */
+  chrome?: "details" | "bare";
+  /** 拉取到的因子条目数变化时回调，给父级 tab 显示真实徽章 count。 */
+  onCountChange?: (count: number) => void;
 }
 
 /**
@@ -37,6 +45,8 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
   workflowRunId,
   onOpenInWorkbench,
   defaultOpen = true,
+  chrome = "details",
+  onCountChange,
 }) => {
   const [factors, setFactors] = useState<FactorRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -97,13 +107,16 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
     });
   }, []);
 
+  /** count 上抛给父级 tab badge */
+  useEffect(() => {
+    onCountChange?.(factors.length);
+  }, [factors.length, onCountChange]);
+
   const summaryLabel = `Agent 生成的因子（${filtered.length}${
     selected.length > 0 ? ` · 已选 ${selected.length}` : ""
   }）`;
 
-  return (
-    <details className="qb-mcp-details" style={styles.details} open={defaultOpen}>
-      <summary style={styles.summary}>{summaryLabel}</summary>
+  const body = (
       <div style={styles.body}>
         <div style={styles.toolbar}>
           <span style={styles.scopeHint}>仅本工作流</span>
@@ -217,6 +230,16 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
           </div>
         ) : null}
       </div>
+  );
+
+  if (chrome === "bare") {
+    return body;
+  }
+
+  return (
+    <details className="qb-mcp-details" style={styles.details} open={defaultOpen}>
+      <summary style={styles.summary}>{summaryLabel}</summary>
+      {body}
     </details>
   );
 };
