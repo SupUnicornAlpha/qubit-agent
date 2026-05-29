@@ -5459,6 +5459,26 @@ const TeamDashboardPanel: FC = () => {
     summary: string;
   } | null>(null);
 
+  /**
+   * 中栏底部「启动设置」面板的折叠态。
+   * 默认关闭（不挡中栏内容）；当 running / 等待 HITL / 有 error 时自动展开
+   * 让用户能立刻看到「停止等待 / 跳到 HITL / 错误信息」这些关键控件。
+   * 用 onToggle 同步 React state ↔ details DOM，避免「props open 强制覆盖
+   * 用户手动折叠」的尴尬。
+   */
+  const [runControlsOpen, setRunControlsOpen] = useState(false);
+
+  /**
+   * 当出现关键运行态（running / 等待 HITL / 有 error）时强制展开启动面板，
+   * 让用户能直接看到「停止等待 / 跳到 HITL banner / 错误内容」这些关键控件。
+   * 状态消退后**不**主动关闭，由用户自行选择保留还是折叠。
+   */
+  useEffect(() => {
+    if (running || teamPendingHitl || error) {
+      setRunControlsOpen(true);
+    }
+  }, [running, teamPendingHitl, error]);
+
   const handleRun = async () => {
     if (!researchScopePayload) return;
     setError(null);
@@ -6494,318 +6514,12 @@ const TeamDashboardPanel: FC = () => {
               </p>
             ) : null}
           </div>
-          <div style={{ ...teamStyles.field, marginTop: 10 }}>
-            <label style={teamStyles.label}>分析师编组（可选）</label>
-            <select
-              style={teamStyles.input}
-              value={analystAgentGroupId}
-              onChange={(e) => setAnalystAgentGroupId(e.target.value)}
-            >
-              <option value="">默认（全部启用的分析师定义）</option>
-              {analystAgentGroupOptions.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          {enabledResearchAnalystDefCount === 0 && agentDefBundles !== null ? (
-            <div className="qb-callout qb-callout--warning" role="status" style={{ marginTop: 12 }}>
-              <div>
-                当前数据库里没有<strong>已启用</strong>的研究团队槽位定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code>、
-                <code style={{ fontSize: 11 }}>research</code>、<code style={{ fontSize: 11 }}>backtest</code>、
-                <code style={{ fontSize: 11 }}>risk</code> 等），无法启动分析。请在下方按<strong>Agent 定义</strong>勾选参与成员（与配置中心已发布定义一致）。
-              </div>
-              <div className="qb-callout__actions">
-                <button
-                  type="button"
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 12, padding: "6px 12px" }}
-                  onClick={() => {
-                    setActiveView("config");
-                    setCfgSubPage("agent");
-                  }}
-                >
-                  打开「配置中心 → Agent」
-                </button>
-                <button
-                  type="button"
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 12, padding: "6px 12px" }}
-                  onClick={() => void listAgentDefinitions().then(setAgentDefBundles)}
-                >
-                  刷新定义列表
-                </button>
-              </div>
-            </div>
-          ) : null}
-          <div
-            style={{
-              marginTop: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              flexWrap: "wrap",
-              fontSize: 11,
-              color: "var(--qb-team-meta, #a1a1aa)",
-            }}
-          >
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              等待上限
-              <input
-                type="number"
-                min={0}
-                max={720}
-                step={5}
-                value={pollTimeoutMin}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  setPollTimeoutMin(Number.isFinite(n) && n >= 0 ? n : 0);
-                }}
-                style={{
-                  width: 56,
-                  padding: "2px 6px",
-                  background: "transparent",
-                  color: "#e4e4e7",
-                  border: "1px solid #3f3f46",
-                  borderRadius: 4,
-                  fontSize: 11,
-                }}
-                title="前端等多少分钟还没结果就停止轮询。后端任务不受影响，仍会跑完并落库。0 = 不超时。"
-              />
-              分钟
-            </label>
-            {[15, 30, 60, 120, 0].map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setPollTimeoutMin(m)}
-                style={{
-                  padding: "2px 8px",
-                  fontSize: 11,
-                  background: pollTimeoutMin === m ? "#27272a" : "transparent",
-                  color: pollTimeoutMin === m ? "#f4f4f5" : "#a1a1aa",
-                  border: "1px solid #3f3f46",
-                  borderRadius: 4,
-                  cursor: "pointer",
-                }}
-              >
-                {m === 0 ? "不超时" : `${m}m`}
-              </button>
-            ))}
-            <span style={{ marginLeft: "auto", color: "#71717a" }}>
-              超时只是不再轮询，后端任务仍会继续
-            </span>
-          </div>
-          <div
-            style={{
-              marginTop: 10,
-              padding: "8px 10px",
-              border: "1px solid #3f3f46",
-              borderRadius: 6,
-              background: teamHitlMode === "off" ? "transparent" : "#1c1917",
-              fontSize: 12,
-              color: "#d4d4d8",
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-            }}
-          >
-            <span style={{ color: "#fde68a", fontWeight: 500 }}>
-              Orchestrator 人工介入（HITL）
-            </span>
-            <div style={{ display: "flex", gap: 6 }}>
-              {(
-                [
-                  { id: "off", label: "关闭", hint: "仅资金/规模/重试硬规则触发" },
-                  { id: "ai", label: "由 AI 决定", hint: "默认 — AI 觉得需要才问" },
-                  { id: "always", label: "每次都问", hint: "每次规划都人工确认" },
-                ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setTeamHitlMode(opt.id)}
-                  disabled={running}
-                  title={opt.hint}
-                  style={{
-                    flex: 1,
-                    padding: "4px 6px",
-                    fontSize: 11,
-                    border: "1px solid",
-                    borderColor: teamHitlMode === opt.id ? "#fbbf24" : "#3f3f46",
-                    background: teamHitlMode === opt.id ? "#3f2d11" : "transparent",
-                    color: teamHitlMode === opt.id ? "#fde68a" : "#a1a1aa",
-                    borderRadius: 4,
-                    cursor: running ? "not-allowed" : "pointer",
-                  }}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-            <span style={{ color: "#71717a", fontSize: 11 }}>
-              {teamHitlMode === "off"
-                ? "AI 主动询问已关闭；高风险（交易/大规模/重试）仍会暂停"
-                : teamHitlMode === "ai"
-                  ? "Orchestrator 自评 + 硬规则共同决定是否暂停"
-                  : "每次规划完成都暂停，等你批准/拒绝"}
-            </span>
-          </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button
-              type="button"
-              className="qb-btn-primary-brand"
-              style={{ flex: 1 }}
-              onClick={handleRun}
-              disabled={teamRunDisabled}
-              title={teamRunDisabledTitle}
-            >
-              {running ? "分析中…" : "启动团队分析"}
-            </button>
-            {running ? (
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                style={{ fontSize: 12, padding: "6px 12px" }}
-                onClick={handleStopWaiting}
-                title="立即停止前端轮询。后端任务不会被中断；如需中断请用「取消当前工作流」"
-              >
-                停止等待
-              </button>
-            ) : null}
-          </div>
-          {running && runProgress && (
-            <div
-              style={{
-                background: "#1e293b",
-                color: "#38bdf8",
-                fontSize: 12,
-                padding: "8px 10px",
-                marginTop: 10,
-                borderRadius: 6,
-                border: "1px solid #334155",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-            >
-              <Loader2 size={14} className="team-loader-spin" aria-hidden style={{ flexShrink: 0 }} />
-              <span>{runProgress}</span>
-            </div>
-          )}
-          {teamPendingHitl ? (
-            <button
-              type="button"
-              role="alert"
-              onClick={() => {
-                if (activeTab !== "research") setActiveTab("research");
-                const el = document.querySelector("[data-qb-team-hitl-banner]");
-                if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
-              }}
-              style={{
-                marginTop: 10,
-                padding: "10px 12px",
-                borderRadius: 6,
-                background: "#1f1d12",
-                border: "1px solid #b45309",
-                color: "#fde68a",
-                fontSize: 12,
-                textAlign: "left",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-              }}
-              title="跳到画布查看完整 HITL 卡片"
-            >
-              <span aria-hidden>⏸</span>
-              <span style={{ flex: 1, minWidth: 0, color: "#fef3c7" }}>
-                {teamPendingHitl.title || "Orchestrator 规划待人工确认"}
-              </span>
-              <span style={{ color: "#fbbf24", fontSize: 11 }}>↑ 跳到画布</span>
-            </button>
-          ) : null}
-          {error ? (
-            <div className="qb-callout qb-callout--danger" role="alert" style={{ marginTop: 10 }}>
-              <div className="qb-callout__row">
-                <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
-                <button
-                  type="button"
-                  className="qb-callout__dismiss"
-                  onClick={() => setError(null)}
-                  aria-label="关闭提示"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          ) : null}
 
-          <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-sidebar-border, #27272a)", paddingTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>
-              团队成员（画布）
-            </div>
-            <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
-              勾选配置中心已发布且启用的研究团队槽位（<code style={{ fontSize: 11 }}>analyst_*</code> 参与 MSA 融合；<code style={{ fontSize: 11 }}>research</code> / <code style={{ fontSize: 11 }}>backtest</code> / <code style={{ fontSize: 11 }}>risk*</code> 等产出辅助章节）<strong>Agent 定义</strong>参与本次分析；与上方「分析师编组」取交集（编组决定拓扑与槽位，勾选决定实际出场的定义）。
-            </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-              {participatingAnalystDefinitionIds.length === 0 ? (
-                <span style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)" }}>暂无成员，请从下方添加</span>
-              ) : (
-                participatingAnalystDefinitionIds.map((defId) => {
-                  const meta = analystDefCatalog.find((x) => x.id === defId);
-                  return (
-                    <div
-                      key={defId}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "4px 8px",
-                        borderRadius: 6,
-                        border: "1px solid var(--qb-team-input-border, #3f3f46)",
-                        fontSize: 11,
-                        color: "var(--qb-team-member-tag-fg, #e4e4e7)",
-                        background: "var(--qb-team-member-tag-bg, #18181b)",
-                      }}
-                    >
-                      <span>{meta?.displayName ?? defId.slice(0, 8)}</span>
-                      <button
-                        type="button"
-                        className="qb-btn-secondary qb-btn--icon-xs"
-                        onClick={() =>
-                          setParticipatingAnalystDefinitionIds((prev) => prev.filter((x) => x !== defId))
-                        }
-                      >
-                        −
-                      </button>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-            <select
-              style={{ ...teamStyles.input, width: "100%", fontSize: 12 }}
-              value=""
-              onChange={(e) => {
-                const v = e.target.value;
-                if (!v) return;
-                setParticipatingAnalystDefinitionIds((prev) => (prev.includes(v) ? prev : [...prev, v]));
-                e.target.value = "";
-              }}
-            >
-              <option value="">＋ 添加分析师（按定义）…</option>
-              {analystDefCatalog
-                .filter((r) => !participatingAnalystDefinitionIds.includes(r.id))
-                .map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.displayName} ({r.role})
-                  </option>
-                ))}
-            </select>
-          </div>
-
+          {/**
+           * 「分析师编组 / 等待上限 / HITL / 启动团队分析 / 团队成员（画布）」整段
+           * 已迁移到中栏底部 `<TeamRunControlsPanel>`（可折叠）。
+           * 左栏只保留工作流选择 + 拓扑只读视图，避免左栏过长 + 关键操作分散。
+           */}
           <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
             <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
@@ -7736,6 +7450,364 @@ const TeamDashboardPanel: FC = () => {
               </div>
             </div>
           </div>
+          {/**
+           * 中栏底部「启动设置」面板：从左栏迁移过来。
+           * - 默认折叠（HTML5 details 自带），点击 summary 展开
+           * - flex-shrink:0 + 顶边线让它贴在中栏底部，不参与中栏主区滚动
+           * - 包含分析师编组 / 等待上限 / HITL / 启动按钮 / 团队成员（画布）
+           */}
+          {/**
+           * 受控折叠：state `runControlsOpen` 是 source of truth，
+           * onToggle 同步用户手动展开/折叠的 DOM 状态到 state，避免 props 覆盖。
+           * useEffect 监听 running/HITL/error 出现时自动 setRunControlsOpen(true)。
+           */}
+          <details
+            className="qb-mcp-details"
+            style={teamStyles.runControlsFooter}
+            open={runControlsOpen}
+            onToggle={(e) => {
+              const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+              if (isOpen !== runControlsOpen) setRunControlsOpen(isOpen);
+            }}
+          >
+            <summary style={teamStyles.runControlsSummary}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#fde68a" }}>
+                  ⚙ 启动设置 · 团队成员
+                </span>
+                {running ? (
+                  <span style={{ fontSize: 11, color: "#38bdf8" }}>
+                    ● 分析进行中
+                  </span>
+                ) : null}
+                {teamPendingHitl ? (
+                  <span style={{ fontSize: 11, color: "#fbbf24" }}>
+                    ⏸ 等待人工确认
+                  </span>
+                ) : null}
+                {!running && !teamPendingHitl && error ? (
+                  <span style={{ fontSize: 11, color: "#fca5a5" }}>
+                    ✕ 上轮失败
+                  </span>
+                ) : null}
+              </span>
+              <span style={{ fontSize: 11, color: "#a1a1aa" }}>点击折叠/展开</span>
+            </summary>
+            <div style={teamStyles.runControlsBody}>
+              <div style={teamStyles.runControlsGrid}>
+                <div style={{ ...teamStyles.field, marginTop: 0 }}>
+                  <label style={teamStyles.label}>分析师编组（可选）</label>
+                  <select
+                    style={teamStyles.input}
+                    value={analystAgentGroupId}
+                    onChange={(e) => setAnalystAgentGroupId(e.target.value)}
+                  >
+                    <option value="">默认（全部启用的分析师定义）</option>
+                    {analystAgentGroupOptions.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    fontSize: 11,
+                    color: "var(--qb-team-meta, #a1a1aa)",
+                  }}
+                >
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    等待上限
+                    <input
+                      type="number"
+                      min={0}
+                      max={720}
+                      step={5}
+                      value={pollTimeoutMin}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        setPollTimeoutMin(Number.isFinite(n) && n >= 0 ? n : 0);
+                      }}
+                      style={{
+                        width: 56,
+                        padding: "2px 6px",
+                        background: "transparent",
+                        color: "#e4e4e7",
+                        border: "1px solid #3f3f46",
+                        borderRadius: 4,
+                        fontSize: 11,
+                      }}
+                      title="前端等多少分钟还没结果就停止轮询。后端任务不受影响，仍会跑完并落库。0 = 不超时。"
+                    />
+                    分钟
+                  </label>
+                  {[15, 30, 60, 120, 0].map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPollTimeoutMin(m)}
+                      style={{
+                        padding: "2px 8px",
+                        fontSize: 11,
+                        background: pollTimeoutMin === m ? "#27272a" : "transparent",
+                        color: pollTimeoutMin === m ? "#f4f4f5" : "#a1a1aa",
+                        border: "1px solid #3f3f46",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {m === 0 ? "不超时" : `${m}m`}
+                    </button>
+                  ))}
+                  <span style={{ marginLeft: "auto", color: "#71717a" }}>
+                    超时只是不再轮询，后端任务仍会继续
+                  </span>
+                </div>
+              </div>
+              {enabledResearchAnalystDefCount === 0 && agentDefBundles !== null ? (
+                <div className="qb-callout qb-callout--warning" role="status" style={{ marginTop: 10 }}>
+                  <div>
+                    当前数据库里没有<strong>已启用</strong>的研究团队槽位定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code>、
+                    <code style={{ fontSize: 11 }}>research</code>、<code style={{ fontSize: 11 }}>backtest</code>、
+                    <code style={{ fontSize: 11 }}>risk</code> 等），无法启动分析。请在下方按<strong>Agent 定义</strong>勾选参与成员（与配置中心已发布定义一致）。
+                  </div>
+                  <div className="qb-callout__actions">
+                    <button
+                      type="button"
+                      className="qb-btn-secondary"
+                      style={{ fontSize: 12, padding: "6px 12px" }}
+                      onClick={() => {
+                        setActiveView("config");
+                        setCfgSubPage("agent");
+                      }}
+                    >
+                      打开「配置中心 → Agent」
+                    </button>
+                    <button
+                      type="button"
+                      className="qb-btn-secondary"
+                      style={{ fontSize: 12, padding: "6px 12px" }}
+                      onClick={() => void listAgentDefinitions().then(setAgentDefBundles)}
+                    >
+                      刷新定义列表
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "8px 10px",
+                  border: "1px solid #3f3f46",
+                  borderRadius: 6,
+                  background: teamHitlMode === "off" ? "transparent" : "#1c1917",
+                  fontSize: 12,
+                  color: "#d4d4d8",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <span style={{ color: "#fde68a", fontWeight: 500 }}>
+                  Orchestrator 人工介入（HITL）
+                </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {(
+                    [
+                      { id: "off", label: "关闭", hint: "仅资金/规模/重试硬规则触发" },
+                      { id: "ai", label: "由 AI 决定", hint: "默认 — AI 觉得需要才问" },
+                      { id: "always", label: "每次都问", hint: "每次规划都人工确认" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setTeamHitlMode(opt.id)}
+                      disabled={running}
+                      title={opt.hint}
+                      style={{
+                        flex: 1,
+                        padding: "4px 6px",
+                        fontSize: 11,
+                        border: "1px solid",
+                        borderColor: teamHitlMode === opt.id ? "#fbbf24" : "#3f3f46",
+                        background: teamHitlMode === opt.id ? "#3f2d11" : "transparent",
+                        color: teamHitlMode === opt.id ? "#fde68a" : "#a1a1aa",
+                        borderRadius: 4,
+                        cursor: running ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <span style={{ color: "#71717a", fontSize: 11 }}>
+                  {teamHitlMode === "off"
+                    ? "AI 主动询问已关闭；高风险（交易/大规模/重试）仍会暂停"
+                    : teamHitlMode === "ai"
+                      ? "Orchestrator 自评 + 硬规则共同决定是否暂停"
+                      : "每次规划完成都暂停，等你批准/拒绝"}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="qb-btn-primary-brand"
+                  style={{ flex: 1 }}
+                  onClick={handleRun}
+                  disabled={teamRunDisabled}
+                  title={teamRunDisabledTitle}
+                >
+                  {running ? "分析中…" : "启动团队分析"}
+                </button>
+                {running ? (
+                  <button
+                    type="button"
+                    className="qb-btn-secondary"
+                    style={{ fontSize: 12, padding: "6px 12px" }}
+                    onClick={handleStopWaiting}
+                    title="立即停止前端轮询。后端任务不会被中断；如需中断请用「取消当前工作流」"
+                  >
+                    停止等待
+                  </button>
+                ) : null}
+              </div>
+              {running && runProgress && (
+                <div
+                  style={{
+                    background: "#1e293b",
+                    color: "#38bdf8",
+                    fontSize: 12,
+                    padding: "8px 10px",
+                    marginTop: 10,
+                    borderRadius: 6,
+                    border: "1px solid #334155",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Loader2 size={14} className="team-loader-spin" aria-hidden style={{ flexShrink: 0 }} />
+                  <span>{runProgress}</span>
+                </div>
+              )}
+              {teamPendingHitl ? (
+                <button
+                  type="button"
+                  role="alert"
+                  onClick={() => {
+                    if (activeTab !== "research") setActiveTab("research");
+                    const el = document.querySelector("[data-qb-team-hitl-banner]");
+                    if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                  style={{
+                    marginTop: 10,
+                    padding: "10px 12px",
+                    borderRadius: 6,
+                    background: "#1f1d12",
+                    border: "1px solid #b45309",
+                    color: "#fde68a",
+                    fontSize: 12,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                  title="跳到画布查看完整 HITL 卡片"
+                >
+                  <span aria-hidden>⏸</span>
+                  <span style={{ flex: 1, minWidth: 0, color: "#fef3c7" }}>
+                    {teamPendingHitl.title || "Orchestrator 规划待人工确认"}
+                  </span>
+                  <span style={{ color: "#fbbf24", fontSize: 11 }}>↑ 跳到画布</span>
+                </button>
+              ) : null}
+              {error ? (
+                <div className="qb-callout qb-callout--danger" role="alert" style={{ marginTop: 10 }}>
+                  <div className="qb-callout__row">
+                    <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
+                    <button
+                      type="button"
+                      className="qb-callout__dismiss"
+                      onClick={() => setError(null)}
+                      aria-label="关闭提示"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-sidebar-border, #27272a)", paddingTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>
+                  团队成员（画布）
+                </div>
+                <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
+                  勾选配置中心已发布且启用的研究团队槽位（<code style={{ fontSize: 11 }}>analyst_*</code> 参与 MSA 融合；<code style={{ fontSize: 11 }}>research</code> / <code style={{ fontSize: 11 }}>backtest</code> / <code style={{ fontSize: 11 }}>risk*</code> 等产出辅助章节）<strong>Agent 定义</strong>参与本次分析；与上方「分析师编组」取交集（编组决定拓扑与槽位，勾选决定实际出场的定义）。
+                </p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {participatingAnalystDefinitionIds.length === 0 ? (
+                    <span style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)" }}>暂无成员，请从下方添加</span>
+                  ) : (
+                    participatingAnalystDefinitionIds.map((defId) => {
+                      const meta = analystDefCatalog.find((x) => x.id === defId);
+                      return (
+                        <div
+                          key={defId}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            border: "1px solid var(--qb-team-input-border, #3f3f46)",
+                            fontSize: 11,
+                            color: "var(--qb-team-member-tag-fg, #e4e4e7)",
+                            background: "var(--qb-team-member-tag-bg, #18181b)",
+                          }}
+                        >
+                          <span>{meta?.displayName ?? defId.slice(0, 8)}</span>
+                          <button
+                            type="button"
+                            className="qb-btn-secondary qb-btn--icon-xs"
+                            onClick={() =>
+                              setParticipatingAnalystDefinitionIds((prev) => prev.filter((x) => x !== defId))
+                            }
+                          >
+                            −
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+                <select
+                  style={{ ...teamStyles.input, width: "100%", fontSize: 12 }}
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    setParticipatingAnalystDefinitionIds((prev) => (prev.includes(v) ? prev : [...prev, v]));
+                    e.target.value = "";
+                  }}
+                >
+                  <option value="">＋ 添加分析师（按定义）…</option>
+                  {analystDefCatalog
+                    .filter((r) => !participatingAnalystDefinitionIds.includes(r.id))
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.displayName} ({r.role})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+          </details>
         </div>
 
         <div
@@ -7997,6 +8069,53 @@ const teamStyles: Record<string, CSSProperties> = {
     flex: 1,
     minHeight: 0,
     minWidth: 0,
+  },
+  /**
+   * 中栏底部「启动设置」面板：贴在 ideCenterWrap 下方。
+   * - flexShrink: 0：不参与中栏主区滚动，永远占自然高度
+   * - 顶部加 borderTop 视觉分隔
+   * - background 比中栏主区稍亮，提示这是个独立操作区
+   */
+  runControlsFooter: {
+    flexShrink: 0,
+    borderTop: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    background: "var(--qb-team-run-footer-bg, rgba(255, 255, 255, 0.02))",
+    margin: 0,
+    borderRadius: 0,
+    maxHeight: "55%",
+    overflow: "auto",
+  },
+  runControlsSummary: {
+    listStyle: "none",
+    cursor: "pointer",
+    padding: "10px 16px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    fontSize: 12,
+    color: "#cbd5e1",
+    userSelect: "none",
+    position: "sticky",
+    top: 0,
+    background: "var(--qb-team-run-footer-summary-bg, #16161a)",
+    zIndex: 1,
+  },
+  runControlsBody: {
+    padding: "8px 16px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+  },
+  /**
+   * 上半"分析师编组 + 等待上限"两列响应式 grid：宽够时左右排，窄时折回单列。
+   * 让中栏底部 panel 在常规屏幕利用横向空间。
+   */
+  runControlsGrid: {
+    display: "grid",
+    gridTemplateColumns: "minmax(220px, 1fr) minmax(260px, 1.6fr)",
+    gap: 12,
+    alignItems: "start",
   },
   teamActivityBar: {
     width: 52,
