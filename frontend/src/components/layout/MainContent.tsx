@@ -56,14 +56,12 @@ import {
   listAgentGroups,
   listChatSessions,
   listMonitorWorkflows,
-  listStrategyScripts,
   getWorkflowArtifacts,
   saveWorkflowReportArtifact,
   listIntentOrders,
   listProjects,
   listSessionMessages,
   listWorkspaces,
-  createStrategyScript,
   patchSessionMessage,
   patchWorkflow,
   reloadAgents,
@@ -139,7 +137,6 @@ import type {
   StrategyGenomeRecord,
   StepStreamEvent,
   BuiltinConnectorConfig,
-  IndicatorStrategyScriptRecord,
   AgentLoopKind,
 } from "../../api/types";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
@@ -197,7 +194,6 @@ import {
 import { ResizableY } from "../team/ResizableY";
 import { TeamHitlBanner } from "../team/TeamHitlBanner";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
-import { TokyoCodeView } from "../code/TokyoCodeEditor";
 import {
   classifyWorkflow,
   groupWorkflowOptions,
@@ -4491,20 +4487,6 @@ function formatDebateStreamLine(ev: DebateStreamEvent): string {
   }
 }
 
-function extractFencedCodeBlocks(report: string): Array<{ lang: string; code: string }> {
-  if (!report?.trim()) return [];
-  const re = /```(\w+)?\s*\n([\s\S]*?)```/g;
-  const out: Array<{ lang: string; code: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(report)) !== null) {
-    const lang = ((m[1] ?? "").trim() || "text").toLowerCase();
-    const code = (m[2] ?? "").trim();
-    if (!code) continue;
-    out.push({ lang, code });
-  }
-  return out;
-}
-
 /** 研究团队中间栏侧栏自上而下：研究画布、成员目录、工具与配置 */
 const TEAM_CENTER_VIEWS = ["research", "roles", "run"] as const;
 type TeamCenterView = (typeof TEAM_CENTER_VIEWS)[number];
@@ -4844,21 +4826,17 @@ const TeamDashboardPanel: FC = () => {
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
   const [participatingAnalystDefinitionIds, setParticipatingAnalystDefinitionIds] = useState<string[]>([]);
-  const [strategyScripts, setStrategyScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
-  const [workflowArtifactHint, setWorkflowArtifactHint] = useState<string>("");
-  const [teamCodePick, setTeamCodePick] = useState<string>("");
+  /**
+   * 注：原 `strategyScripts` / `workflowArtifactHint` / `teamCodePick` / 多个 store
+   * setter 服务于已删除的「策略与代码」details 块；state / handler / setter 全部
+   * 清理。需要把 Agent 产出的代码片段拉到 IDE / 实盘页时，请走量化工坊（onOpenStrategyInComposer）。
+   */
   const [agentDefBundles, setAgentDefBundles] = useState<AgentDefinitionBundle[] | null>(null);
   const [teamResearchProjectId, setTeamResearchProjectId] = useState("");
   const [teamResearchSessionId, setTeamResearchSessionId] = useState("");
   const setActiveView = useAppStore((s) => s.setActiveView);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
   const setCfgSubPage = useAppStore((s) => s.setConfigSubPage);
-  const setIdeSignalPythonCode = useAppStore((s) => s.setIdeSignalPythonCode);
-  const setIdeStrategySource = useAppStore((s) => s.setIdeStrategySource);
-  const setChartSpec = useAppStore((s) => s.setChartSpec);
-  const toggleIdePanelVisible = useAppStore((s) => s.toggleIdePanelVisible);
-  const setSelectedSessionId = useAppStore((s) => s.setSelectedSessionId);
-  const setTraderAgentConfig = useAppStore((s) => s.setTraderAgentConfig);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -5280,20 +5258,12 @@ const TeamDashboardPanel: FC = () => {
     setParticipatingAnalystDefinitionIds((prev) => (prev.length > 0 ? prev : ids));
   }, [agentDefBundles]);
 
-  /** 切换工作流：加载该工作流绑定的策略脚本、磁盘报告与融合摘要 */
+  /** 切换工作流：加载该工作流的磁盘报告与融合摘要（策略脚本列表已下放到量化工坊） */
   useEffect(() => {
     const wf = workflowRunId.trim();
     if (!wf) {
-      setStrategyScripts([]);
-      setWorkflowArtifactHint("");
       setResult(null);
       return;
-    }
-    const sid = workflowSessionId.trim() || teamResearchSessionId.trim();
-    if (sid) {
-      void listStrategyScripts(sid, { workflowRunId: wf }).then(setStrategyScripts);
-    } else {
-      setStrategyScripts([]);
     }
     let cancelled = false;
     void (async () => {
@@ -5301,7 +5271,6 @@ const TeamDashboardPanel: FC = () => {
       try {
         const artifacts = await getWorkflowArtifacts(wf);
         if (cancelled) return;
-        setWorkflowArtifactHint(artifacts.workflowDir);
         const fusion = await getSignalFusion(wf).catch(() => null);
         if (cancelled) return;
         const reportBody =
@@ -5334,13 +5303,13 @@ const TeamDashboardPanel: FC = () => {
           });
         }
       } catch {
-        if (!cancelled) setWorkflowArtifactHint("");
+        /* artifacts/fusion 拉不到时静默；result 已被设为 null 兜底 */
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [workflowRunId, workflowSessionId, teamResearchSessionId]);
+  }, [workflowRunId]);
 
   useEffect(() => {
     const onMove = (e: globalThis.MouseEvent) => {
@@ -5646,49 +5615,6 @@ const TeamDashboardPanel: FC = () => {
     }
   };
 
-  const reportCodeBlocks = useMemo(() => extractFencedCodeBlocks(result?.report ?? ""), [result?.report]);
-
-  const teamCodeSelectOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [];
-    for (const s of strategyScripts) {
-      opts.push({ value: `script:${s.id}`, label: `已保存 · ${s.name}` });
-    }
-    reportCodeBlocks.forEach((b, i) => {
-      opts.push({
-        value: `snippet:${i}`,
-        label: `报告代码块 · ${b.lang} · ${(b.code.length / 1024).toFixed(1)} KB`,
-      });
-    });
-    return opts;
-  }, [strategyScripts, reportCodeBlocks]);
-
-  useEffect(() => {
-    const opts = teamCodeSelectOptions;
-    if (opts.length === 0) {
-      setTeamCodePick("");
-      return;
-    }
-    setTeamCodePick((prev) => (prev && opts.some((o) => o.value === prev) ? prev : opts[0].value));
-  }, [teamCodeSelectOptions]);
-
-  const getPickedTeamCode = useCallback((): { ide: string; signal: string } | null => {
-    if (!teamCodePick) return null;
-    if (teamCodePick.startsWith("script:")) {
-      const id = teamCodePick.slice("script:".length);
-      const s = strategyScripts.find((x) => x.id === id);
-      if (!s) return null;
-      return { ide: s.ideCode ?? "", signal: s.signalCode ?? "" };
-    }
-    if (teamCodePick.startsWith("snippet:")) {
-      const i = Number(teamCodePick.slice("snippet:".length));
-      const b = reportCodeBlocks[i];
-      if (!b) return null;
-      const isPy = b.lang === "python" || b.lang === "py";
-      return isPy ? { ide: "", signal: b.code } : { ide: b.code, signal: "" };
-    }
-    return null;
-  }, [teamCodePick, strategyScripts, reportCodeBlocks]);
-
   const handleCreateTeamWorkflow = async () => {
     if (!teamResearchProjectId || !teamResearchSessionId) {
       setError("尚未解析到默认项目/会话，无法创建工作流。请检查工作区是否可用。");
@@ -5805,77 +5731,6 @@ const TeamDashboardPanel: FC = () => {
     try {
       await patchWorkflow(workflowRunId.trim(), { sessionId: teamResearchSessionId });
       await refreshWorkflowOptions();
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleTeamOpenIde = () => {
-    const p = getPickedTeamCode();
-    if (!p) return;
-    const code = (p.signal || p.ide).trim();
-    if (!code) {
-      setError("当前选中项没有可写入 IDE 的代码内容");
-      return;
-    }
-    setError(null);
-    setIdeSignalPythonCode(code);
-    if (p.ide.trim()) setIdeStrategySource(p.ide);
-    setChartSpec({ symbol: ticker.trim() });
-    setActiveView("ide");
-    const { idePanels } = useAppStore.getState();
-    if (!idePanels.backtest) toggleIdePanelVisible("backtest");
-  };
-
-  const handleTeamSaveStrategyScript = async () => {
-    const sid = (workflowSessionId || teamResearchSessionId).trim();
-    const p = getPickedTeamCode();
-    if (!sid) {
-      setError("需要关联到聊天会话后才能保存策略脚本（请选择带 session 的工作流或先「关联默认会话」）。");
-      return;
-    }
-    if (!p) return;
-    setError(null);
-    try {
-      const wf = workflowRunId.trim() || undefined;
-      const created = await createStrategyScript(sid, {
-        name: `研究团队 · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`,
-        ideCode: p.ide || "",
-        signalCode: p.signal || p.ide || "",
-        workflowRunId: wf,
-        purpose: "both",
-      });
-      const rows = wf
-        ? await listStrategyScripts(sid, { workflowRunId: wf })
-        : await listStrategyScripts(sid);
-      setStrategyScripts(rows);
-      if (created.artifactDir) setWorkflowArtifactHint(created.artifactDir);
-      setTeamCodePick(`script:${created.id}`);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleTeamGoLive = async () => {
-    const sid = (workflowSessionId || teamResearchSessionId).trim();
-    const p = getPickedTeamCode();
-    if (!sid || !p) {
-      setError("需要会话与有效代码片段才能入库并跳转实盘页。");
-      return;
-    }
-    setError(null);
-    try {
-      const wf = workflowRunId.trim() || undefined;
-      const created = await createStrategyScript(sid, {
-        name: `研究团队实盘 · ${ticker.trim() || "标的"} · ${new Date().toLocaleString()}`,
-        ideCode: p.ide || "",
-        signalCode: p.signal || p.ide || "",
-        workflowRunId: wf,
-        purpose: "live_trading",
-      });
-      setTraderAgentConfig({ strategyScriptIds: [created.id] });
-      setSelectedSessionId(sid);
-      setActiveView("trader");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -7916,116 +7771,11 @@ const TeamDashboardPanel: FC = () => {
             }}
           />
 
-          <details className="qb-mcp-details" style={{ ...teamStyles.codeDetails, flex: 1, minHeight: 0 }}>
-            <summary style={teamStyles.codeDetailsSummary}>
-              策略与代码{teamCodeSelectOptions.length > 0 ? `（${teamCodeSelectOptions.length}）` : ""}
-            </summary>
-            <div
-              style={{
-                padding: "0 12px 12px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                flex: 1,
-                minHeight: 0,
-              }}
-            >
-              <p style={{ fontSize: 11, color: "#71717a", marginBottom: 4, lineHeight: 1.45 }}>
-                与<strong>当前工作流</strong>绑定：仅显示该工作流下已保存的脚本，以及本工作流分析报告中的代码块。保存脚本会写入数据库并同步到本机{" "}
-                <code>~/.quant-agent/projects/…/workflows/&lt;id&gt;/</code> 目录。
-              </p>
-              {workflowArtifactHint ? (
-                <p style={{ fontSize: 10, color: "#52525b", marginBottom: 4, wordBreak: "break-all" }}>
-                  工作流目录: {workflowArtifactHint}
-                </p>
-              ) : null}
-              {teamCodeSelectOptions.length === 0 ? (
-                <div style={{ fontSize: 12, color: "#71717a" }}>
-                  暂无可用片段：请先运行团队分析（报告含 ``` 代码块时会出现），或在绑定会话的工作流下于 IDE 保存策略脚本。
-                </div>
-              ) : (
-                <>
-                  <label style={{ ...teamStyles.label, marginBottom: 4 }}>选择代码来源</label>
-                  <select
-                    style={{ ...teamStyles.input, width: "100%", marginBottom: 10 }}
-                    value={teamCodePick}
-                    onChange={(e) => setTeamCodePick(e.target.value)}
-                  >
-                    {teamCodeSelectOptions.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                  {(() => {
-                    const p = getPickedTeamCode();
-                    if (!p) return null;
-                    const hasIde = Boolean(p.ide.trim());
-                    const hasSig = Boolean(p.signal.trim());
-                    return (
-                      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          <button
-                            type="button"
-                            className="qb-btn-secondary"
-                            style={{ fontSize: 12, padding: "6px 10px" }}
-                            onClick={() => handleTeamOpenIde()}
-                            disabled={!hasSig && !hasIde}
-                          >
-                            在 IDE 中打开
-                          </button>
-                          <button
-                            type="button"
-                            className="qb-btn-secondary"
-                            style={{ fontSize: 12, padding: "6px 10px" }}
-                            onClick={() => void handleTeamSaveStrategyScript()}
-                            disabled={!hasSig && !hasIde}
-                          >
-                            保存为策略脚本
-                          </button>
-                          <button
-                            type="button"
-                            className="qb-btn-primary-brand"
-                            style={{ fontSize: 12, padding: "6px 10px" }}
-                            onClick={() => void handleTeamGoLive()}
-                            disabled={!hasSig && !hasIde}
-                          >
-                            去实盘页
-                          </button>
-                        </div>
-                        {hasIde ? (
-                          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>IDE / 指标代码</div>
-                            <TokyoCodeView
-                              code={p.ide}
-                              language="python"
-                              filename="strategy_ide.py"
-                              flex={1}
-                              minHeight={80}
-                              maxHeight="28vh"
-                            />
-                          </div>
-                        ) : null}
-                        {hasSig ? (
-                          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1" }}>Python 信号 / 回测代码</div>
-                            <TokyoCodeView
-                              code={p.signal}
-                              language="python"
-                              filename="signal.py"
-                              flex={1}
-                              minHeight={100}
-                              maxHeight="36vh"
-                            />
-                          </div>
-                        ) : null}
-                      </div>
-                    );
-                  })()}
-                </>
-              )}
-            </div>
-          </details>
+          {/**
+           * 注：原「策略与代码」details 块已删除。
+           * 草稿 / 因子 / 策略 都通过上方 ResearchOutputTabs 切换查看；
+           * 实盘转发交给量化工坊（onOpenStrategyInComposer 入口）。
+           */}
         </aside>
       </div>
       </div>
@@ -8044,24 +7794,6 @@ const teamStyles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
   },
-  codeDetails: {
-    marginBottom: 10,
-    border: "1px solid var(--qb-mcp-details-border, #27272a)",
-    borderRadius: 8,
-    background: "var(--qb-mcp-details-bg, #111114)",
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-  },
-  codeDetailsSummary: {
-    cursor: "pointer",
-    padding: "10px 12px",
-    fontSize: 13,
-    fontWeight: 600,
-    color: "var(--qb-main-meta, #e4e4e7)",
-    userSelect: "none",
-    listStyle: "none",
-  } as CSSProperties,
   teamWorkbenchShell: {
     flex: 1,
     minHeight: 0,
