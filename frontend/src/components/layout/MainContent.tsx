@@ -1,6 +1,6 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { Loader2, Network, Rocket, Users, type LucideIcon } from "lucide-react";
+import { Loader2, Network, Rocket, Settings, Users, type LucideIcon } from "lucide-react";
 import {
   chatHealth,
   checkBrokerHealth,
@@ -4731,6 +4731,63 @@ const TeamDashboardPanel: FC = () => {
   const [workflowListQuery, setWorkflowListQuery] = useState("");
   const [workflowStatusFilter, setWorkflowStatusFilter] = useState<string>("all");
   const [activeTab, setActiveTab] = useState<TeamCenterView>("research");
+
+  /**
+   * 团队页面 tab 可见性。每个 tab 默认可见；用户可通过中栏 nav 末尾的齿轮
+   * popover 隐藏不关心的 tab，状态写到 localStorage 持久化。
+   * - 至少保留一个可见 tab，避免「全部隐藏 → nav 空白没法操作」
+   * - 当当前 active tab 被隐藏时，自动跳到第一个可见 tab
+   */
+  const TEAM_VIEW_VISIBILITY_LS_KEY = "qubit-agent.teamCenterView.hidden.v1";
+  const [hiddenTeamViews, setHiddenTeamViews] = useState<Set<TeamCenterView>>(() => {
+    try {
+      const raw = localStorage.getItem(TEAM_VIEW_VISIBILITY_LS_KEY);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return new Set();
+      const allowed = new Set(TEAM_CENTER_VIEWS);
+      return new Set(arr.filter((v): v is TeamCenterView => allowed.has(v as TeamCenterView)));
+    } catch {
+      return new Set();
+    }
+  });
+  const visibleTeamViews = useMemo(
+    () => TEAM_CENTER_VIEWS.filter((v) => !hiddenTeamViews.has(v)),
+    [hiddenTeamViews],
+  );
+  const persistHiddenTeamViews = useCallback((next: Set<TeamCenterView>) => {
+    try {
+      localStorage.setItem(TEAM_VIEW_VISIBILITY_LS_KEY, JSON.stringify([...next]));
+    } catch {
+      /* localStorage 不可用 / quota exceeded 时静默；UI 状态本地仍然生效 */
+    }
+  }, []);
+  const toggleTeamViewVisibility = useCallback(
+    (view: TeamCenterView) => {
+      setHiddenTeamViews((prev) => {
+        const next = new Set(prev);
+        if (next.has(view)) {
+          next.delete(view);
+        } else {
+          if (TEAM_CENTER_VIEWS.length - next.size <= 1) {
+            return prev;
+          }
+          next.add(view);
+        }
+        persistHiddenTeamViews(next);
+        return next;
+      });
+    },
+    [persistHiddenTeamViews],
+  );
+  /** active tab 被隐藏时跳到第一个可见 tab */
+  useEffect(() => {
+    if (hiddenTeamViews.has(activeTab) && visibleTeamViews.length > 0) {
+      const first = visibleTeamViews[0];
+      if (first) setActiveTab(first);
+    }
+  }, [hiddenTeamViews, activeTab, visibleTeamViews]);
+  const [teamViewMenuOpen, setTeamViewMenuOpen] = useState(false);
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
     confidenceThreshold: 0.55,
     maxRounds: 2,
@@ -5106,8 +5163,25 @@ const TeamDashboardPanel: FC = () => {
       hotRoles.add(row.toRole);
       hotEdgeKeys.add(teamGraphUndirectedKey(row.fromRole, row.toRole));
     }
-    return { hotRoles, hotEdgeKeys, isRunning: running };
-  }, [filteredGraphDisplay?.interactions, running]);
+    /**
+     * 心跳信号也并入 hotRoles：
+     *   alive=true 且 silenceMs < 60s 的 role 视为活跃（节点会脉冲高亮）。
+     * 这样删除左栏「Agent 心跳」展示之后，活跃状态直接由拓扑节点呈现。
+     * isRunning 也合并：只要有任何 alive heartbeat 就视为运行中（前端 `running`
+     * flag 在 polling 超时后会变 false，但 backend 实际还在跑，这时心跳能托底）。
+     */
+    let hasAliveHeartbeat = false;
+    if (agentHeartbeats?.heartbeats?.length) {
+      for (const hb of agentHeartbeats.heartbeats) {
+        if (!hb.alive) continue;
+        const silent = hb.silenceMs;
+        if (silent != null && silent > 60_000) continue;
+        if (hb.role) hotRoles.add(hb.role);
+        hasAliveHeartbeat = true;
+      }
+    }
+    return { hotRoles, hotEdgeKeys, isRunning: running || hasAliveHeartbeat };
+  }, [filteredGraphDisplay?.interactions, running, agentHeartbeats]);
 
   const enabledResearchAnalystDefCount = useMemo(() => {
     if (agentDefBundles == null) return null;
@@ -6425,73 +6499,40 @@ const TeamDashboardPanel: FC = () => {
                 <code style={{ fontSize: 10 }}>{String(selectedWorkflowRow.id)}</code>
               </p>
             ) : null}
-            {agentHeartbeats && agentHeartbeats.heartbeats.length > 0 ? (
+            {/**
+             * 注：原「Agent 心跳」明细列表已删除。
+             * 心跳数据 `agentHeartbeats` 仍由 SSE 推流维持，已合并进
+             * `teamGraphActivity.hotRoles` —— 拓扑画布上 alive 且 silenceMs<60s
+             * 的 Agent 节点会高亮 + 脉冲，作为活跃可视化的唯一信号源。
+             */}
+            {agentHeartbeats && agentHeartbeats.summary.aliveAgents > 0 && running ? (
               <div
                 style={{
                   marginTop: 8,
-                  padding: "8px 10px",
+                  padding: "5px 10px",
                   borderRadius: 6,
-                  background: "var(--qb-team-heartbeat-bg, #1a1a1f)",
-                  border: "1px solid var(--qb-team-heartbeat-border, #2a2a2f)",
-                  fontSize: 11,
-                  lineHeight: 1.5,
+                  background: "rgba(34, 197, 94, 0.08)",
+                  border: "1px solid rgba(34, 197, 94, 0.25)",
+                  fontSize: 10,
+                  color: "#86efac",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
                 }}
+                title="拓扑画布节点会脉冲高亮显示活跃 Agent"
               >
-                <div
+                <span
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 6,
+                    display: "inline-block",
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: "#22c55e",
+                    boxShadow: "0 0 6px rgba(34, 197, 94, 0.65)",
                   }}
-                >
-                  <strong style={{ color: "#a1a1aa" }}>
-                    Agent 心跳（{agentHeartbeats.summary.aliveAgents}/{agentHeartbeats.summary.totalAgents} 活跃）
-                  </strong>
-                  <span style={{ fontSize: 10, color: "#71717a" }}>
-                    总 steps {agentHeartbeats.summary.totalSteps}
-                    {agentHeartbeats.summary.silenceMs != null
-                      ? ` · ${Math.round(agentHeartbeats.summary.silenceMs / 1000)}s 前`
-                      : ""}
-                  </span>
-                </div>
-                {agentHeartbeats.heartbeats.map((hb) => {
-                  const sec = hb.silenceMs != null ? Math.round(hb.silenceMs / 1000) : null;
-                  const color = !hb.alive
-                    ? "#52525b"
-                    : sec == null
-                      ? "#71717a"
-                      : sec < 30
-                        ? "#22c55e"
-                        : sec < 120
-                          ? "#f59e0b"
-                          : "#ef4444";
-                  return (
-                    <div
-                      key={hb.instanceId}
-                      style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}
-                    >
-                      <span
-                        style={{
-                          display: "inline-block",
-                          width: 8,
-                          height: 8,
-                          borderRadius: "50%",
-                          background: color,
-                          flexShrink: 0,
-                        }}
-                      />
-                      <span style={{ flex: 1, color: "#d4d4d8", fontWeight: 500 }}>{hb.role}</span>
-                      <span style={{ color: "#a1a1aa" }}>iter {hb.currentIteration ?? 0}</span>
-                      <span style={{ color: "#71717a", minWidth: 56, textAlign: "right" }}>
-                        {hb.lastPhase ?? "—"}
-                      </span>
-                      <span style={{ color, minWidth: 48, textAlign: "right" }}>
-                        {!hb.alive ? "已结束" : sec == null ? "—" : `${sec}s`}
-                      </span>
-                    </div>
-                  );
-                })}
+                />
+                {agentHeartbeats.summary.aliveAgents}/{agentHeartbeats.summary.totalAgents} Agent
+                活跃中（详见画布脉冲节点）
               </div>
             ) : null}
             {workflowRunId.trim() && !workflowSessionId ? (
@@ -6544,7 +6585,7 @@ const TeamDashboardPanel: FC = () => {
         <div style={teamStyles.centerCol}>
           <div style={teamStyles.ideCenterWrap}>
             <nav style={teamStyles.teamActivityBar} aria-label="研究团队视图">
-              {TEAM_CENTER_VIEWS.map((t) => (
+              {visibleTeamViews.map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -6569,6 +6610,110 @@ const TeamDashboardPanel: FC = () => {
                   })()}
                 </button>
               ))}
+              {/**
+               * 齿轮按钮：展开 popover 让用户勾选哪些 tab 显示。
+               * 至少保留一个可见 tab（toggleTeamViewVisibility 内已兜底）。
+               * 可见性写入 localStorage 持久化。
+               */}
+              <div style={{ marginTop: "auto", position: "relative" }}>
+                <button
+                  type="button"
+                  title="管理 Tab 显示"
+                  aria-haspopup="menu"
+                  aria-expanded={teamViewMenuOpen}
+                  onClick={() => setTeamViewMenuOpen((v) => !v)}
+                  style={{
+                    ...teamStyles.teamActBtn,
+                    ...(teamViewMenuOpen ? teamStyles.teamActBtnActive : {}),
+                  }}
+                >
+                  <Settings size={18} strokeWidth={1.75} color="currentColor" aria-hidden />
+                </button>
+                {teamViewMenuOpen ? (
+                  <>
+                    {/* 点空白处关闭 popover */}
+                    <div
+                      onClick={() => setTeamViewMenuOpen(false)}
+                      style={{
+                        position: "fixed",
+                        inset: 0,
+                        zIndex: 20,
+                        background: "transparent",
+                      }}
+                    />
+                    <div
+                      role="menu"
+                      style={{
+                        position: "absolute",
+                        left: "calc(100% + 6px)",
+                        bottom: 0,
+                        zIndex: 21,
+                        minWidth: 240,
+                        padding: "8px 10px",
+                        background: "var(--qb-team-input-bg, #15151a)",
+                        border: "1px solid var(--qb-team-input-border, #2d2d32)",
+                        borderRadius: 8,
+                        boxShadow: "0 12px 28px rgba(0, 0, 0, 0.45)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "#a1a1aa",
+                          fontWeight: 600,
+                          padding: "2px 4px",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        显示哪些 Tab
+                      </div>
+                      {TEAM_CENTER_VIEWS.map((t) => {
+                        const visible = !hiddenTeamViews.has(t);
+                        const lastVisible = visibleTeamViews.length === 1 && visible;
+                        return (
+                          <label
+                            key={t}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              padding: "5px 4px",
+                              fontSize: 12,
+                              color: "#e4e4e7",
+                              cursor: lastVisible ? "not-allowed" : "pointer",
+                              opacity: lastVisible ? 0.55 : 1,
+                            }}
+                            title={lastVisible ? "至少保留一个 Tab 可见" : ""}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={visible}
+                              disabled={lastVisible}
+                              onChange={() => toggleTeamViewVisibility(t)}
+                            />
+                            <span>{TEAM_VIEW_TITLE[t]}</span>
+                          </label>
+                        );
+                      })}
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "#71717a",
+                          marginTop: 4,
+                          paddingTop: 6,
+                          borderTop: "1px solid var(--qb-team-input-border, #2d2d32)",
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        偏好已写入本机 localStorage，下次自动恢复。
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </nav>
             <div className="qb-team-main-stage" style={teamStyles.teamMainStage}>
               <header className="qb-team-editor-titlebar" style={teamStyles.teamEditorTitleBar}>
