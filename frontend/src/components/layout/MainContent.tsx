@@ -4515,7 +4515,30 @@ const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
 
 /** 画布可多选高亮的团队成员角色（与后端研究团队槽位一致；空集表示不过滤） */
 /** 拓扑画布固定视口高度，避免 ResizeObserver↔SVG 高度互相撑开导致无限增高 */
-const TEAM_GRAPH_VIEWPORT_HEIGHT = 360;
+/**
+ * topology 视图最小 / 最大高度。原来死扣在 360px，11+ 个 Agent 节点 dagre
+ * 布局后纵向压扁、节点和边线挤成一坨（产品截图反馈过）。
+ *
+ * 现在改成"按节点数 + 视口高度"动态计算的方式：
+ *   - 起步 360（少节点时不浪费空间）
+ *   - 每多 1 个节点加 ~36px
+ *   - 不超过当前视口的 58%（避免画布把下方实时对话流挤光）
+ *   - 也不超过硬上限 720
+ *
+ * 计算逻辑封装在 `computeTopologyHeight()` 里。
+ */
+const TEAM_GRAPH_VIEWPORT_MIN_HEIGHT = 360;
+const TEAM_GRAPH_VIEWPORT_MAX_HEIGHT = 720;
+const TEAM_GRAPH_VIEWPORT_PER_NODE = 36;
+
+function computeTopologyHeight(nodeCount: number, viewportHeight: number): number {
+  const byCount = TEAM_GRAPH_VIEWPORT_MIN_HEIGHT + Math.max(0, nodeCount - 6) * TEAM_GRAPH_VIEWPORT_PER_NODE;
+  const byViewport = Math.floor(viewportHeight * 0.58);
+  return Math.max(
+    TEAM_GRAPH_VIEWPORT_MIN_HEIGHT,
+    Math.min(TEAM_GRAPH_VIEWPORT_MAX_HEIGHT, byViewport, byCount),
+  );
+}
 
 const TeamDashboardPanel: FC = () => {
   const [ticker, setTicker] = useState("");
@@ -5407,16 +5430,33 @@ const TeamDashboardPanel: FC = () => {
   );
 
   const graphWrapRef = useRef<HTMLDivElement | null>(null);
-  const [graphSize, setGraphSize] = useState({ w: 720, h: TEAM_GRAPH_VIEWPORT_HEIGHT });
+  /**
+   * graphSize.h 现在跟着「节点数 + 视口高度」联动：
+   *   - 同一组件实例切换 workflow / 编组造成节点数变化 → 动态把高度顶起来
+   *   - 用户调整窗口大小（resize 事件）→ 画布跟随重算
+   * `viewportH` 单独 state 是因为我们没有现成的 ResizeObserver 去观测 window，
+   * 用 window.innerHeight + resize 监听简单直接。
+   */
+  const [viewportH, setViewportH] = useState(() =>
+    typeof window === "undefined" ? 900 : window.innerHeight,
+  );
+  useEffect(() => {
+    const onResize = () => setViewportH(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const graphHeight = useMemo(
+    () => computeTopologyHeight(filteredGraphDisplay?.nodes?.length ?? 0, viewportH),
+    [filteredGraphDisplay?.nodes?.length, viewportH],
+  );
+  const [graphSize, setGraphSize] = useState({ w: 720, h: graphHeight });
 
   useLayoutEffect(() => {
     const el = graphWrapRef.current;
     if (!el || activeTab !== "research") return;
     const applyWidth = (width: number) => {
       const w = Math.max(320, Math.floor(width));
-      setGraphSize((prev) =>
-        prev.w === w && prev.h === TEAM_GRAPH_VIEWPORT_HEIGHT ? prev : { w, h: TEAM_GRAPH_VIEWPORT_HEIGHT }
-      );
+      setGraphSize((prev) => (prev.w === w && prev.h === graphHeight ? prev : { w, h: graphHeight }));
     };
     const ro = new ResizeObserver((entries) => {
       const cr = entries[0]?.contentRect;
@@ -5425,7 +5465,7 @@ const TeamDashboardPanel: FC = () => {
     ro.observe(el);
     applyWidth(el.getBoundingClientRect().width);
     return () => ro.disconnect();
-  }, [activeTab]);
+  }, [activeTab, graphHeight]);
 
   useEffect(() => {
     setGraphSelection(null);
@@ -6052,9 +6092,24 @@ const TeamDashboardPanel: FC = () => {
             );
           })}
         </div>
+        {/**
+         * 弹性宽度策略（在两个 aside 内联生效）：
+         *   - 三栏全显 / 中栏在场：left 与 right 保持用户拖拽设定的固定宽度，center 吃剩余。
+         *   - 中栏被隐藏：right 改成 flex:1 自动铺满（否则 left 固定 + right 固定 → 中间黑屏空洞）。
+         *   - 仅 left 唯一可见：left 改成 flex:1 撑满整个工作台。
+         *   - 仅 right 唯一可见：right 改成 flex:1 撑满（截图反馈过：300px 右栏 + 大片留白）。
+         */}
         <div ref={teamTriRef} style={teamStyles.teamTriRow}>
         {teamPaneVisible("left") ? (
-        <aside style={{ ...teamStyles.leftRail, width: teamLeftW, flexShrink: 0, alignSelf: "stretch" }}>
+        <aside
+          style={{
+            ...teamStyles.leftRail,
+            ...(!teamPaneVisible("center") && !teamPaneVisible("right")
+              ? { flex: 1, minWidth: 0, width: "auto" }
+              : { width: teamLeftW, flexShrink: 0 }),
+            alignSelf: "stretch",
+          }}
+        >
           {/**
            * 上半设置区独立滚动容器：标题 + scope/instrument/标的/模板/分析提示。
            * maxHeight: 55%（来自 teamStyles.leftRailSettings）—— 留 45% 给下半工作流区。
@@ -7153,9 +7208,9 @@ const TeamDashboardPanel: FC = () => {
                     style={{
                       ...teamStyles.graphCanvasHost,
                       flex: teamGraphView === "office" ? "1 1 auto" : "0 0 auto",
-                      height: teamGraphView === "office" ? "min(72vh, 860px)" : TEAM_GRAPH_VIEWPORT_HEIGHT,
-                      minHeight: teamGraphView === "office" ? 520 : TEAM_GRAPH_VIEWPORT_HEIGHT,
-                      maxHeight: teamGraphView === "office" ? "min(72vh, 860px)" : TEAM_GRAPH_VIEWPORT_HEIGHT,
+                      height: teamGraphView === "office" ? "min(72vh, 860px)" : graphHeight,
+                      minHeight: teamGraphView === "office" ? 520 : graphHeight,
+                      maxHeight: teamGraphView === "office" ? "min(72vh, 860px)" : graphHeight,
                       overflow: "hidden",
                       flexDirection: "column",
                       justifyContent: teamGraphView === "office" ? "stretch" : "center",
@@ -7866,7 +7921,15 @@ const TeamDashboardPanel: FC = () => {
         ) : null}
 
         {teamPaneVisible("right") ? (
-        <aside style={{ ...teamStyles.rightRail, width: teamRightW, flexShrink: 0, alignSelf: "stretch" }}>
+        <aside
+          style={{
+            ...teamStyles.rightRail,
+            ...(!teamPaneVisible("center")
+              ? { flex: 1, minWidth: 0, width: "auto" }
+              : { width: teamRightW, flexShrink: 0 }),
+            alignSelf: "stretch",
+          }}
+        >
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 4 }}>
             研究产出
           </div>
