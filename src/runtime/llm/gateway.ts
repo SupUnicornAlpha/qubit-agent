@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { RuntimeModelConfig } from "../config/model-config";
 import { executeWithPolicy } from "../external-call/policy";
 import { fetchWithTimeout, LLM_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
+import { sanitizeChatCompletionsBody } from "./model-capabilities";
 
 export interface LlmGatewayInput {
   config: RuntimeModelConfig;
@@ -65,16 +66,21 @@ async function runOpenAI(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   }
   const client = new OpenAI({ apiKey, baseURL: input.config.baseUrl });
   const startedAt = Date.now();
-  const stream = await client.chat.completions.create({
+  /**
+   * 推理类模型族（gpt-5* / o1-3-4*）只接受 default temperature；用 sanitize
+   * 去掉受限字段，避免 400 + 重试 + 熔断器误开。
+   */
+  const requestBody = sanitizeChatCompletionsBody(input.config.model, {
     model: input.config.model,
     messages: [
-      { role: "system", content: input.systemPrompt },
-      { role: "user", content: input.userPrompt },
+      { role: "system" as const, content: input.systemPrompt },
+      { role: "user" as const, content: input.userPrompt },
     ],
     temperature: 0.1,
-    stream: true,
+    stream: true as const,
     stream_options: { include_usage: true },
   });
+  const stream = await client.chat.completions.create(requestBody);
   let answer = "";
   let usage: LlmTokenUsage | undefined;
   for await (const chunk of stream) {
@@ -128,16 +134,23 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     baseURL: input.config.baseUrl ?? def.baseUrl,
   });
   const startedAt = Date.now();
-  const stream = await client.chat.completions.create({
-    model: input.config.model || def.model,
+  const resolvedModel = input.config.model || def.model;
+  /**
+   * deepseek/qwen/zhipu 等 OpenAI-compatible 提供商目前都接受 temperature；
+   * 但有用户把 baseURL 指到 litellm/azure 这类代理 → 后端可能接的是
+   * gpt-5 / o3 推理模型。同样走 sanitize 兜底。
+   */
+  const requestBody = sanitizeChatCompletionsBody(resolvedModel, {
+    model: resolvedModel,
     messages: [
-      { role: "system", content: input.systemPrompt },
-      { role: "user", content: input.userPrompt },
+      { role: "system" as const, content: input.systemPrompt },
+      { role: "user" as const, content: input.userPrompt },
     ],
     temperature: 0.1,
-    stream: true,
+    stream: true as const,
     stream_options: { include_usage: true },
   });
+  const stream = await client.chat.completions.create(requestBody);
   let answer = "";
   let usage: LlmTokenUsage | undefined;
   for await (const chunk of stream) {
