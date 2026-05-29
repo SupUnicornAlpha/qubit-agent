@@ -7943,35 +7943,42 @@ const teamStyles: Record<string, CSSProperties> = {
     borderRight: "1px solid var(--qb-team-shell-border, #2d2d32)",
     borderRadius: 0,
     padding: 14,
-    display: "flex",
-    flexDirection: "column",
+    /**
+     * 用 CSS Grid 做"设置区按内容自然撑开 / 工作流区占余高自滚"：
+     *   - 第一行 `auto`：设置区按内容自然高度（不会被压缩）
+     *   - 第二行 `minmax(220px, 1fr)`：工作流区占余高，但不少于 220px
+     * 之前用 `flex` 给设置区设 `maxHeight: 55%` 导致设置区被压成只剩一个下拉，
+     * 体验回退；回到 grid 方案后用户能完整看到「研究范围 / 工具类型 / 标的输入
+     * / 模板 / 分析提示」全套设置。
+     */
+    display: "grid",
+    gridTemplateRows: "auto minmax(220px, 1fr)",
     alignSelf: "stretch",
     minHeight: 0,
-    /**
-     * 改 hidden（曾是 auto）：让内部分两段独立滚动 —— 上半「设置区」单独
-     * 滚动、下半「工作流列表」单独滚动，避免整个左栏成为一条超长滚动条
-     * （之前 settings 高度 + workflow list 高度叠起来动辄 1200+px）。
-     * 子区域用 leftRailScroll / leftRailFlex 两个新样式表达。
-     */
     overflow: "hidden",
   },
-  /** 上半「设置区」滚动容器：标题 / scope / instrument / 标的输入 / 模板 / 分析提示 */
+  /**
+   * 上半「设置区」：标题 / scope / instrument / 标的输入 / 模板 / 分析提示。
+   * grid 第一行 auto 按内容撑开，不再设 maxHeight。
+   * 自身允许 overflow:auto 兜底 —— 屏幕特别矮时设置区也能内滚，不会把工作流挤掉。
+   */
   leftRailSettings: {
-    flex: "0 1 auto",
     minHeight: 0,
-    maxHeight: "55%",
     overflowY: "auto",
     paddingRight: 4,
+    paddingBottom: 8,
   },
-  /** 下半「工作流 + 分析师编组」滚动容器：占余高，独立滚动 */
+  /**
+   * 下半「工作流 + 分析师编组」滚动容器。
+   * grid 第二行 `minmax(220px, 1fr)` 占余高；自身 overflow auto 内滚，
+   * 工作流列表自身 maxHeight 已取消、跟随本容器一起滚动 —— 单一短滚动条。
+   */
   leftRailWorkflows: {
-    flex: "1 1 auto",
-    minHeight: 200,
+    minHeight: 0,
     overflowY: "auto",
     paddingRight: 4,
     paddingTop: 8,
     borderTop: "1px solid var(--qb-team-shell-border, #2d2d32)",
-    marginTop: 8,
   },
   centerCol: {
     flex: 1,
