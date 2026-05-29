@@ -1,4 +1,4 @@
-import type { CSSProperties, Dispatch, FC, SetStateAction } from "react";
+import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addAgentGroupMember,
@@ -10,10 +10,7 @@ import {
   removeAgentGroupMember,
 } from "../../api/backend";
 import type { AgentDefinitionBundle, AgentGroupDetail, AgentGroupRecord } from "../../api/types";
-import {
-  RESEARCH_TEAM_GROUP_POOL_ROLE_SET,
-  RESEARCH_TEAM_SLOT_ROLE_SET,
-} from "../../lib/researchTeamRoles";
+import { RESEARCH_TEAM_GROUP_POOL_ROLE_SET } from "../../lib/researchTeamRoles";
 import {
   type TeamTopologyEdge,
   type TopologyCanvasMeta,
@@ -73,16 +70,12 @@ export const TeamResearchMemberDirectory: FC<{
   analystAgentGroupOptions: AgentGroupRecord[];
   setAnalystAgentGroupOptions: (rows: AgentGroupRecord[]) => void;
   agentDefBundles: AgentDefinitionBundle[] | null;
-  participatingAnalystDefinitionIds: string[];
-  setParticipatingAnalystDefinitionIds: Dispatch<SetStateAction<string[]>>;
 }> = ({
   analystAgentGroupId,
   setAnalystAgentGroupId,
   analystAgentGroupOptions,
   setAnalystAgentGroupOptions,
   agentDefBundles,
-  participatingAnalystDefinitionIds,
-  setParticipatingAnalystDefinitionIds,
 }) => {
   const [detail, setDetail] = useState<AgentGroupDetail | null>(null);
   const [topologyEdges, setTopologyEdges] = useState<TeamTopologyEdge[]>([]);
@@ -145,13 +138,6 @@ export const TeamResearchMemberDirectory: FC<{
     if (!detail?.members.length) return false;
     return uniqueRolesInOrder(detail.members).length !== detail.members.length;
   }, [detail]);
-
-  const analystDefsSelectable = useMemo(() => {
-    if (!agentDefBundles) return [];
-    return agentDefBundles.filter(
-      (b) => b.definition.enabled !== false && RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role)
-    );
-  }, [agentDefBundles]);
 
   const poolByBucket = useMemo(() => {
     const map = new Map<string, AgentDefinitionBundle[]>();
@@ -717,69 +703,13 @@ export const TeamResearchMemberDirectory: FC<{
         })
       )}
 
-      <h4
-        style={{
-          fontSize: 13,
-          fontWeight: 600,
-          color: "var(--qb-team-section-fg, #e4e4e7)",
-          margin: "20px 0 8px",
-        }}
-      >
-        本次分析参与的研究团队槽位（按 Agent 定义勾选）
-      </h4>
-      <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
-        与左侧「团队成员」联动；可选 analyst_*（MSA）、research / backtest / risk*
-        等（辅助章节）。与上方编组取交集。
-      </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {analystDefsSelectable.length === 0 ? (
-          <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
-            暂无已启用的研究团队槽位定义
-          </span>
-        ) : (
-          analystDefsSelectable.map((b) => {
-            const id = b.definition.id;
-            const on = participatingAnalystDefinitionIds.includes(id);
-            return (
-              <label
-                key={id}
-                style={{
-                  ...card,
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 10,
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={on}
-                  onChange={() => {
-                    setParticipatingAnalystDefinitionIds((prev) =>
-                      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-                    );
-                  }}
-                  style={{ marginTop: 3 }}
-                />
-                <span
-                  style={{ fontSize: 12, color: "var(--qb-body-fg, #e4e4e7)", lineHeight: 1.45 }}
-                >
-                  <strong>{b.definition.name}</strong>
-                  <span style={{ color: "var(--qb-team-meta, #71717a)" }}>
-                    {" "}
-                    · {b.definition.role}
-                  </span>
-                  <div
-                    style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginTop: 4 }}
-                  >
-                    id {id.slice(0, 8)}…
-                  </div>
-                </span>
-              </label>
-            );
-          })
-        )}
-      </div>
+      {/**
+       * 注：原「本次分析参与的研究团队槽位（按 Agent 定义勾选）」已删除。
+       * 画布上的 Agent 节点直接由上方编组（analystAgentGroupId）决定，
+       * `participatingAnalystDefinitionIds` 不再有 UI 入口（始终为 []）。
+       * 后端在 analystDefinitionIds=undefined 时按 agentGroupId 解析槽位 →
+       * 默认 fallback 为全部启用的研究团队槽位定义。
+       */}
     </div>
   );
 };

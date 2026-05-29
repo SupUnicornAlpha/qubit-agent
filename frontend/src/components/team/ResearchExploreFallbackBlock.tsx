@@ -100,6 +100,24 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
     onCountChange?.(llmMessages.length);
   }, [llmMessages.length, onCountChange]);
 
+  /**
+   * 多条草稿之间切换：每条草稿可能很长（含 markdown 表格），同时全部
+   * 渲染会出现"上一条占满屏 → 下一条只露出标题"的尴尬。
+   * 用 idx 选择当前要展示的那一条；新增草稿时默认跳到最新一条。
+   */
+  const [activeDraftIdx, setActiveDraftIdx] = useState(0);
+  useEffect(() => {
+    if (llmMessages.length === 0) {
+      setActiveDraftIdx(0);
+      return;
+    }
+    setActiveDraftIdx((cur) => {
+      if (cur >= llmMessages.length) return llmMessages.length - 1;
+      return cur;
+    });
+  }, [llmMessages.length]);
+  const activeDraft = llmMessages[activeDraftIdx] ?? null;
+
   const body = (
     <div style={styles.body}>
       <div style={styles.toolbar}>
@@ -129,13 +147,48 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
         </div>
       ) : null}
 
-      {llmMessages.map((row) => (
-        <article key={row.id} style={styles.card}>
+      {/**
+       * 多草稿切换：≥2 条时上方显示 chips 切换器；只渲染当前选中的那一条
+       * markdown body，避免多条叠加时 mdHost 内滚 + 整体外滚的双层尴尬。
+       */}
+      {llmMessages.length > 1 ? (
+        <div style={styles.draftSwitcher} role="tablist" aria-label="草稿切换">
+          {llmMessages.map((row, idx) => {
+            const isActive = idx === activeDraftIdx;
+            return (
+              <button
+                key={row.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setActiveDraftIdx(idx)}
+                style={{
+                  ...styles.draftChip,
+                  ...(isActive ? styles.draftChipActive : null),
+                }}
+                title={new Date(row.createdAt).toLocaleString()}
+              >
+                草稿 {idx + 1}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {activeDraft ? (
+        <article key={activeDraft.id} style={styles.card}>
           <header style={styles.cardHead}>
             <span style={styles.cardBadge}>
-              {row.fromRole} → {row.toRole}
+              {activeDraft.fromRole} → {activeDraft.toRole}
             </span>
-            <span style={styles.cardTime}>{new Date(row.createdAt).toLocaleString()}</span>
+            <span style={styles.cardTime}>
+              {new Date(activeDraft.createdAt).toLocaleString()}
+              {llmMessages.length > 1 ? (
+                <span style={{ marginLeft: 6, color: "#52525b" }}>
+                  ({activeDraftIdx + 1}/{llmMessages.length})
+                </span>
+              ) : null}
+            </span>
           </header>
           {/**
            * 用 MarkdownBubble 渲染（含 GFM 表格、代码块、列表）。
@@ -143,10 +196,10 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
            * 用 <pre> 是不会被解析的。
            */}
           <div style={styles.mdHost}>
-            <MarkdownBubble text={stripBracketTag(row.contentText)} />
+            <MarkdownBubble text={stripBracketTag(activeDraft.contentText)} />
           </div>
         </article>
-      ))}
+      ) : null}
 
       {interactions.some((row) => row.kind === "tool_call") ? (
         <div style={styles.draftHint}>
@@ -255,6 +308,28 @@ const styles: Record<string, CSSProperties> = {
     color: "#71717a",
     padding: "8px 4px",
     lineHeight: 1.5,
+  },
+  draftSwitcher: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    margin: "4px 0 8px",
+  },
+  draftChip: {
+    fontSize: 11,
+    fontWeight: 500,
+    padding: "4px 10px",
+    borderRadius: 999,
+    border: "1px solid #3f3f46",
+    background: "transparent",
+    color: "#a1a1aa",
+    cursor: "pointer",
+    transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
+  },
+  draftChipActive: {
+    background: "rgba(245, 158, 11, 0.18)",
+    color: "#fbbf24",
+    borderColor: "rgba(245, 158, 11, 0.55)",
   },
   card: {
     background: "#111114",

@@ -4857,20 +4857,10 @@ const TeamDashboardPanel: FC = () => {
     return roles;
   }, [agentDefBundles, participatingAnalystDefinitionIds]);
 
-  const analystDefCatalog = useMemo(() => {
-    const rows: { id: string; role: string; displayName: string }[] = [];
-    if (!agentDefBundles) return rows;
-    for (const b of agentDefBundles) {
-      if (!RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role)) continue;
-      if (b.definition.enabled === false) continue;
-      rows.push({
-        id: b.definition.id,
-        role: b.definition.role,
-        displayName: b.profile?.displayName?.trim() || b.definition.name || b.definition.role,
-      });
-    }
-    return rows;
-  }, [agentDefBundles]);
+  /**
+   * 注：原 `analystDefCatalog` 用于左栏「团队成员（画布）」勾选区的 select option，
+   * 该区已删除（节点直接由编组渲染），catalog 不再有引用，整体移除。
+   */
 
   const mergedLiveFeedRows = useMemo(() => {
     type Row = { key: string; t: number; kind: "interaction" | "debate"; body: string };
@@ -5127,14 +5117,18 @@ const TeamDashboardPanel: FC = () => {
     }).length;
   }, [agentDefBundles]);
 
+  /**
+   * 是否禁用「启动团队分析」按钮。
+   * 删除「团队成员勾选区」之后不再要求 participatingAnalystDefinitionIds 非空 ——
+   * 画布上的 Agent 节点直接由 analystAgentGroupId 决定，空数组 = 默认全部启用槽位。
+   */
   const teamRunDisabled = useMemo(() => {
     if (running) return true;
     if (!researchScopePayload || !workflowRunId) return true;
     if (enabledResearchAnalystDefCount === null) return true;
     if (enabledResearchAnalystDefCount === 0) return true;
-    if (participatingAnalystDefinitionIds.length === 0) return true;
     return false;
-  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
+  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount]);
 
   const teamRunDisabledTitle = useMemo(() => {
     if (running) return "分析进行中";
@@ -5143,9 +5137,8 @@ const TeamDashboardPanel: FC = () => {
     if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
     if (enabledResearchAnalystDefCount === 0)
       return "数据库中暂无已启用的研究团队槽位定义（analyst_* / research / backtest / risk* 等），请先到配置中心启用或执行种子";
-    if (participatingAnalystDefinitionIds.length === 0) return "请至少勾选一名参与分析的 Agent 定义";
     return "";
-  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount, participatingAnalystDefinitionIds]);
+  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount]);
 
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
@@ -6976,8 +6969,6 @@ const TeamDashboardPanel: FC = () => {
             analystAgentGroupOptions={analystAgentGroupOptions}
             setAnalystAgentGroupOptions={setAnalystAgentGroupOptions}
             agentDefBundles={agentDefBundles}
-            participatingAnalystDefinitionIds={participatingAnalystDefinitionIds}
-            setParticipatingAnalystDefinitionIds={setParticipatingAnalystDefinitionIds}
           />
         </div>
       )}
@@ -7742,70 +7733,11 @@ const TeamDashboardPanel: FC = () => {
                   </div>
                 </div>
               ) : null}
-
-              <div style={{ marginTop: 14, borderTop: "1px solid var(--qb-sidebar-border, #27272a)", paddingTop: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>
-                  团队成员（画布）
-                </div>
-                <p style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
-                  勾选配置中心已发布且启用的研究团队槽位（<code style={{ fontSize: 11 }}>analyst_*</code> 参与 MSA 融合；<code style={{ fontSize: 11 }}>research</code> / <code style={{ fontSize: 11 }}>backtest</code> / <code style={{ fontSize: 11 }}>risk*</code> 等产出辅助章节）<strong>Agent 定义</strong>参与本次分析；与上方「分析师编组」取交集（编组决定拓扑与槽位，勾选决定实际出场的定义）。
-                </p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                  {participatingAnalystDefinitionIds.length === 0 ? (
-                    <span style={{ fontSize: 11, color: "var(--qb-team-meta, #71717a)" }}>暂无成员，请从下方添加</span>
-                  ) : (
-                    participatingAnalystDefinitionIds.map((defId) => {
-                      const meta = analystDefCatalog.find((x) => x.id === defId);
-                      return (
-                        <div
-                          key={defId}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 6,
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            border: "1px solid var(--qb-team-input-border, #3f3f46)",
-                            fontSize: 11,
-                            color: "var(--qb-team-member-tag-fg, #e4e4e7)",
-                            background: "var(--qb-team-member-tag-bg, #18181b)",
-                          }}
-                        >
-                          <span>{meta?.displayName ?? defId.slice(0, 8)}</span>
-                          <button
-                            type="button"
-                            className="qb-btn-secondary qb-btn--icon-xs"
-                            onClick={() =>
-                              setParticipatingAnalystDefinitionIds((prev) => prev.filter((x) => x !== defId))
-                            }
-                          >
-                            −
-                          </button>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <select
-                  style={{ ...teamStyles.input, width: "100%", fontSize: 12 }}
-                  value=""
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!v) return;
-                    setParticipatingAnalystDefinitionIds((prev) => (prev.includes(v) ? prev : [...prev, v]));
-                    e.target.value = "";
-                  }}
-                >
-                  <option value="">＋ 添加分析师（按定义）…</option>
-                  {analystDefCatalog
-                    .filter((r) => !participatingAnalystDefinitionIds.includes(r.id))
-                    .map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.displayName} ({r.role})
-                      </option>
-                    ))}
-                </select>
-              </div>
+              {/**
+               * 注：原「团队成员（画布）」勾选区已删除。
+               * 画布上的 Agent 节点直接根据「分析师编组」(analystAgentGroupId)
+               * 在 TeamResearchMemberDirectory 内自动渲染，避免双重选择。
+               */}
             </div>
           </details>
         </div>
