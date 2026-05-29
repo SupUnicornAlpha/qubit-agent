@@ -4490,6 +4490,16 @@ function formatDebateStreamLine(ev: DebateStreamEvent): string {
 /** 研究团队中间栏侧栏自上而下：研究画布、成员目录、工具与配置 */
 const TEAM_CENTER_VIEWS = ["research", "roles", "run"] as const;
 type TeamCenterView = (typeof TEAM_CENTER_VIEWS)[number];
+
+/** 团队页大三栏 key —— 用于显隐控制 / localStorage 序列化 */
+type TeamPaneKey = "left" | "center" | "right";
+const TEAM_PANES: readonly TeamPaneKey[] = ["left", "center", "right"];
+const TEAM_PANE_LABEL: Record<TeamPaneKey, string> = {
+  left: "研究与工作流",
+  center: "研究画布",
+  right: "研究产出",
+};
+const TEAM_PANES_LS_KEY = "qubit-agent.teamPanes.hidden.v1";
 const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
   run: "发起分析 · 工具与配置",
   research: "研究画布 · 拓扑 / 实时流 / 结论",
@@ -4770,6 +4780,59 @@ const TeamDashboardPanel: FC = () => {
     }
   }, [hiddenTeamViews, activeTab, visibleTeamViews]);
   const [teamViewMenuOpen, setTeamViewMenuOpen] = useState(false);
+
+  /**
+   * 团队页大三栏（左：研究与工作流 / 中：研究画布 / 右：研究产出）的显隐控制。
+   *
+   * - state 用 Set<TeamPaneKey> 表示**被隐藏**的栏（默认空 = 三栏全显）
+   * - localStorage 持久化，刷新后保持
+   * - 至少保留一栏可见，避免空白工作台无法操作
+   * - 隐藏的栏对应的 gutter（resize 把手）也一起 unmount，否则中间会出现孤儿手柄
+   *
+   * `TEAM_PANES` / `TEAM_PANE_LABEL` 提到组件外为模块常量，避免每次 render 重建
+   * 触发 useCallback / useEffect 的依赖数组警告。
+   */
+  const [hiddenTeamPanes, setHiddenTeamPanes] = useState<Set<TeamPaneKey>>(() => {
+    try {
+      const raw = localStorage.getItem(TEAM_PANES_LS_KEY);
+      if (!raw) return new Set();
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return new Set();
+      const allowed = new Set<TeamPaneKey>(TEAM_PANES);
+      return new Set(arr.filter((v): v is TeamPaneKey => allowed.has(v as TeamPaneKey)));
+    } catch {
+      return new Set();
+    }
+  });
+  const persistHiddenTeamPanes = useCallback((next: Set<TeamPaneKey>) => {
+    try {
+      localStorage.setItem(TEAM_PANES_LS_KEY, JSON.stringify([...next]));
+    } catch {
+      /* localStorage 不可用 / quota exceeded 时静默；UI 状态本地仍然生效 */
+    }
+  }, []);
+  const toggleTeamPane = useCallback(
+    (pane: TeamPaneKey) => {
+      setHiddenTeamPanes((prev) => {
+        const next = new Set(prev);
+        if (next.has(pane)) {
+          next.delete(pane);
+        } else {
+          /** 至少保留一栏可见 */
+          if (TEAM_PANES.length - next.size <= 1) return prev;
+          next.add(pane);
+        }
+        persistHiddenTeamPanes(next);
+        return next;
+      });
+    },
+    [persistHiddenTeamPanes],
+  );
+  const teamPaneVisible = useCallback(
+    (pane: TeamPaneKey) => !hiddenTeamPanes.has(pane),
+    [hiddenTeamPanes],
+  );
+
   const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
     confidenceThreshold: 0.55,
     maxRounds: 2,
@@ -5950,7 +6013,47 @@ const TeamDashboardPanel: FC = () => {
   return (
     <div style={teamStyles.container}>
       <div data-qb-team-shell style={teamStyles.teamWorkbenchShell}>
+        {/**
+         * 三栏显隐工具条：研究与工作流 / 研究画布 / 研究产出 各一颗 toggle。
+         * 至少保留一栏可见；隐藏的栏对应 gutter 也一起 unmount。
+         * 状态持久化到 localStorage（TEAM_PANES_LS_KEY）。
+         */}
+        <div style={teamStyles.paneToggleBar} role="toolbar" aria-label="三栏显示控制">
+          <span style={teamStyles.paneToggleHint}>显示栏目</span>
+          {TEAM_PANES.map((pane) => {
+            const visible = teamPaneVisible(pane);
+            const onlyOne = TEAM_PANES.length - hiddenTeamPanes.size <= 1;
+            const disabled = visible && onlyOne;
+            return (
+              <button
+                key={pane}
+                type="button"
+                onClick={() => toggleTeamPane(pane)}
+                disabled={disabled}
+                style={{
+                  ...teamStyles.paneToggleBtn,
+                  ...(visible ? teamStyles.paneToggleBtnActive : teamStyles.paneToggleBtnHidden),
+                  ...(disabled ? teamStyles.paneToggleBtnDisabled : null),
+                }}
+                title={
+                  disabled
+                    ? "至少保留一栏可见"
+                    : visible
+                      ? `隐藏「${TEAM_PANE_LABEL[pane]}」`
+                      : `显示「${TEAM_PANE_LABEL[pane]}」`
+                }
+                aria-pressed={visible}
+              >
+                <span style={teamStyles.paneToggleDot} aria-hidden>
+                  {visible ? "●" : "○"}
+                </span>
+                {TEAM_PANE_LABEL[pane]}
+              </button>
+            );
+          })}
+        </div>
         <div ref={teamTriRef} style={teamStyles.teamTriRow}>
+        {teamPaneVisible("left") ? (
         <aside style={{ ...teamStyles.leftRail, width: teamLeftW, flexShrink: 0, alignSelf: "stretch" }}>
           {/**
            * 上半设置区独立滚动容器：标题 + scope/instrument/标的/模板/分析提示。
@@ -6429,14 +6532,23 @@ const TeamDashboardPanel: FC = () => {
           </div>
           </div>
         </aside>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整左侧栏宽度"
-          onMouseDown={onTeamColGutterDown(1)}
-          style={teamStyles.teamColGutter}
-        />
+        ) : null}
+        {/**
+         * gutter1：左栏存在且其右侧至少还有一栏可见（center 或 right）。
+         * 当 center 被隐藏只剩 left + right 时，gutter1 仍承担 left/right 分隔 —— 它绑定的
+         * onMouseDown(1) 调整的是 teamLeftW，拖动左栏宽度本来就符合直觉。
+         */}
+        {teamPaneVisible("left") && (teamPaneVisible("center") || teamPaneVisible("right")) ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整左侧栏宽度"
+            onMouseDown={onTeamColGutterDown(1)}
+            style={teamStyles.teamColGutter}
+          />
+        ) : null}
 
+        {teamPaneVisible("center") ? (
         <div style={teamStyles.centerCol}>
           <div style={teamStyles.ideCenterWrap}>
             <nav style={teamStyles.teamActivityBar} aria-label="研究团队视图">
@@ -7741,15 +7853,19 @@ const TeamDashboardPanel: FC = () => {
             </div>
           </details>
         </div>
+        ) : null}
 
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整右侧策略栏宽度"
-          onMouseDown={onTeamColGutterDown(2)}
-          style={teamStyles.teamColGutter}
-        />
+        {teamPaneVisible("center") && teamPaneVisible("right") ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整右侧策略栏宽度"
+            onMouseDown={onTeamColGutterDown(2)}
+            style={teamStyles.teamColGutter}
+          />
+        ) : null}
 
+        {teamPaneVisible("right") ? (
         <aside style={{ ...teamStyles.rightRail, width: teamRightW, flexShrink: 0, alignSelf: "stretch" }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 4 }}>
             研究产出
@@ -7777,6 +7893,7 @@ const TeamDashboardPanel: FC = () => {
            * 实盘转发交给量化工坊（onOpenStrategyInComposer 入口）。
            */}
         </aside>
+        ) : null}
       </div>
       </div>
     </div>
@@ -7804,6 +7921,52 @@ const teamStyles: Record<string, CSSProperties> = {
     overflow: "hidden",
     background: "var(--qb-team-shell-bg, #070708)",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.04), 0 12px 40px rgba(0,0,0,0.45)",
+  },
+  paneToggleBar: {
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 10px",
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    background: "rgba(255, 255, 255, 0.015)",
+    fontSize: 11,
+  },
+  paneToggleHint: {
+    color: "#71717a",
+    fontSize: 10.5,
+    marginRight: 4,
+    flexShrink: 0,
+  },
+  paneToggleBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "3px 9px",
+    fontSize: 11,
+    borderRadius: 12,
+    border: "1px solid #3f3f46",
+    cursor: "pointer",
+    transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
+    fontFamily: "inherit",
+  },
+  paneToggleBtnActive: {
+    background: "rgba(96, 165, 250, 0.16)",
+    color: "#93c5fd",
+    borderColor: "rgba(96, 165, 250, 0.5)",
+  },
+  paneToggleBtnHidden: {
+    background: "transparent",
+    color: "#71717a",
+    borderColor: "#3f3f46",
+  },
+  paneToggleBtnDisabled: {
+    cursor: "not-allowed",
+    opacity: 0.6,
+  },
+  paneToggleDot: {
+    fontSize: 8,
+    lineHeight: 1,
   },
   teamTriRow: {
     display: "flex",

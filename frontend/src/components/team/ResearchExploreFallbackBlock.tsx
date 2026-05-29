@@ -1,8 +1,10 @@
 import type { CSSProperties, FC } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { getAnalystTeamGraph } from "../../api/backend";
 import type { AnalystTeamGraphInteraction } from "../../api/types";
+import { splitToolCallSegments } from "../../lib/toolCallSegments";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
+import { ToolCallSegmentCard } from "./ToolCallSegmentCard";
 
 export interface ResearchExploreFallbackBlockProps {
   /**
@@ -191,12 +193,24 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
             </span>
           </header>
           {/**
-           * 用 MarkdownBubble 渲染（含 GFM 表格、代码块、列表）。
-           * LLM 经常用 markdown 表格列因子方向 / 数据源 / 检验指标，
+           * 渲染策略：
+           *   1) 先用 splitToolCallSegments 把 `<TOOL_CALL>{...}</TOOL_CALL>` 抽出来
+           *      —— 否则那一坨 JSON 会以明文塞进 markdown 正文，把整段挤成乱码（产品截图反馈过）。
+           *   2) 文本段走 MarkdownBubble（含 GFM 表格 / 代码块 / 列表）。
+           *   3) tool_call 段走 ToolCallSegmentCard：折叠 chip + 点开看 pretty JSON。
+           *
            * 用 <pre> 是不会被解析的。
            */}
           <div style={styles.mdHost}>
-            <MarkdownBubble text={stripBracketTag(activeDraft.contentText)} />
+            {splitToolCallSegments(stripBracketTag(activeDraft.contentText)).map((seg, idx) => (
+              <Fragment key={`seg-${activeDraft.id}-${idx}`}>
+                {seg.kind === "text" ? (
+                  <MarkdownBubble text={seg.body} />
+                ) : (
+                  <ToolCallSegmentCard segment={seg} />
+                )}
+              </Fragment>
+            ))}
           </div>
         </article>
       ) : null}
