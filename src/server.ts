@@ -21,6 +21,7 @@ import { strategyRuntimeRouter } from "./routes/strategy-runtime.routes";
 import { traderRouter } from "./routes/trader.routes";
 import { fsiRouter } from "./routes/fsi.routes";
 import { systemRouter } from "./routes/system.routes";
+import { environmentRouter } from "./routes/environment.routes";
 import { providerRouter } from "./routes/provider.routes";
 import { researchScenarioRouter } from "./routes/research-scenario.routes";
 import { factorRouter } from "./routes/factor.routes";
@@ -67,6 +68,7 @@ app.route("/api/v1/fsi", fsiRouter);
 app.route("/api/v1/system", systemRouter);
 // M1 + M2：Provider 抽象层 / 研究场景 / 因子-规则-策略 三段式
 app.route("/api/v1/providers", providerRouter);
+app.route("/api/v1/environment", environmentRouter);
 app.route("/api/v1/research-scenarios", researchScenarioRouter);
 app.route("/api/v1/factors", factorRouter);
 app.route("/api/v1/rules", ruleRouter);

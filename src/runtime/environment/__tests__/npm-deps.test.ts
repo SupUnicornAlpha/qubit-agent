@@ -16,11 +16,11 @@ import {
 } from "../npm-deps";
 import type { ExpectedPackage, InstalledPackage } from "../types";
 
-const TEST_DIR = "/tmp/qubit-env-mgr-test/mcp-bin/node_modules";
+// QUBIT_DATA_DIR 由外部注入，必须是 /tmp 下临时目录（防止误写到真实数据）
+const TEST_DIR = `${config.dataDir}/mcp-bin/node_modules`;
 
 beforeAll(() => {
-  // config.dataDir = /tmp/qubit-env-mgr-test（QUBIT_DATA_DIR 注入）
-  expect(config.dataDir).toContain("/tmp/qubit-env-mgr-test");
+  expect(config.dataDir).toMatch(/^\/tmp\//);
   rmSync(TEST_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
 
