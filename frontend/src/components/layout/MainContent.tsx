@@ -2390,6 +2390,7 @@ const ConfigPanel: FC = () => {
             ["integration", "集成 / IM"],
             ["schedule", "定时任务"],
             ["runtime", "运行时"],
+            ["env", "环境管理"],
           ] as const
         ).map(([id, label]) => (
           <button
