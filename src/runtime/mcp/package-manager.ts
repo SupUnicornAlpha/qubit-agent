@@ -88,8 +88,8 @@ export function parseNpxArgv(argv: readonly string[]): NpxSpec | null {
   return version === undefined ? { pkg, binArgs } : { pkg, version, binArgs };
 }
 
-/** 用于把 pkg 名映射到 mcp-bin 下的安装位置 */
-function getMcpBinDir(): string {
+/** 用于把 pkg 名映射到 mcp-bin 下的安装位置；EnvironmentManager 同样复用此目录。 */
+export function getMcpBinDir(): string {
   return join(config.dataDir, "mcp-bin");
 }
 
