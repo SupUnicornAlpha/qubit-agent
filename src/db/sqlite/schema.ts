@@ -2491,3 +2491,87 @@ export const skillEvolutionRun = sqliteTable(
     index("idx_skill_evolution_project").on(t.projectId, t.startedAt),
   ]
 );
+
+// ─── EnvironmentManager（v0.2）─────────────────────────────────────────────
+// 详见 docs/ENVIRONMENT_MANAGER_DESIGN.md §4.3 / §6.0：
+// 把 Python pip / mcp-bin npm 包的「期望清单」从代码常量挪到 DB，让用户
+// 可以在 UI 编辑（启停 / 改版本约束 / 新增推荐项），同时保留代码 seed
+// 作为系统默认值。设计参考 provider_registry：seed 仅 upsert 系统侧字段，
+// 不覆盖用户编辑过的字段。
+//
+// 仅 stdio 类 MCP 进入 env_registry（kind=npm）；HTTP/WS 类远程 MCP 不
+// 入此表，仅在 connector-probes 中体检（决议 §10.6）。
+
+/** EnvironmentManager 期望清单：包元信息 + 用户编辑覆写 */
+export const envRegistry = sqliteTable(
+  "env_registry",
+  {
+    id: id(),
+    /** python = pip 包；npm = mcp-bin 下 npm stdio 包 */
+    kind: text("kind", { enum: ["python", "npm"] }).notNull(),
+    packageName: text("package_name").notNull(),
+    displayName: text("display_name").notNull(),
+    description: text("description").notNull().default(""),
+    /** 默认版本约束（来自 seed），如 ">=0.2.40" */
+    versionSpec: text("version_spec"),
+    /** 用户在 UI 覆写的版本，优先于 versionSpec */
+    userVersionSpec: text("user_version_spec"),
+    /** 缺失是否影响 ok（true → 可选） */
+    optional: integer("optional", { mode: "boolean" }).notNull().default(true),
+    /** "data-source/yfinance" / "broker/futu" / "core" 等 */
+    capability: text("capability").notNull().default("misc"),
+    /** seed 来源；user = 用户自建项 */
+    source: text("source", {
+      enum: ["requirements", "connector-meta", "seed-mcp", "user"],
+    })
+      .notNull()
+      .default("user"),
+    status: text("status", { enum: ["enabled", "disabled"] })
+      .notNull()
+      .default("enabled"),
+    /** 系统默认项（不可 DELETE，仅可 disabled） */
+    isBuiltin: integer("is_builtin", { mode: "boolean" }).notNull().default(false),
+    /** 透传字段，例如 npm 包的 npxArgs 默认值 */
+    extraJson: text("extra_json", { mode: "json" }).notNull().default("{}"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("idx_env_registry_kind_pkg").on(t.kind, t.packageName),
+    index("idx_env_registry_kind_status_cap").on(t.kind, t.status, t.capability),
+  ]
+);
+
+/** EnvironmentManager 安装/卸载/升级历史；short-poll 进度 + 排障审计用 */
+export const envInstallLog = sqliteTable(
+  "env_install_log",
+  {
+    id: id(),
+    kind: text("kind", { enum: ["python", "npm"] }).notNull(),
+    operation: text("operation", {
+      enum: ["install", "uninstall", "upgrade"],
+    }).notNull(),
+    packageName: text("package_name").notNull(),
+    requestedVersion: text("requested_version"),
+    installedVersion: text("installed_version"),
+    status: text("status", {
+      enum: ["running", "success", "failed", "timeout"],
+    }).notNull(),
+    /** stderr 截断 800 字符；失败排障用 */
+    errorMessage: text("error_message"),
+    startedAt: text("started_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    finishedAt: text("finished_at"),
+    /** "user" / "bootstrap" / "connector_init" / "test" */
+    triggeredBy: text("triggered_by").notNull().default("user"),
+  },
+  (t) => [
+    index("idx_env_install_log_kind_pkg_started").on(
+      t.kind,
+      t.packageName,
+      t.startedAt
+    ),
+    index("idx_env_install_log_status_started").on(t.status, t.startedAt),
+  ]
+);
