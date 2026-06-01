@@ -1528,6 +1528,7 @@ const ConfigPanel: FC = () => {
     | "yahoo_chart"
     | "eastmoney"
     | "akshare"
+    | "yfinance"
     | "binance_crypto"
     | "synthetic"
   >("auto");
@@ -1609,6 +1610,7 @@ const ConfigPanel: FC = () => {
       kds === "yahoo_chart" ||
       kds === "eastmoney" ||
       kds === "akshare" ||
+      kds === "yfinance" ||
       kds === "binance_crypto" ||
       kds === "synthetic" ||
       kds === "auto"
@@ -2478,6 +2480,7 @@ const ConfigPanel: FC = () => {
                         | "yahoo_chart"
                         | "eastmoney"
                         | "akshare"
+                        | "yfinance"
                         | "binance_crypto"
                         | "synthetic"
                     )
@@ -2487,7 +2490,8 @@ const ConfigPanel: FC = () => {
                   <option value="eastmoney">东方财富（A 股日线 + 分钟/小时，免费）</option>
                   <option value="binance_crypto">Binance（加密货币 K 线 / 报价，公开 API）</option>
                   <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
-                  <option value="yahoo_chart">Yahoo Finance（日线 + 分钟/小时）</option>
+                  <option value="yahoo_chart">Yahoo Finance Chart（TS 直连，免依赖）</option>
+                  <option value="yfinance">yfinance（Python，含分红/财报/资产信息；pip install yfinance pandas）</option>
                   <option value="tushare_daily">Tushare 日线（需 token）</option>
                   <option value="synthetic">不拉外源（K 线为空，用于禁用行情）</option>
                 </select>

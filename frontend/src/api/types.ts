@@ -14,7 +14,14 @@ export interface KlineBar {
 export interface KlinesResponseMeta {
   timeframe: string;
   period: string;
-  dataSource: "tushare_daily" | "yahoo_chart" | "eastmoney" | "akshare" | "synthetic";
+  dataSource:
+    | "tushare_daily"
+    | "yahoo_chart"
+    | "eastmoney"
+    | "akshare"
+    | "yfinance"
+    | "binance_crypto"
+    | "synthetic";
   requestedLimit: number;
   returned: number;
 }

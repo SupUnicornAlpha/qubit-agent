@@ -5,6 +5,11 @@ import { BaseConnector } from "../base.connector";
  * DataConnector — abstract base for market/news/fundamental/event data sources.
  *
  * Concrete implementations: TushareConnector, AKShareConnector, BaoStockConnector, etc.
+ *
+ * The four `abstract` methods (bars/ticks/news/fundamentals) are required;
+ * the optional methods (`fetchDividends`/`fetchEarnings`/`fetchAssetInfo`)
+ * default to throwing `not_supported` so existing subclasses keep compiling
+ * while new sources (e.g. yfinance) can opt-in by overriding them.
  */
 export abstract class DataConnector extends BaseConnector {
   abstract readonly meta: ConnectorMeta;
@@ -16,6 +21,21 @@ export abstract class DataConnector extends BaseConnector {
   abstract fetchNews(params: FetchNewsParams): Promise<NewsData[]>;
   abstract fetchFundamentals(params: FetchFundamentalsParams): Promise<FundamentalData>;
 
+  /** Optional — yfinance-class sources only; default rejects with `not_supported`. */
+  async fetchDividends(_params: FetchDividendsParams): Promise<DividendItem[]> {
+    throw new Error("fetch_dividends: not supported by this connector");
+  }
+
+  /** Optional — yfinance-class sources only; default rejects with `not_supported`. */
+  async fetchEarnings(_params: FetchEarningsParams): Promise<EarningsItem[]> {
+    throw new Error("fetch_earnings: not supported by this connector");
+  }
+
+  /** Optional — yfinance-class sources only; default rejects with `not_supported`. */
+  async fetchAssetInfo(_params: FetchAssetInfoParams): Promise<AssetInfoData> {
+    throw new Error("fetch_asset_info: not supported by this connector");
+  }
+
   protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     switch (operation) {
       case "fetch_bars":
@@ -26,6 +46,12 @@ export abstract class DataConnector extends BaseConnector {
         return this.fetchNews(payload as FetchNewsParams) as unknown as TOutput;
       case "fetch_fundamentals":
         return this.fetchFundamentals(payload as FetchFundamentalsParams) as unknown as TOutput;
+      case "fetch_dividends":
+        return this.fetchDividends(payload as FetchDividendsParams) as unknown as TOutput;
+      case "fetch_earnings":
+        return this.fetchEarnings(payload as FetchEarningsParams) as unknown as TOutput;
+      case "fetch_asset_info":
+        return this.fetchAssetInfo(payload as FetchAssetInfoParams) as unknown as TOutput;
       default:
         throw new Error(`DataConnector: unknown operation "${operation}"`);
     }
@@ -110,4 +136,62 @@ export interface FundamentalData {
     pb?: number;
     [key: string]: unknown;
   }>;
+}
+
+// ─── Optional yfinance-class operations ───────────────────────────────────────
+
+export interface FetchDividendsParams {
+  symbol: string;
+  exchange?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface DividendItem {
+  date: string;
+  amount: number;
+}
+
+export interface FetchEarningsParams {
+  symbol: string;
+  exchange?: string;
+}
+
+export interface EarningsItem {
+  period: string;
+  source: string;
+  revenue?: number | null;
+  netIncome?: number | null;
+  operatingIncome?: number | null;
+  eps?: number | null;
+}
+
+export interface FetchAssetInfoParams {
+  symbol: string;
+  exchange?: string;
+}
+
+/**
+ * 与 `yfinance-klines.ts:YfinanceAssetInfo` 字段保持一致。
+ * 不包含 PII（address/email/phone），由 Python 层白名单过滤。
+ */
+export interface AssetInfoData {
+  symbol: string;
+  yahooSymbol?: string;
+  shortName?: string;
+  longName?: string;
+  sector?: string;
+  industry?: string;
+  country?: string;
+  currency?: string;
+  marketCap?: number;
+  sharesOutstanding?: number;
+  beta?: number;
+  trailingPE?: number;
+  dividendYield?: number;
+  fiftyTwoWeekHigh?: number;
+  fiftyTwoWeekLow?: number;
+  longBusinessSummary?: string;
+  exchange?: string;
+  quoteType?: string;
 }

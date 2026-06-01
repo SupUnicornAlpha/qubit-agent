@@ -12,6 +12,7 @@ export type KlinesDataSourceSetting =
   | "yahoo_chart"
   | "eastmoney"
   | "akshare"
+  | "yfinance"
   | "binance_crypto"
   | "synthetic";
 
@@ -21,6 +22,7 @@ export type KlinesDataSourceMeta =
   | "yahoo_chart"
   | "eastmoney"
   | "akshare"
+  | "yfinance"
   | "binance_crypto"
   | "synthetic";
 
@@ -32,6 +34,7 @@ export function parseKlinesDataSourceSetting(raw: unknown): KlinesDataSourceSett
     raw === "yahoo_chart" ||
     raw === "eastmoney" ||
     raw === "akshare" ||
+    raw === "yfinance" ||
     raw === "binance_crypto" ||
     raw === "synthetic" ||
     raw === "auto"
@@ -57,6 +60,7 @@ export function resolveEffectiveKlinesSource(params: {
   if (mode === "binance_crypto") return "binance_crypto";
   if (mode === "eastmoney") return "eastmoney";
   if (mode === "akshare") return "akshare";
+  if (mode === "yfinance") return "yfinance";
   if (mode === "yahoo_chart") return "yahoo_chart";
   if (mode === "tushare_daily") {
     return params.hasTushareToken ? "tushare_daily" : "synthetic";

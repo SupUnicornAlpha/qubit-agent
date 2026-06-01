@@ -165,14 +165,14 @@ bun run build:app:release
 
 ### 5. Python 连接器（可选）
 
-仅当需要 **行情数据（AKShare）、Python 回测、券商实盘桥（Futu/IB/CCXT）** 时启动；后端会在缺失时优雅降级。
+仅当需要 **行情数据（AKShare A 股 / yfinance Yahoo 含分红与基本面）、Python 回测、券商实盘桥（Futu/IB/CCXT）** 时启动；后端会在缺失时优雅降级。
 
 **前置条件**：本机 `python3 >= 3.10`，建议使用 venv 隔离。
 
 ```bash
 cd python_connectors
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt          # 基础：numpy / pandas / akshare / pytest
+pip install -r requirements.txt          # 基础：numpy / pandas / akshare / yfinance / pytest
 
 # 实盘 Futu 示例（需额外依赖与 OpenD）
 pip install futu-api

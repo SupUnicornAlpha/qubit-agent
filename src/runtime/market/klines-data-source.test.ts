@@ -114,6 +114,29 @@ describe("resolveEffectiveKlinesSource", () => {
     ).toBe("akshare");
   });
 
+  test("explicit yfinance mode", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "yfinance" } },
+        period: "1d",
+        hasTushareToken: false,
+      })
+    ).toBe("yfinance");
+  });
+
+  test("auto does NOT silently route to yfinance even for US tickers", () => {
+    /** 决议 §10.3：auto 保持走 yahoo_chart 直连，避免没装 Python 的用户被坑。 */
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "auto" } },
+        period: "1d",
+        hasTushareToken: false,
+        symbol: "AAPL",
+        exchange: "US",
+      })
+    ).toBe("yahoo_chart");
+  });
+
   test("auto + crypto uses binance_crypto", () => {
     expect(
       resolveEffectiveKlinesSource({

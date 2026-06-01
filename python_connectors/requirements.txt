@@ -7,6 +7,9 @@ pandas>=2.2.0
 
 # Data sources (install as needed)
 akshare>=1.12.0
+# Optional: only required when klinesDataSource=yfinance (or fetch_dividends/
+# fetch_earnings/fetch_asset_info on the qubit-data connector).
+yfinance>=0.2.40
 # tushare>=1.4.0
 # baostock>=0.8.8
 

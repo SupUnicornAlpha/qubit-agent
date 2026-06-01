@@ -13,13 +13,25 @@ import {
   symbolToYahooSymbol,
 } from "../../runtime/market/klines-data-source";
 import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
+import {
+  fetchYfinanceAssetInfo,
+  fetchYfinanceBars,
+  fetchYfinanceDividends,
+  fetchYfinanceEarnings,
+} from "../../runtime/market/yfinance-klines";
 import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
 import {
+  type AssetInfoData,
   type BarData,
   DataConnector,
+  type DividendItem,
+  type EarningsItem,
+  type FetchAssetInfoParams,
   type FetchBarsParams,
+  type FetchDividendsParams,
+  type FetchEarningsParams,
   type FetchFundamentalsParams,
   type FetchNewsParams,
   type FetchTicksParams,
@@ -120,6 +132,9 @@ export class QubitNativeDataConnector extends DataConnector {
       "fetch_financial_data",
       "fetch_fundamentals",
       "fetch_news",
+      "fetch_dividends",
+      "fetch_earnings",
+      "fetch_asset_info",
       "write_snapshot",
     ],
     assetClasses: ["stock", "crypto"],
@@ -167,6 +182,13 @@ export class QubitNativeDataConnector extends DataConnector {
         status: "healthy",
         message:
           "qubit-data: A 股 K 线 → AKShare（Python，需 pip install akshare pandas；失败时 A 股回退东方财富）",
+      };
+    }
+    if (daily === "yfinance") {
+      return {
+        status: "healthy",
+        message:
+          "qubit-data: K 线 → yfinance（Python，需 pip install yfinance pandas；失败时回退 Yahoo Chart 直连）",
       };
     }
     if (daily === "yahoo_chart") {
@@ -417,6 +439,33 @@ export class QubitNativeDataConnector extends DataConnector {
       if (mode === "akshare") return [];
     }
 
+    if (effective === "yfinance") {
+      try {
+        const bars = await fetchYfinanceBars(params);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `yfinance returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `yfinance request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+      }
+      try {
+        const fallback = await fetchYahooFinanceBars(params);
+        if (fallback.length > 0) {
+          console.warn(
+            `[qubit-data] yfinance unavailable or empty; fell back to Yahoo Chart for ${params.symbol}`
+          );
+          return fallback;
+        }
+      } catch {
+        /* logged below if still empty */
+      }
+      if (mode === "yfinance") return [];
+    }
+
     if (effective === "eastmoney") {
       try {
         const bars = await fetchEastMoneyBars(params);
@@ -528,5 +577,24 @@ export class QubitNativeDataConnector extends DataConnector {
       exchange: params.exchange || "UNKNOWN",
       periods: [],
     };
+  }
+
+  /**
+   * 三个 yfinance-class 操作均通过 Python yfinance 子进程实现。
+   * 调用方需在配置里启用 yfinance（或显式调用），否则会因 yfinance 未装而抛错。
+   */
+  override async fetchDividends(params: FetchDividendsParams): Promise<DividendItem[]> {
+    if (!params.symbol?.trim()) throw new Error("fetch_dividends: symbol is required");
+    return fetchYfinanceDividends(params);
+  }
+
+  override async fetchEarnings(params: FetchEarningsParams): Promise<EarningsItem[]> {
+    if (!params.symbol?.trim()) throw new Error("fetch_earnings: symbol is required");
+    return fetchYfinanceEarnings(params);
+  }
+
+  override async fetchAssetInfo(params: FetchAssetInfoParams): Promise<AssetInfoData> {
+    if (!params.symbol?.trim()) throw new Error("fetch_asset_info: symbol is required");
+    return fetchYfinanceAssetInfo(params);
   }
 }
