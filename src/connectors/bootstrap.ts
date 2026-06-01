@@ -11,6 +11,7 @@ import {
   loadBuiltinConnectorSettings,
   type BuiltinConnectorInitConfigs,
 } from "../runtime/config/builtin-connector-settings";
+import { seedEnvRegistry } from "../runtime/environment/seed-env-registry";
 import { bootstrapProviders } from "../runtime/provider/bootstrap";
 import { bootstrapResearchScenarios } from "../runtime/research-scenario/bootstrap";
 
@@ -39,6 +40,14 @@ export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConf
     // 这样后续 connector / runtime 都可直接走 providerResolver。
     await bootstrapProviders();
     await bootstrapResearchScenarios();
+    // EnvironmentManager P1：把代码里的"系统期望清单"upsert 到 env_registry，
+    // 用户编辑过的字段（status / user_version_spec）会被保留。
+    // 失败仅 warn —— seed 不可用不应阻塞 connector init。
+    try {
+      await seedEnvRegistry();
+    } catch (e) {
+      console.warn(`[Bootstrap] seedEnvRegistry skipped: ${(e as Error).message}`);
+    }
 
     const data = new QubitNativeDataConnector();
     const news = new QubitNativeNewsConnector();
