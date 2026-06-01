@@ -20,6 +20,7 @@ const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; label: string }[] = [
   { id: "providers", label: "Providers" },
   { id: "integration", label: "集成 / IM" },
   { id: "schedule", label: "定时任务" },
+  { id: "env", label: "环境管理" },
 ];
 
 const NAV_ITEMS: readonly { label: string; key: NavKey }[] = [

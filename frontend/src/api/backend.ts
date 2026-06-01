@@ -136,6 +136,194 @@ export async function getSystemPythonHealth(force?: boolean): Promise<SystemPyth
   return res.data;
 }
 
+// ─── EnvironmentManager（详见 docs/ENVIRONMENT_MANAGER_DESIGN.md §6.6）──────
+
+export type EnvKind = "python" | "npm";
+export type EnvStatus = "enabled" | "disabled";
+export type EnvSource = "requirements" | "connector-meta" | "seed-mcp" | "user";
+export type EnvOk = "ok" | "warn" | "error";
+
+export interface ExpectedPackage {
+  id: string;
+  kind: EnvKind;
+  name: string;
+  displayName: string;
+  description: string;
+  versionSpec: string | null;
+  userVersionSpec: string | null;
+  effectiveVersionSpec: string | null;
+  optional: boolean;
+  capability: string;
+  source: EnvSource;
+  status: EnvStatus;
+  isBuiltin: boolean;
+  extra: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InstalledPackage {
+  name: string;
+  version: string;
+  installPath?: string;
+}
+
+export interface PackageDiff {
+  expected: ExpectedPackage[];
+  installed: InstalledPackage[];
+  satisfied: ExpectedPackage[];
+  missing: ExpectedPackage[];
+  versionMismatch: Array<{ expected: ExpectedPackage; installed: InstalledPackage }>;
+  orphan: InstalledPackage[];
+}
+
+export interface ConnectorProbe {
+  name: string;
+  type: string;
+  status: "healthy" | "degraded" | "unhealthy" | "error";
+  latencyMs: number | null;
+  message: string;
+  checkedAt: string;
+}
+
+export interface EnvironmentStatus {
+  ok: EnvOk;
+  summary: string;
+  pythonBin: string;
+  python: PackageDiff & { hasPipFailure: boolean };
+  npm: PackageDiff;
+  connectors: ConnectorProbe[];
+  generatedAt: string;
+}
+
+export type EnvInstallLogStatus = "running" | "success" | "failed" | "timeout";
+export type EnvInstallOperation = "install" | "uninstall" | "upgrade";
+
+export interface EnvInstallLogEntry {
+  id: string;
+  kind: EnvKind;
+  operation: EnvInstallOperation;
+  packageName: string;
+  requestedVersion: string | null;
+  installedVersion: string | null;
+  status: EnvInstallLogStatus;
+  errorMessage: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  triggeredBy: string;
+}
+
+export interface EnvRegistryCreateInput {
+  kind: EnvKind;
+  packageName: string;
+  displayName: string;
+  description?: string;
+  versionSpec?: string | null;
+  optional?: boolean;
+  capability?: string;
+}
+
+export interface EnvRegistryPatchInput {
+  status?: EnvStatus;
+  userVersionSpec?: string | null;
+  displayName?: string;
+  description?: string;
+  optional?: boolean;
+  capability?: string;
+}
+
+/**
+ * 顶层环境状态（python diff + npm diff + connector probes）。
+ * 该接口比较慢（拉 pip list + 扫盘 + connector probes），UI 上记得显示 loading
+ * 并避免高频轮询；status 页面建议手动 refresh。
+ */
+export async function getEnvironmentStatus(): Promise<EnvironmentStatus> {
+  const r = await httpGet<{ ok: boolean; data: EnvironmentStatus }>(
+    "/api/v1/environment/status"
+  );
+  return r.data;
+}
+
+export async function listEnvRegistry(kind?: EnvKind): Promise<ExpectedPackage[]> {
+  const path = kind
+    ? `/api/v1/environment/registry?kind=${encodeURIComponent(kind)}`
+    : "/api/v1/environment/registry";
+  const r = await httpGet<{ ok: boolean; data: ExpectedPackage[] }>(path);
+  return r.data;
+}
+
+export async function createEnvRegistryItem(
+  input: EnvRegistryCreateInput
+): Promise<ExpectedPackage> {
+  const r = await httpPost<{ ok: boolean; data: ExpectedPackage }>(
+    "/api/v1/environment/registry",
+    input
+  );
+  return r.data;
+}
+
+export async function patchEnvRegistryItem(
+  id: string,
+  patch: EnvRegistryPatchInput
+): Promise<ExpectedPackage> {
+  const r = await httpPatch<{ ok: boolean; data: ExpectedPackage }>(
+    `/api/v1/environment/registry/${encodeURIComponent(id)}`,
+    patch
+  );
+  return r.data;
+}
+
+export async function deleteEnvRegistryItem(id: string): Promise<void> {
+  await httpDelete(`/api/v1/environment/registry/${encodeURIComponent(id)}`);
+}
+
+export async function installEnvPackage(
+  kind: EnvKind,
+  packageName: string,
+  versionSpec?: string
+): Promise<{ logId: string }> {
+  const path =
+    kind === "python"
+      ? "/api/v1/environment/python/install"
+      : "/api/v1/environment/npm/install";
+  const body =
+    kind === "python"
+      ? { packageName, versionSpec: versionSpec ?? null }
+      : { packageName, version: versionSpec ?? null };
+  const r = await httpPost<{ ok: boolean; data: { logId: string } }>(path, body);
+  return r.data;
+}
+
+export async function uninstallEnvPackage(
+  kind: EnvKind,
+  packageName: string
+): Promise<{ logId: string }> {
+  const path =
+    kind === "python"
+      ? "/api/v1/environment/python/uninstall"
+      : "/api/v1/environment/npm/uninstall";
+  const r = await httpPost<{ ok: boolean; data: { logId: string } }>(path, {
+    packageName,
+  });
+  return r.data;
+}
+
+export async function listEnvInstallLog(filter: {
+  kind?: EnvKind;
+  packageName?: string;
+  limit?: number;
+}): Promise<EnvInstallLogEntry[]> {
+  const params = new URLSearchParams();
+  if (filter.kind) params.set("kind", filter.kind);
+  if (filter.packageName) params.set("packageName", filter.packageName);
+  if (filter.limit) params.set("limit", String(filter.limit));
+  const path = params.toString()
+    ? `/api/v1/environment/install-log?${params.toString()}`
+    : "/api/v1/environment/install-log";
+  const r = await httpGet<{ ok: boolean; data: EnvInstallLogEntry[] }>(path);
+  return r.data;
+}
+
 export async function getHealth(): Promise<{ status: string }> {
   return httpGet<{ status: string }>("/health");
 }

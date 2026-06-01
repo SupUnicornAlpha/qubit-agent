@@ -130,7 +130,8 @@ export type ConfigSubPage =
   | "integration"
   | "schedule"
   | "providers"
-  | "runtime";
+  | "runtime"
+  | "env";
 
 export interface AppState {
   backendConnected: boolean;

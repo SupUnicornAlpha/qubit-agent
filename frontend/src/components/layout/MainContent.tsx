@@ -183,6 +183,7 @@ import { ProvidersPanel } from "../config/ProvidersPanel";
 import { LlmProvidersList } from "../config/LlmProvidersList";
 import { OriginBadge } from "../common/OriginBadge";
 import { PythonRuntimeCard } from "../common/PythonRuntimeCard";
+import { EnvironmentPanel } from "../environment/EnvironmentPanel";
 import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { ResearchOutputTabs } from "../team/ResearchOutputTabs";
@@ -3723,6 +3724,7 @@ const ConfigPanel: FC = () => {
           </>
         ) : null}
         {activeConfigSubPage === "providers" ? <ProvidersPanel /> : null}
+        {activeConfigSubPage === "env" ? <EnvironmentPanel /> : null}
         {activeConfigSubPage === "integration" ? (
           <IntegrationCenterPanel
             workspaceId={currentWorkspaceId || undefined}
