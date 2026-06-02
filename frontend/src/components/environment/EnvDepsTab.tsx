@@ -90,7 +90,73 @@ interface KindSectionProps {
 }
 
 function KindSection({ kind, diff, rowStates, rowMessages, onAction }: KindSectionProps) {
-  const rows = useMemo(() => bucketize(diff), [diff]);
+  const allRows = useMemo(() => bucketize(diff), [diff]);
+  const primaryRows = useMemo(() => allRows.filter((r) => r.bucket !== "orphan"), [allRows]);
+  const orphanRows = useMemo(() => allRows.filter((r) => r.bucket === "orphan"), [allRows]);
+
+  const renderRow = (r: DepRow) => {
+    const sev = severityForRow(r);
+    const name = r.expected?.name ?? r.installed?.name ?? "?";
+    const display = r.expected?.displayName ?? name;
+    const optional = r.expected?.optional ?? true;
+    const busy = rowStates[r.key] === "busy";
+    const failMsg = rowStates[r.key] === "fail" ? rowMessages[r.key] : undefined;
+
+    return (
+      <tr key={r.key} style={tableTrBordered}>
+        <td style={{ ...tableTd, fontFamily: "ui-monospace, monospace" }}>
+          <div style={{ fontWeight: 600 }}>{display}</div>
+          <div style={{ color: "var(--qb-main-meta)", fontSize: 11 }}>{name}</div>
+        </td>
+        <td style={{ ...tableTd, color: "var(--qb-main-meta)" }}>
+          <span style={code}>{r.expected?.capability ?? "—"}</span>
+        </td>
+        <td style={tableTd}>
+          {r.expected?.effectiveVersionSpec ? (
+            <span style={code}>{r.expected.effectiveVersionSpec}</span>
+          ) : (
+            <span style={{ color: "var(--qb-main-meta)" }}>—</span>
+          )}
+        </td>
+        <td style={tableTd}>
+          {r.installed ? (
+            <span style={code}>{r.installed.version}</span>
+          ) : (
+            <span style={{ color: STATUS_COLOR.red }}>未装</span>
+          )}
+        </td>
+        <td style={tableTd}>
+          <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <span style={statusDot(sev)} />
+            {labelForBucket(r.bucket, optional)}
+          </span>
+          {failMsg ? (
+            <div style={{ color: STATUS_COLOR.red, fontSize: 11, marginTop: 2 }}>{failMsg}</div>
+          ) : null}
+        </td>
+        <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
+          <RowActions
+            row={r}
+            busy={busy}
+            onAction={(op, pkg) => void onAction(kind, op, pkg)}
+          />
+        </td>
+      </tr>
+    );
+  };
+
+  const tableHead = (
+    <thead>
+      <tr style={tableHeaderRow}>
+        <th style={tableTh}>包</th>
+        <th style={tableTh}>能力</th>
+        <th style={tableTh}>期望</th>
+        <th style={tableTh}>已装</th>
+        <th style={tableTh}>状态</th>
+        <th style={tableTh}>操作</th>
+      </tr>
+    </thead>
+  );
 
   return (
     <div style={card}>
@@ -104,78 +170,40 @@ function KindSection({ kind, diff, rowStates, rowMessages, onAction }: KindSecti
         </span>
       </div>
 
-      {rows.length === 0 ? (
+      {primaryRows.length === 0 ? (
         <p style={{ margin: 0, fontSize: 12, color: "var(--qb-main-meta)" }}>
           无任何 {kind} 期望项；可在「期望清单」tab 添加。
         </p>
       ) : (
         <table style={baseTable}>
-          <thead>
-            <tr style={tableHeaderRow}>
-              <th style={tableTh}>包</th>
-              <th style={tableTh}>能力</th>
-              <th style={tableTh}>期望</th>
-              <th style={tableTh}>已装</th>
-              <th style={tableTh}>状态</th>
-              <th style={tableTh}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const sev = severityForRow(r);
-              const name = r.expected?.name ?? r.installed?.name ?? "?";
-              const display = r.expected?.displayName ?? name;
-              const optional = r.expected?.optional ?? true;
-              const busy = rowStates[r.key] === "busy";
-              const failMsg = rowStates[r.key] === "fail" ? rowMessages[r.key] : undefined;
-
-              return (
-                <tr key={r.key} style={tableTrBordered}>
-                  <td style={{ ...tableTd, fontFamily: "ui-monospace, monospace" }}>
-                    <div style={{ fontWeight: 600 }}>{display}</div>
-                    <div style={{ color: "var(--qb-main-meta)", fontSize: 11 }}>{name}</div>
-                  </td>
-                  <td style={{ ...tableTd, color: "var(--qb-main-meta)" }}>
-                    <span style={code}>{r.expected?.capability ?? "—"}</span>
-                  </td>
-                  <td style={tableTd}>
-                    {r.expected?.effectiveVersionSpec ? (
-                      <span style={code}>{r.expected.effectiveVersionSpec}</span>
-                    ) : (
-                      <span style={{ color: "var(--qb-main-meta)" }}>—</span>
-                    )}
-                  </td>
-                  <td style={tableTd}>
-                    {r.installed ? (
-                      <span style={code}>{r.installed.version}</span>
-                    ) : (
-                      <span style={{ color: STATUS_COLOR.red }}>未装</span>
-                    )}
-                  </td>
-                  <td style={tableTd}>
-                    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                      <span style={statusDot(sev)} />
-                      {labelForBucket(r.bucket, optional)}
-                    </span>
-                    {failMsg ? (
-                      <div style={{ color: STATUS_COLOR.red, fontSize: 11, marginTop: 2 }}>
-                        {failMsg}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td style={{ ...tableTd, whiteSpace: "nowrap" }}>
-                    <RowActions
-                      row={r}
-                      busy={busy}
-                      onAction={(op, pkg) => void onAction(kind, op, pkg)}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
+          {tableHead}
+          <tbody>{primaryRows.map(renderRow)}</tbody>
         </table>
       )}
+
+      {orphanRows.length > 0 ? (
+        <details style={{ marginTop: 12 }}>
+          <summary
+            style={{
+              cursor: "pointer",
+              padding: "6px 8px",
+              fontSize: 12,
+              color: "var(--qb-main-meta)",
+              userSelect: "none",
+              borderTop: "1px dashed var(--qb-border, rgba(0,0,0,0.12))",
+            }}
+          >
+            孤儿包（已装但不在期望清单内）· {orphanRows.length}
+            <span style={{ marginLeft: 8, fontSize: 11 }}>
+              通常是依赖的依赖（传递依赖），无需手动处理；点击展开查看 / 卸载
+            </span>
+          </summary>
+          <table style={{ ...baseTable, marginTop: 8 }}>
+            {tableHead}
+            <tbody>{orphanRows.map(renderRow)}</tbody>
+          </table>
+        </details>
+      ) : null}
     </div>
   );
 }
