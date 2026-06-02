@@ -9,21 +9,32 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { MockEmbeddingClient, setEmbeddingClientForTesting } from "../../llm/embedding-client";
 import { setExperienceBusForTesting } from "../experience-bus";
 import { InMemoryExperienceStore, setExperienceStoreForTesting } from "../experience-store";
+import {
+  InMemoryExperienceVectorStore,
+  setExperienceVectorStoreForTesting,
+} from "../experience-vector-store";
 import { ExperienceMaintenanceWorker } from "../maintenance-worker";
 
 let store: InMemoryExperienceStore;
+let vectorStore: InMemoryExperienceVectorStore;
 
 beforeEach(() => {
   store = new InMemoryExperienceStore();
+  vectorStore = new InMemoryExperienceVectorStore();
   setExperienceStoreForTesting(store);
   setExperienceBusForTesting(null);
+  setExperienceVectorStoreForTesting(vectorStore);
+  setEmbeddingClientForTesting(null);
 });
 
 afterEach(() => {
   setExperienceStoreForTesting(null);
   setExperienceBusForTesting(null);
+  setExperienceVectorStoreForTesting(null);
+  setEmbeddingClientForTesting(null);
 });
 
 describe("ExperienceMaintenanceWorker — tick", () => {
@@ -32,6 +43,11 @@ describe("ExperienceMaintenanceWorker — tick", () => {
     const res = await worker.tick();
     expect(res.janitor.ok).toBe(true);
     expect(res.janitor.summary?.scanned).toBe(0);
+    // Memory V2 P2：无 OPENAI_API_KEY 时 embedder skip
+    const oldKey = process.env.OPENAI_API_KEY;
+    if (!oldKey) {
+      expect(res.embedder.skipped).toBe("no_embedding_client");
+    }
   });
 
   test("tick 串行：第二次并发调用返回 'previous tick still running'", async () => {
@@ -68,6 +84,25 @@ describe("ExperienceMaintenanceWorker — tick", () => {
     const res = await worker.tick();
     expect(res.janitor.ok).toBe(false);
     expect(res.janitor.error).toBe("boom");
+  });
+
+  test("注入 embedding client → embedder 真跑（P2 集成）", async () => {
+    setEmbeddingClientForTesting(new MockEmbeddingClient({ dimension: 16 }));
+    await store.insert({
+      kind: "semantic",
+      subKind: "fact",
+      scope: "project",
+      scopeId: "proj",
+      contentJson: { summary: "alpha" },
+      validFrom: new Date().toISOString(),
+    });
+    const worker = new ExperienceMaintenanceWorker();
+    const res = await worker.tick();
+    expect(res.janitor.ok).toBe(true);
+    expect(res.embedder.ok).toBe(true);
+    expect(res.embedder.summary?.picked).toBe(1);
+    expect(res.embedder.summary?.succeeded).toBe(1);
+    expect(vectorStore.size()).toBe(1);
   });
 });
 

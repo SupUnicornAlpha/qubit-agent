@@ -168,6 +168,28 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(Object.keys(snap).length).toBe(0);
   });
 
+  test("maintenance_run(kind=embedder) → embedder.* 汇总", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "embedder",
+      actor: "embedder",
+      summary: { scanned: 100, picked: 20, succeeded: 18, failed: 2, tokensUsed: 1500 },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "embedder",
+      actor: "embedder",
+      summary: { scanned: 80, picked: 0, succeeded: 0, failed: 0, tokensUsed: 0 },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["memory.embedder.tick.total"]).toBe(2);
+    expect(snap["memory.embedder.scanned"]).toBe(180);
+    expect(snap["memory.embedder.picked"]).toBe(20);
+    expect(snap["memory.embedder.succeeded"]).toBe(18);
+    expect(snap["memory.embedder.failed"]).toBe(2);
+    expect(snap["memory.embedder.tokens"]).toBe(1500);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({

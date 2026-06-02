@@ -266,11 +266,20 @@ export async function reasonNode(
         }
       }
 
-      // ── Memory V2 P1：ExperienceRecall（与 skill 召回并存，独立失败域） ──
+      // ── Memory V2 P1/P2：ExperienceRecall（与 skill 召回并存，独立失败域）──
+      //   P2 升级：当 OPENAI_API_KEY 存在 → 自动启用 hybrid（embedding+keyword）；
+      //   缺 key 时 getDefaultEmbeddingClient() 返 null，Recall 降级到 keyword-only
+      //   （getDefaultEmbeddingClient 在 src/runtime/llm/embedding-client.ts）
       try {
+        const { getDefaultEmbeddingClient } = await import("../../llm/embedding-client");
+        const { getExperienceVectorStore } = await import(
+          "../../experience/experience-vector-store"
+        );
+        const embeddingClient = getDefaultEmbeddingClient();
         const recall = new ExperienceRecall({
           store: getExperienceStore(),
           bus: getExperienceBus(),
+          ...(embeddingClient ? { embeddingClient, vectorStore: getExperienceVectorStore() } : {}),
         });
         const recallHits = await recall.recall({
           projectId: meta.projectId,

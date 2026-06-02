@@ -15,24 +15,32 @@
  *       维护基础设施失败 ≠ 业务失败。
  */
 
+import { getDefaultEmbeddingClient } from "../llm/embedding-client";
 import { getExperienceBus } from "./experience-bus";
 import { getExperienceStore } from "./experience-store";
+import { getExperienceVectorStore } from "./experience-vector-store";
 import { type MetricsHandle, attachMemoryMetrics } from "./metrics";
+import { type EmbedderRunSummary, runEmbedderOnce } from "./pipes/embedder";
 import { type JanitorRunSummary, runJanitorOnce } from "./pipes/janitor";
 
 /** 默认每小时一次（错过整点 5min，避开和 monitorAggregator 抢资源） */
 const DEFAULT_TICK_MS = 60 * 60 * 1000;
 const STARTUP_DELAY_MS = 60 * 1000;
 const DEFAULT_MAX_BATCH = 500;
+const DEFAULT_EMBED_BATCH = 64;
 
 export interface ExperienceMaintenanceTickResult {
   janitor: { ok: boolean; summary?: JanitorRunSummary; error?: string };
+  embedder: { ok: boolean; summary?: EmbedderRunSummary; error?: string; skipped?: string };
 }
 
 export interface ExperienceMaintenanceOptions {
   tickMs?: number;
   startupDelayMs?: number;
+  /** Janitor 单次扫描上限 */
   maxBatch?: number;
+  /** Embedder 单次 embed batch 上限 */
+  embedBatch?: number;
 }
 
 export class ExperienceMaintenanceWorker {
@@ -43,11 +51,13 @@ export class ExperienceMaintenanceWorker {
   private readonly tickMs: number;
   private readonly startupDelayMs: number;
   private readonly maxBatch: number;
+  private readonly embedBatch: number;
 
   constructor(opts: ExperienceMaintenanceOptions = {}) {
     this.tickMs = opts.tickMs ?? DEFAULT_TICK_MS;
     this.startupDelayMs = opts.startupDelayMs ?? STARTUP_DELAY_MS;
     this.maxBatch = opts.maxBatch ?? DEFAULT_MAX_BATCH;
+    this.embedBatch = opts.embedBatch ?? DEFAULT_EMBED_BATCH;
   }
 
   /**
@@ -61,8 +71,12 @@ export class ExperienceMaintenanceWorker {
       };
     }
     this.running = true;
-    const result: ExperienceMaintenanceTickResult = { janitor: { ok: false } };
+    const result: ExperienceMaintenanceTickResult = {
+      janitor: { ok: false },
+      embedder: { ok: false },
+    };
     try {
+      // Stage 1 — Janitor（永远跑，无外部依赖）
       try {
         const summary = await runJanitorOnce({
           store: getExperienceStore(),
@@ -72,7 +86,7 @@ export class ExperienceMaintenanceWorker {
         result.janitor = { ok: true, summary };
         if (summary.qualityUpdated > 0 || summary.decayMarked > 0 || summary.archived > 0) {
           console.log(
-            `[experienceMaintenance] tick OK scanned=${summary.scanned} ` +
+            `[experienceMaintenance] janitor scanned=${summary.scanned} ` +
               `qUpdated=${summary.qualityUpdated} decay=${summary.decayMarked} ` +
               `archived=${summary.archived}`
           );
@@ -81,6 +95,51 @@ export class ExperienceMaintenanceWorker {
         const err = errToStr(e);
         result.janitor = { ok: false, error: err };
         console.warn(`[experienceMaintenance] janitor failed: ${err}`);
+      }
+
+      // Stage 2 — Embedder（需要 embedding client；无 key 时 skip）
+      const client = getDefaultEmbeddingClient();
+      if (!client) {
+        result.embedder = { ok: false, skipped: "no_embedding_client" };
+      } else {
+        try {
+          const summary = await runEmbedderOnce({
+            store: getExperienceStore(),
+            vectorStore: getExperienceVectorStore(),
+            client,
+            batchSize: this.embedBatch,
+          });
+          result.embedder = { ok: true, summary };
+          // 给 metrics collector emit 一条 maintenance_run；
+          // Janitor 内部已自己 emit 过，所以这里只补 embedder 这条
+          try {
+            getExperienceBus().emit({
+              type: "maintenance_run",
+              kind: "embedder",
+              actor: "embedder",
+              summary: {
+                scanned: summary.scanned,
+                picked: summary.picked,
+                succeeded: summary.succeeded,
+                failed: summary.failed,
+                tokensUsed: summary.tokensUsed,
+              },
+            });
+          } catch {
+            /* metrics emit 失败 silent，不影响主流程 */
+          }
+          if (summary.picked > 0) {
+            console.log(
+              `[experienceMaintenance] embedder picked=${summary.picked} ` +
+                `succ=${summary.succeeded} fail=${summary.failed} ` +
+                `tokens=${summary.tokensUsed}`
+            );
+          }
+        } catch (e) {
+          const err = errToStr(e);
+          result.embedder = { ok: false, error: err };
+          console.warn(`[experienceMaintenance] embedder failed: ${err}`);
+        }
       }
     } finally {
       this.running = false;

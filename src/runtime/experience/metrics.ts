@@ -18,6 +18,7 @@
  *   - `experience_executed` → `execute.total` + `execute.by_outcome.{success,fail,partial,unknown}`
  *   - `maintenance_run` (kind=janitor) → `janitor.scanned/qualityUpdated/decayMarked/archived`
  *   - `maintenance_run` (kind=reflector_daily) → `reflector.runs.total` + `reflector.by_status.{...}`
+ *   - `maintenance_run` (kind=embedder) → `embedder.tick.total / scanned / picked / succeeded / failed / tokens`（Memory V2 P2）
  */
 
 import type { ExperienceBus } from "./experience-bus";
@@ -126,6 +127,14 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         const status = String(ev.summary.status ?? "unknown");
         c.inc("memory.reflector.runs.total");
         c.inc("memory.reflector.runs.by_status", 1, { status });
+      } else if (ev.kind === "embedder") {
+        const s = ev.summary;
+        c.inc("memory.embedder.tick.total");
+        c.inc("memory.embedder.scanned", numOf(s.scanned));
+        c.inc("memory.embedder.picked", numOf(s.picked));
+        c.inc("memory.embedder.succeeded", numOf(s.succeeded));
+        c.inc("memory.embedder.failed", numOf(s.failed));
+        c.inc("memory.embedder.tokens", numOf(s.tokensUsed));
       }
     } catch {
       /* noop */

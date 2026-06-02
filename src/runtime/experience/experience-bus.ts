@@ -91,7 +91,8 @@ export type ExperienceEvent =
    */
   | {
       type: "maintenance_run";
-      kind: "janitor" | "skill_curator" | "reflector_daily";
+      // Memory V2 P2 加入 embedder（pull-mode 跑 embedding 时 emit）
+      kind: "janitor" | "skill_curator" | "reflector_daily" | "embedder";
       actor: string;
       summary: Record<string, number | string>;
     };

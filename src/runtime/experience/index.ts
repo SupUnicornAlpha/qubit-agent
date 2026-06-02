@@ -126,3 +126,26 @@ export {
   type ReconcileProceduralDiff,
   type ReconcileReflectiveStats,
 } from "./reconciliation";
+
+// ───────────────────────── P2 向量召回 / Embedder ─────────────────────────
+export {
+  InMemoryExperienceVectorStore,
+  LanceDbExperienceVectorStore,
+  getExperienceVectorStore,
+  setExperienceVectorStoreForTesting,
+  type ExperienceVectorStore,
+  type UpsertEmbeddingInput,
+  type VectorSearchFilter,
+  type VectorSearchHit,
+} from "./experience-vector-store";
+
+export {
+  runEmbedderOnce,
+  rebuildExperienceEmbedding,
+  EMBEDDER_META_KEYS,
+  DEFAULT_BATCH_SIZE as EMBEDDER_DEFAULT_BATCH_SIZE,
+  DEFAULT_MAX_RETRIES as EMBEDDER_DEFAULT_MAX_RETRIES,
+  DEFAULT_SCAN_LIMIT as EMBEDDER_DEFAULT_SCAN_LIMIT,
+  type EmbedderRunSummary,
+  type RunEmbedderOnceOptions,
+} from "./pipes/embedder";
