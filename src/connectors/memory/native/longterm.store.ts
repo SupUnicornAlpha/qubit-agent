@@ -1,16 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { LANCE_TABLES, openOrCreateTable, vectorSearch } from "../../../db/lancedb/client";
 import { getDb } from "../../../db/sqlite/client";
 import { longtermMemory } from "../../../db/sqlite/schema";
-import {
-  LANCE_TABLES,
-  openOrCreateTable,
-  vectorSearch,
-} from "../../../db/lancedb/client";
-import type {
-  LongtermMemory,
-  LongtermMemoryType,
-  LongtermScope,
-} from "../../../types/entities";
+import type { LongtermMemory, LongtermMemoryType, LongtermScope } from "../../../types/entities";
 
 export interface LongtermQueryParams {
   scope?: LongtermScope;
@@ -31,9 +23,7 @@ export interface LongtermSemanticSearchParams {
 }
 
 export class LongtermMemoryStore {
-  async insert(
-    entry: Omit<LongtermMemory, "id" | "updatedAt">
-  ): Promise<LongtermMemory> {
+  async insert(entry: Omit<LongtermMemory, "id" | "updatedAt">): Promise<LongtermMemory> {
     const db = await getDb();
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -68,6 +58,11 @@ export class LongtermMemoryStore {
   /**
    * Semantic vector search via LanceDB.
    * Requires that embedding vectors have been written to LanceDB beforehand.
+   *
+   * Bug B3 修复（Memory V2 P0）：
+   *   旧实现 `eq(longtermMemory.id, ids[0]!)` 只取第一个命中，意味着 topK=10 永远
+   *   只返回 1 条。改为 `inArray(...)`，并按 LanceDB 命中顺序保持返回结果的相对排序
+   *   （SQLite IN 查询不保证顺序，所以我们在 JS 端 reorder）。
    */
   async semanticSearch(params: LongtermSemanticSearchParams): Promise<LongtermMemory[]> {
     const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "''");
@@ -87,19 +82,26 @@ export class LongtermMemoryStore {
     if (ids.length === 0) return [];
 
     const db = await getDb();
-    const rows = await db
+    const rows = (await db
       .select()
       .from(longtermMemory)
-      .where(eq(longtermMemory.id, ids[0]!));
+      .where(inArray(longtermMemory.id, ids))) as LongtermMemory[];
 
-    return rows as LongtermMemory[];
+    // 按 LanceDB 命中顺序排回去，保持"语义相似度高的在前"
+    const order = new Map<string, number>();
+    ids.forEach((id, i) => order.set(id, i));
+    rows.sort((a, b) => (order.get(a.id) ?? 1e9) - (order.get(b.id) ?? 1e9));
+    return rows;
   }
 
   async upsertEmbedding(
     longtermMemoryId: string,
     vector: number[],
     text: string,
-    meta: Omit<LongtermMemory, "id" | "updatedAt" | "contentJson" | "embeddingRef" | "artifactUri" | "validTo">
+    meta: Omit<
+      LongtermMemory,
+      "id" | "updatedAt" | "contentJson" | "embeddingRef" | "artifactUri" | "validTo"
+    >
   ): Promise<void> {
     const record = {
       id: crypto.randomUUID(),

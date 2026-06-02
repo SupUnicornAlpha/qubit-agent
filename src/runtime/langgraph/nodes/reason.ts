@@ -12,13 +12,19 @@ import {
   mergeSystemPrompt,
   readPackFiles,
 } from "../../agent/agent-pack-service";
-import { resolveLlmForAgent, invokeWithFallback } from "../../llm/llm-router";
-import type { LlmTokenUsage } from "../../llm/gateway";
-import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
+import {
+  ExperienceRecall,
+  getExperienceBus,
+  getExperienceStore,
+  renderRecallBlockForPrompt,
+} from "../../experience";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
-import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import type { LlmTokenUsage } from "../../llm/gateway";
+import { invokeWithFallback, resolveLlmForAgent } from "../../llm/llm-router";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
-import { skillService, renderSkillsBlockForPrompt } from "../../skills/skill-service";
+import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
+import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
@@ -106,10 +112,7 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
       createdAt: chatMessage.createdAt,
     })
     .from(chatMessage)
-    .innerJoin(
-      chatMessageWorkflowLink,
-      eq(chatMessageWorkflowLink.chatMessageId, chatMessage.id)
-    )
+    .innerJoin(chatMessageWorkflowLink, eq(chatMessageWorkflowLink.chatMessageId, chatMessage.id))
     .where(eq(chatMessageWorkflowLink.workflowRunId, workflowId))
     .orderBy(desc(chatMessage.createdAt))
     .limit(limit);
@@ -120,9 +123,16 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
     .filter((line) => line.length > 0);
 }
 
-async function resolveEffectiveSystemPrompt(definitionId: string, dbSystemPrompt: string): Promise<string> {
+async function resolveEffectiveSystemPrompt(
+  definitionId: string,
+  dbSystemPrompt: string
+): Promise<string> {
   const db = await getDb();
-  const profRows = await db.select().from(agentProfile).where(eq(agentProfile.definitionId, definitionId)).limit(1);
+  const profRows = await db
+    .select()
+    .from(agentProfile)
+    .where(eq(agentProfile.definitionId, definitionId))
+    .limit(1);
   const prof = profRows[0];
   const read = await readPackFiles({
     dataDir: getDataDir(),
@@ -170,16 +180,14 @@ export async function reasonNode(
   let userPromptLen = 0;
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
-  const payloadParams = (payload["params"] ?? {}) as Record<string, unknown>;
+  const payloadParams = (payload.params ?? {}) as Record<string, unknown>;
   const payloadGoal =
-    payloadParams["goal"] ??
-    payload["goal"] ??
-    payload["message"] ??
+    payloadParams.goal ??
+    payload.goal ??
+    payload.message ??
     JSON.stringify(state.inboundMessage.payload);
-  const slotContext =
-    typeof payloadParams["context"] === "string" ? payloadParams["context"].trim() : "";
-  const slotTicker =
-    typeof payloadParams["ticker"] === "string" ? payloadParams["ticker"].trim() : "";
+  const slotContext = typeof payloadParams.context === "string" ? payloadParams.context.trim() : "";
+  const slotTicker = typeof payloadParams.ticker === "string" ? payloadParams.ticker.trim() : "";
   const previousObservations = state.observations.slice(-3);
   const sessionContext = await loadSessionContext(state.workflowId);
 
@@ -201,11 +209,12 @@ export async function reasonNode(
    *
    * 查询失败不阻塞（典型场景：异步 cleanup 后 workflow 被删），降级到没注入。
    */
-  let workflowMeta: { projectId: string | null; sessionId: string | null; source: string | null } = {
-    projectId: null,
-    sessionId: null,
-    source: null,
-  };
+  let workflowMeta: { projectId: string | null; sessionId: string | null; source: string | null } =
+    {
+      projectId: null,
+      sessionId: null,
+      source: null,
+    };
   try {
     workflowMeta = await loadWorkflowMeta(state.workflowId);
   } catch {
@@ -214,6 +223,8 @@ export async function reasonNode(
 
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
+  // Memory V2 P1：在 skill 召回旁拼一个 experience 召回块；与 skill 完全独立的失败域
+  let recalledExperienceBlock = "";
   try {
     const meta = workflowMeta;
     if (meta.projectId) {
@@ -254,6 +265,37 @@ export async function reasonNode(
           );
         }
       }
+
+      // ── Memory V2 P1：ExperienceRecall（与 skill 召回并存，独立失败域） ──
+      try {
+        const recall = new ExperienceRecall({
+          store: getExperienceStore(),
+          bus: getExperienceBus(),
+        });
+        const recallHits = await recall.recall({
+          projectId: meta.projectId,
+          definitionId: state.agentDefinition.id,
+          role: state.agentDefinition.role,
+          query,
+          topK: 5,
+          workflowRunId: state.workflowId,
+        });
+        if (recallHits.length > 0) {
+          recalledExperienceBlock = renderRecallBlockForPrompt(recallHits);
+          if (process.env.DEBUG_MEMORY_V2) {
+            console.log(
+              `[reason] recalled ${recallHits.length} experiences for ${state.agentDefinition.role}`
+            );
+          }
+        }
+      } catch (err) {
+        if (process.env.DEBUG_MEMORY_V2) {
+          console.warn(
+            "[reason] experience recall failed:",
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
     }
   } catch (err) {
     // 表不存在 / 项目无 skill 都属于正常分支，仅 debug 日志
@@ -264,11 +306,14 @@ export async function reasonNode(
 
   const userPromptParts = [
     `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
-    ``,
+    "",
     `**任务目标**：${payloadGoal}`,
     slotTicker ? `**标的**：${slotTicker}` : "",
-    slotContext ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 12000)}` : "",
+    slotContext
+      ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 12000)}`
+      : "",
     recalledSkillsBlock ? `\n${recalledSkillsBlock}` : "",
+    recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
     sessionContext.length
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "",
@@ -281,7 +326,7 @@ export async function reasonNode(
   if (hasTools) {
     userPromptParts.push(
       "",
-      "若本步需要调用工具，请在分析文字之后附上**唯一一个** JSON 工具调用块（见系统提示中的格式）；若仅需文字结论则使用 `{\"tool\":\"none\"}`。"
+      '若本步需要调用工具，请在分析文字之后附上**唯一一个** JSON 工具调用块（见系统提示中的格式）；若仅需文字结论则使用 `{"tool":"none"}`。'
     );
   }
 
@@ -383,7 +428,12 @@ export async function reasonNode(
                 type: "token",
                 stepIndex: state.iteration,
                 ts: Date.now(),
-                payload: { token, provider: modelConfig.provider, model: modelConfig.model, retry: true },
+                payload: {
+                  token,
+                  provider: modelConfig.provider,
+                  model: modelConfig.model,
+                  retry: true,
+                },
               });
             },
           });
@@ -405,8 +455,7 @@ export async function reasonNode(
               usage = retryResult.usage;
             }
             console.log(
-              `[reason] agent ${state.agentDefinition.role} parse-retry succeeded ` +
-                `(orig parse_error → retried OK)`
+              `[reason] agent ${state.agentDefinition.role} parse-retry succeeded (orig parse_error → retried OK)`
             );
           } else {
             console.warn(
@@ -415,8 +464,7 @@ export async function reasonNode(
           }
         } catch (retryErr) {
           console.warn(
-            `[reason] agent ${state.agentDefinition.role} parse-retry threw: ` +
-              (retryErr instanceof Error ? retryErr.message : String(retryErr))
+            `[reason] agent ${state.agentDefinition.role} parse-retry threw: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`
           );
         }
       }

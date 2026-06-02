@@ -407,6 +407,13 @@
       "when": 1780617600000,
       "tag": "0058_environment_manager_p1",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1780704000000,
+      "tag": "0059_memory_v2_p0",
+      "breakpoints": true
     }
   ]
 }

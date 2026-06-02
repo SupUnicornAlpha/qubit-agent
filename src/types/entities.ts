@@ -604,11 +604,7 @@ export interface LongtermMemory {
 }
 
 export type MemoryLayer = "session" | "midterm" | "longterm";
-export type MemoryLinkRelation =
-  | "derive_from"
-  | "summarize_to"
-  | "evidence_of"
-  | "conflicts_with";
+export type MemoryLinkRelation = "derive_from" | "summarize_to" | "evidence_of" | "conflicts_with";
 
 export interface MemoryLink {
   id: string;
@@ -764,4 +760,112 @@ export interface SkillEvolutionRun {
   triggeredBy: string;
   startedAt: string;
   endedAt: string | null;
+}
+
+// ─── Memory V2 · 统一经验体（experience）类型 ──────────────────────────────
+// 与 src/db/sqlite/schema.ts 的 4 张新表一一对应。完整设计见
+// docs/MEMORY_V2_DESIGN.md。
+
+export type ExperienceKind = "episodic" | "semantic" | "procedural" | "reflective" | "identity";
+
+export type ExperienceScope = "org" | "workspace" | "project" | "strategy" | "workflow";
+
+export type ExperienceVisibility = "agent_private" | "role_shared" | "project_shared";
+
+/**
+ * 经验体内容载体：summary 是给检索 / Prompt 注入用的短摘要；body 放完整正文。
+ * subKind 之外的语义参数全部塞 metadataJson；这里的 ContentJson 保持稳定。
+ */
+export interface ExperienceContent {
+  summary: string;
+  body?: string;
+  [extraKey: string]: unknown;
+}
+
+export interface Experience {
+  id: string;
+  kind: ExperienceKind;
+  subKind: string;
+  scope: ExperienceScope;
+  scopeId: string;
+  definitionId: string | null;
+  visibility: ExperienceVisibility;
+  contentJson: ExperienceContent;
+  tagsJson: string[];
+  qualityScore: number;
+  useCount: number;
+  successCount: number;
+  failCount: number;
+  decayAt: string | null;
+  validFrom: string;
+  validTo: string | null;
+  parentId: string | null;
+  sourceRunId: string | null;
+  embeddingRef: string | null;
+  pinned: boolean;
+  metadataJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExperienceLinkRelation =
+  | "derive_from"
+  | "summarize_to"
+  | "evidence_of"
+  | "conflicts_with"
+  | "supersedes";
+
+export interface ExperienceLink {
+  id: string;
+  fromId: string;
+  toId: string;
+  relation: ExperienceLinkRelation;
+  weight: number;
+  createdAt: string;
+}
+
+export type ReflectionScope = "workflow_completed" | "workflow_failed" | "daily" | "manual";
+
+export type ReflectionStatus =
+  | "running"
+  | "completed"
+  | "skipped_dedup"
+  | "skipped_budget"
+  | "sampled_out"
+  | "failed";
+
+export interface ReflectionRun {
+  id: string;
+  scope: ReflectionScope;
+  subjectRunId: string | null;
+  failureSignature: string | null;
+  definitionId: string | null;
+  status: ReflectionStatus;
+  budgetTokensUsed: number;
+  producedExperienceIdsJson: string[];
+  errorMessage: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export type ExperienceOp =
+  | "create"
+  | "update"
+  | "recall"
+  | "execute"
+  | "decay"
+  | "archive"
+  | "promote";
+
+export type ExperienceOutcome = "success" | "fail" | "partial" | "unknown";
+
+export interface ExperienceOpLog {
+  id: string;
+  experienceId: string;
+  op: ExperienceOp;
+  workflowRunId: string | null;
+  outcome: ExperienceOutcome | null;
+  actor: string;
+  metadataJson: Record<string, unknown>;
+  createdAt: string;
 }

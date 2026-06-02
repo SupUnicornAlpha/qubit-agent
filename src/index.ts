@@ -1,16 +1,17 @@
 import { config } from "./config";
+import { formatStartupBanner } from "./routes/meta.routes";
+import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { isPackagedRuntime } from "./runtime/app-paths";
 import { runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
-import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { executionWorker } from "./runtime/execution/execution-worker";
+import { experienceMaintenanceWorker } from "./runtime/experience/maintenance-worker";
 import { installAcpMonitoringHook } from "./runtime/monitor/acp-monitoring-hook";
 import { monitorAggregatorWorker } from "./runtime/monitor/monitor-aggregator-worker";
 import { restoreRunningStrategies } from "./runtime/strategy/restore-running-strategies";
 import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worker";
+import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
 import { restoreRunningWorkflows } from "./runtime/workflow/restore-running-workflows";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
-import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
-import { formatStartupBanner } from "./routes/meta.routes";
 import { createServer } from "./server";
 
 async function main() {
@@ -18,7 +19,7 @@ async function main() {
   console.log(formatStartupBanner());
   console.log(`[QUBIT] Starting in ${config.env} mode...`);
   if (isPackagedRuntime()) {
-    console.log(`[QUBIT] Packaged app root: ${process.env["QUBIT_APP_ROOT"]}`);
+    console.log(`[QUBIT] Packaged app root: ${process.env.QUBIT_APP_ROOT}`);
     console.log(`[QUBIT] Data directory: ${config.dataDir}`);
   }
 
@@ -48,6 +49,9 @@ async function main() {
   // 监控聚合 + 告警扫描 worker（P2-4）：每 5min 跑一次 aggregateMetrics +
   // stuckWorkflowAlerts + scanAllSystemAlerts；任一阶段失败仅 warn，不影响主链路。
   monitorAggregatorWorker.start();
+  // Memory V2 P1.5：每小时跑一次 ExperienceJanitor —— 重算 qualityScore + decay/archive。
+  // 单 tick 全程串行，失败仅 warn。
+  experienceMaintenanceWorker.start();
   // 监控 V2 P2：在 ACP caller 注入 connector_call_log 写入 hook。幂等。
   installAcpMonitoringHook();
 
@@ -62,6 +66,7 @@ async function main() {
     executionWorker.stop();
     strategyRuntimeWorker.stop();
     monitorAggregatorWorker.stop();
+    experienceMaintenanceWorker.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);
@@ -72,6 +77,7 @@ async function main() {
     executionWorker.stop();
     strategyRuntimeWorker.stop();
     monitorAggregatorWorker.stop();
+    experienceMaintenanceWorker.stop();
     await stopAllAgents();
     server.stop();
     process.exit(0);

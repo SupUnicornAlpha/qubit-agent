@@ -18,6 +18,11 @@ import {
   runEval,
 } from "../runtime/eval/pipeline";
 import {
+  scanAllSystemAlerts,
+  scanMcpCircuitOpenAlerts,
+  scanTokenAnomalyAlerts,
+} from "../runtime/monitor/alert-scanners";
+import {
   ackAlert,
   createAlertsFromWorkflowQuality,
   createStuckWorkflowAlerts,
@@ -25,21 +30,12 @@ import {
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
-import {
-  scanAllSystemAlerts,
-  scanMcpCircuitOpenAlerts,
-  scanTokenAnomalyAlerts,
-} from "../runtime/monitor/alert-scanners";
 import { getConnectorsSummary } from "../runtime/monitor/connector-summary";
-import { listFailures, type FailureScope } from "../runtime/monitor/failure-list";
+import { type FailureScope, listFailures } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
 import { getMcpDiagnostics } from "../runtime/monitor/mcp-diagnostics";
 import { getMcpSummary } from "../runtime/monitor/mcp-summary";
-import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
-import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
-import { getSkillsSummary } from "../runtime/monitor/skills-summary";
-import { getToolsSummary, type ToolKind } from "../runtime/monitor/tools-summary";
 import {
   aggregateAgentRuntimeMetrics,
   createWorkflowQualitySnapshot,
@@ -47,6 +43,10 @@ import {
   listAgentRuntimeMetrics,
   listWorkflowQualitySnapshots,
 } from "../runtime/monitor/quality-metrics";
+import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
+import { getSkillsSummary } from "../runtime/monitor/skills-summary";
+import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
+import { type ToolKind, getToolsSummary } from "../runtime/monitor/tools-summary";
 import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
 
 export const monitorRouter = new Hono();
@@ -86,10 +86,8 @@ monitorRouter.post("/alerts/scan-system", async (c) => {
   const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
   const input: Parameters<typeof scanAllSystemAlerts>[0] = {};
   if (body.mcpStuckMinutes !== undefined) input.mcpStuckMinutes = body.mcpStuckMinutes;
-  if (body.tokenRatioThreshold !== undefined)
-    input.tokenRatioThreshold = body.tokenRatioThreshold;
-  if (body.tokenWindowMinutes !== undefined)
-    input.tokenWindowMinutes = body.tokenWindowMinutes;
+  if (body.tokenRatioThreshold !== undefined) input.tokenRatioThreshold = body.tokenRatioThreshold;
+  if (body.tokenWindowMinutes !== undefined) input.tokenWindowMinutes = body.tokenWindowMinutes;
   const data = await scanAllSystemAlerts(input);
   return c.json({ ok: true, data });
 });
@@ -115,8 +113,7 @@ monitorRouter.post("/alerts/scan-token", async (c) => {
   const input: Parameters<typeof scanTokenAnomalyAlerts>[0] = {};
   if (body.ratioThreshold !== undefined) input.ratioThreshold = body.ratioThreshold;
   if (body.windowMinutes !== undefined) input.windowMinutes = body.windowMinutes;
-  if (body.baselineMinTokens !== undefined)
-    input.baselineMinTokens = body.baselineMinTokens;
+  if (body.baselineMinTokens !== undefined) input.baselineMinTokens = body.baselineMinTokens;
   const data = await scanTokenAnomalyAlerts(input);
   return c.json({ ok: true, data });
 });
@@ -693,4 +690,24 @@ monitorRouter.get("/eval/runs/:id", async (c) => {
   const runId = c.req.param("id");
   const data = await getEvalRunDetail(runId);
   return c.json({ ok: true, data });
+});
+
+// Memory V2 P1.5：实时返回内存指标快照（in-process counters）
+// 监控面板 / curl debug 用；下游 Prometheus exporter 也能直接拉这个端点序列化
+monitorRouter.get("/memory/metrics", async (c) => {
+  const { getMemoryMetricsSnapshot } = await import("../runtime/experience/metrics");
+  const snapshot = getMemoryMetricsSnapshot();
+  return c.json({ ok: true, data: { snapshot, ts: new Date().toISOString() } });
+});
+
+// Memory V2 P1.5：触发一次双写对账，返回报告。query: ?projectId=&sinceDays=
+monitorRouter.get("/memory/reconcile", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const sinceDays = Math.max(1, Number(c.req.query("sinceDays") ?? "7"));
+  const { reconcileProject } = await import("../runtime/experience/reconciliation");
+  const now = new Date();
+  const since = new Date(now.getTime() - sinceDays * 86_400_000);
+  const report = await reconcileProject({ projectId, since, now });
+  return c.json({ ok: true, data: report });
 });

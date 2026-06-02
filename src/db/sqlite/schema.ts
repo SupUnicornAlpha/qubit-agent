@@ -5,13 +5,9 @@ import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-or
 
 const id = () => text("id").primaryKey();
 const createdAt = () =>
-  text("created_at")
-    .notNull()
-    .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`);
+  text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`);
 const updatedAt = () =>
-  text("updated_at")
-    .notNull()
-    .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`);
+  text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`);
 
 // ─── 2.1 组织与任务域 ────────────────────────────────────────────────────────
 
@@ -172,7 +168,9 @@ export const workflowCompensationTask = sqliteTable("workflow_compensation_task"
   })
     .notNull()
     .default("pending"),
-  actionType: text("action_type", { enum: ["retry_from_start", "resume", "manual_intervention"] }).notNull(),
+  actionType: text("action_type", {
+    enum: ["retry_from_start", "resume", "manual_intervention"],
+  }).notNull(),
   reason: text("reason").notNull().default(""),
   retryCount: integer("retry_count").notNull().default(0),
   maxRetries: integer("max_retries").notNull().default(3),
@@ -218,9 +216,7 @@ export const analystResearchJob = sqliteTable(
     hitlSummary: text("hitl_summary"),
     /** 不用 createdAt() helper：那个 helper 把 SQL 列名硬编码成 `created_at`，
      *  这里列名必须叫 `started_at` 与 migration 0046 对齐。 */
-    startedAt: text("started_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     endedAt: text("ended_at"),
     updatedAt: updatedAt(),
   },
@@ -334,18 +330,12 @@ export const sandboxPolicy = sqliteTable("sandbox_policy", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   allowedToolsJson: text("allowed_tools_json", { mode: "json" }).notNull().default("[]"),
-  allowedMcpServersJson: text("allowed_mcp_servers_json", { mode: "json" })
-    .notNull()
-    .default("[]"),
-  allowedConnectorsJson: text("allowed_connectors_json", { mode: "json" })
-    .notNull()
-    .default("[]"),
+  allowedMcpServersJson: text("allowed_mcp_servers_json", { mode: "json" }).notNull().default("[]"),
+  allowedConnectorsJson: text("allowed_connectors_json", { mode: "json" }).notNull().default("[]"),
   allowedHostsJson: text("allowed_hosts_json", { mode: "json" }).notNull().default("[]"),
   allowedFsPathsJson: text("allowed_fs_paths_json", { mode: "json" }).notNull().default("[]"),
   canWriteMemory: integer("can_write_memory", { mode: "boolean" }).notNull().default(true),
-  canReadLiveMarket: integer("can_read_live_market", { mode: "boolean" })
-    .notNull()
-    .default(false),
+  canReadLiveMarket: integer("can_read_live_market", { mode: "boolean" }).notNull().default(false),
   canSubmitOrder: integer("can_submit_order", { mode: "boolean" }).notNull().default(false),
   maxToolCallMs: integer("max_tool_call_ms").notNull().default(30_000),
   maxIterationsPerRun: integer("max_iterations_per_run").notNull().default(20),
@@ -389,7 +379,9 @@ export const mcpServerConfig = sqliteTable("mcp_server_config", {
 export const mcpToolBinding = sqliteTable("mcp_tool_binding", {
   id: id(),
   projectId: text("project_id").references(() => project.id),
-  definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
+  definitionId: text("definition_id").references(() => agentDefinition.id, {
+    onDelete: "set null",
+  }),
   serverName: text("server_name").notNull(),
   toolName: text("tool_name").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
@@ -473,9 +465,7 @@ export const mcpCatalog = sqliteTable(
     defaultRetryPolicyJson: text("default_retry_policy_json", { mode: "json" })
       .notNull()
       .default("{}"),
-    defaultRateLimitJson: text("default_rate_limit_json", { mode: "json" })
-      .notNull()
-      .default("{}"),
+    defaultRateLimitJson: text("default_rate_limit_json", { mode: "json" }).notNull().default("{}"),
     defaultCapabilitiesJson: text("default_capabilities_json", { mode: "json" })
       .notNull()
       .default("[]"),
@@ -863,9 +853,7 @@ export const mcpServerHealth = sqliteTable(
     cooldownMs: integer("cooldown_ms").notNull().default(30_000),
     lastErrorMessage: text("last_error_message"),
     createdAt: createdAt(),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   },
   (t) => [uniqueIndex("idx_mcp_server_health_name").on(t.serverName)]
 );
@@ -1245,14 +1233,7 @@ export const brokerOrder = sqliteTable("broker_order", {
   connectorInstanceId: text("connector_instance_id").notNull(),
   brokerOrderId: text("broker_order_id").notNull(),
   status: text("status", {
-    enum: [
-      "submitted",
-      "partially_filled",
-      "filled",
-      "cancelled",
-      "rejected",
-      "expired",
-    ],
+    enum: ["submitted", "partially_filled", "filled", "cancelled", "rejected", "expired"],
   }).notNull(),
   submittedAt: createdAt(),
   updatedAt: updatedAt(),
@@ -1310,7 +1291,9 @@ export const executionTask = sqliteTable(
     updatedAt: updatedAt(),
   },
   (table) => ({
-    orderIntentUnique: uniqueIndex("idx_execution_task_order_intent_unique").on(table.orderIntentId),
+    orderIntentUnique: uniqueIndex("idx_execution_task_order_intent_unique").on(
+      table.orderIntentId
+    ),
   })
 );
 
@@ -1485,7 +1468,9 @@ export const brokerAccount = sqliteTable("broker_account", {
   id: id(),
   provider: text("provider", { enum: ["futu", "ib", "ccxt"] }).notNull(),
   accountRef: text("account_ref").notNull(),
-  mode: text("mode", { enum: ["mock", "sandbox", "live"] }).notNull().default("mock"),
+  mode: text("mode", { enum: ["mock", "sandbox", "live"] })
+    .notNull()
+    .default("mock"),
   baseUrl: text("base_url"),
   providerConfigJson: text("provider_config_json", { mode: "json" }).notNull().default({}),
   isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
@@ -1630,7 +1615,9 @@ export const midtermMemory = sqliteTable("midterm_memory", {
   projectId: text("project_id")
     .notNull()
     .references(() => project.id),
-  definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
+  definitionId: text("definition_id").references(() => agentDefinition.id, {
+    onDelete: "set null",
+  }),
   memoryType: text("memory_type", {
     enum: ["strategy_iteration", "risk_review", "simulation_note", "param_scan"],
   }).notNull(),
@@ -1646,15 +1633,11 @@ export const longtermMemory = sqliteTable("longterm_memory", {
   id: id(),
   scope: text("scope", { enum: ["org", "project", "strategy"] }).notNull(),
   scopeId: text("scope_id").notNull(),
-  definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
+  definitionId: text("definition_id").references(() => agentDefinition.id, {
+    onDelete: "set null",
+  }),
   memoryType: text("memory_type", {
-    enum: [
-      "factor_archive",
-      "regime",
-      "playbook",
-      "postmortem",
-      "execution_profile",
-    ],
+    enum: ["factor_archive", "regime", "playbook", "postmortem", "execution_profile"],
   }).notNull(),
   contentJson: text("content_json", { mode: "json" }).notNull(),
   embeddingRef: text("embedding_ref"),
@@ -1697,13 +1680,9 @@ export const memoryBackendConfig = sqliteTable("memory_backend_config", {
   })
     .notNull()
     .default("native_only"),
-  connectorInstanceId: text("connector_instance_id").references(
-    () => connectorInstance.id
-  ),
+  connectorInstanceId: text("connector_instance_id").references(() => connectorInstance.id),
   configRef: text("config_ref").notNull().default(""),
-  fallbackToNative: integer("fallback_to_native", { mode: "boolean" })
-    .notNull()
-    .default(true),
+  fallbackToNative: integer("fallback_to_native", { mode: "boolean" }).notNull().default(true),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -1931,8 +1910,12 @@ export const riskVetoLog = sqliteTable("risk_veto_log", {
   vetoTarget: text("veto_target").notNull(),
   vetoReason: text("veto_reason").notNull(),
   riskScore: real("risk_score").notNull(),
-  riskRulesTriggeredJson: text("risk_rules_triggered_json", { mode: "json" }).notNull().default("[]"),
-  severity: text("severity", { enum: ["warning", "block", "critical"] }).notNull().default("block"),
+  riskRulesTriggeredJson: text("risk_rules_triggered_json", { mode: "json" })
+    .notNull()
+    .default("[]"),
+  severity: text("severity", { enum: ["warning", "block", "critical"] })
+    .notNull()
+    .default("block"),
   createdAt: createdAt(),
 });
 
@@ -1996,7 +1979,9 @@ export const alertEvent = sqliteTable("alert_event", {
   severity: text("severity", { enum: ["info", "warn", "error", "critical"] }).notNull(),
   title: text("title").notNull(),
   detailsJson: text("details_json", { mode: "json" }).notNull().default("{}"),
-  status: text("status", { enum: ["open", "ack", "resolved"] }).notNull().default("open"),
+  status: text("status", { enum: ["open", "ack", "resolved"] })
+    .notNull()
+    .default("open"),
   createdAt: createdAt(),
   resolvedAt: text("resolved_at"),
 });
@@ -2095,9 +2080,7 @@ export const langgraphCheckpoint = sqliteTable(
     metadataBlob: text("metadata_blob").notNull(),
     createdAt: createdAt(),
   },
-  (t) => [
-    uniqueIndex("idx_langgraph_checkpoint_pk").on(t.threadId, t.checkpointNs, t.checkpointId),
-  ]
+  (t) => [uniqueIndex("idx_langgraph_checkpoint_pk").on(t.threadId, t.checkpointNs, t.checkpointId)]
 );
 
 /**
@@ -2364,7 +2347,9 @@ export const agentSkill = sqliteTable(
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "cascade" }),
-    definitionId: text("definition_id").references(() => agentDefinition.id, { onDelete: "set null" }),
+    definitionId: text("definition_id").references(() => agentDefinition.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
     bodyMd: text("body_md").notNull().default(""),
@@ -2407,7 +2392,9 @@ export const agentSkillRun = sqliteTable(
     skillId: text("skill_id")
       .notNull()
       .references(() => agentSkill.id, { onDelete: "cascade" }),
-    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, { onDelete: "set null" }),
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, {
+      onDelete: "set null",
+    }),
     agentInstanceId: text("agent_instance_id").references(() => agentInstance.id, {
       onDelete: "set null",
     }),
@@ -2419,9 +2406,7 @@ export const agentSkillRun = sqliteTable(
       .default("unknown"),
     score: real("score"),
     notes: text("notes").notNull().default(""),
-    startedAt: text("started_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     endedAt: text("ended_at"),
   },
   (t) => [
@@ -2437,7 +2422,9 @@ export const skillCuratorRun = sqliteTable(
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "cascade" }),
-    mode: text("mode", { enum: ["dry_run", "live"] }).notNull().default("dry_run"),
+    mode: text("mode", { enum: ["dry_run", "live"] })
+      .notNull()
+      .default("dry_run"),
     status: text("status", { enum: ["running", "completed", "failed"] })
       .notNull()
       .default("running"),
@@ -2451,9 +2438,7 @@ export const skillCuratorRun = sqliteTable(
     summaryYaml: text("summary_yaml").notNull().default(""),
     actionsJson: text("actions_json", { mode: "json" }).notNull().default("[]"),
     errorMessage: text("error_message"),
-    startedAt: text("started_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     endedAt: text("ended_at"),
   },
   (t) => [index("idx_skill_curator_run_project").on(t.projectId, t.startedAt)]
@@ -2481,9 +2466,7 @@ export const skillEvolutionRun = sqliteTable(
     reportJson: text("report_json", { mode: "json" }).notNull().default("{}"),
     errorMessage: text("error_message"),
     triggeredBy: text("triggered_by").notNull().default("user"),
-    startedAt: text("started_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     endedAt: text("ended_at"),
   },
   (t) => [
@@ -2559,19 +2542,210 @@ export const envInstallLog = sqliteTable(
     }).notNull(),
     /** stderr 截断 800 字符；失败排障用 */
     errorMessage: text("error_message"),
-    startedAt: text("started_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     finishedAt: text("finished_at"),
     /** "user" / "bootstrap" / "connector_init" / "test" */
     triggeredBy: text("triggered_by").notNull().default("user"),
   },
   (t) => [
-    index("idx_env_install_log_kind_pkg_started").on(
-      t.kind,
-      t.packageName,
-      t.startedAt
-    ),
+    index("idx_env_install_log_kind_pkg_started").on(t.kind, t.packageName, t.startedAt),
     index("idx_env_install_log_status_started").on(t.status, t.startedAt),
+  ]
+);
+
+// ─── Memory V2 · P0（experience 统一经验体）───────────────────────────────
+// 详见 docs/MEMORY_V2_DESIGN.md §4：
+//
+// 这 4 张新表是 Memory V2 的"地基"。它们与旧 session_memory / midterm_memory
+// /longterm_memory / memory_link 并存，由 P1 阶段的 Writer/Extractor/Reflector/
+// Janitor/Recall 5 个 pipe 真正驱动读写；P0 阶段仅落表 + 类型 + Store/Bus 边界，
+// 业务路径不切换、不破坏。
+//
+// 设计取舍（已与用户对齐）：
+//   1. 物理新表（非 view）—— 一次性迁移、查询简洁；
+//   2. 失败必反思 + 预算上限 + 签名去重 —— 由 reflection_run 持久化；
+//   3. P1 仅关键词 + JSON path 召回，P2 才接 embedding；embedding_ref 字段先留空；
+//   4. semantic 共享 / reflective 隔离 —— 用 visibility 字段表达，集中在 Recall 路由。
+
+/**
+ * Experience（统一经验体）
+ *
+ * 五种 kind：
+ *   - episodic    一次工作流的事件流水（取代 session_memory）
+ *   - semantic    关于世界/项目/标的的事实、规则（默认 project_shared）
+ *   - procedural  可复用流程（与 agent_skill 同义；P2 收敛）
+ *   - reflective  关于自己的反思：失败模式 / 偏好 / 校准（默认 agent_private）
+ *   - identity    持久画像、persona、user.md 提炼
+ *
+ * subKind 是自由 string（取代旧 memoryType 硬编码 enum），常见值：
+ *   factor_archive / regime / playbook / postmortem / execution_profile
+ *   strategy_iteration / risk_review / simulation_note / param_scan
+ *   failure_mode / fact / preference / persona / iteration_summary
+ *
+ * visibility 决定召回路由：
+ *   - agent_private    仅 definitionId 自己可见 —— reflective 强制
+ *   - role_shared      同 role 共享（按 agent_definition.role 比对）
+ *   - project_shared   同 project 内所有 agent 可见 —— semantic / procedural 默认
+ */
+export const experience = sqliteTable(
+  "experience",
+  {
+    id: id(),
+    kind: text("kind", {
+      enum: ["episodic", "semantic", "procedural", "reflective", "identity"],
+    }).notNull(),
+    /** 自由分类（取代旧 memoryType enum） */
+    subKind: text("sub_kind").notNull().default(""),
+    scope: text("scope", {
+      enum: ["org", "workspace", "project", "strategy", "workflow"],
+    }).notNull(),
+    /** scopeId 对应：workflow→workflowRunId / project→projectId 等 */
+    scopeId: text("scope_id").notNull(),
+    /** 产生者；reflective 必填，semantic 可空（表示"项目共有"） */
+    definitionId: text("definition_id").references(() => agentDefinition.id, {
+      onDelete: "set null",
+    }),
+    visibility: text("visibility", {
+      enum: ["agent_private", "role_shared", "project_shared"],
+    })
+      .notNull()
+      .default("project_shared"),
+    /** {summary, body, ...} — body 大字段也放这；不再生成额外的 markdown 镜像文件 */
+    contentJson: text("content_json", { mode: "json" }).notNull(),
+    /** 自由 string[] 用于过滤检索 */
+    tagsJson: text("tags_json", { mode: "json" }).notNull().default("[]"),
+    /** 0~1；Janitor nightly 重算（见 quality.ts） */
+    qualityScore: real("quality_score").notNull().default(0.5),
+    useCount: integer("use_count").notNull().default(0),
+    successCount: integer("success_count").notNull().default(0),
+    failCount: integer("fail_count").notNull().default(0),
+    /** 软归档触发时间；null 表示永不（pinned / identity） */
+    decayAt: text("decay_at"),
+    validFrom: text("valid_from").notNull(),
+    /** 被新版本取代时填，软删 */
+    validTo: text("valid_to"),
+    /** evolve / consolidate 谱系 */
+    parentId: text("parent_id"),
+    /** 哪次 workflow 产生 */
+    sourceRunId: text("source_run_id").references(() => workflowRun.id, {
+      onDelete: "set null",
+    }),
+    /** P2 接 embedding 时回填；P1 一律 null */
+    embeddingRef: text("embedding_ref"),
+    pinned: integer("pinned", { mode: "boolean" }).notNull().default(false),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default("{}"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("idx_experience_scope_kind_quality").on(t.scope, t.scopeId, t.kind, t.qualityScore),
+    index("idx_experience_def_kind_validfrom").on(t.definitionId, t.kind, t.validFrom),
+    index("idx_experience_kind_subkind").on(t.kind, t.subKind),
+    index("idx_experience_decay").on(t.decayAt),
+    index("idx_experience_parent").on(t.parentId),
+  ]
+);
+
+/**
+ * Experience 之间的关系图（取代死表 memory_link，并由 Extractor / Reflector
+ * 在 P1 真正写入）。
+ */
+export const experienceLink = sqliteTable(
+  "experience_link",
+  {
+    id: id(),
+    fromId: text("from_id")
+      .notNull()
+      .references(() => experience.id, { onDelete: "cascade" }),
+    toId: text("to_id")
+      .notNull()
+      .references(() => experience.id, { onDelete: "cascade" }),
+    relation: text("relation", {
+      enum: ["derive_from", "summarize_to", "evidence_of", "conflicts_with", "supersedes"],
+    }).notNull(),
+    weight: real("weight").notNull().default(1.0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_experience_link_from_rel").on(t.fromId, t.relation),
+    index("idx_experience_link_to_rel").on(t.toId, t.relation),
+    uniqueIndex("idx_experience_link_unique").on(t.fromId, t.toId, t.relation),
+  ]
+);
+
+/**
+ * 反思执行留痕。
+ *
+ * Reflector 的 3 个跳过分支也写一行（status=skipped_*），便于回答"我们今天到底
+ * 有多少失败被反思了、多少被预算/去重挡掉了"。
+ */
+export const reflectionRun = sqliteTable(
+  "reflection_run",
+  {
+    id: id(),
+    scope: text("scope", {
+      enum: ["workflow_completed", "workflow_failed", "daily", "manual"],
+    }).notNull(),
+    /** 反思对象；workflow_* 时为 workflowRunId */
+    subjectRunId: text("subject_run_id").references(() => workflowRun.id, {
+      onDelete: "set null",
+    }),
+    /** 仅 workflow_failed 有；用于 24h 去重 */
+    failureSignature: text("failure_signature"),
+    /** 产生 reflective 的归属 agent（隔离写入） */
+    definitionId: text("definition_id").references(() => agentDefinition.id, {
+      onDelete: "set null",
+    }),
+    status: text("status", {
+      enum: ["running", "completed", "skipped_dedup", "skipped_budget", "sampled_out", "failed"],
+    }).notNull(),
+    budgetTokensUsed: integer("budget_tokens_used").notNull().default(0),
+    /** 反思产出的 experience id 列表（含 reflective 与 semantic） */
+    producedExperienceIdsJson: text("produced_experience_ids_json", { mode: "json" })
+      .notNull()
+      .default("[]"),
+    errorMessage: text("error_message"),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [
+    index("idx_reflection_run_signature").on(t.failureSignature, t.startedAt),
+    index("idx_reflection_run_status_started").on(t.status, t.startedAt),
+    index("idx_reflection_run_subject").on(t.subjectRunId),
+  ]
+);
+
+/**
+ * Experience 全生命周期审计 —— 写入 / 召回 / 执行 / 衰减 / 归档 / 晋升。
+ *
+ * 与 skill_recall_log 的关系：P1 阶段并存；P2 用本表替代（带 kind 维度）。
+ */
+export const experienceOpLog = sqliteTable(
+  "experience_op_log",
+  {
+    id: id(),
+    experienceId: text("experience_id")
+      .notNull()
+      .references(() => experience.id, { onDelete: "cascade" }),
+    op: text("op", {
+      enum: ["create", "update", "recall", "execute", "decay", "archive", "promote"],
+    }).notNull(),
+    /** recall / execute 时填 */
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, {
+      onDelete: "set null",
+    }),
+    /** execute 时填，驱动 qualityScore 计算 */
+    outcome: text("outcome", {
+      enum: ["success", "fail", "partial", "unknown"],
+    }),
+    /** "extractor" / "reflector" / "reason" / "janitor" / "user" 等 */
+    actor: text("actor").notNull().default("system"),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default("{}"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_experience_op_log_exp_created").on(t.experienceId, t.createdAt),
+    index("idx_experience_op_log_workflow_op").on(t.workflowRunId, t.op),
+    index("idx_experience_op_log_op_created").on(t.op, t.createdAt),
   ]
 );
