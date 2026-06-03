@@ -184,6 +184,8 @@ export async function actNode(
     agentStepId,
     workflowRunId: state.workflowId,
     traceId: state.traceId,
+    /** 监控 v3 P0：让 tool_call_log / mcp_call_log 直接落 agent_definition_id 冗余 */
+    agentDefinitionId: state.agentDefinition.id,
     targetName,
     toolKind,
     targetKind,
@@ -227,17 +229,8 @@ export async function actNode(
         });
 
   if (!check.allowed) {
-    const acpId = crypto.randomUUID();
     await recordToolCallSandboxBlocked({
-      acpId,
       toolCallId,
-      workflowRunId: state.workflowId,
-      traceId: state.traceId,
-      agentStepId,
-      callerInstanceId: agentInstanceId,
-      targetKind,
-      targetName,
-      intent: state.plannedAction ?? "tool_call",
       hasMcp: Boolean(mcp),
       reason: check.reason ?? "blocked by sandbox",
       ...(check.violationType ? { violationType: check.violationType } : {}),
@@ -264,7 +257,6 @@ export async function actNode(
       payload: {
         level: "error",
         sandbox: true,
-        acpId,
         reason: check.reason ?? "sandbox denied tool call",
       },
     });
@@ -403,17 +395,8 @@ export async function actNode(
 
   if (!execution.ok) {
     const latencyMs = Date.now() - startedAt;
-    const timeoutAcpId = crypto.randomUUID();
     await recordToolCallTimeout({
-      acpId: timeoutAcpId,
       toolCallId,
-      workflowRunId: state.workflowId,
-      traceId: state.traceId,
-      agentStepId,
-      callerInstanceId: agentInstanceId,
-      targetKind,
-      targetName,
-      intent: state.plannedAction ?? "tool_call",
       hasMcp: Boolean(mcp),
       latencyMs,
       reason: execution.result.reason ?? "tool timeout",
@@ -465,24 +448,15 @@ export async function actNode(
    *
    * 行为差异：
    *   - mcp：同时更新 mcp_call_log 与 tool_call_log
-   *   - connector / builtin：只更 tool_call_log（acp_call 也会写一条 error）
+   *   - connector / builtin：只更 tool_call_log
    *   - errorClass / hint 文案对所有 source 通用（classifier 只看 errorMessage）
    */
   if (execValue.result === "error" && execValue.toolError) {
     const latencyMs = Date.now() - startedAt;
     const errMsg = execValue.errorMessage ?? "tool call failed";
     const errorSource = execValue.errorSource ?? "unknown";
-    const failAcpId = crypto.randomUUID();
     await recordToolCallError({
-      acpId: failAcpId,
       toolCallId,
-      workflowRunId: state.workflowId,
-      traceId: state.traceId,
-      agentStepId,
-      callerInstanceId: agentInstanceId,
-      targetKind,
-      targetName,
-      intent: state.plannedAction ?? "tool_call",
       hasMcp: Boolean(mcp),
       latencyMs,
       errorSource,
@@ -556,17 +530,8 @@ export async function actNode(
   }
 
   const latencyMs = Date.now() - startedAt;
-  const acpId = crypto.randomUUID();
   await recordToolCallSuccess({
-    acpId,
     toolCallId,
-    workflowRunId: state.workflowId,
-    traceId: state.traceId,
-    agentStepId,
-    callerInstanceId: agentInstanceId,
-    targetKind,
-    targetName,
-    intent: state.plannedAction ?? "tool_call",
     hasMcp: Boolean(mcp),
     latencyMs,
     responsePayload: execution.value as Record<string, unknown>,
@@ -580,7 +545,7 @@ export async function actNode(
     type: "tool_call_end",
     stepIndex: state.iteration,
     ts: Date.now(),
-    payload: { toolCallId, status: "success", acpId, targetKind, targetName },
+    payload: { toolCallId, status: "success", targetKind, targetName },
   });
 
   const resultPreview = (() => {
@@ -623,7 +588,7 @@ export async function actNode(
   }
 
   return {
-    toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success", acpId }],
+    toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success" }],
     observations: nextObservations,
   };
 }
