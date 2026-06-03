@@ -842,6 +842,27 @@ export const llmCallLog = sqliteTable("llm_call_log", {
   promptTokens: integer("prompt_tokens"),
   completionTokens: integer("completion_tokens"),
   totalTokens: integer("total_tokens"),
+  /**
+   * 监控 V3 P0（迁移 0066）：Gateway P0 增强字段。
+   *
+   * - `promptCachedTokens`：OpenAI Responses / Anthropic prompt-cache 命中的输入
+   *   token 数（可选，老 chat.completions 模型不返回）。计 cost 时按 cached
+   *   单价（约 standard 输入价的 1/4）。
+   * - `reasoningTokens`：o-series / gpt-5 暴露的"链式思考"token 数；包含在
+   *   `completionTokens` 内，单独存便于 reasoning ratio 监控。
+   * - `firstTokenLatencyMs`：流式首 token / 非流式整段 latency，用作 TTFT 指标。
+   * - `finishReason`：'stop' / 'length' / 'tool_calls' / 'content_filter' /
+   *   'incomplete' 等；用于诊断"输出被截断"等高频问题。
+   * - `responseId`：服务端返回的 chatcmpl-* / resp_* / msg_*；用于跨日志追溯
+   *   （客服/运维拿到 id 能直接 join 到该次调用）。
+   *
+   * 全部 nullable：旧行不需要回填即可读，新写入路径自动填。
+   */
+  promptCachedTokens: integer("prompt_cached_tokens"),
+  reasoningTokens: integer("reasoning_tokens"),
+  firstTokenLatencyMs: integer("first_token_latency_ms"),
+  finishReason: text("finish_reason"),
+  responseId: text("response_id"),
   latencyMs: integer("latency_ms").notNull(),
   status: text("status", {
     enum: ["success", "error", "timeout", "fallback"],

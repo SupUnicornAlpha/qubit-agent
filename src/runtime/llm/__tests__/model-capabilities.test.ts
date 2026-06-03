@@ -52,6 +52,23 @@ describe("modelCapability", () => {
     expect(modelCapability("GPT-5.5").customTemperature).toBe(false);
     expect(modelCapability("O1-MINI").customTemperature).toBe(false);
   });
+
+  test("apiPath：reasoning 走 responses；其它走 chat", () => {
+    expect(modelCapability("gpt-5-mini").apiPath).toBe("responses");
+    expect(modelCapability("o3-mini").apiPath).toBe("responses");
+    expect(modelCapability("azure/gpt-5").apiPath).toBe("responses");
+    expect(modelCapability("gpt-4o").apiPath).toBe("chat");
+    expect(modelCapability("claude-3-5-sonnet").apiPath).toBe("chat");
+    expect(modelCapability("deepseek-chat").apiPath).toBe("chat");
+    expect(modelCapability(undefined).apiPath).toBe("chat");
+  });
+
+  test("reasoningEffort：仅 reasoning family 为 true", () => {
+    expect(modelCapability("gpt-5").reasoningEffort).toBe(true);
+    expect(modelCapability("o1-pro").reasoningEffort).toBe(true);
+    expect(modelCapability("gpt-4o-mini").reasoningEffort).toBe(false);
+    expect(modelCapability("claude-3-5-sonnet").reasoningEffort).toBe(false);
+  });
 });
 
 describe("sanitizeChatCompletionsBody", () => {

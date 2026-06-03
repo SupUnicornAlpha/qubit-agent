@@ -279,6 +279,8 @@ export async function executeAgentReact(
       await writeLlmCallLog({
         workflowRunId: params.workflowId,
         agentStepId: reasonStepId,
+        /** 监控 v3 P0：让 llm_call_log 按 Agent 切分时单表 GROUP BY */
+        agentDefinitionId: params.def.id,
         provider: reasonResult.meta.provider,
         model: reasonResult.meta.model,
         ...(reasonResult.meta.usage ? { usage: reasonResult.meta.usage } : {}),
@@ -291,6 +293,13 @@ export async function executeAgentReact(
         ...(reasonResult.meta.userPromptLen !== undefined
           ? { userPromptLen: reasonResult.meta.userPromptLen }
           : {}),
+        ...(reasonResult.meta.firstTokenLatencyMs !== undefined
+          ? { firstTokenLatencyMs: reasonResult.meta.firstTokenLatencyMs }
+          : {}),
+        ...(reasonResult.meta.finishReason
+          ? { finishReason: reasonResult.meta.finishReason }
+          : {}),
+        ...(reasonResult.meta.responseId ? { responseId: reasonResult.meta.responseId } : {}),
         extraMeta: {
           fallbackUsed: reasonResult.meta.fallbackUsed,
           ...(reasonResult.meta.parseRetryUsed ? { parseRetryUsed: true } : {}),

@@ -183,6 +183,12 @@ export interface InvokeWithFallbackResult {
   usage?: LlmTokenUsage;
   /** Gateway-measured latency of the actually-executed model call. */
   latencyMs: number;
+  /** Streaming 首 token 延迟（非流式 = latencyMs）；缺信息时不写。 */
+  firstTokenLatencyMs?: number;
+  /** 服务端 response id，跨日志追溯用。 */
+  responseId?: string;
+  /** finish_reason / stop_reason / done_reason 字面量。 */
+  finishReason?: string;
   modelUsed: RuntimeModelConfig;
   fallbackUsed: boolean;
 }
@@ -197,6 +203,11 @@ export async function invokeWithFallback(
       answer: result.answer,
       ...(result.usage ? { usage: result.usage } : {}),
       latencyMs: result.latencyMs,
+      ...(result.firstTokenLatencyMs !== undefined
+        ? { firstTokenLatencyMs: result.firstTokenLatencyMs }
+        : {}),
+      ...(result.responseId ? { responseId: result.responseId } : {}),
+      ...(result.finishReason ? { finishReason: result.finishReason } : {}),
       modelUsed: primaryConfig,
       fallbackUsed: false,
     };
@@ -219,6 +230,11 @@ export async function invokeWithFallback(
       answer: result.answer,
       ...(result.usage ? { usage: result.usage } : {}),
       latencyMs: result.latencyMs,
+      ...(result.firstTokenLatencyMs !== undefined
+        ? { firstTokenLatencyMs: result.firstTokenLatencyMs }
+        : {}),
+      ...(result.responseId ? { responseId: result.responseId } : {}),
+      ...(result.finishReason ? { finishReason: result.finishReason } : {}),
       modelUsed: defaultCfg,
       fallbackUsed: true,
     };

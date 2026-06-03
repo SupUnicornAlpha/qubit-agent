@@ -456,6 +456,13 @@
       "when": 1781308800000,
       "tag": "0065_self_evolve_p8_auto_installer",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1781395200000,
+      "tag": "0066_llm_gateway_p0_telemetry",
+      "breakpoints": true
     }
   ]
 }

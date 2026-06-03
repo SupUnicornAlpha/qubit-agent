@@ -40,18 +40,39 @@ export interface ModelCapabilityProfile {
   customTopP: boolean;
   /** 是否接受 frequency_penalty / presence_penalty */
   penalties: boolean;
+  /**
+   * 推荐走的 OpenAI 端点：
+   *
+   * - `"chat"`（默认）：传统 `/v1/chat/completions`，所有 gpt-4o / gpt-3.5 系列
+   *   及 OpenAI-compatible 第三方（deepseek/qwen/zhipu）都用这个。
+   * - `"responses"`：新一代 `/v1/responses`，OpenAI 官方推荐 o-series 与 gpt-5*
+   *   使用，能拿到 `reasoning_tokens` / `cached_input_tokens` 等附加 usage 字段。
+   *
+   * 网关只在 provider === 'openai' 时使用本字段做路由；OpenAI-compatible
+   * 第三方代理大多不支持 /v1/responses，强制走 chat.completions。
+   */
+  apiPath: "chat" | "responses";
+  /**
+   * 是否支持 `reasoning.effort` 参数（responses API 才有）。`reasoning` 是
+   * o-series / gpt-5 暴露给调用方的 'low/medium/high' 推理预算开关。
+   */
+  reasoningEffort: boolean;
 }
 
 const FULL: ModelCapabilityProfile = {
   customTemperature: true,
   customTopP: true,
   penalties: true,
+  apiPath: "chat",
+  reasoningEffort: false,
 };
 
 const REASONING: ModelCapabilityProfile = {
   customTemperature: false,
   customTopP: false,
   penalties: false,
+  apiPath: "responses",
+  reasoningEffort: true,
 };
 
 /**

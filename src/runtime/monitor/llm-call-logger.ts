@@ -33,15 +33,39 @@ export type LlmCallLogInput = {
   workflowRunId: string;
   /** 来源 step；reason 节点是 reasonStepId；外部 cli loop 也可写但无 step 时传 null */
   agentStepId: string | null;
+  /**
+   * 监控 v3 P0：来源 Agent 的 definitionId。冗余到 llm_call_log 让
+   * /monitor/timeseries?source=llm_call_log&groupBy=agentDefinitionId 直接走索引,
+   * 不必反查 agent_step → agent_instance → agent_definition。
+   * CLI loop 路径暂时没有 def 概念，可传 null。
+   */
+  agentDefinitionId?: string | null;
   provider: string;
   model: string;
-  /** 来自 gateway / provider 返回；缺失字段写 null 不写 0，避免和「真实 0 token」混淆 */
+  /**
+   * 来自 gateway / provider 返回；缺失字段写 null 不写 0，避免和「真实 0 token」混淆。
+   *
+   * 新增（gateway P0）：
+   *   - cachedPromptTokens：OpenAI Responses / Anthropic prompt cache 命中数
+   *   - reasoningTokens：o-series / gpt-5 链式思考 token 数（已计入 completionTokens）
+   */
   usage?: {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
+    cachedPromptTokens?: number;
+    reasoningTokens?: number;
   };
   latencyMs: number;
+  /** 流式首 token / 非流式整段 latency；不写 0，无信息时写 null。 */
+  firstTokenLatencyMs?: number;
+  /**
+   * 'stop' / 'length' / 'tool_calls' / 'content_filter' / 'incomplete' 等。
+   * 用于诊断 truncation / 拒答 / max_tokens 截断等问题；与 status（成功/失败口径）正交。
+   */
+  finishReason?: string;
+  /** 服务端 response id：chatcmpl-* / resp_* / msg_*。用于跨日志追溯。 */
+  responseId?: string;
   status: "success" | "error" | "timeout" | "fallback";
   errorMessage?: string;
   /** 计算 cost / token 命中率用；不存原文 */
@@ -80,15 +104,36 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
       ...(input.extraMeta ?? {}),
     };
 
+    const cached = isNonNegInt(usage.cachedPromptTokens) ? usage.cachedPromptTokens : null;
+    const reasoning = isNonNegInt(usage.reasoningTokens) ? usage.reasoningTokens : null;
+    const ttft =
+      typeof input.firstTokenLatencyMs === "number" && Number.isFinite(input.firstTokenLatencyMs)
+        ? Math.max(0, Math.round(input.firstTokenLatencyMs))
+        : null;
+    const finishReason =
+      typeof input.finishReason === "string" && input.finishReason.trim()
+        ? input.finishReason.trim().slice(0, 64)
+        : null;
+    const responseId =
+      typeof input.responseId === "string" && input.responseId.trim()
+        ? input.responseId.trim().slice(0, 128)
+        : null;
+
     await db.insert(llmCallLog).values({
       id: randomUUID(),
       workflowRunId: input.workflowRunId,
       agentStepId: input.agentStepId,
+      agentDefinitionId: input.agentDefinitionId ?? null,
       provider: input.provider,
       model: input.model,
       promptTokens: prompt,
       completionTokens: completion,
       totalTokens: total,
+      promptCachedTokens: cached,
+      reasoningTokens: reasoning,
+      firstTokenLatencyMs: ttft,
+      finishReason,
+      responseId,
       latencyMs: Math.max(0, Math.round(input.latencyMs)),
       status: input.status,
       errorMessage: input.errorMessage ? input.errorMessage.slice(0, ERR_MSG_MAX) : null,
