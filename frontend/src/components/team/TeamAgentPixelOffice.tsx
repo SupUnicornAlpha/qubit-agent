@@ -54,6 +54,7 @@ import type {
 } from "../../lib/pixelOffice/types";
 import { ACTION_MS, WALK_MS } from "../../lib/pixelOffice/types";
 import type { TeamGraphActivity, TeamGraphSelection } from "../ide/TeamAgentGraph";
+import { useTranslation } from "../../i18n";
 import { PixelOfficeCredits } from "./PixelOfficeCredits";
 
 const TeamAgentPhaserOffice = lazy(() =>
@@ -62,11 +63,7 @@ const TeamAgentPhaserOffice = lazy(() =>
 
 type Engine = "canvas" | "phaser";
 const SERVER_ROLE = "__tools__";
-const CITY_OPTIONS: { id: CitySkyline; label: string }[] = [
-  { id: "shanghai", label: "上海" },
-  { id: "nyc", label: "纽约" },
-  { id: "hongkong", label: "香港" },
-];
+const CITY_IDS: CitySkyline[] = ["shanghai", "nyc", "hongkong"];
 
 type Props = {
   graph: AnalystTeamGraphPayload;
@@ -107,7 +104,8 @@ function applyOfficeEvent(
   layout: ReturnType<typeof computeOfficeLayout>,
   now: number,
   beams: ChatBeam[],
-  particles: Particle[]
+  particles: Particle[],
+  defaultBubble: string,
 ) {
   const cat = cats.get(ev.role);
   if (!cat) return;
@@ -117,7 +115,7 @@ function applyOfficeEvent(
     cat.action = "chat_send";
     cat.actionUntil = now + ACTION_MS.chat_send;
     cat.screenMode = "chat";
-    cat.bubble = ev.label ?? "喵…";
+    cat.bubble = ev.label ?? defaultBubble;
     cat.bubbleUntil = cat.actionUntil;
     if (peerDesk) cat.facing = peerDesk.x >= cat.homeX ? 1 : -1;
     beams.push({ from: ev.role, to: ev.peerRole, until: now + ACTION_MS.chat_send });
@@ -271,6 +269,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   activity,
   isRunning = false,
 }) => {
+  const { t } = useTranslation();
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 360 });
@@ -279,6 +278,10 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   const [themeId, setThemeId] = useState<string>(() => getActiveTheme().id);
   const [creditsOpen, setCreditsOpen] = useState(false);
   const themes = useMemo(() => listThemes(), []);
+  const cityOptions = useMemo(
+    () => CITY_IDS.map((id) => ({ id, label: t(`team.pixelOffice.cities.${id}`) })),
+    [t],
+  );
 
   const catsRef = useRef<Map<string, CatActor>>(new Map());
   const beamsRef = useRef<ChatBeam[]>([]);
@@ -403,11 +406,20 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       seenRef.current,
       reg.getEventMapperHooks()
     );
+    const defaultBubble = t("team.pixelOffice.catBubbleDefault");
     for (const ev of newEvents) {
-      applyOfficeEvent(cats, ev, layout, now, beamsRef.current, particlesRef.current);
+      applyOfficeEvent(
+        cats,
+        ev,
+        layout,
+        now,
+        beamsRef.current,
+        particlesRef.current,
+        defaultBubble,
+      );
       seenRef.current.add(ev.id);
     }
-  }, [graphInput, agentNodes, layout]);
+  }, [graphInput, agentNodes, layout, t]);
 
   const paint = useCallback(
     (now: number) => {
@@ -501,10 +513,10 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         ctx.fillStyle = "rgba(74, 222, 128, 0.9)";
         ctx.font = "11px monospace";
         ctx.textAlign = "left";
-        ctx.fillText("● 分析进行中", 12, h - 12);
+        ctx.fillText(t("team.pixelOffice.analysisOverlay"), 12, h - 12);
       }
     },
-    [size, layout, city, agentNodes, selection, activity, isRunning]
+    [size, layout, city, agentNodes, selection, activity, isRunning, t]
   );
 
   useEffect(() => {
@@ -546,14 +558,14 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   };
 
   const statusLine = useMemo(() => {
-    if (isRunning) return "[团队分析] 工作中";
+    if (isRunning) return t("team.pixelOffice.statusRunning");
     if (selection?.kind === "node") {
       const node = agentNodes.find((n) => n.role === selection.role);
       const label = node?.label || node?.role || selection.role;
-      return `[${label}] 已选中`;
+      return t("team.pixelOffice.statusSelected", { label });
     }
-    return "[待命] 休息角待命中";
-  }, [isRunning, selection, agentNodes]);
+    return t("team.pixelOffice.statusIdle");
+  }, [isRunning, selection, agentNodes, t]);
 
   return (
     <div ref={wrapRef} className="qb-pixel-office qb-pixel-office--fill" data-qb-topology-canvas="">
@@ -568,7 +580,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
           <div className="qb-pixel-office-status">{statusLine}</div>
           <div className="qb-pixel-office-plaque">
             <span className="qb-pixel-office-plaque-star">⭐</span>
-            <span className="qb-pixel-office-plaque-title">Qubit Agent 办公室</span>
+            <span className="qb-pixel-office-plaque-title">{t("team.pixelOffice.plaque")}</span>
             <span className="qb-pixel-office-plaque-star">⭐</span>
           </div>
         </>
@@ -576,7 +588,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         <Suspense
           fallback={
             <div className="qb-pixel-office-loading">
-              <span>正在加载 Phaser 引擎…</span>
+              <span>{t("team.pixelOffice.loadingPhaser")}</span>
             </div>
           }
         >
@@ -594,12 +606,12 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         </Suspense>
       )}
       <div className="qb-pixel-office-toolbar">
-        <span className="qb-pixel-office-toolbar-label">引擎</span>
+        <span className="qb-pixel-office-toolbar-label">{t("team.pixelOffice.toolbar.engine")}</span>
         <button
           type="button"
           className={engine === "canvas" ? "is-active" : ""}
           onClick={() => setEngine("canvas")}
-          title="原生 Canvas 渲染（默认）"
+          title={t("team.pixelOffice.toolbar.canvasTitle")}
         >
           Canvas
         </button>
@@ -607,27 +619,27 @@ export const TeamAgentPixelOffice: FC<Props> = ({
           type="button"
           className={engine === "phaser" ? "is-active" : ""}
           onClick={() => setEngine("phaser")}
-          title="Phaser 3 引擎 + ArkPixel"
+          title={t("team.pixelOffice.toolbar.phaserTitle")}
         >
           Phaser
         </button>
         <span className="qb-pixel-office-toolbar-divider" />
-        <span className="qb-pixel-office-toolbar-label">主题</span>
+        <span className="qb-pixel-office-toolbar-label">{t("team.pixelOffice.toolbar.theme")}</span>
         <select
           className="qb-pixel-office-theme-select"
           value={themeId}
           onChange={(e) => setActiveTheme(e.target.value)}
-          title="像素办公室画风主题"
+          title={t("team.pixelOffice.toolbar.themeTitle")}
         >
-          {themes.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.label}
+          {themes.map((th) => (
+            <option key={th.id} value={th.id}>
+              {th.label}
             </option>
           ))}
         </select>
         <span className="qb-pixel-office-toolbar-divider" />
-        <span className="qb-pixel-office-toolbar-label">窗外</span>
-        {CITY_OPTIONS.map((c) => (
+        <span className="qb-pixel-office-toolbar-label">{t("team.pixelOffice.toolbar.city")}</span>
+        {cityOptions.map((c) => (
           <button
             key={c.id}
             type="button"
@@ -642,8 +654,8 @@ export const TeamAgentPixelOffice: FC<Props> = ({
           type="button"
           className="qb-pixel-office-credits-trigger"
           onClick={() => setCreditsOpen(true)}
-          title="美术与字体署名"
-          aria-label="美术与字体署名"
+          title={t("team.pixelOffice.toolbar.credits")}
+          aria-label={t("team.pixelOffice.toolbar.credits")}
         >
           ⓘ
         </button>
@@ -653,20 +665,20 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       </div>
       <PixelOfficeCredits open={creditsOpen} onClose={() => setCreditsOpen(false)} />
       <div className="qb-pixel-office-legend">
-        <span>像素办公室 · 点击工位选中 Agent</span>
+        <span>{t("team.pixelOffice.legendIntro")}</span>
         <span className="qb-pixel-office-legend-actions">
           {(
             [
-              ["对话", "chat_send"],
-              ["走向机架", "at_rack"],
-              ["走向书架", "at_shelf"],
-              ["成功", "success"],
-              ["失败", "fail"],
-              ["空结果", "success_empty"],
+              ["team.pixelOffice.legendActions.chat", "chat_send"],
+              ["team.pixelOffice.legendActions.atRack", "at_rack"],
+              ["team.pixelOffice.legendActions.atShelf", "at_shelf"],
+              ["team.pixelOffice.legendActions.success", "success"],
+              ["team.pixelOffice.legendActions.fail", "fail"],
+              ["team.pixelOffice.legendActions.successEmpty", "success_empty"],
             ] as const
-          ).map(([label, act]) => (
+          ).map(([key, act]) => (
             <span key={act} title={actionLabel(act)}>
-              {label}
+              {t(key)}
             </span>
           ))}
         </span>

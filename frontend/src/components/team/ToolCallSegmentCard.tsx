@@ -1,5 +1,6 @@
 import type { CSSProperties, FC } from "react";
 import { useState } from "react";
+import { useTranslation } from "../../i18n";
 import { describeToolCall, type ToolCallSegment } from "../../lib/toolCallSegments";
 
 export interface ToolCallSegmentCardProps {
@@ -24,6 +25,7 @@ export const ToolCallSegmentCard: FC<ToolCallSegmentCardProps> = ({
   segment,
   defaultOpen = false,
 }) => {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   const { tool, preview } = describeToolCall(segment);
   const parsed = segment.parsed;
@@ -54,7 +56,7 @@ export const ToolCallSegmentCard: FC<ToolCallSegmentCardProps> = ({
         <span style={styles.toolName}>{tool}</span>
         {preview ? <span style={styles.preview}>· {preview}</span> : null}
         {parsed ? null : (
-          <span style={styles.parseFailBadge} title="JSON 解析失败（可能流式截断）">
+          <span style={styles.parseFailBadge} title={t("team.toolCard.parseFailTitle")}>
             raw
           </span>
         )}

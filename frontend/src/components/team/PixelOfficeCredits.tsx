@@ -1,5 +1,6 @@
 import type { FC } from "react";
 import { useEffect } from "react";
+import { useTranslation } from "../../i18n";
 import { getActiveTheme } from "../../lib/pixelOffice/themes";
 
 type Props = {
@@ -8,6 +9,8 @@ type Props = {
 };
 
 export const PixelOfficeCredits: FC<Props> = ({ open, onClose }) => {
+  const { t } = useTranslation();
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -27,21 +30,21 @@ export const PixelOfficeCredits: FC<Props> = ({ open, onClose }) => {
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="像素办公室美术与字体署名"
+        aria-label={t("team.pixelOffice.credits.dialogAriaLabel")}
       >
         <header className="qb-pixel-office-credits-header">
-          <h3>美术与字体 Credits</h3>
+          <h3>{t("team.pixelOffice.credits.title")}</h3>
           <button
             type="button"
             className="qb-pixel-office-credits-close"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("team.pixelOffice.credits.close")}
           >
             ×
           </button>
         </header>
         <p className="qb-pixel-office-credits-intro">
-          像素办公室使用了以下开源 / CC 协议资产。点击名称跳转源链接。
+          {t("team.pixelOffice.credits.intro")}
         </p>
         <ul className="qb-pixel-office-credits-list">
           {attribution.map((a) => (
@@ -51,13 +54,17 @@ export const PixelOfficeCredits: FC<Props> = ({ open, onClose }) => {
               </a>
               <span className={`qb-pixel-office-credits-license${a.required ? " is-required" : ""}`}>
                 {a.license}
-                {a.required && <em title="本协议要求显著署名">必须署名</em>}
+                {a.required && (
+                  <em title={t("team.pixelOffice.credits.requiredAttributionTitle")}>
+                    {t("team.pixelOffice.credits.requiredAttribution")}
+                  </em>
+                )}
               </span>
             </li>
           ))}
         </ul>
         <footer className="qb-pixel-office-credits-footer">
-          猫咪精灵为本项目原创（程序化 sprite，非外部资产）。
+          {t("team.pixelOffice.credits.footer")}
         </footer>
       </div>
     </div>

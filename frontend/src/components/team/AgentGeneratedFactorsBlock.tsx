@@ -1,6 +1,7 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { listFactors, type FactorRecord } from "../../api/backend";
+import { useTranslation } from "../../i18n";
 
 export interface AgentGeneratedFactorsBlockProps {
   /** 当前研究项目 ID（teamResearchProjectId）。空字符串则不拉取。 */
@@ -48,6 +49,7 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
   chrome = "details",
   onCountChange,
 }) => {
+  const { t } = useTranslation();
   const [factors, setFactors] = useState<FactorRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -112,17 +114,21 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
     onCountChange?.(factors.length);
   }, [factors.length, onCountChange]);
 
-  const summaryLabel = `Agent 生成的因子（${filtered.length}${
-    selected.length > 0 ? ` · 已选 ${selected.length}` : ""
-  }）`;
+  const summaryLabel =
+    selected.length > 0
+      ? t("team.factorsBlock.summaryWithSelection", {
+          n: filtered.length,
+          selected: selected.length,
+        })
+      : t("team.factorsBlock.summary", { n: filtered.length });
 
   const body = (
       <div style={styles.body}>
         <div style={styles.toolbar}>
-          <span style={styles.scopeHint}>仅本工作流</span>
+          <span style={styles.scopeHint}>{t("team.factorsBlock.scopeBadge")}</span>
           <input
             style={styles.searchInput}
-            placeholder="按名称 / 表达式 / 类别搜索"
+            placeholder={t("team.factorsBlock.searchPlaceholder")}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             disabled={!workflowRunId}
@@ -134,7 +140,7 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
             onClick={() => void reload()}
             disabled={loading || !workflowRunId}
           >
-            {loading ? "刷新中…" : "刷新"}
+            {loading ? t("team.factorsBlock.refreshing") : t("team.factorsBlock.refresh")}
           </button>
         </div>
 
@@ -142,10 +148,10 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
         {!error && filtered.length === 0 ? (
           <div style={styles.empty}>
             {!projectId
-              ? "请先在左侧选择研究项目。"
+              ? t("team.factorsBlock.emptyNoProject")
               : !workflowRunId
-                ? "请先选择或启动一个工作流；研究产出仅展示当前工作流的因子。"
-                : "本工作流暂未产出因子。让 Agent 调用 factor.register / discovery.promote 即可入库。"}
+                ? t("team.factorsBlock.emptyNoWorkflow")
+                : t("team.factorsBlock.emptyNoOutput")}
           </div>
         ) : null}
 
@@ -191,29 +197,31 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
                   </div>
                 </header>
                 <div style={styles.cardField}>
-                  <div style={styles.cardLabel}>Expression</div>
+                  <div style={styles.cardLabel}>{t("team.factorsBlock.labelExpression")}</div>
                   <pre style={styles.cardCode}>{f.expr}</pre>
                 </div>
                 <div style={styles.cardFieldRow}>
                   <div style={styles.cardField}>
-                    <div style={styles.cardLabel}>语言</div>
+                    <div style={styles.cardLabel}>{t("team.factorsBlock.labelLanguage")}</div>
                     <div style={styles.cardValue}>{f.lang}</div>
                   </div>
                   <div style={styles.cardField}>
-                    <div style={styles.cardLabel}>Horizon</div>
+                    <div style={styles.cardLabel}>{t("team.factorsBlock.labelHorizon")}</div>
                     <div style={styles.cardValue}>{f.horizon} d</div>
                   </div>
                   <div style={styles.cardField}>
-                    <div style={styles.cardLabel}>Universe</div>
+                    <div style={styles.cardLabel}>{t("team.factorsBlock.labelUniverse")}</div>
                     <div style={styles.cardValue}>{f.universe}</div>
                   </div>
                   <div style={styles.cardField}>
-                    <div style={styles.cardLabel}>Provider</div>
+                    <div style={styles.cardLabel}>{t("team.factorsBlock.labelProvider")}</div>
                     <div style={styles.cardValue}>{f.providerKey || "—"}</div>
                   </div>
                 </div>
                 <div style={styles.cardFooter}>
-                  <span style={styles.cardMeta}>创建于 {new Date(f.createdAt).toLocaleString()}</span>
+                  <span style={styles.cardMeta}>
+                    {t("team.factorsBlock.createdAt", { at: new Date(f.createdAt).toLocaleString() })}
+                  </span>
                   {onOpenInWorkbench ? (
                     <button
                       type="button"
@@ -221,7 +229,7 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
                       style={styles.cardBtn}
                       onClick={() => onOpenInWorkbench(f)}
                     >
-                      去因子工坊详情
+                      {t("team.factorsBlock.openInWorkbench")}
                     </button>
                   ) : null}
                 </div>

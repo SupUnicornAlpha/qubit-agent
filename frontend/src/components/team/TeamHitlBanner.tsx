@@ -15,6 +15,7 @@ import {
   listPendingWorkflowHitl,
   resolveWorkflowHitl,
 } from "../../api/backend";
+import { useTranslation } from "../../i18n";
 import {
   HitlInputArea,
   buildHitlResponsePayload,
@@ -40,6 +41,7 @@ interface BannerState {
 }
 
 export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHitlBannerProps) {
+  const { t } = useTranslation();
   const [state, setState] = useState<BannerState>({ pending: null, busy: false, error: null });
   const [choice, setChoice] = useState<string>("");
   const [multiChoice, setMultiChoice] = useState<string[]>([]);
@@ -87,13 +89,13 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
   if (state.error) {
     return (
       <div style={errorBannerStyle} role="alert">
-        HITL 加载失败：{state.error}
+        {t("team.hitl.banner.loadFailed", { err: state.error })}
         <button
           type="button"
           onClick={() => void refresh()}
           style={smallBtnStyle}
         >
-          重试
+          {t("team.hitl.banner.retry")}
         </button>
       </div>
     );
@@ -123,14 +125,14 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
     <div style={bannerStyle} role="alert">
       <div style={headerStyle}>
         <span aria-hidden>⏸</span>
-        <span style={{ fontWeight: 600 }}>{p.title || "等待人工审批"}</span>
+        <span style={{ fontWeight: 600 }}>{p.title || t("team.hitl.banner.defaultTitle")}</span>
         <span style={kindTagStyle}>{hitlKindLabel(inputKind)}</span>
       </div>
 
       {p.summary ? (
         <details style={summaryStyle}>
           <summary style={{ cursor: "pointer", color: "#fbbf24" }}>
-            Orchestrator 规划摘要 / 触发原因
+            {t("team.hitl.banner.summaryHeader")}
           </summary>
           <pre style={preStyle}>{p.summary}</pre>
         </details>
@@ -158,7 +160,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
           onClick={() => void submit("approved")}
           disabled={state.busy}
         >
-          {state.busy ? "处理中…" : hitlSubmitLabel(inputKind)}
+          {state.busy ? t("team.hitl.banner.processing") : hitlSubmitLabel(inputKind)}
         </button>
         <button
           type="button"
@@ -171,7 +173,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
           onClick={() => void submit("rejected")}
           disabled={state.busy}
         >
-          拒绝（中止）
+          {t("team.hitl.banner.reject")}
         </button>
       </div>
     </div>

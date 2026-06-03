@@ -6,6 +6,7 @@ import {
   type StrategyCompositionRecord,
   type StrategyVersionFlatRecord,
 } from "../../api/backend";
+import { useTranslation } from "../../i18n";
 
 export interface AgentGeneratedStrategiesBlockProps {
   projectId: string;
@@ -61,6 +62,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
   chrome = "details",
   onCountChange,
 }) => {
+  const { t } = useTranslation();
   const [rows, setRows] = useState<StrategyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -170,17 +172,21 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
     onCountChange?.(rows.length);
   }, [rows.length, onCountChange]);
 
-  const summaryLabel = `Agent 生成的策略（${filtered.length}${
-    selected.length > 0 ? ` · 已选 ${selected.length}` : ""
-  }）`;
+  const summaryLabel =
+    selected.length > 0
+      ? t("team.strategiesBlock.summaryWithSelection", {
+          n: filtered.length,
+          selected: selected.length,
+        })
+      : t("team.strategiesBlock.summary", { n: filtered.length });
 
   const body = (
       <div style={styles.body}>
         <div style={styles.toolbar}>
-          <span style={styles.scopeHint}>仅本工作流</span>
+          <span style={styles.scopeHint}>{t("team.strategiesBlock.scopeBadge")}</span>
           <input
             style={styles.searchInput}
-            placeholder="按策略名 / 版本 / 风格搜索"
+            placeholder={t("team.strategiesBlock.searchPlaceholder")}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             disabled={!workflowRunId}
@@ -192,7 +198,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
             onClick={() => void reload()}
             disabled={loading || !workflowRunId}
           >
-            {loading ? "刷新中…" : "刷新"}
+            {loading ? t("team.strategiesBlock.refreshing") : t("team.strategiesBlock.refresh")}
           </button>
         </div>
 
@@ -200,10 +206,10 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
         {!error && filtered.length === 0 ? (
           <div style={styles.empty}>
             {!projectId
-              ? "请先在左侧选择研究项目。"
+              ? t("team.strategiesBlock.emptyNoProject")
               : !workflowRunId
-                ? "请先选择或启动一个工作流；研究产出仅展示当前工作流的策略。"
-                : "本工作流暂未产出策略。让 Agent 调用 strategy.compose / discovery.promote 即可入库。"}
+                ? t("team.strategiesBlock.emptyNoWorkflow")
+                : t("team.strategiesBlock.emptyNoOutput")}
           </div>
         ) : null}
 
@@ -228,7 +234,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                     <span style={styles.badge}>{r.version.strategyStyle}</span>
                   </div>
                   <div style={styles.rowMeta}>
-                    创建于 {new Date(r.version.createdAt).toLocaleString()}
+                    {t("team.strategiesBlock.createdAt", { at: new Date(r.version.createdAt).toLocaleString() })}
                   </div>
                 </div>
               </label>
@@ -248,10 +254,10 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                   </div>
                 </header>
                 {r.loadingCompositions ? (
-                  <div style={styles.cardMeta}>加载组合详情…</div>
+                  <div style={styles.cardMeta}>{t("team.strategiesBlock.loadingComps")}</div>
                 ) : r.compositions.length === 0 ? (
                   <div style={styles.cardMeta}>
-                    该版本还没有 composition；可在量化工坊 → 组合工坊里基于此版本编排。
+                    {t("team.strategiesBlock.noComps")}
                   </div>
                 ) : (
                   <div style={styles.compList}>
@@ -265,7 +271,9 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                         </div>
                         <div style={styles.compFields}>
                           <div style={styles.compField}>
-                            <div style={styles.cardLabel}>因子（{c.factorIds.length}）</div>
+                            <div style={styles.cardLabel}>
+                              {t("team.strategiesBlock.compFactors", { n: c.factorIds.length })}
+                            </div>
                             <div style={styles.cardValue}>
                               {c.factorIds.length > 0
                                 ? c.factorIds.map((id) => id.slice(0, 8)).join(", ")
@@ -273,7 +281,9 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                             </div>
                           </div>
                           <div style={styles.compField}>
-                            <div style={styles.cardLabel}>规则（{c.ruleIds.length}）</div>
+                            <div style={styles.cardLabel}>
+                              {t("team.strategiesBlock.compRules", { n: c.ruleIds.length })}
+                            </div>
                             <div style={styles.cardValue}>
                               {c.ruleIds.length > 0
                                 ? c.ruleIds.map((id) => id.slice(0, 8)).join(", ")
@@ -287,7 +297,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                 )}
                 <div style={styles.cardFooter}>
                   <span style={styles.cardMeta}>
-                    创建于 {new Date(r.version.createdAt).toLocaleString()}
+                    {t("team.strategiesBlock.createdAt", { at: new Date(r.version.createdAt).toLocaleString() })}
                   </span>
                   {onOpenInComposer ? (
                     <button
@@ -296,7 +306,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                       style={styles.cardBtn}
                       onClick={() => onOpenInComposer(r.version)}
                     >
-                      去组合工坊
+                      {t("team.strategiesBlock.openInComposer")}
                     </button>
                   ) : null}
                 </div>

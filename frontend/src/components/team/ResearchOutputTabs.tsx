@@ -1,5 +1,6 @@
 import type { CSSProperties, FC } from "react";
 import { useState } from "react";
+import { useTranslation } from "../../i18n";
 import { AgentGeneratedFactorsBlock } from "./AgentGeneratedFactorsBlock";
 import { AgentGeneratedStrategiesBlock } from "./AgentGeneratedStrategiesBlock";
 import { ResearchExploreFallbackBlock } from "./ResearchExploreFallbackBlock";
@@ -39,20 +40,21 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   onOpenStrategyInComposer,
   defaultTab = "drafts",
 }) => {
+  const { t } = useTranslation();
   const [active, setActive] = useState<TabKey>(defaultTab);
   const [draftCount, setDraftCount] = useState(0);
   const [factorCount, setFactorCount] = useState(0);
   const [strategyCount, setStrategyCount] = useState(0);
 
   const tabs: Array<{ key: TabKey; label: string; count: number; accent: string }> = [
-    { key: "drafts", label: "草稿", count: draftCount, accent: "#f59e0b" },
-    { key: "factors", label: "因子", count: factorCount, accent: "#60a5fa" },
-    { key: "strategies", label: "策略", count: strategyCount, accent: "#a78bfa" },
+    { key: "drafts", label: t("team.outputTabs.drafts"), count: draftCount, accent: "#f59e0b" },
+    { key: "factors", label: t("team.outputTabs.factors"), count: factorCount, accent: "#60a5fa" },
+    { key: "strategies", label: t("team.outputTabs.strategies"), count: strategyCount, accent: "#a78bfa" },
   ];
 
   return (
     <div style={styles.host}>
-      <div style={styles.tabBar} role="tablist" aria-label="研究产出 tabs">
+      <div style={styles.tabBar} role="tablist" aria-label={t("team.outputTabs.ariaLabel")}>
         {tabs.map((t) => {
           const isActive = active === t.key;
           return (

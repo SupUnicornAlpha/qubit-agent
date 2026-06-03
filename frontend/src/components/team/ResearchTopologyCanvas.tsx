@@ -1,5 +1,6 @@
-import type { FC, PointerEvent } from "react";
+import type { FC, PointerEvent, ReactNode } from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useTranslation } from "../../i18n";
 import type { TeamTopologyEdge } from "../../lib/researchTeamTopology";
 import { buildTopologyEdgePath, type TopoRect } from "../../lib/topologyEdgeRouting";
 
@@ -26,6 +27,7 @@ export const ResearchTopologyCanvas: FC<{
   onEdgesChange: (next: TeamTopologyEdge[]) => void;
   drawMode: TopologyDrawMode;
 }> = ({ roles, positions, onPositionsChange, edges, onEdgesChange, drawMode }) => {
+  const { t } = useTranslation();
   const svgRef = useRef<SVGSVGElement | null>(null);
   const markerId = `qb-topo-arrow-${useId().replace(/:/g, "")}`;
   const [dragRole, setDragRole] = useState<string | null>(null);
@@ -160,15 +162,21 @@ export const ResearchTopologyCanvas: FC<{
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
         {drawMode === "unicast" ? (
           <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>
-            单向：先点<strong>起点</strong>，再点<strong>终点</strong>添加或移除连线；同起点再点一次可清除起点。
-            {uniSource ? ` 已选起点：${uniSource}` : ""}
+            {t("team.topology.unicastHint")}
+            {uniSource ? t("team.topology.unicastSelected", { role: uniSource }) : ""}
           </span>
         ) : null}
         {drawMode === "broadcast" ? (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>
-              广播：先点<strong>源</strong>，再点多个<strong>接收方</strong>（可多选），然后确认。同一源重复确认会覆盖该源的广播边。
-              {bcFrom ? ` 源=${bcFrom}，接收=${bcPicks.join(", ") || "（未选）"}` : ""}
+              {t("team.topology.broadcastHint")}
+              {bcFrom
+                ? t("team.topology.broadcastSelected", {
+                    from: bcFrom,
+                    picks:
+                      bcPicks.join(", ") || t("team.topology.broadcastNoneYet"),
+                  })
+                : ""}
             </span>
             <button
               type="button"
@@ -177,15 +185,15 @@ export const ResearchTopologyCanvas: FC<{
               onClick={confirmBroadcast}
               disabled={!bcFrom || bcPicks.length === 0}
             >
-              确认广播
+              {t("team.topology.confirmBroadcast")}
             </button>
             <button type="button" className="qb-btn-secondary" style={{ fontSize: 11, padding: "4px 8px" }} onClick={cancelBroadcast}>
-              取消
+              {t("team.topology.cancel")}
             </button>
           </div>
         ) : null}
         {drawMode === "select" ? (
-          <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>选择：拖拽节点卡片调整布局。</span>
+          <span style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)" }}>{t("team.topology.selectHint")}</span>
         ) : null}
       </div>
 
@@ -255,27 +263,32 @@ export const ResearchTopologyCanvas: FC<{
 
       {edges.length > 0 ? (
         <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>边列表</div>
+          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--qb-team-section-fg, #cbd5e1)", marginBottom: 6 }}>
+            {t("team.topology.edgeListTitle")}
+          </div>
           <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", lineHeight: 1.6 }}>
-            {edges.map((e, i) => (
-              <li key={`e-${i}-${e.kind}`}>
-                {e.kind === "unicast" ? (
-                  <>
-                    单向 <code style={{ fontSize: 10 }}>{e.from}</code> → <code style={{ fontSize: 10 }}>{e.to}</code>{" "}
-                    <button type="button" className="qb-btn-secondary" style={{ fontSize: 10, padding: "2px 6px", marginLeft: 6 }} onClick={() => removeEdgeAt(i)}>
-                      删除
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    广播 <code style={{ fontSize: 10 }}>{e.from}</code> → [{e.targets.join(", ")}]{" "}
-                    <button type="button" className="qb-btn-secondary" style={{ fontSize: 10, padding: "2px 6px", marginLeft: 6 }} onClick={() => removeEdgeAt(i)}>
-                      删除
-                    </button>
-                  </>
-                )}
-              </li>
-            ))}
+            {edges.map((e, i) => {
+              const removeBtn: ReactNode = (
+                <button type="button" className="qb-btn-secondary" style={{ fontSize: 10, padding: "2px 6px", marginLeft: 6 }} onClick={() => removeEdgeAt(i)}>
+                  {t("team.topology.removeEdge")}
+                </button>
+              );
+              return (
+                <li key={`e-${i}-${e.kind}`}>
+                  {e.kind === "unicast" ? (
+                    <>
+                      {t("team.topology.edgeUnicast")} <code style={{ fontSize: 10 }}>{e.from}</code> → <code style={{ fontSize: 10 }}>{e.to}</code>{" "}
+                      {removeBtn}
+                    </>
+                  ) : (
+                    <>
+                      {t("team.topology.edgeBroadcast")} <code style={{ fontSize: 10 }}>{e.from}</code> → [{e.targets.join(", ")}]{" "}
+                      {removeBtn}
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}

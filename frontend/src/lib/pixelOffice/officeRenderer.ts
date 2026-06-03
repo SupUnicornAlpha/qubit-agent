@@ -13,6 +13,7 @@ import { drawDropShadow } from "./starOfficeStyle";
 import { computeOfficePerspective, depthScale, drawDeskFloorShadow } from "./officePerspective";
 import { getPixelOfficeRegistry } from "./runtime";
 import type { CatAction, CatActor, ChatBeam, CitySkyline, DeskSlot, OfficeLayout, Particle, ScreenMode } from "./types";
+import { t } from "../../i18n";
 
 function scales(depth = 0.5) {
   const c = getRenderConfig();
@@ -290,24 +291,30 @@ export function drawParticles(ctx: CanvasRenderingContext2D, particles: Particle
   ctx.globalAlpha = 1;
 }
 
+const ACTION_KEYS: Partial<Record<CatAction, string>> = {
+  chat_send: "team.pixelOffice.actionLabels.chat_send",
+  chat_recv: "team.pixelOffice.actionLabels.chat_recv",
+  mcp: "team.pixelOffice.actionLabels.mcp",
+  skill: "team.pixelOffice.actionLabels.skill",
+  sandbox: "team.pixelOffice.actionLabels.sandbox",
+  builtin: "team.pixelOffice.actionLabels.builtin",
+  tool: "team.pixelOffice.actionLabels.tool",
+  at_rack: "team.pixelOffice.actionLabels.at_rack",
+  at_shelf: "team.pixelOffice.actionLabels.at_shelf",
+  walk: "team.pixelOffice.actionLabels.walk",
+  success: "team.pixelOffice.actionLabels.success",
+  fail: "team.pixelOffice.actionLabels.fail",
+  success_empty: "team.pixelOffice.actionLabels.success_empty",
+  signal: "team.pixelOffice.actionLabels.signal",
+};
+
 export function actionLabel(action: CatAction): string {
-  const map: Partial<Record<CatAction, string>> = {
-    chat_send: "对话",
-    chat_recv: "倾听",
-    mcp: "MCP",
-    skill: "Skill",
-    sandbox: "沙箱",
-    builtin: "内置工具",
-    tool: "工具",
-    at_rack: "机架作业",
-    at_shelf: "查阅技能",
-    walk: "移动",
-    success: "成功",
-    fail: "失败",
-    success_empty: "空结果",
-    signal: "信号",
-  };
-  return map[action] ?? "待命";
+  const key = ACTION_KEYS[action];
+  if (key) {
+    const localized = t(key);
+    if (localized && localized !== key) return localized;
+  }
+  return t("team.pixelOffice.actionLabels.idle");
 }
 
 export type { ChatBeam, AtlasSprites };

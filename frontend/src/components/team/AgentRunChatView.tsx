@@ -1,5 +1,6 @@
 import type { CSSProperties, FC } from "react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "../../i18n";
 import type {
   AnalystTeamGraphAgentStep,
   AnalystTeamGraphInteraction,
@@ -32,6 +33,7 @@ export const AgentRunPanel: FC<{ data: AgentRunPanelData; defaultMode?: ViewMode
   data,
   defaultMode = "chat",
 }) => {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<ViewMode>(defaultMode);
   const totals = {
     inbound: data.inbound.length,
@@ -98,7 +100,7 @@ export const AgentRunPanel: FC<{ data: AgentRunPanelData; defaultMode?: ViewMode
           }}
         >
           <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7" }}>
-            Agent 运行 · {data.role}
+            {t("team.agentRun.title", { role: data.role })}
           </div>
           <div
             style={{
@@ -124,29 +126,34 @@ export const AgentRunPanel: FC<{ data: AgentRunPanelData; defaultMode?: ViewMode
                   fontSize: 11,
                 }}
               >
-                {m === "chat" ? "对话流" : "紧凑"}
+                {m === "chat" ? t("team.agentRun.modeChat") : t("team.agentRun.modeCompact")}
               </button>
             ))}
           </div>
         </div>
         <div style={{ fontSize: 11, color: "#a1a1aa" }}>
-          收到 {totals.inbound} · 发出 {totals.outbound} · 步 {totals.steps} · 工具 {totals.tools}
-          {" · "}MCP {totals.mcps}
+          {t("team.agentRun.totals", {
+            inbound: totals.inbound,
+            outbound: totals.outbound,
+            steps: totals.steps,
+            tools: totals.tools,
+            mcps: totals.mcps,
+          })}
           {(issueCounts.empty || issueCounts.suspect || issueCounts.failed) > 0 ? (
             <span style={{ marginLeft: 8 }}>
               {issueCounts.empty > 0 ? (
                 <span style={{ color: TOOL_BADGE_STYLE.empty.color, marginRight: 8 }}>
-                  ⚠ 空数据 {issueCounts.empty}
+                  {t("team.agentRun.issuesEmpty", { n: issueCounts.empty })}
                 </span>
               ) : null}
               {issueCounts.suspect > 0 ? (
                 <span style={{ color: TOOL_BADGE_STYLE.suspect.color, marginRight: 8 }}>
-                  ? 可疑 {issueCounts.suspect}
+                  {t("team.agentRun.issuesSuspect", { n: issueCounts.suspect })}
                 </span>
               ) : null}
               {issueCounts.failed > 0 ? (
                 <span style={{ color: TOOL_BADGE_STYLE.failed.color }}>
-                  ✗ 失败 {issueCounts.failed}
+                  {t("team.agentRun.issuesFailed", { n: issueCounts.failed })}
                 </span>
               ) : null}
             </span>
@@ -230,6 +237,7 @@ export const AgentRunChatView: FC<AgentRunChatViewProps> = ({
   mcps,
   compact = false,
 }) => {
+  const { t } = useTranslation();
   const items = useMemo<ChatItem[]>(() => {
     const list: ChatItem[] = [];
     inbound.forEach((r) => list.push({ kind: "inbound", ts: r.createdAt, raw: r }));
@@ -247,7 +255,7 @@ export const AgentRunChatView: FC<AgentRunChatViewProps> = ({
   if (items.length === 0) {
     return (
       <div style={{ fontSize: 12, color: "#71717a", padding: "12px 0" }}>
-        该 Agent 暂无运行轨迹。
+        {t("team.agentRun.empty")}
       </div>
     );
   }
@@ -325,6 +333,7 @@ const MsgBubble: FC<{
   selfRole: string;
   side: "left" | "right";
 }> = ({ item, selfRole, side }) => {
+  const { t } = useTranslation();
   const r = item.raw;
   const isSelf = side === "right";
   const avatarRole = isSelf ? selfRole : r.fromRole;
@@ -371,7 +380,7 @@ const MsgBubble: FC<{
               {formatRoleName(r.fromRole)}
             </span>
           ) : null}
-          {truncate(r.contentText || "(无文本内容)", 4000)}
+          {truncate(r.contentText || t("team.conversation.noTextContent"), 4000)}
         </div>
       </div>
     </div>
@@ -408,6 +417,7 @@ const Badge: FC<{ badge: ToolResultBadge; reason: string; latencyMs?: number | n
 };
 
 const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
+  const { t } = useTranslation();
   const verdict = analyzeToolEffectiveness({
     status: tool.status,
     responseJson: tool.responseJson ?? null,
@@ -438,13 +448,13 @@ const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
       ) : null}
       {tool.requestJson != null ? (
         <details>
-          <summary style={summaryStyle}>请求</summary>
+          <summary style={summaryStyle}>{t("team.agentRun.request")}</summary>
           <pre style={preStyle}>{truncate(JSON.stringify(tool.requestJson, null, 2), 2000)}</pre>
         </details>
       ) : null}
       {tool.responseJson != null ? (
         <details>
-          <summary style={summaryStyle}>响应</summary>
+          <summary style={summaryStyle}>{t("team.agentRun.response")}</summary>
           <pre style={{ ...preStyle, color: "#86efac" }}>
             {truncate(JSON.stringify(tool.responseJson, null, 2), 3000)}
           </pre>
@@ -458,6 +468,7 @@ const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
 };
 
 const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
+  const { t } = useTranslation();
   const verdict = analyzeToolEffectiveness({
     status: mcp.status,
     responseJson: mcp.responseJson ?? null,
@@ -488,13 +499,13 @@ const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
       ) : null}
       {mcp.requestJson != null ? (
         <details>
-          <summary style={summaryStyle}>请求</summary>
+          <summary style={summaryStyle}>{t("team.agentRun.request")}</summary>
           <pre style={preStyle}>{truncate(JSON.stringify(mcp.requestJson, null, 2), 2000)}</pre>
         </details>
       ) : null}
       {mcp.responseJson != null ? (
         <details>
-          <summary style={summaryStyle}>响应</summary>
+          <summary style={summaryStyle}>{t("team.agentRun.response")}</summary>
           <pre style={{ ...preStyle, color: "#86efac" }}>
             {truncate(JSON.stringify(mcp.responseJson, null, 2), 3000)}
           </pre>
@@ -505,6 +516,7 @@ const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
 };
 
 const StepBubble: FC<{ step: AnalystTeamGraphAgentStep; role: string }> = ({ step, role }) => {
+  const { t } = useTranslation();
   return (
     <div
       style={{
@@ -534,10 +546,10 @@ const StepBubble: FC<{ step: AnalystTeamGraphAgentStep; role: string }> = ({ ste
           fontFamily: "ui-sans-serif, system-ui, sans-serif",
         }}
       >
-        {step.thought ? truncate(step.thought, 3000) : <em style={{ opacity: 0.6 }}>（无思考文本）</em>}
+        {step.thought ? truncate(step.thought, 3000) : <em style={{ opacity: 0.6 }}>{t("team.agentRun.noThought")}</em>}
         {step.observationJson != null && typeof step.observationJson === "object" ? (
           <details style={{ marginTop: 6 }}>
-            <summary style={summaryStyle}>观察</summary>
+            <summary style={summaryStyle}>{t("team.agentRun.observe")}</summary>
             <pre style={preStyle}>
               {truncate(JSON.stringify(step.observationJson, null, 2), 2000)}
             </pre>
@@ -585,6 +597,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
   tools,
   mcps,
 }) => {
+  const { t } = useTranslation();
   const hasCalls = tools.length > 0 || mcps.length > 0;
   return (
     <div
@@ -596,35 +609,35 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
     >
       {hasCalls ? (
         <div style={{ marginBottom: 10, maxHeight: 220, overflow: "auto" }}>
-          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>工具 / MCP</div>
-          {tools.map((t) => {
+          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>{t("team.agentRun.sectionTools")}</div>
+          {tools.map((tc) => {
             const v = analyzeToolEffectiveness({
-              status: t.status,
-              responseJson: t.responseJson ?? null,
-              latencyMs: t.latencyMs ?? null,
-              errorMessage: t.errorMessage ?? null,
+              status: tc.status,
+              responseJson: tc.responseJson ?? null,
+              latencyMs: tc.latencyMs ?? null,
+              errorMessage: tc.errorMessage ?? null,
             });
             const c = TOOL_BADGE_STYLE[v.badge];
             return (
-              <details key={t.id} style={{ marginBottom: 6 }}>
+              <details key={tc.id} style={{ marginBottom: 6 }}>
                 <summary style={{ cursor: "pointer", color: c.color }}>
-                  [{formatTs(t.createdAt)}] {t.toolKind} · {t.toolName} · {c.icon} {c.label}
-                  {t.latencyMs != null ? ` · ${t.latencyMs}ms` : ""}
+                  [{formatTs(tc.createdAt)}] {tc.toolKind} · {tc.toolName} · {c.icon} {c.label}
+                  {tc.latencyMs != null ? ` · ${tc.latencyMs}ms` : ""}
                 </summary>
                 {v.badge !== "ok" ? (
                   <div style={{ fontSize: 11, color: c.color, margin: "4px 0" }}>{v.reason}</div>
                 ) : null}
-                {t.errorMessage ? (
-                  <pre style={{ ...preStyle, color: "#f87171" }}>{t.errorMessage}</pre>
+                {tc.errorMessage ? (
+                  <pre style={{ ...preStyle, color: "#f87171" }}>{tc.errorMessage}</pre>
                 ) : null}
-                {t.requestJson != null ? (
+                {tc.requestJson != null ? (
                   <pre style={{ ...preStyle, color: "#a1a1aa" }}>
-                    请求: {truncate(JSON.stringify(t.requestJson, null, 2), 2000)}
+                    {t("team.agentRun.compactRequestPrefix")}{truncate(JSON.stringify(tc.requestJson, null, 2), 2000)}
                   </pre>
                 ) : null}
-                {t.responseJson != null ? (
+                {tc.responseJson != null ? (
                   <pre style={{ ...preStyle, color: "#86efac" }}>
-                    响应: {truncate(JSON.stringify(t.responseJson, null, 2), 3000)}
+                    {t("team.agentRun.compactResponsePrefix")}{truncate(JSON.stringify(tc.responseJson, null, 2), 3000)}
                   </pre>
                 ) : null}
               </details>
@@ -649,7 +662,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
                 ) : null}
                 {m.responseJson != null ? (
                   <pre style={{ ...preStyle, color: "#86efac" }}>
-                    响应: {truncate(JSON.stringify(m.responseJson, null, 2), 3000)}
+                    {t("team.agentRun.compactResponsePrefix")}{truncate(JSON.stringify(m.responseJson, null, 2), 3000)}
                   </pre>
                 ) : null}
               </details>
@@ -659,7 +672,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
       ) : null}
       {inbound.length > 0 ? (
         <div style={{ maxHeight: 140, overflow: "auto", marginBottom: 8 }}>
-          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>收到的消息</div>
+          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>{t("team.agentRun.sectionInbound")}</div>
           {inbound.map((row) => (
             <div
               key={row.id}
@@ -677,7 +690,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
       ) : null}
       {outbound.length > 0 ? (
         <div style={{ maxHeight: 140, overflow: "auto", marginBottom: 8 }}>
-          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>发出的消息</div>
+          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>{t("team.agentRun.sectionOutbound")}</div>
           {outbound.map((row) => (
             <div
               key={row.id}
@@ -695,7 +708,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
       ) : null}
       {steps.length > 0 ? (
         <div style={{ maxHeight: 160, overflow: "auto", marginBottom: 8 }}>
-          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>执行轨迹（ReAct）</div>
+          <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>{t("team.agentRun.sectionReact")}</div>
           {steps.map((s) => (
             <details key={s.id} style={{ marginBottom: 6 }}>
               <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
@@ -714,7 +727,7 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
         </div>
       ) : null}
       {!hasCalls && inbound.length === 0 && outbound.length === 0 && steps.length === 0 ? (
-        <div style={{ fontSize: 11, color: "#71717a" }}>该 Agent 暂无运行轨迹。</div>
+        <div style={{ fontSize: 11, color: "#71717a" }}>{t("team.agentRun.empty")}</div>
       ) : null}
     </div>
   );

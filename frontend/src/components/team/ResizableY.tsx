@@ -1,5 +1,6 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "../../i18n";
 
 /**
  * 自实现的"竖向拖拽"容器。
@@ -37,6 +38,7 @@ export const ResizableY: FC<ResizableYProps> = ({
   wrapperData,
   children,
 }) => {
+  const { t } = useTranslation();
   const [height, setHeight] = useState<number>(() => {
     if (storageKey && typeof window !== "undefined") {
       const raw = window.localStorage.getItem(storageKey);
@@ -104,7 +106,7 @@ export const ResizableY: FC<ResizableYProps> = ({
       {children}
       <div
         onMouseDown={onMouseDown}
-        title="拖动调整高度"
+        title={t("team.resizableY.dragTitle")}
         style={{
           position: "absolute",
           left: 0,

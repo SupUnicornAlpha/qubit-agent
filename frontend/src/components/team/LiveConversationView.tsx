@@ -1,5 +1,6 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useMemo, useState } from "react";
+import { useTranslation } from "../../i18n";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import {
   avatarColorFor,
@@ -83,6 +84,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
   contentMaxLength = 4000,
   emptyText,
 }) => {
+  const { t } = useTranslation();
   const sorted = useMemo(() => {
     return [...events].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
   }, [events]);
@@ -97,7 +99,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
           padding: "16px 8px",
         }}
       >
-        {emptyText ?? "暂无对话记录。"}
+        {emptyText ?? t("team.conversation.empty")}
       </div>
     );
   }
@@ -202,6 +204,7 @@ const MessageRow: FC<{
   selfRole: string;
   maxLen: number;
 }> = ({ ev, selfRole, maxLen }) => {
+  const { t } = useTranslation();
   const isSelf = ev.fromRole === selfRole;
   const accent = avatarColorFor(ev.fromRole).bg;
   const tagText = `${formatRoleName(ev.fromRole)} → ${formatRoleName(ev.toRole)}${
@@ -213,7 +216,7 @@ const MessageRow: FC<{
     : `rgba(${hexToRgbStr(avatarColorFor(ev.fromRole).bg)}, 0.32)`;
   const safeBorder = bubbleBorder.includes("rgba(NaN") ? "rgba(96,165,250,0.32)" : bubbleBorder;
 
-  const rawContent = ev.contentText || "(无文本内容)";
+  const rawContent = ev.contentText || t("team.conversation.noTextContent");
   const content = truncate(rawContent, maxLen);
   /**
    * llm_message 消息往往是分析师的结构化输出，里面带 GFM 表格 / 标题 / 列表，
@@ -360,45 +363,48 @@ function tryPrettyJson(body: string): { isJson: boolean; pretty: string } {
   }
 }
 
-const STATUS_PALETTE: Record<
-  ToolCallPieces["status"],
-  { bg: string; border: string; fg: string; chip: string; label: string }
-> = {
+type StatusStyle = {
+  bg: string;
+  border: string;
+  fg: string;
+  chip: string;
+};
+
+const STATUS_PALETTE: Record<ToolCallPieces["status"], StatusStyle> = {
   ok: {
     bg: "rgba(34,197,94,0.07)",
     border: "rgba(34,197,94,0.35)",
     fg: "#86efac",
     chip: "rgba(34,197,94,0.16)",
-    label: "成功",
   },
   warn: {
     bg: "rgba(245,158,11,0.07)",
     border: "rgba(245,158,11,0.32)",
     fg: "#fbbf24",
     chip: "rgba(245,158,11,0.18)",
-    label: "警告",
   },
   fail: {
     bg: "rgba(239,68,68,0.07)",
     border: "rgba(239,68,68,0.35)",
     fg: "#fca5a5",
     chip: "rgba(239,68,68,0.18)",
-    label: "失败",
   },
   unknown: {
     bg: "rgba(148,163,184,0.07)",
     border: "rgba(148,163,184,0.32)",
     fg: "#cbd5e1",
     chip: "rgba(148,163,184,0.18)",
-    label: "调用",
   },
 };
 
 const COLLAPSED_BODY_LINES = 8;
 
 const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = ({ ev, maxLen }) => {
+  const { t } = useTranslation();
   const pieces = parseToolCallText(ev.contentText, ev.toolName);
   const palette = STATUS_PALETTE[pieces.status];
+  const statusLabel = t(`team.conversation.toolCall.status.${pieces.status}`);
+  const toolCallAria = t("team.conversation.toolCall.ariaLabel");
   const toolName = ev.toolName || "tool";
   const { isJson, pretty } = tryPrettyJson(pieces.body);
   const fullBody = truncate(pretty, maxLen);
@@ -451,8 +457,8 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
           {formatRoleName(ev.fromRole)}
         </span>
         <span
-          aria-label="工具调用"
-          title="工具调用"
+          aria-label={toolCallAria}
+          title={toolCallAria}
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -496,7 +502,7 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
           }}
         >
           {pieces.statusIcon ? <span aria-hidden>{pieces.statusIcon}</span> : null}
-          {palette.label}
+          {statusLabel}
           {pieces.latencyMs != null ? (
             <span style={{ opacity: 0.75 }}>· {pieces.latencyMs}ms</span>
           ) : null}
@@ -517,7 +523,9 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
               fontFamily: "ui-sans-serif, system-ui, sans-serif",
             }}
           >
-            {expanded ? "收起" : `展开 (${lines.length} 行)`}
+            {expanded
+              ? t("team.conversation.toolCall.collapse")
+              : t("team.conversation.toolCall.expand", { n: lines.length })}
           </button>
         ) : null}
       </div>
@@ -549,24 +557,30 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
   );
 };
 
-function debateTitle(ev: LiveConversationDebateEvent): string {
-  switch (ev.debateType) {
-    case "debate_start":
-      return "辩论开始";
-    case "debate_turn":
-      return `辩论轮次 R${ev.round ?? "?"}${ev.stance ? ` · ${ev.stance}` : ""}${
-        ev.speakerRole ? ` · ${formatRoleName(ev.speakerRole)}` : ""
-      }`;
-    case "debate_verdict":
-      return "辩论裁决";
-    case "debate_end":
-      return "辩论结束";
-    default:
-      return ev.debateType;
-  }
+function useDebateTitle(): (ev: LiveConversationDebateEvent) => string {
+  const { t } = useTranslation();
+  return (ev: LiveConversationDebateEvent) => {
+    switch (ev.debateType) {
+      case "debate_start":
+        return t("team.conversation.debate.start");
+      case "debate_turn":
+        return t("team.conversation.debate.turn", {
+          round: ev.round ?? "?",
+          stance: ev.stance ? ` · ${ev.stance}` : "",
+          speaker: ev.speakerRole ? ` · ${formatRoleName(ev.speakerRole)}` : "",
+        });
+      case "debate_verdict":
+        return t("team.conversation.debate.verdict");
+      case "debate_end":
+        return t("team.conversation.debate.end");
+      default:
+        return ev.debateType;
+    }
+  };
 }
 
 const DebateBanner: FC<{ ev: LiveConversationDebateEvent; maxLen: number }> = ({ ev, maxLen }) => {
+  const debateTitle = useDebateTitle();
   return (
     <div style={bannerWrapStyle}>
       <div
@@ -610,13 +624,14 @@ const BroadcastBanner: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> 
   ev,
   maxLen,
 }) => {
+  const { t } = useTranslation();
   const accent = avatarColorFor(ev.fromRole).bg;
   /** payloadJson.targetRoles 在前端 hydration 已扁平到 contentText 之外；这里没拿到结构化字段，
    *  退化成只显示「→ 全员」，但保留正文。后续若要展示 N 个角色名，把 hydration 多透一个字段即可。 */
-  const tagText = `${formatRoleName(ev.fromRole)} → 全员广播${
+  const tagText = `${formatRoleName(ev.fromRole)}${t("team.conversation.broadcastSuffix")}${
     ev.messageKind ? ` · ${ev.messageKind}` : ""
   }`;
-  const rawContent = ev.contentText || "(无文本内容)";
+  const rawContent = ev.contentText || t("team.conversation.noTextContent");
   const content = truncate(rawContent, maxLen);
   const useMarkdown = looksLikeMarkdown(content);
 
@@ -657,6 +672,7 @@ const BroadcastBanner: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> 
 };
 
 const SystemBanner: FC<{ ev: LiveConversationSystemEvent; maxLen: number }> = ({ ev, maxLen }) => {
+  const { t } = useTranslation();
   return (
     <div style={bannerWrapStyle}>
       <div
@@ -670,7 +686,9 @@ const SystemBanner: FC<{ ev: LiveConversationSystemEvent; maxLen: number }> = ({
           color: "var(--qb-body-fg, #d4d4d8)",
         }}
       >
-        <div style={{ ...tsLabel, marginBottom: 4 }}>{formatTs(ev.ts)} · 系统</div>
+        <div style={{ ...tsLabel, marginBottom: 4 }}>
+          {formatTs(ev.ts)} · {t("team.conversation.systemTag")}
+        </div>
         <div style={{ fontSize: 12, whiteSpace: "pre-wrap", color: "inherit" }}>
           {truncate(ev.text || "", maxLen)}
         </div>

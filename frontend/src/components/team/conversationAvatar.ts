@@ -4,13 +4,38 @@
  * 设计要点：
  * - 颜色对每个 role 是稳定确定的（基于 hash），新 role 加进来不需要改 mapping。
  * - 已知 role 直接命中预设色，让常用角色有更"品牌化"的辨识度。
- * - 缩写：优先用中文短名（基本面/技术面/...），否则取拉丁字符首字母。
+ * - 缩写 / 全名：优先走 i18n 字典（team.role.abbr.* / team.role.name.*），
+ *   未命中时回落到拉丁字符首字母 / 原始 role id。
  *
  * 特殊伪角色：
  * - `__team__`：Orchestrator 的 fan-out 广播目标（runtime 会展开成各 role），
  *   UI 展示成"全员"虚拟节点。
  * - `__tools__`：拓扑画布把 connector / mcp 工具调用聚合到这个伪角色上。
  */
+import { t } from "../../i18n";
+
+const KNOWN_ROLES: ReadonlySet<string> = new Set([
+  "orchestrator",
+  "research",
+  "analyst_fundamental",
+  "analyst_technical",
+  "analyst_sentiment",
+  "analyst_macro",
+  "analyst",
+  "backtest",
+  "risk",
+  "risk_monitor",
+  "msa",
+  "audit",
+  "memory_curator",
+  "market_data",
+  "news_event",
+  "execution",
+  "simulation",
+  "memory",
+  "__team__",
+  "__tools__",
+]);
 
 const PRESET_COLORS: Record<string, { bg: string; fg: string }> = {
   orchestrator: { bg: "#f59e0b", fg: "#1c1917" },
@@ -26,29 +51,6 @@ const PRESET_COLORS: Record<string, { bg: string; fg: string }> = {
   memory_curator: { bg: "#0ea5e9", fg: "#082f49" },
   __team__: { bg: "#475569", fg: "#f8fafc" },
   __tools__: { bg: "#374151", fg: "#e5e7eb" },
-};
-
-const ROLE_LABEL: Record<string, string> = {
-  orchestrator: "总编",
-  research: "研究",
-  analyst_fundamental: "基本",
-  analyst_technical: "技术",
-  analyst_sentiment: "情绪",
-  analyst_macro: "宏观",
-  analyst: "分析",
-  backtest: "回测",
-  risk: "风控",
-  risk_monitor: "风控",
-  msa: "融合",
-  audit: "审计",
-  memory_curator: "记忆",
-  market_data: "行情",
-  news_event: "新闻",
-  execution: "执行",
-  simulation: "仿真",
-  memory: "记忆",
-  __team__: "全员",
-  __tools__: "工具",
 };
 
 /** 伪 role：runtime 用来表示一对多广播或工具调用聚合，前端 UI 需要特殊渲染。 */
@@ -77,8 +79,11 @@ export function avatarColorFor(role: string): { bg: string; fg: string } {
 }
 
 export function avatarLabelFor(role: string): string {
-  const cn = ROLE_LABEL[role];
-  if (cn) return cn;
+  if (KNOWN_ROLES.has(role)) {
+    const key = `team.role.abbr.${role}`;
+    const localized = t(key);
+    if (localized && localized !== key) return localized;
+  }
   const cleaned = role.replace(/[_\-]+/g, " ").trim();
   if (!cleaned) return "?";
   const parts = cleaned.split(/\s+/).filter(Boolean);
@@ -89,5 +94,10 @@ export function avatarLabelFor(role: string): string {
 }
 
 export function formatRoleName(role: string): string {
-  return ROLE_LABEL[role] ?? role;
+  if (KNOWN_ROLES.has(role)) {
+    const key = `team.role.name.${role}`;
+    const localized = t(key);
+    if (localized && localized !== key) return localized;
+  }
+  return role;
 }

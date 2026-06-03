@@ -9,6 +9,7 @@
  * 不依赖 backend.ts 之外的全局状态；外层负责拉 pending 详情与提交。
  */
 import { type HitlInputKind, type HitlInputSchema } from "../../api/backend";
+import { t, useTranslation } from "../../i18n";
 
 export interface HitlInputAreaProps {
   inputKind: HitlInputKind;
@@ -23,6 +24,7 @@ export interface HitlInputAreaProps {
 }
 
 export function HitlInputArea(props: HitlInputAreaProps) {
+  const { t: tt } = useTranslation();
   const { inputKind, schema, disabled } = props;
   const options = schema.options ?? [];
 
@@ -30,7 +32,7 @@ export function HitlInputArea(props: HitlInputAreaProps) {
 
   if (inputKind === "single_choice") {
     if (options.length === 0) {
-      return <div style={hintStyle}>（缺少选项，仅可批准/拒绝）</div>;
+      return <div style={hintStyle}>{tt("team.hitl.inputArea.missingOptions")}</div>;
     }
     return (
       <div style={optionListStyle}>
@@ -57,7 +59,7 @@ export function HitlInputArea(props: HitlInputAreaProps) {
 
   if (inputKind === "multi_choice") {
     if (options.length === 0) {
-      return <div style={hintStyle}>（缺少选项，仅可批准/拒绝）</div>;
+      return <div style={hintStyle}>{tt("team.hitl.inputArea.missingOptions")}</div>;
     }
     return (
       <div style={optionListStyle}>
@@ -88,9 +90,9 @@ export function HitlInputArea(props: HitlInputAreaProps) {
         })}
         {schema.minSelect || schema.maxSelect ? (
           <div style={hintStyle}>
-            {schema.minSelect ? `至少 ${schema.minSelect} 项` : ""}
-            {schema.minSelect && schema.maxSelect ? "，" : ""}
-            {schema.maxSelect ? `最多 ${schema.maxSelect} 项` : ""}
+            {schema.minSelect ? tt("team.hitl.inputArea.minSelect", { n: schema.minSelect }) : ""}
+            {schema.minSelect && schema.maxSelect ? tt("team.hitl.inputArea.minMaxJoiner") : ""}
+            {schema.maxSelect ? tt("team.hitl.inputArea.maxSelect", { n: schema.maxSelect }) : ""}
           </div>
         ) : null}
       </div>
@@ -102,7 +104,7 @@ export function HitlInputArea(props: HitlInputAreaProps) {
     <textarea
       value={props.freeText}
       onChange={(e) => props.setFreeText(e.target.value)}
-      placeholder={schema.placeholder ?? "请输入对 Orchestrator 的指引（≤500 字符）"}
+      placeholder={schema.placeholder ?? tt("team.hitl.inputArea.defaultPlaceholder")}
       maxLength={schema.maxLength ?? 500}
       disabled={disabled}
       rows={3}
@@ -115,12 +117,12 @@ export function HitlInputArea(props: HitlInputAreaProps) {
 export function hitlSubmitLabel(kind: HitlInputKind): string {
   switch (kind) {
     case "approve_only":
-      return "批准并继续";
+      return t("team.hitl.submit.approveOnly");
     case "single_choice":
     case "multi_choice":
-      return "提交选择";
+      return t("team.hitl.submit.choice");
     case "free_form":
-      return "提交指引";
+      return t("team.hitl.submit.freeForm");
   }
 }
 
@@ -128,13 +130,13 @@ export function hitlSubmitLabel(kind: HitlInputKind): string {
 export function hitlKindLabel(kind: HitlInputKind): string {
   switch (kind) {
     case "approve_only":
-      return "确认";
+      return t("team.hitl.kind.approveOnly");
     case "single_choice":
-      return "单选";
+      return t("team.hitl.kind.singleChoice");
     case "multi_choice":
-      return "多选";
+      return t("team.hitl.kind.multiChoice");
     case "free_form":
-      return "输入指引";
+      return t("team.hitl.kind.freeForm");
   }
 }
 
@@ -154,21 +156,21 @@ export function buildHitlResponsePayload(input: {
 }): Record<string, unknown> | null {
   const { inputKind, schema, choice, multiChoice, freeText } = input;
   if (inputKind === "single_choice") {
-    if (!choice) throw new Error("请先选择一项");
+    if (!choice) throw new Error(t("team.hitl.validation.needChoice"));
     return { value: choice };
   }
   if (inputKind === "multi_choice") {
     if (schema.minSelect !== undefined && multiChoice.length < schema.minSelect) {
-      throw new Error(`至少选择 ${schema.minSelect} 项`);
+      throw new Error(t("team.hitl.validation.needMin", { n: schema.minSelect }));
     }
     if (schema.maxSelect !== undefined && multiChoice.length > schema.maxSelect) {
-      throw new Error(`最多选择 ${schema.maxSelect} 项`);
+      throw new Error(t("team.hitl.validation.needMax", { n: schema.maxSelect }));
     }
     return { values: multiChoice };
   }
   if (inputKind === "free_form") {
     const text = freeText.trim();
-    if (!text) throw new Error("请输入指引内容");
+    if (!text) throw new Error(t("team.hitl.validation.needText"));
     return { text };
   }
   return null;

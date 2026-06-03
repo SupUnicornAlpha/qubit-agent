@@ -2,6 +2,7 @@ import type { CSSProperties, FC } from "react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { getAnalystTeamGraph } from "../../api/backend";
 import type { AnalystTeamGraphInteraction } from "../../api/types";
+import { useTranslation } from "../../i18n";
 import { splitToolCallSegments } from "../../lib/toolCallSegments";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import { ToolCallSegmentCard } from "./ToolCallSegmentCard";
@@ -50,6 +51,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
   chrome = "details",
   onCountChange,
 }) => {
+  const { t } = useTranslation();
   const [interactions, setInteractions] = useState<AnalystTeamGraphInteraction[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -123,10 +125,9 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
   const body = (
     <div style={styles.body}>
       <div style={styles.toolbar}>
-        <span style={styles.scopeHint}>explore fallback</span>
+        <span style={styles.scopeHint}>{t("team.exploreFallback.scopeBadge")}</span>
         <span style={styles.scopeHintMuted}>
-          置信度不足或信息不充分时 Orchestrator 切到这条 fallback 链路，
-          产出研究方向建议而非可执行策略
+          {t("team.exploreFallback.scopeMuted")}
         </span>
         <button
           type="button"
@@ -135,7 +136,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
           onClick={() => void reload()}
           disabled={loading}
         >
-          {loading ? "刷新中…" : "刷新"}
+          {loading ? t("team.exploreFallback.refreshing") : t("team.exploreFallback.refresh")}
         </button>
       </div>
 
@@ -144,8 +145,8 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
       {!error && llmMessages.length === 0 && !loading ? (
         <div style={styles.empty}>
           {!workflowRunId
-            ? "请先选择或启动一个工作流。"
-            : "本工作流未触发 explore fallback。当 Orchestrator 决定不进入策略撰写时，研究方向草稿会出现在这里。"}
+            ? t("team.exploreFallback.emptyNoWorkflow")
+            : t("team.exploreFallback.emptyNoFallback")}
         </div>
       ) : null}
 
@@ -154,7 +155,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
        * markdown body，避免多条叠加时 mdHost 内滚 + 整体外滚的双层尴尬。
        */}
       {llmMessages.length > 1 ? (
-        <div style={styles.draftSwitcher} role="tablist" aria-label="草稿切换">
+        <div style={styles.draftSwitcher} role="tablist" aria-label={t("team.exploreFallback.draftSwitcherAria")}>
           {llmMessages.map((row, idx) => {
             const isActive = idx === activeDraftIdx;
             return (
@@ -170,7 +171,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
                 }}
                 title={new Date(row.createdAt).toLocaleString()}
               >
-                草稿 {idx + 1}
+                {t("team.exploreFallback.draftChip", { n: idx + 1 })}
               </button>
             );
           })}
@@ -217,10 +218,28 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
 
       {interactions.some((row) => row.kind === "tool_call") ? (
         <div style={styles.draftHint}>
-          部分研究方向已经被解析为 <code style={styles.codeInline}>factor.draft</code>
-          ，落入「因子产出」tab（status=draft）。
-          {draftFactorCount > 0 ? `本轮共 ${draftFactorCount} 条。` : ""}
-          后续可手动转 active 或让下一轮 research 续写表达式。
+          {/**
+           * Split into static text via t() with `{factorTag}` and `{count}`
+           * placeholders that we substitute via React JSX nodes. The key
+           * intentionally embeds inline `<code>` text via the factorTag slot.
+           */}
+          {(() => {
+            const tmpl = t("team.exploreFallback.draftHint", {
+              factorTag: "__FACTOR_TAG__",
+              count:
+                draftFactorCount > 0
+                  ? t("team.exploreFallback.draftHintWithCount", { n: draftFactorCount })
+                  : "",
+            });
+            const parts = tmpl.split("__FACTOR_TAG__");
+            return (
+              <>
+                {parts[0]}
+                <code style={styles.codeInline}>factor.draft</code>
+                {parts[1] ?? ""}
+              </>
+            );
+          })()}
         </div>
       ) : null}
     </div>
@@ -231,7 +250,7 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
     if (!workflowRunId) {
       return (
         <div style={styles.body}>
-          <div style={styles.empty}>请先选择或启动一个工作流。</div>
+          <div style={styles.empty}>{t("team.exploreFallback.emptyNoWorkflow")}</div>
         </div>
       );
     }
@@ -243,9 +262,13 @@ export const ResearchExploreFallbackBlock: FC<ResearchExploreFallbackBlockProps>
     return null;
   }
 
-  const summaryLabel = `研究方向草稿（${interactions.length}${
-    draftFactorCount > 0 ? ` · 已落 ${draftFactorCount} 条 draft 因子` : ""
-  }）`;
+  const summaryLabel =
+    draftFactorCount > 0
+      ? t("team.exploreFallback.summaryWithDraftFactors", {
+          n: interactions.length,
+          factors: draftFactorCount,
+        })
+      : t("team.exploreFallback.summary", { n: interactions.length });
 
   return (
     <details className="qb-mcp-details" style={styles.details} open={defaultOpen}>

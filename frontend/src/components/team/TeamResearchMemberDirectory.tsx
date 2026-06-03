@@ -10,6 +10,7 @@ import {
   removeAgentGroupMember,
 } from "../../api/backend";
 import type { AgentDefinitionBundle, AgentGroupDetail, AgentGroupRecord } from "../../api/types";
+import { useTranslation } from "../../i18n";
 import { RESEARCH_TEAM_GROUP_POOL_ROLE_SET } from "../../lib/researchTeamRoles";
 import {
   type TeamTopologyEdge,
@@ -22,14 +23,14 @@ import {
 } from "../../lib/researchTeamTopology";
 import { ResearchTopologyCanvas, type TopologyDrawMode } from "./ResearchTopologyCanvas";
 
-const BUCKET: Record<string, { label: string; color: string }> = {
-  analyst: { label: "分析师（MSA）", color: "#3b82f6" },
-  researcher: { label: "研究员 / 策略 / 回测", color: "#8b5cf6" },
-  risk: { label: "风控", color: "#ef4444" },
-  portfolio: { label: "组合", color: "#f59e0b" },
-  execution: { label: "执行", color: "#10b981" },
-  orchestration: { label: "编排", color: "#14b8a6" },
-  ops: { label: "运营 / 其他", color: "#6b7280" },
+const BUCKET: Record<string, { i18nKey: string; color: string }> = {
+  analyst: { i18nKey: "team.members.bucket.analyst", color: "#3b82f6" },
+  researcher: { i18nKey: "team.members.bucket.researcher", color: "#8b5cf6" },
+  risk: { i18nKey: "team.members.bucket.risk", color: "#ef4444" },
+  portfolio: { i18nKey: "team.members.bucket.portfolio", color: "#f59e0b" },
+  execution: { i18nKey: "team.members.bucket.execution", color: "#10b981" },
+  orchestration: { i18nKey: "team.members.bucket.orchestration", color: "#14b8a6" },
+  ops: { i18nKey: "team.members.bucket.ops", color: "#6b7280" },
 };
 
 function bucketKey(role: string): keyof typeof BUCKET {
@@ -77,6 +78,7 @@ export const TeamResearchMemberDirectory: FC<{
   setAnalystAgentGroupOptions,
   agentDefBundles,
 }) => {
+  const { t } = useTranslation();
   const [detail, setDetail] = useState<AgentGroupDetail | null>(null);
   const [topologyEdges, setTopologyEdges] = useState<TeamTopologyEdge[]>([]);
   const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
@@ -171,12 +173,12 @@ export const TeamResearchMemberDirectory: FC<{
       });
       setTopologyEdges(prunedEdges);
       setNodePositions(mergeLayoutWithRoles(roles, meta));
-      setTopologyMsg("已保存研究组拓扑（relations_json：画布布局 + 单向 / 广播边）。");
+      setTopologyMsg(t("team.members.msgs.saveSuccess"));
       refreshGroups();
       const d = await getAgentGroup(analystAgentGroupId.trim());
       applyGroupDetail(d);
     } catch (e) {
-      setTopologyMsg(`保存失败：${(e as Error).message}`);
+      setTopologyMsg(t("team.members.msgs.saveFailed", { err: (e as Error).message }));
     } finally {
       setSavingTopo(false);
     }
@@ -185,9 +187,7 @@ export const TeamResearchMemberDirectory: FC<{
   const handleAddToGroup = async (definitionId: string, role: string) => {
     if (!analystAgentGroupId.trim() || !detail) return;
     if (detail.members.some((m) => m.role === role)) {
-      setTopologyMsg(
-        `编组内已有角色「${role}」。调度与画布以角色为节点，同一编组内每个角色仅保留一条定义；请先移除现有成员或换用其他角色。`
-      );
+      setTopologyMsg(t("team.members.msgs.duplicateRole", { role }));
       return;
     }
     setTopologyMsg(null);
@@ -201,9 +201,9 @@ export const TeamResearchMemberDirectory: FC<{
       const d = await getAgentGroup(analystAgentGroupId.trim());
       applyGroupDetail(d);
       refreshGroups();
-      setTopologyMsg("已从 Agent 池加入编组。");
+      setTopologyMsg(t("team.members.msgs.joined"));
     } catch (e) {
-      setTopologyMsg(`加入失败：${(e as Error).message}`);
+      setTopologyMsg(t("team.members.msgs.joinFailed", { err: (e as Error).message }));
     } finally {
       setMemberBusy(false);
     }
@@ -233,9 +233,9 @@ export const TeamResearchMemberDirectory: FC<{
       const d = await getAgentGroup(analystAgentGroupId.trim());
       applyGroupDetail(d);
       refreshGroups();
-      setTopologyMsg("已移除成员并同步裁剪拓扑。");
+      setTopologyMsg(t("team.members.msgs.removed"));
     } catch (e) {
-      setTopologyMsg(`移除失败：${(e as Error).message}`);
+      setTopologyMsg(t("team.members.msgs.removeFailed", { err: (e as Error).message }));
     } finally {
       setMemberBusy(false);
     }
@@ -249,7 +249,7 @@ export const TeamResearchMemberDirectory: FC<{
   const submitCreateGroup = async () => {
     const name = (creatingGroupName ?? "").trim();
     if (!name) {
-      setTopologyMsg("编组名不能为空");
+      setTopologyMsg(t("team.members.msgs.groupNameRequired"));
       return;
     }
     setTopologyMsg(null);
@@ -260,9 +260,9 @@ export const TeamResearchMemberDirectory: FC<{
       setAnalystAgentGroupOptions(rows);
       setAnalystAgentGroupId(created.id);
       setCreatingGroupName(null);
-      setTopologyMsg(`已新建编组「${created.name}」。`);
+      setTopologyMsg(t("team.members.msgs.groupCreated", { name: created.name }));
     } catch (e) {
-      setTopologyMsg(`新建失败：${(e as Error).message}`);
+      setTopologyMsg(t("team.members.msgs.createFailed", { err: (e as Error).message }));
     } finally {
       setGroupOpBusy(false);
     }
@@ -282,9 +282,9 @@ export const TeamResearchMemberDirectory: FC<{
         setTopologyEdges([]);
         setNodePositions({});
       }
-      setTopologyMsg(`已删除编组「${groupName}」。`);
+      setTopologyMsg(t("team.members.msgs.groupDeleted", { name: groupName }));
     } catch (e) {
-      setTopologyMsg(`删除失败：${(e as Error).message}`);
+      setTopologyMsg(t("team.members.msgs.deleteFailed", { err: (e as Error).message }));
     } finally {
       setGroupOpBusy(false);
     }
@@ -295,7 +295,7 @@ export const TeamResearchMemberDirectory: FC<{
       void performDeleteGroup(groupId, groupName);
     } else {
       setPendingDeleteGroupId(groupId);
-      setTopologyMsg(`再次点击「${groupName}」右侧 × 即可删除（4 秒内有效）。`);
+      setTopologyMsg(t("team.members.msgs.pendingDelete", { name: groupName }));
     }
   };
 
@@ -309,12 +309,19 @@ export const TeamResearchMemberDirectory: FC<{
           lineHeight: 1.55,
         }}
       >
-        成员与编组来自<strong>配置中心已发布的 Agent 定义</strong>及{" "}
-        <code style={{ fontSize: 12 }}>agent_group</code>。拓扑边语义：<strong>from 先完成，结论传给 to</strong>。
-        <strong>推荐流程</strong>：① Orchestrator 广播派发任务 → ② 分析师之间用单向边串行加深信息（如 macro→fundamental→technical）→
-        ③ 分析师回报 Orchestrator（运行期自动落库）→ ④ MSA 融合 → ⑤ Orchestrator 买/卖/观望决策 →
-        ⑥ 画布配置 <code>research → backtest</code> 单向边控制策略与回测顺序。仅 Orchestrator 星型边时分析师会并行且信息较浅。
-        保存后写入 <code style={{ fontSize: 12 }}>relations_json</code>。
+        {t("team.members.intro.beforeSourceStrong")}
+        <strong>{t("team.members.intro.sourceStrong")}</strong>
+        {t("team.members.intro.beforeSourceCode")}
+        <code style={{ fontSize: 12 }}>{t("team.members.intro.sourceCode")}</code>
+        {t("team.members.intro.edgeSemantics")}
+        <strong>{t("team.members.intro.edgeSemanticsStrong")}</strong>
+        {t("team.members.intro.beforeRecommendStrong")}
+        <strong>{t("team.members.intro.recommendStrong")}</strong>
+        {t("team.members.intro.recommendBody")}
+        <code>{t("team.members.intro.recommendCode")}</code>
+        {t("team.members.intro.recommendTail")}
+        <code style={{ fontSize: 12 }}>{t("team.members.intro.recommendTailCode")}</code>
+        {t("team.members.intro.recommendDone")}
       </p>
 
       <h4
@@ -325,12 +332,12 @@ export const TeamResearchMemberDirectory: FC<{
           margin: "0 0 8px",
         }}
       >
-        Agent 编组
+        {t("team.members.sectionGroups")}
       </h4>
       <div style={{ ...row, marginBottom: 16 }}>
         {analystAgentGroupOptions.length === 0 ? (
           <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
-            暂无编组（请点击右侧「+ 新建编组」创建）
+            {t("team.members.emptyGroups")}
           </span>
         ) : (
           analystAgentGroupOptions.map((g) => {
@@ -362,17 +369,19 @@ export const TeamResearchMemberDirectory: FC<{
                   }}
                 >
                   {g.name}
-                  {typeof g.memberCount === "number" ? ` · ${g.memberCount} 人` : ""}
+                  {typeof g.memberCount === "number"
+                    ? t("team.members.memberCountSuffix", { n: g.memberCount })
+                    : ""}
                 </button>
                 <button
                   type="button"
                   className="qb-btn-secondary"
                   title={
                     pendingDelete
-                      ? `再次点击确认删除「${g.name}」`
-                      : `删除编组「${g.name}」（需点 2 次）`
+                      ? t("team.members.deletePendingTitle", { name: g.name })
+                      : t("team.members.deleteTitle", { name: g.name })
                   }
-                  aria-label={`删除编组「${g.name}」`}
+                  aria-label={t("team.members.deleteAriaLabel", { name: g.name })}
                   style={{
                     fontSize: 12,
                     padding: "6px 8px",
@@ -391,7 +400,7 @@ export const TeamResearchMemberDirectory: FC<{
                     handleClickDelete(g.id, g.name);
                   }}
                 >
-                  {pendingDelete ? "再次点击确认" : "×"}
+                  {pendingDelete ? t("team.members.deleteConfirmAgain") : "×"}
                 </button>
               </span>
             );
@@ -409,7 +418,7 @@ export const TeamResearchMemberDirectory: FC<{
               setCreatingGroupName("");
             }}
           >
-            + 新建编组
+            {t("team.members.newGroup")}
           </button>
         ) : (
           <span
@@ -426,7 +435,7 @@ export const TeamResearchMemberDirectory: FC<{
               value={creatingGroupName}
               autoFocus
               disabled={groupOpBusy}
-              placeholder="编组名称"
+              placeholder={t("team.members.newGroupNamePlaceholder")}
               onChange={(e) => setCreatingGroupName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
@@ -453,7 +462,7 @@ export const TeamResearchMemberDirectory: FC<{
               disabled={groupOpBusy || !creatingGroupName.trim()}
               onClick={() => void submitCreateGroup()}
             >
-              保存
+              {t("team.members.saveBtn")}
             </button>
             <button
               type="button"
@@ -462,7 +471,7 @@ export const TeamResearchMemberDirectory: FC<{
               disabled={groupOpBusy}
               onClick={() => setCreatingGroupName(null)}
             >
-              取消
+              {t("team.members.cancelBtn")}
             </button>
           </span>
         )}
@@ -481,7 +490,7 @@ export const TeamResearchMemberDirectory: FC<{
               onClick={() => void saveTopology()}
               disabled={savingTopo || memberBusy}
             >
-              {savingTopo ? "保存中…" : "保存研究组拓扑"}
+              {savingTopo ? t("team.members.savingTopology") : t("team.members.saveTopology")}
             </button>
           </div>
           {topologyMsg ? (
@@ -500,12 +509,13 @@ export const TeamResearchMemberDirectory: FC<{
               className="qb-callout qb-callout--warning"
               style={{ marginBottom: 10, fontSize: 12 }}
             >
-              编组内存在<strong>相同角色</strong>
-              的多条定义，画布与调度仅以「角色」为节点，可能无法区分二者。建议每个角色只保留一条成员。
+              {t("team.members.duplicateRolePrefix")}
+              <strong>{t("team.members.duplicateRoleStrong")}</strong>
+              {t("team.members.duplicateRoleSuffix")}
             </output>
           ) : null}
           <div style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginBottom: 8 }}>
-            {detail.group.description || "无描述"}
+            {detail.group.description || t("team.members.emptyDescription")}
           </div>
           <div
             style={{
@@ -515,7 +525,7 @@ export const TeamResearchMemberDirectory: FC<{
               marginBottom: 6,
             }}
           >
-            编组成员（可移除）
+            {t("team.members.sectionMembers")}
           </div>
           <div
             style={{
@@ -533,7 +543,7 @@ export const TeamResearchMemberDirectory: FC<{
                   {m.role}
                 </div>
                 <div style={{ fontSize: 10, color: "var(--qb-team-meta, #52525b)", marginTop: 4 }}>
-                  definition: {m.definitionId.slice(0, 8)}…
+                  {t("team.members.definitionPrefix", { id: m.definitionId.slice(0, 8) })}
                 </div>
                 <button
                   type="button"
@@ -542,7 +552,7 @@ export const TeamResearchMemberDirectory: FC<{
                   disabled={memberBusy}
                   onClick={() => void handleRemoveMember(m.id)}
                 >
-                  移出编组
+                  {t("team.members.removeMember")}
                 </button>
               </div>
             ))}
@@ -558,19 +568,19 @@ export const TeamResearchMemberDirectory: FC<{
                   marginBottom: 8,
                 }}
               >
-                研究组通信拓扑（画布）
+                {t("team.members.sectionTopology")}
               </div>
               <div style={{ ...row, marginBottom: 10 }}>
                 <span
                   style={{ fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginRight: 6 }}
                 >
-                  工具：
+                  {t("team.members.toolsLabel")}
                 </span>
                 {(
                   [
-                    ["select", "调整布局"],
-                    ["unicast", "单向边"],
-                    ["broadcast", "广播边"],
+                    ["select", t("team.members.toolSelect")],
+                    ["unicast", t("team.members.toolUnicast")],
+                    ["broadcast", t("team.members.toolBroadcast")],
                   ] as const
                 ).map(([k, label]) => (
                   <button
@@ -593,18 +603,18 @@ export const TeamResearchMemberDirectory: FC<{
                 drawMode={drawMode}
               />
               <p style={{ fontSize: 11, color: "var(--qb-team-meta, #52525b)", marginTop: 8 }}>
-                留空边集表示全员同波并行。单向边与广播边均参与分层调度；编辑后请点击「保存研究组拓扑」写入服务端。
+                {t("team.members.topologyHint")}
               </p>
             </div>
           ) : (
             <p style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginTop: 12 }}>
-              当前编组暂无成员，请从下方 Agent 池加入。
+              {t("team.members.emptyMembers")}
             </p>
           )}
         </div>
       ) : (
         <p style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)", marginBottom: 16 }}>
-          请在上方选择一个编组，或回到左侧「发起分析」选择分析师编组。
+          {t("team.members.selectGroupHint")}
         </p>
       )}
 
@@ -616,11 +626,11 @@ export const TeamResearchMemberDirectory: FC<{
           margin: "20px 0 8px",
         }}
       >
-        已启用 Agent 池（按职能分组）
+        {t("team.members.sectionPool")}
       </h4>
       {agentDefBundles === null ? (
         <div style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
-          正在加载 Agent 定义…
+          {t("team.members.loadingDefs")}
         </div>
       ) : (
         (Object.keys(BUCKET) as Array<keyof typeof BUCKET>).map((bk) => {
@@ -630,7 +640,7 @@ export const TeamResearchMemberDirectory: FC<{
           return (
             <div key={bk} style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: meta.color, marginBottom: 6 }}>
-                {meta.label}（{list.length}）
+                {t("team.members.bucketCount", { label: t(meta.i18nKey), n: list.length })}
               </div>
               <div
                 style={{
@@ -670,7 +680,7 @@ export const TeamResearchMemberDirectory: FC<{
                           lineHeight: 1.4,
                         }}
                       >
-                        {b.profile?.description?.trim() || "（无 profile 描述）"}
+                        {b.profile?.description?.trim() || t("team.members.emptyProfileDescription")}
                       </div>
                       {slot && analystAgentGroupId.trim() && detail ? (
                         <button
@@ -679,9 +689,9 @@ export const TeamResearchMemberDirectory: FC<{
                           style={{ fontSize: 11, marginTop: 10, width: "100%", padding: "6px 8px" }}
                           disabled={memberBusy || inGroup || !detail}
                           onClick={() => void handleAddToGroup(b.definition.id, b.definition.role)}
-                          title={inGroup ? "已在当前编组" : "加入当前编组"}
+                          title={inGroup ? t("team.members.alreadyInGroupTitle") : t("team.members.joinTitle")}
                         >
-                          {inGroup ? "已在编组" : "加入当前编组"}
+                          {inGroup ? t("team.members.alreadyInGroup") : t("team.members.addToGroup")}
                         </button>
                       ) : slot ? (
                         <p
@@ -691,7 +701,7 @@ export const TeamResearchMemberDirectory: FC<{
                             marginTop: 8,
                           }}
                         >
-                          请先选择上方编组
+                          {t("team.members.selectGroupFirst")}
                         </p>
                       ) : null}
                     </div>
