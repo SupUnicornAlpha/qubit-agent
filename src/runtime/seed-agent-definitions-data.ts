@@ -117,15 +117,23 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-technical",
     role: "analyst_technical",
     name: "量化策略师",
-    /** 3.0.0：M9.P2 装上量化工坊全套（动量/反转/波动因子 + run_experiment + 沙箱） */
-    version: "3.0.0",
+    /**
+     * 3.0.0：M9.P2 装上量化工坊全套（动量/反转/波动因子 + run_experiment + 沙箱）。
+     * 3.1.0：评估报告 P2-E — 去掉 `run_backtest` 工具授权。
+     *
+     *   原因：PROMPT_ANALYST_TECHNICAL（seed-agent-prompts.ts:528）明确写
+     *   "信号 > 0.7 即触发 backtest 外抛"——technical 只产因子/规则信号，
+     *   不亲自跑回测；保留 run_backtest 会让 LLM 误把 backtest 作为本角色
+     *   职责吞掉一轮迭代，token 浪费 + 与 backtest 角色重复（参见调研：
+     *   3 个 def 的工具集中 run_backtest 唯一可去重的 1 个）。
+     */
+    version: "3.1.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
       "fetch_price_data",
       "fetch_klines",
       "compute_indicators",
       "detect_patterns",
-      "run_backtest",
       // M9.P2：量化锚点 — 看现成动量/反转/波动因子的 RankIC
       "factor.list",
       "factor.autoEvaluate",

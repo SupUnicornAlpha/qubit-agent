@@ -189,16 +189,29 @@ export const FACTOR_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
   ],
 };
 
-/** 规则研究：orchestrator + research + risk_manager */
+/**
+ * 规则研究：orchestrator + research + risk。
+ *
+ * 评估报告 P2-F：原 memberRoles 写 `risk_manager` 与 memberDefinitionIds 里的
+ * `def-risk` 不一致——M9.P5 起 risk_manager role 已并入 risk（统一风控）。
+ * 这种错位会让前端选编组 UI 显示"risk_manager"但实际跑的是 def-risk，
+ * 让用户以为有两个风险 agent。
+ */
 export const RULE_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-rule-research",
   name: "规则研究",
   description: "基于现有因子库生成可解释的 JSON-DSL 规则并入库。",
   memberDefinitionIds: ["def-orchestrator", "def-research", "def-risk"],
-  memberRoles: ["orchestrator", "research", "risk_manager"],
+  memberRoles: ["orchestrator", "research", "risk"],
 };
 
-/** 选股研究：orchestrator + stock_screener + 两个分析师 */
+/**
+ * 选股研究：orchestrator + research + 两个分析师。
+ *
+ * 评估报告 P2-F：原 memberRoles 写 `stock_screener` 与 memberDefinitionIds 里
+ * 的 `def-research` 不一致——stock_screener role 已在 RETIRED_BUILTIN_DEFINITION_IDS
+ * 里（M9.P5 选股职能并入 research：factor.list + discovery.run + universe）。
+ */
 export const STOCK_SCREENING_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-stock-screening",
   name: "选股研究",
@@ -211,22 +224,35 @@ export const STOCK_SCREENING_GROUP: BuiltinAgentGroupSpec = {
   ],
   memberRoles: [
     "orchestrator",
-    "stock_screener",
+    "research",
     "analyst_fundamental",
     "analyst_sentiment",
   ],
 };
 
-/** 风控审查：orchestrator + risk_manager + audit */
+/**
+ * 风控审查：orchestrator + risk + research。
+ *
+ * 评估报告 P2-F：原 memberRoles 写 `risk_manager` + `audit`，与 memberDefinitionIds
+ * 里 `def-risk` + `def-research` 不一致——audit role 已在 RETIRED_BUILTIN_DEFINITION_IDS
+ * 里（合规审计并入 monitor + tool-call-log-service），risk_manager 已并入 risk。
+ */
 export const RISK_REVIEW_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-risk-review",
   name: "风控审查",
   description: "审查策略历史与现有限额，产出新的风控规则建议。",
   memberDefinitionIds: ["def-orchestrator", "def-risk", "def-research"],
-  memberRoles: ["orchestrator", "risk_manager", "audit"],
+  memberRoles: ["orchestrator", "risk", "research"],
 };
 
-/** PM 组合管理：orchestrator + portfolio_manager + risk_manager + research */
+/**
+ * PM 组合管理：orchestrator + research + risk + backtest。
+ *
+ * 评估报告 P2-F：原 memberRoles 包含 portfolio_manager + risk_manager 两个
+ * 退役 role，与 memberDefinitionIds 完全不对齐。M9.P5 起 PM 职能并入
+ * research（仓位决策 / 再平衡方案）+ risk（暴露限额签核），不再有专门 PM
+ * agent；如需独立 PM 维度，后续可新建 def 但不要复活旧 stub。
+ */
 export const PORTFOLIO_MANAGEMENT_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-portfolio-management",
   name: "PM 组合管理",
@@ -237,7 +263,7 @@ export const PORTFOLIO_MANAGEMENT_GROUP: BuiltinAgentGroupSpec = {
     "def-risk",
     "def-backtest",
   ],
-  memberRoles: ["orchestrator", "portfolio_manager", "risk_manager", "research"],
+  memberRoles: ["orchestrator", "research", "risk", "backtest"],
 };
 
 /** 因子/规则/策略 挖掘：orchestrator + research + backtest_engineer */
@@ -257,13 +283,20 @@ export const DISCOVERY_GROUP: BuiltinAgentGroupSpec = {
   memberRoles: ["orchestrator", "research", "backtest", "backtest_engineer"],
 };
 
-/** 实盘交易：orchestrator + execution_trader + risk_manager */
+/**
+ * 实盘交易：orchestrator + risk。
+ *
+ * 评估报告 P2-F：原 memberRoles 写 execution_trader + risk_manager 都是退役
+ * role，且与 memberDefinitionIds 完全不一致——def-execution-trader 已退役，
+ * 当前实盘路径走的是 risk 签核 + monitor 兜底，并无专门执行 agent；
+ * UI 显示两个不存在 role 会让用户困惑。如需重建实盘 agent，请新建 def。
+ */
 export const LIVE_TRADING_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-live-trading",
   name: "实盘交易",
   description: "实盘下单、监控、风控记录；走 Live 闸门与 HMAC 签名。",
   memberDefinitionIds: ["def-orchestrator", "def-risk"],
-  memberRoles: ["orchestrator", "execution_trader", "risk_manager"],
+  memberRoles: ["orchestrator", "risk"],
 };
 
 /** 复盘归因：orchestrator + research + analyst_macro */

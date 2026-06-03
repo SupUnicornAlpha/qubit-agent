@@ -48,6 +48,16 @@ import {
   readPackFiles,
 } from "../agent/agent-pack-service";
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
+import { recommendAgentGroupForScope } from "./recommend-agent-group";
+
+/**
+ * P2-D：是否启用 scope → agent group 自动推荐。
+ * 默认开（=1）；显式 "0" / "false" / "no" 关闭，对齐仓库其它 env flag 解析风格。
+ */
+function isGroupAutoRecommendEnabled(): boolean {
+  const raw = (process.env.QUBIT_AGENT_GROUP_AUTO_RECOMMEND ?? "1").trim().toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "no" && raw !== "off";
+}
 import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
 import {
   decideShouldDebate,
@@ -426,14 +436,36 @@ async function runAnalystTeamCore(params: {
   const dataContext = await buildAnalystTeamDataContext({ scope });
   let context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
 
-  const orchestratorSlot = await resolveOrchestratorSlot(db, params.agentGroupId);
+  /**
+   * 评估报告 P2-D：当用户**没有显式选编组**（undefined，而不是 null/""—— 后者
+   * 表示用户在 UI 主动选「不指定」）时，按 scope 自动推荐。
+   *
+   * env flag:
+   *   - QUBIT_AGENT_GROUP_AUTO_RECOMMEND=0/false → 关闭推荐，保持现状默认（9 slot 全跑）
+   *   - 默认开（=1）
+   *
+   * 推荐 helper 是纯函数（不读 DB / 不读 env），决策可审计 + 测试 deterministic。
+   * 详细规则见 `recommend-agent-group.ts` 顶部注释。
+   */
+  let effectiveGroupId: string | null | undefined = params.agentGroupId;
+  let groupRecommendationDebug: string | undefined;
+  if (params.agentGroupId === undefined && isGroupAutoRecommendEnabled()) {
+    const rec = recommendAgentGroupForScope(scope);
+    if (rec.groupId) {
+      effectiveGroupId = rec.groupId;
+      groupRecommendationDebug = `[P2-D auto-recommend] scope.kind=${scope.kind} → group=${rec.groupId} (${rec.reason}; ${rec.humanText})`;
+      console.log(groupRecommendationDebug);
+    }
+  }
+
+  const orchestratorSlot = await resolveOrchestratorSlot(db, effectiveGroupId);
 
   await db
     .update(workflowRun)
-    .set({ agentGroupId: params.agentGroupId ?? null })
+    .set({ agentGroupId: effectiveGroupId ?? null })
     .where(eq(workflowRun.id, workflowRunId));
 
-  let slots = await resolveAnalystSlots({ db, agentGroupId: params.agentGroupId });
+  let slots = await resolveAnalystSlots({ db, agentGroupId: effectiveGroupId });
   if (params.analystDefinitionIds && params.analystDefinitionIds.length > 0) {
     const allowIds = new Set(params.analystDefinitionIds);
     slots = slots.filter((s) => allowIds.has(s.definitionId));
@@ -456,8 +488,8 @@ async function runAnalystTeamCore(params: {
   slots = await enrichAnalystSlotsWithFsi(db, slots);
 
   let relationEdges: TeamRelationEdge[] = [];
-  if (params.agentGroupId) {
-    const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, params.agentGroupId)).limit(1);
+  if (effectiveGroupId) {
+    const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, effectiveGroupId)).limit(1);
     if (grp[0]) {
       relationEdges = parseGroupRelationsWithOrchestrator(grp[0].relationsJson);
     }
@@ -466,7 +498,7 @@ async function runAnalystTeamCore(params: {
   const analystSlots = slots.filter((s) => isMsAnalystRole(s.role));
   const auxSlots = slots.filter((s) => POST_FUSION_AUX_ROLES.has(s.role));
   const strategyPipelineMode =
-    isStrategyPipelineGroup(params.agentGroupId) || isStrategyFocusedSlots(slots);
+    isStrategyPipelineGroup(effectiveGroupId) || isStrategyFocusedSlots(slots);
   const slotRoleSet = new Set(slots.map((s) => s.role));
 
   await logOrchestratorKickoff({

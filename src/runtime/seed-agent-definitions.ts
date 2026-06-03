@@ -439,59 +439,63 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
     auxChain: ["research", "analyst_fundamental", "analyst_technical"],
   },
   "grp-rule-research": {
+    /** P2-F: risk_manager → risk（与 def-risk 对齐） */
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
       research: { x: 280, y: 240 },
-      risk_manager: { x: 560, y: 240 },
+      risk: { x: 560, y: 240 },
     },
     phases: [
       { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
       { id: "draft", label: "规则草拟", roles: ["research"] },
-      { id: "review", label: "风控复核", roles: ["risk_manager"] },
+      { id: "review", label: "风控复核", roles: ["risk"] },
     ],
-    auxChain: ["research", "risk_manager"],
+    auxChain: ["research", "risk"],
   },
   "grp-stock-screening": {
+    /** P2-F: stock_screener → research（M9.P5 选股职能并入 research） */
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
-      stock_screener: { x: 420, y: 220 },
+      research: { x: 420, y: 220 },
       analyst_fundamental: { x: 240, y: 360 },
       analyst_sentiment: { x: 600, y: 360 },
     },
     phases: [
       { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
-      { id: "screen", label: "因子+规则过滤", roles: ["stock_screener"] },
+      { id: "screen", label: "因子+规则过滤", roles: ["research"] },
       { id: "deepen", label: "候选股复核", roles: ["analyst_fundamental", "analyst_sentiment"] },
     ],
-    auxChain: ["stock_screener", "analyst_fundamental", "analyst_sentiment"],
+    auxChain: ["research", "analyst_fundamental", "analyst_sentiment"],
   },
   "grp-risk-review": {
+    /** P2-F: risk_manager + audit → risk + research（audit 已退役并入 monitor） */
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
-      risk_manager: { x: 280, y: 240 },
-      audit: { x: 560, y: 240 },
+      risk: { x: 280, y: 240 },
+      research: { x: 560, y: 240 },
     },
     phases: [
       { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
-      { id: "review", label: "限额/策略审查", roles: ["risk_manager"] },
-      { id: "audit", label: "审计与建议", roles: ["audit"] },
+      { id: "review", label: "限额/策略审查", roles: ["risk"] },
+      { id: "audit", label: "策略历史与建议", roles: ["research"] },
     ],
-    auxChain: ["risk_manager", "audit"],
+    auxChain: ["risk", "research"],
   },
   "grp-portfolio-management": {
+    /** P2-F: portfolio_manager + risk_manager → research + risk + backtest */
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
-      portfolio_manager: { x: 180, y: 240 },
-      risk_manager: { x: 420, y: 300 },
-      research: { x: 660, y: 240 },
+      research: { x: 180, y: 240 },
+      risk: { x: 420, y: 300 },
+      backtest: { x: 660, y: 240 },
     },
     phases: [
       { id: "clarify", label: "澄清目标", roles: ["orchestrator"] },
-      { id: "allocate", label: "权重分配", roles: ["portfolio_manager"] },
-      { id: "validate", label: "风控核验", roles: ["risk_manager"] },
-      { id: "report", label: "暴露报告", roles: ["research"] },
+      { id: "allocate", label: "权重分配", roles: ["research"] },
+      { id: "validate", label: "风控核验", roles: ["risk"] },
+      { id: "report", label: "暴露报告 + 回测验证", roles: ["backtest"] },
     ],
-    auxChain: ["portfolio_manager", "risk_manager", "research"],
+    auxChain: ["research", "risk", "backtest"],
   },
   "grp-discovery": {
     nodePositions: {
@@ -509,17 +513,20 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
     auxChain: ["research", "backtest", "backtest_engineer"],
   },
   "grp-live-trading": {
+    /**
+     * P2-F: execution_trader + risk_manager → risk only。
+     * def-execution-trader 已退役，当前实盘路径走的是 risk 签核 + monitor 兜底。
+     * 如未来重建执行 agent，请新建 def 并更新此 layout。
+     */
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
-      execution_trader: { x: 280, y: 240 },
-      risk_manager: { x: 560, y: 240 },
+      risk: { x: 420, y: 240 },
     },
     phases: [
       { id: "clarify", label: "确认信号", roles: ["orchestrator"] },
-      { id: "execute", label: "下单执行", roles: ["execution_trader"] },
-      { id: "guard", label: "风控闸门", roles: ["risk_manager"] },
+      { id: "guard", label: "风控签核 + 实盘闸门", roles: ["risk"] },
     ],
-    auxChain: ["execution_trader", "risk_manager"],
+    auxChain: ["risk"],
   },
   "grp-postmortem": {
     nodePositions: {
