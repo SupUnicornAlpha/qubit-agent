@@ -54,6 +54,13 @@ export interface ReasonStepMeta {
   errorMessage?: string;
   /** 'success' | 'error' | 'fallback'：success+fallbackUsed=true 即 'fallback' 路径 */
   llmStatus?: "success" | "error" | "fallback";
+  /**
+   * 网关 P0 透传字段：写入 llm_call_log 对应正式列。
+   * 失败 / 不返回时缺失。
+   */
+  firstTokenLatencyMs?: number;
+  finishReason?: string;
+  responseId?: string;
 }
 
 export interface ReasonNodeOutput {
@@ -175,6 +182,10 @@ export async function reasonNode(
   // 监控 V2 P1：从 catch 兜底拿到的 LLM 错误信息（在 finally 时回填进 meta）
   let llmErrorMessage: string | undefined;
   let llmCallSucceeded = false;
+  // 网关 P0：来自 gateway 的扩展打点字段（首次成功调用即填入；retry 路径会覆盖为 retry 的）
+  let firstTokenLatencyMs: number | undefined;
+  let finishReason: string | undefined;
+  let responseId: string | undefined;
   // 监控 V2 P1：prompt 长度（不存原文，仅用于 llm_call_log.requestMetaJson）
   let systemPromptLen = 0;
   let userPromptLen = 0;
@@ -225,6 +236,9 @@ export async function reasonNode(
   let recalledSkillsBlock = "";
   // Memory V2 P1：在 skill 召回旁拼一个 experience 召回块；与 skill 完全独立的失败域
   let recalledExperienceBlock = "";
+  // Self-Evolving Agent P9：PnL-aware skill 引导块（"该 agent 最近 7d 最赚钱 top-3"）
+  // 跟语义召回完全独立的失败域；总闸关 / 无 PnL 数据 → 空串自然跳过
+  let pnlAwareSkillBlock = "";
   try {
     const meta = workflowMeta;
     if (meta.projectId) {
@@ -305,6 +319,28 @@ export async function reasonNode(
           );
         }
       }
+
+      // ── Self-Evolving Agent P9：PnL-aware top-K skill 引导块 ──
+      //   独立失败域：失败/无数据返回空串，不阻塞主链路
+      //   gate：SELF_EVOLVE_ENABLED + PNL_AWARE_REASON_ENABLED；都关时 fetch 返 []
+      try {
+        const { getDb } = await import("../../../db/sqlite/client");
+        const { buildPnlAwareSkillBlock } = await import("./pnl-aware-skill-block");
+        const db = await getDb();
+        pnlAwareSkillBlock = await buildPnlAwareSkillBlock(db, state.agentDefinition.id);
+        if (pnlAwareSkillBlock && process.env.DEBUG_SKILLS) {
+          console.log(
+            `[reason] injected PnL-aware skill block for ${state.agentDefinition.role}`
+          );
+        }
+      } catch (err) {
+        if (process.env.DEBUG_SKILLS) {
+          console.warn(
+            "[reason] pnl-aware skill block failed:",
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
     }
   } catch (err) {
     // 表不存在 / 项目无 skill 都属于正常分支，仅 debug 日志
@@ -323,6 +359,7 @@ export async function reasonNode(
       : "",
     recalledSkillsBlock ? `\n${recalledSkillsBlock}` : "",
     recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
+    pnlAwareSkillBlock ? `\n${pnlAwareSkillBlock}` : "",
     sessionContext.length
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "",
@@ -393,6 +430,9 @@ export async function reasonNode(
     modelFallbackUsed = llmResult.fallbackUsed;
     usage = llmResult.usage;
     measuredLatencyMs = llmResult.latencyMs;
+    firstTokenLatencyMs = llmResult.firstTokenLatencyMs;
+    finishReason = llmResult.finishReason;
+    responseId = llmResult.responseId;
     llmCallSucceeded = true;
     if (modelFallbackUsed) {
       console.warn(
@@ -459,10 +499,31 @@ export async function reasonNode(
                 completionTokens:
                   (usage.completionTokens ?? 0) + (retryResult.usage.completionTokens ?? 0),
                 totalTokens: (usage.totalTokens ?? 0) + (retryResult.usage.totalTokens ?? 0),
+                ...(usage.cachedPromptTokens !== undefined ||
+                retryResult.usage.cachedPromptTokens !== undefined
+                  ? {
+                      cachedPromptTokens:
+                        (usage.cachedPromptTokens ?? 0) +
+                        (retryResult.usage.cachedPromptTokens ?? 0),
+                    }
+                  : {}),
+                ...(usage.reasoningTokens !== undefined ||
+                retryResult.usage.reasoningTokens !== undefined
+                  ? {
+                      reasoningTokens:
+                        (usage.reasoningTokens ?? 0) + (retryResult.usage.reasoningTokens ?? 0),
+                    }
+                  : {}),
               };
             } else if (retryResult.usage) {
               usage = retryResult.usage;
             }
+            /**
+             * Retry 成功 → 用 retry 的 finish/response id 覆盖（更能反映"实际被采纳的回答"）;
+             * firstTokenLatencyMs 维持首次调用值（首次推理仍发生过，TTFT 还是首次的语义）。
+             */
+            if (retryResult.finishReason) finishReason = retryResult.finishReason;
+            if (retryResult.responseId) responseId = retryResult.responseId;
             console.log(
               `[reason] agent ${state.agentDefinition.role} parse-retry succeeded (orig parse_error → retried OK)`
             );
@@ -522,6 +583,9 @@ export async function reasonNode(
       userPromptLen,
       llmStatus,
       ...(llmErrorMessage ? { errorMessage: llmErrorMessage } : {}),
+      ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
+      ...(finishReason ? { finishReason } : {}),
+      ...(responseId ? { responseId } : {}),
     },
   };
 }

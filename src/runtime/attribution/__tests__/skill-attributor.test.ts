@@ -444,6 +444,103 @@ describe("SkillAttributor.attribute", () => {
     void runId;
   });
 
+  test("场景5b：P9 listSkillRankingsByDefinition 按 agent 7d top-K", async () => {
+    // seed 3 个 skill_run 都在 today，s2 最赚（+50）s1 中（+20）s3 亏（-10）
+    const db = await getDb();
+    const seedRunWithPnl = async (skillId: string, pnl: number) => {
+      await db
+        .insert(agentSkillRun)
+        .values({
+          id: `asr_${randomUUID()}`,
+          skillId,
+          workflowRunId: fixture.workflowRunId,
+          agentInstanceId: fixture.agentInstanceId,
+          definitionId: fixture.definitionId,
+          outcome: pnl >= 0 ? "success" : "fail",
+          pnlDelta: pnl,
+          attributionConfidence: 1,
+        })
+        .run();
+    };
+    await seedRunWithPnl(fixture.s1, 20);
+    await seedRunWithPnl(fixture.s2, 50);
+    await seedRunWithPnl(fixture.s3, -10);
+
+    const attr = createSkillAttributor(db);
+    const out = await attr.listSkillRankingsByDefinition(fixture.definitionId, {
+      windowDays: 7,
+      topK: 3,
+    });
+    expect(out).toHaveLength(3);
+    expect(out[0]?.skillId).toBe(fixture.s2);
+    expect(out[0]?.pnlSum).toBe(50);
+    expect(out[1]?.skillId).toBe(fixture.s1);
+    expect(out[2]?.skillId).toBe(fixture.s3);
+    expect(out[2]?.loseCount).toBe(1);
+
+    // topK=2 截断
+    const out2 = await attr.listSkillRankingsByDefinition(fixture.definitionId, {
+      windowDays: 7,
+      topK: 2,
+    });
+    expect(out2).toHaveLength(2);
+    expect(out2.map((r) => r.skillId)).toEqual([fixture.s2, fixture.s1]);
+
+    // 别的 definition 完全不串台
+    const other = await attr.listSkillRankingsByDefinition(`def_${randomUUID()}`, {
+      windowDays: 7,
+    });
+    expect(other).toHaveLength(0);
+
+    // pnlDelta=null 的 run 不计入 sampleCount（直接 seed 一行 null）
+    await db
+      .insert(agentSkillRun)
+      .values({
+        id: `asr_${randomUUID()}`,
+        skillId: fixture.s1,
+        workflowRunId: fixture.workflowRunId,
+        agentInstanceId: fixture.agentInstanceId,
+        definitionId: fixture.definitionId,
+        outcome: "unknown",
+        pnlDelta: null,
+        attributionConfidence: null,
+      })
+      .run();
+    const out3 = await attr.listSkillRankingsByDefinition(fixture.definitionId, {
+      windowDays: 7,
+      topK: 3,
+    });
+    // s1 还是 pnl=20、sample=1（null run 被过滤）
+    const s1Row = out3.find((r) => r.skillId === fixture.s1);
+    expect(s1Row?.sampleCount).toBe(1);
+    expect(s1Row?.pnlSum).toBe(20);
+  });
+
+  test("场景5c：窗口外的 run 不计入", async () => {
+    const db = await getDb();
+    // 8 天前的 run（应被排除）
+    const oldTs = new Date(Date.now() - 8 * 86400_000).toISOString();
+    await db
+      .insert(agentSkillRun)
+      .values({
+        id: `asr_${randomUUID()}`,
+        skillId: fixture.s1,
+        workflowRunId: fixture.workflowRunId,
+        agentInstanceId: fixture.agentInstanceId,
+        definitionId: fixture.definitionId,
+        outcome: "success",
+        pnlDelta: 999,
+        startedAt: oldTs,
+        endedAt: oldTs,
+      })
+      .run();
+    const attr = createSkillAttributor(db);
+    const out = await attr.listSkillRankingsByDefinition(fixture.definitionId, {
+      windowDays: 7,
+    });
+    expect(out).toHaveLength(0);
+  });
+
   test("场景6：PnlAttributor end-to-end → SkillAttributor 自动跑", async () => {
     // 先 seed recall + skill_run
     await seedRecall(fixture.workflowRunId, fixture.s1, true);

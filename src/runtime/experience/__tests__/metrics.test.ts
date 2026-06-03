@@ -446,6 +446,65 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(snap["self_evolve.auto_installer.proposals_no_candidate"]).toBe(1);
   });
 
+  test("maintenance_run(kind=auto_installer, mode=auto) → P9 auto_installed/by_mode 计数", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "auto_installer",
+      actor: "auto_installer",
+      summary: {
+        status: "completed",
+        mode: "auto",
+        gapsScanned: 3,
+        proposalsCreated: 3,
+        proposalsSkippedExisting: 0,
+        proposalsNoCandidate: 0,
+        autoInstalled: 2,
+        autoInstallFailed: 1,
+        elapsedMs: 33,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.auto_installer.tick.by_mode|mode=auto"]).toBe(1);
+    expect(snap["self_evolve.auto_installer.auto_installed"]).toBe(2);
+    expect(snap["self_evolve.auto_installer.auto_install_failed"]).toBe(1);
+  });
+
+  test("maintenance_run(kind=skill_baseline_observer) → self_evolve.skill_baseline_observer.* 汇总（P9）", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "skill_baseline_observer",
+      actor: "skill_baseline_observer",
+      summary: {
+        status: "completed",
+        scanned: 5,
+        approved: 2,
+        notReady: 3,
+        errors: 0,
+        elapsedMs: 17,
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "skill_baseline_observer",
+      actor: "skill_baseline_observer",
+      summary: {
+        status: "disabled",
+        scanned: 0,
+        approved: 0,
+        notReady: 0,
+        errors: 0,
+        elapsedMs: 1,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.skill_baseline_observer.tick.total"]).toBe(2);
+    expect(snap["self_evolve.skill_baseline_observer.tick.by_status|status=completed"]).toBe(1);
+    expect(snap["self_evolve.skill_baseline_observer.tick.by_status|status=disabled"]).toBe(1);
+    expect(snap["self_evolve.skill_baseline_observer.scanned"]).toBe(5);
+    expect(snap["self_evolve.skill_baseline_observer.approved"]).toBe(2);
+    expect(snap["self_evolve.skill_baseline_observer.not_ready"]).toBe(3);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({

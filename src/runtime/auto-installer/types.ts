@@ -55,6 +55,10 @@ export interface AutoInstallerRunSummary {
   proposalsCreated: number;
   proposalsSkippedExisting: number;
   proposalsNoCandidate: number;
+  /** P9 auto 模式：直接 approved+真装的数量 */
+  autoInstalled?: number;
+  /** P9 auto 模式：尝试自动装但 install-service 抛错的数量 */
+  autoInstallFailed?: number;
   elapsedMs: number;
   errorMessage?: string;
   startedAt: string;

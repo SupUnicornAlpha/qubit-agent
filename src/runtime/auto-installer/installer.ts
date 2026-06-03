@@ -25,8 +25,11 @@ import {
   autoInstallerRun,
   toolGapLog,
 } from "../../db/sqlite/schema.js";
+import { getSelfEvolveConfig } from "../config/self-evolve-config.js";
 import { getExperienceBus, type ExperienceBus } from "../experience/experience-bus.js";
+import { installMcpCatalogToProject } from "../mcp/install-service.js";
 import { findCandidatesForGap } from "./candidate-matcher.js";
+import { approveProposal } from "./lifecycle.js";
 import type {
   AutoInstallerRunSummary,
   MatchCandidate,
@@ -43,6 +46,16 @@ export interface AutoInstallerRunOptions {
   topK?: number;
   triggeredBy?: string;
   emitMetrics?: boolean;
+  /**
+   * P9 auto 模式覆盖：默认从 getSelfEvolveConfig() 读 autoInstallMode。
+   * 单测可以直接传 'auto' 而不动 env / config singleton。
+   * 仅当 mode='auto' + 候选 safetyLevel='low' + targetKind='mcp_catalog'
+   *   + score≥minScoreForAuto 时才走自动 approve+真装链路。
+   * external（mcp_catalog_item）无论 safety 都走 propose（registry 来源风险敞口更大）。
+   */
+  autoModeOverride?: "off" | "propose" | "auto";
+  /** 同上：覆盖 minScoreForAuto */
+  minScoreForAutoOverride?: number;
 }
 
 export interface AutoInstallerDeps {
@@ -52,9 +65,10 @@ export interface AutoInstallerDeps {
 interface ActionEntry {
   gapId: string;
   gapSignature: string;
-  action: "proposed" | "skipped_existing" | "no_candidate";
+  action: "proposed" | "skipped_existing" | "no_candidate" | "auto_installed" | "auto_install_failed";
   proposalId?: string;
   candidate?: { slug: string; score: number; targetKind: string };
+  installId?: string;
   reason?: string;
 }
 
@@ -101,10 +115,21 @@ export class AutoInstaller {
       proposalsCreated: 0,
       proposalsSkippedExisting: 0,
       proposalsNoCandidate: 0,
+      autoInstalled: 0,
+      autoInstallFailed: 0,
       elapsedMs: 0,
       startedAt: new Date(startedAt).toISOString(),
     };
     const actions: ActionEntry[] = [];
+
+    // P9：决定本次跑批走 propose 还是 auto；override > config
+    const cfg = getSelfEvolveConfig();
+    const mode = opts.autoModeOverride ?? cfg.autoInstallMode;
+    const minScoreForAuto = opts.minScoreForAutoOverride ?? cfg.minScoreForAuto;
+    if (mode === "off") {
+      // 跟 propose 一样跑（兼容性：单测早就直接 new AutoInstaller().runOnce 不传 mode）；
+      // 真正全停由 cron 层 gate selfEvolveDisabledReason() 控制。
+    }
 
     try {
       const maxGaps = opts.maxGapsPerRun ?? DEFAULT_MAX_GAPS_PER_RUN;
@@ -178,6 +203,14 @@ export class AutoInstaller {
         }
 
         const best = candidates[0]!;
+        // P9 auto 判定：safetyLevel=low + targetKind=mcp_catalog（builtin） + score≥阈值 → 自动 approve+真装
+        // external（mcp_catalog_item）无论 safety 都走 propose（registry 来源风险更大）
+        const autoEligible =
+          mode === "auto" &&
+          best.safetyLevel === "low" &&
+          best.targetKind === "mcp_catalog" &&
+          best.score >= minScoreForAuto;
+
         const proposalId = await this.insertProposal({
           projectId: opts.projectId,
           gapLogId: gap.id,
@@ -187,7 +220,7 @@ export class AutoInstaller {
           candidates,
           proposerRunId: runId,
         });
-        // 同步 gap status
+        // 同步 gap status → proposed（无论是否 auto 都先走这一步；auto 路径接下来会再翻 installed）
         await db
           .update(toolGapLog)
           .set({
@@ -199,7 +232,47 @@ export class AutoInstaller {
           })
           .where(eq(toolGapLog.id, gap.id));
         summary.proposalsCreated += 1;
-        if (actions.length < MAX_ACTIONS_PER_RUN) {
+
+        if (autoEligible && best.targetId) {
+          // ── auto 模式：approve + 真装 ──
+          // 任一步抛错都翻 auto_install_failed；proposal 保持 pending_review 留给人工审批
+          try {
+            const install = await installMcpCatalogToProject({
+              catalogId: best.targetId,
+              serverName: best.targetSlug ?? best.targetId,
+              installedBy: "auto_installer",
+              ...(best.payload.defaultToolName ? { toolName: best.payload.defaultToolName } : {}),
+            });
+            await approveProposal({
+              proposalId,
+              actor: "auto_installer",
+              reason: `auto-approved (mode=auto, safety=low, score=${best.score} ≥ ${minScoreForAuto})`,
+            });
+            summary.autoInstalled = (summary.autoInstalled ?? 0) + 1;
+            if (actions.length < MAX_ACTIONS_PER_RUN) {
+              actions.push({
+                gapId: gap.id,
+                gapSignature: gap.gapSignature,
+                action: "auto_installed",
+                proposalId,
+                installId: install.installId,
+                candidate: { slug: best.targetSlug, score: best.score, targetKind: best.targetKind },
+              });
+            }
+          } catch (autoErr) {
+            summary.autoInstallFailed = (summary.autoInstallFailed ?? 0) + 1;
+            if (actions.length < MAX_ACTIONS_PER_RUN) {
+              actions.push({
+                gapId: gap.id,
+                gapSignature: gap.gapSignature,
+                action: "auto_install_failed",
+                proposalId,
+                candidate: { slug: best.targetSlug, score: best.score, targetKind: best.targetKind },
+                reason: autoErr instanceof Error ? autoErr.message : String(autoErr),
+              });
+            }
+          }
+        } else if (actions.length < MAX_ACTIONS_PER_RUN) {
           actions.push({
             gapId: gap.id,
             gapSignature: gap.gapSignature,
@@ -240,10 +313,13 @@ export class AutoInstaller {
           actor: "auto_installer",
           summary: {
             status: summary.status,
+            mode,
             gapsScanned: summary.gapsScanned,
             proposalsCreated: summary.proposalsCreated,
             proposalsSkippedExisting: summary.proposalsSkippedExisting,
             proposalsNoCandidate: summary.proposalsNoCandidate,
+            autoInstalled: summary.autoInstalled ?? 0,
+            autoInstallFailed: summary.autoInstallFailed ?? 0,
             elapsedMs: summary.elapsedMs,
           },
         });

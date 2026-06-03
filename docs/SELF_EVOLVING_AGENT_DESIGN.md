@@ -786,7 +786,121 @@ POST  /api/v1/monitor/memory/auto-installer/proposals/:id/reject    body={actor?
 
 ### 6.7 P9 — Reason 节点 PnL-aware + auto 模式
 
-reason 注入"该 agent 最近 7 天最赚钱 top-3 skill"；MCP allowlist 全审通过的 + `safetyLevel=low` 自动装；SkillEvolver baseline 回归通过才 enable。
+闭环最后一环。前面 P4b → P5 → P6 → P7 → P8 把数据/进化/上报/装机器都打通后，本期把三个动作变成"无人值守也能跑"：
+
+1. **reason 节点 PnL-aware**：在 LLM 决策前注入"该 agent 最近 N 天最赚钱 top-K skill"，让选 skill 不只看语义召回也看真实 PnL 证据。
+2. **AutoInstaller auto 模式**：满足白名单 + 高分 + 低风险时，AutoInstaller 跳过人工审批直接 approve + 真装。
+3. **SkillBaselineObserver**：evolved skill 默认 `pending_review`，跑一个独立 worker 看"召回观察期"达标后自动翻 `active`，不依赖人工。
+
+#### 6.7.1 三层开关（`src/runtime/config/self-evolve-config.ts`）
+
+| env | 默认 | 含义 |
+|---|---|---|
+| `SELF_EVOLVE_ENABLED` | `false` | 总闸；关时 4 个 worker / reason 注入 / AutoInstaller 全停（带 `reason='SELF_EVOLVE_ENABLED=false'`） |
+| `AUTO_INSTALL_MODE` | `propose` | `off` / `propose`（P8 默认）/ `auto`（P9 自动审批+真装） |
+| `PNL_AWARE_REASON_ENABLED` | 随总闸 | 单独关 reason 注入的逃生口；保留观察 / 不干扰 LLM 决策模式 |
+| `AUTO_INSTALL_MIN_SCORE` | `0.85` | auto 准入分数线（高于 P8 候选下限 0.3 很多，避免"看起来像"的也装上） |
+| `REASON_PNL_TOP_N` | `3` | reason 节点注入 top-K |
+| `REASON_PNL_WINDOW_DAYS` | `7` | reason 节点的 PnL 聚合窗口 |
+
+设计纪律：
+
+- **import-time singleton**：单测通过 `setSelfEvolveConfigForTest` monkey-patch（11 个测试覆盖）
+- **gate 在 worker 入口 + 公共 `selfEvolveDisabledReason()`**：让 cron 调度层不静默 short-circuit，保留 audit
+- **不引入新 schema**：allowlist 用现有 `mcp_catalog.risk_level='low'` 替代（P9 仅装 builtin catalog，不装 external `mcp_catalog_item`）
+
+#### 6.7.2 Reason 节点 PnL skill 注入（`pnl-aware-skill-block.ts`）
+
+```mermaid
+flowchart LR
+  R[reason node] -->|definitionId| F[fetchPnlAwareTopSkills]
+  F -->|gate cfg.enabled| A[SkillAttributor.listSkillRankingsByDefinition]
+  A -->|agent_skill_run.pnlDelta + definitionId + 7d window| RES[(top-3 win-only)]
+  RES -->|render| B["**该 Agent 最近 N 天最赚钱 top-K skill** ..."]
+  B --> P[userPromptParts]
+```
+
+- 数据源：**`agent_skill_run`** 直接 SUM(pnlDelta) WHERE definitionId+startedAt≥now-N天+pnlDelta IS NOT NULL，比 P5 `agent_skill.pnl_attribution_json`（project 维度 + 30 天 cache）更精确
+- 失败完全降级：任何错误（DB 没建表 / 无数据 / config 抛错）→ 空串，不阻塞 reason 主链路
+- 注入位置：`reason.ts` 现有的 `recalledSkillsBlock` / `recalledExperienceBlock` 之后，自成第三块；不污染 prompt 结构
+- 引导语强调"不是命令，仅基于过去的实盘 PnL"，避免 LLM 盲目复用
+
+#### 6.7.3 AutoInstaller auto 分支
+
+判定条件（**全部满足**才走 auto）：
+
+```
+mode === 'auto'
+ && best.safetyLevel === 'low'
+ && best.targetKind === 'mcp_catalog'   // external catalog_item 走 propose
+ && best.score >= cfg.minScoreForAuto
+ && best.targetId
+```
+
+执行链：
+
+```
+candidates[0] hit auto
+ → insertProposal(state='pending_review')          // 仍写一份，保 audit
+ → toolGapLog.status='proposed'                    // 同 propose 路径
+ → installMcpCatalogToProject(installedBy='auto_installer')   // P9 抽出的 service
+ → approveProposal(actor='auto_installer', reason='auto-approved (mode=auto, ...)')
+ → toolGapLog.status='installed'（approve lifecycle 自动同步）
+ → action='auto_installed' + autoInstalled++
+```
+
+任一步抛错 → `auto_install_failed++`，proposal 保持 `pending_review`，gap 维持 `proposed`，让人工 fallback。
+
+`installMcpCatalogToProject(catalogId, serverName, ...)` 从 `agentRouter.post("/mcp/catalog/install")` 抽出（service in `src/runtime/mcp/install-service.ts`），upsert mcp_server_config + mcp_tool_binding（serverName + null definitionId）+ 写 mcp_catalog_install audit 行。`installedBy` 透传到 audit 用于区分用户/auto 装的来源。
+
+| 测试覆盖 | 路径 |
+|---|---|
+| safety=low + 高分 → 真装 + approved + installed | installer-auto-mode.test.ts 场景 1 |
+| safety=medium → propose 不 auto | 场景 2 |
+| score 不足 → propose 不 auto | 场景 3 |
+| external catalog_item → propose 不 auto | 场景 4 |
+| 默认 propose → P8 行为不变 | 场景 5 |
+| emit summary 含 mode / autoInstalled | 场景 6 |
+
+#### 6.7.4 SkillBaselineObserver（召回观察期）
+
+选这个口径而不是 dataset replay 的原因：
+
+- **零基建**：复用 P5 已有 `skill_recall_log` + `agent_skill_run`
+- **真实信号**：是被真实 reason 节点召回 → 真实 act 执行的结果
+- **自然反馈**：召回多 = LLM 觉得"语义相关"；outcome 好 = "真的有用"
+
+缺点：要等数据自然累积（典型 7~14 天）。dataset replay 留 P10。
+
+判定（**全部满足**才 auto enable）：
+
+| 条件 | 默认 | env / option |
+|---|---|---|
+| 观察窗口期内累计召回 ≥ N | 3 | `minRecallCount` |
+| 期内 outcome != 'unknown' 的 run ≥ N | 2 | `minSignaledRuns` |
+| success / (success+fail+partial) ≥ rate | 0.6 | `minSuccessRate` |
+| 单次最多 enable | 20 | `maxApprovesPerRun` |
+
+`outcome='unknown'` 不计入分母（防止把"agent 没主动 markOutcome 的 run"误判成 fail）。
+
+| 测试覆盖 | 路径 |
+|---|---|
+| 总闸关 / 无候选 / source≠evolved 不扫 | observer.test.ts 场景 1-2, 7 |
+| recall / signaled / successRate 三条单独不达标 | 3-5 |
+| 全达标 → state=active + lastPromotedAt 写入 | 6 |
+| unknown 不计入；maxApprovesPerRun 截断 | 8-9 |
+| emit summary 含 status / approved | 10 |
+
+#### 6.7.5 cron / 启动顺序建议
+
+| 频率 | 命令 | 备注 |
+|---|---|---|
+| 每 60 min | `bun run src/scripts/run-pnl-attributor.ts` | P4b：先有 PnL 才有 P9 排行 |
+| 每 60 min | `bun run src/scripts/run-tool-gap-watcher.ts` | P7：先有 gap 才有 proposal |
+| 每 60 min | `bun run src/scripts/run-auto-installer.ts --projectId=...` | P8/P9：mode=auto 时真装 |
+| 每日 1 次 | `bun run src/scripts/run-skill-evolver-watcher.ts --projectId=...` | P6：跑 evolved skill |
+| 每日 1 次 | `bun run src/scripts/run-skill-baseline-observer.ts --projectId=...` | **P9 新增**：召回观察期 → auto enable |
+| 每日 1 次 | `bun run src/scripts/run-skill-promoter.ts --projectId=...` | P5：propose 升级路径 |
 
 ---
 
@@ -840,10 +954,19 @@ self_evolve.tool_gap_watcher.gaps_incremented
 self_evolve.tool_gap_watcher.gaps_skipped
 self_evolve.auto_installer.tick.total
 self_evolve.auto_installer.tick.by_status{status}
+self_evolve.auto_installer.tick.by_mode{mode}        # P9: propose | auto | off
 self_evolve.auto_installer.gaps_scanned
 self_evolve.auto_installer.proposals_created
 self_evolve.auto_installer.proposals_skipped_existing
 self_evolve.auto_installer.proposals_no_candidate
+self_evolve.auto_installer.auto_installed             # P9
+self_evolve.auto_installer.auto_install_failed        # P9
+self_evolve.skill_baseline_observer.tick.total         # P9
+self_evolve.skill_baseline_observer.tick.by_status{status}
+self_evolve.skill_baseline_observer.scanned
+self_evolve.skill_baseline_observer.approved
+self_evolve.skill_baseline_observer.not_ready
+self_evolve.skill_baseline_observer.errors
 ```
 
 接入 `src/runtime/experience/metrics.ts`，前端 MemoryTab 顶部展示。
@@ -875,9 +998,9 @@ self_evolve.auto_installer.proposals_no_candidate
 | **P6** | Skill 自动修订（自动触发链路） | `requestSkillRevision` 队列 + `SkillEvolverWatcher` worker + cron + 3 个新 routes + 前端 LCS 行级 diff（8 watcher + 1 metrics + 9 routes 单测全过；前端 tsc 全绿） | 2 人/日 | ✅ 2026-06-03 |
 | **P7** | Tool Gap 观测 | ToolGapWatcher (3 detector + 1 explicit ingest) + `tool_gap_log` / `tool_gap_run` + builtin `tool.report_gap` + 5 routes + 前端 Tool Gaps sub-tab + cron 脚本 + 55 tests | 2 人/日 | ✅ 2026-06-03 |
 | **P8** | Tool 自装配 propose | AutoInstaller (candidate-matcher + installer + lifecycle) + `auto_install_proposal` / `auto_installer_run` + 4 routes + 前端 Proposals section (Tool Gaps sub-tab) + cron 脚本 + 51 tests | 3 人/日 | ✅ 2026-06-03 |
-| **P9** | PnL-aware reason + auto 模式 | reason 注入 top-3 skill + MCP allowlist + auto 模式 + SkillEvolver baseline 回归 | 3 人/日 | TBD |
+| **P9** | PnL-aware reason + auto 模式 | `self-evolve-config.ts` 三层开关 + `listSkillRankingsByDefinition`（agent 维度 7d top-K）+ reason 节点 `pnl-aware-skill-block`（注入 + 失败降级）+ `install-service.ts`（从 route 抽 service）+ AutoInstaller auto 分支（allowlist + score 阈值 + 真装）+ `SkillBaselineObserver` worker（召回观察期 → auto enable）+ cron 脚本 `run-skill-baseline-observer.ts` + Bus event `maintenance_run/skill_baseline_observer` 接入 metrics（含 auto by_mode）；P9 合计 41/41 单测 + 6 auto 集成测全过；P4b/P5/P6/P7/P8/P9 合计 128/128 全回归通过 | 3 人/日 | ✅ 2026-06-03 |
 
-**总计：3 人/日（不含 P4a / P4b / P5 / P6 / P7 / P8 已完成的 17 人/日）。**
+**总计：20 人/日（P4a–P9 全部交付）。**
 
 ---
 
@@ -900,4 +1023,5 @@ self_evolve.auto_installer.proposals_no_candidate
 | v0.3 | 2026-06-03 | P5 落地：SkillPromoter + scoring + skill_promotion_run + approve/reject + cron + 4 个后端 routes + MemoryTab Skill Promotions sub-tab（9 scoring + 8 worker + 9 routes + 1 metrics 单测全过；migrations 62/62；前端 tsc 全绿）；改写 6.3 章节、修订 8 节排期表 |
 | v0.4 | 2026-06-03 | P6 落地：reflective(skill_revision_request) 队列约定 + `requestSkillRevision` 辅助 + `SkillEvolverWatcher` worker（8 集成测）+ Bus event `maintenance_run/skill_evolver` + metrics 1 单测 + cron 脚本 `run-skill-evolver-watcher.ts` + 3 个新 routes（`/skill-evolutions/runs|diff|request`，9 集成测）+ 前端 SkillPromotionsPanel 增 evolved 标签 + LCS 行级 diff 折叠区；新写 6.4 章节、修订 7.3 metrics + 8 节排期表（P4a-P6 全 ✅）；P4b/P5/P6 合计 163/163 测试全过 |
 | v0.5 | 2026-06-03 | P7 落地：3 路 detector（unknown_tool / repeated_fail / reflective_mention）+ `tool_gap_log` partial-unique-on-open dedup + `tool_gap_run` summary + `ToolGapWatcher.runOnce` worker（按 detection_kind 优先级折叠）+ builtin `tool.report_gap` agent 主动上报通道（dynamic-import 防循环）+ cron 脚本 `run-tool-gap-watcher.ts` + Bus event `maintenance_run/tool_gap_watcher` 接入 metrics（8 个指标，1 单测）+ 5 个新 routes（`GET /tool-gaps`、`GET /tool-gaps/runs`、`POST /:id/wont-fix`、`POST /:id/reopen`、`POST /tool-gaps/report`）+ 前端 MemoryTab 新增 Tool Gaps sub-tab（filter/列表/详情/Mark won't fix/Reopen/Report dialog）；改写 6.5 章节、更新 7.3 metrics + 8 节排期表（P4a–P7 全 ✅）；P7 合计 55/55 测试全过（16 detector + 8 watcher + 5 builtin + 1 metrics + 11 routes + 14 复用 metrics），前端 tsc 全绿，P4b/P5/P6 回归 43/43 全过 |
+| v0.7 | 2026-06-03 | **P9 落地（自进化闭环最后一环）**：`src/runtime/config/self-evolve-config.ts` 三层开关（`SELF_EVOLVE_ENABLED` / `AUTO_INSTALL_MODE` / `PNL_AWARE_REASON_ENABLED` + `AUTO_INSTALL_MIN_SCORE`/`REASON_PNL_TOP_N`/`REASON_PNL_WINDOW_DAYS`，monkey-patch 支持，11 单测）+ `SkillAttributor.listSkillRankingsByDefinition`（按 agent 维度聚合 7d top-K，agent_skill_run.pnlDelta 实时聚合而非读 30d cache，2 单测）+ reason 节点新模块 `pnl-aware-skill-block`（fetch + render + 一站式 build，独立失败域 + 总闸 gate + 仅 pnlSum>0，9 单测）+ MCP 自装配 service `installMcpCatalogToProject`（从 `agentRouter.post("/mcp/catalog/install")` 抽出，6 单测）+ AutoInstaller auto 分支（`mode=auto` + `safetyLevel=low` + `targetKind=mcp_catalog` + `score≥cfg.minScoreForAuto` 自动 approve + 真装，external 永远走 propose，6 集成测）+ `SkillBaselineObserver` worker（召回观察期：evolved+pending_review skill 在 N 天内累计召回≥3 + outcome!=unknown 的 run≥2 + success rate≥60% → `approveSkillPromotion(actor='skill_baseline_observer')`，10 单测）+ cron 脚本 `run-skill-baseline-observer.ts`（smoke 过）+ Bus event `maintenance_run/skill_baseline_observer` + metrics 含 auto `by_mode` / `auto_installed` / `auto_install_failed` + observer 全套指标（1 P9 auto + 1 P9 observer 单测）；改写 6.7 章节为完整设计、更新 7.3 metrics + 8 节排期表（P4a–P9 全 ✅）；P9 合计 41/41 单测 + 6 auto 集成测过；P4b/P5/P6/P7/P8/P9 合计 **128/128** 全回归通过，前端无变更（最小化 UI 改动） |
 | v0.6 | 2026-06-03 | P8 落地：`auto_install_proposal` + `auto_installer_run` schema（partial-unique-on-pending dedup）+ `candidate-matcher`（parseGapSignature + scoreCatalog 6 维评分）+ `AutoInstaller.runOnce` worker（路由 tool_gap_log.open → mcp_catalog/mcp_catalog_item top-K → propose）+ `approveProposal` / `rejectProposal` lifecycle（含 gap 同步流转 + ProposalStateError）+ cron 脚本 `run-auto-installer.ts` + Bus event `maintenance_run/auto_installer` 接入 metrics（6 个指标，1 单测）+ 4 个新 routes（`GET /auto-installer/proposals`、`GET /auto-installer/runs`、`POST /:id/approve`、`POST /:id/reject`）+ 前端 ToolGapsPanel 增 `ProposalsSection`（KPI 行 + state 过滤 + Approve/Reject 行内按钮）；改写 6.6 章节、更新 7.3 metrics + 8 节排期表（P4a–P8 全 ✅）；P8 合计 51/51 测试全过（15 candidate-matcher + 9 installer/lifecycle + 11 routes + 1 metrics + 15 复用 metrics）；P4b/P5/P6/P7/P8 合计 121/121 全回归通过，前端 tsc 全绿 |

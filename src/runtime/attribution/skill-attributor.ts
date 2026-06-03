@@ -341,6 +341,84 @@ export class SkillAttributor {
     return out.slice(0, limit);
   }
 
+  /**
+   * Self-Evolving Agent P9：按 **agent definition** 维度查最近 N 天最赚钱的 top-K skill。
+   *
+   * 与 `listSkillRankings`（project 维度、读 30 天滚动 cache）不同：
+   *   - 按 `agent_skill_run.definitionId` 精确归属（多 agent 共用同 project 时不串台）
+   *   - 实时聚合（窗口可调，不用等 PnlAttributor 重算 cache）
+   *   - 只看 pnlDelta IS NOT NULL 的 run；没归因到 PnL 的 run（如 P4b 前 / 无 PnL 上下文）天然过滤掉
+   *
+   * 用法：reason 节点注入"该 agent 最近 7d 最赚钱 top-3 skill"prompt 块。
+   * 性能：依赖 `idx_agent_skill_run_definition` + `started_at` 二级索引；P9 期 < 10k run/agent 可接受。
+   */
+  async listSkillRankingsByDefinition(
+    definitionId: string,
+    options: { windowDays?: number; topK?: number; minSampleCount?: number } = {}
+  ): Promise<
+    Array<{
+      skillId: string;
+      name: string;
+      pnlSum: number;
+      winCount: number;
+      loseCount: number;
+      sampleCount: number;
+    }>
+  > {
+    const windowDays = options.windowDays ?? 7;
+    const topK = options.topK ?? 3;
+    const minSample = options.minSampleCount ?? 1;
+    const cutoff = new Date(Date.now() - windowDays * 86400_000).toISOString();
+    const rows = await this.db
+      .select({
+        skillId: agentSkillRun.skillId,
+        pnlDelta: agentSkillRun.pnlDelta,
+      })
+      .from(agentSkillRun)
+      .where(
+        and(
+          eq(agentSkillRun.definitionId, definitionId),
+          gte(agentSkillRun.startedAt, cutoff),
+          sql`${agentSkillRun.pnlDelta} IS NOT NULL`
+        )
+      )
+      .all();
+    if (rows.length === 0) return [];
+    const agg = new Map<string, { pnlSum: number; winCount: number; loseCount: number; sampleCount: number }>();
+    for (const r of rows) {
+      if (r.pnlDelta == null) continue;
+      const cur = agg.get(r.skillId) ?? { pnlSum: 0, winCount: 0, loseCount: 0, sampleCount: 0 };
+      cur.pnlSum += r.pnlDelta;
+      cur.sampleCount += 1;
+      if (r.pnlDelta > 0) cur.winCount += 1;
+      else if (r.pnlDelta < 0) cur.loseCount += 1;
+      agg.set(r.skillId, cur);
+    }
+    const ids = Array.from(agg.keys());
+    if (ids.length === 0) return [];
+    const skillRows = await this.db
+      .select({ id: agentSkill.id, name: agentSkill.name })
+      .from(agentSkill)
+      .where(inArray(agentSkill.id, ids))
+      .all();
+    const nameById = new Map(skillRows.map((s) => [s.id, s.name]));
+    const out = ids
+      .map((id) => {
+        const a = agg.get(id)!;
+        return {
+          skillId: id,
+          name: nameById.get(id) ?? "(unknown)",
+          pnlSum: round6(a.pnlSum),
+          winCount: a.winCount,
+          loseCount: a.loseCount,
+          sampleCount: a.sampleCount,
+        };
+      })
+      .filter((r) => r.sampleCount >= minSample && nameById.has(r.skillId));
+    out.sort((a, b) => b.pnlSum - a.pnlSum);
+    return out.slice(0, topK);
+  }
+
   /** Bulk reader：一组 (workflow, skill) 的 pnl_delta 直读，避免 N+1。 */
   async getPnlDeltaForRuns(
     pairs: Array<{ workflowRunId: string; skillId: string }>

@@ -209,11 +209,13 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.tool_gap_watcher.gaps_incremented", numOf(s.gapsIncremented));
         c.inc("self_evolve.tool_gap_watcher.gaps_skipped", numOf(s.gapsSkipped));
       } else if (ev.kind === "auto_installer") {
-        // Self-Evolving Agent P8：tool_gap_log → auto_install_proposal
+        // Self-Evolving Agent P8 + P9：tool_gap_log → auto_install_proposal（含 P9 auto 模式真装）
         const s = ev.summary;
         const status = String(s.status ?? "unknown");
+        const mode = String(s.mode ?? "propose");
         c.inc("self_evolve.auto_installer.tick.total");
         c.inc("self_evolve.auto_installer.tick.by_status", 1, { status });
+        c.inc("self_evolve.auto_installer.tick.by_mode", 1, { mode });
         c.inc("self_evolve.auto_installer.gaps_scanned", numOf(s.gapsScanned));
         c.inc("self_evolve.auto_installer.proposals_created", numOf(s.proposalsCreated));
         c.inc(
@@ -224,6 +226,18 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
           "self_evolve.auto_installer.proposals_no_candidate",
           numOf(s.proposalsNoCandidate)
         );
+        c.inc("self_evolve.auto_installer.auto_installed", numOf(s.autoInstalled));
+        c.inc("self_evolve.auto_installer.auto_install_failed", numOf(s.autoInstallFailed));
+      } else if (ev.kind === "skill_baseline_observer") {
+        // Self-Evolving Agent P9：evolved+pending_review skill → 召回观察期 → auto enable
+        const s = ev.summary;
+        const status = String(s.status ?? "unknown");
+        c.inc("self_evolve.skill_baseline_observer.tick.total");
+        c.inc("self_evolve.skill_baseline_observer.tick.by_status", 1, { status });
+        c.inc("self_evolve.skill_baseline_observer.scanned", numOf(s.scanned));
+        c.inc("self_evolve.skill_baseline_observer.approved", numOf(s.approved));
+        c.inc("self_evolve.skill_baseline_observer.not_ready", numOf(s.notReady));
+        c.inc("self_evolve.skill_baseline_observer.errors", numOf(s.errors));
       }
     } catch {
       /* noop */

@@ -1260,93 +1260,35 @@ agentRouter.post("/mcp/catalog/install", async (c) => {
   if (!body.catalogId || !body.serverName) {
     return c.json({ error: "catalogId and serverName are required" }, 400);
   }
-  const db = await getDb();
-  const catalogRows = await db
-    .select()
-    .from(mcpCatalog)
-    .where(eq(mcpCatalog.id, body.catalogId))
-    .limit(1);
-  if (!catalogRows[0]) return c.json({ error: "catalog not found" }, 404);
-  const catalog = catalogRows[0];
-  const serverName = body.serverName.trim();
-  const existingServer = await db
-    .select()
-    .from(mcpServerConfig)
-    .where(eq(mcpServerConfig.name, serverName))
-    .limit(1);
-  if (existingServer[0]) {
-    await db
-      .update(mcpServerConfig)
-      .set({
-        transport: catalog.transport,
-        command: body.command ?? catalog.command,
-        url: body.url ?? catalog.url,
-        capabilitiesJson: catalog.defaultCapabilitiesJson,
-        enabled: true,
-      })
-      .where(eq(mcpServerConfig.id, existingServer[0].id));
-  } else {
-    await db.insert(mcpServerConfig).values({
-      id: crypto.randomUUID(),
-      name: serverName,
-      transport: catalog.transport,
-      command: body.command ?? catalog.command,
-      url: body.url ?? catalog.url,
-      capabilitiesJson: catalog.defaultCapabilitiesJson,
-      enabled: true,
-    });
+  // P9：抽到 install-service，让 AutoInstaller auto 模式也能复用同一份装机器
+  try {
+    const { installMcpCatalogToProject, CatalogNotFoundError } = await import(
+      "../runtime/mcp/install-service"
+    );
+    const input: Parameters<typeof installMcpCatalogToProject>[0] = {
+      catalogId: body.catalogId,
+      serverName: body.serverName,
+    };
+    if (body.command !== undefined) input.command = body.command;
+    if (body.url !== undefined) input.url = body.url;
+    if (body.toolName !== undefined) input.toolName = body.toolName;
+    if (body.timeoutMs !== undefined) input.timeoutMs = body.timeoutMs;
+    if (body.installedBy !== undefined) input.installedBy = body.installedBy;
+    const result = await installMcpCatalogToProject(input);
+    const db = await getDb();
+    const [installed] = await db
+      .select()
+      .from(mcpCatalogInstall)
+      .where(eq(mcpCatalogInstall.id, result.installId))
+      .limit(1);
+    return c.json({ data: installed }, 201);
+  } catch (e) {
+    const Err = (await import("../runtime/mcp/install-service")).CatalogNotFoundError;
+    if (e instanceof Err) {
+      return c.json({ error: "catalog not found" }, 404);
+    }
+    throw e;
   }
-
-  const toolName = body.toolName?.trim() || catalog.defaultToolName || "ping";
-  const bindingRows = await db
-    .select()
-    .from(mcpToolBinding)
-    .where(
-      and(
-        eq(mcpToolBinding.serverName, serverName),
-        eq(mcpToolBinding.toolName, toolName),
-        isNull(mcpToolBinding.definitionId)
-      )
-    )
-    .limit(1);
-  if (bindingRows[0]) {
-    await db
-      .update(mcpToolBinding)
-      .set({
-        enabled: true,
-        timeoutMs: body.timeoutMs ?? catalog.defaultTimeoutMs,
-        retryPolicyJson: catalog.defaultRetryPolicyJson,
-        rateLimitJson: catalog.defaultRateLimitJson,
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(mcpToolBinding.id, bindingRows[0].id));
-  } else {
-    await db.insert(mcpToolBinding).values({
-      id: crypto.randomUUID(),
-      serverName,
-      toolName,
-      definitionId: null,
-      enabled: true,
-      timeoutMs: body.timeoutMs ?? catalog.defaultTimeoutMs,
-      retryPolicyJson: catalog.defaultRetryPolicyJson,
-      rateLimitJson: catalog.defaultRateLimitJson,
-    });
-  }
-
-  const installId = crypto.randomUUID();
-  await db.insert(mcpCatalogInstall).values({
-    id: installId,
-    catalogId: catalog.id,
-    serverName,
-    status: "installed",
-    installedBy: body.installedBy ?? "user",
-  });
-  const installed = await db
-    .select()
-    .from(mcpCatalogInstall)
-    .where(eq(mcpCatalogInstall.id, installId))
-    .limit(1);
-  return c.json({ data: installed[0] }, 201);
 });
 
 agentRouter.post("/mcp/catalog/:id/test", async (c) => {

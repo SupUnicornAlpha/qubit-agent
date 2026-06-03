@@ -104,7 +104,10 @@ export type ExperienceEvent =
    *   - tool_gap_watcher    — ToolGapWatcher.runOnce 跑完
    *
    * P8 新增 1 个 kind：
-   *   - auto_installer      — AutoInstaller.runOnce 跑完（propose 模式）
+   *   - auto_installer      — AutoInstaller.runOnce 跑完（propose / auto 模式都用）
+   *
+   * P9 新增 1 个 kind：
+   *   - skill_baseline_observer — SkillBaselineObserver.runOnce 跑完（召回观察期 → auto enable）
    */
   | {
       type: "maintenance_run";
@@ -119,7 +122,8 @@ export type ExperienceEvent =
         | "skill_promoter"
         | "skill_evolver"
         | "tool_gap_watcher"
-        | "auto_installer";
+        | "auto_installer"
+        | "skill_baseline_observer";
       actor: string;
       summary: Record<string, number | string>;
     };
