@@ -226,13 +226,64 @@ describe("FactorService", () => {
     ).rejects.toThrow(/dry_run_failed: degenerate_constant/);
   });
 
-  test("dry-run skipped: lang=python（非 qlib_expr）走 lang_unsupported 路径，注册仍成功", async () => {
+  /**
+   * P3-1：lang=python 现在也走完整 dry-run（spawn code_sandbox_runner.py）。
+   *
+   * 测试环境的 python3 通常没 pandas/numpy，sandbox 会返回
+   * `python_unavailable` / `python_deps_missing` —— 此时我们 graceful skip
+   * 而不是 reject，因为「sandbox 系统级故障」≠「LLM 写错因子」。
+   * 详细见 factor-service.ts:runPythonExprDryRun 的注释。
+   */
+  test("dry-run lang=python：sandbox 不可用时 graceful skip（不阻塞注册），detail 写明原因", async () => {
     const rec = await factorService.register({
       projectId,
-      name: `dr_skip_${randomUUID().slice(0, 6)}`,
+      name: `dr_py_skip_${randomUUID().slice(0, 6)}`,
       category: "momentum",
-      expr: "anything",
+      /** close[-1] / close[-21] - 1 是典型的 20 日动量因子，sandbox 可用时会真跑 */
+      expr: "close[-1] / close[-21] - 1",
       lang: "python",
+      dryRun: true,
+    });
+    const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;
+    /**
+     * 两种合法结果：
+     *   (a) sandbox 不可用（开发机 / CI）→ skipped=true + reason=sandbox_unavailable:*
+     *   (b) sandbox 可用 + 通过 4 项检查 → pythonSandbox=true + sampleSize > 0
+     * 任一即可；test 关心的是「不阻塞注册 + 给出可审计 reason」。
+     */
+    expect(dr).toBeDefined();
+    const skipped = dr?.["skipped"] === true;
+    const sandboxRan = dr?.["pythonSandbox"] === true;
+    expect(skipped || sandboxRan).toBe(true);
+    if (skipped) {
+      expect(String(dr?.["reason"] ?? "")).toMatch(/sandbox_unavailable/);
+    }
+    if (sandboxRan) {
+      expect(typeof dr?.["sampleSize"]).toBe("number");
+      expect(Number(dr?.["sampleSize"])).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  test("dry-run lang=python：未传 dryRun=false 时绕过整个 dry-run 闸门（旧 caller 不破）", async () => {
+    /** dryRun: false 时不调 runPythonExprDryRun，避开测试环境 sandbox 缺失噪音 */
+    const rec = await factorService.register({
+      projectId,
+      name: `dr_py_off_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "close",
+      lang: "python",
+      dryRun: false,
+    });
+    expect(rec.definition["dryRun"]).toBeUndefined();
+  });
+
+  test("dry-run lang=sql / jsonlogic：保持 lang_unsupported skip（P3-1 范围只覆盖 python）", async () => {
+    const rec = await factorService.register({
+      projectId,
+      name: `dr_sql_skip_${randomUUID().slice(0, 6)}`,
+      category: "momentum",
+      expr: "SELECT close FROM bars",
+      lang: "sql",
       dryRun: true,
     });
     const dr = rec.definition["dryRun"] as Record<string, unknown> | undefined;

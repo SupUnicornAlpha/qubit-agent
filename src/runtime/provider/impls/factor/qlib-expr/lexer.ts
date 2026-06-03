@@ -111,9 +111,23 @@ export function tokenize(input: string): Token[] {
 function isDigit(c: string): boolean {
   return c >= "0" && c <= "9";
 }
+/**
+ * `$` 作为 ident 首字符接受（评估报告 P3：qlib 字段标准前缀 `$close` / `$open` /
+ * `$volume` 等。之前 lexer 直接抛 `unexpected_char: "$"`，导致 LLM 按 qlib 标准
+ * 写 `Mean($close, 20) - Mean($close, 60)` 在 register dry-run 就被拒，
+ * 暴露在 quant-builtin-tools.test.ts 的 factor.register + factor.list 用例）。
+ *
+ * Parser 端会 strip 前导 `$` 取 field name，evaluator 不变 → 向后兼容
+ * 「裸字段」`close` / `open` 写法。
+ */
 function isIdentStart(c: string): boolean {
-  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === "$";
 }
 function isIdentCont(c: string): boolean {
-  return isIdentStart(c) || isDigit(c);
+  return (
+    (c >= "a" && c <= "z") ||
+    (c >= "A" && c <= "Z") ||
+    c === "_" ||
+    isDigit(c)
+  );
 }

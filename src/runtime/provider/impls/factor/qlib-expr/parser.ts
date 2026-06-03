@@ -114,7 +114,13 @@ class Parser {
         this.expect("rparen");
         return { type: "call", name: t.value, args };
       }
-      return { type: "field", name: t.value };
+      /**
+       * Strip qlib 标准字段前缀 `$`：`$close` → field "close"。lexer 已接受
+       * `$` 作 ident 首字符（见 lexer.ts:isIdentStart 注释），这里把它归一化
+       * 成裸字段名，evaluator 不用关心两种写法。
+       */
+      const name = t.value.startsWith("$") ? t.value.slice(1) : t.value;
+      return { type: "field", name };
     }
     throw new ExprParseError(t.pos, `unexpected_token: ${t.type}(${t.value})`);
   }

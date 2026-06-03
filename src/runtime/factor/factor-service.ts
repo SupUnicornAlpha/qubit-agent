@@ -203,7 +203,7 @@ export class FactorService {
         typeof input.dryRun === "object"
           ? input.dryRun
           : ({} as { minRows?: number; minVariance?: number });
-      const dryRunResult = this.runRegistrationDryRun(input.expr, lang, opts);
+      const dryRunResult = await this.runRegistrationDryRun(input.expr, lang, opts);
       if (!dryRunResult.ok) {
         throw new FactorServiceError(
           "validation_failed",
@@ -249,95 +249,44 @@ export class FactorService {
   /**
    * 注册前 dry-run：在合成 GBM 序列上跑一遍表达式，验证可执行性 + 区分度
    *
-   * - `qlib_expr` lang：用内置 parser+evaluator 真跑（不依赖任何外部数据源 / Provider）
-   * - 其他 lang：当前跳过（在 detail 里写明 reason=lang_unsupported）
+   * 评估报告 P3-1：之前 `lang !== "qlib_expr"` 一律跳过（写 skipped:true），导致
+   * LLM 写错的 python 因子（语法 / NameError / 全常数）**无声落库** → 后续
+   * factor.compute 返回空 → autoEvaluate 以 `no_factor_values` 误报，定位难。
+   * 现在 python 路径也走完整 4 项检查（用 runPythonSandbox 跑用户代码）。
    *
-   * 检查项（按顺序短路）：
-   *   1. 语法解析失败 → `parse_error`
-   *   2. 评估抛错 → `eval_error`
+   * 支持矩阵：
+   *   - `qlib_expr`：内置 parser+evaluator 真跑（同步，零依赖）
+   *   - `python`   ：spawn `code_sandbox_runner.py` 跑用户代码，contract 要求
+   *                  用户代码设置全局变量 `factor_values: list[float | None]`
+   *   - 其他 lang（sql / jsonlogic）：暂仍跳过（在 detail 里写 lang_unsupported）
+   *
+   * 检查项（按顺序短路，所有 lang 共用）：
+   *   1. 语法解析 / sandbox spawn 失败 → `parse_error` / `sandbox_unavailable`
+   *   2. 评估抛错（包含用户代码运行时错）→ `eval_error`
    *   3. 有限值行数 < `minRows`（默认 10）→ `insufficient_values`
    *   4. 全常数（方差 < `minVariance`，默认 1e-12）→ `degenerate_constant`
    */
-  private runRegistrationDryRun(
+  private async runRegistrationDryRun(
     expr: string,
     lang: FactorLang,
     opts: { minRows?: number; minVariance?: number }
-  ):
+  ): Promise<
     | { ok: true; detail: Record<string, unknown> }
-    | { ok: false; reason: string; detail?: Record<string, unknown> } {
+    | { ok: false; reason: string; detail?: Record<string, unknown> }
+  > {
     const minRows = opts.minRows ?? 10;
     const minVariance = opts.minVariance ?? 1e-12;
 
-    if (lang !== "qlib_expr") {
-      return {
-        ok: true,
-        detail: { skipped: true, reason: `lang_unsupported_for_dry_run:${lang}` },
-      };
+    if (lang === "qlib_expr") {
+      return runQlibExprDryRun(expr, minRows, minVariance);
     }
-
-    let ast;
-    try {
-      ast = parseQlibExpr(expr);
-    } catch (e) {
-      return { ok: false, reason: `parse_error: ${(e as Error).message}` };
-    }
-
-    const symbols = ["__DR_A__", "__DR_B__", "__DR_C__"];
-    const finiteCounts: number[] = [];
-    const flatValues: number[] = [];
-
-    for (const sym of symbols) {
-      const series = synthGbmSeries(sym, 90);
-      let factorSeries: Array<number | null>;
-      try {
-        factorSeries = evalQlibExpr(ast, series);
-      } catch (e) {
-        return {
-          ok: false,
-          reason: `eval_error: ${(e as Error).message}`,
-          detail: { symbol: sym },
-        };
-      }
-      let n = 0;
-      for (const v of factorSeries) {
-        if (typeof v === "number" && Number.isFinite(v)) {
-          flatValues.push(v);
-          n++;
-        }
-      }
-      finiteCounts.push(n);
-    }
-
-    if (flatValues.length < minRows) {
-      return {
-        ok: false,
-        reason: "insufficient_values",
-        detail: { finiteValues: flatValues.length, minRows, perSymbol: finiteCounts },
-      };
-    }
-
-    // 方差检查：所有 dry-run symbol 合并后的值方差必须 > minVariance（否则因子完全无区分度）
-    let sum = 0;
-    for (const v of flatValues) sum += v;
-    const mean = sum / flatValues.length;
-    let sse = 0;
-    for (const v of flatValues) sse += (v - mean) * (v - mean);
-    const variance = sse / flatValues.length;
-    if (variance < minVariance) {
-      return {
-        ok: false,
-        reason: "degenerate_constant",
-        detail: { variance, minVariance, sampleSize: flatValues.length },
-      };
+    if (lang === "python") {
+      return runPythonExprDryRun(expr, minRows, minVariance);
     }
 
     return {
       ok: true,
-      detail: {
-        sampleSize: flatValues.length,
-        variance: Number(variance.toFixed(8)),
-        perSymbolFiniteCounts: finiteCounts,
-      },
+      detail: { skipped: true, reason: `lang_unsupported_for_dry_run:${lang}` },
     };
   }
 
@@ -720,4 +669,269 @@ function synthGbmSeries(symbol: string, days: number): PriceSeries {
       vwap: ticks.map((t) => t.close),
     },
   };
+}
+
+const DRY_RUN_SYMBOLS = ["__DR_A__", "__DR_B__", "__DR_C__"] as const;
+
+interface DryRunOk {
+  ok: true;
+  detail: Record<string, unknown>;
+}
+interface DryRunFail {
+  ok: false;
+  reason: string;
+  detail?: Record<string, unknown>;
+}
+type DryRunResult = DryRunOk | DryRunFail;
+
+/** 把多个 symbol 拉平成单一 finite list + per-symbol 统计，做最后的方差 / 计数判定 */
+function summarizeDryRunValues(
+  flatValues: number[],
+  perSymbolFiniteCounts: number[],
+  minRows: number,
+  minVariance: number,
+  extraDetail: Record<string, unknown> = {}
+): DryRunResult {
+  if (flatValues.length < minRows) {
+    return {
+      ok: false,
+      reason: "insufficient_values",
+      detail: {
+        finiteValues: flatValues.length,
+        minRows,
+        perSymbol: perSymbolFiniteCounts,
+        ...extraDetail,
+      },
+    };
+  }
+  let sum = 0;
+  for (const v of flatValues) sum += v;
+  const mean = sum / flatValues.length;
+  let sse = 0;
+  for (const v of flatValues) sse += (v - mean) * (v - mean);
+  const variance = sse / flatValues.length;
+  if (variance < minVariance) {
+    return {
+      ok: false,
+      reason: "degenerate_constant",
+      detail: { variance, minVariance, sampleSize: flatValues.length, ...extraDetail },
+    };
+  }
+  return {
+    ok: true,
+    detail: {
+      sampleSize: flatValues.length,
+      variance: Number(variance.toFixed(8)),
+      perSymbolFiniteCounts,
+      ...extraDetail,
+    },
+  };
+}
+
+/**
+ * qlib_expr dry-run：用内置 parser+evaluator 跑 3 个合成 GBM 序列。
+ * 与历史行为完全一致（评估报告 P3-1 只迁移代码结构、不改 qlib 路径语义）。
+ */
+function runQlibExprDryRun(
+  expr: string,
+  minRows: number,
+  minVariance: number
+): DryRunResult {
+  let ast;
+  try {
+    ast = parseQlibExpr(expr);
+  } catch (e) {
+    return { ok: false, reason: `parse_error: ${(e as Error).message}` };
+  }
+
+  const finiteCounts: number[] = [];
+  const flatValues: number[] = [];
+  for (const sym of DRY_RUN_SYMBOLS) {
+    const series = synthGbmSeries(sym, 90);
+    let factorSeries: Array<number | null>;
+    try {
+      factorSeries = evalQlibExpr(ast, series);
+    } catch (e) {
+      return {
+        ok: false,
+        reason: `eval_error: ${(e as Error).message}`,
+        detail: { symbol: sym },
+      };
+    }
+    let n = 0;
+    for (const v of factorSeries) {
+      if (typeof v === "number" && Number.isFinite(v)) {
+        flatValues.push(v);
+        n++;
+      }
+    }
+    finiteCounts.push(n);
+  }
+  return summarizeDryRunValues(flatValues, finiteCounts, minRows, minVariance);
+}
+
+/**
+ * python dry-run：spawn code_sandbox_runner.py 跑用户代码，对 3 个合成 GBM
+ * symbol 各跑一次，拉回 `factor_values` 全局变量。
+ *
+ * Contract（写入 PROMPT_ANALYST_SENTIMENT 同步引导）：
+ *   - 用户 expr 是一段 python 代码，**必须**在结尾设置全局变量
+ *     `factor_values: list[float | None]`（每根 bar 一个值，None 表示缺失）
+ *   - 可访问的 vars：close / open / high / low / volume / turnover / vwap
+ *     （全是 list[float]，长度相同）+ numpy / pandas / math
+ *   - 不要 import os / sys / subprocess（sandbox 会拒绝）
+ *
+ * 评估报告 P3-1 之前：lang='python' 走 skipped:true，错代码无声落库 →
+ * factor.compute 返空 → autoEvaluate 误报 no_factor_values，定位难。
+ */
+/**
+ * 抽出 sandbox runner 类型，便于 dry-run 测试做依赖注入（替代 mock.module，
+ * 后者在 Bun 是**全局污染且无 restore**，会让 src/runtime/sandbox/__tests__
+ * 全量跑时把 runPythonSandbox 替换成 dry-run 测试的 mock，引发误失败）。
+ */
+type PythonSandboxRunner = (req: {
+  code: string;
+  vars: Record<string, unknown>;
+  returnVar?: string;
+  timeoutSec?: number;
+}) => Promise<{
+  ok: boolean;
+  stdout: string;
+  result: unknown;
+  elapsedMs: number;
+  rowsInResult: number;
+  error?: string;
+  trace?: string;
+}>;
+
+let testSandboxRunner: PythonSandboxRunner | null = null;
+
+/**
+ * 测试专用：注入 sandbox runner mock；同进程其它代码不受影响。
+ * 调用 `__testSetSandboxRunner(null)` 恢复真 runner。
+ */
+export function __testSetSandboxRunner(runner: PythonSandboxRunner | null): void {
+  testSandboxRunner = runner;
+}
+
+export async function __testRunPythonExprDryRun(
+  expr: string,
+  minRows = 10,
+  minVariance = 1e-12
+): Promise<DryRunResult> {
+  return runPythonExprDryRun(expr, minRows, minVariance);
+}
+
+async function runPythonExprDryRun(
+  expr: string,
+  minRows: number,
+  minVariance: number
+): Promise<DryRunResult> {
+  if (!expr.trim()) {
+    return { ok: false, reason: "parse_error: empty_python_expr" };
+  }
+
+  /**
+   * 把用户表达式包装：
+   *   - 如果代码里已经写了 `factor_values =`，直接 exec 原样
+   *   - 否则当成单行 expression，wrap 成 `factor_values = list({expr})`
+   *
+   * 这样 LLM 写「`close[-1] / close[-21] - 1`」单行也能 dry-run；
+   * 写多行 + 自己设 factor_values 也能 dry-run。
+   */
+  const code = /\bfactor_values\s*=/.test(expr)
+    ? expr
+    : `factor_values = list(${expr})`;
+
+  const runPythonSandbox: PythonSandboxRunner =
+    testSandboxRunner ?? (await import("../sandbox/python-sandbox")).runPythonSandbox;
+
+  const finiteCounts: number[] = [];
+  const flatValues: number[] = [];
+  const errorsBySymbol: Record<string, string> = {};
+
+  for (const sym of DRY_RUN_SYMBOLS) {
+    const series = synthGbmSeries(sym, 90);
+    const resp = await runPythonSandbox({
+      code,
+      vars: {
+        close: series.fields.close,
+        open: series.fields.open,
+        high: series.fields.high,
+        low: series.fields.low,
+        volume: series.fields.volume,
+        turnover: series.fields.turnover,
+        vwap: series.fields.vwap,
+        symbol: sym,
+      },
+      returnVar: "factor_values",
+      timeoutSec: 15,
+    });
+    if (!resp.ok) {
+      const tail = (resp.trace ?? "").trim().slice(-400);
+      /**
+       * sandbox 系统级不可用（python 未装 / 缺 pandas / 钱箱 wall timeout）
+       * → **graceful skip dry-run** 而非 reject 注册。理由：
+       *   1. 测试环境 / 刚 install 未 bootstrap 的开发机普遍无 pandas
+       *   2. 这类故障不是「LLM 写的因子有问题」，不该让 register 失败
+       *   3. detail 写明 reason，运维 + LLM 都能看到「dry-run 被跳过」与原因
+       *
+       * 真正的"用户代码错误"（NameError / ImportError 黑名单 / TypeError / 全局变量未定义）
+       * → 仍走 eval_error 让 register 拒绝。
+       */
+      if (
+        resp.error === "python_unavailable" ||
+        resp.error === "python_deps_missing" ||
+        resp.error === "wall_timeout"
+      ) {
+        return {
+          ok: true,
+          detail: {
+            skipped: true,
+            reason: `sandbox_unavailable:${resp.error}`,
+            hint: (resp.trace ?? "").trim().slice(0, 400),
+          },
+        };
+      }
+      return {
+        ok: false,
+        reason: `eval_error: ${resp.error ?? "sandbox_error"}`,
+        detail: { symbol: sym, trace: tail },
+      };
+    }
+
+    const values = resp.result;
+    if (!Array.isArray(values)) {
+      errorsBySymbol[sym] = `factor_values_not_array: type=${typeof values}`;
+      finiteCounts.push(0);
+      continue;
+    }
+    let n = 0;
+    for (const v of values) {
+      /**
+       * 显式过滤 null / undefined（Python 端把 NaN 序列化成 None → JSON null）。
+       * 不能直接 `Number(v)`，因为 Number(null)=0 会让"全 NaN" 被误算成 0 series。
+       */
+      if (v === null || v === undefined) continue;
+      const num = typeof v === "number" ? v : Number(v);
+      if (Number.isFinite(num)) {
+        flatValues.push(num);
+        n++;
+      }
+    }
+    finiteCounts.push(n);
+  }
+
+  if (Object.keys(errorsBySymbol).length === DRY_RUN_SYMBOLS.length) {
+    return {
+      ok: false,
+      reason: "eval_error: factor_values_invalid_for_all_symbols",
+      detail: { errorsBySymbol },
+    };
+  }
+
+  return summarizeDryRunValues(flatValues, finiteCounts, minRows, minVariance, {
+    pythonSandbox: true,
+    ...(Object.keys(errorsBySymbol).length > 0 ? { errorsBySymbol } : {}),
+  });
 }

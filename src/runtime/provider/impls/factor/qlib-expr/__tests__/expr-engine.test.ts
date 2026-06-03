@@ -36,6 +36,13 @@ describe("Lexer", () => {
   test("非法字符抛 ExprLexError", () => {
     expect(() => tokenize("close @ 5")).toThrow(ExprLexError);
   });
+  test("qlib $field 前缀（P3-1 顺手修：之前 $close 抛 lex_error）", () => {
+    const toks = tokenize("Mean($close, 20) - $volume");
+    /** $close / $volume 都被 lex 成 ident，值含 $ 由 parser 端 strip */
+    expect(toks.map((t) => t.value)).toEqual([
+      "Mean", "(", "$close", ",", "20", ")", "-", "$volume", "",
+    ]);
+  });
   test("浮点数", () => {
     const toks = tokenize(".5 0.25");
     expect(toks[0]?.value).toBe(".5");
@@ -50,6 +57,15 @@ describe("Parser", () => {
       type: "binop",
       op: "+",
       right: { type: "binop", op: "*" },
+    });
+  });
+  test("$field → field name 自动 strip $", () => {
+    const ast = parse("$close + $volume");
+    expect(ast).toMatchObject({
+      type: "binop",
+      op: "+",
+      left: { type: "field", name: "close" },
+      right: { type: "field", name: "volume" },
     });
   });
   test("函数调用嵌套", () => {
