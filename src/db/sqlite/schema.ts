@@ -760,6 +760,13 @@ export const toolCallLog = sqliteTable("tool_call_log", {
    * 旧行保持 NULL，前端 fallback 走 join 兼容。
    */
   workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+  /**
+   * 监控 v3 P0 冗余列（迁移 0064）：直接记录调用方 agent 的 definitionId，
+   * 让 /monitor/timeseries 等"按 Agent 切分"的查询不必 3 跳 join
+   * (tool_call_log → agent_step → agent_instance → agent_definition)。
+   * 旧行保持 NULL；timeseries 在 groupBy=agentDefinitionId 时直接过滤掉 NULL。
+   */
+  agentDefinitionId: text("agent_definition_id").references(() => agentDefinition.id),
   /** v2 P1：retry 上下文跨记录关联（idempotency / 多次 retry 同一 trace） */
   traceId: text("trace_id"),
   retryCount: integer("retry_count").notNull().default(0),
@@ -783,11 +790,24 @@ export const mcpCallLog = sqliteTable("mcp_call_log", {
   agentStepId: text("agent_step_id")
     .notNull()
     .references(() => agentStep.id),
+  /** 监控 v3 P0：同 toolCallLog.agentDefinitionId，避免按 Agent 切分时多跳 join。 */
+  agentDefinitionId: text("agent_definition_id").references(() => agentDefinition.id),
   serverName: text("server_name").notNull(),
   toolName: text("tool_name").notNull(),
   /** v2 P1：与 tool_call_log 对齐，便于跨表 union 与重试关联 */
   traceId: text("trace_id"),
   retryCount: integer("retry_count").notNull().default(0),
+  /**
+   * 监控 v3 P0（迁移 0064）：记录调用所用 transport（stdio / http / ws），
+   * 用于按 transport 维度切分 MCP 调用量、定位"stdio 不稳定但 http 正常"之类的情况。
+   * 旧行 NULL；写入侧从 dispatcher 已知的 server 配置反查（详见 docs/MONITORING_V2_DESIGN.md §4.3.2）。
+   */
+  transport: text("transport"),
+  /**
+   * 监控 v3 P0：调用发生时该 server 的熔断器状态快照（closed/open/half_open）。
+   * 在失败/超时复盘时尤其有用：能立刻区分"调用真的失败"还是"短路返回"。
+   */
+  circuitState: text("circuit_state", { enum: ["closed", "open", "half_open"] }),
   requestJson: text("request_json", { mode: "json" }).notNull(),
   responseJson: text("response_json", { mode: "json" }),
   status: text("status", { enum: ["success", "timeout", "failed", "sandbox_blocked"] }).notNull(),
@@ -810,6 +830,13 @@ export const llmCallLog = sqliteTable("llm_call_log", {
     .notNull()
     .references(() => workflowRun.id),
   agentStepId: text("agent_step_id").references(() => agentStep.id),
+  /**
+   * 监控 v3 P0（迁移 0064）：调用方 agent 的 definitionId 冗余。
+   * 不冗余的话，"某 Agent 24h 内消耗多少 token / cost"要从
+   * llm_call_log → agent_step → agent_instance → agent_definition 3 跳 join；
+   * 加这列后 /monitor/timeseries?source=llm_call_log&groupBy=agentDefinitionId 直接走索引。
+   */
+  agentDefinitionId: text("agent_definition_id").references(() => agentDefinition.id),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   promptTokens: integer("prompt_tokens"),

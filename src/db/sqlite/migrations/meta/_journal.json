@@ -435,6 +435,13 @@
       "when": 1780963200000,
       "tag": "0062_self_evolve_p5_skill_promoter",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1781049600000,
+      "tag": "0064_monitoring_v3_timeseries",
+      "breakpoints": true
     }
   ]
 }
