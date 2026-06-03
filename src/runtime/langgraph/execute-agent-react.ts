@@ -303,6 +303,7 @@ export async function executeAgentReact(
         extraMeta: {
           fallbackUsed: reasonResult.meta.fallbackUsed,
           ...(reasonResult.meta.parseRetryUsed ? { parseRetryUsed: true } : {}),
+          ...(reasonResult.meta.lengthRetryUsed ? { lengthRetryUsed: true } : {}),
           iteration: nextIteration,
           agentRole: params.def.role,
         },

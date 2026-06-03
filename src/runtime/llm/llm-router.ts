@@ -176,7 +176,14 @@ export function providerEnvKey(provider: LlmProvider): string | null {
  * 2. 失败 → 拿 default model 再试一次（如果 default != primary）
  * 3. 都失败 → 抛错
  *
- * 返回 { answer, usage, latencyMs, modelUsed, fallbackUsed }
+ * P2 智能重试（length-retry）：
+ *   - 单次成功但 finishReason ∈ { length, max_output_tokens, incomplete } → 截断信号
+ *   - 把 maxOutputTokens × 2（上限 32768），用同一 model 重试**最多一次**；
+ *     补救成功（新 finishReason ≠ 截断 / 内容更长）就用新答案
+ *   - content_filter / 其它非截断信号不重试
+ *   - ENV `QUBIT_LLM_LENGTH_RETRY_DISABLED=1` 关闭整条机制（debug / 老代理）
+ *
+ * 返回 { answer, usage, latencyMs, modelUsed, fallbackUsed, lengthRetryUsed }
  */
 export interface InvokeWithFallbackResult {
   answer: string;
@@ -191,6 +198,134 @@ export interface InvokeWithFallbackResult {
   finishReason?: string;
   modelUsed: RuntimeModelConfig;
   fallbackUsed: boolean;
+  /** P2：本次调用是否被 length-retry 自救过（即 max_tokens 翻倍重试一次）。 */
+  lengthRetryUsed: boolean;
+}
+
+/** length-retry 的 max_tokens 硬上限：避免误读 finishReason 让单次调用炸到天文数字。 */
+const LENGTH_RETRY_MAX_TOKENS_CAP = 32_768;
+/** 截断信号：触发自动 length-retry。涵盖 OpenAI / Anthropic / Responses 三套语义。 */
+const TRUNCATION_FINISH_REASONS: ReadonlySet<string> = new Set([
+  "length",
+  "max_tokens",
+  "max_output_tokens",
+  "incomplete",
+]);
+
+function isTruncated(finishReason: string | undefined): boolean {
+  if (!finishReason) return false;
+  return TRUNCATION_FINISH_REASONS.has(finishReason.toLowerCase());
+}
+
+/** 把 LlmGatewayResult 投影成 InvokeWithFallbackResult 的公共字段（兼顾 exactOptional）。 */
+function projectResult(
+  result: Awaited<ReturnType<typeof runLlmGateway>>,
+  modelUsed: RuntimeModelConfig,
+  flags: { fallbackUsed: boolean; lengthRetryUsed: boolean },
+): InvokeWithFallbackResult {
+  return {
+    answer: result.answer,
+    ...(result.usage ? { usage: result.usage } : {}),
+    latencyMs: result.latencyMs,
+    ...(result.firstTokenLatencyMs !== undefined
+      ? { firstTokenLatencyMs: result.firstTokenLatencyMs }
+      : {}),
+    ...(result.responseId ? { responseId: result.responseId } : {}),
+    ...(result.finishReason ? { finishReason: result.finishReason } : {}),
+    modelUsed,
+    fallbackUsed: flags.fallbackUsed,
+    lengthRetryUsed: flags.lengthRetryUsed,
+  };
+}
+
+/**
+ * 内部：跑一次 gateway；如果触发截断信号且允许重试，加大 maxOutputTokens 再跑一次，
+ * 并合并 usage / latencyMs。把"length-retry 是否发生"通过返回值告诉外层。
+ */
+async function invokeOnceWithLengthRetry(
+  config: RuntimeModelConfig,
+  input: Omit<LlmGatewayInput, "config">,
+): Promise<{
+  result: Awaited<ReturnType<typeof runLlmGateway>>;
+  lengthRetryUsed: boolean;
+}> {
+  const first = await runLlmGateway({ ...input, config });
+  if (process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"] === "1") {
+    return { result: first, lengthRetryUsed: false };
+  }
+  if (!isTruncated(first.finishReason)) {
+    return { result: first, lengthRetryUsed: false };
+  }
+  /**
+   * 计算下一次 maxOutputTokens：原 sampling 没指定就以 4096 起步（与
+   * gateway 内置默认对齐）；上限 32768 防失控。
+   */
+  const prevMax = input.sampling?.maxOutputTokens ?? 4096;
+  if (prevMax >= LENGTH_RETRY_MAX_TOKENS_CAP) {
+    return { result: first, lengthRetryUsed: false };
+  }
+  const nextMax = Math.min(LENGTH_RETRY_MAX_TOKENS_CAP, Math.max(prevMax * 2, prevMax + 1024));
+  console.warn(
+    `[LlmRouter] truncated finishReason=${first.finishReason} ` +
+      `(${config.provider}:${config.model}) → length-retry maxOutputTokens ${prevMax} → ${nextMax}`,
+  );
+  let second: Awaited<ReturnType<typeof runLlmGateway>>;
+  try {
+    second = await runLlmGateway({
+      ...input,
+      sampling: { ...(input.sampling ?? {}), maxOutputTokens: nextMax },
+      config,
+    });
+  } catch (err) {
+    /**
+     * length-retry 自身失败不应该让原本"成功但截断"的结果丢失 — 把首次
+     * 结果当作可用答案返回，由 caller 自己决定怎么处理截断。
+     */
+    console.warn(
+      `[LlmRouter] length-retry threw (${(err as Error).message}); keeping first truncated result`,
+    );
+    return { result: first, lengthRetryUsed: false };
+  }
+  /**
+   * 合并 usage / latency。retry 的 firstTokenLatencyMs **不**覆盖 first：caller 视
+   * 角第一次 token 进来的时间才是真正的 TTFT；retry 是网关层补救，对体验透明。
+   */
+  const merged: Awaited<ReturnType<typeof runLlmGateway>> = {
+    answer: second.answer || first.answer,
+    latencyMs: first.latencyMs + second.latencyMs,
+    ...(first.firstTokenLatencyMs !== undefined
+      ? { firstTokenLatencyMs: first.firstTokenLatencyMs }
+      : second.firstTokenLatencyMs !== undefined
+        ? { firstTokenLatencyMs: second.firstTokenLatencyMs }
+        : {}),
+    ...(second.responseId ? { responseId: second.responseId } : first.responseId ? { responseId: first.responseId } : {}),
+    ...(second.finishReason ? { finishReason: second.finishReason } : {}),
+    ...(mergeUsage(first.usage, second.usage) ? { usage: mergeUsage(first.usage, second.usage)! } : {}),
+  };
+  return { result: merged, lengthRetryUsed: true };
+}
+
+function mergeUsage(
+  a: LlmTokenUsage | undefined,
+  b: LlmTokenUsage | undefined,
+): LlmTokenUsage | undefined {
+  if (!a && !b) return undefined;
+  if (!a) return b;
+  if (!b) return a;
+  const sum = (x?: number, y?: number) =>
+    x === undefined && y === undefined ? undefined : (x ?? 0) + (y ?? 0);
+  const promptTokens = sum(a.promptTokens, b.promptTokens);
+  const completionTokens = sum(a.completionTokens, b.completionTokens);
+  const totalTokens = sum(a.totalTokens, b.totalTokens);
+  const cachedPromptTokens = sum(a.cachedPromptTokens, b.cachedPromptTokens);
+  const reasoningTokens = sum(a.reasoningTokens, b.reasoningTokens);
+  return {
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+    ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+  };
 }
 
 export async function invokeWithFallback(
@@ -198,22 +333,10 @@ export async function invokeWithFallback(
   input: Omit<LlmGatewayInput, "config">
 ): Promise<InvokeWithFallbackResult> {
   try {
-    const result = await runLlmGateway({ ...input, config: primaryConfig });
-    return {
-      answer: result.answer,
-      ...(result.usage ? { usage: result.usage } : {}),
-      latencyMs: result.latencyMs,
-      ...(result.firstTokenLatencyMs !== undefined
-        ? { firstTokenLatencyMs: result.firstTokenLatencyMs }
-        : {}),
-      ...(result.responseId ? { responseId: result.responseId } : {}),
-      ...(result.finishReason ? { finishReason: result.finishReason } : {}),
-      modelUsed: primaryConfig,
-      fallbackUsed: false,
-    };
+    const { result, lengthRetryUsed } = await invokeOnceWithLengthRetry(primaryConfig, input);
+    return projectResult(result, primaryConfig, { fallbackUsed: false, lengthRetryUsed });
   } catch (err) {
     const defaultCfg = await loadModelConfig();
-    // 没有 default 或 default == primary → 直接抛
     if (
       !defaultCfg ||
       (defaultCfg.provider === primaryConfig.provider && defaultCfg.model === primaryConfig.model)
@@ -225,19 +348,8 @@ export async function invokeWithFallback(
         `falling back to default (${defaultCfg.provider}:${defaultCfg.model}): ` +
         (err instanceof Error ? err.message : String(err))
     );
-    const result = await runLlmGateway({ ...input, config: defaultCfg });
-    return {
-      answer: result.answer,
-      ...(result.usage ? { usage: result.usage } : {}),
-      latencyMs: result.latencyMs,
-      ...(result.firstTokenLatencyMs !== undefined
-        ? { firstTokenLatencyMs: result.firstTokenLatencyMs }
-        : {}),
-      ...(result.responseId ? { responseId: result.responseId } : {}),
-      ...(result.finishReason ? { finishReason: result.finishReason } : {}),
-      modelUsed: defaultCfg,
-      fallbackUsed: true,
-    };
+    const { result, lengthRetryUsed } = await invokeOnceWithLengthRetry(defaultCfg, input);
+    return projectResult(result, defaultCfg, { fallbackUsed: true, lengthRetryUsed });
   }
 }
 

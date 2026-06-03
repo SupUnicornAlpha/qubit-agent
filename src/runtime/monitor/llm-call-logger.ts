@@ -88,6 +88,13 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
     if (total === null && (prompt !== null || completion !== null)) {
       total = (prompt ?? 0) + (completion ?? 0);
     }
+    const cached = isNonNegInt(usage.cachedPromptTokens) ? usage.cachedPromptTokens : null;
+    const reasoning = isNonNegInt(usage.reasoningTokens) ? usage.reasoningTokens : null;
+    /**
+     * P2：把 cachedPromptTokens 透传给 cost 函数，让 cost 反映 prompt cache 折扣
+     * （OpenAI Responses 50% / Anthropic 10%）。reasoningTokens 已计入
+     * completionTokens，cost 上不重复计费，仅作为打点字段。
+     */
     const cost =
       prompt !== null || completion !== null
         ? estimateLlmCostUsd({
@@ -95,6 +102,7 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
             model: input.model,
             promptTokens: prompt ?? 0,
             completionTokens: completion ?? 0,
+            ...(cached !== null ? { cachedPromptTokens: cached } : {}),
           })
         : null;
 
@@ -104,8 +112,6 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
       ...(input.extraMeta ?? {}),
     };
 
-    const cached = isNonNegInt(usage.cachedPromptTokens) ? usage.cachedPromptTokens : null;
-    const reasoning = isNonNegInt(usage.reasoningTokens) ? usage.reasoningTokens : null;
     const ttft =
       typeof input.firstTokenLatencyMs === "number" && Number.isFinite(input.firstTokenLatencyMs)
         ? Math.max(0, Math.round(input.firstTokenLatencyMs))

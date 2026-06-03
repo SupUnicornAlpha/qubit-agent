@@ -103,3 +103,126 @@ describe("estimateLlmCostUsd · provider fallback / 未知 / 边界", () => {
     expect(cost).toBe(0.00075);
   });
 });
+
+describe("estimateLlmCostUsd · P2 cached input 折扣", () => {
+  test("OpenAI cached prompt 享 50% 折扣，老 caller 不传 cachedPromptTokens 等价老行为", () => {
+    /** 老行为：1M prompt × $2.5 = $2.5 */
+    const baseline = estimateLlmCostUsd({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+    });
+    expect(baseline).toBe(2.5);
+
+    /** 全部 cached：1M × $2.5 × 0.5 = $1.25 */
+    const allCached = estimateLlmCostUsd({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cachedPromptTokens: 1_000_000,
+    });
+    expect(allCached).toBe(1.25);
+
+    /** 半 cached：500k uncached × $2.5/1M + 500k cached × $1.25/1M = $1.875 */
+    const halfCached = estimateLlmCostUsd({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cachedPromptTokens: 500_000,
+    });
+    expect(halfCached).toBe(1.875);
+  });
+
+  test("Anthropic cached prompt 享 10% 折扣（cache_read 价 = uncached × 10%）", () => {
+    /** 1M cached × $3 × 0.1 = $0.3 */
+    const allCached = estimateLlmCostUsd({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-latest",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cachedPromptTokens: 1_000_000,
+    });
+    expect(allCached).toBe(0.3);
+  });
+
+  test("cachedPromptTokens > promptTokens 被 clamp 到 promptTokens", () => {
+    /** 上游打点 bug：cached > total。我们 clamp 而不是抛错。 */
+    const cost = estimateLlmCostUsd({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 100_000,
+      completionTokens: 0,
+      cachedPromptTokens: 999_999_999,
+    });
+    /** 100k × $2.5 × 0.5 = $0.125 */
+    expect(cost).toBe(0.125);
+  });
+
+  test("负数 cachedPromptTokens 视为 0", () => {
+    const cost = estimateLlmCostUsd({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cachedPromptTokens: -123,
+    });
+    expect(cost).toBe(2.5);
+  });
+
+  test("DeepSeek 没有 cache 折扣表 → cachedPromptTokens 不影响结果", () => {
+    const a = estimateLlmCostUsd({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+    });
+    const b = estimateLlmCostUsd({
+      provider: "deepseek",
+      model: "deepseek-chat",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cachedPromptTokens: 500_000,
+    });
+    expect(a).toBe(b);
+  });
+});
+
+describe("estimateLlmCostUsd · P2 价表升级", () => {
+  test("gpt-5 / gpt-5-mini / gpt-5-nano 命中精确单价", () => {
+    expect(
+      estimateLlmCostUsd({ provider: "openai", model: "gpt-5", promptTokens: 1_000_000, completionTokens: 0 }),
+    ).toBe(1.25);
+    expect(
+      estimateLlmCostUsd({ provider: "openai", model: "gpt-5-mini", promptTokens: 0, completionTokens: 1_000_000 }),
+    ).toBe(2);
+    expect(
+      estimateLlmCostUsd({ provider: "openai", model: "gpt-5-nano", promptTokens: 0, completionTokens: 1_000_000 }),
+    ).toBe(0.4);
+  });
+
+  test("deepseek-r1 命中精确单价（与 reasoner 同价）", () => {
+    expect(
+      estimateLlmCostUsd({
+        provider: "deepseek",
+        model: "deepseek-r1",
+        promptTokens: 1_000_000,
+        completionTokens: 1_000_000,
+      }),
+    ).toBe(2.74);
+  });
+
+  test("claude-3-5-sonnet-v2 命中（与 -latest 同价 + 10% cache 折扣）", () => {
+    expect(
+      estimateLlmCostUsd({
+        provider: "anthropic",
+        model: "claude-3-5-sonnet-v2",
+        promptTokens: 1_000_000,
+        completionTokens: 0,
+        cachedPromptTokens: 1_000_000,
+      }),
+    ).toBe(0.3);
+  });
+});

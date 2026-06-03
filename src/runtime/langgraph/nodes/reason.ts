@@ -62,6 +62,11 @@ export interface ReasonStepMeta {
   firstTokenLatencyMs?: number;
   finishReason?: string;
   responseId?: string;
+  /**
+   * 网关 P2：是否被 length-retry 自救过（截断时网关层自动加大 maxOutputTokens 重试）。
+   * 落到 llm_call_log.requestMetaJson.lengthRetryUsed，让监控能挑出"被自动救过的调用"。
+   */
+  lengthRetryUsed?: boolean;
 }
 
 export interface ReasonNodeOutput {
@@ -187,6 +192,8 @@ export async function reasonNode(
   let firstTokenLatencyMs: number | undefined;
   let finishReason: string | undefined;
   let responseId: string | undefined;
+  /** 网关 P2：是否被 length-retry 自救过（任一次 invokeWithFallback 触发即 true） */
+  let lengthRetryUsed = false;
   // 监控 V2 P1：prompt 长度（不存原文，仅用于 llm_call_log.requestMetaJson）
   let systemPromptLen = 0;
   let userPromptLen = 0;
@@ -440,6 +447,7 @@ export async function reasonNode(
     firstTokenLatencyMs = llmResult.firstTokenLatencyMs;
     finishReason = llmResult.finishReason;
     responseId = llmResult.responseId;
+    if (llmResult.lengthRetryUsed) lengthRetryUsed = true;
     llmCallSucceeded = true;
     if (modelFallbackUsed) {
       console.warn(
@@ -532,6 +540,7 @@ export async function reasonNode(
              */
             if (retryResult.finishReason) finishReason = retryResult.finishReason;
             if (retryResult.responseId) responseId = retryResult.responseId;
+            if (retryResult.lengthRetryUsed) lengthRetryUsed = true;
             console.log(
               `[reason] agent ${state.agentDefinition.role} parse-retry succeeded (orig parse_error → retried OK)`
             );
@@ -594,6 +603,7 @@ export async function reasonNode(
       ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
       ...(finishReason ? { finishReason } : {}),
       ...(responseId ? { responseId } : {}),
+      ...(lengthRetryUsed ? { lengthRetryUsed: true } : {}),
     },
   };
 }

@@ -128,6 +128,22 @@ function pickFinishReason(value: unknown): string | undefined {
 }
 
 /**
+ * P2：DeepSeek-R1 / deepseek-reasoner 在 chat.completions 流里的
+ * `delta.reasoning_content` 字符数 → reasoning tokens 粗估。
+ *
+ * 估算规则：`ceil(chars / 4)`。理由：
+ *   - DeepSeek 用 BPE tokenizer，中英混合时一个 token 平均 ≈ 3–5 chars；
+ *   - 我们没法在客户端跑 tokenizer，但 chars/4 在常见 reasoning 文本上偏差 < 30%；
+ *   - 该值仅用于监控（reasoning ratio 维度），不参与计费 / 决策，精度足够。
+ *
+ * 仅在上游 usage.reasoning_tokens 缺失时调用。导出给单测覆盖。
+ */
+export function estimateReasoningTokensFromChars(chars: number): number {
+  if (!Number.isFinite(chars) || chars <= 0) return 0;
+  return Math.ceil(chars / 4);
+}
+
+/**
  * P0-1 路由：openai provider 入口。按 model capability 决定走 chat.completions
  * 还是 responses。`QUBIT_LLM_USE_RESPONSES_API="0"` 可强制全部回到 chat（兜底
  * 给 baseURL 指到老代理 / litellm 还没接 /v1/responses 的场景）。
@@ -480,17 +496,34 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   let firstTokenLatencyMs: number | undefined;
   let finishReason: string | undefined;
   let responseId: string | undefined;
+  /**
+   * P2：DeepSeek-R1 / deepseek-reasoner 在 chat.completions 流里把推理过程放在
+   * `delta.reasoning_content`（不是 `delta.content`）。我们刻意**不**把这部分推到
+   * onToken / answer：
+   *   1) 它是模型的内部独白，不该污染最终输出 / 前端 UI / 下游 schema 校验；
+   *   2) 上游 DeepSeek 不暴露 `reasoning_tokens`，需要自己按字符估算（≈chars/4）。
+   * 累积长度后，如果 chunkUsage 没给 reasoning_tokens，再用估算值兜底填到
+   * usage.reasoningTokens，让监控能看到 reasoning ratio。
+   */
+  let reasoningContentChars = 0;
   for await (const chunk of stream) {
     if (!responseId && typeof (chunk as { id?: string }).id === "string") {
       responseId = (chunk as { id: string }).id;
     }
-    const token = chunk.choices[0]?.delta?.content ?? "";
+    const delta = chunk.choices[0]?.delta as
+      | { content?: string; reasoning_content?: string }
+      | undefined;
+    const token = delta?.content ?? "";
     if (token) {
       if (firstTokenLatencyMs === undefined) {
         firstTokenLatencyMs = Date.now() - startedAt;
       }
       answer += token;
       input.onToken(token);
+    }
+    const reasoningDelta = delta?.reasoning_content;
+    if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
+      reasoningContentChars += reasoningDelta.length;
     }
     const fr = pickFinishReason(chunk.choices[0]?.finish_reason);
     if (fr) finishReason = fr;
@@ -513,6 +546,16 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
         ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
         ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
       };
+    }
+  }
+  /**
+   * 上游没给 reasoning_tokens 但确实输出了 reasoning_content 时，按 chars/4 粗估。
+   * 详见 estimateReasoningTokensFromChars。
+   */
+  if (reasoningContentChars > 0 && (!usage || usage.reasoningTokens === undefined)) {
+    const estimated = estimateReasoningTokensFromChars(reasoningContentChars);
+    if (estimated > 0) {
+      usage = { ...(usage ?? {}), reasoningTokens: estimated };
     }
   }
   const normalized = normalizeUsage(usage);
