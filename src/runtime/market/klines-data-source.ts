@@ -4,6 +4,7 @@ import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-se
 import { isCryptoMarket } from "./crypto-market";
 import { isChinaAShareMarket } from "./eastmoney-klines";
 import { aggregateBarsByMsWindow } from "./klines-bars";
+import { resolveTickerMarket } from "./resolve-ticker-market";
 
 /** User-selectable K-line upstream (配置中心 `qubit-data.klinesDataSource`). */
 export type KlinesDataSourceSetting =
@@ -158,7 +159,17 @@ export function symbolToYahooSymbol(symbol: string, exchange: string): string {
   }
 
   if (!ex || ex === "UNKNOWN") {
-    if (/^\d{6}$/.test(s)) return `${s}.SS`;
+    /**
+     * 评估报告 P0 修复点：之前 6 位数字一律 fallback `.SS`（沪市），
+     * 把 `000001`（应为 .SZ 平安银行）错路到 `000001.SS`（上证综指）。
+     * 现在按统一 resolver 推断（6→SH/.SS，0/3→SZ/.SZ，4/8→BJ）。
+     */
+    if (/^\d{6}$/.test(s)) {
+      const r = resolveTickerMarket(s);
+      if (r.market === "CN" && r.exchange === "SZ") return `${s}.SZ`;
+      // BJ 在 Yahoo 上没有官方后缀，只能继续走沪市 fallback；调用方应优先走 eastmoney
+      return `${s}.SS`;
+    }
     return s.length <= 5 ? s : `${digits}.SS`;
   }
   if (ex === "US" || ex === "NASDAQ" || ex === "NYSE" || ex === "AMEX" || ex === "OTC") {

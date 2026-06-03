@@ -7,6 +7,27 @@ import {
   symbolToYahooSymbol,
 } from "./klines-data-source";
 
+describe("symbolToEastMoneySecId — resolver-driven 空 exchange 兜底", () => {
+  test("显式后缀仍优先（向后兼容）", () => {
+    expect(symbolToEastMoneySecId("600519.SH", "")).toBe("1.600519");
+    expect(symbolToEastMoneySecId("000001.SZ", "")).toBe("0.000001");
+    expect(symbolToEastMoneySecId("872925.BJ", "")).toBe("0.872925");
+  });
+  test("显式 exchange 仍优先", () => {
+    expect(symbolToEastMoneySecId("600519", "SH")).toBe("1.600519");
+    expect(symbolToEastMoneySecId("000001", "SZ")).toBe("0.000001");
+  });
+  test("评估报告 P0 修复：空 exchange 时按首位精确分流（不再一律 1.xxx）", () => {
+    expect(symbolToEastMoneySecId("600519", "")).toBe("1.600519"); // 6 → SH
+    expect(symbolToEastMoneySecId("688981", "")).toBe("1.688981"); // 6 → SH (科创板)
+    // P0 bug fix：000001 不再被错路到 1.000001（上证综指）
+    expect(symbolToEastMoneySecId("000001", "")).toBe("0.000001"); // 0 → SZ
+    expect(symbolToEastMoneySecId("300750", "")).toBe("0.300750"); // 3 → SZ
+    expect(symbolToEastMoneySecId("872925", "")).toBe("0.872925"); // 8 → BJ
+    expect(symbolToEastMoneySecId("430047", "")).toBe("0.430047"); // 4 → BJ
+  });
+});
+
 describe("symbolToYahooSymbol", () => {
   test("A-share SH / SZ", () => {
     expect(symbolToYahooSymbol("600000", "SH")).toBe("600000.SS");
@@ -20,8 +41,13 @@ describe("symbolToYahooSymbol", () => {
     expect(symbolToYahooSymbol("ASTS", "US")).toBe("ASTS");
   });
 
-  test("six digits without exchange defaults to Shanghai suffix", () => {
+  test("six digits without exchange — resolver-driven SH/SZ", () => {
+    // 6 头沪市保持 .SS
     expect(symbolToYahooSymbol("600000", "")).toBe("600000.SS");
+    expect(symbolToYahooSymbol("688981", "")).toBe("688981.SS"); // 科创板
+    // 评估报告 P0 修复点：0 头深市不再被错路到 .SS
+    expect(symbolToYahooSymbol("000001", "")).toBe("000001.SZ"); // 平安银行
+    expect(symbolToYahooSymbol("300750", "")).toBe("300750.SZ"); // 宁德时代 / 创业板
   });
 
   test("other venues", () => {

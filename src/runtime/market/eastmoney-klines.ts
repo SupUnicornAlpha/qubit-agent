@@ -1,6 +1,7 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 import { aggregateBarsByMsWindow } from "./klines-bars";
+import { resolveTickerMarket } from "./resolve-ticker-market";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
 const EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
@@ -50,10 +51,25 @@ export function symbolToEastMoneySecId(symbol: string, exchange: string): string
     return `0.${digits}`;
   }
   if (ex.includes("SZ") || ex === "SZSE" || ex === "XSHE") return `0.${digits}`;
-  if (ex.includes("SH") || ex === "SSE" || ex === "XSHG" || !ex || ex === "UNKNOWN") {
+  if (ex.includes("SH") || ex === "SSE" || ex === "XSHG") return `1.${digits}`;
+
+  /**
+   * exchange 缺省（空 / "UNKNOWN" / 其它非 A 股 hint）→ 走统一 resolver。
+   *
+   * 评估报告 P0 修复点：之前这里一律 fallback 到 `1.${digits}`（沪市），
+   * 导致 `000001`（应为深市 0.000001 平安银行）被路由到 `1.000001`（上证综指）；
+   * 现在按 ticker 首位精确判断（6→SH，0/3→SZ，4/8→BJ），与 resolver 单一事实源对齐。
+   */
+  if (/^\d{6}$/.test(digits)) {
+    const r = resolveTickerMarket(digits);
+    if (r.market === "CN") {
+      if (r.exchange === "SH") return `1.${digits}`;
+      if (r.exchange === "SZ") return `0.${digits}`;
+      if (r.exchange === "BJ") return `0.${digits}`;
+    }
+    // resolver 没识别但还是 6 位数字 → 留沪市兜底（与历史一致，且 explicit 上层不会进到这里）
     return `1.${digits}`;
   }
-  if (/^\d{6}$/.test(digits)) return `1.${digits}`;
   return null;
 }
 

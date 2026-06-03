@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { BacktestConnector } from "../../connectors/backtest/backtest.connector";
 import { connectorRegistry } from "../../connectors/registry";
 import { runSmaCrossoverBacktestJob } from "../market/backtest-job-runner";
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
@@ -933,12 +934,20 @@ async function persistStrategyScript(input: {
 
 async function runNativeBacktestForTicker(
   workflowRunId: string,
-  ticker: string
+  ticker: string,
+  hintExchange?: string
 ): Promise<string | null> {
   try {
+    /**
+     * 评估报告 P0 修复点：之前 `exchange: "US"` 是字面量硬编码，
+     * 任何 A 股 / 港股 / 加密标的进 fusion 后跑 SMA 兜底都带 US 字段，
+     * 仅靠下游 secid regex 救回。现在统一用 resolver 推断；
+     * 上层未来可通过 hintExchange 传 scope.exchange 进一步覆盖。
+     */
+    const resolved = resolveTickerMarket(ticker, { hintExchange });
     const body: Record<string, unknown> = {
       symbol: ticker,
-      exchange: "US",
+      exchange: resolved.exchange,
       timeframe: "1d",
       limit: 250,
       fastPeriod: 5,
@@ -964,6 +973,7 @@ async function runNativeBacktestForTicker(
       const perf = result.performance;
       const lines = [
         `状态：${result.status}`,
+        `市场推断：${resolved.market}/${resolved.exchange}（confidence=${resolved.confidence}）`,
         `总收益：${(perf.totalReturn * 100).toFixed(2)}%`,
         `Sharpe：${perf.sharpeRatio.toFixed(2)}`,
         `最大回撤：${(perf.maxDrawdown * 100).toFixed(2)}%`,

@@ -3,7 +3,45 @@ import { formatResearchScopePreamble } from "./analyst-team-scope";
 import { isCryptoMarket } from "../market/crypto-market";
 import { queryKlines } from "../market/klines-query";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { snapshotIndicators } from "../market/technical-indicators";
+
+/**
+ * 用 deterministic resolver 渲染一段"系统市场识别"块塞进 prompt。
+ *
+ * 评估报告 P0 修复点：之前 prompt 不显式告诉 LLM 主标的属于哪个市场，
+ * LLM 在 `fetch_klines` 等工具调用上自由发挥，常见错误：
+ *   - 把 `000001` 当上证综指（应为深市平安银行）
+ *   - 把港股 `00700.HK` 当美股
+ *   - 加密 `BTCUSDT` 用 yfinance 拉空
+ *
+ * 现在把 resolver 的结果（含 confidence + reason）写在 "## 自动数据快照" 之前，
+ * 让 LLM 在做工具调用前看到事实而不是凭直觉。
+ *
+ * 返回空字符串 = 不输出（primary 为空时跳过）。
+ */
+export function buildMarketIdentificationBlock(
+  primary: string,
+  hintExchange?: string | undefined
+): string {
+  if (!primary) return "";
+  const r = resolveTickerMarket(primary, { hintExchange });
+  const head = `### 系统市场识别`;
+  if (r.market === "UNKNOWN") {
+    return [
+      head,
+      `- 主标的：${primary}`,
+      `- market 推断失败（fallback）；**请先调 fetch_klines + 候选 exchange (US/CN/HK/CRYPTO) 探测**，或向用户澄清。`,
+    ].join("\n");
+  }
+  return [
+    head,
+    `- 主标的：${primary}`,
+    `- market=**${r.market}** / exchange=**${r.exchange}**（confidence=${r.confidence}）`,
+    `- 推断依据：${r.reason}`,
+    `- 工具调用时请优先使用上述 exchange；如需覆盖，请在 reasoning 中显式说明理由。`,
+  ].join("\n");
+}
 
 async function buildSingleSymbolSnapshot(
   symbol: string,
@@ -80,13 +118,28 @@ export async function buildAnalystTeamDataContext(params: {
     } satisfies NormalizedResearchScope);
 
   const primary = scope.primarySymbol || params.ticker?.trim() || "";
+  const hintExchange = params.exchange ?? scope.exchange;
+
+  /**
+   * 评估报告 P0 修复点：之前 exchange 推断只覆盖加密一种，其它一律 undefined，
+   * 让 LLM 自己猜市场。现在用统一 resolver 一次性解析（含 hintExchange 优先级），
+   * 把结果**显式注入到 prompt** 让 LLM 看到 market 事实而不是凭直觉。
+   */
+  const resolved = primary ? resolveTickerMarket(primary, { hintExchange }) : null;
   const inferredCrypto =
-    !params.exchange && !scope.exchange && primary && isCryptoMarket(primary, "");
-  const exchange = params.exchange ?? scope.exchange ?? (inferredCrypto ? "CRYPTO" : undefined);
+    !hintExchange && primary && isCryptoMarket(primary, "");
+  const exchange =
+    hintExchange ??
+    (resolved && resolved.market !== "UNKNOWN" ? resolved.exchange : undefined) ??
+    (inferredCrypto ? "CRYPTO" : undefined);
+
   const blocks: string[] = [
     "## 自动数据快照（系统拉取，供分析引用，请勿臆造未列出数据）",
     formatResearchScopePreamble(scope),
   ];
+
+  const marketBlock = buildMarketIdentificationBlock(primary, hintExchange);
+  if (marketBlock) blocks.push(marketBlock, "");
 
   /**
    * explore 模式 + 空 symbols → 跳过自动行情快照。
