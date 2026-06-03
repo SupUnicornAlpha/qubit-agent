@@ -3870,3 +3870,205 @@ export async function registerRule(body: {
   return res.data;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Memory V2 Inspector — P3
+//
+// 设计原则：
+//   - 列表 / 详情 / link / oplog 分别走 4 个端点，**列表 payload 不含 body**
+//     （减重；点击详情才单独拉 body）。
+//   - 类型用 frontend 本地 interface（不复用 backend Experience types，避免
+//     drizzle Date<->string 类型耦合）。所有时间字段都是 ISO string。
+//   - getMemoryMetrics 返一个 snapshot 字典（key 是点分式 metric 名，value 是 number）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type MemoryExperienceKind =
+  | "episodic"
+  | "semantic"
+  | "procedural"
+  | "reflective"
+  | "identity";
+
+export type MemoryExperienceScope = "project" | "agent" | "global";
+
+export type MemoryExperienceVisibility = "project_shared" | "agent_private" | "role_shared";
+
+export type MemoryArchivalMode = "exclude_archived" | "only_archived" | "all";
+
+export type MemoryOrderBy = "valid_from_desc" | "quality_desc" | "created_desc";
+
+export type MemoryLinkRelation =
+  | "evidence_of"
+  | "derive_from"
+  | "supersedes"
+  | "contradicts"
+  | "related_to";
+
+/** /memory/experiences 列表项：剥掉 body，含 embeddingState 透出 */
+export interface MemoryExperienceListItem {
+  id: string;
+  kind: MemoryExperienceKind;
+  subKind: string;
+  scope: MemoryExperienceScope;
+  scopeId: string;
+  definitionId: string | null;
+  visibility: MemoryExperienceVisibility;
+  summary: string;
+  tags: string[];
+  qualityScore: number;
+  useCount: number;
+  successCount: number;
+  failCount: number;
+  decayAt: string | null;
+  validFrom: string;
+  validTo: string | null;
+  sourceRunId: string | null;
+  sourceStepId: string | null;
+  pinned: boolean;
+  embeddingState: string | null;
+  embeddingModel: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MemoryExperienceListResponse {
+  items: MemoryExperienceListItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** /memory/experiences/:id 详情：完整 contentJson + metadataJson */
+export interface MemoryExperienceDetail extends MemoryExperienceListItem {
+  contentJson: {
+    summary: string;
+    body?: string;
+    [key: string]: unknown;
+  };
+  metadataJson: Record<string, unknown>;
+}
+
+export interface MemoryExperienceLinkRow {
+  id: string;
+  fromId: string;
+  toId: string;
+  relation: MemoryLinkRelation;
+  weight: number;
+  createdAt: string;
+  /** "outgoing" = seed → other；"incoming" = other → seed */
+  direction: "outgoing" | "incoming";
+  otherId: string;
+  other: {
+    id: string;
+    kind: MemoryExperienceKind;
+    subKind: string;
+    summary: string;
+    qualityScore: number;
+    validTo: string | null;
+  } | null;
+}
+
+export interface MemoryExperienceLinksResponse {
+  seed: {
+    id: string;
+    kind: MemoryExperienceKind;
+    subKind: string;
+    summary: string;
+  };
+  links: MemoryExperienceLinkRow[];
+}
+
+export interface MemoryOpLogRow {
+  id: string;
+  experienceId: string;
+  op: string;
+  actor: string;
+  reason: string | null;
+  ts: string;
+  contextJson: Record<string, unknown> | null;
+}
+
+export interface MemoryMetricsSnapshot {
+  snapshot: Record<string, number>;
+  ts: string;
+}
+
+export interface ListMemoryExperiencesParams {
+  projectId: string;
+  kinds?: MemoryExperienceKind[];
+  subKind?: string;
+  definitionId?: string;
+  pinnedOnly?: boolean;
+  archivalMode?: MemoryArchivalMode;
+  orderBy?: MemoryOrderBy;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listMemoryExperiences(
+  params: ListMemoryExperiencesParams
+): Promise<MemoryExperienceListResponse> {
+  const query = new URLSearchParams();
+  query.set("projectId", params.projectId);
+  for (const k of params.kinds ?? []) query.append("kind", k);
+  if (params.subKind) query.set("subKind", params.subKind);
+  if (params.definitionId) query.set("definitionId", params.definitionId);
+  if (params.pinnedOnly) query.set("pinnedOnly", "1");
+  if (params.archivalMode) query.set("archivalMode", params.archivalMode);
+  if (params.orderBy) query.set("orderBy", params.orderBy);
+  if (params.q && params.q.trim()) query.set("q", params.q.trim());
+  if (params.limit != null) query.set("limit", String(params.limit));
+  if (params.offset != null) query.set("offset", String(params.offset));
+  const res = await httpGet<{
+    ok: boolean;
+    data: MemoryExperienceListResponse;
+  }>(`/api/v1/monitor/memory/experiences?${query.toString()}`);
+  return res.data;
+}
+
+export async function getMemoryExperienceDetail(
+  id: string
+): Promise<MemoryExperienceDetail> {
+  const res = await httpGet<{ ok: boolean; data: MemoryExperienceDetail }>(
+    `/api/v1/monitor/memory/experiences/${encodeURIComponent(id)}`
+  );
+  return res.data;
+}
+
+export async function getMemoryExperienceLinks(
+  id: string,
+  relations?: MemoryLinkRelation[]
+): Promise<MemoryExperienceLinksResponse> {
+  const query = new URLSearchParams();
+  if (relations && relations.length > 0) {
+    query.set("relations", relations.join(","));
+  }
+  const qs = query.toString();
+  const res = await httpGet<{
+    ok: boolean;
+    data: MemoryExperienceLinksResponse;
+  }>(
+    `/api/v1/monitor/memory/experiences/${encodeURIComponent(id)}/links${qs ? `?${qs}` : ""}`
+  );
+  return res.data;
+}
+
+export async function getMemoryExperienceOpLog(
+  id: string,
+  limit?: number
+): Promise<MemoryOpLogRow[]> {
+  const query = new URLSearchParams();
+  if (limit != null) query.set("limit", String(limit));
+  const qs = query.toString();
+  const res = await httpGet<{ ok: boolean; data: { items: MemoryOpLogRow[] } }>(
+    `/api/v1/monitor/memory/experiences/${encodeURIComponent(id)}/oplog${qs ? `?${qs}` : ""}`
+  );
+  return res.data.items;
+}
+
+export async function getMemoryMetrics(): Promise<MemoryMetricsSnapshot> {
+  const res = await httpGet<{ ok: boolean; data: MemoryMetricsSnapshot }>(
+    `/api/v1/monitor/memory/metrics`
+  );
+  return res.data;
+}

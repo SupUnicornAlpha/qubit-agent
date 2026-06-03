@@ -17,6 +17,7 @@ export type MonitorScope =
   | "workflow"
   | "agent"
   | "skills"
+  | "memory"
   | "diagnostics"
   | "stream"
   | "alerts_eval";
@@ -40,6 +41,11 @@ export const SCOPE_TABS: { id: MonitorScope; label: string; hint: string }[] = [
   { id: "workflow", label: "工作流", hint: "列表、详情、质量快照、按工作流过滤 SSE" },
   { id: "agent", label: "Agent", hint: "注册实例、延迟与健康度、点击卡片下钻指标" },
   { id: "skills", label: "Skills", hint: "Skill 召回成功率、失败列表（显式 agent_skill_run 归因）" },
+  {
+    id: "memory",
+    label: "记忆 (V2)",
+    hint: "experience 池子检查器：筛选 / 详情 / link 邻居 / op_log 时间线 / 进程内指标",
+  },
   {
     id: "diagnostics",
     label: "工具/MCP 排障",

@@ -73,6 +73,7 @@ import { OverviewTab, type StrategyRuntime } from "./OverviewTab";
 import { WorkflowTab } from "./WorkflowTab";
 import { AgentTab } from "./AgentTab";
 import { SkillsTab } from "./SkillsTab";
+import { MemoryTab } from "./MemoryTab";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { StreamTab } from "./StreamTab";
 import { AlertsEvalTab, type AlertStatusFilter } from "./AlertsEvalTab";
@@ -613,6 +614,10 @@ export const MonitorDashboard: FC = () => {
           sessionFilter={sessionFilter || undefined}
           onJumpToWorkflow={onJumpToWorkflow}
         />
+      ) : null}
+
+      {scope === "memory" ? (
+        <MemoryTab projectId={projectId} autoRefresh={autoRefresh} />
       ) : null}
 
       {scope === "diagnostics" ? (

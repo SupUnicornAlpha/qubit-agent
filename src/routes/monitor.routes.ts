@@ -711,3 +711,199 @@ monitorRouter.get("/memory/reconcile", async (c) => {
   const report = await reconcileProject({ projectId, since, now });
   return c.json({ ok: true, data: report });
 });
+
+// ───────────────────────── Memory V2 P3：Inspector 只读 API ─────────────────────────
+//
+// 前端 MemoryTab.tsx 消费；只读 + 不下推业务策略，避免与 5 个 pipe 形成多入口写。
+//
+// 设计原则（沿用 §6.7 Recall 的契约）：
+//   - 列表端点 **不返 contentJson.body**（数据可能很大）；
+//     需要 body → 调 GET /memory/experiences/:id 详情端点
+//   - 关键词搜在 route 层 in-memory 过滤（拉宽 200 候选 → q 过滤 → 截 limit）；
+//     不污染 ExperienceStore 接口
+//   - reflective 列表会带回所有 agent 的（前端可自行按 definitionId 二次过滤）；
+//     生产侧只有 reason 节点的 ExperienceRecall 会做 agent 隔离
+
+monitorRouter.get("/memory/experiences", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+
+  const kindParam = c.req.queries("kind") ?? [];
+  const allowedKinds: ReadonlyArray<string> = [
+    "episodic",
+    "semantic",
+    "procedural",
+    "reflective",
+    "identity",
+  ];
+  const kinds = kindParam.filter(
+    (k): k is "episodic" | "semantic" | "procedural" | "reflective" | "identity" =>
+      allowedKinds.includes(k)
+  );
+
+  const subKind = c.req.query("subKind") ?? undefined;
+  const definitionId = c.req.query("definitionId") ?? undefined;
+  const pinnedOnly = c.req.query("pinnedOnly") === "1" || c.req.query("pinnedOnly") === "true";
+  const archMode =
+    (c.req.query("archivalMode") as "exclude_archived" | "only_archived" | "all" | undefined) ??
+    "exclude_archived";
+  const orderBy =
+    (c.req.query("orderBy") as "valid_from_desc" | "quality_desc" | "created_desc" | undefined) ??
+    "valid_from_desc";
+  const q = (c.req.query("q") ?? "").trim().toLowerCase();
+  const limit = Math.max(1, Math.min(200, Number(c.req.query("limit") ?? "50")));
+  const offset = Math.max(0, Number(c.req.query("offset") ?? "0"));
+
+  // 为了拿到准确 `total`，统一拉宽到 5000（in-memory map 遍历 5000 行 << 1ms；
+  // 真实 project 内的 Memory V2 experience 数远小于这个值）。
+  // 之后再按 q（如有）做关键词过滤，最后 offset+limit 切页。
+  const fetchLimit = 5000;
+
+  const { getExperienceStore } = await import("../runtime/experience/experience-store");
+  const store = getExperienceStore();
+  const rows = await store.query({
+    scope: "project",
+    scopeId: projectId,
+    ...(kinds.length > 0 ? { kind: kinds } : {}),
+    ...(subKind ? { subKind } : {}),
+    ...(definitionId ? { definitionId } : {}),
+    archivalMode: archMode,
+    pinnedOnly,
+    orderBy,
+    limit: fetchLimit,
+  });
+
+  let filtered = rows;
+  if (q) {
+    filtered = rows.filter((r) => {
+      const summary = (r.contentJson.summary ?? "").toLowerCase();
+      const body = (r.contentJson.body ?? "").toString().toLowerCase();
+      const tags = r.tagsJson.join(" ").toLowerCase();
+      return summary.includes(q) || body.includes(q) || tags.includes(q);
+    });
+  }
+
+  const total = filtered.length;
+  const sliced = filtered.slice(offset, offset + limit);
+
+  // 列表端点：剥掉 body 减小 payload；前端要 body 走 detail 端点
+  const items = sliced.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    subKind: r.subKind,
+    scope: r.scope,
+    scopeId: r.scopeId,
+    definitionId: r.definitionId,
+    visibility: r.visibility,
+    summary: r.contentJson.summary,
+    tags: r.tagsJson,
+    qualityScore: r.qualityScore,
+    useCount: r.useCount,
+    successCount: r.successCount,
+    failCount: r.failCount,
+    decayAt: r.decayAt,
+    validFrom: r.validFrom,
+    validTo: r.validTo,
+    sourceRunId: r.sourceRunId,
+    sourceStepId: r.sourceStepId,
+    pinned: r.pinned,
+    embeddingState: r.metadataJson.embeddingState ?? null,
+    embeddingModel: r.metadataJson.embeddingModel ?? null,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  }));
+
+  return c.json({
+    ok: true,
+    data: {
+      items,
+      total,
+      limit,
+      offset,
+    },
+  });
+});
+
+monitorRouter.get("/memory/experiences/:id", async (c) => {
+  const id = c.req.param("id");
+  const { getExperienceStore } = await import("../runtime/experience/experience-store");
+  const exp = await getExperienceStore().findById(id);
+  if (!exp) return c.json({ ok: false, error: "not_found" }, 404);
+  return c.json({ ok: true, data: exp });
+});
+
+monitorRouter.get("/memory/experiences/:id/links", async (c) => {
+  const id = c.req.param("id");
+  const relsParam = c.req.query("relations");
+  const requestedRels = relsParam
+    ? relsParam
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  const allowedRels = [
+    "evidence_of",
+    "derive_from",
+    "supersedes",
+    "contradicts",
+    "related_to",
+  ] as const;
+  const rels = requestedRels.filter((r): r is (typeof allowedRels)[number] =>
+    (allowedRels as ReadonlyArray<string>).includes(r)
+  );
+
+  const { getExperienceStore } = await import("../runtime/experience/experience-store");
+  const store = getExperienceStore();
+  const exp = await store.findById(id);
+  if (!exp) return c.json({ ok: false, error: "not_found" }, 404);
+
+  const allLinks = await store.linkListByEither(id);
+  const links = rels.length > 0 ? allLinks.filter((l) => rels.includes(l.relation)) : allLinks;
+
+  // 拿邻居 brief（避免发回完整 body）
+  const otherIds = Array.from(new Set(links.map((l) => (l.fromId === id ? l.toId : l.fromId))));
+  const others = otherIds.length > 0 ? await store.findManyByIds(otherIds) : [];
+  const briefMap = new Map(
+    others.map((o) => [
+      o.id,
+      {
+        id: o.id,
+        kind: o.kind,
+        subKind: o.subKind,
+        summary: o.contentJson.summary,
+        qualityScore: o.qualityScore,
+        validTo: o.validTo,
+      },
+    ])
+  );
+
+  return c.json({
+    ok: true,
+    data: {
+      seed: {
+        id: exp.id,
+        kind: exp.kind,
+        subKind: exp.subKind,
+        summary: exp.contentJson.summary,
+      },
+      links: links.map((l) => {
+        const otherId = l.fromId === id ? l.toId : l.fromId;
+        const direction = l.fromId === id ? ("outgoing" as const) : ("incoming" as const);
+        return {
+          ...l,
+          direction,
+          otherId,
+          other: briefMap.get(otherId) ?? null,
+        };
+      }),
+    },
+  });
+});
+
+monitorRouter.get("/memory/experiences/:id/oplog", async (c) => {
+  const id = c.req.param("id");
+  const limit = Math.max(1, Math.min(500, Number(c.req.query("limit") ?? "100")));
+  const { getExperienceStore } = await import("../runtime/experience/experience-store");
+  const items = await getExperienceStore().listOps(id, limit);
+  return c.json({ ok: true, data: { items } });
+});

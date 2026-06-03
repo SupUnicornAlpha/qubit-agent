@@ -57,6 +57,11 @@ export interface ExperienceStore {
     weight?: number
   ): Promise<ExperienceLink>;
   linkList(experienceId: string): Promise<ExperienceLink[]>;
+  /**
+   * 列出与 experienceId 有任意方向连接的全部 link（from=id OR to=id）。
+   * Memory V2 P3 Inspector：邻居图需要看到 incoming + outgoing 两侧。
+   */
+  linkListByEither(experienceId: string): Promise<ExperienceLink[]>;
   /** 从 seedIds 出发按 relations 1..maxDepth 跳邻居，返回去重后的 experience */
   linkExpand(params: LinkExpandParams): Promise<Experience[]>;
 
@@ -336,6 +341,17 @@ export class SqliteExperienceStore implements ExperienceStore {
     return rows.map(rowToLink);
   }
 
+  async linkListByEither(experienceId: string): Promise<ExperienceLink[]> {
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(experienceLinkTable)
+      .where(
+        sql`${experienceLinkTable.fromId} = ${experienceId} OR ${experienceLinkTable.toId} = ${experienceId}`
+      );
+    return rows.map(rowToLink);
+  }
+
   async linkExpand(params: LinkExpandParams): Promise<Experience[]> {
     if (params.seedIds.length === 0) return [];
     const db = await getDb();
@@ -553,6 +569,10 @@ export class InMemoryExperienceStore implements ExperienceStore {
 
   async linkList(experienceId: string): Promise<ExperienceLink[]> {
     return this.links.filter((l) => l.fromId === experienceId);
+  }
+
+  async linkListByEither(experienceId: string): Promise<ExperienceLink[]> {
+    return this.links.filter((l) => l.fromId === experienceId || l.toId === experienceId);
   }
 
   async linkExpand(params: LinkExpandParams): Promise<Experience[]> {
