@@ -3,36 +3,38 @@ import { Sparkles } from "lucide-react";
 import { useAppStore, type ConfigSubPage, type QuantTab } from "../../store";
 import type { NavKey } from "../../lib/navIcons";
 import { NavGlyph } from "../../lib/navIcons";
+import { useTranslation } from "../../i18n";
 
-const QUANT_SUB: readonly { id: QuantTab; label: string }[] = [
-  { id: "factor", label: "因子工坊" },
-  { id: "discovery", label: "挖掘工坊" },
-  { id: "composer", label: "组合工坊" },
-  { id: "backtest", label: "回测工坊" },
+/** 仅承载结构（id 与 i18n key），具体 label 在渲染时通过 `t()` 解析。 */
+const QUANT_SUB: readonly { id: QuantTab; i18nKey: string }[] = [
+  { id: "factor", i18nKey: "sidebar.quant.factor" },
+  { id: "discovery", i18nKey: "sidebar.quant.discovery" },
+  { id: "composer", i18nKey: "sidebar.quant.composer" },
+  { id: "backtest", i18nKey: "sidebar.quant.backtest" },
 ];
 
-const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; label: string }[] = [
-  { id: "llm", label: "LLM" },
-  { id: "datasources", label: "数据源" },
-  { id: "mcp", label: "MCP" },
-  { id: "skills", label: "Skills" },
-  { id: "agent", label: "Agent" },
-  { id: "providers", label: "Providers" },
-  { id: "integration", label: "集成 / IM" },
-  { id: "schedule", label: "定时任务" },
-  { id: "env", label: "环境管理" },
+const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; i18nKey: string }[] = [
+  { id: "llm", i18nKey: "sidebar.config.llm" },
+  { id: "datasources", i18nKey: "sidebar.config.datasources" },
+  { id: "mcp", i18nKey: "sidebar.config.mcp" },
+  { id: "skills", i18nKey: "sidebar.config.skills" },
+  { id: "agent", i18nKey: "sidebar.config.agent" },
+  { id: "providers", i18nKey: "sidebar.config.providers" },
+  { id: "integration", i18nKey: "sidebar.config.integration" },
+  { id: "schedule", i18nKey: "sidebar.config.schedule" },
+  { id: "env", i18nKey: "sidebar.config.env" },
 ];
 
-const NAV_ITEMS: readonly { label: string; key: NavKey }[] = [
-  { label: "研究工作台", key: "ide" },
-  { label: "研究团队", key: "team" },
-  { label: "实时交易Agent", key: "trader" },
-  { label: "量化工作台", key: "quant" },
-  { label: "资讯", key: "chart" },
-  { label: "对话", key: "chat" },
-  { label: "运行监控", key: "monitor" },
-  { label: "券商账户配置", key: "broker" },
-  { label: "配置中心", key: "config" },
+const NAV_ITEMS: readonly { key: NavKey; i18nKey: string }[] = [
+  { key: "ide", i18nKey: "sidebar.nav.ide" },
+  { key: "team", i18nKey: "sidebar.nav.team" },
+  { key: "trader", i18nKey: "sidebar.nav.trader" },
+  { key: "quant", i18nKey: "sidebar.nav.quant" },
+  { key: "chart", i18nKey: "sidebar.nav.chart" },
+  { key: "chat", i18nKey: "sidebar.nav.chat" },
+  { key: "monitor", i18nKey: "sidebar.nav.monitor" },
+  { key: "broker", i18nKey: "sidebar.nav.broker" },
+  { key: "config", i18nKey: "sidebar.nav.config" },
 ];
 
 const ACTIVITY_BAR_WIDTH = 52;
@@ -48,7 +50,9 @@ export const Sidebar: FC = () => {
   const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
   const quantTab = useAppStore((s) => s.quantTab);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const { t } = useTranslation();
   const activeItem = NAV_ITEMS.find((n) => n.key === activeView) ?? NAV_ITEMS[0];
+  const activeLabel = t(activeItem.i18nKey);
 
   const goNav = (key: NavKey) => {
     setActiveView(key);
@@ -66,7 +70,9 @@ export const Sidebar: FC = () => {
 
   const activityTitle = (label: string, key: NavKey) => {
     if (activeView !== key) return label;
-    return explorerOpen ? `${label}（再次点击收起 Explorer）` : `${label}（点击展开 Explorer）`;
+    return explorerOpen
+      ? t("sidebar.explorer.activityHintCollapseAgain", { label })
+      : t("sidebar.explorer.activityHintExpand", { label });
   };
 
   return (
@@ -77,54 +83,57 @@ export const Sidebar: FC = () => {
         width: explorerOpen ? SIDEBAR_WIDTH_OPEN : ACTIVITY_BAR_WIDTH,
         minWidth: explorerOpen ? SIDEBAR_WIDTH_OPEN : ACTIVITY_BAR_WIDTH,
       }}
-      aria-label="主导航"
+      aria-label={t("topbar.navAriaLabel")}
     >
       <div className="qb-sidebar-activity" style={styles.activityBar}>
         <button
           type="button"
           className="qb-nav-activity-brand"
-          title={explorerOpen ? "收起 Explorer" : "展开 Explorer"}
-          aria-label={explorerOpen ? "收起 Explorer" : "展开 Explorer"}
+          title={explorerOpen ? t("sidebar.explorer.collapse") : t("sidebar.explorer.expand")}
+          aria-label={explorerOpen ? t("sidebar.explorer.collapse") : t("sidebar.explorer.expand")}
           onClick={() => setExplorerOpen(!explorerOpen)}
         >
           <Sparkles className="qb-nav-activity-brand-icon" size={17} strokeWidth={2.25} />
         </button>
-        {NAV_ITEMS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => onActivityClick(item.key)}
-            title={activityTitle(item.label, item.key)}
-            aria-label={item.label}
-            aria-current={activeView === item.key ? "page" : undefined}
-            aria-expanded={activeView === item.key ? explorerOpen : undefined}
-            className={[
-              "qb-nav-activity-btn",
-              activeView === item.key ? "qb-nav-activity-btn--active" : "",
-              activeView === item.key && !explorerOpen ? "qb-nav-activity-btn--explorer-collapsed" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            <span style={styles.activityIcon}>
-              <NavGlyph navKey={item.key} size={18} />
-            </span>
-          </button>
-        ))}
+        {NAV_ITEMS.map((item) => {
+          const label = t(item.i18nKey);
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onActivityClick(item.key)}
+              title={activityTitle(label, item.key)}
+              aria-label={label}
+              aria-current={activeView === item.key ? "page" : undefined}
+              aria-expanded={activeView === item.key ? explorerOpen : undefined}
+              className={[
+                "qb-nav-activity-btn",
+                activeView === item.key ? "qb-nav-activity-btn--active" : "",
+                activeView === item.key && !explorerOpen ? "qb-nav-activity-btn--explorer-collapsed" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <span style={styles.activityIcon}>
+                <NavGlyph navKey={item.key} size={18} />
+              </span>
+            </button>
+          );
+        })}
       </div>
       {explorerOpen ? (
         <div className="qb-explorer-panel" style={styles.explorer}>
           <div className="qb-sidebar-brand-line" style={styles.brand}>
             <div className="qb-sidebar-muted-text" style={styles.brandTitle}>
-              Explorer
+              {t("sidebar.brand.title")}
             </div>
             <div className="qb-sidebar-strong-text" style={styles.brandMeta}>
-              QUBIT IDE
+              {t("sidebar.brand.meta")}
             </div>
           </div>
           <div style={styles.group}>
             <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-              导航
+              {t("sidebar.group.nav")}
             </div>
             {NAV_ITEMS.map((item) => (
               <button
@@ -136,14 +145,14 @@ export const Sidebar: FC = () => {
                 <span style={styles.icon}>
                   <NavGlyph navKey={item.key} size={16} />
                 </span>
-                <span style={styles.label}>{item.label}</span>
+                <span style={styles.label}>{t(item.i18nKey)}</span>
               </button>
             ))}
           </div>
           {activeView === "config" ? (
             <div style={styles.group}>
               <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-                配置子项
+                {t("sidebar.group.configSub")}
               </div>
               {CONFIG_CENTER_SUB.map((sub) => (
                 <button
@@ -155,7 +164,7 @@ export const Sidebar: FC = () => {
                   }}
                   className={`qb-nav-row${configSubPage === sub.id ? " qb-nav-row--active" : ""}`}
                 >
-                  <span style={styles.label}>{sub.label}</span>
+                  <span style={styles.label}>{t(sub.i18nKey)}</span>
                 </button>
               ))}
             </div>
@@ -163,7 +172,7 @@ export const Sidebar: FC = () => {
           {activeView === "quant" ? (
             <div style={styles.group}>
               <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-                量化子项
+                {t("sidebar.group.quantSub")}
               </div>
               {QUANT_SUB.map((sub) => (
                 <button
@@ -175,21 +184,21 @@ export const Sidebar: FC = () => {
                   }}
                   className={`qb-nav-row${quantTab === sub.id ? " qb-nav-row--active" : ""}`}
                 >
-                  <span style={styles.label}>{sub.label}</span>
+                  <span style={styles.label}>{t(sub.i18nKey)}</span>
                 </button>
               ))}
             </div>
           ) : null}
           <div style={styles.group}>
             <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-              当前上下文
+              {t("sidebar.group.currentContext")}
             </div>
             <div className="qb-context-card">
               <div className="qb-sidebar-strong-text" style={styles.contextTitle}>
-                {activeItem.label}
+                {activeLabel}
               </div>
               <div className="qb-sidebar-muted-text" style={styles.contextMeta}>
-                模块：{activeItem.label}
+                {t("sidebar.context.moduleLabel", { name: activeLabel })}
                 {activeView === "config" ? ` · ${configSubPage}` : ""}
                 {activeView === "quant" ? ` · ${quantTab}` : ""}
               </div>

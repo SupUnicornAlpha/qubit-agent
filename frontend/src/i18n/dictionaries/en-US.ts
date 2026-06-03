@@ -1,0 +1,355 @@
+/**
+ * English (United States).
+ *
+ * Keep keys in sync with `zh-CN.ts`. Missing keys will fall back to `zh-CN`
+ * with a console warning in dev mode.
+ */
+import type { LocalePack } from "../types";
+
+const pack: LocalePack = {
+  id: "en-US",
+  name: "English",
+  englishName: "English",
+  dir: "ltr",
+  translations: {
+    common: {
+      backend: {
+        connected: "Backend Connected",
+        offline: "Backend Offline",
+      },
+      action: {
+        refresh: "Refresh",
+        send: "Send",
+        save: "Save",
+        delete: "Delete",
+        cancel: "Cancel",
+        confirmAgain: "Confirm again",
+      },
+      status: {
+        loading: "Loading…",
+      },
+    },
+    app: {
+      hint: {
+        tauriBackendNotReady:
+          "The embedded backend is not ready yet — click 'Restart Backend' above, or wait for auto retry.",
+        webBackendDisconnected:
+          "Backend disconnected: please run `bun run dev` from the project root.",
+        webModeBootstrap:
+          "You are in web mode; the backend is not auto-started. Run `bun run dev` first.",
+      },
+    },
+    topbar: {
+      brandSubtitle: "Quant Research Agent Platform",
+      navAriaLabel: "Primary navigation",
+      style: { label: "UI style" },
+      palette: {
+        label: "Palette",
+        lockedTitle:
+          "Switch back to Default / Glass Holographic / Biophilic style to change the palette",
+        glassTitle: "Glass tone (cool / warm / rainbow)",
+        biophilicTitle: "Biophilic palette (green-up / soft-red-up)",
+        defaultTitle: "Palette",
+      },
+      language: { label: "Language", title: "Interface language" },
+      restart: {
+        button: "Restart backend",
+        running: "Restarting…",
+        title: "Restart the embedded backend ({url})",
+        progress: "Restarting the embedded backend…",
+        failure: "Restart failed. Make sure no other process is using {url}.",
+      },
+      status: {
+        connectedTauri: "Embedded backend connected (127.0.0.1:17385)",
+        connectedWeb: "Backend health check passed; APIs are ready",
+        offlineTauri: "Embedded backend not responding — try 'Restart backend'",
+        offlineWeb: "Backend not responding — check that the dev server is running",
+      },
+    },
+    sidebar: {
+      brand: { title: "Explorer", meta: "QUBIT IDE" },
+      group: {
+        nav: "Navigation",
+        configSub: "Settings",
+        quantSub: "Quant tabs",
+        currentContext: "Current context",
+      },
+      context: { moduleLabel: "Module: {name}" },
+      explorer: {
+        expand: "Expand Explorer",
+        collapse: "Collapse Explorer",
+        activityHintCollapseAgain: "{label} (click again to collapse Explorer)",
+        activityHintExpand: "{label} (click to expand Explorer)",
+      },
+      nav: {
+        ide: "Research IDE",
+        team: "Research Team",
+        trader: "Live Trading Agent",
+        quant: "Quant Workbench",
+        chart: "News",
+        chat: "Chat",
+        monitor: "Monitor",
+        broker: "Broker Accounts",
+        config: "Settings",
+      },
+      quant: {
+        factor: "Factors",
+        discovery: "Discovery",
+        composer: "Composer",
+        backtest: "Backtest",
+      },
+      config: {
+        llm: "LLM",
+        datasources: "Data sources",
+        mcp: "MCP",
+        skills: "Skills",
+        agent: "Agent",
+        providers: "Providers",
+        integration: "Integrations / IM",
+        schedule: "Scheduled jobs",
+        env: "Environment",
+      },
+    },
+    theme: {
+      styles: {
+        default: "Default",
+        "feishu-clean": "Clean",
+        "glass-holographic": "Glass Holographic",
+        "retro-futurism": "Retro-Futurism · CLI",
+        industrial: "Industrial",
+        "neon-cyberpunk": "Neon Cyberpunk",
+        bauhaus: "Bauhaus",
+        "sci-fi-hud": "Sci-Fi HUD",
+        "comic-book": "Comic Book",
+        "anti-design": "Anti-Design",
+        blueprint: "Blueprint",
+        "hand-drawn-fabric": "Hand-Drawn · Fabric",
+        "ambient-3d": "Ambient 3D · Soft Space",
+        biophilic: "Biophilic",
+      },
+      palettes: {
+        "dark-purple": "Dark Purple",
+        "light-white": "Light",
+        "light-sky": "Sky",
+        "glass-cool": "Cool",
+        "glass-warm": "Warm",
+        "glass-rainbow": "Rainbow",
+        "bio-green": "Green (Up=Green)",
+        "bio-red": "Soft Red (Up=Red)",
+      },
+    },
+    ide: {
+      workbench: {
+        gutterAriaLabel: "Resize chat / chart split",
+        emptyCenter:
+          "Chart and backtest are hidden. Open 'Chart' or 'Backtest' from the toolbar above to restore them.",
+      },
+      leftColumn: {
+        ariaLabel: "Left workbench mode",
+        chat: "Chat workbench",
+        indicator: "Indicator IDE",
+      },
+      toolbar: {
+        labels: {
+          watchlist: "Symbol",
+          symbol: "Code",
+          symbolAria: "Instrument code",
+          period: "Period",
+          periodTitle: "Bar period: {tf}",
+          bars: "Bars",
+          barsTitle: "Maximum number of bars to fetch",
+          indicators: "Indicator",
+          indicatorsTitle: "Research-side indicator script template",
+          refresh: "Refresh",
+          refreshTitle: "Re-request bars using current symbol & period",
+          mainOverlay: "Overlays",
+          panels: "Panels",
+        },
+        overlays: {
+          sma20: "SMA20 (overlay)",
+          ema20: "EMA20 (overlay)",
+          rsi14: "RSI14 (sub-pane)",
+          macd: "MACD (sub-pane, exclusive with RSI)",
+          bb20: "Bollinger Bands (20, 2)",
+        },
+        panelToggles: {
+          left: "Toggle left chat panel",
+          chart: "Toggle main chart",
+          backtest: "Toggle backtest dock",
+          quickTrade: "Toggle quick-trade sidebar",
+        },
+      },
+      indicators: {
+        none: "(No indicator)",
+        smaCross: "Dual MA crossover",
+        rsiRange: "RSI range",
+        macdHist: "MACD histogram",
+        boll: "Bollinger Bands",
+      },
+      backtest: {
+        dockAriaLabel: "Backtest & tuning",
+        tabs: { backtest: "Backtest", tune: "Auto-tune" },
+        kind: {
+          label: "Strategy source",
+          python: "Left-side Python (on_init / on_bar)",
+          sma: "Built-in SMA crossover (fast/slow)",
+        },
+        fields: {
+          fastPeriod: "Fast period",
+          slowPeriod: "Slow period",
+          initialCapital: "Initial capital",
+          commission: "Commission rate",
+          startDate: "Start date",
+          endDate: "End date",
+          customRange: "Custom date range (otherwise derived from current 'Bars')",
+        },
+        run: {
+          button: "Run backtest",
+          running: "Running…",
+          failedDefault: "Backtest failed",
+          summary:
+            "Return {ret}% · Max DD {dd}% · Sharpe≈{sharpe} · Trades {trades} · Bars {bars}{posTail}",
+          posTail: " · Last position {pos}",
+          pythonPathHint: "Runs left-side on_init/on_bar (real bar-by-bar matching)",
+          smaPathHint: "Built-in SMA crossover (left-side code is ignored)",
+          symbolFromToolbar: "Symbol taken from toolbar",
+          stdoutSummary: "Strategy stdout/print ({n} chars)",
+          runtimeHint:
+            "Paper / live runtimes: pick a strategy from the Live Trading page, or call POST /api/v1/strategy-runtimes",
+        },
+        tune: {
+          intro:
+            "Structured grid scan: search the fast/slow period grid for better params (max 50 combos, server-side cap).",
+          fastList: "Fast candidates (comma-separated)",
+          slowList: "Slow candidates (comma-separated)",
+          run: "Run grid auto-tune",
+          running: "Scanning…",
+          regimeRun: "Detect regime",
+          regimeRunning: "Detecting…",
+          errorPrefix: "Error: {err}",
+        },
+      },
+      indicatorIde: {
+        title: "Code editor",
+        defaultScriptName: "Strategy draft",
+        badge: { saved: "Saved · {name}", unsaved: "Local draft · unsaved", unnamed: "Untitled" },
+        meta: {
+          session: "Session",
+          sessionEmpty: "(no session selected)",
+          sessionWarn: "Pick a session in the Chat workbench first",
+          run: "Research run",
+          runEmpty: "(not bound to a specific run)",
+          purpose: "Purpose",
+          name: "Name",
+          namePlaceholder: "Name used when saving",
+          saved: "Saved",
+          savedEmpty: "(pick a saved strategy…)",
+        },
+        purpose: {
+          research: "Research / chat output",
+          live: "Live trading execution",
+          both: "Research + trading",
+        },
+        actions: {
+          refresh: "Refresh list",
+          newDraft: "New draft",
+          saveUpdate: "Update",
+          saveToSession: "Save to session",
+          delete: "Delete",
+        },
+        errors: {
+          needSession: "Pick a session in the Chat workbench before saving.",
+          needName: "Please give the strategy a name.",
+          confirmDelete: "Delete the saved strategy draft?",
+        },
+        signal: { summary: "Python signal script (shared with the bottom 'Code strategy' backtest)" },
+        ai: {
+          title: "AI generation (Natural language → strategy)",
+          placeholder: "Describe the indicator or buy/sell logic in natural language…",
+          send: "Generate & open in chat",
+          hint: "Saving also records this description and the current chart symbol for cross-module reuse.",
+          chatBlock:
+            "Please refine the following indicator/strategy draft against the natural-language requirement, list risk points, and explain which market data or APIs are needed:\n\n[Requirement]\n{prompt}\n\n[Current draft]\n```python\n{code}\n```",
+          promptEmpty: "(no natural-language description provided)",
+        },
+        editor: { ariaSource: "Strategy & indicator source", ariaSignal: "Python signal buy/sell" },
+      },
+      quickTrade: {
+        ariaLabel: "Quick trade",
+        title: "Quick trade",
+        intro:
+          "Wired to the left agent stream and the chart above: paper orders go through the unified pipeline (risk → execution_task → paper fill).",
+        amountLabel: "Notional amount (illustrative, used to estimate qty)",
+        qtyEstimate: "Estimated qty ≈ {qty} shares/contracts · paper mode",
+        backendOffline: "Available once the backend is connected on the Live Trading page",
+        long: "Long",
+        short: "Short",
+        submitting: "Submitting…",
+        cancelLast: "Cancel last ({id}…)",
+        orderKind: { market: "Market", limit: "Limit" },
+        leverage: "Leverage {n}x",
+        margin: { cross: "Cross", isolated: "Isolated" },
+        tp: "Take profit",
+        sl: "Stop loss",
+        tpslPlaceholder: "Optional (later release)",
+        currentKindPrefix: "Current order type: ",
+        currentKindSuffix: ". TP/SL and live brokers are coming in a later release.",
+        logTitle: "Quick-trade settings updated",
+        logBody:
+          "Order type={kind} · Notional pct={pct}% · Leverage={lev}x · Margin={margin}\nSymbol {symbol} / {exchange} · {tf}",
+      },
+    },
+    chart: {
+      kline: {
+        title: "News",
+        importToChat: "Import into chat",
+        codeLabel: "Code",
+        marketLabel: "Market",
+        periodLabel: "Period",
+        barsLabel: "Bars",
+        sourceCompact: "Source {source} · {got}/{want}{loadingTail}",
+        sourceFull: "Source {source} · {tf} / {period} · {got} / requested {want}{tail}",
+        loadingTail: " · loading…",
+        ohlcTail: " · last OHLC={o}/{h}/{l}/{c} · vol={v}",
+      },
+    },
+    chat: {
+      sidebar: {
+        newSession: "New session",
+        defaultSessionTitle: "Default session",
+        confirmDeletePending: "Click again to confirm deleting session {title}",
+        deleteSession: "Hard-delete session {title}",
+        confirmDeleteTitle:
+          "Click again to confirm hard-deletion (workflows / messages / checkpoints — irreversible). Auto-cancels in 3s.",
+        deleteSessionTitle: "Hard-delete session (irreversible, includes workflows)",
+        resizerAria: "Resize session list / chat width",
+        resizerTitle: "Drag to resize",
+      },
+      board: {
+        show: "Show board",
+        hide: "Hide board",
+        showTitle: "Show session agent board",
+        hideTitle: "Hide right session agent board",
+      },
+      bubble: {
+        streaming: "(streaming…)",
+        empty: "(no reply content)",
+      },
+      form: {
+        loopLabel: "Loop",
+        loopOptions: { native: "Native", claude: "Claude CLI", codex: "Codex CLI" },
+        hitlLabel: "HITL",
+        hitlTitle:
+          "Chat HITL trigger policy:\n  • Smart (default): only high-risk tools (orders / external writes) trigger; normal calls don't interrupt\n  • Off: skip entirely; high-risk tools still hit the hard-rule fallback\n  • Every: confirm every tool call (legacy behavior)",
+        hitlOptions: { ai: "Smart", off: "Off", always: "Every" },
+        placeholder: "Type the task goal — sent to the main agent",
+      },
+      errors: {
+        createSession: "Failed to create session",
+        hitlAction: "HITL action failed",
+      },
+    },
+  },
+};
+
+export default pack;

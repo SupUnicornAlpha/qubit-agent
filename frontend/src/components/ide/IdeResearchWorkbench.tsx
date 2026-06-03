@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KlinePanel } from "../chart/KlinePanel";
 import { useAppStore } from "../../store";
+import { useTranslation } from "../../i18n";
 import { IdeBacktestDock } from "./IdeBacktestDock";
 import { IdeLeftColumn } from "./IdeLeftColumn";
 import { IdeQuickTradePanel } from "./IdeQuickTradePanel";
@@ -14,6 +15,7 @@ const MAX_IDE_LEFT_PCT = 68;
 export const IdeResearchWorkbench: FC<{ renderChat: () => ReactNode }> = ({ renderChat }) => {
   const idePanels = useAppStore((s) => s.idePanels);
   const ideQuickTradeOpen = useAppStore((s) => s.ideQuickTradeOpen);
+  const { t } = useTranslation();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [leftPct, setLeftPct] = useState(42);
   const drag = useRef<{ startX: number; startPct: number } | null>(null);
@@ -58,7 +60,7 @@ export const IdeResearchWorkbench: FC<{ renderChat: () => ReactNode }> = ({ rend
             <div
               role="separator"
               aria-orientation="vertical"
-              aria-label="调整对话与 K 线宽度"
+              aria-label={t("ide.workbench.gutterAriaLabel")}
               onMouseDown={onGutterDown}
               style={styles.gutter}
             />
@@ -76,9 +78,7 @@ export const IdeResearchWorkbench: FC<{ renderChat: () => ReactNode }> = ({ rend
                 {idePanels.backtest ? <IdeBacktestDock /> : null}
               </>
             ) : (
-              <div style={styles.emptyCenter}>
-                已隐藏 K 线 / 回测。在上方工具栏打开「K线」或「回测」即可恢复。
-              </div>
+              <div style={styles.emptyCenter}>{t("ide.workbench.emptyCenter")}</div>
             )}
           </div>
           {ideQuickTradeOpen ? (

@@ -175,6 +175,7 @@ import {
 import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
 import { MonitorDashboard } from "../monitor/MonitorDashboard";
 import { TraderLivePanel } from "../trader/TraderLivePanel";
+import { useTranslation } from "../../i18n";
 import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
 import { IntegrationCenterPanel } from "../config/IntegrationCenterPanel";
@@ -402,6 +403,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   const setChatMessages = useAppStore((s) => s.setChatMessages);
   const streamEvents = useAppStore((s) => s.streamEvents);
   const pushStreamEvent = useAppStore((s) => s.pushStreamEvent);
+  const { t } = useTranslation();
 
   const [workspaceId, setWorkspaceId] = useState("");
   const [projectId, setProjectId] = useState("");
@@ -664,7 +666,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             : sessions[0].id;
         setSelectedSessionId(keep);
       } else {
-        const created = await createChatSession({ workspaceId: wsId, projectId: pid, title: "默认会话" });
+        const created = await createChatSession({
+          workspaceId: wsId,
+          projectId: pid,
+          title: t("chat.sidebar.defaultSessionTitle"),
+        });
         setChatSessions([created]);
         setSelectedSessionId(created.id);
       }
@@ -716,7 +722,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       await onSelectSession(created.id);
       setErrorText("");
     } catch (err) {
-      setErrorText(err instanceof Error ? err.message : "新建会话失败");
+      setErrorText(err instanceof Error ? err.message : t("chat.errors.createSession"));
     }
   };
 
@@ -1044,7 +1050,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
         return next;
       });
     } catch (err) {
-      setErrorText(err instanceof Error ? err.message : "HITL 操作失败");
+      setErrorText(err instanceof Error ? err.message : t("chat.errors.hitlAction"));
     } finally {
       setHitlInflightRequestIds((prev) => {
         if (!prev.has(requestId)) return prev;
@@ -1142,7 +1148,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             style={{ flexShrink: 0, alignSelf: "stretch" }}
             onClick={() => void onCreateSession()}
           >
-            新建会话
+            {t("chat.sidebar.newSession")}
           </button>
           <div className="qb-chat-session-list" style={styles.chatSessionList}>
             {chatSessions.map((session) => (
@@ -1189,13 +1195,13 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                   type="button"
                   aria-label={
                     pendingDeleteSessionId === session.id
-                      ? `再次点击确认硬删除会话 ${session.title}`
-                      : `硬删除会话 ${session.title}`
+                      ? t("chat.sidebar.confirmDeletePending", { title: session.title })
+                      : t("chat.sidebar.deleteSession", { title: session.title })
                   }
                   title={
                     pendingDeleteSessionId === session.id
-                      ? "再次点击确认硬删除（含全部工作流/消息/checkpoint，不可恢复）。3 秒内未确认将自动取消。"
-                      : "硬删除会话（含全部工作流，不可恢复）"
+                      ? t("chat.sidebar.confirmDeleteTitle")
+                      : t("chat.sidebar.deleteSessionTitle")
                   }
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1214,7 +1220,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                     fontWeight: pendingDeleteSessionId === session.id ? 600 : 400,
                   }}
                 >
-                  {pendingDeleteSessionId === session.id ? "再次确认" : "×"}
+                  {pendingDeleteSessionId === session.id ? t("common.action.confirmAgain") : "×"}
                 </button>
               </div>
             ))}
@@ -1223,8 +1229,8 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
 
         <button
           type="button"
-          aria-label="拖动调整会话列表与对话区宽度"
-          title="拖动调整宽度"
+          aria-label={t("chat.sidebar.resizerAria")}
+          title={t("chat.sidebar.resizerTitle")}
           onMouseDown={onChatSidebarResizeMouseDown}
           style={styles.chatColResizer}
         />
@@ -1235,9 +1241,11 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               type="button"
               className="qb-btn-ghost qb-btn--compact"
               onClick={() => setSessionAgentBoardOpen((o) => !o)}
-              title={sessionAgentBoardOpen ? "隐藏右侧会话 Agent 看板" : "显示会话 Agent 看板"}
+              title={
+                sessionAgentBoardOpen ? t("chat.board.hideTitle") : t("chat.board.showTitle")
+              }
             >
-              {sessionAgentBoardOpen ? "隐藏会话看板" : "显示会话看板"}
+              {sessionAgentBoardOpen ? t("chat.board.hide") : t("chat.board.show")}
             </button>
           </div>
           <div style={styles.chatMessages}>
@@ -1250,9 +1258,13 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                   {msg.content ? (
                     <MarkdownBubble text={msg.content} />
                   ) : msg.status === "running" || msg.status === "queued" ? (
-                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>(流式生成中…)</span>
+                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>
+                      {t("chat.bubble.streaming")}
+                    </span>
                   ) : (
-                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>（暂无回复内容）</span>
+                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>
+                      {t("chat.bubble.empty")}
+                    </span>
                   )}
                 </div>
                 {msg.workflowRunIds?.length ? (
@@ -1311,45 +1323,40 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
           </div>
           <form style={styles.chatForm} onSubmit={onSend}>
             <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
-              Loop
+              {t("chat.form.loopLabel")}
               <select
                 value={chatLoopKind}
                 onChange={(e) => setChatLoopKind(e.target.value as AgentLoopKind)}
                 style={{ ...styles.input, maxWidth: 160 }}
               >
-                <option value="native">Native</option>
-                <option value="claude_cli">Claude CLI</option>
-                <option value="codex_cli">Codex CLI</option>
+                <option value="native">{t("chat.form.loopOptions.native")}</option>
+                <option value="claude_cli">{t("chat.form.loopOptions.claude")}</option>
+                <option value="codex_cli">{t("chat.form.loopOptions.codex")}</option>
               </select>
             </label>
             <label
               style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}
-              title={
-                "对话 HITL 触发策略：\n" +
-                "  • 智能（默认）：仅高危工具（下单 / 写入外部状态）触发，普通调用不打扰\n" +
-                "  • 关闭：完全跳过；高危工具仍走硬规则兜底\n" +
-                "  • 每次：每个工具调用都需要人工确认（旧版行为）"
-              }
+              title={t("chat.form.hitlTitle")}
             >
-              HITL
+              {t("chat.form.hitlLabel")}
               <select
                 value={chatHitlMode}
                 onChange={(e) => setChatHitlMode(e.target.value as "off" | "ai" | "always")}
                 style={{ ...styles.input, maxWidth: 110 }}
               >
-                <option value="ai">智能</option>
-                <option value="off">关闭</option>
-                <option value="always">每次</option>
+                <option value="ai">{t("chat.form.hitlOptions.ai")}</option>
+                <option value="off">{t("chat.form.hitlOptions.off")}</option>
+                <option value="always">{t("chat.form.hitlOptions.always")}</option>
               </select>
             </label>
             <input
               style={{ ...styles.input, flex: 1 }}
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="输入任务目标，发送给主 Agent"
+              placeholder={t("chat.form.placeholder")}
             />
             <button className="qb-btn-primary-brand" type="submit">
-              发送
+              {t("common.action.send")}
             </button>
           </form>
         </div>

@@ -355,7 +355,11 @@ export const useAppStore = create<AppState>((set) => ({
   idePanels: { left: true, chart: true, backtest: true },
   toggleIdePanelVisible: (key) =>
     set((s) => ({ idePanels: { ...s.idePanels, [key]: !s.idePanels[key] } })),
-  ideIndicatorLabel: "（未选指标）",
+  /**
+   * 持久化下拉选中的「指标模板 id」（稳定值），具体展示文案在组件内通过 i18n 解析。
+   * 取值范围：`none` / `smaCross` / `rsiRange` / `macdHist` / `boll`。
+   */
+  ideIndicatorLabel: "none",
   setIdeIndicatorLabel: (v) => set({ ideIndicatorLabel: v }),
   ideQuickTradeOpen: false,
   setIdeQuickTradeOpen: (v) => set({ ideQuickTradeOpen: v }),

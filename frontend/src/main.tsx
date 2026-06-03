@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { initI18n } from "./i18n";
 import "./ide-theme.css";
 import "./theme/tokyo-night-editor.css";
 import "./qb-themes.css";
@@ -42,6 +43,8 @@ import "./theme/quant-sci-fi-hud.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");
+
+initI18n();
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>

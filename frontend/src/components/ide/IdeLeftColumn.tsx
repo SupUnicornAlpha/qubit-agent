@@ -1,14 +1,16 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useAppStore } from "../../store";
+import { useTranslation } from "../../i18n";
 import { IdeIndicatorIdePanel } from "./IdeIndicatorIdePanel";
 
 export const IdeLeftColumn: FC<{ renderChat: () => ReactNode }> = ({ renderChat }) => {
   const ideLeftTab = useAppStore((s) => s.ideLeftTab);
   const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
+  const { t } = useTranslation();
 
   return (
     <div style={styles.root}>
-      <div style={styles.tabsWrap} role="tablist" aria-label="左侧工作台模式">
+      <div style={styles.tabsWrap} role="tablist" aria-label={t("ide.leftColumn.ariaLabel")}>
         <div className="qb-segmented qb-segmented--inline" style={styles.segmented}>
           <button
             type="button"
@@ -17,7 +19,7 @@ export const IdeLeftColumn: FC<{ renderChat: () => ReactNode }> = ({ renderChat 
             className={`qb-segmented__tab${ideLeftTab === "chat" ? " qb-segmented__tab--active" : ""}`}
             onClick={() => setIdeLeftTab("chat")}
           >
-            对话工作台
+            {t("ide.leftColumn.chat")}
           </button>
           <button
             type="button"
@@ -26,7 +28,7 @@ export const IdeLeftColumn: FC<{ renderChat: () => ReactNode }> = ({ renderChat 
             className={`qb-segmented__tab${ideLeftTab === "indicator" ? " qb-segmented__tab--active" : ""}`}
             onClick={() => setIdeLeftTab("indicator")}
           >
-            指标 IDE
+            {t("ide.leftColumn.indicator")}
           </button>
         </div>
       </div>

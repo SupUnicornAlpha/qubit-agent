@@ -8,10 +8,12 @@ import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
 import { useAppStore } from "./store";
 import { useAmbient3dTilt } from "./hooks/useAmbient3dTilt";
+import { useTranslation } from "./i18n";
 
 const App: FC = () => {
   const setBackendConnected = useAppStore((s) => s.setBackendConnected);
   const setBackendHint = useAppStore((s) => s.setBackendHint);
+  const { t, locale } = useTranslation();
   useAmbient3dTilt();
 
   useEffect(() => {
@@ -52,9 +54,9 @@ const App: FC = () => {
         lastConnected = false;
         setBackendConnected(false);
         if (inTauri) {
-          setBackendHint("内置后端未就绪，可点击顶部「重启后端」或稍候自动重试。");
+          setBackendHint(t("app.hint.tauriBackendNotReady"));
         } else {
-          setBackendHint("后端未连接：请在项目根目录启动 `bun run dev`。");
+          setBackendHint(t("app.hint.webBackendDisconnected"));
         }
       } finally {
         scheduleNext();
@@ -73,7 +75,7 @@ const App: FC = () => {
       setBackendHint(null);
       void tauriStartBackend();
     } else {
-      setBackendHint("当前为 Web 模式，不会自动拉起后端，请先执行 `bun run dev`。");
+      setBackendHint(t("app.hint.webModeBootstrap"));
     }
     document.addEventListener("visibilitychange", onVisibilityChange);
     void probeHealth();
@@ -83,7 +85,8 @@ const App: FC = () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer) clearTimeout(timer);
     };
-  }, [setBackendConnected, setBackendHint]);
+    // 依赖 `locale` 是为了切换语言后立即用新文案刷新 hint。
+  }, [setBackendConnected, setBackendHint, t, locale]);
 
   return (
     <div className="qb-app-root" style={styles.root}>

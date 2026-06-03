@@ -14,6 +14,7 @@ import { useAppStore } from "../../store";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
 import { ChartMarketSelect } from "../chart/ChartMarketSelect";
 import { IconToolbarButton } from "../ui/IconToolbarButton";
+import { useTranslation } from "../../i18n";
 
 const chipLayout: CSSProperties = {
   padding: "4px 10px",
@@ -21,6 +22,13 @@ const chipLayout: CSSProperties = {
   fontSize: 12,
   cursor: "pointer",
 };
+
+/**
+ * 指标模板下拉选项：使用稳定 id 作为持久化值，切换语言后只影响展示。
+ * 老版本可能在 localStorage / store 里残留中文 label —— 但当前 store 没有对它做持久化，
+ * 切语言不会引入历史值不一致问题。
+ */
+const INDICATOR_IDS = ["none", "smaCross", "rsiRange", "macdHist", "boll"] as const;
 
 export const IdeWorkbenchToolbar: FC = () => {
   const chartSpec = useAppStore((s) => s.chartSpec);
@@ -34,6 +42,7 @@ export const IdeWorkbenchToolbar: FC = () => {
   const toggleIdePanelVisible = useAppStore((s) => s.toggleIdePanelVisible);
   const chartOverlays = useAppStore((s) => s.chartOverlays);
   const toggleChartOverlay = useAppStore((s) => s.toggleChartOverlay);
+  const { t } = useTranslation();
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -44,13 +53,13 @@ export const IdeWorkbenchToolbar: FC = () => {
     <header className="qb-workbench-toolbar" style={styles.outer}>
       <form style={styles.rowMain} onSubmit={onSubmit}>
         <div className="qb-toolbar-group">
-          <span style={styles.lab}>自选</span>
+          <span style={styles.lab}>{t("ide.toolbar.labels.watchlist")}</span>
           <input
             style={styles.fieldControl}
             value={chartSpec.symbol}
             onChange={(e) => setChartSpec({ symbol: e.target.value })}
-            placeholder="代码"
-            aria-label="品种代码"
+            placeholder={t("ide.toolbar.labels.symbol")}
+            aria-label={t("ide.toolbar.labels.symbolAria")}
           />
           <span style={styles.slash}>/</span>
           <ChartMarketSelect
@@ -60,14 +69,14 @@ export const IdeWorkbenchToolbar: FC = () => {
           />
         </div>
         <span className="qb-toolbar-vsep" aria-hidden />
-        <div className="qb-toolbar-group" role="group" aria-label="周期">
+        <div className="qb-toolbar-group" role="group" aria-label={t("ide.toolbar.labels.period")}>
           {CHART_TIMEFRAMES.map((tf) => (
             <button
               key={tf}
               type="button"
               className={`qb-chip${chartSpec.timeframe === tf ? " qb-chip--active" : ""}`}
               style={chipLayout}
-              title={`K 线周期：${tf}`}
+              title={t("ide.toolbar.labels.periodTitle", { tf })}
               onClick={() => setChartSpec({ timeframe: tf })}
             >
               {tf}
@@ -77,7 +86,7 @@ export const IdeWorkbenchToolbar: FC = () => {
         <span className="qb-toolbar-vsep" aria-hidden />
         <div className="qb-toolbar-group">
           <label style={styles.labInline}>
-            条数
+            {t("ide.toolbar.labels.bars")}
             <input
               style={{ ...styles.inpSm, width: 72 }}
               type="number"
@@ -85,86 +94,92 @@ export const IdeWorkbenchToolbar: FC = () => {
               max={2000}
               value={chartSpec.limit}
               onChange={(e) => setChartSpec({ limit: Number(e.target.value) || 120 })}
-              title="拉取 K 线根数上限"
+              title={t("ide.toolbar.labels.barsTitle")}
             />
           </label>
           <select
             style={styles.select}
-            value={ideIndicatorLabel}
+            value={(INDICATOR_IDS as readonly string[]).includes(ideIndicatorLabel)
+              ? ideIndicatorLabel
+              : "none"}
             onChange={(e) => setIdeIndicatorLabel(e.target.value)}
-            aria-label="指标模板"
-            title="研究侧加载的指标脚本模板"
+            aria-label={t("ide.toolbar.labels.indicators")}
+            title={t("ide.toolbar.labels.indicatorsTitle")}
           >
-            <option value="（未选指标）">（未选指标）</option>
-            <option value="双均线交叉">双均线交叉</option>
-            <option value="RSI 区间">RSI 区间</option>
-            <option value="MACD 柱">MACD 柱</option>
-            <option value="布林带">布林带</option>
+            {INDICATOR_IDS.map((id) => (
+              <option key={id} value={id}>
+                {t(`ide.indicators.${id}`)}
+              </option>
+            ))}
           </select>
         </div>
         <div style={styles.spacer} />
-        <button type="submit" className="qb-btn-primary" title="按当前自选与周期重新请求 K 线">
-          刷新数据
+        <button
+          type="submit"
+          className="qb-btn-primary"
+          title={t("ide.toolbar.labels.refreshTitle")}
+        >
+          {t("ide.toolbar.labels.refresh")}
         </button>
       </form>
       <div style={styles.rowSub}>
-        <span style={styles.subLab}>主图叠加</span>
+        <span style={styles.subLab}>{t("ide.toolbar.labels.mainOverlay")}</span>
         <div className="qb-toolbar-group">
           <IconToolbarButton
             Icon={ChartLine}
-            label="SMA20 主图均线"
+            label={t("ide.toolbar.overlays.sma20")}
             active={chartOverlays.sma20}
             onClick={() => toggleChartOverlay("sma20")}
           />
           <IconToolbarButton
             Icon={Waves}
-            label="EMA20 主图均线"
+            label={t("ide.toolbar.overlays.ema20")}
             active={chartOverlays.ema20}
             onClick={() => toggleChartOverlay("ema20")}
           />
           <IconToolbarButton
             Icon={Activity}
-            label="RSI14 副图"
+            label={t("ide.toolbar.overlays.rsi14")}
             active={chartOverlays.rsi14}
             onClick={() => toggleChartOverlay("rsi14")}
           />
           <IconToolbarButton
             Icon={BarChart2}
-            label="MACD 副图（与 RSI 二选一）"
+            label={t("ide.toolbar.overlays.macd")}
             active={chartOverlays.macd}
             onClick={() => toggleChartOverlay("macd")}
           />
           <IconToolbarButton
             Icon={CircleDashed}
-            label="布林带（20, 2）主图叠加"
+            label={t("ide.toolbar.overlays.bb20")}
             active={chartOverlays.bb20}
             onClick={() => toggleChartOverlay("bb20")}
           />
         </div>
         <span className="qb-toolbar-vsep" aria-hidden />
-        <span style={styles.subLab}>面板</span>
+        <span style={styles.subLab}>{t("ide.toolbar.labels.panels")}</span>
         <div className="qb-toolbar-group">
           <IconToolbarButton
             Icon={LayoutPanelLeft}
-            label="显示或隐藏左侧会话列"
+            label={t("ide.toolbar.panelToggles.left")}
             active={idePanels.left}
             onClick={() => toggleIdePanelVisible("left")}
           />
           <IconToolbarButton
             Icon={ChartCandlestick}
-            label="显示或隐藏 K 线主图"
+            label={t("ide.toolbar.panelToggles.chart")}
             active={idePanels.chart}
             onClick={() => toggleIdePanelVisible("chart")}
           />
           <IconToolbarButton
             Icon={FlaskConical}
-            label="显示或隐藏回测停靠栏"
+            label={t("ide.toolbar.panelToggles.backtest")}
             active={idePanels.backtest}
             onClick={() => toggleIdePanelVisible("backtest")}
           />
           <IconToolbarButton
             Icon={Banknote}
-            label="打开或关闭快捷交易侧栏"
+            label={t("ide.toolbar.panelToggles.quickTrade")}
             active={ideQuickTradeOpen}
             onClick={() => setIdeQuickTradeOpen(!ideQuickTradeOpen)}
           />

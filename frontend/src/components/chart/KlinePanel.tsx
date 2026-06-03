@@ -25,6 +25,7 @@ import {
 import { ChartMarketSelect } from "./ChartMarketSelect";
 import type { TraderMarkerRecord } from "../../store";
 import { useAppStore } from "../../store";
+import { useTranslation } from "../../i18n";
 import { NewsBriefSection } from "./NewsBriefSection";
 
 function toChartTime(bar: KlineBar, timeframe: string): Time {
@@ -159,6 +160,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   const setActiveView = useAppStore((s) => s.setActiveView);
   const activeView = useAppStore((s) => s.activeView);
   const traderMarkers = useAppStore((s) => s.traderMarkers);
+  const { t } = useTranslation();
   const wrapRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -352,7 +354,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     const spec = useAppStore.getState().chartSpec;
     const last = lastBars[lastBars.length - 1];
     const summary = last
-      ? `末根 OHLC=${last.open.toFixed(4)}/${last.high.toFixed(4)}/${last.low.toFixed(4)}/${last.close.toFixed(4)} · vol=${Math.round(last.volume)}`
+      ? t("chart.kline.ohlcTail", {
+          o: last.open.toFixed(4),
+          h: last.high.toFixed(4),
+          l: last.low.toFixed(4),
+          c: last.close.toFixed(4),
+          v: Math.round(last.volume),
+        }).replace(/^ · /, "")
       : undefined;
     setChartContext({
       symbol: spec.symbol.trim(),
@@ -402,14 +410,24 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     requestChartReload();
   };
 
+  const errTail = klinesError ? ` · ${formatKlinesErrorTail(klinesError)}` : "";
+  const loadingTail = loading ? t("chart.kline.loadingTail") : "";
   const metaStatusLine = meta
     ? embedded
-      ? `来源 ${meta.dataSource} · 返回 ${meta.returned}/${meta.requestedLimit}${loading ? " · 加载中…" : ""}${
-          klinesError ? ` · ${formatKlinesErrorTail(klinesError)}` : ""
-        }`
-      : `来源 ${meta.dataSource} · 周期 ${meta.timeframe} / ${meta.period} · 返回 ${meta.returned} / 请求 ${meta.requestedLimit}${
-          klinesError ? ` · ${formatKlinesErrorTail(klinesError)}` : ""
-        }`
+      ? t("chart.kline.sourceCompact", {
+          source: meta.dataSource,
+          got: meta.returned,
+          want: meta.requestedLimit,
+          loadingTail: loadingTail + errTail,
+        })
+      : t("chart.kline.sourceFull", {
+          source: meta.dataSource,
+          tf: meta.timeframe,
+          period: meta.period,
+          got: meta.returned,
+          want: meta.requestedLimit,
+          tail: errTail,
+        })
     : null;
 
   return (
@@ -423,7 +441,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
           {metaStatusLine ? (
             <div style={styles.metaCompact}>{metaStatusLine}</div>
           ) : loading ? (
-            <div style={styles.metaCompact}>加载中…</div>
+            <div style={styles.metaCompact}>{t("common.status.loading")}</div>
           ) : null}
           <button
             type="button"
@@ -431,15 +449,15 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
             disabled={loading || lastBars.length === 0}
             onClick={bringToChat}
           >
-            带入对话分析
+            {t("chart.kline.importToChat")}
           </button>
         </div>
       ) : (
         <header style={styles.header}>
-          <h1 style={styles.title}>资讯</h1>
+          <h1 style={styles.title}>{t("chart.kline.title")}</h1>
           <form style={styles.form} onSubmit={onSubmit}>
             <label style={styles.lab}>
-              代码
+              {t("chart.kline.codeLabel")}
               <input
                 style={styles.field}
                 value={chartSpec.symbol}
@@ -448,7 +466,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
               />
             </label>
             <label style={styles.lab}>
-              市场
+              {t("chart.kline.marketLabel")}
               <ChartMarketSelect
                 style={styles.field}
                 value={chartSpec.exchange}
@@ -456,7 +474,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
               />
             </label>
             <label style={styles.lab}>
-              周期
+              {t("chart.kline.periodLabel")}
               <select
                 style={styles.field}
                 value={chartSpec.timeframe}
@@ -470,7 +488,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
               </select>
             </label>
             <label style={styles.lab}>
-              条数
+              {t("chart.kline.barsLabel")}
               <input
                 style={styles.field}
                 type="number"
@@ -481,7 +499,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
               />
             </label>
             <button type="submit" className="qb-btn-primary" disabled={loading}>
-              {loading ? "加载中…" : "刷新"}
+              {loading ? t("common.status.loading") : t("common.action.refresh")}
             </button>
             <button
               type="button"
@@ -489,7 +507,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
               disabled={loading || lastBars.length === 0}
               onClick={bringToChat}
             >
-              带入对话分析
+              {t("chart.kline.importToChat")}
             </button>
           </form>
         </header>

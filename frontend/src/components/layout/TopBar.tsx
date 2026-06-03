@@ -3,8 +3,9 @@ import { useState } from "react";
 import { getHealth } from "../../api/backend";
 import { PACKAGED_BACKEND_URL } from "../../api/packaged-backend";
 import { isTauriEnv, tauriRestartBackend } from "../../api/tauri";
-import { PALETTE_LABELS, palettesForStyle, STYLE_LABELS } from "../../theme/appearance";
+import { palettesForStyle } from "../../theme/appearance";
 import { useAppStore, UI_STYLE_IDS, type UiPaletteId, type UiStyleId } from "../../store";
+import { LanguageSwitcher, useTranslation } from "../../i18n";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
@@ -15,6 +16,7 @@ export const TopBar: FC = () => {
   const uiStyle = useAppStore((s) => s.uiStyle);
   const setUiPalette = useAppStore((s) => s.setUiPalette);
   const setUiStyle = useAppStore((s) => s.setUiStyle);
+  const { t } = useTranslation();
   const [restarting, setRestarting] = useState(false);
   const inTauri = isTauriEnv();
   const paletteLocked =
@@ -24,7 +26,7 @@ export const TopBar: FC = () => {
   const onRestartBackend = async () => {
     if (!inTauri || restarting) return;
     setRestarting(true);
-    setBackendHint("正在重启内置后端…");
+    setBackendHint(t("topbar.restart.progress"));
     try {
       await tauriRestartBackend();
       await new Promise((r) => setTimeout(r, 800));
@@ -33,7 +35,7 @@ export const TopBar: FC = () => {
       setBackendHint(null);
     } catch {
       setBackendConnected(false);
-      setBackendHint(`重启失败，请确认本机未占用 ${PACKAGED_BACKEND_URL} 对应端口。`);
+      setBackendHint(t("topbar.restart.failure", { url: PACKAGED_BACKEND_URL }));
     } finally {
       setRestarting(false);
     }
@@ -49,29 +51,29 @@ export const TopBar: FC = () => {
       </div>
       <span className="qb-topbar__divider" aria-hidden />
       <span className="qb-topbar__subtitle" style={styles.subtitleWrap}>
-        量化研究 Agent 平台
+        {t("topbar.brandSubtitle")}
       </span>
       {backendHint ? <span style={styles.hint}>{backendHint}</span> : null}
       <div className="qb-appearance-controls" style={styles.appearance}>
         <label className="qb-visually-hidden" htmlFor="qb-ui-style">
-          界面风格
+          {t("topbar.style.label")}
         </label>
         <select
           id="qb-ui-style"
           className="qb-style-select"
           value={uiStyle}
-          title="界面风格"
-          aria-label="界面风格"
+          title={t("topbar.style.label")}
+          aria-label={t("topbar.style.label")}
           onChange={(e) => setUiStyle(e.target.value as UiStyleId)}
         >
           {UI_STYLE_IDS.map((id) => (
             <option key={id} value={id}>
-              {STYLE_LABELS[id]}
+              {t(`theme.styles.${id}`)}
             </option>
           ))}
         </select>
         <label className="qb-visually-hidden" htmlFor="qb-ui-palette">
-          配色
+          {t("topbar.palette.label")}
         </label>
         <select
           id="qb-ui-palette"
@@ -79,23 +81,24 @@ export const TopBar: FC = () => {
           value={uiPalette}
           title={
             paletteLocked
-              ? "切换回「默认」、Glass Holographic 或 Biophilic 风格后可改配色"
+              ? t("topbar.palette.lockedTitle")
               : uiStyle === "glass-holographic"
-                ? "Glass 底色（冷 / 暖 / 彩虹）"
+                ? t("topbar.palette.glassTitle")
                 : uiStyle === "biophilic"
-                  ? "亲自然配色（绿植绿涨 / 柔和红涨）"
-                  : "配色"
+                  ? t("topbar.palette.biophilicTitle")
+                  : t("topbar.palette.defaultTitle")
           }
-          aria-label="配色"
+          aria-label={t("topbar.palette.label")}
           disabled={paletteLocked}
           onChange={(e) => setUiPalette(e.target.value as UiPaletteId)}
         >
           {paletteOptions.map((id) => (
             <option key={id} value={id}>
-              {PALETTE_LABELS[id]}
+              {t(`theme.palettes.${id}`)}
             </option>
           ))}
         </select>
+        <LanguageSwitcher />
       </div>
       <span className="qb-topbar__divider" aria-hidden />
       <StatusDot connected={connected} inTauri={inTauri} />
@@ -105,10 +108,10 @@ export const TopBar: FC = () => {
           className="qb-backend-restart-btn"
           style={styles.restartBtn}
           disabled={restarting}
-          title={`重启内置后端（${PACKAGED_BACKEND_URL}）`}
+          title={t("topbar.restart.title", { url: PACKAGED_BACKEND_URL })}
           onClick={() => void onRestartBackend()}
         >
-          {restarting ? "重启中…" : "重启后端"}
+          {restarting ? t("topbar.restart.running") : t("topbar.restart.button")}
         </button>
       ) : null}
       {uiStyle === "ambient-3d" ? (
@@ -120,27 +123,30 @@ export const TopBar: FC = () => {
   );
 };
 
-const StatusDot: FC<{ connected: boolean; inTauri: boolean }> = ({ connected, inTauri }) => (
-  <div
-    className="qb-status-pill"
-    title={
-      connected
-        ? inTauri
-          ? "内置后端已连接（127.0.0.1:17385）"
-          : "后端健康检查通过，可正常调用 API"
-        : inTauri
-          ? "内置后端未响应，可点击「重启后端」"
-          : "后端未响应：请检查本机是否已启动开发服务"
-    }
-    style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#a1a1aa" }}
-  >
-    <span
-      className={`qb-status-dot ${connected ? "qb-status-dot--ok qb-status-dot--live" : "qb-status-dot--off"}`}
-      aria-hidden
-    />
-    {connected ? "Backend Connected" : "Backend Offline"}
-  </div>
-);
+const StatusDot: FC<{ connected: boolean; inTauri: boolean }> = ({ connected, inTauri }) => {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="qb-status-pill"
+      title={
+        connected
+          ? inTauri
+            ? t("topbar.status.connectedTauri")
+            : t("topbar.status.connectedWeb")
+          : inTauri
+            ? t("topbar.status.offlineTauri")
+            : t("topbar.status.offlineWeb")
+      }
+      style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#a1a1aa" }}
+    >
+      <span
+        className={`qb-status-dot ${connected ? "qb-status-dot--ok qb-status-dot--live" : "qb-status-dot--off"}`}
+        aria-hidden
+      />
+      {connected ? t("common.backend.connected") : t("common.backend.offline")}
+    </div>
+  );
+};
 
 const styles: Record<string, CSSProperties> = {
   bar: {

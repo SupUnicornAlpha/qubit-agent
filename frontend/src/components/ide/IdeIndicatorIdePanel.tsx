@@ -11,6 +11,7 @@ import type { IndicatorStrategyScriptRecord } from "../../api/types";
 import { TokyoCodeEditor } from "../code/TokyoCodeEditor";
 import { qc } from "../../lib/uiClasses";
 import { useAppStore } from "../../store";
+import { useTranslation } from "../../i18n";
 
 type WfRow = { id?: string; goal?: string; status?: string };
 
@@ -28,9 +29,11 @@ export const IdeIndicatorIdePanel: FC = () => {
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
   const chatSessions = useAppStore((s) => s.chatSessions);
   const chartSpec = useAppStore((s) => s.chartSpec);
+  const { t } = useTranslation();
 
+  const defaultName = t("ide.indicatorIde.defaultScriptName");
   const [scripts, setScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
-  const [scriptName, setScriptName] = useState("策略稿");
+  const [scriptName, setScriptName] = useState(defaultName);
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [purpose, setPurpose] = useState<"research" | "live_trading" | "both">("both");
   const [workflows, setWorkflows] = useState<WfRow[]>([]);
@@ -39,10 +42,10 @@ export const IdeIndicatorIdePanel: FC = () => {
   const [showSignal, setShowSignal] = useState(false);
 
   const sessionTitle = useMemo(() => {
-    if (!selectedSessionId) return "（未选择会话）";
+    if (!selectedSessionId) return t("ide.indicatorIde.meta.sessionEmpty");
     const s = chatSessions.find((x) => x.id === selectedSessionId);
     return s?.title ?? selectedSessionId.slice(0, 8);
-  }, [chatSessions, selectedSessionId]);
+  }, [chatSessions, selectedSessionId, t]);
 
   const refreshScripts = useCallback(async () => {
     if (!selectedSessionId) {
@@ -82,19 +85,19 @@ export const IdeIndicatorIdePanel: FC = () => {
 
   const newDraft = () => {
     setIdeActiveStrategyScriptId(null);
-    setScriptName("策略稿");
+    setScriptName(defaultName);
     setWorkflowRunId("");
     setError(null);
   };
 
   const saveNow = async () => {
     if (!selectedSessionId) {
-      setError("请先在对话工作台选择会话后再保存。");
+      setError(t("ide.indicatorIde.errors.needSession"));
       return;
     }
     const name = scriptName.trim();
     if (!name) {
-      setError("请填写策略名称。");
+      setError(t("ide.indicatorIde.errors.needName"));
       return;
     }
     setLoading(true);
@@ -139,7 +142,7 @@ export const IdeIndicatorIdePanel: FC = () => {
 
   const deleteNow = async () => {
     if (!ideActiveStrategyScriptId) return;
-    if (!window.confirm("确定删除当前已保存的策略稿？")) return;
+    if (!window.confirm(t("ide.indicatorIde.errors.confirmDelete"))) return;
     setLoading(true);
     setError(null);
     try {
@@ -154,38 +157,45 @@ export const IdeIndicatorIdePanel: FC = () => {
   };
 
   const sendToChat = () => {
-    const prompt = ideAiPrompt.trim() || "（未填写自然语言描述）";
-    const block = `请根据以下「自然语言需求」与「指标/策略草稿」继续完善、检查风险点，并说明需要哪些行情数据或 API：\n\n【需求】\n${prompt}\n\n【当前草稿】\n\`\`\`python\n${ideStrategySource}\n\`\`\``;
+    const prompt = ideAiPrompt.trim() || t("ide.indicatorIde.ai.promptEmpty");
+    const block = t("ide.indicatorIde.ai.chatBlock", {
+      prompt,
+      code: ideStrategySource,
+    });
     setChatDraftPrefill(block);
     setIdeLeftTab("chat");
   };
 
   const badgeText = ideActiveStrategyScriptId
-    ? `已入库 · ${scriptName.trim() || "未命名"}`
-    : "本地草稿 · 未保存";
+    ? t("ide.indicatorIde.badge.saved", {
+        name: scriptName.trim() || t("ide.indicatorIde.badge.unnamed"),
+      })
+    : t("ide.indicatorIde.badge.unsaved");
 
   return (
     <div style={styles.root}>
       <div style={styles.head}>
-        <span style={styles.title}>代码编辑器</span>
+        <span style={styles.title}>{t("ide.indicatorIde.title")}</span>
         <span style={styles.badge}>{badgeText}</span>
       </div>
 
       <div style={styles.metaBar}>
         <div style={styles.metaRow}>
-          <span style={styles.metaLabel}>关联会话</span>
+          <span style={styles.metaLabel}>{t("ide.indicatorIde.meta.session")}</span>
           <span style={styles.metaVal}>{sessionTitle}</span>
-          {!selectedSessionId ? <span style={styles.warn}>请在「对话工作台」选中会话</span> : null}
+          {!selectedSessionId ? (
+            <span style={styles.warn}>{t("ide.indicatorIde.meta.sessionWarn")}</span>
+          ) : null}
         </div>
         <div style={styles.metaRow}>
-          <span style={styles.metaLabel}>研究团队 Run</span>
+          <span style={styles.metaLabel}>{t("ide.indicatorIde.meta.run")}</span>
           <select
             style={styles.selectSm}
             value={workflowRunId}
             onChange={(e) => setWorkflowRunId(e.target.value)}
             disabled={!selectedSessionId}
           >
-            <option value="">（不关联具体 Run）</option>
+            <option value="">{t("ide.indicatorIde.meta.runEmpty")}</option>
             {workflows.map((w) => (
               <option key={w.id} value={w.id}>
                 {(w.goal ?? "").slice(0, 36)}
@@ -195,42 +205,44 @@ export const IdeIndicatorIdePanel: FC = () => {
           </select>
         </div>
         <div style={styles.metaRow}>
-          <span style={styles.metaLabel}>用途</span>
+          <span style={styles.metaLabel}>{t("ide.indicatorIde.meta.purpose")}</span>
           <select
             style={styles.selectSm}
             value={purpose}
             onChange={(e) => setPurpose(e.target.value as typeof purpose)}
           >
-            <option value="research">研究 / 对话产出</option>
-            <option value="live_trading">量化交易执行</option>
-            <option value="both">研究 + 交易</option>
+            <option value="research">{t("ide.indicatorIde.purpose.research")}</option>
+            <option value="live_trading">{t("ide.indicatorIde.purpose.live")}</option>
+            <option value="both">{t("ide.indicatorIde.purpose.both")}</option>
           </select>
         </div>
         <div style={styles.metaRow}>
-          <span style={styles.metaLabel}>策略名</span>
+          <span style={styles.metaLabel}>{t("ide.indicatorIde.meta.name")}</span>
           <input
             style={styles.inpSm}
             value={scriptName}
             onChange={(e) => setScriptName(e.target.value)}
-            placeholder="保存时使用的名称"
+            placeholder={t("ide.indicatorIde.meta.namePlaceholder")}
           />
         </div>
         <div style={styles.btnRow}>
           <button type="button" className="qb-btn-secondary" onClick={() => void refreshScripts()} disabled={!selectedSessionId || loading}>
-            刷新列表
+            {t("ide.indicatorIde.actions.refresh")}
           </button>
           <button type="button" className="qb-btn-secondary" onClick={newDraft}>
-            新建草稿
+            {t("ide.indicatorIde.actions.newDraft")}
           </button>
           <button type="button" className="qb-btn-primary-brand" onClick={() => void saveNow()} disabled={loading}>
-            {ideActiveStrategyScriptId ? "保存更新" : "保存到会话"}
+            {ideActiveStrategyScriptId
+              ? t("ide.indicatorIde.actions.saveUpdate")
+              : t("ide.indicatorIde.actions.saveToSession")}
           </button>
           <button type="button" className="qb-btn-secondary" onClick={() => void deleteNow()} disabled={!ideActiveStrategyScriptId || loading}>
-            删除
+            {t("ide.indicatorIde.actions.delete")}
           </button>
         </div>
         <div style={styles.metaRow}>
-          <span style={styles.metaLabel}>已保存</span>
+          <span style={styles.metaLabel}>{t("ide.indicatorIde.meta.saved")}</span>
           <select
             style={styles.selectGrow}
             value={ideActiveStrategyScriptId ?? ""}
@@ -245,7 +257,7 @@ export const IdeIndicatorIdePanel: FC = () => {
             }}
             disabled={!selectedSessionId || scripts.length === 0}
           >
-            <option value="">（选择已保存策略…）</option>
+            <option value="">{t("ide.indicatorIde.meta.savedEmpty")}</option>
             {scripts.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} · {s.purpose}
@@ -266,11 +278,11 @@ export const IdeIndicatorIdePanel: FC = () => {
         filename={`${scriptName.trim() || "strategy"}.py`}
         value={ideStrategySource}
         onChange={setIdeStrategySource}
-        textareaProps={{ "aria-label": "策略与指标源码" }}
+        textareaProps={{ "aria-label": t("ide.indicatorIde.editor.ariaSource") }}
       />
 
       <details style={styles.details} open={showSignal} onToggle={(e) => setShowSignal((e.target as HTMLDetailsElement).open)}>
-        <summary style={styles.sum}>Python 信号脚本（底部「代码策略」回测共用）</summary>
+        <summary style={styles.sum}>{t("ide.indicatorIde.signal.summary")}</summary>
         <TokyoCodeEditor
           flat
           showChrome={false}
@@ -280,25 +292,25 @@ export const IdeIndicatorIdePanel: FC = () => {
           filename="signal.py"
           value={ideSignalPythonCode}
           onChange={setIdeSignalPythonCode}
-          textareaProps={{ "aria-label": "Python 信号 buy sell" }}
+          textareaProps={{ "aria-label": t("ide.indicatorIde.editor.ariaSignal") }}
         />
       </details>
 
       <div style={styles.aiBox}>
-          <div style={styles.aiTitle}>AI 生成（自然语言 → 策略）</div>
+        <div style={styles.aiTitle}>{t("ide.indicatorIde.ai.title")}</div>
         <textarea
           className={qc.textarea}
           style={styles.aiIn}
           value={ideAiPrompt}
           onChange={(e) => setIdeAiPrompt(e.target.value)}
-          placeholder="用自然语言描述你想实现的指标或买卖逻辑…"
+          placeholder={t("ide.indicatorIde.ai.placeholder")}
           rows={3}
         />
         <div style={styles.aiActions}>
           <button type="button" className="qb-btn-primary-brand" onClick={sendToChat}>
-            生成并带入对话
+            {t("ide.indicatorIde.ai.send")}
           </button>
-          <span style={styles.hint}>保存时会一并记录此描述与当前图表标的，便于研究与交易模块复用。</span>
+          <span style={styles.hint}>{t("ide.indicatorIde.ai.hint")}</span>
         </div>
       </div>
     </div>

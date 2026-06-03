@@ -1,6 +1,7 @@
 import type { CSSProperties, FC } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../../store";
+import { useTranslation } from "../../i18n";
 
 type OrderKind = "market" | "limit";
 
@@ -21,6 +22,7 @@ export const IdeQuickTradePanel: FC<{
 }) => {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const pushTraderAgentLog = useAppStore((s) => s.pushTraderAgentLog);
+  const { t } = useTranslation();
   const [orderKind, setOrderKind] = useState<OrderKind>("market");
   const [amountPct, setAmountPct] = useState(25);
   const [notional, setNotional] = useState(10_000);
@@ -38,15 +40,40 @@ export const IdeQuickTradePanel: FC<{
     const sig = `${orderKind}|${amountPct}|${leverage}|${marginMode}`;
     if (lastSig.current === sig) return;
     lastSig.current = sig;
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       pushTraderAgentLog({
         kind: "user",
-        title: "快捷交易参数变更",
-        body: `订单类型=${orderKind === "market" ? "市价" : "限价"} · 名义比例=${amountPct}% · 杠杆=${leverage}x · 保证金=${marginMode === "cross" ? "全仓" : "逐仓"}\n品种 ${chartSpec.symbol} / ${chartSpec.exchange} · ${chartSpec.timeframe}`,
+        title: t("ide.quickTrade.logTitle"),
+        body: t("ide.quickTrade.logBody", {
+          kind:
+            orderKind === "market"
+              ? t("ide.quickTrade.orderKind.market")
+              : t("ide.quickTrade.orderKind.limit"),
+          pct: amountPct,
+          lev: leverage,
+          margin:
+            marginMode === "cross"
+              ? t("ide.quickTrade.margin.cross")
+              : t("ide.quickTrade.margin.isolated"),
+          symbol: chartSpec.symbol,
+          exchange: chartSpec.exchange,
+          tf: chartSpec.timeframe,
+        }),
       });
     }, 450);
-    return () => window.clearTimeout(t);
-  }, [traderLinked, orderKind, amountPct, leverage, marginMode, chartSpec.symbol, chartSpec.exchange, chartSpec.timeframe, pushTraderAgentLog]);
+    return () => window.clearTimeout(timer);
+  }, [
+    traderLinked,
+    orderKind,
+    amountPct,
+    leverage,
+    marginMode,
+    chartSpec.symbol,
+    chartSpec.exchange,
+    chartSpec.timeframe,
+    pushTraderAgentLog,
+    t,
+  ]);
 
   const qtyFromNotional = () => {
     const base = Math.max(1, Math.floor((notional * amountPct) / 100 / 100));
@@ -68,19 +95,18 @@ export const IdeQuickTradePanel: FC<{
       ? { ...styles.panel, width: "100%", maxWidth: "100%", borderLeft: "none", borderTop: "none" }
       : styles.panel;
 
+  const orderKindLabel =
+    orderKind === "market" ? t("ide.quickTrade.orderKind.market") : t("ide.quickTrade.orderKind.limit");
+
   return (
-    <aside style={panelStyle} aria-label="快捷交易">
-      <h2 style={styles.title}>快捷交易</h2>
+    <aside style={panelStyle} aria-label={t("ide.quickTrade.ariaLabel")}>
+      <h2 style={styles.title}>{t("ide.quickTrade.title")}</h2>
       <p style={styles.pair}>
         {chartSpec.symbol} / {chartSpec.exchange} · {chartSpec.timeframe}
       </p>
-      {traderLinked ? (
-        <p style={styles.linkHint}>
-          与左侧 Agent 流、上方 K 线联动：纸面下单走统一执行管道（风控 → execution_task → 纸面成交）。
-        </p>
-      ) : null}
+      {traderLinked ? <p style={styles.linkHint}>{t("ide.quickTrade.intro")}</p> : null}
       <label style={styles.lab}>
-        名义金额（示意，用于估算数量）
+        {t("ide.quickTrade.amountLabel")}
         <input
           style={styles.inpActive}
           type="number"
@@ -92,8 +118,8 @@ export const IdeQuickTradePanel: FC<{
       </label>
       <p style={styles.price}>
         {canTrade
-          ? `预估数量约 ${qtyFromNotional()} 股/张 · 纸面模式`
-          : "在实时交易页连接后端后可用"}
+          ? t("ide.quickTrade.qtyEstimate", { qty: qtyFromNotional() })
+          : t("ide.quickTrade.backendOffline")}
       </p>
       {orderErr ? <p style={styles.err}>{orderErr}</p> : null}
       <div style={styles.lr}>
@@ -103,7 +129,7 @@ export const IdeQuickTradePanel: FC<{
           disabled={!canTrade || traderBusy}
           onClick={() => void submit("buy")}
         >
-          {traderBusy ? "提交中…" : "做多"}
+          {traderBusy ? t("ide.quickTrade.submitting") : t("ide.quickTrade.long")}
         </button>
         <button
           type="button"
@@ -111,7 +137,7 @@ export const IdeQuickTradePanel: FC<{
           disabled={!canTrade || traderBusy}
           onClick={() => void submit("sell")}
         >
-          {traderBusy ? "提交中…" : "做空"}
+          {traderBusy ? t("ide.quickTrade.submitting") : t("ide.quickTrade.short")}
         </button>
       </div>
       {canTrade && lastOrderIntentId ? (
@@ -121,7 +147,7 @@ export const IdeQuickTradePanel: FC<{
           disabled={traderBusy || !onCancelLast}
           onClick={() => void onCancelLast?.()}
         >
-          撤上一单 ({lastOrderIntentId.slice(0, 8)}…)
+          {t("ide.quickTrade.cancelLast", { id: lastOrderIntentId.slice(0, 8) })}
         </button>
       ) : null}
       <div className="qb-segmented qb-segmented--inline" style={styles.segBar}>
@@ -130,14 +156,14 @@ export const IdeQuickTradePanel: FC<{
           className={`qb-segmented__tab${orderKind === "market" ? " qb-segmented__tab--active" : ""}`}
           onClick={() => setOrderKind("market")}
         >
-          市价
+          {t("ide.quickTrade.orderKind.market")}
         </button>
         <button
           type="button"
           className={`qb-segmented__tab${orderKind === "limit" ? " qb-segmented__tab--active" : ""}`}
           onClick={() => setOrderKind("limit")}
         >
-          限价
+          {t("ide.quickTrade.orderKind.limit")}
         </button>
       </div>
       <div style={styles.pctRow}>
@@ -153,7 +179,7 @@ export const IdeQuickTradePanel: FC<{
         ))}
       </div>
       <label style={styles.lab}>
-        杠杆 {leverage}x
+        {t("ide.quickTrade.leverage", { n: leverage })}
         <input
           style={styles.range}
           type="range"
@@ -169,26 +195,40 @@ export const IdeQuickTradePanel: FC<{
           className={`qb-segmented__tab${marginMode === "cross" ? " qb-segmented__tab--active" : ""}`}
           onClick={() => setMarginMode("cross")}
         >
-          全仓
+          {t("ide.quickTrade.margin.cross")}
         </button>
         <button
           type="button"
           className={`qb-segmented__tab${marginMode === "isolated" ? " qb-segmented__tab--active" : ""}`}
           onClick={() => setMarginMode("isolated")}
         >
-          逐仓
+          {t("ide.quickTrade.margin.isolated")}
         </button>
       </div>
       <label style={styles.lab}>
-        止盈价
-        <input style={styles.inp} value={tp} onChange={(e) => setTp(e.target.value)} placeholder="可选（后续版本）" disabled />
+        {t("ide.quickTrade.tp")}
+        <input
+          style={styles.inp}
+          value={tp}
+          onChange={(e) => setTp(e.target.value)}
+          placeholder={t("ide.quickTrade.tpslPlaceholder")}
+          disabled
+        />
       </label>
       <label style={styles.lab}>
-        止损价
-        <input style={styles.inp} value={sl} onChange={(e) => setSl(e.target.value)} placeholder="可选（后续版本）" disabled />
+        {t("ide.quickTrade.sl")}
+        <input
+          style={styles.inp}
+          value={sl}
+          onChange={(e) => setSl(e.target.value)}
+          placeholder={t("ide.quickTrade.tpslPlaceholder")}
+          disabled
+        />
       </label>
       <p style={styles.note}>
-        当前订单类型：<strong>{orderKind === "market" ? "市价" : "限价"}</strong>。止盈止损与实盘券商将在后续版本接入。
+        {t("ide.quickTrade.currentKindPrefix")}
+        <strong>{orderKindLabel}</strong>
+        {t("ide.quickTrade.currentKindSuffix")}
       </p>
     </aside>
   );

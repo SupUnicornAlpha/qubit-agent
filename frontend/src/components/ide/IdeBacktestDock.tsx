@@ -6,6 +6,7 @@ import {
   postMarketStructuredTune,
 } from "../../api/backend";
 import { useAppStore } from "../../store";
+import { useTranslation } from "../../i18n";
 
 type DockTab = "backtest" | "tune";
 type BacktestKind = "python_strategy" | "sma_crossover";
@@ -21,6 +22,7 @@ function parseNumList(raw: string, fallback: number[]): number[] {
 export const IdeBacktestDock: FC = () => {
   const chartSpec = useAppStore((s) => s.chartSpec);
   const ideStrategySource = useAppStore((s) => s.ideStrategySource);
+  const { t } = useTranslation();
   const [tab, setTab] = useState<DockTab>("backtest");
   const [kind, setKind] = useState<BacktestKind>("python_strategy");
   const [fastPeriod, setFastPeriod] = useState(5);
@@ -71,7 +73,7 @@ export const IdeBacktestDock: FC = () => {
             };
       const res = await postMarketBacktest(body);
       if (!res.ok) {
-        setBtError(res.error ?? "回测失败");
+        setBtError(res.error ?? t("ide.backtest.run.failedDefault"));
         return;
       }
       const r = res.data?.result as
@@ -93,10 +95,17 @@ export const IdeBacktestDock: FC = () => {
       if (m) {
         const posTail =
           kind === "python_strategy" && typeof m.lastPosition === "number"
-            ? ` · 末仓位 ${m.lastPosition.toFixed(4)}`
+            ? t("ide.backtest.run.posTail", { pos: m.lastPosition.toFixed(4) })
             : "";
         setBtSummary(
-          `收益 ${(m.totalReturnPct ?? 0).toFixed(2)}% · 最大回撤 ${(m.maxDrawdownPct ?? 0).toFixed(2)}% · Sharpe≈${(m.sharpeApprox ?? 0).toFixed(2)} · 成交 ${m.tradeCount ?? 0} 笔 · K线 ${m.bars ?? 0} 根${posTail}`
+          t("ide.backtest.run.summary", {
+            ret: (m.totalReturnPct ?? 0).toFixed(2),
+            dd: (m.maxDrawdownPct ?? 0).toFixed(2),
+            sharpe: (m.sharpeApprox ?? 0).toFixed(2),
+            trades: m.tradeCount ?? 0,
+            bars: m.bars ?? 0,
+            posTail,
+          }),
         );
       } else {
         setBtSummary(JSON.stringify(res.data?.result ?? res.data, null, 2).slice(0, 800));
@@ -122,6 +131,7 @@ export const IdeBacktestDock: FC = () => {
     kind,
     slowPeriod,
     startDate,
+    t,
     useCustomRange,
   ]);
 
@@ -143,7 +153,7 @@ export const IdeBacktestDock: FC = () => {
         commission,
       });
       if (!res.ok) {
-        setTuneOut(`错误: ${res.error ?? "unknown"}`);
+        setTuneOut(t("ide.backtest.tune.errorPrefix", { err: res.error ?? "unknown" }));
         return;
       }
       setTuneOut(JSON.stringify(res.data, null, 2).slice(0, 4000));
@@ -161,6 +171,7 @@ export const IdeBacktestDock: FC = () => {
     endDate,
     initialCapital,
     startDate,
+    t,
     tuneFast,
     tuneSlow,
     useCustomRange,
@@ -178,7 +189,7 @@ export const IdeBacktestDock: FC = () => {
         ...(useCustomRange && startDate && endDate ? { startDate, endDate } : {}),
       });
       if (!res.ok) {
-        setRegOut(`错误: ${res.error ?? "unknown"}`);
+        setRegOut(t("ide.backtest.tune.errorPrefix", { err: res.error ?? "unknown" }));
         return;
       }
       setRegOut(JSON.stringify(res.data, null, 2).slice(0, 2000));
@@ -194,11 +205,12 @@ export const IdeBacktestDock: FC = () => {
     chartSpec.timeframe,
     endDate,
     startDate,
+    t,
     useCustomRange,
   ]);
 
   return (
-    <aside style={styles.dock} aria-label="回测与调参">
+    <aside style={styles.dock} aria-label={t("ide.backtest.dockAriaLabel")}>
       <div className="qb-dock-tabstrip" role="tablist">
         <button
           type="button"
@@ -207,7 +219,7 @@ export const IdeBacktestDock: FC = () => {
           className={`qb-dock-tab${tab === "backtest" ? " qb-dock-tab--active" : ""}`}
           onClick={() => setTab("backtest")}
         >
-          回测参数
+          {t("ide.backtest.tabs.backtest")}
         </button>
         <button
           type="button"
@@ -216,13 +228,13 @@ export const IdeBacktestDock: FC = () => {
           className={`qb-dock-tab${tab === "tune" ? " qb-dock-tab--active" : ""}`}
           onClick={() => setTab("tune")}
         >
-          智能调参
+          {t("ide.backtest.tabs.tune")}
         </button>
       </div>
       {tab === "backtest" ? (
         <div style={styles.body}>
           <div style={styles.kindRow}>
-            <span style={styles.kindLabel}>策略来源</span>
+            <span style={styles.kindLabel}>{t("ide.backtest.kind.label")}</span>
             <label style={styles.kindOpt}>
               <input
                 type="radio"
@@ -230,7 +242,7 @@ export const IdeBacktestDock: FC = () => {
                 checked={kind === "python_strategy"}
                 onChange={() => setKind("python_strategy")}
               />
-              <span>左侧 Python 脚本（on_init/on_bar）</span>
+              <span>{t("ide.backtest.kind.python")}</span>
             </label>
             <label style={styles.kindOpt}>
               <input
@@ -239,14 +251,14 @@ export const IdeBacktestDock: FC = () => {
                 checked={kind === "sma_crossover"}
                 onChange={() => setKind("sma_crossover")}
               />
-              <span>固定 SMA 双均线（fast/slow）</span>
+              <span>{t("ide.backtest.kind.sma")}</span>
             </label>
           </div>
           <div style={styles.grid}>
             {kind === "sma_crossover" ? (
               <>
                 <label style={styles.field}>
-                  <span>快线周期</span>
+                  <span>{t("ide.backtest.fields.fastPeriod")}</span>
                   <input
                     type="number"
                     style={styles.inp}
@@ -256,7 +268,7 @@ export const IdeBacktestDock: FC = () => {
                   />
                 </label>
                 <label style={styles.field}>
-                  <span>慢线周期</span>
+                  <span>{t("ide.backtest.fields.slowPeriod")}</span>
                   <input
                     type="number"
                     style={styles.inp}
@@ -268,7 +280,7 @@ export const IdeBacktestDock: FC = () => {
               </>
             ) : null}
             <label style={styles.field}>
-              <span>初始资金</span>
+              <span>{t("ide.backtest.fields.initialCapital")}</span>
               <input
                 type="number"
                 style={styles.inp}
@@ -279,7 +291,7 @@ export const IdeBacktestDock: FC = () => {
               />
             </label>
             <label style={styles.field}>
-              <span>手续费率</span>
+              <span>{t("ide.backtest.fields.commission")}</span>
               <input
                 type="number"
                 style={styles.inp}
@@ -296,29 +308,29 @@ export const IdeBacktestDock: FC = () => {
               checked={useCustomRange}
               onChange={(e) => setUseCustomRange(e.target.checked)}
             />
-            自定义日期区间（否则使用当前「条数」推导区间）
+            {t("ide.backtest.fields.customRange")}
           </label>
           {useCustomRange ? (
             <div style={styles.grid}>
               <label style={styles.field}>
-                <span>开始日期</span>
+                <span>{t("ide.backtest.fields.startDate")}</span>
                 <input style={styles.inp} value={startDate} onChange={(e) => setStartDate(e.target.value)} placeholder="YYYY-MM-DD" />
               </label>
               <label style={styles.field}>
-                <span>结束日期</span>
+                <span>{t("ide.backtest.fields.endDate")}</span>
                 <input style={styles.inp} value={endDate} onChange={(e) => setEndDate(e.target.value)} placeholder="YYYY-MM-DD" />
               </label>
             </div>
           ) : null}
           <div style={styles.row}>
             <button type="button" className="qb-btn-primary" disabled={btLoading} onClick={() => void runBacktest()}>
-              {btLoading ? "运行中…" : "运行回测"}
+              {btLoading ? t("ide.backtest.run.running") : t("ide.backtest.run.button")}
             </button>
             <span style={styles.muted}>
-              标的取自工具条 ·{" "}
+              {t("ide.backtest.run.symbolFromToolbar")} ·{" "}
               {kind === "python_strategy"
-                ? "执行左侧 on_init/on_bar（真实 bar-by-bar 撮合）"
-                : "固定 SMA 双均线（左侧代码不参与）"}
+                ? t("ide.backtest.run.pythonPathHint")
+                : t("ide.backtest.run.smaPathHint")}
               · POST /api/v1/market/backtests
             </span>
           </div>
@@ -326,35 +338,33 @@ export const IdeBacktestDock: FC = () => {
           {btSummary ? <div style={styles.ok}>{btSummary}</div> : null}
           {btStderr ? (
             <details style={styles.stdoutBox}>
-              <summary style={styles.stdoutSum}>策略 print 输出（{btStderr.length} 字符）</summary>
+              <summary style={styles.stdoutSum}>
+                {t("ide.backtest.run.stdoutSummary", { n: btStderr.length })}
+              </summary>
               <pre style={styles.pre}>{btStderr}</pre>
             </details>
           ) : null}
           <div style={styles.pillRow}>
-            <span style={styles.pillMuted}>
-              纸面/实盘策略运行时：在「实时交易」页勾选策略后启动，或调用 POST /api/v1/strategy-runtimes
-            </span>
+            <span style={styles.pillMuted}>{t("ide.backtest.run.runtimeHint")}</span>
           </div>
         </div>
       ) : (
         <div style={styles.body}>
-          <p style={styles.hint}>
-            Structured scan（Grid）：在快线/慢线周期集合上搜索较优参数（最多 50 组试算，后端限制）。
-          </p>
+          <p style={styles.hint}>{t("ide.backtest.tune.intro")}</p>
           <label style={styles.fieldFull}>
-            <span>快线候选（逗号分隔）</span>
+            <span>{t("ide.backtest.tune.fastList")}</span>
             <input style={styles.inp} value={tuneFast} onChange={(e) => setTuneFast(e.target.value)} />
           </label>
           <label style={styles.fieldFull}>
-            <span>慢线候选（逗号分隔）</span>
+            <span>{t("ide.backtest.tune.slowList")}</span>
             <input style={styles.inp} value={tuneSlow} onChange={(e) => setTuneSlow(e.target.value)} />
           </label>
           <div style={styles.row}>
             <button type="button" className="qb-btn-primary" disabled={tuneLoading} onClick={() => void runTune()}>
-              {tuneLoading ? "扫描中…" : "运行智能调参（Grid）"}
+              {tuneLoading ? t("ide.backtest.tune.running") : t("ide.backtest.tune.run")}
             </button>
             <button type="button" className="qb-btn-ghost" disabled={regLoading} onClick={() => void runRegime()}>
-              {regLoading ? "检测中…" : "盘势检测（Regime）"}
+              {regLoading ? t("ide.backtest.tune.regimeRunning") : t("ide.backtest.tune.regimeRun")}
             </button>
           </div>
           {tuneOut ? <pre style={styles.pre}>{tuneOut}</pre> : null}
