@@ -2381,6 +2381,13 @@ export const agentSkill = sqliteTable(
     lastPromotedAt: text("last_promoted_at"),
     /** 'manual' | 'auto'，P6/P9 用 */
     evolutionMode: text("evolution_mode").notNull().default("manual"),
+    /** Self-Evolving Agent P5：这个 skill 是哪一次 promoter run 写的；nullable —
+     * user_authored / pre-P5 自动写的 skill 不写值。不打 FK：删 run 不应级联删 skill。 */
+    promotionRunId: text("promotion_run_id"),
+    /** P5：promoter 评分 0~1，按规则加权（recall/success/pnl/diversity）。nullable。 */
+    promotionScore: real("promotion_score"),
+    /** P5：user approve / reject 时间；前端列表按 state + 该字段排序。 */
+    promotionReviewAt: text("promotion_review_at"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -2389,6 +2396,8 @@ export const agentSkill = sqliteTable(
     index("idx_agent_skill_project_state").on(t.projectId, t.state, t.lastUsedAt),
     index("idx_agent_skill_definition").on(t.definitionId, t.state),
     index("idx_agent_skill_parent").on(t.parentSkillId),
+    index("idx_agent_skill_promotion_run").on(t.projectId, t.state, t.promotionRunId),
+    index("idx_agent_skill_promotion_score").on(t.projectId, t.state, t.promotionScore),
   ]
 );
 
@@ -2454,6 +2463,44 @@ export const skillCuratorRun = sqliteTable(
     endedAt: text("ended_at"),
   },
   (t) => [index("idx_skill_curator_run_project").on(t.projectId, t.startedAt)]
+);
+
+/**
+ * Self-Evolving Agent P5 — SkillPromoter 跑批记录。
+ *
+ * 一次 cron / 手动触发的扫描产出，summary + 候选明细。生产策略不下放到这里 ——
+ * worker 模块自己决定哪些规则触发；本表只是结果存证 + 前端展示 + 故障复盘。
+ */
+export const skillPromotionRun = sqliteTable(
+  "skill_promotion_run",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    mode: text("mode", { enum: ["dry_run", "live"] })
+      .notNull()
+      .default("dry_run"),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    triggeredBy: text("triggered_by").notNull().default("cron"),
+    totalScanned: integer("total_scanned").notNull().default(0),
+    totalQualified: integer("total_qualified").notNull().default(0),
+    totalPromoted: integer("total_promoted").notNull().default(0),
+    totalSkippedDuplicate: integer("total_skipped_duplicate").notNull().default(0),
+    totalSkippedInsufficient: integer("total_skipped_insufficient").notNull().default(0),
+    /** [{candidateKind, candidateId, signature, score, ruleHits, ...}, ...]，上限 200 条 */
+    actionsJson: text("actions_json", { mode: "json" }).notNull().default("[]"),
+    elapsedMs: integer("elapsed_ms").notNull().default(0),
+    errorMessage: text("error_message"),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [
+    index("idx_skill_promotion_run_project").on(t.projectId, t.startedAt),
+    index("idx_skill_promotion_run_status").on(t.status, t.startedAt),
+  ]
 );
 
 export const skillEvolutionRun = sqliteTable(

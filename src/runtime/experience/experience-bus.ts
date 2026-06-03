@@ -93,6 +93,9 @@ export type ExperienceEvent =
    *   - pnl_attributor      — PnlAttributor.runOnce 跑完一次
    *   - analyst_accuracy    — AnalystAccuracyWriter.syncPlaceholders + evaluatePending 跑完
    *   - mark_price_fetcher  — DailyMarkPriceFetcher.fetchAndPersist 跑完
+   *
+   * P5 新增 1 个 kind：
+   *   - skill_promoter      — SkillPromoter.runOnce 跑完
    */
   | {
       type: "maintenance_run";
@@ -103,7 +106,8 @@ export type ExperienceEvent =
         | "embedder"
         | "pnl_attributor"
         | "analyst_accuracy"
-        | "mark_price_fetcher";
+        | "mark_price_fetcher"
+        | "skill_promoter";
       actor: string;
       summary: Record<string, number | string>;
     };

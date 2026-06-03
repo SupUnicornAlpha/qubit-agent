@@ -428,6 +428,13 @@
       "when": 1780876800000,
       "tag": "0061_self_evolve_p4b_pnl_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1780963200000,
+      "tag": "0062_self_evolve_p5_skill_promoter",
+      "breakpoints": true
     }
   ]
 }

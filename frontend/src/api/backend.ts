@@ -4072,3 +4072,102 @@ export async function getMemoryMetrics(): Promise<MemoryMetricsSnapshot> {
   );
   return res.data;
 }
+
+// ───────────────────────── Self-Evolving Agent P5 — Skill Promotions ─────────────────────────
+//
+// MemoryTab Skill Promotions sub-tab 用。
+
+export type SkillPromotionState = "pending_review" | "active" | "archived" | "stale";
+
+export interface SkillPromotionListItem {
+  id: string;
+  name: string;
+  description: string;
+  state: SkillPromotionState;
+  category: string;
+  definitionId: string | null;
+  promotionRunId: string | null;
+  promotionScore: number | null;
+  promotionReviewAt: string | null;
+  lastPromotedAt: string | null;
+  useCount: number;
+  successCount: number;
+  failCount: number;
+  pnlAttributionJson: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillPromotionRunSummary {
+  id: string;
+  mode: "dry_run" | "live";
+  status: "running" | "completed" | "failed";
+  triggeredBy: string;
+  totalScanned: number;
+  totalQualified: number;
+  totalPromoted: number;
+  totalSkippedDuplicate: number;
+  totalSkippedInsufficient: number;
+  elapsedMs: number;
+  startedAt: string;
+  endedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface SkillPromotionReviewResult {
+  skillId: string;
+  prevState: string;
+  nextState: string;
+  signature: string | null;
+  reflectiveExperienceId?: string;
+}
+
+export async function listSkillPromotions(params: {
+  projectId: string;
+  state?: SkillPromotionState | "all";
+  limit?: number;
+}): Promise<{ items: SkillPromotionListItem[]; total: number }> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.state) q.set("state", params.state);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{
+    ok: boolean;
+    data: { items: SkillPromotionListItem[]; total: number };
+  }>(`/api/v1/monitor/memory/skill-promotions?${q.toString()}`);
+  return res.data;
+}
+
+export async function listSkillPromotionRuns(params: {
+  projectId: string;
+  limit?: number;
+}): Promise<SkillPromotionRunSummary[]> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{
+    ok: boolean;
+    data: { items: SkillPromotionRunSummary[] };
+  }>(`/api/v1/monitor/memory/skill-promotions/runs?${q.toString()}`);
+  return res.data.items;
+}
+
+export async function approveSkillPromotion(
+  skillId: string,
+  body: { description?: string; actor?: string } = {}
+): Promise<SkillPromotionReviewResult> {
+  const res = await httpPost<{ ok: boolean; data: SkillPromotionReviewResult }>(
+    `/api/v1/monitor/memory/skill-promotions/${encodeURIComponent(skillId)}/approve`,
+    body
+  );
+  return res.data;
+}
+
+export async function rejectSkillPromotion(
+  skillId: string,
+  body: { reason?: string; actor?: string } = {}
+): Promise<SkillPromotionReviewResult> {
+  const res = await httpPost<{ ok: boolean; data: SkillPromotionReviewResult }>(
+    `/api/v1/monitor/memory/skill-promotions/${encodeURIComponent(skillId)}/reject`,
+    body
+  );
+  return res.data;
+}

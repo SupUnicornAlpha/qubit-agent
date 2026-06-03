@@ -961,3 +961,131 @@ monitorRouter.get("/memory/experiences/:id/oplog", async (c) => {
   const items = await getExperienceStore().listOps(id, limit);
   return c.json({ ok: true, data: { items } });
 });
+
+// ───────────────────────── Self-Evolving Agent P5 — Skill Promotions ─────────────────────────
+//
+// 前端 MemoryTab → Skill Promotions sub-tab 消费。
+// 三个端点：
+//   GET   /memory/skill-promotions?projectId=&state=pending_review&limit=  → 列表
+//   GET   /memory/skill-promotions/runs?projectId=&limit=                    → 最近 N 次跑批 summary
+//   POST  /memory/skill-promotions/:skillId/approve   body={description?}
+//   POST  /memory/skill-promotions/:skillId/reject    body={reason?}
+//
+// 只读 + 两个 mutate；写策略下沉到 promoter-review.ts，本路由仅做参数校验 + 调度。
+
+monitorRouter.get("/memory/skill-promotions", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const stateParam = c.req.query("state") ?? "pending_review";
+  const allowed = new Set(["pending_review", "active", "archived", "stale", "all"]);
+  if (!allowed.has(stateParam)) {
+    return c.json({ ok: false, error: `state must be one of ${[...allowed].join("/")}` }, 400);
+  }
+  const limit = Math.max(1, Math.min(200, Number(c.req.query("limit") ?? "50")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { agentSkill } = await import("../db/sqlite/schema");
+  const { and, eq, desc, sql } = await import("drizzle-orm");
+  const db = await getDb();
+  const conds = [eq(agentSkill.projectId, projectId)];
+  if (stateParam !== "all") {
+    conds.push(eq(agentSkill.state, stateParam as "pending_review" | "active" | "archived" | "stale"));
+  }
+  const rows = await db
+    .select({
+      id: agentSkill.id,
+      name: agentSkill.name,
+      description: agentSkill.description,
+      state: agentSkill.state,
+      category: agentSkill.category,
+      definitionId: agentSkill.definitionId,
+      promotionRunId: agentSkill.promotionRunId,
+      promotionScore: agentSkill.promotionScore,
+      promotionReviewAt: agentSkill.promotionReviewAt,
+      lastPromotedAt: agentSkill.lastPromotedAt,
+      useCount: agentSkill.useCount,
+      successCount: agentSkill.successCount,
+      failCount: agentSkill.failCount,
+      pnlAttributionJson: agentSkill.pnlAttributionJson,
+      createdAt: agentSkill.createdAt,
+      updatedAt: agentSkill.updatedAt,
+    })
+    .from(agentSkill)
+    .where(and(...conds))
+    .orderBy(desc(sql`coalesce(${agentSkill.promotionScore}, 0)`), desc(agentSkill.createdAt))
+    .limit(limit);
+
+  return c.json({ ok: true, data: { items: rows, total: rows.length } });
+});
+
+monitorRouter.get("/memory/skill-promotions/runs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const limit = Math.max(1, Math.min(50, Number(c.req.query("limit") ?? "10")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { skillPromotionRun } = await import("../db/sqlite/schema");
+  const { eq, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: skillPromotionRun.id,
+      mode: skillPromotionRun.mode,
+      status: skillPromotionRun.status,
+      triggeredBy: skillPromotionRun.triggeredBy,
+      totalScanned: skillPromotionRun.totalScanned,
+      totalQualified: skillPromotionRun.totalQualified,
+      totalPromoted: skillPromotionRun.totalPromoted,
+      totalSkippedDuplicate: skillPromotionRun.totalSkippedDuplicate,
+      totalSkippedInsufficient: skillPromotionRun.totalSkippedInsufficient,
+      elapsedMs: skillPromotionRun.elapsedMs,
+      startedAt: skillPromotionRun.startedAt,
+      endedAt: skillPromotionRun.endedAt,
+      errorMessage: skillPromotionRun.errorMessage,
+    })
+    .from(skillPromotionRun)
+    .where(eq(skillPromotionRun.projectId, projectId))
+    .orderBy(desc(skillPromotionRun.startedAt))
+    .limit(limit);
+  return c.json({ ok: true, data: { items: rows } });
+});
+
+monitorRouter.post("/memory/skill-promotions/:skillId/approve", async (c) => {
+  const skillId = c.req.param("skillId");
+  let body: { description?: string; actor?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty body */
+  }
+  try {
+    const { approveSkillPromotion } = await import("../runtime/skill-promoter/promoter-review");
+    const opts: { actor?: string; description?: string } = {};
+    if (body.actor) opts.actor = body.actor;
+    if (body.description) opts.description = body.description;
+    const result = await approveSkillPromotion(skillId, opts);
+    return c.json({ ok: true, data: result });
+  } catch (e) {
+    return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+monitorRouter.post("/memory/skill-promotions/:skillId/reject", async (c) => {
+  const skillId = c.req.param("skillId");
+  let body: { reason?: string; actor?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty body */
+  }
+  try {
+    const { rejectSkillPromotion } = await import("../runtime/skill-promoter/promoter-review");
+    const opts: { actor?: string; reason?: string } = {};
+    if (body.actor) opts.actor = body.actor;
+    if (body.reason) opts.reason = body.reason;
+    const result = await rejectSkillPromotion(skillId, opts);
+    return c.json({ ok: true, data: result });
+  } catch (e) {
+    return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});

@@ -287,6 +287,47 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(snap["self_evolve.mark_price.failures"]).toBe(0);
   });
 
+  test("maintenance_run(kind=skill_promoter) → self_evolve.skill_promoter.* 汇总", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "skill_promoter",
+      actor: "skill_promoter",
+      summary: {
+        scanned: 5,
+        qualified: 2,
+        promoted: 2,
+        skippedDuplicate: 1,
+        skippedInsufficient: 1,
+        mode: "live",
+        status: "completed",
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "skill_promoter",
+      actor: "skill_promoter",
+      summary: {
+        scanned: 3,
+        qualified: 0,
+        promoted: 0,
+        skippedDuplicate: 1,
+        skippedInsufficient: 2,
+        mode: "dry_run",
+        status: "completed",
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.skill_promoter.tick.total"]).toBe(2);
+    expect(snap["self_evolve.skill_promoter.scanned"]).toBe(8);
+    expect(snap["self_evolve.skill_promoter.qualified"]).toBe(2);
+    expect(snap["self_evolve.skill_promoter.promoted"]).toBe(2);
+    expect(snap["self_evolve.skill_promoter.skipped_duplicate"]).toBe(2);
+    expect(snap["self_evolve.skill_promoter.skipped_insufficient"]).toBe(3);
+    expect(snap["self_evolve.skill_promoter.tick.by_mode|mode=live"]).toBe(1);
+    expect(snap["self_evolve.skill_promoter.tick.by_mode|mode=dry_run"]).toBe(1);
+    expect(snap["self_evolve.skill_promoter.tick.by_status|status=completed"]).toBe(2);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({

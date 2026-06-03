@@ -31,6 +31,9 @@ import {
   type MemoryOrderBy,
 } from "../../api/backend";
 import { Kpi, monitorAxisTick, monitorGridStroke, monitorTooltipStyle, styles } from "./monitor-shared";
+import { SkillPromotionsPanel } from "./SkillPromotionsPanel";
+
+type MemorySubTab = "experiences" | "skill_promotions";
 
 const KIND_OPTIONS: { id: MemoryExperienceKind; label: string }[] = [
   { id: "semantic", label: "semantic" },
@@ -118,6 +121,64 @@ export type MemoryTabProps = {
 };
 
 export const MemoryTab: FC<MemoryTabProps> = ({ projectId, autoRefresh }) => {
+  const [subTab, setSubTab] = useState<MemorySubTab>("experiences");
+
+  return (
+    <div style={{ minWidth: 0 }}>
+      <SubTabBar active={subTab} onChange={setSubTab} />
+      {subTab === "experiences" ? (
+        <ExperiencesPanel projectId={projectId} autoRefresh={autoRefresh} />
+      ) : (
+        <SkillPromotionsPanel projectId={projectId} autoRefresh={autoRefresh} />
+      )}
+    </div>
+  );
+};
+
+const SubTabBar: FC<{ active: MemorySubTab; onChange: (id: MemorySubTab) => void }> = ({
+  active,
+  onChange,
+}) => {
+  const tabs: { id: MemorySubTab; label: string }[] = [
+    { id: "experiences", label: "Experiences" },
+    { id: "skill_promotions", label: "Skill Promotions" },
+  ];
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 4,
+        borderBottom: "1px solid var(--qb-main-input-border, #27272a)",
+        marginBottom: 12,
+      }}
+    >
+      {tabs.map((t) => {
+        const isActive = active === t.id;
+        return (
+          <button
+            type="button"
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            style={{
+              background: "transparent",
+              color: isActive ? "#3b82f6" : "var(--qb-main-meta, #a1a1aa)",
+              border: "none",
+              borderBottom: `2px solid ${isActive ? "#3b82f6" : "transparent"}`,
+              padding: "8px 14px",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+const ExperiencesPanel: FC<MemoryTabProps> = ({ projectId, autoRefresh }) => {
   // ── 筛选状态 ──
   const [selectedKinds, setSelectedKinds] = useState<Set<MemoryExperienceKind>>(new Set());
   const [subKind, setSubKind] = useState("");

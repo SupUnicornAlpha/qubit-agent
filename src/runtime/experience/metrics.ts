@@ -170,6 +170,19 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.mark_price.updated", numOf(s.updated));
         c.inc("self_evolve.mark_price.skipped", numOf(s.skipped));
         c.inc("self_evolve.mark_price.failures", numOf(s.failures));
+      } else if (ev.kind === "skill_promoter") {
+        // Self-Evolving Agent P5：候选扫描 + 评分 + 写 pending_review
+        const s = ev.summary;
+        const mode = String(s.mode ?? "unknown");
+        const status = String(s.status ?? "unknown");
+        c.inc("self_evolve.skill_promoter.tick.total");
+        c.inc("self_evolve.skill_promoter.tick.by_mode", 1, { mode });
+        c.inc("self_evolve.skill_promoter.tick.by_status", 1, { status });
+        c.inc("self_evolve.skill_promoter.scanned", numOf(s.scanned));
+        c.inc("self_evolve.skill_promoter.qualified", numOf(s.qualified));
+        c.inc("self_evolve.skill_promoter.promoted", numOf(s.promoted));
+        c.inc("self_evolve.skill_promoter.skipped_duplicate", numOf(s.skippedDuplicate));
+        c.inc("self_evolve.skill_promoter.skipped_insufficient", numOf(s.skippedInsufficient));
       }
     } catch {
       /* noop */

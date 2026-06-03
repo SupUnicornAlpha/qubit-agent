@@ -404,21 +404,94 @@ agent_pnl_attribution      agent_skill_run.pnl_delta    agent_skill.pnl_attribut
 
 **Exit code**：cron 脚本 `0` 全成功 / `1` 有 errors / `2` 参数错。reconcile `0` 无漂移 / `1` 有漂移 / `2` 异常。
 
-### 6.3 P5 — SkillPromoter Worker
+### 6.3 P5 — SkillPromoter ✅（已落地 2026-06-03）
 
-**目标**：扫 procedural / reflective experience，把高价值候选晋升为 `agent_skill(pending_review)`。
+#### 6.3.1 数据表（migration 0062）
 
-**触发**：接入 `ExperienceMaintenanceWorker`，每 30 min 跑一轮。
+| 表 / 字段 | 关键设计 |
+|---|---|
+| **`skill_promotion_run`**（新表） | 一次跑批 = 一行；含 mode/status/triggeredBy + 5 个 counter + `actions_json`（候选明细 + ruleHits，上限 200）+ `elapsed_ms` |
+| `agent_skill.promotion_run_id` | 标这个 skill 是哪一次 promoter run 写的；user_authored / pre-P5 不写值；不打 FK（删 run 不级联删 skill） |
+| `agent_skill.promotion_score` | promoter 评分 0~1（recall/success/quality/pnl 加权） |
+| `agent_skill.promotion_review_at` | user approve/reject 时间，前端列表排序键 |
 
-**规则 v0**：
+#### 6.3.2 模块清单
+
+| 模块 | 文件 | 职责 | 测试 |
+|---|---|---|---|
+| **scoring**（纯函数） | `src/runtime/skill-promoter/scoring.ts` | 4 个 gate + 4 个 weighted 维度（recall/success/quality/pnl）；规则与权重 v0 写死，结构化 ruleHits 给前端 | 9 cases |
+| **SkillPromoter**（worker） | `src/runtime/skill-promoter/skill-promoter.ts` | 拉 `procedural.workflow_play` 候选 → 去重（signature 标记 + reject 反馈）→ 评分 → upsert `agent_skill(state='pending_review')` + `skill_promotion_run`；emit `maintenance_run/skill_promoter` | 8 cases |
+| **promoter-review** | `src/runtime/skill-promoter/promoter-review.ts` | `approveSkillPromotion` / `rejectSkillPromotion`；reject 时写 `reflective(skill_reject_feedback)` 让下次 promoter 跳过同 signature | 含在 8 cases 内 |
+| **后端路由** | `src/routes/monitor.routes.ts` | `/memory/skill-promotions` 列表 / `/runs` 历史 / `:skillId/approve` / `:skillId/reject` 4 个端点 | 9 cases |
+| **前端** | `frontend/src/components/monitor/MemoryTab.tsx` + `SkillPromotionsPanel.tsx` | MemoryTab 加 sub-tab；列表 + state 切换 + approve/reject 内联表单 | — |
+| **cron 脚本** | `src/scripts/run-skill-promoter.ts` | `--projectId/--mode/--triggeredBy/--json`；smoke 通过 | smoke |
+| **metrics 扩展** | `experience-bus.ts` + `metrics.ts` | 新增 `skill_promoter` kind；指标 `self_evolve.skill_promoter.{tick,scanned,qualified,promoted,...}` | 1 case（13/13） |
+
+**总计：18+ 新单测 + 9 集成测全过；前端 tsc 0 错；migrations 62/62 pass。**
+
+#### 6.3.3 候选 → 决策数据流
+
 ```
-candidate.recallCount >= 5
-  && candidate.successCount / candidate.executedCount >= 0.7
-  && (candidate.pnlSum > 0 || candidate.pnlSum === null /*尚无 PnL 信号*/)
-  && !alreadyPromoted(candidate.id)
+experience(procedural, workflow_play)              ─ candidate 来源（signature 已去重）
+        │
+        ├─ loadExistingSignatures(agent_skill.bodyMd 末尾 marker)   ─ 跳过 duplicate
+        ├─ loadRejectedSignatures(reflective.skill_reject_feedback)  ─ 跳过 rejected
+        ▼
+scoreCandidate（4 gate + 4 weighted score）
+        │
+   不合格 ─ skipped_insufficient（actionsJson 留痕）
+        │
+   合格 ─ live ─→ insert agent_skill(state='pending_review',
+                    promotion_run_id, promotion_score, signature marker)
+        ▼
+skill_promotion_run.actionsJson += { candidate, score, ruleHits, status }
+        ▼
+emit maintenance_run/skill_promoter（→ metrics）
+        ▼
+前端 MemoryTab > Skill Promotions sub-tab
+        │
+   approve ─→ state='active', promotion_review_at, last_promoted_at
+   reject  ─→ state='archived' + write reflective(skill_reject_feedback,
+              metadataJson.signature)  → 下次 promoter 跳过
 ```
 
-**审批**：MemoryTab 新增「Skill 晋升候选」tab；通过 → `state=active`；驳回 → `state=archived` + 写 reflection 反馈给 Promoter。
+#### 6.3.4 规则 v0 评分公式
+
+```
+gate_recall:        useCount        >= 3
+gate_exec:          successCount + failCount >= 2
+gate_success_rate:  success / executed >= 0.6
+gate_quality:       qualityScore    >= 0.5
+─── 全部通过才进入加权 ──────────────────────────────────
+score = 0.4 * clamp(log1p(useCount) / log1p(20))
+      + 0.3 * (success / executed)
+      + 0.2 * qualityScore
+      + 0.1 * pnlSignal       # v0 = 0.5 中性，P9 接 agent_skill.pnl_attribution_json
+```
+
+#### 6.3.5 关键设计决策
+
+1. **候选源 v0 只取 procedural**：`procedural.workflow_play` 由 Extractor R2 规则按 toolChain signature 去重写入，天然适合做 skill 候选；reflective 留到 P6（Reflector → SkillEvolver 链路时一起处理，避免重复抽取）。
+2. **signature 三层去重**：
+   - candidate 自己（extractor R2 已去重）
+   - agent_skill.bodyMd 末尾 `<!-- signature: xxx -->` marker（兼容 reconciliation 模式）
+   - reflective.skill_reject_feedback.metadataJson.signature（用户驳回后永久跳过）
+3. **不开 `skill_promotion_candidate` 表**：candidate 直接复用 `agent_skill(state='pending_review')`。approve 只需 UPDATE state；reject 只需 UPDATE state='archived' + 写 reflective。前端列表也只查一张表，少一次 join。
+4. **scoring 纯函数化**：全部依赖参数注入（候选 stats + cfg），9 个边界 case 在 1ms 内跑完，零 sqlite。worker 集成测只验编排。
+5. **三阶段都不开 LLM**：v0 全规则；P6 起把"是否合并/重写候选 bodyMd"交给 LLM judge，把 scoring 维度拓展到 `scoring.ts`，规则 + LLM 共同打分。
+6. **reject 反馈走 reflective**：而不是单独表，让 Reflector 后续可以汇总"用户为什么驳回 X 类签名"形成更高阶的 lesson；同时 promoter 自己消化 `loadRejectedSignatures` 即可，零侵入。
+7. **promotion_run_id 不打 FK**：删某次 run 不应级联删被 approve 过的 skill。worker 自己保证写入一致性。
+8. **`agent_skill.pnl_attribution_json` 已就绪但 v0 不用**：P4b 跑批已经写满该字段，P5 评分维度 `pnlSignal` 留 0.5 中性；P9 reason 节点 PnL-aware 时一起激活，避免 promoter / reason 双口径不一致。
+
+#### 6.3.6 cron 运维
+
+| 场景 | 命令 |
+|---|---|
+| 日度 cron（每 30 min） | `bun run src/scripts/run-skill-promoter.ts --projectId=$PRJ --mode=live` |
+| dry-run 诊断（不动 skill） | 加 `--mode=dry_run --json` |
+| 单 project 全量重扫 | live 模式直跑（duplicate 会被 signature marker 自动跳过） |
+
+**Exit code**：`0` 成功 / `1` 跑批 failed / `2` 参数错。
 
 ### 6.4 P6 — Skill 自动修订
 
@@ -501,13 +574,13 @@ self_evolve.tool_gap.auto_installed_total
 |---|---|---|---|---|
 | **P4a** | PnL 基础设施（路面） | `daily_mark_price` / `strategy_pnl_snapshot` / `fee_schedule` + 4 模块 + 78 tests | 2-3 人/日 | ✅ 2026-06-03 |
 | **P4b** | PnL 反馈环（燃料） | PnlAttributor worker + SkillAttributor + `agent_pnl_attribution` + skill 字段补齐 + 对账 + metrics + 后端只读接口 | 3-4 人/日 | ✅ 2026-06-03 |
-| **P5** | Skill 晋升（齿轮） | SkillPromoter + `skill_promotion_run` + 前端 Skill Promotions sub-tab | 3 人/日 | TBD |
+| **P5** | Skill 晋升（齿轮） | SkillPromoter + `skill_promotion_run` + 前端 Skill Promotions sub-tab + cron + approve/reject 闭环 | 3 人/日 | ✅ 2026-06-03 |
 | **P6** | Skill 自动修订 | Reflector → SkillEvolver 自动触发 + bodyMd diff 视图 | 2 人/日 | TBD |
 | **P7** | Tool Gap 观测 | ToolGapWatcher + `tool_gap_log` + `tool.report_gap` builtin + 前端 Tool Gaps sub-tab | 2 人/日 | TBD |
 | **P8** | Tool 自装配 propose | AutoInstaller + `auto_install_proposal` + 前端审批 UI | 4 人/日 | TBD |
 | **P9** | PnL-aware reason + auto 模式 | reason 注入 top-3 skill + MCP allowlist + auto 模式 + SkillEvolver baseline 回归 | 3 人/日 | TBD |
 
-**总计：14 人/日（不含 P4a / P4b 已完成的 7 人/日）。**
+**总计：11 人/日（不含 P4a / P4b / P5 已完成的 10 人/日）。**
 
 ---
 
@@ -527,3 +600,4 @@ self_evolve.tool_gap.auto_installed_total
 |---|---|---|
 | v0.1 | 2026-06-03 | 首版（含 P4a 已落地实现） |
 | v0.2 | 2026-06-03 | P4b 落地：PnlAttributor + SkillAttributor + agent_pnl_attribution + 后端只读接口 + 对账 + metrics（35+ 单测、5 集成测、attribution 整体 106/106、metrics 12/12）；改写 6.2 章节、修订 8 节排期表 |
+| v0.3 | 2026-06-03 | P5 落地：SkillPromoter + scoring + skill_promotion_run + approve/reject + cron + 4 个后端 routes + MemoryTab Skill Promotions sub-tab（9 scoring + 8 worker + 9 routes + 1 metrics 单测全过；migrations 62/62；前端 tsc 全绿）；改写 6.3 章节、修订 8 节排期表 |
