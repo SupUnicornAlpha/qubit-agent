@@ -38,6 +38,7 @@ docs/*
 !docs/ENVIRONMENT_MANAGER_DESIGN.md
 !docs/MEMORY_V2_DESIGN.md
 !docs/SELF_EVOLVING_AGENT_DESIGN.md
+!docs/SELF_EVOLVING_AGENT_P10_BACKLOG.md
 .tmp-broker-test-home/
 
 # IDE metadata
