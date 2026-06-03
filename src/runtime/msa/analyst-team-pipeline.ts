@@ -786,10 +786,17 @@ export async function runPostFusionPipeline(input: {
 
     const extra =
       slot.role === "research"
-        ? "\n\n请输出可回测的 Python 策略：在 Markdown 末尾附 ```python 代码块，含 `def on_bar(ctx):` 或清晰买卖逻辑；若暂无法生成代码，说明原因。"
+        ? [
+            "",
+            "",
+            "请输出**可直接执行的 Python 策略**：在 Markdown 末尾附 ```python 代码块，",
+            "签名必须为 `def on_bar(ctx, bar): ...`（双参；ctx 提供 buy/sell/close/sma/ema/atr，bar 是当前 OHLCV dict）。",
+            "评估报告 P1-A：代码会被系统**真实执行**喂回测引擎；若你写 `def on_bar(ctx):`（单参）会被 runner 直接拒。",
+            "若暂时无法生成代码，请显式说明原因——系统将退回内置 SMA 兜底回测。",
+          ].join("\n")
         : slot.role === "backtest" || slot.role === "backtest_engineer"
           ? strategyScriptId
-            ? `\n\n已生成策略脚本 id=${strategyScriptId}；请给出回测参数建议与结果解读要点。`
+            ? `\n\n已生成策略脚本 id=${strategyScriptId}（系统会真实执行该 Python 代码跑回测，不再是 SMA 占位）；请给出回测参数建议与结果解读要点。`
             : "\n\n请基于上游策略结论给出回测方案与参数建议。"
           : "";
 
@@ -821,7 +828,12 @@ export async function runPostFusionPipeline(input: {
     }
 
     if ((slot.role === "backtest" || slot.role === "backtest_engineer") && !backtestSummary) {
-      backtestSummary = await runNativeBacktestForTicker(input.workflowRunId, input.ticker);
+      backtestSummary = await runNativeBacktestForTicker(
+        input.workflowRunId,
+        input.ticker,
+        undefined,
+        strategyScriptId
+      );
       if (backtestSummary) {
         body = `${body}\n\n### 引擎回测结果\n\n${backtestSummary}`;
         await logResearchTeamInteraction({
@@ -932,55 +944,203 @@ async function persistStrategyScript(input: {
   return { scriptId: id };
 }
 
+/**
+ * 评估报告 P1-A 闭环：post-fusion 阶段的"自动回测"——
+ *
+ *   research slot 写出 ```python on_bar(ctx, bar)``` → persistStrategyScript 落
+ *   indicator_strategy_script → 这里 **真实执行该 Python 代码** 跑 bar-by-bar 回测。
+ *
+ * 之前（P0 之前）：strategyCode="" 一律跑硬编码 SMA 5/20 金叉，LLM 写的代码完全不被读。
+ * 现在：
+ *   1. 给了 strategyScriptId 且 signalCode 非空 → runPythonStrategyBacktest（真跑用户代码）
+ *   2. 上面任何一步失败 → fallback 到内置 SMA 兜底（与 P0 行为一致），失败原因写入摘要
+ *
+ * 失败回滚而不是抛错的原因：post-fusion 是"自动产物"，不该因为 LLM 代码语法错就让整个
+ * 研究 workflow 标 failed；摘要里写"python 失败 → SMA 兜底"对用户透明即可。
+ */
 async function runNativeBacktestForTicker(
   workflowRunId: string,
   ticker: string,
-  hintExchange?: string
+  hintExchange?: string,
+  strategyScriptId?: string
 ): Promise<string | null> {
+  const resolved = resolveTickerMarket(ticker, { hintExchange });
+  const initialCapital = 100_000;
+  const commission = 0.001;
+  const end = new Date();
+  const start = new Date(end);
+  start.setFullYear(start.getFullYear() - 1);
+  const startDate = start.toISOString().slice(0, 10);
+  const endDate = end.toISOString().slice(0, 10);
+
+  /** 1) 优先：跑 LLM 写的 Python 策略（P1-A 闭环路径） */
+  if (strategyScriptId) {
+    try {
+      const summary = await runLlmPythonStrategyForTicker({
+        workflowRunId,
+        strategyScriptId,
+        ticker,
+        exchange: resolved.exchange,
+        startDate,
+        endDate,
+        initialCapital,
+        commission,
+        marketLine: `市场推断：${resolved.market}/${resolved.exchange}（confidence=${resolved.confidence}）`,
+      });
+      if (summary) return summary;
+    } catch (e) {
+      console.warn(
+        `[runNativeBacktestForTicker] python strategy failed, fallback to SMA: ${(e as Error).message}`
+      );
+      /** 落到 SMA fallback 时把失败原因带回摘要 */
+      return await runSmaFallbackForTicker({
+        workflowRunId,
+        ticker,
+        exchange: resolved.exchange,
+        startDate,
+        endDate,
+        initialCapital,
+        commission,
+        marketLine: `市场推断：${resolved.market}/${resolved.exchange}（confidence=${resolved.confidence}）`,
+        pythonFallbackReason: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  /** 2) 兜底：跑硬编码 SMA 5/20 金叉（P0 之前的唯一路径） */
+  return await runSmaFallbackForTicker({
+    workflowRunId,
+    ticker,
+    exchange: resolved.exchange,
+    startDate,
+    endDate,
+    initialCapital,
+    commission,
+    marketLine: `市场推断：${resolved.market}/${resolved.exchange}（confidence=${resolved.confidence}）`,
+  });
+}
+
+interface PythonStrategyRunInput {
+  workflowRunId: string;
+  strategyScriptId: string;
+  ticker: string;
+  exchange: string;
+  startDate: string;
+  endDate: string;
+  initialCapital: number;
+  commission: number;
+  marketLine: string;
+}
+
+/**
+ * 跑 LLM 写的 Python 策略。返回 null 表示"signal_code 为空 / 不可执行"——
+ * 上层会 fallback 到 SMA；返回字符串就是渲染好的摘要。
+ *
+ * 抛错由上层 catch → fallback 到 SMA。
+ */
+export async function runLlmPythonStrategyForTicker(
+  input: PythonStrategyRunInput
+): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({ signalCode: indicatorStrategyScript.signalCode })
+    .from(indicatorStrategyScript)
+    .where(eq(indicatorStrategyScript.id, input.strategyScriptId))
+    .limit(1);
+  const code = rows[0]?.signalCode?.trim() ?? "";
+  if (code.length < 20) return null;
+
+  const { queryBarsRange } = await import("../market/klines-query");
+  const { runPythonStrategyBacktest } = await import("../market/python-strategy-backtest-runner");
+
+  const bars = await queryBarsRange({
+    symbol: input.ticker,
+    exchange: input.exchange,
+    period: "1d",
+    startDate: input.startDate,
+    endDate: input.endDate,
+  });
+  if (!bars || bars.length < 30) {
+    /** 数据太薄就别难为 Python runner；让上层走 SMA 兜底（SMA 内部也会拉同 bars） */
+    return null;
+  }
+
+  const result = await runPythonStrategyBacktest({
+    strategyCode: code,
+    bars,
+    initialCapital: input.initialCapital,
+    commission: input.commission,
+  });
+
+  const m = result.metrics;
+  const lines = [
+    `状态：completed（**LLM Python 策略真实执行**，workflow=${input.workflowRunId}）`,
+    input.marketLine,
+    `策略脚本 id：${input.strategyScriptId}`,
+    `K 线数：${m.bars}`,
+    `总收益：${m.totalReturnPct.toFixed(2)}%`,
+    `Sharpe（近似）：${m.sharpeApprox.toFixed(2)}`,
+    `最大回撤：${m.maxDrawdownPct.toFixed(2)}%`,
+    `交易次数：${m.tradeCount}`,
+    m.lastPosition !== undefined ? `末态持仓：${m.lastPosition}` : "",
+    "说明：脚本已通过 `python_strategy_backtest_runner.py` 真实回测（非 SMA 占位）。",
+  ];
+  if (result.stderrText && result.stderrText.trim().length > 0) {
+    lines.push(`Python stderr/print（截断 400 字符）：${result.stderrText.slice(0, 400)}`);
+  }
+  return lines.filter((l) => l.length > 0).join("\n");
+}
+
+interface SmaFallbackInput {
+  workflowRunId: string;
+  ticker: string;
+  exchange: string;
+  startDate: string;
+  endDate: string;
+  initialCapital: number;
+  commission: number;
+  marketLine: string;
+  pythonFallbackReason?: string;
+}
+
+async function runSmaFallbackForTicker(input: SmaFallbackInput): Promise<string | null> {
   try {
-    /**
-     * 评估报告 P0 修复点：之前 `exchange: "US"` 是字面量硬编码，
-     * 任何 A 股 / 港股 / 加密标的进 fusion 后跑 SMA 兜底都带 US 字段，
-     * 仅靠下游 secid regex 救回。现在统一用 resolver 推断；
-     * 上层未来可通过 hintExchange 传 scope.exchange 进一步覆盖。
-     */
-    const resolved = resolveTickerMarket(ticker, { hintExchange });
     const body: Record<string, unknown> = {
-      symbol: ticker,
-      exchange: resolved.exchange,
+      symbol: input.ticker,
+      exchange: input.exchange,
       timeframe: "1d",
       limit: 250,
       fastPeriod: 5,
       slowPeriod: 20,
-      initialCapital: 100_000,
+      initialCapital: input.initialCapital,
     };
     const bt = connectorRegistry.get("qubit-backtest") as BacktestConnector | undefined;
     if (bt?.runBacktest) {
-      const end = new Date();
-      const start = new Date(end);
-      start.setFullYear(start.getFullYear() - 1);
       const result = await bt.runBacktest({
         strategyCode: "",
         strategyParams: body,
         datasetUri: "",
-        startDate: start.toISOString().slice(0, 10),
-        endDate: end.toISOString().slice(0, 10),
-        initialCapital: 100_000,
-        commission: 0.001,
+        startDate: input.startDate,
+        endDate: input.endDate,
+        initialCapital: input.initialCapital,
+        commission: input.commission,
         slippage: 0,
-        benchmarkSymbol: ticker,
+        benchmarkSymbol: input.ticker,
       });
       const perf = result.performance;
       const lines = [
         `状态：${result.status}`,
-        `市场推断：${resolved.market}/${resolved.exchange}（confidence=${resolved.confidence}）`,
+        input.marketLine,
+        input.pythonFallbackReason
+          ? `Python 策略执行失败 → 退回 SMA 兜底（原因：${input.pythonFallbackReason.slice(0, 200)}）`
+          : "",
         `总收益：${(perf.totalReturn * 100).toFixed(2)}%`,
         `Sharpe：${perf.sharpeRatio.toFixed(2)}`,
         `最大回撤：${(perf.maxDrawdown * 100).toFixed(2)}%`,
         `交易次数：${perf.tradeCount}`,
-        `说明：内置 SMA 金叉死叉回测（workflow=${workflowRunId}）。`,
+        `说明：内置 SMA 金叉死叉回测（workflow=${input.workflowRunId}）。`,
       ];
-      return lines.join("\n");
+      return lines.filter((l) => l.length > 0).join("\n");
     }
     const jobId = randomUUID();
     const db = await getDb();
@@ -991,7 +1151,7 @@ async function runNativeBacktestForTicker(
       paramsJson: body,
     });
     await runSmaCrossoverBacktestJob(jobId, body);
-    return `状态：completed（直连 job-runner）\n说明：workflow=${workflowRunId}，标的 ${ticker}`;
+    return `状态：completed（直连 job-runner）\n${input.marketLine}\n说明：workflow=${input.workflowRunId}，标的 ${input.ticker}`;
   } catch (e) {
     return `（回测引擎执行失败：${e instanceof Error ? e.message : String(e)}）`;
   }
