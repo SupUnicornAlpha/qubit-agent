@@ -196,6 +196,12 @@ export interface InvokeWithFallbackResult {
   responseId?: string;
   /** finish_reason / stop_reason / done_reason 字面量。 */
   finishReason?: string;
+  /**
+   * P3-3：模型本轮主动请求调用的工具列表（基础设施透传；caller 可不读）。
+   * 仅当 caller 通过 LlmGatewayInput.tools 启用了原生 tool calling、且模型返回了
+   * function_call / tool_use blocks 时存在。
+   */
+  toolCalls?: import("./gateway").LlmToolCallRequest[];
   modelUsed: RuntimeModelConfig;
   fallbackUsed: boolean;
   /** P2：本次调用是否被 length-retry 自救过（即 max_tokens 翻倍重试一次）。 */
@@ -232,6 +238,7 @@ function projectResult(
       : {}),
     ...(result.responseId ? { responseId: result.responseId } : {}),
     ...(result.finishReason ? { finishReason: result.finishReason } : {}),
+    ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}),
     modelUsed,
     fallbackUsed: flags.fallbackUsed,
     lengthRetryUsed: flags.lengthRetryUsed,
@@ -318,12 +325,17 @@ function mergeUsage(
   const completionTokens = sum(a.completionTokens, b.completionTokens);
   const totalTokens = sum(a.totalTokens, b.totalTokens);
   const cachedPromptTokens = sum(a.cachedPromptTokens, b.cachedPromptTokens);
+  const cacheCreationInputTokens = sum(
+    a.cacheCreationInputTokens,
+    b.cacheCreationInputTokens,
+  );
   const reasoningTokens = sum(a.reasoningTokens, b.reasoningTokens);
   return {
     ...(promptTokens !== undefined ? { promptTokens } : {}),
     ...(completionTokens !== undefined ? { completionTokens } : {}),
     ...(totalTokens !== undefined ? { totalTokens } : {}),
     ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }

@@ -1596,8 +1596,15 @@ export type MonitorLlmUsageGroup = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** P3-2 监控闭环：prompt cache 命中 token、reasoning token、TTFT 分位、finish reason 分布、length retry 次数 */
+  cachedPromptTokens: number;
+  reasoningTokens: number;
   costUsd: number;
   avgLatencyMs: number | null;
+  p50FirstTokenLatencyMs: number | null;
+  p95FirstTokenLatencyMs: number | null;
+  finishReasonBreakdown: Record<string, number>;
+  lengthRetryCount: number;
   successRate: number;
   lastCalledAt: string | null;
 };
@@ -1612,8 +1619,14 @@ export type MonitorLlmUsageSummary = {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    cachedPromptTokens: number;
+    reasoningTokens: number;
     costUsd: number;
     avgLatencyMs: number | null;
+    p50FirstTokenLatencyMs: number | null;
+    p95FirstTokenLatencyMs: number | null;
+    finishReasonBreakdown: Record<string, number>;
+    lengthRetryCount: number;
     successRate: number;
   };
   byProviderModel: MonitorLlmUsageGroup[];

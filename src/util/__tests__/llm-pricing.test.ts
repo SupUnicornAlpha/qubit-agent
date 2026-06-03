@@ -226,3 +226,76 @@ describe("estimateLlmCostUsd · P2 价表升级", () => {
     ).toBe(0.3);
   });
 });
+
+describe("estimateLlmCostUsd · P3-1 cache write 加价（Anthropic 1.25×）", () => {
+  test("Anthropic cache_creation_input_tokens 按 inUsdPerM × 1.25 计费", () => {
+    /** claude-3-5-sonnet-20241022：$3 / 1M input；写 cache 应为 $3.75 / 1M */
+    const cost = estimateLlmCostUsd({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cacheCreationInputTokens: 1_000_000,
+    });
+    expect(cost).toBe(3.75);
+  });
+
+  test("read + write 同时存在：read 0.1× / write 1.25× / 剩余 1.0× 各自独立计费", () => {
+    /**
+     * 1M prompt 拆三段（claude-3-5-sonnet @ $3/1M input）：
+     *   - 800k 写 cache：800k × 3 × 1.25 / 1M = $3.00
+     *   - 150k 读 cache：150k × 3 × 0.10 / 1M = $0.045
+     *   - 50k 普通 input：50k × 3 × 1.00 / 1M = $0.15
+     *   合计 $3.195
+     */
+    const cost = estimateLlmCostUsd({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cacheCreationInputTokens: 800_000,
+      cachedPromptTokens: 150_000,
+    });
+    expect(cost).toBeCloseTo(3.195, 6);
+  });
+
+  test("OpenAI 不应用 cache write 加价（保持 1.0×，因为 OpenAI Responses 没这个概念）", () => {
+    /** gpt-4o：$2.5 / 1M input；写 cache 应仍是 $2.5 / 1M（不像 Anthropic 加价） */
+    const cost = estimateLlmCostUsd({
+      provider: "openai",
+      model: "gpt-4o",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cacheCreationInputTokens: 1_000_000,
+    });
+    expect(cost).toBe(2.5);
+  });
+
+  test("cache_creation_input_tokens > prompt 被 clamp（防上游打点错乱）", () => {
+    const cost = estimateLlmCostUsd({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      promptTokens: 1000,
+      completionTokens: 0,
+      cacheCreationInputTokens: 999_999, // 远超 promptTokens
+    });
+    /** 应按 1000 token 计：1000 × $3 / 1M × 1.25 = $0.00375 */
+    expect(cost).toBeCloseTo(0.00375, 8);
+  });
+
+  test("cache write 与 cache read 总和不超过 prompt（write 优先占额）", () => {
+    /**
+     * write=600k, read=600k, prompt=1M → write 取 600k，read 在剩余 400k 里 clamp 为 400k
+     * cost = 600k × 3 × 1.25 / 1M + 400k × 3 × 0.1 / 1M = 2.25 + 0.12 = 2.37
+     */
+    const cost = estimateLlmCostUsd({
+      provider: "anthropic",
+      model: "claude-3-5-sonnet-20241022",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+      cacheCreationInputTokens: 600_000,
+      cachedPromptTokens: 600_000, // 表面上 write+read=1.2M > prompt
+    });
+    expect(cost).toBeCloseTo(2.37, 6);
+  });
+});

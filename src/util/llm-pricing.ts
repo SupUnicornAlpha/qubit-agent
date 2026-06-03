@@ -49,6 +49,12 @@ export type LlmPricingInput = {
    * - 其它 provider 暂不暴露 → 不传。
    */
   cachedPromptTokens?: number;
+  /**
+   * Anthropic prompt-caching 专属：本次请求**写入**缓存的 token 数（≤ promptTokens）。
+   * 计费为 `inUsdPerM × cacheWriteMultiplier`（Anthropic 公开 1.25×）。
+   * 不传 / 0 = 没写 cache（或 provider 不支持），按普通 input 计费。
+   */
+  cacheCreationInputTokens?: number;
 };
 
 type PriceRow = {
@@ -123,17 +129,29 @@ const PROVIDER_CACHE_DISCOUNT: ReadonlyMap<string, number> = new Map([
 ]);
 
 /**
+ * provider 级 cache **write** 加价系数。Anthropic 写 cache 时按
+ * `inUsdPerM × 1.25` 收费（这部分钱 5 分钟内被 cache_read 的 0.1× 折扣摊还回来）。
+ * OpenAI Responses 不区分 cache write 与普通 input，统一按 input 价收。
+ */
+const PROVIDER_CACHE_WRITE_MULTIPLIER: ReadonlyMap<string, number> = new Map([
+  ["anthropic", 1.25],
+]);
+
+/**
  * 估算单次 LLM 调用成本（USD）。
  *   - 命中精确 `provider:model`：精准价
  *   - 不命中但 provider 已知：provider fallback
  *   - 都不命中（ollama / mock / 未知）：0
  *
- * cached input 计费拆分：
- *   uncachedPrompt = max(0, promptTokens - cachedPromptTokens)
- *   cachedPrompt   = min(promptTokens, cachedPromptTokens)
- *   inputCost = uncachedPrompt × inUsdPerM/1M + cachedPrompt × inUsdPerM × discount /1M
+ * P3-1 cache write 计费拆分：
+ *   cacheWritten = min(promptTokens, cacheCreationInputTokens)   // 写缓存的 token
+ *   cacheRead    = min(promptTokens - cacheWritten, cachedPromptTokens)  // 命中缓存的 token
+ *   uncached     = promptTokens - cacheWritten - cacheRead       // 既没写也没读
+ *   inputCost = uncached × inUsdPerM
+ *             + cacheRead × inUsdPerM × cachedDiscount       // Anthropic 0.1×, OpenAI 0.5×
+ *             + cacheWritten × inUsdPerM × cacheWriteMultiplier  // Anthropic 1.25×, 其它 1.0×
  *
- * `cachedPromptTokens` 不传 / 0 时退化为老行为（与 P1 完全相同），向后兼容。
+ * `cachedPromptTokens` / `cacheCreationInputTokens` 不传 / 0 时完全等价 P2 行为。
  *
  * 输出保留 6 位小数（约 1 个 token 量级），避免微调用因 round 丢失。
  */
@@ -147,17 +165,31 @@ export function estimateLlmCostUsd(input: LlmPricingInput): number {
   const completionTokens = Math.max(0, input.completionTokens);
   if (promptTokens <= 0 && completionTokens <= 0) return 0;
   /**
-   * cachedPromptTokens 收紧：不能超过 promptTokens（防上游打点 bug）；负数当 0。
+   * 收紧 cache 维度：上游打点偶尔会出现 cached > prompt / 负数等病态值；
+   * 不抛错，clamp 后继续算。
    */
-  const rawCached = input.cachedPromptTokens ?? 0;
-  const cached = Math.max(0, Math.min(promptTokens, Math.floor(rawCached)));
-  const uncached = promptTokens - cached;
-  const discount = row.cachedDiscount ?? PROVIDER_CACHE_DISCOUNT.get(provider) ?? 1;
+  const rawWrite = input.cacheCreationInputTokens ?? 0;
+  const cacheWritten = Math.max(0, Math.min(promptTokens, Math.floor(rawWrite)));
+  const rawRead = input.cachedPromptTokens ?? 0;
+  /** cache_read 与 cache_write 不能同时占用同一 token，read 在剩余预算里 clamp */
+  const cacheRead = Math.max(
+    0,
+    Math.min(promptTokens - cacheWritten, Math.floor(rawRead)),
+  );
+  const uncached = promptTokens - cacheWritten - cacheRead;
+  const readDiscount = row.cachedDiscount ?? PROVIDER_CACHE_DISCOUNT.get(provider) ?? 1;
+  const writeMultiplier = PROVIDER_CACHE_WRITE_MULTIPLIER.get(provider) ?? 1;
   const cost =
     (uncached * row.inUsdPerM) / 1_000_000 +
-    (cached * row.inUsdPerM * discount) / 1_000_000 +
+    (cacheRead * row.inUsdPerM * readDiscount) / 1_000_000 +
+    (cacheWritten * row.inUsdPerM * writeMultiplier) / 1_000_000 +
     (completionTokens * row.outUsdPerM) / 1_000_000;
   return Number(cost.toFixed(6));
 }
 
-export const __TEST_ONLY__ = { PRICE_TABLE, PROVIDER_FALLBACK, PROVIDER_CACHE_DISCOUNT };
+export const __TEST_ONLY__ = {
+  PRICE_TABLE,
+  PROVIDER_FALLBACK,
+  PROVIDER_CACHE_DISCOUNT,
+  PROVIDER_CACHE_WRITE_MULTIPLIER,
+};

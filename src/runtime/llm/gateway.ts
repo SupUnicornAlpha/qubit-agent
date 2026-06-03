@@ -31,6 +31,51 @@ export interface LlmSamplingOverrides {
   reasoningEffort?: "low" | "medium" | "high";
 }
 
+/**
+ * P3-3：网关层原生 tools 入参（基础设施，opt-in）。
+ *
+ * 设计原则：
+ *   - 调用方完全 optional —— 不传 = 与 P2 行为零差异（reason 节点目前仍走
+ *     `<TOOL_CALL>` 文本协议）。
+ *   - 网关负责 schema 翻译：把统一的 `LlmToolDefinition` 翻译成各 provider 的 wire format。
+ *   - **不会** 把 tool 调用结果 round-trip 回模型（那是 caller / agent loop 的职责）。
+ *     网关只把模型「想调的工具」解析成 `LlmGatewayResult.toolCalls` 透出去。
+ *
+ * Provider 支持矩阵：
+ *   - OpenAI Chat Completions（GPT-4 / GPT-4o / GPT-4.1）：传入 `tools=[{type:'function',...}]`，
+ *     从 choices[0].message.tool_calls 解析。
+ *   - OpenAI Responses（gpt-5 / o-series）：传入 `tools=[{type:'function',name,parameters}]`，
+ *     从 output[].type='function_call' 解析。
+ *   - Anthropic Messages：传入 `tools=[{name,input_schema}]`，从 content[].type='tool_use' 解析。
+ *   - Ollama / OpenAI-compatible 通用网关（DeepSeek、智谱）：维持 chat.completions 协议，
+ *     若 provider 不支持会被 sanitize 掉（P3-3 阶段不强校验，由 caller 选模型时承担）。
+ */
+export interface LlmToolDefinition {
+  /** 工具名（snake_case 推荐，符合 OpenAI / Anthropic 命名约束 ^[a-zA-Z0-9_-]+$）。 */
+  name: string;
+  /** 工具用途的人类可读描述；模型会读它决定何时调用。 */
+  description?: string;
+  /** JSON Schema（draft-07 子集），描述该工具入参 shape。空对象 = 无参。 */
+  parameters: Record<string, unknown>;
+}
+
+export interface LlmToolCallRequest {
+  /**
+   * 服务端给的 call id。OpenAI 写在 `tool_calls[].id`；Anthropic 写在 `content[].id`；
+   * Responses 写在 `output[].call_id`。下一步把工具结果回传时必须带回。
+   *
+   * **注意**：网关不会校验唯一性 / 编码规则，原样透传。
+   */
+  id: string;
+  name: string;
+  /**
+   * 解析后的入参 object。OpenAI 给的是 stringified JSON，网关已 parse；
+   * 解析失败时 args = {} 并把原始字符串放在 `rawArgs`，避免 caller 因 JSON 报错挂掉。
+   */
+  args: Record<string, unknown>;
+  rawArgs?: string;
+}
+
 export interface LlmGatewayInput {
   config: RuntimeModelConfig;
   systemPrompt: string;
@@ -38,6 +83,13 @@ export interface LlmGatewayInput {
   onToken: (token: string) => void;
   /** P0-3：调用方自定义采样参数；不传走默认值。 */
   sampling?: LlmSamplingOverrides;
+  /**
+   * P3-3：可选的 tools 列表。传了之后：
+   *   - 网关把 tools 翻译成 provider wire format 一并发送；
+   *   - response 中的 tool_calls 会解析到 `LlmGatewayResult.toolCalls`。
+   * 不传 = 完全保持 P2 行为，answer 字段照常给文本（含 `<TOOL_CALL>` sentinel）。
+   */
+  tools?: LlmToolDefinition[];
 }
 
 export interface LlmTokenUsage {
@@ -45,11 +97,23 @@ export interface LlmTokenUsage {
   completionTokens?: number;
   totalTokens?: number;
   /**
-   * Responses API（gpt-5 / o-series）专属：被 OpenAI 服务端缓存的 prompt
-   * token 数。命中缓存的部分按更低费率计价（约 1/4 standard 输入价）。
-   * 其它路径（chat.completions / Anthropic / Ollama）不会有此字段。
+   * 命中 prompt cache 的 token 数：
+   *   - OpenAI Responses：`input_tokens_details.cached_tokens`（≈ 1/2 标准输入价）
+   *   - Anthropic Messages（启用 prompt-caching beta 时）：`cache_read_input_tokens`（≈ 1/10 标准输入价）
+   *   - 其它路径（chat.completions / Ollama）不会有此字段
    */
   cachedPromptTokens?: number;
+  /**
+   * Anthropic prompt-caching 专属：本次请求**写入**缓存的 token 数。Anthropic
+   * 计费按 1.25× 标准输入价收（写一次缓存，后续 5 分钟内同 hash 读以 0.1× 价收回本）。
+   *
+   * 我们落库为单独字段是为了：
+   *   1) 监控 cache hit/miss 比例时区分"miss + 写"与"miss 不写"；
+   *   2) 后续做"是否值得开 caching"决策时有依据。
+   *
+   * 若没启用 prompt caching，字段始终缺省。
+   */
+  cacheCreationInputTokens?: number;
   /**
    * Responses API 专属：模型用于 chain-of-thought 的推理 token 数（计费按
    * completion 价）。`completionTokens` 已经包含这一份，本字段单独存便于做
@@ -79,10 +143,145 @@ export interface LlmGatewayResult {
    *   stop / length / max_tokens / max_output_tokens / tool_calls / content_filter / error
    */
   finishReason?: string;
+  /**
+   * P3-3：模型主动请求调用的工具列表。仅在调用方传了 `LlmGatewayInput.tools`
+   * 且模型确实返回 tool 调用时存在；否则 undefined。
+   *
+   * 网关**不**执行工具，只把意图透传。caller 负责执行 + 把结果通过新的请求
+   * 回传给模型（多轮 tool-use loop）。
+   */
+  toolCalls?: LlmToolCallRequest[];
 }
 
 function splitForPseudoStreaming(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
+}
+
+/**
+ * P3-3 helpers：tool definition / tool_calls 解析。
+ *
+ * 拆成独立 function 而不是 inline，是为了：
+ *   1) 三条 provider 路径（OpenAI Chat / Anthropic / Responses）共用同一组 schema 翻译；
+ *   2) 单测可以脱网验证 schema 生成正确性；
+ *   3) 解析 tool_calls 时 args 可能是 stringified JSON（OpenAI）也可能是 object（Anthropic），
+ *      统一在这里 normalize。
+ */
+type OpenAIToolWire = { type: "function"; function: { name: string; description?: string; parameters: Record<string, unknown> } };
+type AnthropicToolWire = { name: string; description?: string; input_schema: Record<string, unknown> };
+type ResponsesToolWire = { type: "function"; name: string; description?: string; parameters: Record<string, unknown> };
+
+function toOpenAITools(tools: LlmToolDefinition[] | undefined): OpenAIToolWire[] | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      ...(t.description ? { description: t.description } : {}),
+      parameters: t.parameters ?? {},
+    },
+  }));
+}
+
+function toAnthropicTools(tools: LlmToolDefinition[] | undefined): AnthropicToolWire[] | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map((t) => ({
+    name: t.name,
+    ...(t.description ? { description: t.description } : {}),
+    /** Anthropic 字段名是 input_schema（不是 parameters） */
+    input_schema: t.parameters ?? {},
+  }));
+}
+
+function toResponsesTools(tools: LlmToolDefinition[] | undefined): ResponsesToolWire[] | undefined {
+  if (!tools || tools.length === 0) return undefined;
+  return tools.map((t) => ({
+    type: "function" as const,
+    name: t.name,
+    ...(t.description ? { description: t.description } : {}),
+    parameters: t.parameters ?? {},
+  }));
+}
+
+/**
+ * 把 OpenAI/Responses 风格的 stringified arguments 解析成对象。失败时不抛错，
+ * 返回 args={} 并把原文落 rawArgs，让 caller 自己决定 fail-fast 还是 fail-soft。
+ */
+function parseToolArguments(raw: unknown): { args: Record<string, unknown>; rawArgs?: string } {
+  if (raw == null) return { args: {} };
+  if (typeof raw === "object") {
+    return { args: raw as Record<string, unknown> };
+  }
+  if (typeof raw === "string") {
+    if (raw.trim().length === 0) return { args: {}, rawArgs: raw };
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        return { args: parsed as Record<string, unknown>, rawArgs: raw };
+      }
+      return { args: {}, rawArgs: raw };
+    } catch {
+      return { args: {}, rawArgs: raw };
+    }
+  }
+  return { args: {} };
+}
+
+/**
+ * P3-3：增量 tool_calls 累积器（OpenAI Chat Completions 流式）。
+ *
+ * OpenAI 在 stream 模式把 tool_calls 切分成多帧 delta：
+ *   帧 1: { index:0, id:'call_abc', function:{ name:'fetch' } }
+ *   帧 2: { index:0, function:{ arguments:'{"sym' } }
+ *   帧 N: { index:0, function:{ arguments:'bol":"BTC"}' } }
+ * 我们按 `index` 累积，最终在 stream 结束后 parse arguments 字符串。
+ */
+type ToolCallAccumulator = Map<
+  number,
+  { id?: string; name?: string; argsBuf: string }
+>;
+
+function accumulateOpenAIToolCallDelta(
+  acc: ToolCallAccumulator,
+  delta: unknown,
+): void {
+  if (!Array.isArray(delta)) return;
+  for (const item of delta) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as { index?: number; id?: string; function?: { name?: string; arguments?: string } };
+    const idx = typeof obj.index === "number" ? obj.index : 0;
+    let cur = acc.get(idx);
+    if (!cur) {
+      cur = { argsBuf: "" };
+      acc.set(idx, cur);
+    }
+    if (typeof obj.id === "string" && obj.id.length > 0) cur.id = obj.id;
+    if (obj.function) {
+      if (typeof obj.function.name === "string" && obj.function.name.length > 0) {
+        cur.name = obj.function.name;
+      }
+      if (typeof obj.function.arguments === "string") {
+        cur.argsBuf += obj.function.arguments;
+      }
+    }
+  }
+}
+
+function finalizeOpenAIToolCalls(acc: ToolCallAccumulator): LlmToolCallRequest[] | undefined {
+  if (acc.size === 0) return undefined;
+  const out: LlmToolCallRequest[] = [];
+  /** 按 index 排序，保持模型给出的调用顺序（多 tool 调用时必要） */
+  const sorted = [...acc.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [, cur] of sorted) {
+    if (!cur.id || !cur.name) continue; // 帧丢失/顺序错乱的兜底，丢弃半成品
+    const { args, rawArgs } = parseToolArguments(cur.argsBuf);
+    out.push({
+      id: cur.id,
+      name: cur.name,
+      args,
+      ...(rawArgs !== undefined ? { rawArgs } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 /**
@@ -97,7 +296,14 @@ function estimateTokens(text: string): number {
 
 function normalizeUsage(usage: LlmTokenUsage | undefined): LlmTokenUsage | undefined {
   if (!usage) return undefined;
-  const { promptTokens, completionTokens, totalTokens, cachedPromptTokens, reasoningTokens } = usage;
+  const {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cachedPromptTokens,
+    cacheCreationInputTokens,
+    reasoningTokens,
+  } = usage;
   if (
     (promptTokens === undefined || promptTokens === 0) &&
     (completionTokens === undefined || completionTokens === 0) &&
@@ -113,6 +319,7 @@ function normalizeUsage(usage: LlmTokenUsage | undefined): LlmTokenUsage | undef
     ...(completionTokens !== undefined ? { completionTokens } : {}),
     ...(total !== undefined ? { totalTokens: total } : {}),
     ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
   };
 }
@@ -173,6 +380,7 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
    * 推理类模型族（gpt-5* / o1-3-4*）只接受 default temperature；用 sanitize
    * 去掉受限字段，避免 400 + 重试 + 熔断器误开。
    */
+  const oaiTools = toOpenAITools(input.tools);
   const requestBody = sanitizeChatCompletionsBody(input.config.model, {
     model: input.config.model,
     messages: [
@@ -182,6 +390,8 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
     temperature,
     ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
     ...(sampling.maxOutputTokens !== undefined ? { max_tokens: sampling.maxOutputTokens } : {}),
+    /** P3-3：可选 tools。不传时与 P2 行为零差。 */
+    ...(oaiTools ? { tools: oaiTools } : {}),
     stream: true as const,
     stream_options: { include_usage: true },
   });
@@ -191,17 +401,26 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
   let firstTokenLatencyMs: number | undefined;
   let finishReason: string | undefined;
   let responseId: string | undefined;
+  /** P3-3：tool_calls 增量累积器；空 = 模型未发起 tool 调用 */
+  const toolCallAcc: ToolCallAccumulator = new Map();
   for await (const chunk of stream) {
     if (!responseId && typeof (chunk as { id?: string }).id === "string") {
       responseId = (chunk as { id: string }).id;
     }
-    const token = chunk.choices[0]?.delta?.content ?? "";
+    const delta = chunk.choices[0]?.delta as
+      | { content?: string; tool_calls?: unknown }
+      | undefined;
+    const token = delta?.content ?? "";
     if (token) {
       if (firstTokenLatencyMs === undefined) {
         firstTokenLatencyMs = Date.now() - startedAt;
       }
       answer += token;
       input.onToken(token);
+    }
+    /** P3-3：原生 tool_calls delta 增量入账 */
+    if (delta && Array.isArray(delta.tool_calls)) {
+      accumulateOpenAIToolCallDelta(toolCallAcc, delta.tool_calls);
     }
     const choiceFinish = chunk.choices[0]?.finish_reason;
     const fr = pickFinishReason(choiceFinish);
@@ -228,6 +447,7 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
     }
   }
   const normalized = normalizeUsage(usage);
+  const toolCalls = finalizeOpenAIToolCalls(toolCallAcc);
   return {
     answer,
     ...(normalized ? { usage: normalized } : {}),
@@ -235,6 +455,7 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
     ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
     ...(responseId ? { responseId } : {}),
     ...(finishReason ? { finishReason } : {}),
+    ...(toolCalls ? { toolCalls } : {}),
   };
 }
 
@@ -269,6 +490,11 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
     max_output_tokens: sampling.maxOutputTokens ?? 4096,
     stream: useStream,
   };
+  /** P3-3：可选 tools。Responses 用 type:'function' 风格但字段在 top-level（不是 nested function 对象）。 */
+  const respTools = toResponsesTools(input.tools);
+  if (respTools) {
+    reqBody["tools"] = respTools;
+  }
   if (cap.reasoningEffort) {
     reqBody["reasoning"] = { effort: sampling.reasoningEffort ?? "medium" };
   }
@@ -310,6 +536,10 @@ type ResponsesPayload = {
   output_text?: string;
   output?: Array<{
     type?: string;
+    /** P3-3：function_call 在 output[] 里独立 item，与 message item 同级 */
+    name?: string;
+    arguments?: string;
+    call_id?: string;
     content?: Array<{ type?: string; text?: string }>;
   }>;
   usage?: {
@@ -321,6 +551,28 @@ type ResponsesPayload = {
   };
   incomplete_details?: { reason?: string };
 };
+
+/**
+ * P3-3：从 Responses API 完整 output 数组里抽 function_call items。
+ * 同时兼容流式 / 非流式（两种 schema 一致）。
+ */
+function pickResponsesToolCalls(json: ResponsesPayload): LlmToolCallRequest[] | undefined {
+  const out = json.output;
+  if (!Array.isArray(out)) return undefined;
+  const calls: LlmToolCallRequest[] = [];
+  for (const item of out) {
+    if (!item || item.type !== "function_call") continue;
+    if (typeof item.name !== "string" || typeof item.call_id !== "string") continue;
+    const { args, rawArgs } = parseToolArguments(item.arguments);
+    calls.push({
+      id: item.call_id,
+      name: item.name,
+      args,
+      ...(rawArgs !== undefined ? { rawArgs } : {}),
+    });
+  }
+  return calls.length > 0 ? calls : undefined;
+}
 
 function pickResponsesUsage(json: ResponsesPayload): LlmTokenUsage | undefined {
   const rawUsage = json.usage;
@@ -364,6 +616,7 @@ async function consumeResponsesNonStream(
   const latencyMs = Date.now() - startedAt;
   const normalized = normalizeUsage(pickResponsesUsage(json));
   const finishReason = pickResponsesFinishReason(json);
+  const toolCalls = pickResponsesToolCalls(json);
   return {
     answer,
     ...(normalized ? { usage: normalized } : {}),
@@ -371,6 +624,7 @@ async function consumeResponsesNonStream(
     firstTokenLatencyMs: latencyMs,
     ...(json.id ? { responseId: json.id } : {}),
     ...(finishReason ? { finishReason } : {}),
+    ...(toolCalls ? { toolCalls } : {}),
   };
 }
 
@@ -391,6 +645,16 @@ async function consumeResponsesStream(
   let responseId: string | undefined;
   let finishReason: string | undefined;
   let usage: LlmTokenUsage | undefined;
+  /**
+   * P3-3：Responses 流式 function_call 增量。事件序列：
+   *   response.output_item.added (item.type=function_call) → 拿到 call_id + name
+   *   response.function_call_arguments.delta (output_index, delta) → 拼 args 字符串
+   *   response.function_call_arguments.done / response.completed → 收尾
+   * 我们按 output_index 累积；最后用 pickResponsesToolCalls 兜底（response.completed 里
+   * 通常有完整 output[]）。
+   */
+  const respToolAcc = new Map<number, { id?: string; name?: string; argsBuf: string }>();
+  let toolCallsFromCompleted: LlmToolCallRequest[] | undefined;
 
   for await (const ev of readSseEvents(body)) {
     let parsed: Record<string, unknown>;
@@ -413,6 +677,25 @@ async function consumeResponsesStream(
         answer += delta;
         input.onToken(delta);
       }
+    } else if (t === "response.output_item.added") {
+      const item = parsed["item"] as
+        | { type?: string; call_id?: string; name?: string }
+        | undefined;
+      const idx = typeof parsed["output_index"] === "number" ? (parsed["output_index"] as number) : 0;
+      if (item && item.type === "function_call") {
+        const cur = respToolAcc.get(idx) ?? { argsBuf: "" };
+        if (typeof item.call_id === "string") cur.id = item.call_id;
+        if (typeof item.name === "string") cur.name = item.name;
+        respToolAcc.set(idx, cur);
+      }
+    } else if (t === "response.function_call_arguments.delta") {
+      const idx = typeof parsed["output_index"] === "number" ? (parsed["output_index"] as number) : 0;
+      const delta = parsed["delta"];
+      if (typeof delta === "string") {
+        const cur = respToolAcc.get(idx) ?? { argsBuf: "" };
+        cur.argsBuf += delta;
+        respToolAcc.set(idx, cur);
+      }
     } else if (t === "response.completed") {
       const r = parsed["response"] as ResponsesPayload | undefined;
       if (r) {
@@ -421,6 +704,8 @@ async function consumeResponsesStream(
         if (u) usage = u;
         const fr = pickResponsesFinishReason(r);
         if (fr) finishReason = fr;
+        /** response.completed 里的 output[] 已经包含完整 function_call，直接抽 */
+        toolCallsFromCompleted = pickResponsesToolCalls(r);
       }
     } else if (t === "response.failed" || t === "response.error" || t === "error") {
       const err = parsed["error"] as Record<string, unknown> | undefined;
@@ -431,6 +716,26 @@ async function consumeResponsesStream(
 
   const latencyMs = Date.now() - startedAt;
   const normalized = normalizeUsage(usage);
+  /**
+   * P3-3：tool_calls 优先用 response.completed 给的完整版（args 已是终态字符串）；
+   * 没有时拼增量累积器（极少数 provider 不在 completed 里塞 output[]）。
+   */
+  let toolCalls: LlmToolCallRequest[] | undefined = toolCallsFromCompleted;
+  if (!toolCalls && respToolAcc.size > 0) {
+    const sorted = [...respToolAcc.entries()].sort((a, b) => a[0] - b[0]);
+    const arr: LlmToolCallRequest[] = [];
+    for (const [, cur] of sorted) {
+      if (!cur.id || !cur.name) continue;
+      const { args, rawArgs } = parseToolArguments(cur.argsBuf);
+      arr.push({
+        id: cur.id,
+        name: cur.name,
+        args,
+        ...(rawArgs !== undefined ? { rawArgs } : {}),
+      });
+    }
+    if (arr.length > 0) toolCalls = arr;
+  }
   return {
     answer,
     ...(normalized ? { usage: normalized } : {}),
@@ -438,6 +743,7 @@ async function consumeResponsesStream(
     ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
     ...(responseId ? { responseId } : {}),
     ...(finishReason ? { finishReason } : {}),
+    ...(toolCalls ? { toolCalls } : {}),
   };
 }
 
@@ -478,6 +784,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
    * 但有用户把 baseURL 指到 litellm/azure 这类代理 → 后端可能接的是
    * gpt-5 / o3 推理模型。同样走 sanitize 兜底。
    */
+  const oaiCompatTools = toOpenAITools(input.tools);
   const requestBody = sanitizeChatCompletionsBody(resolvedModel, {
     model: resolvedModel,
     messages: [
@@ -487,6 +794,8 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     temperature,
     ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
     ...(sampling.maxOutputTokens !== undefined ? { max_tokens: sampling.maxOutputTokens } : {}),
+    /** P3-3：DeepSeek-Chat / Qwen / Zhipu 都接受 OpenAI tools schema（DeepSeek-R1 不接，模型选时承担）。 */
+    ...(oaiCompatTools ? { tools: oaiCompatTools } : {}),
     stream: true as const,
     stream_options: { include_usage: true },
   });
@@ -496,6 +805,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   let firstTokenLatencyMs: number | undefined;
   let finishReason: string | undefined;
   let responseId: string | undefined;
+  const compatToolCallAcc: ToolCallAccumulator = new Map();
   /**
    * P2：DeepSeek-R1 / deepseek-reasoner 在 chat.completions 流里把推理过程放在
    * `delta.reasoning_content`（不是 `delta.content`）。我们刻意**不**把这部分推到
@@ -511,7 +821,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
       responseId = (chunk as { id: string }).id;
     }
     const delta = chunk.choices[0]?.delta as
-      | { content?: string; reasoning_content?: string }
+      | { content?: string; reasoning_content?: string; tool_calls?: unknown }
       | undefined;
     const token = delta?.content ?? "";
     if (token) {
@@ -520,6 +830,9 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
       }
       answer += token;
       input.onToken(token);
+    }
+    if (delta && Array.isArray(delta.tool_calls)) {
+      accumulateOpenAIToolCallDelta(compatToolCallAcc, delta.tool_calls);
     }
     const reasoningDelta = delta?.reasoning_content;
     if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
@@ -559,6 +872,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     }
   }
   const normalized = normalizeUsage(usage);
+  const toolCalls = finalizeOpenAIToolCalls(compatToolCallAcc);
   return {
     answer,
     ...(normalized ? { usage: normalized } : {}),
@@ -566,6 +880,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
     ...(responseId ? { responseId } : {}),
     ...(finishReason ? { finishReason } : {}),
+    ...(toolCalls ? { toolCalls } : {}),
   };
 }
 
@@ -581,6 +896,33 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
  * 兼容兜底：如果 ENV `QUBIT_LLM_ANTHROPIC_NON_STREAM="1"`，回退到非流式（debug
  * 用，例如某代理不支持 stream）。
  */
+/**
+ * Anthropic prompt-caching 启用判定（P3-1，opt-in）：
+ *
+ * 触发条件**任一满足**即开启：
+ *   1) ENV `QUBIT_LLM_ANTHROPIC_PROMPT_CACHE` 显式设为 `"1"`；
+ *   2) systemPrompt 长度 ≥ ENV `QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS`（默认 4096
+ *      ≈ 1k token，低于此长度上行 cache write 1.25× 不划算）。
+ *
+ * 启用后会做两件事：
+ *   - HTTP header 加 `anthropic-beta: prompt-caching-2024-07-31`；
+ *   - request body 把 `system` 字段从 string 改成 array：
+ *       [{ type: 'text', text: <prompt>, cache_control: { type: 'ephemeral' } }]
+ *     这是 Anthropic 标记 cache 边界的 schema —— 同一 hash 的 system block 在 5
+ *     分钟 TTL 内复用 → cache_read 命中（10% 输入价）。
+ *
+ * 关闭：不传 ENV / 短 prompt → 与 P0/P1/P2 行为完全一致。
+ */
+function shouldEnableAnthropicPromptCache(systemPrompt: string): boolean {
+  if (process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE"] === "1") return true;
+  const raw = process.env["QUBIT_LLM_ANTHROPIC_PROMPT_CACHE_MIN_CHARS"];
+  if (raw && raw.trim()) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n >= 0 && systemPrompt.length >= n) return true;
+  }
+  return false;
+}
+
 async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const apiKey = input.config.apiKey || process.env["ANTHROPIC_API_KEY"];
   if (!apiKey) {
@@ -598,6 +940,20 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const maxTokens = sampling.maxOutputTokens ?? 4096;
   const temperature = sampling.temperature ?? 0.1;
   const useStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] !== "1";
+  const useCaching = shouldEnableAnthropicPromptCache(input.systemPrompt);
+  /**
+   * caching 启用时 system 必须是带 cache_control 的 block 数组；不启用走老的
+   * string 字段，保持 schema 100% 兼容。
+   */
+  const systemField: unknown = useCaching
+    ? [
+        {
+          type: "text",
+          text: input.systemPrompt,
+          cache_control: { type: "ephemeral" },
+        },
+      ]
+    : input.systemPrompt;
   const startedAt = Date.now();
   const res = await fetchWithTimeout(
     `${baseUrl}/v1/messages`,
@@ -607,6 +963,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        ...(useCaching ? { "anthropic-beta": "prompt-caching-2024-07-31" } : {}),
         ...(useStream ? { Accept: "text/event-stream" } : {}),
       },
       body: JSON.stringify({
@@ -614,8 +971,10 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
         max_tokens: maxTokens,
         temperature,
         ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
-        system: input.systemPrompt,
+        system: systemField,
         messages: [{ role: "user", content: input.userPrompt }],
+        /** P3-3：可选 tools（Anthropic 字段 input_schema 与 OpenAI 不同） */
+        ...(toAnthropicTools(input.tools) ? { tools: toAnthropicTools(input.tools) } : {}),
         ...(useStream ? { stream: true } : {}),
       }),
     },
@@ -640,12 +999,41 @@ async function consumeAnthropicNonStream(
 ): Promise<LlmGatewayResult> {
   const json = (await res.json()) as {
     id?: string;
-    content?: Array<{ type: string; text?: string }>;
-    usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number };
+    content?: Array<{
+      type: string;
+      text?: string;
+      /** P3-3：tool_use block schema */
+      id?: string;
+      name?: string;
+      input?: Record<string, unknown>;
+    }>;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
     stop_reason?: string;
   };
   const answer =
     json.content?.filter((c) => c.type === "text").map((c) => c.text ?? "").join("") ?? "";
+  /** P3-3：抽 tool_use blocks → LlmToolCallRequest[] */
+  const toolCalls: LlmToolCallRequest[] | undefined = (() => {
+    const blocks = json.content?.filter((c) => c.type === "tool_use") ?? [];
+    if (blocks.length === 0) return undefined;
+    const arr: LlmToolCallRequest[] = [];
+    for (const b of blocks) {
+      if (typeof b.id !== "string" || typeof b.name !== "string") continue;
+      const { args, rawArgs } = parseToolArguments(b.input);
+      arr.push({
+        id: b.id,
+        name: b.name,
+        args,
+        ...(rawArgs !== undefined ? { rawArgs } : {}),
+      });
+    }
+    return arr.length > 0 ? arr : undefined;
+  })();
   const rawUsage = json.usage;
   const usage: LlmTokenUsage | undefined = rawUsage
     ? {
@@ -653,6 +1041,9 @@ async function consumeAnthropicNonStream(
         ...(rawUsage.output_tokens !== undefined ? { completionTokens: rawUsage.output_tokens } : {}),
         ...(rawUsage.cache_read_input_tokens !== undefined
           ? { cachedPromptTokens: rawUsage.cache_read_input_tokens }
+          : {}),
+        ...(rawUsage.cache_creation_input_tokens !== undefined
+          ? { cacheCreationInputTokens: rawUsage.cache_creation_input_tokens }
           : {}),
       }
     : undefined;
@@ -664,6 +1055,7 @@ async function consumeAnthropicNonStream(
     firstTokenLatencyMs: latencyMs,
     ...(json.id ? { responseId: json.id } : {}),
     ...(json.stop_reason ? { finishReason: json.stop_reason } : {}),
+    ...(toolCalls ? { toolCalls } : {}),
   };
 }
 
@@ -682,7 +1074,16 @@ async function consumeAnthropicStream(
    */
   let promptTokens: number | undefined;
   let cachedPromptTokens: number | undefined;
+  let cacheCreationInputTokens: number | undefined;
   let outputTokens: number | undefined;
+  /**
+   * P3-3：tool_use 增量。Anthropic 流式 tool_use schema：
+   *   content_block_start: { index, content_block: { type:'tool_use', id, name, input:{} } }
+   *   content_block_delta: { index, delta: { type:'input_json_delta', partial_json:'...' } }
+   *   content_block_stop:  { index }
+   * 我们按 index 累积；最终 partial_json 拼成完整 JSON 再 parse。
+   */
+  const anthToolAcc = new Map<number, { id: string; name: string; argsBuf: string }>();
 
   for await (const ev of readSseEvents(body)) {
     let parsed: Record<string, unknown>;
@@ -703,8 +1104,29 @@ async function consumeAnthropicStream(
             if (typeof u["cache_read_input_tokens"] === "number") {
               cachedPromptTokens = u["cache_read_input_tokens"];
             }
+            if (typeof u["cache_creation_input_tokens"] === "number") {
+              cacheCreationInputTokens = u["cache_creation_input_tokens"];
+            }
             if (typeof u["output_tokens"] === "number") outputTokens = u["output_tokens"];
           }
+        }
+        break;
+      }
+      case "content_block_start": {
+        const block = parsed["content_block"] as Record<string, unknown> | undefined;
+        const idx =
+          typeof parsed["index"] === "number" ? (parsed["index"] as number) : 0;
+        if (
+          block &&
+          block["type"] === "tool_use" &&
+          typeof block["id"] === "string" &&
+          typeof block["name"] === "string"
+        ) {
+          anthToolAcc.set(idx, {
+            id: block["id"] as string,
+            name: block["name"] as string,
+            argsBuf: "",
+          });
         }
         break;
       }
@@ -719,6 +1141,15 @@ async function consumeAnthropicStream(
             answer += token;
             input.onToken(token);
           }
+        } else if (
+          delta &&
+          delta["type"] === "input_json_delta" &&
+          typeof delta["partial_json"] === "string"
+        ) {
+          const idx =
+            typeof parsed["index"] === "number" ? (parsed["index"] as number) : 0;
+          const cur = anthToolAcc.get(idx);
+          if (cur) cur.argsBuf += delta["partial_json"] as string;
         }
         break;
       }
@@ -746,9 +1177,26 @@ async function consumeAnthropicStream(
           ...(promptTokens !== undefined ? { promptTokens } : {}),
           ...(outputTokens !== undefined ? { completionTokens: outputTokens } : {}),
           ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
+          ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
         }
       : undefined;
   const normalized = normalizeUsage(usage);
+  /** P3-3：把累积的 tool_use 拼成 LlmToolCallRequest[] */
+  const toolCalls: LlmToolCallRequest[] | undefined = (() => {
+    if (anthToolAcc.size === 0) return undefined;
+    const sorted = [...anthToolAcc.entries()].sort((a, b) => a[0] - b[0]);
+    const arr: LlmToolCallRequest[] = [];
+    for (const [, cur] of sorted) {
+      const { args, rawArgs } = parseToolArguments(cur.argsBuf);
+      arr.push({
+        id: cur.id,
+        name: cur.name,
+        args,
+        ...(rawArgs !== undefined ? { rawArgs } : {}),
+      });
+    }
+    return arr.length > 0 ? arr : undefined;
+  })();
   const latencyMs = Date.now() - startedAt;
   return {
     answer,
@@ -757,6 +1205,7 @@ async function consumeAnthropicStream(
     ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
     ...(responseId ? { responseId } : {}),
     ...(finishReason ? { finishReason } : {}),
+    ...(toolCalls ? { toolCalls } : {}),
   };
 }
 

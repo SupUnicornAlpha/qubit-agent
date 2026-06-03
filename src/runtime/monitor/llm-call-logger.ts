@@ -45,15 +45,19 @@ export type LlmCallLogInput = {
   /**
    * 来自 gateway / provider 返回；缺失字段写 null 不写 0，避免和「真实 0 token」混淆。
    *
-   * 新增（gateway P0）：
-   *   - cachedPromptTokens：OpenAI Responses / Anthropic prompt cache 命中数
-   *   - reasoningTokens：o-series / gpt-5 链式思考 token 数（已计入 completionTokens）
+   * 字段：
+   *   - promptTokens / completionTokens / totalTokens：标准用量
+   *   - cachedPromptTokens：OpenAI Responses / Anthropic prompt cache **命中** token 数
+   *   - cacheCreationInputTokens（P3-1）：Anthropic prompt cache **写入** token 数；
+   *     落到 requestMetaJson 而不是单独列 — 出现频率有限，加列性价比低
+   *   - reasoningTokens：o-series / gpt-5 / DeepSeek-R1 链式思考 token 数（已计入 completionTokens）
    */
   usage?: {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
     cachedPromptTokens?: number;
+    cacheCreationInputTokens?: number;
     reasoningTokens?: number;
   };
   latencyMs: number;
@@ -91,9 +95,18 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
     const cached = isNonNegInt(usage.cachedPromptTokens) ? usage.cachedPromptTokens : null;
     const reasoning = isNonNegInt(usage.reasoningTokens) ? usage.reasoningTokens : null;
     /**
-     * P2：把 cachedPromptTokens 透传给 cost 函数，让 cost 反映 prompt cache 折扣
-     * （OpenAI Responses 50% / Anthropic 10%）。reasoningTokens 已计入
-     * completionTokens，cost 上不重复计费，仅作为打点字段。
+     * P3-1：cache_creation_input_tokens（Anthropic 写 cache 的 token 数）。
+     * 落到 requestMetaJson.cacheCreationInputTokens，让监控分清"miss + 写"与
+     * "miss 不写"。cost 函数也吃这个字段（写 cache 1.25× 加价）。
+     */
+    const cacheCreation = isNonNegInt(usage.cacheCreationInputTokens)
+      ? usage.cacheCreationInputTokens
+      : null;
+    /**
+     * P2/P3：把 cached / cacheCreation 透传给 cost 函数：
+     *   - cached: OpenAI 50% / Anthropic 10% read 折扣
+     *   - cacheCreation: Anthropic 1.25× 写加价
+     * reasoningTokens 已计入 completionTokens，不重复计费，仅作为打点字段。
      */
     const cost =
       prompt !== null || completion !== null
@@ -103,12 +116,14 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
             promptTokens: prompt ?? 0,
             completionTokens: completion ?? 0,
             ...(cached !== null ? { cachedPromptTokens: cached } : {}),
+            ...(cacheCreation !== null ? { cacheCreationInputTokens: cacheCreation } : {}),
           })
         : null;
 
     const requestMeta: Record<string, unknown> = {
       systemPromptLen: input.systemPromptLen ?? null,
       userPromptLen: input.userPromptLen ?? null,
+      ...(cacheCreation !== null ? { cacheCreationInputTokens: cacheCreation } : {}),
       ...(input.extraMeta ?? {}),
     };
 

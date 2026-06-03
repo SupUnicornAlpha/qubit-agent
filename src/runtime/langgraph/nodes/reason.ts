@@ -523,6 +523,14 @@ export async function reasonNode(
                         (retryResult.usage.cachedPromptTokens ?? 0),
                     }
                   : {}),
+                ...(usage.cacheCreationInputTokens !== undefined ||
+                retryResult.usage.cacheCreationInputTokens !== undefined
+                  ? {
+                      cacheCreationInputTokens:
+                        (usage.cacheCreationInputTokens ?? 0) +
+                        (retryResult.usage.cacheCreationInputTokens ?? 0),
+                    }
+                  : {}),
                 ...(usage.reasoningTokens !== undefined ||
                 retryResult.usage.reasoningTokens !== undefined
                   ? {
