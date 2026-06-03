@@ -564,6 +564,18 @@ export const agentDefinition = sqliteTable("agent_definition", {
   skillsJson: text("skills_json", { mode: "json" }).notNull().default("[]"),
   subscriptionsJson: text("subscriptions_json", { mode: "json" }).notNull().default("[]"),
   llmProvider: text("llm_provider").notNull(),
+  /**
+   * Per-Agent LLM 采样配置（迁移 0067，LLM 网关 P1）。
+   *
+   * 形如 `{ "temperature": 0.2, "maxOutputTokens": 8192, "reasoningEffort": "high" }`。
+   * 字段全部 optional：不写 / 写 `{}` 等价于走网关默认值（与 P0 行为一致）。
+   *
+   * 为什么用 JSON 列而不是 N 个独立 column：
+   *   - 字段会持续扩展（top_p / top_k / repetition_penalty / vendor 私有 knob）；
+   *   - 老 agent 行下 ALTER 加 5+ 列会污染 audit 历史；
+   *   - 网关只会 spread 已知字段，未知 knob 直接忽略，前向兼容。
+   */
+  llmConfigJson: text("llm_config_json", { mode: "json" }).notNull().default("{}"),
   maxIterations: integer("max_iterations").notNull().default(20),
   sandboxPolicyId: text("sandbox_policy_id")
     .notNull()

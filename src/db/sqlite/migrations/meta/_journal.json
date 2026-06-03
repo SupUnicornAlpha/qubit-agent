@@ -463,6 +463,13 @@
       "when": 1781395200000,
       "tag": "0066_llm_gateway_p0_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1781481600000,
+      "tag": "0067_agent_def_llm_config",
+      "breakpoints": true
     }
   ]
 }

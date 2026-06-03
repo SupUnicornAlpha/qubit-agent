@@ -21,6 +21,7 @@ import {
   runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
+import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import type { RuntimeAgentDefinition } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "./event-stream";
@@ -117,6 +118,7 @@ export class GraphRunner {
               skills: d.skillsJson as string[],
               subscriptions: d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
               llmProvider: d.llmProvider,
+              llmConfig: parseLlmConfigJson(d.llmConfigJson),
               maxIterations: d.maxIterations,
               sandboxPolicyId: d.sandboxPolicyId,
               enabled: Boolean(d.enabled),
@@ -172,6 +174,7 @@ export class GraphRunner {
         skills: row.skillsJson as string[],
         subscriptions: row.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
         llmProvider: row.llmProvider,
+        llmConfig: parseLlmConfigJson(row.llmConfigJson),
         maxIterations: row.maxIterations,
         sandboxPolicyId: row.sandboxPolicyId,
         enabled: Boolean(row.enabled),
@@ -444,7 +447,7 @@ export class GraphRunner {
       def,
       workflowId: params.workflowId,
       payload,
-      agentInstanceId: reuseInstanceId,
+      ...(reuseInstanceId ? { agentInstanceId: reuseInstanceId } : {}),
       resume: hasCheckpoint,
     });
     return { runId, resumed: hasCheckpoint };

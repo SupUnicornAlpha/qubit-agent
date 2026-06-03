@@ -76,11 +76,29 @@ const REASONING: ModelCapabilityProfile = {
 };
 
 /**
- * 已知**强制 default-only 采样**的模型族。
+ * DeepSeek-R1 / deepseek-reasoner：reasoning model 但**不**走 Responses API。
+ *
+ * 与 OpenAI 推理模型的区别：
+ *   - 走 chat.completions 路径（DeepSeek 平台没有 Responses 端点）；
+ *   - 同样不接受 temperature / top_p / penalties（参数会被 DeepSeek 服务端拒绝）；
+ *   - 不暴露 reasoning.effort 入参（DeepSeek 服务端自动控制）；
+ *   - 输出里有 `choices[0].message.reasoning_content` 字段，但 P1 暂未拆 token
+ *     维度（待 P2 加 reasoning_tokens 估算）。
+ */
+const REASONING_OPENAI_COMPAT: ModelCapabilityProfile = {
+  customTemperature: false,
+  customTopP: false,
+  penalties: false,
+  apiPath: "chat",
+  reasoningEffort: false,
+};
+
+/**
+ * 已知**强制 default-only 采样**的 OpenAI 系模型族（走 Responses API）。
  *
  * 顺序无关；命中第一个匹配前缀即生效。
  */
-const REASONING_PREFIXES: readonly string[] = [
+const REASONING_OPENAI_PREFIXES: readonly string[] = [
   // OpenAI o-series（含 o1, o1-mini, o1-preview, o1-pro, o3, o3-mini, o4-mini）
   "o1",
   "o3",
@@ -94,13 +112,28 @@ const REASONING_PREFIXES: readonly string[] = [
   "azure/gpt-5",
 ];
 
+/**
+ * OpenAI-compatible 路径下的 reasoning 模型（chat.completions API 但禁采样自定义）。
+ *
+ * - DeepSeek-R1 / deepseek-reasoner：DeepSeek 官方推理模型；
+ *   传 temperature 等会被服务端拒绝，需 strip。
+ * - 后续可扩展 qwq / qwen3-32b-reasoning 等。
+ */
+const REASONING_OPENAI_COMPAT_PREFIXES: readonly string[] = [
+  "deepseek-r1",
+  "deepseek-reasoner",
+];
+
 /** 给定模型名返回能力 profile（小写不敏感） */
 export function modelCapability(model: string | undefined | null): ModelCapabilityProfile {
   if (!model) return FULL;
   const m = model.trim().toLowerCase();
   if (!m) return FULL;
-  for (const p of REASONING_PREFIXES) {
+  for (const p of REASONING_OPENAI_PREFIXES) {
     if (m.startsWith(p)) return REASONING;
+  }
+  for (const p of REASONING_OPENAI_COMPAT_PREFIXES) {
+    if (m.startsWith(p)) return REASONING_OPENAI_COMPAT;
   }
   return FULL;
 }

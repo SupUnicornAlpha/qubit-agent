@@ -36,14 +36,23 @@ function jsonResponse(init: MockResponseInit): Response {
 
 describe("Gateway P0 — Anthropic sampling", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
+  const origNonStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
 
   beforeEach(() => {
     process.env["ANTHROPIC_API_KEY"] = "sk-test-anthropic";
+    /**
+     * P0 这组覆盖的是 sampling 字段下发 / 默认值，与流式协议无关；
+     * P1 把流式作为默认后，这里 force 走非流式让 mock 用普通 JSON 即可。
+     * Streaming 协议的覆盖见 gateway-streaming.test.ts。
+     */
+    process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
+    if (origNonStream === undefined) delete process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"];
+    else process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] = origNonStream;
   });
 
   test("默认 max_tokens=4096（修复历史 1024 截断问题）", async () => {
@@ -114,10 +123,17 @@ describe("Gateway P0 — Anthropic sampling", () => {
 describe("Gateway P0 — OpenAI Responses API 路由", () => {
   let fetchSpy: ReturnType<typeof spyOn>;
   const origForceChat = process.env["QUBIT_LLM_USE_RESPONSES_API"];
+  const origNonStream = process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
 
   beforeEach(() => {
     process.env["OPENAI_API_KEY"] = "sk-test-openai";
     delete process.env["QUBIT_LLM_USE_RESPONSES_API"];
+    /**
+     * 同 P0 Anthropic 组：流式协议在 gateway-streaming.test.ts 单独覆盖，
+     * 这里只关心 sampling 字段路由 / sanitize / finishReason 解析，
+     * force NON_STREAM 让 mock 用普通 JSON 即可。
+     */
+    process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = "1";
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
@@ -128,6 +144,8 @@ describe("Gateway P0 — OpenAI Responses API 路由", () => {
     } else {
       process.env["QUBIT_LLM_USE_RESPONSES_API"] = origForceChat;
     }
+    if (origNonStream === undefined) delete process.env["QUBIT_LLM_RESPONSES_NON_STREAM"];
+    else process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] = origNonStream;
   });
 
   test("provider=openai + model=gpt-5* → 路由到 /v1/responses，带 reasoning.effort=medium", async () => {

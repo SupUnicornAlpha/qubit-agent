@@ -3,6 +3,7 @@ import type { RuntimeModelConfig } from "../config/model-config";
 import { executeWithPolicy } from "../external-call/policy";
 import { fetchWithTimeout, LLM_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import { modelCapability, sanitizeChatCompletionsBody } from "./model-capabilities";
+import { readSseEvents } from "./sse-stream";
 
 /**
  * 调用方对单次 LLM 请求的采样偏好（可选）。
@@ -222,17 +223,12 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
 }
 
 /**
- * P0-1：OpenAI Responses API 路径（gpt-5* / o-series 官方推荐）。
+ * OpenAI Responses API 路径（gpt-5* / o-series 官方推荐）。
  *
- * 实现策略（最小耦合）：
- *   - 不依赖 OpenAI SDK 的 `client.responses` 子模块（不同 SDK 版本签名差异大）；
- *     直接用项目内已有的 `fetchWithTimeout` 调 `/v1/responses` REST。
- *   - 暂走非流式：网关层用伪流式把整段答案 split 成 token 推给 onToken，与
- *     `runAnthropic` / `runOllama` 行为一致，先解决"能不能用"再优化"流式体验"。
- *   - usage 解析覆盖 cached_tokens / reasoning_tokens（Responses API 才暴露这两个）。
- *
- * 后续可在 P1/P2：换成真正的 SSE streaming（事件名 `response.output_text.delta`），
- * 把 firstTokenLatencyMs 升级成"首 delta"语义。
+ * - P0：fetch 直调 `/v1/responses`，非流式 + 伪流式 onToken。
+ * - P1：升级真流式 SSE。事件 `response.output_text.delta` → onToken 实时推；
+ *   `response.completed` 一次性拿到 usage（含 cached_tokens / reasoning_tokens）。
+ *   ENV `QUBIT_LLM_RESPONSES_NON_STREAM="1"` 可回退非流式（debug / 老代理兜底）。
  */
 async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const apiKey = input.config.apiKey || process.env["OPENAI_API_KEY"];
@@ -242,9 +238,10 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
   const baseUrl = (input.config.baseUrl ?? "https://api.openai.com").replace(/\/+$/, "");
   const sampling = input.sampling ?? {};
   const cap = modelCapability(input.config.model);
+  const useStream = process.env["QUBIT_LLM_RESPONSES_NON_STREAM"] !== "1";
   /**
-   * Responses 入参用 `input` 数组而不是 `messages`；system 用 role:'system' 即可，
-   * SDK 行为与 chat.completions 等价。
+   * Responses 入参用 `input` 数组而不是 `messages`；system 用 role:system 即可，
+   * 行为与 chat.completions 等价。
    */
   const reqBody: Record<string, unknown> = {
     model: input.config.model,
@@ -254,8 +251,7 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
     ],
     /** Responses API 字段名是 max_output_tokens，与 chat.completions 的 max_tokens 区分。 */
     max_output_tokens: sampling.maxOutputTokens ?? 4096,
-    /** stream 暂不开，先保证非流式通路稳定。开关留给后续升级。 */
-    stream: false,
+    stream: useStream,
   };
   if (cap.reasoningEffort) {
     reqBody["reasoning"] = { effort: sampling.reasoningEffort ?? "medium" };
@@ -274,6 +270,7 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
+        ...(useStream ? { Accept: "text/event-stream" } : {}),
       },
       body: JSON.stringify(reqBody),
     },
@@ -282,28 +279,63 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
   if (!res.ok) {
     throw new Error(`OpenAI Responses request failed: ${res.status} ${await res.text()}`);
   }
-  type ResponsesPayload = {
-    id?: string;
-    status?: string;
-    output_text?: string;
-    output?: Array<{
-      type?: string;
-      content?: Array<{ type?: string; text?: string }>;
-    }>;
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-      total_tokens?: number;
-      input_tokens_details?: { cached_tokens?: number };
-      output_tokens_details?: { reasoning_tokens?: number };
-    };
-    incomplete_details?: { reason?: string };
+  if (!useStream) {
+    return await consumeResponsesNonStream(res, startedAt);
+  }
+  if (!res.body) {
+    throw new Error("OpenAI Responses stream response has no body");
+  }
+  return await consumeResponsesStream(res.body, input, startedAt);
+}
+
+type ResponsesPayload = {
+  id?: string;
+  status?: string;
+  output_text?: string;
+  output?: Array<{
+    type?: string;
+    content?: Array<{ type?: string; text?: string }>;
+  }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    input_tokens_details?: { cached_tokens?: number };
+    output_tokens_details?: { reasoning_tokens?: number };
   };
+  incomplete_details?: { reason?: string };
+};
+
+function pickResponsesUsage(json: ResponsesPayload): LlmTokenUsage | undefined {
+  const rawUsage = json.usage;
+  if (!rawUsage) return undefined;
+  return {
+    ...(rawUsage.input_tokens !== undefined ? { promptTokens: rawUsage.input_tokens } : {}),
+    ...(rawUsage.output_tokens !== undefined ? { completionTokens: rawUsage.output_tokens } : {}),
+    ...(rawUsage.total_tokens !== undefined ? { totalTokens: rawUsage.total_tokens } : {}),
+    ...(rawUsage.input_tokens_details?.cached_tokens !== undefined
+      ? { cachedPromptTokens: rawUsage.input_tokens_details.cached_tokens }
+      : {}),
+    ...(rawUsage.output_tokens_details?.reasoning_tokens !== undefined
+      ? { reasoningTokens: rawUsage.output_tokens_details.reasoning_tokens }
+      : {}),
+  };
+}
+
+function pickResponsesFinishReason(json: ResponsesPayload): string | undefined {
+  if (json.status === "incomplete") {
+    return json.incomplete_details?.reason ?? "incomplete";
+  }
+  if (json.status === "completed") return "stop";
+  return json.status;
+}
+
+async function consumeResponsesNonStream(
+  res: Response,
+  startedAt: number,
+): Promise<LlmGatewayResult> {
   const json = (await res.json()) as ResponsesPayload;
-  /**
-   * Responses API 提供 `output_text` 便捷字段（拼接所有 message.text）；
-   * 兜底再走 output[].content[].text 自己拼。
-   */
+  /** `output_text` 便捷字段；兜底再走 output[].content[].text 自己拼。 */
   const answer =
     json.output_text ??
     json.output
@@ -313,42 +345,82 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
       .map((c) => c.text ?? "")
       .join("") ??
     "";
-  for (const token of splitForPseudoStreaming(answer)) {
-    input.onToken(token);
-  }
-  const rawUsage = json.usage;
-  const usage: LlmTokenUsage | undefined = rawUsage
-    ? {
-        ...(rawUsage.input_tokens !== undefined ? { promptTokens: rawUsage.input_tokens } : {}),
-        ...(rawUsage.output_tokens !== undefined ? { completionTokens: rawUsage.output_tokens } : {}),
-        ...(rawUsage.total_tokens !== undefined ? { totalTokens: rawUsage.total_tokens } : {}),
-        ...(rawUsage.input_tokens_details?.cached_tokens !== undefined
-          ? { cachedPromptTokens: rawUsage.input_tokens_details.cached_tokens }
-          : {}),
-        ...(rawUsage.output_tokens_details?.reasoning_tokens !== undefined
-          ? { reasoningTokens: rawUsage.output_tokens_details.reasoning_tokens }
-          : {}),
+  const latencyMs = Date.now() - startedAt;
+  const normalized = normalizeUsage(pickResponsesUsage(json));
+  const finishReason = pickResponsesFinishReason(json);
+  return {
+    answer,
+    ...(normalized ? { usage: normalized } : {}),
+    latencyMs,
+    firstTokenLatencyMs: latencyMs,
+    ...(json.id ? { responseId: json.id } : {}),
+    ...(finishReason ? { finishReason } : {}),
+  };
+}
+
+/**
+ * Responses 流式事件 schema（subset）：
+ *   - response.created：{ response: { id, ... } } —— 拿到 response id
+ *   - response.output_text.delta：{ delta: string } —— 主 token 流
+ *   - response.completed：{ response: { id, status, usage, incomplete_details } } —— 终态
+ *   - response.failed / response.error / error：错误事件 → 抛错走外层熔断
+ */
+async function consumeResponsesStream(
+  body: ReadableStream<Uint8Array>,
+  input: LlmGatewayInput,
+  startedAt: number,
+): Promise<LlmGatewayResult> {
+  let answer = "";
+  let firstTokenLatencyMs: number | undefined;
+  let responseId: string | undefined;
+  let finishReason: string | undefined;
+  let usage: LlmTokenUsage | undefined;
+
+  for await (const ev of readSseEvents(body)) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(ev.data) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    /** Responses 同时把 type 写在 event line 与 data.type，二者通常一致 */
+    const t = (parsed["type"] as string | undefined) ?? ev.event ?? "";
+    if (t === "response.created") {
+      const r = parsed["response"] as Record<string, unknown> | undefined;
+      if (r && typeof r["id"] === "string") responseId = r["id"] as string;
+    } else if (t === "response.output_text.delta") {
+      const delta = parsed["delta"];
+      if (typeof delta === "string" && delta.length > 0) {
+        if (firstTokenLatencyMs === undefined) {
+          firstTokenLatencyMs = Date.now() - startedAt;
+        }
+        answer += delta;
+        input.onToken(delta);
       }
-    : undefined;
-  /**
-   * Responses 没有 finish_reason 字段；status='incomplete' 时 incomplete_details.reason
-   * 给出原因（'max_output_tokens' / 'content_filter' 等），其它正常完成统一报 'stop'。
-   */
-  const finishReason: string | undefined =
-    json.status === "incomplete"
-      ? (json.incomplete_details?.reason ?? "incomplete")
-      : json.status === "completed"
-        ? "stop"
-        : json.status;
+    } else if (t === "response.completed") {
+      const r = parsed["response"] as ResponsesPayload | undefined;
+      if (r) {
+        if (typeof r.id === "string" && !responseId) responseId = r.id;
+        const u = pickResponsesUsage(r);
+        if (u) usage = u;
+        const fr = pickResponsesFinishReason(r);
+        if (fr) finishReason = fr;
+      }
+    } else if (t === "response.failed" || t === "response.error" || t === "error") {
+      const err = parsed["error"] as Record<string, unknown> | undefined;
+      const msg = (err?.["message"] as string | undefined) ?? "responses stream error";
+      throw new Error(`OpenAI Responses stream error: ${msg}`);
+    }
+  }
+
   const latencyMs = Date.now() - startedAt;
   const normalized = normalizeUsage(usage);
   return {
     answer,
     ...(normalized ? { usage: normalized } : {}),
     latencyMs,
-    /** 非流式：firstTokenLatency == 整段 latency。stream 升级后改成"首 delta"。 */
-    firstTokenLatencyMs: latencyMs,
-    ...(json.id ? { responseId: json.id } : {}),
+    ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
+    ...(responseId ? { responseId } : {}),
     ...(finishReason ? { finishReason } : {}),
   };
 }
@@ -454,6 +526,18 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   };
 }
 
+/**
+ * P1：Anthropic Messages 真流式 SSE 实现。
+ *
+ * 事件 schema（subset）：
+ *   - message_start：{ message: { id, usage: { input_tokens, cache_read_input_tokens, output_tokens } } }
+ *   - content_block_delta：{ delta: { type: 'text_delta', text } } —— 主 token 流
+ *   - message_delta：{ delta: { stop_reason }, usage: { output_tokens } } —— 终止 + 出量更新
+ *   - message_stop：流末尾标记
+ *
+ * 兼容兜底：如果 ENV `QUBIT_LLM_ANTHROPIC_NON_STREAM="1"`，回退到非流式（debug
+ * 用，例如某代理不支持 stream）。
+ */
 async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const apiKey = input.config.apiKey || process.env["ANTHROPIC_API_KEY"];
   if (!apiKey) {
@@ -463,15 +547,14 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const sampling = input.sampling ?? {};
   /**
    * Claude 3.5/4 系列在新版 API（messages-2023-06-01）下 max_tokens 上限：
-   *   - claude-3-5-sonnet：8192
-   *   - claude-3-5-haiku：8192
+   *   - claude-3-5-sonnet / claude-3-5-haiku：8192
    *   - claude-3-opus：4096
    *
-   * 旧网关默认 1024 经常被截断（user-prompt 短的研究任务都会报 "max_tokens"），
-   * 这里默认拉到 4096，给出空间。caller 想要更长输出可通过 sampling.maxOutputTokens 覆写。
+   * 旧网关默认 1024 经常被截断；这里默认拉到 4096。
    */
   const maxTokens = sampling.maxOutputTokens ?? 4096;
   const temperature = sampling.temperature ?? 0.1;
+  const useStream = process.env["QUBIT_LLM_ANTHROPIC_NON_STREAM"] !== "1";
   const startedAt = Date.now();
   const res = await fetchWithTimeout(
     `${baseUrl}/v1/messages`,
@@ -481,6 +564,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
         "Content-Type": "application/json",
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
+        ...(useStream ? { Accept: "text/event-stream" } : {}),
       },
       body: JSON.stringify({
         model: input.config.model || "claude-3-5-sonnet-latest",
@@ -489,6 +573,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
         ...(sampling.topP !== undefined ? { top_p: sampling.topP } : {}),
         system: input.systemPrompt,
         messages: [{ role: "user", content: input.userPrompt }],
+        ...(useStream ? { stream: true } : {}),
       }),
     },
     LLM_FETCH_TIMEOUT_MS,
@@ -496,6 +581,20 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   if (!res.ok) {
     throw new Error(`Anthropic request failed: ${res.status} ${await res.text()}`);
   }
+
+  if (!useStream) {
+    return await consumeAnthropicNonStream(res, startedAt);
+  }
+  if (!res.body) {
+    throw new Error("Anthropic stream response has no body");
+  }
+  return await consumeAnthropicStream(res.body, input, startedAt);
+}
+
+async function consumeAnthropicNonStream(
+  res: Response,
+  startedAt: number,
+): Promise<LlmGatewayResult> {
   const json = (await res.json()) as {
     id?: string;
     content?: Array<{ type: string; text?: string }>;
@@ -504,9 +603,6 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   };
   const answer =
     json.content?.filter((c) => c.type === "text").map((c) => c.text ?? "").join("") ?? "";
-  for (const token of splitForPseudoStreaming(answer)) {
-    input.onToken(token);
-  }
   const rawUsage = json.usage;
   const usage: LlmTokenUsage | undefined = rawUsage
     ? {
@@ -522,10 +618,102 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
     answer,
     ...(normalizeUsage(usage) ? { usage: normalizeUsage(usage)! } : {}),
     latencyMs,
-    /** 非流式：firstTokenLatency == 整段 latency。 */
     firstTokenLatencyMs: latencyMs,
     ...(json.id ? { responseId: json.id } : {}),
     ...(json.stop_reason ? { finishReason: json.stop_reason } : {}),
+  };
+}
+
+async function consumeAnthropicStream(
+  body: ReadableStream<Uint8Array>,
+  input: LlmGatewayInput,
+  startedAt: number,
+): Promise<LlmGatewayResult> {
+  let answer = "";
+  let firstTokenLatencyMs: number | undefined;
+  let responseId: string | undefined;
+  let finishReason: string | undefined;
+  /**
+   * Anthropic 把 input_tokens 在 message_start 给一次（含 cache_read），
+   * output_tokens 在 message_delta 累计更新；最终 message_stop 时是终值。
+   */
+  let promptTokens: number | undefined;
+  let cachedPromptTokens: number | undefined;
+  let outputTokens: number | undefined;
+
+  for await (const ev of readSseEvents(body)) {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(ev.data) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const t = (parsed["type"] as string | undefined) ?? ev.event;
+    switch (t) {
+      case "message_start": {
+        const msg = parsed["message"] as Record<string, unknown> | undefined;
+        if (msg) {
+          if (typeof msg["id"] === "string") responseId = msg["id"] as string;
+          const u = msg["usage"] as Record<string, unknown> | undefined;
+          if (u) {
+            if (typeof u["input_tokens"] === "number") promptTokens = u["input_tokens"];
+            if (typeof u["cache_read_input_tokens"] === "number") {
+              cachedPromptTokens = u["cache_read_input_tokens"];
+            }
+            if (typeof u["output_tokens"] === "number") outputTokens = u["output_tokens"];
+          }
+        }
+        break;
+      }
+      case "content_block_delta": {
+        const delta = parsed["delta"] as Record<string, unknown> | undefined;
+        if (delta && delta["type"] === "text_delta" && typeof delta["text"] === "string") {
+          const token = delta["text"] as string;
+          if (token) {
+            if (firstTokenLatencyMs === undefined) {
+              firstTokenLatencyMs = Date.now() - startedAt;
+            }
+            answer += token;
+            input.onToken(token);
+          }
+        }
+        break;
+      }
+      case "message_delta": {
+        const delta = parsed["delta"] as Record<string, unknown> | undefined;
+        if (delta && typeof delta["stop_reason"] === "string") {
+          finishReason = delta["stop_reason"] as string;
+        }
+        const u = parsed["usage"] as Record<string, unknown> | undefined;
+        if (u && typeof u["output_tokens"] === "number") {
+          outputTokens = u["output_tokens"];
+        }
+        break;
+      }
+      case "message_stop":
+        break;
+      default:
+        break;
+    }
+  }
+
+  const usage: LlmTokenUsage | undefined =
+    promptTokens !== undefined || outputTokens !== undefined
+      ? {
+          ...(promptTokens !== undefined ? { promptTokens } : {}),
+          ...(outputTokens !== undefined ? { completionTokens: outputTokens } : {}),
+          ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
+        }
+      : undefined;
+  const normalized = normalizeUsage(usage);
+  const latencyMs = Date.now() - startedAt;
+  return {
+    answer,
+    ...(normalized ? { usage: normalized } : {}),
+    latencyMs,
+    ...(firstTokenLatencyMs !== undefined ? { firstTokenLatencyMs } : {}),
+    ...(responseId ? { responseId } : {}),
+    ...(finishReason ? { finishReason } : {}),
   };
 }
 

@@ -19,6 +19,7 @@ import {
   renderRecallBlockForPrompt,
 } from "../../experience";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
+import { agentLlmConfigToSampling } from "../../llm/agent-llm-config";
 import type { LlmTokenUsage } from "../../llm/gateway";
 import { invokeWithFallback, resolveLlmForAgent } from "../../llm/llm-router";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
@@ -410,9 +411,15 @@ export async function reasonNode(
     systemPromptLen = systemPrompt.length;
     userPromptLen = userPrompt.length;
 
+    /**
+     * P1：把 agent_definition.llm_config_json 反序列化结果转成 sampling，注入到
+     * 网关。空配置 / 老 agent 行 → sampling = {} → 网关走默认值（与 P0 完全兼容）。
+     */
+    const samplingFromAgent = agentLlmConfigToSampling(state.agentDefinition.llmConfig);
     const llmResult = await invokeWithFallback(modelConfig, {
       systemPrompt,
       userPrompt,
+      ...(Object.keys(samplingFromAgent).length ? { sampling: samplingFromAgent } : {}),
       onToken: (token) => {
         emit({
           runId: state.runId,
@@ -468,6 +475,7 @@ export async function reasonNode(
           const retryResult = await invokeWithFallback(modelConfig, {
             systemPrompt,
             userPrompt: retryUserPrompt,
+            ...(Object.keys(samplingFromAgent).length ? { sampling: samplingFromAgent } : {}),
             onToken: (token) => {
               emit({
                 runId: state.runId,

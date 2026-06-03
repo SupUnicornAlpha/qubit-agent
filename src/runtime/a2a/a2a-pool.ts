@@ -11,6 +11,7 @@ import {
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import { AgentRuntime } from "../agent-runtime";
 import { getRoleHandler } from "../handlers/role-handlers";
+import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import type { RuntimeAgentDefinition } from "../types";
 import type { AgentRole } from "../../types/entities";
 import {
@@ -155,6 +156,7 @@ export class A2APool {
           skills: d.skillsJson as string[],
           subscriptions: d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
           llmProvider: d.llmProvider,
+          llmConfig: parseLlmConfigJson(d.llmConfigJson),
           maxIterations: d.maxIterations,
           sandboxPolicyId: d.sandboxPolicyId,
           enabled: Boolean(d.enabled),

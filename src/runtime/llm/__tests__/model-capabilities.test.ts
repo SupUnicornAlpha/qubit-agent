@@ -63,11 +63,39 @@ describe("modelCapability", () => {
     expect(modelCapability(undefined).apiPath).toBe("chat");
   });
 
-  test("reasoningEffort：仅 reasoning family 为 true", () => {
+  test("reasoningEffort：仅 OpenAI Responses reasoning family 为 true", () => {
     expect(modelCapability("gpt-5").reasoningEffort).toBe(true);
     expect(modelCapability("o1-pro").reasoningEffort).toBe(true);
     expect(modelCapability("gpt-4o-mini").reasoningEffort).toBe(false);
     expect(modelCapability("claude-3-5-sonnet").reasoningEffort).toBe(false);
+    /** DeepSeek-R1 也是 reasoning model，但走 chat.completions，不暴露 effort 入参 */
+    expect(modelCapability("deepseek-r1").reasoningEffort).toBe(false);
+    expect(modelCapability("deepseek-reasoner").reasoningEffort).toBe(false);
+  });
+
+  test("DeepSeek-R1 / deepseek-reasoner：strip sampling，但 apiPath 仍是 chat", () => {
+    for (const m of ["deepseek-r1", "deepseek-reasoner", "DeepSeek-R1", "deepseek-r1-distill"]) {
+      const cap = modelCapability(m);
+      expect(cap.customTemperature).toBe(false);
+      expect(cap.customTopP).toBe(false);
+      expect(cap.penalties).toBe(false);
+      /** 关键：不能误路由到 /v1/responses（DeepSeek 平台没有这个端点） */
+      expect(cap.apiPath).toBe("chat");
+    }
+  });
+
+  test("sanitize 也对 deepseek-reasoner 生效（chat.completions 路径）", () => {
+    const out = sanitizeChatCompletionsBody("deepseek-reasoner", {
+      model: "deepseek-reasoner",
+      messages: [],
+      temperature: 0.5,
+      top_p: 0.9,
+      frequency_penalty: 0.3,
+    }) as Record<string, unknown>;
+    expect(out.temperature).toBeUndefined();
+    expect(out.top_p).toBeUndefined();
+    expect(out.frequency_penalty).toBeUndefined();
+    expect(out.model).toBe("deepseek-reasoner");
   });
 });
 

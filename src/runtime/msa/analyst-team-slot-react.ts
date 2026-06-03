@@ -32,6 +32,7 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import { executeAgentReact } from "../langgraph/execute-agent-react";
+import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers";
 import type { RuntimeAgentDefinition } from "../types";
 import type { RawAnalystSignal } from "./signal-fusion";
@@ -61,6 +62,7 @@ async function loadRuntimeDefinition(definitionId: string): Promise<RuntimeAgent
     skills: (d.skillsJson as string[]) ?? [],
     subscriptions: (d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"]) ?? ["TASK_ASSIGN"],
     llmProvider: d.llmProvider,
+    llmConfig: parseLlmConfigJson(d.llmConfigJson),
     maxIterations: Math.min(d.maxIterations ?? TEAM_SLOT_MAX_ITERATIONS, TEAM_SLOT_MAX_ITERATIONS),
     sandboxPolicyId: d.sandboxPolicyId,
     enabled: Boolean(d.enabled),
