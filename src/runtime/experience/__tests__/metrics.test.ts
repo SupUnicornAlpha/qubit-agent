@@ -328,6 +328,42 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(snap["self_evolve.skill_promoter.tick.by_status|status=completed"]).toBe(2);
   });
 
+  test("maintenance_run(kind=skill_evolver) → self_evolve.skill_evolver.* 汇总（P6）", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "skill_evolver",
+      actor: "skill_evolver_watcher",
+      summary: {
+        scanned: 5,
+        processed: 2,
+        skippedBaseMissing: 1,
+        skippedBaseArchived: 1,
+        failed: 1,
+        elapsedMs: 123,
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "skill_evolver",
+      actor: "skill_evolver_watcher",
+      summary: {
+        scanned: 3,
+        processed: 3,
+        skippedBaseMissing: 0,
+        skippedBaseArchived: 0,
+        failed: 0,
+        elapsedMs: 88,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.skill_evolver.tick.total"]).toBe(2);
+    expect(snap["self_evolve.skill_evolver.scanned"]).toBe(8);
+    expect(snap["self_evolve.skill_evolver.processed"]).toBe(5);
+    expect(snap["self_evolve.skill_evolver.skipped_base_missing"]).toBe(1);
+    expect(snap["self_evolve.skill_evolver.skipped_base_archived"]).toBe(1);
+    expect(snap["self_evolve.skill_evolver.failed"]).toBe(1);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({

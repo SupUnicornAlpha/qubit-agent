@@ -96,6 +96,9 @@ export type ExperienceEvent =
    *
    * P5 新增 1 个 kind：
    *   - skill_promoter      — SkillPromoter.runOnce 跑完
+   *
+   * P6 新增 1 个 kind：
+   *   - skill_evolver       — SkillEvolverWatcher.runOnce 跑完
    */
   | {
       type: "maintenance_run";
@@ -107,7 +110,8 @@ export type ExperienceEvent =
         | "pnl_attributor"
         | "analyst_accuracy"
         | "mark_price_fetcher"
-        | "skill_promoter";
+        | "skill_promoter"
+        | "skill_evolver";
       actor: string;
       summary: Record<string, number | string>;
     };

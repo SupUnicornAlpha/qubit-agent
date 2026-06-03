@@ -4086,6 +4086,10 @@ export interface SkillPromotionListItem {
   state: SkillPromotionState;
   category: string;
   definitionId: string | null;
+  /** P6：来源（'user_authored' | 'agent_created' | 'open_skill_market' | 'evolved'） */
+  source: string | null;
+  /** P6：演化谱系上的父 skill（SkillEvolver 产物时非空） */
+  parentSkillId: string | null;
   promotionRunId: string | null;
   promotionScore: number | null;
   promotionReviewAt: string | null;
@@ -4167,6 +4171,87 @@ export async function rejectSkillPromotion(
 ): Promise<SkillPromotionReviewResult> {
   const res = await httpPost<{ ok: boolean; data: SkillPromotionReviewResult }>(
     `/api/v1/monitor/memory/skill-promotions/${encodeURIComponent(skillId)}/reject`,
+    body
+  );
+  return res.data;
+}
+
+// ───────────────────────── Self-Evolving Agent P6 — Skill Evolutions ─────────────────────────
+//
+// 三个端点：
+//   GET   /memory/skill-evolutions/runs        — 最近 N 次 SkillEvolver 跑批
+//   GET   /memory/skill-evolutions/diff        — 拉 evolved child + parent bodyMd（供前端 diff）
+//   POST  /memory/skill-evolutions/request     — 手动触发：写一条 reflective(skill_revision_request)
+
+export interface SkillEvolutionRunSummary {
+  id: string;
+  baseSkillId: string;
+  status: "running" | "completed" | "failed";
+  triggeredBy: string;
+  iterations: number;
+  candidatesEvaluated: number;
+  baselineScore: number | null;
+  bestScore: number | null;
+  winningSkillId: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface SkillEvolutionDiff {
+  child: {
+    id: string;
+    name: string;
+    bodyMd: string;
+    description: string;
+    parentSkillId: string | null;
+    source: string | null;
+    state: SkillPromotionState;
+  };
+  parent: {
+    id: string;
+    name: string;
+    bodyMd: string;
+    description: string;
+    state: SkillPromotionState;
+  } | null;
+}
+
+export interface SkillRevisionRequestResult {
+  status: "created" | "deduped";
+  experienceId: string;
+}
+
+export async function listSkillEvolutionRuns(params: {
+  projectId: string;
+  limit?: number;
+}): Promise<SkillEvolutionRunSummary[]> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{
+    ok: boolean;
+    data: { items: SkillEvolutionRunSummary[] };
+  }>(`/api/v1/monitor/memory/skill-evolutions/runs?${q.toString()}`);
+  return res.data.items;
+}
+
+export async function getSkillEvolutionDiff(skillId: string): Promise<SkillEvolutionDiff> {
+  const res = await httpGet<{ ok: boolean; data: SkillEvolutionDiff }>(
+    `/api/v1/monitor/memory/skill-evolutions/diff?skillId=${encodeURIComponent(skillId)}`
+  );
+  return res.data;
+}
+
+export async function requestSkillRevision(body: {
+  projectId: string;
+  baseSkillId: string;
+  reason?: string;
+  requestedBy?: string;
+  iterations?: number;
+  candidatesPerIteration?: number;
+}): Promise<SkillRevisionRequestResult> {
+  const res = await httpPost<{ ok: boolean; data: SkillRevisionRequestResult }>(
+    `/api/v1/monitor/memory/skill-evolutions/request`,
     body
   );
   return res.data;

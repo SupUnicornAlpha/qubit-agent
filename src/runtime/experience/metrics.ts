@@ -183,6 +183,15 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.skill_promoter.promoted", numOf(s.promoted));
         c.inc("self_evolve.skill_promoter.skipped_duplicate", numOf(s.skippedDuplicate));
         c.inc("self_evolve.skill_promoter.skipped_insufficient", numOf(s.skippedInsufficient));
+      } else if (ev.kind === "skill_evolver") {
+        // Self-Evolving Agent P6：reflective(skill_revision_request) → SkillEvolver.evolve
+        const s = ev.summary;
+        c.inc("self_evolve.skill_evolver.tick.total");
+        c.inc("self_evolve.skill_evolver.scanned", numOf(s.scanned));
+        c.inc("self_evolve.skill_evolver.processed", numOf(s.processed));
+        c.inc("self_evolve.skill_evolver.skipped_base_missing", numOf(s.skippedBaseMissing));
+        c.inc("self_evolve.skill_evolver.skipped_base_archived", numOf(s.skippedBaseArchived));
+        c.inc("self_evolve.skill_evolver.failed", numOf(s.failed));
       }
     } catch {
       /* noop */

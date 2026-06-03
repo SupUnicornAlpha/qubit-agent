@@ -999,6 +999,10 @@ monitorRouter.get("/memory/skill-promotions", async (c) => {
       state: agentSkill.state,
       category: agentSkill.category,
       definitionId: agentSkill.definitionId,
+      // P6：让前端能区分"SkillPromoter 提名"（source='evolved' 时 parentSkillId 非空）
+      // 与"SkillEvolver 派生"两种 pending_review 来源
+      source: agentSkill.source,
+      parentSkillId: agentSkill.parentSkillId,
       promotionRunId: agentSkill.promotionRunId,
       promotionScore: agentSkill.promotionScore,
       promotionReviewAt: agentSkill.promotionReviewAt,
@@ -1016,6 +1020,127 @@ monitorRouter.get("/memory/skill-promotions", async (c) => {
     .limit(limit);
 
   return c.json({ ok: true, data: { items: rows, total: rows.length } });
+});
+
+// ===========================================================================
+// Self-Evolving Agent P6 — Skill Evolutions（自动修订）端点
+// 前端 MemoryTab → Skill Promotions sub-tab 复用展示 evolved skill；
+// 这里补充 evolved 专属的：
+//   GET   /memory/skill-evolutions/runs?projectId=&limit=
+//   GET   /memory/skill-evolutions/diff?skillId=        → 返回 base/evolved 两段 bodyMd
+//   POST  /memory/skill-evolutions/request body={projectId, baseSkillId, reason?, ...}
+//                                                       → 写 reflective(skill_revision_request)
+//                                                         给 SkillEvolverWatcher 下次跑批消费
+// ===========================================================================
+
+monitorRouter.get("/memory/skill-evolutions/runs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const limit = Math.max(1, Math.min(50, Number(c.req.query("limit") ?? "10")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { skillEvolutionRun } = await import("../db/sqlite/schema");
+  const { eq, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  const rows = await db
+    .select({
+      id: skillEvolutionRun.id,
+      baseSkillId: skillEvolutionRun.baseSkillId,
+      status: skillEvolutionRun.status,
+      triggeredBy: skillEvolutionRun.triggeredBy,
+      iterations: skillEvolutionRun.iterations,
+      candidatesEvaluated: skillEvolutionRun.candidatesEvaluated,
+      baselineScore: skillEvolutionRun.baselineScore,
+      bestScore: skillEvolutionRun.bestScore,
+      winningSkillId: skillEvolutionRun.winningSkillId,
+      startedAt: skillEvolutionRun.startedAt,
+      endedAt: skillEvolutionRun.endedAt,
+      errorMessage: skillEvolutionRun.errorMessage,
+    })
+    .from(skillEvolutionRun)
+    .where(eq(skillEvolutionRun.projectId, projectId))
+    .orderBy(desc(skillEvolutionRun.startedAt))
+    .limit(limit);
+  return c.json({ ok: true, data: { items: rows } });
+});
+
+monitorRouter.get("/memory/skill-evolutions/diff", async (c) => {
+  const skillId = c.req.query("skillId");
+  if (!skillId) return c.json({ ok: false, error: "skillId required" }, 400);
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { agentSkill } = await import("../db/sqlite/schema");
+  const { eq } = await import("drizzle-orm");
+  const db = await getDb();
+  const child = (
+    await db
+      .select({
+        id: agentSkill.id,
+        name: agentSkill.name,
+        bodyMd: agentSkill.bodyMd,
+        description: agentSkill.description,
+        parentSkillId: agentSkill.parentSkillId,
+        source: agentSkill.source,
+        state: agentSkill.state,
+      })
+      .from(agentSkill)
+      .where(eq(agentSkill.id, skillId))
+      .limit(1)
+  )[0];
+  if (!child) return c.json({ ok: false, error: "skill not found" }, 404);
+  if (!child.parentSkillId) {
+    return c.json({ ok: true, data: { child, parent: null } });
+  }
+  const parent = (
+    await db
+      .select({
+        id: agentSkill.id,
+        name: agentSkill.name,
+        bodyMd: agentSkill.bodyMd,
+        description: agentSkill.description,
+        state: agentSkill.state,
+      })
+      .from(agentSkill)
+      .where(eq(agentSkill.id, child.parentSkillId))
+      .limit(1)
+  )[0];
+  return c.json({ ok: true, data: { child, parent: parent ?? null } });
+});
+
+monitorRouter.post("/memory/skill-evolutions/request", async (c) => {
+  let body: {
+    projectId?: string;
+    baseSkillId?: string;
+    reason?: string;
+    requestedBy?: string;
+    iterations?: number;
+    candidatesPerIteration?: number;
+  } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty */
+  }
+  if (!body.projectId || !body.baseSkillId) {
+    return c.json({ ok: false, error: "projectId and baseSkillId are required" }, 400);
+  }
+  try {
+    const { requestSkillRevision } = await import(
+      "../runtime/skill-evolver-watcher/request-skill-revision"
+    );
+    const input: Parameters<typeof requestSkillRevision>[0] = {
+      projectId: body.projectId,
+      baseSkillId: body.baseSkillId,
+      requestedBy: body.requestedBy ?? "api",
+    };
+    if (body.reason) input.reason = body.reason;
+    if (body.iterations) input.iterations = body.iterations;
+    if (body.candidatesPerIteration) input.candidatesPerIteration = body.candidatesPerIteration;
+    const result = await requestSkillRevision(input);
+    return c.json({ ok: true, data: result });
+  } catch (e) {
+    return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+  }
 });
 
 monitorRouter.get("/memory/skill-promotions/runs", async (c) => {

@@ -12,9 +12,13 @@ import type { FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   approveSkillPromotion,
+  getSkillEvolutionDiff,
+  listSkillEvolutionRuns,
   listSkillPromotionRuns,
   listSkillPromotions,
   rejectSkillPromotion,
+  type SkillEvolutionDiff,
+  type SkillEvolutionRunSummary,
   type SkillPromotionListItem,
   type SkillPromotionRunSummary,
   type SkillPromotionState,
@@ -77,6 +81,7 @@ export const SkillPromotionsPanel: FC<SkillPromotionsPanelProps> = ({ projectId,
   const [stateFilter, setStateFilter] = useState<SkillPromotionState | "all">("pending_review");
   const [items, setItems] = useState<SkillPromotionListItem[]>([]);
   const [runs, setRuns] = useState<SkillPromotionRunSummary[]>([]);
+  const [evoRuns, setEvoRuns] = useState<SkillEvolutionRunSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -88,16 +93,19 @@ export const SkillPromotionsPanel: FC<SkillPromotionsPanelProps> = ({ projectId,
     setLoading(true);
     setErr(null);
     try {
-      const [list, runHistory] = await Promise.all([
+      const [list, runHistory, evoHistory] = await Promise.all([
         listSkillPromotions({ projectId, state: stateFilter, limit: 100 }),
         listSkillPromotionRuns({ projectId, limit: 10 }),
+        listSkillEvolutionRuns({ projectId, limit: 10 }).catch(() => []),
       ]);
       setItems(list.items);
       setRuns(runHistory);
+      setEvoRuns(evoHistory);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "加载失败");
       setItems([]);
       setRuns([]);
+      setEvoRuns([]);
     } finally {
       setLoading(false);
     }
@@ -153,7 +161,7 @@ export const SkillPromotionsPanel: FC<SkillPromotionsPanelProps> = ({ projectId,
 
   return (
     <div style={{ minWidth: 0 }}>
-      <RunsBar runs={runs} onRefresh={() => void reload()} loading={loading} />
+      <RunsBar runs={runs} evoRuns={evoRuns} onRefresh={() => void reload()} loading={loading} />
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "12px 0" }}>
         {STATE_OPTIONS.map((o) => (
@@ -202,18 +210,34 @@ export const SkillPromotionsPanel: FC<SkillPromotionsPanelProps> = ({ projectId,
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                     <strong style={{ color: "#e4e4e7" }}>{it.name}</strong>
-                    <span
-                      style={{
-                        color:
-                          it.state === "pending_review"
-                            ? "#f59e0b"
-                            : it.state === "active"
-                              ? "#22c55e"
-                              : "#71717a",
-                        fontSize: 12,
-                      }}
-                    >
-                      {it.state}
+                    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {it.source === "evolved" && (
+                        <span
+                          title="SkillEvolver 自动派生（P6）"
+                          style={{
+                            fontSize: 10,
+                            color: "#a78bfa",
+                            border: "1px solid #a78bfa",
+                            borderRadius: 4,
+                            padding: "1px 4px",
+                          }}
+                        >
+                          evolved
+                        </span>
+                      )}
+                      <span
+                        style={{
+                          color:
+                            it.state === "pending_review"
+                              ? "#f59e0b"
+                              : it.state === "active"
+                                ? "#22c55e"
+                                : "#71717a",
+                          fontSize: 12,
+                        }}
+                      >
+                        {it.state}
+                      </span>
                     </span>
                   </div>
                   <div style={{ fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
@@ -256,20 +280,47 @@ export const SkillPromotionsPanel: FC<SkillPromotionsPanelProps> = ({ projectId,
 
 const RunsBar: FC<{
   runs: SkillPromotionRunSummary[];
+  evoRuns: SkillEvolutionRunSummary[];
   onRefresh: () => void;
   loading: boolean;
-}> = ({ runs, onRefresh, loading }) => {
+}> = ({ runs, evoRuns, onRefresh, loading }) => {
   const latest = runs[0];
+  const evoLatest = evoRuns[0];
   return (
-    <div style={{ display: "flex", gap: 12, alignItems: "stretch", marginBottom: 4 }}>
-      <Kpi label="最近一次跑批" value={latest ? `${latest.mode}` : "—"} accent="#3b82f6" />
+    <div style={{ display: "flex", gap: 12, alignItems: "stretch", marginBottom: 4, flexWrap: "wrap" }}>
+      <Kpi label="Promoter mode" value={latest ? `${latest.mode}` : "—"} accent="#3b82f6" />
       <Kpi label="scanned" value={latest ? String(latest.totalScanned) : "—"} accent="#a1a1aa" />
-      <Kpi label="qualified" value={latest ? String(latest.totalQualified) : "—"} accent="#a78bfa" />
       <Kpi label="promoted" value={latest ? String(latest.totalPromoted) : "—"} accent="#22c55e" />
       <Kpi
         label="status"
         value={latest?.status ?? "—"}
         accent={latest?.status === "failed" ? "#f87171" : "#22c55e"}
+      />
+      {/* P6：SkillEvolver 最近跑批 */}
+      <Kpi
+        label="Evolver runs (10)"
+        value={String(evoRuns.length)}
+        accent="#a78bfa"
+      />
+      <Kpi
+        label="evo last"
+        value={evoLatest ? `${evoLatest.status}` : "—"}
+        accent={
+          evoLatest?.status === "completed"
+            ? "#22c55e"
+            : evoLatest?.status === "failed"
+              ? "#f87171"
+              : "#71717a"
+        }
+      />
+      <Kpi
+        label="evo Δscore"
+        value={
+          evoLatest && evoLatest.bestScore != null && evoLatest.baselineScore != null
+            ? (evoLatest.bestScore - evoLatest.baselineScore).toFixed(3)
+            : "—"
+        }
+        accent="#facc15"
       />
       <button
         type="button"
@@ -279,6 +330,198 @@ const RunsBar: FC<{
       >
         {loading ? "刷新中…" : "刷新"}
       </button>
+    </div>
+  );
+};
+
+// ───────── P6 子组件：bodyMd 行级 diff（基于 LCS） ─────────
+//
+// 输入两段文本，输出 LCS 对齐后的行级 diff 标记：
+//   { kind: 'same' | 'add' | 'del', text }[]
+// 大文本回退到行数级（>800 行直接 split-pane 展示，不做 diff，避免 O(n*m) 卡前端）
+
+function lcsDiff(a: string, b: string): { kind: "same" | "add" | "del"; text: string }[] {
+  const al = a.split("\n");
+  const bl = b.split("\n");
+  if (al.length > 800 || bl.length > 800) {
+    return [
+      ...al.map((t) => ({ kind: "del" as const, text: t })),
+      ...bl.map((t) => ({ kind: "add" as const, text: t })),
+    ];
+  }
+  const m = al.length;
+  const n = bl.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i]![j] = al[i] === bl[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  const out: { kind: "same" | "add" | "del"; text: string }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (al[i] === bl[j]) {
+      out.push({ kind: "same", text: al[i]! });
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+      out.push({ kind: "del", text: al[i]! });
+      i += 1;
+    } else {
+      out.push({ kind: "add", text: bl[j]! });
+      j += 1;
+    }
+  }
+  while (i < m) out.push({ kind: "del", text: al[i++]! });
+  while (j < n) out.push({ kind: "add", text: bl[j++]! });
+  return out;
+}
+
+const DiffViewer: FC<{ parentBody: string; childBody: string }> = ({ parentBody, childBody }) => {
+  const lines = useMemo(() => lcsDiff(parentBody, childBody), [parentBody, childBody]);
+  const stat = useMemo(() => {
+    let add = 0;
+    let del = 0;
+    for (const l of lines) {
+      if (l.kind === "add") add += 1;
+      else if (l.kind === "del") del += 1;
+    }
+    return { add, del };
+  }, [lines]);
+  return (
+    <div
+      style={{
+        border: "1px solid #27272a",
+        borderRadius: 6,
+        background: "#0a0a0a",
+        marginTop: 8,
+      }}
+    >
+      <div
+        style={{
+          padding: "6px 10px",
+          fontSize: 11,
+          color: "#a1a1aa",
+          borderBottom: "1px solid #27272a",
+          display: "flex",
+          gap: 12,
+        }}
+      >
+        <span>parent → evolved diff</span>
+        <span style={{ color: "#22c55e" }}>+{stat.add}</span>
+        <span style={{ color: "#f87171" }}>-{stat.del}</span>
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: 8,
+          maxHeight: 360,
+          overflow: "auto",
+          fontSize: 11,
+          lineHeight: 1.5,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        }}
+      >
+        {lines.map((l, idx) => (
+          <div
+            key={idx}
+            style={{
+              background:
+                l.kind === "add" ? "rgba(34,197,94,0.12)" : l.kind === "del" ? "rgba(248,113,113,0.12)" : undefined,
+              color: l.kind === "add" ? "#86efac" : l.kind === "del" ? "#fca5a5" : "#d4d4d8",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              padding: "0 4px",
+            }}
+          >
+            <span style={{ color: "#52525b", marginRight: 6 }}>
+              {l.kind === "add" ? "+" : l.kind === "del" ? "-" : " "}
+            </span>
+            {l.text || "\u00a0"}
+          </div>
+        ))}
+      </pre>
+    </div>
+  );
+};
+
+const EvolutionDiffSection: FC<{ skillId: string }> = ({ skillId }) => {
+  const [diff, setDiff] = useState<SkillEvolutionDiff | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const d = await getSkillEvolutionDiff(skillId);
+      setDiff(d);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "diff 加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [skillId]);
+
+  useEffect(() => {
+    if (open && !diff && !loading) void load();
+  }, [open, diff, loading, load]);
+
+  // skillId 变化时复位
+  useEffect(() => {
+    setDiff(null);
+    setOpen(false);
+  }, [skillId]);
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((s) => !s)}
+        style={{
+          ...btnGhost,
+          width: "100%",
+          textAlign: "left",
+          color: "#a78bfa",
+          borderColor: "#a78bfa",
+        }}
+      >
+        {open ? "▼" : "▶"} 演化谱系 · 与 parent skill 的 diff
+      </button>
+      {open && (
+        <>
+          {loading && (
+            <div style={{ color: "#a1a1aa", padding: 8, fontSize: 12 }}>diff 加载中…</div>
+          )}
+          {err && <div style={{ color: "#f87171", padding: 8, fontSize: 12 }}>{err}</div>}
+          {diff && diff.parent && (
+            <>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "#a1a1aa",
+                  marginTop: 6,
+                  display: "flex",
+                  gap: 8,
+                }}
+              >
+                <span>parent: </span>
+                <code style={{ color: "#e4e4e7" }}>{diff.parent.name}</code>
+                <span>·</span>
+                <span>state: {diff.parent.state}</span>
+              </div>
+              <DiffViewer parentBody={diff.parent.bodyMd} childBody={diff.child.bodyMd} />
+            </>
+          )}
+          {diff && !diff.parent && (
+            <div style={{ color: "#a1a1aa", padding: 8, fontSize: 12 }}>
+              此 skill 无 parent（非 SkillEvolver 派生）。
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };
@@ -328,6 +571,10 @@ const DetailPanel: FC<{
           </>
         )}
       </div>
+
+      {item.source === "evolved" && item.parentSkillId && (
+        <EvolutionDiffSection skillId={item.id} />
+      )}
 
       {canDecide && (
         <div

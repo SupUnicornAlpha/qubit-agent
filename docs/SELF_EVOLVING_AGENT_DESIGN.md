@@ -493,9 +493,104 @@ score = 0.4 * clamp(log1p(useCount) / log1p(20))
 
 **Exit code**：`0` 成功 / `1` 跑批 failed / `2` 参数错。
 
-### 6.4 P6 — Skill 自动修订
+### 6.4 P6 — Skill 自动修订 ✅（已落地 2026-06-03）
 
-Reflector 写 reflective + linkedSkillIds 时 → 自动 enqueue SkillEvolver（baseExperience=reflective.id）；新版本 parent_skill_id 指向旧版本。
+#### 6.4.1 触发约定（与 P5 解耦）
+
+P6 不是 push 型（Reflector 不直接调 LLM 演化）—— 那样会让 reflector 主流程被慢 LLM 阻塞，且
+跨模块依赖太重。改成 **pull / 队列模型**：
+
+- 任何方（Reflector / Janitor / 用户手动 trigger / 后端 routes）需要触发某 skill 修订时，
+  写一条 reflective experience：
+
+  ```
+  kind='reflective'
+  subKind='skill_revision_request'
+  scope='project' / scopeId=projectId
+  metadataJson = {
+    baseSkillId,              // 要演化的 base skill id（必填）
+    requestedBy,              // 'reflector' | 'user' | 'janitor' | 'api'
+    reason?,                  // 自由文字：失败信号 / 用户备注
+    iterations?,
+    candidatesPerIteration?,
+    // ↓ Watcher 跑完回写，标记已处理
+    processedAt?, evolutionRunId?, evolveStatus?, evolveError?,
+  }
+  ```
+
+- 触发去重：同 (projectId, baseSkillId) 在 **6h 窗口内只允许一条 pending request**，
+  避免短时间内对同一 skill 重复跑昂贵的 LLM 演化（`requestSkillRevision` 内部 enforce）。
+- `request-skill-revision.ts` 同时支持 `sourceReflectiveExperienceId` 参数（Reflector 调时
+  会自动建 `experience_link(derive_from)` 关系，方便追溯）。
+
+#### 6.4.2 模块清单
+
+| 模块 | 路径 | 职责 |
+|---|---|---|
+| `requestSkillRevision` | `src/runtime/skill-evolver-watcher/request-skill-revision.ts` | 给任何调用方用的辅助函数：去重 + 写 reflective request |
+| `SkillEvolverWatcher` | `src/runtime/skill-evolver-watcher/watcher.ts` | 周期 worker：扫未处理 request → 调 `SkillEvolver.evolve` → 回写 `processedAt`/`evolutionRunId` |
+| `SkillEvolver` | `src/runtime/skills/skill-evolve.ts`（M11.D1 已存在） | LLM mutation × 4 策略 + 离线评分 + 写 evolved skill（`state='pending_review'`, `parentSkillId=base`） |
+| `run-skill-evolver-watcher.ts` | `src/scripts/` | CLI；cron 每 60min 一跑（LLM cost 比 promoter 高，频率低一档） |
+| `monitor.routes.ts` 3 个新 endpoint | `src/routes/` | GET `/memory/skill-evolutions/runs` / GET `/memory/skill-evolutions/diff` / POST `/memory/skill-evolutions/request` |
+| `SkillPromotionsPanel`（扩展） | `frontend/src/components/monitor/` | 复用 P5 UI 展示 evolved skill；evolved 标签 + 按需 fetch parent/child bodyMd + LCS 行级 diff |
+
+#### 6.4.3 数据流（端到端）
+
+```
+Reflector / 用户 / Janitor
+        │
+        ▼   写 reflective(skill_revision_request, metadataJson.baseSkillId=...)
+   experience 表（待办队列）
+        │
+        ▼   cron 每 60min
+   SkillEvolverWatcher.runOnce
+   ├─ 拉最近 50 条 subKind='skill_revision_request'
+   ├─ 已 processedAt 的跳过（重跑安全）
+   ├─ base skill 不存在 → skipped_base_missing
+   ├─ base skill state=archived → skipped_base_archived
+   └─ 调 SkillEvolver.evolve(allowOfflineMutation=true)
+              │
+              ▼  4×iter 个 mutation 候选 + 离线评分 + best > baseline+0.05 才落版本
+        agent_skill (state='pending_review', source='evolved', parentSkillId=base)
+        skill_evolution_run（baselineScore / bestScore / winningSkillId）
+              │
+              ▼  Watcher 回写 metadataJson.processedAt + evolutionRunId 标记 done
+        experience 更新；下次跑批跳过此条
+              │
+              ▼  emit maintenance_run/skill_evolver event
+        metrics: self_evolve.skill_evolver.{tick,scanned,processed,...}
+              │
+              ▼  前端 MemoryTab > Skill Promotions sub-tab
+        evolved skill 跟 P5 promoted skill 同列展示（state=pending_review）
+        用户点开 → 演化谱系折叠区 → fetch /skill-evolutions/diff → LCS 行级 diff
+        用户 approve → state=active；reject → state=archived + 写 reflective(skill_reject_feedback)
+```
+
+#### 6.4.4 关键设计决策
+
+- **不复用 P5 SkillPromoter 评分**：P6 评分由 `SkillEvolver` 内部 deterministic `scoreSkillBody`
+  完成（长度甜区 + 步骤计数 + 验收/失败词命中 + 反作弊扣 commit/PR 指代），不需要等
+  30 天 PnL 累计。Promote vs Evolve 是两条独立的 quality signal。
+- **重跑安全（idempotent）**：Watcher 跑批基于 `metadataJson.processedAt` 标记，不依赖物理
+  删除 request。跑批失败时也写 `evolveStatus='failed'` + `evolveError`，**不自动重试**，
+  要重试只能再发一条 reflective request（避免反复花 LLM）。
+- **base archived 不动**：base skill 已被 archive 时跳过演化，前端 UI 还能展示历史，
+  避免对已弃用 skill 产生误导性 evolved 版本。
+- **离线 fallback 默认开**：开发机无 LLM key 时也能跑 worker，使用 `offlineMutate`（启发式
+  改写）+ 评分。生产环境实际跑批会优先 LLM。
+- **POST trigger 是开发/手动用，不是公共 API**：前端先不暴露按钮，避免误触；后续 P9
+  接 auto 模式时也走 reflective 队列入口。
+
+#### 6.4.5 cron 运维
+
+| 场景 | 命令 |
+|---|---|
+| 日度 cron（每 60 min） | `bun run src/scripts/run-skill-evolver-watcher.ts --projectId=$PRJ` |
+| JSON 输出（接监控） | 加 `--json` |
+| 限批大小（防 LLM 风暴） | 加 `--maxBatch=10`（默认 50） |
+| 手动触发某 skill 演化 | `curl -XPOST .../memory/skill-evolutions/request -d '{"projectId":"prj_x","baseSkillId":"skill_y","reason":"..."}'` |
+
+**Exit code**：`0` 成功（含 0 候选）/ `1` 有 failed / `2` 参数错。
 
 ### 6.5 P7 — ToolGapWatcher
 
@@ -544,6 +639,12 @@ self_evolve.mark_price.fetched_total{market}
 self_evolve.mark_price.failures_total{market}
 self_evolve.skill_promoter.candidates_scanned_total
 self_evolve.skill_promoter.promoted_total
+self_evolve.skill_evolver.tick.total
+self_evolve.skill_evolver.scanned
+self_evolve.skill_evolver.processed
+self_evolve.skill_evolver.skipped_base_missing
+self_evolve.skill_evolver.skipped_base_archived
+self_evolve.skill_evolver.failed
 self_evolve.tool_gap.gaps_logged_total{kind}
 self_evolve.tool_gap.proposals_created_total
 self_evolve.tool_gap.auto_installed_total
@@ -575,12 +676,12 @@ self_evolve.tool_gap.auto_installed_total
 | **P4a** | PnL 基础设施（路面） | `daily_mark_price` / `strategy_pnl_snapshot` / `fee_schedule` + 4 模块 + 78 tests | 2-3 人/日 | ✅ 2026-06-03 |
 | **P4b** | PnL 反馈环（燃料） | PnlAttributor worker + SkillAttributor + `agent_pnl_attribution` + skill 字段补齐 + 对账 + metrics + 后端只读接口 | 3-4 人/日 | ✅ 2026-06-03 |
 | **P5** | Skill 晋升（齿轮） | SkillPromoter + `skill_promotion_run` + 前端 Skill Promotions sub-tab + cron + approve/reject 闭环 | 3 人/日 | ✅ 2026-06-03 |
-| **P6** | Skill 自动修订 | Reflector → SkillEvolver 自动触发 + bodyMd diff 视图 | 2 人/日 | TBD |
+| **P6** | Skill 自动修订（自动触发链路） | `requestSkillRevision` 队列 + `SkillEvolverWatcher` worker + cron + 3 个新 routes + 前端 LCS 行级 diff（8 watcher + 1 metrics + 9 routes 单测全过；前端 tsc 全绿） | 2 人/日 | ✅ 2026-06-03 |
 | **P7** | Tool Gap 观测 | ToolGapWatcher + `tool_gap_log` + `tool.report_gap` builtin + 前端 Tool Gaps sub-tab | 2 人/日 | TBD |
 | **P8** | Tool 自装配 propose | AutoInstaller + `auto_install_proposal` + 前端审批 UI | 4 人/日 | TBD |
 | **P9** | PnL-aware reason + auto 模式 | reason 注入 top-3 skill + MCP allowlist + auto 模式 + SkillEvolver baseline 回归 | 3 人/日 | TBD |
 
-**总计：11 人/日（不含 P4a / P4b / P5 已完成的 10 人/日）。**
+**总计：9 人/日（不含 P4a / P4b / P5 / P6 已完成的 12 人/日）。**
 
 ---
 
@@ -601,3 +702,4 @@ self_evolve.tool_gap.auto_installed_total
 | v0.1 | 2026-06-03 | 首版（含 P4a 已落地实现） |
 | v0.2 | 2026-06-03 | P4b 落地：PnlAttributor + SkillAttributor + agent_pnl_attribution + 后端只读接口 + 对账 + metrics（35+ 单测、5 集成测、attribution 整体 106/106、metrics 12/12）；改写 6.2 章节、修订 8 节排期表 |
 | v0.3 | 2026-06-03 | P5 落地：SkillPromoter + scoring + skill_promotion_run + approve/reject + cron + 4 个后端 routes + MemoryTab Skill Promotions sub-tab（9 scoring + 8 worker + 9 routes + 1 metrics 单测全过；migrations 62/62；前端 tsc 全绿）；改写 6.3 章节、修订 8 节排期表 |
+| v0.4 | 2026-06-03 | P6 落地：reflective(skill_revision_request) 队列约定 + `requestSkillRevision` 辅助 + `SkillEvolverWatcher` worker（8 集成测）+ Bus event `maintenance_run/skill_evolver` + metrics 1 单测 + cron 脚本 `run-skill-evolver-watcher.ts` + 3 个新 routes（`/skill-evolutions/runs|diff|request`，9 集成测）+ 前端 SkillPromotionsPanel 增 evolved 标签 + LCS 行级 diff 折叠区；新写 6.4 章节、修订 7.3 metrics + 8 节排期表（P4a-P6 全 ✅）；P4b/P5/P6 合计 163/163 测试全过 |
