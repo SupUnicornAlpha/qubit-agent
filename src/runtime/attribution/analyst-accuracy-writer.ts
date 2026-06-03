@@ -176,7 +176,10 @@ export class AnalystAccuracyWriter {
           result.skippedNoMark += 1;
           continue;
         }
-        const signalDate = epochDayToDate(row.signalDate);
+        // epochDayToDate 返回 UTC 00:00，在 America/New_York 是前一天 20:00，
+        // dateToTradingDay 会算到前一日；加 12h 让探针落在 UTC 中午，跨已支持
+        // market 时区（GMT−5 ~ GMT+8）都不会跨日。
+        const signalDate = new Date(epochDayToDate(row.signalDate).getTime() + 12 * 3600 * 1000);
         const evalDate = nextNTradingDays(signalDate, evalDelayDays, market);
 
         // start 可回退至多 2 个交易日（信号日停牌容忍）；end 必须精确（评估日无数据 = 跳过，不污染推断）

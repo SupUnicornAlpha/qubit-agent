@@ -2374,6 +2374,13 @@ export const agentSkill = sqliteTable(
     lastUsedAt: text("last_used_at"),
     metadataJson: text("metadata_json", { mode: "json" }).notNull().default("{}"),
     createdBy: text("created_by").notNull().default("agent"),
+    /** Self-Evolving Agent P4b：30 天滚动 PnL 汇总，PnlAttributor 每次跑覆盖。
+     * 结构 {windowDays, pnlSum, winCount, loseCount, lastUpdatedAt}。 */
+    pnlAttributionJson: text("pnl_attribution_json").notNull().default("{}"),
+    /** P5 SkillPromoter 留位（P4b 不写，避免每期 alter 表）。 */
+    lastPromotedAt: text("last_promoted_at"),
+    /** 'manual' | 'auto'，P6/P9 用 */
+    evolutionMode: text("evolution_mode").notNull().default("manual"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -2406,6 +2413,11 @@ export const agentSkillRun = sqliteTable(
       .default("unknown"),
     score: real("score"),
     notes: text("notes").notNull().default(""),
+    /** Self-Evolving Agent P4b：单次 skill 执行分到的 PnL（v0 等权 PnL/K）。
+     * nullable —— 没归因的 run（P4b 前的 / 无 PnL 上下文的）不写值，reader 用 IS NOT NULL 过滤。 */
+    pnlDelta: real("pnl_delta"),
+    /** 归因置信度。v0 等权恒为 1.0；P4b+ 时 Shapley 时小于 1。nullable 同上。 */
+    attributionConfidence: real("attribution_confidence"),
     startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     endedAt: text("ended_at"),
   },
@@ -2870,5 +2882,51 @@ export const feeSchedule = sqliteTable(
       t.enabled,
       t.priority
     ),
+  ]
+);
+
+// ─── Self-Evolving Agent P4b — PnL Attribution ─────────────────────────────
+// 见 docs/SELF_EVOLVING_AGENT_DESIGN.md §P4b。新表把 strategy_pnl_snapshot 进一步
+// 归因到 (workflow_run, agent_definition, skill[]) 维度。一行 = 一次 workflow_run
+// 在一个交易日产生的 PnL 归因结果。
+
+/**
+ * Agent + Skill 维度的 PnL 归因明细。
+ * 一行 = (workflow_run, definition, as_of_date) 唯一；skill 多个走 skill_ids_json + per_skill_share。
+ * 由 PnlAttributor worker 写入；upsert 唯一键见 idx_agent_pnl_attr_unique。
+ */
+export const agentPnlAttribution = sqliteTable(
+  "agent_pnl_attribution",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    /** Nullable —— strategyRuntime 反查 workflow_run 可能拿不到 agent（典型：cron 触发的 fill）。 */
+    definitionId: text("definition_id").references(() => agentDefinition.id, {
+      onDelete: "set null",
+    }),
+    strategyRuntimeId: text("strategy_runtime_id")
+      .notNull()
+      .references(() => strategyRuntime.id, { onDelete: "cascade" }),
+    /** ISO date 'YYYY-MM-DD'（按 market 本地交易日） */
+    asOfDate: text("as_of_date").notNull(),
+    /** 归因到该 (run, def, date) 的 PnL（已扣 fee） */
+    pnlAttributed: real("pnl_attributed").notNull().default(0),
+    /** 该 run 召回执行过的 skill_id 列表（JSON string[]）；可为空数组 */
+    skillIdsJson: text("skill_ids_json").notNull().default("[]"),
+    /** pnl_attributed / max(1, len(skill_ids_json))；冗余给 reader */
+    perSkillShare: real("per_skill_share").notNull().default(0),
+    /** 'equal_weight_v0' / 'time_decay_v1' / 'shapley_v2' */
+    attributionMethod: text("attribution_method").notNull().default("equal_weight_v0"),
+    /** v0 恒为 1.0；Shapley 时小于 1 */
+    attributionConfidence: real("attribution_confidence").notNull().default(1.0),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default({}),
+    computedAt: text("computed_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    uniqueIndex("idx_agent_pnl_attr_unique").on(t.workflowRunId, t.definitionId, t.asOfDate),
+    index("idx_agent_pnl_attr_runtime_date").on(t.strategyRuntimeId, t.asOfDate),
+    index("idx_agent_pnl_attr_def_date").on(t.definitionId, t.asOfDate),
   ]
 );

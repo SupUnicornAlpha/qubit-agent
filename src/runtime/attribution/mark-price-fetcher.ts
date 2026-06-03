@@ -25,6 +25,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import type { DbClient } from "../../db/sqlite/client";
 import { dailyMarkPrice } from "../../db/sqlite/schema";
+import { type ExperienceBus, getExperienceBus } from "../experience/experience-bus";
 import { queryBarsRange } from "../market/klines-query";
 import { dateToTradingDay } from "./time-util";
 
@@ -51,6 +52,10 @@ export interface FetchMarkPriceOptions {
   fetchBarsRange?: FetchBarsRangeFn;
   /** source 标识；默认 'auto'（由 connector 决定）。手动指定可标 'synthetic_backfill' 等。 */
   sourceTag?: string;
+  /** 注入：ExperienceBus；默认走全局 bus。 */
+  experienceBus?: ExperienceBus;
+  /** 默认 true：跑完发 maintenance_run(kind=mark_price_fetcher) 给 metrics */
+  emitMetrics?: boolean;
 }
 
 export interface FetchMarkPriceResult {
@@ -134,6 +139,27 @@ export class DailyMarkPriceFetcher {
         });
       }
     }
+
+    if ((opts.emitMetrics ?? true) === true) {
+      const bus = opts.experienceBus ?? getExperienceBus();
+      try {
+        bus.emit({
+          type: "maintenance_run",
+          kind: "mark_price_fetcher",
+          actor: "mark_price_fetcher",
+          summary: {
+            targets: targets.length,
+            inserted: result.inserted,
+            updated: result.updated,
+            skipped: result.skipped,
+            failures: result.failures.length,
+          },
+        });
+      } catch {
+        /* metrics emit 失败 silent */
+      }
+    }
+
     return result;
   }
 

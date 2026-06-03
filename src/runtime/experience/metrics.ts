@@ -135,6 +135,41 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("memory.embedder.succeeded", numOf(s.succeeded));
         c.inc("memory.embedder.failed", numOf(s.failed));
         c.inc("memory.embedder.tokens", numOf(s.tokensUsed));
+      } else if (ev.kind === "pnl_attributor") {
+        // Self-Evolving Agent P4b：策略层 PnL 计算与 skill 归因汇总
+        const s = ev.summary;
+        c.inc("self_evolve.pnl_attributor.tick.total");
+        c.inc("self_evolve.pnl_attributor.runtimes_scanned", numOf(s.runtimesScanned));
+        c.inc("self_evolve.pnl_attributor.runtimes_processed", numOf(s.runtimesProcessed));
+        c.inc("self_evolve.pnl_attributor.runtimes_skipped", numOf(s.runtimesSkipped));
+        c.inc("self_evolve.pnl_attributor.fills_scanned", numOf(s.fillsScanned));
+        c.inc("self_evolve.pnl_attributor.snapshots_written", numOf(s.snapshotsWritten));
+        c.inc("self_evolve.pnl_attributor.errors", numOf(s.errors));
+        c.inc(
+          "self_evolve.pnl_attributor.skill_attribution_rows",
+          numOf(s.skillAttributionRows)
+        );
+        c.inc("self_evolve.pnl_attributor.skill_runs_updated", numOf(s.skillRunsUpdated));
+      } else if (ev.kind === "analyst_accuracy") {
+        const s = ev.summary;
+        c.inc("self_evolve.analyst_accuracy.tick.total");
+        c.inc("self_evolve.analyst_accuracy.scanned_signals", numOf(s.scannedSignals));
+        c.inc("self_evolve.analyst_accuracy.placeholders_inserted", numOf(s.placeholdersInserted));
+        c.inc("self_evolve.analyst_accuracy.evaluated", numOf(s.evaluated));
+        c.inc("self_evolve.analyst_accuracy.skipped_no_mark", numOf(s.skippedNoMark));
+        c.inc(
+          "self_evolve.analyst_accuracy.skipped_no_future_mark",
+          numOf(s.skippedNoFutureMark)
+        );
+        c.inc("self_evolve.analyst_accuracy.failures", numOf(s.failures));
+      } else if (ev.kind === "mark_price_fetcher") {
+        const s = ev.summary;
+        c.inc("self_evolve.mark_price.tick.total");
+        c.inc("self_evolve.mark_price.targets", numOf(s.targets));
+        c.inc("self_evolve.mark_price.inserted", numOf(s.inserted));
+        c.inc("self_evolve.mark_price.updated", numOf(s.updated));
+        c.inc("self_evolve.mark_price.skipped", numOf(s.skipped));
+        c.inc("self_evolve.mark_price.failures", numOf(s.failures));
       }
     } catch {
       /* noop */

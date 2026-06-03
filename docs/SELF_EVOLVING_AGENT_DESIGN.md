@@ -322,27 +322,87 @@ flowchart TB
 4. **agentInstanceId=null 严格跳过**：不写假 definition_id，保持 `analyst_accuracy_log` 与 `agent_definition` FK 真相一致；reader（`loadDynamicWeights`）按 definition_id 聚合时不会被污染。
 5. **end mark 精确取**：评估日 mark 缺失时直接跳过（`skippedNoFutureMark`），避免回退取到 start mark 导致 `outcome` 计算错误（实测踩过坑）。
 
-### 6.2 P4b — PnlAttributor Worker（下一期）
+### 6.2 P4b — PnL 反馈环 ✅（已落地 2026-06-03）
 
-**目标**：扫 `fill` + `execution_report` → 算时序 position + NAV → 写 `strategy_pnl_snapshot` 与 `agent_pnl_attribution`。
+#### 6.2.1 数据表（migration 0061）
 
-**触发**：cron 每日 03:00（日度）+ 每 15 min（实时滚动，仅 active strategy）。
+| 表 / 字段 | 关键设计 |
+|---|---|
+| **`agent_pnl_attribution`**（新表） | uniq(workflow_run_id, definition_id, as_of_date)；一行 = 一次 workflow 当日的归因记录；`skill_ids_json`（JSON 数组）+ `per_skill_share`（冗余给 reader）；`attribution_method`（'equal_weight_v0' / 未来 'shapley_v2'）；`attribution_confidence`（v0 恒 1.0） |
+| `agent_skill.pnl_attribution_json` | 30 天滚动 rollup：`{windowDays, pnlSum, winCount, loseCount, sampleCount, lastUpdatedAt}`；每次跑批覆盖 |
+| `agent_skill.last_promoted_at` / `evolution_mode` | P5/P6 留位（P4b 不写） |
+| `agent_skill_run.pnl_delta` / `attribution_confidence` | 单次 skill 执行分到的 PnL（nullable，旧 run 不回填） |
 
-**数据流**：
+#### 6.2.2 模块清单
+
+| 模块 | 文件 | 职责 | 测试 |
+|---|---|---|---|
+| **pnl-calc**（纯函数） | `src/runtime/attribution/pnl-calc.ts` | FIFO position book 从 fill 序列 → 逐日 realized/unrealized/fee；mark 三级 fallback（today → prev day → avg_cost）；跨 0 反向；增量 prior positions；零 DB | 11 cases |
+| **PnlAttributor**（worker） | `src/runtime/attribution/pnl-attributor.ts` | 拉 fill+broker_order+order_intent+strategy_runtime → calc → upsert strategy_pnl_snapshot；按 market 把 fill.filledAt 映射 trading_day；内联调 SkillAttributor + AnalystAccuracyWriter；emit `maintenance_run(pnl_attributor/analyst_accuracy)` | 10 cases |
+| **SkillAttributor** | `src/runtime/attribution/skill-attributor.ts` | 接受 PnlAttributor 输出 → 反查 skill_recall_log(executed=true) → upsert agent_pnl_attribution（NULL definition_id）+ 写 agent_skill_run.pnl_delta + 重算 30d rollup；reader: listAttributionsByRuntime / listSkillRankings / getPnlDeltaForRuns | 7 cases |
+| **pnl-summary**（reader） | `src/runtime/monitor/pnl-summary.ts` | `getStrategyPnlSummary` 按 (runtime, symbol) 聚合范围内 daily；`getSkillPnlSummary` 按 project 列 skill rollup | — |
+| **后端路由** | `src/routes/monitor.routes.ts` | `GET /api/v1/monitor/pnl/strategies` + `GET /api/v1/monitor/pnl/skills` | 5 cases |
+| **cron 脚本** | `src/scripts/run-pnl-attribution.ts` | CLI：`--from/to/marketScope/runtimeIds/dryRun/no-skill/no-analyst/json` | smoke |
+| **对账脚本** | `src/scripts/run-pnl-reconcile.ts` | 对照 `Σ fill.notional` vs `Σ strategy_pnl_snapshot.turnover_daily` → JSON drift report | smoke |
+| **metrics 扩展** | `src/runtime/experience/metrics.ts` + `experience-bus.ts` | Bus event 加 3 个 kind；指标 `self_evolve.pnl_attributor.*` / `self_evolve.analyst_accuracy.*` / `self_evolve.mark_price.*` | 12 cases |
+
+**总计：35+ 个新单测全过；attribution 整体 106/106 通过；后端 PnL 路由 5/5 通过；metrics 12/12 通过。**
+
+#### 6.2.3 数据流（端到端）
+
 ```
-fill + execution_report (with FeeCalculator 估 fee)
-  → 算 strategy_runtime 日 PnL
-  → 写 strategy_pnl_snapshot (runtime, day, symbol)
-  → 反查 strategy_runtime → workflow_run（fill 那次的决策）
-  → 反查 workflow_run.skill_recall_log（executed=true 的 skill）
-  → 等权分配 PnL → agent_pnl_attribution + agent_skill_run.pnl_delta
-  → 聚合到 agent_skill.pnl_attribution_json（30 天滚动）
-  → 调 AnalystAccuracyWriter.syncPlaceholders + evaluatePending
+fill + broker_order + order_intent  ─┐
+                                      │
+strategy_runtime (market/symbol) ─────┤
+                                      │
+priorPositions（fromDay-1 snapshot）─┤
+                                      ▼
+                                  pnl-calc
+                                      │
+                                      ▼
+                       strategy_pnl_snapshot (UPSERT)
+                                      │
+                                      ▼
+                     PnlAttributor.perRunDay { workflow_run_ids, day, pnl }
+                                      │
+                                      ▼
+                           SkillAttributor.attribute
+                                      │
+        ┌─────────────────────────────┼─────────────────────────────┐
+        ▼                             ▼                             ▼
+agent_pnl_attribution      agent_skill_run.pnl_delta    agent_skill.pnl_attribution_json
+                                                                    (30d rollup 覆盖)
+                                      │
+                                      ▼
+                         AnalystAccuracyWriter.sync + evaluate
+                                      │
+                                      ▼
+                              analyst_accuracy_log
 ```
 
-**异常处理**：跨日 fill / 撤单 / corp action → 写 `pnl_attribution_anomaly` 日志（落 metadataJson），不阻塞主流程。
+#### 6.2.4 关键设计决策
 
-**代码落点**：`src/runtime/attribution/pnl-attributor.ts` + `src/scripts/run-pnl-attribution.ts`。
+1. **pnl-calc 纯函数化**：所有 DB / fee / mark 依赖通过参数注入；让全部 11 个边界 case（mark fallback / 跨 0 反向 / 增量 prior / 多 symbol 聚合 / fee provider 注入 / 空 fills 漂移等）都能在 0.5ms 内验证，不依赖 sqlite 启动。
+2. **增量从 priorPositions 起算**：每日 cron 只算 `[fromDay, toDay]`，不回扫历史 fill；priorPositions 从上一日 snapshot 自动派生，让全量回填只需一次性 `--from=2026-01-01 --to=today`。
+3. **markLookup 三级 fallback**：当日 → 上一日已知 → avgCost（unrealized=0）→ null。`markSource` 字段标记 'fallback_prev_day' / 'fallback_avg_cost'，前端可以看出哪些天数据不可信。
+4. **definition_id=NULL 兜底归因**：v0 不细分多 definition 的 workflow（一个 workflow 可能 recall 跨多个 agent 的 skill）；SQLite UNIQUE 索引允许多 NULL，但单 (workflow, day) 仅生成一行。P5+ 拆分按 definition。
+5. **skill 归因 v0 等权**：`perSkillShare = pnlAttributed / K`，K = executed=true skill 去重数。Shapley 在 P9 接，置信度字段 `attribution_confidence` 先留位（v0 恒 1.0）。
+6. **`pnl_attribution_json` 覆盖而非增量**：每次跑批用 LIKE '%"<skill_id>"%' 扫 30 天 agent_pnl_attribution 重算；避免增量漂移（重跑、补算、修边界等场景 caller 不需要关心一致性）。P5 加 normalized 反向索引解决 LIKE 全表扫问题。
+7. **三阶段独立可关**：`attributeSkills` / `evaluateAnalystAccuracy` 都是 boolean 开关；cron 出问题时 caller 可以 `--no-skill --no-analyst` 退化到纯策略层快照。
+8. **AnalystAccuracyWriter 时区修复（P4a flaky test 顺手修）**：原 `epochDayToDate` 返回 UTC 00:00，在 America/New_York 是前一天 20:00 → `dateToTradingDay` 误判前一日。修法：加 12h offset 让探针落 UTC 中午，跨 GMT−5 ~ GMT+8 都不跨日。
+9. **对账走 turnover 而非 PnL**：`Σ |fill.qty * fill.price|` 和 `Σ strategy_pnl_snapshot.turnover_daily` 是恒等关系（无估算项），适合做"快照漏行"探针；PnL 因 fee 估算 / mark fallback 难以对账，前期不查。
+
+#### 6.2.5 触发与运维
+
+| 场景 | 命令 |
+|---|---|
+| 日度 cron（US，每天 21:30 ET） | `bun run src/scripts/run-pnl-attribution.ts --from=昨天 --to=昨天 --marketScope=US` |
+| 日度 cron（CN，每天 15:30 CST） | `bun run src/scripts/run-pnl-attribution.ts --from=今天 --to=今天 --marketScope=CN` |
+| 全量回填 | `bun run src/scripts/run-pnl-attribution.ts --from=2026-01-01 --to=今天` |
+| dry-run 诊断 | 加 `--dryRun --json` |
+| 对账 | `bun run src/scripts/run-pnl-reconcile.ts --from=2026-05-27 --to=今天 --tolerance=0.001` |
+
+**Exit code**：cron 脚本 `0` 全成功 / `1` 有 errors / `2` 参数错。reconcile `0` 无漂移 / `1` 有漂移 / `2` 异常。
 
 ### 6.3 P5 — SkillPromoter Worker
 
@@ -440,14 +500,14 @@ self_evolve.tool_gap.auto_installed_total
 | 期号 | 主题 | 核心交付 | 工时 | 状态 |
 |---|---|---|---|---|
 | **P4a** | PnL 基础设施（路面） | `daily_mark_price` / `strategy_pnl_snapshot` / `fee_schedule` + 4 模块 + 78 tests | 2-3 人/日 | ✅ 2026-06-03 |
-| **P4b** | PnL 反馈环（燃料） | PnlAttributor worker + `agent_pnl_attribution` + skill 字段补齐 + 对账 + metrics + 后端只读接口 | 3-4 人/日 | 下一期 |
+| **P4b** | PnL 反馈环（燃料） | PnlAttributor worker + SkillAttributor + `agent_pnl_attribution` + skill 字段补齐 + 对账 + metrics + 后端只读接口 | 3-4 人/日 | ✅ 2026-06-03 |
 | **P5** | Skill 晋升（齿轮） | SkillPromoter + `skill_promotion_run` + 前端 Skill Promotions sub-tab | 3 人/日 | TBD |
 | **P6** | Skill 自动修订 | Reflector → SkillEvolver 自动触发 + bodyMd diff 视图 | 2 人/日 | TBD |
 | **P7** | Tool Gap 观测 | ToolGapWatcher + `tool_gap_log` + `tool.report_gap` builtin + 前端 Tool Gaps sub-tab | 2 人/日 | TBD |
 | **P8** | Tool 自装配 propose | AutoInstaller + `auto_install_proposal` + 前端审批 UI | 4 人/日 | TBD |
 | **P9** | PnL-aware reason + auto 模式 | reason 注入 top-3 skill + MCP allowlist + auto 模式 + SkillEvolver baseline 回归 | 3 人/日 | TBD |
 
-**总计：17-18 人/日（不含 P4a 已完成的 3 人/日）。**
+**总计：14 人/日（不含 P4a / P4b 已完成的 7 人/日）。**
 
 ---
 
@@ -466,3 +526,4 @@ self_evolve.tool_gap.auto_installed_total
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | v0.1 | 2026-06-03 | 首版（含 P4a 已落地实现） |
+| v0.2 | 2026-06-03 | P4b 落地：PnlAttributor + SkillAttributor + agent_pnl_attribution + 后端只读接口 + 对账 + metrics（35+ 单测、5 集成测、attribution 整体 106/106、metrics 12/12）；改写 6.2 章节、修订 8 节排期表 |

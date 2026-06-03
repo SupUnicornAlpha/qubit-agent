@@ -88,11 +88,22 @@ export type ExperienceEvent =
     }
   /**
    * Janitor / Curator 完成一轮维护后 emit；监控面板订阅做指标。
+   *
+   * Self-Evolving Agent P4b 新增 3 个 kind：
+   *   - pnl_attributor      — PnlAttributor.runOnce 跑完一次
+   *   - analyst_accuracy    — AnalystAccuracyWriter.syncPlaceholders + evaluatePending 跑完
+   *   - mark_price_fetcher  — DailyMarkPriceFetcher.fetchAndPersist 跑完
    */
   | {
       type: "maintenance_run";
-      // Memory V2 P2 加入 embedder（pull-mode 跑 embedding 时 emit）
-      kind: "janitor" | "skill_curator" | "reflector_daily" | "embedder";
+      kind:
+        | "janitor"
+        | "skill_curator"
+        | "reflector_daily"
+        | "embedder"
+        | "pnl_attributor"
+        | "analyst_accuracy"
+        | "mark_price_fetcher";
       actor: string;
       summary: Record<string, number | string>;
     };

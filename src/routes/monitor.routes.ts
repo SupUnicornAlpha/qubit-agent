@@ -45,6 +45,7 @@ import {
 } from "../runtime/monitor/quality-metrics";
 import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
+import { getSkillPnlSummary, getStrategyPnlSummary } from "../runtime/monitor/pnl-summary";
 import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { type ToolKind, getToolsSummary } from "../runtime/monitor/tools-summary";
 import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
@@ -439,6 +440,59 @@ monitorRouter.get("/skills/summary", async (c) => {
   if (windowMinutes) input.windowMinutes = Number(windowMinutes);
   if (sessionId) input.sessionId = sessionId;
   const data = await getSkillsSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * Self-Evolving Agent P4b：策略层 PnL 汇总（按 runtime × symbol，范围内）。
+ * Query：projectId? / marketScope? (CSV) / runtimeIds? (CSV) / fromDay? / toDay? / limit?
+ *
+ * 数据源：strategy_pnl_snapshot；不重算，只读。
+ */
+monitorRouter.get("/pnl/strategies", async (c) => {
+  const projectId = c.req.query("projectId");
+  const fromDay = c.req.query("fromDay");
+  const toDay = c.req.query("toDay");
+  const marketScopeRaw = c.req.query("marketScope");
+  const runtimeIdsRaw = c.req.query("runtimeIds");
+  const limitRaw = c.req.query("limit");
+  const input: Parameters<typeof getStrategyPnlSummary>[0] = {};
+  if (projectId) input.projectId = projectId;
+  if (fromDay) input.fromDay = fromDay;
+  if (toDay) input.toDay = toDay;
+  if (marketScopeRaw) {
+    input.marketScope = marketScopeRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (runtimeIdsRaw) {
+    input.runtimeIds = runtimeIdsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (limitRaw) input.limit = Math.max(1, Math.min(1000, Number(limitRaw) || 200));
+  const data = await getStrategyPnlSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * Self-Evolving Agent P4b：Skill 层 PnL 汇总（30 天滚动；rollup 由 SkillAttributor 覆盖）。
+ * Query：projectId（required） / limit?
+ *
+ * 数据源：agent_skill.pnl_attribution_json；不重算，只读。
+ */
+monitorRouter.get("/pnl/skills", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) {
+    return c.json({ ok: false, error: "projectId required" }, 400);
+  }
+  const limitRaw = c.req.query("limit");
+  const data = await getSkillPnlSummary({
+    projectId,
+    ...(limitRaw ? { limit: Math.max(1, Math.min(500, Number(limitRaw) || 100)) } : {}),
+  });
   return c.json({ ok: true, data });
 });
 

@@ -190,6 +190,103 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(snap["memory.embedder.tokens"]).toBe(1500);
   });
 
+  // ───────────────────────── P4b 三组指标 ─────────────────────────
+
+  test("maintenance_run(kind=pnl_attributor) → self_evolve.pnl_attributor.* 汇总", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "pnl_attributor",
+      actor: "pnl_attributor",
+      summary: {
+        runtimesScanned: 5,
+        runtimesProcessed: 3,
+        runtimesSkipped: 2,
+        fillsScanned: 100,
+        snapshotsWritten: 15,
+        errors: 1,
+        skillAttributionRows: 3,
+        skillRunsUpdated: 7,
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "pnl_attributor",
+      actor: "pnl_attributor",
+      summary: {
+        runtimesScanned: 5,
+        runtimesProcessed: 5,
+        runtimesSkipped: 0,
+        fillsScanned: 50,
+        snapshotsWritten: 10,
+        errors: 0,
+        skillAttributionRows: 5,
+        skillRunsUpdated: 10,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.pnl_attributor.tick.total"]).toBe(2);
+    expect(snap["self_evolve.pnl_attributor.runtimes_scanned"]).toBe(10);
+    expect(snap["self_evolve.pnl_attributor.runtimes_processed"]).toBe(8);
+    expect(snap["self_evolve.pnl_attributor.runtimes_skipped"]).toBe(2);
+    expect(snap["self_evolve.pnl_attributor.fills_scanned"]).toBe(150);
+    expect(snap["self_evolve.pnl_attributor.snapshots_written"]).toBe(25);
+    expect(snap["self_evolve.pnl_attributor.errors"]).toBe(1);
+    expect(snap["self_evolve.pnl_attributor.skill_attribution_rows"]).toBe(8);
+    expect(snap["self_evolve.pnl_attributor.skill_runs_updated"]).toBe(17);
+  });
+
+  test("maintenance_run(kind=analyst_accuracy) → self_evolve.analyst_accuracy.* 汇总", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "analyst_accuracy",
+      actor: "analyst_accuracy_writer",
+      summary: {
+        scannedSignals: 30,
+        placeholdersInserted: 10,
+        evaluated: 8,
+        skippedNoMark: 1,
+        skippedNoFutureMark: 1,
+        failures: 0,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.analyst_accuracy.tick.total"]).toBe(1);
+    expect(snap["self_evolve.analyst_accuracy.scanned_signals"]).toBe(30);
+    expect(snap["self_evolve.analyst_accuracy.placeholders_inserted"]).toBe(10);
+    expect(snap["self_evolve.analyst_accuracy.evaluated"]).toBe(8);
+    expect(snap["self_evolve.analyst_accuracy.skipped_no_mark"]).toBe(1);
+    expect(snap["self_evolve.analyst_accuracy.skipped_no_future_mark"]).toBe(1);
+    expect(snap["self_evolve.analyst_accuracy.failures"]).toBe(0);
+  });
+
+  test("maintenance_run(kind=mark_price_fetcher) → self_evolve.mark_price.* 汇总", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "mark_price_fetcher",
+      actor: "mark_price_fetcher",
+      summary: {
+        targets: 20,
+        inserted: 18,
+        updated: 1,
+        skipped: 1,
+        failures: 0,
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "mark_price_fetcher",
+      actor: "mark_price_fetcher",
+      summary: { targets: 10, inserted: 5, updated: 5, skipped: 0, failures: 0 },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.mark_price.tick.total"]).toBe(2);
+    expect(snap["self_evolve.mark_price.targets"]).toBe(30);
+    expect(snap["self_evolve.mark_price.inserted"]).toBe(23);
+    expect(snap["self_evolve.mark_price.updated"]).toBe(6);
+    expect(snap["self_evolve.mark_price.skipped"]).toBe(1);
+    expect(snap["self_evolve.mark_price.failures"]).toBe(0);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({

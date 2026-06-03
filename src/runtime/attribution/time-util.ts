@@ -133,3 +133,47 @@ export function previousTradingDay(d: Date, market: string): Date {
 
 /** 显式的市场列表（与 trading-calendar.ts 的 MarketCode 一致） */
 export const SUPPORTED_MARKETS: ReadonlyArray<MarketCode> = ["CN", "US", "HK", "CRYPTO"];
+
+/**
+ * ISO 'YYYY-MM-DD' → UTC 00:00:00 Date。给 listTradingDays / mark fetcher 串 ISO 用。
+ * 不做时区修正：当作 UTC 解释。前提：传入的 ISO 字符串本身就是 market 本地 trading_day。
+ */
+export function isoDateToDate(iso: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!m) throw new Error(`time-util: invalid ISO date "${iso}"`);
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+}
+
+/**
+ * `listTradingDays` 的字符串包装：from / to 都是 'YYYY-MM-DD'，含两端。
+ *
+ * 注意：不能直接 `listTradingDays(isoToDate(fromIso), ...)` —— 内部 floor 到 UTC 00:00
+ * 在 America/New_York 是前一天 20:00，会把"周一"误判为"周日"，整段 US trading_day 被丢。
+ * 所以这里独立实现 loop，探针固定到 12:00 UTC，跨已支持 market 时区（GMT−5 ~ GMT+8）都不会跨日。
+ */
+export function listTradingDaysByIso(fromIso: string, toIso: string, market: string): string[] {
+  const noon = (iso: string): Date => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+    if (!m) throw new Error(`time-util: invalid ISO date "${iso}"`);
+    return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+  };
+  const fromNoon = noon(fromIso);
+  const toNoon = noon(toIso);
+  if (fromNoon.getTime() > toNoon.getTime()) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let cursor = fromNoon;
+  let safety = 0;
+  while (cursor.getTime() <= toNoon.getTime() && safety < 2000) {
+    safety += 1;
+    if (!isWeekendInMarket(cursor, market)) {
+      const td = dateToTradingDay(cursor, market);
+      if (!seen.has(td)) {
+        seen.add(td);
+        out.push(td);
+      }
+    }
+    cursor = new Date(cursor.getTime() + MS_PER_DAY);
+  }
+  return out;
+}
