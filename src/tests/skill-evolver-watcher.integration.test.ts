@@ -10,8 +10,10 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { config } from "../config";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
 import {
@@ -33,11 +35,12 @@ let baseSkillId = "";
 let evolvedSkillId = "";
 
 beforeAll(async () => {
-  const testHome = `${process.cwd()}/.tmp-test-home-p6`;
-  await rm(testHome, { recursive: true, force: true });
-  await mkdir(testHome, { recursive: true });
-  process.env.HOME = testHome;
-  process.env.QUBIT_DATA_DIR = testHome;
+  // 2026-06-03 P7：本地共享 ~/.quant-agent core.sqlite 多次跑 migration 后会积累
+  // __drizzle_migrations 历史行，与最新 journal entries 数对不上 → MigrationDriftError。
+  // 修：把 config.dataDir monkey-patch 到 unique tmp dir + closeDb 重建 client。
+  const tmp = join("/tmp", `qubit-p6-routes-${Date.now()}-${randomUUID().slice(0, 8)}`);
+  await mkdir(tmp, { recursive: true });
+  (config as { dataDir: string }).dataDir = tmp;
   closeDb();
   await runMigrations();
   const server = await import("../server");

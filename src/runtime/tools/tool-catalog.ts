@@ -206,6 +206,13 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   write_audit_log: { description: "关键操作写入 audit_log 留痕", category: "audit" },
   generate_report: { description: "汇总分析师信号生成 Markdown 研报", category: "audit" },
 
+  // Self-Evolving Agent P7：agent 自报缺工具，喂给 ToolGapWatcher（→ P8 AutoInstaller 候选）
+  "tool.report_gap": {
+    description:
+      "上报当前 agent 想用但找不到 / 失败 / 不知怎么用的工具：参数 toolName 或 reason 至少一个；可选 serverName（MCP）/ toolKind。Watcher 会按 gap_signature 去重累计 occurrence_count。",
+    category: "audit",
+  },
+
   // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
   "factor.register": {
     description: "注册因子（落 factor_definition；走 Provider.validateExpr 做语法校验）",

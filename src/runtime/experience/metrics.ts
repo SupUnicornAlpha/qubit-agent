@@ -192,6 +192,22 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.skill_evolver.skipped_base_missing", numOf(s.skippedBaseMissing));
         c.inc("self_evolve.skill_evolver.skipped_base_archived", numOf(s.skippedBaseArchived));
         c.inc("self_evolve.skill_evolver.failed", numOf(s.failed));
+      } else if (ev.kind === "tool_gap_watcher") {
+        // Self-Evolving Agent P7：tool_call_log + reflective + explicit_report → tool_gap_log
+        const s = ev.summary;
+        const status = String(s.status ?? "unknown");
+        c.inc("self_evolve.tool_gap_watcher.tick.total");
+        c.inc("self_evolve.tool_gap_watcher.tick.by_status", 1, { status });
+        c.inc("self_evolve.tool_gap_watcher.signals.unknown_tool", numOf(s.unknownToolCount));
+        c.inc("self_evolve.tool_gap_watcher.signals.repeated_fail", numOf(s.repeatedFailCount));
+        c.inc(
+          "self_evolve.tool_gap_watcher.signals.reflective_mention",
+          numOf(s.reflectiveMentionCount)
+        );
+        c.inc("self_evolve.tool_gap_watcher.signals.total", numOf(s.totalSignals));
+        c.inc("self_evolve.tool_gap_watcher.gaps_created", numOf(s.gapsCreated));
+        c.inc("self_evolve.tool_gap_watcher.gaps_incremented", numOf(s.gapsIncremented));
+        c.inc("self_evolve.tool_gap_watcher.gaps_skipped", numOf(s.gapsSkipped));
       }
     } catch {
       /* noop */

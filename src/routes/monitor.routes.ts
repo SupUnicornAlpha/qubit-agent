@@ -46,6 +46,17 @@ import {
 import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
 import { getSkillPnlSummary, getStrategyPnlSummary } from "../runtime/monitor/pnl-summary";
+import {
+  TIMESERIES_GROUP_BYS,
+  TIMESERIES_INTERVALS,
+  TIMESERIES_METRICS,
+  TIMESERIES_SOURCES,
+  type TimeseriesGroupBy,
+  type TimeseriesInterval,
+  type TimeseriesMetric,
+  type TimeseriesSource,
+  queryTimeseries,
+} from "../runtime/monitor/timeseries";
 import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { type ToolKind, getToolsSummary } from "../runtime/monitor/tools-summary";
 import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
@@ -631,6 +642,70 @@ monitorRouter.get("/mcp/:serverName/detail", async (c) => {
 });
 
 /**
+ * 监控 V3 P0：统一 timeseries 查询端点。
+ *
+ * 用例（前端 OverviewTab / AgentTab / LlmUsagePanel / McpDiagnosticsPanel 共用）：
+ *   - GET /api/v1/monitor/timeseries
+ *       ?source=llm_call_log
+ *       &metric=tokens
+ *       &interval=1h
+ *       &from=2026-05-26T00:00:00Z
+ *       &to=2026-05-27T00:00:00Z
+ *       &groupBy=provider           （可选）
+ *       &sessionId=xxx              （可选）
+ *
+ * 输出契约（详见 runtime/monitor/timeseries.ts）：
+ *   { source, metric, interval, from, to, buckets: ISO[], series: [{name, points: number[]}] }
+ *
+ * 错误处理：
+ *   - 参数缺失 / 枚举不在允许集 → 400 + 明确字段名
+ *   - 桶数超过 1000（如 1d 范围用 1m interval） → 400 提示调大 interval
+ *   - source/metric/groupBy 组合不支持（如 tool_call_log 取 tokens） → 400 提示
+ */
+monitorRouter.get("/timeseries", async (c) => {
+  const source = c.req.query("source");
+  const metric = c.req.query("metric");
+  const interval = c.req.query("interval");
+  const from = c.req.query("from");
+  const to = c.req.query("to");
+  const groupBy = c.req.query("groupBy");
+  const sessionId = c.req.query("sessionId");
+
+  if (!source || !(TIMESERIES_SOURCES as readonly string[]).includes(source)) {
+    return c.json({ ok: false, error: `invalid 'source'; expect one of ${TIMESERIES_SOURCES.join(",")}` }, 400);
+  }
+  if (!metric || !(TIMESERIES_METRICS as readonly string[]).includes(metric)) {
+    return c.json({ ok: false, error: `invalid 'metric'; expect one of ${TIMESERIES_METRICS.join(",")}` }, 400);
+  }
+  if (!interval || !(TIMESERIES_INTERVALS as readonly string[]).includes(interval)) {
+    return c.json({ ok: false, error: `invalid 'interval'; expect one of ${TIMESERIES_INTERVALS.join(",")}` }, 400);
+  }
+  if (!from || !to) {
+    return c.json({ ok: false, error: "'from' and 'to' (ISO timestamps) are required" }, 400);
+  }
+  if (groupBy && !(TIMESERIES_GROUP_BYS as readonly string[]).includes(groupBy)) {
+    return c.json({ ok: false, error: `invalid 'groupBy'; expect one of ${TIMESERIES_GROUP_BYS.join(",")}` }, 400);
+  }
+
+  try {
+    const params: Parameters<typeof queryTimeseries>[0] = {
+      source: source as TimeseriesSource,
+      metric: metric as TimeseriesMetric,
+      interval: interval as TimeseriesInterval,
+      from,
+      to,
+    };
+    if (groupBy) params.groupBy = groupBy as TimeseriesGroupBy;
+    if (sessionId) params.sessionId = sessionId;
+    const data = await queryTimeseries(params);
+    return c.json({ ok: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "timeseries query failed";
+    return c.json({ ok: false, error: msg }, 400);
+  }
+});
+
+/**
  * LLM 用量聚合 — /llm/usage。
  * 详见 docs/MONITORING_V2_DESIGN.md §4.1.1 / §7.5 与 runtime/monitor/llm-usage.ts。
  */
@@ -1209,6 +1284,200 @@ monitorRouter.post("/memory/skill-promotions/:skillId/reject", async (c) => {
     if (body.actor) opts.actor = body.actor;
     if (body.reason) opts.reason = body.reason;
     const result = await rejectSkillPromotion(skillId, opts);
+    return c.json({ ok: true, data: result });
+  } catch (e) {
+    return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
+  }
+});
+
+// ===========================================================================
+// Self-Evolving Agent P7 — Tool Gaps（缺工具诊断 + AutoInstaller propose 上游）
+// 前端 MemoryTab > Tool Gaps sub-tab 消费。
+// 五个端点：
+//   GET   /memory/tool-gaps?projectId=&status=open&kind=&limit=         列表
+//   GET   /memory/tool-gaps/runs?projectId=&limit=                       跑批 summary
+//   POST  /memory/tool-gaps/:id/wont-fix    body={reason?, actor?}      标记 wont_fix
+//   POST  /memory/tool-gaps/:id/reopen      body={reason?, actor?}      历史 wont_fix/rejected → open
+//   POST  /memory/tool-gaps/report          body={projectId, signature?, toolName?, ...}
+//                                                                       手动上报一个 gap（人/接 P8 调）
+// ===========================================================================
+
+monitorRouter.get("/memory/tool-gaps", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const statusParam = c.req.query("status") ?? "open";
+  const allowed = new Set(["open", "proposed", "installed", "wont_fix", "rejected", "all"]);
+  if (!allowed.has(statusParam)) {
+    return c.json({ ok: false, error: `status must be one of ${[...allowed].join("/")}` }, 400);
+  }
+  const kindParam = c.req.query("kind");
+  const allowedKinds = new Set([
+    "unknown_tool",
+    "repeated_fail",
+    "reflective_mention",
+    "explicit_report",
+  ]);
+  if (kindParam && !allowedKinds.has(kindParam)) {
+    return c.json({ ok: false, error: `kind must be one of ${[...allowedKinds].join("/")}` }, 400);
+  }
+  const limit = Math.max(1, Math.min(200, Number(c.req.query("limit") ?? "50")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { toolGapLog } = await import("../db/sqlite/schema");
+  const { and, eq, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  const conds = [eq(toolGapLog.projectId, projectId)];
+  if (statusParam !== "all") {
+    conds.push(
+      eq(
+        toolGapLog.status,
+        statusParam as "open" | "proposed" | "installed" | "wont_fix" | "rejected"
+      )
+    );
+  }
+  if (kindParam) {
+    conds.push(
+      eq(
+        toolGapLog.detectionKind,
+        kindParam as "unknown_tool" | "repeated_fail" | "reflective_mention" | "explicit_report"
+      )
+    );
+  }
+  const rows = await db
+    .select()
+    .from(toolGapLog)
+    .where(and(...conds))
+    .orderBy(desc(toolGapLog.occurrenceCount), desc(toolGapLog.lastSeenAt))
+    .limit(limit);
+  return c.json({ ok: true, data: { items: rows, total: rows.length } });
+});
+
+monitorRouter.get("/memory/tool-gaps/runs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const limit = Math.max(1, Math.min(50, Number(c.req.query("limit") ?? "10")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { toolGapRun } = await import("../db/sqlite/schema");
+  const { eq, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(toolGapRun)
+    .where(eq(toolGapRun.projectId, projectId))
+    .orderBy(desc(toolGapRun.startedAt))
+    .limit(limit);
+  return c.json({ ok: true, data: { items: rows } });
+});
+
+async function transitionStatus(
+  gapId: string,
+  toStatus: "wont_fix" | "open",
+  body: { reason?: string; actor?: string },
+  // 允许从这些 status 流转到 toStatus；其它直接 400
+  fromAllowed: ReadonlyArray<"open" | "proposed" | "installed" | "wont_fix" | "rejected">
+): Promise<{ ok: true; data: { id: string; prevStatus: string; nextStatus: string } } | { ok: false; error: string; status: number }> {
+  const { getDb } = await import("../db/sqlite/client");
+  const { toolGapLog } = await import("../db/sqlite/schema");
+  const { eq } = await import("drizzle-orm");
+  const db = await getDb();
+  const row = (await db.select().from(toolGapLog).where(eq(toolGapLog.id, gapId)).limit(1))[0];
+  if (!row) return { ok: false, error: "tool_gap_log not found", status: 404 };
+  if (!fromAllowed.includes(row.status)) {
+    return {
+      ok: false,
+      error: `cannot transition from ${row.status} → ${toStatus}; allowed prev: ${fromAllowed.join(",")}`,
+      status: 400,
+    };
+  }
+  await db
+    .update(toolGapLog)
+    .set({
+      status: toStatus,
+      statusAt: new Date().toISOString(),
+      statusBy: body.actor ?? "user",
+      statusReason: body.reason ?? null,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(toolGapLog.id, gapId));
+  return { ok: true, data: { id: gapId, prevStatus: row.status, nextStatus: toStatus } };
+}
+
+monitorRouter.post("/memory/tool-gaps/:id/wont-fix", async (c) => {
+  const id = c.req.param("id");
+  let body: { reason?: string; actor?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty */
+  }
+  const r = await transitionStatus(id, "wont_fix", body, ["open", "proposed"]);
+  if (r.ok) return c.json({ ok: true, data: r.data });
+  return c.json({ ok: false, error: r.error }, r.status as 400 | 404);
+});
+
+monitorRouter.post("/memory/tool-gaps/:id/reopen", async (c) => {
+  const id = c.req.param("id");
+  let body: { reason?: string; actor?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty */
+  }
+  const r = await transitionStatus(id, "open", body, ["wont_fix", "rejected"]);
+  if (r.ok) return c.json({ ok: true, data: r.data });
+  return c.json({ ok: false, error: r.error }, r.status as 400 | 404);
+});
+
+monitorRouter.post("/memory/tool-gaps/report", async (c) => {
+  let body: {
+    projectId?: string;
+    signature?: string;
+    toolName?: string;
+    serverName?: string;
+    toolKind?: string;
+    reason?: string;
+    workflowRunId?: string;
+    definitionId?: string;
+  } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty */
+  }
+  if (!body.projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  if (!body.signature && !body.toolName && !body.reason) {
+    return c.json(
+      { ok: false, error: "signature 或 toolName 或 reason 至少一个" },
+      400
+    );
+  }
+  try {
+    const { reportExplicitGap } = await import("../runtime/tool-gap-watcher/watcher");
+    const sigMod = await import("../runtime/tool-gap-watcher/signature");
+    let sig = body.signature;
+    if (!sig && body.toolName && body.serverName) {
+      sig = sigMod.makeMcpSignature(body.serverName, body.toolName);
+    } else if (!sig && body.toolName) {
+      sig = sigMod.makeToolSignature(body.toolName);
+    } else if (!sig && body.reason) {
+      const first =
+        body.reason.match(/[a-zA-Z][a-zA-Z0-9_-]{2,}/)?.[0] ??
+        body.reason.match(/[\u4e00-\u9fff]{2,6}/)?.[0] ??
+        body.reason.slice(0, 20);
+      sig = sigMod.makeConceptSignature(first || "unspecified");
+    }
+    if (!sig) return c.json({ ok: false, error: "无法生成 signature" }, 400);
+    const input: Parameters<typeof reportExplicitGap>[0] = {
+      projectId: body.projectId,
+      signature: sig,
+    };
+    if (body.reason) input.excerpt = body.reason;
+    if (body.toolName) input.requestedToolName = body.toolName;
+    if (body.toolKind) input.requestedToolKind = body.toolKind;
+    if (body.workflowRunId) input.workflowRunId = body.workflowRunId;
+    if (body.definitionId) input.definitionId = body.definitionId;
+    const result = await reportExplicitGap(input);
     return c.json({ ok: true, data: result });
   } catch (e) {
     return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);

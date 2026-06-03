@@ -364,6 +364,51 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(snap["self_evolve.skill_evolver.failed"]).toBe(1);
   });
 
+  test("maintenance_run(kind=tool_gap_watcher) → self_evolve.tool_gap_watcher.* 汇总（P7）", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "tool_gap_watcher",
+      actor: "tool_gap_watcher",
+      summary: {
+        status: "completed",
+        unknownToolCount: 5,
+        repeatedFailCount: 2,
+        reflectiveMentionCount: 3,
+        totalSignals: 10,
+        gapsCreated: 4,
+        gapsIncremented: 2,
+        gapsSkipped: 1,
+        elapsedMs: 88,
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "tool_gap_watcher",
+      actor: "tool_gap_watcher",
+      summary: {
+        status: "completed",
+        unknownToolCount: 1,
+        repeatedFailCount: 0,
+        reflectiveMentionCount: 1,
+        totalSignals: 2,
+        gapsCreated: 1,
+        gapsIncremented: 0,
+        gapsSkipped: 0,
+        elapsedMs: 30,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.tool_gap_watcher.tick.total"]).toBe(2);
+    expect(snap["self_evolve.tool_gap_watcher.tick.by_status|status=completed"]).toBe(2);
+    expect(snap["self_evolve.tool_gap_watcher.signals.unknown_tool"]).toBe(6);
+    expect(snap["self_evolve.tool_gap_watcher.signals.repeated_fail"]).toBe(2);
+    expect(snap["self_evolve.tool_gap_watcher.signals.reflective_mention"]).toBe(4);
+    expect(snap["self_evolve.tool_gap_watcher.signals.total"]).toBe(12);
+    expect(snap["self_evolve.tool_gap_watcher.gaps_created"]).toBe(5);
+    expect(snap["self_evolve.tool_gap_watcher.gaps_incremented"]).toBe(2);
+    expect(snap["self_evolve.tool_gap_watcher.gaps_skipped"]).toBe(1);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({

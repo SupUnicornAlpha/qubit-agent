@@ -1249,7 +1249,81 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(extraParams ? { params: extraParams } : {}),
     });
   },
+
+  /**
+   * Self-Evolving Agent P7 — `tool.report_gap`
+   *
+   * agent 在 LLM 推理中识别到「需要某工具但没有 / 不可用 / 不知道怎么用」时主动调用，
+   * 由 ToolGapWatcher 统一 ingest 到 `tool_gap_log`，给 P8 AutoInstaller propose 模式
+   * 提供候选输入。
+   *
+   * 参数（任 1 必填）：
+   *   - toolName / tool_name        ：想要的具体工具名（如 "get_realtime_options_chain"）
+   *   - serverName                  ：MCP server 名（如 "slack"），与 toolName 配合产 mcp: 签名
+   *   - reason / note               ：自由说明；若无 toolName，则用 reason 第一关键词产 concept: 签名
+   *
+   * 可选参数：
+   *   - toolKind / tool_kind        ：'mcp' | 'builtin' | 'unknown'（默认 'unknown'）
+   *
+   * 返回：{ ok, action: 'created'|'incremented'|'skipped', gapId?, signature }
+   */
+  "tool.report_gap": async (ctx, params) => {
+    const toolName = String(params["toolName"] ?? params["tool_name"] ?? "").trim();
+    const serverName = String(params["serverName"] ?? params["server_name"] ?? "").trim();
+    const reason = String(params["reason"] ?? params["note"] ?? "").trim();
+    const toolKind = String(params["toolKind"] ?? params["tool_kind"] ?? "unknown");
+    if (!toolName && !reason) {
+      throw new Error("tool.report_gap: 必须提供 toolName 或 reason");
+    }
+    const projectId = await resolveProjectIdForWorkflow(ctx);
+    if (!projectId) {
+      throw new Error("tool.report_gap: 无法解析 projectId（workflow 未绑定 project）");
+    }
+    // 依赖注入式 import（避免 builtin-tools.ts 顶部循环依赖 tool-gap-watcher）
+    const watcherMod = await import("../tool-gap-watcher/watcher");
+    const sigMod = await import("../tool-gap-watcher/signature");
+    let signature: string;
+    if (toolName && serverName) {
+      signature = sigMod.makeMcpSignature(serverName, toolName);
+    } else if (toolName) {
+      signature = sigMod.makeToolSignature(toolName);
+    } else {
+      // 没有具体工具名 → 从 reason 取第一段 ascii / 中文关键词，规避空 signature
+      const first =
+        reason.match(/[a-zA-Z][a-zA-Z0-9_-]{2,}/)?.[0] ??
+        reason.match(/[\u4e00-\u9fff]{2,6}/)?.[0] ??
+        reason.slice(0, 20);
+      signature = sigMod.makeConceptSignature(first || "unspecified");
+    }
+    const ingest: Parameters<typeof watcherMod.reportExplicitGap>[0] = {
+      projectId,
+      signature,
+      requestedToolKind: toolKind,
+      metadata: { reportedByInstance: ctx.agentInstanceId },
+    };
+    if (reason) ingest.excerpt = reason;
+    if (toolName) ingest.requestedToolName = toolName;
+    if (ctx.workflowId) ingest.workflowRunId = ctx.workflowId;
+    if (ctx.definition.id) ingest.definitionId = ctx.definition.id;
+    const r = await watcherMod.reportExplicitGap(ingest);
+    return { ok: true, ...r };
+  },
 };
+
+async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<string> {
+  if (ctx.projectId) return ctx.projectId;
+  if (!ctx.workflowId) return "";
+  const db = await getDb();
+  const { workflowRun } = await import("../../db/sqlite/schema");
+  const row = (
+    await db
+      .select({ projectId: workflowRun.projectId })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, ctx.workflowId))
+      .limit(1)
+  )[0];
+  return row?.projectId ?? "";
+}
 
 async function dispatchTeamAgentTask(
   ctx: BuiltinToolContext,

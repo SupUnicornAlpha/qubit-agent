@@ -32,8 +32,9 @@ import {
 } from "../../api/backend";
 import { Kpi, monitorAxisTick, monitorGridStroke, monitorTooltipStyle, styles } from "./monitor-shared";
 import { SkillPromotionsPanel } from "./SkillPromotionsPanel";
+import { ToolGapsPanel } from "./ToolGapsPanel";
 
-type MemorySubTab = "experiences" | "skill_promotions";
+type MemorySubTab = "experiences" | "skill_promotions" | "tool_gaps";
 
 const KIND_OPTIONS: { id: MemoryExperienceKind; label: string }[] = [
   { id: "semantic", label: "semantic" },
@@ -128,8 +129,10 @@ export const MemoryTab: FC<MemoryTabProps> = ({ projectId, autoRefresh }) => {
       <SubTabBar active={subTab} onChange={setSubTab} />
       {subTab === "experiences" ? (
         <ExperiencesPanel projectId={projectId} autoRefresh={autoRefresh} />
-      ) : (
+      ) : subTab === "skill_promotions" ? (
         <SkillPromotionsPanel projectId={projectId} autoRefresh={autoRefresh} />
+      ) : (
+        <ToolGapsPanel projectId={projectId} autoRefresh={autoRefresh} />
       )}
     </div>
   );
@@ -142,6 +145,7 @@ const SubTabBar: FC<{ active: MemorySubTab; onChange: (id: MemorySubTab) => void
   const tabs: { id: MemorySubTab; label: string }[] = [
     { id: "experiences", label: "Experiences" },
     { id: "skill_promotions", label: "Skill Promotions" },
+    { id: "tool_gaps", label: "Tool Gaps" },
   ];
   return (
     <div

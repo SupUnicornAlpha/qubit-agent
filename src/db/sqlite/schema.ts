@@ -3004,3 +3004,86 @@ export const agentPnlAttribution = sqliteTable(
     index("idx_agent_pnl_attr_def_date").on(t.definitionId, t.asOfDate),
   ]
 );
+
+// ───────────────────────── Self-Evolving Agent P7 — ToolGapWatcher ─────────────────────────
+// 详见 docs/SELF_EVOLVING_AGENT_DESIGN.md §6.5
+// migration: 0063_self_evolve_p7_tool_gap.sql
+
+export const toolGapLog = sqliteTable(
+  "tool_gap_log",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    workflowRunId: text("workflow_run_id"),
+    definitionId: text("definition_id"),
+    detectionKind: text("detection_kind", {
+      enum: ["unknown_tool", "repeated_fail", "reflective_mention", "explicit_report"],
+    }).notNull(),
+    /** 'tool:get_weather' / 'mcp:slack/post_message' / 'concept:realtime_options_chain' */
+    gapSignature: text("gap_signature").notNull(),
+    requestedToolName: text("requested_tool_name"),
+    requestedToolKind: text("requested_tool_kind"),
+    excerpt: text("excerpt"),
+    sourceToolCallId: text("source_tool_call_id"),
+    sourceExperienceId: text("source_experience_id"),
+    occurrenceCount: integer("occurrence_count").notNull().default(1),
+    firstSeenAt: text("first_seen_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    lastSeenAt: text("last_seen_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    status: text("status", {
+      enum: ["open", "proposed", "installed", "wont_fix", "rejected"],
+    })
+      .notNull()
+      .default("open"),
+    statusAt: text("status_at"),
+    statusBy: text("status_by"),
+    statusReason: text("status_reason"),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default({}),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    index("idx_tool_gap_log_project_status").on(t.projectId, t.status, t.lastSeenAt),
+    index("idx_tool_gap_log_kind").on(t.projectId, t.detectionKind, t.lastSeenAt),
+    // 注：partial unique index `idx_tool_gap_log_dedup_open` (status='open') 由 SQL migration
+    // 直接创建；drizzle ORM 不支持 WHERE 子句，这里不再声明，避免生成器尝试 drop。
+  ]
+);
+
+export const toolGapRun = sqliteTable(
+  "tool_gap_run",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    triggeredBy: text("triggered_by").notNull().default("cron"),
+    fromTs: text("from_ts"),
+    toTs: text("to_ts"),
+    unknownToolCount: integer("unknown_tool_count").notNull().default(0),
+    repeatedFailCount: integer("repeated_fail_count").notNull().default(0),
+    reflectiveMentionCount: integer("reflective_mention_count").notNull().default(0),
+    totalSignals: integer("total_signals").notNull().default(0),
+    gapsCreated: integer("gaps_created").notNull().default(0),
+    gapsIncremented: integer("gaps_incremented").notNull().default(0),
+    gapsSkipped: integer("gaps_skipped").notNull().default(0),
+    actionsJson: text("actions_json", { mode: "json" }).notNull().default("[]"),
+    elapsedMs: integer("elapsed_ms").notNull().default(0),
+    errorMessage: text("error_message"),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [index("idx_tool_gap_run_project").on(t.projectId, t.startedAt)]
+);

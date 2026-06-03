@@ -11,7 +11,9 @@
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { config } from "../config";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
 import { agentSkill, project, workspace } from "../db/sqlite/schema";
@@ -26,11 +28,10 @@ let projectId = "";
 let workspaceId = "";
 
 beforeAll(async () => {
-  const testHome = `${process.cwd()}/.tmp-test-home-p5`;
-  await rm(testHome, { recursive: true, force: true });
-  await mkdir(testHome, { recursive: true });
-  process.env.HOME = testHome;
-  process.env.QUBIT_DATA_DIR = testHome;
+  // 2026-06-03 P7：同 P6 修法。config 是 singleton；monkey-patch dataDir 到 tmp。
+  const tmp = join("/tmp", `qubit-p5-routes-${Date.now()}-${randomUUID().slice(0, 8)}`);
+  await mkdir(tmp, { recursive: true });
+  (config as { dataDir: string }).dataDir = tmp;
   closeDb();
   await runMigrations();
   const server = await import("../server");

@@ -99,6 +99,9 @@ export type ExperienceEvent =
    *
    * P6 新增 1 个 kind：
    *   - skill_evolver       — SkillEvolverWatcher.runOnce 跑完
+   *
+   * P7 新增 1 个 kind：
+   *   - tool_gap_watcher    — ToolGapWatcher.runOnce 跑完
    */
   | {
       type: "maintenance_run";
@@ -111,7 +114,8 @@ export type ExperienceEvent =
         | "analyst_accuracy"
         | "mark_price_fetcher"
         | "skill_promoter"
-        | "skill_evolver";
+        | "skill_evolver"
+        | "tool_gap_watcher";
       actor: string;
       summary: Record<string, number | string>;
     };
@@ -172,9 +176,9 @@ class InProcessExperienceBus implements ExperienceBus {
       set = new Set();
       this.handlers.set(type, set);
     }
-    set.add(handler as ExperienceHandler<ExperienceEventType>);
+    set.add(handler as unknown as ExperienceHandler<ExperienceEventType>);
     return () => {
-      set?.delete(handler as ExperienceHandler<ExperienceEventType>);
+      set?.delete(handler as unknown as ExperienceHandler<ExperienceEventType>);
     };
   }
 

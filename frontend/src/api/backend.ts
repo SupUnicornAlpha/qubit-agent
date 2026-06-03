@@ -1634,6 +1634,81 @@ export async function getMonitorLlmUsage(input?: {
   return res.data;
 }
 
+/**
+ * 监控 V3 P0：统一 timeseries 查询客户端。
+ *
+ * 服务端路由：src/routes/monitor.routes.ts → /api/v1/monitor/timeseries
+ * 后端核心：src/runtime/monitor/timeseries.ts:queryTimeseries
+ *
+ * 调用方都是 monitor/* 下的图表组件；不要在业务页面直接 import。
+ */
+export type MonitorTimeseriesSource =
+  | "llm_call_log"
+  | "tool_call_log"
+  | "mcp_call_log"
+  | "connector_call_log"
+  | "skill_recall_log";
+
+export type MonitorTimeseriesMetric =
+  | "count"
+  | "errorCount"
+  | "tokens"
+  | "cost"
+  | "avgLatency";
+
+export type MonitorTimeseriesInterval = "1m" | "5m" | "15m" | "1h" | "1d";
+
+export type MonitorTimeseriesGroupBy =
+  | "provider"
+  | "model"
+  | "agentDefinitionId"
+  | "definitionId"
+  | "serverName"
+  | "toolName"
+  | "toolKind"
+  | "transport"
+  | "circuitState"
+  | "status"
+  | "connectorName"
+  | "operation"
+  | "executed";
+
+export type MonitorTimeseriesResult = {
+  source: MonitorTimeseriesSource;
+  metric: MonitorTimeseriesMetric;
+  interval: MonitorTimeseriesInterval;
+  from: string;
+  to: string;
+  /** 完整桶时间戳列表（与每个 series.points 一一对应） */
+  buckets: string[];
+  /** 至少一条 series；缺数据时返回空数组（前端展示 "窗口内无数据"） */
+  series: Array<{ name: string; points: number[] }>;
+};
+
+export async function getMonitorTimeseries(input: {
+  source: MonitorTimeseriesSource;
+  metric: MonitorTimeseriesMetric;
+  interval: MonitorTimeseriesInterval;
+  from: string;
+  to: string;
+  groupBy?: MonitorTimeseriesGroupBy;
+  sessionId?: string;
+}): Promise<MonitorTimeseriesResult> {
+  const query = new URLSearchParams({
+    source: input.source,
+    metric: input.metric,
+    interval: input.interval,
+    from: input.from,
+    to: input.to,
+  });
+  if (input.groupBy) query.set("groupBy", input.groupBy);
+  if (input.sessionId) query.set("sessionId", input.sessionId);
+  const res = await httpGet<{ ok: boolean; data: MonitorTimeseriesResult }>(
+    `/api/v1/monitor/timeseries?${query.toString()}`
+  );
+  return res.data;
+}
+
 export async function scanStuckWorkflowAlerts(stuckMinutes = 120): Promise<{
   scanned: number;
   created: number;
@@ -4254,5 +4329,133 @@ export async function requestSkillRevision(body: {
     `/api/v1/monitor/memory/skill-evolutions/request`,
     body
   );
+  return res.data;
+}
+
+// ───────────────────────── Self-Evolving Agent P7 — Tool Gaps ─────────────────────────
+
+export type ToolGapDetectionKind =
+  | "unknown_tool"
+  | "repeated_fail"
+  | "reflective_mention"
+  | "explicit_report";
+
+export type ToolGapStatus = "open" | "proposed" | "installed" | "wont_fix" | "rejected";
+
+export interface ToolGapListItem {
+  id: string;
+  projectId: string;
+  workflowRunId: string | null;
+  definitionId: string | null;
+  detectionKind: ToolGapDetectionKind;
+  gapSignature: string;
+  requestedToolName: string | null;
+  requestedToolKind: string | null;
+  excerpt: string | null;
+  sourceToolCallId: string | null;
+  sourceExperienceId: string | null;
+  occurrenceCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  status: ToolGapStatus;
+  statusAt: string | null;
+  statusBy: string | null;
+  statusReason: string | null;
+  metadataJson: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolGapRunSummary {
+  id: string;
+  projectId: string;
+  status: "running" | "completed" | "failed";
+  triggeredBy: string;
+  fromTs: string | null;
+  toTs: string | null;
+  unknownToolCount: number;
+  repeatedFailCount: number;
+  reflectiveMentionCount: number;
+  totalSignals: number;
+  gapsCreated: number;
+  gapsIncremented: number;
+  gapsSkipped: number;
+  actionsJson: Array<{
+    signature: string;
+    detectionKind: ToolGapDetectionKind;
+    action: "created" | "incremented" | "skipped";
+    skipReason?: string;
+    gapId?: string;
+  }>;
+  elapsedMs: number;
+  errorMessage: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export async function listToolGaps(params: {
+  projectId: string;
+  status?: ToolGapStatus | "all";
+  kind?: ToolGapDetectionKind;
+  limit?: number;
+}): Promise<ToolGapListItem[]> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.status) q.set("status", params.status);
+  if (params.kind) q.set("kind", params.kind);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{ ok: boolean; data: { items: ToolGapListItem[]; total: number } }>(
+    `/api/v1/monitor/memory/tool-gaps?${q.toString()}`
+  );
+  return res.data.items;
+}
+
+export async function listToolGapRuns(params: {
+  projectId: string;
+  limit?: number;
+}): Promise<ToolGapRunSummary[]> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{ ok: boolean; data: { items: ToolGapRunSummary[] } }>(
+    `/api/v1/monitor/memory/tool-gaps/runs?${q.toString()}`
+  );
+  return res.data.items;
+}
+
+export async function markToolGapWontFix(
+  gapId: string,
+  body: { reason?: string; actor?: string } = {}
+): Promise<{ id: string; prevStatus: string; nextStatus: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { id: string; prevStatus: string; nextStatus: string };
+  }>(`/api/v1/monitor/memory/tool-gaps/${gapId}/wont-fix`, body);
+  return res.data;
+}
+
+export async function reopenToolGap(
+  gapId: string,
+  body: { reason?: string; actor?: string } = {}
+): Promise<{ id: string; prevStatus: string; nextStatus: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { id: string; prevStatus: string; nextStatus: string };
+  }>(`/api/v1/monitor/memory/tool-gaps/${gapId}/reopen`, body);
+  return res.data;
+}
+
+export async function reportToolGap(body: {
+  projectId: string;
+  toolName?: string;
+  serverName?: string;
+  signature?: string;
+  toolKind?: string;
+  reason?: string;
+  workflowRunId?: string;
+  definitionId?: string;
+}): Promise<{ action: "created" | "incremented" | "skipped"; gapId?: string; signature: string }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { action: "created" | "incremented" | "skipped"; gapId?: string; signature: string };
+  }>(`/api/v1/monitor/memory/tool-gaps/report`, body);
   return res.data;
 }

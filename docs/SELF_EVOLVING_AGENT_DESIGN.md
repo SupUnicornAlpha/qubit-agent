@@ -592,9 +592,92 @@ Reflector / 用户 / Janitor
 
 **Exit code**：`0` 成功（含 0 候选）/ `1` 有 failed / `2` 参数错。
 
-### 6.5 P7 — ToolGapWatcher
+### 6.5 P7 — ToolGapWatcher ✅（已落地 2026-06-03）
 
-订阅 `tool_call_log`（unknown tool / parse_retry_used）+ reflective experience（正则提"need tool X"）+ builtin `tool.report_gap` → 去重写 `tool_gap_log`。
+**目的**：把"agent 想用某个工具但找不到 / 失败 / 不懂用"的隐性信号统一物化到一张表，给 P8 AutoInstaller propose 模式提供候选输入。
+
+**核心抽象**：
+- **Signal**：detector 输出的原子证据（"某 tool_call 报 unknown tool" / "某 reflective 提到缺工具"）。
+- **Gap**：watcher 按 `gap_signature` 折叠后落库的逻辑实体（`tool_gap_log` 一行）。
+
+**Gap signature 命名空间**（人可读、前端展示就是它）：
+- `tool:<name>` — builtin / 未知 server 的 mcp 工具
+- `mcp:<server>/<tool>` — 已知 server + tool 的 mcp
+- `concept:<keyword>` — 只描述"想做某事"但没具体工具名（reflective_mention 常见）
+
+**三路 detector + 1 路 explicit**（按优先级折叠）：
+
+| 路径 | 来源 | 触发条件 | detection_kind |
+|---|---|---|---|
+| 1 | `tool_call_log.status='error'` | errorMessage 命中 `unknown tool` / `tool not found` / `找不到.*?工具` / `Failed to parse tool arguments` 等 9 条正则 | `unknown_tool` |
+| 2 | `tool_call_log` 聚合 | 同 toolName 在窗口（默认 24h）内 ≥ 3 次 error | `repeated_fail` |
+| 3 | `experience(reflective).contentJson.body` | 中英 mention 正则：`(?:需要\|缺\|没有).*?(?:工具\|tool)` / `need\|missing.*?\b(tool\|api)\b` | `reflective_mention` |
+| 4 | builtin `tool.report_gap` / POST `/tool-gaps/report` | agent 主动调；用户在 UI 点 "Report a gap" | `explicit_report` |
+
+折叠优先级：`explicit_report > unknown_tool > repeated_fail > reflective_mention`（更"确信"的描述更具体）。
+
+**ingest 三态**：
+| 已有 status='open' 行 | watcher 行为 | 输出 |
+|---|---|---|
+| 有 | `occurrence_count += 1` + 更新 `last_seen_at` / `metadataJson.lastDetectionKind` | `incremented` |
+| 无，且有非 open 历史 | 不动（用户已决策） | `skipped` |
+| 全无 | `INSERT` 新行 | `created` |
+
+**状态机**：
+```
+            ┌─ (P8 propose) ──► proposed ──► installed
+open ───────┤                              └─ rejected
+            └─ (user wont-fix) ──► wont_fix ──► (user reopen) ──► open
+```
+- watcher 不会自动 reopen 已 `wont_fix` / `rejected` 的 gap —— 那是用户决策。
+- 写 `wont_fix` / `rejected` / `reopen` 的端点见下表。
+
+**关键文件**：
+| 路径 | 角色 |
+|---|---|
+| `src/db/sqlite/migrations/0063_self_evolve_p7_tool_gap.sql` | `tool_gap_log` + partial-unique index `(project_id, gap_signature) WHERE status='open'` + `tool_gap_run` |
+| `src/runtime/tool-gap-watcher/signature.ts` | `makeToolSignature` / `makeMcpSignature` / `makeConceptSignature` |
+| `src/runtime/tool-gap-watcher/detectors.ts` | 3 路 detector（纯读、纯返回 Signal[]） |
+| `src/runtime/tool-gap-watcher/watcher.ts` | `ToolGapWatcher.runOnce` + `ingestSignal` + `reportExplicitGap` helper |
+| `src/runtime/tools/builtin-tools.ts` | builtin `tool.report_gap` handler（dynamic import 防循环） |
+| `src/scripts/run-tool-gap-watcher.ts` | cron CLI |
+| `src/routes/monitor.routes.ts` | 5 个端点（list / runs / wont-fix / reopen / report） |
+| `frontend/src/components/monitor/ToolGapsPanel.tsx` | MemoryTab > Tool Gaps sub-tab |
+
+**后端 routes**：
+
+| Endpoint | 用途 |
+|---|---|
+| `GET /api/v1/monitor/memory/tool-gaps?projectId=&status=open&kind=&limit=` | 列表（默认 open，可选 kind 过滤） |
+| `GET /api/v1/monitor/memory/tool-gaps/runs?projectId=&limit=` | 最近 watcher 跑批 summary |
+| `POST /api/v1/monitor/memory/tool-gaps/:id/wont-fix` body `{reason?, actor?}` | open/proposed → wont_fix |
+| `POST /api/v1/monitor/memory/tool-gaps/:id/reopen` body `{reason?, actor?}` | wont_fix/rejected → open |
+| `POST /api/v1/monitor/memory/tool-gaps/report` body `{projectId, toolName?\|serverName?\|signature?\|reason?, ...}` | 手动 / API 上报，等价 builtin |
+
+**cron 运维**：
+```bash
+# 每 60 min 跑一次（与 SkillEvolverWatcher 一档）
+bun run src/scripts/run-tool-gap-watcher.ts --projectId=prj_xxx
+# 自定义窗口 + repeated_fail 阈值
+bun run src/scripts/run-tool-gap-watcher.ts --projectId=prj_xxx --windowHours=48 --repeatedFailThreshold=2
+# JSON 输出给监控管道
+bun run src/scripts/run-tool-gap-watcher.ts --projectId=prj_xxx --json
+```
+Exit code：`0` 成功 / `1` 跑批 failed / `2` 参数错。
+
+**关键取舍**：
+- **`gap_signature` 不 hash**：直接拼可读字符串（最长 120 char），前端列表展示就是 signature。
+- **重跑安全**：partial-unique index `WHERE status='open'` 保证同 signature 同时只有一条 open；watcher 再跑只 increment。
+- **不自动 reopen**：避免和用户决策打架；reopen 走人工 API。
+- **detector 纯读**：worker 才写表 + emit metrics；detector 单独单测无副作用。
+- **builtin 用动态 import**：`tool.report_gap` 是 builtin-tools.ts 末尾 +1 handler，但通过 `await import(...)` 引 watcher 避免顶层循环依赖。
+
+**测试**（55 用例全过）：
+- detector：16 单测覆盖 signature 归一化 + unknown_tool 9 模式 + repeated_fail 阈值 + reflective_mention 中英 + project 隔离
+- watcher：8 集成测覆盖 3 路命中 / 重跑累计 / wont_fix 不重开 / 多 signal 优先级 / extraSignals 一起跑 / tool_gap_run 写入 / emit event / reportExplicitGap helper
+- builtin：5 单测覆盖 tool/mcp/concept 三种 signature + 缺参抛错 + 第二次 incremented
+- metrics：1 单测覆盖 `self_evolve.tool_gap_watcher.*` 8 个指标
+- routes：11 集成测覆盖 5 endpoints + 错参 400 / 不存在 404 / 状态机非法流转 400
 
 ### 6.6 P8 — AutoInstaller propose 模式
 
@@ -645,9 +728,15 @@ self_evolve.skill_evolver.processed
 self_evolve.skill_evolver.skipped_base_missing
 self_evolve.skill_evolver.skipped_base_archived
 self_evolve.skill_evolver.failed
-self_evolve.tool_gap.gaps_logged_total{kind}
-self_evolve.tool_gap.proposals_created_total
-self_evolve.tool_gap.auto_installed_total
+self_evolve.tool_gap_watcher.tick.total
+self_evolve.tool_gap_watcher.tick.by_status{status}
+self_evolve.tool_gap_watcher.signals.unknown_tool
+self_evolve.tool_gap_watcher.signals.repeated_fail
+self_evolve.tool_gap_watcher.signals.reflective_mention
+self_evolve.tool_gap_watcher.signals.total
+self_evolve.tool_gap_watcher.gaps_created
+self_evolve.tool_gap_watcher.gaps_incremented
+self_evolve.tool_gap_watcher.gaps_skipped
 ```
 
 接入 `src/runtime/experience/metrics.ts`，前端 MemoryTab 顶部展示。
@@ -677,11 +766,11 @@ self_evolve.tool_gap.auto_installed_total
 | **P4b** | PnL 反馈环（燃料） | PnlAttributor worker + SkillAttributor + `agent_pnl_attribution` + skill 字段补齐 + 对账 + metrics + 后端只读接口 | 3-4 人/日 | ✅ 2026-06-03 |
 | **P5** | Skill 晋升（齿轮） | SkillPromoter + `skill_promotion_run` + 前端 Skill Promotions sub-tab + cron + approve/reject 闭环 | 3 人/日 | ✅ 2026-06-03 |
 | **P6** | Skill 自动修订（自动触发链路） | `requestSkillRevision` 队列 + `SkillEvolverWatcher` worker + cron + 3 个新 routes + 前端 LCS 行级 diff（8 watcher + 1 metrics + 9 routes 单测全过；前端 tsc 全绿） | 2 人/日 | ✅ 2026-06-03 |
-| **P7** | Tool Gap 观测 | ToolGapWatcher + `tool_gap_log` + `tool.report_gap` builtin + 前端 Tool Gaps sub-tab | 2 人/日 | TBD |
+| **P7** | Tool Gap 观测 | ToolGapWatcher (3 detector + 1 explicit ingest) + `tool_gap_log` / `tool_gap_run` + builtin `tool.report_gap` + 5 routes + 前端 Tool Gaps sub-tab + cron 脚本 + 55 tests | 2 人/日 | ✅ 2026-06-03 |
 | **P8** | Tool 自装配 propose | AutoInstaller + `auto_install_proposal` + 前端审批 UI | 4 人/日 | TBD |
 | **P9** | PnL-aware reason + auto 模式 | reason 注入 top-3 skill + MCP allowlist + auto 模式 + SkillEvolver baseline 回归 | 3 人/日 | TBD |
 
-**总计：9 人/日（不含 P4a / P4b / P5 / P6 已完成的 12 人/日）。**
+**总计：7 人/日（不含 P4a / P4b / P5 / P6 / P7 已完成的 14 人/日）。**
 
 ---
 
@@ -703,3 +792,4 @@ self_evolve.tool_gap.auto_installed_total
 | v0.2 | 2026-06-03 | P4b 落地：PnlAttributor + SkillAttributor + agent_pnl_attribution + 后端只读接口 + 对账 + metrics（35+ 单测、5 集成测、attribution 整体 106/106、metrics 12/12）；改写 6.2 章节、修订 8 节排期表 |
 | v0.3 | 2026-06-03 | P5 落地：SkillPromoter + scoring + skill_promotion_run + approve/reject + cron + 4 个后端 routes + MemoryTab Skill Promotions sub-tab（9 scoring + 8 worker + 9 routes + 1 metrics 单测全过；migrations 62/62；前端 tsc 全绿）；改写 6.3 章节、修订 8 节排期表 |
 | v0.4 | 2026-06-03 | P6 落地：reflective(skill_revision_request) 队列约定 + `requestSkillRevision` 辅助 + `SkillEvolverWatcher` worker（8 集成测）+ Bus event `maintenance_run/skill_evolver` + metrics 1 单测 + cron 脚本 `run-skill-evolver-watcher.ts` + 3 个新 routes（`/skill-evolutions/runs|diff|request`，9 集成测）+ 前端 SkillPromotionsPanel 增 evolved 标签 + LCS 行级 diff 折叠区；新写 6.4 章节、修订 7.3 metrics + 8 节排期表（P4a-P6 全 ✅）；P4b/P5/P6 合计 163/163 测试全过 |
+| v0.5 | 2026-06-03 | P7 落地：3 路 detector（unknown_tool / repeated_fail / reflective_mention）+ `tool_gap_log` partial-unique-on-open dedup + `tool_gap_run` summary + `ToolGapWatcher.runOnce` worker（按 detection_kind 优先级折叠）+ builtin `tool.report_gap` agent 主动上报通道（dynamic-import 防循环）+ cron 脚本 `run-tool-gap-watcher.ts` + Bus event `maintenance_run/tool_gap_watcher` 接入 metrics（8 个指标，1 单测）+ 5 个新 routes（`GET /tool-gaps`、`GET /tool-gaps/runs`、`POST /:id/wont-fix`、`POST /:id/reopen`、`POST /tool-gaps/report`）+ 前端 MemoryTab 新增 Tool Gaps sub-tab（filter/列表/详情/Mark won't fix/Reopen/Report dialog）；改写 6.5 章节、更新 7.3 metrics + 8 节排期表（P4a–P7 全 ✅）；P7 合计 55/55 测试全过（16 detector + 8 watcher + 5 builtin + 1 metrics + 11 routes + 14 复用 metrics），前端 tsc 全绿，P4b/P5/P6 回归 43/43 全过 |
