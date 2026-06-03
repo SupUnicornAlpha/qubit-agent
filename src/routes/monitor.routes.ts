@@ -1483,3 +1483,111 @@ monitorRouter.post("/memory/tool-gaps/report", async (c) => {
     return c.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 400);
   }
 });
+
+// ===========================================================================
+// Self-Evolving Agent P8 — AutoInstaller propose 模式
+// 前端 MemoryTab > Tool Gaps sub-tab "Proposals" section 消费。
+// 四个端点：
+//   GET   /memory/auto-installer/proposals?projectId=&state=&limit=     列表
+//   GET   /memory/auto-installer/runs?projectId=&limit=                 跑批 summary
+//   POST  /memory/auto-installer/proposals/:id/approve  body={reason?, actor?}
+//   POST  /memory/auto-installer/proposals/:id/reject   body={reason?, actor?}
+// ===========================================================================
+
+monitorRouter.get("/memory/auto-installer/proposals", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const stateParam = c.req.query("state") ?? "pending_review";
+  const allowed = new Set(["pending_review", "approved", "rejected", "no_candidate", "all"]);
+  if (!allowed.has(stateParam)) {
+    return c.json({ ok: false, error: `state must be one of ${[...allowed].join("/")}` }, 400);
+  }
+  const limit = Math.max(1, Math.min(200, Number(c.req.query("limit") ?? "50")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { autoInstallProposal } = await import("../db/sqlite/schema");
+  const { and, eq, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  const conds = [eq(autoInstallProposal.projectId, projectId)];
+  if (stateParam !== "all") {
+    conds.push(
+      eq(
+        autoInstallProposal.state,
+        stateParam as "pending_review" | "approved" | "rejected" | "no_candidate"
+      )
+    );
+  }
+  const rows = await db
+    .select()
+    .from(autoInstallProposal)
+    .where(and(...conds))
+    .orderBy(desc(autoInstallProposal.createdAt))
+    .limit(limit);
+  return c.json({ ok: true, data: { items: rows, total: rows.length } });
+});
+
+monitorRouter.get("/memory/auto-installer/runs", async (c) => {
+  const projectId = c.req.query("projectId");
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+  const limit = Math.max(1, Math.min(50, Number(c.req.query("limit") ?? "10")));
+
+  const { getDb } = await import("../db/sqlite/client");
+  const { autoInstallerRun } = await import("../db/sqlite/schema");
+  const { eq, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  const rows = await db
+    .select()
+    .from(autoInstallerRun)
+    .where(eq(autoInstallerRun.projectId, projectId))
+    .orderBy(desc(autoInstallerRun.startedAt))
+    .limit(limit);
+  return c.json({ ok: true, data: { items: rows } });
+});
+
+monitorRouter.post("/memory/auto-installer/proposals/:id/approve", async (c) => {
+  const id = c.req.param("id");
+  let body: { reason?: string; actor?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty */
+  }
+  try {
+    const { approveProposal } = await import("../runtime/auto-installer/lifecycle");
+    const input: Parameters<typeof approveProposal>[0] = {
+      proposalId: id,
+      actor: body.actor ?? "user",
+    };
+    if (body.reason) input.reason = body.reason;
+    const r = await approveProposal(input);
+    return c.json({ ok: true, data: r });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const status = msg.startsWith("proposal not found") ? 404 : 400;
+    return c.json({ ok: false, error: msg }, status);
+  }
+});
+
+monitorRouter.post("/memory/auto-installer/proposals/:id/reject", async (c) => {
+  const id = c.req.param("id");
+  let body: { reason?: string; actor?: string } = {};
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    /* allow empty */
+  }
+  try {
+    const { rejectProposal } = await import("../runtime/auto-installer/lifecycle");
+    const input: Parameters<typeof rejectProposal>[0] = {
+      proposalId: id,
+      actor: body.actor ?? "user",
+    };
+    if (body.reason) input.reason = body.reason;
+    const r = await rejectProposal(input);
+    return c.json({ ok: true, data: r });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const status = msg.startsWith("proposal not found") ? 404 : 400;
+    return c.json({ ok: false, error: msg }, status);
+  }
+});

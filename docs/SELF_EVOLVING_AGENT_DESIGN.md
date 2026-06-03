@@ -681,7 +681,108 @@ Exit code：`0` 成功 / `1` 跑批 failed / `2` 参数错。
 
 ### 6.6 P8 — AutoInstaller propose 模式
 
-扫 `tool_gap_log.status=open` → 路由（unknown_tool / repeated_fail / explicit_report）→ 写 `auto_install_proposal` 入审批队列。MemoryTab 加 Tool Gaps sub-tab。
+P7 已经把"agent 想用某工具但没有"的隐性信号收敛进 `tool_gap_log`。本期把它和 `mcp_catalog`（builtin）/ `mcp_catalog_item`（registry 爬来的外部）路由起来：每条 `status=open` 的 gap 出一个候选 proposal 入审批队列，用户在 **MemoryTab > Tool Gaps > Proposals section** 一键 approve / reject。
+
+#### 设计
+
+| 决定 | 取舍 |
+|---|---|
+| **propose 不真装** | approve 只把 proposal 标 `approved` + gap 标 `installed`；真的安装走 `mcp catalog` 已有的 `/tools/mcp/catalog/:slug/install` 端点（P9 auto 模式再链路化） |
+| **同 gap 只能有 1 个 `pending_review` proposal** | partial unique idx `idx_auto_install_proposal_gap_pending` (WHERE state='pending_review') 兜底；worker 重跑时显式 query 避免触发约束错 |
+| **`no_candidate` 也落 proposal** | 让用户看到"扫到了但 catalog 里没有"，提醒补 catalog；gap 维持 `open`，下轮可重扫（catalog 扩展后会匹配到） |
+| **proposal 不打 catalog FK** | mcp_catalog / mcp_catalog_item 可能被软删 / 改 slug；proposal 只记 `target_kind` + `target_slug` + 不可变 `payload_json` snapshot |
+| **不动 gap 直到 proposal 落地** | install/no_candidate 时 gap 才流转；避免 watcher 跑批失败后 gap 卡在中间态 |
+
+#### 候选匹配（candidate-matcher）
+
+`gap_signature` 通过 `parseGapSignature` 拆成命名空间 + token：
+
+```ts
+tool:get_weather          → kind=tool,    tool='get_weather',     tokens=['get','weather']
+mcp:slack/post_message    → kind=mcp,     server='slack', tool='post_message'
+concept:realtime_options  → kind=concept, keyword='realtime_options', tokens=['realtime','options']
+```
+
+对每条 mcp_catalog / mcp_catalog_item 行打分（cap 1.0、阈值 0.3）：
+
+| 维度 | 加分 | 触发条件 |
+|---|---|---|
+| `exact_tool` | +0.7 | `defaultToolName === parsed.tool` |
+| `exact_slug` | +0.4 | `slug === parsed.server` |
+| `tool_eq_slug` | +0.3 | `slug === parsed.tool`（catalog only） |
+| `slug_partial` | +0.2 | `slug.includes(server)` 或反之 |
+| `desc_hits` | +0.15 ×命中 token 数（封顶 3） | name + description token 命中 |
+| `cap_hits` | +0.1（catalog only） | capabilities token 命中 |
+
+返回 score 降序 top-K（默认 3）。所有命中规则文字塞 `ruleHits[]`，前端展示"为什么是它"。
+
+#### 状态机
+
+```
+                    AutoInstaller.runOnce
+                            │
+            ┌──── open gap ─┴────────────────────┐
+            │                                    │
+       匹配到候选 (score ≥ 0.3)             无候选
+            │                                    │
+            ▼                                    ▼
+  proposal(pending_review)                proposal(no_candidate)
+      gap → proposed                       gap 保持 open
+            │
+   ┌────────┴────────┐
+   │                 │
+  approve           reject
+   │                 │
+   ▼                 ▼
+proposal(approved)  proposal(rejected)
+  gap → installed    gap → rejected
+```
+
+`reject no_candidate` 把 proposal 标 `rejected`、gap 不动（仍 open）—— 用户在"扫到了但 catalog 没有"上点 reject 只是"暂时不关心"，并不否定 gap 存在。
+
+#### 关键文件
+
+| 文件 | 职责 |
+|---|---|
+| `src/db/sqlite/migrations/0065_self_evolve_p8_auto_installer.sql` | `auto_install_proposal` + `auto_installer_run` + 3 索引（含 partial unique） |
+| `src/runtime/auto-installer/types.ts` | `MatchCandidate` / `ProposalKind` / `AutoInstallerRunSummary` |
+| `src/runtime/auto-installer/signature.ts`（隐式复用 P7） | gap_signature 解析仍走 P7 工具 |
+| `src/runtime/auto-installer/candidate-matcher.ts` | `parseGapSignature` + `scoreCatalog` + `findCandidatesForGap`（纯函数，DB 显式注入） |
+| `src/runtime/auto-installer/installer.ts` | `AutoInstaller.runOnce`：扫 → match → 写 proposal + 同步 gap → emit |
+| `src/runtime/auto-installer/lifecycle.ts` | `approveProposal` / `rejectProposal` + `ProposalStateError`；状态机迁移 |
+| `src/runtime/experience/experience-bus.ts` | event union 加 `maintenance_run.kind='auto_installer'` |
+| `src/runtime/experience/metrics.ts` | 注入 `self_evolve.auto_installer.*` 6 个指标 |
+| `src/scripts/run-auto-installer.ts` | cron CLI（同 P7 风格，`--projectId / --maxGapsPerRun / --scoreThreshold / --topK / --json`） |
+| `src/routes/monitor.routes.ts` | 4 endpoints（见下） |
+| `frontend/src/api/backend.ts` | 5 type + 4 fetch helpers（`listAutoInstallProposals` / `listAutoInstallerRuns` / `approve…` / `reject…`） |
+| `frontend/src/components/monitor/ToolGapsPanel.tsx` | 增加 `ProposalsSection`：KPI 行 + 表格 + Approve/Reject 按钮 |
+
+#### 后端 routes（5 个新增到 monitor.routes.ts）
+
+```
+GET   /api/v1/monitor/memory/auto-installer/proposals?projectId=&state=&limit=
+GET   /api/v1/monitor/memory/auto-installer/runs?projectId=&limit=
+POST  /api/v1/monitor/memory/auto-installer/proposals/:id/approve   body={actor?,reason?}
+POST  /api/v1/monitor/memory/auto-installer/proposals/:id/reject    body={actor?,reason?}
+```
+
+状态机非法流转返回 400 + `ProposalStateError` 文案；`proposal not found` 返回 404。
+
+#### Cron 运维
+
+| 项 | 值 |
+|---|---|
+| 频率 | 每 60 min（与 P7 / P6 一档） |
+| 默认 max gaps/run | 50（防爆库） |
+| 命令 | `bun run src/scripts/run-auto-installer.ts --projectId=prj_xxx [--maxGapsPerRun=50 --scoreThreshold=0.3 --topK=3] [--json]` |
+| Exit code | 0=ok / 1=failed / 2=参数错 |
+
+#### 测试（51 用例全过）
+
+- candidate-matcher：15 单测覆盖 `parseGapSignature` 三种命名空间 + 短 token 过滤 + 5 类 score 规则 + score cap + topK 截断 + enabled=false 跳过 + 阈值过滤
+- installer + lifecycle：9 集成测覆盖无 gap / 有候选 / 无候选 / 重跑 skipped / emit event / approve / reject(pending) / reject(no_candidate) / approve 非 pending_review 抛错
+- metrics：1 单测覆盖 `self_evolve.auto_installer.*` 6 个指标
+- routes：11 集成测覆盖 4 endpoints + state 过滤 + 错参 400 + 不存在 404
 
 ### 6.7 P9 — Reason 节点 PnL-aware + auto 模式
 
@@ -737,6 +838,12 @@ self_evolve.tool_gap_watcher.signals.total
 self_evolve.tool_gap_watcher.gaps_created
 self_evolve.tool_gap_watcher.gaps_incremented
 self_evolve.tool_gap_watcher.gaps_skipped
+self_evolve.auto_installer.tick.total
+self_evolve.auto_installer.tick.by_status{status}
+self_evolve.auto_installer.gaps_scanned
+self_evolve.auto_installer.proposals_created
+self_evolve.auto_installer.proposals_skipped_existing
+self_evolve.auto_installer.proposals_no_candidate
 ```
 
 接入 `src/runtime/experience/metrics.ts`，前端 MemoryTab 顶部展示。
@@ -767,10 +874,10 @@ self_evolve.tool_gap_watcher.gaps_skipped
 | **P5** | Skill 晋升（齿轮） | SkillPromoter + `skill_promotion_run` + 前端 Skill Promotions sub-tab + cron + approve/reject 闭环 | 3 人/日 | ✅ 2026-06-03 |
 | **P6** | Skill 自动修订（自动触发链路） | `requestSkillRevision` 队列 + `SkillEvolverWatcher` worker + cron + 3 个新 routes + 前端 LCS 行级 diff（8 watcher + 1 metrics + 9 routes 单测全过；前端 tsc 全绿） | 2 人/日 | ✅ 2026-06-03 |
 | **P7** | Tool Gap 观测 | ToolGapWatcher (3 detector + 1 explicit ingest) + `tool_gap_log` / `tool_gap_run` + builtin `tool.report_gap` + 5 routes + 前端 Tool Gaps sub-tab + cron 脚本 + 55 tests | 2 人/日 | ✅ 2026-06-03 |
-| **P8** | Tool 自装配 propose | AutoInstaller + `auto_install_proposal` + 前端审批 UI | 4 人/日 | TBD |
+| **P8** | Tool 自装配 propose | AutoInstaller (candidate-matcher + installer + lifecycle) + `auto_install_proposal` / `auto_installer_run` + 4 routes + 前端 Proposals section (Tool Gaps sub-tab) + cron 脚本 + 51 tests | 3 人/日 | ✅ 2026-06-03 |
 | **P9** | PnL-aware reason + auto 模式 | reason 注入 top-3 skill + MCP allowlist + auto 模式 + SkillEvolver baseline 回归 | 3 人/日 | TBD |
 
-**总计：7 人/日（不含 P4a / P4b / P5 / P6 / P7 已完成的 14 人/日）。**
+**总计：3 人/日（不含 P4a / P4b / P5 / P6 / P7 / P8 已完成的 17 人/日）。**
 
 ---
 
@@ -793,3 +900,4 @@ self_evolve.tool_gap_watcher.gaps_skipped
 | v0.3 | 2026-06-03 | P5 落地：SkillPromoter + scoring + skill_promotion_run + approve/reject + cron + 4 个后端 routes + MemoryTab Skill Promotions sub-tab（9 scoring + 8 worker + 9 routes + 1 metrics 单测全过；migrations 62/62；前端 tsc 全绿）；改写 6.3 章节、修订 8 节排期表 |
 | v0.4 | 2026-06-03 | P6 落地：reflective(skill_revision_request) 队列约定 + `requestSkillRevision` 辅助 + `SkillEvolverWatcher` worker（8 集成测）+ Bus event `maintenance_run/skill_evolver` + metrics 1 单测 + cron 脚本 `run-skill-evolver-watcher.ts` + 3 个新 routes（`/skill-evolutions/runs|diff|request`，9 集成测）+ 前端 SkillPromotionsPanel 增 evolved 标签 + LCS 行级 diff 折叠区；新写 6.4 章节、修订 7.3 metrics + 8 节排期表（P4a-P6 全 ✅）；P4b/P5/P6 合计 163/163 测试全过 |
 | v0.5 | 2026-06-03 | P7 落地：3 路 detector（unknown_tool / repeated_fail / reflective_mention）+ `tool_gap_log` partial-unique-on-open dedup + `tool_gap_run` summary + `ToolGapWatcher.runOnce` worker（按 detection_kind 优先级折叠）+ builtin `tool.report_gap` agent 主动上报通道（dynamic-import 防循环）+ cron 脚本 `run-tool-gap-watcher.ts` + Bus event `maintenance_run/tool_gap_watcher` 接入 metrics（8 个指标，1 单测）+ 5 个新 routes（`GET /tool-gaps`、`GET /tool-gaps/runs`、`POST /:id/wont-fix`、`POST /:id/reopen`、`POST /tool-gaps/report`）+ 前端 MemoryTab 新增 Tool Gaps sub-tab（filter/列表/详情/Mark won't fix/Reopen/Report dialog）；改写 6.5 章节、更新 7.3 metrics + 8 节排期表（P4a–P7 全 ✅）；P7 合计 55/55 测试全过（16 detector + 8 watcher + 5 builtin + 1 metrics + 11 routes + 14 复用 metrics），前端 tsc 全绿，P4b/P5/P6 回归 43/43 全过 |
+| v0.6 | 2026-06-03 | P8 落地：`auto_install_proposal` + `auto_installer_run` schema（partial-unique-on-pending dedup）+ `candidate-matcher`（parseGapSignature + scoreCatalog 6 维评分）+ `AutoInstaller.runOnce` worker（路由 tool_gap_log.open → mcp_catalog/mcp_catalog_item top-K → propose）+ `approveProposal` / `rejectProposal` lifecycle（含 gap 同步流转 + ProposalStateError）+ cron 脚本 `run-auto-installer.ts` + Bus event `maintenance_run/auto_installer` 接入 metrics（6 个指标，1 单测）+ 4 个新 routes（`GET /auto-installer/proposals`、`GET /auto-installer/runs`、`POST /:id/approve`、`POST /:id/reject`）+ 前端 ToolGapsPanel 增 `ProposalsSection`（KPI 行 + state 过滤 + Approve/Reject 行内按钮）；改写 6.6 章节、更新 7.3 metrics + 8 节排期表（P4a–P8 全 ✅）；P8 合计 51/51 测试全过（15 candidate-matcher + 9 installer/lifecycle + 11 routes + 1 metrics + 15 复用 metrics）；P4b/P5/P6/P7/P8 合计 121/121 全回归通过，前端 tsc 全绿 |

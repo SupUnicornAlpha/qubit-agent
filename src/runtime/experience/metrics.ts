@@ -208,6 +208,22 @@ export function attachMemoryMetrics(bus: ExperienceBus): MetricsHandle {
         c.inc("self_evolve.tool_gap_watcher.gaps_created", numOf(s.gapsCreated));
         c.inc("self_evolve.tool_gap_watcher.gaps_incremented", numOf(s.gapsIncremented));
         c.inc("self_evolve.tool_gap_watcher.gaps_skipped", numOf(s.gapsSkipped));
+      } else if (ev.kind === "auto_installer") {
+        // Self-Evolving Agent P8：tool_gap_log → auto_install_proposal
+        const s = ev.summary;
+        const status = String(s.status ?? "unknown");
+        c.inc("self_evolve.auto_installer.tick.total");
+        c.inc("self_evolve.auto_installer.tick.by_status", 1, { status });
+        c.inc("self_evolve.auto_installer.gaps_scanned", numOf(s.gapsScanned));
+        c.inc("self_evolve.auto_installer.proposals_created", numOf(s.proposalsCreated));
+        c.inc(
+          "self_evolve.auto_installer.proposals_skipped_existing",
+          numOf(s.proposalsSkippedExisting)
+        );
+        c.inc(
+          "self_evolve.auto_installer.proposals_no_candidate",
+          numOf(s.proposalsNoCandidate)
+        );
       }
     } catch {
       /* noop */

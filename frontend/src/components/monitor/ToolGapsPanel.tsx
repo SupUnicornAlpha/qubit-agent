@@ -15,11 +15,18 @@
 import type { FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  approveAutoInstallProposal,
+  listAutoInstallProposals,
+  listAutoInstallerRuns,
   listToolGapRuns,
   listToolGaps,
   markToolGapWontFix,
+  rejectAutoInstallProposal,
   reopenToolGap,
   reportToolGap,
+  type AutoInstallProposalItem,
+  type AutoInstallerRunItem,
+  type ProposalState,
   type ToolGapDetectionKind,
   type ToolGapListItem,
   type ToolGapRunSummary,
@@ -205,6 +212,8 @@ export const ToolGapsPanel: FC<ToolGapsPanelProps> = ({ projectId, autoRefresh }
           />
         </div>
       </div>
+
+      <ProposalsSection projectId={projectId} autoRefresh={autoRefresh} />
 
       {reportOpen ? (
         <ReportDialog
@@ -658,5 +667,329 @@ const ReportDialog: FC<{
         </div>
       </div>
     </div>
+  );
+};
+
+// ───────────────────────── Self-Evolving Agent P8 — Proposals section ─────────────────────────
+// 展示 auto_install_proposal + auto_installer_run。approve/reject 当场 toast 错误并 reload。
+
+const PROPOSAL_STATE_OPTIONS: Array<{ id: ProposalState | "all"; label: string }> = [
+  { id: "pending_review", label: "Pending" },
+  { id: "no_candidate", label: "No Candidate" },
+  { id: "approved", label: "Approved" },
+  { id: "rejected", label: "Rejected" },
+  { id: "all", label: "全部" },
+];
+
+function safetyAccent(s: "low" | "medium" | "high"): string {
+  if (s === "low") return "#22c55e";
+  if (s === "medium") return "#eab308";
+  return "#f87171";
+}
+
+function proposalStateAccent(s: ProposalState): string {
+  switch (s) {
+    case "pending_review":
+      return "#3b82f6";
+    case "approved":
+      return "#22c55e";
+    case "rejected":
+      return "#f87171";
+    case "no_candidate":
+      return "#a1a1aa";
+  }
+}
+
+const ProposalsSection: FC<{ projectId: string; autoRefresh: boolean }> = ({
+  projectId,
+  autoRefresh,
+}) => {
+  const [state, setState] = useState<ProposalState | "all">("pending_review");
+  const [items, setItems] = useState<AutoInstallProposalItem[]>([]);
+  const [runs, setRuns] = useState<AutoInstallerRunItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!projectId) return;
+    setLoading(true);
+    setErr(null);
+    try {
+      const [list, runList] = await Promise.all([
+        listAutoInstallProposals({ projectId, state, limit: 50 }),
+        listAutoInstallerRuns({ projectId, limit: 5 }),
+      ]);
+      setItems(list);
+      setRuns(runList);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "加载失败");
+      setItems([]);
+      setRuns([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [projectId, state]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  useEffect(() => {
+    if (!autoRefresh || !projectId) return;
+    const t = window.setInterval(() => void reload(), 12_000);
+    return () => window.clearInterval(t);
+  }, [autoRefresh, projectId, reload]);
+
+  const handleApprove = useCallback(
+    async (id: string) => {
+      const reason = window.prompt("Approve 备注（可空）：", "") ?? "";
+      setActionErr(null);
+      try {
+        await approveAutoInstallProposal(id, { reason: reason || undefined, actor: "user" });
+        await reload();
+      } catch (e) {
+        setActionErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [reload]
+  );
+
+  const handleReject = useCallback(
+    async (id: string) => {
+      const reason = window.prompt("Reject 原因（可空）：", "") ?? "";
+      setActionErr(null);
+      try {
+        await rejectAutoInstallProposal(id, { reason: reason || undefined, actor: "user" });
+        await reload();
+      } catch (e) {
+        setActionErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [reload]
+  );
+
+  const latestRun = runs[0];
+  const cumulative = useMemo(
+    () =>
+      runs.reduce(
+        (acc, r) => ({
+          scanned: acc.scanned + r.gapsScanned,
+          created: acc.created + r.proposalsCreated,
+          skipped: acc.skipped + r.proposalsSkippedExisting,
+          noCand: acc.noCand + r.proposalsNoCandidate,
+        }),
+        { scanned: 0, created: 0, skipped: 0, noCand: 0 }
+      ),
+    [runs]
+  );
+
+  return (
+    <section style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid var(--qb-main-border, #27272a)" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
+      >
+        <h3 style={{ ...styles.subTitle, margin: 0 }}>AutoInstaller · Proposals</h3>
+        <button
+          type="button"
+          className="qb-btn-secondary"
+          style={{ fontSize: 11, padding: "3px 10px" }}
+          onClick={() => void reload()}
+        >
+          刷新
+        </button>
+      </div>
+
+      {runs.length === 0 ? (
+        <div style={styles.empty}>
+          暂无 AutoInstaller 跑批记录。运行{" "}
+          <code>bun run src/scripts/run-auto-installer.ts --projectId=...</code> 触发。
+        </div>
+      ) : (
+        <div style={styles.kpiRow}>
+          {latestRun ? (
+            <>
+              <Kpi
+                label="最近 run · scanned"
+                value={String(latestRun.gapsScanned)}
+                accent="#3b82f6"
+              />
+              <Kpi
+                label="最近 run · created"
+                value={String(latestRun.proposalsCreated)}
+                accent="#22c55e"
+              />
+              <Kpi
+                label="最近 run · no_cand"
+                value={String(latestRun.proposalsNoCandidate)}
+                accent="#a1a1aa"
+              />
+              <Kpi
+                label="最近 run · status"
+                value={latestRun.status}
+                accent={latestRun.status === "failed" ? "#f87171" : "#22c55e"}
+              />
+            </>
+          ) : null}
+          <Kpi
+            label={`累计 (${runs.length} run)`}
+            value={`${cumulative.scanned}sc / ${cumulative.created}new`}
+            accent="#71717a"
+          />
+        </div>
+      )}
+
+      <div style={{ ...styles.form, margin: "12px 0 8px" }}>
+        <select
+          value={state}
+          onChange={(e) => setState(e.target.value as ProposalState | "all")}
+          style={styles.select}
+        >
+          {PROPOSAL_STATE_OPTIONS.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {actionErr ? (
+        <div style={{ ...styles.empty, color: "#f87171" }}>动作失败：{actionErr}</div>
+      ) : null}
+      {err ? <div style={{ ...styles.empty, color: "#f87171" }}>加载失败：{err}</div> : null}
+      {loading && items.length === 0 ? <div style={styles.empty}>加载中…</div> : null}
+      {!loading && items.length === 0 && !err ? (
+        <div style={styles.empty}>
+          当前 state={state} 没有 proposal。等 AutoInstaller 跑批后会扫{" "}
+          <code>tool_gap_log.status=open</code> 生成 proposal。
+        </div>
+      ) : null}
+
+      {items.length > 0 ? (
+        <div style={styles.tableWrap}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <th style={{ ...styles.th, width: 90 }}>kind</th>
+                <th style={{ ...styles.th }}>target</th>
+                <th style={{ ...styles.th, width: 80, textAlign: "right" }}>score</th>
+                <th style={{ ...styles.th, width: 70 }}>safety</th>
+                <th style={{ ...styles.th, width: 100 }}>state</th>
+                <th style={{ ...styles.th, width: 140 }}>created</th>
+                <th style={{ ...styles.th, width: 140 }}>actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((p) => {
+                const canAct = p.state === "pending_review";
+                return (
+                  <tr key={p.id} style={styles.tr}>
+                    <td style={styles.td}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          color: proposalStateAccent(p.state),
+                          border: `1px solid ${proposalStateAccent(p.state)}55`,
+                        }}
+                      >
+                        {p.proposalKind.replace("install_", "")}
+                      </span>
+                    </td>
+                    <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 11 }}>
+                      {p.targetSlug ?? <span style={{ color: "#71717a" }}>—</span>}
+                      {p.targetKind === "mcp_catalog_item" ? (
+                        <span style={{ marginLeft: 6, color: "#a1a1aa", fontSize: 10 }}>(ext)</span>
+                      ) : null}
+                    </td>
+                    <td
+                      style={{
+                        ...styles.td,
+                        textAlign: "right",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {p.matchScore.toFixed(2)}
+                    </td>
+                    <td style={styles.td}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          color: safetyAccent(p.safetyLevel),
+                          border: `1px solid ${safetyAccent(p.safetyLevel)}55`,
+                        }}
+                      >
+                        {p.safetyLevel}
+                      </span>
+                    </td>
+                    <td style={styles.td}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 4,
+                          color: proposalStateAccent(p.state),
+                          border: `1px solid ${proposalStateAccent(p.state)}55`,
+                        }}
+                      >
+                        {p.state}
+                      </span>
+                    </td>
+                    <td
+                      style={{
+                        ...styles.td,
+                        fontSize: 11,
+                        color: "var(--qb-main-meta, #a1a1aa)",
+                      }}
+                    >
+                      {fmtTs(p.createdAt)}
+                    </td>
+                    <td style={styles.td}>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          className="qb-btn-primary"
+                          style={{
+                            fontSize: 10,
+                            padding: "2px 8px",
+                            opacity: canAct ? 1 : 0.4,
+                          }}
+                          disabled={!canAct}
+                          onClick={() => handleApprove(p.id)}
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          className="qb-btn-secondary"
+                          style={{
+                            fontSize: 10,
+                            padding: "2px 8px",
+                            opacity:
+                              p.state === "pending_review" || p.state === "no_candidate" ? 1 : 0.4,
+                          }}
+                          disabled={p.state !== "pending_review" && p.state !== "no_candidate"}
+                          onClick={() => handleReject(p.id)}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </section>
   );
 };

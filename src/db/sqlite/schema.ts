@@ -3087,3 +3087,79 @@ export const toolGapRun = sqliteTable(
   },
   (t) => [index("idx_tool_gap_run_project").on(t.projectId, t.startedAt)]
 );
+
+// ───────────────────────── Self-Evolving Agent P8 — AutoInstaller propose 模式 ─────────────────────────
+// 详见 docs/SELF_EVOLVING_AGENT_DESIGN.md §6.6
+// migration: 0065_self_evolve_p8_auto_installer.sql
+
+export const autoInstallProposal = sqliteTable(
+  "auto_install_proposal",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    /** 关联 tool_gap_log.id；不打 FK 以容忍 gap 软删 */
+    gapLogId: text("gap_log_id").notNull(),
+    proposalKind: text("proposal_kind", {
+      enum: ["install_mcp_catalog", "install_mcp_external", "no_candidate"],
+    }).notNull(),
+    safetyLevel: text("safety_level", { enum: ["low", "medium", "high"] })
+      .notNull()
+      .default("medium"),
+    matchScore: real("match_score").notNull().default(0),
+    /** 'mcp_catalog' | 'mcp_catalog_item' | null（no_candidate 时为 null） */
+    targetKind: text("target_kind"),
+    targetId: text("target_id"),
+    targetSlug: text("target_slug"),
+    /** propose 时的不可变快照，避免 catalog 后续被改 */
+    payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+    /** top-3 候选明细（含 score / ruleHits / slug） */
+    candidatesJson: text("candidates_json", { mode: "json" }).notNull().default("[]"),
+    state: text("state", {
+      enum: ["pending_review", "approved", "rejected", "no_candidate"],
+    })
+      .notNull()
+      .default("pending_review"),
+    stateAt: text("state_at"),
+    stateBy: text("state_by"),
+    stateReason: text("state_reason"),
+    proposerRunId: text("proposer_run_id"),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at")
+      .notNull()
+      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    index("idx_auto_install_proposal_project_state").on(t.projectId, t.state, t.createdAt),
+    index("idx_auto_install_proposal_gap").on(t.gapLogId, t.createdAt),
+    // partial unique `idx_auto_install_proposal_gap_pending` (state='pending_review') 由 SQL migration
+    // 直接创建；drizzle ORM 不支持 WHERE 子句，此处不声明避免 generator 误 drop。
+  ]
+);
+
+export const autoInstallerRun = sqliteTable(
+  "auto_installer_run",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    status: text("status", { enum: ["running", "completed", "failed"] })
+      .notNull()
+      .default("running"),
+    triggeredBy: text("triggered_by").notNull().default("cron"),
+    gapsScanned: integer("gaps_scanned").notNull().default(0),
+    proposalsCreated: integer("proposals_created").notNull().default(0),
+    proposalsSkippedExisting: integer("proposals_skipped_existing").notNull().default(0),
+    proposalsNoCandidate: integer("proposals_no_candidate").notNull().default(0),
+    actionsJson: text("actions_json", { mode: "json" }).notNull().default("[]"),
+    elapsedMs: integer("elapsed_ms").notNull().default(0),
+    errorMessage: text("error_message"),
+    startedAt: text("started_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    endedAt: text("ended_at"),
+  },
+  (t) => [index("idx_auto_installer_run_project").on(t.projectId, t.startedAt)]
+);

@@ -4459,3 +4459,137 @@ export async function reportToolGap(body: {
   }>(`/api/v1/monitor/memory/tool-gaps/report`, body);
   return res.data;
 }
+
+// ===========================================================================
+// Self-Evolving Agent P8 — AutoInstaller propose 模式（docs §6.6）
+// 前端 MemoryTab > Tool Gaps sub-tab "Proposals" section 消费。
+// ===========================================================================
+
+export type ProposalKind = "install_mcp_catalog" | "install_mcp_external" | "no_candidate";
+export type ProposalState = "pending_review" | "approved" | "rejected" | "no_candidate";
+export type ProposalSafetyLevel = "low" | "medium" | "high";
+
+export interface AutoInstallProposalItem {
+  id: string;
+  projectId: string;
+  gapLogId: string;
+  proposalKind: ProposalKind;
+  safetyLevel: ProposalSafetyLevel;
+  matchScore: number;
+  targetKind: "mcp_catalog" | "mcp_catalog_item" | null;
+  targetId: string | null;
+  targetSlug: string | null;
+  payloadJson: Record<string, unknown>;
+  candidatesJson: Array<{
+    targetKind: "mcp_catalog" | "mcp_catalog_item";
+    targetId: string;
+    targetSlug: string;
+    name: string;
+    score: number;
+    ruleHits: string[];
+    safetyLevel: ProposalSafetyLevel;
+  }>;
+  state: ProposalState;
+  stateAt: string | null;
+  stateBy: string | null;
+  stateReason: string | null;
+  proposerRunId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutoInstallerRunItem {
+  id: string;
+  projectId: string;
+  status: "running" | "completed" | "failed";
+  triggeredBy: string;
+  gapsScanned: number;
+  proposalsCreated: number;
+  proposalsSkippedExisting: number;
+  proposalsNoCandidate: number;
+  actionsJson: Array<{
+    gapId: string;
+    gapSignature: string;
+    action: "proposed" | "skipped_existing" | "no_candidate";
+    proposalId?: string;
+    candidate?: { slug: string; score: number; targetKind: string };
+    reason?: string;
+  }>;
+  elapsedMs: number;
+  errorMessage: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export async function listAutoInstallProposals(params: {
+  projectId: string;
+  state?: ProposalState | "all";
+  limit?: number;
+}): Promise<AutoInstallProposalItem[]> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.state) q.set("state", params.state);
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{
+    ok: boolean;
+    data: { items: AutoInstallProposalItem[]; total: number };
+  }>(`/api/v1/monitor/memory/auto-installer/proposals?${q.toString()}`);
+  return res.data.items;
+}
+
+export async function listAutoInstallerRuns(params: {
+  projectId: string;
+  limit?: number;
+}): Promise<AutoInstallerRunItem[]> {
+  const q = new URLSearchParams({ projectId: params.projectId });
+  if (params.limit != null) q.set("limit", String(params.limit));
+  const res = await httpGet<{ ok: boolean; data: { items: AutoInstallerRunItem[] } }>(
+    `/api/v1/monitor/memory/auto-installer/runs?${q.toString()}`
+  );
+  return res.data.items;
+}
+
+export async function approveAutoInstallProposal(
+  proposalId: string,
+  body: { reason?: string; actor?: string } = {}
+): Promise<{
+  proposalId: string;
+  gapLogId: string;
+  fromState: string;
+  toState: string;
+  gapStatusChanged: boolean;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      proposalId: string;
+      gapLogId: string;
+      fromState: string;
+      toState: string;
+      gapStatusChanged: boolean;
+    };
+  }>(`/api/v1/monitor/memory/auto-installer/proposals/${proposalId}/approve`, body);
+  return res.data;
+}
+
+export async function rejectAutoInstallProposal(
+  proposalId: string,
+  body: { reason?: string; actor?: string } = {}
+): Promise<{
+  proposalId: string;
+  gapLogId: string;
+  fromState: string;
+  toState: string;
+  gapStatusChanged: boolean;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      proposalId: string;
+      gapLogId: string;
+      fromState: string;
+      toState: string;
+      gapStatusChanged: boolean;
+    };
+  }>(`/api/v1/monitor/memory/auto-installer/proposals/${proposalId}/reject`, body);
+  return res.data;
+}

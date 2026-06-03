@@ -102,6 +102,9 @@ export type ExperienceEvent =
    *
    * P7 新增 1 个 kind：
    *   - tool_gap_watcher    — ToolGapWatcher.runOnce 跑完
+   *
+   * P8 新增 1 个 kind：
+   *   - auto_installer      — AutoInstaller.runOnce 跑完（propose 模式）
    */
   | {
       type: "maintenance_run";
@@ -115,7 +118,8 @@ export type ExperienceEvent =
         | "mark_price_fetcher"
         | "skill_promoter"
         | "skill_evolver"
-        | "tool_gap_watcher";
+        | "tool_gap_watcher"
+        | "auto_installer";
       actor: string;
       summary: Record<string, number | string>;
     };

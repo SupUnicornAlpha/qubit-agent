@@ -409,6 +409,43 @@ describe("attachMemoryMetrics — Bus 事件 → 指标", () => {
     expect(snap["self_evolve.tool_gap_watcher.gaps_skipped"]).toBe(1);
   });
 
+  test("maintenance_run(kind=auto_installer) → self_evolve.auto_installer.* 汇总（P8）", () => {
+    bus.emit({
+      type: "maintenance_run",
+      kind: "auto_installer",
+      actor: "auto_installer",
+      summary: {
+        status: "completed",
+        gapsScanned: 4,
+        proposalsCreated: 2,
+        proposalsSkippedExisting: 1,
+        proposalsNoCandidate: 1,
+        elapsedMs: 21,
+      },
+    });
+    bus.emit({
+      type: "maintenance_run",
+      kind: "auto_installer",
+      actor: "auto_installer",
+      summary: {
+        status: "failed",
+        gapsScanned: 0,
+        proposalsCreated: 0,
+        proposalsSkippedExisting: 0,
+        proposalsNoCandidate: 0,
+        elapsedMs: 5,
+      },
+    });
+    const snap = getMemoryMetricsSnapshot();
+    expect(snap["self_evolve.auto_installer.tick.total"]).toBe(2);
+    expect(snap["self_evolve.auto_installer.tick.by_status|status=completed"]).toBe(1);
+    expect(snap["self_evolve.auto_installer.tick.by_status|status=failed"]).toBe(1);
+    expect(snap["self_evolve.auto_installer.gaps_scanned"]).toBe(4);
+    expect(snap["self_evolve.auto_installer.proposals_created"]).toBe(2);
+    expect(snap["self_evolve.auto_installer.proposals_skipped_existing"]).toBe(1);
+    expect(snap["self_evolve.auto_installer.proposals_no_candidate"]).toBe(1);
+  });
+
   test("detach() 后停止计数", () => {
     metrics.detach();
     bus.emit({
