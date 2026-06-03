@@ -2749,3 +2749,126 @@ export const experienceOpLog = sqliteTable(
     index("idx_experience_op_log_op_created").on(t.op, t.createdAt),
   ]
 );
+
+// ─── Self-Evolving Agent P4a — PnL Infrastructure ───────────────────────────
+// 见 docs/SELF_EVOLVING_AGENT_DESIGN.md §P4a。3 张表为飞轮"PnL 反馈环"打底，
+// P4b 的 PnlAttributor worker 读 fill / execution_report → join daily_mark_price →
+// 估 fee_schedule → 写 strategy_pnl_snapshot。
+
+/**
+ * EOD 收盘价物化表。让 PnL 跑批与 broker connector 解耦：DailyMarkPriceFetcher
+ * 在交易日结束后一次性从 klines connector 拉所有持仓 symbol，PnlAttributor 只读本表。
+ */
+export const dailyMarkPrice = sqliteTable(
+  "daily_mark_price",
+  {
+    id: id(),
+    /** CN | US | HK | CRYPTO，与 trading_account.market_scope / strategy_runtime.market 对齐 */
+    market: text("market").notNull(),
+    symbol: text("symbol").notNull(),
+    /** ISO date 'YYYY-MM-DD'（按 market 本地交易日） */
+    tradingDay: text("trading_day").notNull(),
+    close: real("close").notNull(),
+    open: real("open"),
+    high: real("high"),
+    low: real("low"),
+    volume: real("volume"),
+    /** klines data source meta：'eastmoney' / 'yfinance' / 'yahoo_chart' / 'tushare_daily' / 'akshare' / 'binance_crypto' / 'synthetic' */
+    source: text("source").notNull(),
+    fetchedAt: text("fetched_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    uniqueIndex("idx_daily_mark_price_unique").on(t.market, t.symbol, t.tradingDay),
+    index("idx_daily_mark_price_symbol_day").on(t.symbol, t.tradingDay),
+  ]
+);
+
+/**
+ * 时序日度 PnL 快照（runtime × symbol × day）。
+ *
+ * 注意：和 `strategy_position_snapshot` 是不同物种：
+ *   - strategy_position_snapshot：(runtime, symbol) 唯一行，只存"当前"持仓与买入价
+ *   - strategy_pnl_snapshot：(runtime, day, symbol) 时序，含 realized/unrealized/cum/fee/turnover
+ *
+ * 由 PnlAttributor worker upsert；source 字段记录算法版本（"pnl_attributor_v0" 等权归因）。
+ */
+export const strategyPnlSnapshot = sqliteTable(
+  "strategy_pnl_snapshot",
+  {
+    id: id(),
+    strategyRuntimeId: text("strategy_runtime_id")
+      .notNull()
+      .references(() => strategyRuntime.id, { onDelete: "cascade" }),
+    /** ISO date 'YYYY-MM-DD' */
+    tradingDay: text("trading_day").notNull(),
+    symbol: text("symbol").notNull(),
+    /** 当日收盘持仓数量（含未平仓） */
+    qty: real("qty").notNull().default(0),
+    /** 移动平均成本（FIFO 简化）；qty=0 时为 null */
+    avgCost: real("avg_cost"),
+    /** 当日 mark：取 daily_mark_price.close；查不到时由 last_fill.fill_price 回退 */
+    markPrice: real("mark_price"),
+    marketValue: real("market_value").notNull().default(0),
+    realizedPnlDaily: real("realized_pnl_daily").notNull().default(0),
+    unrealizedPnlDaily: real("unrealized_pnl_daily").notNull().default(0),
+    realizedPnlCum: real("realized_pnl_cum").notNull().default(0),
+    unrealizedPnlCum: real("unrealized_pnl_cum").notNull().default(0),
+    feeDaily: real("fee_daily").notNull().default(0),
+    feeCum: real("fee_cum").notNull().default(0),
+    turnoverDaily: real("turnover_daily").notNull().default(0),
+    /** 'pnl_attributor_v0' / 'pnl_attributor_v1' */
+    source: text("source").notNull(),
+    /** mark_source / partial_data_flag / fill_count 等 */
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default("{}"),
+    computedAt: text("computed_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+  },
+  (t) => [
+    uniqueIndex("idx_strategy_pnl_snapshot_unique").on(t.strategyRuntimeId, t.tradingDay, t.symbol),
+    index("idx_strategy_pnl_snapshot_runtime_day").on(t.strategyRuntimeId, t.tradingDay),
+    index("idx_strategy_pnl_snapshot_symbol_day").on(t.symbol, t.tradingDay),
+  ]
+);
+
+/**
+ * 内置费率表。fill.fee 现在全 0，FeeCalculator 按 (broker, market, asset_class, side)
+ * 多维匹配本表（priority 越大越优先；'*' 通配 priority=10，精确匹配 priority=100）。
+ * 默认 seed 覆盖 CN/US/HK/CRYPTO 主流；'paper' broker 兜底零费率。
+ */
+export const feeSchedule = sqliteTable(
+  "fee_schedule",
+  {
+    id: id(),
+    /** 'paper' | 'futu' | 'ib' | 'ccxt' | '*' 通配 */
+    broker: text("broker").notNull(),
+    /** 'CN' | 'US' | 'HK' | 'CRYPTO' | '*' */
+    market: text("market").notNull(),
+    /** 'stock' | 'crypto' | 'future' | 'option' | '*' */
+    assetClass: text("asset_class").notNull(),
+    /** 'buy' | 'sell' | '*' */
+    side: text("side").notNull(),
+    commissionRate: real("commission_rate").notNull().default(0),
+    commissionMin: real("commission_min").notNull().default(0),
+    /** 印花税（CN A 股卖 0.001、HK 0.0013 等） */
+    stampDutyRate: real("stamp_duty_rate").notNull().default(0),
+    /** 过户费 / SEC fee / TAF 等 */
+    transferFeeRate: real("transfer_fee_rate").notNull().default(0),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** 越大越优先；精确匹配 100，通配 10 */
+    priority: integer("priority").notNull().default(0),
+    effectiveFrom: text("effective_from").notNull(),
+    /** null = 一直有效 */
+    effectiveTo: text("effective_to"),
+    metadataJson: text("metadata_json", { mode: "json" }).notNull().default("{}"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_fee_schedule_match").on(
+      t.broker,
+      t.market,
+      t.assetClass,
+      t.side,
+      t.enabled,
+      t.priority
+    ),
+  ]
+);

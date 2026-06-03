@@ -414,6 +414,13 @@
       "when": 1780704000000,
       "tag": "0059_memory_v2_p0",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1780790400000,
+      "tag": "0060_self_evolve_p4a_pnl_infra",
+      "breakpoints": true
     }
   ]
 }

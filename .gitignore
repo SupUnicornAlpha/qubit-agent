@@ -36,6 +36,8 @@ docs/*
 !docs/HITL_REDESIGN.md
 !docs/MONITORING_V2_DESIGN.md
 !docs/ENVIRONMENT_MANAGER_DESIGN.md
+!docs/MEMORY_V2_DESIGN.md
+!docs/SELF_EVOLVING_AGENT_DESIGN.md
 .tmp-broker-test-home/
 
 # IDE metadata
