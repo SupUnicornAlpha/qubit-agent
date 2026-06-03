@@ -39,6 +39,8 @@ docs/*
 !docs/MEMORY_V2_DESIGN.md
 !docs/SELF_EVOLVING_AGENT_DESIGN.md
 !docs/SELF_EVOLVING_AGENT_P10_BACKLOG.md
+!docs/canvases/
+!docs/canvases/**
 .tmp-broker-test-home/
 
 # IDE metadata
