@@ -1,21 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
-import type { AgentRole } from "../../types/entities";
+import { agentProfile } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
+import type { AgentRole } from "../../types/entities";
+import type { AnalystSignalValue } from "../../types/entities";
+import type { AgentSkillOutcome } from "../../types/entities";
 import { dispatchTaskToRole } from "../agent-pool";
 import {
-  assertTopologyTargetAllowed,
-  isTopologyTeamTool,
-  loadOrchestratorTopologyForWorkflow,
-  parseRoleFromTopologyTeamTool,
-  resolveDispatchRole,
-} from "../orchestration/topology-dispatch";
-import { getDataDir, writePackSelfEditMarkdown, type AgentPackSelfEditTarget } from "../agent/agent-pack-service";
-import { agentProfile } from "../../db/sqlite/schema";
-import { detectRegimeFromBars } from "../market/regime";
+  type AgentPackSelfEditTarget,
+  getDataDir,
+  writePackSelfEditMarkdown,
+} from "../agent/agent-pack-service";
+import { backtestJobService } from "../backtest/backtest-job-service";
+import { discoveryService } from "../discovery/discovery-service";
+import type { DiscoveryKind } from "../discovery/discovery-service";
+import { writeExecCallLog } from "../exec/exec-call-log";
+import { getExecProvider } from "../exec/registry";
+import { checkArgs, checkCwdScope, renderArgTemplate, runExec } from "../exec/runner";
+import type { ExecResult } from "../exec/types";
+import { factorService } from "../factor/factor-service";
+import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
+import { queryMarketNewsBrief } from "../market/news-brief-query";
+import { detectRegimeFromBars } from "../market/regime";
 import {
   computeBollinger,
   computeMacd,
@@ -23,40 +33,27 @@ import {
   computeSma,
   snapshotIndicators,
 } from "../market/technical-indicators";
-import { queryMarketNewsBrief } from "../market/news-brief-query";
-import { parseHitlApproval } from "../workflow/hitl-service";
-import { fuseSignals, type RawAnalystSignal } from "../msa/signal-fusion";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
 import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
-import type { AnalystSignalValue } from "../../types/entities";
-import { runStockScreener } from "../screener/stock-screener";
-import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
-import { factorService } from "../factor/factor-service";
-import { ruleService } from "../rule/rule-service";
-import { strategyComposer } from "../strategy/strategy-composer";
-import { backtestJobService } from "../backtest/backtest-job-service";
-import { discoveryService } from "../discovery/discovery-service";
-import type { DiscoveryKind } from "../discovery/discovery-service";
-import { runPythonSandbox } from "../sandbox/python-sandbox";
-import type {
-  FactorCategory,
-  FactorLang,
-  FactorStatus,
-} from "../factor/factor-service";
-import type {
-  RuleAppliesTo,
-  RuleLang,
-  RuleStatus,
-} from "../rule/rule-service";
-import type {
-  StrategyKind,
-  WeightMethod,
-} from "../strategy/strategy-composer";
+import { type RawAnalystSignal, fuseSignals } from "../msa/signal-fusion";
+import {
+  assertTopologyTargetAllowed,
+  isTopologyTeamTool,
+  loadOrchestratorTopologyForWorkflow,
+  parseRoleFromTopologyTeamTool,
+  resolveDispatchRole,
+} from "../orchestration/topology-dispatch";
 import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
-import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
-import { resolveConnectorForTool } from "./tool-routes";
+import { ruleService } from "../rule/rule-service";
+import type { RuleAppliesTo, RuleLang, RuleStatus } from "../rule/rule-service";
+import { runPythonSandbox } from "../sandbox/python-sandbox";
+import { runStockScreener } from "../screener/stock-screener";
 import { skillService } from "../skills/skill-service";
-import type { AgentSkillOutcome } from "../../types/entities";
+import { strategyComposer } from "../strategy/strategy-composer";
+import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
+import { parseHitlApproval } from "../workflow/hitl-service";
+import { resolveConnectorForTool } from "./tool-routes";
+import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 
 const memoryConnector = new NativeMemoryConnector();
 
@@ -155,9 +152,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
    * 入参兼容下划线 / 驼峰双风格，避免 LLM 写错参数名硬性失败。
    */
   summarize_team_decision: async (ctx, params) => {
-    const fusionSummary = String(
-      params.fusion_summary ?? params.fusionSummary ?? ""
-    ).trim();
+    const fusionSummary = String(params.fusion_summary ?? params.fusionSummary ?? "").trim();
     const ticker = String(params.ticker ?? "").trim();
     if (!fusionSummary || !ticker) {
       throw new Error(
@@ -181,7 +176,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const pickRoles = (key1: string, key2: string): AgentRole[] | undefined => {
       const raw = params[key1] ?? params[key2];
       if (!Array.isArray(raw)) return undefined;
-      return raw.filter((r): r is AgentRole => typeof r === "string" && r.length > 0) as AgentRole[];
+      return raw.filter(
+        (r): r is AgentRole => typeof r === "string" && r.length > 0
+      ) as AgentRole[];
     };
     const attendedRoles = pickRoles("attended_roles", "attendedRoles");
     const missingRoles = pickRoles("missing_roles", "missingRoles");
@@ -313,8 +310,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const bars = await queryBarsRange({ symbol, exchange, period, startDate, endDate });
     const closes = bars.map((b) => b.close);
     const last = closes[closes.length - 1] ?? 0;
-    const mean252 =
-      closes.length > 0 ? closes.reduce((a, b) => a + b, 0) / closes.length : last;
+    const mean252 = closes.length > 0 ? closes.reduce((a, b) => a + b, 0) / closes.length : last;
     const peProxy = mean252 > 0 ? last / mean252 : null;
     return {
       symbol,
@@ -448,7 +444,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     await db.insert(longtermMemory).values({
       id,
       scope: scopeStr as never,
-      scopeId: scopeStr === "org" ? "default" : (projectId || "default"),
+      scopeId: scopeStr === "org" ? "default" : projectId || "default",
       definitionId: definitionId || null,
       memoryType: memoryType as never,
       contentJson: { content, ...params, source: "agent_consolidation" },
@@ -526,7 +522,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const idOrName = String(params.skillId ?? params.id ?? params.name ?? "").trim();
     if (!idOrName) throw new Error("skill.view: skillId or name is required");
     const skill =
-      (await skillService.findById(idOrName)) ?? (await skillService.findByName(projectId, idOrName));
+      (await skillService.findById(idOrName)) ??
+      (await skillService.findByName(projectId, idOrName));
     if (!skill) return { error: `skill not found: ${idOrName}` };
     return skill;
   },
@@ -534,7 +531,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   "skill.list": async (ctx, params) => {
     const projectId = String(params.projectId ?? params.project_id ?? ctx.projectId ?? "");
     if (!projectId) throw new Error("skill.list: projectId is required");
-    const opts: { includeArchived?: boolean; state?: "active" | "stale" | "archived" | "pending_review" } = {};
+    const opts: {
+      includeArchived?: boolean;
+      state?: "active" | "stale" | "archived" | "pending_review";
+    } = {};
     if (typeof params.includeArchived === "boolean") opts.includeArchived = params.includeArchived;
     if (typeof params.state === "string") {
       const s = params.state as "active" | "stale" | "archived" | "pending_review";
@@ -593,14 +593,20 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!skillId) throw new Error("skill.archive: skillId is required");
     const reason = typeof params.reason === "string" ? params.reason : undefined;
     const archived = await skillService.archive(skillId, reason);
-    return { skillId: archived.id, state: archived.state, message: "skill archived (recoverable via skill.patch state=active)" };
+    return {
+      skillId: archived.id,
+      state: archived.state,
+      message: "skill archived (recoverable via skill.patch state=active)",
+    };
   },
 
   "skill.use_record": async (ctx, params) => {
     const skillId = String(params.skillId ?? params.id ?? "").trim();
     if (!skillId) throw new Error("skill.use_record: skillId is required");
     const outcomeRaw = String(params.outcome ?? "unknown") as AgentSkillOutcome;
-    const outcome: AgentSkillOutcome = ["success", "fail", "partial", "unknown"].includes(outcomeRaw)
+    const outcome: AgentSkillOutcome = ["success", "fail", "partial", "unknown"].includes(
+      outcomeRaw
+    )
       ? outcomeRaw
       : "unknown";
     await skillService.recordUsage({
@@ -691,13 +697,14 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
      */
     const dryRunParam = params.dry_run ?? params.dryRun;
     let dryRun: boolean | { minRows?: number; minVariance?: number } = true;
-    if (dryRunParam === false || dryRunParam === "false" || dryRunParam === 0 || dryRunParam === "off") {
-      dryRun = false;
-    } else if (
-      dryRunParam &&
-      typeof dryRunParam === "object" &&
-      !Array.isArray(dryRunParam)
+    if (
+      dryRunParam === false ||
+      dryRunParam === "false" ||
+      dryRunParam === 0 ||
+      dryRunParam === "off"
     ) {
+      dryRun = false;
+    } else if (dryRunParam && typeof dryRunParam === "object" && !Array.isArray(dryRunParam)) {
       const cfg: { minRows?: number; minVariance?: number } = {};
       const dr = dryRunParam as Record<string, unknown>;
       if (dr.min_rows !== undefined) cfg.minRows = Number(dr.min_rows);
@@ -758,9 +765,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const valuesRaw = params.values;
     const values = Array.isArray(valuesRaw) ? (valuesRaw as FactorComputeRow[]) : [];
     const futureRaw = params.future_returns;
-    const futureReturns = Array.isArray(futureRaw)
-      ? (futureRaw as FactorComputeRow[])
-      : undefined;
+    const futureReturns = Array.isArray(futureRaw) ? (futureRaw as FactorComputeRow[]) : undefined;
     return factorService.evaluate({
       factorId,
       values,
@@ -852,7 +857,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         name,
         category: String(params["category"] ?? "momentum") as FactorCategory,
         expr: exprRaw.trim(),
-        ...(params["lang"] ? { lang: String(params["lang"]) as FactorLang } : { lang: "qlib_expr" as FactorLang }),
+        ...(params["lang"]
+          ? { lang: String(params["lang"]) as FactorLang }
+          : { lang: "qlib_expr" as FactorLang }),
         ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       });
       factorId = registered.id;
@@ -917,8 +924,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const symbols = Array.isArray(symbolsRaw)
       ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       : undefined;
-    const horizonDays =
-      params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
+    const horizonDays = params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
 
     type BatchItem = {
       factor_id: string;
@@ -976,11 +982,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     );
     const sortedByRankIc = [...finite].sort((a, b) => Math.abs(b.rank_ic) - Math.abs(a.rank_ic));
     const meanRankIc =
-      finite.length > 0
-        ? finite.reduce((sum, i) => sum + i.rank_ic, 0) / finite.length
-        : 0;
-    const meanIr =
-      finite.length > 0 ? finite.reduce((sum, i) => sum + i.ir, 0) / finite.length : 0;
+      finite.length > 0 ? finite.reduce((sum, i) => sum + i.rank_ic, 0) / finite.length : 0;
+    const meanIr = finite.length > 0 ? finite.reduce((sum, i) => sum + i.ir, 0) / finite.length : 0;
 
     return {
       ok: true,
@@ -1031,7 +1034,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (expressions.length < minCount) {
       throw new Error(
         `factor.mine.llm: expressions.length(${expressions.length}) < min_count(${minCount}); ` +
-          "一次至少产" + minCount + "个 qlib_expr 表达式以充分利用评估闸门"
+          "一次至少产" +
+          minCount +
+          "个 qlib_expr 表达式以充分利用评估闸门"
       );
     }
 
@@ -1048,8 +1053,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     const topK = Number(params.top_k ?? 5);
-    const horizonDays =
-      params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
+    const horizonDays = params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
     const icThreshold = Number(params.ic_threshold ?? 0.02);
     const autoPromote = params.auto_promote === false ? false : true;
     const namePrefix = String(params.name_prefix ?? "llm_mined").trim() || "llm_mined";
@@ -1222,9 +1226,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
               kind: String((signals as Record<string, unknown>)["kind"] ?? "factor_score"),
               expr: String((signals as Record<string, unknown>)["expr"] ?? ""),
               lang: String((signals as Record<string, unknown>)["lang"] ?? "qlib_expr"),
-              ...((signals as Record<string, unknown>)["reverse"]
-                ? { reverse: true }
-                : {}),
+              ...((signals as Record<string, unknown>)["reverse"] ? { reverse: true } : {}),
             } as never,
           }
         : {}),
@@ -1250,9 +1252,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         ? (varsRaw as Record<string, unknown>)
         : {};
     const timeoutSec =
-      typeof params.timeout_sec === "number" && params.timeout_sec > 0
-        ? params.timeout_sec
-        : 30;
+      typeof params.timeout_sec === "number" && params.timeout_sec > 0 ? params.timeout_sec : 30;
     const maxStdoutBytes =
       typeof params.max_stdout_bytes === "number" && params.max_stdout_bytes > 0
         ? params.max_stdout_bytes
@@ -1366,6 +1366,299 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (ctx.definition.id) ingest.definitionId = ctx.definition.id;
     const r = await watcherMod.reportExplicitGap(ingest);
     return { ok: true, ...r };
+  },
+
+  // ─── Exec 能力源（CLI 工具 + 外部 agentic CLI） ──────────────────────────
+  // 详见 src/runtime/exec/types.ts 模块注释（2026 "CLI vs MCP" 争论后的 hybrid 方案）
+  //
+  // 设计要点：
+  //   - act 节点已自动跑 sandbox.checkToolCall（工具名层白名单）
+  //   - 这里再做 binary 层白名单（必须在 EXEC_PROVIDERS 中注册）+ cwd 边界 + arg 元字符防御
+  //   - 错误统一返回 ExecResult 结构（ok=false + error code），不 throw，让 ReAct 自纠错
+  /**
+   * shell.exec — 让 agent 直接调用本地 CLI（git/jq/duckdb/rg/...）。
+   *
+   * 调用形态：
+   *   { tool: "shell.exec", params: {
+   *       binary: "duckdb",
+   *       args: ["-c", "SELECT count(*) FROM 'bars.parquet'"],
+   *       cwd: "/Users/.../projects/<pid>/workflows/<runId>",
+   *       timeoutMs: 30000   // 可选
+   *   } }
+   *
+   * cwd 必须落在 provider.workdirStrategy 限定的根目录下，
+   * args 走数组形式不经 shell（防注入）。
+   *
+   * 所有路径（含治理拦截）都落 exec_call_log，让监控页能看到"被拦下"的次数。
+   */
+  "shell.exec": async (ctx, params) => {
+    const binary = String(params.binary ?? "").trim();
+    if (!binary) throw new Error("shell.exec: binary is required");
+
+    const argsRaw = params.args;
+    const args = Array.isArray(argsRaw)
+      ? argsRaw.map((a) => (typeof a === "string" ? a : String(a)))
+      : [];
+    const cwd = String(params.cwd ?? "").trim();
+    const stdinText = typeof params.stdinText === "string" ? params.stdinText : undefined;
+    const stdinBytes = stdinText ? Buffer.byteLength(stdinText, "utf-8") : 0;
+
+    const logBase = {
+      toolCallId: ctx.toolCallId ?? "",
+      agentStepId: ctx.agentStepId ?? "",
+      workflowRunId: ctx.workflowId,
+      agentDefinitionId: ctx.definition.id,
+      traceId: ctx.traceId,
+      providerId: binary,
+      execKind: "shell" as const,
+      binary,
+      args,
+      cwd,
+      stdinBytes,
+    };
+    const earlyResult = (result: ExecResult): ExecResult => {
+      void writeExecCallLog({ ...logBase, result });
+      return result;
+    };
+
+    const provider = await getExecProvider(binary, "shell");
+    if (!provider) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "binary_not_registered",
+        errorDetail: `binary "${binary}" is not in EXEC_PROVIDERS; register it in $dataDir/exec-providers.json or pick from the built-in list (git/jq/rg/duckdb)`,
+      });
+    }
+
+    if (!cwd) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "cwd_escape",
+        errorDetail: "shell.exec: cwd is required (must be absolute path within workdir scope)",
+      });
+    }
+
+    const cwdCheck = checkCwdScope(cwd, provider, {
+      projectId: ctx.projectId,
+      workflowId: ctx.workflowId,
+    });
+    if (!cwdCheck.ok) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "cwd_escape",
+        errorDetail: cwdCheck.reason ?? "cwd escape",
+      });
+    }
+
+    const argCheck = checkArgs(provider, args);
+    if (!argCheck.ok) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: argCheck.reason?.includes("subcommand") ? "disallowed_subcommand" : "shell_metachar",
+        errorDetail: argCheck.reason ?? "arg rejected",
+      });
+    }
+
+    const timeoutMs =
+      typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : undefined;
+
+    const result = await runExec({
+      provider,
+      args,
+      cwd,
+      ...(stdinText !== undefined ? { stdinText } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      toolCallContext: {
+        ...(ctx.workflowId ? { workflowId: ctx.workflowId } : {}),
+        ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
+        ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+      },
+    });
+    void writeExecCallLog({
+      ...logBase,
+      providerId: provider.id,
+      binary: provider.command,
+      result,
+    });
+    return result;
+  },
+
+  /**
+   * cli_agent.run — 把外部 agentic CLI（claude-code / aider / codex）作为子智能体调用。
+   *
+   * 调用形态：
+   *   { tool: "cli_agent.run", params: {
+   *       agentId: "claude-code",
+   *       task: "在 src/runtime/factor/ 下新增 risk_parity 因子，参考已有 alpha101 风格",
+   *       cwd: "/Users/.../projects/<pid>/workflows/<runId>",
+   *       files: ["src/runtime/factor/momentum.ts"],   // 可选：通过 argTemplate {files...} 展开
+   *       timeoutMs: 600000   // 可选
+   *   } }
+   *
+   * 与 shell.exec 的差别：
+   *   - args 不由 LLM 自由组装，而是从 provider.argTemplate 渲染（占位符 {prompt}/{cwd}/{files...}）
+   *   - 默认超时长（5-10 分钟）；输出截断阈值高（256KB）
+   *   - lifecycle=unsafe，UI 应高亮警示
+   */
+  "cli_agent.run": async (ctx, params) => {
+    const agentId = String(params.agentId ?? "").trim();
+    if (!agentId) throw new Error("cli_agent.run: agentId is required");
+
+    const task = String(params.task ?? "").trim();
+    const cwd = String(params.cwd ?? "").trim();
+    const filesRaw = params.files;
+    const files = Array.isArray(filesRaw)
+      ? filesRaw.filter((f): f is string => typeof f === "string" && f.length > 0)
+      : undefined;
+
+    const logBase = {
+      toolCallId: ctx.toolCallId ?? "",
+      agentStepId: ctx.agentStepId ?? "",
+      workflowRunId: ctx.workflowId,
+      agentDefinitionId: ctx.definition.id,
+      traceId: ctx.traceId,
+      providerId: agentId,
+      execKind: "cli_agent" as const,
+      binary: agentId,
+      args: [] as string[],
+      cwd,
+      stdinBytes: 0,
+    };
+    const earlyResult = (result: ExecResult, args: string[] = []): ExecResult => {
+      void writeExecCallLog({ ...logBase, args, result });
+      return result;
+    };
+
+    const provider = await getExecProvider(agentId, "cli_agent");
+    if (!provider) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "binary_not_registered",
+        errorDetail: `cli_agent "${agentId}" is not in EXEC_PROVIDERS (kind=cli_agent); built-in: claude-code, aider`,
+      });
+    }
+
+    if (!task) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "exec_failed",
+        errorDetail: "cli_agent.run: task is required (non-empty natural-language prompt)",
+      });
+    }
+
+    if (!cwd) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "cwd_escape",
+        errorDetail: "cli_agent.run: cwd is required (must be absolute path within workdir scope)",
+      });
+    }
+
+    const cwdCheck = checkCwdScope(cwd, provider, {
+      projectId: ctx.projectId,
+      workflowId: ctx.workflowId,
+    });
+    if (!cwdCheck.ok) {
+      return earlyResult({
+        ok: false,
+        exitCode: null,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+        elapsedMs: 0,
+        error: "cwd_escape",
+        errorDetail: cwdCheck.reason ?? "cwd escape",
+      });
+    }
+
+    const template = provider.argTemplate ?? ["{prompt}"];
+    const args = renderArgTemplate(template, {
+      prompt: task,
+      cwd,
+      ...(files ? { files } : {}),
+    });
+
+    const argCheck = checkArgs(provider, args);
+    if (!argCheck.ok) {
+      return earlyResult(
+        {
+          ok: false,
+          exitCode: null,
+          stdout: "",
+          stderr: "",
+          truncated: false,
+          elapsedMs: 0,
+          error: "shell_metachar",
+          errorDetail: `cli_agent.run: task or files triggered metachar check: ${argCheck.reason}`,
+        },
+        args
+      );
+    }
+
+    const stdinText =
+      provider.stdinTemplate !== undefined
+        ? provider.stdinTemplate.replace(/\{prompt\}/g, task).replace(/\{cwd\}/g, cwd)
+        : undefined;
+    const stdinBytes = stdinText ? Buffer.byteLength(stdinText, "utf-8") : 0;
+    const timeoutMs =
+      typeof params.timeoutMs === "number" && params.timeoutMs > 0 ? params.timeoutMs : undefined;
+
+    const result = await runExec({
+      provider,
+      args,
+      cwd,
+      ...(stdinText !== undefined ? { stdinText } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      toolCallContext: {
+        ...(ctx.workflowId ? { workflowId: ctx.workflowId } : {}),
+        ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
+        ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+      },
+    });
+    void writeExecCallLog({
+      ...logBase,
+      providerId: provider.id,
+      binary: provider.command,
+      args,
+      stdinBytes,
+      result,
+    });
+    return result;
   },
 };
 

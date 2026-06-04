@@ -30,6 +30,7 @@ import {
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
+import { type ExecKind, getExecSummary } from "../runtime/monitor/exec-summary";
 import { type FailureScope, listFailures } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
 import { getMcpDiagnostics } from "../runtime/monitor/mcp-diagnostics";
@@ -575,6 +576,29 @@ monitorRouter.get("/mcp/summary", async (c) => {
   if (windowMinutes) input.windowMinutes = Number(windowMinutes);
   if (sessionId) input.sessionId = sessionId;
   const data = await getMcpSummary(input);
+  return c.json({ ok: true, data });
+});
+
+/**
+ * Exec 维度聚合 — /exec/summary（2026 "CLI vs MCP" hybrid 方案接入后新增）。
+ *
+ * 数据源：exec_call_log（migration 0075）。
+ * 输出按 (execKind, providerId) 聚合：success/error/timeout/sandbox_blocked 分布、
+ * 平均 latency / 平均 stdout 字节数、按 errorCode 切分 top 5、按 binary 切分 top 5。
+ * 让"哪个 binary 调用最多 / 哪类 error 多发 / cwd 是否常逃逸"一眼可见。
+ */
+monitorRouter.get("/exec/summary", async (c) => {
+  const windowMinutes = c.req.query("windowMinutes");
+  const sessionId = c.req.query("sessionId");
+  const execKindRaw = c.req.query("execKind");
+  const allowedKinds: ExecKind[] = ["shell", "cli_agent"];
+  const input: Parameters<typeof getExecSummary>[0] = {};
+  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
+  if (sessionId) input.sessionId = sessionId;
+  if (execKindRaw && (allowedKinds as string[]).includes(execKindRaw)) {
+    input.execKind = execKindRaw as ExecKind;
+  }
+  const data = await getExecSummary(input);
   return c.json({ ok: true, data });
 });
 

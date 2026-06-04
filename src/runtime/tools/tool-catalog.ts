@@ -30,6 +30,7 @@ export const TOOL_CATALOG_CATEGORIES: Record<
   macro: { label: "宏观策略", hint: "宏观指标与政策框架" },
   memory: { label: "记忆知识", hint: "跨会话记忆读写" },
   audit: { label: "审计报告", hint: "留痕与报告生成" },
+  exec: { label: "命令执行", hint: "本地 CLI 工具 + 外部 agentic CLI 子代理" },
 };
 
 const TOOL_META: Record<string, ToolMetaEntry> = {
@@ -288,6 +289,21 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description:
       "受限沙箱内执行 Python：白名单 builtins + 仅放行 numpy/pandas/scipy/math 等；可注入 vars (含 factor 值/价格序列等)，可指定 return_var 取回结构化结果（DataFrame→records）；30s 超时，禁 import os/sys/socket，禁 open / 网络 / 子进程。",
     category: "research",
+  },
+
+  // Exec 能力源：本地 CLI 工具 + 外部 agentic CLI
+  // 详见 src/runtime/exec/types.ts 设计文档（2026 "CLI vs MCP" 争论后的 hybrid 方案）
+  "shell.exec": {
+    description:
+      "执行 EXEC_PROVIDERS 白名单中的本地 CLI（默认 git/jq/rg/duckdb）。参数：binary, args[], cwd(必须在 workflow/project/data 目录内), timeoutMs?, stdinText?。args 走数组形式不经 shell。返回 {ok, exitCode, stdout, stderr, truncated, elapsedMs, error?}。",
+    category: "exec",
+    lifecycle: "experimental",
+  },
+  "cli_agent.run": {
+    description:
+      "把外部 agentic CLI（默认 claude-code/aider）作为子智能体调用，把长 horizon 编码任务整包外包。参数：agentId, task(自然语言), cwd, files?, timeoutMs?。LLM 不自由组装 args，由 provider.argTemplate 渲染。默认 10min 超时，输出截断 256KB。",
+    category: "exec",
+    lifecycle: "experimental",
   },
 };
 

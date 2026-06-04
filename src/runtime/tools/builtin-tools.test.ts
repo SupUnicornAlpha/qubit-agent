@@ -86,6 +86,85 @@ describe("builtin tool handlers", () => {
     expect(isBuiltinTool("analyze_policy")).toBe(false);
     expect(isBuiltinTool("get_analyst_ratings")).toBe(false);
   });
+
+  /**
+   * Exec 能力源接入回归（2026 "CLI vs MCP" hybrid 方案）：
+   * - shell.exec / cli_agent.run 是 builtin（不是 connector / mcp）
+   * - catalog 把它们归在 exec 分类、lifecycle=experimental，方便 UI 识别
+   * - 默认 seed agent definitions 里只有 research / backtest 默认带 shell.exec，
+   *   只有 research 默认带 cli_agent.run（避免无差别开放 attack surface）
+   */
+  test("exec tools registered as builtin + categorized in catalog", async () => {
+    expect(isBuiltinTool("shell.exec")).toBe(true);
+    expect(isBuiltinTool("cli_agent.run")).toBe(true);
+    expect(isRoutedTool("shell.exec")).toBe(false);
+    expect(isRoutedTool("cli_agent.run")).toBe(false);
+
+    const catalog = buildToolCatalog();
+    const shellEntry = catalog.find((e) => e.name === "shell.exec");
+    const cliAgentEntry = catalog.find((e) => e.name === "cli_agent.run");
+    expect(shellEntry?.kind).toBe("builtin");
+    expect(shellEntry?.category).toBe("exec");
+    expect(shellEntry?.lifecycle).toBe("experimental");
+    expect(cliAgentEntry?.kind).toBe("builtin");
+    expect(cliAgentEntry?.category).toBe("exec");
+    expect(cliAgentEntry?.lifecycle).toBe("experimental");
+  });
+
+  test("seed agent defaults: research/backtest get exec tools, others don't", async () => {
+    const { SEED_AGENT_DEFINITIONS } = await import("../seed-agent-definitions-data");
+    const research = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-research");
+    const backtest = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-backtest");
+    const orchestrator = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-orchestrator");
+    const analystTech = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-analyst-technical");
+
+    expect(research?.tools).toContain("shell.exec");
+    expect(research?.tools).toContain("cli_agent.run");
+    expect(backtest?.tools).toContain("shell.exec");
+    // backtest 暂不开 cli_agent.run（数值计算 agent，外包给 coding agent 价值不大）
+    expect(backtest?.tools).not.toContain("cli_agent.run");
+    // orchestrator / analyst 默认不开（保守 attack surface）
+    expect(orchestrator?.tools).not.toContain("shell.exec");
+    expect(orchestrator?.tools).not.toContain("cli_agent.run");
+    expect(analystTech?.tools).not.toContain("shell.exec");
+    expect(analystTech?.tools).not.toContain("cli_agent.run");
+  });
+
+  test("exec tools sandbox loadPolicy fall back to definition.tools when row.allowedToolsJson is empty", async () => {
+    // sandbox-executor.loadPolicy 路径：
+    //   - row 存在 + allowedToolsJson=[] → fall back 到 definition.tools（"wide-open dev"）
+    //   - row 存在 + allowedToolsJson 非空 → 用 row 列表
+    //   - row 不存在 → fail closed（空集）
+    // 我们关心的是第一种 fall-back 路径必须把 shell.exec / cli_agent.run 透出来，
+    // 否则 def-research 默认 SEED 起的 dev 环境就跑不通 exec 工具。
+    //
+    // 测试自己 seed 一个固定 id 的空 sandbox_policy + 一个临时 RuntimeAgentDefinition
+    // 引用它，避免依赖 dev DB 里既存的 default-policy（混跑时其 allowedToolsJson 可能非空）。
+    const { runMigrations } = await import("../../db/sqlite/migrate");
+    const { getDb } = await import("../../db/sqlite/client");
+    const schema = await import("../../db/sqlite/schema");
+    const { SandboxExecutor } = await import("../sandbox-executor");
+    const { SEED_AGENT_DEFINITIONS } = await import("../seed-agent-definitions-data");
+
+    await runMigrations();
+    const db = await getDb();
+    const POLICY_ID = `sb-exec-${process.pid}`;
+    await db
+      .insert(schema.sandboxPolicy)
+      .values({ id: POLICY_ID, name: POLICY_ID, description: "exec test policy" })
+      .onConflictDoNothing();
+
+    const research = SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-research");
+    if (!research) throw new Error("def-research seed missing");
+
+    const executor = new SandboxExecutor();
+    const policy = await executor.loadPolicy({
+      ...research,
+      sandboxPolicyId: POLICY_ID,
+    });
+    expect(policy.allowedTools.has("shell.exec")).toBe(true);
+    expect(policy.allowedTools.has("cli_agent.run")).toBe(true);
+  });
 });
 
 describe("factor.mine.llm builtin (P0-4)", () => {
@@ -134,9 +213,7 @@ describe("factor.mine.llm builtin (P0-4)", () => {
     const { runMigrations } = await import("../../db/sqlite/migrate");
     const { getDb } = await import("../../db/sqlite/client");
     const schema = await import("../../db/sqlite/schema");
-    const { _resetBootstrapForTests, bootstrapProviders } = await import(
-      "../provider/bootstrap"
-    );
+    const { _resetBootstrapForTests, bootstrapProviders } = await import("../provider/bootstrap");
     await runMigrations();
     _resetBootstrapForTests();
     await bootstrapProviders();

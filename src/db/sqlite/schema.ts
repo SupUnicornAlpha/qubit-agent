@@ -817,6 +817,75 @@ export const toolCallLog = sqliteTable("tool_call_log", {
   createdAt: createdAt(),
 });
 
+/**
+ * Exec 能力源调用日志（migration 0075）。
+ *
+ * 与 `tool_call_log` 1:1 同主键：`exec_call_log.id === tool_call_log.id`。
+ * 仿照 mcp_call_log 同构，让监控页可以平滑 JOIN：
+ *   SELECT t.*, e.provider_id, e.exit_code, e.stdout_bytes
+ *   FROM tool_call_log t JOIN exec_call_log e ON t.id = e.id
+ *   WHERE t.tool_name IN ('shell.exec', 'cli_agent.run');
+ *
+ * 设计取舍：
+ *   - 不存 stdout/stderr 原文（可能 256KB 级），只存字节数 → 真要看输出从 tool_call_log.response_json 拿
+ *   - error_code 是 ExecResult 的结构化码（binary_not_found / cwd_escape / wall_timeout 等）
+ *   - status 沿用 tool_call_log 的 4 枚举，跨表 union 查询零映射
+ */
+export const execCallLog = sqliteTable("exec_call_log", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id),
+  agentStepId: text("agent_step_id")
+    .notNull()
+    .references(() => agentStep.id),
+  /** 监控 v3 P0：同 toolCallLog.agentDefinitionId，避免按 Agent 切分时多跳 join。 */
+  agentDefinitionId: text("agent_definition_id").references(() => agentDefinition.id),
+  traceId: text("trace_id"),
+  retryCount: integer("retry_count").notNull().default(0),
+
+  // ─── Provider 维度（exec 独有，便于按 binary 切分） ─────────────────
+  /** EXEC_PROVIDERS 注册的 id（git / jq / duckdb / claude-code / aider）；空表示未走 registry */
+  providerId: text("provider_id").notNull(),
+  /** "shell" | "cli_agent" */
+  execKind: text("exec_kind", { enum: ["shell", "cli_agent"] }).notNull(),
+  /** 实际 binary（可能与 providerId 不同，例如 claude-code provider 的 binary 是 "claude"） */
+  binary: text("binary").notNull(),
+
+  // ─── 输入维度 ─────────────────────────────────────────────────────
+  /** argv 数组（不含 binary 本身），JSON 字符串 */
+  argsJson: text("args_json", { mode: "json" }).notNull().default("[]"),
+  /** 工作目录绝对路径 */
+  cwd: text("cwd").notNull(),
+  /** stdin 字节数（仅记长度，避免落原文） */
+  stdinBytes: integer("stdin_bytes").notNull().default(0),
+
+  // ─── 输出维度 ─────────────────────────────────────────────────────
+  /** 子进程退出码；NULL = 被 kill / timeout */
+  exitCode: integer("exit_code"),
+  /** stdout 字节数（截断前的原始量） */
+  stdoutBytes: integer("stdout_bytes").notNull().default(0),
+  /** stderr 字节数 */
+  stderrBytes: integer("stderr_bytes").notNull().default(0),
+  /** 是否触发 maxOutputBytes 截断（0/1） */
+  truncated: integer("truncated").notNull().default(0),
+
+  // ─── 状态维度 ─────────────────────────────────────────────────────
+  status: text("status", {
+    enum: ["success", "error", "timeout", "sandbox_blocked"],
+  }).notNull(),
+  /**
+   * ExecResult.error 的结构化错误码：
+   *   binary_not_found / binary_not_registered / cwd_escape / shell_metachar /
+   *   disallowed_subcommand / wall_timeout / output_truncated / nonzero_exit / exec_failed
+   */
+  errorCode: text("error_code"),
+  errorDetail: text("error_detail"),
+  latencyMs: integer("latency_ms"),
+
+  createdAt: createdAt(),
+});
+
 export const mcpCallLog = sqliteTable("mcp_call_log", {
   id: id(),
   workflowRunId: text("workflow_run_id")

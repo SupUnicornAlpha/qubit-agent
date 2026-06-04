@@ -1,19 +1,15 @@
-import { getDb } from "../../../db/sqlite/client";
-import { workflowRun } from "../../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
-import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
-import { sandboxExecutor } from "../../sandbox-executor";
-import type { AgentGraphState, StepStreamEvent } from "../state";
-import { dispatchMcpToolCall } from "../../mcp/dispatcher";
-import { logResearchTeamInteraction } from "../../research-team/interaction-log";
-import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
-import { resolveToolAlias } from "../../tools/tool-catalog";
-import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
-import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
-import { resolveConnectorForTool, resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
-import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
+import { getDb } from "../../../db/sqlite/client";
+import { workflowRun } from "../../../db/sqlite/schema";
+import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
+import { dispatchMcpToolCall } from "../../mcp/dispatcher";
+import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { logResearchTeamInteraction } from "../../research-team/interaction-log";
+import { sandboxExecutor } from "../../sandbox-executor";
+import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
+import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import {
   recordToolCallError,
   recordToolCallSandboxBlocked,
@@ -21,6 +17,10 @@ import {
   recordToolCallSuccess,
   recordToolCallTimeout,
 } from "../../tools/tool-call-log-service";
+import { resolveToolAlias } from "../../tools/tool-catalog";
+import { resolveConnectorForServerAlias, resolveConnectorForTool } from "../../tools/tool-routes";
+import type { AgentGraphState, StepStreamEvent } from "../state";
+import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 
 export async function actNode(
   state: AgentGraphState,
@@ -91,7 +91,12 @@ export async function actNode(
     return {
       observations: [
         ...state.observations,
-        { level: "error", toolParseError: true, message: parsed.message, reasonText: state.reasonText },
+        {
+          level: "error",
+          toolParseError: true,
+          message: parsed.message,
+          reasonText: state.reasonText,
+        },
       ],
     };
   }
@@ -146,9 +151,14 @@ export async function actNode(
   }
 
   const connectorTarget = !mcp
-    ? resolveConnectorForTool(effectiveToolName) ?? (parsedMcp ? resolveConnectorForServerAlias(parsedMcp.serverName) : undefined)
+    ? (resolveConnectorForTool(effectiveToolName) ??
+      (parsedMcp ? resolveConnectorForServerAlias(parsedMcp.serverName) : undefined))
     : undefined;
-  const targetKind: "mcp" | "tool" | "connector" = mcp ? "mcp" : connectorTarget ? "connector" : "tool";
+  const targetKind: "mcp" | "tool" | "connector" = mcp
+    ? "mcp"
+    : connectorTarget
+      ? "connector"
+      : "tool";
   const targetName = mcp
     ? `${mcp.serverName}/${mcp.toolName}`
     : connectorTarget
@@ -244,7 +254,13 @@ export async function actNode(
       type: "tool_call_end",
       stepIndex: state.iteration,
       ts: Date.now(),
-      payload: { toolCallId, status: "blocked_by_sandbox", reason: check.reason, targetKind, targetName },
+      payload: {
+        toolCallId,
+        status: "blocked_by_sandbox",
+        reason: check.reason,
+        targetKind,
+        targetName,
+      },
     });
     emit({
       runId: state.runId,
@@ -357,11 +373,17 @@ export async function actNode(
             definition: state.agentDefinition,
             reasonText: state.reasonText,
             inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
+            /**
+             * 透传 toolCallId / agentStepId 给 builtin handler，让 shell.exec /
+             * cli_agent.run 能在 exec_call_log（与 tool_call_log 1:1 同主键）落库。
+             */
+            toolCallId,
+            agentStepId,
           };
           const builtinResult = await dispatchBuiltinTool(
             effectiveToolName,
             toolCtx,
-            enrichedParams,
+            enrichedParams
           );
           if (effectiveToolName === "run_analyst_team") {
             return { result: "ok" as const, analystTeamResult: builtinResult };
@@ -410,7 +432,13 @@ export async function actNode(
       type: "tool_call_end",
       stepIndex: state.iteration,
       ts: Date.now(),
-      payload: { toolCallId, status: "timeout", reason: execution.result.reason, targetKind, targetName },
+      payload: {
+        toolCallId,
+        status: "timeout",
+        reason: execution.result.reason,
+        targetKind,
+        targetName,
+      },
     });
     emit({
       runId: state.runId,
@@ -592,4 +620,3 @@ export async function actNode(
     observations: nextObservations,
   };
 }
-

@@ -519,6 +519,13 @@
       "when": 1782086400000,
       "tag": "0074_agent_definition_user_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1782259200000,
+      "tag": "0075_exec_call_log",
+      "breakpoints": true
     }
   ]
 }

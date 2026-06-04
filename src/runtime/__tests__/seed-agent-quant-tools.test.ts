@@ -158,7 +158,8 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
       "memory.refresh_workspace",
     ]);
     const def = BY_ID.get("def-orchestrator");
-    expect(def!.version).toMatch(/^3\.4/);
+    // 版本上限放宽到 3.x（含 3.4 / 3.5 等小版本），任何 minor bump 不要无脑挂这个 test
+    expect(def!.version).toMatch(/^3\./);
   });
 
   test("M10.A2 升级：def-research 装上长期记忆工具", () => {
@@ -168,7 +169,8 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
       "memory.refresh_workspace",
     ]);
     const def = BY_ID.get("def-research");
-    expect(def!.version).toMatch(/^4\.1/);
+    // 4.1（M10.A2）→ 4.2（exec 接入，加 shell.exec / cli_agent.run），都满足 M10.A2 契约
+    expect(def!.version).toMatch(/^4\./);
   });
 
   test("M10.A2 升级：所有装上 consolidate_longterm 的 agent 必须也装 search_memory（确保闭环）", () => {

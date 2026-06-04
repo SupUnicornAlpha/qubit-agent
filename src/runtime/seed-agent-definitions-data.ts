@@ -222,8 +222,15 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-research",
     role: "research",
     name: "策略研究",
-    /** 4.0.0：装齐 M2/M6 量化工坊全套工具；4.1.0：长期记忆使用规约（M10.A2）— factor_archive/playbook 复用 + consolidation */
-    version: "4.1.0",
+    /**
+     * 4.0.0：装齐 M2/M6 量化工坊全套工具；
+     * 4.1.0：长期记忆使用规约（M10.A2）— factor_archive/playbook 复用 + consolidation；
+     * 4.2.0：接入 Exec 能力源 — shell.exec / cli_agent.run（2026 CLI vs MCP hybrid 方案）：
+     *        让 research agent 能直接用本地 CLI（duckdb 查数据集 / jq 处理 JSON / git 版本化策略）
+     *        以及把长 horizon 写因子任务派给外部 agentic CLI（claude-code / aider）。
+     *        两者均为 lifecycle=experimental，必须经 EXEC_PROVIDERS 白名单 + cwd 边界 + arg 元字符防御。
+     */
+    version: "4.2.0",
     systemPrompt: PROMPT_RESEARCH,
     tools: [
       // 基础数据
@@ -245,6 +252,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "backtest.run",
       // M7.3 沙箱代码执行（拿大量数据做自由分析 / 算 IC 矩阵 / 算相关性等）
       "code.run_python",
+      // Exec 能力源：本地 CLI 工具 + 外部 agentic CLI（详见 src/runtime/exec/types.ts）
+      "shell.exec",
+      "cli_agent.run",
       // M10.A2 长期记忆 — factor_archive / playbook 复用 + 主动 consolidate
       "search_memory",
       "memory.consolidate_longterm",
@@ -268,8 +278,13 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-backtest",
     role: "backtest",
-    /** 4.0.0：装上事件驱动回测 backtest.run + 沙箱代码执行 */
-    version: "4.0.0",
+    /**
+     * 4.0.0：装上事件驱动回测 backtest.run + 沙箱代码执行；
+     * 4.1.0：接入 Exec 能力源（shell.exec），让回测 agent 用 duckdb 直查 parquet 结果集、
+     *        git 管理回测产物快照。暂不开 cli_agent.run——回测主要是数值计算，外包给
+     *        coding agent 价值不大。
+     */
+    version: "4.1.0",
     name: "回测",
     systemPrompt: PROMPT_BACKTEST,
     tools: [
@@ -284,6 +299,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.compute",
       // 自由分析（如计算多回测同图 metrics、回归归因）
       "code.run_python",
+      // Exec 能力源：duckdb 直查 parquet 回测产物 / git 版本化回测脚本
+      "shell.exec",
       // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
       "skill.search",
       "skill.use_record",
