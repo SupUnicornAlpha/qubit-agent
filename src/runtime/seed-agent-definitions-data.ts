@@ -1,5 +1,10 @@
 import type { RuntimeAgentDefinition } from "./types";
-import { ROLE_CONNECTOR_MCPS, ROLE_SKILLS, resolveSeedMcpServers } from "./seed-agent-catalog";
+import {
+  ROLE_CONNECTOR_MCPS,
+  ROLE_OUTPUTS,
+  ROLE_SKILLS,
+  resolveSeedMcpServers,
+} from "./seed-agent-catalog";
 import {
   PROMPT_ANALYST_FUNDAMENTAL,
   PROMPT_ANALYST_MACRO,
@@ -23,6 +28,11 @@ function def(
     /** 仅真实 MCP（mathjs / mcp-financex / 已启用的 fsi-*）；connector 走 tools 列表，勿写入 mcpServers */
     mcpServers: resolveSeedMcpServers(role, partial.mcpServers ?? []),
     skills: partial.skills ?? ROLE_SKILLS[role] ?? [],
+    /**
+     * 产出能力（migration 0073）。未显式传时按 role 走 ROLE_OUTPUTS 默认；
+     * 老 def 不传时默认 `[]`（dispatcher 走 role-name 老 fallback，保持兼容）。
+     */
+    outputs: partial.outputs ?? ROLE_OUTPUTS[role] ?? [],
     subscriptions: partial.subscriptions ?? ["TASK_ASSIGN"],
     llmProvider: partial.llmProvider ?? "openai:gpt-4o",
     maxIterations: partial.maxIterations ?? 20,

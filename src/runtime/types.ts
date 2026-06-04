@@ -19,6 +19,31 @@ export interface AgentLlmConfig {
   reasoningEffort?: "low" | "medium" | "high";
 }
 
+/**
+ * 角色产出能力声明（migration 0073）。
+ *
+ * Dispatcher（analyst-team.ts 等）按这组标签把 slot 输出分桶进对应聚合通道：
+ *   - 'signal'             → MSA fusion 投票（hold/buy/sell + confidence）
+ *   - 'report'             → 报告聚合（Markdown 章节）
+ *   - 'events'             → 事件 / 催化剂列表
+ *   - 'factor_candidates'  → 候选因子（名称 + 表达式 + 检验指标）
+ *   - 'strategy_dsl'       → JSON-DSL 策略
+ *   - 'backtest_results'   → 回测 run + 指标
+ *   - 'risk_assessment'    → 风控审核（approved/vetoed + 评分 + rulesTriggered）
+ *
+ * 一个 role 可声明多种产出（如 def-research 同时产 report + factor_candidates +
+ * strategy_dsl）。空数组（旧 def / 第三方）走 dispatcher 老 fallback，按
+ * role 名走 `isMsAnalystRole` 等历史判断（兼容路径）。
+ */
+export type AgentOutput =
+  | "signal"
+  | "report"
+  | "events"
+  | "factor_candidates"
+  | "strategy_dsl"
+  | "backtest_results"
+  | "risk_assessment";
+
 export interface RuntimeAgentDefinition {
   id: string;
   role: AgentRole;
@@ -35,6 +60,11 @@ export interface RuntimeAgentDefinition {
    * 老 agent 行 / seed 没写时为 `undefined` 或 `{}`，等价于全部走网关默认值。
    */
   llmConfig?: AgentLlmConfig;
+  /**
+   * 产出能力（migration 0073）；DB 列 `agent_definition.outputs_json` 反序列化得到。
+   * 详见 `AgentOutput` JSDoc。空 / 未声明时 dispatcher 走 role 名 fallback。
+   */
+  outputs?: readonly AgentOutput[];
   maxIterations: number;
   sandboxPolicyId: string;
   enabled: boolean;

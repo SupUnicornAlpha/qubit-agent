@@ -174,6 +174,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
       isFsiActive() && shouldApplyFsiAgentMappings()
         ? await mergeFsiSkillsForRole(def.role, def.skills)
         : def.skills;
+    const outputsJson = def.outputs ?? [];
     await db
       .insert(agentDefinition)
       .values({
@@ -188,6 +189,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
         subscriptionsJson: def.subscriptions,
         llmProvider: def.llmProvider,
         llmConfigJson: def.llmConfig ?? {},
+        outputsJson,
         maxIterations: def.maxIterations,
         sandboxPolicyId: def.sandboxPolicyId,
         enabled: def.enabled,
@@ -205,6 +207,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
           subscriptionsJson: def.subscriptions,
           llmProvider: def.llmProvider,
           llmConfigJson: def.llmConfig ?? {},
+          outputsJson,
           maxIterations: def.maxIterations,
           sandboxPolicyId: def.sandboxPolicyId,
           enabled: def.enabled,
@@ -610,12 +613,14 @@ async function upsertBuiltinAgentGroup(
       name: spec.name,
       description: spec.description,
       relationsJson,
+      pipelineKind: spec.pipelineKind,
     })
     .onConflictDoUpdate({
       target: agentGroup.id,
       set: {
         name: spec.name,
         description: spec.description,
+        pipelineKind: spec.pipelineKind,
         updatedAt: new Date().toISOString(),
         ...(shouldInjectTopo || options.force ? { relationsJson } : {}),
       },

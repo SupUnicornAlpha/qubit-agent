@@ -577,6 +577,18 @@ export const agentDefinition = sqliteTable("agent_definition", {
    *   - 网关只会 spread 已知字段，未知 knob 直接忽略，前向兼容。
    */
   llmConfigJson: text("llm_config_json", { mode: "json" }).notNull().default("{}"),
+  /**
+   * 角色产出能力（migration 0073）。Dispatcher 据此把 role 自动分桶进 MSA fusion /
+   * report aggregator / events collector / factor candidates collector / 等。
+   *
+   * 取代了硬编码的 `isMsAnalystRole` / `POST_FUSION_AUX_ROLES` / `RESEARCH_TEAM_SLOT_SET`
+   * 三套散落 role 列表。空数组（旧 seed 行 / 第三方 def）走 dispatcher 兼容路径，
+   * 仍按 role 名走老 fallback。
+   *
+   * 合法值：`signal | report | events | factor_candidates | strategy_dsl | backtest_results | risk_assessment`
+   * 详见 src/runtime/types.ts `AgentOutput`。
+   */
+  outputsJson: text("outputs_json", { mode: "json" }).notNull().default("[]"),
   maxIterations: integer("max_iterations").notNull().default(20),
   sandboxPolicyId: text("sandbox_policy_id")
     .notNull()
@@ -594,6 +606,19 @@ export const agentGroup = sqliteTable("agent_group", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   relationsJson: text("relations_json", { mode: "json" }).notNull().default("[]"),
+  /**
+   * 编组的 dispatch 模式（migration 0073）。决定 analyst-team.ts / 同类 runner
+   * 怎么编排 memberRoles 的产出。
+   *
+   * 合法值（详见 src/runtime/seed-agent-catalog.ts `AgentGroupPipelineKind`）：
+   *   - 'msa_fusion'          : 4 类 analyst_* → 投票融合 → 可选 aux post-fusion（**当前默认行为**）
+   *   - 'sequential_research' : 按 memberRoles 顺序跑，无 MSA 投票
+   *   - 'event_radar'         : events 角色主导扫描，signal 角色辅助
+   *   - 'factor_discovery'    : research → factor_candidates → backtest_results
+   *
+   * 默认 'msa_fusion'：旧编组 / 用户自定义不指定时保持现状语义。
+   */
+  pipelineKind: text("pipeline_kind").notNull().default("msa_fusion"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

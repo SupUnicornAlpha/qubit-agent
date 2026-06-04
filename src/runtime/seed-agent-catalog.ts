@@ -4,6 +4,7 @@
  */
 
 import type { AgentRole } from "../types/entities";
+import type { AgentOutput } from "./types";
 import { RECOMMENDED_MCP_NAMES } from "./seed-recommended-mcp-servers";
 
 /** 量化平台通用 MCP（math / financex 等） */
@@ -88,12 +89,46 @@ export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[]
   return out;
 }
 
+/**
+ * 编组的 dispatch 模式（migration 0073）。
+ *
+ * Dispatcher（src/runtime/msa/analyst-team.ts 及未来同类 runner）按这个枚举决定
+ * 如何编排 memberRoles 的产出。**新增 group 时必须显式指定**——避免再次落入
+ * "硬编码 isMsAnalystRole 把非 4 类 analyst_* 偷偷丢弃" 的历史坑。
+ *
+ *   - 'msa_fusion'           Orchestrator + 4 类 analyst_* → MSA 信号融合 →
+ *                            可选 aux post-fusion（research/backtest/risk）。
+ *                            **当前默认行为**；适合单标 / 篮子的多视角共识。
+ *
+ *   - 'sequential_research'  按 memberRoles 顺序串行执行，无 MSA 投票。
+ *                            适合：strategy_pipeline (research→backtest→risk)、
+ *                            postmortem (research+macro 归因)、
+ *                            screening (research+2 分析师选股) 等无需信号汇总的链条。
+ *
+ *   - 'event_radar'          events 角色（news_event）主导扫描，signal 角色
+ *                            （analyst_sentiment）辅助评估市场情绪。
+ *                            产出 events[] + report，不参与 MSA fusion。
+ *
+ *   - 'factor_discovery'     research → factor_candidates → backtest_results
+ *                            的特化串行；包含 walk-forward 验证师把关。
+ */
+export type AgentGroupPipelineKind =
+  | "msa_fusion"
+  | "sequential_research"
+  | "event_radar"
+  | "factor_discovery";
+
 export type BuiltinAgentGroupSpec = {
   id: string;
   name: string;
   description: string;
   memberDefinitionIds: readonly string[];
   memberRoles: readonly AgentRole[];
+  /**
+   * 编组的 dispatch 模式（migration 0073）。落 `agent_group.pipeline_kind` 列。
+   * 详见 `AgentGroupPipelineKind` JSDoc。
+   */
+  pipelineKind: AgentGroupPipelineKind;
 };
 
 /** 默认编排团队（10 成员 = Orchestrator + 9 专家） */
@@ -126,6 +161,7 @@ export const DEFAULT_ORCHESTRATION_GROUP: BuiltinAgentGroupSpec = {
     "backtest",
     "risk",
   ],
+  pipelineKind: "msa_fusion",
 };
 
 /** 全分析师编组：四维 MSA + 多空博弈，不进入策略/回测 */
@@ -148,6 +184,7 @@ export const FULL_ANALYST_GROUP: BuiltinAgentGroupSpec = {
     "analyst_sentiment",
     "analyst_macro",
   ],
+  pipelineKind: "msa_fusion",
 };
 
 /** 策略撰写编组：MSA/辩论之后专门产出可回测策略 */
@@ -163,6 +200,7 @@ export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
     "def-risk",
   ],
   memberRoles: ["orchestrator", "research", "backtest", "risk"],
+  pipelineKind: "sequential_research",
 };
 
 // ─── M1：研究场景化新增编组（详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6.4） ───
@@ -187,6 +225,12 @@ export const FACTOR_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
     "analyst_fundamental",
     "analyst_technical",
   ],
+  /**
+   * 注意：本编组只做"候选因子 + 同行评审"，**不跑 backtest**（无 def-backtest 成员）。
+   * 因此 pipelineKind 是 sequential_research 而非 factor_discovery
+   * （后者要求成员包含 backtest_results 产出者，由 grp-discovery 承担）。
+   */
+  pipelineKind: "sequential_research",
 };
 
 /**
@@ -203,6 +247,7 @@ export const RULE_RESEARCH_GROUP: BuiltinAgentGroupSpec = {
   description: "基于现有因子库生成可解释的 JSON-DSL 规则并入库。",
   memberDefinitionIds: ["def-orchestrator", "def-research", "def-risk"],
   memberRoles: ["orchestrator", "research", "risk"],
+  pipelineKind: "sequential_research",
 };
 
 /**
@@ -228,6 +273,7 @@ export const STOCK_SCREENING_GROUP: BuiltinAgentGroupSpec = {
     "analyst_fundamental",
     "analyst_sentiment",
   ],
+  pipelineKind: "sequential_research",
 };
 
 /**
@@ -243,6 +289,7 @@ export const RISK_REVIEW_GROUP: BuiltinAgentGroupSpec = {
   description: "审查策略历史与现有限额，产出新的风控规则建议。",
   memberDefinitionIds: ["def-orchestrator", "def-risk", "def-research"],
   memberRoles: ["orchestrator", "risk", "research"],
+  pipelineKind: "sequential_research",
 };
 
 /**
@@ -264,6 +311,7 @@ export const PORTFOLIO_MANAGEMENT_GROUP: BuiltinAgentGroupSpec = {
     "def-backtest",
   ],
   memberRoles: ["orchestrator", "research", "risk", "backtest"],
+  pipelineKind: "sequential_research",
 };
 
 /** 因子/规则/策略 挖掘：orchestrator + research + backtest_engineer */
@@ -281,6 +329,7 @@ export const DISCOVERY_GROUP: BuiltinAgentGroupSpec = {
     "def-walk-forward-validator",
   ],
   memberRoles: ["orchestrator", "research", "backtest", "backtest_engineer"],
+  pipelineKind: "factor_discovery",
 };
 
 /**
@@ -297,6 +346,7 @@ export const LIVE_TRADING_GROUP: BuiltinAgentGroupSpec = {
   description: "实盘下单、监控、风控记录；走 Live 闸门与 HMAC 签名。",
   memberDefinitionIds: ["def-orchestrator", "def-risk"],
   memberRoles: ["orchestrator", "risk"],
+  pipelineKind: "sequential_research",
 };
 
 /** 复盘归因：orchestrator + research + analyst_macro */
@@ -310,6 +360,7 @@ export const POSTMORTEM_GROUP: BuiltinAgentGroupSpec = {
     "def-analyst-macro",
   ],
   memberRoles: ["orchestrator", "research", "analyst_macro"],
+  pipelineKind: "sequential_research",
 };
 
 /** 事件雷达：orchestrator + news_event + analyst_sentiment */
@@ -323,6 +374,7 @@ export const NEWS_EVENT_RADAR_GROUP: BuiltinAgentGroupSpec = {
     "def-analyst-sentiment",
   ],
   memberRoles: ["orchestrator", "news_event", "analyst_sentiment"],
+  pipelineKind: "event_radar",
 };
 
 export const BUILTIN_AGENT_GROUPS: readonly BuiltinAgentGroupSpec[] = [
@@ -408,4 +460,30 @@ export const ROLE_CONNECTOR_MCPS: Partial<Record<AgentRole, string[]>> = {
   analyst_technical: ["qubit-data", "qubit-backtest"],
   analyst_sentiment: ["qubit-news"],
   analyst_macro: ["qubit-data"],
+};
+
+/**
+ * 角色产出能力默认映射（migration 0073）。
+ *
+ * Dispatcher（src/runtime/msa/analyst-team.ts 等）按 def.outputs 分桶——取代
+ * 三套硬编码 set（RESEARCH_TEAM_SLOT_SET / isMsAnalystRole / POST_FUSION_AUX_ROLES）。
+ *
+ * 单个 def 在 `seed-agent-definitions-data.ts` 中如果未显式传 outputs，
+ * 由 `def()` helper 从这里读 fallback。完全没声明（如未来第三方 def）
+ * 则等同于 `[]`，dispatcher 走 role-name 老 fallback（兼容路径）。
+ *
+ * 取值含义详见 src/runtime/types.ts `AgentOutput`。
+ */
+export const ROLE_OUTPUTS: Partial<Record<AgentRole, readonly AgentOutput[]>> = {
+  orchestrator: [],
+  market_data: ["report"],
+  news_event: ["events", "report"],
+  analyst_fundamental: ["signal", "report"],
+  analyst_technical: ["signal", "report"],
+  analyst_sentiment: ["signal", "report"],
+  analyst_macro: ["signal", "report"],
+  research: ["report", "factor_candidates", "strategy_dsl"],
+  backtest: ["backtest_results", "report"],
+  risk: ["risk_assessment", "report"],
+  backtest_engineer: ["backtest_results", "report"],
 };

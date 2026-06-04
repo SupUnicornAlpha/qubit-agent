@@ -103,3 +103,100 @@ describe("P2-F：稳定 type 检查（防回退）", () => {
     expect(Array.isArray(sample.memberRoles)).toBe(true);
   });
 });
+
+/**
+ * Migration 0073 卫生测试（防"哪些 role 做什么"再次硬编码进 dispatcher）。
+ *
+ * 触发场景（2026-06 评估批次实测）：
+ *   - case 5 (event-radar) news_event 在 memberRoles 里、但 dispatcher 用
+ *     `isMsAnalystRole` 过滤把它丢了，attendedRoles=[] / signals=0；
+ *   - case 4 (discovery) 同理 backtest_engineer 被丢。
+ *
+ * 修复路径：
+ *   - `agent_group.pipeline_kind` 决定编组 dispatch 模式（msa_fusion / sequential_research / ...）；
+ *   - `agent_definition.outputs` 决定角色产出能力（signal / report / events / ...）；
+ *   - Dispatcher 按 outputs 分桶（而非按 role 名硬编码 set），按 pipelineKind 路由。
+ *
+ * 本测试只校验 declarative 数据完整性，不校验 dispatcher 行为（dispatcher 重构
+ * 在 Phase B 单独验证）。
+ */
+describe("P0-01 / P1-04：pipeline_kind + outputs 卫生（migration 0073）", () => {
+  const VALID_PIPELINES = new Set([
+    "msa_fusion",
+    "sequential_research",
+    "event_radar",
+    "factor_discovery",
+  ]);
+  const VALID_OUTPUTS = new Set([
+    "signal",
+    "report",
+    "events",
+    "factor_candidates",
+    "strategy_dsl",
+    "backtest_results",
+    "risk_assessment",
+  ]);
+
+  for (const g of BUILTIN_AGENT_GROUPS) {
+    test(`group ${g.id} 必须声明合法 pipelineKind`, () => {
+      expect(typeof g.pipelineKind).toBe("string");
+      expect(VALID_PIPELINES.has(g.pipelineKind)).toBe(true);
+    });
+  }
+
+  for (const d of SEED_AGENT_DEFINITIONS) {
+    test(`def ${d.id} outputs 必须是合法 AgentOutput 数组`, () => {
+      expect(Array.isArray(d.outputs)).toBe(true);
+      for (const o of d.outputs ?? []) {
+        expect(VALID_OUTPUTS.has(o)).toBe(true);
+      }
+    });
+  }
+
+  test("event_radar 编组必须至少有一个角色产出 'events'（否则该模式无意义）", () => {
+    for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "event_radar")) {
+      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) =>
+        g.memberDefinitionIds.includes(d.id)
+      );
+      const hasEvents = memberDefs.some((d) => (d.outputs ?? []).includes("events"));
+      if (!hasEvents) {
+        throw new Error(`${g.id} pipelineKind=event_radar 但成员无人产出 events`);
+      }
+    }
+  });
+
+  test("factor_discovery 编组必须至少有 'factor_candidates' + 'backtest_results' 各一个", () => {
+    for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "factor_discovery")) {
+      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) =>
+        g.memberDefinitionIds.includes(d.id)
+      );
+      const hasFactor = memberDefs.some((d) =>
+        (d.outputs ?? []).includes("factor_candidates")
+      );
+      const hasBacktest = memberDefs.some((d) =>
+        (d.outputs ?? []).includes("backtest_results")
+      );
+      if (!hasFactor || !hasBacktest) {
+        throw new Error(
+          `${g.id} pipelineKind=factor_discovery 但成员缺 factor_candidates=${hasFactor} / backtest_results=${hasBacktest}`
+        );
+      }
+    }
+  });
+
+  test("msa_fusion 编组必须至少有 2 个 signal 产出者（否则无投票意义）", () => {
+    for (const g of BUILTIN_AGENT_GROUPS.filter((x) => x.pipelineKind === "msa_fusion")) {
+      const memberDefs = SEED_AGENT_DEFINITIONS.filter((d) =>
+        g.memberDefinitionIds.includes(d.id)
+      );
+      const signalCount = memberDefs.filter((d) =>
+        (d.outputs ?? []).includes("signal")
+      ).length;
+      if (signalCount < 2) {
+        throw new Error(
+          `${g.id} pipelineKind=msa_fusion 但仅 ${signalCount} 个 signal 产出者（需 ≥2）`
+        );
+      }
+    }
+  });
+});
