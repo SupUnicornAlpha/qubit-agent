@@ -165,13 +165,23 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
             <div style={styles.hint}>选中工作流后加载 LLM、工具与 MCP 调用统计…</div>
           ) : (
             <>
+              {/* P0-05：KPI 新增 "LLM 调用" + "成本"；都来自 llm_call_log，含内部直调 */}
               <div className="qb-monitor__kpi-row" style={styles.kpiRow}>
+                <Kpi label="LLM 调用" value={String(workflowObservability.llm.llmCalls)} accent="#a78bfa" />
                 <Kpi label="LLM reason 步" value={String(workflowObservability.llm.reasonSteps)} accent="#a78bfa" />
                 <Kpi
                   label="Token 合计"
                   value={
                     workflowObservability.llm.totalTokenCount != null
                       ? String(workflowObservability.llm.totalTokenCount)
+                      : "—"
+                  }
+                />
+                <Kpi
+                  label="成本(USD)"
+                  value={
+                    workflowObservability.llm.totalCostUsd != null
+                      ? workflowObservability.llm.totalCostUsd.toFixed(4)
                       : "—"
                   }
                 />
@@ -198,16 +208,21 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
                           <th style={styles.th}>工具</th>
                           <th style={styles.th}>MCP</th>
                           <th style={styles.th}>Tokens</th>
+                          <th style={styles.th}>成本(USD)</th>
                         </tr>
                       </thead>
                       <tbody>
                         {workflowObservability.byAgentRole.map((r) => (
                           <tr key={r.role} style={styles.tr}>
                             <td style={styles.td}>{r.role}</td>
-                            <td style={styles.td}>{r.reasonSteps}</td>
+                            {/* P0-05：从 reasonSteps 改为 llmCalls——后者含内部直调（更准） */}
+                            <td style={styles.td}>{r.llmCalls}</td>
                             <td style={styles.td}>{r.toolCalls}</td>
                             <td style={styles.td}>{r.mcpCalls}</td>
                             <td style={styles.td}>{r.tokens ?? "—"}</td>
+                            <td style={styles.td}>
+                              {r.llmCostUsd > 0 ? r.llmCostUsd.toFixed(4) : "—"}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

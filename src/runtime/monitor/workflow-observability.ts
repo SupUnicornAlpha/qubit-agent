@@ -4,15 +4,39 @@ import {
   agentDefinition,
   agentInstance,
   agentStep,
+  llmCallLog,
   mcpCallLog,
   toolCallLog,
 } from "../../db/sqlite/schema";
 
+/**
+ * Per-workflow observability 汇总。
+ *
+ * F-P0-05 修复（2026-06）：之前 LLM/per-role token 统计仅读 `agent_step.tokenCount`，
+ * 漏算了所有走 `runLlmGateway` 但不经过 reason 节点的内部调用（orchestrator
+ * planning / runDebateSession / summarize_team_decision / recommend-agent-group），
+ * 导致前端看到 totalTokenCount=null 或 per-role tokens=0。
+ *
+ * 现在用 `llm_call_log` 作为权威源（每次真实 LLM 调用一行，自带
+ * workflowRunId + agentDefinitionId + totalTokens + costUsd）；agent_step
+ * 字段保留兼容。
+ */
 export type WorkflowObservability = {
   workflowRunId: string;
   llm: {
+    /**
+     * 经过 reason 节点的 LLM 步骤数（来自 agent_step.phase='reason'）。
+     * 不包含 orchestrator planning / debate / summarize_team_decision 等
+     * 直走 gateway 的"内部"LLM 调用——后者用 `llmCalls` 字段反映。
+     */
     reasonSteps: number;
+    /** P0-05：所有真实 LLM 调用计数（包含 reason 节点 + 内部直调），来自 llm_call_log */
+    llmCalls: number;
     totalTokenCount: number | null;
+    /** P0-05：合计 prompt / completion 拆分 + cost，来自 llm_call_log */
+    totalPromptTokens: number | null;
+    totalCompletionTokens: number | null;
+    totalCostUsd: number | null;
     totalReasonLatencyMs: number | null;
   };
   tools: {
@@ -31,27 +55,55 @@ export type WorkflowObservability = {
     reasonSteps: number;
     toolCalls: number;
     mcpCalls: number;
+    /**
+     * P0-05：roll-up from `llm_call_log.totalTokens` (主源) →
+     * 回退到 agent_step.tokenCount (老字段)；不再两边一起空。
+     */
     tokens: number | null;
+    /** P0-05：真实 LLM 调用次数（按 def，含内部调用） */
+    llmCalls: number;
+    llmPromptTokens: number;
+    llmCompletionTokens: number;
+    llmCostUsd: number;
   }>;
 };
 
 export async function getWorkflowObservability(workflowRunId: string): Promise<WorkflowObservability> {
   const db = await getDb();
 
-  const [steps, instances, mcpRows] = await Promise.all([
+  /**
+   * P0-05：把 llm_call_log 拉进观测口径。一次性 4 个 query 减少 round-trip；
+   * llm_call_log 在生产基本与 agent_step 行数同数量级，全表 fetch 不是瓶颈。
+   */
+  const [steps, instances, mcpRows, llmRows] = await Promise.all([
     db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowRunId)),
     db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
     db.select().from(mcpCallLog).where(eq(mcpCallLog.workflowRunId, workflowRunId)),
+    db.select().from(llmCallLog).where(eq(llmCallLog.workflowRunId, workflowRunId)),
   ]);
 
-  const defIds = [...new Set(instances.map((i) => i.definitionId))];
+  /**
+   * defIds 现在合并两个源：
+   *   - agent_instance.definitionId（reason 节点路径）
+   *   - llm_call_log.agentDefinitionId（内部直调路径，比如 orchestrator planning）
+   * 一次 query 拿齐全部用到的 def role。
+   */
+  const defIdsRaw = [
+    ...instances.map((i) => i.definitionId),
+    ...llmRows.map((r) => r.agentDefinitionId).filter((x): x is string => !!x),
+  ];
+  const defIds = [...new Set(defIdsRaw)];
   const defs =
     defIds.length > 0
       ? await db.select().from(agentDefinition).where(inArray(agentDefinition.id, defIds))
       : [];
+  const roleByDef = new Map<string, string>();
+  for (const d of defs) {
+    roleByDef.set(d.id, d.role);
+  }
   const roleByInst = new Map<string, string>();
   for (const inst of instances) {
-    const role = defs.find((d) => d.id === inst.definitionId)?.role ?? "unknown";
+    const role = roleByDef.get(inst.definitionId) ?? "unknown";
     roleByInst.set(inst.id, role);
   }
 
@@ -62,8 +114,25 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
       : [];
 
   const reasonSteps = steps.filter((s) => s.phase === "reason");
-  const totalTokenCount = reasonSteps.reduce((acc, s) => acc + (s.tokenCount ?? 0), 0) || null;
   const totalReasonLatencyMs = reasonSteps.reduce((acc, s) => acc + (s.latencyMs ?? 0), 0) || null;
+
+  /**
+   * P0-05：LLM token / cost 全部从 llm_call_log 走（权威源）。
+   * 老字段 totalTokenCount 用 llm_call_log.totalTokens 求和；如果该表没行
+   * （非常老的 workflow 或 P1 之前的），回退到 agent_step.tokenCount 兼容。
+   */
+  const llmCallsTotal = llmRows.length;
+  const sumLlmTokens = llmRows.reduce((a, r) => a + (r.totalTokens ?? 0), 0);
+  const sumLlmPromptTokens = llmRows.reduce((a, r) => a + (r.promptTokens ?? 0), 0);
+  const sumLlmCompletionTokens = llmRows.reduce((a, r) => a + (r.completionTokens ?? 0), 0);
+  const sumLlmCostUsd = llmRows.reduce((a, r) => a + (r.costUsd ?? 0), 0);
+  const sumAgentStepTokens =
+    reasonSteps.reduce((acc, s) => acc + (s.tokenCount ?? 0), 0) || 0;
+  const totalTokenCount =
+    sumLlmTokens > 0 ? sumLlmTokens : sumAgentStepTokens > 0 ? sumAgentStepTokens : null;
+  const totalPromptTokens = sumLlmPromptTokens > 0 ? sumLlmPromptTokens : null;
+  const totalCompletionTokens = sumLlmCompletionTokens > 0 ? sumLlmCompletionTokens : null;
+  const totalCostUsd = sumLlmCostUsd > 0 ? sumLlmCostUsd : null;
 
   const byKind: Record<string, number> = {};
   const byStatus: Record<string, number> = {};
@@ -92,37 +161,103 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
     stepByInst.set(s.agentInstanceId, arr);
   }
 
-  const toolByStep = new Map(toolRows.map((t) => [t.agentStepId, t]));
-  const rolesSeen = new Set<string>();
-  const byAgentRole: WorkflowObservability["byAgentRole"] = [];
+  /**
+   * P0-05：用一个 Map<role, aggregated> 收集，避免老实现 O(role^2 × instances)
+   * 重复扫描。所有 role 来源：
+   *   - agent_instance.definitionId → role
+   *   - llm_call_log.agentDefinitionId → role
+   * 后者承载内部直调 LLM（orchestrator planning / debate / summarize）。
+   */
+  type RoleAgg = {
+    role: string;
+    reasonSteps: number;
+    toolCalls: number;
+    mcpCalls: number;
+    legacyStepTokens: number;
+    llmCalls: number;
+    llmTokens: number;
+    llmPromptTokens: number;
+    llmCompletionTokens: number;
+    llmCostUsd: number;
+  };
+  const ensure = (m: Map<string, RoleAgg>, role: string): RoleAgg => {
+    let agg = m.get(role);
+    if (!agg) {
+      agg = {
+        role,
+        reasonSteps: 0,
+        toolCalls: 0,
+        mcpCalls: 0,
+        legacyStepTokens: 0,
+        llmCalls: 0,
+        llmTokens: 0,
+        llmPromptTokens: 0,
+        llmCompletionTokens: 0,
+        llmCostUsd: 0,
+      };
+      m.set(role, agg);
+    }
+    return agg;
+  };
+  const roleAggMap = new Map<string, RoleAgg>();
 
   for (const inst of instances) {
     const role = roleByInst.get(inst.id) ?? "unknown";
-    if (rolesSeen.has(role)) continue;
-    rolesSeen.add(role);
-    const instIds = instances.filter((i) => roleByInst.get(i.id) === role).map((i) => i.id);
-    const roleSteps = instIds.flatMap((id) => stepByInst.get(id) ?? []);
-    const roleReason = roleSteps.filter((s) => s.phase === "reason");
+    const agg = ensure(roleAggMap, role);
+    const roleSteps = stepByInst.get(inst.id) ?? [];
+    for (const s of roleSteps) {
+      if (s.phase === "reason") {
+        agg.reasonSteps += 1;
+        agg.legacyStepTokens += s.tokenCount ?? 0;
+      }
+    }
     const roleStepIds = new Set(roleSteps.map((s) => s.id));
-    const roleTools = toolRows.filter((t) => roleStepIds.has(t.agentStepId));
-    const roleMcp = mcpRows.filter((m) => {
-      const st = steps.find((s) => s.id === m.agentStepId);
-      return st && roleStepIds.has(st.id);
-    });
-    byAgentRole.push({
-      role,
-      reasonSteps: roleReason.length,
-      toolCalls: roleTools.length,
-      mcpCalls: roleMcp.length,
-      tokens: roleReason.reduce((a, s) => a + (s.tokenCount ?? 0), 0) || null,
-    });
+    for (const t of toolRows) if (roleStepIds.has(t.agentStepId)) agg.toolCalls += 1;
+    for (const m of mcpRows) {
+      const st = m.agentStepId ? steps.find((s) => s.id === m.agentStepId) : undefined;
+      if (st && roleStepIds.has(st.id)) agg.mcpCalls += 1;
+    }
   }
+
+  /**
+   * 用 llm_call_log.agentDefinitionId 回标 role；行内 agentDefinitionId 可能
+   * 为 null（早期未冗余 / 路径未传 def），归到 'internal_llm' 桶——这样
+   * orchestrator planning / debate / summarize_team_decision 这种"准内部
+   * 调用"也能在 byAgentRole 里被审计，而不是悄悄消失在总数里。
+   */
+  for (const r of llmRows) {
+    const role = r.agentDefinitionId ? (roleByDef.get(r.agentDefinitionId) ?? "unknown") : "internal_llm";
+    const agg = ensure(roleAggMap, role);
+    agg.llmCalls += 1;
+    agg.llmTokens += r.totalTokens ?? 0;
+    agg.llmPromptTokens += r.promptTokens ?? 0;
+    agg.llmCompletionTokens += r.completionTokens ?? 0;
+    agg.llmCostUsd += r.costUsd ?? 0;
+  }
+
+  const byAgentRole: WorkflowObservability["byAgentRole"] = [...roleAggMap.values()]
+    .map((agg) => ({
+      role: agg.role,
+      reasonSteps: agg.reasonSteps,
+      toolCalls: agg.toolCalls,
+      mcpCalls: agg.mcpCalls,
+      tokens: agg.llmTokens > 0 ? agg.llmTokens : agg.legacyStepTokens > 0 ? agg.legacyStepTokens : null,
+      llmCalls: agg.llmCalls,
+      llmPromptTokens: agg.llmPromptTokens,
+      llmCompletionTokens: agg.llmCompletionTokens,
+      llmCostUsd: agg.llmCostUsd,
+    }))
+    .sort((a, b) => a.role.localeCompare(b.role));
 
   return {
     workflowRunId,
     llm: {
       reasonSteps: reasonSteps.length,
+      llmCalls: llmCallsTotal,
       totalTokenCount,
+      totalPromptTokens,
+      totalCompletionTokens,
+      totalCostUsd,
       totalReasonLatencyMs,
     },
     tools: {
@@ -141,6 +276,6 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
         .sort((a, b) => b[1].count - a[1].count)
         .map(([server, v]) => ({ server, ...v })),
     },
-    byAgentRole: byAgentRole.sort((a, b) => a.role.localeCompare(b.role)),
+    byAgentRole,
   };
 }

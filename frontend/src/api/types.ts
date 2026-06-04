@@ -562,12 +562,23 @@ export interface WorkflowDetail {
   sandboxViolations: Array<Record<string, unknown>>;
 }
 
-/** GET /monitor/workflows/:id/observability */
+/**
+ * GET /monitor/workflows/:id/observability
+ *
+ * P0-05 (2026-06)：新增 llm.llmCalls / totalPromptTokens / totalCompletionTokens /
+ * totalCostUsd，per-role 新增 llmCalls + 拆分 + cost。老字段保留兼容。
+ * 详见 backend `src/runtime/monitor/workflow-observability.ts` 顶部注释。
+ */
 export interface WorkflowObservability {
   workflowRunId: string;
   llm: {
     reasonSteps: number;
+    /** P0-05：所有真实 LLM 调用计数（含内部直调如 orchestrator planning） */
+    llmCalls: number;
     totalTokenCount: number | null;
+    totalPromptTokens: number | null;
+    totalCompletionTokens: number | null;
+    totalCostUsd: number | null;
     totalReasonLatencyMs: number | null;
   };
   tools: {
@@ -587,6 +598,10 @@ export interface WorkflowObservability {
     toolCalls: number;
     mcpCalls: number;
     tokens: number | null;
+    llmCalls: number;
+    llmPromptTokens: number;
+    llmCompletionTokens: number;
+    llmCostUsd: number;
   }>;
 }
 
