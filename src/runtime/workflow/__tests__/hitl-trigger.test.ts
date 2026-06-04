@@ -1,14 +1,27 @@
 /**
  * v2 HITL 触发器单测：三档模式 × 硬规则 × LLM 自评。
  * 参考 docs/HITL_REDESIGN.md §3-§5。
+ *
+ * 注：hitl-service 模块链触发 connectors/bootstrap，本地开发若 backend 持
+ * 锁生产 sqlite 会 SQLITE_READONLY 直挂；用 tmpdir 把 DB 路径隔离掉。
  */
-import { describe, expect, test } from "bun:test";
-import {
+import { mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const tmpDir = join(tmpdir(), `qubit-hitl-trigger-${process.pid}-${Date.now()}`);
+rmSync(tmpDir, { recursive: true, force: true });
+mkdirSync(join(tmpDir, "db"), { recursive: true });
+process.env.QUBIT_DATA_DIR = tmpDir;
+process.env.HOME = tmpDir;
+
+const { describe, expect, test } = await import("bun:test");
+const {
   evaluateChatHitlTrigger,
   evaluateTeamHitlTrigger,
   isHighRiskChatTool,
-} from "../hitl-service";
-import { workflowRun } from "../../../db/sqlite/schema";
+} = await import("../hitl-service");
+const { workflowRun } = await import("../../../db/sqlite/schema");
 
 /**
  * 防御：`getRecentSameTickerStatus` 历史上误用 `workflowRun.createdAt`（不存在），
@@ -77,8 +90,13 @@ describe("evaluateTeamHitlTrigger - 三档模式", () => {
   });
 });
 
-describe("evaluateTeamHitlTrigger - 硬规则（无视 mode）", () => {
-  test("rule_money：trade mode 无视 hitlMode='off' 必触发", () => {
+describe("evaluateTeamHitlTrigger - 硬规则", () => {
+  /**
+   * rule_money 是资金安全底线，**不可** 被 'off' 抑制（守护用户钱包）。
+   * 其它 rule_scale / rule_retry 在 P0-03 修复后会被 'off' 抑制——
+   * 老断言"无视 mode 都触发"的设计被反转为 "off 视为用户已承担风险"。
+   */
+  test("rule_money：trade mode 无视 hitlMode='off' 必触发（资金安全底线，不可关闭）", () => {
     const d = evaluateTeamHitlTrigger({
       ...baseInput,
       workflow: { mode: "trade" },
@@ -89,33 +107,33 @@ describe("evaluateTeamHitlTrigger - 硬规则（无视 mode）", () => {
     expect(d.reason).toContain("下单");
   });
 
-  test("rule_scale：6 个标的无视 hitlMode='off' 必触发", () => {
+  test("rule_scale：mode='ai' (default) 时 6 个标的仍触发", () => {
     const d = evaluateTeamHitlTrigger({
       ...baseInput,
       symbols: ["A", "B", "C", "D", "E", "F"],
-      loopOptions: { hitlMode: "off" },
+      loopOptions: { hitlMode: "ai" },
     });
     expect(d.trigger).toBe(true);
     expect(d.source).toBe("rule_scale");
     expect(d.reason).toContain("6 标的");
   });
 
-  test("rule_scale：7 个分析师无视 hitlMode='off' 必触发", () => {
+  test("rule_scale：mode='ai' 时 7 个分析师仍触发", () => {
     const d = evaluateTeamHitlTrigger({
       ...baseInput,
       analystSlotCount: 7,
-      loopOptions: { hitlMode: "off" },
+      loopOptions: { hitlMode: "ai" },
     });
     expect(d.trigger).toBe(true);
     expect(d.source).toBe("rule_scale");
     expect(d.reason).toContain("7 分析师");
   });
 
-  test("rule_retry：同标的最近失败无视 hitlMode='off' 必触发", () => {
+  test("rule_retry：mode='ai' 时同标的最近失败仍触发", () => {
     const d = evaluateTeamHitlTrigger({
       ...baseInput,
       recentSameTickerStatus: "failed",
-      loopOptions: { hitlMode: "off" },
+      loopOptions: { hitlMode: "ai" },
     });
     expect(d.trigger).toBe(true);
     expect(d.source).toBe("rule_retry");
@@ -126,9 +144,57 @@ describe("evaluateTeamHitlTrigger - 硬规则（无视 mode）", () => {
     const d = evaluateTeamHitlTrigger({
       ...baseInput,
       recentSameTickerStatus: "completed",
-      loopOptions: { hitlMode: "off" },
+      loopOptions: { hitlMode: "ai" },
     });
     expect(d.trigger).toBe(false);
+  });
+
+  /**
+   * P0-03 行为反转回归：用户设 hitlMode='off' 必须能跳过 scale / retry 提醒。
+   * 评估 case 4 实测 bug：7 个 symbol → rule_scale → 强制 HITL，
+   * 但用户 hitlMode='off' 表达"我承担风险"。修复后这种场景必须 trigger=false。
+   */
+  describe("F-P0-03：hitlMode='off' 抑制 rule_scale / rule_retry（资金外的提醒型规则）", () => {
+    test("hitlMode='off' + 6 标的（命中 rule_scale 阈值）→ 不触发", () => {
+      const d = evaluateTeamHitlTrigger({
+        ...baseInput,
+        symbols: ["A", "B", "C", "D", "E", "F"],
+        loopOptions: { hitlMode: "off" },
+      });
+      expect(d.trigger).toBe(false);
+      expect(d.source).toBe("none");
+      expect(d.reason).toContain("hitlMode='off'");
+    });
+
+    test("hitlMode='off' + 7 分析师（命中 rule_scale 阈值）→ 不触发", () => {
+      const d = evaluateTeamHitlTrigger({
+        ...baseInput,
+        analystSlotCount: 7,
+        loopOptions: { hitlMode: "off" },
+      });
+      expect(d.trigger).toBe(false);
+      expect(d.source).toBe("none");
+    });
+
+    test("hitlMode='off' + 上次失败（命中 rule_retry）→ 不触发", () => {
+      const d = evaluateTeamHitlTrigger({
+        ...baseInput,
+        recentSameTickerStatus: "failed",
+        loopOptions: { hitlMode: "off" },
+      });
+      expect(d.trigger).toBe(false);
+      expect(d.source).toBe("none");
+    });
+
+    test("hitlMode='off' + LLM hint needed=true → 仍不触发（用户意愿优先）", () => {
+      const d = evaluateTeamHitlTrigger({
+        ...baseInput,
+        loopOptions: { hitlMode: "off" },
+        hitlHint: { needed: true, reason: "Orchestrator 觉得需要确认" },
+      });
+      expect(d.trigger).toBe(false);
+      expect(d.source).toBe("none");
+    });
   });
 
   test("硬规则优先级：money > scale > retry（money 命中后短路）", () => {

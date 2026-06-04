@@ -217,7 +217,23 @@ export type HitlTriggerDecision = {
 /**
  * 评估"该不该 HITL"：三档模式 × 硬规则 × LLM 自评。
  *
- * 优先级：硬规则（无视 mode 都触发）> mode='always'（每次都触发）> mode='ai' 时看 LLM hint > mode='off' 不触发。
+ * 优先级（F-P0-03 修复后，2026-06）：
+ *   1. rule_money（涉资金硬底线，**任何 mode** 都触发，包括 'off'）
+ *   2. mode='off'  → **抑制 rule_scale / rule_retry / mode_always / ai**，
+ *      直接不触发（除 rule_money 已在 step1 兜底）
+ *   3. rule_scale / rule_retry（mode='ai'/'always' 时触发）
+ *   4. mode='always' → 必触发
+ *   5. mode='ai' + LLM hint needed=true → 触发
+ *
+ * F-P0-03 评估批次复盘：
+ *   旧行为是"硬规则无视 mode 都触发"——但 case 4 实测里用户明确选了
+ *   hitlMode='off' 但因为 7 个 symbol 命中 rule_scale，仍然被拉去审批。
+ *   用户预期是 "off = 我承担风险、别打扰我"。
+ *
+ *   新行为划清界限：
+ *     - rule_money：资金安全栅栏，不可被 'off' 关闭（守护用户钱包）
+ *     - rule_scale / rule_retry：提醒性规则，'off' 视为用户已知风险并选择
+ *       自动化运行，应当尊重
  *
  * 硬规则覆盖范围（v2 P1）：money / scale / retry；详见 docs/HITL_REDESIGN.md §4。
  */
@@ -232,7 +248,7 @@ export function evaluateTeamHitlTrigger(input: {
 }): HitlTriggerDecision {
   const mode = resolveHitlMode(input.loopOptions);
 
-  // 1) 硬规则：资金 — trade mode + 金额超阈值（v2 P1 取阈值默认 1000）
+  // 1) 硬规则：资金 — trade mode 涉真实下单，**不可** 被 'off' 抑制（资金安全底线）
   if (input.workflow.mode === "trade") {
     const threshold = input.loopOptions.hitlMoneyThreshold ?? 1000;
     // TODO(v2-P2)：amount 当前未从 loopOptions 拿到，先以 mode=trade 作必触发，避免假阴；后续接 broker order ticket
@@ -245,7 +261,19 @@ export function evaluateTeamHitlTrigger(input: {
     };
   }
 
-  // 2) 硬规则：规模 — symbols>5 或 analystSlotCount>6
+  // P0-03 修复：mode='off' 在 rule_money 之后短路。用户显式选 'off' 表达
+  // "自己承担风险、不要打断"，rule_scale / rule_retry 这种提醒型规则不应再
+  // 强制触发。资金类操作由 step1 已经兜底（trade mode 在前面 return）。
+  if (mode === "off") {
+    return {
+      trigger: false,
+      source: "none",
+      reason: "用户设置 hitlMode='off'：抑制 scale/retry 等提醒型规则；资金类操作由 rule_money 单独守卫",
+      inputKind: "approve_only",
+    };
+  }
+
+  // 2) 硬规则：规模 — symbols>5 或 analystSlotCount>6（mode='ai'/'always' 时生效）
   if (input.symbols.length > 5 || input.analystSlotCount > 6) {
     return {
       trigger: true,
@@ -256,7 +284,7 @@ export function evaluateTeamHitlTrigger(input: {
     };
   }
 
-  // 3) 硬规则：失败重试 — 同标的最近一次 failed
+  // 3) 硬规则：失败重试 — 同标的最近一次 failed（mode='ai'/'always' 时生效）
   if (input.recentSameTickerStatus === "failed") {
     return {
       trigger: true,
