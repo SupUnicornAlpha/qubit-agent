@@ -32,6 +32,7 @@ import {
   type AgentCardView,
 } from "./monitor-shared";
 import { AgentDetailDrillDown } from "./AgentDetailDrillDown";
+import { TimeseriesChart } from "./TimeseriesChart";
 
 export type AgentTabProps = {
   graphAgentCards: AgentCardView[];
@@ -78,6 +79,20 @@ export const AgentTab: FC<AgentTabProps> = ({
   );
   const toggleSelectDefinition = (defId: string) =>
     setSelectedDefinitionId((prev) => (prev === defId ? null : defId));
+
+  /**
+   * definitionId → role / name 的轻量映射，给 timeseries 图的 series 名做标签美化。
+   * 没匹配到的 definitionId（旧行 / 已删除）退回 short ID 显示。
+   */
+  const defIdLabel = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of allCards) {
+      if (!a.definitionId) continue;
+      const label = a.role && a.name && a.role !== a.name ? `${a.role} · ${a.name}` : a.role || a.name || a.definitionId;
+      map.set(a.definitionId, label);
+    }
+    return (raw: string) => map.get(raw) ?? shortId(raw);
+  }, [allCards]);
 
   return (
     <>
@@ -135,6 +150,23 @@ export const AgentTab: FC<AgentTabProps> = ({
             </PieChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      {/*
+        监控 V3 P0：Agent 维度的错误时序。
+        groupBy=agentDefinitionId 直接走 tool_call_log.agent_definition_id 冗余列
+        （迁移 0064），不必 3 跳 join。一眼能看出"是某个 Agent 在某时段集中报错"。
+      */}
+      <div className="qb-monitor__chart-grid" style={styles.chartGrid}>
+        <TimeseriesChart
+          title="各 Agent · 工具错误数 / 小时"
+          source="tool_call_log"
+          metric="errorCount"
+          groupBy="agentDefinitionId"
+          defaultWindowMinutes={1440}
+          seriesNameFormatter={defIdLabel}
+          height={240}
+        />
       </div>
 
       <h3 className="qb-monitor__section" style={styles.subTitle}>

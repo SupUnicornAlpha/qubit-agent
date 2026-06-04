@@ -1,17 +1,17 @@
 /**
  * P9 AutoInstaller auto 模式集成测：
- *   - mode=auto + safety=low + score≥阈值 + targetKind=mcp_catalog → 真装 + proposal=approved + gap=installed
+ *   - mode=auto + safety=low + score≥阈值 + source=builtin → 真装 + proposal=approved + gap=installed
  *   - mode=auto + safety=medium → 仍走 propose（不该自动装高危）
  *   - mode=auto + score<阈值 → propose
- *   - mode=auto + targetKind=mcp_catalog_item (external) → propose（registry 来源不自动装）
+ *   - mode=auto + source=registry（external） → propose（registry 来源不自动装）
  *   - mode=auto + 真装抛错 → 计 auto_install_failed，proposal 仍 pending_review，gap 仍 proposed
  *   - mode=propose（默认）→ 行为同 P8（不真装）
  *   - emit 的 summary 含 mode + autoInstalled 字段
  */
 
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { config } from "../../../config";
@@ -23,15 +23,14 @@ import {
   mcpCatalog,
   mcpCatalogInstall,
   mcpRegistrySource,
-  mcpCatalogItem,
   mcpServerConfig,
   mcpToolBinding,
   project,
   toolGapLog,
   workspace,
 } from "../../../db/sqlite/schema";
-import { getExperienceBus, type ExperienceEvent } from "../../experience/experience-bus";
 import { setSelfEvolveConfigForTest } from "../../config/self-evolve-config";
+import { type ExperienceEvent, getExperienceBus } from "../../experience/experience-bus";
 import { AutoInstaller } from "../installer";
 
 let projectId = "";
@@ -84,7 +83,6 @@ beforeEach(async () => {
   await db.delete(autoInstallerRun).where(eq(autoInstallerRun.projectId, projectId));
   await db.delete(toolGapLog).where(eq(toolGapLog.projectId, projectId));
   await db.delete(mcpCatalog).run();
-  await db.delete(mcpCatalogItem).run();
   setSelfEvolveConfigForTest(null);
 });
 
@@ -187,12 +185,15 @@ describe("AutoInstaller auto 模式", () => {
     expect(p!.matchScore).toBeLessThan(0.95);
   });
 
-  test("external catalog_item 即便 low/high-score 也不自动装", async () => {
+  test("external (source=registry) 即便 low/high-score 也不自动装", async () => {
     const db = await getDb();
+    // C4 合表后：external 条目仍写入 mcp_catalog，靠 source='registry' 区分；
+    // installer 看 candidate.source 判定 → 不允许自动装 + proposalKind='install_mcp_external'
     await db
-      .insert(mcpCatalogItem)
+      .insert(mcpCatalog)
       .values({
         id: "ci_safe",
+        source: "registry",
         sourceId,
         externalId: "ext_safe",
         slug: "external-fs",
@@ -200,7 +201,8 @@ describe("AutoInstaller auto 模式", () => {
         description: "external filesystem tool",
         transport: "stdio",
         riskLevel: "low",
-        specJson: { defaultToolName: "external-fs", defaultCapabilitiesJson: ["external-fs"] },
+        defaultToolName: "external-fs",
+        defaultCapabilitiesJson: ["external-fs"],
       })
       .run();
     const gapId = await seedOpenGap("mcp:external-fs/external-fs");

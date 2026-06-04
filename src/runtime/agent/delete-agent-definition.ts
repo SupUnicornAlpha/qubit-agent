@@ -1,7 +1,6 @@
 import { eq, inArray } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import {
-  acpCall,
   agentDefinition,
   agentDefinitionDraft,
   agentDefinitionRelease,
@@ -46,7 +45,6 @@ export async function deleteAgentInstancesForDefinition(
   await db
     .delete(sandboxViolationLog)
     .where(inArray(sandboxViolationLog.agentInstanceId, instanceIds));
-  await db.delete(acpCall).where(inArray(acpCall.callerInstanceId, instanceIds));
   await db.delete(analystSignal).where(inArray(analystSignal.agentInstanceId, instanceIds));
   await db.delete(agentInstance).where(eq(agentInstance.definitionId, definitionId));
 }

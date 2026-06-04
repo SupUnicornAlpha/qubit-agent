@@ -2,12 +2,14 @@
  * 回归测试：hardDeleteWorkflowRun 必须清掉所有持有 workflow_run_id FK 的衍生表。
  *
  * 背景 bug：migration 0049（监控 V2 P1）新增了 llm_call_log / skill_recall_log，
- * migration 0051（监控 V2 P2）给 connector_call_log 新增直接 workflow_run_id 列。
  * 但 hard-delete.ts 里 WORKFLOW_DIRECT_TABLES 没同步更新；硬删除 research 类
  * 工作流时，这些表的孤儿行让 `defer_foreign_keys = ON` 在 COMMIT 时报
  * "FOREIGN KEY constraint failed" → HTTP 500。
  *
- * 这里独立种入这几张表，验证 hardDeleteWorkflowRun 能干净清掉、且统计计数正确。
+ * Schema 收敛 C5-2（migration 0070）：原本还要覆盖 `connector_call_log` 的 FK
+ * 清理路径，该表已删除，相应断言一并下线。
+ *
+ * 这里独立种入剩下两张表，验证 hardDeleteWorkflowRun 能干净清掉、且统计计数正确。
  */
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,7 +54,7 @@ describe("hardDeleteWorkflowRun: v2 monitoring 衍生表", () => {
     await closeDb();
   });
 
-  test("覆盖 llm_call_log / skill_recall_log / connector_call_log", async () => {
+  test("覆盖 llm_call_log / skill_recall_log", async () => {
     const db = await getDb();
     const wfId = `wf-${crypto.randomUUID()}`;
     await db.insert(schema.workflowRun).values({
@@ -88,26 +90,11 @@ describe("hardDeleteWorkflowRun: v2 monitoring 衍生表", () => {
       skillId,
     });
 
-    // 3) connector_call_log v2 P2：直接 workflow_run_id 列、acp_call_id 留空（市场行情类无 instance）。
-    await db.insert(schema.connectorCallLog).values({
-      id: `cc-${crypto.randomUUID()}`,
-      connectorInstanceId: null,
-      connectorName: "qubit-news",
-      workflowRunId: wfId,
-      acpCallId: null,
-      traceId: `tr-${crypto.randomUUID()}`,
-      operation: "search_news",
-      requestJson: {},
-      latencyMs: 50,
-      status: "success",
-    });
-
     const result = await hardDeleteWorkflowRun(wfId);
 
     expect(result.details.workflow_run).toBe(1);
     expect(result.details.llm_call_log).toBe(1);
     expect(result.details.skill_recall_log).toBe(1);
-    expect(result.details.connector_call_log).toBeGreaterThanOrEqual(1);
 
     const gone = await db
       .select()
@@ -126,10 +113,5 @@ describe("hardDeleteWorkflowRun: v2 monitoring 衍生表", () => {
       .from(schema.skillRecallLog)
       .where(drizzle.eq(schema.skillRecallLog.workflowRunId, wfId));
     expect(skillLeft.length).toBe(0);
-    const ccLeft = await db
-      .select()
-      .from(schema.connectorCallLog)
-      .where(drizzle.eq(schema.connectorCallLog.workflowRunId, wfId));
-    expect(ccLeft.length).toBe(0);
   });
 });

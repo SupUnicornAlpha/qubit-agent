@@ -2,21 +2,20 @@
  * P8 candidate-matcher 单测：
  *   1) parseGapSignature 拆 tool: / mcp: / concept:
  *   2) scoreCatalog：exact tool / slug / desc / capabilities 打分
- *   3) findCandidatesForGap：seed mcp_catalog + mcp_catalog_item，验 top-3 & 阈值过滤
+ *   3) findCandidatesForGap：seed mcp_catalog（builtin + registry source 区分），验 top-3 & 阈值过滤
+ *
+ * Schema 收敛 C4（migration 0071）后：原 mcp_catalog_item 已并入 mcp_catalog，
+ * 用 source='registry' + sourceId 区分外部来源。
  */
 
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "../../../config";
 import { closeDb, getDb } from "../../../db/sqlite/client";
 import { runMigrations } from "../../../db/sqlite/migrate";
-import {
-  mcpCatalog,
-  mcpCatalogItem,
-  mcpRegistrySource,
-} from "../../../db/sqlite/schema";
+import { mcpCatalog, mcpRegistrySource } from "../../../db/sqlite/schema";
 import {
   _scoreCatalogForTest,
   findCandidatesForGap,
@@ -46,7 +45,6 @@ beforeAll(async () => {
 beforeEach(async () => {
   const db = await getDb();
   await db.delete(mcpCatalog).run();
-  await db.delete(mcpCatalogItem).run();
 });
 
 describe("parseGapSignature", () => {
@@ -160,7 +158,7 @@ describe("scoreCatalog (纯函数)", () => {
 });
 
 describe("findCandidatesForGap (DB)", () => {
-  test("混合 catalog + catalog_item，按 score 降序返回 top-3", async () => {
+  test("混合 builtin + registry source，按 score 降序返回 top-3", async () => {
     const db = await getDb();
     await db
       .insert(mcpCatalog)
@@ -185,13 +183,9 @@ describe("findCandidatesForGap (DB)", () => {
           defaultToolName: "read_file",
           defaultCapabilitiesJson: ["files"],
         },
-      ])
-      .run();
-    await db
-      .insert(mcpCatalogItem)
-      .values([
         {
           id: "ci_slack_ext",
+          source: "registry",
           sourceId,
           externalId: "ext_slack",
           slug: "slack-ext",
@@ -199,7 +193,8 @@ describe("findCandidatesForGap (DB)", () => {
           description: "external slack mcp",
           transport: "stdio",
           riskLevel: "low",
-          specJson: { defaultToolName: "post_message", defaultCapabilitiesJson: ["slack"] },
+          defaultToolName: "post_message",
+          defaultCapabilitiesJson: ["slack"],
         },
       ])
       .run();
@@ -209,7 +204,8 @@ describe("findCandidatesForGap (DB)", () => {
     expect(out[0]!.score).toBeGreaterThanOrEqual(out[out.length - 1]!.score);
     expect(out[0]!.targetSlug).toBe("slack");
     expect(out[0]!.targetKind).toBe("mcp_catalog");
-    expect(out.find((c) => c.targetKind === "mcp_catalog_item")).toBeDefined();
+    // 区分外部来源改用 candidate.source
+    expect(out.find((c) => c.source === "registry")).toBeDefined();
   });
 
   test("score < threshold 全过滤", async () => {

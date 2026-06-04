@@ -15,6 +15,7 @@ import {
   type MonitorMcpDiagnostics,
 } from "../../api/backend";
 import { Kpi, styles } from "./monitor-shared";
+import { TimeseriesChart } from "./TimeseriesChart";
 
 export type McpDiagnosticsPanelProps = {
   serverName: string;
@@ -101,6 +102,21 @@ export const McpDiagnosticsPanel: FC<McpDiagnosticsPanelProps> = ({
         <Kpi label="p95" value={fmtMs(latency.p95)} />
         <Kpi label="p99" value={fmtMs(latency.p99)} />
       </div>
+
+      {/*
+        监控 V3 P0：该 MCP server 的失败时序（按 tool 切分）。
+        与 ByToolCard（窗口合计）互补：合计看"哪个 tool 出问题"，时序看"什么时候开始坏"。
+        sessionId / windowMinutes 透传父组件，保持上下文一致。
+      */}
+      <TimeseriesChart
+        title={`${serverName} · 失败数 / 小时（按 tool 切分）`}
+        source="mcp_call_log"
+        metric="errorCount"
+        groupBy="toolName"
+        defaultWindowMinutes={windowMinutes}
+        sessionId={sessionId}
+        height={200}
+      />
 
       <ErrorTopCard rows={errorTop} />
       <ByToolCard rows={byTool} />

@@ -61,7 +61,11 @@ export async function installMcpCatalogToProject(
   if (!input.serverName) throw new Error("serverName required");
 
   const db = await getDb();
-  const rows = await db.select().from(mcpCatalog).where(eq(mcpCatalog.id, input.catalogId)).limit(1);
+  const rows = await db
+    .select()
+    .from(mcpCatalog)
+    .where(eq(mcpCatalog.id, input.catalogId))
+    .limit(1);
   const catalog = rows[0];
   if (!catalog) throw new CatalogNotFoundError(input.catalogId);
 

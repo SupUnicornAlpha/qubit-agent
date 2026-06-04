@@ -5,7 +5,6 @@ import { isPackagedRuntime } from "./runtime/app-paths";
 import { runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
 import { executionWorker } from "./runtime/execution/execution-worker";
 import { experienceMaintenanceWorker } from "./runtime/experience/maintenance-worker";
-import { installAcpMonitoringHook } from "./runtime/monitor/acp-monitoring-hook";
 import { monitorAggregatorWorker } from "./runtime/monitor/monitor-aggregator-worker";
 import { restoreRunningStrategies } from "./runtime/strategy/restore-running-strategies";
 import { strategyRuntimeWorker } from "./runtime/strategy/strategy-runtime-worker";
@@ -52,8 +51,6 @@ async function main() {
   // Memory V2 P1.5：每小时跑一次 ExperienceJanitor —— 重算 qualityScore + decay/archive。
   // 单 tick 全程串行，失败仅 warn。
   experienceMaintenanceWorker.start();
-  // 监控 V2 P2：在 ACP caller 注入 connector_call_log 写入 hook。幂等。
-  installAcpMonitoringHook();
 
   // Start HTTP + WS server
   const server = createServer();

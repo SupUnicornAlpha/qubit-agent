@@ -4,14 +4,14 @@
  */
 import { Buffer } from "node:buffer";
 import { runMigrations } from "../../db/sqlite/migrate";
+import type { BrokerProvider } from "../../types/broker";
+import { checkBrokerAccountHealth } from "../execution/broker/broker-admin";
 import {
   brokerCancelOrder,
   brokerGetFills,
   brokerGetPositions,
 } from "../execution/broker/broker-service";
-import { checkBrokerAccountHealth } from "../execution/broker/broker-admin";
 import { executeIntentLive, executeIntentPaper } from "../reia/intent-engine";
-import type { BrokerProvider } from "../../types/broker";
 import { negotiateServerProtocolVersion } from "./mcp-protocol";
 
 function writeMcpMessage(obj: Record<string, unknown>): void {
@@ -162,7 +162,9 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
   }
 }
 
-async function handleRequest(msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+async function handleRequest(
+  msg: Record<string, unknown>
+): Promise<Record<string, unknown> | null> {
   const inbound = msg as { method?: string; id?: unknown; params?: Record<string, unknown> };
   const method = inbound.method;
   const id = inbound.id;
@@ -210,7 +212,11 @@ async function handleRequest(msg: Record<string, unknown>): Promise<Record<strin
     }
   }
 
-  return { jsonrpc: "2.0", id, error: { code: -32601, message: `unknown method: ${String(method)}` } };
+  return {
+    jsonrpc: "2.0",
+    id,
+    error: { code: -32601, message: `unknown method: ${String(method)}` },
+  };
 }
 
 export async function runBrokerMcpMain(): Promise<void> {

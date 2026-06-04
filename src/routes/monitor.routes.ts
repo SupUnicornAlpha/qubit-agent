@@ -30,12 +30,12 @@ import {
   resolveAlert,
   resolveAlertsByScope,
 } from "../runtime/monitor/alert-service";
-import { getConnectorsSummary } from "../runtime/monitor/connector-summary";
 import { type FailureScope, listFailures } from "../runtime/monitor/failure-list";
 import { getLlmUsageSummary } from "../runtime/monitor/llm-usage";
 import { getMcpDiagnostics } from "../runtime/monitor/mcp-diagnostics";
 import { getMcpSummary } from "../runtime/monitor/mcp-summary";
 import { getMonitorSummary } from "../runtime/monitor/monitor-summary";
+import { getSkillPnlSummary, getStrategyPnlSummary } from "../runtime/monitor/pnl-summary";
 import {
   aggregateAgentRuntimeMetrics,
   createWorkflowQualitySnapshot,
@@ -45,7 +45,6 @@ import {
 } from "../runtime/monitor/quality-metrics";
 import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
-import { getSkillPnlSummary, getStrategyPnlSummary } from "../runtime/monitor/pnl-summary";
 import {
   TIMESERIES_GROUP_BYS,
   TIMESERIES_INTERVALS,
@@ -522,20 +521,6 @@ monitorRouter.get("/skills/recalls", async (c) => {
 });
 
 /**
- * P2-H：Connector 调用聚合（ACP→connector 调用次数 / 成功率 / 延迟）。
- * 详见 docs/MONITORING_V2_DESIGN.md §4.1.5 与 runtime/monitor/connector-summary.ts。
- */
-monitorRouter.get("/connectors/summary", async (c) => {
-  const windowMinutes = c.req.query("windowMinutes");
-  const workflowRunId = c.req.query("workflowRunId");
-  const input: Parameters<typeof getConnectorsSummary>[0] = {};
-  if (windowMinutes) input.windowMinutes = Number(windowMinutes);
-  if (workflowRunId) input.workflowRunId = workflowRunId;
-  const data = await getConnectorsSummary(input);
-  return c.json({ ok: true, data });
-});
-
-/**
  * 失败列表（summary level，跨 tool / mcp / skill / agent）。
  * 详见 docs/MONITORING_V2_DESIGN.md §4.1.2 与 runtime/monitor/failure-list.ts。
  */
@@ -672,19 +657,31 @@ monitorRouter.get("/timeseries", async (c) => {
   const sessionId = c.req.query("sessionId");
 
   if (!source || !(TIMESERIES_SOURCES as readonly string[]).includes(source)) {
-    return c.json({ ok: false, error: `invalid 'source'; expect one of ${TIMESERIES_SOURCES.join(",")}` }, 400);
+    return c.json(
+      { ok: false, error: `invalid 'source'; expect one of ${TIMESERIES_SOURCES.join(",")}` },
+      400
+    );
   }
   if (!metric || !(TIMESERIES_METRICS as readonly string[]).includes(metric)) {
-    return c.json({ ok: false, error: `invalid 'metric'; expect one of ${TIMESERIES_METRICS.join(",")}` }, 400);
+    return c.json(
+      { ok: false, error: `invalid 'metric'; expect one of ${TIMESERIES_METRICS.join(",")}` },
+      400
+    );
   }
   if (!interval || !(TIMESERIES_INTERVALS as readonly string[]).includes(interval)) {
-    return c.json({ ok: false, error: `invalid 'interval'; expect one of ${TIMESERIES_INTERVALS.join(",")}` }, 400);
+    return c.json(
+      { ok: false, error: `invalid 'interval'; expect one of ${TIMESERIES_INTERVALS.join(",")}` },
+      400
+    );
   }
   if (!from || !to) {
     return c.json({ ok: false, error: "'from' and 'to' (ISO timestamps) are required" }, 400);
   }
   if (groupBy && !(TIMESERIES_GROUP_BYS as readonly string[]).includes(groupBy)) {
-    return c.json({ ok: false, error: `invalid 'groupBy'; expect one of ${TIMESERIES_GROUP_BYS.join(",")}` }, 400);
+    return c.json(
+      { ok: false, error: `invalid 'groupBy'; expect one of ${TIMESERIES_GROUP_BYS.join(",")}` },
+      400
+    );
   }
 
   try {
@@ -1064,7 +1061,9 @@ monitorRouter.get("/memory/skill-promotions", async (c) => {
   const db = await getDb();
   const conds = [eq(agentSkill.projectId, projectId)];
   if (stateParam !== "all") {
-    conds.push(eq(agentSkill.state, stateParam as "pending_review" | "active" | "archived" | "stale"));
+    conds.push(
+      eq(agentSkill.state, stateParam as "pending_review" | "active" | "archived" | "stale")
+    );
   }
   const rows = await db
     .select({
@@ -1376,7 +1375,10 @@ async function transitionStatus(
   body: { reason?: string; actor?: string },
   // 允许从这些 status 流转到 toStatus；其它直接 400
   fromAllowed: ReadonlyArray<"open" | "proposed" | "installed" | "wont_fix" | "rejected">
-): Promise<{ ok: true; data: { id: string; prevStatus: string; nextStatus: string } } | { ok: false; error: string; status: number }> {
+): Promise<
+  | { ok: true; data: { id: string; prevStatus: string; nextStatus: string } }
+  | { ok: false; error: string; status: number }
+> {
   const { getDb } = await import("../db/sqlite/client");
   const { toolGapLog } = await import("../db/sqlite/schema");
   const { eq } = await import("drizzle-orm");
@@ -1447,10 +1449,7 @@ monitorRouter.post("/memory/tool-gaps/report", async (c) => {
   }
   if (!body.projectId) return c.json({ ok: false, error: "projectId required" }, 400);
   if (!body.signature && !body.toolName && !body.reason) {
-    return c.json(
-      { ok: false, error: "signature 或 toolName 或 reason 至少一个" },
-      400
-    );
+    return c.json({ ok: false, error: "signature 或 toolName 或 reason 至少一个" }, 400);
   }
   try {
     const { reportExplicitGap } = await import("../runtime/tool-gap-watcher/watcher");

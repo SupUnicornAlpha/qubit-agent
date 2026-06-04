@@ -13,9 +13,8 @@
  *   - recordExternalLoopToolCall      cli 解析出的 tool 事件落 tool_call_log
  *
  * 与 `tool-call-log-service.ts`（P1-G 抽出）的区别：那里专门服务 LangGraph
- * act 节点（强依赖 acpCall / mcpCallLog 联动），不契合外部 loop 没有 ACP 的
- * 上下文。本服务是为"外部 process 视角"补的轻量等价物，**只写 tool_call_log
- * 一张表**，避免误造假 ACP 记录。
+ * act 节点（强依赖 mcpCallLog 联动），不契合外部 loop 没有 ACP 的上下文。
+ * 本服务是为"外部 process 视角"补的轻量等价物，**只写 tool_call_log 一张表**。
  */
 
 import { randomUUID } from "node:crypto";
@@ -126,7 +125,7 @@ export interface RecordExternalLoopToolCallInput {
  * - latencyMs 1：CLI 协议未携带延迟，占位
  * - toolKind 'builtin'：外部 loop 无法精确区分 acp_connector/mcp/skill；
  *   仅说明这是 loop 内部调用
- * - 不写 mcp_call_log / acp_call：避免误造假的 ACP / MCP 记录污染监控
+ * - 不写 mcp_call_log：避免误造假的 MCP 记录污染监控
  * - 写失败仅 warn 不抛：监控类副作用不挡主流程
  */
 export async function recordExternalLoopToolCall(

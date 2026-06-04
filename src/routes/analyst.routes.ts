@@ -11,13 +11,7 @@ import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import {
-  agentGroup,
-  agentRoleCatalog,
-  analystSignal,
-  signalFusionResult,
-  workflowRun,
-} from "../db/sqlite/schema";
+import { agentGroup, analystSignal, signalFusionResult, workflowRun } from "../db/sqlite/schema";
 import { dispatchTaskToRole } from "../runtime/agent-pool";
 import {
   failAnalystResearchJob,
@@ -27,8 +21,9 @@ import {
 import { RESEARCH_TEAM_SLOT_SET } from "../runtime/msa/analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
+import { SEED_AGENT_ROLE_CATALOG } from "../runtime/seed-agent-roles";
 import type { AgentRole } from "../types/entities";
-import { resolveResearchScope, type ResearchScopeInput } from "../types/research-scope";
+import { type ResearchScopeInput, resolveResearchScope } from "../types/research-scope";
 
 export const analystRouter = new Hono();
 
@@ -89,8 +84,7 @@ analystRouter.post("/run", async (c) => {
   // 把 hitl 偏好（v2 hitlMode）同步到 workflow.loopOptionsJson，
   // 让 evaluateTeamHitlTrigger 读取到。v1 字段已通过 migration 0053 退场。
   if (body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always") {
-    const currentLoopOptions =
-      (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
+    const currentLoopOptions = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
     const nextLoopOptions: Record<string, unknown> = {
       ...currentLoopOptions,
       hitlMode: body.hitlMode,
@@ -228,11 +222,13 @@ analystRouter.get("/fusion/:workflowId", async (c) => {
 /**
  * GET /api/v1/analyst/roles
  * 返回角色字典（前端展示用）
+ *
+ * 历史：曾从 `agent_role_catalog` 表 select；该表 22 行内容由 migration 0004 硬编码
+ * 写入、运行时永不变更、零业务消费方（前端 `getAgentRoles` 声明但无调用方）。
+ * 收敛后直接返回 `SEED_AGENT_ROLE_CATALOG` 常量，端点 schema 与原表行一致。
  */
 analystRouter.get("/roles", async (c) => {
-  const db = await getDb();
-  const roles = await db.select().from(agentRoleCatalog);
-  return c.json({ ok: true, data: roles });
+  return c.json({ ok: true, data: SEED_AGENT_ROLE_CATALOG });
 });
 
 /**

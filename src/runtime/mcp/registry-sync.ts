@@ -1,8 +1,25 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, like } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { mcpCatalogItem, mcpRegistrySource } from "../../db/sqlite/schema";
-import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
+import { mcpCatalog, mcpRegistrySource } from "../../db/sqlite/schema";
+import { DEFAULT_FETCH_TIMEOUT_MS, fetchWithTimeout } from "../../util/fetch-with-timeout";
+
+/**
+ * Schema 收敛 C4（migration 0071）后：registry 同步直接写到合并后的 `mcp_catalog`
+ * 表（source='registry'）；原来塞在 specJson JSON blob 里的 command / url /
+ * defaultToolName / defaults / setupSchema 现在展平为顶级列。
+ */
+
+interface RegistrySpec {
+  command?: string;
+  url?: string;
+  defaultToolName?: string;
+  defaultTimeoutMs?: number;
+  defaultRetryPolicyJson?: Record<string, unknown>;
+  defaultRateLimitJson?: Record<string, unknown>;
+  defaultCapabilitiesJson?: unknown[];
+  setupSchemaJson?: Record<string, unknown>;
+}
 
 export interface RegistryCatalogPayload {
   items: Array<{
@@ -111,7 +128,9 @@ function mapOfficialServerEntry(entry: unknown): RegistryCatalogPayload["items"]
 
   const metaBlock = wrap["_meta"];
   if (metaBlock && typeof metaBlock === "object") {
-    const official = (metaBlock as Record<string, unknown>)["io.modelcontextprotocol.registry/official"];
+    const official = (metaBlock as Record<string, unknown>)[
+      "io.modelcontextprotocol.registry/official"
+    ];
     if (official && typeof official === "object") {
       const status = (official as Record<string, unknown>)["status"];
       if (status === "deleted") return null;
@@ -241,7 +260,7 @@ async function fetchCatalogFromSource(
     const nextRes = await fetchWithTimeout(
       nextUrl.toString(),
       { headers },
-      DEFAULT_FETCH_TIMEOUT_MS,
+      DEFAULT_FETCH_TIMEOUT_MS
     );
     if (!nextRes.ok) {
       throw new Error(`registry source responded ${nextRes.status} (page ${page + 2})`);
@@ -284,7 +303,11 @@ export async function syncRegistrySource(sourceId: string): Promise<{
   usedFallback: boolean;
 }> {
   const db = await getDb();
-  const rows = await db.select().from(mcpRegistrySource).where(eq(mcpRegistrySource.id, sourceId)).limit(1);
+  const rows = await db
+    .select()
+    .from(mcpRegistrySource)
+    .where(eq(mcpRegistrySource.id, sourceId))
+    .limit(1);
   const source = rows[0];
   if (!source) throw new Error("registry source not found");
 
@@ -308,13 +331,19 @@ export async function syncRegistrySource(sourceId: string): Promise<{
   for (const item of payload.items) {
     const existed = await db
       .select()
-      .from(mcpCatalogItem)
-      .where(and(eq(mcpCatalogItem.sourceId, sourceId), eq(mcpCatalogItem.slug, item.slug)))
+      .from(mcpCatalog)
+      .where(
+        and(
+          eq(mcpCatalog.source, "registry"),
+          eq(mcpCatalog.sourceId, sourceId),
+          eq(mcpCatalog.slug, item.slug)
+        )
+      )
       .limit(1);
-    const spec = item.specJson ?? {};
+    const spec = (item.specJson ?? {}) as RegistrySpec;
     if (existed[0]) {
       await db
-        .update(mcpCatalogItem)
+        .update(mcpCatalog)
         .set({
           externalId: item.externalId ?? existed[0].externalId,
           name: item.name,
@@ -323,24 +352,39 @@ export async function syncRegistrySource(sourceId: string): Promise<{
           provider: item.provider ?? "community",
           transport: item.transport,
           riskLevel: item.riskLevel ?? "medium",
-          specJson: spec,
+          command: spec.command ?? null,
+          url: spec.url ?? null,
+          defaultToolName: spec.defaultToolName ?? "",
+          defaultTimeoutMs: spec.defaultTimeoutMs ?? 20_000,
+          defaultRetryPolicyJson: spec.defaultRetryPolicyJson ?? {},
+          defaultRateLimitJson: spec.defaultRateLimitJson ?? {},
+          defaultCapabilitiesJson: spec.defaultCapabilitiesJson ?? [],
+          setupSchemaJson: spec.setupSchemaJson ?? {},
           enabled: item.enabled ?? true,
           updatedAt: new Date().toISOString(),
         })
-        .where(eq(mcpCatalogItem.id, existed[0].id));
+        .where(eq(mcpCatalog.id, existed[0].id));
     } else {
-      await db.insert(mcpCatalogItem).values({
+      await db.insert(mcpCatalog).values({
         id: randomUUID(),
-        sourceId,
-        externalId: item.externalId ?? "",
         slug: item.slug,
         name: item.name,
-        version: item.version ?? "latest",
         description: item.description ?? "",
         provider: item.provider ?? "community",
-        transport: item.transport,
+        source: "registry",
+        sourceId,
+        externalId: item.externalId ?? "",
+        version: item.version ?? "latest",
         riskLevel: item.riskLevel ?? "medium",
-        specJson: spec,
+        transport: item.transport,
+        command: spec.command ?? null,
+        url: spec.url ?? null,
+        defaultToolName: spec.defaultToolName ?? "",
+        defaultTimeoutMs: spec.defaultTimeoutMs ?? 20_000,
+        defaultRetryPolicyJson: spec.defaultRetryPolicyJson ?? {},
+        defaultRateLimitJson: spec.defaultRateLimitJson ?? {},
+        defaultCapabilitiesJson: spec.defaultCapabilitiesJson ?? [],
+        setupSchemaJson: spec.setupSchemaJson ?? {},
         enabled: item.enabled ?? true,
       });
     }

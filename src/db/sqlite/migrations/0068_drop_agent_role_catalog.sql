@@ -1,0 +1,21 @@
+-- Schema 收敛 C9 — 删除 agent_role_catalog 表。
+--
+-- 背景：该表 22 行内容由 migration 0004 一次性 INSERT OR IGNORE，运行时永不变更
+-- （schema 的 `defaultPromptTemplate` 列全部为空字符串，`isBuiltin` 全部 true）。
+-- 全仓代码扫描结果：
+--   - 写入端：仅 migration 0004 的 SQL 种子，零 `db.insert(agentRoleCatalog)` 命中
+--   - 读取端：仅 `GET /api/v1/analyst/roles` 一个端点
+--   - 前端：`AgentRoleCatalogItem` DTO + `getAgentRoles()` 函数已定义，但全仓零调用方
+--
+-- 收敛方案：
+--   - 22 行内容固化为 `src/runtime/seed-agent-roles.ts` 常量 `SEED_AGENT_ROLE_CATALOG`
+--   - `GET /api/v1/analyst/roles` 改为直接返回常量（端点行为向后兼容）
+--   - 删除本表
+--
+-- 兼容性影响：
+--   - 旧数据库升级到本 migration 后，该表数据丢失但功能等价（常量与 0004 seed 字段一致）
+--   - 前端 `getAgentRoles()` 返回值结构不变
+--
+-- 回滚：down-0068.sql（CREATE TABLE + 重新 INSERT OR IGNORE 22 行）
+
+DROP TABLE IF EXISTS `agent_role_catalog`;

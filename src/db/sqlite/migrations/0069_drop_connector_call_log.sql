@@ -1,0 +1,31 @@
+-- Schema 收敛 C5-2 — 删除 connector_call_log 表。
+--
+-- 背景（详见 docs canvas C5）：
+--   * 写入路径：act → defaultAcpCaller → installAcpMonitoringHook 注入的 hook →
+--     connector-call-logger → db.insert(connector_call_log)
+--   * 读取路径：getConnectorsSummary + /monitor/timeseries?source=connector_call_log
+--   * 前端：MonitorTimeseriesSource union 含 "connector_call_log"，**但全仓零组件传值**；
+--     `/api/v1/monitor/connectors/summary` 在 frontend 0 命中
+--   * 净效果："写有读无"，全链路死路。
+--
+-- 同步删除：
+--   * src/index.ts:installAcpMonitoringHook() 调用
+--   * src/runtime/monitor/acp-monitoring-hook.ts
+--   * src/runtime/monitor/connector-call-logger.ts
+--   * src/runtime/monitor/connector-summary.ts
+--   * src/runtime/monitor/__tests__/acp-monitoring-hook.test.ts
+--   * src/messaging/acp.ts:AcpCaller.onCallObserved / setOnCallObserved / _observe
+--   * src/routes/monitor.routes.ts GET /connectors/summary
+--   * src/runtime/monitor/timeseries.ts "connector_call_log" source 分支
+--   * frontend MonitorTimeseriesSource union 中的 "connector_call_log"
+--
+-- 兼容性影响：
+--   * 旧数据库升级后表与数据丢失；前端零调用方，无 UI 影响
+--   * 如未来需要按 connector 维度聚合，可复用 tool_call_log（toolKind='acp_connector'）
+--
+-- 必须在 0070 删除 acp_call 之前 drop —— connector_call_log.acp_call_id 持有
+-- 对 acp_call.id 的外键引用。
+--
+-- 回滚：down-0069.sql（CREATE TABLE + idx，数据无法恢复）
+
+DROP TABLE IF EXISTS `connector_call_log`;

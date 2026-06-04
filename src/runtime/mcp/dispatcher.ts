@@ -33,12 +33,18 @@ function asRecord(v: unknown): Record<string, unknown> {
 }
 
 function stringifyResult(result: unknown): Record<string, unknown> {
-  if (result && typeof result === "object" && !Array.isArray(result)) return result as Record<string, unknown>;
+  if (result && typeof result === "object" && !Array.isArray(result))
+    return result as Record<string, unknown>;
   return { value: result as string | number | boolean | null };
 }
 
 /** Higher = more specific for dispatch (definition → project → exact tool name). */
-function bindingSpecificityScore(row: McpBindingRow, toolName: string, projectId: string | undefined, definitionId: string | undefined): number {
+function bindingSpecificityScore(
+  row: McpBindingRow,
+  toolName: string,
+  projectId: string | undefined,
+  definitionId: string | undefined
+): number {
   let defS = 0;
   if (definitionId) {
     if (row.definitionId === definitionId) defS = 3;
@@ -108,13 +114,17 @@ function parseRetryPolicy(raw: unknown): ResolvedMcpPolicy["retry"] {
   const mult = Number(o["backoffMultiplier"]);
   return {
     maxAttempts:
-      Number.isFinite(max) && max >= 1 ? Math.min(Math.floor(max), 10) : DEFAULT_MCP_POLICY.retry.maxAttempts,
+      Number.isFinite(max) && max >= 1
+        ? Math.min(Math.floor(max), 10)
+        : DEFAULT_MCP_POLICY.retry.maxAttempts,
     backoffMs:
       Number.isFinite(backoff) && backoff >= 0
         ? Math.min(Math.floor(backoff), 10_000)
         : DEFAULT_MCP_POLICY.retry.backoffMs,
     backoffMultiplier:
-      Number.isFinite(mult) && mult >= 1 ? Math.min(mult, 5) : DEFAULT_MCP_POLICY.retry.backoffMultiplier,
+      Number.isFinite(mult) && mult >= 1
+        ? Math.min(mult, 5)
+        : DEFAULT_MCP_POLICY.retry.backoffMultiplier,
   };
 }
 
@@ -133,7 +143,9 @@ async function resolveMcpPolicy(
         eq(mcpToolBinding.serverName, serverName),
         eq(mcpToolBinding.enabled, true),
         or(eq(mcpToolBinding.toolName, toolName), eq(mcpToolBinding.toolName, "*")),
-        projectId ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId)) : undefined
+        projectId
+          ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId))
+          : undefined
       )
     );
   const exact = pickBestBindingRow(rows, toolName, projectId, definitionId, true);
@@ -157,7 +169,9 @@ async function assertToolBindingNotDisabled(
     .where(
       and(
         eq(mcpToolBinding.serverName, serverName),
-        projectId ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId)) : undefined
+        projectId
+          ? or(eq(mcpToolBinding.projectId, projectId), isNull(mcpToolBinding.projectId))
+          : undefined
       )
     );
   const best = pickBestBindingRow(rows, toolName, projectId, definitionId, false);
@@ -192,104 +206,114 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
   await assertMcpServerNotOpen(input.serverName);
   try {
     const dispatchResult = await executeWithPolicy(
-    {
-      scopeKey: `mcp:${input.serverName}:${input.toolName}`,
-      retry: policy.retry,
-      circuitBreaker: { failureThreshold: 3, cooldownMs: 30_000 },
-      idempotency: {
-        enabled: true,
-        key: `mcp:${input.serverName}:${input.toolName}:${JSON.stringify(input.arguments ?? {})}`,
-        ttlMs: 10_000,
+      {
+        scopeKey: `mcp:${input.serverName}:${input.toolName}`,
+        retry: policy.retry,
+        circuitBreaker: { failureThreshold: 3, cooldownMs: 30_000 },
+        idempotency: {
+          enabled: true,
+          key: `mcp:${input.serverName}:${input.toolName}:${JSON.stringify(input.arguments ?? {})}`,
+          ttlMs: 10_000,
+        },
       },
-    },
-    async () => {
-      const db = await getDb();
-      /**
-       * 2026-05-27 P1 修复：之前 `eq(mcpServerConfig.projectId, null)` 在 SQL
-       * 里展开成 `project_id = NULL`（NULL 三值逻辑下永远不为 true），导致
-       * project-scoped workflow 调用 **global**（projectId IS NULL）的 mcp
-       * server 时永远查不到 → 报 `not found or disabled`。
-       * WF 9adf5d91 实测：def-analyst-fundamental 通过 call_mcp 调
-       * mcp-financex 时被这条 bug 拦住，agent 误判"该 server 不可用"。
-       * 改用 drizzle 的 `isNull()` 帮手生成正确的 `project_id IS NULL`.
-       */
-      const rows = await db
-        .select()
-        .from(mcpServerConfig)
-        .where(
-          and(
-            eq(mcpServerConfig.name, input.serverName),
-            eq(mcpServerConfig.enabled, true),
-            input.projectId
-              ? or(eq(mcpServerConfig.projectId, input.projectId), isNull(mcpServerConfig.projectId))
-              : undefined
-          )
-        );
-      const server =
-        rows.find((row) => row.projectId === input.projectId) ?? rows.find((row) => row.projectId == null);
-      if (!server) {
-        throw new Error(`mcp server "${input.serverName}" not found or disabled`);
-      }
-
-      await assertToolBindingNotDisabled(input.serverName, input.toolName, input.projectId, input.definitionId);
-      const timeoutMs = policy.timeoutMs;
-      const caps = server.capabilitiesJson;
-
-      let result: unknown;
-      if (server.transport === "stdio") {
-        const rawArgv = stdioArgvFromServer(server.command, caps);
-        /*
-         * 把 `npx -y pkg@ver` 替换成绝对路径的 .bin。首次会触发 npm install 到
-         * <dataDir>/mcp-bin，后续直接秒级启动。失败时 fallback 原 argv，让旧的
-         * npx 行为继续可用（package-manager 内部已 console.warn 给运维定位）。
+      async () => {
+        const db = await getDb();
+        /**
+         * 2026-05-27 P1 修复：之前 `eq(mcpServerConfig.projectId, null)` 在 SQL
+         * 里展开成 `project_id = NULL`（NULL 三值逻辑下永远不为 true），导致
+         * project-scoped workflow 调用 **global**（projectId IS NULL）的 mcp
+         * server 时永远查不到 → 报 `not found or disabled`。
+         * WF 9adf5d91 实测：def-analyst-fundamental 通过 call_mcp 调
+         * mcp-financex 时被这条 bug 拦住，agent 误判"该 server 不可用"。
+         * 改用 drizzle 的 `isNull()` 帮手生成正确的 `project_id IS NULL`.
          */
-        const resolved = await resolveMcpStdioArgv(rawArgv);
-        const envObj = asRecord(asRecord(caps).env);
-        const env: Record<string, string> = {};
-        for (const [k, v] of Object.entries(envObj)) {
-          if (typeof v === "string") env[k] = v;
+        const rows = await db
+          .select()
+          .from(mcpServerConfig)
+          .where(
+            and(
+              eq(mcpServerConfig.name, input.serverName),
+              eq(mcpServerConfig.enabled, true),
+              input.projectId
+                ? or(
+                    eq(mcpServerConfig.projectId, input.projectId),
+                    isNull(mcpServerConfig.projectId)
+                  )
+                : undefined
+            )
+          );
+        const server =
+          rows.find((row) => row.projectId === input.projectId) ??
+          rows.find((row) => row.projectId == null);
+        if (!server) {
+          throw new Error(`mcp server "${input.serverName}" not found or disabled`);
         }
-        const cwd = typeof asRecord(caps).cwd === "string" ? (asRecord(caps).cwd as string) : undefined;
-        result = await callMcpStdioTool({
-          serverKey: input.serverName,
-          argv: resolved.argv,
-          env,
-          cwd,
-          requestTimeoutMs: timeoutMs,
-          toolName: input.toolName,
-          arguments: input.arguments ?? {},
-        });
-      } else if (server.transport === "http") {
-        const url = httpEndpointFromServer(server.url, caps);
-        const headers = httpHeadersFromCaps(caps);
-        result = await callMcpHttpTool({
-          postUrl: url,
-          toolName: input.toolName,
-          arguments: input.arguments ?? {},
-          headers,
-          timeoutMs,
-        });
-      } else if (server.transport === "ws") {
-        if (!server.url) throw new Error("MCP ws: mcp_server_config.url is required");
-        result = await callMcpWsTool({
-          wsUrl: server.url,
-          toolName: input.toolName,
-          arguments: input.arguments ?? {},
-          timeoutMs,
-        });
-      } else {
-        throw new Error(`unsupported mcp transport: ${server.transport}`);
-      }
 
-      return {
-        serverName: input.serverName,
-        toolName: input.toolName,
-        transport: server.transport,
-        accepted: true,
-        output: stringifyResult(result),
-      };
-    }
-  );
+        await assertToolBindingNotDisabled(
+          input.serverName,
+          input.toolName,
+          input.projectId,
+          input.definitionId
+        );
+        const timeoutMs = policy.timeoutMs;
+        const caps = server.capabilitiesJson;
+
+        let result: unknown;
+        if (server.transport === "stdio") {
+          const rawArgv = stdioArgvFromServer(server.command, caps);
+          /*
+           * 把 `npx -y pkg@ver` 替换成绝对路径的 .bin。首次会触发 npm install 到
+           * <dataDir>/mcp-bin，后续直接秒级启动。失败时 fallback 原 argv，让旧的
+           * npx 行为继续可用（package-manager 内部已 console.warn 给运维定位）。
+           */
+          const resolved = await resolveMcpStdioArgv(rawArgv);
+          const envObj = asRecord(asRecord(caps).env);
+          const env: Record<string, string> = {};
+          for (const [k, v] of Object.entries(envObj)) {
+            if (typeof v === "string") env[k] = v;
+          }
+          const cwd =
+            typeof asRecord(caps).cwd === "string" ? (asRecord(caps).cwd as string) : undefined;
+          result = await callMcpStdioTool({
+            serverKey: input.serverName,
+            argv: resolved.argv,
+            env,
+            cwd,
+            requestTimeoutMs: timeoutMs,
+            toolName: input.toolName,
+            arguments: input.arguments ?? {},
+          });
+        } else if (server.transport === "http") {
+          const url = httpEndpointFromServer(server.url, caps);
+          const headers = httpHeadersFromCaps(caps);
+          result = await callMcpHttpTool({
+            postUrl: url,
+            toolName: input.toolName,
+            arguments: input.arguments ?? {},
+            headers,
+            timeoutMs,
+          });
+        } else if (server.transport === "ws") {
+          if (!server.url) throw new Error("MCP ws: mcp_server_config.url is required");
+          result = await callMcpWsTool({
+            wsUrl: server.url,
+            toolName: input.toolName,
+            arguments: input.arguments ?? {},
+            timeoutMs,
+          });
+        } else {
+          throw new Error(`unsupported mcp transport: ${server.transport}`);
+        }
+
+        return {
+          serverName: input.serverName,
+          toolName: input.toolName,
+          transport: server.transport,
+          accepted: true,
+          output: stringifyResult(result),
+        };
+      }
+    );
     // 调用成功（含 idempotency cache 命中）：刷新 health 行为 closed + 累计 success
     await recordMcpCallResult(input.serverName, "success");
     return dispatchResult;

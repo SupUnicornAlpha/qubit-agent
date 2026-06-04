@@ -1,6 +1,10 @@
 /**
- * AutoInstaller（P8）—— 把 P7 `tool_gap_log` 路由到 mcp_catalog / mcp_catalog_item 上
- * 生成 `auto_install_proposal` 入审批队列。
+ * AutoInstaller（P8）—— 把 P7 `tool_gap_log` 路由到 mcp_catalog 上生成
+ * `auto_install_proposal` 入审批队列。
+ *
+ * Schema 收敛 C4（migration 0071）后：builtin / registry / fsi 来源已并入同一张
+ * `mcp_catalog` 表，用 `source` 字段区分。MatchCandidate.source 决定走
+ * install_mcp_catalog 还是 install_mcp_external。
  *
  * 文档：docs/SELF_EVOLVING_AGENT_DESIGN.md §6.6
  */
@@ -14,17 +18,29 @@ export type ProposalState = "pending_review" | "approved" | "rejected" | "no_can
 /** auto_install_proposal.safety_level（透传 catalog.riskLevel） */
 export type ProposalSafetyLevel = "low" | "medium" | "high";
 
-/** auto_install_proposal.target_kind */
+/**
+ * auto_install_proposal.target_kind
+ *
+ * Schema 收敛 C4（migration 0071）后：所有候选物理上都来自合并后的 `mcp_catalog`
+ * 一张表，target_kind 新写入恒为 'mcp_catalog'。'mcp_catalog_item' 字面值
+ * 保留是为了 backward-compat 反序列化历史 proposal 行（不再产生新值）。
+ * 区分 builtin / external 改用 MatchCandidate.source 或 proposal_kind。
+ */
 export type ProposalTargetKind = "mcp_catalog" | "mcp_catalog_item";
+
+/** mcp_catalog.source —— 候选来源域 */
+export type CatalogSource = "builtin" | "registry" | "fsi";
 
 /** matcher 给一个 gap 算出来的一个候选 */
 export interface MatchCandidate {
-  /** 'mcp_catalog' / 'mcp_catalog_item' */
+  /** 合表后恒为 'mcp_catalog'；保留字段是为了 proposal payload 兼容旧消费端 */
   targetKind: ProposalTargetKind;
-  /** catalog 或 catalog_item 的主键 */
+  /** mcp_catalog 主键 */
   targetId: string;
-  /** catalog.slug / catalog_item.slug，给前端展示 */
+  /** mcp_catalog.slug，给前端展示 */
   targetSlug: string;
+  /** 候选来源：'builtin' 走 install_mcp_catalog & 允许 auto-install；其余走 install_mcp_external */
+  source: CatalogSource;
   /** 展示名 */
   name: string;
   description: string;

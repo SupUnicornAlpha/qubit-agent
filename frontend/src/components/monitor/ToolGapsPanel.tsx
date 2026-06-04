@@ -15,6 +15,13 @@
 import type { FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  type AutoInstallProposalItem,
+  type AutoInstallerRunItem,
+  type ProposalState,
+  type ToolGapDetectionKind,
+  type ToolGapListItem,
+  type ToolGapRunSummary,
+  type ToolGapStatus,
   approveAutoInstallProposal,
   listAutoInstallProposals,
   listAutoInstallerRuns,
@@ -24,13 +31,6 @@ import {
   rejectAutoInstallProposal,
   reopenToolGap,
   reportToolGap,
-  type AutoInstallProposalItem,
-  type AutoInstallerRunItem,
-  type ProposalState,
-  type ToolGapDetectionKind,
-  type ToolGapListItem,
-  type ToolGapRunSummary,
-  type ToolGapStatus,
 } from "../../api/backend";
 import { Kpi, styles } from "./monitor-shared";
 
@@ -205,11 +205,7 @@ export const ToolGapsPanel: FC<ToolGapsPanelProps> = ({ projectId, autoRefresh }
           />
         </div>
         <div style={styles.col}>
-          <DetailPanel
-            item={selected}
-            onWontFix={handleWontFix}
-            onReopen={handleReopen}
-          />
+          <DetailPanel item={selected} onWontFix={handleWontFix} onReopen={handleReopen} />
         </div>
       </div>
 
@@ -242,7 +238,14 @@ const RunsBar: FC<{ runs: ToolGapRunSummary[]; onRefresh: () => void }> = ({ run
   );
   return (
     <section style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 8,
+        }}
+      >
         <h3 style={{ ...styles.subTitle, margin: 0 }}>ToolGapWatcher · 跑批概览</h3>
         <button
           type="button"
@@ -254,23 +257,48 @@ const RunsBar: FC<{ runs: ToolGapRunSummary[]; onRefresh: () => void }> = ({ run
         </button>
       </div>
       {runs.length === 0 ? (
-        <div style={styles.empty}>暂无 watcher 跑批记录。运行 <code>bun run src/scripts/run-tool-gap-watcher.ts --projectId=...</code> 触发。</div>
+        <div style={styles.empty}>
+          暂无 watcher 跑批记录。运行{" "}
+          <code>bun run src/scripts/run-tool-gap-watcher.ts --projectId=...</code> 触发。
+        </div>
       ) : (
         <>
           <div style={styles.kpiRow}>
             {latest ? (
               <>
-                <Kpi label="最近 run · signals" value={String(latest.totalSignals)} accent="#3b82f6" />
-                <Kpi label="最近 run · created" value={String(latest.gapsCreated)} accent="#22c55e" />
-                <Kpi label="最近 run · incremented" value={String(latest.gapsIncremented)} accent="#a78bfa" />
-                <Kpi label="最近 run · status" value={latest.status} accent={latest.status === "failed" ? "#f87171" : "#22c55e"} />
+                <Kpi
+                  label="最近 run · signals"
+                  value={String(latest.totalSignals)}
+                  accent="#3b82f6"
+                />
+                <Kpi
+                  label="最近 run · created"
+                  value={String(latest.gapsCreated)}
+                  accent="#22c55e"
+                />
+                <Kpi
+                  label="最近 run · incremented"
+                  value={String(latest.gapsIncremented)}
+                  accent="#a78bfa"
+                />
+                <Kpi
+                  label="最近 run · status"
+                  value={latest.status}
+                  accent={latest.status === "failed" ? "#f87171" : "#22c55e"}
+                />
                 <Kpi label="elapsed" value={`${latest.elapsedMs}ms`} accent="#eab308" />
               </>
             ) : null}
-            <Kpi label={`累计 (${runs.length} run)`} value={`${total.signals}sig / ${total.created}new`} accent="#71717a" />
+            <Kpi
+              label={`累计 (${runs.length} run)`}
+              value={`${total.signals}sig / ${total.created}new`}
+              accent="#71717a"
+            />
           </div>
           {latest?.errorMessage ? (
-            <div style={{ ...styles.empty, color: "#f87171" }}>last error: {latest.errorMessage}</div>
+            <div style={{ ...styles.empty, color: "#f87171" }}>
+              last error: {latest.errorMessage}
+            </div>
           ) : null}
         </>
       )}
@@ -344,10 +372,9 @@ const ListTable: FC<{
     return (
       <div style={styles.empty}>
         当前条件下没有 gap。
-        <br />
-        - 等 ToolGapWatcher 周期跑后会自动落 unknown_tool / repeated_fail / reflective_mention 三路。
-        <br />
-        - agent 可以主动调 builtin <code>tool.report_gap</code> 上报。
+        <br />- 等 ToolGapWatcher 周期跑后会自动落 unknown_tool / repeated_fail / reflective_mention
+        三路。
+        <br />- agent 可以主动调 builtin <code>tool.report_gap</code> 上报。
       </div>
     );
   }
@@ -390,7 +417,9 @@ const ListTable: FC<{
                 <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 11 }}>
                   {it.gapSignature}
                 </td>
-                <td style={{ ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                <td
+                  style={{ ...styles.td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                >
                   {it.occurrenceCount}
                 </td>
                 <td style={styles.td}>
@@ -424,7 +453,9 @@ const DetailPanel: FC<{
   onReopen: (id: string) => void;
 }> = ({ item, onWontFix, onReopen }) => {
   if (!item) {
-    return <section style={{ ...styles.empty, padding: 24 }}>← 在左侧列表点击 gap 行查看详情。</section>;
+    return (
+      <section style={{ ...styles.empty, padding: 24 }}>← 在左侧列表点击 gap 行查看详情。</section>
+    );
   }
   const canWontFix = item.status === "open" || item.status === "proposed";
   const canReopen = item.status === "wont_fix" || item.status === "rejected";
@@ -440,7 +471,15 @@ const DetailPanel: FC<{
           marginBottom: 12,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 8,
+            flexWrap: "wrap",
+          }}
+        >
           <span
             style={{
               padding: "1px 8px",
@@ -469,7 +508,15 @@ const DetailPanel: FC<{
             occurrence={item.occurrenceCount}
           </span>
         </div>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--qb-body-fg, #f4f4f5)", marginBottom: 6, fontFamily: "monospace" }}>
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--qb-body-fg, #f4f4f5)",
+            marginBottom: 6,
+            fontFamily: "monospace",
+          }}
+        >
           {item.gapSignature}
         </div>
         {item.excerpt ? (
@@ -785,7 +832,13 @@ const ProposalsSection: FC<{ projectId: string; autoRefresh: boolean }> = ({
   );
 
   return (
-    <section style={{ marginTop: 24, paddingTop: 16, borderTop: "1px solid var(--qb-main-border, #27272a)" }}>
+    <section
+      style={{
+        marginTop: 24,
+        paddingTop: 16,
+        borderTop: "1px solid var(--qb-main-border, #27272a)",
+      }}
+    >
       <div
         style={{
           display: "flex",
@@ -904,7 +957,10 @@ const ProposalsSection: FC<{ projectId: string; autoRefresh: boolean }> = ({
                     </td>
                     <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 11 }}>
                       {p.targetSlug ?? <span style={{ color: "#71717a" }}>—</span>}
-                      {p.targetKind === "mcp_catalog_item" ? (
+                      {/* C4 合表后：用 proposalKind 区分 external（之前用 targetKind='mcp_catalog_item'）；
+                          老数据 targetKind 仍可能是 'mcp_catalog_item'，两个条件都成立时显示 (ext) */}
+                      {p.proposalKind === "install_mcp_external" ||
+                      p.targetKind === "mcp_catalog_item" ? (
                         <span style={{ marginLeft: 6, color: "#a1a1aa", fontSize: 10 }}>(ext)</span>
                       ) : null}
                     </td>

@@ -415,35 +415,16 @@ export const mcpRegistrySource = sqliteTable(
   })
 );
 
-export const mcpCatalogItem = sqliteTable(
-  "mcp_catalog_item",
-  {
-    id: id(),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => mcpRegistrySource.id),
-    externalId: text("external_id").notNull().default(""),
-    slug: text("slug").notNull(),
-    name: text("name").notNull(),
-    version: text("version").notNull().default("latest"),
-    description: text("description").notNull().default(""),
-    provider: text("provider").notNull().default("community"),
-    transport: text("transport", { enum: ["stdio", "http", "ws"] }).notNull(),
-    riskLevel: text("risk_level", { enum: ["low", "medium", "high"] })
-      .notNull()
-      .default("medium"),
-    specJson: text("spec_json", { mode: "json" }).notNull().default("{}"),
-    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => ({
-    itemSourceSlugUnique: uniqueIndex("idx_mcp_catalog_item_source_slug_unique").on(
-      table.sourceId,
-      table.slug
-    ),
-  })
-);
+// Schema 收敛 C4（migration 0071）：原 `mcp_catalog_item` 表已并入下面的
+// `mcp_catalog` —— 用 `source` 字段区分 'builtin' / 'registry' / 'fsi' 来源，
+// registry 同步来的行额外带 `sourceId` / `externalId` / `version`。
+//
+// 之前两表 95% 字段重叠：mcp_catalog_item 的 specJson JSON blob 里存的 command /
+// url / defaultToolName / defaultTimeoutMs / defaultRetryPolicyJson /
+// defaultRateLimitJson / defaultCapabilitiesJson / setupSchemaJson 全部是
+// mcp_catalog 的顶级列；market-service.installCatalogItemToProject 在装机时
+// 就要做一次 shadow-copy 把 item 复制到 catalog，证明它们语义相同。
+// 合表后这层 shadow-copy 直接删掉。
 
 export const mcpCatalog = sqliteTable(
   "mcp_catalog",
@@ -453,7 +434,14 @@ export const mcpCatalog = sqliteTable(
     name: text("name").notNull(),
     description: text("description").notNull().default(""),
     provider: text("provider").notNull().default("community"),
+    /** 来源域：'builtin'（内置）/ 'registry'（订阅源同步）/ 'fsi'（FSI 内容包） */
     source: text("source").notNull().default("builtin"),
+    /** 仅 source='registry' 时非空：指向同步源 */
+    sourceId: text("source_id").references(() => mcpRegistrySource.id),
+    /** 仅 source='registry' 时非空：上游 registry 的 externalId */
+    externalId: text("external_id").notNull().default(""),
+    /** 仅 source='registry' 时非默认值：上游版本号 */
+    version: text("version").notNull().default("latest"),
     riskLevel: text("risk_level", { enum: ["low", "medium", "high"] })
       .notNull()
       .default("medium"),
@@ -475,7 +463,19 @@ export const mcpCatalog = sqliteTable(
     updatedAt: updatedAt(),
   },
   (table) => ({
-    slugUnique: uniqueIndex("idx_mcp_catalog_slug_unique").on(table.slug),
+    /**
+     * 唯一键：`(source, COALESCE(source_id,''), slug)` 见 migration 0071。
+     * 不同 source 之间允许同名 slug（如 builtin 的 'filesystem-local' 与 registry 同步
+     * 来的同名条目），同 source 下 (sourceId, slug) 唯一。
+     *
+     * 注意：这里的 drizzle `uniqueIndex` 声明只是给 `.onConflictDoNothing` 之类
+     * targeting 用，真正的 DDL 在 migration 0071 用了 COALESCE 表达式索引。
+     */
+    sourceSlugUnique: uniqueIndex("idx_mcp_catalog_source_slug").on(
+      table.source,
+      table.sourceId,
+      table.slug
+    ),
   })
 );
 
@@ -484,7 +484,8 @@ export const mcpCatalogInstall = sqliteTable("mcp_catalog_install", {
   projectId: text("project_id").references(() => project.id),
   workspaceId: text("workspace_id").references(() => workspace.id),
   sourceId: text("source_id").references(() => mcpRegistrySource.id),
-  catalogItemId: text("catalog_item_id").references(() => mcpCatalogItem.id),
+  // Schema 收敛 C4（migration 0071）：原 `catalog_item_id` 列已删除 ——
+  // `mcp_catalog_item` 已并入 `mcp_catalog`，安装审计只需 `catalog_id` 一条 FK。
   catalogId: text("catalog_id")
     .notNull()
     .references(() => mcpCatalog.id),
@@ -714,30 +715,9 @@ export const a2aMessage = sqliteTable("a2a_message", {
   createdAt: createdAt(),
 });
 
-export const acpCall = sqliteTable("acp_call", {
-  id: id(),
-  workflowRunId: text("workflow_run_id")
-    .notNull()
-    .references(() => workflowRun.id),
-  traceId: text("trace_id").notNull(),
-  agentStepId: text("agent_step_id"),
-  callerInstanceId: text("caller_instance_id")
-    .notNull()
-    .references(() => agentInstance.id),
-  targetKind: text("target_kind", {
-    enum: ["skill", "mcp", "tool", "connector"],
-  }).notNull(),
-  targetName: text("target_name").notNull(),
-  intent: text("intent").notNull(),
-  inputSchemaVersion: text("input_schema_version").notNull().default("1.0"),
-  outputSchemaVersion: text("output_schema_version"),
-  latencyMs: integer("latency_ms"),
-  status: text("status", {
-    enum: ["success", "error", "timeout", "blocked_by_sandbox"],
-  }).notNull(),
-  errorCode: text("error_code"),
-  createdAt: createdAt(),
-});
+// Schema 收敛 C5-1（migration 0070）：`acp_call` 已删除。
+// 4 个终态 helper 之外只有 minimum-acceptance 脚本读 1 处行数断言，0 个
+// monitor 服务 / 0 个前端组件消费；同样字段已落在 tool_call_log + mcp_call_log。
 
 export const agentStep = sqliteTable("agent_step", {
   id: id(),
@@ -1625,32 +1605,45 @@ export const connectorInstance = sqliteTable("connector_instance", {
   lastHealthcheckAt: text("last_healthcheck_at"),
 });
 
-export const connectorCallLog = sqliteTable("connector_call_log", {
-  id: id(),
-  /**
-   * 监控 V2 P2 起 NULLABLE：
-   * ACP 调用上下文（act.ts → AcpCaller → registry.dispatchAcpCall）只知道 connector 名字，
-   * 不一定有持久化 connector_instance 行（市场行情 / 新闻类无状态 connector 永远没 instance）。
-   * 详见 migration 0051。
-   */
-  connectorInstanceId: text("connector_instance_id").references(() => connectorInstance.id),
-  /** 监控 V2 P2 新增：每条 log 都明确记录 connector 名字（不依赖 instance 反查） */
-  connectorName: text("connector_name").notNull().default(""),
-  /** 监控 V2 P2 新增：与 tool_call_log / mcp_call_log 对齐，便于跨表查询同一工作流的所有外部调用 */
-  workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
-  acpCallId: text("acp_call_id").references(() => acpCall.id),
-  traceId: text("trace_id").notNull(),
-  operation: text("operation", {
-    enum: ["init", "healthcheck", "execute", "shutdown"],
-  }).notNull(),
-  requestJson: text("request_json", { mode: "json" }).notNull(),
-  responseJson: text("response_json", { mode: "json" }),
-  latencyMs: integer("latency_ms").notNull(),
-  status: text("status", { enum: ["success", "error", "timeout"] }).notNull(),
-  /** 监控 V2 P2：失败 / timeout 时的错误消息摘要，最长 500 字 */
-  errorMessage: text("error_message"),
-  createdAt: createdAt(),
-});
+/**
+ * Connector 子系统 audit 表（BaseConnector 的 init / healthcheck / execute /
+ * shutdown 4 阶段生命周期事件落点）。
+ *
+ * 历史：
+ *   - migration 0051 引入
+ *   - migration 0069（C5-2）误删 —— 当时只看"前端 0 消费 + ACP-hook 写入路径下线"，
+ *     没识别出 `src/connectors/`（data / memory / risk / execution / backtest /
+ *     research / simulation 七类）这套活跃子系统的 audit 需求并未消失，只是
+ *     原来绕 ACP 挂的 hook 在 V2 失效了
+ *   - migration 0072 恢复（去掉了原来 dangling 的 `acp_call_id` FK，因为
+ *     acp_call 已被 0070 删除）
+ *
+ * 当前状态：**表已建好但暂无写入路径**。未来给 BaseConnector 加 audit hook 时
+ * 直接写本表（独立任务，不在本次 schema 收敛范围内）。
+ */
+export const connectorCallLog = sqliteTable(
+  "connector_call_log",
+  {
+    id: id(),
+    connectorInstanceId: text("connector_instance_id").references(() => connectorInstance.id),
+    connectorName: text("connector_name").notNull().default(""),
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+    traceId: text("trace_id").notNull(),
+    operation: text("operation", {
+      enum: ["init", "healthcheck", "execute", "shutdown"],
+    }).notNull(),
+    requestJson: text("request_json", { mode: "json" }).notNull(),
+    responseJson: text("response_json", { mode: "json" }),
+    latencyMs: integer("latency_ms").notNull(),
+    status: text("status", { enum: ["success", "error", "timeout"] }).notNull(),
+    errorMessage: text("error_message"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_connector_call_log_workflow_created").on(t.workflowRunId, t.createdAt),
+    index("idx_connector_call_log_instance_created").on(t.connectorInstanceId, t.createdAt),
+  ]
+);
 
 // ─── 2.7 记忆域 ──────────────────────────────────────────────────────────────
 
@@ -1841,18 +1834,11 @@ export const communicationMessageLog = sqliteTable("communication_message_log", 
 
 // ─── 2.8 审计与可观测域 ──────────────────────────────────────────────────────
 
-// ─── V2 角色字典 ──────────────────────────────────────────────────────────────
-
-export const agentRoleCatalog = sqliteTable("agent_role_catalog", {
-  role: text("role").primaryKey(),
-  displayName: text("display_name").notNull(),
-  description: text("description").notNull().default(""),
-  defaultPromptTemplate: text("default_prompt_template").notNull().default(""),
-  team: text("team").notNull().default("ops"),
-  isBuiltin: integer("is_builtin", { mode: "boolean" }).notNull().default(true),
-});
-
 // ─── V2 多信号融合域（MSA） ───────────────────────────────────────────────────
+//
+// 历史角色字典 `agent_role_catalog` 已在 migration 0068 删除 ——
+// 22 行内容运行时永不变更，已固化为 `src/runtime/seed-agent-roles.ts` 常量；
+// `GET /api/v1/analyst/roles` 端点改为返回该常量。
 
 export const analystSignal = sqliteTable("analyst_signal", {
   id: id(),
@@ -3065,9 +3051,7 @@ export const toolGapLog = sqliteTable(
     firstSeenAt: text("first_seen_at")
       .notNull()
       .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
-    lastSeenAt: text("last_seen_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    lastSeenAt: text("last_seen_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
     status: text("status", {
       enum: ["open", "proposed", "installed", "wont_fix", "rejected"],
     })
@@ -3077,12 +3061,8 @@ export const toolGapLog = sqliteTable(
     statusBy: text("status_by"),
     statusReason: text("status_reason"),
     metadataJson: text("metadata_json", { mode: "json" }).notNull().default({}),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   },
   (t) => [
     index("idx_tool_gap_log_project_status").on(t.projectId, t.status, t.lastSeenAt),
@@ -3141,7 +3121,13 @@ export const autoInstallProposal = sqliteTable(
       .notNull()
       .default("medium"),
     matchScore: real("match_score").notNull().default(0),
-    /** 'mcp_catalog' | 'mcp_catalog_item' | null（no_candidate 时为 null） */
+    /**
+     * 'mcp_catalog' | null（no_candidate 时为 null）
+     *
+     * Schema 收敛 C4（migration 0071）后：合表只有 mcp_catalog 一张表，新写入恒为
+     * 'mcp_catalog'；历史行可能仍有 'mcp_catalog_item' 字面值，前端按 proposal_kind
+     * 区分 install_mcp_catalog vs install_mcp_external 即可。
+     */
     targetKind: text("target_kind"),
     targetId: text("target_id"),
     targetSlug: text("target_slug"),
@@ -3158,12 +3144,8 @@ export const autoInstallProposal = sqliteTable(
     stateBy: text("state_by"),
     stateReason: text("state_reason"),
     proposerRunId: text("proposer_run_id"),
-    createdAt: text("created_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
-    updatedAt: text("updated_at")
-      .notNull()
-      .default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    createdAt: text("created_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
+    updatedAt: text("updated_at").notNull().default(sql`(strftime('%Y-%m-%dT%H:%M:%fZ','now'))`),
   },
   (t) => [
     index("idx_auto_install_proposal_project_state").on(t.projectId, t.state, t.createdAt),

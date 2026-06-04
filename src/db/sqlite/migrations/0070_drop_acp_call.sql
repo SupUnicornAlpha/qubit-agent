@@ -1,0 +1,26 @@
+-- Schema 收敛 C5-1 — 删除 acp_call 表。
+--
+-- 背景（详见 docs canvas C5）：
+--   * 写入路径：tool-call-log-service.ts 4 个终态 helper（sandbox/timeout/error/success）
+--   * 读取路径：仅 `src/runtime/langgraph/minimum-acceptance.ts` 一次性脚本做行数断言
+--   * 业务面板：0 个 monitor service、0 个 REST 端点、0 个前端组件消费
+--   * 字段含义已与 tool_call_log / mcp_call_log 高度重叠（status/latency/errorCode
+--     / targetKind 都可从 tool_call_log.toolKind + tool_call_log.requestJson 复原）
+--   * 净效果："持续写入但没有任何聚合查询消费方"，纯冗余。
+--
+-- 同步删除：
+--   * src/runtime/tools/tool-call-log-service.ts 4 处 db.insert(acpCall)
+--   * src/runtime/langgraph/nodes/act.ts 4 处 record* helper 入参收紧
+--   * src/runtime/langgraph/minimum-acceptance.ts 两处读取断言
+--   * src/runtime/agent/delete-agent-definition.ts: delete(acpCall)
+--   * src/runtime/workflow/hard-delete.ts: WORKFLOW_DIRECT_TABLES 中的 acp_call 项
+--   * src/types/entities.ts: AcpCall 接口
+--
+-- 兼容性影响：
+--   * 旧数据库升级后表与数据丢失；无业务读取方，无 UI 影响
+--
+-- 必须排在 0069 之后 drop —— acp_call 被 connector_call_log.acp_call_id 引用。
+--
+-- 回滚：down-0070.sql（CREATE TABLE，数据无法恢复）
+
+DROP TABLE IF EXISTS `acp_call`;

@@ -123,14 +123,9 @@ export interface AnalystSignalFusionResult {
 /** @deprecated 用 `AnalystSignalFusionResult` */
 export type SignalFusionResult = AnalystSignalFusionResult;
 
-export interface AgentRoleCatalog {
-  role: string;
-  displayName: string;
-  description: string;
-  defaultPromptTemplate: string;
-  team: string;
-  isBuiltin: boolean;
-}
+// Schema 收敛 C9（migration 0068）：原 `agent_role_catalog` 表与 `AgentRoleCatalog`
+// 类型已下线；运行时常量见 `src/runtime/seed-agent-roles.ts`，前端 DTO 仍保留为
+// `frontend/src/api/types.ts: AgentRoleCatalogItem`（端点向后兼容）。
 
 export interface AnalystAccuracyLog {
   id: string;
@@ -283,22 +278,8 @@ export interface A2AMessage {
 
 export type ConnectorTargetKind = "skill" | "mcp" | "tool" | "connector";
 
-export interface AcpCall {
-  id: string;
-  workflowRunId: string;
-  agentStepId: string | null;
-  traceId: string;
-  callerInstanceId: string;
-  targetKind: ConnectorTargetKind;
-  targetName: string;
-  intent: string;
-  inputSchemaVersion: string;
-  outputSchemaVersion: string | null;
-  latencyMs: number | null;
-  status: "success" | "error" | "timeout" | "blocked_by_sandbox";
-  errorCode: string | null;
-  createdAt: string;
-}
+// Schema 收敛 C5-1（migration 0070）：原 `acp_call` 表 + `AcpCall` 接口已下线；
+// 写入路径以 tool_call_log（toolKind='acp_connector' / 'mcp' / 'builtin'）替代。
 
 // ─── 2.3 策略研究与回测域 ────────────────────────────────────────────────────
 
@@ -532,18 +513,22 @@ export interface ConnectorInstance {
   lastHealthcheckAt: string | null;
 }
 
+// Connector 子系统 audit 表（migration 0069 误删 → 0072 恢复，去掉 dangling 的
+// `acpCallId`）。当前无写入路径，是 BaseConnector 未来 audit hook 的 reserved 落点。
 export type ConnectorOperation = "init" | "healthcheck" | "execute" | "shutdown";
 
 export interface ConnectorCallLog {
   id: string;
-  connectorInstanceId: string;
-  acpCallId: string | null;
+  connectorInstanceId: string | null;
+  connectorName: string;
+  workflowRunId: string | null;
   traceId: string;
   operation: ConnectorOperation;
   requestJson: unknown;
   responseJson: unknown | null;
   latencyMs: number;
   status: "success" | "error" | "timeout";
+  errorMessage: string | null;
   createdAt: string;
 }
 

@@ -28,6 +28,7 @@ import {
 } from "./monitor-shared";
 import { FailuresPanel } from "./FailuresPanel";
 import { LlmUsagePanel } from "./LlmUsagePanel";
+import { TimeseriesChart } from "./TimeseriesChart";
 
 export type StrategyRuntime = Awaited<ReturnType<typeof listStrategyRuntimes>>[number];
 
@@ -182,6 +183,34 @@ export const OverviewTab: FC<OverviewTabProps> = ({
             </BarChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      {/*
+        监控 V3 P0：时序图行（Grafana-lite）。
+        - LLM token/h：直观体现"今天某段时间烧 token 多"
+        - Tool count/h：与 LLM 趋势对照可看出"reason → act"流量是否平衡
+        默认按 1 h 桶看 24 h；用户可在每张图上切换时间窗，桶大小自适应。
+      */}
+      <h3 className="qb-monitor__section" style={styles.subTitle}>
+        整体 · 时序趋势（按时间分桶）
+      </h3>
+      <div className="qb-monitor__chart-grid" style={styles.chartGrid}>
+        <TimeseriesChart
+          title="LLM token / 小时"
+          source="llm_call_log"
+          metric="tokens"
+          defaultWindowMinutes={1440}
+          sessionId={sessionFilter || undefined}
+          hideLegendIfSingleSeries
+        />
+        <TimeseriesChart
+          title="Tool 调用数 / 小时"
+          source="tool_call_log"
+          metric="count"
+          defaultWindowMinutes={1440}
+          groupBy="toolKind"
+          sessionId={sessionFilter || undefined}
+        />
       </div>
 
       <h3 className="qb-monitor__section" style={styles.subTitle}>

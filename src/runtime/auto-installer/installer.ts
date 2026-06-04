@@ -20,21 +20,13 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 
 import { getDb } from "../../db/sqlite/client.js";
-import {
-  autoInstallProposal,
-  autoInstallerRun,
-  toolGapLog,
-} from "../../db/sqlite/schema.js";
+import { autoInstallProposal, autoInstallerRun, toolGapLog } from "../../db/sqlite/schema.js";
 import { getSelfEvolveConfig } from "../config/self-evolve-config.js";
-import { getExperienceBus, type ExperienceBus } from "../experience/experience-bus.js";
+import { type ExperienceBus, getExperienceBus } from "../experience/experience-bus.js";
 import { installMcpCatalogToProject } from "../mcp/install-service.js";
 import { findCandidatesForGap } from "./candidate-matcher.js";
 import { approveProposal } from "./lifecycle.js";
-import type {
-  AutoInstallerRunSummary,
-  MatchCandidate,
-  ProposalKind,
-} from "./types.js";
+import type { AutoInstallerRunSummary, MatchCandidate, ProposalKind } from "./types.js";
 
 export interface AutoInstallerRunOptions {
   projectId: string;
@@ -49,9 +41,9 @@ export interface AutoInstallerRunOptions {
   /**
    * P9 auto 模式覆盖：默认从 getSelfEvolveConfig() 读 autoInstallMode。
    * 单测可以直接传 'auto' 而不动 env / config singleton。
-   * 仅当 mode='auto' + 候选 safetyLevel='low' + targetKind='mcp_catalog'
+   * 仅当 mode='auto' + 候选 safetyLevel='low' + source='builtin'
    *   + score≥minScoreForAuto 时才走自动 approve+真装链路。
-   * external（mcp_catalog_item）无论 safety 都走 propose（registry 来源风险敞口更大）。
+   * external（source='registry'）无论 safety 都走 propose（registry 来源风险敞口更大）。
    */
   autoModeOverride?: "off" | "propose" | "auto";
   /** 同上：覆盖 minScoreForAuto */
@@ -65,7 +57,12 @@ export interface AutoInstallerDeps {
 interface ActionEntry {
   gapId: string;
   gapSignature: string;
-  action: "proposed" | "skipped_existing" | "no_candidate" | "auto_installed" | "auto_install_failed";
+  action:
+    | "proposed"
+    | "skipped_existing"
+    | "no_candidate"
+    | "auto_installed"
+    | "auto_install_failed";
   proposalId?: string;
   candidate?: { slug: string; score: number; targetKind: string };
   installId?: string;
@@ -77,7 +74,9 @@ const MAX_ACTIONS_PER_RUN = 100;
 
 function pickProposalKind(c: MatchCandidate | null): ProposalKind {
   if (!c) return "no_candidate";
-  return c.targetKind === "mcp_catalog" ? "install_mcp_catalog" : "install_mcp_external";
+  // Schema 收敛 C4 后：所有候选 targetKind 都是 'mcp_catalog'，但需要按 source 字段
+  // 区分 install_mcp_catalog（builtin/fsi）vs install_mcp_external（registry 同步来的）。
+  return c.source === "registry" ? "install_mcp_external" : "install_mcp_catalog";
 }
 
 function nowIso(): string {
@@ -203,12 +202,12 @@ export class AutoInstaller {
         }
 
         const best = candidates[0]!;
-        // P9 auto 判定：safetyLevel=low + targetKind=mcp_catalog（builtin） + score≥阈值 → 自动 approve+真装
-        // external（mcp_catalog_item）无论 safety 都走 propose（registry 来源风险更大）
+        // P9 auto 判定：safetyLevel=low + source=builtin（合表前的 mcp_catalog） + score≥阈值 → 自动 approve+真装
+        // external（合表前的 mcp_catalog_item，即 source=registry）无论 safety 都走 propose（registry 来源风险更大）
         const autoEligible =
           mode === "auto" &&
           best.safetyLevel === "low" &&
-          best.targetKind === "mcp_catalog" &&
+          best.source === "builtin" &&
           best.score >= minScoreForAuto;
 
         const proposalId = await this.insertProposal({
@@ -256,7 +255,11 @@ export class AutoInstaller {
                 action: "auto_installed",
                 proposalId,
                 installId: install.installId,
-                candidate: { slug: best.targetSlug, score: best.score, targetKind: best.targetKind },
+                candidate: {
+                  slug: best.targetSlug,
+                  score: best.score,
+                  targetKind: best.targetKind,
+                },
               });
             }
           } catch (autoErr) {
@@ -267,7 +270,11 @@ export class AutoInstaller {
                 gapSignature: gap.gapSignature,
                 action: "auto_install_failed",
                 proposalId,
-                candidate: { slug: best.targetSlug, score: best.score, targetKind: best.targetKind },
+                candidate: {
+                  slug: best.targetSlug,
+                  score: best.score,
+                  targetKind: best.targetKind,
+                },
                 reason: autoErr instanceof Error ? autoErr.message : String(autoErr),
               });
             }

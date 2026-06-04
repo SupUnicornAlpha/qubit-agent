@@ -34,13 +34,13 @@ describe("isSupportedMcpProtocolVersion", () => {
 
 describe("isUnsupportedProtocolVersionError", () => {
   test("matches real-world error messages from MCP servers", () => {
-    expect(
-      isUnsupportedProtocolVersionError("Unsupported MCP protocol version: 2024-11-05")
-    ).toBe(true);
+    expect(isUnsupportedProtocolVersionError("Unsupported MCP protocol version: 2024-11-05")).toBe(
+      true
+    );
     expect(isUnsupportedProtocolVersionError("Unsupported protocol version")).toBe(true);
-    expect(
-      isUnsupportedProtocolVersionError("Protocol version not supported by server")
-    ).toBe(true);
+    expect(isUnsupportedProtocolVersionError("Protocol version not supported by server")).toBe(
+      true
+    );
     expect(
       isUnsupportedProtocolVersionError("MCP HTTP 400: Unsupported MCP protocol version")
     ).toBe(true);

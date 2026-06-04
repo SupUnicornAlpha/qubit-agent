@@ -4,25 +4,29 @@ import { getDb } from "../../db/sqlite/client";
 import {
   mcpCatalog,
   mcpCatalogInstall,
-  mcpCatalogItem,
   mcpRegistrySource,
   mcpServerConfig,
   mcpToolBinding,
   project,
 } from "../../db/sqlite/schema";
 import { dispatchMcpToolCall } from "./dispatcher";
-import { ensureDefaultRegistrySource, listRegistrySources, syncRegistrySource } from "./registry-sync";
+import {
+  ensureDefaultRegistrySource,
+  listRegistrySources,
+  syncRegistrySource,
+} from "./registry-sync";
 
-type InstallSpec = {
-  command?: string;
-  url?: string;
-  defaultToolName?: string;
-  defaultTimeoutMs?: number;
-  defaultRetryPolicyJson?: Record<string, unknown>;
-  defaultRateLimitJson?: Record<string, unknown>;
-  defaultCapabilitiesJson?: unknown[];
-  setupSchemaJson?: Record<string, unknown>;
-};
+/**
+ * Schema 收敛 C4（migration 0071）后：原 `mcp_catalog_item` 已并入 `mcp_catalog`，
+ * 用 `source` 字段（'builtin' / 'registry' / 'fsi'）区分来源。
+ *
+ * - listMcpSources / upsertMcpSource / setDefaultSource / syncSourceNow：照常操作 `mcp_registry_source`。
+ * - listCatalogItemsPaginated / installCatalogItemToProject：原本读 mcp_catalog_item 的现在
+ *   读合表，并加 `source != 'builtin'` 过滤（前端"市场页"只想看 registry 同步来的，不想
+ *   重复显示 install-service 已经在用的 builtin 行）。
+ * - installCatalogItemToProject 里原来的 shadow-copy 段（把 item 复制到 mcp_catalog）已删，
+ *   因为合表后两边就是同一行。
+ */
 
 export async function listMcpSources() {
   await ensureDefaultRegistrySource();
@@ -41,7 +45,11 @@ export async function upsertMcpSource(input: {
 }) {
   const db = await getDb();
   if (input.id) {
-    const rows = await db.select().from(mcpRegistrySource).where(eq(mcpRegistrySource.id, input.id)).limit(1);
+    const rows = await db
+      .select()
+      .from(mcpRegistrySource)
+      .where(eq(mcpRegistrySource.id, input.id))
+      .limit(1);
     if (rows[0]) {
       await db
         .update(mcpRegistrySource)
@@ -56,7 +64,11 @@ export async function upsertMcpSource(input: {
           updatedAt: new Date().toISOString(),
         })
         .where(eq(mcpRegistrySource.id, input.id));
-      const updated = await db.select().from(mcpRegistrySource).where(eq(mcpRegistrySource.id, input.id)).limit(1);
+      const updated = await db
+        .select()
+        .from(mcpRegistrySource)
+        .where(eq(mcpRegistrySource.id, input.id))
+        .limit(1);
       return updated[0];
     }
   }
@@ -75,7 +87,11 @@ export async function upsertMcpSource(input: {
     isDefault: input.isDefault ?? false,
     syncIntervalSec: input.syncIntervalSec ?? 300,
   });
-  const created = await db.select().from(mcpRegistrySource).where(eq(mcpRegistrySource.id, id)).limit(1);
+  const created = await db
+    .select()
+    .from(mcpRegistrySource)
+    .where(eq(mcpRegistrySource.id, id))
+    .limit(1);
   return created[0];
 }
 
@@ -86,7 +102,11 @@ export async function setDefaultSource(id: string) {
     .update(mcpRegistrySource)
     .set({ isDefault: true, updatedAt: new Date().toISOString() })
     .where(eq(mcpRegistrySource.id, id));
-  const rows = await db.select().from(mcpRegistrySource).where(eq(mcpRegistrySource.id, id)).limit(1);
+  const rows = await db
+    .select()
+    .from(mcpRegistrySource)
+    .where(eq(mcpRegistrySource.id, id))
+    .limit(1);
   return rows[0] ?? null;
 }
 
@@ -95,25 +115,25 @@ export async function syncSourceNow(id: string) {
 }
 
 function catalogWhere(input?: { sourceId?: string; q?: string; risk?: "low" | "medium" | "high" }) {
-  const filters = [];
-  if (input?.sourceId) filters.push(eq(mcpCatalogItem.sourceId, input.sourceId));
+  // "市场页"语义：只展示 registry 同步来的条目（不重复展示 builtin/fsi，那些走单独 install-service）
+  const filters: ReturnType<typeof eq>[] = [ne(mcpCatalog.source, "builtin")];
+  if (input?.sourceId) filters.push(eq(mcpCatalog.sourceId, input.sourceId));
   const q = input?.q?.trim();
   if (q) {
     const pattern = `%${q.replace(/[%_]/g, "")}%`;
-    filters.push(
-      or(
-        like(mcpCatalogItem.name, pattern),
-        like(mcpCatalogItem.slug, pattern),
-        like(mcpCatalogItem.description, pattern)
-      )
+    const qFilter = or(
+      like(mcpCatalog.name, pattern),
+      like(mcpCatalog.slug, pattern),
+      like(mcpCatalog.description, pattern)
     );
+    if (qFilter) filters.push(qFilter);
   }
-  if (input?.risk) filters.push(eq(mcpCatalogItem.riskLevel, input.risk));
-  return filters.length ? and(...filters) : undefined;
+  if (input?.risk) filters.push(eq(mcpCatalog.riskLevel, input.risk));
+  return and(...filters);
 }
 
 export interface McpCatalogPageResult {
-  items: typeof mcpCatalogItem.$inferSelect[];
+  items: (typeof mcpCatalog.$inferSelect)[];
   total: number;
   page: number;
   pageSize: number;
@@ -132,7 +152,7 @@ export async function listCatalogItemsPaginated(input?: {
   const page = Math.max(input?.page ?? 1, 1);
   const where = catalogWhere(input);
 
-  const countRow = await db.select({ n: count() }).from(mcpCatalogItem).where(where);
+  const countRow = await db.select({ n: count() }).from(mcpCatalog).where(where);
   const total = Number(countRow[0]?.n ?? 0);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -140,9 +160,9 @@ export async function listCatalogItemsPaginated(input?: {
 
   const items = await db
     .select()
-    .from(mcpCatalogItem)
+    .from(mcpCatalog)
     .where(where)
-    .orderBy(desc(mcpCatalogItem.updatedAt))
+    .orderBy(desc(mcpCatalog.updatedAt))
     .limit(pageSize)
     .offset(offset);
 
@@ -164,51 +184,39 @@ export async function installCatalogItemToProject(input: {
   timeoutMs?: number;
 }): Promise<typeof mcpCatalogInstall.$inferSelect> {
   const db = await getDb();
-  const projectRows = await db.select().from(project).where(eq(project.id, input.projectId)).limit(1);
+  const projectRows = await db
+    .select()
+    .from(project)
+    .where(eq(project.id, input.projectId))
+    .limit(1);
   const projectRow = projectRows[0];
   if (!projectRow) throw new Error("project not found");
 
-  const itemRows = await db.select().from(mcpCatalogItem).where(eq(mcpCatalogItem.id, input.catalogItemId)).limit(1);
+  // 合表后 catalogItemId 直接是 mcp_catalog.id（registry 同步条目）
+  const itemRows = await db
+    .select()
+    .from(mcpCatalog)
+    .where(eq(mcpCatalog.id, input.catalogItemId))
+    .limit(1);
   const item = itemRows[0];
   if (!item) throw new Error("catalog item not found");
-  const spec = (item.specJson ?? {}) as InstallSpec;
-  const legacyCatalogRows = await db.select().from(mcpCatalog).where(eq(mcpCatalog.id, item.id)).limit(1);
-  if (!legacyCatalogRows[0]) {
-    await db.insert(mcpCatalog).values({
-      id: item.id,
-      slug: item.slug,
-      name: item.name,
-      description: item.description,
-      provider: item.provider,
-      source: "registry",
-      riskLevel: item.riskLevel,
-      transport: item.transport,
-      command: spec.command ?? null,
-      url: spec.url ?? null,
-      defaultToolName: spec.defaultToolName ?? "",
-      defaultTimeoutMs: spec.defaultTimeoutMs ?? 20_000,
-      defaultRetryPolicyJson: spec.defaultRetryPolicyJson ?? {},
-      defaultRateLimitJson: spec.defaultRateLimitJson ?? {},
-      defaultCapabilitiesJson: spec.defaultCapabilitiesJson ?? [],
-      setupSchemaJson: spec.setupSchemaJson ?? {},
-      enabled: item.enabled,
-    });
-  }
   const scopedName = projectScopedServerName(input.projectId, input.serverName);
 
   const serverRows = await db
     .select()
     .from(mcpServerConfig)
-    .where(and(eq(mcpServerConfig.projectId, input.projectId), eq(mcpServerConfig.name, scopedName)))
+    .where(
+      and(eq(mcpServerConfig.projectId, input.projectId), eq(mcpServerConfig.name, scopedName))
+    )
     .limit(1);
   if (serverRows[0]) {
     await db
       .update(mcpServerConfig)
       .set({
         transport: item.transport,
-        command: input.command ?? spec.command ?? serverRows[0].command,
-        url: input.url ?? spec.url ?? serverRows[0].url,
-        capabilitiesJson: spec.defaultCapabilitiesJson ?? serverRows[0].capabilitiesJson,
+        command: input.command ?? item.command ?? serverRows[0].command,
+        url: input.url ?? item.url ?? serverRows[0].url,
+        capabilitiesJson: item.defaultCapabilitiesJson ?? serverRows[0].capabilitiesJson,
         enabled: true,
       })
       .where(eq(mcpServerConfig.id, serverRows[0].id));
@@ -218,14 +226,14 @@ export async function installCatalogItemToProject(input: {
       name: scopedName,
       projectId: input.projectId,
       transport: item.transport,
-      command: input.command ?? spec.command ?? null,
-      url: input.url ?? spec.url ?? null,
-      capabilitiesJson: spec.defaultCapabilitiesJson ?? [],
+      command: input.command ?? item.command ?? null,
+      url: input.url ?? item.url ?? null,
+      capabilitiesJson: item.defaultCapabilitiesJson ?? [],
       enabled: true,
     });
   }
 
-  const toolName = input.toolName?.trim() || spec.defaultToolName || "ping";
+  const toolName = input.toolName?.trim() || item.defaultToolName || "ping";
   const bindingRows = await db
     .select()
     .from(mcpToolBinding)
@@ -243,9 +251,9 @@ export async function installCatalogItemToProject(input: {
       .update(mcpToolBinding)
       .set({
         enabled: true,
-        timeoutMs: input.timeoutMs ?? spec.defaultTimeoutMs ?? bindingRows[0].timeoutMs,
-        retryPolicyJson: spec.defaultRetryPolicyJson ?? bindingRows[0].retryPolicyJson,
-        rateLimitJson: spec.defaultRateLimitJson ?? bindingRows[0].rateLimitJson,
+        timeoutMs: input.timeoutMs ?? item.defaultTimeoutMs ?? bindingRows[0].timeoutMs,
+        retryPolicyJson: item.defaultRetryPolicyJson ?? bindingRows[0].retryPolicyJson,
+        rateLimitJson: item.defaultRateLimitJson ?? bindingRows[0].rateLimitJson,
         updatedAt: new Date().toISOString(),
       })
       .where(eq(mcpToolBinding.id, bindingRows[0].id));
@@ -257,9 +265,9 @@ export async function installCatalogItemToProject(input: {
       serverName: scopedName,
       toolName,
       enabled: true,
-      timeoutMs: input.timeoutMs ?? spec.defaultTimeoutMs ?? 20_000,
-      retryPolicyJson: spec.defaultRetryPolicyJson ?? {},
-      rateLimitJson: spec.defaultRateLimitJson ?? {},
+      timeoutMs: input.timeoutMs ?? item.defaultTimeoutMs ?? 20_000,
+      retryPolicyJson: item.defaultRetryPolicyJson ?? {},
+      rateLimitJson: item.defaultRateLimitJson ?? {},
     });
   }
 
@@ -267,7 +275,6 @@ export async function installCatalogItemToProject(input: {
   await db.insert(mcpCatalogInstall).values({
     id: installId,
     catalogId: item.id,
-    catalogItemId: item.id,
     sourceId: item.sourceId,
     workspaceId: projectRow.workspaceId,
     projectId: input.projectId,
@@ -276,8 +283,12 @@ export async function installCatalogItemToProject(input: {
     installStatus: "installed",
     installedBy: input.installedBy ?? "user",
   });
-  const rows = await db.select().from(mcpCatalogInstall).where(eq(mcpCatalogInstall.id, installId)).limit(1);
-  return rows[0];
+  const rows = await db
+    .select()
+    .from(mcpCatalogInstall)
+    .where(eq(mcpCatalogInstall.id, installId))
+    .limit(1);
+  return rows[0]!;
 }
 
 export async function listProjectInstalls(projectId: string) {
@@ -285,7 +296,12 @@ export async function listProjectInstalls(projectId: string) {
   return db
     .select()
     .from(mcpCatalogInstall)
-    .where(and(eq(mcpCatalogInstall.projectId, projectId), ne(mcpCatalogInstall.installStatus, "removed")))
+    .where(
+      and(
+        eq(mcpCatalogInstall.projectId, projectId),
+        ne(mcpCatalogInstall.installStatus, "removed")
+      )
+    )
     .orderBy(desc(mcpCatalogInstall.createdAt));
 }
 
@@ -297,7 +313,12 @@ export async function uninstallProjectCatalogInstall(input: {
   const rows = await db
     .select()
     .from(mcpCatalogInstall)
-    .where(and(eq(mcpCatalogInstall.id, input.installId), eq(mcpCatalogInstall.projectId, input.projectId)))
+    .where(
+      and(
+        eq(mcpCatalogInstall.id, input.installId),
+        eq(mcpCatalogInstall.projectId, input.projectId)
+      )
+    )
     .limit(1);
   const install = rows[0];
   if (!install) throw new Error("install not found");
@@ -307,10 +328,20 @@ export async function uninstallProjectCatalogInstall(input: {
     await db
       .update(mcpServerConfig)
       .set({ enabled: false })
-      .where(and(eq(mcpServerConfig.projectId, install.projectId), eq(mcpServerConfig.name, install.serverName)));
+      .where(
+        and(
+          eq(mcpServerConfig.projectId, install.projectId),
+          eq(mcpServerConfig.name, install.serverName)
+        )
+      );
     await db
       .delete(mcpToolBinding)
-      .where(and(eq(mcpToolBinding.projectId, install.projectId), eq(mcpToolBinding.serverName, install.serverName)));
+      .where(
+        and(
+          eq(mcpToolBinding.projectId, install.projectId),
+          eq(mcpToolBinding.serverName, install.serverName)
+        )
+      );
   }
 
   await db
@@ -318,7 +349,11 @@ export async function uninstallProjectCatalogInstall(input: {
     .set({ installStatus: "removed" })
     .where(eq(mcpCatalogInstall.id, install.id));
 
-  const updated = await db.select().from(mcpCatalogInstall).where(eq(mcpCatalogInstall.id, install.id)).limit(1);
+  const updated = await db
+    .select()
+    .from(mcpCatalogInstall)
+    .where(eq(mcpCatalogInstall.id, install.id))
+    .limit(1);
   return updated[0]!;
 }
 
@@ -328,14 +363,18 @@ export async function testProjectInstall(input: {
   arguments?: Record<string, unknown>;
 }) {
   const db = await getDb();
-  const rows = await db.select().from(mcpCatalogInstall).where(eq(mcpCatalogInstall.id, input.installId)).limit(1);
+  const rows = await db
+    .select()
+    .from(mcpCatalogInstall)
+    .where(eq(mcpCatalogInstall.id, input.installId))
+    .limit(1);
   const install = rows[0];
   if (!install) throw new Error("install not found");
-  const itemRows = install.catalogItemId
-    ? await db.select().from(mcpCatalogItem).where(eq(mcpCatalogItem.id, install.catalogItemId)).limit(1)
+  // 合表后默认 toolName 直接读 mcp_catalog.defaultToolName
+  const catalogRows = install.catalogId
+    ? await db.select().from(mcpCatalog).where(eq(mcpCatalog.id, install.catalogId)).limit(1)
     : [];
-  const spec = (itemRows[0]?.specJson ?? {}) as InstallSpec;
-  const toolName = input.toolName?.trim() || spec.defaultToolName || "ping";
+  const toolName = input.toolName?.trim() || catalogRows[0]?.defaultToolName || "ping";
   return dispatchMcpToolCall({
     projectId: install.projectId ?? undefined,
     serverName: install.serverName,

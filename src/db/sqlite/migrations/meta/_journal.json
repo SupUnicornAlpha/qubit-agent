@@ -470,6 +470,41 @@
       "when": 1781481600000,
       "tag": "0067_agent_def_llm_config",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1781568000000,
+      "tag": "0068_drop_agent_role_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1781568000001,
+      "tag": "0069_drop_connector_call_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1781568000002,
+      "tag": "0070_drop_acp_call",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1781654400000,
+      "tag": "0071_merge_mcp_catalog_item",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1781740800000,
+      "tag": "0072_restore_connector_call_log",
+      "breakpoints": true
     }
   ]
 }

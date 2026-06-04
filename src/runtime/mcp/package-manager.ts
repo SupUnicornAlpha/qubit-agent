@@ -133,7 +133,12 @@ async function ensureMcpBinDir(): Promise<void> {
     await writeFile(
       pj,
       JSON.stringify(
-        { name: "qubit-mcp-bin", private: true, version: "0.0.0", description: "Qubit MCP package store" },
+        {
+          name: "qubit-mcp-bin",
+          private: true,
+          version: "0.0.0",
+          description: "Qubit MCP package store",
+        },
         null,
         2
       ),

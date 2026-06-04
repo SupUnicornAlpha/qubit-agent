@@ -1,11 +1,15 @@
 /**
  * Candidate matcher —— 给 tool_gap_log 的 gap_signature 在
- * mcp_catalog（builtin）+ mcp_catalog_item（registry 爬来）里找候选。
+ * `mcp_catalog`（builtin/registry/fsi 合表）里找候选。
  *
  * 设计原则：
  *   - 纯函数，所有 IO 显式注入（便于单测）
  *   - 评分规则确定性、可解释（每一分都有一条 ruleHit 文字）
  *   - 评分 cap 在 1.0；阈值 < 0.3 视为"无候选"
+ *
+ * Schema 收敛 C4（migration 0071）：原 `mcp_catalog_item` 已并入 `mcp_catalog`，
+ * 用 `source` 字段区分 'builtin' / 'registry' / 'fsi'，candidate.source 透传给
+ * installer 决定走 install_mcp_catalog 还是 install_mcp_external。
  *
  * 文档：docs/SELF_EVOLVING_AGENT_DESIGN.md §6.6
  */
@@ -13,13 +17,9 @@
 import { eq } from "drizzle-orm";
 
 import { getDb } from "../../db/sqlite/client.js";
-import { mcpCatalog, mcpCatalogItem } from "../../db/sqlite/schema.js";
+import { mcpCatalog } from "../../db/sqlite/schema.js";
 
-import type {
-  MatchCandidate,
-  ProposalSafetyLevel,
-  ProposalTargetKind,
-} from "./types.js";
+import type { CatalogSource, MatchCandidate, ProposalSafetyLevel } from "./types.js";
 
 export interface ParsedSignature {
   kind: "tool" | "mcp" | "concept" | "unknown";
@@ -81,6 +81,7 @@ interface CatalogRow {
   description: string;
   riskLevel: ProposalSafetyLevel;
   transport: "stdio" | "http" | "ws";
+  source: CatalogSource;
   command: string | null;
   url: string | null;
   defaultToolName: string;
@@ -88,34 +89,15 @@ interface CatalogRow {
   enabled: boolean;
 }
 
-interface CatalogItemRow {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  riskLevel: ProposalSafetyLevel;
-  transport: "stdio" | "http" | "ws";
-  spec: Record<string, unknown>;
-  enabled: boolean;
-}
-
 function asStrArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
-function asStrOrNull(v: unknown): string | null {
-  return typeof v === "string" && v.length > 0 ? v : null;
+function normalizeSource(value: unknown): CatalogSource {
+  return value === "registry" || value === "fsi" ? value : "builtin";
 }
 
-function specDefaultToolName(spec: Record<string, unknown>): string {
-  const v = spec["defaultToolName"];
-  return typeof v === "string" ? v : "";
-}
-
-function scoreCatalog(
-  row: CatalogRow,
-  parsed: ParsedSignature
-): { score: number; hits: string[] } {
+function scoreCatalog(row: CatalogRow, parsed: ParsedSignature): { score: number; hits: string[] } {
   const hits: string[] = [];
   let score = 0;
 
@@ -133,7 +115,10 @@ function scoreCatalog(
   } else if (parsed.tool && row.slug === parsed.tool) {
     score += 0.3;
     hits.push(`tool_eq_slug:${row.slug}`);
-  } else if (parsed.server && (row.slug.includes(parsed.server) || parsed.server.includes(row.slug))) {
+  } else if (
+    parsed.server &&
+    (row.slug.includes(parsed.server) || parsed.server.includes(row.slug))
+  ) {
     score += 0.2;
     hits.push(`slug_partial:${row.slug}`);
   }
@@ -160,53 +145,15 @@ function scoreCatalog(
   return { score: Math.min(SCORE_CAP, score), hits };
 }
 
-function scoreCatalogItem(
-  row: CatalogItemRow,
-  parsed: ParsedSignature
-): { score: number; hits: string[]; toolName: string } {
-  const hits: string[] = [];
-  let score = 0;
-  const defaultToolName = specDefaultToolName(row.spec);
-
-  // 1. exact tool
-  const toolBody = parsed.tool ?? "";
-  if (toolBody && defaultToolName && defaultToolName === toolBody) {
-    score += 0.7;
-    hits.push(`exact_tool:${defaultToolName}`);
-  }
-
-  // 2. slug
-  if (parsed.server && row.slug === parsed.server) {
-    score += 0.4;
-    hits.push(`exact_slug:${row.slug}`);
-  } else if (parsed.server && (row.slug.includes(parsed.server) || parsed.server.includes(row.slug))) {
-    score += 0.2;
-    hits.push(`slug_partial:${row.slug}`);
-  }
-
-  // 3. concept / token 命中
-  const tokens = parsed.tokens;
-  if (tokens.length > 0) {
-    const haystack = `${row.name} ${row.description}`.toLowerCase();
-    const matched = tokens.filter((t) => haystack.includes(t));
-    if (matched.length > 0) {
-      const inc = Math.min(MAX_DESC_HITS, matched.length) * 0.15;
-      score += inc;
-      hits.push(`desc_hits:${matched.join(",")}`);
-    }
-  }
-
-  return { score: Math.min(SCORE_CAP, score), hits, toolName: defaultToolName };
-}
-
 function catalogRowToCandidate(
   row: CatalogRow,
   s: ReturnType<typeof scoreCatalog>
 ): MatchCandidate {
   return {
-    targetKind: "mcp_catalog" satisfies ProposalTargetKind,
+    targetKind: "mcp_catalog",
     targetId: row.id,
     targetSlug: row.slug,
+    source: row.source,
     name: row.name,
     description: row.description,
     safetyLevel: row.riskLevel,
@@ -219,31 +166,6 @@ function catalogRowToCandidate(
       url: row.url,
       defaultToolName: row.defaultToolName,
       capabilities: row.capabilities,
-    },
-  };
-}
-
-function catalogItemRowToCandidate(
-  row: CatalogItemRow,
-  s: ReturnType<typeof scoreCatalogItem>
-): MatchCandidate {
-  const spec = row.spec;
-  return {
-    targetKind: "mcp_catalog_item" satisfies ProposalTargetKind,
-    targetId: row.id,
-    targetSlug: row.slug,
-    name: row.name,
-    description: row.description,
-    safetyLevel: row.riskLevel,
-    score: Number(s.score.toFixed(3)),
-    ruleHits: s.hits,
-    toolName: s.toolName || null,
-    payload: {
-      transport: row.transport,
-      command: asStrOrNull(spec["command"]),
-      url: asStrOrNull(spec["url"]),
-      defaultToolName: s.toolName,
-      capabilities: asStrArray(spec["defaultCapabilitiesJson"]),
     },
   };
 }
@@ -269,10 +191,7 @@ export async function findCandidatesForGap(
   if (parsed.kind === "unknown" && parsed.tokens.length === 0) return [];
 
   const db = await getDb();
-  const [catalogs, items] = await Promise.all([
-    db.select().from(mcpCatalog).where(eq(mcpCatalog.enabled, true)).all(),
-    db.select().from(mcpCatalogItem).where(eq(mcpCatalogItem.enabled, true)).all(),
-  ]);
+  const catalogs = await db.select().from(mcpCatalog).where(eq(mcpCatalog.enabled, true)).all();
 
   const candidates: MatchCandidate[] = [];
 
@@ -284,6 +203,7 @@ export async function findCandidatesForGap(
       description: c.description ?? "",
       riskLevel: c.riskLevel as ProposalSafetyLevel,
       transport: c.transport,
+      source: normalizeSource(c.source),
       command: c.command,
       url: c.url,
       defaultToolName: c.defaultToolName ?? "",
@@ -294,26 +214,11 @@ export async function findCandidatesForGap(
     if (s.score >= threshold) candidates.push(catalogRowToCandidate(row, s));
   }
 
-  for (const it of items) {
-    const row: CatalogItemRow = {
-      id: it.id,
-      slug: it.slug,
-      name: it.name,
-      description: it.description ?? "",
-      riskLevel: it.riskLevel as ProposalSafetyLevel,
-      transport: it.transport,
-      spec: (it.specJson ?? {}) as Record<string, unknown>,
-      enabled: it.enabled,
-    };
-    const s = scoreCatalogItem(row, parsed);
-    if (s.score >= threshold) candidates.push(catalogItemRowToCandidate(row, s));
-  }
-
   candidates.sort((a, b) => b.score - a.score);
   return candidates.slice(0, topK);
 }
 
-export { scoreCatalog, scoreCatalogItem };
+export { scoreCatalog };
 
 /** 给单测使用 —— 不走 db */
 export function _scoreCatalogForTest(
@@ -326,6 +231,7 @@ export function _scoreCatalogForTest(
     transport?: "stdio" | "http" | "ws";
     defaultToolName?: string;
     capabilities?: string[];
+    source?: CatalogSource;
   },
   signature: string
 ): { score: number; hits: string[] } {
@@ -337,6 +243,7 @@ export function _scoreCatalogForTest(
       description: row.description ?? "",
       riskLevel: row.riskLevel ?? "medium",
       transport: row.transport ?? "stdio",
+      source: row.source ?? "builtin",
       command: null,
       url: null,
       defaultToolName: row.defaultToolName ?? "",

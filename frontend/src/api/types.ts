@@ -1210,13 +1210,24 @@ export interface ScheduledJobRunRecord {
   createdAt: string;
 }
 
+/**
+ * Schema 收敛 C4（migration 0071）后：原 mcp_catalog_item 已并入 mcp_catalog，
+ * 用 `source` 字段区分 'builtin' / 'registry' / 'fsi' 来源，registry 同步条目带
+ * `sourceId` / `externalId` / `version` 三列。
+ */
 export interface McpCatalogRecord {
   id: string;
   slug: string;
   name: string;
   description: string;
   provider: string;
-  source: string;
+  source: "builtin" | "registry" | "fsi" | string;
+  /** 仅 source='registry' 时非空 */
+  sourceId?: string | null;
+  /** 仅 source='registry' 时有意义 */
+  externalId?: string;
+  /** 仅 source='registry' 时有意义 */
+  version?: string;
   riskLevel: "low" | "medium" | "high";
   transport: "stdio" | "http" | "ws";
   command?: string | null;
@@ -1257,25 +1268,15 @@ export interface McpRegistrySourceRecord {
   updatedAt: string;
 }
 
-export interface McpCatalogItemRecord {
-  id: string;
-  sourceId: string;
-  externalId: string;
-  slug: string;
-  name: string;
-  version: string;
-  description: string;
-  provider: string;
-  transport: "stdio" | "http" | "ws";
-  riskLevel: "low" | "medium" | "high";
-  specJson: Record<string, unknown>;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+/**
+ * Schema 收敛 C4（migration 0071）：原独立的 `mcp_catalog_item` 表已并入
+ * `mcp_catalog`，DTO 合并为 `McpCatalogRecord`（用 `source='registry'` 区分）。
+ * 这里保留 type alias 让外部 import 不破链；新代码请直接用 McpCatalogRecord。
+ */
+export type McpCatalogItemRecord = McpCatalogRecord;
 
 export interface McpCatalogPageResult {
-  items: McpCatalogItemRecord[];
+  items: McpCatalogRecord[];
   total: number;
   page: number;
   pageSize: number;
@@ -1287,7 +1288,7 @@ export interface McpProjectInstallRecord {
   projectId?: string | null;
   workspaceId?: string | null;
   sourceId?: string | null;
-  catalogItemId?: string | null;
+  // Schema 收敛 C4（migration 0071）后：catalogItemId 列已从 mcp_catalog_install 删除
   catalogId: string;
   serverName: string;
   status: "installed" | "failed";

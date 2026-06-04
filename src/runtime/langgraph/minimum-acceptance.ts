@@ -1,7 +1,8 @@
-import { graphRunner } from "./graph-factory";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
-  acpCall,
   agentDefinition,
   agentStep,
   project,
@@ -11,9 +12,7 @@ import {
   workflowRun,
   workspace,
 } from "../../db/sqlite/schema";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { eq } from "drizzle-orm";
+import { graphRunner } from "./graph-factory";
 
 async function ensureBaseProject() {
   const db = await getDb();
@@ -173,19 +172,12 @@ async function assertWorkflowDbRecords(workflowId: string, expectFailed: boolean
     .from(toolCallLog)
     .innerJoin(agentStep, eq(toolCallLog.agentStepId, agentStep.id))
     .where(eq(agentStep.workflowRunId, workflowId));
-  const acps = await db
-    .select({ id: acpCall.id })
-    .from(acpCall)
-    .where(eq(acpCall.workflowRunId, workflowId));
 
   if (steps.length === 0) {
     throw new Error(`workflow=${workflowId} no agent_step records found`);
   }
   if (tools.length === 0) {
     throw new Error(`workflow=${workflowId} no tool_call_log records found`);
-  }
-  if (acps.length === 0) {
-    throw new Error(`workflow=${workflowId} no acp_call records found`);
   }
 
   const isFailed = statusRow?.status === "failed";
@@ -197,7 +189,7 @@ async function assertWorkflowDbRecords(workflowId: string, expectFailed: boolean
   }
 
   console.log(
-    `[acceptance] workflow=${workflowId} status=${statusRow?.status} steps=${steps.length} tools=${tools.length} acp=${acps.length}`
+    `[acceptance] workflow=${workflowId} status=${statusRow?.status} steps=${steps.length} tools=${tools.length}`
   );
 }
 
@@ -208,18 +200,13 @@ async function assertSandboxBlocked(workflowId: string): Promise<void> {
     .from(toolCallLog)
     .innerJoin(agentStep, eq(toolCallLog.agentStepId, agentStep.id))
     .where(eq(agentStep.workflowRunId, workflowId));
-  const blockedAcp = await db
-    .select({ id: acpCall.id, status: acpCall.status })
-    .from(acpCall)
-    .where(eq(acpCall.workflowRunId, workflowId));
   const violations = await db
     .select({ id: sandboxViolationLog.id })
     .from(sandboxViolationLog)
     .where(eq(sandboxViolationLog.workflowRunId, workflowId));
 
   const hasToolBlocked = blockedTools.some((row) => row.status === "sandbox_blocked");
-  const hasAcpBlocked = blockedAcp.some((row) => row.status === "blocked_by_sandbox");
-  if (!hasToolBlocked || !hasAcpBlocked || violations.length === 0) {
+  if (!hasToolBlocked || violations.length === 0) {
     throw new Error(`workflow=${workflowId} sandbox blocked assertions failed`);
   }
 }
@@ -365,9 +352,7 @@ async function main() {
   });
   const forcedStatus = await waitWorkflowDone(maxIterationWorkflow);
   await assertWorkflowDbRecords(maxIterationWorkflow, true);
-  console.log(
-    `[acceptance] max-iteration runId=${forced.runId} workflowStatus=${forcedStatus}`
-  );
+  console.log(`[acceptance] max-iteration runId=${forced.runId} workflowStatus=${forcedStatus}`);
 
   const blockedWorkflow = await createWorkflow(projectId, "acceptance-sandbox-blocked-tool");
   await upsertPolicy({
@@ -394,4 +379,3 @@ async function main() {
 }
 
 void main();
-

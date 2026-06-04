@@ -1659,7 +1659,6 @@ export type MonitorTimeseriesSource =
   | "llm_call_log"
   | "tool_call_log"
   | "mcp_call_log"
-  | "connector_call_log"
   | "skill_recall_log";
 
 export type MonitorTimeseriesMetric =

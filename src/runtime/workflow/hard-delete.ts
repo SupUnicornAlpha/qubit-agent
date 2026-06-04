@@ -35,19 +35,18 @@ function getRawSqlite(db: Awaited<ReturnType<typeof getDb>>): RawSqlite {
 /** 直接以 workflow_run_id 关联的衍生表（DELETE 后无需再保留任何引用） */
 const WORKFLOW_DIRECT_TABLES = [
   "a2a_message",
-  "acp_call",
   // Phase 2.2: agent_checkpoint_snapshot FK 引用了 workflow_run.id 和 agent_instance.id；
   // 必须排在 agent_instance 之前删，否则 defer_foreign_keys 在 COMMIT 时报 FK 违规。
   "agent_checkpoint_snapshot",
   "agent_step",
   "mcp_call_log",
-  // 监控 V2 P1 / P2 新增 (migrations 0049 / 0051)：
+  // 监控 V2 P1 (migration 0049)：
   //   llm_call_log / skill_recall_log 用 NOT NULL FK 引用 workflow_run，无 ON DELETE CASCADE；
-  //   connector_call_log 新增 nullable workflow_run_id 直连（旧路径仍走下方 INDIRECT via acp_call）。
-  // 不显式清理 research 类工作流硬删时会在 COMMIT 阶段报 "FOREIGN KEY constraint failed"。
+  //   不显式清理 research 类工作流硬删时会在 COMMIT 阶段报 "FOREIGN KEY constraint failed"。
+  // Schema 收敛 C5-1/C5-2（migrations 0069/0070）：acp_call 与 connector_call_log
+  //   已删除，不再需要在这里硬删。
   "llm_call_log",
   "skill_recall_log",
-  "connector_call_log",
   "agent_instance",
   "analyst_signal",
   "chat_message_workflow_link",
@@ -79,15 +78,16 @@ const WORKFLOW_SET_NULL_TABLES = [
  *
  * 现有链路：
  *   debate_session   ← debate_turn / debate_verdict
- *   acp_call         ← connector_call_log
  *   order_intent     ← broker_order / execution_task / risk_decision / risk_hit_log / risk_review_ticket
  *   intent_order     ← broker_order_event / execution_confirm_ticket / execution_report / intent_deviation
  *   screener_run     ← screener_candidate
+ *
+ * Schema 收敛 C5：原本还有一条 `connector_call_log ← acp_call`，两张表已随
+ * migrations 0069/0070 删除。
  */
 const WORKFLOW_INDIRECT_TABLES: ReadonlyArray<{ table: string; via: string; viaColumn: string }> = [
   { table: "debate_turn", via: "debate_session", viaColumn: "debate_session_id" },
   { table: "debate_verdict", via: "debate_session", viaColumn: "debate_session_id" },
-  { table: "connector_call_log", via: "acp_call", viaColumn: "acp_call_id" },
   { table: "broker_order", via: "order_intent", viaColumn: "order_intent_id" },
   { table: "execution_task", via: "order_intent", viaColumn: "order_intent_id" },
   { table: "risk_decision", via: "order_intent", viaColumn: "order_intent_id" },
@@ -150,7 +150,7 @@ export async function hardDeleteWorkflowRun(
     }
 
     // 2) 直接以 workflow_run_id 引用的表（defer_foreign_keys 下顺序不强制要求）。
-    // 用 `+=` 而非赋值，避免与 INDIRECT 阶段重复清理同表（如 connector_call_log）时统计被覆盖。
+    // 用 `+=` 而非赋值，保留 INDIRECT 阶段已统计的同表 count（防御性写法）。
     for (const table of WORKFLOW_DIRECT_TABLES) {
       const r = sqlite.prepare(`DELETE FROM ${table} WHERE workflow_run_id = ?`).run(workflowRunId);
       details[table] = (details[table] ?? 0) + r.changes;

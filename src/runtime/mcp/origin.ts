@@ -14,8 +14,8 @@
  *   3. 其它 → 'manual'（用户在"快速添加 MCP SERVER"表单手填）
  */
 
-import { RECOMMENDED_MCP_NAMES } from "../seed-recommended-mcp-servers";
 import { QUBIT_BROKER_MCP_NAME } from "../seed-broker-mcp";
+import { RECOMMENDED_MCP_NAMES } from "../seed-recommended-mcp-servers";
 
 export type McpServerOrigin = "builtin" | "market" | "manual";
 
@@ -29,10 +29,7 @@ const BUILTIN_MCP_NAMES = new Set<string>([
  * seed-fsi-integration / 其它内置 seed 写入时会标这个值，用来识别"项目自带"的
  * MCP，避免落到 'manual'（看起来像用户手填）。
  */
-const BUILTIN_CAPABILITY_SOURCES = new Set<string>([
-  "anthropic-fsi-catalog",
-  "builtin",
-]);
+const BUILTIN_CAPABILITY_SOURCES = new Set<string>(["anthropic-fsi-catalog", "builtin"]);
 
 export interface McpServerOriginInput {
   name: string;

@@ -11,8 +11,8 @@
  */
 
 import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { config } from "../../../config";
@@ -29,11 +29,14 @@ import {
 import { getExperienceBus } from "../../experience/experience-bus";
 import type { ExperienceEvent } from "../../experience/experience-bus";
 import { AutoInstaller } from "../installer";
-import { approveProposal, ProposalStateError, rejectProposal } from "../lifecycle";
+import { ProposalStateError, approveProposal, rejectProposal } from "../lifecycle";
 
 let projectId = "";
 
-async function seedOpenGap(signature: string, kind: "unknown_tool" | "reflective_mention" = "unknown_tool"): Promise<string> {
+async function seedOpenGap(
+  signature: string,
+  kind: "unknown_tool" | "reflective_mention" = "unknown_tool"
+): Promise<string> {
   const db = await getDb();
   const id = `gap_${randomUUID()}`;
   await db
