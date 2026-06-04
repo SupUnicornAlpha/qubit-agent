@@ -38,6 +38,7 @@ import type { RuntimeAgentDefinition } from "../types";
 import type { RawAnalystSignal } from "./signal-fusion";
 import { validateFsiRoleOutput } from "../fsi/fsi-output-validator";
 import type { NormalizedResearchScope } from "../../types/research-scope";
+import { stripToolCallSentinels } from "../tools/tool-call-format";
 import { formatResearchScopePreamble } from "./analyst-team-scope";
 
 const TEAM_SLOT_MAX_ITERATIONS = 6;
@@ -320,10 +321,14 @@ export async function runResearchTeamSlotReact(params: {
        * LLM 没产出合法 signal JSON：不让它塌缩成 `hold @ 0.4`（旧 bug），
        * 改为退化成 markdown 输出 —— fusion 会看到这个角色 missing，下游辩论
        * 触发器才能正确反映"信号缺失"，而不是"4 个角色都低置信"的假象。
+       *
+       * F-P0-04 修复：剥 `<TOOL_CALL>...</TOOL_CALL>` sentinel——displayable
+       * body 不该把工具调用语法泄漏给用户。原始 `text` 仅供工具解析使用。
        */
+      const cleanText = stripToolCallSentinels(text);
       return {
         kind: "markdown",
-        body: `[signal_parse_failed for ${params.role}] ${text || "（模型未返回内容）"}`,
+        body: `[signal_parse_failed for ${params.role}] ${cleanText || "（模型未返回内容）"}`,
         ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
       };
     }
@@ -336,9 +341,22 @@ export async function runResearchTeamSlotReact(params: {
     };
   }
 
+  /**
+   * F-P0-04 修复（2026-06 评估批次）：aux slot 的 markdown body 会被直接拼进
+   * 最终报告（analyst-team.ts → auxSections → report）。reasonText 包含 LLM
+   * 在最后一轮 emit 的 `<TOOL_CALL>` sentinel 块（如 `{"tool":"none","summary"}`
+   * 或 LLM 因 max_iterations 仍想继续调工具而留下的 sentinel）。tool 解析路径
+   * 已经在 act/observe 节点单独走，display 路径必须剥干净，否则报告里会出现
+   * `{"tool":"...","params":{...}}` 这种用户看不懂的原始 JSON。
+   *
+   * 这是 `stripToolCallSentinels` 的 design intent（见该 helper JSDoc："仅用于
+   * 展示给用户路径；工具解析必须使用原始文本"）。此处补回 aux 路径漏掉的
+   * 一次调用，与 act/observe 节点对 reasonText 的处理保持一致。
+   */
+  const cleanText = stripToolCallSentinels(text);
   return {
     kind: "markdown",
-    body: text || "（模型未返回内容）",
+    body: cleanText || "（模型未返回内容）",
     ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
   };
 }
