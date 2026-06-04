@@ -28,6 +28,8 @@ import {
   agentProfile,
   workflowRun,
 } from "../../db/sqlite/schema";
+import type { AgentOutput } from "../types";
+import type { AgentGroupPipelineKind } from "../seed-agent-catalog";
 import { loadDebateConfig } from "../config/debate-config";
 import { fuseSignals, type RawAnalystSignal } from "./signal-fusion";
 import {
@@ -100,8 +102,8 @@ import { STRATEGY_PIPELINE_GROUP } from "../seed-agent-catalog";
 
 async function enrichAnalystSlotsWithFsi(
   db: Awaited<ReturnType<typeof getDb>>,
-  slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>
-): Promise<Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>> {
+  slots: AnalystSlot[]
+): Promise<AnalystSlot[]> {
   if (slots.length === 0) return slots;
   const ids = [...new Set(slots.map((s) => s.definitionId))];
   const defs =
@@ -128,8 +130,8 @@ async function enrichAnalystSlotsWithFsi(
 
 async function enrichAnalystSlotsWithPack(
   db: Awaited<ReturnType<typeof getDb>>,
-  slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>
-): Promise<Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>> {
+  slots: AnalystSlot[]
+): Promise<AnalystSlot[]> {
   if (slots.length === 0) return slots;
   const ids = [...new Set(slots.map((s) => s.definitionId))];
   const profRows =
@@ -169,7 +171,17 @@ export const ANALYST_TEAM_ROLES: AgentRole[] = [
   "analyst_macro",
 ];
 
-/** 研究团队画布可选角色：analyst_* 参与 MSA；其余产出 Markdown 辅助章节 */
+/**
+ * 研究团队画布"可选 slot 角色"白名单——历史上同时承担三种角色：
+ *   1) 路由层：限制 user 传入的 analyst_roles 字符串数组（防注入未定义 role）
+ *   2) 默认编组路径：当 caller 不传 group_id 时，按 role 名过滤启用 def
+ *   3) 编组 path 内的 second-level filter（**migration 0073 后已删除**）
+ *
+ * Phase B (2026-06)：dispatch 决策不再读这个 set——改为读 def.outputs 走
+ * capability-driven 分桶（见下方 `slotProducesSignal` / `slotIsAuxReporter`）。
+ * 这个 set 仅留作 "vocabulary 白名单" 兜底，新加入的角色（如 backtest_engineer）
+ * 必须在这里登记才能被前端 / 路由接受。
+ */
 export const RESEARCH_TEAM_SLOT_ROLES: readonly AgentRole[] = [
   "market_data",
   "news_event",
@@ -179,6 +191,8 @@ export const RESEARCH_TEAM_SLOT_ROLES: readonly AgentRole[] = [
   "analyst_macro",
   "research",
   "backtest",
+  /** P0-01 修复：walk-forward 验证师属于 discovery 编组成员，须能成为合法 slot */
+  "backtest_engineer",
   "risk",
 ] as const;
 
@@ -194,19 +208,64 @@ export const RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET = new Set<string>([
   "orchestrator",
 ]);
 
+/**
+ * @deprecated Phase B (2026-06) 起 dispatch 路径不再调用本函数——改用
+ * `slotProducesSignal()` 走 def.outputs（migration 0073）。保留导出仅为兼容
+ * 第三方代码 / 旧测试；新代码请勿继续使用。
+ */
 export function isMsAnalystRole(role: AgentRole): boolean {
   return (ANALYST_TEAM_ROLES as readonly string[]).includes(role);
 }
 
-/** 策略专岗编组：无 analyst_*，直接进入 research → backtest → risk */
+/**
+ * @deprecated Phase B (2026-06) 起 dispatch 路径改读 `agent_group.pipeline_kind`
+ * （migration 0073，sequential_research/factor_discovery/event_radar 都跳过 MSA）。
+ * 保留导出仅为兼容老 caller。
+ */
 export function isStrategyPipelineGroup(agentGroupId?: string | null): boolean {
   return agentGroupId === STRATEGY_PIPELINE_GROUP.id;
 }
 
-function isStrategyFocusedSlots(slots: Array<{ role: AgentRole }>): boolean {
-  const hasAnalyst = slots.some((s) => isMsAnalystRole(s.role));
-  const hasAux = slots.some((s) => POST_FUSION_AUX_ROLES.has(s.role));
-  return hasAux && !hasAnalyst;
+/**
+ * Capability-driven slot 分桶（migration 0073 配套，取代 `isMsAnalystRole`）。
+ *
+ * 优先看 def.outputs 是否声明 'signal'；只有声明了 signal 才进 MSA 投票
+ * wave。outputs 为空（旧 def / 第三方）回退到 role-name 老判断保持兼容。
+ *
+ * 例子：
+ *   - analyst_fundamental.outputs=['signal','report']  → true (进 MSA)
+ *   - analyst_sentiment.outputs=['signal','report']    → true
+ *   - news_event.outputs=['events','report']           → false (走 aux pipeline)
+ *   - backtest_engineer.outputs=['backtest_results','report'] → false
+ *   - research.outputs=['report','factor_candidates']  → false
+ */
+export function slotProducesSignal(slot: {
+  role: AgentRole;
+  outputs: readonly AgentOutput[];
+}): boolean {
+  if (slot.outputs.length > 0) return slot.outputs.includes("signal");
+  return isMsAnalystRole(slot.role);
+}
+
+/**
+ * Capability-driven aux 分桶（取代 `POST_FUSION_AUX_ROLES.has`）。
+ *
+ * "产任意非 signal 产物的 slot" → 走 post-fusion 串行 pipeline。
+ *   - news_event (events+report)        → aux
+ *   - backtest_engineer (backtest+report) → aux
+ *   - research/backtest/risk (report+...) → aux
+ *   - market_data (report)              → aux
+ *   - analyst_* (signal+report)         → 不进 aux（已在 MSA wave）
+ *
+ * outputs 为空时回退到老 set。
+ */
+export function slotIsAuxReporter(slot: {
+  role: AgentRole;
+  outputs: readonly AgentOutput[];
+}): boolean {
+  if (slot.outputs.length === 0) return POST_FUSION_AUX_ROLES.has(slot.role);
+  if (slot.outputs.includes("signal")) return false;
+  return slot.outputs.length > 0;
 }
 
 export interface AnalystTeamResult {
@@ -254,28 +313,54 @@ export interface AnalystTeamResult {
   };
 }
 
+/**
+ * Slot 槽位元数据（Phase B：附带 def.outputs，dispatch 路径据此分桶）。
+ * orchestrator 不进 slot 序列；其余成员一律由 dispatcher 按 outputs 桶化决定路径。
+ */
+type AnalystSlot = {
+  role: AgentRole;
+  definitionId: string;
+  systemPrompt: string;
+  outputs: readonly AgentOutput[];
+};
+
+function readSlotOutputs(raw: unknown): readonly AgentOutput[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is AgentOutput => typeof x === "string");
+}
+
 async function resolveAnalystSlots(params: {
   db: Awaited<ReturnType<typeof getDb>>;
   agentGroupId?: string | null;
-}): Promise<Array<{ role: AgentRole; definitionId: string; systemPrompt: string }>> {
+}): Promise<AnalystSlot[]> {
   const { db, agentGroupId } = params;
   if (agentGroupId) {
+    /**
+     * Phase B (2026-06)：信任 group 声明的成员集合，不再 second-level 过滤
+     * `RESEARCH_TEAM_SLOT_SET`。把 def.outputs 一起拉出来供下游 capability
+     * 分桶用。orchestrator 仍然单独拎出来（不进 slot 序列）。
+     */
     const rows = await db
       .select({ m: agentGroupMember, d: agentDefinition })
       .from(agentGroupMember)
       .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
       .where(eq(agentGroupMember.groupId, agentGroupId))
       .orderBy(asc(agentGroupMember.sortOrder));
-    const slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }> = [];
+    const slots: AnalystSlot[] = [];
     for (const row of rows) {
       if (!row.d.enabled) continue;
       const role = row.d.role as AgentRole;
-      if (!RESEARCH_TEAM_SLOT_SET.has(role)) continue;
-      slots.push({ role, definitionId: row.d.id, systemPrompt: row.d.systemPrompt });
+      if (role === "orchestrator") continue;
+      slots.push({
+        role,
+        definitionId: row.d.id,
+        systemPrompt: row.d.systemPrompt,
+        outputs: readSlotOutputs(row.d.outputsJson),
+      });
     }
     if (slots.length === 0) {
       throw new Error(
-        "所选 Agent 组中没有可用的研究团队槽位定义（需为 analyst_* / research / backtest / risk 之一且已启用）"
+        "所选 Agent 组中没有可用的已启用 Agent 定义（除 orchestrator 外至少需 1 个成员）"
       );
     }
     return slots;
@@ -284,9 +369,13 @@ async function resolveAnalystSlots(params: {
   const dbDefs = await db.select().from(agentDefinition).where(eq(agentDefinition.enabled, true));
   const slotDefs = dbDefs.filter((d) => RESEARCH_TEAM_SLOT_SET.has(d.role as string));
   const definitionIdByRole: Partial<Record<AgentRole, string>> = {};
+  const outputsByRole: Partial<Record<AgentRole, readonly AgentOutput[]>> = {};
   for (const def of slotDefs) {
     const r = def.role as AgentRole;
-    if (!definitionIdByRole[r]) definitionIdByRole[r] = def.id;
+    if (!definitionIdByRole[r]) {
+      definitionIdByRole[r] = def.id;
+      outputsByRole[r] = readSlotOutputs(def.outputsJson);
+    }
   }
 
   const prompts: Record<AgentRole, string> = {
@@ -326,11 +415,16 @@ async function resolveAnalystSlots(params: {
     prompts[def.role as AgentRole] = def.systemPrompt;
   }
 
-  const slots: Array<{ role: AgentRole; definitionId: string; systemPrompt: string }> = [];
+  const slots: AnalystSlot[] = [];
   for (const role of RESEARCH_TEAM_SLOT_ROLES) {
     const defId = definitionIdByRole[role];
     if (!defId) continue;
-    slots.push({ role, definitionId: defId, systemPrompt: prompts[role] });
+    slots.push({
+      role,
+      definitionId: defId,
+      systemPrompt: prompts[role],
+      outputs: outputsByRole[role] ?? [],
+    });
   }
   if (slots.length === 0) {
     throw new Error(
@@ -497,18 +591,46 @@ async function runAnalystTeamCore(params: {
   slots = await enrichAnalystSlotsWithPack(db, slots);
   slots = await enrichAnalystSlotsWithFsi(db, slots);
 
+  /**
+   * Phase B：把 agent_group.pipeline_kind 拉出来供 dispatch 决策。
+   * - msa_fusion (default)：现行行为（signal contributors → fusion → aux post-fusion）
+   * - sequential_research / factor_discovery / event_radar：跳过 MSA，
+   *   所有非 signal 角色直接进 aux 串行 pipeline
+   *
+   * 注意：dispatch 行为仍然主要由 outputs 能力驱动（slotProducesSignal /
+   * slotIsAuxReporter）。pipelineKind 只影响"无 signal contributor 时是否
+   * 显式标记 strategyPipelineMode"——这决定了 fusion 是否写 placeholder /
+   * 报告头是否显示"未运行 MSA"。
+   */
   let relationEdges: TeamRelationEdge[] = [];
+  let pipelineKind: AgentGroupPipelineKind = "msa_fusion";
   if (effectiveGroupId) {
     const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, effectiveGroupId)).limit(1);
     if (grp[0]) {
       relationEdges = parseGroupRelationsWithOrchestrator(grp[0].relationsJson);
+      const rawKind = (grp[0] as { pipelineKind?: string | null }).pipelineKind;
+      if (
+        rawKind === "msa_fusion" ||
+        rawKind === "sequential_research" ||
+        rawKind === "event_radar" ||
+        rawKind === "factor_discovery"
+      ) {
+        pipelineKind = rawKind;
+      }
     }
   }
 
-  const analystSlots = slots.filter((s) => isMsAnalystRole(s.role));
-  const auxSlots = slots.filter((s) => POST_FUSION_AUX_ROLES.has(s.role));
+  const analystSlots = slots.filter((s) => slotProducesSignal(s));
+  const auxSlots = slots.filter((s) => slotIsAuxReporter(s));
+  /**
+   * strategyPipelineMode：跳过 MSA 共识评估、跳过辩论触发条件、跳过 placeholder
+   * 信号写入。判定条件（Phase B：纯 declarative）：
+   *   1) group.pipeline_kind 显式非 msa_fusion；或
+   *   2) 编组里没有任何 signal 产出者，但有 aux 产出者（自动适配 P2-D 推荐
+   *      路径下的策略专岗 / discovery / postmortem 等场景）。
+   */
   const strategyPipelineMode =
-    isStrategyPipelineGroup(effectiveGroupId) || isStrategyFocusedSlots(slots);
+    pipelineKind !== "msa_fusion" || (analystSlots.length === 0 && auxSlots.length > 0);
   const slotRoleSet = new Set(slots.map((s) => s.role));
 
   await logOrchestratorKickoff({
@@ -542,8 +664,14 @@ async function runAnalystTeamCore(params: {
     context = `${context}\n\n## Orchestrator 任务简报\n${planResult.brief}${respText}`;
   }
 
+  /**
+   * Phase B：拓扑边只保留 signal 产出者之间——非 signal 角色走 aux 串行 pipeline，
+   * 不参与 MSA wave 拓扑。原来用 `isMsAnalystRole` 硬编码，现在按 analystSlots
+   * 集合判断（capability-driven）。
+   */
+  const signalRoleSet = new Set(analystSlots.map((s) => s.role));
   let analystEdges = slotOnlyRelationEdges(relationEdges, slotRoleSet);
-  analystEdges = analystEdges.filter((e) => isMsAnalystRole(e.from) && isMsAnalystRole(e.to));
+  analystEdges = analystEdges.filter((e) => signalRoleSet.has(e.from) && signalRoleSet.has(e.to));
   const waveSlots = analystSlots;
   const waves =
     waveSlots.length > 0 ? partitionSlotsIntoWaves(waveSlots, analystEdges) : [];
@@ -673,7 +801,7 @@ async function runAnalystTeamCore(params: {
       } else if (
         result.status === "fulfilled" &&
         result.value.kind === "missing_signal" &&
-        isMsAnalystRole(slot.role)
+        slotProducesSignal(slot)
       ) {
         /**
          * Analyst slot 跑完但 LLM 输出无法解析为合法 JSON 信号。
@@ -689,7 +817,7 @@ async function runAnalystTeamCore(params: {
           contentText: `[signal_parse_failed] ${result.value.body.slice(0, 3500)}`,
           payloadJson: { phase: "analyst_report", ticker, missingSignal: true },
         });
-      } else if (result.status === "rejected" && isMsAnalystRole(slot.role)) {
+      } else if (result.status === "rejected" && slotProducesSignal(slot)) {
         /**
          * Slot 整体抛错（异常路径）：保留 fallback 信号但 confidence=0，
          * 让 fusion 加权时这个信号无投票力，同时在 reasoning 里记录原因。
