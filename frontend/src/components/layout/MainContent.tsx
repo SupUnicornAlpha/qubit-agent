@@ -6353,6 +6353,34 @@ const TeamDashboardPanel: FC = () => {
                 aria-label="工作流关键字搜索"
               />
             </div>
+            {/*
+              二级操作（新建 / 关联默认会话）放在列表**上方**，与筛选条同区。
+              原因：之前放在列表下方时，用户要先把列表滚到底才能点到「新建工作流」，
+              非常反直觉。抬到上方后按钮一直可见，无需依赖列表滚动位置。
+              "取消 / 硬删除"仍下放到每个 list 行内，按工作流即可操作。
+            */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+              <button
+                type="button"
+                className="qb-btn-secondary"
+                style={{ fontSize: 12, padding: "6px 10px" }}
+                onClick={() => void handleCreateTeamWorkflow()}
+                disabled={!teamResearchProjectId || !teamResearchSessionId}
+                title={!teamResearchSessionId ? "正在解析默认会话…" : "创建仅用于研究团队的工作流（不触发总控编排）"}
+              >
+                新建工作流
+              </button>
+              {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 10px" }}
+                  onClick={() => void handleLinkWorkflowToDefaultSession()}
+                >
+                  关联默认会话
+                </button>
+              ) : null}
+            </div>
             {/* 滚动 list，按 kind 分组（沿用既有 groupedWorkflowOptions），但每组用关键字进一步过滤。 */}
             <div
               role="listbox"
@@ -6362,7 +6390,7 @@ const TeamDashboardPanel: FC = () => {
               {filteredGroupedWorkflowList.length === 0 ? (
                 <div style={workflowListStyles.empty}>
                   {workflowOptions.length === 0
-                    ? "暂无工作流。点击下方「新建工作流」开始一次研究团队任务。"
+                    ? "暂无工作流。点击上方「新建工作流」开始一次研究团队任务。"
                     : "没有匹配的工作流。试试清空搜索 / 切换筛选条件。"}
                 </div>
               ) : (
@@ -6475,29 +6503,10 @@ const TeamDashboardPanel: FC = () => {
                 ))
               )}
             </div>
-            {/* 列表下方的二级操作（新建 / 关联默认会话）。"取消 / 硬删除"已下放到 list 行内。 */}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                style={{ fontSize: 12, padding: "6px 10px" }}
-                onClick={() => void handleCreateTeamWorkflow()}
-                disabled={!teamResearchProjectId || !teamResearchSessionId}
-                title={!teamResearchSessionId ? "正在解析默认会话…" : "创建仅用于研究团队的工作流（不触发总控编排）"}
-              >
-                新建工作流
-              </button>
-              {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
-                <button
-                  type="button"
-                  className="qb-btn-secondary"
-                  style={{ fontSize: 12, padding: "6px 10px" }}
-                  onClick={() => void handleLinkWorkflowToDefaultSession()}
-                >
-                  关联默认会话
-                </button>
-              ) : null}
-            </div>
+            {/*
+              新建 / 关联默认会话按钮已上移到筛选条下方（list 上方），
+              避免用户必须把 list 滚到底才能点到。这里只保留 notice / 当前选中 / 提示文案。
+            */}
             {workflowNotice ? (
               <div
                 className="qb-callout qb-callout--success"
