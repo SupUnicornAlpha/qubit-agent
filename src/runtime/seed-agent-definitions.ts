@@ -21,6 +21,10 @@ import { mergeFsiSkillsForRole } from "./fsi/fsi-prompt-enricher";
 import { runFsiSeedIntegration, seedFsiSandboxPresets } from "./fsi/seed-fsi-integration";
 import { syncOrchestratorTopologyToolsForGroup } from "./orchestration/sync-orchestrator-topology-tools";
 import {
+  parseUserOverrides,
+  type UserBindableField,
+} from "./agent/agent-binding-service";
+import {
   BUILTIN_AGENT_GROUPS,
   type BuiltinAgentGroupSpec,
   DEFAULT_ORCHESTRATION_GROUP,
@@ -154,10 +158,14 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
 
   let resetCount = 0;
   let preservedCount = 0;
+  let perFieldPreservedCount = 0;
 
   for (const def of SEED_AGENT_DEFINITIONS) {
     const existing = await db
-      .select({ id: agentDefinition.id })
+      .select({
+        id: agentDefinition.id,
+        userOverridesJson: agentDefinition.userOverridesJson,
+      })
       .from(agentDefinition)
       .where(eq(agentDefinition.id, def.id))
       .limit(1);
@@ -169,52 +177,75 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
       continue;
     }
 
+    /**
+     * F-P0-06 fix: per-field user-override sentinel (migration 0074).
+     *
+     * 即使 def 整体没走 release 流程，用户也可能通过 setAgentDefinitionBindings()
+     * 或直连 SQL 标记某些字段为 user-owned。这里读出 sentinel map，构造 UPSERT
+     * 时用 `pick()` 过滤掉这些字段，让它们维持 DB 现值不被 seed 抹回。
+     *
+     * `force=true`（builtin/reload）时跳过过滤 → 等价 factory reset。
+     */
+    const overrides = force ? {} : parseUserOverrides(existing[0]?.userOverridesJson);
+    const preserveField = (col: UserBindableField): boolean => overrides[col] === true;
+    let perFieldHit = false;
+
     const mcpServers = def.mcpServers;
     const skillsJson =
       isFsiActive() && shouldApplyFsiAgentMappings()
         ? await mergeFsiSkillsForRole(def.role, def.skills)
         : def.skills;
     const outputsJson = def.outputs ?? [];
+
+    const baseValues = {
+      id: def.id,
+      role: def.role,
+      name: def.name,
+      version: def.version,
+      systemPrompt: def.systemPrompt,
+      toolsJson: def.tools,
+      mcpServersJson: mcpServers,
+      skillsJson,
+      subscriptionsJson: def.subscriptions,
+      llmProvider: def.llmProvider,
+      llmConfigJson: def.llmConfig ?? {},
+      outputsJson,
+      maxIterations: def.maxIterations,
+      sandboxPolicyId: def.sandboxPolicyId,
+      enabled: def.enabled,
+    } as const;
+
+    const updateSet: Record<string, unknown> = {
+      role: def.role,
+      name: def.name,
+      version: def.version,
+      updatedAt: new Date().toISOString(),
+    };
+    const maybeAdd = (col: UserBindableField, key: string, value: unknown): void => {
+      if (preserveField(col)) {
+        perFieldHit = true;
+        return;
+      }
+      updateSet[key] = value;
+    };
+    maybeAdd("system_prompt", "systemPrompt", def.systemPrompt);
+    maybeAdd("tools_json", "toolsJson", def.tools);
+    maybeAdd("mcp_servers_json", "mcpServersJson", mcpServers);
+    maybeAdd("skills_json", "skillsJson", skillsJson);
+    maybeAdd("subscriptions_json", "subscriptionsJson", def.subscriptions);
+    maybeAdd("llm_provider", "llmProvider", def.llmProvider);
+    maybeAdd("llm_config_json", "llmConfigJson", def.llmConfig ?? {});
+    maybeAdd("outputs_json", "outputsJson", outputsJson);
+    maybeAdd("max_iterations", "maxIterations", def.maxIterations);
+    maybeAdd("sandbox_policy_id", "sandboxPolicyId", def.sandboxPolicyId);
+    maybeAdd("enabled", "enabled", def.enabled);
+
     await db
       .insert(agentDefinition)
-      .values({
-        id: def.id,
-        role: def.role,
-        name: def.name,
-        version: def.version,
-        systemPrompt: def.systemPrompt,
-        toolsJson: def.tools,
-        mcpServersJson: mcpServers,
-        skillsJson,
-        subscriptionsJson: def.subscriptions,
-        llmProvider: def.llmProvider,
-        llmConfigJson: def.llmConfig ?? {},
-        outputsJson,
-        maxIterations: def.maxIterations,
-        sandboxPolicyId: def.sandboxPolicyId,
-        enabled: def.enabled,
-      })
-      .onConflictDoUpdate({
-        target: agentDefinition.id,
-        set: {
-          role: def.role,
-          name: def.name,
-          version: def.version,
-          systemPrompt: def.systemPrompt,
-          toolsJson: def.tools,
-          mcpServersJson: mcpServers,
-          skillsJson,
-          subscriptionsJson: def.subscriptions,
-          llmProvider: def.llmProvider,
-          llmConfigJson: def.llmConfig ?? {},
-          outputsJson,
-          maxIterations: def.maxIterations,
-          sandboxPolicyId: def.sandboxPolicyId,
-          enabled: def.enabled,
-          updatedAt: new Date().toISOString(),
-        },
-      });
+      .values(baseValues)
+      .onConflictDoUpdate({ target: agentDefinition.id, set: updateSet });
     resetCount += 1;
+    if (perFieldHit) perFieldPreservedCount += 1;
 
     const profRows = await db
       .select()
@@ -261,12 +292,18 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
   }
 
   const total = SEED_AGENT_DEFINITIONS.length;
+  const perFieldNote =
+    perFieldPreservedCount > 0
+      ? `, perFieldPreserved=${perFieldPreservedCount} (user_overrides_json)`
+      : "";
   if (preservedCount > 0) {
     console.log(
-      `[Seed] Agent definitions: reset=${resetCount}, preserved=${preservedCount} (user-published), total=${total}${force ? " [force]" : ""}.`
+      `[Seed] Agent definitions: reset=${resetCount}, preserved=${preservedCount} (user-published)${perFieldNote}, total=${total}${force ? " [force]" : ""}.`
     );
   } else {
-    console.log(`[Seed] Upserted ${resetCount}/${total} agent definitions${force ? " [force]" : ""}.`);
+    console.log(
+      `[Seed] Upserted ${resetCount}/${total} agent definitions${perFieldNote}${force ? " [force]" : ""}.`
+    );
   }
 
   const removedDupes = await cleanupRedundantAgentDefinitions(db);

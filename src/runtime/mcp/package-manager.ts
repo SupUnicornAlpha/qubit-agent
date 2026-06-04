@@ -187,6 +187,15 @@ interface ResolveResult {
   rewritten: boolean;
   /** 调试用信息：本次实际定位到的 bin 路径（如有） */
   binPath?: string;
+  /**
+   * F-P0-07 fix（2026-06-04）：argv 被 rewrite 成绝对路径 .bin 时，附带返回该 npm
+   * 包的安装目录 `<mcp-bin>/node_modules/<pkg>`，供 dispatcher 用作默认 `cwd`。
+   * 这样子进程跑包内代码时，相对 `require('./financials.js')` /
+   * `readFileSync(path.join(__dirname, '../data/...'))` 等用法的工作目录与
+   * 「手动 `npx -y pkg`」一致（npx 自己也会 cd 到 install temp dir 再执行），
+   * 消除「手动跑能 init+tools/list+call，后端跑就崩」这类奇异差异。
+   */
+  installDir?: string;
 }
 
 /**
@@ -252,7 +261,13 @@ export async function resolveMcpStdioArgv(argv: readonly string[]): Promise<Reso
   if (!spec) return { argv: [...argv], rewritten: false };
   const binPath = await ensureInstalledAndResolveBin(spec.pkg, spec.version);
   if (!binPath) return { argv: [...argv], rewritten: false };
-  return { argv: [binPath, ...spec.binArgs], rewritten: true, binPath };
+  const installDir = pkgInstallDir(spec.pkg);
+  return {
+    argv: [binPath, ...spec.binArgs],
+    rewritten: true,
+    binPath,
+    ...(existsSync(installDir) ? { installDir } : {}),
+  };
 }
 
 /** 测试钩子 */

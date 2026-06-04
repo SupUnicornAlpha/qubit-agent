@@ -1,0 +1,44 @@
+-- F-P0-06 fix: per-field user-override sentinel for agent_definition
+--
+-- 背景（2026-06-04 eval batch 2 复盘）：
+--   user 直接 UPDATE agent_definition.mcp_servers_json（给 9 个 def 加 3 个新 MCP）
+--   ~9 min 后被 `bun --watch` 触发的重启抹回 SEED_AGENT_DEFINITIONS 内置值。
+--   两条覆盖链同时存在：
+--     1) runPlatformBootstrap() → seedAgentDefinitions() onConflictDoUpdate 全字段；
+--        仅当 agent_definition_release 有该 def 的至少一条 release 才跳过。
+--        但 user 不会主动走 draft+release 流程（成本太重），直连 UPDATE 完全没保护。
+--     2) startAllAgents() → GraphRunner.start() → syncFromWorkspaceConfig() →
+--        syncWorkspaceConfigToDb() 又把 .qubit/agents.json（同样来自 SEED 常量）反向
+--        UPSERT 回 DB —— 这一步连 release 检查都没有。
+--   结果：21 个 eval case 中 0 个 agent 看到 3 个健康的新 MCP，3 个新 MCP 调用 0 次。
+--
+-- 设计原则（user review 2026-06-04）：
+--   "Agent 行为应该由角色定义 + 可用工具 / MCP 等定义，不要写特定 agent 的代码模块。"
+--   user-level MCP / tool / skill 绑定必须可持久化跨 seed 重跑。
+--
+-- 本 migration 加 1 列：`user_overrides_json`，per-field sentinel。
+--   - 类型：JSON object，形如 `{"mcp_servers_json": true, "tools_json": false}`
+--   - 语义：seed / sync 在 UPSERT 时检测每个字段对应的 sentinel，true 就跳过该字段；
+--           false / 缺失 → 走 seed 内置值（兼容老行为）。
+--   - 覆盖的字段集合（一律 user 可改）：
+--       systemPrompt, toolsJson, mcpServersJson, skillsJson, subscriptionsJson,
+--       llmProvider, llmConfigJson, outputsJson, maxIterations, sandboxPolicyId, enabled
+--   - role / name / version 仍 seed-only（架构语义字段，user 不该改）。
+--   - 写入方：
+--       a) `POST /api/v1/agents/definitions/:id/bindings`（前端 / curl 通用入口）
+--       b) `setAgentDefinitionBinding()` helper（其它服务复用）
+--       c) 直连 SQL：脚本可一句 `UPDATE … SET user_overrides_json = json_set(...)` 自助
+--   - 重置方：`POST /api/v1/agents/builtin/reload` (force=true) 仍会清掉所有 override
+--     并回到 seed 默认 —— 等价于 "factory reset"。
+--
+-- 行为不变性：
+--   - 旧行 default '{}' → seed 路径完全等价于此次 migration 之前（不影响现有用户）。
+--   - DB schema 多加 1 列，对所有 SELECT * 路径无害（JSON 列）。
+--   - 不动 agent_definition_release / draft 两张表 —— 它们仍负责 "版本化发布" 语义，
+--     和本 sentinel 是正交的：你可以只用 sentinel 持久 binding，也可以走完整 release。
+--
+-- 回滚：down-0074.sql 是 no-op（SQLite DROP COLUMN 重表代价高，且字段对老代码无害）。
+
+ALTER TABLE `agent_definition` ADD COLUMN `user_overrides_json` TEXT NOT NULL DEFAULT '{}';
+--> statement-breakpoint
+UPDATE `agent_definition` SET `user_overrides_json` = '{}' WHERE `user_overrides_json` IS NULL OR `user_overrides_json` = '';

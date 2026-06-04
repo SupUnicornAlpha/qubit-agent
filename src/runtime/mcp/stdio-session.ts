@@ -139,19 +139,59 @@ function spawnFailureHint(argv: string[], rawMessage: string, errno: unknown): s
   return "请检查 command 第一个可执行文件是否已安装、是否在当前进程 PATH 中可用，或改为绝对路径。";
 }
 
+/**
+ * F-P0-07 fix（2026-06-04）：错误消息的 stderr tail 按「行」截断，不按 byte。
+ *
+ * 之前 `stderrBuf.slice(-10).join("").trim().slice(-1200)` 是直接按字节切尾，
+ * 正好可能从 `…/financials.js:175:28` 中间砍掉首字符变成 `inancials.js:175:28`，
+ * 让排查者误以为路径被吃掉。这次改为：
+ *   1) join 所有 chunk
+ *   2) 按 `\n` split 取最后 20 行
+ *   3) 每行最多 240 字符（保护单行 console.error 把整 JSON dump 全打进来）
+ *
+ * 导出供 stdio-session 单测调用；同时保留为 internal helper（前缀 `_` 即"测试钩子"）。
+ */
+export function _formatStdioExitErrorMessage(
+  stderrChunks: readonly string[],
+  code: number | null,
+  phase: string
+): string {
+  const joined = stderrChunks.join("").trim();
+  const header = `MCP stdio: 子进程在 ${phase} 阶段提前退出 (exit code=${code ?? "?"})`;
+  if (!joined) return header;
+  const MAX_LINES = 20;
+  const MAX_LINE_LEN = 240;
+  const tailLines = joined
+    .split("\n")
+    .slice(-MAX_LINES)
+    .map((line) => (line.length > MAX_LINE_LEN ? `${line.slice(0, MAX_LINE_LEN)}…` : line));
+  return `${header}\nstderr (tail):\n${tailLines.join("\n")}`;
+}
+
 function exitErrorMessage(pool: Pooled, code: number | null, phase: string): string {
-  const stderrTail = pool.stderrBuf.slice(-10).join("").trim();
-  const stderrPart = stderrTail ? `\nstderr (tail): ${stderrTail.slice(-1200)}` : "";
-  return `MCP stdio: 子进程在 ${phase} 阶段提前退出 (exit code=${code ?? "?"})${stderrPart}`;
+  return _formatStdioExitErrorMessage(pool.stderrBuf, code, phase);
 }
 
 /**
  * Race a JSON-RPC response against subprocess exit. If the subprocess dies first
  * we surface a precise error (exit code + tail of stderr) instead of letting the
  * line stream silently close and producing a generic timeout.
+ *
+ * F-P0-07 fix（2026-06-04）：拿到 exit code 时**同步**把死 pool 从 `pools` map 删掉。
+ * 之前依赖 `void proc.exited.then(() => pools.delete(key))` 异步清理；retry attempt 2
+ * 进 `ensurePool` 时可能撞到尚未清理的僵尸 pool → 再次抛"子进程在 tools/call
+ * 阶段提前退出"→ 内存熔断 + DB 熔断 翻 open → 同 batch 后续 9 个调用全 fail-fast。
+ * eval batch 2 的 mcp-financex 9/9 失败就是这个 cascade。
  */
-async function raceRpcOrExit<T>(rpcPromise: Promise<T>, pool: Pooled, phase: string): Promise<T> {
+async function raceRpcOrExit<T>(
+  rpcPromise: Promise<T>,
+  pool: Pooled,
+  phase: string,
+  serverKey: string
+): Promise<T> {
   const exitPromise: Promise<never> = pool.proc.exited.then((code) => {
+    const cur = pools.get(serverKey);
+    if (cur?.proc === pool.proc) pools.delete(serverKey);
     throw new Error(exitErrorMessage(pool, code ?? null, phase));
   });
   try {
@@ -163,6 +203,8 @@ async function raceRpcOrExit<T>(rpcPromise: Promise<T>, pool: Pooled, phase: str
         pool.proc.exited,
         new Promise<undefined>((r) => setTimeout(() => r(undefined), 250)),
       ]).catch(() => undefined);
+      const cur = pools.get(serverKey);
+      if (cur?.proc === pool.proc) pools.delete(serverKey);
       throw new Error(exitErrorMessage(pool, code ?? null, phase));
     }
     throw e;
@@ -239,7 +281,8 @@ async function ensurePool(
 
 async function tryInitializeStdioAcrossVersions(
   pool: Pooled,
-  timeout: number
+  timeout: number,
+  serverKey: string
 ): Promise<McpProtocolVersion> {
   let lastError: unknown;
   for (const ver of MCP_SUPPORTED_PROTOCOL_VERSIONS) {
@@ -258,7 +301,8 @@ async function tryInitializeStdioAcrossVersions(
       const rInit = await raceRpcOrExit(
         collectRpcResponse(pool.lines, initId, timeout),
         pool,
-        "initialize"
+        "initialize",
+        serverKey
       );
       if (rInit.error) {
         const msg = rInit.error.message ?? "";
@@ -303,7 +347,7 @@ export async function callMcpStdioTool(
     const pool = await ensurePool(opts.serverKey, argv, opts.env ?? {}, opts.cwd);
 
     if (!pool.initialized) {
-      pool.protocolVersion = await tryInitializeStdioAcrossVersions(pool, timeout);
+      pool.protocolVersion = await tryInitializeStdioAcrossVersions(pool, timeout, opts.serverKey);
       await pool.writer.writeLine({
         jsonrpc: "2.0",
         method: "notifications/initialized",
@@ -325,7 +369,8 @@ export async function callMcpStdioTool(
     const rCall = await raceRpcOrExit(
       collectRpcResponse(pool.lines, callId, timeout),
       pool,
-      "tools/call"
+      "tools/call",
+      opts.serverKey
     );
     if (rCall.error) throw new Error(rCall.error.message);
     return rCall.result;

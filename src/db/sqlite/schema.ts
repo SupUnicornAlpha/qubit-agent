@@ -595,6 +595,24 @@ export const agentDefinition = sqliteTable("agent_definition", {
     .references(() => sandboxPolicy.id),
   signalWeight: real("signal_weight").notNull().default(1.0),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /**
+   * Per-field user-override sentinel（migration 0074, F-P0-06 fix）。
+   *
+   * 形如 `{"mcp_servers_json": true, "tools_json": true}`：列出 user 显式改过、
+   * 不希望被启动期 seed / workspace-config 同步覆盖的字段名。Seed / sync 路径
+   * 会在 UPSERT 前查这张 map，对 sentinel=true 的字段跳过 `set:` 子句。
+   *
+   * 写入入口：
+   *   - `POST /api/v1/agents/definitions/:id/bindings`（前端 / curl）
+   *   - `setAgentDefinitionBinding()` runtime helper（程序化绑定）
+   *   - 直连 SQL：脚本可以 `UPDATE … SET user_overrides_json = json_set(...)` 自助
+   *
+   * 不覆盖：role / name / version 仍 seed-only。
+   *
+   * Reset：`POST /api/v1/agents/builtin/reload`（force=true）会清空所有 override
+   * 并回到 SEED_AGENT_DEFINITIONS 默认值，等价于 factory reset。
+   */
+  userOverridesJson: text("user_overrides_json", { mode: "json" }).notNull().default("{}"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

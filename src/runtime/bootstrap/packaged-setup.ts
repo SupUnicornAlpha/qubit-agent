@@ -133,10 +133,21 @@ export async function runPlatformBootstrap(options?: {
 
   await runMigrations();
   await seedAgentDefinitions();
+  /**
+   * F-P0-06 fix（2026-06-04）：之前传 `refresh: true` 会把 `.qubit/agents.json` 每次
+   * 启动都用 SEED_AGENT_DEFINITIONS 强制重写一遍；紧接着 GraphRunner.start() →
+   * syncWorkspaceConfigToDb() 又把这个 SEED 内容 UPSERT 回 DB，**抹掉 user 在
+   * agent_definition 上手工/通过 setAgentDefinitionBindings() 标记的 user-owned
+   * 字段**（migration 0073/0074 的 21 case eval 中 9 个 def 全部踩中）。
+   *
+   * 现在改为「只在文件缺失时创建」：seed 已经把 builtin def 写进 DB；workspace 文件
+   * 是给 user / Tauri UI 编辑的副本，启动期不再覆盖。如果用户想要 factory reset
+   * 这份副本，请走 `POST /api/v1/agents/builtin/reload`（force=true）或手动删文件。
+   */
   await ensureWorkspaceRuntimeConfigFiles({
     definitions: SEED_AGENT_DEFINITIONS,
     policies: buildDefaultSandboxPoliciesFromDefinitions(SEED_AGENT_DEFINITIONS),
-    refresh: true,
+    refresh: false,
   });
   await registerBuiltinConnectors();
 

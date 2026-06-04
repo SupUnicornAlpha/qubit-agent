@@ -44,6 +44,11 @@ import {
 } from "../runtime/agent/delete-agent-definition";
 import { buildAgentPromptPreview } from "../runtime/agent/agent-prompt-preview";
 import { seedAgentDefinitions } from "../runtime/seed-agent-definitions";
+import {
+  type AgentDefinitionBindingInput,
+  clearAllAgentDefinitionOverrides,
+  setAgentDefinitionBindings,
+} from "../runtime/agent/agent-binding-service";
 import { graphRunner } from "../runtime/langgraph/graph-factory";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
@@ -304,15 +309,70 @@ agentRouter.post("/reload", async (c) => {
  * 手动「重载系统预设」：把所有内置 Agent 定义 / 编组 强制重置回 SEED。
  * - 正常启动会保留用户改动；这个接口是唯一显式破坏用户改动的入口。
  * - 调用后会自动 graphRunner.reload()，让 runtime 立刻拿到新定义。
+ *
+ * F-P0-06 fix（2026-06-04）：force=true 现在也会清空 agent_definition.user_overrides_json
+ * 上的所有 per-field sentinel，等价于"factory reset"。否则用户既改过又点 reload
+ * 时，sentinel 仍残留会让 reload 出来的字段下次启动又被「保留」回 user 改过的值。
  */
 agentRouter.post("/builtin/reload", async (c) => {
+  const clearedOverrides = await clearAllAgentDefinitionOverrides();
   const report = await seedAgentDefinitions({ force: true });
   const runtimeReload = await graphRunner.reload();
   return c.json({
     ok: true,
     report,
+    clearedOverrides,
     runtime: { before: runtimeReload.before, after: runtimeReload.after },
   });
+});
+
+/**
+ * F-P0-06 fix: 显式用户绑定入口。
+ *
+ * 用法（curl）：
+ *   POST /api/v1/agents/definitions/def-research/bindings
+ *   { "mcpServers": ["00000000-yahoo-finance", "00000000-pulse-fetch"] }
+ *
+ * 行为：
+ *   - 写入 agent_definition 对应字段；
+ *   - 同步把 user_overrides_json["<col>"]=true，让启动期 seed / sync 不再覆盖；
+ *   - 自动 graphRunner.reload() 让 runtime 立刻看到新 binding。
+ *
+ * 想"撤回 user 绑定，回归 seed 默认"：传 `"clearOverride": true` 不带任何字段值，
+ * 或对某字段传 `null + clearOverride:true`。
+ */
+agentRouter.post("/definitions/:id/bindings", async (c) => {
+  const definitionId = c.req.param("id");
+  let body: AgentDefinitionBindingInput;
+  try {
+    body = (await c.req.json()) as AgentDefinitionBindingInput;
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+  if (!body || typeof body !== "object") {
+    return c.json({ error: "body must be a JSON object" }, 400);
+  }
+  try {
+    const result = await setAgentDefinitionBindings(definitionId, body);
+    const reload = await graphRunner.reload();
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(agentDefinition)
+      .where(eq(agentDefinition.id, definitionId))
+      .limit(1);
+    return c.json({
+      ok: true,
+      definition: rows[0],
+      changedFields: result.changedFields,
+      overridesAfter: result.overridesAfter,
+      runtime: { before: reload.before, after: reload.after },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("not found")) return c.json({ error: msg }, 404);
+    return c.json({ error: msg }, 500);
+  }
 });
 
 agentRouter.get("/definitions", async (c) => {

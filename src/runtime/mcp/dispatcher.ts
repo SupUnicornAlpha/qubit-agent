@@ -272,8 +272,17 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
           for (const [k, v] of Object.entries(envObj)) {
             if (typeof v === "string") env[k] = v;
           }
-          const cwd =
+          /**
+           * cwd 解析优先级（F-P0-07 fix，2026-06-04）：
+           *   1) capabilities_json.cwd（用户显式声明，最高优先级）
+           *   2) resolved.installDir（npx → .bin rewrite 时 package-manager 给出
+           *      `<mcp-bin>/node_modules/<pkg>` —— 让相对 require / __dirname-relative
+           *      file IO 工作目录与手动 `npx -y pkg` 行为一致）
+           *   3) undefined（继承 backend cwd，老行为，仅用于非 npx 的纯绝对路径 argv）
+           */
+          const capsCwd =
             typeof asRecord(caps).cwd === "string" ? (asRecord(caps).cwd as string) : undefined;
+          const cwd = capsCwd ?? resolved.installDir;
           result = await callMcpStdioTool({
             serverKey: input.serverName,
             argv: resolved.argv,
