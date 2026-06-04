@@ -434,6 +434,73 @@ async function resolveAnalystSlots(params: {
   return slots;
 }
 
+/**
+ * F-P0-02 修复（2026-06）：runDebateSession 的 try/catch 兜底封装。
+ *
+ * 旧 path 没兜底——LLM 失败（429 / timeout / connector_call_failed）会让异常
+ * 直接冒泡，整个 workflow 标 failed；evaluation canvas 写成的 F-P0-02
+ * "debate triggered 但 debate_session 表里没行 + workflow failed"就是这个
+ * 现象。
+ *
+ * 软失败策略：
+ *   - 成功 → 返回完整 debate 结构
+ *   - 失败 → console.warn + 写一条 phase=debate_failed interaction 留痕 +
+ *     返回 undefined。downstream risk 评估自动回退到 fusedConfidence-only
+ *     判定（veto-engine 处理过 debateConsensusScore=undefined 这条 path）。
+ *
+ * helper 把 runDebateSession / logResearchTeamInteraction 作为依赖注入，
+ * 便于单测 mock。export 以便 __tests__/ 下直接复用。
+ */
+export async function executeDebateSafely(input: {
+  workflowRunId: string;
+  ticker: string;
+  fusedSignal: AnalystSignalValue;
+  fusedConfidence: number;
+  analystSummary: string;
+  maxRounds: number;
+  run: typeof runDebateSession;
+  logFailure: typeof logResearchTeamInteraction;
+}): Promise<NonNullable<AnalystTeamResult["debate"]> | undefined> {
+  try {
+    const d = await input.run({
+      workflowRunId: input.workflowRunId,
+      ticker: input.ticker,
+      fusedSignal: input.fusedSignal,
+      fusedConfidence: input.fusedConfidence,
+      analystSummary: input.analystSummary,
+      maxRounds: input.maxRounds,
+    });
+    return {
+      sessionId: d.debateSessionId,
+      consensusScore: d.consensusScore,
+      finalStance: d.finalStance,
+      verdict: d.verdict,
+      reasoning: d.reasoning,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[analyst-team] debate session failed for ${input.ticker} (workflow=${input.workflowRunId}): ${msg}; ` +
+        `continuing without consensus (risk evaluation will fall back to confidence-only).`
+    );
+    await input.logFailure({
+      workflowRunId: input.workflowRunId,
+      fromRole: "orchestrator",
+      toRole: "__team__",
+      kind: "llm_message",
+      contentText: `Bull/Bear 辩论会话执行失败：${msg.slice(0, 800)}。已跳过共识评估，继续走 risk + 最终报告。`,
+      payloadJson: {
+        phase: "debate_failed",
+        ticker: input.ticker,
+        fusedSignal: input.fusedSignal,
+        fusedConfidence: input.fusedConfidence,
+        errorMessage: msg.slice(0, 1200),
+      },
+    });
+    return undefined;
+  }
+}
+
 function mergeMultiSymbolAnalystResults(
   scope: NormalizedResearchScope,
   results: AnalystTeamResult[]
@@ -1028,21 +1095,16 @@ async function runAnalystTeamCore(params: {
     const analystSummary = fusionResult.signalBreakdown
       .map((s) => `${s.role}: ${s.signal} (${(s.confidence * 100).toFixed(0)}%) ${s.reasoning.slice(0, 120)}`)
       .join("\n");
-    const d = await runDebateSession({
+    debate = await executeDebateSafely({
       workflowRunId,
       ticker,
       fusedSignal: fusionResult.fusedSignal,
       fusedConfidence: fusionResult.fusedConfidence,
       analystSummary,
       maxRounds: debateConfig.maxRounds,
+      run: runDebateSession,
+      logFailure: logResearchTeamInteraction,
     });
-    debate = {
-      sessionId: d.debateSessionId,
-      consensusScore: d.consensusScore,
-      finalStance: d.finalStance,
-      verdict: d.verdict,
-      reasoning: d.reasoning,
-    };
   }
   const risk = await evaluateRiskAndVeto({
     workflowRunId,
