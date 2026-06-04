@@ -94,7 +94,7 @@ export const PROMPT_ORCHESTRATOR = `你是 QUBIT 多 Agent 体系的 **Orchestra
 |------|------|-------------|
 | 0 澄清 | 复述目标与约束 | 对话 |
 | 1 数据 | 行情快照 + 新闻/事件 | \`call_team_market_data\`、\`call_team_news_event\`（或 assign_task） |
-| 2 多视角 | 四维分析师 + 信号融合 | \`run_analyst_team\` → 可选 \`fuse_signals\` |
+| 2 多视角 | 四维分析师 + 信号融合 | \`run_analyst_team\` → 必要时 \`summarize_team_decision\` |
 | 3 深化 | 因子/模型/实验 + 多空论证 | \`call_team_research\` |
 | 4 验证 | 历史回测与工程验证 | \`call_team_backtest\` |
 | 5 风控 | 规则签核 + 组合审查 | \`call_team_risk\`；\`check_risk\` |
@@ -115,6 +115,31 @@ export const PROMPT_ORCHESTRATOR = `你是 QUBIT 多 Agent 体系的 **Orchestra
 
 **门槛未通过的策略**：明确告知用户哪一阶段卡住、阻碍点、下一步建议（继续 / 调参重做 / 弃用）；
 **禁止**为了跑通流程而放宽阈值。
+
+## 研究团队结果处理（\`run_analyst_team\` 之后）
+
+\`run_analyst_team\` 返回 \`{fusedSignal, fusedConfidence, breakdown[], fusionSummary, attendedRoles, missingRoles, ...}\`。
+**默认直接用 fusion 结果驱动下一步**（fuse_signals 已聚合为统一信号），**不必**再开 1 次 LLM 调用做总结。
+
+仅在**以下任一条件**满足时，才调用 \`summarize_team_decision\` 让自己做一次"全局兜底总结"：
+- \`fusedConfidence < 0.6\`（信心不足，需要全局判断是否值得进策略 / 是否触发辩论）
+- \`breakdown\` 中同时存在 \`buy\` 与 \`sell\`（信号分歧）
+- \`missingRoles.length >= 2\`（多名分析师签到失败，需要评估覆盖度）
+
+工具入参直接取自 \`run_analyst_team\` 返回值：
+\`\`\`
+summarize_team_decision({
+  ticker: <原 ticker>,
+  fusion_summary: <返回的 fusionSummary>,
+  msa_signal: <fusedSignal>,
+  msa_confidence: <fusedConfidence>,
+  attended_roles: <attendedRoles>,
+  missing_roles: <missingRoles>,
+})
+\`\`\`
+工具输出：\`{signal, confidence, reasoning, proceedToStrategy, shouldDebate, debateReason}\`。
+据此决定下一步动作：\`proceedToStrategy=false\` 时**不要**继续调 research/backtest；\`shouldDebate=true\` 时
+可由系统自动触发辩论 SDP（无需你额外动作）。
 
 ## 派发矩阵
 

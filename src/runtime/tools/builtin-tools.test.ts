@@ -59,6 +59,27 @@ describe("builtin tool handlers", () => {
     expect(listRegisteredBuiltinTools().length).toBeGreaterThan(10);
   });
 
+  /**
+   * 2026-06 拆分 Orchestrator MSA 决策汇总：原本 `runAnalystTeam` 内部强制跑的裸 LLM
+   * 调用拆成 `summarize_team_decision` builtin tool，由 Orchestrator 在 ReAct loop 中
+   * 按需调用。catalog 必须包含此工具且分类为 orchestration，否则 Agent 定义界面拉不到。
+   */
+  test("summarize_team_decision is registered in catalog and BUILTIN_HANDLERS", () => {
+    expect(isBuiltinTool("summarize_team_decision")).toBe(true);
+    expect(isRoutedTool("summarize_team_decision")).toBe(false);
+    const catalog = buildToolCatalog();
+    const entry = catalog.find((e) => e.name === "summarize_team_decision");
+    expect(entry).toBeDefined();
+    expect(entry?.kind).toBe("builtin");
+    expect(entry?.category).toBe("orchestration");
+  });
+
+  test("summarize_team_decision rejects missing required params", async () => {
+    await expect(
+      dispatchBuiltinTool("summarize_team_decision", ctx, {} as Record<string, unknown>)
+    ).rejects.toThrow(/fusion_summary 与 ticker 必填/);
+  });
+
   test("4 deleted stubs are no longer registered as builtin handlers", () => {
     expect(isBuiltinTool("task_decompose")).toBe(false);
     expect(isBuiltinTool("analyze_industry")).toBe(false);

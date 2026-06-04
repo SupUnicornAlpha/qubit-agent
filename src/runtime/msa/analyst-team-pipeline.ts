@@ -373,11 +373,23 @@ ${input.dataAndUserContext}`;
   return parsed;
 }
 
-/** MSA 之后：Orchestrator 汇总并给出买/卖/观望与是否进入策略阶段 */
-export async function runOrchestratorDecision(input: {
+/**
+ * MSA 之后：让 Orchestrator 用一次 LLM 调用做"全局兜底总结"，输出 buy/sell/hold + 是否进入策略阶段。
+ *
+ * 设计沿革（2026-06）：
+ * - 老路径：`runAnalystTeam` 内部强制跑这次 LLM 调用，每个 workflow 都多 1 次 ~2-5s 延迟，
+ *   不论信号是否分歧、置信度高低；ReAct loop 之外的"裸 LLM 调用"也让 Agent 架构出现分叉。
+ * - 新路径：把这次 LLM 调用拆成 builtin tool `summarize_team_decision`，由 Orchestrator 自己
+ *   在 ReAct loop 中按需调用（典型条件：confidence < 0.6 / 信号分歧 / missingRoles >= 2）。
+ *
+ * 因此本函数被设计成"不依赖 AnalystTeamSlot"的纯函数，**仅需 system prompt 字符串**，既能被
+ * builtin tool 调用（拿当前 Orchestrator Agent 的 systemPrompt），也能被遗留路径调用（如有）。
+ */
+export async function summarizeTeamDecision(input: {
   workflowRunId: string;
   ticker: string;
-  orchestrator: AnalystTeamSlot;
+  /** Orchestrator Agent 的 system prompt（来自 RuntimeAgentDefinition.systemPrompt） */
+  orchestratorSystemPrompt: string;
   fusionSummary: string;
   msaSignal: AnalystSignalValue;
   msaConfidence: number;
@@ -449,7 +461,7 @@ ${input.fusionSummary}`;
   try {
     const result = await runLlmGateway({
       config: modelConfig,
-      systemPrompt: input.orchestrator.systemPrompt,
+      systemPrompt: input.orchestratorSystemPrompt,
       userPrompt,
       onToken: () => {},
     });
@@ -525,6 +537,33 @@ ${input.fusionSummary}`;
     shouldDebate,
     ...(debateReason ? { debateReason } : {}),
   };
+}
+
+/**
+ * @deprecated 2026-06：拆成 builtin tool `summarize_team_decision` 后，`runAnalystTeam` 不再
+ * 强制调用此函数；保留 thin wrapper 仅作向后兼容（被 `analyst-team.ts` import 但未调用）。
+ * 新代码请直接使用 `summarizeTeamDecision`，传入 `orchestratorSystemPrompt` 字符串即可。
+ */
+export async function runOrchestratorDecision(input: {
+  workflowRunId: string;
+  ticker: string;
+  orchestrator: AnalystTeamSlot;
+  fusionSummary: string;
+  msaSignal: AnalystSignalValue;
+  msaConfidence: number;
+  attendedRoles?: AgentRole[];
+  missingRoles?: AgentRole[];
+}): Promise<OrchestratorDecision> {
+  return summarizeTeamDecision({
+    workflowRunId: input.workflowRunId,
+    ticker: input.ticker,
+    orchestratorSystemPrompt: input.orchestrator.systemPrompt,
+    fusionSummary: input.fusionSummary,
+    msaSignal: input.msaSignal,
+    msaConfidence: input.msaConfidence,
+    attendedRoles: input.attendedRoles,
+    missingRoles: input.missingRoles,
+  });
 }
 
 /**

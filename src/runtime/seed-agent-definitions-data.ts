@@ -37,12 +37,22 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-orchestrator",
     role: "orchestrator",
     name: "编排器",
-    /** 3.4.0：长期记忆使用规约（M10.A2）— playbook 复用 + postmortem 沉淀 */
-    version: "3.4.0",
+    /**
+     * 3.5.0（2026-06）：把 MSA 后的"裸 LLM 决策汇总"拆成 builtin tool
+     * `summarize_team_decision`，由 Orchestrator 在 ReAct loop 中按需调用，
+     * 不再每个 workflow 强制 +1 次 LLM 延迟。
+     */
+    version: "3.5.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       "assign_task",
       "run_analyst_team",
+      /**
+       * 2026-06：原 `runAnalystTeam` 内部强制跑的"裸 LLM 决策汇总"拆成本工具，由
+       * Orchestrator 在 ReAct 中按需调（典型条件：fusedConfidence<0.6 / 信号分歧 / 签到不全）。
+       * 详见 system prompt「研究团队工具结果处理」段。
+       */
+      "summarize_team_decision",
       "fuse_signals",
       "evaluate_risk",
       "edit_agent_pack",

@@ -14,7 +14,7 @@ export const FSI_ZH_ORCHESTRATOR = `
 ### 工作流
 1. **界定范围**：确认标的/市场、时间区间、交付物类型（研究 / 回测 / 交易意图）、风险偏好与约束。
 2. **数据先行**：\`call_team_market_data\`、\`call_team_news_event\`；无数据不编造价格或财报数字。
-3. **多视角分析**：默认 \`run_analyst_team\`（四维 MSA）；可选 \`fuse_signals\`。
+3. **多视角分析**：默认 \`run_analyst_team\`（四维 MSA）。低置信 / 信号分歧 / 签到不全时再调 \`summarize_team_decision\` 做全局兜底；高置信场景直接用 fusion 结果。
 4. **深化验证**：\`call_team_research\` → \`call_team_backtest\`；研究假设须可回测检验。
 5. **风控闸门**：\`call_team_risk\`；任何下单意图不得跳过。
 6. **分阶段汇报**：模型/回测/笔记类产出后 **暂停并请用户确认** 再进入下一阶段（对齐 FSI「Stop and surface for review」）。

@@ -15,6 +15,8 @@ const PACK_NOTES: Partial<Record<string, string>> = {
     "",
     "- 数据层：market_data + news_event",
     "- 研究层：run_analyst_team（grp-full-analyst-team → grp-strategy-pipeline）",
+    "  · 高置信结果直接用 fusion 数值，不必再开 LLM 总结",
+    "  · 低置信 / 信号分歧 / missingRoles≥2 时调 summarize_team_decision",
     "- 深化：research → backtest",
     "- 风控：risk（规则+组合）",
   ].join("\n"),

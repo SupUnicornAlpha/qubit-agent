@@ -27,6 +27,8 @@ import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { parseHitlApproval } from "../workflow/hitl-service";
 import { fuseSignals, type RawAnalystSignal } from "../msa/signal-fusion";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
+import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
+import type { AnalystSignalValue } from "../../types/entities";
 import { runStockScreener } from "../screener/stock-screener";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { factorService } from "../factor/factor-service";
@@ -136,6 +138,63 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       hitlApproval: parseHitlApproval(
         (ctx.inboundPayload?.["params"] as Record<string, unknown> | undefined)?.["hitlApproval"]
       ),
+    });
+  },
+
+  /**
+   * 2026-06 新增：对 `run_analyst_team` 输出做"全局兜底总结"。
+   *
+   * 设计意图：
+   *   - 老路径在 `runAnalystTeam` 内部强制跑一次 LLM 决策汇总，每个 workflow 都多 1 次
+   *     ~2-5s 调用 + 让 Orchestrator 出现 ReAct 之外的裸 LLM 调用。
+   *   - 新路径把这次调用拆成本工具，由 Orchestrator 在 ReAct loop 中按需调（典型条件：
+   *     fusedConfidence < 0.6 / breakdown 信号分歧 / missingRoles >= 2）。
+   *   - 工具复用 `ctx.definition.systemPrompt` 作为 Orchestrator 的人格 prompt，保证语义
+   *     与历史 `runOrchestratorDecision` 一致。
+   *
+   * 入参兼容下划线 / 驼峰双风格，避免 LLM 写错参数名硬性失败。
+   */
+  summarize_team_decision: async (ctx, params) => {
+    const fusionSummary = String(
+      params.fusion_summary ?? params.fusionSummary ?? ""
+    ).trim();
+    const ticker = String(params.ticker ?? "").trim();
+    if (!fusionSummary || !ticker) {
+      throw new Error(
+        "summarize_team_decision: fusion_summary 与 ticker 必填（请把 run_analyst_team 返回值中的 fusionSummary 与 ticker 原样传入）"
+      );
+    }
+    const allowedSignals: ReadonlyArray<AnalystSignalValue> = ["buy", "sell", "hold"];
+    const rawSignal = String(
+      params.msa_signal ?? params.msaSignal ?? params.fused_signal ?? "hold"
+    ).toLowerCase();
+    const msaSignal = (
+      allowedSignals.includes(rawSignal as AnalystSignalValue) ? rawSignal : "hold"
+    ) as AnalystSignalValue;
+    const confidenceRaw = Number(
+      params.msa_confidence ?? params.msaConfidence ?? params.fused_confidence ?? 0.5
+    );
+    const msaConfidence = Number.isFinite(confidenceRaw)
+      ? Math.max(0, Math.min(1, confidenceRaw))
+      : 0.5;
+
+    const pickRoles = (key1: string, key2: string): AgentRole[] | undefined => {
+      const raw = params[key1] ?? params[key2];
+      if (!Array.isArray(raw)) return undefined;
+      return raw.filter((r): r is AgentRole => typeof r === "string" && r.length > 0) as AgentRole[];
+    };
+    const attendedRoles = pickRoles("attended_roles", "attendedRoles");
+    const missingRoles = pickRoles("missing_roles", "missingRoles");
+
+    return summarizeTeamDecision({
+      workflowRunId: ctx.workflowId,
+      ticker,
+      orchestratorSystemPrompt: ctx.definition.systemPrompt,
+      fusionSummary,
+      msaSignal,
+      msaConfidence,
+      attendedRoles,
+      missingRoles,
     });
   },
 

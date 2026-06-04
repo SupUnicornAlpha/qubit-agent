@@ -65,7 +65,6 @@ import {
   parseGroupRelationsWithOrchestrator,
   POST_FUSION_AUX_ROLES,
   resolveOrchestratorSlot,
-  runOrchestratorDecision,
   runOrchestratorPlanning,
   runPostFusionPipeline,
   slotOnlyRelationEdges,
@@ -227,6 +226,17 @@ export interface AnalystTeamResult {
     reasoning: string;
   }>;
   report: string;
+  /**
+   * 2026-06：MSA 融合后的核心报告文本（即原 `reportCore`，含分析师 breakdown 与可选辅助章节）。
+   * 暴露给 Orchestrator Agent，使其在 ReAct loop 中可按需把它传给 builtin tool
+   * `summarize_team_decision` 做"全局兜底总结"——这取代了老路径在 `runAnalystTeam` 内部
+   * 强制跑一次裸 LLM 调用的设计。
+   */
+  fusionSummary: string;
+  /** 实际产出合法 signal 的分析师角色，用于 summarize_team_decision 工具的硬约束 prompt */
+  attendedRoles?: AgentRole[];
+  /** 签到失败 / 未产出 signal 的分析师角色 */
+  missingRoles?: AgentRole[];
   debate?: {
     sessionId: string;
     consensusScore: number;
@@ -794,40 +804,22 @@ async function runAnalystTeamCore(params: {
         confidence: 0.55,
       },
     });
-  } else if (orchestratorSlot) {
-    /**
-     * 2026-05-27 P2 修复：把"实际签到分析师"传给 orchestrator decision，
-     * 否则 LLM 在零有效信号（或只有 2 个签到时）会幻觉编造"四维信号"——
-     * WF a09e90c5 实测：只签到 fundamental + technical 且都 signal_parse_failed，
-     * orchestrator 居然写出"综合基本面、技术、情绪及宏观四维信号"和
-     * "情绪面散户关注度高但机构持仓谨慎、宏观层面航天板块政策顺风..."的
-     * 完整伪造叙事。把签到清单作为 hard fact 拼进 prompt 能根治这类幻觉。
-     */
-    const attendedRoles = fusionResult.signalBreakdown.map((s) => s.role);
-    const allAnalystRoles = analystSlots.map((s) => s.role);
-    const missingRoles = allAnalystRoles.filter((r) => !attendedRoles.includes(r));
-    orchestratorDecision = await runOrchestratorDecision({
-      workflowRunId,
-      ticker,
-      orchestrator: orchestratorSlot,
-      fusionSummary: reportCore,
-      msaSignal: fusionResult.fusedSignal,
-      msaConfidence: fusionResult.fusedConfidence,
-      attendedRoles,
-      missingRoles,
-    });
-    reportCore += `\n\n### Orchestrator 汇总决策\n\n**${orchestratorDecision.signal.toUpperCase()}**（${(orchestratorDecision.confidence * 100).toFixed(0)}%）\n\n${orchestratorDecision.reasoning}`;
-    if (orchestratorDecision.proceedToStrategy) {
-      await logResearchTeamInteraction({
-        workflowRunId,
-        fromRole: "orchestrator",
-        toRole: "research",
-        kind: "llm_message",
-        contentText: "Orchestrator 批准进入策略撰写与回测阶段。",
-        payloadJson: { phase: "orchestrator_to_research" },
-      });
-    }
   }
+  /**
+   * 2026-06 架构调整：MSA 之后那次"裸 LLM 决策汇总"被拆成 builtin tool
+   * `summarize_team_decision`，由 Orchestrator Agent 在自己的 ReAct loop 中按需调用
+   * （典型条件：fusedConfidence < 0.6 / 信号分歧 / missingRoles >= 2）。
+   *
+   * 收益：
+   *   - 节省 1 次 ~2-5s LLM 调用（高置信场景）
+   *   - Orchestrator 的所有 LLM 调用统一走 ReAct 路径，不再有 act 节点之外的裸调用
+   *   - 兜底逻辑（proceedToStrategy / shouldDebate）天然回落到 decideShouldDebate 的
+   *     "orchestratorDecision=null + 阈值"分支，不影响下游
+   *
+   * 留下的 strategyPipelineMode stub 是**硬编码数据**（无 LLM 调用），保留即可。
+   * 历史强制调用 `runOrchestratorDecision` 的逻辑已删除；如需保留报告中"汇总决策"段，
+   * 让 Orchestrator 自行在 ReAct 中调工具后用工具结果追加到对话回复即可。
+   */
 
   if (auxSlots.length > 0) {
     const post = await runPostFusionPipeline({
@@ -932,6 +924,16 @@ async function runAnalystTeamCore(params: {
     debateConsensusScore: debate?.consensusScore,
   });
 
+  /**
+   * 2026-06：把 reportCore（融合后的核心报告，未拼 aux 章节）和签到清单暴露给 caller，
+   * 让 Orchestrator 在 ReAct loop 中可按需把它们传给 `summarize_team_decision` 工具做
+   * 全局兜底总结。注意：`report` 仍是含 aux 章节的完整报告；`fusionSummary` 只到 MSA
+   * 融合层为止，避免工具 prompt 被 aux 章节膨胀。
+   */
+  const attendedRoles = fusionResult.signalBreakdown.map((s) => s.role);
+  const allAnalystRoles = analystSlots.map((s) => s.role);
+  const missingRoles = allAnalystRoles.filter((r) => !attendedRoles.includes(r));
+
   return {
     fusionId: fusionResult.fusionId,
     ticker: scope.displayLabel,
@@ -946,6 +948,9 @@ async function runAnalystTeamCore(params: {
       reasoning: s.reasoning,
     })),
     report,
+    fusionSummary: reportCore,
+    attendedRoles,
+    missingRoles,
     debate,
     risk,
   };
