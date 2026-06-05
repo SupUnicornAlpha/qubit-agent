@@ -87,9 +87,22 @@ export async function loadProviderFromDb(
       ? inferProviderFromModelName(row.modelName)
       : (row.providerType as LlmProvider);
 
-  // apiKeyRef 优先级：明文 apiKey > env(从 ref 解析) > 空
-  // 当前阶段（B1 最小可用版）apiKeyRef 直接当 env 变量名读取；后续 P1 改 keychain
-  const apiKey = row.apiKeyRef ? process.env[row.apiKeyRef] ?? row.apiKeyRef : "";
+  /**
+   * apiKey 取值优先级（2026-06-05 修复"重启后缺 apiKey"后）：
+   *   1. `row.apiKeySecret`：migration 0079 起，明文 apiKey 持久化在此列，重启不丢
+   *   2. `process.env[row.apiKeyRef]`：兼容旧数据 / user 自己用 env 引用方式配置的情况
+   *   3. 空串 → 上层会降级到 default model
+   *
+   * 注意：旧实现里的 `process.env[row.apiKeyRef] ?? row.apiKeyRef` 是 bug —— env 不存在时
+   * 会把 envKey 的字符串名字（如 "OPENAI_API_KEY"）当作真正的 apiKey 调下游 LLM，鉴权一定
+   * 失败且错误信息高度误导（看起来像"key 错了"，实际是这里读串了）。这里改为兜底空串。
+   */
+  const apiKey =
+    (row.apiKeySecret && row.apiKeySecret.length > 0
+      ? row.apiKeySecret
+      : row.apiKeyRef
+        ? process.env[row.apiKeyRef] ?? ""
+        : "") ?? "";
 
   const config: RuntimeModelConfig = {
     provider: providerType,
@@ -98,6 +111,39 @@ export async function loadProviderFromDb(
     ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
   };
   return config;
+}
+
+/**
+ * 启动期把 DB 中所有 `api_key_secret` 还原到 `process.env[apiKeyRef]`。
+ *
+ * 必要性：除了 `loadProviderFromDb` 已经能直接读 `apiKeySecret` 外，仍有路径
+ * （如 inline-string 路径中 `process.env[envKey]`、或者用户直接 fetch
+ * OpenAI/Anthropic SDK 时读 `process.env.OPENAI_API_KEY`）依赖 env。把 secret
+ * hydrate 回 env 能在不动这些消费者的前提下消除"重启即丢"的体感问题。
+ *
+ * 仅在 `apiKeyRef && apiKeySecret` 同时存在时写入；如果 env 已被 OS 层（shell
+ * export / .env）注入了同名变量，**不覆盖**——避免 DB 里的旧值打掉 user 通过环境
+ * 变量临时覆盖的新值。
+ */
+export async function hydrateLlmProviderEnv(): Promise<{
+  scanned: number;
+  hydrated: number;
+  skippedExistingEnv: number;
+}> {
+  const db = await getDb();
+  const rows = await db.select().from(llmProviderConfig);
+  let hydrated = 0;
+  let skippedExistingEnv = 0;
+  for (const row of rows) {
+    if (!row.apiKeyRef || !row.apiKeySecret) continue;
+    if (process.env[row.apiKeyRef] && process.env[row.apiKeyRef] !== "") {
+      skippedExistingEnv += 1;
+      continue;
+    }
+    process.env[row.apiKeyRef] = row.apiKeySecret;
+    hydrated += 1;
+  }
+  return { scanned: rows.length, hydrated, skippedExistingEnv };
 }
 
 /**

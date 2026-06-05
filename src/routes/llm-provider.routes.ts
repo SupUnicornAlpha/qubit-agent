@@ -48,31 +48,62 @@ interface UpdatePayload {
   enabled?: boolean;
 }
 
-/** 把前端传的 apiKey 明文转成 env 变量名引用 — B1 最小版：直接存为 ref，B-P1 改成 keychain */
-function normalizeApiKeyRef(input: {
+/**
+ * 把前端传的 apiKey 明文（或显式 apiKeyRef）规范化为 `{ apiKeyRef, apiKeySecret }`。
+ *
+ * 设计（2026-06-05 修复"重启后缺 apiKey"）：
+ *
+ * - **apiKeyRef**：env 变量名（如 `OPENAI_API_KEY`）。当 user 通过 env 提供 key 时，
+ *   这一列就是唯一来源；当 user 通过 UI 提供明文 apiKey 时，这一列仍然填上推断出的
+ *   envKey，便于"hydrate 回 process.env"以及"启动后让 SDK 直接读 env"。
+ * - **apiKeySecret**：明文 apiKey 持久化（migration 0079）。本字段是修复重启丢失的
+ *   核心载体；之前只写 process.env，进程退出即丢，user 体感"上次配的全消失"。
+ *
+ * 三个分支：
+ *   1. user 显式传 `apiKeyRef` → 不存 secret（user 自己用 env 管理 key，DB 不存明文）
+ *   2. user 传明文 `apiKey` → 同时持久化 secret + 写 process.env[apiKeyRef]（当前进程立即生效）
+ *   3. 都没传 → `{ apiKeyRef: null, apiKeySecret: null }`（创建场景下表示无 key）
+ *
+ * NOTE：返回 `apiKeySecret === undefined` 表示"调用方不要动这个字段"（用于 PATCH 时
+ * apiKey 字段缺省 == 保持不变）；返回 `apiKeySecret === null` 才是"显式清空"。
+ */
+function normalizeApiKey(input: {
   apiKey?: string | null;
   apiKeyRef?: string | null;
   providerType?: ProviderType;
   modelName?: string;
-}): string | null {
-  // 优先 apiKeyRef（如用户已经用 env 引用方式配）
+}): { apiKeyRef: string | null; apiKeySecret: string | null } {
+  // case 1: user 显式 env-ref
   if (input.apiKeyRef && input.apiKeyRef.trim()) {
-    return input.apiKeyRef.trim();
+    return { apiKeyRef: input.apiKeyRef.trim(), apiKeySecret: null };
   }
-  // 明文 apiKey → 注入到 process.env 并存 env 变量名
-  // (B-P0 阶段最小可用版：内存级保护，重启后失效。B-P1 改 keychain。)
+  // case 2: 明文 apiKey
   if (input.apiKey && input.apiKey.trim()) {
+    const secret = input.apiKey.trim();
     const provider =
       input.providerType === "custom" && input.modelName
         ? inferProviderFromModelName(input.modelName)
         : input.providerType;
     const envKey = provider ? providerEnvKey(provider as "openai") : null;
-    // 为每个 provider 单独命名 env key（避免冲突），存进 process.env
+    // 给 custom 兜底一个命名（多个 custom provider 仍会共用同一个 env key，但
+    // loadProviderFromDb 主要走 apiKeySecret，这里的 env key 仅为兼容层）
     const finalEnvKey = envKey ?? `QUBIT_LLM_${(input.providerType ?? "custom").toUpperCase()}_KEY`;
-    process.env[finalEnvKey] = input.apiKey.trim();
-    return finalEnvKey;
+    // 同步写 process.env，让本进程内其他 SDK / inline-string 路径立即可见。
+    // 进程重启后由 hydrateLlmProviderEnv() 从 DB 重新还原。
+    process.env[finalEnvKey] = secret;
+    return { apiKeyRef: finalEnvKey, apiKeySecret: secret };
   }
-  return null;
+  // case 3: 都没传
+  return { apiKeyRef: null, apiKeySecret: null };
+}
+
+function apiKeyConfigured(row: {
+  apiKeyRef: string | null;
+  apiKeySecret: string | null;
+}): boolean {
+  if (row.apiKeySecret && row.apiKeySecret.length > 0) return true;
+  if (row.apiKeyRef && (process.env[row.apiKeyRef] ?? "").length > 0) return true;
+  return false;
 }
 
 /** GET /api/v1/llm-providers — 列出所有 provider（apiKey 不返回明文，只返回是否已配置） */
@@ -88,7 +119,7 @@ llmProviderRouter.get("/", async (c) => {
       modelName: r.modelName,
       baseUrl: r.baseUrl,
       apiKeyRef: r.apiKeyRef,
-      apiKeyConfigured: Boolean(r.apiKeyRef && (process.env[r.apiKeyRef] ?? "").length > 0),
+      apiKeyConfigured: apiKeyConfigured(r),
       contextWindow: r.contextWindow,
       supportsFunctionCalling: r.supportsFunctionCalling,
       enabled: r.enabled,
@@ -104,11 +135,13 @@ llmProviderRouter.get("/:id", async (c) => {
   const rows = await db.select().from(llmProviderConfig).where(eq(llmProviderConfig.id, id)).limit(1);
   const row = rows[0];
   if (!row) return c.json({ ok: false, error: "not_found" }, 404);
+  // 不把 apiKeySecret 明文回吐给前端，仅暴露"是否已配置"
+  const { apiKeySecret: _omit, ...safeRow } = row;
   return c.json({
     ok: true,
     data: {
-      ...row,
-      apiKeyConfigured: Boolean(row.apiKeyRef && (process.env[row.apiKeyRef] ?? "").length > 0),
+      ...safeRow,
+      apiKeyConfigured: apiKeyConfigured(row),
     },
   });
 });
@@ -128,7 +161,7 @@ llmProviderRouter.post("/", async (c) => {
     if (existing[0]) {
       return c.json({ ok: false, error: "providerId_already_exists" }, 409);
     }
-    const apiKeyRef = normalizeApiKeyRef(body);
+    const { apiKeyRef, apiKeySecret } = normalizeApiKey(body);
     const id = randomUUID();
     await db.insert(llmProviderConfig).values({
       id,
@@ -137,6 +170,7 @@ llmProviderRouter.post("/", async (c) => {
       modelName: body.modelName.trim(),
       baseUrl: body.baseUrl ?? null,
       apiKeyRef,
+      apiKeySecret,
       contextWindow: body.contextWindow ?? 128_000,
       supportsFunctionCalling: body.supportsFunctionCalling ?? true,
       enabled: body.enabled ?? true,
@@ -168,15 +202,20 @@ llmProviderRouter.patch("/:id", async (c) => {
     if (body.supportsFunctionCalling !== undefined) next.supportsFunctionCalling = body.supportsFunctionCalling;
     if (body.enabled !== undefined) next.enabled = body.enabled;
 
-    // apiKey / apiKeyRef 变化时重写
+    // apiKey / apiKeyRef 变化时重写。
+    //
+    // PATCH 语义：apiKey/apiKeyRef 任一字段出现在请求 body 中即视为"要重设 key"。
+    // 都缺省则保持现状（前端 LlmProvidersList 的 handleSaveEdit 已遵循此约定：
+    // apiKey 留空就不发送）。
     if (body.apiKey !== undefined || body.apiKeyRef !== undefined) {
-      const newRef = normalizeApiKeyRef({
+      const normalized = normalizeApiKey({
         apiKey: body.apiKey,
         apiKeyRef: body.apiKeyRef,
         providerType: body.providerType ?? (existing[0].providerType as ProviderType),
         modelName: body.modelName ?? existing[0].modelName,
       });
-      next.apiKeyRef = newRef;
+      next.apiKeyRef = normalized.apiKeyRef;
+      next.apiKeySecret = normalized.apiKeySecret;
     }
 
     await db.update(llmProviderConfig).set(next).where(eq(llmProviderConfig.id, id));
@@ -214,9 +253,9 @@ llmProviderRouter.post("/:id/test", async (c) => {
       ? inferProviderFromModelName(row.modelName)
       : (row.providerType as "openai" | "anthropic" | "ollama");
   const envKey = providerEnvKey(provider);
-  const apiKeyConfigured = Boolean(row.apiKeyRef && (process.env[row.apiKeyRef] ?? "").length > 0);
+  const keyOk = apiKeyConfigured(row);
 
-  if (!apiKeyConfigured && provider !== "ollama" && provider !== "mock") {
+  if (!keyOk && provider !== "ollama" && provider !== "mock") {
     return c.json({
       ok: false,
       error: "api_key_not_configured",
@@ -231,7 +270,7 @@ llmProviderRouter.post("/:id/test", async (c) => {
       runtimeProvider: provider,
       modelName: row.modelName,
       baseUrl: row.baseUrl,
-      apiKeyConfigured,
+      apiKeyConfigured: keyOk,
       envKeyHint: envKey,
       note: "B-P0 dry-run only; real ping coming in B-P2.",
     },

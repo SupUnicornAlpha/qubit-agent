@@ -1,0 +1,24 @@
+-- M10.B-P0-fix: 持久化 LLM Provider 的明文 apiKey（修复重启后显示"缺 apiKey"）
+--
+-- 背景（2026-06-05 user 反馈）：
+--   在「LLM 模型」页面新增 / 编辑 provider 时填的 apiKey 明文，旧逻辑
+--   `normalizeApiKeyRef` 只把它 `process.env[envKey] = apiKey`，DB 里只存了 envKey
+--   的名字（如 `OPENAI_API_KEY`）。进程重启 → process.env 清空 → 前端读到
+--   `apiKeyConfigured = Boolean(process.env[apiKeyRef]) = false` → 所有 provider
+--   全部显示「缺 apiKey」。
+--
+-- 修复：新增 `api_key_secret` 列直接持久化明文。启动时（runPlatformBootstrap）会把所有
+-- secret 还原到 process.env[apiKeyRef]，保持其它依赖 env 的旧路径（如直接读
+-- process.env.OPENAI_API_KEY 的 SDK）继续可用。
+--
+-- 安全性：本地 SQLite 明文，适用于"本地工具"场景。B-P1 切到 OS keychain 时，把这一列
+-- 迁移成 keychain key id 即可（apiKeyRef 含义不变，仍是 envKey 名字）。
+--
+-- 行为不变性：
+--   - 旧行 default NULL → 启动 hydrate 跳过 → 走 process.env 兼容路径，等价于此次
+--     migration 之前；user 重新「重设 apiKey」就会落到新列。
+--   - SELECT * 自动带上新列，对所有路径无害（apiKeyConfigured 判定改为 secret OR env）。
+--
+-- 回滚：down-0079.sql 是 no-op（SQLite DROP COLUMN 重表代价高，且字段对老代码无害）。
+
+ALTER TABLE `llm_provider_config` ADD COLUMN `api_key_secret` TEXT;

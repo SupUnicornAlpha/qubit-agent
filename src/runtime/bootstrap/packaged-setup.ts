@@ -13,6 +13,7 @@ import {
   ensureWorkspaceRuntimeConfigFiles,
 } from "../config/workspace-config";
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
+import { hydrateLlmProviderEnv } from "../llm/llm-router";
 
 export type BootstrapResult = {
   migrations: boolean;
@@ -137,6 +138,25 @@ export async function runPlatformBootstrap(options?: {
   // 路径（agent_group 等）若想引用 workspace_id 时需要它已存在。
   await ensureDefaultUserWorkspace();
   await seedAgentDefinitions();
+  /**
+   * LLM Provider apiKey hydrate（M10.B-P0 fix，2026-06-05）：
+   *
+   * 把 llm_provider_config.api_key_secret 还原到 process.env[apiKeyRef]，让"重启后
+   * apiKey 全部消失"的 UI 体感修复掉，同时让继续依赖 process.env 的 SDK / inline
+   * 路径继续工作（如直接读 OPENAI_API_KEY 的 OpenAI 客户端）。
+   *
+   * 失败仅 warn，不阻塞 boot；下次保存 apiKey 时仍会写 process.env，等价于以前的兼容路径。
+   */
+  try {
+    const r = await hydrateLlmProviderEnv();
+    if (r.hydrated > 0 || r.skippedExistingEnv > 0) {
+      console.log(
+        `[QUBIT] LLM provider env hydrated: ${r.hydrated}/${r.scanned} (kept existing env: ${r.skippedExistingEnv})`
+      );
+    }
+  } catch (e) {
+    console.warn(`[QUBIT] hydrateLlmProviderEnv failed (non-fatal): ${(e as Error).message}`);
+  }
   /**
    * F-P0-06 fix（2026-06-04）：之前传 `refresh: true` 会把 `.qubit/agents.json` 每次
    * 启动都用 SEED_AGENT_DEFINITIONS 强制重写一遍；紧接着 GraphRunner.start() →

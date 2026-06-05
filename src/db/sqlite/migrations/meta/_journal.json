@@ -547,6 +547,13 @@
       "when": 1782518460000,
       "tag": "0078_consolidate_user_workspaces_part2",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1782604800000,
+      "tag": "0079_llm_provider_api_key_secret",
+      "breakpoints": true
     }
   ]
 }

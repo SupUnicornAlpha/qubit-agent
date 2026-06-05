@@ -356,6 +356,16 @@ export const llmProviderConfig = sqliteTable("llm_provider_config", {
   baseUrl: text("base_url"),
   modelName: text("model_name").notNull(),
   apiKeyRef: text("api_key_ref"),
+  /**
+   * 明文 apiKey 持久化字段（migration 0079 引入）。
+   *
+   * 在 B-P0 阶段 apiKey 仅写入 `process.env[apiKeyRef]`，重启后丢失；user 反馈下次启动
+   * 显示"缺 apiKey"即此 bug。改为把明文落库 + 启动时 hydrate 回 process.env，保证持久化。
+   *
+   * 安全性说明：本字段在本地 SQLite 中明文存放，仅适用于"本地工具"场景。后续 B-P1
+   * 切换到 OS keychain 时，把这里的迁移成 keychain key id 即可（保持 apiKeyRef 不变）。
+   */
+  apiKeySecret: text("api_key_secret"),
   contextWindow: integer("context_window").notNull().default(128_000),
   supportsFunctionCalling: integer("supports_function_calling", { mode: "boolean" })
     .notNull()
