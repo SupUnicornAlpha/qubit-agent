@@ -1,6 +1,6 @@
 import { RefreshCw } from "lucide-react";
 import type { CSSProperties, FC } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createAgentDefinition,
   createAgentDraft,
@@ -14,6 +14,7 @@ import {
   reloadBuiltinAgentSeed,
   type ReloadBuiltinSeedResponse,
 } from "../../api/backend";
+import { httpGet } from "../../api/client";
 import type {
   AgentDefinitionBundle,
   AgentMemoryStatsResponse,
@@ -56,6 +57,8 @@ export type ConfigAgentPanelProps = {
   setDraftSoul: (v: string) => void;
   draftPromptTemplateRef: string;
   setDraftPromptTemplateRef: (v: string) => void;
+  draftLlmProvider: string;
+  setDraftLlmProvider: (v: string) => void;
   draftNote: string;
   setDraftNote: (v: string) => void;
   draftPromptMode: "db_primary" | "file_primary" | "merged";
@@ -155,6 +158,8 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   setDraftSoul,
   draftPromptTemplateRef,
   setDraftPromptTemplateRef,
+  draftLlmProvider,
+  setDraftLlmProvider,
   draftNote,
   setDraftNote,
   draftPromptMode,
@@ -208,6 +213,54 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const [reloadSeedBusy, setReloadSeedBusy] = useState(false);
   const [reloadSeedMsg, setReloadSeedMsg] = useState<string | null>(null);
+
+  /**
+   * 已配置的 LLM provider 列表（来自 GET /api/v1/llm-providers），用于给 Agent 的
+   * `llmProvider` 字段做下拉提示 + 配置状态徽章。失败不影响其余 UI。
+   */
+  type LlmProviderRow = {
+    providerId: string;
+    providerType: string;
+    modelName: string;
+    apiKeyConfigured: boolean;
+    enabled: boolean;
+  };
+  const [llmProviderRows, setLlmProviderRows] = useState<LlmProviderRow[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void httpGet<{ ok: boolean; data: LlmProviderRow[] }>("/api/v1/llm-providers")
+      .then((res) => {
+        if (!cancelled) setLlmProviderRows(res.data ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setLlmProviderRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const llmProviderInfo = useMemo(() => {
+    const id = draftLlmProvider.trim();
+    if (!id) return { kind: "empty" as const };
+    const row = llmProviderRows.find((r) => r.providerId === id);
+    if (!row) return { kind: "unregistered" as const };
+    if (!row.enabled) return { kind: "disabled" as const, row };
+    if (!row.apiKeyConfigured && row.providerType !== "ollama") {
+      return { kind: "no_api_key" as const, row };
+    }
+    return { kind: "ready" as const, row };
+  }, [draftLlmProvider, llmProviderRows]);
+
+  const sortedLlmProviderIds = useMemo(() => {
+    const ids = llmProviderRows.map((r) => r.providerId);
+    return Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
+  }, [llmProviderRows]);
+
+  const draftLlmProviderTrim = draftLlmProvider.trim();
+  const publishedLlmProvider = def?.llmProvider ?? "";
+  const llmProviderDiverged =
+    Boolean(selectedBundle) && draftLlmProviderTrim !== (publishedLlmProvider ?? "");
 
   const handleReloadBuiltinSeed = () => {
     if (
@@ -298,8 +351,45 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               <span className={`qb-agent-badge${def?.enabled ? "" : " qb-agent-badge--muted"}`}>
                 {def?.enabled ? "已启用" : "已禁用"}
               </span>
-              <span className="qb-agent-badge--muted qb-agent-badge">
-                LLM: {def?.llmProvider ?? "—"}
+              <span
+                className="qb-agent-badge--muted qb-agent-badge"
+                title={
+                  llmProviderInfo.kind === "ready"
+                    ? `已在 LLM 模型库中配置：${llmProviderInfo.row.providerType} / ${llmProviderInfo.row.modelName}`
+                    : llmProviderInfo.kind === "empty"
+                      ? "未指定 llmProvider，将走 .qubit/model.json 默认模型"
+                      : llmProviderInfo.kind === "unregistered"
+                        ? "未在「LLM 模型」中登记，将尝试用环境变量 apiKey，否则降级到默认模型"
+                        : llmProviderInfo.kind === "disabled"
+                          ? "已在 LLM 模型库中禁用，将降级到默认模型"
+                          : "已登记但缺 apiKey，将降级到默认模型"
+                }
+              >
+                LLM: {draftLlmProviderTrim || "（默认）"}
+                {llmProviderInfo.kind === "ready" ? null : (
+                  <span
+                    style={{
+                      marginLeft: 4,
+                      color:
+                        llmProviderInfo.kind === "empty"
+                          ? "var(--qb-agent-hint, #a1a1aa)"
+                          : "#fbbf24",
+                    }}
+                  >
+                    {llmProviderInfo.kind === "empty"
+                      ? "·走默认"
+                      : llmProviderInfo.kind === "unregistered"
+                        ? "·未登记"
+                        : llmProviderInfo.kind === "disabled"
+                          ? "·已禁用"
+                          : "·缺 apiKey"}
+                  </span>
+                )}
+                {llmProviderDiverged ? (
+                  <span style={{ marginLeft: 4, color: "var(--qb-agent-draft-accent, #c4b5fd)" }}>
+                    （已发布 {publishedLlmProvider || "—"}）
+                  </span>
+                ) : null}
               </span>
               <span className="qb-agent-badge--muted qb-agent-badge">
                 迭代上限: {draftMaxIterations}
@@ -528,6 +618,45 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                   onChange={(e) => setDraftDescription(e.target.value)}
                   placeholder="可选，用于配置中心与团队目录展示"
                 />
+              </div>
+              <div>
+                <span style={label}>
+                  llmProvider（运行时按此 ID 在「LLM 模型」中查模型，留空走默认模型）
+                </span>
+                <input
+                  list="qb-llm-provider-ids"
+                  style={input}
+                  value={draftLlmProvider}
+                  onChange={(e) => setDraftLlmProvider(e.target.value)}
+                  placeholder="例如 openai:gpt-4o / anthropic:claude-sonnet-4 / 留空"
+                />
+                <datalist id="qb-llm-provider-ids">
+                  {sortedLlmProviderIds.map((id) => (
+                    <option key={id} value={id} />
+                  ))}
+                </datalist>
+                <p
+                  style={{
+                    margin: "4px 0 0",
+                    fontSize: 11,
+                    color:
+                      llmProviderInfo.kind === "ready"
+                        ? "var(--qb-main-meta, #71717a)"
+                        : llmProviderInfo.kind === "empty"
+                          ? "var(--qb-main-meta, #71717a)"
+                          : "#fbbf24",
+                  }}
+                >
+                  {llmProviderInfo.kind === "ready"
+                    ? `已就绪：${llmProviderInfo.row.providerType} / ${llmProviderInfo.row.modelName}`
+                    : llmProviderInfo.kind === "empty"
+                      ? "留空 → 运行时使用 .qubit/model.json 中的默认模型"
+                      : llmProviderInfo.kind === "unregistered"
+                        ? `「LLM 模型」中没有 providerId=${draftLlmProviderTrim} 的记录；运行时会尝试用环境变量（如 OPENAI_API_KEY）作为 apiKey，否则降级到默认模型`
+                        : llmProviderInfo.kind === "disabled"
+                          ? "该 provider 在「LLM 模型」中处于禁用状态，将降级到默认模型"
+                          : "该 provider 已登记但缺 apiKey，将降级到默认模型 — 请到「LLM 模型」补齐 apiKey"}
+                </p>
               </div>
               <div>
                 <span style={label}>prompt_mode</span>
@@ -828,6 +957,12 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               mcpServersJson: draftMcpServerNames,
               skillsJson: draftSkills,
               subscriptionsJson: draftSubscriptions,
+              /**
+               * 留空 → 写入空串：resolveLlmForAgent 看到空串会跳过 DB/inline 查找，
+               * 直接降级到 .qubit/model.json 的默认模型（"" 在 if(agentProvider) 中为
+               * falsy）。表 `agent_definition_draft.llm_provider` notNull 允许空串。
+               */
+              llmProvider: draftLlmProvider.trim(),
               profile: {
                 displayName:
                   draftDisplayName.trim() ||

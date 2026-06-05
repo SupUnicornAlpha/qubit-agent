@@ -1520,6 +1520,7 @@ const ConfigPanel: FC = () => {
   const [draftSkills, setDraftSkills] = useState<string[]>([]);
   const [draftSubscriptions, setDraftSubscriptions] = useState<string[]>([]);
   const [draftPromptTemplateRef, setDraftPromptTemplateRef] = useState("");
+  const [draftLlmProvider, setDraftLlmProvider] = useState("");
   const [provider, setProvider] = useState<
     "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock"
   >("mock");
@@ -1711,6 +1712,7 @@ const ConfigPanel: FC = () => {
         setDraftConfigRootUri(b.profile?.configRootUri ?? "");
         setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
         setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
+        setDraftLlmProvider(b.draft?.llmProvider ?? b.definition.llmProvider ?? "");
       }
     }
     try {
@@ -1913,6 +1915,7 @@ const ConfigPanel: FC = () => {
     setDraftSkills(parseStrList(b.draft?.skillsJson ?? b.definition.skillsJson));
     setDraftSubscriptions(parseStrList(b.draft?.subscriptionsJson ?? b.definition.subscriptionsJson));
     setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
+    setDraftLlmProvider(b.draft?.llmProvider ?? b.definition.llmProvider ?? "");
   }, [selectedDefinitionId, definitions]);
 
   const knownToolPool = useMemo(() => {
@@ -3760,6 +3763,8 @@ const ConfigPanel: FC = () => {
             setDraftSoul={setDraftSoul}
             draftPromptTemplateRef={draftPromptTemplateRef}
             setDraftPromptTemplateRef={setDraftPromptTemplateRef}
+            draftLlmProvider={draftLlmProvider}
+            setDraftLlmProvider={setDraftLlmProvider}
             draftNote={draftNote}
             setDraftNote={setDraftNote}
             draftPromptMode={draftPromptMode}
