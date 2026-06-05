@@ -182,7 +182,7 @@ const tsLabel: CSSProperties = {
  * - 链接：`[text](url)`；
  * 任一命中即视为 markdown。否则走更省渲染开销的 plain text 分支。
  */
-function looksLikeMarkdown(text: string): boolean {
+export function looksLikeMarkdown(text: string): boolean {
   if (!text) return false;
   if (/```|~~~/.test(text)) return true;
   if (/\[[^\]]+\]\([^)]+\)/.test(text)) return true;

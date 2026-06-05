@@ -13,6 +13,8 @@ import {
   type ToolResultBadge,
 } from "../../lib/toolResultEffectiveness";
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
+import { MarkdownBubble } from "../chat/MarkdownBubble";
+import { looksLikeMarkdown } from "./LiveConversationView";
 
 export type AgentRunPanelData = {
   role: string;
@@ -29,10 +31,17 @@ type ViewMode = "chat" | "compact";
  * 顶层面板：统计 + 视图切换 + 内容渲染。
  * 默认对话流（Chat），人读起来更顺；切到 Compact 看到原有的紧凑 details 列表。
  */
-export const AgentRunPanel: FC<{ data: AgentRunPanelData; defaultMode?: ViewMode }> = ({
-  data,
-  defaultMode = "chat",
-}) => {
+export const AgentRunPanel: FC<{
+  data: AgentRunPanelData;
+  defaultMode?: ViewMode;
+  /**
+   * 折叠态：仅渲染顶部 header（标题 + 模式切换 + 折叠按钮），不渲染下方内容主体。
+   * 受控字段 —— 由父组件持久化到 localStorage（与「实时对话流」开关风格一致），
+   * 不提供时默认展开。
+   */
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+}> = ({ data, defaultMode = "chat", collapsed = false, onToggleCollapsed }) => {
   const { t } = useTranslation();
   const [mode, setMode] = useState<ViewMode>(defaultMode);
   const totals = {
@@ -105,30 +114,75 @@ export const AgentRunPanel: FC<{ data: AgentRunPanelData; defaultMode?: ViewMode
           <div
             style={{
               display: "inline-flex",
-              border: "1px solid #3f3f46",
-              borderRadius: 6,
-              overflow: "hidden",
-              fontSize: 11,
+              alignItems: "center",
+              gap: 6,
               flexShrink: 0,
             }}
           >
-            {(["chat", "compact"] as const).map((m) => (
+            <div
+              style={{
+                display: "inline-flex",
+                border: "1px solid #3f3f46",
+                borderRadius: 6,
+                overflow: "hidden",
+                fontSize: 11,
+              }}
+            >
+              {(["chat", "compact"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  disabled={collapsed}
+                  style={{
+                    padding: "3px 10px",
+                    background: mode === m ? "#27272a" : "transparent",
+                    color: mode === m ? "#f4f4f5" : "#a1a1aa",
+                    border: "none",
+                    cursor: collapsed ? "not-allowed" : "pointer",
+                    fontSize: 11,
+                    opacity: collapsed ? 0.55 : 1,
+                  }}
+                >
+                  {m === "chat" ? t("team.agentRun.modeChat") : t("team.agentRun.modeCompact")}
+                </button>
+              ))}
+            </div>
+            {onToggleCollapsed ? (
               <button
-                key={m}
                 type="button"
-                onClick={() => setMode(m)}
+                onClick={onToggleCollapsed}
+                title={
+                  collapsed
+                    ? t("team.agentRun.toggleExpand")
+                    : t("team.agentRun.toggleCollapse")
+                }
+                aria-label={
+                  collapsed
+                    ? t("team.agentRun.toggleExpand")
+                    : t("team.agentRun.toggleCollapse")
+                }
+                aria-expanded={!collapsed}
                 style={{
-                  padding: "3px 10px",
-                  background: mode === m ? "#27272a" : "transparent",
-                  color: mode === m ? "#f4f4f5" : "#a1a1aa",
-                  border: "none",
+                  padding: "3px 8px",
+                  background: "transparent",
+                  color: "#a1a1aa",
+                  border: "1px solid #3f3f46",
+                  borderRadius: 6,
                   cursor: "pointer",
                   fontSize: 11,
+                  lineHeight: 1,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
                 }}
               >
-                {m === "chat" ? t("team.agentRun.modeChat") : t("team.agentRun.modeCompact")}
+                <span aria-hidden style={{ fontSize: 10 }}>{collapsed ? "▸" : "▾"}</span>
+                {collapsed
+                  ? t("team.agentRun.toggleExpand")
+                  : t("team.agentRun.toggleCollapse")}
               </button>
-            ))}
+            ) : null}
           </div>
         </div>
         <div style={{ fontSize: 11, color: "#a1a1aa" }}>
@@ -160,17 +214,19 @@ export const AgentRunPanel: FC<{ data: AgentRunPanelData; defaultMode?: ViewMode
           ) : null}
         </div>
       </div>
-      <div
-        style={{
-          flex: "1 1 0",
-          minHeight: 0,
-          overflowY: "auto",
-          overflowX: "hidden",
-          padding: "8px 10px 16px",
-        }}
-      >
-        {mode === "chat" ? <AgentRunChatView {...data} /> : <AgentRunCompactView {...data} />}
-      </div>
+      {collapsed ? null : (
+        <div
+          style={{
+            flex: "1 1 0",
+            minHeight: 0,
+            overflowY: "auto",
+            overflowX: "hidden",
+            padding: "8px 10px 16px",
+          }}
+        >
+          {mode === "chat" ? <AgentRunChatView {...data} /> : <AgentRunCompactView {...data} />}
+        </div>
+      )}
     </div>
   );
 };
@@ -338,6 +394,15 @@ const MsgBubble: FC<{
   const isSelf = side === "right";
   const avatarRole = isSelf ? selfRole : r.fromRole;
   const accent = avatarColorFor(avatarRole).bg;
+  const rawContent = r.contentText || t("team.conversation.noTextContent");
+  const content = truncate(rawContent, 4000);
+  /**
+   * 与 LiveConversationView 对齐：只有 llm_message（或后端未填 kind）才尝试 markdown 渲染，
+   * tool_call / signal_submit 这种结构化 payload 继续走 pre-wrap，不会把 JSON 中
+   * 偶发的 `#` `-` 误判成标题/列表。
+   */
+  const useMarkdown =
+    (r.kind === "llm_message" || !r.kind) && looksLikeMarkdown(content);
   return (
     <div
       style={{
@@ -353,7 +418,7 @@ const MsgBubble: FC<{
           display: "flex",
           flexDirection: "column",
           alignItems: isSelf ? "flex-end" : "flex-start",
-          maxWidth: "82%",
+          maxWidth: useMarkdown ? "92%" : "82%",
           minWidth: 0,
         }}
       >
@@ -363,24 +428,48 @@ const MsgBubble: FC<{
         </div>
         <div
           style={{
-            padding: "8px 12px",
+            padding: useMarkdown ? "6px 12px" : "8px 12px",
             borderRadius: 10,
             background: isSelf ? "rgba(245,158,11,0.08)" : "rgba(96,165,250,0.06)",
             border: `1px solid ${isSelf ? "rgba(245,158,11,0.32)" : "rgba(96,165,250,0.32)"}`,
             color: "#e4e4e7",
-            fontSize: 12,
+            fontSize: useMarkdown ? 13 : 12,
             lineHeight: 1.55,
-            whiteSpace: "pre-wrap",
+            whiteSpace: useMarkdown ? "normal" : "pre-wrap",
             wordBreak: "break-word",
             fontFamily: "ui-sans-serif, system-ui, sans-serif",
+            width: useMarkdown ? "100%" : undefined,
+            minWidth: 0,
           }}
         >
-          {!isSelf ? (
-            <span style={{ color: accent, fontWeight: 600, fontSize: 11, marginRight: 6 }}>
-              {formatRoleName(r.fromRole)}
-            </span>
-          ) : null}
-          {truncate(r.contentText || t("team.conversation.noTextContent"), 4000)}
+          {useMarkdown ? (
+            <>
+              {!isSelf ? (
+                <div
+                  style={{
+                    display: "block",
+                    color: accent,
+                    fontWeight: 600,
+                    fontSize: 11,
+                    marginBottom: 2,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  {formatRoleName(r.fromRole)}
+                </div>
+              ) : null}
+              <MarkdownBubble text={content} />
+            </>
+          ) : (
+            <>
+              {!isSelf ? (
+                <span style={{ color: accent, fontWeight: 600, fontSize: 11, marginRight: 6 }}>
+                  {formatRoleName(r.fromRole)}
+                </span>
+              ) : null}
+              {content}
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -517,6 +606,12 @@ const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
 
 const StepBubble: FC<{ step: AnalystTeamGraphAgentStep; role: string }> = ({ step, role }) => {
   const { t } = useTranslation();
+  const thoughtText = step.thought ? truncate(step.thought, 3000) : "";
+  /**
+   * ReAct 思考文本通常是 LLM 自由输出，常带 `## 标题` / `- 列表` / 行内代码，
+   * 启发式命中即走 markdown 渲染，避免 `##` / `*` 这种符号原样裸露污染阅读。
+   */
+  const thoughtUseMarkdown = thoughtText !== "" && looksLikeMarkdown(thoughtText);
   return (
     <div
       style={{
@@ -539,14 +634,22 @@ const StepBubble: FC<{ step: AnalystTeamGraphAgentStep; role: string }> = ({ ste
           background: "rgba(161,161,170,0.06)",
           border: "1px dashed rgba(161,161,170,0.35)",
           color: "#a1a1aa",
-          fontSize: 11.5,
+          fontSize: thoughtUseMarkdown ? 12.5 : 11.5,
           lineHeight: 1.5,
-          whiteSpace: "pre-wrap",
+          whiteSpace: thoughtUseMarkdown ? "normal" : "pre-wrap",
           wordBreak: "break-word",
           fontFamily: "ui-sans-serif, system-ui, sans-serif",
         }}
       >
-        {step.thought ? truncate(step.thought, 3000) : <em style={{ opacity: 0.6 }}>{t("team.agentRun.noThought")}</em>}
+        {thoughtText ? (
+          thoughtUseMarkdown ? (
+            <MarkdownBubble text={thoughtText} />
+          ) : (
+            thoughtText
+          )
+        ) : (
+          <em style={{ opacity: 0.6 }}>{t("team.agentRun.noThought")}</em>
+        )}
         {step.observationJson != null && typeof step.observationJson === "object" ? (
           <details style={{ marginTop: 6 }}>
             <summary style={summaryStyle}>{t("team.agentRun.observe")}</summary>

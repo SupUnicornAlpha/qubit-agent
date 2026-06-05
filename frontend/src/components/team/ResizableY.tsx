@@ -25,6 +25,12 @@ export type ResizableYProps = {
    * 用来让主题 CSS 可以通过 `[data-qb-*]` 选择器精确命中这层容器。
    */
   wrapperData?: Record<string, string>;
+  /**
+   * 折叠态：容器高度切换为 `auto`，由 children（一般是头部 bar）自然撑开，
+   * 同时隐藏底部拖拽条，避免在已经折叠的窗口上还能被误拖出大空白。
+   * 持久化高度仍然保留，展开后回到上次记忆的高度。
+   */
+  collapsed?: boolean;
   children: ReactNode;
 };
 
@@ -36,6 +42,7 @@ export const ResizableY: FC<ResizableYProps> = ({
   style,
   className,
   wrapperData,
+  collapsed = false,
   children,
 }) => {
   const { t } = useTranslation();
@@ -93,9 +100,10 @@ export const ResizableY: FC<ResizableYProps> = ({
     <div
       className={className}
       {...wrapperData}
+      data-qb-collapsed={collapsed ? "1" : undefined}
       style={{
         ...style,
-        height,
+        height: collapsed ? "auto" : height,
         flexShrink: 0,
         position: "relative",
         display: "flex",
@@ -104,35 +112,37 @@ export const ResizableY: FC<ResizableYProps> = ({
       }}
     >
       {children}
-      <div
-        onMouseDown={onMouseDown}
-        title={t("team.resizableY.dragTitle")}
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 8,
-          cursor: "ns-resize",
-          zIndex: 5,
-          background:
-            "linear-gradient(to bottom, transparent 0%, transparent 40%, rgba(120,120,140,0.18) 50%, rgba(120,120,140,0.35) 70%, transparent 100%)",
-        }}
-      >
+      {collapsed ? null : (
         <div
+          onMouseDown={onMouseDown}
+          title={t("team.resizableY.dragTitle")}
           style={{
             position: "absolute",
-            left: "50%",
-            bottom: 1,
-            transform: "translateX(-50%)",
-            width: 36,
-            height: 3,
-            borderRadius: 2,
-            background: "rgba(161,161,170,0.5)",
-            pointerEvents: "none",
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: 8,
+            cursor: "ns-resize",
+            zIndex: 5,
+            background:
+              "linear-gradient(to bottom, transparent 0%, transparent 40%, rgba(120,120,140,0.18) 50%, rgba(120,120,140,0.35) 70%, transparent 100%)",
           }}
-        />
-      </div>
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: "50%",
+              bottom: 1,
+              transform: "translateX(-50%)",
+              width: 36,
+              height: 3,
+              borderRadius: 2,
+              background: "rgba(161,161,170,0.5)",
+              pointerEvents: "none",
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 };

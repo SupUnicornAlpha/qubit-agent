@@ -401,6 +401,7 @@ const pack: LocalePack = {
         drafts: "Drafts",
         factors: "Factors",
         strategies: "Strategies",
+        scripts: "Scripts",
       },
       hitl: {
         inputArea: {
@@ -510,6 +511,28 @@ const pack: LocalePack = {
         createdAt: "Created {at}",
         openInComposer: "Open in composer",
       },
+      scriptsBlock: {
+        summary: "Agent-generated scripts ({n})",
+        summaryWithSelection: "Agent-generated scripts ({n} · {selected} selected)",
+        scopeBadge: "this workflow only",
+        scopeHint:
+          "Executable Python strategy scripts produced by the research pipeline (research / backtest_engineer slots) and stored in indicator_strategy_script — distinct from the versioned strategies (strategy_version) shown in the Strategies tab.",
+        searchPlaceholder: "Search by script name / purpose",
+        refreshing: "Refreshing…",
+        refresh: "Refresh",
+        emptyNoSession: "Pick or resolve a default session first.",
+        emptyNoWorkflow:
+          "Pick or start a workflow first; this panel only shows scripts from the current workflow.",
+        emptyNoOutput:
+          "No scripts yet. When research / backtest_engineer slots append ```python on_bar(ctx, bar)``` blocks to their reply, they get persisted automatically.",
+        purposeLabel: "Purpose",
+        codeLabel: "Signal code ({n} chars)",
+        promptLabel: "AI prompt snapshot",
+        artifactLabel: "Artifact path",
+        createdAt: "Created {at}",
+        copyCode: "Copy code",
+        copied: "Copied",
+      },
       conversation: {
         empty: "No conversation yet.",
         noTextContent: "(no text content)",
@@ -553,6 +576,8 @@ const pack: LocalePack = {
         sectionReact: "Execution trace (ReAct)",
         compactRequestPrefix: "Request: ",
         compactResponsePrefix: "Response: ",
+        toggleCollapse: "Collapse",
+        toggleExpand: "Expand",
       },
       resizableY: { dragTitle: "Drag to resize height" },
       toolCard: {

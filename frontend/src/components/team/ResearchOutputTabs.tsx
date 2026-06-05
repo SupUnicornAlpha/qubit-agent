@@ -2,15 +2,22 @@ import type { CSSProperties, FC } from "react";
 import { useState } from "react";
 import { useTranslation } from "../../i18n";
 import { AgentGeneratedFactorsBlock } from "./AgentGeneratedFactorsBlock";
+import { AgentGeneratedScriptsBlock } from "./AgentGeneratedScriptsBlock";
 import { AgentGeneratedStrategiesBlock } from "./AgentGeneratedStrategiesBlock";
 import { ResearchExploreFallbackBlock } from "./ResearchExploreFallbackBlock";
 import type { FactorRecord, StrategyVersionFlatRecord } from "../../api/backend";
 
-type TabKey = "drafts" | "factors" | "strategies";
+type TabKey = "drafts" | "factors" | "strategies" | "scripts";
 
 export interface ResearchOutputTabsProps {
   projectId: string;
   workflowRunId: string;
+  /**
+   * 当前研究项目的默认 session id（chat_session.id）。
+   * 用于「脚本」tab 拉 indicator_strategy_script —— 该表用 sessionId 作主键关联。
+   * 空字符串则「脚本」tab 展示空态、不发请求。
+   */
+  sessionId: string;
   onOpenFactorInWorkbench?: (factor: FactorRecord) => void;
   onOpenStrategyInComposer?: (version: StrategyVersionFlatRecord) => void;
   /** 初始 active tab。默认 `drafts` —— 草稿块是 explore fallback 路径的唯一可见出口，优先级最高。 */
@@ -23,19 +30,28 @@ export interface ResearchOutputTabsProps {
  * 之前右侧栏把「研究方向草稿 / Agent 生成的因子 / Agent 生成的策略」三个 block
  * 纵向堆叠在一起，屏宽窄时挤得很难看。改成 tab 后：
  *   - 一次只显示一个 block 的完整 body，垂直空间充裕（含 markdown 表格 + 代码块）
- *   - 三个子 block 都用 `chrome="bare"` 模式渲染，去掉自带的 details 外壳
+ *   - 子 block 都用 `chrome="bare"` 模式渲染，去掉自带的 details 外壳
  *   - 子 block 通过 `onCountChange` 把真实条目数上抛，tab badge 上显示 `(N)`
  *   - **不 unmount 非活跃 tab**，用 CSS `display:none` 切换：保留搜索 / 选择 / 滚动状态，
  *     切换 tab 不重新发 API 请求（除非工作流变了，子组件内部 reload 会感知）
  *
+ * 四个 tab 的语义（重要！别再搞混）：
+ *   - drafts     ← research_team_interaction + factor_definition.status='draft'
+ *                  仅 explore fallback 路径会产
+ *   - factors    ← factor_definition（workflow_run_id 严格匹配）
+ *   - strategies ← strategy_version（仅 Agent 调 version_strategy 或真单触发时才有）
+ *   - scripts    ← indicator_strategy_script（post-fusion pipeline 的 Python on_bar 脚本，
+ *                  即 research/backtest_engineer slot 输出 ```python``` 后落库的产物。
+ *                  与 strategies tab 来源不同，**别期待 research 脚本会出现在 strategies tab**）
+ *
  * Tab 选择策略（自动跳转）：
  *   - 用户首次进入：保持 `defaultTab`（草稿）
- *   - 草稿 = 0 但因子 > 0 / 策略 > 0 时：不自动跳转，让用户自己选 —— 避免「我明明
- *     选了草稿 tab 突然跳到因子去了」这种意外
+ *   - 各 tab 数量变化时不自动跳转，避免「明明选了 X 突然跳到 Y」这种意外
  */
 export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   projectId,
   workflowRunId,
+  sessionId,
   onOpenFactorInWorkbench,
   onOpenStrategyInComposer,
   defaultTab = "drafts",
@@ -45,11 +61,13 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   const [draftCount, setDraftCount] = useState(0);
   const [factorCount, setFactorCount] = useState(0);
   const [strategyCount, setStrategyCount] = useState(0);
+  const [scriptCount, setScriptCount] = useState(0);
 
   const tabs: Array<{ key: TabKey; label: string; count: number; accent: string }> = [
     { key: "drafts", label: t("team.outputTabs.drafts"), count: draftCount, accent: "#f59e0b" },
     { key: "factors", label: t("team.outputTabs.factors"), count: factorCount, accent: "#60a5fa" },
     { key: "strategies", label: t("team.outputTabs.strategies"), count: strategyCount, accent: "#a78bfa" },
+    { key: "scripts", label: t("team.outputTabs.scripts"), count: scriptCount, accent: "#38bdf8" },
   ];
 
   return (
@@ -136,6 +154,19 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
           chrome="bare"
           onCountChange={setStrategyCount}
           {...(onOpenStrategyInComposer ? { onOpenInComposer: onOpenStrategyInComposer } : {})}
+        />
+      </div>
+
+      <div
+        role="tabpanel"
+        aria-hidden={active !== "scripts"}
+        style={{ ...styles.panel, display: active === "scripts" ? "block" : "none" }}
+      >
+        <AgentGeneratedScriptsBlock
+          sessionId={sessionId}
+          workflowRunId={workflowRunId}
+          chrome="bare"
+          onCountChange={setScriptCount}
         />
       </div>
     </div>

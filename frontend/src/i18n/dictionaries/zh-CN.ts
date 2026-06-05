@@ -399,6 +399,7 @@ const pack: LocalePack = {
         drafts: "草稿",
         factors: "因子",
         strategies: "策略",
+        scripts: "脚本",
       },
       hitl: {
         inputArea: {
@@ -502,6 +503,27 @@ const pack: LocalePack = {
         createdAt: "创建于 {at}",
         openInComposer: "去组合工坊",
       },
+      scriptsBlock: {
+        summary: "Agent 生成的脚本（{n}）",
+        summaryWithSelection: "Agent 生成的脚本（{n} · 已选 {selected}）",
+        scopeBadge: "仅本工作流",
+        scopeHint:
+          "研究流水线（research / backtest_engineer）输出的可执行 Python 策略脚本，落入 indicator_strategy_script 表。与「策略」tab 的版本化策略 (strategy_version) 不同。",
+        searchPlaceholder: "按脚本名 / 用途搜索",
+        refreshing: "刷新中…",
+        refresh: "刷新",
+        emptyNoSession: "请先选择或解析默认会话。",
+        emptyNoWorkflow: "请先选择或启动一个工作流；脚本面板只展示当前工作流的产物。",
+        emptyNoOutput:
+          "本工作流暂未产出脚本。当 research / backtest_engineer slot 在回复里附 ```python on_bar(ctx, bar)``` 时，会自动落库。",
+        purposeLabel: "用途",
+        codeLabel: "Signal 代码（{n} 字符）",
+        promptLabel: "AI Prompt 快照",
+        artifactLabel: "落盘路径",
+        createdAt: "创建于 {at}",
+        copyCode: "复制代码",
+        copied: "已复制",
+      },
       conversation: {
         empty: "暂无对话记录。",
         noTextContent: "(无文本内容)",
@@ -545,6 +567,8 @@ const pack: LocalePack = {
         sectionReact: "执行轨迹（ReAct）",
         compactRequestPrefix: "请求: ",
         compactResponsePrefix: "响应: ",
+        toggleCollapse: "折叠",
+        toggleExpand: "展开",
       },
       resizableY: { dragTitle: "拖动调整高度" },
       toolCard: {
