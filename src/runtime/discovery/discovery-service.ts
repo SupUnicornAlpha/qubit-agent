@@ -275,6 +275,8 @@ export class DiscoveryService {
        * 侧栏能严格按工作流过滤。NULL → discovery 是脚本 / API 触发的，没有 workflow。
        */
       ...(job.workflowRunId ? { workflowRunId: job.workflowRunId } : {}),
+      /** F-P0-10：标识此次 register 来自 discovery.promote，让 team-graph 看见 register 事件 */
+      autoRegisteredVia: "discovery.promote",
       definition: {
         promotedFrom: {
           discoveryJobId: jobId,

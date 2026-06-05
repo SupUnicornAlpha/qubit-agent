@@ -93,11 +93,21 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     deprecationReason: "旧实验链路，已被 M6 factor.autoEvaluate 取代",
   },
   version_strategy: {
-    description: "创建 strategy / strategy_version 版本记录",
+    /**
+     * F-P0-11（2026-06-05 eval batch 3 retry / case 1 修复）：
+     *
+     * 之前被标 deprecated → aliased to strategy.compose 是误判：
+     *   - `version_strategy`（qubit-research connector op）= **从零创建** 一条
+     *     `strategy` + `strategy_version` 行，由 LLM 直接调用是 strategy_authoring
+     *     场景的入口
+     *   - `strategy.compose`（builtin tool）= 把 factor_ids / rule_ids **组合到一个
+     *     已存在的 strategy_version** 上（必填 `strategy_version_id`）
+     * 二者是上下游关系，不是替代关系。错误标 deprecated 后 alias resolver 在 act 节点
+     * 把 LLM 的 `version_strategy` 调用静默 rewrite 成 `strategy.compose`，参数 schema
+     * 完全错位 → 永远抛 "strategy_version_id is required" → 策略 tab 永空。
+     */
+    description: "在 qubit-research connector 上创建 strategy + strategy_version 版本记录（strategy_authoring 入口）",
     category: "research",
-    lifecycle: "deprecated",
-    replacedBy: "strategy.compose",
-    deprecationReason: "旧策略版本链路，已被 M2 strategy.compose 取代",
   },
   compute_indicators: { description: "计算 SMA/RSI/MACD/布林带等指标序列", category: "research" },
   detect_patterns: { description: "识别市场状态（趋势/震荡）与金叉/死叉", category: "research" },

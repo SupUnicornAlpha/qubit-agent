@@ -60,6 +60,27 @@ export interface FactorRegisterInput {
    * 落库后用于研究产出侧栏严格按"本工作流"过滤，避免历史 / manual 产物串栏。
    */
   workflowRunId?: string | null;
+  /**
+   * F-P0-10（2026-06-05 eval batch 3 / case 2 observability 修复）：
+   *
+   * 用于把"另一个 builtin tool 内部调到的 factorService.register"标识为"side-effect 注册"，
+   * 让我们在 research_team_interaction 里 emit 一条 tool_call 记录，避免出现"DB 有
+   * factor 但 team-graph 里只看到上层工具调用、看不到注册事件"的观测盲区。
+   *
+   * 约定值（也允许任意字符串以便后续扩展）：
+   *   - "factor.autoEvaluate" — 旧 run_experiment 风格被 builtin 内部自动补 register
+   *   - "discovery.promote"   — discovery 命中后 promote 到 factor pool
+   *   - "factor.mine.llm"     — LLM 挖掘工具一次性 batch register
+   *
+   * 留空（默认）= 调用方是显式的 factor.register builtin 或直接走 service，对应的
+   * tool_call 已经由 act 节点写过 → 不重复写。
+   */
+  autoRegisteredVia?: string;
+  /**
+   * F-P0-10：触发本次 side-effect 注册的 agent 角色，用于让 interaction log 的
+   * fromRole 准确归位。仅当 `autoRegisteredVia` 也传时才会被使用。
+   */
+  agentRole?: string;
   /** 任意补充元数据（写入 definition_json） */
   definition?: Record<string, unknown>;
   /**
@@ -242,6 +263,44 @@ export class FactorService {
       providerKey,
       workflowRunId,
     });
+
+    /**
+     * F-P0-10：side-effect 注册的可观测性补丁。
+     *
+     * 直接调 factor.register builtin 时，act 节点会自动写一条 tool_call interaction，
+     * 不需要在这里再写一遍。但如果是被另一个 builtin（factor.autoEvaluate 内部、
+     * discovery.promote、factor.mine.llm 批量等）副作用调到的，act 节点对应的
+     * 上层工具调用记录的是上层 tool_name（如 "factor.autoEvaluate"），DB 里出现了一条
+     * factor row 但 team-graph 看不到 "factor.register" → 让人误以为因子凭空出现。
+     *
+     * 仅当 autoRegisteredVia + workflowRunId 都齐时才 emit；不阻塞主路径，错误吞掉。
+     */
+    if (input.autoRegisteredVia && workflowRunId) {
+      void (async () => {
+        try {
+          const { logResearchTeamInteraction } = await import(
+            "../research-team/interaction-log"
+          );
+          await logResearchTeamInteraction({
+            workflowRunId,
+            fromRole: (input.agentRole ?? "research") as never,
+            toRole: "__tools__" as never,
+            kind: "tool_call",
+            toolName: `factor.register (auto via ${input.autoRegisteredVia})`,
+            contentText: `✓ factor.register (auto via ${input.autoRegisteredVia}) — ${input.name}[${status}]`,
+            payloadJson: {
+              factorId: id,
+              factorName: input.name,
+              autoRegisteredVia: input.autoRegisteredVia,
+              status,
+              expr: input.expr.slice(0, 200),
+            },
+          });
+        } catch {
+          /** observability 补丁，不影响主路径 */
+        }
+      })();
+    }
 
     return this.get(id);
   }

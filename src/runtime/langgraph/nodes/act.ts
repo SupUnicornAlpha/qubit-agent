@@ -178,6 +178,30 @@ export async function actNode(
     .limit(1);
   const projectId = workflowRows[0]?.projectId;
 
+  /**
+   * F-P0-12（2026-06-05 eval batch 3 round 3 / case 1 修复）：
+   *
+   * 多个 connector / builtin tool 都要求 `projectId`（如 qubit-research/version_strategy、
+   * factor.register、rule.register 等）。LLM 经常忘传或写成占位符 \`"<ctx.projectId>"\` /
+   * `"default"`。为了让 strategy_authoring / discovery 等"必须落 DB 的工具"不要因为
+   * projectId 缺失而硬失败，act 节点统一从 workflow_run → project_id 取真值兜底注入：
+   *
+   *   - LLM 传了非空字符串 → 尊重 LLM 的值（除非是明显占位符 "<ctx.projectId>" / "TODO"）
+   *   - LLM 没传 / 传空 / 传占位符 → 用 workflow_run.project_id 兜底
+   *
+   * 与 workflowRunId 同样语义（line 107），让 ReAct-loop 写出来的工具调用更稳定。
+   */
+  const looksLikePlaceholderProjectId = (v: unknown) =>
+    typeof v === "string" &&
+    (v.startsWith("<") || v.trim().length === 0 || v.toLowerCase() === "todo");
+  const incomingProjectId =
+    (toolParams["projectId"] as string | undefined) ??
+    (toolParams["project_id"] as string | undefined);
+  if ((!incomingProjectId || looksLikePlaceholderProjectId(incomingProjectId)) && projectId) {
+    enrichedToolParams["projectId"] = projectId;
+    enrichedToolParams["project_id"] = projectId;
+  }
+
   emit({
     runId: state.runId,
     workflowId: state.workflowId,

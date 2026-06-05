@@ -861,6 +861,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
           ? { lang: String(params["lang"]) as FactorLang }
           : { lang: "qlib_expr" as FactorLang }),
         ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+        /** F-P0-10：标识此次 register 是 autoEvaluate 内部副作用 → emit team-graph interaction */
+        autoRegisteredVia: "factor.autoEvaluate",
+        agentRole: ctx.definition.role,
       });
       factorId = registered.id;
     }

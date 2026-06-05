@@ -70,6 +70,7 @@ import {
   runOrchestratorPlanning,
   runPostFusionPipeline,
   slotOnlyRelationEdges,
+  summarizeTeamDecision,
 } from "./analyst-team-pipeline";
 import {
   pauseForTeamOrchestratorHitl,
@@ -1015,6 +1016,102 @@ async function runAnalystTeamCore(params: {
    * 历史强制调用 `runOrchestratorDecision` 的逻辑已删除；如需保留报告中"汇总决策"段，
    * 让 Orchestrator 自行在 ReAct 中调工具后用工具结果追加到对话回复即可。
    */
+
+  /**
+   * F-P0-08（2026-06-04 eval batch 3 / case 5 explore-fallback 修复）：
+   *
+   * research_team_execute 短路路径**不进 Orchestrator 的 ReAct loop**，所以
+   * `summarize_team_decision` 这个 builtin tool 永远不会被 Orchestrator 主动调到。
+   * 结果：当 4 个分析师都返回 hold/0.3 / 0 个签到时，`orchestratorDecision` 一直保持
+   * `null`，下游 `runPostFusionPipeline` 的 `if (orch && !orch.proceedToStrategy)`
+   * 守门条件因 `orch === null` 短路 false → explore_fallback 分支**永远不进**，
+   * 草稿 tab 永远是 0。
+   *
+   * 兜底：当 orch 还是 null 且 auxSlots 非空时，按"签到事实"主动合成一个决策。
+   *
+   * 决策矩阵：
+   *   - 0 个分析师签到 → 直接生成 hold / confidence≤0.4 / proceedToStrategy=false
+   *     （匹配 summarizeTeamDecision prompt 里的硬约束 #2，不必再花一次 ~2-5s LLM 调用）
+   *   - 有签到但 fusedConfidence < 0.45 + fusedSignal=hold → 跑一次真正的
+   *     summarizeTeamDecision LLM 决策（恢复老 runOrchestratorDecision 行为，
+   *     仅在确实"信息不足或观望"时多花这次 LLM 调用）
+   *   - 其它情况 → 保持 orch=null，让 decideShouldDebate 走阈值兜底，下游 pipeline
+   *     按 sequential_research 跑（不进 fallback，因为信号充分）
+   *
+   * 这条短路只影响 research_team_execute 路径；Orchestrator 自己跑 ReAct 时仍可显式
+   * 调 summarize_team_decision 来覆盖（决策的 reasoning 比这里硬合成的更细）。
+   */
+  if (auxSlots.length > 0 && orchestratorDecision == null) {
+    const attendedNow = fusionResult.signalBreakdown.map((s) => s.role);
+    const missingNow = analystSlots
+      .map((s) => s.role)
+      .filter((r) => !attendedNow.includes(r));
+
+    if (attendedNow.length === 0) {
+      orchestratorDecision = {
+        signal: "hold" as const,
+        confidence: Math.min(fusionResult.fusedConfidence, 0.4),
+        reasoning:
+          "本轮无任何分析师产出合法 signal（attended=0）；按签到硬约束自动判定为 hold / 低置信 / 不推进策略，触发 research 角色 explore_fallback 输出候选研究方向草稿。",
+        proceedToStrategy: false,
+        shouldDebate: false,
+        debateReason: "0 个分析师签到，无对立视角可辩论",
+      };
+      await logResearchTeamInteraction({
+        workflowRunId,
+        fromRole: "orchestrator",
+        toRole: "__team__",
+        kind: "llm_message",
+        contentText:
+          "签到事实：0 个分析师产出合法 signal — 短路合成 hold / proceedToStrategy=false，跳过辩论，触发 explore fallback。",
+        payloadJson: {
+          phase: "team_decision",
+          source: "short_circuit_no_signal",
+          attendedRoles: attendedNow,
+          missingRoles: missingNow,
+          decision: {
+            signal: orchestratorDecision.signal,
+            confidence: orchestratorDecision.confidence,
+            proceedToStrategy: orchestratorDecision.proceedToStrategy,
+            shouldDebate: orchestratorDecision.shouldDebate,
+          },
+        },
+      });
+    } else if (
+      fusionResult.fusedSignal === "hold" &&
+      fusionResult.fusedConfidence < 0.45
+    ) {
+      orchestratorDecision = await summarizeTeamDecision({
+        workflowRunId,
+        ticker,
+        orchestratorSystemPrompt: orchestratorSlot?.systemPrompt ?? "",
+        fusionSummary: reportCore,
+        msaSignal: fusionResult.fusedSignal,
+        msaConfidence: fusionResult.fusedConfidence,
+        attendedRoles: attendedNow,
+        missingRoles: missingNow,
+      });
+      await logResearchTeamInteraction({
+        workflowRunId,
+        fromRole: "orchestrator",
+        toRole: "__team__",
+        kind: "llm_message",
+        contentText: `Orchestrator 决策：${orchestratorDecision.signal} ${(orchestratorDecision.confidence * 100).toFixed(0)}% / proceedToStrategy=${orchestratorDecision.proceedToStrategy} / shouldDebate=${orchestratorDecision.shouldDebate ?? "auto"}。`,
+        payloadJson: {
+          phase: "team_decision",
+          source: "low_confidence_summarize",
+          attendedRoles: attendedNow,
+          missingRoles: missingNow,
+          decision: {
+            signal: orchestratorDecision.signal,
+            confidence: orchestratorDecision.confidence,
+            proceedToStrategy: orchestratorDecision.proceedToStrategy,
+            shouldDebate: orchestratorDecision.shouldDebate,
+          },
+        },
+      });
+    }
+  }
 
   if (auxSlots.length > 0) {
     const post = await runPostFusionPipeline({
