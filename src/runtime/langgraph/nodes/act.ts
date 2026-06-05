@@ -191,9 +191,24 @@ export async function actNode(
    *
    * 与 workflowRunId 同样语义（line 107），让 ReAct-loop 写出来的工具调用更稳定。
    */
-  const looksLikePlaceholderProjectId = (v: unknown) =>
-    typeof v === "string" &&
-    (v.startsWith("<") || v.trim().length === 0 || v.toLowerCase() === "todo");
+  /**
+   * F-P0-12 扩展（2026-06-05 监控复盘 #3）：
+   *
+   * 原占位符集合 (<...> / "" / "todo") 漏了 LLM 极常用的 `"default"`、`"project_id"`、
+   * `"<project_id>"` 等字面占位。结果 factor.autoEvaluate 内部的 `params["project_id"] ?? ctx.projectId`
+   * 被 LLM 传的 `"default"` 满足，覆盖 ctx.projectId，再 register 因子时 `factor_definition.project_id="default"`
+   * 触发 SQLite `FOREIGN KEY constraint failed`（因为 project 表里没 id="default" 行）。
+   * 实测 workflow 35d357c8 因此 fail。
+   *
+   * 现在统一在 act 入口拦截：所有疑似 placeholder 的 projectId 一律走 workflow_run.project_id 兜底。
+   */
+  const looksLikePlaceholderProjectId = (v: unknown) => {
+    if (typeof v !== "string") return false;
+    const t = v.trim().toLowerCase();
+    if (t.length === 0) return true;
+    if (t.startsWith("<")) return true;
+    return ["todo", "default", "project_id", "projectid", "fixme", "tbd", "?"].includes(t);
+  };
   const incomingProjectId =
     (toolParams["projectId"] as string | undefined) ??
     (toolParams["project_id"] as string | undefined);
@@ -362,11 +377,21 @@ export async function actNode(
           });
           const response = await defaultAcpCaller.call(request);
           if (response.status !== "success") {
+            /**
+             * 2026-06-05 监控复盘 #3 修复：之前只把 `response.errorCode` 当 errorMessage
+             * 给 LLM（如 "ACP_CONNECTOR_ERROR"），detail 全丢，LLM 无法自修。
+             * 现在拼上 errorDetail（lastError.message slice 800）：
+             *   "ACP_CONNECTOR_ERROR: factor 4f... not found in this project"
+             * 这样 LLM 在下一轮 react 能看到具体原因，自修参数 / 切换工具。
+             */
+            const code = response.errorCode ?? response.status ?? "connector_call_failed";
+            const detail = response.errorDetail?.trim();
+            const errorMessage = detail ? `${code}: ${detail}` : code;
             return {
               result: "error" as const,
               toolError: true,
               errorSource: "connector" as const,
-              errorMessage: response.errorCode ?? response.status ?? "connector_call_failed",
+              errorMessage,
             };
           }
           return { result: "ok" as const, connectorResult: response.result };

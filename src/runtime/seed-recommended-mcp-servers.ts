@@ -59,18 +59,41 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
        * 这里把真实工具名注入 capabilitiesJson.tools，让 prompt 拼装层
        * （buildAgentToolsPromptBlock）能列出真实清单，LLM 不再瞎猜。
        */
+      /**
+       * 2026-06-05 监控复盘 #3：mcp-financex 1.0.11 在最近 1d 12 次调用 12 次失败，
+       * 子进程在 tools/call 阶段提前退出（exit code=?），circuit breaker 频繁打开。
+       * 1.0.11 已经是 npm 最新版（最低 1.0.2），没有更高版本可升级。
+       * 受影响工具实测：get_financial_statements / analyze_news_impact /
+       * get_historical_data / search_ticker。
+       *
+       * 修复：在 desc 里给这 4 个工具加 ⚠ unstable 标记 + 指向稳定替代方案，
+       * 让 prompt 拼装层 (buildAgentToolsPromptBlock) 把警告带给 LLM，下次选工具时
+       * 优先用 qubit-data/qubit-news 等内置 connector，避免无谓重试。
+       */
       capabilitiesJson: {
         tools: [
-          { name: "get_quote", desc: "单标的实时行情快照" },
-          { name: "get_quote_batch", desc: "批量标的实时行情" },
-          { name: "get_historical_data", desc: "历史 OHLCV（日线/分钟）" },
-          { name: "search_ticker", desc: "按关键词搜索 ticker" },
+          { name: "get_quote", desc: "单标的实时行情快照（稳定）" },
+          { name: "get_quote_batch", desc: "批量标的实时行情（稳定）" },
+          {
+            name: "get_historical_data",
+            desc:
+              "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。优先用 qubit-data/fetch_klines 拉 OHLCV。",
+          },
+          {
+            name: "search_ticker",
+            desc:
+              "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。可用 qubit-data/fetch_klines 直接传 symbol 验证存在性。",
+          },
           { name: "get_market_news", desc: "标的新闻头条" },
           { name: "calculate_indicator", desc: "技术指标计算（RSI/MACD/MA…）" },
           { name: "get_extended_hours_data", desc: "盘前/盘后行情" },
           { name: "get_short_interest", desc: "做空利息与挤空指数" },
           { name: "get_analyst_ratings", desc: "分析师评级与目标价" },
-          { name: "analyze_news_impact", desc: "新闻情绪与股价关联分析" },
+          {
+            name: "analyze_news_impact",
+            desc:
+              "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。优先用 qubit-news/fetch_news_sentiment 做情绪聚合。",
+          },
           { name: "get_options_chain", desc: "期权链（到期日 + 行权价）" },
           { name: "get_earnings_calendar", desc: "财报日历" },
           { name: "get_dividend_info", desc: "股息历史与下次派息" },
@@ -84,7 +107,11 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
           { name: "get_8k_material_events", desc: "8-K 重大事件" },
           { name: "get_sec_form4_filings", desc: "SEC Form 4 内部人交易（首选名）" },
           { name: "get_insider_trades", desc: "Form 4 内部人交易（legacy alias）" },
-          { name: "get_financial_statements", desc: "财报三表 + 比率（不叫 get_financials）" },
+          {
+            name: "get_financial_statements",
+            desc:
+              "⚠ mcp-financex 1.0.11 实测不稳定（子进程在 financials.js:175 处崩）。没有可靠替代——若必须取财报，可降级为基于 get_quote 的估值代理或直接在 reasoning 里标注 unavailable。",
+          },
           { name: "calculate_dcf_valuation", desc: "DCF 内在价值估算" },
           { name: "compare_peer_companies", desc: "可比公司估值/财务对比" },
         ],

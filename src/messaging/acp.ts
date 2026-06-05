@@ -62,6 +62,8 @@ export class AcpCaller {
             traceId: request.traceId,
             status: "timeout",
             errorCode: ACP_ERROR_CODES.TIMEOUT,
+            // 监控复盘 #3：超时也带 detail，区分 "网络/上游慢" vs "我们 timeoutMs 设太小"
+            errorDetail: lastError.message.slice(0, 800),
             latencyMs: timeoutMs,
             outputSchemaVersion: "1.0",
             result: null,
@@ -80,6 +82,10 @@ export class AcpCaller {
       traceId: request.traceId,
       status: "error",
       errorCode: ACP_ERROR_CODES.CONNECTOR_ERROR,
+      // 监控复盘 #3：最后一次 attempt 的 err.message 透传给 act.ts → 拼到 errorMessage 里给 LLM。
+      // 现状（修复前）：LLM 只看到 "ACP_CONNECTOR_ERROR"，无法分辨参数错 / 上游 500 / connector 内部异常。
+      // 实测 fetch_klines 5 次失败 + version_strategy 2 次失败全部因为 LLM 看不到 detail 而盲重试。
+      errorDetail: lastError?.message?.slice(0, 800) ?? null,
       latencyMs: finalLatency,
       outputSchemaVersion: "1.0",
       result: null,

@@ -106,7 +106,8 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 把 LLM 的 `version_strategy` 调用静默 rewrite 成 `strategy.compose`，参数 schema
      * 完全错位 → 永远抛 "strategy_version_id is required" → 策略 tab 永空。
      */
-    description: "在 qubit-research connector 上创建 strategy + strategy_version 版本记录（strategy_authoring 入口）",
+    description:
+      "在 qubit-research connector 上创建 strategy + strategy_version 版本记录（strategy_authoring 入口）。**必填** `projectId` / `strategyName` / `versionTag` / `params` (策略参数对象)。**返回** `{strategyId, strategyVersionId}` —— 后续 strategy.compose / backtest.run 需要这个 strategyVersionId。",
     category: "research",
   },
   compute_indicators: { description: "计算 SMA/RSI/MACD/布林带等指标序列", category: "research" },
@@ -235,7 +236,14 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "research",
   },
   "factor.compute": {
-    description: "计算因子值（走 FactorComputeProvider；P0 返回 in-memory rows）",
+    /**
+     * 2026-06-05 监控复盘 #3：旧 description "计算因子值（走 FactorComputeProvider）"
+     * 不告诉 LLM 必须传 `factor_id` (UUID)，导致 LLM 凭训练记忆传 `{symbol, ticker}`
+     * 直接抛 "factor_id is required" 浪费工具调用轮次。
+     * 现在显式标注 schema + 数据依赖（先 register 拿 id），让 LLM 一看就知道前置步骤。
+     */
+    description:
+      "计算因子值并写入 factor_value。**必填 `factor_id` (UUID)**（来自 factor.register 或 factor.list 返回），可选 `symbols[]` / `start_date` / `end_date`。**不要传 `symbol`/`ticker`/`factor_expression`** —— 那些是 factor.autoEvaluate / factor.register 的参数。前置依赖：先调 factor.register 创建 factor 拿到 id。",
     category: "research",
   },
   "factor.evaluate": {
@@ -254,7 +262,14 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "research",
   },
   "strategy.compose": {
-    description: "组合 factor + rule 为可执行策略组合（落 strategy_composition）",
+    /**
+     * 2026-06-05 监控复盘 #3：旧 description 不告诉 LLM 必须先有 strategy_version_id。
+     * 实测最近 1d 20 次调用 20 次失败，全部"strategy_version_id is required"。
+     * LLM 在 reasonText 里写了 `{tool: "version_strategy", params: ...}` 想先版本化，
+     * 但是 ReAct 一轮只能跑一个 tool call，没拿到 version_id 就直接调 compose → 必挂。
+     */
+    description:
+      "把已有的 factor_ids / rule_ids 组合到一个**已存在的** strategy_version 上（落 strategy_composition）。**必填 `strategy_version_id`** (UUID, 来自 version_strategy 返回)。**调用顺序**：① version_strategy 创建 strategy + strategy_version 拿 id → ② strategy.compose 组合 factor/rule → ③ backtest.run 跑回测。一上来直接调 compose 会失败。",
     category: "research",
   },
 
@@ -264,8 +279,12 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "research",
   },
   "factor.autoEvaluate": {
+    /**
+     * 2026-06-05 监控复盘 #3：旧 description 没强调 schema → LLM 经常缺 start_date/end_date/factor_id。
+     * 实测最近 1d 9 次调用 4 次失败：缺日期 / 缺 factor_id / 没先 compute。
+     */
     description:
-      "自动评估因子：从 DuckDB 取因子值 + 市场连接器取价格 → 计算 IC/RankIC/IR/衰减/分组收益/换手率",
+      "一步式评估因子（自动从 DuckDB 取因子值 + 市场连接器取价格 → IC/RankIC/IR/衰减/分组收益/换手率）。**必填三件套**：`factor_id` (UUID, 来自 factor.register/factor.list) + `start_date` (YYYY-MM-DD) + `end_date`。两种入参模式互斥：(A) 已有因子 → 传 factor_id ；(B) 新因子一步式 → 传 `factor_expression` (DSL) + `name` + `project_id`，工具会自动 register 再 evaluate。**前置依赖**：因子值表必须有数据（先调 factor.compute 写入），否则报 `no_factor_values`。",
     category: "research",
   },
   "factor.evaluate.batch": {
@@ -289,8 +308,13 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "research",
   },
   "backtest.run": {
+    /**
+     * 2026-06-05 监控复盘 #3：旧 description 没标"必填 strategy_version_id"。
+     * 实测最近 1d 30 次调用 29 次失败：15 次缺 strategy_version_id / 9 次缺 composition_id 或 signals / 1 次 composition_not_found。
+     * 改：把完整 schema + 调用顺序写在最前面，让 LLM 一眼看到。
+     */
     description:
-      "运行事件驱动回测：传 composition_id 或手写 signals，返回 metrics + equity_curve + trades 并落 backtest_run",
+      "运行事件驱动回测，返回 metrics + equity_curve + trades 并落 backtest_run。**必填**：`strategy_version_id` (UUID) + `symbols[]` + `start_date` + `end_date`，且 `composition_id` 与 `signals` 必须二选一传一个。**完整调用顺序**：① version_strategy 拿 strategy_version_id → ② strategy.compose 拿 composition_id → ③ backtest.run。或者跳过 compose 自己手写 `signals: {[symbol]: [{date, weight}]}` 也行。一上来直接调会失败。",
     category: "research",
   },
 

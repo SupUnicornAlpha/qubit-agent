@@ -601,7 +601,18 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   "skill.use_record": async (ctx, params) => {
-    const skillId = String(params.skillId ?? params.id ?? "").trim();
+    /**
+     * 2026-06-05 监控复盘 #3 修复：
+     *   旧实现：硬把 LLM 传的 skillId 透传给 skillService.recordUsage（只查 UUID），
+     *   找不到 silent return，response 假报 `recorded:true` → 最近 1d 36 次调用 0 条
+     *   agent_skill_run 落表。
+     *
+     *   新实现：
+     *   1) 透传 projectId 让 service 能走 findByName fallback；
+     *   2) 真没找到时（service throw）catch 住，return `{recorded:false, hint, candidates}`
+     *      给 LLM —— 下一轮可以用正确的 skillId 重试，而不是被骗以为成功了。
+     */
+    const skillId = String(params.skillId ?? params.id ?? params.name ?? "").trim();
     if (!skillId) throw new Error("skill.use_record: skillId is required");
     const outcomeRaw = String(params.outcome ?? "unknown") as AgentSkillOutcome;
     const outcome: AgentSkillOutcome = ["success", "fail", "partial", "unknown"].includes(
@@ -609,16 +620,35 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     )
       ? outcomeRaw
       : "unknown";
-    await skillService.recordUsage({
-      skillId,
-      workflowRunId: ctx.workflowId,
-      agentInstanceId: ctx.agentInstanceId,
-      definitionId: ctx.definition.id,
-      outcome,
-      score: typeof params.score === "number" ? params.score : 0,
-      notes: typeof params.notes === "string" ? params.notes : "",
-    });
-    return { skillId, outcome, recorded: true };
+    try {
+      await skillService.recordUsage({
+        skillId,
+        projectId: ctx.projectId,
+        workflowRunId: ctx.workflowId,
+        agentInstanceId: ctx.agentInstanceId,
+        definitionId: ctx.definition.id,
+        outcome,
+        score: typeof params.score === "number" ? params.score : 0,
+        notes: typeof params.notes === "string" ? params.notes : "",
+      });
+      return { skillId, outcome, recorded: true };
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.startsWith("skill_not_found:")) {
+        const candidates = ctx.projectId
+          ? await skillService.list(ctx.projectId, { includeArchived: false })
+          : [];
+        return {
+          recorded: false,
+          error: msg,
+          hint:
+            "传入的 skillId 既不是 UUID 也不是本 project 下任何 active skill 的 name；" +
+            "用下面 candidates 里的 id 或 name 重试，或先调 skill.create 注册一个新的。",
+          candidates: candidates.slice(0, 20).map((s) => ({ id: s.id, name: s.name })),
+        };
+      }
+      throw err;
+    }
   },
 
   "skill.import_market": async (ctx, params) => {

@@ -56,7 +56,10 @@ export interface PatchSkillInput {
 }
 
 export interface RecordSkillUsageInput {
+  /** UUID 或 name 都接受；非 UUID 时必须配 projectId 才能 fallback 到 findByName */
   skillId: string;
+  /** 当 skillId 不是 UUID 时用于 fallback 查 name */
+  projectId?: string;
   workflowRunId?: string | null;
   agentInstanceId?: string | null;
   definitionId?: string | null;
@@ -282,16 +285,37 @@ export class SkillService {
       .orderBy(desc(agentSkill.pinned), desc(agentSkill.lastUsedAt), asc(agentSkill.name))) as AgentSkill[];
   }
 
-  /** Agent 调用 skill 后写入用量；同步刷新 last_used_at / use_count / success_count / fail_count */
+  /**
+   * Agent 调用 skill 后写入用量；同步刷新 last_used_at / use_count / success_count / fail_count。
+   *
+   * 2026-06-05 监控复盘 #3 修复：
+   *   - 旧实现 `findById(input.skillId)` 只支持 UUID，但 LLM 自然倾向传 skill name
+   *     (`"quant-analyst"`, `"fsi/earnings-analysis"`) → 找不到 UUID → silent return
+   *     → agent_skill_run **零写入**。最近 1d 36 次 skill.use_record 调用全部空转。
+   *   - 现在：先 findById，找不到再 findByName(projectId, name) fallback；
+   *     仍找不到时 throw error（带 hint），让 builtin tool 把"recorded:false"+候选
+   *     skill 名单返回给 LLM，下一轮可以传正确的 id。
+   *   - 找不到 skill 时**不再 silent return**，否则 tool response `recorded:true` 是骗
+   *     LLM 的，掩盖 telemetry 缺失。
+   */
   async recordUsage(input: RecordSkillUsageInput): Promise<void> {
     const db = await getDb();
-    const skill = await this.findById(input.skillId);
-    if (!skill) return;
+    let skill = await this.findById(input.skillId);
+    if (!skill && input.projectId) {
+      skill = await this.findByName(input.projectId, input.skillId);
+    }
+    if (!skill) {
+      throw new Error(
+        `skill_not_found: "${input.skillId}" 不是 agent_skill 表里的 UUID 或 name`
+      );
+    }
+    // 使用真实 skill.id 写入，而不是 LLM 传过来的字符串（可能是 name）。
+    const skillRowId = skill.id;
     const now = new Date().toISOString();
     const id = randomUUID();
     await db.insert(agentSkillRun).values({
       id,
-      skillId: input.skillId,
+      skillId: skillRowId,
       workflowRunId: input.workflowRunId ?? null,
       agentInstanceId: input.agentInstanceId ?? null,
       definitionId: input.definitionId ?? null,
@@ -310,7 +334,7 @@ export class SkillService {
     if (input.outcome === "fail") setters["failCount"] = sql`${agentSkill.failCount} + 1`;
     // active → 复活：被 Curator 标 stale 的 skill 再次被用 → 重新激活
     if (skill.state === "stale") setters["state"] = "active";
-    await db.update(agentSkill).set(setters).where(eq(agentSkill.id, input.skillId));
+    await db.update(agentSkill).set(setters).where(eq(agentSkill.id, skillRowId));
 
     /**
      * 监控 V2 P2：把 (workflowRunId, skillId) 对应的最近一条 skill_recall_log
@@ -322,7 +346,7 @@ export class SkillService {
         const recallLogger = await import("../monitor/skill-recall-logger");
         await recallLogger.markSkillRecallExecuted({
           workflowRunId: input.workflowRunId,
-          skillId: input.skillId,
+          skillId: skillRowId,
         });
       } catch (e) {
         console.warn(
