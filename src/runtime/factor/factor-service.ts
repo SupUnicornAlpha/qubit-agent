@@ -361,6 +361,24 @@ export class FactorService {
     return this.rowToRecord(r);
   }
 
+  /**
+   * 2026-06-05 P1 修复（监控复盘 #3 / factor.autoEvaluate idempotent 配套）：
+   *
+   * autoEvaluate 的 auto-register fallback 在 LLM retry 同 name 时会被
+   * `factor_name_already_exists` 拒掉（factor 表 (project_id, name) 唯一约束）。
+   * 没有原生 findByName 时只能 list().filter()，浪费 SQL 全表扫；用单查复用
+   * (project_id, name) 复合索引，常数级返回。
+   */
+  async findByProjectAndName(projectId: string, name: string): Promise<FactorRecord | null> {
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(factorDefTable)
+      .where(and(eq(factorDefTable.projectId, projectId), eq(factorDefTable.name, name)))
+      .limit(1);
+    return (rows[0] as FactorRecord | undefined) ?? null;
+  }
+
   async list(
     filter: {
       projectId?: string;

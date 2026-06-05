@@ -15,7 +15,10 @@
  * 注意：所有阶段都包 try/catch，单个阶段失败不阻塞其它阶段；
  * 失败仅 console.warn，不抛出主进程。监控基础设施失败 ≠ 业务失败。
  */
-import { createStuckWorkflowAlerts } from "./alert-service";
+import {
+  cancelInactiveWorkflows,
+  createStuckWorkflowAlerts,
+} from "./alert-service";
 import { scanAllSystemAlerts } from "./alert-scanners";
 import { aggregateAgentRuntimeMetrics } from "./quality-metrics";
 
@@ -29,6 +32,11 @@ export type MonitorAggregatorTickResult = {
   aggregateMetrics: { ok: boolean; error?: string };
   stuckAlerts: { ok: boolean; created?: number; error?: string };
   systemAlerts: { ok: boolean; mcpCreated?: number; tokenCreated?: number; error?: string };
+  /**
+   * 2026-06-05 P1：watchdog 阶段，主动 cancel 卡死无进度的 workflow。
+   * cancelled=本 tick 处理的 workflow 数；不抛错（错误转 result.error）。
+   */
+  inactiveCancelled: { ok: boolean; cancelled?: number; error?: string };
 };
 
 export class MonitorAggregatorWorker {
@@ -52,6 +60,7 @@ export class MonitorAggregatorWorker {
         aggregateMetrics: { ok: false, error: "previous tick still running" },
         stuckAlerts: { ok: false, error: "skipped" },
         systemAlerts: { ok: false, error: "skipped" },
+        inactiveCancelled: { ok: false, error: "skipped" },
       };
     }
     this.running = true;
@@ -59,6 +68,7 @@ export class MonitorAggregatorWorker {
       aggregateMetrics: { ok: false },
       stuckAlerts: { ok: false },
       systemAlerts: { ok: false },
+      inactiveCancelled: { ok: false },
     };
     try {
       // 1) Agent 维度指标聚合（写 breakdownJson + agent_runtime_metric）
@@ -90,6 +100,15 @@ export class MonitorAggregatorWorker {
       } catch (e) {
         result.systemAlerts = { ok: false, error: errToStr(e) };
         console.warn(`[monitorAggregator] systemAlerts failed: ${result.systemAlerts.error}`);
+      }
+
+      // 4) workflow watchdog（无进度 ≥ 20min → 强制 failed）
+      try {
+        const r = await cancelInactiveWorkflows(20);
+        result.inactiveCancelled = { ok: true, cancelled: r.cancelled };
+      } catch (e) {
+        result.inactiveCancelled = { ok: false, error: errToStr(e) };
+        console.warn(`[monitorAggregator] inactiveCancelled failed: ${result.inactiveCancelled.error}`);
       }
 
       const summary = formatTickSummary(result);
@@ -138,6 +157,8 @@ function formatTickSummary(r: MonitorAggregatorTickResult): string {
     parts.push(`stuck=${r.stuckAlerts.created ?? 0}`);
   if (r.systemAlerts.ok)
     parts.push(`mcp=${r.systemAlerts.mcpCreated ?? 0} token=${r.systemAlerts.tokenCreated ?? 0}`);
+  if (r.inactiveCancelled.ok)
+    parts.push(`inactive=${r.inactiveCancelled.cancelled ?? 0}`);
   return parts.join(" ");
 }
 

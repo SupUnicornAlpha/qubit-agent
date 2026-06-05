@@ -882,25 +882,51 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         );
       }
       const name = String(params["name"] ?? `auto_${Date.now()}`).trim();
-      const registered = await factorService.register({
-        projectId,
-        name,
-        category: String(params["category"] ?? "momentum") as FactorCategory,
-        expr: exprRaw.trim(),
-        ...(params["lang"]
-          ? { lang: String(params["lang"]) as FactorLang }
-          : { lang: "qlib_expr" as FactorLang }),
-        ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
-        /** F-P0-10：标识此次 register 是 autoEvaluate 内部副作用 → emit team-graph interaction */
-        autoRegisteredVia: "factor.autoEvaluate",
-        agentRole: ctx.definition.role,
-      });
-      factorId = registered.id;
+      /**
+       * 2026-06-05 P1 修复（监控复盘 #3）：name idempotent reuse。
+       *
+       * LLM 收到 `no_factor_values: factor=X; 先跑 compute` 后经常**用同 name + 同
+       * expr 再调一遍 autoEvaluate**（错误地以为重试就能跳过 compute 步骤）。
+       * 旧实现里 register 触发 `factor_name_already_exists` → autoEvaluate 直接挂，
+       * LLM 看到这个错也不知道该改用 factor.compute → 死循环。
+       * 现在 catch 该错误，inline 查 existing factor 的 id 复用，返回业务正确的
+       * `no_factor_values` 继续提示去 compute，链路一致。
+       */
+      try {
+        const registered = await factorService.register({
+          projectId,
+          name,
+          category: String(params["category"] ?? "momentum") as FactorCategory,
+          expr: exprRaw.trim(),
+          ...(params["lang"]
+            ? { lang: String(params["lang"]) as FactorLang }
+            : { lang: "qlib_expr" as FactorLang }),
+          ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+          /** F-P0-10：标识此次 register 是 autoEvaluate 内部副作用 → emit team-graph interaction */
+          autoRegisteredVia: "factor.autoEvaluate",
+          agentRole: ctx.definition.role,
+        });
+        factorId = registered.id;
+      } catch (err) {
+        const msg = (err as Error).message || "";
+        if (msg.includes("factor_name_already_exists")) {
+          const existing = await factorService.findByProjectAndName(projectId, name);
+          if (existing) {
+            factorId = existing.id;
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
     }
 
     if (!factorId) {
       throw new Error(
-        "factor.autoEvaluate: factor_id is required（也接受 factor_expression / expr 自动注册，但需附带 name + project_id）"
+        "factor.autoEvaluate: 调用必须满足以下任一：(A) 传 `factor_id` (UUID, 来自 factor.register 或 factor.list)；" +
+          "(B) 一步式新因子模式：同时传 `factor_expression` (或 `expr`) + `name` + `project_id`。" +
+          "你两种参数都没传 —— 先用 factor.list 看本项目下已有因子，或直接传 expr+name 走 (B) 模式。"
       );
     }
     const symbolsRaw = params.symbols;
