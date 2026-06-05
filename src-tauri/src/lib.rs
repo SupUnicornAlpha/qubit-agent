@@ -76,14 +76,10 @@ fn data_dir_path(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // 直接走 libc::kill(pid, 0)：signal 0 只检查 pid 存在性 + 调用方权限，不投递信号、不 fork。
+    // 早先实现 `Command::new("kill").arg("-0").status()` 虽然 Command::status() 内部会 waitpid 不留 zombie，
+    // 但每次健康轮询都白白 fork 一个 `kill` 子进程，是无谓的进程创建。
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
 }
 
 fn migrations_present(root: &Path) -> bool {
@@ -132,6 +128,34 @@ fn spawn_dev_bun_backend(
         .dev_child
         .lock()
         .map_err(|_| "backend lock poisoned".to_string())?;
+
+    // 关键 zombie 修复：
+    // 旧实现里 `*dev_guard = Some(new_child)` 会直接 drop 原来的 Option<Child>，
+    // 而 std::process::Child::drop 文档明确不会 wait()，所以每次重复 spawn 都会留下一个
+    // defunct bash —— 配合前端 backend_status 在 dev 模式恒返回 stopped、每 15s 触发
+    // start_backend，导致 zombie 线性堆积、最终撞穿 RLIMIT_NPROC。
+    //
+    // 修复策略：
+    //   1. 如果旧 child 还活着，直接复用（避免重复 fork bash → bun → 端口冲突 → exit）。
+    //   2. 如果旧 child 已退出，先 try_wait / wait 把内核 zombie entry 收掉再继续。
+    if let Some(mut old) = dev_guard.take() {
+        match old.try_wait() {
+            Ok(None) => {
+                let pid = old.id();
+                *dev_guard = Some(old);
+                // 同步刷新 state.pid，让 backend_status 能查到 dev 后端（详见下方 pid mirror）。
+                if let Ok(mut pid_guard) = state.pid.lock() {
+                    *pid_guard = Some(pid);
+                }
+                return Ok(status_ok(pid));
+            }
+            Ok(Some(_)) => { /* 已退出且 try_wait 已 reap，丢弃 */ }
+            Err(_) => {
+                let _ = old.kill();
+                let _ = old.wait();
+            }
+        }
+    }
 
     let app_root = resolve_app_root(handle)?;
     let data_dir = data_dir_path(handle)?;
@@ -188,6 +212,12 @@ fn spawn_dev_bun_backend(
 
     let pid = child.id();
     *dev_guard = Some(child);
+    // Bug B 修复：dev 模式也要把 pid 镜像到 state.pid，
+    // 否则 backend_status 看不到 dev 后端 → 前端 probeHealth 认为后端没起 →
+    // 每 15s 都会再调一次 start_backend → 走到上面的 dev_guard.take() 分支重复入循环。
+    if let Ok(mut pid_guard) = state.pid.lock() {
+        *pid_guard = Some(pid);
+    }
     Ok(status_ok(pid))
 }
 

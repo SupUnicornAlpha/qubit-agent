@@ -3,12 +3,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   createProject,
   createStrategyRuntime,
-  createWorkspace,
   getDefaultProjectSession,
+  getDefaultWorkspace,
   listProjects,
   listStrategyRuntimes,
   listStrategyScripts,
-  listWorkspaces,
   stopStrategyRuntime,
 } from "../../api/backend";
 import type { StrategyRuntimeRecord } from "../../api/backend";
@@ -283,12 +282,9 @@ export const TraderLivePanel: FC = () => {
     booted.current = true;
     void (async () => {
       try {
-        const workspaces = await listWorkspaces();
-        let wsId = workspaces[0]?.id;
-        if (!wsId) {
-          const created = await createWorkspace({ name: "QUBIT Default Workspace", owner: "local-user" });
-          wsId = created.data.id;
-        }
+        // 单租户兜底 workspace；详见 src/runtime/bootstrap/ensure-default-workspace.ts。
+        const dft = await getDefaultWorkspace();
+        const wsId = dft.id;
         const projects = await listProjects(wsId);
         let pid = projects[0]?.id;
         if (!pid) {

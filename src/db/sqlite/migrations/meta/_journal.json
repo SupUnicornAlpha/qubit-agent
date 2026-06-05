@@ -526,6 +526,27 @@
       "when": 1782259200000,
       "tag": "0075_exec_call_log",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1782345600000,
+      "tag": "0076_fix_agent_runtime_metric_unique_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1782518400000,
+      "tag": "0077_consolidate_user_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1782518460000,
+      "tag": "0078_consolidate_user_workspaces_part2",
+      "breakpoints": true
     }
   ]
 }

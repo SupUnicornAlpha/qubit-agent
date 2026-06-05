@@ -9,8 +9,8 @@ import {
   createSessionMessage,
   createIntentOrder,
   createWorkflow,
-  createWorkspace,
   getAgentsConfig,
+  getDefaultWorkspace,
   getDebateConfig,
   getDebateTurns,
   getDebateVerdict,
@@ -61,7 +61,6 @@ import {
   listIntentOrders,
   listProjects,
   listSessionMessages,
-  listWorkspaces,
   patchSessionMessage,
   patchWorkflow,
   reloadAgents,
@@ -638,12 +637,10 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   useEffect(() => {
     const boot = async () => {
       await chatHealth();
-      const workspaces = await listWorkspaces();
-      let wsId = workspaces[0]?.id;
-      if (!wsId) {
-        const created = await createWorkspace({ name: "QUBIT Default Workspace", owner: "local-user" });
-        wsId = created.data.id;
-      }
+      // 单租户兜底 workspace（详见 src/runtime/bootstrap/ensure-default-workspace.ts）。
+      // 旧实现 `workspaces[0]?.id + createWorkspace 兜底` 会落到 A2A Pool (system) 上。
+      const dft = await getDefaultWorkspace();
+      const wsId = dft.id;
       const projects = await listProjects(wsId);
       let pid = projects[0]?.id;
       if (!pid) {
@@ -1646,9 +1643,9 @@ const ConfigPanel: FC = () => {
   const prevAgentDefId = useRef<string>("");
 
   const loadConfig = async () => {
-    const workspaces = await listWorkspaces();
-    const currentWorkspace = workspaces[0];
-    const projects = currentWorkspace ? await listProjects(currentWorkspace.id) : [];
+    // 用 default workspace（不再用 workspaces[0]，避免被 A2A Pool 抢走）。
+    const dft = await getDefaultWorkspace();
+    const projects = await listProjects(dft.id);
     const currentProject = projects[0];
     const [data, bundles, servers, bindings, sources] = await Promise.all([
       getAgentsConfig(),
@@ -1681,7 +1678,7 @@ const ConfigPanel: FC = () => {
     setMcpMarketTotalPages(1);
     setMcpMarketInstalls(installs);
     setSkillInstalls(skillInstallRows);
-    if (currentWorkspace) setCurrentWorkspaceId(currentWorkspace.id);
+    setCurrentWorkspaceId(dft.id);
     if (currentProject) setCurrentProjectId(currentProject.id);
     if (!selectedMcpServer && servers[0]) {
       setSelectedMcpServer(servers[0].name);
@@ -5036,6 +5033,31 @@ const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     liveFeedAutoFollowRef.current = liveFeedAutoFollow;
   }, [liveFeedAutoFollow]);
+
+  /**
+   * 实时对话流 / Agent 运行对话流各自的"折叠"开关（持久化到 localStorage）：
+   * - 折叠态：ResizableY 的高度退化为 `auto`，只剩顶部 header + 统计行；
+   * - 展开态：恢复用户上次记忆的拖拽高度；
+   * - 两个窗口独立控制，方便屏幕空间紧张时只折叠不关心的那一个。
+   */
+  const LIVE_FEED_COLLAPSED_LS = "qb.live-feed-collapsed";
+  const AGENT_RUN_COLLAPSED_LS = "qb.agent-run-collapsed";
+  const [liveFeedCollapsed, setLiveFeedCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(LIVE_FEED_COLLAPSED_LS) === "1";
+  });
+  const [agentRunCollapsed, setAgentRunCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(AGENT_RUN_COLLAPSED_LS) === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(LIVE_FEED_COLLAPSED_LS, liveFeedCollapsed ? "1" : "0");
+  }, [liveFeedCollapsed]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(AGENT_RUN_COLLAPSED_LS, agentRunCollapsed ? "1" : "0");
+  }, [agentRunCollapsed]);
   const scrollLiveFeedToBottom = useCallback(() => {
     const el = liveFeedScrollRef.current;
     if (!el) return;
@@ -5512,12 +5534,9 @@ const TeamDashboardPanel: FC = () => {
         })
         .catch(() => setAnalystAgentGroupOptions([]));
       try {
-        const workspaces = await listWorkspaces();
-        let wsId = workspaces[0]?.id;
-        if (!wsId) {
-          const cr = await createWorkspace({ name: "QUBIT Default Workspace", owner: "local-user" });
-          wsId = cr.data.id;
-        }
+        // 单租户兜底 workspace；详见 src/runtime/bootstrap/ensure-default-workspace.ts。
+        const dft = await getDefaultWorkspace();
+        const wsId = dft.id;
         const projects = await listProjects(wsId);
         let pid = projects[0]?.id;
         if (!pid) {
@@ -7341,6 +7360,7 @@ const TeamDashboardPanel: FC = () => {
                   minHeight={200}
                   maxHeight={1200}
                   storageKey="qb.live-feed-h"
+                  collapsed={liveFeedCollapsed}
                   wrapperData={{ "data-qb-team-live-feed-shell": "" }}
                   style={{
                     border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
@@ -7385,7 +7405,7 @@ const TeamDashboardPanel: FC = () => {
                       title="关闭后新消息进来不会再自动滚到底，便于回看上方对话"
                       style={{
                         marginLeft: "auto",
-                        display: "inline-flex",
+                        display: liveFeedCollapsed ? "none" : "inline-flex",
                         alignItems: "center",
                         gap: 5,
                         fontSize: 11,
@@ -7407,83 +7427,114 @@ const TeamDashboardPanel: FC = () => {
                       />
                       自动跟随{liveFeedAutoFollow ? "" : "（已暂停）"}
                     </label>
-                    <span
+                    {liveFeedCollapsed ? <span style={{ marginLeft: "auto" }} /> : null}
+                    <button
+                      type="button"
+                      onClick={() => setLiveFeedCollapsed((v) => !v)}
+                      title={liveFeedCollapsed ? "展开实时对话流窗口" : "折叠实时对话流窗口"}
+                      aria-label={liveFeedCollapsed ? "展开实时对话流窗口" : "折叠实时对话流窗口"}
+                      aria-expanded={!liveFeedCollapsed}
                       style={{
-                        fontSize: 10,
-                        color: "var(--qb-team-meta, #71717a)",
-                        fontWeight: 400,
+                        padding: "2px 8px",
+                        background: "transparent",
+                        color: "var(--qb-team-meta, #a1a1aa)",
+                        border:
+                          "1px solid var(--qb-team-live-feed-row-border, var(--qb-team-live-feed-border, #3f3f46))",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        lineHeight: 1.4,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
                       }}
                     >
-                      拖底边调整高度
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      position: "relative",
-                      flex: "1 1 0",
-                      minHeight: 0,
-                      display: "flex",
-                      flexDirection: "column",
-                    }}
-                  >
-                    <div
-                      ref={liveFeedScrollRef}
-                      onScroll={handleLiveFeedScroll}
-                      data-qb-team-live-feed
-                      className="qb-team-live-feed-scroll"
-                      style={{
-                        flex: "1 1 0",
-                        minHeight: 0,
-                        overflowY: "auto",
-                        overflowX: "hidden",
-                        padding: 10,
-                        paddingBottom: 16,
-                      }}
-                    >
-                      <LiveConversationView
-                        events={displayedLiveFeedEvents}
-                        selfRole="orchestrator"
-                        contentMaxLength={4000}
-                        emptyText={
-                          graphSelection?.kind === "edge"
-                            ? "该连线暂无对话记录。"
-                            : running
-                              ? "等待各分析师与系统写入交互记录（轮询中）…"
-                              : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
-                        }
-                      />
-                    </div>
-                    {!liveFeedAtBottom ? (
-                      <button
-                        type="button"
-                        onClick={scrollLiveFeedToBottom}
-                        title="跳到最新消息并恢复自动跟随"
+                      <span aria-hidden style={{ fontSize: 10 }}>
+                        {liveFeedCollapsed ? "▸" : "▾"}
+                      </span>
+                      {liveFeedCollapsed ? "展开" : "折叠"}
+                    </button>
+                    {liveFeedCollapsed ? null : (
+                      <span
                         style={{
-                          position: "absolute",
-                          right: 16,
-                          bottom: 14,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 5,
-                          padding: "5px 11px",
-                          borderRadius: 999,
-                          border: "1px solid rgba(59,130,246,0.55)",
-                          background: "rgba(15,23,42,0.85)",
-                          color: "#bfdbfe",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
-                          backdropFilter: "blur(4px)",
+                          fontSize: 10,
+                          color: "var(--qb-team-meta, #71717a)",
+                          fontWeight: 400,
                         }}
                       >
-                        <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>
-                          ↓
-                        </span>
-                        跳到最新
-                      </button>
-                    ) : null}
+                        拖底边调整高度
+                      </span>
+                    )}
                   </div>
+                  {liveFeedCollapsed ? null : (
+                    <div
+                      style={{
+                        position: "relative",
+                        flex: "1 1 0",
+                        minHeight: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                      }}
+                    >
+                      <div
+                        ref={liveFeedScrollRef}
+                        onScroll={handleLiveFeedScroll}
+                        data-qb-team-live-feed
+                        className="qb-team-live-feed-scroll"
+                        style={{
+                          flex: "1 1 0",
+                          minHeight: 0,
+                          overflowY: "auto",
+                          overflowX: "hidden",
+                          padding: 10,
+                          paddingBottom: 16,
+                        }}
+                      >
+                        <LiveConversationView
+                          events={displayedLiveFeedEvents}
+                          selfRole="orchestrator"
+                          contentMaxLength={4000}
+                          emptyText={
+                            graphSelection?.kind === "edge"
+                              ? "该连线暂无对话记录。"
+                              : running
+                                ? "等待各分析师与系统写入交互记录（轮询中）…"
+                                : "暂无记录。启动分析后，研究队交互与辩论事件将按时间显示在此。"
+                          }
+                        />
+                      </div>
+                      {!liveFeedAtBottom ? (
+                        <button
+                          type="button"
+                          onClick={scrollLiveFeedToBottom}
+                          title="跳到最新消息并恢复自动跟随"
+                          style={{
+                            position: "absolute",
+                            right: 16,
+                            bottom: 14,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "5px 11px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(59,130,246,0.55)",
+                            background: "rgba(15,23,42,0.85)",
+                            color: "#bfdbfe",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                            backdropFilter: "blur(4px)",
+                          }}
+                        >
+                          <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>
+                            ↓
+                          </span>
+                          跳到最新
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
                 </ResizableY>
               </div>
               {graphSelection?.kind === "node" ? (
@@ -7493,6 +7544,7 @@ const TeamDashboardPanel: FC = () => {
                     minHeight={220}
                     maxHeight={1400}
                     storageKey="qb.agent-run-h"
+                    collapsed={agentRunCollapsed}
                     wrapperData={{ "data-qb-team-live-feed-shell": "" }}
                     style={{
                       border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
@@ -7510,6 +7562,8 @@ const TeamDashboardPanel: FC = () => {
                         tools: graphNodeDetail.tools,
                         mcps: graphNodeDetail.mcps,
                       }}
+                      collapsed={agentRunCollapsed}
+                      onToggleCollapsed={() => setAgentRunCollapsed((v) => !v)}
                     />
                   </ResizableY>
                 </div>
@@ -7957,12 +8011,13 @@ const TeamDashboardPanel: FC = () => {
             研究产出
           </div>
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            展示当前研究项目下 Agent 生成的<strong>因子 / 策略</strong>，以及当前工作流下保存的代码片段。每块支持折叠，专注当前关注的问题。
+            展示当前研究项目下 Agent 生成的<strong>草稿 / 因子 / 策略 / 脚本</strong>。注意「策略」读 strategy_version（需 Agent 调 version_strategy 或真单触发），research 流水线吐出的 Python on_bar 脚本会落在「脚本」tab。
           </p>
 
           <ResearchOutputTabs
             projectId={teamResearchProjectId}
             workflowRunId={workflowRunId}
+            sessionId={teamResearchSessionId}
             onOpenFactorInWorkbench={() => {
               setActiveView("quant");
               setQuantTab("factor");

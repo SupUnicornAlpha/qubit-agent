@@ -32,9 +32,9 @@ import {
   createEvalDataset,
   createProject,
   createWorkflow,
-  createWorkspace,
   createWorkflowQuality,
   getDefaultProjectSession,
+  getDefaultWorkspace,
   getEvalRunDetail,
   getMonitorSummary,
   getSessionAgentsBoard,
@@ -87,6 +87,19 @@ export const MonitorDashboard: FC = () => {
 
   const [projectId, setProjectId] = useState("");
   const [sessionId, setSessionId] = useState("");
+  /**
+   * 项目/工作空间切换：
+   *
+   * 历史 bug：boot() 把第一个 workspace × 第一个 project × **默认 session** 一把锁死塞进
+   * sessionFilter，导致任何"在隔离 project（如 agent-eval-batch-3）下跑出的 workflow"
+   * 全部不可见 —— 因为它们 session_id 为空 / 在不同 project，永远匹配不上 sessionFilter。
+   *
+   * 修复策略：把 workspace/project 选择提取成顶层 toolbar，让用户能切；列表层默认按
+   * projectId 过滤而非 sessionId，session 维度仅作为可选下钻。
+   */
+  const [workspaces, setWorkspaces] = useState<Array<{ id: string; name: string }>>([]);
+  const [workspaceId, setWorkspaceId] = useState("");
+  const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [goal, setGoal] = useState("Run orchestrator workflow");
   const [mode, setMode] = useState<WorkflowMode>("research");
   const [createLoopKind, setCreateLoopKind] = useState<AgentLoopKind>("native");
@@ -266,7 +279,11 @@ export const MonitorDashboard: FC = () => {
   }, [sessionFilter]);
 
   const onSearch = useCallback(async () => {
+    // projectId 作为粗粒度 default 过滤：保证打开监控面板的"默认列表"是
+    // 「当前 project 的全部 workflow」而不再是「当前 project default session 的 workflow」。
+    // sessionFilter 仍保留作为可选下钻，用户在 WorkflowTab 输入框填入 sessionId 即生效。
     const rows = await listMonitorWorkflows({
+      projectId: projectId || undefined,
       sessionId: sessionFilter || undefined,
       status: statusFilter || undefined,
     });
@@ -281,7 +298,7 @@ export const MonitorDashboard: FC = () => {
     } catch {
       setStrategyRuntimes([]);
     }
-  }, [sessionFilter, statusFilter, refreshSummary]);
+  }, [projectId, sessionFilter, statusFilter, refreshSummary]);
 
   const refreshAgents = useCallback(async () => {
     try {
@@ -320,14 +337,26 @@ export const MonitorDashboard: FC = () => {
 
   useEffect(() => {
     const boot = async () => {
-      const workspaces = await listWorkspaces();
-      let workspaceId = workspaces[0]?.id;
-      if (!workspaceId) {
-        const created = await createWorkspace({ name: "QUBIT Default Workspace", owner: "local-user" });
-        workspaceId = created.data.id;
-      }
-      const projects = await listProjects(workspaceId);
-      let pid = projects[0]?.id;
+      // 先 ensure default workspace（后端 ensureDefaultUserWorkspace 已在 bootstrap 期写入；
+      // 这里调一次 GET /workspaces/default 起容错作用，DB 极端被外部清表也能自愈），
+      // 再 listWorkspaces 让用户看到全量 workspace（系统 A2A Pool + 默认 + 任何手动新建的多租户）。
+      const dft = await getDefaultWorkspace();
+      const all = await listWorkspaces();
+      setWorkspaces(all);
+      // 默认选中 default workspace（不是 workspaces[0]，避免被 A2A Pool 抢走）。
+      setWorkspaceId(dft.id);
+      // project / session 由下面的 useEffect (随 workspaceId 变化) 接管，避免重复 listProjects。
+    };
+    void boot().catch(console.error);
+  }, []);
+
+  /** workspace 切换：刷新 projects 列表，并自动选中 projects[0]（保持与旧 boot 一致）。 */
+  useEffect(() => {
+    if (!workspaceId) return;
+    void (async () => {
+      const list = await listProjects(workspaceId);
+      setProjects(list);
+      let pid = list[0]?.id ?? "";
       if (!pid) {
         const created = await createProject({
           workspaceId,
@@ -335,14 +364,32 @@ export const MonitorDashboard: FC = () => {
           marketScope: "CN-A",
         });
         pid = created.data.id;
+        setProjects([{ id: created.data.id, name: created.data.name }]);
       }
       setProjectId(pid);
-      const defaultSession = await getDefaultProjectSession(pid);
-      setSessionId(defaultSession.id);
-      setSessionFilter(defaultSession.id);
-    };
-    void boot().catch(console.error);
-  }, []);
+    })().catch(console.error);
+  }, [workspaceId]);
+
+  /**
+   * project 切换：拉默认 session（仅供 onCreate 新建工作流用），重置 sessionFilter / 选中行。
+   *
+   * 关键：**不再**把 defaultSession.id 塞进 sessionFilter；让列表默认显示当前 project
+   * 的全部 workflow，由用户在 WorkflowTab 输入框手动收窄。
+   */
+  useEffect(() => {
+    if (!projectId) return;
+    void (async () => {
+      try {
+        const defaultSession = await getDefaultProjectSession(projectId);
+        setSessionId(defaultSession.id);
+      } catch {
+        setSessionId("");
+      }
+      setSessionFilter("");
+      setSelectedWorkflowId(null);
+      setDrawerDetail("");
+    })().catch(console.error);
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -527,6 +574,56 @@ export const MonitorDashboard: FC = () => {
         （MIT）渲染；未嵌入 Grafana，避免 Tauri/前端再运维一套时序库。工作流结束时会自动写入质量快照并评估告警；Agent
         维度指标需手动「聚合过去24h」或调用聚合 API。
       </p>
+
+      {/*
+        workspace / project 切换 toolbar：
+        旧版本 boot() 把第一个 workspace × 第一个 project 一把锁死，没暴露切换入口 ——
+        在隔离 project（如 eval 跑批新建的 agent-eval-batch-3）下产出的 workflow 完全不可见。
+        这里提供两个最小化下拉，让"打开监控就能看到当前 project 的全部 workflow"成为默认行为。
+      */}
+      <div style={styles.form} role="group" aria-label="workspace 与 project 切换">
+        <label style={{ ...styles.check, gap: 6 }}>
+          <span style={{ color: "var(--qb-main-meta, #a1a1aa)" }}>Workspace</span>
+          <select
+            style={styles.select}
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+            aria-label="切换 workspace"
+          >
+            {workspaces.length === 0 ? (
+              <option value="">(loading…)</option>
+            ) : (
+              workspaces.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        <label style={{ ...styles.check, gap: 6 }}>
+          <span style={{ color: "var(--qb-main-meta, #a1a1aa)" }}>Project</span>
+          <select
+            style={styles.select}
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            aria-label="切换 project"
+          >
+            {projects.length === 0 ? (
+              <option value="">(loading…)</option>
+            ) : (
+              projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))
+            )}
+          </select>
+        </label>
+        <span style={{ ...styles.kpiLabel, alignSelf: "center", marginLeft: "auto" }}>
+          {projectId ? `当前 project: ${projectId.slice(0, 8)}…` : "未选择 project"}
+        </span>
+      </div>
 
       <div className="qb-monitor__tabs" style={styles.tabBar} role="tablist" aria-label="监控维度">
         {SCOPE_TABS.map((t) => (

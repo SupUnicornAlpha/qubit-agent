@@ -443,6 +443,19 @@ export async function listWorkspaces(): Promise<Array<{ id: string; name: string
   return res.data;
 }
 
+/**
+ * 单租户兜底 workspace。前端任何 boot 路径都该走这个，**不要再自己 createWorkspace** ——
+ * 历史 3 处 `if (!workspaces[0]) createWorkspace(...)` 兜底因为 A2A Pool（system）
+ * 永远占着 workspaces[0]，从未触发；导致桌面用户上车默认用了 system workspace。
+ * 详见 src/runtime/bootstrap/ensure-default-workspace.ts。
+ */
+export async function getDefaultWorkspace(): Promise<{ id: string; name: string; owner: string }> {
+  const res = await httpGet<{ data: { id: string; name: string; owner: string } }>(
+    "/api/v1/workspaces/default"
+  );
+  return res.data;
+}
+
 export async function createWorkspace(input: { name: string; owner: string }): Promise<{
   data: { id: string; name: string };
 }> {
@@ -1751,11 +1764,19 @@ export async function getWorkflowSandboxViolations(workflowId: string): Promise<
 }
 
 export async function listMonitorWorkflows(params: {
+  /**
+   * 项目级粗粒度过滤（来自 MonitorDashboard 顶部 project 切换下拉）。
+   * 后端 `/api/v1/monitor/workflows` 在 routes/monitor.routes.ts 中支持 projectId 过滤，
+   * 配合 `idx_workflow_run_project_created` 索引，能让"打开监控面板就能看到当前 project 的全部
+   * workflow"成为默认行为，而不必依赖更窄的 sessionId 过滤。
+   */
+  projectId?: string;
   sessionId?: string;
   status?: string;
   mode?: string;
 }): Promise<unknown[]> {
   const query = new URLSearchParams();
+  if (params.projectId) query.set("projectId", params.projectId);
   if (params.sessionId) query.set("sessionId", params.sessionId);
   if (params.status) query.set("status", params.status);
   if (params.mode) query.set("mode", params.mode);

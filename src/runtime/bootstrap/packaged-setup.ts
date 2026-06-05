@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { config } from "../../config";
 import { runMigrations } from "../../db/sqlite/migrate";
 import { getPythonConnectorsDir, getPythonWheelsDir, resolvePythonBin } from "../app-paths";
+import { ensureDefaultUserWorkspace } from "./ensure-default-workspace";
 import { seedAgentDefinitions } from "../seed-agent-definitions";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import {
@@ -132,6 +133,9 @@ export async function runPlatformBootstrap(options?: {
   }
 
   await runMigrations();
+  // 单租户默认 workspace 兜底：必须在 seedAgentDefinitions 之前，因为部分 seed
+  // 路径（agent_group 等）若想引用 workspace_id 时需要它已存在。
+  await ensureDefaultUserWorkspace();
   await seedAgentDefinitions();
   /**
    * F-P0-06 fix（2026-06-04）：之前传 `refresh: true` 会把 `.qubit/agents.json` 每次
