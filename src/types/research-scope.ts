@@ -74,6 +74,115 @@ export function parseSymbolList(raw: string): string[] {
   ];
 }
 
+/**
+ * 2026-06-05 监控复盘 #4：判断单个字符串是否"看起来像真实 ticker"。
+ *
+ * 背景：之前没有这层判断，导致：
+ *   - 用户在 UI 输入「AI 半导体板块机会」当 ticker → orchestrator 把它当合法
+ *     ticker 派给分析师 → fetch_klines 永远拿不到 → LLM 困在 no-data 死循环；
+ *   - 测试 / LLM 自己经常构造 `ZZZ_NONEXISTENT_BAD` 之类的虚假 ticker → 一样的
+ *     no-data 死循环；
+ *   - 即使后端有 `scope.kind="explore"` 完整支持（必填 theme），入口层从不
+ *     主动 promote 不合法 ticker 到 explore 模式。
+ *
+ * 这里只识别**表面格式**（cheap pre-check），真实存在性仍由下游 fetch_klines
+ * 验证（fail-soft prompt 在 B 改动里加）。
+ *
+ * 识别 universe（覆盖 ≥ 95% 真实 case）：
+ *   - US 股 / NASDAQ / NYSE：`^[A-Z][A-Z.\-]{0,9}$`（如 AAPL / BRK.B / BF-A）
+ *   - A 股沪深：`^\d{6}$`（如 600519）
+ *   - 港股：`^\d{4,5}\.HK$` 或 `^[A-Z]{1,6}\.HK$`（少数 H 股带字母）
+ *   - 加密：`^[A-Z]{2,6}[-/](USDT?|BTC|ETH)$`（如 BTC-USD / ETH/USDT）
+ *   - 期货：`^[A-Z]{1,4}\d{2,4}$`（如 ES2412 / CL2503，连续合约 ESH5 类不识别）
+ *   - 期权 OPRA 21 字符（如 AAPL241220C00200000）：长度 + 形态判断
+ *
+ * 显式拒绝：含空格 / 中文 / 任何描述性字眼（"AI 半导体" / "机会" / 长 > 24）。
+ */
+/**
+ * Placeholder 黑名单：与 act.ts `looksLikePlaceholderProjectId` 同源思路。
+ * 这些字符串虽然表面格式合法（4-5 字母全大写匹配 US ticker 形态），但实际
+ * 是 LLM / 用户填的占位符，要主动剔除避免下游 fetch_klines 拿空。
+ */
+const TICKER_PLACEHOLDER_DENYLIST = new Set([
+  "TODO",
+  "TBD",
+  "FIXME",
+  "NULL",
+  "NONE",
+  "TICKER",
+  "SYMBOL",
+  "TEST",
+  "DEFAULT",
+  "UNKNOWN",
+  "XXXX",
+  "XXXXX",
+  "AAAA",
+  "ZZZZ",
+]);
+
+export function looksLikeTicker(raw: unknown): boolean {
+  if (typeof raw !== "string") return false;
+  const s = raw.trim();
+  if (!s) return false;
+  if (s.length > 24) return false;
+  // 含空白 / 中文 / 标点（除常见 . - / 之外）→ 一定不是 ticker
+  if (/\s/.test(s)) return false;
+  if (/[\u4e00-\u9fa5]/.test(s)) return false;
+  const upper = s.toUpperCase();
+  if (TICKER_PLACEHOLDER_DENYLIST.has(upper)) return false;
+
+  if (/^\d{6}$/.test(upper)) return true; // A 股
+  if (/^(?:\d{4,5}|[A-Z]{1,6})\.HK$/.test(upper)) return true; // 港股
+  if (/^[A-Z][A-Z.\-]{0,9}$/.test(upper)) return true; // US 含 BRK.B / BF-A
+  if (/^[A-Z]{2,6}[-/](?:USDT?|BTC|ETH|EUR|GBP|JPY)$/.test(upper)) return true; // 加密
+  if (/^[A-Z]{1,4}\d{2,4}$/.test(upper)) return true; // 期货数字合约
+  if (upper.length === 21 && /^[A-Z]{1,6}\d{6}[CP]\d{8}$/.test(upper)) return true; // OPRA 期权
+
+  return false;
+}
+
+/**
+ * 给定原始入参，决定**最终应该走的 scope.kind 与 theme**：
+ *   - 用户已显式传 `scope.kind="explore"` → 透传
+ *   - 用户传 ticker 且看起来像真 ticker → 沿用原 ticker（不动 scope）
+ *   - 用户传 ticker 但**不像 ticker**（典型："AI半导体板块机会" / "ZZZ_BAD"）
+ *     → auto-promote 为 explore，把原文当 theme
+ *   - 没传 ticker 也没 scope → caller 自己 reject（保留现有 400 行为）
+ *
+ * 返回 `{shouldPromoteToExplore: boolean, theme?: string, reason?: string}`，
+ * caller 拿去重组入参并保留 audit log。
+ */
+export function classifyResearchInput(input: {
+  ticker?: string | null;
+  scope?: ResearchScopeInput | null;
+}): {
+  shouldPromoteToExplore: boolean;
+  theme?: string;
+  reason?: string;
+} {
+  const userKind = input.scope?.kind;
+  if (userKind === "explore") return { shouldPromoteToExplore: false };
+
+  // 用户在 scope.symbols 里给了任一合法 ticker → 信任 user，不 promote
+  const scopeSymbols = (input.scope?.symbols ?? [])
+    .map((s) => (typeof s === "string" ? s : ""))
+    .filter((s) => s.length > 0);
+  if (scopeSymbols.some(looksLikeTicker)) {
+    return { shouldPromoteToExplore: false };
+  }
+
+  const ticker = (input.ticker ?? input.scope?.ticker ?? "").trim();
+  if (!ticker) return { shouldPromoteToExplore: false };
+
+  if (looksLikeTicker(ticker)) return { shouldPromoteToExplore: false };
+
+  return {
+    shouldPromoteToExplore: true,
+    theme: ticker,
+    reason: `ticker "${ticker.slice(0, 60)}" 不符合任何已知 ticker 表面格式 (US/CN-A/HK/crypto/futures/OPRA)，按"探索主题"处理`,
+  };
+}
+
 export function resolveResearchScope(input: {
   ticker?: string;
   scope?: ResearchScopeInput | null;

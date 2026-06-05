@@ -23,7 +23,11 @@ import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
 import { SEED_AGENT_ROLE_CATALOG } from "../runtime/seed-agent-roles";
 import type { AgentRole } from "../types/entities";
-import { type ResearchScopeInput, resolveResearchScope } from "../types/research-scope";
+import {
+  classifyResearchInput,
+  type ResearchScopeInput,
+  resolveResearchScope,
+} from "../types/research-scope";
 
 export const analystRouter = new Hono();
 
@@ -57,8 +61,51 @@ analystRouter.post("/run", async (c) => {
     return c.json({ error: "workflowRunId is required" }, 400);
   }
 
-  const scope = resolveResearchScope({ ticker: body.ticker, scope: body.scope });
-  if (!body.ticker?.trim() && !body.scope && scope.primarySymbol === "UNKNOWN") {
+  /**
+   * 2026-06-05 监控复盘 #4 / A：入口自动归类。
+   *
+   * 之前缺这一步 → 用户 / LLM 传"AI半导体板块机会"或"ZZZ_BAD"当 ticker 时，
+   * orchestrator 把它当合法 symbol 派给分析师，下游 fetch_klines 永远返空 →
+   * LLM 困在 no-data 死循环。后端早就完整支持 `scope.kind="explore"` + theme，
+   * 但入口从不主动 promote。
+   *
+   * 现在：classifyResearchInput 用 looksLikeTicker 做表面格式预判（US/CN-A/HK/
+   * crypto/期货/OPRA），不像 ticker 就把原文当 theme，scope 自动改为 explore。
+   * 真实存在性仍由下游 fetch_klines 验证（B 改动里加 fail-soft fallback）。
+   *
+   * 保留原 body.ticker 在 context 末尾让 LLM 知道用户原话；input 重组只动 scope。
+   */
+  let effectiveScope: ResearchScopeInput | null | undefined = body.scope;
+  let effectiveTicker: string | undefined = body.ticker;
+  let effectiveContext: string | undefined = body.context;
+  const classification = classifyResearchInput({
+    ticker: body.ticker ?? null,
+    scope: body.scope ?? null,
+  });
+  if (classification.shouldPromoteToExplore && classification.theme) {
+    effectiveScope = {
+      ...(body.scope ?? {}),
+      kind: "explore",
+      theme: classification.theme,
+    };
+    effectiveTicker = undefined;
+    const originalNote =
+      `[auto-promoted to explore] 用户原始输入："${classification.theme}"。` +
+      `原因：${classification.reason}。请先调 run_screener / factor.list / skill.search 找候选 ticker（≤3 个），` +
+      `用 fetch_klines 验证存在性后再分析。`;
+    effectiveContext = body.context
+      ? `${body.context}\n\n${originalNote}`
+      : originalNote;
+    console.log(
+      `[analyst.run] auto-promoted "${classification.theme}" → explore mode (workflow=${body.workflowRunId})`
+    );
+  }
+
+  const scope = resolveResearchScope({
+    ...(effectiveTicker !== undefined ? { ticker: effectiveTicker } : {}),
+    ...(effectiveScope !== undefined ? { scope: effectiveScope } : {}),
+  });
+  if (!effectiveTicker?.trim() && !effectiveScope && scope.primarySymbol === "UNKNOWN") {
     return c.json({ error: "ticker or scope.symbols is required" }, 400);
   }
 
@@ -128,9 +175,9 @@ analystRouter.post("/run", async (c) => {
         assignedRole: "orchestrator",
         params: {
           jobId,
-          ticker: body.ticker ?? scope.primarySymbol,
-          scope: body.scope ?? undefined,
-          context: body.context,
+          ticker: effectiveTicker ?? scope.primarySymbol,
+          scope: effectiveScope ?? undefined,
+          context: effectiveContext,
           agentGroupId: body.agentGroupId ?? undefined,
           analystRoles: analystRoles ?? undefined,
           analystDefinitionIds: analystDefinitionIds ?? undefined,

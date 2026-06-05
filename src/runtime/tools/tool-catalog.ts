@@ -56,10 +56,17 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "orchestration",
   },
   run_screener: {
-    description: "按条件筛选股票候选（当前为演示股票池）",
+    description:
+      "**探索类任务首选 — 按 sector / industry / 估值 / 动量等多维度筛真实股票候选**。" +
+      "Universe 池含 200+ ticker（US S&P/NDX 头部 + CN-A 沪深300 头部 + HK 恒指/恒科 + Crypto），" +
+      "返回 top-N 候选含 score 与 sector/industry/country meta。" +
+      "`universe` 取值：`'ALL'`（默认，最不挑剔）/ `'US'` / `'CN-A'` / `'HK'` / `'CRYPTO'`。" +
+      "`criteria` 可选：`{sector?, industry?, country?, minMarketCapBillion?, maxPe?, minMomentum30d?, minQuality?, minSentiment?}`，" +
+      "**sector 取值**：Tech / Financials / Healthcare / Consumer / Energy / Industrials / Materials / REIT / Utilities / Telecom / Crypto；" +
+      "**industry 用子串包含**（如 `industry:'Semi'` 匹配 Semiconductors / Semi Equipment）。" +
+      "**返回 0 个候选时看 `hint` 字段**，里面会建议放宽哪个 criteria。" +
+      "**用法**：用户提'分析 AI 半导体板块机会' → `run_screener({universe:'US', criteria:{industry:'Semi'}, topN:5})` 拿候选 → 对每个候选跑分析。",
     category: "research",
-    lifecycle: "stub",
-    deprecationReason: "返回固定演示股票池，未对接实际筛选服务",
   },
 
   // 行情

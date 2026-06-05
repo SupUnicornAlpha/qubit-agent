@@ -51,8 +51,11 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * 3.5.0（2026-06）：把 MSA 后的"裸 LLM 决策汇总"拆成 builtin tool
      * `summarize_team_decision`，由 Orchestrator 在 ReAct loop 中按需调用，
      * 不再每个 workflow 强制 +1 次 LLM 延迟。
+     * 3.6.0（2026-06-05 监控复盘 #4 / C）：加 `run_screener` 工具授权，让
+     * 探索类任务（用户提"AI 半导体板块机会"等）能首选拿真实候选 ticker，
+     * 而不是反复 fetch_klines 试错。
      */
-    version: "3.5.0",
+    version: "3.6.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       "assign_task",
@@ -76,6 +79,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "skill.create",
       "skill.patch",
       "skill.archive",
+      /**
+       * 2026-06-05 监控复盘 #4 / C：探索类任务（用户提"AI 半导体板块机会"/
+       * "分析下哪些便宜银行股"）首选 — 按 sector/industry 拿 200+ 真实候选 ticker。
+       * 详见 analyst-team-context.ts 的 explore prompt 与 stock-screener.ts。
+       */
+      "run_screener",
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
@@ -112,8 +121,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-fundamental",
     role: "analyst_fundamental",
     name: "基本面研究员",
-    /** 3.0.0：M9.P2 装上量化锚点工具（factor.list value/quality + autoEvaluate + 沙箱） */
-    version: "3.0.0",
+    /**
+     * 3.0.0：M9.P2 装上量化锚点工具（factor.list value/quality + autoEvaluate + 沙箱）
+     * 3.1.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
+     * sector/industry 拿真实候选 ticker，不再反复 fetch_klines 试错。
+     */
+    version: "3.1.0",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
       "fetch_financial_data",
@@ -128,6 +141,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
+      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找候选 ticker
+      "run_screener",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -146,8 +161,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      *   不亲自跑回测；保留 run_backtest 会让 LLM 误把 backtest 作为本角色
      *   职责吞掉一轮迭代，token 浪费 + 与 backtest 角色重复（参见调研：
      *   3 个 def 的工具集中 run_backtest 唯一可去重的 1 个）。
+     * 3.2.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
+     * sector/industry 拿真实候选 ticker。
      */
-    version: "3.1.0",
+    version: "3.2.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
       "fetch_price_data",
@@ -163,6 +180,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
+      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找候选 ticker
+      "run_screener",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -172,8 +191,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-sentiment",
     role: "analyst_sentiment",
     name: "舆情分析师",
-    /** 3.0.0：M9.P2 装上事件→sentiment 因子工具（factor.register + autoEvaluate + 沙箱） */
-    version: "3.0.0",
+    /**
+     * 3.0.0：M9.P2 装上事件→sentiment 因子工具（factor.register + autoEvaluate + 沙箱）
+     * 3.1.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
+     * sector/industry 拿真实候选 ticker。
+     */
+    version: "3.1.0",
     systemPrompt: PROMPT_ANALYST_SENTIMENT,
     tools: [
       "fetch_news",
@@ -190,6 +213,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
+      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找候选 ticker
+      "run_screener",
       "edit_agent_pack",
       "call_mcp",
     ],
@@ -199,8 +224,12 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-macro",
     role: "analyst_macro",
     name: "宏观策略师",
-    /** 3.0.0：M9.P2 装上跨市场相关性 + regime 量化工具（factor.list macro + 沙箱） */
-    version: "3.0.0",
+    /**
+     * 3.0.0：M9.P2 装上跨市场相关性 + regime 量化工具（factor.list macro + 沙箱）
+     * 3.1.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
+     * sector/industry 找跨市场候选 ticker。
+     */
+    version: "3.1.0",
     systemPrompt: PROMPT_ANALYST_MACRO,
     tools: [
       "fetch_klines",
@@ -213,6 +242,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
+      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找跨市场候选 ticker
+      "run_screener",
       "edit_agent_pack",
       "call_mcp",
     ],

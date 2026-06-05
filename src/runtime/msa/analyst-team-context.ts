@@ -48,6 +48,24 @@ async function buildSingleSymbolSnapshot(
   exchange?: string
 ): Promise<string[]> {
   const blocks: string[] = [`### ${symbol}`];
+  /**
+   * 2026-06-05 监控复盘 #4 / B：fail-soft fallback 提示。
+   *
+   * 之前 fetch_klines 拉空 / 失败时，只 push 一句 `[行情] 拉取失败` 就完了，
+   * LLM 看到这条信息后通常的反应是：(1) 反复重试同 ticker → 浪费 token；
+   * (2) 编一个看起来合理的"假数据"（hallucination）继续分析；(3) 死磕同
+   * 个 ticker 不放手。
+   *
+   * 现在：拉空 / 失败一并附上明确的 fallback 行动建议，让 LLM 改走 discovery
+   * 路径（run_screener 找候选 + 重新提议 ticker → fetch_klines 验证），跟
+   * explore 模式的 prompt 保持一致。
+   */
+  const fallbackHint =
+    `[!important] 该 ticker 未能验证存在性。请按以下任一路径推进，不要再重试同 symbol：\n` +
+    `  1. 调 \`run_screener\` 按行业/估值/动量条件拿一组候选 ticker；\n` +
+    `  2. 调 \`factor.list\` / \`skill.search\` 复用本项目历史成功研究过的 ticker；\n` +
+    `  3. 自主提 1-3 个候选 ticker（同板块替代），用 \`fetch_klines\` 验证后再开展分析；\n` +
+    `  4. 若用户原意就是探索某主题/板块，可在 task summary 中明确告知"待用户确认具体标的"。`;
   try {
     const { bars, meta, error } = await queryKlines({
       symbol,
@@ -56,9 +74,9 @@ async function buildSingleSymbolSnapshot(
       limit: 250,
     });
     if (error) {
-      blocks.push(`[行情] 拉取失败：${error.message}`);
+      blocks.push(`[行情] 拉取失败：${error.message}`, fallbackHint);
     } else if (bars.length === 0) {
-      blocks.push("[行情] 未返回 K 线");
+      blocks.push(`[行情] 未返回 K 线（symbol \"${symbol}\" 可能不存在或当前数据源无覆盖）`, fallbackHint);
     } else {
       const snap = snapshotIndicators(bars, symbol);
       const last = bars[bars.length - 1];
@@ -72,7 +90,7 @@ async function buildSingleSymbolSnapshot(
       );
     }
   } catch (e) {
-    blocks.push(`[行情] 异常：${e instanceof Error ? e.message : String(e)}`);
+    blocks.push(`[行情] 异常：${e instanceof Error ? e.message : String(e)}`, fallbackHint);
   }
 
   try {
@@ -161,11 +179,13 @@ export async function buildAnalystTeamDataContext(params: {
     blocks.push(
       "### 自由探索：标的池待 LLM 自主选择",
       "[提示] 当前任务未绑定固定标的，**请勿在此处期待任何系统拉取的行情/新闻**。",
-      "请按以下步骤自主推进：",
-      "1. 调用 `factor.list` / `skill.search` / `search_memory` 复用历史成功路径；",
-      "2. 自主提出 1-3 个候选 ticker；",
-      "3. 用 `fetch_klines` 验证每个 ticker 真实存在 + 有足够日均成交额，无法验证立即剔除；",
-      "4. 选定后再开展基本面/技术面/情绪面分析。",
+      "请按以下步骤自主推进（**优先走步骤 1，不要直接乱猜 ticker 反复 fetch_klines**）：",
+      "1. **首选**：调 `run_screener` 按主题/板块拿一组真实候选 —— `universe: 'US' / 'CN-A' / 'HK' / 'ALL'`，" +
+        "`criteria.industry`（如 `'Semi'` / `'AI'` / `'Banks'` / `'Pharma'`）或 `criteria.sector`（如 `'Tech'` / `'Financials'`），" +
+        "`topN: 5`。screener 池含 200+ 真实 ticker 跨 US/CN/HK/Crypto，**不要担心拿不到**；返回 0 个看 `hint` 字段调参数。",
+      "2. **辅助**：`factor.list` / `skill.search` / `search_memory` 复用本项目历史成功研究过的 ticker；",
+      "3. 拿到候选后用 `fetch_klines` 验证每个 ticker 真实存在 + 有足够日均成交额，无法验证立即剔除；",
+      "4. 选定 1-3 个最终标的后再开展基本面/技术面/情绪面分析。",
       ""
     );
   } else {

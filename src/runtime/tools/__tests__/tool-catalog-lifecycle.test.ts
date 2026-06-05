@@ -17,13 +17,13 @@ describe("tool-catalog lifecycle metadata", () => {
 
   test("remaining stubs are labeled lifecycle=stub with a deprecationReason", () => {
     // Step 2 删除了 task_decompose / analyze_industry / analyze_policy / get_analyst_ratings 4 个纯 builtin stub
-    // 留下 5 个仍标 stub 的：connector stub (extract_event/score_sentiment) + 半 stub builtin (analyze_social_media/cleanup_ttl/run_screener)
+    // 留下 4 个仍标 stub 的：connector stub (extract_event/score_sentiment) + 半 stub builtin (analyze_social_media/cleanup_ttl)
+    // run_screener 已在 2026-06-05 监控复盘 #4 / C 升级为真实 universe（200+ ticker + sector/industry 过滤），不再是 stub
     const stubs = [
       "score_sentiment",
       "extract_event",
       "analyze_social_media",
       "cleanup_ttl",
-      "run_screener",
     ];
     for (const name of stubs) {
       const e = find(name);
