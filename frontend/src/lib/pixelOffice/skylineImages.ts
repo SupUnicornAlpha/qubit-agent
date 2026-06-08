@@ -1,13 +1,9 @@
+import shanghaiUrl from "../../assets/pixel-office/skyline-shanghai.png";
 import type { CitySkyline } from "./types";
 import type { SkylineDrawContext } from "./registry";
-import shanghaiUrl from "../../assets/pixel-office/skyline-shanghai.png";
-import nycUrl from "../../assets/pixel-office/skyline-nyc.png";
-import hongkongUrl from "../../assets/pixel-office/skyline-hongkong.png";
 
 const SKYLINE_SRC: Record<CitySkyline, string> = {
   shanghai: shanghaiUrl,
-  nyc: nycUrl,
-  hongkong: hongkongUrl,
 };
 
 const cache = new Map<CitySkyline, HTMLImageElement>();
@@ -35,7 +31,7 @@ export function onSkylineImagesReady(listener: () => void): () => void {
   return () => readyListeners.delete(listener);
 }
 
-/** 预加载三地窗外风景（办公室挂载时调用） */
+/** 预加载窗外风景（办公室挂载时调用） */
 export function preloadSkylineImages(): void {
   for (const city of Object.keys(SKYLINE_SRC) as CitySkyline[]) {
     loadOne(city);

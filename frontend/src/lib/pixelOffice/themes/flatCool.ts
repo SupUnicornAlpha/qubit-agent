@@ -2,7 +2,7 @@
  * Flat Cool 主题：v2 PNG 美术包（扁平猫 + 冷色 tech 办公室场景）。
  */
 
-import { modernAtlasManifest } from "./modern";
+import { anteaAtlasManifest } from "./anteaAtlas";
 import type { ThemeDescriptor } from "./types";
 
 export const flatCoolTheme: ThemeDescriptor = {
@@ -10,7 +10,8 @@ export const flatCoolTheme: ThemeDescriptor = {
   label: "扁平酷感",
   renderEngine: "asset",
   assetBundleId: "flat_cool",
-  atlas: modernAtlasManifest,
+  /** asset 主题不读 atlas，但 ThemeDescriptor 类型要求字段存在 */
+  atlas: anteaAtlasManifest,
   palette: {
     floor: "#1e293b",
     floorAlt: "#172033",

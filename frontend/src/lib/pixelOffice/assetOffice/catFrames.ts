@@ -22,30 +22,28 @@ export function catPoseForAction(action: CatAction, frame: number): CatPoseName 
   return "idle";
 }
 
+/**
+ * Resolve the precise (image, frame) for a given (breed, pose) using the
+ * frames.json built by `scripts/build-pixel-office-v2.ts`.
+ *
+ * Falls back to `idle` if the requested pose key is missing for that breed,
+ * which keeps rendering robust if a sheet is partially populated.
+ */
 export function resolveCatFrame(
   bundle: LoadedAssetBundle,
   breed: CatBreed,
-  pose: CatPoseName
+  pose: CatPoseName,
 ): { image: HTMLImageElement; frame: FrameRect } | null {
   const { cats } = bundle.manifest;
-  const poseCol = cats.poses.indexOf(pose);
-  if (poseCol < 0) return null;
-
   for (let si = 0; si < cats.sheets.length; si++) {
     const sheet = cats.sheets[si]!;
-    const row = sheet.breeds.indexOf(breed);
-    if (row < 0) continue;
+    if (sheet.breeds.indexOf(breed) < 0) continue;
     const image = bundle.catSheets[si];
     if (!image) return null;
-    return {
-      image,
-      frame: {
-        x: poseCol * cats.cellW,
-        y: row * cats.cellH,
-        w: cats.cellW,
-        h: cats.cellH,
-      },
-    };
+    const key = `${breed}_${pose}`;
+    const frame = sheet.frames[key] ?? sheet.frames[`${breed}_idle`];
+    if (!frame) return null;
+    return { image, frame };
   }
   return null;
 }

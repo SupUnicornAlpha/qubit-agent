@@ -49,6 +49,7 @@ import {
   applyThemeOverlay,
   ensureActiveAtlasLoaded,
   getActiveTheme,
+  getTheme,
   isAssetRenderTheme,
   listThemes,
   setActiveTheme,
@@ -73,7 +74,8 @@ const TeamAgentPhaserOffice = lazy(() =>
 
 type Engine = "canvas" | "phaser";
 const SERVER_ROLE = "__tools__";
-const CITY_IDS: CitySkyline[] = ["shanghai", "nyc", "hongkong"];
+/** Skyline locked to Shanghai; the toolbar city switcher was removed. */
+const FIXED_CITY: CitySkyline = "shanghai";
 
 type Props = {
   graph: AnalystTeamGraphPayload;
@@ -283,15 +285,11 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [size, setSize] = useState({ w: 800, h: 360 });
-  const [city, setCity] = useState<CitySkyline>("shanghai");
+  const city = FIXED_CITY;
   const [engine, setEngine] = useState<Engine>("canvas");
   const [themeId, setThemeId] = useState<string>(() => getActiveTheme().id);
   const [creditsOpen, setCreditsOpen] = useState(false);
   const themes = useMemo(() => listThemes(), []);
-  const cityOptions = useMemo(
-    () => CITY_IDS.map((id) => ({ id, label: t(`team.pixelOffice.cities.${id}`) })),
-    [t],
-  );
 
   const catsRef = useRef<Map<string, CatActor>>(new Map());
   const beamsRef = useRef<ChatBeam[]>([]);
@@ -311,10 +309,16 @@ export const TeamAgentPixelOffice: FC<Props> = ({
     [graph]
   );
 
-  const layout = useMemo(
-    () => computeOfficeLayout(agentNodes, size.w, size.h),
-    [agentNodes, size.w, size.h]
-  );
+  const layout = useMemo(() => {
+    const theme = getTheme(themeId) ?? getActiveTheme();
+    /**
+     * v2 资产主题的 scene-bg.png 把"墙↔地板"边界放在画布约 46% 处；
+     * legacy 程序化场景里则在 28% 处。给 layout 传不同 windowHRatio
+     * 才能让所有工位都坐落在可见地板上，而不是浮在后墙里。
+     */
+    const windowHRatio = isAssetRenderTheme(theme) ? 0.46 : 0.28;
+    return computeOfficeLayout(agentNodes, size.w, size.h, { windowHRatio });
+  }, [agentNodes, size.w, size.h, themeId]);
 
   useEffect(() => {
     preloadSkylineImages();
@@ -460,7 +464,7 @@ export const TeamAgentPixelOffice: FC<Props> = ({
 
       if (assetBundle) {
         drawAssetSceneBackground(ctx, w, h, assetBundle, city);
-        drawAssetShelfAndRack(ctx, assetBundle, layout);
+        drawAssetShelfAndRack(ctx, assetBundle, layout, w);
       } else {
         drawOfficeScene(ctx, w, h, city, layout, now, isRunning);
       }
@@ -674,18 +678,6 @@ export const TeamAgentPixelOffice: FC<Props> = ({
             </option>
           ))}
         </select>
-        <span className="qb-pixel-office-toolbar-divider" />
-        <span className="qb-pixel-office-toolbar-label">{t("team.pixelOffice.toolbar.city")}</span>
-        {cityOptions.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className={city === c.id ? "is-active" : ""}
-            onClick={() => setCity(c.id)}
-          >
-            {c.label}
-          </button>
-        ))}
         <span className="qb-pixel-office-toolbar-divider" />
         <button
           type="button"

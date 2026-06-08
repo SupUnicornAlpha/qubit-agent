@@ -150,7 +150,7 @@ function renderBackgroundLayer(
 
   if (assetBundle) {
     drawAssetSceneBackground(ctx, STAGE_W, STAGE_H, assetBundle, state.city);
-    drawAssetShelfAndRack(ctx, assetBundle, state.layout);
+    drawAssetShelfAndRack(ctx, assetBundle, state.layout, STAGE_W);
     const desks: Array<[string, DeskSlot]> = [...state.layout.desks];
     desks.sort((a, b) => a[1].depth - b[1].depth);
     for (const [role, desk] of desks) {
@@ -466,7 +466,9 @@ export async function createPhaserOffice(
   const Phaser = await loadPhaser();
   await ensureArkPixelLoaded();
 
-  const layout = computeOfficeLayout(initial.nodes, STAGE_W, STAGE_H);
+  const layout = computeOfficeLayout(initial.nodes, STAGE_W, STAGE_H, {
+    windowHRatio: isAssetRenderTheme() ? 0.46 : 0.28,
+  });
   const persp0 = computeOfficePerspective(STAGE_W, STAGE_H, layout.windowH);
   const state: PhaserRuntimeState = {
     Phaser,
@@ -578,6 +580,19 @@ export async function createPhaserOffice(
         invalidateSpriteAtlas();
         ensureActiveAtlasLoaded();
         ensureCatAtlasInScene(this);
+        /* 切换 legacy ↔ asset 时，layout 的 windowHRatio 需要重算，
+         * 否则 desk Y 仍是上一主题的取值，会出现"工位飘在墙上"。 */
+        state.layout = computeOfficeLayout(state.agentNodes, STAGE_W, STAGE_H, {
+          windowHRatio: isAssetRenderTheme() ? 0.46 : 0.28,
+        });
+        state.pathGrid = buildPathGrid(
+          state.layout,
+          computeOfficePerspective(STAGE_W, STAGE_H, state.layout.windowH),
+        );
+        for (const n of state.agentNodes) {
+          const desk = state.layout.desks.get(n.role);
+          if (desk) ensureCatRuntime(this, n, desk);
+        }
       });
 
       const plaqueX = STAGE_W / 2;
@@ -737,7 +752,9 @@ export async function createPhaserOffice(
       state.agentNodes = input.nodes;
 
       if ((nodesChanged || cityChanged) && scene) {
-        state.layout = computeOfficeLayout(input.nodes, STAGE_W, STAGE_H);
+        state.layout = computeOfficeLayout(input.nodes, STAGE_W, STAGE_H, {
+          windowHRatio: isAssetRenderTheme() ? 0.46 : 0.28,
+        });
         state.pathGrid = buildPathGrid(
           state.layout,
           computeOfficePerspective(STAGE_W, STAGE_H, state.layout.windowH)

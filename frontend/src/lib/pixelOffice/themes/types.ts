@@ -15,7 +15,7 @@ import type {
 } from "../../../assets/pixel-office/themes/modern/manifest";
 import type { AssetBundleId } from "../assetOffice/types";
 
-export type ThemeId = "modern" | "modern_night" | "cozy" | "comic_bc" | "flat_cool";
+export type ThemeId = "cozy" | "comic_bc" | "flat_cool";
 
 export type ThemeRenderEngine = "legacy" | "asset";
 

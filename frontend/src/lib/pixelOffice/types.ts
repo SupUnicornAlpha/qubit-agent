@@ -5,7 +5,7 @@ import type {
   AnalystTeamGraphToolCall,
 } from "../../api/types";
 
-export type CitySkyline = "nyc" | "shanghai" | "hongkong";
+export type CitySkyline = "shanghai";
 
 /** 猫咪当前动作（像素动画状态机） */
 export type CatAction =

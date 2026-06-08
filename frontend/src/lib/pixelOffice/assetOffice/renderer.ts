@@ -30,10 +30,6 @@ function blit(
   ctx.restore();
 }
 
-function propFrame(bundle: LoadedAssetBundle, name: string): FrameRect | null {
-  return bundle.manifest.props.frames[name] ?? null;
-}
-
 /** 全屏 cover 绘制场景背景（AI 生成的完整办公室层） */
 export function drawAssetSceneBackground(
   ctx: CanvasRenderingContext2D,
@@ -56,29 +52,52 @@ export function drawAssetSceneBackground(
   ctx.restore();
 }
 
+function propFrame(bundle: LoadedAssetBundle, name: string): FrameRect | null {
+  return bundle.manifest.props.frames[name] ?? null;
+}
+
+/**
+ * 在场景左/右两侧绘制书架与机柜。`layout.shelf.x` / `layout.rack.x` 在窄
+ * 画布上会贴得太近边缘，这里强制至少留 6% 画布宽度的内边距，避免被裁。
+ */
 export function drawAssetShelfAndRack(
   ctx: CanvasRenderingContext2D,
   bundle: LoadedAssetBundle,
-  layout: OfficeLayout
+  layout: OfficeLayout,
+  canvasW: number,
 ) {
   const { render } = bundle.manifest;
   const shelf = propFrame(bundle, "bookshelf");
   const rack = propFrame(bundle, "rack");
+  const margin = Math.max(72, canvasW * 0.06);
   if (shelf) {
     const s = render.shelfScaleBase * depthScale(layout.shelf.depth);
-    blit(ctx, bundle.props, shelf, layout.shelf.x, layout.shelf.y + 20, s);
+    const sw = shelf.w * s;
+    const sx = Math.max(margin + sw / 2, layout.shelf.x);
+    blit(ctx, bundle.props, shelf, sx, layout.shelf.y + 12, s);
   }
   if (rack) {
     const s = render.rackScaleBase * depthScale(layout.rack.depth);
-    blit(ctx, bundle.props, rack, layout.rack.x, layout.rack.y + 24, s);
+    const rw = rack.w * s;
+    const rx = Math.min(canvasW - margin - rw / 2, layout.rack.x);
+    blit(ctx, bundle.props, rack, rx, layout.rack.y + 12, s);
   }
-  ctx.fillStyle = "rgba(148, 163, 184, 0.85)";
-  ctx.font = pixelFont(Math.max(9, 11 * depthScale(layout.shelf.depth)));
-  ctx.textAlign = "center";
-  ctx.fillText("技能书架", layout.shelf.x, layout.shelf.y + 48 * depthScale(layout.shelf.depth));
-  ctx.fillText("MCP / 工具机架", layout.rack.x, layout.rack.y + 52 * depthScale(layout.rack.depth));
 }
 
+/**
+ * 每只猫的工位 = 选中光圈 + desk + monitor。
+ *
+ * 关键的视觉约束：cat sprite frame 由 bbox 紧贴 cat content 计算，但 cat
+ * 自身的轮廓边缘存在 1~2 像素的 anti-aliased 半透明像素带。如果 monitor
+ * 与 cat 的 x 范围有任何重叠，z-order 即使 cat 在前，cat 边缘的半透明
+ * 像素也会让下层 monitor 的山景图透出来，看起来就像"猫身上有半透明
+ * 图案"——这正是用户看到的怪象。
+ *
+ * 解决：把 desk + monitor 的中心 x 拉到 cat 中心右侧 75 * dScale，再把
+ * desk / monitor 的尺寸适当收缩，使 monitor 左沿落在 cat 右沿外侧、
+ * 完全不与 cat 的可见像素重合；desk 只与 cat 边缘有 1~2 px 接触，
+ * 视觉上像"猫站在自家工位旁边"。
+ */
 export function drawAssetWorkstation(
   ctx: CanvasRenderingContext2D,
   bundle: LoadedAssetBundle,
@@ -87,29 +106,38 @@ export function drawAssetWorkstation(
   screenMode: ScreenMode,
   depth: number,
   selected: boolean,
-  hot: boolean
+  hot: boolean,
 ) {
   const { render, props } = bundle.manifest;
   const dScale = depthScale(depth);
   const desk = propFrame(bundle, "desk");
   const monName = props.monitorByScreenMode[screenMode] ?? "monitor_idle";
-  const monitor = propFrame(bundle, monName);
+  const monitor = propFrame(bundle, monName) ?? propFrame(bundle, "monitor_idle");
 
-  if (selected) {
-    ctx.strokeStyle = "#60a5fa";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x - 40 * dScale, y - 56 * dScale, 80 * dScale, 64 * dScale);
-  }
-  if (hot) {
-    ctx.fillStyle = "rgba(56, 189, 248, 0.12)";
-    ctx.fillRect(x - 36 * dScale, y - 52 * dScale, 72 * dScale, 58 * dScale);
+  if (selected || hot) {
+    const rx = 38 * dScale;
+    const ry = 9 * dScale;
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(x, y + 4 * dScale, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = selected
+      ? "rgba(255, 215, 0, 0.22)"
+      : "rgba(56, 189, 248, 0.18)";
+    ctx.fill();
+    ctx.restore();
   }
 
+  const wsOffsetX = 75 * dScale;
+  let deskTopY = y;
   if (desk) {
-    blit(ctx, bundle.props, desk, x, y + 4, render.deskScaleBase * dScale);
+    const deskScale = render.deskScaleBase * dScale;
+    const deskH = desk.h * deskScale;
+    blit(ctx, bundle.props, desk, x + wsOffsetX, y, deskScale);
+    deskTopY = y - deskH;
   }
   if (monitor) {
-    blit(ctx, bundle.props, monitor, x, y - 6 * dScale, render.monitorScaleBase * dScale);
+    const monScale = render.monitorScaleBase * dScale;
+    blit(ctx, bundle.props, monitor, x + wsOffsetX, deskTopY + 4 * dScale, monScale);
   }
 }
 

@@ -65,16 +65,27 @@ function slotAt(
   return { x: pos.x, y: pos.y, depth: pos.depth };
 }
 
+export type OfficeLayoutOptions = {
+  /**
+   * 后墙高度占画布高度的比例（控制后排工位 y）。
+   * - legacy 程序化场景：0.28（默认，匹配画的窗户位置）
+   * - asset 主题：~0.46（匹配 v2 空办公室 PNG 的可见地板起点）
+   */
+  windowHRatio?: number;
+};
+
 /** 透视网格排布工位、书架、机架 */
 export function computeOfficeLayout(
   roles: ReadonlyArray<{ role: string }>,
   width: number,
-  height: number
+  height: number,
+  options?: OfficeLayoutOptions,
 ): OfficeLayout {
   const cfg = getRenderConfig();
   const fp = getStationFootprint(cfg);
 
-  const windowH = Math.max(90, Math.floor(height * 0.28));
+  const ratio = options?.windowHRatio ?? 0.28;
+  const windowH = Math.max(90, Math.floor(height * ratio));
   const floorY = height - FLOOR_STRIP;
   const p = computeOfficePerspective(width, height, windowH);
 

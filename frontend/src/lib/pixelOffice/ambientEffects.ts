@@ -21,20 +21,10 @@ type DustParticle = {
   twinkle: number;
 };
 
-type RainDrop = {
-  x: number;
-  y: number;
-  speed: number;
-  length: number;
-  alpha: number;
-};
-
 let dustPool: DustParticle[] | null = null;
-let rainPool: RainDrop[] | null = null;
 let lastInitDims = { w: 0, h: 0 };
 
 const DUST_COUNT = 36;
-const RAIN_COUNT = 60;
 
 function ensureDust(w: number, h: number): DustParticle[] {
   if (dustPool && lastInitDims.w === w && lastInitDims.h === h) return dustPool;
@@ -54,21 +44,6 @@ function ensureDust(w: number, h: number): DustParticle[] {
   return dustPool;
 }
 
-function ensureRain(w: number, h: number): RainDrop[] {
-  if (rainPool && rainPool.length === RAIN_COUNT) return rainPool;
-  rainPool = [];
-  for (let i = 0; i < RAIN_COUNT; i++) {
-    rainPool.push({
-      x: Math.random() * w,
-      y: Math.random() * h * 0.4,
-      speed: 4 + Math.random() * 4,
-      length: 6 + Math.random() * 8,
-      alpha: 0.18 + Math.random() * 0.3,
-    });
-  }
-  return rainPool;
-}
-
 /** 在天花板/窗户区域漂浮的背光尘粒（仅白天/暖橙主题） */
 export function drawDustParticles(
   ctx: CanvasRenderingContext2D,
@@ -77,9 +52,6 @@ export function drawDustParticles(
   now: number
 ): void {
   const theme = getActiveTheme();
-  // 夜间主题不画尘粒（视觉太"亮"），改用雨
-  if (theme.id === "modern_night") return;
-
   const dust = ensureDust(w, h);
   ctx.save();
   for (const p of dust) {
@@ -100,32 +72,14 @@ export function drawDustParticles(
   ctx.restore();
 }
 
-/** 夜间主题：窗外雨滴（在 windowH 区域内向右下飘） */
+/** v2 暂无内置 night 主题；保留 stub 以维持调用点签名稳定。 */
 export function drawRain(
-  ctx: CanvasRenderingContext2D,
-  w: number,
-  windowH: number,
-  _now: number
+  _ctx: CanvasRenderingContext2D,
+  _w: number,
+  _windowH: number,
+  _now: number,
 ): void {
-  if (getActiveTheme().id !== "modern_night") return;
-  const drops = ensureRain(w, windowH);
-  ctx.save();
-  ctx.strokeStyle = "rgba(186, 210, 240, 0.45)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (const d of drops) {
-    d.x += d.speed * 0.45;
-    d.y += d.speed;
-    if (d.y > windowH) {
-      d.y = -d.length;
-      d.x = Math.random() * w;
-    }
-    if (d.x > w) d.x = -d.length;
-    ctx.moveTo(d.x, d.y);
-    ctx.lineTo(d.x - d.length * 0.45, d.y - d.length);
-  }
-  ctx.stroke();
-  ctx.restore();
+  /* no-op */
 }
 
 /** 工位 work 时的键盘波纹（蓝色同心弧） */
@@ -255,6 +209,5 @@ export function drawAmbientLayer(
 /** 测试 / 主题切换时重置粒子池 */
 export function resetAmbientEffects(): void {
   dustPool = null;
-  rainPool = null;
   lastInitDims = { w: 0, h: 0 };
 }

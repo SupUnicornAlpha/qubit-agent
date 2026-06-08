@@ -702,8 +702,6 @@ const pack: LocalePack = {
         analysisOverlay: "● 分析进行中",
         cities: {
           shanghai: "上海",
-          nyc: "纽约",
-          hongkong: "香港",
         },
         credits: {
           dialogAriaLabel: "像素办公室美术与字体署名",

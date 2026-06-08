@@ -9,8 +9,6 @@ import {
 
 function cityLabel(cityId: string): string {
   if (cityId === "shanghai") return "上海 · 陆家嘴";
-  if (cityId === "nyc") return "纽约 · 曼哈顿";
-  if (cityId === "hongkong") return "香港 · 中环";
   return cityId;
 }
 

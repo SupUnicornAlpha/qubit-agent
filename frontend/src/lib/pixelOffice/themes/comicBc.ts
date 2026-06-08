@@ -2,7 +2,7 @@
  * Comic BC 主题：v2 PNG 美术包（漫画猫 + 暖色办公室场景）。
  */
 
-import { modernAtlasManifest } from "./modern";
+import { anteaAtlasManifest } from "./anteaAtlas";
 import type { ThemeDescriptor } from "./types";
 
 export const comicBcTheme: ThemeDescriptor = {
@@ -10,7 +10,8 @@ export const comicBcTheme: ThemeDescriptor = {
   label: "漫画办公室",
   renderEngine: "asset",
   assetBundleId: "comic_bc",
-  atlas: modernAtlasManifest,
+  /** asset 主题不读 atlas，但 ThemeDescriptor 类型要求字段存在 */
+  atlas: anteaAtlasManifest,
   palette: {
     floor: "#f0e6d4",
     floorAlt: "#e4d6bc",

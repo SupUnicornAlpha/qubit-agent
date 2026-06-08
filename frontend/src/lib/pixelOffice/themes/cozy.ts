@@ -3,14 +3,14 @@
  * 适合演示「下午茶时段」温馨氛围。
  */
 
-import { modernAtlasManifest } from "./modern";
+import { anteaAtlasManifest } from "./anteaAtlas";
 import type { ThemeDescriptor } from "./types";
 
 export const cozyTheme: ThemeDescriptor = {
   id: "cozy",
   label: "暖橙午后",
   renderEngine: "legacy",
-  atlas: modernAtlasManifest,
+  atlas: anteaAtlasManifest,
   palette: {
     floor: "#f3e3c8",
     floorAlt: "#e7d4b2",

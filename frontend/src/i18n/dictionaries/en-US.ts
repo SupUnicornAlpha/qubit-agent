@@ -713,8 +713,6 @@ const pack: LocalePack = {
         analysisOverlay: "● Analysis in progress",
         cities: {
           shanghai: "Shanghai",
-          nyc: "New York",
-          hongkong: "Hong Kong",
         },
         credits: {
           dialogAriaLabel: "Pixel office art & font credits",

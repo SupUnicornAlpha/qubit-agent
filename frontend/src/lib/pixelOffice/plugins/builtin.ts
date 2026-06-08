@@ -18,8 +18,6 @@ export function registerBuiltinPlugins(reg: PixelOfficeRegistry): void {
   preloadSkylineImages();
 
   reg.registerSkyline("shanghai", skylineWithImageFallback("shanghai"));
-  reg.registerSkyline("nyc", skylineWithImageFallback("nyc"));
-  reg.registerSkyline("hongkong", skylineWithImageFallback("hongkong"));
 
   reg.setSceneBackgroundRenderer((ctx, w, h, cityId, now) => {
     drawBuiltinSceneBackground(ctx, w, h, cityId, now, reg);
