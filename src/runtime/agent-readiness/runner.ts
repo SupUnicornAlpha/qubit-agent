@@ -17,8 +17,36 @@ import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
 import { collectSnapshot } from "./snapshot-collector";
 import { gradeSnapshot, type ReadinessSnapshot, type SnapshotGrade } from "./grader";
+import type { JudgeClient } from "./quality/content-judge";
 import { renderJsonReport, renderMarkdownReport } from "./reporters";
 import { getScenarioRecipe, type ScenarioRecipe } from "./scenarios";
+
+/**
+ * P2 优先级（Round 7 复盘 2026-06-08）：把 scenario 写到 workflow_run.research_scenario_id，
+ * 让 act.ts artifact gate 能反查"当前 scenario 是哪个"，进而调 scenario-expectations 检查
+ * requiredArtifacts 是否落库。在 wait/snapshot 之前调一次幂等 update。
+ *
+ * 这是 React loop artifact gate 的前置依赖；如果跳过这一步，act.ts 拿不到 scenarioKey →
+ * gate 退化为 no-op（fallback 老行为，安全）。
+ */
+async function tagWorkflowWithScenario(
+  workflowRunId: string,
+  scenarioKey: ScenarioRecipe["key"]
+): Promise<void> {
+  await getDb();
+  const sqlite = getSqliteForTesting();
+  try {
+    sqlite
+      .prepare("UPDATE workflow_run SET research_scenario_id = ? WHERE id = ?")
+      .run(scenarioKey, workflowRunId);
+  } catch (err) {
+    /** column 缺失或 workflow 不存在时不阻塞主流程；artifact gate 自动 fallback */
+    console.warn(
+      `[runner] tagWorkflowWithScenario failed (workflow=${workflowRunId}, scenario=${scenarioKey}):`,
+      err
+    );
+  }
+}
 
 export interface RunReadinessInput {
   scenario: ScenarioRecipe["key"];
@@ -29,6 +57,10 @@ export interface RunReadinessInput {
   waitTimeoutMs?: number;
   /** 轮询间隔（毫秒），默认 1500 */
   pollIntervalMs?: number;
+  /** 可选：A-3 LLM-as-Judge 客户端；不传则跳过 A-3 */
+  judgeClient?: JudgeClient;
+  /** 单 workflow 评的 artifact 上限 */
+  judgeMaxArtifacts?: number;
 }
 
 export interface RunReadinessResult {
@@ -60,6 +92,10 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
     outputDir: input.outputDir,
     ...(input.waitTimeoutMs !== undefined ? { waitTimeoutMs: input.waitTimeoutMs } : {}),
     ...(input.pollIntervalMs !== undefined ? { pollIntervalMs: input.pollIntervalMs } : {}),
+    ...(input.judgeClient ? { judgeClient: input.judgeClient } : {}),
+    ...(input.judgeMaxArtifacts !== undefined
+      ? { judgeMaxArtifacts: input.judgeMaxArtifacts }
+      : {}),
   });
 
   return { ...result, elapsedMs: Date.now() - startMs };
@@ -78,6 +114,8 @@ export interface RunReadinessFromIdInput {
   outputDir: string;
   waitTimeoutMs?: number;
   pollIntervalMs?: number;
+  judgeClient?: JudgeClient;
+  judgeMaxArtifacts?: number;
 }
 
 export async function runReadinessFromWorkflowId(
@@ -85,6 +123,12 @@ export async function runReadinessFromWorkflowId(
 ): Promise<RunReadinessResult> {
   const recipe = getScenarioRecipe(input.scenario);
   const startMs = Date.now();
+
+  /**
+   * P2 优先级：在等待之前先 tag scenario，确保 react loop 早期就能查到。
+   * 幂等：多次调用结果一致；wait/snapshot 不受影响。
+   */
+  await tagWorkflowWithScenario(input.workflowRunId, recipe.key);
 
   const { status, timedOut } = await waitForTerminal({
     workflowRunId: input.workflowRunId,
@@ -96,6 +140,10 @@ export async function runReadinessFromWorkflowId(
   const snapshot = await collectSnapshot({
     workflowRunId: input.workflowRunId,
     scenario: recipe.key,
+    ...(input.judgeClient ? { judgeClient: input.judgeClient } : {}),
+    ...(input.judgeMaxArtifacts !== undefined
+      ? { judgeMaxArtifacts: input.judgeMaxArtifacts }
+      : {}),
   });
   const grade = gradeSnapshot(snapshot);
 

@@ -333,19 +333,24 @@ export const DISCOVERY_GROUP: BuiltinAgentGroupSpec = {
 };
 
 /**
- * 实盘交易：orchestrator + risk。
+ * 实盘交易：orchestrator + research + risk。
  *
  * 评估报告 P2-F：原 memberRoles 写 execution_trader + risk_manager 都是退役
  * role，且与 memberDefinitionIds 完全不一致——def-execution-trader 已退役，
- * 当前实盘路径走的是 risk 签核 + monitor 兜底，并无专门执行 agent；
- * UI 显示两个不存在 role 会让用户困惑。如需重建实盘 agent，请新建 def。
+ * 当前实盘路径走的是 risk 签核 + monitor 兜底；如需重建实盘 agent，请新建 def。
+ *
+ * 2026-06-08 P0-1.c (Round 6 复盘)：旧成员只有 orchestrator + risk，Round 6 实测
+ * 整个团队 4 step 就停，0 个 order_intent 落库——风险评估完没人下单。
+ * 现加入 def-research：研究员在 paper mode 下用 order.create_intent 落单（risk
+ * 仍负责签核 + pre-trade 检查），完成"研究 → 风控 → 下单"完整链路。
  */
 export const LIVE_TRADING_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-live-trading",
   name: "实盘交易",
-  description: "实盘下单、监控、风控记录；走 Live 闸门与 HMAC 签名。",
-  memberDefinitionIds: ["def-orchestrator", "def-risk"],
-  memberRoles: ["orchestrator", "risk"],
+  description:
+    "research 负责 strategy.create_version + order.create_intent 下单；risk 负责签核与 pre-trade 风险检查。默认走 paper（dispatch_mode='paper'），实盘前必须人工 review。",
+  memberDefinitionIds: ["def-orchestrator", "def-research", "def-risk"],
+  memberRoles: ["orchestrator", "research", "risk"],
   pipelineKind: "sequential_research",
 };
 

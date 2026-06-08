@@ -556,6 +556,27 @@ export class FactorService {
     for (const v of values) symbolSet.add(v.symbol);
     const symbols = Array.from(symbolSet);
 
+    /**
+     * P0-3 修（Round 6 复盘）：IC/RankIC 是 **cross-section** 指标，每日横截面需要
+     * ≥3 个 symbols 才能计算 Pearson/Spearman。
+     *
+     * Round 6 实测 LLM 用单个 AAPL + horizon=60 跑 autoEvaluate，loadValues 拿到 238 行
+     * (单 symbol × 238 day)，下游 dailyIcSeries 第 145 行因 `p.xs.length < 3` 全跳过
+     * → ics.length === 0 → provider 返回 `error: "sample_size_too_small"` + ic=0/rankIc=0/ir=0。
+     *
+     * 工具层（builtin-tools.ts）已经从入参 symbols 拦了一道，这里是**入参绕过 / Agent 复用
+     * 旧 factor_id 没传 symbols** 时的最终防线 —— 提前抛出，避免脏 0 流入 factor_evaluation
+     * 与下游 strategy.compose 的 IC-weighted 算法。
+     */
+    if (symbols.length < 3) {
+      throw new FactorServiceError(
+        "validation_failed",
+        `cross_section_too_few_symbols: factor=${f.id} 当前 factor_value 只覆盖 ${symbols.length} 只 symbols (${symbols
+          .slice(0, 5)
+          .join(",")}); IC/RankIC 是横截面指标，至少需要 3 只 symbols（推荐 ≥ 10）。请重跑 factor.compute 并传入 ≥3 只 symbols（如 ["AAPL","MSFT","NVDA","GOOG","META"]）再评估。`
+      );
+    }
+
     // 2) 拉行情 → 算多期未来收益
     const closesBySymbol = new Map<string, { dates: string[]; closes: number[] }>();
     const maxHorizon = Math.max(horizon, ...decayHorizons);
@@ -596,6 +617,30 @@ export class FactorService {
       ...(input.providerKey ? { providerKey: input.providerKey } : {}),
       ...(input.scope ? { scope: input.scope } : {}),
     });
+
+    /**
+     * P0-3 修（Round 6 复盘）：当 provider 返回 result.error（如 sample_size_too_small / no_future_returns）
+     * 时，旧实现把 `{ ic:0, rankIc:0, ir:0, error:"sample_size_too_small" }` 直接 return 给上层 builtin tool，
+     * 而 tool 层把它包成 `{ result:"ok", builtinResult:{...} }`，LLM 看到 "ok" 顶层就以为评估成功，把 0
+     * 当真实指标写进 strategy / signal —— 这是 Round 6 strategy 链路 IC=0 的根因。
+     *
+     * 修复：result.error 存在时 throw FactorServiceError，让 builtin tool dispatcher 把它当工具失败上报，
+     * LLM 在下一轮 reason 时能看到清晰错误消息并改用更多 symbols 重试。
+     *
+     * 注意：evaluate() 已经把含 error 的行写进 factor_evaluation 表（保留审计痕迹），上层抛错不影响留痕。
+     */
+    if (result.error) {
+      throw new FactorServiceError(
+        "validation_failed",
+        `factor_evaluation_invalid: ${result.error}; sample_size=${result.sampleSize}; horizon=${horizon}; ` +
+          `symbols=${symbols.length} (${symbols.slice(0, 5).join(",")}); ` +
+          (result.error === "sample_size_too_small"
+            ? "IC/RankIC 是横截面指标，至少需要 3 只 symbols 才能计算（推荐 ≥ 10）。请改用更宽的 universe 重跑 factor.compute + factor.autoEvaluate。"
+            : "请检查数据完整性、horizon 选择是否合理、symbols 数量是否足够。"),
+        { factorId: f.id, evaluationId: result.evaluationId }
+      );
+    }
+
     return { ...result, meta: { horizonDays: horizon, decayHorizons } };
   }
 

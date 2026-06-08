@@ -77,6 +77,7 @@ import {
   type HitlApprovalPayload,
 } from "../workflow/hitl-service";
 import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
+import { buildGroupRoleConstraintHint } from "./group-constraint-hint";
 
 /**
  * v2：把用户在 HITL 卡片提交的 response 拼成给下游分析师的上下文片段。
@@ -672,10 +673,16 @@ async function runAnalystTeamCore(params: {
    */
   let relationEdges: TeamRelationEdge[] = [];
   let pipelineKind: AgentGroupPipelineKind = "msa_fusion";
+  /**
+   * P1 Round 7 复盘（2026-06-08）：拿到 group.description 用于按 (groupId, role)
+   * 算编组级硬约束 hint，注入到 slot 派单的 userGoal。详见 group-constraint-hint.ts。
+   */
+  let groupDescription: string | null = null;
   if (effectiveGroupId) {
     const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, effectiveGroupId)).limit(1);
     if (grp[0]) {
       relationEdges = parseGroupRelationsWithOrchestrator(grp[0].relationsJson);
+      groupDescription = grp[0].description ?? null;
       const rawKind = (grp[0] as { pipelineKind?: string | null }).pipelineKind;
       if (
         rawKind === "msa_fusion" ||
@@ -821,6 +828,11 @@ async function runAnalystTeamCore(params: {
             context: ctx,
             ...(preInstanceId !== undefined ? { agentInstanceId: preInstanceId } : {}),
             expectJsonSignal: true,
+            groupConstraintHint: buildGroupRoleConstraintHint({
+              groupId: effectiveGroupId,
+              role: slot.role,
+              groupDescription,
+            }),
           });
           /**
            * 2026-05-26 修复：旧逻辑无脑 cast 成 analyst payload，遇到 LLM 输出
@@ -1133,6 +1145,11 @@ async function runAnalystTeamCore(params: {
           scope,
           context: ctx,
           expectJsonSignal: false,
+          groupConstraintHint: buildGroupRoleConstraintHint({
+            groupId: effectiveGroupId,
+            role: slot.role,
+            groupDescription,
+          }),
         });
         return out.kind === "markdown" ? out.body : "";
       },

@@ -49,7 +49,7 @@ describe("tool-catalog lifecycle metadata", () => {
       { name: "factor.evaluate", replacedBy: "factor.autoEvaluate" },
       { name: "compute_factors", replacedBy: "factor.compute" },
       { name: "run_experiment", replacedBy: "factor.autoEvaluate" },
-      { name: "version_strategy", replacedBy: "strategy.compose" },
+      { name: "version_strategy", replacedBy: "strategy.create_version" },
     ];
     const catalogNames = new Set(buildToolCatalog().map((e) => e.name));
     for (const { name, replacedBy } of cases) {
@@ -101,7 +101,7 @@ describe("resolveToolAlias (Step 3 — deprecated 别名透明跳转)", () => {
       { from: "factor.evaluate", to: "factor.autoEvaluate" },
       { from: "compute_factors", to: "factor.compute" },
       { from: "run_experiment", to: "factor.autoEvaluate" },
-      { from: "version_strategy", to: "strategy.compose" },
+      { from: "version_strategy", to: "strategy.create_version" },
     ];
     for (const { from, to } of cases) {
       const r = resolveToolAlias(from);

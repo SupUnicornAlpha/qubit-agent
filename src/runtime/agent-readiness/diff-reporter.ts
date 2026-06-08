@@ -28,7 +28,22 @@ const ICON: Record<MetricGrade, string> = {
   red: "❌",
 };
 
-const METRIC_ORDER = ["O-1", "T-1", "T-3", "T-6", "S-1", "M-1"];
+function gradeIcon(g: MetricGrade | null | undefined): string {
+  if (!g) return "—";
+  return ICON[g];
+}
+function gradeText(g: MetricGrade | null | undefined): string {
+  return g ?? "n/a";
+}
+
+/** v2 顺序：AQM 主指标在前，LEGACY 在后 */
+const METRIC_ORDER = [
+  "A-1", "A-2", "A-3", "A-4",
+  "B-1", "B-2", "B-3", "B-7",
+  "C-1", "C-2", "C-3-total", "C-3-p95", "C-5",
+  "D-1", "D-2", "D-3",
+  "O-1", "T-1", "T-3", "T-6", "S-1", "M-1",
+];
 
 export function renderDiffMarkdown(pair: DiffSnapshotPair): string {
   const baseGrade = gradeSnapshot(pair.base.snapshot);
@@ -49,13 +64,13 @@ export function renderDiffMarkdown(pair: DiffSnapshotPair): string {
   for (const id of METRIC_ORDER) {
     const bv = pair.base.snapshot.metrics[id] ?? null;
     const tv = pair.target.snapshot.metrics[id] ?? null;
-    const bg = baseGrade.metricGrades[id] ?? "red";
-    const tg = targetGrade.metricGrades[id] ?? "red";
+    const bg = baseGrade.metricGrades[id] ?? null;
+    const tg = targetGrade.metricGrades[id] ?? null;
     const delta = formatDelta(bv, tv);
     const changed = delta !== "";
     if (changed || bg !== tg) anyChange = true;
     lines.push(
-      `| ${id} | ${formatValue(bv)} | ${formatValue(tv)} | ${delta || "·"} | ${ICON[bg]} ${bg} → ${ICON[tg]} ${tg} |`
+      `| ${id} | ${formatValue(bv)} | ${formatValue(tv)} | ${delta || "·"} | ${gradeIcon(bg)} ${gradeText(bg)} → ${gradeIcon(tg)} ${gradeText(tg)} |`
     );
   }
   lines.push("");
@@ -69,8 +84,8 @@ export function renderDiffMarkdown(pair: DiffSnapshotPair): string {
     for (const id of METRIC_ORDER) {
       const bv = pair.base.snapshot.metrics[id] ?? null;
       const tv = pair.target.snapshot.metrics[id] ?? null;
-      const bg = baseGrade.metricGrades[id] ?? "red";
-      const tg = targetGrade.metricGrades[id] ?? "red";
+      const bg = baseGrade.metricGrades[id] ?? null;
+      const tg = targetGrade.metricGrades[id] ?? null;
       if (formatDelta(bv, tv) === "" && bg === tg) continue;
       lines.push(`- **${id}**：${interpret(id, bv, tv, bg, tg)}`);
     }
@@ -105,8 +120,8 @@ function interpret(
   id: string,
   bv: number | null,
   tv: number | null,
-  bg: MetricGrade,
-  tg: MetricGrade
+  bg: MetricGrade | null,
+  tg: MetricGrade | null
 ): string {
   const direction =
     bv === null || tv === null
@@ -116,6 +131,6 @@ function interpret(
         : tv < bv
           ? "下降"
           : "持平";
-  const gradeShift = bg === tg ? "等级未变" : `等级 ${bg} → ${tg}`;
+  const gradeShift = bg === tg ? "等级未变" : `等级 ${gradeText(bg)} → ${gradeText(tg)}`;
   return `${formatValue(bv)} → ${formatValue(tv)}（${direction}），${gradeShift}`;
 }

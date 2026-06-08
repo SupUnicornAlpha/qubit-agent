@@ -22,6 +22,12 @@ import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { agentLlmConfigToSampling } from "../../llm/agent-llm-config";
 import type { LlmTokenUsage } from "../../llm/gateway";
 import { invokeWithFallback, resolveLlmForAgent } from "../../llm/llm-router";
+import {
+  compactObservations,
+  computePromptBudget,
+  estimateTokens,
+  getContextWindow,
+} from "../../llm/token-budget";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
@@ -207,7 +213,16 @@ export async function reasonNode(
     JSON.stringify(state.inboundMessage.payload);
   const slotContext = typeof payloadParams.context === "string" ? payloadParams.context.trim() : "";
   const slotTicker = typeof payloadParams.ticker === "string" ? payloadParams.ticker.trim() : "";
-  const previousObservations = state.observations.slice(-3);
+
+  /**
+   * P1-6（Round 6 复盘 2026-06-08）：observations 旧逻辑 `slice(-3)` 简单粗暴：
+   *   - 不读模型真实 contextWindow（128K / 200K / 400K / 1M 一刀切）
+   *   - 不处理单条爆炸（fetch_klines 一次几 K token）
+   *   - 不在超 budget 时给早期步骤留 stub，让 LLM 一进新轮就"失忆"
+   *
+   * 现在按模型 contextWindow 算 budget，把 observations 压缩到余量内，保留最近 6 步。
+   * 实测 strategy / live_trading p95 74K → 应该能降到 40-50K 量级，给后续 thoughts 留 buffer。
+   */
   const sessionContext = await loadSessionContext(state.workflowId);
 
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
@@ -357,6 +372,66 @@ export async function reasonNode(
     }
   }
 
+  /**
+   * P1-6：在拼接 userPrompt 之前算 prompt budget，把 observations 压缩到余量内。
+   *
+   * fixedPromptTokens：粗略估算 userPrompt 静态部分（goal + context + skill block + session）+
+   * 留出 systemPrompt 大头（保守 8K，实际 6K-12K 浮动）。我们不解 systemPrompt 字符串
+   * （那段比较稳定，按经验值预留），重点压缩 observations 这条最易爆炸的尾巴。
+   */
+  const fixedSnippet = [
+    typeof payloadGoal === "string" ? payloadGoal : JSON.stringify(payloadGoal),
+    slotTicker,
+    slotContext.slice(0, 12000),
+    recalledSkillsBlock,
+    recalledExperienceBlock,
+    pnlAwareSkillBlock,
+    sessionContext.join("\n"),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const fixedPromptTokens = estimateTokens(fixedSnippet) + 8_000; // 8K 给 systemPrompt
+  const contextWindow = getContextWindow(modelConfig.model);
+  /**
+   * maxOutputTokens：尊重 agent 的 llmConfig（默认 4096）。compactor 用 8192 做保守估算
+   * 防止 length-retry 自动翻倍后超 window。
+   */
+  const sampledMaxOut = (() => {
+    const cfg = state.agentDefinition.llmConfig;
+    if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
+      const v = (cfg as Record<string, unknown>)["maxOutputTokens"];
+      if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.max(v, 8_192);
+    }
+    return 8_192;
+  })();
+  const promptBudget = computePromptBudget({
+    contextWindow,
+    maxOutputTokens: sampledMaxOut,
+  });
+
+  const compactedResult = compactObservations(state.observations, {
+    fixedPromptTokens,
+    promptBudget,
+    keepRecent: 6,
+    maxCharsPerObservation: 4_000,
+  });
+  const previousObservations = compactedResult.observations;
+  if (
+    process.env["DEBUG_TOKEN_BUDGET"] ||
+    compactedResult.actions.droppedEarly > 0 ||
+    compactedResult.actions.truncatedPerItem > 0
+  ) {
+    /** 命中压缩动作时打 info 日志，便于监控 */
+    console.log(
+      `[reason] token-budget compact: role=${state.agentDefinition.role} ` +
+        `model=${modelConfig.model} window=${contextWindow} budget=${promptBudget} ` +
+        `fixed=${fixedPromptTokens} obsTokens=${compactedResult.estimatedTokens} ` +
+        `truncated=${compactedResult.actions.truncatedPerItem} ` +
+        `dropped=${compactedResult.actions.droppedEarly} ` +
+        `kept=${compactedResult.actions.keptRecent}/${state.observations.length}`
+    );
+  }
+
   const userPromptParts = [
     `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
     "",
@@ -372,7 +447,7 @@ export async function reasonNode(
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "",
     previousObservations.length
-      ? `\n**历史观测（最近 ${previousObservations.length} 步）**：\n${JSON.stringify(previousObservations, null, 2)}`
+      ? `\n**历史观测（共 ${state.observations.length} 步，按 token 预算压缩到最近 ${previousObservations.length} 条；早期已 stub 化）**：\n${JSON.stringify(previousObservations, null, 2)}`
       : "",
     state.iteration > 1 ? `\n**当前迭代**：第 ${state.iteration} 轮` : "",
   ];

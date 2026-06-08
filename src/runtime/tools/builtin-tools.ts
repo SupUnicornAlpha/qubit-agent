@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
@@ -51,6 +51,13 @@ import { runStockScreener } from "../screener/stock-screener";
 import { skillService } from "../skills/skill-service";
 import { strategyComposer } from "../strategy/strategy-composer";
 import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
+import {
+  strategy as strategyTable,
+  strategyVersion as strategyVersionTable,
+  instrument as instrumentTable,
+} from "../../db/sqlite/schema";
+import { createOrderIntentWithExecution } from "../execution/order-intent-service";
+import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import { parseHitlApproval } from "../workflow/hitl-service";
 import { isLikelyProjectIdFormat } from "../langgraph/nodes/project-id";
 import { resolveConnectorForTool } from "./tool-routes";
@@ -991,6 +998,35 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const symbols = Array.isArray(symbolsRaw)
       ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       : undefined;
+
+    /**
+     * P0-3 修（Round 6 复盘）：早拦 cross-section symbol 不足。
+     *
+     * Round 6 实测 LLM 用已存在的 factor_id + `symbols=["AAPL"]` 直接调 autoEvaluate
+     * （**纯 evaluate 路径**，不走一步式 register+compute），下游 IC=0/RankIC=0/IR=0，
+     * 但顶层 result="ok" → LLM 把脏 0 写进 strategy。在工具入口就抛清晰错误。
+     *
+     * 范围限制：**仅纯 evaluate 路径** 校验（即用户传 factor_id 而非一步式 expr）。
+     * 一步式（exprRaw 非空 → 先 register+compute）放过，让 service 层 cross_section_too_few_symbols
+     * 在 evaluate 之前兜底；这样既不破坏一步式的合法测试入参，又能在 LLM 直接 evaluate 时教育它。
+     *
+     * 允许例外：LLM 没传 symbols（symbols=undefined）→ service 层用 factor_value 表里
+     * 已存在的全部 symbols（factor.compute 时录的），service 层会做最终防线检查。
+     */
+    const isOneShot = exprRaw.trim().length > 0 && !pickFactorId(params);
+    if (
+      !isOneShot &&
+      symbols !== undefined &&
+      symbols.length > 0 &&
+      symbols.length < 3
+    ) {
+      throw new Error(
+        `factor.autoEvaluate: symbols 数量过少（当前 ${symbols.length} 只: ${symbols.join(",")}）。` +
+          "IC/RankIC 是 **横截面** 指标，每日至少需要 3 只 symbols 才能计算 Pearson/Spearman；推荐 ≥ 10 只。" +
+          '请改用 ≥3 只 symbols 重跑，例如 ["AAPL","MSFT","NVDA","GOOG","META"]，或不传 symbols（用 factor.compute 时录入的全部 symbols）。'
+      );
+    }
+
     const decayRaw = params.decay_horizons;
     const decayHorizons = Array.isArray(decayRaw)
       ? decayRaw.filter((n): n is number => typeof n === "number")
@@ -1386,6 +1422,277 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       maxStdoutBytes,
       ...(returnVar ? { returnVar } : {}),
     });
+  },
+
+  /**
+   * P0-1.b（Round 6 复盘新增 2026-06-08）：让 strategy 场景的多 agent 团队能"落最后一公里"。
+   *
+   * Round 6 实测 grp-strategy-pipeline 跑了 18 step / 13 tool call，分析师把 factor 全 register
+   * 完了，但 strategy_author **没有任何工具能写 strategy / strategy_version 表** —— `strategy.compose`
+   * 强制要先有 strategyVersionId（来自 indicator_strategy_script 派生路径），而 ReAct loop 里没人帮 agent
+   * 创建占位 version → 整个 strategy 链路最终 fusion 写完 analyst_signal 就停了，DB 0 行 strategy_version。
+   *
+   * 这个工具补齐 author 路径：
+   *   1) 先 ensure 该 project 下有 strategy（按 name 幂等 lookup，不存在则插入）
+   *   2) 然后插入新的 strategy_version（versionTag 自增 v1/v2/...）
+   *   3) 把 workflow_run_id 挂上（让产物侧栏按工作流过滤）
+   *   4) 返回 strategyVersionId 给 LLM，让它紧接着调 strategy.compose 完成组装
+   *
+   * 入参：
+   *   - name (必填)：策略名（同 project 内幂等）
+   *   - style (可选)：'low_freq'|'mid_freq'|'high_freq'|'options'|'futures'，默认 low_freq
+   *   - description (可选)：策略描述
+   *   - universe (可选)：universe 标记，影响 paramSchemaJson 留痕，但不影响 strategy_version 唯一性
+   *   - version_tag (可选)：手动指定（默认按已有 version 数自增 v{N+1}）
+   *
+   * 返回：{ strategyId, strategyVersionId, versionTag }
+   */
+  "strategy.create_version": async (ctx, params) => {
+    const name = String(params.name ?? "").trim();
+    if (!name) {
+      throw new Error("strategy.create_version: name (策略名) is required");
+    }
+    /**
+     * projectId 解析：优先 ctx（来自 workflow_run.project_id），其次 params 显式传入；
+     * 与 factor.register 完全一致的优先级，避免 LLM 用错。
+     */
+    const fromParams = String(params["project_id"] ?? "").trim();
+    const projectId = ctx.projectId
+      ? ctx.projectId
+      : isLikelyProjectIdFormat(fromParams)
+        ? fromParams
+        : "";
+    if (!projectId) {
+      throw new Error(
+        "strategy.create_version: 缺少 project_id。请在 chat / workflow context 中确保 ctx.projectId 已挂载，或显式传 project_id。"
+      );
+    }
+
+    type StrategyStyle = "low_freq" | "mid_freq" | "high_freq" | "options" | "futures";
+    const styleRaw = String(params.style ?? "low_freq").trim() as StrategyStyle;
+    const allowedStyles: StrategyStyle[] = [
+      "low_freq",
+      "mid_freq",
+      "high_freq",
+      "options",
+      "futures",
+    ];
+    if (!allowedStyles.includes(styleRaw)) {
+      throw new Error(
+        `strategy.create_version: style 必须是 ${allowedStyles.join("/")} 之一，收到: ${styleRaw}`
+      );
+    }
+    const description = String(params.description ?? "").trim();
+    const universe = String(params.universe ?? "").trim();
+
+    const db = await getDb();
+
+    /** 1) ensure strategy（按 (projectId, name) 幂等） */
+    const existing = await db
+      .select()
+      .from(strategyTable)
+      .where(
+        and(
+          eq(strategyTable.projectId, projectId),
+          eq(strategyTable.name, name)
+        )
+      )
+      .limit(1);
+    let strategyId: string;
+    if (existing[0]) {
+      strategyId = existing[0].id;
+    } else {
+      strategyId = randomUUID();
+      await db.insert(strategyTable).values({
+        id: strategyId,
+        projectId,
+        name,
+        style: styleRaw,
+        description: description || `Created by ${ctx.definition.role} via strategy.create_version`,
+      });
+    }
+
+    /** 2) 计算 versionTag（默认 v{count+1}） */
+    const existingVersions = await db
+      .select()
+      .from(strategyVersionTable)
+      .where(eq(strategyVersionTable.strategyId, strategyId));
+    const explicitTag = String(params.version_tag ?? "").trim();
+    const versionTag = explicitTag || `v${existingVersions.length + 1}`;
+    /** 同 strategyId 下 versionTag 必须唯一（不限 schema unique，但语义上重复会迷惑下游） */
+    if (existingVersions.some((v) => v.versionTag === versionTag)) {
+      throw new Error(
+        `strategy.create_version: versionTag "${versionTag}" 已存在于 strategy ${strategyId}; 显式传一个新的 version_tag 或留空让系统自增。`
+      );
+    }
+
+    /** 3) 插 strategy_version */
+    const strategyVersionId = randomUUID();
+    const paramSchemaJson: Record<string, unknown> = {
+      createdBy: ctx.definition.role,
+      ...(universe ? { universe } : {}),
+      ...(params.params && typeof params.params === "object" && !Array.isArray(params.params)
+        ? { params: params.params as Record<string, unknown> }
+        : {}),
+    };
+    /** logicHash 暂取 versionId 短前缀 — composer.define 后会被 composition 真正定锚 */
+    await db.insert(strategyVersionTable).values({
+      id: strategyVersionId,
+      strategyId,
+      versionTag,
+      logicHash: `pending-${strategyVersionId.slice(0, 8)}`,
+      paramSchemaJson: paramSchemaJson as never,
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+    });
+
+    return {
+      strategyId,
+      strategyVersionId,
+      versionTag,
+      next_steps:
+        "已创建空的 strategy_version。下一步：调 strategy.compose({strategy_version_id, kind, factor_ids, weight_method, ...}) 真正定义策略组合。",
+    };
+  },
+
+  /**
+   * P0-1.c（Round 6 复盘新增 2026-06-08）：让 live_trading 场景的 trader 能"落最后一公里"。
+   *
+   * Round 6 实测 grp-live-trading 只跑 4 step 就停了，因为 trader 完全没有"写 order_intent"的工具。
+   * createOrderIntentWithExecution 服务齐全（含 pre-trade risk 检查 + paper/live 分发），
+   * 但仅供后端 webhook / strategy runtime 内部调用，从未暴露给 LLM。
+   *
+   * 这个工具薄包装该服务，默认走 paper 模式（dispatchMode='paper'）安全。trader agent 在 compose
+   * 完 strategy 后可以一步落单：strategy.create_version → strategy.compose → order.create_intent。
+   *
+   * 入参：
+   *   - strategy_version_id (必填)：来自 strategy.create_version
+   *   - symbol (必填)：交易标的（如 AAPL）
+   *   - side (必填)：'buy' | 'sell'
+   *   - qty (必填，> 0)：下单数量
+   *   - order_type (可选)：'market' | 'limit'（默认 market）
+   *   - price (limit 必填)：限价
+   *   - time_in_force (可选)：'day' | 'gtc'（默认 day）
+   *   - market (可选)：'US' | 'CN' 等（用于 instrument 解析；默认 US）
+   *   - dispatch_mode (可选)：'paper' | 'live'（默认 paper，安全起见）
+   *
+   * 返回：{ orderIntentId, executionTaskId, riskOutcome, riskReason, riskReviewTicketId }
+   */
+  "order.create_intent": async (ctx, params) => {
+    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    if (!strategyVersionId) {
+      throw new Error(
+        "order.create_intent: strategy_version_id is required。先调 strategy.create_version 拿到 id。"
+      );
+    }
+    const symbol = String(params.symbol ?? "").trim();
+    if (!symbol) {
+      throw new Error("order.create_intent: symbol (交易标的) is required");
+    }
+    const sideRaw = String(params.side ?? "").trim().toLowerCase();
+    if (sideRaw !== "buy" && sideRaw !== "sell") {
+      throw new Error(`order.create_intent: side 必须是 'buy' 或 'sell'，收到: ${sideRaw}`);
+    }
+    const side: OrderSide = sideRaw as OrderSide;
+    const qty = Number(params.qty ?? 0);
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error(`order.create_intent: qty 必须是正数，收到: ${qty}`);
+    }
+    const orderTypeRaw = String(params.order_type ?? "market").trim().toLowerCase();
+    if (orderTypeRaw !== "market" && orderTypeRaw !== "limit") {
+      throw new Error(
+        `order.create_intent: order_type 必须是 'market' 或 'limit'，收到: ${orderTypeRaw}`
+      );
+    }
+    const orderType: OrderType = orderTypeRaw as OrderType;
+    const priceRaw = params.price;
+    const price =
+      priceRaw !== undefined && priceRaw !== null && Number.isFinite(Number(priceRaw))
+        ? Number(priceRaw)
+        : null;
+    if (orderType === "limit" && price === null) {
+      throw new Error("order.create_intent: order_type=limit 时必须传 price (limit 价)");
+    }
+    const tifRaw = String(params.time_in_force ?? "day").trim().toLowerCase();
+    const tifAllowed: TimeInForce[] = ["day", "gtc", "ioc", "fok"];
+    if (!tifAllowed.includes(tifRaw as TimeInForce)) {
+      throw new Error(
+        `order.create_intent: time_in_force 必须是 ${tifAllowed.join("/")} 之一，收到: ${tifRaw}`
+      );
+    }
+    const timeInForce: TimeInForce = tifRaw as TimeInForce;
+    const market = String(params.market ?? "US").trim();
+    const dispatchModeRaw = String(params.dispatch_mode ?? "paper").trim().toLowerCase();
+    if (dispatchModeRaw !== "paper" && dispatchModeRaw !== "live") {
+      throw new Error(
+        `order.create_intent: dispatch_mode 必须是 'paper' 或 'live'，收到: ${dispatchModeRaw}`
+      );
+    }
+    const dispatchMode = dispatchModeRaw as "paper" | "live";
+
+    /**
+     * workflowRunId 必须可解析：order_intent.workflow_run_id 通过 FK 引用 workflow_run.id。
+     * 如果 ctx 缺失（理论上不该发生，但 IDE / 测试调用可能没挂 workflowId），抛清晰错误。
+     */
+    const workflowRunId = ctx.workflowId;
+    if (!workflowRunId) {
+      throw new Error(
+        "order.create_intent: ctx.workflowId 缺失（无法 FK 到 workflow_run.id）。请确保该工具在 workflow context 内调用。"
+      );
+    }
+
+    /**
+     * instrumentId 解析：先 lookup instrument 表，找不到时复用 strategy-runtime-service 的
+     * ensureInstrumentForSymbol 风格 —— 但本工具不引该服务，直接在这里插一条最小 instrument。
+     */
+    const db = await getDb();
+    const sym = symbol.toUpperCase();
+    const existingInst = await db
+      .select()
+      .from(instrumentTable)
+      .where(eq(instrumentTable.symbol, sym))
+      .limit(1);
+    let instrumentId: string;
+    if (existingInst[0]) {
+      instrumentId = existingInst[0].id;
+    } else {
+      instrumentId = randomUUID();
+      await db.insert(instrumentTable).values({
+        id: instrumentId,
+        symbol: sym,
+        assetClass: market === "CRYPTO" ? "crypto" : "stock",
+        exchange: market,
+        metaJson: {},
+      });
+    }
+
+    const result = await createOrderIntentWithExecution(db, {
+      workflowRunId,
+      strategyVersionId,
+      instrumentId,
+      side,
+      qty,
+      orderType,
+      price,
+      timeInForce,
+      market,
+      symbol: sym,
+      timeframe: typeof params.timeframe === "string" ? (params.timeframe as string) : undefined,
+      dispatchMode,
+      ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
+    });
+
+    return {
+      orderIntentId: result.orderIntentId,
+      executionTaskId: result.executionTaskId,
+      riskOutcome: result.riskOutcome,
+      riskReason: result.riskReason,
+      riskReviewTicketId: result.riskReviewTicketId,
+      symbol: sym,
+      side,
+      qty,
+      orderType,
+      dispatchMode,
+    };
   },
 
   "strategy.compose": async (_ctx, params) => {

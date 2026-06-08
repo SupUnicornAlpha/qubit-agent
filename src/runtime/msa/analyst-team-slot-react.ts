@@ -217,6 +217,16 @@ export async function runResearchTeamSlotReact(params: {
   agentInstanceId?: string;
   /** analyst_* 需解析 JSON 信号 */
   expectJsonSignal?: boolean;
+  /**
+   * 编组级硬约束 hint（Round 7 复盘 2026-06-08 新增）。
+   *
+   * 由 caller 通过 `buildGroupRoleConstraintHint({ groupId, role, groupDescription })` 算好后透传。
+   * 这里只负责"如果非空就拼到 userGoal 末尾"——不读 group 信息，避免 slot 层耦合 group schema。
+   *
+   * 典型场景：grp-strategy-pipeline / grp-live-trading 强制要求 research 调
+   * strategy.create_version / order.create_intent 落库。
+   */
+  groupConstraintHint?: string;
 }): Promise<
   | { kind: "analyst"; payload: RawAnalystSignal & { agentInstanceId?: string } }
   | { kind: "markdown"; body: string; agentInstanceId?: string }
@@ -255,9 +265,16 @@ export async function runResearchTeamSlotReact(params: {
   } else {
     targetLabel = `标的 ${params.scope?.primarySymbol || "（待确认）"}`;
   }
+  /**
+   * P1 优先级（Round 7 复盘 2026-06-08）：把编组级硬约束拼到 userGoal 末尾。
+   * 当 caller 未传或 buildGroupRoleConstraintHint 未命中白名单时为空串，对原流不影响。
+   */
+  const groupHint = params.groupConstraintHint?.trim()
+    ? `\n\n${params.groupConstraintHint.trim()}`
+    : "";
   const userGoal = params.expectJsonSignal
-    ? `分析${targetLabel}，先使用授权工具拉取数据/指标，再输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}`
-    : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}`;
+    ? `分析${targetLabel}，先使用授权工具拉取数据/指标，再输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}${groupHint}`
+    : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}${groupHint}`;
 
   const result = await executeAgentReact({
     runId,

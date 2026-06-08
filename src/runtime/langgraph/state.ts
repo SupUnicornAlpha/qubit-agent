@@ -43,6 +43,18 @@ export interface AgentGraphState {
   // output
   finalResponse: Record<string, unknown> | null;
   events: StepStreamEvent[];
+
+  /**
+   * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 已 push back 多少次。
+   *
+   * 当 LLM 输出 `{"tool":"none"}` 想停机但 scenario 的 requiredArtifacts 还没满足，
+   * act 节点会阻止 finalResponse 写入并把 hint 塞进 observation，让 graph 回 reason
+   * 再跑一轮。为防死循环，最多 push back 2 次；超过就放行（写 finalResponse），让评测
+   * 真实记录"未落库 → A-1=0"，而不是把工作流卡死。
+   *
+   * undefined / 0 = 还没触发过；max 2（详见 act.ts MAX_ARTIFACT_GATE_RETRIES）。
+   */
+  artifactGapRetryCount?: number;
 }
 
 export function createInitialGraphState(input: {

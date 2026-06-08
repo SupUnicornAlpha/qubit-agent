@@ -3,6 +3,7 @@ import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig, mcpToolBinding } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
 import { assertMcpServerNotOpen, recordMcpCallResult } from "../monitor/mcp-health-tracker";
+import { tryFinancexFallback } from "./financex-fallback";
 import { callMcpHttpTool, httpEndpointFromServer, httpHeadersFromCaps } from "./http-transport";
 import { resolveMcpStdioArgv } from "./package-manager";
 import { callMcpStdioTool, stdioArgvFromServer } from "./stdio-session";
@@ -202,8 +203,32 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
    *     重启后不会"假装健康"再被打到上游 RST。
    *
    * DB 异常时 assert 内部会自己 warn 并放行，所以不会因为监控故障误伤业务。
+   *
+   * P0-2（Round 6 复盘，2026-06-08）：mcp-financex 频繁熔断时，先尝试 fallback router
+   * 路由到内置 qubit-data / qubit-news connector；只有 fallback 也不可用 / 工具不在
+   * 白名单 / fallback 自身失败时才把 circuit-breaker error 上抛。这样 financex 整体
+   * 不可用也不会让分析师团队的研究链路彻底卡死。
    */
-  await assertMcpServerNotOpen(input.serverName);
+  try {
+    await assertMcpServerNotOpen(input.serverName);
+  } catch (assertErr) {
+    const fallback = await tryFinancexFallback({
+      serverName: input.serverName,
+      toolName: input.toolName,
+      ...(input.arguments ? { arguments: input.arguments } : {}),
+      reason: "circuit_open",
+      originalError: assertErr as Error,
+    });
+    if (fallback) {
+      /**
+       * 不调 recordMcpCallResult("success") —— 这是 fallback 路径，financex 服务本身
+       * 仍在熔断态，不能让它的健康分被误恢复。fallback 日志由 financex-fallback 模块
+       * 自己在 __mcp_fallback 元数据里留痕，供前端 / eval 识别。
+       */
+      return fallback;
+    }
+    throw assertErr;
+  }
   try {
     const dispatchResult = await executeWithPolicy(
       {
@@ -341,6 +366,31 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     if (!msg.startsWith("mcp circuit breaker open")) {
       await recordMcpCallResult(input.serverName, status, msg);
     }
+
+    /**
+     * P0-2（Round 6 复盘，2026-06-08）：MCP 工具调用失败时尝试 financex fallback。
+     *
+     * 触发条件（仅对 mcp-financex 生效，其他 server 不变）：
+     *   - server === "mcp-financex"
+     *   - toolName 在 FINANCEX_FALLBACK_TOOLS 白名单（get_quote / get_quote_batch /
+     *     get_historical_data / get_market_news）
+     *   - fallback 自己也可能失败（Yahoo 限流 / connector 缺数据），那种情况下抛回 fallback error
+     *
+     * 这与 circuit_open 分支的 fallback 互补：那条管"短路 fail-fast 之前"，这条管"打通了
+     * 但失败"。两条加起来覆盖所有 Round 6 trace 中 financex 失败模式（subprocess exit /
+     * tool isError / yahoo 403）。
+     */
+    const fallback = await tryFinancexFallback({
+      serverName: input.serverName,
+      toolName: input.toolName,
+      ...(input.arguments ? { arguments: input.arguments } : {}),
+      reason: "tool_error",
+      originalError: err as Error,
+    });
+    if (fallback) {
+      return fallback;
+    }
+
     /**
      * E1 错误增强：当 MCP server 抛 `Unknown tool: <X>` 时，
      * 把 capabilities_json.tools 真实工具清单拼进错误消息，让 LLM 下一轮自纠正。

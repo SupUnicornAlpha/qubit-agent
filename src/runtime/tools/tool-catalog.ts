@@ -101,21 +101,24 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   version_strategy: {
     /**
-     * F-P0-11（2026-06-05 eval batch 3 retry / case 1 修复）：
+     * 2026-06-08 P0-1.b 修复：F-P0-11 当年取消 deprecated 是因为旧 alias target
+     * (strategy.compose) 与 version_strategy 不等价（compose 要 strategy_version_id 才能调）。
+     * 现在我们新增了等价的 builtin tool `strategy.create_version`，可以正确 alias。
      *
-     * 之前被标 deprecated → aliased to strategy.compose 是误判：
-     *   - `version_strategy`（qubit-research connector op）= **从零创建** 一条
-     *     `strategy` + `strategy_version` 行，由 LLM 直接调用是 strategy_authoring
-     *     场景的入口
-     *   - `strategy.compose`（builtin tool）= 把 factor_ids / rule_ids **组合到一个
-     *     已存在的 strategy_version** 上（必填 `strategy_version_id`）
-     * 二者是上下游关系，不是替代关系。错误标 deprecated 后 alias resolver 在 act 节点
-     * 把 LLM 的 `version_strategy` 调用静默 rewrite 成 `strategy.compose`，参数 schema
-     * 完全错位 → 永远抛 "strategy_version_id is required" → 策略 tab 永空。
+     *   - `version_strategy`（旧 qubit-research connector op）= 创建 strategy + strategy_version
+     *   - `strategy.create_version`（新 builtin tool）= 同样的语义，但不依赖 MCP connector
+     *
+     * 标 deprecated 让 alias resolver 把 LLM 的 `version_strategy` 调用静默 rewrite 成
+     * `strategy.create_version`，调用入参兼容（strategy.create_version 接受 name + style，
+     * connector op 用 strategyName + params，由 act 节点的入参 rewrite 兜底）。
      */
     description:
-      "在 qubit-research connector 上创建 strategy + strategy_version 版本记录（strategy_authoring 入口）。**必填** `projectId` / `strategyName` / `versionTag` / `params` (策略参数对象)。**返回** `{strategyId, strategyVersionId}` —— 后续 strategy.compose / backtest.run 需要这个 strategyVersionId。",
+      "[Deprecated] 在 qubit-research connector 上创建 strategy + strategy_version 版本记录。**已被 builtin tool `strategy.create_version` 取代**（不依赖 MCP，更稳定）。",
     category: "research",
+    lifecycle: "deprecated",
+    replacedBy: "strategy.create_version",
+    deprecationReason:
+      "builtin strategy.create_version 等价且不依赖 MCP connector；2026-06-08 Round 6 复盘确认替换。",
   },
   compute_indicators: { description: "计算 SMA/RSI/MACD/布林带等指标序列", category: "research" },
   detect_patterns: { description: "识别市场状态（趋势/震荡）与金叉/死叉", category: "research" },
@@ -268,16 +271,33 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description: "执行规则（走 RuleEngineProvider.evaluate；写 rule_evaluation_log 留痕）",
     category: "research",
   },
+  "strategy.create_version": {
+    /**
+     * P0-1.b（2026-06-08 Round 6 复盘）：strategy_author 一直没工具落 strategy / strategy_version，
+     * 现在补这个让"最后一公里"能写库。
+     */
+    description:
+      "创建一个新的策略版本（落 strategy + strategy_version，按 (project_id, name) 幂等）。**必填 `name`** (策略名)，可选 `style` ('low_freq'|'mid_freq'|'high_freq'|'options'|'futures'，默认 low_freq) / `description` / `universe` / `version_tag` (默认按已有版本数自增 v{N+1})。**调用顺序**：① strategy.create_version 拿 strategyVersionId → ② strategy.compose 组合 factor/rule → ③ backtest.run / order.create_intent。",
+    category: "research",
+  },
   "strategy.compose": {
     /**
      * 2026-06-05 监控复盘 #3：旧 description 不告诉 LLM 必须先有 strategy_version_id。
      * 实测最近 1d 20 次调用 20 次失败，全部"strategy_version_id is required"。
-     * LLM 在 reasonText 里写了 `{tool: "version_strategy", params: ...}` 想先版本化，
-     * 但是 ReAct 一轮只能跑一个 tool call，没拿到 version_id 就直接调 compose → 必挂。
+     * 2026-06-08 P0-1.b：把"先 strategy.create_version 拿 id"补进调用顺序。
      */
     description:
-      "把已有的 factor_ids / rule_ids 组合到一个**已存在的** strategy_version 上（落 strategy_composition）。**必填 `strategy_version_id`** (UUID, 来自 version_strategy 返回)。**调用顺序**：① version_strategy 创建 strategy + strategy_version 拿 id → ② strategy.compose 组合 factor/rule → ③ backtest.run 跑回测。一上来直接调 compose 会失败。",
+      "把已有的 factor_ids / rule_ids 组合到一个**已存在的** strategy_version 上（落 strategy_composition）。**必填 `strategy_version_id`** (UUID, 来自 strategy.create_version 返回)。**调用顺序**：① strategy.create_version 拿 id → ② strategy.compose 组合 factor/rule → ③ backtest.run。一上来直接调 compose 会失败。",
     category: "research",
+  },
+  "order.create_intent": {
+    /**
+     * P0-1.c（2026-06-08 Round 6 复盘）：trader 没工具下单 → live_trading 团队 0 产物。
+     * 包 createOrderIntentWithExecution，默认 paper mode 安全；走完 pre-trade risk 检查后落 order_intent。
+     */
+    description:
+      "下达一个交易意向（落 order_intent + 走 pre-trade risk 检查 + execution_task 派发）。**必填**：`strategy_version_id` (来自 strategy.create_version) + `symbol` + `side` ('buy'|'sell') + `qty` (>0)。可选：`order_type` ('market'|'limit'，默认 market) + `price` (limit 必填) + `time_in_force` ('day'|'gtc'，默认 day) + `market` (默认 US) + `dispatch_mode` ('paper'|'live'，**默认 paper 安全**)。**调用顺序**：strategy.create_version → strategy.compose → order.create_intent。Live 实盘前请人工 review，模型默认走 paper。",
+    category: "trading",
   },
 
   // M6：Agent 直通量化工坊

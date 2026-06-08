@@ -277,7 +277,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "factor.autoEvaluate",
       "rule.register",
       "rule.evaluate",
+      // 2026-06-08 P0-1.b / P0-1.c：补"最后一公里"产物落库工具
+      "strategy.create_version",
       "strategy.compose",
+      "order.create_intent",
       "discovery.run",
       "discovery.promote",
       "backtest.run",

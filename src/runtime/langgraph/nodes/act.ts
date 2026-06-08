@@ -1,8 +1,13 @@
 import { eq } from "drizzle-orm";
 import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
-import { getDb } from "../../../db/sqlite/client";
+import { getDb, getSqliteForTesting } from "../../../db/sqlite/client";
 import { workflowRun } from "../../../db/sqlite/schema";
+import {
+  buildArtifactGapHint,
+  checkRequiredArtifacts,
+  resolveScenarioKey,
+} from "../../agent-readiness/quality/artifact-checker";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
@@ -23,6 +28,18 @@ import type { AgentGraphState, StepStreamEvent } from "../state";
 import { isLikelyProjectIdFormat } from "./project-id";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 
+/**
+ * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 最多 push back 几次。
+ *
+ * 触发：LLM 输出 `{"tool":"none"}` 想停机 + scenario 的 requiredArtifacts 还没满足。
+ * 上限 2：第 1/2 次把 hint 塞回 observation 让 graph 回 reason 再跑；第 3 次放行，
+ * 写 finalResponse，让评测真实记录 A-1=0，而不是死循环卡死。
+ *
+ * 同时受 def.maxIterations 上限保护（execute-agent-react.ts:438）—— 即便 gate 想 push back
+ * 但已到 max iteration，graph 会自然 finalize。
+ */
+const MAX_ARTIFACT_GATE_RETRIES = 2;
+
 export async function actNode(
   state: AgentGraphState,
   emit: (event: StepStreamEvent) => void,
@@ -36,6 +53,68 @@ export async function actNode(
   if (parsed.kind === "none") {
     const cleanedReason = stripToolCallSentinels(state.reasonText ?? "");
     const summary = parsed.summary?.trim() || cleanedReason.slice(0, 2000) || "no tool requested";
+
+    /**
+     * P2 artifact gate：在写 finalResponse 之前反查 scenario 的 requiredArtifacts。
+     * 三种结局：
+     *   - 反查不到 scenario（workflow 未 tag / 旧 DB） → fallback 老行为，直接 finalize
+     *   - 反查到 + 已满足 → 直接 finalize
+     *   - 反查到 + 未满足 + retry < MAX → push back observation，让 graph 回 reason
+     *   - 反查到 + 未满足 + retry ≥ MAX → 放行 finalize（让 A-1=0 真实暴露给评测）
+     */
+    const sqliteHandle = (() => {
+      try {
+        return getSqliteForTesting();
+      } catch {
+        return null;
+      }
+    })();
+    const scenarioKey = sqliteHandle ? resolveScenarioKey(sqliteHandle, state.workflowId) : null;
+    if (sqliteHandle && scenarioKey) {
+      const gate = checkRequiredArtifacts(sqliteHandle, scenarioKey, state.workflowId);
+      const retryCount = state.artifactGapRetryCount ?? 0;
+      if (!gate.ok && retryCount < MAX_ARTIFACT_GATE_RETRIES) {
+        const hint = buildArtifactGapHint(gate);
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: {
+            level: "warn",
+            artifactGapHint: true,
+            scenario: scenarioKey,
+            missing: gate.missing,
+            retryCount: retryCount + 1,
+            maxRetries: MAX_ARTIFACT_GATE_RETRIES,
+            message: `[artifact gate] 拦截 tool=none：${gate.missing
+              .map((m) => `${m.table}=${m.rows}/${m.minRows}`)
+              .join(", ")}`,
+          },
+        });
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "warn",
+              artifactGapHint: true,
+              scenario: scenarioKey,
+              missing: gate.missing,
+              retryCount: retryCount + 1,
+              maxRetries: MAX_ARTIFACT_GATE_RETRIES,
+              hint,
+              reasonText: state.reasonText,
+            },
+          ],
+          artifactGapRetryCount: retryCount + 1,
+          /** 关键：不写 finalResponse，shouldStopReactLoopAfterObserve 不命中 → 回 reason */
+        };
+      }
+    }
+
     emit({
       runId: state.runId,
       workflowId: state.workflowId,

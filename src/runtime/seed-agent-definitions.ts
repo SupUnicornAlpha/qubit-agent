@@ -24,6 +24,7 @@ import {
   parseUserOverrides,
   type UserBindableField,
 } from "./agent/agent-binding-service";
+import { buildDefaultSandboxPoliciesFromDefinitions } from "./config/workspace-config";
 import {
   BUILTIN_AGENT_GROUPS,
   type BuiltinAgentGroupSpec,
@@ -141,13 +142,37 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
   const force = options.force === true;
   const db = await getDb();
 
+  /**
+   * Round 8 复盘（2026-06-08）：default-policy.allowedToolsJson 之前是固定 `[]`，
+   * 让 sandbox-executor 走 fallback `definition.tools`。但实测发现：当用户/Tauri 把
+   * `.qubit/sandbox.json` 同步进 DB 后（通过 ensureWorkspaceRuntimeConfigFiles），
+   * allowed_tools_json 会被填成具体白名单，从此 fallback 路径再也走不到。新增的
+   * builtin tool（如 strategy.create_version / order.create_intent）就被 sandbox 闸
+   * 拦截 ——「tool not allowed by sandbox policy」。
+   *
+   * 修复：seed 时显式把 SEED_AGENT_DEFINITIONS 所有 def.tools 的 union 写入
+   * default-policy.allowed_tools_json，确保新增 builtin tool 自动覆盖。
+   * force=true 也会刷新（ON CONFLICT DO UPDATE），保证 reload 按钮一键生效。
+   */
+  const sandboxPolicyAllowedTools = (() => {
+    try {
+      const generated = buildDefaultSandboxPoliciesFromDefinitions(SEED_AGENT_DEFINITIONS);
+      return generated[0]?.allowedTools ?? [];
+    } catch {
+      return [];
+    }
+  })();
   await db
     .insert(sandboxPolicy)
-    .values(DEFAULT_SANDBOX_POLICY)
+    .values({
+      ...DEFAULT_SANDBOX_POLICY,
+      allowedToolsJson: sandboxPolicyAllowedTools,
+    })
     .onConflictDoUpdate({
       target: sandboxPolicy.id,
       set: {
         ...DEFAULT_SANDBOX_POLICY,
+        allowedToolsJson: sandboxPolicyAllowedTools,
         updatedAt: new Date().toISOString(),
       },
     });
@@ -556,17 +581,21 @@ export const BUILTIN_GROUP_LAYOUTS: Record<string, GroupRelationsLayout> = {
     /**
      * P2-F: execution_trader + risk_manager → risk only。
      * def-execution-trader 已退役，当前实盘路径走的是 risk 签核 + monitor 兜底。
-     * 如未来重建执行 agent，请新建 def 并更新此 layout。
+     *
+     * 2026-06-08 P0-1.c（Round 6 复盘）：原成员只有 orchestrator + risk，团队 4 step 就停，
+     * 0 个 order_intent。现加入 def-research，由 research 用 order.create_intent 落 paper 单。
      */
     nodePositions: {
       orchestrator: { x: 420, y: 60 },
-      risk: { x: 420, y: 240 },
+      research: { x: 280, y: 240 },
+      risk: { x: 560, y: 240 },
     },
     phases: [
       { id: "clarify", label: "确认信号", roles: ["orchestrator"] },
+      { id: "author", label: "策略 + 下单（paper）", roles: ["research"] },
       { id: "guard", label: "风控签核 + 实盘闸门", roles: ["risk"] },
     ],
-    auxChain: ["risk"],
+    auxChain: ["research", "risk"],
   },
   "grp-postmortem": {
     nodePositions: {
@@ -710,7 +739,13 @@ export async function ensureBuiltinAgentGroups(
 export { syncOrchestratorTopologyToolsForGroup };
 
 if (import.meta.main) {
-  void seedAgentDefinitions().catch((err) => {
+  /**
+   * P0 Round 7 复盘：当 grp-live-trading 等内置编组在 DB 里被改过（哪怕只是
+   * 添加成员），seed 默认走 preserved。新增 `--force` flag 让运行时一键回到
+   * factory state；对用户的 user_overrides_json 仍由内部 perField 保留。
+   */
+  const force = process.argv.includes("--force");
+  void seedAgentDefinitions({ force }).catch((err) => {
     console.error(err);
     process.exit(1);
   });
