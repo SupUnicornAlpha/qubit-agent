@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { ALL_AGENT_ROLES } from "../../types/entities";
+import { topologyTeamToolName } from "../orchestration/topology-dispatch";
 import type { RuntimeAgentDefinition } from "../types";
 
 const AgentRoleSchema = z.enum(ALL_AGENT_ROLES as unknown as [string, ...string[]]);
@@ -80,7 +81,10 @@ export interface WorkspaceRuntimeFileBundle {
 export function buildDefaultSandboxPoliciesFromDefinitions(
   definitions: RuntimeAgentDefinition[]
 ): WorkspaceSandboxPolicy[] {
-  const tools = [...new Set(definitions.flatMap((d) => d.tools))].sort();
+  // call_team_<role> 是运行时按编组拓扑注入的 orchestrator 工具，不在各 definition.tools 里，
+  // 但必须进 default-policy 白名单，否则 dispatch 会 sandbox_blocked。
+  const topologyTools = definitions.map((d) => topologyTeamToolName(d.role));
+  const tools = [...new Set([...definitions.flatMap((d) => d.tools), ...topologyTools])].sort();
   const mcps = [...new Set(definitions.flatMap((d) => d.mcpServers))].sort();
   return [
     {

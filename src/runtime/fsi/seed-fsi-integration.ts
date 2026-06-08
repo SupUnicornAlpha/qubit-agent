@@ -11,6 +11,7 @@ import {
   shouldSeedFsiMcpCatalog,
 } from "./fsi-config";
 import { loadFsiManifest } from "./fsi-manifest-loader";
+import { syncDefinitionSkillsForAllProjects } from "../skills/sync-definition-skills";
 import { mergeFsiSkillsForRole } from "./fsi-prompt-enricher";
 
 export async function seedFsiSandboxPresets(): Promise<number> {
@@ -139,6 +140,7 @@ export async function runFsiSeedIntegration(
 ): Promise<void> {
   const presets = await seedFsiSandboxPresets();
   const mcps = await seedFsiMcpCatalog();
+  const mirrored = await syncDefinitionSkillsForAllProjects();
   if (isFsiActive()) {
     await applyFsiAgentSkillMappings(definitions);
     const snap = getFsiConfigSnapshot();
@@ -146,12 +148,14 @@ export async function runFsiSeedIntegration(
     console.log(
       `[Seed][FSI] Active bundles: ${bundles.join(", ")}; ` +
         `content: ${snap.contentRootResolved ?? "missing — run scripts/sync-fsi-vendor.sh"}; ` +
-        `sandbox presets: ${presets}; MCP catalog: ${mcps} (disabled by default).`
+        `sandbox presets: ${presets}; MCP catalog: ${mcps} (disabled by default); ` +
+        `agent_skill mirrored: ${mirrored}.`
     );
   } else {
     console.log(
       `[Seed][FSI] Disabled (edit content-packs/anthropic-fsi/settings.json or set QUBIT_FSI_DISABLED=true). ` +
-        `Registered ${presets} sandbox preset(s), ${mcps} MCP catalog row(s).`
+        `Registered ${presets} sandbox preset(s), ${mcps} MCP catalog row(s); ` +
+        `agent_skill mirrored: ${mirrored}.`
     );
   }
 }

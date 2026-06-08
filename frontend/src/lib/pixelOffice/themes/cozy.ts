@@ -9,6 +9,7 @@ import type { ThemeDescriptor } from "./types";
 export const cozyTheme: ThemeDescriptor = {
   id: "cozy",
   label: "暖橙午后",
+  renderEngine: "legacy",
   atlas: modernAtlasManifest,
   palette: {
     floor: "#f3e3c8",

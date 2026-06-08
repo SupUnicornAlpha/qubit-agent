@@ -20,6 +20,7 @@ import {
 import { resolveToolAlias } from "../../tools/tool-catalog";
 import { resolveConnectorForServerAlias, resolveConnectorForTool } from "../../tools/tool-routes";
 import type { AgentGraphState, StepStreamEvent } from "../state";
+import { isLikelyProjectIdFormat } from "./project-id";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 
 export async function actNode(
@@ -192,27 +193,20 @@ export async function actNode(
    * 与 workflowRunId 同样语义（line 107），让 ReAct-loop 写出来的工具调用更稳定。
    */
   /**
-   * F-P0-12 扩展（2026-06-05 监控复盘 #3）：
+   * F-P0-12 扩展（2026-06-05 监控复盘 #3 + B+ Phase 1.1）：
    *
-   * 原占位符集合 (<...> / "" / "todo") 漏了 LLM 极常用的 `"default"`、`"project_id"`、
-   * `"<project_id>"` 等字面占位。结果 factor.autoEvaluate 内部的 `params["project_id"] ?? ctx.projectId`
-   * 被 LLM 传的 `"default"` 满足，覆盖 ctx.projectId，再 register 因子时 `factor_definition.project_id="default"`
-   * 触发 SQLite `FOREIGN KEY constraint failed`（因为 project 表里没 id="default" 行）。
-   * 实测 workflow 35d357c8 因此 fail。
+   * 第 1 版用反向黑名单 (`default` / `project_id` / `todo` 等)，但 LLM 会创造
+   * 新的业务化占位（`ai_semiconductor_technical`、`aapl_trend_v1`、`nvda_research`），
+   * 黑名单覆盖不到，再被传到 factor.autoEvaluate 内部 register 时仍触发
+   * `FOREIGN KEY constraint failed`（实测 workflow 4614e8b1 因此 fail）。
    *
-   * 现在统一在 act 入口拦截：所有疑似 placeholder 的 projectId 一律走 workflow_run.project_id 兜底。
+   * 改成**正向白名单** `isLikelyProjectIdFormat`：只有 UUID 形态或 `proj-*` 老 seed
+   * 才被认为是合法 projectId，其他一律兜底为 `workflow_run.project_id`。
    */
-  const looksLikePlaceholderProjectId = (v: unknown) => {
-    if (typeof v !== "string") return false;
-    const t = v.trim().toLowerCase();
-    if (t.length === 0) return true;
-    if (t.startsWith("<")) return true;
-    return ["todo", "default", "project_id", "projectid", "fixme", "tbd", "?"].includes(t);
-  };
   const incomingProjectId =
     (toolParams["projectId"] as string | undefined) ??
     (toolParams["project_id"] as string | undefined);
-  if ((!incomingProjectId || looksLikePlaceholderProjectId(incomingProjectId)) && projectId) {
+  if (!isLikelyProjectIdFormat(incomingProjectId) && projectId) {
     enrichedToolParams["projectId"] = projectId;
     enrichedToolParams["project_id"] = projectId;
   }

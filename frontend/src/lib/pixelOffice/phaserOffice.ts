@@ -50,7 +50,15 @@ import {
   tickParticles,
 } from "./officeRenderer";
 import { getPixelOfficeRegistry } from "./runtime";
-import { ensureActiveAtlasLoaded, getActiveTheme, subscribeThemeChange } from "./themes";
+import {
+  drawAssetCat,
+  drawAssetSceneBackground,
+  drawAssetShelfAndRack,
+  drawAssetWorkstation,
+  getLoadedAssetBundle,
+} from "./assetOffice";
+import { invalidateSpriteAtlas } from "./spriteAtlas";
+import { ensureActiveAtlasLoaded, getActiveTheme, isAssetRenderTheme, subscribeThemeChange } from "./themes";
 import {
   ACTION_MS,
   WALK_MS,
@@ -134,17 +142,40 @@ function renderBackgroundLayer(
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, STAGE_W, STAGE_H);
 
-  drawOfficeScene(ctx, STAGE_W, STAGE_H, state.city, state.layout, now, state.isRunning);
+  const theme = getActiveTheme();
+  const assetBundle =
+    isAssetRenderTheme(theme) && theme.assetBundleId
+      ? getLoadedAssetBundle(theme.assetBundleId)
+      : null;
 
-  const persp = computeOfficePerspective(STAGE_W, STAGE_H, state.layout.windowH);
-  // 工位按 depth 排序，便于和 Phaser sprite 的 depth 一致
-  const desks: Array<[string, DeskSlot]> = [...state.layout.desks];
-  desks.sort((a, b) => a[1].depth - b[1].depth);
-  for (const [role, desk] of desks) {
-    const cat = state.cats.get(role);
-    const sel = state.selectedRole === role;
-    const screenMode: ScreenMode = cat?.actor.screenMode ?? "idle";
-    drawWorkstation(ctx, desk.x, desk.y, screenMode, now, false, sel, desk.depth, persp);
+  if (assetBundle) {
+    drawAssetSceneBackground(ctx, STAGE_W, STAGE_H, assetBundle, state.city);
+    drawAssetShelfAndRack(ctx, assetBundle, state.layout);
+    const desks: Array<[string, DeskSlot]> = [...state.layout.desks];
+    desks.sort((a, b) => a[1].depth - b[1].depth);
+    for (const [role, desk] of desks) {
+      const cat = state.cats.get(role);
+      const sel = state.selectedRole === role;
+      const screenMode: ScreenMode = cat?.actor.screenMode ?? "idle";
+      drawAssetWorkstation(ctx, assetBundle, desk.x, desk.y, screenMode, desk.depth, sel, false);
+    }
+    for (const rt of state.cats.values()) {
+      rt.actor.frame = Math.floor(now / 140) % 2;
+      const depth = rt.actor.depth ?? 0.5;
+      drawAssetCat(ctx, assetBundle, rt.actor, depth);
+    }
+  } else {
+    drawOfficeScene(ctx, STAGE_W, STAGE_H, state.city, state.layout, now, state.isRunning);
+
+    const persp = computeOfficePerspective(STAGE_W, STAGE_H, state.layout.windowH);
+    const desks: Array<[string, DeskSlot]> = [...state.layout.desks];
+    desks.sort((a, b) => a[1].depth - b[1].depth);
+    for (const [role, desk] of desks) {
+      const cat = state.cats.get(role);
+      const sel = state.selectedRole === role;
+      const screenMode: ScreenMode = cat?.actor.screenMode ?? "idle";
+      drawWorkstation(ctx, desk.x, desk.y, screenMode, now, false, sel, desk.depth, persp);
+    }
   }
 
   for (const beam of state.beams) {
@@ -544,8 +575,9 @@ export async function createPhaserOffice(
         .setDepth(2900);
 
       themeUnsub = subscribeThemeChange(() => {
-        // 主题变更：背景层下一帧自动重绘（drawOfficeScene 读最新 atlas 与色板）
+        invalidateSpriteAtlas();
         ensureActiveAtlasLoaded();
+        ensureCatAtlasInScene(this);
       });
 
       const plaqueX = STAGE_W / 2;
@@ -594,7 +626,15 @@ export async function createPhaserOffice(
       tickActorTimers(this, state, now);
 
       // 同步每只猫的 depth（layer 排序），并应用动作动画
+      const theme = getActiveTheme();
+      const useAssetCanvas = isAssetRenderTheme(theme);
+
       for (const rt of state.cats.values()) {
+        if (useAssetCanvas) {
+          rt.sprite.setVisible(false);
+          continue;
+        }
+        rt.sprite.setVisible(true);
         const persp = computeOfficePerspective(STAGE_W, STAGE_H, state.layout.windowH);
         const v =
           rt.actor.action === "walk" ? depthAtY(persp, rt.sprite.y) : (rt.actor.depth ?? 0.5);

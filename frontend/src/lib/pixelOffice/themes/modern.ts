@@ -27,6 +27,7 @@ export const modernAtlasManifest: ThemeAtlasManifest = {
 export const modernTheme: ThemeDescriptor = {
   id: "modern",
   label: "现代日间",
+  renderEngine: "legacy",
   atlas: modernAtlasManifest,
   palette: {
     floor: "#f5efe4",

@@ -1,14 +1,17 @@
 /**
  * 像素办公室主题注册表。
  *
- * - 内置三套：modern (default) / modern_night / cozy
+ * - 内置主题：modern / modern_night / cozy / comic_bc / flat_cool
  * - 外部可通过 registerTheme 注入额外主题（如 sprite forest）
  * - 当前激活主题存入 localStorage (`qb-pixel-office-theme`)
  * - 提供监听器，UI 切换 → 引擎刷新
  */
 
 import { getLoadedThemeAtlas, loadThemeAtlas } from "../themeAssets";
+import { preloadAssetBundle } from "../assetOffice";
 import { cozyTheme } from "./cozy";
+import { comicBcTheme } from "./comicBc";
+import { flatCoolTheme } from "./flatCool";
 import { modernTheme } from "./modern";
 import { modernNightTheme } from "./modernNight";
 import type { LoadedThemeAtlas, ThemeChangeListener, ThemeDescriptor, ThemeId } from "./types";
@@ -25,6 +28,8 @@ function registerBuiltin(): void {
   registerTheme(modernTheme);
   registerTheme(modernNightTheme);
   registerTheme(cozyTheme);
+  registerTheme(comicBcTheme);
+  registerTheme(flatCoolTheme);
 }
 
 export function registerTheme(theme: ThemeDescriptor): void {
@@ -105,6 +110,10 @@ let loadInFlightUrl: string | null = null;
 
 export function ensureActiveAtlasLoaded(): void {
   const theme = getActiveTheme();
+  if (theme.renderEngine === "asset" && theme.assetBundleId) {
+    preloadAssetBundle(theme.assetBundleId);
+    return;
+  }
   if (getLoadedThemeAtlas(theme)) return;
   if (loadInFlightUrl === theme.atlas.imageUrl) return;
   loadInFlightUrl = theme.atlas.imageUrl;
@@ -140,5 +149,9 @@ export function applyThemeOverlay(
   ctx.restore();
 }
 
-export { modernTheme, modernNightTheme, cozyTheme };
+export function isAssetRenderTheme(theme: ThemeDescriptor = getActiveTheme()): boolean {
+  return theme.renderEngine === "asset" && Boolean(theme.assetBundleId);
+}
+
+export { modernTheme, modernNightTheme, cozyTheme, comicBcTheme, flatCoolTheme };
 export type { ThemeDescriptor, ThemeId, ThemeChangeListener, LoadedThemeAtlas } from "./types";

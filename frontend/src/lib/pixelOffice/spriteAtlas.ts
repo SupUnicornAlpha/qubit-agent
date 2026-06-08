@@ -7,6 +7,11 @@ let atlasCanvas: HTMLCanvasElement | null = null;
 let atlasBuild = -1;
 let atlasSpriteUnit = 8;
 
+export function invalidateSpriteAtlas(): void {
+  atlasCanvas = null;
+  atlasBuild = -1;
+}
+
 type SpriteRect = { x: number; y: number; w: number; h: number };
 
 export type AtlasSprites = {
@@ -685,15 +690,6 @@ function drawCatPixels(
   }
 }
 
-/**
- * 现代办公桌侧视图 V2：桌面 + 桌沿 + 抽屉 + 桌脚 + 地面阴影。
- *
- * 之前的 desk sprite 内置了一个 placeholder monitor (row 6..19)，会被真正的
- * monitor sprite 完全遮盖 → 浪费像素而且让"桌子"看起来不像桌子。
- *
- * 新设计：上方 3 行完全留空（让 monitor sprite 自然坐落上来），从 row 3 开始
- * 才是桌子本体——桌面顶光、深色木纹、抽屉面+把手、左右两根桌脚 + 中间横档。
- */
 function drawDeskSprite(
   fill: ReturnType<typeof makeFill>,
   ctx: CanvasRenderingContext2D,
@@ -704,51 +700,17 @@ function drawDeskSprite(
   const dw = hd ? 56 : 40;
   const surfaceTop = hd ? 3 : 2;
   const surfaceH = hd ? 4 : 3;
-  const apronTop = surfaceTop + surfaceH; // 桌沿 / 抽屉面顶
+  const apronTop = surfaceTop + surfaceH;
   const apronH = hd ? 6 : 5;
   const legTop = apronTop + apronH;
   const legBottom = hd ? 28 : 23;
   const legH = legBottom - legTop;
   const legW = hd ? 5 : 4;
-
-  // === 桌面 surface ===
-  // 主体（深胡桃木）
   fill(ctx, ox, oy + surfaceTop, dw, surfaceH, "#5a3e28");
-  // 顶部边缘高光（细线）
   fill(ctx, ox + 1, oy + surfaceTop, dw - 2, 1, "#8b6a4a");
-  fill(ctx, ox + 1, oy + surfaceTop + 1, dw - 2, 1, "#7a5b3e");
-  // 木纹两条横细线（深一档）
-  fill(ctx, ox + 4, oy + surfaceTop + 2, dw - 8, 1, "#4a3220");
-  // 桌面前沿（最下 1px 加深，分割桌面与抽屉面）
-  fill(ctx, ox, oy + apronTop - 1, dw, 1, "#3a2a1c");
-
-  // === 抽屉面 apron ===
-  // 整面浅一点的木色
   fill(ctx, ox + 2, oy + apronTop, dw - 4, apronH, "#6a4a32");
-  // 中央抽屉缝（垂直）
-  fill(ctx, ox + Math.floor(dw / 2), oy + apronTop + 1, 1, apronH - 2, "#3a2818");
-  // 抽屉把手（左右各一个小金属条）
-  const handleY = oy + apronTop + Math.floor(apronH / 2);
-  fill(ctx, ox + Math.floor(dw * 0.22), handleY, hd ? 5 : 4, 1, "#c9a76a");
-  fill(ctx, ox + Math.floor(dw * 0.22), handleY + 1, hd ? 5 : 4, 1, "#8b6a3a");
-  fill(ctx, ox + dw - Math.floor(dw * 0.22) - (hd ? 5 : 4), handleY, hd ? 5 : 4, 1, "#c9a76a");
-  fill(ctx, ox + dw - Math.floor(dw * 0.22) - (hd ? 5 : 4), handleY + 1, hd ? 5 : 4, 1, "#8b6a3a");
-
-  // === 桌脚 legs ===
-  // 左右两根金属桌脚（深灰带金属高光）
   fill(ctx, ox + 3, oy + legTop, legW, legH, "#3a3a42");
-  fill(ctx, ox + 3, oy + legTop, 1, legH, "#5a5a64"); // 左边缘高光
   fill(ctx, ox + dw - 3 - legW, oy + legTop, legW, legH, "#3a3a42");
-  fill(ctx, ox + dw - 3 - legW, oy + legTop, 1, legH, "#5a5a64");
-  // 桌脚底部脚垫（更深）
-  fill(ctx, ox + 2, oy + legBottom - 1, legW + 2, 1, "#1a1a22");
-  fill(ctx, ox + dw - 4 - legW, oy + legBottom - 1, legW + 2, 1, "#1a1a22");
-  // 中间横档（连接两桌脚的细金属杆）
-  const crossY = oy + legTop + Math.floor(legH * 0.6);
-  fill(ctx, ox + 3 + legW, crossY, dw - 6 - 2 * legW, 1, "#4a4a52");
-  fill(ctx, ox + 3 + legW, crossY + 1, dw - 6 - 2 * legW, 1, "#2a2a32");
-
-  // === 地面阴影 ===
   fill(ctx, ox + 2, oy + legBottom, dw - 4, 1, "rgba(0,0,0,0.35)");
 }
 
@@ -759,15 +721,8 @@ function drawRackSprite(fill: ReturnType<typeof makeFill>, ctx: CanvasRenderingC
   fill(ctx, ox + 2, oy + 2, rw - 4, rh - 4, "#1e293b");
   for (let i = 0; i < 5; i++) {
     fill(ctx, ox + 4, oy + 4 + i * 8, rw - 8, 5, "#334155");
-    const row = 5 + i * (hd ? 8 : 6);
-    fill(ctx, ox + 6, oy + row, 3, 2, "#22c55e");
-    fill(ctx, ox + 14, oy + row, 3, 2, "#38bdf8");
-    fill(ctx, ox + rw - 6, oy + row, 2, 2, blinkLed(i));
+    fill(ctx, ox + 6, oy + 5 + i * 8, 3, 2, i % 2 === 0 ? "#22c55e" : "#38bdf8");
   }
-}
-
-function blinkLed(i: number): string {
-  return i % 2 === 0 ? "#4ade80" : "#22d3ee";
 }
 
 function drawShelfSprite(fill: ReturnType<typeof makeFill>, ctx: CanvasRenderingContext2D, ox: number, oy: number, hd: boolean) {
@@ -778,8 +733,6 @@ function drawShelfSprite(fill: ReturnType<typeof makeFill>, ctx: CanvasRendering
     const row = 3 + i * (hd ? 10 : 8);
     fill(ctx, ox + 2, oy + row, sw - 4, 2, "#6d5040");
     fill(ctx, ox + 4, oy + row + 2, 5, 5, i % 2 ? "#fbbf24" : "#f59e0b");
-    fill(ctx, ox + 12, oy + row + 2, 6, 5, i % 2 ? "#d97706" : "#b45309");
-    fill(ctx, ox + sw - 7, oy + row + 3, 3, 4, "#78716c");
   }
 }
 

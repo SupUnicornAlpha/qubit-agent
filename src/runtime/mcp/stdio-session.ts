@@ -1,4 +1,5 @@
-import type { Subprocess } from "bun";
+import { spawn as nodeSpawn } from "node:child_process";
+import { Readable } from "node:stream";
 import { McpStreamClosedError, collectRpcResponse } from "./jsonrpc-ndjson";
 import {
   MCP_SUPPORTED_PROTOCOL_VERSIONS,
@@ -46,8 +47,17 @@ type StdinLineWriter = {
   writeLine: (obj: Record<string, unknown>) => Promise<void>;
 };
 
+/** node:child_process 封装；Bun.spawn 管道下部分 npm MCP（mcp-financex）会提前断 stdout。 */
+type McpStdioChild = {
+  stdin: NodeJS.WritableStream;
+  stdout: ReadableStream<Uint8Array>;
+  stderr: ReadableStream<Uint8Array>;
+  exited: Promise<number | null>;
+  kill: () => void;
+};
+
 type Pooled = {
-  proc: Subprocess;
+  proc: McpStdioChild;
   writer: StdinLineWriter;
   lines: AsyncGenerator<string, void, unknown>;
   initialized: boolean;
@@ -57,19 +67,41 @@ type Pooled = {
   protocolVersion?: McpProtocolVersion;
 };
 
-function createStdinLineWriter(stdin: NonNullable<Subprocess["stdin"]>): StdinLineWriter {
-  const stream = stdin as WritableStream<Uint8Array>;
-  if (typeof stream.getWriter === "function") {
-    const w = stream.getWriter();
-    return {
-      writeLine: async (obj) => {
-        await w.write(new TextEncoder().encode(`${JSON.stringify(obj)}\n`));
-      },
-    };
-  }
+function createStdinLineWriter(stdin: NodeJS.WritableStream): StdinLineWriter {
   return {
     writeLine: async (obj) => {
-      stdin.write(`${JSON.stringify(obj)}\n`);
+      const line = `${JSON.stringify(obj)}\n`;
+      if (!stdin.write(line)) {
+        await new Promise<void>((resolve) => stdin.once("drain", resolve));
+      }
+    },
+  };
+}
+
+function spawnMcpStdioChild(
+  argv: string[],
+  env: Record<string, string>,
+  cwd?: string
+): McpStdioChild {
+  const proc = nodeSpawn(argv[0]!, argv.slice(1), {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+    cwd,
+  });
+  if (!proc.stdin || !proc.stdout || !proc.stderr) {
+    throw new Error("stdio MCP: subprocess missing pipes");
+  }
+  return {
+    stdin: proc.stdin,
+    stdout: Readable.toWeb(proc.stdout) as ReadableStream<Uint8Array>,
+    stderr: Readable.toWeb(proc.stderr) as ReadableStream<Uint8Array>,
+    exited: new Promise((resolve) => proc.on("exit", (code) => resolve(code ?? null))),
+    kill: () => {
+      try {
+        proc.kill();
+      } catch {
+        // ignore
+      }
     },
   };
 }
@@ -168,8 +200,35 @@ export function _formatStdioExitErrorMessage(
   return `${header}\nstderr (tail):\n${tailLines.join("\n")}`;
 }
 
-function exitErrorMessage(pool: Pooled, code: number | null, phase: string): string {
-  return _formatStdioExitErrorMessage(pool.stderrBuf, code, phase);
+/**
+ * mcp-financex 常在写出 isError 帧后立刻 exit；若 stderr 里已有 tool error，优先返回业务错误。
+ */
+export function mcpToolErrorFromStderr(stderrChunks: readonly string[]): string | null {
+  const joined = stderrChunks.join("");
+  if (!joined.includes("[MCP] Tool error")) return null;
+  const orig = joined.match(/originalMessage['"]?\s*:\s*['"]([^'"]+)['"]/);
+  if (orig?.[1]) return orig[1];
+  const code = joined.match(/code:\s*'([^']+)'/);
+  if (code?.[1]) return `mcp-financex: ${code[1]}`;
+  return "mcp-financex tool error (see server stderr)";
+}
+
+/** 子进程 exit 后仍可能有几帧 JSON-RPC 在 stdout 管道里；宽限期内继续等 rpc / stderr。 */
+const RPC_EXIT_GRACE_MS = 2_500;
+
+async function waitForStderrToolError(pool: Pooled, maxMs: number): Promise<string | null> {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    const err = mcpToolErrorFromStderr(pool.stderrBuf);
+    if (err) return err;
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  return mcpToolErrorFromStderr(pool.stderrBuf);
+}
+
+async function exitErrorMessage(pool: Pooled, code: number | null, phase: string): Promise<string> {
+  const toolErr = await waitForStderrToolError(pool, RPC_EXIT_GRACE_MS);
+  return toolErr ?? _formatStdioExitErrorMessage(pool.stderrBuf, code, phase);
 }
 
 /**
@@ -182,6 +241,9 @@ function exitErrorMessage(pool: Pooled, code: number | null, phase: string): str
  * 进 `ensurePool` 时可能撞到尚未清理的僵尸 pool → 再次抛"子进程在 tools/call
  * 阶段提前退出"→ 内存熔断 + DB 熔断 翻 open → 同 batch 后续 9 个调用全 fail-fast。
  * eval batch 2 的 mcp-financex 9/9 失败就是这个 cascade。
+ *
+ * 2026-06-05：mcp-financex 在 tools/call 写出 isError 帧后仍可能很快 exit(1)；
+ * 若 exit 先触发 race，给 stdout 再 2.5s 宽限读取响应，避免误报「提前退出」。
  */
 async function raceRpcOrExit<T>(
   rpcPromise: Promise<T>,
@@ -189,26 +251,42 @@ async function raceRpcOrExit<T>(
   phase: string,
   serverKey: string
 ): Promise<T> {
-  const exitPromise: Promise<never> = pool.proc.exited.then((code) => {
-    const cur = pools.get(serverKey);
-    if (cur?.proc === pool.proc) pools.delete(serverKey);
-    throw new Error(exitErrorMessage(pool, code ?? null, phase));
-  });
-  try {
-    return await Promise.race([rpcPromise, exitPromise]);
-  } catch (e) {
-    if (e instanceof McpStreamClosedError) {
-      // Stdout closed first — try to wait briefly for proc.exited so we can attach exit code.
-      const code = await Promise.race<number | undefined>([
-        pool.proc.exited,
-        new Promise<undefined>((r) => setTimeout(() => r(undefined), 250)),
-      ]).catch(() => undefined);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    rpcPromise
+      .then((v) => settle(() => resolve(v)))
+      .catch((e) => {
+        if (e instanceof McpStreamClosedError) {
+          void (async () => {
+            await new Promise((r) => setTimeout(r, RPC_EXIT_GRACE_MS));
+            const code = await Promise.race<number | undefined>([
+              pool.proc.exited,
+              new Promise<undefined>((r) => setTimeout(() => r(undefined), 250)),
+            ]).catch(() => undefined);
+            const cur = pools.get(serverKey);
+            if (cur?.proc === pool.proc) pools.delete(serverKey);
+            const msg = await exitErrorMessage(pool, code ?? null, phase);
+            settle(() => reject(new Error(msg)));
+          })();
+          return;
+        }
+        settle(() => reject(e));
+      });
+
+    void pool.proc.exited.then(async (code) => {
+      await new Promise((r) => setTimeout(r, RPC_EXIT_GRACE_MS));
       const cur = pools.get(serverKey);
       if (cur?.proc === pool.proc) pools.delete(serverKey);
-      throw new Error(exitErrorMessage(pool, code ?? null, phase));
-    }
-    throw e;
-  }
+      const msg = await exitErrorMessage(pool, code ?? null, phase);
+      settle(() => reject(new Error(msg)));
+    });
+  });
 }
 
 async function ensurePool(
@@ -220,15 +298,9 @@ async function ensurePool(
   const existing = pools.get(key);
   if (existing) return existing;
 
-  let proc: Subprocess;
+  let proc: McpStdioChild;
   try {
-    proc = Bun.spawn(argv, {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...process.env, ...env },
-      cwd,
-    });
+    proc = spawnMcpStdioChild(argv, env, cwd);
   } catch (e) {
     const errno = (e as NodeJS.ErrnoException | undefined)?.code;
     const raw = e instanceof Error ? e.message : String(e);
@@ -236,15 +308,12 @@ async function ensurePool(
     throw new Error(`MCP stdio 无法启动子进程（${argv[0] ?? "?"}）：${raw}。${hint}`);
   }
 
-  if (!proc.stdin || !proc.stdout) throw new Error("stdio MCP: subprocess missing pipes");
-
   const writer = createStdinLineWriter(proc.stdin);
   const lines = readNdjsonLines(proc.stdout);
   const stderrBuf: string[] = [];
 
   void (async () => {
-    const errReader = proc.stderr?.getReader();
-    if (!errReader) return;
+    const errReader = proc.stderr.getReader();
     const dec = new TextDecoder();
     try {
       while (true) {
@@ -330,6 +399,33 @@ async function tryInitializeStdioAcrossVersions(
   );
 }
 
+/** MCP tools/call 成功帧里 isError=true 时，从 content 提取可读错误信息。 */
+export function mcpToolResultErrorMessage(result: unknown): string | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const r = result as { isError?: boolean; content?: unknown };
+  if (!r.isError) return null;
+  const parts: string[] = [];
+  if (Array.isArray(r.content)) {
+    for (const block of r.content) {
+      if (block && typeof block === "object" && !Array.isArray(block)) {
+        const text = (block as { text?: unknown }).text;
+        if (typeof text === "string" && text.trim()) parts.push(text.trim());
+      }
+    }
+  }
+  if (parts.length === 0) return "MCP tool returned isError without content";
+  const joined = parts.join("\n");
+  try {
+    const parsed = JSON.parse(joined) as { error?: string; code?: string };
+    if (typeof parsed.error === "string") {
+      return parsed.code ? `${parsed.code}: ${parsed.error}` : parsed.error;
+    }
+  } catch {
+    // not JSON — use raw text
+  }
+  return joined.slice(0, 500);
+}
+
 export async function callMcpStdioTool(
   opts: McpStdioSessionOptions & {
     toolName: string;
@@ -373,6 +469,8 @@ export async function callMcpStdioTool(
       opts.serverKey
     );
     if (rCall.error) throw new Error(rCall.error.message);
+    const toolErr = mcpToolResultErrorMessage(rCall.result);
+    if (toolErr) throw new Error(toolErr);
     return rCall.result;
   });
 }
@@ -380,10 +478,6 @@ export async function callMcpStdioTool(
 export function killMcpStdioPool(serverKey: string) {
   const p = pools.get(serverKey);
   if (!p) return;
-  try {
-    p.proc.kill?.();
-  } catch {
-    // ignore
-  }
+  p.proc.kill();
   pools.delete(serverKey);
 }

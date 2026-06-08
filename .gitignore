@@ -67,3 +67,6 @@ frontend/src/assets/pixel-office/raw/
 
 # Agent runtime snapshots
 .tmp-agent-snapshot-test/
+
+# Agent readiness eval outputs (per-run JSON / MD reports, traces, run.log)
+out/

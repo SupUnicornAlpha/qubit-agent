@@ -13,8 +13,11 @@ import type {
   ModernFurnitureCategory,
   ModernSpriteMeta,
 } from "../../../assets/pixel-office/themes/modern/manifest";
+import type { AssetBundleId } from "../assetOffice/types";
 
-export type ThemeId = "modern" | "modern_night" | "cozy";
+export type ThemeId = "modern" | "modern_night" | "cozy" | "comic_bc" | "flat_cool";
+
+export type ThemeRenderEngine = "legacy" | "asset";
 
 /** 主题 atlas 静态资源描述（来自构建脚本产物） */
 export type ThemeAtlasManifest = {
@@ -85,7 +88,11 @@ export type ThemeDecorationPreset = {
 export type ThemeDescriptor = {
   id: ThemeId;
   label: string;
-  /** 该主题使用的 atlas（多主题可共享同一份） */
+  /** legacy = 程序化 spriteAtlas；asset = PNG 美术包 v2 */
+  renderEngine: ThemeRenderEngine;
+  /** renderEngine=asset 时指向 v2 资产包 */
+  assetBundleId?: AssetBundleId;
+  /** legacy 主题专用 atlas */
   atlas: ThemeAtlasManifest;
   palette: ThemePalette;
   filter: ThemeFilter;

@@ -50,7 +50,11 @@ describe("extractFactorNamesFromDraft", () => {
   });
 
   test("去重 + 限制最多 8 条", () => {
-    const items = Array.from({ length: 15 }, (_, i) => `${i + 1}. **F${i + 1}**：desc`).join("\n");
+    /**
+     * T1.3 后收紧 length ≥ 3，原 fixture `F1..F15` 被 stop-word 长度过滤，
+     * 改成 `FCT_1..FCT_15` 模拟真因子命名（更接近线上行为）。
+     */
+    const items = Array.from({ length: 15 }, (_, i) => `${i + 1}. **FCT_${i + 1}**：desc`).join("\n");
     const names = extractFactorNamesFromDraft(items);
     expect(names.length).toBe(8);
   });
@@ -63,5 +67,81 @@ describe("extractFactorNamesFromDraft", () => {
     const names = extractFactorNamesFromDraft(draft);
     expect(names).toContain("ALPHA_1");
     expect(names).toContain("ALPHA_2");
+  });
+
+  /**
+   * B+ Phase T1.3 回归用例（基于 wf 35d357c8 / 8f527eab / d5b337e6 实测产生的脏数据）。
+   *
+   * 这些"被错抓为因子名"的字符串都是 LLM 写的叙述性文本中的下游 tool 名 /
+   * 角色名 / ticker / 技术指标名，不是真正的因子名。它们一旦被写到
+   * factor_definition 表里，会污染 factor.list 输出 + 占用 unique-name slot。
+   */
+  test("stop-word 黑名单：排除分析师角色 / 技术指标 / ticker 字面 / tool 名", () => {
+    const draft = `
+1. **analyst_options**：跟踪 IV / OI（实际是要调的下游分析师角色，不是因子）
+2. **analyst_fundamental_filing**：财报披露事件（角色名）
+3. **SMA20**：20 日均线（技术指标，不是因子定义）
+4. **SMA60**：60 日均线
+5. **RSI14**：14 日 RSI（技术指标）
+6. **MACD**：MACD 指标
+7. **EMA12**：12 日 EMA
+8. **ticker**：股票代号占位（这只是 placeholder 不是因子）
+9. **AAPL**：单一 ticker（不该当因子名）
+10. **VWAP**：成交量加权均价（技术指标）
+`;
+    const names = extractFactorNamesFromDraft(draft);
+    expect(names).not.toContain("analyst_options");
+    expect(names).not.toContain("analyst_fundamental_filing");
+    expect(names).not.toContain("SMA20");
+    expect(names).not.toContain("SMA60");
+    expect(names).not.toContain("RSI14");
+    expect(names).not.toContain("MACD");
+    expect(names).not.toContain("EMA12");
+    expect(names).not.toContain("ticker");
+    expect(names).not.toContain("AAPL");
+    expect(names).not.toContain("VWAP");
+    /** 全部被过滤后应该是空（这个 draft 没有真因子名） */
+    expect(names.length).toBe(0);
+  });
+
+  test("stop-word 与真因子混合：保留真因子 + 排除脏数据", () => {
+    const draft = `
+1. **SMA20**：20 日均线（技术指标，应排除）
+2. **MOM_20**：20 日动量 z-score 因子（真因子，应保留）
+3. **ticker**：占位（应排除）
+4. **vol_breakout**：波动率突破因子（应保留）
+5. **analyst_macro**：宏观分析师角色（应排除）
+`;
+    const names = extractFactorNamesFromDraft(draft);
+    expect(names).toContain("MOM_20");
+    expect(names).toContain("vol_breakout");
+    expect(names).not.toContain("SMA20");
+    expect(names).not.toContain("ticker");
+    expect(names).not.toContain("analyst_macro");
+  });
+
+  test("长度过短的候选（< 3）应被排除", () => {
+    const draft = `
+1. **AI**：太短，不是因子
+2. **MOM_30**：合法
+`;
+    const names = extractFactorNamesFromDraft(draft);
+    expect(names).not.toContain("AI");
+    expect(names).toContain("MOM_30");
+  });
+
+  test("ticker 大写黑名单：常见 US/CN ticker 不该被当因子", () => {
+    const draft = `
+1. **NVDA**：候选 ticker
+2. **GOOGL**：候选 ticker
+3. **600519**：候选 ticker
+4. **TSLA**：候选 ticker
+5. **MY_FACTOR_1**：真因子
+`;
+    const names = extractFactorNamesFromDraft(draft);
+    expect(names).not.toContain("NVDA");
+    expect(names).not.toContain("GOOGL");
+    expect(names).not.toContain("TSLA");
+    expect(names).toContain("MY_FACTOR_1");
   });
 });

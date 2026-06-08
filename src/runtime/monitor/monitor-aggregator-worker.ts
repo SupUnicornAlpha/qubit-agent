@@ -20,6 +20,7 @@ import {
   createStuckWorkflowAlerts,
 } from "./alert-service";
 import { scanAllSystemAlerts } from "./alert-scanners";
+import { purgeOrphanCheckpoints } from "./checkpoint-gc";
 import { aggregateAgentRuntimeMetrics } from "./quality-metrics";
 
 /** 默认 5 分钟一次（avoid 跟整点对齐，因为整点很多用户手动触发） */
@@ -37,6 +38,17 @@ export type MonitorAggregatorTickResult = {
    * cancelled=本 tick 处理的 workflow 数；不抛错（错误转 result.error）。
    */
   inactiveCancelled: { ok: boolean; cancelled?: number; error?: string };
+  /**
+   * B+ Phase T1.4：清理 langgraph_checkpoint 孤儿数据
+   * （thread_id 前 36 字符对应的 workflow_run 已不存在）。
+   * 单次释放 GB 量级 blob 空间；不抛错。
+   */
+  orphanCheckpointPurged: {
+    ok: boolean;
+    ckpt?: number;
+    write?: number;
+    error?: string;
+  };
 };
 
 export class MonitorAggregatorWorker {
@@ -61,6 +73,7 @@ export class MonitorAggregatorWorker {
         stuckAlerts: { ok: false, error: "skipped" },
         systemAlerts: { ok: false, error: "skipped" },
         inactiveCancelled: { ok: false, error: "skipped" },
+        orphanCheckpointPurged: { ok: false, error: "skipped" },
       };
     }
     this.running = true;
@@ -69,6 +82,7 @@ export class MonitorAggregatorWorker {
       stuckAlerts: { ok: false },
       systemAlerts: { ok: false },
       inactiveCancelled: { ok: false },
+      orphanCheckpointPurged: { ok: false },
     };
     try {
       // 1) Agent 维度指标聚合（写 breakdownJson + agent_runtime_metric）
@@ -109,6 +123,24 @@ export class MonitorAggregatorWorker {
       } catch (e) {
         result.inactiveCancelled = { ok: false, error: errToStr(e) };
         console.warn(`[monitorAggregator] inactiveCancelled failed: ${result.inactiveCancelled.error}`);
+      }
+
+      // 5) langgraph_checkpoint 孤儿 GC（B+ T1.4）
+      try {
+        const r = await purgeOrphanCheckpoints();
+        if (r.error) {
+          result.orphanCheckpointPurged = { ok: false, error: r.error };
+          console.warn(`[monitorAggregator] orphanCheckpointPurged failed: ${r.error}`);
+        } else {
+          result.orphanCheckpointPurged = {
+            ok: true,
+            ckpt: r.checkpointDeleted,
+            write: r.checkpointWriteDeleted,
+          };
+        }
+      } catch (e) {
+        result.orphanCheckpointPurged = { ok: false, error: errToStr(e) };
+        console.warn(`[monitorAggregator] orphanCheckpointPurged failed: ${result.orphanCheckpointPurged.error}`);
       }
 
       const summary = formatTickSummary(result);
@@ -159,6 +191,10 @@ function formatTickSummary(r: MonitorAggregatorTickResult): string {
     parts.push(`mcp=${r.systemAlerts.mcpCreated ?? 0} token=${r.systemAlerts.tokenCreated ?? 0}`);
   if (r.inactiveCancelled.ok)
     parts.push(`inactive=${r.inactiveCancelled.cancelled ?? 0}`);
+  if (r.orphanCheckpointPurged.ok)
+    parts.push(
+      `ckpt-gc=${r.orphanCheckpointPurged.ckpt ?? 0}/${r.orphanCheckpointPurged.write ?? 0}`,
+    );
   return parts.join(" ");
 }
 

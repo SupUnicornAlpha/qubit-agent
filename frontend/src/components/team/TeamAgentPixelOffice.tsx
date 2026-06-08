@@ -13,6 +13,15 @@ import {
 import { breedForRole } from "../../lib/pixelOffice/catAppearance";
 import { classifyInteractionKind } from "../../lib/pixelOffice/classify";
 import { getRenderConfig } from "../../lib/pixelOffice/config";
+import {
+  drawAssetCat,
+  drawAssetCatBubble,
+  drawAssetSceneBackground,
+  drawAssetShelfAndRack,
+  drawAssetWorkstation,
+  getLoadedAssetBundle,
+} from "../../lib/pixelOffice/assetOffice";
+import { invalidateSpriteAtlas } from "../../lib/pixelOffice/spriteAtlas";
 import { mapGraphToOfficeEventsExtended } from "../../lib/pixelOffice/eventMapper";
 import { ensureArkPixelLoaded } from "../../lib/pixelOffice/fonts";
 import { getPixelOfficeRegistry } from "../../lib/pixelOffice/runtime";
@@ -40,6 +49,7 @@ import {
   applyThemeOverlay,
   ensureActiveAtlasLoaded,
   getActiveTheme,
+  isAssetRenderTheme,
   listThemes,
   setActiveTheme,
   subscribeThemeChange,
@@ -315,6 +325,9 @@ export const TeamAgentPixelOffice: FC<Props> = ({
   useEffect(() => {
     const unsub = subscribeThemeChange((next) => {
       setThemeId(next.id);
+      if (next.renderEngine === "legacy") {
+        invalidateSpriteAtlas();
+      }
       ensureActiveAtlasLoaded();
       resetAmbientEffects();
     });
@@ -436,9 +449,21 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      drawOfficeScene(ctx, w, h, city, layout, now, isRunning);
+      const theme = getActiveTheme();
+      const assetBundle =
+        isAssetRenderTheme(theme) && theme.assetBundleId
+          ? getLoadedAssetBundle(theme.assetBundleId)
+          : null;
 
       const hotRoles = activity?.hotRoles ?? new Set<string>();
+      const persp = computeOfficePerspective(w, h, layout.windowH);
+
+      if (assetBundle) {
+        drawAssetSceneBackground(ctx, w, h, assetBundle, city);
+        drawAssetShelfAndRack(ctx, assetBundle, layout);
+      } else {
+        drawOfficeScene(ctx, w, h, city, layout, now, isRunning);
+      }
 
       for (const beam of beamsRef.current) {
         const from = catsRef.current.get(beam.from);
@@ -447,7 +472,6 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       }
       beamsRef.current = beamsRef.current.filter((b) => b.until > now);
 
-      const persp = computeOfficePerspective(w, h, layout.windowH);
       const drawLayers = agentNodes
         .map((n) => ({
           n,
@@ -468,30 +492,40 @@ export const TeamAgentPixelOffice: FC<Props> = ({
         cat.depth = depth;
         const sel = selection?.kind === "node" && selection.role === n.role;
         const hot = hotRoles.has(n.role);
-        drawWorkstation(ctx, desk.x, desk.y, cat.screenMode, now, hot, sel, depth, persp);
-        // 桌面个性化装饰（Folders/Books/Papers/Bin，按 role hash 确定性放置）
-        drawDeskDressing(ctx, desk.x, desk.y, depth, n.role, now);
+        if (assetBundle) {
+          drawAssetWorkstation(ctx, assetBundle, desk.x, desk.y, cat.screenMode, depth, sel, hot);
+        } else {
+          drawWorkstation(ctx, desk.x, desk.y, cat.screenMode, now, hot, sel, depth, persp);
+          drawDeskDressing(ctx, desk.x, desk.y, depth, n.role, now);
+        }
       }
 
-      for (const { desk, cat } of drawLayers) {
-        const depth = cat.depth ?? desk.depth;
-        const isWorking =
-          cat.action === "chat_send" ||
-          cat.action === "chat_recv" ||
-          cat.action === "tool" ||
-          cat.action === "mcp" ||
-          cat.action === "skill" ||
-          cat.action === "sandbox" ||
-          cat.action === "builtin" ||
-          cat.action === "at_rack" ||
-          cat.action === "at_shelf";
-        drawWorkstationAmbient(ctx, desk.x, desk.y, depth, cat.screenMode, now, isWorking);
+      if (!assetBundle) {
+        for (const { desk, cat } of drawLayers) {
+          const depth = cat.depth ?? desk.depth;
+          const isWorking =
+            cat.action === "chat_send" ||
+            cat.action === "chat_recv" ||
+            cat.action === "tool" ||
+            cat.action === "mcp" ||
+            cat.action === "skill" ||
+            cat.action === "sandbox" ||
+            cat.action === "builtin" ||
+            cat.action === "at_rack" ||
+            cat.action === "at_shelf";
+          drawWorkstationAmbient(ctx, desk.x, desk.y, depth, cat.screenMode, now, isWorking);
+        }
       }
 
       for (const { desk, cat } of drawLayers) {
         cat.frame = Math.floor(now / 140) % 2;
         const depth = cat.depth ?? desk.depth;
-        drawCatSprite(ctx, cat, now, depth);
+        if (assetBundle) {
+          drawAssetCat(ctx, assetBundle, cat, depth);
+          drawAssetCatBubble(ctx, cat, now, depth);
+        } else {
+          drawCatSprite(ctx, cat, now, depth);
+        }
         const sel = selection?.kind === "node" && selection.role === cat.role;
         drawDeskNameplate(ctx, cat.homeX, cat.homeY, cat.label, cat.role, sel, depth);
         const emoji = statusEmojiForAction(cat.action, cat.screenMode);
@@ -503,11 +537,14 @@ export const TeamAgentPixelOffice: FC<Props> = ({
       particlesRef.current = tickParticles(particlesRef.current, 16);
       drawParticles(ctx, particlesRef.current);
 
-      // 全局环境层（尘粒 / 雨）放在所有 sprite 之上、主题滤镜之下
-      drawAmbientLayer(ctx, w, h, persp, now);
+      // 全局环境层（legacy 主题）
+      if (!assetBundle) {
+        drawAmbientLayer(ctx, w, h, persp, now);
+      }
 
-      // 主题滤镜：覆盖背景 + 工位 + 猫咪 + 粒子 + 环境层，但不覆盖 status 文字
-      applyThemeOverlay(ctx, w, h);
+      if (!assetBundle) {
+        applyThemeOverlay(ctx, w, h);
+      }
 
       if (isRunning) {
         ctx.fillStyle = "rgba(74, 222, 128, 0.9)";

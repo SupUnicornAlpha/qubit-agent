@@ -9,6 +9,7 @@ import type { ThemeDescriptor } from "./types";
 export const modernNightTheme: ThemeDescriptor = {
   id: "modern_night",
   label: "深夜模式",
+  renderEngine: "legacy",
   atlas: modernAtlasManifest,
   palette: {
     floor: "#2a3142",

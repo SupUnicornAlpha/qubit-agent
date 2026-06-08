@@ -38,6 +38,10 @@ const WORKFLOW_DIRECT_TABLES = [
   // Phase 2.2: agent_checkpoint_snapshot FK 引用了 workflow_run.id 和 agent_instance.id；
   // 必须排在 agent_instance 之前删，否则 defer_foreign_keys 在 COMMIT 时报 FK 违规。
   "agent_checkpoint_snapshot",
+  // 2026-06: exec_call_log 在 migration 0075 加入，FK NOT NULL 且无 ON DELETE，
+  //   遗漏后历史 workflow 硬删全军覆没（FOREIGN KEY constraint failed in COMMIT）。
+  //   排在 agent_step 之前，避免 defer 链路上的 step→exec 残留。
+  "exec_call_log",
   "agent_step",
   "mcp_call_log",
   // 监控 V2 P1 (migration 0049)：
@@ -69,6 +73,11 @@ const WORKFLOW_SET_NULL_TABLES = [
   "eval_case_result",
   "indicator_strategy_script",
   "scheduled_job_run",
+  // 2026-06: agent_skill_run.workflow_run_id 是 ON DELETE SET NULL，技术上 SQLite 会自动
+  //   触发；但放进显式 set_null 表里有两个好处：
+  //     1) 把 set_null 计数纳入 details，审计 / 监控页能看到"这条 workflow 影响了多少个 skill_run"。
+  //     2) 防御性写法 —— 万一未来有人改 schema 把 ON DELETE 去掉，至少这里能兜底不报 FK 违规。
+  "agent_skill_run",
 ] as const;
 
 /**
@@ -98,6 +107,37 @@ const WORKFLOW_INDIRECT_TABLES: ReadonlyArray<{ table: string; via: string; viaC
   { table: "execution_report", via: "intent_order", viaColumn: "intent_order_id" },
   { table: "intent_deviation", via: "intent_order", viaColumn: "intent_order_id" },
   { table: "screener_candidate", via: "screener_run", viaColumn: "screener_run_id" },
+];
+
+/**
+ * 三级 FK 链：子表通过两层中间表才挂到 workflow_run。
+ * SQL 形如：
+ *   DELETE FROM <table> WHERE <viaColumn> IN (
+ *     SELECT id FROM <via> WHERE <viaParentColumn> IN (
+ *       SELECT id FROM <viaParent> WHERE workflow_run_id = ?
+ *     )
+ *   )
+ *
+ * 当前已知链路：
+ *   fill ← broker_order ← order_intent
+ *
+ * 规则：必须先删本表，再删 via（broker_order）—— via 在二级 INDIRECT 列表里已声明。
+ * 顺序：DEEP_INDIRECT 必须先于 INDIRECT 执行，否则 broker_order 已经被清，孤儿 fill 仍然违约。
+ */
+const WORKFLOW_DEEP_INDIRECT_TABLES: ReadonlyArray<{
+  table: string;
+  via: string;
+  viaColumn: string;
+  viaParent: string;
+  viaParentColumn: string;
+}> = [
+  {
+    table: "fill",
+    via: "broker_order",
+    viaColumn: "broker_order_id",
+    viaParent: "order_intent",
+    viaParentColumn: "order_intent_id",
+  },
 ];
 
 /**
@@ -137,6 +177,21 @@ export async function hardDeleteWorkflowRun(
       )
       .run(workflowRunId);
     details.sandbox_violation_log = sandboxDel.changes;
+
+    // 1.4) 三级 FK 链：必须先于二级删，否则中间表（如 broker_order）一旦被清，
+    // 孤儿子表（如 fill）会在 COMMIT 报 FK 违规。
+    for (const { table, via, viaColumn, viaParent, viaParentColumn } of WORKFLOW_DEEP_INDIRECT_TABLES) {
+      const r = sqlite
+        .prepare(
+          `DELETE FROM ${table} WHERE ${viaColumn} IN (
+             SELECT id FROM ${via} WHERE ${viaParentColumn} IN (
+               SELECT id FROM ${viaParent} WHERE workflow_run_id = ?
+             )
+           )`
+        )
+        .run(workflowRunId);
+      details[table] = (details[table] ?? 0) + r.changes;
+    }
 
     // 1.5) 二级 FK 链：子表通过父表 PK 关联（NO ACTION），必须在删父表前显式清掉，
     // 否则 COMMIT 阶段的 FK check 仍会报 "FOREIGN KEY constraint failed"。

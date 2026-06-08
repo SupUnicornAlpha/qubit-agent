@@ -1362,6 +1362,91 @@ export async function buildWorkflowPriorOutputsContext(
  *
  * 该函数是 export 的，便于单测覆盖 / 后续 prompt 微调时回归。
  */
+/**
+ * B+ Phase T1.3：stop-word 黑名单。
+ *
+ * 这些字符串看起来"形态合法"（含字母数字、长度 OK），但语义上不是因子名：
+ *   - `analyst_*` / `news_event` / `risk_*` / `orchestrator` 等：是 agent role
+ *   - `SMA20`/`EMA12`/`MACD`/`RSI14`/`VWAP`/`BBANDS`/`ATR` 等：技术指标本身
+ *   - `ticker`/`symbol`/`stock` 等：placeholder
+ *   - `AAPL`/`NVDA`/`GOOGL`/`TSLA`/`MSFT` 等：实际 ticker（用户/LLM 误用）
+ *   - 4-5 位纯数字（如 `600519`）：A 股 ticker
+ *
+ * 一旦匹配，候选直接丢弃，避免污染 factor_definition 表。
+ */
+const FACTOR_NAME_STOPWORDS = new Set([
+  /** agent roles */
+  "orchestrator",
+  "research",
+  "researcher",
+  "analyst",
+  "analyst_fundamental",
+  "analyst_technical",
+  "analyst_macro",
+  "analyst_sentiment",
+  "analyst_options",
+  "analyst_options_risk",
+  "analyst_risk",
+  "analyst_filing",
+  "analyst_fundamental_filing",
+  "news_event",
+  "risk",
+  "backtest",
+  "trader",
+  "market_data",
+  /** placeholders */
+  "ticker",
+  "symbol",
+  "stock",
+  "code",
+  "name",
+  "default",
+  "todo",
+  "tbd",
+  "fixme",
+  /** 常见纯技术指标名（不是因子定义本身） */
+  "macd",
+  "vwap",
+  "bbands",
+  "atr",
+  "kdj",
+  "wr",
+  "cci",
+  "obv",
+  /** US 常见 ticker（top 50 大盘 / LLM 高频写到的） */
+  "aapl",
+  "nvda",
+  "googl",
+  "google",
+  "amzn",
+  "tsla",
+  "msft",
+  "meta",
+  "avgo",
+  "mu",
+  "amd",
+  "intc",
+  "tsm",
+  "asml",
+  "nflx",
+  "dis",
+  "ko",
+  "pep",
+  "wmt",
+  "jpm",
+  "ba",
+  "v",
+  "ma",
+  /** SPY / QQQ / 大盘 ETF */
+  "spy",
+  "qqq",
+  "iwm",
+  "vti",
+]);
+
+const SMA_LIKE_INDICATOR_RE = /^(sma|ema|rsi|wma|dema|tema|tr|adx|stoch)\d+$/i;
+const PURE_DIGIT_TICKER_RE = /^\d{4,6}$/;
+
 export function extractFactorNamesFromDraft(draftBody: string): string[] {
   if (!draftBody || draftBody.trim().length === 0) return [];
   const names = new Set<string>();
@@ -1393,7 +1478,16 @@ export function extractFactorNamesFromDraft(draftBody: string): string[] {
 
     /** 标识符化：保留 letters/digits/_/- */
     const normalized = candidate.replace(/[^A-Za-z0-9_\-]/g, "").trim();
-    if (normalized.length < 2) continue;
+    /** 收紧长度：≥ 3 才是合理因子名（"AI" / "EV" 太短无信息量） */
+    if (normalized.length < 3) continue;
+
+    /** stop-word 黑名单（大小写不敏感） */
+    if (FACTOR_NAME_STOPWORDS.has(normalized.toLowerCase())) continue;
+    /** SMA20 / EMA12 / RSI14 等"技术指标 + 周期" 模式 */
+    if (SMA_LIKE_INDICATOR_RE.test(normalized)) continue;
+    /** 4-6 位纯数字 = A 股 ticker（如 600519） */
+    if (PURE_DIGIT_TICKER_RE.test(normalized)) continue;
+
     names.add(normalized);
   }
   return [...names].slice(0, 8);

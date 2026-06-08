@@ -22,7 +22,27 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "../../config";
+
+const MCP_FINANCEX_GUARD = join(
+  fileURLToPath(new URL(".", import.meta.url)),
+  "mcp-financex-process-guard.mjs"
+);
+
+/** npm MCP 包用 Node 跑；Bun 作 process.execPath 时 fatal handler 行为不一致。 */
+function resolveNodeBinaryForMcp(): string {
+  const candidates = [
+    process.env.NODE_BIN?.trim(),
+    process.env.npm_node_execpath?.trim(),
+    "/opt/homebrew/bin/node",
+    "/usr/local/bin/node",
+  ];
+  for (const c of candidates) {
+    if (c && existsSync(c)) return c;
+  }
+  return "node";
+}
 
 interface NpxSpec {
   pkg: string;
@@ -262,8 +282,25 @@ export async function resolveMcpStdioArgv(argv: readonly string[]): Promise<Reso
   const binPath = await ensureInstalledAndResolveBin(spec.pkg, spec.version);
   if (!binPath) return { argv: [...argv], rewritten: false };
   const installDir = pkgInstallDir(spec.pkg);
+  /**
+   * mcp-financex 1.0.11：Yahoo 403 等工具错误会触发 unhandledRejection → process.exit(1)，
+   * 子进程在写出 tools/call 响应前死掉。经 launcher 吞掉 exit(1) 后，isError 响应可正常返回。
+   */
+  const financexEntry = join(installDir, "dist", "index.js");
+  const spawnArgv =
+    spec.pkg === "mcp-financex" &&
+    existsSync(MCP_FINANCEX_GUARD) &&
+    existsSync(financexEntry)
+      ? [
+          resolveNodeBinaryForMcp(),
+          "--import",
+          MCP_FINANCEX_GUARD,
+          financexEntry,
+          ...spec.binArgs,
+        ]
+      : [binPath, ...spec.binArgs];
   return {
-    argv: [binPath, ...spec.binArgs],
+    argv: spawnArgv,
     rewritten: true,
     binPath,
     ...(existsSync(installDir) ? { installDir } : {}),

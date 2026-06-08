@@ -52,6 +52,7 @@ import { skillService } from "../skills/skill-service";
 import { strategyComposer } from "../strategy/strategy-composer";
 import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
 import { parseHitlApproval } from "../workflow/hitl-service";
+import { isLikelyProjectIdFormat } from "../langgraph/nodes/project-id";
 import { resolveConnectorForTool } from "./tool-routes";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 
@@ -889,10 +890,22 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     if (!factorId && exprRaw.trim().length > 0) {
-      const projectId = String(params["project_id"] ?? ctx.projectId ?? "").trim();
+      /**
+       * 双保险（B+ Phase 1.1）：act 入口已 rewrite placeholder，但这里仍做
+       * 形态校验，避免任何旁路绕过 act（e.g. 直接 dispatchBuiltinTool 单测）。
+       *
+       * 优先级：ctx.projectId（来自 workflow_run.project_id）> params["project_id"]
+       *   （仅当形态合法时使用），其他情况报清晰错误。
+       */
+      const fromParams = String(params["project_id"] ?? "").trim();
+      const projectId = ctx.projectId
+        ? ctx.projectId
+        : isLikelyProjectIdFormat(fromParams)
+          ? fromParams
+          : "";
       if (!projectId) {
         throw new Error(
-          "factor.autoEvaluate: factor_id 缺失且无 project_id，无法自动注册因子。请先 factor.register 拿到 factor_id，再调 factor.autoEvaluate。"
+          "factor.autoEvaluate: factor_id 缺失且无可用 project_id，无法自动注册因子。请先 factor.register 拿到 factor_id，再调 factor.autoEvaluate。"
         );
       }
       const name = String(params["name"] ?? `auto_${Date.now()}`).trim();
@@ -933,6 +946,37 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         } else {
           throw err;
         }
+      }
+
+      /**
+       * B+ Phase T1.2：register 成功 / 复用既有 id 后，**自动跑一次 compute**
+       * 把 factor_value 落到 DuckDB，避免随后的 autoEvaluate 抛 `no_factor_values`。
+       *
+       * 历史：12/12 失败诊断中 6 次都是 LLM 用一步式 expr+name 调用，handler 只
+       * register 没 compute → autoEvaluate 拉空 values 报 no_factor_values → LLM
+       * 习惯性重试 autoEvaluate（同名 → already_exists / 复用 id → 还是空 values）→
+       * 死循环。修复后 register-then-compute-then-evaluate 三步走 atomically。
+       *
+       * 容错：compute 失败不直接抛，而是把错误信息附在 autoEvaluate 抛错里给
+       * LLM，避免 compute 的 provider/缺数据问题被吞掉。
+       */
+      const computeSymbolsRaw = params.symbols;
+      const computeSymbols = Array.isArray(computeSymbolsRaw)
+        ? computeSymbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : undefined;
+      try {
+        await factorService.compute({
+          factorId,
+          startDate,
+          endDate,
+          ...(computeSymbols && computeSymbols.length > 0 ? { symbols: computeSymbols } : {}),
+          ...(params["provider_key"] ? { providerKey: String(params["provider_key"]) } : {}),
+        });
+      } catch (err) {
+        throw new Error(
+          `factor.autoEvaluate: 内部 factor.compute 失败（factor_id=${factorId}）: ${(err as Error).message}。` +
+            "请检查 expr 语法 / symbols 是否有真实 K 线数据 / provider 是否可用。"
+        );
       }
     }
 
