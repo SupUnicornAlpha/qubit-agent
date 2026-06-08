@@ -191,12 +191,85 @@ export async function loadWorkspaceRuntimeConfig(
   };
 }
 
+/**
+ * Round 8 复盘（2026-06-08）：`.qubit/sandbox.json` 是 user 工作区的历史快照。
+ * SEED_AGENT_DEFINITIONS 新增 builtin tool（如 strategy.create_version /
+ * order.create_intent）后，文件里的 default-policy.allowedTools 仍旧没有这些工具；
+ * 后续 GraphRunner.syncFromWorkspaceConfig → syncWorkspaceConfigToDb 会用文件覆盖
+ * DB → sandbox_policy.allowed_tools_json 退回旧值 → 评测里 strategy.create_version
+ * 永远 sandbox_blocked。
+ *
+ * 这里做"软合并"：按 id 找到文件里 builtin policy（如 default-policy），把 SEED
+ * 版本的 allowedTools / allowedMcpServers union 进去，user 自加的额外项保留；
+ * 其他 policy（user 自定义、FSI preset）完全不动。其他字段（maxIterationsPerRun、
+ * canSubmitOrder 等）尊重 user 文件值，避免覆盖 user 的安全约束。
+ */
+export function mergeBuiltinSandboxPoliciesIntoUserFile(
+  fileSandbox: WorkspaceSandboxPolicy[],
+  seedPolicies: WorkspaceSandboxPolicy[]
+): { policies: WorkspaceSandboxPolicy[]; mutated: boolean } {
+  let mutated = false;
+  const fileById = new Map(fileSandbox.map((p) => [p.id, p]));
+  const merged: WorkspaceSandboxPolicy[] = [];
+
+  for (const file of fileSandbox) {
+    const seed = seedPolicies.find((s) => s.id === file.id);
+    if (!seed) {
+      // user 自定义 / FSI preset：原样保留
+      merged.push(file);
+      continue;
+    }
+
+    const toolsUnion = unionStrings(file.allowedTools, seed.allowedTools);
+    const mcpUnion = unionStrings(file.allowedMcpServers, seed.allowedMcpServers);
+
+    const toolsChanged = !sameSet(file.allowedTools, toolsUnion);
+    const mcpChanged = !sameSet(file.allowedMcpServers, mcpUnion);
+    if (toolsChanged || mcpChanged) mutated = true;
+
+    merged.push({
+      ...file,
+      allowedTools: toolsUnion,
+      allowedMcpServers: mcpUnion,
+    });
+  }
+
+  // SEED 里有、文件没有的 builtin policy 直接补一条（首次启动 / 文件被人删了 builtin 项）
+  for (const seed of seedPolicies) {
+    if (fileById.has(seed.id)) continue;
+    mutated = true;
+    merged.push(seed);
+  }
+
+  return { policies: merged, mutated };
+}
+
+function unionStrings(a: string[], b: string[]): string[] {
+  const set = new Set<string>();
+  for (const x of a) set.add(x);
+  for (const x of b) set.add(x);
+  return [...set].sort();
+}
+
+function sameSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = new Set(a);
+  for (const x of b) if (!sa.has(x)) return false;
+  return true;
+}
+
 export async function ensureWorkspaceRuntimeConfigFiles(params: {
   rootDir?: string;
   definitions: RuntimeAgentDefinition[];
   policies: WorkspaceSandboxPolicy[];
   /** 为 true 时用种子定义覆盖 workspace 文件（与 DB seed 对齐） */
   refresh?: boolean;
+  /**
+   * 默认 true：当 sandbox.json 已存在时，把 SEED 的 builtin policy（按 id 匹配）的
+   * allowedTools / allowedMcpServers union 进文件并写回，其他 policy 不动。
+   * 给 unit test 显式传 false 关掉以便测试初始写入路径。
+   */
+  mergeBuiltinSandboxPolicies?: boolean;
 }): Promise<void> {
   const rootDir = params.rootDir ?? process.cwd();
   const configDir = join(rootDir, ".qubit");
@@ -212,5 +285,25 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
   }
   if (params.refresh || !existsSync(sandboxFile)) {
     await writeFile(sandboxFile, JSON.stringify({ policies: params.policies }, null, 2), "utf-8");
+    return;
+  }
+  // 文件已存在：按需 union builtin policy 的工具白名单
+  if (params.mergeBuiltinSandboxPolicies === false) return;
+  try {
+    const raw = await readFile(sandboxFile, "utf-8");
+    const parsed = SandboxFileSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return; // 损坏文件交给 loadWorkspaceRuntimeConfig 报 parseError
+    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(
+      parsed.data.policies,
+      params.policies
+    );
+    if (mutated) {
+      await writeFile(sandboxFile, JSON.stringify({ policies }, null, 2), "utf-8");
+      console.log(
+        `[Workspace] sandbox.json: union new builtin tools/MCPs into existing user policies.`
+      );
+    }
+  } catch {
+    // 读/写失败不阻塞启动；GraphRunner 后续 reload 仍会按文件原状跑
   }
 }
