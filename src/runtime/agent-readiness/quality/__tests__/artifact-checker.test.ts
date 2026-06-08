@@ -57,7 +57,8 @@ beforeAll(() => {
     );
     CREATE TABLE factor_definition (
       id TEXT PRIMARY KEY,
-      expr TEXT
+      expr TEXT,
+      workflow_run_id TEXT
     );
     CREATE TABLE factor_evaluation (
       id TEXT PRIMARY KEY,
@@ -80,7 +81,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  /** 每个 test 重置数据 */
+  /** 每个 test 重置数据；注意 factor_evaluation 先 delete（FK 概念上指向 factor_definition） */
   sqlite.exec(`
     DELETE FROM workflow_run;
     DELETE FROM analyst_signal;
@@ -89,8 +90,8 @@ beforeEach(() => {
     DELETE FROM strategy_composition;
     DELETE FROM order_intent;
     DELETE FROM risk_decision;
-    DELETE FROM factor_definition;
     DELETE FROM factor_evaluation;
+    DELETE FROM factor_definition;
     DELETE FROM screener_run;
     DELETE FROM screener_candidate;
   `);
@@ -183,6 +184,56 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
     expect(missingAS).toBeDefined();
     expect(missingAS?.minRows).toBe(2);
     expect(missingAS?.rows).toBe(0);
+  });
+
+  /**
+   * Round 8 复盘（2026-06-08）：原 factor 场景 SQL 没用 workflow_run_id `?` 占位符
+   * → 历史 round 的全库因子被误计为本 workflow 产出 → A-1 假阳性。
+   */
+  test("factor scenario：其他 workflow 的因子不应被计入本 workflow", () => {
+    // 灌 1 条"别的 workflow"的 factor + evaluation
+    sqlite
+      .prepare(
+        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
+      )
+      .run("f-other", "close - close[20]", "wf-other");
+    sqlite
+      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic) VALUES (?, ?, ?)")
+      .run("fe-other", "f-other", 0.04);
+
+    const result = checkRequiredArtifacts(sqlite, "factor", "wf-current");
+    expect(result.ok).toBe(false);
+    expect(result.rows.find((r) => r.table === "factor_definition")?.rows).toBe(0);
+    expect(result.rows.find((r) => r.table === "factor_evaluation")?.rows).toBe(0);
+  });
+
+  test("factor scenario：本 workflow 因子 + 评估齐全 → ok", () => {
+    sqlite
+      .prepare(
+        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
+      )
+      .run("f-curr", "ret_20d", "wf-x");
+    sqlite
+      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic) VALUES (?, ?, ?)")
+      .run("fe-curr", "f-curr", 0.05);
+
+    const result = checkRequiredArtifacts(sqlite, "factor", "wf-x");
+    expect(result.ok).toBe(true);
+  });
+
+  test("factor scenario：本 workflow 有因子但 evaluation.ic IS NULL → 不算 ok", () => {
+    sqlite
+      .prepare(
+        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
+      )
+      .run("f-x", "ret_20d", "wf-x");
+    sqlite
+      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic) VALUES (?, ?, NULL)")
+      .run("fe-x", "f-x");
+
+    const result = checkRequiredArtifacts(sqlite, "factor", "wf-x");
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.table === "factor_evaluation")).toBe(true);
   });
 });
 

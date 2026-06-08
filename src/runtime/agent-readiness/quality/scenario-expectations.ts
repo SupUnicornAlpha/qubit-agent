@@ -104,25 +104,30 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
 
   factor: {
     scenario: "factor",
+    /**
+     * Round 8 复盘（2026-06-08）：原 SQL 写成三层嵌套 IN 且没用 `?` 占位符，
+     * artifact-checker / content-quality 用 `sqlite.prepare(sql).get(workflowRunId)`
+     * 时多余参数被静默忽略，SQL 在全库范围跑 → 历史 round 留下的旧因子都进了 count
+     * → A-1 永远 = 1 误判"有产出"，与 UI 研究产出 tab 实际为空形成假阳性。
+     *
+     * 现修为严格按 workflow_run_id 过滤；factor_evaluation 没有 workflow_run_id
+     * 列，通过 factor_id JOIN 到 factor_definition 反查本 workflow 内的评估。
+     */
     requiredArtifacts: [
       {
         table: "factor_definition",
-        countSql: `
-          SELECT COUNT(*) AS c
-          FROM factor_definition
-          WHERE id IN (
-            SELECT factor_id FROM factor_evaluation fe
-            WHERE fe.factor_id IN (
-              SELECT fd.id FROM factor_definition fd
-              WHERE fd.id IN (SELECT id FROM factor_definition)
-            )
-          )`,
+        countSql: `SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?`,
         minRows: 1,
         nonNullColumns: ["expr"],
       },
       {
         table: "factor_evaluation",
-        countSql: `SELECT COUNT(*) AS c FROM factor_evaluation WHERE ic IS NOT NULL`,
+        countSql: `
+          SELECT COUNT(*) AS c FROM factor_evaluation fe
+          WHERE fe.ic IS NOT NULL
+            AND fe.factor_id IN (
+              SELECT id FROM factor_definition WHERE workflow_run_id = ?
+            )`,
         minRows: 1,
       },
     ],

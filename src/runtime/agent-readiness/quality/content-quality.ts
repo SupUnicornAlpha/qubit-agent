@@ -136,12 +136,16 @@ function fetchSearchHaystack(
       .all(workflowRunId) as Array<{ ticker: string; company: string }>;
     for (const c of cands) parts.push(c.ticker, c.company);
   } else if (scenario === "factor") {
+    /**
+     * Round 8 复盘：旧实现 `WHERE id IN (SELECT factor_id FROM factor_evaluation)`
+     * 没用 workflowRunId，会把全库的因子文本拼进 haystack，让 A-2 关键词命中假高。
+     * 现严格限定本 workflow 的因子。
+     */
     const facs = sqlite
       .prepare(
-        `SELECT name, expr, category FROM factor_definition
-         WHERE id IN (SELECT factor_id FROM factor_evaluation)`
+        `SELECT name, expr, category FROM factor_definition WHERE workflow_run_id = ?`
       )
-      .all() as Array<{ name: string; expr: string; category: string }>;
+      .all(workflowRunId) as Array<{ name: string; expr: string; category: string }>;
     for (const f of facs) parts.push(f.name, f.expr, f.category);
   } else if (scenario === "strategy") {
     const vers = sqlite

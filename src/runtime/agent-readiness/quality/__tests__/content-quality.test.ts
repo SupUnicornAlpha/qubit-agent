@@ -256,6 +256,76 @@ describe("A 类 · 内容质量", () => {
     expect(r["A-2"]).toBeGreaterThanOrEqual(0.5);
   });
 
+  /**
+   * Round 8 复盘（2026-06-08）：原 factor 场景 A-1 SQL 没按 workflow_run_id 过滤，
+   * artifact-checker / content-quality 用 `sqlite.prepare(sql).get(workflowRunId)`
+   * 时多余参数被静默忽略，导致历史 round 的因子也被计入"本 workflow 产出"。
+   * 这两个测试覆盖修复后 SQL 严格 workflow scope 的行为。
+   */
+  test("factor：仅当本 workflow 写入 factor_definition + factor_evaluation 时 A-1=1", async () => {
+    const wfId = await setupWorkflow("[readiness/factor] new alpha");
+    const db = await getDb();
+    const fid = `fd-${wfId}`;
+    await db.insert(schema.factorDefinition).values({
+      id: fid,
+      projectId: PROJECT_ID,
+      name: "alpha-mr",
+      category: "momentum",
+      definitionJson: {} as never,
+      expr: "close - close[20]",
+      workflowRunId: wfId,
+    });
+    await db.insert(schema.factorEvaluation).values({
+      id: `fe-${wfId}`,
+      factorId: fid,
+      asof: new Date().toISOString().slice(0, 10),
+      universe: "us-largecap",
+      ic: 0.05,
+      rankIc: 0.06,
+      ir: 0.4,
+    });
+    const sqlite = getSqliteForTesting();
+    const r = await collectContentQuality(sqlite, {
+      workflowRunId: wfId,
+      scenario: "factor",
+      goal: "alpha 因子 IC",
+    });
+    expect(r["A-1"]).toBe(1);
+  });
+
+  test("factor：其他 workflow 留下的全库残留因子不应让本 workflow 假阳性 A-1>0", async () => {
+    // 先以"其他 workflow"身份注入 1 个 factor + evaluation
+    const otherWf = await setupWorkflow("[readiness/factor] OTHER ROUND");
+    const db = await getDb();
+    const otherFid = `fd-other-${otherWf}`;
+    await db.insert(schema.factorDefinition).values({
+      id: otherFid,
+      projectId: PROJECT_ID,
+      name: "legacy-alpha",
+      category: "value",
+      definitionJson: {} as never,
+      expr: "pe",
+      workflowRunId: otherWf,
+    });
+    await db.insert(schema.factorEvaluation).values({
+      id: `fe-other-${otherWf}`,
+      factorId: otherFid,
+      asof: new Date().toISOString().slice(0, 10),
+      universe: "us-largecap",
+      ic: 0.02,
+    });
+
+    // 现在跑"本 workflow"（不向 factor_* 写任何东西），A-1 必须 = 0
+    const wfId = await setupWorkflow("[readiness/factor] CURRENT ROUND");
+    const sqlite = getSqliteForTesting();
+    const r = await collectContentQuality(sqlite, {
+      workflowRunId: wfId,
+      scenario: "factor",
+      goal: "alpha 因子",
+    });
+    expect(r["A-1"]).toBe(0);
+  });
+
   test("live_trading：order → strategy_version 引用合法 → A-4=1", async () => {
     const wfId = await setupWorkflow("[readiness/live] order placement");
     const db = await getDb();
