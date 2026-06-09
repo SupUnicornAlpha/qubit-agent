@@ -33,14 +33,25 @@ export type ActiveView =
 export type QuantTab = "factor" | "discovery" | "composer" | "backtest";
 
 /**
- * 量化工作台 4 tab 间的「一键跳转回测」handoff payload。
+ * 量化工作台 4 tab 间的跨 tab handoff payload。
  *
- * - `raw`：来自 Discovery 候选 / 因子工坊单因子 dry-run；用 qlib_expr 直接作为 signal
- * - `composition`：来自 Composer，引用 strategy_composition.id 作为回测入口
+ * Backtest 方向（payload 由 Discovery / Composer / FactorWorkbench 写入，
+ * BacktestStudio mount 时消费）：
+ *   - `raw`：用 qlib_expr 直接作为 signal（Discovery 单候选试跑 / Factor 单因子 dry-run）
+ *   - `composition`：引用 strategy_composition.id 作为回测入口（Composer 一键回测）
+ *
+ * Composer 方向（payload 由 FactorWorkbench 批量动作写入，ComposerTab mount 消费）：
+ *   - `factor-ids-to-composer`：把一组 factorId 自动勾入 Composer 候选池
+ *
+ * 注意：保持联合类型；旧的 `QuantBacktestHandoff` 别名仍可用于 backtest 路径。
  */
-export type QuantBacktestHandoff =
+export type QuantHandoff =
   | { kind: "raw"; expr: string; lang: "qlib_expr"; reverse?: boolean; note?: string }
-  | { kind: "composition"; compositionId: string; note?: string };
+  | { kind: "composition"; compositionId: string; note?: string }
+  | { kind: "factor-ids-to-composer"; factorIds: string[]; note?: string };
+
+/** @deprecated 使用 QuantHandoff；保留别名以兼容旧 import */
+export type QuantBacktestHandoff = QuantHandoff;
 
 import {
   applyUiAppearance,
@@ -177,8 +188,8 @@ export interface AppState {
    *
    * BacktestStudioTab 在 mount / 变化时消费 + 清空，避免重复触发。
    */
-  quantHandoff: QuantBacktestHandoff | null;
-  setQuantHandoff: (h: QuantBacktestHandoff | null) => void;
+  quantHandoff: QuantHandoff | null;
+  setQuantHandoff: (h: QuantHandoff | null) => void;
   /** 图表请求版本号，供 IDE 内嵌 K 线监听刷新 */
   chartReloadNonce: number;
   requestChartReload: () => void;

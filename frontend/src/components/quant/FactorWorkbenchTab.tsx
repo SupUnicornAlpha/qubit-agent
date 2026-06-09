@@ -35,6 +35,7 @@ import {
 import { useDefaultProject } from "./useDefaultProject";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
 import { LineageBadge, LineageTrail } from "./LineageBadge";
+import { useAppStore } from "../../store";
 
 const CATEGORY_LABELS: Record<FactorCategory, string> = {
   value: "Value",
@@ -113,11 +114,20 @@ export const FactorWorkbenchTab: FC = () => {
   // last evaluation result
   const [lastEval, setLastEval] = useState<FactorEvalResultDto | null>(null);
 
-  // 对比模式：多选因子在 IC 时序图上叠加
-  const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  /**
+   * 多选集 —— 同时承担「IC 对比」与「批量动作」两类用途，
+   * 避免再开一组 state 让 checkbox 行为发散。
+   */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [compareEvalsByFactor, setCompareEvalsByFactor] = useState<
     Record<string, FactorEvaluationLogRow[]>
   >({});
+
+  /** 批量动作进度提示（"3/5 compute MOMENTUM_5D"） */
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+
+  const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
+  const setQuantTab = useAppStore((s) => s.setQuantTab);
 
   const reloadList = useCallback(async () => {
     if (!projectId) return;
@@ -281,8 +291,8 @@ export const FactorWorkbenchTab: FC = () => {
     }
   }, [selectedId, symbolsList, opStart, opEnd]);
 
-  const toggleCompare = useCallback((id: string) => {
-    setCompareIds((prev) => {
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -290,15 +300,128 @@ export const FactorWorkbenchTab: FC = () => {
     });
   }, []);
 
+  /**
+   * 串行批量执行，避免同时打多个 compute / auto-evaluate 把 DuckDB 压瘫。
+   * 每步更新 bulkProgress，让用户能看到 N/M 进度。
+   */
+  const runBulk = useCallback(
+    async <T,>(
+      action: string,
+      ids: string[],
+      fn: (id: string, factor: FactorRecord) => Promise<T>
+    ) => {
+      if (ids.length === 0) return;
+      setBulkProgress({ done: 0, total: ids.length, label: action });
+      setError(null);
+      setInfo(null);
+      let success = 0;
+      let failed = 0;
+      const factorById = new Map(factors.map((f) => [f.id, f] as const));
+      for (let i = 0; i < ids.length; i++) {
+        const fid = ids[i]!;
+        const f = factorById.get(fid);
+        if (!f) {
+          failed += 1;
+          setBulkProgress({ done: i + 1, total: ids.length, label: `${action} · 跳过` });
+          continue;
+        }
+        setBulkProgress({ done: i, total: ids.length, label: `${action} · ${f.name}` });
+        try {
+          await fn(fid, f);
+          success += 1;
+        } catch (e) {
+          failed += 1;
+          // 累积错误信息，但不中断；最后统一展示
+          setError((prev) =>
+            prev
+              ? `${prev}\n[${f.name}] ${(e as Error).message}`
+              : `[${f.name}] ${(e as Error).message}`
+          );
+        }
+      }
+      setBulkProgress(null);
+      setInfo(`批量${action}完成：成功 ${success} · 失败 ${failed}`);
+    },
+    [factors]
+  );
+
+  /** 批量状态切换：复用单条 setFactorStatus，串行即可（写极快） */
+  const onBulkStatus = useCallback(
+    async (next: FactorStatus) => {
+      const ids = Array.from(selectedIds);
+      if (ids.length === 0) return;
+      await runBulk(`设为${STATUS_LABELS[next]}`, ids, async (id) => {
+        await setFactorStatus(id, next);
+      });
+      await reloadList();
+      await reloadSelected();
+    },
+    [selectedIds, runBulk, reloadList, reloadSelected]
+  );
+
+  const onBulkCompute = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    await runBulk("compute", ids, async (id) => {
+      await computeFactor(id, {
+        startDate: opStart,
+        endDate: opEnd,
+        symbols: symbolsList.length > 0 ? symbolsList : undefined,
+      });
+    });
+    // 跑完刷新选中因子的统计
+    const stats = selectedId ? await factorValuesStats(selectedId).catch(() => null) : null;
+    setValueStats(stats);
+  }, [selectedIds, runBulk, opStart, opEnd, symbolsList, selectedId]);
+
+  const onBulkAutoEvaluate = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    await runBulk("auto-evaluate", ids, async (id) => {
+      await autoEvaluateFactor(id, {
+        startDate: opStart,
+        endDate: opEnd,
+        symbols: symbolsList.length > 0 ? symbolsList : undefined,
+        horizonDays: opHorizon,
+        groupCount: opGroups,
+        decayHorizons: [1, 3, 5, 10, 20],
+      });
+    });
+    // 重新拉对比组的评估历史
+    const idsArr = Array.from(selectedIds);
+    const results = await Promise.all(
+      idsArr.map((id) =>
+        listFactorEvaluations(id, 60)
+          .then((rows) => ({ id, rows }))
+          .catch(() => ({ id, rows: [] as FactorEvaluationLogRow[] }))
+      )
+    );
+    const next: Record<string, FactorEvaluationLogRow[]> = {};
+    for (const r of results) next[r.id] = r.rows;
+    setCompareEvalsByFactor(next);
+  }, [selectedIds, runBulk, opStart, opEnd, symbolsList, opHorizon, opGroups]);
+
+  /** 批量送入组合工坊（写 handoff + 切 tab） */
+  const onBulkToComposer = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setQuantHandoff({
+      kind: "factor-ids-to-composer",
+      factorIds: ids,
+      note: `来自因子工坊批量选中 (${ids.length})`,
+    });
+    setQuantTab("composer");
+  }, [selectedIds, setQuantHandoff, setQuantTab]);
+
   // 拉取对比组的评估历史
   useEffect(() => {
-    if (compareIds.size === 0) {
+    if (selectedIds.size === 0) {
       setCompareEvalsByFactor({});
       return;
     }
     let cancelled = false;
     (async () => {
-      const idsArr = Array.from(compareIds);
+      const idsArr = Array.from(selectedIds);
       try {
         const results = await Promise.all(
           idsArr.map((id) =>
@@ -318,7 +441,7 @@ export const FactorWorkbenchTab: FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [compareIds]);
+  }, [selectedIds]);
 
   // 单因子 IC 时序图
   const singleICSeries = useMemo<ChartSeries[]>(() => {
@@ -344,7 +467,7 @@ export const FactorWorkbenchTab: FC = () => {
     const out: ChartSeries[] = [];
     let i = 0;
     for (const f of factors) {
-      if (!compareIds.has(f.id)) continue;
+      if (!selectedIds.has(f.id)) continue;
       const rows = (compareEvalsByFactor[f.id] ?? []).slice().sort((a, b) =>
         a.asof.localeCompare(b.asof)
       );
@@ -357,7 +480,7 @@ export const FactorWorkbenchTab: FC = () => {
       i += 1;
     }
     return out;
-  }, [factors, compareIds, compareEvalsByFactor]);
+  }, [factors, selectedIds, compareEvalsByFactor]);
 
   const onToggleStatus = useCallback(
     async (next: FactorStatus) => {
@@ -435,6 +558,48 @@ export const FactorWorkbenchTab: FC = () => {
             <option value="system">System</option>
           </select>
         </div>
+        <FactorBulkBar
+          filteredCount={filtered.length}
+          selectedIds={selectedIds}
+          busy={busy || bulkProgress !== null}
+          onSelectAll={() => {
+            setSelectedIds(new Set(filtered.map((f) => f.id)));
+          }}
+          onInvert={() => {
+            setSelectedIds((prev) => {
+              const next = new Set<string>();
+              for (const f of filtered) if (!prev.has(f.id)) next.add(f.id);
+              return next;
+            });
+          }}
+          onClear={() => setSelectedIds(new Set())}
+          onStatus={onBulkStatus}
+          onCompute={onBulkCompute}
+          onAutoEval={onBulkAutoEvaluate}
+          onToComposer={onBulkToComposer}
+        />
+        {bulkProgress ? (
+          <div
+            className="qb-quant-bulk-progress"
+            style={styles.bulkProgress}
+            data-qb-quant-bulk-progress
+          >
+            <div style={styles.bulkProgressLabel}>
+              <span>批量 · {bulkProgress.label}</span>
+              <span style={{ color: "var(--qb-text-muted)" }}>
+                {bulkProgress.done}/{bulkProgress.total}
+              </span>
+            </div>
+            <div style={styles.bulkProgressTrack}>
+              <span
+                style={{
+                  ...styles.bulkProgressFill,
+                  width: `${(bulkProgress.done / Math.max(1, bulkProgress.total)) * 100}%`,
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
         {showForm ? (
           <form onSubmit={onSubmitRegister} className="qb-quant-form" style={styles.form}>
             <label style={styles.formLabel}>
@@ -534,10 +699,10 @@ export const FactorWorkbenchTab: FC = () => {
             >
               <input
                 type="checkbox"
-                checked={compareIds.has(f.id)}
-                onChange={() => toggleCompare(f.id)}
+                checked={selectedIds.has(f.id)}
+                onChange={() => toggleSelect(f.id)}
                 onClick={(e) => e.stopPropagation()}
-                title="加入对比"
+                title="勾选：加入批量动作 + IC 对比图"
                 style={{ flexShrink: 0 }}
               />
               <button
@@ -815,6 +980,135 @@ export const FactorWorkbenchTab: FC = () => {
   );
 };
 
+/**
+ * 因子批量动作条 —— 仅在有选中或可批量时浮现。
+ *
+ * 操作矩阵：
+ *   - 选择控制：全选（当前过滤）/ 反选 / 清空
+ *   - 状态批量：启用 / 草稿 / 归档（复用单条 PATCH，串行调用）
+ *   - 计算批量：compute / auto-evaluate（用当前操作面板的日期+symbols+horizon+groups）
+ *   - 工坊联动：送入组合工坊（写 quantHandoff 切 tab）
+ *
+ * 设计权衡：
+ *   - 「送入组合」「批量计算」走的是「同一参数应用到 N 因子」的语义；
+ *     如果有需要每条不同参数，应该在 Composer 里逐条调；这里追求快。
+ *   - 所有动作都依赖左侧勾选；当 selectedIds.size === 0 时整条条目变灰禁用，
+ *     以避免用户误操作清掉过滤后的全部数据。
+ */
+const FactorBulkBar: FC<{
+  filteredCount: number;
+  selectedIds: Set<string>;
+  busy: boolean;
+  onSelectAll: () => void;
+  onInvert: () => void;
+  onClear: () => void;
+  onStatus: (next: FactorStatus) => void;
+  onCompute: () => void;
+  onAutoEval: () => void;
+  onToComposer: () => void;
+}> = ({
+  filteredCount,
+  selectedIds,
+  busy,
+  onSelectAll,
+  onInvert,
+  onClear,
+  onStatus,
+  onCompute,
+  onAutoEval,
+  onToComposer,
+}) => {
+  const hasSelection = selectedIds.size > 0;
+  const allSelected = filteredCount > 0 && selectedIds.size === filteredCount;
+  return (
+    <div className="qb-quant-bulk-bar" data-qb-has-selection={hasSelection} style={styles.bulkBar}>
+      <div style={styles.bulkBarLeft}>
+        <button
+          type="button"
+          onClick={allSelected ? onClear : onSelectAll}
+          disabled={busy || filteredCount === 0}
+          className="qb-quant-btn qb-quant-btn--ghost"
+          style={styles.btnGhost}
+          title={allSelected ? "清空选择" : "全选当前过滤结果"}
+        >
+          {allSelected ? "✓ 取消全选" : `全选 ${filteredCount}`}
+        </button>
+        <button
+          type="button"
+          onClick={onInvert}
+          disabled={busy || filteredCount === 0}
+          className="qb-quant-btn qb-quant-btn--ghost"
+          style={styles.btnGhost}
+          title="反选当前过滤结果"
+        >
+          反选
+        </button>
+        {hasSelection ? (
+          <span className="qb-quant-bulk-count" style={styles.bulkCount}>
+            已选 <strong style={{ color: "var(--qb-text-strong)" }}>{selectedIds.size}</strong> 个
+          </span>
+        ) : null}
+      </div>
+      {hasSelection ? (
+        <div style={styles.bulkBarRight}>
+          <div className="qb-quant-bulk-group" data-group="status" style={styles.bulkGroup}>
+            <span style={styles.bulkGroupLabel}>状态</span>
+            {(["active", "draft", "archived"] as FactorStatus[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                disabled={busy}
+                onClick={() => onStatus(s)}
+                className="qb-quant-btn qb-quant-btn--ghost"
+                data-qb-quant-status={s}
+                style={styles.btnGhost}
+                title={`将所选 ${selectedIds.size} 个因子设为「${STATUS_LABELS[s]}」`}
+              >
+                {STATUS_LABELS[s]}
+              </button>
+            ))}
+          </div>
+          <div className="qb-quant-bulk-group" data-group="compute" style={styles.bulkGroup}>
+            <span style={styles.bulkGroupLabel}>计算</span>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCompute}
+              className="qb-quant-btn qb-quant-btn--primary"
+              style={styles.btnPrimary}
+              title="对所选因子用「操作」面板的日期+symbols 批量 compute"
+            >
+              Compute
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onAutoEval}
+              className="qb-quant-btn qb-quant-btn--primary"
+              style={styles.btnPrimary}
+              title="对所选因子按「操作」面板 horizon/groups 跑 auto-evaluate"
+            >
+              Auto-Eval
+            </button>
+          </div>
+          <div className="qb-quant-bulk-group" data-group="route" style={styles.bulkGroup}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onToComposer}
+              className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--submit"
+              style={styles.btnPrimary}
+              title="把所选因子勾入组合工坊候选池并跳过去"
+            >
+              送入组合 →
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 const FACTOR_TONE_COLOR: Record<string, string> = {
   emerald: "var(--qb-quant-accent-5)",
   cyan: "var(--qb-quant-accent-2)",
@@ -917,6 +1211,79 @@ const styles: Record<string, CSSProperties> = {
     gap: 6,
     padding: "6px 10px 8px",
     borderBottom: "1px solid var(--qb-border-subtle)",
+  },
+  bulkBar: {
+    flex: "0 0 auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: "6px 10px",
+    borderBottom: "1px solid var(--qb-border-subtle)",
+    background:
+      "linear-gradient(180deg, color-mix(in srgb, var(--qb-quant-accent-1) 5%, transparent), transparent)",
+  },
+  bulkBarLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 11,
+    color: "var(--qb-text-muted)",
+  },
+  bulkBarRight: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
+  },
+  bulkGroup: {
+    display: "flex",
+    gap: 4,
+    alignItems: "center",
+    padding: "2px 6px",
+    border: "1px solid var(--qb-border-subtle)",
+    borderRadius: 6,
+    background: "var(--qb-bg-elevated)",
+  },
+  bulkGroupLabel: {
+    fontSize: 10,
+    color: "var(--qb-text-muted)",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+    paddingRight: 2,
+  },
+  bulkCount: {
+    fontSize: 11,
+    color: "var(--qb-text-muted)",
+    marginLeft: 4,
+  },
+  bulkProgress: {
+    flex: "0 0 auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    padding: "8px 12px",
+    borderBottom: "1px solid var(--qb-border-subtle)",
+    background: "var(--qb-bg-elevated)",
+  },
+  bulkProgressLabel: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: 11,
+    fontVariantNumeric: "tabular-nums",
+    color: "var(--qb-text-strong)",
+  },
+  bulkProgressTrack: {
+    height: 4,
+    borderRadius: 2,
+    background: "var(--qb-bg-surface)",
+    overflow: "hidden",
+  },
+  bulkProgressFill: {
+    display: "block",
+    height: "100%",
+    background:
+      "linear-gradient(90deg, var(--qb-quant-accent-1), var(--qb-quant-accent-4))",
+    transition: "width 220ms ease",
   },
   list: { flex: 1, minHeight: 0, overflow: "auto" },
   listItem: {

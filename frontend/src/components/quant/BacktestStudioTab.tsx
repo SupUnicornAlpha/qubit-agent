@@ -83,12 +83,14 @@ export const BacktestStudioTab: FC = () => {
       setRawExpr(handoff.expr);
       setRawReverse(handoff.reverse ?? false);
       setInfo(`已预填 raw signal · ${handoff.note ?? "来自其他 tab"}`);
+      setQuantHandoff(null);
     } else if (handoff.kind === "composition") {
       setSource("composition");
       setCompositionId(handoff.compositionId);
       setInfo(`已预选 composition · ${handoff.note ?? handoff.compositionId.slice(0, 8)}`);
+      setQuantHandoff(null);
     }
-    setQuantHandoff(null);
+    // factor-ids-to-composer 不属于 backtest 路径：不消费 / 不清空，留给 ComposerTab 接管。
   }, [handoff, setQuantHandoff]);
 
   const symbolsList = useMemo(

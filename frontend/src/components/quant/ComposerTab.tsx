@@ -79,6 +79,22 @@ export const ComposerTab: FC = () => {
 
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const handoff = useAppStore((s) => s.quantHandoff);
+
+  /**
+   * 消费来自 FactorWorkbench 批量动作的 handoff —— 将一批 factorIds 自动勾入候选池。
+   * 仅当当前激活 tab 是 composer 时才真正消费，避免还在其他 tab 时被吞掉。
+   */
+  useEffect(() => {
+    if (!handoff || handoff.kind !== "factor-ids-to-composer") return;
+    setSelectedFactorIds((prev) => {
+      const next = new Set(prev);
+      for (const fid of handoff.factorIds) next.add(fid);
+      return next;
+    });
+    setInfo(`已勾入 ${handoff.factorIds.length} 个因子${handoff.note ? ` · ${handoff.note}` : ""}`);
+    setQuantHandoff(null);
+  }, [handoff, setQuantHandoff]);
 
   const selectedComp = useMemo(
     () => compositions.find((c) => c.id === selectedCompId) ?? null,
