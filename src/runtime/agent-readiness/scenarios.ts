@@ -25,9 +25,38 @@ export interface AnalystRunPayload {
   hitlMode?: "off" | "ai" | "always";
 }
 
+/**
+ * 9 个场景 key —— 现有 5 base + 4 个组合维度扩展（多/空/无标的）：
+ *
+ *   research              → 单标的研究（R-S）
+ *   research_multi        → 多标的同业对比（R-M）
+ *   research_theme        → 主题驱动 / 无标的（R-T）
+ *   stock_pick            → 多标的 long 偏好（SP-L，沿用 base）
+ *   stock_pick_short      → 多标的 short 偏好（SP-S）
+ *   factor                → alpha 因子（F-1）
+ *   strategy              → long-only 因子组合（沿用 base）
+ *   strategy_long_short   → 多空配对策略（ST-LS）
+ *   live_trading          → 做多 order_intent（LT-L，沿用 base）
+ *   live_trading_short    → 做空 order_intent（LT-S）
+ *
+ * 期权场景（ST-OPT）待 instrument schema 扩展支持期权后再补，详见
+ * docs/superpowers/specs/2026-06-09-options-data-model.md（待生成）。
+ */
+export type ScenarioKey =
+  | "research"
+  | "research_multi"
+  | "research_theme"
+  | "stock_pick"
+  | "stock_pick_short"
+  | "factor"
+  | "strategy"
+  | "strategy_long_short"
+  | "live_trading"
+  | "live_trading_short";
+
 export interface ScenarioRecipe {
   /** 场景 key，会进 snapshot.scenario，方便 diff */
-  key: "research" | "stock_pick" | "factor" | "strategy" | "live_trading";
+  key: ScenarioKey;
   /** 给 reporter 用的 human-readable 名称 */
   displayName: string;
   /** 第 1 步：传给 createAndDispatchWorkflow 的 workflow 占位入参（建议 skipDispatch=true） */
@@ -61,9 +90,9 @@ const DEFAULT_TERMINAL: ReadonlyArray<"completed" | "failed" | "cancelled" | "ti
 export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
   research: {
     key: "research",
-    displayName: "市场研究",
+    displayName: "市场研究 · 单标的（R-S）",
     workflow: {
-      goal: "对当前美股市场做一次宏观 + 个股级别的研究，输出 3 条交易级见解；要求引用至少 2 个新闻或财报数据点。",
+      goal: "对 AAPL 做一次单只个股深度研究：财报、估值、技术面、宏观与同业对比；输出 3 条交易级见解，每条引用至少 1 个新闻或财报数据点。",
       mode: "research",
       source: "api",
       skipDispatch: true,
@@ -72,18 +101,18 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     },
     analystRun: {
       agentGroupId: "grp-full-analyst-team",
-      ticker: "SPY",
+      ticker: "AAPL",
       context:
-        "评测目标：对美股市场做宏观 + 个股级研究，输出 3 条交易级见解，至少引用 2 个新闻或财报数据点。SPY 仅作为市场代理；分析师团队应自主从 SPY 出发延展到代表性个股（如 NVDA / AAPL / MSFT），充分调用市场行情、新闻情绪、基本面工具。",
+        "评测目标：以 AAPL 为唯一标的做单只深度研究，覆盖估值/财报/技术/宏观/同业对比；分析师团队应充分调用 quote、news、fundamentals、screener 等工具，输出 3 条具体交易级见解。",
       hitlMode: "off",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
-  stock_pick: {
-    key: "stock_pick",
-    displayName: "股票推荐",
+  research_multi: {
+    key: "research_multi",
+    displayName: "市场研究 · 多标的同业（R-M）",
     workflow: {
-      goal: "基于过去 30 天的 momentum + 估值 + 新闻情绪，从美股大盘里筛出 5 只候选并给出推荐理由。",
+      goal: "对 AI 算力相关的 3 只半导体股做横向对比研究（NVDA / AMD / INTC），输出每只一段 2-3 句的多空观点并给出相对排序及理由。",
       mode: "research",
       source: "api",
       skipDispatch: true,
@@ -92,9 +121,78 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     },
     analystRun: {
       agentGroupId: "grp-full-analyst-team",
-      scope: { kind: "explore", theme: "美股大盘 momentum + 估值 + 新闻情绪 选股" },
+      scope: {
+        kind: "explore",
+        theme: "NVDA / AMD / INTC 半导体三家横向对比 · AI 算力主题",
+      },
       context:
-        "评测目标：从美股大盘筛 5 只候选并给推荐理由，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选存在性后再分析。",
+        "评测目标：对 NVDA / AMD / INTC 三只半导体股做横向对比，要求 analyst_signal 至少落 3 条（每只一条）且 ticker 字段三家齐；输出每家多空观点 + 相对排序。",
+      hitlMode: "off",
+    },
+    expectedTerminalStatus: DEFAULT_TERMINAL,
+  },
+  research_theme: {
+    key: "research_theme",
+    displayName: "市场研究 · 主题/无标的（R-T）",
+    workflow: {
+      goal: "围绕「AI 算力基础设施」主题做行业级研究：识别 3 个最具代表性的细分领域 + 各推荐 1 只龙头标的并给推荐理由；要求自主决定标的、不依赖外部输入。",
+      mode: "research",
+      source: "api",
+      skipDispatch: true,
+      loopKind: "react",
+      loopOptionsJson: { maxIterations: 8 },
+    },
+    analystRun: {
+      agentGroupId: "grp-full-analyst-team",
+      scope: {
+        kind: "explore",
+        theme: "AI 算力基础设施主题研究 · 自主识别 3 个细分赛道 + 各 1 只龙头",
+      },
+      context:
+        "评测目标：纯主题驱动 / 无指定 ticker；分析师团队应主动用 screener / fetch_klines / news 识别 3 个 AI 算力基础设施细分赛道，并各推 1 只代表标的。analyst_signal 至少落 3 条。",
+      hitlMode: "off",
+    },
+    expectedTerminalStatus: DEFAULT_TERMINAL,
+  },
+  stock_pick: {
+    key: "stock_pick",
+    displayName: "股票推荐 · long 偏好（SP-L）",
+    workflow: {
+      goal: "基于过去 30 天的 momentum + 估值 + 新闻情绪，从美股大盘里筛出 5 只 long 候选并给出推荐理由。",
+      mode: "research",
+      source: "api",
+      skipDispatch: true,
+      loopKind: "react",
+      loopOptionsJson: { maxIterations: 8 },
+    },
+    analystRun: {
+      agentGroupId: "grp-full-analyst-team",
+      scope: { kind: "explore", theme: "美股大盘 momentum + 估值 + 新闻情绪 long 选股" },
+      context:
+        "评测目标：从美股大盘筛 5 只 long 候选并给推荐理由，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选存在性后再分析。",
+      hitlMode: "off",
+    },
+    expectedTerminalStatus: DEFAULT_TERMINAL,
+  },
+  stock_pick_short: {
+    key: "stock_pick_short",
+    displayName: "股票推荐 · short 偏好（SP-S）",
+    workflow: {
+      goal: "从美股大盘筛 3 只「相对高估值 + 业绩下滑或动量恶化」的 short 候选并给出做空理由；强调风险（轧空、回购）。",
+      mode: "research",
+      source: "api",
+      skipDispatch: true,
+      loopKind: "react",
+      loopOptionsJson: { maxIterations: 8 },
+    },
+    analystRun: {
+      agentGroupId: "grp-full-analyst-team",
+      scope: {
+        kind: "explore",
+        theme: "美股大盘做空候选：高估值 + 业绩或动量恶化 + 风险评估",
+      },
+      context:
+        "评测目标：筛 3 只 short 候选（高估值/业绩下滑/动量恶化），每只 analyst_signal 的 reasoning 必须显式提到「做空」/「short」/「估值过高」之类关键词，并讨论轧空、强制平仓、负 carry 等风险。",
       hitlMode: "off",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,

@@ -345,7 +345,14 @@ export const FactorWorkbenchTab: FC = () => {
     [factors]
   );
 
-  /** 批量状态切换：复用单条 setFactorStatus，串行即可（写极快） */
+  /**
+   * 批量状态切换：复用单条 setFactorStatus，串行即可（写极快）。
+   *
+   * 选中集保留策略：
+   * - filterStatus = "all" → 切完仍在 filtered 里 → 保留，方便连续批量动作
+   * - filterStatus = next → 用户已在目标状态视图 → 保留
+   * - 其他 → 切完被过滤藏起来，保留会出现「计数 5 但列表为空」的鬼影 → 清空
+   */
   const onBulkStatus = useCallback(
     async (next: FactorStatus) => {
       const ids = Array.from(selectedIds);
@@ -355,8 +362,11 @@ export const FactorWorkbenchTab: FC = () => {
       });
       await reloadList();
       await reloadSelected();
+      if (filterStatus !== "all" && filterStatus !== next) {
+        setSelectedIds(new Set());
+      }
     },
-    [selectedIds, runBulk, reloadList, reloadSelected]
+    [selectedIds, runBulk, reloadList, reloadSelected, filterStatus]
   );
 
   const onBulkCompute = useCallback(async () => {
@@ -981,6 +991,36 @@ export const FactorWorkbenchTab: FC = () => {
 };
 
 /**
+ * 批量状态按钮的色彩 token —— 与列表里 status dot 同源（绿/琥珀/灰红），
+ * 让"点这个 = 状态变成这个颜色"成为肌肉记忆。
+ */
+const BULK_STATUS_TONE: Record<FactorStatus, {
+  dot: string;
+  text: string;
+  border: string;
+  bg: string;
+}> = {
+  active: {
+    dot: "var(--qb-quant-accent-3)",
+    text: "var(--qb-quant-accent-3)",
+    border: "color-mix(in srgb, var(--qb-quant-accent-3) 55%, transparent)",
+    bg: "color-mix(in srgb, var(--qb-quant-accent-3) 10%, var(--qb-bg-elevated))",
+  },
+  draft: {
+    dot: "var(--qb-quant-accent-2)",
+    text: "var(--qb-quant-accent-2)",
+    border: "color-mix(in srgb, var(--qb-quant-accent-2) 55%, transparent)",
+    bg: "color-mix(in srgb, var(--qb-quant-accent-2) 10%, var(--qb-bg-elevated))",
+  },
+  archived: {
+    dot: "var(--qb-text-muted)",
+    text: "var(--qb-text-muted)",
+    border: "var(--qb-border-subtle)",
+    bg: "var(--qb-bg-surface)",
+  },
+};
+
+/**
  * 因子批量动作条 —— 仅在有选中或可批量时浮现。
  *
  * 操作矩阵：
@@ -1053,20 +1093,44 @@ const FactorBulkBar: FC<{
         <div style={styles.bulkBarRight}>
           <div className="qb-quant-bulk-group" data-group="status" style={styles.bulkGroup}>
             <span style={styles.bulkGroupLabel}>状态</span>
-            {(["active", "draft", "archived"] as FactorStatus[]).map((s) => (
-              <button
-                key={s}
-                type="button"
-                disabled={busy}
-                onClick={() => onStatus(s)}
-                className="qb-quant-btn qb-quant-btn--ghost"
-                data-qb-quant-status={s}
-                style={styles.btnGhost}
-                title={`将所选 ${selectedIds.size} 个因子设为「${STATUS_LABELS[s]}」`}
-              >
-                {STATUS_LABELS[s]}
-              </button>
-            ))}
+            {(["active", "draft", "archived"] as FactorStatus[]).map((s) => {
+              const tone = BULK_STATUS_TONE[s];
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    // 批量归档是降级动作 —— 先 confirm 避免误伤大量数据。
+                    if (s === "archived") {
+                      const ok = window.confirm(
+                        `确认将所选 ${selectedIds.size} 个因子全部归档？\n（归档后默认列表里需切到「状态: 归档」才能看到）`
+                      );
+                      if (!ok) return;
+                    }
+                    onStatus(s);
+                  }}
+                  className="qb-quant-btn qb-quant-bulk-status-btn"
+                  data-qb-quant-status={s}
+                  style={{
+                    ...styles.bulkStatusBtn,
+                    color: tone.text,
+                    borderColor: tone.border,
+                    background: tone.bg,
+                  }}
+                  title={`将所选 ${selectedIds.size} 个因子设为「${STATUS_LABELS[s]}」`}
+                >
+                  <span
+                    style={{
+                      ...styles.bulkStatusDot,
+                      background: tone.dot,
+                      boxShadow: `0 0 0 2px color-mix(in srgb, ${tone.dot} 35%, transparent)`,
+                    }}
+                  />
+                  {STATUS_LABELS[s]}
+                </button>
+              );
+            })}
           </div>
           <div className="qb-quant-bulk-group" data-group="compute" style={styles.bulkGroup}>
             <span style={styles.bulkGroupLabel}>计算</span>
@@ -1250,6 +1314,24 @@ const styles: Record<string, CSSProperties> = {
     letterSpacing: 0.4,
     textTransform: "uppercase",
     paddingRight: 2,
+  },
+  bulkStatusBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "3px 8px",
+    fontSize: 11,
+    fontWeight: 600,
+    borderRadius: 4,
+    border: "1px solid",
+    cursor: "pointer",
+    transition: "transform 120ms ease, filter 120ms ease",
+  },
+  bulkStatusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    flexShrink: 0,
   },
   bulkCount: {
     fontSize: 11,
