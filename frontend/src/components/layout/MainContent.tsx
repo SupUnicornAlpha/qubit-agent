@@ -4938,6 +4938,7 @@ const TeamDashboardPanel: FC = () => {
   const [teamResearchSessionId, setTeamResearchSessionId] = useState("");
   const setActiveView = useAppStore((s) => s.setActiveView);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
   const setCfgSubPage = useAppStore((s) => s.setConfigSubPage);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
@@ -8049,7 +8050,19 @@ const TeamDashboardPanel: FC = () => {
               setActiveView("quant");
               setQuantTab("factor");
             }}
-            onOpenStrategyInComposer={() => {
+            onOpenStrategyInComposer={(version) => {
+              /**
+               * 把"打开哪个 strategy_version"的上下文写到全局 store，
+               * Composer 在 mount / handoff 变化时按 strategyVersionId 自动选中。
+               * 没有 version 参数的兜底场景（理论不会发生）只切 tab。
+               */
+              if (version?.id) {
+                setQuantHandoff({
+                  kind: "strategy-version-to-composer",
+                  strategyVersionId: version.id,
+                  workflowRunId: version.workflowRunId ?? null,
+                });
+              }
               setActiveView("quant");
               setQuantTab("composer");
             }}

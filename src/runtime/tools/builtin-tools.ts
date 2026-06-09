@@ -1713,19 +1713,71 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 
-  "strategy.compose": async (_ctx, params) => {
+  "strategy.compose": async (ctx, params) => {
     const strategyVersionId = String(params.strategy_version_id ?? "").trim();
     if (!strategyVersionId) {
       throw new Error("strategy.compose: strategy_version_id is required");
     }
     const factorIdsRaw = params.factor_ids;
     const ruleIdsRaw = params.rule_ids;
-    const factorIds = Array.isArray(factorIdsRaw)
+    let factorIds = Array.isArray(factorIdsRaw)
       ? factorIdsRaw.filter((s): s is string => typeof s === "string")
       : undefined;
     const ruleIds = Array.isArray(ruleIdsRaw)
       ? ruleIdsRaw.filter((s): s is string => typeof s === "string")
       : undefined;
+    const kind = String(params.kind ?? "factor_score") as StrategyKind;
+
+    /**
+     * Tier-1 容错（2026-06-09）：kind=factor_score / hybrid 但 agent 忘传 factor_ids 时，
+     * 从 `factor_definition` 自动捞 top-3 用 ——
+     *   - 候选范围：相同 workflow_run_id 产的 active 因子（最关键、最相关）
+     *   - 退路：项目下任意 active 因子（按 created_at desc）
+     * 都拿不到时再回到原报错 `factor_score_requires_factor_ids`，让 agent 显式报。
+     *
+     * 旧行为是直接抛错、agent 不一定会 retry —— Agent Readiness Evaluation R-7 实测
+     * 4 次 strategy.compose 调用里 2 次因这个原因失败，引入兜底显著提升健康度。
+     */
+    if ((kind === "factor_score" || kind === "hybrid") && (!factorIds || factorIds.length === 0)) {
+      try {
+        const db = await getDb();
+        const sv = await db
+          .select({
+            workflowRunId: strategyVersionTable.workflowRunId,
+            strategyId: strategyVersionTable.strategyId,
+          })
+          .from(strategyVersionTable)
+          .where(eq(strategyVersionTable.id, strategyVersionId))
+          .limit(1);
+        if (sv[0]) {
+          /**
+           * strategy.project_id 在 strategy_version 上没有镜像列，需要走 strategy 表 join。
+           * 这里复用 builtin tools 已有的 resolveProjectIdForWorkflow，避免再写一遍 SQL。
+           */
+          const projectId = await resolveProjectIdForWorkflow(ctx);
+          const wfRunId = sv[0].workflowRunId ?? ctx.workflowId ?? null;
+          const candidates = await factorService.list({
+            ...(projectId ? { projectId } : {}),
+            ...(wfRunId ? { workflowRunId: wfRunId } : {}),
+            status: "active",
+          });
+          let pool = candidates;
+          // workflow 内拿不到 → 退化到项目维度
+          if (pool.length === 0 && projectId) {
+            pool = await factorService.list({ projectId, status: "active" });
+          }
+          if (pool.length > 0) {
+            factorIds = pool.slice(0, 3).map((f) => f.id);
+          }
+        }
+      } catch (e) {
+        // 兜底失败不 escalate；把原错误抛出去让 agent 自己处理
+        console.warn(
+          `[strategy.compose] 自动拉 top-3 factor 失败：${(e as Error).message}; 退回原始校验`
+        );
+      }
+    }
+
     const weightsRaw = params.factor_weights;
     const factorWeights =
       weightsRaw && typeof weightsRaw === "object" && !Array.isArray(weightsRaw)
@@ -1738,7 +1790,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         : undefined;
     return strategyComposer.define({
       strategyVersionId,
-      kind: String(params.kind ?? "factor_score") as StrategyKind,
+      kind,
       ...(factorIds && factorIds.length > 0 ? { factorIds } : {}),
       ...(ruleIds && ruleIds.length > 0 ? { ruleIds } : {}),
       ...(params.weight_method

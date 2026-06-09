@@ -96,6 +96,33 @@ export const ComposerTab: FC = () => {
     setQuantHandoff(null);
   }, [handoff, setQuantHandoff]);
 
+  /**
+   * 消费"研究产物侧栏 → Composer"的 handoff（2026-06-09）：
+   *   - 收到 strategyVersionId 后立刻 setVersionId，触发左侧选中 + reloadCompositions
+   *   - versions 列表还没加载完（projectLoading / versions 为空）时只暂存
+   *     handoff 不消费，下一次 versions 到位后 effect 会再触发
+   *   - 消费后清空 handoff，避免重复执行
+   *
+   * 注意没用 versionId 当 effect 依赖：那样会形成"选中 → 清空 → 重新选中"循环。
+   */
+  useEffect(() => {
+    if (!handoff || handoff.kind !== "strategy-version-to-composer") return;
+    if (versions.length === 0) return;
+    const hit = versions.find((v) => v.id === handoff.strategyVersionId);
+    if (!hit) {
+      setError(
+        `Composer 收到的 strategy_version_id=${handoff.strategyVersionId.slice(0, 8)}… ` +
+          `不在当前 project 的 version 列表里 —— 多半是 projectId 与 Agent 写入侧不一致。`
+      );
+      setQuantHandoff(null);
+      return;
+    }
+    setVersionId(hit.id);
+    setInfo(`已切到 strategyVersion ${hit.id.slice(0, 8)}… (${hit.strategyName ?? "unnamed"})`);
+    setSelectedCompId(null);
+    setQuantHandoff(null);
+  }, [handoff, versions, setQuantHandoff]);
+
   const selectedComp = useMemo(
     () => compositions.find((c) => c.id === selectedCompId) ?? null,
     [compositions, selectedCompId]

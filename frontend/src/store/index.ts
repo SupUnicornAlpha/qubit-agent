@@ -48,7 +48,20 @@ export type QuantTab = "factor" | "discovery" | "composer" | "backtest";
 export type QuantHandoff =
   | { kind: "raw"; expr: string; lang: "qlib_expr"; reverse?: boolean; note?: string }
   | { kind: "composition"; compositionId: string; note?: string }
-  | { kind: "factor-ids-to-composer"; factorIds: string[]; note?: string };
+  | { kind: "factor-ids-to-composer"; factorIds: string[]; note?: string }
+  /**
+   * 研究产物侧栏 → ComposerTab handoff（2026-06-09）：
+   *   带上具体的 strategyVersionId（必填），让 Composer 进去后立即选中、
+   *   reloadCompositions 拿到该 version 下的所有 composition；不像 raw / composition
+   *   两个分支需要再次构造，这里就是单纯路由"打开这一个 version"。
+   *   workflowRunId 可选：用于后续可能的"只看本次工作流"二级过滤。
+   */
+  | {
+      kind: "strategy-version-to-composer";
+      strategyVersionId: string;
+      workflowRunId?: string | null;
+      note?: string;
+    };
 
 /** @deprecated 使用 QuantHandoff；保留别名以兼容旧 import */
 export type QuantBacktestHandoff = QuantHandoff;
