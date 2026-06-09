@@ -77,6 +77,49 @@ describe("FactorService", () => {
     for (const f of list) expect(f.category).toBe("momentum");
   });
 
+  /**
+   * 研究产出侧栏契约：workflow_run_id 全局唯一，前端只用 workflowRunId 过滤
+   * 就该拿到该 workflow 跨 project 的所有因子（实际场景是一个 workflow 必然
+   * 在一个 project 下，但前端 UI 锁定的 projectId 可能与该 workflow 实际
+   * project_id 不一致 —— 此时仍应正确返回）。
+   *
+   * 反例：若 service 在 workflowRunId 非空时仍强卡 projectId，研究产出侧栏
+   * 切到任意非 "默认 project" 下的 workflow 都会得到空结果（即 round8/9 评测
+   * 工作流"产物显示为 0"的根因）。
+   */
+  test("list: 仅传 workflowRunId（无 projectId）也能拿到该 workflow 跨 project 的因子", async () => {
+    const db = await getDb();
+    const otherProjectId = randomUUID();
+    await db.insert(schema.project).values({
+      id: otherProjectId,
+      workspaceId: (await db.select().from(schema.project).limit(1))[0]!.workspaceId,
+      name: `fs-other-${randomUUID().slice(0, 6)}`,
+      marketScope: "CN-A",
+      status: "active",
+    });
+    const wfid = randomUUID();
+    const recA = await factorService.register({
+      projectId,
+      name: `wf_only_a_${randomUUID().slice(0, 6)}`,
+      category: "value",
+      expr: "close",
+      workflowRunId: wfid,
+    });
+    const recB = await factorService.register({
+      projectId: otherProjectId,
+      name: `wf_only_b_${randomUUID().slice(0, 6)}`,
+      category: "value",
+      expr: "close",
+      workflowRunId: wfid,
+    });
+    const onlyByWorkflow = await factorService.list({ workflowRunId: wfid });
+    const gotIds = onlyByWorkflow.map((f) => f.id).sort();
+    expect(gotIds).toContain(recA.id);
+    expect(gotIds).toContain(recB.id);
+    // 不应混入其他 workflow / null 的存量因子
+    expect(onlyByWorkflow.every((f) => f.workflowRunId === wfid)).toBe(true);
+  });
+
   test("setStatus → active", async () => {
     const rec = await factorService.register({
       projectId,

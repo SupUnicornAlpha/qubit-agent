@@ -5335,6 +5335,28 @@ const TeamDashboardPanel: FC = () => {
     [selectedWorkflowRow]
   );
 
+  /**
+   * 「研究产出」侧栏使用的有效 projectId：优先跟随当前选中工作流的 project_id，
+   * 兜底回退到 teamResearchProjectId（启动时锁定的"默认 project"）。
+   *
+   * 背景：teamResearchProjectId 由启动时 `listProjects(defaultWs)[0]` 锁定，
+   * 但用户切到其他 project 下产生的 workflow（如 round8/9 评测 / FSI 流水线）时，
+   * 该锁定值与 workflow.project_id 不一致，会让侧栏内任何"按 project 维度联动"
+   * 的组件产生状态错位。研究产出本身已在子组件层只按 workflow_run_id 过滤
+   * （见 AgentGeneratedFactorsBlock 注释），这里再让 projectId 自动跟随，
+   * 主要是为了状态自洽（例如未来 add-on：点击因子打开量化工坊时按 workflow
+   * 实际 project 跳转）。
+   *
+   * 不影响 `handleCreateTeamWorkflow`：那里仍用 teamResearchProjectId 作为
+   * 「新建工作流的归属 project」，保持用户在 UI 当前上下文新建的语义。
+   */
+  const effectiveResearchProjectId = useMemo(() => {
+    const wfPid = selectedWorkflowRow?.projectId
+      ? String(selectedWorkflowRow.projectId)
+      : "";
+    return wfPid || teamResearchProjectId;
+  }, [selectedWorkflowRow, teamResearchProjectId]);
+
   const filteredWorkflowOptions = useMemo(() => {
     if (workflowKindFilter === "all") return workflowOptions;
     const filtered = workflowOptions.filter((row) => classifyWorkflow(row) === workflowKindFilter);
@@ -8020,7 +8042,7 @@ const TeamDashboardPanel: FC = () => {
           </p>
 
           <ResearchOutputTabs
-            projectId={teamResearchProjectId}
+            projectId={effectiveResearchProjectId}
             workflowRunId={workflowRunId}
             sessionId={teamResearchSessionId}
             onOpenFactorInWorkbench={() => {

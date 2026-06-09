@@ -4,7 +4,15 @@ import { listFactors, type FactorRecord } from "../../api/backend";
 import { useTranslation } from "../../i18n";
 
 export interface AgentGeneratedFactorsBlockProps {
-  /** 当前研究项目 ID（teamResearchProjectId）。空字符串则不拉取。 */
+  /**
+   * 当前研究项目 ID（teamResearchProjectId）。
+   *
+   * **不参与产物过滤**（workflow_run_id 全局唯一，单独过滤就足够；强行 AND projectId
+   * 会在「UI 锁定的 projectId ≠ 该 workflow 实际 project_id」时把产物全部隐藏 —
+   * 即此前 round8/9 评测工作流"产物显示为 0"的根因）。
+   *
+   * 仅用于显示空态文案 / 父组件状态联动。可空。
+   */
   projectId: string;
   /**
    * 当前选中的工作流 ID（workflow_run.id）。
@@ -32,8 +40,9 @@ export interface AgentGeneratedFactorsBlockProps {
  * 数据契约（migration 0047 之后）：
  *   factor_definition.workflow_run_id 在 builtin tools / discovery.promote /
  *   native-research.connector 三条 Agent 写入链路上都由 act 节点透传 ctx.workflowId
- *   写入。这里走 `listFactors({ projectId, workflowRunId })` 严格匹配，命中
- *   `idx_factor_definition_project_workflow` 索引。
+ *   写入。这里走 `listFactors({ workflowRunId })` 单维度匹配 —— workflow_run_id
+ *   全局唯一，无需再 AND projectId（实测加上 projectId 反而会因 UI 默认锁定的
+ *   projectId 与该 workflow 实际 project_id 不一致而把产物全部过滤掉）。
  *
  * 与历史时间过滤方案的差异：
  *   - 不再用 createdAt >= workflowStartedAt 做近似过滤（并发 workflow 会串栏）
@@ -42,7 +51,8 @@ export interface AgentGeneratedFactorsBlockProps {
  *   - workflow_run_id IS NULL 的存量 / IDE 注册因子直接不展示，避免误导
  */
 export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = ({
-  projectId,
+  /** projectId 仍在 props 中保留以兼容上游 caller，但组件内部不再使用（不参与过滤） */
+  projectId: _projectId,
   workflowRunId,
   onOpenInWorkbench,
   defaultOpen = true,
@@ -57,21 +67,21 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
   const [keyword, setKeyword] = useState("");
 
   const reload = useCallback(async () => {
-    if (!projectId || !workflowRunId) {
+    if (!workflowRunId) {
       setFactors([]);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const rows = await listFactors({ projectId, workflowRunId });
+      const rows = await listFactors({ workflowRunId });
       setFactors(rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [projectId, workflowRunId]);
+  }, [workflowRunId]);
 
   useEffect(() => {
     void reload();
@@ -79,7 +89,7 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [workflowRunId, projectId]);
+  }, [workflowRunId]);
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -147,11 +157,9 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
         {error ? <div style={styles.error}>{error}</div> : null}
         {!error && filtered.length === 0 ? (
           <div style={styles.empty}>
-            {!projectId
-              ? t("team.factorsBlock.emptyNoProject")
-              : !workflowRunId
-                ? t("team.factorsBlock.emptyNoWorkflow")
-                : t("team.factorsBlock.emptyNoOutput")}
+            {!workflowRunId
+              ? t("team.factorsBlock.emptyNoWorkflow")
+              : t("team.factorsBlock.emptyNoOutput")}
           </div>
         ) : null}
 

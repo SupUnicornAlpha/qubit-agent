@@ -9,6 +9,10 @@ import {
 import { useTranslation } from "../../i18n";
 
 export interface AgentGeneratedStrategiesBlockProps {
+  /**
+   * 仍在 props 中保留以兼容上游 caller，但**不参与产物过滤**。
+   * 见 AgentGeneratedFactorsBlock 同名 prop 的注释。
+   */
   projectId: string;
   /**
    * 当前选中的工作流 ID（workflow_run.id）。
@@ -41,8 +45,8 @@ interface StrategyRow {
  * 数据契约（migration 0047 之后）：
  *   strategy_version.workflow_run_id 在 strategy-runtime-service /
  *   reia-bridge / native-research(version_strategy) 三条写入链路上都已落库。
- *   这里走 `listStrategyVersions({ projectId, workflowRunId })` 严格匹配，
- *   命中 `idx_strategy_version_workflow` 索引。
+ *   这里走 `listStrategyVersions({ workflowRunId })` 单维度匹配 —— 详见
+ *   AgentGeneratedFactorsBlock 同位置的注释（projectId 在此**不参与过滤**）。
  *
  * 为什么走 version 维度而不是 composition 维度：
  *   - Agent 通过 strategy.compose / discovery.promote 产出 strategy_version
@@ -55,7 +59,8 @@ interface StrategyRow {
  *   - workflow_run_id IS NULL 的存量数据直接不展示
  */
 export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProps> = ({
-  projectId,
+  /** projectId 仍在 props 中保留以兼容上游 caller，但组件内部不再使用（不参与过滤） */
+  projectId: _projectId,
   workflowRunId,
   onOpenInComposer,
   defaultOpen = true,
@@ -70,14 +75,14 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
   const [keyword, setKeyword] = useState("");
 
   const reload = useCallback(async () => {
-    if (!projectId || !workflowRunId) {
+    if (!workflowRunId) {
       setRows([]);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const versions = await listStrategyVersions({ projectId, workflowRunId });
+      const versions = await listStrategyVersions({ workflowRunId });
       setRows(
         versions.map((v) => ({
           version: v,
@@ -90,7 +95,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
     } finally {
       setLoading(false);
     }
-  }, [projectId, workflowRunId]);
+  }, [workflowRunId]);
 
   useEffect(() => {
     void reload();
@@ -98,7 +103,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
 
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [workflowRunId, projectId]);
+  }, [workflowRunId]);
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -205,11 +210,9 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
         {error ? <div style={styles.error}>{error}</div> : null}
         {!error && filtered.length === 0 ? (
           <div style={styles.empty}>
-            {!projectId
-              ? t("team.strategiesBlock.emptyNoProject")
-              : !workflowRunId
-                ? t("team.strategiesBlock.emptyNoWorkflow")
-                : t("team.strategiesBlock.emptyNoOutput")}
+            {!workflowRunId
+              ? t("team.strategiesBlock.emptyNoWorkflow")
+              : t("team.strategiesBlock.emptyNoOutput")}
           </div>
         ) : null}
 
