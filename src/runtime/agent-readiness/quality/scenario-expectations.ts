@@ -72,7 +72,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
       "get_quote",
       "news",
     ],
-    goalKeywords: ["美股", "宏观", "见解"],
+    goalKeywords: ["AAPL", "估值", "见解"],
     consistencyChecks: [
       {
         name: "fusion ↔ signal",
@@ -80,6 +80,58 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         kind: "fusion_signal_refs",
       },
     ],
+  },
+
+  research_multi: {
+    scenario: "research_multi",
+    requiredArtifacts: [
+      {
+        table: "analyst_signal",
+        // 多标的对比要求 ≥3 条 signal 且至少覆盖 2 个不同 ticker
+        countSql: `SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        minRows: 3,
+        nonNullColumns: ["reasoning", "ticker"],
+      },
+      {
+        table: "analyst_signal_distinct_tickers",
+        countSql: `SELECT COUNT(DISTINCT ticker) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        minRows: 2,
+      },
+      {
+        table: "signal_fusion_result",
+        countSql: `SELECT COUNT(*) AS c FROM signal_fusion_result WHERE workflow_run_id = ?`,
+        minRows: 1,
+      },
+    ],
+    requiredTools: ["get_quote", "news"],
+    goalKeywords: ["NVDA", "AMD", "对比"],
+    consistencyChecks: [
+      {
+        name: "fusion ↔ signal",
+        description: "signal_fusion_result.ticker 应有至少一条对应的 analyst_signal",
+        kind: "fusion_signal_refs",
+      },
+    ],
+  },
+
+  research_theme: {
+    scenario: "research_theme",
+    requiredArtifacts: [
+      {
+        table: "analyst_signal",
+        countSql: `SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        minRows: 3,
+        nonNullColumns: ["reasoning", "ticker"],
+      },
+      {
+        table: "analyst_signal_distinct_tickers",
+        countSql: `SELECT COUNT(DISTINCT ticker) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        minRows: 3,
+      },
+    ],
+    requiredTools: ["screener", "get_quote", "news"],
+    goalKeywords: ["AI", "算力", "细分"],
+    consistencyChecks: [],
   },
 
   stock_pick: {
@@ -99,6 +151,28 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     ],
     requiredTools: ["screener"],
     goalKeywords: ["momentum", "估值", "新闻"],
+    consistencyChecks: [],
+  },
+
+  stock_pick_short: {
+    scenario: "stock_pick_short",
+    requiredArtifacts: [
+      {
+        table: "screener_candidate",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM screener_candidate
+          WHERE screener_run_id IN (
+            SELECT id FROM screener_run WHERE workflow_run_id = ?
+          )`,
+        minRows: 2,
+        nonNullColumns: ["ticker", "score"],
+      },
+    ],
+    requiredTools: ["screener"],
+    // 做空场景：关键词命中是给 A-2（内容相关性）打分用，要求产物文本里出现
+    // 做空 / 估值 / 风险等词，A-3 由 LLM-Judge 进一步打专业度分。
+    goalKeywords: ["做空", "估值", "风险"],
     consistencyChecks: [],
   },
 
@@ -167,12 +241,45 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     ],
   },
 
+  strategy_long_short: {
+    scenario: "strategy_long_short",
+    requiredArtifacts: [
+      {
+        table: "strategy_version",
+        countSql: `SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?`,
+        minRows: 1,
+      },
+      {
+        table: "strategy_composition",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM strategy_composition
+          WHERE strategy_version_id IN (
+            SELECT id FROM strategy_version WHERE workflow_run_id = ?
+          )
+            AND factor_ids_json != '[]'`,
+        minRows: 1,
+      },
+    ],
+    requiredTools: ["strategy"],
+    // 多空配对场景：description 应同时出现 long / short / pair / 配对 关键词
+    goalKeywords: ["long", "short", "配对"],
+    consistencyChecks: [
+      {
+        name: "strategy → factor refs",
+        description:
+          "strategy_composition.factorIdsJson 中的每个 id 都应在 factor_definition 中存在",
+        kind: "strategy_factor_refs",
+      },
+    ],
+  },
+
   live_trading: {
     scenario: "live_trading",
     requiredArtifacts: [
       {
         table: "order_intent",
-        countSql: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?`,
+        countSql: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ? AND side = 'buy'`,
         minRows: 1,
       },
       {
@@ -187,7 +294,39 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
       },
     ],
     requiredTools: ["order", "risk"],
-    goalKeywords: ["策略", "订单", "风控"],
+    goalKeywords: ["做多", "订单", "风控"],
+    consistencyChecks: [
+      {
+        name: "order → strategy_version",
+        description: "order_intent.strategy_version_id 必须能在 strategy_version 找到",
+        kind: "order_strategy_refs",
+      },
+    ],
+  },
+
+  live_trading_short: {
+    scenario: "live_trading_short",
+    requiredArtifacts: [
+      {
+        table: "order_intent",
+        // 做空场景：必须有 side='sell' 的 order_intent（做空通过 sell 表达，
+        // 真正"开空"vs"平多"语义由 strategy_version 上下文决定）
+        countSql: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ? AND side = 'sell'`,
+        minRows: 1,
+      },
+      {
+        table: "risk_decision",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM risk_decision
+          WHERE order_intent_id IN (
+            SELECT id FROM order_intent WHERE workflow_run_id = ?
+          )`,
+        minRows: 1,
+      },
+    ],
+    requiredTools: ["order", "risk"],
+    goalKeywords: ["做空", "保证金", "风控"],
     consistencyChecks: [
       {
         name: "order → strategy_version",

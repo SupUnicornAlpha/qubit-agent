@@ -219,9 +219,9 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
   },
   strategy: {
     key: "strategy",
-    displayName: "策略生成",
+    displayName: "策略生成 · long-only（ST）",
     workflow: {
-      goal: "组合 2-3 个已有因子生成一份可回测的策略草稿，包含目标 universe / 持仓周期 / 仓位规则。",
+      goal: "组合 2-3 个已有因子生成一份 long-only 的可回测策略草稿，包含目标 universe / 持仓周期 / 仓位规则。",
       mode: "research",
       source: "api",
       skipDispatch: true,
@@ -230,18 +230,41 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     },
     analystRun: {
       agentGroupId: "grp-strategy-pipeline",
-      scope: { kind: "explore", theme: "因子组合策略草稿 + universe + 持仓周期" },
+      scope: { kind: "explore", theme: "long-only 因子组合策略草稿 + universe + 持仓周期" },
       context:
-        "评测目标：组合 2-3 个已有因子产出可回测的策略草稿，落 strategy + strategy_version；包含 universe / 持仓周期 / 仓位规则。",
+        "评测目标：组合 2-3 个已有因子产出 long-only 策略草稿，落 strategy + strategy_version + strategy_composition；包含 universe / 持仓周期 / 仓位规则。",
+      hitlMode: "off",
+    },
+    expectedTerminalStatus: DEFAULT_TERMINAL,
+  },
+  strategy_long_short: {
+    key: "strategy_long_short",
+    displayName: "策略生成 · 多空配对（ST-LS）",
+    workflow: {
+      goal: "用 2-3 个因子构造一个 long/short 配对策略：在 universe 内分别选 long 端和 short 端，各 5-10% 仓位上限；输出 strategy_version + strategy_composition + 回测假设。",
+      mode: "research",
+      source: "api",
+      skipDispatch: true,
+      loopKind: "react",
+      loopOptionsJson: { maxIterations: 10 },
+    },
+    analystRun: {
+      agentGroupId: "grp-strategy-pipeline",
+      scope: {
+        kind: "explore",
+        theme: "多空配对策略草稿：long/short 因子组合 + 配对方式 + 仓位约束",
+      },
+      context:
+        "评测目标：组合 2-3 个因子产出 **long/short** 配对策略；strategy_composition.description 中必须显式提到「long」「short」「pair」等关键词；composition.factorIdsJson 至少 2 个因子；包含 universe / 持仓周期 / 多空仓位上限。",
       hitlMode: "off",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   live_trading: {
     key: "live_trading",
-    displayName: "实时交易",
+    displayName: "实时交易 · 做多（LT-L）",
     workflow: {
-      goal: "按现有最新策略版本，针对当前市场状态产出至少一个 order_intent；遇到风控/合规问题应中断并写 audit_log。",
+      goal: "按现有最新策略版本，针对当前市场状态产出至少 1 条 **做多（side=buy）** 的 order_intent，并经 risk_decision 审核；触发风控/合规要走 audit_log + HITL，不要直接放行。",
       mode: "research",
       source: "api",
       skipDispatch: true,
@@ -250,9 +273,32 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     },
     analystRun: {
       agentGroupId: "grp-live-trading",
-      scope: { kind: "explore", theme: "基于最新策略版本的实盘下单意图" },
+      scope: { kind: "explore", theme: "基于最新策略版本的做多下单意图" },
       context:
-        "评测目标：先 SELECT 最新 strategy_version，再针对当前市场状态产出至少 1 条 order_intent；触发风控/合规要走 audit_log + HITL，不要直接放行。",
+        "评测目标：先 SELECT 最新 strategy_version，再针对当前市场状态产出至少 1 条 **side=buy** 的 order_intent + risk_decision；reasoning 中说明加仓理由（动量/估值/事件）。",
+      hitlMode: "off",
+    },
+    expectedTerminalStatus: DEFAULT_TERMINAL,
+  },
+  live_trading_short: {
+    key: "live_trading_short",
+    displayName: "实时交易 · 做空（LT-S）",
+    workflow: {
+      goal: "按现有最新策略版本，针对当前市场状态产出至少 1 条 **做空（side=sell）** 的 order_intent，并经 risk_decision 审核；做空场景应触发更严风控（保证金、可借券、轧空风险）。",
+      mode: "research",
+      source: "api",
+      skipDispatch: true,
+      loopKind: "react",
+      loopOptionsJson: { maxIterations: 6 },
+    },
+    analystRun: {
+      agentGroupId: "grp-live-trading",
+      scope: {
+        kind: "explore",
+        theme: "基于最新策略版本的做空下单意图 + 严格风控",
+      },
+      context:
+        "评测目标：产出至少 1 条 **side=sell** 的 order_intent + risk_decision；reasoning 必须显式提到「做空」/「short」并讨论保证金、可借券或轧空风险。注意：当前是 sell 表达「做空」语义，依赖 strategy_version 上下文区分平多 vs 开空。",
       hitlMode: "off",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,

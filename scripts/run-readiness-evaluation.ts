@@ -8,8 +8,11 @@
  *   - 不让用户中间确认；每个场景跑完直接进下一个；最后写一份 evaluation-summary.md
  */
 
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { Database } from "bun:sqlite";
 import { runReadinessFromWorkflowId } from "../src/runtime/agent-readiness/runner";
 import { renderTraceMarkdown } from "../src/runtime/agent-readiness/trace-reporter";
 import { SCENARIO_RECIPES, type ScenarioRecipe } from "../src/runtime/agent-readiness/scenarios";
@@ -17,6 +20,11 @@ import type { MetricGrade, OverallGrade } from "../src/runtime/agent-readiness/t
 import { createJudgeClient } from "../src/runtime/agent-readiness/quality/judge-client-factory";
 import type { JudgeClient } from "../src/runtime/agent-readiness/quality/content-judge";
 import { writeCanvasReport } from "../src/runtime/agent-readiness/canvas-report";
+import {
+  aggregateHealth,
+  renderHealthMarkdown,
+} from "../src/runtime/agent-readiness/health-aggregator";
+import { writeHealthCanvas } from "../src/runtime/agent-readiness/health-canvas";
 
 const DEV_SERVER = process.env["QUBIT_DEV_SERVER"] ?? "http://127.0.0.1:17385";
 const PROJECT_ID =
@@ -38,12 +46,24 @@ const FLAGS = (() => {
   return { noJudge, judgeModel, judgeMaxArtifacts };
 })();
 
+/**
+ * 9 个用例的执行顺序：按依赖关系排（factor → strategy → live_trading），并把多
+ * 维度变体放在 base 之后（避免 base 还没有 factor / strategy 产出就跑 long_short）。
+ *
+ * 期权场景 ST-OPT 待 instrument schema 扩展支持期权后再补，详见
+ * docs/superpowers/specs/2026-06-09-options-data-model.md（待生成）。
+ */
 const BASE_SCENARIO_ORDER: ScenarioRecipe["key"][] = [
   "research",
+  "research_multi",
+  "research_theme",
   "stock_pick",
+  "stock_pick_short",
   "factor",
   "strategy",
+  "strategy_long_short",
   "live_trading",
+  "live_trading_short",
 ];
 const SCENARIO_ORDER: ScenarioRecipe["key"][] = Array.from({ length: ROUNDS }).flatMap(
   () => BASE_SCENARIO_ORDER
@@ -311,8 +331,42 @@ function escapeStatus(r: ScenarioResult): string {
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
 
+  /**
+   * Round 10 复盘（2026-06-09）：评测脚本 default dataDir 是 ~/.quant-agent，
+   * 但 dev server 通常用 ~/Library/Application Support/app.qubit.agent
+   * （macOS native packaging 默认目录）。这俩 DB 完全独立 → 评测脚本通过
+   * HTTP 让 dev server 创建 workflow_run，但 collectSnapshot 读自己本地
+   * DB → 100% workflow_run not found，FATAL 退出。
+   *
+   * 修复：启动时主动 sanity check：如果 QUBIT_DATA_DIR 未设但 macOS
+   * 标准目录下的 DB 比本地 ~/.quant-agent/db/core.sqlite 大很多或后者
+   * 不存在 → 提示用户设置。
+   */
+  if (!process.env["QUBIT_DATA_DIR"]) {
+    const localDb = join(homedir(), ".quant-agent", "db", "core.sqlite");
+    const macDb = join(
+      homedir(),
+      "Library",
+      "Application Support",
+      "app.qubit.agent",
+      "db",
+      "core.sqlite"
+    );
+    if (!existsSync(localDb) && existsSync(macDb)) {
+      console.error(
+        `\n[FATAL] QUBIT_DATA_DIR 未设置，评测脚本会走 ${localDb}（不存在），\n` +
+          `        但 dev server 看起来用的是 ${macDb}。\n` +
+          `        请在跑评测前 export:\n` +
+          `          export QUBIT_DATA_DIR="${join(homedir(), "Library", "Application Support", "app.qubit.agent")}"\n` +
+          `        然后重新跑。\n`
+      );
+      process.exit(3);
+    }
+  }
+
   console.log("Agent Readiness Evaluation (v2 AQM)");
   console.log(`  dev server : ${DEV_SERVER}`);
+  console.log(`  data dir   : ${process.env["QUBIT_DATA_DIR"] ?? join(homedir(), ".quant-agent")}`);
   console.log(`  project    : ${PROJECT_ID}`);
   console.log(`  output     : ${OUTPUT_DIR}`);
   console.log(`  wait/poll  : ${WAIT_TIMEOUT_MS}ms / ${POLL_MS}ms`);
@@ -390,17 +444,67 @@ async function main() {
     console.warn("[canvas] failed to generate:", err);
   }
 
+  /**
+   * Round 9 复盘（2026-06-09）：评测完毕后自动跑跨工作流"健康度报告"
+   * （tool / mcp / llm / skill / error 五维），写 markdown + canvas。
+   * 失败不阻塞 process.exit。
+   */
+  let healthMdPath: string | null = null;
+  let healthCanvasPath: string | null = null;
+  try {
+    const workflowIds = results
+      .map((r) => r.workflowRunId)
+      .filter((id) => typeof id === "string" && id.length > 0);
+    if (workflowIds.length > 0) {
+      const dbPath = defaultDbPath();
+      if (existsSync(dbPath)) {
+        const sqlite = new Database(dbPath, { readonly: true });
+        let report;
+        try {
+          report = aggregateHealth(sqlite, workflowIds);
+        } finally {
+          sqlite.close();
+        }
+        const healthMd = renderHealthMarkdown(report, { roundLabel });
+        healthMdPath = join(OUTPUT_DIR, "health-report.md");
+        await writeFile(healthMdPath, healthMd, "utf8");
+        const healthJsonPath = join(OUTPUT_DIR, "health-report.json");
+        await writeFile(healthJsonPath, JSON.stringify(report, null, 2), "utf8");
+        const healthCanvasName = `agent-health-${roundLabel.replace(/\s+/g, "-").toLowerCase()}`;
+        healthCanvasPath = await writeHealthCanvas({
+          roundLabel,
+          report,
+          reportDir: OUTPUT_DIR,
+          fileBaseName: healthCanvasName,
+        });
+      } else {
+        console.warn(`[health] DB 不存在 ${dbPath}，跳过健康度报告生成`);
+      }
+    }
+  } catch (err) {
+    console.warn("[health] 报告生成失败：", err);
+  }
+
   console.log("");
   console.log("╭─ Evaluation Summary ─");
   for (const r of results) {
-    console.log(`│ ${r.scenario.padEnd(13)} → ${r.overall} (${escapeStatus(r)})`);
+    console.log(`│ ${r.scenario.padEnd(20)} → ${r.overall} (${escapeStatus(r)})`);
   }
   console.log(`│`);
-  console.log(`│ summary: ${summaryPath}`);
-  if (canvasPath) console.log(`│ canvas:  ${canvasPath}`);
+  console.log(`│ summary:        ${summaryPath}`);
+  if (canvasPath) console.log(`│ scenarios canv: ${canvasPath}`);
+  if (healthMdPath) console.log(`│ health md:      ${healthMdPath}`);
+  if (healthCanvasPath) console.log(`│ health canvas:  ${healthCanvasPath}`);
   console.log(`╰─────────────────────────`);
 
   process.exit(0);
+}
+
+function defaultDbPath(): string {
+  const dataDir =
+    process.env["QUBIT_DATA_DIR"] ??
+    join(homedir(), "Library", "Application Support", "app.qubit.agent");
+  return join(dataDir, "db", "core.sqlite");
 }
 
 main().catch((err) => {

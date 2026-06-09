@@ -49,7 +49,8 @@ beforeAll(() => {
     );
     CREATE TABLE order_intent (
       id TEXT PRIMARY KEY,
-      workflow_run_id TEXT
+      workflow_run_id TEXT,
+      side TEXT
     );
     CREATE TABLE risk_decision (
       id TEXT PRIMARY KEY,
@@ -166,15 +167,50 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
     expect(result.missing.some((m) => m.table === "order_intent")).toBe(true);
   });
 
-  test("live_trading scenario：有 order_intent + risk_decision → ok", () => {
+  test("live_trading scenario：有 side=buy order_intent + risk_decision → ok", () => {
     sqlite
-      .prepare("INSERT INTO order_intent (id, workflow_run_id) VALUES (?, ?)")
-      .run("oi-1", "wf-x");
+      .prepare("INSERT INTO order_intent (id, workflow_run_id, side) VALUES (?, ?, ?)")
+      .run("oi-1", "wf-x", "buy");
     sqlite
       .prepare("INSERT INTO risk_decision (id, order_intent_id) VALUES (?, ?)")
       .run("rd-1", "oi-1");
     const result = checkRequiredArtifacts(sqlite, "live_trading", "wf-x");
     expect(result.ok).toBe(true);
+  });
+
+  test("live_trading scenario：只有 side=sell 的 order → missing（做多场景要求 side=buy）", () => {
+    sqlite
+      .prepare("INSERT INTO order_intent (id, workflow_run_id, side) VALUES (?, ?, ?)")
+      .run("oi-sell", "wf-x", "sell");
+    sqlite
+      .prepare("INSERT INTO risk_decision (id, order_intent_id) VALUES (?, ?)")
+      .run("rd-sell", "oi-sell");
+    const result = checkRequiredArtifacts(sqlite, "live_trading", "wf-x");
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.table === "order_intent")).toBe(true);
+  });
+
+  test("live_trading_short scenario：有 side=sell order_intent + risk_decision → ok", () => {
+    sqlite
+      .prepare("INSERT INTO order_intent (id, workflow_run_id, side) VALUES (?, ?, ?)")
+      .run("oi-2", "wf-y", "sell");
+    sqlite
+      .prepare("INSERT INTO risk_decision (id, order_intent_id) VALUES (?, ?)")
+      .run("rd-2", "oi-2");
+    const result = checkRequiredArtifacts(sqlite, "live_trading_short", "wf-y");
+    expect(result.ok).toBe(true);
+  });
+
+  test("live_trading_short scenario：只有 side=buy 的 order → missing（做空场景要求 side=sell）", () => {
+    sqlite
+      .prepare("INSERT INTO order_intent (id, workflow_run_id, side) VALUES (?, ?, ?)")
+      .run("oi-buy", "wf-y", "buy");
+    sqlite
+      .prepare("INSERT INTO risk_decision (id, order_intent_id) VALUES (?, ?)")
+      .run("rd-buy", "oi-buy");
+    const result = checkRequiredArtifacts(sqlite, "live_trading_short", "wf-y");
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.table === "order_intent")).toBe(true);
   });
 
   test("research scenario：缺 analyst_signal → missing 含 minRows=2 元信息", () => {
