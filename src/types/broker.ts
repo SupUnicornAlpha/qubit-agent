@@ -9,7 +9,7 @@
  * `runtime/reia/`，未来 P2 阶段可考虑迁移到 `runtime/execution/broker/`。
  */
 
-export type BrokerProvider = "futu" | "ib" | "ccxt";
+export type BrokerProvider = "futu" | "ib" | "ccxt" | "alpaca";
 
 export type FutuProviderConfig = {
   opendHost?: string;
@@ -33,7 +33,26 @@ export type CcxtProviderConfig = {
   market?: "CRYPTO";
 };
 
-export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig | CcxtProviderConfig;
+/**
+ * Alpaca paper / live trading（美股）。注册即用，无身份证要求。
+ * - paper: https://paper-api.alpaca.markets
+ * - live:  https://api.alpaca.markets
+ *
+ * 凭据走 env（apiKeyEnv / secretEnv 默认 ALPACA_API_KEY_ID / ALPACA_API_SECRET），
+ * 或直接由 broker_account 的 provider_config_json 注入 apiKey/apiSecret（不推荐，敏感数据应在 env）。
+ */
+export type AlpacaProviderConfig = {
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  secretEnv?: string;
+  market?: "US";
+};
+
+export type BrokerProviderConfig =
+  | FutuProviderConfig
+  | IbProviderConfig
+  | CcxtProviderConfig
+  | AlpacaProviderConfig;
 
 export type BrokerAccountRow = {
   id: string;

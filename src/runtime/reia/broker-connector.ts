@@ -14,6 +14,7 @@ import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 const BROKER_HTTP_TIMEOUT_MS = 30_000;
 
 export type {
+  AlpacaProviderConfig,
   BrokerProvider,
   BrokerProviderConfig,
   CcxtProviderConfig,
@@ -242,6 +243,74 @@ class MockCcxtConnector implements BrokerConnector {
       message: "mock ccxt ready",
       checkedAt: new Date().toISOString(),
       latencyMs: 20,
+      accountRef: this.accountRef,
+    };
+  }
+}
+
+class MockAlpacaConnector implements BrokerConnector {
+  readonly provider: BrokerProvider = "alpaca";
+  readonly mode = "mock" as const;
+  readonly accountRef: string;
+
+  constructor(accountRef = "alpaca-mock") {
+    this.accountRef = accountRef;
+  }
+
+  async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
+    const latency = Math.floor(80 + Math.random() * 220);
+    const base = input.limitPrice ?? 100;
+    const slipPct = (Math.random() - 0.5) * 0.005;
+    const price = Number((base * (1 + slipPct)).toFixed(4));
+    return {
+      provider: this.provider,
+      brokerOrderId: `alpaca-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      status: "filled",
+      actualPrice: price,
+      actualQuantity: input.quantity,
+      executionTimeMs: latency,
+      raw: { venue: "MOCK_ALPACA", ticker: input.ticker },
+    };
+  }
+
+  async cancelOrder(_brokerOrderId: string): Promise<void> {
+    /* mock no-op */
+  }
+
+  async getOrder(brokerOrderId: string): Promise<BrokerOrderResult> {
+    return {
+      provider: this.provider,
+      brokerOrderId,
+      status: "filled",
+      actualPrice: 100,
+      actualQuantity: 0,
+      executionTimeMs: 1,
+      raw: { venue: "MOCK_ALPACA" },
+    };
+  }
+
+  async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
+    return [
+      {
+        brokerOrderId,
+        fillQty: 1,
+        fillPrice: 100,
+        filledAt: new Date().toISOString(),
+      },
+    ];
+  }
+
+  async getPositions(): Promise<BrokerPosition[]> {
+    return [];
+  }
+
+  async healthCheck(): Promise<BrokerHealthResult> {
+    return {
+      provider: this.provider,
+      status: "healthy",
+      message: "mock alpaca ready",
+      checkedAt: new Date().toISOString(),
+      latencyMs: Math.floor(15 + Math.random() * 25),
       accountRef: this.accountRef,
     };
   }
@@ -483,6 +552,7 @@ const DEFAULT_MOCK: Record<BrokerProvider, BrokerConnector> = {
   futu: new MockFutuConnector(),
   ib: new MockIbConnector(),
   ccxt: new MockCcxtConnector(),
+  alpaca: new MockAlpacaConnector(),
 };
 
 export function getBrokerConnector(provider: BrokerProvider): BrokerConnector {
@@ -493,6 +563,7 @@ export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnec
   if (config.mode === "mock") {
     if (config.provider === "futu") return new MockFutuConnector(config.accountRef);
     if (config.provider === "ccxt") return new MockCcxtConnector(config.accountRef);
+    if (config.provider === "alpaca") return new MockAlpacaConnector(config.accountRef);
     return new MockIbConnector(config.accountRef);
   }
   if (!config.baseUrl) throw new Error(`missing broker baseUrl for ${config.provider}(${config.mode})`);

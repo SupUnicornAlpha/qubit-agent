@@ -23,6 +23,7 @@ import { ExecutionConnector, type ModifyOrderParams } from "./execution.connecto
 function asProvider(v: unknown): BrokerProvider {
   if (v === "ib") return "ib";
   if (v === "ccxt") return "ccxt";
+  if (v === "alpaca") return "alpaca";
   return "futu";
 }
 

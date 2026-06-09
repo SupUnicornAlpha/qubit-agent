@@ -1,0 +1,60 @@
+-- down-0081.sql
+--
+-- 回滚：CHECK 缩回 ('futu','ib')。
+-- 注意：如果生产已有 provider='ccxt' / 'alpaca' 的行，回滚会失败（INSERT 触发 CHECK）。
+-- 这是预期行为 —— 缩约束前需手动清理 / 迁移数据。
+
+PRAGMA foreign_keys=OFF;
+--> statement-breakpoint
+CREATE TABLE broker_account_rollback (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK(provider IN ('futu','ib')),
+  account_ref TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'mock' CHECK(mode IN ('mock','sandbox','live')),
+  base_url TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  health_status TEXT NOT NULL DEFAULT 'unknown' CHECK(health_status IN ('unknown','healthy','degraded','down')),
+  health_message TEXT,
+  last_health_at TEXT,
+  provider_config_json TEXT NOT NULL DEFAULT '{}',
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+--> statement-breakpoint
+INSERT INTO broker_account_rollback SELECT
+  id, provider, account_ref, mode, base_url, enabled, health_status, health_message,
+  last_health_at, provider_config_json, is_default, created_at, updated_at
+FROM broker_account WHERE provider IN ('futu','ib');
+--> statement-breakpoint
+DROP TABLE broker_account;
+--> statement-breakpoint
+ALTER TABLE broker_account_rollback RENAME TO broker_account;
+--> statement-breakpoint
+CREATE INDEX idx_broker_account_provider_enabled ON broker_account(provider, enabled);
+--> statement-breakpoint
+CREATE TABLE broker_order_event_rollback (
+  id TEXT PRIMARY KEY,
+  intent_order_id TEXT REFERENCES intent_order(id),
+  execution_report_id TEXT REFERENCES execution_report(id),
+  provider TEXT NOT NULL CHECK(provider IN ('futu','ib')),
+  event_type TEXT NOT NULL CHECK(event_type IN ('submit','ack','partial_fill','fill','cancel','reject','health_check')),
+  broker_order_id TEXT,
+  status TEXT NOT NULL DEFAULT 'ok',
+  detail_json TEXT NOT NULL DEFAULT '{}',
+  event_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+--> statement-breakpoint
+INSERT INTO broker_order_event_rollback SELECT
+  id, intent_order_id, execution_report_id, provider, event_type, broker_order_id, status,
+  detail_json, event_at, created_at
+FROM broker_order_event WHERE provider IN ('futu','ib');
+--> statement-breakpoint
+DROP TABLE broker_order_event;
+--> statement-breakpoint
+ALTER TABLE broker_order_event_rollback RENAME TO broker_order_event;
+--> statement-breakpoint
+CREATE INDEX idx_broker_order_event_intent_created ON broker_order_event(intent_order_id, created_at DESC);
+--> statement-breakpoint
+PRAGMA foreign_keys=ON;
