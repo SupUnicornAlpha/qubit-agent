@@ -41,6 +41,10 @@ export interface RuleRegisterInput {
   dsl: unknown;
   status?: RuleStatus;
   providerKey?: string;
+  /** 产物 lineage（migration 0080）：与 factor_definition 同协议 */
+  workflowRunId?: string | null;
+  createdBy?: "user" | "agent" | "system" | string;
+  agentInstanceId?: string | null;
 }
 
 export interface RuleRecord {
@@ -53,6 +57,10 @@ export interface RuleRecord {
   dsl: unknown;
   status: RuleStatus;
   providerKey: string;
+  /** 产物 lineage（migration 0080） */
+  workflowRunId: string | null;
+  createdBy: string;
+  agentInstanceId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -126,8 +134,22 @@ export class RuleService {
       dslJson: input.dsl as never,
       status: input.status ?? "draft",
       providerKey,
+      createdBy: input.createdBy ?? "user",
+      workflowRunId: input.workflowRunId ?? null,
+      agentInstanceId: input.agentInstanceId ?? null,
     });
     return this.get(id);
+  }
+
+  /** 列出指定 project + name 的规则（用于 idempotent register / lineage 查询） */
+  async findByProjectAndName(projectId: string, name: string): Promise<RuleRecord | null> {
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(ruleDefTable)
+      .where(and(eq(ruleDefTable.projectId, projectId), eq(ruleDefTable.name, name)))
+      .limit(1);
+    return rows[0] ? this.rowToRecord(rows[0]) : null;
   }
 
   async get(id: string): Promise<RuleRecord> {
@@ -239,6 +261,9 @@ export class RuleService {
       dsl: r.dslJson,
       status: r.status,
       providerKey: r.providerKey,
+      workflowRunId: r.workflowRunId ?? null,
+      createdBy: r.createdBy ?? "user",
+      agentInstanceId: r.agentInstanceId ?? null,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     };

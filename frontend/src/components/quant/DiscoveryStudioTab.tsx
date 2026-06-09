@@ -10,7 +10,7 @@
  */
 
 import type { CSSProperties, FC } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   getDiscoveryJob,
   listDiscoveryJobs,
@@ -22,6 +22,8 @@ import {
   type FactorCategory,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { LineageBadge, LineageTrail } from "./LineageBadge";
+import { useAppStore } from "../../store";
 
 const KIND_LABELS: Record<DiscoveryKind, string> = {
   factor_alpha101: "Alpha101 模板",
@@ -73,6 +75,11 @@ export const DiscoveryStudioTab: FC = () => {
   const [promoteCandidate, setPromoteCandidate] = useState<DiscoveryCandidateDto | null>(null);
   const [promoteName, setPromoteName] = useState("");
   const [promoteCategory, setPromoteCategory] = useState<FactorCategory>("momentum");
+  /** 候选详情展开（点表达式行 → 显示完整 description / 全表达式） */
+  const [expandedCandidateId, setExpandedCandidateId] = useState<string | null>(null);
+
+  const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
+  const setQuantTab = useAppStore((s) => s.setQuantTab);
 
   const reloadList = useCallback(async () => {
     if (!projectId) return;
@@ -308,7 +315,10 @@ export const DiscoveryStudioTab: FC = () => {
             >
               <div className="qb-quant-list-item-top" style={styles.listItemTop}>
                 <span className="qb-quant-status-tag" data-qb-quant-status={j.status} style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
-                <span className="qb-quant-muted" style={styles.muted}>{j.kind}</span>
+                <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <LineageBadge createdBy={j.createdBy ?? "user"} size="small" />
+                  <span className="qb-quant-muted" style={styles.muted}>{j.kind}</span>
+                </span>
               </div>
               <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
                 {j.candidates.length} 候选 · {new Date(j.startedAt).toLocaleString()}
@@ -343,6 +353,7 @@ export const DiscoveryStudioTab: FC = () => {
                 刷新
               </button>
             </div>
+            <LineageTrail kind="discovery_job" id={selected.id} compact />
             {selected.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>错误：{selected.error}</div> : null}
             <div className="qb-quant-table-wrap" style={styles.tableWrap}>
               <table className="qb-quant-table qb-quant-table--candidates" style={styles.table}>
@@ -358,38 +369,131 @@ export const DiscoveryStudioTab: FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {selected.candidates.map((c, idx) => (
-                    <tr key={c.id} style={c.error ? styles.rowErr : undefined}>
-                      <td style={styles.td}>{idx + 1}</td>
-                      <td style={styles.tdMono} title={c.description ?? c.expr}>
-                        {c.expr}
-                      </td>
-                      <td style={styles.tdNum}>{c.metrics.ic.toFixed(4)}</td>
-                      <td style={styles.tdNum}>{c.metrics.rankIc.toFixed(4)}</td>
-                      <td style={styles.tdNum}>{c.metrics.sampleSize}</td>
-                      <td style={styles.tdNum}>{c.metrics.score.toFixed(4)}</td>
-                      <td style={styles.td}>
-                        {c.error ? (
-                          <span style={styles.muted}>error</span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setPromoteCandidate(c);
-                              setPromoteName(`disc_${idx + 1}_${selected.id.slice(0, 6)}`);
-                              setPromoteCategory(
-                                (c.category as FactorCategory | undefined) ?? "momentum"
-                              );
-                            }}
-                            className="qb-quant-btn qb-quant-btn--primary"
-                            style={styles.btnPrimary}
-                          >
-                            Promote
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {selected.candidates.map((c, idx) => {
+                    const isExpanded = expandedCandidateId === c.id;
+                    return (
+                      <Fragment key={c.id}>
+                        <tr
+                          style={{
+                            ...(c.error ? styles.rowErr : null),
+                            ...(isExpanded ? { background: "var(--qb-bg-elevated)" } : null),
+                            cursor: "pointer",
+                          }}
+                          onClick={() => setExpandedCandidateId(isExpanded ? null : c.id)}
+                        >
+                          <td style={styles.td}>{idx + 1}</td>
+                          <td style={styles.tdMono} title={c.description ?? c.expr}>
+                            {c.expr}
+                          </td>
+                          <td style={styles.tdNum}>{c.metrics.ic.toFixed(4)}</td>
+                          <td style={styles.tdNum}>{c.metrics.rankIc.toFixed(4)}</td>
+                          <td style={styles.tdNum}>{c.metrics.sampleSize}</td>
+                          <td style={styles.tdNum}>{c.metrics.score.toFixed(4)}</td>
+                          <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                            {c.error ? (
+                              <span style={styles.muted}>error</span>
+                            ) : (
+                              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPromoteCandidate(c);
+                                    setPromoteName(`disc_${idx + 1}_${selected.id.slice(0, 6)}`);
+                                    setPromoteCategory(
+                                      (c.category as FactorCategory | undefined) ?? "momentum"
+                                    );
+                                  }}
+                                  className="qb-quant-btn qb-quant-btn--primary"
+                                  style={styles.btnPrimary}
+                                  title="将候选 promote 为正式因子（draft 状态）"
+                                >
+                                  Promote
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setQuantHandoff({
+                                      kind: "raw",
+                                      expr: c.expr,
+                                      lang: "qlib_expr",
+                                      reverse: c.metrics.ic < 0,
+                                      note: `Discovery 候选 #${idx + 1} (job ${selected.id.slice(0, 8)})`,
+                                    });
+                                    setQuantTab("backtest");
+                                  }}
+                                  className="qb-quant-btn qb-quant-btn--ghost"
+                                  style={styles.btnGhost}
+                                  title="跳转到回测工坊，预填该候选表达式为 raw signal"
+                                >
+                                  试跑回测
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                        {isExpanded ? (
+                          <tr style={{ background: "var(--qb-bg-elevated)" }}>
+                            <td colSpan={7} style={{ ...styles.td, padding: "8px 12px" }}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 6,
+                                  fontSize: 11,
+                                }}
+                              >
+                                {c.description ? (
+                                  <div>
+                                    <span style={styles.muted}>说明：</span> {c.description}
+                                  </div>
+                                ) : null}
+                                <div>
+                                  <span style={styles.muted}>表达式：</span>
+                                  <pre
+                                    style={{
+                                      ...styles.exprBox,
+                                      marginTop: 4,
+                                      maxHeight: 180,
+                                      overflow: "auto",
+                                    }}
+                                  >
+                                    {c.expr}
+                                  </pre>
+                                </div>
+                                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                  <span>
+                                    <span style={styles.muted}>IC </span>
+                                    {c.metrics.ic.toFixed(4)}
+                                  </span>
+                                  <span>
+                                    <span style={styles.muted}>RankIC </span>
+                                    {c.metrics.rankIc.toFixed(4)}
+                                  </span>
+                                  <span>
+                                    <span style={styles.muted}>Score </span>
+                                    {c.metrics.score.toFixed(4)}
+                                  </span>
+                                  <span>
+                                    <span style={styles.muted}>N </span>
+                                    {c.metrics.sampleSize}
+                                  </span>
+                                  {c.category ? (
+                                    <span>
+                                      <span style={styles.muted}>Category </span>
+                                      {c.category}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                {c.error ? (
+                                  <div style={{ color: "#c54040" }}>错误：{c.error}</div>
+                                ) : null}
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
+                    );
+                  })}
                   {selected.candidates.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="qb-quant-empty" style={styles.empty}>

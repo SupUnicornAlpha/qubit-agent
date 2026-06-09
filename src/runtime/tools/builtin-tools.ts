@@ -778,6 +778,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(definition ? { definition } : {}),
       // ctx.workflowId 在 langgraph act 节点保证非空；落库后用于研究产出严格过滤
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      // lineage（migration 0080）：所有 builtin tool 路径默认归为 'agent'，
+      // 让前端 LineageBadge 能与 IDE / REST 直接调用的 'user' 路径区分。
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
       dryRun,
     });
   },
@@ -840,6 +844,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       dsl: params.dsl,
       ...(params.status ? { status: String(params.status) as RuleStatus } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      // lineage（migration 0080）：tool 路径全部标 agent
+      createdBy: "agent",
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
     });
   },
 
@@ -1223,6 +1231,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(horizonDays !== undefined ? { horizonDays } : {}),
       // 落到 discovery_job.workflow_run_id；promoteCandidate 再透传到 factor.workflow_run_id
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
     });
 
     // 候选闸门：只 promote 通过 IC 阈值的
@@ -1319,6 +1330,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         : {}),
       // 关联到本工作流：promoteCandidate 时把 workflowRunId 透传给 factor.register
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
     });
   },
 
@@ -1336,7 +1350,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     });
   },
 
-  "backtest.run": async (_ctx, params) => {
+  "backtest.run": async (ctx, params) => {
     const strategyVersionId = String(params.strategy_version_id ?? "").trim();
     if (!strategyVersionId) throw new Error("backtest.run: strategy_version_id is required");
     const symbolsRaw = params.symbols;
@@ -1392,6 +1406,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
       ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
     });
   },
 

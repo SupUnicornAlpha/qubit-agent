@@ -39,6 +39,15 @@ export interface CompositionDefineInput {
   rebalanceFreq?: string;
   universe?: string;
   params?: Record<string, unknown>;
+  /** UI 展示用元信息（migration 0080） */
+  name?: string;
+  description?: string;
+  /** 产物 lineage（migration 0080） */
+  workflowRunId?: string | null;
+  createdBy?: "user" | "agent" | "clone" | "system" | string;
+  agentInstanceId?: string | null;
+  /** 克隆来源（migration 0080） */
+  parentCompositionId?: string | null;
 }
 
 export interface CompositionRecord {
@@ -51,6 +60,13 @@ export interface CompositionRecord {
   rebalanceFreq: string;
   universe: string;
   params: Record<string, unknown>;
+  name: string;
+  description: string;
+  /** 产物 lineage（migration 0080） */
+  workflowRunId: string | null;
+  createdBy: string;
+  agentInstanceId: string | null;
+  parentCompositionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -148,8 +164,49 @@ export class StrategyComposer {
         ...(input.params ?? {}),
         ...(input.factorWeights ? { factorWeights: input.factorWeights } : {}),
       } as never,
+      name: input.name ?? "",
+      description: input.description ?? "",
+      createdBy: input.createdBy ?? "user",
+      workflowRunId: input.workflowRunId ?? null,
+      agentInstanceId: input.agentInstanceId ?? null,
+      parentCompositionId: input.parentCompositionId ?? null,
     });
     return this.get(id);
+  }
+
+  /**
+   * 克隆已有 composition：复用 factor/rule/权重等内核配置，把 lineage 标记为 `clone`
+   * 并记录 `parentCompositionId`。前端「组合工坊」的克隆按钮直接走这里。
+   *
+   * 注意：克隆默认延用源 composition 的 strategyVersion；用户也可显式 override。
+   */
+  async clone(
+    sourceId: string,
+    override?: Partial<CompositionDefineInput>
+  ): Promise<CompositionRecord> {
+    const src = await this.get(sourceId);
+    const defineInput: CompositionDefineInput = {
+      strategyVersionId: override?.strategyVersionId ?? src.strategyVersionId,
+      kind: override?.kind ?? src.kind,
+      factorIds: override?.factorIds ?? src.factorIds,
+      ruleIds: override?.ruleIds ?? src.ruleIds,
+      weightMethod: override?.weightMethod ?? src.weightMethod,
+      ...(override?.factorWeights
+        ? { factorWeights: override.factorWeights }
+        : src.params["factorWeights"]
+          ? { factorWeights: src.params["factorWeights"] as Record<string, number> }
+          : {}),
+      rebalanceFreq: override?.rebalanceFreq ?? src.rebalanceFreq,
+      universe: override?.universe ?? src.universe,
+      params: override?.params ?? src.params,
+      name: override?.name ?? (src.name ? `${src.name} (clone)` : `Clone of ${src.id.slice(0, 8)}`),
+      description: override?.description ?? src.description,
+      createdBy: override?.createdBy ?? "clone",
+      workflowRunId: override?.workflowRunId ?? null,
+      agentInstanceId: override?.agentInstanceId ?? null,
+      parentCompositionId: sourceId,
+    };
+    return this.define(defineInput);
   }
 
   async get(id: string): Promise<CompositionRecord> {
@@ -412,6 +469,12 @@ export class StrategyComposer {
       rebalanceFreq: r.rebalanceFreq,
       universe: r.universe,
       params: (r.paramsJson as Record<string, unknown>) ?? {},
+      name: r.name ?? "",
+      description: r.description ?? "",
+      workflowRunId: r.workflowRunId ?? null,
+      createdBy: r.createdBy ?? "user",
+      agentInstanceId: r.agentInstanceId ?? null,
+      parentCompositionId: r.parentCompositionId ?? null,
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,
     };

@@ -3460,6 +3460,20 @@ export type FactorCategory = "value" | "momentum" | "volatility" | "news" | "qua
 export type FactorLang = "qlib_expr" | "python" | "sql" | "jsonlogic";
 export type FactorStatus = "draft" | "active" | "archived";
 
+/**
+ * 量化工作台产物 lineage 来源标识（migration 0080）。
+ *
+ * 与后端 `factor_definition.created_by` / `rule_definition.created_by` 等列
+ * 对齐，前端 `<LineageBadge>` 用此值决定徽章配色与图标。
+ */
+export type LineageCreatedBy =
+  | "user"
+  | "agent"
+  | "discovery_promote"
+  | "clone"
+  | "system"
+  | string;
+
 export interface FactorRecord {
   id: string;
   projectId: string;
@@ -3473,6 +3487,11 @@ export interface FactorRecord {
   providerKey: string;
   /** 产出该 factor 的 workflow_run.id；NULL = IDE / REST / 历史数据 */
   workflowRunId: string | null;
+  /** 产物 lineage（migration 0080） */
+  createdBy: LineageCreatedBy;
+  agentInstanceId: string | null;
+  /** discovery_promote 时记录上游 discovery_job.id */
+  sourceJobId: string | null;
   definition: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -3535,6 +3554,10 @@ export async function listFactors(filter?: {
    * 不传则返回项目下全部（量化工坊 / 因子工坊场景）。
    */
   workflowRunId?: string;
+  /** lineage 过滤：created_by IN ('user'|'agent'|'discovery_promote'|'clone'|...) */
+  createdBy?: LineageCreatedBy;
+  /** lineage 过滤：单 agent 实例发起的所有产物 */
+  agentInstanceId?: string;
 }): Promise<FactorRecord[]> {
   const qs: string[] = [];
   if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
@@ -3542,6 +3565,9 @@ export async function listFactors(filter?: {
   if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
   if (filter?.workflowRunId)
     qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  if (filter?.createdBy) qs.push(`created_by=${encodeURIComponent(filter.createdBy)}`);
+  if (filter?.agentInstanceId)
+    qs.push(`agent_instance_id=${encodeURIComponent(filter.agentInstanceId)}`);
   const q = qs.length ? `?${qs.join("&")}` : "";
   const res = await httpGet<{ ok: boolean; data: FactorRecord[] }>(`/api/v1/factors${q}`);
   return res.data;
@@ -3702,6 +3728,12 @@ export interface BacktestJobRecord {
   result: BacktestResultDto | null;
   startedAt: string;
   endedAt: string | null;
+  /** lineage（migration 0080） */
+  createdBy: LineageCreatedBy;
+  workflowRunId: string | null;
+  agentInstanceId: string | null;
+  /** 当回测来自 composition 时记录上游 strategy_composition.id */
+  compositionId: string | null;
 }
 
 export interface BacktestJobSubmitBody {
@@ -3796,6 +3828,9 @@ export interface DiscoveryJobRecord {
   startedAt: string;
   endedAt: string | null;
   error: string | null;
+  /** lineage（migration 0080） */
+  createdBy: LineageCreatedBy;
+  agentInstanceId: string | null;
 }
 
 export interface DiscoverySubmitBody {
@@ -3902,6 +3937,14 @@ export interface StrategyCompositionRecord {
   universe: string;
   params: Record<string, unknown>;
   createdAt: string;
+  /** lineage（migration 0080） */
+  name: string;
+  description: string;
+  createdBy: LineageCreatedBy;
+  workflowRunId: string | null;
+  agentInstanceId: string | null;
+  /** 当 created_by='clone' 时记录上游 composition.id */
+  parentCompositionId: string | null;
 }
 
 export async function listStrategyCompositions(
@@ -3923,9 +3966,27 @@ export async function createStrategyComposition(body: {
   rebalanceFreq?: string;
   universe?: string;
   params?: Record<string, unknown>;
+  /** 命名（migration 0080） */
+  name?: string;
+  description?: string;
 }): Promise<StrategyCompositionRecord> {
   const res = await httpPost<{ ok: boolean; data: StrategyCompositionRecord }>(
     `/api/v1/strategy-compositions`,
+    body
+  );
+  return res.data;
+}
+
+/**
+ * 从已有 composition 克隆出一份新的（created_by='clone'，parent_composition_id=源）。
+ * 后端会复制 factorIds / ruleIds / weightMethod / params 等所有结构性字段。
+ */
+export async function cloneStrategyComposition(
+  id: string,
+  body: { name?: string; description?: string } = {}
+): Promise<StrategyCompositionRecord> {
+  const res = await httpPost<{ ok: boolean; data: StrategyCompositionRecord }>(
+    `/api/v1/strategy-compositions/${encodeURIComponent(id)}/clone`,
     body
   );
   return res.data;
@@ -3949,6 +4010,10 @@ export interface RuleRecord {
   providerKey: string;
   createdAt: string;
   updatedAt: string;
+  /** lineage（migration 0080） */
+  createdBy: LineageCreatedBy;
+  workflowRunId: string | null;
+  agentInstanceId: string | null;
 }
 
 export async function listRules(filter?: {
@@ -3976,6 +4041,98 @@ export async function registerRule(body: {
 }): Promise<RuleRecord> {
   const res = await httpPost<{ ok: boolean; data: RuleRecord }>(`/api/v1/rules`, body);
   return res.data;
+}
+
+// ─── Quant Lineage ─────────────────────────────────────────────────────────
+//
+// 与 /src/routes/quant.routes.ts 对齐：
+//   - GET  /api/v1/quant/lineage?kind=&id=   — 单节点 + 上下游
+//   - POST /api/v1/quant/lineage/batch       — 批量（不含 children）
+//   - GET  /api/v1/quant/agents?ids=         — agent_instance 列表解析
+//   - GET  /api/v1/quant/workflows?ids=      — workflow_run 列表解析
+//
+// 前端 <LineageBadge> / <LineageTrail> 默认走单节点接口；列表场景（FactorTab 列表）
+// 用 batch + agents/workflows 一次拉好整批 metadata，避免 N+1。
+
+export type LineageKind =
+  | "factor"
+  | "rule"
+  | "composition"
+  | "discovery_job"
+  | "backtest_run";
+
+export interface LineageAgentSummary {
+  instanceId: string;
+  definitionId: string;
+  role: string;
+  name: string;
+}
+
+export interface LineageWorkflowSummary {
+  id: string;
+  goal: string;
+  mode: string;
+  status: string;
+  startedAt: string;
+}
+
+export interface LineageNode {
+  kind: LineageKind;
+  id: string;
+  label: string;
+  createdBy: LineageCreatedBy;
+  agent: LineageAgentSummary | null;
+  workflow: LineageWorkflowSummary | null;
+  parent: LineageNode | null;
+  children: LineageNode[];
+  meta: Record<string, unknown>;
+}
+
+export async function getLineage(
+  kind: LineageKind,
+  id: string
+): Promise<LineageNode | null> {
+  const url = `/api/v1/quant/lineage?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`;
+  const res = await httpGet<{ ok: boolean; data?: LineageNode; error?: string }>(url);
+  if (!res.ok) {
+    if (res.error === "not_found") return null;
+    throw new Error(res.error ?? "lineage_fetch_failed");
+  }
+  return res.data ?? null;
+}
+
+export async function getLineageBatch(
+  kind: LineageKind,
+  ids: string[]
+): Promise<LineageNode[]> {
+  if (!ids.length) return [];
+  const res = await httpPost<{ ok: boolean; data: LineageNode[] }>(
+    `/api/v1/quant/lineage/batch`,
+    { kind, ids }
+  );
+  return res.data ?? [];
+}
+
+export async function getLineageAgents(
+  ids: string[]
+): Promise<LineageAgentSummary[]> {
+  if (!ids.length) return [];
+  const q = ids.map((s) => encodeURIComponent(s)).join(",");
+  const res = await httpGet<{ ok: boolean; data: LineageAgentSummary[] }>(
+    `/api/v1/quant/agents?ids=${q}`
+  );
+  return res.data ?? [];
+}
+
+export async function getLineageWorkflows(
+  ids: string[]
+): Promise<LineageWorkflowSummary[]> {
+  if (!ids.length) return [];
+  const q = ids.map((s) => encodeURIComponent(s)).join(",");
+  const res = await httpGet<{ ok: boolean; data: LineageWorkflowSummary[] }>(
+    `/api/v1/quant/workflows?ids=${q}`
+  );
+  return res.data ?? [];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

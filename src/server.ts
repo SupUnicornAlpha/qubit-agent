@@ -30,6 +30,7 @@ import { backtestJobRouter } from "./routes/backtest-job.routes";
 import { discoveryRouter } from "./routes/discovery.routes";
 import { strategyRouter } from "./routes/strategy.routes";
 import { strategyCompositionRouter } from "./routes/strategy-composition.routes";
+import { quantRouter } from "./routes/quant.routes";
 import { llmProviderRouter } from "./routes/llm-provider.routes";
 import { metaRouter } from "./routes/meta.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
@@ -76,6 +77,8 @@ app.route("/api/v1/backtest-jobs", backtestJobRouter);
 app.route("/api/v1/discovery-jobs", discoveryRouter);
 app.route("/api/v1/strategies", strategyRouter);
 app.route("/api/v1/strategy-compositions", strategyCompositionRouter);
+// 量化工作台聚合：lineage 查询 + agents/workflows 批量解析（migration 0080 配套）
+app.route("/api/v1/quant", quantRouter);
 // M10: LLM Provider 配置（per-Agent 模型路由 + 默认降级）
 app.route("/api/v1/llm-providers", llmProviderRouter);
 // 后端元信息：commit / startedAt / pid / watchMode，便于"代码到底有没有生效"快速排查

@@ -30,9 +30,11 @@ import {
   type FactorStatus,
   type FactorValueRow,
   type FactorValueStats,
+  type LineageCreatedBy,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
+import { LineageBadge, LineageTrail } from "./LineageBadge";
 
 const CATEGORY_LABELS: Record<FactorCategory, string> = {
   value: "Value",
@@ -81,6 +83,11 @@ export const FactorWorkbenchTab: FC = () => {
   const [factors, setFactors] = useState<FactorRecord[]>([]);
   const [filterCategory, setFilterCategory] = useState<FactorCategory | "all">("all");
   const [filterStatus, setFilterStatus] = useState<FactorStatus | "all">("all");
+  /**
+   * 来源过滤：用户 / Agent / Promoted / 全部 — migration 0080 引入。
+   * 仅前端筛 factors[] 即可（量级 << 1000），不走后端 query string。
+   */
+  const [filterSource, setFilterSource] = useState<LineageCreatedBy | "all">("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<FactorRecord | null>(null);
   const [evaluations, setEvaluations] = useState<FactorEvaluationLogRow[]>([]);
@@ -160,7 +167,10 @@ export const FactorWorkbenchTab: FC = () => {
     void reloadSelected();
   }, [reloadSelected]);
 
-  const filtered = factors;
+  const filtered = useMemo(() => {
+    if (filterSource === "all") return factors;
+    return factors.filter((f) => (f.createdBy ?? "user") === filterSource);
+  }, [factors, filterSource]);
 
   const symbolsList = useMemo(
     () =>
@@ -412,6 +422,18 @@ export const FactorWorkbenchTab: FC = () => {
               </option>
             ))}
           </select>
+          <select
+            value={filterSource}
+            onChange={(e) => setFilterSource(e.target.value as LineageCreatedBy | "all")}
+            style={styles.select}
+            title="按因子的产出来源筛选（用户 / Agent / Discovery promote）"
+          >
+            <option value="all">来源: 全部</option>
+            <option value="user">用户</option>
+            <option value="agent">Agent</option>
+            <option value="discovery_promote">Promoted</option>
+            <option value="system">System</option>
+          </select>
         </div>
         {showForm ? (
           <form onSubmit={onSubmitRegister} className="qb-quant-form" style={styles.form}>
@@ -531,7 +553,15 @@ export const FactorWorkbenchTab: FC = () => {
                   padding: 0,
                 }}
               >
-                <div className="qb-quant-list-item-title" style={styles.listItemTitle}>{f.name}</div>
+                <div
+                  className="qb-quant-list-item-title"
+                  style={{ ...styles.listItemTitle, display: "flex", alignItems: "center", gap: 6 }}
+                >
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {f.name}
+                  </span>
+                  <LineageBadge createdBy={f.createdBy ?? "user"} size="small" />
+                </div>
                 <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
                   <span className="qb-quant-status-tag" data-qb-quant-status={f.status} style={{ color: STATUS_TONES[f.status] }}>{STATUS_LABELS[f.status]}</span>
                   <span> · {CATEGORY_LABELS[f.category]}</span>
@@ -574,6 +604,7 @@ export const FactorWorkbenchTab: FC = () => {
                 ))}
               </div>
             </div>
+            <LineageTrail kind="factor" id={selected.id} />
             <pre className="qb-quant-expr-box" style={styles.exprBox}>{selected.expr}</pre>
 
             <div className="qb-quant-op-panel" style={styles.opPanel}>

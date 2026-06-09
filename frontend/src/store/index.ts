@@ -32,6 +32,16 @@ export type ActiveView =
 /** 量化工作台 tab */
 export type QuantTab = "factor" | "discovery" | "composer" | "backtest";
 
+/**
+ * 量化工作台 4 tab 间的「一键跳转回测」handoff payload。
+ *
+ * - `raw`：来自 Discovery 候选 / 因子工坊单因子 dry-run；用 qlib_expr 直接作为 signal
+ * - `composition`：来自 Composer，引用 strategy_composition.id 作为回测入口
+ */
+export type QuantBacktestHandoff =
+  | { kind: "raw"; expr: string; lang: "qlib_expr"; reverse?: boolean; note?: string }
+  | { kind: "composition"; compositionId: string; note?: string };
+
 import {
   applyUiAppearance,
   coercePaletteForStyle,
@@ -160,6 +170,15 @@ export interface AppState {
   setConfigSubPage: (page: ConfigSubPage) => void;
   quantTab: QuantTab;
   setQuantTab: (tab: QuantTab) => void;
+  /**
+   * 量化工作台跨 tab handoff（migration 0080 量化工作台增强）：
+   *   - Discovery 单候选「一键试跑」→ 写 { kind:'raw', expr, lang, reverse } → 切到 backtest
+   *   - Composer 详情「一键回测」→ 写 { kind:'composition', compositionId } → 切到 backtest
+   *
+   * BacktestStudioTab 在 mount / 变化时消费 + 清空，避免重复触发。
+   */
+  quantHandoff: QuantBacktestHandoff | null;
+  setQuantHandoff: (h: QuantBacktestHandoff | null) => void;
   /** 图表请求版本号，供 IDE 内嵌 K 线监听刷新 */
   chartReloadNonce: number;
   requestChartReload: () => void;
@@ -332,6 +351,8 @@ export const useAppStore = create<AppState>((set) => ({
   setConfigSubPage: (configSubPage) => set({ configSubPage }),
   quantTab: "factor",
   setQuantTab: (quantTab) => set({ quantTab }),
+  quantHandoff: null,
+  setQuantHandoff: (quantHandoff) => set({ quantHandoff }),
   chartReloadNonce: 0,
   requestChartReload: () => set((s) => ({ chartReloadNonce: s.chartReloadNonce + 1 })),
   chartSpec: readPersistedChartSpec(),

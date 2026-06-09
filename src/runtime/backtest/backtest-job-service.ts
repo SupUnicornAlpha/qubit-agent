@@ -52,6 +52,10 @@ export interface BacktestJobSubmitInput {
   /** 显式 BacktestProvider key（默认 event_driven） */
   providerKey?: string;
   scope?: ProviderScope;
+  /** 产物 lineage（migration 0080） */
+  workflowRunId?: string | null;
+  createdBy?: "user" | "agent" | "system" | string;
+  agentInstanceId?: string | null;
 }
 
 export interface BacktestJobRecord {
@@ -64,6 +68,11 @@ export interface BacktestJobRecord {
   result: BacktestResult | null;
   startedAt: string;
   endedAt: string | null;
+  /** 产物 lineage（migration 0080） */
+  createdBy: string;
+  workflowRunId: string | null;
+  agentInstanceId: string | null;
+  compositionId: string | null;
 }
 
 export class BacktestJobError extends Error {
@@ -130,7 +139,7 @@ export class BacktestJobService {
     await db.insert(backtestRunTable).values({
       id,
       strategyVersionId: input.strategyVersionId,
-      agentInstanceId: null,
+      agentInstanceId: input.agentInstanceId ?? null,
       connectorInstanceId: "",
       datasetSnapshotId: "",
       configJson: request as never,
@@ -138,6 +147,9 @@ export class BacktestJobService {
       status: "pending",
       providerId: null,
       engineKey: providerKey,
+      createdBy: input.createdBy ?? "user",
+      workflowRunId: input.workflowRunId ?? null,
+      compositionId: input.compositionId ?? null,
     });
 
     return this.get(id);
@@ -275,6 +287,10 @@ export class BacktestJobService {
       result: (r.performanceJson as unknown as BacktestResult | null) ?? null,
       startedAt: r.startedAt,
       endedAt: r.endedAt ?? null,
+      createdBy: r.createdBy ?? "user",
+      workflowRunId: r.workflowRunId ?? null,
+      agentInstanceId: r.agentInstanceId ?? null,
+      compositionId: r.compositionId ?? null,
     };
   }
 }

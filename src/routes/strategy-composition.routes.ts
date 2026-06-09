@@ -56,6 +56,11 @@ strategyCompositionRouter.post("/", async (c) => {
       rebalanceFreq?: string;
       universe?: string;
       params?: Record<string, unknown>;
+      name?: string;
+      description?: string;
+      createdBy?: string;
+      workflowRunId?: string;
+      agentInstanceId?: string;
     }>();
     const data = await strategyComposer.define({
       strategyVersionId: body.strategyVersionId,
@@ -67,6 +72,53 @@ strategyCompositionRouter.post("/", async (c) => {
       ...(body.rebalanceFreq ? { rebalanceFreq: body.rebalanceFreq } : {}),
       ...(body.universe ? { universe: body.universe } : {}),
       ...(body.params ? { params: body.params } : {}),
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.description !== undefined ? { description: body.description } : {}),
+      ...(body.createdBy ? { createdBy: body.createdBy } : {}),
+      ...(body.workflowRunId ? { workflowRunId: body.workflowRunId } : {}),
+      ...(body.agentInstanceId ? { agentInstanceId: body.agentInstanceId } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asError(e), 400);
+  }
+});
+
+/**
+ * POST /api/v1/strategy-compositions/:id/clone
+ *
+ * 克隆已有 composition。lineage 自动标 `createdBy='clone'` 并记录 `parentCompositionId`，
+ * 配合前端「组合工坊 → 克隆」按钮使用。Body 可选 override：
+ *   `{ name?, description?, weightMethod?, factorIds?, ruleIds?, ... }`
+ */
+strategyCompositionRouter.post("/:id/clone", async (c) => {
+  const id = c.req.param("id");
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as Partial<{
+      strategyVersionId: string;
+      kind: StrategyKind;
+      factorIds: string[];
+      ruleIds: string[];
+      weightMethod: WeightMethod;
+      factorWeights: Record<string, number>;
+      rebalanceFreq: string;
+      universe: string;
+      params: Record<string, unknown>;
+      name: string;
+      description: string;
+    }>;
+    const data = await strategyComposer.clone(id, {
+      ...(body.strategyVersionId ? { strategyVersionId: body.strategyVersionId } : {}),
+      ...(body.kind ? { kind: body.kind } : {}),
+      ...(body.factorIds ? { factorIds: body.factorIds } : {}),
+      ...(body.ruleIds ? { ruleIds: body.ruleIds } : {}),
+      ...(body.weightMethod ? { weightMethod: body.weightMethod } : {}),
+      ...(body.factorWeights ? { factorWeights: body.factorWeights } : {}),
+      ...(body.rebalanceFreq ? { rebalanceFreq: body.rebalanceFreq } : {}),
+      ...(body.universe ? { universe: body.universe } : {}),
+      ...(body.params ? { params: body.params } : {}),
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.description !== undefined ? { description: body.description } : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {

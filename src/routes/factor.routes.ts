@@ -42,6 +42,10 @@ factorRouter.get("/", async (c) => {
       ...(c.req.query("workflow_run_id")
         ? { workflowRunId: c.req.query("workflow_run_id")! }
         : {}),
+      ...(c.req.query("created_by") ? { createdBy: c.req.query("created_by")! } : {}),
+      ...(c.req.query("agent_instance_id")
+        ? { agentInstanceId: c.req.query("agent_instance_id")! }
+        : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {
@@ -74,6 +78,10 @@ factorRouter.post("/", async (c) => {
       providerKey?: string;
       workflowRunId?: string;
       definition?: Record<string, unknown>;
+      /** lineage（migration 0080）：IDE 路径默认 'user'；REST 调用方可显式传 */
+      createdBy?: string;
+      agentInstanceId?: string;
+      sourceJobId?: string;
     }>();
     const data = await factorService.register({
       projectId: body.projectId,
@@ -87,6 +95,9 @@ factorRouter.post("/", async (c) => {
       ...(body.providerKey ? { providerKey: body.providerKey } : {}),
       ...(body.workflowRunId ? { workflowRunId: body.workflowRunId } : {}),
       ...(body.definition ? { definition: body.definition } : {}),
+      ...(body.createdBy ? { createdBy: body.createdBy } : {}),
+      ...(body.agentInstanceId ? { agentInstanceId: body.agentInstanceId } : {}),
+      ...(body.sourceJobId ? { sourceJobId: body.sourceJobId } : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {

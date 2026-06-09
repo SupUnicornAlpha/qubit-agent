@@ -75,6 +75,13 @@ export interface DiscoverySubmitInput {
   expressions?: string[];
   /** workflow 关联 */
   workflowRunId?: string;
+  /**
+   * 产物 lineage（migration 0080）：
+   *   - createdBy：'user'（默认）/ 'agent' / 'system'
+   *   - agentInstanceId：发起任务的 agent_instance.id
+   */
+  createdBy?: "user" | "agent" | "system" | string;
+  agentInstanceId?: string | null;
 }
 
 export interface DiscoveryCandidate {
@@ -105,6 +112,9 @@ export interface DiscoveryJobRecord {
   startedAt: string;
   endedAt: string | null;
   error: string | null;
+  /** 产物 lineage（migration 0080） */
+  createdBy: string;
+  agentInstanceId: string | null;
 }
 
 export class DiscoveryError extends Error {
@@ -151,6 +161,8 @@ export class DiscoveryService {
       inputJson: input as never,
       outputJson: { candidates: [] } as never,
       status: "pending",
+      createdBy: input.createdBy ?? "user",
+      agentInstanceId: input.agentInstanceId ?? null,
     });
     return this.get(id);
   }
@@ -275,6 +287,13 @@ export class DiscoveryService {
        * 侧栏能严格按工作流过滤。NULL → discovery 是脚本 / API 触发的，没有 workflow。
        */
       ...(job.workflowRunId ? { workflowRunId: job.workflowRunId } : {}),
+      /**
+       * lineage（migration 0080）：promote 路径明确标识来源，前端 LineageBadge 据此区分
+       * 「Agent / 用户手动 / Discovery 提升」三种来源。
+       */
+      createdBy: "discovery_promote",
+      sourceJobId: jobId,
+      ...(job.agentInstanceId ? { agentInstanceId: job.agentInstanceId } : {}),
       /** F-P0-10：标识此次 register 来自 discovery.promote，让 team-graph 看见 register 事件 */
       autoRegisteredVia: "discovery.promote",
       definition: {
@@ -505,6 +524,8 @@ export class DiscoveryService {
       startedAt: r.startedAt,
       endedAt: r.endedAt ?? null,
       error: r.error ?? null,
+      createdBy: r.createdBy ?? "user",
+      agentInstanceId: r.agentInstanceId ?? null,
     };
   }
 }

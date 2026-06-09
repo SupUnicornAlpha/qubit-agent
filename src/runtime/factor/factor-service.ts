@@ -84,6 +84,18 @@ export interface FactorRegisterInput {
   /** 任意补充元数据（写入 definition_json） */
   definition?: Record<string, unknown>;
   /**
+   * 产物 lineage（migration 0080）：
+   *   - createdBy：'user'（默认）/ 'agent' / 'discovery_promote' / 'system'
+   *   - agentInstanceId：发起注册的 agent_instance.id
+   *   - sourceJobId：discovery promote 时记录上游 discovery_job.id
+   *
+   * 与 `workflowRunId` 解耦：workflow 跑 builtin tool 时这三者通常一起写；
+   * IDE / REST 走默认值 'user'。
+   */
+  createdBy?: "user" | "agent" | "discovery_promote" | "system" | string;
+  agentInstanceId?: string | null;
+  sourceJobId?: string | null;
+  /**
    * P0-2: 注册前 dry-run 闸门（详见 AGENT_STABILITY_REVIEW.md §四-P0-2）
    *
    * - `false` / 未传：跳过 dry-run（向后兼容；脚本/API/IDE 路径默认行为）
@@ -112,6 +124,10 @@ export interface FactorRecord {
   providerKey: string;
   /** 来源 workflow_run.id；NULL = IDE / REST / 历史数据 */
   workflowRunId: string | null;
+  /** 产物 lineage（migration 0080） */
+  createdBy: string;
+  agentInstanceId: string | null;
+  sourceJobId: string | null;
   definition: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -245,6 +261,9 @@ export class FactorService {
     // 用户显式传 status 时尊重用户输入
     const status: FactorStatus = input.status ?? "draft";
     const workflowRunId = input.workflowRunId?.trim() || null;
+    const createdBy = input.createdBy ?? "user";
+    const agentInstanceId = input.agentInstanceId?.trim?.() || input.agentInstanceId || null;
+    const sourceJobId = input.sourceJobId?.trim?.() || input.sourceJobId || null;
     await db.insert(factorDefTable).values({
       id,
       projectId: input.projectId,
@@ -262,6 +281,9 @@ export class FactorService {
       status,
       providerKey,
       workflowRunId,
+      createdBy,
+      agentInstanceId,
+      sourceJobId,
     });
 
     /**
@@ -376,7 +398,7 @@ export class FactorService {
       .from(factorDefTable)
       .where(and(eq(factorDefTable.projectId, projectId), eq(factorDefTable.name, name)))
       .limit(1);
-    return (rows[0] as FactorRecord | undefined) ?? null;
+    return rows[0] ? this.rowToRecord(rows[0]) : null;
   }
 
   async list(
@@ -386,6 +408,9 @@ export class FactorService {
       status?: FactorStatus;
       /** 严格按工作流过滤；命中 (project_id, workflow_run_id) 索引，详见 migration 0047 */
       workflowRunId?: string;
+      /** lineage 过滤（migration 0080）：按来源筛 user / agent / discovery_promote */
+      createdBy?: string;
+      agentInstanceId?: string;
     } = {}
   ): Promise<FactorRecord[]> {
     const db = await getDb();
@@ -395,6 +420,9 @@ export class FactorService {
     if (filter.status) conds.push(eq(factorDefTable.status, filter.status));
     if (filter.workflowRunId)
       conds.push(eq(factorDefTable.workflowRunId, filter.workflowRunId));
+    if (filter.createdBy) conds.push(eq(factorDefTable.createdBy, filter.createdBy));
+    if (filter.agentInstanceId)
+      conds.push(eq(factorDefTable.agentInstanceId, filter.agentInstanceId));
 
     const rows = conds.length
       ? await db
@@ -763,6 +791,9 @@ export class FactorService {
       status: r.status,
       providerKey: r.providerKey,
       workflowRunId: r.workflowRunId ?? null,
+      createdBy: r.createdBy ?? "user",
+      agentInstanceId: r.agentInstanceId ?? null,
+      sourceJobId: r.sourceJobId ?? null,
       definition: (r.definitionJson as Record<string, unknown>) ?? {},
       createdAt: r.createdAt,
       updatedAt: r.updatedAt,

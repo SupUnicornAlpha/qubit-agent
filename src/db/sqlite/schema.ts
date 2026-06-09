@@ -1134,6 +1134,15 @@ export const factorDefinition = sqliteTable("factor_definition", {
    * 用于研究产出侧栏严格按"本工作流"过滤；详见 migration 0047。
    */
   workflowRunId: text("workflow_run_id"),
+  /**
+   * 产物 lineage（migration 0080）：
+   *   - createdBy：'user' | 'agent' | 'discovery_promote' | 'system'
+   *   - agentInstanceId：发起注册的 agent_instance.id（仅 agent 路径）
+   *   - sourceJobId：discovery_job.id（promote 时记录上游挖掘任务）
+   */
+  createdBy: text("created_by").notNull().default("user"),
+  agentInstanceId: text("agent_instance_id"),
+  sourceJobId: text("source_job_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -1168,6 +1177,15 @@ export const backtestRun = sqliteTable("backtest_run", {
   /** 回测 Provider 留痕：哪个 BacktestProvider 跑出了这次结果（sma_legacy / backtrader / veighna_bt …） */
   providerId: text("provider_id"),
   engineKey: text("engine_key").notNull().default("sma_legacy"),
+  /**
+   * 产物 lineage（migration 0080）：
+   *   - createdBy / workflowRunId：与其他研究产物表同协议
+   *   - compositionId：直接关联回测使用的 strategy_composition.id（NULL = 走 raw signals 模式）
+   * `agentInstanceId` 列在初始 schema 已存在，BacktestJobService.submit 改造后会真正写入。
+   */
+  createdBy: text("created_by").notNull().default("user"),
+  workflowRunId: text("workflow_run_id"),
+  compositionId: text("composition_id"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
 });
@@ -2439,6 +2457,10 @@ export const ruleDefinition = sqliteTable("rule_definition", {
     .notNull()
     .default("draft"),
   providerKey: text("provider_key").notNull().default("jsonlogic"),
+  /** 产物 lineage（migration 0080）：同 factor_definition 协议 */
+  createdBy: text("created_by").notNull().default("user"),
+  workflowRunId: text("workflow_run_id"),
+  agentInstanceId: text("agent_instance_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -2479,6 +2501,19 @@ export const strategyComposition = sqliteTable("strategy_composition", {
   rebalanceFreq: text("rebalance_freq").notNull().default("1d"),
   universe: text("universe").notNull().default("CN-A"),
   paramsJson: text("params_json", { mode: "json" }).notNull().default("{}"),
+  /**
+   * 组合显示用元信息（migration 0080）：UI 上展示 / 搜索用。
+   *   - name：用户可读名（空 → UI 回退到 `kind#<id前缀>`）
+   *   - description：自由文本说明（克隆自 X / Agent Y 推荐 etc.）
+   */
+  name: text("name").notNull().default(""),
+  description: text("description").notNull().default(""),
+  /** 产物 lineage（migration 0080）：同 factor_definition 协议 + 克隆链路 */
+  createdBy: text("created_by").notNull().default("user"),
+  workflowRunId: text("workflow_run_id"),
+  agentInstanceId: text("agent_instance_id"),
+  /** 克隆来源：被 clone API 创建时记录父 composition.id */
+  parentCompositionId: text("parent_composition_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -2503,6 +2538,9 @@ export const discoveryJob = sqliteTable("discovery_job", {
   error: text("error"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
+  /** 产物 lineage（migration 0080）：同 factor_definition 协议 */
+  createdBy: text("created_by").notNull().default("user"),
+  agentInstanceId: text("agent_instance_id"),
   createdAt: createdAt(),
 });
 

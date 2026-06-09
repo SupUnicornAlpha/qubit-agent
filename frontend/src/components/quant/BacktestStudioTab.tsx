@@ -24,6 +24,8 @@ import {
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
 import { pickColor, SvgLineChart, type ChartSeries } from "./charts/SvgLineChart";
+import { LineageBadge, LineageTrail } from "./LineageBadge";
+import { useAppStore } from "../../store";
 
 type Source = "composition" | "raw";
 type Rebalance = "daily" | "weekly" | "monthly";
@@ -67,6 +69,27 @@ export const BacktestStudioTab: FC = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  /**
+   * 消费 quantHandoff —— Discovery / Composer 切到这里时预填表单。
+   * 仅在组件挂载时跑一次：消费后立即清空，避免重渲染时重复填表。
+   */
+  const handoff = useAppStore((s) => s.quantHandoff);
+  const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
+  useEffect(() => {
+    if (!handoff) return;
+    if (handoff.kind === "raw") {
+      setSource("raw");
+      setRawExpr(handoff.expr);
+      setRawReverse(handoff.reverse ?? false);
+      setInfo(`已预填 raw signal · ${handoff.note ?? "来自其他 tab"}`);
+    } else if (handoff.kind === "composition") {
+      setSource("composition");
+      setCompositionId(handoff.compositionId);
+      setInfo(`已预选 composition · ${handoff.note ?? handoff.compositionId.slice(0, 8)}`);
+    }
+    setQuantHandoff(null);
+  }, [handoff, setQuantHandoff]);
 
   const symbolsList = useMemo(
     () =>
@@ -487,8 +510,11 @@ export const BacktestStudioTab: FC = () => {
               >
                 <div className="qb-quant-list-item-top" style={styles.listItemTop}>
                   <span className="qb-quant-status-tag" data-qb-quant-status={j.status} style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
-                  <span className="qb-quant-muted" style={styles.muted}>
-                    {j.result ? `${(j.result.metrics.totalReturn * 100).toFixed(2)}%` : "—"}
+                  <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <LineageBadge createdBy={j.createdBy ?? "user"} size="small" />
+                    <span className="qb-quant-muted" style={styles.muted}>
+                      {j.result ? `${(j.result.metrics.totalReturn * 100).toFixed(2)}%` : "—"}
+                    </span>
                   </span>
                 </div>
                 <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
@@ -571,9 +597,13 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
     <>
       <div className="qb-quant-detail-header" style={styles.detailHeader}>
         <div>
-          <div className="qb-quant-detail-title" style={styles.detailTitle}>
+          <div
+            className="qb-quant-detail-title"
+            style={{ ...styles.detailTitle, display: "flex", alignItems: "center", gap: 8 }}
+          >
             <span className="qb-quant-status-tag" data-qb-quant-status={job.status} style={{ color: STATUS_TONES[job.status] }}>{job.status.toUpperCase()}</span> ·{" "}
             {job.engineKey}
+            <LineageBadge createdBy={job.createdBy ?? "user"} size="normal" />
           </div>
           <div className="qb-quant-detail-meta" style={styles.detailMeta}>
             {job.config.startDate} ~ {job.config.endDate} · capital=${job.config.capital} ·{" "}
@@ -584,6 +614,7 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
           刷新
         </button>
       </div>
+      <LineageTrail kind="backtest_run" id={job.id} />
       {job.result?.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>{job.result.error}</div> : null}
       {m ? (
         <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>

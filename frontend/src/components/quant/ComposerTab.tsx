@@ -16,6 +16,7 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  cloneStrategyComposition,
   createStrategyComposition,
   listFactors,
   listRules,
@@ -29,6 +30,8 @@ import {
   type WeightMethod,
 } from "../../api/backend";
 import { useDefaultProject } from "./useDefaultProject";
+import { LineageBadge, LineageTrail } from "./LineageBadge";
+import { useAppStore } from "../../store";
 
 const KIND_OPTIONS: { id: StrategyKind; label: string; desc: string }[] = [
   { id: "factor_only", label: "Factor Only", desc: "仅因子分数选股" },
@@ -58,6 +61,8 @@ export const ComposerTab: FC = () => {
 
   // editor state
   const [kind, setKind] = useState<StrategyKind>("factor_only");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [selectedFactorIds, setSelectedFactorIds] = useState<Set<string>>(new Set());
   const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
   const [weightMethod, setWeightMethod] = useState<WeightMethod>("equal");
@@ -65,9 +70,20 @@ export const ComposerTab: FC = () => {
   const [rebalanceFreq, setRebalanceFreq] = useState<string>("daily");
   const [universe, setUniverse] = useState("default");
 
+  /** 选中已有 composition 进入「详情面板」（克隆 / 一键回测 / lineage chain） */
+  const [selectedCompId, setSelectedCompId] = useState<string | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
+  const setQuantTab = useAppStore((s) => s.setQuantTab);
+
+  const selectedComp = useMemo(
+    () => compositions.find((c) => c.id === selectedCompId) ?? null,
+    [compositions, selectedCompId]
+  );
 
   const reloadVersions = useCallback(async () => {
     if (!projectId) return;
@@ -142,11 +158,53 @@ export const ComposerTab: FC = () => {
     setSelectedFactorIds(new Set());
     setSelectedRuleIds(new Set());
     setKind("factor_only");
+    setName("");
+    setDescription("");
     setWeightMethod("equal");
     setFactorWeights({});
     setRebalanceFreq("daily");
     setUniverse("default");
   }, []);
+
+  /**
+   * 克隆 — 复用 backend POST :id/clone：lineage 自动写 createdBy='clone' + parentCompositionId。
+   * 克隆后切到该新 composition 详情，便于用户立刻继续编辑或回测。
+   */
+  const onClone = useCallback(
+    async (c: StrategyCompositionRecord) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const next = await cloneStrategyComposition(c.id, {
+          name: c.name ? `${c.name} (copy)` : undefined,
+        });
+        setInfo(`已克隆 composition ${next.id.slice(0, 8)}…`);
+        await reloadCompositions();
+        setSelectedCompId(next.id);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [reloadCompositions]
+  );
+
+  /**
+   * 一键回测 — 把 composition.id 写入 quantHandoff，并切到 BacktestStudio。
+   * BacktestStudio 在挂载时会消费该 payload 自动填表。
+   */
+  const onRunBacktest = useCallback(
+    (c: StrategyCompositionRecord) => {
+      setQuantHandoff({
+        kind: "composition",
+        compositionId: c.id,
+        note: c.name ? `Composition · ${c.name}` : `Composition ${c.id.slice(0, 8)}`,
+      });
+      setQuantTab("backtest");
+    },
+    [setQuantHandoff, setQuantTab]
+  );
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -183,10 +241,13 @@ export const ComposerTab: FC = () => {
           ...(weightMethod === "fixed" ? { factorWeights } : {}),
           rebalanceFreq,
           universe,
+          ...(name.trim() ? { name: name.trim() } : {}),
+          ...(description.trim() ? { description: description.trim() } : {}),
         });
         setInfo(`已创建 composition ${rec.id.slice(0, 8)}…（${rec.kind}）`);
         reset();
         await reloadCompositions();
+        setSelectedCompId(rec.id);
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -196,6 +257,8 @@ export const ComposerTab: FC = () => {
     [
       versionId,
       kind,
+      name,
+      description,
       selectedFactorIds,
       selectedRuleIds,
       weightMethod,
@@ -243,24 +306,128 @@ export const ComposerTab: FC = () => {
         </div>
         <div className="qb-quant-list" style={styles.list}>
           {compositions.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无</div> : null}
-          {compositions.map((c) => (
-            <div key={c.id} className="qb-quant-comp-row" style={styles.compRow}>
-              <div className="qb-quant-comp-row-top" style={styles.compRowTop}>
-                <span className="qb-quant-comp-kind" style={styles.compKind}>{c.kind}</span>
-                <span className="qb-quant-muted" style={styles.muted}>{c.weightMethod}</span>
-              </div>
-              <div className="qb-quant-muted" style={styles.muted}>
-                {c.factorIds.length} factors · {c.ruleIds.length} rules · {c.rebalanceFreq}
-              </div>
-              <div className="qb-quant-comp-row-meta" style={styles.compRowMeta}>
-                {new Date(c.createdAt).toLocaleString()}
-              </div>
-            </div>
-          ))}
+          {compositions.map((c) => {
+            const isActive = c.id === selectedCompId;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setSelectedCompId(c.id)}
+                className={`qb-quant-comp-row${isActive ? " qb-quant-comp-row--active" : ""}`}
+                style={{
+                  ...styles.compRow,
+                  textAlign: "left",
+                  background: isActive ? "var(--qb-bg-elevated)" : "transparent",
+                  color: "inherit",
+                  cursor: "pointer",
+                  width: "100%",
+                  border: "none",
+                  borderBottom: "1px solid var(--qb-border-subtle)",
+                }}
+              >
+                <div className="qb-quant-comp-row-top" style={styles.compRowTop}>
+                  <span className="qb-quant-comp-kind" style={styles.compKind}>
+                    {c.name?.trim() || c.kind}
+                  </span>
+                  <LineageBadge createdBy={c.createdBy ?? "user"} size="small" />
+                </div>
+                <div className="qb-quant-muted" style={styles.muted}>
+                  {c.factorIds.length} factors · {c.ruleIds.length} rules · {c.weightMethod} · {c.rebalanceFreq}
+                </div>
+                <div className="qb-quant-comp-row-meta" style={styles.compRowMeta}>
+                  {new Date(c.createdAt).toLocaleString()}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </aside>
 
       <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
+        {selectedComp ? (
+          <div className="qb-quant-comp-detail" style={styles.detailPanel}>
+            <div style={styles.detailHeader}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <strong style={{ fontSize: 14 }}>
+                    {selectedComp.name?.trim() || `${selectedComp.kind}#${selectedComp.id.slice(0, 8)}`}
+                  </strong>
+                  <LineageBadge createdBy={selectedComp.createdBy ?? "user"} size="normal" />
+                </div>
+                <span style={styles.muted}>
+                  {selectedComp.kind} · {selectedComp.weightMethod} · {selectedComp.rebalanceFreq} · universe={selectedComp.universe}
+                </span>
+                {selectedComp.description ? (
+                  <span style={{ fontSize: 11 }}>{selectedComp.description}</span>
+                ) : null}
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  type="button"
+                  onClick={() => onRunBacktest(selectedComp)}
+                  className="qb-quant-btn qb-quant-btn--primary"
+                  style={styles.btnPrimary}
+                  title="跳到回测工坊，自动用该 composition 发起回测"
+                >
+                  一键回测
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onClone(selectedComp)}
+                  disabled={busy}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="复制为新的草稿 composition（lineage 自动标 clone）"
+                >
+                  克隆
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedCompId(null)}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+            <LineageTrail kind="composition" id={selectedComp.id} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11 }}>
+              <span style={styles.muted}>因子 ({selectedComp.factorIds.length})</span>
+              <div style={styles.chipList}>
+                {selectedComp.factorIds.length === 0 ? (
+                  <span style={styles.muted}>无</span>
+                ) : (
+                  selectedComp.factorIds.map((fid) => {
+                    const f = factors.find((x) => x.id === fid);
+                    return (
+                      <span key={fid} style={styles.chip}>
+                        {f?.name ?? fid.slice(0, 8)}
+                        {f ? <LineageBadge createdBy={f.createdBy ?? "user"} size="small" /> : null}
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+              <span style={styles.muted}>规则 ({selectedComp.ruleIds.length})</span>
+              <div style={styles.chipList}>
+                {selectedComp.ruleIds.length === 0 ? (
+                  <span style={styles.muted}>无</span>
+                ) : (
+                  selectedComp.ruleIds.map((rid) => {
+                    const r = rules.find((x) => x.id === rid);
+                    return (
+                      <span key={rid} style={styles.chip}>
+                        {r?.name ?? rid.slice(0, 8)}
+                        {r ? <LineageBadge createdBy={r.createdBy ?? "user"} size="small" /> : null}
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        ) : null}
         <form onSubmit={onSubmit} className="qb-quant-editor" style={styles.editor}>
           <div className="qb-quant-editor-header" style={styles.editorHeader}>
             <strong>新建 Composition</strong>
@@ -273,6 +440,28 @@ export const ComposerTab: FC = () => {
               清空
             </button>
           </div>
+          <div style={styles.formRow}>
+            <label style={{ ...styles.formLabel, flex: 2 }}>
+              名称（可选）
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例：momentum_v2 / 沪深300_动量轮动"
+                style={styles.input}
+              />
+            </label>
+          </div>
+          <label style={styles.formLabel}>
+            描述（可选）
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              placeholder="主要因子组合 / 回测期望 / 与上游产物的关系"
+              style={{ ...styles.input, fontFamily: "inherit", resize: "vertical" }}
+            />
+          </label>
           <label style={styles.formLabel}>
             Kind
             <select
@@ -423,6 +612,7 @@ export const ComposerTab: FC = () => {
                   onChange={() => toggleFactor(f.id)}
                 />
                 <span className="qb-quant-pool-name" style={styles.poolName}>{f.name}</span>
+                <LineageBadge createdBy={f.createdBy ?? "user"} size="small" />
                 <span className="qb-quant-muted" style={styles.muted}>{f.category}</span>
               </label>
             ))}
@@ -440,6 +630,7 @@ export const ComposerTab: FC = () => {
                   onChange={() => toggleRule(r.id)}
                 />
                 <span className="qb-quant-pool-name" style={styles.poolName}>{r.name}</span>
+                <LineageBadge createdBy={r.createdBy ?? "user"} size="small" />
                 <span className="qb-quant-muted" style={styles.muted}>{r.appliesTo}</span>
               </label>
             ))}
@@ -599,6 +790,22 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
   },
   poolName: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  detailPanel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    border: "1px solid var(--qb-border-subtle)",
+    borderRadius: 8,
+    padding: "12px 16px",
+    marginBottom: 12,
+  },
+  detailHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    flexWrap: "wrap",
+  },
   btnPrimary: {
     padding: "6px 12px",
     fontSize: 12,
