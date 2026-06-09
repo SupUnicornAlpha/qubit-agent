@@ -509,12 +509,39 @@ export const BacktestStudioTab: FC = () => {
                 }}
               >
                 <div className="qb-quant-list-item-top" style={styles.listItemTop}>
-                  <span className="qb-quant-status-tag" data-qb-quant-status={j.status} style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
+                  <span style={{ display: "flex", alignItems: "center" }}>
+                    <span
+                      className="qb-quant-status-dot"
+                      data-status={j.status}
+                      aria-hidden
+                    />
+                    <span
+                      className="qb-quant-status-tag"
+                      data-qb-quant-status={j.status}
+                      style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}
+                    >
+                      {j.status}
+                    </span>
+                  </span>
                   <span style={{ display: "flex", gap: 4, alignItems: "center" }}>
                     <LineageBadge createdBy={j.createdBy ?? "user"} size="small" />
-                    <span className="qb-quant-muted" style={styles.muted}>
-                      {j.result ? `${(j.result.metrics.totalReturn * 100).toFixed(2)}%` : "—"}
-                    </span>
+                    {j.result ? (
+                      <strong
+                        style={{
+                          color:
+                            j.result.metrics.totalReturn >= 0
+                              ? "var(--qb-success)"
+                              : "var(--qb-error)",
+                          fontFamily: "var(--qb-font-mono)",
+                          fontVariantNumeric: "tabular-nums",
+                          fontSize: 11,
+                        }}
+                      >
+                        {(j.result.metrics.totalReturn * 100).toFixed(2)}%
+                      </strong>
+                    ) : (
+                      <span className="qb-quant-muted" style={styles.muted}>—</span>
+                    )}
                   </span>
                 </div>
                 <div className="qb-quant-list-item-meta" style={styles.listItemMeta}>
@@ -595,37 +622,53 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
 
   return (
     <>
-      <div className="qb-quant-detail-header" style={styles.detailHeader}>
-        <div>
-          <div
-            className="qb-quant-detail-title"
-            style={{ ...styles.detailTitle, display: "flex", alignItems: "center", gap: 8 }}
-          >
-            <span className="qb-quant-status-tag" data-qb-quant-status={job.status} style={{ color: STATUS_TONES[job.status] }}>{job.status.toUpperCase()}</span> ·{" "}
-            {job.engineKey}
-            <LineageBadge createdBy={job.createdBy ?? "user"} size="normal" />
+      <div
+        className="qb-quant-hero-card"
+        style={{ display: "flex", flexDirection: "column", gap: 10 }}
+      >
+        <div className="qb-quant-detail-header" style={styles.detailHeader}>
+          <div>
+            <div
+              className="qb-quant-detail-title"
+              style={{ ...styles.detailTitle, display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <span
+                className="qb-quant-status-dot"
+                data-status={job.status}
+                aria-hidden
+              />
+              <span
+                className="qb-quant-status-tag"
+                data-qb-quant-status={job.status}
+                style={{ color: STATUS_TONES[job.status] }}
+              >
+                {job.status.toUpperCase()}
+              </span>{" "}
+              · {job.engineKey}
+              <LineageBadge createdBy={job.createdBy ?? "user"} size="normal" />
+            </div>
+            <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+              {job.config.startDate} ~ {job.config.endDate} · capital=${job.config.capital} ·{" "}
+              {job.config.symbols.length} symbols · rebalance={job.config.rebalance ?? "daily"}
+            </div>
           </div>
-          <div className="qb-quant-detail-meta" style={styles.detailMeta}>
-            {job.config.startDate} ~ {job.config.endDate} · capital=${job.config.capital} ·{" "}
-            {job.config.symbols.length} symbols · rebalance={job.config.rebalance ?? "daily"}
-          </div>
+          <button type="button" onClick={onRefresh} className="qb-quant-btn qb-quant-btn--ghost" style={styles.btnGhost}>
+            刷新
+          </button>
         </div>
-        <button type="button" onClick={onRefresh} className="qb-quant-btn qb-quant-btn--ghost" style={styles.btnGhost}>
-          刷新
-        </button>
+        <LineageTrail kind="backtest_run" id={job.id} />
       </div>
-      <LineageTrail kind="backtest_run" id={job.id} />
       {job.result?.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>{job.result.error}</div> : null}
       {m ? (
         <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
-          <Metric label="总收益" value={m.totalReturn} pct />
-          <Metric label="年化收益" value={m.annualReturn} pct />
-          <Metric label="年化波动" value={m.annualVol} pct />
-          <Metric label="Sharpe" value={m.sharpe} />
-          <Metric label="最大回撤" value={m.maxDrawdown} pct />
-          <Metric label="胜率" value={m.winRate} pct />
-          <Metric label="交易笔数" value={m.tradeCount} digits={0} />
-          <Metric label="换手率" value={m.turnover} />
+          <Metric label="总收益" value={m.totalReturn} pct tone="emerald" highlight={m.totalReturn !== 0} signed />
+          <Metric label="年化收益" value={m.annualReturn} pct tone="emerald" signed />
+          <Metric label="年化波动" value={m.annualVol} pct tone="cyan" />
+          <Metric label="Sharpe" value={m.sharpe} tone="indigo" signed />
+          <Metric label="最大回撤" value={m.maxDrawdown} pct tone="amber" />
+          <Metric label="胜率" value={m.winRate} pct tone="pink" />
+          <Metric label="交易笔数" value={m.tradeCount} digits={0} tone="cyan" />
+          <Metric label="换手率" value={m.turnover} tone="indigo" />
         </div>
       ) : null}
       {equitySeries.length > 0 ? (
@@ -701,15 +744,42 @@ const CompareView: FC<{ jobs: BacktestJobRecord[]; equitySeries: ChartSeries[] }
   );
 };
 
-const Metric: FC<{ label: string; value: number; pct?: boolean; digits?: number }> = ({
-  label,
-  value,
-  pct = false,
-  digits = 4,
-}) => {
+const TONE_COLOR: Record<string, string> = {
+  emerald: "var(--qb-quant-accent-5)",
+  cyan: "var(--qb-quant-accent-2)",
+  indigo: "var(--qb-quant-accent-1)",
+  amber: "var(--qb-quant-accent-3)",
+  pink: "var(--qb-quant-accent-4)",
+};
+
+const Metric: FC<{
+  label: string;
+  value: number;
+  pct?: boolean;
+  digits?: number;
+  tone?: keyof typeof TONE_COLOR;
+  /** signed=true 时按正/负染色为绿/红，覆盖 tone */
+  signed?: boolean;
+  highlight?: boolean;
+}> = ({ label, value, pct = false, digits = 4, tone, signed = false, highlight = false }) => {
+  const dotColor = signed
+    ? value >= 0
+      ? "var(--qb-success)"
+      : "var(--qb-error)"
+    : tone
+    ? TONE_COLOR[tone]
+    : "var(--qb-quant-accent-1)";
+  const valueColor = signed
+    ? value > 0
+      ? "var(--qb-success)"
+      : value < 0
+      ? "var(--qb-error)"
+      : "var(--qb-text-strong)"
+    : "var(--qb-text-strong)";
   if (!Number.isFinite(value)) {
     return (
-      <div className="qb-quant-metric" style={styles.metric}>
+      <div className="qb-quant-metric" style={{ ...styles.metric, position: "relative" }}>
+        <span style={{ position: "absolute", top: 10, right: 10, width: 6, height: 6, borderRadius: 999, background: dotColor, opacity: 0.6 }} />
         <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
         <div className="qb-quant-metric-value" style={styles.metricValue}>—</div>
       </div>
@@ -717,9 +787,22 @@ const Metric: FC<{ label: string; value: number; pct?: boolean; digits?: number 
   }
   const text = pct ? `${(value * 100).toFixed(2)}%` : value.toFixed(digits);
   return (
-    <div className="qb-quant-metric" style={styles.metric}>
+    <div
+      className="qb-quant-metric"
+      style={{
+        ...styles.metric,
+        position: "relative",
+        borderColor: highlight ? `color-mix(in srgb, ${dotColor} 50%, var(--qb-border-subtle))` : undefined,
+      }}
+    >
+      <span style={{ position: "absolute", top: 10, right: 10, width: 6, height: 6, borderRadius: 999, background: dotColor, boxShadow: `0 0 0 3px color-mix(in srgb, ${dotColor} 22%, transparent)` }} />
       <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
-      <div className="qb-quant-metric-value" style={styles.metricValue}>{text}</div>
+      <div
+        className="qb-quant-metric-value"
+        style={{ ...styles.metricValue, color: valueColor }}
+      >
+        {text}
+      </div>
     </div>
   );
 };

@@ -557,6 +557,11 @@ export const FactorWorkbenchTab: FC = () => {
                   className="qb-quant-list-item-title"
                   style={{ ...styles.listItemTitle, display: "flex", alignItems: "center", gap: 6 }}
                 >
+                  <span
+                    className="qb-quant-status-dot"
+                    data-status={f.status === "active" ? "succeeded" : f.status === "archived" ? "failed" : "pending"}
+                    aria-hidden
+                  />
                   <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
                     {f.name}
                   </span>
@@ -576,6 +581,10 @@ export const FactorWorkbenchTab: FC = () => {
       <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
         {selected ? (
           <>
+            <div
+              className="qb-quant-hero-card"
+              style={{ display: "flex", flexDirection: "column", gap: 10 }}
+            >
             <div className="qb-quant-detail-header" style={styles.detailHeader}>
               <div>
                 <div className="qb-quant-detail-title" style={styles.detailTitle}>{selected.name}</div>
@@ -606,6 +615,7 @@ export const FactorWorkbenchTab: FC = () => {
             </div>
             <LineageTrail kind="factor" id={selected.id} />
             <pre className="qb-quant-expr-box" style={styles.exprBox}>{selected.expr}</pre>
+            </div>
 
             <div className="qb-quant-op-panel" style={styles.opPanel}>
               <strong>操作</strong>
@@ -680,12 +690,12 @@ export const FactorWorkbenchTab: FC = () => {
               <div className="qb-quant-eval-panel" style={styles.evalPanel}>
                 <strong>最近一次评估</strong>
                 <div className="qb-quant-eval-grid" style={styles.evalGrid}>
-                  <MetricCell label="IC" value={lastEval.ic} />
-                  <MetricCell label="RankIC" value={lastEval.rankIc} />
-                  <MetricCell label="IR" value={lastEval.ir} />
-                  <MetricCell label="Turnover" value={lastEval.turnover} />
-                  <MetricCell label="N" value={lastEval.sampleSize} digits={0} />
-                  <MetricCell label="延迟ms" value={lastEval.latencyMs} digits={0} />
+                  <MetricCell label="IC" value={lastEval.ic} signed />
+                  <MetricCell label="RankIC" value={lastEval.rankIc} signed />
+                  <MetricCell label="IR" value={lastEval.ir} signed />
+                  <MetricCell label="Turnover" value={lastEval.turnover} tone="cyan" />
+                  <MetricCell label="N" value={lastEval.sampleSize} digits={0} tone="indigo" />
+                  <MetricCell label="延迟ms" value={lastEval.latencyMs} digits={0} tone="amber" />
                 </div>
                 {lastEval.decayCurve.length > 0 ? (
                   <div style={styles.evalSub}>
@@ -805,18 +815,60 @@ export const FactorWorkbenchTab: FC = () => {
   );
 };
 
-const MetricCell: FC<{ label: string; value: number; digits?: number }> = ({
-  label,
-  value,
-  digits = 4,
-}) => (
-  <div className="qb-quant-metric" style={styles.metric}>
-    <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
-    <div className="qb-quant-metric-value" style={styles.metricValue}>
-      {Number.isFinite(value) ? value.toFixed(digits) : "—"}
+const FACTOR_TONE_COLOR: Record<string, string> = {
+  emerald: "var(--qb-quant-accent-5)",
+  cyan: "var(--qb-quant-accent-2)",
+  indigo: "var(--qb-quant-accent-1)",
+  amber: "var(--qb-quant-accent-3)",
+  pink: "var(--qb-quant-accent-4)",
+};
+
+const MetricCell: FC<{
+  label: string;
+  value: number;
+  digits?: number;
+  /** signed=true 时正负值用 success/error 着色（IC/IR/RankIC 专用） */
+  signed?: boolean;
+  tone?: keyof typeof FACTOR_TONE_COLOR;
+}> = ({ label, value, digits = 4, signed = false, tone }) => {
+  const dotColor = signed
+    ? value >= 0
+      ? "var(--qb-success)"
+      : "var(--qb-error)"
+    : tone
+    ? FACTOR_TONE_COLOR[tone]
+    : "var(--qb-quant-accent-1)";
+  const valueColor = signed
+    ? value > 0
+      ? "var(--qb-success)"
+      : value < 0
+      ? "var(--qb-error)"
+      : "var(--qb-text-strong)"
+    : "var(--qb-text-strong)";
+  return (
+    <div className="qb-quant-metric" style={{ ...styles.metric, position: "relative" }}>
+      <span
+        style={{
+          position: "absolute",
+          top: 8,
+          right: 8,
+          width: 5,
+          height: 5,
+          borderRadius: 999,
+          background: dotColor,
+          boxShadow: `0 0 0 3px color-mix(in srgb, ${dotColor} 22%, transparent)`,
+        }}
+      />
+      <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
+      <div
+        className="qb-quant-metric-value"
+        style={{ ...styles.metricValue, color: valueColor }}
+      >
+        {Number.isFinite(value) ? value.toFixed(digits) : "—"}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const styles: Record<string, CSSProperties> = {
   root: {

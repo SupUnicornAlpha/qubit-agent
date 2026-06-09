@@ -5,6 +5,7 @@ import { initI18n } from "./i18n";
 import "./ide-theme.css";
 import "./theme/tokyo-night-editor.css";
 import "./qb-themes.css";
+import "./theme/quant-studio.css";
 import "./theme/transitions.css";
 import "./theme/styles/feishu-clean.css";
 import "./theme/styles/glass-holographic.css";

@@ -126,6 +126,15 @@ export const DiscoveryStudioTab: FC = () => {
     [symbols]
   );
 
+  /** 候选打分归一化：|score| / max(|score|) → 0~100 mini bar 用 */
+  const maxCandidateScore = useMemo(() => {
+    if (!selected || selected.candidates.length === 0) return 0.0001;
+    return Math.max(
+      0.0001,
+      ...selected.candidates.map((c) => Math.abs(c.metrics.score) || 0)
+    );
+  }, [selected]);
+
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -314,7 +323,20 @@ export const DiscoveryStudioTab: FC = () => {
               }}
             >
               <div className="qb-quant-list-item-top" style={styles.listItemTop}>
-                <span className="qb-quant-status-tag" data-qb-quant-status={j.status} style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}>{j.status}</span>
+                <span style={{ display: "flex", alignItems: "center" }}>
+                  <span
+                    className="qb-quant-status-dot"
+                    data-status={j.status}
+                    aria-hidden
+                  />
+                  <span
+                    className="qb-quant-status-tag"
+                    data-qb-quant-status={j.status}
+                    style={{ color: STATUS_TONES[j.status], fontWeight: 600 }}
+                  >
+                    {j.status}
+                  </span>
+                </span>
                 <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <LineageBadge createdBy={j.createdBy ?? "user"} size="small" />
                   <span className="qb-quant-muted" style={styles.muted}>{j.kind}</span>
@@ -332,6 +354,10 @@ export const DiscoveryStudioTab: FC = () => {
       <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
         {selected ? (
           <>
+            <div
+              className="qb-quant-hero-card"
+              style={{ display: "flex", flexDirection: "column", gap: 8 }}
+            >
             <div className="qb-quant-detail-header" style={styles.detailHeader}>
               <div>
                 <div className="qb-quant-detail-title" style={styles.detailTitle}>
@@ -354,6 +380,7 @@ export const DiscoveryStudioTab: FC = () => {
               </button>
             </div>
             <LineageTrail kind="discovery_job" id={selected.id} compact />
+            </div>
             {selected.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>错误：{selected.error}</div> : null}
             <div className="qb-quant-table-wrap" style={styles.tableWrap}>
               <table className="qb-quant-table qb-quant-table--candidates" style={styles.table}>
@@ -364,13 +391,14 @@ export const DiscoveryStudioTab: FC = () => {
                     <th style={styles.thNum}>IC</th>
                     <th style={styles.thNum}>RankIC</th>
                     <th style={styles.thNum}>N</th>
-                    <th style={styles.thNum}>分</th>
+                    <th style={{ ...styles.thNum, minWidth: 140 }}>分</th>
                     <th style={styles.th}>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {selected.candidates.map((c, idx) => {
                     const isExpanded = expandedCandidateId === c.id;
+                    const scorePct = Math.min(100, (Math.abs(c.metrics.score) / maxCandidateScore) * 100);
                     return (
                       <Fragment key={c.id}>
                         <tr
@@ -388,7 +416,30 @@ export const DiscoveryStudioTab: FC = () => {
                           <td style={styles.tdNum}>{c.metrics.ic.toFixed(4)}</td>
                           <td style={styles.tdNum}>{c.metrics.rankIc.toFixed(4)}</td>
                           <td style={styles.tdNum}>{c.metrics.sampleSize}</td>
-                          <td style={styles.tdNum}>{c.metrics.score.toFixed(4)}</td>
+                          <td style={styles.tdNum}>
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "flex-end",
+                                gap: 8,
+                                minWidth: 120,
+                              }}
+                            >
+                              <span style={{ minWidth: 50, textAlign: "right" }}>
+                                {c.metrics.score.toFixed(4)}
+                              </span>
+                              <span
+                                className="qb-quant-mini-bar"
+                                data-tone={c.metrics.score < 0 ? "amber" : "emerald"}
+                                style={{ width: 60 }}
+                                aria-hidden
+                                title={`score=${c.metrics.score.toFixed(4)}`}
+                              >
+                                <span style={{ width: `${scorePct}%` }} />
+                              </span>
+                            </div>
+                          </td>
                           <td style={styles.td} onClick={(e) => e.stopPropagation()}>
                             {c.error ? (
                               <span style={styles.muted}>error</span>

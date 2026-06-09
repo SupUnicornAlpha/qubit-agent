@@ -1,0 +1,571 @@
+/**
+ * Quant Studio 主题强化（2026-06-09）
+ *
+ * 设计意图：
+ *   - 给量化工作台一套独立的设计 token；之前 4 个 tab 用了
+ *     `--qb-bg-surface` / `--qb-bg-elevated` / `--qb-border-subtle` /
+ *     `--qb-text-muted` / `--qb-success` / `--qb-font-mono` 等变量但全局没定义，
+ *     渲染时落到 inherit / null，导致界面"灰一块、缺层次"。
+ *   - 在 `.qb-quant-shell` 内统一注入这些 token + 一组 quant 专属调色（蓝/紫/青/橙），
+ *     并补 hero card、KPI 卡片、状态 dot、micro-glow 等 utility class，
+ *     不污染外部主题。
+ *   - dark-purple / light-white / light-sky 三主题分别细调，保持对比度。
+ *
+ * 用法：在 `.qb-quant-shell` 子树用 `var(--qb-bg-surface)` 等变量；
+ *      并在需要时附加 className：
+ *        .qb-quant-hero-card / .qb-quant-kpi-card / .qb-quant-section
+ *        .qb-quant-status-dot--{running|completed|failed|pending}
+ *
+ *  保持与 quant 组件 inline-style 共存：inline-style 仍负责布局/动态值，
+ *  本 CSS 只做色板 + 装饰 + hover 微交互。
+ */
+
+:root,
+html[data-qb-theme="dark-purple"] {
+  /* ── quant 专属调色 ─────────────────────────────────────── */
+  --qb-quant-accent-1: #818cf8; /* indigo-400 — 主强调（因子） */
+  --qb-quant-accent-2: #22d3ee; /* cyan-400 — 数据/挖掘 */
+  --qb-quant-accent-3: #f59e0b; /* amber-500 — promote / 警示 */
+  --qb-quant-accent-4: #f472b6; /* pink-400 — 组合 */
+  --qb-quant-accent-5: #34d399; /* emerald-400 — 收益 */
+  --qb-quant-danger: #f87171;
+
+  /* ── 缺失 token 补齐 ────────────────────────────────────── */
+  --qb-bg-surface: #0f0f12;
+  --qb-bg-elevated: #18181d;
+  --qb-bg-elevated-strong: #20202a;
+  --qb-bg-hero: linear-gradient(135deg, #1b1b25 0%, #14141a 100%);
+  --qb-border-subtle: rgba(255, 255, 255, 0.07);
+  --qb-border-strong: rgba(255, 255, 255, 0.14);
+  --qb-text-muted: #8b8b97;
+  --qb-text-strong: #e9e9f1;
+  --qb-success: #34d399;
+  --qb-warn: #f59e0b;
+  --qb-error: #f87171;
+  --qb-info: #60a5fa;
+  --qb-font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Consolas, Menlo, monospace;
+
+  /* hero gradient stops + shadows (dark) */
+  --qb-quant-hero-glow: radial-gradient(
+      80% 100% at 0% 0%,
+      rgba(129, 140, 248, 0.16) 0%,
+      transparent 60%
+    ),
+    radial-gradient(60% 100% at 100% 0%, rgba(34, 211, 238, 0.1) 0%, transparent 60%);
+  --qb-quant-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 1px 12px rgba(0, 0, 0, 0.4);
+}
+
+html[data-qb-theme="light-white"] {
+  --qb-quant-accent-1: #4f46e5;
+  --qb-quant-accent-2: #0891b2;
+  --qb-quant-accent-3: #d97706;
+  --qb-quant-accent-4: #db2777;
+  --qb-quant-accent-5: #059669;
+  --qb-quant-danger: #dc2626;
+
+  --qb-bg-surface: #ffffff;
+  --qb-bg-elevated: #f5f5f7;
+  --qb-bg-elevated-strong: #ebebef;
+  --qb-bg-hero: linear-gradient(135deg, #fafafe 0%, #f0f1f7 100%);
+  --qb-border-subtle: rgba(20, 20, 30, 0.08);
+  --qb-border-strong: rgba(20, 20, 30, 0.18);
+  --qb-text-muted: #6b7280;
+  --qb-text-strong: #111827;
+  --qb-success: #059669;
+  --qb-warn: #d97706;
+  --qb-error: #dc2626;
+  --qb-info: #2563eb;
+
+  --qb-quant-hero-glow: radial-gradient(
+      80% 100% at 0% 0%,
+      rgba(99, 102, 241, 0.1) 0%,
+      transparent 60%
+    ),
+    radial-gradient(60% 100% at 100% 0%, rgba(14, 165, 233, 0.08) 0%, transparent 60%);
+  --qb-quant-card-shadow: 0 1px 0 rgba(255, 255, 255, 1) inset,
+    0 1px 12px rgba(20, 20, 40, 0.06);
+}
+
+html[data-qb-theme="light-sky"] {
+  --qb-quant-accent-1: #0284c7;
+  --qb-quant-accent-2: #0891b2;
+  --qb-quant-accent-3: #d97706;
+  --qb-quant-accent-4: #be185d;
+  --qb-quant-accent-5: #059669;
+  --qb-quant-danger: #dc2626;
+
+  --qb-bg-surface: #f0f9ff;
+  --qb-bg-elevated: #e0f2fe;
+  --qb-bg-elevated-strong: #bae6fd;
+  --qb-bg-hero: linear-gradient(135deg, #ecfeff 0%, #dbeafe 100%);
+  --qb-border-subtle: rgba(3, 105, 161, 0.1);
+  --qb-border-strong: rgba(3, 105, 161, 0.22);
+  --qb-text-muted: #475569;
+  --qb-text-strong: #0c4a6e;
+  --qb-success: #059669;
+  --qb-warn: #d97706;
+  --qb-error: #dc2626;
+  --qb-info: #0284c7;
+
+  --qb-quant-hero-glow: radial-gradient(
+      80% 100% at 0% 0%,
+      rgba(2, 132, 199, 0.08) 0%,
+      transparent 60%
+    ),
+    radial-gradient(60% 100% at 100% 0%, rgba(8, 145, 178, 0.06) 0%, transparent 60%);
+  --qb-quant-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset,
+    0 1px 12px rgba(3, 105, 161, 0.08);
+}
+
+/* ─── 顶部 shell：把 header 改成渐变 hero + 浮雕分割线 ─────────────────────── */
+.qb-quant-shell {
+  background: var(--qb-bg-surface);
+  color: var(--qb-text-strong);
+  font-feature-settings: "ss01", "cv01";
+}
+.qb-quant-shell .qb-quant-header {
+  position: relative;
+  background: var(--qb-bg-hero);
+  background-image: var(--qb-quant-hero-glow), var(--qb-bg-hero);
+  border-bottom: 1px solid var(--qb-border-strong);
+  padding: 18px 24px 14px;
+  overflow: hidden;
+}
+.qb-quant-shell .qb-quant-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--qb-quant-accent-1) 30%,
+    var(--qb-quant-accent-4) 70%,
+    transparent 100%
+  );
+  opacity: 0.4;
+  pointer-events: none;
+}
+.qb-quant-shell .qb-quant-title {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  background: linear-gradient(
+    90deg,
+    var(--qb-text-strong) 0%,
+    var(--qb-quant-accent-1) 80%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ─── Tab 按钮：胶囊 + 当前 tab 彩色阴影 ──────────────────────────────────── */
+.qb-quant-shell .qb-quant-tabbar {
+  gap: 4px;
+  padding: 4px;
+  background: var(--qb-bg-elevated);
+  border: 1px solid var(--qb-border-subtle);
+  border-radius: 999px;
+}
+.qb-quant-shell .qb-quant-tab {
+  position: relative;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--qb-text-muted);
+  transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.qb-quant-shell .qb-quant-tab:hover {
+  color: var(--qb-text-strong);
+}
+.qb-quant-shell .qb-quant-tab--active {
+  color: var(--qb-text-strong);
+  background: var(--qb-bg-surface);
+  border-color: var(--qb-border-strong);
+  box-shadow: 0 0 0 1px var(--qb-border-subtle), 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+.qb-quant-shell .qb-quant-tab[data-qb-quant-tab-id="factor"].qb-quant-tab--active {
+  box-shadow: 0 0 0 1px var(--qb-border-subtle), 0 4px 12px rgba(129, 140, 248, 0.22);
+}
+.qb-quant-shell .qb-quant-tab[data-qb-quant-tab-id="discovery"].qb-quant-tab--active {
+  box-shadow: 0 0 0 1px var(--qb-border-subtle), 0 4px 12px rgba(34, 211, 238, 0.22);
+}
+.qb-quant-shell .qb-quant-tab[data-qb-quant-tab-id="composer"].qb-quant-tab--active {
+  box-shadow: 0 0 0 1px var(--qb-border-subtle), 0 4px 12px rgba(244, 114, 182, 0.22);
+}
+.qb-quant-shell .qb-quant-tab[data-qb-quant-tab-id="backtest"].qb-quant-tab--active {
+  box-shadow: 0 0 0 1px var(--qb-border-subtle), 0 4px 12px rgba(52, 211, 153, 0.22);
+}
+
+/* ─── KPI 顶部条：标题下面的统计胶囊 ────────────────────────────────────── */
+.qb-quant-kpi-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.qb-quant-kpi {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--qb-border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 11px;
+  color: var(--qb-text-muted);
+  backdrop-filter: blur(8px);
+}
+html[data-qb-theme^="light"] .qb-quant-kpi {
+  background: rgba(255, 255, 255, 0.65);
+}
+.qb-quant-kpi-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--qb-quant-accent-1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-1) 25%, transparent);
+}
+.qb-quant-kpi-dot[data-color="cyan"] {
+  background: var(--qb-quant-accent-2);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-2) 25%, transparent);
+}
+.qb-quant-kpi-dot[data-color="amber"] {
+  background: var(--qb-quant-accent-3);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-3) 25%, transparent);
+}
+.qb-quant-kpi-dot[data-color="pink"] {
+  background: var(--qb-quant-accent-4);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-4) 25%, transparent);
+}
+.qb-quant-kpi-dot[data-color="emerald"] {
+  background: var(--qb-quant-accent-5);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-5) 25%, transparent);
+}
+.qb-quant-kpi-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--qb-text-strong);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--qb-font-mono);
+}
+
+/* ─── hero / 卡片基础 ───────────────────────────────────────────────────── */
+.qb-quant-hero-card {
+  position: relative;
+  border: 1px solid var(--qb-border-strong);
+  border-radius: 10px;
+  background: var(--qb-bg-hero);
+  background-image: var(--qb-quant-hero-glow), var(--qb-bg-hero);
+  padding: 14px 16px;
+  box-shadow: var(--qb-quant-card-shadow);
+  overflow: hidden;
+}
+.qb-quant-hero-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--qb-quant-accent-1),
+    transparent
+  );
+  opacity: 0.5;
+}
+
+/* discovery / composer / backtest 各自的 accent 条 */
+.qb-quant-tab-root--discovery .qb-quant-hero-card::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--qb-quant-accent-2),
+    transparent
+  );
+}
+.qb-quant-tab-root--composer .qb-quant-hero-card::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--qb-quant-accent-4),
+    transparent
+  );
+}
+.qb-quant-tab-root--backtest .qb-quant-hero-card::before {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--qb-quant-accent-5),
+    transparent
+  );
+}
+
+/* ─── 列表项 hover ──────────────────────────────────────────────────────── */
+.qb-quant-list-item {
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.qb-quant-list-item:hover {
+  background: var(--qb-bg-elevated);
+}
+.qb-quant-list-item--active {
+  background: var(--qb-bg-elevated) !important;
+  position: relative;
+}
+.qb-quant-list-item--active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--qb-quant-accent-1);
+}
+.qb-quant-tab-root--discovery .qb-quant-list-item--active::before {
+  background: var(--qb-quant-accent-2);
+}
+.qb-quant-tab-root--composer .qb-quant-list-item--active::before {
+  background: var(--qb-quant-accent-4);
+}
+.qb-quant-tab-root--backtest .qb-quant-list-item--active::before {
+  background: var(--qb-quant-accent-5);
+}
+
+/* ─── 状态 dot（discovery / backtest job 列表） ────────────────────────── */
+.qb-quant-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--qb-text-muted);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.04);
+}
+.qb-quant-status-dot[data-status="running"] {
+  background: var(--qb-info);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--qb-info) 25%, transparent);
+  animation: qb-quant-pulse 1.4s ease-in-out infinite;
+}
+.qb-quant-status-dot[data-status="succeeded"],
+.qb-quant-status-dot[data-status="completed"] {
+  background: var(--qb-success);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--qb-success) 25%, transparent);
+}
+.qb-quant-status-dot[data-status="failed"] {
+  background: var(--qb-error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--qb-error) 25%, transparent);
+}
+.qb-quant-status-dot[data-status="pending"] {
+  background: var(--qb-warn);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--qb-warn) 25%, transparent);
+}
+@keyframes qb-quant-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.18);
+    opacity: 0.65;
+  }
+}
+
+/* ─── 指标卡片（FactorWorkbench / BacktestStudio） ──────────────────────── */
+.qb-quant-metric {
+  position: relative;
+  background: var(--qb-bg-elevated);
+  border: 1px solid var(--qb-border-subtle);
+  border-radius: 8px;
+  padding: 8px 10px !important;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.qb-quant-metric:hover {
+  border-color: var(--qb-border-strong);
+}
+.qb-quant-metric .qb-quant-metric-label {
+  font-size: 9px !important;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--qb-text-muted);
+}
+.qb-quant-metric .qb-quant-metric-value {
+  font-size: 15px !important;
+  font-weight: 700;
+  margin-top: 2px;
+  color: var(--qb-text-strong);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--qb-font-mono);
+}
+
+/* BacktestStudio 的指标卡片留个 padding（dot 由 JS Metric 组件 inline 渲染） */
+.qb-quant-metrics-grid .qb-quant-metric {
+  padding: 10px 12px !important;
+}
+
+/* ─── 表达式块：上下渐变 + 等宽 ────────────────────────────────────────── */
+.qb-quant-expr-box {
+  background: var(--qb-bg-elevated) !important;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%);
+  border: 1px solid var(--qb-border-subtle) !important;
+  font-family: var(--qb-font-mono) !important;
+  font-size: 12px !important;
+  line-height: 1.5;
+}
+
+/* ─── Lineage badge：加 micro glow ──────────────────────────────────────── */
+.qb-lineage-badge {
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  font-feature-settings: "tnum";
+  transition: transform 120ms ease;
+}
+.qb-lineage-badge:hover {
+  transform: translateY(-1px);
+}
+.qb-lineage-badge[data-qb-lineage-created-by="agent"] {
+  box-shadow: 0 0 0 0 transparent, 0 0 12px color-mix(in srgb, var(--qb-success) 30%, transparent);
+}
+.qb-lineage-badge[data-qb-lineage-created-by="discovery_promote"] {
+  box-shadow: 0 0 0 0 transparent,
+    0 0 12px color-mix(in srgb, var(--qb-warn) 35%, transparent);
+}
+.qb-lineage-badge[data-qb-lineage-created-by="clone"] {
+  box-shadow: 0 0 0 0 transparent,
+    0 0 12px color-mix(in srgb, var(--qb-info) 35%, transparent);
+}
+
+/* ─── 表格 hover ────────────────────────────────────────────────────────── */
+.qb-quant-table tbody tr {
+  transition: background 100ms ease;
+}
+.qb-quant-table tbody tr:hover {
+  background: var(--qb-bg-elevated);
+}
+
+/* ─── trades row（BacktestStudio 右栏）：buy/sell 着色 + 等宽 ───────────── */
+.qb-quant-trade-row {
+  font-family: var(--qb-font-mono);
+  border-left: 2px solid transparent;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.qb-quant-trade-row:hover {
+  background: var(--qb-bg-elevated);
+}
+.qb-quant-trade-row[data-qb-quant-side="buy"] {
+  border-left-color: color-mix(in srgb, var(--qb-success) 70%, transparent);
+}
+.qb-quant-trade-row[data-qb-quant-side="sell"] {
+  border-left-color: color-mix(in srgb, var(--qb-error) 70%, transparent);
+}
+
+/* ─── 按钮组：primary / ghost 微改 ──────────────────────────────────────── */
+.qb-quant-btn--primary {
+  border-color: var(--qb-border-strong) !important;
+  background: var(--qb-bg-elevated-strong) !important;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+.qb-quant-btn--primary:not(:disabled):hover {
+  border-color: var(--qb-quant-accent-1) !important;
+  color: var(--qb-text-strong) !important;
+}
+.qb-quant-btn--primary:not(:disabled):active {
+  transform: translateY(1px);
+}
+.qb-quant-btn--run {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--qb-quant-accent-1) 35%, var(--qb-bg-elevated-strong)),
+    color-mix(in srgb, var(--qb-quant-accent-4) 25%, var(--qb-bg-elevated-strong))
+  ) !important;
+  border-color: var(--qb-quant-accent-1) !important;
+  color: var(--qb-text-strong) !important;
+  font-weight: 600 !important;
+}
+.qb-quant-btn--submit {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--qb-quant-accent-4) 35%, var(--qb-bg-elevated-strong)),
+    color-mix(in srgb, var(--qb-quant-accent-1) 25%, var(--qb-bg-elevated-strong))
+  ) !important;
+  border-color: var(--qb-quant-accent-4) !important;
+  color: var(--qb-text-strong) !important;
+  font-weight: 600 !important;
+}
+
+/* ─── 表单 input/select/textarea 统一 focus ring ────────────────────────── */
+.qb-quant-shell input:focus,
+.qb-quant-shell select:focus,
+.qb-quant-shell textarea:focus {
+  outline: none;
+  border-color: var(--qb-quant-accent-1) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-1) 22%, transparent);
+}
+
+/* ─── chip（Composer）样式升级 ─────────────────────────────────────────── */
+.qb-quant-chip {
+  background: var(--qb-bg-elevated) !important;
+  border-color: var(--qb-border-strong) !important;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.qb-quant-chip:hover {
+  border-color: var(--qb-quant-accent-4) !important;
+  transform: translateY(-1px);
+}
+
+/* ─── 列头 / 分割线统一 hairline ────────────────────────────────────────── */
+.qb-quant-col-header {
+  background: linear-gradient(180deg, var(--qb-bg-elevated) 0%, transparent 100%);
+}
+
+/* ─── factor 列表 mini score bar（FactorWorkbench 列表项内嵌） ───────────── */
+.qb-quant-mini-bar {
+  position: relative;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--qb-bg-elevated);
+  overflow: hidden;
+}
+.qb-quant-mini-bar > span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--qb-quant-accent-1),
+    var(--qb-quant-accent-4)
+  );
+  border-radius: 2px;
+}
+.qb-quant-mini-bar[data-tone="emerald"] > span {
+  background: linear-gradient(
+    90deg,
+    var(--qb-quant-accent-5),
+    var(--qb-quant-accent-2)
+  );
+}
+.qb-quant-mini-bar[data-tone="amber"] > span {
+  background: linear-gradient(
+    90deg,
+    var(--qb-quant-accent-3),
+    var(--qb-quant-accent-4)
+  );
+}
+
+/* ─── toast 提升一点 ───────────────────────────────────────────────────── */
+.qb-quant-toast {
+  backdrop-filter: blur(10px);
+  border-radius: 8px !important;
+}
+.qb-quant-toast--info {
+  border-color: var(--qb-quant-accent-1) !important;
+  background: color-mix(in srgb, var(--qb-quant-accent-1) 14%, var(--qb-bg-elevated)) !important;
+}

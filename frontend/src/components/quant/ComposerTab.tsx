@@ -345,7 +345,7 @@ export const ComposerTab: FC = () => {
 
       <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
         {selectedComp ? (
-          <div className="qb-quant-comp-detail" style={styles.detailPanel}>
+          <div className="qb-quant-comp-detail qb-quant-hero-card" style={styles.detailPanel}>
             <div style={styles.detailHeader}>
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -589,9 +589,9 @@ export const ComposerTab: FC = () => {
             type="submit"
             disabled={busy || !versionId}
             className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--submit"
-            style={styles.btnPrimary}
+            style={{ ...styles.btnPrimary, alignSelf: "flex-start", padding: "8px 18px" }}
           >
-            {busy ? "提交中…" : "提交并创建"}
+            {busy ? "提交中…" : "提交并创建 Composition"}
           </button>
         </form>
       </section>
@@ -701,9 +701,10 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 10,
     border: "1px solid var(--qb-border-subtle)",
-    borderRadius: 8,
-    padding: "12px 16px",
+    borderRadius: 10,
+    padding: "14px 18px",
     background: "var(--qb-bg-elevated)",
+    boxShadow: "0 1px 0 rgba(255,255,255,0.04) inset, 0 1px 6px rgba(0,0,0,0.18)",
   },
   editorHeader: {
     display: "flex",
@@ -793,10 +794,7 @@ const styles: Record<string, CSSProperties> = {
   detailPanel: {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
-    border: "1px solid var(--qb-border-subtle)",
-    borderRadius: 8,
-    padding: "12px 16px",
+    gap: 10,
     marginBottom: 12,
   },
   detailHeader: {
