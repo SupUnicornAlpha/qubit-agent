@@ -97,6 +97,7 @@ const pack: LocalePack = {
         discovery: "Discovery",
         composer: "Composer",
         backtest: "Backtest",
+        script: "Scripts",
       },
       config: {
         llm: "LLM",

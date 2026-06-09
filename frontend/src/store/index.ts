@@ -30,7 +30,7 @@ export type ActiveView =
   | "config";
 
 /** 量化工作台 tab */
-export type QuantTab = "factor" | "discovery" | "composer" | "backtest";
+export type QuantTab = "factor" | "discovery" | "composer" | "backtest" | "script";
 
 /**
  * 量化工作台 4 tab 间的跨 tab handoff payload。

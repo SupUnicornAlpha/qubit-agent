@@ -19,10 +19,12 @@ import { FactorWorkbenchTab } from "./FactorWorkbenchTab";
 import { DiscoveryStudioTab } from "./DiscoveryStudioTab";
 import { ComposerTab } from "./ComposerTab";
 import { BacktestStudioTab } from "./BacktestStudioTab";
+import { ScriptStudioTab } from "./ScriptStudioTab";
 import {
   listBacktestJobs,
   listDiscoveryJobs,
   listFactors,
+  listProjectStrategyScripts,
   listStrategyVersions,
   listStrategyCompositions,
 } from "../../api/backend";
@@ -33,6 +35,7 @@ const TABS: readonly { id: QuantTab; label: string; desc: string; color: string 
   { id: "discovery", label: "挖掘工坊", desc: "DiscoveryStudio", color: "var(--qb-quant-accent-2)" },
   { id: "composer", label: "组合工坊", desc: "Composer", color: "var(--qb-quant-accent-4)" },
   { id: "backtest", label: "回测工坊", desc: "BacktestStudio", color: "var(--qb-quant-accent-5)" },
+  { id: "script", label: "脚本工坊", desc: "ScriptStudio · Python on_bar", color: "var(--qb-quant-accent-3)" },
 ];
 
 interface KpiSummary {
@@ -40,6 +43,7 @@ interface KpiSummary {
   discoveries: { total: number; succeeded: number };
   compositions: { total: number; clone: number };
   backtests: { total: number; completed: number };
+  scripts: { total: number; research: number; live: number };
 }
 
 const EMPTY_KPI: KpiSummary = {
@@ -47,6 +51,7 @@ const EMPTY_KPI: KpiSummary = {
   discoveries: { total: 0, succeeded: 0 },
   compositions: { total: 0, clone: 0 },
   backtests: { total: 0, completed: 0 },
+  scripts: { total: 0, research: 0, live: 0 },
 };
 
 export const QuantStudioPanel: FC = () => {
@@ -60,11 +65,12 @@ export const QuantStudioPanel: FC = () => {
     let cancelled = false;
     (async () => {
       try {
-        const [factors, discoveries, versions, backtests] = await Promise.all([
+        const [factors, discoveries, versions, backtests, scripts] = await Promise.all([
           listFactors({ projectId }).catch(() => []),
           listDiscoveryJobs({ projectId }).catch(() => []),
           listStrategyVersions(projectId).catch(() => []),
           listBacktestJobs().catch(() => []),
+          listProjectStrategyScripts({ projectId }).catch(() => []),
         ]);
         // 聚合 composition 数量（每个 strategy_version 各取一次；限制并发避免压垮 SQLite）
         const compositionsByVersion = await Promise.all(
@@ -92,6 +98,11 @@ export const QuantStudioPanel: FC = () => {
             total: backtests.length,
             completed: backtests.filter((b) => b.status === "completed").length,
           },
+          scripts: {
+            total: scripts.length,
+            research: scripts.filter((s) => s.purpose === "research").length,
+            live: scripts.filter((s) => s.purpose === "live_trading" || s.purpose === "both").length,
+          },
         });
       } catch {
         if (!cancelled) setKpi(EMPTY_KPI);
@@ -117,6 +128,7 @@ export const QuantStudioPanel: FC = () => {
             <KpiPill color="cyan" label="挖掘任务" value={kpi.discoveries.total} hint={`${kpi.discoveries.succeeded} succeeded`} />
             <KpiPill color="pink" label="组合" value={kpi.compositions.total} hint={`${kpi.compositions.clone} cloned`} />
             <KpiPill color="emerald" label="回测" value={kpi.backtests.total} hint={`${kpi.backtests.completed} completed`} />
+            <KpiPill color="amber" label="Python 脚本" value={kpi.scripts.total} hint={`research ${kpi.scripts.research} · live ${kpi.scripts.live}`} />
           </div>
         </div>
         <div role="tablist" className="qb-quant-tabbar" style={styles.tabbar} aria-label="量化工作台子模块">
@@ -157,6 +169,7 @@ export const QuantStudioPanel: FC = () => {
         {tab === "discovery" ? <DiscoveryStudioTab /> : null}
         {tab === "composer" ? <ComposerTab /> : null}
         {tab === "backtest" ? <BacktestStudioTab /> : null}
+        {tab === "script" ? <ScriptStudioTab /> : null}
       </div>
     </div>
   );

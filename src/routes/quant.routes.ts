@@ -14,7 +14,7 @@
  */
 
 import { Hono } from "hono";
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import {
   factorDefinition as factorTable,
@@ -25,6 +25,8 @@ import {
   agentInstance as agentInstanceTable,
   agentDefinition as agentDefinitionTable,
   workflowRun as workflowRunTable,
+  indicatorStrategyScript as scriptTable,
+  chatSession as chatSessionTable,
 } from "../db/sqlite/schema";
 
 export const quantRouter = new Hono();
@@ -409,6 +411,119 @@ quantRouter.get("/workflows", async (c) => {
       .from(workflowRunTable)
       .where(inArray(workflowRunTable.id, ids));
     return c.json({ ok: true, data: rows });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 500);
+  }
+});
+
+/**
+ * GET /api/v1/quant/strategy-scripts?project_id=&purpose=&workflow_run_id=&session_id=
+ *
+ * 跨 session 列出某 project 下的所有 indicator_strategy_script —— 给「量化工作台 →
+ * 脚本工坊」tab 用。原 chat.routes 下的 `GET /sessions/:sessionId/strategy-scripts`
+ * 只能按 session 拉，工作台需要 project 维度聚合，且要带 sessionTitle 让用户能识别
+ * 脚本来自哪场对话。
+ *
+ * 默认不返回 ideCode / signalCode 全文（数据量大），只返回元数据 + 代码长度；用户
+ * 进详情时再走 `GET /api/v1/quant/strategy-scripts/:id` 拉全文。
+ */
+quantRouter.get("/strategy-scripts", async (c) => {
+  try {
+    const db = await getDb();
+    const projectId = c.req.query("project_id");
+    const purpose = c.req.query("purpose") as
+      | "research"
+      | "live_trading"
+      | "both"
+      | undefined;
+    const workflowRunId = c.req.query("workflow_run_id");
+    const sessionId = c.req.query("session_id");
+
+    const conds = [];
+    if (projectId) conds.push(eq(chatSessionTable.projectId, projectId));
+    if (purpose) conds.push(eq(scriptTable.purpose, purpose));
+    if (workflowRunId) conds.push(eq(scriptTable.workflowRunId, workflowRunId));
+    if (sessionId) conds.push(eq(scriptTable.sessionId, sessionId));
+
+    const query = db
+      .select({
+        id: scriptTable.id,
+        sessionId: scriptTable.sessionId,
+        sessionTitle: chatSessionTable.title,
+        projectId: chatSessionTable.projectId,
+        workflowRunId: scriptTable.workflowRunId,
+        name: scriptTable.name,
+        purpose: scriptTable.purpose,
+        ideCodeLen: scriptTable.ideCode,
+        signalCodeLen: scriptTable.signalCode,
+        aiPromptSnapshot: scriptTable.aiPromptSnapshot,
+        createdAt: scriptTable.createdAt,
+        updatedAt: scriptTable.updatedAt,
+      })
+      .from(scriptTable)
+      .innerJoin(chatSessionTable, eq(chatSessionTable.id, scriptTable.sessionId));
+
+    const rows =
+      conds.length === 0
+        ? await query.orderBy(desc(scriptTable.updatedAt))
+        : await query
+            .where(conds.length === 1 ? conds[0] : and(...conds))
+            .orderBy(desc(scriptTable.updatedAt));
+
+    // 字段裁剪：只回 *_len（避免直接把可能很长的 code 灌出来）
+    const data = rows.map((r) => ({
+      id: r.id,
+      sessionId: r.sessionId,
+      sessionTitle: r.sessionTitle,
+      projectId: r.projectId,
+      workflowRunId: r.workflowRunId,
+      name: r.name,
+      purpose: r.purpose,
+      ideCodeLength: (r.ideCodeLen ?? "").length,
+      signalCodeLength: (r.signalCodeLen ?? "").length,
+      hasAiPrompt: !!(r.aiPromptSnapshot && r.aiPromptSnapshot.trim().length > 0),
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+    }));
+
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 500);
+  }
+});
+
+/**
+ * GET /api/v1/quant/strategy-scripts/:id
+ *
+ * 按 id 单查 —— 返回包含 ideCode / signalCode 全文的完整记录 + sessionTitle / projectId
+ * 等关联字段，供脚本工坊详情面板渲染只读 Python 代码块。
+ */
+quantRouter.get("/strategy-scripts/:id", async (c) => {
+  try {
+    const db = await getDb();
+    const id = c.req.param("id");
+    const rows = await db
+      .select({
+        id: scriptTable.id,
+        sessionId: scriptTable.sessionId,
+        sessionTitle: chatSessionTable.title,
+        projectId: chatSessionTable.projectId,
+        workflowRunId: scriptTable.workflowRunId,
+        name: scriptTable.name,
+        purpose: scriptTable.purpose,
+        ideCode: scriptTable.ideCode,
+        signalCode: scriptTable.signalCode,
+        aiPromptSnapshot: scriptTable.aiPromptSnapshot,
+        chartSnapshotJson: scriptTable.chartSnapshotJson,
+        createdAt: scriptTable.createdAt,
+        updatedAt: scriptTable.updatedAt,
+      })
+      .from(scriptTable)
+      .innerJoin(chatSessionTable, eq(chatSessionTable.id, scriptTable.sessionId))
+      .where(eq(scriptTable.id, id))
+      .limit(1);
+    if (!rows[0]) return c.json({ ok: false, error: "not_found" }, 404);
+    return c.json({ ok: true, data: rows[0] });
   } catch (e) {
     return c.json({ ok: false, error: (e as Error).message }, 500);
   }

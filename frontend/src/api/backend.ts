@@ -1178,6 +1178,63 @@ export async function deleteStrategyScript(scriptId: string): Promise<{ ok: bool
   );
 }
 
+/**
+ * 量化工作台「脚本工坊」专用聚合 DTO —— 返回 project 维度的 script summary，
+ * 字段从 chat.routes 的 sessionId-only 列表升级到带 sessionTitle / projectId /
+ * 代码长度统计，便于工坊侧无需逐条 fetch 全文。
+ *
+ * 注意：列表接口不返回 ideCode / signalCode 全文（数据量大），点详情时单查。
+ */
+export interface QuantStrategyScriptSummary {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  projectId: string | null;
+  workflowRunId: string | null;
+  name: string;
+  purpose: "research" | "live_trading" | "both";
+  ideCodeLength: number;
+  signalCodeLength: number;
+  hasAiPrompt: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QuantStrategyScriptDetail extends QuantStrategyScriptSummary {
+  ideCode: string;
+  signalCode: string;
+  aiPromptSnapshot: string | null;
+  chartSnapshotJson: Record<string, unknown>;
+}
+
+export async function listProjectStrategyScripts(filter?: {
+  projectId?: string;
+  purpose?: "research" | "live_trading" | "both";
+  workflowRunId?: string;
+  sessionId?: string;
+}): Promise<QuantStrategyScriptSummary[]> {
+  const qs: string[] = [];
+  if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
+  if (filter?.purpose) qs.push(`purpose=${encodeURIComponent(filter.purpose)}`);
+  if (filter?.workflowRunId)
+    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  if (filter?.sessionId) qs.push(`session_id=${encodeURIComponent(filter.sessionId)}`);
+  const url = qs.length
+    ? `/api/v1/quant/strategy-scripts?${qs.join("&")}`
+    : `/api/v1/quant/strategy-scripts`;
+  const res = await httpGet<{ ok: boolean; data: QuantStrategyScriptSummary[] }>(url);
+  return res.data;
+}
+
+export async function getProjectStrategyScript(
+  scriptId: string
+): Promise<QuantStrategyScriptDetail> {
+  const res = await httpGet<{ ok: boolean; data: QuantStrategyScriptDetail }>(
+    `/api/v1/quant/strategy-scripts/${encodeURIComponent(scriptId)}`
+  );
+  return res.data;
+}
+
 export async function createSessionMessage(params: {
   sessionId: string;
   role: "user" | "assistant" | "system";
