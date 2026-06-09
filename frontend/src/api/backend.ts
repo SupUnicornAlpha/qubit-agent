@@ -3899,6 +3899,52 @@ export interface StrategyVersionFlatRecord {
   projectId: string;
 }
 
+/**
+ * `createStrategyVersion` 的入参 —— 对应 `POST /api/v1/strategies/versions`。
+ *
+ * 用途：Composer UI 自洽 —— 此前 strategy_version 只能由 research agent /
+ * strategy IDE / reia-bridge 三条非 UI 路径写入，导致用户在 Quant Workbench
+ * 里看到「暂无 version」死锁。现在前端可直接调此函数兜底建一个 v1。
+ */
+export interface StrategyVersionCreateInput {
+  projectId: string;
+  /** 已有 strategy.id；与 strategyName 二选一 */
+  strategyId?: string;
+  /** 自动新建 strategy 时使用 */
+  strategyName?: string;
+  strategyStyle?: "low_freq" | "high_freq" | "mid_freq";
+  versionTag?: string;
+  params?: Record<string, unknown>;
+  workflowRunId?: string | null;
+}
+
+export interface StrategyVersionRecord {
+  id: string;
+  strategyId: string;
+  versionTag: string;
+  logicHash: string;
+  workflowRunId: string | null;
+  createdAt: string;
+}
+
+export async function createStrategyVersion(
+  input: StrategyVersionCreateInput
+): Promise<StrategyVersionRecord> {
+  const res = await httpPost<{ ok: boolean; data: StrategyVersionRecord }>(
+    "/api/v1/strategies/versions",
+    {
+      project_id: input.projectId,
+      ...(input.strategyId ? { strategy_id: input.strategyId } : {}),
+      ...(input.strategyName ? { strategy_name: input.strategyName } : {}),
+      ...(input.strategyStyle ? { strategy_style: input.strategyStyle } : {}),
+      ...(input.versionTag ? { version_tag: input.versionTag } : {}),
+      ...(input.params ? { params: input.params } : {}),
+      ...(input.workflowRunId !== undefined ? { workflow_run_id: input.workflowRunId } : {}),
+    }
+  );
+  return res.data;
+}
+
 export async function listStrategyVersions(
   filterOrProjectId?: string | { projectId?: string; workflowRunId?: string }
 ): Promise<StrategyVersionFlatRecord[]> {

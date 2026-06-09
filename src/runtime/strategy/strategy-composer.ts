@@ -12,10 +12,11 @@
  * 由上层 backtest provider / live ems 接走。
  */
 
-import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { createHash, randomUUID } from "node:crypto";
+import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
+  strategy as strategyTable,
   strategyComposition as compositionTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
@@ -118,7 +119,134 @@ export class StrategyComposerError extends Error {
 
 // ─── Service ────────────────────────────────────────────────────────────────
 
+/**
+ * `createStrategyVersion` 的入参 —— 既允许显式指定 strategyId（挂在已有 strategy 下），
+ * 也允许只给 strategyName（自动建一个新的 strategy 父对象）。
+ */
+export interface StrategyVersionCreateInput {
+  projectId: string;
+  /** 已有 strategy.id；与 strategyName 二选一 */
+  strategyId?: string;
+  /** 自动新建 strategy 时使用；默认 "user-strategy" */
+  strategyName?: string;
+  /** strategy.style；默认 "low_freq" */
+  strategyStyle?: "low_freq" | "high_freq" | "mid_freq";
+  versionTag?: string;
+  params?: Record<string, unknown>;
+  /** 可选 hash 源；默认用 params + Date.now() 算 16 位短 hash 占位 */
+  hashSeed?: string;
+  workflowRunId?: string | null;
+}
+
+export interface StrategyVersionRecord {
+  id: string;
+  strategyId: string;
+  versionTag: string;
+  logicHash: string;
+  workflowRunId: string | null;
+  createdAt: string;
+}
+
 export class StrategyComposer {
+  /**
+   * 创建（或挂载）一个 strategy_version。
+   *
+   * 用途：Composer UI 自洽 —— 此前 strategy_version 只能由 research agent / strategy
+   * IDE / reia-bridge 三条非 UI 路径写入，导致用户在 Composer 里看到「暂无 version」
+   * 死锁。现在前端可直接 `POST /api/v1/strategies/versions` 兜底建一个。
+   *
+   * 实现要点：
+   *  - 若给了 strategyId 就挂在已有 strategy 下；否则自动建一个新的 strategy（projectId 必填）
+   *  - versionTag 默认 "v1"；同名 tag 不去重（业务层允许）
+   *  - logicHash 取 sha256(params || Date.now()) 前 16 位作为占位，与 native-research 同款
+   */
+  async createVersion(input: StrategyVersionCreateInput): Promise<StrategyVersionRecord> {
+    const projectId = input.projectId.trim();
+    if (!projectId) {
+      throw new StrategyComposerError("validation_failed", "projectId_required");
+    }
+    const db = await getDb();
+    let strategyId = input.strategyId?.trim() || null;
+    if (strategyId) {
+      const exists = await db
+        .select()
+        .from(strategyTable)
+        .where(eq(strategyTable.id, strategyId))
+        .limit(1);
+      if (!exists[0]) {
+        throw new StrategyComposerError(
+          "validation_failed",
+          `strategy_not_found: ${strategyId}`
+        );
+      }
+    } else {
+      strategyId = randomUUID();
+      await db.insert(strategyTable).values({
+        id: strategyId,
+        projectId,
+        name: (input.strategyName ?? "user-strategy").trim() || "user-strategy",
+        style: input.strategyStyle ?? "low_freq",
+        description: "Created from Quant Workbench composer",
+      });
+    }
+    const logicHash = createHash("sha256")
+      .update((input.hashSeed ?? "") + JSON.stringify(input.params ?? {}) + Date.now())
+      .digest("hex")
+      .slice(0, 16);
+    const versionId = randomUUID();
+    await db.insert(strategyVersionTable).values({
+      id: versionId,
+      strategyId,
+      versionTag: (input.versionTag ?? "v1").trim() || "v1",
+      logicHash,
+      paramSchemaJson: (input.params ?? {}) as never,
+      workflowRunId: input.workflowRunId ?? null,
+    });
+    const row = await db
+      .select()
+      .from(strategyVersionTable)
+      .where(eq(strategyVersionTable.id, versionId))
+      .limit(1);
+    const v = row[0]!;
+    return {
+      id: v.id,
+      strategyId: v.strategyId,
+      versionTag: v.versionTag,
+      logicHash: v.logicHash,
+      workflowRunId: v.workflowRunId,
+      createdAt: v.createdAt,
+    };
+  }
+
+  /**
+   * 兜底：如果当前 project 一个 strategy_version 都没有，自动建一个默认 v1。
+   * Composer `submit` 入口在 strategyVersionId 为空时会调用，避免 chicken-and-egg。
+   * 已有 version 时返回最近一条，不重复建。
+   */
+  async ensureDefaultVersion(projectId: string): Promise<StrategyVersionRecord> {
+    const db = await getDb();
+    const existing = await db
+      .select({
+        id: strategyVersionTable.id,
+        strategyId: strategyVersionTable.strategyId,
+        versionTag: strategyVersionTable.versionTag,
+        logicHash: strategyVersionTable.logicHash,
+        workflowRunId: strategyVersionTable.workflowRunId,
+        createdAt: strategyVersionTable.createdAt,
+      })
+      .from(strategyVersionTable)
+      .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
+      .where(eq(strategyTable.projectId, projectId))
+      .orderBy(desc(strategyVersionTable.createdAt))
+      .limit(1);
+    if (existing[0]) return existing[0];
+    return this.createVersion({
+      projectId,
+      strategyName: "default-composer-strategy",
+      versionTag: "v1",
+    });
+  }
+
   /** 定义策略组合（落 SQLite `strategy_composition`） */
   async define(input: CompositionDefineInput): Promise<CompositionRecord> {
     // 必须存在的 strategy_version

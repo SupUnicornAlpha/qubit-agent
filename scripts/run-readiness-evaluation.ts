@@ -65,8 +65,36 @@ const BASE_SCENARIO_ORDER: ScenarioRecipe["key"][] = [
   "live_trading",
   "live_trading_short",
 ];
+
+/**
+ * Smoke / debug 子集（2026-06-09）：通过 `QUBIT_READINESS_SCENARIOS=factor,strategy,...`
+ * env 限定本次执行的场景，未指定则跑全量 BASE_SCENARIO_ORDER。
+ *
+ * 严格匹配 ScenarioRecipe.key；未识别的 key 直接抛 fail-fast，避免一长串 typo
+ * 跑下来才发现没跑想跑的场景。
+ */
+function resolveBaseOrder(): ScenarioRecipe["key"][] {
+  const raw = process.env["QUBIT_READINESS_SCENARIOS"]?.trim();
+  if (!raw) return BASE_SCENARIO_ORDER;
+  const picked = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0) as ScenarioRecipe["key"][];
+  const known = new Set(BASE_SCENARIO_ORDER);
+  const bad = picked.filter((k) => !known.has(k));
+  if (bad.length > 0) {
+    throw new Error(
+      `QUBIT_READINESS_SCENARIOS 含未知 key: [${bad.join(", ")}]；` +
+        `合法 key: ${BASE_SCENARIO_ORDER.join(", ")}`
+    );
+  }
+  if (picked.length === 0) return BASE_SCENARIO_ORDER;
+  return picked;
+}
+
+const ACTIVE_BASE_ORDER = resolveBaseOrder();
 const SCENARIO_ORDER: ScenarioRecipe["key"][] = Array.from({ length: ROUNDS }).flatMap(
-  () => BASE_SCENARIO_ORDER
+  () => ACTIVE_BASE_ORDER
 );
 
 interface ScenarioResult {

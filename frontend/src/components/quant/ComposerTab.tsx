@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   cloneStrategyComposition,
   createStrategyComposition,
+  createStrategyVersion,
   listFactors,
   listRules,
   listStrategyCompositions,
@@ -249,13 +250,44 @@ export const ComposerTab: FC = () => {
     [setQuantHandoff, setQuantTab]
   );
 
+  /**
+   * 显式「+ 新建 strategy_version」入口（弹一个 prompt 输入 tag 即可），
+   * 用于进阶用户管理版本号；普通用户可以全程靠 onSubmit 内置兜底走通。
+   */
+  const onCreateVersion = useCallback(async () => {
+    if (!projectId) return;
+    const tag = window.prompt(
+      "新建 strategy version —— 输入 versionTag（默认 v1）：",
+      versions.length === 0 ? "v1" : `v${versions.length + 1}`
+    );
+    if (tag === null) return; // 用户取消
+    const strategyName = window.prompt(
+      "策略名称（同 versionTag 下可重复；用于在「策略 → versions」里分组）：",
+      "composer-strategy"
+    );
+    if (strategyName === null) return;
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    try {
+      const v = await createStrategyVersion({
+        projectId,
+        strategyName: strategyName.trim() || "composer-strategy",
+        versionTag: tag.trim() || "v1",
+      });
+      await reloadVersions();
+      setVersionId(v.id);
+      setInfo(`已新建 strategy_version ${v.versionTag} · ${v.id.slice(0, 8)}…`);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, [projectId, versions.length, reloadVersions]);
+
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
-      if (!versionId) {
-        setError("先选择 strategy version");
-        return;
-      }
       const factorIds = Array.from(selectedFactorIds);
       const ruleIds = Array.from(selectedRuleIds);
       if (kind === "factor_only" && factorIds.length === 0) {
@@ -275,8 +307,30 @@ export const ComposerTab: FC = () => {
       setError(null);
       setInfo(null);
       try {
+        /**
+         * 兜底：strategy_version 此前只能由 research agent / strategy IDE /
+         * reia-bridge 三条非 UI 路径写入，导致用户在 Composer 看到「暂无 version」
+         * 死锁。提交时若 project 没有 version，先自动建一个 v1 再继续。
+         */
+        let useVersionId = versionId;
+        if (!useVersionId) {
+          if (!projectId) {
+            setError("default project 未就绪，无法创建 strategy version");
+            return;
+          }
+          const created = await createStrategyVersion({
+            projectId,
+            strategyName: name.trim() || "composer-strategy",
+            versionTag: "v1",
+          });
+          useVersionId = created.id;
+          await reloadVersions();
+          setVersionId(created.id);
+          setInfo(`已自动新建 strategy_version v1 · ${created.id.slice(0, 8)}…`);
+        }
+
         const rec = await createStrategyComposition({
-          strategyVersionId: versionId,
+          strategyVersionId: useVersionId,
           kind,
           factorIds,
           ruleIds,
@@ -287,7 +341,10 @@ export const ComposerTab: FC = () => {
           ...(name.trim() ? { name: name.trim() } : {}),
           ...(description.trim() ? { description: description.trim() } : {}),
         });
-        setInfo(`已创建 composition ${rec.id.slice(0, 8)}…（${rec.kind}）`);
+        setInfo(
+          (prev) =>
+            (prev ? `${prev} · ` : "") + `已创建 composition ${rec.id.slice(0, 8)}…（${rec.kind}）`
+        );
         reset();
         await reloadCompositions();
         setSelectedCompId(rec.id);
@@ -299,6 +356,7 @@ export const ComposerTab: FC = () => {
     },
     [
       versionId,
+      projectId,
       kind,
       name,
       description,
@@ -310,6 +368,7 @@ export const ComposerTab: FC = () => {
       universe,
       reset,
       reloadCompositions,
+      reloadVersions,
     ]
   );
 
@@ -328,6 +387,16 @@ export const ComposerTab: FC = () => {
       <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>Strategy Version</strong>
+          <button
+            type="button"
+            onClick={onCreateVersion}
+            disabled={busy || !projectId}
+            className="qb-quant-btn qb-quant-btn--primary"
+            style={styles.btnPrimary}
+            title="新建 strategy version —— 用于在「策略 → 版本」维度归档你的 compositions"
+          >
+            + 新建版本
+          </button>
         </div>
         <div className="qb-quant-panel-pad" style={styles.panelPad}>
           <select
@@ -335,13 +404,21 @@ export const ComposerTab: FC = () => {
             onChange={(e) => setVersionId(e.target.value)}
             style={styles.select}
           >
-            {versions.length === 0 ? <option value="">暂无 strategy_version</option> : null}
+            {versions.length === 0 ? (
+              <option value="">暂无 — 提交时会自动建 v1</option>
+            ) : null}
             {versions.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.strategyName} · {v.versionTag}
               </option>
             ))}
           </select>
+          {versions.length === 0 ? (
+            <div className="qb-quant-muted" style={{ ...styles.muted, marginTop: 6, lineHeight: 1.4 }}>
+              提示：strategy_version 是「策略命名版本壳」。你也可以让 research agent 帮你建，
+              或点上面「+ 新建版本」显式管理 versionTag。
+            </div>
+          ) : null}
         </div>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>已有 Composition</strong>
