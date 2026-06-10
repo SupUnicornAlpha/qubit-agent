@@ -52,8 +52,27 @@ beforeEach(() => {
       score REAL,
       executed INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE mcp_server_config (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      project_id TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1
+    );
   `);
 });
+
+function insertMcpServerConfig(name: string, opts: { enabled?: boolean; projectId?: string | null } = {}) {
+  sqlite
+    .prepare(
+      `INSERT INTO mcp_server_config (id, name, project_id, enabled) VALUES (?, ?, ?, ?)`
+    )
+    .run(
+      crypto.randomUUID(),
+      name,
+      opts.projectId ?? null,
+      opts.enabled === false ? 0 : 1
+    );
+}
 
 afterEach(() => {
   sqlite.close();
@@ -277,6 +296,66 @@ describe("aggregateHealth", () => {
     expect(fetchErr?.count).toBe(2);
     expect(fetchErr?.pattern).toContain("<UUID>");
     expect(fetchErr?.pattern).toContain("<TS>");
+  });
+
+  /**
+   * Wave-1（2026-06-10）：MCP 采纳率视图测试
+   */
+  describe("mcpAdoption（Wave-1）", () => {
+    test("正常路径：configured 全部出现 + 部分被调用 → adoptionRate = used/configured", () => {
+      // configured = 3 个 enabled
+      insertMcpServerConfig("mathjs");
+      insertMcpServerConfig("publicfinance");
+      insertMcpServerConfig("investor-agent");
+      // 仅前两个被实际调用
+      insertMcp({ serverName: "mathjs" });
+      insertMcp({ serverName: "publicfinance" });
+      const r = aggregateHealth(sqlite, ["wf-1"]);
+      expect(r.mcpAdoption.configuredServers.sort()).toEqual([
+        "investor-agent",
+        "mathjs",
+        "publicfinance",
+      ]);
+      expect(r.mcpAdoption.usedServers.sort()).toEqual(["mathjs", "publicfinance"]);
+      expect(r.mcpAdoption.unusedServers).toEqual(["investor-agent"]);
+      expect(r.mcpAdoption.adoptionRate).toBeCloseTo(2 / 3, 4);
+    });
+
+    test("disabled 的 server 不计入 configured", () => {
+      insertMcpServerConfig("mathjs");
+      insertMcpServerConfig("disabled-server", { enabled: false });
+      insertMcp({ serverName: "mathjs" });
+      const r = aggregateHealth(sqlite, ["wf-1"]);
+      expect(r.mcpAdoption.configuredServers).toEqual(["mathjs"]);
+      expect(r.mcpAdoption.adoptionRate).toBe(1);
+    });
+
+    test("project 级 (project_id 非 null) 的 server 不计入全局 configured", () => {
+      insertMcpServerConfig("global-server");
+      insertMcpServerConfig("project-only", { projectId: "proj-x" });
+      const r = aggregateHealth(sqlite, ["wf-1"]);
+      expect(r.mcpAdoption.configuredServers).toEqual(["global-server"]);
+    });
+
+    test("无 mcp_server_config 表（fallback 路径）→ 用 mcp_call_log 兜底", () => {
+      sqlite.exec("DROP TABLE mcp_server_config");
+      insertMcp({ serverName: "from-log" });
+      insertMcp({ serverName: "from-log" });
+      insertMcp({ serverName: "from-log-2" });
+      const r = aggregateHealth(sqlite, ["wf-1"]);
+      expect(r.mcpAdoption.configuredServers.sort()).toEqual(["from-log", "from-log-2"]);
+      expect(r.mcpAdoption.adoptionRate).toBe(1);
+    });
+
+    test("configured 但 0 调用 → adoptionRate = 0 + unusedServers 全列", () => {
+      insertMcpServerConfig("mathjs");
+      insertMcpServerConfig("publicfinance");
+      // 不插 mcp_call_log → 全没调用
+      const r = aggregateHealth(sqlite, ["wf-1"]);
+      expect(r.mcpAdoption.usedServers).toEqual([]);
+      expect(r.mcpAdoption.unusedServers.sort()).toEqual(["mathjs", "publicfinance"]);
+      expect(r.mcpAdoption.adoptionRate).toBe(0);
+    });
   });
 });
 

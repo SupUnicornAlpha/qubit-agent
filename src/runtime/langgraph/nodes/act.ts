@@ -13,6 +13,7 @@ import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { sandboxExecutor } from "../../sandbox-executor";
+import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import {
@@ -685,6 +686,24 @@ export async function actNode(
     hasMcp: Boolean(mcp),
     latencyMs,
     responsePayload: execution.value as Record<string, unknown>,
+  });
+
+  /**
+   * Wave-1（2026-06-10）：自动 mark recalled skill 为 executed。
+   *
+   * 旧链路靠 LLM 主动调 `skill.use_record(skillId)` 翻 executed=true，实测命中率
+   * 接近 0（参见 auto-skill-execution-hook.ts JSDoc）。这里改成 fire-and-forget：
+   * tool call 成功后扫一遍 skill_recall_log，对 body 包含本次 tool / server 名的
+   * skill 自动标记。完全不阻塞 graph 主流。
+   */
+  void autoMarkRecalledSkillsAsExecuted({
+    workflowRunId: state.workflowId,
+    toolName: targetName,
+    mcpServerName: mcp?.serverName ?? null,
+    definitionId: state.agentDefinition.id ?? null,
+    outcome: "success",
+  }).catch(() => {
+    /** hook 自身已 try/catch + warn，这里再兜底防止未捕获 rejection */
   });
 
   emit({

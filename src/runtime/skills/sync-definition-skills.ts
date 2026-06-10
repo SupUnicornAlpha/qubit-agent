@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentSkill, project } from "../../db/sqlite/schema";
 import { resolveFsiSkillBody } from "../fsi/fsi-skill-resolver";
+import { syncBuiltinQuantSkillsForProject } from "./seed-builtin-quant-skills";
 import { skillService } from "./skill-service";
 
 const FRONTMATTER_DESC_RE =
@@ -110,6 +111,17 @@ export async function syncDefinitionSkillsForProject(projectId: string): Promise
   for (const ref of refs) {
     const ok = await mirrorFsiSkillForProject(projectId, ref);
     if (ok) n += 1;
+  }
+  /**
+   * Wave-1（2026-06-10）：在 FSI 镜像之后追加 11 个内置 quant skill。
+   * quant skill 不依赖 FSI 内容包或 env，是金融研究 base layer；幂等。
+   */
+  try {
+    n += await syncBuiltinQuantSkillsForProject(projectId);
+  } catch (err) {
+    console.warn(
+      `[Seed:quant-skills] sync failed for project ${projectId}: ${(err as Error).message}`
+    );
   }
   return n;
 }

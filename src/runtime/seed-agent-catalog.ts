@@ -14,6 +14,19 @@ export const QUANT_MCP = [
   RECOMMENDED_MCP_NAMES.FINANCEX,
 ] as const;
 
+/**
+ * Wave-1（2026-06-10）：3 个零-key 公开金融 MCP，按角色定向派发。
+ *   - investor-agent：股票 / 期权 / 技术指标 / Fear&Greed —— 全 quant 角色都用得上，
+ *     是 mcp-financex 1.0.11 实测不稳定时最直接的稳定替代。
+ *   - publicfinance：SEC EDGAR / Treasury / BLS —— 基本面 + 宏观分析必需。
+ *   - us-gov-open-data：40+ 美国政府 API（FRED 等）—— 宏观 / 事件研究必备。
+ */
+export const PUBLIC_FINANCE_MCP = [
+  RECOMMENDED_MCP_NAMES.INVESTOR_AGENT,
+  RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
+  RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
+] as const;
+
 /** FSI 机构数据 MCP（DB 中默认 disabled，配置 URL 后启用） */
 export const FSI_DATA_MCP = [
   "fsi-factset",
@@ -82,6 +95,12 @@ export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[]
   const out = [...base];
   if (QUANT_MCP_ROLES.has(role)) {
     for (const n of QUANT_MCP) if (!out.includes(n)) out.push(n);
+    /**
+     * Wave-1（2026-06-10）：QUANT_MCP_ROLES 自动也获得 3 个零-key 公开金融 MCP。
+     * 跟 QUANT_MCP 是 ADD 关系不是 REPLACE —— 先给 LLM 多选一些，让它在
+     * mcp-financex 不可用时有 fallback 路径（投递给 evaluator 看是否使用）。
+     */
+    for (const n of PUBLIC_FINANCE_MCP) if (!out.includes(n)) out.push(n);
   }
   if (FSI_MCP_ROLES.has(role)) {
     for (const n of FSI_DATA_MCP) if (!out.includes(n)) out.push(n);
@@ -398,10 +417,39 @@ export const BUILTIN_AGENT_GROUPS: readonly BuiltinAgentGroupSpec[] = [
   NEWS_EVENT_RADAR_GROUP,
 ];
 
+/**
+ * Wave-1（2026-06-10）：11 个内置 quant skill slug → "quant:<slug>" 即落到
+ * agent_skill.name；用于在 ROLE_SKILLS 注册时按 role 定向召回加分。
+ *
+ * 物理文件在 content-packs/quant-skills/*.md；
+ * seed 入口在 src/runtime/skills/seed-builtin-quant-skills.ts。
+ */
+export const QUANT_SKILLS = {
+  peadDrift: "quant:alpha-pead-drift",
+  piotroskiFScore: "quant:quality-piotroski-f-score",
+  momentum52w: "quant:momentum-52w-breakout",
+  meanReversionBb: "quant:mean-reversion-bollinger",
+  volRegime: "quant:vol-regime-classifier",
+  yieldCurveRecession: "quant:yield-curve-recession-probe",
+  newsSentiment: "quant:news-sentiment-event-scoring",
+  factorIcIrReport: "quant:factor-ic-ir-report",
+  riskConcentrationVar: "quant:risk-concentration-var-checklist",
+  backtestLeakage: "quant:backtest-leakage-self-check",
+  orderIntentBuy: "quant:order-intent-buy-checklist",
+} as const;
+
+const Q = QUANT_SKILLS;
+
 export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
-  orchestrator: skills(S.compsAnalysis, S.thesisTracker),
+  orchestrator: skills(S.compsAnalysis, S.thesisTracker, Q.factorIcIrReport),
   market_data: skills(S.cleanDataXls),
-  news_event: skills("sentiment-analysis", S.earningsPreview, S.morningNote),
+  news_event: skills(
+    "sentiment-analysis",
+    S.earningsPreview,
+    S.morningNote,
+    Q.newsSentiment,
+    Q.peadDrift
+  ),
   research: skills(
     "momentum-factor",
     "fundamental-analysis",
@@ -411,18 +459,30 @@ export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
     S.ideaGeneration,
     S.competitiveAnalysis,
     /** M9.P3：研究产出长期跟踪 */
-    S.thesisTracker
+    S.thesisTracker,
+    /** Wave-1：研究核心 skill 5 件套 */
+    Q.factorIcIrReport,
+    Q.peadDrift,
+    Q.momentum52w,
+    Q.volRegime,
+    Q.orderIntentBuy
   ),
   backtest: skills(
     S.auditXls,
     "technical-analysis",
     /** M9.P3：回测前要做数据清洗 */
-    S.cleanDataXls
+    S.cleanDataXls,
+    /** Wave-1：回测前必跑 leakage 自查 + 因子评估 */
+    Q.backtestLeakage,
+    Q.factorIcIrReport
   ),
   risk: skills(
     "risk-management",
     /** M9.P3：风控也覆盖 KYC/合规规则 */
-    S.kycRules
+    S.kycRules,
+    /** Wave-1：实盘前 4 件套风控 + buy intent checklist */
+    Q.riskConcentrationVar,
+    Q.orderIntentBuy
   ),
   analyst_fundamental: skills(
     "fundamental-analysis",
@@ -431,26 +491,38 @@ export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
     S.dcfModel,
     /** M9.P3：财报准入与持续跟踪 */
     S.earningsPreview,
-    S.thesisTracker
+    S.thesisTracker,
+    /** Wave-1：财务质量 + 财报漂移 */
+    Q.piotroskiFScore,
+    Q.peadDrift
   ),
   analyst_technical: skills(
     "technical-analysis",
     /** M9.P3：技术面也是动量因子家族最常用 */
-    "momentum-factor"
+    "momentum-factor",
+    /** Wave-1：动量 / 均值回归 / vol regime 三件套 */
+    Q.momentum52w,
+    Q.meanReversionBb,
+    Q.volRegime
   ),
   analyst_sentiment: skills(
     "sentiment-analysis",
     S.earningsAnalysis,
     S.earningsPreview,
     S.modelUpdate,
-    S.morningNote
+    S.morningNote,
+    /** Wave-1：新闻事件情绪分级 */
+    Q.newsSentiment
   ),
   analyst_macro: skills(
     "macro-analysis",
     S.sectorOverview,
     S.initiatingCoverage,
     /** M9.P3：宏观也用 morning-note 输出格式 */
-    S.morningNote
+    S.morningNote,
+    /** Wave-1：宏观核心 —— vol regime + 收益曲线衰退 */
+    Q.volRegime,
+    Q.yieldCurveRecession
   ),
 };
 

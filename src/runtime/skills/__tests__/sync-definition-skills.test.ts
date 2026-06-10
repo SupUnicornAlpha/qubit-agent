@@ -65,4 +65,55 @@ describe("syncDefinitionSkillsForProject", () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]!.skill.name).toContain("comps");
   });
+
+  /**
+   * Wave-1（2026-06-10）：内置 quant skill 在 sync 时一并写入；不依赖 FSI。
+   */
+  test("Wave-1：同步 11 条内置 quant skill，PEAD 关键词可命中", async () => {
+    await _deleteSyncedSkillsForProject(projectId);
+    await syncDefinitionSkillsForProject(projectId);
+    const hits = await skillService.searchWithMeta({
+      projectId,
+      query: "PEAD post-earnings drift SUE",
+      topK: 5,
+    });
+    const peadHit = hits.find((h) => h.skill.name === "quant:alpha-pead-drift");
+    expect(peadHit, "PEAD quant skill 应被召回").toBeDefined();
+    /** description 应该非空（来自 frontmatter） */
+    expect(peadHit!.skill.description?.length ?? 0).toBeGreaterThan(20);
+  });
+
+  test("Wave-1：内置 quant skill 至少 11 条全部入库，可按名查到", async () => {
+    await _deleteSyncedSkillsForProject(projectId);
+    await syncDefinitionSkillsForProject(projectId);
+    const expectedSlugs = [
+      "alpha-pead-drift",
+      "quality-piotroski-f-score",
+      "momentum-52w-breakout",
+      "mean-reversion-bollinger",
+      "vol-regime-classifier",
+      "yield-curve-recession-probe",
+      "news-sentiment-event-scoring",
+      "factor-ic-ir-report",
+      "risk-concentration-var-checklist",
+      "backtest-leakage-self-check",
+      "order-intent-buy-checklist",
+    ];
+    for (const slug of expectedSlugs) {
+      const skill = await skillService.findByName(projectId, `quant:${slug}`);
+      expect(skill, `quant:${slug} 应入库`).toBeTruthy();
+    }
+  });
+
+  test("Wave-1：syncBuiltinQuantSkills 幂等 —— 跑 2 次 skill 数不变", async () => {
+    await _deleteSyncedSkillsForProject(projectId);
+    await syncDefinitionSkillsForProject(projectId);
+    const first = await skillService.findByName(projectId, "quant:alpha-pead-drift");
+    expect(first).toBeTruthy();
+    const firstId = first!.id;
+
+    await syncDefinitionSkillsForProject(projectId);
+    const second = await skillService.findByName(projectId, "quant:alpha-pead-drift");
+    expect(second?.id).toBe(firstId);
+  });
 });

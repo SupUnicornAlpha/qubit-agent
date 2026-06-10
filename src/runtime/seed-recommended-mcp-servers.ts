@@ -13,6 +13,16 @@ export const RECOMMENDED_MCP_NAMES = {
   TRADINGCALC: "tradingcalc",
   FINANCEX: "mcp-financex",
   FMP: "fmp-mcp",
+  /**
+   * 2026-06-10 Wave-1：3 个零-key 公开金融 MCP（Agent 智能补强）
+   *   - PUBLIC_FINANCE：SEC EDGAR + US Treasury + BLS（@leviai/publicfinance-mcp）
+   *   - US_GOV_OPEN_DATA：40+ 美国政府 API（lzinga/us-gov-open-data-mcp）
+   *   - INVESTOR_AGENT：Yahoo Finance + 期权 + Fear&Greed（ferdousbhai/investor-agent v2）
+   * 三者都不需要 API key 即可基础使用，是 mcp-financex 1.0.11 不稳定时的可靠替代/补充。
+   */
+  PUBLIC_FINANCE: "publicfinance",
+  US_GOV_OPEN_DATA: "us-gov-open-data",
+  INVESTOR_AGENT: "investor-agent",
 } as const;
 
 export type RecommendedMcpPreset = {
@@ -131,6 +141,90 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
       },
     });
   }
+
+  // ── Wave-1 (2026-06-10) 零-key 公开金融 MCP ──────────────────────────────
+  presets.push({
+    name: RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
+    transport: "stdio",
+    command: "npx -y @leviai/publicfinance-mcp",
+    registrySlug: "npm:@leviai/publicfinance-mcp",
+    description:
+      "SEC EDGAR / US Treasury 收益曲线 / BLS 失业 CPI PPI / 经济综览（零 API key，MIT）",
+    capabilitiesJson: {
+      tools: [
+        { name: "company_filings", desc: "按 ticker / CIK 拉 SEC EDGAR 10-K/10-Q/8-K/S-1 等" },
+        {
+          name: "company_facts",
+          desc: "XBRL 标准化财务数据：Revenue / NetIncome / Assets 等 1000+ 概念",
+        },
+        { name: "treasury_rates", desc: "美国国债收益曲线 / Bill / 长期 / TIPS 实际收益" },
+        {
+          name: "labor_statistics",
+          desc: "BLS：失业率 / CPI / nonfarm payrolls / participation / PPI / 自定 series",
+        },
+        { name: "ticker_lookup", desc: "Ticker ↔ 公司名 ↔ CIK 三向解析" },
+        { name: "economic_overview", desc: "一次性返回收益曲线 + 失业 + CPI + payrolls 快照" },
+      ],
+    },
+  });
+
+  presets.push({
+    name: RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
+    transport: "stdio",
+    command: "npx -y us-gov-open-data-mcp",
+    registrySlug: "npm:us-gov-open-data-mcp",
+    description:
+      "40+ 美国政府开源 API（FRED / Treasury / SEC / BLS / EIA / EPA …）共 300+ 工具；FRED 等可选 API key 升级配额",
+    capabilitiesJson: {
+      env: {
+        // 都是可选 key；缺失时 server 会限制相应 module 但不 fail
+        ...(process.env.FRED_API_KEY?.trim()
+          ? { FRED_API_KEY: process.env.FRED_API_KEY.trim() }
+          : {}),
+        ...(process.env.DATA_GOV_API_KEY?.trim()
+          ? { DATA_GOV_API_KEY: process.env.DATA_GOV_API_KEY.trim() }
+          : {}),
+      },
+      // 300+ tools 不完整枚举，只挑量化最常用的几个让 LLM 知道这台 server 能干什么
+      tools: [
+        { name: "fred.series.observations", desc: "FRED 时间序列观测值（GDP/CPI/失业等）" },
+        { name: "fred.series.search", desc: "FRED 系列模糊搜索（80 万条）" },
+        { name: "treasury.daily_rates", desc: "美国国债日度收益曲线" },
+        { name: "sec.company_facts", desc: "SEC EDGAR 公司财务事实（XBRL）" },
+        { name: "sec.filings_list", desc: "SEC EDGAR 公司过往申报清单" },
+        { name: "bls.timeseries", desc: "BLS 劳工统计时序（失业 / CPI / payrolls）" },
+        { name: "eia.electricity_prices", desc: "EIA 电力价格序列（与工业需求挂钩）" },
+        {
+          name: "congress.bill_search",
+          desc: "国会立法搜索（含可能影响行业的法案，事件驱动型策略可用）",
+        },
+      ],
+    },
+  });
+
+  presets.push({
+    name: RECOMMENDED_MCP_NAMES.INVESTOR_AGENT,
+    transport: "stdio",
+    command: "npx -y investor-agent",
+    registrySlug: "npm:investor-agent",
+    description:
+      "Yahoo Finance 股票/期权/财报 + CNN Fear&Greed + Crypto F&G + 技术指标（零 API key，作 mcp-financex 1.0.11 不稳定时的稳定替代）",
+    capabilitiesJson: {
+      tools: [
+        { name: "get_stock_info", desc: "股票基本面：价格 / 财务 / 财报 / 持股 / 分析师评级" },
+        { name: "historical_prices", desc: "OHLCV 价格历史（默认 1y weekly，limit 100）" },
+        { name: "get_options", desc: "期权合约（按 open interest 排序，默认 top 25/类）" },
+        { name: "market_movers", desc: "涨幅榜 / 跌幅榜 / 最活跃" },
+        { name: "earnings_calendar", desc: "NASDAQ 财报日历" },
+        { name: "fear_greed_index", desc: "CNN 股市 / Crypto F&G 指数" },
+        {
+          name: "technical_indicator",
+          desc: "SMA / EMA / RSI / MACD / Bollinger Bands（trading-signals 库）",
+        },
+      ],
+    },
+  });
+
   return presets;
 }
 
@@ -140,6 +234,16 @@ export function defaultQuantMcpServers(): string[] {
     RECOMMENDED_MCP_NAMES.MATHJS,
     RECOMMENDED_MCP_NAMES.TRADINGCALC,
     RECOMMENDED_MCP_NAMES.FINANCEX,
+    /**
+     * Wave-1：3 个零-key 公开金融 MCP 默认全部派给 quant 角色 —— mcp-financex 1.0.11
+     * 不稳定时这三家是稳定 fallback；同时它们各自侧重不同：
+     *   - investor-agent：Yahoo 股票 / 期权 / 技术指标，最快替代 mcp-financex
+     *   - publicfinance：SEC / Treasury / BLS，分析师做基本面 / 宏观必需
+     *   - us-gov-open-data：FRED 80 万序列等 40+ 美国政府数据源
+     */
+    RECOMMENDED_MCP_NAMES.INVESTOR_AGENT,
+    RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
+    RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
   ];
   if (process.env.FMP_API_KEY?.trim()) names.push(RECOMMENDED_MCP_NAMES.FMP);
   return names;
@@ -192,10 +296,8 @@ export async function seedRecommendedMcpServers(): Promise<void> {
     upserted += 1;
   }
 
-  console.log(
-    `[Seed] Upserted ${upserted} recommended MCP servers (mathjs, tradingcalc, mcp-financex` +
-      `${process.env.FMP_API_KEY?.trim() ? ", fmp-mcp" : ""}).`
-  );
+  const presetNames = presets.map((p) => p.name).join(", ");
+  console.log(`[Seed] Upserted ${upserted} recommended MCP servers (${presetNames}).`);
 }
 
 if (import.meta.main) {

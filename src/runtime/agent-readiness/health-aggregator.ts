@@ -82,6 +82,22 @@ export interface ErrorAggRow {
   examples: string[];
 }
 
+/**
+ * Wave-1（2026-06-10）：MCP 采纳率视图。
+ *
+ * 用来一眼回答"我配置了这么多 MCP server，agent 真的用了吗"：
+ *   - configuredServers：mcp_server_config.enabled=true 且 project 级（projectId IS NULL）的 server 名
+ *   - usedServers：本轮 evaluation 在 mcp_call_log 实际出现过的 server 名
+ *   - 漏用名 (configured - used) 通常是 prompt 拼装层"劝退过度"或 def.mcp_servers_json
+ *     没注入的问题
+ */
+export interface McpAdoptionRow {
+  configuredServers: string[];
+  usedServers: string[];
+  unusedServers: string[];
+  adoptionRate: number;
+}
+
 export interface HealthReport {
   generatedAt: string;
   workflowRunIds: string[];
@@ -90,6 +106,7 @@ export interface HealthReport {
   llm: LlmCostRow[];
   skills: SkillRecallRow[];
   errors: ErrorAggRow[];
+  mcpAdoption: McpAdoptionRow;
   summary: {
     totalToolCalls: number;
     totalMcpCalls: number;
@@ -436,6 +453,31 @@ export function aggregateHealth(
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
 
+  // ── MCP Adoption（Wave-1）─────────────────────────────────────────
+  /**
+   * 查全局 enabled 的 MCP server 名（projectId IS NULL）作为 "configured"。
+   * 失败 / 表缺失（极端 dev 环境）→ configuredServers 退化为 mcpCallLog 出现过的
+   * server 集合，adoptionRate=1.0 兜底，不阻塞主报告生成。
+   */
+  let configuredServers: string[] = [];
+  try {
+    const cfgRows = sqlite
+      .prepare(
+        `SELECT name FROM mcp_server_config WHERE enabled = 1 AND project_id IS NULL`
+      )
+      .all() as Array<{ name: string }>;
+    configuredServers = cfgRows.map((r) => r.name).filter((n): n is string => !!n);
+  } catch {
+    configuredServers = [...new Set(mcpRows.map((r) => r.server_name))];
+  }
+  const usedServers = [...new Set(mcpRows.map((r) => r.server_name))].filter(
+    (n): n is string => !!n
+  );
+  const usedSet = new Set(usedServers);
+  const unusedServers = configuredServers.filter((n) => !usedSet.has(n));
+  const adoptionRate =
+    configuredServers.length === 0 ? 0 : usedServers.length / configuredServers.length;
+
   return {
     generatedAt: new Date().toISOString(),
     workflowRunIds: [...workflowRunIds],
@@ -444,6 +486,12 @@ export function aggregateHealth(
     llm,
     skills,
     errors,
+    mcpAdoption: {
+      configuredServers,
+      usedServers,
+      unusedServers,
+      adoptionRate,
+    },
     summary: {
       totalToolCalls: toolRows.length,
       totalMcpCalls: mcpRows.length,
@@ -493,6 +541,24 @@ export function renderHealthMarkdown(report: HealthReport, opts?: { roundLabel?:
     lines.push(
       `| ${gradeIcon(m.healthGrade)} | ${m.serverName} | ${m.totalCalls} | ${m.successCount} | ${m.failedCount} | ${m.timeoutCount} | ${m.sandboxBlockedCount} | ${m.circuitOpenCount} | ${fmtMs(m.avgLatencyMs)} |`
     );
+  }
+  lines.push("");
+
+  // ── H-MCP-Adoption（Wave-1 新加）─────────────────────────────────
+  lines.push("## H-MCP-Adoption · MCP 采纳率");
+  lines.push("");
+  const ad = report.mcpAdoption;
+  lines.push(
+    `- 已 enable 的 MCP server：${ad.configuredServers.length} 个 → ${ad.configuredServers.join(", ") || "（无）"}`
+  );
+  lines.push(
+    `- 本轮 evaluation 调用过的 server：${ad.usedServers.length} 个 → ${ad.usedServers.join(", ") || "（无）"}`
+  );
+  lines.push(
+    `- 采纳率：**${(ad.adoptionRate * 100).toFixed(0)}%** ${ad.adoptionRate < 0.3 ? "🔴 LLM 大量绕开 MCP，建议查 prompt 是否过度警告 / def.mcp_servers_json 是否注入" : ad.adoptionRate < 0.7 ? "🟡 多数 server 未被调用" : "🟢"}`
+  );
+  if (ad.unusedServers.length > 0) {
+    lines.push(`- ⚠ 未被使用的 server：${ad.unusedServers.join(", ")}`);
   }
   lines.push("");
 

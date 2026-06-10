@@ -273,7 +273,7 @@ describe("collectSnapshot", () => {
     await db.insert(schema.agentSkill).values({
       id: skillId,
       projectId: PROJECT_ID,
-      name: "rc-skill",
+      name: `rc-skill-${skillId}`,
     });
     await db.insert(schema.skillRecallLog).values([
       { id: `rec-1-${wfId}`, workflowRunId: wfId, skillId, executed: true },
