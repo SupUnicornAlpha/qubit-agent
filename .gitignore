@@ -1,5 +1,6 @@
 node_modules/
 .tmp/
+.tmp-*/
 .tmp-test-home/
 .tmp-pack-test-data/
 .tmp-workflow-list-perf/

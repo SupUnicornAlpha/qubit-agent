@@ -15,9 +15,13 @@ const {
   workspace,
   agentCheckpointSnapshot,
 } = await import("../../db/sqlite/schema");
-const { writeCheckpointSnapshot, loadLatestCheckpointSnapshot } = await import(
-  "./agent-checkpoint-snapshot"
-);
+const {
+  writeCheckpointSnapshot,
+  loadLatestCheckpointSnapshot,
+  loadLatestSnapshotByRunId,
+  restoreStateFromSnapshot,
+  deleteCheckpointSnapshotsForWorkflow,
+} = await import("./agent-checkpoint-snapshot");
 const { createInitialGraphState } = await import("./state");
 
 const WS_ID = "11111111-1111-4000-8000-snapshot00001";
@@ -37,11 +41,6 @@ async function seed(): Promise<void> {
       id: SANDBOX_ID,
       name: "snap-sb",
       description: "for snapshot test",
-      allowedTools: [],
-      networkAllowlist: [],
-      fileAccessJson: { read: [], write: [], deny: [] },
-      maxRuntimeSec: 60,
-      maxIterations: 5,
       maxOutputTokens: 1024,
     })
     .onConflictDoNothing();
@@ -157,7 +156,7 @@ describe("agent-checkpoint-snapshot", () => {
         subscriptions: [],
         llmProvider: "stub",
         maxIterations: 5,
-        sandboxPolicyId: null,
+        sandboxPolicyId: SANDBOX_ID,
         enabled: true,
       },
       inboundMessage: {
@@ -252,5 +251,185 @@ describe("agent-checkpoint-snapshot", () => {
       .from(agentCheckpointSnapshot)
       .where(eq(agentCheckpointSnapshot.workflowRunId, WF_ID));
     expect(after.length).toBe(before.length + 1);
+  });
+
+  it("loadLatestSnapshotByRunId isolates snapshots by runId (MSA fan-out)", async () => {
+    if (skipDueToFrozenConfig) return;
+    // 两个并发 slot 共享 workflowRunId 但各有独立 runId
+    const mkState = (runId: string, planned: string) => {
+      const s = createInitialGraphState({
+        runId,
+        workflowId: WF_ID,
+        traceId: "trace-msa",
+        // biome-ignore lint/suspicious/noExplicitAny: minimal def for test
+        agentDefinition: {
+          id: DEF_ID,
+          role: "orchestrator",
+          name: "snap-def",
+          version: "0.0.1",
+          systemPrompt: "test",
+          tools: [],
+          mcpServers: [],
+          skills: [],
+          subscriptions: [],
+          llmProvider: "stub",
+          maxIterations: 5,
+          sandboxPolicyId: null,
+          enabled: true,
+        } as any,
+        // biome-ignore lint/suspicious/noExplicitAny: minimal envelope
+        inboundMessage: {} as any,
+      });
+      s.iteration = 1;
+      s.plannedAction = planned;
+      return s;
+    };
+    await writeCheckpointSnapshot({
+      runId: "msa-slot-a",
+      workflowId: WF_ID,
+      traceId: "trace-msa",
+      agentInstanceId: INST_ID,
+      stepIndex: 1,
+      phase: "act",
+      state: mkState("msa-slot-a", "slot-a-action"),
+    });
+    await writeCheckpointSnapshot({
+      runId: "msa-slot-b",
+      workflowId: WF_ID,
+      traceId: "trace-msa",
+      agentInstanceId: INST_ID,
+      stepIndex: 1,
+      phase: "act",
+      state: mkState("msa-slot-b", "slot-b-action"),
+    });
+
+    const a = await loadLatestSnapshotByRunId("msa-slot-a");
+    const b = await loadLatestSnapshotByRunId("msa-slot-b");
+    expect((a?.snapshot as { plannedAction?: string }).plannedAction).toBe("slot-a-action");
+    expect((b?.snapshot as { plannedAction?: string }).plannedAction).toBe("slot-b-action");
+  });
+
+  it("end-to-end: write → loadByRunId → restore yields resumable state with full def", async () => {
+    if (skipDueToFrozenConfig) return;
+    // 快照里只会保存裁剪后的 def；resume 时必须用完整 def 覆盖
+    const fullDef = {
+      id: DEF_ID,
+      role: "orchestrator" as const,
+      name: "snap-def",
+      version: "0.0.1",
+      systemPrompt: "FULL system prompt only in DB",
+      tools: ["tool_x", "tool_y"],
+      mcpServers: ["mcp_z"],
+      skills: ["skill_q"],
+      subscriptions: ["TASK_ASSIGN" as const],
+      llmProvider: "stub",
+      maxIterations: 5,
+      sandboxPolicyId: SANDBOX_ID,
+      enabled: true,
+    };
+    const state = createInitialGraphState({
+      runId: "e2e-run",
+      workflowId: WF_ID,
+      traceId: "trace-e2e",
+      agentDefinition: fullDef,
+      inboundMessage: {
+        messageId: "msg-e2e",
+        workflowId: WF_ID,
+        traceId: "trace-e2e",
+        senderAgent: "system",
+        receiverAgent: INST_ID,
+        messageType: "TASK_ASSIGN",
+        // biome-ignore lint/suspicious/noExplicitAny: test fixture
+        payload: { taskId: "te2e", taskType: "research" } as any,
+        priority: 50,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    state.iteration = 4;
+    state.reasonText = "thinking";
+    state.toolCalls = [{ tool: "tool_x", ok: true }];
+    state.observations = [{ r: "obs1" }, { r: "obs2" }];
+    state.contextMemory = { ticker: "MSFT" };
+
+    await writeCheckpointSnapshot({
+      runId: "e2e-run",
+      workflowId: WF_ID,
+      traceId: "trace-e2e",
+      agentInstanceId: INST_ID,
+      stepIndex: 4,
+      phase: "observe",
+      state,
+    });
+
+    const loaded = await loadLatestSnapshotByRunId("e2e-run");
+    expect(loaded).not.toBeNull();
+    if (!loaded) return;
+
+    const { state: restored, resumeIteration, resumePhase } = restoreStateFromSnapshot(
+      loaded,
+      fullDef
+    );
+    // 决策字段全量还原
+    expect(resumeIteration).toBe(4);
+    expect(resumePhase).toBe("observe");
+    expect(restored.reasonText).toBe("thinking");
+    expect(restored.toolCalls).toEqual([{ tool: "tool_x", ok: true }]);
+    expect(restored.observations).toEqual([{ r: "obs1" }, { r: "obs2" }]);
+    expect(restored.contextMemory).toEqual({ ticker: "MSFT" });
+    // 完整 def 来自传入参数，而非快照里被裁剪的版本
+    expect(restored.agentDefinition.tools).toEqual(["tool_x", "tool_y"]);
+    expect(restored.agentDefinition.systemPrompt).toBe("FULL system prompt only in DB");
+    // inboundMessage 从快照恢复
+    expect(restored.inboundMessage.messageId).toBe("msg-e2e");
+  });
+
+  it("restoreStateFromSnapshot honors inboundMessage override", async () => {
+    if (skipDueToFrozenConfig) return;
+    const loaded = await loadLatestSnapshotByRunId("e2e-run");
+    if (!loaded) return;
+    const fullDef = {
+      id: DEF_ID,
+      role: "orchestrator" as const,
+      name: "snap-def",
+      version: "0.0.1",
+      systemPrompt: "x",
+      tools: [],
+      mcpServers: [],
+      skills: [],
+      subscriptions: ["TASK_ASSIGN" as const],
+      llmProvider: "stub",
+      maxIterations: 5,
+      sandboxPolicyId: SANDBOX_ID,
+      enabled: true,
+    };
+    const override = {
+      messageId: "msg-override",
+      workflowId: WF_ID,
+      traceId: "trace-e2e",
+      senderAgent: "system",
+      receiverAgent: INST_ID,
+      messageType: "TASK_ASSIGN" as const,
+      // biome-ignore lint/suspicious/noExplicitAny: test fixture
+      payload: { taskId: "ovr", taskType: "research" } as any,
+      priority: 50,
+      createdAt: new Date().toISOString(),
+    };
+    // biome-ignore lint/suspicious/noExplicitAny: envelope override
+    const { state } = restoreStateFromSnapshot(loaded, fullDef, override as any);
+    expect(state.inboundMessage.messageId).toBe("msg-override");
+  });
+
+  it("deleteCheckpointSnapshotsForWorkflow clears all rows for new-turn (resume sees nothing)", async () => {
+    if (skipDueToFrozenConfig) return;
+    // 先确认 WF_ID 上有快照（前面几个用例已写入）
+    const before = await loadLatestCheckpointSnapshot(WF_ID);
+    expect(before).not.toBeNull();
+
+    const deleted = await deleteCheckpointSnapshotsForWorkflow(WF_ID);
+    expect(deleted).toBeGreaterThan(0);
+
+    // 清空后 resume 权威（按 workflow 取最近）应当落空 → fail-soft 回退 fresh
+    const after = await loadLatestCheckpointSnapshot(WF_ID);
+    expect(after).toBeNull();
   });
 });

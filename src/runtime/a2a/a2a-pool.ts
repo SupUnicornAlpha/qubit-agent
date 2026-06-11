@@ -10,6 +10,12 @@ import {
 } from "../../db/sqlite/schema";
 import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import { AgentRuntime } from "../agent-runtime";
+import {
+  computeConfigHash,
+  startWorkspaceConfigWatcher,
+  syncWorkspaceConfigToDbFromFiles,
+  type WorkspaceConfigWatcherHandle,
+} from "../config/workspace-config-watcher";
 import { getRoleHandler } from "../handlers/role-handlers";
 import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import type { RuntimeAgentDefinition } from "../types";
@@ -30,9 +36,14 @@ type PoolEntry = {
 export class A2APool {
   private entries = new Map<AgentRole, PoolEntry>();
   private started = false;
+  private configWatcher: WorkspaceConfigWatcherHandle | null = null;
+  private reloading = false;
 
   async start(): Promise<void> {
     if (this.started) return;
+    // 启动前先把 .qubit/*.json 配置 sync 进 DB（原 GraphRunner.syncFromWorkspaceConfig
+    // 职责，现移到 workspace-config-watcher），再从 DB 加载 definitions。
+    await syncWorkspaceConfigToDbFromFiles();
     await this.ensurePoolInfrastructure();
     const definitions = await this.loadDefinitions();
 
@@ -45,16 +56,101 @@ export class A2APool {
     }
 
     this.started = true;
+    this.startConfigWatcher();
     console.log(`[A2APool] started ${this.entries.size} role runtimes.`);
   }
 
   async stop(): Promise<void> {
+    this.stopConfigWatcher();
     for (const entry of this.entries.values()) {
       await entry.runtime.stop();
     }
     this.entries.clear();
     this.started = false;
     console.log("[A2APool] stopped.");
+  }
+
+  /**
+   * 配置热加载：重载 agent definitions 并优雅地换掉每个 role 的 AgentRuntime。
+   *
+   * 关键约束（不丢消息 / 不双订阅）：逐 role **先 stop 旧 runtime（解订阅）→ 再 start
+   * 新 runtime（建新订阅）**。AgentRuntime.stop() 会同步执行 unsubscribeFns，
+   * start() 才重新 `a2aRouter.on(...)`，所以同一 role 任意时刻最多一个活跃订阅，
+   * 不会出现「旧+新」双份 handler 处理同一条消息。
+   *
+   * 没了的 role（新配置里 disabled / 删除）→ stop 后从 entries 移除。
+   * 新增 role → 直接 start 并加入 entries。
+   *
+   * 失败 fail-soft：单个 role 重建出错只告警，保留其它 role；整体 sync 出错则保持原池。
+   *
+   * 返回 { before, after } 与原 GraphRunner.reload 形状一致，方便 routes 平滑替换。
+   */
+  async reload(): Promise<{ before: number; after: number }> {
+    const before = this.entries.size;
+    if (this.reloading) return { before, after: before };
+    this.reloading = true;
+    try {
+      await syncWorkspaceConfigToDbFromFiles();
+      await this.ensurePoolInfrastructure();
+      const definitions = await this.loadDefinitions();
+      const nextRoles = new Set<AgentRole>();
+
+      for (const def of definitions) {
+        if (!def.enabled) continue;
+        nextRoles.add(def.role);
+        try {
+          const instanceId = await this.ensurePoolInstance(def);
+          const prev = this.entries.get(def.role);
+          // 先停旧（解订阅），再起新（建订阅）：同一 role 任意时刻单订阅。
+          if (prev) await prev.runtime.stop();
+          const runtime = new AgentRuntime(def, getRoleHandler(def.role), { instanceId });
+          await runtime.start();
+          this.entries.set(def.role, { runtime, instanceId, role: def.role });
+        } catch (err) {
+          console.warn(
+            `[A2APool] reload: failed to (re)start role=${def.role}, keeping previous:`,
+            err instanceof Error ? err.message : String(err)
+          );
+        }
+      }
+
+      // 配置里已消失的 role：停掉并移除。
+      for (const [role, entry] of [...this.entries.entries()]) {
+        if (!nextRoles.has(role)) {
+          await entry.runtime.stop().catch(() => {});
+          this.entries.delete(role);
+        }
+      }
+
+      if (!this.started) {
+        this.started = true;
+        this.startConfigWatcher();
+      }
+      // reload 成功 → 更新 watcher 的 lastHash，避免本次写盘自己再触发一轮。
+      this.configWatcher?.setLastHash(await computeConfigHash());
+    } catch (err) {
+      console.warn(
+        "[A2APool] reload failed; keeping previous pool:",
+        err instanceof Error ? err.message : String(err)
+      );
+    } finally {
+      this.reloading = false;
+    }
+    return { before, after: this.entries.size };
+  }
+
+  private startConfigWatcher(): void {
+    if (this.configWatcher) return;
+    this.configWatcher = startWorkspaceConfigWatcher(async () => {
+      await this.reload();
+    });
+  }
+
+  private stopConfigWatcher(): void {
+    if (this.configWatcher) {
+      this.configWatcher.stop();
+      this.configWatcher = null;
+    }
   }
 
   getInstanceIdForRole(role: AgentRole): string {

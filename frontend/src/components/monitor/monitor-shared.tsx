@@ -84,12 +84,12 @@ export function agentStatusColor(status: string | undefined, running: boolean): 
   return "#eab308";
 }
 
-/** API 未带 executionPath 时（旧后端）按实例 ID 推断所属长驻池 */
-export function resolvePoolExecutionPath(agent: AgentSummary): "graph" | "a2a" | null {
-  if (agent.executionPath === "graph" || agent.executionPath === "a2a") {
-    return agent.executionPath;
-  }
-  if (agent.id.startsWith("graph-")) return "graph";
+/**
+ * 收敛后内部 agent 总线唯一为 A2A，graph 长驻池已删除。这里只识别 A2A 实例，
+ * 其余（含历史 graph- 前缀实例）一律归入「未标注执行路径」分组展示。
+ */
+export function resolvePoolExecutionPath(agent: AgentSummary): "a2a" | null {
+  if (agent.executionPath === "a2a") return "a2a";
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agent.id)) {
     return "a2a";
   }
@@ -109,13 +109,6 @@ export function buildAgentCardViews(
 // ------------------------------ Pool / Card 小组件 ------------------------------
 
 export const POOL_SECTION_META = {
-  graph: {
-    title: "Graph 长驻池",
-    hint: "LangGraph 编排：native loop 的 workflow 默认经此池按角色执行（实例 ID 形如 graph-<role>）",
-    accent: "#60a5fa",
-    panelBorder: "rgba(59, 130, 246, 0.45)",
-    badgeBg: "rgba(59, 130, 246, 0.15)",
-  },
   a2a: {
     title: "A2A 长驻池",
     hint: "A2A 消息总线：executionPath=a2a 的 workflow 经此池订阅并派发（实例 ID 为 DB 中的 UUID）",

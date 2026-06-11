@@ -153,10 +153,6 @@ export const MonitorDashboard: FC = () => {
     [agents, metricsByDefinitionId]
   );
 
-  const graphAgentCards = useMemo(
-    () => agentCardViews.filter((a) => resolvePoolExecutionPath(a) === "graph"),
-    [agentCardViews]
-  );
   const a2aAgentCards = useMemo(
     () => agentCardViews.filter((a) => resolvePoolExecutionPath(a) === "a2a"),
     [agentCardViews]
@@ -691,7 +687,6 @@ export const MonitorDashboard: FC = () => {
 
       {scope === "agent" ? (
         <AgentTab
-          graphAgentCards={graphAgentCards}
           a2aAgentCards={a2aAgentCards}
           legacyAgentCards={legacyAgentCards}
           latencyBarData={latencyBarData}

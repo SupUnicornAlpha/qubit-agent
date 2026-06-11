@@ -35,7 +35,6 @@ import { AgentDetailDrillDown } from "./AgentDetailDrillDown";
 import { TimeseriesChart } from "./TimeseriesChart";
 
 export type AgentTabProps = {
-  graphAgentCards: AgentCardView[];
   a2aAgentCards: AgentCardView[];
   legacyAgentCards: AgentCardView[];
   latencyBarData: { name: string; p50: number; p95: number }[];
@@ -51,7 +50,6 @@ export type AgentTabProps = {
 };
 
 export const AgentTab: FC<AgentTabProps> = ({
-  graphAgentCards,
   a2aAgentCards,
   legacyAgentCards,
   latencyBarData,
@@ -70,8 +68,8 @@ export const AgentTab: FC<AgentTabProps> = ({
    */
   const [selectedDefinitionId, setSelectedDefinitionId] = useState<string | null>(null);
   const allCards = useMemo(
-    () => [...graphAgentCards, ...a2aAgentCards, ...legacyAgentCards],
-    [graphAgentCards, a2aAgentCards, legacyAgentCards]
+    () => [...a2aAgentCards, ...legacyAgentCards],
+    [a2aAgentCards, legacyAgentCards]
   );
   const selectedCard = useMemo(
     () => (selectedDefinitionId ? allCards.find((a) => a.definitionId === selectedDefinitionId) ?? null : null),
@@ -173,16 +171,10 @@ export const AgentTab: FC<AgentTabProps> = ({
         Agent · 注册实例（运行时列表）
       </h3>
       <p style={styles.scopeHint}>
-        同一角色会在 Graph、A2A 各注册一次（两套执行通道，并非重复故障）。下方「会话工作流实例」为某次
+        内部 agent 总线统一为 A2A 长驻池（每角色注册一次）。下方「会话工作流实例」为某次
         workflow 上的真实任务实例。
       </p>
       <div style={styles.poolSplit}>
-        <AgentPoolSection
-          poolKey="graph"
-          agents={graphAgentCards}
-          selectedDefinitionId={selectedDefinitionId}
-          onSelectDefinition={toggleSelectDefinition}
-        />
         <AgentPoolSection
           poolKey="a2a"
           agents={a2aAgentCards}

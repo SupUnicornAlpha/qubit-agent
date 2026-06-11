@@ -49,7 +49,7 @@ import {
   clearAllAgentDefinitionOverrides,
   setAgentDefinitionBindings,
 } from "../runtime/agent/agent-binding-service";
-import { graphRunner } from "../runtime/langgraph/graph-factory";
+import { reloadAgentPool } from "../runtime/agent-pool";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
   installCatalogItemToProject,
@@ -297,7 +297,7 @@ agentRouter.get("/", (c) => {
 });
 
 agentRouter.post("/reload", async (c) => {
-  const result = await graphRunner.reload();
+  const result = await reloadAgentPool();
   return c.json({
     ok: true,
     before: result.before,
@@ -308,7 +308,7 @@ agentRouter.post("/reload", async (c) => {
 /**
  * 手动「重载系统预设」：把所有内置 Agent 定义 / 编组 强制重置回 SEED。
  * - 正常启动会保留用户改动；这个接口是唯一显式破坏用户改动的入口。
- * - 调用后会自动 graphRunner.reload()，让 runtime 立刻拿到新定义。
+ * - 调用后会自动 reloadAgentPool()，让 runtime 立刻拿到新定义。
  *
  * F-P0-06 fix（2026-06-04）：force=true 现在也会清空 agent_definition.user_overrides_json
  * 上的所有 per-field sentinel，等价于"factory reset"。否则用户既改过又点 reload
@@ -317,7 +317,7 @@ agentRouter.post("/reload", async (c) => {
 agentRouter.post("/builtin/reload", async (c) => {
   const clearedOverrides = await clearAllAgentDefinitionOverrides();
   const report = await seedAgentDefinitions({ force: true });
-  const runtimeReload = await graphRunner.reload();
+  const runtimeReload = await reloadAgentPool();
   return c.json({
     ok: true,
     report,
@@ -336,7 +336,7 @@ agentRouter.post("/builtin/reload", async (c) => {
  * 行为：
  *   - 写入 agent_definition 对应字段；
  *   - 同步把 user_overrides_json["<col>"]=true，让启动期 seed / sync 不再覆盖；
- *   - 自动 graphRunner.reload() 让 runtime 立刻看到新 binding。
+ *   - 自动 reloadAgentPool() 让 runtime 立刻看到新 binding。
  *
  * 想"撤回 user 绑定，回归 seed 默认"：传 `"clearOverride": true` 不带任何字段值，
  * 或对某字段传 `null + clearOverride:true`。
@@ -354,7 +354,7 @@ agentRouter.post("/definitions/:id/bindings", async (c) => {
   }
   try {
     const result = await setAgentDefinitionBindings(definitionId, body);
-    const reload = await graphRunner.reload();
+    const reload = await reloadAgentPool();
     const db = await getDb();
     const rows = await db
       .select()
@@ -461,7 +461,7 @@ agentRouter.post("/definitions", async (c) => {
     configContentHash: "",
     configSyncedAt: "",
   });
-  await graphRunner.reload();
+  await reloadAgentPool();
   const rows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, id)).limit(1);
   const profRows = await db
     .select()
@@ -491,7 +491,7 @@ agentRouter.delete("/definitions/:id", async (c) => {
     const status = result.reason === "not found" ? 404 : 409;
     return c.json({ error: result.reason ?? "delete failed" }, status);
   }
-  await graphRunner.reload();
+  await reloadAgentPool();
   return c.json({ ok: true, deletedId: definitionId });
 });
 
@@ -988,7 +988,7 @@ agentRouter.post("/definitions/:id/release", async (c) => {
   });
   const [released, runtimeReload] = await Promise.all([
     db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1),
-    graphRunner.reload(),
+    reloadAgentPool(),
   ]);
   return c.json({
     data: released[0],

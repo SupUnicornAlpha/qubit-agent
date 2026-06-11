@@ -18,6 +18,14 @@ export async function runA2aReactTaskAssign(
   const traceId = msg.traceId;
   const workflowId = msg.workflowId;
 
+  /**
+   * 自研 snapshot 续跑：workflow_resume 的 payload.params.resume=true 时，
+   * executeAgentReact 会按 workflowId 取最近一份 agent_checkpoint_snapshot 还原运行态
+   * 并从下一轮 reason 重入（进程重启恢复 / sweep 续跑走这条线）。HITL approve 重派
+   * 不带 resume —— 让 orchestrator 重跑 ReAct，由 hitlApproval 自然进入上下文。
+   */
+  const resume = (payload.params as Record<string, unknown> | undefined)?.resume === true;
+
   try {
     const { finalResponse, terminalStatus } = await executeAgentReact({
       runId,
@@ -29,6 +37,7 @@ export async function runA2aReactTaskAssign(
       streamLoopKind: "native",
       streamSource: "a2a",
       updateWorkflowStatus: true,
+      resume,
     });
 
     /**

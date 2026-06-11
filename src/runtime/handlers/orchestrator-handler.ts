@@ -18,7 +18,6 @@ import type { AgentRole } from "../../types/entities";
 import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
 import { buildTaskResult } from "../a2a/task-result";
 import { getA2APool } from "../a2a/a2a-pool";
-import { graphRunner } from "../langgraph/graph-factory";
 import {
   failResearchTeamExecuteJob,
   parseResearchTeamExecutePayload,
@@ -28,7 +27,6 @@ import { parseHitlApproval } from "../workflow/hitl-service";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
-import { resolveExecutionPathForWorkflow } from "../resolve-execution-path";
 
 async function setWorkflowStatus(
   workflowId: string,
@@ -55,57 +53,23 @@ type OrchestratorTaskHandler = (
 ) => Promise<void>;
 
 /**
- * workflow_resume / workflow_retry：按 executionPath 选择续跑路径。
+ * workflow_resume / workflow_retry：收敛后续跑唯一走 A2A —— 让 orchestrator 自己
+ * 重新跑一遍 ReAct loop（runA2aReactTaskAssign）。
  *
- * P2-A Batch 2：之前这里硬编码 `graphRunner.resumeRoleTask`，导致 a2a workflow
- * 续跑时被静默切换到 graph 路径（违背 A2A 自洽）。改造后：
- *   - executionPath === "graph" → graphRunner.resumeRoleTask（LangGraph
- *     checkpointer 续跑，行为不变）。
- *   - executionPath === "a2a" → 重跑 orchestrator 的 ReAct loop
- *     (runA2aReactTaskAssign)。hitlApproval / hitlPayload 通过 payload.params
- *     自然进入 LLM 上下文，由 orchestrator 自己决定下一步。
+ * 续跑上下文来源：
+ *   - 自研 snapshot：payload.params.resume=true 时 executeAgentReact 按 workflowId 取
+ *     最近 agent_checkpoint_snapshot 还原运行态、从下一轮 reason 重入（进程重启 / sweep）。
+ *   - HITL approve：hitlApproval / hitlPayload 通过 payload.params 自然进入 LLM 上下文，
+ *     orchestrator 重跑 ReAct 自行决定下一步（不带 snapshot resume）。
  *
- * 设计取舍：A2A 不像 LangGraph 那样有 step-level checkpoint，但 A2A 的 source
- * of truth 是消息流（a2a_message 表），加上 analystResearchJob 存的 resumePayload，
- * orchestrator 完全可以重建上下文。这样我们用"重跑 ReAct"换"独立 checkpointer"，
- * 大幅降低实现复杂度且不破坏 A2A 模型。
+ * A2A 的 source of truth 是消息流（a2a_message）+ analystResearchJob.resumePayload +
+ * 自研 snapshot，orchestrator 完全可以重建上下文。
  *
- * 成功发 TASK_RESULT；失败标 failed 后发 fail TASK_RESULT。
+ * runA2aReactTaskAssign 内部已处理 awaiting_approval / failed 分支并自己发 TASK_RESULT。
  */
 const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) => {
   try {
-    const path = await resolveExecutionPathForWorkflow(msg.workflowId);
-    if (path === "a2a") {
-      /**
-       * A2A 路径：让 orchestrator 自己重新跑一遍 ReAct loop。
-       * runA2aReactTaskAssign 内部已经处理 awaiting_approval、failed 分支，
-       * 也会自己发 TASK_RESULT（这里就不重复发 success TASK_RESULT 了）。
-       */
-      await runA2aReactTaskAssign(ctx, msg);
-      return;
-    }
-
-    /** Graph 路径：保留旧行为 */
-    const result = await graphRunner.resumeRoleTask({
-      workflowId: msg.workflowId,
-      role: "orchestrator",
-      payload,
-      traceId: msg.traceId,
-    });
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, "orchestrator", {
-        result: {
-          taskType: payload.taskType,
-          runId: result.runId,
-          resumed: result.resumed,
-        },
-      }),
-      priority: msg.priority,
-    });
+    await runA2aReactTaskAssign(ctx, msg);
   } catch (err) {
     await setWorkflowStatus(msg.workflowId, "failed");
     const errorMessage = err instanceof Error ? err.message : String(err);

@@ -2,27 +2,27 @@ import { describe, expect, it } from "bun:test";
 import { resolveExecutionPath } from "../resolve-execution-path";
 
 describe("resolveExecutionPath", () => {
-  it("defaults native workflows to graph", () => {
-    expect(resolveExecutionPath({ loopKind: "native" })).toBe("graph");
+  it("native workflows always resolve to a2a (graph dispatch removed)", () => {
+    expect(resolveExecutionPath({ loopKind: "native" })).toBe("a2a");
   });
 
-  it("uses execution_path column when set", () => {
+  it("native ignores legacy execution_path='graph' and still resolves a2a", () => {
     expect(
-      resolveExecutionPath({ loopKind: "native", executionPath: "a2a" })
+      resolveExecutionPath({ loopKind: "native", executionPath: "graph" })
     ).toBe("a2a");
   });
 
-  it("loop_options executionPath overrides column", () => {
+  it("native ignores loop_options executionPath override, still a2a", () => {
     expect(
       resolveExecutionPath({
         loopKind: "native",
         executionPath: "graph",
-        loopOptionsJson: { executionPath: "a2a" },
+        loopOptionsJson: { executionPath: "graph" },
       })
     ).toBe("a2a");
   });
 
-  it("CLI loops always use graph driver path", () => {
+  it("CLI loops return the 'graph' placeholder (routed via CLI driver, not LangGraph)", () => {
     expect(
       resolveExecutionPath({
         loopKind: "claude_cli",

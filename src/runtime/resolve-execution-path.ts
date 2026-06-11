@@ -2,11 +2,8 @@ import { eq } from "drizzle-orm";
 import { config } from "../config";
 import { getDb } from "../db/sqlite/client";
 import { workflowRun } from "../db/sqlite/schema";
-import {
-  type AgentExecutionPath,
-  normalizeExecutionPath,
-} from "../types/execution-path";
-import { normalizeLoopKind, parseLoopOptionsJson } from "../types/loop";
+import type { AgentExecutionPath } from "../types/execution-path";
+import { normalizeLoopKind } from "../types/loop";
 
 export interface ExecutionPathContext {
   loopKind?: unknown;
@@ -16,20 +13,18 @@ export interface ExecutionPathContext {
 
 /**
  * Resolve how a native workflow should run agents.
- * CLI loops (claude_cli / codex_cli) always use graph-equivalent external drivers.
+ *
+ * 收敛后：native loop 的唯一内部总线是 A2A，恒返回 "a2a"（graph 派发已删除）。
+ * 历史 DB 里 executionPath='graph' 的 workflow 也被强制归一到 "a2a"，续跑时走
+ * A2A 重放/自研 snapshot 恢复，不再回退 LangGraph。
+ *
+ * CLI loops (claude_cli / codex_cli) 不经此路径派发（dispatchTaskToRole 直接走
+ * getLoopDriver(kind)）；这里对非 native 返回占位 "graph" 仅为类型兼容，不影响实际路由。
  */
 export function resolveExecutionPath(ctx: ExecutionPathContext): AgentExecutionPath {
   const loopKind = normalizeLoopKind(ctx.loopKind);
   if (loopKind !== "native") return "graph";
-
-  const opts = parseLoopOptionsJson(ctx.loopOptionsJson);
-  if (opts.executionPath) return opts.executionPath;
-
-  if (ctx.executionPath != null && ctx.executionPath !== "") {
-    return normalizeExecutionPath(ctx.executionPath);
-  }
-
-  return config.agentExecutionPath;
+  return "a2a";
 }
 
 export async function resolveExecutionPathForWorkflow(

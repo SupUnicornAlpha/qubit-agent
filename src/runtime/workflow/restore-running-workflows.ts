@@ -1,10 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { analystResearchJob, workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import { normalizeLoopKind } from "../../types/loop";
+import { dispatchTaskToRole } from "../agent-pool";
 import { loadLatestCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
-import { graphRunner } from "../langgraph/graph-factory";
-import { getCheckpointSaver } from "../langgraph/sqlite-checkpoint-saver";
 import { ClaudeCliLoopDriver, CodexCliLoopDriver } from "../loop/cli-loop-driver";
 import {
   failAnalystResearchJob,
@@ -48,15 +48,16 @@ function getCliDriver(kind: "claude_cli" | "codex_cli") {
 
 /**
  * 进程启动时扫描"未结束"工作流：
- * 1. 有 LangGraph checkpoint 的 `running` / `pending` → 调 graphRunner.resumeRoleTask 续跑；
- * 2. 没有 checkpoint 的 → 入补偿队列 retry_from_start（或对 CLI 工作流标 failed，等用户/告警决定）；
+ * 1. 有自研 snapshot 的 `running` / `pending` native 工作流 → 派 A2A workflow_resume
+ *    从快照续跑（executeAgentReact 内 restoreStateFromSnapshot 真·恢复运行态）；
+ * 2. 没有 snapshot 的 → 入补偿队列 retry_from_start（或对 CLI 工作流标 failed，等用户/告警决定）；
  * 3. `awaiting_approval` → 不主动续跑（要等人审批），但要把 analyst job cache 回填，
  *    让 resolveHitlRequest 一调用就能拿到 resumePayload 重派；
  * 4. **P0-3 新增**：扫"stale awaiting_approval"——hitl_request 已 approved/rejected 但
  *    analyst job 还停在 awaiting_approval 的死锁残留（resolveHitlRequest 跑到一半崩溃），
  *    按 hitl_request.status 决策修复。
  *
- * 在 `startAllAgents()` 之后调用，确保 GraphRunner 已 ready。
+ * 在 `startAllAgents()` 之后调用，确保 A2APool 已 ready。
  */
 export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
   const db = await getDb();
@@ -130,39 +131,44 @@ export async function restoreRunningWorkflows(): Promise<RestoreOutcome> {
   }
   if (candidates.length === 0) return outcome;
 
-  const saver = getCheckpointSaver();
-
   for (const wf of candidates) {
     const loopKind = normalizeLoopKind(wf.loopKind);
     try {
-      const tuple = await saver.getTuple({ configurable: { thread_id: wf.id } });
-      if (tuple && loopKind === "native") {
-        await graphRunner.resumeRoleTask({ workflowId: wf.id });
-        outcome.resumed += 1;
-        console.log(
-          `[restoreRunningWorkflows] resumed workflow=${wf.id} from checkpoint=${tuple.checkpoint.id}`
-        );
-        continue;
-      }
-
-      // 无 LangGraph checkpoint：先看看旁路 snapshot 是否能提供线索（仅用作运营日志），
-      // 再交给补偿队列 retry_from_start。
+      // native 工作流：有自研 snapshot 就从快照续跑。收敛后走 A2A —— 派一条
+      // workflow_resume TASK_ASSIGN(params.resume=true) 给 orchestrator，
+      // runA2aReactTaskAssign → executeAgentReact(resume=true) → restoreStateFromSnapshot
+      // 恢复运行态、从下一轮 reason 重入。
       if (loopKind === "native") {
-        const sidecar = await loadLatestCheckpointSnapshot(wf.id);
-        const hint = sidecar
-          ? ` last_snapshot=phase:${sidecar.phase} step:${sidecar.stepIndex} iter:${sidecar.iteration}`
-          : "";
+        const snapshot = await loadLatestCheckpointSnapshot(wf.id);
+        if (snapshot) {
+          await dispatchTaskToRole({
+            workflowId: wf.id,
+            role: "orchestrator",
+            payload: {
+              taskId: randomUUID(),
+              taskType: "workflow_resume",
+              assignedRole: "orchestrator",
+              params: { workflowRunId: wf.id, goal: wf.goal, mode: wf.mode, resume: true },
+            },
+          });
+          outcome.resumed += 1;
+          console.log(
+            `[restoreRunningWorkflows] resumed workflow=${wf.id} from snapshot=` +
+              `phase:${snapshot.phase} step:${snapshot.stepIndex} iter:${snapshot.iteration}`
+          );
+          continue;
+        }
+
+        // 无 snapshot：交给补偿队列 retry_from_start。
         await enqueueCompensationTask({
           workflowRunId: wf.id,
           actionType: "retry_from_start",
-          reason: sidecar
-            ? `process_restart_no_lg_checkpoint_but_snapshot:${sidecar.phase}@step${sidecar.stepIndex}`
-            : "process_restart_no_checkpoint",
+          reason: "process_restart_no_snapshot",
           maxRetries: 1,
         });
         outcome.enqueuedRetry += 1;
         console.log(
-          `[restoreRunningWorkflows] no LG checkpoint for workflow=${wf.id}, enqueued retry_from_start${hint}`
+          `[restoreRunningWorkflows] no snapshot for workflow=${wf.id}, enqueued retry_from_start`
         );
         continue;
       }

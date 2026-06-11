@@ -8,8 +8,11 @@ const ConfigSchema = z.object({
   dataDir: z.string().default(defaultDataDir()),
   logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
   riskSigningKey: z.string().default("dev-secret-change-in-production"),
-  /** Default agent execution path for new native workflows (graph | a2a). Per-workflow override on workflow_run. */
-  agentExecutionPath: z.enum(["graph", "a2a"]).default("graph"),
+  /**
+   * Default agent execution path for new native workflows. 收敛后 native loop 唯一
+   * 内部总线是 A2A（graph 派发已删除）；"graph" 枚举仅为兼容历史 DB 行，实际不再路由到 LangGraph。
+   */
+  agentExecutionPath: z.enum(["graph", "a2a"]).default("a2a"),
   memory: z.object({
     sessionTtlHours: z.coerce.number().default(24),
     external: z.object({
