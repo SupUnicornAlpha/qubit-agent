@@ -687,6 +687,11 @@ export interface AgentSkill {
   failCount: number;
   lastUsedAt: string | null;
   metadataJson: unknown;
+  /**
+   * W2（2026-06-11）：JSON 字符串数组，列出此 skill 推荐使用的 tool 全名。
+   * 默认 `"[]"`；空时 auto-skill-execution-hook 会退回子串匹配。
+   */
+  recommendedToolsJson: string;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

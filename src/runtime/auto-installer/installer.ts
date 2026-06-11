@@ -25,7 +25,9 @@ import { getSelfEvolveConfig } from "../config/self-evolve-config.js";
 import { type ExperienceBus, getExperienceBus } from "../experience/experience-bus.js";
 import { installMcpCatalogToProject } from "../mcp/install-service.js";
 import { findCandidatesForGap } from "./candidate-matcher.js";
+import { type DryRunFn, createDefaultDryRunner } from "./dry-run-sandbox.js";
 import { approveProposal } from "./lifecycle.js";
+import { type SafetyScanOptions, type SafetyScanResult, scanCandidate } from "./safety-scan.js";
 import type { AutoInstallerRunSummary, MatchCandidate, ProposalKind } from "./types.js";
 
 export interface AutoInstallerRunOptions {
@@ -52,6 +54,17 @@ export interface AutoInstallerRunOptions {
 
 export interface AutoInstallerDeps {
   bus?: ExperienceBus;
+  /**
+   * W3（2026-06-11）：候选 safety scan 注入点。默认用 `scanCandidate` 纯函数。
+   * 仅对 external（source!='builtin'）候选生效；builtin 已经过 catalog 入库审核。
+   */
+  safetyScanner?: (c: MatchCandidate, opts?: SafetyScanOptions) => SafetyScanResult;
+  safetyScanOptions?: SafetyScanOptions;
+  /**
+   * W3：dry-run 探针。默认占位实现（不真 spawn），单测可注入返回 ok=false 的 mock
+   * 来验证 reject path。仅 external 候选会跑此探针。
+   */
+  dryRunner?: DryRunFn;
 }
 
 interface ActionEntry {
@@ -62,11 +75,18 @@ interface ActionEntry {
     | "skipped_existing"
     | "no_candidate"
     | "auto_installed"
-    | "auto_install_failed";
+    | "auto_install_failed"
+    /** W3：safety scan 阻断；候选被剔除 */
+    | "safety_blocked"
+    /** W3：dry-run 探针失败；候选被剔除 */
+    | "dry_run_failed";
   proposalId?: string;
   candidate?: { slug: string; score: number; targetKind: string };
   installId?: string;
   reason?: string;
+  /** W3：safety / dry-run 详细信息 */
+  blockers?: string[];
+  warnings?: string[];
 }
 
 const DEFAULT_MAX_GAPS_PER_RUN = 50;
@@ -85,9 +105,75 @@ function nowIso(): string {
 
 export class AutoInstaller {
   private readonly bus: ExperienceBus;
+  private readonly safetyScanner: NonNullable<AutoInstallerDeps["safetyScanner"]>;
+  private readonly safetyScanOptions: SafetyScanOptions;
+  private readonly dryRunner: DryRunFn;
 
   constructor(deps: AutoInstallerDeps = {}) {
     this.bus = deps.bus ?? getExperienceBus();
+    this.safetyScanner = deps.safetyScanner ?? scanCandidate;
+    this.safetyScanOptions = deps.safetyScanOptions ?? {};
+    this.dryRunner = deps.dryRunner ?? createDefaultDryRunner();
+  }
+
+  /**
+   * W3：从 candidates 列表里挑首个"可 propose"的候选。
+   * - builtin 来源跳过 safety / dry-run（catalog 已审）。
+   * - external 来源依次跑 safety scan + dry-run，遇到任一阻断就把候选打掉。
+   * 返回 `{ accepted, rejected }`：rejected 用来落 actions 日志，accepted=null 时表示候选用尽。
+   */
+  private async pickAcceptedCandidate(candidates: MatchCandidate[]): Promise<{
+    accepted: MatchCandidate | null;
+    rejected: Array<{
+      candidate: MatchCandidate;
+      reason: "safety_blocked" | "dry_run_failed";
+      blockers: string[];
+      warnings: string[];
+    }>;
+  }> {
+    const rejected: Array<{
+      candidate: MatchCandidate;
+      reason: "safety_blocked" | "dry_run_failed";
+      blockers: string[];
+      warnings: string[];
+    }> = [];
+    for (const c of candidates) {
+      if (c.source === "builtin") return { accepted: c, rejected };
+
+      const safety = this.safetyScanner(c, this.safetyScanOptions);
+      if (!safety.ok) {
+        rejected.push({
+          candidate: c,
+          reason: "safety_blocked",
+          blockers: safety.blockers,
+          warnings: safety.warnings,
+        });
+        continue;
+      }
+
+      try {
+        const dry = await this.dryRunner(c.payload);
+        if (!dry.ok) {
+          rejected.push({
+            candidate: c,
+            reason: "dry_run_failed",
+            blockers: [dry.reason ?? "dry_run_not_ok"],
+            warnings: safety.warnings,
+          });
+          continue;
+        }
+      } catch (err) {
+        rejected.push({
+          candidate: c,
+          reason: "dry_run_failed",
+          blockers: [err instanceof Error ? err.message : String(err)],
+          warnings: safety.warnings,
+        });
+        continue;
+      }
+      return { accepted: c, rejected };
+    }
+    return { accepted: null, rejected };
   }
 
   async runOnce(opts: AutoInstallerRunOptions): Promise<AutoInstallerRunSummary> {
@@ -201,7 +287,49 @@ export class AutoInstaller {
           continue;
         }
 
-        const best = candidates[0]!;
+        // W3：safety scan + dry-run 过滤；external 候选两关都过才进 propose
+        const picked = await this.pickAcceptedCandidate(candidates);
+        for (const r of picked.rejected) {
+          if (actions.length < MAX_ACTIONS_PER_RUN) {
+            actions.push({
+              gapId: gap.id,
+              gapSignature: gap.gapSignature,
+              action: r.reason,
+              candidate: {
+                slug: r.candidate.targetSlug,
+                score: r.candidate.score,
+                targetKind: r.candidate.targetKind,
+              },
+              blockers: r.blockers,
+              warnings: r.warnings,
+              reason: r.blockers[0] ?? r.reason,
+            });
+          }
+        }
+        if (!picked.accepted) {
+          // 所有候选都被 reject → 当 no_candidate 处理（保留 reject 详情在 actions 里）
+          const proposalId = await this.insertProposal({
+            projectId: opts.projectId,
+            gapLogId: gap.id,
+            kind: "no_candidate",
+            state: "no_candidate",
+            best: null,
+            candidates: [],
+            proposerRunId: runId,
+          });
+          summary.proposalsNoCandidate += 1;
+          if (actions.length < MAX_ACTIONS_PER_RUN) {
+            actions.push({
+              gapId: gap.id,
+              gapSignature: gap.gapSignature,
+              action: "no_candidate",
+              proposalId,
+              reason: "all candidates blocked by safety/dry-run",
+            });
+          }
+          continue;
+        }
+        const best = picked.accepted;
         // P9 auto 判定：safetyLevel=low + source=builtin（合表前的 mcp_catalog） + score≥阈值 → 自动 approve+真装
         // external（合表前的 mcp_catalog_item，即 source=registry）无论 safety 都走 propose（registry 来源风险更大）
         const autoEligible =

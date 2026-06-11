@@ -42,6 +42,8 @@ export interface CreateSkillInput {
   version?: string;
   state?: AgentSkillState;
   pinned?: boolean;
+  /** W2：显式声明此 skill 推荐使用的 tool 全名白名单。空 / 未传时 hook 退回子串匹配。 */
+  recommendedTools?: string[];
 }
 
 export interface PatchSkillInput {
@@ -53,6 +55,8 @@ export interface PatchSkillInput {
   state?: AgentSkillState;
   metadata?: Record<string, unknown>;
   bumpVersion?: boolean;
+  /** W2：覆盖 recommendedTools 白名单（`null` / `[]` 都表示清空，回退子串匹配）。 */
+  recommendedTools?: string[] | null;
 }
 
 export interface RecordSkillUsageInput {
@@ -95,6 +99,29 @@ function bumpSemver(version: string): string {
   const major = Number(m[1] ?? "1");
   const minor = m[2] != null ? Number(m[2]) + 1 : 1;
   return `v${major}.${minor}`;
+}
+
+/**
+ * W2 helper：把外部传入的 `recommendedTools?: string[] | null` 规范化为存进 SQLite 的
+ * JSON 字符串。规则：
+ *   - 去重 + trim + 过滤空串
+ *   - 不限制大小写（tool name 大小写敏感，hook 侧再小写归一化匹配）
+ *   - `null` / `undefined` / `[]` → `"[]"`
+ *   - 出错（例如 caller 误传 object）一律落回 `"[]"`，不抛错（避免阻断 skill 创建）
+ */
+export function serializeRecommendedTools(input: string[] | null | undefined): string {
+  if (!input || !Array.isArray(input)) return "[]";
+  const cleaned: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+    const t = raw.trim();
+    if (!t) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    cleaned.push(t);
+  }
+  return JSON.stringify(cleaned);
 }
 
 function enforceLimits(input: { description: string; bodyMd: string }): void {
@@ -150,6 +177,7 @@ export class SkillService {
       failCount: 0,
       lastUsedAt: null,
       metadataJson: input.metadata ?? {},
+      recommendedToolsJson: serializeRecommendedTools(input.recommendedTools),
       createdBy: input.createdBy ?? "agent",
       createdAt: now,
       updatedAt: now,
@@ -200,6 +228,9 @@ export class SkillService {
         ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
         ...(input.state ? { state: input.state } : {}),
         ...(input.bumpVersion ? { version: nextVersion } : {}),
+        ...(input.recommendedTools !== undefined
+          ? { recommendedToolsJson: serializeRecommendedTools(input.recommendedTools) }
+          : {}),
         metadataJson: merged,
         updatedAt: now,
       })

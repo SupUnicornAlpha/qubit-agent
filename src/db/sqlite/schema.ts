@@ -2583,6 +2583,15 @@ export const agentSkill = sqliteTable(
     /** Self-Evolving Agent P4b：30 天滚动 PnL 汇总，PnlAttributor 每次跑覆盖。
      * 结构 {windowDays, pnlSum, winCount, loseCount, lastUpdatedAt}。 */
     pnlAttributionJson: text("pnl_attribution_json").notNull().default("{}"),
+    /**
+     * W2（2026-06-11）：skill 显式声明它推荐使用的工具白名单。JSON 字符串数组，
+     * 例如 `["factor.register","factor.compute","qubit-data/fetch_klines"]`。
+     *
+     * 用于 auto-skill-execution-hook 在工具调用成功后做"该 skill 是否被采纳"的精确判定，
+     * 取代旧版基于 bodyMd 的 substring 匹配（容易把通用步骤 skill 全命中 / 漏掉重命名工具）。
+     * 兼容：若该列为空数组，hook 会退回到子串匹配，保证旧 skill 仍可被自动标记 executed。
+     */
+    recommendedToolsJson: text("recommended_tools_json").notNull().default("[]"),
     /** P5 SkillPromoter 留位（P4b 不写，避免每期 alter 表）。 */
     lastPromotedAt: text("last_promoted_at"),
     /** 'manual' | 'auto'，P6/P9 用 */

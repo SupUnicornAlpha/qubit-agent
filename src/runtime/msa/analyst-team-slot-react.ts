@@ -41,9 +41,54 @@ import type { NormalizedResearchScope } from "../../types/research-scope";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
 import { formatResearchScopePreamble } from "./analyst-team-scope";
 
-const TEAM_SLOT_MAX_ITERATIONS = 6;
+/**
+ * 单 slot 在 ReAct 内核里允许的最大轮数。提到 8（原 6）：
+ *
+ * Wave-3 / W5（2026-06-10 复盘）：旧 prompt 写"先用工具，再出 JSON"暗示线性 2 步；
+ * LLM 经常 1 工具 + 1 JSON 就停，没真正进入 ReAct 的"假设→验证→修正"循环。
+ * 把 cap 抬到 8 是给"自驱多轮交叉验证"留 token 预算；不会让单 slot 跑爆——
+ * `def.maxIterations` 仍然是真实下限（min 取小）。
+ */
+const TEAM_SLOT_MAX_ITERATIONS = 8;
 
-async function loadRuntimeDefinition(definitionId: string): Promise<RuntimeAgentDefinition> {
+/**
+ * "wave 分析师 ReAct 档位"默认值映射。caller（analyst-team.ts）传入 group.pipelineKind
+ * 时按这张表挑迭代上限，否则走默认。
+ *
+ * - msa_fusion：典型的多分析师投票场景，鼓励单分析师做交叉验证 → 4 轮
+ * - sequential_research：策略撰写/实盘下单 pipeline，工具链路本来就长 → 6 轮
+ * - event_radar / factor_discovery：事件/因子聚焦 → 3 轮足够
+ */
+export type AnalystReactDepth = "minimal" | "standard" | "deep";
+
+export function pickAnalystReactDepth(input: {
+  pipelineKind?: "msa_fusion" | "sequential_research" | "event_radar" | "factor_discovery" | null;
+  expectJsonSignal: boolean;
+}): AnalystReactDepth {
+  /** Aux pipeline（expectJsonSignal=false）：策略撰写/回测/实盘等长链路 → deep */
+  if (!input.expectJsonSignal) return "deep";
+  switch (input.pipelineKind) {
+    case "sequential_research":
+      return "deep";
+    case "event_radar":
+    case "factor_discovery":
+      return "minimal";
+    case "msa_fusion":
+    default:
+      return "standard";
+  }
+}
+
+export const ANALYST_REACT_ITERATIONS: Record<AnalystReactDepth, number> = {
+  minimal: 3,
+  standard: 4,
+  deep: 6,
+};
+
+async function loadRuntimeDefinition(
+  definitionId: string,
+  reactCap: number = TEAM_SLOT_MAX_ITERATIONS
+): Promise<RuntimeAgentDefinition> {
   const db = await getDb();
   const row = await db
     .select()
@@ -52,6 +97,13 @@ async function loadRuntimeDefinition(definitionId: string): Promise<RuntimeAgent
     .limit(1);
   if (!row[0]) throw new Error(`Agent definition not found: ${definitionId}`);
   const d = row[0];
+  /**
+   * W5：reactCap 决定该 slot 在本批 wave 内的上限：
+   *   - 默认 reactCap = TEAM_SLOT_MAX_ITERATIONS（8）
+   *   - caller 按 pipelineKind 传 ANALYST_REACT_ITERATIONS[depth] (3/4/6)
+   *   - 与 def.maxIterations 取小值，避免 def 的低 cap 被覆盖（def 可能显式设 2）
+   */
+  const cap = Math.max(1, Math.min(reactCap, TEAM_SLOT_MAX_ITERATIONS));
   return {
     id: d.id,
     role: d.role as AgentRole,
@@ -64,7 +116,7 @@ async function loadRuntimeDefinition(definitionId: string): Promise<RuntimeAgent
     subscriptions: (d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"]) ?? ["TASK_ASSIGN"],
     llmProvider: d.llmProvider,
     llmConfig: parseLlmConfigJson(d.llmConfigJson),
-    maxIterations: Math.min(d.maxIterations ?? TEAM_SLOT_MAX_ITERATIONS, TEAM_SLOT_MAX_ITERATIONS),
+    maxIterations: Math.min(d.maxIterations ?? cap, cap),
     sandboxPolicyId: d.sandboxPolicyId,
     enabled: Boolean(d.enabled),
   };
@@ -218,6 +270,14 @@ export async function runResearchTeamSlotReact(params: {
   /** analyst_* 需解析 JSON 信号 */
   expectJsonSignal?: boolean;
   /**
+   * W5（2026-06-10）：wave 分析师 ReAct 迭代档位。
+   *
+   * caller（analyst-team.ts）按 `group.pipelineKind` 传入 minimal/standard/deep；
+   * 不传时默认 standard（4 轮），与历史行为相比从"事实上 1-2 轮"提升到"鼓励 4 轮"。
+   * 真实上限仍然受 def.maxIterations 与 TEAM_SLOT_MAX_ITERATIONS 双重约束。
+   */
+  reactDepth?: AnalystReactDepth;
+  /**
    * 编组级硬约束 hint（Round 7 复盘 2026-06-08 新增）。
    *
    * 由 caller 通过 `buildGroupRoleConstraintHint({ groupId, role, groupDescription })` 算好后透传。
@@ -231,7 +291,9 @@ export async function runResearchTeamSlotReact(params: {
   | { kind: "analyst"; payload: RawAnalystSignal & { agentInstanceId?: string } }
   | { kind: "markdown"; body: string; agentInstanceId?: string }
 > {
-  const def = await loadRuntimeDefinition(params.definitionId);
+  const reactDepth: AnalystReactDepth = params.reactDepth ?? "standard";
+  const reactCap = ANALYST_REACT_ITERATIONS[reactDepth];
+  const def = await loadRuntimeDefinition(params.definitionId, reactCap);
   def.systemPrompt = params.systemPrompt;
   def.mcpServers = await resolveEnabledMcpServerNames(def.mcpServers ?? []);
 
@@ -272,8 +334,26 @@ export async function runResearchTeamSlotReact(params: {
   const groupHint = params.groupConstraintHint?.trim()
     ? `\n\n${params.groupConstraintHint.trim()}`
     : "";
+  /**
+   * W5（2026-06-10）：把"先用工具，再出 JSON"的线性 2 步暗示改成"多轮交叉验证 + 自我修正"
+   * 的 ReAct loop 描述，让 LLM 自己驱动多个工具调用做证据互证，而不是 1 工具 + 1 JSON 就停。
+   * 配合 reactDepth=standard (4) / deep (6) 的 maxIterations 提升才有效。
+   */
+  const reactPolicyHint = (() => {
+    if (!params.expectJsonSignal) return "";
+    const minTools = reactDepth === "deep" ? 3 : reactDepth === "minimal" ? 1 : 2;
+    return [
+      "",
+      `**多轮 ReAct 策略（本子任务建议至少 ${minTools} 次工具调用 + 1 次 self-critique）**：`,
+      "1. **第 1 步**：先调一个核心工具（如 fetch_klines / fetch_news_sentiment）拿到数据",
+      "2. **第 2 步**：基于第 1 步结果做交叉验证 —— 选一个**不同维度**的工具（技术面 + 消息面 / 估值 + 同行对比）",
+      "3. **第 3 步**：自我审视：`第 1/2 步证据是否互相支撑？是否有反向信号被忽略？` —— 如有冲突，再调 1 个工具核实",
+      "4. **最终回合**：综合所有观测输出 JSON 信号（buy/sell/hold + confidence + reasoning）",
+      "**禁止**：第 1 个工具调用之后立刻给 JSON 就停 —— 单数据源信号 confidence 上限 0.6。",
+    ].join("\n");
+  })();
   const userGoal = params.expectJsonSignal
-    ? `分析${targetLabel}，先使用授权工具拉取数据/指标，再输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}${groupHint}`
+    ? `分析${targetLabel}，使用授权工具做多轮交叉验证，最终输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}${reactPolicyHint}${groupHint}`
     : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}${groupHint}`;
 
   const result = await executeAgentReact({

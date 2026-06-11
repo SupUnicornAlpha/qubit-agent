@@ -19,6 +19,8 @@ import { skillService } from "../skill-service";
 import {
   autoMarkRecalledSkillsAsExecuted,
   buildSearchTokens,
+  matchRecommendedTool,
+  parseRecommendedToolsJson,
 } from "../auto-skill-execution-hook";
 
 const SANDBOX_ID = "sb-auto-hook-test";
@@ -254,5 +256,158 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
       mcpServerName: "publicfinance",
     });
     expect(res.matched).toEqual([skill.id]);
+  });
+});
+
+/**
+ * W2（2026-06-11）：recommended_tools_json 显式白名单优先于子串匹配。
+ */
+describe("matchRecommendedTool / parseRecommendedToolsJson (W2 helpers)", () => {
+  test("精确匹配（case-insensitive）", () => {
+    expect(matchRecommendedTool(["factor.register"], "factor.register")).toBe(true);
+    expect(matchRecommendedTool(["FACTOR.register"], "factor.REGISTER")).toBe(true);
+  });
+
+  test("namespace.* 通配命中同 namespace 的所有工具", () => {
+    expect(matchRecommendedTool(["factor.*"], "factor.register")).toBe(true);
+    expect(matchRecommendedTool(["factor.*"], "factor.compute")).toBe(true);
+    expect(matchRecommendedTool(["factor.*"], "factor")).toBe(true);
+    expect(matchRecommendedTool(["factor.*"], "strategy.create")).toBe(false);
+  });
+
+  test("mcp:<server> 通过 server 名命中", () => {
+    expect(
+      matchRecommendedTool(["mcp:publicfinance"], "treasury_rates", "publicfinance")
+    ).toBe(true);
+    expect(matchRecommendedTool(["mcp:publicfinance"], "treasury_rates", "yahoo")).toBe(false);
+  });
+
+  test("空白名单永远不命中（让 caller fallback）", () => {
+    expect(matchRecommendedTool([], "factor.register")).toBe(false);
+  });
+
+  test("parse JSON 字符串 → string[]", () => {
+    expect(parseRecommendedToolsJson('["a","b"]')).toEqual(["a", "b"]);
+    expect(parseRecommendedToolsJson("[]")).toEqual([]);
+    expect(parseRecommendedToolsJson(null)).toEqual([]);
+    expect(parseRecommendedToolsJson(undefined)).toEqual([]);
+  });
+
+  test("非法 JSON / 非 string 元素全部安全过滤", () => {
+    expect(parseRecommendedToolsJson("not-json")).toEqual([]);
+    expect(parseRecommendedToolsJson('"single-string"')).toEqual([]);
+    expect(parseRecommendedToolsJson('["ok",123,null,"also-ok"]')).toEqual(["ok", "also-ok"]);
+  });
+});
+
+describe("autoMarkRecalledSkillsAsExecuted · W2 recommended_tools 优先", () => {
+  test("白名单精确命中 → 翻 executed=true（即使 bodyMd 完全不提该 tool）", async () => {
+    const skill = await skillService.create({
+      projectId,
+      definitionId: null,
+      name: "w2-skill-explicit",
+      description: "依靠白名单精确判定",
+      // 注意 body 里完全没有 "factor.register" 这个串，旧路径会 miss
+      bodyMd: "## 步骤\n根据 prompt 决定调用哪个工具，无需写明",
+      category: "quant",
+      source: "user_authored",
+      createdBy: "test",
+      recommendedTools: ["factor.register", "factor.compute"],
+    });
+    await insertRecall(skill.id);
+
+    const res = await autoMarkRecalledSkillsAsExecuted({
+      workflowRunId,
+      toolName: "factor.register",
+      outcome: "success",
+    });
+    expect(res.matched).toEqual([skill.id]);
+    expect(res.recorded).toBe(1);
+
+    const db = await getDb();
+    const recall = await db
+      .select()
+      .from(schema.skillRecallLog)
+      .where(eq(schema.skillRecallLog.skillId, skill.id))
+      .limit(1);
+    expect(recall[0]?.executed).toBe(true);
+  });
+
+  test("声明了白名单但 toolName 不在其中 → 不走 fallback 子串匹配（避免误报）", async () => {
+    const skill = await skillService.create({
+      projectId,
+      definitionId: null,
+      name: "w2-skill-strict",
+      description: "白名单只授权 factor.compute",
+      // body 里写了 "factor.register"，旧的子串匹配会命中；W2 应该不命中
+      bodyMd: "## Step 1\n用 factor.register 注册...\n## Step 2\n再 factor.compute",
+      category: "quant",
+      source: "user_authored",
+      createdBy: "test",
+      recommendedTools: ["factor.compute"],
+    });
+    await insertRecall(skill.id);
+
+    const res = await autoMarkRecalledSkillsAsExecuted({
+      workflowRunId,
+      toolName: "factor.register",
+      outcome: "success",
+    });
+    expect(res.matched).toEqual([]);
+    expect(res.recorded).toBe(0);
+
+    const db = await getDb();
+    const recall = await db
+      .select()
+      .from(schema.skillRecallLog)
+      .where(eq(schema.skillRecallLog.skillId, skill.id))
+      .limit(1);
+    expect(recall[0]?.executed).toBe(false);
+  });
+
+  test("namespace.* 白名单覆盖整族工具", async () => {
+    const skill = await skillService.create({
+      projectId,
+      definitionId: null,
+      name: "w2-skill-namespace",
+      description: "授权 strategy.* 全族",
+      bodyMd: "策略管线：先 create_version，再 push",
+      category: "quant",
+      source: "user_authored",
+      createdBy: "test",
+      recommendedTools: ["strategy.*"],
+    });
+    await insertRecall(skill.id);
+
+    const res = await autoMarkRecalledSkillsAsExecuted({
+      workflowRunId,
+      toolName: "strategy.create_version",
+      outcome: "success",
+    });
+    expect(res.matched).toEqual([skill.id]);
+    expect(res.recorded).toBe(1);
+  });
+
+  test("空白名单 skill 仍走 fallback 子串匹配（不 break 存量行为）", async () => {
+    const skill = await skillService.create({
+      projectId,
+      definitionId: null,
+      name: "w2-skill-legacy",
+      description: "未声明白名单",
+      bodyMd: "Step 调用 factor.register 注册因子",
+      category: "quant",
+      source: "user_authored",
+      createdBy: "test",
+      // 不传 recommendedTools → 默认 "[]"
+    });
+    await insertRecall(skill.id);
+
+    const res = await autoMarkRecalledSkillsAsExecuted({
+      workflowRunId,
+      toolName: "factor.register",
+      outcome: "success",
+    });
+    expect(res.matched).toEqual([skill.id]);
+    expect(res.recorded).toBe(1);
   });
 });

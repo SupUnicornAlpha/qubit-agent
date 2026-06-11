@@ -31,11 +31,16 @@ import {
   brokerOrder,
   chatSession,
   dailyMarkPrice,
+  executionTask,
+  executionTaskEvent,
   fill,
   indicatorStrategyScript,
   instrument,
   orderIntent,
   project,
+  riskDecision,
+  riskHitLog,
+  riskReviewTicket,
   sandboxPolicy,
   skillRecallLog,
   strategy,
@@ -197,6 +202,17 @@ beforeEach(async () => {
   await db.delete(strategyPnlSnapshot).run();
   await db.delete(fill).run();
   await db.delete(brokerOrder).run();
+  /**
+   * orderIntent 还有 execution_task / execution_task_event / risk_* 这几张子表
+   * 通过外键引用（migration 自带 6 行 seed 数据），不先清掉就 DELETE order_intent
+   * 会触发 SQLITE_CONSTRAINT_FOREIGNKEY。
+   * 顺序：execution_task_event → execution_task → risk_decision/hit/ticket → order_intent。
+   */
+  await db.delete(executionTaskEvent).run();
+  await db.delete(executionTask).run();
+  await db.delete(riskDecision).run();
+  await db.delete(riskHitLog).run();
+  await db.delete(riskReviewTicket).run();
   await db.delete(orderIntent).run();
   await db.delete(dailyMarkPrice).run();
   // 清 skill 的 pnl_attribution_json
@@ -695,5 +711,224 @@ describe("SkillAttributor.attribute", () => {
     expect(summary.skillAttribution).toBeNull();
     const apa = await (await getDb()).select().from(agentPnlAttribution).all();
     expect(apa).toHaveLength(0);
+  });
+});
+
+/**
+ * W1（2026-06-10）：recency_weighted_v1 — 同 workflow 内按 first-touch 时间排序，
+ * 越接近最终决策的 skill 拿越大权重。lambda 默认 0.85。
+ */
+describe("SkillAttributor.attribute · v1 recency_weighted (W1)", () => {
+  test("3 个 skill 按 first-touch 排序：末位拿最大 share，首位最小", async () => {
+    /** 关键：手工写 createdAt，让 s1 早于 s2 早于 s3（注意 createdAt 是 ISO 字符串，字典序就是时间序）*/
+    const db = await getDb();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s1,
+        executed: true,
+        createdAt: "2026-06-01T10:00:00.000Z",
+      })
+      .run();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s2,
+        executed: true,
+        createdAt: "2026-06-01T10:00:30.000Z",
+      })
+      .run();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s3,
+        executed: true,
+        createdAt: "2026-06-01T10:01:00.000Z",
+      })
+      .run();
+    const runIdS1 = await seedSkillRun(fixture.workflowRunId, fixture.s1);
+    const runIdS2 = await seedSkillRun(fixture.workflowRunId, fixture.s2);
+    const runIdS3 = await seedSkillRun(fixture.workflowRunId, fixture.s3);
+
+    const attr = createSkillAttributor(db);
+    const summary = await attr.attribute({
+      items: [
+        {
+          workflowRunId: fixture.workflowRunId,
+          tradingDay: "2026-06-01",
+          pnlAttributed: 100,
+          strategyRuntimeId: fixture.runtimeUSId,
+        },
+      ],
+      attributionMethod: "recency_weighted_v1",
+    });
+    expect(summary.attributionRowsUpserted).toBe(1);
+    expect(summary.skillRunsUpdated).toBe(3);
+
+    /** 期望：lambda=0.85，weights=[0.85^2, 0.85^1, 0.85^0]=[0.7225, 0.85, 1.0]
+     *       归一化 sum=2.5725 → shares ≈ [28.10, 33.04, 38.87]
+     *  s1 (最早) ≈ 28.10；s3 (最晚) ≈ 38.87；s2 中间 */
+    const r1 = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, runIdS1)).get();
+    const r2 = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, runIdS2)).get();
+    const r3 = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, runIdS3)).get();
+    if (!r1 || !r2 || !r3) throw new Error("missing skill_run");
+
+    expect(r1.pnlDelta).toBeGreaterThan(27);
+    expect(r1.pnlDelta).toBeLessThan(29);
+    expect(r2.pnlDelta).toBeGreaterThan(32);
+    expect(r2.pnlDelta).toBeLessThan(34);
+    expect(r3.pnlDelta).toBeGreaterThan(38);
+    expect(r3.pnlDelta).toBeLessThan(40);
+    /** 末位严格 > 首位 */
+    expect((r3.pnlDelta ?? 0) > (r1.pnlDelta ?? 0)).toBe(true);
+    /** 三者之和应该约等于 100（pnlAttributed）允许 round6 误差 */
+    const total = (r1.pnlDelta ?? 0) + (r2.pnlDelta ?? 0) + (r3.pnlDelta ?? 0);
+    expect(Math.abs(total - 100)).toBeLessThan(0.01);
+
+    /** 主字段 perSkillShare 是"等权占位" pnl/N = 100/3 ≈ 33.33（避免误导报表） */
+    const apaRows = await db
+      .select()
+      .from(agentPnlAttribution)
+      .where(eq(agentPnlAttribution.workflowRunId, fixture.workflowRunId))
+      .all();
+    expect(apaRows).toHaveLength(1);
+    const apa = apaRows[0]!;
+    expect(apa.attributionMethod).toBe("recency_weighted_v1");
+    expect(apa.perSkillShare).toBeGreaterThan(33);
+    expect(apa.perSkillShare).toBeLessThan(34);
+    /** metadata_json 存了真实 share map */
+    const meta = apa.metadataJson as {
+      recencyDecayLambda?: number;
+      perSkillShareByIdJson?: Record<string, number>;
+      skillIdsOrderedByFirstTouch?: string[];
+    };
+    expect(meta.recencyDecayLambda).toBe(0.85);
+    expect(meta.skillIdsOrderedByFirstTouch).toEqual([fixture.s1, fixture.s2, fixture.s3]);
+    expect(meta.perSkillShareByIdJson?.[fixture.s3]!).toBeGreaterThan(
+      meta.perSkillShareByIdJson?.[fixture.s1]!
+    );
+  });
+
+  test("'time_decay_v1' 别名走相同算法", async () => {
+    const db = await getDb();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s1,
+        executed: true,
+        createdAt: "2026-06-01T10:00:00.000Z",
+      })
+      .run();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s2,
+        executed: true,
+        createdAt: "2026-06-01T10:01:00.000Z",
+      })
+      .run();
+    await seedSkillRun(fixture.workflowRunId, fixture.s1);
+    await seedSkillRun(fixture.workflowRunId, fixture.s2);
+
+    const attr = createSkillAttributor(db);
+    const summary = await attr.attribute({
+      items: [
+        {
+          workflowRunId: fixture.workflowRunId,
+          tradingDay: "2026-06-01",
+          pnlAttributed: 100,
+          strategyRuntimeId: fixture.runtimeUSId,
+        },
+      ],
+      attributionMethod: "time_decay_v1",
+    });
+    expect(summary.attributionRowsUpserted).toBe(1);
+    const apa = (await db.select().from(agentPnlAttribution).all())[0]!;
+    expect(apa.attributionMethod).toBe("time_decay_v1");
+    /** 2 个 skill：weights=[0.85, 1.0] 归一化 → [0.4595, 0.5405] → s1≈45.95, s2≈54.05 */
+    const meta = apa.metadataJson as { perSkillShareByIdJson?: Record<string, number> };
+    expect(meta.perSkillShareByIdJson?.[fixture.s2]!).toBeGreaterThan(
+      meta.perSkillShareByIdJson?.[fixture.s1]!
+    );
+  });
+
+  test("自定义 lambda=0.5（激进）→ 末位远大于首位", async () => {
+    const db = await getDb();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s1,
+        executed: true,
+        createdAt: "2026-06-01T10:00:00.000Z",
+      })
+      .run();
+    await db
+      .insert(skillRecallLog)
+      .values({
+        id: `rec_${randomUUID()}`,
+        workflowRunId: fixture.workflowRunId,
+        skillId: fixture.s2,
+        executed: true,
+        createdAt: "2026-06-01T10:01:00.000Z",
+      })
+      .run();
+    const r1 = await seedSkillRun(fixture.workflowRunId, fixture.s1);
+    const r2 = await seedSkillRun(fixture.workflowRunId, fixture.s2);
+
+    const attr = createSkillAttributor(db);
+    await attr.attribute({
+      items: [
+        {
+          workflowRunId: fixture.workflowRunId,
+          tradingDay: "2026-06-01",
+          pnlAttributed: 90,
+          strategyRuntimeId: fixture.runtimeUSId,
+        },
+      ],
+      attributionMethod: "recency_weighted_v1",
+      recencyDecayLambda: 0.5,
+    });
+    /** weights=[0.5, 1.0] 归一化 → [0.333, 0.667] → s1=30, s2=60 */
+    const r1Row = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, r1)).get();
+    const r2Row = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, r2)).get();
+    expect(r1Row?.pnlDelta).toBeCloseTo(30, 1);
+    expect(r2Row?.pnlDelta).toBeCloseTo(60, 1);
+  });
+
+  test("默认 method（不传 attributionMethod）仍走 v0 等权", async () => {
+    await seedRecall(fixture.workflowRunId, fixture.s1, true);
+    await seedRecall(fixture.workflowRunId, fixture.s2, true);
+    const r1 = await seedSkillRun(fixture.workflowRunId, fixture.s1);
+    const r2 = await seedSkillRun(fixture.workflowRunId, fixture.s2);
+
+    const db = await getDb();
+    await createSkillAttributor(db).attribute({
+      items: [
+        {
+          workflowRunId: fixture.workflowRunId,
+          tradingDay: "2026-06-01",
+          pnlAttributed: 100,
+          strategyRuntimeId: fixture.runtimeUSId,
+        },
+      ],
+    });
+    const r1Row = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, r1)).get();
+    const r2Row = await db.select().from(agentSkillRun).where(eq(agentSkillRun.id, r2)).get();
+    expect(r1Row?.pnlDelta).toBe(50);
+    expect(r2Row?.pnlDelta).toBe(50);
+    const apa = (await db.select().from(agentPnlAttribution).all())[0]!;
+    expect(apa.attributionMethod).toBe("equal_weight_v0");
   });
 });

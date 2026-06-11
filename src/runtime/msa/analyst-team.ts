@@ -76,7 +76,7 @@ import {
   pauseForTeamOrchestratorHitl,
   type HitlApprovalPayload,
 } from "../workflow/hitl-service";
-import { runResearchTeamSlotReact } from "./analyst-team-slot-react";
+import { pickAnalystReactDepth, runResearchTeamSlotReact } from "./analyst-team-slot-react";
 import { buildGroupRoleConstraintHint } from "./group-constraint-hint";
 
 /**
@@ -828,6 +828,10 @@ async function runAnalystTeamCore(params: {
             context: ctx,
             ...(preInstanceId !== undefined ? { agentInstanceId: preInstanceId } : {}),
             expectJsonSignal: true,
+            reactDepth: pickAnalystReactDepth({
+              pipelineKind,
+              expectJsonSignal: true,
+            }),
             groupConstraintHint: buildGroupRoleConstraintHint({
               groupId: effectiveGroupId,
               role: slot.role,
@@ -1145,6 +1149,10 @@ async function runAnalystTeamCore(params: {
           scope,
           context: ctx,
           expectJsonSignal: false,
+          reactDepth: pickAnalystReactDepth({
+            pipelineKind,
+            expectJsonSignal: false,
+          }),
           groupConstraintHint: buildGroupRoleConstraintHint({
             groupId: effectiveGroupId,
             role: slot.role,
