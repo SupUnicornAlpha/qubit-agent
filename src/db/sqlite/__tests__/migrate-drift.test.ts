@@ -36,7 +36,11 @@ describe("runMigrations sanity drift check", () => {
 
   test("__drizzle_migrations 表不存在 → readAppliedMigrationCount 返回 0（不抛错）", () => {
     const tmpDir = process.env.QUBIT_DATA_DIR ?? config.dataDir;
-    const dbPath = join(tmpDir, "db", "__test_no_table.sqlite");
+    const dbDir = join(tmpDir, "db");
+    const dbPath = join(dbDir, "__test_no_table.sqlite");
+    // 确保 db/ 子目录存在：测试隔离后 QUBIT_DATA_DIR 指向全新空 tmp，
+    // 若本文件先于任何 getDb()（其负责 mkdir db/）执行，open 会因目录缺失而失败。
+    require("node:fs").mkdirSync(dbDir, { recursive: true });
     // 建一个空 sqlite，不建 __drizzle_migrations 表
     const sqlite = new Database(dbPath);
     sqlite.exec("CREATE TABLE foo(id INTEGER)");

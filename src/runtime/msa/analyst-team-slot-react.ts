@@ -380,12 +380,9 @@ export async function runResearchTeamSlotReact(params: {
     streamSource: "native",
     updateWorkflowStatus: false,
     /**
-     * MSA fan-out 隔离：4 个 analyst slot 并发执行时必须用 per-slot 的 LangGraph
-     * thread_id，避免共用 `workflowRunId` 导致 checkpoint 互相覆盖（reason/act
-     * state 串台 → "Orchestrator 收到的不是自己分析师的回复"）。
-     * suffix 用 `role:definitionId` 既保证人类可读，又避免同 role 多 instance 冲突。
+     * MSA fan-out 隔离：4 个 analyst slot 并发执行各自独立 `runId`，自研 snapshot
+     * 天然按 runId 隔离，无需额外 thread 后缀（原 LangGraph thread_id 隔离已下线）。
      */
-    threadSuffix: `${params.role}:${params.definitionId}`,
   });
 
   const text =

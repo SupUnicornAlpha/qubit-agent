@@ -6,6 +6,7 @@ import {
   DEFAULT_USER_WORKSPACE_ID,
   DEFAULT_USER_WORKSPACE_NAME,
   DEFAULT_USER_WORKSPACE_OWNER,
+  ensureDefaultUserProject,
   ensureDefaultUserWorkspace,
 } from "../runtime/bootstrap/ensure-default-workspace";
 
@@ -59,6 +60,22 @@ workspaceRouter.get("/default", async (c) => {
       owner: DEFAULT_USER_WORKSPACE_OWNER,
     },
   });
+});
+
+/**
+ * 幂等 get-or-create default project（挂在 default workspace 下）。
+ *
+ * 前端 4 处 boot（MainContent ×2 / MonitorDashboard / TraderLivePanel）改成只读调这个
+ * 端点，省去各自 `if (!project) createProject()` 兜底 —— 那套并发上车会各建一份同名
+ * "QUBIT Default Project"，攒出一堆重复 project。后端写死稳定 ID 统一 get-or-create，
+ * 天然幂等，前端无论并发多少次都拿到同一行。
+ *
+ * 路由顺序重要：必须放在 `GET /:id/projects` 之前，否则 ":id"="default" 会被参数化
+ * 路由捕获、":id"/projects/default 不匹配（且会落进 list 而非 get-or-create）。
+ */
+workspaceRouter.get("/default/projects/default", async (c) => {
+  const row = await ensureDefaultUserProject();
+  return c.json({ data: row });
 });
 
 workspaceRouter.get("/:id", async (c) => {

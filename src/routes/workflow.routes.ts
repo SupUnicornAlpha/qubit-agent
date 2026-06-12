@@ -293,7 +293,7 @@ workflowRouter.patch("/:id", async (c) => {
  * - 默认：软删除（status -> cancelled，保留审计数据）。
  * - 当 query 中带 `?hard=true` 或请求体 `{ hard: true }`：硬删除，
  *   通过 hardDeleteWorkflowRun 级联清理所有衍生数据（agent_*、a2a/acp、screener、order_intent、
- *   intent_order、quality、langgraph_checkpoint 等），并把 audit_log / scheduled_job_run 等
+ *   intent_order、quality、agent_checkpoint_snapshot 等），并把 audit_log / scheduled_job_run 等
  *   保留型反向引用置空。
  *
  * 注意：前端 UI 必须在调用 hard=true 前做二次确认。

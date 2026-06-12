@@ -481,6 +481,26 @@ export async function createProject(params: {
   });
 }
 
+/**
+ * 幂等 get-or-create default project（后端写死稳定 ID）。
+ *
+ * 前端 boot 路径统一走这个，**不要再自己 createProject 兜底** —— 历史 4 处
+ * `if (!project) createProject({name:"QUBIT Default Project"})` 并发上车会各建一份同名
+ * project，攒出重复。后端 get-or-create 天然幂等，并发多少次都返回同一行。
+ * 详见 src/runtime/bootstrap/ensure-default-workspace.ts:ensureDefaultUserProject。
+ */
+export async function getOrCreateDefaultProject(): Promise<{
+  id: string;
+  workspaceId: string;
+  name: string;
+  marketScope: string;
+}> {
+  const res = await httpGet<{
+    data: { id: string; workspaceId: string; name: string; marketScope: string };
+  }>("/api/v1/workspaces/default/projects/default");
+  return res.data;
+}
+
 export async function listAgents(): Promise<AgentSummary[]> {
   const res = await httpGet<{ data: AgentSummary[] }>("/api/v1/agents");
   return res.data;

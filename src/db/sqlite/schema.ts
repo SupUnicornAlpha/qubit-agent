@@ -65,22 +65,20 @@ export const workflowRun = sqliteTable("workflow_run", {
     .default("pending"),
   /** 研究团队分析选用的 Agent 组（见迁移 0023_agent_group；Drizzle 侧不声明 FK 避免表定义顺序循环） */
   agentGroupId: text("agent_group_id"),
-  /** Agent 执行循环：native=LangGraph；claude_cli / codex_cli=外部 CLI（见 src/runtime/loop） */
+  /** Agent 执行循环：native=自研 ReAct while 循环；claude_cli / codex_cli=外部 CLI（见 src/runtime/loop） */
   loopKind: text("loop_kind", { enum: ["native", "claude_cli", "codex_cli"] })
     .notNull()
     .default("native"),
-  /** native 循环下的执行路径：graph=LangGraph；a2a=内存总线 + AgentRuntime */
+  /**
+   * native 循环下的执行路径。收敛后唯一总线为 a2a；"graph" 枚举仅兼容历史 DB 行，
+   * 实际不再路由到 LangGraph（resolveExecutionPath 对 native 恒返回 a2a）。
+   */
   executionPath: text("execution_path", { enum: ["graph", "a2a"] })
     .notNull()
-    .default("graph"),
+    .default("a2a"),
   loopOptionsJson: text("loop_options_json", { mode: "json" }).notNull().default("{}"),
   startedAt: createdAt(),
   endedAt: text("ended_at"),
-  /** LangGraph checkpointer 的 thread_id（一般等于 workflow_run.id；显式存储便于跨表查询） */
-  langgraphThreadId: text("langgraph_thread_id"),
-  /** 最近一次写入的 LangGraph checkpoint id；用于 sweep 时判断断点存在性 */
-  lastCheckpointId: text("last_checkpoint_id"),
-  lastCheckpointAt: text("last_checkpoint_at"),
   /** 累计被续跑/重试次数（Phase 1 用于幂等限流） */
   resumeCount: integer("resume_count").notNull().default(0),
   /** Phase 2.5：CLI loop（claude_cli/codex_cli）的 session id，用于 `--resume`。 */
@@ -2250,28 +2248,9 @@ export const auditLog = sqliteTable("audit_log", {
   createdAt: createdAt(),
 });
 
-// ─── LangGraph checkpointer 持久化 ────────────────────────────────────────────
-// 每个 ReAct 节点完成后 LangGraph 会调用 `put`，把当前 channel state 落到这里。
-// pending writes 在节点中断时存放未提交的写入，便于重启后恢复同一节点。
-
-export const langgraphCheckpoint = sqliteTable(
-  "langgraph_checkpoint",
-  {
-    threadId: text("thread_id").notNull(),
-    checkpointNs: text("checkpoint_ns").notNull().default(""),
-    checkpointId: text("checkpoint_id").notNull(),
-    parentCheckpointId: text("parent_checkpoint_id"),
-    type: text("type").notNull().default("json"),
-    checkpointBlob: text("checkpoint_blob").notNull(),
-    metadataBlob: text("metadata_blob").notNull(),
-    createdAt: createdAt(),
-  },
-  (t) => [uniqueIndex("idx_langgraph_checkpoint_pk").on(t.threadId, t.checkpointNs, t.checkpointId)]
-);
-
 /**
- * Phase 2.2：旁路 ReAct GraphState snapshot。
- * 节点边界写一行；与 langgraph_checkpoint 的二进制 blob 互为冗余。
+ * 自研 ReAct GraphState snapshot（替代原 LangGraph checkpointer）。
+ * 节点边界写一行；resume 时按 workflowRunId 取最近一份还原运行态。
  */
 export const agentCheckpointSnapshot = sqliteTable(
   "agent_checkpoint_snapshot",
@@ -2294,30 +2273,6 @@ export const agentCheckpointSnapshot = sqliteTable(
   (t) => [
     index("idx_agent_checkpoint_snapshot_workflow").on(t.workflowRunId, t.stepIndex),
     index("idx_agent_checkpoint_snapshot_run").on(t.runId, t.stepIndex),
-  ]
-);
-
-export const langgraphCheckpointWrite = sqliteTable(
-  "langgraph_checkpoint_write",
-  {
-    threadId: text("thread_id").notNull(),
-    checkpointNs: text("checkpoint_ns").notNull().default(""),
-    checkpointId: text("checkpoint_id").notNull(),
-    taskId: text("task_id").notNull(),
-    idx: integer("idx").notNull(),
-    channel: text("channel").notNull(),
-    type: text("type").notNull().default("json"),
-    valueBlob: text("value_blob").notNull(),
-    createdAt: createdAt(),
-  },
-  (t) => [
-    uniqueIndex("idx_langgraph_checkpoint_write_pk").on(
-      t.threadId,
-      t.checkpointNs,
-      t.checkpointId,
-      t.taskId,
-      t.idx
-    ),
   ]
 );
 

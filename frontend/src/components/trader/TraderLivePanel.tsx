@@ -1,7 +1,7 @@
 import type { CSSProperties, FC } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
-  createProject,
+  getOrCreateDefaultProject,
   createStrategyRuntime,
   getDefaultProjectSession,
   getDefaultWorkspace,
@@ -288,12 +288,9 @@ export const TraderLivePanel: FC = () => {
         const projects = await listProjects(wsId);
         let pid = projects[0]?.id;
         if (!pid) {
-          const created = await createProject({
-            workspaceId: wsId,
-            name: "QUBIT Default Project",
-            marketScope: "CN-A",
-          });
-          pid = created.data.id;
+          // 只读 get-or-create：后端写死稳定 ID 幂等，不再前端 createProject 兜底。
+          const dftProj = await getOrCreateDefaultProject();
+          pid = dftProj.id;
         }
         const session = await getDefaultProjectSession(pid);
         setProjectId(pid);

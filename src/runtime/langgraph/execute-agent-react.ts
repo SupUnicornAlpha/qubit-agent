@@ -42,13 +42,6 @@ export type ExecuteAgentReactParams = {
    *   用 initialState 跑的行为一致）。
    */
   resume?: boolean;
-  /**
-   * 历史遗留：原 LangGraph 并发 thread 隔离用。
-   *
-   * 自研 snapshot 天然按 `runId` 隔离（MSA 每个 slot 独立 runId），不再需要 thread
-   * 后缀。阶段 1 保留为 no-op 过渡参数，阶段 4/5 删除。
-   */
-  threadSuffix?: string;
 };
 
 export type ExecuteAgentReactResult = {

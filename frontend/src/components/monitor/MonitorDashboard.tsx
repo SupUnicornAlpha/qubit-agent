@@ -30,7 +30,7 @@ import {
   ackAlert,
   aggregateAgentQuality,
   createEvalDataset,
-  createProject,
+  getOrCreateDefaultProject,
   createWorkflow,
   createWorkflowQuality,
   getDefaultProjectSession,
@@ -351,16 +351,14 @@ export const MonitorDashboard: FC = () => {
     if (!workspaceId) return;
     void (async () => {
       const list = await listProjects(workspaceId);
-      setProjects(list);
       let pid = list[0]?.id ?? "";
       if (!pid) {
-        const created = await createProject({
-          workspaceId,
-          name: "QUBIT Default Project",
-          marketScope: "CN-A",
-        });
-        pid = created.data.id;
-        setProjects([{ id: created.data.id, name: created.data.name }]);
+        // 只读 get-or-create：后端写死稳定 ID 幂等，不再前端 createProject 兜底。
+        const dft = await getOrCreateDefaultProject();
+        pid = dft.id;
+        setProjects([{ id: dft.id, name: dft.name }]);
+      } else {
+        setProjects(list);
       }
       setProjectId(pid);
     })().catch(console.error);

@@ -575,6 +575,13 @@
       "when": 1813017600000,
       "tag": "0082_agent_skill_recommended_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1813104000000,
+      "tag": "0083_drop_langgraph_checkpoint",
+      "breakpoints": true
     }
   ]
 }

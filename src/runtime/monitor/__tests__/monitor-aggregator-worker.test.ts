@@ -26,7 +26,6 @@ describe("MonitorAggregatorWorker", () => {
     expect(result).toHaveProperty("stuckAlerts");
     expect(result).toHaveProperty("systemAlerts");
     expect(result).toHaveProperty("inactiveCancelled");
-    expect(result).toHaveProperty("orphanCheckpointPurged");
 
     // 至少一个 stage 应该 fail 时携带 error 字符串（在没有 sqlite 的测试中应该全 fail；
     // 但如果 CI 已经 bootstrap 数据库也可能全成功 — 兼容两种情况只断结构正确性）
@@ -39,11 +38,8 @@ describe("MonitorAggregatorWorker", () => {
     if (!result.systemAlerts.ok) {
       expect(typeof result.systemAlerts.error).toBe("string");
     }
-    if (!result.orphanCheckpointPurged.ok) {
-      expect(typeof result.orphanCheckpointPurged.error).toBe("string");
-    } else {
-      expect(typeof result.orphanCheckpointPurged.ckpt).toBe("number");
-      expect(typeof result.orphanCheckpointPurged.write).toBe("number");
+    if (!result.inactiveCancelled.ok) {
+      expect(typeof result.inactiveCancelled.error).toBe("string");
     }
   });
 
@@ -58,7 +54,7 @@ describe("MonitorAggregatorWorker", () => {
     expect(result.aggregateMetrics.error).toBe("previous tick still running");
     expect(result.stuckAlerts.error).toBe("skipped");
     expect(result.systemAlerts.error).toBe("skipped");
-    expect(result.orphanCheckpointPurged.error).toBe("skipped");
+    expect(result.inactiveCancelled.error).toBe("skipped");
   });
 
   test("start/stop 幂等", () => {

@@ -25,9 +25,9 @@
  * 显式申请（owner 字段区分）。这个 ensure 只是给「单机桌面 / 单租户」
  * 模式做兜底默认值，不影响多租户扩展。
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { workspace } from "../../db/sqlite/schema";
+import { project, workspace } from "../../db/sqlite/schema";
 
 /**
  * 用户租户的稳定 workspace ID。
@@ -38,6 +38,19 @@ import { workspace } from "../../db/sqlite/schema";
 export const DEFAULT_USER_WORKSPACE_ID = "00000000-0000-4000-8000-localuser0001";
 export const DEFAULT_USER_WORKSPACE_NAME = "Default Workspace";
 export const DEFAULT_USER_WORKSPACE_OWNER = "local-user";
+
+/**
+ * 用户租户的稳定 default project ID + name + marketScope。
+ *
+ * 历史问题：前端 4 处 boot 各自 `if (!project) createProject({name:"QUBIT Default
+ * Project", marketScope:"CN-A"})`，并发上车 / 多页面同时挂载会各建一份，攒出一堆
+ * 同名 project。改由后端 `GET /workspaces/default/projects/default` 统一 get-or-create：
+ * 写死 ID 幂等，前端只读取不再 create。name/marketScope 沿用历史前端兜底值，保证
+ * useDefaultProject 的 PREFERRED_NAMES("QUBIT Default Project") 仍能命中。
+ */
+export const DEFAULT_USER_PROJECT_ID = "00000000-0000-4000-8000-localproj0001";
+export const DEFAULT_USER_PROJECT_NAME = "QUBIT Default Project";
+export const DEFAULT_USER_PROJECT_MARKET_SCOPE = "CN-A";
 
 export async function ensureDefaultUserWorkspace(): Promise<void> {
   const db = await getDb();
@@ -54,5 +67,72 @@ export async function ensureDefaultUserWorkspace(): Promise<void> {
   });
   console.log(
     `[QUBIT] ensured default user workspace ${DEFAULT_USER_WORKSPACE_ID} (${DEFAULT_USER_WORKSPACE_NAME})`
+  );
+}
+
+/**
+ * 幂等 get-or-create default project（挂在 default workspace 下）。返回 project 行。
+ *
+ * 优先级：
+ *   1. 稳定 ID 命中 → 直接返回（最常路径）。
+ *   2. default workspace 下已有同名 "QUBIT Default Project" → 复用（兼容历史前端
+ *      用随机 ID 建的那批，避免再造一份；不强行迁移它们的 ID）。
+ *   3. 都没有 → INSERT 稳定 ID 的新 project。
+ *
+ * 先 ensure workspace 再 ensure project，保证 FK（project.workspace_id）一定有父。
+ */
+export async function ensureDefaultUserProject(): Promise<{
+  id: string;
+  workspaceId: string;
+  name: string;
+  marketScope: string;
+  status: "active" | "archived" | "paused";
+}> {
+  await ensureDefaultUserWorkspace();
+  const db = await getDb();
+
+  const byId = await db
+    .select()
+    .from(project)
+    .where(eq(project.id, DEFAULT_USER_PROJECT_ID))
+    .limit(1);
+  if (byId[0]) return byId[0];
+
+  const byName = await db
+    .select()
+    .from(project)
+    .where(
+      and(
+        eq(project.workspaceId, DEFAULT_USER_WORKSPACE_ID),
+        eq(project.name, DEFAULT_USER_PROJECT_NAME)
+      )
+    )
+    .limit(1);
+  if (byName[0]) return byName[0];
+
+  await db.insert(project).values({
+    id: DEFAULT_USER_PROJECT_ID,
+    workspaceId: DEFAULT_USER_WORKSPACE_ID,
+    name: DEFAULT_USER_PROJECT_NAME,
+    marketScope: DEFAULT_USER_PROJECT_MARKET_SCOPE,
+    status: "active",
+  });
+  console.log(
+    `[QUBIT] ensured default user project ${DEFAULT_USER_PROJECT_ID} (${DEFAULT_USER_PROJECT_NAME})`
+  );
+  const created = await db
+    .select()
+    .from(project)
+    .where(eq(project.id, DEFAULT_USER_PROJECT_ID))
+    .limit(1);
+  // created[0] 一定存在（刚 INSERT）；保守兜底返回常量结构防 undefined 越界。
+  return (
+    created[0] ?? {
+      id: DEFAULT_USER_PROJECT_ID,
+      workspaceId: DEFAULT_USER_WORKSPACE_ID,
+      name: DEFAULT_USER_PROJECT_NAME,
+      marketScope: DEFAULT_USER_PROJECT_MARKET_SCOPE,
+      status: "active",
+    }
   );
 }

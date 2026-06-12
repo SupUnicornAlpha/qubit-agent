@@ -141,7 +141,7 @@ const WORKFLOW_DEEP_INDIRECT_TABLES: ReadonlyArray<{
 ];
 
 /**
- * 硬删除单个 workflow_run，连带清理所有引用它的衍生数据（agent_*、a2a/acp、screener、order/intent、quality、langgraph_checkpoint 等）。
+ * 硬删除单个 workflow_run，连带清理所有引用它的衍生数据（agent_*、a2a/acp、screener、order/intent、quality、agent_checkpoint_snapshot 等）。
  */
 export async function hardDeleteWorkflowRun(
   workflowRunId: string
@@ -219,17 +219,8 @@ export async function hardDeleteWorkflowRun(
       details[`${table}_set_null`] = r.changes;
     }
 
-    // 4) LangGraph checkpoint（thread_id 一般 == workflow_run.id；显式清理释放空间）。
-    const lgWrite = sqlite
-      .prepare("DELETE FROM langgraph_checkpoint_write WHERE thread_id = ?")
-      .run(workflowRunId);
-    details.langgraph_checkpoint_write = lgWrite.changes;
-    const lgCheckpoint = sqlite
-      .prepare("DELETE FROM langgraph_checkpoint WHERE thread_id = ?")
-      .run(workflowRunId);
-    details.langgraph_checkpoint = lgCheckpoint.changes;
-
-    // 5) 最后删 workflow_run 本身。
+    // 4) 最后删 workflow_run 本身。
+    //    （自研 agent_checkpoint_snapshot 已由 WORKFLOW_DIRECT_TABLES 的 workflow_run_id 直删覆盖。）
     const wfDel = sqlite.prepare("DELETE FROM workflow_run WHERE id = ?").run(workflowRunId);
     details.workflow_run = wfDel.changes;
 
@@ -262,7 +253,7 @@ export async function hardDeleteChatSession(sessionId: string): Promise<HardDele
 
   const details: Record<string, number> = {};
 
-  // 1) 先把所有从属 workflow_run 硬删除（含 langgraph_checkpoint、agent_* 等）。
+  // 1) 先把所有从属 workflow_run 硬删除（含 agent_checkpoint_snapshot、agent_* 等）。
   const wfRows = await db
     .select({ id: workflowRun.id })
     .from(workflowRun)

@@ -5,7 +5,7 @@ import {
   chatHealth,
   checkBrokerHealth,
   createChatSession,
-  createProject,
+  getOrCreateDefaultProject,
   createSessionMessage,
   createIntentOrder,
   createWorkflow,
@@ -644,12 +644,9 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
       const projects = await listProjects(wsId);
       let pid = projects[0]?.id;
       if (!pid) {
-        const created = await createProject({
-          workspaceId: wsId,
-          name: "QUBIT Default Project",
-          marketScope: "CN-A",
-        });
-        pid = created.data.id;
+        // 只读 get-or-create：后端写死稳定 ID 幂等，不再前端 createProject 兜底。
+        const dftProj = await getOrCreateDefaultProject();
+        pid = dftProj.id;
       }
       setWorkspaceId(wsId);
       setProjectId(pid);
@@ -5568,12 +5565,9 @@ const TeamDashboardPanel: FC = () => {
         const projects = await listProjects(wsId);
         let pid = projects[0]?.id;
         if (!pid) {
-          const pr = await createProject({
-            workspaceId: wsId,
-            name: "QUBIT Default Project",
-            marketScope: "CN-A",
-          });
-          pid = pr.data.id;
+          // 只读 get-or-create：后端写死稳定 ID 幂等，不再前端 createProject 兜底。
+          const pr = await getOrCreateDefaultProject();
+          pid = pr.id;
         }
         setTeamResearchProjectId(pid);
         const session = await getDefaultProjectSession(pid);

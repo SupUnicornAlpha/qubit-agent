@@ -1,0 +1,7 @@
+# bun test 全局配置。
+#
+# preload：在任何被测模块 import 前执行 src/tests/setup-test-data-dir.ts，
+# 抢先把 QUBIT_DATA_DIR 指向 tmp，隔离测试对真实 ~/.quant-agent 生产库的写入。
+# 详见该文件头注释。
+[test]
+preload = ["./src/tests/setup-test-data-dir.ts"]
