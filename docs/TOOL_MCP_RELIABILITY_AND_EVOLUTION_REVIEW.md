@@ -2,15 +2,16 @@
 
 | 文档状态 | 草稿 |
 |----------|------|
-| 版本 | v0.1 |
+| 版本 | v0.2 |
 | 更新日期 | 2026-06-12 |
 | 数据来源 | 真库 `~/Library/Application Support/app.qubit.agent/db/core.sqlite`；样本 `tool_call_log` 784 条 + `mcp_call_log` 81 条（窗口 2026-06-05 → 06-10） |
 | 关联文档 | [`AGENT_STABILITY_REVIEW.md`](./AGENT_STABILITY_REVIEW.md)、[`QUANT_READINESS_ASSESSMENT.md`](./QUANT_READINESS_ASSESSMENT.md)、[`SELF_EVOLVING_AGENT_DESIGN.md`](./SELF_EVOLVING_AGENT_DESIGN.md)、[`MONITORING_V2_DESIGN.md`](./MONITORING_V2_DESIGN.md) |
 
-> 本文回答三个问题：
+> 本文回答四个问题：
 > 1. 跑了那么多任务，工具和 MCP 的报错原因是什么？怎么让它们更可用？
 > 2. 当前多 Agent 角色设计能否模拟「量化研究 / 策略因子上线 / 实盘交易」全链路？欠缺什么？
 > 3. 系统能否进化？现状到哪一步，怎么启动？
+> 4. （v0.2 追加）MCP transport 支持的类型够不够（streamable-http 支持吗）？CLI 方式的工具调用做得如何？
 
 ---
 
@@ -19,6 +20,7 @@
 - **报错**：MCP `financex` stdio 子进程崩溃（失败率 ~55%）是头号问题；其次是 LLM 漏传业务参数；历史 schema 漂移已被 migration 0080 修复成历史。
 - **角色**：研究链路（95%）、因子上线（90%）已接近生产级；**实盘运营层（60%）是最大缺口**——能下单，但缺执行算法 / 持仓守护 / live-gate。
 - **进化**：基建大半已建，P&L 归因飞轮**已全接线**；但所有进化开关**默认 OFF**、且**无统一调度器**——**具备进化能力，但尚未启动进化**。
+- **接入面（v0.2）**：MCP transport 只有 stdio/http/ws，**没有把 streamable-http 当独立 transport**（registry 同步时塌缩成 http），SSE 长连接缺独立实现；**CLI 工具调用部分支持但脱管**——sandbox policy 完全不生效、toolKind/status/latency 全是占位假值、调不了 ACP connector / skill。
 
 ---
 
@@ -158,6 +160,8 @@
 - [ ] **S4** 按 `error_class` 建监控看板（transient 占比作为 S1/S2 成效度量）
 - [ ] **L3** live-position-monitor agent（长驻持仓守护）
 - [ ] **E1** 打开 P&L 飞轮验证（仅开关，无新代码）
+- [ ] **M1** MCP transport 补 streamable-http（独立 SSE 长连接，见第八节）
+- [ ] **C1** CLI 路径接入 sandbox policy 授权（见第九节，安全相关，可提到 P0）
 
 ### P2（进化 & 实盘运营纵深）
 - [ ] **E2** 统一调度器收编 evolver/attributor/auto-installer worker
@@ -165,10 +169,76 @@
 - [ ] **L2** portfolio-orchestrator agent
 - [ ] **L6** 4 个 stub 工具接真实数据源或下线
 - [ ] **E3** AutoInstaller gated auto
+- [ ] **C2** CLI 工具事件携带真实 toolKind/status/latency（见第九节）
 
 ### 关键改动点文件（预估）
 - MCP 稳定性：MCP server 入口 + `src/runtime/mcp/`（熔断/调用记录）
+- MCP transport：`src/runtime/mcp/dispatcher.ts`（transport switch）+ `schema.ts` transport 枚举 + `registry-sync.ts`
 - 授权/sandbox：`src/runtime/sandbox-executor.ts`（#3 已收口）+ `sandbox_policy` 数据
+- CLI 路径治理：`src/runtime/loop/cli-loop-driver.ts` + `external-loop-state.ts` + `loop-protocol.ts` + `mcp-bridge-server.ts`
 - 工具 schema/prompt：各工具 schema + reason 节点 prompt 组装
 - 实盘运营：execution-dispatcher / 新增 monitor·orchestrator agent / pre-trade-risk gate
 - 进化：`self-evolve-config.ts`（开关）+ 新增统一调度器 + auto-installer/skill-evolver worker
+
+---
+
+## 八、MCP Transport 支持面（streamable-http 缺位）
+
+### 现状
+
+| transport | 支持 | 落点 |
+|-----------|------|------|
+| **stdio** | ✅ | `dispatcher.ts:287` `callMcpStdioTool` |
+| **http**（POST，含 SSE 响应） | ✅ | `dispatcher.ts` `callMcpHttpTool` |
+| **ws**（WebSocket） | ✅ | `dispatcher.ts` `callMcpWsTool` |
+| **streamable-http**（MCP 2025 标准独立 transport） | ❌ | registry 同步时塌缩成 `http`（`registry-sync.ts:196-203`） |
+| **sse**（独立长连接 transport） | ❌ | 同上，塌缩成 `http` |
+
+- transport 枚举只有三种：`schema.ts:379` / `:456` → `text("transport", { enum: ["stdio", "http", "ws"] })`。
+- 派发 switch 在 `dispatcher.ts:287-340`，遇到未知 transport 直接 `throw "unsupported mcp transport"`。
+- MCP **协议版本**号支持到最新（`mcp-protocol.ts:13`：2025-06-18 / 2025-03-26 / 2024-11-05），且为**自研客户端**（package.json 不依赖 `@modelcontextprotocol/sdk`）——所以缺的是「传输层实现」，不是协议版本。
+
+### 问题
+
+- `registry-sync.ts:196-203` 把 `streamable-http` 和 `sse` 都映射成 `transport: "http"`。如果对端是真正的 **streamable-http**（单 endpoint、POST 发请求 + SSE 流式回多事件 + session 续连），用普通「POST 等一个完整 JSON 响应」的 `callMcpHttpTool` 去打，会拿不到流式中间事件、长任务超时、session 无法保持——**表现为连接得上但调用经常失败/截断**。
+- 这会和第一节 A 类「MCP 调用失败」部分重叠：未来接入更多远程 MCP（越来越多 server 默认走 streamable-http）时，失败面会扩大。
+
+### 简单方案（M1）
+
+1. transport 枚举加 `streamable-http`（schema + migration），`registry-sync.ts` 不再塌缩。
+2. `dispatcher.ts` switch 增一个分支 `callMcpStreamableHttpTool`：单 endpoint POST 初始化 + `Accept: text/event-stream` 读 SSE 流、聚合多事件、维持 `Mcp-Session-Id`。
+3. 过渡期可先复用自研 http 客户端加 SSE 解析；长期建议直接引 `@modelcontextprotocol/sdk` 的 `StreamableHTTPClientTransport`，省得自己维护协议细节。
+4. **验收**：能连真正的 streamable-http server（如官方 everything server 的 http 模式），长任务不截断、session 保持。
+
+---
+
+## 九、CLI 工具调用（部分支持但脱管）
+
+### 现状：claude_cli / codex_cli 两种 CLI loop（`loop.ts:2`）
+
+CLI loop 通过 `qubit.loop.v1` NDJSON 协议（`loop-protocol.ts`）回吐 `tool` 事件，被 `cli-loop-driver.ts:296-314` 接住，最小化写入 `tool_call_log`（`external-loop-state.ts:121-156`）。**能记录，但管不住**。
+
+### Native vs CLI 工具能力对比
+
+| 维度 | Native（a2a ReAct） | CLI（claude_cli / codex_cli） |
+|------|--------------------|------------------------------|
+| 工具类型 | MCP + ACP connector + builtin + skill | 全由外部 CLI 决定 |
+| **sandbox 授权** | 强制（act 阶段 `loadPolicy` + check*Call） | **完全不生效**（driver 不 load policy） |
+| toolKind 精度 | 精确区分 mcp/acp_connector/skill/builtin | **恒 `builtin`** |
+| status | success/error/timeout/sandbox_blocked | **恒 `success`**（靠后续 error 行兜底） |
+| latency | 真实 ms | **恒占位 1ms** |
+| MCP 调用 | 直接 `dispatchMcpToolCall` | 仅经 MCP bridge（`mcp-bridge-server.ts` 的 `call_qubit_mcp`）回跳 native |
+| ACP connector / skill | 支持 | **不支持** |
+
+### 问题
+
+1. **安全**：CLI 路径完全绕过 sandbox policy（`cli-loop-driver.ts` 不涉及 `sandboxExecutor`）——授权收口（#3）只覆盖 native，CLI 是治理盲区。一旦 CLI 路径用于实盘相关工具，等于无闸门。
+2. **观测失真**：CLI 工具调用在监控里 toolKind 恒 builtin、status 恒 success、latency 恒 1ms（与第一节 #4 治理同源的「假 1ms」问题，但 CLI 是结构性写死，连区分都做不到）。p50/p95 和成功率被污染。
+3. **能力缺口**：CLI 调不到 ACP connector / skill，MCP 也只能绕 bridge——CLI 路径本质是「外部 agent 借壳跑」，与本系统工具体系半脱节。
+
+### 简单方案
+
+- **C1（安全，建议提到 P0）**：在 CLI 接收 `tool` 事件、或 MCP bridge 转发 `call_qubit_mcp` 时，过一遍 `isToolAuthorized/isMcpAuthorized`（#3 已抽好的纯函数），拒绝则回 error 行 + 记 `sandbox_blocked`。先覆盖 bridge 这条「CLI→本系统工具」的真实通道，成本最低、收益最大。
+- **C2（观测）**：扩 `qubit.loop.v1` 的 `tool` 行，让 CLI 携带 `toolKind` / `ok` / `durationMs`；`recordExternalLoopToolCall` 按实填写，去掉写死的 builtin/success/1ms。CLI 侧不传时再退回占位。
+- **定位**：明确 CLI 路径定位为「轻量调试/研究」，生产关键链路（尤其实盘）走 native；在文档/产品层面标注，避免误用。
+- **验收**：bridge 调用受 policy 约束（越权被拒并留痕）；监控里 CLI 工具调用 toolKind/status/latency 不再恒为占位值。
