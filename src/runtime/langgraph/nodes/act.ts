@@ -15,6 +15,7 @@ import { logResearchTeamInteraction } from "../../research-team/interaction-log"
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
+import { injectContextParams } from "../../tools/context-params";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import {
   recordToolCallError,
@@ -26,7 +27,6 @@ import {
 import { resolveToolAlias } from "../../tools/tool-catalog";
 import { resolveConnectorForServerAlias, resolveConnectorForTool } from "../../tools/tool-routes";
 import type { AgentGraphState, StepStreamEvent } from "../state";
-import { isLikelyProjectIdFormat } from "./project-id";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 
 /**
@@ -183,10 +183,12 @@ export async function actNode(
   }
 
   const { toolName, params: toolParams, mcp: parsedMcp } = parsed;
-  const enrichedToolParams: Record<string, unknown> = {
-    ...toolParams,
-    workflowRunId: (toolParams["workflowRunId"] as string | undefined) ?? state.workflowId,
-  };
+  /**
+   * 治理 #2：上下文绑定参数（workflowRunId / projectId）由 harness 在
+   * resolve 出权威 projectId 后用 injectContextParams 无条件注入（见 line ~290）。
+   * 这里先按 LLM 原始 params 起步；连 connector-alias rewrite 分支也只动业务参数。
+   */
+  let enrichedToolParams: Record<string, unknown> = { ...toolParams };
 
   /** LLM 误用 call_mcp(serverName=qubit-news) 时转 connector 执行 */
   let mcp = parsedMcp;
@@ -260,36 +262,21 @@ export async function actNode(
   const projectId = workflowRows[0]?.projectId;
 
   /**
-   * F-P0-12（2026-06-05 eval batch 3 round 3 / case 1 修复）：
+   * 治理 #2（取代 F-P0-12 的 isLikelyProjectIdFormat 启发式补丁）：
    *
-   * 多个 connector / builtin tool 都要求 `projectId`（如 qubit-research/version_strategy、
-   * factor.register、rule.register 等）。LLM 经常忘传或写成占位符 \`"<ctx.projectId>"\` /
-   * `"default"`。为了让 strategy_authoring / discovery 等"必须落 DB 的工具"不要因为
-   * projectId 缺失而硬失败，act 节点统一从 workflow_run → project_id 取真值兜底注入：
+   * workflowRunId / projectId / project_id 是**上下文绑定参数**，由 harness 从
+   * 权威上下文（state.workflowId / workflow_run.project_id）**无条件注入并覆盖**
+   * LLM 传入的任何值。LLM 不需要、也不应该提供这些参数（prompt 已声明会自动填）。
    *
-   *   - LLM 传了非空字符串 → 尊重 LLM 的值（除非是明显占位符 "<ctx.projectId>" / "TODO"）
-   *   - LLM 没传 / 传空 / 传占位符 → 用 workflow_run.project_id 兜底
-   *
-   * 与 workflowRunId 同样语义（line 107），让 ReAct-loop 写出来的工具调用更稳定。
+   * 旧实现（反向黑名单 → 正向白名单 isLikelyProjectIdFormat）本质是在"猜 LLM
+   * 填的值合不合法"，LLM 会创造新的业务化占位（`nvda_research` 等）绕过白名单，
+   * 再到 factor.autoEvaluate 内部 register 时触发 FK constraint failed。
+   * 改为 harness 单一事实源后，LLM 填什么都不影响——这类参数对它透明。
    */
-  /**
-   * F-P0-12 扩展（2026-06-05 监控复盘 #3 + B+ Phase 1.1）：
-   *
-   * 第 1 版用反向黑名单 (`default` / `project_id` / `todo` 等)，但 LLM 会创造
-   * 新的业务化占位（`ai_semiconductor_technical`、`aapl_trend_v1`、`nvda_research`），
-   * 黑名单覆盖不到，再被传到 factor.autoEvaluate 内部 register 时仍触发
-   * `FOREIGN KEY constraint failed`（实测 workflow 4614e8b1 因此 fail）。
-   *
-   * 改成**正向白名单** `isLikelyProjectIdFormat`：只有 UUID 形态或 `proj-*` 老 seed
-   * 才被认为是合法 projectId，其他一律兜底为 `workflow_run.project_id`。
-   */
-  const incomingProjectId =
-    (toolParams["projectId"] as string | undefined) ??
-    (toolParams["project_id"] as string | undefined);
-  if (!isLikelyProjectIdFormat(incomingProjectId) && projectId) {
-    enrichedToolParams["projectId"] = projectId;
-    enrichedToolParams["project_id"] = projectId;
-  }
+  enrichedToolParams = injectContextParams(enrichedToolParams, {
+    workflowRunId: state.workflowId,
+    projectId,
+  });
 
   emit({
     runId: state.runId,

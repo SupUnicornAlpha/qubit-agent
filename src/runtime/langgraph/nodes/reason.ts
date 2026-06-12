@@ -30,6 +30,7 @@ import {
 } from "../../llm/token-budget";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
@@ -226,14 +227,28 @@ export async function reasonNode(
   const sessionContext = await loadSessionContext(state.workflowId);
 
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
-  const tools = effective.tools;
   /**
    * 拉取 enabled MCP server **+ 真实工具清单**（capabilities_json.tools），
    * 注入 prompt 让 LLM 看到 mcp-financex 真实可调的工具名（如 `get_financial_statements`），
    * 而不是凭训练记忆瞎喊 `get_financials` / `list_available_tools`。
    * 详见 resolve-enabled-mcp-servers.ts 与 tool-call-format.ts。
    */
-  const mcpServers = await resolveEnabledMcpServers(state.agentDefinition.mcpServers ?? []);
+  const enabledMcpServers = await resolveEnabledMcpServers(state.agentDefinition.mcpServers ?? []);
+
+  /**
+   * 授权前移（治理 #1）：把 effective tools + enabled MCP server 先按 sandbox policy
+   * 裁剪到「真正可调用」的子集，再注入 prompt。被 policy 拒的工具根本不出现在
+   * 「可用工具」块里，LLM 不会反复挑禁用工具浪费 reason 轮次。act 阶段 check*Call
+   * 仍保留为 deny-by-default 兜底（见 sandbox-executor.filterAuthorizedTools 注释）。
+   */
+  const authorized = await sandboxExecutor.filterAuthorizedTools(
+    state.agentDefinition,
+    effective.tools,
+    enabledMcpServers.map((s) => s.name)
+  );
+  const tools = authorized.tools;
+  const allowedMcpNames = new Set(authorized.mcpServers);
+  const mcpServers = enabledMcpServers.filter((s) => allowedMcpNames.has(s.name));
   const hasTools = tools.length > 0 || mcpServers.length > 0;
 
   /**

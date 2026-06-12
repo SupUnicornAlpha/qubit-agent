@@ -2,6 +2,7 @@ import { getDb } from "../db/sqlite/client";
 import { sandboxPolicy, sandboxViolationLog } from "../db/sqlite/schema";
 import type { RuntimeAgentDefinition } from "./types";
 import { eq } from "drizzle-orm";
+import { resolveConnectorForTool } from "./tools/tool-routes";
 
 type SandboxViolationType =
   | "tool_not_allowed"
@@ -90,6 +91,42 @@ export class SandboxExecutor {
       maxToolCallMs: row.maxToolCallMs ?? 30_000,
       maxIterationsPerRun: row.maxIterationsPerRun ?? definition.maxIterations,
     };
+  }
+
+  /**
+   * 授权前移（治理 #1）：在 reason 组装 prompt 之前，把候选工具/MCP server 列表
+   * 按 sandbox policy 裁剪到「真正可调用」的子集，只把它们注入 prompt。
+   *
+   * 动机：原先 allow-list 只在 act 阶段（LLM 已生成 tool_call 之后）才校验，
+   * 被拒的工具仍会出现在 prompt「可用工具」块里，LLM 反复挑被禁工具 → 每次
+   * 浪费一整轮 reason + 一条 sandbox_blocked 日志。前移后 LLM 根本看不到禁用工具。
+   *
+   * **必须与 check*Call 的判定完全同构**，否则 prompt 说可用、act 又拒 → 更糟：
+   *   - builtin / 自定义 tool 名：`allowedTools.has(name)`（对应 checkToolCall）
+   *   - connector 路由的 tool 名：`allowedConnectors` 空=放行，否则 `.has(connector)`
+   *     （对应 checkConnectorCall —— act 里 connector 工具走的是这条分支）
+   *   - MCP server：`allowedMcpServers.has(server)`（对应 checkMcpCall）
+   *
+   * act 阶段的 check*Call 仍然保留，作为 deny-by-default 的防御性兜底
+   * （prompt 注入与实际执行之间策略可能热更新 / LLM 仍可能瞎喊未列出名）。
+   */
+  async filterAuthorizedTools(
+    definition: RuntimeAgentDefinition,
+    candidateTools: string[],
+    candidateMcpServers: string[]
+  ): Promise<{ tools: string[]; mcpServers: string[] }> {
+    const policy = await this.loadPolicy(definition);
+    const tools = candidateTools.filter((name) => {
+      const connector = resolveConnectorForTool(name);
+      if (connector) {
+        // connector 路由工具：对应 checkConnectorCall（空集=放行）
+        return policy.allowedConnectors.size === 0 || policy.allowedConnectors.has(connector);
+      }
+      // builtin / 自定义：对应 checkToolCall
+      return policy.allowedTools.has(name);
+    });
+    const mcpServers = candidateMcpServers.filter((name) => policy.allowedMcpServers.has(name));
+    return { tools, mcpServers };
   }
 
   async checkToolCall(input: SandboxCheckInput): Promise<SandboxCheckResult> {

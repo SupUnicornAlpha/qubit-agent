@@ -822,8 +822,27 @@ export const toolCallLog = sqliteTable("tool_call_log", {
   }).notNull(),
   latencyMs: integer("latency_ms"),
   errorMessage: text("error_message"),
+  /**
+   * 工具错误分类（迁移 0084）：把原本只埋在 response_json.toolError / observation
+   * 里的 `classifyToolError` 结果提成一等列。让"工具错误排查"类查询
+   * （按 transient/permanent/blocked 切分、统计可重试错误占比）走单列索引，
+   * 不必再 `responseJson LIKE '%"toolError":true%'` 全表扫。
+   *
+   * 语义：
+   *   - status=success            → NULL
+   *   - status=error              → transient | permanent | blocked | unknown（classifyToolError）
+   *   - status=timeout            → "transient"（超时天然可重试）
+   *   - status=sandbox_blocked    → "blocked"
+   * 旧行保持 NULL（迁移不回填）；监控端 fallback 仍可读 response_json。
+   */
+  errorClass: text("error_class", {
+    enum: ["transient", "permanent", "blocked", "unknown"],
+  }),
   createdAt: createdAt(),
-});
+}, (t) => [
+  /** 工具错误排查：按 status + errorClass 切分，配合 createdAt 做时间窗聚合 */
+  index("idx_tool_call_log_status_class_created").on(t.status, t.errorClass, t.createdAt),
+]);
 
 /**
  * Exec 能力源调用日志（migration 0075）。

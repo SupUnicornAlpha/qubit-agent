@@ -24,6 +24,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCallLog, toolCallLog } from "../../db/sqlite/schema";
+import { classifyToolError } from "../langgraph/nodes/tool-error-classifier";
 
 export type ToolTargetKind = "mcp" | "tool" | "connector";
 export type ToolKind = "mcp" | "builtin" | "acp_connector";
@@ -141,6 +142,8 @@ export async function recordToolCallSandboxBlocked(
     .set({
       status: "sandbox_blocked",
       errorMessage: input.reason ?? "blocked by sandbox",
+      /** 沙箱拒绝天然归 blocked（迁移 0084 一等列） */
+      errorClass: "blocked",
     })
     .where(eq(toolCallLog.id, input.toolCallId));
 
@@ -170,6 +173,8 @@ export async function recordToolCallTimeout(input: RecordToolCallTimeoutInput): 
       status: "timeout",
       latencyMs: input.latencyMs,
       errorMessage: input.reason ?? "tool timeout",
+      /** 超时天然可重试（迁移 0084 一等列） */
+      errorClass: "transient",
     })
     .where(eq(toolCallLog.id, input.toolCallId));
 
@@ -202,6 +207,11 @@ export async function recordToolCallError(input: RecordToolCallErrorInput): Prom
       status: "error",
       latencyMs: input.latencyMs,
       errorMessage: input.errorMessage,
+      /**
+       * 迁移 0084 一等列：与 act.ts observation 里的 classifyToolError 同源，
+       * 让排查查询不必扫 response_json。act 端仍各自算一遍喂给 LLM，二者一致。
+       */
+      errorClass: classifyToolError(input.errorMessage),
       responseJson: {
         toolError: true,
         errorSource: input.errorSource,
