@@ -187,7 +187,13 @@ export function aggregateSummary(toolName: string, rows: RawRow[]): ToolSummaryR
     else if (r.status === "timeout") timeout += 1;
     else if (r.status === "sandbox_blocked") sandbox += 1;
     else error += 1;
-    if (typeof r.latencyMs === "number") {
+    /**
+     * 治理 #4：latency 统计排除 sandbox_blocked。这类调用在 act.ts 里被沙箱在
+     * 真正起 timer（startedAt）之前就拦下，从未真实执行；但 recordToolCallStart
+     * 乐观初始化成 latencyMs=1 且 blocked 终态不覆盖，留下假的 1ms。若计入会把
+     * 工具真实延迟的 avg / p50 / p95 往下拽。timeout/error 仍计入（它们有真实耗时）。
+     */
+    if (typeof r.latencyMs === "number" && r.status !== "sandbox_blocked") {
       latSum += r.latencyMs;
       latCount += 1;
     }
@@ -216,6 +222,8 @@ export function computeLatencyPercentiles(rows: RawRow[]): {
   samples: number;
 } {
   const lat = rows
+    /** 治理 #4：sandbox_blocked 留的假 1ms 不计入分位（见 aggregateSummary 注释） */
+    .filter((r) => r.status !== "sandbox_blocked")
     .map((r) => r.latencyMs)
     .filter((v): v is number => typeof v === "number" && v >= 0)
     .sort((a, b) => a - b);

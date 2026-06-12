@@ -23,6 +23,32 @@ export interface LoadedSandboxPolicy {
   maxIterationsPerRun: number;
 }
 
+/**
+ * 授权判定单一事实源（治理 #3）。
+ *
+ * 原先这三条规则被复制在 4 处：filterAuthorizedTools（reason 前移裁剪）+
+ * checkToolCall / checkConnectorCall / checkMcpCall（act 阶段兜底）。filter 与
+ * check 物理分离、靠注释「必须同构」人肉维持一致 —— 改一处忘改另一处就会出现
+ * 「prompt 说可用、act 又拒」的漂移。现在收口到这三个纯函数，filter 与 check
+ * 全部委托给它们，规则只有一份定义。
+ *
+ * 注意：connector 工具的判定需要先 resolveConnectorForTool(name) 拿到 connector，
+ * 这一步由调用方（filterAuthorizedTools / act 的 connectorTarget 分支）完成，
+ * 这里只接收已 resolve 出的 connector 名。
+ */
+export function isToolAuthorized(policy: LoadedSandboxPolicy, toolName: string): boolean {
+  return policy.allowedTools.has(toolName);
+}
+
+export function isConnectorAuthorized(policy: LoadedSandboxPolicy, connectorName: string): boolean {
+  // 空集 = 不限制 connector（放行全部）；非空 = 白名单
+  return policy.allowedConnectors.size === 0 || policy.allowedConnectors.has(connectorName);
+}
+
+export function isMcpAuthorized(policy: LoadedSandboxPolicy, serverName: string): boolean {
+  return policy.allowedMcpServers.has(serverName);
+}
+
 export interface SandboxCheckInput {
   runId: string;
   workflowId: string;
@@ -101,11 +127,11 @@ export class SandboxExecutor {
    * 被拒的工具仍会出现在 prompt「可用工具」块里，LLM 反复挑被禁工具 → 每次
    * 浪费一整轮 reason + 一条 sandbox_blocked 日志。前移后 LLM 根本看不到禁用工具。
    *
-   * **必须与 check*Call 的判定完全同构**，否则 prompt 说可用、act 又拒 → 更糟：
-   *   - builtin / 自定义 tool 名：`allowedTools.has(name)`（对应 checkToolCall）
-   *   - connector 路由的 tool 名：`allowedConnectors` 空=放行，否则 `.has(connector)`
-   *     （对应 checkConnectorCall —— act 里 connector 工具走的是这条分支）
-   *   - MCP server：`allowedMcpServers.has(server)`（对应 checkMcpCall）
+   * **与 check*Call 的判定完全同构**（治理 #3：现已物理共享 isToolAuthorized /
+   * isConnectorAuthorized / isMcpAuthorized 三个纯函数，不再靠人肉维持一致）：
+   *   - builtin / 自定义 tool 名：isToolAuthorized（对应 checkToolCall）
+   *   - connector 路由的 tool 名：isConnectorAuthorized（对应 checkConnectorCall）
+   *   - MCP server：isMcpAuthorized（对应 checkMcpCall）
    *
    * act 阶段的 check*Call 仍然保留，作为 deny-by-default 的防御性兜底
    * （prompt 注入与实际执行之间策略可能热更新 / LLM 仍可能瞎喊未列出名）。
@@ -118,21 +144,17 @@ export class SandboxExecutor {
     const policy = await this.loadPolicy(definition);
     const tools = candidateTools.filter((name) => {
       const connector = resolveConnectorForTool(name);
-      if (connector) {
-        // connector 路由工具：对应 checkConnectorCall（空集=放行）
-        return policy.allowedConnectors.size === 0 || policy.allowedConnectors.has(connector);
-      }
-      // builtin / 自定义：对应 checkToolCall
-      return policy.allowedTools.has(name);
+      // connector 路由工具走 connector 判定；其余走 builtin/自定义判定。
+      // 二者与 act 的 check*Call 共用同一组纯函数（治理 #3）。
+      return connector ? isConnectorAuthorized(policy, connector) : isToolAuthorized(policy, name);
     });
-    const mcpServers = candidateMcpServers.filter((name) => policy.allowedMcpServers.has(name));
+    const mcpServers = candidateMcpServers.filter((name) => isMcpAuthorized(policy, name));
     return { tools, mcpServers };
   }
 
   async checkToolCall(input: SandboxCheckInput): Promise<SandboxCheckResult> {
     const policy = await this.loadPolicy(input.definition);
-    const allowed = policy.allowedTools.has(input.toolName);
-    if (allowed) {
+    if (isToolAuthorized(policy, input.toolName)) {
       return {
         allowed: true,
         policySnapshot: { sandboxPolicyId: policy.id, maxToolCallMs: policy.maxToolCallMs },
@@ -166,8 +188,8 @@ export class SandboxExecutor {
     }
   ): Promise<SandboxCheckResult> {
     const policy = await this.loadPolicy(input.definition);
-    const allowed = policy.allowedMcpServers.has(input.serverName);
-    if (allowed) return { allowed: true, policySnapshot: { sandboxPolicyId: policy.id } };
+    if (isMcpAuthorized(policy, input.serverName))
+      return { allowed: true, policySnapshot: { sandboxPolicyId: policy.id } };
 
     await this.logViolation({
       workflowId: input.workflowId,
@@ -195,9 +217,8 @@ export class SandboxExecutor {
     }
   ): Promise<SandboxCheckResult> {
     const policy = await this.loadPolicy(input.definition);
-    const allowed =
-      policy.allowedConnectors.size === 0 || policy.allowedConnectors.has(input.connectorName);
-    if (allowed) return { allowed: true, policySnapshot: { sandboxPolicyId: policy.id } };
+    if (isConnectorAuthorized(policy, input.connectorName))
+      return { allowed: true, policySnapshot: { sandboxPolicyId: policy.id } };
 
     await this.logViolation({
       workflowId: input.workflowId,

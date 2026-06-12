@@ -61,6 +61,18 @@ describe("aggregateSummary", () => {
     expect(r.avgLatencyMs).toBe(200);
   });
 
+  test("治理 #4：sandbox_blocked 的假 latency 不计入 avg", () => {
+    const r = aggregateSummary("foo", [
+      row({ status: "success", latencyMs: 100 }),
+      row({ status: "success", latencyMs: 300 }),
+      // recordToolCallStart 乐观初始化 latencyMs=1，blocked 终态不覆盖 → 假 1ms
+      row({ status: "sandbox_blocked", latencyMs: 1 }),
+    ]);
+    // 若计入会被拽成 (100+300+1)/3≈133.67；排除后应为 200
+    expect(r.avgLatencyMs).toBe(200);
+    expect(r.sandboxBlockedCount).toBe(1);
+  });
+
   test("lastCalledAt 取最大值（不依赖输入顺序）", () => {
     const r = aggregateSummary("foo", [
       row({ createdAt: "2026-05-26T08:00:00Z" }),
@@ -111,6 +123,17 @@ describe("computeLatencyPercentiles", () => {
       row({ latencyMs: 50 }),
       row({ latencyMs: 100 }),
     ]);
+    expect(r.samples).toBe(2);
+    expect(r.p50).toBe(75);
+  });
+
+  test("治理 #4：sandbox_blocked 的假 1ms 不进分位样本", () => {
+    const r = computeLatencyPercentiles([
+      row({ status: "sandbox_blocked", latencyMs: 1 }),
+      row({ status: "success", latencyMs: 50 }),
+      row({ status: "success", latencyMs: 100 }),
+    ]);
+    // 只剩 [50,100] 两个真实样本，1ms 被排除
     expect(r.samples).toBe(2);
     expect(r.p50).toBe(75);
   });
