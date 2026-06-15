@@ -51,6 +51,7 @@ const PRESET_COLORS: Record<string, { bg: string; fg: string }> = {
   memory_curator: { bg: "#0ea5e9", fg: "#082f49" },
   __team__: { bg: "#475569", fg: "#f8fafc" },
   __tools__: { bg: "#374151", fg: "#e5e7eb" },
+  user: { bg: "#f1f5f9", fg: "#0f172a" },
 };
 
 /** 伪 role：runtime 用来表示一对多广播或工具调用聚合，前端 UI 需要特殊渲染。 */
@@ -79,6 +80,7 @@ export function avatarColorFor(role: string): { bg: string; fg: string } {
 }
 
 export function avatarLabelFor(role: string): string {
+  if (role === "user") return "你";
   if (KNOWN_ROLES.has(role)) {
     const key = `team.role.abbr.${role}`;
     const localized = t(key);
@@ -94,6 +96,7 @@ export function avatarLabelFor(role: string): string {
 }
 
 export function formatRoleName(role: string): string {
+  if (role === "user") return "用户";
   if (KNOWN_ROLES.has(role)) {
     const key = `team.role.name.${role}`;
     const localized = t(key);

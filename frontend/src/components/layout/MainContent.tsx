@@ -5032,7 +5032,10 @@ const TeamDashboardPanel: FC = () => {
   const mergedLiveFeedRows = useMemo(() => {
     type Row = { key: string; t: number; kind: "interaction" | "debate"; body: string };
     const rows: Row[] = [];
-    const allow = participatingAnalystRoles.length > 0 ? new Set(participatingAnalystRoles) : null;
+    const allow =
+      participatingAnalystRoles.length > 0
+        ? new Set([...participatingAnalystRoles, "orchestrator", "user"])
+        : null;
     for (const row of teamGraph?.interactions ?? []) {
       if (!interactionMatchesAllow(row, allow)) continue;
       rows.push({
@@ -5191,9 +5194,14 @@ const TeamDashboardPanel: FC = () => {
       }
       return events;
     }
-    const allow = participatingAnalystRoles.length > 0 ? new Set(participatingAnalystRoles) : null;
+    const allow =
+      participatingAnalystRoles.length > 0
+        ? new Set([...participatingAnalystRoles, "orchestrator", "user"])
+        : null;
+    const persistedUserContents = new Set<string>();
     for (const row of teamGraph?.interactions ?? []) {
       if (!interactionMatchesAllow(row, allow)) continue;
+      if (row.fromRole === "user") persistedUserContents.add(row.contentText.trim());
       events.push({
         kind: "message",
         id: `i-${row.id}`,
@@ -5247,8 +5255,11 @@ const TeamDashboardPanel: FC = () => {
         text,
       });
     });
-    // 用户提示词回显：合成 fromRole="user" 的消息事件，让用户在右侧看到自己发过的指令/插话。
+    // 用户提示词回显：合成 fromRole="user" 的消息事件，让用户即时看到自己发过的指令/插话。
+    // 后端已把同样的提示词落库为 user→orchestrator 交互（约 2.5s 后随轮询出现）；这里对已
+    // 落库的同内容回显去重，避免乐观回显与持久化交互并列成两条。
     for (const e of userEchoes) {
+      if (persistedUserContents.has(e.content.trim())) continue;
       events.push({
         kind: "message",
         id: e.id,

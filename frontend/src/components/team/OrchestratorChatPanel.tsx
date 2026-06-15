@@ -16,7 +16,14 @@
  * composer 会被禁用并提示"将在 Orchestrator 暂停征询时回复"。这是已知边界，待后端
  * 消息注入能力落地后再放开（见任务单）。
  */
-import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 
@@ -98,7 +105,22 @@ export function OrchestratorChatPanel({
   const [injecting, setInjecting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [artifactsOpen, setArtifactsOpen] = useState(true);
+  /**
+   * 默认只看 Orchestrator 自己的输出（含对 user 与对子 Agent 的 A2A），折叠其他 Agent 的
+   * 输出与 tool 调用——避免对话框被子 Agent 刷屏。可切「全部」看完整多 Agent 流。
+   */
+  const [feedScope, setFeedScope] = useState<"orchestrator" | "all">("orchestrator");
   const wfId = workflowRunId.trim();
+
+  const visibleEvents = useMemo(() => {
+    if (feedScope === "all") return events;
+    return events.filter((ev) => {
+      if (ev.kind !== "message") return false; // 折叠 debate/system 多 Agent 噪声
+      if (ev.messageKind === "tool_call") return false; // 折叠 tool 调用
+      return ev.fromRole === "orchestrator" || ev.fromRole === "user"; // 只留 Orchestrator + 用户
+    });
+  }, [events, feedScope]);
+  const hiddenCount = events.length - visibleEvents.length;
 
   // 新消息进来时自动滚到底（右栏主对话框默认始终跟随最新）
   useEffect(() => {
@@ -226,6 +248,30 @@ export function OrchestratorChatPanel({
             );
           })}
         </div>
+        {/* 视图范围：默认只看 Orchestrator 输出（折叠子 Agent + tool），可切全部 */}
+        <div style={styles.scopeRow}>
+          {[
+            { id: "orchestrator" as const, label: "只看 Orchestrator" },
+            { id: "all" as const, label: hiddenCount > 0 ? `全部（+${hiddenCount}）` : "全部" },
+          ].map((opt) => {
+            const active = feedScope === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => setFeedScope(opt.id)}
+                style={{ ...styles.scopeBtn, ...(active ? styles.scopeBtnActive : null) }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+          <span style={styles.scopeHint}>
+            {feedScope === "orchestrator"
+              ? "子 Agent 与工具调用已折叠 · 表头「编排器 → 用户/技术面」区分对象"
+              : "完整多 Agent 流（含工具调用）"}
+          </span>
+        </div>
       </div>
 
       {/* Body：内联 HITL + 产物卡片 + 对话流 */}
@@ -273,7 +319,7 @@ export function OrchestratorChatPanel({
           </div>
         ) : null}
         <LiveConversationView
-          events={events}
+          events={visibleEvents}
           selfRole="orchestrator"
           contentMaxLength={6000}
           emptyText={
@@ -281,7 +327,9 @@ export function OrchestratorChatPanel({
               ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
               : running
                 ? "Orchestrator 已启动，正在规划与派发…"
-                : "输入研究指令并发送，Orchestrator 将开始工作。子 Agent 的对话可在中间拓扑图点击节点查看。"
+                : feedScope === "orchestrator" && hiddenCount > 0
+                  ? "本视图只看 Orchestrator 的输出；子 Agent 的对话与工具调用已折叠，点上方「全部」查看。"
+                  : "输入研究指令并发送，Orchestrator 将开始工作。子 Agent 的对话可在中间拓扑图点击节点查看。"
           }
         />
       </div>
@@ -395,6 +443,24 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
   },
   modeRow: { display: "flex", gap: 6 },
+  scopeRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  scopeBtn: {
+    padding: "2px 8px",
+    fontSize: 10.5,
+    border: "1px solid #3f3f46",
+    background: "transparent",
+    color: "#a1a1aa",
+    borderRadius: 10,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  scopeBtnActive: {
+    borderColor: "rgba(96,165,250,0.5)",
+    background: "rgba(96,165,250,0.16)",
+    color: "#93c5fd",
+    fontWeight: 600,
+  },
+  scopeHint: { fontSize: 10, color: "#71717a", flex: 1, minWidth: 0 },
   modeBtn: {
     flex: 1,
     padding: "5px 6px",

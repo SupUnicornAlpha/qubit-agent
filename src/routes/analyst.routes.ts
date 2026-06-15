@@ -20,6 +20,7 @@ import {
   registerAnalystResearchJob,
 } from "../runtime/msa/analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET } from "../runtime/msa/analyst-team";
+import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
 import { SEED_AGENT_ROLE_CATALOG } from "../runtime/seed-agent-roles";
@@ -157,6 +158,19 @@ analystRouter.post("/run", async (c) => {
     ticker: scope.displayLabel,
     startedAt: Date.now(),
   });
+
+  // 把用户这次给 Orchestrator 的提示词落库为一条 user→orchestrator 交互，
+  // 让右栏对话框（含历史/已完成工作流、刷新后）都能看到「用户对 Agent 的提示词」。
+  // 启动与「继续研究」都走本路由，故 start/continue 的指令都会被记下。
+  if (body.context?.trim()) {
+    await logResearchTeamInteraction({
+      workflowRunId: body.workflowRunId,
+      fromRole: "user",
+      toRole: "orchestrator",
+      kind: "llm_message",
+      contentText: body.context.trim().slice(0, 4000),
+    });
+  }
 
   const analystRoles =
     Array.isArray(body.analystRoles) && body.analystRoles.length > 0

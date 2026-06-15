@@ -739,6 +739,18 @@ async function runAnalystTeamCore(params: {
     // v2：若用户在 HITL 中填了 response（single_choice/free_form），注入给后续分析师上下文。
     const respText = formatHitlResponseForContext(params.hitlApproval ?? null);
     context = `${context}\n\n## Orchestrator 任务简报\n${planResult.brief}${respText}`;
+
+    // 面向用户的进度播报（toRole="user"）：让右栏对话框看到 Orchestrator 在干什么，
+    // 而不只是 A2A 派单。这些 toRole=user 的消息在前端默认「只看 Orchestrator」视图里可见。
+    await logResearchTeamInteraction({
+      workflowRunId,
+      fromRole: "orchestrator",
+      toRole: "user",
+      kind: "llm_message",
+      contentText:
+        `📋 研究规划已就绪。我会协调 ${analystSlots.length} 位分析师并行展开` +
+        `（${analystSlots.map((s) => s.role).join("、")}）。\n\n**规划要点**\n${planResult.brief.slice(0, 700)}`,
+    });
   }
 
   /**
@@ -983,6 +995,24 @@ async function runAnalystTeamCore(params: {
       payloadJson: { ticker, signal: signal.signal, confidence: signal.confidence },
     });
   }
+
+  // 面向用户的进度播报：多信号融合完成（toRole="user"）。
+  await logResearchTeamInteraction({
+    workflowRunId,
+    fromRole: "orchestrator",
+    toRole: "user",
+    kind: "llm_message",
+    contentText:
+      `✅ 已汇总 ${rawSignals.length} 位分析师的信号并完成多信号融合（MSA）。\n\n` +
+      `**综合结论**：${String(fusionResult.fusedSignal).toUpperCase()}` +
+      `（置信度 ${(fusionResult.fusedConfidence * 100).toFixed(0)}%）。` +
+      `${fusionResult.noAnalystSignals === true ? "（注：本轮无有效分析师信号，结论仅供参考）" : ""}`,
+    payloadJson: {
+      ticker,
+      fusedSignal: fusionResult.fusedSignal,
+      fusedConfidence: fusionResult.fusedConfidence,
+    },
+  });
 
   let reportCore = buildTeamReport(
     ticker,

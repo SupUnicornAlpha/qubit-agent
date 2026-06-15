@@ -25,6 +25,7 @@ import {
   enqueueUserMessage,
 } from "../runtime/workflow/user-message-queue";
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
+import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
@@ -402,6 +403,14 @@ workflowRouter.post("/:id/inject-message", async (c) => {
       workflowRunId,
       content,
       targetRole: body.targetRole ?? null,
+    });
+    // 同时落库为 user→orchestrator 交互，让右栏对话框看到用户的插话（而不仅是被 LLM 吸收）。
+    await logResearchTeamInteraction({
+      workflowRunId,
+      fromRole: "user",
+      toRole: "orchestrator",
+      kind: "llm_message",
+      contentText: content.slice(0, 4000),
     });
     const queued = await countQueuedUserMessages(workflowRunId);
     return c.json({ ok: true, data: { id, queued } });
