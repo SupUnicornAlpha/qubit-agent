@@ -51,15 +51,30 @@ const PRESET_COLORS: Record<string, { bg: string; fg: string }> = {
   memory_curator: { bg: "#0ea5e9", fg: "#082f49" },
   __team__: { bg: "#475569", fg: "#f8fafc" },
   __tools__: { bg: "#374151", fg: "#e5e7eb" },
+  __skills__: { bg: "#7c3aed", fg: "#f5f3ff" },
   user: { bg: "#f1f5f9", fg: "#0f172a" },
 };
 
 /** 伪 role：runtime 用来表示一对多广播或工具调用聚合，前端 UI 需要特殊渲染。 */
 export const TEAM_BROADCAST_ROLE = "__team__" as const;
 export const TOOLS_PSEUDO_ROLE = "__tools__" as const;
-const PSEUDO_ROLES: ReadonlySet<string> = new Set([TEAM_BROADCAST_ROLE, TOOLS_PSEUDO_ROLE]);
+export const SKILLS_PSEUDO_ROLE = "__skills__" as const;
+const PSEUDO_ROLES: ReadonlySet<string> = new Set([
+  TEAM_BROADCAST_ROLE,
+  TOOLS_PSEUDO_ROLE,
+  SKILLS_PSEUDO_ROLE,
+]);
 export function isPseudoRole(role: string | null | undefined): boolean {
   return role != null && PSEUDO_ROLES.has(role);
+}
+
+/** 节点大类：user=用户 / agent=Agent / tool=Tool·MCP·CLI / skill=技能。供拓扑按类型上图标。 */
+export type TeamNodeType = "user" | "agent" | "tool" | "skill";
+export function nodeTypeForRole(role: string): TeamNodeType {
+  if (role === "user") return "user";
+  if (role === TOOLS_PSEUDO_ROLE) return "tool";
+  if (role === SKILLS_PSEUDO_ROLE) return "skill";
+  return "agent";
 }
 
 function hashString(s: string): number {

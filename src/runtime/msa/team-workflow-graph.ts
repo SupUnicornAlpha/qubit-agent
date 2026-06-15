@@ -11,16 +11,34 @@ import {
   debateTurn,
   mcpCallLog,
   researchTeamInteraction,
+  skillRecallLog,
   toolCallLog,
   workflowRun,
 } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 import { parseTeamRelations } from "./analyst-team-topology";
 
+/** 节点大类，供前端按类型上不同图标（user=人形 / agent=电脑 / tool=扳手 / skill=书）。 */
+export type TeamGraphNodeType = "user" | "agent" | "tool" | "skill";
+
 export interface TeamGraphNode {
   id: string;
   role: string;
   label: string;
+  type: TeamGraphNodeType;
+}
+
+/** Tool / MCP / CLI 聚合伪节点。 */
+export const TOOLS_PSEUDO_ROLE = "__tools__";
+/** Skill 召回聚合伪节点。 */
+export const SKILLS_PSEUDO_ROLE = "__skills__";
+
+/** 角色 → 节点大类。user=用户；__tools__=工具类；__skills__=技能；其余皆 agent。 */
+export function nodeTypeForRole(role: string): TeamGraphNodeType {
+  if (role === "user") return "user";
+  if (role === TOOLS_PSEUDO_ROLE) return "tool";
+  if (role === SKILLS_PSEUDO_ROLE) return "skill";
+  return "agent";
 }
 
 export interface TeamGraphEdge {
@@ -37,6 +55,8 @@ export interface TeamGraphEdge {
   messagesBtoA: number;
   toolSuccessCount: number;
   toolFailCount: number;
+  /** agent → __skills__ 边的 skill 召回次数（仅 skill 边非 0）。 */
+  skillCount: number;
 }
 
 export interface TeamGraphToolCall {
@@ -117,6 +137,8 @@ function roleLabel(role: string): string {
     risk: "风控",
     risk_manager: "风控经理",
     __tools__: "Tool / MCP",
+    __skills__: "Skills",
+    user: "用户",
   };
   return map[role] ?? role;
 }
@@ -160,6 +182,12 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     stepIds.length > 0
       ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
       : [];
+
+  // Skill 召回（reason 节点检索出的候选 skill）：按 role 聚合成 agent → __skills__ 边。
+  const skillRows = await db
+    .select()
+    .from(skillRecallLog)
+    .where(eq(skillRecallLog.workflowRunId, workflowRunId));
 
   const stepById = new Map(steps.map((s) => [s.id, s]));
   const agentSteps: TeamGraphAgentStep[] = steps.map((s) => ({
@@ -220,6 +248,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     messagesBtoA: number;
     toolSuccessCount: number;
     toolFailCount: number;
+    skillCount: number;
   };
   const edgeMap = new Map<string, EdgeAgg>();
 
@@ -230,6 +259,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     messagesBtoA: 0,
     toolSuccessCount: 0,
     toolFailCount: 0,
+    skillCount: 0,
   });
 
   const bumpEdge = (x: string, y: string, messages: number, tools: number) => {
@@ -260,6 +290,14 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     cur.toolCount += 1;
     if (success) cur.toolSuccessCount += 1;
     else cur.toolFailCount += 1;
+    edgeMap.set(k, cur);
+  };
+
+  const bumpSkillEdge = (agentRole: string) => {
+    if (!agentRole || agentRole === SKILLS_PSEUDO_ROLE) return;
+    const k = undirectedKey(agentRole, SKILLS_PSEUDO_ROLE);
+    const cur = edgeMap.get(k) ?? emptyAgg();
+    cur.skillCount += 1;
     edgeMap.set(k, cur);
   };
 
@@ -327,6 +365,10 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   for (const m of mcpCalls) {
     bumpToolEdge(m.agentRole, toolOk(m.status));
   }
+  for (const sr of skillRows) {
+    const role = sr.definitionId ? defRole.get(sr.definitionId) : undefined;
+    if (role && role !== "unknown") bumpSkillEdge(role);
+  }
 
   const nodeRoles = new Set<string>();
   for (const k of edgeMap.keys()) {
@@ -356,6 +398,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       id: role,
       role,
       label: roleLabel(role),
+      type: nodeTypeForRole(role),
     }));
 
   const edges: TeamGraphEdge[] = [...edgeMap.entries()].map(([key, agg]) => {
@@ -370,6 +413,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       messagesBtoA: agg.messagesBtoA,
       toolSuccessCount: agg.toolSuccessCount,
       toolFailCount: agg.toolFailCount,
+      skillCount: agg.skillCount,
     };
   });
 

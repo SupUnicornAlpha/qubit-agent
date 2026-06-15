@@ -606,10 +606,15 @@ export interface WorkflowObservability {
 }
 
 /** GET /analyst/workflow/:id/team-graph */
+/** 节点大类：user=用户 / agent=Agent / tool=Tool·MCP·CLI / skill=技能。 */
+export type TeamGraphNodeType = "user" | "agent" | "tool" | "skill";
+
 export interface AnalystTeamGraphNode {
   id: string;
   role: string;
   label: string;
+  /** 后端返回的节点大类；老数据可能缺省，前端按 role 兜底推断。 */
+  type?: TeamGraphNodeType;
 }
 
 export interface AnalystTeamGraphEdge {
@@ -622,6 +627,8 @@ export interface AnalystTeamGraphEdge {
   messagesBtoA?: number;
   toolSuccessCount?: number;
   toolFailCount?: number;
+  /** agent → __skills__ 边的 skill 召回次数（仅 skill 边非 0）。 */
+  skillCount?: number;
 }
 
 export interface AnalystTeamGraphInteraction {

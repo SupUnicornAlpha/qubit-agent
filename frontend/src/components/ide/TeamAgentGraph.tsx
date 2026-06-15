@@ -1,3 +1,4 @@
+import { BookOpen, Cpu, User, Wrench } from "lucide-react";
 import type { FC, MouseEvent } from "react";
 import { useId, useMemo } from "react";
 import type { AnalystTeamGraphEdge, AnalystTeamGraphNode } from "../../api/types";
@@ -5,21 +6,37 @@ import {
   edgeMessagesAtoB,
   edgeMessagesBtoA,
   formatEdgeLabel,
+  isSkillGraphEdge,
   isToolGraphEdge,
+  skillAgentOnEdge,
   toolAgentOnEdge,
   toolEdgeStroke,
 } from "../../lib/teamGraphEdgeVisual";
-import { buildTopologyEdgePath, sampleLine, type TopoRect } from "../../lib/topologyEdgeRouting";
 import {
-  computeTeamGraphNodePositions,
   TEAM_GRAPH_NODE_H,
   TEAM_GRAPH_NODE_W,
+  computeTeamGraphNodePositions,
 } from "../../lib/teamGraphLayout";
+import { type TopoRect, buildTopologyEdgePath, sampleLine } from "../../lib/topologyEdgeRouting";
+import { type TeamNodeType, nodeTypeForRole } from "../team/conversationAvatar";
 
 export type TeamGraphSelection =
   | null
   | { kind: "node"; role: string }
   | { kind: "edge"; a: string; b: string };
+
+/** 节点大类 → 图标 + 颜色：user=人形 / agent=电脑 / tool=扳手 / skill=书。 */
+const NODE_TYPE_ICON: Record<TeamNodeType, { Icon: typeof User; color: string }> = {
+  user: { Icon: User, color: "#e2e8f0" },
+  agent: { Icon: Cpu, color: "#93c5fd" },
+  tool: { Icon: Wrench, color: "#d1d5db" },
+  skill: { Icon: BookOpen, color: "#c4b5fd" },
+};
+
+/** 取节点大类：优先后端 type，缺省按 role 兜底推断。 */
+function resolveNodeType(node: AnalystTeamGraphNode): TeamNodeType {
+  return node.type ?? nodeTypeForRole(node.role);
+}
 
 /** 与后端 edge key 一致：无向 */
 export function teamGraphUndirectedKey(a: string, b: string): string {
@@ -69,10 +86,14 @@ function buildDrawnEdges(
     const agent = toolAgentOnEdge(ed);
     const agentPos = agent === ed.a ? pa : pb;
     const toolsPos = agent === ed.a ? pb : pa;
-    const d = buildTopologyEdgePath(nodeRect(agentPos.x, agentPos.y), nodeRect(toolsPos.x, toolsPos.y), {
-      curved: true,
-      curveStrength: 0.55,
-    });
+    const d = buildTopologyEdgePath(
+      nodeRect(agentPos.x, agentPos.y),
+      nodeRect(toolsPos.x, toolsPos.y),
+      {
+        curved: true,
+        curveStrength: 0.55,
+      }
+    );
     const labelPt = sampleLine(agentPos.x, agentPos.y, toolsPos.x, toolsPos.y, 0.42);
     return [
       {
@@ -88,11 +109,44 @@ function buildDrawnEdges(
     ];
   }
 
+  if (isSkillGraphEdge(ed)) {
+    const agent = skillAgentOnEdge(ed);
+    const agentPos = agent === ed.a ? pa : pb;
+    const skillsPos = agent === ed.a ? pb : pa;
+    const d = buildTopologyEdgePath(
+      nodeRect(agentPos.x, agentPos.y),
+      nodeRect(skillsPos.x, skillsPos.y),
+      {
+        curved: true,
+        curveStrength: 0.55,
+      }
+    );
+    const labelPt = sampleLine(agentPos.x, agentPos.y, skillsPos.x, skillsPos.y, 0.42);
+    return [
+      {
+        key: `${ed.key}-skill`,
+        d,
+        className: "qb-topo-edge qb-topo-edge--tool",
+        dashed: (ed.skillCount ?? 0) === 0,
+        stroke: toolEdgeStroke(ed),
+        showArrow: true,
+        label,
+        labelPt,
+      },
+    ];
+  }
+
   const ab = edgeMessagesAtoB(ed);
   const ba = edgeMessagesBtoA(ed);
   const out: DrawnEdge[] = [];
 
-  const addDirected = (from: { x: number; y: number }, to: { x: number; y: number }, suffix: string, fanIndex: number, fanTotal: number) => {
+  const addDirected = (
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    suffix: string,
+    fanIndex: number,
+    fanTotal: number
+  ) => {
     const d = buildTopologyEdgePath(nodeRect(from.x, from.y), nodeRect(to.x, to.y), {
       curved: true,
       curveStrength: 0.65,
@@ -209,10 +263,24 @@ export const TeamAgentGraph: FC<{
         <marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
           <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-stroke, #71717a)" />
         </marker>
-        <marker id={markerSuccessId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+        <marker
+          id={markerSuccessId}
+          markerWidth="9"
+          markerHeight="9"
+          refX="8"
+          refY="4.5"
+          orient="auto"
+        >
           <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-success, #4ade80)" />
         </marker>
-        <marker id={markerFailId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+        <marker
+          id={markerFailId}
+          markerWidth="9"
+          markerHeight="9"
+          refX="8"
+          refY="4.5"
+          orient="auto"
+        >
           <path d="M0,0 L9,4.5 L0,9 z" fill="var(--qb-topo-edge-fail, #f87171)" />
         </marker>
       </defs>
@@ -270,7 +338,9 @@ export const TeamAgentGraph: FC<{
                       pointerEvents: "none",
                       stroke: seg.stroke,
                       animation:
-                        isHot && activity.isRunning ? "qb-team-edge-pulse 1.1s ease-in-out infinite" : undefined,
+                        isHot && activity.isRunning
+                          ? "qb-team-edge-pulse 1.1s ease-in-out infinite"
+                          : undefined,
                     }}
                   />
                   {seg.label ? (
@@ -302,6 +372,7 @@ export const TeamAgentGraph: FC<{
         ]
           .filter(Boolean)
           .join(" ");
+        const { Icon, color: iconColor } = NODE_TYPE_ICON[resolveNodeType(node)];
         return (
           <g key={node.role}>
             <rect
@@ -313,13 +384,28 @@ export const TeamAgentGraph: FC<{
               rx={8}
               style={{
                 cursor: "pointer",
-                animation: hot && activity.isRunning ? "qb-team-node-pulse 1.2s ease-in-out infinite" : undefined,
+                animation:
+                  hot && activity.isRunning
+                    ? "qb-team-node-pulse 1.2s ease-in-out infinite"
+                    : undefined,
               }}
               onClick={(e: MouseEvent<SVGRectElement>) => {
                 e.stopPropagation();
                 onSelectNode(node.role);
               }}
             />
+            {/* 类型图标（左上角徽标），点击同样选中节点，不打断文字布局 */}
+            <foreignObject
+              x={p.x - TEAM_GRAPH_NODE_W / 2 + 6}
+              y={p.y - TEAM_GRAPH_NODE_H / 2 + 6}
+              width={16}
+              height={16}
+              style={{ pointerEvents: "none" }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon size={14} color={iconColor} strokeWidth={2} />
+              </div>
+            </foreignObject>
             <text className="qb-topo-label" x={p.x} y={p.y - 5} textAnchor="middle">
               {node.label.length > 11 ? `${node.label.slice(0, 10)}…` : node.label}
             </text>

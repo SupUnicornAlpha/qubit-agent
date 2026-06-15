@@ -8,6 +8,15 @@ export function toolAgentOnEdge(ed: AnalystTeamGraphEdge): string {
   return ed.a === "__tools__" ? ed.b : ed.a;
 }
 
+/** skill 召回边：agent ↔ __skills__。 */
+export function isSkillGraphEdge(ed: AnalystTeamGraphEdge): boolean {
+  return ed.a === "__skills__" || ed.b === "__skills__";
+}
+
+export function skillAgentOnEdge(ed: AnalystTeamGraphEdge): string {
+  return ed.a === "__skills__" ? ed.b : ed.a;
+}
+
 export function edgeMessagesAtoB(ed: AnalystTeamGraphEdge): number {
   return ed.messagesAtoB ?? 0;
 }
@@ -24,8 +33,9 @@ export function edgeToolFail(ed: AnalystTeamGraphEdge): number {
   return ed.toolFailCount ?? 0;
 }
 
-/** 工具/MCP 边描边色 */
+/** 工具/MCP 边描边色（skill 边复用此函数返回紫色） */
 export function toolEdgeStroke(ed: AnalystTeamGraphEdge): string {
+  if (isSkillGraphEdge(ed)) return "var(--qb-topo-edge-skill, #a78bfa)";
   const ok = edgeToolSuccess(ed);
   const fail = edgeToolFail(ed);
   if (fail > 0 && ok === 0) return "var(--qb-topo-edge-fail, #f87171)";
@@ -35,13 +45,21 @@ export function toolEdgeStroke(ed: AnalystTeamGraphEdge): string {
 }
 
 export function formatEdgeLabel(ed: AnalystTeamGraphEdge): string {
+  if (isSkillGraphEdge(ed)) {
+    const n = ed.skillCount ?? 0;
+    return n > 0 ? `技能 ${n}` : "技能";
+  }
   if (isToolGraphEdge(ed)) {
     const ok = edgeToolSuccess(ed);
     const fail = edgeToolFail(ed);
     const parts: string[] = [];
     if (ok > 0) parts.push(`✓${ok}`);
     if (fail > 0) parts.push(`✗${fail}`);
-    return parts.length > 0 ? `工具 ${parts.join(" ")}` : ed.toolCount > 0 ? `工具 ${ed.toolCount}` : "工具";
+    return parts.length > 0
+      ? `工具 ${parts.join(" ")}`
+      : ed.toolCount > 0
+        ? `工具 ${ed.toolCount}`
+        : "工具";
   }
   const ab = edgeMessagesAtoB(ed);
   const ba = edgeMessagesBtoA(ed);
