@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { _formatStdioExitErrorMessage } from "../stdio-session";
+import { _formatStdioExitErrorMessage, prefixStdioToolError } from "../stdio-session";
+import { classifyToolError } from "../../langgraph/nodes/tool-error-classifier";
 
 /*
  * F-P0-07 regression：之前 stderrBuf 用 `.slice(-1200)` 按字节截断，eval batch 2
@@ -68,5 +69,46 @@ describe("_formatStdioExitErrorMessage (F-P0-07)", () => {
       "在 tools/call 阶段"
     );
     expect(_formatStdioExitErrorMessage([], 0, "initialize")).toContain("在 initialize 阶段");
+  });
+});
+
+describe("prefixStdioToolError", () => {
+  test("给裸错误消息加 [server/tool] 前缀", () => {
+    const out = prefixStdioToolError(
+      "mcp-financex",
+      "compare_peer_companies",
+      "At least 2 symbols are required for comparison."
+    );
+    expect(out).toBe(
+      "[mcp-financex/compare_peer_companies] At least 2 symbols are required for comparison."
+    );
+  });
+
+  test("已带前缀时不重复叠加（幂等）", () => {
+    const once = prefixStdioToolError("s", "t", "boom");
+    const twice = prefixStdioToolError("s", "t", once);
+    expect(twice).toBe(once);
+    expect(twice.match(/\[s\/t\]/g)?.length).toBe(1);
+  });
+
+  test("前缀不污染 errorClass 分类（compare_peer_companies 缺参 → 仍非 blocked/transient 误判）", () => {
+    // 关键回归：加前缀后分类结果应与裸消息一致，不能因为前缀里的字符触发 BLOCKED/TRANSIENT 正则
+    const raw = "At least 2 symbols are required for comparison.";
+    const prefixed = prefixStdioToolError("mcp-financex", "compare_peer_companies", raw);
+    expect(classifyToolError(prefixed)).toBe(classifyToolError(raw));
+  });
+
+  test("子进程退出类错误加前缀后分类结果不变（无论原类别）", () => {
+    const raw = "MCP stdio: 子进程在 tools/call 阶段提前退出 (exit code=1)";
+    const prefixed = prefixStdioToolError("mcp-financex", "get_quote_batch", raw);
+    // 核心保证：加前缀不能改变 classifyToolError 的判定结果
+    expect(classifyToolError(prefixed)).toBe(classifyToolError(raw));
+  });
+
+  test("含 timeout 关键词的错误加前缀后仍被分类为 transient", () => {
+    const raw = "request timed out after 60000ms";
+    const prefixed = prefixStdioToolError("mcp-financex", "get_quote", raw);
+    expect(classifyToolError(raw)).toBe("transient");
+    expect(classifyToolError(prefixed)).toBe("transient");
   });
 });

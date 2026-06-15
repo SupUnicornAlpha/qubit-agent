@@ -123,7 +123,11 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
               "⚠ mcp-financex 1.0.11 实测不稳定（子进程在 financials.js:175 处崩）。没有可靠替代——若必须取财报，可降级为基于 get_quote 的估值代理或直接在 reasoning 里标注 unavailable。",
           },
           { name: "calculate_dcf_valuation", desc: "DCF 内在价值估算" },
-          { name: "compare_peer_companies", desc: "可比公司估值/财务对比" },
+          {
+            name: "compare_peer_companies",
+            desc:
+              "可比公司估值/财务对比。⚠ 参数 symbols 必须是含 **≥2 个** 标的的数组（如 [\"AAPL\",\"MSFT\"]），只传 1 个会被服务端直接拒绝（At least 2 symbols are required）。",
+          },
         ],
       },
     },

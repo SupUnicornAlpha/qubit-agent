@@ -40,9 +40,25 @@ export interface ExternalCallMeta {
   attempt: number;
 }
 
+export interface ExternalCallOptions {
+  /**
+   * 每次 attempt 失败时回调（含会被重试吞掉的中途失败）。
+   *
+   * 为什么需要：`executeWithPolicy` 内部重试时，中途失败的 attempt 会被 catch
+   * 吞掉再重试，调用方只看得到「最终成功 / 最终失败」。但 DB 健康统计
+   * （mcp_server_health.failureCount）想如实反映「这次工具调用一共失败了几次」，
+   * 否则 attempt1 失败 + attempt2 成功会被记成纯 success，failureCount 偏乐观、
+   * DB 熔断触发偏晚。dispatcher 借这个钩子把中途失败也回写一笔。
+   *
+   * 回调内抛错不影响主流程（被吞 + warn），observability 不该拖垮业务。
+   */
+  onAttemptFailure?: (attempt: number, error: Error) => void | Promise<void>;
+}
+
 export async function executeWithPolicy<T>(
   policy: ExternalCallPolicy,
-  action: (meta: ExternalCallMeta) => Promise<T>
+  action: (meta: ExternalCallMeta) => Promise<T>,
+  options?: ExternalCallOptions
 ): Promise<T> {
   if (policy.idempotency?.enabled) {
     const cached = idempotencyByKey.get(policy.idempotency.key) as IdempotencyEntry<T> | undefined;
@@ -89,6 +105,16 @@ export async function executeWithPolicy<T>(
         circuit.openedAt = Date.now();
       }
       circuitByKey.set(key, circuit);
+      if (options?.onAttemptFailure) {
+        // observability 钩子失败不该拖垮业务：吞 + warn
+        try {
+          await options.onAttemptFailure(attempt, lastError);
+        } catch (cbErr) {
+          console.warn(
+            `[executeWithPolicy] onAttemptFailure threw (ignored): ${(cbErr as Error).message}`
+          );
+        }
+      }
       if (attempt >= policy.retry.maxAttempts) break;
       const backoff = policy.retry.backoffMs * Math.pow(policy.retry.backoffMultiplier, attempt - 1);
       await Bun.sleep(backoff);

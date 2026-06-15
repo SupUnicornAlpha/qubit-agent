@@ -468,11 +468,30 @@ export async function callMcpStdioTool(
       "tools/call",
       opts.serverKey
     );
-    if (rCall.error) throw new Error(rCall.error.message);
+    /**
+     * 给 RPC error / isError 帧加 `[serverKey/toolName]` 前缀：多个 server 同时在跑时，
+     * 光看 "At least 2 symbols required" 这类裸消息无法定位是哪个工具崩的。带上前缀后
+     * 错误消息自包含定位信息，不必再 join DB 的 tool_name 列。raceRpcOrExit 抛的
+     * 「子进程提前退出」已含 phase，不在此处重复加前缀。
+     */
+    if (rCall.error) throw new Error(prefixStdioToolError(opts.serverKey, opts.toolName, rCall.error.message));
     const toolErr = mcpToolResultErrorMessage(rCall.result);
-    if (toolErr) throw new Error(toolErr);
+    if (toolErr) throw new Error(prefixStdioToolError(opts.serverKey, opts.toolName, toolErr));
     return rCall.result;
   });
+}
+
+/**
+ * 给 stdio 工具错误消息加 `[serverKey/toolName]` 前缀。纯函数，便于单测。
+ * 已带前缀（重复调用 / 上游已标注）时不再叠加。
+ */
+export function prefixStdioToolError(
+  serverKey: string,
+  toolName: string,
+  message: string
+): string {
+  const prefix = `[${serverKey}/${toolName}]`;
+  return message.startsWith(prefix) ? message : `${prefix} ${message}`;
 }
 
 export function killMcpStdioPool(serverKey: string) {

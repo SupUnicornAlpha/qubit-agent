@@ -346,6 +346,24 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
           accepted: true,
           output: stringifyResult(result),
         };
+      },
+      {
+        /**
+         * 监控修复：重试中途失败也如实回写 DB health。
+         *
+         * 之前只在 executeWithPolicy 返回后记一次（最终成功→success / 最终失败→failed），
+         * attempt1 失败 + attempt2 成功 会被记成纯 success，mcp_server_health.failureCount
+         * 偏乐观、DB 熔断触发偏晚。这里把每次被重试吞掉的中途失败也补记一笔，让
+         * failureCount 反映「这次工具调用一共失败了几次」。
+         *
+         * circuit-breaker-open 这类短路错误不会进到这里（fail-fast 在 executeWithPolicy
+         * 之外的 assertMcpServerNotOpen 就拦了），所以不会二次膨胀。
+         */
+        onAttemptFailure: async (_attempt, attemptErr) => {
+          const m = attemptErr.message ?? String(attemptErr);
+          const st: "failed" | "timeout" = /timeout/i.test(m) ? "timeout" : "failed";
+          await recordMcpCallResult(input.serverName, st, m);
+        },
       }
     );
     // 调用成功（含 idempotency cache 命中）：刷新 health 行为 closed + 累计 success
@@ -353,19 +371,14 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     return dispatchResult;
   } catch (err) {
     /**
-     * 失败分类：
-     *   - timeout：错误消息含 'timeout'（http-transport / stdio-session 抛错惯例）
-     *   - 其他：failed
-     * sandbox_blocked / 二级业务错误目前在 act.ts 那一层做更细分类，dispatcher 只看
-     * 「请求是否打通」即可。
+     * 失败已记账：不再在此处记 failed —— executeWithPolicy 的 onAttemptFailure 钩子（上面）已经
+     * 把**每一次** attempt 失败（含最终那次）如实回写过 DB health 了。若这里再记一次，
+     * 最后一次失败会被双倍计入 failureCount（正是历史注释要避免的二次膨胀）。
+     *
+     * assertMcpServerNotOpen 抛的"mcp circuit breaker open"是 executeWithPolicy 之外的
+     * fail-fast，本就不该记（health 已是 open）；它走的也不是这条 catch（在更上层的
+     * try 块捕获并尝试 fallback），这里仅作防御性说明。
      */
-    const msg = (err as Error)?.message ?? String(err);
-    const status: "failed" | "timeout" = /timeout/i.test(msg) ? "timeout" : "failed";
-    // assertMcpServerNotOpen 抛的"mcp circuit breaker open"不该再次记录（它本来就因为
-    // health 是 open；再 recordMcpCallResult 会让 failureCount 二次膨胀）。
-    if (!msg.startsWith("mcp circuit breaker open")) {
-      await recordMcpCallResult(input.serverName, status, msg);
-    }
 
     /**
      * P0-2（Round 6 复盘，2026-06-08）：MCP 工具调用失败时尝试 financex fallback。
