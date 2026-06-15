@@ -27,6 +27,15 @@ const TRANSIENT_PATTERNS: RegExp[] = [
   /\btransport closed\b/i,
   /\bsubprocess\s+exited\b/i,
   /\bcircuit breaker open\b/i,
+  /*
+   * 本仓自产的中文子进程崩溃/断流消息（瞬时崩，重试可能成功）：
+   *   - stdio-session._formatStdioExitErrorMessage → "子进程在 <phase> 阶段提前退出"
+   *   - jsonrpc-ndjson collectRpcResponse        → "子进程在响应 id=N 前关闭了 stdout"
+   * 用精确短语「提前退出」「关闭了 stdout」锚定，避免误伤协议不兼容的
+   * 「子进程拒绝了…protocolVersion」（那是 permanent，重试无意义）。
+   */
+  /提前退出/,
+  /关闭了\s*stdout/,
 ];
 
 const PERMANENT_PATTERNS: RegExp[] = [

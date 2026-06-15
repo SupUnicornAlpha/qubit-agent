@@ -22,6 +22,37 @@ describe("classifyToolError", () => {
     expect(classifyToolError("Connection refused (ECONNREFUSED)")).toBe("transient");
   });
 
+  /*
+   * 回归：本仓自产的子进程崩溃/断流消息是中文（stdio-session._formatStdioExitErrorMessage /
+   * jsonrpc-ndjson collectRpcResponse），原 TRANSIENT_PATTERNS 只认英文
+   * `subprocess exited`，导致这些中文消息被归 unknown(retryable=false)。实证中
+   * mcp-financex 的 subprocess_exit 失败（10 次）本可重试却没重试。钉死为 transient。
+   */
+  test("中文子进程崩溃/断流（本仓自产）→ transient", () => {
+    expect(
+      classifyToolError("MCP stdio: 子进程在 tools/call 阶段提前退出 (exit code=1)")
+    ).toBe("transient");
+    expect(
+      classifyToolError("MCP stdio: 子进程在 initialize 阶段提前退出 (exit code=?)")
+    ).toBe("transient");
+    // 带 [server/tool] 前缀（prefixStdioToolError）仍 transient
+    expect(
+      classifyToolError(
+        "[mcp-financex/get_quote_batch] MCP stdio: 子进程在 tools/call 阶段提前退出 (exit code=1)"
+      )
+    ).toBe("transient");
+    // jsonrpc-ndjson 断流消息
+    expect(
+      classifyToolError("MCP RPC: 子进程在响应 id=3 前关闭了 stdout（无任何输出）")
+    ).toBe("transient");
+  });
+
+  test("中文 transient pattern 不误伤协议不兼容（拒绝了 protocolVersion 重试无意义）", () => {
+    const msg =
+      "MCP initialize failed: 子进程拒绝了我们支持的全部 protocolVersion (2024-11-05)。最后一次错误: unsupported protocol version";
+    expect(classifyToolError(msg)).not.toBe("transient");
+  });
+
   test("识别 permanent 错误（4xx / 参数错 / 资源 not found）", () => {
     expect(classifyToolError("MCP HTTP 400: bad request")).toBe("permanent");
     expect(classifyToolError("validation_failed: 'ticker' required missing")).toBe("permanent");
