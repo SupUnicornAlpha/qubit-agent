@@ -5190,6 +5190,7 @@ const TeamDashboardPanel: FC = () => {
           messageKind: row.kind,
           toolName: row.toolName,
           contentText: row.contentText,
+          payloadJson: row.payloadJson,
         });
       }
       return events;
@@ -5211,6 +5212,7 @@ const TeamDashboardPanel: FC = () => {
         messageKind: row.kind,
         toolName: row.toolName,
         contentText: row.contentText,
+        payloadJson: row.payloadJson,
       });
     }
     liveDebateEvents.forEach((ev, i) => {

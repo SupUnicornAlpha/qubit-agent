@@ -794,7 +794,9 @@ async function runAnalystTeamCore(params: {
     predsByTo.set(e.to, arr);
   }
 
+  let waveNo = 0;
   for (const wave of waves) {
+    waveNo += 1;
     // 用户发起的协作式中断：在每个 wave 边界（无 slot 在飞的安全点）检查。命中则起一个
     // free_form team_orchestrator HITL 停在断点，等用户输入新提示词后走既有恢复链续跑。
     if (consumeInterrupt(workflowRunId)) {
@@ -805,6 +807,14 @@ async function runAnalystTeamCore(params: {
         ticker: scope.displayLabel,
       });
     }
+    // 面向用户的进度播报：当前组分析师开跑（coding-agent 式 play-by-play）。
+    await logResearchTeamInteraction({
+      workflowRunId,
+      fromRole: "orchestrator",
+      toRole: "user",
+      kind: "llm_message",
+      contentText: `🔬 第 ${waveNo}/${waves.length} 组分析进行中：${wave.map((s) => s.role).join("、")}…`,
+    });
     const waveResults = await Promise.allSettled(
       wave.map((slot) => {
         const predChain = (predsByTo.get(slot.role) ?? []).filter(
@@ -906,6 +916,21 @@ async function runAnalystTeamCore(params: {
           contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 3500)}`,
           payloadJson: { phase: "analyst_report", ticker },
         });
+        // coding-agent 式即时点评：每个分析师一回来，Orchestrator 对用户说一句（toRole=user）。
+        {
+          const conf = Math.round(signal.confidence * 100);
+          const tone =
+            signal.signal === "buy" ? "偏多" : signal.signal === "sell" ? "偏空" : "中性";
+          const gist = signal.reasoning.trim().split("\n")[0]?.slice(0, 80) ?? "";
+          await logResearchTeamInteraction({
+            workflowRunId,
+            fromRole: "orchestrator",
+            toRole: "user",
+            kind: "llm_message",
+            contentText: `🗒️ ${slot.role} 已返回：${signal.signal.toUpperCase()}（${conf}%，${tone}）${gist ? ` — ${gist}…` : ""}`,
+            payloadJson: { phase: "analyst_reaction", role: slot.role },
+          });
+        }
       } else if (
         result.status === "fulfilled" &&
         result.value.kind === "missing_signal" &&
@@ -924,6 +949,14 @@ async function runAnalystTeamCore(params: {
           kind: "llm_message",
           contentText: `[signal_parse_failed] ${result.value.body.slice(0, 3500)}`,
           payloadJson: { phase: "analyst_report", ticker, missingSignal: true },
+        });
+        await logResearchTeamInteraction({
+          workflowRunId,
+          fromRole: "orchestrator",
+          toRole: "user",
+          kind: "llm_message",
+          contentText: `⚠️ ${slot.role} 本轮未给出有效信号，融合时我会降低它的权重。`,
+          payloadJson: { phase: "analyst_reaction", role: slot.role, missingSignal: true },
         });
       } else if (result.status === "rejected" && slotProducesSignal(slot)) {
         /**
@@ -949,6 +982,14 @@ async function runAnalystTeamCore(params: {
           kind: "llm_message",
           contentText: `[slot_runtime_error] ${fallback.reasoning.slice(0, 3500)}`,
           payloadJson: { phase: "analyst_report", ticker, slotError: true },
+        });
+        await logResearchTeamInteraction({
+          workflowRunId,
+          fromRole: "orchestrator",
+          toRole: "user",
+          kind: "llm_message",
+          contentText: `⚠️ ${slot.role} 执行出错，本轮不计入。`,
+          payloadJson: { phase: "analyst_reaction", role: slot.role, slotError: true },
         });
       }
 
@@ -1287,6 +1328,27 @@ async function runAnalystTeamCore(params: {
   const attendedRoles = fusionResult.signalBreakdown.map((s) => s.role);
   const allAnalystRoles = analystSlots.map((s) => s.role);
   const missingRoles = allAnalystRoles.filter((r) => !attendedRoles.includes(r));
+
+  // 面向用户的最终交付：Orchestrator 把完整研究结论发给用户（而不只是给子 Agent 派单）。
+  // 这是 coding-agent 式"过程里也对用户说话"的收尾——用户在对话框直接拿到结论与建议。
+  const riskNote = risk?.vetoed
+    ? `\n\n> ⚠️ 风控拦截：${risk.reason ?? ""}`
+    : debate
+      ? `\n\n> 🗣️ 已经过 Bull/Bear 辩论：${debate.verdict ?? debate.finalStance ?? ""}`
+      : "";
+  await logResearchTeamInteraction({
+    workflowRunId,
+    fromRole: "orchestrator",
+    toRole: "user",
+    kind: "llm_message",
+    contentText: `🏁 研究完成，这是我的结论：\n\n${report.slice(0, 6000)}${riskNote}`,
+    payloadJson: {
+      phase: "final_report",
+      fusedSignal: fusionResult.fusedSignal,
+      fusedConfidence: fusionResult.fusedConfidence,
+      vetoed: risk?.vetoed ?? false,
+    },
+  });
 
   return {
     fusionId: fusionResult.fusionId,

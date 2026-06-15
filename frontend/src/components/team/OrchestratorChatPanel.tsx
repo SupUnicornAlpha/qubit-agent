@@ -105,22 +105,24 @@ export function OrchestratorChatPanel({
   const [injecting, setInjecting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [artifactsOpen, setArtifactsOpen] = useState(true);
-  /**
-   * 默认只看 Orchestrator 自己的输出（含对 user 与对子 Agent 的 A2A），折叠其他 Agent 的
-   * 输出与 tool 调用——避免对话框被子 Agent 刷屏。可切「全部」看完整多 Agent 流。
-   */
-  const [feedScope, setFeedScope] = useState<"orchestrator" | "all">("orchestrator");
   const wfId = workflowRunId.trim();
 
-  const visibleEvents = useMemo(() => {
-    if (feedScope === "all") return events;
-    return events.filter((ev) => {
-      if (ev.kind !== "message") return false; // 折叠 debate/system 多 Agent 噪声
-      if (ev.messageKind === "tool_call") return false; // 折叠 tool 调用
-      return ev.fromRole === "orchestrator" || ev.fromRole === "user"; // 只留 Orchestrator + 用户
-    });
-  }, [events, feedScope]);
-  const hiddenCount = events.length - visibleEvents.length;
+  /**
+   * 本对话框只聚焦 Orchestrator 与用户：
+   *   - Orchestrator → 用户：正式输出气泡
+   *   - Orchestrator → 子 Agent / msa / 全员：折叠成一行 A2A 卡片（collapseA2AFromRole）
+   *   - 用户提示词：左侧气泡
+   * 其他子 Agent 之间的完整对话不在这里——点中间拓扑图的节点进入该 Agent 自己的对话框查看。
+   */
+  const visibleEvents = useMemo(
+    () =>
+      events.filter((ev) => {
+        if (ev.kind !== "message") return false; // debate/system 多 Agent 噪声不在此视图
+        if (ev.messageKind === "tool_call") return false; // tool 调用属于子 Agent 视图
+        return ev.fromRole === "orchestrator" || ev.fromRole === "user";
+      }),
+    [events]
+  );
 
   // 新消息进来时自动滚到底（右栏主对话框默认始终跟随最新）
   useEffect(() => {
@@ -248,28 +250,11 @@ export function OrchestratorChatPanel({
             );
           })}
         </div>
-        {/* 视图范围：默认只看 Orchestrator 输出（折叠子 Agent + tool），可切全部 */}
+        {/* 只聚焦 Orchestrator：对用户输出=气泡，对子 Agent 的 A2A=折叠卡片 */}
         <div style={styles.scopeRow}>
-          {[
-            { id: "orchestrator" as const, label: "只看 Orchestrator" },
-            { id: "all" as const, label: hiddenCount > 0 ? `全部（+${hiddenCount}）` : "全部" },
-          ].map((opt) => {
-            const active = feedScope === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => setFeedScope(opt.id)}
-                style={{ ...styles.scopeBtn, ...(active ? styles.scopeBtnActive : null) }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
           <span style={styles.scopeHint}>
-            {feedScope === "orchestrator"
-              ? "子 Agent 与工具调用已折叠 · 表头「编排器 → 用户/技术面」区分对象"
-              : "完整多 Agent 流（含工具调用）"}
+            仅显示 Orchestrator 对你的输出；对子 Agent 的派单已折叠成卡片。子 Agent
+            之间的完整对话请点中间拓扑图的节点查看。
           </span>
         </div>
       </div>
@@ -322,14 +307,13 @@ export function OrchestratorChatPanel({
           events={visibleEvents}
           selfRole="orchestrator"
           contentMaxLength={6000}
+          collapseA2AFromRole="orchestrator"
           emptyText={
             !wfId
               ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
               : running
                 ? "Orchestrator 已启动，正在规划与派发…"
-                : feedScope === "orchestrator" && hiddenCount > 0
-                  ? "本视图只看 Orchestrator 的输出；子 Agent 的对话与工具调用已折叠，点上方「全部」查看。"
-                  : "输入研究指令并发送，Orchestrator 将开始工作。子 Agent 的对话可在中间拓扑图点击节点查看。"
+                : "输入研究指令并发送，Orchestrator 将开始工作。子 Agent 的对话可在中间拓扑图点击节点查看。"
           }
         />
       </div>

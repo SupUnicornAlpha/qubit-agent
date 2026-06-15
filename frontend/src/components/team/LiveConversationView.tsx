@@ -3,10 +3,10 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "../../i18n";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import {
+  TEAM_BROADCAST_ROLE,
   avatarColorFor,
   avatarLabelFor,
   formatRoleName,
-  TEAM_BROADCAST_ROLE,
 } from "./conversationAvatar";
 
 /**
@@ -27,6 +27,8 @@ export type LiveConversationMessageEvent = {
   messageKind?: string | null;
   toolName?: string | null;
   contentText: string;
+  /** A2A 协议原始 payload（interaction.payloadJson）；A2A 卡片「查看协议」用。 */
+  payloadJson?: unknown;
 };
 
 export type LiveConversationDebateEvent = {
@@ -60,6 +62,12 @@ export type LiveConversationViewProps = {
   /** 内容裁剪上限，每条消息最多渲染多少字符。 */
   contentMaxLength?: number;
   emptyText?: ReactNode;
+  /**
+   * 设了之后：该 role 发出、且**不是给 user** 的消息（A2A 派单 / 广播 / 给 msa 等）
+   * 折叠成一行可展开的卡片（默认收起，只显示"X → Y · 派发调用"），让对话框聚焦
+   * 「Orchestrator → 用户」的正式输出。子 Agent 之间的完整对话请点拓扑节点查看。
+   */
+  collapseA2AFromRole?: string;
 };
 
 function formatTs(ts: string): string {
@@ -83,6 +91,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
   selfRole = "orchestrator",
   contentMaxLength = 4000,
   emptyText,
+  collapseA2AFromRole,
 }) => {
   const { t } = useTranslation();
   const sorted = useMemo(() => {
@@ -111,6 +120,17 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
           case "message":
             if (ev.messageKind === "tool_call") {
               return <ToolCallCard key={ev.id} ev={ev} maxLen={contentMaxLength} />;
+            }
+            /**
+             * A2A 折叠：collapseA2AFromRole 发出的、非给 user 的消息（派单/广播/给 msa）
+             * 收成一行可展开卡片，让对话框聚焦「Orchestrator → 用户」的正式输出。
+             */
+            if (
+              collapseA2AFromRole &&
+              ev.fromRole === collapseA2AFromRole &&
+              ev.toRole !== "user"
+            ) {
+              return <A2ACard key={ev.id} ev={ev} maxLen={contentMaxLength} />;
             }
             /**
              * Orchestrator 的"全员广播"消息（runtime 写入 toRole=__team__，避免对 N 个
@@ -309,6 +329,144 @@ const MessageRow: FC<{
   );
 };
 
+/**
+ * A2A 折叠卡片：Orchestrator 给子 Agent / msa / 全员发出的调用消息，默认收起成一行
+ * 「编排器 → 宏观 · 派发调用」，点击展开看完整内容。让右栏聚焦 Orchestrator→用户输出。
+ */
+const A2ACard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = ({ ev, maxLen }) => {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [showProtocol, setShowProtocol] = useState(false);
+  const toLabel = ev.toRole === TEAM_BROADCAST_ROLE ? "全员" : formatRoleName(ev.toRole);
+  const content = truncate(ev.contentText || t("team.conversation.noTextContent"), maxLen);
+  const useMarkdown = looksLikeMarkdown(content);
+  // A2A 协议原文：把这条消息的信封字段 + 原始 payload 拼成可读 JSON。
+  const protocolText = JSON.stringify(
+    {
+      fromRole: ev.fromRole,
+      toRole: ev.toRole,
+      kind: ev.messageKind ?? "llm_message",
+      toolName: ev.toolName ?? undefined,
+      ts: ev.ts,
+      content: ev.contentText,
+      payload: ev.payloadJson ?? null,
+    },
+    null,
+    2
+  );
+  return (
+    <div style={a2aCardStyle}>
+      <div style={a2aSummaryStyle}>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          style={a2aSummaryBtnStyle}
+        >
+          <span aria-hidden style={{ fontSize: 10, color: "#71717a" }}>
+            {expanded ? "▾" : "▸"}
+          </span>
+          <span aria-hidden style={{ color: "#a1a1aa" }}>
+            ⇄
+          </span>
+          <span style={{ color: "#cbd5e1", fontWeight: 600 }}>
+            {formatRoleName(ev.fromRole)} → {toLabel}
+          </span>
+          <span style={a2aTagStyle}>派发调用</span>
+          <span style={{ ...tsLabel, marginLeft: "auto" }}>{formatTs(ev.ts)}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setShowProtocol((v) => !v);
+            if (!showProtocol) setExpanded(true);
+          }}
+          title="查看这条 A2A 消息的协议原文（信封字段 + 原始 payload）"
+          style={{ ...a2aProtoBtnStyle, ...(showProtocol ? a2aProtoBtnActiveStyle : null) }}
+        >
+          {"{} 协议"}
+        </button>
+      </div>
+      {expanded ? (
+        <div style={a2aBodyStyle}>
+          {showProtocol ? (
+            <pre style={a2aProtoPreStyle}>{protocolText}</pre>
+          ) : useMarkdown ? (
+            <MarkdownBubble text={content} />
+          ) : (
+            <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{content}</div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const a2aCardStyle: CSSProperties = {
+  border: "1px dashed var(--qb-team-live-feed-border, #3f3f46)",
+  borderRadius: 8,
+  background: "rgba(255,255,255,0.015)",
+};
+const a2aSummaryStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "3px 6px 3px 0",
+};
+const a2aSummaryBtnStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "5px 9px",
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  fontFamily: "inherit",
+  fontSize: 11,
+  textAlign: "left",
+};
+const a2aProtoBtnStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 10,
+  padding: "2px 7px",
+  borderRadius: 6,
+  border: "1px solid #3f3f46",
+  background: "transparent",
+  color: "#a1a1aa",
+  cursor: "pointer",
+  fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+};
+const a2aProtoBtnActiveStyle: CSSProperties = {
+  borderColor: "rgba(96,165,250,0.5)",
+  background: "rgba(96,165,250,0.16)",
+  color: "#93c5fd",
+};
+const a2aProtoPreStyle: CSSProperties = {
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  margin: 0,
+  fontSize: 11,
+  fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+  color: "#cbd5e1",
+  maxHeight: "50vh",
+  overflow: "auto",
+};
+const a2aTagStyle: CSSProperties = {
+  fontSize: 9.5,
+  padding: "0 6px",
+  borderRadius: 4,
+  border: "1px solid #3f3f46",
+  color: "#71717a",
+};
+const a2aBodyStyle: CSSProperties = {
+  padding: "2px 10px 10px",
+  fontSize: 12,
+  color: "var(--qb-team-live-feed-fg, #d4d4d8)",
+  borderTop: "1px solid rgba(255,255,255,0.04)",
+};
+
 /** 把 tool_call 的 contentText（首行 "✓ name (123ms)\n{json}"）解构出来。 */
 type ToolCallPieces = {
   statusIcon: string | null;
@@ -411,7 +569,8 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
   const lines = fullBody.split("\n");
   const collapsable = lines.length > COLLAPSED_BODY_LINES;
   const [expanded, setExpanded] = useState(false);
-  const visibleBody = expanded || !collapsable ? fullBody : lines.slice(0, COLLAPSED_BODY_LINES).join("\n");
+  const visibleBody =
+    expanded || !collapsable ? fullBody : lines.slice(0, COLLAPSED_BODY_LINES).join("\n");
 
   return (
     <div
@@ -473,7 +632,9 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
             letterSpacing: 0.2,
           }}
         >
-          <span aria-hidden style={{ opacity: 0.85 }}>{"⚙"}</span>
+          <span aria-hidden style={{ opacity: 0.85 }}>
+            {"⚙"}
+          </span>
           tool
         </span>
         <span
@@ -681,8 +842,7 @@ const SystemBanner: FC<{ ev: LiveConversationSystemEvent; maxLen: number }> = ({
           ...bannerStyle,
           borderColor:
             "var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, rgba(161,161,170,0.35)))",
-          background:
-            "var(--qb-main-card-bg, var(--qb-sidebar-explorer-bg, rgba(63,63,70,0.25)))",
+          background: "var(--qb-main-card-bg, var(--qb-sidebar-explorer-bg, rgba(63,63,70,0.25)))",
           color: "var(--qb-body-fg, #d4d4d8)",
         }}
       >
@@ -719,13 +879,13 @@ function hexToRgbStr(color: string): string {
     let g = 0;
     let b = 0;
     if (color.length === 7) {
-      r = parseInt(color.slice(1, 3), 16);
-      g = parseInt(color.slice(3, 5), 16);
-      b = parseInt(color.slice(5, 7), 16);
+      r = Number.parseInt(color.slice(1, 3), 16);
+      g = Number.parseInt(color.slice(3, 5), 16);
+      b = Number.parseInt(color.slice(5, 7), 16);
     } else {
-      r = parseInt(color[1]! + color[1]!, 16);
-      g = parseInt(color[2]! + color[2]!, 16);
-      b = parseInt(color[3]! + color[3]!, 16);
+      r = Number.parseInt(color[1]! + color[1]!, 16);
+      g = Number.parseInt(color[2]! + color[2]!, 16);
+      b = Number.parseInt(color[3]! + color[3]!, 16);
     }
     return `${r}, ${g}, ${b}`;
   }
