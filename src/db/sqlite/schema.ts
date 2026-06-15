@@ -180,6 +180,38 @@ export const workflowCompensationTask = sqliteTable("workflow_compensation_task"
 });
 
 /**
+ * 运行中向 Orchestrator/agent「随时插话」的消息队列（coding-agent 风格持续对话）。
+ *
+ * 后端运行循环（run-react-loop.ts）只在 HITL 节点硬暂停；要让用户在循环跑动时随时
+ * 追加指令，这里用一张轻量队列表承接：前端 POST /workflows/:id/inject-message 入队，
+ * ReAct 循环在每轮 reason 前 drain 本工作流的 queued 消息 → 注入 LLM 上下文。
+ *
+ * - targetRole 为空 = 任意 agent 可消费；指定 role（如 orchestrator）= 仅该角色 drain。
+ * - status: queued → injected（被某轮 drain 取走）；dropped 预留给清理/取消。
+ * - 软注入，不阻塞工作流；与 workflow_hitl_request（硬暂停）互补、互不冲突。
+ */
+export const userMessageQueue = sqliteTable(
+  "user_message_queue",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id),
+    /** 目标角色；NULL = 任意 agent 可消费，否则仅该 role drain */
+    targetRole: text("target_role"),
+    content: text("content").notNull(),
+    status: text("status", { enum: ["queued", "injected", "dropped"] })
+      .notNull()
+      .default("queued"),
+    createdAt: createdAt(),
+    injectedAt: text("injected_at"),
+  },
+  (t) => ({
+    byWorkflowStatus: index("idx_user_msg_queue_wf_status").on(t.workflowRunId, t.status),
+  })
+);
+
+/**
  * P0-2：研究团队异步任务的持久化真相源。
  *
  * 旧设计：`src/runtime/msa/analyst-research-jobs.ts` 全靠进程内存 Map，重启就丢；

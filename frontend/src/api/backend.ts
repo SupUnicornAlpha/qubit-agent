@@ -687,6 +687,36 @@ export async function rejectWorkflowHitl(
 }
 
 /**
+ * 运行中「随时插话」：把一条用户消息入队，ReAct 循环下一轮 reason 前 drain 注入。
+ * 软注入，不阻塞工作流；返回当前还有多少条未消费（queued）。
+ */
+export async function injectWorkflowMessage(
+  workflowId: string,
+  content: string,
+  targetRole?: string | null
+): Promise<{ id: string; queued: number }> {
+  const res = await httpPost<{ ok: boolean; data: { id: string; queued: number } }>(
+    `/api/v1/workflows/${workflowId}/inject-message`,
+    { content, targetRole: targetRole ?? null }
+  );
+  return res.data;
+}
+
+/**
+ * 协作式中断：请求中断正在运行的团队研究。团队会在下一个 wave 边界停在断点，起一个
+ * free_form HITL 等用户输入新提示词后续跑。立即返回（真正暂停发生在下一个安全断点）。
+ */
+export async function interruptWorkflow(
+  workflowId: string
+): Promise<{ workflowRunId: string; requested: boolean }> {
+  const res = await httpPost<{ ok: boolean; data: { workflowRunId: string; requested: boolean } }>(
+    `/api/v1/workflows/${workflowId}/interrupt`,
+    {}
+  );
+  return res.data;
+}
+
+/**
  * v2：HITL 卡片支持的 4 种交互形态。
  * - approve_only：批准 / 拒绝（v1 兼容默认值）
  * - single_choice：单选（inputSchema.options 列出选项）
@@ -2805,6 +2835,73 @@ export function subscribeWorkflowStream(params: {
             params.onEvent(JSON.parse(parsed.data) as StepStreamEvent);
           } catch {
             // ignore
+          }
+        }
+      }
+    } catch (e) {
+      if (!active) return;
+      const name = e instanceof Error ? e.name : "";
+      if (name === "AbortError") return;
+      params.onError?.(new Event("fetch-error"));
+    }
+  };
+
+  void run();
+
+  return () => {
+    active = false;
+    ac.abort();
+  };
+}
+
+/**
+ * Subscribe to the WORKFLOW-level firehose (SSE): all agent runs under one workflow.
+ * 研究团队页用它逐字渲染 Orchestrator/各子 agent 的 LLM 输出（事件自带 role/runId 供路由）。
+ * 与 subscribeWorkflowStream 同样用 fetch + ReadableStream，避免 EventSource 在 Tauri 的重连噪声。
+ */
+export function subscribeWorkflowEvents(params: {
+  workflowId: string;
+  onEvent: (event: StepStreamEvent) => void;
+  onError?: (err: Event) => void;
+}): () => void {
+  const url = backendFetchUrl(`/api/v1/workflows/${params.workflowId}/events`);
+  const ac = new AbortController();
+  let active = true;
+
+  const run = async (): Promise<void> => {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal: ac.signal,
+        cache: "no-store",
+      });
+      if (!res.ok || !res.body) {
+        if (active) params.onError?.(new Event("http-error"));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (active) {
+        const { done, value } = await reader.read();
+        if (value) buf += decoder.decode(value, { stream: true });
+        if (done) {
+          buf += decoder.decode();
+          break;
+        }
+        buf = buf.replace(/\r\n/g, "\n");
+        for (;;) {
+          const sep = buf.indexOf("\n\n");
+          if (sep < 0) break;
+          const block = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          try {
+            params.onEvent(JSON.parse(parsed.data) as StepStreamEvent);
+          } catch {
+            // ignore malformed JSON
           }
         }
       }

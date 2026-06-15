@@ -556,6 +556,47 @@ export async function pauseForTeamOrchestratorHitl(input: {
 }
 
 /**
+ * 用户发起的「协作式中断」断点：在团队 wave 边界被调用，**无条件**起一个 free_form 的
+ * team_orchestrator HITL 并抛 HitlAwaitingApprovalError，让团队任务停在 awaiting_approval。
+ *
+ * 复用与规划 HITL 完全相同的恢复链（resolveHitlRequest → research_team_execute →
+ * runAnalystTeam(hitlApproval)）：用户提交的文本经 formatHitlResponseForContext 折进
+ * 后续分析师上下文，团队据此续跑。留空直接批准则按原计划继续。
+ *
+ * 注意：恢复是从 orchestrator 规划处重入（规划 gate 因 approved 直接放行），已完成的
+ * wave 会重跑——这是当前团队恢复模型的固有代价（v1 取舍）。
+ */
+export async function pauseForUserInterrupt(input: {
+  workflowRunId: string;
+  runId: string;
+  traceId: string;
+  ticker: string;
+  stepIndex?: number;
+}): Promise<never> {
+  const title = `用户中断：请输入要补充/调整的提示词 — ${input.ticker}`;
+  const { id } = await createHitlRequest({
+    workflowRunId: input.workflowRunId,
+    runId: input.runId,
+    traceId: input.traceId,
+    role: "orchestrator",
+    stepIndex: input.stepIndex ?? 0,
+    scope: "team_orchestrator",
+    requestKind: "team_research_plan",
+    title,
+    summary:
+      "你中断了正在进行的研究。请输入新的提示词 / 侧重点，Orchestrator 将带着它继续；" +
+      "留空直接批准则按原计划继续。（注：恢复会从规划处重入，已完成的分析师会重跑。）",
+    payloadJson: { ticker: input.ticker, interrupt: true },
+    inputKind: "free_form",
+    inputSchema: {
+      placeholder: "例如：把重点放到现金流质量与估值安全边际上",
+      maxLength: 1000,
+    },
+  });
+  throw new HitlAwaitingApprovalError(id, input.workflowRunId, title);
+}
+
+/**
  * 查询同 (ticker, mode) 最近一次 workflow 的状态（24h 内）。
  *
  * 现状：workflow_run 没有 ticker 字段，goal 文本里通常含 "· TICKER ·" 串

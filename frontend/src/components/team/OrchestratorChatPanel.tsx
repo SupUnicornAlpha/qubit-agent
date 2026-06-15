@@ -1,0 +1,396 @@
+/**
+ * Orchestrator 主对话面板（右栏 · Agent IDE 形态）
+ *
+ * 设计目标（见对话记录 · 2026-06）：把"和 Orchestrator 对话"做成 coding-agent 风格的
+ * 右侧常驻面板，而不是把人工介入埋在画布下方的橙色 banner 里。
+ *
+ *   顶部 Header：标题 + 运行徽标 + 自主/HITL 模式切换（完全自主 ⇄ 人工介入）
+ *   中部 Body  ：内联 HITL 卡片（复用 TeamHitlBanner）+ 以 Orchestrator 为主视角的对话流
+ *   底部 Footer：输入框 composer —— 空闲时把指令喂给 Orchestrator 并启动/继续研究
+ *
+ * 本组件刻意保持"展示 + 受控回调"，真正的运行/HITL 业务逻辑仍在 MainContent：
+ *   - onSend(text)：把 text 作为分析提示（context）并启动团队分析（idle 时）
+ *   - HITL 应答走 TeamHitlBanner 自包含链路（listPendingWorkflowHitl / resolveWorkflowHitl）
+ *
+ * 后端尚不支持"向运行中的 Orchestrator 随时注入消息"——运行中且无 pending HITL 时，
+ * composer 会被禁用并提示"将在 Orchestrator 暂停征询时回复"。这是已知边界，待后端
+ * 消息注入能力落地后再放开（见任务单）。
+ */
+import { type CSSProperties, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
+import { TeamHitlBanner } from "./TeamHitlBanner";
+
+export type OrchestratorHitlMode = "off" | "ai" | "always";
+
+export interface OrchestratorChatPanelProps {
+  /** 当前工作流 run id（驱动 HITL banner 自挂载 + composer 启用判定） */
+  workflowRunId: string;
+  /** 归一化后的对话事件（已按 selfRole=orchestrator 视角过滤/组装） */
+  events: LiveConversationEvent[];
+  /** 是否正在轮询/运行 */
+  running: boolean;
+  /** 运行进度文案（running 时显示在 composer 上方） */
+  runProgress: string;
+  /** 自主 / HITL 模式 */
+  hitlMode: OrchestratorHitlMode;
+  onHitlModeChange: (mode: OrchestratorHitlMode) => void;
+  /** 是否存在 pending HITL（外部状态；用于 composer 文案与 banner triggerKey 兜底） */
+  pendingHitlRequestId: string | null;
+  /** HITL 解决后回调（同 TeamHitlBanner.onResolved） */
+  onHitlResolved: (decision: "approved" | "rejected") => void;
+  /** composer 文本（受控；与左栏「分析提示」共享同一 state） */
+  composerValue: string;
+  onComposerChange: (value: string) => void;
+  /** 空闲时发送：把 composerValue 作为指令启动团队分析 */
+  onSend: () => void;
+  /** 运行中发送：把 composerValue 注入运行中的 Orchestrator，返回队列剩余条数 */
+  onInject: (content: string) => Promise<number>;
+  /** 协作式中断：请求在下一个安全断点暂停，等用户输入新提示词后续跑 */
+  onInterrupt: () => Promise<void>;
+  /** 空闲启动是否禁用（沿用 teamRunDisabled） */
+  sendDisabled: boolean;
+  /** 启动禁用原因（tooltip） */
+  sendDisabledReason: string;
+}
+
+const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hint: string }> = [
+  { id: "off", label: "完全自主", hint: "Orchestrator 自主完成，仅资金/规模/重试硬规则会暂停" },
+  { id: "ai", label: "由 AI 决定", hint: "Orchestrator 自评 + 硬规则共同决定是否暂停征询" },
+  { id: "always", label: "每步确认", hint: "每次规划完成都暂停，等你批准/拒绝" },
+];
+
+export function OrchestratorChatPanel({
+  workflowRunId,
+  events,
+  running,
+  runProgress,
+  hitlMode,
+  onHitlModeChange,
+  pendingHitlRequestId,
+  onHitlResolved,
+  composerValue,
+  onComposerChange,
+  onSend,
+  onInject,
+  onInterrupt,
+  sendDisabled,
+  sendDisabledReason,
+}: OrchestratorChatPanelProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [injectHint, setInjectHint] = useState<string | null>(null);
+  const [injecting, setInjecting] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
+  const wfId = workflowRunId.trim();
+
+  // 新消息进来时自动滚到底（右栏主对话框默认始终跟随最新）
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [events.length, runProgress]);
+
+  /**
+   * 发送语义随运行态切换：
+   *   - 空闲：发送 = 以 composer 文本为指令「启动」团队分析（onSend，受 sendDisabled 约束）
+   *   - 运行中：发送 = 把文本「注入」运行中的 Orchestrator（onInject，下一轮 reason 生效）
+   */
+  const mode: "start" | "inject" = running ? "inject" : "start";
+  const hasContent = composerValue.trim().length > 0;
+  const canSend =
+    wfId.length > 0 && hasContent && !injecting && (mode === "inject" ? true : !sendDisabled);
+
+  const doSend = async () => {
+    if (!canSend) return;
+    if (mode === "inject") {
+      const text = composerValue.trim();
+      setInjecting(true);
+      setInjectHint(null);
+      try {
+        const queued = await onInject(text);
+        onComposerChange("");
+        setInjectHint(
+          `已发送给 Orchestrator，将在它下一轮思考时采纳${queued > 1 ? `（队列 ${queued} 条待消费）` : ""}`
+        );
+      } catch (e) {
+        setInjectHint(`发送失败：${(e as Error).message}`);
+      } finally {
+        setInjecting(false);
+      }
+    } else {
+      onSend();
+    }
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Cmd/Ctrl+Enter 发送，回车换行（coding-agent 习惯）
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      void doSend();
+    }
+  };
+
+  const composerHint =
+    wfId.length === 0
+      ? "请先在左侧选择或新建工作流"
+      : mode === "inject"
+        ? "Orchestrator 运行中 —— 发送的指令会在它下一轮思考时被采纳（Cmd/Ctrl+Enter）"
+        : hitlMode === "off"
+          ? "输入研究指令 → 启动后 Orchestrator 将自主完成（Cmd/Ctrl+Enter 发送）"
+          : "输入研究指令 → Orchestrator 将在关键节点暂停征询你（Cmd/Ctrl+Enter 发送）";
+
+  return (
+    <div style={styles.root}>
+      {/* Header：标题 + 运行徽标 + 模式切换 */}
+      <div style={styles.header}>
+        <div style={styles.titleRow}>
+          <span style={styles.title}>Orchestrator</span>
+          {running ? (
+            <span style={styles.runningBadge}>● 运行中</span>
+          ) : pendingHitlRequestId ? (
+            <span style={styles.hitlBadge}>⏸ 待确认</span>
+          ) : (
+            <span style={styles.idleBadge}>○ 空闲</span>
+          )}
+          {running && !pendingHitlRequestId ? (
+            <button
+              type="button"
+              disabled={interrupting}
+              title="在下一个安全断点暂停，等你输入新提示词后继续"
+              onClick={async () => {
+                setInterrupting(true);
+                setInjectHint(null);
+                try {
+                  await onInterrupt();
+                  setInjectHint("已请求中断，将在下一个断点暂停并等你输入新提示词…");
+                } catch (e) {
+                  setInjectHint(`中断请求失败：${(e as Error).message}`);
+                } finally {
+                  setInterrupting(false);
+                }
+              }}
+              style={{
+                ...styles.interruptBtn,
+                ...(interrupting ? styles.modeBtnDisabled : null),
+              }}
+            >
+              {interrupting ? "中断中…" : "⏸ 中断"}
+            </button>
+          ) : null}
+        </div>
+        <div style={styles.modeRow} role="radiogroup" aria-label="自主 / HITL 模式">
+          {MODE_OPTIONS.map((opt) => {
+            const active = hitlMode === opt.id;
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={running}
+                title={opt.hint}
+                onClick={() => onHitlModeChange(opt.id)}
+                style={{
+                  ...styles.modeBtn,
+                  ...(active ? styles.modeBtnActive : null),
+                  ...(running ? styles.modeBtnDisabled : null),
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Body：内联 HITL + 对话流 */}
+      <div ref={scrollRef} style={styles.body} data-qb-orchestrator-chat>
+        {wfId ? (
+          <TeamHitlBanner
+            workflowRunId={wfId}
+            triggerKey={pendingHitlRequestId ?? wfId}
+            onResolved={onHitlResolved}
+          />
+        ) : null}
+        <LiveConversationView
+          events={events}
+          selfRole="orchestrator"
+          contentMaxLength={6000}
+          emptyText={
+            !wfId
+              ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
+              : running
+                ? "Orchestrator 已启动，正在规划与派发…"
+                : "输入研究指令并发送，Orchestrator 将开始工作。子 Agent 的对话可在中间拓扑图点击节点查看。"
+          }
+        />
+      </div>
+
+      {/* Footer：进度 + composer */}
+      <div style={styles.footer}>
+        {running && runProgress ? <div style={styles.progress}>{runProgress}</div> : null}
+        {injectHint ? <div style={styles.injectHint}>{injectHint}</div> : null}
+        <textarea
+          style={styles.composer}
+          value={composerValue}
+          onChange={(e) => onComposerChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          rows={3}
+          placeholder={
+            mode === "inject"
+              ? "给运行中的 Orchestrator 追加指令，例如：把重点放到现金流质量上…"
+              : "给 Orchestrator 的研究指令，例如：对当前标的做一次机构投研级深度尽调…"
+          }
+        />
+        <div style={styles.composerBar}>
+          <span style={styles.composerHint}>{composerHint}</span>
+          <button
+            type="button"
+            className="qb-btn-primary-brand"
+            style={{ ...styles.sendBtn, ...(canSend ? null : styles.sendBtnDisabled) }}
+            disabled={!canSend}
+            title={
+              mode === "start" && sendDisabled
+                ? sendDisabledReason
+                : canSend
+                  ? mode === "inject"
+                    ? "发送给运行中的 Orchestrator"
+                    : "发送指令并启动"
+                  : "请输入指令"
+            }
+            onClick={() => void doSend()}
+          >
+            {injecting ? "发送中…" : mode === "inject" ? "发送给 Orchestrator" : "发送并启动"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const styles: Record<string, CSSProperties> = {
+  root: {
+    display: "flex",
+    flexDirection: "column",
+    flex: 1,
+    minHeight: 0,
+    gap: 0,
+  },
+  header: {
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    paddingBottom: 10,
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
+  },
+  titleRow: { display: "flex", alignItems: "center", gap: 8 },
+  title: { fontSize: 14, fontWeight: 600, color: "#e4e4e7", letterSpacing: 0.3 },
+  runningBadge: {
+    fontSize: 10,
+    padding: "1px 7px",
+    borderRadius: 999,
+    border: "1px solid rgba(56,189,248,0.45)",
+    background: "rgba(56,189,248,0.12)",
+    color: "#7dd3fc",
+    fontWeight: 600,
+  },
+  hitlBadge: {
+    fontSize: 10,
+    padding: "1px 7px",
+    borderRadius: 999,
+    border: "1px solid #b45309",
+    background: "rgba(180,83,9,0.18)",
+    color: "#fbbf24",
+    fontWeight: 600,
+  },
+  idleBadge: {
+    fontSize: 10,
+    padding: "1px 7px",
+    borderRadius: 999,
+    border: "1px solid #3f3f46",
+    color: "#71717a",
+    fontWeight: 600,
+  },
+  interruptBtn: {
+    marginLeft: "auto",
+    padding: "3px 10px",
+    fontSize: 11,
+    fontWeight: 600,
+    border: "1px solid #b45309",
+    background: "rgba(180,83,9,0.18)",
+    color: "#fbbf24",
+    borderRadius: 12,
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  modeRow: { display: "flex", gap: 6 },
+  modeBtn: {
+    flex: 1,
+    padding: "5px 6px",
+    fontSize: 11,
+    border: "1px solid #3f3f46",
+    background: "transparent",
+    color: "#a1a1aa",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
+  },
+  modeBtnActive: {
+    borderColor: "#60a5fa",
+    background: "rgba(96,165,250,0.16)",
+    color: "#93c5fd",
+    fontWeight: 600,
+  },
+  modeBtnDisabled: { cursor: "not-allowed", opacity: 0.6 },
+  body: {
+    flex: "1 1 0",
+    minHeight: 0,
+    overflowY: "auto",
+    overflowX: "hidden",
+    padding: "10px 2px 12px",
+  },
+  footer: {
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    paddingTop: 10,
+    borderTop: "1px solid var(--qb-team-shell-border, #2d2d32)",
+  },
+  progress: {
+    fontSize: 11,
+    color: "#38bdf8",
+    background: "#0f1f2e",
+    border: "1px solid #1e3a52",
+    borderRadius: 6,
+    padding: "5px 8px",
+  },
+  composer: {
+    width: "100%",
+    resize: "vertical",
+    minHeight: 56,
+    maxHeight: 200,
+    padding: "8px 10px",
+    background: "var(--qb-team-canvas-bg, #0c0c0e)",
+    color: "#e4e4e7",
+    border: "1px solid #3f3f46",
+    borderRadius: 8,
+    fontSize: 12,
+    lineHeight: 1.5,
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+  },
+  injectHint: {
+    fontSize: 11,
+    color: "#86efac",
+    background: "rgba(34,197,94,0.10)",
+    border: "1px solid rgba(34,197,94,0.35)",
+    borderRadius: 6,
+    padding: "5px 8px",
+  },
+  composerBar: { display: "flex", alignItems: "center", gap: 8 },
+  composerHint: { flex: 1, minWidth: 0, fontSize: 10.5, color: "#71717a", lineHeight: 1.4 },
+  sendBtn: { flexShrink: 0, fontSize: 12, padding: "6px 16px" },
+  sendBtnDisabled: { opacity: 0.5, cursor: "not-allowed" },
+};

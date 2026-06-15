@@ -467,6 +467,22 @@ export async function reasonNode(
     state.iteration > 1 ? `\n**当前迭代**：第 ${state.iteration} 轮` : "",
   ];
 
+  /**
+   * 运行中「随时插话」：用户在循环跑动时追加的指令（run-react-loop 在每轮 reason 前
+   * drain 后累加到 contextMemory.injectedUserMessages）。作为高优先级实时指引拼进
+   * userPrompt——只展示最近 5 条，避免无界增长污染上下文。
+   */
+  const injectedUserMessages = Array.isArray(state.contextMemory["injectedUserMessages"])
+    ? (state.contextMemory["injectedUserMessages"] as string[])
+    : [];
+  if (injectedUserMessages.length > 0) {
+    const recent = injectedUserMessages.slice(-5);
+    userPromptParts.push(
+      `\n**用户实时追加指令（${injectedUserMessages.length} 条，请优先采纳最新意图）**：`,
+      ...recent.map((m, i) => `${injectedUserMessages.length - recent.length + i + 1}. ${m}`)
+    );
+  }
+
   if (hasTools) {
     userPromptParts.push(
       "",

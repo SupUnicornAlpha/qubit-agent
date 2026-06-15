@@ -20,6 +20,11 @@ import {
 } from "../runtime/workflow/compensation-queue";
 import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
 import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
+import {
+  countQueuedUserMessages,
+  enqueueUserMessage,
+} from "../runtime/workflow/user-message-queue";
+import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
@@ -376,6 +381,51 @@ workflowRouter.get("/:id/hitl/pending", async (c) => {
   const id = c.req.param("id");
   const data = await listPendingHitlRequests(id);
   return c.json({ data });
+});
+
+/**
+ * 运行中「随时插话」：把一条用户消息入队，ReAct 循环下一轮 reason 前 drain 注入。
+ * body: { content: string, targetRole?: string }（targetRole 省略 = 任意 agent 可消费）
+ * 软注入，不阻塞工作流；与 HITL（硬暂停）互补。
+ */
+workflowRouter.post("/:id/inject-message", async (c) => {
+  const workflowRunId = c.req.param("id");
+  const body = await c.req
+    .json<{ content?: string; targetRole?: string | null }>()
+    .catch(() => ({}));
+  const content = (body.content ?? "").trim();
+  if (!content) {
+    return c.json({ error: "content is required" }, 400);
+  }
+  try {
+    const id = await enqueueUserMessage({
+      workflowRunId,
+      content,
+      targetRole: body.targetRole ?? null,
+    });
+    const queued = await countQueuedUserMessages(workflowRunId);
+    return c.json({ ok: true, data: { id, queued } });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+
+/** 查询本工作流还有多少条未消费（queued）的注入消息——前端做「已排队」提示用。 */
+workflowRouter.get("/:id/inject-message/pending", async (c) => {
+  const workflowRunId = c.req.param("id");
+  const queued = await countQueuedUserMessages(workflowRunId);
+  return c.json({ data: { queued } });
+});
+
+/**
+ * 协作式中断：标记本工作流"请求中断"。团队编排在下一个 wave 边界命中后，会起一个
+ * free_form HITL 停在断点等用户输入新提示词，再走既有恢复链续跑（见 pauseForUserInterrupt）。
+ * 进程内信号，立即返回；真正暂停发生在下一个安全断点。
+ */
+workflowRouter.post("/:id/interrupt", async (c) => {
+  const workflowRunId = c.req.param("id");
+  requestInterrupt(workflowRunId);
+  return c.json({ ok: true, data: { workflowRunId, requested: true } });
 });
 
 /**

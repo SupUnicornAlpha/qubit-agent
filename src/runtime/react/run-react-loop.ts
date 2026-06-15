@@ -17,6 +17,7 @@ import type { AgentGraphState, StepStreamEvent } from "../langgraph/state";
 import { sandboxExecutor } from "../sandbox-executor";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
+import { drainUserMessages } from "../workflow/user-message-queue";
 import type { RuntimeAgentDefinition } from "../types";
 import type { TaskAssignPayload } from "../../types/a2a";
 
@@ -356,6 +357,26 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
 
   // while 主体对应原 conditionalEdges：reason→hitl_gate→act→observe→（回 reason / finalize）
   for (;;) {
+    // 运行中「随时插话」：drain 本工作流面向本角色的注入消息，累加进 contextMemory，
+    // 供本轮及后续 reason 拼进 LLM 上下文（软注入，不打断循环；失败 fail-soft）。
+    try {
+      const injected = await drainUserMessages(params.workflowId, params.def.role);
+      if (injected.length > 0) {
+        const prev = Array.isArray(state.contextMemory["injectedUserMessages"])
+          ? (state.contextMemory["injectedUserMessages"] as string[])
+          : [];
+        state = {
+          ...state,
+          contextMemory: {
+            ...state.contextMemory,
+            injectedUserMessages: [...prev, ...injected],
+          },
+        };
+      }
+    } catch (e) {
+      console.warn(`[run-react-loop] drainUserMessages failed: ${(e as Error).message}`);
+    }
+
     state = await runReason(params, state);
     // 沙箱迭代限流：reason 已写 terminated finalResponse → 直接 finalize
     if (isTerminalStatus(state)) break;

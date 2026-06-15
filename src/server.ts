@@ -106,6 +106,21 @@ app.get("/api/v1/workflows/:id/stream/:runId", (c) => {
     },
   });
 });
+/**
+ * Workflow 级 firehose：订阅该 workflow 下所有 agent run 的事件（token / tool / final…）。
+ * 研究团队页用它逐字渲染 Orchestrator 与各子 agent 的 LLM 输出（事件自带 role 供前端路由）。
+ */
+app.get("/api/v1/workflows/:id/events", (c) => {
+  const workflowId = c.req.param("id");
+  const stream = stepStreamBus.createWorkflowSseStream(workflowId);
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+});
 
 app.notFound((c) => c.json({ error: "Not found" }, 404));
 app.onError((err, c) => {

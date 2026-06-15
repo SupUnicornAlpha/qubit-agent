@@ -85,7 +85,10 @@ import {
   subscribeDebateStream,
   listPendingWorkflowHitl,
   resolveWorkflowHitl,
+  injectWorkflowMessage,
+  interruptWorkflow,
   subscribeWorkflowStream,
+  subscribeWorkflowEvents,
   listWorkflowCompensations,
   enqueueWorkflowCompensation,
   installMcpMarket,
@@ -194,6 +197,7 @@ import {
 } from "../team/LiveConversationView";
 import { ResizableY } from "../team/ResizableY";
 import { TeamHitlBanner } from "../team/TeamHitlBanner";
+import { OrchestratorChatPanel } from "../team/OrchestratorChatPanel";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
 import {
   classifyWorkflow,
@@ -4510,7 +4514,7 @@ const TEAM_PANES: readonly TeamPaneKey[] = ["left", "center", "right"];
 const TEAM_PANE_LABEL: Record<TeamPaneKey, string> = {
   left: "研究与工作流",
   center: "研究画布",
-  right: "研究产出",
+  right: "Orchestrator 对话",
 };
 const TEAM_PANES_LS_KEY = "qubit-agent.teamPanes.hidden.v1";
 const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
@@ -4874,6 +4878,28 @@ const TeamDashboardPanel: FC = () => {
     maxRounds: 2,
   });
   const [liveDebateEvents, setLiveDebateEvents] = useState<DebateStreamEvent[]>([]);
+  /**
+   * Token 级流式：workflow firehose 推来的、尚未落库的「在飞」LLM 输出，按 role 累积。
+   * 每条在 displayedLiveFeedEvents 里合成一个 `streaming:${role}` 气泡逐字显示；
+   * 该 role 的 step 落库（step_persisted/final/observe）后清空，交还给轮询的正式消息。
+   */
+  const [streamingByRole, setStreamingByRole] = useState<
+    Record<string, { text: string; ts: string }>
+  >({});
+  /**
+   * 用户在右侧 Orchestrator 对话框发出的提示词回显（启动指令 / 运行中插话）。
+   * 合成成 fromRole="user" 的消息事件并入实时流，让用户看到自己说过什么。
+   */
+  const [userEchoes, setUserEchoes] = useState<Array<{ id: string; content: string; ts: string }>>(
+    []
+  );
+  const pushUserEcho = useCallback((content: string) => {
+    const text = content.trim();
+    if (!text) return;
+    setUserEchoes((prev) =>
+      [...prev, { id: `ue-${Date.now()}-${prev.length}`, content: text, ts: new Date().toISOString() }].slice(-50)
+    );
+  }, []);
   const [replayTurns, setReplayTurns] = useState<DebateTurnRecord[]>([]);
   const [replayVerdict, setReplayVerdict] = useState<DebateVerdictRecord | null>(null);
   const [riskConfig, setRiskConfigState] = useState<RiskConfig>({
@@ -4940,7 +4966,7 @@ const TeamDashboardPanel: FC = () => {
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
-  const [teamRightW, setTeamRightW] = useState(300);
+  const [teamRightW, setTeamRightW] = useState(400);
   const teamColDrag = useRef<{ which: 1 | 2; startX: number; left0: number; right0: number } | null>(null);
 
   const refreshWorkflowOptions = useCallback(async () => {
@@ -5215,10 +5241,93 @@ const TeamDashboardPanel: FC = () => {
         text,
       });
     });
+    // 用户提示词回显：合成 fromRole="user" 的消息事件，让用户在右侧看到自己发过的指令/插话。
+    for (const e of userEchoes) {
+      events.push({
+        kind: "message",
+        id: e.id,
+        ts: e.ts,
+        fromRole: "user",
+        toRole: "orchestrator",
+        messageKind: "llm_message",
+        contentText: e.content,
+      });
+    }
+    // 合成 token 级「在飞」流式气泡：每个有累积文本的 role 一个，置于队尾（ts=now 兜底）。
+    for (const [role, s] of Object.entries(streamingByRole)) {
+      const text = stripToolCallSentinels(s.text).trim();
+      if (!text) continue;
+      if (allow && !allow.has(role)) continue;
+      events.push({
+        kind: "message",
+        id: `streaming:${role}`,
+        ts: s.ts,
+        fromRole: role,
+        toRole: "orchestrator",
+        messageKind: "llm_message",
+        contentText: `${text} ▌`,
+      });
+    }
     return events
       .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
       .slice(-200);
-  }, [graphSelection, graphEdgeDetail, teamGraph, participatingAnalystRoles, liveDebateEvents]);
+  }, [
+    graphSelection,
+    graphEdgeDetail,
+    teamGraph,
+    participatingAnalystRoles,
+    liveDebateEvents,
+    streamingByRole,
+    userEchoes,
+  ]);
+
+  /**
+   * Token 级流式订阅：研究团队 tab + 有 workflow 时，连 workflow firehose，把各 agent 的
+   * token 逐字累积到 streamingByRole；step 落库（step_persisted/final/observe）即清空该 role，
+   * 交还给 2.5s 轮询的正式消息，避免重复。整条工作流共用一条 SSE（不按 run 数翻倍）。
+   */
+  useEffect(() => {
+    const wf = workflowRunId.trim();
+    if (!wf || activeTab !== "research") return;
+    setStreamingByRole({});
+    setUserEchoes([]);
+    const unsubscribe = subscribeWorkflowEvents({
+      workflowId: wf,
+      onEvent: (event) => {
+        const role = event.role || "unknown";
+        if (event.type === "token") {
+          const piece = String(event.payload?.["token"] ?? event.payload?.["text"] ?? "");
+          if (!piece) return;
+          setStreamingByRole((prev) => ({
+            ...prev,
+            [role]: {
+              text: (prev[role]?.text ?? "") + piece,
+              ts: new Date(event.ts).toISOString(),
+            },
+          }));
+        } else if (
+          event.type === "step_persisted" ||
+          event.type === "final" ||
+          event.type === "observe" ||
+          event.type === "error"
+        ) {
+          // 该 role 的一步已收口：清掉在飞缓冲，让轮询的正式消息接管。
+          setStreamingByRole((prev) => {
+            if (!(role in prev)) return prev;
+            const next = { ...prev };
+            delete next[role];
+            return next;
+          });
+        }
+      },
+      onError: () => {
+        /** firehose 断开：忽略，轮询仍在兜底；下次 effect 依赖变化会重连 */
+      },
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, [workflowRunId, activeTab]);
 
   useEffect(() => {
     const el = liveFeedScrollRef.current;
@@ -5661,6 +5770,27 @@ const TeamDashboardPanel: FC = () => {
    * 用户手动折叠」的尴尬。
    */
   const [runControlsOpen, setRunControlsOpen] = useState(false);
+
+  /**
+   * 中栏底部「研究产出」抽屉的折叠态（因子/策略/脚本/草稿）。
+   * 从右栏迁移而来：右栏现在是 Orchestrator 主对话框，产物下移到中栏底部，可隐去。
+   * 持久化到 localStorage，默认折叠（不挤占对话/拓扑）。
+   */
+  const OUTPUTS_DRAWER_LS_KEY = "qb.team-outputs-drawer-open";
+  const [outputsDrawerOpen, setOutputsDrawerOpen] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(OUTPUTS_DRAWER_LS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(OUTPUTS_DRAWER_LS_KEY, outputsDrawerOpen ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [outputsDrawerOpen]);
 
   /**
    * 当出现关键运行态（running / 等待 HITL / 有 error）时强制展开启动面板，
@@ -7355,7 +7485,11 @@ const TeamDashboardPanel: FC = () => {
                 </div>
               ) : null}
               <div style={{ marginTop: 14 }} data-qb-team-hitl-banner>
-                {workflowRunId.trim() ? (
+                {/**
+                 * HITL 主入口已迁到右栏 Orchestrator 对话框（内联卡片）。
+                 * 这里仅在右栏被隐藏时作为兜底，避免同一询问出现两张卡片。
+                 */}
+                {!teamPaneVisible("right") && workflowRunId.trim() ? (
                   /**
                    * v2 修复：Banner 只要 workflowRunId 有效就常驻挂载，由 banner 内部用
                    * listPendingWorkflowHitl 自动发现 pending。这样即使 `teamPendingHitl`
@@ -8006,6 +8140,57 @@ const TeamDashboardPanel: FC = () => {
                */}
             </div>
           </details>
+          {/**
+           * 中栏底部「研究产出」抽屉（从右栏迁移）：因子 / 策略 / 脚本 / 草稿。
+           * 可折叠隐去；与「启动设置」一样 flexShrink:0 贴在中栏底部，不参与主区滚动。
+           */}
+          <details
+            className="qb-mcp-details"
+            style={teamStyles.runControlsFooter}
+            open={outputsDrawerOpen}
+            onToggle={(e) => {
+              const isOpen = (e.currentTarget as HTMLDetailsElement).open;
+              if (isOpen !== outputsDrawerOpen) setOutputsDrawerOpen(isOpen);
+            }}
+          >
+            <summary style={teamStyles.runControlsSummary}>
+              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#93c5fd" }}>
+                  📦 研究产出 · 因子 / 策略 / 脚本 / 草稿
+                </span>
+              </span>
+              <span style={{ fontSize: 11, color: "#a1a1aa" }}>点击折叠/展开</span>
+            </summary>
+            <div style={{ padding: "10px 16px 14px" }}>
+              <p style={{ fontSize: 11, color: "#71717a", marginTop: 0, marginBottom: 10, lineHeight: 1.45 }}>
+                展示当前研究项目下 Agent 生成的<strong>草稿 / 因子 / 策略 / 脚本</strong>。注意「策略」读 strategy_version（需 Agent 调 version_strategy 或真单触发），research 流水线吐出的 Python on_bar 脚本会落在「脚本」tab。
+              </p>
+              <ResearchOutputTabs
+                projectId={effectiveResearchProjectId}
+                workflowRunId={workflowRunId}
+                sessionId={teamResearchSessionId}
+                onOpenFactorInWorkbench={() => {
+                  setActiveView("quant");
+                  setQuantTab("factor");
+                }}
+                onOpenStrategyInComposer={(version) => {
+                  /**
+                   * 把"打开哪个 strategy_version"的上下文写到全局 store，
+                   * Composer 在 mount / handoff 变化时按 strategyVersionId 自动选中。
+                   */
+                  if (version?.id) {
+                    setQuantHandoff({
+                      kind: "strategy-version-to-composer",
+                      strategyVersionId: version.id,
+                      workflowRunId: version.workflowRunId ?? null,
+                    });
+                  }
+                  setActiveView("quant");
+                  setQuantTab("composer");
+                }}
+              />
+            </div>
+          </details>
         </div>
         ) : null}
 
@@ -8029,44 +8214,52 @@ const TeamDashboardPanel: FC = () => {
             alignSelf: "stretch",
           }}
         >
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 4 }}>
-            研究产出
-          </div>
-          <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            展示当前研究项目下 Agent 生成的<strong>草稿 / 因子 / 策略 / 脚本</strong>。注意「策略」读 strategy_version（需 Agent 调 version_strategy 或真单触发），research 流水线吐出的 Python on_bar 脚本会落在「脚本」tab。
-          </p>
-
-          <ResearchOutputTabs
-            projectId={effectiveResearchProjectId}
-            workflowRunId={workflowRunId}
-            sessionId={teamResearchSessionId}
-            onOpenFactorInWorkbench={() => {
-              setActiveView("quant");
-              setQuantTab("factor");
-            }}
-            onOpenStrategyInComposer={(version) => {
-              /**
-               * 把"打开哪个 strategy_version"的上下文写到全局 store，
-               * Composer 在 mount / handoff 变化时按 strategyVersionId 自动选中。
-               * 没有 version 参数的兜底场景（理论不会发生）只切 tab。
-               */
-              if (version?.id) {
-                setQuantHandoff({
-                  kind: "strategy-version-to-composer",
-                  strategyVersionId: version.id,
-                  workflowRunId: version.workflowRunId ?? null,
-                });
-              }
-              setActiveView("quant");
-              setQuantTab("composer");
-            }}
-          />
-
           {/**
-           * 注：原「策略与代码」details 块已删除。
-           * 草稿 / 因子 / 策略 都通过上方 ResearchOutputTabs 切换查看；
-           * 实盘转发交给量化工坊（onOpenStrategyInComposer 入口）。
+           * Agent IDE 形态：右栏改为 Orchestrator 主对话面板。
+           * - 与 Orchestrator 持续对话（composer → 启动/续跑）
+           * - 自主 / HITL 模式切换内置在 Header
+           * - HITL 询问内联在对话流顶部（TeamHitlBanner），不再埋在画布下方
+           * 生成的产物（因子/策略/脚本/草稿）已下移到中栏底部「研究产出」抽屉。
            */}
+          <OrchestratorChatPanel
+            workflowRunId={workflowRunId}
+            events={displayedLiveFeedEvents}
+            running={running}
+            runProgress={runProgress}
+            hitlMode={teamHitlMode}
+            onHitlModeChange={setTeamHitlMode}
+            pendingHitlRequestId={teamPendingHitl?.requestId ?? null}
+            onHitlResolved={(decision) => {
+              setTeamPendingHitl(null);
+              setRunProgress(
+                decision === "approved" ? "已批准，分析师团队继续执行…" : "已拒绝，工作流终止"
+              );
+            }}
+            composerValue={teamAnalysisContext}
+            onComposerChange={setTeamAnalysisContext}
+            onSend={() => {
+              if (teamAnalysisContext.trim()) pushUserEcho(teamAnalysisContext.trim());
+              handleRun();
+            }}
+            onInject={async (content) => {
+              const wf = workflowRunId.trim();
+              if (!wf) throw new Error("请先选择工作流");
+              pushUserEcho(content);
+              /**
+               * 广播（targetRole=null）：团队跑动时 orchestrator 不跑 react-loop（只一次规划调用），
+               * 真正在跑 loop 的是各分析师 slot——由它们在下一轮 reason 前 drain 并采纳。
+               */
+              const res = await injectWorkflowMessage(wf, content, null);
+              return res.queued;
+            }}
+            onInterrupt={async () => {
+              const wf = workflowRunId.trim();
+              if (!wf) throw new Error("请先选择工作流");
+              await interruptWorkflow(wf);
+            }}
+            sendDisabled={teamRunDisabled}
+            sendDisabledReason={teamRunDisabledTitle}
+          />
         </aside>
         ) : null}
       </div>

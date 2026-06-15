@@ -74,8 +74,10 @@ import {
 } from "./analyst-team-pipeline";
 import {
   pauseForTeamOrchestratorHitl,
+  pauseForUserInterrupt,
   type HitlApprovalPayload,
 } from "../workflow/hitl-service";
+import { consumeInterrupt } from "../workflow/workflow-interrupt";
 import { pickAnalystReactDepth, runResearchTeamSlotReact } from "./analyst-team-slot-react";
 import { buildGroupRoleConstraintHint } from "./group-constraint-hint";
 
@@ -781,6 +783,16 @@ async function runAnalystTeamCore(params: {
   }
 
   for (const wave of waves) {
+    // 用户发起的协作式中断：在每个 wave 边界（无 slot 在飞的安全点）检查。命中则起一个
+    // free_form team_orchestrator HITL 停在断点，等用户输入新提示词后走既有恢复链续跑。
+    if (consumeInterrupt(workflowRunId)) {
+      await pauseForUserInterrupt({
+        workflowRunId,
+        runId: params.runId ?? workflowRunId,
+        traceId: params.traceId ?? workflowRunId,
+        ticker: scope.displayLabel,
+      });
+    }
     const waveResults = await Promise.allSettled(
       wave.map((slot) => {
         const predChain = (predsByTo.get(slot.role) ?? []).filter(

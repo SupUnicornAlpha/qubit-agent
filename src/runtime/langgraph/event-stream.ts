@@ -22,10 +22,25 @@ interface RunBuffer {
   cleanupTimer: ReturnType<typeof setTimeout> | null;
 }
 
+/**
+ * Workflow 级（跨 runId）firehose 的 late-join 缓冲上限。
+ *
+ * 研究团队一个 workflow 下有多个 agent run，每个 run 高频吐 token；这里不按 run 全量缓存
+ * （那有 per-run buffer 兜底），只为 workflow 订阅者保留最近 N 条做"刚连上时的补帧"，
+ * 满了丢最旧，避免长跑团队把内存撑爆。
+ */
+const WORKFLOW_BUFFER_CAP = 400;
+
 class StepStreamBus {
   private controllersByRun = new Map<string, Set<StreamController>>();
   /** Per-run event ring buffer for late-joining SSE subscribers. */
   private bufferByRun = new Map<string, RunBuffer>();
+  /**
+   * Workflow 级订阅者：把同一 workflowId 下所有 run 的事件 fan-in 到一条 SSE，
+   * 供研究团队页"逐字看 Orchestrator/各 agent 输出"用（事件自带 role 供前端路由）。
+   */
+  private controllersByWorkflow = new Map<string, Set<StreamController>>();
+  private workflowBuffer = new Map<string, StepStreamEvent[]>();
   /** 每个 controller 的 heartbeat timer，用于 cancel / close 时清理。 */
   private heartbeatByController = new WeakMap<StreamController, ReturnType<typeof setInterval>>();
   private encoder = new TextEncoder();
@@ -113,20 +128,78 @@ class StepStreamBus {
     });
   }
 
+  /**
+   * Workflow 级 firehose：订阅某 workflowId 下所有 run 的事件（跨 agent）。
+   * 与 createSseStream(runId) 平行；前端按 event.role/runId 自行路由到对应 agent 气泡。
+   * 不随单个 run close 而关闭——团队多 run 期间保持常驻，由客户端断开 / 心跳兜底。
+   */
+  createWorkflowSseStream(workflowId: string): ReadableStream<Uint8Array> {
+    let currentController: StreamController | null = null;
+    return new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        currentController = controller;
+        try {
+          controller.enqueue(this.encoder.encode(": stream-open\n\n"));
+          const buf = this.workflowBuffer.get(workflowId);
+          if (buf) {
+            for (const evt of buf) controller.enqueue(this.encodeEvent(evt));
+          }
+        } catch {
+          // ignore enqueue on aborted stream
+        }
+        const set = this.controllersByWorkflow.get(workflowId) ?? new Set<StreamController>();
+        set.add(controller);
+        this.controllersByWorkflow.set(workflowId, set);
+        this.startHeartbeat(controller);
+      },
+      cancel: () => {
+        if (!currentController) return;
+        const set = this.controllersByWorkflow.get(workflowId);
+        if (!set) return;
+        set.delete(currentController);
+        this.safeClose(currentController);
+        if (set.size === 0) {
+          this.controllersByWorkflow.delete(workflowId);
+          // 无人订阅即释放 late-join 缓冲，避免 workflowBuffer Map 随历史 workflow 无界增长。
+          this.workflowBuffer.delete(workflowId);
+        }
+      },
+    });
+  }
+
   publish(event: StepStreamEvent): void {
     // Buffer for late subscribers.
     const buf = this.getOrCreateBuffer(event.runId);
     buf.events.push(event);
 
-    // Forward to active subscribers.
-    const set = this.controllersByRun.get(event.runId);
-    if (!set) return;
     const data = this.encodeEvent(event);
-    for (const controller of set) {
-      try {
-        controller.enqueue(data);
-      } catch {
-        // ignore broken stream
+
+    // Forward to per-run subscribers.
+    const set = this.controllersByRun.get(event.runId);
+    if (set) {
+      for (const controller of set) {
+        try {
+          controller.enqueue(data);
+        } catch {
+          // ignore broken stream
+        }
+      }
+    }
+
+    // Fan-in to workflow-level subscribers + capped late-join buffer.
+    const wfBuf = this.workflowBuffer.get(event.workflowId) ?? [];
+    wfBuf.push(event);
+    if (wfBuf.length > WORKFLOW_BUFFER_CAP) wfBuf.splice(0, wfBuf.length - WORKFLOW_BUFFER_CAP);
+    this.workflowBuffer.set(event.workflowId, wfBuf);
+
+    const wfSet = this.controllersByWorkflow.get(event.workflowId);
+    if (wfSet) {
+      for (const controller of wfSet) {
+        try {
+          controller.enqueue(data);
+        } catch {
+          // ignore broken stream
+        }
       }
     }
   }
