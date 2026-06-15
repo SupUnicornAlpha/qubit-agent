@@ -87,6 +87,7 @@ import {
   resolveWorkflowHitl,
   injectWorkflowMessage,
   interruptWorkflow,
+  listFactors,
   subscribeWorkflowStream,
   subscribeWorkflowEvents,
   listWorkflowCompensations,
@@ -197,7 +198,10 @@ import {
 } from "../team/LiveConversationView";
 import { ResizableY } from "../team/ResizableY";
 import { TeamHitlBanner } from "../team/TeamHitlBanner";
-import { OrchestratorChatPanel } from "../team/OrchestratorChatPanel";
+import {
+  OrchestratorChatPanel,
+  type OrchestratorArtifact,
+} from "../team/OrchestratorChatPanel";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
 import {
   classifyWorkflow,
@@ -4900,6 +4904,8 @@ const TeamDashboardPanel: FC = () => {
       [...prev, { id: `ue-${Date.now()}-${prev.length}`, content: text, ts: new Date().toISOString() }].slice(-50)
     );
   }, []);
+  /** 本工作流已生成的产物（内联在右栏对话框顶部，点击可打开到量化工坊）。 */
+  const [teamArtifacts, setTeamArtifacts] = useState<OrchestratorArtifact[]>([]);
   const [replayTurns, setReplayTurns] = useState<DebateTurnRecord[]>([]);
   const [replayVerdict, setReplayVerdict] = useState<DebateVerdictRecord | null>(null);
   const [riskConfig, setRiskConfigState] = useState<RiskConfig>({
@@ -5329,6 +5335,41 @@ const TeamDashboardPanel: FC = () => {
     };
   }, [workflowRunId, activeTab]);
 
+  /**
+   * 内联产物轮询：研究团队 tab + 有 workflow 时，周期性拉本工作流已生成的因子，
+   * 映射成右栏对话框顶部的产物卡片。每 6s 一次（产物落库不高频，足够实时感知）。
+   */
+  useEffect(() => {
+    const wf = workflowRunId.trim();
+    if (!wf || activeTab !== "research") {
+      setTeamArtifacts([]);
+      return;
+    }
+    let alive = true;
+    const load = async () => {
+      try {
+        const factors = await listFactors({ workflowRunId: wf });
+        if (!alive) return;
+        setTeamArtifacts(
+          factors.map((f) => ({
+            id: f.id,
+            kind: "factor" as const,
+            title: f.name,
+            subtitle: f.status === "draft" ? "草稿" : f.category,
+          }))
+        );
+      } catch {
+        /** 拉取失败：保持上次结果，下个 tick 再试 */
+      }
+    };
+    void load();
+    const timer = setInterval(load, 6000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [workflowRunId, activeTab]);
+
   useEffect(() => {
     const el = liveFeedScrollRef.current;
     if (!el || activeTab !== "research") return;
@@ -5436,6 +5477,17 @@ const TeamDashboardPanel: FC = () => {
     () => workflowOptions.find((w) => String(w.id) === workflowRunId) ?? null,
     [workflowOptions, workflowRunId]
   );
+
+  /**
+   * 选中工作流是否已结束（completed/failed/cancelled）。用于右栏「继续研究」模式：
+   * 已结束时 composer 允许基于已有研究续跑（后端用上次 ticker 兜底，无需重填研究范围）。
+   * running 时不算（那是注入模式）。
+   */
+  const selectedWorkflowCompleted = useMemo(() => {
+    if (running) return false;
+    const st = selectedWorkflowRow?.status;
+    return st === "completed" || st === "failed" || st === "cancelled";
+  }, [selectedWorkflowRow, running]);
 
   const selectedWorkflowKind = useMemo(
     () => (selectedWorkflowRow ? classifyWorkflow(selectedWorkflowRow) : null),
@@ -5804,7 +5856,12 @@ const TeamDashboardPanel: FC = () => {
   }, [running, teamPendingHitl, error]);
 
   const handleRun = async () => {
-    if (!researchScopePayload) return;
+    /**
+     * researchScopePayload 可为 null —— completed 后「继续对话」时左栏研究范围常为空，
+     * 此时不带 ticker/scope 发起，后端用该 workflow 上次跑过的 ticker 兜底（沿用同一标的）。
+     * 正常「启动」按钮受 teamRunDisabled 约束，scope 一定非空，不受此放宽影响。
+     */
+    if (!researchScopePayload && !workflowRunId.trim()) return;
     setError(null);
     setRunning(true);
     setResult(null);
@@ -5833,8 +5890,8 @@ const TeamDashboardPanel: FC = () => {
       const timeoutMs = pollTimeoutMin > 0 ? pollTimeoutMin * 60_000 : 0;
       const res = await runAnalystTeam({
         workflowRunId: wfId,
-        ticker: researchScopePayload.symbols?.[0] ?? ticker.trim(),
-        scope: researchScopePayload,
+        ticker: researchScopePayload?.symbols?.[0] ?? ticker.trim(),
+        scope: researchScopePayload ?? undefined,
         context: teamAnalysisContext.trim() || undefined,
         agentGroupId: analystAgentGroupId.trim() || undefined,
         analystDefinitionIds:
@@ -8225,6 +8282,7 @@ const TeamDashboardPanel: FC = () => {
             workflowRunId={workflowRunId}
             events={displayedLiveFeedEvents}
             running={running}
+            completed={selectedWorkflowCompleted}
             runProgress={runProgress}
             hitlMode={teamHitlMode}
             onHitlModeChange={setTeamHitlMode}
@@ -8256,6 +8314,17 @@ const TeamDashboardPanel: FC = () => {
               const wf = workflowRunId.trim();
               if (!wf) throw new Error("请先选择工作流");
               await interruptWorkflow(wf);
+            }}
+            artifacts={teamArtifacts}
+            onOpenArtifact={(a) => {
+              // 目前内联卡片只有因子：跳到量化工坊因子页（与底部抽屉「在工坊打开」一致）。
+              if (a.kind === "factor") {
+                setActiveView("quant");
+                setQuantTab("factor");
+              } else if (a.kind === "strategy") {
+                setActiveView("quant");
+                setQuantTab("composer");
+              }
             }}
             sendDisabled={teamRunDisabled}
             sendDisabledReason={teamRunDisabledTitle}

@@ -16,6 +16,7 @@ import { dispatchTaskToRole } from "../runtime/agent-pool";
 import {
   failAnalystResearchJob,
   getAnalystResearchJob,
+  getLatestJobTickerByWorkflow,
   registerAnalystResearchJob,
 } from "../runtime/msa/analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET } from "../runtime/msa/analyst-team";
@@ -99,6 +100,13 @@ analystRouter.post("/run", async (c) => {
     console.log(
       `[analyst.run] auto-promoted "${classification.theme}" → explore mode (workflow=${body.workflowRunId})`
     );
+  }
+
+  // completed 后「继续对话」：前端不重填研究范围时，用该 workflow 最近一次跑过的 ticker
+  // 兜底，让续跑沿用同一标的（context 里带着用户的新追加指令）。
+  if (!effectiveTicker?.trim() && !effectiveScope) {
+    const priorTicker = await getLatestJobTickerByWorkflow(body.workflowRunId);
+    if (priorTicker) effectiveTicker = priorTicker;
   }
 
   const scope = resolveResearchScope({

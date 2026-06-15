@@ -18,7 +18,7 @@
  *   把 job 恢复 running 并重派 `research_team_execute`（带 hitlApproval）。
  */
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { analystResearchJob } from "../../db/sqlite/schema";
 import type { AnalystTeamResult } from "./analyst-team";
@@ -352,6 +352,26 @@ export async function findActiveAnalystJobsByWorkflow(workflowRunId: string): Pr
     );
   for (const r of rows) ids.add(r.id);
   return [...ids];
+}
+
+/**
+ * 反查某 workflow 最近一次 analyst job 的 ticker（任意状态）。
+ *
+ * 用途：completed 后「继续对话」时，前端不必重填研究范围——后端用上一次跑过的 ticker
+ * 兜底，让续跑沿用同一标的。先查内存 cache（热路径），miss 再查 DB 取最新一行。
+ */
+export async function getLatestJobTickerByWorkflow(
+  workflowRunId: string
+): Promise<string | null> {
+  const db = await getDb();
+  const rows = await db
+    .select({ ticker: analystResearchJob.ticker })
+    .from(analystResearchJob)
+    .where(eq(analystResearchJob.workflowRunId, workflowRunId))
+    .orderBy(desc(analystResearchJob.startedAt))
+    .limit(1);
+  const ticker = rows[0]?.ticker?.trim();
+  return ticker ? ticker : null;
 }
 
 // ─── 启动时回填 cache（restoreRunningWorkflows 调） ─────────────────────────

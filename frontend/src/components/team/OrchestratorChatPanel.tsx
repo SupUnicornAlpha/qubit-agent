@@ -22,6 +22,14 @@ import { TeamHitlBanner } from "./TeamHitlBanner";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
 
+/** 内联产物卡片（Orchestrator 对话框里直接展示已生成的因子/策略/脚本，点击可打开）。 */
+export interface OrchestratorArtifact {
+  id: string;
+  kind: "factor" | "strategy" | "script";
+  title: string;
+  subtitle?: string;
+}
+
 export interface OrchestratorChatPanelProps {
   /** 当前工作流 run id（驱动 HITL banner 自挂载 + composer 启用判定） */
   workflowRunId: string;
@@ -29,6 +37,8 @@ export interface OrchestratorChatPanelProps {
   events: LiveConversationEvent[];
   /** 是否正在轮询/运行 */
   running: boolean;
+  /** 选中工作流是否已完成/失败（用于「继续研究」模式：基于已有研究续跑，无需重填范围） */
+  completed: boolean;
   /** 运行进度文案（running 时显示在 composer 上方） */
   runProgress: string;
   /** 自主 / HITL 模式 */
@@ -47,6 +57,10 @@ export interface OrchestratorChatPanelProps {
   onInject: (content: string) => Promise<number>;
   /** 协作式中断：请求在下一个安全断点暂停，等用户输入新提示词后续跑 */
   onInterrupt: () => Promise<void>;
+  /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
+  artifacts: OrchestratorArtifact[];
+  /** 点击产物卡片：跳到量化工坊 / 底部抽屉打开 */
+  onOpenArtifact: (artifact: OrchestratorArtifact) => void;
   /** 空闲启动是否禁用（沿用 teamRunDisabled） */
   sendDisabled: boolean;
   /** 启动禁用原因（tooltip） */
@@ -68,11 +82,14 @@ export function OrchestratorChatPanel({
   onHitlModeChange,
   pendingHitlRequestId,
   onHitlResolved,
+  completed,
   composerValue,
   onComposerChange,
   onSend,
   onInject,
   onInterrupt,
+  artifacts,
+  onOpenArtifact,
   sendDisabled,
   sendDisabledReason,
 }: OrchestratorChatPanelProps) {
@@ -80,6 +97,7 @@ export function OrchestratorChatPanel({
   const [injectHint, setInjectHint] = useState<string | null>(null);
   const [injecting, setInjecting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  const [artifactsOpen, setArtifactsOpen] = useState(true);
   const wfId = workflowRunId.trim();
 
   // 新消息进来时自动滚到底（右栏主对话框默认始终跟随最新）
@@ -91,13 +109,19 @@ export function OrchestratorChatPanel({
 
   /**
    * 发送语义随运行态切换：
-   *   - 空闲：发送 = 以 composer 文本为指令「启动」团队分析（onSend，受 sendDisabled 约束）
    *   - 运行中：发送 = 把文本「注入」运行中的 Orchestrator（onInject，下一轮 reason 生效）
+   *   - 已完成/失败：发送 = 「继续研究」，基于已有研究续跑（onSend；后端用上次 ticker 兜底，
+   *     无需重填研究范围，故不受 sendDisabled 约束）
+   *   - 空闲（未跑过）：发送 = 「启动」团队分析（onSend，受 sendDisabled 约束）
    */
-  const mode: "start" | "inject" = running ? "inject" : "start";
+  const mode: "start" | "inject" | "continue" = running
+    ? "inject"
+    : completed
+      ? "continue"
+      : "start";
   const hasContent = composerValue.trim().length > 0;
   const canSend =
-    wfId.length > 0 && hasContent && !injecting && (mode === "inject" ? true : !sendDisabled);
+    wfId.length > 0 && hasContent && !injecting && (mode === "start" ? !sendDisabled : true);
 
   const doSend = async () => {
     if (!canSend) return;
@@ -134,9 +158,11 @@ export function OrchestratorChatPanel({
       ? "请先在左侧选择或新建工作流"
       : mode === "inject"
         ? "Orchestrator 运行中 —— 发送的指令会在它下一轮思考时被采纳（Cmd/Ctrl+Enter）"
-        : hitlMode === "off"
-          ? "输入研究指令 → 启动后 Orchestrator 将自主完成（Cmd/Ctrl+Enter 发送）"
-          : "输入研究指令 → Orchestrator 将在关键节点暂停征询你（Cmd/Ctrl+Enter 发送）";
+        : mode === "continue"
+          ? "该研究已完成 —— 输入追加指令将基于已有研究继续（沿用原标的，Cmd/Ctrl+Enter）"
+          : hitlMode === "off"
+            ? "输入研究指令 → 启动后 Orchestrator 将自主完成（Cmd/Ctrl+Enter 发送）"
+            : "输入研究指令 → Orchestrator 将在关键节点暂停征询你（Cmd/Ctrl+Enter 发送）";
 
   return (
     <div style={styles.root}>
@@ -202,7 +228,7 @@ export function OrchestratorChatPanel({
         </div>
       </div>
 
-      {/* Body：内联 HITL + 对话流 */}
+      {/* Body：内联 HITL + 产物卡片 + 对话流 */}
       <div ref={scrollRef} style={styles.body} data-qb-orchestrator-chat>
         {wfId ? (
           <TeamHitlBanner
@@ -210,6 +236,41 @@ export function OrchestratorChatPanel({
             triggerKey={pendingHitlRequestId ?? wfId}
             onResolved={onHitlResolved}
           />
+        ) : null}
+        {artifacts.length > 0 ? (
+          <div style={styles.artifactBox}>
+            <button
+              type="button"
+              style={styles.artifactHeader}
+              onClick={() => setArtifactsOpen((v) => !v)}
+              aria-expanded={artifactsOpen}
+            >
+              <span aria-hidden style={{ fontSize: 10 }}>
+                {artifactsOpen ? "▾" : "▸"}
+              </span>
+              📦 本轮产物（{artifacts.length}）
+            </button>
+            {artifactsOpen ? (
+              <div style={styles.artifactList}>
+                {artifacts.map((a) => (
+                  <button
+                    key={`${a.kind}:${a.id}`}
+                    type="button"
+                    style={styles.artifactCard}
+                    title={`打开${a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}：${a.title}`}
+                    onClick={() => onOpenArtifact(a)}
+                  >
+                    <span style={styles.artifactKind}>
+                      {a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}
+                    </span>
+                    <span style={styles.artifactTitle}>{a.title}</span>
+                    {a.subtitle ? <span style={styles.artifactSub}>{a.subtitle}</span> : null}
+                    <span style={styles.artifactOpen}>打开 ↗</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         ) : null}
         <LiveConversationView
           events={events}
@@ -238,7 +299,9 @@ export function OrchestratorChatPanel({
           placeholder={
             mode === "inject"
               ? "给运行中的 Orchestrator 追加指令，例如：把重点放到现金流质量上…"
-              : "给 Orchestrator 的研究指令，例如：对当前标的做一次机构投研级深度尽调…"
+              : mode === "continue"
+                ? "基于已完成的研究追加指令，例如：再补一个估值敏感性分析…"
+                : "给 Orchestrator 的研究指令，例如：对当前标的做一次机构投研级深度尽调…"
           }
         />
         <div style={styles.composerBar}>
@@ -254,12 +317,20 @@ export function OrchestratorChatPanel({
                 : canSend
                   ? mode === "inject"
                     ? "发送给运行中的 Orchestrator"
-                    : "发送指令并启动"
+                    : mode === "continue"
+                      ? "基于已有研究继续"
+                      : "发送指令并启动"
                   : "请输入指令"
             }
             onClick={() => void doSend()}
           >
-            {injecting ? "发送中…" : mode === "inject" ? "发送给 Orchestrator" : "发送并启动"}
+            {injecting
+              ? "发送中…"
+              : mode === "inject"
+                ? "发送给 Orchestrator"
+                : mode === "continue"
+                  ? "继续研究"
+                  : "发送并启动"}
           </button>
         </div>
       </div>
@@ -381,6 +452,66 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
     boxSizing: "border-box",
   },
+  artifactBox: {
+    marginBottom: 10,
+    border: "1px solid rgba(96,165,250,0.35)",
+    borderRadius: 8,
+    background: "rgba(96,165,250,0.06)",
+    overflow: "hidden",
+  },
+  artifactHeader: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 10px",
+    background: "transparent",
+    border: "none",
+    color: "#93c5fd",
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "left",
+  },
+  artifactList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    padding: "0 8px 8px",
+  },
+  artifactCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    background: "var(--qb-team-canvas-bg, #0c0c0e)",
+    border: "1px solid #27272a",
+    borderRadius: 6,
+    cursor: "pointer",
+    fontFamily: "inherit",
+    textAlign: "left",
+    width: "100%",
+  },
+  artifactKind: {
+    flexShrink: 0,
+    fontSize: 10,
+    padding: "1px 6px",
+    borderRadius: 4,
+    border: "1px solid rgba(96,165,250,0.5)",
+    color: "#93c5fd",
+  },
+  artifactTitle: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    color: "#e4e4e7",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  artifactSub: { flexShrink: 0, fontSize: 10, color: "#71717a" },
+  artifactOpen: { flexShrink: 0, fontSize: 10, color: "#60a5fa" },
   injectHint: {
     fontSize: 11,
     color: "#86efac",
