@@ -33,7 +33,10 @@ export interface SelfEvolveConfig {
 }
 
 const DEFAULT_CONFIG: SelfEvolveConfig = {
-  enabled: false,
+  // P0（2026-06）：自进化总闸默认开启——此前默认关导致 4 个 self-evolve worker /
+  // reason 注入 / AutoInstaller 全停，skill 晋升与长期记忆几乎不触发。仍可用
+  // SELF_EVOLVE_ENABLED=false 显式关闭。
+  enabled: true,
   autoInstallMode: "propose",
   pnlAwareReasonEnabled: false,
   minScoreForAuto: 0.85,

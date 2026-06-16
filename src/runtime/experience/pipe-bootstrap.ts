@@ -23,12 +23,16 @@ import { loadModelConfig } from "../config/model-config";
 import { invokeWithFallback } from "../llm/llm-router";
 import { getExperienceBus } from "./experience-bus";
 import { getExperienceStore } from "./experience-store";
+import { sqliteExtractorLoader, sqliteReflectorLoader } from "./pipe-loaders";
+import { type ExtractorHandle, startExtractorPipe } from "./pipes/extractor";
+import { type ReflectorHandle, startReflectorPipe } from "./pipes/reflector";
 import type { SummarizerHandle } from "./pipes/workflow-summarizer";
 import {
+  type SummarizerLlmCallFn,
   sqliteSummarizerLoader,
   startWorkflowSummarizerPipe,
-  type SummarizerLlmCallFn,
 } from "./pipes/workflow-summarizer";
+import { type WriterHandle, startWriterPipe } from "./pipes/writer";
 
 /**
  * LLM callback 适配器：使用项目默认 model 跑一次 LLM 调用（带 fallback），
@@ -56,35 +60,72 @@ const summarizerLlm: SummarizerLlmCallFn = async ({ system, user }) => {
   return { text: res.answer, tokensUsed };
 };
 
-let _handles: { summarizer?: SummarizerHandle } | null = null;
+interface PipeHandles {
+  summarizer?: SummarizerHandle;
+  writer?: WriterHandle;
+  extractor?: ExtractorHandle;
+  reflector?: ReflectorHandle;
+}
+let _handles: PipeHandles | null = null;
 
 /**
  * 启动 experience pipes（幂等）。
  *
- * 设计：handle 保存在 module 级单例；重复调直接返回。任何 pipe 启动失败仅 warn，
- * 不影响进程主流程（pipe 本身就是"锦上添花"，不在主链路上）。
+ * P0（2026-06）：把 Writer / Extractor / Reflector 一并接上（此前只接 summarizer，
+ * 导致 workflow_terminal 事件几乎无 handler、skill 候选无来源、长期记忆几乎不触发）。
+ *   - Writer：step_emitted → episodic（事件驱动，自包含）
+ *   - Extractor：workflow_terminal → procedural workflow_play（喂 SkillPromoter 晋升）
+ *   - Reflector：workflow_failed / 抽样 completed → reflective（失败反思）
+ *   - Summarizer：completed → semantic 总结
+ *
+ * 设计：每个 pipe 启动失败仅 warn，互不影响（pipe 是旁路增强，不在主链路）。
  */
 export function attachExperiencePipes(): void {
   if (_handles) return;
-  _handles = {};
-  try {
-    _handles.summarizer = startWorkflowSummarizerPipe({
-      store: getExperienceStore(),
-      bus: getExperienceBus(),
+  const handles: PipeHandles = {};
+  const store = getExperienceStore();
+  const bus = getExperienceBus();
+  const attempt = (name: string, fn: () => void) => {
+    try {
+      fn();
+      console.log(`[experience-pipes] attached: ${name}`);
+    } catch (err) {
+      console.warn(`[experience-pipes] failed to attach ${name}: ${(err as Error).message}`);
+    }
+  };
+
+  attempt("writer", () => {
+    handles.writer = startWriterPipe({ store, bus });
+  });
+  attempt("extractor", () => {
+    handles.extractor = startExtractorPipe({ store, bus, loader: sqliteExtractorLoader });
+  });
+  attempt("reflector", () => {
+    handles.reflector = startReflectorPipe({
+      store,
+      bus,
+      loader: sqliteReflectorLoader,
+      llm: summarizerLlm,
+    });
+  });
+  attempt("workflow-summarizer", () => {
+    handles.summarizer = startWorkflowSummarizerPipe({
+      store,
+      bus,
       loader: sqliteSummarizerLoader,
       llm: summarizerLlm,
     });
-    console.log("[experience-pipes] attached: workflow-summarizer");
-  } catch (err) {
-    console.warn(
-      `[experience-pipes] failed to attach workflow-summarizer: ${(err as Error).message}`
-    );
-  }
+  });
+
+  _handles = handles;
 }
 
 /** 仅供测试：detach all + 重置 */
 export function _detachExperiencePipesForTesting(): void {
   if (!_handles) return;
   _handles.summarizer?.detach();
+  _handles.writer?.detach();
+  _handles.extractor?.detach();
+  _handles.reflector?.detach();
   _handles = null;
 }

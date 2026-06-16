@@ -27,7 +27,12 @@
 
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import { agentStep, workflowRun } from "../../../db/sqlite/schema";
+import {
+  agentDefinition,
+  agentInstance,
+  agentStep,
+  workflowRun,
+} from "../../../db/sqlite/schema";
 import type { ExperienceBus } from "../experience-bus";
 import type { ExperienceStore } from "../experience-store";
 
@@ -346,11 +351,29 @@ export const sqliteSummarizerLoader: SummarizerLoader = {
       const wf = wfRow[0];
       if (!wf || wf.status !== "completed") return null;
 
+      /**
+       * 修复（P0 2026-06）：agent_step 没有 role / reasonText / finalAnswer 列（原实现引用
+       * 不存在列，运行时取到 undefined）。role 改走 agent_instance→agent_definition join；
+       * reason 用 agent_step.thought；final_answer 文本只能 best-effort 从 actionJson 取。
+       */
+      const defs = await db
+        .select({ id: agentDefinition.id, role: agentDefinition.role })
+        .from(agentDefinition);
+      const defRole = new Map(defs.map((d) => [d.id, d.role]));
+      const instRows = await db
+        .select({ id: agentInstance.id, definitionId: agentInstance.definitionId })
+        .from(agentInstance)
+        .where(eq(agentInstance.workflowRunId, workflowRunId));
+      const instRole = new Map(
+        instRows.map((i) => [i.id, defRole.get(i.definitionId) ?? "unknown"])
+      );
+
       const stepRows = await db
         .select({
-          role: agentStep.role,
-          reasonText: agentStep.reasonText,
-          finalAnswer: agentStep.finalAnswer,
+          agentInstanceId: agentStep.agentInstanceId,
+          thought: agentStep.thought,
+          actionType: agentStep.actionType,
+          actionJson: agentStep.actionJson,
           createdAt: agentStep.createdAt,
         })
         .from(agentStep)
@@ -360,12 +383,21 @@ export const sqliteSummarizerLoader: SummarizerLoader = {
 
       // 按时间正序还原
       stepRows.reverse();
-      const rolesInvolved = [...new Set(stepRows.map((s) => s.role).filter(Boolean))] as string[];
+      const rolesInvolved = [
+        ...new Set(stepRows.map((s) => instRole.get(s.agentInstanceId) ?? "unknown")),
+      ];
       const recentStepsText = stepRows
         .map((s, i) => {
-          const reason = (s.reasonText ?? "").slice(0, 280);
-          const final = (s.finalAnswer ?? "").slice(0, 280);
-          const parts = [`### step ${i + 1} · ${s.role}`];
+          const role = instRole.get(s.agentInstanceId) ?? "unknown";
+          const reason = (s.thought ?? "").slice(0, 280);
+          const final =
+            s.actionType === "final_answer"
+              ? (typeof s.actionJson === "string"
+                  ? s.actionJson
+                  : JSON.stringify(s.actionJson ?? "")
+                ).slice(0, 280)
+              : "";
+          const parts = [`### step ${i + 1} · ${role}`];
           if (reason) parts.push(`reason: ${reason}`);
           if (final) parts.push(`final_answer: ${final}`);
           return parts.join("\n");
