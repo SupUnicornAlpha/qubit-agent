@@ -117,12 +117,14 @@ function clampBoundsToImage(b: FrameRect, w: number, h: number, pad: number): Fr
 type CellGrid = { cols: number; rows: number; cellW: number; cellH: number };
 
 /**
- * 将整张 sprite sheet 中的:
- *   1. 白色像素（RGB ≥ threshold）
- *   2. 落在每个 cell 边界 inset 范围之外的像素（grid line 区）
- * 都强制 alpha=0。
+ * 把 sprite sheet 背景白色键出为 alpha=0：
+ *   1. grid line 区（落在 cell 边界 inset 之外）→ 透明
+ *   2. **逐 cell 从内容边界 flood-fill** 白色背景 → 透明
  *
- * 这一步是保证渲染时不会出现黑色细框/网格线的关键。
+ * 关键修复（2026-06，"猫半透明"）：旧实现用全局阈值 `RGB ≥ threshold → alpha=0`，
+ * 会把**浅色猫**（白猫 / 浅灰 / 浅橘虎斑高光）身上同样高亮的像素一并键掉，导致这些
+ * 猫渲染时身体出现透明空洞、看起来半透明；深色猫不受影响。改为「只移除与 cell 边缘
+ * 连通的白」——即真正的背景白——猫内部的浅色/白色毛发（不与边缘连通）被保留。
  */
 function whiteAndGridToAlpha(
   pixels: Uint8Array,
@@ -136,38 +138,72 @@ function whiteAndGridToAlpha(
   const out = Buffer.alloc(pixels.length);
   out.set(pixels);
 
+  const isWhite = (i: number): boolean =>
+    out[i]! >= threshold && out[i + 1]! >= threshold && out[i + 2]! >= threshold;
+
+  // Pass 1：grid line inset 区 → 透明（去网格线，保持原行为）
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      const r = out[i]!;
-      const g = out[i + 1]!;
-      const b = out[i + 2]!;
-      let alpha = out[i + 3]!;
+      const localX = x % grid.cellW;
+      const localY = y % grid.cellH;
+      const colIdx = Math.floor(x / grid.cellW);
+      const rowIdx = Math.floor(y / grid.cellH);
+      const inSheet = colIdx < grid.cols && rowIdx < grid.rows;
+      if (
+        !inSheet ||
+        localX < inset ||
+        localX >= grid.cellW - inset ||
+        localY < inset ||
+        localY >= grid.cellH - inset
+      ) {
+        out[(y * w + x) * 4 + 3] = 0;
+      }
+    }
+  }
 
-      if (r >= threshold && g >= threshold && b >= threshold) {
-        alpha = 0;
-      } else {
-        /**
-         * Coordinates relative to the cell this pixel belongs to.
-         * If too close to any cell edge, treat as grid noise → transparent.
-         */
-        const localX = x % grid.cellW;
-        const localY = y % grid.cellH;
-        const colIdx = Math.floor(x / grid.cellW);
-        const rowIdx = Math.floor(y / grid.cellH);
-        const inSheet = colIdx < grid.cols && rowIdx < grid.rows;
-        if (
-          !inSheet ||
-          localX < inset ||
-          localX >= grid.cellW - inset ||
-          localY < inset ||
-          localY >= grid.cellH - inset
-        ) {
-          alpha = 0;
+  // Pass 2：逐 cell 从内容边界向内 flood-fill 背景白（4-邻接），只键掉连通到边缘的白。
+  const stack: number[] = [];
+  for (let row = 0; row < grid.rows; row++) {
+    for (let col = 0; col < grid.cols; col++) {
+      const x0 = col * grid.cellW + inset;
+      const y0 = row * grid.cellH + inset;
+      const x1 = Math.min((col + 1) * grid.cellW - inset, w);
+      const y1 = Math.min((row + 1) * grid.cellH - inset, h);
+      if (x1 <= x0 || y1 <= y0) continue;
+
+      stack.length = 0;
+      const seed = (x: number, y: number): void => {
+        const i = (y * w + x) * 4;
+        if (out[i + 3] === 0 || !isWhite(i)) return;
+        out[i + 3] = 0;
+        stack.push(x, y);
+      };
+      // 内容区四条边作为 flood 起点（背景白一定从这里连进来）
+      for (let x = x0; x < x1; x++) {
+        seed(x, y0);
+        seed(x, y1 - 1);
+      }
+      for (let y = y0; y < y1; y++) {
+        seed(x0, y);
+        seed(x1 - 1, y);
+      }
+      while (stack.length > 0) {
+        const py = stack.pop()!;
+        const px = stack.pop()!;
+        const nbrs: ReadonlyArray<readonly [number, number]> = [
+          [px - 1, py],
+          [px + 1, py],
+          [px, py - 1],
+          [px, py + 1],
+        ];
+        for (const [nx, ny] of nbrs) {
+          if (nx < x0 || nx >= x1 || ny < y0 || ny >= y1) continue;
+          const ni = (ny * w + nx) * 4;
+          if (out[ni + 3] === 0 || !isWhite(ni)) continue;
+          out[ni + 3] = 0;
+          stack.push(nx, ny);
         }
       }
-
-      out[i + 3] = alpha;
     }
   }
   return out;
