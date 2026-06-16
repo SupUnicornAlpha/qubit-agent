@@ -242,6 +242,14 @@ function parseJsonSignalFromText(
         ? p["reasoning"]
         : text.slice(0, 500);
 
+    /**
+     * 保留 FSI outputSchema 校验后的结构化字段（key_drivers / key_risks / catalysts /
+     * entry_zone / stop_loss / sentiment_score 等），去掉已单列的 signal/confidence/reasoning，
+     * 其余作为 structured 贯通到融合/报告/辩论/下游——之前这些字段被解析后直接丢弃。
+     */
+    const { signal: _s, confidence: _c, reasoning: _r, ...rest } = p as Record<string, unknown>;
+    const structured = Object.keys(rest).length > 0 ? rest : undefined;
+
     return {
       definitionId,
       analystRole: role,
@@ -250,6 +258,7 @@ function parseJsonSignalFromText(
       confidence,
       reasoning,
       dataSnapshot: { rawResponse: text },
+      ...(structured ? { structured } : {}),
     };
   })();
 }
@@ -348,12 +357,12 @@ export async function runResearchTeamSlotReact(params: {
       "1. **第 1 步**：先调一个核心工具（如 fetch_klines / fetch_news_sentiment）拿到数据",
       "2. **第 2 步**：基于第 1 步结果做交叉验证 —— 选一个**不同维度**的工具（技术面 + 消息面 / 估值 + 同行对比）",
       "3. **第 3 步**：自我审视：`第 1/2 步证据是否互相支撑？是否有反向信号被忽略？` —— 如有冲突，再调 1 个工具核实",
-      "4. **最终回合**：综合所有观测输出 JSON 信号（buy/sell/hold + confidence + reasoning）",
+      "4. **最终回合**：综合所有观测输出 JSON 信号。除 `signal`(buy/sell/hold) + `confidence` + `reasoning` 外，**务必按你角色的输出 schema 补全结构化字段**（如 key_drivers / key_risks / catalysts / entry_zone / stop_loss / sentiment_score —— 带上具体数字/证据），这些会原样传给融合、辩论与下游成员。",
       "**禁止**：第 1 个工具调用之后立刻给 JSON 就停 —— 单数据源信号 confidence 上限 0.6。",
     ].join("\n");
   })();
   const userGoal = params.expectJsonSignal
-    ? `分析${targetLabel}，使用授权工具做多轮交叉验证，最终输出一段 JSON 信号（buy/sell/hold + confidence + reasoning）。${scopeHint}${reactPolicyHint}${groupHint}`
+    ? `分析${targetLabel}，使用授权工具做多轮交叉验证，最终输出一段 JSON 信号（buy/sell/hold + confidence + reasoning，并按你角色 schema 补全 key_drivers/key_risks/catalysts 等结构化字段）。${scopeHint}${reactPolicyHint}${groupHint}`
     : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}${groupHint}`;
 
   const result = await executeAgentReact({

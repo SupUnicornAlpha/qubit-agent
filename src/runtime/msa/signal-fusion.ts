@@ -30,6 +30,12 @@ export interface RawAnalystSignal {
   confidence: number;
   reasoning: string;
   dataSnapshot?: Record<string, unknown>;
+  /**
+   * FSI 角色 outputSchema 校验后的结构化输出（key_drivers / key_risks / catalysts /
+   * entry_zone / stop_loss / sentiment_score 等，因角色而异）。贯通到融合/辩论/报告/下游
+   * handoff，避免只剩 signal+confidence+reasoning 这层薄协议丢掉关键信息。缺省回退 reasoning。
+   */
+  structured?: Record<string, unknown>;
 }
 
 /**
@@ -58,6 +64,8 @@ export interface AnalystSignalFusionOutput {
     confidence: number;
     weight: number;
     reasoning: string;
+    /** 透传分析师的结构化输出（key_drivers / key_risks / catalysts 等），供报告/辩论展开。 */
+    structured?: Record<string, unknown>;
   }>;
 }
 
@@ -185,7 +193,7 @@ export async function fuseSignals(params: {
         signal: s.signal,
         confidence: s.confidence,
         reasoning: s.reasoning,
-        dataSnapshotJson: s.dataSnapshot ?? {},
+        dataSnapshotJson: { ...(s.dataSnapshot ?? {}), structured: s.structured ?? null },
       });
     }
   }
@@ -211,6 +219,7 @@ export async function fuseSignals(params: {
       confidence: s.confidence,
       weight: dynW,
       reasoning: s.reasoning,
+      ...(s.structured ? { structured: s.structured } : {}),
     });
   }
 
@@ -293,12 +302,17 @@ export async function getLatestFusionForWorkflow(
     fusedConfidence: f.fusedConfidence,
     debateTriggered: Boolean(f.debateTriggered),
     weights: (f.weightsJson as Record<string, number>) ?? {},
-    signalBreakdown: signals.map((s) => ({
-      role: s.analystRole as AgentRole,
-      signal: s.signal as AnalystSignalValue,
-      confidence: s.confidence,
-      weight: 1.0,
-      reasoning: s.reasoning,
-    })),
+    signalBreakdown: signals.map((s) => {
+      const snap = (s.dataSnapshotJson as Record<string, unknown> | null) ?? null;
+      const structured = snap?.structured as Record<string, unknown> | undefined;
+      return {
+        role: s.analystRole as AgentRole,
+        signal: s.signal as AnalystSignalValue,
+        confidence: s.confidence,
+        weight: 1.0,
+        reasoning: s.reasoning,
+        ...(structured ? { structured } : {}),
+      };
+    }),
   };
 }

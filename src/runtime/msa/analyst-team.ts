@@ -826,10 +826,13 @@ async function runAnalystTeamCore(params: {
                 .map((pr) => {
                   const o = outputByRole.get(pr);
                   if (o) {
-                    return `- **${pr}**（信号）：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 600)}`;
+                    // Tier1+2：上游结论从 600 字放开到 1500，并附结构化关键驱动/风险，下游分析师不再"管中窥豹"。
+                    const struct = formatStructuredFields(o.structured, { maxArr: 5 });
+                    const structLine = struct.length > 0 ? `\n  ${struct.join("\n  ")}` : "";
+                    return `- **${pr}**（信号）：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 1500)}${structLine}`;
                   }
                   const md = auxDigestByRole.get(pr);
-                  if (md) return `- **${pr}**（辅助）：\n  ${md.slice(0, 600)}`;
+                  if (md) return `- **${pr}**（辅助）：\n  ${md.slice(0, 1200)}`;
                   return "";
                 })
                 .filter((line) => line.length > 0)
@@ -1297,8 +1300,13 @@ async function runAnalystTeamCore(params: {
     },
   });
   if (shouldDebate) {
+    // Tier1+2：辩论摘要从 120 字放开到 600 字，并带上结构化的关键驱动/风险，让 Bull/Bear 辩得更实。
     const analystSummary = fusionResult.signalBreakdown
-      .map((s) => `${s.role}: ${s.signal} (${(s.confidence * 100).toFixed(0)}%) ${s.reasoning.slice(0, 120)}`)
+      .map((s) => {
+        const struct = formatStructuredFields(s.structured, { maxArr: 4 });
+        const structLine = struct.length > 0 ? `\n    ${struct.join("｜")}` : "";
+        return `${s.role}: ${s.signal} (${(s.confidence * 100).toFixed(0)}%) ${s.reasoning.slice(0, 600)}${structLine}`;
+      })
       .join("\n");
     debate = await executeDebateSafely({
       workflowRunId,
@@ -1376,7 +1384,13 @@ function buildTeamReport(
   ticker: string,
   fusedSignal: AnalystSignalValue,
   fusedConfidence: number,
-  breakdown: Array<{ role: AgentRole; signal: AnalystSignalValue; confidence: number; reasoning: string }>,
+  breakdown: Array<{
+    role: AgentRole;
+    signal: AnalystSignalValue;
+    confidence: number;
+    reasoning: string;
+    structured?: Record<string, unknown>;
+  }>,
   noAnalystSignals = false
 ): string {
   const signalEmoji: Record<AnalystSignalValue, string> = {
@@ -1419,8 +1433,43 @@ function buildTeamReport(
   for (const s of breakdown) {
     const name = roleNames[s.role] ?? s.role;
     lines.push(`- **${name}**：${signalEmoji[s.signal]} ${s.signal.toUpperCase()}（${(s.confidence * 100).toFixed(0)}%）`);
-    lines.push(`  > ${s.reasoning.slice(0, 200)}`);
+    // Tier1：论据放开到 1000 字（原 200 字会丢掉大量关键信息）。
+    lines.push(`  > ${s.reasoning.slice(0, 1000)}`);
+    // Tier2：渲染结构化字段（关键驱动/关键风险/催化剂/入场·止损…），不再丢弃。
+    for (const f of formatStructuredFields(s.structured)) lines.push(`  > ${f}`);
   }
 
   return lines.join("\n");
+}
+
+/** 结构化分析师字段（FSI outputSchema）→ 人类可读行；用于报告/辩论/handoff。 */
+const STRUCTURED_FIELD_LABELS: Record<string, string> = {
+  key_drivers: "关键驱动",
+  key_risks: "关键风险",
+  catalysts: "催化剂",
+  risks: "风险",
+  entry_zone: "入场区间",
+  stop_loss: "止损",
+  target_price: "目标价",
+  sentiment_score: "情绪分",
+};
+function formatStructuredFields(
+  structured: Record<string, unknown> | undefined,
+  opts?: { maxArr?: number }
+): string[] {
+  if (!structured) return [];
+  const maxArr = opts?.maxArr ?? 6;
+  const out: string[] = [];
+  for (const [key, label] of Object.entries(STRUCTURED_FIELD_LABELS)) {
+    const v = structured[key];
+    if (v == null) continue;
+    if (Array.isArray(v)) {
+      const items = v.filter((x) => typeof x === "string" && x.trim()).slice(0, maxArr);
+      if (items.length > 0) out.push(`${label}：${items.join("；")}`);
+    } else if (typeof v === "string" || typeof v === "number") {
+      const sv = String(v).trim();
+      if (sv) out.push(`${label}：${sv}`);
+    }
+  }
+  return out;
 }
