@@ -2,11 +2,11 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { debateSession, debateTurn, debateVerdict } from "../../db/sqlite/schema";
+import type { AnalystSignalValue } from "../../types/entities";
 import { loadModelConfig } from "../config/model-config";
 import { runLlmGateway } from "../llm/gateway";
-import type { AnalystSignalValue } from "../../types/entities";
-import { debateStreamBus } from "./debate-stream";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import { debateStreamBus } from "./debate-stream";
 
 export interface DebateInput {
   workflowRunId: string;
@@ -25,11 +25,22 @@ export interface DebateOutput {
   reasoning: string;
 }
 
-async function runRole(role: "bull" | "bear", topic: string, summary: string): Promise<{
-  statement: string;
-  confidence: number;
-}> {
-  const modelConfig = (await loadModelConfig()) ?? { provider: "mock" as const, model: "mock", apiKey: "" };
+/**
+ * 单方（bull/bear）一回合发言。A2A 路径下由 bull/bear 专属实例的 runtime handler 调用，
+ * 进程内路径下由 `runDebateSession` 默认直接调用——同一套 prompt，保证两条路径行为一致。
+ */
+export type DebateTurnRunner = (
+  stance: "bull" | "bear",
+  topic: string,
+  summary: string
+) => Promise<{ statement: string; confidence: number }>;
+
+export const runDebateRoleTurn: DebateTurnRunner = async (role, topic, summary) => {
+  const modelConfig = (await loadModelConfig()) ?? {
+    provider: "mock" as const,
+    model: "mock",
+    apiKey: "",
+  };
   const systemPrompt =
     role === "bull"
       ? "你是多方研究员，请提出支持买入的论据，重点强调上行空间、催化剂和风险补偿。"
@@ -43,9 +54,18 @@ async function runRole(role: "bull" | "bear", topic: string, summary: string): P
   const c = answer.match(/(0(\.\d+)?|1(\.0+)?)/);
   const confidence = c ? Math.max(0, Math.min(1, Number(c[1]))) : 0.6;
   return { statement: answer, confidence };
-}
+};
 
-export async function runDebateSession(input: DebateInput): Promise<DebateOutput> {
+/**
+ * @param deps.runTurn 注入单回合发言的执行方式。默认进程内裸 LLM（`runDebateRoleTurn`）；
+ *   A2A 路径传入「派 TASK_ASSIGN 给 bull/bear 专属实例并等回包」的实现，使辩论也走总线。
+ *   无论哪条路径，评分 / debate_session / debate_turn / verdict 持久化 + 流事件都在本函数内统一完成。
+ */
+export async function runDebateSession(
+  input: DebateInput,
+  deps?: { runTurn?: DebateTurnRunner }
+): Promise<DebateOutput> {
+  const runTurn = deps?.runTurn ?? runDebateRoleTurn;
   const db = await getDb();
   const sessionId = randomUUID();
   const maxRounds = input.maxRounds ?? 2;
@@ -71,7 +91,7 @@ export async function runDebateSession(input: DebateInput): Promise<DebateOutput
   let bearScore = 0;
 
   for (let round = 1; round <= maxRounds; round++) {
-    const bull = await runRole("bull", topic, input.analystSummary);
+    const bull = await runTurn("bull", topic, input.analystSummary);
     await db.insert(debateTurn).values({
       id: randomUUID(),
       debateSessionId: sessionId,
@@ -105,7 +125,7 @@ export async function runDebateSession(input: DebateInput): Promise<DebateOutput
     });
     bullScore += bull.confidence;
 
-    const bear = await runRole("bear", topic, input.analystSummary);
+    const bear = await runTurn("bear", topic, input.analystSummary);
     await db.insert(debateTurn).values({
       id: randomUUID(),
       debateSessionId: sessionId,

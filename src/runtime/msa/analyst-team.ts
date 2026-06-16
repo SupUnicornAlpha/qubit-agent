@@ -38,7 +38,8 @@ import {
   type ResearchScopeInput,
 } from "../../types/research-scope";
 import { defaultResearchUserContext } from "./analyst-team-scope";
-import { runDebateSession } from "../debate/debate-engine";
+import { type DebateInput, runDebateSession } from "../debate/debate-engine";
+import { type DebateA2ASetup, setupDebateA2A } from "../debate/debate-a2a";
 import { evaluateRiskAndVeto } from "../risk/veto-engine";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
@@ -80,6 +81,19 @@ import {
 import { consumeInterrupt } from "../workflow/workflow-interrupt";
 import { pickAnalystReactDepth, runResearchTeamSlotReact } from "./analyst-team-slot-react";
 import { buildGroupRoleConstraintHint } from "./group-constraint-hint";
+import { config } from "../../config";
+import { getA2APool } from "../a2a/a2a-pool";
+import {
+  dispatchSlotsViaA2A,
+  spawnTeamSlotRuntimes,
+  type TeamSlotScope,
+} from "./team-slot-a2a";
+
+/**
+ * A2A 团队 slot 派单的 gather 超时兜底（仅防「某 slot 彻底卡死」；正常 deep ReAct
+ * 单 slot 实测约 1-3 分钟，留足余量）。进程内老路径无此超时，故设得很宽以免误伤。
+ */
+const TEAM_SLOT_A2A_TIMEOUT_MS = 1_200_000;
 
 /**
  * v2：把用户在 HITL 卡片提交的 response 拼成给下游分析师的上下文片段。
@@ -779,6 +793,38 @@ async function runAnalystTeamCore(params: {
     });
   }
 
+  /**
+   * 团队 slot 传输路径决策（默认 A2A）。需 A2A pool 已启动以拿到 orchestrator 实例
+   * 作为派单 sender；拿不到（脱离 pool 的单测 / 脚本）则回退进程内执行，行为与历史一致。
+   */
+  const teamA2aEnabled = config.teamExecutionPath === "a2a" && waveSlots.length > 0;
+  let orchestratorInstanceId: string | null = null;
+  if (teamA2aEnabled) {
+    try {
+      orchestratorInstanceId = getA2APool().getInstanceIdForRole("orchestrator");
+    } catch {
+      orchestratorInstanceId = null;
+    }
+  }
+  const useTeamA2a = teamA2aEnabled && orchestratorInstanceId !== null;
+  let teamSlotScope: TeamSlotScope | null = null;
+  if (useTeamA2a) {
+    teamSlotScope = await spawnTeamSlotRuntimes(
+      waveSlots.map((s, i) => ({
+        instanceId: instanceBySlotIndex[i] as string,
+        definitionId: s.definitionId,
+        role: s.role,
+      })),
+    );
+    console.log(
+      `[analyst-team] workflow=${workflowRunId} team transport=A2A (${waveSlots.length} analyst slot runtimes spawned)`,
+    );
+  } else if (config.teamExecutionPath === "a2a" && waveSlots.length > 0) {
+    console.warn(
+      `[analyst-team] workflow=${workflowRunId} teamExecutionPath=a2a but A2A pool orchestrator unavailable; falling back to in-process slot execution.`,
+    );
+  }
+
   type SlotRow = (typeof slots)[number];
   const outputByRole = new Map<AgentRole, RawAnalystSignal>();
   const auxDigestByRole = new Map<AgentRole, string>();
@@ -794,7 +840,13 @@ async function runAnalystTeamCore(params: {
     predsByTo.set(e.to, arr);
   }
 
+  /** 单 slot ReAct 结果（两条传输路径共用，故提到 wave 循环外声明）。 */
+  type SlotResult =
+    | { kind: "analyst"; payload: RawAnalystSignal & { agentInstanceId?: string } }
+    | { kind: "missing_signal"; agentInstanceId?: string; body: string };
+
   let waveNo = 0;
+  try {
   for (const wave of waves) {
     waveNo += 1;
     // 用户发起的协作式中断：在每个 wave 边界（无 slot 在飞的安全点）检查。命中则起一个
@@ -815,8 +867,13 @@ async function runAnalystTeamCore(params: {
       kind: "llm_message",
       contentText: `🔬 第 ${waveNo}/${waves.length} 组分析进行中：${wave.map((s) => s.role).join("、")}…`,
     });
-    const waveResults = await Promise.allSettled(
-      wave.map((slot) => {
+    /**
+     * 先为每个 slot 拼好「前置成员结论 appendix」上下文并记录拓扑 handoff——这两件事
+     * A2A 路径与进程内路径完全一致，故抽到派发之前统一做（保留 research_team_interaction
+     * 的画布连线）。
+     */
+    const waveSpecs = await Promise.all(
+      wave.map(async (slot) => {
         const predChain = (predsByTo.get(slot.role) ?? []).filter(
           (pr) => outputByRole.has(pr) || auxDigestByRole.has(pr)
         );
@@ -839,62 +896,109 @@ async function runAnalystTeamCore(params: {
                 .join("\n")}\n`
             : "";
         const ctx = `${context}${appendix}`;
-        type SlotResult =
-          | { kind: "analyst"; payload: RawAnalystSignal & { agentInstanceId?: string } }
-          | { kind: "missing_signal"; agentInstanceId?: string; body: string };
-        return (async (): Promise<SlotResult> => {
-          for (const pr of predChain) {
-            await logResearchTeamInteraction({
-              workflowRunId,
-              fromRole: pr,
-              toRole: slot.role,
-              kind: "llm_message",
-              contentText: `[topology handoff] ${pr} → ${slot.role}：将前置结论文本传入本轮推理上下文`,
-              payloadJson: { topology: true, ticker },
-            });
-          }
-          const slotIdx = waveSlots.findIndex((s) => s.role === slot.role);
-          const preInstanceId = slotIdx >= 0 ? instanceBySlotIndex[slotIdx] : undefined;
-          const reactOut = await runResearchTeamSlotReact({
+        for (const pr of predChain) {
+          await logResearchTeamInteraction({
             workflowRunId,
-            definitionId: slot.definitionId,
-            role: slot.role,
-            systemPrompt: slot.systemPrompt,
-            ticker,
-            scope,
-            context: ctx,
-            ...(preInstanceId !== undefined ? { agentInstanceId: preInstanceId } : {}),
-            expectJsonSignal: true,
-            reactDepth: pickAnalystReactDepth({
-              pipelineKind,
-              expectJsonSignal: true,
-            }),
-            groupConstraintHint: buildGroupRoleConstraintHint({
-              groupId: effectiveGroupId,
-              role: slot.role,
-              groupDescription,
-            }),
+            fromRole: pr,
+            toRole: slot.role,
+            kind: "llm_message",
+            contentText: `[topology handoff] ${pr} → ${slot.role}：将前置结论文本传入本轮推理上下文`,
+            payloadJson: { topology: true, ticker },
           });
-          /**
-           * 2026-05-26 修复：旧逻辑无脑 cast 成 analyst payload，遇到 LLM 输出
-           * 不是合法 JSON 时 parseJsonSignalFromText 会塌缩为 hold@0.4，污染整批
-           * 信号。新逻辑：当 slot ReAct 返回 markdown（即 signal_parse_failed），
-           * 不再生成假 RawAnalystSignal，把它降级为 "missing_signal" 让上层 fusion
-           * 看到真实的"信号缺失"状态。
-           */
-          if (reactOut.kind === "analyst") {
-            return { kind: "analyst", payload: reactOut.payload };
-          }
-          return {
-            kind: "missing_signal",
-            ...(reactOut.agentInstanceId !== undefined
-              ? { agentInstanceId: reactOut.agentInstanceId }
-              : {}),
-            body: reactOut.body,
-          };
-        })();
+        }
+        const slotIdx = waveSlots.findIndex((s) => s.role === slot.role);
+        const preInstanceId = slotIdx >= 0 ? instanceBySlotIndex[slotIdx] : undefined;
+        return { slot, ctx, preInstanceId };
       })
     );
+
+    const reactDepth = pickAnalystReactDepth({ pipelineKind, expectJsonSignal: true });
+
+    /**
+     * 2026-05-26 修复：markdown（signal_parse_failed）降级为 missing_signal，不再塌缩
+     * hold@0.4 污染整批；slot 整体抛错 → rejected。下面两条传输路径都遵循此约定，
+     * 产出对齐的 `PromiseSettledResult<SlotResult>[]`（顺序 = wave 顺序）交给统一处理。
+     */
+    let waveResults: PromiseSettledResult<SlotResult>[];
+    if (useTeamA2a && orchestratorInstanceId) {
+      // A2A 路径：orchestrator 真发 TASK_ASSIGN 给各 analyst 专属实例、gather 等回 TASK_RESULT。
+      const dispatchResults = await dispatchSlotsViaA2A({
+        workflowRunId,
+        traceId: params.traceId ?? workflowRunId,
+        orchestratorInstanceId,
+        slots: waveSpecs.map((ws) => ({
+          instanceId: ws.preInstanceId as string,
+          definitionId: ws.slot.definitionId,
+          role: ws.slot.role,
+          systemPrompt: ws.slot.systemPrompt,
+          ticker,
+          scope,
+          context: ws.ctx,
+          expectJsonSignal: true,
+          reactDepth,
+          groupConstraintHint: buildGroupRoleConstraintHint({
+            groupId: effectiveGroupId,
+            role: ws.slot.role,
+            groupDescription,
+          }),
+        })),
+        timeoutMs: TEAM_SLOT_A2A_TIMEOUT_MS,
+      });
+      waveResults = waveSpecs.map((ws): PromiseSettledResult<SlotResult> => {
+        const r = ws.preInstanceId ? dispatchResults.get(ws.preInstanceId) : undefined;
+        if (r?.ok) {
+          if (r.reactOut.kind === "analyst") {
+            return { status: "fulfilled", value: { kind: "analyst", payload: r.reactOut.payload } };
+          }
+          return {
+            status: "fulfilled",
+            value: {
+              kind: "missing_signal",
+              ...(r.reactOut.agentInstanceId !== undefined
+                ? { agentInstanceId: r.reactOut.agentInstanceId }
+                : {}),
+              body: r.reactOut.body,
+            },
+          };
+        }
+        return { status: "rejected", reason: new Error(r?.error ?? "a2a_dispatch_failed") };
+      });
+    } else {
+      // 进程内路径（历史；脱离 A2A pool 的单测 / teamExecutionPath=inprocess 时走这里）。
+      waveResults = await Promise.allSettled(
+        waveSpecs.map((ws) =>
+          (async (): Promise<SlotResult> => {
+            const reactOut = await runResearchTeamSlotReact({
+              workflowRunId,
+              definitionId: ws.slot.definitionId,
+              role: ws.slot.role,
+              systemPrompt: ws.slot.systemPrompt,
+              ticker,
+              scope,
+              context: ws.ctx,
+              ...(ws.preInstanceId !== undefined ? { agentInstanceId: ws.preInstanceId } : {}),
+              expectJsonSignal: true,
+              reactDepth,
+              groupConstraintHint: buildGroupRoleConstraintHint({
+                groupId: effectiveGroupId,
+                role: ws.slot.role,
+                groupDescription,
+              }),
+            });
+            if (reactOut.kind === "analyst") {
+              return { kind: "analyst", payload: reactOut.payload };
+            }
+            return {
+              kind: "missing_signal",
+              ...(reactOut.agentInstanceId !== undefined
+                ? { agentInstanceId: reactOut.agentInstanceId }
+                : {}),
+              body: reactOut.body,
+            };
+          })()
+        )
+      );
+    }
 
     for (let wi = 0; wi < wave.length; wi++) {
       const slot = wave[wi] as SlotRow;
@@ -1003,6 +1107,10 @@ async function runAnalystTeamCore(params: {
           .where(eq(agentInstance.id, instanceId));
       }
     }
+  }
+  } finally {
+    // 团队跑完 / 中途 HITL pause throw / 异常——都要停掉临时 analyst runtime（解订阅）。
+    if (teamSlotScope) await teamSlotScope.stopAll();
   }
 
   /** 融合顺序与 slots 声明顺序一致（便于对照 UI） */
@@ -1216,39 +1324,109 @@ async function runAnalystTeamCore(params: {
   }
 
   if (auxSlots.length > 0) {
-    const post = await runPostFusionPipeline({
-      workflowRunId,
-      ticker,
-      fusionReport: reportCore,
-      fusedSignal: fusionResult.fusedSignal,
-      fusedConfidence: fusionResult.fusedConfidence,
-      orchestratorDecision,
-      relationEdges,
-      auxSlots,
-      runAuxLlm: async (slot, ctx) => {
-        const out = await runResearchTeamSlotReact({
+    /**
+     * aux pipeline（research/backtest/risk 等串行后置角色）同样切 A2A：为每个 aux 角色
+     * 预建专属实例 + 起临时 runtime，使其也成为总线真实参与方（a2a_message / 拓扑可见）。
+     * 行为不变——slot 仍走 runResearchTeamSlotReact（expectJsonSignal=false → markdown）。
+     */
+    let auxScope: TeamSlotScope | null = null;
+    const auxInstanceByRole = new Map<AgentRole, string>();
+    if (useTeamA2a && orchestratorInstanceId) {
+      for (const s of auxSlots) {
+        const instId = randomUUID();
+        auxInstanceByRole.set(s.role, instId);
+        await db.insert(agentInstance).values({
+          id: instId,
+          definitionId: s.definitionId,
           workflowRunId,
-          definitionId: slot.definitionId,
-          role: slot.role,
-          systemPrompt: slot.systemPrompt,
-          ticker,
-          scope,
-          context: ctx,
-          expectJsonSignal: false,
-          reactDepth: pickAnalystReactDepth({
-            pipelineKind,
-            expectJsonSignal: false,
-          }),
-          groupConstraintHint: buildGroupRoleConstraintHint({
-            groupId: effectiveGroupId,
-            role: slot.role,
-            groupDescription,
-          }),
+          status: "running",
+          currentIteration: 0,
+          startedAt: new Date().toISOString(),
         });
-        return out.kind === "markdown" ? out.body : "";
-      },
-    });
-    auxSections = post.auxSections;
+      }
+      auxScope = await spawnTeamSlotRuntimes(
+        auxSlots.map((s) => ({
+          instanceId: auxInstanceByRole.get(s.role) as string,
+          definitionId: s.definitionId,
+          role: s.role,
+        })),
+      );
+    }
+    const auxReactDepth = pickAnalystReactDepth({ pipelineKind, expectJsonSignal: false });
+    try {
+      const post = await runPostFusionPipeline({
+        workflowRunId,
+        ticker,
+        fusionReport: reportCore,
+        fusedSignal: fusionResult.fusedSignal,
+        fusedConfidence: fusionResult.fusedConfidence,
+        orchestratorDecision,
+        relationEdges,
+        auxSlots,
+        runAuxLlm: async (slot, ctx) => {
+          const auxInstanceId = auxInstanceByRole.get(slot.role);
+          // A2A 路径：派 TASK_ASSIGN 给该 aux 实例、gather 等回 markdown 回包。
+          if (useTeamA2a && orchestratorInstanceId && auxInstanceId) {
+            const res = await dispatchSlotsViaA2A({
+              workflowRunId,
+              traceId: params.traceId ?? workflowRunId,
+              orchestratorInstanceId,
+              slots: [
+                {
+                  instanceId: auxInstanceId,
+                  definitionId: slot.definitionId,
+                  role: slot.role,
+                  systemPrompt: slot.systemPrompt,
+                  ticker,
+                  scope,
+                  context: ctx,
+                  expectJsonSignal: false,
+                  reactDepth: auxReactDepth,
+                  groupConstraintHint: buildGroupRoleConstraintHint({
+                    groupId: effectiveGroupId,
+                    role: slot.role,
+                    groupDescription,
+                  }),
+                },
+              ],
+              timeoutMs: TEAM_SLOT_A2A_TIMEOUT_MS,
+            });
+            const r = res.get(auxInstanceId);
+            if (r?.ok) return r.reactOut.kind === "markdown" ? r.reactOut.body : "";
+            return "";
+          }
+          // 进程内回退（脱离 pool / teamExecutionPath=inprocess）。
+          const out = await runResearchTeamSlotReact({
+            workflowRunId,
+            definitionId: slot.definitionId,
+            role: slot.role,
+            systemPrompt: slot.systemPrompt,
+            ticker,
+            scope,
+            context: ctx,
+            expectJsonSignal: false,
+            reactDepth: auxReactDepth,
+            groupConstraintHint: buildGroupRoleConstraintHint({
+              groupId: effectiveGroupId,
+              role: slot.role,
+              groupDescription,
+            }),
+          });
+          return out.kind === "markdown" ? out.body : "";
+        },
+      });
+      auxSections = post.auxSections;
+    } finally {
+      if (auxScope) {
+        await auxScope.stopAll();
+        for (const instId of auxInstanceByRole.values()) {
+          await db
+            .update(agentInstance)
+            .set({ status: "stopped", endedAt: new Date().toISOString() })
+            .where(eq(agentInstance.id, instId));
+        }
+      }
+    }
   }
 
   // Build human-readable report + 辅助角色 Markdown 章节（按编组槽位顺序）
@@ -1308,16 +1486,37 @@ async function runAnalystTeamCore(params: {
         return `${s.role}: ${s.signal} (${(s.confidence * 100).toFixed(0)}%) ${s.reasoning.slice(0, 600)}${structLine}`;
       })
       .join("\n");
-    debate = await executeDebateSafely({
-      workflowRunId,
-      ticker,
-      fusedSignal: fusionResult.fusedSignal,
-      fusedConfidence: fusionResult.fusedConfidence,
-      analystSummary,
-      maxRounds: debateConfig.maxRounds,
-      run: runDebateSession,
-      logFailure: logResearchTeamInteraction,
-    });
+    /**
+     * A2A 路径：把 bull/bear 做成总线真实参与方——建专属实例 + 起临时 runtime，注入
+     * runTurn 让每回合发言走 TASK_ASSIGN/TASK_RESULT。评分/持久化仍在 runDebateSession 内。
+     */
+    let debateA2A: DebateA2ASetup | null = null;
+    if (useTeamA2a && orchestratorInstanceId) {
+      debateA2A = await setupDebateA2A({
+        workflowRunId,
+        traceId: params.traceId ?? workflowRunId,
+        orchestratorInstanceId,
+        timeoutMs: TEAM_SLOT_A2A_TIMEOUT_MS,
+      });
+    }
+    try {
+      const debateRunTurn = debateA2A?.runTurn;
+      const runDebate = debateRunTurn
+        ? (di: DebateInput) => runDebateSession(di, { runTurn: debateRunTurn })
+        : runDebateSession;
+      debate = await executeDebateSafely({
+        workflowRunId,
+        ticker,
+        fusedSignal: fusionResult.fusedSignal,
+        fusedConfidence: fusionResult.fusedConfidence,
+        analystSummary,
+        maxRounds: debateConfig.maxRounds,
+        run: runDebate,
+        logFailure: logResearchTeamInteraction,
+      });
+    } finally {
+      if (debateA2A) await debateA2A.cleanup();
+    }
   }
   const risk = await evaluateRiskAndVeto({
     workflowRunId,

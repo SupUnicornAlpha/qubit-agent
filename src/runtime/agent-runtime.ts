@@ -19,6 +19,14 @@ import type {
 export interface AgentRuntimeOptions {
   /** When set, must match agent_instance.id (used by A2A pool). */
   instanceId?: string;
+  /**
+   * 只按 instanceId 投递，**不**按 role 名匹配（默认 false=兼容历史行为）。
+   *
+   * 研究团队的「每 workflow 专属 analyst 实例」runtime 用 true：否则一条按 role 名
+   * （如 "analyst_fundamental"）寻址的消息会同时命中 pool 常驻 runtime + 本临时
+   * runtime → 双投递双执行。团队派单一律按 instanceId 寻址，开 instanceOnly 杜绝串台。
+   */
+  instanceOnlyRouting?: boolean;
 }
 
 export class AgentRuntime {
@@ -28,6 +36,7 @@ export class AgentRuntime {
   private readonly handler: RuntimeRoleHandler;
   private readonly unsubscribeFns: Array<() => void> = [];
   private readonly iterationByWorkflow = new Map<string, number>();
+  private readonly instanceOnlyRouting: boolean;
   private running = false;
 
   constructor(
@@ -37,6 +46,7 @@ export class AgentRuntime {
   ) {
     this.definition = definition;
     this.handler = handler;
+    this.instanceOnlyRouting = options?.instanceOnlyRouting ?? false;
     this.instance = {
       instanceId: options?.instanceId ?? randomUUID(),
       definitionId: definition.id,
@@ -137,7 +147,8 @@ export class AgentRuntime {
 
     if (msg.receiverAgent) {
       const forInstance = msg.receiverAgent === this.instance.instanceId;
-      const forRole = msg.receiverAgent === this.definition.role;
+      const forRole =
+        !this.instanceOnlyRouting && msg.receiverAgent === this.definition.role;
       if (!forInstance && !forRole) return;
     }
 
