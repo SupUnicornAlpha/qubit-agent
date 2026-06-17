@@ -137,6 +137,17 @@ analystRouter.post("/run", async (c) => {
     return c.json({ error: "workflow not found" }, 404);
   }
 
+  /**
+   * 每次（重新）派发都把 workflow_run 标 running 并**重置 startedAt=now**、清 endedAt。
+   * 关键修复（2026-06，completed 后「继续研究」报 stuck_no_progress）：
+   * 不重置 startedAt 时，续跑沿用原始 1226min 前的 startedAt，而新一轮 agent_step 尚未写出，
+   * cancelInactiveWorkflows(20) 看到 status=running + startedAt 远早于 20min → 立刻判死。
+   */
+  await db
+    .update(workflowRun)
+    .set({ status: "running", startedAt: new Date().toISOString(), endedAt: null })
+    .where(eq(workflowRun.id, body.workflowRunId));
+
   // 把 hitl 偏好（v2 hitlMode）同步到 workflow.loopOptionsJson，
   // 让 evaluateTeamHitlTrigger 读取到。v1 字段已通过 migration 0053 退场。
   if (body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always") {

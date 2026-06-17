@@ -164,15 +164,22 @@ export async function cancelInactiveWorkflows(maxIdleMinutes = 20) {
 
   const cancelled: Array<{ workflowId: string; idleMs: number; reason: string }> = [];
   for (const wf of candidates) {
-    const refTs = wf.lastStepAt ?? wf.startedAt;
-    if (!refTs) continue;
-    const refMs = Date.parse(refTs);
-    if (!Number.isFinite(refMs)) continue;
+    /**
+     * 活跃参考点取「最近一次有动静」= max(startedAt, lastStepAt)。
+     * 关键修复：重新派发（completed 后续跑）会把 startedAt 重置为 now，但上一轮的旧
+     * agent_step（lastStepAt 很旧）仍在；若只看 lastStepAt 会误判 stuck。取较晚者后，
+     * 刚重启的 workflow（startedAt=now）在新一轮写出 step 前也有完整 20min 宽限。
+     */
+    const startMs = wf.startedAt ? Date.parse(wf.startedAt) : Number.NaN;
+    const lastMs = wf.lastStepAt ? Date.parse(wf.lastStepAt) : Number.NaN;
+    const candidatesMs = [startMs, lastMs].filter((m) => Number.isFinite(m));
+    if (candidatesMs.length === 0) continue;
+    const refMs = Math.max(...candidatesMs);
     if (refMs >= idleBeforeMs) continue;
 
     const idleMs = Date.now() - refMs;
     const idleMinutes = Math.round(idleMs / 60_000);
-    const reason = wf.lastStepAt
+    const reason = Number.isFinite(lastMs)
       ? `stuck_no_progress: last agent_step ${idleMinutes}min ago > ${maxIdleMinutes}min threshold`
       : `stuck_no_progress: no agent_step since startedAt ${idleMinutes}min ago`;
 
