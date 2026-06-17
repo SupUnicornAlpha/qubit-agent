@@ -1,6 +1,8 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import {
+  a2aMessage,
+  agentCheckpointSnapshot,
   agentDefinition,
   agentDefinitionDraft,
   agentDefinitionRelease,
@@ -10,8 +12,16 @@ import {
   agentStep,
   analystAccuracyLog,
   analystSignal,
+  auditLog,
+  backtestRun,
+  executionReport,
+  intentOrder,
   mcpCallLog,
+  researchExperiment,
+  riskDecision,
+  riskVetoLog,
   sandboxViolationLog,
+  simulationRun,
   toolCallLog,
 } from "../../db/sqlite/schema";
 import { BUILTIN_AGENT_DEFINITION_IDS, BUILTIN_AGENT_ROLES } from "../seed-agent-definitions-data";
@@ -46,6 +56,39 @@ export async function deleteAgentInstancesForDefinition(
     .delete(sandboxViolationLog)
     .where(inArray(sandboxViolationLog.agentInstanceId, instanceIds));
   await db.delete(analystSignal).where(inArray(analystSignal.agentInstanceId, instanceIds));
+
+  /**
+   * 修复 2026-06-17 冷启动崩溃（SQLITE_CONSTRAINT_FOREIGNKEY）：agent_instance 还有一批
+   * `ON DELETE NO ACTION` 子表，若不先清就 `delete(agentInstance)` 会 FK 失败。实测触发点是
+   * 退役的 def-researcher-bull/bear（辩论实例）残留的 `a2a_message` 行——seedAgentDefinitions →
+   * purgeRetiredBuiltinDefinitions 在每次启动（含 bun --watch 热重载）跑，一崩整个后端起不来。
+   *
+   * 这里把 instance 名下所有 NO ACTION 子表按 FK 安全顺序（子先于父）清掉。
+   * 故意不动 `strategy`（owner_instance_id）—— 那是用户资产，退役/自定义 agent 几乎不会持有；
+   * 万一真有，宁可让 FK 报错暴露问题，也不静默删策略。
+   */
+  await db.delete(executionReport).where(inArray(executionReport.executorInstanceId, instanceIds));
+  await db.delete(intentOrder).where(inArray(intentOrder.createdByInstanceId, instanceIds));
+  await db.delete(riskVetoLog).where(inArray(riskVetoLog.riskInstanceId, instanceIds));
+  await db.delete(riskDecision).where(inArray(riskDecision.agentInstanceId, instanceIds));
+  await db.delete(backtestRun).where(inArray(backtestRun.agentInstanceId, instanceIds));
+  await db.delete(simulationRun).where(inArray(simulationRun.agentInstanceId, instanceIds));
+  await db
+    .delete(researchExperiment)
+    .where(inArray(researchExperiment.agentInstanceId, instanceIds));
+  await db.delete(auditLog).where(inArray(auditLog.agentInstanceId, instanceIds));
+  await db
+    .delete(agentCheckpointSnapshot)
+    .where(inArray(agentCheckpointSnapshot.agentInstanceId, instanceIds));
+  await db
+    .delete(a2aMessage)
+    .where(
+      or(
+        inArray(a2aMessage.senderInstanceId, instanceIds),
+        inArray(a2aMessage.receiverInstanceId, instanceIds)
+      )
+    );
+
   await db.delete(agentInstance).where(eq(agentInstance.definitionId, definitionId));
 }
 

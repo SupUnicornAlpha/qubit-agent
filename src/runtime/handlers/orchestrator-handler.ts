@@ -167,8 +167,23 @@ const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg) => {
   const res = await runA2aReactTaskAssign(ctx, msg);
   if (res && res.terminalStatus !== "failed") {
     try {
-      const obs = (res.finalResponse?.observation ?? {}) as Record<string, unknown>;
-      const answer = typeof obs.reasonText === "string" ? obs.reasonText.trim() : "";
+      /**
+       * 取 orchestrator 最终面向用户的自然语言答复。
+       *
+       * 关键修复：当 orchestrator 直接回答（tool=none，act.ts 走 skippedToolCall 分支）时，
+       * finalResponse 形如 `{status,role,iteration,skippedToolCall:true,summary}` ——
+       * 答复在 `summary`，**没有** `observation` / `reasonText` 字段。之前误读
+       * `finalResponse.observation.reasonText` 永远是 undefined → 答复永不落库 →
+       * 右栏看不到回复。这里按多种 finalize 形态兜底取值。
+       */
+      const fr = (res.finalResponse ?? {}) as Record<string, unknown>;
+      const obs = (fr.observation ?? {}) as Record<string, unknown>;
+      const pick = (v: unknown): string =>
+        typeof v === "string" && v.trim() && v.trim() !== "no tool requested" ? v.trim() : "";
+      // answerText（act.ts skippedToolCall 注入的完整 reason 文本）最贴近用户答复，优先；
+      // 再退回 summary / reasonText / observation.reasonText 兼容其它 finalize 形态。
+      const answer =
+        pick(fr.answerText) || pick(fr.summary) || pick(fr.reasonText) || pick(obs.reasonText);
       if (answer) {
         await logResearchTeamInteraction({
           workflowRunId: msg.workflowId,

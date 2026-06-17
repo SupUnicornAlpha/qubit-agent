@@ -154,6 +154,12 @@ export async function actNode(
         iteration: state.iteration,
         skippedToolCall: true,
         summary,
+        /**
+         * answerText = 完整去 sentinel 的 reason 文本（即 LLM 面向用户的自然语言答复）。
+         * summary 可能只是 LLM 自带的「为何不调工具」式摘要句，不一定是实质答案；
+         * orchestrator_chat 落库 orchestrator→user 时优先用 answerText 取完整答复。
+         */
+        answerText: cleanedReason || summary,
       },
     };
   }
