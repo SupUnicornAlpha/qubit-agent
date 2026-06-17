@@ -520,7 +520,19 @@ export async function reasonNode(
     const systemWithHitl = isChatOrchestrator
       ? `${systemWithTopology}\n\n---\n${buildChatHitlSelfCheckPromptBlock()}`
       : systemWithTopology;
-    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithHitl, { tools, mcpServers });
+    /**
+     * 调度决策指引：orchestrator 走 reasonNode 的入口=对话/A2A ReAct（团队规划走
+     * runOrchestratorPlanning 不经此处），所以对 role==='orchestrator' 注入"如何调度"。
+     * 目标：别对每条消息都跑全队——能用已有上下文答的直接答，要某一维才派单，确需重研才跑全队。
+     */
+    const systemWithDispatch =
+      state.agentDefinition.role === "orchestrator"
+        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，绝不要默认跑全队**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只需要某一维度补充 → 用 \`assign_task\` 把子任务派给对应分析师（如 analyst_technical / analyst_macro），等回包后整合。\n- 确需系统性重新研究 → 才调 \`run_analyst_team\` 跑全队，完成后用 \`summarize_team_decision\` 汇总。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。`
+        : systemWithHitl;
+    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithDispatch, {
+      tools,
+      mcpServers,
+    });
     systemPromptLen = systemPrompt.length;
     userPromptLen = userPrompt.length;
 

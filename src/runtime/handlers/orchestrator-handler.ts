@@ -24,6 +24,7 @@ import {
   runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
 import { parseHitlApproval } from "../workflow/hitl-service";
+import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
@@ -156,10 +157,39 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
   });
 };
 
+/**
+ * orchestrator_chat：研究团队页的「对话消息」入口（非「启动团队分析」按钮）。
+ * 让 orchestrator 跑 ReAct 自主判断——直接回答 / assign_task 派给特定子 agent /
+ * run_analyst_team 跑全队（见 reason.ts 注入的调度决策指引）。跑完把它的最终自然语言
+ * 答复落库为 orchestrator→user 交互，供右栏对话框持久展示（token 已实时流式）。
+ */
+const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg) => {
+  const res = await runA2aReactTaskAssign(ctx, msg);
+  if (res && res.terminalStatus !== "failed") {
+    try {
+      const obs = (res.finalResponse?.observation ?? {}) as Record<string, unknown>;
+      const answer = typeof obs.reasonText === "string" ? obs.reasonText.trim() : "";
+      if (answer) {
+        await logResearchTeamInteraction({
+          workflowRunId: msg.workflowId,
+          fromRole: "orchestrator",
+          toRole: "user",
+          kind: "llm_message",
+          contentText: answer.slice(0, 6000),
+          payloadJson: { phase: "orchestrator_chat_answer" },
+        });
+      }
+    } catch (err) {
+      console.warn(`[orchestrator-handler] log chat answer failed: ${(err as Error).message}`);
+    }
+  }
+};
+
 const ORCHESTRATOR_TASK_HANDLERS: Record<string, OrchestratorTaskHandler> = {
   workflow_resume: handleWorkflowResume,
   workflow_retry: handleWorkflowResume,
   research_team_execute: handleResearchTeamExecute,
+  orchestrator_chat: handleOrchestratorChat,
 };
 
 /**

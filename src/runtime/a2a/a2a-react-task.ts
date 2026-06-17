@@ -12,7 +12,9 @@ import { buildTaskResult } from "./task-result";
 export async function runA2aReactTaskAssign(
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope
-): Promise<void> {
+): Promise<
+  { finalResponse: Record<string, unknown>; terminalStatus: "completed" | "failed" } | undefined
+> {
   const payload = msg.payload as TaskAssignPayload;
   const runId = randomUUID();
   const traceId = msg.traceId;
@@ -69,6 +71,10 @@ export async function runA2aReactTaskAssign(
       }),
       priority: msg.priority,
     });
+
+    // 返回 finalResponse 供 caller（如 orchestrator_chat handler）把最终答复落库为
+    // orchestrator→user 交互；其它 caller 忽略返回值即可（行为不变）。
+    return { finalResponse, terminalStatus };
   } catch (err) {
     /**
      * P0-C：error 帧 + workflow_run.status='failed' + agent_instance.status='error' 现在

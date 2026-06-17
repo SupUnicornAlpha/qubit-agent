@@ -8,10 +8,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import { agentGroup, analystSignal, signalFusionResult, workflowRun } from "../db/sqlite/schema";
+import {
+  agentGroup,
+  analystSignal,
+  researchTeamInteraction,
+  signalFusionResult,
+  workflowRun,
+} from "../db/sqlite/schema";
 import { dispatchTaskToRole } from "../runtime/agent-pool";
 import {
   failAnalystResearchJob,
@@ -226,6 +232,90 @@ analystRouter.post("/run", async (c) => {
   }
 
   return c.json({ ok: true, jobId, status: "running" }, 202);
+});
+
+/**
+ * POST /api/v1/analyst/orchestrator-chat
+ *
+ * 研究团队页「对话消息」入口（区别于「启动团队分析」按钮）。不再写死跑全队，而是把消息
+ * 交给 Orchestrator 跑 ReAct 自主判断：直接回答 / assign_task 派给特定子 agent /
+ * run_analyst_team 跑全队（决策指引在 reason.ts 注入）。上下文用**本会话的最近对话**
+ * （researchTeamInteraction transcript），不载入历史报告。
+ *
+ * body: { workflowRunId, message, hitlMode? }
+ */
+analystRouter.post("/orchestrator-chat", async (c) => {
+  const body = await c.req
+    .json<{ workflowRunId?: string; message?: string; hitlMode?: "off" | "ai" | "always" }>()
+    .catch(() => ({}));
+  const workflowRunId = (body.workflowRunId ?? "").trim();
+  const message = (body.message ?? "").trim();
+  if (!workflowRunId) return c.json({ error: "workflowRunId is required" }, 400);
+  if (!message) return c.json({ error: "message is required" }, 400);
+
+  const db = await getDb();
+  const wf = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  if (!wf[0]) return c.json({ error: "workflow not found" }, 404);
+
+  // 与 /run 一致：标 running + 重置 startedAt（防 stuck 看门狗误杀）。
+  await db
+    .update(workflowRun)
+    .set({ status: "running", startedAt: new Date().toISOString(), endedAt: null })
+    .where(eq(workflowRun.id, workflowRunId));
+
+  if (body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always") {
+    const cur = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
+    await db
+      .update(workflowRun)
+      .set({ loopOptionsJson: { ...cur, hitlMode: body.hitlMode } as never })
+      .where(eq(workflowRun.id, workflowRunId));
+  }
+
+  // 用户消息落库为 user→orchestrator 交互（右栏展示 + 进入会话 transcript）。
+  await logResearchTeamInteraction({
+    workflowRunId,
+    fromRole: "user",
+    toRole: "orchestrator",
+    kind: "llm_message",
+    contentText: message.slice(0, 4000),
+  });
+
+  // 本会话上下文 = 该 workflow 最近的对话/事件（不含本条 user 消息，避免重复）。
+  const recent = await db
+    .select({
+      fromRole: researchTeamInteraction.fromRole,
+      toRole: researchTeamInteraction.toRole,
+      contentText: researchTeamInteraction.contentText,
+    })
+    .from(researchTeamInteraction)
+    .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
+    .orderBy(desc(researchTeamInteraction.createdAt))
+    .limit(31);
+  recent.reverse();
+  const transcript = recent
+    .slice(0, -1) // 去掉刚落库的本条
+    .map((r) => `- ${r.fromRole} → ${r.toRole}: ${(r.contentText ?? "").slice(0, 600)}`)
+    .join("\n");
+  const context = transcript
+    ? `## 本次会话上下文（最近对话，按时间）\n${transcript}`
+    : "（本会话暂无历史对话）";
+
+  const taskId = randomUUID();
+  try {
+    await dispatchTaskToRole({
+      workflowId: workflowRunId,
+      role: "orchestrator",
+      payload: {
+        taskId,
+        taskType: "orchestrator_chat",
+        assignedRole: "orchestrator",
+        params: { goal: message, context },
+      },
+    });
+  } catch (err) {
+    return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+  }
+  return c.json({ ok: true, status: "running" }, 202);
 });
 
 /**

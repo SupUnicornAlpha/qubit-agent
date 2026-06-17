@@ -132,20 +132,19 @@ export function OrchestratorChatPanel({
   }, [events.length, runProgress]);
 
   /**
-   * 发送语义随运行态切换：
+   * 发送语义：
    *   - 运行中：发送 = 把文本「注入」运行中的 Orchestrator（onInject，下一轮 reason 生效）
-   *   - 已完成/失败：发送 = 「继续研究」，基于已有研究续跑（onSend；后端用上次 ticker 兜底，
-   *     无需重填研究范围，故不受 sendDisabled 约束）
-   *   - 空闲（未跑过）：发送 = 「启动」团队分析（onSend，受 sendDisabled 约束）
+   *   - 其余（空闲/已完成）：发送 = 交给 Orchestrator **自主判断**（onSend → orchestrator-chat：
+   *     直接答 / assign_task 派单 / run_analyst_team 全队）。是对话，不需要研究范围，
+   *     故不受 sendDisabled 约束。「启动团队分析」按钮才是直接全队。
    */
-  const mode: "start" | "inject" | "continue" = running
-    ? "inject"
-    : completed
-      ? "continue"
-      : "start";
+  const mode: "chat" | "inject" = running ? "inject" : "chat";
   const hasContent = composerValue.trim().length > 0;
-  const canSend =
-    wfId.length > 0 && hasContent && !injecting && (mode === "start" ? !sendDisabled : true);
+  const canSend = wfId.length > 0 && hasContent && !injecting;
+  // 现已统一走 orchestrator 自主对话；以下 props 保留接口兼容但不再约束发送。
+  void completed;
+  void sendDisabled;
+  void sendDisabledReason;
 
   const doSend = async () => {
     if (!canSend) return;
@@ -182,11 +181,7 @@ export function OrchestratorChatPanel({
       ? "请先在左侧选择或新建工作流"
       : mode === "inject"
         ? "Orchestrator 运行中 —— 发送的指令会在它下一轮思考时被采纳（Cmd/Ctrl+Enter）"
-        : mode === "continue"
-          ? "该研究已完成 —— 输入追加指令将基于已有研究继续（沿用原标的，Cmd/Ctrl+Enter）"
-          : hitlMode === "off"
-            ? "输入研究指令 → 启动后 Orchestrator 将自主完成（Cmd/Ctrl+Enter 发送）"
-            : "输入研究指令 → Orchestrator 将在关键节点暂停征询你（Cmd/Ctrl+Enter 发送）";
+        : "和 Orchestrator 对话 —— 它会自主判断：直接回答 / 派给某分析师 / 跑全队（Cmd/Ctrl+Enter 发送）";
 
   return (
     <div style={styles.root}>
@@ -331,9 +326,7 @@ export function OrchestratorChatPanel({
           placeholder={
             mode === "inject"
               ? "给运行中的 Orchestrator 追加指令，例如：把重点放到现金流质量上…"
-              : mode === "continue"
-                ? "基于已完成的研究追加指令，例如：再补一个估值敏感性分析…"
-                : "给 Orchestrator 的研究指令，例如：对当前标的做一次机构投研级深度尽调…"
+              : "和 Orchestrator 对话，例如：总结一下结论 / 重做一次技术面 / 对当前标的做深度尽调…"
           }
         />
         <div style={styles.composerBar}>
@@ -344,25 +337,15 @@ export function OrchestratorChatPanel({
             style={{ ...styles.sendBtn, ...(canSend ? null : styles.sendBtnDisabled) }}
             disabled={!canSend}
             title={
-              mode === "start" && sendDisabled
-                ? sendDisabledReason
-                : canSend
-                  ? mode === "inject"
-                    ? "发送给运行中的 Orchestrator"
-                    : mode === "continue"
-                      ? "基于已有研究继续"
-                      : "发送指令并启动"
-                  : "请输入指令"
+              canSend
+                ? mode === "inject"
+                  ? "发送给运行中的 Orchestrator"
+                  : "发送给 Orchestrator（它自主判断如何处理）"
+                : "请输入内容"
             }
             onClick={() => void doSend()}
           >
-            {injecting
-              ? "发送中…"
-              : mode === "inject"
-                ? "发送给 Orchestrator"
-                : mode === "continue"
-                  ? "继续研究"
-                  : "发送并启动"}
+            {injecting ? "发送中…" : mode === "inject" ? "发送给 Orchestrator" : "发送"}
           </button>
         </div>
       </div>

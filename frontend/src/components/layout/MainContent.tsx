@@ -87,6 +87,7 @@ import {
   resolveWorkflowHitl,
   injectWorkflowMessage,
   interruptWorkflow,
+  runOrchestratorChat,
   listFactors,
   subscribeWorkflowStream,
   subscribeWorkflowEvents,
@@ -5868,6 +5869,32 @@ const TeamDashboardPanel: FC = () => {
     }
   }, [running, teamPendingHitl, error]);
 
+  /**
+   * 对话消息入口（composer 发送/继续）：交给 Orchestrator 跑 ReAct 自主判断
+   * （直接答 / assign_task 派单 / run_analyst_team 全队）。区别于「启动团队分析」按钮（handleRun=直接全队）。
+   * 结果经 token firehose 流式 + team-graph 轮询出现在右栏；发送后清空 composer。
+   */
+  const handleOrchestratorChat = async () => {
+    const wf = workflowRunId.trim();
+    const msg = teamAnalysisContext.trim();
+    if (!wf) {
+      setError("请先选择工作流");
+      return;
+    }
+    if (!msg) return;
+    setError(null);
+    pushUserEcho(msg);
+    setTeamAnalysisContext("");
+    setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
+    try {
+      await runOrchestratorChat(wf, msg, teamHitlMode);
+      void loadTeamGraph({ preserveSelection: true });
+    } catch (e) {
+      setError((e as Error).message);
+      setRunProgress("");
+    }
+  };
+
   const handleRun = async () => {
     /**
      * researchScopePayload 可为 null —— completed 后「继续对话」时左栏研究范围常为空，
@@ -8309,8 +8336,9 @@ const TeamDashboardPanel: FC = () => {
             composerValue={teamAnalysisContext}
             onComposerChange={setTeamAnalysisContext}
             onSend={() => {
-              if (teamAnalysisContext.trim()) pushUserEcho(teamAnalysisContext.trim());
-              handleRun();
+              // composer 发送/继续 = 交给 Orchestrator 自主判断（答/派单/全队）。
+              // 「启动团队分析」按钮才是直接全队（handleRun）。
+              void handleOrchestratorChat();
             }}
             onInject={async (content) => {
               const wf = workflowRunId.trim();

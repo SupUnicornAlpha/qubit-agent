@@ -703,6 +703,24 @@ export async function injectWorkflowMessage(
 }
 
 /**
+ * 对话消息入口（区别于「启动团队分析」按钮）：把消息交给 Orchestrator 跑 ReAct 自主判断
+ * （直接回答 / assign_task 派单 / run_analyst_team 跑全队）。立即返回 202，结果经 token
+ * firehose 流式 + team-graph 轮询出现在右栏。
+ */
+export async function runOrchestratorChat(
+  workflowRunId: string,
+  message: string,
+  hitlMode?: "off" | "ai" | "always"
+): Promise<{ status: string }> {
+  const res = await httpPost<{ ok: boolean; status: string }>("/api/v1/analyst/orchestrator-chat", {
+    workflowRunId,
+    message,
+    ...(hitlMode ? { hitlMode } : {}),
+  });
+  return { status: res.status ?? "running" };
+}
+
+/**
  * 协作式中断：请求中断正在运行的团队研究。团队会在下一个 wave 边界停在断点，起一个
  * free_form HITL 等用户输入新提示词后续跑。立即返回（真正暂停发生在下一个安全断点）。
  */
