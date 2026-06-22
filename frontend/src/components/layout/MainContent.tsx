@@ -4898,6 +4898,14 @@ const TeamDashboardPanel: FC = () => {
     Record<string, { text: string; ts: string }>
   >({});
   /**
+   * 已「收口」的 role 集合：某 role 的当前流式段已收到 observe/step_persisted/final，
+   * 文本不再追加、等待持久化消息接管。下一轮首个 token 到来时据此重置该 role 文本
+   * （避免多轮 ReAct 文本无限拼接），teamGraph 带出对应 interaction 后被清空。
+   */
+  const settledRolesRef = useRef<Set<string>>(new Set());
+  /** 收口事件防抖回拉 teamGraph 的 timer（chat 路径无 2.5s 轮询，靠它带出最终答复）。 */
+  const settleRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
    * 用户在右侧 Orchestrator 对话框发出的提示词回显（启动指令 / 运行中插话）。
    * 合成成 fromRole="user" 的消息事件并入实时流，让用户看到自己说过什么。
    */
@@ -5003,6 +5011,15 @@ const TeamDashboardPanel: FC = () => {
       setGraphLoading(false);
     }
   }, [workflowRunId]);
+
+  /**
+   * 稳定 ref 持有最新 loadTeamGraph，供 SSE 订阅里的收口回拉调用，
+   * 避免把 loadTeamGraph 加进订阅 effect 依赖而频繁重订阅（保持 firehose 连接稳定）。
+   */
+  const loadTeamGraphRef = useRef(loadTeamGraph);
+  useEffect(() => {
+    loadTeamGraphRef.current = loadTeamGraph;
+  }, [loadTeamGraph]);
 
   useEffect(() => {
     if (activeTab !== "research") return;
@@ -5284,6 +5301,17 @@ const TeamDashboardPanel: FC = () => {
       const text = stripToolCallSentinels(s.text).trim();
       if (!text) continue;
       if (allow && !allow.has(role)) continue;
+      // 沉淀去重：若已存在同 role 且不早于气泡的持久化消息，正式气泡已接管，跳过在飞气泡，
+      // 杜绝交接瞬间（teamGraph 已更新但 prune effect 尚未跑完一拍）的「重影」。
+      const bubbleTs = new Date(s.ts).getTime();
+      const covered = events.some(
+        (ev) =>
+          ev.kind === "message" &&
+          ev.fromRole === role &&
+          ev.id !== `streaming:${role}` &&
+          new Date(ev.ts).getTime() >= bubbleTs - 1500
+      );
+      if (covered) continue;
       events.push({
         kind: "message",
         id: `streaming:${role}`,
@@ -5309,14 +5337,19 @@ const TeamDashboardPanel: FC = () => {
 
   /**
    * Token 级流式订阅：研究团队 tab + 有 workflow 时，连 workflow firehose，把各 agent 的
-   * token 逐字累积到 streamingByRole；step 落库（step_persisted/final/observe）即清空该 role，
-   * 交还给 2.5s 轮询的正式消息，避免重复。整条工作流共用一条 SSE（不按 run 数翻倍）。
+   * token 逐字累积到 streamingByRole。整条工作流共用一条 SSE（不按 run 数翻倍）。
+   *
+   * 收口（step_persisted/final/observe/error）不再立即删在飞气泡——那会让流式文本「闪一下
+   * 变空白」、且 chat 路径没有 2.5s 轮询去接管。改为：标记该 role 已收口，让气泡留在屏上
+   * 直到 teamGraph 带出对应持久化消息再平滑替换（见下方 prune effect + displayedLiveFeed 去重）。
+   * 终态事件（final/error）额外防抖回拉一次 teamGraph，带出 orchestrator 跑完后才落库的最终答复。
    */
   useEffect(() => {
     const wf = workflowRunId.trim();
     if (!wf || activeTab !== "research") return;
     setStreamingByRole({});
     setUserEchoes([]);
+    settledRolesRef.current = new Set();
     const unsubscribe = subscribeWorkflowEvents({
       workflowId: wf,
       onEvent: (event) => {
@@ -5324,10 +5357,12 @@ const TeamDashboardPanel: FC = () => {
         if (event.type === "token") {
           const piece = String(event.payload?.["token"] ?? event.payload?.["text"] ?? "");
           if (!piece) return;
+          // 上一段已收口 → 新轮首个 token 重置该 role 文本（否则多轮 ReAct 会无限拼接）。
+          const resetting = settledRolesRef.current.delete(role);
           setStreamingByRole((prev) => ({
             ...prev,
             [role]: {
-              text: (prev[role]?.text ?? "") + piece,
+              text: (resetting ? "" : (prev[role]?.text ?? "")) + piece,
               ts: new Date(event.ts).toISOString(),
             },
           }));
@@ -5337,13 +5372,18 @@ const TeamDashboardPanel: FC = () => {
           event.type === "observe" ||
           event.type === "error"
         ) {
-          // 该 role 的一步已收口：清掉在飞缓冲，让轮询的正式消息接管。
-          setStreamingByRole((prev) => {
-            if (!(role in prev)) return prev;
-            const next = { ...prev };
-            delete next[role];
-            return next;
-          });
+          // 该 role 的一步已收口：标记（不删），保留流式文本等持久化消息接管。
+          settledRolesRef.current.add(role);
+          if (event.type === "final" || event.type === "error") {
+            // chat 路径无轮询：终态后 orchestrator→user 答复才落库，防抖回拉两次带出它。
+            if (settleRefetchTimerRef.current) clearTimeout(settleRefetchTimerRef.current);
+            settleRefetchTimerRef.current = setTimeout(() => {
+              void loadTeamGraphRef.current({ preserveSelection: true });
+              setTimeout(() => {
+                void loadTeamGraphRef.current({ preserveSelection: true });
+              }, 1500);
+            }, 700);
+          }
         }
       },
       onError: () => {
@@ -5352,8 +5392,42 @@ const TeamDashboardPanel: FC = () => {
     });
     return () => {
       unsubscribe();
+      if (settleRefetchTimerRef.current) {
+        clearTimeout(settleRefetchTimerRef.current);
+        settleRefetchTimerRef.current = null;
+      }
     };
   }, [workflowRunId, activeTab]);
+
+  /**
+   * 沉淀式交接：teamGraph 刷新后，若某个仍在屏的流式气泡已被持久化 interaction 覆盖
+   * （同 role 且 createdAt >= 气泡 ts，留 1.5s skew 容时钟/落库微差），则删除该 role 的
+   * 在飞缓冲——此时正式气泡已就位，流式文本平滑让位，无空白也无重影。
+   */
+  useEffect(() => {
+    const interactions = teamGraph?.interactions;
+    if (!interactions?.length) return;
+    setStreamingByRole((prev) => {
+      const roles = Object.keys(prev);
+      if (!roles.length) return prev;
+      let changed = false;
+      const next = { ...prev };
+      for (const role of roles) {
+        const bubbleTs = new Date(prev[role]?.ts ?? 0).getTime();
+        const covered = interactions.some(
+          (row) =>
+            row.fromRole === role &&
+            new Date(row.createdAt).getTime() >= bubbleTs - 1500
+        );
+        if (covered) {
+          delete next[role];
+          settledRolesRef.current.delete(role);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [teamGraph]);
 
   /**
    * 内联产物轮询：研究团队 tab + 有 workflow 时，周期性拉本工作流已生成的因子，
