@@ -8,6 +8,7 @@ import { Buffer } from "node:buffer";
 import { getDb } from "../../db/sqlite/client";
 import { dispatchMcpToolCall } from "../mcp/dispatcher";
 import { negotiateServerProtocolVersion } from "../mcp/mcp-protocol";
+import { isToolPermitted, parseToolPatternEnv } from "./mcp-bridge-guard";
 
 function writeMcpMessage(obj: Record<string, unknown>): void {
   const body = JSON.stringify(obj);
@@ -138,6 +139,27 @@ async function handleRequest(
         jsonrpc: "2.0",
         id,
         error: { code: -32602, message: "arguments too large" },
+      };
+    }
+
+    /**
+     * 治理红线（docs/CLI_AGENT_PROJECTION_DESIGN.md §5）：高危工具（下单 / 实盘 /
+     * 划转）默认拒绝，外部 CLI 经桥不可触达；可选按角色 allow 白名单收紧。
+     * allow/deny 由 reasoner 通过 env 注入（见 cli-role-reasoner.ts）。
+     */
+    const permit = isToolPermitted({
+      serverName,
+      toolName,
+      allow: parseToolPatternEnv(process.env.QUBIT_MCP_BRIDGE_ALLOW),
+      deny: parseToolPatternEnv(process.env.QUBIT_MCP_BRIDGE_DENY),
+    });
+    if (!permit.ok) {
+      const role = process.env.QUBIT_MCP_BRIDGE_ROLE ?? "";
+      console.warn(`[qubit-mcp-bridge] blocked tool call (role=${role}): ${permit.reason}`);
+      return {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32603, message: `tool call blocked: ${permit.reason}` },
       };
     }
 

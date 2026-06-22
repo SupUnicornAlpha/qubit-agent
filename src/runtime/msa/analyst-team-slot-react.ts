@@ -30,9 +30,10 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
+import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
-import { executeAgentReact } from "../langgraph/execute-agent-react";
 import { parseLlmConfigJson } from "../llm/agent-llm-config";
+import { resolveRoleReasoner } from "./role-reasoner";
 import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers";
 import type { RuntimeAgentDefinition } from "../types";
 import type { RawAnalystSignal } from "./signal-fusion";
@@ -365,38 +366,44 @@ export async function runResearchTeamSlotReact(params: {
     ? `分析${targetLabel}，使用授权工具做多轮交叉验证，最终输出一段 JSON 信号（buy/sell/hold + confidence + reasoning，并按你角色 schema 补全 key_drivers/key_risks/catalysts 等结构化字段）。${scopeHint}${reactPolicyHint}${groupHint}`
     : `分析${targetLabel}，使用授权工具完成本子任务，最后用 Markdown 小结（不要 JSON）。${scopeHint}${groupHint}`;
 
-  const result = await executeAgentReact({
-    runId,
-    workflowId: params.workflowRunId,
-    traceId,
-    def,
-    ...(params.agentInstanceId !== undefined ? { agentInstanceId: params.agentInstanceId } : {}),
-    receiverAgent: `team-slot-${params.role}`,
-    payload: {
-      taskId: runId,
-      taskType: "analyst_team_slot",
-      assignedRole: params.role,
-      params: {
-        goal: userGoal,
-        ticker: params.ticker,
-        scope: params.scope,
-        context: params.context,
-        forceLoop: true,
-        teamSlot: true,
-      },
+  /**
+   * 模型 B（docs/CLI_AGENT_PROJECTION_DESIGN.md）：单角色推理引擎可选
+   * native / claude_cli / codex_cli。默认 native 时行为与重构前逐字一致——
+   * 同 runId、同 payload、同 text 取值（`finalState.reasonText` 优先，空则回退
+   * `finalResponse` JSON 串）。CLI 引擎返回同样的最终文本，下面的 JSON 信号解析
+   * 与 markdown 兜底完全复用，无需感知引擎差异。
+   *
+   * MSA fan-out 隔离：4 个 analyst slot 并发执行各自独立 `runId`，自研 snapshot
+   * 天然按 runId 隔离，无需额外 thread 后缀（原 LangGraph thread_id 隔离已下线）。
+   */
+  const payload: TaskAssignPayload = {
+    taskId: runId,
+    taskType: "analyst_team_slot",
+    assignedRole: params.role,
+    params: {
+      goal: userGoal,
+      ticker: params.ticker,
+      scope: params.scope,
+      context: params.context,
+      forceLoop: true,
+      teamSlot: true,
     },
-    streamLoopKind: "native",
-    streamSource: "native",
-    updateWorkflowStatus: false,
-    /**
-     * MSA fan-out 隔离：4 个 analyst slot 并发执行各自独立 `runId`，自研 snapshot
-     * 天然按 runId 隔离，无需额外 thread 后缀（原 LangGraph thread_id 隔离已下线）。
-     */
+  };
+  const reasoner = await resolveRoleReasoner(params.workflowRunId);
+  const outcome = await reasoner.reason({
+    def,
+    role: params.role,
+    workflowRunId: params.workflowRunId,
+    runId,
+    traceId,
+    payload,
+    userGoal,
+    ticker: params.ticker,
+    context: params.context,
+    ...(params.agentInstanceId !== undefined ? { agentInstanceId: params.agentInstanceId } : {}),
+    expectJsonSignal: Boolean(params.expectJsonSignal),
   });
-
-  const text =
-    String(result.finalState.reasonText ?? "").trim() ||
-    JSON.stringify(result.finalResponse ?? {});
+  const text = outcome.text;
 
   const db = await getDb();
   const inst = await db

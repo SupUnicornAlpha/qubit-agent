@@ -21,6 +21,23 @@ export const LoopOptionsJsonSchema = z
     /** native Agent 内建 ReAct；false 时强制单轮（仍走 perceive→reason→act→observe 一次） */
     reactLoop: z.boolean().optional(),
     /**
+     * 单角色推理引擎选择（模型 B，详见 docs/CLI_AGENT_PROJECTION_DESIGN.md）。
+     * 覆盖由 `loop_kind` 推出的默认值：
+     *   - 'native'     ：自研进程内 ReAct（默认）
+     *   - 'claude_cli' ：子进程 Claude Code CLI 作为单角色 reason 引擎
+     *   - 'codex_cli'  ：子进程 Codex CLI 作为单角色 reason 引擎
+     * 与「整 workflow loop_kind」正交：可在 native 编排下让某些角色的 reason 走 CLI。
+     */
+    roleReasoner: z.enum(["native", "claude_cli", "codex_cli"]).optional(),
+    /**
+     * CLI reasoner 经 MCP 桥回调工具时的 allow 白名单（glob：`server/tool`，`*` 通配）。
+     * 非空时，工具调用必须命中其一才放行。高危工具（下单/实盘）由桥的默认 deny 始终拦截，
+     * 与本白名单无关（docs/CLI_AGENT_PROJECTION_DESIGN.md §5）。
+     */
+    allowedToolsOverride: z.array(z.string()).optional(),
+    /** CLI reasoner 经桥回调工具时追加的 deny 模式（与默认高危表合并）。 */
+    denyToolsExtra: z.array(z.string()).optional(),
+    /**
      * Chat orchestrator HITL 三档触发策略（与团队 HITL `hitlMode` 同义）。
      *   - 'off'     ：永不主动询问；高危工具硬规则（下单 / 写入外部状态）仍触发
      *   - 'ai'      ：默认 — 仅高危工具或 LLM 显式 hint 才询问
