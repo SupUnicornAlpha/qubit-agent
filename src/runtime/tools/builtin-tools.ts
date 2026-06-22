@@ -151,6 +151,84 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       done: steps.filter((s) => s.status === "done").length,
     };
   },
+  /**
+   * web.fetch —— 读取一个公开网页/接口并返回正文文本（Coding-Agent 体验 P2，
+   * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。**只读外联**，带 SSRF 防护：
+   *   - 仅 http/https；
+   *   - 拒绝 loopback / 内网 / 云元数据地址（防 SSRF）；
+   *   - 15s 超时 + 2MB 读取上限 + 正文截断。
+   * 调用已由 act.ts 的 tool_call_log 记录（无需额外审计）。
+   * params: { url: string, maxChars?: number }。
+   * 注：基于 hostname 字面判定，残留 DNS-rebinding 风险（桌面单租户场景威胁较低）。
+   */
+  "web.fetch": async (_ctx, params) => {
+    const raw = String(params.url ?? params.uri ?? "").trim();
+    if (!raw) return { ok: false, error: "url is required" };
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      return { ok: false, error: `invalid url: ${raw}` };
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      return { ok: false, error: `unsupported scheme: ${u.protocol}（仅支持 http/https）` };
+    }
+    const host = u.hostname.toLowerCase();
+    const blocked =
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "metadata.google.internal" ||
+      host.endsWith(".local") ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host.startsWith("fc") ||
+      host.startsWith("fd");
+    if (blocked) {
+      return { ok: false, error: `blocked host（loopback/内网/元数据地址）：${host}` };
+    }
+    const maxChars = Math.min(Number(params.maxChars) || 20000, 60000);
+    const maxBytes = 2 * 1024 * 1024;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(u.toString(), {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: { "User-Agent": "qubit-agent/web.fetch" },
+      });
+      const ctype = res.headers.get("content-type") ?? "";
+      const buf = await res.arrayBuffer();
+      const bytes = buf.byteLength;
+      let text = new TextDecoder().decode(buf.slice(0, maxBytes));
+      // 极简正文化：HTML 去 script/style/标签（不引依赖，够给 LLM 读）。
+      if (/html/i.test(ctype) || /^\s*</.test(text)) {
+        text = text
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+      return {
+        ok: res.ok,
+        status: res.status,
+        contentType: ctype,
+        bytes,
+        truncated: text.length > maxChars,
+        text: text.slice(0, maxChars),
+      };
+    } catch (e) {
+      const msg = (e as Error).name === "AbortError" ? "timeout (15s)" : (e as Error).message;
+      return { ok: false, error: `fetch failed: ${msg}` };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
   assign_task: async (ctx, params) => {
     const role = String(params.role ?? params.targetRole ?? "").trim() as AgentRole;
     if (!role) throw new Error("assign_task: role is required");

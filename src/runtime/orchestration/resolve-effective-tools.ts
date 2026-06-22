@@ -18,7 +18,8 @@ export async function resolveEffectiveAgentTools(
   def: RuntimeAgentDefinition,
   workflowId: string
 ): Promise<EffectiveToolsResult> {
-  const base = def.tools ?? [];
+  // Coding-Agent 体验 P2：web.fetch（只读外联原语）对所有角色始终可用，无需 re-seed DB。
+  const base = [...new Set([...(def.tools ?? []), "web.fetch"])];
   if (def.role !== "orchestrator") {
     return {
       tools: base,

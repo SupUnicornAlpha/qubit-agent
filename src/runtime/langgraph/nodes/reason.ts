@@ -529,7 +529,20 @@ export async function reasonNode(
       state.agentDefinition.role === "orchestrator"
         ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，绝不要默认跑全队**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只需要某一维度补充 → 用 \`assign_task\` 把子任务派给对应分析师（如 analyst_technical / analyst_macro），等回包后整合。\n- 确需系统性重新研究 → 才调 \`run_analyst_team\` 跑全队，完成后用 \`summarize_team_decision\` 汇总。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 计划可见（重要）\n当任务需要**多步**（派单、跑团队、连续工具调用）时：**动手前先调 \`update_plan\` 列出 3-5 步**（每步一句话，status=pending），让用户看到你打算怎么做；**每完成一步就再调一次 \`update_plan\`**把该步 status 改为 done、下一步改为 in_progress。一句话能答的简单问题**不必**建计划。`
         : systemWithHitl;
-    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithDispatch, {
+    /**
+     * Coding-Agent 体验 P2（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：运行时注入「工作方式」块。
+     * 放在 reason 装配层（而非 seed prompt）→ 对所有角色即时生效、无需 re-seed DB。
+     * 目标：把「按配方硬跑」变成「像 coding agent 一样增量推进、失败自适应、先查后做」。
+     */
+    const WORK_STYLE_BLOCK = [
+      "## 工作方式（重要）",
+      "- **增量推进**：把任务拆成小步，一步步来；每步只做一件事，拿到结果再决定下一步，不要一次性假设整条流程。",
+      "- **先查后做**：动手前若有 `search_memory` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；有就复用，别重复劳动。",
+      "- **失败自适应**：工具报错或返回空/异常时，**不要原样重试同一调用**——换参数/换途径/换工具，或降级到更简单的做法；连续两次仍不通，就把卡点讲清楚并交回上层（编排器 / 用户），不要空转。",
+      "- **诚实**：没有数据支撑就说不确定；不要编造工具结果或假装已完成。",
+    ].join("\n");
+    const systemWithWorkStyle = `${systemWithDispatch}\n\n---\n${WORK_STYLE_BLOCK}`;
+    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithWorkStyle, {
       tools,
       mcpServers,
     });
