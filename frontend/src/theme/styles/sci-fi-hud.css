@@ -309,8 +309,7 @@ html[data-qb-style="sci-fi-hud"] .qb-callout--danger {
   color: #fca5a5;
 }
 
-html[data-qb-style="sci-fi-hud"] .qb-style-select,
-html[data-qb-style="sci-fi-hud"] .qb-theme-select {
+html[data-qb-style="sci-fi-hud"] .qb-style-select {
   background: rgba(15, 23, 42, 0.85);
   border-color: var(--qb-glass-border);
   color: var(--qb-hud-cyan);

@@ -283,8 +283,7 @@ html[data-qb-style="feishu-clean"] .qb-status-dot--off {
 }
 
 /* 外观下拉控件 */
-html[data-qb-style="feishu-clean"] .qb-style-select,
-html[data-qb-style="feishu-clean"] .qb-theme-select {
+html[data-qb-style="feishu-clean"] .qb-style-select {
   background: #ffffff;
   border: 1px solid var(--qb-hairline);
   color: #1f2329;

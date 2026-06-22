@@ -433,8 +433,7 @@ html[data-qb-style="comic-book"] textarea:not(.qb-tokyo-editor__textarea) {
   font-family: var(--qb-font-body);
 }
 
-html[data-qb-style="comic-book"] .qb-style-select,
-html[data-qb-style="comic-book"] .qb-theme-select {
+html[data-qb-style="comic-book"] .qb-style-select {
   border: 2px solid var(--qb-comic-ink);
   font-weight: 700;
 }

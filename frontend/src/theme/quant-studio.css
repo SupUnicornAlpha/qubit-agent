@@ -9,7 +9,7 @@
  *   - 在 `.qb-quant-shell` 内统一注入这些 token + 一组 quant 专属调色（蓝/紫/青/橙），
  *     并补 hero card、KPI 卡片、状态 dot、micro-glow 等 utility class，
  *     不污染外部主题。
- *   - dark-purple / light-white / light-sky 三主题分别细调，保持对比度。
+ *   - 针对 dark-purple 配色细调，保持对比度。
  *
  * 用法：在 `.qb-quant-shell` 子树用 `var(--qb-bg-surface)` 等变量；
  *      并在需要时附加 className：
@@ -54,68 +54,6 @@ html[data-qb-theme="dark-purple"] {
     radial-gradient(60% 100% at 100% 0%, rgba(34, 211, 238, 0.1) 0%, transparent 60%);
   --qb-quant-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset,
     0 1px 12px rgba(0, 0, 0, 0.4);
-}
-
-html[data-qb-theme="light-white"] {
-  --qb-quant-accent-1: #4f46e5;
-  --qb-quant-accent-2: #0891b2;
-  --qb-quant-accent-3: #d97706;
-  --qb-quant-accent-4: #db2777;
-  --qb-quant-accent-5: #059669;
-  --qb-quant-danger: #dc2626;
-
-  --qb-bg-surface: #ffffff;
-  --qb-bg-elevated: #f5f5f7;
-  --qb-bg-elevated-strong: #ebebef;
-  --qb-bg-hero: linear-gradient(135deg, #fafafe 0%, #f0f1f7 100%);
-  --qb-border-subtle: rgba(20, 20, 30, 0.08);
-  --qb-border-strong: rgba(20, 20, 30, 0.18);
-  --qb-text-muted: #6b7280;
-  --qb-text-strong: #111827;
-  --qb-success: #059669;
-  --qb-warn: #d97706;
-  --qb-error: #dc2626;
-  --qb-info: #2563eb;
-
-  --qb-quant-hero-glow: radial-gradient(
-      80% 100% at 0% 0%,
-      rgba(99, 102, 241, 0.1) 0%,
-      transparent 60%
-    ),
-    radial-gradient(60% 100% at 100% 0%, rgba(14, 165, 233, 0.08) 0%, transparent 60%);
-  --qb-quant-card-shadow: 0 1px 0 rgba(255, 255, 255, 1) inset,
-    0 1px 12px rgba(20, 20, 40, 0.06);
-}
-
-html[data-qb-theme="light-sky"] {
-  --qb-quant-accent-1: #0284c7;
-  --qb-quant-accent-2: #0891b2;
-  --qb-quant-accent-3: #d97706;
-  --qb-quant-accent-4: #be185d;
-  --qb-quant-accent-5: #059669;
-  --qb-quant-danger: #dc2626;
-
-  --qb-bg-surface: #f0f9ff;
-  --qb-bg-elevated: #e0f2fe;
-  --qb-bg-elevated-strong: #bae6fd;
-  --qb-bg-hero: linear-gradient(135deg, #ecfeff 0%, #dbeafe 100%);
-  --qb-border-subtle: rgba(3, 105, 161, 0.1);
-  --qb-border-strong: rgba(3, 105, 161, 0.22);
-  --qb-text-muted: #475569;
-  --qb-text-strong: #0c4a6e;
-  --qb-success: #059669;
-  --qb-warn: #d97706;
-  --qb-error: #dc2626;
-  --qb-info: #0284c7;
-
-  --qb-quant-hero-glow: radial-gradient(
-      80% 100% at 0% 0%,
-      rgba(2, 132, 199, 0.08) 0%,
-      transparent 60%
-    ),
-    radial-gradient(60% 100% at 100% 0%, rgba(8, 145, 178, 0.06) 0%, transparent 60%);
-  --qb-quant-card-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset,
-    0 1px 12px rgba(3, 105, 161, 0.08);
 }
 
 /* ─── 顶部 shell：把 header 改成渐变 hero + 浮雕分割线 ─────────────────────── */
@@ -220,9 +158,6 @@ html[data-qb-theme="light-sky"] {
   font-size: 11px;
   color: var(--qb-text-muted);
   backdrop-filter: blur(8px);
-}
-html[data-qb-theme^="light"] .qb-quant-kpi {
-  background: rgba(255, 255, 255, 0.65);
 }
 .qb-quant-kpi-dot {
   width: 8px;
