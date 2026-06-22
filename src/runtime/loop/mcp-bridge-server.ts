@@ -10,35 +10,111 @@ import { dispatchMcpToolCall } from "../mcp/dispatcher";
 import { negotiateServerProtocolVersion } from "../mcp/mcp-protocol";
 import { isToolPermitted, parseToolPatternEnv } from "./mcp-bridge-guard";
 
+/**
+ * MCP stdio 帧格式。当前 MCP 规范的 stdio 传输是 **换行分隔 JSON**（一行一条
+ * JSON-RPC 消息，消息内不含裸换行）——Claude Code / Codex 均用此格式。
+ * 早期/部分实现用 LSP 式 `Content-Length:` 头分帧。
+ *
+ * 2026-06 复盘（WF 36df0380）：本桥原先**只**解析 Content-Length 帧，导致 Claude
+ * 发来的换行分隔 `initialize` 永远匹配不上 → 桥不回包 → claude 标记 server=failed →
+ * 该角色无工具可用、空转到 300s 超时被 SIGTERM → 回退 native。修复：默认按换行分隔
+ * 读写，同时兼容 Content-Length（按客户端来帧镜像回包）。
+ */
+const framing = { contentLength: false };
+
 function writeMcpMessage(obj: Record<string, unknown>): void {
   const body = JSON.stringify(obj);
-  const header = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n`;
-  const out = Buffer.concat([Buffer.from(header, "utf8"), Buffer.from(body, "utf8")]);
-  process.stdout.write(out);
+  if (framing.contentLength) {
+    const header = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n`;
+    process.stdout.write(Buffer.concat([Buffer.from(header, "utf8"), Buffer.from(body, "utf8")]));
+    return;
+  }
+  // 换行分隔 JSON（MCP stdio 规范默认；Claude Code / Codex）。
+  process.stdout.write(`${body}\n`);
+}
+
+/**
+ * 从累积 buffer 中切出完整 MCP 消息（纯函数，便于单测）。
+ * 自动识别帧格式：以 `Content-Length:` 开头 → LSP 帧（置 state.contentLength=true）；
+ * 否则按换行分隔。返回解析出的消息与剩余未消费 buffer。无法 JSON.parse 的行被跳过。
+ */
+export function takeMcpMessages(
+  buf: Buffer,
+  state: { contentLength: boolean }
+): { msgs: Record<string, unknown>[]; rest: Buffer } {
+  const msgs: Record<string, unknown>[] = [];
+  let b = buf;
+  while (b.length > 0) {
+    // 跳过前导空白 / 换行
+    let start = 0;
+    while (
+      start < b.length &&
+      (b[start] === 0x0a || b[start] === 0x0d || b[start] === 0x20 || b[start] === 0x09)
+    ) {
+      start += 1;
+    }
+    if (start >= b.length) {
+      b = Buffer.alloc(0);
+      break;
+    }
+    const head = b
+      .subarray(start, Math.min(start + 15, b.length))
+      .toString("latin1")
+      .toLowerCase();
+    if (head.startsWith("content-length:")) {
+      state.contentLength = true;
+      const sep = b.indexOf("\r\n\r\n", start);
+      if (sep < 0) {
+        b = b.subarray(start);
+        break;
+      }
+      const headerBlock = b.subarray(start, sep).toString("utf8");
+      const m = /content-length:\s*(\d+)/i.exec(headerBlock);
+      const bodyStart = sep + 4;
+      if (!m) {
+        b = b.subarray(bodyStart);
+        continue;
+      }
+      const len = Number(m[1]);
+      if (b.length < bodyStart + len) {
+        b = b.subarray(start);
+        break;
+      }
+      const bodyText = b.subarray(bodyStart, bodyStart + len).toString("utf8");
+      b = b.subarray(bodyStart + len);
+      try {
+        msgs.push(JSON.parse(bodyText) as Record<string, unknown>);
+      } catch {
+        /* skip malformed */
+      }
+    } else {
+      // 换行分隔：取到下一个 \n
+      const nl = b.indexOf(0x0a, start);
+      if (nl < 0) {
+        b = b.subarray(start);
+        break;
+      }
+      const lineText = b.subarray(start, nl).toString("utf8").trim();
+      b = b.subarray(nl + 1);
+      if (lineText) {
+        try {
+          msgs.push(JSON.parse(lineText) as Record<string, unknown>);
+        } catch {
+          /* skip non-JSON line */
+        }
+      }
+    }
+  }
+  return { msgs, rest: b };
 }
 
 async function* readMcpMessages(): AsyncGenerator<Record<string, unknown>> {
-  const dec = new TextDecoder();
   let buf = Buffer.alloc(0);
   for await (const chunk of Bun.stdin.stream()) {
     buf = Buffer.concat([buf, chunk as Buffer]);
-    while (true) {
-      const sep = buf.indexOf("\r\n\r\n");
-      if (sep < 0) break;
-      const headerBlock = dec.decode(buf.subarray(0, sep));
-      const m = /Content-Length:\s*(\d+)/i.exec(headerBlock);
-      if (!m) {
-        throw new Error(
-          `mcp-bridge: missing Content-Length in header: ${headerBlock.slice(0, 200)}`
-        );
-      }
-      const len = Number(m[1]);
-      const bodyStart = sep + 4;
-      if (buf.length < bodyStart + len) break;
-      const bodyText = dec.decode(buf.subarray(bodyStart, bodyStart + len));
-      buf = buf.subarray(bodyStart + len);
-      yield JSON.parse(bodyText) as Record<string, unknown>;
-    }
+    const { msgs, rest } = takeMcpMessages(buf, framing);
+    buf = rest;
+    for (const m of msgs) yield m;
   }
 }
 
