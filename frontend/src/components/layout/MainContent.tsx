@@ -4584,6 +4584,12 @@ const TeamDashboardPanel: FC = () => {
   /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
   const [promptTemplateId, setPromptTemplateId] = useState("");
+  /**
+   * Agent 底座/引擎：团队里每个角色单轮 reason 用哪个引擎
+   * （docs/CLI_AGENT_PROJECTION_DESIGN.md 模型 B）。写入 loopOptions.roleReasoner，
+   * 与 loop_kind 正交——仍走 MSA 编排，仅替换角色 reason 引擎。
+   */
+  const [roleReasoner, setRoleReasoner] = useState<AgentLoopKind>("native");
 
   /**
    * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
@@ -5887,7 +5893,7 @@ const TeamDashboardPanel: FC = () => {
     setTeamAnalysisContext("");
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
     try {
-      await runOrchestratorChat(wf, msg, teamHitlMode);
+      await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner);
       void loadTeamGraph({ preserveSelection: true });
     } catch (e) {
       setError((e as Error).message);
@@ -5939,6 +5945,7 @@ const TeamDashboardPanel: FC = () => {
         timeoutMs,
         signal: abortCtl.signal,
         hitlMode: teamHitlMode,
+        roleReasoner,
         onAwaitingApproval: (info) => {
           setTeamPendingHitl({
             jobId: info.jobId,
@@ -6422,6 +6429,21 @@ const TeamDashboardPanel: FC = () => {
               <option value="equity_short">股票做空</option>
               <option value="option">期权</option>
             </select>
+          </div>
+          <div style={{ ...teamStyles.field, marginTop: 8 }}>
+            <label style={teamStyles.label}>Agent 底座</label>
+            <select
+              style={teamStyles.input}
+              value={roleReasoner}
+              onChange={(e) => setRoleReasoner(e.target.value as AgentLoopKind)}
+            >
+              <option value="native">自研（进程内 ReAct）</option>
+              <option value="claude_cli">Claude CLI</option>
+              <option value="codex_cli">Codex CLI</option>
+            </select>
+            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+              每个角色单轮推理用的引擎；仍走团队编排（MSA），CLI 不可用时自动回退自研。
+            </div>
           </div>
           {scopeMode === "single" ? (
             <div style={{ ...teamStyles.field, marginTop: 8 }}>

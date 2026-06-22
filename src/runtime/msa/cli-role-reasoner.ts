@@ -313,6 +313,7 @@ class CliRoleReasoner implements RoleReasoner {
     const skillsBlock = await renderDeclaredSkillsBlock(projectId, req.def.skills ?? []);
     const promptText = buildRolePromptText(req, includeSystemInPrompt, skillsBlock);
 
+    const model = extractModelFromProvider(req.def.llmProvider, kind);
     const { command, args } = buildRoleCliInvocation({
       kind,
       systemPrompt: req.def.systemPrompt,
@@ -320,9 +321,7 @@ class CliRoleReasoner implements RoleReasoner {
       bridgeEntryFile,
       projectId,
       lastMessagePath,
-      ...(extractModelFromProvider(req.def.llmProvider, kind)
-        ? { model: extractModelFromProvider(req.def.llmProvider, kind) }
-        : {}),
+      ...(model ? { model } : {}),
     });
 
     const proc = Bun.spawn([command, ...args], {

@@ -63,6 +63,14 @@ analystRouter.post("/run", async (c) => {
      * 旧客户端若仍传 `hitlTeam` 会被 zod .strip() 忽略，不会报错（兼容性硬退场）。
      */
     hitlMode?: "off" | "ai" | "always";
+    /**
+     * Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（docs/CLI_AGENT_PROJECTION_DESIGN.md 模型 B）。
+     * 写入 workflow.loopOptionsJson.roleReasoner，由 runResearchTeamSlotReact 的 resolveRoleReasoner 读取。
+     *   - 'native'（默认）：自研进程内 ReAct
+     *   - 'claude_cli' / 'codex_cli'：子进程 CLI 作为单角色 reason 引擎
+     * 注意：这与 workflow.loop_kind 正交——loop_kind 保持 native（仍走 MSA 编排），仅替换角色 reason 引擎。
+     */
+    roleReasoner?: "native" | "claude_cli" | "codex_cli";
   }>();
 
   if (!body.workflowRunId) {
@@ -154,18 +162,28 @@ analystRouter.post("/run", async (c) => {
     .set({ status: "running", startedAt: new Date().toISOString(), endedAt: null })
     .where(eq(workflowRun.id, body.workflowRunId));
 
-  // 把 hitl 偏好（v2 hitlMode）同步到 workflow.loopOptionsJson，
-  // 让 evaluateTeamHitlTrigger 读取到。v1 字段已通过 migration 0053 退场。
-  if (body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always") {
-    const currentLoopOptions = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
-    const nextLoopOptions: Record<string, unknown> = {
-      ...currentLoopOptions,
-      hitlMode: body.hitlMode,
-    };
-    await db
-      .update(workflowRun)
-      .set({ loopOptionsJson: nextLoopOptions as never })
-      .where(eq(workflowRun.id, body.workflowRunId));
+  // 把 hitl 偏好（v2 hitlMode）+ Agent 底座（roleReasoner）同步到 workflow.loopOptionsJson。
+  // hitlMode 让 evaluateTeamHitlTrigger 读取；roleReasoner 让 resolveRoleReasoner 读取。
+  // v1 hitl 字段已通过 migration 0053 退场。
+  {
+    const hitlValid =
+      body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always";
+    const reasonerValid =
+      body.roleReasoner === "native" ||
+      body.roleReasoner === "claude_cli" ||
+      body.roleReasoner === "codex_cli";
+    if (hitlValid || reasonerValid) {
+      const currentLoopOptions = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
+      const nextLoopOptions: Record<string, unknown> = {
+        ...currentLoopOptions,
+        ...(hitlValid ? { hitlMode: body.hitlMode } : {}),
+        ...(reasonerValid ? { roleReasoner: body.roleReasoner } : {}),
+      };
+      await db
+        .update(workflowRun)
+        .set({ loopOptionsJson: nextLoopOptions as never })
+        .where(eq(workflowRun.id, body.workflowRunId));
+    }
   }
 
   const jobId = randomUUID();
@@ -245,9 +263,15 @@ analystRouter.post("/run", async (c) => {
  * body: { workflowRunId, message, hitlMode? }
  */
 analystRouter.post("/orchestrator-chat", async (c) => {
+  type OrchestratorChatBody = {
+    workflowRunId?: string;
+    message?: string;
+    hitlMode?: "off" | "ai" | "always";
+    roleReasoner?: "native" | "claude_cli" | "codex_cli";
+  };
   const body = await c.req
-    .json<{ workflowRunId?: string; message?: string; hitlMode?: "off" | "ai" | "always" }>()
-    .catch(() => ({}));
+    .json<OrchestratorChatBody>()
+    .catch(() => ({}) as OrchestratorChatBody);
   const workflowRunId = (body.workflowRunId ?? "").trim();
   const message = (body.message ?? "").trim();
   if (!workflowRunId) return c.json({ error: "workflowRunId is required" }, 400);
@@ -263,12 +287,26 @@ analystRouter.post("/orchestrator-chat", async (c) => {
     .set({ status: "running", startedAt: new Date().toISOString(), endedAt: null })
     .where(eq(workflowRun.id, workflowRunId));
 
-  if (body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always") {
-    const cur = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
-    await db
-      .update(workflowRun)
-      .set({ loopOptionsJson: { ...cur, hitlMode: body.hitlMode } as never })
-      .where(eq(workflowRun.id, workflowRunId));
+  {
+    const hitlValid =
+      body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always";
+    const reasonerValid =
+      body.roleReasoner === "native" ||
+      body.roleReasoner === "claude_cli" ||
+      body.roleReasoner === "codex_cli";
+    if (hitlValid || reasonerValid) {
+      const cur = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
+      await db
+        .update(workflowRun)
+        .set({
+          loopOptionsJson: {
+            ...cur,
+            ...(hitlValid ? { hitlMode: body.hitlMode } : {}),
+            ...(reasonerValid ? { roleReasoner: body.roleReasoner } : {}),
+          } as never,
+        })
+        .where(eq(workflowRun.id, workflowRunId));
+    }
   }
 
   // 用户消息落库为 user→orchestrator 交互（右栏展示 + 进入会话 transcript）。
