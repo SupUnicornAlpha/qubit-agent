@@ -199,6 +199,7 @@ import {
 } from "../team/LiveConversationView";
 import { ResizableY } from "../team/ResizableY";
 import { TeamHitlBanner } from "../team/TeamHitlBanner";
+import type { OrchestratorPlan } from "../team/PlanCard";
 import {
   OrchestratorChatPanel,
   type OrchestratorArtifact,
@@ -4905,6 +4906,13 @@ const TeamDashboardPanel: FC = () => {
   const settledRolesRef = useRef<Set<string>>(new Set());
   /** 收口事件防抖回拉 teamGraph 的 timer（chat 路径无 2.5s 轮询，靠它带出最终答复）。 */
   const settleRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Coding-Agent 体验 P1：Orchestrator 分步计划/TODO + 当前「正在调用什么、为何」活动行。 */
+  const [teamPlan, setTeamPlan] = useState<OrchestratorPlan | null>(null);
+  const [activeRationale, setActiveRationale] = useState<{
+    tool: string;
+    why: string;
+    ts: number;
+  } | null>(null);
   /**
    * 用户在右侧 Orchestrator 对话框发出的提示词回显（启动指令 / 运行中插话）。
    * 合成成 fromRole="user" 的消息事件并入实时流，让用户看到自己说过什么。
@@ -5349,11 +5357,30 @@ const TeamDashboardPanel: FC = () => {
     if (!wf || activeTab !== "research") return;
     setStreamingByRole({});
     setUserEchoes([]);
+    setTeamPlan(null);
+    setActiveRationale(null);
     settledRolesRef.current = new Set();
     const unsubscribe = subscribeWorkflowEvents({
       workflowId: wf,
       onEvent: (event) => {
         const role = event.role || "unknown";
+        if (event.type === "plan") {
+          // Coding-Agent 体验 P1：分步计划/TODO 快照 → 右栏计划卡片。
+          const steps = Array.isArray(event.payload?.["steps"])
+            ? (event.payload["steps"] as OrchestratorPlan["steps"])
+            : [];
+          setTeamPlan({ steps, updatedAt: String(event.payload?.["updatedAt"] ?? "") });
+          return;
+        }
+        if (event.type === "tool_rationale") {
+          // 当前正在做什么 + 为什么（露给用户）；下个理由替换，终态清空。
+          setActiveRationale({
+            tool: String(event.payload?.["targetName"] ?? event.payload?.["toolName"] ?? ""),
+            why: String(event.payload?.["why"] ?? ""),
+            ts: event.ts,
+          });
+          return;
+        }
         if (event.type === "token") {
           const piece = String(event.payload?.["token"] ?? event.payload?.["text"] ?? "");
           if (!piece) return;
@@ -5375,6 +5402,7 @@ const TeamDashboardPanel: FC = () => {
           // 该 role 的一步已收口：标记（不删），保留流式文本等持久化消息接管。
           settledRolesRef.current.add(role);
           if (event.type === "final" || event.type === "error") {
+            setActiveRationale(null); // 终态：清掉「正在调用」活动行
             // chat 路径无轮询：终态后 orchestrator→user 答复才落库，防抖回拉两次带出它。
             if (settleRefetchTimerRef.current) clearTimeout(settleRefetchTimerRef.current);
             settleRefetchTimerRef.current = setTimeout(() => {
@@ -8452,6 +8480,8 @@ const TeamDashboardPanel: FC = () => {
               if (!wf) throw new Error("请先选择工作流");
               await interruptWorkflow(wf);
             }}
+            plan={teamPlan}
+            activity={activeRationale}
             artifacts={teamArtifacts}
             onOpenArtifact={(a) => {
               // 目前内联卡片只有因子：跳到量化工坊因子页（与底部抽屉「在工坊打开」一致）。

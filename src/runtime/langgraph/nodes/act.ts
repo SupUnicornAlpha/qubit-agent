@@ -284,6 +284,23 @@ export async function actNode(
     projectId,
   });
 
+  // Coding-Agent 体验 P1（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：把「调用理由」露给用户。
+  // 取 reason 文本里约定的 `调用理由：…` 一行；仅 SSE 事件，不污染最终答复。best-effort。
+  const rationaleMatch = (state.reasonText ?? "").match(/调用理由[:：]\s*(.+)/);
+  const rationaleWhy = (rationaleMatch?.[1] ?? "").trim().slice(0, 280);
+  if (rationaleWhy) {
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "tool_rationale",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: { toolName, targetName, why: rationaleWhy },
+    });
+  }
+
   emit({
     runId: state.runId,
     workflowId: state.workflowId,

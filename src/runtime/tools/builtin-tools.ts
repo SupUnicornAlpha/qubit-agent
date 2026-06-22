@@ -3,7 +3,8 @@ import { and, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
-import { agentProfile } from "../../db/sqlite/schema";
+import { agentProfile, workflowRun } from "../../db/sqlite/schema";
+import { stepStreamBus } from "../langgraph/event-stream";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
@@ -96,6 +97,60 @@ function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "e
 
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
+  /**
+   * update_plan —— 编排器维护一份对用户可见的分步计划/TODO（Coding-Agent 体验 P1，
+   * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。写入 workflow_run.plan_json 并经 SSE
+   * `type:"plan"` 推流给右栏「计划卡片」。best-effort：失败仅 warn，不影响主推理
+   * （计划是 UI 投影，不是权威态）。params: { steps: [{id?,title,status?,note?}] }，
+   * status ∈ pending|in_progress|done|skipped。
+   */
+  update_plan: async (ctx, params) => {
+    const rawSteps = Array.isArray(params.steps) ? params.steps : [];
+    const allowed = new Set(["pending", "in_progress", "done", "skipped"]);
+    const steps: Array<{ id: string; title: string; status: string; note?: string }> = [];
+    for (let i = 0; i < rawSteps.length && steps.length < 20; i++) {
+      const o = (rawSteps[i] ?? {}) as Record<string, unknown>;
+      const title = String(o.title ?? o.text ?? "").trim();
+      if (!title) continue;
+      const status = String(o.status ?? "pending").trim();
+      const note = o.note != null ? String(o.note).slice(0, 300) : undefined;
+      steps.push({
+        id: (String(o.id ?? "").trim() || `s${i + 1}`).slice(0, 40),
+        title: title.slice(0, 200),
+        status: allowed.has(status) ? status : "pending",
+        ...(note ? { note } : {}),
+      });
+    }
+    const plan = { steps, updatedAt: new Date().toISOString() };
+    try {
+      const db = await getDb();
+      await db
+        .update(workflowRun)
+        .set({ planJson: plan as never })
+        .where(eq(workflowRun.id, ctx.workflowId));
+    } catch (e) {
+      console.warn(`[update_plan] persist failed: ${(e as Error).message}`);
+    }
+    try {
+      stepStreamBus.publish({
+        runId: ctx.runId,
+        workflowId: ctx.workflowId,
+        traceId: ctx.traceId,
+        role: ctx.definition.role,
+        type: "plan",
+        stepIndex: 0,
+        ts: Date.now(),
+        payload: plan,
+      });
+    } catch (e) {
+      console.warn(`[update_plan] publish failed: ${(e as Error).message}`);
+    }
+    return {
+      ok: true,
+      stepCount: steps.length,
+      done: steps.filter((s) => s.status === "done").length,
+    };
+  },
   assign_task: async (ctx, params) => {
     const role = String(params.role ?? params.targetRole ?? "").trim() as AgentRole;
     if (!role) throw new Error("assign_task: role is required");

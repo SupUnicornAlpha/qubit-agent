@@ -35,6 +35,11 @@ export const TOOL_CATALOG_CATEGORIES: Record<
 
 const TOOL_META: Record<string, ToolMetaEntry> = {
   // 编排
+  update_plan: {
+    description:
+      "更新对用户可见的分步计划/TODO（params: steps=[{id?,title,status?,note?}]，status∈pending|in_progress|done|skipped）。开工前先列 3-5 步，每完成一步就更新其状态。",
+    category: "orchestration",
+  },
   assign_task: { description: "向指定角色 Agent 派发工作流任务", category: "orchestration" },
   run_analyst_team: { description: "并行运行分析师编组，MSA 融合 + 可选辩论/风控", category: "orchestration" },
   summarize_team_decision: {

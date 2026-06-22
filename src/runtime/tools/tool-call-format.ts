@@ -65,6 +65,7 @@ export function buildAgentToolsPromptBlock(params: {
     "- **不要填** `workflowRunId` / `projectId` / `project_id`——这些上下文参数由系统自动注入，你填的任何值都会被覆盖。",
     "- 不要编造工具执行结果；未调用工具前不得声称「已回测/已拉取行情」。",
     "- 一次只能调用一个工具；多个工具调用请分多轮。",
+    "- 调用工具时，在 `<TOOL_CALL>` 之前**用一行写明**：`调用理由：<为何调用、预期得到什么>`（让用户看懂你的每一步）。",
     "",
   ];
 

@@ -26,6 +26,7 @@ import {
 } from "react";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
+import { type OrchestratorPlan, PlanCard } from "./PlanCard";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
 
@@ -64,6 +65,10 @@ export interface OrchestratorChatPanelProps {
   onInject: (content: string) => Promise<number>;
   /** 协作式中断：请求在下一个安全断点暂停，等用户输入新提示词后续跑 */
   onInterrupt: () => Promise<void>;
+  /** Coding-Agent 体验 P1：Orchestrator 的分步计划/TODO（update_plan 推流），置于对话框顶部 */
+  plan?: OrchestratorPlan | null;
+  /** Coding-Agent 体验 P1：当前「正在调用什么、为何」活动行（tool_rationale 推流） */
+  activity?: { tool: string; why: string } | null;
   /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
   artifacts: OrchestratorArtifact[];
   /** 点击产物卡片：跳到量化工坊 / 底部抽屉打开 */
@@ -95,6 +100,8 @@ export function OrchestratorChatPanel({
   onSend,
   onInject,
   onInterrupt,
+  plan,
+  activity,
   artifacts,
   onOpenArtifact,
   sendDisabled,
@@ -254,8 +261,21 @@ export function OrchestratorChatPanel({
         </div>
       </div>
 
-      {/* Body：内联 HITL + 产物卡片 + 对话流 */}
+      {/* Body：计划卡片 + 当前活动 + 内联 HITL + 产物卡片 + 对话流 */}
       <div ref={scrollRef} style={styles.body} data-qb-orchestrator-chat>
+        <PlanCard plan={plan ?? null} />
+        {activity?.why ? (
+          <div style={styles.activityLine}>
+            <span style={styles.activitySpinner} aria-hidden>
+              ⠋
+            </span>
+            <span style={styles.activityText}>
+              {activity.tool ? <strong>调用 {activity.tool}</strong> : null}
+              {activity.tool ? "：" : null}
+              {activity.why}
+            </span>
+          </div>
+        ) : null}
         {wfId ? (
           <TeamHitlBanner
             workflowRunId={wfId}
@@ -553,6 +573,21 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 6,
     padding: "5px 8px",
   },
+  activityLine: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 6,
+    marginBottom: 10,
+    padding: "5px 9px",
+    borderRadius: 6,
+    border: "1px solid rgba(56,189,248,0.28)",
+    background: "rgba(56,189,248,0.08)",
+    fontSize: 11.5,
+    color: "#bae6fd",
+    lineHeight: 1.45,
+  },
+  activitySpinner: { color: "#38bdf8", animation: "qbPulse 1.1s ease-in-out infinite" },
+  activityText: { minWidth: 0, color: "#cbd5e1" },
   composerBar: { display: "flex", alignItems: "center", gap: 8 },
   composerHint: { flex: 1, minWidth: 0, fontSize: 10.5, color: "#71717a", lineHeight: 1.4 },
   sendBtn: { flexShrink: 0, fontSize: 12, padding: "6px 16px" },

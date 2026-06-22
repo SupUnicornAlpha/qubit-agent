@@ -127,7 +127,10 @@ export interface StepStreamEvent {
     | "step_persisted"
     | "hitl_request"
     | "final"
-    | "error";
+    | "error"
+    // Coding-Agent 体验 P1：plan=分步计划/TODO 快照；tool_rationale=调用工具前的「为何调/预期」。
+    | "plan"
+    | "tool_rationale";
   stepIndex: number;
   ts: number;
   payload: Record<string, unknown>;
