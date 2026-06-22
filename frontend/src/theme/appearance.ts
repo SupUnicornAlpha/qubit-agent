@@ -3,8 +3,8 @@
  * DOM：`html[data-qb-theme]` + `html[data-qb-style]`
  */
 
-/** 默认风格配色 */
-export const DEFAULT_PALETTE_IDS = ["dark-purple", "light-white", "light-sky"] as const;
+/** 默认风格配色：仅黑紫（浅色需求由「简洁」风格承载） */
+export const DEFAULT_PALETTE_IDS = ["dark-purple"] as const;
 export type DefaultPaletteId = (typeof DEFAULT_PALETTE_IDS)[number];
 
 export const UI_PALETTE_IDS = [...DEFAULT_PALETTE_IDS] as const;
@@ -26,8 +26,6 @@ export const UI_THEME_IDS = UI_PALETTE_IDS;
 
 export const PALETTE_LABELS: Record<UiPaletteId, string> = {
   "dark-purple": "黑紫",
-  "light-white": "白",
-  "light-sky": "天蓝",
 };
 
 /** 当前风格下 TopBar 展示的配色项 */
@@ -60,7 +58,10 @@ const LEGACY_THEME_KEY = "qubit-ui-theme-v1";
 
 const LEGACY_PALETTE_MAP: Record<string, UiPaletteId> = {
   "dark-gray": "dark-purple",
-  "light-mint": "light-white",
+  // 已下线的浅色配色 → 统一回落黑紫（浅色改用「简洁」风格）
+  "light-mint": "dark-purple",
+  "light-white": "dark-purple",
+  "light-sky": "dark-purple",
 };
 
 /** 已下线的风格 → 回落到现存风格（多数无对应，统一回 default） */

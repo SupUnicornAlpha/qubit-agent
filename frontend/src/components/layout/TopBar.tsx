@@ -3,8 +3,7 @@ import { useState } from "react";
 import { getHealth } from "../../api/backend";
 import { PACKAGED_BACKEND_URL } from "../../api/packaged-backend";
 import { isTauriEnv, tauriRestartBackend } from "../../api/tauri";
-import { palettesForStyle } from "../../theme/appearance";
-import { useAppStore, UI_STYLE_IDS, type UiPaletteId, type UiStyleId } from "../../store";
+import { useAppStore, UI_STYLE_IDS, type UiStyleId } from "../../store";
 import { LanguageSwitcher, useTranslation } from "../../i18n";
 
 export const TopBar: FC = () => {
@@ -12,15 +11,11 @@ export const TopBar: FC = () => {
   const backendHint = useAppStore((s) => s.backendHint);
   const setBackendConnected = useAppStore((s) => s.setBackendConnected);
   const setBackendHint = useAppStore((s) => s.setBackendHint);
-  const uiPalette = useAppStore((s) => s.uiPalette);
   const uiStyle = useAppStore((s) => s.uiStyle);
-  const setUiPalette = useAppStore((s) => s.setUiPalette);
   const setUiStyle = useAppStore((s) => s.setUiStyle);
   const { t } = useTranslation();
   const [restarting, setRestarting] = useState(false);
   const inTauri = isTauriEnv();
-  const paletteLocked = uiStyle !== "default";
-  const paletteOptions = palettesForStyle(uiStyle);
 
   const onRestartBackend = async () => {
     if (!inTauri || restarting) return;
@@ -68,24 +63,6 @@ export const TopBar: FC = () => {
           {UI_STYLE_IDS.map((id) => (
             <option key={id} value={id}>
               {t(`theme.styles.${id}`)}
-            </option>
-          ))}
-        </select>
-        <label className="qb-visually-hidden" htmlFor="qb-ui-palette">
-          {t("topbar.palette.label")}
-        </label>
-        <select
-          id="qb-ui-palette"
-          className="qb-theme-select"
-          value={uiPalette}
-          title={paletteLocked ? t("topbar.palette.lockedTitle") : t("topbar.palette.defaultTitle")}
-          aria-label={t("topbar.palette.label")}
-          disabled={paletteLocked}
-          onChange={(e) => setUiPalette(e.target.value as UiPaletteId)}
-        >
-          {paletteOptions.map((id) => (
-            <option key={id} value={id}>
-              {t(`theme.palettes.${id}`)}
             </option>
           ))}
         </select>

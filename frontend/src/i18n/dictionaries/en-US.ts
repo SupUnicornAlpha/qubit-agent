@@ -43,11 +43,6 @@ const pack: LocalePack = {
       brandSubtitle: "Quant Research Agent Platform",
       navAriaLabel: "Primary navigation",
       style: { label: "UI style" },
-      palette: {
-        label: "Palette",
-        lockedTitle: "Switch back to the Default style to change the palette",
-        defaultTitle: "Palette",
-      },
       language: { label: "Language", title: "Interface language" },
       restart: {
         button: "Restart backend",
@@ -119,8 +114,6 @@ const pack: LocalePack = {
       },
       palettes: {
         "dark-purple": "Dark Purple",
-        "light-white": "Light",
-        "light-sky": "Sky",
       },
     },
     ide: {

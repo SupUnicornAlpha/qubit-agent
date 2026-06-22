@@ -43,11 +43,6 @@ const pack: LocalePack = {
       brandSubtitle: "量化研究 Agent 平台",
       navAriaLabel: "主导航",
       style: { label: "界面风格" },
-      palette: {
-        label: "配色",
-        lockedTitle: "切换回「默认」风格后可改配色",
-        defaultTitle: "配色",
-      },
       language: { label: "界面语言", title: "界面语言" },
       restart: {
         button: "重启后端",
@@ -119,8 +114,6 @@ const pack: LocalePack = {
       },
       palettes: {
         "dark-purple": "黑紫",
-        "light-white": "白",
-        "light-sky": "天蓝",
       },
     },
     ide: {
