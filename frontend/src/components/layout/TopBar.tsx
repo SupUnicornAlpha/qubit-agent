@@ -19,8 +19,7 @@ export const TopBar: FC = () => {
   const { t } = useTranslation();
   const [restarting, setRestarting] = useState(false);
   const inTauri = isTauriEnv();
-  const paletteLocked =
-    uiStyle !== "default" && uiStyle !== "glass-holographic" && uiStyle !== "biophilic";
+  const paletteLocked = uiStyle !== "default";
   const paletteOptions = palettesForStyle(uiStyle);
 
   const onRestartBackend = async () => {
@@ -79,15 +78,7 @@ export const TopBar: FC = () => {
           id="qb-ui-palette"
           className="qb-theme-select"
           value={uiPalette}
-          title={
-            paletteLocked
-              ? t("topbar.palette.lockedTitle")
-              : uiStyle === "glass-holographic"
-                ? t("topbar.palette.glassTitle")
-                : uiStyle === "biophilic"
-                  ? t("topbar.palette.biophilicTitle")
-                  : t("topbar.palette.defaultTitle")
-          }
+          title={paletteLocked ? t("topbar.palette.lockedTitle") : t("topbar.palette.defaultTitle")}
           aria-label={t("topbar.palette.label")}
           disabled={paletteLocked}
           onChange={(e) => setUiPalette(e.target.value as UiPaletteId)}
@@ -113,11 +104,6 @@ export const TopBar: FC = () => {
         >
           {restarting ? t("topbar.restart.running") : t("topbar.restart.button")}
         </button>
-      ) : null}
-      {uiStyle === "ambient-3d" ? (
-        <span className="qb-topbar__spatial-badge" aria-hidden>
-          SPATIAL UI
-        </span>
       ) : null}
     </header>
   );

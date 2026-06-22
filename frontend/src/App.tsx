@@ -7,14 +7,12 @@ import { getHealth } from "./api/backend";
 import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
 import { useAppStore } from "./store";
-import { useAmbient3dTilt } from "./hooks/useAmbient3dTilt";
 import { useTranslation } from "./i18n";
 
 const App: FC = () => {
   const setBackendConnected = useAppStore((s) => s.setBackendConnected);
   const setBackendHint = useAppStore((s) => s.setBackendHint);
   const { t, locale } = useTranslation();
-  useAmbient3dTilt();
 
   useEffect(() => {
     const CONNECTED_INTERVAL_MS = 15_000;
