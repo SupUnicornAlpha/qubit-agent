@@ -712,13 +712,15 @@ export async function runOrchestratorChat(
   workflowRunId: string,
   message: string,
   hitlMode?: "off" | "ai" | "always",
-  roleReasoner?: AgentLoopKind
+  roleReasoner?: AgentLoopKind,
+  experience?: "native" | "coding_agent"
 ): Promise<{ status: string }> {
   const res = await httpPost<{ ok: boolean; status: string }>("/api/v1/analyst/orchestrator-chat", {
     workflowRunId,
     message,
     ...(hitlMode ? { hitlMode } : {}),
     ...(roleReasoner ? { roleReasoner } : {}),
+    ...(experience ? { experience } : {}),
   });
   return { status: res.status ?? "running" };
 }

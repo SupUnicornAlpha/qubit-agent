@@ -60,6 +60,14 @@ export const LoopOptionsJsonSchema = z
      * 默认 1000；超过则即便 hitlMode='off' 也强制触发 HITL。
      */
     hitlMoneyThreshold: z.number().positive().optional(),
+    /**
+     * Coding-Agent 体验改造 P3（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：编排体验档位。
+     *   - 'native'（默认 / 缺省）：现有固定编排，所有 rails 不变。
+     *   - 'coding_agent'：放开「角色集锁死」——编排器可按需 assign_task 拉入团队拓扑
+     *     之外的任意有效专家角色（像 coding agent 临时召唤子 agent）。其余 rails（融合/
+     *     风控/可复现）保持不变。
+     */
+    experience: z.enum(["native", "coding_agent"]).optional(),
   })
   .strip();
 

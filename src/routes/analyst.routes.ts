@@ -268,6 +268,7 @@ analystRouter.post("/orchestrator-chat", async (c) => {
     message?: string;
     hitlMode?: "off" | "ai" | "always";
     roleReasoner?: "native" | "claude_cli" | "codex_cli";
+    experience?: "native" | "coding_agent";
   };
   const body = await c.req
     .json<OrchestratorChatBody>()
@@ -294,7 +295,9 @@ analystRouter.post("/orchestrator-chat", async (c) => {
       body.roleReasoner === "native" ||
       body.roleReasoner === "claude_cli" ||
       body.roleReasoner === "codex_cli";
-    if (hitlValid || reasonerValid) {
+    const experienceValid =
+      body.experience === "native" || body.experience === "coding_agent";
+    if (hitlValid || reasonerValid || experienceValid) {
       const cur = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
       await db
         .update(workflowRun)
@@ -303,6 +306,7 @@ analystRouter.post("/orchestrator-chat", async (c) => {
             ...cur,
             ...(hitlValid ? { hitlMode: body.hitlMode } : {}),
             ...(reasonerValid ? { roleReasoner: body.roleReasoner } : {}),
+            ...(experienceValid ? { experience: body.experience } : {}),
           } as never,
         })
         .where(eq(workflowRun.id, workflowRunId));

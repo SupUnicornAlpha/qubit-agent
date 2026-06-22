@@ -5,6 +5,7 @@ import { getDb } from "../../db/sqlite/client";
 import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
 import { stepStreamBus } from "../langgraph/event-stream";
+import { parseLoopOptionsJson } from "../../types/loop";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
@@ -2304,6 +2305,21 @@ async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<str
   return row?.projectId ?? "";
 }
 
+/** Coding-Agent 体验 P3：读 workflow_run.loop_options_json，判断是否 coding_agent 编排档。 */
+async function isCodingAgentExperience(workflowId: string): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select({ loopOptionsJson: workflowRun.loopOptionsJson })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowId))
+      .limit(1);
+    return parseLoopOptionsJson(rows[0]?.loopOptionsJson).experience === "coding_agent";
+  } catch {
+    return false; // 读失败按默认 native 处理（保守，rails 不变）
+  }
+}
+
 async function dispatchTeamAgentTask(
   ctx: BuiltinToolContext,
   role: AgentRole,
@@ -2312,7 +2328,20 @@ async function dispatchTeamAgentTask(
   const targetRole = resolveDispatchRole(role);
   const topology = await loadOrchestratorTopologyForWorkflow(ctx.workflowId);
   if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
-    assertTopologyTargetAllowed(topology, targetRole);
+    // Coding-Agent 体验 P3：coding_agent 档放开「角色集锁死」——编排器可按需拉入团队
+    // 拓扑之外的任意有效专家角色（像 coding agent 临时召唤子 agent）。默认 native 档保持
+    // 严格校验（rails 不变）。dispatchTaskToRole 仍会对不存在定义的角色报运行时错误兜底。
+    const codingAgent = await isCodingAgentExperience(ctx.workflowId);
+    if (codingAgent) {
+      const onEdge = topology.targets.some((t) => t.role === targetRole);
+      if (!onEdge) {
+        console.info(
+          `[dispatchTeamAgentTask] coding_agent 档：放行拓扑外角色 '${targetRole}'（按需拉入专家）`
+        );
+      }
+    } else {
+      assertTopologyTargetAllowed(topology, targetRole);
+    }
   }
 
   const goal = String(params.goal ?? params.message ?? "").trim();

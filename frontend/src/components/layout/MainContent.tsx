@@ -4591,6 +4591,13 @@ const TeamDashboardPanel: FC = () => {
    * 与 loop_kind 正交——仍走 MSA 编排，仅替换角色 reason 引擎。
    */
   const [roleReasoner, setRoleReasoner] = useState<AgentLoopKind>("native");
+  /**
+   * Coding-Agent 体验档位（docs/CODING_AGENT_EXPERIENCE_DESIGN.md P3）。
+   *   - native：现有固定编排（默认，rails 不变）
+   *   - coding_agent：放开「角色集锁死」，编排器可按需拉团队外专家
+   * 写入 loopOptions.experience；经 orchestrator-chat API 合并。
+   */
+  const [teamExperience, setTeamExperience] = useState<"native" | "coding_agent">("native");
 
   /**
    * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
@@ -5995,7 +6002,7 @@ const TeamDashboardPanel: FC = () => {
     setTeamAnalysisContext("");
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
     try {
-      await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner);
+      await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner, teamExperience);
       void loadTeamGraph({ preserveSelection: true });
     } catch (e) {
       setError((e as Error).message);
@@ -6545,6 +6552,21 @@ const TeamDashboardPanel: FC = () => {
             </select>
             <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
               每个角色单轮推理用的引擎；仍走团队编排（MSA），CLI 不可用时自动回退自研。
+            </div>
+          </div>
+          <div style={{ ...teamStyles.field, marginTop: 8 }}>
+            <label style={teamStyles.label}>编排体验</label>
+            <select
+              style={teamStyles.input}
+              value={teamExperience}
+              onChange={(e) => setTeamExperience(e.target.value as "native" | "coding_agent")}
+            >
+              <option value="native">标准（固定编排）</option>
+              <option value="coding_agent">Coding-Agent（按需拉专家）</option>
+            </select>
+            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+              Coding-Agent 档：编排器可按需 assign_task 拉入团队拓扑之外的专家角色；融合/风控等
+              rails 不变。下条对话生效。
             </div>
           </div>
           {scopeMode === "single" ? (
