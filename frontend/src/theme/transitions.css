@@ -24,7 +24,6 @@ body,
 .qb-btn-primary-brand,
 .qb-chip,
 .qb-agent-shell,
-.qb-theme-select,
 .qb-style-select {
   transition:
     background-color 0.4s cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -37,30 +36,27 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   html,
-  body,
-  .qb-app-root,
-  .qb-topbar,
-  .qb-sidebar-shell,
-  .qb-sidebar-activity,
-  .qb-explorer-panel,
-  .qb-workbench-toolbar,
-  .qb-context-card,
-  .qb-status-pill,
-  .qb-segmented,
-  .qb-segmented__tab,
-  .qb-btn-primary,
-  .qb-btn-secondary,
-  .qb-btn-ghost,
-  .qb-btn-primary-brand,
-  .qb-chip,
-  .qb-agent-shell,
-  .qb-theme-select,
-  .qb-style-select {
+body,
+.qb-app-root,
+.qb-topbar,
+.qb-sidebar-shell,
+.qb-sidebar-activity,
+.qb-explorer-panel,
+.qb-workbench-toolbar,
+.qb-context-card,
+.qb-status-pill,
+.qb-segmented,
+.qb-segmented__tab,
+.qb-btn-primary,
+.qb-btn-secondary,
+.qb-btn-ghost,
+.qb-btn-primary-brand,
+.qb-chip,
+.qb-agent-shell,
+.qb-style-select {
     transition: none;
   }
 
-  html[data-qb-style="retro-futurism"] .qb-app-root::before,
-  html[data-qb-style="retro-futurism"] .qb-app-root::after,
   html[data-qb-style="sci-fi-hud"] .qb-app-root::after {
     animation: none;
   }
