@@ -21,6 +21,7 @@ import type { AnalystSignalValue } from "../../types/entities";
 import { exportStrategyScriptToWorkflowDir } from "../strategy/strategy-script-files";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
+import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import {
   HITL_HINT_DELIMITER,
@@ -896,13 +897,15 @@ export async function runPostFusionPipeline(input: {
      * 也导致 buildWorkflowPriorOutputsContext 用 from_role 过滤时拿不到正确的角色产出。
      * 正确语义：本轮 slot.role 把成果汇报给 msa（后续 fuseSignals / report 阶段）。
      */
+    // 解析 markdown 报告末尾的 ```json``` 交接信封 → payloadJson.handoff（下游程序化消费）。
+    const auxHandoff = parseHandoffEnvelope(body);
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
       fromRole: slot.role,
       toRole: "msa",
       kind: "llm_message",
       contentText: body.slice(0, 4000),
-      payloadJson: { phase: "post_fusion", role: slot.role },
+      payloadJson: { phase: "post_fusion", role: slot.role, ...(auxHandoff ? { handoff: auxHandoff } : {}) },
     });
 
     prevRole = slot.role;

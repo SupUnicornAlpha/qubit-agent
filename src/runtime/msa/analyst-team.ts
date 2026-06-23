@@ -41,6 +41,7 @@ import { defaultResearchUserContext } from "./analyst-team-scope";
 import { type DebateInput, runDebateSession } from "../debate/debate-engine";
 import { type DebateA2ASetup, setupDebateA2A } from "../debate/debate-a2a";
 import { evaluateRiskAndVeto } from "../risk/veto-engine";
+import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import { parseTeamRelations, partitionSlotsIntoWaves, type TeamRelationEdge } from "./analyst-team-topology";
@@ -1015,13 +1016,22 @@ async function runAnalystTeamCore(params: {
           signal,
           ...(persistInstanceId !== undefined ? { agentInstanceId: persistInstanceId } : {}),
         });
+        // 解析交接信封（thesis/metrics/data_refs/handoffs…）落 payloadJson.handoff，供下游程序化消费。
+        const analystHandoff =
+          parseHandoffEnvelope(signal.structured ?? null) ??
+          parseHandoffEnvelope(
+            typeof (signal.dataSnapshot as Record<string, unknown> | undefined)?.rawResponse ===
+              "string"
+              ? ((signal.dataSnapshot as Record<string, unknown>).rawResponse as string)
+              : null
+          );
         await logResearchTeamInteraction({
           workflowRunId,
           fromRole: slot.role,
           toRole: "orchestrator",
           kind: "llm_message",
           contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 3500)}`,
-          payloadJson: { phase: "analyst_report", ticker },
+          payloadJson: { phase: "analyst_report", ticker, ...(analystHandoff ? { handoff: analystHandoff } : {}) },
         });
         // coding-agent 式即时点评：每个分析师一回来，Orchestrator 对用户说一句（toRole=user）。
         {

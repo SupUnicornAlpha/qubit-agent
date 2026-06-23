@@ -22,10 +22,10 @@ html[data-qb-style="sci-fi-hud"] {
   --qb-separator: rgba(148, 163, 184, 0.28);
   --qb-body-fg: #e5f2ff;
 
-  --qb-topbar-bg: rgba(2, 6, 23, 0.88);
-  --qb-workbench-toolbar-bg: rgba(15, 23, 42, 0.82);
+  --qb-topbar-bg: rgba(2, 6, 23, 0.94);
+  --qb-workbench-toolbar-bg: rgba(15, 23, 42, 0.94);
   --qb-segmented-active-bg: rgba(14, 165, 233, 0.35);
-  --qb-glass-panel: rgba(15, 23, 42, 0.72);
+  --qb-glass-panel: rgba(15, 23, 42, 0.92);
   --qb-glass-border: rgba(34, 211, 238, 0.45);
 
   --qb-scrollbar-track: rgba(15, 23, 42, 0.6);
