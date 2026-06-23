@@ -33,6 +33,7 @@ import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import { parseLlmConfigJson } from "../llm/agent-llm-config";
+import { invokeWithFallback, resolveLlmForAgent } from "../llm/llm-router";
 import { resolveRoleReasoner } from "./role-reasoner";
 import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers";
 import type { RuntimeAgentDefinition } from "../types";
@@ -265,6 +266,45 @@ function parseJsonSignalFromText(
 }
 
 /**
+ * #2 末轮强制信号守卫（测评复盘 2026-06-23）：分析师 ReAct 跑完但未以合法 signal JSON 收口
+ * （常因数据/工具反复失败耗尽迭代，最后一条是「下一步调用理由」而非结论）。这里做一次极简
+ * 「收口」LLM 调用，强制基于已有分析吐出严格 JSON 信号（证据不足则 hold + 低置信），把
+ * 「无信号」抢救成「带诚实置信度的信号」，避免融合层凭空缺一角色。best-effort，失败返回 null。
+ */
+async function salvageSignalFromText(input: {
+  def: RuntimeAgentDefinition;
+  role: AgentRole;
+  definitionId: string;
+  ticker: string;
+  failedText: string;
+}): Promise<RawAnalystSignal | null> {
+  try {
+    const { config } = await resolveLlmForAgent({
+      id: input.def.id,
+      role: input.role,
+      llmProvider: input.def.llmProvider,
+    });
+    const systemPrompt = `你是 ${input.role}。现在只做一件事：把下面的分析收口成一个严格 JSON 信号。只输出 JSON，不要任何解释、不要代码围栏。`;
+    const userPrompt = [
+      "你之前的分析（可能因数据/工具失败而未收口）：",
+      "",
+      stripToolCallSentinels(input.failedText).slice(0, 3500),
+      "",
+      '现在**只输出一个 JSON 对象**：{"signal":"buy|sell|hold","confidence":<0到1的数>,"reasoning":"<一句话依据>","thesis":"<一句话结论>"}。',
+      '若证据不足以支撑明确方向，就给 signal="hold" 且 confidence ≤ 0.4，并在 reasoning 里点明数据缺口。不要编造数据。',
+    ].join("\n");
+    const res = await invokeWithFallback(config, {
+      systemPrompt,
+      userPrompt,
+      onToken: () => {},
+    });
+    return await parseJsonSignalFromText(input.role, input.definitionId, input.ticker, res.answer);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 研究团队槽位：走 LangGraph ReAct（reason→act→工具），写入 tool_call_log / research_team_interaction。
  */
 export async function runResearchTeamSlotReact(params: {
@@ -360,6 +400,8 @@ export async function runResearchTeamSlotReact(params: {
       "3. **第 3 步**：自我审视：`第 1/2 步证据是否互相支撑？是否有反向信号被忽略？` —— 如有冲突，再调 1 个工具核实",
       "4. **最终回合**：综合所有观测输出 JSON 信号。除 `signal`(buy/sell/hold) + `confidence` + `reasoning` 外，**务必按你角色的输出 schema 补全结构化字段**（如 key_drivers / key_risks / catalysts / entry_zone / stop_loss / sentiment_score —— 带上具体数字/证据），这些会原样传给融合、辩论与下游成员。",
       "**禁止**：第 1 个工具调用之后立刻给 JSON 就停 —— 单数据源信号 confidence 上限 0.6。",
+      "**量化锚点要与场景匹配**：单标的分析用**单名可行**的锚点（指标读数 / 历史波动分位 / 单名 `backtest.run` Sharpe）；`RankIC`/`IC` 是**横截面**指标、需要 ≥3 只标的，**单标的别强行 `factor.autoEvaluate`**（会因横截面样本不足报 `no_factor_values` / `cross_section_too_few_symbols`，白白耗轮次）。锚点拿不到就**如实说明并下调 confidence**，不要在失败工具上空转。",
+      "**最后一轮务必收口**：无论数据是否齐全，最终都要给出 JSON 信号——数据不足就 `hold` + 低 confidence + 在 reasoning 标注缺口，**绝不要**因为还想再调工具而不输出结论。",
     ].join("\n");
   })();
   const userGoal = params.expectJsonSignal
@@ -428,8 +470,27 @@ export async function runResearchTeamSlotReact(params: {
     );
     if (signal === null) {
       /**
-       * LLM 没产出合法 signal JSON：不让它塌缩成 `hold @ 0.4`（旧 bug），
-       * 改为退化成 markdown 输出 —— fusion 会看到这个角色 missing，下游辩论
+       * #2 末轮强制信号守卫：先尝试「收口」抢救成合法信号（数据不足 → hold + 低置信），
+       * 避免分析师因数据/工具反复失败耗尽迭代而完全缺席融合（测评复盘 2026-06-23）。
+       */
+      const salvaged = await salvageSignalFromText({
+        def,
+        role: params.role,
+        definitionId: params.definitionId,
+        ticker: params.ticker,
+        failedText: text,
+      });
+      if (salvaged) {
+        return {
+          kind: "analyst",
+          payload: {
+            ...salvaged,
+            ...(agentInstanceId !== undefined ? { agentInstanceId } : {}),
+          },
+        };
+      }
+      /**
+       * 抢救仍失败：退化成 markdown 输出 —— fusion 会看到这个角色 missing，下游辩论
        * 触发器才能正确反映"信号缺失"，而不是"4 个角色都低置信"的假象。
        *
        * F-P0-04 修复：剥 `<TOOL_CALL>...</TOOL_CALL>` sentinel——displayable

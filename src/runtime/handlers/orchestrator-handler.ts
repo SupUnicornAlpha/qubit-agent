@@ -24,6 +24,7 @@ import {
   runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
 import { parseHitlApproval } from "../workflow/hitl-service";
+import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
@@ -185,13 +186,15 @@ const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg) => {
       const answer =
         pick(fr.answerText) || pick(fr.summary) || pick(fr.reasonText) || pick(obs.reasonText);
       if (answer) {
+        // 交接信封解析也覆盖 chat 路径的 orchestrator 答复（测评复盘 #3）。
+        const handoff = parseHandoffEnvelope(answer);
         await logResearchTeamInteraction({
           workflowRunId: msg.workflowId,
           fromRole: "orchestrator",
           toRole: "user",
           kind: "llm_message",
           contentText: answer.slice(0, 6000),
-          payloadJson: { phase: "orchestrator_chat_answer" },
+          payloadJson: { phase: "orchestrator_chat_answer", ...(handoff ? { handoff } : {}) },
         });
       }
     } catch (err) {
