@@ -34,7 +34,7 @@ html[data-qb-theme="dark-purple"] {
   --qb-sidebar-activity-bg: #111114;
   --qb-sidebar-explorer-bg: #141416;
   --qb-sidebar-border: #27272a;
-  --qb-sidebar-muted: #71717a;
+  --qb-sidebar-muted: #9ca3af;
   --qb-sidebar-text: #e4e4e7;
 
   --qb-brand-icon: #a78bfa;
@@ -64,7 +64,7 @@ html[data-qb-theme="dark-purple"] {
   --qb-main-input-bg: #18181b;
   --qb-main-input-border: #3f3f46;
   --qb-main-input-fg: var(--qb-body-fg);
-  --qb-main-meta: #71717a;
+  --qb-main-meta: #9ca3af;
   --qb-kline-root-bg: #09090b;
   --qb-kline-header-border: #27272a;
   --qb-kline-embedded-bar-bg: #111114;

@@ -26,8 +26,8 @@
 }
 
 .qb-topbar__subtitle {
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: 0.01em;
   color: #636366;
 }
@@ -300,8 +300,8 @@
   border: 1px solid rgba(63, 63, 70, 0.95);
   background: #1f1f23;
   color: #aeaeb2;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
   transition:
@@ -314,7 +314,7 @@
 .qb-chip--sm {
   padding: 3px 8px;
   min-height: 0;
-  font-size: 11px;
+  font-size: 12px;
   border-radius: 6px;
 }
 
@@ -348,7 +348,7 @@
   border: 1px solid #2563eb;
   background: var(--qb-blue);
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
@@ -387,7 +387,7 @@
   border: 1px solid #6d28d9;
   background: #7c3aed;
   color: #fafafa;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
   cursor: pointer;
@@ -426,8 +426,8 @@
   border: 1px solid rgba(72, 72, 76, 0.95);
   background: #2a2a2e;
   color: #e5e5ea;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
   white-space: nowrap;
@@ -467,8 +467,8 @@
   border: 1px solid rgba(84, 84, 88, 0.55);
   background: rgba(255, 255, 255, 0.04);
   color: #d1d1d6;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
   transition:
@@ -501,7 +501,7 @@
 .qb-btn--compact {
   padding: 5px 10px;
   min-height: 26px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .qb-btn--icon-xs {
@@ -524,7 +524,7 @@
 .qb-dock-tab {
   padding: 10px 16px;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   border: none;
   background: transparent;
   color: #8e8e93;
@@ -583,7 +583,7 @@
 }
 
 .qb-btn-mini {
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px 9px;
   min-height: 26px;
   box-sizing: border-box;
@@ -592,7 +592,7 @@
   background: #252529;
   color: #e4e4e7;
   cursor: pointer;
-  font-weight: 500;
+  font-weight: 600;
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
@@ -616,8 +616,8 @@
   padding: 10px 12px;
   color: #e4e4e7;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
@@ -668,7 +668,7 @@
   border: 1px solid #166534;
   background: #052e16;
   color: #bbf7d0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.12s var(--qb-ease-out);
@@ -690,7 +690,7 @@
   border: 1px solid #991b1b;
   background: #450a0a;
   color: #fecaca;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.12s var(--qb-ease-out);
@@ -735,7 +735,7 @@
 
 .qb-agent-hero__sub {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: 13px;
   color: #8e8e93;
   line-height: 1.45;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
@@ -757,7 +757,7 @@
 }
 
 .qb-agent-badge {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   padding: 4px 10px;
   border-radius: 999px;
@@ -782,7 +782,7 @@
 }
 
 .qb-agent-help {
-  font-size: 11px;
+  font-size: 12px;
   color: #71717a;
   line-height: 1.5;
   margin: 0 0 12px;
@@ -803,8 +803,8 @@
   gap: 6px;
   padding: 6px 11px;
   border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 600;
   border: 1px solid rgba(72, 72, 76, 0.9);
   background: rgba(255, 255, 255, 0.04);
   color: #aeaeb2;
@@ -873,7 +873,7 @@
   display: inline-block;
   padding: 0 6px;
   border-radius: 6px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 16px;
   letter-spacing: 0.2px;
@@ -890,7 +890,7 @@
   border-radius: var(--qb-radius-sm);
   border: 1px solid #2a2a2e;
   background: #0a0a0c;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
   color: #a1a1aa;
   overflow: auto;
@@ -901,7 +901,7 @@
 .qb-callout {
   border-radius: 8px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   border: 1px solid transparent;
 }
@@ -981,7 +981,7 @@
   background: transparent;
   color: #a1a1aa;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   font-family: inherit;
   transition:

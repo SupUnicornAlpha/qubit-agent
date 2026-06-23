@@ -37,20 +37,20 @@ html[data-qb-style="sci-fi-hud"] {
   --qb-scrollbar-border: rgba(34, 211, 238, 0.15);
   --qb-scrollbar-thumb-border: transparent;
 
-  --qb-sidebar-nav-bg: rgba(15, 23, 42, 0.75);
-  --qb-sidebar-activity-bg: rgba(2, 6, 23, 0.92);
-  --qb-sidebar-explorer-bg: rgba(15, 23, 42, 0.65);
+  --qb-sidebar-nav-bg: rgba(15, 23, 42, 0.94);
+  --qb-sidebar-activity-bg: rgba(2, 6, 23, 0.95);
+  --qb-sidebar-explorer-bg: rgba(15, 23, 42, 0.92);
   --qb-sidebar-border: rgba(34, 211, 238, 0.35);
-  --qb-sidebar-muted: #94a3b8;
+  --qb-sidebar-muted: #b6c2d4;
   --qb-sidebar-text: #e5f2ff;
   --qb-brand-icon: #22d3ee;
   --qb-brand-icon-glow: rgba(34, 211, 238, 0.9);
 
-  --qb-main-input-bg: rgba(15, 23, 42, 0.85);
-  --qb-main-card-bg: rgba(15, 23, 42, 0.72);
-  --qb-main-panel-bg: rgba(2, 6, 23, 0.5);
-  --qb-chat-main-bg: rgba(15, 23, 42, 0.78);
-  --qb-chat-sidebar-bg: rgba(15, 23, 42, 0.85);
+  --qb-main-input-bg: rgba(15, 23, 42, 0.95);
+  --qb-main-card-bg: rgba(15, 23, 42, 0.92);
+  --qb-main-panel-bg: rgba(2, 6, 23, 0.85);
+  --qb-chat-main-bg: rgba(15, 23, 42, 0.94);
+  --qb-chat-sidebar-bg: rgba(15, 23, 42, 0.95);
   --qb-radius-lg: 2px;
   --qb-radius-md: 2px;
   --qb-radius-sm: 2px;
@@ -109,8 +109,8 @@ html[data-qb-style="sci-fi-hud"] .qb-app-root::before {
   z-index: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+    linear-gradient(rgba(148, 163, 184, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.035) 1px, transparent 1px);
   background-size: 24px 24px;
   mask-image: radial-gradient(ellipse 90% 80% at 50% 40%, black 20%, transparent 75%);
 }
@@ -125,7 +125,7 @@ html[data-qb-style="sci-fi-hud"] .qb-app-root::after {
   z-index: 0;
   pointer-events: none;
   background: linear-gradient(90deg, transparent, var(--qb-hud-cyan), transparent);
-  opacity: 0.25;
+  opacity: 0.12;
   animation: qb-hud-scan 8s linear infinite;
 }
 
@@ -143,8 +143,8 @@ html[data-qb-style="sci-fi-hud"] .qb-topbar {
   box-shadow:
     0 1px 0 rgba(34, 211, 238, 0.2),
     0 8px 32px rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 html[data-qb-style="sci-fi-hud"] .qb-topbar::after {
@@ -167,9 +167,9 @@ html[data-qb-style="sci-fi-hud"] .qb-logo-text {
 }
 
 html[data-qb-style="sci-fi-hud"] .qb-topbar__subtitle {
-  color: #94a3b8;
+  color: #b6c2d4;
   letter-spacing: 0.06em;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
 }
 
@@ -181,8 +181,8 @@ html[data-qb-style="sci-fi-hud"] .qb-segmented {
   position: relative;
   background: var(--qb-glass-panel);
   border: 1px solid var(--qb-glass-border);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   box-shadow:
     0 0 0 1px rgba(34, 211, 238, 0.08) inset,
     0 4px 24px rgba(0, 0, 0, 0.35);
@@ -218,8 +218,8 @@ html[data-qb-style="sci-fi-hud"] .qb-sidebar-shell,
 html[data-qb-style="sci-fi-hud"] .qb-explorer-panel {
   background: var(--qb-sidebar-nav-bg);
   border-color: var(--qb-glass-border);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 html[data-qb-style="sci-fi-hud"] .qb-nav-row--active {
@@ -256,7 +256,7 @@ html[data-qb-style="sci-fi-hud"] .qb-btn-primary {
   box-shadow: 0 0 12px rgba(34, 211, 238, 0.2);
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
