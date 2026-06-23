@@ -1,5 +1,6 @@
 import { backendFetchUrl, httpDelete, httpGet, httpPatch, httpPost, httpPut } from "./client";
 import type {
+  AgentLoopKind,
   AgentSkillRecord,
   AgentSkillState,
   AgentSummary,
@@ -710,12 +711,16 @@ export async function injectWorkflowMessage(
 export async function runOrchestratorChat(
   workflowRunId: string,
   message: string,
-  hitlMode?: "off" | "ai" | "always"
+  hitlMode?: "off" | "ai" | "always",
+  roleReasoner?: AgentLoopKind,
+  experience?: "native" | "coding_agent"
 ): Promise<{ status: string }> {
   const res = await httpPost<{ ok: boolean; status: string }>("/api/v1/analyst/orchestrator-chat", {
     workflowRunId,
     message,
     ...(hitlMode ? { hitlMode } : {}),
+    ...(roleReasoner ? { roleReasoner } : {}),
+    ...(experience ? { experience } : {}),
   });
   return { status: res.status ?? "running" };
 }
@@ -2097,6 +2102,8 @@ export async function startAnalystTeam(params: {
    *   - 'always'：每次规划都触发（v1 行为）
    */
   hitlMode?: "off" | "ai" | "always";
+  /** Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（写入 loopOptions.roleReasoner）。 */
+  roleReasoner?: AgentLoopKind;
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
@@ -2256,6 +2263,8 @@ export async function runAnalystTeam(params: {
   hitlTeam?: boolean;
   /** v2：HITL 三档模式 */
   hitlMode?: "off" | "ai" | "always";
+  /** Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（写入 loopOptions.roleReasoner）。 */
+  roleReasoner?: AgentLoopKind;
   onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
   onResume?: () => void;
 }): Promise<AnalystTeamResult> {

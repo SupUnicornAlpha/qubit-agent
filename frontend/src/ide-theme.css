@@ -1067,6 +1067,17 @@
   animation: team-loader-spin 0.85s linear infinite;
 }
 
+/* Coding-Agent 体验 P1：计划卡片 in_progress 步骤 + 当前活动行的呼吸高亮 */
+@keyframes qbPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .team-loader-spin {
     animation: none;

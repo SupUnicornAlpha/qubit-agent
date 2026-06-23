@@ -3,7 +3,9 @@ import { and, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
-import { agentProfile } from "../../db/sqlite/schema";
+import { agentProfile, workflowRun } from "../../db/sqlite/schema";
+import { stepStreamBus } from "../langgraph/event-stream";
+import { parseLoopOptionsJson } from "../../types/loop";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
@@ -96,6 +98,138 @@ function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "e
 
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
+  /**
+   * update_plan —— 编排器维护一份对用户可见的分步计划/TODO（Coding-Agent 体验 P1，
+   * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。写入 workflow_run.plan_json 并经 SSE
+   * `type:"plan"` 推流给右栏「计划卡片」。best-effort：失败仅 warn，不影响主推理
+   * （计划是 UI 投影，不是权威态）。params: { steps: [{id?,title,status?,note?}] }，
+   * status ∈ pending|in_progress|done|skipped。
+   */
+  update_plan: async (ctx, params) => {
+    const rawSteps = Array.isArray(params.steps) ? params.steps : [];
+    const allowed = new Set(["pending", "in_progress", "done", "skipped"]);
+    const steps: Array<{ id: string; title: string; status: string; note?: string }> = [];
+    for (let i = 0; i < rawSteps.length && steps.length < 20; i++) {
+      const o = (rawSteps[i] ?? {}) as Record<string, unknown>;
+      const title = String(o.title ?? o.text ?? "").trim();
+      if (!title) continue;
+      const status = String(o.status ?? "pending").trim();
+      const note = o.note != null ? String(o.note).slice(0, 300) : undefined;
+      steps.push({
+        id: (String(o.id ?? "").trim() || `s${i + 1}`).slice(0, 40),
+        title: title.slice(0, 200),
+        status: allowed.has(status) ? status : "pending",
+        ...(note ? { note } : {}),
+      });
+    }
+    const plan = { steps, updatedAt: new Date().toISOString() };
+    try {
+      const db = await getDb();
+      await db
+        .update(workflowRun)
+        .set({ planJson: plan as never })
+        .where(eq(workflowRun.id, ctx.workflowId));
+    } catch (e) {
+      console.warn(`[update_plan] persist failed: ${(e as Error).message}`);
+    }
+    try {
+      stepStreamBus.publish({
+        runId: ctx.runId,
+        workflowId: ctx.workflowId,
+        traceId: ctx.traceId,
+        role: ctx.definition.role,
+        type: "plan",
+        stepIndex: 0,
+        ts: Date.now(),
+        payload: plan,
+      });
+    } catch (e) {
+      console.warn(`[update_plan] publish failed: ${(e as Error).message}`);
+    }
+    return {
+      ok: true,
+      stepCount: steps.length,
+      done: steps.filter((s) => s.status === "done").length,
+    };
+  },
+  /**
+   * web.fetch —— 读取一个公开网页/接口并返回正文文本（Coding-Agent 体验 P2，
+   * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。**只读外联**，带 SSRF 防护：
+   *   - 仅 http/https；
+   *   - 拒绝 loopback / 内网 / 云元数据地址（防 SSRF）；
+   *   - 15s 超时 + 2MB 读取上限 + 正文截断。
+   * 调用已由 act.ts 的 tool_call_log 记录（无需额外审计）。
+   * params: { url: string, maxChars?: number }。
+   * 注：基于 hostname 字面判定，残留 DNS-rebinding 风险（桌面单租户场景威胁较低）。
+   */
+  "web.fetch": async (_ctx, params) => {
+    const raw = String(params.url ?? params.uri ?? "").trim();
+    if (!raw) return { ok: false, error: "url is required" };
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      return { ok: false, error: `invalid url: ${raw}` };
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      return { ok: false, error: `unsupported scheme: ${u.protocol}（仅支持 http/https）` };
+    }
+    const host = u.hostname.toLowerCase();
+    const blocked =
+      host === "localhost" ||
+      host === "0.0.0.0" ||
+      host === "::1" ||
+      host === "metadata.google.internal" ||
+      host.endsWith(".local") ||
+      /^127\./.test(host) ||
+      /^10\./.test(host) ||
+      /^192\.168\./.test(host) ||
+      /^169\.254\./.test(host) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+      host.startsWith("fc") ||
+      host.startsWith("fd");
+    if (blocked) {
+      return { ok: false, error: `blocked host（loopback/内网/元数据地址）：${host}` };
+    }
+    const maxChars = Math.min(Number(params.maxChars) || 20000, 60000);
+    const maxBytes = 2 * 1024 * 1024;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch(u.toString(), {
+        method: "GET",
+        redirect: "follow",
+        signal: controller.signal,
+        headers: { "User-Agent": "qubit-agent/web.fetch" },
+      });
+      const ctype = res.headers.get("content-type") ?? "";
+      const buf = await res.arrayBuffer();
+      const bytes = buf.byteLength;
+      let text = new TextDecoder().decode(buf.slice(0, maxBytes));
+      // 极简正文化：HTML 去 script/style/标签（不引依赖，够给 LLM 读）。
+      if (/html/i.test(ctype) || /^\s*</.test(text)) {
+        text = text
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+      return {
+        ok: res.ok,
+        status: res.status,
+        contentType: ctype,
+        bytes,
+        truncated: text.length > maxChars,
+        text: text.slice(0, maxChars),
+      };
+    } catch (e) {
+      const msg = (e as Error).name === "AbortError" ? "timeout (15s)" : (e as Error).message;
+      return { ok: false, error: `fetch failed: ${msg}` };
+    } finally {
+      clearTimeout(timer);
+    }
+  },
   assign_task: async (ctx, params) => {
     const role = String(params.role ?? params.targetRole ?? "").trim() as AgentRole;
     if (!role) throw new Error("assign_task: role is required");
@@ -2171,6 +2305,21 @@ async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<str
   return row?.projectId ?? "";
 }
 
+/** Coding-Agent 体验 P3：读 workflow_run.loop_options_json，判断是否 coding_agent 编排档。 */
+async function isCodingAgentExperience(workflowId: string): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select({ loopOptionsJson: workflowRun.loopOptionsJson })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowId))
+      .limit(1);
+    return parseLoopOptionsJson(rows[0]?.loopOptionsJson).experience === "coding_agent";
+  } catch {
+    return false; // 读失败按默认 native 处理（保守，rails 不变）
+  }
+}
+
 async function dispatchTeamAgentTask(
   ctx: BuiltinToolContext,
   role: AgentRole,
@@ -2179,7 +2328,20 @@ async function dispatchTeamAgentTask(
   const targetRole = resolveDispatchRole(role);
   const topology = await loadOrchestratorTopologyForWorkflow(ctx.workflowId);
   if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
-    assertTopologyTargetAllowed(topology, targetRole);
+    // Coding-Agent 体验 P3：coding_agent 档放开「角色集锁死」——编排器可按需拉入团队
+    // 拓扑之外的任意有效专家角色（像 coding agent 临时召唤子 agent）。默认 native 档保持
+    // 严格校验（rails 不变）。dispatchTaskToRole 仍会对不存在定义的角色报运行时错误兜底。
+    const codingAgent = await isCodingAgentExperience(ctx.workflowId);
+    if (codingAgent) {
+      const onEdge = topology.targets.some((t) => t.role === targetRole);
+      if (!onEdge) {
+        console.info(
+          `[dispatchTeamAgentTask] coding_agent 档：放行拓扑外角色 '${targetRole}'（按需拉入专家）`
+        );
+      }
+    } else {
+      assertTopologyTargetAllowed(topology, targetRole);
+    }
   }
 
   const goal = String(params.goal ?? params.message ?? "").trim();

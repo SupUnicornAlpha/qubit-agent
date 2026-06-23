@@ -6,6 +6,7 @@ import {
   chatMessageWorkflowLink,
   workflowRun,
 } from "../../../db/sqlite/schema";
+import { parseLoopOptionsJson } from "../../../types/loop";
 import {
   type PromptMode,
   getDataDir,
@@ -30,6 +31,7 @@ import {
 } from "../../llm/token-budget";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { buildSuggestedCallChainBlock } from "../../orchestration/topology-dispatch";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
@@ -85,18 +87,24 @@ export interface ReasonNodeOutput {
 
 async function loadWorkflowMeta(
   workflowId: string
-): Promise<{ projectId: string | null; sessionId: string | null; source: string | null }> {
+): Promise<{
+  projectId: string | null;
+  sessionId: string | null;
+  source: string | null;
+  experience: "native" | "coding_agent";
+}> {
   const db = await getDb();
   const wfRows = await db
     .select({
       projectId: workflowRun.projectId,
       sessionId: workflowRun.sessionId,
       source: workflowRun.source,
+      loopOptionsJson: workflowRun.loopOptionsJson,
     })
     .from(workflowRun)
     .where(eq(workflowRun.id, workflowId))
     .limit(1);
-  if (!wfRows[0]) return { projectId: null, sessionId: null, source: null };
+  if (!wfRows[0]) return { projectId: null, sessionId: null, source: null, experience: "native" };
   return {
     projectId: wfRows[0].projectId ?? null,
     sessionId: wfRows[0].sessionId ?? null,
@@ -105,6 +113,11 @@ async function loadWorkflowMeta(
      * 其它 source（manual/api/scheduler/trader/research-team 直接派的）不需要这段提示。
      */
     source: wfRows[0].source ?? null,
+    /** Coding-Agent 体验 P3：coding_agent 档给编排器加「可按需拉团队外专家」提示。 */
+    experience:
+      parseLoopOptionsJson(wfRows[0].loopOptionsJson).experience === "coding_agent"
+        ? "coding_agent"
+        : "native",
   };
 }
 
@@ -258,12 +271,17 @@ export async function reasonNode(
    *
    * 查询失败不阻塞（典型场景：异步 cleanup 后 workflow 被删），降级到没注入。
    */
-  let workflowMeta: { projectId: string | null; sessionId: string | null; source: string | null } =
-    {
-      projectId: null,
-      sessionId: null,
-      source: null,
-    };
+  let workflowMeta: {
+    projectId: string | null;
+    sessionId: string | null;
+    source: string | null;
+    experience: "native" | "coding_agent";
+  } = {
+    projectId: null,
+    sessionId: null,
+    source: null,
+    experience: "native",
+  };
   try {
     workflowMeta = await loadWorkflowMeta(state.workflowId);
   } catch {
@@ -502,7 +520,17 @@ export async function reasonNode(
       basePrompt: baseSystem,
       declaredSkillIds: state.agentDefinition.skills ?? [],
     });
-    const topologyOrCollab = effective.topologyPromptBlock || effective.collaborationHint;
+    /**
+     * Coding-Agent 体验 P3：coding_agent 档把「编组拓扑」从硬性执行图降级为给 Orchestrator
+     * 的**建议调用链**（可照做/调整/跳过/补人）。其余档位沿用原拓扑调度块（与画布一致、严格）。
+     */
+    const topologyBlock =
+      state.agentDefinition.role === "orchestrator" &&
+      workflowMeta.experience === "coding_agent" &&
+      effective.topologyContext
+        ? buildSuggestedCallChainBlock(effective.topologyContext)
+        : effective.topologyPromptBlock;
+    const topologyOrCollab = topologyBlock || effective.collaborationHint;
     const systemWithTopology = topologyOrCollab
       ? `${fsiSystem}\n\n---\n${topologyOrCollab}`
       : fsiSystem;
@@ -527,9 +555,26 @@ export async function reasonNode(
      */
     const systemWithDispatch =
       state.agentDefinition.role === "orchestrator"
-        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，绝不要默认跑全队**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只需要某一维度补充 → 用 \`assign_task\` 把子任务派给对应分析师（如 analyst_technical / analyst_macro），等回包后整合。\n- 确需系统性重新研究 → 才调 \`run_analyst_team\` 跑全队，完成后用 \`summarize_team_decision\` 汇总。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。`
+        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，绝不要默认跑全队**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只需要某一维度补充 → 用 \`assign_task\` 把子任务派给对应分析师（如 analyst_technical / analyst_macro），等回包后整合。\n- 确需系统性重新研究 → 才调 \`run_analyst_team\` 跑全队，完成后用 \`summarize_team_decision\` 汇总。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 计划可见（重要）\n当任务需要**多步**（派单、跑团队、连续工具调用）时：**动手前先调 \`update_plan\` 列出 3-5 步**（每步一句话，status=pending），让用户看到你打算怎么做；**每完成一步就再调一次 \`update_plan\`**把该步 status 改为 done、下一步改为 in_progress。一句话能答的简单问题**不必**建计划。${
+            workflowMeta.experience === "coding_agent"
+              ? "\n\n## 按需召唤专家（Coding-Agent 档）\n当前为 coding_agent 编排档：若需要团队当前编组里没有的专长，**可以直接 \`assign_task\` 把任务派给那个专家角色**（如临时需要 `analyst_macro` / `risk` 等），系统会按需拉它进来——像随手叫一个子 agent。不必拘泥于既定编组。"
+              : ""
+          }`
         : systemWithHitl;
-    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithDispatch, {
+    /**
+     * Coding-Agent 体验 P2（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：运行时注入「工作方式」块。
+     * 放在 reason 装配层（而非 seed prompt）→ 对所有角色即时生效、无需 re-seed DB。
+     * 目标：把「按配方硬跑」变成「像 coding agent 一样增量推进、失败自适应、先查后做」。
+     */
+    const WORK_STYLE_BLOCK = [
+      "## 工作方式（重要）",
+      "- **增量推进**：把任务拆成小步，一步步来；每步只做一件事，拿到结果再决定下一步，不要一次性假设整条流程。",
+      "- **先查后做**：动手前若有 `search_memory` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；有就复用，别重复劳动。",
+      "- **失败自适应**：工具报错或返回空/异常时，**不要原样重试同一调用**——换参数/换途径/换工具，或降级到更简单的做法；连续两次仍不通，就把卡点讲清楚并交回上层（编排器 / 用户），不要空转。",
+      "- **诚实**：没有数据支撑就说不确定；不要编造工具结果或假装已完成。",
+    ].join("\n");
+    const systemWithWorkStyle = `${systemWithDispatch}\n\n---\n${WORK_STYLE_BLOCK}`;
+    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithWorkStyle, {
       tools,
       mcpServers,
     });

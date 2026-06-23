@@ -18,7 +18,8 @@ export async function resolveEffectiveAgentTools(
   def: RuntimeAgentDefinition,
   workflowId: string
 ): Promise<EffectiveToolsResult> {
-  const base = def.tools ?? [];
+  // Coding-Agent 体验 P2：web.fetch（只读外联原语）对所有角色始终可用，无需 re-seed DB。
+  const base = [...new Set([...(def.tools ?? []), "web.fetch"])];
   if (def.role !== "orchestrator") {
     return {
       tools: base,
@@ -30,7 +31,9 @@ export async function resolveEffectiveAgentTools(
 
   const topologyContext = await loadOrchestratorTopologyForWorkflow(workflowId);
   const topologyTools = topologyContext?.toolNames ?? [];
-  const tools = [...new Set([...base, ...topologyTools])];
+  // Coding-Agent 体验 P1：update_plan 是编排器通用的「计划/TODO」元工具，始终注入，
+  // 无需依赖 agent_definition.tools 是否声明（避免再 seed 一遍 DB）。
+  const tools = [...new Set([...base, ...topologyTools, "update_plan"])];
   const topologyPromptBlock = buildTopologyToolsPromptBlock(topologyContext);
 
   return {

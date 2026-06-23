@@ -89,6 +89,12 @@ export const workflowRun = sqliteTable("workflow_run", {
   cliSessionResumedCount: integer("cli_session_resumed_count").notNull().default(0),
   /** 研究场景标签（见迁移 0040_research_scenario；Drizzle 侧不声明 FK 避免循环） */
   researchScenarioId: text("research_scenario_id"),
+  /**
+   * Coding-Agent 体验改造（docs/CODING_AGENT_EXPERIENCE_DESIGN.md P1）：编排器对用户
+   * 可见的分步计划/TODO 快照（update_plan 工具写入）。刷新/重连后据此水合右栏计划卡片。
+   * 形如 `{ steps: Array<{id,title,status,note?}>, updatedAt }`；null = 暂无计划，向后兼容。
+   */
+  planJson: text("plan_json", { mode: "json" }),
 });
 
 /** Saved from IDE: indicator draft + optional Python signal (buy/sell) for backtest / live reuse. */

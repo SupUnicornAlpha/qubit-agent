@@ -9,7 +9,11 @@ export type StepEventType =
   | "step_persisted"
   | "hitl_request"
   | "final"
-  | "error";
+  | "error"
+  // Coding-Agent 体验改造（docs/CODING_AGENT_EXPERIENCE_DESIGN.md P1）：
+  // plan = 编排器对用户可见的分步计划/TODO 快照；tool_rationale = 调用工具前的「为何调/预期」。
+  | "plan"
+  | "tool_rationale";
 
 export interface StepStreamEvent {
   runId: string;
