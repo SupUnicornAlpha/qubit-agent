@@ -173,6 +173,36 @@ export function buildTopologyToolsPromptBlock(ctx: OrchestratorTopologyContext |
   return lines.join("\n");
 }
 
+/**
+ * Coding-Agent 体验 P3（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：把编组拓扑渲染成给
+ * Orchestrator 的「**建议调用链**」——不是硬性执行图，而是推荐顺序。Orchestrator 是决策者，
+ * 可照做 / 调整 / 跳过 / 按需补人（coding_agent 档已放开拓扑外 assign_task）。编组依然存在，
+ * 只是从「执行图」降级为「建议」。
+ */
+export function buildSuggestedCallChainBlock(ctx: OrchestratorTopologyContext | null): string {
+  if (!ctx || ctx.targets.length === 0) {
+    return [
+      "## 建议的调用链（仅供参考）",
+      "当前工作流没有预设编组拓扑。你自主决定调用哪些专家：`assign_task` 派给任意已启用角色，或 `run_analyst_team` 一次性跑四维分析师 MSA。",
+    ].join("\n");
+  }
+  const chain = ctx.targets
+    .map(
+      (t, i) =>
+        `${i + 1}. \`${t.toolName}\`（${t.role} / ${t.agentName}${t.enabled ? "" : " · 已禁用"}）`
+    )
+    .join("  →  ");
+  return [
+    "## 建议的调用链（来自编组拓扑 · 仅供参考 · 非强制）",
+    "下面是当前编组给你的**推荐**派单链。你是决策者：可以照此推进，也可以调整顺序、跳过某步、或按需补人（本档位允许 `assign_task` 拉编组之外的专家）。",
+    "",
+    `建议顺序：${chain}`,
+    "",
+    "推荐阶段：分析师并行加深 → MSA 融合（`run_analyst_team` 或逐个 `call_team_*` 后 `fuse_signals`）→ research → backtest → risk。",
+    "原则：能少调就少调，信息够了就收口给用户；开工前用 `update_plan` 把你**选定**的链落成对用户可见的计划，每步完成即更新。",
+  ].join("\n");
+}
+
 /** Orchestrator 静态基础工具（不含拓扑边，拓扑工具由 sync 写入 DB） */
 export const ORCHESTRATOR_BASE_TOOLS = [
   "assign_task",

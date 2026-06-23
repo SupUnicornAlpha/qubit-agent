@@ -31,6 +31,7 @@ import {
 } from "../../llm/token-budget";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { buildSuggestedCallChainBlock } from "../../orchestration/topology-dispatch";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
@@ -519,7 +520,17 @@ export async function reasonNode(
       basePrompt: baseSystem,
       declaredSkillIds: state.agentDefinition.skills ?? [],
     });
-    const topologyOrCollab = effective.topologyPromptBlock || effective.collaborationHint;
+    /**
+     * Coding-Agent 体验 P3：coding_agent 档把「编组拓扑」从硬性执行图降级为给 Orchestrator
+     * 的**建议调用链**（可照做/调整/跳过/补人）。其余档位沿用原拓扑调度块（与画布一致、严格）。
+     */
+    const topologyBlock =
+      state.agentDefinition.role === "orchestrator" &&
+      workflowMeta.experience === "coding_agent" &&
+      effective.topologyContext
+        ? buildSuggestedCallChainBlock(effective.topologyContext)
+        : effective.topologyPromptBlock;
+    const topologyOrCollab = topologyBlock || effective.collaborationHint;
     const systemWithTopology = topologyOrCollab
       ? `${fsiSystem}\n\n---\n${topologyOrCollab}`
       : fsiSystem;
