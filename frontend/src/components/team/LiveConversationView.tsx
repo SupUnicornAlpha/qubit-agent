@@ -68,6 +68,11 @@ export type LiveConversationViewProps = {
    * 「Orchestrator → 用户」的正式输出。子 Agent 之间的完整对话请点拓扑节点查看。
    */
   collapseA2AFromRole?: string;
+  /**
+   * 点击交接信封里的产物引用（data_refs，如 factor / strategy_version）时回调。
+   * 不传则产物引用渲染为静态标签（仍展示，不可点）。
+   */
+  onOpenRef?: (ref: { kind: string; id: string }) => void;
 };
 
 function formatTs(ts: string): string {
@@ -92,6 +97,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
   contentMaxLength = 4000,
   emptyText,
   collapseA2AFromRole,
+  onOpenRef,
 }) => {
   const { t } = useTranslation();
   const sorted = useMemo(() => {
@@ -141,7 +147,15 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
             if (ev.toRole === TEAM_BROADCAST_ROLE) {
               return <BroadcastBanner key={ev.id} ev={ev} maxLen={contentMaxLength} />;
             }
-            return <MessageRow key={ev.id} ev={ev} selfRole={selfRole} maxLen={contentMaxLength} />;
+            return (
+              <MessageRow
+                key={ev.id}
+                ev={ev}
+                selfRole={selfRole}
+                maxLen={contentMaxLength}
+                onOpenRef={onOpenRef}
+              />
+            );
           case "debate":
             return <DebateBanner key={ev.id} ev={ev} maxLen={contentMaxLength} />;
           case "system":
@@ -223,7 +237,8 @@ const MessageRow: FC<{
   ev: LiveConversationMessageEvent;
   selfRole: string;
   maxLen: number;
-}> = ({ ev, selfRole, maxLen }) => {
+  onOpenRef?: (ref: { kind: string; id: string }) => void;
+}> = ({ ev, selfRole, maxLen, onOpenRef }) => {
   const { t } = useTranslation();
   const isSelf = ev.fromRole === selfRole;
   const accent = avatarColorFor(ev.fromRole).bg;
@@ -323,10 +338,131 @@ const MessageRow: FC<{
               {content}
             </>
           )}
+          <HandoffBlock payload={ev.payloadJson} onOpenRef={onOpenRef} />
         </div>
       </div>
     </div>
   );
+};
+
+/** 交接信封视图：把 payloadJson.handoff 的 metrics 渲染成小表、data_refs 渲染成（可点的）产物标签。 */
+const REF_LABEL: Record<string, string> = {
+  factor: "因子",
+  strategy_version: "策略",
+  backtest_run: "回测",
+  order_intent: "订单",
+  dataset: "数据集",
+  report: "报告",
+};
+const OPENABLE_REF = new Set(["factor", "strategy_version"]);
+
+const HandoffBlock: FC<{
+  payload: unknown;
+  onOpenRef?: (ref: { kind: string; id: string }) => void;
+}> = ({ payload, onOpenRef }) => {
+  const h =
+    payload && typeof payload === "object"
+      ? ((payload as Record<string, unknown>).handoff as Record<string, unknown> | undefined)
+      : undefined;
+  if (!h || typeof h !== "object") return null;
+  const metrics = Array.isArray(h.metrics)
+    ? (h.metrics as Array<Record<string, unknown>>).filter((m) => m && typeof m === "object")
+    : [];
+  const refs = Array.isArray(h.data_refs)
+    ? (h.data_refs as Array<Record<string, unknown>>).filter((r) => r && typeof r === "object")
+    : [];
+  if (metrics.length === 0 && refs.length === 0) return null;
+
+  return (
+    <div style={handoffStyles.box}>
+      {metrics.length > 0 ? (
+        <table style={handoffStyles.table}>
+          <thead>
+            <tr>
+              <th style={handoffStyles.th}>指标</th>
+              <th style={handoffStyles.th}>值</th>
+              <th style={handoffStyles.th}>时点</th>
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.slice(0, 12).map((m, i) => (
+              <tr key={`${String(m.name)}-${i}`}>
+                <td style={handoffStyles.td}>{String(m.name ?? "")}</td>
+                <td style={{ ...handoffStyles.td, color: "#e4e4e7", fontVariantNumeric: "tabular-nums" }}>
+                  {String(m.value ?? "")}
+                  {m.unit ? ` ${String(m.unit)}` : ""}
+                </td>
+                <td style={{ ...handoffStyles.td, color: "#71717a" }}>{m.asof ? String(m.asof) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+      {refs.length > 0 ? (
+        <div style={handoffStyles.refRow}>
+          {refs.slice(0, 12).map((r, i) => {
+            const kind = String(r.kind ?? "");
+            const id = String(r.id ?? "");
+            if (!kind || !id) return null;
+            const label = `${REF_LABEL[kind] ?? kind}:${id}`;
+            const openable = !!onOpenRef && OPENABLE_REF.has(kind);
+            return openable ? (
+              <button
+                key={`${kind}-${id}-${i}`}
+                type="button"
+                style={{ ...handoffStyles.chip, ...handoffStyles.chipOpenable }}
+                title={`打开${REF_LABEL[kind] ?? kind} ${id}`}
+                onClick={() => onOpenRef?.({ kind, id })}
+              >
+                {label} ↗
+              </button>
+            ) : (
+              <span key={`${kind}-${id}-${i}`} style={handoffStyles.chip} title={r.note ? String(r.note) : label}>
+                {label}
+              </span>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+const handoffStyles: Record<string, CSSProperties> = {
+  box: {
+    marginTop: 6,
+    paddingTop: 6,
+    borderTop: "1px dashed rgba(148,163,184,0.25)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  table: { borderCollapse: "collapse", fontSize: 11, width: "100%" },
+  th: {
+    textAlign: "left",
+    color: "#94a3b8",
+    fontWeight: 600,
+    padding: "1px 8px 3px 0",
+    borderBottom: "1px solid rgba(148,163,184,0.2)",
+  },
+  td: { padding: "2px 8px 2px 0", color: "#a1a1aa", whiteSpace: "nowrap" },
+  refRow: { display: "flex", flexWrap: "wrap", gap: 5 },
+  chip: {
+    fontSize: 10.5,
+    padding: "1px 7px",
+    borderRadius: 10,
+    border: "1px solid rgba(148,163,184,0.3)",
+    color: "#cbd5e1",
+    background: "rgba(148,163,184,0.08)",
+    fontFamily: "inherit",
+    whiteSpace: "nowrap",
+  },
+  chipOpenable: {
+    borderColor: "rgba(96,165,250,0.5)",
+    color: "#93c5fd",
+    background: "rgba(96,165,250,0.12)",
+    cursor: "pointer",
+  },
 };
 
 /**

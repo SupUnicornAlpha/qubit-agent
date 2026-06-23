@@ -323,6 +323,12 @@ export function OrchestratorChatPanel({
           selfRole="orchestrator"
           contentMaxLength={6000}
           collapseA2AFromRole="orchestrator"
+          onOpenRef={(ref) => {
+            // 交接信封里的产物引用 → 复用产物打开逻辑（factor / strategy_version）。
+            const kind =
+              ref.kind === "factor" ? "factor" : ref.kind === "strategy_version" ? "strategy" : null;
+            if (kind) onOpenArtifact({ id: ref.id, kind, title: ref.id });
+          }}
           emptyText={
             !wfId
               ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"

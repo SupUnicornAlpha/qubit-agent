@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseHandoffEnvelope } from "../handoff-envelope";
+import { formatHandoffEnvelopeBlock, parseHandoffEnvelope } from "../handoff-envelope";
 
 describe("parseHandoffEnvelope", () => {
   test("parses trailing fenced json envelope from a markdown report", () => {
@@ -66,5 +66,28 @@ describe("parseHandoffEnvelope", () => {
   test("does not throw on malformed json fence", () => {
     expect(() => parseHandoffEnvelope("```json\n{bad json,,,}\n```")).not.toThrow();
     expect(parseHandoffEnvelope("```json\n{bad json,,,}\n```")).toBeNull();
+  });
+});
+
+describe("formatHandoffEnvelopeBlock", () => {
+  test("renders compact structured block with metrics table + data_refs", () => {
+    const block = formatHandoffEnvelopeBlock({
+      thesis: "偏多",
+      metrics: [{ name: "sharpe", value: 1.2, asof: "2026-06-22", source: "backtest.run" }],
+      data_refs: [{ kind: "backtest_run", id: "job_abc", note: "全样本" }],
+      handoffs: [{ role: "risk", ask: "看集中度" }],
+      falsifiers: ["OOS Sharpe<0.5"],
+    });
+    expect(block).toContain("**结论**：偏多");
+    expect(block).toContain("| 指标 | 值 | 时点 | 来源 |");
+    expect(block).toContain("| sharpe | 1.2 | 2026-06-22 | backtest.run |");
+    expect(block).toContain("`backtest_run:job_abc`（全样本）");
+    expect(block).toContain("risk ← 看集中度");
+    expect(block).toContain("OOS Sharpe<0.5");
+  });
+
+  test("returns empty string for null/empty envelope", () => {
+    expect(formatHandoffEnvelopeBlock(null)).toBe("");
+    expect(formatHandoffEnvelopeBlock({})).toBe("");
   });
 });

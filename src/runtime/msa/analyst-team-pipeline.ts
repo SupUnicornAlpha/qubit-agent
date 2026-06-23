@@ -21,7 +21,11 @@ import type { AnalystSignalValue } from "../../types/entities";
 import { exportStrategyScriptToWorkflowDir } from "../strategy/strategy-script-files";
 import { runLlmGateway } from "../llm/gateway";
 import { loadModelConfig } from "../config/model-config";
-import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
+import {
+  type HandoffEnvelope,
+  formatHandoffEnvelopeBlock,
+  parseHandoffEnvelope,
+} from "../research-team/handoff-envelope";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import {
   HITL_HINT_DELIMITER,
@@ -808,7 +812,8 @@ export async function runPostFusionPipeline(input: {
    *
    * 现在把上游 body 截断后塞进下一个 slot 的 context，让链路真正串起来。
    */
-  const handoffSections: Array<{ role: AgentRole; body: string }> = [];
+  const handoffSections: Array<{ role: AgentRole; body: string; handoff?: HandoffEnvelope | null }> =
+    [];
 
   const orderedAux = orderPostFusionSlotsByTopology(input.auxSlots, input.relationEdges);
 
@@ -887,8 +892,11 @@ export async function runPostFusionPipeline(input: {
       }
     }
 
+    // 解析 markdown 报告末尾的 ```json``` 交接信封：既落 payloadJson.handoff（下游程序化消费），
+    // 也带进 handoffSections，让下一个 aux 角色的 context 收到结构化「速读摘要」而非纯正文。
+    const auxHandoff = parseHandoffEnvelope(body);
     auxSections.push({ role: slot.role, body });
-    handoffSections.push({ role: slot.role, body });
+    handoffSections.push({ role: slot.role, body, handoff: auxHandoff });
 
     /**
      * 这条 interaction 记录的是 **当前 slot 跑完后的输出 body**。
@@ -897,8 +905,6 @@ export async function runPostFusionPipeline(input: {
      * 也导致 buildWorkflowPriorOutputsContext 用 from_role 过滤时拿不到正确的角色产出。
      * 正确语义：本轮 slot.role 把成果汇报给 msa（后续 fuseSignals / report 阶段）。
      */
-    // 解析 markdown 报告末尾的 ```json``` 交接信封 → payloadJson.handoff（下游程序化消费）。
-    const auxHandoff = parseHandoffEnvelope(body);
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
       fromRole: slot.role,
@@ -923,7 +929,7 @@ export async function runPostFusionPipeline(input: {
  * 导出以便单测覆盖 handoff 拼接格式 / 截断逻辑。
  */
 export function formatHandoffSections(
-  sections: Array<{ role: AgentRole; body: string }>
+  sections: Array<{ role: AgentRole; body: string; handoff?: HandoffEnvelope | null }>
 ): string {
   if (sections.length === 0) return "";
   const blocks = sections.map((s) => {
@@ -933,7 +939,10 @@ export function formatHandoffSections(
       trimmed.length > max
         ? `${trimmed.slice(0, max)}\n\n（...为节省 token 已截断，完整 body 见数据库 research_team_interaction 表）`
         : trimmed;
-    return `### 来自 ${s.role}\n\n${clipped}`;
+    // 上游若给了结构化交接信封，把它作为「速读摘要」置于正文之前（结论 + 关键数据表 + 产物指针）。
+    const envBlock = formatHandoffEnvelopeBlock(s.handoff ?? null);
+    const head = envBlock ? `${envBlock}\n\n---\n\n` : "";
+    return `### 来自 ${s.role}\n\n${head}${clipped}`;
   });
   return [
     "",

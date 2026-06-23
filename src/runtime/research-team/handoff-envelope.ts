@@ -216,3 +216,35 @@ export function parseHandoffEnvelope(
 
   return Object.keys(env).length > 0 ? env : null;
 }
+
+/**
+ * 把归一化后的信封渲染成**紧凑的结构化 markdown 块**，用于注入下游角色的 context——
+ * 让下一个 Agent 拿到的不是一坨正文，而是「结论 + 关键数据表 + 产物指针 + 交接 + 证伪」。
+ * 仅渲染非空部分；无内容返回空串。
+ */
+export function formatHandoffEnvelopeBlock(env: HandoffEnvelope | null): string {
+  if (!env) return "";
+  const lines: string[] = [];
+  if (env.thesis) lines.push(`**结论**：${env.thesis}`);
+  if (env.metrics?.length) {
+    lines.push("", "**关键数据**：", "", "| 指标 | 值 | 时点 | 来源 |", "|---|---|---|---|");
+    for (const m of env.metrics) {
+      lines.push(
+        `| ${m.name} | ${m.value}${m.unit ? ` ${m.unit}` : ""} | ${m.asof ?? "-"} | ${m.source ?? "-"} |`
+      );
+    }
+  }
+  if (env.data_refs?.length) {
+    lines.push(
+      "",
+      `**产物引用**：${env.data_refs.map((r) => `\`${r.kind}:${r.id}\`${r.note ? `（${r.note}）` : ""}`).join("、")}`
+    );
+  }
+  if (env.handoffs?.length) {
+    lines.push("", `**交接请求**：${env.handoffs.map((h) => `${h.role} ← ${h.ask}`).join("；")}`);
+  }
+  if (env.falsifiers?.length) {
+    lines.push("", `**反方/证伪**：${env.falsifiers.join("；")}`);
+  }
+  return lines.join("\n");
+}
