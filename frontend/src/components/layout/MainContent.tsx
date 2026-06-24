@@ -5511,6 +5511,19 @@ const TeamDashboardPanel: FC = () => {
   }, [displayedLiveFeedRows, running, activeTab, liveFeedAutoFollow]);
 
   const teamGraphActivity = useMemo((): TeamGraphActivity => {
+    /**
+     * 终态短路（修：completed 工作流拓扑仍显示「运行中」）：若选中工作流已是终态
+     * （completed/failed/cancelled）且本会话没有正在主动跑它（running=false），则一律
+     * 视为静止——不点亮任何 hot role/edge、isRunning=false。否则后端未及时回收的「存活」
+     * 心跳会让已完成的图持续脉冲，误导用户以为 agent 还在跑。重跑时 running=true 会放行。
+     */
+    const wfRow = workflowOptions.find((w) => String(w.id) === workflowRunId);
+    const wfStatus = typeof wfRow?.status === "string" ? wfRow.status : "";
+    const wfTerminal =
+      wfStatus === "completed" || wfStatus === "failed" || wfStatus === "cancelled";
+    if (wfTerminal && !running) {
+      return { hotRoles: new Set<string>(), hotEdgeKeys: new Set<string>(), isRunning: false };
+    }
     const intr = filteredGraphDisplay?.interactions ?? [];
     const hotRoles = new Set<string>();
     const hotEdgeKeys = new Set<string>();
@@ -5563,7 +5576,7 @@ const TeamDashboardPanel: FC = () => {
       }
     }
     return { hotRoles, hotEdgeKeys, isRunning: running || hasAliveHeartbeat };
-  }, [filteredGraphDisplay?.interactions, running, agentHeartbeats]);
+  }, [filteredGraphDisplay?.interactions, running, agentHeartbeats, workflowOptions, workflowRunId]);
 
   const enabledResearchAnalystDefCount = useMemo(() => {
     if (agentDefBundles == null) return null;
