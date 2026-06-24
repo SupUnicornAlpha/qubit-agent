@@ -204,6 +204,18 @@ describe("GET /memory/experiences/:id (detail)", () => {
     expect(body.data.metadataJson.custom).toBe("value");
   });
 
+  // 回归：detail 端点须返回与列表同构的 DTO（尤其 `tags`，实体字段是 `tagsJson`）。
+  // 历史上 detail 直接回原始实体，前端访问 detail.tags.length 时 undefined → 整页崩溃。
+  test("命中 → 含列表 DTO 字段（tags / qualityScore 等），前端不会因缺字段崩溃", async () => {
+    const e = await seed({ summary: "s", tags: ["alpha", "beta"], qualityScore: 0.42 });
+    const { body } = await get(`/memory/experiences/${e.id}`);
+    expect(Array.isArray(body.data.tags)).toBe(true);
+    expect(body.data.tags).toEqual(["alpha", "beta"]);
+    expect(typeof body.data.qualityScore).toBe("number");
+    expect(body.data.summary).toBe("s");
+    expect(body.data).not.toHaveProperty("tagsJson");
+  });
+
   test("未命中 → 404", async () => {
     const { status, body } = await get("/memory/experiences/no-such-id");
     expect(status).toBe(404);

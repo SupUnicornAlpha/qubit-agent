@@ -60,8 +60,41 @@ import {
 import { getToolDiagnostics } from "../runtime/monitor/tools-diagnostics";
 import { type ToolKind, getToolsSummary } from "../runtime/monitor/tools-summary";
 import { getWorkflowObservability } from "../runtime/monitor/workflow-observability";
+import type { Experience } from "../types/entities";
 
 export const monitorRouter = new Hono();
+
+/**
+ * Experience 实体 → 列表 DTO。
+ * list 与 detail 端点共用同一套映射，避免字段命名/形状两端漂移
+ * （历史上 detail 直接回原始实体，导致前端拿不到 `tags`（实体是 `tagsJson`）而崩溃）。
+ */
+function toExperienceListItem(r: Experience) {
+  return {
+    id: r.id,
+    kind: r.kind,
+    subKind: r.subKind,
+    scope: r.scope,
+    scopeId: r.scopeId,
+    definitionId: r.definitionId,
+    visibility: r.visibility,
+    summary: r.contentJson.summary,
+    tags: r.tagsJson,
+    qualityScore: r.qualityScore,
+    useCount: r.useCount,
+    successCount: r.successCount,
+    failCount: r.failCount,
+    decayAt: r.decayAt,
+    validFrom: r.validFrom,
+    validTo: r.validTo,
+    sourceRunId: r.sourceRunId,
+    pinned: r.pinned,
+    embeddingState: (r.metadataJson.embeddingState as string | null) ?? null,
+    embeddingModel: (r.metadataJson.embeddingModel as string | null) ?? null,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  };
+}
 
 monitorRouter.get("/summary", async (c) => {
   const sessionId = c.req.query("sessionId");
@@ -937,31 +970,7 @@ monitorRouter.get("/memory/experiences", async (c) => {
   const sliced = filtered.slice(offset, offset + limit);
 
   // 列表端点：剥掉 body 减小 payload；前端要 body 走 detail 端点
-  const items = sliced.map((r) => ({
-    id: r.id,
-    kind: r.kind,
-    subKind: r.subKind,
-    scope: r.scope,
-    scopeId: r.scopeId,
-    definitionId: r.definitionId,
-    visibility: r.visibility,
-    summary: r.contentJson.summary,
-    tags: r.tagsJson,
-    qualityScore: r.qualityScore,
-    useCount: r.useCount,
-    successCount: r.successCount,
-    failCount: r.failCount,
-    decayAt: r.decayAt,
-    validFrom: r.validFrom,
-    validTo: r.validTo,
-    sourceRunId: r.sourceRunId,
-    sourceStepId: r.sourceStepId,
-    pinned: r.pinned,
-    embeddingState: r.metadataJson.embeddingState ?? null,
-    embeddingModel: r.metadataJson.embeddingModel ?? null,
-    createdAt: r.createdAt,
-    updatedAt: r.updatedAt,
-  }));
+  const items = sliced.map(toExperienceListItem);
 
   return c.json({
     ok: true,
@@ -979,7 +988,15 @@ monitorRouter.get("/memory/experiences/:id", async (c) => {
   const { getExperienceStore } = await import("../runtime/experience/experience-store");
   const exp = await getExperienceStore().findById(id);
   if (!exp) return c.json({ ok: false, error: "not_found" }, 404);
-  return c.json({ ok: true, data: exp });
+  // 复用列表映射（含 tags 等），再补完整 contentJson（含 body）+ metadataJson
+  return c.json({
+    ok: true,
+    data: {
+      ...toExperienceListItem(exp),
+      contentJson: exp.contentJson,
+      metadataJson: exp.metadataJson,
+    },
+  });
 });
 
 monitorRouter.get("/memory/experiences/:id/links", async (c) => {

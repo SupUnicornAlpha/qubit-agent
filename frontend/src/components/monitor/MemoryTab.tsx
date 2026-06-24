@@ -918,7 +918,7 @@ const MetaBadges: FC<{ detail: MemoryExperienceDetail }> = ({ detail }) => {
     items.push({ label: "embed", value: `${detail.embeddingState}${detail.embeddingModel ? ` · ${detail.embeddingModel}` : ""}` });
   }
   if (detail.decayAt) items.push({ label: "decay", value: fmtTs(detail.decayAt) });
-  if (detail.tags.length > 0) items.push({ label: "tags", value: detail.tags.join(", ") });
+  if (detail.tags?.length) items.push({ label: "tags", value: detail.tags.join(", ") });
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 11 }}>
       {items.map((i) => (
