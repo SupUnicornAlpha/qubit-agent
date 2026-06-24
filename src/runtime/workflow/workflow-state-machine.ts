@@ -20,9 +20,9 @@
  * 只是从"散点直写"挪到了"唯一函数 + 显式日志"。
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { workflowRun } from "../../db/sqlite/schema";
+import { agentInstance, workflowRun } from "../../db/sqlite/schema";
 
 export type WorkflowStatus =
   | "pending"
@@ -127,6 +127,32 @@ export async function setWorkflowState(
   }
 
   await db.update(workflowRun).set(patch).where(eq(workflowRun.id, workflowId));
+
+  /**
+   * 工作流终态时回收其 agent 实例：标 stopped + endedAt。
+   *
+   * 否则心跳派生逻辑（agent-heartbeat.ts: `alive = status !== "stopped" && !endedAt`）会把
+   * 已完成工作流的 agent 持续判活，前端拓扑误显示「运行中」（脉冲高亮 / isRunning=true）。
+   * 只更新「尚未 stopped 或缺 endedAt」的行，幂等、不覆盖已正确收口的实例。best-effort，
+   * 失败仅 warn，不影响工作流状态写入本身。
+   */
+  if (TERMINAL_STATUSES.has(toStatus)) {
+    try {
+      await db
+        .update(agentInstance)
+        .set({ status: "stopped", endedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(agentInstance.workflowRunId, workflowId),
+            or(ne(agentInstance.status, "stopped"), isNull(agentInstance.endedAt)),
+          ),
+        );
+    } catch (e) {
+      console.warn(
+        `[workflow-state] reap agent instances failed (workflowId=${workflowId}): ${(e as Error).message}`,
+      );
+    }
+  }
 
   return { previous, current: toStatus, transitionAllowed };
 }
