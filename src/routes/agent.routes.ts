@@ -1,6 +1,7 @@
 import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { reloadBuiltinConnectorsFromSettings } from "../connectors/bootstrap";
+import { invalidateWindBridge } from "../runtime/market/wind-klines";
 import { getDb } from "../db/sqlite/client";
 import {
   agentDefinition,
@@ -1071,6 +1072,7 @@ agentRouter.post("/builtin-connector-config", async (c) => {
     ...(body["qubit-data"] !== undefined ? { "qubit-data": body["qubit-data"] } : {}),
     ...(body["qubit-news"] !== undefined ? { "qubit-news": body["qubit-news"] } : {}),
   });
+  await invalidateWindBridge();
   const data = await reloadBuiltinConnectorsFromSettings();
   return c.json({ data });
 });

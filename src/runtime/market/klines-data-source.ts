@@ -15,6 +15,7 @@ export type KlinesDataSourceSetting =
   | "akshare"
   | "yfinance"
   | "binance_crypto"
+  | "wind"
   | "synthetic";
 
 /** Value exposed in `GET /market/klines` meta and used internally after resolution. */
@@ -25,6 +26,7 @@ export type KlinesDataSourceMeta =
   | "akshare"
   | "yfinance"
   | "binance_crypto"
+  | "wind"
   | "synthetic";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
@@ -37,6 +39,7 @@ export function parseKlinesDataSourceSetting(raw: unknown): KlinesDataSourceSett
     raw === "akshare" ||
     raw === "yfinance" ||
     raw === "binance_crypto" ||
+    raw === "wind" ||
     raw === "synthetic" ||
     raw === "auto"
   ) {
@@ -53,12 +56,17 @@ export function resolveEffectiveKlinesSource(params: {
   settings: BuiltinConnectorInitConfigs;
   period: FetchBarsParams["period"];
   hasTushareToken: boolean;
+  /** Wind 子进程 + 终端已连通（probe 或 healthcheck 通过） */
+  hasWindAvailable?: boolean;
   symbol?: string;
   exchange?: string;
 }): KlinesDataSourceMeta {
   const mode = parseKlinesDataSourceSetting(qubitDataSettings(params.settings).klinesDataSource);
   if (mode === "synthetic") return "synthetic";
   if (mode === "binance_crypto") return "binance_crypto";
+  if (mode === "wind") {
+    return params.hasWindAvailable ? "wind" : "synthetic";
+  }
   if (mode === "eastmoney") return "eastmoney";
   if (mode === "akshare") return "akshare";
   if (mode === "yfinance") return "yfinance";
@@ -76,8 +84,9 @@ export function resolveEffectiveKlinesSource(params: {
       ? isChinaAShareMarket(params.symbol, params.exchange ?? "")
       : false;
 
-  /** auto：加密 → Binance；日线有 Tushare token → Tushare；A 股/北交所 → 东方财富；否则 Yahoo */
+  /** auto：加密 → Binance；Wind 可用且 A 股 → Wind；日线有 Tushare token → Tushare；A 股 → 东方财富；否则 Yahoo */
   if (crypto) return "binance_crypto";
+  if (china && params.hasWindAvailable) return "wind";
   if (params.period === "1d" && params.hasTushareToken) return "tushare_daily";
   if (china) return "eastmoney";
   return "yahoo_chart";

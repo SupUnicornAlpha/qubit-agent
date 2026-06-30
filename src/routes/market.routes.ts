@@ -16,6 +16,13 @@ import { detectRegimeFromBars } from "../runtime/market/regime";
 import { runStructuredTune } from "../runtime/market/structured-tune";
 import { wrapKlinesThrownError } from "../runtime/market/klines-error";
 import { queryMarketNewsBrief } from "../runtime/market/news-brief-query";
+import {
+  getWindSessionStatus,
+  invalidateWindBridge,
+  loginWindSession,
+  reconnectWindSession,
+} from "../runtime/market/wind-klines";
+import { loadBuiltinConnectorSettings } from "../runtime/config/builtin-connector-settings";
 
 export const marketRouter = new Hono();
 
@@ -91,6 +98,65 @@ marketRouter.get("/klines", async (c) => {
           : 500;
     console.error("[market/klines]", e);
     return c.json({ ok: false, error: wrapped }, status);
+  }
+});
+
+/** Wind 登录态查询（需本地 Wind 终端 + WindPy）。 */
+marketRouter.get("/wind/session", async (c) => {
+  try {
+    const settings = await loadBuiltinConnectorSettings();
+    const session = await getWindSessionStatus(settings);
+    return c.json({ ok: true, data: session });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[market/wind/session]", e);
+    return c.json({ ok: false, error: msg }, 503);
+  }
+});
+
+/** 使用配置中心账号密码登录 Wind（或 body 覆盖）。 */
+marketRouter.post("/wind/session/login", async (c) => {
+  try {
+    const settings = await loadBuiltinConnectorSettings();
+    const body = (await c.req.json().catch(() => ({}))) as {
+      username?: string;
+      password?: string;
+      startWaitSec?: number;
+    };
+    const session = await loginWindSession(settings, {
+      ...(body.username ? { username: body.username } : {}),
+      ...(body.password ? { password: body.password } : {}),
+      ...(body.startWaitSec !== undefined ? { startWaitSec: Number(body.startWaitSec) } : {}),
+    });
+    return c.json({ ok: true, data: session });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[market/wind/session/login]", e);
+    return c.json({ ok: false, error: msg }, 503);
+  }
+});
+
+/** 断开并重连 Wind（复用已保存凭据或终端已有登录）。 */
+marketRouter.post("/wind/session/reconnect", async (c) => {
+  try {
+    const settings = await loadBuiltinConnectorSettings();
+    const session = await reconnectWindSession(settings);
+    return c.json({ ok: true, data: session });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[market/wind/session/reconnect]", e);
+    return c.json({ ok: false, error: msg }, 503);
+  }
+});
+
+/** 关闭 Wind 子进程（保存配置后也可调用以强制重建会话）。 */
+marketRouter.post("/wind/session/reset", async (c) => {
+  try {
+    await invalidateWindBridge();
+    return c.json({ ok: true, data: { reset: true } });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ ok: false, error: msg }, 500);
   }
 });
 

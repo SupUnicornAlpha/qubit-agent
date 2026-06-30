@@ -74,6 +74,44 @@ describe("symbolToYahooSymbol", () => {
 describe("resolveEffectiveKlinesSource", () => {
   const base = { "qubit-data": {}, "qubit-news": {} };
 
+  test("auto + wind username prefers wind for CN A-share", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: {
+          ...base,
+          "qubit-data": { klinesDataSource: "auto", windUsername: "demo" },
+        },
+        period: "1d",
+        hasTushareToken: true,
+        hasWindAvailable: true,
+        symbol: "600000",
+        exchange: "SH",
+      })
+    ).toBe("wind");
+  });
+
+  test("explicit wind mode when available", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "wind" } },
+        period: "1d",
+        hasTushareToken: false,
+        hasWindAvailable: true,
+      })
+    ).toBe("wind");
+  });
+
+  test("wind mode without availability falls back to synthetic", () => {
+    expect(
+      resolveEffectiveKlinesSource({
+        settings: { ...base, "qubit-data": { klinesDataSource: "wind" } },
+        period: "1d",
+        hasTushareToken: false,
+        hasWindAvailable: false,
+      })
+    ).toBe("synthetic");
+  });
+
   test("auto + token uses tushare for 1d", () => {
     expect(
       resolveEffectiveKlinesSource({

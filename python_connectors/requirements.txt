@@ -11,6 +11,8 @@ akshare>=1.12.0
 # fetch_earnings/fetch_asset_info on the qubit-data connector).
 yfinance>=0.2.40
 # tushare>=1.4.0
+# WindPy — bundled with Wind Financial Terminal; copy from Wind install dir or:
+#   pip install WindPy  (only works when Wind Terminal is installed on the machine)
 # baostock>=0.8.8
 
 # Backtest engines (install as needed)

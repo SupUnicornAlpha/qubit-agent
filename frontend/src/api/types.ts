@@ -21,9 +21,18 @@ export interface KlinesResponseMeta {
     | "akshare"
     | "yfinance"
     | "binance_crypto"
+    | "wind"
     | "synthetic";
   requestedLimit: number;
   returned: number;
+}
+
+export interface WindSessionStatus {
+  connected: boolean;
+  userId: string | null;
+  lastLoginAt: string | null;
+  message: string;
+  hasCredentials: boolean;
 }
 
 /** `GET /market/klines` 无数据或失败时的包装错误 */

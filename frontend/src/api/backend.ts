@@ -75,6 +75,7 @@ import type {
   KlinesErrorPayload,
   KlinesResponseMeta,
   MarketNewsBriefPayload,
+  WindSessionStatus,
   AgentDefinitionDraftRecord,
   OpenSkillMarketEntryDto,
   SkillMarketPageResult,
@@ -356,6 +357,45 @@ export async function getMarketNewsBrief(params: {
   if (params.limit !== undefined) q.set("limit", String(params.limit));
   return httpGet<{ ok: boolean; data?: MarketNewsBriefPayload; error?: string }>(
     `/api/v1/market/news-brief?${q.toString()}`
+  );
+}
+
+export async function getWindSessionStatus(): Promise<{
+  ok: boolean;
+  data?: WindSessionStatus;
+  error?: string;
+}> {
+  return httpGet<{ ok: boolean; data?: WindSessionStatus; error?: string }>(
+    "/api/v1/market/wind/session"
+  );
+}
+
+export async function loginWindSession(input?: {
+  username?: string;
+  password?: string;
+  startWaitSec?: number;
+}): Promise<{ ok: boolean; data?: WindSessionStatus; error?: string }> {
+  return httpPost<{ ok: boolean; data?: WindSessionStatus; error?: string }>(
+    "/api/v1/market/wind/session/login",
+    input ?? {}
+  );
+}
+
+export async function reconnectWindSession(): Promise<{
+  ok: boolean;
+  data?: WindSessionStatus;
+  error?: string;
+}> {
+  return httpPost<{ ok: boolean; data?: WindSessionStatus; error?: string }>(
+    "/api/v1/market/wind/session/reconnect",
+    {}
+  );
+}
+
+export async function resetWindSession(): Promise<{ ok: boolean; data?: { reset: boolean }; error?: string }> {
+  return httpPost<{ ok: boolean; data?: { reset: boolean }; error?: string }>(
+    "/api/v1/market/wind/session/reset",
+    {}
   );
 }
 

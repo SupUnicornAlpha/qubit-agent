@@ -12,6 +12,7 @@ import {
   resolveEffectiveKlinesSource,
   symbolToYahooSymbol,
 } from "../../runtime/market/klines-data-source";
+import { fetchWindBars, windConfigFromSettings } from "../../runtime/market/wind-klines";
 import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
 import {
   fetchYfinanceAssetInfo,
@@ -102,6 +103,15 @@ async function tushareCall(
   return json.data ?? {};
 }
 
+function hasWindIntent(
+  settings: BuiltinConnectorInitConfigs,
+  mode: ReturnType<typeof parseKlinesDataSourceSetting>
+): boolean {
+  if (mode === "wind") return true;
+  const cfg = windConfigFromSettings(settings);
+  return mode === "auto" && Boolean(cfg.username);
+}
+
 function tushareTokenFromSettings(
   settings: BuiltinConnectorInitConfigs,
   fallback?: string | undefined
@@ -155,16 +165,29 @@ export class QubitNativeDataConnector extends DataConnector {
     const liveSettings = await loadBuiltinConnectorSettings();
     const tokenLive = tushareTokenFromSettings(liveSettings, this.tushareToken);
     const hasToken = Boolean(tokenLive);
+    const klinesMode = parseKlinesDataSourceSetting(
+      (liveSettings["qubit-data"] as Record<string, unknown> | undefined)?.klinesDataSource
+    );
+    const windIntent = hasWindIntent(liveSettings, klinesMode);
     const daily = resolveEffectiveKlinesSource({
       settings: liveSettings,
       period: "1d",
       hasTushareToken: hasToken,
+      hasWindAvailable: windIntent,
     });
     const intraday = resolveEffectiveKlinesSource({
       settings: liveSettings,
       period: "5m",
       hasTushareToken: hasToken,
+      hasWindAvailable: windIntent,
     });
+    if (daily === "wind") {
+      return {
+        status: "healthy",
+        message:
+          "qubit-data: K 线 → Wind（需本地 Wind 终端 + WindPy；见配置中心 Wind 账号与登录态）",
+      };
+    }
     if (daily === "tushare_daily") {
       return {
         status: "healthy",
@@ -308,13 +331,44 @@ export class QubitNativeDataConnector extends DataConnector {
       typeof dataCfg.klinesDataSource === "string" ? dataCfg.klinesDataSource : undefined;
 
     const mode = parseKlinesDataSourceSetting(klinesRaw);
+    const windIntent = hasWindIntent(liveSettings, mode);
     const effective = resolveEffectiveKlinesSource({
       settings: liveSettings,
       period: params.period,
       hasTushareToken: hasTushare,
+      hasWindAvailable: windIntent,
       symbol: params.symbol,
       exchange: params.exchange,
     });
+
+    if (effective === "wind") {
+      try {
+        const bars = await fetchWindBars(params, liveSettings);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `Wind returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `Wind request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+      }
+      if (isChinaAShareMarket(params.symbol, params.exchange || "")) {
+        try {
+          const fallback = await fetchEastMoneyBars(params);
+          if (fallback.length > 0) {
+            console.warn(
+              `[qubit-data] Wind unavailable or empty; fell back to East Money for ${params.symbol}`
+            );
+            return fallback;
+          }
+        } catch {
+          /* logged below if still empty */
+        }
+      }
+      if (mode === "wind") return [];
+    }
 
     if (effective === "tushare_daily" && tokenLive) {
       try {
@@ -503,7 +557,11 @@ export class QubitNativeDataConnector extends DataConnector {
     }
 
     if (effective === "synthetic") {
-      if (mode === "tushare_daily" && !tokenLive) {
+      if (mode === "wind" && !windIntent) {
+        this.logFetchBarsEmpty(
+          `klinesDataSource=wind but Wind is not configured (symbol=${params.symbol})`
+        );
+      } else if (mode === "tushare_daily" && !tokenLive) {
         this.logFetchBarsEmpty(
           `klinesDataSource=tushare_daily but tushareToken is missing (symbol=${params.symbol})`
         );

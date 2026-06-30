@@ -24,6 +24,8 @@ const DATA_SOURCE_HINTS: Partial<Record<KlinesDataSourceMeta, string>> = {
   tushare_daily: "请确认 Tushare Token 有效，且标的为 A 股日线。",
   binance_crypto:
     "Binance 未返回数据：请确认交易对（如 BTCUSDT）、市场 CRYPTO，以及网络可访问 api.binance.com；测试网可在配置中启用 cryptoUseTestnet。",
+  wind:
+    "Wind 未返回数据：请确认本地已安装 Wind 终端并已登录，WindPy 可用；可在配置中心查看 Wind 登录态并尝试「重新连接」。",
   synthetic: "当前配置禁用了外部 K 线（synthetic）；请在配置中心调整 qubit-data.klinesDataSource。",
   yahoo_chart: "Yahoo 未返回数据：请检查代码、市场与周期是否匹配（如美股代码 + 市场 US）。",
 };

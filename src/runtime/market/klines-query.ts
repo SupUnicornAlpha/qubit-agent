@@ -1,7 +1,8 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { connectorRegistry } from "../../connectors/registry";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
-import { resolveEffectiveKlinesSource, type KlinesDataSourceMeta } from "./klines-data-source";
+import { parseKlinesDataSourceSetting, resolveEffectiveKlinesSource, type KlinesDataSourceMeta } from "./klines-data-source";
+import { windConfigFromSettings } from "./wind-klines";
 import {
   buildKlinesConnectorUnavailableError,
   buildKlinesEmptyError,
@@ -148,10 +149,17 @@ export async function queryKlines(params: {
   const settings = await loadBuiltinConnectorSettings();
   const token = (settings["qubit-data"] as Record<string, unknown> | undefined)?.tushareToken;
   const hasTushare = typeof token === "string" && token.trim().length > 0;
+  const klinesMode = parseKlinesDataSourceSetting(
+    (settings["qubit-data"] as Record<string, unknown> | undefined)?.klinesDataSource
+  );
+  const windCfg = windConfigFromSettings(settings);
+  const hasWindAvailable =
+    klinesMode === "wind" || (klinesMode === "auto" && Boolean(windCfg.username));
   const dataSource = resolveEffectiveKlinesSource({
     settings,
     period,
     hasTushareToken: hasTushare,
+    hasWindAvailable,
     symbol,
     exchange,
   });

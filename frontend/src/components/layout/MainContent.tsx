@@ -28,6 +28,9 @@ import {
   listScreenerRuns,
   getModelConfig,
   getBuiltinConnectorConfig,
+  getWindSessionStatus,
+  loginWindSession,
+  reconnectWindSession,
   getIntentExecutionView,
   getSessionAgentsBoard,
   getSessionA2AMessages,
@@ -1535,6 +1538,18 @@ const ConfigPanel: FC = () => {
   const [modelApiKey, setModelApiKey] = useState("");
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [tushareToken, setTushareToken] = useState("");
+  const [windUsername, setWindUsername] = useState("");
+  const [windPassword, setWindPassword] = useState("");
+  const [windStartWaitSec, setWindStartWaitSec] = useState(60);
+  const [windAutoLogin, setWindAutoLogin] = useState(true);
+  const [windSession, setWindSession] = useState<{
+    connected: boolean;
+    userId: string | null;
+    message: string;
+    lastLoginAt: string | null;
+  } | null>(null);
+  const [windSessionBusy, setWindSessionBusy] = useState(false);
+  const [windSessionError, setWindSessionError] = useState("");
   const [klinesDataSource, setKlinesDataSource] = useState<
     | "auto"
     | "tushare_daily"
@@ -1543,6 +1558,7 @@ const ConfigPanel: FC = () => {
     | "akshare"
     | "yfinance"
     | "binance_crypto"
+    | "wind"
     | "synthetic"
   >("auto");
   const [cryptoUseTestnet, setCryptoUseTestnet] = useState(false);
@@ -1617,6 +1633,17 @@ const ConfigPanel: FC = () => {
     const d = cfg["qubit-data"] ?? {};
     const n = cfg["qubit-news"] ?? {};
     setTushareToken(typeof d.tushareToken === "string" ? d.tushareToken : "");
+    setWindUsername(typeof d.windUsername === "string" ? d.windUsername : "");
+    setWindPassword(typeof d.windPassword === "string" ? d.windPassword : "");
+    const wsw = d["windStartWaitSec"];
+    setWindStartWaitSec(
+      typeof wsw === "number" && Number.isFinite(wsw)
+        ? wsw
+        : typeof wsw === "string" && Number.isFinite(Number(wsw))
+          ? Number(wsw)
+          : 60
+    );
+    setWindAutoLogin(d.windAutoLogin === false ? false : true);
     const kds = d["klinesDataSource"];
     setKlinesDataSource(
       kds === "tushare_daily" ||
@@ -1625,6 +1652,7 @@ const ConfigPanel: FC = () => {
       kds === "akshare" ||
       kds === "yfinance" ||
       kds === "binance_crypto" ||
+      kds === "wind" ||
       kds === "synthetic" ||
       kds === "auto"
         ? kds
@@ -2479,7 +2507,7 @@ const ConfigPanel: FC = () => {
               在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
               <br />
               K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为 A 股优先{" "}
-              <strong>东方财富</strong>；加密货币（市场 CRYPTO / 如 BTCUSDT）走 <strong>Binance</strong> 公开 API；
+              <strong>东方财富</strong>；配置 Wind 账号后 A 股可走 <strong>Wind</strong>；加密货币走 <strong>Binance</strong>；
               有 Tushare token 时 A 股日线可走 Tushare；美股等走 Yahoo。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
@@ -2498,12 +2526,14 @@ const ConfigPanel: FC = () => {
                         | "akshare"
                         | "yfinance"
                         | "binance_crypto"
+                        | "wind"
                         | "synthetic"
                     )
                   }
                 >
-                  <option value="auto">自动（A 股 → 东方财富；加密 → Binance；有 Tushare → 日线；其它 → Yahoo）</option>
+                  <option value="auto">自动（A 股 → 东方财富 / 有 Wind 账号 → Wind；加密 → Binance；有 Tushare → 日线；其它 → Yahoo）</option>
                   <option value="eastmoney">东方财富（A 股日线 + 分钟/小时，免费）</option>
+                  <option value="wind">Wind 万得（需本地终端 + WindPy）</option>
                   <option value="binance_crypto">Binance（加密货币 K 线 / 报价，公开 API）</option>
                   <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
                   <option value="yahoo_chart">Yahoo Finance Chart（TS 直连，免依赖）</option>
@@ -2529,6 +2559,120 @@ const ConfigPanel: FC = () => {
                 placeholder="Tushare token（仅在选择 Tushare 或自动且有 token 时使用）"
               />
             </div>
+            {(klinesDataSource === "wind" || klinesDataSource === "auto") ? (
+              <div style={{ ...styles.form, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <input
+                  style={{ ...styles.input, minWidth: 160 }}
+                  value={windUsername}
+                  onChange={(e) => setWindUsername(e.target.value)}
+                  placeholder="Wind 账号（可选，终端已登录可留空）"
+                  autoComplete="username"
+                />
+                <input
+                  style={{ ...styles.input, minWidth: 160 }}
+                  type="password"
+                  value={windPassword}
+                  onChange={(e) => setWindPassword(e.target.value)}
+                  placeholder="Wind 密码（可选）"
+                  autoComplete="current-password"
+                />
+                <input
+                  style={{ ...styles.input, width: 100 }}
+                  type="number"
+                  min={10}
+                  max={300}
+                  value={windStartWaitSec}
+                  onChange={(e) => setWindStartWaitSec(Number(e.target.value))}
+                  placeholder="等待秒"
+                  title="w.start 等待 Wind 终端响应的最长时间（秒）"
+                />
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--qb-body-fg)" }}>
+                  <input
+                    type="checkbox"
+                    checked={windAutoLogin}
+                    onChange={(e) => setWindAutoLogin(e.target.checked)}
+                  />
+                  凭据自动登录
+                </label>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  disabled={windSessionBusy}
+                  onClick={() => {
+                    setWindSessionBusy(true);
+                    setWindSessionError("");
+                    void getWindSessionStatus()
+                      .then((res) => {
+                        if (res.ok && res.data) {
+                          setWindSession(res.data);
+                        } else {
+                          setWindSessionError(res.error ?? "查询 Wind 登录态失败");
+                        }
+                      })
+                      .catch((e) => setWindSessionError(e instanceof Error ? e.message : String(e)))
+                      .finally(() => setWindSessionBusy(false));
+                  }}
+                >
+                  {windSessionBusy ? "查询中…" : "查询登录态"}
+                </button>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  disabled={windSessionBusy}
+                  onClick={() => {
+                    setWindSessionBusy(true);
+                    setWindSessionError("");
+                    void loginWindSession({
+                      username: windUsername.trim() || undefined,
+                      password: windPassword.trim() || undefined,
+                      startWaitSec: windStartWaitSec,
+                    })
+                      .then((res) => {
+                        if (res.ok && res.data) {
+                          setWindSession(res.data);
+                        } else {
+                          setWindSessionError(res.error ?? "Wind 登录失败");
+                        }
+                      })
+                      .catch((e) => setWindSessionError(e instanceof Error ? e.message : String(e)))
+                      .finally(() => setWindSessionBusy(false));
+                  }}
+                >
+                  登录 Wind
+                </button>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  disabled={windSessionBusy}
+                  onClick={() => {
+                    setWindSessionBusy(true);
+                    setWindSessionError("");
+                    void reconnectWindSession()
+                      .then((res) => {
+                        if (res.ok && res.data) {
+                          setWindSession(res.data);
+                        } else {
+                          setWindSessionError(res.error ?? "Wind 重连失败");
+                        }
+                      })
+                      .catch((e) => setWindSessionError(e instanceof Error ? e.message : String(e)))
+                      .finally(() => setWindSessionBusy(false));
+                  }}
+                >
+                  重新连接
+                </button>
+                {windSession ? (
+                  <span style={{ fontSize: 12, color: windSession.connected ? "var(--qb-success-fg, #0a0)" : "var(--qb-warn-fg, #a60)" }}>
+                    {windSession.connected
+                      ? `已连接${windSession.userId ? ` · ${windSession.userId}` : ""}`
+                      : `未连接 · ${windSession.message}`}
+                  </span>
+                ) : null}
+                {windSessionError ? (
+                  <span style={{ fontSize: 12, color: "var(--qb-danger-fg, #c00)" }}>{windSessionError}</span>
+                ) : null}
+              </div>
+            ) : null}
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <input
                 style={{ ...styles.input, minWidth: 200 }}
@@ -2572,6 +2716,10 @@ const ConfigPanel: FC = () => {
                     "qubit-data": {
                       klinesDataSource,
                       tushareToken: tushareToken.trim() || undefined,
+                      windUsername: windUsername.trim() || undefined,
+                      windPassword: windPassword.trim() || undefined,
+                      windStartWaitSec,
+                      windAutoLogin: windAutoLogin || undefined,
                       cryptoUseTestnet: cryptoUseTestnet || undefined,
                     },
                     "qubit-news": {
@@ -4707,6 +4855,11 @@ const TeamDashboardPanel: FC = () => {
   const [analystAgentGroupId, setAnalystAgentGroupId] = useState("");
   const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
   const [running, setRunning] = useState(false);
+  /**
+   * orchestrator-chat 路径专用：composer 对话走 ReAct（非 handleRun 全队分析）。
+   * 与 `running` 分离，避免右栏误判为「注入模式」；仍驱动轮询 / 运行徽标 / 进度收口。
+   */
+  const [orchestratorChatInFlight, setOrchestratorChatInFlight] = useState(false);
   const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 工作流面板的成功/中性提示（区别于上方红色 error callout）。 */
@@ -5036,20 +5189,25 @@ const TeamDashboardPanel: FC = () => {
     loadTeamGraphRef.current = loadTeamGraph;
   }, [loadTeamGraph]);
 
+  const refreshWorkflowOptionsRef = useRef(refreshWorkflowOptions);
+  useEffect(() => {
+    refreshWorkflowOptionsRef.current = refreshWorkflowOptions;
+  }, [refreshWorkflowOptions]);
+
   useEffect(() => {
     if (activeTab !== "research") return;
     void loadTeamGraph();
   }, [activeTab, loadTeamGraph]);
 
-  /** 分析进行中轮询拓扑与台账，便于对话拓扑页实时更新 */
+  /** 分析 / orchestrator-chat 进行中轮询拓扑与台账，便于右栏对话实时更新 */
   useEffect(() => {
-    if (!running || !workflowRunId.trim()) return;
+    if ((!running && !orchestratorChatInFlight) || !workflowRunId.trim()) return;
     void loadTeamGraph({ preserveSelection: true });
     const id = window.setInterval(() => {
       void loadTeamGraph({ preserveSelection: true });
     }, 2500);
     return () => window.clearInterval(id);
-  }, [running, workflowRunId, loadTeamGraph]);
+  }, [running, orchestratorChatInFlight, workflowRunId, loadTeamGraph]);
 
   const participatingAnalystRoles = useMemo(() => {
     if (!agentDefBundles?.length || participatingAnalystDefinitionIds.length === 0) return [];
@@ -5410,10 +5568,13 @@ const TeamDashboardPanel: FC = () => {
           settledRolesRef.current.add(role);
           if (event.type === "final" || event.type === "error") {
             setActiveRationale(null); // 终态：清掉「正在调用」活动行
-            // chat 路径无轮询：终态后 orchestrator→user 答复才落库，防抖回拉两次带出它。
+            setOrchestratorChatInFlight(false);
+            setRunProgress("");
+            // chat 路径：终态后 orchestrator→user 答复才落库，防抖回拉 + 刷新工作流状态。
             if (settleRefetchTimerRef.current) clearTimeout(settleRefetchTimerRef.current);
             settleRefetchTimerRef.current = setTimeout(() => {
               void loadTeamGraphRef.current({ preserveSelection: true });
+              void refreshWorkflowOptionsRef.current();
               setTimeout(() => {
                 void loadTeamGraphRef.current({ preserveSelection: true });
               }, 1500);
@@ -6013,11 +6174,14 @@ const TeamDashboardPanel: FC = () => {
     setError(null);
     pushUserEcho(msg);
     setTeamAnalysisContext("");
+    setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
     try {
       await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner, teamExperience);
+      void refreshWorkflowOptions();
       void loadTeamGraph({ preserveSelection: true });
     } catch (e) {
+      setOrchestratorChatInFlight(false);
       setError((e as Error).message);
       setRunProgress("");
     }
@@ -8481,6 +8645,7 @@ const TeamDashboardPanel: FC = () => {
             workflowRunId={workflowRunId}
             events={displayedLiveFeedEvents}
             running={running}
+            chatInFlight={orchestratorChatInFlight}
             completed={selectedWorkflowCompleted}
             runProgress={runProgress}
             hitlMode={teamHitlMode}
