@@ -67,6 +67,8 @@ export interface FetchBarsParams {
   startDate: string;
   endDate: string;
   adjustType?: "none" | "pre" | "post";
+  /** ReAct harness 注入；用于 workflow 级 K 线缓存 */
+  workflowRunId?: string;
 }
 
 export interface BarData {

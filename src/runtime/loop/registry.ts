@@ -1,7 +1,7 @@
 import type { AgentLoopKind } from "../../types/loop";
+import { a2aLoopDriver } from "../a2a/a2a-loop-driver";
 import { ClaudeCliLoopDriver, CodexCliLoopDriver } from "./cli-loop-driver";
 import type { LoopDriver } from "./loop-driver";
-import { nativeLoopDriver } from "./native-loop-driver";
 
 const claude = new ClaudeCliLoopDriver();
 const codex = new CodexCliLoopDriver();
@@ -13,6 +13,7 @@ export function getLoopDriver(kind: AgentLoopKind): LoopDriver {
     case "codex_cli":
       return codex;
     default:
-      return nativeLoopDriver;
+      // native / 未知 kind 均走 A2A（GraphRunner 已删除）
+      return a2aLoopDriver;
   }
 }

@@ -71,11 +71,10 @@ describe("tool-catalog lifecycle metadata", () => {
     }
   });
 
-  test("connector kind keeps connector field intact when lifecycle is attached", () => {
-    const bars = find("fetch_bars");
-    expect(bars.kind).toBe("connector");
-    expect(bars.connector).toBe("qubit-data");
-    expect(bars.lifecycle).toBe("deprecated");
+  test("migrated research alias 无 connector 路由时仍出现在 catalog", () => {
+    const cf = find("compute_factors");
+    expect(cf.lifecycle).toBe("deprecated");
+    expect(cf.replacedBy).toBe("factor.compute");
   });
 });
 

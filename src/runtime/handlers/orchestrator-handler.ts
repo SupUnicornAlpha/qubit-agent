@@ -94,9 +94,9 @@ const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) 
 };
 
 /**
- * research_team_execute：与 Graph 路径短路共用 `runTeamResearchAndPersist` helper，
- * 由 helper 负责 status / HITL pause / SSE final / analyst job。这里只负责把
- * outcome 翻译成 A2A TASK_RESULT 消息。
+ * research_team_execute：Orchestrator 研究团队**短路**（不经 ReAct loop）。
+ * 与 ReAct 内 `run_analyst_team` 工具共用 `runTeamResearchAndPersist` 真理源；
+ * 差异仅在于入口（HTTP 按钮 → TASK_ASSIGN vs LLM 工具调用）。
  */
 const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payload) => {
   const parsed = parseResearchTeamExecutePayload(payload);

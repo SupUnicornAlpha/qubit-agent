@@ -35,7 +35,10 @@ import {
   computeSma,
   snapshotIndicators,
 } from "../market/technical-indicators";
-import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam } from "../msa/analyst-team";
+import {
+  buildParsedResearchTeamFromToolParams,
+  runResearchTeamFromOrchestrator,
+} from "../msa/research-team-execute";
 import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
 import { type RawAnalystSignal, fuseSignals } from "../msa/signal-fusion";
 import {
@@ -237,46 +240,20 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   run_analyst_team: async (ctx, params) => {
-    const ticker =
-      String(params.ticker ?? ctx.inboundPayload?.["ticker"] ?? "").trim() || undefined;
-    const scopeRaw = params.scope ?? ctx.inboundPayload?.["scope"];
-    const scope =
-      scopeRaw && typeof scopeRaw === "object" && !Array.isArray(scopeRaw)
-        ? (scopeRaw as Record<string, unknown>)
-        : undefined;
-    const context = String(params.context ?? ctx.inboundPayload?.["goal"] ?? "");
-    const rolesRaw = params.analyst_roles;
-    const analystRoles =
-      Array.isArray(rolesRaw) && rolesRaw.length > 0
-        ? (rolesRaw.filter(
-            (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
-          ) as AgentRole[])
-        : undefined;
-    const defIdsRaw = params.analyst_definition_ids;
-    const analystDefinitionIds =
-      Array.isArray(defIdsRaw) && defIdsRaw.length > 0
-        ? defIdsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
-        : undefined;
-    const agRaw = params.agent_group_id;
-    const agentGroupId =
-      typeof agRaw === "string" && agRaw.trim()
-        ? agRaw.trim()
-        : agRaw === null || agRaw === ""
-          ? null
-          : undefined;
-    return runAnalystTeam({
+    const parsed = buildParsedResearchTeamFromToolParams({
       workflowRunId: ctx.workflowId,
-      ticker,
-      scope: scope as import("../../types/research-scope").ResearchScopeInput | undefined,
-      context: context || undefined,
-      agentGroupId,
-      analystRoles,
-      analystDefinitionIds,
+      params: params as Record<string, unknown>,
+      ...(ctx.inboundPayload !== undefined ? { inboundPayload: ctx.inboundPayload } : {}),
+    });
+    return runResearchTeamFromOrchestrator({
+      workflowRunId: ctx.workflowId,
       runId: ctx.runId,
       traceId: ctx.traceId,
+      parsed,
       hitlApproval: parseHitlApproval(
         (ctx.inboundPayload?.["params"] as Record<string, unknown> | undefined)?.["hitlApproval"]
       ),
+      ensureJob: true,
     });
   },
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
@@ -10,7 +11,9 @@ import { setWorkflowState } from "../workflow/workflow-state-machine";
 import {
   completeAnalystResearchJob,
   failAnalystResearchJob,
+  getAnalystResearchJob,
   pauseAnalystResearchJobForHitl,
+  registerAnalystResearchJob,
 } from "./analyst-research-jobs";
 import { RESEARCH_TEAM_SLOT_SET, runAnalystTeam, type AnalystTeamResult } from "./analyst-team";
 
@@ -108,6 +111,101 @@ export async function executeResearchTeamWorkflow(input: {
   });
   await completeAnalystResearchJob(input.params.jobId, teamResult);
   return teamResult;
+}
+
+/**
+ * 从 ReAct `run_analyst_team` 工具参数构建与 `research_team_execute` 等价的 parsed payload。
+ */
+export function buildParsedResearchTeamFromToolParams(input: {
+  workflowRunId: string;
+  params: Record<string, unknown>;
+  inboundPayload?: Record<string, unknown>;
+  jobId?: string;
+}): ParsedResearchTeamExecute {
+  const pr = input.params;
+  const inbound = input.inboundPayload ?? {};
+  const ticker =
+    String(pr.ticker ?? inbound["ticker"] ?? "").trim() || "UNKNOWN";
+  const scopeRaw = pr.scope ?? inbound["scope"];
+  const scope =
+    scopeRaw && typeof scopeRaw === "object" && !Array.isArray(scopeRaw)
+      ? (scopeRaw as ResearchScopeInput)
+      : undefined;
+
+  const rolesRaw = pr.analyst_roles ?? pr.analystRoles;
+  const analystRoles =
+    Array.isArray(rolesRaw) && rolesRaw.length > 0
+      ? (rolesRaw.filter(
+          (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
+        ) as AgentRole[])
+      : undefined;
+
+  const defIdsRaw = pr.analyst_definition_ids ?? pr.analystDefinitionIds;
+  const analystDefinitionIds =
+    Array.isArray(defIdsRaw) && defIdsRaw.length > 0
+      ? defIdsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined;
+
+  const agRaw = pr.agent_group_id ?? pr.agentGroupId;
+  let agentGroupId: string | null | undefined;
+  if (agRaw === null || agRaw === "") agentGroupId = null;
+  else if (typeof agRaw === "string" && agRaw.trim()) agentGroupId = agRaw.trim();
+
+  const context = String(pr.context ?? inbound["goal"] ?? "").trim() || undefined;
+
+  return {
+    jobId: input.jobId ?? randomUUID(),
+    ticker,
+    scope,
+    context,
+    agentGroupId,
+    analystDefinitionIds,
+    analystRoles,
+  };
+}
+
+/**
+ * Orchestrator 研究团队统一入口：`research_team_execute` 任务与 `run_analyst_team` 工具
+ * 均经 `runTeamResearchAndPersist` 写 workflow 状态 / SSE / analyst job。
+ */
+export async function runResearchTeamFromOrchestrator(input: {
+  workflowRunId: string;
+  runId: string;
+  traceId: string;
+  parsed: ParsedResearchTeamExecute;
+  hitlApproval?: HitlApprovalPayload | null;
+  /** ReAct 工具路径：若无 job 则自动 register */
+  ensureJob?: boolean;
+}): Promise<AnalystTeamResult> {
+  if (input.ensureJob) {
+    const existing = await getAnalystResearchJob(input.parsed.jobId);
+    if (!existing) {
+      await registerAnalystResearchJob(input.parsed.jobId, {
+        status: "running",
+        workflowRunId: input.workflowRunId,
+        ticker: input.parsed.ticker,
+        startedAt: Date.now(),
+      });
+    }
+  }
+
+  const outcome = await runTeamResearchAndPersist({
+    workflowRunId: input.workflowRunId,
+    runId: input.runId,
+    traceId: input.traceId,
+    parsed: input.parsed,
+    hitlApproval: input.hitlApproval ?? null,
+  });
+
+  if (outcome.kind === "completed") return outcome.teamResult;
+  if (outcome.kind === "awaiting_approval") {
+    throw new HitlAwaitingApprovalError(
+      outcome.requestId,
+      input.workflowRunId,
+      outcome.title
+    );
+  }
+  throw outcome.error;
 }
 
 // ─── 统一短路 helper ─────────────────────────────────────────────────────────

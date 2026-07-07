@@ -19,10 +19,8 @@ export const TOOL_CONNECTOR_ROUTES: Record<string, string> = {
   // qubit-backtest
   run_backtest: "qubit-backtest",
   get_backtest_status: "qubit-backtest",
-  // qubit-research
-  compute_factors: "qubit-research",
-  run_experiment: "qubit-research",
-  version_strategy: "qubit-research",
+  // qubit-research — compute_factors / run_experiment / version_strategy 已迁 builtin，
+  // 走 resolveToolAlias + tool-dispatch-resolver（builtin 优先），不再注册 connector 路由。
   // qubit-sim
   submit_paper_order: "qubit-sim",
   get_paper_position: "qubit-sim",

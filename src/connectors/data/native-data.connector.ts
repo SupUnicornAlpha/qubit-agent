@@ -15,6 +15,11 @@ import {
 import { fetchWindBars, windConfigFromSettings } from "../../runtime/market/wind-klines";
 import { computeDateRangeForLimit } from "../../runtime/market/klines-query";
 import {
+  buildKlinesQueryKey,
+  getCachedKlinesBars,
+  setCachedKlinesBars,
+} from "../../runtime/market/klines-request-cache";
+import {
   fetchYfinanceAssetInfo,
   fetchYfinanceBars,
   fetchYfinanceDividends,
@@ -242,6 +247,7 @@ export class QubitNativeDataConnector extends DataConnector {
         exchange?: string;
         timeframe?: string;
         limit?: number;
+        workflowRunId?: string;
       };
       const symbol = String(p.symbol ?? "").trim();
       if (!symbol) throw new Error(`${operation}: symbol is required`);
@@ -255,6 +261,7 @@ export class QubitNativeDataConnector extends DataConnector {
         period,
         startDate,
         endDate,
+        ...(p.workflowRunId ? { workflowRunId: String(p.workflowRunId) } : {}),
       });
       if (operation === "fetch_price_data") {
         return {
@@ -323,6 +330,24 @@ export class QubitNativeDataConnector extends DataConnector {
       throw new Error("fetch_bars: startDate/endDate must be parseable dates");
     }
 
+    const queryKey = buildKlinesQueryKey({
+      symbol: params.symbol,
+      exchange: params.exchange,
+      period: params.period,
+      startDate: params.startDate,
+      endDate: params.endDate,
+    });
+    const cached = getCachedKlinesBars(queryKey, params.workflowRunId);
+    if (cached) return cached;
+
+    const bars = await this.fetchBarsFromSources(params);
+    if (bars.length > 0) {
+      setCachedKlinesBars(queryKey, bars, params.workflowRunId);
+    }
+    return bars;
+  }
+
+  private async fetchBarsFromSources(params: FetchBarsParams): Promise<BarData[]> {
     const liveSettings = await loadBuiltinConnectorSettings();
     const tokenLive = tushareTokenFromSettings(liveSettings, this.tushareToken);
     const hasTushare = Boolean(tokenLive);

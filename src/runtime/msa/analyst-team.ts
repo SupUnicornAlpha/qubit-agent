@@ -80,21 +80,24 @@ import {
   type HitlApprovalPayload,
 } from "../workflow/hitl-service";
 import { consumeInterrupt } from "../workflow/workflow-interrupt";
-import { pickAnalystReactDepth, runResearchTeamSlotReact } from "./analyst-team-slot-react";
+import { pickAnalystReactDepth } from "./analyst-team-slot-react";
 import { buildGroupRoleConstraintHint } from "./group-constraint-hint";
-import { config } from "../../config";
-import { getA2APool } from "../a2a/a2a-pool";
 import {
-  dispatchSlotsViaA2A,
-  spawnTeamSlotRuntimes,
-  type TeamSlotScope,
-} from "./team-slot-a2a";
+  buildAuxSlotDispatchSpec,
+  buildTeamSlotDispatchSpecs,
+  createTeamSlotExecutor,
+  DEFAULT_TEAM_SLOT_TIMEOUT_MS,
+  dispatchAuxSlotMarkdown,
+  mapDispatchResultsToWaveResults,
+  resolveTeamSlotTransport,
+} from "./team-slot-executor";
+import { spawnTeamSlotRuntimes, type TeamSlotScope } from "./team-slot-a2a";
 
 /**
  * A2A 团队 slot 派单的 gather 超时兜底（仅防「某 slot 彻底卡死」；正常 deep ReAct
  * 单 slot 实测约 1-3 分钟，留足余量）。进程内老路径无此超时，故设得很宽以免误伤。
  */
-const TEAM_SLOT_A2A_TIMEOUT_MS = 1_200_000;
+const TEAM_SLOT_A2A_TIMEOUT_MS = DEFAULT_TEAM_SLOT_TIMEOUT_MS;
 
 /**
  * v2：把用户在 HITL 卡片提交的 response 拼成给下游分析师的上下文片段。
@@ -798,18 +801,19 @@ async function runAnalystTeamCore(params: {
    * 团队 slot 传输路径决策（默认 A2A）。需 A2A pool 已启动以拿到 orchestrator 实例
    * 作为派单 sender；拿不到（脱离 pool 的单测 / 脚本）则回退进程内执行，行为与历史一致。
    */
-  const teamA2aEnabled = config.teamExecutionPath === "a2a" && waveSlots.length > 0;
-  let orchestratorInstanceId: string | null = null;
-  if (teamA2aEnabled) {
-    try {
-      orchestratorInstanceId = getA2APool().getInstanceIdForRole("orchestrator");
-    } catch {
-      orchestratorInstanceId = null;
-    }
-  }
-  const useTeamA2a = teamA2aEnabled && orchestratorInstanceId !== null;
+  const { useA2a, orchestratorInstanceId } = resolveTeamSlotTransport({
+    slotCount: waveSlots.length,
+  });
+  const useTeamA2a = useA2a && orchestratorInstanceId !== null;
+  const teamSlotExecutor = createTeamSlotExecutor({
+    workflowRunId,
+    traceId: params.traceId ?? workflowRunId,
+    useA2a: useTeamA2a,
+    orchestratorInstanceId,
+    timeoutMs: TEAM_SLOT_A2A_TIMEOUT_MS,
+  });
   let teamSlotScope: TeamSlotScope | null = null;
-  if (useTeamA2a) {
+  if (useTeamA2a && orchestratorInstanceId) {
     teamSlotScope = await spawnTeamSlotRuntimes(
       waveSlots.map((s, i) => ({
         instanceId: instanceBySlotIndex[i] as string,
@@ -820,7 +824,7 @@ async function runAnalystTeamCore(params: {
     console.log(
       `[analyst-team] workflow=${workflowRunId} team transport=A2A (${waveSlots.length} analyst slot runtimes spawned)`,
     );
-  } else if (config.teamExecutionPath === "a2a" && waveSlots.length > 0) {
+  } else if (useA2a && waveSlots.length > 0) {
     console.warn(
       `[analyst-team] workflow=${workflowRunId} teamExecutionPath=a2a but A2A pool orchestrator unavailable; falling back to in-process slot execution.`,
     );
@@ -841,10 +845,7 @@ async function runAnalystTeamCore(params: {
     predsByTo.set(e.to, arr);
   }
 
-  /** 单 slot ReAct 结果（两条传输路径共用，故提到 wave 循环外声明）。 */
-  type SlotResult =
-    | { kind: "analyst"; payload: RawAnalystSignal & { agentInstanceId?: string } }
-    | { kind: "missing_signal"; agentInstanceId?: string; body: string };
+  /** 单 slot ReAct 结果（TeamSlotExecutor 两条传输路径共用）。 */
 
   let waveNo = 0;
   try {
@@ -916,90 +917,26 @@ async function runAnalystTeamCore(params: {
     const reactDepth = pickAnalystReactDepth({ pipelineKind, expectJsonSignal: true });
 
     /**
-     * 2026-05-26 修复：markdown（signal_parse_failed）降级为 missing_signal，不再塌缩
-     * hold@0.4 污染整批；slot 整体抛错 → rejected。下面两条传输路径都遵循此约定，
-     * 产出对齐的 `PromiseSettledResult<SlotResult>[]`（顺序 = wave 顺序）交给统一处理。
+     * TeamSlotExecutor 统一 wave 派发（A2A / inprocess 仅 transport 不同）。
      */
-    let waveResults: PromiseSettledResult<SlotResult>[];
-    if (useTeamA2a && orchestratorInstanceId) {
-      // A2A 路径：orchestrator 真发 TASK_ASSIGN 给各 analyst 专属实例、gather 等回 TASK_RESULT。
-      const dispatchResults = await dispatchSlotsViaA2A({
-        workflowRunId,
-        traceId: params.traceId ?? workflowRunId,
-        orchestratorInstanceId,
-        slots: waveSpecs.map((ws) => ({
-          instanceId: ws.preInstanceId as string,
-          definitionId: ws.slot.definitionId,
+    const dispatchSpecs = buildTeamSlotDispatchSpecs({
+      workflowRunId,
+      ticker,
+      scope,
+      reactDepth,
+      waveSpecs: waveSpecs.map((ws) => ({
+        slot: ws.slot,
+        ctx: ws.ctx,
+        ...(ws.preInstanceId !== undefined ? { preInstanceId: ws.preInstanceId } : {}),
+        groupConstraintHint: buildGroupRoleConstraintHint({
+          groupId: effectiveGroupId,
           role: ws.slot.role,
-          systemPrompt: ws.slot.systemPrompt,
-          ticker,
-          scope,
-          context: ws.ctx,
-          expectJsonSignal: true,
-          reactDepth,
-          groupConstraintHint: buildGroupRoleConstraintHint({
-            groupId: effectiveGroupId,
-            role: ws.slot.role,
-            groupDescription,
-          }),
-        })),
-        timeoutMs: TEAM_SLOT_A2A_TIMEOUT_MS,
-      });
-      waveResults = waveSpecs.map((ws): PromiseSettledResult<SlotResult> => {
-        const r = ws.preInstanceId ? dispatchResults.get(ws.preInstanceId) : undefined;
-        if (r?.ok) {
-          if (r.reactOut.kind === "analyst") {
-            return { status: "fulfilled", value: { kind: "analyst", payload: r.reactOut.payload } };
-          }
-          return {
-            status: "fulfilled",
-            value: {
-              kind: "missing_signal",
-              ...(r.reactOut.agentInstanceId !== undefined
-                ? { agentInstanceId: r.reactOut.agentInstanceId }
-                : {}),
-              body: r.reactOut.body,
-            },
-          };
-        }
-        return { status: "rejected", reason: new Error(r?.error ?? "a2a_dispatch_failed") };
-      });
-    } else {
-      // 进程内路径（历史；脱离 A2A pool 的单测 / teamExecutionPath=inprocess 时走这里）。
-      waveResults = await Promise.allSettled(
-        waveSpecs.map((ws) =>
-          (async (): Promise<SlotResult> => {
-            const reactOut = await runResearchTeamSlotReact({
-              workflowRunId,
-              definitionId: ws.slot.definitionId,
-              role: ws.slot.role,
-              systemPrompt: ws.slot.systemPrompt,
-              ticker,
-              scope,
-              context: ws.ctx,
-              ...(ws.preInstanceId !== undefined ? { agentInstanceId: ws.preInstanceId } : {}),
-              expectJsonSignal: true,
-              reactDepth,
-              groupConstraintHint: buildGroupRoleConstraintHint({
-                groupId: effectiveGroupId,
-                role: ws.slot.role,
-                groupDescription,
-              }),
-            });
-            if (reactOut.kind === "analyst") {
-              return { kind: "analyst", payload: reactOut.payload };
-            }
-            return {
-              kind: "missing_signal",
-              ...(reactOut.agentInstanceId !== undefined
-                ? { agentInstanceId: reactOut.agentInstanceId }
-                : {}),
-              body: reactOut.body,
-            };
-          })()
-        )
-      );
-    }
+          groupDescription,
+        }),
+      })),
+    });
+    const dispatchResults = await teamSlotExecutor.dispatchWave(dispatchSpecs);
+    const waveResults = mapDispatchResultsToWaveResults(dispatchSpecs, dispatchResults);
 
     for (let wi = 0; wi < wave.length; wi++) {
       const slot = wave[wi] as SlotRow;
@@ -1374,47 +1311,16 @@ async function runAnalystTeamCore(params: {
         relationEdges,
         auxSlots,
         runAuxLlm: async (slot, ctx) => {
-          const auxInstanceId = auxInstanceByRole.get(slot.role);
-          // A2A 路径：派 TASK_ASSIGN 给该 aux 实例、gather 等回 markdown 回包。
-          if (useTeamA2a && orchestratorInstanceId && auxInstanceId) {
-            const res = await dispatchSlotsViaA2A({
-              workflowRunId,
-              traceId: params.traceId ?? workflowRunId,
-              orchestratorInstanceId,
-              slots: [
-                {
-                  instanceId: auxInstanceId,
-                  definitionId: slot.definitionId,
-                  role: slot.role,
-                  systemPrompt: slot.systemPrompt,
-                  ticker,
-                  scope,
-                  context: ctx,
-                  expectJsonSignal: false,
-                  reactDepth: auxReactDepth,
-                  groupConstraintHint: buildGroupRoleConstraintHint({
-                    groupId: effectiveGroupId,
-                    role: slot.role,
-                    groupDescription,
-                  }),
-                },
-              ],
-              timeoutMs: TEAM_SLOT_A2A_TIMEOUT_MS,
-            });
-            const r = res.get(auxInstanceId);
-            if (r?.ok) return r.reactOut.kind === "markdown" ? r.reactOut.body : "";
-            return "";
-          }
-          // 进程内回退（脱离 pool / teamExecutionPath=inprocess）。
-          const out = await runResearchTeamSlotReact({
+          const auxInstanceId = auxInstanceByRole.get(slot.role) ?? randomUUID();
+          const spec = buildAuxSlotDispatchSpec({
             workflowRunId,
+            instanceId: auxInstanceId,
             definitionId: slot.definitionId,
             role: slot.role,
             systemPrompt: slot.systemPrompt,
             ticker,
             scope,
             context: ctx,
-            expectJsonSignal: false,
             reactDepth: auxReactDepth,
             groupConstraintHint: buildGroupRoleConstraintHint({
               groupId: effectiveGroupId,
@@ -1422,7 +1328,7 @@ async function runAnalystTeamCore(params: {
               groupDescription,
             }),
           });
-          return out.kind === "markdown" ? out.body : "";
+          return dispatchAuxSlotMarkdown(teamSlotExecutor, spec);
         },
       });
       auxSections = post.auxSections;

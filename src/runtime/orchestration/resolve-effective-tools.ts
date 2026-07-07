@@ -1,4 +1,8 @@
-import type { AgentRole } from "../../types/entities";
+import { eq } from "drizzle-orm";
+import { getDb } from "../../db/sqlite/client";
+import { workflowRun } from "../../db/sqlite/schema";
+import { researchScenarioRegistry } from "../research-scenario/registry";
+import { resolveToolAlias } from "../tools/tool-catalog";
 import type { RuntimeAgentDefinition } from "../types";
 import {
   buildAgentCollaborationHint,
@@ -12,28 +16,61 @@ export type EffectiveToolsResult = {
   topologyContext: OrchestratorTopologyContext | null;
   topologyPromptBlock: string;
   collaborationHint: string;
+  /** 来自 research_scenario.toolPreset.builtinTools（已 alias 规范化） */
+  scenarioTools: string[];
+  scenarioKey: string | null;
 };
+
+function normalizeToolNames(names: string[]): string[] {
+  return [...new Set(names.map((n) => resolveToolAlias(n.trim()).resolved).filter(Boolean))];
+}
+
+async function loadScenarioToolsForWorkflow(workflowId: string): Promise<{
+  scenarioKey: string | null;
+  tools: string[];
+}> {
+  const db = await getDb();
+  const rows = await db
+    .select({ researchScenarioId: workflowRun.researchScenarioId })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowId))
+    .limit(1);
+  const key = (rows[0]?.researchScenarioId ?? "").trim();
+  if (!key) return { scenarioKey: null, tools: [] };
+  const spec = researchScenarioRegistry.get(key);
+  if (!spec) return { scenarioKey: key, tools: [] };
+  const preset = spec.toolPreset?.builtinTools ?? [];
+  return { scenarioKey: key, tools: normalizeToolNames(preset) };
+}
 
 export async function resolveEffectiveAgentTools(
   def: RuntimeAgentDefinition,
   workflowId: string
 ): Promise<EffectiveToolsResult> {
-  // Coding-Agent 体验 P2：web.fetch（只读外联原语）对所有角色始终可用，无需 re-seed DB。
-  const base = [...new Set([...(def.tools ?? []), "web.fetch"])];
+  const { scenarioKey, tools: scenarioTools } = await loadScenarioToolsForWorkflow(workflowId);
+
+  // Coding-Agent 体验 P2：web.fetch 对所有角色始终可用。
+  // Runtime 4.5：scenario toolPreset 与 agent_definition.tools 合并（alias 规范化）。
+  const base = normalizeToolNames([
+    ...(def.tools ?? []),
+    ...scenarioTools,
+    "web.fetch",
+  ]);
+
   if (def.role !== "orchestrator") {
     return {
       tools: base,
       topologyContext: null,
       topologyPromptBlock: "",
       collaborationHint: buildAgentCollaborationHint(def.role),
+      scenarioTools,
+      scenarioKey,
     };
   }
 
   const topologyContext = await loadOrchestratorTopologyForWorkflow(workflowId);
   const topologyTools = topologyContext?.toolNames ?? [];
-  // Coding-Agent 体验 P1：update_plan 是编排器通用的「计划/TODO」元工具，始终注入，
-  // 无需依赖 agent_definition.tools 是否声明（避免再 seed 一遍 DB）。
-  const tools = [...new Set([...base, ...topologyTools, "update_plan"])];
+  const tools = normalizeToolNames([...base, ...topologyTools, "update_plan"]);
   const topologyPromptBlock = buildTopologyToolsPromptBlock(topologyContext);
 
   return {
@@ -41,5 +78,7 @@ export async function resolveEffectiveAgentTools(
     topologyContext,
     topologyPromptBlock,
     collaborationHint: "",
+    scenarioTools,
+    scenarioKey,
   };
 }

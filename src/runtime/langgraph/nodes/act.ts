@@ -24,8 +24,12 @@ import {
   recordToolCallSuccess,
   recordToolCallTimeout,
 } from "../../tools/tool-call-log-service";
-import { resolveToolAlias } from "../../tools/tool-catalog";
-import { resolveConnectorForServerAlias, resolveConnectorForTool } from "../../tools/tool-routes";
+import {
+  resolveToolExecutionRoute,
+  toolRouteToTargetKind,
+  toolRouteToToolKind,
+} from "../../tools/tool-dispatch-resolver";
+import { resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 
@@ -211,14 +215,12 @@ export async function actNode(
   }
 
   /**
-   * Step 3：deprecated 别名工具透明跳转到 `replacedBy` 指向的工具。
-   * 旧 prompt / 旧 agent 定义仍可调用 fetch_bars / fetch_macro_data 等老名字，
-   * 但实际执行的是 fetch_klines / compute_macro_indicators，让链路自动收敛。
-   * 只对 mcp=undefined 的情况生效（mcp 工具名不在 catalog 中，不需要 alias 跳转）。
+   * Runtime 4.5：统一工具路由（alias → builtin 优先 → connector）。
+   * MCP connector 别名改写仍在上面的 block 完成。
    */
-  if (!mcp) {
-    const aliasResolution = resolveToolAlias(effectiveToolName);
-    if (aliasResolution.aliased) {
+  const executionRoute = mcp ? null : resolveToolExecutionRoute(effectiveToolName);
+  if (executionRoute) {
+    if (executionRoute.aliased) {
       emit({
         runId: state.runId,
         workflowId: state.workflowId,
@@ -230,34 +232,27 @@ export async function actNode(
         payload: {
           level: "warn",
           toolAlias: true,
-          originalTool: aliasResolution.originalName,
-          resolvedTool: aliasResolution.resolved,
-          message: `tool '${aliasResolution.originalName}' is deprecated; routed to '${aliasResolution.resolved}'`,
+          originalTool: executionRoute.originalName,
+          resolvedTool: executionRoute.effectiveName,
+          route: executionRoute.route,
+          message: `tool '${executionRoute.originalName}' is deprecated; routed to '${executionRoute.effectiveName}' (${executionRoute.route})`,
         },
       });
-      effectiveToolName = aliasResolution.resolved;
     }
+    effectiveToolName = executionRoute.effectiveName;
   }
 
-  const connectorTarget = !mcp
-    ? (resolveConnectorForTool(effectiveToolName) ??
-      (parsedMcp ? resolveConnectorForServerAlias(parsedMcp.serverName) : undefined))
-    : undefined;
+  const connectorTarget =
+    !mcp && executionRoute?.route === "connector" ? executionRoute.connectorName : undefined;
   const targetKind: "mcp" | "tool" | "connector" = mcp
     ? "mcp"
-    : connectorTarget
-      ? "connector"
-      : "tool";
+    : toolRouteToTargetKind(executionRoute?.route ?? "builtin");
   const targetName = mcp
     ? `${mcp.serverName}/${mcp.toolName}`
     : connectorTarget
       ? `${connectorTarget}/${effectiveToolName}`
       : effectiveToolName;
-  const toolKind: "mcp" | "builtin" | "acp_connector" = mcp
-    ? "mcp"
-    : connectorTarget
-      ? "acp_connector"
-      : "builtin";
+  const toolKind = mcp ? "mcp" : toolRouteToToolKind(executionRoute?.route ?? "builtin");
   const toolCallId = crypto.randomUUID();
   const db = await getDb();
   const workflowRows = await db

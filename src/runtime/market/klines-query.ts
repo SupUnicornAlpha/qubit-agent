@@ -9,6 +9,11 @@ import {
   buildKlinesInvalidRequestError,
   type KlinesErrorPayload,
 } from "./klines-error";
+import {
+  buildKlinesQueryKey,
+  getCachedKlinesBars,
+  setCachedKlinesBars,
+} from "./klines-request-cache";
 
 /** Query token (case-insensitive). `1W` normalizes to daily bars spanning `limit` weeks. */
 const TIMEFRAME_TO_PERIOD: Record<string, FetchBarsParams["period"]> = {
@@ -172,7 +177,20 @@ export async function queryKlines(params: {
     endDate,
   };
 
-  const bars = (await connector.execute("fetch_bars", fetchParams)) as BarData[];
+  const queryKey = buildKlinesQueryKey({
+    symbol,
+    exchange,
+    period,
+    startDate,
+    endDate,
+  });
+  const cached = getCachedKlinesBars(queryKey);
+  const bars =
+    cached ??
+    ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
+  if (!cached && bars.length > 0) {
+    setCachedKlinesBars(queryKey, bars);
+  }
   const sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const trimmed =
     sorted.length > requestedLimit ? sorted.slice(sorted.length - requestedLimit) : sorted;
@@ -210,6 +228,8 @@ export async function queryBarsRange(params: {
   period: FetchBarsParams["period"];
   startDate: string;
   endDate: string;
+  /** 同一 workflow 内复用 K 线缓存（C 类冗余治理） */
+  workflowRunId?: string;
 }): Promise<BarData[]> {
   const connector = connectorRegistry.get("qubit-data");
   if (!connector) {
@@ -217,13 +237,28 @@ export async function queryBarsRange(params: {
   }
   const sym = params.symbol?.trim();
   if (!sym) throw new Error("symbol is required");
+  const exchange = params.exchange?.trim() ?? "";
   const fetchParams: FetchBarsParams = {
     symbol: sym,
-    exchange: params.exchange?.trim() ?? "",
+    exchange,
     period: params.period,
     startDate: params.startDate,
     endDate: params.endDate,
   };
-  const bars = (await connector.execute("fetch_bars", fetchParams)) as BarData[];
-  return [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const queryKey = buildKlinesQueryKey({
+    symbol: sym,
+    exchange,
+    period: params.period,
+    startDate: params.startDate,
+    endDate: params.endDate,
+  });
+  const cached = getCachedKlinesBars(queryKey, params.workflowRunId);
+  const raw =
+    cached ??
+    ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
+  const sorted = [...raw].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  if (!cached && sorted.length > 0) {
+    setCachedKlinesBars(queryKey, sorted, params.workflowRunId);
+  }
+  return sorted;
 }

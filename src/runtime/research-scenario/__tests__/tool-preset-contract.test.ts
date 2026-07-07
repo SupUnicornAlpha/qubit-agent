@@ -13,7 +13,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { isBuiltinTool } from "../../tools/builtin-tools";
-import { resolveConnectorForTool } from "../../tools/tool-routes";
+import { resolveToolExecutionRoute } from "../../tools/tool-dispatch-resolver";
 import { BUILTIN_RESEARCH_SCENARIOS } from "../scenarios-seed";
 
 /** call_mcp / mcp:* 由 act 节点单独处理，不在 builtin/connector 注册表里 */
@@ -23,7 +23,10 @@ function isMcpAlias(name: string): boolean {
 
 function isToolImplemented(name: string): boolean {
   if (isMcpAlias(name)) return true;
-  return isBuiltinTool(name) || Boolean(resolveConnectorForTool(name));
+  const route = resolveToolExecutionRoute(name);
+  if (route.route === "builtin") return isBuiltinTool(route.effectiveName);
+  if (route.route === "connector") return Boolean(route.connectorName);
+  return false;
 }
 
 describe("内置场景 toolPreset 与真实工具白名单对齐（防脱钩）", () => {

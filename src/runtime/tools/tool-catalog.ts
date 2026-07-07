@@ -422,6 +422,13 @@ export function buildToolCatalog(): ToolCatalogEntry[] {
     seen.add(name);
     entries.push(metaFor(name, "builtin"));
   }
+  /** deprecated 别名若已从 connector 路由移除，仍保留在 catalog 供 UI / 契约测试 */
+  for (const [name, meta] of Object.entries(TOOL_META)) {
+    if (seen.has(name) || meta.lifecycle !== "deprecated") continue;
+    seen.add(name);
+    const connector = TOOL_CONNECTOR_ROUTES[name];
+    entries.push(metaFor(name, connector ? "connector" : "builtin", connector));
+  }
   if (!seen.has("call_mcp")) {
     entries.push(metaFor("call_mcp", "builtin"));
   }

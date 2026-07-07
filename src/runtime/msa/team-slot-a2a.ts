@@ -54,6 +54,8 @@ export interface TeamSlotDispatchSpec {
   expectJsonSignal: boolean;
   reactDepth: AnalystReactDepth;
   groupConstraintHint?: string;
+  /** inprocess 传输使用；A2A 路径由 dispatch 入参 workflowRunId 提供 */
+  workflowRunId?: string;
 }
 
 /** dispatch 结果：ok=true 带 reactOut；ok=false 等价于历史 Promise.allSettled 的 rejected。 */
