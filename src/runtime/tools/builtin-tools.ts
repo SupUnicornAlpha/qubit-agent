@@ -19,6 +19,7 @@ import {
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
+import { recommendationService, type RecommendationSide } from "../effect-validation/recommendation-service";
 import { writeExecCallLog } from "../exec/exec-call-log";
 import { getExecProvider } from "../exec/registry";
 import { checkArgs, checkCwdScope, renderArgTemplate, runExec } from "../exec/runner";
@@ -1821,6 +1822,60 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       qty,
       orderType,
       dispatchMode,
+    };
+  },
+
+  "recommendation.record": async (ctx, params) => {
+    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
+    if (!symbol) {
+      throw new Error("recommendation.record: symbol/ticker is required");
+    }
+    const sideRaw = String(params.side ?? "long").trim().toLowerCase();
+    const sideMap: Record<string, RecommendationSide> = {
+      buy: "long",
+      long: "long",
+      bullish: "long",
+      sell: "short",
+      short: "short",
+      bearish: "short",
+      hold: "neutral",
+      neutral: "neutral",
+    };
+    const side = sideMap[sideRaw];
+    if (!side) {
+      throw new Error(
+        `recommendation.record: side must be long/short/neutral (or buy/sell/hold), got ${sideRaw}`
+      );
+    }
+    const horizonDays = Number(params.horizon_days ?? params.horizonDays ?? 20);
+    const confidence = Number(params.confidence ?? 0.5);
+    const scoreRaw = params.score;
+    const evidenceRaw = params.evidence ?? params.evidence_json;
+    const evidence = Array.isArray(evidenceRaw) ? evidenceRaw : [];
+    const result = await recommendationService.record({
+      workflowRunId: ctx.workflowId,
+      symbol,
+      market: typeof params.market === "string" ? params.market : "US",
+      side,
+      horizonDays: Number.isFinite(horizonDays) && horizonDays > 0 ? Math.floor(horizonDays) : 20,
+      confidence: Number.isFinite(confidence) ? confidence : 0.5,
+      score: scoreRaw !== undefined && Number.isFinite(Number(scoreRaw)) ? Number(scoreRaw) : null,
+      rationale: String(params.rationale ?? params.reasoning ?? ""),
+      evidence,
+      sourceArtifactKind:
+        typeof params.source_artifact_kind === "string" ? params.source_artifact_kind : null,
+      sourceArtifactId:
+        typeof params.source_artifact_id === "string" ? params.source_artifact_id : null,
+      createdBy: "agent",
+      agentInstanceId: ctx.agentInstanceId,
+      ...(typeof params.asof === "string" ? { asof: params.asof } : {}),
+    });
+    return {
+      recommendationId: result.id,
+      symbol: result.symbol,
+      side,
+      next_steps:
+        "推荐已落 recommendation_snapshot；后续 outcome worker 可按 horizon_days 回填 recommendation_outcome。",
     };
   },
 

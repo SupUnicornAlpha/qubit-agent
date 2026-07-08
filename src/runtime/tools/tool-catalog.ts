@@ -309,6 +309,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "下达一个交易意向（落 order_intent + 走 pre-trade risk 检查 + execution_task 派发）。**必填**：`strategy_version_id` (来自 strategy.create_version) + `symbol` + `side` ('buy'|'sell') + `qty` (>0)。可选：`order_type` ('market'|'limit'，默认 market) + `price` (limit 必填) + `time_in_force` ('day'|'gtc'，默认 day) + `market` (默认 US) + `dispatch_mode` ('paper'|'live'，**默认 paper 安全**)。**调用顺序**：strategy.create_version → strategy.compose → order.create_intent。Live 实盘前请人工 review，模型默认走 paper。",
     category: "trading",
   },
+  "recommendation.record": {
+    description:
+      "记录一次股票推荐快照（落 recommendation_snapshot），用于后续 1d/5d/20d 后验收益验证。**必填**：symbol/ticker + side(long/short/neutral 或 buy/sell/hold)。可选：confidence、score、horizon_days、rationale、evidence[]、market。",
+    category: "research",
+  },
 
   // M6：Agent 直通量化工坊
   "factor.list": {

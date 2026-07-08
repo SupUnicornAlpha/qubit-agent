@@ -102,6 +102,43 @@ researchScenarioRouter.post("/:key/plan-launch", async (c) => {
   }
 });
 
+/** POST /api/v1/research-scenarios/:key/launch  { projectId, inputParams, agentGroupId?, goal? } */
+researchScenarioRouter.post("/:key/launch", async (c) => {
+  const key = c.req.param("key");
+  const body = await c.req.json<{
+    projectId: string;
+    goal?: string;
+    inputParams: Record<string, unknown>;
+    agentGroupId?: string;
+    loopOverrides?: Record<string, unknown>;
+  }>();
+  try {
+    const launched = await researchScenarioService.launch({
+      scenarioKey: key,
+      projectId: body.projectId,
+      ...(body.goal ? { goal: body.goal } : {}),
+      inputParams: body.inputParams ?? {},
+      ...(body.agentGroupId ? { agentGroupId: body.agentGroupId } : {}),
+      ...(body.loopOverrides ? { loopOverrides: body.loopOverrides as never } : {}),
+    });
+    return c.json({ ok: true, data: launched }, 202);
+  } catch (e) {
+    if (e instanceof ScenarioError) {
+      const status =
+        e.code === "scenario_not_found"
+          ? 404
+          : e.code === "missing_capability"
+            ? 409
+            : 400;
+      const payload = { ok: false, code: e.code, error: e.message, details: e.details };
+      if (status === 404) return c.json(payload, 404);
+      if (status === 409) return c.json(payload, 409);
+      return c.json(payload, 400);
+    }
+    throw e;
+  }
+});
+
 /** PATCH /api/v1/research-scenarios/:key  { status } */
 researchScenarioRouter.patch("/:key", async (c) => {
   const key = c.req.param("key");

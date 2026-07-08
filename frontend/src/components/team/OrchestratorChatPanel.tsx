@@ -43,8 +43,10 @@ export interface OrchestratorChatPanelProps {
   workflowRunId: string;
   /** 归一化后的对话事件（已按 selfRole=orchestrator 视角过滤/组装） */
   events: LiveConversationEvent[];
-  /** 是否正在轮询/运行 */
+  /** 是否正在轮询/运行（全队分析 handleRun） */
   running: boolean;
+  /** orchestrator-chat composer 对话进行中（与 running 分离，仍显示运行徽标但不切注入模式） */
+  chatInFlight?: boolean;
   /** 选中工作流是否已完成/失败（用于「继续研究」模式：基于已有研究续跑，无需重填范围） */
   completed: boolean;
   /** 运行进度文案（running 时显示在 composer 上方） */
@@ -89,6 +91,7 @@ export function OrchestratorChatPanel({
   workflowRunId,
   events,
   running,
+  chatInFlight = false,
   runProgress,
   hitlMode,
   onHitlModeChange,
@@ -145,6 +148,7 @@ export function OrchestratorChatPanel({
    *     直接答 / assign_task 派单 / run_analyst_team 全队）。是对话，不需要研究范围，
    *     故不受 sendDisabled 约束。「启动团队分析」按钮才是直接全队。
    */
+  const showActive = running || chatInFlight;
   const mode: "chat" | "inject" = running ? "inject" : "chat";
   const hasContent = composerValue.trim().length > 0;
   const canSend = wfId.length > 0 && hasContent && !injecting;
@@ -196,7 +200,7 @@ export function OrchestratorChatPanel({
       <div style={styles.header}>
         <div style={styles.titleRow}>
           <span style={styles.title}>Orchestrator</span>
-          {running ? (
+          {showActive ? (
             <span style={styles.runningBadge}>● 运行中</span>
           ) : pendingHitlRequestId ? (
             <span style={styles.hitlBadge}>⏸ 待确认</span>

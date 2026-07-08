@@ -12,30 +12,19 @@ import { desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import {
-  agentGroup,
   analystSignal,
   researchTeamInteraction,
   signalFusionResult,
   workflowRun,
 } from "../db/sqlite/schema";
 import { dispatchTaskToRole } from "../runtime/agent-pool";
-import {
-  failAnalystResearchJob,
-  getAnalystResearchJob,
-  getLatestJobTickerByWorkflow,
-  registerAnalystResearchJob,
-} from "../runtime/msa/analyst-research-jobs";
-import { RESEARCH_TEAM_SLOT_SET } from "../runtime/msa/analyst-team";
+import { getAnalystResearchJob } from "../runtime/msa/analyst-research-jobs";
+import { launchAnalystTeam, LaunchAnalystTeamError } from "../runtime/msa/launch-analyst-team";
 import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
 import { SEED_AGENT_ROLE_CATALOG } from "../runtime/seed-agent-roles";
-import type { AgentRole } from "../types/entities";
-import {
-  classifyResearchInput,
-  type ResearchScopeInput,
-  resolveResearchScope,
-} from "../types/research-scope";
+import type { ResearchScopeInput } from "../types/research-scope";
 
 export const analystRouter = new Hono();
 
@@ -73,183 +62,30 @@ analystRouter.post("/run", async (c) => {
     roleReasoner?: "native" | "claude_cli" | "codex_cli";
   }>();
 
-  if (!body.workflowRunId) {
-    return c.json({ error: "workflowRunId is required" }, 400);
-  }
-
-  /**
-   * 2026-06-05 监控复盘 #4 / A：入口自动归类。
-   *
-   * 之前缺这一步 → 用户 / LLM 传"AI半导体板块机会"或"ZZZ_BAD"当 ticker 时，
-   * orchestrator 把它当合法 symbol 派给分析师，下游 fetch_klines 永远返空 →
-   * LLM 困在 no-data 死循环。后端早就完整支持 `scope.kind="explore"` + theme，
-   * 但入口从不主动 promote。
-   *
-   * 现在：classifyResearchInput 用 looksLikeTicker 做表面格式预判（US/CN-A/HK/
-   * crypto/期货/OPRA），不像 ticker 就把原文当 theme，scope 自动改为 explore。
-   * 真实存在性仍由下游 fetch_klines 验证（B 改动里加 fail-soft fallback）。
-   *
-   * 保留原 body.ticker 在 context 末尾让 LLM 知道用户原话；input 重组只动 scope。
-   */
-  let effectiveScope: ResearchScopeInput | null | undefined = body.scope;
-  let effectiveTicker: string | undefined = body.ticker;
-  let effectiveContext: string | undefined = body.context;
-  const classification = classifyResearchInput({
-    ticker: body.ticker ?? null,
-    scope: body.scope ?? null,
-  });
-  if (classification.shouldPromoteToExplore && classification.theme) {
-    effectiveScope = {
-      ...(body.scope ?? {}),
-      kind: "explore",
-      theme: classification.theme,
-    };
-    effectiveTicker = undefined;
-    const originalNote =
-      `[auto-promoted to explore] 用户原始输入："${classification.theme}"。` +
-      `原因：${classification.reason}。请先调 run_screener / factor.list / skill.search 找候选 ticker（≤3 个），` +
-      `用 fetch_klines 验证存在性后再分析。`;
-    effectiveContext = body.context
-      ? `${body.context}\n\n${originalNote}`
-      : originalNote;
-    console.log(
-      `[analyst.run] auto-promoted "${classification.theme}" → explore mode (workflow=${body.workflowRunId})`
-    );
-  }
-
-  // completed 后「继续对话」：前端不重填研究范围时，用该 workflow 最近一次跑过的 ticker
-  // 兜底，让续跑沿用同一标的（context 里带着用户的新追加指令）。
-  if (!effectiveTicker?.trim() && !effectiveScope) {
-    const priorTicker = await getLatestJobTickerByWorkflow(body.workflowRunId);
-    if (priorTicker) effectiveTicker = priorTicker;
-  }
-
-  const scope = resolveResearchScope({
-    ...(effectiveTicker !== undefined ? { ticker: effectiveTicker } : {}),
-    ...(effectiveScope !== undefined ? { scope: effectiveScope } : {}),
-  });
-  if (!effectiveTicker?.trim() && !effectiveScope && scope.primarySymbol === "UNKNOWN") {
-    return c.json({ error: "ticker or scope.symbols is required" }, 400);
-  }
-
-  const db = await getDb();
-  if (body.agentGroupId) {
-    const grp = await db
-      .select()
-      .from(agentGroup)
-      .where(eq(agentGroup.id, body.agentGroupId))
-      .limit(1);
-    if (!grp[0]) return c.json({ error: "agent group not found" }, 404);
-  }
-  const wf = await db
-    .select()
-    .from(workflowRun)
-    .where(eq(workflowRun.id, body.workflowRunId))
-    .limit(1);
-
-  if (!wf[0]) {
-    return c.json({ error: "workflow not found" }, 404);
-  }
-
-  /**
-   * 每次（重新）派发都把 workflow_run 标 running 并**重置 startedAt=now**、清 endedAt。
-   * 关键修复（2026-06，completed 后「继续研究」报 stuck_no_progress）：
-   * 不重置 startedAt 时，续跑沿用原始 1226min 前的 startedAt，而新一轮 agent_step 尚未写出，
-   * cancelInactiveWorkflows(20) 看到 status=running + startedAt 远早于 20min → 立刻判死。
-   */
-  await db
-    .update(workflowRun)
-    .set({ status: "running", startedAt: new Date().toISOString(), endedAt: null })
-    .where(eq(workflowRun.id, body.workflowRunId));
-
-  // 把 hitl 偏好（v2 hitlMode）+ Agent 底座（roleReasoner）同步到 workflow.loopOptionsJson。
-  // hitlMode 让 evaluateTeamHitlTrigger 读取；roleReasoner 让 resolveRoleReasoner 读取。
-  // v1 hitl 字段已通过 migration 0053 退场。
-  {
-    const hitlValid =
-      body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always";
-    const reasonerValid =
-      body.roleReasoner === "native" ||
-      body.roleReasoner === "claude_cli" ||
-      body.roleReasoner === "codex_cli";
-    if (hitlValid || reasonerValid) {
-      const currentLoopOptions = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
-      const nextLoopOptions: Record<string, unknown> = {
-        ...currentLoopOptions,
-        ...(hitlValid ? { hitlMode: body.hitlMode } : {}),
-        ...(reasonerValid ? { roleReasoner: body.roleReasoner } : {}),
-      };
-      await db
-        .update(workflowRun)
-        .set({ loopOptionsJson: nextLoopOptions as never })
-        .where(eq(workflowRun.id, body.workflowRunId));
-    }
-  }
-
-  const jobId = randomUUID();
-  await registerAnalystResearchJob(jobId, {
-    status: "running",
-    workflowRunId: body.workflowRunId,
-    ticker: scope.displayLabel,
-    startedAt: Date.now(),
-  });
-
-  // 把用户这次给 Orchestrator 的提示词落库为一条 user→orchestrator 交互，
-  // 让右栏对话框（含历史/已完成工作流、刷新后）都能看到「用户对 Agent 的提示词」。
-  // 启动与「继续研究」都走本路由，故 start/continue 的指令都会被记下。
-  if (body.context?.trim()) {
-    await logResearchTeamInteraction({
-      workflowRunId: body.workflowRunId,
-      fromRole: "user",
-      toRole: "orchestrator",
-      kind: "llm_message",
-      contentText: body.context.trim().slice(0, 4000),
-    });
-  }
-
-  const analystRoles =
-    Array.isArray(body.analystRoles) && body.analystRoles.length > 0
-      ? (body.analystRoles.filter(
-          (r): r is AgentRole => typeof r === "string" && RESEARCH_TEAM_SLOT_SET.has(r)
-        ) as AgentRole[])
-      : undefined;
-
-  const analystDefinitionIds =
-    Array.isArray(body.analystDefinitionIds) && body.analystDefinitionIds.length > 0
-      ? body.analystDefinitionIds.filter(
-          (x): x is string => typeof x === "string" && x.trim().length > 0
-        )
-      : undefined;
-
-  const taskId = randomUUID();
   try {
-    await dispatchTaskToRole({
-      workflowId: body.workflowRunId,
-      role: "orchestrator",
-      payload: {
-        taskId,
-        taskType: "research_team_execute",
-        assignedRole: "orchestrator",
-        params: {
-          jobId,
-          ticker: effectiveTicker ?? scope.primarySymbol,
-          scope: effectiveScope ?? undefined,
-          context: effectiveContext,
-          agentGroupId: body.agentGroupId ?? undefined,
-          analystRoles: analystRoles ?? undefined,
-          analystDefinitionIds: analystDefinitionIds ?? undefined,
-        },
-      },
+    const launched = await launchAnalystTeam({
+      workflowRunId: body.workflowRunId,
+      ...(body.ticker !== undefined ? { ticker: body.ticker } : {}),
+      ...(body.scope !== undefined ? { scope: body.scope } : {}),
+      ...(body.context !== undefined ? { context: body.context } : {}),
+      ...(body.agentGroupId !== undefined ? { agentGroupId: body.agentGroupId } : {}),
+      ...(body.analystRoles !== undefined ? { analystRoles: body.analystRoles } : {}),
+      ...(body.analystDefinitionIds !== undefined
+        ? { analystDefinitionIds: body.analystDefinitionIds }
+        : {}),
+      ...(body.hitlMode !== undefined ? { hitlMode: body.hitlMode } : {}),
+      ...(body.roleReasoner !== undefined ? { roleReasoner: body.roleReasoner } : {}),
     });
+    return c.json({ ok: true, jobId: launched.jobId, status: "running" }, 202);
   } catch (err) {
-    await failAnalystResearchJob(jobId, err);
-    return c.json(
-      { ok: false, error: err instanceof Error ? err.message : String(err), jobId },
-      500
-    );
+    if (err instanceof LaunchAnalystTeamError) {
+      if (err.status === 404) {
+        return c.json({ ok: false, error: err.message, code: err.code }, 404);
+      }
+      return c.json({ ok: false, error: err.message, code: err.code }, 400);
+    }
+    throw err;
   }
-
-  return c.json({ ok: true, jobId, status: "running" }, 202);
 });
 
 /**

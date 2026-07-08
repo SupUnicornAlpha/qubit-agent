@@ -14,7 +14,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
-import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import { researchScenarioService } from "../research-scenario/service";
 import { collectSnapshot } from "./snapshot-collector";
 import { gradeSnapshot, type ReadinessSnapshot, type SnapshotGrade } from "./grader";
 import type { JudgeClient } from "./quality/content-judge";
@@ -80,11 +80,15 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
   const recipe = getScenarioRecipe(input.scenario);
   const startMs = Date.now();
 
-  const created = await createAndDispatchWorkflow({
-    ...recipe.workflow,
+  const launched = await researchScenarioService.launch({
+    scenarioKey: recipe.key,
     projectId: input.projectId,
+    goal: recipe.workflow.goal,
+    inputParams: scenarioInputParamsFromRecipe(recipe),
+    agentGroupId: recipe.analystRun.agentGroupId,
+    loopOverrides: recipe.workflow.loopOptionsJson as never,
   });
-  const workflowRunId = created.data.id;
+  const workflowRunId = launched.workflowRunId;
 
   const result = await runReadinessFromWorkflowId({
     scenario: input.scenario,
@@ -99,6 +103,14 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
   });
 
   return { ...result, elapsedMs: Date.now() - startMs };
+}
+
+function scenarioInputParamsFromRecipe(recipe: ScenarioRecipe): Record<string, unknown> {
+  return {
+    ...(recipe.analystRun.ticker ? { ticker: recipe.analystRun.ticker } : {}),
+    ...(recipe.analystRun.scope ? { scope: recipe.analystRun.scope } : {}),
+    ...(recipe.analystRun.context ? { context: recipe.analystRun.context } : {}),
+  };
 }
 
 /**

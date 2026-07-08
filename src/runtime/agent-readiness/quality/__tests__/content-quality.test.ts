@@ -174,6 +174,16 @@ describe("A 类 · 内容质量", () => {
       kind: "factor_score",
       factorIdsJson: [`f-1-${wfId}`, `f-2-${wfId}`] as never,
     });
+    await db.insert(schema.backtestRun).values({
+      id: `bt-${wfId}`,
+      strategyVersionId: verId,
+      connectorInstanceId: "test-connector",
+      datasetSnapshotId: "test-dataset",
+      configJson: {} as never,
+      performanceJson: { sharpe: 1.1, maxDrawdown: 0.08 } as never,
+      status: "completed",
+      workflowRunId: wfId,
+    });
     const sqlite = getSqliteForTesting();
     const r = await collectContentQuality(sqlite, {
       workflowRunId: wfId,
@@ -182,6 +192,7 @@ describe("A 类 · 内容质量", () => {
     });
     expect(r["A-1"]).toBe(1);
     expect(r["A-4"]).toBe(1);
+    expect(r["A-5"]).toBe(1);
   });
 
   test("strategy：composition 引用 1 个不存在的 factor → A-4=0.5", async () => {
@@ -291,6 +302,7 @@ describe("A 类 · 内容质量", () => {
       goal: "alpha 因子 IC",
     });
     expect(r["A-1"]).toBe(1);
+    expect(r["A-5"]).toBe(1);
   });
 
   test("factor：其他 workflow 留下的全库残留因子不应让本 workflow 假阳性 A-1>0", async () => {

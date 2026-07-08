@@ -171,6 +171,7 @@ export async function collectSnapshot(
     "A-2": content["A-2"],
     "A-3": judge["A-3"],
     "A-4": content["A-4"],
+    "A-5": content["A-5"],
     // B 类
     "B-1": tools["B-1"],
     "B-2": tools["B-2"],

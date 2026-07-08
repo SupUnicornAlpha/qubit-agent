@@ -603,6 +603,13 @@
       "when": 1813363200000,
       "tag": "0086_plan_json_workflow_run",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1813449600000,
+      "tag": "0087_research_effect_validation",
+      "breakpoints": true
     }
   ]
 }

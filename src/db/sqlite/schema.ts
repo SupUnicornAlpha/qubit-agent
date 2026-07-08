@@ -2094,6 +2094,53 @@ export const analystAccuracyLog = sqliteTable("analyst_accuracy_log", {
   evaluatedAt: integer("evaluated_at"),
 });
 
+export const recommendationSnapshot = sqliteTable("recommendation_snapshot", {
+  id: id(),
+  workflowRunId: text("workflow_run_id")
+    .notNull()
+    .references(() => workflowRun.id, { onDelete: "cascade" }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id, { onDelete: "cascade" }),
+  scenarioKey: text("scenario_key").notNull(),
+  symbol: text("symbol").notNull(),
+  market: text("market").notNull().default("US"),
+  side: text("side", { enum: ["long", "short", "neutral"] }).notNull(),
+  horizonDays: integer("horizon_days").notNull().default(20),
+  confidence: real("confidence").notNull().default(0.5),
+  score: real("score"),
+  rationale: text("rationale").notNull().default(""),
+  evidenceJson: text("evidence_json", { mode: "json" }).notNull().default("[]"),
+  sourceArtifactKind: text("source_artifact_kind"),
+  sourceArtifactId: text("source_artifact_id"),
+  createdBy: text("created_by").notNull().default("agent"),
+  agentInstanceId: text("agent_instance_id"),
+  asof: text("asof").notNull(),
+  createdAt: createdAt(),
+});
+
+export const recommendationOutcome = sqliteTable("recommendation_outcome", {
+  id: id(),
+  recommendationId: text("recommendation_id")
+    .notNull()
+    .references(() => recommendationSnapshot.id, { onDelete: "cascade" }),
+  horizonDays: integer("horizon_days").notNull(),
+  startPrice: real("start_price"),
+  endPrice: real("end_price"),
+  returnPct: real("return_pct"),
+  benchmarkReturnPct: real("benchmark_return_pct"),
+  excessReturnPct: real("excess_return_pct"),
+  hit: integer("hit", { mode: "boolean" }),
+  outcome: text("outcome", {
+    enum: ["pending", "win", "loss", "flat", "invalid"],
+  })
+    .notNull()
+    .default("pending"),
+  evaluatedAt: text("evaluated_at"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
 // ─── V2 结构化辩论域（SDP） ───────────────────────────────────────────────────
 
 export const debateSession = sqliteTable("debate_session", {
@@ -2528,6 +2575,39 @@ export const strategyComposition = sqliteTable("strategy_composition", {
   parentCompositionId: text("parent_composition_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
+});
+
+export const strategyEvalRun = sqliteTable("strategy_eval_run", {
+  id: id(),
+  workflowRunId: text("workflow_run_id").references(() => workflowRun.id, {
+    onDelete: "set null",
+  }),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => project.id, { onDelete: "cascade" }),
+  strategyVersionId: text("strategy_version_id").references(() => strategyVersion.id, {
+    onDelete: "set null",
+  }),
+  compositionId: text("composition_id").references(() => strategyComposition.id, {
+    onDelete: "set null",
+  }),
+  backtestRunId: text("backtest_run_id").references(() => backtestRun.id, {
+    onDelete: "set null",
+  }),
+  scenarioKey: text("scenario_key").notNull().default(""),
+  evalKind: text("eval_kind", {
+    enum: ["backtest", "paper", "live", "walk_forward", "recommendation"],
+  })
+    .notNull()
+    .default("backtest"),
+  periodStart: text("period_start"),
+  periodEnd: text("period_end"),
+  metricsJson: text("metrics_json", { mode: "json" }).notNull().default("{}"),
+  qualityScore: real("quality_score"),
+  pass: integer("pass", { mode: "boolean" }),
+  notes: text("notes").notNull().default(""),
+  createdBy: text("created_by").notNull().default("system"),
+  createdAt: createdAt(),
 });
 
 /** 挖掘任务编排留痕：因子挖掘 / 规则挖掘 / 协演化 */

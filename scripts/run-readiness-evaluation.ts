@@ -114,68 +114,42 @@ interface ScenarioResult {
 }
 
 /**
- * 复刻 UI 上「新建工作流 → 启动研究团队」两步链路：
+ * 通过统一 Scenario Harness 启动：
  *
- *   1. POST /api/v1/workflows  (skipDispatch=true)
- *      仅占位 workflow_run；不让 orchestrator 走「单 Agent 走 react loop」
- *      的简化路径。
- *   2. POST /api/v1/analyst/run  { workflowRunId, agentGroupId, ticker | scope, hitlMode }
- *      派发 task_type=research_team_execute 给 orchestrator，runAnalystTeam
- *      内部会把 agent_group_id 写回 workflow_run，并按 group 解析分析师 slot。
+ *   POST /api/v1/research-scenarios/:key/launch
  *
- * 若 group 没有 analyst slot（如 grp-strategy-pipeline / grp-live-trading 暂时
- * 无成员），analyst/run 会 4xx 报错；此时把错误透出到 startError 字段，让评
- * 测报告显式暴露"该场景在 UI 上无可用入口"，比静默 fallback 到单 Agent 裸跑
- * 更诚实。
+ * 该入口内部负责 create workflow、tag research_scenario_id、启动研究团队。
+ * 评测脚本不再手写「create workflow + analyst/run」两步，避免 UI / harness 漂移。
  */
 async function startWorkflowViaUiPath(recipe: ScenarioRecipe): Promise<string> {
-  // ── Step 1: 创建 workflow 占位（skipDispatch=true）──
-  const createPayload = {
+  const launchPayload = {
     projectId: PROJECT_ID,
     goal: recipe.workflow.goal,
-    mode: recipe.workflow.mode,
-    source: "api" as const,
-    skipDispatch: true,
-    loopKind: recipe.workflow.loopKind,
-    loopOptionsJson: recipe.workflow.loopOptionsJson,
-  };
-  const createRes = await fetch(`${DEV_SERVER}/api/v1/workflows`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(createPayload),
-  });
-  if (!createRes.ok) {
-    const text = await createRes.text().catch(() => "");
-    throw new Error(`POST /workflows ${createRes.status}: ${text.slice(0, 300)}`);
-  }
-  const createJson = (await createRes.json()) as {
-    data?: { id?: string };
-    runId?: string;
-  };
-  const workflowRunId = createJson.data?.id ?? createJson.runId;
-  if (!workflowRunId) {
-    throw new Error(`unexpected create response: ${JSON.stringify(createJson).slice(0, 300)}`);
-  }
-
-  // ── Step 2: 启动研究团队（按 group 派发分析师 + 多 Agent）──
-  const runPayload: Record<string, unknown> = {
-    workflowRunId,
+    inputParams: {
+      ...(recipe.analystRun.ticker ? { ticker: recipe.analystRun.ticker } : {}),
+      ...(recipe.analystRun.scope ? { scope: recipe.analystRun.scope } : {}),
+      ...(recipe.analystRun.context ? { context: recipe.analystRun.context } : {}),
+    },
     agentGroupId: recipe.analystRun.agentGroupId,
-    ...(recipe.analystRun.ticker ? { ticker: recipe.analystRun.ticker } : {}),
-    ...(recipe.analystRun.scope ? { scope: recipe.analystRun.scope } : {}),
-    ...(recipe.analystRun.context ? { context: recipe.analystRun.context } : {}),
-    ...(recipe.analystRun.hitlMode ? { hitlMode: recipe.analystRun.hitlMode } : {}),
+    loopOverrides: recipe.workflow.loopOptionsJson,
   };
-  const runRes = await fetch(`${DEV_SERVER}/api/v1/analyst/run`, {
+  const launchRes = await fetch(`${DEV_SERVER}/api/v1/research-scenarios/${recipe.key}/launch`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(runPayload),
+    body: JSON.stringify(launchPayload),
   });
-  if (!runRes.ok) {
-    const text = await runRes.text().catch(() => "");
+  if (!launchRes.ok) {
+    const text = await launchRes.text().catch(() => "");
     throw new Error(
-      `POST /analyst/run ${runRes.status}: ${text.slice(0, 300)} (workflowRunId=${workflowRunId}, group=${recipe.analystRun.agentGroupId})`
+      `POST /research-scenarios/${recipe.key}/launch ${launchRes.status}: ${text.slice(0, 300)} (group=${recipe.analystRun.agentGroupId})`
     );
+  }
+  const launchJson = (await launchRes.json()) as {
+    data?: { workflowRunId?: string };
+  };
+  const workflowRunId = launchJson.data?.workflowRunId;
+  if (!workflowRunId) {
+    throw new Error(`unexpected launch response: ${JSON.stringify(launchJson).slice(0, 300)}`);
   }
 
   return workflowRunId;

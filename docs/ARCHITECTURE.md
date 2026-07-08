@@ -149,9 +149,7 @@ flowchart LR
   AP --> Native
   AP --> Claude
   AP --> Codex
-  Native --> Graph
   Native --> A2A
-  Graph --> EAR
   A2A --> EAR
 ```
 
@@ -159,16 +157,15 @@ flowchart LR
 
 - `startAllAgents()` / `stopAllAgents()`
 - `dispatchTaskToRole({ workflowId, role, payload })`
-- `getRuntimeAgents()` — 合并 Graph 视图与 A2A Pool 视图（带 `executionPath` 标记）
+- `getRuntimeAgents()` — 返回 A2A Pool 视图（`executionPath` 固定标记为 `a2a`）
 
 派发逻辑：
 
-1. 读取 `workflow_run` 的 `loopKind`、`executionPath`、`loopOptionsJson`
-2. `resolveExecutionPath()`（`src/runtime/resolve-execution-path.ts`）
-3. 若 `native` + `a2a` → `a2aLoopDriver`（发 A2A 消息）
-4. 否则 → `getLoopDriver(loopKind).dispatchTask()`（native 默认 `graphRunner.runRoleTask`）
+1. 读取 `workflow_run.loopKind`
+2. 若 `native` → `a2aLoopDriver`（发 A2A 消息）
+3. 若 `claude_cli` / `codex_cli` → `getLoopDriver(loopKind).dispatchTask()`
 
-环境变量：`QUBIT_AGENT_EXECUTION_PATH`（默认 `graph`）作为新工作流的默认 `executionPath`。
+`executionPath` 字段仅兼容历史 DB；`resolveExecutionPath()` 对 native 恒返回 `a2a`。
 
 ### 5.2 ReAct 内建循环（Native）
 
@@ -199,23 +196,21 @@ stateDiagram-v2
 - 显式关闭：任务 `params.forceLoop: false` 或 `loopOptions.reactLoop: false`
 - 沙箱：`sandboxExecutor.checkIterationLimit` 可终止并写 `SANDBOX_ITERATION_LIMIT`
 
-**Graph 路径**：`GraphRunner.executeGraph()` → `executeAgentReact()`（`streamSource: native`）
-
-**A2A 路径**：`AgentRuntime` 订阅消息 → `role-handlers` 默认 handler → `runA2aReactTaskAssign()` → 同一 `executeAgentReact()`（`streamSource: a2a`）→ 回 `TASK_RESULT`
+**A2A 路径**：`AgentRuntime` 订阅消息 → `role-handlers` 默认 handler → `runA2aReactTaskAssign()` → `executeAgentReact()`（`streamSource: a2a`）→ 回 `TASK_RESULT`
 
 > 编排器 `research_team_execute`、风控签名链、`risk` / `execution` 等 **专用 handler** 仍走定制逻辑，不进入通用 ReAct 短路。
 
-### 5.3 GraphRunner vs A2APool
+### 5.3 A2APool
 
-| | GraphRunner | A2APool |
-|---|-------------|---------|
-| 入口 | `nativeLoopDriver` → `graphRunner.runRoleTask` | `a2aLoopDriver.dispatchTask` → `a2aRouter.send(TASK_ASSIGN)` |
-| 实例模型 | 每次任务新建 `agent_instance` | 长驻 `agent_instance` 绑在 pool workflow 上 |
-| 角色行为 | 直接调 `executeAgentReact` | `AgentRuntime` + `RuntimeRoleHandler` |
-| 配置热更新 | 监听 `.qubit/*.json` 可 reload 定义 | 启动时加载 DB 定义 |
-| 适用场景 | 默认；与 LangGraph 状态机一致 | 需要完整 A2A 消息轨迹、多角色总线协作 |
+Native 内部总线已收敛到 A2A Pool：
 
-两者在 **ReAct 语义上等价**；差异在调度与消息外壳。
+| 项 | 当前实现 |
+|---|----------|
+| 入口 | `a2aLoopDriver.dispatchTask` → `a2aRouter.send(TASK_ASSIGN)` |
+| 实例模型 | 长驻 `agent_instance` 绑在 pool workflow 上 |
+| 角色行为 | `AgentRuntime` + `RuntimeRoleHandler`，默认进入 `executeAgentReact` |
+| 配置热更新 | `reloadAgentPool()` 从 `.qubit/*.json` / DB 重载定义 |
+| 历史兼容 | `execution_path='graph'` 的旧 workflow 续跑时归一为 A2A |
 
 ### 5.4 外部 CLI Loop
 

@@ -5,13 +5,29 @@
  */
 
 import { providerResolver } from "../provider/resolver";
+import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import { launchAnalystTeam } from "../msa/launch-analyst-team";
+import type { ResearchScopeInput } from "../../types/research-scope";
 import { researchScenarioRegistry } from "./registry";
 import {
   ScenarioError,
   type FieldSchema,
   type ScenarioLaunchInput,
+  type ResearchScenarioSpec,
   type ScenarioValidateResult,
 } from "./types";
+
+const SCENARIO_KEY_ALIASES: Record<string, string> = {
+  research: "analyst_debate",
+  research_multi: "analyst_debate",
+  research_theme: "stock_screening",
+  stock_pick: "stock_screening",
+  stock_pick_short: "stock_screening",
+  factor: "factor_research",
+  strategy: "strategy_authoring",
+  strategy_long_short: "strategy_authoring",
+  live_trading_short: "live_trading",
+};
 
 function validateInput(
   schema: Record<string, FieldSchema>,
@@ -74,15 +90,27 @@ function validateInput(
 }
 
 export class ResearchScenarioService {
+  private resolveSpec(
+    scenarioKey: string
+  ): { requestedKey: string; registryKey: string; spec: ResearchScenarioSpec & { id: string } } {
+    const direct = researchScenarioRegistry.get(scenarioKey);
+    const registryKey = direct ? scenarioKey : SCENARIO_KEY_ALIASES[scenarioKey];
+    if (!registryKey) {
+      throw new ScenarioError("scenario_not_found", `scenario_not_found: ${scenarioKey}`);
+    }
+    const spec = direct ?? researchScenarioRegistry.get(registryKey);
+    if (!spec) {
+      throw new ScenarioError("scenario_not_found", `scenario_not_found: ${scenarioKey}`);
+    }
+    return { requestedKey: scenarioKey, registryKey, spec };
+  }
+
   async validate(
     scenarioKey: string,
     input: Record<string, unknown>,
     scope: { projectId?: string; workflowRunId?: string; strategyVersionId?: string } = {}
   ): Promise<ScenarioValidateResult> {
-    const spec = researchScenarioRegistry.get(scenarioKey);
-    if (!spec) {
-      throw new ScenarioError("scenario_not_found", `scenario_not_found: ${scenarioKey}`);
-    }
+    const { spec } = this.resolveSpec(scenarioKey);
     if (spec.status === "disabled") {
       throw new ScenarioError("scenario_disabled", `scenario_disabled: ${scenarioKey}`);
     }
@@ -109,16 +137,14 @@ export class ResearchScenarioService {
    */
   async planLaunch(input: ScenarioLaunchInput): Promise<{
     scenarioKey: string;
+    registryScenarioKey: string;
     scenarioId: string;
     agentGroupId: string;
     inputParams: Record<string, unknown>;
     loopOptions: Record<string, unknown>;
     validation: ScenarioValidateResult;
   }> {
-    const spec = researchScenarioRegistry.get(input.scenarioKey);
-    if (!spec) {
-      throw new ScenarioError("scenario_not_found", `scenario_not_found: ${input.scenarioKey}`);
-    }
+    const { requestedKey, registryKey, spec } = this.resolveSpec(input.scenarioKey);
     if (spec.status === "disabled") {
       throw new ScenarioError("scenario_disabled", `scenario_disabled: ${input.scenarioKey}`);
     }
@@ -135,7 +161,8 @@ export class ResearchScenarioService {
     const loop = { ...spec.loopDefaults, ...(input.loopOverrides ?? {}) };
 
     return {
-      scenarioKey: spec.key,
+      scenarioKey: requestedKey,
+      registryScenarioKey: registryKey,
       scenarioId: spec.id,
       agentGroupId: groupId,
       inputParams: input.inputParams,
@@ -143,6 +170,152 @@ export class ResearchScenarioService {
       validation,
     };
   }
+
+  async launch(input: ScenarioLaunchInput): Promise<{
+    scenarioKey: string;
+    registryScenarioKey: string;
+    scenarioId: string;
+    workflowRunId: string;
+    jobId: string;
+    agentGroupId: string;
+    validation: ScenarioValidateResult;
+  }> {
+    const plan = await this.planLaunch(input);
+    if (plan.validation.invalidInputs?.length) {
+      throw new ScenarioError("invalid_input", "invalid_input", {
+        invalidInputs: plan.validation.invalidInputs,
+      });
+    }
+    const requiredMissing = plan.validation.missingCapabilities ?? [];
+    if (requiredMissing.length > 0) {
+      throw new ScenarioError("missing_capability", "missing_capability", {
+        missingCapabilities: requiredMissing,
+      });
+    }
+
+    const goal = input.goal?.trim() || buildScenarioGoal(plan.scenarioKey, plan.inputParams);
+    const created = await createAndDispatchWorkflow({
+      projectId: input.projectId,
+      goal,
+      mode: "research",
+      source: "api",
+      skipDispatch: true,
+      loopKind: "native",
+      loopOptionsJson: {
+        ...plan.loopOptions,
+        scenarioKey: plan.scenarioKey,
+        registryScenarioKey: plan.registryScenarioKey,
+      } as never,
+    });
+
+    const launchInput = buildAnalystLaunchInput({
+      scenarioKey: plan.scenarioKey,
+      inputParams: plan.inputParams,
+      goal,
+    });
+    const launched = await launchAnalystTeam({
+      workflowRunId: created.data.id,
+      ...(launchInput.ticker !== undefined ? { ticker: launchInput.ticker } : {}),
+      ...(launchInput.scope !== undefined ? { scope: launchInput.scope } : {}),
+      context: launchInput.context,
+      agentGroupId: plan.agentGroupId,
+      researchScenarioKey: plan.scenarioKey,
+      hitlMode: "off",
+    });
+
+    return {
+      scenarioKey: plan.scenarioKey,
+      registryScenarioKey: plan.registryScenarioKey,
+      scenarioId: plan.scenarioId,
+      workflowRunId: created.data.id,
+      jobId: launched.jobId,
+      agentGroupId: plan.agentGroupId,
+      validation: plan.validation,
+    };
+  }
 }
 
 export const researchScenarioService = new ResearchScenarioService();
+
+function buildScenarioGoal(scenarioKey: string, params: Record<string, unknown>): string {
+  const parts = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .slice(0, 8)
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : String(value)}`);
+  return `运行研究场景 ${scenarioKey}${parts.length ? `：${parts.join("；")}` : ""}`;
+}
+
+function buildAnalystLaunchInput(input: {
+  scenarioKey: string;
+  inputParams: Record<string, unknown>;
+  goal: string;
+}): { ticker?: string; scope?: ResearchScopeInput; context: string } {
+  const params = input.inputParams;
+  const explicitContext = firstString(params, ["context"]);
+  const explicitScope =
+    params.scope && typeof params.scope === "object" && !Array.isArray(params.scope)
+      ? (params.scope as ResearchScopeInput)
+      : undefined;
+  const ticker = firstString(params, ["ticker", "symbol", "primarySymbol"]);
+  const symbols = firstStringArray(params, ["symbols", "tickers"]);
+  const theme =
+    firstString(params, ["theme", "strategyHint", "ruleTheme", "factorCategory", "universe"]) ??
+    input.goal;
+
+  if (ticker) {
+    return {
+      ticker,
+      context: explicitContext ?? input.goal,
+    };
+  }
+  if (explicitScope) {
+    return {
+      scope: explicitScope,
+      context: explicitContext ?? input.goal,
+    };
+  }
+  if (symbols.length === 1) {
+    return {
+      ticker: symbols[0]!,
+      context: explicitContext ?? input.goal,
+    };
+  }
+  if (symbols.length > 1) {
+    return {
+      scope: { kind: "basket", symbols, theme },
+      context: explicitContext ?? input.goal,
+    };
+  }
+  return {
+    scope: { kind: "explore", theme },
+    context: explicitContext ?? input.goal,
+  };
+}
+
+function firstString(params: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function firstStringArray(params: Record<string, unknown>, keys: string[]): string[] {
+  for (const key of keys) {
+    const value = params[key];
+    if (Array.isArray(value)) {
+      const strings = value.filter(
+        (item): item is string => typeof item === "string" && item.trim().length > 0
+      );
+      if (strings.length > 0) return strings.map((item) => item.trim());
+    }
+    if (typeof value === "string" && value.includes(",")) {
+      const strings = value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (strings.length > 0) return strings;
+    }
+  }
+  return [];
+}

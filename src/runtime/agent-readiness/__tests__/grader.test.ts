@@ -21,11 +21,12 @@ function makeSnap(
 }
 
 const ALL_GREEN: Record<string, number> = {
-  // A 类：4 个全绿
+  // A 类：5 个全绿
   "A-1": 1.0,
   "A-2": 0.8,
   "A-3": 4.0,
   "A-4": 1.0,
+  "A-5": 1.0,
   // B 类：4 个全绿
   "B-1": 1.0,
   "B-2": 1.0,
@@ -69,20 +70,21 @@ describe("gradeSnapshot v2 (AQM)", () => {
         "A-2": 0,
         "A-3": 1,
         "A-4": 0,
+        "A-5": 0,
       })
     );
     expect(r.metricGrades["A-1"]).toBe("red");
     expect(r.categoryScores.A).toBe(0);
     // 加权分 = 0*0.4 + 1*0.3 + 1*0.2 + 1*0.1 = 0.6
     expect(r.weightedScore).toBeCloseTo(0.6, 2);
-    // 红比 = 4/16 = 0.25 → D（红比 > 0.1）
+    // A 类全红，B/C/D 全绿 → D
     expect(r.overall).toBe("D");
   });
 
   test("一个指标缺值（A-3=null，nullGrade=null）不计入聚合", () => {
     const r = gradeSnapshot(makeSnap({ ...ALL_GREEN, "A-3": null }));
     expect(r.metricGrades["A-3"]).toBeNull();
-    // A 类还有 3 个绿；categoryScores.A 仍是 1（3 绿 / 3 = 1）
+    // A 类还有 4 个绿；categoryScores.A 仍是 1（4 绿 / 4 = 1）
     expect(r.categoryScores.A).toBe(1);
     expect(r.overall).toBe("A");
   });
@@ -113,6 +115,7 @@ describe("gradeSnapshot v2 (AQM)", () => {
         "A-2": 0.4,
         "A-3": 3.0,
         "A-4": 0.8,
+        "A-5": 0.5,
         "B-1": 0,
         "B-2": 0,
         "B-3": 0.5,

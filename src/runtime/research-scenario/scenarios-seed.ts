@@ -295,7 +295,7 @@ export const STOCK_SCREENING_SCENARIO: ResearchScenarioSpec = {
     { kind: "rule_engine", level: "optional" },
   ],
   toolPreset: {
-    builtinTools: ["factor.list", "rule.evaluate", "run_screener"],
+    builtinTools: ["factor.list", "rule.evaluate", "run_screener", "recommendation.record"],
     connectors: ["qubit-data", "qubit-research"],
     mcpServers: [],
     defaultParams: {},

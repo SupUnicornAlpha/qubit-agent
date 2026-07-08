@@ -1,5 +1,5 @@
 /**
- * A 类 · 内容质量指标（A-1 / A-2 / A-4）。
+ * A 类 · 内容质量指标（A-1 / A-2 / A-4 / A-5）。
  *
  * 三个指标都是从 SQL 抓产物，**不调 LLM**：
  *   - A-1 完整性：requiredArtifacts 全部满足 → 1，部分满足 → ratio，全 0 → 0
@@ -32,12 +32,13 @@ export interface ContentQualityResult {
   "A-1": number;
   "A-2": number;
   "A-4": number | null;
+  "A-5": number | null;
   /** 调试用：每个 artifact 是否达标 */
   details: {
-    artifacts: ReadonlyArray<{ table: string; ok: boolean; rows: number }>;
+    artifacts: Array<{ table: string; ok: boolean; rows: number }>;
     keywordsMatched: ReadonlyArray<string>;
     keywordsMissed: ReadonlyArray<string>;
-    consistency: ReadonlyArray<{
+    consistency: Array<{
       name: string;
       totalRefs: number;
       brokenRefs: number;
@@ -79,6 +80,25 @@ function metricA1(
   return {
     value: filled / exp.requiredArtifacts.length,
     details: checks.map((c) => ({ table: c.table, ok: c.ok, rows: c.rows })),
+  };
+}
+
+function metricA5(
+  sqlite: Database,
+  workflowRunId: string,
+  exp: ScenarioExpectation
+): { value: number | null; details: ContentQualityResult["details"]["artifacts"] } {
+  const gates = exp.qualityGates ?? [];
+  if (gates.length === 0) return { value: null, details: [] };
+  const checks = gates.map((gate) => ({
+    table: gate.table,
+    minRows: gate.minRows,
+    ...evaluateArtifact(sqlite, workflowRunId, gate),
+  }));
+  const passed = checks.filter((check) => check.ok).length;
+  return {
+    value: passed / gates.length,
+    details: checks.map((check) => ({ table: check.table, ok: check.ok, rows: check.rows })),
   };
 }
 
@@ -125,7 +145,7 @@ function fetchSearchHaystack(
       )
       .all(workflowRunId) as Array<{ ticker: string; sig: string }>;
     for (const f of fus) parts.push(f.ticker, f.sig);
-  } else if (scenario === "stock_pick") {
+  } else if (scenario === "stock_pick" || scenario === "stock_pick_short") {
     const cands = sqlite
       .prepare(
         `SELECT sc.ticker, sc.company_name AS company
@@ -135,6 +155,16 @@ function fetchSearchHaystack(
       )
       .all(workflowRunId) as Array<{ ticker: string; company: string }>;
     for (const c of cands) parts.push(c.ticker, c.company);
+    try {
+      const recs = sqlite
+        .prepare(
+          `SELECT symbol, side, rationale FROM recommendation_snapshot WHERE workflow_run_id = ?`
+        )
+        .all(workflowRunId) as Array<{ symbol: string; side: string; rationale: string }>;
+      for (const r of recs) parts.push(r.symbol, r.side, r.rationale);
+    } catch {
+      // Older test DBs may not have recommendation_snapshot; artifact gate handles the hard check.
+    }
   } else if (scenario === "factor") {
     /**
      * Round 8 复盘：旧实现 `WHERE id IN (SELECT factor_id FROM factor_evaluation)`
@@ -301,12 +331,14 @@ export async function collectContentQuality(
   const a1 = metricA1(sqlite, input.workflowRunId, exp);
   const a2 = metricA2(sqlite, input, exp);
   const a4 = metricA4(sqlite, input.workflowRunId, exp);
+  const a5 = metricA5(sqlite, input.workflowRunId, exp);
   return {
     "A-1": a1.value,
     "A-2": a2.value,
     "A-4": a4.value,
+    "A-5": a5.value,
     details: {
-      artifacts: a1.details,
+      artifacts: [...a1.details, ...a5.details],
       keywordsMatched: a2.matched,
       keywordsMissed: a2.missed,
       consistency: a4.details,

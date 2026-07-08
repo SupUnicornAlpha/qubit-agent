@@ -23,6 +23,8 @@ export interface ScenarioExpectation {
   scenario: ScenarioRecipe["key"];
   /** 必备产物表（A-1） */
   requiredArtifacts: ArtifactExpectation[];
+  /** 效果质量门：比“已落库”更进一步，要求关键结果可验证 */
+  qualityGates?: ArtifactExpectation[];
   /** 必备工具集合（B-1）：按 toolName / 前缀匹配 */
   requiredTools: ReadonlyArray<string>;
   /**
@@ -148,8 +150,18 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         minRows: 3,
         nonNullColumns: ["ticker", "score"],
       },
+      {
+        table: "recommendation_snapshot",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM recommendation_snapshot
+          WHERE workflow_run_id = ?
+            AND side = 'long'`,
+        minRows: 3,
+        nonNullColumns: ["symbol", "rationale"],
+      },
     ],
-    requiredTools: ["screener"],
+    requiredTools: ["screener", "recommendation.record"],
     goalKeywords: ["momentum", "估值", "新闻"],
     consistencyChecks: [],
   },
@@ -168,8 +180,18 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         minRows: 2,
         nonNullColumns: ["ticker", "score"],
       },
+      {
+        table: "recommendation_snapshot",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM recommendation_snapshot
+          WHERE workflow_run_id = ?
+            AND side = 'short'`,
+        minRows: 2,
+        nonNullColumns: ["symbol", "rationale"],
+      },
     ],
-    requiredTools: ["screener"],
+    requiredTools: ["screener", "recommendation.record"],
     // 做空场景：关键词命中是给 A-2（内容相关性）打分用，要求产物文本里出现
     // 做空 / 估值 / 风险等词，A-3 由 LLM-Judge 进一步打专业度分。
     goalKeywords: ["做空", "估值", "风险"],
@@ -205,6 +227,21 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         minRows: 1,
       },
     ],
+    qualityGates: [
+      {
+        table: "quality:factor_ic_rankic",
+        countSql: `
+          SELECT COUNT(*) AS c FROM factor_evaluation fe
+          WHERE (
+              (fe.ic IS NOT NULL AND ABS(fe.ic) >= 0.03)
+              OR (fe.rank_ic IS NOT NULL AND ABS(fe.rank_ic) >= 0.03)
+            )
+            AND fe.factor_id IN (
+              SELECT id FROM factor_definition WHERE workflow_run_id = ?
+            )`,
+        minRows: 1,
+      },
+    ],
     requiredTools: ["factor"],
     goalKeywords: ["因子", "alpha", "IC"],
     consistencyChecks: [],
@@ -227,6 +264,18 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
             SELECT id FROM strategy_version WHERE workflow_run_id = ?
           )
             AND factor_ids_json != '[]'`,
+        minRows: 1,
+      },
+    ],
+    qualityGates: [
+      {
+        table: "quality:strategy_backtest_completed",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM backtest_run
+          WHERE workflow_run_id = ?
+            AND status = 'completed'
+            AND performance_json IS NOT NULL`,
         minRows: 1,
       },
     ],
@@ -258,6 +307,18 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
             SELECT id FROM strategy_version WHERE workflow_run_id = ?
           )
             AND factor_ids_json != '[]'`,
+        minRows: 1,
+      },
+    ],
+    qualityGates: [
+      {
+        table: "quality:strategy_backtest_completed",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM backtest_run
+          WHERE workflow_run_id = ?
+            AND status = 'completed'
+            AND performance_json IS NOT NULL`,
         minRows: 1,
       },
     ],

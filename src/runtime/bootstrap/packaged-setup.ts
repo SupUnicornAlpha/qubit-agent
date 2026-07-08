@@ -14,6 +14,8 @@ import {
 } from "../config/workspace-config";
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { hydrateLlmProviderEnv } from "../llm/llm-router";
+import { bootstrapProviders } from "../provider/bootstrap";
+import { bootstrapResearchScenarios } from "../research-scenario/bootstrap";
 
 export type BootstrapResult = {
   migrations: boolean;
@@ -138,6 +140,8 @@ export async function runPlatformBootstrap(options?: {
   // 路径（agent_group 等）若想引用 workspace_id 时需要它已存在。
   await ensureDefaultUserWorkspace();
   await seedAgentDefinitions();
+  await bootstrapProviders();
+  await bootstrapResearchScenarios();
   /**
    * LLM Provider apiKey hydrate（M10.B-P0 fix，2026-06-05）：
    *

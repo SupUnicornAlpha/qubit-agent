@@ -77,6 +77,13 @@ export const AQM_THRESHOLDS: Record<string, MetricThreshold> = {
     nullGrade: null,
     category: "A",
   },
+  "A-5": {
+    metricId: "A-5",
+    description: "效果质量门：IC/RankIC、回测、推荐快照等场景质量 gate 通过率",
+    grade: gtRatio(1.0, 0.5),
+    nullGrade: null,
+    category: "A",
+  },
 
   // ── B 类 · 工具/Skill 调用质量 ────────────────────────────────────────
   "B-1": {

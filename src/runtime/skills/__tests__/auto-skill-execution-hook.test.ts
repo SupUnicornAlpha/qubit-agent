@@ -66,7 +66,7 @@ beforeEach(async () => {
     mode: "research",
     source: "user",
     status: "running",
-    loopKind: "react",
+    loopKind: "native",
   });
 });
 

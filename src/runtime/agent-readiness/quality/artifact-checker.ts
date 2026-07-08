@@ -75,7 +75,7 @@ export function checkRequiredArtifacts(
   const exp = getScenarioExpectation(scenario);
   const rows: ArtifactGapDetail[] = [];
   const missing: ArtifactGapDetail[] = [];
-  for (const a of exp.requiredArtifacts) {
+  for (const a of [...exp.requiredArtifacts, ...(exp.qualityGates ?? [])]) {
     let count = 0;
     try {
       const row = sqlite.prepare(a.countSql).get(workflowRunId) as

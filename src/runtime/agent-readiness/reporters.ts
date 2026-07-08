@@ -31,7 +31,7 @@ interface CategoryView {
 }
 
 const CATEGORY_VIEWS: Record<"A" | "B" | "C" | "D" | "LEGACY", CategoryView> = {
-  A: { title: "A 类 · 内容质量", metrics: ["A-1", "A-2", "A-3", "A-4"] },
+  A: { title: "A 类 · 内容质量", metrics: ["A-1", "A-2", "A-3", "A-4", "A-5"] },
   B: { title: "B 类 · 工具/Skill 调用质量", metrics: ["B-1", "B-2", "B-3", "B-7"] },
   C: {
     title: "C 类 · LLM 调用质量",
@@ -84,7 +84,7 @@ export function renderMarkdownReport(snapshot: ReadinessSnapshot): string {
     lines.push("| --- | --- | --- | --- |");
     for (const id of view.metrics) {
       const g = grade.metricGrades[id];
-      const value = grade.metricValues[id];
+      const value = grade.metricValues[id] ?? null;
       const desc = grade.metricDescriptions[id] ?? "";
       const icon = g ? GRADE_ICON[g] : "—";
       const gradeText = g ?? "n/a";
@@ -114,7 +114,7 @@ export function renderMarkdownReport(snapshot: ReadinessSnapshot): string {
   }
 
   // 红灯指标的 next-step 提示（仅 AQM 主指标，不包含 LEGACY）
-  const allMetrics = ["A", "B", "C", "D"].flatMap((c) => CATEGORY_VIEWS[c as "A"].metrics);
+  const allMetrics = (["A", "B", "C", "D"] as const).flatMap((c) => CATEGORY_VIEWS[c].metrics);
   const reds = allMetrics.filter((id) => grade.metricGrades[id] === "red");
   lines.push("## 下一步建议");
   lines.push("");
@@ -158,6 +158,7 @@ function suggestForRed(id: string): string {
     "A-2": "产物字段未提及 goal 关键词；可能 Agent 根本没解析 goal，或在不同 ticker 上跑。",
     "A-3": "LLM judge 给低分；查看 'A-3 评分明细' issues，再回头改 prompt / 工具链。",
     "A-4": "产物之间引用断开（strategy 引用了不存在的 factor / order 引用了不存在的 strategy）；说明产物落库不一致。",
+    "A-5": "效果质量门未过（如 IC/RankIC 太低、策略未完成回测、推荐未落快照）；优先补验证链路而不是只补文本总结。",
     "B-1": "必备工具未被调用；可能 prompt 没暴露工具描述、或 reason 节点没把工具列表给 LLM。",
     "B-2": "调用参数异常（qty<=0 / NaN / 非法日期）；加严工具入参 schema 校验。",
     "B-3": "工具失败率过高，看 tool_call_log error_message 聚类，常见是参数 schema 校验或资源未就绪。",

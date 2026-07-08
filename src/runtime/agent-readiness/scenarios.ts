@@ -96,7 +96,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 6 },
     },
     analystRun: {
@@ -116,7 +116,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
@@ -139,7 +139,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
@@ -162,7 +162,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
@@ -182,7 +182,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
@@ -205,7 +205,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
@@ -225,7 +225,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
@@ -245,7 +245,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 10 },
     },
     analystRun: {
@@ -268,7 +268,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 6 },
     },
     analystRun: {
@@ -288,7 +288,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       mode: "research",
       source: "api",
       skipDispatch: true,
-      loopKind: "react",
+      loopKind: "native",
       loopOptionsJson: { maxIterations: 6 },
     },
     analystRun: {

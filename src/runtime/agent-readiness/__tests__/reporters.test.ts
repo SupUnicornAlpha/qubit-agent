@@ -16,6 +16,7 @@ const FULL_AQM_GREEN: ReadinessSnapshot = {
     "A-2": 0.8,
     "A-3": 4.0,
     "A-4": 1,
+    "A-5": 1,
     "B-1": 1,
     "B-2": 1,
     "B-3": 0,
@@ -50,7 +51,7 @@ describe("renderJsonReport v2", () => {
 });
 
 describe("renderMarkdownReport v2", () => {
-  test("Markdown 包含 4 个类标题 + AQM 总分 + 16 指标行", () => {
+  test("Markdown 包含 4 个类标题 + AQM 总分 + AQM 指标行", () => {
     const md = renderMarkdownReport(FULL_AQM_GREEN);
     expect(md).toContain("研究" === "research" ? "研究" : "research");
     expect(md).toContain("wf-rep-1");
@@ -60,7 +61,7 @@ describe("renderMarkdownReport v2", () => {
     expect(md).toContain("C 类 · LLM 调用质量");
     expect(md).toContain("D 类 · 编排质量");
     for (const id of [
-      "A-1", "A-2", "A-3", "A-4",
+      "A-1", "A-2", "A-3", "A-4", "A-5",
       "B-1", "B-2", "B-3", "B-7",
       "C-1", "C-2", "C-3-total", "C-5",
       "D-1", "D-2", "D-3",

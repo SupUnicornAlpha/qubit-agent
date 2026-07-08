@@ -47,6 +47,12 @@ beforeAll(() => {
       strategy_version_id TEXT,
       factor_ids_json TEXT
     );
+    CREATE TABLE backtest_run (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT,
+      status TEXT,
+      performance_json TEXT
+    );
     CREATE TABLE order_intent (
       id TEXT PRIMARY KEY,
       workflow_run_id TEXT,
@@ -64,7 +70,8 @@ beforeAll(() => {
     CREATE TABLE factor_evaluation (
       id TEXT PRIMARY KEY,
       factor_id TEXT,
-      ic REAL
+      ic REAL,
+      rank_ic REAL
     );
     CREATE TABLE screener_run (
       id TEXT PRIMARY KEY,
@@ -73,6 +80,13 @@ beforeAll(() => {
     CREATE TABLE screener_candidate (
       id TEXT PRIMARY KEY,
       screener_run_id TEXT
+    );
+    CREATE TABLE recommendation_snapshot (
+      id TEXT PRIMARY KEY,
+      workflow_run_id TEXT,
+      symbol TEXT,
+      side TEXT,
+      rationale TEXT
     );
   `);
 });
@@ -89,12 +103,14 @@ beforeEach(() => {
     DELETE FROM signal_fusion_result;
     DELETE FROM strategy_version;
     DELETE FROM strategy_composition;
+    DELETE FROM backtest_run;
     DELETE FROM order_intent;
     DELETE FROM risk_decision;
     DELETE FROM factor_evaluation;
     DELETE FROM factor_definition;
     DELETE FROM screener_run;
     DELETE FROM screener_candidate;
+    DELETE FROM recommendation_snapshot;
   `);
 });
 
@@ -133,7 +149,26 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
     expect(result.rows.every((r) => r.rows === 0)).toBe(true);
   });
 
-  test("strategy scenario：strategy_version + composition 都有 → ok", () => {
+  test("strategy scenario：strategy_version + composition + completed backtest 都有 → ok", () => {
+    sqlite
+      .prepare("INSERT INTO strategy_version (id, workflow_run_id) VALUES (?, ?)")
+      .run("sv-1", "wf-x");
+    sqlite
+      .prepare(
+        "INSERT INTO strategy_composition (id, strategy_version_id, factor_ids_json) VALUES (?, ?, ?)"
+      )
+      .run("sc-1", "sv-1", '["f1"]');
+    sqlite
+      .prepare(
+        "INSERT INTO backtest_run (id, workflow_run_id, status, performance_json) VALUES (?, ?, ?, ?)"
+      )
+      .run("bt-1", "wf-x", "completed", '{"sharpe":1.2}');
+    const result = checkRequiredArtifacts(sqlite, "strategy", "wf-x");
+    expect(result.ok).toBe(true);
+    expect(result.missing).toHaveLength(0);
+  });
+
+  test("strategy scenario：缺 completed backtest → quality gate missing", () => {
     sqlite
       .prepare("INSERT INTO strategy_version (id, workflow_run_id) VALUES (?, ?)")
       .run("sv-1", "wf-x");
@@ -143,8 +178,10 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
       )
       .run("sc-1", "sv-1", '["f1"]');
     const result = checkRequiredArtifacts(sqlite, "strategy", "wf-x");
-    expect(result.ok).toBe(true);
-    expect(result.missing).toHaveLength(0);
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.table === "quality:strategy_backtest_completed")).toBe(
+      true
+    );
   });
 
   test("strategy scenario：composition.factor_ids_json='[]' → 不算满足", () => {
@@ -222,6 +259,36 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
     expect(missingAS?.rows).toBe(0);
   });
 
+  test("stock_pick scenario：screener + long recommendation 快照齐全 → ok", () => {
+    sqlite.prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)").run("sr-1", "wf-sp");
+    for (const id of ["c1", "c2", "c3"]) {
+      sqlite
+        .prepare("INSERT INTO screener_candidate (id, screener_run_id) VALUES (?, ?)")
+        .run(id, "sr-1");
+    }
+    for (const sym of ["AAPL", "MSFT", "NVDA"]) {
+      sqlite
+        .prepare(
+          "INSERT INTO recommendation_snapshot (id, workflow_run_id, symbol, side, rationale) VALUES (?, ?, ?, ?, ?)"
+        )
+        .run(`rec-${sym}`, "wf-sp", sym, "long", "momentum + valuation");
+    }
+    const result = checkRequiredArtifacts(sqlite, "stock_pick", "wf-sp");
+    expect(result.ok).toBe(true);
+  });
+
+  test("stock_pick_short scenario：缺 short recommendation 快照 → missing", () => {
+    sqlite.prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)").run("sr-2", "wf-ss");
+    for (const id of ["c1", "c2"]) {
+      sqlite
+        .prepare("INSERT INTO screener_candidate (id, screener_run_id) VALUES (?, ?)")
+        .run(id, "sr-2");
+    }
+    const result = checkRequiredArtifacts(sqlite, "stock_pick_short", "wf-ss");
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.table === "recommendation_snapshot")).toBe(true);
+  });
+
   /**
    * Round 8 复盘（2026-06-08）：原 factor 场景 SQL 没用 workflow_run_id `?` 占位符
    * → 历史 round 的全库因子被误计为本 workflow 产出 → A-1 假阳性。
@@ -234,8 +301,8 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
       )
       .run("f-other", "close - close[20]", "wf-other");
     sqlite
-      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic) VALUES (?, ?, ?)")
-      .run("fe-other", "f-other", 0.04);
+      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic, rank_ic) VALUES (?, ?, ?, ?)")
+      .run("fe-other", "f-other", 0.04, 0.04);
 
     const result = checkRequiredArtifacts(sqlite, "factor", "wf-current");
     expect(result.ok).toBe(false);
@@ -250,11 +317,26 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
       )
       .run("f-curr", "ret_20d", "wf-x");
     sqlite
-      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic) VALUES (?, ?, ?)")
-      .run("fe-curr", "f-curr", 0.05);
+      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic, rank_ic) VALUES (?, ?, ?, ?)")
+      .run("fe-curr", "f-curr", 0.05, 0.05);
 
     const result = checkRequiredArtifacts(sqlite, "factor", "wf-x");
     expect(result.ok).toBe(true);
+  });
+
+  test("factor scenario：评估存在但 IC/RankIC 太低 → quality gate missing", () => {
+    sqlite
+      .prepare(
+        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
+      )
+      .run("f-low", "ret_5d", "wf-x");
+    sqlite
+      .prepare("INSERT INTO factor_evaluation (id, factor_id, ic, rank_ic) VALUES (?, ?, ?, ?)")
+      .run("fe-low", "f-low", 0.01, 0.02);
+
+    const result = checkRequiredArtifacts(sqlite, "factor", "wf-x");
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((m) => m.table === "quality:factor_ic_rankic")).toBe(true);
   });
 
   test("factor scenario：本 workflow 有因子但 evaluation.ic IS NULL → 不算 ok", () => {
