@@ -22,8 +22,6 @@ import { eq, asc, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
-  agentGroup,
-  agentGroupMember,
   agentInstance,
   agentProfile,
   workflowRun,
@@ -52,21 +50,10 @@ import {
   readPackFiles,
 } from "../agent/agent-pack-service";
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
-import { recommendAgentGroupForScope } from "./recommend-agent-group";
-
-/**
- * P2-D：是否启用 scope → agent group 自动推荐。
- * 默认开（=1）；显式 "0" / "false" / "no" 关闭，对齐仓库其它 env flag 解析风格。
- */
-function isGroupAutoRecommendEnabled(): boolean {
-  const raw = (process.env.QUBIT_AGENT_GROUP_AUTO_RECOMMEND ?? "1").trim().toLowerCase();
-  return raw !== "0" && raw !== "false" && raw !== "no" && raw !== "off";
-}
 import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
 import {
   decideShouldDebate,
   logOrchestratorKickoff,
-  parseGroupRelationsWithOrchestrator,
   POST_FUSION_AUX_ROLES,
   resolveOrchestratorSlot,
   runOrchestratorPlanning,
@@ -120,7 +107,6 @@ function formatHitlResponseForContext(approval: HitlApprovalPayload | null): str
   }
   return "";
 }
-import { STRATEGY_PIPELINE_GROUP } from "../seed-agent-catalog";
 
 async function enrichAnalystSlotsWithFsi(
   db: Awaited<ReturnType<typeof getDb>>,
@@ -240,15 +226,6 @@ export function isMsAnalystRole(role: AgentRole): boolean {
 }
 
 /**
- * @deprecated Phase B (2026-06) 起 dispatch 路径改读 `agent_group.pipeline_kind`
- * （migration 0073，sequential_research/factor_discovery/event_radar 都跳过 MSA）。
- * 保留导出仅为兼容老 caller。
- */
-export function isStrategyPipelineGroup(agentGroupId?: string | null): boolean {
-  return agentGroupId === STRATEGY_PIPELINE_GROUP.id;
-}
-
-/**
  * Capability-driven slot 分桶（migration 0073 配套，取代 `isMsAnalystRole`）。
  *
  * 优先看 def.outputs 是否声明 'signal'；只有声明了 signal 才进 MSA 投票
@@ -353,41 +330,8 @@ function readSlotOutputs(raw: unknown): readonly AgentOutput[] {
 
 async function resolveAnalystSlots(params: {
   db: Awaited<ReturnType<typeof getDb>>;
-  agentGroupId?: string | null;
 }): Promise<AnalystSlot[]> {
-  const { db, agentGroupId } = params;
-  if (agentGroupId) {
-    /**
-     * Phase B (2026-06)：信任 group 声明的成员集合，不再 second-level 过滤
-     * `RESEARCH_TEAM_SLOT_SET`。把 def.outputs 一起拉出来供下游 capability
-     * 分桶用。orchestrator 仍然单独拎出来（不进 slot 序列）。
-     */
-    const rows = await db
-      .select({ m: agentGroupMember, d: agentDefinition })
-      .from(agentGroupMember)
-      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-      .where(eq(agentGroupMember.groupId, agentGroupId))
-      .orderBy(asc(agentGroupMember.sortOrder));
-    const slots: AnalystSlot[] = [];
-    for (const row of rows) {
-      if (!row.d.enabled) continue;
-      const role = row.d.role as AgentRole;
-      if (role === "orchestrator") continue;
-      slots.push({
-        role,
-        definitionId: row.d.id,
-        systemPrompt: row.d.systemPrompt,
-        outputs: readSlotOutputs(row.d.outputsJson),
-      });
-    }
-    if (slots.length === 0) {
-      throw new Error(
-        "所选 Agent 组中没有可用的已启用 Agent 定义（除 orchestrator 外至少需 1 个成员）"
-      );
-    }
-    return slots;
-  }
-
+  const { db } = params;
   const dbDefs = await db.select().from(agentDefinition).where(eq(agentDefinition.enabled, true));
   const slotDefs = dbDefs.filter((d) => RESEARCH_TEAM_SLOT_SET.has(d.role as string));
   const definitionIdByRole: Partial<Record<AgentRole, string>> = {};
@@ -582,7 +526,7 @@ function stripScopeFields(r: AnalystTeamResult): Omit<AnalystTeamResult, "perSym
 }
 
 /**
- * 主入口：并行运行 Analyst Agent（默认四类；可选用 Agent 组子集/顺序），收集信号，执行 MSA 融合
+ * 主入口：并行运行 Analyst Agent（按当前启用专家；可选 role/definition 子集），收集信号，执行 MSA 融合
  */
 export async function runAnalystTeam(params: {
   workflowRunId: string;
@@ -590,7 +534,6 @@ export async function runAnalystTeam(params: {
   ticker?: string;
   scope?: ResearchScopeInput | null;
   context?: string;
-  agentGroupId?: string | null;
   analystRoles?: AgentRole[] | null;
   analystDefinitionIds?: string[] | null;
   runId?: string;
@@ -616,7 +559,6 @@ async function runAnalystTeamCore(params: {
   ticker: string;
   scope: NormalizedResearchScope;
   context?: string;
-  agentGroupId?: string | null;
   analystRoles?: AgentRole[] | null;
   analystDefinitionIds?: string[] | null;
   runId?: string;
@@ -628,43 +570,14 @@ async function runAnalystTeamCore(params: {
   const userContext = params.context ?? defaultResearchUserContext(scope);
   const dataContext = await buildAnalystTeamDataContext({ scope });
   let context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
-
-  /**
-   * 评估报告 P2-D：当用户**没有显式选编组**（undefined，而不是 null/""—— 后者
-   * 表示用户在 UI 主动选「不指定」）时，按 scope 自动推荐。
-   *
-   * env flag:
-   *   - QUBIT_AGENT_GROUP_AUTO_RECOMMEND=0/false → 关闭推荐，保持现状默认（9 slot 全跑）
-   *   - 默认开（=1）
-   *
-   * 推荐 helper 是纯函数（不读 DB / 不读 env），决策可审计 + 测试 deterministic。
-   * 详细规则见 `recommend-agent-group.ts` 顶部注释。
-   */
-  let effectiveGroupId: string | null | undefined = params.agentGroupId;
-  let groupRecommendationDebug: string | undefined;
-  if (params.agentGroupId === undefined && isGroupAutoRecommendEnabled()) {
-    const rec = recommendAgentGroupForScope(scope);
-    if (rec.groupId) {
-      effectiveGroupId = rec.groupId;
-      groupRecommendationDebug = `[P2-D auto-recommend] scope.kind=${scope.kind} → group=${rec.groupId} (${rec.reason}; ${rec.humanText})`;
-      console.log(groupRecommendationDebug);
-    }
-  }
-
-  const orchestratorSlot = await resolveOrchestratorSlot(db, effectiveGroupId);
-
-  await db
-    .update(workflowRun)
-    .set({ agentGroupId: effectiveGroupId ?? null })
-    .where(eq(workflowRun.id, workflowRunId));
-
-  let slots = await resolveAnalystSlots({ db, agentGroupId: effectiveGroupId });
+  const orchestratorSlot = await resolveOrchestratorSlot(db);
+  let slots = await resolveAnalystSlots({ db });
   if (params.analystDefinitionIds && params.analystDefinitionIds.length > 0) {
     const allowIds = new Set(params.analystDefinitionIds);
     slots = slots.filter((s) => allowIds.has(s.definitionId));
     if (slots.length === 0) {
       throw new Error(
-        "所选分析师定义与当前编组或可用分析师槽位无交集。请调整左侧勾选的 Agent，或更换分析师编组。"
+        "所选分析师定义与当前可用分析师槽位无交集。请调整选择的 Agent。"
       );
     }
   } else if (params.analystRoles && params.analystRoles.length > 0) {
@@ -672,7 +585,7 @@ async function runAnalystTeamCore(params: {
     slots = slots.filter((s) => allow.has(s.role));
     if (slots.length === 0) {
       throw new Error(
-        "所选「团队成员」与当前编组或可用分析师定义无交集。请调整左侧参与角色，或换一个分析师编组。"
+        "所选参与角色与当前可用分析师定义无交集。请调整参与角色。"
       );
     }
   }
@@ -693,27 +606,7 @@ async function runAnalystTeamCore(params: {
    */
   let relationEdges: TeamRelationEdge[] = [];
   let pipelineKind: AgentGroupPipelineKind = "msa_fusion";
-  /**
-   * P1 Round 7 复盘（2026-06-08）：拿到 group.description 用于按 (groupId, role)
-   * 算编组级硬约束 hint，注入到 slot 派单的 userGoal。详见 group-constraint-hint.ts。
-   */
-  let groupDescription: string | null = null;
-  if (effectiveGroupId) {
-    const grp = await db.select().from(agentGroup).where(eq(agentGroup.id, effectiveGroupId)).limit(1);
-    if (grp[0]) {
-      relationEdges = parseGroupRelationsWithOrchestrator(grp[0].relationsJson);
-      groupDescription = grp[0].description ?? null;
-      const rawKind = (grp[0] as { pipelineKind?: string | null }).pipelineKind;
-      if (
-        rawKind === "msa_fusion" ||
-        rawKind === "sequential_research" ||
-        rawKind === "event_radar" ||
-        rawKind === "factor_discovery"
-      ) {
-        pipelineKind = rawKind;
-      }
-    }
-  }
+  const groupDescription: string | null = null;
 
   const analystSlots = slots.filter((s) => slotProducesSignal(s));
   const auxSlots = slots.filter((s) => slotIsAuxReporter(s));
@@ -929,7 +822,7 @@ async function runAnalystTeamCore(params: {
         ctx: ws.ctx,
         ...(ws.preInstanceId !== undefined ? { preInstanceId: ws.preInstanceId } : {}),
         groupConstraintHint: buildGroupRoleConstraintHint({
-          groupId: effectiveGroupId,
+          groupId: null,
           role: ws.slot.role,
           groupDescription,
         }),
@@ -1323,7 +1216,7 @@ async function runAnalystTeamCore(params: {
             context: ctx,
             reactDepth: auxReactDepth,
             groupConstraintHint: buildGroupRoleConstraintHint({
-              groupId: effectiveGroupId,
+              groupId: null,
               role: slot.role,
               groupDescription,
             }),

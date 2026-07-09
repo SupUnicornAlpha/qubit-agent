@@ -1,6 +1,6 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { Loader2, Network, Rocket, Settings, Users, type LucideIcon } from "lucide-react";
+import { Loader2, Network, Rocket, Settings, type LucideIcon } from "lucide-react";
 import {
   chatHealth,
   checkBrokerHealth,
@@ -56,7 +56,6 @@ import {
   searchSkillMarket,
   getAgentDefinitionMemoryStats,
   getAgentDefinitionPack,
-  listAgentGroups,
   listChatSessions,
   listMonitorWorkflows,
   getWorkflowArtifacts,
@@ -105,7 +104,6 @@ import type {
   AgentDefinitionRecord,
   AgentMemoryStatsResponse,
   AgentPackResponse,
-  AgentGroupRecord,
   AgentSkillRecord,
   AnalystTeamResult,
   DebateConfig,
@@ -193,7 +191,6 @@ import { OriginBadge } from "../common/OriginBadge";
 import { PythonRuntimeCard } from "../common/PythonRuntimeCard";
 import { EnvironmentPanel } from "../environment/EnvironmentPanel";
 import { QuantStudioPanel } from "../quant/QuantStudioPanel";
-import { TeamResearchMemberDirectory } from "../team/TeamResearchMemberDirectory";
 import { ResearchOutputTabs } from "../team/ResearchOutputTabs";
 import { AgentRunPanel } from "../team/AgentRunChatView";
 import {
@@ -4658,8 +4655,8 @@ function formatDebateStreamLine(ev: DebateStreamEvent): string {
   }
 }
 
-/** 研究团队中间栏侧栏自上而下：研究画布、成员目录、工具与配置 */
-const TEAM_CENTER_VIEWS = ["research", "roles", "run"] as const;
+/** 研究团队中间栏侧栏自上而下：研究画布、工具与配置 */
+const TEAM_CENTER_VIEWS = ["research", "run"] as const;
 type TeamCenterView = (typeof TEAM_CENTER_VIEWS)[number];
 
 /** 团队页大三栏 key —— 用于显隐控制 / localStorage 序列化 */
@@ -4674,14 +4671,12 @@ const TEAM_PANES_LS_KEY = "qubit-agent.teamPanes.hidden.v1";
 const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
   run: "发起分析 · 工具与配置",
   research: "研究画布 · 拓扑 / 实时流 / 结论",
-  roles: "成员目录",
 };
 
 /** 活动栏图标：Web 端用 Lucide 对齐 SF Symbols 语义（见 `appleUiSymbols.ts` 与 [SF Symbols](https://developer.apple.com/cn/sf-symbols/)）。 */
 const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
   run: Rocket,
   research: Network,
-  roles: Users,
 };
 
 /** 画布可多选高亮的团队成员角色（与后端研究团队槽位一致；空集表示不过滤） */
@@ -4852,8 +4847,6 @@ const TeamDashboardPanel: FC = () => {
   const [workflowRunId, setWorkflowRunId] = useState("");
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
-  const [analystAgentGroupId, setAnalystAgentGroupId] = useState("");
-  const [analystAgentGroupOptions, setAnalystAgentGroupOptions] = useState<AgentGroupRecord[]>([]);
   const [running, setRunning] = useState(false);
   /**
    * orchestrator-chat 路径专用：composer 对话走 ReAct（非 handleRun 全队分析）。
@@ -5139,7 +5132,6 @@ const TeamDashboardPanel: FC = () => {
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
-  const [participatingAnalystDefinitionIds, setParticipatingAnalystDefinitionIds] = useState<string[]>([]);
   /**
    * 注：原 `strategyScripts` / `workflowArtifactHint` / `teamCodePick` / 多个 store
    * setter 服务于已删除的「策略与代码」details 块；state / handler / setter 全部
@@ -5210,21 +5202,16 @@ const TeamDashboardPanel: FC = () => {
   }, [running, orchestratorChatInFlight, workflowRunId, loadTeamGraph]);
 
   const participatingAnalystRoles = useMemo(() => {
-    if (!agentDefBundles?.length || participatingAnalystDefinitionIds.length === 0) return [];
-    const idSet = new Set(participatingAnalystDefinitionIds);
+    if (!agentDefBundles?.length) return [];
     const roles: string[] = [];
     for (const b of agentDefBundles) {
-      if (!idSet.has(b.definition.id)) continue;
       const r = b.definition.role;
-      if (RESEARCH_TEAM_SLOT_ROLE_SET.has(r)) roles.push(r);
+      if (RESEARCH_TEAM_SLOT_ROLE_SET.has(r) && b.definition.enabled !== false) roles.push(r);
     }
     return roles;
-  }, [agentDefBundles, participatingAnalystDefinitionIds]);
+  }, [agentDefBundles]);
 
-  /**
-   * 注：原 `analystDefCatalog` 用于左栏「团队成员（画布）」勾选区的 select option，
-   * 该区已删除（节点直接由编组渲染），catalog 不再有引用，整体移除。
-   */
+  /** 研究拓扑默认展示当前启用的研究团队槽位角色。 */
 
   const mergedLiveFeedRows = useMemo(() => {
     type Row = { key: string; t: number; kind: "interaction" | "debate"; body: string };
@@ -5747,11 +5734,7 @@ const TeamDashboardPanel: FC = () => {
     }).length;
   }, [agentDefBundles]);
 
-  /**
-   * 是否禁用「启动团队分析」按钮。
-   * 删除「团队成员勾选区」之后不再要求 participatingAnalystDefinitionIds 非空 ——
-   * 画布上的 Agent 节点直接由 analystAgentGroupId 决定，空数组 = 默认全部启用槽位。
-   */
+  /** 是否禁用「启动团队分析」按钮。 */
   const teamRunDisabled = useMemo(() => {
     if (running) return true;
     if (!researchScopePayload || !workflowRunId) return true;
@@ -5861,14 +5844,6 @@ const TeamDashboardPanel: FC = () => {
       .filter((group) => group.rows.length > 0);
   }, [groupedWorkflowOptions, workflowListQuery, workflowStatusFilter]);
 
-  useEffect(() => {
-    if (agentDefBundles === null) return;
-    const ids = agentDefBundles
-      .filter((b) => RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role) && b.definition.enabled !== false)
-      .map((b) => b.definition.id);
-    setParticipatingAnalystDefinitionIds((prev) => (prev.length > 0 ? prev : ids));
-  }, [agentDefBundles]);
-
   /** 切换工作流：加载该工作流的磁盘报告与融合摘要（策略脚本列表已下放到量化工坊） */
   useEffect(() => {
     const wf = workflowRunId.trim();
@@ -5957,7 +5932,7 @@ const TeamDashboardPanel: FC = () => {
   const graphWrapRef = useRef<HTMLDivElement | null>(null);
   /**
    * graphSize.h 现在跟着「节点数 + 视口高度」联动：
-   *   - 同一组件实例切换 workflow / 编组造成节点数变化 → 动态把高度顶起来
+   *   - 同一组件实例切换 workflow 造成节点数变化 → 动态把高度顶起来
    *   - 用户调整窗口大小（resize 事件）→ 画布跟随重算
    * `viewportH` 单独 state 是因为我们没有现成的 ResizeObserver 去观测 window，
    * 用 window.innerHeight + resize 监听简单直接。
@@ -6008,20 +5983,6 @@ const TeamDashboardPanel: FC = () => {
       void listAgentDefinitions()
         .then(setAgentDefBundles)
         .catch(() => setAgentDefBundles([]));
-      void listAgentGroups()
-        .then((rows) => {
-          setAnalystAgentGroupOptions(rows);
-          setAnalystAgentGroupId((cur) => {
-            if (cur.trim()) return cur;
-            return (
-              rows.find((g) => g.id === "grp-full-analyst-team")?.id ??
-              rows.find((g) => g.id === "grp-default-analyst-team")?.id ??
-              rows[0]?.id ??
-              ""
-            );
-          });
-        })
-        .catch(() => setAnalystAgentGroupOptions([]));
       try {
         // 单租户兜底 workspace；详见 src/runtime/bootstrap/ensure-default-workspace.ts。
         const dft = await getDefaultWorkspace();
@@ -6225,9 +6186,6 @@ const TeamDashboardPanel: FC = () => {
         ticker: researchScopePayload?.symbols?.[0] ?? ticker.trim(),
         scope: researchScopePayload ?? undefined,
         context: teamAnalysisContext.trim() || undefined,
-        agentGroupId: analystAgentGroupId.trim() || undefined,
-        analystDefinitionIds:
-          participatingAnalystDefinitionIds.length > 0 ? participatingAnalystDefinitionIds : undefined,
         timeoutMs,
         signal: abortCtl.signal,
         hitlMode: teamHitlMode,
@@ -6881,7 +6839,7 @@ const TeamDashboardPanel: FC = () => {
           </div>
           </div>
           {/**
-           * 下半工作流区独立滚动容器：工作流筛选 + 列表 + 新建按钮 + 分析师编组 + 拓扑。
+           * 下半工作流区独立滚动容器：工作流筛选 + 列表 + 新建按钮 + 拓扑。
            * flex: 1 占据余高。
            * 子组件 workflow list / 拓扑 ul 取消了自身 maxHeight —— 让本容器作为唯一滚动条。
            */}
@@ -7177,14 +7135,13 @@ const TeamDashboardPanel: FC = () => {
           </div>
 
           {/**
-           * 「分析师编组 / 等待上限 / HITL / 启动团队分析 / 团队成员（画布）」整段
-           * 已迁移到中栏底部 `<TeamRunControlsPanel>`（可折叠）。
+           * 「等待上限 / HITL / 启动团队分析」整段已迁移到中栏底部（可折叠）。
            * 左栏只保留工作流选择 + 拓扑只读视图，避免左栏过长 + 关键操作分散。
            */}
           <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
             <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
-              运行期轨迹：含 LLM 交互、Tool/MCP 及编组<strong>通信拓扑</strong>产生的 handoff（见成员目录保存的 relations_json）。
+              运行期轨迹：含 LLM 交互、Tool/MCP 及 Agent <strong>通信拓扑</strong>产生的 handoff。
               无数据时请在「研究画布」刷新。
             </p>
             {!teamGraph?.edges?.length ? (
@@ -7740,20 +7697,6 @@ const TeamDashboardPanel: FC = () => {
         </div>
       )}
 
-
-      {/* Roles Panel — 基于 Agent 定义 + 编组 + 可编辑通信拓扑 */}
-      {activeTab === "roles" && (
-        <div style={{ ...teamStyles.panel, overflowY: "auto" }}>
-          <TeamResearchMemberDirectory
-            analystAgentGroupId={analystAgentGroupId}
-            setAnalystAgentGroupId={setAnalystAgentGroupId}
-            analystAgentGroupOptions={analystAgentGroupOptions}
-            setAnalystAgentGroupOptions={setAnalystAgentGroupOptions}
-            agentDefBundles={agentDefBundles}
-          />
-        </div>
-      )}
-
       {activeTab === "research" && (
         <div
           data-qb-team-research-panel
@@ -7799,9 +7742,7 @@ const TeamDashboardPanel: FC = () => {
                 </div>
                 <span style={{ fontSize: 12, color: "var(--qb-team-meta, #71717a)" }}>
                   {filteredGraphDisplay
-                    ? `展示 ${filteredGraphDisplay.nodes.filter((n) => n.role !== "__tools__").length} 个 Agent${
-                        participatingAnalystRoles.length > 0 ? "（已按左侧勾选过滤）" : ""
-                      }`
+                    ? `展示 ${filteredGraphDisplay.nodes.filter((n) => n.role !== "__tools__").length} 个 Agent`
                     : ""}
                 </span>
               </div>
@@ -7867,9 +7808,7 @@ const TeamDashboardPanel: FC = () => {
                 <div style={{ ...teamStyles.empty, marginTop: 12 }}>
                   {graphLoading
                     ? "…"
-                    : teamGraph && teamGraph.nodes.length > 0 && participatingAnalystRoles.length > 0
-                      ? "当前成员过滤后无可见节点，请在左侧调整参与分析师。"
-                      : "暂无拓扑节点：分析刚开始或未落库时可能短暂为空；下方仍可查看实时对话流。"}
+                    : "暂无拓扑节点：分析刚开始或未落库时可能短暂为空；下方仍可查看实时对话流。"}
                 </div>
               )}
               {graphEdgeDetail ? (
@@ -8265,7 +8204,7 @@ const TeamDashboardPanel: FC = () => {
            * 中栏底部「启动设置」面板：从左栏迁移过来。
            * - 默认折叠（HTML5 details 自带），点击 summary 展开
            * - flex-shrink:0 + 顶边线让它贴在中栏底部，不参与中栏主区滚动
-           * - 包含分析师编组 / 等待上限 / HITL / 启动按钮 / 团队成员（画布）
+           * - 包含等待上限 / HITL / 启动按钮
            */}
           {/**
            * 受控折叠：state `runControlsOpen` 是 source of truth，
@@ -8284,7 +8223,7 @@ const TeamDashboardPanel: FC = () => {
             <summary style={teamStyles.runControlsSummary}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#fde68a" }}>
-                  ⚙ 启动设置 · 团队成员
+                  ⚙ 启动设置
                 </span>
                 {running ? (
                   <span style={{ fontSize: 11, color: "#38bdf8" }}>
@@ -8306,21 +8245,6 @@ const TeamDashboardPanel: FC = () => {
             </summary>
             <div style={teamStyles.runControlsBody}>
               <div style={teamStyles.runControlsGrid}>
-                <div style={{ ...teamStyles.field, marginTop: 0 }}>
-                  <label style={teamStyles.label}>分析师编组（可选）</label>
-                  <select
-                    style={teamStyles.input}
-                    value={analystAgentGroupId}
-                    onChange={(e) => setAnalystAgentGroupId(e.target.value)}
-                  >
-                    <option value="">默认（全部启用的分析师定义）</option>
-                    {analystAgentGroupOptions.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
                 <div
                   style={{
                     display: "flex",
@@ -8553,11 +8477,6 @@ const TeamDashboardPanel: FC = () => {
                   </div>
                 </div>
               ) : null}
-              {/**
-               * 注：原「团队成员（画布）」勾选区已删除。
-               * 画布上的 Agent 节点直接根据「分析师编组」(analystAgentGroupId)
-               * 在 TeamResearchMemberDirectory 内自动渲染，避免双重选择。
-               */}
             </div>
           </details>
           {/**
@@ -8817,7 +8736,7 @@ const teamStyles: Record<string, CSSProperties> = {
     paddingBottom: 8,
   },
   /**
-   * 下半「工作流 + 分析师编组」滚动容器。
+   * 下半「工作流」滚动容器。
    * grid 第二行 `minmax(220px, 1fr)` 占余高；自身 overflow auto 内滚，
    * 工作流列表自身 maxHeight 已取消、跟随本容器一起滚动 —— 单一短滚动条。
    */
@@ -8884,7 +8803,7 @@ const teamStyles: Record<string, CSSProperties> = {
     gap: 0,
   },
   /**
-   * 上半"分析师编组 + 等待上限"两列响应式 grid：宽够时左右排，窄时折回单列。
+   * 上半"等待上限 + 控制项"两列响应式 grid：宽够时左右排，窄时折回单列。
    * 让中栏底部 panel 在常规屏幕利用横向空间。
    */
   runControlsGrid: {

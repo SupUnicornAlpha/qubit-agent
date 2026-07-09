@@ -2,8 +2,6 @@ import { eq, inArray, asc } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
-  agentGroup,
-  agentGroupMember,
   agentInstance,
   agentStep,
   analystSignal,
@@ -15,8 +13,6 @@ import {
   toolCallLog,
   workflowRun,
 } from "../../db/sqlite/schema";
-import type { AgentRole } from "../../types/entities";
-import { parseTeamRelations } from "./analyst-team-topology";
 
 /** 节点大类，供前端按类型上不同图标（user=人形 / agent=电脑 / tool=扳手 / skill=书）。 */
 export type TeamGraphNodeType = "user" | "agent" | "tool" | "skill";
@@ -300,22 +296,6 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     cur.skillCount += 1;
     edgeMap.set(k, cur);
   };
-
-  /** 编组 relations_json：分析开始前即可显示「计划拓扑」边（计数为 0） */
-  const wfRow = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
-  const agentGroupId = wfRow[0]?.agentGroupId ?? null;
-  if (agentGroupId) {
-    const grpRows = await db.select().from(agentGroup).where(eq(agentGroup.id, agentGroupId)).limit(1);
-    const mems = await db
-      .select({ role: agentDefinition.role })
-      .from(agentGroupMember)
-      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-      .where(eq(agentGroupMember.groupId, agentGroupId));
-    const uniqRoles = [...new Set(mems.map((m) => String(m.role)))];
-    const allow = [...uniqRoles, "msa", "signal_fusion", "orchestrator"] as unknown as readonly AgentRole[];
-    const topo = parseTeamRelations(grpRows[0]?.relationsJson ?? [], allow);
-    for (const e of topo) bumpEdge(String(e.from), String(e.to), 0, 0);
-  }
 
   const rows: TeamGraphInteractionRow[] = logged.map((r) => ({
     id: r.id,

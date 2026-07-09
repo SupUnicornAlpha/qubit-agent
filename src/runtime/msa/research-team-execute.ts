@@ -22,7 +22,6 @@ export type ParsedResearchTeamExecute = {
   ticker: string;
   scope?: ResearchScopeInput | null;
   context?: string;
-  agentGroupId?: string | null;
   analystDefinitionIds?: string[];
   analystRoles?: AgentRole[];
 };
@@ -48,13 +47,6 @@ export function parseResearchTeamExecutePayload(
     };
   }
 
-  let agentGroupId: string | null | undefined;
-  if ("agentGroupId" in pr) {
-    const ag = pr.agentGroupId;
-    if (ag === null) agentGroupId = null;
-    else if (typeof ag === "string") agentGroupId = ag.trim() || null;
-  }
-
   const rawDefIds = pr.analystDefinitionIds;
   const analystDefinitionIds =
     Array.isArray(rawDefIds) && rawDefIds.length > 0
@@ -78,7 +70,6 @@ export function parseResearchTeamExecutePayload(
       ticker: ticker || resolved.primarySymbol,
       scope,
       context,
-      agentGroupId,
       analystDefinitionIds,
       analystRoles,
     },
@@ -104,7 +95,6 @@ export async function executeResearchTeamWorkflow(input: {
     ticker: input.params.ticker,
     scope: input.params.scope,
     context: input.params.context,
-    agentGroupId: input.params.agentGroupId,
     analystRoles: input.params.analystRoles,
     analystDefinitionIds: input.params.analystDefinitionIds,
     hitlApproval: input.hitlApproval ?? null,
@@ -146,11 +136,6 @@ export function buildParsedResearchTeamFromToolParams(input: {
       ? defIdsRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
       : undefined;
 
-  const agRaw = pr.agent_group_id ?? pr.agentGroupId;
-  let agentGroupId: string | null | undefined;
-  if (agRaw === null || agRaw === "") agentGroupId = null;
-  else if (typeof agRaw === "string" && agRaw.trim()) agentGroupId = agRaw.trim();
-
   const context = String(pr.context ?? inbound["goal"] ?? "").trim() || undefined;
 
   return {
@@ -158,7 +143,6 @@ export function buildParsedResearchTeamFromToolParams(input: {
     ticker,
     scope,
     context,
-    agentGroupId,
     analystDefinitionIds,
     analystRoles,
   };

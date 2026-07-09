@@ -160,6 +160,9 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     const def = BY_ID.get("def-orchestrator");
     // 版本上限放宽到 3.x（含 3.4 / 3.5 等小版本），任何 minor bump 不要无脑挂这个 test
     expect(def!.version).toMatch(/^3\./);
+    expect(def!.tools).not.toContain("run_analyst_team");
+    expect(def!.tools).not.toContain("summarize_team_decision");
+    expect(def!.tools).not.toContain("fuse_signals");
   });
 
   test("M10.A2 升级：def-research 装上长期记忆工具", () => {

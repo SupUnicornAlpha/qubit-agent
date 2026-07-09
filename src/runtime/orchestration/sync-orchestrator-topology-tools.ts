@@ -1,18 +1,19 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition } from "../../db/sqlite/schema";
-import { loadOrchestratorTopologyForGroup, mergeOrchestratorToolsJson } from "./topology-dispatch";
+import { loadOrchestratorTopologyForWorkflow, mergeOrchestratorToolsJson } from "./topology-dispatch";
 
 const ORCHESTRATOR_DEFINITION_ID = "def-orchestrator";
 
 /**
- * 根据编组拓扑出边，将 `call_team_<role>` 写入 Orchestrator 的 toolsJson（配置中心可见）。
+ * 根据当前启用专家，将 `call_team_<role>` 写入 Orchestrator 的 toolsJson（配置中心可见）。
  */
 export async function syncOrchestratorTopologyToolsForGroup(groupId: string): Promise<{
   topologyTools: string[];
   toolsJson: string[];
 }> {
-  const ctx = await loadOrchestratorTopologyForGroup(groupId);
+  void groupId;
+  const ctx = await loadOrchestratorTopologyForWorkflow();
   const topologyTools = ctx?.toolNames ?? [];
   const canonical = mergeOrchestratorToolsJson(topologyTools);
 

@@ -38,9 +38,6 @@ import { seedRecommendedMcpServers } from "./seed-recommended-mcp-servers";
 
 export { SEED_AGENT_DEFINITIONS };
 
-/** 内置编排团队编组 ID */
-export const DEFAULT_ANALYST_AGENT_GROUP_ID = DEFAULT_ORCHESTRATION_GROUP.id;
-
 const DEFAULT_SANDBOX_POLICY = {
   id: "default-policy",
   name: "default-policy",
@@ -343,7 +340,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
     console.log(`[Seed] Purged ${purged} retired built-in agent definition(s).`);
   }
   const groupReport = await ensureBuiltinAgentGroups({ force });
-  await syncOrchestratorTopologyToolsForGroup(DEFAULT_ANALYST_AGENT_GROUP_ID);
+  await syncOrchestratorTopologyToolsForGroup("decommissioned");
 
   return {
     definitions: { total, reset: resetCount, preserved: preservedCount },

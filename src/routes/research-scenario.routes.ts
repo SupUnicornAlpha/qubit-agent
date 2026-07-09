@@ -24,7 +24,6 @@ researchScenarioRouter.get("/", async (c) => {
       key: s.key,
       displayName: s.displayName,
       description: s.description,
-      defaultAgentGroupId: s.defaultAgentGroupId,
       inputSchema: s.inputSchema,
       outputContract: s.outputContract,
       requiredCapabilities: s.requiredCapabilities,
@@ -43,13 +42,6 @@ researchScenarioRouter.get("/:key", (c) => {
   const spec = researchScenarioRegistry.get(key);
   if (!spec) return c.json({ ok: false, error: "scenario_not_found" }, 404);
   return c.json({ ok: true, data: spec });
-});
-
-/** GET /api/v1/research-scenarios/:key/groups */
-researchScenarioRouter.get("/:key/groups", async (c) => {
-  const key = c.req.param("key");
-  const groups = await researchScenarioRegistry.listGroupsForScenario(key);
-  return c.json({ ok: true, data: groups });
 });
 
 /** POST /api/v1/research-scenarios/:key/validate  { inputParams, projectId? } */
@@ -74,13 +66,12 @@ researchScenarioRouter.post("/:key/validate", async (c) => {
   }
 });
 
-/** POST /api/v1/research-scenarios/:key/plan-launch  { projectId, inputParams, agentGroupId? } */
+/** POST /api/v1/research-scenarios/:key/plan-launch  { projectId, inputParams } */
 researchScenarioRouter.post("/:key/plan-launch", async (c) => {
   const key = c.req.param("key");
   const body = await c.req.json<{
     projectId: string;
     inputParams: Record<string, unknown>;
-    agentGroupId?: string;
     loopOverrides?: Record<string, unknown>;
   }>();
   try {
@@ -88,7 +79,6 @@ researchScenarioRouter.post("/:key/plan-launch", async (c) => {
       scenarioKey: key,
       projectId: body.projectId,
       inputParams: body.inputParams ?? {},
-      ...(body.agentGroupId ? { agentGroupId: body.agentGroupId } : {}),
       ...(body.loopOverrides
         ? { loopOverrides: body.loopOverrides as never }
         : {}),
@@ -102,14 +92,13 @@ researchScenarioRouter.post("/:key/plan-launch", async (c) => {
   }
 });
 
-/** POST /api/v1/research-scenarios/:key/launch  { projectId, inputParams, agentGroupId?, goal? } */
+/** POST /api/v1/research-scenarios/:key/launch  { projectId, inputParams, goal? } */
 researchScenarioRouter.post("/:key/launch", async (c) => {
   const key = c.req.param("key");
   const body = await c.req.json<{
     projectId: string;
     goal?: string;
     inputParams: Record<string, unknown>;
-    agentGroupId?: string;
     loopOverrides?: Record<string, unknown>;
   }>();
   try {
@@ -118,7 +107,6 @@ researchScenarioRouter.post("/:key/launch", async (c) => {
       projectId: body.projectId,
       ...(body.goal ? { goal: body.goal } : {}),
       inputParams: body.inputParams ?? {},
-      ...(body.agentGroupId ? { agentGroupId: body.agentGroupId } : {}),
       ...(body.loopOverrides ? { loopOverrides: body.loopOverrides as never } : {}),
     });
     return c.json({ ok: true, data: launched }, 202);

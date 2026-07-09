@@ -1,6 +1,4 @@
-import type { RuntimeAgentDefinition } from "./types";
 import {
-  ROLE_CONNECTOR_MCPS,
   ROLE_OUTPUTS,
   ROLE_SKILLS,
   resolveSeedMcpServers,
@@ -18,6 +16,7 @@ import {
   PROMPT_RISK,
   PROMPT_WALK_FORWARD_VALIDATOR,
 } from "./seed-agent-prompts";
+import type { RuntimeAgentDefinition } from "./types";
 
 function def(
   partial: RuntimeAgentDefinition & { enabled?: boolean }
@@ -48,25 +47,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "orchestrator",
     name: "编排器",
     /**
-     * 3.5.0（2026-06）：把 MSA 后的"裸 LLM 决策汇总"拆成 builtin tool
-     * `summarize_team_decision`，由 Orchestrator 在 ReAct loop 中按需调用，
-     * 不再每个 workflow 强制 +1 次 LLM 延迟。
-     * 3.6.0（2026-06-05 监控复盘 #4 / C）：加 `run_screener` 工具授权，让
-     * 探索类任务（用户提"AI 半导体板块机会"等）能首选拿真实候选 ticker，
-     * 而不是反复 fetch_klines 试错。
+     * 3.7.0（2026-07）：默认编排模式从“批量团队研究”切到“Orchestrator 作为大脑按需派单”。
+     * `run_analyst_team` / `summarize_team_decision` / `fuse_signals` 保留为兼容能力，
+     * 但不再作为 Orchestrator 默认工具面，避免任务一上来就跑偏成团队会审或长报告。
      */
-    version: "3.6.0",
+    version: "3.7.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       "assign_task",
-      "run_analyst_team",
-      /**
-       * 2026-06：原 `runAnalystTeam` 内部强制跑的"裸 LLM 决策汇总"拆成本工具，由
-       * Orchestrator 在 ReAct 中按需调（典型条件：fusedConfidence<0.6 / 信号分歧 / 签到不全）。
-       * 详见 system prompt「研究团队工具结果处理」段。
-       */
-      "summarize_team_decision",
-      "fuse_signals",
       "evaluate_risk",
       "edit_agent_pack",
       // M10.A2：playbook 复用 + postmortem 沉淀

@@ -7,8 +7,6 @@ import {
   agentDefinition,
   agentDefinitionDraft,
   agentDefinitionRelease,
-  agentGroup,
-  agentGroupMember,
   agentProfile,
   longtermMemory,
   mcpCatalog,
@@ -18,7 +16,6 @@ import {
   midtermMemory,
   sandboxPolicy,
   skillMarketInstall,
-  workspace,
 } from "../db/sqlite/schema";
 import { getRuntimeAgents } from "../runtime/agent-pool";
 import { buildToolCatalog } from "../runtime/tools/tool-catalog";
@@ -64,7 +61,6 @@ import {
   upsertMcpSource,
 } from "../runtime/mcp/market-service";
 import { deriveMcpServerOrigin } from "../runtime/mcp/origin";
-import { RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET } from "../runtime/msa/analyst-team";
 import {
   DEFAULT_OPEN_SKILL_MARKET_BASE,
   ensureOpenSkillMarketLoaded,
@@ -82,75 +78,6 @@ import {
 import { ALL_AGENT_ROLES, type AgentRole } from "../types/entities";
 
 export const agentRouter = new Hono();
-
-function validateAgentGroupRelationsJson(relations: unknown, memberRoles: string[]): string | null {
-  if (!Array.isArray(relations)) return "relationsJson must be an array";
-  const roleSet = new Set(memberRoles);
-
-  const asEdgeString = (v: unknown): string | null => {
-    if (typeof v === "string") return v;
-    if (typeof v === "number" && Number.isFinite(v)) return String(v);
-    return null;
-  };
-
-  for (const row of relations) {
-    if (row == null) continue;
-    if (typeof row !== "object" || Array.isArray(row))
-      return "each relation entry must be a plain object";
-    const rec = row as Record<string, unknown>;
-    if (Object.keys(rec).length === 0) continue;
-
-    if (rec.type === "topology_canvas") {
-      const np = rec.nodePositions;
-      if (np !== undefined && (typeof np !== "object" || np === null || Array.isArray(np))) {
-        return "topology_canvas.nodePositions must be an object";
-      }
-      if (np && typeof np === "object" && !Array.isArray(np)) {
-        for (const [k, v] of Object.entries(np as Record<string, unknown>)) {
-          if (!roleSet.has(k))
-            return `topology layout key "${k}" is not a member role in this group`;
-          if (!v || typeof v !== "object" || Array.isArray(v))
-            return "each layout value must be {x,y}";
-          const o = v as Record<string, unknown>;
-          const x = o.x;
-          const y = o.y;
-          const xn =
-            typeof x === "number" ? x : typeof x === "string" ? Number.parseFloat(x) : Number.NaN;
-          const yn =
-            typeof y === "number" ? y : typeof y === "string" ? Number.parseFloat(y) : Number.NaN;
-          if (!Number.isFinite(xn) || !Number.isFinite(yn))
-            return "layout entries need numeric x,y";
-        }
-      }
-      continue;
-    }
-
-    if (rec.kind === "broadcast") {
-      const from = asEdgeString(rec.from);
-      const targets = rec.targets;
-      if (from === null) return "broadcast.from must be a string";
-      if (!Array.isArray(targets)) return "broadcast.targets must be an array";
-      if (!roleSet.has(from)) return `broadcast source "${from}" is not a member of this group`;
-      for (const t of targets) {
-        const ts = asEdgeString(t);
-        if (ts === null) return "broadcast target must be a string";
-        if (ts === from) return "broadcast from and target must differ";
-        if (!roleSet.has(ts)) return `broadcast target "${ts}" is not a member of this group`;
-      }
-      continue;
-    }
-
-    const from = asEdgeString(rec.from);
-    const to = asEdgeString(rec.to);
-    if (from === null && to === null) continue;
-    if (from === null || to === null) return "relation from/to must be strings";
-    if (from === to) return "relation from and to must differ";
-    if (!roleSet.has(from) || !roleSet.has(to)) {
-      return `relation endpoints must be roles of members in this group (got ${from} → ${to})`;
-    }
-  }
-  return null;
-}
 
 function toJsonValue(input: unknown): unknown {
   if (typeof input !== "string") return input;
@@ -1879,386 +1806,24 @@ agentRouter.get("/skills/evolve/runs", async (c) => {
   return c.json({ count: rows.length, data: rows });
 });
 
-// ─── Agent groups（分析师等多定义编组）────────────────────────────────────────
+// ─── Decommissioned agent-group routes ───────────────────────────────────────
 
-agentRouter.get("/agent-groups", async (c) => {
-  const db = await getDb();
-  const groups = await db.select().from(agentGroup).orderBy(desc(agentGroup.updatedAt));
-  const memberCounts = await db
-    .select({
-      groupId: agentGroupMember.groupId,
-      n: count(agentGroupMember.id),
-    })
-    .from(agentGroupMember)
-    .groupBy(agentGroupMember.groupId);
-  const countByGroup = new Map(memberCounts.map((row) => [row.groupId, Number(row.n)]));
-  return c.json({
-    data: groups.map((g) => ({
-      ...g,
-      memberCount: countByGroup.get(g.id) ?? 0,
-    })),
-  });
-});
+const decommissionedGroupMessage =
+  "agent-group orchestration has been decommissioned; orchestrator now dispatches enabled specialists directly";
 
-agentRouter.post("/agent-groups", async (c) => {
-  const body = await c.req.json<{ name?: string; description?: string }>();
-  if (!body.name?.trim()) return c.json({ error: "name is required" }, 400);
-  const db = await getDb();
-  const id = crypto.randomUUID();
-  await db.insert(agentGroup).values({
-    id,
-    name: body.name.trim(),
-    description: (body.description ?? "").trim(),
-  });
-  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  return c.json({ data: row[0] }, 201);
-});
-
-agentRouter.patch("/agent-groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const body = await c.req.json<{ name?: string; description?: string; relationsJson?: unknown }>();
-  const db = await getDb();
-  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!existing[0]) return c.json({ error: "not found" }, 404);
-  const patch: {
-    name?: string;
-    description?: string;
-    relationsJson?: unknown;
-    updatedAt?: string;
-  } = {
-    updatedAt: new Date().toISOString(),
-  };
-  if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim();
-  if (typeof body.description === "string") patch.description = body.description;
-  if (body.relationsJson !== undefined) {
-    const members = await db
-      .select({ role: agentDefinition.role })
-      .from(agentGroupMember)
-      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-      .where(eq(agentGroupMember.groupId, id));
-    const memberRoles = members.map((m) => String(m.role));
-    const relErr = validateAgentGroupRelationsJson(body.relationsJson, memberRoles);
-    if (relErr) return c.json({ error: relErr }, 400);
-    patch.relationsJson = toJsonValue(body.relationsJson) as never;
-  }
-  await db.update(agentGroup).set(patch).where(eq(agentGroup.id, id));
-  if (body.relationsJson !== undefined) {
-    const { syncOrchestratorTopologyToolsForGroup } = await import(
-      "../runtime/orchestration/sync-orchestrator-topology-tools"
-    );
-    await syncOrchestratorTopologyToolsForGroup(id).catch((err) => {
-      console.warn("[agent-groups] sync orchestrator topology tools failed:", err);
-    });
-  }
-  const row = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  return c.json({ data: row[0] });
-});
-
-agentRouter.delete("/agent-groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const db = await getDb();
-  const existing = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!existing[0]) return c.json({ error: "not found" }, 404);
-  await db.delete(agentGroup).where(eq(agentGroup.id, id));
-  return c.json({ ok: true });
-});
-
-agentRouter.get("/agent-groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const db = await getDb();
-  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!g[0]) return c.json({ error: "not found" }, 404);
-  const members = await db
-    .select({
-      id: agentGroupMember.id,
-      groupId: agentGroupMember.groupId,
-      definitionId: agentGroupMember.definitionId,
-      sortOrder: agentGroupMember.sortOrder,
-      role: agentDefinition.role,
-      definitionName: agentDefinition.name,
-    })
-    .from(agentGroupMember)
-    .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-    .where(eq(agentGroupMember.groupId, id))
-    .orderBy(asc(agentGroupMember.sortOrder), asc(agentGroupMember.id));
-  return c.json({ data: { group: g[0], members } });
-});
-
-agentRouter.post("/agent-groups/:id/members", async (c) => {
-  const groupId = c.req.param("id");
-  const body = await c.req.json<{ definitionId?: string; sortOrder?: number }>();
-  if (!body.definitionId?.trim()) return c.json({ error: "definitionId is required" }, 400);
-  const db = await getDb();
-  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, groupId)).limit(1);
-  if (!g[0]) return c.json({ error: "group not found" }, 404);
-  const def = await db
-    .select({ id: agentDefinition.id })
-    .from(agentDefinition)
-    .where(eq(agentDefinition.id, body.definitionId.trim()))
-    .limit(1);
-  if (!def[0]) return c.json({ error: "definition not found" }, 404);
-  const memberId = crypto.randomUUID();
-  const sortOrder =
-    typeof body.sortOrder === "number" && Number.isFinite(body.sortOrder)
-      ? Math.trunc(body.sortOrder)
-      : 0;
-  try {
-    await db.insert(agentGroupMember).values({
-      id: memberId,
-      groupId,
-      definitionId: body.definitionId.trim(),
-      sortOrder,
-    });
-  } catch {
-    return c.json({ error: "member already exists for this definition" }, 409);
-  }
-  await db
-    .update(agentGroup)
-    .set({ updatedAt: new Date().toISOString() })
-    .where(eq(agentGroup.id, groupId));
-  const row = await db
-    .select()
-    .from(agentGroupMember)
-    .where(eq(agentGroupMember.id, memberId))
-    .limit(1);
-  return c.json({ data: row[0] }, 201);
-});
-
-agentRouter.delete("/agent-groups/:id/members/:memberId", async (c) => {
-  const groupId = c.req.param("id");
-  const memberId = c.req.param("memberId");
-  const db = await getDb();
-  const row = await db
-    .select()
-    .from(agentGroupMember)
-    .where(and(eq(agentGroupMember.id, memberId), eq(agentGroupMember.groupId, groupId)))
-    .limit(1);
-  if (!row[0]) return c.json({ error: "not found" }, 404);
-  await db.delete(agentGroupMember).where(eq(agentGroupMember.id, memberId));
-  await db
-    .update(agentGroup)
-    .set({ updatedAt: new Date().toISOString() })
-    .where(eq(agentGroup.id, groupId));
-  return c.json({ ok: true });
-});
-
-// ─── Agent 组（研究团队可选）────────────────────────────────────────────────────
-
-async function assertResearchTeamGroupMembers(definitionIds: string[]) {
-  const db = await getDb();
-  if (definitionIds.length === 0) {
-    return { ok: false as const, error: "members must include at least one agent definition" };
-  }
-  const defs = await db
-    .select()
-    .from(agentDefinition)
-    .where(inArray(agentDefinition.id, definitionIds));
-  if (defs.length !== definitionIds.length) {
-    return { ok: false as const, error: "one or more definition ids not found" };
-  }
-  for (const d of defs) {
-    if (!RESEARCH_TEAM_GROUP_TOPOLOGY_ROLE_SET.has(d.role as string)) {
-      return {
-        ok: false as const,
-        error: `only research-team / topology roles allowed in group; got ${d.role}`,
-      };
-    }
-  }
-  return { ok: true as const, definitions: defs };
-}
-
-agentRouter.get("/groups", async (c) => {
-  const workspaceId = c.req.query("workspaceId");
-  const db = await getDb();
-  const rows = workspaceId
-    ? await db
-        .select()
-        .from(agentGroup)
-        .where(or(eq(agentGroup.workspaceId, workspaceId), isNull(agentGroup.workspaceId)))
-        .orderBy(asc(agentGroup.name))
-    : await db.select().from(agentGroup).orderBy(asc(agentGroup.name));
-
-  const groupIds = rows.map((g) => g.id);
-  const members =
-    groupIds.length > 0
-      ? await db
-          .select({
-            m: agentGroupMember,
-            def: agentDefinition,
-          })
-          .from(agentGroupMember)
-          .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-          .where(inArray(agentGroupMember.groupId, groupIds))
-          .orderBy(asc(agentGroupMember.sortOrder))
-      : [];
-
-  const byGroup = new Map<string, typeof members>();
-  for (const row of members) {
-    const gid = row.m.groupId;
-    const arr = byGroup.get(gid) ?? [];
-    arr.push(row);
-    byGroup.set(gid, arr);
-  }
-
-  return c.json({
-    data: rows.map((g) => ({
-      group: g,
-      members: (byGroup.get(g.id) ?? []).map((row) => ({
-        id: row.m.id,
-        groupId: row.m.groupId,
-        definitionId: row.m.definitionId,
-        sortOrder: row.m.sortOrder,
-        role: row.def.role,
-        name: row.def.name,
-        version: row.def.version,
-      })),
-    })),
-  });
-});
-
-agentRouter.get("/groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const db = await getDb();
-  const g = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!g[0]) return c.json({ error: "group not found" }, 404);
-  const members = await db
-    .select({
-      m: agentGroupMember,
-      def: agentDefinition,
-    })
-    .from(agentGroupMember)
-    .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-    .where(eq(agentGroupMember.groupId, id))
-    .orderBy(asc(agentGroupMember.sortOrder));
-  return c.json({
-    data: {
-      group: g[0],
-      members: members.map((row) => ({
-        id: row.m.id,
-        groupId: row.m.groupId,
-        definitionId: row.m.definitionId,
-        sortOrder: row.m.sortOrder,
-        role: row.def.role,
-        name: row.def.name,
-        version: row.def.version,
-        systemPrompt: row.def.systemPrompt,
-      })),
-    },
-  });
-});
-
-agentRouter.post("/groups", async (c) => {
-  const body = await c.req.json<{
-    name: string;
-    workspaceId?: string | null;
-    description?: string;
-    relationsJson?: unknown[];
-    members: Array<{ definitionId: string; sortOrder?: number }>;
-  }>();
-  if (!body.name?.trim()) return c.json({ error: "name is required" }, 400);
-  if (!Array.isArray(body.members) || body.members.length === 0) {
-    return c.json({ error: "members array is required" }, 400);
-  }
-  const db = await getDb();
-  if (body.workspaceId) {
-    const ws = await db.select().from(workspace).where(eq(workspace.id, body.workspaceId)).limit(1);
-    if (!ws[0]) return c.json({ error: "workspace not found" }, 404);
-  }
-  const ordered = [...body.members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-  const definitionIds = ordered.map((m) => m.definitionId);
-  const check = await assertResearchTeamGroupMembers(definitionIds);
-  if (!check.ok) return c.json({ error: check.error }, 400);
-
-  if (body.relationsJson !== undefined) {
-    const memberRoles = check.definitions.map((d) => String(d.role));
-    const relErr = validateAgentGroupRelationsJson(body.relationsJson, memberRoles);
-    if (relErr) return c.json({ error: relErr }, 400);
-  }
-
-  const groupId = crypto.randomUUID();
-  await db.insert(agentGroup).values({
-    id: groupId,
-    workspaceId: body.workspaceId ?? null,
-    name: body.name.trim(),
-    description: body.description ?? "",
-    relationsJson: toJsonValue(body.relationsJson ?? []) as never,
-  });
-  for (let i = 0; i < ordered.length; i++) {
-    await db.insert(agentGroupMember).values({
-      id: crypto.randomUUID(),
-      groupId,
-      definitionId: ordered[i].definitionId,
-      sortOrder: ordered[i].sortOrder ?? i,
-    });
-  }
-  const created = await db.select().from(agentGroup).where(eq(agentGroup.id, groupId)).limit(1);
-  return c.json({ data: created[0] }, 201);
-});
-
-agentRouter.patch("/groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const body = await c.req.json<{
-    name?: string;
-    workspaceId?: string | null;
-    description?: string;
-    relationsJson?: unknown[];
-    members?: Array<{ definitionId: string; sortOrder?: number }>;
-  }>();
-  const db = await getDb();
-  const existed = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!existed[0]) return c.json({ error: "group not found" }, 404);
-  if (body.workspaceId) {
-    const ws = await db.select().from(workspace).where(eq(workspace.id, body.workspaceId)).limit(1);
-    if (!ws[0]) return c.json({ error: "workspace not found" }, 404);
-  }
-  if (body.members) {
-    const ordered = [...body.members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    const definitionIds = ordered.map((m) => m.definitionId);
-    const check = await assertResearchTeamGroupMembers(definitionIds);
-    if (!check.ok) return c.json({ error: check.error }, 400);
-    await db.delete(agentGroupMember).where(eq(agentGroupMember.groupId, id));
-    for (let i = 0; i < ordered.length; i++) {
-      await db.insert(agentGroupMember).values({
-        id: crypto.randomUUID(),
-        groupId: id,
-        definitionId: ordered[i].definitionId,
-        sortOrder: ordered[i].sortOrder ?? i,
-      });
-    }
-  }
-  if (body.relationsJson !== undefined) {
-    const members = await db
-      .select({ role: agentDefinition.role })
-      .from(agentGroupMember)
-      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-      .where(eq(agentGroupMember.groupId, id));
-    const memberRoles = members.map((m) => String(m.role));
-    const relErr = validateAgentGroupRelationsJson(body.relationsJson, memberRoles);
-    if (relErr) return c.json({ error: relErr }, 400);
-  }
-  const now = new Date().toISOString();
-  await db
-    .update(agentGroup)
-    .set({
-      name: body.name?.trim() ?? existed[0].name,
-      workspaceId: body.workspaceId !== undefined ? body.workspaceId : existed[0].workspaceId,
-      description: body.description ?? existed[0].description,
-      relationsJson:
-        body.relationsJson !== undefined
-          ? (toJsonValue(body.relationsJson) as never)
-          : existed[0].relationsJson,
-      updatedAt: now,
-    })
-    .where(eq(agentGroup.id, id));
-  const updated = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  return c.json({ data: updated[0] });
-});
-
-agentRouter.delete("/groups/:id", async (c) => {
-  const id = c.req.param("id");
-  const db = await getDb();
-  const existed = await db.select().from(agentGroup).where(eq(agentGroup.id, id)).limit(1);
-  if (!existed[0]) return c.json({ error: "group not found" }, 404);
-  await db.delete(agentGroup).where(eq(agentGroup.id, id));
-  return c.json({ ok: true });
-});
+agentRouter.get("/agent-groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.post("/agent-groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.patch("/agent-groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.delete("/agent-groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.get("/agent-groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.post("/agent-groups/:id/members", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.delete("/agent-groups/:id/members/:memberId", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.get("/groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.get("/groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.post("/groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.patch("/groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.delete("/groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));

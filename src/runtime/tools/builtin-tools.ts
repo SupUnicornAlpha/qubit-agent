@@ -2358,7 +2358,7 @@ async function dispatchTeamAgentTask(
   params: Record<string, unknown>
 ): Promise<{ dispatched: boolean; role: AgentRole; runId: string; via: string }> {
   const targetRole = resolveDispatchRole(role);
-  const topology = await loadOrchestratorTopologyForWorkflow(ctx.workflowId);
+  const topology = await loadOrchestratorTopologyForWorkflow();
   if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
     // Coding-Agent 体验 P3：coding_agent 档放开「角色集锁死」——编排器可按需拉入团队
     // 拓扑之外的任意有效专家角色（像 coding agent 临时召唤子 agent）。默认 native 档保持

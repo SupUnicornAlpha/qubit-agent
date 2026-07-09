@@ -5,7 +5,7 @@ import {
 } from "../orchestration/topology-dispatch";
 import { listRegisteredBuiltinTools } from "./builtin-tools";
 import { TOOL_CONNECTOR_ROUTES } from "./tool-routes";
-import type { ToolCatalogEntry, ToolCatalogCategory, ToolLifecycle } from "./types";
+import type { ToolCatalogCategory, ToolCatalogEntry, ToolLifecycle } from "./types";
 
 type ToolMetaEntry = {
   description: string;
@@ -46,7 +46,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "exec",
   },
   assign_task: { description: "向指定角色 Agent 派发工作流任务", category: "orchestration" },
-  run_analyst_team: { description: "并行运行分析师编组，MSA 融合 + 可选辩论/风控", category: "orchestration" },
+  run_analyst_team: {
+    description:
+      "兼容性团队批量研究入口。默认不推荐；优先由 orchestrator 用 assign_task / call_team_<role> 按需调用专家，再自行整合结论。",
+    category: "orchestration",
+  },
   summarize_team_decision: {
     description:
       "对 run_analyst_team 结果做全局兜底总结（仅在 confidence<0.6 / 信号分歧 / 签到不全时调用；高置信场景不需调）。入参：fusion_summary, ticker, msa_signal, msa_confidence, attended_roles?, missing_roles?",

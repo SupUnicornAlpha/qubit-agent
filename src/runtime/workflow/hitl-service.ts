@@ -766,7 +766,6 @@ export async function resolveHitlRequest(input: {
           ticker: resumePayload.ticker,
           scope: resumePayload.scope ?? undefined,
           context: resumePayload.context,
-          agentGroupId: resumePayload.agentGroupId ?? undefined,
           analystRoles: resumePayload.analystRoles ?? undefined,
           analystDefinitionIds: resumePayload.analystDefinitionIds ?? undefined,
           hitlApproval: {

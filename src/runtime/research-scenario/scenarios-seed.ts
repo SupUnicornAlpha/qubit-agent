@@ -3,7 +3,6 @@
  *
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6.2 / §6.6.3 / §6.6.4
  *
- * 编组 ID 与 seed-agent-catalog.ts 的 BUILTIN_AGENT_GROUPS 对齐。
  */
 
 import type { ResearchScenarioSpec } from "./types";
@@ -32,7 +31,6 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
   key: "analyst_debate",
   displayName: "分析辩论（MSA + 多空）",
   description: "四维分析师 MSA 融合 + 多空辩论；产出综合信号。",
-  defaultAgentGroupId: "grp-full-analyst-team",
   inputSchema: {
     ticker: {
       type: "string",
@@ -86,7 +84,6 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
   key: "strategy_authoring",
   displayName: "策略撰写（研究→回测→风控）",
   description: "基于上游研究结论或上下文，直接产出可回测策略。",
-  defaultAgentGroupId: "grp-strategy-pipeline",
   inputSchema: {
     ticker: {
       type: "string",
@@ -131,7 +128,6 @@ export const FACTOR_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   key: "factor_research",
   displayName: "因子研究",
   description: "围绕目标因子类别生成候选因子、计算因子值、评估 IC/IR、入库为可复用因子。",
-  defaultAgentGroupId: "grp-factor-research",
   inputSchema: {
     universe: {
       type: "enum",
@@ -203,7 +199,6 @@ export const RULE_RESEARCH_SCENARIO: ResearchScenarioSpec = {
   key: "rule_research",
   displayName: "规则研究",
   description: "基于现有因子库，生成可解释的 JSON-DSL 规则并入库。",
-  defaultAgentGroupId: "grp-rule-research",
   inputSchema: {
     universe: {
       type: "enum",
@@ -261,7 +256,6 @@ export const STOCK_SCREENING_SCENARIO: ResearchScenarioSpec = {
   key: "stock_screening",
   displayName: "选股研究",
   description: "基于因子打分与规则过滤产出候选股池。",
-  defaultAgentGroupId: "grp-stock-screening",
   inputSchema: {
     universe: {
       type: "enum",
@@ -311,7 +305,6 @@ export const RISK_REVIEW_SCENARIO: ResearchScenarioSpec = {
   key: "risk_review",
   displayName: "风控审查",
   description: "审查策略历史与现有限额，产出新的风控规则建议。",
-  defaultAgentGroupId: "grp-risk-review",
   inputSchema: {
     targetStrategyId: {
       type: "string",
@@ -363,7 +356,6 @@ export const PORTFOLIO_MANAGEMENT_SCENARIO: ResearchScenarioSpec = {
   key: "portfolio_management",
   displayName: "PM 组合管理",
   description: "多策略权重分配、再平衡方案、暴露报告。",
-  defaultAgentGroupId: "grp-portfolio-management",
   inputSchema: {
     strategyIds: {
       type: "string[]",
@@ -424,7 +416,6 @@ export const DISCOVERY_SCENARIO: ResearchScenarioSpec = {
   key: "discovery",
   displayName: "因子/规则/策略 挖掘",
   description: "自动生成候选因子+规则+策略，演化筛选 Sharpe>阈值 的优胜者。",
-  defaultAgentGroupId: "grp-discovery",
   inputSchema: {
     universe: {
       type: "enum",
@@ -499,7 +490,6 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
   key: "live_trading",
   displayName: "实盘交易",
   description: "实盘下单、监控、风控记录；走 Live 闸门。",
-  defaultAgentGroupId: "grp-live-trading",
   inputSchema: {
     strategyId: {
       type: "string",
@@ -559,7 +549,6 @@ export const POSTMORTEM_SCENARIO: ResearchScenarioSpec = {
   key: "postmortem",
   displayName: "复盘归因",
   description: "对一段时间或某策略的成交/持仓做因子归因、行业归因、事件归因。",
-  defaultAgentGroupId: "grp-postmortem",
   inputSchema: {
     targetStrategyId: {
       type: "string",
@@ -609,7 +598,6 @@ export const NEWS_EVENT_RADAR_SCENARIO: ResearchScenarioSpec = {
   key: "news_event_radar",
   displayName: "事件雷达",
   description: "扫描新闻流，识别可交易事件，输出影响评估与预警。",
-  defaultAgentGroupId: "grp-news-event-radar",
   inputSchema: {
     universe: {
       type: "enum",

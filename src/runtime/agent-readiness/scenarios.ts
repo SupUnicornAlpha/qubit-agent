@@ -3,11 +3,11 @@
  *
  * 评测必须复刻 UI 上「研究团队」启动方式的真实链路：
  *   1. POST /api/v1/workflows  (skipDispatch=true) — 仅创建 workflow_run 占位
- *   2. POST /api/v1/analyst/run { workflowRunId, agentGroupId, ticker | scope }
- *      — 真正派发给 orchestrator，启动多 Agent 团队（task=research_team_execute）
+ *   2. POST /api/v1/analyst/run { workflowRunId, ticker | scope }
+ *      — 真正派发给 orchestrator，启动专家协作链路（task=research_team_execute）
  *
- * 历史教训（Round 5）：之前直接走 POST /api/v1/workflows（无 skipDispatch、无
- * agentGroupId）等于让单 Agent 裸跑，没启动分析师团队、回测 / risk agent，
+ * 历史教训（Round 5）：之前直接走 POST /api/v1/workflows（无 skipDispatch）
+ * 等于让单 Agent 裸跑，没启动分析师团队、回测 / risk agent，
  * A 类内容指标全垮（trace 显示 research 仅 10 step / 2 tool calls），跟 UI
  * 实际行为完全脱节。AGM v2 的 5 个场景必须按 UI 路径跑才有意义。
  */
@@ -16,8 +16,6 @@ import type { CreateAndDispatchWorkflowInput } from "../workflow/workflow-servic
 import type { ResearchScopeInput } from "../../types/research-scope";
 
 export interface AnalystRunPayload {
-  /** 必填：UI 上"启动研究团队"必须选的 group */
-  agentGroupId: string;
   /** 单标的优先（research 类）；多标/概念类用 scope.kind=explore + theme */
   ticker?: string;
   scope?: ResearchScopeInput;
@@ -61,7 +59,7 @@ export interface ScenarioRecipe {
   displayName: string;
   /** 第 1 步：传给 createAndDispatchWorkflow 的 workflow 占位入参（建议 skipDispatch=true） */
   workflow: Omit<CreateAndDispatchWorkflowInput, "projectId">;
-  /** 第 2 步：传给 /api/v1/analyst/run 的 group + 上下文 */
+  /** 第 2 步：传给 /api/v1/analyst/run 的上下文 */
   analystRun: AnalystRunPayload;
   /**
    * 默认期望终态。runner 会等到 workflow_run.status 进入 expectedTerminalStatus
@@ -100,7 +98,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 6 },
     },
     analystRun: {
-      agentGroupId: "grp-full-analyst-team",
       ticker: "AAPL",
       context:
         "评测目标：以 AAPL 为唯一标的做单只深度研究，覆盖估值/财报/技术/宏观/同业对比；分析师团队应充分调用 quote、news、fundamentals、screener 等工具，输出 3 条具体交易级见解。",
@@ -120,7 +117,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
-      agentGroupId: "grp-full-analyst-team",
       scope: {
         kind: "explore",
         theme: "NVDA / AMD / INTC 半导体三家横向对比 · AI 算力主题",
@@ -143,7 +139,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
-      agentGroupId: "grp-full-analyst-team",
       scope: {
         kind: "explore",
         theme: "AI 算力基础设施主题研究 · 自主识别 3 个细分赛道 + 各 1 只龙头",
@@ -166,7 +161,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
-      agentGroupId: "grp-full-analyst-team",
       scope: { kind: "explore", theme: "美股大盘 momentum + 估值 + 新闻情绪 long 选股" },
       context:
         "评测目标：从美股大盘筛 5 只 long 候选并给推荐理由，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选存在性后再分析。",
@@ -186,7 +180,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
-      agentGroupId: "grp-full-analyst-team",
       scope: {
         kind: "explore",
         theme: "美股大盘做空候选：高估值 + 业绩或动量恶化 + 风险评估",
@@ -209,7 +202,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
-      agentGroupId: "grp-factor-research",
       scope: { kind: "explore", theme: "新 alpha 因子设计 + 60 日 IC/IR 评估" },
       context:
         "评测目标：提出一个 alpha 因子（公式 + 经济学解释 + 60 日 IC/IR 模拟）。落库要求：factor_definition + factor_evaluation 各至少一条；评估指标必须有数值（IC / Rank IC / IR）。",
@@ -229,7 +221,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 8 },
     },
     analystRun: {
-      agentGroupId: "grp-strategy-pipeline",
       scope: { kind: "explore", theme: "long-only 因子组合策略草稿 + universe + 持仓周期" },
       context:
         "评测目标：组合 2-3 个已有因子产出 long-only 策略草稿，落 strategy + strategy_version + strategy_composition；包含 universe / 持仓周期 / 仓位规则。",
@@ -249,7 +240,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 10 },
     },
     analystRun: {
-      agentGroupId: "grp-strategy-pipeline",
       scope: {
         kind: "explore",
         theme: "多空配对策略草稿：long/short 因子组合 + 配对方式 + 仓位约束",
@@ -272,7 +262,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 6 },
     },
     analystRun: {
-      agentGroupId: "grp-live-trading",
       scope: { kind: "explore", theme: "基于最新策略版本的做多下单意图" },
       context:
         "评测目标：先 SELECT 最新 strategy_version，再针对当前市场状态产出至少 1 条 **side=buy** 的 order_intent + risk_decision；reasoning 中说明加仓理由（动量/估值/事件）。",
@@ -292,7 +281,6 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       loopOptionsJson: { maxIterations: 6 },
     },
     analystRun: {
-      agentGroupId: "grp-live-trading",
       scope: {
         kind: "explore",
         theme: "基于最新策略版本的做空下单意图 + 严格风控",

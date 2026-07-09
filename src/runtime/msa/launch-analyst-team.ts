@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentGroup, workflowRun } from "../../db/sqlite/schema";
+import { workflowRun } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 import {
   type ResearchScopeInput,
@@ -22,7 +22,6 @@ export type LaunchAnalystTeamInput = {
   ticker?: string;
   scope?: ResearchScopeInput | null;
   context?: string;
-  agentGroupId?: string | null;
   analystRoles?: string[] | null;
   analystDefinitionIds?: string[] | null;
   hitlMode?: "off" | "ai" | "always";
@@ -37,7 +36,7 @@ export type LaunchAnalystTeamResult = {
   taskId: string;
   ticker: string;
   scope: ReturnType<typeof resolveResearchScope>;
-  agentGroupId: string | null;
+  agentGroupId: null;
 };
 
 export class LaunchAnalystTeamError extends Error {
@@ -45,7 +44,6 @@ export class LaunchAnalystTeamError extends Error {
     public code:
       | "workflow_required"
       | "scope_required"
-      | "agent_group_not_found"
       | "workflow_not_found"
       | "dispatch_failed",
     message: string,
@@ -98,17 +96,6 @@ export async function launchAnalystTeam(
   }
 
   const db = await getDb();
-  if (input.agentGroupId) {
-    const grp = await db
-      .select()
-      .from(agentGroup)
-      .where(eq(agentGroup.id, input.agentGroupId))
-      .limit(1);
-    if (!grp[0]) {
-      throw new LaunchAnalystTeamError("agent_group_not_found", "agent group not found", 404);
-    }
-  }
-
   const wf = await db
     .select()
     .from(workflowRun)
@@ -141,7 +128,6 @@ export async function launchAnalystTeam(
       startedAt: new Date().toISOString(),
       endedAt: null,
       loopOptionsJson: loopOptionsJson as never,
-      ...(input.agentGroupId !== undefined ? { agentGroupId: input.agentGroupId } : {}),
       ...(input.researchScenarioKey ? { researchScenarioId: input.researchScenarioKey } : {}),
     })
     .where(eq(workflowRun.id, input.workflowRunId));
@@ -192,7 +178,6 @@ export async function launchAnalystTeam(
           ticker: effectiveTicker ?? scope.primarySymbol,
           scope: effectiveScope ?? undefined,
           context: effectiveContext,
-          agentGroupId: input.agentGroupId ?? undefined,
           analystRoles: analystRoles ?? undefined,
           analystDefinitionIds: analystDefinitionIds ?? undefined,
         },
@@ -214,6 +199,6 @@ export async function launchAnalystTeam(
     taskId,
     ticker: effectiveTicker ?? scope.primarySymbol,
     scope,
-    agentGroupId: input.agentGroupId ?? null,
+    agentGroupId: null,
   };
 }

@@ -81,7 +81,7 @@ export interface WorkspaceRuntimeFileBundle {
 export function buildDefaultSandboxPoliciesFromDefinitions(
   definitions: RuntimeAgentDefinition[]
 ): WorkspaceSandboxPolicy[] {
-  // call_team_<role> 是运行时按编组拓扑注入的 orchestrator 工具，不在各 definition.tools 里，
+  // call_team_<role> 是运行时按已启用专家注入的 orchestrator 工具，不在各 definition.tools 里，
   // 但必须进 default-policy 白名单，否则 dispatch 会 sandbox_blocked。
   const topologyTools = definitions.map((d) => topologyTeamToolName(d.role));
   const tools = [...new Set([...definitions.flatMap((d) => d.tools), ...topologyTools])].sort();

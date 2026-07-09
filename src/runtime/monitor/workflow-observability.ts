@@ -14,7 +14,7 @@ import {
  *
  * F-P0-05 修复（2026-06）：之前 LLM/per-role token 统计仅读 `agent_step.tokenCount`，
  * 漏算了所有走 `runLlmGateway` 但不经过 reason 节点的内部调用（orchestrator
- * planning / runDebateSession / summarize_team_decision / recommend-agent-group），
+ * planning / runDebateSession / summarize_team_decision），
  * 导致前端看到 totalTokenCount=null 或 per-role tokens=0。
  *
  * 现在用 `llm_call_log` 作为权威源（每次真实 LLM 调用一行，自带

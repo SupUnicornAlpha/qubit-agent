@@ -40,7 +40,7 @@ export function classifyWorkflow(row: Record<string, unknown>): WorkflowKind {
   if (mode === "live") return "live_trading";
   if (mode === "simulation" && /实时交易|trader/i.test(goal)) return "live_trading";
 
-  if (goal.startsWith("研究团队") || Boolean(row.agentGroupId ?? row.agent_group_id)) {
+  if (goal.startsWith("研究团队")) {
     return "research_team";
   }
 

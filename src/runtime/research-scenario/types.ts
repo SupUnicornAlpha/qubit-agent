@@ -3,7 +3,7 @@
  *
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6
  *
- * 场景 = "做什么研究" + 输入契约 + 产出契约 + 默认编组 + 工具预设 + Provider 能力要求 + Loop 默认值
+ * 场景 = "做什么研究" + 输入契约 + 产出契约 + 工具预设 + Provider 能力要求 + Loop 默认值
  */
 
 import type { ProviderKind } from "../provider/types";
@@ -82,7 +82,6 @@ export interface ResearchScenarioSpec {
   key: string;
   displayName: string;
   description: string;
-  defaultAgentGroupId: string;
   inputSchema: Record<string, FieldSchema>;
   outputContract: OutputContract;
   requiredCapabilities: CapabilityRequirement[];
@@ -105,7 +104,6 @@ export interface ScenarioLaunchInput {
   scenarioKey: string;
   projectId: string;
   goal?: string;
-  agentGroupId?: string;
   scopeInput?: Record<string, unknown>;
   inputParams: Record<string, unknown>;
   providerOverrides?: Array<{ kind: ProviderKind; providerKey?: string; providerId?: string }>;
@@ -118,8 +116,7 @@ export class ScenarioError extends Error {
       | "scenario_not_found"
       | "scenario_disabled"
       | "missing_capability"
-      | "invalid_input"
-      | "group_resolve_failed",
+      | "invalid_input",
     message: string,
     public details?: Record<string, unknown>
   ) {

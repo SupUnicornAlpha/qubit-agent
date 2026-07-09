@@ -380,7 +380,6 @@ monitorRouter.get("/workflows", async (c) => {
       status: workflowRun.status,
       startedAt: workflowRun.startedAt,
       endedAt: workflowRun.endedAt,
-      agentGroupId: workflowRun.agentGroupId,
       loopKind: workflowRun.loopKind,
       executionPath: workflowRun.executionPath,
     })

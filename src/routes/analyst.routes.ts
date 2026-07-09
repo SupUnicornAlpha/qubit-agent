@@ -38,7 +38,6 @@ analystRouter.post("/run", async (c) => {
     ticker?: string;
     scope?: ResearchScopeInput | null;
     context?: string;
-    agentGroupId?: string | null;
     analystRoles?: string[] | null;
     analystDefinitionIds?: string[] | null;
     /**
@@ -68,7 +67,6 @@ analystRouter.post("/run", async (c) => {
       ...(body.ticker !== undefined ? { ticker: body.ticker } : {}),
       ...(body.scope !== undefined ? { scope: body.scope } : {}),
       ...(body.context !== undefined ? { context: body.context } : {}),
-      ...(body.agentGroupId !== undefined ? { agentGroupId: body.agentGroupId } : {}),
       ...(body.analystRoles !== undefined ? { analystRoles: body.analystRoles } : {}),
       ...(body.analystDefinitionIds !== undefined
         ? { analystDefinitionIds: body.analystDefinitionIds }

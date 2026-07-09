@@ -139,7 +139,6 @@ export class ResearchScenarioService {
     scenarioKey: string;
     registryScenarioKey: string;
     scenarioId: string;
-    agentGroupId: string;
     inputParams: Record<string, unknown>;
     loopOptions: Record<string, unknown>;
     validation: ScenarioValidateResult;
@@ -153,18 +152,12 @@ export class ResearchScenarioService {
       ...(input.projectId ? { projectId: input.projectId } : {}),
     });
 
-    const groupId = input.agentGroupId ?? spec.defaultAgentGroupId;
-    if (!groupId) {
-      throw new ScenarioError("group_resolve_failed", "no_default_group_for_scenario");
-    }
-
     const loop = { ...spec.loopDefaults, ...(input.loopOverrides ?? {}) };
 
     return {
       scenarioKey: requestedKey,
       registryScenarioKey: registryKey,
       scenarioId: spec.id,
-      agentGroupId: groupId,
       inputParams: input.inputParams,
       loopOptions: loop as Record<string, unknown>,
       validation,
@@ -177,7 +170,6 @@ export class ResearchScenarioService {
     scenarioId: string;
     workflowRunId: string;
     jobId: string;
-    agentGroupId: string;
     validation: ScenarioValidateResult;
   }> {
     const plan = await this.planLaunch(input);
@@ -218,7 +210,6 @@ export class ResearchScenarioService {
       ...(launchInput.ticker !== undefined ? { ticker: launchInput.ticker } : {}),
       ...(launchInput.scope !== undefined ? { scope: launchInput.scope } : {}),
       context: launchInput.context,
-      agentGroupId: plan.agentGroupId,
       researchScenarioKey: plan.scenarioKey,
       hitlMode: "off",
     });
@@ -229,7 +220,6 @@ export class ResearchScenarioService {
       scenarioId: plan.scenarioId,
       workflowRunId: created.data.id,
       jobId: launched.jobId,
-      agentGroupId: plan.agentGroupId,
       validation: plan.validation,
     };
   }

@@ -5,8 +5,6 @@ import type {
   AgentSkillState,
   AgentSummary,
   AgentDefinitionBundle,
-  AgentGroupDetail,
-  AgentGroupRecord,
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentPromptPreviewResponse,
@@ -1040,47 +1038,6 @@ export async function getAgentDefinitionMemoryStats(definitionId: string): Promi
     `/api/v1/agents/definitions/${definitionId}/memory-stats`
   );
   return res.data;
-}
-
-export async function listAgentGroups(): Promise<AgentGroupRecord[]> {
-  const res = await httpGet<{ data: AgentGroupRecord[] }>("/api/v1/agents/agent-groups");
-  return res.data;
-}
-
-export async function patchAgentGroup(
-  id: string,
-  input: { name?: string; description?: string; relationsJson?: unknown[] }
-): Promise<AgentGroupRecord> {
-  const res = await httpPatch<{ data: AgentGroupRecord }>(`/api/v1/agents/agent-groups/${id}`, input);
-  return res.data;
-}
-
-export async function createAgentGroup(input: { name: string; description?: string }): Promise<AgentGroupRecord> {
-  const res = await httpPost<{ data: AgentGroupRecord }>("/api/v1/agents/agent-groups", input);
-  return res.data;
-}
-
-export async function deleteAgentGroup(id: string): Promise<void> {
-  await httpDelete<{ ok: boolean }>(`/api/v1/agents/agent-groups/${id}`);
-}
-
-export async function getAgentGroup(id: string): Promise<AgentGroupDetail> {
-  const res = await httpGet<{ data: AgentGroupDetail }>(`/api/v1/agents/agent-groups/${id}`);
-  return res.data;
-}
-
-export async function addAgentGroupMember(
-  groupId: string,
-  input: { definitionId: string; sortOrder?: number }
-): Promise<{ id: string; groupId: string; definitionId: string; sortOrder: number; createdAt: string }> {
-  const res = await httpPost<{
-    data: { id: string; groupId: string; definitionId: string; sortOrder: number; createdAt: string };
-  }>(`/api/v1/agents/agent-groups/${groupId}/members`, input);
-  return res.data;
-}
-
-export async function removeAgentGroupMember(groupId: string, memberId: string): Promise<void> {
-  await httpDelete<{ ok: boolean }>(`/api/v1/agents/agent-groups/${groupId}/members/${memberId}`);
 }
 
 export async function createAgentDraft(params: {
@@ -2127,7 +2084,6 @@ export async function startAnalystTeam(params: {
   ticker?: string;
   scope?: import("./types").ResearchScopeInput;
   context?: string;
-  agentGroupId?: string;
   analystRoles?: string[];
   analystDefinitionIds?: string[];
   /**
@@ -2290,7 +2246,6 @@ export async function runAnalystTeam(params: {
   scope?: import("./types").ResearchScopeInput;
   context?: string;
   onProgress?: (elapsedMs: number) => void;
-  agentGroupId?: string;
   analystRoles?: string[];
   analystDefinitionIds?: string[];
   /** 前端轮询超时（毫秒），<=0 表示不超时。默认 30 分钟。 */

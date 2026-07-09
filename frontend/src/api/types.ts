@@ -441,32 +441,6 @@ export interface AgentSkillRecord {
   updatedAt: string;
 }
 
-export interface AgentGroupRecord {
-  id: string;
-  name: string;
-  description: string;
-  /** 有向边 / 广播 / 画布布局（见 researchTeamTopology） */
-  relationsJson?: unknown[] | Array<{ from: string; to: string }>;
-  workspaceId?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  memberCount?: number;
-}
-
-export interface AgentGroupMemberDetail {
-  id: string;
-  groupId: string;
-  definitionId: string;
-  sortOrder: number;
-  role: string;
-  definitionName: string;
-}
-
-export interface AgentGroupDetail {
-  group: AgentGroupRecord;
-  members: AgentGroupMemberDetail[];
-}
-
 export interface ChatSession {
   id: string;
   workspaceId: string;

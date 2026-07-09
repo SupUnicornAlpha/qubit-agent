@@ -8,12 +8,9 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import {
-  researchScenario as scenarioTable,
-  researchScenarioGroup,
-} from "../../db/sqlite/schema";
+import { researchScenario as scenarioTable } from "../../db/sqlite/schema";
 import type {
   CapabilityRequirement,
   FieldSchema,
@@ -89,7 +86,6 @@ export class ResearchScenarioRegistry {
         key: r.key,
         displayName: r.displayName,
         description: r.description,
-        defaultAgentGroupId: r.defaultAgentGroupId ?? "",
         inputSchema: (r.inputSchemaJson as Record<string, FieldSchema>) ?? {},
         outputContract: (r.outputContractJson as unknown as OutputContract) ?? {
           primary: "",
@@ -111,56 +107,6 @@ export class ResearchScenarioRegistry {
         isBuiltin: Boolean(r.isBuiltin),
       });
     }
-  }
-
-  /** 绑定场景 → 编组（默认编组或额外编组） */
-  async bindGroup(input: {
-    scenarioKey: string;
-    agentGroupId: string;
-    isDefault?: boolean;
-    sortOrder?: number;
-  }): Promise<void> {
-    const spec = this.get(input.scenarioKey);
-    if (!spec) throw new Error(`scenario_not_found: ${input.scenarioKey}`);
-    const db = await getDb();
-    const existing = await db
-      .select()
-      .from(researchScenarioGroup)
-      .where(
-        and(
-          eq(researchScenarioGroup.scenarioId, spec.id),
-          eq(researchScenarioGroup.agentGroupId, input.agentGroupId)
-        )
-      )
-      .limit(1);
-    if (existing[0]) return;
-    await db.insert(researchScenarioGroup).values({
-      id: randomUUID(),
-      scenarioId: spec.id,
-      agentGroupId: input.agentGroupId,
-      isDefault: input.isDefault ?? false,
-      sortOrder: input.sortOrder ?? 100,
-    });
-  }
-
-  /** 列出场景绑定的所有编组 */
-  async listGroupsForScenario(
-    scenarioKey: string
-  ): Promise<Array<{ agentGroupId: string; isDefault: boolean; sortOrder: number }>> {
-    const spec = this.get(scenarioKey);
-    if (!spec) return [];
-    const db = await getDb();
-    const rows = await db
-      .select()
-      .from(researchScenarioGroup)
-      .where(eq(researchScenarioGroup.scenarioId, spec.id));
-    return rows
-      .map((r) => ({
-        agentGroupId: r.agentGroupId,
-        isDefault: Boolean(r.isDefault),
-        sortOrder: r.sortOrder,
-      }))
-      .sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
   _resetForTests(): void {
@@ -190,7 +136,6 @@ export class ResearchScenarioRegistry {
         .set({
           displayName: spec.displayName,
           description: spec.description,
-          defaultAgentGroupId: spec.defaultAgentGroupId,
           inputSchemaJson: spec.inputSchema as never,
           outputContractJson: spec.outputContract as never,
           requiredCapabilitiesJson: spec.requiredCapabilities as never,
@@ -210,7 +155,6 @@ export class ResearchScenarioRegistry {
       key: spec.key,
       displayName: spec.displayName,
       description: spec.description,
-      defaultAgentGroupId: spec.defaultAgentGroupId,
       inputSchemaJson: spec.inputSchema as never,
       outputContractJson: spec.outputContract as never,
       requiredCapabilitiesJson: spec.requiredCapabilities as never,

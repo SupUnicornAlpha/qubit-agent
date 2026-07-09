@@ -476,11 +476,11 @@ describe("api minimal integration", () => {
     expect(meta.dataSource).toBe("yahoo_chart");
   });
 
-  test("agents: agent-groups list and create", async () => {
+  test("agents: agent-groups routes are decommissioned", async () => {
     const listRes = await app.request(new Request("http://test/api/v1/agents/agent-groups"));
-    expect(listRes.status).toBe(200);
+    expect(listRes.status).toBe(410);
     const listJson = await jsonOf(listRes);
-    expect(Array.isArray(listJson.data)).toBeTrue();
+    expect(listJson.ok).toBe(false);
 
     const createRes = await app.request(
       new Request("http://test/api/v1/agents/agent-groups", {
@@ -489,19 +489,14 @@ describe("api minimal integration", () => {
         body: JSON.stringify({ name: `g-${Date.now()}`, description: "integration" }),
       })
     );
-    expect(createRes.status).toBe(201);
-    const created = await jsonOf(createRes);
-    const gid = String((created.data as Record<string, unknown>).id ?? "");
-    expect(gid.length).toBeGreaterThan(4);
+    expect(createRes.status).toBe(410);
 
     const detailRes = await app.request(
-      new Request(`http://test/api/v1/agents/agent-groups/${gid}`)
+      new Request("http://test/api/v1/agents/agent-groups/decommissioned")
     );
-    expect(detailRes.status).toBe(200);
+    expect(detailRes.status).toBe(410);
     const detailJson = await jsonOf(detailRes);
-    const data = detailJson.data as Record<string, unknown>;
-    expect(Array.isArray(data.members)).toBeTrue();
-    expect((data.members as unknown[]).length).toBe(0);
+    expect(detailJson.ok).toBe(false);
   });
 
   test("reia: broker account upsert and health-check (mock)", async () => {

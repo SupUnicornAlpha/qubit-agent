@@ -85,7 +85,6 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
     projectId: input.projectId,
     goal: recipe.workflow.goal,
     inputParams: scenarioInputParamsFromRecipe(recipe),
-    agentGroupId: recipe.analystRun.agentGroupId,
     loopOverrides: recipe.workflow.loopOptionsJson as never,
   });
   const workflowRunId = launched.workflowRunId;

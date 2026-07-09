@@ -38,13 +38,12 @@ describe("Research scenario bootstrap + service", () => {
     expect(result.invalidInputs?.some((e) => e.field === "universe")).toBe(true);
   });
 
-  test("planLaunch: 默认 agent group 解析成功", async () => {
+  test("planLaunch: 默认场景配置解析成功", async () => {
     const plan = await researchScenarioService.planLaunch({
       scenarioKey: "stock_screening",
       projectId: "p-test",
       inputParams: { universe: "CN-A:csi500", topN: 30 },
     });
-    expect(plan.agentGroupId).toBe("grp-stock-screening");
     expect(plan.scenarioKey).toBe("stock_screening");
     expect(plan.loopOptions.maxIterations).toBe(3);
   });

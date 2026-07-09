@@ -7,7 +7,6 @@ import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
-  agentGroupMember,
   agentInstance,
   agentStep,
   analystSignal,
@@ -33,7 +32,7 @@ import {
   type OrchestratorHitlHint,
   type OrchestratorPlanResult,
 } from "../workflow/hitl-hint-parse";
-import { partitionSlotsIntoWaves, parseTeamRelations, type TeamRelationEdge } from "./analyst-team-topology";
+import { partitionSlotsIntoWaves, type TeamRelationEdge } from "./analyst-team-topology";
 
 /**
  * 历史这里直接定义了 hitlHint 的协议（分隔符 + parse + 类型）；现在被对话 orchestrator
@@ -51,26 +50,6 @@ export type AnalystTeamSlot = {
 
 export const POST_FUSION_AUX_ROLES = new Set<AgentRole>(["research", "backtest", "risk"]);
 
-const TOPOLOGY_ROLES_WITH_ORCHESTRATOR: readonly AgentRole[] = [
-  "orchestrator",
-  "market_data",
-  "news_event",
-  "analyst_fundamental",
-  "analyst_technical",
-  "analyst_sentiment",
-  "analyst_macro",
-  "research",
-  "backtest",
-  "risk",
-] as AgentRole[];
-
-export { TOPOLOGY_ROLES_WITH_ORCHESTRATOR };
-
-/** 解析编组拓扑（含 orchestrator 边，用于调度与展示） */
-export function parseGroupRelationsWithOrchestrator(raw: unknown): TeamRelationEdge[] {
-  return parseTeamRelations(raw, TOPOLOGY_ROLES_WITH_ORCHESTRATOR);
-}
-
 /** 仅保留槽位之间的边；orchestrator 星型边不进入 wave 分层 */
 export function slotOnlyRelationEdges(
   edges: TeamRelationEdge[],
@@ -79,32 +58,15 @@ export function slotOnlyRelationEdges(
   return edges.filter((e) => slotRoles.has(e.from) && slotRoles.has(e.to));
 }
 
-/** 从编组或种子定义解析 orchestrator（用于规划 / 汇总决策，不占分析师槽位） */
+/** 从当前启用定义解析 orchestrator（用于规划 / 汇总决策，不占分析师槽位） */
 export async function resolveOrchestratorSlot(
-  db: Awaited<ReturnType<typeof getDb>>,
-  agentGroupId?: string | null
+  db: Awaited<ReturnType<typeof getDb>>
 ): Promise<AnalystTeamSlot | null> {
-  if (agentGroupId) {
-    const rows = await db
-      .select({ d: agentDefinition })
-      .from(agentGroupMember)
-      .innerJoin(agentDefinition, eq(agentGroupMember.definitionId, agentDefinition.id))
-      .where(eq(agentGroupMember.groupId, agentGroupId))
-      .orderBy(asc(agentGroupMember.sortOrder));
-    const row = rows.find((r) => r.d.role === "orchestrator" && r.d.enabled);
-    if (row) {
-      return {
-        role: "orchestrator",
-        definitionId: row.d.id,
-        systemPrompt: row.d.systemPrompt,
-      };
-    }
-  }
   const defs = await db
     .select()
     .from(agentDefinition)
     .where(eq(agentDefinition.role, "orchestrator"))
-    .limit(1);
+    .orderBy(asc(agentDefinition.name));
   const def = defs.find((d) => d.enabled);
   if (!def) return null;
   return {

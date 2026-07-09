@@ -265,7 +265,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   const handleReloadBuiltinSeed = () => {
     if (
       !window.confirm(
-        "重载系统预设将把所有内置 Agent 与编组重置回出厂配置，覆盖你对内置项的发布版改动。\n\n你自定义创建的 Agent / 编组不会受影响。\n\n确定继续？"
+        "重载系统预设将把所有内置 Agent 与系统协作预设重置回出厂配置，覆盖你对内置项的发布版改动。\n\n你自定义创建的 Agent 不会受影响。\n\n确定继续？"
       )
     ) {
       return;
@@ -277,7 +277,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
         const d = res.report.definitions;
         const g = res.report.groups;
         setReloadSeedMsg(
-          `已重载：Agent ${d.reset}/${d.total}，编组 ${g.reset}/${g.total}。运行时 ${res.runtime.before} → ${res.runtime.after}。`
+          `已重载：Agent ${d.reset}/${d.total}，协作预设 ${g.reset}/${g.total}。运行时 ${res.runtime.before} → ${res.runtime.after}。`
         );
         onReloadAll();
       })
@@ -482,7 +482,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               className="qb-btn-ghost qb-btn--compact"
               style={{ color: "#fbbf24", borderColor: "#78350f" }}
               disabled={reloadSeedBusy}
-              title="把所有内置 Agent / 编组重置回出厂配置（不影响你自建的 Agent 与编组）"
+              title="把所有内置 Agent / 系统协作预设重置回出厂配置（不影响你自建的 Agent）"
               onClick={handleReloadBuiltinSeed}
             >
               {reloadSeedBusy ? "重载中…" : "重载系统预设"}

@@ -21,6 +21,12 @@ export type EffectiveToolsResult = {
   scenarioKey: string | null;
 };
 
+const ORCHESTRATOR_COMPAT_TEAM_TOOLS = new Set([
+  "run_analyst_team",
+  "summarize_team_decision",
+  "fuse_signals",
+]);
+
 function normalizeToolNames(names: string[]): string[] {
   return [...new Set(names.map((n) => resolveToolAlias(n.trim()).resolved).filter(Boolean))];
 }
@@ -68,9 +74,19 @@ export async function resolveEffectiveAgentTools(
     };
   }
 
-  const topologyContext = await loadOrchestratorTopologyForWorkflow(workflowId);
+  void workflowId;
+  const topologyContext = await loadOrchestratorTopologyForWorkflow();
   const topologyTools = topologyContext?.toolNames ?? [];
-  const tools = normalizeToolNames([...base, ...topologyTools, "update_plan"]);
+  /**
+   * 2026-07：Orchestrator 默认改成“按需派专家，由自己整合裁决”。
+   * 即使历史 DB 里的 def-orchestrator.tools 还保留团队批跑工具，这里也在运行时剔除，
+   * 让新行为无需 force reseed 就能生效。兼容路径仍保留实现，但不出现在默认工具面。
+   */
+  const tools = normalizeToolNames(
+    [...base, ...topologyTools, "update_plan"].filter(
+      (toolName) => !ORCHESTRATOR_COMPAT_TEAM_TOOLS.has(toolName)
+    )
+  );
   const topologyPromptBlock = buildTopologyToolsPromptBlock(topologyContext);
 
   return {
