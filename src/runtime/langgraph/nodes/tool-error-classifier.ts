@@ -79,13 +79,13 @@ export function buildMcpRetryHint(
 ): string {
   switch (errorClass) {
     case "transient":
-      return `MCP 工具「${toolName}」遇到瞬时错误，已自动重试过；如再次失败请换其他数据源或暂停该步并产出文字结论。原因：${truncate(message)}`;
+      return `工具「${toolName}」遇到瞬时错误；可按 recovery 预算重试，预算耗尽后必须换数据源或降级。原因：${truncate(message)}`;
     case "permanent":
-      return `MCP 工具「${toolName}」遇到不可重试错误（参数/权限/路径错），请修正参数后重试或改用其他工具。原因：${truncate(message)}`;
+      return `工具「${toolName}」遇到不可重试错误（参数/权限/路径错），请修正参数或改用其他工具。原因：${truncate(message)}`;
     case "blocked":
-      return `MCP 工具「${toolName}」被沙箱或熔断暂时拒绝（不在允许列表/熔断 cooldown 中），本轮请换别的工具或退化为文字推理。原因：${truncate(message)}`;
+      return `工具「${toolName}」被沙箱或熔断拒绝，本轮请换别的工具或退化为文字推理。原因：${truncate(message)}`;
     default:
-      return `MCP 工具「${toolName}」失败，无法判断错误类别；建议本轮换工具或退化文字结论，不要反复重试相同调用。原因：${truncate(message)}`;
+      return `工具「${toolName}」失败，无法判断错误类别；建议换工具或退化文字结论，不要反复重试相同调用。原因：${truncate(message)}`;
   }
 }
 

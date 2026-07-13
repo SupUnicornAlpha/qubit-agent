@@ -24,6 +24,7 @@ import {
   recordToolCallSuccess,
   recordToolCallTimeout,
 } from "../../tools/tool-call-log-service";
+import { detectSemanticToolFailure } from "../../tools/semantic-tool-result";
 import {
   resolveToolExecutionRoute,
   toolRouteToTargetKind,
@@ -32,6 +33,7 @@ import {
 import { resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
+import { buildToolRecoveryPlan } from "./tool-recovery-policy";
 
 /**
  * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 最多 push back 几次。
@@ -596,6 +598,7 @@ export async function actNode(
     errorSource?: "mcp" | "connector" | "builtin" | "unknown";
     errorMessage?: string;
   };
+  const semanticFailure = detectSemanticToolFailure(targetName, execution.value);
   /**
    * P1-D：把 P0-4 的"MCP 错误转 observation"扩展到 connector / builtin / unknown
    * 所有 toolError 分支。LLM 看到结构化 hint 后能换工具/换参，而不是让整个 graph
@@ -607,10 +610,18 @@ export async function actNode(
    *   - connector / builtin：只更 tool_call_log
    *   - errorClass / hint 文案对所有 source 通用（classifier 只看 errorMessage）
    */
-  if (execValue.result === "error" && execValue.toolError) {
+  if ((execValue.result === "error" && execValue.toolError) || semanticFailure) {
     const latencyMs = Date.now() - startedAt;
-    const errMsg = execValue.errorMessage ?? "tool call failed";
-    const errorSource = execValue.errorSource ?? "unknown";
+    const errMsg = semanticFailure
+      ? `semantic_data_failure:${semanticFailure}`
+      : (execValue.errorMessage ?? "tool call failed");
+    const errorSource = semanticFailure
+      ? mcp
+        ? "mcp"
+        : connectorTarget
+          ? "connector"
+          : "builtin"
+      : (execValue.errorSource ?? "unknown");
     await recordToolCallError({
       toolCallId,
       hasMcp: Boolean(mcp),
@@ -637,7 +648,14 @@ export async function actNode(
       },
     });
     const errorClass = classifyToolError(errMsg);
-    const retryable = errorClass === "transient";
+    const recovery = buildToolRecoveryPlan({
+      failedTool: targetName,
+      availableTools,
+      priorToolCalls: state.toolCalls,
+      errorClass,
+      semanticFailure: Boolean(semanticFailure),
+    });
+    const retryable = recovery.allowSameToolRetry;
     const hint = buildMcpRetryHint(errorClass, errMsg, targetName);
     emit({
       runId: state.runId,
@@ -654,7 +672,8 @@ export async function actNode(
         message: errMsg,
         errorClass,
         retryable,
-        hint,
+        hint: `${hint} ${recovery.guidance}`,
+        recovery,
       },
     });
     return {
@@ -678,7 +697,8 @@ export async function actNode(
           message: errMsg,
           errorClass,
           retryable,
-          hint,
+          hint: `${hint} ${recovery.guidance}`,
+          recovery,
           reasonText: state.reasonText,
         },
       ],
