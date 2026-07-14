@@ -5,17 +5,16 @@ import { getDb } from "../../db/sqlite/client";
 import {
   indicatorStrategyScript,
   instrument,
-  strategy,
   strategyPositionSnapshot,
   strategyRuntime,
   strategySignalDedup,
-  strategyVersion,
-  workflowRun,
 } from "../../db/sqlite/schema";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { resolveInstrument } from "../market/instrument-router";
 import type { OrderSide } from "../../types/entities";
 import { appendStrategyRuntimeLog } from "./strategy-runtime-log";
+import { ensureStrategyVersionForScript } from "./strategy-version-resolver";
 
 export interface CreateStrategyRuntimeInput {
   strategyScriptId: string;
@@ -59,64 +58,6 @@ async function ensureInstrumentForSymbol(
   return id;
 }
 
-async function ensureStrategyVersionForScript(
-  db: DbClient,
-  script: typeof indicatorStrategyScript.$inferSelect
-): Promise<{ strategyVersionId: string; workflowRunId: string }> {
-  let workflowRunId = script.workflowRunId;
-  if (!workflowRunId) {
-    throw new Error("strategy_script_missing_workflow_run");
-  }
-
-  const runs = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
-  const run = runs[0];
-  if (!run) throw new Error("workflow_run_not_found");
-
-  const strategies = await db
-    .select()
-    .from(strategy)
-    .where(eq(strategy.projectId, run.projectId))
-    .limit(1);
-  let strat = strategies[0];
-  if (!strat) {
-    const sid = randomUUID();
-    await db.insert(strategy).values({
-      id: sid,
-      projectId: run.projectId,
-      name: script.name,
-      style: "low_freq",
-      description: "",
-    });
-    strat = {
-      id: sid,
-      projectId: run.projectId,
-      name: script.name,
-      style: "low_freq",
-      description: "",
-    } as typeof strategy.$inferSelect;
-  }
-
-  const versions = await db
-    .select()
-    .from(strategyVersion)
-    .where(eq(strategyVersion.strategyId, strat.id))
-    .limit(1);
-  if (versions[0]) {
-    return { strategyVersionId: versions[0].id, workflowRunId };
-  }
-
-  const vid = randomUUID();
-  await db.insert(strategyVersion).values({
-    id: vid,
-    strategyId: strat.id,
-    versionTag: "v1",
-    logicHash: `script-${script.id.slice(0, 8)}`,
-    paramSchemaJson: {},
-    workflowRunId,
-  });
-  return { strategyVersionId: vid, workflowRunId };
-}
-
 export async function createStrategyRuntime(
   input: CreateStrategyRuntimeInput,
   db?: DbClient
@@ -140,6 +81,7 @@ export async function createStrategyRuntime(
     market: input.market,
     symbol: input.symbol,
     brokerAccountId: input.brokerAccountId,
+    lookupDefaultBroker: db == null,
   });
 
   const id = randomUUID();
@@ -158,7 +100,9 @@ export async function createStrategyRuntime(
     updatedAt: now,
   });
 
-  const row = (await client.select().from(strategyRuntime).where(eq(strategyRuntime.id, id)).limit(1))[0]!;
+  const row = (
+    await client.select().from(strategyRuntime).where(eq(strategyRuntime.id, id)).limit(1)
+  )[0]!;
 
   if (input.autoStart) {
     await startStrategyRuntime(id, client);
@@ -169,6 +113,16 @@ export async function createStrategyRuntime(
 
 export async function startStrategyRuntime(runtimeId: string, db?: DbClient): Promise<void> {
   const client = db ?? (await getDb());
+  const runtimeRows = await client
+    .select()
+    .from(strategyRuntime)
+    .where(eq(strategyRuntime.id, runtimeId))
+    .limit(1);
+  const runtime = runtimeRows[0];
+  if (!runtime) throw new Error("strategy_runtime_not_found");
+  if (runtime.executionMode === "live") {
+    await strategyPromotionService.assertRuntimeLiveEligible(runtimeId, client);
+  }
   const now = new Date().toISOString();
   await client
     .update(strategyRuntime)

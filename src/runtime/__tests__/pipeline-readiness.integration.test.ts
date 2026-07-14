@@ -279,6 +279,12 @@ describe("五产线就绪度（pipeline readiness）", () => {
 
   test("产线 5：实时交易 — createOrderIntentFromReiaPayload 落 order_intent + execution_task", async () => {
     const db = await getDb();
+    const legacyBefore = (
+      await db
+        .select()
+        .from(schema.intentOrder)
+        .where(drizzle.eq(schema.intentOrder.workflowRunId, workflowRunId))
+    ).length;
     const out = await createOrderIntentFromReiaPayload(
       {
         workflowRunId,
@@ -295,6 +301,7 @@ describe("五产线就绪度（pipeline readiness）", () => {
     );
 
     expect(out.orderIntentId).toBeTruthy();
+    expect(out.legacyIntentOrderId).toBeUndefined();
 
     const oiRows = await db
       .select()
@@ -307,6 +314,35 @@ describe("五产线就绪度（pipeline readiness）", () => {
       .from(schema.executionTask)
       .where(drizzle.eq(schema.executionTask.orderIntentId, out.orderIntentId));
     expect(taskRows.length).toBeGreaterThanOrEqual(1);
+    const legacyAfter = (
+      await db
+        .select()
+        .from(schema.intentOrder)
+        .where(drizzle.eq(schema.intentOrder.workflowRunId, workflowRunId))
+    ).length;
+    expect(legacyAfter).toBe(legacyBefore);
+  });
+
+  test("旧 intent_order 仅在显式兼容开关下双写", async () => {
+    const db = await getDb();
+    const out = await createOrderIntentFromReiaPayload(
+      {
+        workflowRunId,
+        ticker: "MSFT",
+        direction: "long",
+        quantity: 2,
+        targetPrice: 400,
+        executionMode: "paper",
+        legacyDualWrite: true,
+      },
+      db
+    );
+    expect(out.legacyIntentOrderId).toBeTruthy();
+    const rows = await db
+      .select()
+      .from(schema.intentOrder)
+      .where(drizzle.eq(schema.intentOrder.id, out.legacyIntentOrderId!));
+    expect(rows).toHaveLength(1);
   });
 
   test("端到端 lineage：单 workflow 内五段产物可被串联", async () => {

@@ -122,9 +122,7 @@ export async function assertMcpServerNotOpen(serverName: string): Promise<void> 
     const now = Date.now();
     if (openedAt > 0 && now - openedAt < row.cooldownMs) {
       const remainSec = Math.ceil((row.cooldownMs - (now - openedAt)) / 1000);
-      throw new Error(
-        `mcp circuit breaker open: ${serverName} (retry after ~${remainSec}s)`
-      );
+      throw new Error(`mcp circuit breaker open: ${serverName} (retry after ~${remainSec}s)`);
     }
     // 过了 cooldown：状态转 half_open，让下一次调用作为探测
     await db
@@ -142,6 +140,25 @@ export async function assertMcpServerNotOpen(serverName: string): Promise<void> 
     console.warn(
       `[mcpHealth] assertMcpServerNotOpen DB error (allow-through): ${(err as Error).message}`
     );
+  }
+}
+
+/** Read-only prompt-time check. Unlike assertMcpServerNotOpen this never mutates half-open state. */
+export async function isMcpServerInCooldown(serverName: string): Promise<boolean> {
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select()
+      .from(mcpServerHealth)
+      .where(eq(mcpServerHealth.serverName, serverName))
+      .limit(1);
+    const row = rows[0];
+    if (!row || row.circuitState !== "open") return false;
+    const openedAt = row.openedAt ? Date.parse(row.openedAt) : 0;
+    return openedAt > 0 && Date.now() - openedAt < row.cooldownMs;
+  } catch (err) {
+    console.warn(`[mcpHealth] cooldown read failed (allow-through): ${(err as Error).message}`);
+    return false;
   }
 }
 

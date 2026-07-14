@@ -8,10 +8,7 @@
  * 这个测试锁定三段优先级的边界条件，防止后续重构倒退。
  */
 import { describe, expect, test } from "bun:test";
-import {
-  decideShouldDebate,
-  type OrchestratorDecision,
-} from "../analyst-team-pipeline";
+import { decideShouldDebate, type OrchestratorDecision } from "../analyst-team-pipeline";
 
 const baseOrch: OrchestratorDecision = {
   signal: "hold",
@@ -21,6 +18,19 @@ const baseOrch: OrchestratorDecision = {
 };
 
 describe("decideShouldDebate", () => {
+  test("硬守门：全部 HOLD 时不允许生成伪多空结论", () => {
+    const r = decideShouldDebate({
+      fusedConfidence: 0.1,
+      signalBreakdownCount: 4,
+      directionalSignalCount: 0,
+      orchestratorDecision: { ...baseOrch, shouldDebate: true },
+      confidenceThreshold: 0.55,
+    });
+    expect(r.shouldDebate).toBe(false);
+    expect(r.source).toBe("hard_guard");
+    expect(r.reason).toContain("全部分析师为 HOLD");
+  });
+
   test("硬守门：0 个分析师产出 → 不辩论", () => {
     const r = decideShouldDebate({
       fusedConfidence: 0.2, // 低于阈值

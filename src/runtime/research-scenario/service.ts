@@ -4,16 +4,16 @@
  * 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.6.5
  */
 
+import type { ResearchScopeInput } from "../../types/research-scope";
+import { launchAnalystTeam } from "../msa/launch-analyst-team";
 import { providerResolver } from "../provider/resolver";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
-import { launchAnalystTeam } from "../msa/launch-analyst-team";
-import type { ResearchScopeInput } from "../../types/research-scope";
 import { researchScenarioRegistry } from "./registry";
 import {
-  ScenarioError,
   type FieldSchema,
-  type ScenarioLaunchInput,
   type ResearchScenarioSpec,
+  ScenarioError,
+  type ScenarioLaunchInput,
   type ScenarioValidateResult,
 } from "./types";
 
@@ -51,7 +51,7 @@ function validateInput(
         }
         if (def.type === "enum") {
           const ok = def.values.some((c) => c.value === v);
-          if (!ok) errs.push({ field, error: `not_in_enum` });
+          if (!ok) errs.push({ field, error: "not_in_enum" });
         }
         if (def.type === "string" && def.maxLength && v.length > def.maxLength) {
           errs.push({ field, error: "exceeds_max_length" });
@@ -90,9 +90,11 @@ function validateInput(
 }
 
 export class ResearchScenarioService {
-  private resolveSpec(
-    scenarioKey: string
-  ): { requestedKey: string; registryKey: string; spec: ResearchScenarioSpec & { id: string } } {
+  private resolveSpec(scenarioKey: string): {
+    requestedKey: string;
+    registryKey: string;
+    spec: ResearchScenarioSpec & { id: string };
+  } {
     const direct = researchScenarioRegistry.get(scenarioKey);
     const registryKey = direct ? scenarioKey : SCENARIO_KEY_ALIASES[scenarioKey];
     if (!registryKey) {
@@ -142,6 +144,8 @@ export class ResearchScenarioService {
     inputParams: Record<string, unknown>;
     loopOptions: Record<string, unknown>;
     validation: ScenarioValidateResult;
+    specOutputContract: ResearchScenarioSpec["outputContract"];
+    specToolPreset: ResearchScenarioSpec["toolPreset"];
   }> {
     const { requestedKey, registryKey, spec } = this.resolveSpec(input.scenarioKey);
     if (spec.status === "disabled") {
@@ -161,6 +165,8 @@ export class ResearchScenarioService {
       inputParams: input.inputParams,
       loopOptions: loop as Record<string, unknown>,
       validation,
+      specOutputContract: spec.outputContract,
+      specToolPreset: spec.toolPreset,
     };
   }
 
@@ -186,13 +192,23 @@ export class ResearchScenarioService {
     }
 
     const goal = input.goal?.trim() || buildScenarioGoal(plan.scenarioKey, plan.inputParams);
+    const useAnalystTeam = plan.registryScenarioKey === "analyst_debate";
     const created = await createAndDispatchWorkflow({
       projectId: input.projectId,
       goal,
       mode: "research",
       source: "api",
-      skipDispatch: true,
+      skipDispatch: useAnalystTeam,
       loopKind: "native",
+      researchScenarioId: plan.scenarioKey,
+      taskType: `research_scenario:${plan.registryScenarioKey}`,
+      params: {
+        scenarioKey: plan.scenarioKey,
+        registryScenarioKey: plan.registryScenarioKey,
+        inputParams: plan.inputParams,
+        outputContract: plan.specOutputContract,
+        toolPreset: plan.specToolPreset,
+      },
       loopOptionsJson: {
         ...plan.loopOptions,
         scenarioKey: plan.scenarioKey,
@@ -200,26 +216,30 @@ export class ResearchScenarioService {
       } as never,
     });
 
-    const launchInput = buildAnalystLaunchInput({
-      scenarioKey: plan.scenarioKey,
-      inputParams: plan.inputParams,
-      goal,
-    });
-    const launched = await launchAnalystTeam({
-      workflowRunId: created.data.id,
-      ...(launchInput.ticker !== undefined ? { ticker: launchInput.ticker } : {}),
-      ...(launchInput.scope !== undefined ? { scope: launchInput.scope } : {}),
-      context: launchInput.context,
-      researchScenarioKey: plan.scenarioKey,
-      hitlMode: "off",
-    });
+    let jobId = created.runId ?? created.data.id;
+    if (useAnalystTeam) {
+      const launchInput = buildAnalystLaunchInput({
+        scenarioKey: plan.scenarioKey,
+        inputParams: plan.inputParams,
+        goal,
+      });
+      const launched = await launchAnalystTeam({
+        workflowRunId: created.data.id,
+        ...(launchInput.ticker !== undefined ? { ticker: launchInput.ticker } : {}),
+        ...(launchInput.scope !== undefined ? { scope: launchInput.scope } : {}),
+        context: launchInput.context,
+        researchScenarioKey: plan.scenarioKey,
+        hitlMode: "off",
+      });
+      jobId = launched.jobId;
+    }
 
     return {
       scenarioKey: plan.scenarioKey,
       registryScenarioKey: plan.registryScenarioKey,
       scenarioId: plan.scenarioId,
       workflowRunId: created.data.id,
-      jobId: launched.jobId,
+      jobId,
       validation: plan.validation,
     };
   }
@@ -265,8 +285,10 @@ function buildAnalystLaunchInput(input: {
     };
   }
   if (symbols.length === 1) {
+    const symbol = symbols[0];
+    if (!symbol) return { context: explicitContext ?? input.goal };
     return {
-      ticker: symbols[0]!,
+      ticker: symbol,
       context: explicitContext ?? input.goal,
     };
   }

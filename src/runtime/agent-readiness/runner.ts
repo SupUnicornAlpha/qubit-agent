@@ -20,6 +20,7 @@ import { gradeSnapshot, type ReadinessSnapshot, type SnapshotGrade } from "./gra
 import type { JudgeClient } from "./quality/content-judge";
 import { renderJsonReport, renderMarkdownReport } from "./reporters";
 import { getScenarioRecipe, type ScenarioRecipe } from "./scenarios";
+import { assertGoldenMarketDataReadiness } from "./quality/market-data-readiness";
 
 /**
  * P2 优先级（Round 7 复盘 2026-06-08）：把 scenario 写到 workflow_run.research_scenario_id，
@@ -77,6 +78,7 @@ export interface RunReadinessResult {
 }
 
 export async function runReadiness(input: RunReadinessInput): Promise<RunReadinessResult> {
+  assertGoldenMarketDataReadiness();
   const recipe = getScenarioRecipe(input.scenario);
   const startMs = Date.now();
 

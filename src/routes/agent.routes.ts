@@ -966,7 +966,15 @@ agentRouter.get("/model-config", async (c) => {
     model: "gpt-4o-mini",
     apiKey: "",
   };
-  return c.json({ data: config });
+  return c.json({
+    data: {
+      provider: config.provider,
+      model: config.model,
+      baseUrl: config.baseUrl,
+      apiKey: "",
+      apiKeyConfigured: Boolean(config.apiKey),
+    },
+  });
 });
 
 agentRouter.post("/model-config", async (c) => {
@@ -977,12 +985,20 @@ agentRouter.post("/model-config", async (c) => {
     baseUrl?: string;
   }>();
   const saved = await saveModelConfig({
-    provider: body.provider,
-    model: body.model,
-    apiKey: body.apiKey,
-    baseUrl: body.baseUrl,
+    ...(body.provider ? { provider: body.provider } : {}),
+    ...(body.model ? { model: body.model } : {}),
+    ...(body.apiKey?.trim() ? { apiKey: body.apiKey.trim() } : {}),
+    ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
   });
-  return c.json({ data: saved });
+  return c.json({
+    data: {
+      provider: saved.provider,
+      model: saved.model,
+      baseUrl: saved.baseUrl,
+      apiKey: "",
+      apiKeyConfigured: Boolean(saved.apiKey),
+    },
+  });
 });
 
 agentRouter.get("/builtin-connector-config", async (c) => {

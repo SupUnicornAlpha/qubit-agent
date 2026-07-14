@@ -315,7 +315,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "recommendation.record": {
     description:
-      "记录一次股票推荐快照（落 recommendation_snapshot），用于后续 1d/5d/20d 后验收益验证。**必填**：symbol/ticker + side(long/short/neutral 或 buy/sell/hold)。可选：confidence、score、horizon_days、rationale、evidence[]、market。",
+      "记录结构化 DecisionSignal，并自动进入后验验证。**必填**：symbol/ticker + side(long/short/neutral 或 buy/sell/hold)。强烈建议提供 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[]、watch_conditions[]；可选 confidence、score、horizon_days、rationale、evidence[]、market、benchmark_symbol、expires_at、data_asof。",
     category: "research",
   },
 

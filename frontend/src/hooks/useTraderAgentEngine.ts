@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   cancelTraderOrder,
   ensureTraderSession,
+  placeTraderBracketOrder as placeTraderBracketOrderApi,
   placeTraderOrder,
   pollTraderFeed,
   runTraderCommand,
@@ -309,6 +310,45 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
     [pushTraderAgentLog, pushTraderDriver, pollOnce]
   );
 
+  const placeBracketOrder = useCallback(
+    async (input: {
+      side: "buy" | "sell";
+      qty: number;
+      entryOrderType: "market" | "limit";
+      takeProfitPrice: number;
+      stopLossPrice: number;
+    }) => {
+      if (!session?.workflowRunId) throw new Error("交易会话未就绪");
+      setBusy(true);
+      try {
+        const spec = useAppStore.getState().chartSpec;
+        const data = await placeTraderBracketOrderApi({
+          workflowRunId: session.workflowRunId,
+          symbol: spec.symbol.trim(),
+          exchange: spec.exchange,
+          side: input.side,
+          qty: input.qty,
+          entryOrderType: input.entryOrderType,
+          takeProfitPrice: input.takeProfitPrice,
+          stopLossPrice: input.stopLossPrice,
+          timeframe: spec.timeframe,
+          executionMode: "paper",
+        });
+        pushTraderAgentLog({
+          kind: "user",
+          title: `${input.side === "buy" ? "做多" : "做空"} Bracket 已提交`,
+          body: `entry=${data.entry.orderIntentId}\ntakeProfit=${data.takeProfit.orderIntentId}\nstopLoss=${data.stopLoss.orderIntentId}`,
+        });
+        requestChartReload();
+        void pollOnce();
+        return data;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [session, pushTraderAgentLog, requestChartReload, pollOnce],
+  );
+
   const runCommand = useCallback(
     async (text: string) => {
       if (!session?.workflowRunId || !sessionId) throw new Error("交易会话未就绪");
@@ -367,6 +407,7 @@ export function useTraderAgentEngine(projectId: string | null, sessionId: string
     busy,
     lastPollAt,
     placeOrder,
+    placeBracketOrder,
     cancelOrder,
     runCommand,
     runAgentCycle,

@@ -26,6 +26,8 @@ export interface ReiaOrderPayload {
   brokerAccountId?: string;
   strategyRuntimeId?: string;
   signalBarTime?: string;
+  /** 迁移期兼容：仅显式开启时才同步写旧 intent_order。主链默认只写 order_intent。 */
+  legacyDualWrite?: boolean;
 }
 
 function directionToSide(direction: ReiaOrderPayload["direction"]): "buy" | "sell" {
@@ -33,9 +35,11 @@ function directionToSide(direction: ReiaOrderPayload["direction"]): "buy" | "sel
   return "buy";
 }
 
-async function resolveStrategyContext(
+export async function resolveExecutionStrategyContext(
   db: DbClient,
-  workflowRunId: string
+  workflowRunId: string,
+  symbol: string,
+  market: string,
 ): Promise<{ strategyVersionId: string; instrumentId: string; projectId: string }> {
   const runs = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
   const run = runs[0];
@@ -94,23 +98,23 @@ async function resolveStrategyContext(
   const instruments = await db
     .select()
     .from(instrument)
-    .where(eq(instrument.symbol, "BRIDGE"))
+    .where(eq(instrument.symbol, symbol.trim().toUpperCase()))
     .limit(1);
   let inst = instruments[0];
   if (!inst) {
     const iid = randomUUID();
     await db.insert(instrument).values({
       id: iid,
-      symbol: "BRIDGE",
-      assetClass: "stock",
-      exchange: "BRIDGE",
+      symbol: symbol.trim().toUpperCase(),
+      assetClass: market === "CRYPTO" ? "crypto" : "stock",
+      exchange: market,
       metaJson: {},
     });
     inst = {
       id: iid,
-      symbol: "BRIDGE",
-      assetClass: "stock",
-      exchange: "BRIDGE",
+      symbol: symbol.trim().toUpperCase(),
+      assetClass: market === "CRYPTO" ? "crypto" : "stock",
+      exchange: market,
       metaJson: {},
     } as typeof instrument.$inferSelect;
   }
@@ -128,23 +132,33 @@ export async function createOrderIntentFromReiaPayload(
   db?: DbClient
 ): Promise<CreateOrderIntentResult & { legacyIntentOrderId?: string }> {
   const client = db ?? (await getDb());
-  const ctx = await resolveStrategyContext(client, input.workflowRunId);
+  const ctx = await resolveExecutionStrategyContext(
+    client,
+    input.workflowRunId,
+    input.ticker,
+    input.market ?? "US",
+  );
 
-  const legacyId = randomUUID();
-  await client.insert(intentOrder).values({
-    id: legacyId,
-    workflowRunId: input.workflowRunId,
-    createdByInstanceId: null,
-    ticker: input.ticker,
-    direction: input.direction,
-    quantity: input.quantity,
-    targetPrice: input.targetPrice,
-    rationale: input.rationale ?? "",
-    expectedReturn: null,
-    expectedRisk: null,
-    status: "approved",
-    riskApprovedAt: new Date().toISOString(),
-  });
+  const legacyDualWrite =
+    input.legacyDualWrite === true || process.env.QUBIT_LEGACY_INTENT_DUAL_WRITE === "1";
+  let legacyId: string | undefined;
+  if (legacyDualWrite) {
+    legacyId = randomUUID();
+    await client.insert(intentOrder).values({
+      id: legacyId,
+      workflowRunId: input.workflowRunId,
+      createdByInstanceId: null,
+      ticker: input.ticker,
+      direction: input.direction,
+      quantity: input.quantity,
+      targetPrice: input.targetPrice,
+      rationale: input.rationale ?? "",
+      expectedReturn: null,
+      expectedRisk: null,
+      status: "approved",
+      riskApprovedAt: new Date().toISOString(),
+    });
+  }
 
   const dispatchMode = input.executionMode === "live" ? "live" : "paper";
 
@@ -167,5 +181,5 @@ export async function createOrderIntentFromReiaPayload(
     traceId: randomUUID(),
   });
 
-  return { ...result, legacyIntentOrderId: legacyId };
+  return legacyId ? { ...result, legacyIntentOrderId: legacyId } : result;
 }

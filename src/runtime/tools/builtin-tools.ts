@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
-import { analystSignal, auditLog, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
+import { analystSignal, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
+import { appendAuditLog } from "../audit/audit-chain-service";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
 import { stepStreamBus } from "../langgraph/event-stream";
 import { parseLoopOptionsJson } from "../../types/loop";
@@ -98,6 +99,12 @@ function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "e
   const camel = snake === "start_date" ? "startDate" : "endDate";
   const v = params[snake] ?? params[camel];
   return typeof v === "string" ? v.trim() : "";
+}
+
+function optionalFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** Tools implemented in-process (not routed to ACP connectors). */
@@ -786,7 +793,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   write_audit_log: async (ctx, params) => {
     const db = await getDb();
     const id = randomUUID();
-    await db.insert(auditLog).values({
+    await appendAuditLog(db, {
       id,
       traceId: ctx.traceId,
       workflowRunId: ctx.workflowId,
@@ -1860,8 +1867,22 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       horizonDays: Number.isFinite(horizonDays) && horizonDays > 0 ? Math.floor(horizonDays) : 20,
       confidence: Number.isFinite(confidence) ? confidence : 0.5,
       score: scoreRaw !== undefined && Number.isFinite(Number(scoreRaw)) ? Number(scoreRaw) : null,
+      entryLow: optionalFiniteNumber(params.entry_low ?? params.entryLow),
+      entryHigh: optionalFiniteNumber(params.entry_high ?? params.entryHigh),
+      stopLoss: optionalFiniteNumber(params.stop_loss ?? params.stopLoss),
+      takeProfit: optionalFiniteNumber(params.take_profit ?? params.takeProfit ?? params.target_price),
+      positionSizePct: optionalFiniteNumber(params.position_size_pct ?? params.positionSizePct),
+      riskRewardRatio: optionalFiniteNumber(params.risk_reward_ratio ?? params.riskRewardRatio),
       rationale: String(params.rationale ?? params.reasoning ?? ""),
       evidence,
+      invalidation: Array.isArray(params.invalidation_conditions)
+        ? params.invalidation_conditions
+        : [],
+      watchConditions: Array.isArray(params.watch_conditions) ? params.watch_conditions : [],
+      benchmarkSymbol:
+        typeof params.benchmark_symbol === "string" ? params.benchmark_symbol : null,
+      expiresAt: typeof params.expires_at === "string" ? params.expires_at : null,
+      dataAsof: typeof params.data_asof === "string" ? params.data_asof : null,
       sourceArtifactKind:
         typeof params.source_artifact_kind === "string" ? params.source_artifact_kind : null,
       sourceArtifactId:
@@ -1874,8 +1895,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       recommendationId: result.id,
       symbol: result.symbol,
       side,
-      next_steps:
-        "推荐已落 recommendation_snapshot；后续 outcome worker 可按 horizon_days 回填 recommendation_outcome。",
+      next_steps: "推荐已进入 DecisionSignal 生命周期；outcome worker 会按 horizon_days 自动回填效果。",
     };
   },
 

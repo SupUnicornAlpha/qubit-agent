@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { computeNextRunAt, parseMinuteStep, supportsCronExpression } from "./scheduler";
+import {
+  computeNextRunAt,
+  executeScheduledJobAction,
+  parseMinuteStep,
+  parsePositionReconciliationJobPayload,
+  parseScheduledJobKind,
+  supportsCronExpression,
+} from "./scheduler";
 
 describe("supportsCronExpression", () => {
   test("accepts five-field star cron", () => {
@@ -50,5 +57,59 @@ describe("computeNextRunAt", () => {
     const next = computeNextRunAt("*/5 * * * *", from);
     const d = new Date(next);
     expect(d.getUTCMinutes() % 5).toBe(0);
+  });
+});
+
+describe("scheduled job actions", () => {
+  test("defaults historical payloads to workflow jobs", () => {
+    expect(parseScheduledJobKind({ goal: "研究 AAPL" })).toBe("workflow");
+  });
+
+  test("parses position reconciliation payload", () => {
+    expect(
+      parsePositionReconciliationJobPayload({
+        kind: "position_reconciliation",
+        provider: "ib",
+        accountRef: " DU123 ",
+      }),
+    ).toEqual({ kind: "position_reconciliation", provider: "ib", accountRef: "DU123" });
+    expect(
+      parsePositionReconciliationJobPayload({
+        kind: "position_reconciliation",
+        provider: "invalid",
+      }),
+    ).toBeNull();
+  });
+
+  test("runs reconciliation without creating a workflow", async () => {
+    const calls: unknown[] = [];
+    const job = {
+      id: "job-1",
+      workspaceId: "ws-1",
+      projectId: "project-1",
+      sessionId: null,
+      name: "position check",
+      enabled: true,
+      cronExpr: "*/5 * * * *",
+      timezone: "UTC",
+      payloadJson: { kind: "position_reconciliation", provider: "futu", accountRef: "ACC-1" },
+      executionMode: "paper",
+      nextRunAt: null,
+      lastRunAt: null,
+      createdBy: "user",
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+    } as const;
+    const result = await executeScheduledJobAction(job, "2026-07-13T00:05:00.000Z", {
+      scanPositions: async (input) => {
+        calls.push(input);
+        return {} as Awaited<ReturnType<typeof import("../execution/position-reconciliation-service").scanPositionReconciliation>>;
+      },
+      dispatchWorkflow: async () => {
+        throw new Error("workflow should not be created");
+      },
+    });
+    expect(result).toEqual({});
+    expect(calls).toEqual([{ projectId: "project-1", provider: "futu", accountRef: "ACC-1" }]);
   });
 });

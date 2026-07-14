@@ -26,6 +26,7 @@ export interface CreateAndDispatchWorkflowInput {
   loopOptionsJson?: LoopOptionsJson;
   /** native 循环：graph（LangGraph）或 a2a（总线）；默认见 QUBIT_AGENT_EXECUTION_PATH */
   executionPath?: AgentExecutionPath;
+  researchScenarioId?: string;
 }
 
 export async function createAndDispatchWorkflow(
@@ -95,6 +96,7 @@ export async function createAndDispatchWorkflow(
           loopKind,
           executionPath,
           loopOptionsJson: loopOpts,
+          researchScenarioId: input.researchScenarioId,
         })
         .where(eq(workflowRun.id, id));
       await setWorkflowState(id, "pending", { reason: "workflow-service:reuse" });
@@ -110,6 +112,7 @@ export async function createAndDispatchWorkflow(
         loopKind,
         executionPath,
         loopOptionsJson: loopOpts,
+        researchScenarioId: input.researchScenarioId,
       });
     }
   } else {
@@ -124,6 +127,7 @@ export async function createAndDispatchWorkflow(
       loopKind,
       executionPath,
       loopOptionsJson: loopOpts,
+      researchScenarioId: input.researchScenarioId,
     });
   }
 

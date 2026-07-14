@@ -34,6 +34,24 @@ export interface DispatchExecutionResult {
   status: "filled" | "waiting_ack" | "partially_filled";
 }
 
+export function assertDispatchableOrderType(
+  orderType: (typeof orderIntent.$inferSelect)["orderType"],
+  dispatchMode: DispatchMode,
+): asserts orderType is "market" | "limit" {
+  if (orderType !== "market" && orderType !== "limit") {
+    throw new Error(`conditional_order_not_supported:${dispatchMode}:${orderType}`);
+  }
+}
+
+export function resolveEffectiveOrderType(
+  orderType: (typeof orderIntent.$inferSelect)["orderType"],
+  activationStatus: (typeof orderIntent.$inferSelect)["activationStatus"],
+): "market" | "limit" {
+  if (orderType === "market" || orderType === "limit") return orderType;
+  if (activationStatus !== "triggered") throw new Error(`conditional_order_not_triggered:${orderType}`);
+  return orderType === "stop_limit" ? "limit" : "market";
+}
+
 async function appendEvent(
   db: DbClient,
   input: {
@@ -112,7 +130,8 @@ async function dispatchLiveBroker(
   input: DispatchExecutionInput,
   intent: typeof orderIntent.$inferSelect,
   fillPrice: number,
-  nowIso: string
+  nowIso: string,
+  effectiveOrderType: "market" | "limit",
 ): Promise<DispatchExecutionResult> {
   if (!isLiveTradingEnabled()) {
     throw new Error("live_trading_disabled");
@@ -143,7 +162,7 @@ async function dispatchLiveBroker(
     intent.instrumentId;
 
   const side = intent.side;
-  const orderType = intent.orderType === "market" ? "market" : "limit";
+  const orderType = effectiveOrderType;
   const limitPrice = orderType === "limit" ? (intent.price ?? fillPrice) : undefined;
 
   await appendEvent(db, {
@@ -169,7 +188,7 @@ async function dispatchLiveBroker(
         side,
         quantity: intent.qty,
         orderType,
-        limitPrice,
+        ...(limitPrice !== undefined ? { limitPrice } : {}),
       })
   );
 
@@ -261,10 +280,11 @@ export async function dispatchExecutionTask(
   const intents = await db.select().from(orderIntent).where(eq(orderIntent.id, input.orderIntentId)).limit(1);
   const intent = intents[0];
   if (!intent) throw new Error("order_intent_missing");
+  const effectiveOrderType = resolveEffectiveOrderType(intent.orderType, intent.activationStatus);
 
   let fillPrice = intent.price;
   if (fillPrice === null || !Number.isFinite(fillPrice) || fillPrice <= 0) {
-    if (input.dispatchMode === "live" && intent.orderType === "market") {
+    if (input.dispatchMode === "live" && effectiveOrderType === "market") {
       fillPrice = 1;
     } else {
       throw new Error("price_required_for_execution");
@@ -272,7 +292,7 @@ export async function dispatchExecutionTask(
   }
 
   if (input.dispatchMode === "live") {
-    return dispatchLiveBroker(db, input, intent, fillPrice, nowIso);
+    return dispatchLiveBroker(db, input, intent, fillPrice, nowIso, effectiveOrderType);
   }
 
   return dispatchBuiltinPaper(db, input, intent, fillPrice, nowIso);

@@ -382,6 +382,7 @@ monitorRouter.get("/workflows", async (c) => {
       endedAt: workflowRun.endedAt,
       loopKind: workflowRun.loopKind,
       executionPath: workflowRun.executionPath,
+      researchScenarioId: workflowRun.researchScenarioId,
     })
     .from(workflowRun);
 

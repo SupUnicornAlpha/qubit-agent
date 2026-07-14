@@ -1413,9 +1413,18 @@ export const orderIntent = sqliteTable("order_intent", {
   side: text("side", { enum: ["buy", "sell"] }).notNull(),
   qty: real("qty").notNull(),
   orderType: text("order_type", {
-    enum: ["market", "limit", "stop", "stop_limit"],
+    enum: ["market", "limit", "stop", "stop_limit", "trailing_stop"],
   }).notNull(),
   price: real("price"),
+  stopPrice: real("stop_price"),
+  trailingOffsetPct: real("trailing_offset_pct"),
+  trailingAnchorPrice: real("trailing_anchor_price"),
+  triggerDirection: text("trigger_direction", { enum: ["above", "below"] }),
+  parentOrderIntentId: text("parent_order_intent_id"),
+  ocoGroupId: text("oco_group_id"),
+  activationStatus: text("activation_status", {
+    enum: ["active", "held", "waiting_trigger", "triggered"],
+  }).notNull().default("active"),
   timeInForce: text("time_in_force", {
     enum: ["day", "gtc", "ioc", "fok"],
   }).notNull(),
@@ -1424,6 +1433,13 @@ export const orderIntent = sqliteTable("order_intent", {
   timeframe: text("timeframe"),
   strategyRuntimeId: text("strategy_runtime_id"),
   signalBarTime: text("signal_bar_time"),
+  lifecycleStatus: text("lifecycle_status", {
+    enum: ["created", "risk_checked", "submitted", "partial", "filled", "cancelled", "rejected"],
+  })
+    .notNull()
+    .default("created"),
+  clientOrderId: text("client_order_id"),
+  lifecycleUpdatedAt: text("lifecycle_updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   intentTime: createdAt(),
 });
 
@@ -1503,6 +1519,8 @@ export const executionTask = sqliteTable(
     status: text("status", {
       enum: [
         "pending",
+        "held",
+        "conditional_wait",
         "awaiting_review",
         "dispatching",
         "waiting_ack",
@@ -1538,7 +1556,7 @@ export const executionTaskEvent = sqliteTable("execution_task_event", {
     .notNull()
     .references(() => executionTask.id, { onDelete: "cascade" }),
   eventType: text("event_type", {
-    enum: ["dispatch", "ack", "partial_fill", "fill", "cancel", "reject", "timeout", "retry"],
+    enum: ["dispatch", "trigger", "activate", "ack", "partial_fill", "fill", "cancel", "reject", "timeout", "retry"],
   }).notNull(),
   eventPayloadJson: text("event_payload_json", { mode: "json" }).notNull().default("{}"),
   eventAt: text("event_at").notNull(),
@@ -2109,8 +2127,25 @@ export const recommendationSnapshot = sqliteTable("recommendation_snapshot", {
   horizonDays: integer("horizon_days").notNull().default(20),
   confidence: real("confidence").notNull().default(0.5),
   score: real("score"),
+  entryLow: real("entry_low"),
+  entryHigh: real("entry_high"),
+  stopLoss: real("stop_loss"),
+  takeProfit: real("take_profit"),
+  positionSizePct: real("position_size_pct"),
+  riskRewardRatio: real("risk_reward_ratio"),
   rationale: text("rationale").notNull().default(""),
   evidenceJson: text("evidence_json", { mode: "json" }).notNull().default("[]"),
+  invalidationJson: text("invalidation_json", { mode: "json" }).notNull().default("[]"),
+  watchConditionsJson: text("watch_conditions_json", { mode: "json" }).notNull().default("[]"),
+  benchmarkSymbol: text("benchmark_symbol"),
+  status: text("status", {
+    enum: ["draft", "active", "closed", "expired", "invalidated"],
+  })
+    .notNull()
+    .default("active"),
+  expiresAt: text("expires_at"),
+  dataAsof: text("data_asof"),
+  engineVersion: text("engine_version").notNull().default("decision-signal-v1"),
   sourceArtifactKind: text("source_artifact_kind"),
   sourceArtifactId: text("source_artifact_id"),
   createdBy: text("created_by").notNull().default("agent"),
@@ -2127,9 +2162,20 @@ export const recommendationOutcome = sqliteTable("recommendation_outcome", {
   horizonDays: integer("horizon_days").notNull(),
   startPrice: real("start_price"),
   endPrice: real("end_price"),
+  entryPrice: real("entry_price"),
+  exitPrice: real("exit_price"),
+  exitReason: text("exit_reason"),
   returnPct: real("return_pct"),
   benchmarkReturnPct: real("benchmark_return_pct"),
   excessReturnPct: real("excess_return_pct"),
+  maxFavorableExcursionPct: real("max_favorable_excursion_pct"),
+  maxAdverseExcursionPct: real("max_adverse_excursion_pct"),
+  stopLossTriggered: integer("stop_loss_triggered", { mode: "boolean" }),
+  takeProfitTriggered: integer("take_profit_triggered", { mode: "boolean" }),
+  ambiguousBar: integer("ambiguous_bar", { mode: "boolean" }).notNull().default(false),
+  barsObserved: integer("bars_observed").notNull().default(0),
+  evaluationError: text("evaluation_error"),
+  engineVersion: text("engine_version").notNull().default("decision-signal-v1"),
   hit: integer("hit", { mode: "boolean" }),
   outcome: text("outcome", {
     enum: ["pending", "win", "loss", "flat", "invalid"],
@@ -2349,6 +2395,8 @@ export const auditLog = sqliteTable("audit_log", {
   resourceType: text("resource_type").notNull(),
   resourceId: text("resource_id").notNull(),
   detailJson: text("detail_json", { mode: "json" }).notNull(),
+  previousHash: text("previous_hash"),
+  entryHash: text("entry_hash"),
   createdAt: createdAt(),
 });
 
@@ -2609,6 +2657,33 @@ export const strategyEvalRun = sqliteTable("strategy_eval_run", {
   createdBy: text("created_by").notNull().default("system"),
   createdAt: createdAt(),
 });
+
+export const componentEvalRun = sqliteTable(
+  "component_eval_run",
+  {
+    id: id(),
+    projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, { onDelete: "set null" }),
+    componentKind: text("component_kind", { enum: ["agent", "prompt", "tool", "model"] }).notNull(),
+    componentId: text("component_id").notNull(),
+    versionId: text("version_id").notNull(),
+    evalKind: text("eval_kind", { enum: ["offline", "shadow", "paper"] }).notNull(),
+    sampleSize: integer("sample_size").notNull().default(0),
+    metricsJson: text("metrics_json", { mode: "json" }).notNull().default("{}"),
+    qualityScore: real("quality_score").notNull(),
+    pass: integer("pass", { mode: "boolean" }).notNull().default(false),
+    createdBy: text("created_by").notNull().default("system"),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    index("idx_component_eval_project_component").on(
+      table.projectId,
+      table.componentKind,
+      table.componentId,
+      table.createdAt,
+    ),
+  ],
+);
 
 /** 挖掘任务编排留痕：因子挖掘 / 规则挖掘 / 协演化 */
 export const discoveryJob = sqliteTable("discovery_job", {
@@ -3147,6 +3222,24 @@ export const dailyMarkPrice = sqliteTable(
     uniqueIndex("idx_daily_mark_price_unique").on(t.market, t.symbol, t.tradingDay),
     index("idx_daily_mark_price_symbol_day").on(t.symbol, t.tradingDay),
   ]
+);
+
+export const executionMarkPrice = sqliteTable(
+  "execution_mark_price",
+  {
+    id: id(),
+    market: text("market").notNull(),
+    symbol: text("symbol").notNull(),
+    price: real("price").notNull(),
+    observedAt: text("observed_at").notNull(),
+    timeframe: text("timeframe").notNull().default("1m"),
+    source: text("source").notNull(),
+    fetchedAt: text("fetched_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_execution_mark_market_symbol").on(table.market, table.symbol),
+    index("idx_execution_mark_freshness").on(table.fetchedAt),
+  ],
 );
 
 /**

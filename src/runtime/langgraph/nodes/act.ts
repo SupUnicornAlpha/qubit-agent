@@ -26,6 +26,10 @@ import {
 } from "../../tools/tool-call-log-service";
 import { detectSemanticToolFailure } from "../../tools/semantic-tool-result";
 import {
+  evaluateToolGovernance,
+  recordWorkflowToolFailure,
+} from "../../tools/tool-governance-policy";
+import {
   resolveToolExecutionRoute,
   toolRouteToTargetKind,
   toolRouteToToolKind,
@@ -280,6 +284,43 @@ export async function actNode(
     workflowRunId: state.workflowId,
     projectId,
   });
+
+  const governance = evaluateToolGovernance({
+    workflowId: state.workflowId,
+    targetName,
+    params: mcp ? mcp.arguments : enrichedToolParams,
+  });
+  if (!governance.allowed) {
+    const recoveryObservation = {
+      level: "warn",
+      toolGovernance: true,
+      code: governance.code,
+      market: governance.market,
+      message: governance.reason,
+      recovery: {
+        nextAction: "switch_tool",
+        allowSameToolRetry: false,
+        guidance: governance.reason,
+      },
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: recoveryObservation,
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        { toolName: targetName, status: "governance_blocked", reason: governance.reason },
+      ],
+      observations: [...state.observations, recoveryObservation],
+    };
+  }
 
   // Coding-Agent 体验 P1（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：把「调用理由」露给用户。
   // 取 reason 文本里约定的 `调用理由：…` 一行；仅 SSE 事件，不污染最终答复。best-effort。
@@ -648,6 +689,13 @@ export async function actNode(
       },
     });
     const errorClass = classifyToolError(errMsg);
+    recordWorkflowToolFailure({
+      workflowId: state.workflowId,
+      targetName,
+      params: mcp ? mcp.arguments : enrichedToolParams,
+      reason: errMsg,
+      cacheable: Boolean(semanticFailure) || errorClass === "blocked" || errorClass === "permanent",
+    });
     const recovery = buildToolRecoveryPlan({
       failedTool: targetName,
       availableTools,

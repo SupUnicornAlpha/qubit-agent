@@ -81,6 +81,7 @@ function makeMockDeps(): {
     failJob: (jobId, err) => {
       failJobCalls.push({ jobId, err });
     },
+    verifyArtifacts: async () => ({ ok: true }),
   };
 
   return {
@@ -234,6 +235,39 @@ describe("runTeamResearchAndPersist", () => {
      * 渲染两条"任务结束"卡片。
      */
     expect(m.publishedEvents.length).toBe(0);
+  });
+
+  test("artifact gate: 产物缺失时不得把团队结果标 completed", async () => {
+    const m = makeMockDeps();
+    m.setExecuteResult(async () =>
+      ({ fusionId: "fusion-gap", fusedSignal: "hold", fusedConfidence: 0.1 }) as AnalystTeamResult
+    );
+    m.deps.verifyArtifacts = async () => ({
+      ok: false,
+      detail: "factor_evaluation >= 1（当前 0）",
+    });
+
+    const outcome = await runTeamResearchAndPersist(
+      {
+        workflowRunId: "wf-gap",
+        runId: "run-gap",
+        traceId: "tr-gap",
+        parsed: makeParsed({ jobId: "job-gap" }),
+        hitlApproval: null,
+      },
+      m.deps,
+    );
+
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind === "failed") {
+      expect(outcome.error.message).toContain("research_artifact_gate_failed");
+    }
+    expect(m.setStatusCalls).toEqual([
+      ["wf-gap", "running"],
+      ["wf-gap", "failed"],
+    ]);
+    expect(m.terminalCalls).toEqual([["wf-gap", "failed"]]);
+    expect(m.publishedEvents).toHaveLength(0);
   });
 
   test("HitlAwaitingApprovalError 不会被当成 generic error → 不会调 failJob 或 onTerminal", async () => {

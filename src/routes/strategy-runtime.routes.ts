@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { paperEvaluationService } from "../runtime/effect-validation/paper-evaluation-service";
+import { strategyPromotionService } from "../runtime/effect-validation/strategy-promotion-service";
 import { listStrategyRuntimeLogs } from "../runtime/strategy/strategy-runtime-log";
 import {
   createStrategyRuntime,
@@ -9,6 +11,20 @@ import {
 } from "../runtime/strategy/strategy-runtime-service";
 
 export const strategyRuntimeRouter = new Hono();
+
+strategyRuntimeRouter.get("/champion-challenger/compare", async (c) => {
+  const projectId = c.req.query("projectId")?.trim();
+  if (!projectId) return c.json({ ok: false, error: "projectId is required" }, 400);
+  const minimumScoreUplift = Number(c.req.query("minimumScoreUplift") ?? 0.03);
+  const data = await strategyPromotionService.compareVersions({
+    projectId,
+    ...(c.req.query("challengerStrategyVersionId")
+      ? { challengerStrategyVersionId: c.req.query("challengerStrategyVersionId") }
+      : {}),
+    minimumScoreUplift: Number.isFinite(minimumScoreUplift) ? minimumScoreUplift : 0.03,
+  });
+  return c.json({ ok: true, data });
+});
 
 strategyRuntimeRouter.get("/", async (c) => {
   const workflowRunId = c.req.query("workflowRunId");
@@ -72,6 +88,34 @@ strategyRuntimeRouter.get("/:id/logs", async (c) => {
   const limit = Math.min(Number(c.req.query("limit") ?? 50), 200);
   const logs = await listStrategyRuntimeLogs(id, limit);
   return c.json({ ok: true, data: logs });
+});
+
+strategyRuntimeRouter.post("/:id/evaluate-paper", async (c) => {
+  try {
+    const data = await paperEvaluationService.evaluate(c.req.param("id"));
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
+  }
+});
+
+strategyRuntimeRouter.post("/:id/approve-live", async (c) => {
+  try {
+    const body = await c.req.json<{ reviewer?: string }>().catch(() => ({}));
+    const data = await strategyPromotionService.approveRuntime(
+      c.req.param("id"),
+      body.reviewer ?? "user"
+    );
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      400
+    );
+  }
 });
 
 strategyRuntimeRouter.post("/:id/start", async (c) => {

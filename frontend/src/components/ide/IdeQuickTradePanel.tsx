@@ -10,6 +10,13 @@ export const IdeQuickTradePanel: FC<{
   traderLinked?: boolean;
   traderBusy?: boolean;
   onPlaceOrder?: (side: "buy" | "sell", qty: number, orderKind: OrderKind) => Promise<void>;
+  onPlaceBracket?: (
+    side: "buy" | "sell",
+    qty: number,
+    orderKind: OrderKind,
+    takeProfitPrice: number,
+    stopLossPrice: number,
+  ) => Promise<void>;
   onCancelLast?: () => Promise<void>;
   lastOrderIntentId?: string | null;
 }> = ({
@@ -17,6 +24,7 @@ export const IdeQuickTradePanel: FC<{
   traderLinked = false,
   traderBusy = false,
   onPlaceOrder,
+  onPlaceBracket,
   onCancelLast,
   lastOrderIntentId,
 }) => {
@@ -84,7 +92,24 @@ export const IdeQuickTradePanel: FC<{
     if (!onPlaceOrder) return;
     setOrderErr(null);
     try {
-      await onPlaceOrder(side, qtyFromNotional(), orderKind);
+      const takeProfitPrice = Number(tp);
+      const stopLossPrice = Number(sl);
+      const hasProtection = tp.trim().length > 0 || sl.trim().length > 0;
+      if (hasProtection) {
+        if (!onPlaceBracket) throw new Error(t("ide.quickTrade.bracketUnavailable"));
+        if (!(takeProfitPrice > 0) || !(stopLossPrice > 0)) {
+          throw new Error(t("ide.quickTrade.bracketIncomplete"));
+        }
+        await onPlaceBracket(
+          side,
+          qtyFromNotional(),
+          orderKind,
+          takeProfitPrice,
+          stopLossPrice,
+        );
+      } else {
+        await onPlaceOrder(side, qtyFromNotional(), orderKind);
+      }
     } catch (e) {
       setOrderErr(e instanceof Error ? e.message : String(e));
     }
@@ -212,7 +237,10 @@ export const IdeQuickTradePanel: FC<{
           value={tp}
           onChange={(e) => setTp(e.target.value)}
           placeholder={t("ide.quickTrade.tpslPlaceholder")}
-          disabled
+          disabled={!canTrade}
+          type="number"
+          min="0"
+          step="any"
         />
       </label>
       <label style={styles.lab}>
@@ -222,7 +250,10 @@ export const IdeQuickTradePanel: FC<{
           value={sl}
           onChange={(e) => setSl(e.target.value)}
           placeholder={t("ide.quickTrade.tpslPlaceholder")}
-          disabled
+          disabled={!canTrade}
+          type="number"
+          min="0"
+          step="any"
         />
       </label>
       <p style={styles.note}>

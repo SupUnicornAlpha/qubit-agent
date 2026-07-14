@@ -47,10 +47,7 @@ export interface ConsistencyCheck {
   name: string;
   description: string;
   /** 返回 (totalRefs, brokenRefs) 的 SQL 查询；具体实现走 content-quality.ts */
-  kind:
-    | "strategy_factor_refs"
-    | "order_strategy_refs"
-    | "fusion_signal_refs";
+  kind: "strategy_factor_refs" | "order_strategy_refs" | "fusion_signal_refs";
 }
 
 export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpectation> = {
@@ -161,6 +158,21 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         nonNullColumns: ["symbol", "rationale"],
       },
     ],
+    qualityGates: [
+      {
+        table: "recommendation_trade_plan",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM recommendation_snapshot
+          WHERE workflow_run_id = ?
+            AND side = 'long'
+            AND (entry_low IS NOT NULL OR entry_high IS NOT NULL)
+            AND stop_loss IS NOT NULL
+            AND take_profit IS NOT NULL
+            AND invalidation_json <> '[]'`,
+        minRows: 2,
+      },
+    ],
     requiredTools: ["screener", "recommendation.record"],
     goalKeywords: ["momentum", "估值", "新闻"],
     consistencyChecks: [],
@@ -189,6 +201,21 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
             AND side = 'short'`,
         minRows: 2,
         nonNullColumns: ["symbol", "rationale"],
+      },
+    ],
+    qualityGates: [
+      {
+        table: "recommendation_trade_plan",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM recommendation_snapshot
+          WHERE workflow_run_id = ?
+            AND side = 'short'
+            AND (entry_low IS NOT NULL OR entry_high IS NOT NULL)
+            AND stop_loss IS NOT NULL
+            AND take_profit IS NOT NULL
+            AND invalidation_json <> '[]'`,
+        minRows: 2,
       },
     ],
     requiredTools: ["screener", "recommendation.record"],
@@ -284,7 +311,8 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
     consistencyChecks: [
       {
         name: "strategy → factor refs",
-        description: "strategy_composition.factorIdsJson 中的每个 id 都应在 factor_definition 中存在",
+        description:
+          "strategy_composition.factorIdsJson 中的每个 id 都应在 factor_definition 中存在",
         kind: "strategy_factor_refs",
       },
     ],
@@ -399,9 +427,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
 };
 
 /** 取场景 expectation；未知场景抛错（避免静默 0 分） */
-export function getScenarioExpectation(
-  scenario: ScenarioRecipe["key"]
-): ScenarioExpectation {
+export function getScenarioExpectation(scenario: ScenarioRecipe["key"]): ScenarioExpectation {
   const exp = SCENARIO_EXPECTATIONS[scenario];
   if (!exp) {
     throw new Error(`[scenario-expectations] unknown scenario: ${scenario}`);

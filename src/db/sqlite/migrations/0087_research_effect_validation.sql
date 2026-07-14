@@ -25,12 +25,15 @@ CREATE TABLE IF NOT EXISTS `recommendation_snapshot` (
   `asof` TEXT NOT NULL,
   `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 CREATE INDEX IF NOT EXISTS `idx_recommendation_snapshot_workflow`
   ON `recommendation_snapshot` (`workflow_run_id`);
+--> statement-breakpoint
 
 CREATE INDEX IF NOT EXISTS `idx_recommendation_snapshot_project_symbol`
   ON `recommendation_snapshot` (`project_id`, `symbol`, `asof`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `recommendation_outcome` (
   `id` TEXT PRIMARY KEY NOT NULL,
@@ -48,9 +51,11 @@ CREATE TABLE IF NOT EXISTS `recommendation_outcome` (
   `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_recommendation_outcome_unique`
   ON `recommendation_outcome` (`recommendation_id`, `horizon_days`);
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS `strategy_eval_run` (
   `id` TEXT PRIMARY KEY NOT NULL,
@@ -71,9 +76,11 @@ CREATE TABLE IF NOT EXISTS `strategy_eval_run` (
   `created_by` TEXT NOT NULL DEFAULT 'system',
   `created_at` TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+--> statement-breakpoint
 
 CREATE INDEX IF NOT EXISTS `idx_strategy_eval_run_workflow`
   ON `strategy_eval_run` (`workflow_run_id`);
+--> statement-breakpoint
 
 CREATE INDEX IF NOT EXISTS `idx_strategy_eval_run_strategy`
   ON `strategy_eval_run` (`strategy_version_id`, `created_at`);

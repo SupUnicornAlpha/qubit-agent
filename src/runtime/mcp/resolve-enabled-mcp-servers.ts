@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig } from "../../db/sqlite/schema";
+import { isMcpServerInCooldown } from "../monitor/mcp-health-tracker";
 
 /**
  * 单个 MCP server 在 capabilities_json.tools 里登记的工具元数据。
@@ -74,5 +75,7 @@ export async function resolveEnabledMcpServers(names: string[]): Promise<Enabled
     const tools = parseTools(row.capabilitiesJson);
     byName.set(row.name, tools ? { name: row.name, tools } : { name: row.name });
   }
-  return unique.filter((n) => byName.has(n)).map((n) => byName.get(n)!);
+  const configured = unique.filter((n) => byName.has(n));
+  const cooldown = await Promise.all(configured.map((name) => isMcpServerInCooldown(name)));
+  return configured.filter((_, index) => !cooldown[index]).map((name) => byName.get(name)!);
 }

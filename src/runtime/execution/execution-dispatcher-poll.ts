@@ -7,6 +7,7 @@ import {
   executionTask,
   executionTaskEvent,
   fill,
+  orderIntent,
 } from "../../db/sqlite/schema";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import type { BrokerProvider } from "../../types/broker";
@@ -77,6 +78,10 @@ export async function pollPendingBrokerOrders(db: DbClient, nowIso: string): Pro
           .update(executionTask)
           .set({ status: "filled", updatedAt: nowIso, lastError: null })
           .where(eq(executionTask.id, task.id));
+        await db
+          .update(orderIntent)
+          .set({ lifecycleStatus: "filled", lifecycleUpdatedAt: nowIso })
+          .where(eq(orderIntent.id, task.orderIntentId));
       } else if (live.status === "rejected" || live.status === "cancelled") {
         await db
           .update(brokerOrder)
@@ -93,6 +98,13 @@ export async function pollPendingBrokerOrders(db: DbClient, nowIso: string): Pro
             updatedAt: nowIso,
           })
           .where(eq(executionTask.id, task.id));
+        await db
+          .update(orderIntent)
+          .set({
+            lifecycleStatus: live.status === "rejected" ? "rejected" : "cancelled",
+            lifecycleUpdatedAt: nowIso,
+          })
+          .where(eq(orderIntent.id, task.orderIntentId));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -3,14 +3,24 @@ import { useEffect, useRef, useState } from "react";
 import {
   getOrCreateDefaultProject,
   createStrategyRuntime,
+  approveStrategyRuntimeForLive,
+  evaluatePaperRuntime,
   getDefaultProjectSession,
   getDefaultWorkspace,
+  createPortfolioAllocationPlan,
+  remediatePositionReconciliation,
+  scanPositionReconciliation,
   listProjects,
   listStrategyRuntimes,
   listStrategyScripts,
   stopStrategyRuntime,
 } from "../../api/backend";
-import type { StrategyRuntimeRecord } from "../../api/backend";
+import type {
+  PortfolioAllocationPlan,
+  PositionRemediationPlan,
+  PositionReconciliationReport,
+  StrategyRuntimeRecord,
+} from "../../api/backend";
 import type { IndicatorStrategyScriptRecord } from "../../api/types";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
 import { ChartMarketSelect } from "../chart/ChartMarketSelect";
@@ -51,7 +61,13 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: 900,
   },
   row: { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end" },
-  lab: { display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: "var(--qb-main-meta, #a1a1aa)" },
+  lab: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    fontSize: 12,
+    color: "var(--qb-main-meta, #a1a1aa)",
+  },
   inp: {
     minWidth: 120,
     padding: "6px 10px",
@@ -272,10 +288,79 @@ export const TraderLivePanel: FC = () => {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [userCmd, setUserCmd] = useState("");
   const [lastOrderIntentId, setLastOrderIntentId] = useState<string | null>(null);
+  const [reconcileProvider, setReconcileProvider] = useState<"futu" | "ib" | "ccxt">("futu");
+  const [reconcileReport, setReconcileReport] = useState<PositionReconciliationReport | null>(null);
+  const [remediationPlan, setRemediationPlan] = useState<PositionRemediationPlan | null>(null);
+  const [remediationRuntimeId, setRemediationRuntimeId] = useState("");
+  const [remediationBusy, setRemediationBusy] = useState(false);
+  const [reconcileError, setReconcileError] = useState<string | null>(null);
+  const [portfolioCapital, setPortfolioCapital] = useState(100_000);
+  const [portfolioPlan, setPortfolioPlan] = useState<PortfolioAllocationPlan | null>(null);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [flowTab, setFlowTab] = useState<"decision" | "drivers" | "messages">("decision");
   const booted = useRef(false);
 
   const engine = useTraderAgentEngine(projectId, sessionId);
+
+  const runPositionReconciliation = async () => {
+    if (!projectId) return;
+    setReconcileError(null);
+    try {
+      const result = await scanPositionReconciliation({
+        projectId,
+        provider: reconcileProvider,
+      });
+      setReconcileReport(result.report);
+      setRemediationPlan(result.remediation);
+    } catch (error) {
+      setReconcileReport(null);
+      setRemediationPlan(null);
+      setReconcileError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const executePositionRemediation = async () => {
+    if (!projectId || !remediationPlan || !remediationRuntimeId) return;
+    const actionSummary = remediationPlan.actions
+      .map((action) => `${action.action === "buy" ? "买入" : "卖出"} ${action.symbol} ${action.quantity}`)
+      .join("\n");
+    if (!window.confirm(`将重新对账并通过风控/HITL 下发以下修复单：\n${actionSummary}\n\n确认继续？`)) return;
+    setRemediationBusy(true);
+    setReconcileError(null);
+    try {
+      const result = await remediatePositionReconciliation({
+        projectId,
+        provider: reconcileProvider,
+        expectedPlanHash: remediationPlan.planHash,
+        strategyRuntimeId: remediationRuntimeId,
+      });
+      await runPositionReconciliation();
+      setReconcileError(`已提交 ${result.orders.length} 个修复订单；订单仍需通过风控与人工审批。`);
+    } catch (error) {
+      setReconcileError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRemediationBusy(false);
+    }
+  };
+
+  const runPortfolioAllocation = async () => {
+    if (!projectId) return;
+    setPortfolioError(null);
+    try {
+      setPortfolioPlan(await createPortfolioAllocationPlan({
+        projectId,
+        capital: portfolioCapital,
+        grossLimit: 1,
+        netLimit: 0.5,
+        perPositionMax: 0.25,
+        totalRiskBudget: 0.02,
+        maxSectorGross: 0.4,
+      }));
+    } catch (error) {
+      setPortfolioPlan(null);
+      setPortfolioError(error instanceof Error ? error.message : String(error));
+    }
+  };
 
   useEffect(() => {
     if (booted.current) return;
@@ -371,6 +456,32 @@ export const TraderLivePanel: FC = () => {
     }
   };
 
+  const evaluatePaperById = async (id: string) => {
+    setRuntimeBusy(true);
+    try {
+      const result = await evaluatePaperRuntime(id);
+      setRuntimeMsg(
+        `Paper Gate ${result.pass ? "通过" : "未通过"}：${result.tradingDays} 日，收益 ${(result.netReturn * 100).toFixed(2)}%，Sharpe ${result.sharpe.toFixed(2)}`
+      );
+    } catch (error) {
+      setRuntimeMsg(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
+
+  const approveLiveById = async (id: string) => {
+    setRuntimeBusy(true);
+    try {
+      const result = await approveStrategyRuntimeForLive(id);
+      setRuntimeMsg(result.liveEligible ? "已批准进入 live" : "尚未满足 live 条件");
+    } catch (error) {
+      setRuntimeMsg(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRuntimeBusy(false);
+    }
+  };
+
   const submitUserCmd = async () => {
     const text = userCmd.trim();
     if (!text) return;
@@ -393,8 +504,8 @@ export const TraderLivePanel: FC = () => {
         <summary style={styles.summary}>交易 Agent 配置</summary>
         <div style={styles.configBody}>
           <p style={styles.hint}>
-            触发方式持久化于 sessionStorage。策略信号由后台 worker 评估并下单；定时/资讯由 Agent 轮询 feed
-            写入左侧流；用户可在下方输入「买入 100」「撤单 &lt;intentId&gt;」等指令。
+            触发方式持久化于 sessionStorage。策略信号由后台 worker 评估并下单；定时/资讯由 Agent
+            轮询 feed 写入左侧流；用户可在下方输入「买入 100」「撤单 &lt;intentId&gt;」等指令。
           </p>
           <div style={styles.row}>
             <label style={styles.lab}>
@@ -422,7 +533,9 @@ export const TraderLivePanel: FC = () => {
                   min={10}
                   max={3600}
                   value={traderAgentConfig.intervalSec}
-                  onChange={(e) => setTraderAgentConfig({ intervalSec: Number(e.target.value) || 60 })}
+                  onChange={(e) =>
+                    setTraderAgentConfig({ intervalSec: Number(e.target.value) || 60 })
+                  }
                 />
               </label>
             ) : null}
@@ -433,12 +546,156 @@ export const TraderLivePanel: FC = () => {
               将当前品种写入对话流
             </button>
           </div>
+          <div style={styles.row}>
+            <label style={styles.lab}>
+              持仓对账券商
+              <select
+                style={styles.select}
+                value={reconcileProvider}
+                onChange={(event) =>
+                  setReconcileProvider(event.target.value as "futu" | "ib" | "ccxt")
+                }
+              >
+                <option value="futu">Futu</option>
+                <option value="ib">IB</option>
+                <option value="ccxt">CCXT</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="qb-btn-secondary"
+              disabled={!projectId}
+              onClick={() => void runPositionReconciliation()}
+            >
+              对账内部账本 / 券商持仓
+            </button>
+            {reconcileReport ? (
+              <span
+                style={{
+                  ...styles.hint,
+                  color: reconcileReport.summary.mismatched > 0 ? "#f59e0b" : "#22c55e",
+                }}
+              >
+                匹配 {reconcileReport.summary.matched}/{reconcileReport.summary.symbols} · 偏差标的{
+                  reconcileReport.summary.mismatched
+                } · 名义偏差 {reconcileReport.summary.absoluteNotionalDelta.toFixed(2)}
+              </span>
+            ) : null}
+            {reconcileError ? (
+              <span style={{ ...styles.hint, color: reconcileError.startsWith("已提交") ? "#22c55e" : "#ef4444" }}>
+                {reconcileError}
+              </span>
+            ) : null}
+          </div>
+          {remediationPlan?.actions.length ? (
+            <div style={styles.scriptList}>
+              <strong style={{ fontSize: 12, color: "#f59e0b" }}>
+                修复提案 · 仅显式确认后提交 · {remediationPlan.actions.length} 笔
+              </strong>
+              {remediationPlan.actions.map((action) => (
+                <div key={action.symbol} style={{ ...styles.scriptRow, justifyContent: "space-between" }}>
+                  <span>{action.action === "buy" ? "买入" : "卖出"} {action.symbol} · {action.quantity}</span>
+                  <span style={styles.hint}>估算名义 {action.estimatedNotional.toFixed(2)}</span>
+                </div>
+              ))}
+              <div style={styles.row}>
+                <label style={styles.lab}>
+                  修复执行上下文（Live Runtime）
+                  <select
+                    style={styles.select}
+                    value={remediationRuntimeId}
+                    onChange={(event) => setRemediationRuntimeId(event.target.value)}
+                  >
+                    <option value="">请选择已审批的 Live Runtime</option>
+                    {runtimes
+                      .filter((runtime) => runtime.executionMode === "live" && runtime.brokerAccountId)
+                      .map((runtime) => (
+                        <option key={runtime.id} value={runtime.id}>
+                          {runtime.symbol} · {runtime.status} · {runtime.id.slice(0, 8)}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  disabled={remediationBusy || !remediationRuntimeId}
+                  onClick={() => void executePositionRemediation()}
+                >
+                  {remediationBusy ? "重新核对中…" : "确认并进入风控下单"}
+                </button>
+              </div>
+              {!runtimes.some((runtime) => runtime.executionMode === "live" && runtime.brokerAccountId) ? (
+                <span style={{ ...styles.hint, color: "#f59e0b" }}>
+                  暂无绑定券商账户的 Live Runtime；请先完成策略晋级和 Live 配置。
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          <div style={styles.row}>
+            <label style={styles.lab}>
+              组合总资金
+              <input
+                style={styles.inp}
+                type="number"
+                min={1}
+                value={portfolioCapital}
+                onChange={(event) => setPortfolioCapital(Math.max(1, Number(event.target.value) || 1))}
+              />
+            </label>
+            <button
+              type="button"
+              className="qb-btn-secondary"
+              disabled={!projectId}
+              onClick={() => void runPortfolioAllocation()}
+            >
+              从有效推荐生成组合计划
+            </button>
+            {portfolioPlan ? (
+              <span style={{ ...styles.hint, color: "#22c55e" }}>
+                {portfolioPlan.rows.length} 个目标仓位 · 总暴露 {(portfolioPlan.exposures.grossExposure * 100).toFixed(1)}%
+                · 净暴露 {(portfolioPlan.exposures.netExposure * 100).toFixed(1)}% · 止损风险预算
+                {(portfolioPlan.exposures.estimatedLossAtStopsPct * 100).toFixed(2)}%
+                {portfolioPlan.risk?.metrics
+                  ? ` · VaR95 ${(portfolioPlan.risk.metrics.historicalVar95Pct * 100).toFixed(2)}% · ES95 ${(portfolioPlan.risk.metrics.expectedShortfall95Pct * 100).toFixed(2)}%`
+                  : " · 历史风险数据不足"}
+              </span>
+            ) : null}
+            {portfolioError ? <span style={{ ...styles.hint, color: "#ef4444" }}>{portfolioError}</span> : null}
+          </div>
+          {portfolioPlan ? (
+            <div style={styles.scriptList}>
+              {portfolioPlan.rows.map((row) => (
+                <div key={row.symbol} style={{ ...styles.scriptRow, justifyContent: "space-between" }}>
+                  <strong>{row.symbol} · {row.side.toUpperCase()}</strong>
+                  <span style={styles.hint}>
+                    目标 {(row.targetWeight * 100).toFixed(2)}% / {row.targetQty.toFixed(2)} 股 · 调仓
+                    {row.rebalanceQty >= 0 ? "+" : ""}{row.rebalanceQty.toFixed(2)} · 风险
+                    {(row.riskContributionPct * 100).toFixed(2)}%
+                  </span>
+                </div>
+              ))}
+              {portfolioPlan.warnings.map((warning) => (
+                <span key={warning} style={{ ...styles.hint, color: "#f59e0b" }}>⚠ {warning}</span>
+              ))}
+              {portfolioPlan.risk?.stressTests.slice(0, 2).map((stress) => (
+                <span key={stress.scenario} style={{ ...styles.hint, color: stress.lossAmount > 0 ? "#f59e0b" : "#22c55e" }}>
+                  压力 {stress.scenario}：{(stress.portfolioReturnPct * 100).toFixed(2)}% / 损失 {stress.lossAmount.toFixed(2)}
+                </span>
+              ))}
+              {portfolioPlan.risk?.warnings.map((warning) => (
+                <span key={`risk-${warning}`} style={{ ...styles.hint, color: "#f59e0b" }}>⚠ {warning}</span>
+              ))}
+            </div>
+          ) : null}
           <div>
             <div style={{ ...styles.lab, marginBottom: 6 }}>运行策略（Python 策略库 · 多选）</div>
             {scriptsErr ? <p style={{ ...styles.hint, color: "#ef4444" }}>{scriptsErr}</p> : null}
             <div style={styles.scriptList}>
               {scripts.length === 0 ? (
-                <span style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>暂无脚本；请先在 IDE 保存策略或写入会话策略库。</span>
+                <span style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
+                  暂无脚本；请先在 IDE 保存策略或写入会话策略库。
+                </span>
               ) : (
                 scripts.map((s) => (
                   <label key={s.id} style={styles.scriptRow}>
@@ -483,7 +740,28 @@ export const TraderLivePanel: FC = () => {
                     >
                       停止
                     </button>
-                  ) : null}
+                  ) : (
+                    <span style={{ display: "flex", gap: 6 }}>
+                      {r.executionMode === "paper" ? (
+                        <button
+                          type="button"
+                          className="qb-btn-ghost qb-btn--compact"
+                          disabled={runtimeBusy}
+                          onClick={() => void evaluatePaperById(r.id)}
+                        >
+                          评估 Paper
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="qb-btn-ghost qb-btn--compact"
+                        disabled={runtimeBusy}
+                        onClick={() => void approveLiveById(r.id)}
+                      >
+                        审批 Live
+                      </button>
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -565,7 +843,8 @@ export const TraderLivePanel: FC = () => {
             {flowTab === "drivers" ? (
               traderDrivers.length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
-                  暂无策略驱动。来源包括：策略运行时评估、定时任务、资讯 RSS、外部通信、告警与用户指令。
+                  暂无策略驱动。来源包括：策略运行时评估、定时任务、资讯
+                  RSS、外部通信、告警与用户指令。
                 </div>
               ) : (
                 [...traderDrivers].reverse().map((row) => (
@@ -583,7 +862,8 @@ export const TraderLivePanel: FC = () => {
             {flowTab === "messages" ? (
               traderAgentMessages.length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--qb-main-meta, #71717a)" }}>
-                  暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN / ORDER_INTENT / RISK_BLOCK 等将显示在此。
+                  暂无 A2A 消息。工作流内 Agent 间 TASK_ASSIGN / ORDER_INTENT / RISK_BLOCK
+                  等将显示在此。
                 </div>
               ) : (
                 [...traderAgentMessages].reverse().map((row) => (
@@ -659,7 +939,11 @@ export const TraderLivePanel: FC = () => {
                   ))}
                 </select>
               </label>
-              <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={() => requestChartReload()}>
+              <button
+                type="button"
+                className="qb-btn-ghost qb-btn--compact"
+                onClick={() => requestChartReload()}
+              >
                 刷新
               </button>
             </div>
@@ -676,6 +960,22 @@ export const TraderLivePanel: FC = () => {
               onPlaceOrder={async (side, qty, orderKind) => {
                 const data = await engine.placeOrder({ side, qty, orderType: orderKind });
                 if (data?.orderIntentId) setLastOrderIntentId(data.orderIntentId);
+              }}
+              onPlaceBracket={async (
+                side,
+                qty,
+                orderKind,
+                takeProfitPrice,
+                stopLossPrice,
+              ) => {
+                const data = await engine.placeBracketOrder({
+                  side,
+                  qty,
+                  entryOrderType: orderKind,
+                  takeProfitPrice,
+                  stopLossPrice,
+                });
+                setLastOrderIntentId(data.entry.orderIntentId);
               }}
               onCancelLast={
                 lastOrderIntentId

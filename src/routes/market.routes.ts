@@ -23,6 +23,10 @@ import {
   reconnectWindSession,
 } from "../runtime/market/wind-klines";
 import { loadBuiltinConnectorSettings } from "../runtime/config/builtin-connector-settings";
+import {
+  normalizeExecutionMarket,
+  recordExecutionMark,
+} from "../runtime/execution/execution-mark-service";
 
 export const marketRouter = new Hono();
 
@@ -79,6 +83,9 @@ marketRouter.get("/klines", async (c) => {
     const timeframe = c.req.query("timeframe") ?? c.req.query("tf") ?? undefined;
     const limitRaw = c.req.query("limit");
     const limit = limitRaw !== undefined && limitRaw !== "" ? Number(limitRaw) : undefined;
+    if (!symbol.trim()) {
+      return c.json({ ok: false, error: { type: "klines_invalid_request", message: "symbol is required" } }, 400);
+    }
 
     const { bars, meta, error } = await queryKlines({
       symbol,
@@ -86,6 +93,17 @@ marketRouter.get("/klines", async (c) => {
       timeframe,
       limit: Number.isFinite(limit as number) ? (limit as number) : undefined,
     });
+    const latest = bars[bars.length - 1];
+    if (latest?.close && !error) {
+      await recordExecutionMark(await getDb(), {
+        market: normalizeExecutionMarket(exchange),
+        symbol,
+        price: latest.close,
+        observedAt: latest.timestamp,
+        timeframe: meta.timeframe,
+        source: meta.dataSource,
+      }).catch(() => undefined);
+    }
 
     return c.json({ ok: true, data: bars, meta, ...(error ? { error } : {}) });
   } catch (e) {

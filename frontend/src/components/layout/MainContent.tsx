@@ -1533,6 +1533,7 @@ const ConfigPanel: FC = () => {
   >("mock");
   const [modelName, setModelName] = useState("gpt-4o-mini");
   const [modelApiKey, setModelApiKey] = useState("");
+  const [modelApiKeyConfigured, setModelApiKeyConfigured] = useState(false);
   const [modelBaseUrl, setModelBaseUrl] = useState("");
   const [tushareToken, setTushareToken] = useState("");
   const [windUsername, setWindUsername] = useState("");
@@ -1761,6 +1762,7 @@ const ConfigPanel: FC = () => {
       setProvider(cfg.provider ?? "mock");
       setModelName(cfg.model ?? "gpt-4o-mini");
       setModelApiKey(cfg.apiKey ?? "");
+      setModelApiKeyConfigured(Boolean(cfg.apiKeyConfigured));
       setModelBaseUrl(cfg.baseUrl ?? "");
     });
     void getBuiltinConnectorConfig()
@@ -2218,19 +2220,18 @@ const ConfigPanel: FC = () => {
 
   const installMarketCatalogItem = async (item: McpCatalogItemRecord) => {
     if (!currentProjectId) return;
-    const spec = (item.specJson ?? {}) as Record<string, unknown>;
     const serverName = item.slug.replace(/[^a-z0-9_-]/gi, "-");
-    const toolRaw = spec["defaultToolName"];
+    const toolRaw = item.defaultToolName;
     const toolName = typeof toolRaw === "string" && toolRaw.trim() ? toolRaw.trim() : undefined;
-    const toRaw = spec["defaultTimeoutMs"];
+    const toRaw = item.defaultTimeoutMs;
     const timeoutMs =
       typeof toRaw === "number" && Number.isFinite(toRaw)
         ? toRaw
         : typeof toRaw === "string" && Number.isFinite(Number(toRaw))
           ? Number(toRaw)
           : mcpTimeoutMs;
-    const cmd = typeof spec["command"] === "string" ? spec["command"].trim() : "";
-    const url = typeof spec["url"] === "string" ? spec["url"].trim() : "";
+    const cmd = typeof item.command === "string" ? item.command.trim() : "";
+    const url = typeof item.url === "string" ? item.url.trim() : "";
     try {
       const installed = await installMcpMarket({
         projectId: currentProjectId,
@@ -2471,18 +2472,28 @@ const ConfigPanel: FC = () => {
                 <option value="zhipu">zhipu</option>
               </select>
               <input style={styles.input} value={modelName} onChange={(e) => setModelName(e.target.value)} />
-              <input style={styles.input} value={modelApiKey} onChange={(e) => setModelApiKey(e.target.value)} />
+              <input
+                style={styles.input}
+                type="password"
+                autoComplete="new-password"
+                value={modelApiKey}
+                placeholder={modelApiKeyConfigured ? "已配置；输入新值可替换" : "输入 API Key"}
+                onChange={(e) => setModelApiKey(e.target.value)}
+              />
               <input style={styles.input} value={modelBaseUrl} onChange={(e) => setModelBaseUrl(e.target.value)} />
               <button
                 className="qb-btn-primary-brand"
-                onClick={() =>
+                onClick={() => {
                   void saveModelConfig({
                     provider,
                     model: modelName,
-                    apiKey: modelApiKey,
+                    ...(modelApiKey.trim() ? { apiKey: modelApiKey.trim() } : {}),
                     baseUrl: modelBaseUrl || undefined,
-                  })
-                }
+                  }).then((saved) => {
+                    setModelApiKey("");
+                    setModelApiKeyConfigured(Boolean(saved.apiKeyConfigured));
+                  });
+                }}
               >
                 保存默认配置
               </button>
@@ -3003,12 +3014,11 @@ const ConfigPanel: FC = () => {
                 <div className="qb-mcp-market-card qb-mcp-market-card--empty" style={{ ...styles.mcpMarketCard, color: "var(--qb-main-meta)" }}>暂无目录项，请先同步注册表或检查网络。</div>
               ) : null}
               {mcpMarketItems.map((item) => {
-                const spec = (item.specJson ?? {}) as Record<string, unknown>;
-                const caps = Array.isArray(spec["defaultCapabilitiesJson"])
-                  ? (spec["defaultCapabilitiesJson"] as unknown[]).filter((x): x is string => typeof x === "string")
+                const caps = Array.isArray(item.defaultCapabilitiesJson)
+                  ? item.defaultCapabilitiesJson.filter((x): x is string => typeof x === "string")
                   : [];
-                const defaultTool = typeof spec["defaultToolName"] === "string" ? spec["defaultToolName"] : "";
-                const cmdPreview = typeof spec["command"] === "string" ? spec["command"] : "";
+                const defaultTool = item.defaultToolName;
+                const cmdPreview = item.command ?? "";
                 const riskBorder =
                   item.riskLevel === "high" ? "#991b1b" : item.riskLevel === "medium" ? "#a16207" : "#166534";
                 const selected = selectedCatalogId === item.id;
@@ -3022,7 +3032,7 @@ const ConfigPanel: FC = () => {
                       setSelectedCatalogId(item.id);
                       setCatalogServerName(item.slug.replace(/[^a-z0-9_-]/gi, "-"));
                       if (defaultTool) setMcpToolName(defaultTool);
-                      const to = spec["defaultTimeoutMs"];
+                      const to = item.defaultTimeoutMs;
                       if (typeof to === "number" && Number.isFinite(to)) setMcpTimeoutMs(to);
                     }}
                     onKeyDown={(e) => {
@@ -3030,6 +3040,8 @@ const ConfigPanel: FC = () => {
                         e.preventDefault();
                         setSelectedCatalogId(item.id);
                         setCatalogServerName(item.slug.replace(/[^a-z0-9_-]/gi, "-"));
+                        if (defaultTool) setMcpToolName(defaultTool);
+                        if (Number.isFinite(item.defaultTimeoutMs)) setMcpTimeoutMs(item.defaultTimeoutMs);
                       }
                     }}
                     style={{
@@ -5185,6 +5197,22 @@ const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     refreshWorkflowOptionsRef.current = refreshWorkflowOptions;
   }, [refreshWorkflowOptions]);
+
+  useEffect(() => {
+    const refreshVisibleList = () => {
+      if (document.visibilityState === "visible") {
+        void refreshWorkflowOptionsRef.current();
+      }
+    };
+    window.addEventListener("focus", refreshVisibleList);
+    document.addEventListener("visibilitychange", refreshVisibleList);
+    const timer = window.setInterval(refreshVisibleList, 15_000);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleList);
+      document.removeEventListener("visibilitychange", refreshVisibleList);
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "research") return;

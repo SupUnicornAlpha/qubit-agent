@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { StepStreamEvent } from "../langgraph/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
+import {
+  buildArtifactGapHint,
+  checkRequiredArtifacts,
+  resolveScenarioKey,
+} from "../agent-readiness/quality/artifact-checker";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import type { HitlApprovalPayload } from "../workflow/hitl-service";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
@@ -239,6 +245,18 @@ export interface RunTeamResearchPersistDeps {
   pauseJob?: typeof pauseAnalystResearchJobForHitl;
   /** 把 analyst job 标 failed；默认 `failResearchTeamExecuteJob` */
   failJob?: typeof failResearchTeamExecuteJob;
+  verifyArtifacts?: (workflowRunId: string) => Promise<{ ok: boolean; detail?: string }>;
+}
+
+async function defaultVerifyArtifacts(
+  workflowRunId: string,
+): Promise<{ ok: boolean; detail?: string }> {
+  await getDb();
+  const sqlite = getSqliteForTesting();
+  const scenario = resolveScenarioKey(sqlite, workflowRunId);
+  if (!scenario) return { ok: true };
+  const check = checkRequiredArtifacts(sqlite, scenario, workflowRunId);
+  return check.ok ? { ok: true } : { ok: false, detail: buildArtifactGapHint(check) };
 }
 
 async function defaultSetWorkflowStatus(
@@ -268,6 +286,7 @@ export async function runTeamResearchAndPersist(
   const terminal = deps.onTerminal ?? onWorkflowTerminal;
   const pauseJob = deps.pauseJob ?? pauseAnalystResearchJobForHitl;
   const failJob = deps.failJob ?? failResearchTeamExecuteJob;
+  const verifyArtifacts = deps.verifyArtifacts ?? defaultVerifyArtifacts;
 
   try {
     /**
@@ -287,6 +306,12 @@ export async function runTeamResearchAndPersist(
       params: input.parsed,
       hitlApproval: input.hitlApproval,
     });
+    const artifactGate = await verifyArtifacts(input.workflowRunId);
+    if (!artifactGate.ok) {
+      throw new Error(
+        `research_artifact_gate_failed: ${artifactGate.detail ?? "required artifacts missing"}`,
+      );
+    }
     await setStatus(input.workflowRunId, "completed");
     terminal(input.workflowRunId, "completed");
     publish({

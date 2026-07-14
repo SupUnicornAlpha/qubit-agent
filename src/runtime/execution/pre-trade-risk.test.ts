@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   computeNotionalUsd,
+  computeRuntimeDrawdown,
   parseRuleExpr,
   readContractMultiplier,
   ruleDecisionForViolation,
@@ -9,7 +10,10 @@ import {
 
 describe("parseRuleExpr", () => {
   test("parses JSON rule", () => {
-    expect(parseRuleExpr('{"kind":"max_notional","max":100}')).toEqual({ kind: "max_notional", max: 100 });
+    expect(parseRuleExpr('{"kind":"max_notional","max":100}')).toEqual({
+      kind: "max_notional",
+      max: 100,
+    });
   });
 
   test("returns null for invalid JSON", () => {
@@ -24,6 +28,21 @@ describe("computeNotionalUsd", () => {
 
   test("returns null without price", () => {
     expect(computeNotionalUsd(10, null, 1)).toBeNull();
+  });
+});
+
+describe("computeRuntimeDrawdown", () => {
+  test("aggregates symbols by day and returns peak-to-trough drawdown", () => {
+    expect(
+      computeRuntimeDrawdown(
+        [
+          { day: "2026-01-01", pnl: 100 },
+          { day: "2026-01-02", pnl: -150 },
+          { day: "2026-01-02", pnl: -50 },
+        ],
+        1_000
+      )
+    ).toBeCloseTo(200 / 1_100, 6);
   });
 });
 

@@ -20,12 +20,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, asc, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import {
-  agentDefinition,
-  agentInstance,
-  agentProfile,
-  workflowRun,
-} from "../../db/sqlite/schema";
+import { agentDefinition, agentInstance, agentProfile, workflowRun } from "../../db/sqlite/schema";
 import type { AgentOutput } from "../types";
 import type { AgentGroupPipelineKind } from "../seed-agent-catalog";
 import { loadDebateConfig } from "../config/debate-config";
@@ -42,7 +37,11 @@ import { evaluateRiskAndVeto } from "../risk/veto-engine";
 import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
-import { parseTeamRelations, partitionSlotsIntoWaves, type TeamRelationEdge } from "./analyst-team-topology";
+import {
+  parseTeamRelations,
+  partitionSlotsIntoWaves,
+  type TeamRelationEdge,
+} from "./analyst-team-topology";
 import {
   type PromptMode,
   getDataDir,
@@ -121,9 +120,7 @@ async function enrichAnalystSlotsWithFsi(
           .from(agentDefinition)
           .where(inArray(agentDefinition.id, ids))
       : [];
-  const skillsByDef = new Map(
-    defs.map((d) => [d.id, (d.skillsJson as string[]) ?? []])
-  );
+  const skillsByDef = new Map(defs.map((d) => [d.id, (d.skillsJson as string[]) ?? []]));
   return Promise.all(
     slots.map(async (slot) => ({
       ...slot,
@@ -143,7 +140,9 @@ async function enrichAnalystSlotsWithPack(
   if (slots.length === 0) return slots;
   const ids = [...new Set(slots.map((s) => s.definitionId))];
   const profRows =
-    ids.length > 0 ? await db.select().from(agentProfile).where(inArray(agentProfile.definitionId, ids)) : [];
+    ids.length > 0
+      ? await db.select().from(agentProfile).where(inArray(agentProfile.definitionId, ids))
+      : [];
   const profByDef = new Map(profRows.map((p) => [p.definitionId, p]));
   return Promise.all(
     slots.map(async (slot) => {
@@ -205,7 +204,9 @@ export const RESEARCH_TEAM_SLOT_ROLES: readonly AgentRole[] = [
 ] as const;
 
 /** 与 `RESEARCH_TEAM_SLOT_ROLES` 一致，供路由 / 图编排校验 */
-export const RESEARCH_TEAM_SLOT_SET = new Set<string>(RESEARCH_TEAM_SLOT_ROLES as readonly string[]);
+export const RESEARCH_TEAM_SLOT_SET = new Set<string>(
+  RESEARCH_TEAM_SLOT_ROLES as readonly string[]
+);
 
 /**
  * 可加入研究团队编组、可出现在 relations_json 拓扑中的角色（含 orchestrator）。
@@ -359,10 +360,8 @@ async function resolveAnalystSlots(params: {
       "你是回测工程师，给出可执行的回测假设、数据窗口与评价指标。输出 Markdown（不要 JSON）。",
     backtest_engineer:
       "你是量化工程/实现专家，关注代码结构与可维护性。输出 Markdown（不要 JSON）。",
-    risk:
-      "你是风控专员，从规则与敞口角度审视当前结论。输出 Markdown（不要 JSON）。",
-    risk_manager:
-      "你是风控经理，综合评估尾部风险与合规边界。输出 Markdown（不要 JSON）。",
+    risk: "你是风控专员，从规则与敞口角度审视当前结论。输出 Markdown（不要 JSON）。",
+    risk_manager: "你是风控经理，综合评估尾部风险与合规边界。输出 Markdown（不要 JSON）。",
     orchestrator: "",
     market_data: "",
     news_event: "",
@@ -475,7 +474,11 @@ function mergeMultiSymbolAnalystResults(
     throw new Error("mergeMultiSymbolAnalystResults: empty results");
   }
   if (results.length === 1) {
-    return { ...results[0], scope, perSymbol: [{ symbol: results[0].ticker, result: stripScopeFields(results[0]) }] };
+    return {
+      ...results[0],
+      scope,
+      perSymbol: [{ symbol: results[0].ticker, result: stripScopeFields(results[0]) }],
+    };
   }
 
   const buy = results.filter((r) => r.fusedSignal === "buy").length;
@@ -576,17 +579,13 @@ async function runAnalystTeamCore(params: {
     const allowIds = new Set(params.analystDefinitionIds);
     slots = slots.filter((s) => allowIds.has(s.definitionId));
     if (slots.length === 0) {
-      throw new Error(
-        "所选分析师定义与当前可用分析师槽位无交集。请调整选择的 Agent。"
-      );
+      throw new Error("所选分析师定义与当前可用分析师槽位无交集。请调整选择的 Agent。");
     }
   } else if (params.analystRoles && params.analystRoles.length > 0) {
     const allow = new Set(params.analystRoles);
     slots = slots.filter((s) => allow.has(s.role));
     if (slots.length === 0) {
-      throw new Error(
-        "所选参与角色与当前可用分析师定义无交集。请调整参与角色。"
-      );
+      throw new Error("所选参与角色与当前可用分析师定义无交集。请调整参与角色。");
     }
   }
 
@@ -673,8 +672,7 @@ async function runAnalystTeamCore(params: {
   let analystEdges = slotOnlyRelationEdges(relationEdges, slotRoleSet);
   analystEdges = analystEdges.filter((e) => signalRoleSet.has(e.from) && signalRoleSet.has(e.to));
   const waveSlots = analystSlots;
-  const waves =
-    waveSlots.length > 0 ? partitionSlotsIntoWaves(waveSlots, analystEdges) : [];
+  const waves = waveSlots.length > 0 ? partitionSlotsIntoWaves(waveSlots, analystEdges) : [];
 
   const instanceBySlotIndex: string[] = [];
   for (let i = 0; i < waveSlots.length; i++) {
@@ -712,14 +710,14 @@ async function runAnalystTeamCore(params: {
         instanceId: instanceBySlotIndex[i] as string,
         definitionId: s.definitionId,
         role: s.role,
-      })),
+      }))
     );
     console.log(
-      `[analyst-team] workflow=${workflowRunId} team transport=A2A (${waveSlots.length} analyst slot runtimes spawned)`,
+      `[analyst-team] workflow=${workflowRunId} team transport=A2A (${waveSlots.length} analyst slot runtimes spawned)`
     );
   } else if (useA2a && waveSlots.length > 0) {
     console.warn(
-      `[analyst-team] workflow=${workflowRunId} teamExecutionPath=a2a but A2A pool orchestrator unavailable; falling back to in-process slot execution.`,
+      `[analyst-team] workflow=${workflowRunId} teamExecutionPath=a2a but A2A pool orchestrator unavailable; falling back to in-process slot execution.`
     );
   }
 
@@ -742,212 +740,216 @@ async function runAnalystTeamCore(params: {
 
   let waveNo = 0;
   try {
-  for (const wave of waves) {
-    waveNo += 1;
-    // 用户发起的协作式中断：在每个 wave 边界（无 slot 在飞的安全点）检查。命中则起一个
-    // free_form team_orchestrator HITL 停在断点，等用户输入新提示词后走既有恢复链续跑。
-    if (consumeInterrupt(workflowRunId)) {
-      await pauseForUserInterrupt({
+    for (const wave of waves) {
+      waveNo += 1;
+      // 用户发起的协作式中断：在每个 wave 边界（无 slot 在飞的安全点）检查。命中则起一个
+      // free_form team_orchestrator HITL 停在断点，等用户输入新提示词后走既有恢复链续跑。
+      if (consumeInterrupt(workflowRunId)) {
+        await pauseForUserInterrupt({
+          workflowRunId,
+          runId: params.runId ?? workflowRunId,
+          traceId: params.traceId ?? workflowRunId,
+          ticker: scope.displayLabel,
+        });
+      }
+      // 面向用户的进度播报：当前组分析师开跑（coding-agent 式 play-by-play）。
+      await logResearchTeamInteraction({
         workflowRunId,
-        runId: params.runId ?? workflowRunId,
-        traceId: params.traceId ?? workflowRunId,
-        ticker: scope.displayLabel,
+        fromRole: "orchestrator",
+        toRole: "user",
+        kind: "llm_message",
+        contentText: `🔬 第 ${waveNo}/${waves.length} 组分析进行中：${wave.map((s) => s.role).join("、")}…`,
       });
-    }
-    // 面向用户的进度播报：当前组分析师开跑（coding-agent 式 play-by-play）。
-    await logResearchTeamInteraction({
-      workflowRunId,
-      fromRole: "orchestrator",
-      toRole: "user",
-      kind: "llm_message",
-      contentText: `🔬 第 ${waveNo}/${waves.length} 组分析进行中：${wave.map((s) => s.role).join("、")}…`,
-    });
-    /**
-     * 先为每个 slot 拼好「前置成员结论 appendix」上下文并记录拓扑 handoff——这两件事
-     * A2A 路径与进程内路径完全一致，故抽到派发之前统一做（保留 research_team_interaction
-     * 的画布连线）。
-     */
-    const waveSpecs = await Promise.all(
-      wave.map(async (slot) => {
-        const predChain = (predsByTo.get(slot.role) ?? []).filter(
-          (pr) => outputByRole.has(pr) || auxDigestByRole.has(pr)
-        );
-        const appendix =
-          predChain.length > 0
-            ? `\n\n### 前置成员结论（编组通信拓扑）\n${predChain
-                .map((pr) => {
-                  const o = outputByRole.get(pr);
-                  if (o) {
-                    // Tier1+2：上游结论从 600 字放开到 1500，并附结构化关键驱动/风险，下游分析师不再"管中窥豹"。
-                    const struct = formatStructuredFields(o.structured, { maxArr: 5 });
-                    const structLine = struct.length > 0 ? `\n  ${struct.join("\n  ")}` : "";
-                    return `- **${pr}**（信号）：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 1500)}${structLine}`;
-                  }
-                  const md = auxDigestByRole.get(pr);
-                  if (md) return `- **${pr}**（辅助）：\n  ${md.slice(0, 1200)}`;
-                  return "";
-                })
-                .filter((line) => line.length > 0)
-                .join("\n")}\n`
-            : "";
-        const ctx = `${context}${appendix}`;
-        for (const pr of predChain) {
+      /**
+       * 先为每个 slot 拼好「前置成员结论 appendix」上下文并记录拓扑 handoff——这两件事
+       * A2A 路径与进程内路径完全一致，故抽到派发之前统一做（保留 research_team_interaction
+       * 的画布连线）。
+       */
+      const waveSpecs = await Promise.all(
+        wave.map(async (slot) => {
+          const predChain = (predsByTo.get(slot.role) ?? []).filter(
+            (pr) => outputByRole.has(pr) || auxDigestByRole.has(pr)
+          );
+          const appendix =
+            predChain.length > 0
+              ? `\n\n### 前置成员结论（编组通信拓扑）\n${predChain
+                  .map((pr) => {
+                    const o = outputByRole.get(pr);
+                    if (o) {
+                      // Tier1+2：上游结论从 600 字放开到 1500，并附结构化关键驱动/风险，下游分析师不再"管中窥豹"。
+                      const struct = formatStructuredFields(o.structured, { maxArr: 5 });
+                      const structLine = struct.length > 0 ? `\n  ${struct.join("\n  ")}` : "";
+                      return `- **${pr}**（信号）：${o.signal}（置信度 ${(o.confidence * 100).toFixed(0)}%）\n  ${String(o.reasoning).slice(0, 1500)}${structLine}`;
+                    }
+                    const md = auxDigestByRole.get(pr);
+                    if (md) return `- **${pr}**（辅助）：\n  ${md.slice(0, 1200)}`;
+                    return "";
+                  })
+                  .filter((line) => line.length > 0)
+                  .join("\n")}\n`
+              : "";
+          const ctx = `${context}${appendix}`;
+          for (const pr of predChain) {
+            await logResearchTeamInteraction({
+              workflowRunId,
+              fromRole: pr,
+              toRole: slot.role,
+              kind: "llm_message",
+              contentText: `[topology handoff] ${pr} → ${slot.role}：将前置结论文本传入本轮推理上下文`,
+              payloadJson: { topology: true, ticker },
+            });
+          }
+          const slotIdx = waveSlots.findIndex((s) => s.role === slot.role);
+          const preInstanceId = slotIdx >= 0 ? instanceBySlotIndex[slotIdx] : undefined;
+          return { slot, ctx, preInstanceId };
+        })
+      );
+
+      const reactDepth = pickAnalystReactDepth({ pipelineKind, expectJsonSignal: true });
+
+      /**
+       * TeamSlotExecutor 统一 wave 派发（A2A / inprocess 仅 transport 不同）。
+       */
+      const dispatchSpecs = buildTeamSlotDispatchSpecs({
+        workflowRunId,
+        ticker,
+        scope,
+        reactDepth,
+        waveSpecs: waveSpecs.map((ws) => ({
+          slot: ws.slot,
+          ctx: ws.ctx,
+          ...(ws.preInstanceId !== undefined ? { preInstanceId: ws.preInstanceId } : {}),
+          groupConstraintHint: buildGroupRoleConstraintHint({
+            groupId: null,
+            role: ws.slot.role,
+            groupDescription,
+          }),
+        })),
+      });
+      const dispatchResults = await teamSlotExecutor.dispatchWave(dispatchSpecs);
+      const waveResults = mapDispatchResultsToWaveResults(dispatchSpecs, dispatchResults);
+
+      for (let wi = 0; wi < wave.length; wi++) {
+        const slot = wave[wi] as SlotRow;
+        const idx = waveSlots.findIndex((s) => s.role === slot.role);
+        const instanceId = idx >= 0 ? instanceBySlotIndex[idx] : undefined;
+        const result = waveResults[wi];
+        if (!result) continue;
+        if (result.status === "fulfilled" && result.value.kind === "analyst") {
+          const { agentInstanceId: reactInstId, ...signal } = result.value.payload;
+          outputByRole.set(slot.role, signal);
+          rawSignals.push(signal);
+          const persistInstanceId = reactInstId ?? instanceId;
+          persistSignals.push({
+            signal,
+            ...(persistInstanceId !== undefined ? { agentInstanceId: persistInstanceId } : {}),
+          });
+          // 解析交接信封（thesis/metrics/data_refs/handoffs…）落 payloadJson.handoff，供下游程序化消费。
+          const analystHandoff =
+            parseHandoffEnvelope(signal.structured ?? null) ??
+            parseHandoffEnvelope(
+              typeof (signal.dataSnapshot as Record<string, unknown> | undefined)?.rawResponse ===
+                "string"
+                ? ((signal.dataSnapshot as Record<string, unknown>).rawResponse as string)
+                : null
+            );
           await logResearchTeamInteraction({
             workflowRunId,
-            fromRole: pr,
-            toRole: slot.role,
+            fromRole: slot.role,
+            toRole: "orchestrator",
             kind: "llm_message",
-            contentText: `[topology handoff] ${pr} → ${slot.role}：将前置结论文本传入本轮推理上下文`,
-            payloadJson: { topology: true, ticker },
+            contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 3500)}`,
+            payloadJson: {
+              phase: "analyst_report",
+              ticker,
+              ...(analystHandoff ? { handoff: analystHandoff } : {}),
+            },
           });
-        }
-        const slotIdx = waveSlots.findIndex((s) => s.role === slot.role);
-        const preInstanceId = slotIdx >= 0 ? instanceBySlotIndex[slotIdx] : undefined;
-        return { slot, ctx, preInstanceId };
-      })
-    );
-
-    const reactDepth = pickAnalystReactDepth({ pipelineKind, expectJsonSignal: true });
-
-    /**
-     * TeamSlotExecutor 统一 wave 派发（A2A / inprocess 仅 transport 不同）。
-     */
-    const dispatchSpecs = buildTeamSlotDispatchSpecs({
-      workflowRunId,
-      ticker,
-      scope,
-      reactDepth,
-      waveSpecs: waveSpecs.map((ws) => ({
-        slot: ws.slot,
-        ctx: ws.ctx,
-        ...(ws.preInstanceId !== undefined ? { preInstanceId: ws.preInstanceId } : {}),
-        groupConstraintHint: buildGroupRoleConstraintHint({
-          groupId: null,
-          role: ws.slot.role,
-          groupDescription,
-        }),
-      })),
-    });
-    const dispatchResults = await teamSlotExecutor.dispatchWave(dispatchSpecs);
-    const waveResults = mapDispatchResultsToWaveResults(dispatchSpecs, dispatchResults);
-
-    for (let wi = 0; wi < wave.length; wi++) {
-      const slot = wave[wi] as SlotRow;
-      const idx = waveSlots.findIndex((s) => s.role === slot.role);
-      const instanceId = idx >= 0 ? instanceBySlotIndex[idx] : undefined;
-      const result = waveResults[wi];
-      if (!result) continue;
-      if (result.status === "fulfilled" && result.value.kind === "analyst") {
-        const { agentInstanceId: reactInstId, ...signal } = result.value.payload;
-        outputByRole.set(slot.role, signal);
-        rawSignals.push(signal);
-        const persistInstanceId = reactInstId ?? instanceId;
-        persistSignals.push({
-          signal,
-          ...(persistInstanceId !== undefined ? { agentInstanceId: persistInstanceId } : {}),
-        });
-        // 解析交接信封（thesis/metrics/data_refs/handoffs…）落 payloadJson.handoff，供下游程序化消费。
-        const analystHandoff =
-          parseHandoffEnvelope(signal.structured ?? null) ??
-          parseHandoffEnvelope(
-            typeof (signal.dataSnapshot as Record<string, unknown> | undefined)?.rawResponse ===
-              "string"
-              ? ((signal.dataSnapshot as Record<string, unknown>).rawResponse as string)
-              : null
-          );
-        await logResearchTeamInteraction({
-          workflowRunId,
-          fromRole: slot.role,
-          toRole: "orchestrator",
-          kind: "llm_message",
-          contentText: `[${signal.signal}] ${(signal.confidence * 100).toFixed(0)}% — ${signal.reasoning.slice(0, 3500)}`,
-          payloadJson: { phase: "analyst_report", ticker, ...(analystHandoff ? { handoff: analystHandoff } : {}) },
-        });
-        // coding-agent 式即时点评：每个分析师一回来，Orchestrator 对用户说一句（toRole=user）。
-        {
-          const conf = Math.round(signal.confidence * 100);
-          const tone =
-            signal.signal === "buy" ? "偏多" : signal.signal === "sell" ? "偏空" : "中性";
-          const gist = signal.reasoning.trim().split("\n")[0]?.slice(0, 80) ?? "";
+          // coding-agent 式即时点评：每个分析师一回来，Orchestrator 对用户说一句（toRole=user）。
+          {
+            const conf = Math.round(signal.confidence * 100);
+            const tone =
+              signal.signal === "buy" ? "偏多" : signal.signal === "sell" ? "偏空" : "中性";
+            const gist = signal.reasoning.trim().split("\n")[0]?.slice(0, 80) ?? "";
+            await logResearchTeamInteraction({
+              workflowRunId,
+              fromRole: "orchestrator",
+              toRole: "user",
+              kind: "llm_message",
+              contentText: `🗒️ ${slot.role} 已返回：${signal.signal.toUpperCase()}（${conf}%，${tone}）${gist ? ` — ${gist}…` : ""}`,
+              payloadJson: { phase: "analyst_reaction", role: slot.role },
+            });
+          }
+        } else if (
+          result.status === "fulfilled" &&
+          result.value.kind === "missing_signal" &&
+          slotProducesSignal(slot)
+        ) {
+          /**
+           * Analyst slot 跑完但 LLM 输出无法解析为合法 JSON 信号。
+           * 不再塌缩 hold@0.4 —— 改为不向 fusion 提供假信号，但记录互动事件
+           * 让前端 / 用户能看到"X 分析师没产出有效信号"。下游 fusion 会因为
+           * 信号数变少而触发更高优先级的辩论 / 数据补充。
+           */
+          await logResearchTeamInteraction({
+            workflowRunId,
+            fromRole: slot.role,
+            toRole: "orchestrator",
+            kind: "llm_message",
+            contentText: `[signal_parse_failed] ${result.value.body.slice(0, 3500)}`,
+            payloadJson: { phase: "analyst_report", ticker, missingSignal: true },
+          });
           await logResearchTeamInteraction({
             workflowRunId,
             fromRole: "orchestrator",
             toRole: "user",
             kind: "llm_message",
-            contentText: `🗒️ ${slot.role} 已返回：${signal.signal.toUpperCase()}（${conf}%，${tone}）${gist ? ` — ${gist}…` : ""}`,
-            payloadJson: { phase: "analyst_reaction", role: slot.role },
+            contentText: `⚠️ ${slot.role} 本轮未给出有效信号，融合时我会降低它的权重。`,
+            payloadJson: { phase: "analyst_reaction", role: slot.role, missingSignal: true },
+          });
+        } else if (result.status === "rejected" && slotProducesSignal(slot)) {
+          /**
+           * Slot 整体抛错（异常路径）：保留 fallback 信号但 confidence=0，
+           * 让 fusion 加权时这个信号无投票力，同时在 reasoning 里记录原因。
+           * 不再使用 0.2 这种"看似有效但实际只是兜底"的置信度。
+           */
+          const fallback: RawAnalystSignal = {
+            definitionId: slot.definitionId,
+            analystRole: slot.role,
+            ticker,
+            signal: "hold",
+            confidence: 0,
+            reasoning: `[slot_runtime_error] Analyst ${slot.role} failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason).slice(0, 400)}`,
+          };
+          outputByRole.set(slot.role, fallback);
+          rawSignals.push(fallback);
+          persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
+          await logResearchTeamInteraction({
+            workflowRunId,
+            fromRole: slot.role,
+            toRole: "orchestrator",
+            kind: "llm_message",
+            contentText: `[slot_runtime_error] ${fallback.reasoning.slice(0, 3500)}`,
+            payloadJson: { phase: "analyst_report", ticker, slotError: true },
+          });
+          await logResearchTeamInteraction({
+            workflowRunId,
+            fromRole: "orchestrator",
+            toRole: "user",
+            kind: "llm_message",
+            contentText: `⚠️ ${slot.role} 执行出错，本轮不计入。`,
+            payloadJson: { phase: "analyst_reaction", role: slot.role, slotError: true },
           });
         }
-      } else if (
-        result.status === "fulfilled" &&
-        result.value.kind === "missing_signal" &&
-        slotProducesSignal(slot)
-      ) {
-        /**
-         * Analyst slot 跑完但 LLM 输出无法解析为合法 JSON 信号。
-         * 不再塌缩 hold@0.4 —— 改为不向 fusion 提供假信号，但记录互动事件
-         * 让前端 / 用户能看到"X 分析师没产出有效信号"。下游 fusion 会因为
-         * 信号数变少而触发更高优先级的辩论 / 数据补充。
-         */
-        await logResearchTeamInteraction({
-          workflowRunId,
-          fromRole: slot.role,
-          toRole: "orchestrator",
-          kind: "llm_message",
-          contentText: `[signal_parse_failed] ${result.value.body.slice(0, 3500)}`,
-          payloadJson: { phase: "analyst_report", ticker, missingSignal: true },
-        });
-        await logResearchTeamInteraction({
-          workflowRunId,
-          fromRole: "orchestrator",
-          toRole: "user",
-          kind: "llm_message",
-          contentText: `⚠️ ${slot.role} 本轮未给出有效信号，融合时我会降低它的权重。`,
-          payloadJson: { phase: "analyst_reaction", role: slot.role, missingSignal: true },
-        });
-      } else if (result.status === "rejected" && slotProducesSignal(slot)) {
-        /**
-         * Slot 整体抛错（异常路径）：保留 fallback 信号但 confidence=0，
-         * 让 fusion 加权时这个信号无投票力，同时在 reasoning 里记录原因。
-         * 不再使用 0.2 这种"看似有效但实际只是兜底"的置信度。
-         */
-        const fallback: RawAnalystSignal = {
-          definitionId: slot.definitionId,
-          analystRole: slot.role,
-          ticker,
-          signal: "hold",
-          confidence: 0,
-          reasoning: `[slot_runtime_error] Analyst ${slot.role} failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason).slice(0, 400)}`,
-        };
-        outputByRole.set(slot.role, fallback);
-        rawSignals.push(fallback);
-        persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
-        await logResearchTeamInteraction({
-          workflowRunId,
-          fromRole: slot.role,
-          toRole: "orchestrator",
-          kind: "llm_message",
-          contentText: `[slot_runtime_error] ${fallback.reasoning.slice(0, 3500)}`,
-          payloadJson: { phase: "analyst_report", ticker, slotError: true },
-        });
-        await logResearchTeamInteraction({
-          workflowRunId,
-          fromRole: "orchestrator",
-          toRole: "user",
-          kind: "llm_message",
-          contentText: `⚠️ ${slot.role} 执行出错，本轮不计入。`,
-          payloadJson: { phase: "analyst_reaction", role: slot.role, slotError: true },
-        });
-      }
 
-      if (instanceId) {
-        await db
-          .update(agentInstance)
-          .set({ status: "stopped", endedAt: new Date().toISOString() })
-          .where(eq(agentInstance.id, instanceId));
+        if (instanceId) {
+          await db
+            .update(agentInstance)
+            .set({ status: "stopped", endedAt: new Date().toISOString() })
+            .where(eq(agentInstance.id, instanceId));
+        }
       }
     }
-  }
   } finally {
     // 团队跑完 / 中途 HITL pause throw / 异常——都要停掉临时 analyst runtime（解订阅）。
     if (teamSlotScope) await teamSlotScope.stopAll();
@@ -955,10 +957,15 @@ async function runAnalystTeamCore(params: {
 
   /** 融合顺序与 slots 声明顺序一致（便于对照 UI） */
   const orderKey = new Map(slots.map((s, i) => [s.role, i] as const));
-  rawSignals.sort((a, b) => (orderKey.get(a.analystRole as AgentRole) ?? 0) - (orderKey.get(b.analystRole as AgentRole) ?? 0));
+  rawSignals.sort(
+    (a, b) =>
+      (orderKey.get(a.analystRole as AgentRole) ?? 0) -
+      (orderKey.get(b.analystRole as AgentRole) ?? 0)
+  );
   persistSignals.sort(
     (a, b) =>
-      (orderKey.get(a.signal.analystRole as AgentRole) ?? 0) - (orderKey.get(b.signal.analystRole as AgentRole) ?? 0)
+      (orderKey.get(a.signal.analystRole as AgentRole) ?? 0) -
+      (orderKey.get(b.signal.analystRole as AgentRole) ?? 0)
   );
 
   /**
@@ -1093,9 +1100,7 @@ async function runAnalystTeamCore(params: {
    */
   if (auxSlots.length > 0 && orchestratorDecision == null) {
     const attendedNow = fusionResult.signalBreakdown.map((s) => s.role);
-    const missingNow = analystSlots
-      .map((s) => s.role)
-      .filter((r) => !attendedNow.includes(r));
+    const missingNow = analystSlots.map((s) => s.role).filter((r) => !attendedNow.includes(r));
 
     if (attendedNow.length === 0) {
       orchestratorDecision = {
@@ -1127,10 +1132,7 @@ async function runAnalystTeamCore(params: {
           },
         },
       });
-    } else if (
-      fusionResult.fusedSignal === "hold" &&
-      fusionResult.fusedConfidence < 0.45
-    ) {
+    } else if (fusionResult.fusedSignal === "hold" && fusionResult.fusedConfidence < 0.45) {
       orchestratorDecision = await summarizeTeamDecision({
         workflowRunId,
         ticker,
@@ -1189,7 +1191,7 @@ async function runAnalystTeamCore(params: {
           instanceId: auxInstanceByRole.get(s.role) as string,
           definitionId: s.definitionId,
           role: s.role,
-        })),
+        }))
       );
     }
     const auxReactDepth = pickAnalystReactDepth({ pipelineKind, expectJsonSignal: false });
@@ -1266,6 +1268,8 @@ async function runAnalystTeamCore(params: {
   const debateDecision = decideShouldDebate({
     fusedConfidence: fusionResult.fusedConfidence,
     signalBreakdownCount: fusionResult.signalBreakdown.length,
+    directionalSignalCount: fusionResult.signalBreakdown.filter((item) => item.signal !== "hold")
+      .length,
     orchestratorDecision,
     confidenceThreshold: debateConfig.confidenceThreshold,
   });
@@ -1433,14 +1437,18 @@ function buildTeamReport(
     `## ${ticker} 分析师团队研究报告`,
     ``,
     `**综合结论**：${signalEmoji[fusedSignal]} **${fusedSignal.toUpperCase()}**（置信度：${(fusedConfidence * 100).toFixed(0)}%）`,
-    fusedConfidence < 0.55 ? `⚠️ 置信度不足，建议触发辩论协议（SDP）` : `✅ 置信度充分，可进入风控审核`,
+    fusedConfidence < 0.55
+      ? `⚠️ 置信度不足，建议触发辩论协议（SDP）`
+      : `✅ 置信度充分，可进入风控审核`,
     ``,
     `### 各分析师信号`,
   ];
 
   for (const s of breakdown) {
     const name = roleNames[s.role] ?? s.role;
-    lines.push(`- **${name}**：${signalEmoji[s.signal]} ${s.signal.toUpperCase()}（${(s.confidence * 100).toFixed(0)}%）`);
+    lines.push(
+      `- **${name}**：${signalEmoji[s.signal]} ${s.signal.toUpperCase()}（${(s.confidence * 100).toFixed(0)}%）`
+    );
     // Tier1：论据放开到 1000 字（原 200 字会丢掉大量关键信息）。
     lines.push(`  > ${s.reasoning.slice(0, 1000)}`);
     // Tier2：渲染结构化字段（关键驱动/关键风险/催化剂/入场·止损…），不再丢弃。

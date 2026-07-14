@@ -66,6 +66,106 @@ export interface MarketNewsBriefPayload {
 
 export type WorkflowMode = "research" | "backtest" | "simulation" | "live";
 
+export type RecommendationSide = "long" | "short" | "neutral";
+export type RecommendationStatus = "draft" | "active" | "closed" | "expired" | "invalidated";
+
+export interface RecommendationOutcomeRecord {
+  id: string;
+  recommendationId: string;
+  horizonDays: number;
+  entryPrice: number | null;
+  exitPrice: number | null;
+  exitReason: string | null;
+  returnPct: number | null;
+  benchmarkReturnPct: number | null;
+  excessReturnPct: number | null;
+  maxFavorableExcursionPct: number | null;
+  maxAdverseExcursionPct: number | null;
+  stopLossTriggered: boolean | null;
+  takeProfitTriggered: boolean | null;
+  ambiguousBar: boolean;
+  barsObserved: number;
+  evaluationError: string | null;
+  outcome: "pending" | "win" | "loss" | "flat" | "invalid";
+  evaluatedAt: string | null;
+}
+
+export interface RecommendationRecord {
+  id: string;
+  workflowRunId: string;
+  projectId: string;
+  scenarioKey: string;
+  symbol: string;
+  market: string;
+  side: RecommendationSide;
+  horizonDays: number;
+  confidence: number;
+  score: number | null;
+  entryLow: number | null;
+  entryHigh: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  positionSizePct: number | null;
+  riskRewardRatio: number | null;
+  rationale: string;
+  evidenceJson: unknown[];
+  invalidationJson: unknown[];
+  watchConditionsJson: unknown[];
+  benchmarkSymbol: string | null;
+  status: RecommendationStatus;
+  expiresAt: string | null;
+  dataAsof: string | null;
+  asof: string;
+  outcomes: RecommendationOutcomeRecord[];
+  outcome: RecommendationOutcomeRecord | null;
+}
+
+export interface RecommendationCalibrationBin {
+  minConfidence: number;
+  maxConfidence: number;
+  count: number;
+  avgConfidence: number | null;
+  accuracyPct: number | null;
+}
+
+export interface RecommendationHorizonStats {
+  horizonDays: number;
+  total: number;
+  mature: number;
+  pending: number;
+  directional: number;
+  wins: number;
+  losses: number;
+  flat: number;
+  invalid: number;
+  winRatePct: number | null;
+  avgReturnPct: number | null;
+  avgExcessReturnPct: number | null;
+  avgMaePct: number | null;
+  avgMfePct: number | null;
+  stopLossTriggerRatePct: number | null;
+  takeProfitTriggerRatePct: number | null;
+  brierScore: number | null;
+  ece: number | null;
+  calibrationBins: RecommendationCalibrationBin[];
+}
+
+export interface RecommendationStats {
+  total: number;
+  active: number;
+  mature: number;
+  pending: number;
+  directional: number;
+  wins: number;
+  losses: number;
+  winRatePct: number | null;
+  avgReturnPct: number | null;
+  avgExcessReturnPct: number | null;
+  stopLossTriggerRatePct: number | null;
+  takeProfitTriggerRatePct: number | null;
+  horizonStats: RecommendationHorizonStats[];
+}
+
 export type AgentLoopKind = "native" | "claude_cli" | "codex_cli";
 
 export interface LoopOptionsJson {
@@ -229,6 +329,7 @@ export interface ModelConfig {
   provider: "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock";
   model: string;
   apiKey: string;
+  apiKeyConfigured?: boolean;
   baseUrl?: string;
 }
 

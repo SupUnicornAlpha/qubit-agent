@@ -3,6 +3,8 @@ import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { alertEvent, communicationMessageLog, scheduledJob, scheduledJobRun } from "../../db/sqlite/schema";
 import { runAutoExecution, type ScheduledExecutionPayload } from "../reia/auto-execution";
+import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
+import type { BrokerProvider } from "../../types/broker";
 import { createAndDispatchWorkflow } from "./workflow-service";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 
@@ -25,6 +27,36 @@ interface TriggerGateConfig {
   eventLookbackMinutes: number;
   klineLookbackMinutes: number;
   klineKeywords: string[];
+}
+
+export type ScheduledJobKind = "workflow" | "position_reconciliation";
+
+export interface PositionReconciliationJobPayload {
+  kind: "position_reconciliation";
+  provider: BrokerProvider;
+  accountRef?: string;
+}
+
+export function parseScheduledJobKind(raw: unknown): ScheduledJobKind {
+  if (!raw || typeof raw !== "object") return "workflow";
+  return (raw as Record<string, unknown>)["kind"] === "position_reconciliation"
+    ? "position_reconciliation"
+    : "workflow";
+}
+
+export function parsePositionReconciliationJobPayload(
+  raw: unknown,
+): PositionReconciliationJobPayload | null {
+  if (parseScheduledJobKind(raw) !== "position_reconciliation") return null;
+  const payload = raw as Record<string, unknown>;
+  const provider = String(payload["provider"] ?? "");
+  if (!["futu", "ib", "ccxt", "alpaca"].includes(provider)) return null;
+  const accountRef = typeof payload["accountRef"] === "string" ? payload["accountRef"].trim() : "";
+  return {
+    kind: "position_reconciliation",
+    provider: provider as BrokerProvider,
+    ...(accountRef ? { accountRef } : {}),
+  };
 }
 
 function floorToMinute(input: Date): Date {
@@ -207,6 +239,9 @@ async function isTriggerMatched(
 async function evaluateJobGate(job: typeof scheduledJob.$inferSelect): Promise<{ allowed: boolean; reason: string }> {
   const now = new Date();
   const payload = (job.payloadJson ?? {}) as Record<string, unknown>;
+  if (parseScheduledJobKind(payload) === "position_reconciliation") {
+    return { allowed: true, reason: "position reconciliation schedule" };
+  }
   const tradingGate = parseTradingGate(payload);
   if (!isInTradingWindow(now, tradingGate)) {
     return { allowed: false, reason: "outside trading window" };
@@ -215,6 +250,70 @@ async function evaluateJobGate(job: typeof scheduledJob.$inferSelect): Promise<{
   const match = await isTriggerMatched(now, trigger, payload);
   if (!match.matched) return { allowed: false, reason: match.reason };
   return { allowed: true, reason: match.reason };
+}
+
+export async function executeScheduledJobAction(
+  job: typeof scheduledJob.$inferSelect,
+  triggerAtIso: string,
+  dependencies: {
+    scanPositions?: typeof scanPositionReconciliation;
+    dispatchWorkflow?: typeof createAndDispatchWorkflow;
+  } = {},
+): Promise<{
+  workflowRunId?: string;
+  intentOrderId?: string;
+  executionReportId?: string;
+}> {
+  const payload = (job.payloadJson ?? {}) as Record<string, unknown>;
+  if (parseScheduledJobKind(payload) === "position_reconciliation") {
+    const reconciliation = parsePositionReconciliationJobPayload(payload);
+    if (!reconciliation) {
+      throw new Error("position_reconciliation scheduled job requires a valid provider");
+    }
+    await (dependencies.scanPositions ?? scanPositionReconciliation)({
+      projectId: job.projectId,
+      provider: reconciliation.provider,
+      ...(reconciliation.accountRef ? { accountRef: reconciliation.accountRef } : {}),
+    });
+    return {};
+  }
+
+  const goal =
+    typeof payload["goal"] === "string" && payload["goal"].trim()
+      ? String(payload["goal"])
+      : `Scheduled job ${job.name} @ ${triggerAtIso}`;
+  const mode = (payload["mode"] as "research" | "backtest" | "simulation" | "live") ?? "research";
+  const loopKind = payload["loopKind"] as AgentLoopKind | undefined;
+  const loopOptionsJson = payload["loopOptionsJson"] as LoopOptionsJson | undefined;
+  const executionPath = payload["executionPath"] as
+    | import("../../types/execution-path").AgentExecutionPath
+    | undefined;
+  const created = await (dependencies.dispatchWorkflow ?? createAndDispatchWorkflow)({
+    projectId: job.projectId,
+    sessionId: job.sessionId ?? undefined,
+    source: "api",
+    goal,
+    mode,
+    taskType: "scheduled_workflow_start",
+    params: { scheduledJobId: job.id, triggerAt: triggerAtIso },
+    loopKind,
+    loopOptionsJson,
+    executionPath,
+  });
+
+  let intentOrderId: string | undefined;
+  let executionReportId: string | undefined;
+  const execPayload = parseScheduledPayload(job.payloadJson);
+  if (execPayload) {
+    const auto = await runAutoExecution({
+      workflowRunId: created.data.id,
+      executionMode: job.executionMode,
+      payload: execPayload,
+    });
+    intentOrderId = auto.intentOrderId;
+    executionReportId = auto.executionReportId;
+  }
+  return { workflowRunId: created.data.id, intentOrderId, executionReportId };
 }
 
 async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: string): Promise<void> {
@@ -230,51 +329,15 @@ async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: strin
   });
 
   try {
-    const payload = (job.payloadJson ?? {}) as Record<string, unknown>;
-    const goal =
-      typeof payload["goal"] === "string" && payload["goal"].trim()
-        ? String(payload["goal"])
-        : `Scheduled job ${job.name} @ ${triggerAtIso}`;
-    const mode = (payload["mode"] as "research" | "backtest" | "simulation" | "live") ?? "research";
-    const loopKind = payload["loopKind"] as AgentLoopKind | undefined;
-    const loopOptionsJson = payload["loopOptionsJson"] as LoopOptionsJson | undefined;
-    const executionPath = payload["executionPath"] as
-      | import("../../types/execution-path").AgentExecutionPath
-      | undefined;
-
-    const created = await createAndDispatchWorkflow({
-      projectId: job.projectId,
-      sessionId: job.sessionId ?? undefined,
-      source: "api",
-      goal,
-      mode,
-      taskType: "scheduled_workflow_start",
-      params: { scheduledJobId: job.id, triggerAt: triggerAtIso },
-      loopKind,
-      loopOptionsJson,
-      executionPath,
-    });
-
-    let intentOrderId: string | undefined;
-    let executionReportId: string | undefined;
-    const execPayload = parseScheduledPayload(job.payloadJson);
-    if (execPayload) {
-      const auto = await runAutoExecution({
-        workflowRunId: created.data.id,
-        executionMode: job.executionMode,
-        payload: execPayload,
-      });
-      intentOrderId = auto.intentOrderId;
-      executionReportId = auto.executionReportId;
-    }
+    const result = await executeScheduledJobAction(job, triggerAtIso);
 
     await db
       .update(scheduledJobRun)
       .set({
         status: "success",
-        workflowRunId: created.data.id,
-        intentOrderId,
-        executionReportId,
+        workflowRunId: result.workflowRunId,
+        intentOrderId: result.intentOrderId,
+        executionReportId: result.executionReportId,
         endedAt: new Date().toISOString(),
       })
       .where(eq(scheduledJobRun.id, runId));

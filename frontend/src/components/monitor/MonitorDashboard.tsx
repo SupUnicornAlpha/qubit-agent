@@ -77,6 +77,7 @@ import { MemoryTab } from "./MemoryTab";
 import { DiagnosticsTab } from "./DiagnosticsTab";
 import { StreamTab } from "./StreamTab";
 import { AlertsEvalTab, type AlertStatusFilter } from "./AlertsEvalTab";
+import { RecommendationsTab } from "./RecommendationsTab";
 
 export const MonitorDashboard: FC = () => {
   const agents = useAppStore((s) => s.agents);
@@ -709,6 +710,8 @@ export const MonitorDashboard: FC = () => {
       {scope === "memory" ? (
         <MemoryTab projectId={projectId} autoRefresh={autoRefresh} />
       ) : null}
+
+      {scope === "recommendations" ? <RecommendationsTab projectId={projectId} /> : null}
 
       {scope === "diagnostics" ? (
         <DiagnosticsTab

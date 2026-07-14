@@ -153,7 +153,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     key: "stock_pick",
     displayName: "股票推荐 · long 偏好（SP-L）",
     workflow: {
-      goal: "基于过去 30 天的 momentum + 估值 + 新闻情绪，从美股大盘里筛出 5 只 long 候选并给出推荐理由。",
+      goal: "基于过去 30 天的 momentum + 估值 + 新闻情绪，从美股大盘里筛出 5 只 long 候选；每只给出入场区间、止损、止盈、建议仓位与失效条件。",
       mode: "research",
       source: "api",
       skipDispatch: true,
@@ -163,7 +163,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     analystRun: {
       scope: { kind: "explore", theme: "美股大盘 momentum + 估值 + 新闻情绪 long 选股" },
       context:
-        "评测目标：从美股大盘筛 5 只 long 候选并给推荐理由，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选存在性后再分析。",
+        "评测目标：从美股大盘筛 5 只 long 候选，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选，再逐只调用 recommendation.record；至少 2 只必须填写 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[] 与 evidence[]。",
       hitlMode: "off",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,
@@ -172,7 +172,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
     key: "stock_pick_short",
     displayName: "股票推荐 · short 偏好（SP-S）",
     workflow: {
-      goal: "从美股大盘筛 3 只「相对高估值 + 业绩下滑或动量恶化」的 short 候选并给出做空理由；强调风险（轧空、回购）。",
+      goal: "从美股大盘筛 3 只「相对高估值 + 业绩下滑或动量恶化」的 short 候选；给出入场区间、止损、止盈、建议仓位与失效条件，并强调轧空和回购风险。",
       mode: "research",
       source: "api",
       skipDispatch: true,
@@ -185,7 +185,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         theme: "美股大盘做空候选：高估值 + 业绩或动量恶化 + 风险评估",
       },
       context:
-        "评测目标：筛 3 只 short 候选（高估值/业绩下滑/动量恶化），每只 analyst_signal 的 reasoning 必须显式提到「做空」/「short」/「估值过高」之类关键词，并讨论轧空、强制平仓、负 carry 等风险。",
+        "评测目标：筛 3 只 short 候选（高估值/业绩下滑/动量恶化），每只 reasoning 必须显式提到做空逻辑并讨论轧空、强制平仓、负 carry；逐只调用 recommendation.record，至少 2 只填写 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[] 与 evidence[]。",
       hitlMode: "off",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,

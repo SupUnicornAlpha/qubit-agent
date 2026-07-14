@@ -20,7 +20,7 @@ export const WORKFLOW_KIND_ORDER: WorkflowKind[] = [
 
 export const WORKFLOW_KIND_LABEL: Record<WorkflowKind, string> = {
   chat_session: "对话会话",
-  research_team: "研究团队",
+  research_team: "研究任务",
   live_trading: "实时交易",
   a2a_pool: "A2A 常驻池",
   backtest: "回测",
@@ -32,6 +32,9 @@ export function classifyWorkflow(row: Record<string, unknown>): WorkflowKind {
   const mode = String(row.mode ?? "");
   const source = String(row.source ?? "");
   const executionPath = String(row.executionPath ?? row.execution_path ?? "");
+  const researchScenarioId = String(
+    row.researchScenarioId ?? row.research_scenario_id ?? ""
+  ).trim();
 
   if (/Long-lived A2A|agent pool instances/i.test(goal)) return "a2a_pool";
   if (executionPath === "a2a" && /pool|A2A/i.test(goal)) return "a2a_pool";
@@ -40,7 +43,7 @@ export function classifyWorkflow(row: Record<string, unknown>): WorkflowKind {
   if (mode === "live") return "live_trading";
   if (mode === "simulation" && /实时交易|trader/i.test(goal)) return "live_trading";
 
-  if (goal.startsWith("研究团队")) {
+  if (researchScenarioId || goal.startsWith("研究团队")) {
     return "research_team";
   }
 

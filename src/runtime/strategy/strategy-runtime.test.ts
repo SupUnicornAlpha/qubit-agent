@@ -9,6 +9,8 @@ import { eq } from "drizzle-orm";
 import * as schema from "../../db/sqlite/schema";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { processExecutionTasks } from "../execution/execution-worker";
+import { paperEvaluationService } from "../effect-validation/paper-evaluation-service";
+import { strategyPromotionService } from "../effect-validation/strategy-promotion-service";
 import { evaluateSignalCode } from "./signal-evaluator";
 import {
   createStrategyRuntime,
@@ -95,7 +97,7 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     purpose: "both",
   });
 
-  return { wrid, svid, iid, scriptId };
+  return { pid, wrid, svid, iid, scriptId };
 }
 
 describe("strategy runtime", () => {
@@ -119,10 +121,13 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     const sqlite = new Database(":memory:");
     sqlite.exec("PRAGMA foreign_keys=ON;");
     const db = drizzle(sqlite, { schema });
-    const migrationsFolder = join(dirname(fileURLToPath(import.meta.url)), "../../db/sqlite/migrations");
+    const migrationsFolder = join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../db/sqlite/migrations"
+    );
     await migrate(db, { migrationsFolder });
 
-    const { scriptId, wrid, svid, iid } = await seedBase(db);
+    const { pid, scriptId, wrid, svid, iid } = await seedBase(db);
 
     const runtime = await createStrategyRuntime(
       {
@@ -138,6 +143,53 @@ if len(closes) >= 2 and closes[-1] > closes[-2]:
     );
 
     expect(runtime.status).toBe("stopped");
+    for (let day = 1; day <= 20; day++) {
+      await db.insert(schema.strategyPnlSnapshot).values({
+        id: randomUUID(),
+        strategyRuntimeId: runtime.id,
+        tradingDay: `2024-01-${String(day).padStart(2, "0")}`,
+        symbol: "TEST",
+        realizedPnlDaily: 10,
+        unrealizedPnlDaily: 0,
+        feeDaily: 1,
+        turnoverDaily: 100,
+        source: "test",
+      });
+    }
+    const paper = await paperEvaluationService.evaluate(runtime.id, db);
+    expect(paper.tradingDays).toBe(20);
+    expect(paper.netPnl).toBe(180);
+    expect(paper.pass).toBe(true);
+    const paperAgain = await paperEvaluationService.evaluate(runtime.id, db);
+    expect(paperAgain.id).toBe(paper.id);
+
+    await db
+      .update(schema.strategyRuntime)
+      .set({ executionMode: "live" })
+      .where(eq(schema.strategyRuntime.id, runtime.id));
+    await expect(startStrategyRuntime(runtime.id, db)).rejects.toThrow(
+      /live_promotion_gate_blocked/
+    );
+    for (const evalKind of ["backtest", "walk_forward"] as const) {
+      await db.insert(schema.strategyEvalRun).values({
+        id: randomUUID(),
+        workflowRunId: wrid,
+        projectId: pid,
+        strategyVersionId: paper.strategyVersionId,
+        evalKind,
+        metricsJson: {},
+        pass: true,
+      });
+    }
+    const approved = await strategyPromotionService.approveRuntime(runtime.id, "tester", db);
+    expect(approved.liveEligible).toBe(true);
+    await startStrategyRuntime(runtime.id, db);
+    const runningLive = await db
+      .select()
+      .from(schema.strategyRuntime)
+      .where(eq(schema.strategyRuntime.id, runtime.id))
+      .limit(1);
+    expect(runningLive[0]?.status).toBe("running");
     await startStrategyRuntime(runtime.id, db);
 
     const created = await createOrderIntentWithExecution(db, {

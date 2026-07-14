@@ -80,6 +80,10 @@ import type {
   SkillMarketInstallRecord,
   SkillMarketStatusDto,
   ToolCatalogEntry,
+  RecommendationRecord,
+  RecommendationSide,
+  RecommendationStats,
+  RecommendationStatus,
 } from "./types";
 import { normalizeFusionApiToTeamResult } from "../lib/fusionNormalize";
 
@@ -107,6 +111,56 @@ export async function runSystemBootstrap(input?: {
   return res.data;
 }
 
+export async function listRecommendations(
+  params: {
+    projectId?: string;
+    symbol?: string;
+    side?: RecommendationSide;
+    status?: RecommendationStatus;
+    limit?: number;
+  } = {}
+): Promise<RecommendationRecord[]> {
+  const query = new URLSearchParams();
+  if (params.projectId) query.set("project_id", params.projectId);
+  if (params.symbol) query.set("symbol", params.symbol);
+  if (params.side) query.set("side", params.side);
+  if (params.status) query.set("status", params.status);
+  if (params.limit != null) query.set("limit", String(params.limit));
+  const res = await httpGet<{ ok: boolean; data: RecommendationRecord[] }>(
+    `/api/v1/recommendations?${query.toString()}`
+  );
+  return res.data;
+}
+
+export async function getRecommendationStats(projectId?: string): Promise<RecommendationStats> {
+  const query = new URLSearchParams();
+  if (projectId) query.set("project_id", projectId);
+  const res = await httpGet<{ ok: boolean; data: RecommendationStats }>(
+    `/api/v1/recommendations/stats?${query.toString()}`
+  );
+  return res.data;
+}
+
+export async function runRecommendationOutcomes(
+  input: {
+    projectId?: string;
+    limit?: number;
+    force?: boolean;
+  } = {}
+): Promise<{
+  scanned: number;
+  evaluated: number;
+  notReady: number;
+  invalid: number;
+  failed: number;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { scanned: number; evaluated: number; notReady: number; invalid: number; failed: number };
+  }>("/api/v1/recommendations/outcomes/run", input);
+  return res.data;
+}
+
 export interface SystemPythonDepStatus {
   name: string;
   available: boolean;
@@ -121,7 +175,11 @@ export interface SystemPythonHealthReport {
   binKind: "system" | "venv" | "explicit";
   pythonVersion?: string;
   dependencies: SystemPythonDepStatus[];
-  errorCode?: "python_unavailable" | "python_exit_nonzero" | "python_deps_missing" | "probe_timeout";
+  errorCode?:
+    | "python_unavailable"
+    | "python_exit_nonzero"
+    | "python_deps_missing"
+    | "probe_timeout";
   hint?: string;
   checkedAt: string;
 }
@@ -238,9 +296,7 @@ export interface EnvRegistryPatchInput {
  * 并避免高频轮询；status 页面建议手动 refresh。
  */
 export async function getEnvironmentStatus(): Promise<EnvironmentStatus> {
-  const r = await httpGet<{ ok: boolean; data: EnvironmentStatus }>(
-    "/api/v1/environment/status"
-  );
+  const r = await httpGet<{ ok: boolean; data: EnvironmentStatus }>("/api/v1/environment/status");
   return r.data;
 }
 
@@ -283,9 +339,7 @@ export async function installEnvPackage(
   versionSpec?: string
 ): Promise<{ logId: string }> {
   const path =
-    kind === "python"
-      ? "/api/v1/environment/python/install"
-      : "/api/v1/environment/npm/install";
+    kind === "python" ? "/api/v1/environment/python/install" : "/api/v1/environment/npm/install";
   const body =
     kind === "python"
       ? { packageName, versionSpec: versionSpec ?? null }
@@ -333,15 +387,23 @@ export async function getKlines(params: {
   exchange?: string;
   timeframe?: string;
   limit?: number;
-}): Promise<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta; error?: KlinesErrorPayload }> {
+}): Promise<{
+  ok: boolean;
+  data: KlineBar[];
+  meta: KlinesResponseMeta;
+  error?: KlinesErrorPayload;
+}> {
   const q = new URLSearchParams();
   q.set("symbol", params.symbol);
   if (params.exchange) q.set("exchange", params.exchange);
   if (params.timeframe) q.set("timeframe", params.timeframe);
   if (params.limit !== undefined) q.set("limit", String(params.limit));
-  return httpGet<{ ok: boolean; data: KlineBar[]; meta: KlinesResponseMeta; error?: KlinesErrorPayload }>(
-    `/api/v1/market/klines?${q.toString()}`
-  );
+  return httpGet<{
+    ok: boolean;
+    data: KlineBar[];
+    meta: KlinesResponseMeta;
+    error?: KlinesErrorPayload;
+  }>(`/api/v1/market/klines?${q.toString()}`);
 }
 
 export async function getMarketNewsBrief(params: {
@@ -390,7 +452,11 @@ export async function reconnectWindSession(): Promise<{
   );
 }
 
-export async function resetWindSession(): Promise<{ ok: boolean; data?: { reset: boolean }; error?: string }> {
+export async function resetWindSession(): Promise<{
+  ok: boolean;
+  data?: { reset: boolean };
+  error?: string;
+}> {
   return httpPost<{ ok: boolean; data?: { reset: boolean }; error?: string }>(
     "/api/v1/market/wind/session/reset",
     {}
@@ -429,7 +495,10 @@ export interface MarketBacktestPostResponse {
 export async function postMarketBacktest(
   body: MarketBacktestPostBody
 ): Promise<MarketBacktestPostResponse> {
-  return httpPost<MarketBacktestPostResponse>("/api/v1/market/backtests", body as unknown as Record<string, unknown>);
+  return httpPost<MarketBacktestPostResponse>(
+    "/api/v1/market/backtests",
+    body as unknown as Record<string, unknown>
+  );
 }
 
 export async function getMarketBacktest(jobId: string): Promise<{
@@ -501,7 +570,9 @@ export async function createWorkspace(input: { name: string; owner: string }): P
   return httpPost("/api/v1/workspaces", input);
 }
 
-export async function listProjects(workspaceId: string): Promise<Array<{ id: string; name: string }>> {
+export async function listProjects(
+  workspaceId: string
+): Promise<Array<{ id: string; name: string }>> {
   const res = await httpGet<{ data: Array<{ id: string; name: string }> }>(
     `/api/v1/workspaces/${workspaceId}/projects`
   );
@@ -806,9 +877,7 @@ export interface HitlPendingRequest {
   responseJson?: Record<string, unknown> | null;
 }
 
-export async function listPendingWorkflowHitl(
-  workflowId: string
-): Promise<HitlPendingRequest[]> {
+export async function listPendingWorkflowHitl(workflowId: string): Promise<HitlPendingRequest[]> {
   const res = await httpGet<{
     data: HitlPendingRequest[];
   }>(`/api/v1/workflows/${workflowId}/hitl/pending`);
@@ -868,7 +937,9 @@ export async function deleteWorkflow(
   const url = options?.hard
     ? `/api/v1/workflows/${encodeURIComponent(workflowId)}?hard=true`
     : `/api/v1/workflows/${encodeURIComponent(workflowId)}`;
-  return httpDelete<{ ok: boolean; id: string; hard?: boolean; details?: Record<string, number> }>(url);
+  return httpDelete<{ ok: boolean; id: string; hard?: boolean; details?: Record<string, number> }>(
+    url
+  );
 }
 
 export async function listScheduledJobs(input?: {
@@ -896,7 +967,10 @@ export async function createScheduledJob(input: {
   executionMode?: "paper" | "live_with_confirm" | "live_direct";
   enabled?: boolean;
 }): Promise<ScheduledJobRecord> {
-  const res = await httpPost<{ data: ScheduledJobRecord }>("/api/v1/workflows/scheduled-jobs", input);
+  const res = await httpPost<{ data: ScheduledJobRecord }>(
+    "/api/v1/workflows/scheduled-jobs",
+    input
+  );
   return res.data;
 }
 
@@ -911,7 +985,10 @@ export async function patchScheduledJob(
     executionMode?: "paper" | "live_with_confirm" | "live_direct";
   }
 ): Promise<ScheduledJobRecord> {
-  const res = await httpPatch<{ data: ScheduledJobRecord }>(`/api/v1/workflows/scheduled-jobs/${id}`, input);
+  const res = await httpPatch<{ data: ScheduledJobRecord }>(
+    `/api/v1/workflows/scheduled-jobs/${id}`,
+    input
+  );
   return res.data;
 }
 
@@ -923,7 +1000,10 @@ export async function runScheduledJobNow(id: string): Promise<ScheduledJobRunRec
   return res.data;
 }
 
-export async function listScheduledJobRuns(id: string, limit = 50): Promise<ScheduledJobRunRecord[]> {
+export async function listScheduledJobRuns(
+  id: string,
+  limit = 50
+): Promise<ScheduledJobRunRecord[]> {
   const res = await httpGet<{ data: ScheduledJobRunRecord[] }>(
     `/api/v1/workflows/scheduled-jobs/${id}/runs?limit=${Math.max(1, Math.min(200, limit))}`
   );
@@ -987,17 +1067,34 @@ export async function postAgentPromptPreview(
 }
 
 export async function getAgentDefinitionPack(definitionId: string): Promise<AgentPackResponse> {
-  const res = await httpGet<{ data: AgentPackResponse }>(`/api/v1/agents/definitions/${definitionId}/pack`);
+  const res = await httpGet<{ data: AgentPackResponse }>(
+    `/api/v1/agents/definitions/${definitionId}/pack`
+  );
   return res.data;
 }
 
 export async function putAgentDefinitionPackFiles(
   definitionId: string,
   body: { agentMarkdown?: string; soulMarkdown: string; promptMarkdown: string }
-): Promise<{ packRoot: string; agentPath: string; soulPath: string; promptPath: string; hash: string }> {
+): Promise<{
+  packRoot: string;
+  agentPath: string;
+  soulPath: string;
+  promptPath: string;
+  hash: string;
+}> {
   const res = await httpPut<{
-    data: { packRoot: string; agentPath: string; soulPath: string; promptPath: string; hash: string };
-  }>(`/api/v1/agents/definitions/${definitionId}/pack/files`, body as unknown as Record<string, unknown>);
+    data: {
+      packRoot: string;
+      agentPath: string;
+      soulPath: string;
+      promptPath: string;
+      hash: string;
+    };
+  }>(
+    `/api/v1/agents/definitions/${definitionId}/pack/files`,
+    body as unknown as Record<string, unknown>
+  );
   return res.data;
 }
 
@@ -1007,7 +1104,10 @@ export async function putAgentDefinitionPackSessionSnapshot(
 ): Promise<{ packRoot: string; userPath: string; memoryPath: string; hash: string }> {
   const res = await httpPut<{
     data: { packRoot: string; userPath: string; memoryPath: string; hash: string };
-  }>(`/api/v1/agents/definitions/${definitionId}/pack/session-snapshot`, body as unknown as Record<string, unknown>);
+  }>(
+    `/api/v1/agents/definitions/${definitionId}/pack/session-snapshot`,
+    body as unknown as Record<string, unknown>
+  );
   return res.data;
 }
 
@@ -1033,7 +1133,9 @@ export async function postAgentDefinitionPackSyncFromFs(definitionId: string): P
   return res.data;
 }
 
-export async function getAgentDefinitionMemoryStats(definitionId: string): Promise<AgentMemoryStatsResponse> {
+export async function getAgentDefinitionMemoryStats(
+  definitionId: string
+): Promise<AgentMemoryStatsResponse> {
   const res = await httpGet<{ data: AgentMemoryStatsResponse }>(
     `/api/v1/agents/definitions/${definitionId}/memory-stats`
   );
@@ -1091,7 +1193,9 @@ export async function getAgentsConfig(): Promise<AgentsConfigResponse> {
 }
 
 export async function getAgentToolCatalog(): Promise<ToolCatalogEntry[]> {
-  const res = await httpGet<{ ok: boolean; data: ToolCatalogEntry[] }>("/api/v1/agents/tools/catalog");
+  const res = await httpGet<{ ok: boolean; data: ToolCatalogEntry[] }>(
+    "/api/v1/agents/tools/catalog"
+  );
   return res.data ?? [];
 }
 
@@ -1106,7 +1210,9 @@ export async function saveModelConfig(input: Partial<ModelConfig>): Promise<Mode
 }
 
 export async function getBuiltinConnectorConfig(): Promise<BuiltinConnectorConfig> {
-  const res = await httpGet<{ data: BuiltinConnectorConfig }>("/api/v1/agents/builtin-connector-config");
+  const res = await httpGet<{ data: BuiltinConnectorConfig }>(
+    "/api/v1/agents/builtin-connector-config"
+  );
   return res.data;
 }
 
@@ -1150,7 +1256,13 @@ export async function createChatSession(input: {
 export async function deleteChatSession(
   sessionId: string,
   options?: { hard?: boolean }
-): Promise<{ ok: boolean; id: string; hard?: boolean; details?: Record<string, number>; workflowRunIds?: string[] }> {
+): Promise<{
+  ok: boolean;
+  id: string;
+  hard?: boolean;
+  details?: Record<string, number>;
+  workflowRunIds?: string[];
+}> {
   const url = options?.hard
     ? `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}?hard=true`
     : `/api/v1/chat/sessions/${encodeURIComponent(sessionId)}`;
@@ -1164,7 +1276,9 @@ export async function deleteChatSession(
 }
 
 export async function getDefaultProjectSession(projectId: string): Promise<ChatSession> {
-  const res = await httpGet<{ data: ChatSession }>(`/api/v1/chat/projects/${projectId}/sessions/default`);
+  const res = await httpGet<{ data: ChatSession }>(
+    `/api/v1/chat/projects/${projectId}/sessions/default`
+  );
   return res.data;
 }
 
@@ -1242,7 +1356,9 @@ export async function updateStrategyScript(
   return res.data;
 }
 
-export async function deleteStrategyScript(scriptId: string): Promise<{ ok: boolean; deletedId: string }> {
+export async function deleteStrategyScript(
+  scriptId: string
+): Promise<{ ok: boolean; deletedId: string }> {
   return httpDelete<{ ok: boolean; deletedId: string }>(
     `/api/v1/chat/strategy-scripts/${encodeURIComponent(scriptId)}`
   );
@@ -1286,8 +1402,7 @@ export async function listProjectStrategyScripts(filter?: {
   const qs: string[] = [];
   if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
   if (filter?.purpose) qs.push(`purpose=${encodeURIComponent(filter.purpose)}`);
-  if (filter?.workflowRunId)
-    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  if (filter?.workflowRunId) qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
   if (filter?.sessionId) qs.push(`session_id=${encodeURIComponent(filter.sessionId)}`);
   const url = qs.length
     ? `/api/v1/quant/strategy-scripts?${qs.join("&")}`
@@ -1314,7 +1429,10 @@ export async function createSessionMessage(params: {
   workflowRunIds?: string[];
 }): Promise<ChatMessage> {
   const { sessionId, ...payload } = params;
-  const res = await httpPost<{ data: ChatMessage }>(`/api/v1/chat/sessions/${sessionId}/messages`, payload);
+  const res = await httpPost<{ data: ChatMessage }>(
+    `/api/v1/chat/sessions/${sessionId}/messages`,
+    payload
+  );
   return res.data;
 }
 
@@ -1801,12 +1919,7 @@ export type MonitorTimeseriesSource =
   | "mcp_call_log"
   | "skill_recall_log";
 
-export type MonitorTimeseriesMetric =
-  | "count"
-  | "errorCount"
-  | "tokens"
-  | "cost"
-  | "avgLatency";
+export type MonitorTimeseriesMetric = "count" | "errorCount" | "tokens" | "cost" | "avgLatency";
 
 export type MonitorTimeseriesInterval = "1m" | "5m" | "15m" | "1h" | "1d";
 
@@ -1866,20 +1979,24 @@ export async function scanStuckWorkflowAlerts(stuckMinutes = 120): Promise<{
   created: number;
   alertIds: string[];
 }> {
-  const res = await httpPost<{ ok: boolean; data: { scanned: number; created: number; alertIds: string[] } }>(
-    "/api/v1/monitor/alerts/scan-stuck",
-    { stuckMinutes }
-  );
+  const res = await httpPost<{
+    ok: boolean;
+    data: { scanned: number; created: number; alertIds: string[] };
+  }>("/api/v1/monitor/alerts/scan-stuck", { stuckMinutes });
   return res.data;
 }
 
 export async function getSessionOverview(sessionId: string): Promise<SessionOverview> {
-  const res = await httpGet<{ data: SessionOverview }>(`/api/v1/monitor/sessions/${sessionId}/overview`);
+  const res = await httpGet<{ data: SessionOverview }>(
+    `/api/v1/monitor/sessions/${sessionId}/overview`
+  );
   return res.data;
 }
 
 export async function getWorkflowTimeline(workflowId: string): Promise<WorkflowTimeline> {
-  const res = await httpGet<{ data: WorkflowTimeline }>(`/api/v1/monitor/workflows/${workflowId}/timeline`);
+  const res = await httpGet<{ data: WorkflowTimeline }>(
+    `/api/v1/monitor/workflows/${workflowId}/timeline`
+  );
   return res.data;
 }
 
@@ -1912,7 +2029,9 @@ export async function listMonitorWorkflows(params: {
 }
 
 export async function getWorkflowDetail(workflowId: string): Promise<WorkflowDetail> {
-  const res = await httpGet<{ data: WorkflowDetail }>(`/api/v1/monitor/workflows/${workflowId}/detail`);
+  const res = await httpGet<{ data: WorkflowDetail }>(
+    `/api/v1/monitor/workflows/${workflowId}/detail`
+  );
   return res.data;
 }
 
@@ -1940,7 +2059,9 @@ export async function getSessionA2AMessages(
   return res.data.messages;
 }
 
-export async function createWorkflowQuality(workflowId: string): Promise<WorkflowQualitySnapshotRecord> {
+export async function createWorkflowQuality(
+  workflowId: string
+): Promise<WorkflowQualitySnapshotRecord> {
   const res = await httpPost<{ ok: boolean; data: WorkflowQualitySnapshotRecord }>(
     `/api/v1/monitor/quality/workflows/${workflowId}/snapshot`,
     {}
@@ -1948,7 +2069,9 @@ export async function createWorkflowQuality(workflowId: string): Promise<Workflo
   return res.data;
 }
 
-export async function listWorkflowQuality(workflowId: string): Promise<WorkflowQualitySnapshotRecord[]> {
+export async function listWorkflowQuality(
+  workflowId: string
+): Promise<WorkflowQualitySnapshotRecord[]> {
   const res = await httpGet<{ ok: boolean; data: WorkflowQualitySnapshotRecord[] }>(
     `/api/v1/monitor/quality/workflows/${workflowId}/snapshots`
   );
@@ -2007,7 +2130,10 @@ export async function listAlerts(input?: {
 }
 
 export async function ackAlert(alertId: string): Promise<AlertEventRecord> {
-  const res = await httpPost<{ ok: boolean; data: AlertEventRecord }>(`/api/v1/monitor/alerts/${alertId}/ack`, {});
+  const res = await httpPost<{ ok: boolean; data: AlertEventRecord }>(
+    `/api/v1/monitor/alerts/${alertId}/ack`,
+    {}
+  );
   return res.data;
 }
 
@@ -2026,12 +2152,17 @@ export async function createEvalDataset(input: {
   sourceDesc?: string;
   metaJson?: Record<string, unknown>;
 }): Promise<EvalDatasetRecord> {
-  const res = await httpPost<{ ok: boolean; data: EvalDatasetRecord }>("/api/v1/monitor/eval/datasets", input);
+  const res = await httpPost<{ ok: boolean; data: EvalDatasetRecord }>(
+    "/api/v1/monitor/eval/datasets",
+    input
+  );
   return res.data;
 }
 
 export async function listEvalDatasets(): Promise<EvalDatasetRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: EvalDatasetRecord[] }>("/api/v1/monitor/eval/datasets");
+  const res = await httpGet<{ ok: boolean; data: EvalDatasetRecord[] }>(
+    "/api/v1/monitor/eval/datasets"
+  );
   return res.data;
 }
 
@@ -2058,7 +2189,9 @@ export async function runEval(input: {
 
 export async function listEvalRuns(datasetId?: string): Promise<EvalRunRecord[]> {
   const suffix = datasetId ? `?datasetId=${encodeURIComponent(datasetId)}` : "";
-  const res = await httpGet<{ ok: boolean; data: EvalRunRecord[] }>(`/api/v1/monitor/eval/runs${suffix}`);
+  const res = await httpGet<{ ok: boolean; data: EvalRunRecord[] }>(
+    `/api/v1/monitor/eval/runs${suffix}`
+  );
   return res.data;
 }
 
@@ -2066,9 +2199,10 @@ export async function getEvalRunDetail(runId: string): Promise<{
   run: EvalRunRecord;
   cases: EvalCaseResultRecord[];
 }> {
-  const res = await httpGet<{ ok: boolean; data: { run: EvalRunRecord; cases: EvalCaseResultRecord[] } }>(
-    `/api/v1/monitor/eval/runs/${runId}`
-  );
+  const res = await httpGet<{
+    ok: boolean;
+    data: { run: EvalRunRecord; cases: EvalCaseResultRecord[] };
+  }>(`/api/v1/monitor/eval/runs/${runId}`);
   return res.data;
 }
 
@@ -2130,7 +2264,12 @@ export class AnalystJobPollError extends Error {
   jobId: string;
   reason: "timeout" | "aborted" | "failed";
   elapsedMs?: number;
-  constructor(opts: { message: string; jobId: string; reason: "timeout" | "aborted" | "failed"; elapsedMs?: number }) {
+  constructor(opts: {
+    message: string;
+    jobId: string;
+    reason: "timeout" | "aborted" | "failed";
+    elapsedMs?: number;
+  }) {
     super(opts.message);
     this.name = "AnalystJobPollError";
     this.jobId = opts.jobId;
@@ -2287,14 +2426,18 @@ export async function getSignalFusion(workflowId: string): Promise<AnalystTeamRe
   return normalizeFusionApiToTeamResult(res.data);
 }
 
-export async function listDebateSessionsForWorkflow(workflowRunId: string): Promise<DebateSessionRecord[]> {
+export async function listDebateSessionsForWorkflow(
+  workflowRunId: string
+): Promise<DebateSessionRecord[]> {
   const res = await httpGet<{ ok: boolean; data: DebateSessionRecord[] }>(
     `/api/v1/debate/sessions/${encodeURIComponent(workflowRunId)}`
   );
   return Array.isArray(res.data) ? res.data : [];
 }
 
-export async function getAnalystTeamGraph(workflowRunId: string): Promise<AnalystTeamGraphPayload | null> {
+export async function getAnalystTeamGraph(
+  workflowRunId: string
+): Promise<AnalystTeamGraphPayload | null> {
   const res = await httpGet<{ ok: boolean; data?: AnalystTeamGraphPayload; error?: string }>(
     `/api/v1/analyst/workflow/${encodeURIComponent(workflowRunId)}/team-graph`
   );
@@ -2427,11 +2570,15 @@ export async function runScreener(params: {
 }
 
 export async function listScreenerRuns(workflowRunId: string): Promise<ScreenerRunRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: ScreenerRunRecord[] }>(`/api/v1/screener/runs/${workflowRunId}`);
+  const res = await httpGet<{ ok: boolean; data: ScreenerRunRecord[] }>(
+    `/api/v1/screener/runs/${workflowRunId}`
+  );
   return res.data;
 }
 
-export async function listScreenerCandidates(screenerRunId: string): Promise<ScreenerCandidateRecord[]> {
+export async function listScreenerCandidates(
+  screenerRunId: string
+): Promise<ScreenerCandidateRecord[]> {
   const res = await httpGet<{ ok: boolean; data: ScreenerCandidateRecord[] }>(
     `/api/v1/screener/candidates/${screenerRunId}`
   );
@@ -2450,26 +2597,34 @@ export async function initGenePool(input: {
   return res.data;
 }
 
-export async function evolveGenePool(projectId: string): Promise<{ generationId: string; generationNumber: number }> {
-  const res = await httpPost<{ ok: boolean; data: { generationId: string; generationNumber: number } }>(
-    "/api/v1/gene/evolve",
-    { projectId }
-  );
+export async function evolveGenePool(
+  projectId: string
+): Promise<{ generationId: string; generationNumber: number }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { generationId: string; generationNumber: number };
+  }>("/api/v1/gene/evolve", { projectId });
   return res.data;
 }
 
 export async function listGeneGenerations(projectId: string): Promise<GeneGenerationRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: GeneGenerationRecord[] }>(`/api/v1/gene/generations/${projectId}`);
+  const res = await httpGet<{ ok: boolean; data: GeneGenerationRecord[] }>(
+    `/api/v1/gene/generations/${projectId}`
+  );
   return res.data;
 }
 
 export async function listGenomes(generationId: string): Promise<StrategyGenomeRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: StrategyGenomeRecord[] }>(`/api/v1/gene/genomes/${generationId}`);
+  const res = await httpGet<{ ok: boolean; data: StrategyGenomeRecord[] }>(
+    `/api/v1/gene/genomes/${generationId}`
+  );
   return res.data;
 }
 
 export async function listGeneTrends(projectId: string): Promise<GeneTrendPoint[]> {
-  const res = await httpGet<{ ok: boolean; data: GeneTrendPoint[] }>(`/api/v1/gene/trends/${projectId}`);
+  const res = await httpGet<{ ok: boolean; data: GeneTrendPoint[] }>(
+    `/api/v1/gene/trends/${projectId}`
+  );
   return res.data;
 }
 
@@ -2515,7 +2670,9 @@ export async function executeIntent(input: {
 }
 
 export async function listIntentOrders(workflowRunId: string): Promise<IntentOrderRecord[]> {
-  const res = await httpGet<{ ok: boolean; data: IntentOrderRecord[] }>(`/api/v1/reia/intents/${workflowRunId}`);
+  const res = await httpGet<{ ok: boolean; data: IntentOrderRecord[] }>(
+    `/api/v1/reia/intents/${workflowRunId}`
+  );
   return res.data;
 }
 
@@ -2536,18 +2693,25 @@ export async function getIntentExecutionView(intentOrderId: string): Promise<{
 }
 
 export async function getExecutionSafetyConfig(): Promise<ExecutionSafetyConfig> {
-  const res = await httpGet<{ ok: boolean; data: ExecutionSafetyConfig }>("/api/v1/reia/safety/config");
+  const res = await httpGet<{ ok: boolean; data: ExecutionSafetyConfig }>(
+    "/api/v1/reia/safety/config"
+  );
   return res.data;
 }
 
 export async function saveExecutionSafetyConfig(
   input: Partial<ExecutionSafetyConfig>
 ): Promise<ExecutionSafetyConfig> {
-  const res = await httpPut<{ ok: boolean; data: ExecutionSafetyConfig }>("/api/v1/reia/safety/config", input);
+  const res = await httpPut<{ ok: boolean; data: ExecutionSafetyConfig }>(
+    "/api/v1/reia/safety/config",
+    input
+  );
   return res.data;
 }
 
-export async function requestExecutionConfirmation(intentOrderId: string): Promise<ExecutionSafetyCheckResult> {
+export async function requestExecutionConfirmation(
+  intentOrderId: string
+): Promise<ExecutionSafetyCheckResult> {
   const res = await httpPost<{ ok: boolean; data: ExecutionSafetyCheckResult }>(
     "/api/v1/reia/safety/request-confirm",
     { intentOrderId }
@@ -2599,7 +2763,9 @@ export async function executeIntentConfirmed(input: {
   return { gate: res.gate, data: res.data };
 }
 
-export async function listExecutionConfirmTickets(intentOrderId: string): Promise<ExecutionConfirmTicketRecord[]> {
+export async function listExecutionConfirmTickets(
+  intentOrderId: string
+): Promise<ExecutionConfirmTicketRecord[]> {
   const res = await httpGet<{ ok: boolean; data: ExecutionConfirmTicketRecord[] }>(
     `/api/v1/reia/safety/tickets/${intentOrderId}`
   );
@@ -2616,7 +2782,9 @@ export async function cleanupExecutionConfirmTickets(): Promise<{ cleaned: numbe
 
 export async function listBrokerAccounts(provider?: "futu" | "ib"): Promise<BrokerAccountRecord[]> {
   const suffix = provider ? `?provider=${provider}` : "";
-  const res = await httpGet<{ ok: boolean; data: BrokerAccountRecord[] }>(`/api/v1/reia/broker/accounts${suffix}`);
+  const res = await httpGet<{ ok: boolean; data: BrokerAccountRecord[] }>(
+    `/api/v1/reia/broker/accounts${suffix}`
+  );
   return res.data;
 }
 
@@ -2629,7 +2797,10 @@ export async function upsertBrokerAccount(input: {
   isDefault?: boolean;
   enabled?: boolean;
 }): Promise<BrokerAccountRecord> {
-  const res = await httpPost<{ ok: boolean; data: BrokerAccountRecord }>("/api/v1/reia/broker/accounts/upsert", input);
+  const res = await httpPost<{ ok: boolean; data: BrokerAccountRecord }>(
+    "/api/v1/reia/broker/accounts/upsert",
+    input
+  );
   return res.data;
 }
 
@@ -2654,7 +2825,10 @@ export async function checkBrokerHealth(input: {
   return res.data;
 }
 
-export async function listBrokerEvents(provider?: "futu" | "ib", limit = 100): Promise<BrokerOrderEventRecord[]> {
+export async function listBrokerEvents(
+  provider?: "futu" | "ib",
+  limit = 100
+): Promise<BrokerOrderEventRecord[]> {
   const query = new URLSearchParams();
   if (provider) query.set("provider", provider);
   query.set("limit", String(limit));
@@ -2694,11 +2868,13 @@ export async function listWorkflowCompensations(input?: {
   return res.data;
 }
 
-export async function processWorkflowCompensations(limit = 10): Promise<{ picked: number; success: number; failed: number }> {
-  const res = await httpPost<{ ok: boolean; data: { picked: number; success: number; failed: number } }>(
-    "/api/v1/workflows/compensation/process",
-    { limit }
-  );
+export async function processWorkflowCompensations(
+  limit = 10
+): Promise<{ picked: number; success: number; failed: number }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { picked: number; success: number; failed: number };
+  }>("/api/v1/workflows/compensation/process", { limit });
   return res.data;
 }
 
@@ -2709,7 +2885,9 @@ export async function listIntegrationCatalog(): Promise<IntegrationAdapterDescri
   return res.data;
 }
 
-export async function listIntegrationChannels(kind?: IntegrationKind): Promise<CommunicationChannelRecord[]> {
+export async function listIntegrationChannels(
+  kind?: IntegrationKind
+): Promise<CommunicationChannelRecord[]> {
   const suffix = kind ? `?kind=${kind}` : "";
   const res = await httpGet<{ ok: boolean; data: CommunicationChannelRecord[] }>(
     `/api/v1/integrations/channels${suffix}`
@@ -2945,7 +3123,9 @@ export function subscribeWorkflowEvents(params: {
 
 export async function listMcpServers(projectId?: string): Promise<McpServerConfigRecord[]> {
   const suffix = projectId ? `?projectId=${encodeURIComponent(projectId)}` : "";
-  const res = await httpGet<{ data: McpServerConfigRecord[] }>(`/api/v1/agents/mcp/servers${suffix}`);
+  const res = await httpGet<{ data: McpServerConfigRecord[] }>(
+    `/api/v1/agents/mcp/servers${suffix}`
+  );
   return res.data;
 }
 
@@ -2958,17 +3138,25 @@ export async function upsertMcpServer(input: {
   capabilitiesJson?: unknown[];
   enabled?: boolean;
 }): Promise<McpServerConfigRecord> {
-  const res = await httpPost<{ data: McpServerConfigRecord }>("/api/v1/agents/mcp/servers/upsert", input);
+  const res = await httpPost<{ data: McpServerConfigRecord }>(
+    "/api/v1/agents/mcp/servers/upsert",
+    input
+  );
   return res.data;
 }
 
-export async function listMcpBindings(projectId?: string, definitionId?: string): Promise<McpToolBindingRecord[]> {
+export async function listMcpBindings(
+  projectId?: string,
+  definitionId?: string
+): Promise<McpToolBindingRecord[]> {
   const params = new URLSearchParams();
   if (projectId) params.set("projectId", projectId);
   if (definitionId) params.set("definitionId", definitionId);
   const q = params.toString();
   const suffix = q ? `?${q}` : "";
-  const res = await httpGet<{ data: McpToolBindingRecord[] }>(`/api/v1/agents/mcp/bindings${suffix}`);
+  const res = await httpGet<{ data: McpToolBindingRecord[] }>(
+    `/api/v1/agents/mcp/bindings${suffix}`
+  );
   return res.data;
 }
 
@@ -2982,7 +3170,10 @@ export async function upsertMcpBinding(input: {
   retryPolicyJson?: Record<string, unknown>;
   rateLimitJson?: Record<string, unknown>;
 }): Promise<McpToolBindingRecord> {
-  const res = await httpPost<{ data: McpToolBindingRecord }>("/api/v1/agents/mcp/bindings/upsert", input);
+  const res = await httpPost<{ data: McpToolBindingRecord }>(
+    "/api/v1/agents/mcp/bindings/upsert",
+    input
+  );
   return res.data;
 }
 
@@ -3033,10 +3224,16 @@ export async function upsertMcpSource(input: {
   syncIntervalSec?: number;
 }): Promise<McpRegistrySourceRecord> {
   if (input.id) {
-    const res = await httpPatch<{ data: McpRegistrySourceRecord }>(`/api/v1/agents/mcp/sources/${input.id}`, input);
+    const res = await httpPatch<{ data: McpRegistrySourceRecord }>(
+      `/api/v1/agents/mcp/sources/${input.id}`,
+      input
+    );
     return res.data;
   }
-  const res = await httpPost<{ data: McpRegistrySourceRecord }>("/api/v1/agents/mcp/sources", input);
+  const res = await httpPost<{ data: McpRegistrySourceRecord }>(
+    "/api/v1/agents/mcp/sources",
+    input
+  );
   return res.data;
 }
 
@@ -3045,10 +3242,10 @@ export async function syncMcpSource(id: string): Promise<{
   syncedCount: number;
   usedFallback: boolean;
 }> {
-  const res = await httpPost<{ ok: boolean; data: { sourceId: string; syncedCount: number; usedFallback: boolean } }>(
-    `/api/v1/agents/mcp/sources/${id}/sync`,
-    {}
-  );
+  const res = await httpPost<{
+    ok: boolean;
+    data: { sourceId: string; syncedCount: number; usedFallback: boolean };
+  }>(`/api/v1/agents/mcp/sources/${id}/sync`, {});
   return res.data;
 }
 
@@ -3092,11 +3289,16 @@ export async function installMcpMarket(input: {
   toolName?: string;
   timeoutMs?: number;
 }): Promise<McpProjectInstallRecord> {
-  const res = await httpPost<{ data: McpProjectInstallRecord }>("/api/v1/agents/mcp/market/install", input);
+  const res = await httpPost<{ data: McpProjectInstallRecord }>(
+    "/api/v1/agents/mcp/market/install",
+    input
+  );
   return res.data;
 }
 
-export async function listMcpProjectInstalls(projectId: string): Promise<McpProjectInstallRecord[]> {
+export async function listMcpProjectInstalls(
+  projectId: string
+): Promise<McpProjectInstallRecord[]> {
   const res = await httpGet<{ data: McpProjectInstallRecord[] }>(
     `/api/v1/agents/mcp/market/installs?projectId=${encodeURIComponent(projectId)}`
   );
@@ -3113,11 +3315,14 @@ export async function refreshSkillMarketRegistry(input?: {
   provider?: "skillsmp" | "open";
   apiKey?: string;
 }): Promise<SkillMarketStatusDto> {
-  const res = await httpPost<{ data: SkillMarketStatusDto }>("/api/v1/agents/skills/market/refresh", {
-    baseUrl: input?.baseUrl?.trim() || undefined,
-    provider: input?.provider,
-    apiKey: input?.apiKey?.trim() || undefined,
-  });
+  const res = await httpPost<{ data: SkillMarketStatusDto }>(
+    "/api/v1/agents/skills/market/refresh",
+    {
+      baseUrl: input?.baseUrl?.trim() || undefined,
+      provider: input?.provider,
+      apiKey: input?.apiKey?.trim() || undefined,
+    }
+  );
   return res.data;
 }
 
@@ -3148,7 +3353,9 @@ export async function searchSkillMarket(input?: {
   };
 }
 
-export async function listSkillMarketInstalls(projectId: string): Promise<SkillMarketInstallRecord[]> {
+export async function listSkillMarketInstalls(
+  projectId: string
+): Promise<SkillMarketInstallRecord[]> {
   const res = await httpGet<{ data: SkillMarketInstallRecord[] }>(
     `/api/v1/agents/skills/installs?projectId=${encodeURIComponent(projectId)}`
   );
@@ -3159,7 +3366,10 @@ export async function installSkillFromMarket(input: {
   projectId: string;
   externalSkillId: string;
 }): Promise<SkillMarketInstallRecord> {
-  const res = await httpPost<{ data: SkillMarketInstallRecord }>("/api/v1/agents/skills/installs", input);
+  const res = await httpPost<{ data: SkillMarketInstallRecord }>(
+    "/api/v1/agents/skills/installs",
+    input
+  );
   return res.data;
 }
 
@@ -3180,7 +3390,10 @@ export async function installManualSkill(input: {
   return res.data;
 }
 
-export async function deleteSkillMarketInstall(projectId: string, installId: string): Promise<void> {
+export async function deleteSkillMarketInstall(
+  projectId: string,
+  installId: string
+): Promise<void> {
   await httpDelete<{ ok: boolean }>(
     `/api/v1/agents/skills/installs/${encodeURIComponent(installId)}?projectId=${encodeURIComponent(projectId)}`
   );
@@ -3278,7 +3491,10 @@ export async function installMcpCatalog(input: {
   toolName?: string;
   timeoutMs?: number;
 }): Promise<McpCatalogInstallRecord> {
-  const res = await httpPost<{ data: McpCatalogInstallRecord }>("/api/v1/agents/mcp/catalog/install", input);
+  const res = await httpPost<{ data: McpCatalogInstallRecord }>(
+    "/api/v1/agents/mcp/catalog/install",
+    input
+  );
   return res.data;
 }
 
@@ -3374,7 +3590,10 @@ export async function ensureTraderSession(input: {
   projectId: string;
   sessionId: string;
 }): Promise<TraderSessionContext> {
-  const res = await httpPost<{ ok: boolean; data: TraderSessionContext }>("/api/v1/trader/session", input);
+  const res = await httpPost<{ ok: boolean; data: TraderSessionContext }>(
+    "/api/v1/trader/session",
+    input
+  );
   return res.data;
 }
 
@@ -3411,6 +3630,39 @@ export async function placeTraderOrder(input: {
   return res.data;
 }
 
+export async function placeTraderBracketOrder(input: {
+  workflowRunId: string;
+  symbol: string;
+  exchange: string;
+  side: "buy" | "sell";
+  qty: number;
+  entryOrderType?: "market" | "limit";
+  takeProfitPrice: number;
+  stopLossPrice: number;
+  timeframe?: string;
+  executionMode?: "paper" | "live";
+}): Promise<{
+  bracketId: string;
+  ocoGroupId: string;
+  entry: { orderIntentId: string; riskOutcome: string; riskReason: string };
+  takeProfit: { orderIntentId: string; riskOutcome: string; riskReason: string };
+  stopLoss: { orderIntentId: string; riskOutcome: string; riskReason: string };
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      bracketId: string;
+      ocoGroupId: string;
+      entry: { orderIntentId: string; riskOutcome: string; riskReason: string };
+      takeProfit: { orderIntentId: string; riskOutcome: string; riskReason: string };
+      stopLoss: { orderIntentId: string; riskOutcome: string; riskReason: string };
+    };
+    error?: string;
+  }>("/api/v1/trader/orders/bracket", input);
+  if (!res.ok) throw new Error(res.error ?? "place_bracket_order_failed");
+  return res.data;
+}
+
 export async function cancelTraderOrder(input: {
   orderIntentId?: string;
   brokerOrderId?: string;
@@ -3422,6 +3674,216 @@ export async function cancelTraderOrder(input: {
     error?: string;
   }>("/api/v1/trader/orders/cancel", input);
   if (!res.ok) throw new Error(res.error ?? "cancel_failed");
+  return res.data;
+}
+
+export type PositionReconciliationReport = {
+  projectId: string;
+  provider: "futu" | "ib" | "ccxt";
+  accountRef: string | null;
+  asof: string;
+  summary: {
+    symbols: number;
+    matched: number;
+    mismatched: number;
+    matchRate: number;
+    absoluteNotionalDelta: number;
+  };
+  rows: Array<{
+    symbol: string;
+    internalQty: number;
+    brokerQty: number;
+    quantityDelta: number;
+    internalAvgPrice: number | null;
+    brokerAvgPrice: number | null;
+    averagePriceDeltaPct: number | null;
+    notionalDelta: number | null;
+    matched: boolean;
+  }>;
+};
+
+export type PositionRemediationPlan = {
+  planHash: string;
+  mode: "proposal_only";
+  autoExecuted: false;
+  actions: Array<{
+    symbol: string;
+    action: "buy" | "sell";
+    quantity: number;
+    estimatedNotional: number;
+    reason: string;
+    requiresApproval: true;
+  }>;
+};
+
+export async function getPositionReconciliation(input: {
+  projectId: string;
+  provider: "futu" | "ib" | "ccxt";
+  accountRef?: string;
+}): Promise<PositionReconciliationReport> {
+  const query = new URLSearchParams({ projectId: input.projectId, provider: input.provider });
+  if (input.accountRef) query.set("accountRef", input.accountRef);
+  const res = await httpGet<{ ok: boolean; data: PositionReconciliationReport }>(
+    `/api/v1/execution/reconciliation/positions?${query.toString()}`,
+  );
+  return res.data;
+}
+
+export async function scanPositionReconciliation(input: {
+  projectId: string;
+  provider: "futu" | "ib" | "ccxt";
+  accountRef?: string;
+}): Promise<{
+  report: PositionReconciliationReport;
+  remediation: PositionRemediationPlan;
+  alert: { id: string | null; created: boolean; resolved: boolean };
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      report: PositionReconciliationReport;
+      remediation: PositionRemediationPlan;
+      alert: { id: string | null; created: boolean; resolved: boolean };
+    };
+  }>("/api/v1/execution/reconciliation/positions/scan", input);
+  return res.data;
+}
+
+export async function remediatePositionReconciliation(input: {
+  projectId: string;
+  provider: "futu" | "ib" | "ccxt";
+  accountRef?: string;
+  expectedPlanHash: string;
+  strategyRuntimeId: string;
+}): Promise<{
+  planHash: string;
+  orders: Array<{
+    orderIntentId: string;
+    executionTaskId: string | null;
+    riskOutcome: string;
+    riskReason: string;
+  }>;
+  note?: string;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      planHash: string;
+      orders: Array<{
+        orderIntentId: string;
+        executionTaskId: string | null;
+        riskOutcome: string;
+        riskReason: string;
+      }>;
+      note?: string;
+    };
+    error?: string;
+  }>("/api/v1/execution/reconciliation/positions/remediate", {
+    ...input,
+    confirmation: "CONFIRM_RECONCILIATION",
+  });
+  if (!res.ok) throw new Error(res.error ?? "position_reconciliation_remediation_failed");
+  return res.data;
+}
+
+export type PortfolioAllocationPlan = {
+  asof: string;
+  config: {
+    capital: number;
+    grossLimit: number;
+    netLimit: number;
+    perPositionMax: number;
+    totalRiskBudget: number;
+    maxSectorGross: number;
+    defaultStopDistancePct: number;
+  };
+  rows: Array<{
+    symbol: string;
+    side: "long" | "short";
+    price: number;
+    targetWeight: number;
+    targetNotional: number;
+    targetQty: number;
+    currentQty: number;
+    rebalanceQty: number;
+    riskContributionPct: number;
+    sector: string;
+    beta: number;
+  }>;
+  exposures: {
+    longGross: number;
+    shortGross: number;
+    grossExposure: number;
+    netExposure: number;
+    estimatedLossAtStopsPct: number;
+    concentrationHhi: number;
+    portfolioBeta: number;
+    weightedAverageCorrelation: number | null;
+    sectorGross: Record<string, number>;
+    sectorNet: Record<string, number>;
+    style: Record<string, number>;
+    factor: Record<string, number>;
+  };
+  warnings: string[];
+  risk: null | {
+    asof: string;
+    status: "ready" | "insufficient_data";
+    metrics: null | {
+      observations: number;
+      historicalVar95Pct: number;
+      historicalVar99Pct: number;
+      expectedShortfall95Pct: number;
+      expectedShortfall99Pct: number;
+      annualizedVolatilityPct: number;
+      historicalMaxDrawdownPct: number;
+    };
+    correlationMatrix: Record<string, Record<string, number>>;
+    covarianceMatrix: Record<string, Record<string, number>>;
+    weightedAverageCorrelation: number | null;
+    stressTests: Array<{
+      scenario: string;
+      portfolioReturnPct: number;
+      lossAmount: number;
+      contributions: Record<string, number>;
+    }>;
+    lineage: Array<{
+      symbol: string;
+      exchange: string;
+      bars: number;
+      firstAsof: string | null;
+      lastAsof: string | null;
+      status: "used" | "insufficient" | "error";
+      error?: string;
+    }>;
+    warnings: string[];
+  };
+};
+
+export async function createPortfolioAllocationPlan(input: {
+  projectId: string;
+  capital: number;
+  grossLimit?: number;
+  netLimit?: number;
+  perPositionMax?: number;
+  totalRiskBudget?: number;
+  maxSectorGross?: number;
+}): Promise<PortfolioAllocationPlan> {
+  const res = await httpPost<{ ok: boolean; data: PortfolioAllocationPlan; error?: string }>(
+    "/api/v1/execution/portfolio/plan",
+    {
+      projectId: input.projectId,
+      config: {
+        capital: input.capital,
+        grossLimit: input.grossLimit,
+        netLimit: input.netLimit,
+        perPositionMax: input.perPositionMax,
+        totalRiskBudget: input.totalRiskBudget,
+        maxSectorGross: input.maxSectorGross,
+      },
+      includeHistoricalRisk: true,
+    },
+  );
+  if (!res.ok) throw new Error(res.error ?? "portfolio_allocation_failed");
   return res.data;
 }
 
@@ -3504,10 +3966,24 @@ export async function runTraderCommand(input: {
 export async function listStrategyRuntimeLogs(
   runtimeId: string,
   limit = 50
-): Promise<{ id: string; level: string; message: string; createdAt: string; payloadJson?: Record<string, unknown> }[]> {
+): Promise<
+  {
+    id: string;
+    level: string;
+    message: string;
+    createdAt: string;
+    payloadJson?: Record<string, unknown>;
+  }[]
+> {
   const res = await httpGet<{
     ok: boolean;
-    data: { id: string; level: string; message: string; createdAt: string; payloadJson?: Record<string, unknown> }[];
+    data: {
+      id: string;
+      level: string;
+      message: string;
+      createdAt: string;
+      payloadJson?: Record<string, unknown>;
+    }[];
   }>(`/api/v1/strategy-runtimes/${encodeURIComponent(runtimeId)}/logs?limit=${limit}`);
   return res.data;
 }
@@ -3579,6 +4055,47 @@ export async function stopStrategyRuntime(id: string): Promise<StrategyRuntimeRe
   return res.data;
 }
 
+export interface PaperEvaluationDto {
+  id: string;
+  strategyRuntimeId: string;
+  strategyVersionId: string;
+  tradingDays: number;
+  netPnl: number;
+  netReturn: number;
+  sharpe: number;
+  maxDrawdown: number;
+  turnover: number;
+  pass: boolean;
+}
+
+export interface StrategyPromotionAssessmentDto {
+  strategyVersionId: string;
+  backtestPassed: boolean;
+  walkForwardPassed: boolean;
+  paperPassed: boolean;
+  manuallyApproved: boolean;
+  liveEligible: boolean;
+}
+
+export async function evaluatePaperRuntime(id: string): Promise<PaperEvaluationDto> {
+  const res = await httpPost<{ ok: boolean; data: PaperEvaluationDto }>(
+    `/api/v1/strategy-runtimes/${encodeURIComponent(id)}/evaluate-paper`,
+    {}
+  );
+  return res.data;
+}
+
+export async function approveStrategyRuntimeForLive(
+  id: string,
+  reviewer = "user"
+): Promise<StrategyPromotionAssessmentDto> {
+  const res = await httpPost<{ ok: boolean; data: StrategyPromotionAssessmentDto }>(
+    `/api/v1/strategy-runtimes/${encodeURIComponent(id)}/approve-live`,
+    { reviewer }
+  );
+  return res.data;
+}
+
 export async function getStrategyRuntime(id: string): Promise<{
   runtime: StrategyRuntimeRecord;
   recentLogs: { id: string; level: string; message: string; createdAt: string }[];
@@ -3630,9 +4147,7 @@ export interface ProviderHealthRecord {
 
 export async function listProviders(kind?: ProviderKind): Promise<ProviderRecord[]> {
   const q = kind ? `?kind=${encodeURIComponent(kind)}` : "";
-  const res = await httpGet<{ ok: boolean; data: ProviderRecord[] }>(
-    `/api/v1/providers${q}`
-  );
+  const res = await httpGet<{ ok: boolean; data: ProviderRecord[] }>(`/api/v1/providers${q}`);
   return res.data;
 }
 
@@ -3662,13 +4177,7 @@ export type FactorStatus = "draft" | "active" | "archived";
  * 与后端 `factor_definition.created_by` / `rule_definition.created_by` 等列
  * 对齐，前端 `<LineageBadge>` 用此值决定徽章配色与图标。
  */
-export type LineageCreatedBy =
-  | "user"
-  | "agent"
-  | "discovery_promote"
-  | "clone"
-  | "system"
-  | string;
+export type LineageCreatedBy = "user" | "agent" | "discovery_promote" | "clone" | "system" | string;
 
 export interface FactorRecord {
   id: string;
@@ -3759,8 +4268,7 @@ export async function listFactors(filter?: {
   if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
   if (filter?.category) qs.push(`category=${encodeURIComponent(filter.category)}`);
   if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
-  if (filter?.workflowRunId)
-    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  if (filter?.workflowRunId) qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
   if (filter?.createdBy) qs.push(`created_by=${encodeURIComponent(filter.createdBy)}`);
   if (filter?.agentInstanceId)
     qs.push(`agent_instance_id=${encodeURIComponent(filter.agentInstanceId)}`);
@@ -3829,7 +4337,8 @@ export async function loadFactorValues(
   q?: { symbols?: string[]; startDate?: string; endDate?: string; latestN?: number }
 ): Promise<FactorValueRow[]> {
   const qs: string[] = [];
-  if (q?.symbols && q.symbols.length > 0) qs.push(`symbols=${encodeURIComponent(q.symbols.join(","))}`);
+  if (q?.symbols && q.symbols.length > 0)
+    qs.push(`symbols=${encodeURIComponent(q.symbols.join(","))}`);
   if (q?.startDate) qs.push(`startDate=${encodeURIComponent(q.startDate)}`);
   if (q?.endDate) qs.push(`endDate=${encodeURIComponent(q.endDate)}`);
   if (typeof q?.latestN === "number") qs.push(`latestN=${q.latestN}`);
@@ -3845,7 +4354,10 @@ export async function factorValuesStats(id: string): Promise<FactorValueStats> {
   return res.data;
 }
 
-export async function listFactorEvaluations(id: string, limit = 20): Promise<FactorEvaluationLogRow[]> {
+export async function listFactorEvaluations(
+  id: string,
+  limit = 20
+): Promise<FactorEvaluationLogRow[]> {
   const res = await httpGet<{ ok: boolean; data: FactorEvaluationLogRow[] }>(
     `/api/v1/factors/${id}/evaluations?limit=${limit}`
   );
@@ -3863,7 +4375,9 @@ export interface BacktestSignalSpecFactorScore {
   lang: "qlib_expr" | "python" | "sql" | "jsonlogic";
   reverse?: boolean;
 }
-export type BacktestSignalSpec = BacktestSignalSpecFactorScore | { kind: string; [k: string]: unknown };
+export type BacktestSignalSpec =
+  | BacktestSignalSpecFactorScore
+  | { kind: string; [k: string]: unknown };
 
 export interface BacktestRequestDto {
   strategyVersionId?: string;
@@ -3914,6 +4428,54 @@ export interface BacktestResultDto {
   error?: string;
 }
 
+export interface StrategyGateCheckDto {
+  key: "sample_size" | "net_sharpe" | "max_drawdown" | "turnover" | "annual_return";
+  label: string;
+  value: number;
+  threshold: number;
+  operator: ">=" | "<=" | ">";
+  pass: boolean;
+}
+
+export interface StrategyEvaluationDto {
+  id: string;
+  backtestRunId: string;
+  strategyVersionId: string | null;
+  evalKind: "backtest" | "paper" | "live" | "walk_forward" | "recommendation";
+  qualityScore: number | null;
+  pass: boolean | null;
+  metrics: Record<string, unknown>;
+  checks: StrategyGateCheckDto[];
+  createdAt: string;
+}
+
+export interface WalkForwardEvaluationDto {
+  id: string;
+  backtestRunId: string;
+  folds: Array<{
+    fold: number;
+    trainStart: string;
+    trainEnd: string;
+    testStart: string;
+    testEnd: string;
+    purgeDays: number;
+    metrics: BacktestMetricsDto;
+    sampleSize: number;
+    regime: string;
+    regimeSource: "market_benchmark" | "benchmark_equity" | "strategy_equity";
+  }>;
+  aggregate: {
+    foldCount: number;
+    compoundedOosReturn: number;
+    averageSharpe: number;
+    worstMaxDrawdown: number;
+    averageTurnover: number;
+    positiveFoldRate: number;
+    regimeStability: number;
+  };
+  pass: boolean;
+}
+
 export interface BacktestJobRecord {
   id: string;
   strategyVersionId: string;
@@ -3930,6 +4492,7 @@ export interface BacktestJobRecord {
   agentInstanceId: string | null;
   /** 当回测来自 composition 时记录上游 strategy_composition.id */
   compositionId: string | null;
+  evaluation: StrategyEvaluationDto | null;
 }
 
 export interface BacktestJobSubmitBody {
@@ -3972,6 +4535,17 @@ export async function getBacktestJob(id: string): Promise<BacktestJobRecord> {
 export async function runBacktestJobNow(body: BacktestJobSubmitBody): Promise<BacktestJobRecord> {
   const res = await httpPost<{ ok: boolean; data: BacktestJobRecord }>(
     `/api/v1/backtest-jobs/run-now`,
+    body
+  );
+  return res.data;
+}
+
+export async function runWalkForwardEvaluation(
+  backtestRunId: string,
+  body: { folds?: number; purgeDays?: number } = {}
+): Promise<WalkForwardEvaluationDto> {
+  const res = await httpPost<{ ok: boolean; data: WalkForwardEvaluationDto }>(
+    `/api/v1/backtest-jobs/${encodeURIComponent(backtestRunId)}/walk-forward`,
     body
   );
   return res.data;
@@ -4155,16 +4729,22 @@ export async function listStrategyVersions(
 
   const qs: string[] = [];
   if (filter.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
-  if (filter.workflowRunId)
-    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
-  const url = qs.length ? `/api/v1/strategies/versions?${qs.join("&")}` : `/api/v1/strategies/versions`;
+  if (filter.workflowRunId) qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  const url = qs.length
+    ? `/api/v1/strategies/versions?${qs.join("&")}`
+    : `/api/v1/strategies/versions`;
   const res = await httpGet<{ ok: boolean; data: StrategyVersionFlatRecord[] }>(url);
   return res.data;
 }
 
 // ── Strategy Composition ──
 
-export type StrategyKind = "factor_only" | "rule_only" | "factor_with_rule" | "ensemble" | "ml_model";
+export type StrategyKind =
+  | "factor_only"
+  | "rule_only"
+  | "factor_with_rule"
+  | "ensemble"
+  | "ml_model";
 export type WeightMethod = "equal" | "fixed" | "ic_weighted" | "ml_optimized";
 
 export interface StrategyCompositionRecord {
@@ -4296,12 +4876,7 @@ export async function registerRule(body: {
 // 前端 <LineageBadge> / <LineageTrail> 默认走单节点接口；列表场景（FactorTab 列表）
 // 用 batch + agents/workflows 一次拉好整批 metadata，避免 N+1。
 
-export type LineageKind =
-  | "factor"
-  | "rule"
-  | "composition"
-  | "discovery_job"
-  | "backtest_run";
+export type LineageKind = "factor" | "rule" | "composition" | "discovery_job" | "backtest_run";
 
 export interface LineageAgentSummary {
   instanceId: string;
@@ -4330,10 +4905,7 @@ export interface LineageNode {
   meta: Record<string, unknown>;
 }
 
-export async function getLineage(
-  kind: LineageKind,
-  id: string
-): Promise<LineageNode | null> {
+export async function getLineage(kind: LineageKind, id: string): Promise<LineageNode | null> {
   const url = `/api/v1/quant/lineage?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`;
   const res = await httpGet<{ ok: boolean; data?: LineageNode; error?: string }>(url);
   if (!res.ok) {
@@ -4343,21 +4915,16 @@ export async function getLineage(
   return res.data ?? null;
 }
 
-export async function getLineageBatch(
-  kind: LineageKind,
-  ids: string[]
-): Promise<LineageNode[]> {
+export async function getLineageBatch(kind: LineageKind, ids: string[]): Promise<LineageNode[]> {
   if (!ids.length) return [];
-  const res = await httpPost<{ ok: boolean; data: LineageNode[] }>(
-    `/api/v1/quant/lineage/batch`,
-    { kind, ids }
-  );
+  const res = await httpPost<{ ok: boolean; data: LineageNode[] }>(`/api/v1/quant/lineage/batch`, {
+    kind,
+    ids,
+  });
   return res.data ?? [];
 }
 
-export async function getLineageAgents(
-  ids: string[]
-): Promise<LineageAgentSummary[]> {
+export async function getLineageAgents(ids: string[]): Promise<LineageAgentSummary[]> {
   if (!ids.length) return [];
   const q = ids.map((s) => encodeURIComponent(s)).join(",");
   const res = await httpGet<{ ok: boolean; data: LineageAgentSummary[] }>(
@@ -4366,9 +4933,7 @@ export async function getLineageAgents(
   return res.data ?? [];
 }
 
-export async function getLineageWorkflows(
-  ids: string[]
-): Promise<LineageWorkflowSummary[]> {
+export async function getLineageWorkflows(ids: string[]): Promise<LineageWorkflowSummary[]> {
   if (!ids.length) return [];
   const q = ids.map((s) => encodeURIComponent(s)).join(",");
   const res = await httpGet<{ ok: boolean; data: LineageWorkflowSummary[] }>(
@@ -4533,9 +5098,7 @@ export async function listMemoryExperiences(
   return res.data;
 }
 
-export async function getMemoryExperienceDetail(
-  id: string
-): Promise<MemoryExperienceDetail> {
+export async function getMemoryExperienceDetail(id: string): Promise<MemoryExperienceDetail> {
   const res = await httpGet<{ ok: boolean; data: MemoryExperienceDetail }>(
     `/api/v1/monitor/memory/experiences/${encodeURIComponent(id)}`
   );
@@ -4554,9 +5117,7 @@ export async function getMemoryExperienceLinks(
   const res = await httpGet<{
     ok: boolean;
     data: MemoryExperienceLinksResponse;
-  }>(
-    `/api/v1/monitor/memory/experiences/${encodeURIComponent(id)}/links${qs ? `?${qs}` : ""}`
-  );
+  }>(`/api/v1/monitor/memory/experiences/${encodeURIComponent(id)}/links${qs ? `?${qs}` : ""}`);
   return res.data;
 }
 

@@ -610,6 +610,55 @@
       "when": 1813449600000,
       "tag": "0087_research_effect_validation",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1813536000000,
+      "tag": "0088_recommendation_decision_signal",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1813622400000,
+      "tag": "0089_order_intent_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1813708800000,
+      "tag": "0090_audit_hash_chain",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1813795200000,
+      "tag": "0091_conditional_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1813881600000,
+      "tag": "0092_bracket_trigger_direction",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1813968000000,
+      "tag": "0093_execution_mark_price",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1814054400000,
+      "tag": "0094_component_challenger",
+      "breakpoints": true
     }
   ]
 }

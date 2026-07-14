@@ -18,6 +18,7 @@ export type MonitorScope =
   | "agent"
   | "skills"
   | "memory"
+  | "recommendations"
   | "diagnostics"
   | "stream"
   | "alerts_eval";
@@ -45,6 +46,11 @@ export const SCOPE_TABS: { id: MonitorScope; label: string; hint: string }[] = [
     id: "memory",
     label: "记忆 (V2)",
     hint: "experience 池子检查器：筛选 / 详情 / link 邻居 / op_log 时间线 / 进程内指标",
+  },
+  {
+    id: "recommendations",
+    label: "推荐效果",
+    hint: "DecisionSignal：当前推荐、交易计划、后验收益与止盈止损效果",
   },
   {
     id: "diagnostics",

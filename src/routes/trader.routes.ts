@@ -5,6 +5,7 @@ import {
   ensureTraderSession,
   getTraderContext,
   parseTraderUserCommand,
+  placeTraderBracketOrder,
   placeTraderOrder,
   pollTraderFeed,
 } from "../runtime/trader/trader-agent-service";
@@ -12,6 +13,10 @@ import { cancelTraderWorkflows } from "../runtime/trader/trader-workflow";
 import { queryKlines } from "../runtime/market/klines-query";
 import { getDb } from "../db/sqlite/client";
 import type { OrderSide, OrderType } from "../types/entities";
+import {
+  normalizeExecutionMarket,
+  recordExecutionMark,
+} from "../runtime/execution/execution-mark-service";
 
 export const traderRouter = new Hono();
 
@@ -103,7 +108,17 @@ traderRouter.post("/orders", async (c) => {
         limit: 2,
       });
       const last = bars[bars.length - 1];
-      if (last?.close) price = last.close;
+      if (last?.close) {
+        price = last.close;
+        await recordExecutionMark(await getDb(), {
+          market: normalizeExecutionMarket(body.exchange ?? ""),
+          symbol: body.symbol,
+          price: last.close,
+          observedAt: last.timestamp,
+          timeframe: body.timeframe ?? "1d",
+          source: "trader_order_quote",
+        });
+      }
     }
 
     const data = await placeTraderOrder({
@@ -124,6 +139,66 @@ traderRouter.post("/orders", async (c) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ ok: false, error: msg }, 400);
+  }
+});
+
+traderRouter.post("/orders/bracket", async (c) => {
+  const body = await c.req.json<{
+    workflowRunId?: string;
+    symbol?: string;
+    exchange?: string;
+    side?: OrderSide;
+    qty?: number;
+    entryOrderType?: "market" | "limit";
+    entryLimitPrice?: number;
+    takeProfitPrice?: number;
+    stopLossPrice?: number;
+    timeframe?: string;
+    executionMode?: "paper" | "live";
+    brokerAccountId?: string;
+  }>();
+  if (
+    !body.workflowRunId || !body.symbol || !body.side || body.qty === undefined ||
+    body.takeProfitPrice === undefined || body.stopLossPrice === undefined
+  ) return c.json({ ok: false, error: "bracket_order_required_fields_missing" }, 400);
+  try {
+    const { bars, meta } = await queryKlines({
+      symbol: body.symbol,
+      exchange: body.exchange,
+      timeframe: body.timeframe ?? "1m",
+      limit: 2,
+    });
+    const latest = bars[bars.length - 1];
+    if (!latest?.close) return c.json({ ok: false, error: "bracket_reference_price_unavailable" }, 409);
+    const market = normalizeExecutionMarket(body.exchange ?? "");
+    await recordExecutionMark(await getDb(), {
+      market,
+      symbol: body.symbol,
+      price: latest.close,
+      observedAt: latest.timestamp,
+      timeframe: meta.timeframe,
+      source: meta.dataSource,
+    });
+    const data = await placeTraderBracketOrder({
+      workflowRunId: body.workflowRunId,
+      symbol: body.symbol,
+      exchange: body.exchange ?? "",
+      side: body.side,
+      qty: Number(body.qty),
+      entryOrderType: body.entryOrderType ?? "market",
+      entryReferencePrice: latest.close,
+      ...(body.entryOrderType === "limit"
+        ? { entryLimitPrice: Number(body.entryLimitPrice ?? latest.close) }
+        : {}),
+      takeProfitPrice: Number(body.takeProfitPrice),
+      stopLossPrice: Number(body.stopLossPrice),
+      ...(body.timeframe ? { timeframe: body.timeframe } : {}),
+      executionMode: body.executionMode ?? "paper",
+      ...(body.brokerAccountId ? { brokerAccountId: body.brokerAccountId } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 400);
   }
 });
 

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { DbClient } from "../../db/sqlite/client";
 import {
-  auditLog,
   BUILTIN_PAPER_TRADING_ACCOUNT_ID,
   executionTask,
   orderIntent,
@@ -14,6 +13,7 @@ import type {
   RiskDecisionResult,
   TimeInForce,
 } from "../../types/entities";
+import { appendAuditLog } from "../audit/audit-chain-service";
 import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 
 const REVIEW_TICKET_TTL_MS = 86_400_000;
@@ -28,6 +28,11 @@ export interface CreateOrderIntentInput {
   qty: number;
   orderType: OrderType;
   price?: number | null;
+  stopPrice?: number | null;
+  trailingOffsetPct?: number | null;
+  triggerDirection?: "above" | "below" | null;
+  parentOrderIntentId?: string | null;
+  ocoGroupId?: string | null;
   timeInForce: TimeInForce;
   /** Defaults to built-in paper account from migration 0019. */
   accountId?: string;
@@ -40,6 +45,8 @@ export interface CreateOrderIntentInput {
   /** paper (default) or live broker dispatch */
   dispatchMode?: DispatchMode;
   brokerAccountId?: string | null;
+  /** 调用方幂等键；缺省使用本次 order_intent id。 */
+  clientOrderId?: string | null;
 }
 
 export interface CreateOrderIntentResult {
@@ -61,11 +68,9 @@ function audit(
     detail: Record<string, unknown>;
   }
 ): Promise<unknown> {
-  return db.insert(auditLog).values({
-    id: randomUUID(),
+  return appendAuditLog(db, {
     traceId: input.traceId,
-    workflowRunId: input.workflowRunId,
-    agentInstanceId: null,
+    workflowRunId: input.workflowRunId ?? null,
     actorType: "system",
     actorId: "execution_pipeline",
     action: input.action,
@@ -79,11 +84,70 @@ export async function createOrderIntentWithExecution(
   db: DbClient,
   input: CreateOrderIntentInput
 ): Promise<CreateOrderIntentResult> {
+  if (!Number.isFinite(input.qty) || input.qty <= 0) {
+    throw new Error("order_quantity_must_be_positive");
+  }
+  const conditional = input.orderType === "stop" || input.orderType === "stop_limit" || input.orderType === "trailing_stop";
+  if (
+    (input.orderType === "stop" || input.orderType === "stop_limit") &&
+    (input.stopPrice == null || !Number.isFinite(input.stopPrice) || input.stopPrice <= 0)
+  ) throw new Error("conditional_order_requires_positive_stop_price");
+  if (
+    input.orderType === "trailing_stop" &&
+    (input.trailingOffsetPct == null || !Number.isFinite(input.trailingOffsetPct) || input.trailingOffsetPct <= 0 || input.trailingOffsetPct >= 1)
+  ) throw new Error("trailing_stop_requires_offset_between_zero_and_one");
+  if (
+    (input.orderType === "limit" || conditional) &&
+    (input.price == null || !Number.isFinite(input.price) || input.price <= 0)
+  ) {
+    throw new Error(conditional ? "conditional_order_requires_positive_reference_price" : "limit_order_requires_positive_price");
+  }
   const traceId = input.traceId ?? randomUUID();
   const accountId = input.accountId ?? BUILTIN_PAPER_TRADING_ACCOUNT_ID;
+  const requestedClientOrderId = input.clientOrderId?.trim() || null;
+
+  if (requestedClientOrderId) {
+    const existingIntents = await db
+      .select()
+      .from(orderIntent)
+      .where(eq(orderIntent.clientOrderId, requestedClientOrderId))
+      .limit(1);
+    const existing = existingIntents[0];
+    if (existing) {
+      const tasks = await db
+        .select()
+        .from(executionTask)
+        .where(eq(executionTask.orderIntentId, existing.id))
+        .limit(1);
+      const task = tasks[0];
+      const riskOutcome: RiskDecisionResult =
+        task?.status === "rejected" || task?.status === "failed"
+          ? "block"
+          : task?.status === "awaiting_review"
+            ? "review"
+            : "allow";
+      return {
+        orderIntentId: existing.id,
+        executionTaskId: task?.id ?? null,
+        riskOutcome,
+        riskReason: task?.lastError ?? "idempotent_replay",
+        riskReviewTicketId: null,
+      };
+    }
+  }
 
   const orderIntentId = randomUUID();
   const dispatchMode = input.dispatchMode ?? "paper";
+  const activationStatus = input.parentOrderIntentId
+    ? "held"
+    : conditional
+      ? "waiting_trigger"
+      : "active";
+  const readyTaskStatus = activationStatus === "held"
+    ? "held"
+    : activationStatus === "waiting_trigger"
+      ? "conditional_wait"
+      : "pending";
   await db.insert(orderIntent).values({
     id: orderIntentId,
     workflowRunId: input.workflowRunId,
@@ -93,12 +157,22 @@ export async function createOrderIntentWithExecution(
     qty: input.qty,
     orderType: input.orderType,
     price: input.price ?? null,
+    stopPrice: input.stopPrice ?? null,
+    trailingOffsetPct: input.trailingOffsetPct ?? null,
+    trailingAnchorPrice: input.orderType === "trailing_stop" ? input.price ?? null : null,
+    triggerDirection: input.triggerDirection ?? null,
+    parentOrderIntentId: input.parentOrderIntentId ?? null,
+    ocoGroupId: input.ocoGroupId ?? null,
+    activationStatus,
     timeInForce: input.timeInForce,
     market: input.market ?? null,
     symbol: input.symbol ?? null,
     timeframe: input.timeframe ?? null,
     strategyRuntimeId: input.strategyRuntimeId ?? null,
     signalBarTime: input.signalBarTime ?? null,
+    lifecycleStatus: "created",
+    clientOrderId: requestedClientOrderId ?? orderIntentId,
+    lifecycleUpdatedAt: new Date().toISOString(),
   });
 
   await audit(db, {
@@ -111,11 +185,16 @@ export async function createOrderIntentWithExecution(
   });
 
   const risk = await evaluatePreTradeForIntent(db, orderIntentId);
+  const riskEvaluatedAt = new Date().toISOString();
 
   let executionTaskId: string | null = null;
   let riskReviewTicketId: string | null = null;
 
   if (risk.outcome === "block") {
+    await db
+      .update(orderIntent)
+      .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: riskEvaluatedAt })
+      .where(eq(orderIntent.id, orderIntentId));
     const tid = randomUUID();
     await db.insert(executionTask).values({
       id: tid,
@@ -148,6 +227,10 @@ export async function createOrderIntentWithExecution(
   }
 
   if (risk.outcome === "review") {
+    await db
+      .update(orderIntent)
+      .set({ lifecycleStatus: "risk_checked", lifecycleUpdatedAt: riskEvaluatedAt })
+      .where(eq(orderIntent.id, orderIntentId));
     const expiresAt = new Date(Date.now() + REVIEW_TICKET_TTL_MS).toISOString();
     riskReviewTicketId = randomUUID();
     await db.insert(riskReviewTicket).values({
@@ -193,11 +276,15 @@ export async function createOrderIntentWithExecution(
   }
 
   const tid = randomUUID();
+  await db
+    .update(orderIntent)
+    .set({ lifecycleStatus: "risk_checked", lifecycleUpdatedAt: riskEvaluatedAt })
+    .where(eq(orderIntent.id, orderIntentId));
   await db.insert(executionTask).values({
     id: tid,
     orderIntentId,
     accountId,
-    status: "pending",
+    status: readyTaskStatus,
     traceId,
     retryCount: 0,
     maxRetries: 3,
@@ -212,7 +299,7 @@ export async function createOrderIntentWithExecution(
     action: "execution_task_enqueued",
     resourceType: "execution_task",
     resourceId: tid,
-    detail: { orderIntentId },
+    detail: { orderIntentId, activationStatus, taskStatus: readyTaskStatus },
   });
 
   return {
@@ -236,6 +323,13 @@ export async function approveRiskReviewTicket(
   if (t.status !== "open") return { ok: false, error: "ticket_not_open" };
 
   const now = new Date().toISOString();
+  const intents = await db.select().from(orderIntent).where(eq(orderIntent.id, t.orderIntentId)).limit(1);
+  const intent = intents[0];
+  const approvedTaskStatus = intent?.activationStatus === "held"
+    ? "held"
+    : intent?.activationStatus === "waiting_trigger"
+      ? "conditional_wait"
+      : "pending";
   await db
     .update(riskReviewTicket)
     .set({
@@ -249,11 +343,15 @@ export async function approveRiskReviewTicket(
   await db
     .update(executionTask)
     .set({
-      status: "pending",
+      status: approvedTaskStatus,
       updatedAt: now,
       lastError: null,
     })
     .where(and(eq(executionTask.orderIntentId, t.orderIntentId), eq(executionTask.status, "awaiting_review")));
+  await db
+    .update(orderIntent)
+    .set({ lifecycleStatus: "risk_checked", lifecycleUpdatedAt: now })
+    .where(eq(orderIntent.id, t.orderIntentId));
 
   await audit(db, {
     traceId: randomUUID(),
@@ -296,6 +394,10 @@ export async function rejectRiskReviewTicket(
       lastError: note ?? "rejected_by_reviewer",
     })
     .where(and(eq(executionTask.orderIntentId, t.orderIntentId), eq(executionTask.status, "awaiting_review")));
+  await db
+    .update(orderIntent)
+    .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: now })
+    .where(eq(orderIntent.id, t.orderIntentId));
 
   await audit(db, {
     traceId: randomUUID(),

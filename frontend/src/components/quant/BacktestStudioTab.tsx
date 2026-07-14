@@ -17,6 +17,7 @@ import {
   listStrategyCompositions,
   listStrategyVersions,
   runBacktestJobNow,
+  runWalkForwardEvaluation,
   type BacktestJobRecord,
   type BacktestSignalSpec,
   type StrategyCompositionRecord,
@@ -189,7 +190,7 @@ export const BacktestStudioTab: FC = () => {
     compareJobs.forEach((j, idx) => {
       const eq = j.result?.equityCurve ?? [];
       out.push({
-        name: `${j.id.slice(0, 6)}… (${(((j.result?.metrics.totalReturn ?? 0) * 100).toFixed(1))}%)`,
+        name: `${j.id.slice(0, 6)}… (${((j.result?.metrics.totalReturn ?? 0) * 100).toFixed(1)}%)`,
         color: pickColor(idx),
         points: eq.map((p) => ({ x: p.date, y: p.equity })),
       });
@@ -230,7 +231,7 @@ export const BacktestStudioTab: FC = () => {
           ...(typeof topN === "number" ? { topN } : {}),
         });
         setInfo(
-          `回测 ${job.status}：${job.result?.metrics.tradeCount ?? 0} 笔交易 · 总收益 ${(((job.result?.metrics.totalReturn ?? 0) * 100).toFixed(2))}%`
+          `回测 ${job.status}：${job.result?.metrics.tradeCount ?? 0} 笔交易 · 总收益 ${((job.result?.metrics.totalReturn ?? 0) * 100).toFixed(2)}%`
         );
         await reloadJobs();
         setSelectedId(job.id);
@@ -270,7 +271,11 @@ export const BacktestStudioTab: FC = () => {
   }
 
   return (
-    <div className="qb-quant-tab-root qb-quant-tab-root--backtest" data-qb-quant-tab="backtest" style={styles.root}>
+    <div
+      className="qb-quant-tab-root qb-quant-tab-root--backtest"
+      data-qb-quant-tab="backtest"
+      style={styles.root}
+    >
       <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>发起回测</strong>
@@ -472,7 +477,11 @@ export const BacktestStudioTab: FC = () => {
           </button>
         </div>
         <div className="qb-quant-list" style={styles.list}>
-          {jobs.length === 0 ? <div className="qb-quant-empty" style={styles.empty}>暂无任务</div> : null}
+          {jobs.length === 0 ? (
+            <div className="qb-quant-empty" style={styles.empty}>
+              暂无任务
+            </div>
+          ) : null}
           {jobs.map((j) => (
             <div
               key={j.id}
@@ -512,11 +521,7 @@ export const BacktestStudioTab: FC = () => {
               >
                 <div className="qb-quant-list-item-top" style={styles.listItemTop}>
                   <span style={{ display: "flex", alignItems: "center" }}>
-                    <span
-                      className="qb-quant-status-dot"
-                      data-status={j.status}
-                      aria-hidden
-                    />
+                    <span className="qb-quant-status-dot" data-status={j.status} aria-hidden />
                     <span
                       className="qb-quant-status-tag"
                       data-qb-quant-status={j.status}
@@ -542,7 +547,9 @@ export const BacktestStudioTab: FC = () => {
                         {(j.result.metrics.totalReturn * 100).toFixed(2)}%
                       </strong>
                     ) : (
-                      <span className="qb-quant-muted" style={styles.muted}>—</span>
+                      <span className="qb-quant-muted" style={styles.muted}>
+                        —
+                      </span>
                     )}
                   </span>
                 </div>
@@ -561,33 +568,67 @@ export const BacktestStudioTab: FC = () => {
         ) : selected ? (
           <BacktestResultView job={selected} onRefresh={reloadSelected} />
         ) : (
-          <div className="qb-quant-empty" style={styles.empty}>左侧选择历史任务或新建回测。</div>
+          <div className="qb-quant-empty" style={styles.empty}>
+            左侧选择历史任务或新建回测。
+          </div>
         )}
       </section>
 
       <aside className="qb-quant-col qb-quant-col--right" style={styles.colRight}>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>Trades</strong>
-          <span className="qb-quant-muted" style={styles.muted}>{selected?.result?.trades.length ?? 0}</span>
+          <span className="qb-quant-muted" style={styles.muted}>
+            {selected?.result?.trades.length ?? 0}
+          </span>
         </div>
         <div className="qb-quant-trades-list" style={styles.tradesList}>
           {(selected?.result?.trades ?? []).slice(0, 200).map((t, i) => (
-            <div key={i} className="qb-quant-trade-row" data-qb-quant-side={t.side} style={styles.tradeRow}>
-              <span className="qb-quant-muted" style={styles.muted}>{t.date}</span>
-              <span className={t.side === "buy" ? "qb-quant-side qb-quant-side--buy" : "qb-quant-side qb-quant-side--sell"} style={t.side === "buy" ? styles.buy : styles.sell}>{t.side}</span>
+            <div
+              key={i}
+              className="qb-quant-trade-row"
+              data-qb-quant-side={t.side}
+              style={styles.tradeRow}
+            >
+              <span className="qb-quant-muted" style={styles.muted}>
+                {t.date}
+              </span>
+              <span
+                className={
+                  t.side === "buy"
+                    ? "qb-quant-side qb-quant-side--buy"
+                    : "qb-quant-side qb-quant-side--sell"
+                }
+                style={t.side === "buy" ? styles.buy : styles.sell}
+              >
+                {t.side}
+              </span>
               <span>{t.symbol}</span>
-              <span className="qb-quant-num" style={styles.tradeNum}>{t.qty.toFixed(4)}</span>
-              <span className="qb-quant-num" style={styles.tradeNum}>${t.price.toFixed(2)}</span>
+              <span className="qb-quant-num" style={styles.tradeNum}>
+                {t.qty.toFixed(4)}
+              </span>
+              <span className="qb-quant-num" style={styles.tradeNum}>
+                ${t.price.toFixed(2)}
+              </span>
             </div>
           ))}
           {(selected?.result?.trades.length ?? 0) === 0 ? (
-            <div className="qb-quant-empty" style={styles.empty}>—</div>
+            <div className="qb-quant-empty" style={styles.empty}>
+              —
+            </div>
           ) : null}
         </div>
       </aside>
 
-      {error ? <div className="qb-quant-toast qb-quant-toast--err" style={styles.toastErr}>{error}</div> : null}
-      {info ? <div className="qb-quant-toast qb-quant-toast--info" style={styles.toastInfo}>{info}</div> : null}
+      {error ? (
+        <div className="qb-quant-toast qb-quant-toast--err" style={styles.toastErr}>
+          {error}
+        </div>
+      ) : null}
+      {info ? (
+        <div className="qb-quant-toast qb-quant-toast--info" style={styles.toastInfo}>
+          {info}
+        </div>
+      ) : null}
     </div>
   );
 };
@@ -598,6 +639,30 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
 }) => {
   const m = job.result?.metrics;
   const equity = job.result?.equityCurve ?? [];
+  const [walkForward, setWalkForward] = useState<Awaited<
+    ReturnType<typeof runWalkForwardEvaluation>
+  > | null>(null);
+  const [walkForwardBusy, setWalkForwardBusy] = useState(false);
+  const [walkForwardError, setWalkForwardError] = useState<string | null>(null);
+  const [walkForwardFolds, setWalkForwardFolds] = useState(3);
+  const [walkForwardPurgeDays, setWalkForwardPurgeDays] = useState(5);
+
+  const runWalkForward = async () => {
+    setWalkForwardBusy(true);
+    setWalkForwardError(null);
+    try {
+      setWalkForward(
+        await runWalkForwardEvaluation(job.id, {
+          folds: walkForwardFolds,
+          purgeDays: walkForwardPurgeDays,
+        })
+      );
+    } catch (error) {
+      setWalkForwardError(error instanceof Error ? error.message : "walk_forward_failed");
+    } finally {
+      setWalkForwardBusy(false);
+    }
+  };
 
   const equitySeries = useMemo<ChartSeries[]>(() => {
     if (equity.length === 0) return [];
@@ -634,11 +699,7 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
               className="qb-quant-detail-title"
               style={{ ...styles.detailTitle, display: "flex", alignItems: "center", gap: 8 }}
             >
-              <span
-                className="qb-quant-status-dot"
-                data-status={job.status}
-                aria-hidden
-              />
+              <span className="qb-quant-status-dot" data-status={job.status} aria-hidden />
               <span
                 className="qb-quant-status-tag"
                 data-qb-quant-status={job.status}
@@ -654,16 +715,217 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
               {job.config.symbols.length} symbols · rebalance={job.config.rebalance ?? "daily"}
             </div>
           </div>
-          <button type="button" onClick={onRefresh} className="qb-quant-btn qb-quant-btn--ghost" style={styles.btnGhost}>
-            刷新
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <label className="qb-quant-detail-meta" style={styles.detailMeta}>
+              折数
+              <input
+                type="number"
+                min={2}
+                max={8}
+                value={walkForwardFolds}
+                onChange={(event) => setWalkForwardFolds(Number(event.target.value))}
+                style={{ width: 48, marginLeft: 4 }}
+              />
+            </label>
+            <label className="qb-quant-detail-meta" style={styles.detailMeta}>
+              Purge
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={walkForwardPurgeDays}
+                onChange={(event) => setWalkForwardPurgeDays(Number(event.target.value))}
+                style={{ width: 48, marginLeft: 4 }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="qb-quant-btn qb-quant-btn--ghost"
+              style={styles.btnGhost}
+            >
+              刷新
+            </button>
+            <button
+              type="button"
+              onClick={() => void runWalkForward()}
+              disabled={walkForwardBusy || job.status !== "completed"}
+              className="qb-quant-btn qb-quant-btn--primary"
+            >
+              {walkForwardBusy ? "OOS 评估中…" : "运行 Walk-forward"}
+            </button>
+          </div>
         </div>
         <LineageTrail kind="backtest_run" id={job.id} />
       </div>
-      {job.result?.error ? <div className="qb-quant-error-panel" style={styles.errorPanel}>{job.result.error}</div> : null}
+      {job.result?.error ? (
+        <div className="qb-quant-error-panel" style={styles.errorPanel}>
+          {job.result.error}
+        </div>
+      ) : null}
+      {job.evaluation ? (
+        <div
+          className="qb-quant-hero-card"
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <div>
+              <strong>策略晋级 Gate</strong>
+              <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                成本后指标 · 可复现规则 · 未通过时不得直接进入 live
+              </div>
+            </div>
+            <span
+              className="qb-quant-status-tag"
+              style={{
+                color: job.evaluation.pass
+                  ? "var(--qb-success, #36ad6a)"
+                  : "var(--qb-warning, #d99a32)",
+              }}
+            >
+              {job.evaluation.pass ? "BACKTEST PASSED" : "RESEARCH ONLY"}
+            </span>
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {job.evaluation.checks.map((check) => (
+              <div
+                key={check.key}
+                style={{ padding: 10, borderRadius: 8, background: "rgba(255,255,255,.025)" }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <span>{check.label}</span>
+                  <strong
+                    style={{
+                      color: check.pass
+                        ? "var(--qb-success, #36ad6a)"
+                        : "var(--qb-danger, #dc5d62)",
+                    }}
+                  >
+                    {check.pass ? "通过" : "未通过"}
+                  </strong>
+                </div>
+                <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                  {check.value.toFixed(3)} {check.operator} {check.threshold}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {walkForwardError ? (
+        <div className="qb-quant-error-panel" style={styles.errorPanel}>
+          {walkForwardError}
+        </div>
+      ) : null}
+      {walkForward ? (
+        <div
+          className="qb-quant-hero-card"
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <strong>Walk-forward / OOS</strong>
+              <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                扩展训练窗 · {walkForward.folds[0]?.purgeDays ?? 0} 日 purge · 独立测试折 · regime
+                稳定性
+              </div>
+            </div>
+            <strong
+              style={{
+                color: walkForward.pass
+                  ? "var(--qb-success, #36ad6a)"
+                  : "var(--qb-warning, #d99a32)",
+              }}
+            >
+              {walkForward.pass ? "PASSED" : "NOT STABLE"}
+            </strong>
+          </div>
+          <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
+            <Metric
+              label="OOS 复合收益"
+              value={walkForward.aggregate.compoundedOosReturn}
+              pct
+              tone="emerald"
+              signed
+            />
+            <Metric
+              label="平均 Sharpe"
+              value={walkForward.aggregate.averageSharpe}
+              tone="indigo"
+              signed
+            />
+            <Metric
+              label="最差回撤"
+              value={walkForward.aggregate.worstMaxDrawdown}
+              pct
+              tone="amber"
+            />
+            <Metric
+              label="正收益折占比"
+              value={walkForward.aggregate.positiveFoldRate}
+              pct
+              tone="cyan"
+            />
+            <Metric
+              label="Regime 稳定性"
+              value={walkForward.aggregate.regimeStability}
+              pct
+              tone="pink"
+            />
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {walkForward.folds.map((fold) => (
+              <div
+                key={fold.fold}
+                style={{ padding: 10, borderRadius: 8, background: "rgba(255,255,255,.025)" }}
+              >
+                <strong>
+                  Fold {fold.fold} · {fold.regime}
+                </strong>
+                <div className="qb-quant-detail-meta" style={styles.detailMeta}>
+                  Train {fold.trainStart}–{fold.trainEnd}
+                  <br />
+                  Test {fold.testStart}–{fold.testEnd}
+                  <br />
+                  Return {(fold.metrics.totalReturn * 100).toFixed(2)}% · Sharpe{" "}
+                  {fold.metrics.sharpe.toFixed(2)}
+                  <br />
+                  Regime source: {fold.regimeSource}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {m ? (
         <div className="qb-quant-metrics-grid" style={styles.metricsGrid}>
-          <Metric label="总收益" value={m.totalReturn} pct tone="emerald" highlight={m.totalReturn !== 0} signed />
+          <Metric
+            label="总收益"
+            value={m.totalReturn}
+            pct
+            tone="emerald"
+            highlight={m.totalReturn !== 0}
+            signed
+          />
           <Metric label="年化收益" value={m.annualReturn} pct tone="emerald" signed />
           <Metric label="年化波动" value={m.annualVol} pct tone="cyan" />
           <Metric label="Sharpe" value={m.sharpe} tone="indigo" signed />
@@ -694,7 +956,9 @@ const CompareView: FC<{ jobs: BacktestJobRecord[]; equitySeries: ChartSeries[] }
     <>
       <div className="qb-quant-detail-header" style={styles.detailHeader}>
         <div>
-          <div className="qb-quant-detail-title" style={styles.detailTitle}>对比模式 — {jobs.length} 个回测同图</div>
+          <div className="qb-quant-detail-title" style={styles.detailTitle}>
+            对比模式 — {jobs.length} 个回测同图
+          </div>
           <div className="qb-quant-detail-meta" style={styles.detailMeta}>
             勾选左侧任务加入或移除；至少 2 个才会显示对比图
           </div>
@@ -769,21 +1033,36 @@ const Metric: FC<{
       ? "var(--qb-success)"
       : "var(--qb-error)"
     : tone
-    ? TONE_COLOR[tone]
-    : "var(--qb-quant-accent-1)";
+      ? TONE_COLOR[tone]
+      : "var(--qb-quant-accent-1)";
   const valueColor = signed
     ? value > 0
       ? "var(--qb-success)"
       : value < 0
-      ? "var(--qb-error)"
-      : "var(--qb-text-strong)"
+        ? "var(--qb-error)"
+        : "var(--qb-text-strong)"
     : "var(--qb-text-strong)";
   if (!Number.isFinite(value)) {
     return (
       <div className="qb-quant-metric" style={{ ...styles.metric, position: "relative" }}>
-        <span style={{ position: "absolute", top: 10, right: 10, width: 6, height: 6, borderRadius: 999, background: dotColor, opacity: 0.6 }} />
-        <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
-        <div className="qb-quant-metric-value" style={styles.metricValue}>—</div>
+        <span
+          style={{
+            position: "absolute",
+            top: 10,
+            right: 10,
+            width: 6,
+            height: 6,
+            borderRadius: 999,
+            background: dotColor,
+            opacity: 0.6,
+          }}
+        />
+        <div className="qb-quant-metric-label" style={styles.metricLabel}>
+          {label}
+        </div>
+        <div className="qb-quant-metric-value" style={styles.metricValue}>
+          —
+        </div>
       </div>
     );
   }
@@ -794,21 +1073,32 @@ const Metric: FC<{
       style={{
         ...styles.metric,
         position: "relative",
-        borderColor: highlight ? `color-mix(in srgb, ${dotColor} 50%, var(--qb-border-subtle))` : undefined,
+        borderColor: highlight
+          ? `color-mix(in srgb, ${dotColor} 50%, var(--qb-border-subtle))`
+          : undefined,
       }}
     >
-      <span style={{ position: "absolute", top: 10, right: 10, width: 6, height: 6, borderRadius: 999, background: dotColor, boxShadow: `0 0 0 3px color-mix(in srgb, ${dotColor} 22%, transparent)` }} />
-      <div className="qb-quant-metric-label" style={styles.metricLabel}>{label}</div>
-      <div
-        className="qb-quant-metric-value"
-        style={{ ...styles.metricValue, color: valueColor }}
-      >
+      <span
+        style={{
+          position: "absolute",
+          top: 10,
+          right: 10,
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: dotColor,
+          boxShadow: `0 0 0 3px color-mix(in srgb, ${dotColor} 22%, transparent)`,
+        }}
+      />
+      <div className="qb-quant-metric-label" style={styles.metricLabel}>
+        {label}
+      </div>
+      <div className="qb-quant-metric-value" style={{ ...styles.metricValue, color: valueColor }}>
         {text}
       </div>
     </div>
   );
 };
-
 
 const styles: Record<string, CSSProperties> = {
   root: {

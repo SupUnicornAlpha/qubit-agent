@@ -53,6 +53,16 @@ const DEFAULT_PAYLOAD = {
   brokerProvider: "futu" as const,
 };
 
+const RECONCILIATION_PAYLOAD = {
+  kind: "position_reconciliation" as const,
+  provider: "futu" as const,
+  accountRef: "",
+};
+
+function scheduledJobKind(payload: Record<string, unknown>): "workflow" | "position_reconciliation" {
+  return payload.kind === "position_reconciliation" ? "position_reconciliation" : "workflow";
+}
+
 interface ScheduledJobsPanelProps {
   workspaceId?: string;
   projectId?: string | null;
@@ -331,6 +341,33 @@ export const ScheduledJobsPanel: FC<ScheduledJobsPanelProps> = ({ workspaceId, p
           </div>
 
           <div style={styles.row}>
+            <label style={{ ...styles.fieldLabel, flex: 1 }}>
+              任务模板
+              <select
+                style={styles.input}
+                value={(() => {
+                  try {
+                    return scheduledJobKind(JSON.parse(payload) as Record<string, unknown>);
+                  } catch {
+                    return "workflow";
+                  }
+                })()}
+                onChange={(event) => {
+                  if (event.target.value === "position_reconciliation") {
+                    setName("券商持仓自动对账");
+                    setExecMode("paper");
+                    setPayload(JSON.stringify(RECONCILIATION_PAYLOAD, null, 2));
+                  } else {
+                    setName("定时分析任务");
+                    setPayload(JSON.stringify(DEFAULT_PAYLOAD, null, 2));
+                  }
+                  setPayloadError(null);
+                }}
+              >
+                <option value="workflow">研究 / 交易 workflow</option>
+                <option value="position_reconciliation">券商持仓自动对账</option>
+              </select>
+            </label>
             <label style={{ ...styles.fieldLabel, flex: 2 }}>
               任务名称
               <input style={styles.input} value={name} onChange={(e) => setName(e.target.value)} />
@@ -387,8 +424,8 @@ export const ScheduledJobsPanel: FC<ScheduledJobsPanelProps> = ({ workspaceId, p
               spellCheck={false}
             />
             <span style={styles.fieldHint}>
-              支持字段：goal / mode / ticker / direction / quantity / targetPrice / triggerSources /
-              tradingDays / tradingStart / tradingEnd …
+              研究任务支持 goal / mode / ticker / triggerSources / trading window；持仓对账支持
+              kind=position_reconciliation / provider / accountRef。模板已生成可直接运行的 JSON。
             </span>
             {payloadError ? <span style={{ color: "#fca5a5", fontSize: 12 }}>{payloadError}</span> : null}
           </label>

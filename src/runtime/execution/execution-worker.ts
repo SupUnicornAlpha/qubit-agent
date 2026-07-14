@@ -10,6 +10,7 @@ import {
 } from "../../db/sqlite/schema";
 import { dispatchExecutionTask } from "./execution-dispatcher";
 import { pollPendingBrokerOrders } from "./execution-dispatcher-poll";
+import { processConditionalOrders } from "./conditional-order-service";
 
 const DEFAULT_TICK_MS = 1500;
 const RETRY_DELAY_MS = 30_000;
@@ -55,6 +56,10 @@ async function expireStaleRiskReviews(db: DbClient, nowIso: string): Promise<voi
       .where(
         and(eq(executionTask.orderIntentId, t.orderIntentId), eq(executionTask.status, "awaiting_review"))
       );
+    await db
+      .update(orderIntent)
+      .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: nowIso })
+      .where(eq(orderIntent.id, t.orderIntentId));
   }
 }
 
@@ -68,6 +73,11 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
   if (!locked.length) return;
 
   const task = locked[0];
+  if (!task) return;
+  await db
+    .update(orderIntent)
+    .set({ lifecycleStatus: "submitted", lifecycleUpdatedAt: nowIso })
+    .where(eq(orderIntent.id, task.orderIntentId));
 
   try {
     await appendEvent(db, {
@@ -85,6 +95,13 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
     });
 
     if (result.status === "waiting_ack" || result.status === "partially_filled") {
+      await db
+        .update(orderIntent)
+        .set({
+          lifecycleStatus: result.status === "partially_filled" ? "partial" : "submitted",
+          lifecycleUpdatedAt: nowIso,
+        })
+        .where(eq(orderIntent.id, task.orderIntentId));
       return;
     }
 
@@ -96,6 +113,10 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
         lastError: null,
       })
       .where(eq(executionTask.id, task.id));
+    await db
+      .update(orderIntent)
+      .set({ lifecycleStatus: "filled", lifecycleUpdatedAt: nowIso })
+      .where(eq(orderIntent.id, task.orderIntentId));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const retries = task.retryCount + 1;
@@ -118,6 +139,10 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
           updatedAt: nowIso,
         })
         .where(eq(executionTask.id, task.id));
+      await db
+        .update(orderIntent)
+        .set({ lifecycleStatus: "risk_checked", lifecycleUpdatedAt: nowIso })
+        .where(eq(orderIntent.id, task.orderIntentId));
     } else {
       await db
         .update(executionTask)
@@ -128,6 +153,10 @@ async function processOneTask(db: DbClient, taskId: string, nowIso: string): Pro
           updatedAt: nowIso,
         })
         .where(eq(executionTask.id, task.id));
+      await db
+        .update(orderIntent)
+        .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: nowIso })
+        .where(eq(orderIntent.id, task.orderIntentId));
     }
   }
 }
@@ -136,6 +165,7 @@ export async function processExecutionTasks(db: DbClient, now = new Date()): Pro
   const nowIso = now.toISOString();
   await expireStaleRiskReviews(db, nowIso);
   await pollPendingBrokerOrders(db, nowIso);
+  await processConditionalOrders(db, nowIso);
 
   const due = await db
     .select()
@@ -152,6 +182,7 @@ export async function processExecutionTasks(db: DbClient, now = new Date()): Pro
   for (const row of due) {
     await processOneTask(db, row.id, nowIso);
   }
+  await processConditionalOrders(db, nowIso);
 }
 
 export class ExecutionWorker {

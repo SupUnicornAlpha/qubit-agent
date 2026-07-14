@@ -85,6 +85,41 @@ export interface ReasonNodeOutput {
   meta: ReasonStepMeta;
 }
 
+const FOCUSED_RESEARCH_SCENARIO_GUIDANCE: Record<string, string[]> = {
+  factor_research: [
+    "目标仅是因子研究，不得扩展成个股基本面、宏观、情绪或多空会审。",
+    "优先由你直接调用 factor.register、factor.compute、factor.evaluate；确需专家时最多派给 research 或 analyst_technical。",
+    "完成条件是产生可追溯的 factor_definition_batch 和 factor_evaluation_report；没有真实入库因子时必须明确失败或继续修复，禁止声称研究完成。",
+  ],
+  stock_screening: [
+    "目标仅是股票筛选与可执行推荐，不得扩展成通用团队研究报告。",
+    "只调用筛选、行情、推荐记录与必要风险工具；确需专家时最多派给 research、analyst_technical 或 risk。",
+    "完成条件是产生结构化候选与 recommendation 记录，包含 asof、置信度、入场区间、止盈、止损和证据血缘；没有推荐产物时不得完成。",
+  ],
+  news_event_radar: [
+    "目标仅是新闻事件雷达，不得扩展成四维分析或个股推荐报告。",
+    "只调用新闻/事件工具；确需专家时最多派给 analyst_sentiment 或 research。",
+    "完成条件是产生带来源、asof、新鲜度和影响方向的事件清单；stub、synthetic 或空数据不得当作有效证据。",
+  ],
+  strategy_authoring: [
+    "目标仅是生成可回测策略及其验证结果，不得扩展成多角色会审。",
+    "完成条件是产生策略版本和真实回测指标；没有 OOS/成本后结果时不得声称策略可信。",
+  ],
+};
+
+export function buildFocusedResearchScenarioPrompt(scenarioKey: string | null): string {
+  if (!scenarioKey) return "";
+  const rules = FOCUSED_RESEARCH_SCENARIO_GUIDANCE[scenarioKey];
+  if (!rules) return "";
+  return [
+    `## 专业研究场景硬约束：${scenarioKey}`,
+    "本任务由 Orchestrator 统一裁决，但不得自动扩成通用研究团队或固定多 Agent 流程。",
+    ...rules.map((rule) => `- ${rule}`),
+    "- 工具返回空数组、barCount=0、no_bars、no_data 或仅 transport success 时，视为数据失败，不得显示为研究证据。",
+    "- 最终答复只包含场景合同要求的结构化结果、关键证据和阻塞项，不生成额外长报告。",
+  ].join("\n");
+}
+
 async function loadWorkflowMeta(
   workflowId: string
 ): Promise<{
@@ -561,6 +596,10 @@ export async function reasonNode(
               : ""
           }`
         : systemWithHitl;
+    const focusedScenarioBlock = buildFocusedResearchScenarioPrompt(effective.scenarioKey);
+    const systemWithScenarioContract = focusedScenarioBlock
+      ? `${systemWithDispatch}\n\n---\n${focusedScenarioBlock}`
+      : systemWithDispatch;
     /**
      * Coding-Agent 体验 P2（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：运行时注入「工作方式」块。
      * 放在 reason 装配层（而非 seed prompt）→ 对所有角色即时生效、无需 re-seed DB。
@@ -575,7 +614,7 @@ export async function reasonNode(
       "- **最小交付**：只返回完成当前目标所需的最小结果；除非明确要求，不要主动生成长报告、固定模板章节或泛泛总结。",
       "- **诚实**：没有数据支撑就说不确定；不要编造工具结果或假装已完成。",
     ].join("\n");
-    const systemWithWorkStyle = `${systemWithDispatch}\n\n---\n${WORK_STYLE_BLOCK}`;
+    const systemWithWorkStyle = `${systemWithScenarioContract}\n\n---\n${WORK_STYLE_BLOCK}`;
     const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithWorkStyle, {
       tools,
       mcpServers,

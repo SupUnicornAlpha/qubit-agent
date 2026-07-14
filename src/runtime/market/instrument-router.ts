@@ -26,7 +26,10 @@ function normalizeSymbol(market: MarketCode, symbol: string): string {
   return s;
 }
 
-async function pickDefaultBrokerAccount(provider: BrokerProvider, market?: string): Promise<string | null> {
+async function pickDefaultBrokerAccount(
+  provider: BrokerProvider,
+  market?: string
+): Promise<string | null> {
   const db = await getDb();
   const rows = await db
     .select()
@@ -39,7 +42,8 @@ async function pickDefaultBrokerAccount(provider: BrokerProvider, market?: strin
   if (market) {
     const matched = rows.find((r) => {
       const cfg = (r.providerConfigJson ?? {}) as FutuProviderConfig | CcxtProviderConfig;
-      if ("market" in cfg && cfg.market) return String(cfg.market).toUpperCase() === market.toUpperCase();
+      if ("market" in cfg && cfg.market)
+        return String(cfg.market).toUpperCase() === market.toUpperCase();
       return false;
     });
     if (matched) return matched.id;
@@ -54,6 +58,7 @@ export async function resolveInstrument(input: {
   symbol: string;
   brokerAccountId?: string | null;
   brokerProvider?: BrokerProvider;
+  lookupDefaultBroker?: boolean;
 }): Promise<ResolvedInstrument> {
   const marketKey = input.market.toUpperCase() as MarketCode;
   const market: MarketCode =
@@ -65,7 +70,7 @@ export async function resolveInstrument(input: {
   const normalizedSymbol = normalizeSymbol(market, input.symbol);
 
   let brokerAccountId = input.brokerAccountId ?? null;
-  if (!brokerAccountId) {
+  if (!brokerAccountId && input.lookupDefaultBroker !== false) {
     brokerAccountId = await pickDefaultBrokerAccount(brokerProvider, market);
   }
 

@@ -1,18 +1,23 @@
-import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { getDb } from "../../../db/sqlite/client";
-import * as schema from "../../../db/sqlite/schema";
 import { runMigrations } from "../../../db/sqlite/migrate";
+import * as schema from "../../../db/sqlite/schema";
+import {
+  createWalkForwardWindows,
+  walkForwardEvaluationService,
+} from "../../effect-validation/walk-forward-evaluation-service";
+import { factorService } from "../../factor/factor-service";
 import { _resetBootstrapForTests, bootstrapProviders } from "../../provider/bootstrap";
 import { providerRegistry } from "../../provider/registry";
-import { factorService } from "../../factor/factor-service";
-import { strategyComposer } from "../../strategy/strategy-composer";
 import type {
   BacktestProvider,
   BacktestRequest,
   BacktestResult,
   ProviderMeta,
 } from "../../provider/types";
+import { strategyComposer } from "../../strategy/strategy-composer";
 import { backtestJobService } from "../backtest-job-service";
 
 class StubBacktestProvider implements BacktestProvider {
@@ -109,6 +114,43 @@ describe("BacktestJobService", () => {
     expect(ran.result?.metrics.totalReturn).toBe(0.05);
     expect(ran.providerId).toBe("stub_bt");
     expect(ran.endedAt).not.toBeNull();
+    expect(ran.evaluation).not.toBeNull();
+    expect(ran.evaluation?.checks).toHaveLength(5);
+    expect(ran.evaluation?.checks.find((check) => check.key === "net_sharpe")?.pass).toBe(true);
+    expect(ran.evaluation?.pass).toBe(false);
+
+    const db = await getDb();
+    const evalRows = await db
+      .select()
+      .from(schema.strategyEvalRun)
+      .where(eq(schema.strategyEvalRun.backtestRunId, job.id));
+    expect(evalRows).toHaveLength(1);
+
+    const walkForward = await walkForwardEvaluationService.run(job.id, {
+      folds: 3,
+      purgeDays: 2,
+    });
+    expect(walkForward.folds).toHaveLength(3);
+    expect(walkForward.aggregate.compoundedOosReturn).toBeCloseTo(0.157625, 6);
+    expect(walkForward.pass).toBe(true);
+    await walkForwardEvaluationService.run(job.id, { folds: 3, purgeDays: 2 });
+    const walkForwardRows = await db
+      .select()
+      .from(schema.strategyEvalRun)
+      .where(eq(schema.strategyEvalRun.backtestRunId, job.id));
+    expect(walkForwardRows.filter((row) => row.evalKind === "walk_forward")).toHaveLength(1);
+  });
+
+  test("walk-forward windows use expanding train period and purge gap", () => {
+    const windows = createWalkForwardWindows("2026-01-01", "2026-04-30", 3, 5);
+    expect(windows).toHaveLength(3);
+    expect(windows[0]?.trainStart).toBe("2026-01-01");
+    expect(Date.parse(windows[1]?.trainEnd ?? "")).toBeGreaterThan(
+      Date.parse(windows[0]?.trainEnd ?? "")
+    );
+    expect(Date.parse(windows[0]?.testStart ?? "")).toBeGreaterThan(
+      Date.parse(windows[0]?.trainEnd ?? "")
+    );
   });
 
   test("缺 signals + 缺 compositionId → validation_failed", async () => {

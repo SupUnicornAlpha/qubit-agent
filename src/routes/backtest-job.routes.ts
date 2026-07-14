@@ -6,10 +6,11 @@
 
 import { Hono } from "hono";
 import {
-  backtestJobService,
   BacktestJobError,
   type BacktestJobSubmitInput,
+  backtestJobService,
 } from "../runtime/backtest/backtest-job-service";
+import { walkForwardEvaluationService } from "../runtime/effect-validation/walk-forward-evaluation-service";
 
 export const backtestJobRouter = new Hono();
 
@@ -20,13 +21,23 @@ function asError(e: unknown) {
   return { ok: false, code: "internal_error", error: (e as Error).message } as const;
 }
 
+/** POST /api/v1/backtest-jobs/:id/walk-forward — 扩展窗口 OOS 评估 */
+backtestJobRouter.post("/:id/walk-forward", async (c) => {
+  try {
+    const body = await c.req.json<{ folds?: number; purgeDays?: number }>().catch(() => ({}));
+    const data = await walkForwardEvaluationService.run(c.req.param("id"), body);
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asError(e), 400);
+  }
+});
+
 /** GET /api/v1/backtest-jobs?strategy_version_id=&status= */
 backtestJobRouter.get("/", async (c) => {
   try {
+    const strategyVersionId = c.req.query("strategy_version_id");
     const data = await backtestJobService.list({
-      ...(c.req.query("strategy_version_id")
-        ? { strategyVersionId: c.req.query("strategy_version_id")! }
-        : {}),
+      ...(strategyVersionId ? { strategyVersionId } : {}),
       ...(c.req.query("status")
         ? { status: c.req.query("status") as "pending" | "running" | "completed" | "failed" }
         : {}),

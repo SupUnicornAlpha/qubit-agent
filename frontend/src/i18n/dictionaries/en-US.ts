@@ -269,9 +269,11 @@ const pack: LocalePack = {
         margin: { cross: "Cross", isolated: "Isolated" },
         tp: "Take profit",
         sl: "Stop loss",
-        tpslPlaceholder: "Optional (later release)",
+        tpslPlaceholder: "Optional; enter both values",
+        bracketUnavailable: "Bracket protection is unavailable for this trading session",
+        bracketIncomplete: "Take-profit and stop-loss must both be greater than zero",
         currentKindPrefix: "Current order type: ",
-        currentKindSuffix: ". TP/SL and live brokers are coming in a later release.",
+        currentKindSuffix: ". Enter both TP and SL to create a Bracket/OCO order.",
         logTitle: "Quick-trade settings updated",
         logBody:
           "Order type={kind} · Notional pct={pct}% · Leverage={lev}x · Margin={margin}\nSymbol {symbol} / {exchange} · {tf}",

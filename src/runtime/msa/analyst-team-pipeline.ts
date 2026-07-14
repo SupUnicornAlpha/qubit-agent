@@ -114,6 +114,7 @@ export interface OrchestratorDecision {
 export interface DecideDebateInput {
   fusedConfidence: number;
   signalBreakdownCount: number;
+  directionalSignalCount?: number;
   orchestratorDecision: OrchestratorDecision | null;
   confidenceThreshold: number;
 }
@@ -129,6 +130,13 @@ export function decideShouldDebate(input: DecideDebateInput): DecideDebateResult
     return {
       shouldDebate: false,
       reason: `signal_breakdown<2: 仅 ${input.signalBreakdownCount} 个分析师产出，无对立观点可辩论`,
+      source: "hard_guard",
+    };
+  }
+  if (input.directionalSignalCount === 0) {
+    return {
+      shouldDebate: false,
+      reason: "directional_signal_count=0: 全部分析师为 HOLD，无多空观点可辩论",
       source: "hard_guard",
     };
   }
@@ -155,10 +163,7 @@ export function decideShouldDebate(input: DecideDebateInput): DecideDebateResult
 /** 从 Orchestrator 全量简报中截取 `## <role>` 段落；若无则回退通用段 + 角色提示 */
 export function extractRoleBriefSection(fullBrief: string, role: AgentRole): string {
   const escaped = role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const sectionRe = new RegExp(
-    `(?:^|\\n)##\\s*${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`,
-    "i"
-  );
+  const sectionRe = new RegExp(`(?:^|\\n)##\\s*${escaped}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, "i");
   const m = fullBrief.match(sectionRe);
   if (m?.[1]?.trim()) {
     return `## 你的角色：${role}\n\n${m[1].trim()}`;
@@ -303,9 +308,7 @@ ${input.dataAndUserContext}`;
    * 空字符串表示首次 planning，不会膨胀 prompt。
    */
   const priorOutputs = await buildWorkflowPriorOutputsContext(input.workflowRunId);
-  const enrichedUserPrompt = priorOutputs
-    ? `${userPrompt}\n\n---\n\n${priorOutputs}`
-    : userPrompt;
+  const enrichedUserPrompt = priorOutputs ? `${userPrompt}\n\n---\n\n${priorOutputs}` : userPrompt;
 
   let answer = "";
   try {
@@ -450,9 +453,11 @@ ${input.fusionSummary}`;
   } catch {
     parsed = {};
   }
-  const signal = (["buy", "sell", "hold"].includes(parsed["signal"] as string)
-    ? parsed["signal"]
-    : input.msaSignal) as AnalystSignalValue;
+  const signal = (
+    ["buy", "sell", "hold"].includes(parsed["signal"] as string)
+      ? parsed["signal"]
+      : input.msaSignal
+  ) as AnalystSignalValue;
   const confidence =
     typeof parsed["confidence"] === "number"
       ? Math.max(0, Math.min(1, parsed["confidence"]))
@@ -594,9 +599,7 @@ export async function logOrchestratorKickoff(input: {
   slotRoles: AgentRole[];
   relationEdges: TeamRelationEdge[];
 }): Promise<void> {
-  const fromOrch = input.relationEdges
-    .filter((e) => e.from === "orchestrator")
-    .map((e) => e.to);
+  const fromOrch = input.relationEdges.filter((e) => e.from === "orchestrator").map((e) => e.to);
   const targets =
     fromOrch.length > 0
       ? [...new Set(fromOrch)]
@@ -643,7 +646,11 @@ export async function runPostFusionPipeline(input: {
   relationEdges: TeamRelationEdge[];
   auxSlots: AnalystTeamSlot[];
   runAuxLlm: (slot: AnalystTeamSlot, context: string) => Promise<string>;
-}): Promise<{ auxSections: Array<{ role: AgentRole; body: string }>; strategyScriptId?: string; backtestSummary?: string }> {
+}): Promise<{
+  auxSections: Array<{ role: AgentRole; body: string }>;
+  strategyScriptId?: string;
+  backtestSummary?: string;
+}> {
   const auxSections: Array<{ role: AgentRole; body: string }> = [];
   if (input.auxSlots.length === 0) {
     return { auxSections };
@@ -774,8 +781,11 @@ export async function runPostFusionPipeline(input: {
    *
    * 现在把上游 body 截断后塞进下一个 slot 的 context，让链路真正串起来。
    */
-  const handoffSections: Array<{ role: AgentRole; body: string; handoff?: HandoffEnvelope | null }> =
-    [];
+  const handoffSections: Array<{
+    role: AgentRole;
+    body: string;
+    handoff?: HandoffEnvelope | null;
+  }> = [];
 
   const orderedAux = orderPostFusionSlotsByTopology(input.auxSlots, input.relationEdges);
 
@@ -873,7 +883,11 @@ export async function runPostFusionPipeline(input: {
       toRole: "msa",
       kind: "llm_message",
       contentText: body.slice(0, 4000),
-      payloadJson: { phase: "post_fusion", role: slot.role, ...(auxHandoff ? { handoff: auxHandoff } : {}) },
+      payloadJson: {
+        phase: "post_fusion",
+        role: slot.role,
+        ...(auxHandoff ? { handoff: auxHandoff } : {}),
+      },
     });
 
     prevRole = slot.role;
@@ -925,7 +939,11 @@ async function persistStrategyScript(input: {
   fusionReport: string;
 }): Promise<{ scriptId: string } | null> {
   const db = await getDb();
-  const wf = await db.select().from(workflowRun).where(eq(workflowRun.id, input.workflowRunId)).limit(1);
+  const wf = await db
+    .select()
+    .from(workflowRun)
+    .where(eq(workflowRun.id, input.workflowRunId))
+    .limit(1);
   const row = wf[0];
   if (!row?.sessionId) return null;
 
@@ -1185,9 +1203,7 @@ async function runSmaFallbackForTicker(input: SmaFallbackInput): Promise<string 
  *
  * 返回空字符串表示"无历史产出"——首次 planning 不会额外膨胀 prompt。
  */
-export async function buildWorkflowPriorOutputsContext(
-  workflowRunId: string
-): Promise<string> {
+export async function buildWorkflowPriorOutputsContext(workflowRunId: string): Promise<string> {
   const db = await getDb();
 
   const [signals, scripts, lastSteps] = await Promise.all([
@@ -1217,12 +1233,7 @@ export async function buildWorkflowPriorOutputsContext(
       })
       .from(agentStep)
       .innerJoin(agentInstance, eq(agentInstance.id, agentStep.agentInstanceId))
-      .where(
-        and(
-          eq(agentStep.workflowRunId, workflowRunId),
-          eq(agentStep.phase, "reason")
-        )
-      )
+      .where(and(eq(agentStep.workflowRunId, workflowRunId), eq(agentStep.phase, "reason")))
       .orderBy(desc(agentStep.createdAt))
       .limit(64),
   ]);
@@ -1258,7 +1269,11 @@ export async function buildWorkflowPriorOutputsContext(
   const defs =
     defIds.length > 0
       ? await db
-          .select({ id: agentDefinition.id, role: agentDefinition.role, name: agentDefinition.name })
+          .select({
+            id: agentDefinition.id,
+            role: agentDefinition.role,
+            name: agentDefinition.name,
+          })
           .from(agentDefinition)
           .where(
             defIds.length === 1
@@ -1268,10 +1283,7 @@ export async function buildWorkflowPriorOutputsContext(
       : [];
   const defMap = new Map(defs.map((d) => [d.id, { role: d.role, name: d.name }]));
 
-  const lines: string[] = [
-    "## 本工作流已跑历史产出（请直接消费，不要重复劳动）",
-    "",
-  ];
+  const lines: string[] = ["## 本工作流已跑历史产出（请直接消费，不要重复劳动）", ""];
 
   if (signals.length > 0) {
     lines.push("### 已落库分析师信号");
@@ -1288,9 +1300,7 @@ export async function buildWorkflowPriorOutputsContext(
     lines.push("### 已发布策略脚本");
     for (const sc of scripts) {
       const codeHead = (sc.signalCode ?? "").trim().slice(0, 200).replace(/\n/g, " ");
-      lines.push(
-        `- id=${sc.id} name=${sc.name} purpose=${sc.purpose} code≈"${codeHead}..."`
-      );
+      lines.push(`- id=${sc.id} name=${sc.name} purpose=${sc.purpose} code≈"${codeHead}..."`);
     }
     lines.push("");
   }
@@ -1503,9 +1513,7 @@ async function persistExploreFallbackDrafts(input: {
     const dup = await db
       .select({ id: factorDefinition.id })
       .from(factorDefinition)
-      .where(
-        and(eq(factorDefinition.projectId, projectId), eq(factorDefinition.name, name)),
-      )
+      .where(and(eq(factorDefinition.projectId, projectId), eq(factorDefinition.name, name)))
       .limit(1);
     if (dup[0]) continue;
 

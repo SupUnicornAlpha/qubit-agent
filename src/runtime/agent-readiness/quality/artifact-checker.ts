@@ -15,16 +15,15 @@
  */
 
 import type { Database } from "bun:sqlite";
-import {
-  getScenarioExpectation,
-  SCENARIO_EXPECTATIONS,
-} from "./scenario-expectations";
 import type { ScenarioRecipe } from "../scenarios";
+import { SCENARIO_EXPECTATIONS, getScenarioExpectation } from "./scenario-expectations";
 
 export interface ArtifactGapDetail {
   table: string;
   rows: number;
   minRows: number;
+  status?: "warming" | "passed" | "failed";
+  detail?: string;
 }
 
 export interface ArtifactCheckResult {
@@ -51,6 +50,14 @@ export function resolveScenarioKey(
       .get(workflowRunId) as { s?: string | null } | undefined;
     const raw = (row?.s ?? "").trim();
     if (!raw) return null;
+    const aliases: Record<string, ScenarioRecipe["key"]> = {
+      analyst_debate: "research",
+      stock_screening: "stock_pick",
+      factor_research: "factor",
+      strategy_authoring: "strategy",
+      live_trading: "live_trading",
+    };
+    if (aliases[raw]) return aliases[raw];
     if (raw in SCENARIO_EXPECTATIONS) {
       return raw as ScenarioRecipe["key"];
     }
@@ -78,9 +85,7 @@ export function checkRequiredArtifacts(
   for (const a of [...exp.requiredArtifacts, ...(exp.qualityGates ?? [])]) {
     let count = 0;
     try {
-      const row = sqlite.prepare(a.countSql).get(workflowRunId) as
-        | { c: number }
-        | undefined;
+      const row = sqlite.prepare(a.countSql).get(workflowRunId) as { c: number } | undefined;
       count = Number(row?.c ?? 0);
     } catch {
       count = 0;
@@ -93,7 +98,82 @@ export function checkRequiredArtifacts(
     rows.push(detail);
     if (count < a.minRows) missing.push(detail);
   }
+  if (scenario === "stock_pick" || scenario === "stock_pick_short") {
+    const effect = checkRecommendationEffectGate(sqlite, workflowRunId, {
+      side: scenario === "stock_pick" ? "long" : "short",
+    });
+    rows.push(effect);
+    if (effect.status === "failed") missing.push(effect);
+  }
   return { scenario, ok: missing.length === 0, missing, rows };
+}
+
+export function checkRecommendationEffectGate(
+  sqlite: Database,
+  workflowRunId: string,
+  input: {
+    side: "long" | "short";
+    minMature?: number;
+    minWinRate?: number;
+    minAverageExcessReturnPct?: number;
+    maxBrierScore?: number;
+  }
+): ArtifactGapDetail {
+  const minMature = input.minMature ?? 50;
+  try {
+    const row = sqlite
+      .prepare(
+        `SELECT
+          COUNT(*) AS mature,
+          AVG(CASE WHEN ro.outcome = 'win' THEN 1.0 ELSE 0.0 END) AS win_rate,
+          AVG(ro.excess_return_pct) AS avg_excess,
+          AVG((rs.confidence - CASE WHEN ro.outcome = 'win' THEN 1.0 ELSE 0.0 END) *
+              (rs.confidence - CASE WHEN ro.outcome = 'win' THEN 1.0 ELSE 0.0 END)) AS brier
+        FROM recommendation_snapshot rs
+        JOIN recommendation_outcome ro ON ro.recommendation_id = rs.id
+        WHERE rs.project_id = (
+          SELECT project_id FROM workflow_run WHERE id = ?
+        )
+          AND rs.side = ?
+          AND ro.horizon_days = 20
+          AND ro.outcome IN ('win', 'loss', 'flat')`
+      )
+      .get(workflowRunId, input.side) as
+      | { mature: number; win_rate: number | null; avg_excess: number | null; brier: number | null }
+      | undefined;
+    const mature = Number(row?.mature ?? 0);
+    const winRate = Number(row?.win_rate ?? 0);
+    const averageExcess = Number(row?.avg_excess ?? 0);
+    const brier = Number(row?.brier ?? 1);
+    if (mature < minMature) {
+      return {
+        table: "quality:recommendation_effect",
+        rows: 1,
+        minRows: 1,
+        status: "warming",
+        detail: `mature=${mature}/${minMature}`,
+      };
+    }
+    const pass =
+      winRate >= (input.minWinRate ?? 0.5) &&
+      averageExcess >= (input.minAverageExcessReturnPct ?? 0) &&
+      brier <= (input.maxBrierScore ?? 0.25);
+    return {
+      table: "quality:recommendation_effect",
+      rows: pass ? 1 : 0,
+      minRows: 1,
+      status: pass ? "passed" : "failed",
+      detail: `mature=${mature}, winRate=${winRate.toFixed(3)}, avgExcess=${averageExcess.toFixed(3)}, brier=${brier.toFixed(3)}`,
+    };
+  } catch (error) {
+    return {
+      table: "quality:recommendation_effect",
+      rows: 1,
+      minRows: 1,
+      status: "warming",
+      detail: `effect_data_unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 }
 
 /**
@@ -107,13 +187,13 @@ export function checkRequiredArtifacts(
 export function buildArtifactGapHint(check: ArtifactCheckResult): string {
   if (check.ok) return "";
   const lines = check.missing
-    .map((m) => `${m.table} >= ${m.minRows}（当前 ${m.rows}）`)
+    .map((m) => `${m.table} >= ${m.minRows}（当前 ${m.rows}${m.detail ? `；${m.detail}` : ""}）`)
     .join("、");
   return [
-    `## 产物完整性闸（artifact gate）触发`,
+    "## 产物完整性闸（artifact gate）触发",
     `本场景（${check.scenario}）要求落库：${lines}。`,
-    `你已尝试结束本轮，但产物未落库——评测会判 A-1=0。`,
-    `**请调用对应落库工具补齐**（如 strategy.create_version / strategy.compose /`,
+    "你已尝试结束本轮，但产物未落库——评测会判 A-1=0。",
+    "**请调用对应落库工具补齐**（如 strategy.create_version / strategy.compose /",
     `order.create_intent / 写 analyst_signal 的输出工具），不要返回 \`{"tool":"none"}\`。`,
   ].join("\n");
 }

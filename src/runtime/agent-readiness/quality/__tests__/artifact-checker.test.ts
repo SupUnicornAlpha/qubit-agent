@@ -7,10 +7,11 @@
  *   3. buildArtifactGapHint 输出可读 markdown
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildArtifactGapHint,
+  checkRecommendationEffectGate,
   checkRequiredArtifacts,
   resolveScenarioKey,
 } from "../artifact-checker";
@@ -26,7 +27,8 @@ beforeAll(() => {
   sqlite.exec(`
     CREATE TABLE workflow_run (
       id TEXT PRIMARY KEY,
-      research_scenario_id TEXT
+      research_scenario_id TEXT,
+      project_id TEXT
     );
     CREATE TABLE analyst_signal (
       id TEXT PRIMARY KEY,
@@ -86,7 +88,21 @@ beforeAll(() => {
       workflow_run_id TEXT,
       symbol TEXT,
       side TEXT,
-      rationale TEXT
+      rationale TEXT,
+      entry_low REAL,
+      entry_high REAL,
+      stop_loss REAL,
+      take_profit REAL,
+      project_id TEXT,
+      confidence REAL DEFAULT 0.5,
+      invalidation_json TEXT DEFAULT '[]'
+    );
+    CREATE TABLE recommendation_outcome (
+      id TEXT PRIMARY KEY,
+      recommendation_id TEXT,
+      horizon_days INTEGER,
+      outcome TEXT,
+      excess_return_pct REAL
     );
   `);
 });
@@ -111,6 +127,7 @@ beforeEach(() => {
     DELETE FROM screener_run;
     DELETE FROM screener_candidate;
     DELETE FROM recommendation_snapshot;
+    DELETE FROM recommendation_outcome;
   `);
 });
 
@@ -120,6 +137,13 @@ describe("resolveScenarioKey (P2 artifact gate)", () => {
       .prepare("INSERT INTO workflow_run (id, research_scenario_id) VALUES (?, ?)")
       .run("wf-1", "strategy");
     expect(resolveScenarioKey(sqlite, "wf-1")).toBe("strategy");
+  });
+
+  test("注册中心场景键映射到 readiness 场景", () => {
+    sqlite
+      .prepare("INSERT INTO workflow_run (id, research_scenario_id) VALUES (?, ?)")
+      .run("wf-registry", "factor_research");
+    expect(resolveScenarioKey(sqlite, "wf-registry")).toBe("factor");
   });
 
   test("未 tag（null）→ 返回 null", () => {
@@ -260,25 +284,42 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
   });
 
   test("stock_pick scenario：screener + long recommendation 快照齐全 → ok", () => {
-    sqlite.prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)").run("sr-1", "wf-sp");
+    sqlite
+      .prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)")
+      .run("sr-1", "wf-sp");
     for (const id of ["c1", "c2", "c3"]) {
       sqlite
         .prepare("INSERT INTO screener_candidate (id, screener_run_id) VALUES (?, ?)")
         .run(id, "sr-1");
     }
-    for (const sym of ["AAPL", "MSFT", "NVDA"]) {
+    for (const [index, sym] of ["AAPL", "MSFT", "NVDA"].entries()) {
       sqlite
         .prepare(
-          "INSERT INTO recommendation_snapshot (id, workflow_run_id, symbol, side, rationale) VALUES (?, ?, ?, ?, ?)"
+          `INSERT INTO recommendation_snapshot
+           (id, workflow_run_id, symbol, side, rationale, entry_low, entry_high, stop_loss, take_profit, invalidation_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(`rec-${sym}`, "wf-sp", sym, "long", "momentum + valuation");
+        .run(
+          `rec-${sym}`,
+          "wf-sp",
+          sym,
+          "long",
+          "momentum + valuation",
+          index < 2 ? 98 : null,
+          index < 2 ? 100 : null,
+          index < 2 ? 94 : null,
+          index < 2 ? 112 : null,
+          index < 2 ? '["跌破支撑"]' : "[]"
+        );
     }
     const result = checkRequiredArtifacts(sqlite, "stock_pick", "wf-sp");
     expect(result.ok).toBe(true);
   });
 
   test("stock_pick_short scenario：缺 short recommendation 快照 → missing", () => {
-    sqlite.prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)").run("sr-2", "wf-ss");
+    sqlite
+      .prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)")
+      .run("sr-2", "wf-ss");
     for (const id of ["c1", "c2"]) {
       sqlite
         .prepare("INSERT INTO screener_candidate (id, screener_run_id) VALUES (?, ?)")
@@ -289,6 +330,25 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
     expect(result.missing.some((m) => m.table === "recommendation_snapshot")).toBe(true);
   });
 
+  test("stock_pick scenario：只有方向没有交易计划 → quality gate missing", () => {
+    sqlite
+      .prepare("INSERT INTO screener_run (id, workflow_run_id) VALUES (?, ?)")
+      .run("sr-plan", "wf-plan");
+    for (const id of ["p1", "p2", "p3"]) {
+      sqlite
+        .prepare("INSERT INTO screener_candidate (id, screener_run_id) VALUES (?, ?)")
+        .run(id, "sr-plan");
+      sqlite
+        .prepare(
+          "INSERT INTO recommendation_snapshot (id, workflow_run_id, symbol, side, rationale) VALUES (?, ?, ?, ?, ?)"
+        )
+        .run(`rec-${id}`, "wf-plan", id.toUpperCase(), "long", "direction only");
+    }
+    const result = checkRequiredArtifacts(sqlite, "stock_pick", "wf-plan");
+    expect(result.ok).toBe(false);
+    expect(result.missing.some((item) => item.table === "recommendation_trade_plan")).toBe(true);
+  });
+
   /**
    * Round 8 复盘（2026-06-08）：原 factor 场景 SQL 没用 workflow_run_id `?` 占位符
    * → 历史 round 的全库因子被误计为本 workflow 产出 → A-1 假阳性。
@@ -296,9 +356,7 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
   test("factor scenario：其他 workflow 的因子不应被计入本 workflow", () => {
     // 灌 1 条"别的 workflow"的 factor + evaluation
     sqlite
-      .prepare(
-        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
-      )
+      .prepare("INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)")
       .run("f-other", "close - close[20]", "wf-other");
     sqlite
       .prepare("INSERT INTO factor_evaluation (id, factor_id, ic, rank_ic) VALUES (?, ?, ?, ?)")
@@ -312,9 +370,7 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
 
   test("factor scenario：本 workflow 因子 + 评估齐全 → ok", () => {
     sqlite
-      .prepare(
-        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
-      )
+      .prepare("INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)")
       .run("f-curr", "ret_20d", "wf-x");
     sqlite
       .prepare("INSERT INTO factor_evaluation (id, factor_id, ic, rank_ic) VALUES (?, ?, ?, ?)")
@@ -326,9 +382,7 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
 
   test("factor scenario：评估存在但 IC/RankIC 太低 → quality gate missing", () => {
     sqlite
-      .prepare(
-        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
-      )
+      .prepare("INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)")
       .run("f-low", "ret_5d", "wf-x");
     sqlite
       .prepare("INSERT INTO factor_evaluation (id, factor_id, ic, rank_ic) VALUES (?, ?, ?, ?)")
@@ -341,9 +395,7 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
 
   test("factor scenario：本 workflow 有因子但 evaluation.ic IS NULL → 不算 ok", () => {
     sqlite
-      .prepare(
-        "INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)"
-      )
+      .prepare("INSERT INTO factor_definition (id, expr, workflow_run_id) VALUES (?, ?, ?)")
       .run("f-x", "ret_20d", "wf-x");
     sqlite
       .prepare("INSERT INTO factor_evaluation (id, factor_id, ic) VALUES (?, ?, NULL)")
@@ -352,6 +404,42 @@ describe("checkRequiredArtifacts (P2 artifact gate)", () => {
     const result = checkRequiredArtifacts(sqlite, "factor", "wf-x");
     expect(result.ok).toBe(false);
     expect(result.missing.some((m) => m.table === "factor_evaluation")).toBe(true);
+  });
+});
+
+describe("recommendation effect gate", () => {
+  test("样本未成熟时只报告 warming，不阻断 stock_pick", () => {
+    sqlite
+      .prepare("INSERT INTO workflow_run (id, research_scenario_id, project_id) VALUES (?, ?, ?)")
+      .run("wf-warm", "stock_pick", "p1");
+    const result = checkRecommendationEffectGate(sqlite, "wf-warm", { side: "long" });
+    expect(result.status).toBe("warming");
+    expect(result.rows).toBe(1);
+  });
+
+  test("成熟后按胜率、超额收益和 Brier 强制阻断", () => {
+    sqlite
+      .prepare("INSERT INTO workflow_run (id, research_scenario_id, project_id) VALUES (?, ?, ?)")
+      .run("wf-effect", "stock_pick", "p1");
+    for (let index = 0; index < 4; index++) {
+      sqlite
+        .prepare(
+          "INSERT INTO recommendation_snapshot (id, workflow_run_id, project_id, symbol, side, rationale, confidence) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+        .run(`rec-${index}`, "wf-effect", "p1", `S${index}`, "long", "r", 0.9);
+      sqlite
+        .prepare(
+          "INSERT INTO recommendation_outcome (id, recommendation_id, horizon_days, outcome, excess_return_pct) VALUES (?, ?, ?, ?, ?)"
+        )
+        .run(`out-${index}`, `rec-${index}`, 20, "loss", -2);
+    }
+    const result = checkRecommendationEffectGate(sqlite, "wf-effect", {
+      side: "long",
+      minMature: 4,
+    });
+    expect(result.status).toBe("failed");
+    expect(result.rows).toBe(0);
+    expect(result.detail).toContain("mature=4");
   });
 });
 

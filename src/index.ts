@@ -4,6 +4,7 @@ import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { isPackagedRuntime } from "./runtime/app-paths";
 import { runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
 import { executionWorker } from "./runtime/execution/execution-worker";
+import { recommendationOutcomeWorker } from "./runtime/effect-validation/recommendation-outcome-evaluator";
 import { experienceMaintenanceWorker } from "./runtime/experience/maintenance-worker";
 import { attachExperiencePipes } from "./runtime/experience/pipe-bootstrap";
 import { monitorAggregatorWorker } from "./runtime/monitor/monitor-aggregator-worker";
@@ -46,6 +47,7 @@ async function main() {
   }
   workflowScheduler.start();
   executionWorker.start();
+  recommendationOutcomeWorker.start();
   strategyRuntimeWorker.start();
   // 监控聚合 + 告警扫描 worker（P2-4）：每 5min 跑一次 aggregateMetrics +
   // stuckWorkflowAlerts + scanAllSystemAlerts；任一阶段失败仅 warn，不影响主链路。
@@ -72,6 +74,7 @@ async function main() {
     console.log("\n[QUBIT] Shutting down...");
     workflowScheduler.stop();
     executionWorker.stop();
+    recommendationOutcomeWorker.stop();
     strategyRuntimeWorker.stop();
     monitorAggregatorWorker.stop();
     experienceMaintenanceWorker.stop();
@@ -84,6 +87,7 @@ async function main() {
   process.on("SIGTERM", async () => {
     workflowScheduler.stop();
     executionWorker.stop();
+    recommendationOutcomeWorker.stop();
     strategyRuntimeWorker.stop();
     monitorAggregatorWorker.stop();
     experienceMaintenanceWorker.stop();

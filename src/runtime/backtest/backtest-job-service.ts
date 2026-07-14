@@ -20,9 +20,12 @@ import {
   backtestRun as backtestRunTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
-import { providerResolver } from "../provider/resolver";
-import { strategyComposer } from "../strategy/strategy-composer";
+import {
+  type StrategyEvaluationRecord,
+  strategyEvaluationService,
+} from "../effect-validation/strategy-evaluation-service";
 import { factorService } from "../factor/factor-service";
+import { providerResolver } from "../provider/resolver";
 import type {
   BacktestCosts,
   BacktestProvider,
@@ -31,6 +34,7 @@ import type {
   BacktestSignalSpec,
   ProviderScope,
 } from "../provider/types";
+import { strategyComposer } from "../strategy/strategy-composer";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -73,6 +77,7 @@ export interface BacktestJobRecord {
   workflowRunId: string | null;
   agentInstanceId: string | null;
   compositionId: string | null;
+  evaluation: StrategyEvaluationRecord | null;
 }
 
 export class BacktestJobError extends Error {
@@ -171,15 +176,16 @@ export class BacktestJobService {
       .where(eq(backtestRunTable.id, jobId));
 
     try {
-      const provider = await providerResolver.resolve<"backtest">("backtest", {}, {
-        providerKey: job.engineKey,
-      });
+      const provider = await providerResolver.resolve<"backtest">(
+        "backtest",
+        {},
+        {
+          providerKey: job.engineKey,
+        }
+      );
       const bp = provider as BacktestProvider;
       if (typeof bp.run !== "function") {
-        throw new BacktestJobError(
-          "provider_failed",
-          `provider_${job.engineKey}_lacks_run_method`
-        );
+        throw new BacktestJobError("provider_failed", `provider_${job.engineKey}_lacks_run_method`);
       }
       const result = await bp.run(job.config);
 
@@ -201,11 +207,10 @@ export class BacktestJobService {
           endedAt: new Date().toISOString(),
         })
         .where(eq(backtestRunTable.id, jobId));
-      throw new BacktestJobError(
-        "provider_failed",
-        `backtest_run_failed: ${(e as Error).message}`
-      );
+      throw new BacktestJobError("provider_failed", `backtest_run_failed: ${(e as Error).message}`);
     }
+    const completed = await this.get(jobId);
+    await strategyEvaluationService.evaluateCompletedBacktest(completed);
     return this.get(jobId);
   }
 
@@ -224,7 +229,9 @@ export class BacktestJobService {
       .limit(1);
     const r = rows[0];
     if (!r) throw new BacktestJobError("job_not_found", `backtest_job_not_found: ${jobId}`);
-    return this.rowToRecord(r);
+    const record = this.rowToRecord(r);
+    record.evaluation = await strategyEvaluationService.getByBacktestRunId(jobId);
+    return record;
   }
 
   async list(filter: { strategyVersionId?: string; status?: BacktestJobRecord["status"] } = {}) {
@@ -240,7 +247,12 @@ export class BacktestJobService {
           .where(and(...conds))
           .orderBy(desc(backtestRunTable.startedAt))
       : await db.select().from(backtestRunTable).orderBy(desc(backtestRunTable.startedAt));
-    return rows.map((r) => this.rowToRecord(r));
+    return Promise.all(
+      rows.map(async (r) => ({
+        ...this.rowToRecord(r),
+        evaluation: await strategyEvaluationService.getByBacktestRunId(r.id),
+      }))
+    );
   }
 
   // ── private ──
@@ -255,10 +267,7 @@ export class BacktestJobService {
   private async resolveSignals(input: BacktestJobSubmitInput): Promise<BacktestSignalSpec> {
     if (input.signals) return input.signals;
     if (!input.compositionId) {
-      throw new BacktestJobError(
-        "validation_failed",
-        "either_signals_or_composition_id_required"
-      );
+      throw new BacktestJobError("validation_failed", "either_signals_or_composition_id_required");
     }
     const comp = await strategyComposer.get(input.compositionId);
     if (comp.factorIds.length === 0) {
@@ -267,7 +276,14 @@ export class BacktestJobService {
         `composition_${comp.id}_has_no_factor_for_backtest`
       );
     }
-    const factor = await factorService.get(comp.factorIds[0]!);
+    const factorId = comp.factorIds[0];
+    if (!factorId) {
+      throw new BacktestJobError(
+        "validation_failed",
+        `composition_${comp.id}_has_no_factor_for_backtest`
+      );
+    }
+    const factor = await factorService.get(factorId);
     return {
       kind: "factor_score",
       factorId: factor.id,
@@ -283,7 +299,7 @@ export class BacktestJobService {
       status: r.status,
       engineKey: r.engineKey,
       providerId: r.providerId ?? null,
-      config: (r.configJson as unknown) as BacktestRequest,
+      config: r.configJson as unknown as BacktestRequest,
       result: (r.performanceJson as unknown as BacktestResult | null) ?? null,
       startedAt: r.startedAt,
       endedAt: r.endedAt ?? null,
@@ -291,6 +307,7 @@ export class BacktestJobService {
       workflowRunId: r.workflowRunId ?? null,
       agentInstanceId: r.agentInstanceId ?? null,
       compositionId: r.compositionId ?? null,
+      evaluation: null,
     };
   }
 }

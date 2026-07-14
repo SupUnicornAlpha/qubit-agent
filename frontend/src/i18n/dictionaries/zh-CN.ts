@@ -268,9 +268,11 @@ const pack: LocalePack = {
         margin: { cross: "全仓", isolated: "逐仓" },
         tp: "止盈价",
         sl: "止损价",
-        tpslPlaceholder: "可选（后续版本）",
+        tpslPlaceholder: "可选；两项需同时填写",
+        bracketUnavailable: "当前交易会话不支持 Bracket 保护单",
+        bracketIncomplete: "止盈价和止损价必须同时填写且大于 0",
         currentKindPrefix: "当前订单类型：",
-        currentKindSuffix: "。止盈止损与实盘券商将在后续版本接入。",
+        currentKindSuffix: "。同时填写止盈止损将创建 Bracket/OCO 保护单。",
         logTitle: "快捷交易参数变更",
         logBody:
           "订单类型={kind} · 名义比例={pct}% · 杠杆={lev}x · 保证金={margin}\n品种 {symbol} / {exchange} · {tf}",

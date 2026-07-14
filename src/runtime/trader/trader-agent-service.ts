@@ -11,7 +11,11 @@ import {
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType } from "../../types/entities";
 import { processExecutionTasks } from "../execution/execution-worker";
-import { createOrderIntentFromReiaPayload } from "../execution/reia-bridge";
+import {
+  createOrderIntentFromReiaPayload,
+  resolveExecutionStrategyContext,
+} from "../execution/reia-bridge";
+import { createBracketOrder } from "../execution/bracket-order-service";
 import { brokerCancelOrder } from "../execution/broker/broker-service";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { listStrategyRuntimeLogs } from "../strategy/strategy-runtime-log";
@@ -144,6 +148,55 @@ export async function placeTraderOrder(input: {
     riskOutcome: result.riskOutcome,
     riskReason: result.riskReason,
   };
+}
+
+export async function placeTraderBracketOrder(input: {
+  workflowRunId: string;
+  symbol: string;
+  exchange: string;
+  side: OrderSide;
+  qty: number;
+  entryOrderType: "market" | "limit";
+  entryReferencePrice: number;
+  entryLimitPrice?: number | null;
+  takeProfitPrice: number;
+  stopLossPrice: number;
+  timeframe?: string;
+  executionMode?: "paper" | "live";
+  brokerAccountId?: string;
+}) {
+  const symbol = input.symbol.trim().toUpperCase();
+  const market = chartExchangeToMarket(input.exchange);
+  const db = await getDb();
+  const context = await resolveExecutionStrategyContext(db, input.workflowRunId, symbol, market);
+  const result = await createBracketOrder(db, {
+    workflowRunId: input.workflowRunId,
+    strategyVersionId: context.strategyVersionId,
+    instrumentId: context.instrumentId,
+    side: input.side,
+    qty: input.qty,
+    entryOrderType: input.entryOrderType,
+    entryReferencePrice: input.entryReferencePrice,
+    ...(input.entryLimitPrice != null ? { entryLimitPrice: input.entryLimitPrice } : {}),
+    takeProfitPrice: input.takeProfitPrice,
+    stopLossPrice: input.stopLossPrice,
+    timeInForce: "gtc",
+    dispatchMode: input.executionMode ?? "paper",
+    ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
+    market,
+    symbol,
+  });
+  await processExecutionTasks(db);
+  await appendTraderContextMessage({
+    workflowRunId: input.workflowRunId,
+    sourceId: `bracket-${result.bracketId}`,
+    role: "user",
+    kind: "bracket_order",
+    title: `${input.side === "buy" ? "做多" : "做空"} ${symbol} · Bracket`,
+    body: `entry=${input.entryReferencePrice}\ntakeProfit=${input.takeProfitPrice}\nstopLoss=${input.stopLossPrice}\nbracket=${result.bracketId}`,
+    payload: { ...result },
+  });
+  return result;
 }
 
 export async function cancelTraderOrder(input: {

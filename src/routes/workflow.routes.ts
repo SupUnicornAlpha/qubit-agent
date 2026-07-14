@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
@@ -26,9 +26,15 @@ import {
 } from "../runtime/workflow/user-message-queue";
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
-import { computeNextRunAt, workflowScheduler } from "../runtime/workflow/scheduler";
+import {
+  computeNextRunAt,
+  parsePositionReconciliationJobPayload,
+  parseScheduledJobKind,
+  workflowScheduler,
+} from "../runtime/workflow/scheduler";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
+import { buildWorkflowLineage } from "../runtime/lineage/workflow-lineage-service";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -36,7 +42,20 @@ export const workflowRouter = new Hono();
 
 workflowRouter.get("/", async (c) => {
   const db = await getDb();
-  const rows = await db.select().from(workflowRun).limit(50);
+  const projectId = c.req.query("projectId")?.trim();
+  const includeCancelled = c.req.query("includeCancelled") === "true";
+  const limitValue = Number(c.req.query("limit") ?? "200");
+  const limit = Number.isFinite(limitValue) ? Math.max(1, Math.min(500, limitValue)) : 200;
+  const where = and(
+    projectId ? eq(workflowRun.projectId, projectId) : undefined,
+    includeCancelled ? undefined : ne(workflowRun.status, "cancelled"),
+  );
+  const rows = await db
+    .select()
+    .from(workflowRun)
+    .where(where)
+    .orderBy(desc(workflowRun.startedAt))
+    .limit(limit);
   return c.json({ data: rows });
 });
 
@@ -145,6 +164,12 @@ workflowRouter.post("/scheduled-jobs", async (c) => {
   if (!body.workspaceId || !body.projectId || !body.cronExpr) {
     return c.json({ error: "workspaceId, projectId and cronExpr are required" }, 400);
   }
+  if (
+    parseScheduledJobKind(body.payloadJson) === "position_reconciliation" &&
+    !parsePositionReconciliationJobPayload(body.payloadJson)
+  ) {
+    return c.json({ error: "position_reconciliation requires provider futu/ib/ccxt/alpaca" }, 400);
+  }
   const db = await getDb();
   const id = randomUUID();
   const now = new Date();
@@ -182,6 +207,13 @@ workflowRouter.patch("/scheduled-jobs/:id", async (c) => {
   if (!existed[0]) return c.json({ error: "scheduled job not found" }, 404);
   const current = existed[0];
   const cronExpr = body.cronExpr ?? current.cronExpr;
+  const payloadJson = body.payloadJson ?? (current.payloadJson as Record<string, unknown>);
+  if (
+    parseScheduledJobKind(payloadJson) === "position_reconciliation" &&
+    !parsePositionReconciliationJobPayload(payloadJson)
+  ) {
+    return c.json({ error: "position_reconciliation requires provider futu/ib/ccxt/alpaca" }, 400);
+  }
   const nextRunAt = computeNextRunAt(cronExpr, new Date());
   await db
     .update(scheduledJob)
@@ -190,7 +222,7 @@ workflowRouter.patch("/scheduled-jobs/:id", async (c) => {
       enabled: body.enabled ?? current.enabled,
       cronExpr,
       timezone: body.timezone ?? current.timezone,
-      payloadJson: body.payloadJson ?? current.payloadJson,
+      payloadJson,
       executionMode: body.executionMode ?? current.executionMode,
       nextRunAt,
       updatedAt: new Date().toISOString(),
@@ -359,6 +391,13 @@ workflowRouter.get("/:id/artifacts", async (c) => {
   const summary = await listWorkflowArtifactSummary(rows[0].projectId, id);
   const report = await readWorkflowReportArtifact(rows[0].projectId, id);
   return c.json({ data: { ...summary, report } });
+});
+
+workflowRouter.get("/:id/lineage", async (c) => {
+  const db = await getDb();
+  const data = await buildWorkflowLineage(db, c.req.param("id"));
+  if (!data) return c.json({ error: "Not found" }, 404);
+  return c.json({ data });
 });
 
 workflowRouter.put("/:id/artifacts/report", async (c) => {
