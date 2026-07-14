@@ -702,6 +702,8 @@ export async function actNode(
       priorToolCalls: state.toolCalls,
       errorClass,
       semanticFailure: Boolean(semanticFailure),
+      workflowId: state.workflowId,
+      params: mcp ? mcp.arguments : enrichedToolParams,
     });
     const retryable = recovery.allowSameToolRetry;
     const hint = buildMcpRetryHint(errorClass, errMsg, targetName);

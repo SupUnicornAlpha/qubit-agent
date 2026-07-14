@@ -1,4 +1,9 @@
 import { getToolCatalogMap } from "../../tools/tool-catalog";
+import { resolveConnectorForTool } from "../../tools/tool-routes";
+import {
+  inferMarketScope,
+  isToolNegativelyCached,
+} from "../../tools/tool-governance-policy";
 import type { ToolErrorClass } from "./tool-error-classifier";
 
 export interface ToolRecoveryPlan {
@@ -22,6 +27,8 @@ export function buildToolRecoveryPlan(input: {
   priorToolCalls: Array<Record<string, unknown>>;
   errorClass: ToolErrorClass;
   semanticFailure: boolean;
+  workflowId?: string;
+  params?: Record<string, unknown>;
 }): ToolRecoveryPlan {
   const failedName = input.failedTool.split("/").at(-1) ?? input.failedTool;
   const failedAttempts =
@@ -32,7 +39,12 @@ export function buildToolRecoveryPlan(input: {
     ).length + 1;
   const allowSameToolRetry =
     input.errorClass === "transient" && !input.semanticFailure && failedAttempts === 1;
-  const alternatives = findAlternatives(failedName, input.availableTools);
+  const alternatives = findAlternatives(
+    failedName,
+    input.availableTools,
+    input.workflowId,
+    input.params
+  );
   const nextAction = allowSameToolRetry
     ? "retry_once"
     : alternatives.length > 0
@@ -58,12 +70,27 @@ export function buildToolRecoveryPlan(input: {
   };
 }
 
-function findAlternatives(failedTool: string, availableTools: string[]): string[] {
+function findAlternatives(
+  failedTool: string,
+  availableTools: string[],
+  workflowId?: string,
+  params: Record<string, unknown> = {}
+): string[] {
   const catalog = getToolCatalogMap();
   const failed = catalog.get(failedTool);
   if (!failed?.category) return [];
   return availableTools
-    .filter((name) => name !== failedTool)
+    .filter(
+      (name) => {
+        const connector = resolveConnectorForTool(name);
+        const targetName = connector ? `${connector}/${name}` : name;
+        return (
+          name !== failedTool &&
+          (!workflowId ||
+            !isToolNegativelyCached(workflowId, targetName, inferMarketScope(params)))
+        );
+      }
+    )
     .map((name) => catalog.get(name))
     .filter(
       (entry): entry is NonNullable<typeof entry> =>

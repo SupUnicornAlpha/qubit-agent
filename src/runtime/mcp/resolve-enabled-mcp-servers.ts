@@ -77,5 +77,8 @@ export async function resolveEnabledMcpServers(names: string[]): Promise<Enabled
   }
   const configured = unique.filter((n) => byName.has(n));
   const cooldown = await Promise.all(configured.map((name) => isMcpServerInCooldown(name)));
-  return configured.filter((_, index) => !cooldown[index]).map((name) => byName.get(name)!);
+  return configured
+    .filter((_, index) => !cooldown[index])
+    .map((name) => byName.get(name))
+    .filter((server): server is EnabledMcpServerInfo => server !== undefined);
 }

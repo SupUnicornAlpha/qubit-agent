@@ -77,7 +77,7 @@ export async function getToolsSummary(input?: {
           )
         );
 
-  type Acc = Omit<ToolSummaryRow, "successRate" | "avgLatencyMs"> & {
+  type Acc = Omit<ToolSummaryRow, "successRate" | "effectiveDataSuccessRate" | "avgLatencyMs"> & {
     latSum: number;
     latCount: number;
   };
