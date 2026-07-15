@@ -25,7 +25,7 @@ import {
 } from "../msa/research-team-execute";
 import { parseHitlApproval } from "../workflow/hitl-service";
 import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
-import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import { projectWorkflowFinalAnswer } from "../research-team/interaction-log";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
@@ -54,6 +54,54 @@ type OrchestratorTaskHandler = (
   payload: TaskAssignPayload,
 ) => Promise<void>;
 
+/** 兼容 ReAct finalize 的多种形态，统一抽取面向用户的自然语言终答。 */
+export function extractWorkflowFinalAnswer(finalResponse: unknown): string {
+  if (!finalResponse || typeof finalResponse !== "object" || Array.isArray(finalResponse)) {
+    return "";
+  }
+  const fr = finalResponse as Record<string, unknown>;
+  const obs =
+    fr.observation && typeof fr.observation === "object" && !Array.isArray(fr.observation)
+      ? (fr.observation as Record<string, unknown>)
+      : {};
+  const pick = (value: unknown): string =>
+    typeof value === "string" && value.trim() && value.trim() !== "no tool requested"
+      ? value.trim()
+      : "";
+  return pick(fr.answerText) || pick(fr.summary) || pick(fr.reasonText) || pick(obs.reasonText);
+}
+
+async function projectReactResult(
+  workflowId: string,
+  taskType: string,
+  result: Awaited<ReturnType<typeof runA2aReactTaskAssign>>
+): Promise<void> {
+  if (!result) return;
+  let answer = extractWorkflowFinalAnswer(result.finalResponse);
+  if (!answer && result.terminalStatus === "failed") {
+    const error = result.finalResponse.error;
+    const reason = result.finalResponse.reason;
+    const detail =
+      typeof error === "string" && error.trim()
+        ? error.trim()
+        : typeof reason === "string" && reason.trim()
+          ? reason.trim()
+          : "工作流执行失败，未生成可验证的最终产物。";
+    answer = `任务未能完成：${detail}`;
+  }
+  if (!answer) return;
+  const handoff = parseHandoffEnvelope(answer);
+  await projectWorkflowFinalAnswer({
+    workflowRunId: workflowId,
+    contentText: answer,
+    sourceTaskType: taskType,
+    payloadJson: {
+      terminalStatus: result.terminalStatus,
+      ...(handoff ? { handoff } : {}),
+    },
+  });
+}
+
 /**
  * workflow_resume / workflow_retry：收敛后续跑唯一走 A2A —— 让 orchestrator 自己
  * 重新跑一遍 ReAct loop（runA2aReactTaskAssign）。
@@ -71,7 +119,8 @@ type OrchestratorTaskHandler = (
  */
 const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) => {
   try {
-    await runA2aReactTaskAssign(ctx, msg);
+    const result = await runA2aReactTaskAssign(ctx, msg);
+    await projectReactResult(msg.workflowId, payload.taskType, result);
   } catch (err) {
     await setWorkflowStatus(msg.workflowId, "failed");
     const errorMessage = err instanceof Error ? err.message : String(err);
@@ -119,6 +168,16 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
   });
 
   if (outcome.kind === "completed") {
+    await projectWorkflowFinalAnswer({
+      workflowRunId: msg.workflowId,
+      contentText: outcome.teamResult.report || outcome.teamResult.fusionSummary,
+      sourceTaskType: "research_team_execute",
+      payloadJson: {
+        fusionId: outcome.teamResult.fusionId,
+        fusedSignal: outcome.teamResult.fusedSignal,
+        fusedConfidence: outcome.teamResult.fusedConfidence,
+      },
+    });
     await ctx.send({
       workflowId: msg.workflowId,
       traceId: msg.traceId,
@@ -130,6 +189,7 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
           fusionId: outcome.teamResult.fusionId,
           fusedSignal: outcome.teamResult.fusedSignal,
           fusedConfidence: outcome.teamResult.fusedConfidence,
+          report: outcome.teamResult.report || outcome.teamResult.fusionSummary,
         },
       }),
       priority: msg.priority,
@@ -166,41 +226,7 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
  */
 const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg) => {
   const res = await runA2aReactTaskAssign(ctx, msg);
-  if (res && res.terminalStatus !== "failed") {
-    try {
-      /**
-       * 取 orchestrator 最终面向用户的自然语言答复。
-       *
-       * 关键修复：当 orchestrator 直接回答（tool=none，act.ts 走 skippedToolCall 分支）时，
-       * finalResponse 形如 `{status,role,iteration,skippedToolCall:true,summary}` ——
-       * 答复在 `summary`，**没有** `observation` / `reasonText` 字段。之前误读
-       * `finalResponse.observation.reasonText` 永远是 undefined → 答复永不落库 →
-       * 右栏看不到回复。这里按多种 finalize 形态兜底取值。
-       */
-      const fr = (res.finalResponse ?? {}) as Record<string, unknown>;
-      const obs = (fr.observation ?? {}) as Record<string, unknown>;
-      const pick = (v: unknown): string =>
-        typeof v === "string" && v.trim() && v.trim() !== "no tool requested" ? v.trim() : "";
-      // answerText（act.ts skippedToolCall 注入的完整 reason 文本）最贴近用户答复，优先；
-      // 再退回 summary / reasonText / observation.reasonText 兼容其它 finalize 形态。
-      const answer =
-        pick(fr.answerText) || pick(fr.summary) || pick(fr.reasonText) || pick(obs.reasonText);
-      if (answer) {
-        // 交接信封解析也覆盖 chat 路径的 orchestrator 答复（测评复盘 #3）。
-        const handoff = parseHandoffEnvelope(answer);
-        await logResearchTeamInteraction({
-          workflowRunId: msg.workflowId,
-          fromRole: "orchestrator",
-          toRole: "user",
-          kind: "llm_message",
-          contentText: answer.slice(0, 6000),
-          payloadJson: { phase: "orchestrator_chat_answer", ...(handoff ? { handoff } : {}) },
-        });
-      }
-    } catch (err) {
-      console.warn(`[orchestrator-handler] log chat answer failed: ${(err as Error).message}`);
-    }
-  }
+  await projectReactResult(msg.workflowId, "orchestrator_chat", res);
 };
 
 const ORCHESTRATOR_TASK_HANDLERS: Record<string, OrchestratorTaskHandler> = {
@@ -249,7 +275,8 @@ export function createOrchestratorHandler(): RuntimeRoleHandler {
         return;
       }
 
-      await runA2aReactTaskAssign(ctx, msg);
+      const result = await runA2aReactTaskAssign(ctx, msg);
+      await projectReactResult(msg.workflowId, payload.taskType, result);
     },
     onShutdown: async () => {
       console.log(`[RoleHandler:orchestrator] shutdown`);

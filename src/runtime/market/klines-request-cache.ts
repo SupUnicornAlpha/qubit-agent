@@ -7,12 +7,13 @@
  */
 
 import type { BarData } from "../../connectors/data/data.connector";
+import type { KlinesDataSourceMeta } from "./klines-data-source";
 
 const WORKFLOW_TTL_MS = 30 * 60 * 1000;
 const GLOBAL_TTL_MS = 90 * 1000;
 const MAX_ENTRIES = 512;
 
-type CacheEntry = { bars: BarData[]; expiresAt: number };
+type CacheEntry = { bars: BarData[]; expiresAt: number; source?: KlinesDataSourceMeta };
 
 const store = new Map<string, CacheEntry>();
 
@@ -69,18 +70,36 @@ export function getCachedKlinesBars(
 export function setCachedKlinesBars(
   queryKey: string,
   bars: BarData[],
-  workflowRunId?: string | null
+  workflowRunId?: string | null,
+  source?: KlinesDataSourceMeta
 ): void {
   const now = Date.now();
-  const entry: CacheEntry = { bars, expiresAt: now + GLOBAL_TTL_MS };
+  const entry: CacheEntry = {
+    bars,
+    expiresAt: now + GLOBAL_TTL_MS,
+    ...(source ? { source } : {}),
+  };
   store.set(`global:${queryKey}`, entry);
   if (workflowRunId?.trim()) {
     store.set(`${workflowRunId.trim()}:${queryKey}`, {
       bars,
       expiresAt: now + WORKFLOW_TTL_MS,
+      ...(source ? { source } : {}),
     });
   }
   pruneIfNeeded();
+}
+
+export function getCachedKlinesSource(
+  queryKey: string,
+  workflowRunId?: string | null
+): KlinesDataSourceMeta | undefined {
+  const key = workflowRunId?.trim()
+    ? `${workflowRunId.trim()}:${queryKey}`
+    : `global:${queryKey}`;
+  const hit = store.get(key);
+  if (!hit || hit.expiresAt <= Date.now()) return undefined;
+  return hit.source;
 }
 
 /** 测试 / workflow 结束时清理 */

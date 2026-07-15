@@ -12,6 +12,7 @@ import {
 import {
   buildKlinesQueryKey,
   getCachedKlinesBars,
+  getCachedKlinesSource,
   setCachedKlinesBars,
 } from "./klines-request-cache";
 
@@ -160,7 +161,7 @@ export async function queryKlines(params: {
   const windCfg = windConfigFromSettings(settings);
   const hasWindAvailable =
     klinesMode === "wind" || (klinesMode === "auto" && Boolean(windCfg.username));
-  const dataSource = resolveEffectiveKlinesSource({
+  const configuredDataSource = resolveEffectiveKlinesSource({
     settings,
     period,
     hasTushareToken: hasTushare,
@@ -188,9 +189,11 @@ export async function queryKlines(params: {
   const bars =
     cached ??
     ((await connector.execute("fetch_bars", fetchParams)) as BarData[]);
+  const actualDataSource = getCachedKlinesSource(queryKey);
   if (!cached && bars.length > 0) {
-    setCachedKlinesBars(queryKey, bars);
+    setCachedKlinesBars(queryKey, bars, undefined, actualDataSource);
   }
+  const dataSource = actualDataSource ?? configuredDataSource;
   const sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   const trimmed =
     sorted.length > requestedLimit ? sorted.slice(sorted.length - requestedLimit) : sorted;

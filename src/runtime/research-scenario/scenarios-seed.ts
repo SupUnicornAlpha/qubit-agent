@@ -183,7 +183,7 @@ export const FACTOR_RESEARCH_SCENARIO: ResearchScenarioSpec = {
     { kind: "factor_eval", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["factor.register", "factor.compute", "factor.evaluate"],
+    builtinTools: ["factor.register", "factor.compute", "factor.autoEvaluate"],
     connectors: ["qubit-data", "qubit-research"],
     mcpServers: [],
     defaultParams: { populationSize: 12, concurrency: 4 },

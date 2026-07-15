@@ -18,27 +18,28 @@ if [[ "${1:-}" == "--tauri" ]]; then
   RUN_TAURI=true
 fi
 
-echo "==> [1/7] install dependencies"
+echo "==> [1/8] install dependencies"
 bun install
 bun install --cwd frontend
 
-echo "==> [2/7] prepare bundle resources"
+echo "==> [2/8] prepare bundle resources"
 bash scripts/prepare-bundle-resources.sh
 
-echo "==> [3/7] python venv (optional, same OS/arch as build host)"
+echo "==> [3/8] python venv (optional, same OS/arch as build host)"
 bash scripts/setup-python-venv.sh || true
 
-echo "==> [4/7] compile backend binary"
-mkdir -p dist/bundle/bin
-bun build --compile src/cli.ts --outfile dist/bundle/bin/qubit
-chmod +x dist/bundle/bin/qubit
+echo "==> [4/8] compile backend binary"
+bash scripts/build-backend.sh dist/bundle/bin/qubit
 
-echo "==> [5/7] build frontend (packaged backend URL)"
+echo "==> [5/8] production sidecar smoke"
+bash scripts/smoke-production-sidecar.sh dist/bundle/bin/qubit
+
+echo "==> [6/8] build frontend (packaged backend URL)"
 export VITE_BACKEND_URL="http://127.0.0.1:${PACKAGED_PORT}"
 # 打包走 vite build（与 dev 一致）；完整 tsc 仍用 `bun run --cwd frontend build`
 (cd frontend && bunx vite build)
 
-echo "==> [6/7] stage for Tauri"
+echo "==> [7/8] stage for Tauri"
 TARGET="$(rustc --print host-tuple)"
 mkdir -p src-tauri/binaries
 cp dist/bundle/bin/qubit "src-tauri/binaries/qubit-${TARGET}"
@@ -47,16 +48,22 @@ echo "    sidecar: src-tauri/binaries/qubit-${TARGET}"
 echo "    resources: dist/bundle/resources → \$RESOURCE/bundle/"
 
 if [[ "${RUN_TAURI}" == true ]]; then
-  echo "==> [7/7] tauri build"
+  echo "==> [8/8] tauri build"
   if ! command -v cargo >/dev/null 2>&1; then
     echo "Rust/Cargo is required for tauri build. Install from https://rustup.rs"
     exit 1
   fi
-  bun run build:tauri
+  # macOS 的 create-dmg 会调用系统 Perl；部分终端继承的 C.UTF-8 在 macOS
+  # 不存在，会让卷图标阶段 panic 并遗留挂载盘。固定到 POSIX C locale。
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    LC_ALL=C LANG=C bun run build:tauri -- --ci
+  else
+    bun run build:tauri -- --ci
+  fi
   echo ""
   echo "Installers are under src-tauri/target/release/bundle/"
 else
-  echo "==> [7/7] skip tauri build (pass --tauri to create .dmg/.msi)"
+  echo "==> [8/8] skip tauri build (pass --tauri to create .dmg/.msi)"
   echo ""
   echo "Test backend bundle manually:"
   echo "  QUBIT_APP_ROOT=${ROOT}/dist/bundle/resources \\"

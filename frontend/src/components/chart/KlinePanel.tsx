@@ -13,8 +13,14 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { getKlines } from "../../api/backend";
-import type { KlineBar, KlinesErrorPayload, KlinesResponseMeta } from "../../api/types";
+import { getKlines, listMarketDataSources } from "../../api/backend";
+import type {
+  KlineBar,
+  KlinesErrorPayload,
+  KlinesResponseMeta,
+  MarketDataReadiness,
+  MarketDataSourceRecord,
+} from "../../api/types";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
 import {
   formatKlinesErrorMessage,
@@ -158,6 +164,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   const requestChartReload = useAppStore((s) => s.requestChartReload);
   const setChartContext = useAppStore((s) => s.setChartContext);
   const setActiveView = useAppStore((s) => s.setActiveView);
+  const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
   const activeView = useAppStore((s) => s.activeView);
   const traderMarkers = useAppStore((s) => s.traderMarkers);
   const { t } = useTranslation();
@@ -178,6 +185,8 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   const [klinesError, setKlinesError] = useState<KlinesErrorPayload | null>(null);
   const [meta, setMeta] = useState<KlinesResponseMeta | null>(null);
   const [lastBars, setLastBars] = useState<KlineBar[]>([]);
+  const [sourceRows, setSourceRows] = useState<MarketDataSourceRecord[]>([]);
+  const [readiness, setReadiness] = useState<MarketDataReadiness | null>(null);
 
   const layoutChart = useCallback(() => {
     const el = wrapRef.current;
@@ -258,6 +267,11 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
     setKlinesError(null);
     setLastBars([]);
     try {
+      const control = await listMarketDataSources().catch(() => null);
+      if (control) {
+        setSourceRows(control.data);
+        setReadiness(control.readiness);
+      }
       const res = await getKlines({
         symbol: spec.symbol.trim(),
         exchange: spec.exchange.trim() || undefined,
@@ -429,6 +443,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
           tail: errTail,
         })
     : null;
+  const activeSource = meta
+    ? sourceRows.find((source) => source.id === meta.dataSource) ?? null
+    : null;
+  const openDataSourceSettings = () => {
+    setConfigSubPage("providers");
+    setActiveView("config");
+  };
 
   return (
     <div
@@ -514,8 +535,35 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       )}
       {!embedded ? (
         <div style={styles.chartColumn}>
+          {readiness && readiness.status !== "ready" ? (
+            <div
+              style={{
+                ...styles.sourceBanner,
+                ...(readiness.status === "down" ? styles.sourceDown : styles.sourceDegraded),
+              }}
+              role="status"
+            >
+              <div>
+                <strong>{readiness.status === "down" ? "行情源不可用" : "行情源部分可用"}</strong>
+                <span style={styles.sourceMessage}>{readiness.message}</span>
+              </div>
+              <button type="button" className="qb-btn-secondary" onClick={openDataSourceSettings}>
+                查看数据源
+              </button>
+            </div>
+          ) : null}
           {error ? <div style={styles.err}>{error}</div> : null}
           {metaStatusLine ? <div style={styles.meta}>{metaStatusLine}</div> : null}
+          {activeSource ? (
+            <div style={styles.sourceDetail}>
+              <span>实际源：<strong>{activeSource.name}</strong></span>
+              <span>健康 {activeSource.healthStatus}</span>
+              <span>成功率 {activeSource.successRate == null ? "—" : `${Math.round(activeSource.successRate * 100)}%`}</span>
+              <span>P95 {activeSource.p95LatencyMs == null ? "—" : `${activeSource.p95LatencyMs}ms`}</span>
+              <span>熔断 {activeSource.circuitState}</span>
+              {activeSource.isFallback ? <span>已降级命中</span> : null}
+            </div>
+          ) : null}
           <div ref={wrapRef} style={styles.chartCanvas} />
         </div>
       ) : (
@@ -598,6 +646,35 @@ const styles: Record<string, React.CSSProperties> = {
   err: { padding: "8px 16px", color: "#fca5a5", fontSize: 13 },
   errCompact: { fontSize: 11, color: "#fca5a5", flex: 1, minWidth: 0 },
   meta: { padding: "4px 16px 8px", fontSize: 12, color: "var(--qb-main-meta, #71717a)" },
+  sourceBanner: {
+    margin: "8px 16px 4px",
+    padding: "8px 10px",
+    border: "1px solid",
+    borderRadius: 7,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    flexWrap: "wrap",
+    fontSize: 12,
+  },
+  sourceDegraded: {
+    borderColor: "color-mix(in srgb, var(--qb-warning, #f59e0b) 45%, transparent)",
+    background: "color-mix(in srgb, var(--qb-warning, #f59e0b) 9%, transparent)",
+  },
+  sourceDown: {
+    borderColor: "color-mix(in srgb, var(--qb-danger, #ef4444) 45%, transparent)",
+    background: "color-mix(in srgb, var(--qb-danger, #ef4444) 9%, transparent)",
+  },
+  sourceMessage: { marginLeft: 8, color: "var(--qb-text-muted)" },
+  sourceDetail: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    padding: "0 16px 7px",
+    color: "var(--qb-text-muted)",
+    fontSize: 10,
+  },
   metaCompact: { fontSize: 11, color: "var(--qb-main-meta, #71717a)", flex: 1, minWidth: 0 },
   embeddedBar: {
     flexShrink: 0,

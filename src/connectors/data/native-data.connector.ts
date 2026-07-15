@@ -20,6 +20,12 @@ import {
   setCachedKlinesBars,
 } from "../../runtime/market/klines-request-cache";
 import {
+  type OperationalMarketDataSource,
+  recordMarketDataSourceAttempt,
+  selectMarketDataSourcePlan,
+} from "../../runtime/market/market-data-source-control";
+import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
+import {
   fetchYfinanceAssetInfo,
   fetchYfinanceBars,
   fetchYfinanceDividends,
@@ -291,10 +297,9 @@ export class QubitNativeDataConnector extends DataConnector {
       });
       const closes = bars.map((b) => b.close);
       const last = closes[closes.length - 1] ?? 0;
+      const anchor1y = closes.length >= 252 ? closes[closes.length - 252] : undefined;
       const ret1y =
-        closes.length >= 252 && closes[closes.length - 252] > 0
-          ? (last - closes[closes.length - 252]) / closes[closes.length - 252]
-          : null;
+        anchor1y !== undefined && anchor1y > 0 ? (last - anchor1y) / anchor1y : null;
       return {
         symbol,
         exchange,
@@ -340,22 +345,73 @@ export class QubitNativeDataConnector extends DataConnector {
     const cached = getCachedKlinesBars(queryKey, params.workflowRunId);
     if (cached) return cached;
 
-    const bars = await this.fetchBarsFromSources(params);
-    if (bars.length > 0) {
-      setCachedKlinesBars(queryKey, bars, params.workflowRunId);
+    const liveSettings = await loadBuiltinConnectorSettings();
+    const dataCfg = (liveSettings["qubit-data"] ?? {}) as Record<string, unknown>;
+    const mode = parseKlinesDataSourceSetting(dataCfg.klinesDataSource);
+    if (mode === "synthetic") return [];
+    const market = resolveTickerMarket(params.symbol, { hintExchange: params.exchange }).market;
+    const plan = await selectMarketDataSourcePlan({
+      market,
+      timeframe: params.period,
+      mode,
+      settings: liveSettings,
+    });
+    const errors: string[] = [];
+    for (const source of plan) {
+      const started = Date.now();
+      try {
+        const bars = await this.fetchBarsFromSources(params, source, liveSettings);
+        const status = bars.length > 0 ? "success" : "empty";
+        await recordMarketDataSourceAttempt({
+          sourceId: source,
+          market,
+          timeframe: params.period,
+          symbol: params.symbol,
+          status,
+          latencyMs: Date.now() - started,
+          ...(bars.length === 0 ? { error: "no usable OHLCV rows" } : {}),
+        });
+        if (bars.length > 0) {
+          setCachedKlinesBars(queryKey, bars, params.workflowRunId, source);
+          return bars;
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        errors.push(`${source}: ${message}`);
+        await recordMarketDataSourceAttempt({
+          sourceId: source,
+          market,
+          timeframe: params.period,
+          symbol: params.symbol,
+          status: "error",
+          latencyMs: Date.now() - started,
+          error: message,
+        });
+      }
     }
-    return bars;
+    if (plan.length === 0) {
+      throw new Error(
+        `market_data_unavailable: no eligible source for market=${market}, timeframe=${params.period}, mode=${mode}`
+      );
+    }
+    throw new Error(
+      `market_data_unavailable: all ${plan.length} source(s) failed for ${params.symbol} (${market}/${params.period}): ${errors.join(" | ") || "empty results"}`
+    );
   }
 
-  private async fetchBarsFromSources(params: FetchBarsParams): Promise<BarData[]> {
-    const liveSettings = await loadBuiltinConnectorSettings();
+  private async fetchBarsFromSources(
+    params: FetchBarsParams,
+    forcedSource?: OperationalMarketDataSource,
+    loadedSettings?: BuiltinConnectorInitConfigs
+  ): Promise<BarData[]> {
+    const liveSettings = loadedSettings ?? (await loadBuiltinConnectorSettings());
     const tokenLive = tushareTokenFromSettings(liveSettings, this.tushareToken);
     const hasTushare = Boolean(tokenLive);
     const dataCfg = (liveSettings["qubit-data"] ?? {}) as Record<string, unknown>;
     const klinesRaw =
       typeof dataCfg.klinesDataSource === "string" ? dataCfg.klinesDataSource : undefined;
 
-    const mode = parseKlinesDataSourceSetting(klinesRaw);
+    const mode = forcedSource ?? parseKlinesDataSourceSetting(klinesRaw);
     const windIntent = hasWindIntent(liveSettings, mode);
     const effective = resolveEffectiveKlinesSource({
       settings: liveSettings,
@@ -378,8 +434,9 @@ export class QubitNativeDataConnector extends DataConnector {
           `Wind request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
       }
-      if (isChinaAShareMarket(params.symbol, params.exchange || "")) {
+      if (!forcedSource && isChinaAShareMarket(params.symbol, params.exchange || "")) {
         try {
           const fallback = await fetchEastMoneyBars(params);
           if (fallback.length > 0) {
@@ -454,6 +511,7 @@ export class QubitNativeDataConnector extends DataConnector {
           `Tushare daily request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
         return [];
       }
     }
@@ -470,6 +528,7 @@ export class QubitNativeDataConnector extends DataConnector {
           `Binance request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
       }
       if (mode === "binance_crypto") return [];
       if (mode === "auto" && isCryptoMarket(params.symbol, params.exchange || "")) {
@@ -484,9 +543,7 @@ export class QubitNativeDataConnector extends DataConnector {
           /* logged below */
         }
       }
-      if (mode === "binance_crypto" || (mode === "auto" && isCryptoMarket(params.symbol, params.exchange || ""))) {
-        return [];
-      }
+      return [];
     }
 
     if (effective === "akshare") {
@@ -501,8 +558,9 @@ export class QubitNativeDataConnector extends DataConnector {
           `AKShare request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
       }
-      if (isChinaAShareMarket(params.symbol, params.exchange || "")) {
+      if (!forcedSource && isChinaAShareMarket(params.symbol, params.exchange || "")) {
         try {
           const fallback = await fetchEastMoneyBars(params);
           if (fallback.length > 0) {
@@ -530,8 +588,9 @@ export class QubitNativeDataConnector extends DataConnector {
           `yfinance request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
       }
-      try {
+      if (!forcedSource) try {
         const fallback = await fetchYahooFinanceBars(params);
         if (fallback.length > 0) {
           console.warn(
@@ -558,6 +617,7 @@ export class QubitNativeDataConnector extends DataConnector {
           `East Money request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
         if (mode !== "auto") return [];
       }
     }
@@ -577,6 +637,7 @@ export class QubitNativeDataConnector extends DataConnector {
           `Yahoo Finance request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
           e instanceof Error ? e.message : e
         );
+        if (forcedSource) throw e;
         return [];
       }
     }

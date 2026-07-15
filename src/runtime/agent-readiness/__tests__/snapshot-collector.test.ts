@@ -316,4 +316,37 @@ describe("collectSnapshot", () => {
     });
     expect(snapshot.metrics["M-1"]).toBeGreaterThanOrEqual(1);
   });
+
+  test("D-4/D-5：内部终答与客户端对话投影分别计分", async () => {
+    const wfId = await setupWorkflow({ status: "completed" });
+    const { instId } = await setupAgentInstance(wfId);
+    const db = await getDb();
+    await db.insert(schema.a2aMessage).values({
+      id: `a2a-final-${wfId}`,
+      workflowRunId: wfId,
+      traceId: `trace-${wfId}`,
+      senderInstanceId: instId,
+      receiverInstanceId: null,
+      messageType: "TASK_RESULT",
+      payloadJson: {
+        taskId: "task-final",
+        success: true,
+        result: { handledByRole: "orchestrator", summary: "内部终答" },
+        durationMs: 0,
+      } as never,
+    });
+    await db.insert(schema.researchTeamInteraction).values({
+      id: `interaction-final-${wfId}`,
+      workflowRunId: wfId,
+      fromRole: "orchestrator",
+      toRole: "user",
+      kind: "llm_message",
+      contentText: "客户端可见终答",
+      payloadJson: { phase: "workflow_final_answer" },
+    });
+
+    const snapshot = await collectSnapshot({ workflowRunId: wfId, scenario: "research" });
+    expect(snapshot.metrics["D-4"]).toBe(1);
+    expect(snapshot.metrics["D-5"]).toBe(1);
+  });
 });

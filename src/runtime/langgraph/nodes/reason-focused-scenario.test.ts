@@ -6,6 +6,8 @@ describe("buildFocusedResearchScenarioPrompt", () => {
     const prompt = buildFocusedResearchScenarioPrompt("factor_research");
     expect(prompt).toContain("不得自动扩成通用研究团队");
     expect(prompt).toContain("factor.register");
+    expect(prompt).toContain("factor.compute");
+    expect(prompt).toContain("factor.autoEvaluate");
     expect(prompt).toContain("没有真实入库因子时");
   });
 

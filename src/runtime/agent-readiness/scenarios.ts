@@ -61,6 +61,8 @@ export interface ScenarioRecipe {
   workflow: Omit<CreateAndDispatchWorkflowInput, "projectId">;
   /** 第 2 步：传给 /api/v1/analyst/run 的上下文 */
   analystRun: AnalystRunPayload;
+  /** 统一 research-scenario 生产入口需要的结构化输入；不得从旧 analyst payload 猜测。 */
+  scenarioInputParams: Record<string, unknown>;
   /**
    * 默认期望终态。runner 会等到 workflow_run.status 进入 expectedTerminalStatus
    * 之一才开始抓快照。
@@ -103,6 +105,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：以 AAPL 为唯一标的做单只深度研究，覆盖估值/财报/技术/宏观/同业对比；分析师团队应充分调用 quote、news、fundamentals、screener 等工具，输出 3 条具体交易级见解。",
       hitlMode: "off",
     },
+    scenarioInputParams: { ticker: "AAPL", debateRounds: 1 },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   research_multi: {
@@ -125,6 +128,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：对 NVDA / AMD / INTC 三只半导体股做横向对比，要求 analyst_signal 至少落 3 条（每只一条）且 ticker 字段三家齐；输出每家多空观点 + 相对排序。",
       hitlMode: "off",
     },
+    scenarioInputParams: { ticker: "NVDA,AMD,INTC", debateRounds: 1 },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   research_theme: {
@@ -147,6 +151,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：纯主题驱动 / 无指定 ticker；分析师团队应主动用 screener / fetch_klines / news 识别 3 个 AI 算力基础设施细分赛道，并各推 1 只代表标的。analyst_signal 至少落 3 条。",
       hitlMode: "off",
     },
+    scenarioInputParams: { universe: "US:sp500", topN: 5 },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   stock_pick: {
@@ -166,6 +171,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：从美股大盘筛 5 只 long 候选，需结合 30 天动量、估值、新闻情绪。请先用 run_screener / fetch_klines 验证候选，再逐只调用 recommendation.record；至少 2 只必须填写 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[] 与 evidence[]。",
       hitlMode: "off",
     },
+    scenarioInputParams: { universe: "US:sp500", topN: 5 },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   stock_pick_short: {
@@ -188,6 +194,7 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：筛 3 只 short 候选（高估值/业绩下滑/动量恶化），每只 reasoning 必须显式提到做空逻辑并讨论轧空、强制平仓、负 carry；逐只调用 recommendation.record，至少 2 只填写 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[] 与 evidence[]。",
       hitlMode: "off",
     },
+    scenarioInputParams: { universe: "US:sp500", topN: 5 },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   factor: {
@@ -207,6 +214,13 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：提出一个 alpha 因子（公式 + 经济学解释 + 60 日 IC/IR 模拟）。落库要求：factor_definition + factor_evaluation 各至少一条；评估指标必须有数值（IC / Rank IC / IR）。",
       hitlMode: "off",
     },
+    scenarioInputParams: {
+      universe: "US:sp500",
+      factorCategory: "momentum",
+      lookbackDays: 504,
+      horizonDays: 5,
+      icThreshold: 0.03,
+    },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   strategy: {
@@ -225,6 +239,11 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       context:
         "评测目标：组合 2-3 个已有因子产出 long-only 策略草稿，落 strategy + strategy_version + strategy_composition；包含 universe / 持仓周期 / 仓位规则。",
       hitlMode: "off",
+    },
+    scenarioInputParams: {
+      ticker: "SPY",
+      strategyHint: "long-only 多因子组合，包含回测与仓位规则",
+      timeframe: "1d",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
@@ -248,6 +267,11 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：组合 2-3 个因子产出 **long/short** 配对策略；strategy_composition.description 中必须显式提到「long」「short」「pair」等关键词；composition.factorIdsJson 至少 2 个因子；包含 universe / 持仓周期 / 多空仓位上限。",
       hitlMode: "off",
     },
+    scenarioInputParams: {
+      ticker: "SPY",
+      strategyHint: "long/short 配对，多空双边仓位上限与风险预算",
+      timeframe: "1d",
+    },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   live_trading: {
@@ -266,6 +290,11 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       context:
         "评测目标：先 SELECT 最新 strategy_version，再针对当前市场状态产出至少 1 条 **side=buy** 的 order_intent + risk_decision；reasoning 中说明加仓理由（动量/估值/事件）。",
       hitlMode: "off",
+    },
+    scenarioInputParams: {
+      capitalCap: 100000,
+      killSwitchEnabled: true,
+      confirmLevel: "manual_each",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
@@ -288,6 +317,11 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
       context:
         "评测目标：产出至少 1 条 **side=sell** 的 order_intent + risk_decision；reasoning 必须显式提到「做空」/「short」并讨论保证金、可借券或轧空风险。注意：当前是 sell 表达「做空」语义，依赖 strategy_version 上下文区分平多 vs 开空。",
       hitlMode: "off",
+    },
+    scenarioInputParams: {
+      capitalCap: 100000,
+      killSwitchEnabled: true,
+      confirmLevel: "manual_each",
     },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },

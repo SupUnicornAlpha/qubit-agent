@@ -84,6 +84,20 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
 
   // 行情
+  "market.resolve_symbol": {
+    description:
+      "调用行情工具前统一识别 symbol 所属市场和 exchange，返回 CN/HK/US/CRYPTO 等市场、置信度和判断原因。",
+    category: "market",
+  },
+  "market.data_sources": {
+    description:
+      "查看行情源能力与实时治理状态：市场/周期覆盖、凭证、成功率、P95、最近错误、熔断、优先级和 fallback。可按 market/timeframe 过滤。",
+    category: "market",
+  },
+  "market.readiness": {
+    description: "查看启动行情 readiness gate；只有真实样本探针通过才会报告 ready。",
+    category: "market",
+  },
   fetch_bars: {
     description: "拉取 OHLCV K 线（多数据源：Yahoo/东财/AkShare 等）",
     category: "market",
@@ -91,7 +105,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     replacedBy: "fetch_klines",
     deprecationReason: "与 fetch_klines 是同一接口的两个名字，统一使用 fetch_klines",
   },
-  fetch_klines: { description: "拉取 OHLCV K 线（多数据源：Yahoo/东财/AkShare 等）", category: "market" },
+  fetch_klines: {
+    description:
+      "市场感知的 OHLCV K 线：自动判断市场，并按源覆盖、周期、凭证、健康度、优先级和熔断状态依次降级。失败会明确返回所有尝试源，不得盲目重复。",
+    category: "market",
+  },
   fetch_ticks: { description: "拉取 Tick/盘口快照（简化实现）", category: "market" },
   fetch_price_data: { description: "K 线 + 最新技术指标快照（SMA/RSI/MACD/布林）", category: "market" },
   fetch_financial_data: { description: "价格统计 + 基本面占位；完整财报需外接数据源", category: "market" },

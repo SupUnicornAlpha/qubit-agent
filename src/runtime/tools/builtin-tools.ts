@@ -29,6 +29,9 @@ import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
+import { listMarketDataSources } from "../market/market-data-source-control";
+import { getMarketDataReadiness } from "../market/market-data-health";
 import { detectRegimeFromBars } from "../market/regime";
 import {
   computeBollinger,
@@ -109,6 +112,32 @@ function optionalFiniteNumber(value: unknown): number | null {
 
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
+  "market.resolve_symbol": async (_ctx, params) => {
+    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
+    if (!symbol) throw new Error("market.resolve_symbol: symbol is required");
+    return resolveTickerMarket(symbol, {
+      ...(typeof params.exchange === "string" ? { hintExchange: params.exchange } : {}),
+    });
+  },
+
+  "market.data_sources": async (_ctx, params) => {
+    const market = typeof params.market === "string" ? params.market.toUpperCase() : "";
+    const timeframe = typeof params.timeframe === "string" ? params.timeframe : "";
+    const rows = await listMarketDataSources();
+    return {
+      readiness: getMarketDataReadiness(),
+      sources: rows.filter(
+        (row) =>
+          (!market || row.supportedMarkets.includes(market)) &&
+          (!timeframe || row.supportedTimeframes.includes(timeframe))
+      ),
+      guidance:
+        "先用 market.resolve_symbol 确认市场；再用此健康清单选择源。fetch_klines 会自动按优先级、凭证和熔断状态降级，不要原样重复调用已 open/down 的源。",
+    };
+  },
+
+  "market.readiness": async () => getMarketDataReadiness(),
+
   /**
    * update_plan —— 编排器维护一份对用户可见的分步计划/TODO（Coding-Agent 体验 P1，
    * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。写入 workflow_run.plan_json 并经 SSE

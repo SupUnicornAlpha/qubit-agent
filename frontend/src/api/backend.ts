@@ -378,8 +378,45 @@ export async function listEnvInstallLog(filter: {
   return r.data;
 }
 
-export async function getHealth(): Promise<{ status: string }> {
-  return httpGet<{ status: string }>("/health");
+export async function getHealth(): Promise<{
+  status: "ok" | "degraded" | string;
+  marketData?: import("./types").MarketDataReadiness;
+}> {
+  return httpGet<{
+    status: "ok" | "degraded" | string;
+    marketData?: import("./types").MarketDataReadiness;
+  }>("/health");
+}
+
+export async function listMarketDataSources(): Promise<{
+  data: import("./types").MarketDataSourceRecord[];
+  readiness: import("./types").MarketDataReadiness;
+}> {
+  const res = await httpGet<{
+    ok: boolean;
+    data: import("./types").MarketDataSourceRecord[];
+    readiness: import("./types").MarketDataReadiness;
+  }>("/api/v1/market/data-sources");
+  return { data: res.data, readiness: res.readiness };
+}
+
+export async function checkMarketDataSources(sourceId?: string): Promise<{
+  data: import("./types").MarketDataSourceRecord[];
+  readiness: import("./types").MarketDataReadiness;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: import("./types").MarketDataSourceRecord[];
+    readiness: import("./types").MarketDataReadiness;
+  }>("/api/v1/market/data-sources/health", sourceId ? { sourceId } : {});
+  return { data: res.data, readiness: res.readiness };
+}
+
+export async function patchMarketDataSource(
+  id: string,
+  patch: { status?: "active" | "inactive"; priority?: number; isFallback?: boolean }
+): Promise<void> {
+  await httpPatch(`/api/v1/market/data-sources/${encodeURIComponent(id)}`, patch);
 }
 
 export async function getKlines(params: {

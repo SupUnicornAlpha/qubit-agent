@@ -24,6 +24,7 @@ import {
   type ProviderKind,
   type ProviderRecord,
 } from "../../api/backend";
+import { MarketDataSourcesPanel } from "./MarketDataSourcesPanel";
 
 const KIND_LABELS: Record<ProviderKind, string> = {
   factor_compute: "因子计算",
@@ -127,6 +128,8 @@ export const ProvidersPanel: FC = () => {
 
   return (
     <div style={styles.shell}>
+      <MarketDataSourcesPanel />
+      <div style={styles.divider} />
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Provider 注册中心</div>
@@ -309,6 +312,7 @@ const styles: Record<string, CSSProperties> = {
     gap: 16,
     color: "var(--qb-body-fg, inherit)",
   },
+  divider: { height: 1, background: "var(--qb-sidebar-border, var(--qb-border-subtle))" },
   header: {
     display: "flex",
     alignItems: "flex-start",

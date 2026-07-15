@@ -37,6 +37,7 @@ import { recommendationRouter } from "./routes/recommendation.routes";
 import { governanceRouter } from "./routes/governance.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
+import { getMarketDataReadiness } from "./runtime/market/market-data-health";
 
 void registerBuiltinConnectors();
 
@@ -47,9 +48,15 @@ export const app = new Hono();
 app.use("*", cors({ origin: "*" }));
 app.use("*", logger());
 
-app.get("/health", (c) =>
-  c.json({ status: "ok", version: "0.1.0", ts: new Date().toISOString() })
-);
+app.get("/health", (c) => {
+  const marketData = getMarketDataReadiness();
+  return c.json({
+    status: marketData.status === "ready" ? "ok" : "degraded",
+    version: "0.1.0",
+    ts: new Date().toISOString(),
+    marketData,
+  });
+});
 
 app.route("/api/v1/workspaces", workspaceRouter);
 app.route("/api/v1/workflows", workflowRouter);
@@ -163,7 +170,7 @@ export function createServer() {
         const url = new URL(req.url);
         const topic = url.searchParams.get("topic") ?? undefined;
         const id = crypto.randomUUID();
-        const upgraded = server.upgrade(req, { data: { id, topic } });
+        const upgraded = server.upgrade(req, { data: { id, ...(topic ? { topic } : {}) } });
         if (upgraded) return undefined;
         return new Response("WebSocket upgrade failed", { status: 400 });
       }

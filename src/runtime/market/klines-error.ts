@@ -44,7 +44,7 @@ export function buildKlinesEmptyError(params: {
     type: KLINES_ERROR_TYPE.EMPTY,
     code: `${params.dataSource}_no_bars`,
     message: `未获取到 K 线：${params.symbol} · 市场 ${ex} · 周期 ${params.timeframe}（请求 ${params.requestedLimit} 根，返回 0）`,
-    hint,
+    ...(hint ? { hint } : {}),
   };
 }
 
@@ -76,6 +76,12 @@ export function buildKlinesUpstreamFailedError(message: string): KlinesErrorPayl
 /** 将任意异常包装为统一 K 线错误结构 */
 export function wrapKlinesThrownError(e: unknown): KlinesErrorPayload {
   const msg = e instanceof Error ? e.message : String(e);
+  if (
+    msg.startsWith("market_data_unavailable") ||
+    /HTTP (429|451|5\d\d)|rate limit|timeout|circuit/i.test(msg)
+  ) {
+    return buildKlinesUpstreamFailedError(msg);
+  }
   if (msg.includes("required") || msg.includes("symbol")) {
     return buildKlinesInvalidRequestError(msg);
   }

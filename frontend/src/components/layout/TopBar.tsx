@@ -24,9 +24,13 @@ export const TopBar: FC = () => {
     try {
       await tauriRestartBackend();
       await new Promise((r) => setTimeout(r, 800));
-      await getHealth();
+      const health = await getHealth();
       setBackendConnected(true);
-      setBackendHint(null);
+      setBackendHint(
+        health.status === "degraded"
+          ? `后端在线 · 行情降级：${health.marketData?.message ?? "readiness 未通过"}`
+          : null
+      );
     } catch {
       setBackendConnected(false);
       setBackendHint(t("topbar.restart.failure", { url: PACKAGED_BACKEND_URL }));

@@ -1331,7 +1331,51 @@ export const marketDataSource = sqliteTable("market_data_source", {
   status: text("status", { enum: ["active", "inactive", "error"] })
     .notNull()
     .default("active"),
+  supportedMarketsJson: text("supported_markets_json", { mode: "json" }).notNull().default("[]"),
+  supportedTimeframesJson: text("supported_timeframes_json", { mode: "json" }).notNull().default("[]"),
+  credentialMode: text("credential_mode", {
+    enum: ["none", "token", "account", "terminal"],
+  }).notNull().default("none"),
+  credentialsReady: integer("credentials_ready", { mode: "boolean" }).notNull().default(false),
+  healthStatus: text("health_status", {
+    enum: ["unknown", "healthy", "degraded", "down"],
+  }).notNull().default("unknown"),
+  lastHealthcheckAt: text("last_healthcheck_at"),
+  lastLatencyMs: integer("last_latency_ms"),
+  p95LatencyMs: integer("p95_latency_ms"),
+  successCount: integer("success_count").notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastError: text("last_error"),
+  circuitState: text("circuit_state", {
+    enum: ["closed", "open", "half_open"],
+  }).notNull().default("closed"),
+  circuitOpenedAt: text("circuit_opened_at"),
+  priority: integer("priority").notNull().default(50),
+  isFallback: integer("is_fallback", { mode: "boolean" }).notNull().default(false),
 });
+
+/** 行情源级调用样本：用于真实成功率/P95/最近错误，而不是把 connector 总健康当行情健康。 */
+export const marketDataSourceCall = sqliteTable(
+  "market_data_source_call",
+  {
+    id: id(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => marketDataSource.id, { onDelete: "cascade" }),
+    market: text("market").notNull(),
+    timeframe: text("timeframe").notNull(),
+    symbol: text("symbol").notNull(),
+    status: text("status", { enum: ["success", "empty", "error", "blocked"] }).notNull(),
+    latencyMs: integer("latency_ms").notNull(),
+    errorMessage: text("error_message"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("idx_market_source_call_source_created").on(t.sourceId, t.createdAt),
+    index("idx_market_source_call_market_created").on(t.market, t.createdAt),
+  ]
+);
 
 export const datasetSnapshot = sqliteTable("dataset_snapshot", {
   id: id(),

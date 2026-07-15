@@ -37,7 +37,7 @@ const CATEGORY_VIEWS: Record<"A" | "B" | "C" | "D" | "LEGACY", CategoryView> = {
     title: "C 类 · LLM 调用质量",
     metrics: ["C-1", "C-2", "C-3-total", "C-3-p95", "C-5"],
   },
-  D: { title: "D 类 · 编排质量", metrics: ["D-1", "D-2", "D-3"] },
+  D: { title: "D 类 · 编排质量", metrics: ["D-1", "D-2", "D-3", "D-4", "D-5"] },
   LEGACY: { title: "LEGACY · 旧 6 指标兼容", metrics: ["O-1", "T-1", "T-3", "T-6", "S-1", "M-1"] },
 };
 
@@ -171,6 +171,8 @@ function suggestForRed(id: string): string {
     "D-1": "工作流没跑到 completed，先去 agent_step / workflow_run 查 lastError 与卡住的 phase。",
     "D-2": "步数触顶（max_iterations）；说明 ReAct 没收敛，可能要加 reflection 或缩 reason 步骤。",
     "D-3": "reason+act 占比低，说明大量时间花在 observe/external，看是不是工具调用太慢。",
+    "D-4": "工作流进入终态但 orchestrator 没有生成 answerText；终态机不应把无回答任务标为 completed。",
+    "D-5": "orchestrator 已有内部答案但没有投影到用户对话；检查 terminal response projector 与 workflow/chat 关联。",
   };
   return tips[id] ?? "请人工检查对应指标的源数据。";
 }

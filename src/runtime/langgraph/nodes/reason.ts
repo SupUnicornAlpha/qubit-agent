@@ -88,7 +88,7 @@ export interface ReasonNodeOutput {
 const FOCUSED_RESEARCH_SCENARIO_GUIDANCE: Record<string, string[]> = {
   factor_research: [
     "目标仅是因子研究，不得扩展成个股基本面、宏观、情绪或多空会审。",
-    "优先由你直接调用 factor.register、factor.compute、factor.evaluate；确需专家时最多派给 research 或 analyst_technical。",
+    "优先由你直接调用 factor.register、factor.compute、factor.autoEvaluate；确需专家时最多派给 research 或 analyst_technical。",
     "完成条件是产生可追溯的 factor_definition_batch 和 factor_evaluation_report；没有真实入库因子时必须明确失败或继续修复，禁止声称研究完成。",
   ],
   stock_screening: [

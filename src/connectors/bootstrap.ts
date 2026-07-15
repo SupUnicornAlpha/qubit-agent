@@ -14,6 +14,7 @@ import {
 import { seedEnvRegistry } from "../runtime/environment/seed-env-registry";
 import { bootstrapProviders } from "../runtime/provider/bootstrap";
 import { bootstrapResearchScenarios } from "../runtime/research-scenario/bootstrap";
+import { bootstrapMarketDataSources } from "../runtime/market/market-data-source-control";
 
 export type { BuiltinConnectorInitConfigs };
 
@@ -59,6 +60,7 @@ export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConf
     connectorRegistry.register("qubit-risk", new QubitNativeRiskConnector());
     connectorRegistry.register("qubit-broker", new QubitBrokerConnector());
     const configs = initConfigs ?? (await loadBuiltinConnectorSettings());
+    await bootstrapMarketDataSources(configs);
     await connectorRegistry.initAll(configs);
   })();
   return bootstrapPromise;

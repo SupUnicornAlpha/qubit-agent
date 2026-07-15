@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getDb } from "../../db/sqlite/client";
+import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { researchTeamInteraction } from "../../db/sqlite/schema";
 
 export type ResearchTeamInteractionKind = "llm_message" | "tool_call" | "signal_submit";
@@ -32,5 +32,57 @@ export async function logResearchTeamInteraction(input: {
     });
   } catch (err) {
     console.warn("[logResearchTeamInteraction]", err);
+  }
+}
+
+/**
+ * 把工作流终态答复投影到客户端读取的研究团队对话流。
+ *
+ * A2A TASK_RESULT 是内部协议记录；客户端右栏读取的是
+ * research_team_interaction。两者不能互相替代。续跑/重试可能再次经过同一终态，
+ * 因此用固定 phase 做 workflow 级幂等，避免用户看到重复答复。
+ */
+export async function projectWorkflowFinalAnswer(input: {
+  workflowRunId: string;
+  contentText: string;
+  sourceTaskType?: string;
+  payloadJson?: Record<string, unknown>;
+}): Promise<boolean> {
+  const contentText = input.contentText.trim();
+  if (!contentText) return false;
+
+  try {
+    await getDb();
+    const sqlite = getSqliteForTesting();
+    const existing = sqlite
+      .prepare(
+        `SELECT 1
+         FROM research_team_interaction
+         WHERE workflow_run_id = ?
+           AND from_role = 'orchestrator'
+           AND to_role = 'user'
+           AND kind = 'llm_message'
+           AND json_extract(payload_json, '$.phase') = 'workflow_final_answer'
+         LIMIT 1`
+      )
+      .get(input.workflowRunId);
+    if (existing) return false;
+
+    await logResearchTeamInteraction({
+      workflowRunId: input.workflowRunId,
+      fromRole: "orchestrator",
+      toRole: "user",
+      kind: "llm_message",
+      contentText,
+      payloadJson: {
+        phase: "workflow_final_answer",
+        ...(input.sourceTaskType ? { sourceTaskType: input.sourceTaskType } : {}),
+        ...(input.payloadJson ?? {}),
+      },
+    });
+    return true;
+  } catch (err) {
+    console.warn("[projectWorkflowFinalAnswer]", err);
+    return false;
   }
 }

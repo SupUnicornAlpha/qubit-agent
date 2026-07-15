@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 #[cfg(debug_assertions)]
 use std::process::Child;
+#[cfg(debug_assertions)]
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;

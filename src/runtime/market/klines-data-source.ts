@@ -252,11 +252,20 @@ async function fetchYahooChartJson(
   const res = await fetchWithTimeout(url, {
     headers: { "User-Agent": UA, Accept: "application/json" },
   });
-  const json = (await res.json()) as YahooChartResponse;
+  const text = await res.text();
   if (!res.ok) {
-    throw new Error(`yahoo_chart: HTTP ${res.status}`);
+    const retryAfter = res.headers.get("retry-after");
+    throw new Error(
+      `yahoo_chart: HTTP ${res.status}${retryAfter ? ` retry-after=${retryAfter}` : ""}: ${text.slice(0, 160)}`
+    );
   }
-  return json;
+  try {
+    return JSON.parse(text) as YahooChartResponse;
+  } catch {
+    throw new Error(
+      `yahoo_chart: invalid JSON (content-type=${res.headers.get("content-type") ?? "unknown"}): ${text.slice(0, 160)}`
+    );
+  }
 }
 
 /** Yahoo Chart `interval`：4h 无原生档位，先拉 60m 再按 4h 桶合并 */
@@ -304,7 +313,7 @@ const YAHOO_INTERVAL_CAPS: Record<string, YahooIntervalCaps> = {
 };
 
 function getYahooIntervalCaps(interval: string): YahooIntervalCaps {
-  return YAHOO_INTERVAL_CAPS[interval] ?? YAHOO_INTERVAL_CAPS["1d"];
+  return YAHOO_INTERVAL_CAPS[interval] ?? YAHOO_INTERVAL_CAPS["1d"]!;
 }
 
 /** 把 `[startMs, endMs)` 按最大窗口切成连续片段，输入非法则返回空数组。 */

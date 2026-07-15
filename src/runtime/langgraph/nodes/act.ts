@@ -43,8 +43,9 @@ import { buildToolRecoveryPlan } from "./tool-recovery-policy";
  * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 最多 push back 几次。
  *
  * 触发：LLM 输出 `{"tool":"none"}` 想停机 + scenario 的 requiredArtifacts 还没满足。
- * 上限 2：第 1/2 次把 hint 塞回 observation 让 graph 回 reason 再跑；第 3 次放行，
- * 写 finalResponse，让评测真实记录 A-1=0，而不是死循环卡死。
+ * 上限 2：第 1/2 次把 hint 塞回 observation 让 graph 回 reason 再跑；第 3 次仍未
+ * 补齐则以 artifact_gate_unsatisfied 明确失败。禁止缺产物却写 completed；同时保留
+ * 面向用户的失败答复，让客户端知道缺什么、为什么无法继续。
  *
  * 同时受 def.maxIterations 上限保护（execute-agent-react.ts:438）—— 即便 gate 想 push back
  * 但已到 max iteration，graph 会自然 finalize。
@@ -122,6 +123,53 @@ export async function actNode(
           ],
           artifactGapRetryCount: retryCount + 1,
           /** 关键：不写 finalResponse，shouldStopReactLoopAfterObserve 不命中 → 回 reason */
+        };
+      }
+      if (!gate.ok) {
+        const hint = buildArtifactGapHint(gate);
+        const missing = gate.missing.map((m) => `${m.table}=${m.rows}/${m.minRows}`).join(", ");
+        const answerText = [
+          `任务未能完成：必需产物在 ${MAX_ARTIFACT_GATE_RETRIES} 次修复后仍不完整（${missing}）。`,
+          "系统不会用空数据或模拟结果冒充成功。请恢复可用数据源后重试。",
+          cleanedReason && cleanedReason !== "no tool requested" ? `当前可交付说明：\n${cleanedReason}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: {
+            level: "error",
+            code: "ARTIFACT_GATE_UNSATISFIED",
+            scenario: scenarioKey,
+            missing: gate.missing,
+            message: hint,
+          },
+        });
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "error",
+              code: "ARTIFACT_GATE_UNSATISFIED",
+              scenario: scenarioKey,
+              missing: gate.missing,
+              hint,
+            },
+          ],
+          finalResponse: {
+            status: "terminated",
+            reason: "artifact_gate_unsatisfied",
+            error: hint,
+            answerText,
+            iteration: state.iteration,
+            role: state.agentDefinition.role,
+          },
         };
       }
     }

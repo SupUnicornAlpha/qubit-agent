@@ -44,10 +44,14 @@ const App: FC = () => {
             await tauriStartBackend().catch(() => null);
           }
         }
-        await getHealth();
+        const health = await getHealth();
         lastConnected = true;
         setBackendConnected(true);
-        setBackendHint(null);
+        setBackendHint(
+          health.status === "degraded"
+            ? `后端在线 · 行情降级：${health.marketData?.message ?? "没有数据源通过 readiness"}`
+            : null
+        );
       } catch {
         lastConnected = false;
         setBackendConnected(false);

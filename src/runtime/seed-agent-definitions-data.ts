@@ -40,6 +40,12 @@ function def(
   };
 }
 
+const MARKET_GOVERNANCE_TOOLS = [
+  "market.resolve_symbol",
+  "market.data_sources",
+  "market.readiness",
+] as const;
+
 /** 内置 Agent 定义（10 个）：Orchestrator + 数据/新闻 + 四维分析师 + 研究/回测/风控 */
 export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
@@ -55,6 +61,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       "assign_task",
+      ...MARKET_GOVERNANCE_TOOLS,
       "evaluate_risk",
       "edit_agent_pack",
       // M10.A2：playbook 复用 + postmortem 沉淀
@@ -84,7 +91,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     name: "行情数据",
     version: "2.1.0",
     systemPrompt: PROMPT_MARKET_DATA,
-    tools: ["fetch_bars", "fetch_klines", "fetch_ticks", "write_snapshot", "call_mcp"],
+    tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
+      "fetch_bars",
+      "fetch_klines",
+      "fetch_ticks",
+      "write_snapshot",
+      "call_mcp",
+    ],
     maxIterations: 12,
   }),
   def({
@@ -117,6 +131,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.1.0",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
       "fetch_financial_data",
       "fetch_fundamentals",
       "fetch_klines",
@@ -155,6 +170,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.2.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
       "fetch_price_data",
       "fetch_klines",
       "compute_indicators",
@@ -220,6 +236,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.1.0",
     systemPrompt: PROMPT_ANALYST_MACRO,
     tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
       "fetch_klines",
       "compute_macro_indicators",
       // M9.P2：量化锚点 — 看现成宏观因子（如果项目里 promote 过）
@@ -253,6 +270,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     systemPrompt: PROMPT_RESEARCH,
     tools: [
       // 基础数据
+      ...MARKET_GOVERNANCE_TOOLS,
       "fetch_klines",
       "compute_factors",
       "compute_indicators",
@@ -310,6 +328,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     name: "回测",
     systemPrompt: PROMPT_BACKTEST,
     tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
       "fetch_klines",
       "run_backtest",
       "get_backtest_status",
@@ -352,6 +371,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     name: "风控",
     systemPrompt: PROMPT_RISK,
     tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
       "evaluate_risk",
       "sign_intent",
       "load_rules",
@@ -388,6 +408,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "1.0.0",
     systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
     tools: [
+      ...MARKET_GOVERNANCE_TOOLS,
       // 多次跑回测（不同区间 / symbols）
       "backtest.run",
       "run_backtest",

@@ -124,6 +124,40 @@ function metricLegacyM1(sqlite: Database, wf: WorkflowRow): number {
   return Number(row.c ?? 0);
 }
 
+function metricInternalFinalAnswer(sqlite: Database, workflowRunId: string): number {
+  const row = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS c
+       FROM a2a_message
+       WHERE workflow_run_id = ?
+         AND message_type = 'TASK_RESULT'
+         AND COALESCE(json_extract(payload_json, '$.success'), 1) != 0
+         AND (
+           LENGTH(TRIM(COALESCE(json_extract(payload_json, '$.result.answerText'), ''))) > 0
+           OR LENGTH(TRIM(COALESCE(json_extract(payload_json, '$.result.summary'), ''))) > 0
+           OR LENGTH(TRIM(COALESCE(json_extract(payload_json, '$.result.reasonText'), ''))) > 0
+           OR LENGTH(TRIM(COALESCE(json_extract(payload_json, '$.result.report'), ''))) > 0
+         )`
+    )
+    .get(workflowRunId) as { c: number };
+  return Number(row.c ?? 0) > 0 ? 1 : 0;
+}
+
+function metricUserResponseProjection(sqlite: Database, workflowRunId: string): number {
+  const row = sqlite
+    .prepare(
+      `SELECT COUNT(*) AS c
+       FROM research_team_interaction
+       WHERE workflow_run_id = ?
+         AND from_role = 'orchestrator'
+         AND to_role = 'user'
+         AND kind = 'llm_message'
+         AND LENGTH(TRIM(content_text)) > 0`
+    )
+    .get(workflowRunId) as { c: number };
+  return Number(row.c ?? 0) > 0 ? 1 : 0;
+}
+
 // ── 主入口 ─────────────────────────────────────────────────────────────────
 
 export async function collectSnapshot(
@@ -187,6 +221,8 @@ export async function collectSnapshot(
     "D-1": metricLegacyO1(wf), // 复用同一个公式，归类成 D 类
     "D-2": orch["D-2"],
     "D-3": orch["D-3"],
+    "D-4": metricInternalFinalAnswer(sqlite, input.workflowRunId),
+    "D-5": metricUserResponseProjection(sqlite, input.workflowRunId),
     // LEGACY 兼容
     "O-1": metricLegacyO1(wf),
     "T-1": metricLegacyT1(sqlite, input.workflowRunId),

@@ -34,6 +34,7 @@ const WAIT_TIMEOUT_MS = Number(process.env["QUBIT_READINESS_WAIT_MS"] ?? 5 * 60_
 const POLL_MS = Number(process.env["QUBIT_READINESS_POLL_MS"] ?? 2000);
 /** 每个场景跑几轮；多轮可用于"减少噪声 + 看波动" */
 const ROUNDS = Math.max(1, Number(process.env["QUBIT_READINESS_ROUNDS"] ?? 1));
+const CONCURRENCY = Math.max(1, Number(process.env["QUBIT_READINESS_CONCURRENCY"] ?? 1));
 
 // CLI flag 解析（极简：只看 process.argv）
 const FLAGS = (() => {
@@ -122,14 +123,14 @@ interface ScenarioResult {
  * 评测脚本不再手写「create workflow + analyst/run」两步，避免 UI / harness 漂移。
  */
 async function startWorkflowViaUiPath(recipe: ScenarioRecipe): Promise<string> {
+  const inputParams: Record<string, unknown> = { ...recipe.scenarioInputParams };
+  if (recipe.key === "live_trading" || recipe.key === "live_trading_short") {
+    Object.assign(inputParams, await ensureExecutionBenchmarkPrerequisites());
+  }
   const launchPayload = {
     projectId: PROJECT_ID,
     goal: recipe.workflow.goal,
-    inputParams: {
-      ...(recipe.analystRun.ticker ? { ticker: recipe.analystRun.ticker } : {}),
-      ...(recipe.analystRun.scope ? { scope: recipe.analystRun.scope } : {}),
-      ...(recipe.analystRun.context ? { context: recipe.analystRun.context } : {}),
-    },
+    inputParams,
     agentGroupId: recipe.analystRun.agentGroupId,
     loopOverrides: recipe.workflow.loopOptionsJson,
   };
@@ -153,6 +154,50 @@ async function startWorkflowViaUiPath(recipe: ScenarioRecipe): Promise<string> {
   }
 
   return workflowRunId;
+}
+
+async function ensureExecutionBenchmarkPrerequisites(): Promise<{
+  strategyId: string;
+  brokerAccountId: string;
+}> {
+  const sqlite = new Database(defaultDbPath(), { readonly: true });
+  let strategyId = "";
+  let brokerAccountId = "";
+  try {
+    const strategy = sqlite
+      .prepare(`SELECT id FROM strategy ORDER BY created_at DESC LIMIT 1`)
+      .get() as { id?: string } | undefined;
+    strategyId = strategy?.id ?? "";
+    const account = sqlite
+      .prepare(`SELECT id FROM broker_account WHERE enabled = 1 ORDER BY is_default DESC, updated_at DESC LIMIT 1`)
+      .get() as { id?: string } | undefined;
+    brokerAccountId = account?.id ?? "";
+  } finally {
+    sqlite.close();
+  }
+
+  if (!strategyId) {
+    throw new Error("execution benchmark requires at least one strategy; strategy scenarios produced none");
+  }
+  if (!brokerAccountId) {
+    const response = await fetch(`${DEV_SERVER}/api/v1/reia/broker/accounts/upsert`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "futu",
+        accountRef: "benchmark-v2-mock",
+        mode: "mock",
+        isDefault: true,
+        enabled: true,
+      }),
+    });
+    const payload = (await response.json()) as { data?: { id?: string }; error?: string };
+    if (!response.ok || !payload.data?.id) {
+      throw new Error(`unable to provision benchmark mock broker: ${payload.error ?? response.status}`);
+    }
+    brokerAccountId = payload.data.id;
+  }
+  return { strategyId, brokerAccountId };
 }
 
 async function runOne(
@@ -265,7 +310,7 @@ function renderSummaryMarkdown(results: ScenarioResult[]): string {
     "A-1", "A-2", "A-3", "A-4",
     "B-1", "B-2", "B-3", "B-7",
     "C-1", "C-2", "C-3-total", "C-5",
-    "D-1", "D-2", "D-3",
+    "D-1", "D-2", "D-3", "D-4", "D-5",
   ];
   lines.push(`| 场景 | ${mainIds.join(" | ")} |`);
   lines.push(`| --- | ${mainIds.map(() => "---").join(" | ")} |`);
@@ -373,6 +418,7 @@ async function main() {
   console.log(`  output     : ${OUTPUT_DIR}`);
   console.log(`  wait/poll  : ${WAIT_TIMEOUT_MS}ms / ${POLL_MS}ms`);
   console.log(`  rounds     : ${ROUNDS}`);
+  console.log(`  concurrency: ${CONCURRENCY}`);
   console.log(`  scenarios  : ${SCENARIO_ORDER.join(", ")}`);
   console.log(
     `  judge      : ${FLAGS.noJudge ? "disabled" : `enabled${FLAGS.judgeModel ? ` (${FLAGS.judgeModel})` : " (default model)"}, max=${FLAGS.judgeMaxArtifacts}`}`
@@ -404,11 +450,19 @@ async function main() {
     }
   }
 
-  const results: ScenarioResult[] = [];
-  for (const key of SCENARIO_ORDER) {
-    const r = await runOne(key, judgeClient);
-    results.push(r);
+  const results: ScenarioResult[] = new Array(SCENARIO_ORDER.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= SCENARIO_ORDER.length) return;
+      const key = SCENARIO_ORDER[index]!;
+      results[index] = await runOne(key, judgeClient);
+    }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, SCENARIO_ORDER.length) }, () => worker())
+  );
 
   const summaryPath = join(OUTPUT_DIR, `evaluation-summary-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
   await writeFile(summaryPath, renderSummaryMarkdown(results), "utf8");

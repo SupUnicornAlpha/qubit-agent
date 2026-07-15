@@ -11,7 +11,7 @@
     "dev:backend": "bash scripts/dev-backend.sh",
     "dev:frontend": "bun run --cwd frontend dev",
     "dev:tauri": "tauri dev",
-    "build": "bun build --compile src/cli.ts --outfile dist/qubit",
+    "build": "bash scripts/build-backend.sh dist/qubit",
     "build:app": "bash scripts/build-app.sh",
     "build:app:release": "bash scripts/build-app.sh --tauri",
     "build:tauri": "tauri build",
@@ -38,6 +38,14 @@
     "hono": "^4.7.0",
     "openai": "^4.103.0",
     "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@duckdb/node-bindings-darwin-arm64": "1.5.2-r.1",
+    "@duckdb/node-bindings-darwin-x64": "1.5.2-r.1",
+    "@duckdb/node-bindings-linux-arm64": "1.5.2-r.1",
+    "@duckdb/node-bindings-linux-x64": "1.5.2-r.1",
+    "@duckdb/node-bindings-win32-arm64": "1.5.2-r.1",
+    "@duckdb/node-bindings-win32-x64": "1.5.2-r.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

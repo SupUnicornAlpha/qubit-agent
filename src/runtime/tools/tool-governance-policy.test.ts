@@ -9,6 +9,12 @@ import {
 beforeEach(resetToolGovernanceCacheForTest);
 
 describe("tool governance", () => {
+  test("uses the shared resolver for suffix-less A-share symbols", () => {
+    expect(inferMarketScope({ symbol: "600000" })).toBe("CN");
+    expect(inferMarketScope({ symbol: "000001" })).toBe("CN");
+    expect(inferMarketScope({ symbol: "AAPL" })).toBe("US");
+    expect(inferMarketScope({ symbol: "BTCUSDT" })).toBe("CRYPTO");
+  });
   test("infers CN and HK market suffixes", () => {
     expect(inferMarketScope({ symbol: "603986.SH" })).toBe("CN");
     expect(inferMarketScope({ symbols: ["00981.HK"] })).toBe("HK");

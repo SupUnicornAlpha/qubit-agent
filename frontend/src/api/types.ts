@@ -27,6 +27,36 @@ export interface KlinesResponseMeta {
   returned: number;
 }
 
+export interface MarketDataReadiness {
+  status: "checking" | "ready" | "degraded" | "down";
+  checkedAt: string | null;
+  healthySources: string[];
+  readyMarkets: string[];
+  targetMarkets: string[];
+  message: string;
+}
+
+export interface MarketDataSourceRecord {
+  id: string;
+  name: string;
+  vendor: string;
+  status: "active" | "inactive" | "error";
+  supportedMarkets: string[];
+  supportedTimeframes: string[];
+  credentialMode: "none" | "token" | "account" | "terminal" | string;
+  credentialsReady: boolean;
+  healthStatus: "unknown" | "healthy" | "degraded" | "down";
+  lastHealthcheckAt: string | null;
+  successRate: number | null;
+  p95LatencyMs: number | null;
+  lastLatencyMs: number | null;
+  lastError: string | null;
+  circuitState: "closed" | "open" | "half_open";
+  circuitOpenedAt: string | null;
+  priority: number;
+  isFallback: boolean;
+}
+
 export interface WindSessionStatus {
   connected: boolean;
   userId: string | null;

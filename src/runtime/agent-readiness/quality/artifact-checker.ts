@@ -189,11 +189,28 @@ export function buildArtifactGapHint(check: ArtifactCheckResult): string {
   const lines = check.missing
     .map((m) => `${m.table} >= ${m.minRows}（当前 ${m.rows}${m.detail ? `；${m.detail}` : ""}）`)
     .join("、");
+  const recoveryByScenario: Partial<Record<ScenarioRecipe["key"], string>> = {
+    factor:
+      "恢复顺序：先 factor.list 找本 workflow 的 factor_id；没有则 factor.register；随后 factor.compute 写入非零 factor_value；最后 factor.autoEvaluate 写 factor_evaluation。若 compute 返回 no_factor_values_written，切换数据源/市场/symbols 后最多重试一次，仍为空就明确失败。",
+    stock_pick:
+      "恢复顺序：先 run_screener 生成候选，再逐只 recommendation.record 写入推荐与交易计划。若所有行情源都无数据，不得改做 strategy/factor 产物来冒充选股结果，应明确失败并报告阻塞。",
+    stock_pick_short:
+      "恢复顺序：先 run_screener 生成做空候选，再逐只 recommendation.record(side=short) 写入推荐与交易计划。若所有行情源都无数据，应明确失败并报告阻塞。",
+    strategy:
+      "恢复顺序：strategy.create_version 后调用 strategy.compose；若因子权重依赖评估，先补 factor.autoEvaluate，不得只输出 Markdown 策略。",
+    strategy_long_short:
+      "恢复顺序：strategy.create_version 后调用 strategy.compose，并确保 long/short 两端及仓位约束真实落库。",
+    live_trading:
+      "恢复顺序：验证 strategy 与 broker account 后调用 order.create_intent；风险或数据校验不通过时明确失败，不得伪造订单。",
+    live_trading_short:
+      "恢复顺序：验证 strategy 与 broker account 后调用 order.create_intent(side=short)；风险或数据校验不通过时明确失败。",
+  };
   return [
     "## 产物完整性闸（artifact gate）触发",
     `本场景（${check.scenario}）要求落库：${lines}。`,
     "你已尝试结束本轮，但产物未落库——评测会判 A-1=0。",
-    "**请调用对应落库工具补齐**（如 strategy.create_version / strategy.compose /",
-    `order.create_intent / 写 analyst_signal 的输出工具），不要返回 \`{"tool":"none"}\`。`,
+    recoveryByScenario[check.scenario] ??
+      "请调用场景对应的落库工具补齐；若外部数据不可用且没有可信替代源，明确失败并报告阻塞。",
+    `不要返回 \`{"tool":"none"}\`，也不要用其它类型产物代替本场景合同。`,
   ].join("\n");
 }

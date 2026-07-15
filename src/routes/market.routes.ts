@@ -27,8 +27,39 @@ import {
   normalizeExecutionMarket,
   recordExecutionMark,
 } from "../runtime/execution/execution-mark-service";
+import {
+  listMarketDataSources,
+  patchMarketDataSource,
+} from "../runtime/market/market-data-source-control";
+import {
+  getMarketDataReadiness,
+  runMarketDataHealthChecks,
+} from "../runtime/market/market-data-health";
 
 export const marketRouter = new Hono();
+
+/** 真实行情源控制面：能力、凭证、健康、成功率、P95、熔断与优先级。 */
+marketRouter.get("/data-sources", async (c) =>
+  c.json({ ok: true, data: await listMarketDataSources(), readiness: getMarketDataReadiness() })
+);
+
+marketRouter.patch("/data-sources/:id", async (c) => {
+  const body = await c.req.json<{
+    status?: "active" | "inactive";
+    priority?: number;
+    isFallback?: boolean;
+  }>();
+  await patchMarketDataSource(c.req.param("id"), body);
+  return c.json({ ok: true, data: await listMarketDataSources() });
+});
+
+marketRouter.post("/data-sources/health", async (c) => {
+  const body = await c.req.json<{ sourceId?: string }>().catch(() => ({} as { sourceId?: string }));
+  const readiness = await runMarketDataHealthChecks(body.sourceId);
+  return c.json({ ok: true, data: await listMarketDataSources(), readiness });
+});
+
+marketRouter.get("/readiness", (c) => c.json({ ok: true, data: getMarketDataReadiness() }));
 
 interface SmaBacktestPost {
   kind?: string;
@@ -89,9 +120,9 @@ marketRouter.get("/klines", async (c) => {
 
     const { bars, meta, error } = await queryKlines({
       symbol,
-      exchange: exchange || undefined,
-      timeframe,
-      limit: Number.isFinite(limit as number) ? (limit as number) : undefined,
+      ...(exchange ? { exchange } : {}),
+      ...(timeframe ? { timeframe } : {}),
+      ...(Number.isFinite(limit as number) ? { limit: limit as number } : {}),
     });
     const latest = bars[bars.length - 1];
     if (latest?.close && !error) {
@@ -113,7 +144,9 @@ marketRouter.get("/klines", async (c) => {
         ? 400
         : wrapped.type === "klines_connector_unavailable"
           ? 503
-          : 500;
+          : wrapped.type === "klines_upstream_failed"
+            ? 503
+            : 500;
     console.error("[market/klines]", e);
     return c.json({ ok: false, error: wrapped }, status);
   }
@@ -192,7 +225,7 @@ marketRouter.get("/news-brief", async (c) => {
     const data = await queryMarketNewsBrief({
       symbol,
       exchange,
-      limit: Number.isFinite(limit as number) ? (limit as number) : undefined,
+      ...(Number.isFinite(limit as number) ? { limit: limit as number } : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {
@@ -338,11 +371,11 @@ marketRouter.post("/experiments/structured-tune", async (c) => {
     const out = await runStructuredTune({
       base: {
         symbol,
-        exchange: typeof base.exchange === "string" ? base.exchange : undefined,
-        timeframe: typeof base.timeframe === "string" ? base.timeframe : undefined,
-        limit: base.limit !== undefined ? Number(base.limit) : undefined,
-        startDate: typeof base.startDate === "string" ? base.startDate : undefined,
-        endDate: typeof base.endDate === "string" ? base.endDate : undefined,
+        ...(typeof base.exchange === "string" ? { exchange: base.exchange } : {}),
+        ...(typeof base.timeframe === "string" ? { timeframe: base.timeframe } : {}),
+        ...(base.limit !== undefined ? { limit: Number(base.limit) } : {}),
+        ...(typeof base.startDate === "string" ? { startDate: base.startDate } : {}),
+        ...(typeof base.endDate === "string" ? { endDate: base.endDate } : {}),
       },
       fastPeriods,
       slowPeriods,

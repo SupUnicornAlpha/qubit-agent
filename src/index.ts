@@ -15,6 +15,7 @@ import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
 import { restoreRunningWorkflows } from "./runtime/workflow/restore-running-workflows";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
 import { createServer } from "./server";
+import { runMarketDataReadinessGate } from "./runtime/market/market-data-health";
 
 async function main() {
   /** banner 单独打一行明显的分隔，便于 `tail -f dev-backend.log` 数重启次数 / 看 commit */
@@ -64,6 +65,12 @@ async function main() {
    * 见 src/runtime/experience/pipe-bootstrap.ts 的 JSDoc 说明历史断点 + 这一波只接一个。
    */
   attachExperiencePipes();
+
+  // 启动 readiness gate：服务可以以 degraded 启动，但只有真实样本探针通过后
+  // `/health` 才返回 status=ok，客户端不会再把“进程存活”误报成“行情正常”。
+  await runMarketDataReadinessGate().catch((e) => {
+    console.warn(`[MarketData] startup readiness gate failed: ${(e as Error).message}`);
+  });
 
   // Start HTTP + WS server
   const server = createServer();

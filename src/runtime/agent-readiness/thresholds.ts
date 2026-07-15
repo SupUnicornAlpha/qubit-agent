@@ -168,6 +168,18 @@ export const AQM_THRESHOLDS: Record<string, MetricThreshold> = {
     nullGrade: null,
     category: "D",
   },
+  "D-4": {
+    metricId: "D-4",
+    description: "内部终态回答：orchestrator 是否产出非空 answerText",
+    grade: gtRatio(1.0, 0.5),
+    category: "D",
+  },
+  "D-5": {
+    metricId: "D-5",
+    description: "用户回复投影：最终回答是否写入关联的 assistant chat_message",
+    grade: gtRatio(1.0, 0.5),
+    category: "D",
+  },
 
   // ── LEGACY · 原 6 兼容（grader 不计入主聚合，仍保留出现在 reporter） ──
   "O-1": {

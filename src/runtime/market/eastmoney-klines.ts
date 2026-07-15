@@ -162,9 +162,17 @@ async function fetchEastMoneyKlineJson(
       Referer: "https://quote.eastmoney.com/",
     },
   });
-  const json = (await res.json()) as EastMoneyKlineResponse;
+  const text = await res.text();
   if (!res.ok) {
-    throw new Error(`eastmoney: HTTP ${res.status}`);
+    throw new Error(`eastmoney: HTTP ${res.status}: ${text.slice(0, 160)}`);
+  }
+  let json: EastMoneyKlineResponse;
+  try {
+    json = JSON.parse(text) as EastMoneyKlineResponse;
+  } catch {
+    throw new Error(
+      `eastmoney: invalid JSON (content-type=${res.headers.get("content-type") ?? "unknown"}): ${text.slice(0, 160)}`
+    );
   }
   if (json.rc !== 0) {
     throw new Error(`eastmoney: rc=${json.rc ?? "unknown"}`);

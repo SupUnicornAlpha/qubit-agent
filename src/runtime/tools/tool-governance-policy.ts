@@ -1,3 +1,5 @@
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
+
 export type MarketScope = "US" | "CN" | "HK" | "CRYPTO" | "UNKNOWN";
 
 export type ToolGovernanceDecision =
@@ -27,10 +29,13 @@ export function inferMarketScope(params: Record<string, unknown>): MarketScope {
     .flatMap((value) => (Array.isArray(value) ? value : [value]))
     .filter((value): value is string => typeof value === "string")
     .map((value) => value.trim().toUpperCase());
-  if (candidates.some((value) => /\.(SH|SS|SZ)$/.test(value))) return "CN";
-  if (candidates.some((value) => /\.HK$/.test(value))) return "HK";
-  if (candidates.some((value) => /(-USD|USDT)$/.test(value))) return "CRYPTO";
-  if (candidates.some((value) => /^[A-Z][A-Z0-9.-]{0,9}$/.test(value))) return "US";
+  const exchange = typeof params.exchange === "string" ? params.exchange : undefined;
+  for (const value of candidates) {
+    const market = resolveTickerMarket(value, { hintExchange: exchange }).market;
+    if (market === "US" || market === "CN" || market === "HK" || market === "CRYPTO") {
+      return market;
+    }
+  }
   return "UNKNOWN";
 }
 
