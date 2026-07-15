@@ -6,6 +6,7 @@ import { AgentGeneratedScriptsBlock } from "./AgentGeneratedScriptsBlock";
 import { AgentGeneratedStrategiesBlock } from "./AgentGeneratedStrategiesBlock";
 import { ResearchExploreFallbackBlock } from "./ResearchExploreFallbackBlock";
 import type { FactorRecord, StrategyVersionFlatRecord } from "../../api/backend";
+import type { IndicatorStrategyScriptRecord } from "../../api/types";
 
 type TabKey = "drafts" | "factors" | "strategies" | "scripts";
 
@@ -20,6 +21,7 @@ export interface ResearchOutputTabsProps {
   sessionId: string;
   onOpenFactorInWorkbench?: (factor: FactorRecord) => void;
   onOpenStrategyInComposer?: (version: StrategyVersionFlatRecord) => void;
+  onOpenScriptInWorkbench?: (script: IndicatorStrategyScriptRecord) => void;
   /** 初始 active tab。默认 `drafts` —— 草稿块是 explore fallback 路径的唯一可见出口，优先级最高。 */
   defaultTab?: TabKey;
 }
@@ -54,6 +56,7 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   sessionId,
   onOpenFactorInWorkbench,
   onOpenStrategyInComposer,
+  onOpenScriptInWorkbench,
   defaultTab = "drafts",
 }) => {
   const { t } = useTranslation();
@@ -167,6 +170,7 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
           workflowRunId={workflowRunId}
           chrome="bare"
           onCountChange={setScriptCount}
+          {...(onOpenScriptInWorkbench ? { onOpenInWorkbench: onOpenScriptInWorkbench } : {})}
         />
       </div>
     </div>

@@ -91,6 +91,8 @@ import {
   interruptWorkflow,
   runOrchestratorChat,
   listFactors,
+  listStrategyVersions,
+  listStrategyScripts,
   subscribeWorkflowStream,
   subscribeWorkflowEvents,
   listWorkflowCompensations,
@@ -211,6 +213,7 @@ import {
   WORKFLOW_KIND_LABEL,
   type WorkflowKind,
 } from "../../lib/workflowKind";
+import { quantNavigationForArtifact } from "../../lib/quantArtifactNavigation";
 
 export const MainContent: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
@@ -5094,6 +5097,8 @@ const TeamDashboardPanel: FC = () => {
   }, []);
   /** 本工作流已生成的产物（内联在右栏对话框顶部，点击可打开到量化工坊）。 */
   const [teamArtifacts, setTeamArtifacts] = useState<OrchestratorArtifact[]>([]);
+  const [teamArtifactsLoading, setTeamArtifactsLoading] = useState(false);
+  const [teamArtifactsError, setTeamArtifactsError] = useState<string | null>(null);
   const [replayTurns, setReplayTurns] = useState<DebateTurnRecord[]>([]);
   const [replayVerdict, setReplayVerdict] = useState<DebateVerdictRecord | null>(null);
   const [riskConfig, setRiskConfigState] = useState<RiskConfig>({
@@ -5155,6 +5160,7 @@ const TeamDashboardPanel: FC = () => {
   const setActiveView = useAppStore((s) => s.setActiveView);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
+  const setQuantContext = useAppStore((s) => s.setQuantContext);
   const setCfgSubPage = useAppStore((s) => s.setConfigSubPage);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
@@ -5641,30 +5647,86 @@ const TeamDashboardPanel: FC = () => {
   }, [teamGraph]);
 
   /**
-   * 内联产物轮询：研究团队 tab + 有 workflow 时，周期性拉本工作流已生成的因子，
-   * 映射成右栏对话框顶部的产物卡片。每 6s 一次（产物落库不高频，足够实时感知）。
+   * 内联产物轮询：按 workflow 聚合因子、策略版本和 Python 脚本。
+   * 单一类型同步失败不遮蔽其他可用产物；workflow 变化时立即清空旧卡片。
    */
   useEffect(() => {
     const wf = workflowRunId.trim();
     if (!wf || activeTab !== "research") {
       setTeamArtifacts([]);
+      setTeamArtifactsLoading(false);
+      setTeamArtifactsError(null);
       return;
     }
     let alive = true;
+    let initial = true;
+    setTeamArtifacts([]);
+    setTeamArtifactsLoading(true);
+    setTeamArtifactsError(null);
     const load = async () => {
-      try {
-        const factors = await listFactors({ workflowRunId: wf });
-        if (!alive) return;
-        setTeamArtifacts(
-          factors.map((f) => ({
+      const scriptsRequest = teamResearchSessionId
+        ? listStrategyScripts(teamResearchSessionId, { workflowRunId: wf })
+        : Promise.resolve([]);
+      const [factorResult, strategyResult, scriptResult] = await Promise.allSettled([
+        listFactors({ workflowRunId: wf }),
+        listStrategyVersions({ workflowRunId: wf }),
+        scriptsRequest,
+      ]);
+      if (!alive) return;
+
+      const next: OrchestratorArtifact[] = [];
+      const failures: string[] = [];
+      if (factorResult.status === "fulfilled") {
+        next.push(
+          ...factorResult.value.map((f) => ({
             id: f.id,
             kind: "factor" as const,
             title: f.name,
             subtitle: f.status === "draft" ? "草稿" : f.category,
+            projectId: f.projectId,
+            workflowRunId: f.workflowRunId,
           }))
         );
-      } catch {
-        /** 拉取失败：保持上次结果，下个 tick 再试 */
+      } else {
+        failures.push("因子");
+      }
+      if (strategyResult.status === "fulfilled") {
+        next.push(
+          ...strategyResult.value.map((v) => ({
+            id: v.id,
+            kind: "strategy" as const,
+            title: v.strategyName,
+            subtitle: v.versionTag,
+            projectId: v.projectId,
+            workflowRunId: v.workflowRunId,
+          }))
+        );
+      } else {
+        failures.push("策略");
+      }
+      if (scriptResult.status === "fulfilled") {
+        next.push(
+          ...scriptResult.value.map((s) => ({
+            id: s.id,
+            kind: "script" as const,
+            title: s.name,
+            subtitle: s.purpose,
+            workflowRunId: s.workflowRunId ?? wf,
+          }))
+        );
+      } else {
+        failures.push("脚本");
+      }
+
+      setTeamArtifacts(next);
+      setTeamArtifactsError(
+        failures.length > 0
+          ? `${failures.join("、")} 产物暂时同步失败，已保留其他可用产物。`
+          : null
+      );
+      if (initial) {
+        initial = false;
+        setTeamArtifactsLoading(false);
       }
     };
     void load();
@@ -5673,7 +5735,7 @@ const TeamDashboardPanel: FC = () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [workflowRunId, activeTab]);
+  }, [workflowRunId, activeTab, teamResearchSessionId]);
 
   useEffect(() => {
     const el = liveFeedScrollRef.current;
@@ -8536,7 +8598,19 @@ const TeamDashboardPanel: FC = () => {
                 projectId={effectiveResearchProjectId}
                 workflowRunId={workflowRunId}
                 sessionId={teamResearchSessionId}
-                onOpenFactorInWorkbench={() => {
+                onOpenFactorInWorkbench={(factor) => {
+                  setQuantContext({
+                    projectId: factor.projectId,
+                    workflowRunId: factor.workflowRunId ?? workflowRunId,
+                    sourceLabel: factor.name,
+                  });
+                  setQuantHandoff({
+                    kind: "factor-to-workbench",
+                    factorId: factor.id,
+                    projectId: factor.projectId,
+                    workflowRunId: factor.workflowRunId,
+                    note: `来自研究产出 · ${factor.name}`,
+                  });
                   setActiveView("quant");
                   setQuantTab("factor");
                 }}
@@ -8546,6 +8620,11 @@ const TeamDashboardPanel: FC = () => {
                    * Composer 在 mount / handoff 变化时按 strategyVersionId 自动选中。
                    */
                   if (version?.id) {
+                    setQuantContext({
+                      projectId: version.projectId,
+                      workflowRunId: version.workflowRunId ?? workflowRunId,
+                      sourceLabel: version.strategyName,
+                    });
                     setQuantHandoff({
                       kind: "strategy-version-to-composer",
                       strategyVersionId: version.id,
@@ -8554,6 +8633,25 @@ const TeamDashboardPanel: FC = () => {
                   }
                   setActiveView("quant");
                   setQuantTab("composer");
+                }}
+                onOpenScriptInWorkbench={(script) => {
+                  const projectId = effectiveResearchProjectId;
+                  if (projectId) {
+                    setQuantContext({
+                      projectId,
+                      workflowRunId: script.workflowRunId ?? workflowRunId,
+                      sourceLabel: script.name,
+                    });
+                  }
+                  setQuantHandoff({
+                    kind: "script-to-workbench",
+                    scriptId: script.id,
+                    projectId,
+                    workflowRunId: script.workflowRunId ?? workflowRunId,
+                    note: `来自研究产出 · ${script.name}`,
+                  });
+                  setActiveView("quant");
+                  setQuantTab("script");
                 }}
               />
             </div>
@@ -8630,15 +8728,18 @@ const TeamDashboardPanel: FC = () => {
             plan={teamPlan}
             activity={activeRationale}
             artifacts={teamArtifacts}
+            artifactsLoading={teamArtifactsLoading}
+            artifactsError={teamArtifactsError}
             onOpenArtifact={(a) => {
-              // 目前内联卡片只有因子：跳到量化工坊因子页（与底部抽屉「在工坊打开」一致）。
-              if (a.kind === "factor") {
-                setActiveView("quant");
-                setQuantTab("factor");
-              } else if (a.kind === "strategy") {
-                setActiveView("quant");
-                setQuantTab("composer");
-              }
+              const target = quantNavigationForArtifact(
+                a,
+                effectiveResearchProjectId,
+                workflowRunId
+              );
+              if (target.context) setQuantContext(target.context);
+              setQuantHandoff(target.handoff);
+              setActiveView("quant");
+              setQuantTab(target.tab);
             }}
             sendDisabled={teamRunDisabled}
             sendDisabledReason={teamRunDisabledTitle}

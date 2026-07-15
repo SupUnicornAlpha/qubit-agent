@@ -18,12 +18,15 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { listProjects, listWorkspaces } from "../../api/backend";
+import { useAppStore } from "../../store";
 
 export interface DefaultProjectInfo {
   workspaceId: string | null;
   projectId: string | null;
   loading: boolean;
   error: string | null;
+  /** true 表示当前项目来自研究产物跳转，而不是默认项目选择器。 */
+  contextual: boolean;
   reload: () => Promise<void>;
 }
 
@@ -46,6 +49,7 @@ export function pickPreferredProject(projects: ProjectLite[]): string | null {
 }
 
 export function useDefaultProject(): DefaultProjectInfo {
+  const contextProjectId = useAppStore((s) => s.quantContext?.projectId ?? null);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,5 +79,12 @@ export function useDefaultProject(): DefaultProjectInfo {
     void reload();
   }, [reload]);
 
-  return { workspaceId, projectId, loading, error, reload };
+  return {
+    workspaceId,
+    projectId: contextProjectId || projectId,
+    loading: contextProjectId ? false : loading,
+    error: contextProjectId ? null : error,
+    contextual: Boolean(contextProjectId),
+    reload,
+  };
 }

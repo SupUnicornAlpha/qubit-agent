@@ -496,6 +496,7 @@ const pack: LocalePack = {
         createdAt: "Created {at}",
         copyCode: "Copy code",
         copied: "Copied",
+        openInWorkbench: "Open in script workbench",
       },
       conversation: {
         empty: "No conversation yet.",

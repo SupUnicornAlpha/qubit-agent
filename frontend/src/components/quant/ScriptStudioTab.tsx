@@ -61,14 +61,29 @@ export const ScriptStudioTab: FC = () => {
   const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
   const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
   const setActiveStrategyScriptId = useAppStore((s) => s.setIdeActiveStrategyScriptId);
+  const handoff = useAppStore((s) => s.quantHandoff);
+  const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
 
   const [scripts, setScripts] = useState<QuantStrategyScriptSummary[]>([]);
   const [purposeFilter, setPurposeFilter] = useState<PurposeFilter>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [requestedScriptId, setRequestedScriptId] = useState<string | null>(null);
   const [detail, setDetail] = useState<QuantStrategyScriptDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  /** 研究产物→脚本工坊：精确选中被点击的脚本。 */
+  useEffect(() => {
+    if (!handoff || handoff.kind !== "script-to-workbench") return;
+    setPurposeFilter("all");
+    setDetail(null);
+    setRequestedScriptId(handoff.scriptId);
+    setSelectedId(handoff.scriptId);
+    setInfo(handoff.note ?? `已打开脚本 ${handoff.scriptId.slice(0, 8)}…`);
+    setError(null);
+    setQuantHandoff(null);
+  }, [handoff, setQuantHandoff]);
 
   const reloadList = useCallback(async () => {
     if (!projectId) return;
@@ -81,19 +96,18 @@ export const ScriptStudioTab: FC = () => {
       });
       setScripts(list);
       // 自动选中第一条；保留已选中且仍在列表中的
-      if (list.length > 0) {
-        const stillThere = selectedId && list.some((s) => s.id === selectedId);
-        if (!stillThere) setSelectedId(list[0]!.id);
-      } else {
-        setSelectedId(null);
-        setDetail(null);
-      }
+      setSelectedId((current) => {
+        if (requestedScriptId && current === requestedScriptId) return current;
+        if (current && list.some((s) => s.id === current)) return current;
+        return list[0]?.id ?? current;
+      });
+      if (list.length === 0 && !requestedScriptId) setDetail(null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }, [projectId, purposeFilter, selectedId]);
+  }, [projectId, purposeFilter, requestedScriptId]);
 
   useEffect(() => {
     void reloadList();
@@ -109,9 +123,18 @@ export const ScriptStudioTab: FC = () => {
     (async () => {
       try {
         const d = await getProjectStrategyScript(selectedId);
-        if (!cancelled) setDetail(d);
+        if (!cancelled) {
+          setDetail(d);
+          setRequestedScriptId(null);
+        }
       } catch (e) {
-        if (!cancelled) setError((e as Error).message);
+        if (!cancelled) {
+          setDetail(null);
+          setError(
+            `无法打开脚本 ${selectedId.slice(0, 8)}…：${(e as Error).message}。` +
+              "该产物可能已删除，或不属于当前研究项目。"
+          );
+        }
       }
     })();
     return () => {

@@ -26,6 +26,7 @@ export interface AgentGeneratedScriptsBlockProps {
   chrome?: "details" | "bare";
   /** 脚本数量变化时回调，给父级 tab 显示真实徽章 count。 */
   onCountChange?: (count: number) => void;
+  onOpenInWorkbench?: (script: IndicatorStrategyScriptRecord) => void;
 }
 
 /**
@@ -53,6 +54,7 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
   defaultOpen = true,
   chrome = "details",
   onCountChange,
+  onOpenInWorkbench,
 }) => {
   const { t } = useTranslation();
   const [scripts, setScripts] = useState<IndicatorStrategyScriptRecord[]>([]);
@@ -259,6 +261,16 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
                       ? t("team.scriptsBlock.copied")
                       : t("team.scriptsBlock.copyCode")}
                   </button>
+                  {onOpenInWorkbench ? (
+                    <button
+                      type="button"
+                      className="qb-btn-secondary"
+                      style={styles.cardBtn}
+                      onClick={() => onOpenInWorkbench(s)}
+                    >
+                      {t("team.scriptsBlock.openInWorkbench")}
+                    </button>
+                  ) : null}
                 </div>
               </article>
             );

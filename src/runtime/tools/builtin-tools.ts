@@ -925,13 +925,21 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const symbols = Array.isArray(symbolsRaw)
       ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       : undefined;
-    return factorService.compute({
+    const result = await factorService.compute({
       factorId,
       startDate: pickDateParam(params, "start_date"),
       endDate: pickDateParam(params, "end_date"),
       ...(symbols && symbols.length > 0 ? { symbols } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
     });
+    if (result.meta.rowCount === 0) {
+      throw new Error(
+        `factor.compute: no_factor_values_written (factor_id=${factorId}). ` +
+          "行情源在该 symbols/区间没有返回可计算数据；不要继续调用 factor.autoEvaluate。" +
+          "请切换可用数据源、市场或 symbols 后最多重试一次；仍为空则明确报告数据不可用并终止因子评估。"
+      );
+    }
+    return result;
   },
 
   "factor.evaluate": async (_ctx, params) => {
@@ -1016,6 +1024,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         : typeof params["expr"] === "string"
           ? (params["expr"] as string)
           : "";
+    const isOneShot = exprRaw.trim().length > 0 && !factorId;
 
     const startDate = pickDateParam(params, "start_date");
     const endDate = pickDateParam(params, "end_date");
@@ -1063,6 +1072,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
             ? { lang: String(params["lang"]) as FactorLang }
             : { lang: "qlib_expr" as FactorLang }),
           ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+          createdBy: "agent",
+          ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
           /** F-P0-10：标识此次 register 是 autoEvaluate 内部副作用 → emit team-graph interaction */
           autoRegisteredVia: "factor.autoEvaluate",
           agentRole: ctx.definition.role,
@@ -1099,16 +1110,25 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         ? computeSymbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
         : undefined;
       try {
-        await factorService.compute({
+        const computeResult = await factorService.compute({
           factorId,
           startDate,
           endDate,
           ...(computeSymbols && computeSymbols.length > 0 ? { symbols: computeSymbols } : {}),
           ...(params["provider_key"] ? { providerKey: String(params["provider_key"]) } : {}),
         });
+        if (computeResult.meta.rowCount === 0) {
+          throw new Error(
+            "no_factor_values_written: 行情源在该 symbols/区间没有返回可计算数据；" +
+              "不要继续 autoEvaluate，请切换数据源、市场或 symbols 后最多重试一次。"
+          );
+        }
       } catch (err) {
+        const partial = isOneShot
+          ? `partial_success: factor_definition 已创建（factor_id=${factorId}），但 factor_evaluation 未创建。`
+          : `factor_id=${factorId}`;
         throw new Error(
-          `factor.autoEvaluate: 内部 factor.compute 失败（factor_id=${factorId}）: ${(err as Error).message}。` +
+          `factor.autoEvaluate: ${partial} 内部 factor.compute 失败: ${(err as Error).message}。` +
             "请检查 expr 语法 / symbols 是否有真实 K 线数据 / provider 是否可用。"
         );
       }
@@ -1140,7 +1160,6 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
      * 允许例外：LLM 没传 symbols（symbols=undefined）→ service 层用 factor_value 表里
      * 已存在的全部 symbols（factor.compute 时录的），service 层会做最终防线检查。
      */
-    const isOneShot = exprRaw.trim().length > 0 && !pickFactorId(params);
     if (
       !isOneShot &&
       symbols !== undefined &&
@@ -1158,7 +1177,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const decayHorizons = Array.isArray(decayRaw)
       ? decayRaw.filter((n): n is number => typeof n === "number")
       : undefined;
-    return factorService.autoEvaluate({
+    const evaluateInput = {
       factorId,
       startDate,
       endDate,
@@ -1167,7 +1186,35 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(decayHorizons && decayHorizons.length > 0 ? { decayHorizons } : {}),
       ...(params.group_count !== undefined ? { groupCount: Number(params.group_count) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
-    });
+    };
+    try {
+      return await factorService.autoEvaluate(evaluateInput);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      /**
+       * 已有 factor_id 路径也做一次 compute→evaluate 自愈。
+       *
+       * 原先只有 expr 一步式路径会自动 compute；模型从 factor.list 拿到既有 id 后
+       * 直接 autoEvaluate，遇到 no_factor_values 必须自己再拼一次 compute，实测经常
+       * 连续重试 autoEvaluate。工具层只自愈一次，零行则明确终止，避免循环。
+       */
+      if (isOneShot || !message.includes("no_factor_values")) throw err;
+      const computeResult = await factorService.compute({
+        factorId,
+        startDate,
+        endDate,
+        ...(symbols && symbols.length > 0 ? { symbols } : {}),
+        ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      });
+      if (computeResult.meta.rowCount === 0) {
+        throw new Error(
+          `factor.autoEvaluate: no_factor_values_written (factor_id=${factorId}). ` +
+            "已自动执行一次 factor.compute，但行情源仍未返回数据；不要继续重试 autoEvaluate。" +
+            "请切换数据源、市场或 symbols，仍为空则明确报告数据不可用。"
+        );
+      }
+      return factorService.autoEvaluate(evaluateInput);
+    }
   },
 
   /**

@@ -36,6 +36,8 @@ export interface OrchestratorArtifact {
   kind: "factor" | "strategy" | "script";
   title: string;
   subtitle?: string;
+  projectId?: string | null;
+  workflowRunId?: string | null;
 }
 
 export interface OrchestratorChatPanelProps {
@@ -73,6 +75,8 @@ export interface OrchestratorChatPanelProps {
   activity?: { tool: string; why: string } | null;
   /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
   artifacts: OrchestratorArtifact[];
+  artifactsLoading?: boolean;
+  artifactsError?: string | null;
   /** 点击产物卡片：跳到量化工坊 / 底部抽屉打开 */
   onOpenArtifact: (artifact: OrchestratorArtifact) => void;
   /** 空闲启动是否禁用（沿用 teamRunDisabled） */
@@ -106,6 +110,8 @@ export function OrchestratorChatPanel({
   plan,
   activity,
   artifacts,
+  artifactsLoading = false,
+  artifactsError = null,
   onOpenArtifact,
   sendDisabled,
   sendDisabledReason,
@@ -287,7 +293,7 @@ export function OrchestratorChatPanel({
             onResolved={onHitlResolved}
           />
         ) : null}
-        {artifacts.length > 0 ? (
+        {artifacts.length > 0 || artifactsLoading || artifactsError ? (
           <div style={styles.artifactBox}>
             <button
               type="button"
@@ -302,6 +308,14 @@ export function OrchestratorChatPanel({
             </button>
             {artifactsOpen ? (
               <div style={styles.artifactList}>
+                {artifactsLoading ? (
+                  <div role="status" style={styles.artifactState}>正在同步本轮产物…</div>
+                ) : null}
+                {artifactsError ? (
+                  <div role="alert" style={{ ...styles.artifactState, color: "var(--qb-warning, #f59e0b)" }}>
+                    {artifactsError}
+                  </div>
+                ) : null}
                 {artifacts.map((a) => (
                   <button
                     key={`${a.kind}:${a.id}`}
@@ -331,7 +345,14 @@ export function OrchestratorChatPanel({
             // 交接信封里的产物引用 → 复用产物打开逻辑（factor / strategy_version）。
             const kind =
               ref.kind === "factor" ? "factor" : ref.kind === "strategy_version" ? "strategy" : null;
-            if (kind) onOpenArtifact({ id: ref.id, kind, title: ref.id });
+            if (kind) {
+              onOpenArtifact({
+                id: ref.id,
+                kind,
+                title: ref.id,
+                workflowRunId,
+              });
+            }
           }}
           emptyText={
             !wfId
@@ -542,6 +563,14 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: "column",
     gap: 6,
     padding: "0 8px 8px",
+  },
+  artifactState: {
+    padding: "7px 9px",
+    border: "1px dashed var(--qb-border-subtle)",
+    borderRadius: 6,
+    color: "var(--qb-text-muted)",
+    fontSize: 11,
+    lineHeight: 1.45,
   },
   artifactCard: {
     display: "flex",

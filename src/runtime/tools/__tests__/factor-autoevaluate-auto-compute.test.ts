@@ -74,7 +74,7 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
 
     const computeSpy = mock(async (input: { factorId: string; symbols?: string[]; startDate: string; endDate: string }) => {
       callOrder.push(`compute(${input.factorId.slice(0, 8)}, symbols=${input.symbols?.join(",")})`);
-      return { factorId: input.factorId, rowCount: 0, providerKey: "qlib_expr" } as never;
+      return { rows: [], meta: { factorId: input.factorId, rowCount: 30, latencyMs: 1 } } as never;
     });
     const autoEvalSpy = mock(async (input: { factorId: string }) => {
       callOrder.push(`autoEvaluate(${input.factorId.slice(0, 8)})`);
@@ -116,6 +116,35 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
     const a = computeSpy.mock.calls[0]?.[0] as { factorId: string };
     const b = autoEvalSpy.mock.calls[0]?.[0] as { factorId: string };
     expect(a.factorId).toBe(b.factorId);
+
+    /** 一步式内部注册也必须保留 Agent lineage，否则工坊会误标为用户产物。 */
+    const registered = await factorService.get(a.factorId);
+    expect(registered.createdBy).toBe("agent");
+    expect(registered.agentInstanceId).toBe(ctx.agentInstanceId);
+  });
+
+  test("一步式 compute 返回 0 行时：应终止，不得继续 autoEvaluate", async () => {
+    const callOrder: string[] = [];
+    factorService.compute = (async () => {
+      callOrder.push("compute");
+      return { rows: [], meta: { factorId: crypto.randomUUID(), rowCount: 0, latencyMs: 1 } } as never;
+    }) as typeof factorService.compute;
+    factorService.autoEvaluate = (async () => {
+      callOrder.push("autoEvaluate");
+      return {} as never;
+    }) as typeof factorService.autoEvaluate;
+
+    await expect(
+      dispatchBuiltinTool("factor.autoEvaluate", buildCtx() as never, {
+        name: `zero_rows_${crypto.randomUUID()}`,
+        factor_expression: "close / delay(close, 5) - 1",
+        project_id: projectId,
+        symbols: ["AAPL", "MSFT", "NVDA"],
+        start_date: "2025-01-01",
+        end_date: "2025-03-01",
+      })
+    ).rejects.toThrow("no_factor_values_written");
+    expect(callOrder).toEqual(["compute"]);
   });
 
   test("已传 factor_id（非一步式）→ 不应触发 compute（保持原有行为）", async () => {
@@ -149,5 +178,35 @@ describe("factor.autoEvaluate 一步式 register → compute → evaluate", () =
 
     expect(computeSpy).not.toHaveBeenCalled();
     expect(autoEvalSpy).toHaveBeenCalled();
+  });
+
+  test("已有 factor_id 缺 values 时：自动 compute 一次后重试 evaluate", async () => {
+    const reg = (await dispatchBuiltinTool("factor.register", buildCtx() as never, {
+      name: `existing_recovery_${randomUUID().slice(0, 6)}`,
+      project_id: projectId,
+      category: "momentum",
+      expr: "$close / Ref($close, 20) - 1",
+      lang: "qlib_expr",
+    })) as { id: string };
+    const callOrder: string[] = [];
+    let evaluateCalls = 0;
+    factorService.autoEvaluate = (async () => {
+      evaluateCalls += 1;
+      callOrder.push(`evaluate-${evaluateCalls}`);
+      if (evaluateCalls === 1) throw new Error("no_factor_values: compute first");
+      return { evaluationId: randomUUID(), rankIc: 0.04, ir: 0.2 } as never;
+    }) as typeof factorService.autoEvaluate;
+    factorService.compute = (async (input) => {
+      callOrder.push("compute");
+      return { rows: [], meta: { factorId: input.factorId, rowCount: 30, latencyMs: 1 } } as never;
+    }) as typeof factorService.compute;
+
+    await dispatchBuiltinTool("factor.autoEvaluate", buildCtx() as never, {
+      factor_id: reg.id,
+      symbols: ["AAPL", "MSFT", "NVDA"],
+      start_date: "2025-01-01",
+      end_date: "2025-03-01",
+    });
+    expect(callOrder).toEqual(["evaluate-1", "compute", "evaluate-2"]);
   });
 });

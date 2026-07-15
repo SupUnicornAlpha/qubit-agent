@@ -128,6 +128,22 @@ export const FactorWorkbenchTab: FC = () => {
 
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const handoff = useAppStore((s) => s.quantHandoff);
+
+  /** 研究产物→因子工坊：清空可能隐藏目标的过滤器，并精确选中因子。 */
+  useEffect(() => {
+    if (!handoff || handoff.kind !== "factor-to-workbench") return;
+    setFilterCategory("all");
+    setFilterStatus("all");
+    setFilterSource("all");
+    setSelected(null);
+    setEvaluations([]);
+    setValueStats(null);
+    setSelectedId(handoff.factorId);
+    setInfo(handoff.note ?? `已打开因子 ${handoff.factorId.slice(0, 8)}…`);
+    setError(null);
+    setQuantHandoff(null);
+  }, [handoff, setQuantHandoff]);
 
   const reloadList = useCallback(async () => {
     if (!projectId) return;
@@ -140,13 +156,13 @@ export const FactorWorkbenchTab: FC = () => {
         status: filterStatus === "all" ? undefined : filterStatus,
       });
       setFactors(rows);
-      if (!selectedId && rows.length > 0) setSelectedId(rows[0]!.id);
+      setSelectedId((current) => current ?? rows[0]?.id ?? null);
     } catch (e) {
-      setError((e as Error).message);
+      setError(`因子列表加载失败：${(e as Error).message}`);
     } finally {
       setBusy(false);
     }
-  }, [projectId, filterCategory, filterStatus, selectedId]);
+  }, [projectId, filterCategory, filterStatus]);
 
   useEffect(() => {
     void reloadList();
@@ -169,7 +185,11 @@ export const FactorWorkbenchTab: FC = () => {
       setEvaluations(evals);
       setValueStats(stats);
     } catch (e) {
-      setError((e as Error).message);
+      setSelected(null);
+      setError(
+        `无法打开因子 ${selectedId.slice(0, 8)}…：${(e as Error).message}。` +
+          "该产物可能已删除，或不属于当前研究项目。"
+      );
     }
   }, [selectedId]);
 

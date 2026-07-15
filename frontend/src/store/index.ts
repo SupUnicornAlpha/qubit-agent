@@ -32,6 +32,13 @@ export type ActiveView =
 /** 量化工作台 tab */
 export type QuantTab = "factor" | "discovery" | "composer" | "backtest" | "script";
 
+/** 从研究工作流进入量化工坊时保留的项目上下文。 */
+export interface QuantContext {
+  projectId: string;
+  workflowRunId?: string | null;
+  sourceLabel?: string;
+}
+
 /**
  * 量化工作台 4 tab 间的跨 tab handoff payload。
  *
@@ -49,6 +56,13 @@ export type QuantHandoff =
   | { kind: "raw"; expr: string; lang: "qlib_expr"; reverse?: boolean; note?: string }
   | { kind: "composition"; compositionId: string; note?: string }
   | { kind: "factor-ids-to-composer"; factorIds: string[]; note?: string }
+  | {
+      kind: "factor-to-workbench";
+      factorId: string;
+      projectId?: string | null;
+      workflowRunId?: string | null;
+      note?: string;
+    }
   /**
    * 研究产物侧栏 → ComposerTab handoff（2026-06-09）：
    *   带上具体的 strategyVersionId（必填），让 Composer 进去后立即选中、
@@ -59,6 +73,13 @@ export type QuantHandoff =
   | {
       kind: "strategy-version-to-composer";
       strategyVersionId: string;
+      workflowRunId?: string | null;
+      note?: string;
+    }
+  | {
+      kind: "script-to-workbench";
+      scriptId: string;
+      projectId?: string | null;
       workflowRunId?: string | null;
       note?: string;
     };
@@ -194,6 +215,9 @@ export interface AppState {
   setConfigSubPage: (page: ConfigSubPage) => void;
   quantTab: QuantTab;
   setQuantTab: (tab: QuantTab) => void;
+  /** 研究产物跳转带入的 project/workflow；为空时量化工坊使用默认项目。 */
+  quantContext: QuantContext | null;
+  setQuantContext: (context: QuantContext | null) => void;
   /**
    * 量化工作台跨 tab handoff（migration 0080 量化工作台增强）：
    *   - Discovery 单候选「一键试跑」→ 写 { kind:'raw', expr, lang, reverse } → 切到 backtest
@@ -375,6 +399,8 @@ export const useAppStore = create<AppState>((set) => ({
   setConfigSubPage: (configSubPage) => set({ configSubPage }),
   quantTab: "factor",
   setQuantTab: (quantTab) => set({ quantTab }),
+  quantContext: null,
+  setQuantContext: (quantContext) => set({ quantContext }),
   quantHandoff: null,
   setQuantHandoff: (quantHandoff) => set({ quantHandoff }),
   chartReloadNonce: 0,

@@ -57,6 +57,8 @@ const EMPTY_KPI: KpiSummary = {
 export const QuantStudioPanel: FC = () => {
   const tab = useAppStore((s) => s.quantTab);
   const setTab = useAppStore((s) => s.setQuantTab);
+  const quantContext = useAppStore((s) => s.quantContext);
+  const setQuantContext = useAppStore((s) => s.setQuantContext);
   const { projectId } = useDefaultProject();
   const [kpi, setKpi] = useState<KpiSummary>(EMPTY_KPI);
 
@@ -123,6 +125,32 @@ export const QuantStudioPanel: FC = () => {
           <div className="qb-quant-subtitle" style={styles.subtitle}>
             因子研究 · 自动挖掘 · 策略回测 — 后端由 Provider 抽象层驱动，可在「配置中心 · Providers」切换实现
           </div>
+          {quantContext ? (
+            <div
+              className="qb-quant-context"
+              style={styles.contextBar}
+              role="region"
+              aria-label="当前研究上下文"
+            >
+              <span style={styles.contextDot} aria-hidden />
+              <span>
+                研究上下文
+                {quantContext.sourceLabel ? ` · ${quantContext.sourceLabel}` : ""}
+              </span>
+              {quantContext.workflowRunId ? (
+                <code style={styles.contextCode}>{quantContext.workflowRunId.slice(0, 8)}…</code>
+              ) : null}
+              <button
+                type="button"
+                className="qb-quant-btn qb-quant-btn--ghost"
+                style={styles.contextReset}
+                onClick={() => setQuantContext(null)}
+                title="退出研究 workflow 上下文，返回 QUBIT Default Project"
+              >
+                返回默认项目
+              </button>
+            </div>
+          ) : null}
           <div className="qb-quant-kpi-row" aria-label="工作台统计">
             <KpiPill color="indigo" label="因子" value={kpi.factors.total} hint={`Agent ${kpi.factors.agent} · Promoted ${kpi.factors.promoted}`} />
             <KpiPill color="cyan" label="挖掘任务" value={kpi.discoveries.total} hint={`${kpi.discoveries.succeeded} succeeded`} />
@@ -207,6 +235,39 @@ const styles: Record<string, CSSProperties> = {
   },
   title: { fontSize: 19, fontWeight: 700 },
   subtitle: { fontSize: 12, color: "var(--qb-text-muted)", marginTop: 4 },
+  contextBar: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 7,
+    width: "fit-content",
+    maxWidth: "100%",
+    marginTop: 5,
+    padding: "5px 8px",
+    border: "1px solid color-mix(in srgb, var(--qb-quant-accent-2) 42%, var(--qb-border-subtle))",
+    borderRadius: 6,
+    background: "color-mix(in srgb, var(--qb-quant-accent-2) 8%, var(--qb-bg-elevated))",
+    color: "var(--qb-text-secondary)",
+    fontSize: 11,
+  },
+  contextDot: {
+    width: 7,
+    height: 7,
+    borderRadius: "50%",
+    background: "var(--qb-quant-accent-2)",
+    boxShadow: "0 0 0 3px color-mix(in srgb, var(--qb-quant-accent-2) 20%, transparent)",
+  },
+  contextCode: {
+    color: "var(--qb-text-muted)",
+    fontFamily: "var(--qb-font-mono)",
+    fontSize: 10,
+  },
+  contextReset: {
+    minHeight: 22,
+    padding: "2px 7px",
+    marginLeft: 2,
+    fontSize: 10,
+  },
   tabbar: { display: "flex", gap: 6, alignSelf: "flex-start" },
   body: { flex: 1, minHeight: 0, overflow: "auto" },
 };

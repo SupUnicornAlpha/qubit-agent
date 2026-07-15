@@ -488,6 +488,7 @@ const pack: LocalePack = {
         createdAt: "创建于 {at}",
         copyCode: "复制代码",
         copied: "已复制",
+        openInWorkbench: "去脚本工坊",
       },
       conversation: {
         empty: "暂无对话记录。",
