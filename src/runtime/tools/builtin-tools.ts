@@ -27,6 +27,7 @@ import { checkArgs, checkCwdScope, renderArgTemplate, runExec } from "../exec/ru
 import type { ExecResult } from "../exec/types";
 import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
+import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
@@ -913,11 +914,14 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       if (dr.minVariance !== undefined) cfg.minVariance = Number(dr.minVariance);
       dryRun = cfg;
     }
+    const expr = String(
+      params.expr ?? params.expression ?? params.factor_expression ?? params.factorExpression ?? ""
+    ).trim();
     return factorService.register({
       projectId,
       name: String(params.name ?? "").trim(),
       category: String(params.category ?? "momentum") as FactorCategory,
-      expr: String(params.expr ?? "").trim(),
+      expr,
       ...(params.lang ? { lang: String(params.lang) as FactorLang } : {}),
       ...(params.universe ? { universe: String(params.universe) } : {}),
       ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
@@ -1602,6 +1606,57 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+    });
+  },
+
+  "factor.promote_backtest": async (ctx, params) => {
+    const factorIdsRaw = params.factor_ids ?? params.factorIds;
+    const factorIds = Array.isArray(factorIdsRaw)
+      ? factorIdsRaw.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : [];
+    if (factorIds.length === 0) {
+      throw new Error("factor.promote_backtest: factor_ids (string[]) is required");
+    }
+    const startDate = String(params.start_date ?? params.startDate ?? "").trim();
+    const endDate = String(params.end_date ?? params.endDate ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.promote_backtest: start_date / end_date are required");
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      : undefined;
+    const costsRaw = params.costs;
+    const costs =
+      costsRaw && typeof costsRaw === "object" && !Array.isArray(costsRaw)
+        ? {
+            commissionBps: Number((costsRaw as Record<string, unknown>)["commissionBps"] ?? 5),
+            slippageBps: Number((costsRaw as Record<string, unknown>)["slippageBps"] ?? 5),
+          }
+        : undefined;
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    return factorBacktestPromotionService.promoteAndBacktest({
+      ...(projectId ? { projectId } : {}),
+      factorIds,
+      startDate,
+      endDate,
+      ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.strategy_name ? { strategyName: String(params.strategy_name) } : {}),
+      ...(params.version_tag ? { versionTag: String(params.version_tag) } : {}),
+      ...(params.composition_name ? { compositionName: String(params.composition_name) } : {}),
+      ...(params.description ? { description: String(params.description) } : {}),
+      ...(params.capital !== undefined ? { capital: Number(params.capital) } : {}),
+      ...(costs ? { costs } : {}),
+      ...(params.rebalance
+        ? { rebalance: String(params.rebalance) as "daily" | "weekly" | "monthly" }
+        : {}),
+      ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
+      ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       createdBy: "agent",
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),

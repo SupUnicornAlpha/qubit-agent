@@ -181,6 +181,25 @@ export interface FactorAutoEvaluateInput {
   scope?: ProviderScope;
 }
 
+const DEFAULT_UNIVERSE_SYMBOLS: Record<string, string[]> = {
+  "CN-A": ["600519", "000858", "300750", "601318", "600036", "000333", "601899", "601012"],
+  "CN-A:hs300": ["600519", "000858", "300750", "601318", "600036", "000333", "601899", "601012"],
+  "CN-A:csi500": ["600031", "600089", "600196", "600256", "600486", "600660", "000009", "000021"],
+  "CN-A:csi1000": ["000050", "000062", "000301", "000401", "000519", "000553", "002008", "002019"],
+  US: ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO", "TSLA"],
+  "US:sp500": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "BRK-B", "JPM"],
+  "US:nasdaq100": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "AVGO", "TSLA"],
+  HK: ["0700.HK", "9988.HK", "3690.HK", "0939.HK", "1299.HK", "0388.HK", "2318.HK", "0005.HK"],
+  "HK:hsi": ["0700.HK", "9988.HK", "3690.HK", "0939.HK", "1299.HK", "0388.HK", "2318.HK", "0005.HK"],
+};
+
+function normalizeFactorComputeSymbols(symbols?: string[], universe?: string | null): string[] {
+  const explicit = (symbols ?? []).map((s) => s.trim()).filter(Boolean);
+  if (explicit.length > 0) return explicit;
+  const key = String(universe ?? "").trim();
+  return DEFAULT_UNIVERSE_SYMBOLS[key] ?? [];
+}
+
 export class FactorServiceError extends Error {
   constructor(
     public code: "factor_not_found" | "provider_failed" | "validation_failed" | "duplicate_name",
@@ -210,14 +229,31 @@ export class FactorService {
     // 同 project 内名字不可重复
     const db = await getDb();
     const dup = await db
-      .select({ id: factorDefTable.id })
+      .select({
+        id: factorDefTable.id,
+        expr: factorDefTable.expr,
+        category: factorDefTable.category,
+        lang: factorDefTable.lang,
+        universe: factorDefTable.universe,
+      })
       .from(factorDefTable)
       .where(
         and(eq(factorDefTable.projectId, input.projectId), eq(factorDefTable.name, input.name))
       )
       .limit(1);
-    if (dup[0]) {
-      throw new FactorServiceError("duplicate_name", `factor_name_already_exists: ${input.name}`);
+    let factorName = input.name;
+    const dupRow = dup[0];
+    if (dupRow) {
+      const isAgentPath = input.createdBy === "agent" || Boolean(input.workflowRunId);
+      const requestedUniverse = input.universe ?? "CN-A";
+      const sameDefinition =
+        dupRow.expr === input.expr &&
+        dupRow.category === input.category &&
+        dupRow.lang === lang &&
+        dupRow.universe === requestedUniverse;
+      if (isAgentPath && sameDefinition) return this.get(dupRow.id);
+      if (isAgentPath) factorName = `${input.name}_${randomUUID().slice(0, 8)}`;
+      else throw new FactorServiceError("duplicate_name", `factor_name_already_exists: ${input.name}`);
     }
 
     // 让 Provider 做 syntax 校验（best effort，不打断 draft 注册）
@@ -267,7 +303,7 @@ export class FactorService {
     await db.insert(factorDefTable).values({
       id,
       projectId: input.projectId,
-      name: input.name,
+      name: factorName,
       category: input.category,
       definitionJson: {
         ...(input.definition ?? {}),
@@ -448,6 +484,7 @@ export class FactorService {
   async compute(input: FactorComputeInput): Promise<FactorComputeResult> {
     const f = await this.get(input.factorId);
     const provider = await this.resolveCompute(f.providerKey, input.providerKey, input.scope);
+    const symbols = normalizeFactorComputeSymbols(input.symbols, f.universe);
 
     let result: FactorComputeResult;
     try {
@@ -458,7 +495,7 @@ export class FactorService {
         universe: f.universe,
         startDate: input.startDate,
         endDate: input.endDate,
-        ...(input.symbols ? { symbols: input.symbols } : {}),
+        ...(symbols.length > 0 ? { symbols } : {}),
       });
     } catch (e) {
       throw new FactorServiceError(

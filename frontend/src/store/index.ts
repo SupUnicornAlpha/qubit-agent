@@ -29,6 +29,8 @@ export type ActiveView =
   | "broker"
   | "config";
 
+export type InterfaceMode = "simple" | "advanced";
+
 /** 量化工作台 tab */
 export type QuantTab = "factor" | "discovery" | "composer" | "backtest" | "script";
 
@@ -55,6 +57,7 @@ export interface QuantContext {
 export type QuantHandoff =
   | { kind: "raw"; expr: string; lang: "qlib_expr"; reverse?: boolean; note?: string }
   | { kind: "composition"; compositionId: string; note?: string }
+  | { kind: "backtest-job"; jobId: string; note?: string }
   | { kind: "factor-ids-to-composer"; factorIds: string[]; note?: string }
   | {
       kind: "factor-to-workbench";
@@ -193,6 +196,9 @@ export interface AppState {
   setBackendConnected: (v: boolean) => void;
   backendHint: string | null;
   setBackendHint: (v: string | null) => void;
+  /** 面向日常研究的简洁入口 / 完整专业工作台。两种模式共享同一套数据与工作流。 */
+  interfaceMode: InterfaceMode;
+  setInterfaceMode: (mode: InterfaceMode) => void;
   /** 默认风格下的配色（`html[data-qb-theme]`） */
   uiPalette: UiPaletteId;
   setUiPalette: (palette: UiPaletteId) => void;
@@ -298,6 +304,23 @@ const defaultChartOverlays: ChartOverlaysState = {
 
 const TRADER_CFG_KEY = "qubit-trader-agent-config-v1";
 const EXPLORER_OPEN_LS = "qubit:explorerOpen";
+const INTERFACE_MODE_LS = "qubit:interfaceMode";
+
+function readInterfaceMode(): InterfaceMode {
+  try {
+    return localStorage.getItem(INTERFACE_MODE_LS) === "advanced" ? "advanced" : "simple";
+  } catch {
+    return "simple";
+  }
+}
+
+function persistInterfaceMode(mode: InterfaceMode) {
+  try {
+    localStorage.setItem(INTERFACE_MODE_LS, mode);
+  } catch {
+    /* ignore */
+  }
+}
 
 function readExplorerOpen(): boolean {
   try {
@@ -354,6 +377,11 @@ export const useAppStore = create<AppState>((set) => ({
   setBackendConnected: (v) => set({ backendConnected: v }),
   backendHint: null,
   setBackendHint: (v) => set({ backendHint: v }),
+  interfaceMode: readInterfaceMode(),
+  setInterfaceMode: (interfaceMode) => {
+    persistInterfaceMode(interfaceMode);
+    set({ interfaceMode });
+  },
   ...(() => {
     const initial = readUiAppearance();
     applyUiAppearance(initial);

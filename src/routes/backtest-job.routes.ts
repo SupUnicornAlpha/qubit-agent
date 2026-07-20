@@ -32,12 +32,16 @@ backtestJobRouter.post("/:id/walk-forward", async (c) => {
   }
 });
 
-/** GET /api/v1/backtest-jobs?strategy_version_id=&status= */
+/** GET /api/v1/backtest-jobs?strategy_version_id=&status=&project_id=&workflow_run_id= */
 backtestJobRouter.get("/", async (c) => {
   try {
     const strategyVersionId = c.req.query("strategy_version_id");
     const data = await backtestJobService.list({
       ...(strategyVersionId ? { strategyVersionId } : {}),
+      ...(c.req.query("project_id") ? { projectId: c.req.query("project_id")! } : {}),
+      ...(c.req.query("workflow_run_id")
+        ? { workflowRunId: c.req.query("workflow_run_id")! }
+        : {}),
       ...(c.req.query("status")
         ? { status: c.req.query("status") as "pending" | "running" | "completed" | "failed" }
         : {}),

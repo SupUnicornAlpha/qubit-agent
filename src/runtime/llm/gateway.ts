@@ -766,7 +766,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
       model: "glm-4-flash",
     },
   };
-  const def = defaults[provider] ?? defaults.deepseek;
+  const def = defaults[provider] ?? defaults.deepseek!;
   const apiKey = input.config.apiKey || process.env[def.envKey];
   if (!apiKey) {
     throw new Error(`${def.envKey} is required for ${provider} provider`);
@@ -799,6 +799,15 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     stream: true as const,
     stream_options: { include_usage: true },
   });
+  if (process.env["QUBIT_LLM_COMPAT_STREAM"] !== "1") {
+    return runOpenAICompatibleNonStream(input, {
+      baseUrl: input.config.baseUrl ?? def.baseUrl,
+      apiKey,
+      requestBody,
+      resolvedModel,
+      startedAt,
+    });
+  }
   const stream = await client.chat.completions.create(requestBody);
   let answer = "";
   let usage: LlmTokenUsage | undefined;
@@ -881,6 +890,99 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     ...(responseId ? { responseId } : {}),
     ...(finishReason ? { finishReason } : {}),
     ...(toolCalls ? { toolCalls } : {}),
+  };
+}
+
+async function runOpenAICompatibleNonStream(
+  input: LlmGatewayInput,
+  resolved: {
+    baseUrl: string;
+    apiKey: string;
+    requestBody: Record<string, unknown>;
+    resolvedModel: string;
+    startedAt: number;
+  }
+): Promise<LlmGatewayResult> {
+  const body = {
+    ...resolved.requestBody,
+    stream: false,
+  };
+  delete (body as Record<string, unknown>)["stream_options"];
+  const res = await fetchWithTimeout(
+    `${resolved.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${resolved.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    },
+    LLM_FETCH_TIMEOUT_MS
+  );
+  if (!res.ok) {
+    throw new Error(`OpenAI-compatible request failed: ${res.status} ${await res.text()}`);
+  }
+  const json = (await res.json()) as {
+    id?: string;
+    choices?: Array<{
+      message?: {
+        content?: string | null;
+        tool_calls?: Array<{
+          id?: string;
+          function?: { name?: string; arguments?: unknown };
+        }>;
+      };
+      finish_reason?: string | null;
+    }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+      prompt_tokens_details?: { cached_tokens?: number };
+      completion_tokens_details?: { reasoning_tokens?: number };
+    };
+  };
+  const choice = json.choices?.[0];
+  const answer = choice?.message?.content ?? "";
+  for (const token of splitForPseudoStreaming(answer)) {
+    input.onToken(token);
+  }
+  const toolCalls = choice?.message?.tool_calls
+    ?.map((call) => {
+      const parsed = parseToolArguments(call.function?.arguments);
+      return call.id && call.function?.name
+        ? {
+            id: call.id,
+            name: call.function.name,
+            args: parsed.args,
+            ...(parsed.rawArgs !== undefined ? { rawArgs: parsed.rawArgs } : {}),
+          }
+        : null;
+    })
+    .filter((call): call is LlmToolCallRequest => Boolean(call));
+  const cached = json.usage?.prompt_tokens_details?.cached_tokens;
+  const reasoning = json.usage?.completion_tokens_details?.reasoning_tokens;
+  const usage: LlmTokenUsage | undefined = json.usage
+    ? {
+        ...(json.usage.prompt_tokens !== undefined ? { promptTokens: json.usage.prompt_tokens } : {}),
+        ...(json.usage.completion_tokens !== undefined
+          ? { completionTokens: json.usage.completion_tokens }
+          : {}),
+        ...(json.usage.total_tokens !== undefined ? { totalTokens: json.usage.total_tokens } : {}),
+        ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+        ...(reasoning !== undefined ? { reasoningTokens: reasoning } : {}),
+      }
+    : undefined;
+  const latencyMs = Date.now() - resolved.startedAt;
+  return {
+    answer,
+    ...(normalizeUsage(usage) ? { usage: normalizeUsage(usage)! } : {}),
+    latencyMs,
+    firstTokenLatencyMs: latencyMs,
+    ...(json.id ? { responseId: json.id } : {}),
+    ...(choice?.finish_reason ? { finishReason: choice.finish_reason } : {}),
+    ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
   };
 }
 

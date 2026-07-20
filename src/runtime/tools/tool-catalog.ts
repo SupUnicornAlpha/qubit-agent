@@ -274,7 +274,8 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
 
   // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
   "factor.register": {
-    description: "注册因子（落 factor_definition；走 Provider.validateExpr 做语法校验）",
+    description:
+      "注册因子并返回 `factor_id`（落 factor_definition；走 Provider.validateExpr 做语法校验）。必填：`name`、`category`、`expr`（也兼容 `expression` / `factor_expression`）、`lang:'qlib_expr'|'python'`；可选：`universe`、`horizon`、`dry_run:false`。后续 factor.compute 必须使用这里返回的 factor_id。",
     category: "research",
   },
   "factor.compute": {
@@ -285,7 +286,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 现在显式标注 schema + 数据依赖（先 register 拿 id），让 LLM 一看就知道前置步骤。
      */
     description:
-      "计算因子值并写入 factor_value。**必填 `factor_id` (UUID)**（来自 factor.register 或 factor.list 返回），可选 `symbols[]` / `start_date` / `end_date`。**不要传 `symbol`/`ticker`/`factor_expression`** —— 那些是 factor.autoEvaluate / factor.register 的参数。前置依赖：先调 factor.register 创建 factor 拿到 id。",
+      "计算因子值并写入 factor_value。**必填 `factor_id` (UUID)**（来自 factor.register 或 factor.list 返回），可选 `symbols[]` / `start_date` / `end_date`。若 factor.register 已设置 `universe`，通常不要传指数代码（如 000300.SH）当 symbols；省略 symbols 时会按 universe 展开最小横截面样本。**不要传 `symbol`/`ticker`/`factor_expression`** —— 那些是 factor.autoEvaluate / factor.register 的参数。",
     category: "research",
   },
   "factor.evaluate": {
@@ -348,12 +349,17 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 实测最近 1d 9 次调用 4 次失败：缺日期 / 缺 factor_id / 没先 compute。
      */
     description:
-      "一步式评估因子（自动从 DuckDB 取因子值 + 市场连接器取价格 → IC/RankIC/IR/衰减/分组收益/换手率）。**必填三件套**：`factor_id` (UUID, 来自 factor.register/factor.list) + `start_date` (YYYY-MM-DD) + `end_date`。两种入参模式互斥：(A) 已有因子 → 传 factor_id ；(B) 新因子一步式 → 传 `factor_expression` (DSL) + `name` + `project_id`，工具会自动 register 再 evaluate。**前置依赖**：因子值表必须有数据（先调 factor.compute 写入），否则报 `no_factor_values`。",
+      "一步式评估因子（自动从 DuckDB 取因子值 + 市场连接器取价格 → IC/RankIC/IR/衰减/分组收益/换手率）。**必填三件套**：`factor_id` (UUID, 来自 factor.register/factor.list) + `start_date` (YYYY-MM-DD) + `end_date`。已有 universe 时不要传指数代码当 symbols；优先省略 symbols，使用 compute 写入的横截面样本。两种入参模式互斥：(A) 已有因子 → 传 factor_id；(B) 新因子一步式 → 传 `factor_expression` + `name` + `project_id`。**前置依赖**：因子值表必须有数据（先调 factor.compute 写入）。",
     category: "research",
   },
   "factor.evaluate.batch": {
     description:
       "批量自动评估多个因子（≤30 个）：串行调 autoEvaluate，返回每个因子的 IC/RankIC/IR + 聚合 summary（mean RankIC、显著因子数、最佳/最差因子）。一次拿一组候选因子的 RankIC 排名时优先用这个，比循环调 autoEvaluate 节省工具调用轮数。",
+    category: "research",
+  },
+  "factor.promote_backtest": {
+    description:
+      "P0 一键闭环：把已有 factor_ids 自动提升为 strategy_version + strategy_composition，并立即运行事件驱动回测（落 backtest_run + strategy_eval_run）。**必填**：factor_ids[] + start_date + end_date。可选 symbols[]；不传时按因子 universe 使用默认样本。优先在 factor.autoEvaluate 成功后调用，用于让量化工坊直接观察「因子→策略→回测」完整链路。",
     category: "research",
   },
   "discovery.run": {

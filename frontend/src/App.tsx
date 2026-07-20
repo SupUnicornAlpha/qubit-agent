@@ -1,18 +1,20 @@
 import type { CSSProperties, FC } from "react";
 import { useEffect } from "react";
-import { Sidebar } from "./components/layout/Sidebar";
-import { TopBar } from "./components/layout/TopBar";
-import { MainContent } from "./components/layout/MainContent";
 import { getHealth } from "./api/backend";
 import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
-import { useAppStore } from "./store";
+import { MainContent } from "./components/layout/MainContent";
+import { SimpleWorkspace } from "./components/layout/SimpleWorkspace";
+import { Sidebar } from "./components/layout/Sidebar";
+import { TopBar } from "./components/layout/TopBar";
 import { useTranslation } from "./i18n";
+import { useAppStore } from "./store";
 
 const App: FC = () => {
   const setBackendConnected = useAppStore((s) => s.setBackendConnected);
   const setBackendHint = useAppStore((s) => s.setBackendHint);
-  const { t, locale } = useTranslation();
+  const interfaceMode = useAppStore((s) => s.interfaceMode);
+  const { t } = useTranslation();
 
   useEffect(() => {
     const CONNECTED_INTERVAL_MS = 15_000;
@@ -42,6 +44,8 @@ const App: FC = () => {
           const st = await tauriBackendStatus().catch(() => null);
           if (st && !st.running) {
             await tauriStartBackend().catch(() => null);
+          } else if (st?.running && !st.ready) {
+            setBackendHint(t("app.hint.tauriBackendStarting"));
           }
         }
         const health = await getHealth();
@@ -56,7 +60,12 @@ const App: FC = () => {
         lastConnected = false;
         setBackendConnected(false);
         if (inTauri) {
-          setBackendHint(t("app.hint.tauriBackendNotReady"));
+          const st = await tauriBackendStatus().catch(() => null);
+          setBackendHint(
+            st?.running && !st.ready
+              ? t("app.hint.tauriBackendStarting")
+              : t("app.hint.tauriBackendNotReady")
+          );
         } else {
           setBackendHint(t("app.hint.webBackendDisconnected"));
         }
@@ -87,29 +96,34 @@ const App: FC = () => {
       document.removeEventListener("visibilitychange", onVisibilityChange);
       if (timer) clearTimeout(timer);
     };
-    // 依赖 `locale` 是为了切换语言后立即用新文案刷新 hint。
-  }, [setBackendConnected, setBackendHint, t, locale]);
+  }, [setBackendConnected, setBackendHint, t]);
 
   return (
-    <div className="qb-app-root" style={styles.root}>
-    <div className="qb-gh-bg-layer" aria-hidden>
-      <span className="qb-gh-bg-layer__base" />
-      <span className="qb-gh-bg-layer__orbs" />
-      <span className="qb-gh-bg-layer__aurora" />
-      <span className="qb-a3d-spatial-grid" />
-      <span className="qb-gh-bg-layer__sweep" />
-      <span className="qb-gh-bg-layer__wave" />
-      <span className="qb-a3d-scene-deco" aria-hidden>
-        <span className="qb-a3d-prism-shadow" />
-        <span className="qb-a3d-prism" />
-      </span>
+    <div className={`qb-app-root qb-app-root--${interfaceMode}`} style={styles.root}>
+      {interfaceMode === "simple" ? (
+        <SimpleWorkspace />
+      ) : (
+        <>
+          <div className="qb-gh-bg-layer" aria-hidden>
+            <span className="qb-gh-bg-layer__base" />
+            <span className="qb-gh-bg-layer__orbs" />
+            <span className="qb-gh-bg-layer__aurora" />
+            <span className="qb-a3d-spatial-grid" />
+            <span className="qb-gh-bg-layer__sweep" />
+            <span className="qb-gh-bg-layer__wave" />
+            <span className="qb-a3d-scene-deco" aria-hidden>
+              <span className="qb-a3d-prism-shadow" />
+              <span className="qb-a3d-prism" />
+            </span>
+          </div>
+          <TopBar />
+          <div className="qb-a3d-stage" style={styles.body}>
+            <Sidebar />
+            <MainContent />
+          </div>
+        </>
+      )}
     </div>
-    <TopBar />
-    <div className="qb-a3d-stage" style={styles.body}>
-      <Sidebar />
-      <MainContent />
-    </div>
-  </div>
   );
 };
 

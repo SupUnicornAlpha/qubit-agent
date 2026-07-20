@@ -27,6 +27,8 @@ const ORCHESTRATOR_COMPAT_TEAM_TOOLS = new Set([
   "fuse_signals",
 ]);
 
+const SCENARIO_SUPPORT_TOOLS = new Set(["update_plan"]);
+
 function normalizeToolNames(names: string[]): string[] {
   return [...new Set(names.map((n) => resolveToolAlias(n.trim()).resolved).filter(Boolean))];
 }
@@ -55,13 +57,22 @@ export async function resolveEffectiveAgentTools(
 ): Promise<EffectiveToolsResult> {
   const { scenarioKey, tools: scenarioTools } = await loadScenarioToolsForWorkflow(workflowId);
 
+  /**
+   * 研究场景是产品级 harness：工具面应由场景合同决定，而不是继承通用 agent 的
+   * memory/report/team 工具。否则模型会在失败后漂移到记忆归档或长报告，无法完成
+   * factor/register/compute/evaluate 这类可验证闭环。这里不删除任何已有能力，只在
+   * scenario workflow 的运行态做白名单收敛。
+   */
+  const scenarioScopedTools =
+    scenarioKey && scenarioTools.length > 0
+      ? normalizeToolNames([...scenarioTools, ...SCENARIO_SUPPORT_TOOLS])
+      : [];
+
   // Coding-Agent 体验 P2：web.fetch 对所有角色始终可用。
   // Runtime 4.5：scenario toolPreset 与 agent_definition.tools 合并（alias 规范化）。
-  const base = normalizeToolNames([
-    ...(def.tools ?? []),
-    ...scenarioTools,
-    "web.fetch",
-  ]);
+  const base = scenarioScopedTools.length
+    ? scenarioScopedTools
+    : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, "web.fetch"]);
 
   if (def.role !== "orchestrator") {
     return {
@@ -69,6 +80,17 @@ export async function resolveEffectiveAgentTools(
       topologyContext: null,
       topologyPromptBlock: "",
       collaborationHint: buildAgentCollaborationHint(def.role),
+      scenarioTools,
+      scenarioKey,
+    };
+  }
+
+  if (scenarioScopedTools.length > 0) {
+    return {
+      tools: base,
+      topologyContext: null,
+      topologyPromptBlock: "",
+      collaborationHint: "",
       scenarioTools,
       scenarioKey,
     };

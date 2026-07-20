@@ -33,7 +33,7 @@ function def(
      */
     outputs: partial.outputs ?? ROLE_OUTPUTS[role] ?? [],
     subscriptions: partial.subscriptions ?? ["TASK_ASSIGN"],
-    llmProvider: partial.llmProvider ?? "openai:gpt-4o",
+    llmProvider: partial.llmProvider ?? "",
     maxIterations: partial.maxIterations ?? 20,
     sandboxPolicyId: partial.sandboxPolicyId ?? "default-policy",
     enabled: partial.enabled ?? true,

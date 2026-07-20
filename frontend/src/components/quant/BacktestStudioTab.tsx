@@ -90,6 +90,10 @@ export const BacktestStudioTab: FC = () => {
       setCompositionId(handoff.compositionId);
       setInfo(`已预选 composition · ${handoff.note ?? handoff.compositionId.slice(0, 8)}`);
       setQuantHandoff(null);
+    } else if (handoff.kind === "backtest-job") {
+      setSelectedId(handoff.jobId);
+      setInfo(`已打开回测 · ${handoff.note ?? handoff.jobId.slice(0, 8)}`);
+      setQuantHandoff(null);
     }
     // factor-ids-to-composer 不属于 backtest 路径：不消费 / 不清空，留给 ComposerTab 接管。
   }, [handoff, setQuantHandoff]);
@@ -132,13 +136,13 @@ export const BacktestStudioTab: FC = () => {
 
   const reloadJobs = useCallback(async () => {
     try {
-      const rows = await listBacktestJobs();
+      const rows = await listBacktestJobs({ projectId: projectId ?? undefined });
       setJobs(rows);
       if (!selectedId && rows.length > 0) setSelectedId(rows[0]!.id);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [selectedId]);
+  }, [projectId, selectedId]);
 
   useEffect(() => {
     void reloadVersions();

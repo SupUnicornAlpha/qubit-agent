@@ -4552,11 +4552,16 @@ export interface BacktestJobSubmitBody {
 export async function listBacktestJobs(filter?: {
   strategyVersionId?: string;
   status?: BacktestJobStatus;
+  projectId?: string;
+  workflowRunId?: string;
 }): Promise<BacktestJobRecord[]> {
   const qs: string[] = [];
   if (filter?.strategyVersionId)
     qs.push(`strategy_version_id=${encodeURIComponent(filter.strategyVersionId)}`);
   if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
+  if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
+  if (filter?.workflowRunId)
+    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
   const url = `/api/v1/backtest-jobs${qs.length ? `?${qs.join("&")}` : ""}`;
   const res = await httpGet<{ ok: boolean; data: BacktestJobRecord[] }>(url);
   return res.data;
@@ -4584,6 +4589,65 @@ export async function runWalkForwardEvaluation(
   const res = await httpPost<{ ok: boolean; data: WalkForwardEvaluationDto }>(
     `/api/v1/backtest-jobs/${encodeURIComponent(backtestRunId)}/walk-forward`,
     body
+  );
+  return res.data;
+}
+
+export interface FactorBacktestPromotionResult {
+  strategyVersion: StrategyVersionRecord;
+  composition: StrategyCompositionRecord;
+  backtest: BacktestJobRecord;
+  factorIds: string[];
+  symbols: string[];
+  universe: string;
+}
+
+export async function runFactorBacktestPromotionNow(body: {
+  projectId?: string;
+  factorIds: string[];
+  strategyName?: string;
+  versionTag?: string;
+  compositionName?: string;
+  description?: string;
+  symbols?: string[];
+  universe?: string;
+  startDate: string;
+  endDate: string;
+  capital?: number;
+  costs?: { commissionBps: number; slippageBps: number; minCommission?: number };
+  rebalance?: "daily" | "weekly" | "monthly";
+  topN?: number;
+  longShort?: boolean;
+  benchmark?: string;
+  providerKey?: string;
+  workflowRunId?: string | null;
+  agentInstanceId?: string | null;
+  createdBy?: string;
+}): Promise<FactorBacktestPromotionResult> {
+  const res = await httpPost<{ ok: boolean; data: FactorBacktestPromotionResult }>(
+    "/api/v1/quant/factor-backtest-promotions/run-now",
+    {
+      ...(body.projectId ? { project_id: body.projectId } : {}),
+      factor_ids: body.factorIds,
+      ...(body.strategyName ? { strategy_name: body.strategyName } : {}),
+      ...(body.versionTag ? { version_tag: body.versionTag } : {}),
+      ...(body.compositionName ? { composition_name: body.compositionName } : {}),
+      ...(body.description ? { description: body.description } : {}),
+      ...(body.symbols ? { symbols: body.symbols } : {}),
+      ...(body.universe ? { universe: body.universe } : {}),
+      start_date: body.startDate,
+      end_date: body.endDate,
+      ...(body.capital !== undefined ? { capital: body.capital } : {}),
+      ...(body.costs ? { costs: body.costs } : {}),
+      ...(body.rebalance ? { rebalance: body.rebalance } : {}),
+      ...(body.topN !== undefined ? { top_n: body.topN } : {}),
+      ...(body.longShort !== undefined ? { longShort: body.longShort } : {}),
+      ...(body.benchmark ? { benchmark: body.benchmark } : {}),
+      ...(body.providerKey ? { provider_key: body.providerKey } : {}),
+      ...(body.workflowRunId !== undefined ? { workflow_run_id: body.workflowRunId } : {}),
+      ...(body.agentInstanceId !== undefined ? { agent_instance_id: body.agentInstanceId } : {}),
+      ...(body.createdBy ? { created_by: body.createdBy } : {}),
+    }
   );
   return res.data;
 }

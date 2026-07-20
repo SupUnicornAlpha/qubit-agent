@@ -3,6 +3,7 @@ import { runMigrations } from "../../db/sqlite/migrate";
 import {
   bootstrapMarketDataSources,
   listMarketDataSources,
+  recordMarketDataSourceAttempt,
   selectMarketDataSourcePlan,
 } from "./market-data-source-control";
 
@@ -39,5 +40,26 @@ describe("market data source control plane", () => {
       settings: { "qubit-data": { klinesDataSource: "yahoo_chart" } },
     });
     expect(plan).toEqual(["yahoo_chart", "yfinance"]);
+  });
+
+  test("explicit unavailable source falls back to healthy fallback chain", async () => {
+    for (let i = 0; i < 3; i++) {
+      await recordMarketDataSourceAttempt({
+        sourceId: "yahoo_chart",
+        market: "CN",
+        timeframe: "1d",
+        symbol: "600519",
+        status: "error",
+        error: "HTTP 403",
+        latencyMs: 1,
+      });
+    }
+    const plan = await selectMarketDataSourcePlan({
+      market: "CN",
+      timeframe: "1d",
+      mode: "yahoo_chart",
+      settings: { "qubit-data": { klinesDataSource: "yahoo_chart" } },
+    });
+    expect(plan.slice(0, 2)).toEqual(["eastmoney", "akshare"]);
   });
 });

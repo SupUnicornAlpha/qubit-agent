@@ -12,6 +12,15 @@ dist/
 ~/.quant-agent/
 .env
 .env.local
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
 frontend/node_modules/
 frontend/dist/
 src-tauri/target/
@@ -45,10 +54,38 @@ docs/*
 !docs/TOOL_MCP_RELIABILITY_AND_EVOLUTION_REVIEW.md
 !docs/canvases/
 !docs/canvases/**
+
+# Private interview / job-search material (local only)
+docs/INTERVIEW_PREP.md
+docs/INTERVIEW_*.md
+interview/
+*.interview.md
 .tmp-broker-test-home/
 
 # IDE metadata
 .idea/
+.vscode/
+
+# OS, logs, coverage, and local database sidecars
+.DS_Store
+*.log
+coverage/
+.nyc_output/
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Python caches and local environments
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
 
 # Local reconstruction / scratch copies
 .reconstructed-writes/

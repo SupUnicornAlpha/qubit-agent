@@ -413,14 +413,16 @@ export class QubitNativeDataConnector extends DataConnector {
 
     const mode = forcedSource ?? parseKlinesDataSourceSetting(klinesRaw);
     const windIntent = hasWindIntent(liveSettings, mode);
-    const effective = resolveEffectiveKlinesSource({
-      settings: liveSettings,
-      period: params.period,
-      hasTushareToken: hasTushare,
-      hasWindAvailable: windIntent,
-      symbol: params.symbol,
-      exchange: params.exchange,
-    });
+    const effective =
+      forcedSource ??
+      resolveEffectiveKlinesSource({
+        settings: liveSettings,
+        period: params.period,
+        hasTushareToken: hasTushare,
+        hasWindAvailable: windIntent,
+        symbol: params.symbol,
+        exchange: params.exchange,
+      });
 
     if (effective === "wind") {
       try {

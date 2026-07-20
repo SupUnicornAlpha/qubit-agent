@@ -404,7 +404,11 @@ const PendingHitlFetchRow: FC<{
   );
 };
 
-const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
+export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "simple" }> = ({
+  ideEmbedded,
+  displayMode = "standard",
+}) => {
+  const simpleMode = displayMode === "simple";
   const chartContext = useAppStore((s) => s.chartContext);
   const setChartContext = useAppStore((s) => s.setChartContext);
   const chatSessions = useAppStore((s) => s.chatSessions);
@@ -1124,7 +1128,8 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
   return (
     <div
       data-qb-chat-panel
-      className="qb-chat-panel"
+      data-qb-chat-display={displayMode}
+      className={`qb-chat-panel${simpleMode ? " qb-chat-panel--simple" : ""}`}
       style={ideEmbedded ? styles.chatIdeRoot : styles.chatPageRoot}
     >
       {ideEmbedded ? (
@@ -1138,17 +1143,22 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             已附带行情上下文（{chartContext.symbol} / {chartContext.timeframe}）。发送一条消息后会自动清除。
           </div>
         ) : null}
-        {errorText ? <div style={styles.errorBox}>{errorText}</div> : null}
+        {errorText ? (
+          <div className="qb-chat-error" style={styles.errorBox}>
+            {simpleMode ? t("simpleMode.connectionError") : errorText}
+          </div>
+        ) : null}
       </div>
       <div
         ref={chatLayoutRef}
+        className={simpleMode ? "qb-simple-chat-layout" : undefined}
         style={{
           ...styles.chatLayout,
           ...(ideEmbedded ? styles.chatLayoutIde : {}),
-          gridTemplateColumns: chatGridTemplateColumns,
+          gridTemplateColumns: simpleMode ? "minmax(0, 1fr)" : chatGridTemplateColumns,
         }}
       >
-        <div className="qb-chat-sidebar" style={styles.chatSidebar}>
+        {!simpleMode ? <div className="qb-chat-sidebar" style={styles.chatSidebar}>
           <button
             type="button"
             className="qb-btn-primary-brand"
@@ -1232,18 +1242,25 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               </div>
             ))}
           </div>
-        </div>
+        </div> : null}
 
-        <button
+        {!simpleMode ? <button
           type="button"
           aria-label={t("chat.sidebar.resizerAria")}
           title={t("chat.sidebar.resizerTitle")}
           onMouseDown={onChatSidebarResizeMouseDown}
           style={styles.chatColResizer}
-        />
+        /> : null}
 
         <div className="qb-chat-main" style={styles.chatMain}>
-          <div style={styles.chatBoardToggleRow}>
+          {simpleMode ? (
+            <div className="qb-simple-chat-context">
+              <span>{chatSessions.find((session) => session.id === selectedSessionId)?.title ?? t("chat.sidebar.defaultSessionTitle")}</span>
+              <button type="button" onClick={() => void onCreateSession()}>
+                {t("simpleMode.newChat")}
+              </button>
+            </div>
+          ) : <div style={styles.chatBoardToggleRow}>
             <button
               type="button"
               className="qb-btn-ghost qb-btn--compact"
@@ -1254,12 +1271,34 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
             >
               {sessionAgentBoardOpen ? t("chat.board.hide") : t("chat.board.show")}
             </button>
-          </div>
-          <div style={styles.chatMessages}>
+          </div>}
+          <div className="qb-chat-messages" style={styles.chatMessages}>
+            {simpleMode && chatMessages.length === 0 ? (
+              <div className="qb-simple-chat-welcome">
+                <span className="qb-simple-chat-welcome__eyebrow">QUBIT RESEARCH</span>
+                <h1>{t("simpleMode.heroTitle")}</h1>
+                <p>{t("simpleMode.heroDescription")}</p>
+                <div className="qb-simple-chat-prompts">
+                  {["market", "stock", "factor", "strategy"].map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setInput(t(`simpleMode.prompts.${key}`))}
+                    >
+                      {t(`simpleMode.prompts.${key}`)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             {chatMessages.map((msg) => (
               <div key={msg.id} className={`qb-chat-bubble qb-chat-bubble--${msg.role}`}>
                 <div className="qb-chat-bubble__meta">
-                  {msg.role} · {msg.status}
+                  {simpleMode
+                    ? msg.role === "user"
+                      ? t("simpleMode.you")
+                      : "Qubit"
+                    : `${msg.role} · ${msg.status}`}
                 </div>
                 <div className="qb-chat-markdown">
                   {msg.content ? (
@@ -1274,7 +1313,7 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                     </span>
                   )}
                 </div>
-                {msg.workflowRunIds?.length ? (
+                {!simpleMode && msg.workflowRunIds?.length ? (
                   <div className="qb-chat-bubble__meta">workflow: {msg.workflowRunIds.join(", ")}</div>
                 ) : null}
                 {msg.status === "awaiting_approval" &&
@@ -1328,8 +1367,13 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
               </div>
             ))}
           </div>
-          <form style={styles.chatForm} onSubmit={onSend}>
-            <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
+          <form
+            className={simpleMode ? "qb-simple-composer" : undefined}
+            data-qb-simple-composer={simpleMode ? "true" : undefined}
+            style={styles.chatForm}
+            onSubmit={onSend}
+          >
+            {!simpleMode ? <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
               {t("chat.form.loopLabel")}
               <select
                 value={chatLoopKind}
@@ -1340,8 +1384,8 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 <option value="claude_cli">{t("chat.form.loopOptions.claude")}</option>
                 <option value="codex_cli">{t("chat.form.loopOptions.codex")}</option>
               </select>
-            </label>
-            <label
+            </label> : null}
+            {!simpleMode ? <label
               style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}
               title={t("chat.form.hitlTitle")}
             >
@@ -1355,20 +1399,35 @@ const ChatPanel: FC<{ ideEmbedded?: boolean }> = ({ ideEmbedded }) => {
                 <option value="off">{t("chat.form.hitlOptions.off")}</option>
                 <option value="always">{t("chat.form.hitlOptions.always")}</option>
               </select>
-            </label>
-            <input
-              style={{ ...styles.input, flex: 1 }}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={t("chat.form.placeholder")}
-            />
-            <button className="qb-btn-primary-brand" type="submit">
-              {t("common.action.send")}
+            </label> : null}
+            {simpleMode ? (
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder={t("simpleMode.composerPlaceholder")}
+                rows={3}
+              />
+            ) : (
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={t("chat.form.placeholder")}
+              />
+            )}
+            <button className={simpleMode ? "qb-simple-composer__send" : "qb-btn-primary-brand"} type="submit" disabled={!input.trim()}>
+              {simpleMode ? "↑" : t("common.action.send")}
             </button>
           </form>
         </div>
 
-        {sessionAgentBoardOpen ? (
+        {!simpleMode && sessionAgentBoardOpen ? (
         <div className="qb-chat-board-col" style={styles.boardCol}>
           <div style={styles.boardColHeader}>
             <h3 style={{ ...styles.subTitle, margin: 0 }}>会话 Agent 看板</h3>

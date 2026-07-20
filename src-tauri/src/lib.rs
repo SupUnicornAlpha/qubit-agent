@@ -1,3 +1,4 @@
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 #[cfg(debug_assertions)]
 use std::process::Child;
@@ -38,6 +39,8 @@ impl Default for BackendState {
 #[derive(Serialize, Clone)]
 struct BackendStatus {
     running: bool,
+    ready: bool,
+    phase: &'static str,
     pid: Option<u32>,
     port: &'static str,
     url: String,
@@ -49,9 +52,30 @@ fn backend_url() -> String {
     format!("http://127.0.0.1:{BACKEND_PORT}")
 }
 
-fn status_ok(pid: u32) -> BackendStatus {
+fn backend_port_ready() -> bool {
+    let Ok(addr) = format!("127.0.0.1:{BACKEND_PORT}").parse::<SocketAddr>() else {
+        return false;
+    };
+    TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok()
+}
+
+fn wait_for_backend_port_to_close(timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while backend_port_ready() {
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    true
+}
+
+fn status_running(pid: u32) -> BackendStatus {
+    let ready = backend_port_ready();
     BackendStatus {
         running: true,
+        ready,
+        phase: if ready { "ready" } else { "starting" },
         pid: Some(pid),
         port: BACKEND_PORT,
         url: backend_url(),
@@ -62,6 +86,8 @@ fn status_ok(pid: u32) -> BackendStatus {
 fn status_stopped() -> BackendStatus {
     BackendStatus {
         running: false,
+        ready: false,
+        phase: "stopped",
         pid: None,
         port: BACKEND_PORT,
         url: backend_url(),
@@ -148,7 +174,7 @@ fn spawn_dev_bun_backend(
                 if let Ok(mut pid_guard) = state.pid.lock() {
                     *pid_guard = Some(pid);
                 }
-                return Ok(status_ok(pid));
+                return Ok(status_running(pid));
             }
             Ok(Some(_)) => { /* 已退出且 try_wait 已 reap，丢弃 */ }
             Err(_) => {
@@ -196,7 +222,11 @@ fn spawn_dev_bun_backend(
     let no_watch = std::env::var("QUBIT_DEV_NO_WATCH")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
-    let bun_cmd = if no_watch { "bun run" } else { "bun --watch run" };
+    let bun_cmd = if no_watch {
+        "bun run"
+    } else {
+        "bun --watch run"
+    };
     let watch_flag = if no_watch { "0" } else { "1" };
 
     let child = Command::new("bash")
@@ -219,7 +249,7 @@ fn spawn_dev_bun_backend(
     if let Ok(mut pid_guard) = state.pid.lock() {
         *pid_guard = Some(pid);
     }
-    Ok(status_ok(pid))
+    Ok(status_running(pid))
 }
 
 fn stop_backend_internal(state: &BackendState) -> Result<(), String> {
@@ -264,7 +294,7 @@ fn spawn_backend_sidecar(
 
     if let Some(pid) = *pid_guard {
         if pid_alive(pid) {
-            return Ok(status_ok(pid));
+            return Ok(status_running(pid));
         }
         *child_guard = None;
         *pid_guard = None;
@@ -293,7 +323,9 @@ fn spawn_backend_sidecar(
             return spawn_dev_bun_backend(handle, state);
         }
         #[cfg(not(debug_assertions))]
-        return Err("qubit sidecar binary missing; run `bun run build:app` before packaging".to_string());
+        return Err(
+            "qubit sidecar binary missing; run `bun run build:app` before packaging".to_string(),
+        );
     };
 
     let app_root_str = app_root
@@ -318,7 +350,7 @@ fn spawn_backend_sidecar(
     *child_guard = Some(child);
     *pid_guard = Some(pid);
 
-    Ok(status_ok(pid))
+    Ok(status_running(pid))
 }
 
 #[tauri::command]
@@ -341,7 +373,11 @@ fn restart_backend(
     state: tauri::State<'_, BackendState>,
 ) -> Result<BackendStatus, String> {
     stop_backend_internal(&state)?;
-    std::thread::sleep(Duration::from_millis(400));
+    if !wait_for_backend_port_to_close(Duration::from_secs(5)) {
+        return Err(format!(
+            "backend port {BACKEND_PORT} is still occupied after stopping the previous process"
+        ));
+    }
     spawn_backend_sidecar(&handle, &state)
 }
 
@@ -353,7 +389,7 @@ fn backend_status(state: tauri::State<'_, BackendState>) -> Result<BackendStatus
         .map_err(|_| "backend lock poisoned".to_string())?;
     if let Some(pid) = *pid_guard {
         if pid_alive(pid) {
-            return Ok(status_ok(pid));
+            return Ok(status_running(pid));
         }
     }
     Ok(status_stopped())
@@ -361,7 +397,7 @@ fn backend_status(state: tauri::State<'_, BackendState>) -> Result<BackendStatus
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_http::init())
@@ -392,6 +428,13 @@ pub fn run() {
             restart_backend,
             backend_status
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            let state = handle.state::<BackendState>();
+            let _ = stop_backend_internal(&state);
+        }
+    });
 }

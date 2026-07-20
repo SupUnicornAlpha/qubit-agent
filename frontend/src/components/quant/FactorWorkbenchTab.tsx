@@ -21,6 +21,7 @@ import {
   listFactors,
   loadFactorValues,
   registerFactor,
+  runFactorBacktestPromotionNow,
   setFactorStatus,
   type FactorCategory,
   type FactorEvalResultDto,
@@ -151,7 +152,7 @@ export const FactorWorkbenchTab: FC = () => {
     setError(null);
     try {
       const rows = await listFactors({
-        projectId,
+        projectId: projectId ?? undefined,
         category: filterCategory === "all" ? undefined : filterCategory,
         status: filterStatus === "all" ? undefined : filterStatus,
       });
@@ -443,6 +444,42 @@ export const FactorWorkbenchTab: FC = () => {
     setQuantTab("composer");
   }, [selectedIds, setQuantHandoff, setQuantTab]);
 
+  const onBulkPromoteBacktest = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setBusy(true);
+    setError(null);
+    setInfo(null);
+    setBulkProgress({ done: 0, total: 1, label: "创建组合并运行回测" });
+    try {
+      const result = await runFactorBacktestPromotionNow({
+        projectId: projectId ?? undefined,
+        factorIds: ids,
+        symbols: symbolsList,
+        startDate: opStart,
+        endDate: opEnd,
+        rebalance: "daily",
+        capital: 100_000,
+        createdBy: "user",
+      });
+      setBulkProgress({ done: 1, total: 1, label: "回测完成" });
+      setInfo(
+        `已创建策略 ${result.strategyVersion.id.slice(0, 8)} / 组合 ${result.composition.id.slice(0, 8)} / 回测 ${result.backtest.id.slice(0, 8)}`
+      );
+      setQuantHandoff({
+        kind: "backtest-job",
+        jobId: result.backtest.id,
+        note: `因子闭环 · ${ids.length} factor(s)`,
+      });
+      setQuantTab("backtest");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+      setBulkProgress(null);
+    }
+  }, [opEnd, opStart, projectId, selectedIds, setQuantHandoff, setQuantTab, symbolsList]);
+
   // 拉取对比组的评估历史
   useEffect(() => {
     if (selectedIds.size === 0) {
@@ -607,6 +644,7 @@ export const FactorWorkbenchTab: FC = () => {
           onCompute={onBulkCompute}
           onAutoEval={onBulkAutoEvaluate}
           onToComposer={onBulkToComposer}
+          onPromoteBacktest={onBulkPromoteBacktest}
         />
         {bulkProgress ? (
           <div
@@ -1066,6 +1104,7 @@ const FactorBulkBar: FC<{
   onCompute: () => void;
   onAutoEval: () => void;
   onToComposer: () => void;
+  onPromoteBacktest: () => void;
 }> = ({
   filteredCount,
   selectedIds,
@@ -1077,6 +1116,7 @@ const FactorBulkBar: FC<{
   onCompute,
   onAutoEval,
   onToComposer,
+  onPromoteBacktest,
 }) => {
   const hasSelection = selectedIds.size > 0;
   const allSelected = filteredCount > 0 && selectedIds.size === filteredCount;
@@ -1185,6 +1225,16 @@ const FactorBulkBar: FC<{
               title="把所选因子勾入组合工坊候选池并跳过去"
             >
               送入组合 →
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onPromoteBacktest}
+              className="qb-quant-btn qb-quant-btn--primary qb-quant-btn--submit"
+              style={styles.btnPrimary}
+              title="直接创建 strategy_version / composition 并运行事件驱动回测"
+            >
+              闭环回测 →
             </button>
           </div>
         </div>

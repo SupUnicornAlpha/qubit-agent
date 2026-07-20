@@ -1,10 +1,9 @@
 import type { CSSProperties, FC } from "react";
 import { useState } from "react";
-import { getHealth } from "../../api/backend";
 import { PACKAGED_BACKEND_URL } from "../../api/packaged-backend";
-import { isTauriEnv, tauriRestartBackend } from "../../api/tauri";
-import { useAppStore, UI_STYLE_IDS, type UiStyleId } from "../../store";
+import { isTauriEnv, tauriRestartBackend, waitForTauriBackendHealth } from "../../api/tauri";
 import { LanguageSwitcher, useTranslation } from "../../i18n";
+import { UI_STYLE_IDS, type UiStyleId, useAppStore } from "../../store";
 
 export const TopBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
@@ -13,6 +12,7 @@ export const TopBar: FC = () => {
   const setBackendHint = useAppStore((s) => s.setBackendHint);
   const uiStyle = useAppStore((s) => s.uiStyle);
   const setUiStyle = useAppStore((s) => s.setUiStyle);
+  const setInterfaceMode = useAppStore((s) => s.setInterfaceMode);
   const { t } = useTranslation();
   const [restarting, setRestarting] = useState(false);
   const inTauri = isTauriEnv();
@@ -22,18 +22,21 @@ export const TopBar: FC = () => {
     setRestarting(true);
     setBackendHint(t("topbar.restart.progress"));
     try {
-      await tauriRestartBackend();
-      await new Promise((r) => setTimeout(r, 800));
-      const health = await getHealth();
+      const status = await tauriRestartBackend();
+      if (!status.running) {
+        throw new Error(status.error ?? "内置后端进程启动失败");
+      }
+      const health = await waitForTauriBackendHealth();
       setBackendConnected(true);
       setBackendHint(
         health.status === "degraded"
           ? `后端在线 · 行情降级：${health.marketData?.message ?? "readiness 未通过"}`
           : null
       );
-    } catch {
+    } catch (error) {
       setBackendConnected(false);
-      setBackendHint(t("topbar.restart.failure", { url: PACKAGED_BACKEND_URL }));
+      const detail = error instanceof Error ? error.message : String(error);
+      setBackendHint(t("topbar.restart.failure", { url: PACKAGED_BACKEND_URL, detail }));
     } finally {
       setRestarting(false);
     }
@@ -42,7 +45,14 @@ export const TopBar: FC = () => {
   return (
     <header className="qb-topbar" style={styles.bar}>
       <div style={styles.brand}>
-        <img src="/icon.png" alt="QUBIT" width={28} height={28} className="qb-brand-mark" style={styles.mark} />
+        <img
+          src="/icon.png"
+          alt="QUBIT"
+          width={28}
+          height={28}
+          className="qb-brand-mark"
+          style={styles.mark}
+        />
         <span className="qb-logo-text" style={styles.logo}>
           QUBIT
         </span>
@@ -53,6 +63,13 @@ export const TopBar: FC = () => {
       </span>
       {backendHint ? <span style={styles.hint}>{backendHint}</span> : null}
       <div className="qb-appearance-controls" style={styles.appearance}>
+        <button
+          type="button"
+          className="qb-interface-mode-btn"
+          onClick={() => setInterfaceMode("simple")}
+        >
+          {t("topbar.mode.simple")}
+        </button>
         <label className="qb-visually-hidden" htmlFor="qb-ui-style">
           {t("topbar.style.label")}
         </label>
@@ -80,6 +97,7 @@ export const TopBar: FC = () => {
           className="qb-backend-restart-btn"
           style={styles.restartBtn}
           disabled={restarting}
+          aria-busy={restarting}
           title={t("topbar.restart.title", { url: PACKAGED_BACKEND_URL })}
           onClick={() => void onRestartBackend()}
         >

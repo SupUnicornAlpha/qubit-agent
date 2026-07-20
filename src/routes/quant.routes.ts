@@ -17,6 +17,10 @@ import { Hono } from "hono";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
 import {
+  factorBacktestPromotionService,
+  FactorBacktestPromotionError,
+} from "../runtime/quant/factor-backtest-promotion-service";
+import {
   factorDefinition as factorTable,
   ruleDefinition as ruleTable,
   strategyComposition as compositionTable,
@@ -30,6 +34,93 @@ import {
 } from "../db/sqlite/schema";
 
 export const quantRouter = new Hono();
+
+function asPromotionError(e: unknown) {
+  if (e instanceof FactorBacktestPromotionError) {
+    return { ok: false, code: e.code, error: e.message } as const;
+  }
+  return { ok: false, code: "internal_error", error: (e as Error).message } as const;
+}
+
+/**
+ * POST /api/v1/quant/factor-backtest-promotions/run-now
+ *
+ * P0 闭环入口：factor_ids → strategy_version → strategy_composition → backtest_run。
+ * 所有产物会写入 workflowRunId / projectId 血缘，量化工坊可直接观察。
+ */
+quantRouter.post("/factor-backtest-promotions/run-now", async (c) => {
+  try {
+    const body = await c.req.json<{
+      project_id?: string;
+      projectId?: string;
+      factor_ids?: string[];
+      factorIds?: string[];
+      strategy_name?: string;
+      strategyName?: string;
+      version_tag?: string;
+      versionTag?: string;
+      composition_name?: string;
+      compositionName?: string;
+      description?: string;
+      symbols?: string[];
+      universe?: string;
+      start_date?: string;
+      startDate?: string;
+      end_date?: string;
+      endDate?: string;
+      capital?: number;
+      costs?: { commissionBps: number; slippageBps: number; minCommission?: number };
+      rebalance?: "daily" | "weekly" | "monthly";
+      top_n?: number;
+      topN?: number;
+      longShort?: boolean;
+      benchmark?: string;
+      provider_key?: string;
+      providerKey?: string;
+      workflow_run_id?: string | null;
+      workflowRunId?: string | null;
+      agent_instance_id?: string | null;
+      agentInstanceId?: string | null;
+      created_by?: string;
+      createdBy?: string;
+    }>();
+    const data = await factorBacktestPromotionService.promoteAndBacktest({
+      ...(body.project_id ?? body.projectId ? { projectId: (body.project_id ?? body.projectId)! } : {}),
+      factorIds: body.factor_ids ?? body.factorIds ?? [],
+      ...(body.strategy_name ?? body.strategyName
+        ? { strategyName: (body.strategy_name ?? body.strategyName)! }
+        : {}),
+      ...(body.version_tag ?? body.versionTag
+        ? { versionTag: (body.version_tag ?? body.versionTag)! }
+        : {}),
+      ...(body.composition_name ?? body.compositionName
+        ? { compositionName: (body.composition_name ?? body.compositionName)! }
+        : {}),
+      ...(body.description ? { description: body.description } : {}),
+      ...(body.symbols ? { symbols: body.symbols } : {}),
+      ...(body.universe ? { universe: body.universe } : {}),
+      startDate: body.start_date ?? body.startDate ?? "",
+      endDate: body.end_date ?? body.endDate ?? "",
+      ...(body.capital !== undefined ? { capital: Number(body.capital) } : {}),
+      ...(body.costs ? { costs: body.costs } : {}),
+      ...(body.rebalance ? { rebalance: body.rebalance } : {}),
+      ...(body.top_n !== undefined || body.topN !== undefined
+        ? { topN: Number(body.top_n ?? body.topN) }
+        : {}),
+      ...(body.longShort !== undefined ? { longShort: body.longShort } : {}),
+      ...(body.benchmark ? { benchmark: body.benchmark } : {}),
+      ...(body.provider_key ?? body.providerKey
+        ? { providerKey: (body.provider_key ?? body.providerKey)! }
+        : {}),
+      workflowRunId: body.workflow_run_id ?? body.workflowRunId ?? null,
+      agentInstanceId: body.agent_instance_id ?? body.agentInstanceId ?? null,
+      createdBy: body.created_by ?? body.createdBy ?? "user",
+    });
+    return c.json({ ok: true, data });
+  } catch (e) {
+    return c.json(asPromotionError(e), 400);
+  }
+});
 
 export type LineageKind =
   | "factor"

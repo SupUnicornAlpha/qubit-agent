@@ -1,21 +1,21 @@
+import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
 import { config } from "../../config";
+import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { runMigrations } from "../../db/sqlite/migrate";
 import { getPythonConnectorsDir, getPythonWheelsDir, resolvePythonBin } from "../app-paths";
-import { ensureDefaultUserWorkspace } from "./ensure-default-workspace";
-import { seedAgentDefinitions } from "../seed-agent-definitions";
-import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import {
   buildDefaultSandboxPoliciesFromDefinitions,
   ensureWorkspaceRuntimeConfigFiles,
 } from "../config/workspace-config";
-import { registerBuiltinConnectors } from "../../connectors/bootstrap";
 import { hydrateLlmProviderEnv } from "../llm/llm-router";
 import { bootstrapProviders } from "../provider/bootstrap";
 import { bootstrapResearchScenarios } from "../research-scenario/bootstrap";
+import { seedAgentDefinitions } from "../seed-agent-definitions";
+import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
+import { ensureDefaultUserWorkspace } from "./ensure-default-workspace";
 
 export type BootstrapResult = {
   migrations: boolean;
@@ -29,7 +29,7 @@ export type BootstrapResult = {
 function runProcess(
   cmd: string,
   args: string[],
-  opts: { cwd?: string; env?: NodeJS.ProcessEnv }
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }
 ): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
@@ -38,10 +38,25 @@ function runProcess(
       stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";
+    let settled = false;
+    const finish = (result: { code: number; stderr: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({
+        code: 1,
+        stderr: `${stderr}\nprocess timed out after ${opts.timeoutMs ?? 30_000}ms`,
+      });
+    }, opts.timeoutMs ?? 30_000);
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
-    child.on("close", (code) => resolve({ code: code ?? 1, stderr }));
+    child.on("error", (error) => finish({ code: 1, stderr: `${stderr}\n${error.message}` }));
+    child.on("close", (code) => finish({ code: code ?? 1, stderr }));
   });
 }
 
@@ -49,11 +64,6 @@ async function ensurePythonVenv(dataDir: string): Promise<{
   status: BootstrapResult["pythonVenv"];
   message?: string;
 }> {
-  const python = resolvePythonBin(dataDir);
-  if (python.includes("python-venv")) {
-    return { status: "existing" };
-  }
-
   const reqPath = join(getPythonConnectorsDir(), "requirements.txt");
   if (!existsSync(reqPath)) {
     return { status: "skipped", message: "requirements.txt not found in bundle" };
@@ -67,6 +77,14 @@ async function ensurePythonVenv(dataDir: string): Promise<{
 
   if (existsSync(venvPython)) {
     process.env["QUBIT_PYTHON"] = venvPython;
+    return { status: "existing" };
+  }
+
+  // 仅在确实需要创建 venv 时才解析系统 Python。旧实现启动阶段先探测 bundle
+  // 内的损坏 Python，部分 macOS/Bun 组合下 spawnSync timeout 不生效，会永久卡住 HTTP。
+  const python = resolvePythonBin(dataDir);
+  if (python.includes("python-venv")) {
+    process.env["QUBIT_PYTHON"] = python;
     return { status: "existing" };
   }
 
@@ -86,8 +104,7 @@ async function ensurePythonVenv(dataDir: string): Promise<{
    * 失败或没 wheel 时回退到联网安装（保持向后兼容）。
    */
   const wheelsDir = getPythonWheelsDir();
-  const hasWheels =
-    existsSync(wheelsDir) && readdirSync(wheelsDir).some((f) => f.endsWith(".whl"));
+  const hasWheels = existsSync(wheelsDir) && readdirSync(wheelsDir).some((f) => f.endsWith(".whl"));
   let pipMessage = "";
   if (hasWheels) {
     const offline = await runProcess(
@@ -115,6 +132,14 @@ async function ensurePythonVenv(dataDir: string): Promise<{
 
   process.env["QUBIT_PYTHON"] = venvPython;
   return { status: "created", ...(pipMessage ? { message: pipMessage } : {}) };
+}
+
+/** 在 HTTP 启动后异步准备 Python，失败只影响 Python 类工具，不阻塞核心 API。 */
+export function ensurePythonRuntime(): Promise<{
+  status: BootstrapResult["pythonVenv"];
+  message?: string;
+}> {
+  return ensurePythonVenv(config.dataDir);
 }
 
 /**

@@ -18,6 +18,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   backtestRun as backtestRunTable,
+  strategy as strategyTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
 import {
@@ -234,19 +235,44 @@ export class BacktestJobService {
     return record;
   }
 
-  async list(filter: { strategyVersionId?: string; status?: BacktestJobRecord["status"] } = {}) {
+  async list(filter: {
+    strategyVersionId?: string;
+    status?: BacktestJobRecord["status"];
+    projectId?: string;
+    workflowRunId?: string;
+  } = {}) {
     const db = await getDb();
     const conds = [];
     if (filter.strategyVersionId)
       conds.push(eq(backtestRunTable.strategyVersionId, filter.strategyVersionId));
     if (filter.status) conds.push(eq(backtestRunTable.status, filter.status));
-    const rows = conds.length
+    if (filter.workflowRunId) conds.push(eq(backtestRunTable.workflowRunId, filter.workflowRunId));
+
+    const withProject = Boolean(filter.projectId);
+    const rows = withProject
       ? await db
-          .select()
+          .select({ run: backtestRunTable })
           .from(backtestRunTable)
-          .where(and(...conds))
+          .innerJoin(
+            strategyVersionTable,
+            eq(strategyVersionTable.id, backtestRunTable.strategyVersionId)
+          )
+          .innerJoin(strategyTable, eq(strategyTable.id, strategyVersionTable.strategyId))
+          .where(
+            and(
+              eq(strategyTable.projectId, filter.projectId!),
+              ...(conds.length > 0 ? conds : [])
+            )
+          )
           .orderBy(desc(backtestRunTable.startedAt))
-      : await db.select().from(backtestRunTable).orderBy(desc(backtestRunTable.startedAt));
+          .then((items) => items.map((item) => item.run))
+      : conds.length
+        ? await db
+            .select()
+            .from(backtestRunTable)
+            .where(and(...conds))
+            .orderBy(desc(backtestRunTable.startedAt))
+        : await db.select().from(backtestRunTable).orderBy(desc(backtestRunTable.startedAt));
     return Promise.all(
       rows.map(async (r) => ({
         ...this.rowToRecord(r),

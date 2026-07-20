@@ -2,11 +2,12 @@ import { config } from "./config";
 import { formatStartupBanner } from "./routes/meta.routes";
 import { startAllAgents, stopAllAgents } from "./runtime/agent-pool";
 import { isPackagedRuntime } from "./runtime/app-paths";
-import { runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
-import { executionWorker } from "./runtime/execution/execution-worker";
+import { ensurePythonRuntime, runPlatformBootstrap } from "./runtime/bootstrap/packaged-setup";
 import { recommendationOutcomeWorker } from "./runtime/effect-validation/recommendation-outcome-evaluator";
+import { executionWorker } from "./runtime/execution/execution-worker";
 import { experienceMaintenanceWorker } from "./runtime/experience/maintenance-worker";
 import { attachExperiencePipes } from "./runtime/experience/pipe-bootstrap";
+import { runMarketDataReadinessGate } from "./runtime/market/market-data-health";
 import { monitorAggregatorWorker } from "./runtime/monitor/monitor-aggregator-worker";
 import { skillSelfEvolveWorker } from "./runtime/skills/skill-self-evolve-worker";
 import { restoreRunningStrategies } from "./runtime/strategy/restore-running-strategies";
@@ -15,7 +16,6 @@ import { purgeAllTraderWorkflowsOnce } from "./runtime/trader/trader-workflow";
 import { restoreRunningWorkflows } from "./runtime/workflow/restore-running-workflows";
 import { workflowScheduler } from "./runtime/workflow/scheduler";
 import { createServer } from "./server";
-import { runMarketDataReadinessGate } from "./runtime/market/market-data-health";
 
 async function main() {
   /** banner 单独打一行明显的分隔，便于 `tail -f dev-backend.log` 数重启次数 / 看 commit */
@@ -26,12 +26,8 @@ async function main() {
     console.log(`[QUBIT] Data directory: ${config.dataDir}`);
   }
 
-  const boot = await runPlatformBootstrap({ skipPython: !isPackagedRuntime() });
-  if (boot.pythonVenv === "created") {
-    console.log("[QUBIT] Python venv created for connectors.");
-  } else if (boot.pythonVenv === "failed") {
-    console.warn(`[QUBIT] Python setup warning: ${boot.pythonMessage ?? "unknown"}`);
-  }
+  // Python venv 准备可能涉及坏二进制探测或 pip 网络访问，不能阻塞核心 HTTP。
+  await runPlatformBootstrap({ skipPython: true });
   await purgeAllTraderWorkflowsOnce();
   await startAllAgents();
   const restored = await restoreRunningStrategies();
@@ -66,15 +62,29 @@ async function main() {
    */
   attachExperiencePipes();
 
-  // 启动 readiness gate：服务可以以 degraded 启动，但只有真实样本探针通过后
-  // `/health` 才返回 status=ok，客户端不会再把“进程存活”误报成“行情正常”。
-  await runMarketDataReadinessGate().catch((e) => {
-    console.warn(`[MarketData] startup readiness gate failed: ${(e as Error).message}`);
-  });
-
   // Start HTTP + WS server
   const server = createServer();
   console.log(`[QUBIT] Server listening on http://${config.host}:${config.port}`);
+
+  // 行情 readiness 会访问多个外部 provider，网络异常时可能耗时数十秒。
+  // 必须在 HTTP 已监听后异步执行：服务先以 degraded/checking 对外提供 `/health`，
+  // 探针完成后再切换 readiness，避免客户端把“探针尚未完成”误判成后端启动失败。
+  void runMarketDataReadinessGate().catch((e) => {
+    console.warn(`[MarketData] startup readiness gate failed: ${(e as Error).message}`);
+  });
+  if (isPackagedRuntime()) {
+    void ensurePythonRuntime()
+      .then((python) => {
+        if (python.status === "created") {
+          console.log("[QUBIT] Python venv created for connectors.");
+        } else if (python.status === "failed") {
+          console.warn(`[QUBIT] Python setup warning: ${python.message ?? "unknown"}`);
+        }
+      })
+      .catch((error) => {
+        console.warn(`[QUBIT] Python setup warning: ${(error as Error).message}`);
+      });
+  }
 
   // Graceful shutdown
   process.on("SIGINT", async () => {

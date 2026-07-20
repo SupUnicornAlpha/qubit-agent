@@ -295,10 +295,12 @@ export async function selectMarketDataSourcePlan(input: {
   });
   const ordered = eligible.map((r) => r.id as OperationalMarketDataSource);
   if (!explicit) return ordered;
-  if (!ordered.includes(explicit as OperationalMarketDataSource)) return [];
   const fallbackIds = new Set(
     eligible.filter((row) => row.isFallback).map((row) => row.id as OperationalMarketDataSource),
   );
+  if (!ordered.includes(explicit as OperationalMarketDataSource)) {
+    return ordered.filter((id) => fallbackIds.has(id));
+  }
   return [
     explicit as OperationalMarketDataSource,
     ...ordered.filter((id) => id !== explicit && fallbackIds.has(id)),

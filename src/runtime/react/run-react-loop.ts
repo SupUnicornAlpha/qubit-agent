@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { getDb } from "../../db/sqlite/client";
-import { agentInstance, agentStep } from "../../db/sqlite/schema";
+import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
+import { parseLoopOptionsJson } from "../../types/loop";
 import { writeCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import { actNode } from "../langgraph/nodes/act";
@@ -9,6 +10,7 @@ import { hitlGateNode } from "../langgraph/nodes/hitl-gate";
 import { observeNode } from "../langgraph/nodes/observe";
 import { perceiveNode } from "../langgraph/nodes/perceive";
 import { reasonNode } from "../langgraph/nodes/reason";
+import { resolveLlmForAgent } from "../llm/llm-router";
 import {
   resolveForceReactLoop,
   shouldStopReactLoopAfterObserve,
@@ -22,6 +24,43 @@ import type { RuntimeAgentDefinition } from "../types";
 import type { TaskAssignPayload } from "../../types/a2a";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
+const DEFAULT_REASON_NODE_TIMEOUT_MS = 180_000;
+
+function reasonNodeTimeoutMs(): number {
+  const raw = process.env["QUBIT_REASON_NODE_TIMEOUT_MS"]?.trim();
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return DEFAULT_REASON_NODE_TIMEOUT_MS;
+}
+
+function parseProviderModel(llmProvider: string | null | undefined): {
+  provider: string;
+  model: string;
+} {
+  const raw = llmProvider?.trim();
+  if (!raw) return { provider: "unknown", model: "unknown" };
+  const [provider, ...modelParts] = raw.split(":");
+  return {
+    provider: provider || "unknown",
+    model: modelParts.join(":") || "unknown",
+  };
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /**
  * 自研 ReAct 循环：用纯 `while` 取代退化的单 channel LangGraph StateGraph。
@@ -87,6 +126,22 @@ function snapshotState(
     phase,
     state: mergedState,
   });
+}
+
+async function resolveEffectiveMaxIterations(params: RunReactLoopParams): Promise<number> {
+  try {
+    const rows = await params.db
+      .select({ loopOptionsJson: workflowRun.loopOptionsJson })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, params.workflowId))
+      .limit(1);
+    const parsed = parseLoopOptionsJson(rows[0]?.loopOptionsJson) as Record<string, unknown>;
+    const loopMax = Number(parsed["maxIterations"]);
+    if (Number.isFinite(loopMax) && loopMax > 0) return Math.floor(loopMax);
+  } catch {
+    // fall through to agent definition default
+  }
+  return params.def.maxIterations;
 }
 
 /** perceive 节点：写 step0 + perceiveNode + snapshot。 */
@@ -162,6 +217,16 @@ async function runReason(
     .set({ currentIteration: nextIteration })
     .where(eq(agentInstance.id, agentInstanceId));
   const reasonStepId = randomUUID();
+  const llmIdentity = await resolveLlmForAgent(params.def)
+    .then((resolved) => ({
+      provider: resolved.config.provider,
+      model: resolved.config.model,
+      source: resolved.source,
+    }))
+    .catch(() => {
+      const parsed = parseProviderModel(params.def.llmProvider);
+      return { ...parsed, source: "unresolved" };
+    });
   await db.insert(agentStep).values({
     id: reasonStepId,
     agentInstanceId,
@@ -170,9 +235,73 @@ async function runReason(
     phase: "reason",
     thought: "Reasoning with LLM provider",
     actionType: "tool_call",
-    actionJson: { llmProvider: params.def.llmProvider },
+    actionJson: {
+      llmProvider: params.def.llmProvider,
+      resolvedProvider: llmIdentity.provider,
+      resolvedModel: llmIdentity.model,
+      resolvedSource: llmIdentity.source,
+    },
   });
-  const reasonResult = await reasonNode({ ...state, iteration: nextIteration }, emit);
+  const reasonStartedAt = Date.now();
+  let reasonResult: Awaited<ReturnType<typeof reasonNode>>;
+  try {
+    reasonResult = await withTimeout(
+      reasonNode({ ...state, iteration: nextIteration }, emit),
+      reasonNodeTimeoutMs(),
+      `reason node timed out after ${reasonNodeTimeoutMs()}ms`
+    );
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const latencyMs = Date.now() - reasonStartedAt;
+    const displayThought = `LLM reasoning failed: ${errorMessage}`;
+    await db
+      .update(agentStep)
+      .set({
+        thought: displayThought.slice(0, 12000),
+        latencyMs,
+      })
+      .where(eq(agentStep.id, reasonStepId));
+    await writeLlmCallLog({
+      workflowRunId: params.workflowId,
+      agentStepId: reasonStepId,
+      agentDefinitionId: params.def.id,
+      provider: llmIdentity.provider,
+      model: llmIdentity.model,
+      latencyMs,
+      status: errorMessage.includes("timed out") ? "timeout" : "error",
+      errorMessage: errorMessage.slice(0, 500),
+      extraMeta: {
+        iteration: nextIteration,
+        agentRole: params.def.role,
+        reasonNodeTimeoutMs: reasonNodeTimeoutMs(),
+      },
+    });
+    emit({
+      runId: params.runId,
+      workflowId: params.workflowId,
+      traceId: params.traceId,
+      role: params.def.role,
+      type: "error",
+      stepIndex: nextIteration,
+      ts: Date.now(),
+      payload: {
+        code: "REASON_NODE_FAILED",
+        message: errorMessage,
+      },
+    });
+    const failed = {
+      ...state,
+      iteration: nextIteration,
+      finalResponse: {
+        status: "terminated",
+        reason: errorMessage.includes("timed out") ? "reason_timeout" : "reason_error",
+        error: errorMessage,
+        iteration: nextIteration,
+      },
+    };
+    snapshotState(params, "reason", nextIteration, failed);
+    return failed;
+  }
   const usage = reasonResult.meta.usage;
   const tokenCount =
     usage?.totalTokens ?? (usage ? (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0) : 0);
@@ -345,14 +474,24 @@ function isTerminalStatus(state: AgentGraphState): boolean {
  * 抛出行为与原 StateGraph 一致：act 内非 HITL 异常会向上抛（caller 统一出口兜底）。
  */
 export async function runReactLoop(params: RunReactLoopParams): Promise<RunReactLoopResult> {
+  const effectiveMaxIterations = await resolveEffectiveMaxIterations(params);
+  const effectiveParams =
+    effectiveMaxIterations === params.def.maxIterations
+      ? params
+      : {
+          ...params,
+          def: { ...params.def, maxIterations: effectiveMaxIterations },
+        };
   // resume：跳过 perceive，直接用恢复的 state 从下一轮 reason 重入；
   // fresh：先跑 perceive 建初始 context。
-  let state = params.resumeFromState ?? (await runPerceive(params, params.initialState));
+  let state =
+    effectiveParams.resumeFromState ??
+    (await runPerceive(effectiveParams, effectiveParams.initialState));
 
   // resume 时若恢复的 state 已是终态（如上一轮停在 finalize 才崩），直接 finalize 收口，
   // 不应再多跑一轮 reason。
-  if (params.resumeFromState && state.finalResponse) {
-    return { state: runFinalize(params, state) };
+  if (effectiveParams.resumeFromState && state.finalResponse) {
+    return { state: runFinalize(effectiveParams, state) };
   }
 
   // while 主体对应原 conditionalEdges：reason→hitl_gate→act→observe→（回 reason / finalize）
@@ -360,7 +499,7 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
     // 运行中「随时插话」：drain 本工作流面向本角色的注入消息，累加进 contextMemory，
     // 供本轮及后续 reason 拼进 LLM 上下文（软注入，不打断循环；失败 fail-soft）。
     try {
-      const injected = await drainUserMessages(params.workflowId, params.def.role);
+      const injected = await drainUserMessages(effectiveParams.workflowId, effectiveParams.def.role);
       if (injected.length > 0) {
         const prev = Array.isArray(state.contextMemory["injectedUserMessages"])
           ? (state.contextMemory["injectedUserMessages"] as string[])
@@ -377,25 +516,25 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
       console.warn(`[run-react-loop] drainUserMessages failed: ${(e as Error).message}`);
     }
 
-    state = await runReason(params, state);
+    state = await runReason(effectiveParams, state);
     // 沙箱迭代限流：reason 已写 terminated finalResponse → 直接 finalize
     if (isTerminalStatus(state)) break;
 
-    state = await runHitlGate(params, state);
+    state = await runHitlGate(effectiveParams, state);
     if (isTerminalStatus(state)) break;
 
-    state = await runAct(params, state);
+    state = await runAct(effectiveParams, state);
     if (isTerminalStatus(state)) break;
 
-    state = await runObserve(params, state);
+    state = await runObserve(effectiveParams, state);
     // observe 后 5 分支（对应原 :430-442）
     if (state.finalResponse) break;
-    if (!params.forceReactLoop) break;
+    if (!effectiveParams.forceReactLoop) break;
     if (shouldStopReactLoopAfterObserve(state)) break;
-    if (state.iteration >= params.def.maxIterations) break;
+    if (state.iteration >= effectiveParams.def.maxIterations) break;
     // 否则回 reason 继续下一轮
   }
 
-  state = runFinalize(params, state);
+  state = runFinalize(effectiveParams, state);
   return { state };
 }

@@ -107,6 +107,37 @@ const FOCUSED_RESEARCH_SCENARIO_GUIDANCE: Record<string, string[]> = {
   ],
 };
 
+const OPTIONAL_CONTEXT_TIMEOUT_MS = Number(
+  process.env["QUBIT_REASON_OPTIONAL_CONTEXT_TIMEOUT_MS"] ?? "2500"
+);
+
+async function withOptionalContextTimeout<T>(
+  label: string,
+  promise: Promise<T>,
+  fallback: T
+): Promise<T> {
+  if (!Number.isFinite(OPTIONAL_CONTEXT_TIMEOUT_MS) || OPTIONAL_CONTEXT_TIMEOUT_MS <= 0) {
+    return promise;
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(
+            `[reason] optional context "${label}" timed out after ${OPTIONAL_CONTEXT_TIMEOUT_MS}ms; continuing without it`
+          );
+          resolve(fallback);
+        }, OPTIONAL_CONTEXT_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function buildFocusedResearchScenarioPrompt(scenarioKey: string | null): string {
   if (!scenarioKey) return "";
   const rules = FOCUSED_RESEARCH_SCENARIO_GUIDANCE[scenarioKey];
@@ -340,12 +371,16 @@ export async function reasonNode(
       ]
         .filter((s) => typeof s === "string" && s.length > 0)
         .join(" ");
-      const hitsMeta = await skillService.searchWithMeta({
-        projectId: meta.projectId,
-        query,
-        definitionId: state.agentDefinition.id,
-        topK: 3,
-      });
+      const hitsMeta = await withOptionalContextTimeout(
+        "skill.searchWithMeta",
+        skillService.searchWithMeta({
+          projectId: meta.projectId,
+          query,
+          definitionId: state.agentDefinition.id,
+          topK: 3,
+        }),
+        []
+      );
       const hits = hitsMeta.map((h) => h.skill);
       if (hits.length > 0) {
         recalledSkillsBlock = renderSkillsBlockForPrompt(hits);
@@ -386,14 +421,18 @@ export async function reasonNode(
           bus: getExperienceBus(),
           ...(embeddingClient ? { embeddingClient, vectorStore: getExperienceVectorStore() } : {}),
         });
-        const recallHits = await recall.recall({
-          projectId: meta.projectId,
-          definitionId: state.agentDefinition.id,
-          role: state.agentDefinition.role,
-          query,
-          topK: 5,
-          workflowRunId: state.workflowId,
-        });
+        const recallHits = await withOptionalContextTimeout(
+          "experience.recall",
+          recall.recall({
+            projectId: meta.projectId,
+            definitionId: state.agentDefinition.id,
+            role: state.agentDefinition.role,
+            query,
+            topK: 5,
+            workflowRunId: state.workflowId,
+          }),
+          []
+        );
         if (recallHits.length > 0) {
           recalledExperienceBlock = renderRecallBlockForPrompt(recallHits);
           if (process.env.DEBUG_MEMORY_V2) {
@@ -418,7 +457,11 @@ export async function reasonNode(
         const { getDb } = await import("../../../db/sqlite/client");
         const { buildPnlAwareSkillBlock } = await import("./pnl-aware-skill-block");
         const db = await getDb();
-        pnlAwareSkillBlock = await buildPnlAwareSkillBlock(db, state.agentDefinition.id);
+        pnlAwareSkillBlock = await withOptionalContextTimeout(
+          "pnlAwareSkillBlock",
+          buildPnlAwareSkillBlock(db, state.agentDefinition.id),
+          ""
+        );
         if (pnlAwareSkillBlock && process.env.DEBUG_SKILLS) {
           console.log(
             `[reason] injected PnL-aware skill block for ${state.agentDefinition.role}`
@@ -621,16 +664,24 @@ export async function reasonNode(
     });
     systemPromptLen = systemPrompt.length;
     userPromptLen = userPrompt.length;
+    console.log(
+      `[reason] invoking LLM role=${state.agentDefinition.role} provider=${modelConfig.provider}:${modelConfig.model} ` +
+        `systemChars=${systemPromptLen} userChars=${userPromptLen}`
+    );
 
     /**
      * P1：把 agent_definition.llm_config_json 反序列化结果转成 sampling，注入到
      * 网关。空配置 / 老 agent 行 → sampling = {} → 网关走默认值（与 P0 完全兼容）。
      */
     const samplingFromAgent = agentLlmConfigToSampling(state.agentDefinition.llmConfig);
+    const samplingForReason = {
+      maxOutputTokens: 2048,
+      ...samplingFromAgent,
+    };
     const llmResult = await invokeWithFallback(modelConfig, {
       systemPrompt,
       userPrompt,
-      ...(Object.keys(samplingFromAgent).length ? { sampling: samplingFromAgent } : {}),
+      sampling: samplingForReason,
       onToken: (token) => {
         emit({
           runId: state.runId,
@@ -687,7 +738,7 @@ export async function reasonNode(
           const retryResult = await invokeWithFallback(modelConfig, {
             systemPrompt,
             userPrompt: retryUserPrompt,
-            ...(Object.keys(samplingFromAgent).length ? { sampling: samplingFromAgent } : {}),
+            sampling: samplingForReason,
             onToken: (token) => {
               emit({
                 runId: state.runId,

@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 /**
  * 桌面安装包内后端固定端口（与 `scripts/build-app.sh`、Tauri sidecar、`frontend/src/api/packaged-backend.ts` 一致）。
@@ -85,10 +85,11 @@ export function resolvePythonBin(dataDir: string): string {
   if (explicit) return explicit;
 
   const candidates = [
-    join(getAppRoot(), "python-venv", "bin", "python3"),
-    join(getAppRoot(), "python-venv", "Scripts", "python.exe"),
+    // 用户数据目录里的 venv 是当前机器创建的，应优先于安装包内可能失效的可执行文件。
     join(dataDir, "python-venv", "bin", "python3"),
     join(dataDir, "python-venv", "Scripts", "python.exe"),
+    join(getAppRoot(), "python-venv", "bin", "python3"),
+    join(getAppRoot(), "python-venv", "Scripts", "python.exe"),
   ];
   /**
    * 2026-05-27 P2 修复：之前只判 existsSync，遇到坏 venv 软链（如 src-tauri/target/

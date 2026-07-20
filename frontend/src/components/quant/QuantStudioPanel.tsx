@@ -71,7 +71,7 @@ export const QuantStudioPanel: FC = () => {
           listFactors({ projectId }).catch(() => []),
           listDiscoveryJobs({ projectId }).catch(() => []),
           listStrategyVersions(projectId).catch(() => []),
-          listBacktestJobs().catch(() => []),
+          listBacktestJobs({ projectId }).catch(() => []),
           listProjectStrategyScripts({ projectId }).catch(() => []),
         ]);
         // 聚合 composition 数量（每个 strategy_version 各取一次；限制并发避免压垮 SQLite）
