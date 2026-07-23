@@ -10,7 +10,7 @@
 
 ## 简介
 
-QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime**、**多角色分析师团队**、**MCP 工具市场** 与 **可视化 IDE** 整合在同一工作台中。你可以：
+QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runtime**、**A2A 多角色分析师团队**、**MCP 工具市场** 与 **可视化 IDE** 整合在同一工作台中。你可以：
 
 - 在对话中带入 K 线上下文，由编排 Agent 调度研究 / 回测 / 风控等角色
 - 在「研究团队」画布上勾选参与分析的 Agent，查看拓扑与 A2A 协作轨迹
@@ -49,7 +49,7 @@ QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime
 
 | 模块 | 说明 |
 |------|------|
-| **Agent Runtime** | LangGraph `perceive → reason → act → observe`；工具语义校验、失败域熔断、有限重试与 Sandbox 审计 |
+| **Agent Runtime** | 自研 `perceive → reason → act → observe` ReAct 状态机；工具语义校验、失败域熔断、有限重试与 Sandbox 审计 |
 | **研究团队** | Orchestrator 定向调度专家，A2A 结果回收、超时隔离、辩论 / 风控与信号融合 |
 | **行情治理** | 按市场 / 周期 / 凭证 / 健康度 / 优先级路由；成功率、P95、最近错误、熔断与 fallback 可观测 |
 | **量化工坊** | Agent 产出的因子 / 策略 / 脚本与 workflow 关联；支持编辑、评估、回测及产物跳转 |
@@ -68,7 +68,7 @@ QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime
 | 层级 | 技术 |
 |------|------|
 | 后端 | Bun · TypeScript · Hono · Drizzle · SQLite · DuckDB |
-| 编排 | LangGraph.js · OpenAI SDK（多 Provider） |
+| 编排 | 自研 ReAct 状态机 · A2A 消息总线 · OpenAI SDK（多 Provider） |
 | 前端 | Vite · React · Zustand |
 | 桌面 | Tauri v2（Rust） |
 | 连接器 | Python（`python_connectors/`，行情 / 券商桥） |
@@ -114,7 +114,7 @@ bun run seed:recommended-mcp      # 推荐 MCP（数学 / 金融等）
 
 ### 2. 后端（必启）
 
-LangGraph runtime + Hono HTTP/WS 服务，默认 **http://localhost:3000**。
+自研 ReAct / A2A runtime + Hono HTTP/WS 服务，默认 **http://localhost:3000**。
 
 **前置条件**：完成步骤 1；如需调用云端大模型，至少配置一个 Provider 的 Key（见下文「[配置](#配置)」）。
 
@@ -295,7 +295,7 @@ curl -s http://localhost:3000/api/v1/market/readiness | jq
 
 ```
 qubit-agent/
-├── src/                 # 后端 API、LangGraph runtime、路由
+├── src/                 # 后端 API、自研 ReAct / A2A runtime、路由
 ├── frontend/            # Web UI（Vite + React）
 ├── src-tauri/           # Tauri 桌面壳
 ├── python_connectors/   # 行情 / 券商 HTTP 桥
@@ -314,9 +314,15 @@ qubit-agent/
 bun run lint          # Biome lint
 bun run check         # lint + format 检查
 bun test              # 集成测试
-bun run acceptance:langgraph
+bun run acceptance:langgraph  # 历史兼容脚本名：验证当前自研 ReAct 主链路
 bun run build         # 编译生产后端（含项目约定的 DuckDB external 处理）
 ```
+
+> **命名说明**：项目已移除 LangGraph 框架依赖和 checkpoint 表。当前原生执行链路是
+> `src/runtime/react/run-react-loop.ts` 中的纯 `while` ReAct 状态机，Agent 间派发统一走
+> A2A 消息总线，恢复使用自研 `agent_checkpoint_snapshot`。代码中的
+> `src/runtime/langgraph/` 与 `acceptance:langgraph` 是迁移期间保留的兼容路径 / 命令名，
+> 不代表运行时仍依赖 LangGraph。
 
 ### Agent Benchmark
 
