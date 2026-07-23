@@ -102,11 +102,12 @@ export function ChatHitlPromptControls({
    * 拒绝按钮，再切回对话，pending 列表里已经没了）。退化成"基础两按钮"，让对话
    * 流仍能 approve/reject —— 父组件 onDecision 内部仍会 idempotent 处理。
    */
-  const fallback = !state.pending;
+  const pending = state.pending;
+  const fallback = !pending;
   const inputKind: HitlInputKind = fallback
     ? "approve_only"
-    : state.pending!.inputKind ?? "approve_only";
-  const schema: HitlInputSchema = fallback ? {} : state.pending!.inputSchemaJson ?? {};
+    : (pending?.inputKind ?? "approve_only");
+  const schema: HitlInputSchema = fallback ? {} : (pending?.inputSchemaJson ?? {});
 
   const submit = (decision: "approved" | "rejected") => {
     setSubmitError(null);
@@ -126,13 +127,12 @@ export function ChatHitlPromptControls({
       {!fallback ? (
         <div style={metaRowStyle}>
           <span style={kindTagStyle}>{hitlKindLabel(inputKind)}</span>
-          {state.pending!.title ? (
-            <span style={titleStyle}>{state.pending!.title}</span>
-          ) : null}
+          {pending?.title ? <span style={titleStyle}>{pending.title}</span> : null}
         </div>
       ) : null}
 
       <HitlInputArea
+        controlId={requestId}
         inputKind={inputKind}
         schema={schema}
         choice={choice}

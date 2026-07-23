@@ -8,10 +8,11 @@
  *
  * 不依赖 backend.ts 之外的全局状态；外层负责拉 pending 详情与提交。
  */
-import { type HitlInputKind, type HitlInputSchema } from "../../api/backend";
+import type { HitlInputKind, HitlInputSchema } from "../../api/backend";
 import { t, useTranslation } from "../../i18n";
 
 export interface HitlInputAreaProps {
+  controlId: string;
   inputKind: HitlInputKind;
   schema: HitlInputSchema;
   choice: string;
@@ -40,7 +41,7 @@ export function HitlInputArea(props: HitlInputAreaProps) {
           <label key={opt.value} style={optionRowStyle}>
             <input
               type="radio"
-              name={`hitl-single-${inputKind}`}
+              name={`hitl-single-${props.controlId}`}
               checked={props.choice === opt.value}
               onChange={() => props.setChoice(opt.value)}
               disabled={disabled}
@@ -157,16 +158,23 @@ export function buildHitlResponsePayload(input: {
   const { inputKind, schema, choice, multiChoice, freeText } = input;
   if (inputKind === "single_choice") {
     if (!choice) throw new Error(t("team.hitl.validation.needChoice"));
+    if (!(schema.options ?? []).some((option) => option.value === choice)) {
+      throw new Error(t("team.hitl.validation.needChoice"));
+    }
     return { value: choice };
   }
   if (inputKind === "multi_choice") {
-    if (schema.minSelect !== undefined && multiChoice.length < schema.minSelect) {
-      throw new Error(t("team.hitl.validation.needMin", { n: schema.minSelect }));
+    const allowed = new Set((schema.options ?? []).map((option) => option.value));
+    const values = [...new Set(multiChoice)].filter((value) => allowed.has(value));
+    const minSelect = schema.minSelect ?? 1;
+    const maxSelect = schema.maxSelect ?? allowed.size;
+    if (values.length < minSelect) {
+      throw new Error(t("team.hitl.validation.needMin", { n: minSelect }));
     }
-    if (schema.maxSelect !== undefined && multiChoice.length > schema.maxSelect) {
-      throw new Error(t("team.hitl.validation.needMax", { n: schema.maxSelect }));
+    if (values.length > maxSelect) {
+      throw new Error(t("team.hitl.validation.needMax", { n: maxSelect }));
     }
-    return { values: multiChoice };
+    return { values };
   }
   if (inputKind === "free_form") {
     const text = freeText.trim();

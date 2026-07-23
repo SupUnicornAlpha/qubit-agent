@@ -65,6 +65,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
   }, [workflowRunId]);
 
   useEffect(() => {
+    void triggerKey;
     void refresh();
   }, [refresh, triggerKey]);
 
@@ -90,18 +91,15 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
     return (
       <div style={errorBannerStyle} role="alert">
         {t("team.hitl.banner.loadFailed", { err: state.error })}
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          style={smallBtnStyle}
-        >
+        <button type="button" onClick={() => void refresh()} style={smallBtnStyle}>
           {t("team.hitl.banner.retry")}
         </button>
       </div>
     );
   }
 
-  const p = state.pending!;
+  if (!state.pending) return null;
+  const p = state.pending;
   const inputKind: HitlInputKind = p.inputKind ?? "approve_only";
   const schema: HitlInputSchema = p.inputSchemaJson ?? {};
 
@@ -139,6 +137,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
       ) : null}
 
       <HitlInputArea
+        controlId={p.id}
         inputKind={inputKind}
         schema={schema}
         choice={choice}

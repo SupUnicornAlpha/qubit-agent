@@ -111,7 +111,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   fetch_klines: {
     description:
-      "市场感知的 OHLCV K 线：自动判断市场，并按源覆盖、周期、凭证、健康度、优先级和熔断状态依次降级。失败会明确返回所有尝试源，不得盲目重复。",
+      "市场感知的 OHLCV K 线：支持单个 symbol/ticker/code 或批量 symbols/tickers，兼容 timeframe/period/interval 与 limit/count/bars；自动判断市场，并按源覆盖、周期、凭证、健康度、优先级和熔断状态依次降级。失败会明确返回所有尝试源，不得盲目重复。",
     category: "market",
   },
   fetch_ticks: { description: "拉取 Tick/盘口快照（简化实现）", category: "market" },

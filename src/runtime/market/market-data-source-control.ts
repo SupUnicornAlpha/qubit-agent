@@ -145,7 +145,10 @@ function credentialsReady(def: MarketDataSourceDefinition, settings: BuiltinConn
     return typeof cfg.tushareToken === "string" && cfg.tushareToken.trim().length > 0;
   }
   if (def.id === "wind") {
-    return true;
+    return (
+      cfg.klinesDataSource === "wind" ||
+      (typeof cfg.windUsername === "string" && cfg.windUsername.trim().length > 0)
+    );
   }
   return false;
 }
@@ -321,14 +324,27 @@ export async function recordMarketDataSourceAttempt(input: {
   const failed = input.status === "empty" || input.status === "error";
   const def = DEF_BY_ID.get(input.sourceId as OperationalMarketDataSource);
   const failure = failed ? classifyMarketDataFailure(input.error ?? input.status) : null;
+  // no_data is normally symbol/window-specific (bad ticker, delisted instrument,
+  // exchange holiday). It must not globally trip a source circuit for other symbols.
+  const impactsSourceHealth = failed && failure?.kind !== "no_data";
   if (def && input.status === "success") upstreamBackoffUntil.delete(def.upstreamFamily);
   if (def && failure?.retryAfterMs && failure.kind !== "no_data") {
     upstreamBackoffUntil.set(def.upstreamFamily, Date.now() + failure.retryAfterMs);
   }
-  const consecutive = failed ? row.consecutiveFailures + 1 : 0;
-  const opened = failed && consecutive >= CIRCUIT_THRESHOLD;
+  const consecutive = impactsSourceHealth
+    ? row.consecutiveFailures + 1
+    : input.status === "success"
+      ? 0
+      : row.consecutiveFailures;
+  const opened = impactsSourceHealth && consecutive >= CIRCUIT_THRESHOLD;
   const healthStatus: MarketSourceHealth =
-    input.status === "success" ? "healthy" : input.status === "blocked" ? row.healthStatus : opened ? "down" : "degraded";
+    input.status === "success"
+      ? "healthy"
+      : input.status === "blocked" || !impactsSourceHealth
+        ? row.healthStatus
+        : opened
+          ? "down"
+          : "degraded";
   await db.insert(marketDataSourceCall).values({
     id: crypto.randomUUID(),
     sourceId: input.sourceId,
@@ -382,6 +398,15 @@ export async function selectMarketDataSourcePlan(input: {
     const openedAt = row.circuitOpenedAt ? Date.parse(row.circuitOpenedAt) : now;
     return Number.isFinite(openedAt) && now - openedAt >= CIRCUIT_COOLDOWN_MS;
   });
+  const healthRank: Record<MarketSourceHealth, number> = {
+    healthy: 4,
+    unknown: 3,
+    degraded: 2,
+    down: 1,
+  };
+  const healthOrdered = [...eligible].sort(
+    (a, b) => healthRank[b.healthStatus] - healthRank[a.healthStatus] || b.priority - a.priority
+  );
   const dedupeFamilies = (items: MarketDataSourceView[], excludedFamily?: MarketDataUpstreamFamily) => {
     const seen = new Set<MarketDataUpstreamFamily>();
     return items.filter((row) => {
@@ -391,17 +416,17 @@ export async function selectMarketDataSourcePlan(input: {
       return true;
     });
   };
-  const orderedRows = dedupeFamilies(eligible);
+  const orderedRows = dedupeFamilies(healthOrdered);
   const ordered = orderedRows.map((r) => r.id as OperationalMarketDataSource);
   if (!explicit) return ordered;
   const explicitEligible = eligible.some((row) => row.id === explicit);
   const explicitFamily = DEF_BY_ID.get(explicit as OperationalMarketDataSource)?.upstreamFamily;
   const fallbackIds = dedupeFamilies(
-    eligible.filter((row) => row.isFallback),
+    healthOrdered.filter((row) => row.isFallback),
     explicitFamily
   ).map((row) => row.id as OperationalMarketDataSource);
   if (!explicitEligible) {
-    return dedupeFamilies(eligible).map((row) => row.id as OperationalMarketDataSource);
+    return dedupeFamilies(healthOrdered).map((row) => row.id as OperationalMarketDataSource);
   }
   return [
     explicit as OperationalMarketDataSource,

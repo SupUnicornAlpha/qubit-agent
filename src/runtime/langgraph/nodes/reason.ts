@@ -42,6 +42,7 @@ import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
+import { buildHitlResumePromptBlock } from "../../workflow/hitl-service";
 import {
   buildWorkflowProcessPrompt,
   resolveEffectiveWorkflowProcessConfig,
@@ -306,6 +307,11 @@ export async function reasonNode(
     JSON.stringify(state.inboundMessage.payload);
   const slotContext = typeof payloadParams.context === "string" ? payloadParams.context.trim() : "";
   const slotTicker = typeof payloadParams.ticker === "string" ? payloadParams.ticker.trim() : "";
+  const hitlResumeBlock = buildHitlResumePromptBlock({
+    approval: payloadParams.hitlApproval,
+    payload: payloadParams.hitlPayload,
+    inputSchema: payloadParams.hitlInputSchema,
+  });
 
   /**
    * P1-6（Round 6 复盘 2026-06-08）：observations 旧逻辑 `slice(-3)` 简单粗暴：
@@ -512,6 +518,7 @@ export async function reasonNode(
     typeof payloadGoal === "string" ? payloadGoal : JSON.stringify(payloadGoal),
     slotTicker,
     slotContext.slice(0, 12000),
+    hitlResumeBlock,
     recalledSkillsBlock,
     recalledExperienceBlock,
     pnlAwareSkillBlock,
@@ -569,6 +576,7 @@ export async function reasonNode(
     slotContext
       ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 12000)}`
       : "",
+    hitlResumeBlock ? `\n${hitlResumeBlock}` : "",
     recalledSkillsBlock ? `\n${recalledSkillsBlock}` : "",
     recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
     pnlAwareSkillBlock ? `\n${pnlAwareSkillBlock}` : "",
@@ -662,7 +670,8 @@ export async function reasonNode(
     const WORK_STYLE_BLOCK = [
       "## 工作方式（重要）",
       "- **增量推进**：把任务拆成小步，一步步来；每步只做一件事，拿到结果再决定下一步，不要一次性假设整条流程。",
-      "- **先查后做**：动手前若有 `search_memory` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；有就复用，别重复劳动。",
+      "- **先查后做**：动手前若有 `search_memory` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；稳定的方法与产物可以复用。",
+      "- **实时状态必须重验**：记忆里的“行情源不可用 / 网络失败 / 凭证缺失 / 熔断”是过期风险很高的历史状态，只能作提示，不能替代当前探测。只要当前工具面有 `market.readiness` / `market.data_sources` / `fetch_klines`，在本工作流尚无同类失败证据时，必须至少做一次当前健康检查或真实拉取后，才能宣告数据不可用。",
       "- **失败自适应**：工具失败时先读取最近 observation 的 `recovery`：`retry_once` 只允许原调用再试一次，`switch_tool` 必须从 alternatives 换源并按新工具参数重组调用，`continue_with_limits` 禁止继续空转。",
       "- **无数据交付**：没有可靠数据时仍完成不依赖该数据的部分；明确列出已知事实、缺失证据、采用的假设和置信度。核心结论依赖缺失事实时，只给‘若 A 则 B’的条件式结论，并说明拿到什么数据后如何验证。",
       "- **最小交付**：只返回完成当前目标所需的最小结果；除非明确要求，不要主动生成长报告、固定模板章节或泛泛总结。",

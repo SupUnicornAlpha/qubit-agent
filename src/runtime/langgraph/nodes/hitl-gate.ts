@@ -1,14 +1,15 @@
-import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { parseToolCallFromReason } from "../../tools/tool-call-format";
+import { extractHitlHintFromText } from "../../workflow/hitl-hint-parse";
 import {
   createHitlRequest,
   evaluateChatHitlTrigger,
+  loadWorkflowLoopContext,
   parseHitlApproval,
   shouldHitlGateToolCall,
   verifyHitlApproval,
+  verifyHitlApprovalForTool,
 } from "../../workflow/hitl-service";
-import { loadWorkflowLoopContext } from "../../workflow/hitl-service";
-import { extractHitlHintFromText } from "../../workflow/hitl-hint-parse";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 export async function hitlGateNode(
@@ -19,8 +20,8 @@ export async function hitlGateNode(
   if (state.finalResponse) return {};
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
-  const payloadParams = (payload["params"] ?? {}) as Record<string, unknown>;
-  const hitlApproval = parseHitlApproval(payloadParams["hitlApproval"]);
+  const payloadParams = (payload.params ?? {}) as Record<string, unknown>;
+  const hitlApproval = parseHitlApproval(payloadParams.hitlApproval);
 
   if (hitlApproval?.decision === "rejected") {
     return {
@@ -34,7 +35,6 @@ export async function hitlGateNode(
 
   if (hitlApproval?.requestId) {
     const verified = await verifyHitlApproval(hitlApproval.requestId, state.workflowId);
-    if (verified.approved) return {};
     if (verified.rejected) {
       return {
         finalResponse: {
@@ -52,6 +52,42 @@ export async function hitlGateNode(
 
   // run_analyst_team 走团队编排内部 HITL（pauseForTeamOrchestratorHitl），这里要让路。
   if (!shouldHitlGateToolCall(parsed.toolName)) return {};
+
+  /**
+   * 审批凭据只能消费一次，且只放行原 request 记录的同一工具 + 同一参数。
+   *
+   * 旧实现只要 requestId 已 approved 就直接跳过 gate，恢复后的 LLM 即使改成了另一
+   * 个工具调用也会继承旧审批；同一 payload 在后续迭代还可反复绕过。现在把审批绑定
+   * 到 createHitlRequest 时落库的 toolName/toolParams，并在 contextMemory 记消费状态。
+   */
+  const consumedApprovalIds = Array.isArray(state.contextMemory.consumedHitlApprovalRequestIds)
+    ? (state.contextMemory.consumedHitlApprovalRequestIds as string[])
+    : [];
+  if (hitlApproval?.requestId && !consumedApprovalIds.includes(hitlApproval.requestId)) {
+    const verifiedTool = await verifyHitlApprovalForTool({
+      requestId: hitlApproval.requestId,
+      workflowRunId: state.workflowId,
+      toolName: parsed.toolName,
+      toolParams: parsed.params,
+    });
+    if (verifiedTool.rejected) {
+      return {
+        finalResponse: {
+          status: "terminated",
+          reason: "hitl_rejected",
+          iteration: state.iteration,
+        },
+      };
+    }
+    if (verifiedTool.approved && verifiedTool.matches) {
+      return {
+        contextMemory: {
+          ...state.contextMemory,
+          consumedHitlApprovalRequestIds: [...consumedApprovalIds, hitlApproval.requestId],
+        },
+      };
+    }
+  }
 
   const { workflow, loopOptions } = await loadWorkflowLoopContext(state.workflowId);
   /**

@@ -4,6 +4,7 @@ import { getDb, runInTransaction } from "../../db/sqlite/client";
 import { workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import type { LoopOptionsJson } from "../../types/loop";
 import { parseLoopOptionsJson } from "../../types/loop";
+import { dispatchTaskToRole } from "../agent-pool";
 // P2-A Batch 2：续跑改走 dispatchTaskToRole（由 agent-pool 按 path 决定），
 // 不再直接调 graphRunner.resumeRoleTask；保留 import 注释作为历史指引。
 import { stepStreamBus } from "../langgraph/event-stream";
@@ -12,7 +13,6 @@ import {
   findPendingAnalystJobByWorkflow,
   resumeAnalystResearchJob,
 } from "../msa/analyst-research-jobs";
-import { dispatchTaskToRole } from "../agent-pool";
 import { setWorkflowState } from "./workflow-state-machine";
 
 export type HitlScope = "chat_orchestrator" | "team_orchestrator";
@@ -32,6 +32,20 @@ export class HitlAwaitingApprovalError extends Error {
 }
 
 export type HitlInputKind = "approve_only" | "single_choice" | "multi_choice" | "free_form";
+
+export type HitlInputOption = {
+  label: string;
+  value: string;
+  description?: string;
+};
+
+export type HitlInputSchema = {
+  options?: HitlInputOption[];
+  placeholder?: string;
+  maxLength?: number;
+  minSelect?: number;
+  maxSelect?: number;
+};
 
 export type HitlApprovalPayload = {
   requestId: string;
@@ -56,6 +70,235 @@ export function parseHitlApproval(raw: unknown): HitlApprovalPayload | null {
   const response =
     o.response && typeof o.response === "object" ? (o.response as Record<string, unknown>) : null;
   return { requestId, decision, response };
+}
+
+function parseHitlInputSchema(raw: unknown): HitlInputSchema {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const value = raw as Record<string, unknown>;
+  const options = Array.isArray(value.options)
+    ? value.options
+        .filter(
+          (option): option is Record<string, unknown> =>
+            Boolean(option) &&
+            typeof option === "object" &&
+            !Array.isArray(option) &&
+            typeof (option as Record<string, unknown>).value === "string"
+        )
+        .map((option) => ({
+          value: String(option.value).trim(),
+          label: String(option.label ?? option.value).trim(),
+          ...(typeof option.description === "string" && option.description.trim()
+            ? { description: option.description.trim() }
+            : {}),
+        }))
+        .filter((option) => option.value.length > 0)
+    : undefined;
+  return {
+    ...(options ? { options } : {}),
+    ...(typeof value.placeholder === "string" ? { placeholder: value.placeholder } : {}),
+    ...(typeof value.maxLength === "number" && Number.isFinite(value.maxLength)
+      ? { maxLength: Math.max(1, Math.floor(value.maxLength)) }
+      : {}),
+    ...(typeof value.minSelect === "number" && Number.isFinite(value.minSelect)
+      ? { minSelect: Math.max(0, Math.floor(value.minSelect)) }
+      : {}),
+    ...(typeof value.maxSelect === "number" && Number.isFinite(value.maxSelect)
+      ? { maxSelect: Math.max(0, Math.floor(value.maxSelect)) }
+      : {}),
+  };
+}
+
+export function normalizeHitlInput(
+  inputKind: HitlInputKind | undefined,
+  inputSchema: unknown
+): { inputKind: HitlInputKind; inputSchema: HitlInputSchema } {
+  const requestedKind = inputKind ?? "approve_only";
+  const schema = parseHitlInputSchema(inputSchema);
+  if (requestedKind === "approve_only") {
+    return { inputKind: "approve_only", inputSchema: {} };
+  }
+  if (requestedKind === "free_form") {
+    return {
+      inputKind: "free_form",
+      inputSchema: {
+        ...(schema.placeholder ? { placeholder: schema.placeholder.slice(0, 300) } : {}),
+        maxLength: Math.min(schema.maxLength ?? 500, 4000),
+      },
+    };
+  }
+
+  const uniqueOptions = [
+    ...new Map((schema.options ?? []).map((option) => [option.value, option])).values(),
+  ].slice(0, 20);
+  if (uniqueOptions.length === 0) {
+    return {
+      inputKind: "free_form",
+      inputSchema: {
+        placeholder: "候选选项生成失败，请直接输入希望 Agent 采用的路径",
+        maxLength: 500,
+      },
+    };
+  }
+  if (requestedKind === "single_choice") {
+    return {
+      inputKind: "single_choice",
+      inputSchema: { options: uniqueOptions },
+    };
+  }
+  const minSelect = Math.min(Math.max(schema.minSelect ?? 1, 0), uniqueOptions.length);
+  const maxSelect = Math.min(
+    Math.max(schema.maxSelect ?? uniqueOptions.length, minSelect),
+    uniqueOptions.length
+  );
+  return {
+    inputKind: "multi_choice",
+    inputSchema: { options: uniqueOptions, minSelect, maxSelect },
+  };
+}
+
+export function validateHitlResponse(input: {
+  decision: "approved" | "rejected";
+  inputKind: HitlInputKind;
+  inputSchema: unknown;
+  response?: Record<string, unknown> | null;
+}): Record<string, unknown> | null {
+  if (input.decision === "rejected") return null;
+  const schema = parseHitlInputSchema(input.inputSchema);
+  const response = input.response ?? null;
+  if (input.inputKind === "approve_only") return null;
+  if (!response) throw new Error(`HITL ${input.inputKind} response is required`);
+
+  if (input.inputKind === "single_choice") {
+    const value = typeof response.value === "string" ? response.value.trim() : "";
+    const allowed = new Set((schema.options ?? []).map((option) => option.value));
+    if (!value) throw new Error("HITL single_choice requires response.value");
+    if (allowed.size === 0 || !allowed.has(value)) {
+      throw new Error("HITL single_choice response is not one of the allowed options");
+    }
+    return { value };
+  }
+
+  if (input.inputKind === "multi_choice") {
+    if (!Array.isArray(response.values)) {
+      throw new Error("HITL multi_choice requires response.values");
+    }
+    const values = [
+      ...new Set(
+        response.values
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim())
+          .filter(Boolean)
+      ),
+    ];
+    const allowed = new Set((schema.options ?? []).map((option) => option.value));
+    if (allowed.size === 0 || values.some((value) => !allowed.has(value))) {
+      throw new Error("HITL multi_choice response contains an unknown option");
+    }
+    const minSelect = schema.minSelect ?? 1;
+    const maxSelect = schema.maxSelect ?? allowed.size;
+    if (values.length < minSelect) {
+      throw new Error(`HITL multi_choice requires at least ${minSelect} selections`);
+    }
+    if (values.length > maxSelect) {
+      throw new Error(`HITL multi_choice allows at most ${maxSelect} selections`);
+    }
+    return { values };
+  }
+
+  const text = typeof response.text === "string" ? response.text.trim() : "";
+  if (!text) throw new Error("HITL free_form requires response.text");
+  const maxLength = schema.maxLength ?? 500;
+  if (text.length > maxLength) {
+    throw new Error(`HITL free_form response exceeds maxLength=${maxLength}`);
+  }
+  return { text };
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+export function matchesHitlToolPayload(
+  payloadRaw: unknown,
+  toolName: string,
+  toolParams: Record<string, unknown>
+): boolean {
+  const payload =
+    payloadRaw && typeof payloadRaw === "object" ? (payloadRaw as Record<string, unknown>) : {};
+  return (
+    payload.toolName === toolName &&
+    canonicalJson(payload.toolParams ?? {}) === canonicalJson(toolParams)
+  );
+}
+
+export async function verifyHitlApprovalForTool(input: {
+  requestId: string;
+  workflowRunId: string;
+  toolName: string;
+  toolParams: Record<string, unknown>;
+}): Promise<{ approved: boolean; rejected: boolean; matches: boolean }> {
+  const row = await getHitlRequest(input.requestId);
+  if (!row || row.workflowRunId !== input.workflowRunId) {
+    return { approved: false, rejected: false, matches: false };
+  }
+  const matches = matchesHitlToolPayload(row.payloadJson, input.toolName, input.toolParams);
+  return {
+    approved: row.status === "approved",
+    rejected: row.status === "rejected",
+    matches,
+  };
+}
+
+export function buildHitlResumePromptBlock(input: {
+  approval: unknown;
+  payload?: unknown;
+  inputSchema?: unknown;
+}): string {
+  const approval = parseHitlApproval(input.approval);
+  if (!approval || approval.decision !== "approved") return "";
+  const payload =
+    input.payload && typeof input.payload === "object"
+      ? (input.payload as Record<string, unknown>)
+      : {};
+  const schema = parseHitlInputSchema(input.inputSchema);
+  const labelByValue = new Map(
+    (schema.options ?? []).map((option) => [option.value, option.label])
+  );
+  const response = approval.response ?? {};
+  let humanDecision = "用户已批准按原计划继续。";
+  if (typeof response.text === "string" && response.text.trim()) {
+    humanDecision = `用户补充指引：${response.text.trim().slice(0, 1000)}`;
+  } else if (Array.isArray(response.values)) {
+    const labels = response.values
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => labelByValue.get(value) ?? value);
+    if (labels.length > 0) humanDecision = `用户选择了多个选项：${labels.join("、")}`;
+  } else if (typeof response.value === "string" && response.value.trim()) {
+    const value = response.value.trim();
+    humanDecision = `用户选择：${labelByValue.get(value) ?? value}`;
+  }
+  const approvedAction =
+    typeof payload.toolName === "string"
+      ? `原待确认工具：${payload.toolName}\n原工具参数：${canonicalJson(payload.toolParams ?? {})}`
+      : typeof payload.planBrief === "string"
+        ? `原待确认规划：${payload.planBrief.slice(0, 1200)}`
+        : "";
+  return [
+    "## 人工确认后的恢复指令（最高优先级）",
+    humanDecision,
+    approvedAction,
+    "继续执行时必须吸收用户选择；若调用工具与原待确认动作不同，必须重新接受当前 HITL 策略评估，不能复用旧审批。",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
@@ -161,8 +404,7 @@ export function evaluateChatHitlTrigger(input: {
     return {
       trigger: true,
       source: "ai_hint",
-      reason:
-        input.hitlHint.reason ?? "Orchestrator 主动请求人工确认（reason 缺省）",
+      reason: input.hitlHint.reason ?? "Orchestrator 主动请求人工确认（reason 缺省）",
       inputKind: input.hitlHint.inputKind ?? "approve_only",
       options: input.hitlHint.options,
     };
@@ -268,7 +510,8 @@ export function evaluateTeamHitlTrigger(input: {
     return {
       trigger: false,
       source: "none",
-      reason: "用户设置 hitlMode='off'：抑制 scale/retry 等提醒型规则；资金类操作由 rule_money 单独守卫",
+      reason:
+        "用户设置 hitlMode='off'：抑制 scale/retry 等提醒型规则；资金类操作由 rule_money 单独守卫",
       inputKind: "approve_only",
     };
   }
@@ -335,7 +578,11 @@ export async function loadWorkflowLoopContext(workflowRunId: string): Promise<{
   loopOptions: LoopOptionsJson;
 }> {
   const db = await getDb();
-  const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
+  const rows = await db
+    .select()
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
   const workflow = rows[0];
   if (!workflow) throw new Error(`workflow_run not found: ${workflowRunId}`);
   return { workflow, loopOptions: parseLoopOptionsJson(workflow.loopOptionsJson) };
@@ -420,6 +667,7 @@ export async function createHitlRequest(input: {
 }): Promise<{ id: string }> {
   const db = await getDb();
   const id = randomUUID();
+  const normalizedInput = normalizeHitlInput(input.inputKind, input.inputSchema);
 
   /**
    * P0-3：原本是「insert hitl_request → update workflow_run」两条裸 SQL，第二步
@@ -443,8 +691,8 @@ export async function createHitlRequest(input: {
       title: input.title.slice(0, 500),
       summary: input.summary.slice(0, 8000),
       payloadJson: input.payloadJson,
-      inputKind: input.inputKind ?? "approve_only",
-      inputSchemaJson: (input.inputSchema ?? {}) as never,
+      inputKind: normalizedInput.inputKind,
+      inputSchemaJson: normalizedInput.inputSchema as never,
     });
     await setWorkflowState(input.workflowRunId, "awaiting_approval", {
       reason: "hitl:create-request",
@@ -656,6 +904,12 @@ export async function resolveHitlRequest(input: {
     return { workflowRunId: row.workflowRunId, resumed: false, idempotent: true };
   }
 
+  const validatedResponse = validateHitlResponse({
+    decision: input.decision,
+    inputKind: row.inputKind,
+    inputSchema: row.inputSchemaJson,
+    ...(input.response !== undefined ? { response: input.response } : {}),
+  });
   const now = new Date().toISOString();
 
   /**
@@ -689,7 +943,7 @@ export async function resolveHitlRequest(input: {
         status: input.decision,
         resolvedAt: now,
         resolvedBy: input.resolvedBy ?? "user",
-        responseJson: (input.response ?? null) as never,
+        responseJson: validatedResponse as never,
       })
       .where(eq(workflowHitlRequest.id, input.requestId));
 
@@ -771,8 +1025,10 @@ export async function resolveHitlRequest(input: {
           hitlApproval: {
             requestId: input.requestId,
             decision: "approved",
-            response: input.response ?? null,
+            response: validatedResponse,
           },
+          hitlInputKind: row.inputKind,
+          hitlInputSchema: row.inputSchemaJson,
         },
       },
     });
@@ -803,9 +1059,11 @@ export async function resolveHitlRequest(input: {
         hitlApproval: {
           requestId: input.requestId,
           decision: "approved",
-          response: input.response ?? null,
+          response: validatedResponse,
         },
         hitlPayload: row.payloadJson as Record<string, unknown>,
+        hitlInputKind: row.inputKind,
+        hitlInputSchema: row.inputSchemaJson,
       },
     },
   });

@@ -28,9 +28,27 @@ const ORCHESTRATOR_COMPAT_TEAM_TOOLS = new Set([
 ]);
 
 const SCENARIO_SUPPORT_TOOLS = new Set(["update_plan"]);
+const MARKET_GOVERNANCE_TOOLS = [
+  "market.resolve_symbol",
+  "market.data_sources",
+  "market.readiness",
+] as const;
+const MARKET_DATA_TOOLS = new Set([
+  "fetch_klines",
+  "fetch_price_data",
+  "fetch_financial_data",
+  "fetch_ticks",
+  ...MARKET_GOVERNANCE_TOOLS,
+]);
 
 function normalizeToolNames(names: string[]): string[] {
   return [...new Set(names.map((n) => resolveToolAlias(n.trim()).resolved).filter(Boolean))];
+}
+
+export function attachMarketGovernanceTools(role: string, tools: string[]): string[] {
+  return role === "orchestrator" || tools.some((tool) => MARKET_DATA_TOOLS.has(tool))
+    ? normalizeToolNames([...tools, ...MARKET_GOVERNANCE_TOOLS])
+    : tools;
 }
 
 async function loadScenarioToolsForWorkflow(workflowId: string): Promise<{
@@ -70,9 +88,13 @@ export async function resolveEffectiveAgentTools(
 
   // Coding-Agent 体验 P2：web.fetch 对所有角色始终可用。
   // Runtime 4.5：scenario toolPreset 与 agent_definition.tools 合并（alias 规范化）。
-  const base = scenarioScopedTools.length
+  const baseRaw = scenarioScopedTools.length
     ? scenarioScopedTools
     : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, "web.fetch"]);
+  // Historical/published agent definitions may predate the market governance
+  // tools. Attach the read-only probes at runtime so they gain the adaptive
+  // source layer without forcing a factory reset of user-owned definitions.
+  const base = attachMarketGovernanceTools(def.role, baseRaw);
 
   if (def.role !== "orchestrator") {
     return {

@@ -253,7 +253,18 @@ export function resolveTickerMarket(
     };
   }
 
-  // 4) A 股 6 位代码
+  // 4) Yahoo-style US indices/futures (^VIX, ^GSPC, GC=F).
+  if (/^\^[A-Z0-9.-]{1,10}$/.test(symbol) || /^[A-Z0-9]{1,6}=F$/.test(symbol)) {
+    return {
+      market: "US",
+      exchange: "US",
+      symbol,
+      confidence: "inferred",
+      reason: "Yahoo index/futures symbol",
+    };
+  }
+
+  // 5) A 股 6 位代码
   const digitsOnly = symbol.replace(/\D/g, "");
   if (/^\d{6}$/.test(symbol)) {
     const ex = inferCnExchangeFromSixDigit(digitsOnly);
@@ -267,7 +278,7 @@ export function resolveTickerMarket(
     };
   }
 
-  // 5) 港股 4-5 位数字（没带 .HK 后缀的常见简写如 "0700" / "700"）
+  // 6) 港股 4-5 位数字（没带 .HK 后缀的常见简写如 "0700" / "700"）
   if (/^\d{1,5}$/.test(symbol) && symbol.length <= 5) {
     return {
       market: "HK",

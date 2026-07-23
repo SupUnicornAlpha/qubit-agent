@@ -27,6 +27,10 @@ import {
 import { marketDataFetch } from "../../runtime/market/market-data-network";
 import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
 import {
+  extractKlinesSymbols,
+  normalizeKlinesToolRequest,
+} from "../../runtime/market/normalize-klines-request";
+import {
   fetchYfinanceAssetInfo,
   fetchYfinanceBars,
   fetchYfinanceDividends,
@@ -252,19 +256,55 @@ export class QubitNativeDataConnector extends DataConnector {
     }
     if (operation === "fetch_klines" || operation === "fetch_price_data") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-      const p = raw as {
-        symbol?: string;
-        exchange?: string;
-        timeframe?: string;
-        limit?: number;
-        workflowRunId?: string;
-      };
-      const symbol = String(p.symbol ?? "").trim();
+      const p = raw as Record<string, unknown>;
+      const requestedSymbols = extractKlinesSymbols(p);
+      if (operation === "fetch_klines" && requestedSymbols.length > 1) {
+        const merged: BarData[] = [];
+        const errors: string[] = [];
+        for (const requestedSymbol of requestedSymbols) {
+          const normalized = normalizeKlinesToolRequest(
+            { ...p, symbol: requestedSymbol },
+            { timeframe: "1d", limit: 120 }
+          );
+          const computedRange = computeDateRangeForLimit(
+            normalized.timeframe,
+            normalized.limit
+          );
+          const startDate = normalized.startDate ?? computedRange.startDate;
+          const endDate = normalized.endDate ?? computedRange.endDate;
+          const { period } = computedRange;
+          try {
+            merged.push(
+              ...(await this.fetchBars({
+                symbol: normalized.symbol,
+                exchange: normalized.exchange,
+                period,
+                startDate,
+                endDate,
+                ...(p.workflowRunId ? { workflowRunId: String(p.workflowRunId) } : {}),
+              }))
+            );
+          } catch (error) {
+            errors.push(
+              `${requestedSymbol}: ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
+        }
+        if (merged.length === 0) {
+          throw new Error(`market_data_unavailable: batch failed: ${errors.join(" | ")}`);
+        }
+        if (errors.length > 0) {
+          console.warn(`[qubit-data] fetch_klines batch partially failed: ${errors.join(" | ")}`);
+        }
+        return merged as TOutput;
+      }
+      const normalized = normalizeKlinesToolRequest(p, { timeframe: "1d", limit: 120 });
+      const { symbol, exchange, timeframe, limit } = normalized;
       if (!symbol) throw new Error(`${operation}: symbol is required`);
-      const exchange = String(p.exchange ?? "");
-      const timeframe = String(p.timeframe ?? "1d");
-      const limit = Math.max(1, Math.min(Number(p.limit ?? 120), 2000));
-      const { startDate, endDate, period } = computeDateRangeForLimit(timeframe, limit);
+      const computedRange = computeDateRangeForLimit(timeframe, limit);
+      const startDate = normalized.startDate ?? computedRange.startDate;
+      const endDate = normalized.endDate ?? computedRange.endDate;
+      const { period } = computedRange;
       const bars = await this.fetchBars({
         symbol,
         exchange,
@@ -287,12 +327,15 @@ export class QubitNativeDataConnector extends DataConnector {
     }
     if (operation === "fetch_financial_data") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
-      const p = raw as { symbol?: string; exchange?: string; limit?: number };
-      const symbol = String(p.symbol ?? "").trim();
+      const p = raw as Record<string, unknown>;
+      const normalized = normalizeKlinesToolRequest(p, { timeframe: "1d", limit: 120 });
+      const { symbol, exchange } = normalized;
       if (!symbol) throw new Error("fetch_financial_data: symbol is required");
-      const exchange = String(p.exchange ?? "");
-      const limit = Math.max(30, Math.min(Number(p.limit ?? 120), 500));
-      const { startDate, endDate, period } = computeDateRangeForLimit("1d", limit);
+      const limit = Math.max(30, Math.min(normalized.limit, 500));
+      const computedRange = computeDateRangeForLimit("1d", limit);
+      const startDate = normalized.startDate ?? computedRange.startDate;
+      const endDate = normalized.endDate ?? computedRange.endDate;
+      const { period } = computedRange;
       const bars = await this.fetchBars({ symbol, exchange, period, startDate, endDate });
       const fundamentals = await this.fetchFundamentals({
         symbol,

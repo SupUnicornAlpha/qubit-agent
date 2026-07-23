@@ -19,6 +19,7 @@ describe("market data source control plane", () => {
       ["akshare", "akshare_tencent", "binance_crypto", "eastmoney", "tushare_daily", "wind", "yahoo_chart", "yfinance"].sort()
     );
     expect(rows.find((row) => row.id === "tushare_daily")?.credentialsReady).toBe(false);
+    expect(rows.find((row) => row.id === "wind")?.credentialsReady).toBe(false);
     expect(rows.find((row) => row.id === "eastmoney")?.supportedMarkets).toContain("CN");
   });
 
@@ -30,6 +31,29 @@ describe("market data source control plane", () => {
     expect(cn.slice(0, 2)).toEqual(["eastmoney", "akshare_tencent"]);
     expect(us).toEqual(["yfinance", "yahoo_chart"]);
     expect(crypto).toEqual(["binance_crypto"]);
+  });
+
+  test("symbol-specific no-data does not trip the global source circuit", async () => {
+    for (let i = 0; i < 4; i++) {
+      await recordMarketDataSourceAttempt({
+        sourceId: "yfinance",
+        market: "US",
+        timeframe: "1d",
+        symbol: `DELISTED${i}`,
+        status: "empty",
+        error: "no usable OHLCV rows",
+        latencyMs: 1,
+      });
+    }
+    const source = (await listMarketDataSources()).find((row) => row.id === "yfinance");
+    expect(source?.circuitState).toBe("closed");
+    const plan = await selectMarketDataSourcePlan({
+      market: "US",
+      timeframe: "1d",
+      mode: "auto",
+      settings: { "qubit-data": { klinesDataSource: "auto" } },
+    });
+    expect(plan[0]).toBe("yfinance");
   });
 
   test("explicit source stays first but retains healthy fallback chain", async () => {
@@ -105,5 +129,23 @@ describe("market data source control plane", () => {
       settings: { "qubit-data": { klinesDataSource: "auto" } },
     });
     expect(plan).toEqual([]);
+  });
+
+  test("prefers a proven healthy fallback over a higher-priority unknown source", async () => {
+    await recordMarketDataSourceAttempt({
+      sourceId: "akshare_tencent",
+      market: "CN",
+      timeframe: "1d",
+      symbol: "600000",
+      status: "success",
+      latencyMs: 1,
+    });
+    const plan = await selectMarketDataSourcePlan({
+      market: "CN",
+      timeframe: "1d",
+      mode: "auto",
+      settings: { "qubit-data": { klinesDataSource: "auto" } },
+    });
+    expect(plan[0]).toBe("akshare_tencent");
   });
 });

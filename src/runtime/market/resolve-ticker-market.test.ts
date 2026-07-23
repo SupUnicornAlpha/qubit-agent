@@ -133,6 +133,14 @@ describe("resolveTickerMarket — short US ticker", () => {
   });
 });
 
+describe("resolveTickerMarket — Yahoo index/futures symbols", () => {
+  test.each([["^VIX"], ["^GSPC"], ["GC=F"]])("%s → US inferred", (symbol) => {
+    const result = resolveTickerMarket(symbol);
+    expect(result.market).toBe("US");
+    expect(result.exchange).toBe("US");
+  });
+});
+
 describe("resolveTickerMarket — UNKNOWN fallback", () => {
   test("空字符串 → UNKNOWN fallback", () => {
     const r = resolveTickerMarket("");

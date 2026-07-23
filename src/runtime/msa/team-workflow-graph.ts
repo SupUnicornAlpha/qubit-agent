@@ -5,6 +5,8 @@ import {
   agentInstance,
   agentStep,
   analystSignal,
+  chatMessage,
+  chatMessageWorkflowLink,
   debateSession,
   debateTurn,
   mcpCallLog,
@@ -98,6 +100,71 @@ export interface TeamGraphInteractionRow {
   createdAt: string;
 }
 
+type ConversationProjectionMessage = {
+  id: string;
+  role: string;
+  sender: string;
+  content: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * 历史补偿：旧版按 workflow 去重最终答复，导致第二轮及后续 Orchestrator 正文只存在
+ * chat_message、没有进入 research_team_interaction。team graph 是右栏的数据源，因此在
+ * 读取时合并缺失的已完成 assistant 消息；不写库、不影响新版本逐轮投影的真相源。
+ */
+export function mergeConversationProjectionFallbacks(
+  interactions: TeamGraphInteractionRow[],
+  messages: ConversationProjectionMessage[],
+  workflowRunId: string
+): TeamGraphInteractionRow[] {
+  const merged = [...interactions];
+  const persistedContents = new Set(
+    interactions
+      .filter(
+        (row) =>
+          row.kind === "llm_message" && row.fromRole === "orchestrator" && row.toRole === "user"
+      )
+      .map((row) => row.contentText.trim())
+      .filter(Boolean)
+  );
+
+  for (const message of messages) {
+    const content = message.content.trim();
+    if (
+      message.role !== "assistant" ||
+      message.sender !== "orchestrator" ||
+      (message.status !== "completed" && message.status !== "failed") ||
+      !content ||
+      persistedContents.has(content)
+    ) {
+      continue;
+    }
+    persistedContents.add(content);
+    merged.push({
+      id: `chat-message:${message.id}`,
+      workflowRunId,
+      fromRole: "orchestrator",
+      toRole: "user",
+      kind: "llm_message",
+      toolKind: null,
+      toolName: null,
+      contentText: content,
+      payloadJson: {
+        phase: "workflow_final_answer",
+        conversationTurnId: message.id,
+        projectionSource: "chat_message_fallback",
+      },
+      // assistant 行在发起时创建，updatedAt 才代表正文真正完成的时间。
+      createdAt: message.updatedAt || message.createdAt,
+    });
+  }
+
+  return merged.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
 /** Agent 执行轨迹（ReAct step），供节点详情展示 stream / 推理 */
 export interface TeamGraphAgentStep {
   id: string;
@@ -154,23 +221,30 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
 }> {
   const db = await getDb();
 
-  const [logged, signals, sessions, instances, steps, mcpRows, workflowRows] = await Promise.all([
-    db
-      .select()
-      .from(researchTeamInteraction)
-      .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
-      .orderBy(asc(researchTeamInteraction.createdAt)),
-    db.select().from(analystSignal).where(eq(analystSignal.workflowRunId, workflowRunId)),
-    db.select().from(debateSession).where(eq(debateSession.workflowRunId, workflowRunId)),
-    db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
-    db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowRunId)),
-    db.select().from(mcpCallLog).where(eq(mcpCallLog.workflowRunId, workflowRunId)),
-    db
-      .select({ planJson: workflowRun.planJson })
-      .from(workflowRun)
-      .where(eq(workflowRun.id, workflowRunId))
-      .limit(1),
-  ]);
+  const [logged, signals, sessions, instances, steps, mcpRows, workflowRows, conversationRows] =
+    await Promise.all([
+      db
+        .select()
+        .from(researchTeamInteraction)
+        .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
+        .orderBy(asc(researchTeamInteraction.createdAt)),
+      db.select().from(analystSignal).where(eq(analystSignal.workflowRunId, workflowRunId)),
+      db.select().from(debateSession).where(eq(debateSession.workflowRunId, workflowRunId)),
+      db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
+      db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowRunId)),
+      db.select().from(mcpCallLog).where(eq(mcpCallLog.workflowRunId, workflowRunId)),
+      db
+        .select({ planJson: workflowRun.planJson })
+        .from(workflowRun)
+        .where(eq(workflowRun.id, workflowRunId))
+        .limit(1),
+      db
+        .select({ message: chatMessage })
+        .from(chatMessageWorkflowLink)
+        .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
+        .where(eq(chatMessageWorkflowLink.workflowRunId, workflowRunId))
+        .orderBy(asc(chatMessage.createdAt)),
+    ]);
 
   const definitions = await db.select().from(agentDefinition);
   const defRole = new Map(definitions.map((d) => [d.id, d.role]));
@@ -304,18 +378,22 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     edgeMap.set(k, cur);
   };
 
-  const rows: TeamGraphInteractionRow[] = logged.map((r) => ({
-    id: r.id,
-    workflowRunId: r.workflowRunId,
-    fromRole: r.fromRole,
-    toRole: r.toRole,
-    kind: r.kind,
-    toolKind: r.toolKind,
-    toolName: r.toolName,
-    contentText: r.contentText,
-    payloadJson: r.payloadJson,
-    createdAt: r.createdAt,
-  }));
+  const rows = mergeConversationProjectionFallbacks(
+    logged.map((r) => ({
+      id: r.id,
+      workflowRunId: r.workflowRunId,
+      fromRole: r.fromRole,
+      toRole: r.toRole,
+      kind: r.kind,
+      toolKind: r.toolKind,
+      toolName: r.toolName,
+      contentText: r.contentText,
+      payloadJson: r.payloadJson,
+      createdAt: r.createdAt,
+    })),
+    conversationRows.map((row) => row.message),
+    workflowRunId
+  );
 
   for (const r of rows) {
     if (r.kind === "tool_call") continue;
