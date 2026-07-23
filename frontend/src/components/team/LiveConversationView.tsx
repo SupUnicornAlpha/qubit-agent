@@ -69,6 +69,11 @@ export type LiveConversationViewProps = {
    */
   collapseA2AFromRole?: string;
   /**
+   * 工具调用默认只显示摘要行，点击后才展示参数/结果正文。
+   * 右栏 Orchestrator 对话使用；中间全量运行区不传，保持原有展开预览。
+   */
+  collapseToolCalls?: boolean;
+  /**
    * 点击交接信封里的产物引用（data_refs，如 factor / strategy_version）时回调。
    * 不传则产物引用渲染为静态标签（仍展示，不可点）。
    */
@@ -97,6 +102,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
   contentMaxLength = 4000,
   emptyText,
   collapseA2AFromRole,
+  collapseToolCalls = false,
   onOpenRef,
 }) => {
   const { t } = useTranslation();
@@ -125,7 +131,14 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
         switch (ev.kind) {
           case "message":
             if (ev.messageKind === "tool_call") {
-              return <ToolCallCard key={ev.id} ev={ev} maxLen={contentMaxLength} />;
+              return (
+                <ToolCallCard
+                  key={ev.id}
+                  ev={ev}
+                  maxLen={contentMaxLength}
+                  collapsedByDefault={collapseToolCalls}
+                />
+              );
             }
             /**
              * A2A 折叠：collapseA2AFromRole 发出的、非给 user 的消息（派单/广播/给 msa）
@@ -693,7 +706,11 @@ const STATUS_PALETTE: Record<ToolCallPieces["status"], StatusStyle> = {
 
 const COLLAPSED_BODY_LINES = 8;
 
-const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = ({ ev, maxLen }) => {
+const ToolCallCard: FC<{
+  ev: LiveConversationMessageEvent;
+  maxLen: number;
+  collapsedByDefault?: boolean;
+}> = ({ ev, maxLen, collapsedByDefault = false }) => {
   const { t } = useTranslation();
   const pieces = parseToolCallText(ev.contentText, ev.toolName);
   const palette = STATUS_PALETTE[pieces.status];
@@ -703,10 +720,12 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
   const { isJson, pretty } = tryPrettyJson(pieces.body);
   const fullBody = truncate(pretty, maxLen);
   const lines = fullBody.split("\n");
-  const collapsable = lines.length > COLLAPSED_BODY_LINES;
+  const collapsable =
+    Boolean(pieces.body) && (collapsedByDefault || lines.length > COLLAPSED_BODY_LINES);
   const [expanded, setExpanded] = useState(false);
   const visibleBody =
     expanded || !collapsable ? fullBody : lines.slice(0, COLLAPSED_BODY_LINES).join("\n");
+  const showBody = Boolean(pieces.body) && (!collapsedByDefault || expanded);
 
   return (
     <div
@@ -728,7 +747,7 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
           alignItems: "center",
           gap: 6,
           flexWrap: "wrap",
-          marginBottom: pieces.body ? 6 : 0,
+          marginBottom: showBody ? 6 : 0,
         }}
       >
         <span style={{ ...tsLabel }}>{formatTs(ev.ts)}</span>
@@ -808,6 +827,12 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            aria-label={
+              expanded
+                ? t("team.conversation.toolCall.collapse")
+                : t("team.conversation.toolCall.expand", { n: lines.length })
+            }
             style={{
               marginLeft: "auto",
               fontSize: 10,
@@ -826,7 +851,7 @@ const ToolCallCard: FC<{ ev: LiveConversationMessageEvent; maxLen: number }> = (
           </button>
         ) : null}
       </div>
-      {pieces.body ? (
+      {showBody ? (
         <pre
           style={{
             margin: 0,

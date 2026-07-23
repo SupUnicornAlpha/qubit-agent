@@ -144,7 +144,7 @@ export function OrchestratorChatPanel({
     () =>
       events.filter((ev) => {
         if (ev.kind !== "message") return false; // debate/system 多 Agent 噪声不在此视图
-        if (ev.messageKind === "tool_call") return false; // tool 调用属于子 Agent 视图
+        // 仅收 Orchestrator 自己的工具调用；子 Agent 工具轨迹仍留在中间全量运行区。
         return ev.fromRole === "orchestrator" || ev.fromRole === "user";
       }),
     [events]
@@ -276,8 +276,8 @@ export function OrchestratorChatPanel({
         {/* 只聚焦 Orchestrator：对用户输出=气泡，对子 Agent 的 A2A=折叠卡片 */}
         <div style={styles.scopeRow}>
           <span style={styles.scopeHint}>
-            仅显示 Orchestrator 对你的输出；对子 Agent 的派单已折叠成卡片。子 Agent
-            之间的完整对话请点中间拓扑图的节点查看。
+            显示 Orchestrator 对你的输出和折叠工具调用；对子 Agent 的派单也会折叠展示。子
+            Agent 之间的完整对话请点中间拓扑图的节点查看。
           </span>
         </div>
       </div>
@@ -356,6 +356,7 @@ export function OrchestratorChatPanel({
           selfRole="orchestrator"
           contentMaxLength={6000}
           collapseA2AFromRole="orchestrator"
+          collapseToolCalls
           onOpenRef={(ref) => {
             // 交接信封里的产物引用 → 复用产物打开逻辑（factor / strategy_version）。
             const kind =

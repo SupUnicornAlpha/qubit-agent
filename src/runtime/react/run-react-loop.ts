@@ -2,33 +2,30 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { getDb } from "../../db/sqlite/client";
 import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
+import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { writeCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
-import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import { actNode } from "../langgraph/nodes/act";
 import { hitlGateNode } from "../langgraph/nodes/hitl-gate";
 import { observeNode } from "../langgraph/nodes/observe";
 import { perceiveNode } from "../langgraph/nodes/perceive";
 import { reasonNode } from "../langgraph/nodes/reason";
-import { resolveLlmForAgent } from "../llm/llm-router";
-import {
-  resolveForceReactLoop,
-  shouldStopReactLoopAfterObserve,
-} from "../langgraph/react-loop-policy";
+import { shouldStopReactLoopAfterObserve } from "../langgraph/react-loop-policy";
 import type { AgentGraphState, StepStreamEvent } from "../langgraph/state";
+import { resolveLlmForAgent } from "../llm/llm-router";
+import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import { sandboxExecutor } from "../sandbox-executor";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
+import type { RuntimeAgentDefinition } from "../types";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { drainUserMessages } from "../workflow/user-message-queue";
-import type { RuntimeAgentDefinition } from "../types";
-import type { TaskAssignPayload } from "../../types/a2a";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 const DEFAULT_REASON_NODE_TIMEOUT_MS = 180_000;
 
 function reasonNodeTimeoutMs(): number {
-  const raw = process.env["QUBIT_REASON_NODE_TIMEOUT_MS"]?.trim();
-  const parsed = raw ? Number(raw) : NaN;
+  const raw = process.env.QUBIT_REASON_NODE_TIMEOUT_MS?.trim();
+  const parsed = raw ? Number(raw) : Number.NaN;
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
   return DEFAULT_REASON_NODE_TIMEOUT_MS;
 }
@@ -46,11 +43,7 @@ function parseProviderModel(llmProvider: string | null | undefined): {
   };
 }
 
-async function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  message: string
-): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -136,7 +129,7 @@ async function resolveEffectiveMaxIterations(params: RunReactLoopParams): Promis
       .where(eq(workflowRun.id, params.workflowId))
       .limit(1);
     const parsed = parseLoopOptionsJson(rows[0]?.loopOptionsJson) as Record<string, unknown>;
-    const loopMax = Number(parsed["maxIterations"]);
+    const loopMax = Number(parsed.maxIterations);
     if (Number.isFinite(loopMax) && loopMax > 0) return Math.floor(loopMax);
   } catch {
     // fall through to agent definition default
@@ -426,6 +419,28 @@ async function runObserve(
   return merged;
 }
 
+/**
+ * 从最后一轮 reason / observation 中提取可面向用户展示的文本。
+ *
+ * ReAct 可能在工具调用完成后刚好耗尽最大迭代。此时历史实现只返回
+ * `{ reason: "max_iterations" }`，导致 Orchestrator 明明已经有一版分析正文，
+ * 用户侧却只能看到工具轨迹。这里剥离 tool sentinel，并依次回退到最近 observation。
+ */
+export function extractFinalizeAnswerText(
+  state: Pick<AgentGraphState, "reasonText" | "observations">
+): string {
+  const candidates: unknown[] = [state.reasonText];
+  for (const observation of [...state.observations].reverse()) {
+    candidates.push(observation.answerText, observation.reasonText, observation.summary);
+  }
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const cleaned = stripToolCallSentinels(candidate).trim();
+    if (cleaned && cleaned !== "no tool requested") return cleaned;
+  }
+  return "";
+}
+
 /** finalize 节点：补 finalResponse（completed / max_iterations terminated）+ snapshot。 */
 function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentGraphState {
   if (state.finalResponse) {
@@ -449,13 +464,22 @@ function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentG
       },
     });
   }
+  const availableAnswer = extractFinalizeAnswerText(state);
   const finalResponse = exceeded
-    ? { status: "terminated", reason: "max_iterations", iteration: state.iteration }
+    ? {
+        status: "terminated",
+        reason: "max_iterations",
+        iteration: state.iteration,
+        answerText: availableAnswer
+          ? `执行达到最大轮次，以下为收口前最后一版可用分析：\n\n${availableAnswer}`
+          : "工具调用已结束，但 Orchestrator 在达到最大执行轮次前未生成可验证的最终正文。请重试本轮任务或提高最大迭代次数。",
+      }
     : {
         status: "completed",
         role: params.def.role,
         iteration: state.iteration,
         observation: state.observations.at(-1) ?? {},
+        ...(availableAnswer ? { answerText: availableAnswer } : {}),
       };
   const merged = { ...state, finalResponse };
   snapshotState(params, "finalize", state.iteration, merged);
@@ -499,10 +523,13 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
     // 运行中「随时插话」：drain 本工作流面向本角色的注入消息，累加进 contextMemory，
     // 供本轮及后续 reason 拼进 LLM 上下文（软注入，不打断循环；失败 fail-soft）。
     try {
-      const injected = await drainUserMessages(effectiveParams.workflowId, effectiveParams.def.role);
+      const injected = await drainUserMessages(
+        effectiveParams.workflowId,
+        effectiveParams.def.role
+      );
       if (injected.length > 0) {
-        const prev = Array.isArray(state.contextMemory["injectedUserMessages"])
-          ? (state.contextMemory["injectedUserMessages"] as string[])
+        const prev = Array.isArray(state.contextMemory.injectedUserMessages)
+          ? (state.contextMemory.injectedUserMessages as string[])
           : [];
         state = {
           ...state,
