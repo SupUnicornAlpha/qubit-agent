@@ -69,7 +69,7 @@ export interface OrchestratorChatPanelProps {
   onInject: (content: string) => Promise<number>;
   /** 协作式中断：请求在下一个安全断点暂停，等用户输入新提示词后续跑 */
   onInterrupt: () => Promise<void>;
-  /** Coding-Agent 体验 P1：Orchestrator 的分步计划/TODO（update_plan 推流），置于对话框顶部 */
+  /** Agent / Plan / Goal：Orchestrator 的分步计划（update_plan 推流），置于对话框顶部 */
   plan?: OrchestratorPlan | null;
   /** Coding-Agent 体验 P1：当前「正在调用什么、为何」活动行（tool_rationale 推流） */
   activity?: { tool: string; why: string } | null;

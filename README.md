@@ -50,6 +50,7 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 | 模块 | 说明 |
 |------|------|
 | **Agent Runtime** | 自研 `perceive → reason → act → observe` ReAct 状态机；工具语义校验、失败域熔断、有限重试与 Sandbox 审计 |
+| **工作模式** | Agent：直接回答 / 按需执行；Plan：只生成可验证计划并硬性禁用业务工具；Goal：自主规划、执行、验证并经完成门禁闭环 |
 | **研究团队** | Orchestrator 定向调度专家，A2A 结果回收、超时隔离、辩论 / 风控与信号融合 |
 | **行情治理** | 按市场 / 周期 / 凭证 / 健康度 / 优先级路由；成功率、P95、最近错误、熔断与 fallback 可观测 |
 | **量化工坊** | Agent 产出的因子 / 策略 / 脚本与 workflow 关联；支持编辑、评估、回测及产物跳转 |
@@ -60,6 +61,12 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 | **Agent Benchmark** | 10 个研究 / 选股 / 因子 / 策略 / 交易场景，AQM 多维评分、trace 与版本对比 |
 | **实盘与券商** | Intent → 风控 → 执行；Futu / IB（mock / sandbox / live） |
 | **桌面端** | Tauri v2 客户端，生产 Sidecar、迁移 / seed、DuckDB 原生依赖与后端 readiness 状态 |
+
+三种工作模式与研究团队角色的推理引擎配置相互独立；团队角色仍可选择自研进程内
+ReAct、Claude CLI 或 Codex CLI。Plan 的“只规划”由运行时工具权限强制执行；Goal 在计划仍有
+`pending / in_progress` 步骤或缺少实际执行证据时不会提前结束。旧工作流中的
+`experience: native / coding_agent` 会分别兼容映射为 Agent / Goal，新接口统一使用
+`loopOptionsJson.agentMode`。
 
 ---
 

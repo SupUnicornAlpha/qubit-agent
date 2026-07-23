@@ -59,6 +59,11 @@ export interface AgentGraphState {
    * undefined / 0 = 还没触发过；max 2（详见 act.ts MAX_ARTIFACT_GATE_RETRIES）。
    */
   artifactGapRetryCount?: number;
+  /**
+   * Agent control mode 的终态门禁重试计数：
+   * Plan 要求至少落一份计划；Goal 要求计划步骤全部进入 done/skipped。
+   */
+  controlModeGapRetryCount?: number;
 }
 
 export function createInitialGraphState(input: {

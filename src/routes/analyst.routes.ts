@@ -19,11 +19,12 @@ import {
 } from "../db/sqlite/schema";
 import { dispatchTaskToRole } from "../runtime/agent-pool";
 import { getAnalystResearchJob } from "../runtime/msa/analyst-research-jobs";
-import { launchAnalystTeam, LaunchAnalystTeamError } from "../runtime/msa/launch-analyst-team";
-import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
+import { LaunchAnalystTeamError, launchAnalystTeam } from "../runtime/msa/launch-analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
+import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import { SEED_AGENT_ROLE_CATALOG } from "../runtime/seed-agent-roles";
+import type { AgentControlMode } from "../types/loop";
 import type { ResearchScopeInput } from "../types/research-scope";
 
 export const analystRouter = new Hono();
@@ -59,7 +60,21 @@ analystRouter.post("/run", async (c) => {
      * 注意：这与 workflow.loop_kind 正交——loop_kind 保持 native（仍走 MSA 编排），仅替换角色 reason 引擎。
      */
     roleReasoner?: "native" | "claude_cli" | "codex_cli";
+    /** Agent 工作模式；与 roleReasoner（引擎）正交。 */
+    agentMode?: AgentControlMode;
   }>();
+
+  if (body.agentMode === "plan" || body.agentMode === "goal") {
+    return c.json(
+      {
+        ok: false,
+        code: "agent_mode_requires_orchestrator",
+        error:
+          "Plan/Goal 模式必须通过 /orchestrator-chat 进入受控 ReAct harness；/run 只用于显式启动固定研究团队。",
+      },
+      409
+    );
+  }
 
   try {
     const launched = await launchAnalystTeam({
@@ -73,6 +88,7 @@ analystRouter.post("/run", async (c) => {
         : {}),
       ...(body.hitlMode !== undefined ? { hitlMode: body.hitlMode } : {}),
       ...(body.roleReasoner !== undefined ? { roleReasoner: body.roleReasoner } : {}),
+      ...(body.agentMode !== undefined ? { agentMode: body.agentMode } : {}),
     });
     return c.json({ ok: true, jobId: launched.jobId, status: "running" }, 202);
   } catch (err) {
@@ -102,11 +118,11 @@ analystRouter.post("/orchestrator-chat", async (c) => {
     message?: string;
     hitlMode?: "off" | "ai" | "always";
     roleReasoner?: "native" | "claude_cli" | "codex_cli";
+    agentMode?: AgentControlMode;
+    /** @deprecated 历史客户端兼容；native -> agent，coding_agent -> goal。 */
     experience?: "native" | "coding_agent";
   };
-  const body = await c.req
-    .json<OrchestratorChatBody>()
-    .catch(() => ({}) as OrchestratorChatBody);
+  const body = await c.req.json<OrchestratorChatBody>().catch(() => ({}) as OrchestratorChatBody);
   const workflowRunId = (body.workflowRunId ?? "").trim();
   const message = (body.message ?? "").trim();
   if (!workflowRunId) return c.json({ error: "workflowRunId is required" }, 400);
@@ -129,10 +145,18 @@ analystRouter.post("/orchestrator-chat", async (c) => {
       body.roleReasoner === "native" ||
       body.roleReasoner === "claude_cli" ||
       body.roleReasoner === "codex_cli";
-    const experienceValid =
-      body.experience === "native" || body.experience === "coding_agent";
-    if (hitlValid || reasonerValid || experienceValid) {
+    const experienceValid = body.experience === "native" || body.experience === "coding_agent";
+    const agentModeValid =
+      body.agentMode === "agent" || body.agentMode === "plan" || body.agentMode === "goal";
+    if (hitlValid || reasonerValid || agentModeValid || experienceValid) {
       const cur = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
+      const compatibleAgentMode = agentModeValid
+        ? body.agentMode
+        : body.experience === "coding_agent"
+          ? "goal"
+          : body.experience === "native"
+            ? "agent"
+            : undefined;
       await db
         .update(workflowRun)
         .set({
@@ -140,7 +164,7 @@ analystRouter.post("/orchestrator-chat", async (c) => {
             ...cur,
             ...(hitlValid ? { hitlMode: body.hitlMode } : {}),
             ...(reasonerValid ? { roleReasoner: body.roleReasoner } : {}),
-            ...(experienceValid ? { experience: body.experience } : {}),
+            ...(compatibleAgentMode ? { agentMode: compatibleAgentMode } : {}),
           } as never,
         })
         .where(eq(workflowRun.id, workflowRunId));

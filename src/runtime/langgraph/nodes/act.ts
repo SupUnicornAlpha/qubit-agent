@@ -3,6 +3,7 @@ import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
 import { getDb, getSqliteForTesting } from "../../../db/sqlite/client";
 import { workflowRun } from "../../../db/sqlite/schema";
+import { resolveAgentControlMode } from "../../../types/loop";
 import {
   buildArtifactGapHint,
   checkRequiredArtifacts,
@@ -11,6 +12,11 @@ import {
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import {
+  assessGoalPlanCompletion,
+  isToolAllowedInAgentControlMode,
+  parseAgentPlanSnapshot,
+} from "../../agent-control-mode";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
@@ -51,6 +57,7 @@ import { buildToolRecoveryPlan } from "./tool-recovery-policy";
  * 但已到 max iteration，graph 会自然 finalize。
  */
 const MAX_ARTIFACT_GATE_RETRIES = 2;
+const MAX_CONTROL_MODE_GATE_RETRIES = 2;
 
 export async function actNode(
   state: AgentGraphState,
@@ -58,6 +65,19 @@ export async function actNode(
   agentInstanceId: string,
   agentStepId: string
 ): Promise<Partial<AgentGraphState>> {
+  const db = await getDb();
+  const workflowRows = await db
+    .select({
+      projectId: workflowRun.projectId,
+      loopOptionsJson: workflowRun.loopOptionsJson,
+      planJson: workflowRun.planJson,
+    })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, state.workflowId))
+    .limit(1);
+  const projectId = workflowRows[0]?.projectId;
+  const agentMode = resolveAgentControlMode(workflowRows[0]?.loopOptionsJson);
+  const planSnapshot = workflowRows[0]?.planJson;
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
   const availableTools = effective.tools;
   const parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
@@ -65,6 +85,91 @@ export async function actNode(
   if (parsed.kind === "none") {
     const cleanedReason = stripToolCallSentinels(state.reasonText ?? "");
     const summary = parsed.summary?.trim() || cleanedReason.slice(0, 2000) || "no tool requested";
+
+    if (state.agentDefinition.role === "orchestrator" && agentMode !== "agent") {
+      const parsedPlan = parseAgentPlanSnapshot(planSnapshot);
+      const goalAssessment =
+        agentMode === "goal"
+          ? assessGoalPlanCompletion(planSnapshot)
+          : {
+              ok: Boolean(parsedPlan?.steps.length),
+              code: "missing_plan" as const,
+              message: "Plan 模式必须先调用 update_plan 保存可执行计划，再返回给用户。",
+              pendingStepIds: [] as string[],
+            };
+      const hasExecutionEvidence =
+        agentMode !== "goal" ||
+        state.toolCalls.some(
+          (call) =>
+            call.status === "success" &&
+            call.toolName !== "update_plan" &&
+            call.toolName !== "tool/update_plan"
+        );
+      const gateOk = goalAssessment.ok && hasExecutionEvidence;
+      if (!gateOk) {
+        const retryCount = state.controlModeGapRetryCount ?? 0;
+        const message = !goalAssessment.ok
+          ? goalAssessment.message
+          : "Goal 模式尚无业务工具或专家执行成功的验证证据，不能仅更新计划后直接结束。";
+        if (retryCount < MAX_CONTROL_MODE_GATE_RETRIES) {
+          const observation = {
+            level: "warn",
+            controlModeGate: true,
+            code:
+              agentMode === "plan"
+                ? "PLAN_REQUIRED"
+                : hasExecutionEvidence
+                  ? "GOAL_PLAN_INCOMPLETE"
+                  : "GOAL_EVIDENCE_REQUIRED",
+            agentMode,
+            pendingStepIds: goalAssessment.pendingStepIds,
+            retryCount: retryCount + 1,
+            maxRetries: MAX_CONTROL_MODE_GATE_RETRIES,
+            message,
+          };
+          emit({
+            runId: state.runId,
+            workflowId: state.workflowId,
+            traceId: state.traceId,
+            role: state.agentDefinition.role,
+            type: "observe",
+            stepIndex: state.iteration,
+            ts: Date.now(),
+            payload: observation,
+          });
+          return {
+            observations: [...state.observations, observation],
+            controlModeGapRetryCount: retryCount + 1,
+          };
+        }
+        const answerText = [
+          `${agentMode === "plan" ? "计划生成" : "目标执行"}未通过完成门禁：${message}`,
+          cleanedReason ? `当前说明：\n${cleanedReason}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "error",
+              controlModeGate: true,
+              code: "CONTROL_MODE_GATE_UNSATISFIED",
+              agentMode,
+              message,
+            },
+          ],
+          finalResponse: {
+            status: "terminated",
+            reason: "control_mode_gate_unsatisfied",
+            error: message,
+            answerText,
+            iteration: state.iteration,
+            role: state.agentDefinition.role,
+          },
+        };
+      }
+    }
 
     /**
      * P2 artifact gate：在写 finalResponse 之前反查 scenario 的 requiredArtifacts。
@@ -131,7 +236,9 @@ export async function actNode(
         const answerText = [
           `任务未能完成：必需产物在 ${MAX_ARTIFACT_GATE_RETRIES} 次修复后仍不完整（${missing}）。`,
           "系统不会用空数据或模拟结果冒充成功。请恢复可用数据源后重试。",
-          cleanedReason && cleanedReason !== "no tool requested" ? `当前可交付说明：\n${cleanedReason}` : "",
+          cleanedReason && cleanedReason !== "no tool requested"
+            ? `当前可交付说明：\n${cleanedReason}`
+            : "",
         ]
           .filter(Boolean)
           .join("\n\n");
@@ -308,14 +415,6 @@ export async function actNode(
       : effectiveToolName;
   const toolKind = mcp ? "mcp" : toolRouteToToolKind(executionRoute?.route ?? "builtin");
   const toolCallId = crypto.randomUUID();
-  const db = await getDb();
-  const workflowRows = await db
-    .select({ projectId: workflowRun.projectId })
-    .from(workflowRun)
-    .where(eq(workflowRun.id, state.workflowId))
-    .limit(1);
-  const projectId = workflowRows[0]?.projectId;
-
   /**
    * 治理 #2（取代 F-P0-12 的 isLikelyProjectIdFormat 启发式补丁）：
    *
@@ -332,6 +431,41 @@ export async function actNode(
     workflowRunId: state.workflowId,
     projectId,
   });
+
+  if (!isToolAllowedInAgentControlMode(agentMode, effectiveToolName)) {
+    const reason = `Plan 模式只允许 update_plan；工具 ${targetName} 已被运行时拦截。请先形成计划，不要执行任务。`;
+    const observation = {
+      level: "warn",
+      toolGovernance: true,
+      controlModeGate: true,
+      code: "PLAN_MODE_EXECUTION_BLOCKED",
+      agentMode,
+      message: reason,
+      recovery: {
+        nextAction: "switch_tool",
+        allowSameToolRetry: false,
+        alternatives: ["update_plan"],
+        guidance: "改用 update_plan 保存计划；随后用 tool=none 返回计划说明。",
+      },
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: observation,
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        { toolName: targetName, status: "governance_blocked", reason },
+      ],
+      observations: [...state.observations, observation],
+    };
+  }
 
   const governance = evaluateToolGovernance({
     workflowId: state.workflowId,
@@ -882,5 +1016,7 @@ export async function actNode(
   return {
     toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success" }],
     observations: nextObservations,
+    // 成功推进后清零“连续提前结束”计数，避免长 Goal 因早期一次试探性收口被累计误杀。
+    controlModeGapRetryCount: 0,
   };
 }

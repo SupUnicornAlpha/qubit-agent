@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
+import type { AgentControlMode } from "../../types/loop";
 import {
   type ResearchScopeInput,
   classifyResearchInput,
@@ -26,6 +27,7 @@ export type LaunchAnalystTeamInput = {
   analystDefinitionIds?: string[] | null;
   hitlMode?: "off" | "ai" | "always";
   roleReasoner?: "native" | "claude_cli" | "codex_cli";
+  agentMode?: AgentControlMode;
   researchScenarioKey?: string | null;
 };
 
@@ -41,11 +43,7 @@ export type LaunchAnalystTeamResult = {
 
 export class LaunchAnalystTeamError extends Error {
   constructor(
-    public code:
-      | "workflow_required"
-      | "scope_required"
-      | "workflow_not_found"
-      | "dispatch_failed",
+    public code: "workflow_required" | "scope_required" | "workflow_not_found" | "dispatch_failed",
     message: string,
     public status = 400
   ) {
@@ -115,6 +113,9 @@ export async function launchAnalystTeam(
     input.roleReasoner === "codex_cli"
   ) {
     loopPatch.roleReasoner = input.roleReasoner;
+  }
+  if (input.agentMode === "agent" || input.agentMode === "plan" || input.agentMode === "goal") {
+    loopPatch.agentMode = input.agentMode;
   }
   const loopOptionsJson =
     Object.keys(loopPatch).length > 0

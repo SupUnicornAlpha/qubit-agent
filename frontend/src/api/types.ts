@@ -203,6 +203,7 @@ export interface RecommendationStats {
 }
 
 export type AgentLoopKind = "native" | "claude_cli" | "codex_cli";
+export type AgentControlMode = "agent" | "plan" | "goal";
 
 export interface LoopOptionsJson {
   command?: string;
@@ -229,6 +230,10 @@ export interface LoopOptionsJson {
   hitlTeam?: boolean;
   /** v2：团队 HITL 三档（off / ai / always） */
   hitlMode?: "off" | "ai" | "always";
+  /** Agent 工作模式；与 AgentLoopKind（推理引擎）正交。 */
+  agentMode?: AgentControlMode;
+  /** @deprecated 历史兼容：native -> agent，coding_agent -> goal。 */
+  experience?: "native" | "coding_agent";
 }
 
 export type StrategyScriptPurpose = "research" | "live_trading" | "both";
@@ -273,7 +278,7 @@ export interface StepStreamEvent {
     | "hitl_request"
     | "final"
     | "error"
-    // Coding-Agent 体验 P1：plan=分步计划/TODO 快照；tool_rationale=调用工具前的「为何调/预期」。
+    // Agent modes：plan=分步计划/TODO 快照；tool_rationale=调用工具前的「为何调/预期」。
     | "plan"
     | "tool_rationale";
   stepIndex: number;
@@ -817,6 +822,23 @@ export interface AnalystTeamGraphPayload {
   toolCalls: AnalystTeamGraphToolCall[];
   mcpCalls: AnalystTeamGraphMcpCall[];
   agentSteps?: AnalystTeamGraphAgentStep[];
+  /** update_plan 的持久化快照；用于刷新/重连后恢复计划卡片。 */
+  plan?: {
+    mode?: AgentControlMode;
+    goal?: {
+      text?: string;
+      status?: "planning" | "executing" | "completed" | "blocked";
+      completedSteps?: number;
+      totalSteps?: number;
+    };
+    steps: Array<{
+      id: string;
+      title: string;
+      status: "pending" | "in_progress" | "done" | "skipped";
+      note?: string;
+    }>;
+    updatedAt?: string;
+  } | null;
 }
 
 // ─── V2 分析师团队与 MSA 类型 ─────────────────────────────────────────────────

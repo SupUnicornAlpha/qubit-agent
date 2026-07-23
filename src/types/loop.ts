@@ -3,6 +3,14 @@ import { z } from "zod";
 export const AgentLoopKindSchema = z.enum(["native", "claude_cli", "codex_cli"]);
 export type AgentLoopKind = z.infer<typeof AgentLoopKindSchema>;
 
+/**
+ * 面向用户的 Agent 工作模式。它与 AgentLoopKind 正交：
+ * - loop kind 决定“用哪个推理执行引擎”
+ * - control mode 决定“本次任务允许做到哪一步”
+ */
+export const AgentControlModeSchema = z.enum(["agent", "plan", "goal"]);
+export type AgentControlMode = z.infer<typeof AgentControlModeSchema>;
+
 /** Per-workflow overrides for external CLI loops (stored in workflow_run.loop_options_json). */
 export const LoopOptionsJsonSchema = z
   .object({
@@ -61,11 +69,15 @@ export const LoopOptionsJsonSchema = z
      */
     hitlMoneyThreshold: z.number().positive().optional(),
     /**
-     * Coding-Agent 体验改造 P3（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：编排体验档位。
-     *   - 'native'（默认 / 缺省）：现有固定编排，所有 rails 不变。
-     *   - 'coding_agent'：放开「角色集锁死」——编排器可按需 assign_task 拉入团队拓扑
-     *     之外的任意有效专家角色（像 coding agent 临时召唤子 agent）。其余 rails（融合/
-     *     风控/可复现）保持不变。
+     * 用户可见的 Agent 工作模式：
+     *   - agent：普通执行；按需调用工具和既定团队成员
+     *   - plan：只分析并生成计划；运行时硬性禁止业务工具、派单和外部写入
+     *   - goal：自主规划、执行、验证并闭环；允许按需召唤拓扑外专家
+     */
+    agentMode: AgentControlModeSchema.optional(),
+    /**
+     * @deprecated 旧版“编排体验”字段。只为历史 DB/API 兼容保留：
+     * native -> agent，coding_agent -> goal。新代码必须写 agentMode。
      */
     experience: z.enum(["native", "coding_agent"]).optional(),
   })
@@ -85,6 +97,13 @@ export function parseLoopOptionsJson(raw: unknown): LoopOptionsJson {
   if (v == null || typeof v !== "object") return {};
   const parsed = LoopOptionsJsonSchema.safeParse(v);
   return parsed.success ? parsed.data : {};
+}
+
+/** 统一解析新旧模式字段；读取失败时走最保守且兼容的普通 Agent 模式。 */
+export function resolveAgentControlMode(raw: unknown): AgentControlMode {
+  const options = parseLoopOptionsJson(raw);
+  if (options.agentMode) return options.agentMode;
+  return options.experience === "coding_agent" ? "goal" : "agent";
 }
 
 export function normalizeLoopKind(raw: unknown): AgentLoopKind {

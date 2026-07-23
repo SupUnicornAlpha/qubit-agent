@@ -859,14 +859,14 @@ export async function runOrchestratorChat(
   message: string,
   hitlMode?: "off" | "ai" | "always",
   roleReasoner?: AgentLoopKind,
-  experience?: "native" | "coding_agent"
+  agentMode?: import("./types").AgentControlMode
 ): Promise<{ status: string }> {
   const res = await httpPost<{ ok: boolean; status: string }>("/api/v1/analyst/orchestrator-chat", {
     workflowRunId,
     message,
     ...(hitlMode ? { hitlMode } : {}),
     ...(roleReasoner ? { roleReasoner } : {}),
-    ...(experience ? { experience } : {}),
+    ...(agentMode ? { agentMode } : {}),
   });
   return { status: res.status ?? "running" };
 }
@@ -2271,6 +2271,8 @@ export async function startAnalystTeam(params: {
   hitlMode?: "off" | "ai" | "always";
   /** Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（写入 loopOptions.roleReasoner）。 */
   roleReasoner?: AgentLoopKind;
+  /** Agent 工作模式（Agent / Plan / Goal）。 */
+  agentMode?: import("./types").AgentControlMode;
 }): Promise<{ jobId: string }> {
   const res = await httpPost<{ ok: boolean; jobId: string; status: string }>(
     "/api/v1/analyst/run",
@@ -2436,6 +2438,8 @@ export async function runAnalystTeam(params: {
   hitlMode?: "off" | "ai" | "always";
   /** Agent 底座/引擎：每个角色单轮 reason 用哪个引擎（写入 loopOptions.roleReasoner）。 */
   roleReasoner?: AgentLoopKind;
+  /** Agent 工作模式（Agent / Plan / Goal）。 */
+  agentMode?: import("./types").AgentControlMode;
   onAwaitingApproval?: (info: AnalystTeamAwaitingApproval) => void;
   onResume?: () => void;
 }): Promise<AnalystTeamResult> {

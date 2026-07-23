@@ -6,7 +6,7 @@ import { analystSignal, longtermMemory, midtermMemory } from "../../db/sqlite/sc
 import { appendAuditLog } from "../audit/audit-chain-service";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
 import { stepStreamBus } from "../langgraph/event-stream";
-import { parseLoopOptionsJson } from "../../types/loop";
+import { resolveAgentControlMode } from "../../types/loop";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
@@ -144,13 +144,24 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   "market.readiness": async () => getMarketDataReadiness(),
 
   /**
-   * update_plan —— 编排器维护一份对用户可见的分步计划/TODO（Coding-Agent 体验 P1，
-   * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。写入 workflow_run.plan_json 并经 SSE
+   * update_plan —— 编排器维护一份对用户可见的分步计划/TODO。写入 workflow_run.plan_json 并经 SSE
    * `type:"plan"` 推流给右栏「计划卡片」。best-effort：失败仅 warn，不影响主推理
    * （计划是 UI 投影，不是权威态）。params: { steps: [{id?,title,status?,note?}] }，
    * status ∈ pending|in_progress|done|skipped。
    */
   update_plan: async (ctx, params) => {
+    const db = await getDb();
+    const workflowMeta = (
+      await db
+        .select({
+          goal: workflowRun.goal,
+          loopOptionsJson: workflowRun.loopOptionsJson,
+        })
+        .from(workflowRun)
+        .where(eq(workflowRun.id, ctx.workflowId))
+        .limit(1)
+    )[0];
+    const mode = resolveAgentControlMode(workflowMeta?.loopOptionsJson);
     const rawSteps = Array.isArray(params.steps) ? params.steps : [];
     const allowed = new Set(["pending", "in_progress", "done", "skipped"]);
     const steps: Array<{ id: string; title: string; status: string; note?: string }> = [];
@@ -158,7 +169,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       const o = (rawSteps[i] ?? {}) as Record<string, unknown>;
       const title = String(o.title ?? o.text ?? "").trim();
       if (!title) continue;
-      const status = String(o.status ?? "pending").trim();
+      const requestedStatus = String(o.status ?? "pending").trim();
+      // Plan 模式只设计未来动作，不能把尚未执行的步骤伪装成 done。
+      const status = mode === "plan" ? "pending" : requestedStatus;
       const note = o.note != null ? String(o.note).slice(0, 300) : undefined;
       steps.push({
         id: (String(o.id ?? "").trim() || `s${i + 1}`).slice(0, 40),
@@ -167,9 +180,32 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         ...(note ? { note } : {}),
       });
     }
-    const plan = { steps, updatedAt: new Date().toISOString() };
+    const completedSteps = steps.filter((step) => step.status === "done").length;
+    const skippedSteps = steps.filter((step) => step.status === "skipped").length;
+    const hasActive = steps.some((step) => step.status === "in_progress");
+    const allTerminal = steps.length > 0 && completedSteps + skippedSteps === steps.length;
+    const goalStatus =
+      mode === "goal"
+        ? allTerminal
+          ? completedSteps > 0
+            ? "completed"
+            : "blocked"
+          : hasActive || completedSteps > 0
+            ? "executing"
+            : "planning"
+        : "planning";
+    const plan = {
+      mode,
+      goal: {
+        text: workflowMeta?.goal ?? "",
+        status: goalStatus,
+        completedSteps,
+        totalSteps: steps.length,
+      },
+      steps,
+      updatedAt: new Date().toISOString(),
+    };
     try {
-      const db = await getDb();
       await db
         .update(workflowRun)
         .set({ planJson: plan as never })
@@ -2510,8 +2546,8 @@ async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<str
   return row?.projectId ?? "";
 }
 
-/** Coding-Agent 体验 P3：读 workflow_run.loop_options_json，判断是否 coding_agent 编排档。 */
-async function isCodingAgentExperience(workflowId: string): Promise<boolean> {
+/** Goal 模式允许 Orchestrator 按目标按需召唤当前拓扑之外的专家。 */
+async function isGoalMode(workflowId: string): Promise<boolean> {
   try {
     const db = await getDb();
     const rows = await db
@@ -2519,7 +2555,7 @@ async function isCodingAgentExperience(workflowId: string): Promise<boolean> {
       .from(workflowRun)
       .where(eq(workflowRun.id, workflowId))
       .limit(1);
-    return parseLoopOptionsJson(rows[0]?.loopOptionsJson).experience === "coding_agent";
+    return resolveAgentControlMode(rows[0]?.loopOptionsJson) === "goal";
   } catch {
     return false; // 读失败按默认 native 处理（保守，rails 不变）
   }
@@ -2542,15 +2578,15 @@ async function dispatchTeamAgentTask(
   const targetRole = resolveDispatchRole(role);
   const topology = await loadOrchestratorTopologyForWorkflow();
   if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
-    // Coding-Agent 体验 P3：coding_agent 档放开「角色集锁死」——编排器可按需拉入团队
-    // 拓扑之外的任意有效专家角色（像 coding agent 临时召唤子 agent）。默认 native 档保持
+    // Goal 模式放开「角色集锁死」——编排器可按需拉入团队拓扑之外的有效专家。
+    // 默认 Agent 模式保持
     // 严格校验（rails 不变）。dispatchTaskToRole 仍会对不存在定义的角色报运行时错误兜底。
-    const codingAgent = await isCodingAgentExperience(ctx.workflowId);
-    if (codingAgent) {
+    const goalMode = await isGoalMode(ctx.workflowId);
+    if (goalMode) {
       const onEdge = topology.targets.some((t) => t.role === targetRole);
       if (!onEdge) {
         console.info(
-          `[dispatchTeamAgentTask] coding_agent 档：放行拓扑外角色 '${targetRole}'（按需拉入专家）`
+          `[dispatchTeamAgentTask] Goal 模式：放行拓扑外角色 '${targetRole}'（按需拉入专家）`
         );
       }
     } else {

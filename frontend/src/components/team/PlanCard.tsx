@@ -1,6 +1,5 @@
 /**
- * PlanCard —— Orchestrator 对用户可见的分步计划/TODO（Coding-Agent 体验 P1，
- * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。
+ * PlanCard —— Orchestrator 对用户可见的分步计划/TODO 与 Goal 进度。
  *
  * 数据来自后端 `update_plan` 工具：写入 workflow_run.plan_json 并经 SSE `type:"plan"`
  * 推流。本组件纯展示——把步骤按状态渲染成一份会随进展勾选的待办清单，置于右栏
@@ -8,6 +7,7 @@
  */
 import type { CSSProperties } from "react";
 import { useState } from "react";
+import type { AgentControlMode } from "../../api/types";
 
 export type PlanStepStatus = "pending" | "in_progress" | "done" | "skipped";
 
@@ -19,6 +19,13 @@ export interface PlanStep {
 }
 
 export interface OrchestratorPlan {
+  mode?: AgentControlMode;
+  goal?: {
+    text?: string;
+    status?: "planning" | "executing" | "completed" | "blocked";
+    completedSteps?: number;
+    totalSteps?: number;
+  };
   steps: PlanStep[];
   updatedAt?: string;
 }
@@ -44,6 +51,18 @@ export function PlanCard({ plan }: { plan: OrchestratorPlan | null }) {
 
   const done = steps.filter((s) => s.status === "done").length;
   const active = steps.find((s) => s.status === "in_progress");
+  const mode = plan?.mode ?? "agent";
+  const headerLabel =
+    mode === "plan" ? "规划方案" : mode === "goal" ? "目标进度" : "执行计划";
+  const modeLabel = mode === "plan" ? "PLAN" : mode === "goal" ? "GOAL" : "AGENT";
+  const goalStatusLabel =
+    plan?.goal?.status === "completed"
+      ? "已完成"
+      : plan?.goal?.status === "blocked"
+        ? "受阻"
+        : plan?.goal?.status === "executing"
+          ? "执行中"
+          : "规划中";
 
   return (
     <div style={styles.box}>
@@ -56,36 +75,43 @@ export function PlanCard({ plan }: { plan: OrchestratorPlan | null }) {
         <span aria-hidden style={{ fontSize: 10 }}>
           {open ? "▾" : "▸"}
         </span>
-        🗺️ 执行计划（{done}/{steps.length}）
+        <span style={styles.modeBadge}>{modeLabel}</span>
+        {headerLabel}（{done}/{steps.length}）
+        {mode === "goal" ? <span style={styles.goalStatus}>{goalStatusLabel}</span> : null}
         {!open && active ? <span style={styles.activeHint}>· {active.title}</span> : null}
       </button>
       {open ? (
-        <ol style={styles.list}>
-          {steps.map((s) => (
-            <li key={s.id} style={styles.item}>
-              <span
-                aria-hidden
-                style={{
-                  ...styles.icon,
-                  color: STATUS_COLOR[s.status],
-                  ...(s.status === "in_progress" ? styles.iconPulse : null),
-                }}
-              >
-                {STATUS_ICON[s.status]}
-              </span>
-              <span
-                style={{
-                  ...styles.title,
-                  ...(s.status === "done" ? styles.titleDone : null),
-                  ...(s.status === "in_progress" ? styles.titleActive : null),
-                }}
-              >
-                {s.title}
-                {s.note ? <span style={styles.note}> — {s.note}</span> : null}
-              </span>
-            </li>
-          ))}
-        </ol>
+        <>
+          {mode === "goal" && plan?.goal?.text ? (
+            <div style={styles.goalText}>{plan.goal.text}</div>
+          ) : null}
+          <ol style={styles.list}>
+            {steps.map((s) => (
+              <li key={s.id} style={styles.item}>
+                <span
+                  aria-hidden
+                  style={{
+                    ...styles.icon,
+                    color: STATUS_COLOR[s.status],
+                    ...(s.status === "in_progress" ? styles.iconPulse : null),
+                  }}
+                >
+                  {STATUS_ICON[s.status]}
+                </span>
+                <span
+                  style={{
+                    ...styles.title,
+                    ...(s.status === "done" ? styles.titleDone : null),
+                    ...(s.status === "in_progress" ? styles.titleActive : null),
+                  }}
+                >
+                  {s.title}
+                  {s.note ? <span style={styles.note}> — {s.note}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </>
       ) : null}
     </div>
   );
@@ -121,6 +147,28 @@ const styles: Record<string, CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     minWidth: 0,
+  },
+  modeBadge: {
+    padding: "1px 5px",
+    borderRadius: 4,
+    border: "1px solid rgba(125,211,252,0.4)",
+    fontSize: 9,
+    letterSpacing: "0.08em",
+  },
+  goalStatus: {
+    marginLeft: "auto",
+    color: "#a5f3fc",
+    fontSize: 10,
+    fontWeight: 500,
+  },
+  goalText: {
+    margin: "0 10px 7px",
+    padding: "7px 8px",
+    borderLeft: "2px solid rgba(56,189,248,0.55)",
+    color: "#d4d4d8",
+    background: "rgba(15,23,42,0.35)",
+    fontSize: 11,
+    lineHeight: 1.45,
   },
   list: {
     listStyle: "none",

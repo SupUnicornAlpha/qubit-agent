@@ -6,7 +6,8 @@ import {
   chatMessageWorkflowLink,
   workflowRun,
 } from "../../../db/sqlite/schema";
-import { parseLoopOptionsJson } from "../../../types/loop";
+import { resolveAgentControlMode, type AgentControlMode } from "../../../types/loop";
+import { buildAgentControlModePrompt } from "../../agent-control-mode";
 import {
   type PromptMode,
   getDataDir,
@@ -151,13 +152,11 @@ export function buildFocusedResearchScenarioPrompt(scenarioKey: string | null): 
   ].join("\n");
 }
 
-async function loadWorkflowMeta(
-  workflowId: string
-): Promise<{
+async function loadWorkflowMeta(workflowId: string): Promise<{
   projectId: string | null;
   sessionId: string | null;
   source: string | null;
-  experience: "native" | "coding_agent";
+  agentMode: AgentControlMode;
 }> {
   const db = await getDb();
   const wfRows = await db
@@ -170,7 +169,7 @@ async function loadWorkflowMeta(
     .from(workflowRun)
     .where(eq(workflowRun.id, workflowId))
     .limit(1);
-  if (!wfRows[0]) return { projectId: null, sessionId: null, source: null, experience: "native" };
+  if (!wfRows[0]) return { projectId: null, sessionId: null, source: null, agentMode: "agent" };
   return {
     projectId: wfRows[0].projectId ?? null,
     sessionId: wfRows[0].sessionId ?? null,
@@ -179,11 +178,7 @@ async function loadWorkflowMeta(
      * 其它 source（manual/api/scheduler/trader/research-team 直接派的）不需要这段提示。
      */
     source: wfRows[0].source ?? null,
-    /** Coding-Agent 体验 P3：coding_agent 档给编排器加「可按需拉团队外专家」提示。 */
-    experience:
-      parseLoopOptionsJson(wfRows[0].loopOptionsJson).experience === "coding_agent"
-        ? "coding_agent"
-        : "native",
+    agentMode: resolveAgentControlMode(wfRows[0].loopOptionsJson),
   };
 }
 
@@ -325,10 +320,9 @@ export async function reasonNode(
     effective.tools,
     enabledMcpServers.map((s) => s.name)
   );
-  const tools = authorized.tools;
+  let tools = authorized.tools;
   const allowedMcpNames = new Set(authorized.mcpServers);
   const mcpServers = enabledMcpServers.filter((s) => allowedMcpNames.has(s.name));
-  const hasTools = tools.length > 0 || mcpServers.length > 0;
 
   /**
    * v2 HITL：source 用于决定是否注入"对话 HITL 自评 prompt"，所以从这里开始
@@ -341,18 +335,24 @@ export async function reasonNode(
     projectId: string | null;
     sessionId: string | null;
     source: string | null;
-    experience: "native" | "coding_agent";
+    agentMode: AgentControlMode;
   } = {
     projectId: null,
     sessionId: null,
     source: null,
-    experience: "native",
+    agentMode: "agent",
   };
   try {
     workflowMeta = await loadWorkflowMeta(state.workflowId);
   } catch {
     // 静默：缺 meta 时直接走默认路径（不注入 HITL 自评 + skill 召回也会自动跳过）
   }
+  if (workflowMeta.agentMode === "plan") {
+    // Prompt 层只暴露 update_plan；act 节点仍有独立硬拦截，防止模型手写隐藏工具名。
+    tools = tools.filter((tool) => tool === "update_plan");
+    mcpServers.splice(0, mcpServers.length);
+  }
+  const hasTools = tools.length > 0 || mcpServers.length > 0;
 
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
@@ -463,9 +463,7 @@ export async function reasonNode(
           ""
         );
         if (pnlAwareSkillBlock && process.env.DEBUG_SKILLS) {
-          console.log(
-            `[reason] injected PnL-aware skill block for ${state.agentDefinition.role}`
-          );
+          console.log(`[reason] injected PnL-aware skill block for ${state.agentDefinition.role}`);
         }
       } catch (err) {
         if (process.env.DEBUG_SKILLS) {
@@ -598,13 +596,10 @@ export async function reasonNode(
       basePrompt: baseSystem,
       declaredSkillIds: state.agentDefinition.skills ?? [],
     });
-    /**
-     * Coding-Agent 体验 P3：coding_agent 档把「编组拓扑」从硬性执行图降级为给 Orchestrator
-     * 的**建议调用链**（可照做/调整/跳过/补人）。其余档位沿用原拓扑调度块（与画布一致、严格）。
-     */
+    /** Goal 模式把固定拓扑降级为建议调用链；Agent / Plan 仍遵守画布拓扑。 */
     const topologyBlock =
       state.agentDefinition.role === "orchestrator" &&
-      workflowMeta.experience === "coding_agent" &&
+      workflowMeta.agentMode === "goal" &&
       effective.topologyContext
         ? buildSuggestedCallChainBlock(effective.topologyContext)
         : effective.topologyPromptBlock;
@@ -634,8 +629,8 @@ export async function reasonNode(
     const systemWithDispatch =
       state.agentDefinition.role === "orchestrator"
         ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，默认由你作为唯一大脑做决策**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只缺一块证据或一个专业判断 → 用 \`assign_task\` 把子任务派给对应专家（如 analyst_technical / analyst_macro / research / risk），等回包后由你整合。\n- 需要多视角时，也优先**分别**派给 2-3 个专家，再由你自己比较与裁决；不要为了“完整流程”一次拉起整队。\n- 除非用户明确要求“完整团队报告 / 团队会审”，否则不要使用批量团队编排思路。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 交付纪律（重要）\n- 你和专家都应围绕**当前技术目标**交付最小必要结果：结论、关键证据、下一步。\n- 除非用户明确要求，**不要生成长报告、模板化章节、完整 Executive Summary、冗长复盘**。\n- 若用户要的是某个技术判断、一个候选名单、一段回测结论或一个风险结论，就只交付那个，不要顺手扩写成整份报告。\n\n## 计划可见（重要）\n当任务需要**多步**（派单、连续工具调用）时：**动手前先调 \`update_plan\` 列出 3-5 步**（每步一句话，status=pending），让用户看到你打算怎么做；**每完成一步就再调一次 \`update_plan\`**把该步 status 改为 done、下一步改为 in_progress。一句话能答的简单问题**不必**建计划。${
-            workflowMeta.experience === "coding_agent"
-              ? "\n\n## 按需召唤专家（Coding-Agent 档）\n当前为 coding_agent 编排档：若需要团队当前编组里没有的专长，**可以直接 \`assign_task\` 把任务派给那个专家角色**（如临时需要 `analyst_macro` / `risk` 等），系统会按需拉它进来——像随手叫一个子 agent。不必拘泥于既定编组。"
+            workflowMeta.agentMode === "goal"
+              ? "\n\n## 按需召唤专家（Goal 模式）\n当前为 Goal 模式：若需要团队当前编组里没有的专长，可以直接 `assign_task` 派给对应专家角色，系统会按需拉入；但必须把结果和验证状态同步回计划。"
               : ""
           }`
         : systemWithHitl;
@@ -643,11 +638,7 @@ export async function reasonNode(
     const systemWithScenarioContract = focusedScenarioBlock
       ? `${systemWithDispatch}\n\n---\n${focusedScenarioBlock}`
       : systemWithDispatch;
-    /**
-     * Coding-Agent 体验 P2（docs/CODING_AGENT_EXPERIENCE_DESIGN.md）：运行时注入「工作方式」块。
-     * 放在 reason 装配层（而非 seed prompt）→ 对所有角色即时生效、无需 re-seed DB。
-     * 目标：把「按配方硬跑」变成「像 coding agent 一样增量推进、失败自适应、先查后做」。
-     */
+    /** 通用运行时工作纪律：增量推进、失败自适应、先查后做；无需重新 seed Agent。 */
     const WORK_STYLE_BLOCK = [
       "## 工作方式（重要）",
       "- **增量推进**：把任务拆成小步，一步步来；每步只做一件事，拿到结果再决定下一步，不要一次性假设整条流程。",
@@ -657,7 +648,13 @@ export async function reasonNode(
       "- **最小交付**：只返回完成当前目标所需的最小结果；除非明确要求，不要主动生成长报告、固定模板章节或泛泛总结。",
       "- **诚实**：没有数据支撑就说不确定；不要编造工具结果或假装已完成。",
     ].join("\n");
-    const systemWithWorkStyle = `${systemWithScenarioContract}\n\n---\n${WORK_STYLE_BLOCK}`;
+    const modeBlock = buildAgentControlModePrompt(
+      workflowMeta.agentMode,
+      state.agentDefinition.role === "orchestrator"
+    );
+    const systemWithWorkStyle = `${systemWithScenarioContract}\n\n---\n${WORK_STYLE_BLOCK}${
+      modeBlock ? `\n\n---\n${modeBlock}` : ""
+    }`;
     const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithWorkStyle, {
       tools,
       mcpServers,

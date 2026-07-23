@@ -145,6 +145,7 @@ import type {
   StepStreamEvent,
   BuiltinConnectorConfig,
   AgentLoopKind,
+  AgentControlMode,
 } from "../../api/types";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
@@ -4837,13 +4838,8 @@ const TeamDashboardPanel: FC = () => {
    * 与 loop_kind 正交——仍走 MSA 编排，仅替换角色 reason 引擎。
    */
   const [roleReasoner, setRoleReasoner] = useState<AgentLoopKind>("native");
-  /**
-   * Coding-Agent 体验档位（docs/CODING_AGENT_EXPERIENCE_DESIGN.md P3）。
-   *   - native：现有固定编排（默认，rails 不变）
-   *   - coding_agent：放开「角色集锁死」，编排器可按需拉团队外专家
-   * 写入 loopOptions.experience；经 orchestrator-chat API 合并。
-   */
-  const [teamExperience, setTeamExperience] = useState<"native" | "coding_agent">("native");
+  /** Agent / Plan / Goal 工作模式；与上面的推理引擎选择正交。 */
+  const [teamAgentMode, setTeamAgentMode] = useState<AgentControlMode>("agent");
 
   /**
    * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
@@ -5272,6 +5268,7 @@ const TeamDashboardPanel: FC = () => {
     try {
       const g = await getAnalystTeamGraph(workflowRunId.trim());
       setTeamGraph(g);
+      setTeamPlan(g?.plan ?? null);
       if (!opts?.preserveSelection) setGraphSelection(null);
     } finally {
       setGraphLoading(false);
@@ -5643,7 +5640,16 @@ const TeamDashboardPanel: FC = () => {
           const steps = Array.isArray(event.payload?.["steps"])
             ? (event.payload["steps"] as OrchestratorPlan["steps"])
             : [];
-          setTeamPlan({ steps, updatedAt: String(event.payload?.["updatedAt"] ?? "") });
+          const mode = event.payload?.["mode"];
+          const goal = event.payload?.["goal"];
+          setTeamPlan({
+            steps,
+            updatedAt: String(event.payload?.["updatedAt"] ?? ""),
+            ...(mode === "agent" || mode === "plan" || mode === "goal" ? { mode } : {}),
+            ...(goal && typeof goal === "object"
+              ? { goal: goal as NonNullable<OrchestratorPlan["goal"]> }
+              : {}),
+          });
           return;
         }
         if (event.type === "tool_rationale") {
@@ -5916,20 +5922,34 @@ const TeamDashboardPanel: FC = () => {
   const teamRunDisabled = useMemo(() => {
     if (running) return true;
     if (!researchScopePayload || !workflowRunId) return true;
+    if (teamAgentMode === "plan") return false;
     if (enabledResearchAnalystDefCount === null) return true;
     if (enabledResearchAnalystDefCount === 0) return true;
     return false;
-  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount]);
+  }, [
+    running,
+    researchScopePayload,
+    workflowRunId,
+    teamAgentMode,
+    enabledResearchAnalystDefCount,
+  ]);
 
   const teamRunDisabledTitle = useMemo(() => {
     if (running) return "分析进行中";
     if (!researchScopePayload) return "请先填写研究范围（标的/篮子/板块）";
     if (!workflowRunId) return "请先选择工作流";
+    if (teamAgentMode === "plan") return "";
     if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
     if (enabledResearchAnalystDefCount === 0)
       return "数据库中暂无已启用的研究团队槽位定义（analyst_* / research / backtest / risk* 等），请先到配置中心启用或执行种子";
     return "";
-  }, [running, researchScopePayload, workflowRunId, enabledResearchAnalystDefCount]);
+  }, [
+    running,
+    researchScopePayload,
+    workflowRunId,
+    teamAgentMode,
+    enabledResearchAnalystDefCount,
+  ]);
 
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
@@ -6316,7 +6336,7 @@ const TeamDashboardPanel: FC = () => {
     setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
     try {
-      await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner, teamExperience);
+      await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner, teamAgentMode);
       void refreshWorkflowOptions();
       void loadTeamGraph({ preserveSelection: true });
     } catch (e) {
@@ -6333,6 +6353,40 @@ const TeamDashboardPanel: FC = () => {
      * 正常「启动」按钮受 teamRunDisabled 约束，scope 一定非空，不受此放宽影响。
      */
     if (!researchScopePayload && !workflowRunId.trim()) return;
+    if (teamAgentMode === "plan" || teamAgentMode === "goal") {
+      const wfId = workflowRunId.trim();
+      if (!wfId || !researchScopePayload) return;
+      const scopeText = JSON.stringify(researchScopePayload);
+      const objective = [
+        teamAgentMode === "plan"
+          ? "请只制定以下量化研究任务的可执行计划，不要开始查询数据或派发任务。"
+          : "请自主完成以下量化研究目标，先建立计划，再执行、验证并闭环。",
+        `研究范围：${scopeText}`,
+        teamAnalysisContext.trim() ? `补充要求：${teamAnalysisContext.trim()}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      setError(null);
+      pushUserEcho(objective);
+      setOrchestratorChatInFlight(true);
+      setRunProgress(teamAgentMode === "plan" ? "Orchestrator 正在制定计划…" : "Goal 正在自主执行…");
+      try {
+        await runOrchestratorChat(
+          wfId,
+          objective,
+          teamHitlMode,
+          roleReasoner,
+          teamAgentMode
+        );
+        void refreshWorkflowOptions();
+        void loadTeamGraph({ preserveSelection: true });
+      } catch (e) {
+        setOrchestratorChatInFlight(false);
+        setRunProgress("");
+        setError((e as Error).message);
+      }
+      return;
+    }
     setError(null);
     setRunning(true);
     setResult(null);
@@ -6368,6 +6422,7 @@ const TeamDashboardPanel: FC = () => {
         signal: abortCtl.signal,
         hitlMode: teamHitlMode,
         roleReasoner,
+        agentMode: teamAgentMode,
         onAwaitingApproval: (info) => {
           setTeamPendingHitl({
             jobId: info.jobId,
@@ -6868,18 +6923,22 @@ const TeamDashboardPanel: FC = () => {
             </div>
           </div>
           <div style={{ ...teamStyles.field, marginTop: 8 }}>
-            <label style={teamStyles.label}>编排体验</label>
+            <label style={teamStyles.label}>工作模式</label>
             <select
               style={teamStyles.input}
-              value={teamExperience}
-              onChange={(e) => setTeamExperience(e.target.value as "native" | "coding_agent")}
+              value={teamAgentMode}
+              onChange={(e) => setTeamAgentMode(e.target.value as AgentControlMode)}
             >
-              <option value="native">标准（固定编排）</option>
-              <option value="coding_agent">Coding-Agent（按需拉专家）</option>
+              <option value="agent">Agent — 直接回答 / 按需执行</option>
+              <option value="plan">Plan — 只制定计划，不执行</option>
+              <option value="goal">Goal — 自主规划、执行并验证</option>
             </select>
             <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              Coding-Agent 档：编排器可按需 assign_task 拉入团队拓扑之外的专家角色；融合/风控等
-              rails 不变。下条对话生效。
+              {teamAgentMode === "plan"
+                ? "仅输出可验证的执行计划；业务工具、行情查询、派单和外部写入会被运行时拦截。"
+                : teamAgentMode === "goal"
+                  ? "持续推进到目标闭环，可按需拉入专家；计划未完成或缺少验证证据时不能提前结束。"
+                  : "普通对话与执行模式：简单问题直接回答，多步任务按需调用工具和团队成员。"}
             </div>
           </div>
           {scopeMode === "single" ? (
@@ -8575,7 +8634,13 @@ const TeamDashboardPanel: FC = () => {
                   disabled={teamRunDisabled}
                   title={teamRunDisabledTitle}
                 >
-                  {running ? "分析中…" : "启动团队分析"}
+                  {running
+                    ? "分析中…"
+                    : teamAgentMode === "plan"
+                      ? "生成研究计划"
+                      : teamAgentMode === "goal"
+                        ? "启动自主目标"
+                        : "启动团队分析"}
                 </button>
                 {running ? (
                   <button
@@ -8829,8 +8894,8 @@ const TeamDashboardPanel: FC = () => {
               setActiveView("quant");
               setQuantTab(target.tab);
             }}
-            sendDisabled={teamRunDisabled}
-            sendDisabledReason={teamRunDisabledTitle}
+            sendDisabled={!workflowRunId.trim()}
+            sendDisabledReason={!workflowRunId.trim() ? "请先选择工作流" : ""}
           />
         </aside>
         ) : null}

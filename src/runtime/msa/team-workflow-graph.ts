@@ -13,6 +13,7 @@ import {
   toolCallLog,
   workflowRun,
 } from "../../db/sqlite/schema";
+import { parseAgentPlanSnapshot, type AgentPlanSnapshot } from "../agent-control-mode";
 
 /** 节点大类，供前端按类型上不同图标（user=人形 / agent=电脑 / tool=扳手 / skill=书）。 */
 export type TeamGraphNodeType = "user" | "agent" | "tool" | "skill";
@@ -149,10 +150,11 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   toolCalls: TeamGraphToolCall[];
   mcpCalls: TeamGraphMcpCall[];
   agentSteps: TeamGraphAgentStep[];
+  plan: AgentPlanSnapshot | null;
 }> {
   const db = await getDb();
 
-  const [logged, signals, sessions, instances, steps, mcpRows] = await Promise.all([
+  const [logged, signals, sessions, instances, steps, mcpRows, workflowRows] = await Promise.all([
     db
       .select()
       .from(researchTeamInteraction)
@@ -163,6 +165,11 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
     db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowRunId)),
     db.select().from(mcpCallLog).where(eq(mcpCallLog.workflowRunId, workflowRunId)),
+    db
+      .select({ planJson: workflowRun.planJson })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowRunId))
+      .limit(1),
   ]);
 
   const definitions = await db.select().from(agentDefinition);
@@ -397,5 +404,13 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     };
   });
 
-  return { nodes, edges, interactions: rows, toolCalls, mcpCalls, agentSteps };
+  return {
+    nodes,
+    edges,
+    interactions: rows,
+    toolCalls,
+    mcpCalls,
+    agentSteps,
+    plan: parseAgentPlanSnapshot(workflowRows[0]?.planJson),
+  };
 }
