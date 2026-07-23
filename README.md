@@ -1,6 +1,6 @@
 # QUBIT Agent Platform
 
-**量化研究多 Agent 平台** — 对话驱动研究、多分析师协作、K 线 IDE、回测与实盘编排，一体化交付。
+**量化研究多 Agent 平台** — 对话驱动研究、多分析师协作、真实行情治理、量化工坊、回测与实盘编排，一体化交付。
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun-000000?logo=bun&logoColor=white)](https://bun.sh)
@@ -14,7 +14,9 @@ QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime
 
 - 在对话中带入 K 线上下文，由编排 Agent 调度研究 / 回测 / 风控等角色
 - 在「研究团队」画布上勾选参与分析的 Agent，查看拓扑与 A2A 协作轨迹
-- 在 IDE 中编辑指标与 Python 信号代码，运行 SMA 等回测
+- 在量化工坊中查看 Agent 产出的因子 / 策略 / 脚本，编辑指标与 Python 信号并运行回测
+- 通过行情源控制面管理 Wind、Tushare、EastMoney、AKShare、yfinance、Yahoo 与 Binance
+- 用内置 10 场景 benchmark 对 Agent 的终态、证据、工具治理、研究产物和执行能力持续评分
 - 通过配置中心接入 MCP（Anthropic Registry）、Skills（SkillsMP）与券商（Futu / IB）
 
 数据与策略脚本默认落在本地 `~/.quant-agent`（可通过 `QUBIT_DATA_DIR` 修改）。
@@ -47,14 +49,17 @@ QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime
 
 | 模块 | 说明 |
 |------|------|
-| **Agent Runtime** | LangGraph `perceive → reason → act → observe`，Sandbox 策略校验与违规审计 |
-| **研究团队** | 多分析师并行、辩论 / 风控、信号融合；工作流可读名称与策略脚本按 run 绑定 |
-| **QUBIT IDE** | K 线（QuantDigger）、指标编辑、Python 回测坞、策略脚本入库 |
+| **Agent Runtime** | LangGraph `perceive → reason → act → observe`；工具语义校验、失败域熔断、有限重试与 Sandbox 审计 |
+| **研究团队** | Orchestrator 定向调度专家，A2A 结果回收、超时隔离、辩论 / 风控与信号融合 |
+| **行情治理** | 按市场 / 周期 / 凭证 / 健康度 / 优先级路由；成功率、P95、最近错误、熔断与 fallback 可观测 |
+| **量化工坊** | Agent 产出的因子 / 策略 / 脚本与 workflow 关联；支持编辑、评估、回测及产物跳转 |
+| **新闻证据** | 当前分析默认 7 天 freshness window；过滤无日期、过期、无关及 synthetic / stub 内容 |
 | **对话工作台** | Session 管理、消息关联 workflow、Agent 看板与执行时间线 |
-| **运行监控** | Session / Workflow / Step / Tool / Sandbox 多层观测 |
+| **运行监控** | Session / Workflow / Step / Tool / MCP / Sandbox 多层观测与失败归因 |
 | **配置中心** | Workspace diff、模型配置、Agent 草稿发布、MCP & Skills 市场 |
+| **Agent Benchmark** | 10 个研究 / 选股 / 因子 / 策略 / 交易场景，AQM 多维评分、trace 与版本对比 |
 | **实盘与券商** | Intent → 风控 → 执行；Futu / IB（mock / sandbox / live） |
-| **桌面端** | Tauri v2 客户端，Sidecar 拉起后端并显示连接状态 |
+| **桌面端** | Tauri v2 客户端，生产 Sidecar、迁移 / seed、DuckDB 原生依赖与后端 readiness 状态 |
 
 ---
 
@@ -62,7 +67,7 @@ QUBIT 面向量化研究与交易自动化场景，将 **LangGraph Agent Runtime
 
 | 层级 | 技术 |
 |------|------|
-| 后端 | Bun · TypeScript · Hono · Drizzle · SQLite |
+| 后端 | Bun · TypeScript · Hono · Drizzle · SQLite · DuckDB |
 | 编排 | LangGraph.js · OpenAI SDK（多 Provider） |
 | 前端 | Vite · React · Zustand |
 | 桌面 | Tauri v2（Rust） |
@@ -126,11 +131,19 @@ PORT=3000 HOST=localhost bun run dev
 
 启动成功后会看到 `Server listening on http://localhost:3000`，并可访问 `GET /api/v1/system/health`。
 
+桌面联调建议使用带 watch 的后端脚本。它复用 Tauri 数据目录，默认监听
+`127.0.0.1:17385`，修改 `src/**` 后会自动重启：
+
+```bash
+bun run dev:backend
+```
+
 ### 3. 前端（Web 调试）
 
 Vite + React，默认 **http://localhost:3041**。`/api` 与 `/ws` 已在 `frontend/vite.config.ts` 中代理到后端 `:3000`。
 
-**前置条件**：后端已在 `:3000` 启动。
+**前置条件**：后端已通过 `bun run dev` 在 `:3000` 启动。Vite 的 `/api` 与 `/ws`
+代理默认指向该端口；`dev:backend` 的 `:17385` 主要用于桌面客户端联调。
 
 ```bash
 # 终端 2
@@ -153,7 +166,7 @@ Tauri 仅作为壳，**开发态依旧需要 Web 后端 + 前端 dev server**，
 bun run dev:tauri
 ```
 
-**打包成可分发的安装包**（含 Bun 编译的后端 sidecar、SQLite 迁移、`python_connectors/`、`content-packs/`；详见 [docs/PACKAGING.md](docs/PACKAGING.md)）：
+**打包成可分发的安装包**（含 Bun 编译的后端 sidecar、SQLite 迁移、`python_connectors/`、`content-packs/`）：
 
 ```bash
 bun run build:app:release
@@ -165,7 +178,9 @@ bun run build:app:release
 
 ### 5. Python 连接器（可选）
 
-仅当需要 **行情数据（AKShare A 股 / yfinance Yahoo 含分红与基本面）、Python 回测、券商实盘桥（Futu/IB/CCXT）** 时启动；后端会在缺失时优雅降级。
+仅当需要 **AKShare / 腾讯 A 股、yfinance Yahoo（含分红与基本面）、Python 回测、
+券商实盘桥（Futu/IB/CCXT）** 时启用；后端在 Python 环境或单个上游不可用时会按
+市场能力和健康状态降级，并明确返回 unavailable，而不是生成模拟行情。
 
 **前置条件**：本机 `python3 >= 3.10`，建议使用 venv 隔离。
 
@@ -232,11 +247,47 @@ curl -s http://localhost:17385/api/v1/_meta/build-info | jq
 | `QUBIT_DATA_DIR` | `~/.quant-agent` | SQLite、Agent Pack、工作流策略落盘目录 |
 | `PORT` / `HOST` | `3000` / `localhost` | 后端监听 |
 | `SKILLSMP_API_KEY` | — | SkillsMP 搜索配额（可选） |
+| `TOPOLOGY_TASK_TIMEOUT_MS` | `120000` | Orchestrator 等待单个专家 A2A 结果的上限（10s–300s） |
 
 工作流策略文件示例路径：
 
 `$QUBIT_DATA_DIR/projects/<projectId>/workflows/<workflowRunId>/report.md`  
 `$QUBIT_DATA_DIR/projects/<projectId>/workflows/<workflowRunId>/strategies/...`
+
+---
+
+## 行情数据源与证据治理
+
+QUBIT 会在启动时注册并探测以下真实数据源：
+
+| 数据源 | 主要市场 | 角色 |
+|--------|----------|------|
+| Wind | A 股 / 港股 | 高优先级终端数据 |
+| Tushare Pro | A 股日线 | Token 数据源 |
+| EastMoney | A 股 | 公共 fallback |
+| AKShare / 腾讯证券 | A 股 / 港股 | Python 与独立上游 fallback |
+| yfinance / Yahoo Chart | 美股、港股、A 股及多个海外市场 | 全球市场 fallback |
+| Binance | Crypto | 分钟到日线 |
+
+配置中心的行情源面板会展示支持市场和周期、凭证状态、最近健康检查、成功率、
+P95 延迟、最近错误、熔断状态、优先级、fallback 能力及网络路由。行情页和 Agent
+工具使用同一份健康状态，自适应跳过不可用数据源。
+
+启动 readiness gate 会对目标市场请求真实样本。只有至少一个目标市场数据源返回
+有效数据，后端才会报告相应市场 ready；所有源失败时，工具返回包含尝试源和失败分类的
+`market_data_unavailable`，不会把空结果或 synthetic 数据当作成功。
+
+常用检查：
+
+```bash
+curl -s http://localhost:3000/api/v1/market/data-sources | jq
+curl -s -X POST http://localhost:3000/api/v1/market/data-sources/health | jq
+curl -s http://localhost:3000/api/v1/market/readiness | jq
+```
+
+新闻也经过证据门：当前行情分析默认只接收最近 7 天、带有效发布时间、与标的相关且
+非 synthetic / stub 的内容。历史新闻必须显式使用 `historical_validation` 模式，
+不能作为近期催化使用。
 
 ---
 
@@ -264,7 +315,36 @@ bun run lint          # Biome lint
 bun run check         # lint + format 检查
 bun test              # 集成测试
 bun run acceptance:langgraph
+bun run build         # 编译生产后端（含项目约定的 DuckDB external 处理）
 ```
+
+### Agent Benchmark
+
+每次大幅修改 Agent、工具治理或研究产物链路后，建议运行 readiness benchmark。当前
+覆盖 10 个任务：单标的研究、多标的对比、主题研究、long / short 选股、因子生成、
+long-only / long-short 策略、做多 / 做空执行。
+
+```bash
+# 先启动桌面联调后端（默认 :17385）
+bun run dev:backend
+
+# 全量 10 场景；无额外 LLM judge 时可先跑确定性评分
+bun run scripts/run-readiness-evaluation.ts --no-judge
+
+# 只跑部分场景
+QUBIT_READINESS_SCENARIOS=research,factor,strategy \
+  bun run scripts/run-readiness-evaluation.ts --no-judge
+
+# 对已有 workflow 重新评分或导出 trace
+bun run scripts/agent-readiness-runner.ts \
+  --scenario=research --workflow=<workflowRunId> --output-dir=./out/agent-readiness
+bun run scripts/agent-readiness-runner.ts \
+  --trace=<workflowRunId> --output-dir=./out/agent-readiness
+```
+
+输出位于 `out/agent-readiness/`，包含每个 workflow 的指标快照、Markdown 报告、
+完整 trace、汇总健康报告和跨版本 diff。评分同时检查终态回复、有效数据、工具治理、
+研究质量、结构化产物与执行效率，避免只用“是否跑完”判断 Agent 能力。
 
 ---
 
@@ -279,6 +359,10 @@ bun run acceptance:langgraph
 - `GET /api/v1/chat/sessions` · `POST .../messages` — 对话
 - `GET /api/v1/monitor/sessions/:id/overview` — 会话监控聚合
 - `GET /api/v1/analyst/fusion/:workflowId` — 团队信号融合
+- `GET /api/v1/market/data-sources` — 行情源能力、健康、延迟、熔断与优先级
+- `POST /api/v1/market/data-sources/health` — 执行真实样本健康检查
+- `GET /api/v1/market/readiness` — 启动行情 readiness gate 状态
+- `POST /api/v1/research-scenarios/:key/launch` — 通过统一场景 harness 启动 workflow
 - `GET /api/v1/agents/mcp/market/catalog` — MCP 市场（分页）
 - `GET /api/v1/agents/skills/market/search` — Skills 市场（分页）
 - `POST /api/v1/reia/broker/accounts/upsert` — 券商账户
@@ -301,6 +385,7 @@ bun run acceptance:langgraph
 
 - [平台架构说明](docs/ARCHITECTURE.md)
 - [Loop 驱动说明](docs/LOOP_DRIVERS.md)
+- [Agent Benchmark v2](docs/AGENT_BENCHMARK_V2.md)
 
 ---
 
