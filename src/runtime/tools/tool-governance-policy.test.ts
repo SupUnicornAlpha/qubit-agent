@@ -45,4 +45,38 @@ describe("tool governance", () => {
     });
     expect(decision.allowed).toBe(false);
   });
+
+  test("shares an exhausted market evidence failure across connector and MCP aliases", () => {
+    recordWorkflowToolFailure({
+      workflowId: "wf",
+      targetName: "qubit-data/fetch_klines",
+      params: { symbol: "002384.SZ" },
+      reason: "market_data_unavailable: all routed providers failed",
+      cacheable: true,
+    });
+    const decision = evaluateToolGovernance({
+      workflowId: "wf",
+      targetName: "mcp-financex/get_historical_data",
+      params: { symbol: "002384.SZ" },
+    });
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) expect(decision.code).toBe("known_failure_in_workflow");
+  });
+
+  test("keeps news and market failure budgets independent", () => {
+    recordWorkflowToolFailure({
+      workflowId: "wf",
+      targetName: "qubit-news/fetch_news",
+      params: { symbol: "002384.SZ" },
+      reason: "news_evidence_unavailable",
+      cacheable: true,
+    });
+    expect(
+      evaluateToolGovernance({
+        workflowId: "wf",
+        targetName: "qubit-data/fetch_klines",
+        params: { symbol: "002384.SZ" },
+      }).allowed
+    ).toBe(true);
+  });
 });

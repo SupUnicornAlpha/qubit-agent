@@ -117,6 +117,8 @@ export interface NewsData {
   source: string;
   symbols: string[];
   sentimentScore?: number;
+  /** 明确标记演示/占位数据；不得用于实时研究证据。 */
+  isSynthetic?: boolean;
 }
 
 export interface FetchFundamentalsParams {

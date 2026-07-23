@@ -1,7 +1,8 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
-import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 import { aggregateBarsByMsWindow } from "./klines-bars";
 import { resolveTickerMarket } from "./resolve-ticker-market";
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { marketDataFetch } from "./market-data-network";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
 const EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get";
@@ -141,7 +142,8 @@ async function fetchEastMoneyKlineJson(
   klt: string,
   beg: string,
   end: string,
-  lmt: number
+  lmt: number,
+  settings: BuiltinConnectorInitConfigs,
 ): Promise<EastMoneyKlineResponse> {
   const qs = new URLSearchParams({
     fields1: "f1,f2,f3,f4,f5,f6",
@@ -155,7 +157,7 @@ async function fetchEastMoneyKlineJson(
     lmt: String(Math.min(Math.max(lmt, 1), 5000)),
   });
   const url = `${EM_KLINE_URL}?${qs.toString()}`;
-  const res = await fetchWithTimeout(url, {
+  const res = await marketDataFetch("eastmoney", settings, url, {
     headers: {
       "User-Agent": UA,
       Accept: "application/json",
@@ -184,7 +186,10 @@ async function fetchEastMoneyKlineJson(
  * 东方财富 K 线（免费、无需 API Key，A 股/北交所日线 + 分钟/小时）。
  * 非 A 股市场请使用 Yahoo / Tushare。
  */
-export async function fetchEastMoneyBars(params: FetchBarsParams): Promise<BarData[]> {
+export async function fetchEastMoneyBars(
+  params: FetchBarsParams,
+  settings: BuiltinConnectorInitConfigs = {},
+): Promise<BarData[]> {
   const secid = symbolToEastMoneySecId(params.symbol, params.exchange || "");
   if (!secid) throw new Error("eastmoney: unsupported symbol/exchange for A-share market");
 
@@ -205,7 +210,7 @@ export async function fetchEastMoneyBars(params: FetchBarsParams): Promise<BarDa
       ? Math.min(daySpan + 30, 5000)
       : Math.min(Math.ceil(daySpan * 80), 5000);
 
-  const json = await fetchEastMoneyKlineJson(secid, klt, beg, end, lmt);
+  const json = await fetchEastMoneyKlineJson(secid, klt, beg, end, lmt, settings);
   const rows = json.data?.klines ?? [];
   let bars: BarData[] = [];
   for (const row of rows) {

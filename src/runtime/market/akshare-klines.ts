@@ -4,6 +4,8 @@ import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
 import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
 import { isChinaAShareMarket } from "./eastmoney-klines";
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { marketDataProxyForPython } from "./market-data-network";
 
 let bridge: PythonConnectorBridgeImpl | null = null;
 let bridgeInit: Promise<PythonConnectorBridgeImpl> | null = null;
@@ -63,7 +65,11 @@ export async function probeAkshareAvailable(): Promise<boolean> {
 /**
  * 通过 Python AKShare 拉取 A 股 OHLCV（免费、需 `pip install akshare pandas`）。
  */
-export async function fetchAkshareBars(params: FetchBarsParams): Promise<BarData[]> {
+export async function fetchAkshareBars(
+  params: FetchBarsParams,
+  settings: BuiltinConnectorInitConfigs = {},
+  upstream: "eastmoney" | "tencent" = "eastmoney",
+): Promise<BarData[]> {
   if (!isChinaAShareMarket(params.symbol, params.exchange || "")) {
     throw new Error("akshare: only China A-share / BJ symbols are supported");
   }
@@ -75,6 +81,11 @@ export async function fetchAkshareBars(params: FetchBarsParams): Promise<BarData
     period: params.period,
     startDate: params.startDate,
     endDate: params.endDate,
+    upstream,
+    proxyUrl: marketDataProxyForPython(
+      settings,
+      upstream === "tencent" ? "akshare_tencent" : "akshare",
+    ),
   })) as BarData[];
 
   let sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -87,4 +98,11 @@ export async function fetchAkshareBars(params: FetchBarsParams): Promise<BarData
   }
 
   return sorted;
+}
+
+export function fetchAkshareTencentBars(
+  params: FetchBarsParams,
+  settings: BuiltinConnectorInitConfigs = {},
+): Promise<BarData[]> {
+  return fetchAkshareBars(params, settings, "tencent");
 }

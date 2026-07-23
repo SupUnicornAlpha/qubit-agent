@@ -26,8 +26,8 @@ HOST="${HOST:-127.0.0.1}"
 # 占端口的进程统统让位（典型是 Tauri 启的 sidecar 或上一轮没退干净的 bun）。
 STALE_PID=$(lsof -ti :"$PORT" 2>/dev/null || true)
 if [ -n "${STALE_PID:-}" ]; then
-  echo "[dev-backend] killing stale process on :$PORT (pid=$STALE_PID)"
-  kill "$STALE_PID" 2>/dev/null || true
+  echo "[dev-backend] killing stale process on :$PORT (pid=$(echo "$STALE_PID" | tr '\n' ' '))"
+  echo "$STALE_PID" | xargs kill 2>/dev/null || true
   sleep 1
 fi
 

@@ -1,14 +1,27 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { marketDataSource, marketDataSourceCall } from "../../db/sqlite/schema";
-import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import {
+  loadBuiltinConnectorSettings,
+  type BuiltinConnectorInitConfigs,
+} from "../config/builtin-connector-settings";
 import type { MarketCode } from "./resolve-ticker-market";
 import type { KlinesDataSourceMeta, KlinesDataSourceSetting } from "./klines-data-source";
+import {
+  classifyMarketDataFailure,
+  formatMarketDataFailure,
+  type MarketDataFailureKind,
+} from "./market-data-errors";
+import {
+  resolveMarketDataNetworkRoute,
+  type MarketDataNetworkMode,
+} from "./market-data-network";
 
 export type OperationalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
 
 export type MarketSourceHealth = "unknown" | "healthy" | "degraded" | "down";
 export type MarketSourceCircuit = "closed" | "open" | "half_open";
+export type MarketDataUpstreamFamily = "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo";
 
 export interface MarketDataSourceDefinition {
   id: OperationalMarketDataSource;
@@ -19,6 +32,7 @@ export interface MarketDataSourceDefinition {
   credentialMode: "none" | "token" | "account" | "terminal";
   priority: number;
   isFallback: boolean;
+  upstreamFamily: MarketDataUpstreamFamily;
 }
 
 export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
@@ -31,6 +45,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "terminal",
     priority: 95,
     isFallback: false,
+    upstreamFamily: "wind",
   },
   {
     id: "tushare_daily",
@@ -41,6 +56,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "token",
     priority: 90,
     isFallback: false,
+    upstreamFamily: "tushare",
   },
   {
     id: "binance_crypto",
@@ -51,6 +67,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "none",
     priority: 85,
     isFallback: false,
+    upstreamFamily: "binance",
   },
   {
     id: "eastmoney",
@@ -61,6 +78,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "none",
     priority: 75,
     isFallback: true,
+    upstreamFamily: "eastmoney",
   },
   {
     id: "akshare",
@@ -71,6 +89,18 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "none",
     priority: 65,
     isFallback: true,
+    upstreamFamily: "eastmoney",
+  },
+  {
+    id: "akshare_tencent",
+    name: "AKShare Tencent Daily",
+    vendor: "腾讯证券 / AKShare",
+    markets: ["CN"],
+    timeframes: ["1d"],
+    credentialMode: "none",
+    priority: 60,
+    isFallback: true,
+    upstreamFamily: "tencent",
   },
   {
     id: "yfinance",
@@ -81,6 +111,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "none",
     priority: 55,
     isFallback: true,
+    upstreamFamily: "yahoo",
   },
   {
     id: "yahoo_chart",
@@ -91,12 +122,14 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "none",
     priority: 40,
     isFallback: true,
+    upstreamFamily: "yahoo",
   },
 ];
 
 const DEF_BY_ID = new Map(MARKET_DATA_SOURCE_DEFINITIONS.map((d) => [d.id, d]));
 const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 60_000;
+const upstreamBackoffUntil = new Map<MarketDataUpstreamFamily, number>();
 
 function credentialsReady(def: MarketDataSourceDefinition, settings: BuiltinConnectorInitConfigs): boolean {
   const cfg = settings["qubit-data"] ?? {};
@@ -105,7 +138,7 @@ function credentialsReady(def: MarketDataSourceDefinition, settings: BuiltinConn
     return typeof cfg.tushareToken === "string" && cfg.tushareToken.trim().length > 0;
   }
   if (def.id === "wind") {
-    return typeof cfg.windUsername === "string" && cfg.windUsername.trim().length > 0;
+    return true;
   }
   return false;
 }
@@ -163,6 +196,12 @@ export interface MarketDataSourceView {
   circuitOpenedAt: string | null;
   priority: number;
   isFallback: boolean;
+  upstreamFamily: MarketDataUpstreamFamily;
+  failureKind: MarketDataFailureKind | null;
+  availabilityStatus: "ready" | "credentials_missing" | "backing_off" | "misconfigured" | "unavailable";
+  retryAt: string | null;
+  networkMode: MarketDataNetworkMode;
+  networkRoute: "direct" | "config" | "environment" | "system" | "invalid";
 }
 
 function percentile95(values: number[]): number | null {
@@ -173,6 +212,7 @@ function percentile95(values: number[]): number | null {
 
 export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
   const db = await getDb();
+  const settings = await loadBuiltinConnectorSettings();
   const rows = await db.select().from(marketDataSource);
   const out: MarketDataSourceView[] = [];
   for (const row of rows.filter((r) => r.sourceType === "market")) {
@@ -184,6 +224,28 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
       .limit(100);
     const completed = calls.filter((c) => c.status !== "blocked");
     const successes = completed.filter((c) => c.status === "success").length;
+    const def = DEF_BY_ID.get(row.id as OperationalMarketDataSource);
+    const failure = row.lastError ? classifyMarketDataFailure(row.lastError) : null;
+    const retryUntil = def ? (upstreamBackoffUntil.get(def.upstreamFamily) ?? 0) : 0;
+    let networkMode: MarketDataNetworkMode = "auto";
+    let networkRoute: MarketDataSourceView["networkRoute"] = "direct";
+    try {
+      const route = resolveMarketDataNetworkRoute(settings, row.id as OperationalMarketDataSource);
+      networkMode = route.mode;
+      networkRoute = route.source;
+    } catch {
+      networkMode = "proxy";
+      networkRoute = "invalid";
+    }
+    const availabilityStatus: MarketDataSourceView["availabilityStatus"] = !row.credentialsReady
+      ? "credentials_missing"
+      : networkRoute === "invalid"
+        ? "misconfigured"
+        : retryUntil > Date.now()
+          ? "backing_off"
+          : row.healthStatus === "down"
+            ? "unavailable"
+            : "ready";
     out.push({
       id: row.id,
       name: row.name,
@@ -203,6 +265,12 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
       circuitOpenedAt: row.circuitOpenedAt,
       priority: row.priority,
       isFallback: row.isFallback,
+      upstreamFamily: def?.upstreamFamily ?? "yahoo",
+      failureKind: failure?.kind ?? null,
+      availabilityStatus,
+      retryAt: retryUntil > Date.now() ? new Date(retryUntil).toISOString() : null,
+      networkMode,
+      networkRoute,
     });
   }
   return out.sort((a, b) => b.priority - a.priority);
@@ -244,6 +312,12 @@ export async function recordMarketDataSourceAttempt(input: {
   const row = current[0];
   if (!row) return;
   const failed = input.status === "empty" || input.status === "error";
+  const def = DEF_BY_ID.get(input.sourceId as OperationalMarketDataSource);
+  const failure = failed ? classifyMarketDataFailure(input.error ?? input.status) : null;
+  if (def && input.status === "success") upstreamBackoffUntil.delete(def.upstreamFamily);
+  if (def && failure?.retryAfterMs && failure.kind !== "no_data") {
+    upstreamBackoffUntil.set(def.upstreamFamily, Date.now() + failure.retryAfterMs);
+  }
   const consecutive = failed ? row.consecutiveFailures + 1 : 0;
   const opened = failed && consecutive >= CIRCUIT_THRESHOLD;
   const healthStatus: MarketSourceHealth =
@@ -256,7 +330,7 @@ export async function recordMarketDataSourceAttempt(input: {
     symbol: input.symbol,
     status: input.status,
     latencyMs: Math.max(0, Math.round(input.latencyMs)),
-    errorMessage: input.error ?? null,
+    errorMessage: failed ? formatMarketDataFailure(input.error ?? input.status) : input.error ?? null,
   });
   await db
     .update(marketDataSource)
@@ -267,7 +341,7 @@ export async function recordMarketDataSourceAttempt(input: {
       successCount: row.successCount + (input.status === "success" ? 1 : 0),
       failureCount: row.failureCount + (failed ? 1 : 0),
       consecutiveFailures: consecutive,
-      lastError: failed ? (input.error ?? input.status) : null,
+      lastError: failed ? formatMarketDataFailure(input.error ?? input.status) : null,
       circuitState: opened ? "open" : input.status === "success" ? "closed" : row.circuitState,
       circuitOpenedAt: opened ? new Date().toISOString() : input.status === "success" ? null : row.circuitOpenedAt,
     })
@@ -287,26 +361,53 @@ export async function selectMarketDataSourcePlan(input: {
     if (row.status !== "active" || !row.credentialsReady) return false;
     if (!row.supportedMarkets.includes(input.market)) return false;
     if (!row.supportedTimeframes.includes(input.timeframe)) return false;
-    if (row.circuitState !== "open") return true;
+    if (
+      row.id === "wind" &&
+      input.mode === "auto" &&
+      row.healthStatus !== "healthy" &&
+      typeof input.settings["qubit-data"]?.windUsername !== "string"
+    ) return false;
     const def = DEF_BY_ID.get(row.id as OperationalMarketDataSource);
-    if (!def) return false;
+    if (!def || row.availabilityStatus === "misconfigured") return false;
+    if ((upstreamBackoffUntil.get(def.upstreamFamily) ?? 0) > now) return false;
+    if (row.circuitState !== "open") return true;
     const openedAt = row.circuitOpenedAt ? Date.parse(row.circuitOpenedAt) : now;
     return Number.isFinite(openedAt) && now - openedAt >= CIRCUIT_COOLDOWN_MS;
   });
-  const ordered = eligible.map((r) => r.id as OperationalMarketDataSource);
+  const dedupeFamilies = (items: MarketDataSourceView[], excludedFamily?: MarketDataUpstreamFamily) => {
+    const seen = new Set<MarketDataUpstreamFamily>();
+    return items.filter((row) => {
+      const family = DEF_BY_ID.get(row.id as OperationalMarketDataSource)?.upstreamFamily;
+      if (!family || family === excludedFamily || seen.has(family)) return false;
+      seen.add(family);
+      return true;
+    });
+  };
+  const orderedRows = dedupeFamilies(eligible);
+  const ordered = orderedRows.map((r) => r.id as OperationalMarketDataSource);
   if (!explicit) return ordered;
-  const fallbackIds = new Set(
-    eligible.filter((row) => row.isFallback).map((row) => row.id as OperationalMarketDataSource),
-  );
-  if (!ordered.includes(explicit as OperationalMarketDataSource)) {
-    return ordered.filter((id) => fallbackIds.has(id));
+  const explicitEligible = eligible.some((row) => row.id === explicit);
+  const explicitFamily = DEF_BY_ID.get(explicit as OperationalMarketDataSource)?.upstreamFamily;
+  const fallbackIds = dedupeFamilies(
+    eligible.filter((row) => row.isFallback),
+    explicitFamily,
+  ).map((row) => row.id as OperationalMarketDataSource);
+  if (!explicitEligible) {
+    return fallbackIds;
   }
   return [
     explicit as OperationalMarketDataSource,
-    ...ordered.filter((id) => id !== explicit && fallbackIds.has(id)),
+    ...fallbackIds,
   ];
 }
 
 export function marketSourceDefinition(id: string): MarketDataSourceDefinition | undefined {
   return DEF_BY_ID.get(id as OperationalMarketDataSource);
+}
+
+export function marketSourceBackoffUntil(id: string): number | null {
+  const family = DEF_BY_ID.get(id as OperationalMarketDataSource)?.upstreamFamily;
+  if (!family) return null;
+  const until = upstreamBackoffUntil.get(family) ?? 0;
+  return until > Date.now() ? until : null;
 }

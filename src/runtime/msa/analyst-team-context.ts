@@ -43,10 +43,7 @@ export function buildMarketIdentificationBlock(
   ].join("\n");
 }
 
-async function buildSingleSymbolSnapshot(
-  symbol: string,
-  exchange?: string
-): Promise<string[]> {
+async function buildSingleSymbolSnapshot(symbol: string, exchange?: string): Promise<string[]> {
   const blocks: string[] = [`### ${symbol}`];
   /**
    * 2026-06-05 监控复盘 #4 / B：fail-soft fallback 提示。
@@ -61,25 +58,28 @@ async function buildSingleSymbolSnapshot(
    * explore 模式的 prompt 保持一致。
    */
   const fallbackHint =
-    `[!important] 该 ticker 未能验证存在性。请按以下任一路径推进，不要再重试同 symbol：\n` +
-    `  1. 调 \`run_screener\` 按行业/估值/动量条件拿一组候选 ticker；\n` +
-    `  2. 调 \`factor.list\` / \`skill.search\` 复用本项目历史成功研究过的 ticker；\n` +
-    `  3. 自主提 1-3 个候选 ticker（同板块替代），用 \`fetch_klines\` 验证后再开展分析；\n` +
-    `  4. 若用户原意就是探索某主题/板块，可在 task summary 中明确告知"待用户确认具体标的"。`;
+    `[!important] 当前失败仅说明行情证据不可用，不等于 ticker 不存在。` +
+    `这是用户指定标的，禁止擅自替换成同板块股票，也不要换工具名重复撞同一行情失败域。` +
+    `请保留该标的，基于仍可验证的公告/新闻/基本面完成有限分析；价格、涨跌幅、技术指标必须标为` +
+    `“待行情源恢复后验证”，最终只给条件式结论与明确的数据截止时间。`;
   try {
     const { bars, meta, error } = await queryKlines({
       symbol,
-      exchange: exchange || undefined,
+      ...(exchange ? { exchange } : {}),
       timeframe: "1d",
       limit: 250,
     });
     if (error) {
       blocks.push(`[行情] 拉取失败：${error.message}`, fallbackHint);
     } else if (bars.length === 0) {
-      blocks.push(`[行情] 未返回 K 线（symbol \"${symbol}\" 可能不存在或当前数据源无覆盖）`, fallbackHint);
+      blocks.push(
+        `[行情] 未返回 K 线（symbol \"${symbol}\" 可能不存在或当前数据源无覆盖）`,
+        fallbackHint
+      );
     } else {
       const snap = snapshotIndicators(bars, symbol);
       const last = bars[bars.length - 1];
+      if (!last) throw new Error("market_data_unavailable: bars unexpectedly empty");
       blocks.push(
         `[行情] 数据源=${meta?.dataSource ?? "unknown"}，${bars.length} 根日线`,
         `- 最新收盘 ${last.close}（${last.timestamp}）`,
@@ -96,17 +96,29 @@ async function buildSingleSymbolSnapshot(
   try {
     const brief = await queryMarketNewsBrief({
       symbol,
-      exchange: exchange || undefined,
+      ...(exchange ? { exchange } : {}),
       limit: 5,
     });
     const newsItems = [...brief.symbolNews, ...brief.sectorNews];
     if (newsItems.length === 0) {
-      blocks.push("[资讯] 暂无头条");
+      blocks.push(
+        `[资讯] 当前证据不可用（窗口=${brief.evidence.maxAgeDays}天；` +
+          `拒绝 synthetic=${brief.evidence.rejected.synthetic}、` +
+          `stale=${brief.evidence.rejected.stale}、` +
+          `irrelevant=${brief.evidence.rejected.irrelevant}）。` +
+          `禁止用历史新闻冒充近期催化；如任务明确是历史验证，才可切换 historical_validation 模式。`
+      );
     } else {
       const sectorHint = brief.sectorLabel != null ? `，板块 ${brief.sectorLabel}` : "";
-      blocks.push(`[资讯] ${newsItems.length} 条${sectorHint}：`);
+      blocks.push(
+        `[资讯] ${newsItems.length} 条${sectorHint}；最新证据时间=` +
+          `${brief.evidence.latestPublishedAt ?? "unknown"}：`
+      );
       for (const item of newsItems.slice(0, 4)) {
-        blocks.push(`- ${item.title}${item.source ? `（${item.source}）` : ""}`);
+        blocks.push(
+          `- ${item.publishedAt.slice(0, 10)}｜${item.title}` +
+            `${item.source ? `（${item.source}）` : ""}`
+        );
       }
     }
   } catch (e) {
@@ -144,8 +156,7 @@ export async function buildAnalystTeamDataContext(params: {
    * 把结果**显式注入到 prompt** 让 LLM 看到 market 事实而不是凭直觉。
    */
   const resolved = primary ? resolveTickerMarket(primary, { hintExchange }) : null;
-  const inferredCrypto =
-    !hintExchange && primary && isCryptoMarket(primary, "");
+  const inferredCrypto = !hintExchange && primary && isCryptoMarket(primary, "");
   const exchange =
     hintExchange ??
     (resolved && resolved.market !== "UNKNOWN" ? resolved.exchange : undefined) ??
@@ -169,11 +180,8 @@ export async function buildAnalystTeamDataContext(params: {
    * 正确做法：explore 没指定标的就显式告诉 LLM"请自主选标 + 用 fetch_klines
    * 验证存在性"，不要去 fetch 一个空 ticker。
    */
-  const symbolsToFetch = scope.symbols.filter(
-    (s) => typeof s === "string" && s.trim().length > 0
-  );
-  const skipSnapshotForExplore =
-    scope.kind === "explore" && symbolsToFetch.length === 0;
+  const symbolsToFetch = scope.symbols.filter((s) => typeof s === "string" && s.trim().length > 0);
+  const skipSnapshotForExplore = scope.kind === "explore" && symbolsToFetch.length === 0;
 
   if (skipSnapshotForExplore) {
     blocks.push(

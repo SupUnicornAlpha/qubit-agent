@@ -12,6 +12,7 @@ import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
 import type { AgentSkillOutcome } from "../../types/entities";
 import { dispatchTaskToRole } from "../agent-pool";
+import { getA2AGather } from "../a2a/a2a-gather";
 import {
   type AgentPackSelfEditTarget,
   getDataDir,
@@ -20,7 +21,10 @@ import {
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
-import { recommendationService, type RecommendationSide } from "../effect-validation/recommendation-service";
+import {
+  recommendationService,
+  type RecommendationSide,
+} from "../effect-validation/recommendation-service";
 import { writeExecCallLog } from "../exec/exec-call-log";
 import { getExecProvider } from "../exec/registry";
 import { checkArgs, checkCwdScope, renderArgTemplate, runExec } from "../exec/runner";
@@ -866,14 +870,26 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       workflowRunId: ctx.workflowId,
       universe: params.universe as "CN-A" | "US" | "HK" | "CRYPTO" | "ALL" | undefined,
       criteria: {
-        ...(typeof criteria["minMarketCapBillion"] === "number" ? { minMarketCapBillion: criteria["minMarketCapBillion"] as number } : {}),
+        ...(typeof criteria["minMarketCapBillion"] === "number"
+          ? { minMarketCapBillion: criteria["minMarketCapBillion"] as number }
+          : {}),
         ...(typeof criteria["maxPe"] === "number" ? { maxPe: criteria["maxPe"] as number } : {}),
-        ...(typeof criteria["minMomentum30d"] === "number" ? { minMomentum30d: criteria["minMomentum30d"] as number } : {}),
+        ...(typeof criteria["minMomentum30d"] === "number"
+          ? { minMomentum30d: criteria["minMomentum30d"] as number }
+          : {}),
         ...(typeof criteria["sector"] === "string" ? { sector: criteria["sector"] as string } : {}),
-        ...(typeof criteria["industry"] === "string" ? { industry: criteria["industry"] as string } : {}),
-        ...(typeof criteria["country"] === "string" ? { country: criteria["country"] as string } : {}),
-        ...(typeof criteria["minQuality"] === "number" ? { minQuality: criteria["minQuality"] as number } : {}),
-        ...(typeof criteria["minSentiment"] === "number" ? { minSentiment: criteria["minSentiment"] as number } : {}),
+        ...(typeof criteria["industry"] === "string"
+          ? { industry: criteria["industry"] as string }
+          : {}),
+        ...(typeof criteria["country"] === "string"
+          ? { country: criteria["country"] as string }
+          : {}),
+        ...(typeof criteria["minQuality"] === "number"
+          ? { minQuality: criteria["minQuality"] as number }
+          : {}),
+        ...(typeof criteria["minSentiment"] === "number"
+          ? { minSentiment: criteria["minSentiment"] as number }
+          : {}),
       },
       topN: Number(params.topN ?? 10),
     });
@@ -1193,12 +1209,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
      * 允许例外：LLM 没传 symbols（symbols=undefined）→ service 层用 factor_value 表里
      * 已存在的全部 symbols（factor.compute 时录的），service 层会做最终防线检查。
      */
-    if (
-      !isOneShot &&
-      symbols !== undefined &&
-      symbols.length > 0 &&
-      symbols.length < 3
-    ) {
+    if (!isOneShot && symbols !== undefined && symbols.length > 0 && symbols.length < 3) {
       throw new Error(
         `factor.autoEvaluate: symbols 数量过少（当前 ${symbols.length} 只: ${symbols.join(",")}）。` +
           "IC/RankIC 是 **横截面** 指标，每日至少需要 3 只 symbols 才能计算 Pearson/Spearman；推荐 ≥ 10 只。" +
@@ -1615,7 +1626,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   "factor.promote_backtest": async (ctx, params) => {
     const factorIdsRaw = params.factor_ids ?? params.factorIds;
     const factorIds = Array.isArray(factorIdsRaw)
-      ? factorIdsRaw.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      ? factorIdsRaw.filter(
+          (value): value is string => typeof value === "string" && value.trim().length > 0
+        )
       : [];
     if (factorIds.length === 0) {
       throw new Error("factor.promote_backtest: factor_ids (string[]) is required");
@@ -1627,7 +1640,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
     const symbolsRaw = params.symbols;
     const symbols = Array.isArray(symbolsRaw)
-      ? symbolsRaw.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      ? symbolsRaw.filter(
+          (value): value is string => typeof value === "string" && value.trim().length > 0
+        )
       : undefined;
     const costsRaw = params.costs;
     const costs =
@@ -1759,12 +1774,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const existing = await db
       .select()
       .from(strategyTable)
-      .where(
-        and(
-          eq(strategyTable.projectId, projectId),
-          eq(strategyTable.name, name)
-        )
-      )
+      .where(and(eq(strategyTable.projectId, projectId), eq(strategyTable.name, name)))
       .limit(1);
     let strategyId: string;
     if (existing[0]) {
@@ -1856,7 +1866,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!symbol) {
       throw new Error("order.create_intent: symbol (交易标的) is required");
     }
-    const sideRaw = String(params.side ?? "").trim().toLowerCase();
+    const sideRaw = String(params.side ?? "")
+      .trim()
+      .toLowerCase();
     if (sideRaw !== "buy" && sideRaw !== "sell") {
       throw new Error(`order.create_intent: side 必须是 'buy' 或 'sell'，收到: ${sideRaw}`);
     }
@@ -1865,7 +1877,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!Number.isFinite(qty) || qty <= 0) {
       throw new Error(`order.create_intent: qty 必须是正数，收到: ${qty}`);
     }
-    const orderTypeRaw = String(params.order_type ?? "market").trim().toLowerCase();
+    const orderTypeRaw = String(params.order_type ?? "market")
+      .trim()
+      .toLowerCase();
     if (orderTypeRaw !== "market" && orderTypeRaw !== "limit") {
       throw new Error(
         `order.create_intent: order_type 必须是 'market' 或 'limit'，收到: ${orderTypeRaw}`
@@ -1880,7 +1894,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (orderType === "limit" && price === null) {
       throw new Error("order.create_intent: order_type=limit 时必须传 price (limit 价)");
     }
-    const tifRaw = String(params.time_in_force ?? "day").trim().toLowerCase();
+    const tifRaw = String(params.time_in_force ?? "day")
+      .trim()
+      .toLowerCase();
     const tifAllowed: TimeInForce[] = ["day", "gtc", "ioc", "fok"];
     if (!tifAllowed.includes(tifRaw as TimeInForce)) {
       throw new Error(
@@ -1889,7 +1905,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
     const timeInForce: TimeInForce = tifRaw as TimeInForce;
     const market = String(params.market ?? "US").trim();
-    const dispatchModeRaw = String(params.dispatch_mode ?? "paper").trim().toLowerCase();
+    const dispatchModeRaw = String(params.dispatch_mode ?? "paper")
+      .trim()
+      .toLowerCase();
     if (dispatchModeRaw !== "paper" && dispatchModeRaw !== "live") {
       throw new Error(
         `order.create_intent: dispatch_mode 必须是 'paper' 或 'live'，收到: ${dispatchModeRaw}`
@@ -1968,7 +1986,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!symbol) {
       throw new Error("recommendation.record: symbol/ticker is required");
     }
-    const sideRaw = String(params.side ?? "long").trim().toLowerCase();
+    const sideRaw = String(params.side ?? "long")
+      .trim()
+      .toLowerCase();
     const sideMap: Record<string, RecommendationSide> = {
       buy: "long",
       long: "long",
@@ -2001,7 +2021,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       entryLow: optionalFiniteNumber(params.entry_low ?? params.entryLow),
       entryHigh: optionalFiniteNumber(params.entry_high ?? params.entryHigh),
       stopLoss: optionalFiniteNumber(params.stop_loss ?? params.stopLoss),
-      takeProfit: optionalFiniteNumber(params.take_profit ?? params.takeProfit ?? params.target_price),
+      takeProfit: optionalFiniteNumber(
+        params.take_profit ?? params.takeProfit ?? params.target_price
+      ),
       positionSizePct: optionalFiniteNumber(params.position_size_pct ?? params.positionSizePct),
       riskRewardRatio: optionalFiniteNumber(params.risk_reward_ratio ?? params.riskRewardRatio),
       rationale: String(params.rationale ?? params.reasoning ?? ""),
@@ -2010,8 +2032,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         ? params.invalidation_conditions
         : [],
       watchConditions: Array.isArray(params.watch_conditions) ? params.watch_conditions : [],
-      benchmarkSymbol:
-        typeof params.benchmark_symbol === "string" ? params.benchmark_symbol : null,
+      benchmarkSymbol: typeof params.benchmark_symbol === "string" ? params.benchmark_symbol : null,
       expiresAt: typeof params.expires_at === "string" ? params.expires_at : null,
       dataAsof: typeof params.data_asof === "string" ? params.data_asof : null,
       sourceArtifactKind:
@@ -2026,7 +2047,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       recommendationId: result.id,
       symbol: result.symbol,
       side,
-      next_steps: "推荐已进入 DecisionSignal 生命周期；outcome worker 会按 horizon_days 自动回填效果。",
+      next_steps:
+        "推荐已进入 DecisionSignal 生命周期；outcome worker 会按 horizon_days 自动回填效果。",
     };
   },
 
@@ -2507,7 +2529,16 @@ async function dispatchTeamAgentTask(
   ctx: BuiltinToolContext,
   role: AgentRole,
   params: Record<string, unknown>
-): Promise<{ dispatched: boolean; role: AgentRole; runId: string; via: string }> {
+): Promise<{
+  dispatched: boolean;
+  completed: boolean;
+  success: boolean;
+  role: AgentRole;
+  runId: string;
+  via: string;
+  result?: unknown;
+  errorMessage?: string | null;
+}> {
   const targetRole = resolveDispatchRole(role);
   const topology = await loadOrchestratorTopologyForWorkflow();
   if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
@@ -2542,6 +2573,12 @@ async function dispatchTeamAgentTask(
     params: { goal, ...extra, ...(role !== targetRole ? { requestedRole: role } : {}) },
   };
 
+  // 先登记再派发，避免进程内总线的快速 TASK_RESULT 在 waiter 建立前到达。
+  const configuredTimeoutMs = Number(process.env.TOPOLOGY_TASK_TIMEOUT_MS ?? 120_000);
+  const gatherTimeoutMs = Number.isFinite(configuredTimeoutMs)
+    ? Math.min(Math.max(configuredTimeoutMs, 10_000), 300_000)
+    : 120_000;
+  const pendingResult = getA2AGather().expect([payload.taskId], { timeoutMs: gatherTimeoutMs });
   const { runId } = await dispatchTaskToRole({
     workflowId: ctx.workflowId,
     role: targetRole,
@@ -2549,7 +2586,17 @@ async function dispatchTeamAgentTask(
     traceId: ctx.traceId,
     senderId: ctx.agentInstanceId,
   });
-  return { dispatched: true, role: targetRole, runId, via: "topology_dispatch" };
+  const gathered = (await pendingResult).get(payload.taskId);
+  return {
+    dispatched: true,
+    completed: !gathered?.timedOut,
+    success: Boolean(gathered?.success),
+    role: targetRole,
+    runId,
+    via: "topology_dispatch",
+    ...(gathered?.result !== undefined ? { result: gathered.result } : {}),
+    ...(gathered?.errorMessage !== undefined ? { errorMessage: gathered.errorMessage } : {}),
+  };
 }
 
 export function isBuiltinTool(toolName: string): boolean {

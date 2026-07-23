@@ -1616,12 +1616,15 @@ const ConfigPanel: FC = () => {
     | "yahoo_chart"
     | "eastmoney"
     | "akshare"
+    | "akshare_tencent"
     | "yfinance"
     | "binance_crypto"
     | "wind"
     | "synthetic"
   >("auto");
   const [cryptoUseTestnet, setCryptoUseTestnet] = useState(false);
+  const [marketDataNetworkMode, setMarketDataNetworkMode] = useState<"auto" | "direct" | "proxy">("auto");
+  const [marketDataProxyUrl, setMarketDataProxyUrl] = useState("");
   const [newsApiBaseUrl, setNewsApiBaseUrl] = useState("");
   const [newsApiKey, setNewsApiKey] = useState("");
   const [newsFetchPath, setNewsFetchPath] = useState("/");
@@ -1710,6 +1713,7 @@ const ConfigPanel: FC = () => {
       kds === "yahoo_chart" ||
       kds === "eastmoney" ||
       kds === "akshare" ||
+      kds === "akshare_tencent" ||
       kds === "yfinance" ||
       kds === "binance_crypto" ||
       kds === "wind" ||
@@ -1720,6 +1724,9 @@ const ConfigPanel: FC = () => {
     );
     const testnet = d["cryptoUseTestnet"];
     setCryptoUseTestnet(testnet === true || testnet === "true");
+    const networkMode = d["marketDataNetworkMode"];
+    setMarketDataNetworkMode(networkMode === "direct" || networkMode === "proxy" ? networkMode : "auto");
+    setMarketDataProxyUrl(typeof d.marketDataProxyUrl === "string" ? d.marketDataProxyUrl : "");
     setNewsApiBaseUrl(typeof n.newsApiBaseUrl === "string" ? n.newsApiBaseUrl : "");
     setNewsApiKey(typeof n.newsApiKey === "string" ? n.newsApiKey : "");
     setNewsFetchPath(typeof n.newsFetchPath === "string" ? n.newsFetchPath : "/");
@@ -2594,6 +2601,7 @@ const ConfigPanel: FC = () => {
                         | "yahoo_chart"
                         | "eastmoney"
                         | "akshare"
+                        | "akshare_tencent"
                         | "yfinance"
                         | "binance_crypto"
                         | "wind"
@@ -2606,6 +2614,7 @@ const ConfigPanel: FC = () => {
                   <option value="wind">Wind 万得（需本地终端 + WindPy）</option>
                   <option value="binance_crypto">Binance（加密货币 K 线 / 报价，公开 API）</option>
                   <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
+                  <option value="akshare_tencent">腾讯证券 / AKShare（日线独立备用源）</option>
                   <option value="yahoo_chart">Yahoo Finance Chart（TS 直连，免依赖）</option>
                   <option value="yfinance">yfinance（Python，含分红/财报/资产信息；pip install yfinance pandas）</option>
                   <option value="tushare_daily">Tushare 日线（需 token）</option>
@@ -2627,6 +2636,24 @@ const ConfigPanel: FC = () => {
                 value={tushareToken}
                 onChange={(e) => setTushareToken(e.target.value)}
                 placeholder="Tushare token（仅在选择 Tushare 或自动且有 token 时使用）"
+              />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
+                <span style={{ whiteSpace: "nowrap" }}>行情网络</span>
+                <select
+                  style={styles.select}
+                  value={marketDataNetworkMode}
+                  onChange={(e) => setMarketDataNetworkMode(e.target.value as "auto" | "direct" | "proxy")}
+                >
+                  <option value="auto">自动（配置代理 → 环境代理 → 直连）</option>
+                  <option value="direct">强制直连</option>
+                  <option value="proxy">强制代理</option>
+                </select>
+              </label>
+              <input
+                style={{ ...styles.input, minWidth: 240 }}
+                value={marketDataProxyUrl}
+                onChange={(e) => setMarketDataProxyUrl(e.target.value)}
+                placeholder="代理 URL，例如 http://127.0.0.1:7896"
               />
             </div>
             {(klinesDataSource === "wind" || klinesDataSource === "auto") ? (
@@ -2791,6 +2818,8 @@ const ConfigPanel: FC = () => {
                       windStartWaitSec,
                       windAutoLogin: windAutoLogin || undefined,
                       cryptoUseTestnet: cryptoUseTestnet || undefined,
+                      marketDataNetworkMode,
+                      marketDataProxyUrl: marketDataProxyUrl.trim() || undefined,
                     },
                     "qubit-news": {
                       newsApiBaseUrl: newsApiBaseUrl.trim() || undefined,

@@ -1,10 +1,10 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
-import { fetchWithTimeout } from "../../util/fetch-with-timeout";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { isCryptoMarket } from "./crypto-market";
 import { isChinaAShareMarket } from "./eastmoney-klines";
 import { aggregateBarsByMsWindow } from "./klines-bars";
 import { resolveTickerMarket } from "./resolve-ticker-market";
+import { marketDataFetch } from "./market-data-network";
 
 /** User-selectable K-line upstream (配置中心 `qubit-data.klinesDataSource`). */
 export type KlinesDataSourceSetting =
@@ -13,6 +13,7 @@ export type KlinesDataSourceSetting =
   | "yahoo_chart"
   | "eastmoney"
   | "akshare"
+  | "akshare_tencent"
   | "yfinance"
   | "binance_crypto"
   | "wind"
@@ -24,6 +25,7 @@ export type KlinesDataSourceMeta =
   | "yahoo_chart"
   | "eastmoney"
   | "akshare"
+  | "akshare_tencent"
   | "yfinance"
   | "binance_crypto"
   | "wind"
@@ -37,6 +39,7 @@ export function parseKlinesDataSourceSetting(raw: unknown): KlinesDataSourceSett
     raw === "yahoo_chart" ||
     raw === "eastmoney" ||
     raw === "akshare" ||
+    raw === "akshare_tencent" ||
     raw === "yfinance" ||
     raw === "binance_crypto" ||
     raw === "wind" ||
@@ -69,6 +72,7 @@ export function resolveEffectiveKlinesSource(params: {
   }
   if (mode === "eastmoney") return "eastmoney";
   if (mode === "akshare") return "akshare";
+  if (mode === "akshare_tencent") return "akshare_tencent";
   if (mode === "yfinance") return "yfinance";
   if (mode === "yahoo_chart") return "yahoo_chart";
   if (mode === "tushare_daily") {
@@ -246,10 +250,11 @@ async function fetchYahooChartJson(
   ticker: string,
   period1Sec: number,
   period2Sec: number,
-  interval: string
+  interval: string,
+  settings: BuiltinConnectorInitConfigs,
 ): Promise<YahooChartResponse> {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1Sec}&period2=${period2Sec}&interval=${encodeURIComponent(interval)}`;
-  const res = await fetchWithTimeout(url, {
+  const res = await marketDataFetch("yahoo_chart", settings, url, {
     headers: { "User-Agent": UA, Accept: "application/json" },
   });
   const text = await res.text();
@@ -361,7 +366,10 @@ function dedupeBarsByTimestamp(bars: BarData[]): BarData[] {
  * 起点超出 Yahoo 历史窗口时会被静默 clamp，避免发出注定为空的请求；
  * 单段失败不影响其它段。返回的 K 线会按时间戳去重并升序排列。
  */
-export async function fetchYahooFinanceBars(params: FetchBarsParams): Promise<BarData[]> {
+export async function fetchYahooFinanceBars(
+  params: FetchBarsParams,
+  settings: BuiltinConnectorInitConfigs = {},
+): Promise<BarData[]> {
   const ticker = symbolToYahooSymbol(params.symbol, params.exchange || "");
   if (!ticker) throw new Error("yahoo_chart: empty symbol");
   const startMsRaw = Date.parse(params.startDate);
@@ -392,7 +400,7 @@ export async function fetchYahooFinanceBars(params: FetchBarsParams): Promise<Ba
     const p1 = Math.floor(c.startMs / 1000);
     const p2 = Math.ceil(c.endMs / 1000);
     try {
-      const json = await fetchYahooChartJson(ticker, p1, p2, yahooIv);
+      const json = await fetchYahooChartJson(ticker, p1, p2, yahooIv, settings);
       const bars = parseYahooChartResultToBars(json, params);
       if (bars.length > 0) merged.push(...bars);
     } catch (e) {

@@ -1,5 +1,5 @@
 const DATA_TOOL_PATTERN =
-  /(fetch|get_quote|get_price|get_market_news|get_financial|get_fundamental|get_earnings|klines|bars|news)/i;
+  /(fetch|get_quote|get_price|get_market_news|get_financial|get_fundamental|get_earnings|klines|bars|news|call_team_)/i;
 
 export function detectSemanticToolFailure(toolName: string, value: unknown): string | null {
   if (!DATA_TOOL_PATTERN.test(toolName)) return null;
@@ -28,7 +28,20 @@ function inspect(value: unknown, depth: number): string | null {
   }
   if (typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
-  if (record.error === "no_bars" || record.error === "no_data") return String(record.error);
+  if (record.success === false) {
+    return typeof record.errorMessage === "string" && record.errorMessage.trim()
+      ? normalizeReason(record.errorMessage)
+      : "reported_failure";
+  }
+  if (record.completed === false) return "child_task_timeout";
+  if (typeof record.error === "string" && record.error.trim()) {
+    return normalizeReason(record.error);
+  }
+  if (record.isSynthetic === true || record.synthetic === true) return "synthetic_data";
+  const status = String(record.dataStatus ?? record.evidenceStatus ?? "").toLowerCase();
+  if (["unavailable", "invalid", "synthetic"].includes(status)) {
+    return `data_status_${status}`;
+  }
   if (record.barCount === 0) return "bar_count_zero";
   for (const key of ["bars", "periods", "items", "quotes", "news", "rows"]) {
     const nested = record[key];
@@ -39,4 +52,11 @@ function inspect(value: unknown, depth: number): string | null {
     if (failure) return failure;
   }
   return null;
+}
+
+function normalizeReason(reason: string): string {
+  const value = reason.trim();
+  if (["no_bars", "no_data"].includes(value)) return value;
+  const code = value.match(/^([a-z][a-z0-9_-]{2,80})(?::|$)/i)?.[1];
+  return code ? `nested_error:${code.toLowerCase()}` : "nested_error";
 }

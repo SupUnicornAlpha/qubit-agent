@@ -7,6 +7,7 @@ Install: pip install akshare pandas
 from __future__ import annotations
 
 import re
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -86,6 +87,17 @@ class AKShareConnector(BaseConnector):
         raise ValueError(f"Unknown operation: {operation}")
 
     def _fetch_bars(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        proxy_url = str(params.get("proxyUrl") or "").strip()
+        if proxy_url:
+            os.environ["HTTP_PROXY"] = proxy_url
+            os.environ["HTTPS_PROXY"] = proxy_url
+            os.environ["http_proxy"] = proxy_url
+            os.environ["https_proxy"] = proxy_url
+        else:
+            os.environ.pop("HTTP_PROXY", None)
+            os.environ.pop("HTTPS_PROXY", None)
+            os.environ.pop("http_proxy", None)
+            os.environ.pop("https_proxy", None)
         symbol = str(params.get("symbol", "")).strip()
         exchange = str(params.get("exchange", "")).strip()
         period = str(params.get("period", "1d"))
@@ -97,16 +109,34 @@ class AKShareConnector(BaseConnector):
 
         start_ymd = start_date.replace("-", "")
         end_ymd = end_date.replace("-", "")
+        upstream = str(params.get("upstream", "eastmoney")).strip().lower()
 
         if period == "1d":
-            df = self._ak.stock_zh_a_hist(
-                symbol=code,
-                period="daily",
-                start_date=start_ymd,
-                end_date=end_ymd,
-                adjust="qfq",
-            )
+            if upstream == "tencent":
+                if code.startswith("6"):
+                    prefix = "sh"
+                elif code.startswith(("0", "3")):
+                    prefix = "sz"
+                else:
+                    raise ValueError("akshare_tencent: only Shanghai/Shenzhen A-shares are supported")
+                df = self._ak.stock_zh_a_hist_tx(
+                    symbol=f"{prefix}{code}",
+                    start_date=start_ymd,
+                    end_date=end_ymd,
+                    adjust="qfq",
+                )
+            else:
+                df = self._ak.stock_zh_a_hist(
+                    symbol=code,
+                    period="daily",
+                    start_date=start_ymd,
+                    end_date=end_ymd,
+                    adjust="qfq",
+                )
             return self._daily_df_to_bars(df, symbol, exchange)
+
+        if upstream == "tencent":
+            raise ValueError("akshare_tencent: only daily bars are supported")
 
         min_p = _period_to_ak_minute(period)
         if not min_p:
@@ -130,17 +160,17 @@ class AKShareConnector(BaseConnector):
             return []
         out: list[dict[str, Any]] = []
         for _, row in df.iterrows():
-            date_raw = str(row.get("日期", row.iloc[0]))
+            date_raw = str(row.get("日期", row.get("date", row.iloc[0])))
             out.append(
                 {
                     "symbol": symbol,
                     "exchange": exchange or "UNKNOWN",
-                    "open": float(row.get("开盘", 0)),
-                    "high": float(row.get("最高", 0)),
-                    "low": float(row.get("最低", 0)),
-                    "close": float(row.get("收盘", 0)),
-                    "volume": float(row.get("成交量", 0)),
-                    "turnover": float(row.get("成交额", 0) if "成交额" in row else 0),
+                    "open": float(row.get("开盘", row.get("open", 0))),
+                    "high": float(row.get("最高", row.get("high", 0))),
+                    "low": float(row.get("最低", row.get("low", 0))),
+                    "close": float(row.get("收盘", row.get("close", 0))),
+                    "volume": float(row.get("成交量", row.get("amount", row.get("volume", 0)))),
+                    "turnover": float(row.get("成交额", row.get("turnover", 0))),
                     "timestamp": _iso_from_cn_datetime(date_raw),
                 }
             )

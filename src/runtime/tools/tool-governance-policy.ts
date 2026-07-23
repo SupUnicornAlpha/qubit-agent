@@ -111,6 +111,18 @@ function failureDomain(targetName: string): string {
       : /quote|price|kline|bar|historical|indicator/.test(tool)
         ? "market"
         : tool;
+  /**
+   * 行情/新闻工具虽然名称和 transport 不同，最终常落到同一组公共上游或同一个
+   * connector router。语义性失败（无数据、synthetic、证据不可用）后若仍按
+   * provider 分桶，Agent 会从 qubit-data 换名到 financex，再由 financex fallback
+   * 回 qubit-data，形成“换工具但没换失败域”的循环。
+   *
+   * 只有已经确认并被缓存的语义/永久/熔断失败会跨 provider 共享；普通瞬时错误
+   * 不入缓存，因此不会阻止一次真正的 fallback。
+   */
+  if (["market", "news", "fundamentals"].includes(dataKind)) {
+    return `evidence::${dataKind}`;
+  }
   return `${provider}::${dataKind}`;
 }
 

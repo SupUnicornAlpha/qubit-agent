@@ -78,9 +78,7 @@ function todayIso(): string {
 async function fallbackGetQuote(args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const symbols = pickSymbols(args);
   if (symbols.length === 0) {
-    throw new Error(
-      "financex_fallback get_quote: 必须传 symbol / ticker / symbols / tickers 之一"
-    );
+    throw new Error("financex_fallback get_quote: 必须传 symbol / ticker / symbols / tickers 之一");
   }
 
   /**
@@ -130,9 +128,7 @@ async function fallbackGetQuote(args: Record<string, unknown>): Promise<Record<s
     }
   }
 
-  return symbols.length === 1
-    ? quotes[0] ?? {}
-    : { quotes, count: quotes.length };
+  return symbols.length === 1 ? (quotes[0] ?? {}) : { quotes, count: quotes.length };
 }
 
 /** financex get_historical_data fallback */
@@ -144,8 +140,7 @@ async function fallbackGetHistoricalData(
     throw new Error("financex_fallback get_historical_data: 必须传 symbol / ticker");
   }
   const sym = symbols[0]!;
-  const startDate =
-    pickStringField(args, "start_date", "from", "from_date") ?? dateNDaysAgo(365);
+  const startDate = pickStringField(args, "start_date", "from", "from_date") ?? dateNDaysAgo(365);
   const endDate = pickStringField(args, "end_date", "to", "to_date") ?? todayIso();
   /**
    * financex 用 interval 字段（1d/1h/...）；我们只支持日线 fallback —— 高频 fallback
@@ -196,7 +191,27 @@ async function fallbackGetMarketNews(
   const limit =
     typeof limitRaw === "number" && Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 12;
 
-  const brief = await queryMarketNewsBrief({ symbol: sym, exchange: "", limit });
+  const requestedMode = pickStringField(args, "mode", "news_mode");
+  const mode = requestedMode === "historical_validation" ? requestedMode : "current";
+  const aliases = [
+    pickStringField(args, "company_name", "companyName", "name"),
+    ...(Array.isArray(args["keywords"])
+      ? args["keywords"].filter((value): value is string => typeof value === "string")
+      : []),
+  ].filter((value): value is string => Boolean(value));
+  const brief = await queryMarketNewsBrief({ symbol: sym, exchange: "", limit, mode, aliases });
+  if (brief.symbolNews.length === 0) {
+    const rejectionSummary = brief.evidence
+      ? Object.entries(brief.evidence.rejected)
+          .filter(([, count]) => count > 0)
+          .map(([reason, count]) => `${reason}=${count}`)
+          .join(",")
+      : "none_accepted";
+    throw new Error(
+      `news_evidence_unavailable: no ${mode === "current" ? "fresh relevant" : "relevant"} ` +
+        `news for ${sym}; rejected=${rejectionSummary || "none_accepted"}`
+    );
+  }
   const headlines = [...brief.symbolNews, ...brief.sectorNews].slice(0, limit).map((item) => ({
     headline: item.title,
     title: item.title,
@@ -213,6 +228,7 @@ async function fallbackGetMarketNews(
     headlines,
     count: headlines.length,
     sector: brief.sectorLabel,
+    evidence: brief.evidence,
     fallback_source: "qubit-news/yahoo+connector",
   };
 }
@@ -261,10 +277,7 @@ export async function tryFinancexFallback(input: {
         original_tool: input.toolName,
         reason: input.reason,
         original_error: input.originalError?.message ?? null,
-        routed_to:
-          input.toolName === "get_market_news"
-            ? "qubit-news"
-            : "qubit-data",
+        routed_to: input.toolName === "get_market_news" ? "qubit-news" : "qubit-data",
       },
     },
   };

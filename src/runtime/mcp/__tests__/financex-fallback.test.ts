@@ -110,7 +110,19 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
       queryMarketNewsBrief: async (params: { symbol: string }) => {
         mockNewsCalled = true;
         if (params.symbol === "EMPTY") {
-          return { sectorLabel: null, sectorHeadlineTicker: null, symbolNews: [], sectorNews: [] };
+          return {
+            sectorLabel: null,
+            sectorHeadlineTicker: null,
+            symbolNews: [],
+            sectorNews: [],
+            evidence: {
+              mode: "current",
+              maxAgeDays: 7,
+              status: "unavailable",
+              latestPublishedAt: null,
+              rejected: { synthetic: 1, stale: 2, irrelevant: 3, missing_or_invalid_time: 0 },
+            },
+          };
         }
         return {
           sectorLabel: "Technology",
@@ -120,12 +132,19 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
               id: "n1",
               title: "AAPL beats earnings",
               content: "Apple reported strong Q2 earnings...",
-              publishedAt: "2026-06-05T12:00:00.000Z",
+              publishedAt: new Date().toISOString(),
               source: "Reuters",
               url: "https://reuters.com/aapl1",
             },
           ],
           sectorNews: [],
+          evidence: {
+            mode: "current",
+            maxAgeDays: 7,
+            status: "ready",
+            latestPublishedAt: new Date().toISOString(),
+            rejected: { synthetic: 0, stale: 0, irrelevant: 0, missing_or_invalid_time: 0 },
+          },
         };
       },
     }));
@@ -235,5 +254,16 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
     expect(out.headlines[0]!.headline).toMatch(/AAPL beats/);
     expect(out.sector).toBe("Technology");
     expect(mockNewsCalled).toBe(true);
+  });
+
+  test("get_market_news 没有新鲜且相关的标的新闻 → 明确失败", async () => {
+    await expect(
+      tryFinancexFallback({
+        serverName: "mcp-financex",
+        toolName: "get_market_news",
+        arguments: { symbol: "EMPTY" },
+        reason: "tool_error",
+      })
+    ).rejects.toThrow(/news_evidence_unavailable.*synthetic=1.*stale=2.*irrelevant=3/);
   });
 });

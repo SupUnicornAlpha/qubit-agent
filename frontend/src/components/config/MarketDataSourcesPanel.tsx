@@ -134,6 +134,7 @@ export const MarketDataSourcesPanel: FC = () => {
                   <div style={styles.sourceName}>{source.name}</div>
                   <code style={styles.code}>{source.id}</code>
                   <div style={styles.vendor}>{source.vendor}</div>
+                  <div style={styles.muted}>upstream: {source.upstreamFamily}</div>
                 </td>
                 <td style={styles.td}>
                   <div style={styles.tags}>{source.supportedMarkets.map((v) => <span key={v} style={styles.tag}>{v}</span>)}</div>
@@ -144,9 +145,13 @@ export const MarketDataSourcesPanel: FC = () => {
                   <span style={source.credentialsReady ? styles.good : styles.bad}>
                     {source.credentialsReady ? "已就绪" : "缺失"}
                   </span>
+                  <div style={styles.muted}>网络 {source.networkMode} / {source.networkRoute}</div>
                 </td>
                 <td style={styles.td}>
                   <strong style={healthTone(source.healthStatus)}>{source.healthStatus}</strong>
+                  <div style={source.availabilityStatus === "ready" ? styles.good : styles.bad}>
+                    {source.availabilityStatus}
+                  </div>
                   <div style={styles.muted}>circuit: {source.circuitState}</div>
                   <button type="button" className="qb-btn-secondary" style={styles.smallButton} disabled={checking !== null} onClick={() => void runCheck(source.id)}>
                     {checking === source.id ? "检查中…" : "检查"}
@@ -161,6 +166,8 @@ export const MarketDataSourcesPanel: FC = () => {
                   <div style={source.lastError ? styles.lastError : styles.muted} title={source.lastError ?? undefined}>
                     {source.lastError ?? "无最近错误"}
                   </div>
+                  {source.failureKind ? <div style={styles.muted}>分类 {source.failureKind}</div> : null}
+                  {source.retryAt ? <div style={styles.muted}>重试 {compactTime(source.retryAt)}</div> : null}
                 </td>
                 <td style={styles.td}>
                   <div style={styles.priority}>

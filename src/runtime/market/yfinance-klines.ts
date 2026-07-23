@@ -3,6 +3,11 @@ import type { BarData, FetchBarsParams } from "../../connectors/data/data.connec
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
 import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
+import {
+  type BuiltinConnectorInitConfigs,
+  loadBuiltinConnectorSettings,
+} from "../config/builtin-connector-settings";
+import { marketDataProxyForPython } from "./market-data-network";
 
 /**
  * yfinance Python bridge — sister to `akshare-klines.ts`.
@@ -76,7 +81,10 @@ export async function probeYfinanceAvailable(): Promise<boolean> {
 }
 
 /** 通过 Python yfinance 拉取 OHLCV（免费、需 `pip install yfinance pandas`）。 */
-export async function fetchYfinanceBars(params: FetchBarsParams): Promise<BarData[]> {
+export async function fetchYfinanceBars(
+  params: FetchBarsParams,
+  settings: BuiltinConnectorInitConfigs = {},
+): Promise<BarData[]> {
   const client = await getYfinanceBridge();
   const bars = (await client.execute("fetch_bars", {
     symbol: params.symbol,
@@ -84,6 +92,7 @@ export async function fetchYfinanceBars(params: FetchBarsParams): Promise<BarDat
     period: params.period,
     startDate: params.startDate,
     endDate: params.endDate,
+    proxyUrl: marketDataProxyForPython(settings, "yfinance"),
   })) as BarData[];
 
   let sorted = [...bars].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
@@ -147,11 +156,13 @@ export async function fetchYfinanceDividends(
   params: YfinanceFetchParams
 ): Promise<YfinanceDividendItem[]> {
   const client = await getYfinanceBridge();
+  const settings = await loadBuiltinConnectorSettings();
   return (await client.execute("fetch_dividends", {
     symbol: params.symbol,
     exchange: params.exchange ?? "",
     startDate: params.startDate ?? "",
     endDate: params.endDate ?? "",
+    proxyUrl: marketDataProxyForPython(settings, "yfinance"),
   })) as YfinanceDividendItem[];
 }
 
@@ -159,9 +170,11 @@ export async function fetchYfinanceEarnings(
   params: YfinanceFetchParams
 ): Promise<YfinanceEarningsItem[]> {
   const client = await getYfinanceBridge();
+  const settings = await loadBuiltinConnectorSettings();
   return (await client.execute("fetch_earnings", {
     symbol: params.symbol,
     exchange: params.exchange ?? "",
+    proxyUrl: marketDataProxyForPython(settings, "yfinance"),
   })) as YfinanceEarningsItem[];
 }
 
@@ -169,8 +182,10 @@ export async function fetchYfinanceAssetInfo(
   params: YfinanceFetchParams
 ): Promise<YfinanceAssetInfo> {
   const client = await getYfinanceBridge();
+  const settings = await loadBuiltinConnectorSettings();
   return (await client.execute("fetch_asset_info", {
     symbol: params.symbol,
     exchange: params.exchange ?? "",
+    proxyUrl: marketDataProxyForPython(settings, "yfinance"),
   })) as YfinanceAssetInfo;
 }

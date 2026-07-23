@@ -38,7 +38,7 @@ function rowToNewsData(row: Record<string, unknown>, index: number): NewsData | 
         ? row.date
         : typeof row.time === "string"
           ? row.time
-          : new Date().toISOString();
+          : "";
   const source = typeof row.source === "string" ? row.source : "external";
   const symbols = Array.isArray(row.symbols)
     ? row.symbols.map(String)
@@ -58,13 +58,14 @@ function rowToNewsData(row: Record<string, unknown>, index: number): NewsData | 
     publishedAt,
     source,
     symbols,
-    sentimentScore,
+    ...(sentimentScore !== undefined ? { sentimentScore } : {}),
   };
 }
 
 /**
  * Built-in news connector: optional HTTP JSON feed when `newsApiBaseUrl` is set in connector init
- * (persisted via UI → SQLite); otherwise keyword/symbol stub rows.
+ * (persisted via UI → SQLite). Synthetic rows are opt-in and are always marked so
+ * they cannot be mistaken for current research evidence.
  */
 export class QubitNativeNewsConnector extends BaseConnector {
   readonly meta: ConnectorMeta = {
@@ -74,14 +75,15 @@ export class QubitNativeNewsConnector extends BaseConnector {
     capabilities: ["fetch_news", "fetch_news_sentiment", "extract_event", "score_sentiment"],
     assetClasses: ["stock"],
     latencyProfile: "batch",
-    description: "Built-in news: HTTP JSON when configured; otherwise stub rows.",
+    description:
+      "Built-in news: HTTP JSON when configured; optional marked synthetic rows for demos.",
   };
 
   private newsApiBaseUrl: string | undefined;
   private newsApiKey: string | undefined;
-  private newsFetchPath: string;
-  private newsTimeoutMs: number;
-  private syntheticWhenEmpty: boolean;
+  private newsFetchPath = "/";
+  private newsTimeoutMs = 15_000;
+  private syntheticWhenEmpty = false;
 
   protected async onInit(config: ConnectorConfig): Promise<void> {
     this.newsApiBaseUrl = cfgStr(config, "newsApiBaseUrl");
@@ -90,14 +92,19 @@ export class QubitNativeNewsConnector extends BaseConnector {
     this.newsTimeoutMs = cfgNum(config, "newsTimeoutMs") ?? 15_000;
     const swe = config["syntheticWhenEmpty"];
     if (typeof swe === "boolean") this.syntheticWhenEmpty = swe;
-    else this.syntheticWhenEmpty = cfgStr(config, "syntheticWhenEmpty") !== "false";
+    else this.syntheticWhenEmpty = cfgStr(config, "syntheticWhenEmpty") === "true";
   }
 
   protected async onHealthcheck(): Promise<Omit<HealthCheckResult, "latencyMs" | "checkedAt">> {
     if (this.newsApiBaseUrl) {
       return { status: "healthy", message: `qubit-news: HTTP ${this.newsApiBaseUrl}` };
     }
-    return { status: "healthy", message: "qubit-news: stub mode (no news API URL in settings)" };
+    return {
+      status: "degraded",
+      message: this.syntheticWhenEmpty
+        ? "qubit-news: synthetic demo mode; unavailable for research evidence"
+        : "qubit-news: no news API URL configured",
+    };
   }
 
   protected async onShutdown(): Promise<void> {}
@@ -149,7 +156,9 @@ export class QubitNativeNewsConnector extends BaseConnector {
     if (this.newsApiBaseUrl) {
       try {
         const base = this.newsApiBaseUrl.replace(/\/$/, "");
-        const path = this.newsFetchPath.startsWith("/") ? this.newsFetchPath : `/${this.newsFetchPath}`;
+        const path = this.newsFetchPath.startsWith("/")
+          ? this.newsFetchPath
+          : `/${this.newsFetchPath}`;
         const url = new URL(base + path);
         url.searchParams.set("startDate", p.startDate ?? "");
         url.searchParams.set("endDate", p.endDate ?? "");
@@ -171,7 +180,9 @@ export class QubitNativeNewsConnector extends BaseConnector {
             throw new Error(`news HTTP ${res.status}`);
           }
           const json = (await res.json()) as unknown;
-          const mapped = this.parseNewsJson(json);
+          const mapped = this.parseNewsJson(json).filter((item) =>
+            this.isWithinRequestedWindow(item, p.startDate, p.endDate)
+          );
           if (mapped.length > 0) return mapped;
           if (!this.syntheticWhenEmpty) return [];
         } finally {
@@ -186,17 +197,18 @@ export class QubitNativeNewsConnector extends BaseConnector {
     if (keywords.length === 0 && symbols.length === 0) {
       return [];
     }
+    if (!this.syntheticWhenEmpty) return [];
     const now = new Date().toISOString();
     return [
       {
         id: "stub-1",
         title: `[stub] News for ${symbols.join(",") || keywords.join(",")}`,
-        content:
-          "Synthetic news row from QubitNativeNewsConnector; set news API URL in 配置中心.",
+        content: "Synthetic news row from QubitNativeNewsConnector; set news API URL in 配置中心.",
         publishedAt: now,
         source: "qubit-native",
         symbols,
         sentimentScore: 0,
+        isSynthetic: true,
       },
     ];
   }
@@ -220,6 +232,20 @@ export class QubitNativeNewsConnector extends BaseConnector {
       }
     });
     return out;
+  }
+
+  private isWithinRequestedWindow(
+    item: NewsData,
+    startDate?: string,
+    endDate?: string
+  ): boolean {
+    const publishedMs = Date.parse(item.publishedAt);
+    if (!Number.isFinite(publishedMs)) return false;
+    const startMs = startDate ? Date.parse(`${startDate.slice(0, 10)}T00:00:00.000Z`) : Number.NaN;
+    const endMs = endDate ? Date.parse(`${endDate.slice(0, 10)}T23:59:59.999Z`) : Number.NaN;
+    if (Number.isFinite(startMs) && publishedMs < startMs) return false;
+    if (Number.isFinite(endMs) && publishedMs > endMs) return false;
+    return true;
   }
 
   private extractEvent(payload: unknown): { events: Array<Record<string, unknown>> } {

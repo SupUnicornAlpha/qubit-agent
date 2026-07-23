@@ -20,6 +20,7 @@ Install: pip install yfinance pandas
 from __future__ import annotations
 
 import re
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -128,6 +129,17 @@ class YFinanceConnector(BaseConnector):
     def execute(self, operation: str, payload: dict[str, Any]) -> Any:
         if self._yf is None:
             raise RuntimeError("YFinanceConnector not initialized")
+        proxy_url = str(payload.get("proxyUrl") or "").strip()
+        if proxy_url:
+            os.environ["HTTP_PROXY"] = proxy_url
+            os.environ["HTTPS_PROXY"] = proxy_url
+            os.environ["http_proxy"] = proxy_url
+            os.environ["https_proxy"] = proxy_url
+        else:
+            os.environ.pop("HTTP_PROXY", None)
+            os.environ.pop("HTTPS_PROXY", None)
+            os.environ.pop("http_proxy", None)
+            os.environ.pop("https_proxy", None)
         if operation == "fetch_bars":
             return self._fetch_bars(payload)
         if operation == "fetch_dividends":

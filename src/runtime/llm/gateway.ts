@@ -747,6 +747,22 @@ async function consumeResponsesStream(
   };
 }
 
+export function normalizeOpenAICompatibleBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+}
+
+export function resolveOpenAICompatibleChatCompletionsUrl(baseUrl: string): string {
+  return `${normalizeOpenAICompatibleBaseUrl(baseUrl)}/chat/completions`;
+}
+
+export function normalizeOpenAICompatibleModel(provider: string, model: string): string {
+  const normalized = model.trim();
+  if (provider === "zhipu") {
+    return normalized.replace(/^glm(?=\d)/i, "glm-");
+  }
+  return normalized;
+}
+
 async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const provider = input.config.provider;
   const defaults: Record<string, { envKey: string; baseUrl: string; model: string }> = {
@@ -771,12 +787,14 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   if (!apiKey) {
     throw new Error(`${def.envKey} is required for ${provider} provider`);
   }
+  const configuredBaseUrl = input.config.baseUrl ?? def.baseUrl;
+  const normalizedBaseUrl = normalizeOpenAICompatibleBaseUrl(configuredBaseUrl);
   const client = new OpenAI({
     apiKey,
-    baseURL: input.config.baseUrl ?? def.baseUrl,
+    baseURL: normalizedBaseUrl,
   });
   const startedAt = Date.now();
-  const resolvedModel = input.config.model || def.model;
+  const resolvedModel = normalizeOpenAICompatibleModel(provider, input.config.model || def.model);
   const sampling = input.sampling ?? {};
   const temperature = sampling.temperature ?? 0.1;
   /**
@@ -801,7 +819,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   });
   if (process.env["QUBIT_LLM_COMPAT_STREAM"] !== "1") {
     return runOpenAICompatibleNonStream(input, {
-      baseUrl: input.config.baseUrl ?? def.baseUrl,
+      baseUrl: normalizedBaseUrl,
       apiKey,
       requestBody,
       resolvedModel,
@@ -909,7 +927,7 @@ async function runOpenAICompatibleNonStream(
   };
   delete (body as Record<string, unknown>)["stream_options"];
   const res = await fetchWithTimeout(
-    `${resolved.baseUrl.replace(/\/+$/, "")}/v1/chat/completions`,
+    resolveOpenAICompatibleChatCompletionsUrl(resolved.baseUrl),
     {
       method: "POST",
       headers: {

@@ -16,22 +16,20 @@ type ToolMetaEntry = {
 };
 
 /** 工具分类（配置中心 hover / 筛选） */
-export const TOOL_CATALOG_CATEGORIES: Record<
-  ToolCatalogCategory,
-  { label: string; hint: string }
-> = {
-  orchestration: { label: "编排协作", hint: "任务拆解、派单、团队分析、信号融合" },
-  market: { label: "行情数据", hint: "K 线、Tick、快照、财务数据代理" },
-  research: { label: "量化研究", hint: "因子、指标、形态、估值、实验" },
-  backtest: { label: "回测验证", hint: "历史回测与任务状态查询" },
-  trading: { label: "交易执行", hint: "下单、撤单、成交、纸交易" },
-  risk: { label: "风控合规", hint: "风险评估、签核、集中度与流动性" },
-  sentiment: { label: "舆情事件", hint: "新闻、情绪、事件抽取" },
-  macro: { label: "宏观策略", hint: "宏观指标与政策框架" },
-  memory: { label: "记忆知识", hint: "跨会话记忆读写" },
-  audit: { label: "审计报告", hint: "留痕与报告生成" },
-  exec: { label: "命令执行", hint: "本地 CLI 工具 + 外部 agentic CLI 子代理" },
-};
+export const TOOL_CATALOG_CATEGORIES: Record<ToolCatalogCategory, { label: string; hint: string }> =
+  {
+    orchestration: { label: "编排协作", hint: "任务拆解、派单、团队分析、信号融合" },
+    market: { label: "行情数据", hint: "K 线、Tick、快照、财务数据代理" },
+    research: { label: "量化研究", hint: "因子、指标、形态、估值、实验" },
+    backtest: { label: "回测验证", hint: "历史回测与任务状态查询" },
+    trading: { label: "交易执行", hint: "下单、撤单、成交、纸交易" },
+    risk: { label: "风控合规", hint: "风险评估、签核、集中度与流动性" },
+    sentiment: { label: "舆情事件", hint: "新闻、情绪、事件抽取" },
+    macro: { label: "宏观策略", hint: "宏观指标与政策框架" },
+    memory: { label: "记忆知识", hint: "跨会话记忆读写" },
+    audit: { label: "审计报告", hint: "留痕与报告生成" },
+    exec: { label: "命令执行", hint: "本地 CLI 工具 + 外部 agentic CLI 子代理" },
+  };
 
 const TOOL_META: Record<string, ToolMetaEntry> = {
   // 编排
@@ -56,7 +54,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "对 run_analyst_team 结果做全局兜底总结（仅在 confidence<0.6 / 信号分歧 / 签到不全时调用；高置信场景不需调）。入参：fusion_summary, ticker, msa_signal, msa_confidence, attended_roles?, missing_roles?",
     category: "orchestration",
   },
-  fuse_signals: { description: "合并多分析师 buy/sell/hold 信号为统一结论", category: "orchestration" },
+  fuse_signals: {
+    description: "合并多分析师 buy/sell/hold 信号为统一结论",
+    category: "orchestration",
+  },
   check_risk: {
     description: "编排链路中的风控检查（调用 qubit-risk）",
     category: "orchestration",
@@ -64,7 +65,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     replacedBy: "evaluate_risk",
     deprecationReason: "与 evaluate_risk 编排重复，统一走规范风控入口",
   },
-  edit_agent_pack: { description: "编辑本 Agent 的 soul/user/memory/prompt 文件", category: "orchestration" },
+  edit_agent_pack: {
+    description: "编辑本 Agent 的 soul/user/memory/prompt 文件",
+    category: "orchestration",
+  },
   call_mcp: {
     description: "调用 MCP 白名单中的外部工具（params: serverName, mcpTool, arguments）",
     category: "orchestration",
@@ -111,9 +115,18 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
   },
   fetch_ticks: { description: "拉取 Tick/盘口快照（简化实现）", category: "market" },
-  fetch_price_data: { description: "K 线 + 最新技术指标快照（SMA/RSI/MACD/布林）", category: "market" },
-  fetch_financial_data: { description: "价格统计 + 基本面占位；完整财报需外接数据源", category: "market" },
-  fetch_fundamentals: { description: "基本面数据结构（无财报源时为空 periods）", category: "market" },
+  fetch_price_data: {
+    description: "K 线 + 最新技术指标快照（SMA/RSI/MACD/布林）",
+    category: "market",
+  },
+  fetch_financial_data: {
+    description: "价格统计 + 基本面占位；完整财报需外接数据源",
+    category: "market",
+  },
+  fetch_fundamentals: {
+    description: "基本面数据结构（无财报源时为空 periods）",
+    category: "market",
+  },
   write_snapshot: { description: "写入行情/研究数据快照供下游复用", category: "market" },
 
   // 研究
@@ -154,7 +167,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   compute_indicators: { description: "计算 SMA/RSI/MACD/布林带等指标序列", category: "research" },
   detect_patterns: { description: "识别市场状态（趋势/震荡）与金叉/死叉", category: "research" },
-  compute_valuation: { description: "估值代理：现价相对 252 日均价（非财报 PE）", category: "research" },
+  compute_valuation: {
+    description: "估值代理：现价相对 252 日均价（非财报 PE）",
+    category: "research",
+  },
 
   // 回测
   run_backtest: { description: "SMA 金叉死叉多空回测，写入 backtest_job", category: "backtest" },
@@ -175,8 +191,16 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   assess_liquidity: { description: "评估订单相对成交量的冲击比例", category: "risk" },
 
   // 舆情
-  fetch_news: { description: "抓取新闻列表（HTTP 源或 stub）", category: "sentiment" },
-  fetch_news_sentiment: { description: "新闻列表 + 聚合情绪得分", category: "sentiment" },
+  fetch_news: {
+    description:
+      "抓取带发布时间和来源的新闻。当前行情研究只接受新鲜、标的相关、非 synthetic 证据；未配置真实新闻源时返回空，不生成占位新闻。",
+    category: "sentiment",
+  },
+  fetch_news_sentiment: {
+    description:
+      "对通过时效性/相关性证据门的新闻聚合情绪；空数据、过期或 synthetic 结果必须降级，不得当作中性新闻。",
+    category: "sentiment",
+  },
   extract_event: {
     description: "从文本抽取结构化事件（简化 stub）",
     category: "sentiment",
@@ -203,7 +227,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     replacedBy: "compute_macro_indicators",
     deprecationReason: "1 行别名，统一走 compute_macro_indicators",
   },
-  compute_macro_indicators: { description: "基准指数推导宏观 regime（risk_on/off 标签）", category: "macro" },
+  compute_macro_indicators: {
+    description: "基准指数推导宏观 regime（risk_on/off 标签）",
+    category: "macro",
+  },
 
   // 记忆
   write_memory: { description: "写入项目/Agent 中期或长期记忆", category: "memory" },
@@ -233,7 +260,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "完成 5+ 步复杂任务/修复 tricky 错误/发现非平凡流程后调；落 agent_skill。description 用于 LLM 检索（≤500 字），bodyMd 为完整流程（≤16KB）。下次匹配 goal 时会被自动召回到 user prompt。",
     category: "memory",
   },
-  "skill.view": { description: "按 id 或 name 查看完整 skill（含 bodyMd / 使用计数）", category: "memory" },
+  "skill.view": {
+    description: "按 id 或 name 查看完整 skill（含 bodyMd / 使用计数）",
+    category: "memory",
+  },
   "skill.list": {
     description: "列出当前项目的全部 skill（默认排除 archived；可传 state 过滤）",
     category: "memory",
@@ -411,7 +441,11 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
 };
 
-function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: string): ToolCatalogEntry {
+function metaFor(
+  name: string,
+  kind: ToolCatalogEntry["kind"],
+  connector?: string
+): ToolCatalogEntry {
   if (isTopologyTeamTool(name)) {
     const role = parseRoleFromTopologyTeamTool(name);
     return {
@@ -424,9 +458,7 @@ function metaFor(name: string, kind: ToolCatalogEntry["kind"], connector?: strin
   const m = TOOL_META[name];
   const description =
     m?.description ??
-    (kind === "connector" && connector
-      ? `经 ${connector} 连接器执行`
-      : "内置工具");
+    (kind === "connector" && connector ? `经 ${connector} 连接器执行` : "内置工具");
   const entry: ToolCatalogEntry = {
     name,
     kind,

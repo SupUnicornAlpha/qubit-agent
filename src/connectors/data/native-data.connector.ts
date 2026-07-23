@@ -2,7 +2,7 @@ import {
   type BuiltinConnectorInitConfigs,
   loadBuiltinConnectorSettings,
 } from "../../runtime/config/builtin-connector-settings";
-import { fetchAkshareBars } from "../../runtime/market/akshare-klines";
+import { fetchAkshareBars, fetchAkshareTencentBars } from "../../runtime/market/akshare-klines";
 import { fetchBinanceBars, fetchBinanceTicker } from "../../runtime/market/binance-klines";
 import { isCryptoMarket } from "../../runtime/market/crypto-market";
 import { fetchEastMoneyBars, isChinaAShareMarket } from "../../runtime/market/eastmoney-klines";
@@ -24,6 +24,7 @@ import {
   recordMarketDataSourceAttempt,
   selectMarketDataSourcePlan,
 } from "../../runtime/market/market-data-source-control";
+import { marketDataFetch } from "../../runtime/market/market-data-network";
 import { resolveTickerMarket } from "../../runtime/market/resolve-ticker-market";
 import {
   fetchYfinanceAssetInfo,
@@ -88,9 +89,12 @@ interface TushareDailyPayload {
 async function tushareCall(
   token: string,
   apiName: string,
-  params: Record<string, string>
+  params: Record<string, string>,
+  settings: BuiltinConnectorInitConfigs,
 ): Promise<TushareDailyPayload> {
-  const res = await fetchWithTimeout(
+  const res = await marketDataFetch(
+    "tushare_daily",
+    settings,
     TUSHARE_ENDPOINT,
     {
       method: "POST",
@@ -440,7 +444,7 @@ export class QubitNativeDataConnector extends DataConnector {
       }
       if (!forcedSource && isChinaAShareMarket(params.symbol, params.exchange || "")) {
         try {
-          const fallback = await fetchEastMoneyBars(params);
+          const fallback = await fetchEastMoneyBars(params, liveSettings);
           if (fallback.length > 0) {
             console.warn(
               `[qubit-data] Wind unavailable or empty; fell back to East Money for ${params.symbol}`
@@ -461,7 +465,7 @@ export class QubitNativeDataConnector extends DataConnector {
           ts_code: tsCode,
           start_date: parseIsoToYmd(params.startDate),
           end_date: parseIsoToYmd(params.endDate),
-        });
+        }, liveSettings);
         const fields = data.fields ?? [];
         const items = data.items ?? [];
         const iTrade = idx(fields, "trade_date");
@@ -536,7 +540,7 @@ export class QubitNativeDataConnector extends DataConnector {
       if (mode === "auto" && isCryptoMarket(params.symbol, params.exchange || "")) {
         try {
           const ySym = symbolToYahooSymbol(params.symbol, params.exchange || "");
-          const bars = await fetchYahooFinanceBars(params);
+          const bars = await fetchYahooFinanceBars(params, liveSettings);
           if (bars.length > 0) {
             console.warn(`[qubit-data] Binance empty; fell back to Yahoo (${ySym})`);
             return bars;
@@ -550,7 +554,7 @@ export class QubitNativeDataConnector extends DataConnector {
 
     if (effective === "akshare") {
       try {
-        const bars = await fetchAkshareBars(params);
+        const bars = await fetchAkshareBars(params, liveSettings);
         if (bars.length > 0) return bars;
         this.logFetchBarsEmpty(
           `AKShare returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
@@ -564,7 +568,7 @@ export class QubitNativeDataConnector extends DataConnector {
       }
       if (!forcedSource && isChinaAShareMarket(params.symbol, params.exchange || "")) {
         try {
-          const fallback = await fetchEastMoneyBars(params);
+          const fallback = await fetchEastMoneyBars(params, liveSettings);
           if (fallback.length > 0) {
             console.warn(
               `[qubit-data] AKShare unavailable or empty; fell back to East Money for ${params.symbol}`
@@ -578,9 +582,26 @@ export class QubitNativeDataConnector extends DataConnector {
       if (mode === "akshare") return [];
     }
 
+    if (effective === "akshare_tencent") {
+      try {
+        const bars = await fetchAkshareTencentBars(params, liveSettings);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `AKShare Tencent returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `AKShare Tencent request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+        if (forcedSource) throw e;
+      }
+      if (mode === "akshare_tencent") return [];
+    }
+
     if (effective === "yfinance") {
       try {
-        const bars = await fetchYfinanceBars(params);
+        const bars = await fetchYfinanceBars(params, liveSettings);
         if (bars.length > 0) return bars;
         this.logFetchBarsEmpty(
           `yfinance returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
@@ -593,7 +614,7 @@ export class QubitNativeDataConnector extends DataConnector {
         if (forcedSource) throw e;
       }
       if (!forcedSource) try {
-        const fallback = await fetchYahooFinanceBars(params);
+        const fallback = await fetchYahooFinanceBars(params, liveSettings);
         if (fallback.length > 0) {
           console.warn(
             `[qubit-data] yfinance unavailable or empty; fell back to Yahoo Chart for ${params.symbol}`
@@ -608,7 +629,7 @@ export class QubitNativeDataConnector extends DataConnector {
 
     if (effective === "eastmoney") {
       try {
-        const bars = await fetchEastMoneyBars(params);
+        const bars = await fetchEastMoneyBars(params, liveSettings);
         if (bars.length > 0) return bars;
         this.logFetchBarsEmpty(
           `East Money returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
@@ -627,7 +648,7 @@ export class QubitNativeDataConnector extends DataConnector {
     if (effective === "yahoo_chart" || (effective === "eastmoney" && mode === "auto")) {
       try {
         const ySym = symbolToYahooSymbol(params.symbol, params.exchange || "");
-        const bars = await fetchYahooFinanceBars(params);
+        const bars = await fetchYahooFinanceBars(params, liveSettings);
         if (bars.length === 0) {
           this.logFetchBarsEmpty(
             `Yahoo Finance returned no usable OHLCV (yahooSymbol=${ySym}, period=${params.period}, window=${params.startDate}…${params.endDate})`

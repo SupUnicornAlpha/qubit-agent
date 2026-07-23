@@ -7,6 +7,15 @@ import type { RuntimeHandlerContext } from "../types";
 import { buildTaskResult } from "./task-result";
 
 /**
+ * Topology dispatch is a child task of an already-running workflow. Its instance
+ * may fail or time out, but only the orchestrator that owns the user-facing run
+ * may decide the workflow terminal state.
+ */
+export function ownsWorkflowTerminalState(payload: TaskAssignPayload): boolean {
+  return payload.taskType !== "topology_dispatch";
+}
+
+/**
  * Run the shared ReAct loop for an A2A TASK_ASSIGN, then reply with TASK_RESULT.
  */
 export async function runA2aReactTaskAssign(
@@ -19,6 +28,10 @@ export async function runA2aReactTaskAssign(
   const runId = randomUUID();
   const traceId = msg.traceId;
   const workflowId = msg.workflowId;
+  const ownsTerminalState = ownsWorkflowTerminalState(payload);
+  const definition = ownsTerminalState
+    ? ctx.definition
+    : { ...ctx.definition, maxIterations: Math.min(ctx.definition.maxIterations, 5) };
 
   /**
    * 自研 snapshot 续跑：workflow_resume 的 payload.params.resume=true 时，
@@ -33,12 +46,12 @@ export async function runA2aReactTaskAssign(
       runId,
       workflowId,
       traceId,
-      def: ctx.definition,
+      def: definition,
       payload,
       receiverAgent: ctx.instance.instanceId,
       streamLoopKind: "native",
       streamSource: "a2a",
-      updateWorkflowStatus: true,
+      updateWorkflowStatus: ownsTerminalState,
       resume,
     });
 
@@ -58,7 +71,7 @@ export async function runA2aReactTaskAssign(
       return;
     }
 
-    onWorkflowTerminal(workflowId, terminalStatus);
+    if (ownsTerminalState) onWorkflowTerminal(workflowId, terminalStatus);
 
     await ctx.send({
       workflowId,
@@ -83,7 +96,7 @@ export async function runA2aReactTaskAssign(
      *   - TASK_RESULT(success=false)：A2A 上游 handler 需要的失败回执
      */
     const message = err instanceof Error ? err.message : String(err);
-    onWorkflowTerminal(workflowId, "failed");
+    if (ownsTerminalState) onWorkflowTerminal(workflowId, "failed");
 
     await ctx.send({
       workflowId,
@@ -97,6 +110,7 @@ export async function runA2aReactTaskAssign(
       }),
       priority: msg.priority,
     });
+    return undefined;
   } finally {
     setTimeout(() => stepStreamBus.close(runId), 250);
   }

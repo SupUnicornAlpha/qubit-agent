@@ -1,15 +1,19 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
-import { fetchAkshareBars } from "./akshare-klines";
+import { fetchAkshareBars, fetchAkshareTencentBars } from "./akshare-klines";
 import { fetchBinanceBars } from "./binance-klines";
 import { fetchEastMoneyBars } from "./eastmoney-klines";
 import { fetchYahooFinanceBars, type KlinesDataSourceMeta } from "./klines-data-source";
 import {
   listMarketDataSources,
+  marketSourceDefinition,
+  marketSourceBackoffUntil,
   recordMarketDataSourceAttempt,
 } from "./market-data-source-control";
 import { fetchYfinanceBars } from "./yfinance-klines";
 import { getWindSessionStatus } from "./wind-klines";
+import { marketDataFetch } from "./market-data-network";
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 
 const PROBE_TIMEOUT_MS = 20_000;
 
@@ -47,7 +51,13 @@ function probeParams(source: KlinesDataSourceMeta): FetchBarsParams {
       endDate: end.toISOString(),
     };
   }
-  if (source === "eastmoney" || source === "akshare" || source === "tushare_daily" || source === "wind") {
+  if (
+    source === "eastmoney" ||
+    source === "akshare" ||
+    source === "akshare_tencent" ||
+    source === "tushare_daily" ||
+    source === "wind"
+  ) {
     return {
       symbol: "600000",
       exchange: "SH",
@@ -65,8 +75,12 @@ function probeParams(source: KlinesDataSourceMeta): FetchBarsParams {
   };
 }
 
-async function probeTushare(params: FetchBarsParams, token: string): Promise<BarData[]> {
-  const res = await fetch("https://api.tushare.pro", {
+async function probeTushare(
+  params: FetchBarsParams,
+  token: string,
+  settings: BuiltinConnectorInitConfigs,
+): Promise<BarData[]> {
+  const res = await marketDataFetch("tushare_daily", settings, "https://api.tushare.pro", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -98,7 +112,7 @@ async function probeTushare(params: FetchBarsParams, token: string): Promise<Bar
   }));
 }
 
-async function probeOne(sourceId: KlinesDataSourceMeta): Promise<boolean> {
+async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): Promise<boolean> {
   const settings = await loadBuiltinConnectorSettings();
   const source = (await listMarketDataSources()).find((s) => s.id === sourceId);
   const params = probeParams(sourceId);
@@ -106,17 +120,44 @@ async function probeOne(sourceId: KlinesDataSourceMeta): Promise<boolean> {
   const started = Date.now();
   try {
     if (!source || source.status !== "active") throw new Error("source disabled");
-    if (!source.credentialsReady) throw new Error(`credentials missing (${source.credentialMode})`);
+    if (!source.credentialsReady) {
+      await recordMarketDataSourceAttempt({
+        sourceId,
+        market,
+        timeframe: "1d",
+        symbol: params.symbol,
+        status: "blocked",
+        latencyMs: Date.now() - started,
+        error: `credentials missing (${source.credentialMode})`,
+        healthcheck: true,
+      });
+      return false;
+    }
+    const backoffUntil = ignoreBackoff ? null : marketSourceBackoffUntil(sourceId);
+    if (backoffUntil) {
+      await recordMarketDataSourceAttempt({
+        sourceId,
+        market,
+        timeframe: "1d",
+        symbol: params.symbol,
+        status: "blocked",
+        latencyMs: Date.now() - started,
+        error: `shared upstream backoff until ${new Date(backoffUntil).toISOString()}`,
+        healthcheck: true,
+      });
+      return false;
+    }
     let bars: BarData[] = [];
-    if (sourceId === "yahoo_chart") bars = await fetchYahooFinanceBars(params);
-    else if (sourceId === "eastmoney") bars = await fetchEastMoneyBars(params);
-    else if (sourceId === "akshare") bars = await fetchAkshareBars(params);
-    else if (sourceId === "yfinance") bars = await fetchYfinanceBars(params);
+    if (sourceId === "yahoo_chart") bars = await fetchYahooFinanceBars(params, settings);
+    else if (sourceId === "eastmoney") bars = await fetchEastMoneyBars(params, settings);
+    else if (sourceId === "akshare") bars = await fetchAkshareBars(params, settings);
+    else if (sourceId === "akshare_tencent") bars = await fetchAkshareTencentBars(params, settings);
+    else if (sourceId === "yfinance") bars = await fetchYfinanceBars(params, settings);
     else if (sourceId === "binance_crypto") {
       bars = await fetchBinanceBars(params, settings["qubit-data"]);
     } else if (sourceId === "tushare_daily") {
       const token = String(settings["qubit-data"]?.tushareToken ?? "").trim();
-      bars = await probeTushare(params, token);
+      bars = await probeTushare(params, token, settings);
     } else if (sourceId === "wind") {
       const session = await getWindSessionStatus(settings);
       if (!session.connected) throw new Error(session.message || "Wind terminal not connected");
@@ -153,7 +194,25 @@ export async function runMarketDataHealthChecks(sourceId?: string): Promise<Mark
   const ids = sourceId
     ? all.filter((s) => s.id === sourceId).map((s) => s.id as KlinesDataSourceMeta)
     : all.map((s) => s.id as KlinesDataSourceMeta);
-  const results = await Promise.all(ids.map(async (id) => ({ id, ok: await probeOne(id) })));
+  const results: Array<{ id: KlinesDataSourceMeta; ok: boolean }> = [];
+  if (sourceId) {
+    const id = ids[0];
+    if (id) results.push({ id, ok: await probeOne(id, true) });
+  } else {
+    const groups = new Map<string, KlinesDataSourceMeta[]>();
+    for (const id of ids) {
+      const family = marketSourceDefinition(id)?.upstreamFamily ?? id;
+      groups.set(family, [...(groups.get(family) ?? []), id]);
+    }
+    const groupedResults = await Promise.all(
+      [...groups.values()].map(async (familyIds) => {
+        const familyResults: Array<{ id: KlinesDataSourceMeta; ok: boolean }> = [];
+        for (const id of familyIds) familyResults.push({ id, ok: await probeOne(id) });
+        return familyResults;
+      }),
+    );
+    results.push(...groupedResults.flat());
+  }
   const refreshed = await listMarketDataSources();
   const healthySources = refreshed.filter((s) => s.healthStatus === "healthy").map((s) => s.id);
   const readyMarkets = Array.from(
