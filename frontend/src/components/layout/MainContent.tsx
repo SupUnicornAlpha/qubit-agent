@@ -6922,25 +6922,6 @@ const TeamDashboardPanel: FC = () => {
               每个角色单轮推理用的引擎；仍走团队编排（MSA），CLI 不可用时自动回退自研。
             </div>
           </div>
-          <div style={{ ...teamStyles.field, marginTop: 8 }}>
-            <label style={teamStyles.label}>工作模式</label>
-            <select
-              style={teamStyles.input}
-              value={teamAgentMode}
-              onChange={(e) => setTeamAgentMode(e.target.value as AgentControlMode)}
-            >
-              <option value="agent">Agent — 直接回答 / 按需执行</option>
-              <option value="plan">Plan — 只制定计划，不执行</option>
-              <option value="goal">Goal — 自主规划、执行并验证</option>
-            </select>
-            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              {teamAgentMode === "plan"
-                ? "仅输出可验证的执行计划；业务工具、行情查询、派单和外部写入会被运行时拦截。"
-                : teamAgentMode === "goal"
-                  ? "持续推进到目标闭环，可按需拉入专家；计划未完成或缺少验证证据时不能提前结束。"
-                  : "普通对话与执行模式：简单问题直接回答，多步任务按需调用工具和团队成员。"}
-            </div>
-          </div>
           {scopeMode === "single" ? (
             <div style={{ ...teamStyles.field, marginTop: 8 }}>
               <label style={teamStyles.label}>标的代码</label>
@@ -8848,6 +8829,8 @@ const TeamDashboardPanel: FC = () => {
             runProgress={runProgress}
             hitlMode={teamHitlMode}
             onHitlModeChange={setTeamHitlMode}
+            agentMode={teamAgentMode}
+            onAgentModeChange={setTeamAgentMode}
             pendingHitlRequestId={teamPendingHitl?.requestId ?? null}
             onHitlResolved={(decision) => {
               setTeamPendingHitl(null);

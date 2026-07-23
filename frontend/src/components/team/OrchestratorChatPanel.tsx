@@ -24,6 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { type AgentControlMode } from "../../api/types";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
@@ -56,6 +57,9 @@ export interface OrchestratorChatPanelProps {
   /** 自主 / HITL 模式 */
   hitlMode: OrchestratorHitlMode;
   onHitlModeChange: (mode: OrchestratorHitlMode) => void;
+  /** 下一条新对话采用的 Agent / Plan / Goal 工作模式 */
+  agentMode: AgentControlMode;
+  onAgentModeChange: (mode: AgentControlMode) => void;
   /** 是否存在 pending HITL（外部状态；用于 composer 文案与 banner triggerKey 兜底） */
   pendingHitlRequestId: string | null;
   /** HITL 解决后回调（同 TeamHitlBanner.onResolved） */
@@ -91,6 +95,16 @@ const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hin
   { id: "always", label: "每步确认", hint: "每次规划完成都暂停，等你批准/拒绝" },
 ];
 
+const AGENT_MODE_OPTIONS: ReadonlyArray<{
+  id: AgentControlMode;
+  label: string;
+  hint: string;
+}> = [
+  { id: "agent", label: "Agent", hint: "直接回答或按需调用工具、分析师团队" },
+  { id: "plan", label: "Plan", hint: "只生成可验证计划，不执行研究工具或外部写入" },
+  { id: "goal", label: "Goal", hint: "自主规划、执行并验证，直到目标闭环" },
+];
+
 export function OrchestratorChatPanel({
   workflowRunId,
   events,
@@ -99,6 +113,8 @@ export function OrchestratorChatPanel({
   runProgress,
   hitlMode,
   onHitlModeChange,
+  agentMode,
+  onAgentModeChange,
   pendingHitlRequestId,
   onHitlResolved,
   completed,
@@ -155,7 +171,9 @@ export function OrchestratorChatPanel({
    *     故不受 sendDisabled 约束。「启动团队分析」按钮才是直接全队。
    */
   const showActive = running || chatInFlight;
-  const mode: "chat" | "inject" = running ? "inject" : "chat";
+  const composerMode: "chat" | "inject" = running ? "inject" : "chat";
+  const selectedAgentMode =
+    AGENT_MODE_OPTIONS.find((option) => option.id === agentMode) ?? AGENT_MODE_OPTIONS[0];
   const hasContent = composerValue.trim().length > 0;
   const canSend = wfId.length > 0 && hasContent && !injecting;
   // 现已统一走 orchestrator 自主对话；以下 props 保留接口兼容但不再约束发送。
@@ -165,7 +183,7 @@ export function OrchestratorChatPanel({
 
   const doSend = async () => {
     if (!canSend) return;
-    if (mode === "inject") {
+    if (composerMode === "inject") {
       const text = composerValue.trim();
       setInjecting(true);
       setInjectHint(null);
@@ -196,9 +214,9 @@ export function OrchestratorChatPanel({
   const composerHint =
     wfId.length === 0
       ? "请先在左侧选择或新建工作流"
-      : mode === "inject"
+      : composerMode === "inject"
         ? "Orchestrator 运行中 —— 发送的指令会在它下一轮思考时被采纳（Cmd/Ctrl+Enter）"
-        : "和 Orchestrator 对话 —— 它会自主判断：直接回答 / 派给某分析师 / 跑全队（Cmd/Ctrl+Enter 发送）";
+        : `${selectedAgentMode.hint}（Cmd/Ctrl+Enter 发送）`;
 
   return (
     <div style={styles.root}>
@@ -375,13 +393,48 @@ export function OrchestratorChatPanel({
           onKeyDown={handleKeyDown}
           rows={3}
           placeholder={
-            mode === "inject"
+            composerMode === "inject"
               ? "给运行中的 Orchestrator 追加指令，例如：把重点放到现金流质量上…"
               : "和 Orchestrator 对话，例如：总结一下结论 / 重做一次技术面 / 对当前标的做深度尽调…"
           }
         />
         <div style={styles.composerBar}>
-          <span style={styles.composerHint}>{composerHint}</span>
+          <div style={styles.composerMeta}>
+            <label
+              style={{
+                ...styles.agentModePicker,
+                ...(running ? styles.agentModePickerDisabled : null),
+              }}
+              title={
+                running
+                  ? "当前团队任务运行中；工作模式将在任务结束后的下一条新对话中生效"
+                  : `下一条消息使用 ${selectedAgentMode.label} 模式：${selectedAgentMode.hint}`
+              }
+            >
+              <span style={styles.agentModeMark} aria-hidden>
+                {agentMode === "goal" ? "◆" : agentMode === "plan" ? "≡" : "✦"}
+              </span>
+              <select
+                aria-label="下一条消息的工作模式"
+                value={agentMode}
+                disabled={running}
+                onChange={(event) =>
+                  onAgentModeChange(event.target.value as AgentControlMode)
+                }
+                style={styles.agentModeSelect}
+              >
+                {AGENT_MODE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span style={styles.agentModeChevron} aria-hidden>
+                ▾
+              </span>
+            </label>
+            <span style={styles.composerHint}>{composerHint}</span>
+          </div>
           <button
             type="button"
             className="qb-btn-primary-brand"
@@ -389,14 +442,18 @@ export function OrchestratorChatPanel({
             disabled={!canSend}
             title={
               canSend
-                ? mode === "inject"
+                ? composerMode === "inject"
                   ? "发送给运行中的 Orchestrator"
-                  : "发送给 Orchestrator（它自主判断如何处理）"
+                  : `使用 ${selectedAgentMode.label} 模式发送给 Orchestrator`
                 : "请输入内容"
             }
             onClick={() => void doSend()}
           >
-            {injecting ? "发送中…" : mode === "inject" ? "发送给 Orchestrator" : "发送"}
+            {injecting
+              ? "发送中…"
+              : composerMode === "inject"
+                ? "发送给 Orchestrator"
+                : "发送"}
           </button>
         </div>
       </div>
@@ -628,7 +685,52 @@ const styles: Record<string, CSSProperties> = {
   activitySpinner: { color: "#38bdf8", animation: "qbPulse 1.1s ease-in-out infinite" },
   activityText: { minWidth: 0, color: "#cbd5e1" },
   composerBar: { display: "flex", alignItems: "center", gap: 8 },
-  composerHint: { flex: 1, minWidth: 0, fontSize: 10.5, color: "#71717a", lineHeight: 1.4 },
+  composerMeta: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  agentModePicker: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    height: 28,
+    padding: "0 7px",
+    border: "1px solid #3f3f46",
+    borderRadius: 7,
+    background: "rgba(255,255,255,0.035)",
+    color: "#d4d4d8",
+    cursor: "pointer",
+  },
+  agentModePickerDisabled: { opacity: 0.55, cursor: "not-allowed" },
+  agentModeMark: { color: "#60a5fa", fontSize: 11, lineHeight: 1 },
+  agentModeSelect: {
+    appearance: "none",
+    WebkitAppearance: "none",
+    border: 0,
+    outline: 0,
+    padding: 0,
+    background: "transparent",
+    color: "inherit",
+    fontFamily: "inherit",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "inherit",
+  },
+  agentModeChevron: { color: "#71717a", fontSize: 9, lineHeight: 1 },
+  composerHint: {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontSize: 10.5,
+    color: "#71717a",
+    lineHeight: 1.4,
+  },
   sendBtn: { flexShrink: 0, fontSize: 12, padding: "6px 16px" },
   sendBtnDisabled: { opacity: 0.5, cursor: "not-allowed" },
 };
