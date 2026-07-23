@@ -28,7 +28,7 @@ describe("market data source control plane", () => {
     const us = await selectMarketDataSourcePlan({ market: "US", timeframe: "1d", mode: "auto", settings });
     const crypto = await selectMarketDataSourcePlan({ market: "CRYPTO", timeframe: "1d", mode: "auto", settings });
     expect(cn.slice(0, 2)).toEqual(["eastmoney", "akshare_tencent"]);
-    expect(us).toEqual(["yfinance"]);
+    expect(us).toEqual(["yfinance", "yahoo_chart"]);
     expect(crypto).toEqual(["binance_crypto"]);
   });
 
@@ -39,7 +39,7 @@ describe("market data source control plane", () => {
       mode: "yahoo_chart",
       settings: { "qubit-data": { klinesDataSource: "yahoo_chart" } },
     });
-    expect(plan).toEqual(["yahoo_chart"]);
+    expect(plan).toEqual(["yahoo_chart", "yfinance"]);
   });
 
   test("explicit unavailable source falls back to healthy fallback chain", async () => {
@@ -61,6 +61,16 @@ describe("market data source control plane", () => {
       settings: { "qubit-data": { klinesDataSource: "yahoo_chart" } },
     });
     expect(plan.slice(0, 2)).toEqual(["eastmoney", "akshare_tencent"]);
+  });
+
+  test("explicit source unsupported by the market falls back to a primary source", async () => {
+    const plan = await selectMarketDataSourcePlan({
+      market: "CRYPTO",
+      timeframe: "1h",
+      mode: "yahoo_chart",
+      settings: { "qubit-data": { klinesDataSource: "yahoo_chart" } },
+    });
+    expect(plan).toEqual(["binance_crypto"]);
   });
 
   test("does not treat wrappers on the same upstream as independent fallbacks", async () => {

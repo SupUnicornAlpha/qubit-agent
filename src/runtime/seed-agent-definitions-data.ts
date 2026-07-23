@@ -60,6 +60,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     version: "3.7.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
+      "update_plan",
       "assign_task",
       ...MARKET_GOVERNANCE_TOOLS,
       "evaluate_risk",

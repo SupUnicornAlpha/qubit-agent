@@ -60,6 +60,7 @@ import type {
   AgentRuntimeMetricRecord,
   SessionAgentBoardItem,
   SessionA2AMessageItem,
+  SubAgentTaskRecord,
   AnalystSignalFusionRecord,
   StepStreamEvent,
   WorkflowDetail,
@@ -2116,6 +2117,27 @@ export async function getSessionA2AMessages(
     `/api/v1/monitor/sessions/${sessionId}/a2a-messages?limit=${encodeURIComponent(String(limit))}`
   );
   return res.data.messages;
+}
+
+export async function listSubAgentTasks(input: {
+  projectId: string;
+  sessionId?: string;
+  limit?: number;
+}): Promise<{ items: SubAgentTaskRecord[]; total: number; active: number }> {
+  const query = new URLSearchParams({ projectId: input.projectId });
+  if (input.sessionId) query.set("sessionId", input.sessionId);
+  if (input.limit != null) query.set("limit", String(input.limit));
+  const res = await httpGet<{
+    ok: boolean;
+    data: {
+      items: SubAgentTaskRecord[];
+      total: number;
+      active: number;
+      projectId: string;
+      sessionId: string | null;
+    };
+  }>(`/api/v1/monitor/sub-agent-tasks?${query.toString()}`);
+  return res.data;
 }
 
 export async function createWorkflowQuality(

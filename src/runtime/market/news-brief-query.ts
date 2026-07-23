@@ -1,11 +1,12 @@
-import type { NewsData } from "../../connectors/data/data.connector";
 import { registerBuiltinConnectors } from "../../connectors/bootstrap";
+import type { NewsData } from "../../connectors/data/data.connector";
 import { connectorRegistry } from "../../connectors/registry";
-import { fetchYahooHeadlineRss, type RssHeadlineItem } from "./rss-headlines";
+import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
 import { symbolToYahooSymbol } from "./klines-data-source";
+import { type NewsEvidenceRejection, assessNewsEvidence } from "./news-evidence";
+import { type RssHeadlineItem, fetchYahooHeadlineRss } from "./rss-headlines";
 import { sectorToHeadlineTicker } from "./sector-etf-map";
 import { fetchYahooAssetLabels } from "./yahoo-asset-profile";
-import { assessNewsEvidence, type NewsEvidenceRejection } from "./news-evidence";
 
 export interface MarketNewsBriefItem {
   id: string;
@@ -137,7 +138,8 @@ export async function queryMarketNewsBrief(params: {
     };
   }
 
-  const labels = await fetchYahooAssetLabels(symbol, exchange);
+  const settings = await loadBuiltinConnectorSettings();
+  const labels = await fetchYahooAssetLabels(symbol, exchange, settings);
   const yTicker = symbolToYahooSymbol(symbol, exchange);
   const sectorTicker = sectorToHeadlineTicker(labels?.sector ?? undefined);
   const sectorKeywords = labels?.industry
@@ -148,8 +150,8 @@ export async function queryMarketNewsBrief(params: {
 
   const symConnLimit = Math.min(5, limit);
   const [rssSymbol, rssSector, symConn, secConn] = await Promise.all([
-    fetchYahooHeadlineRss(yTicker, limit),
-    fetchYahooHeadlineRss(sectorTicker, limit),
+    fetchYahooHeadlineRss(yTicker, limit, settings),
+    fetchYahooHeadlineRss(sectorTicker, limit, settings),
     fetchConnectorNews({ symbols: [symbol], limit: symConnLimit, maxAgeDays }),
     sectorKeywords.length
       ? fetchConnectorNews({ keywords: sectorKeywords, limit: symConnLimit, maxAgeDays })
@@ -165,7 +167,7 @@ export async function queryMarketNewsBrief(params: {
     dedupeByTitle([...symConn.map(newsDataToBrief), ...rssSymbol.map(rssToBrief)]),
     {
       symbol,
-      aliases: [yTicker, ...(params.aliases ?? [])],
+      aliases: [yTicker, ...(labels?.aliases ?? []), ...(params.aliases ?? [])],
       ...(params.asOf ? { asOf: params.asOf } : {}),
       maxAgeDays,
       allowHistorical: mode === "historical_validation",

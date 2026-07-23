@@ -1,8 +1,8 @@
-import { useEffect, useState, type FC } from "react";
 import { Bell, Brain, CheckSquare2, Files, SlidersHorizontal } from "lucide-react";
-import { getDefaultWorkspace, getOrCreateDefaultProject } from "../../api/backend";
+import { type FC, useEffect, useState } from "react";
+import { getOrCreateDefaultProject } from "../../api/backend";
 import { useTranslation } from "../../i18n";
-import { UI_STYLE_IDS, useAppStore, type UiStyleId } from "../../store";
+import { UI_STYLE_IDS, type UiStyleId, useAppStore } from "../../store";
 import { ChatPanel } from "./MainContent";
 import {
   SimpleAlertsPage,
@@ -30,28 +30,32 @@ export const SimpleWorkspace: FC = () => {
   const setInterfaceMode = useAppStore((state) => state.setInterfaceMode);
   const uiStyle = useAppStore((state) => state.uiStyle);
   const setUiStyle = useAppStore((state) => state.setUiStyle);
+  const selectedSessionId = useAppStore((state) => state.selectedSessionId);
+  const setSelectedSessionId = useAppStore((state) => state.setSelectedSessionId);
   const { t } = useTranslation();
   const [page, setPage] = useState<SimplePage>("chat");
-  const [workspaceId, setWorkspaceId] = useState("");
   const [projectId, setProjectId] = useState("");
 
   useEffect(() => {
     let disposed = false;
-    void Promise.all([getDefaultWorkspace(), getOrCreateDefaultProject()])
-      .then(([workspace, project]) => {
+    void getOrCreateDefaultProject()
+      .then((project) => {
         if (disposed) return;
-        setWorkspaceId(workspace.id);
         setProjectId(project.id);
       })
       .catch(() => {
         if (disposed) return;
-        setWorkspaceId("");
         setProjectId("");
       });
     return () => {
       disposed = true;
     };
   }, []);
+
+  const openTaskConversation = (sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    setPage("chat");
+  };
 
   return (
     <div className="qb-simple-shell">
@@ -103,7 +107,13 @@ export const SimpleWorkspace: FC = () => {
       </header>
       <main className="qb-simple-main">
         {page === "chat" ? <ChatPanel displayMode="simple" /> : null}
-        {page === "tasks" ? <SimpleTasksPage workspaceId={workspaceId} projectId={projectId} /> : null}
+        {page === "tasks" ? (
+          <SimpleTasksPage
+            projectId={projectId}
+            sessionId={selectedSessionId}
+            onOpenConversation={openTaskConversation}
+          />
+        ) : null}
         {page === "alerts" ? <SimpleAlertsPage /> : null}
         {page === "memory" ? <SimpleMemoryPage projectId={projectId} /> : null}
         {page === "artifacts" ? <SimpleArtifactsPage projectId={projectId} /> : null}

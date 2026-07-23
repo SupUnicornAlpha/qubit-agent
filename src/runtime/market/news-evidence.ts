@@ -22,8 +22,17 @@ export interface NewsEvidenceAssessment<T> {
 }
 
 function normalizedTokens(symbol: string, aliases: string[]): string[] {
-  const raw = [symbol, symbol.split(".")[0] ?? "", ...aliases]
-    .map((item) => item.trim().toLowerCase())
+  const raw = [symbol, symbol.split(".")[0] ?? "", ...aliases].flatMap((item) => {
+    const normalized = item.trim().toLowerCase();
+    const companyRoot = normalized
+      .replace(/[,.]/g, " ")
+      .replace(
+        /\b(incorporated|inc|corporation|corp|company|co|limited|ltd|plc|holdings?|group)\b.*$/i,
+        ""
+      )
+      .trim();
+    return companyRoot && companyRoot !== normalized ? [normalized, companyRoot] : [normalized];
+  })
     .filter((item) => item.length >= 2);
   return Array.from(new Set(raw));
 }

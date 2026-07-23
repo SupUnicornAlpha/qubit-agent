@@ -49,6 +49,7 @@ describe("buildDefaultSandboxPoliciesFromDefinitions", () => {
     const p = policies[0];
     expect(p?.allowedTools).toContain("fetch_price_data");
     expect(p?.allowedTools).toContain("assign_task");
+    expect(p?.allowedTools).toContain("update_plan");
     expect(p?.allowedTools).toContain("call_team_market_data");
     expect(p?.allowedTools).toContain("call_team_orchestrator");
   });

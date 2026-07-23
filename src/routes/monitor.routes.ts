@@ -6,6 +6,7 @@ import {
   agentDefinition,
   agentInstance,
   agentStep,
+  chatSession,
   sandboxViolationLog,
   toolCallLog,
   workflowRun,
@@ -46,6 +47,7 @@ import {
 } from "../runtime/monitor/quality-metrics";
 import { getSkillRecallSummary } from "../runtime/monitor/skill-recall-summary";
 import { getSkillsSummary } from "../runtime/monitor/skills-summary";
+import { buildSubAgentTasks } from "../runtime/monitor/sub-agent-tasks";
 import {
   TIMESERIES_GROUP_BYS,
   TIMESERIES_INTERVALS,
@@ -331,6 +333,113 @@ monitorRouter.get("/sessions/:id/a2a-messages", async (c) => {
           ? (instanceRoleById.get(m.receiverInstanceId) ?? "unknown")
           : null,
       })),
+    },
+  });
+});
+
+/**
+ * 简洁模式任务列表：任务是非 Orchestrator Agent 的一次实际执行，而不是定时调度配置。
+ *
+ * 以 A2A TASK_ASSIGN 为第一事实来源，并补齐没有消息总线记录的团队/本地 Agent 实例。
+ * 返回 sessionId + workflowRunId，前端可直接回到发起该任务的同一段对话。
+ */
+monitorRouter.get("/sub-agent-tasks", async (c) => {
+  const projectId = c.req.query("projectId")?.trim();
+  if (!projectId) return c.json({ ok: false, error: "projectId required" }, 400);
+
+  const sessionId = c.req.query("sessionId")?.trim();
+  const limitParam = Number(c.req.query("limit") ?? "100");
+  const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(200, limitParam)) : 100;
+  const db = await getDb();
+  const workflowCondition = sessionId
+    ? and(eq(workflowRun.projectId, projectId), eq(workflowRun.sessionId, sessionId))
+    : eq(workflowRun.projectId, projectId);
+  const workflows = await db
+    .select({
+      id: workflowRun.id,
+      projectId: workflowRun.projectId,
+      sessionId: workflowRun.sessionId,
+      goal: workflowRun.goal,
+      status: workflowRun.status,
+      startedAt: workflowRun.startedAt,
+      endedAt: workflowRun.endedAt,
+    })
+    .from(workflowRun)
+    .where(workflowCondition)
+    .orderBy(desc(workflowRun.startedAt))
+    .limit(Math.max(50, limit * 2));
+  const workflowIds = workflows.map((row) => row.id);
+  if (workflowIds.length === 0) {
+    return c.json({
+      ok: true,
+      data: { items: [], total: 0, active: 0, projectId, sessionId: sessionId ?? null },
+    });
+  }
+
+  const [messages, workflowInstances, definitions, steps] = await Promise.all([
+    db
+      .select()
+      .from(a2aMessage)
+      .where(inArray(a2aMessage.workflowRunId, workflowIds))
+      .orderBy(desc(a2aMessage.createdAt)),
+    db.select().from(agentInstance).where(inArray(agentInstance.workflowRunId, workflowIds)),
+    db
+      .select({
+        id: agentDefinition.id,
+        role: agentDefinition.role,
+        name: agentDefinition.name,
+      })
+      .from(agentDefinition),
+    db.select().from(agentStep).where(inArray(agentStep.workflowRunId, workflowIds)),
+  ]);
+
+  // Agent pool 的 receiver 可能属于另一个 pool workflow；按消息引用补查，避免漏掉真实执行人。
+  const knownInstanceIds = new Set(workflowInstances.map((row) => row.id));
+  const referencedInstanceIds = [
+    ...new Set(
+      messages
+        .flatMap((row) => [row.senderInstanceId, row.receiverInstanceId])
+        .filter(
+          (instanceId): instanceId is string =>
+            typeof instanceId === "string" && !knownInstanceIds.has(instanceId)
+        )
+    ),
+  ];
+  const referencedInstances =
+    referencedInstanceIds.length > 0
+      ? await db
+          .select()
+          .from(agentInstance)
+          .where(inArray(agentInstance.id, referencedInstanceIds))
+      : [];
+  const sessionIds = [
+    ...new Set(workflows.map((row) => row.sessionId).filter((id): id is string => Boolean(id))),
+  ];
+  const sessions =
+    sessionIds.length > 0
+      ? await db
+          .select({ id: chatSession.id, title: chatSession.title })
+          .from(chatSession)
+          .where(inArray(chatSession.id, sessionIds))
+      : [];
+
+  const items = buildSubAgentTasks({
+    workflows,
+    instances: [...workflowInstances, ...referencedInstances],
+    definitions,
+    messages,
+    steps,
+    sessionTitles: new Map(sessions.map((row) => [row.id, row.title])),
+  }).slice(0, limit);
+
+  return c.json({
+    ok: true,
+    data: {
+      items,
+      total: items.length,
+      active: items.filter((item) => item.status === "running" || item.status === "waiting").length,
+      projectId,
+      sessionId: sessionId ?? null,
     },
   });
 });

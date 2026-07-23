@@ -48,4 +48,23 @@ describe("assessNewsEvidence", () => {
     expect(result.accepted).toHaveLength(1);
     expect(result.rejected.missing_or_invalid_time).toBe(1);
   });
+
+  test("company aliases match headlines after common legal suffixes are removed", () => {
+    const result = assessNewsEvidence(
+      [
+        {
+          title: "Is Apple Stock a Buy Right Now?",
+          publishedAt: "2026-07-22T10:00:00.000Z",
+          source: "yahoo-rss",
+        },
+      ],
+      {
+        symbol: "AAPL",
+        aliases: ["Apple Inc."],
+        asOf: new Date("2026-07-23T10:00:00.000Z"),
+        maxAgeDays: 7,
+      }
+    );
+    expect(result.accepted).toHaveLength(1);
+  });
 });

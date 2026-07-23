@@ -11,12 +11,19 @@ export interface MarketDataNetworkRoute {
   source: "direct" | "config" | "environment" | "system";
 }
 
-let cachedSystemProxy: string | null | undefined;
+const SYSTEM_PROXY_CACHE_TTL_MS = 5_000;
+let cachedSystemProxy: { value: string | null; checkedAt: number } | undefined;
 
 function macSystemProxy(): string | null {
-  if (cachedSystemProxy !== undefined) return cachedSystemProxy;
-  cachedSystemProxy = null;
-  if (process.platform !== "darwin") return cachedSystemProxy;
+  const now = Date.now();
+  if (cachedSystemProxy && now - cachedSystemProxy.checkedAt < SYSTEM_PROXY_CACHE_TTL_MS) {
+    return cachedSystemProxy.value;
+  }
+  let value: string | null = null;
+  if (process.platform !== "darwin") {
+    cachedSystemProxy = { value, checkedAt: now };
+    return value;
+  }
   try {
     const output = execFileSync("/usr/sbin/scutil", ["--proxy"], {
       encoding: "utf8",
@@ -30,11 +37,10 @@ function macSystemProxy(): string | null {
     const port = output.match(
       new RegExp(`${httpsEnabled ? "HTTPSPort" : "HTTPPort"}\\s*:\\s*(\\d+)`)
     )?.[1];
-    if ((httpsEnabled || httpEnabled) && host && port) cachedSystemProxy = `http://${host}:${port}`;
-  } catch {
-    cachedSystemProxy = null;
-  }
-  return cachedSystemProxy;
+    if ((httpsEnabled || httpEnabled) && host && port) value = `http://${host}:${port}`;
+  } catch {}
+  cachedSystemProxy = { value, checkedAt: now };
+  return value;
 }
 
 function nonEmpty(value: unknown): string | null {

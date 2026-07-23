@@ -37,7 +37,10 @@ export function getContentPacksDir(): string {
 }
 
 export function getBundledMigrationsDir(): string {
-  return join(getAppRoot(), "db", "migrations");
+  const root = getAppRoot();
+  const bundled = join(root, "db", "migrations");
+  if (existsSync(bundled)) return bundled;
+  return join(root, "src", "db", "sqlite", "migrations");
 }
 
 export function migrationsDirAvailable(): boolean {

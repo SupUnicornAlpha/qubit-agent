@@ -3,6 +3,7 @@ import { resolveAgentControlMode } from "../types/loop";
 import {
   assessGoalPlanCompletion,
   buildAgentControlModePrompt,
+  isAgentControlPlaneTool,
   isToolAllowedInAgentControlMode,
   parseAgentPlanSnapshot,
 } from "./agent-control-mode";
@@ -23,6 +24,11 @@ describe("resolveAgentControlMode", () => {
 });
 
 describe("Plan mode execution boundary", () => {
+  test("update_plan is a harness control-plane tool", () => {
+    expect(isAgentControlPlaneTool("update_plan")).toBe(true);
+    expect(isAgentControlPlaneTool("fetch_klines")).toBe(false);
+  });
+
   test("only update_plan is executable", () => {
     expect(isToolAllowedInAgentControlMode("plan", "update_plan")).toBe(true);
     expect(isToolAllowedInAgentControlMode("plan", "fetch_klines")).toBe(false);

@@ -21,7 +21,14 @@ export type OperationalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthet
 
 export type MarketSourceHealth = "unknown" | "healthy" | "degraded" | "down";
 export type MarketSourceCircuit = "closed" | "open" | "half_open";
-export type MarketDataUpstreamFamily = "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo";
+export type MarketDataUpstreamFamily =
+  | "wind"
+  | "tushare"
+  | "binance"
+  | "eastmoney"
+  | "tencent"
+  | "yfinance"
+  | "yahoo";
 
 export interface MarketDataSourceDefinition {
   id: OperationalMarketDataSource;
@@ -111,7 +118,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     credentialMode: "none",
     priority: 55,
     isFallback: true,
-    upstreamFamily: "yahoo",
+    upstreamFamily: "yfinance",
   },
   {
     id: "yahoo_chart",
@@ -363,10 +370,11 @@ export async function selectMarketDataSourcePlan(input: {
     if (!row.supportedTimeframes.includes(input.timeframe)) return false;
     if (
       row.id === "wind" &&
-      input.mode === "auto" &&
+      input.mode !== "wind" &&
       row.healthStatus !== "healthy" &&
       typeof input.settings["qubit-data"]?.windUsername !== "string"
-    ) return false;
+    )
+      return false;
     const def = DEF_BY_ID.get(row.id as OperationalMarketDataSource);
     if (!def || row.availabilityStatus === "misconfigured") return false;
     if ((upstreamBackoffUntil.get(def.upstreamFamily) ?? 0) > now) return false;
@@ -390,10 +398,10 @@ export async function selectMarketDataSourcePlan(input: {
   const explicitFamily = DEF_BY_ID.get(explicit as OperationalMarketDataSource)?.upstreamFamily;
   const fallbackIds = dedupeFamilies(
     eligible.filter((row) => row.isFallback),
-    explicitFamily,
+    explicitFamily
   ).map((row) => row.id as OperationalMarketDataSource);
   if (!explicitEligible) {
-    return fallbackIds;
+    return dedupeFamilies(eligible).map((row) => row.id as OperationalMarketDataSource);
   }
   return [
     explicit as OperationalMarketDataSource,

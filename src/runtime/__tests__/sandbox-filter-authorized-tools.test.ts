@@ -75,6 +75,16 @@ describe("sandboxExecutor.filterAuthorizedTools", () => {
     expect(tools).toEqual(["assign_task"]);
   });
 
+  test("harness 控制面 update_plan 不受业务工具白名单漂移影响", async () => {
+    const def = makeDef("pol-missing-control-policy");
+    const { tools } = await sandboxExecutor.filterAuthorizedTools(
+      def,
+      ["update_plan", "assign_task"],
+      []
+    );
+    expect(tools).toEqual(["update_plan"]);
+  });
+
   test("MCP server：仅保留 allowedMcpServers 命中的", async () => {
     const def = makeDef("pol-allow-builtin");
     const { mcpServers } = await sandboxExecutor.filterAuthorizedTools(

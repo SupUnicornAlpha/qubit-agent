@@ -110,11 +110,20 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 fn migrations_present(root: &Path) -> bool {
-    root.join("db/migrations").is_dir()
+    root.join("db/migrations").is_dir() || root.join("src/db/sqlite/migrations").is_dir()
 }
 
 /// 解析只读资源根（含 migrations、python_connectors、content-packs）。
 fn resolve_app_root(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(debug_assertions)]
+    {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest.join("..");
+        if migrations_present(&repo_root) {
+            return Ok(repo_root);
+        }
+    }
+
     if let Ok(dir) = handle.path().resource_dir() {
         let bundle = dir.join("bundle");
         if migrations_present(&bundle) {

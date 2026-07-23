@@ -3,11 +3,18 @@ import { mkdir, rm } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
-import { workflowRun } from "../db/sqlite/schema";
+import {
+  chatSession,
+  project,
+  researchTeamInteraction,
+  workflowRun,
+  workspace,
+} from "../db/sqlite/schema";
 import {
   completeWorkflowConversationAssistant,
   projectWorkflowUserMessage,
 } from "../runtime/conversation/conversation-projection";
+import { projectWorkflowFinalAnswer } from "../runtime/research-team/interaction-log";
 
 async function jsonOf(res: Response) {
   return (await res.json()) as Record<string, unknown>;
@@ -203,6 +210,78 @@ describe("api minimal integration", () => {
       "按 SOP 分析这个标的",
       "已按相同要求完成第二轮验证。",
     ]);
+  });
+
+  test("orchestrator final answers are idempotent per conversation turn", async () => {
+    const db = await getDb();
+    const testWorkspaceId = workspaceId || crypto.randomUUID();
+    const testProjectId = projectId || crypto.randomUUID();
+    const testSessionId = sessionId || crypto.randomUUID();
+    if (!workspaceId) {
+      await db.insert(workspace).values({
+        id: testWorkspaceId,
+        name: "projection-test",
+        owner: "test",
+      });
+      await db.insert(project).values({
+        id: testProjectId,
+        workspaceId: testWorkspaceId,
+        name: "projection-test",
+        marketScope: "US",
+      });
+      await db.insert(chatSession).values({
+        id: testSessionId,
+        workspaceId: testWorkspaceId,
+        projectId: testProjectId,
+        title: "projection-test",
+      });
+    }
+    const workflowId = crypto.randomUUID();
+    await db.insert(workflowRun).values({
+      id: workflowId,
+      projectId: testProjectId,
+      sessionId: testSessionId,
+      goal: "multi-turn orchestrator chat",
+      mode: "research",
+      source: "chat",
+      status: "running",
+    });
+
+    expect(
+      await projectWorkflowFinalAnswer({
+        workflowRunId: workflowId,
+        conversationTurnId: "turn-1",
+        contentText: "第一轮分析结论",
+        sourceTaskType: "orchestrator_chat",
+      })
+    ).toBeTrue();
+    expect(
+      await projectWorkflowFinalAnswer({
+        workflowRunId: workflowId,
+        conversationTurnId: "turn-2",
+        contentText: "第二轮分析结论",
+        sourceTaskType: "orchestrator_chat",
+      })
+    ).toBeTrue();
+    expect(
+      await projectWorkflowFinalAnswer({
+        workflowRunId: workflowId,
+        conversationTurnId: "turn-2",
+        contentText: "第二轮分析结论",
+        sourceTaskType: "orchestrator_chat",
+      })
+    ).toBeFalse();
+
+    const rows = await db
+      .select()
+      .from(researchTeamInteraction)
+      .where(eq(researchTeamInteraction.workflowRunId, workflowId));
+    expect(rows.map((row) => row.contentText)).toEqual(["第一轮分析结论", "第二轮分析结论"]);
+    expect(
+      rows.map(
+        (row) => (row.payloadJson as Record<string, unknown> | null)?.conversationTurnId ?? null
+      )
+    ).toEqual(["turn-1", "turn-2"]);
   });
 
   test("monitor: summary endpoint", async () => {

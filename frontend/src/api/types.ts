@@ -654,6 +654,8 @@ export interface IndicatorStrategyScriptRecord {
 export interface WorkflowArtifactsDto {
   workflowDir: string;
   reportPath: string | null;
+  planMarkdownPath: string | null;
+  planJsonPath: string | null;
   strategyFolders: string[];
   report: string | null;
 }
@@ -709,6 +711,45 @@ export interface SessionA2AMessageItem {
   messageType: string;
   payloadJson: unknown;
   createdAt: string;
+}
+
+export type SubAgentTaskStatus =
+  | "pending"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface SubAgentTaskRecord {
+  id: string;
+  source: "a2a_assignment" | "agent_execution";
+  taskId: string | null;
+  taskType: string | null;
+  traceId: string | null;
+  projectId: string;
+  sessionId: string | null;
+  sessionTitle: string | null;
+  workflowRunId: string;
+  workflowGoal: string;
+  workflowStatus: string;
+  instanceId: string;
+  agentRole: string;
+  agentName: string;
+  parentInstanceId: string | null;
+  parentAgentRole: string | null;
+  parentAgentName: string | null;
+  a2aContext: string | null;
+  status: SubAgentTaskStatus;
+  title: string;
+  summary: string | null;
+  currentIteration: number;
+  stepCount: number;
+  latestPhase: string | null;
+  latestStepAt: string | null;
+  assignedAt: string;
+  completedAt: string | null;
+  errorMessage: string | null;
 }
 
 export interface WorkflowDetail {

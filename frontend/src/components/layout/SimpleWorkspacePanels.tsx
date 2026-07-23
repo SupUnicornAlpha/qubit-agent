@@ -1,22 +1,31 @@
-import { useCallback, useEffect, useMemo, useState, type FC, type ReactNode } from "react";
-import { AlertTriangle, BellRing, Brain, CheckCircle2, Clock3, FileCode2, FlaskConical, Play, RefreshCw } from "lucide-react";
 import {
+  AlertTriangle,
+  BellRing,
+  Bot,
+  Brain,
+  CheckCircle2,
+  FileCode2,
+  FlaskConical,
+  MessageSquareText,
+  Play,
+  RefreshCw,
+} from "lucide-react";
+import { type FC, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type BacktestJobRecord,
+  type FactorRecord,
+  type MemoryExperienceListItem,
+  type StrategyVersionFlatRecord,
   ackAlert,
   listAlerts,
   listBacktestJobs,
   listFactors,
   listMemoryExperiences,
-  listScheduledJobs,
   listStrategyVersions,
-  patchScheduledJob,
+  listSubAgentTasks,
   resolveAlert,
-  runScheduledJobNow,
-  type BacktestJobRecord,
-  type FactorRecord,
-  type MemoryExperienceListItem,
-  type StrategyVersionFlatRecord,
 } from "../../api/backend";
-import type { AlertEventRecord, ScheduledJobRecord } from "../../api/types";
+import type { AlertEventRecord, SubAgentTaskRecord } from "../../api/types";
 import { useTranslation } from "../../i18n";
 
 type ProjectScope = { projectId: string };
@@ -55,51 +64,41 @@ const PageError: FC<{ text: string }> = ({ text }) => (
   <div className="qb-simple-page-error"><AlertTriangle size={15} /> {text}</div>
 );
 
-export const SimpleTasksPage: FC<ProjectScope & { workspaceId: string }> = ({ workspaceId, projectId }) => {
+export const SimpleTasksPage: FC<
+  ProjectScope & { sessionId: string | null; onOpenConversation: (sessionId: string) => void }
+> = ({ projectId, sessionId, onOpenConversation }) => {
   const { t } = useTranslation();
-  const [jobs, setJobs] = useState<ScheduledJobRecord[]>([]);
+  const [tasks, setTasks] = useState<SubAgentTaskRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
 
   const reload = useCallback(async () => {
-    if (!workspaceId || !projectId) return;
+    if (!projectId || !sessionId) {
+      setTasks([]);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      setJobs(await listScheduledJobs({ workspaceId, projectId }));
+      const result = await listSubAgentTasks({ projectId, sessionId, limit: 120 });
+      setTasks(result.items);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("simpleMode.pages.loadFailed"));
     } finally {
       setLoading(false);
     }
-  }, [projectId, t, workspaceId]);
+  }, [projectId, sessionId, t]);
 
   useEffect(() => { void reload(); }, [reload]);
 
-  const toggleJob = async (job: ScheduledJobRecord) => {
-    setBusyId(job.id);
-    try {
-      await patchScheduledJob(job.id, { enabled: !job.enabled });
-      await reload();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("simpleMode.pages.actionFailed"));
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const runNow = async (job: ScheduledJobRecord) => {
-    setBusyId(job.id);
-    try {
-      await runScheduledJobNow(job.id);
-      await reload();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("simpleMode.pages.actionFailed"));
-    } finally {
-      setBusyId("");
-    }
-  };
+  const activeCount = tasks.filter(
+    (task) => task.status === "running" || task.status === "waiting"
+  ).length;
+  useEffect(() => {
+    if (activeCount === 0) return;
+    const timer = window.setInterval(() => void reload(), 5000);
+    return () => window.clearInterval(timer);
+  }, [activeCount, reload]);
 
   return (
     <SimplePageFrame
@@ -110,24 +109,72 @@ export const SimpleTasksPage: FC<ProjectScope & { workspaceId: string }> = ({ wo
     >
       {error ? <PageError text={error} /> : null}
       <div className="qb-simple-summary-line">
-        <strong>{jobs.filter((job) => job.enabled).length}</strong> {t("simpleMode.pages.tasks.activeCount")} · {jobs.length} {t("simpleMode.pages.tasks.totalCount")}
+        <strong>{activeCount}</strong> {t("simpleMode.pages.tasks.activeCount")} · {tasks.length} {t("simpleMode.pages.tasks.totalCount")}
       </div>
       <div className="qb-simple-list">
-        {jobs.map((job) => (
-          <article className="qb-simple-row" key={job.id}>
-            <div className="qb-simple-row__icon"><Clock3 size={17} /></div>
+        {tasks.map((task) => (
+          <article
+            className={`qb-simple-row${
+              task.status === "failed"
+                ? " qb-simple-row--error"
+                : task.status === "waiting" || task.status === "cancelled"
+                  ? " qb-simple-row--warn"
+                  : ""
+            }`}
+            key={task.id}
+          >
+            <div className="qb-simple-row__icon"><Bot size={17} /></div>
             <div className="qb-simple-row__body">
-              <div className="qb-simple-row__title">{job.name}</div>
-              <div className="qb-simple-row__meta">{job.cronExpr} · {job.timezone} · {job.executionMode}</div>
-              <div className="qb-simple-row__meta">{t("simpleMode.pages.tasks.nextRun")}: {formatTime(job.nextRunAt)}</div>
+              <div className="qb-simple-row__title">{task.title}</div>
+              <div className="qb-simple-row__meta">
+                {task.agentName} · {task.agentRole} · {formatTime(task.assignedAt)}
+              </div>
+              {task.source === "a2a_assignment" ? (
+                <div className="qb-simple-row__meta">
+                  {task.parentAgentName ||
+                    task.parentAgentRole ||
+                    t("simpleMode.pages.tasks.primaryAgent")}
+                  {" → "}
+                  {task.agentName}
+                  {task.traceId ? ` · trace ${task.traceId.slice(0, 8)}` : ""}
+                </div>
+              ) : null}
+              <div className="qb-simple-row__meta">
+                {task.sessionTitle || t("simpleMode.pages.tasks.unlinkedConversation")} · {task.workflowGoal}
+              </div>
+              {task.summary ? <div className="qb-simple-row__meta">{task.summary}</div> : null}
+              {task.a2aContext ? (
+                <div className="qb-simple-row__meta">{task.a2aContext}</div>
+              ) : null}
+              {task.errorMessage ? (
+                <div className="qb-simple-row__error">{task.errorMessage}</div>
+              ) : null}
+              <div className="qb-simple-tags">
+                <span className={`qb-simple-task-status qb-simple-task-status--${task.status}`}>
+                  {t(`simpleMode.pages.tasks.status.${task.status}`)}
+                </span>
+                <span>
+                  {task.source === "a2a_assignment"
+                    ? t("simpleMode.pages.tasks.a2a")
+                    : t("simpleMode.pages.tasks.local")}
+                </span>
+                <span>{task.stepCount} {t("simpleMode.pages.tasks.steps")}</span>
+                {task.latestPhase ? <span>{task.latestPhase}</span> : null}
+              </div>
             </div>
             <div className="qb-simple-row__actions">
-              <button type="button" onClick={() => void runNow(job)} disabled={busyId === job.id}><Play size={14} /> {t("simpleMode.pages.tasks.runNow")}</button>
-              <button type="button" className={job.enabled ? "is-active" : ""} onClick={() => void toggleJob(job)} disabled={busyId === job.id}>{job.enabled ? t("simpleMode.pages.tasks.enabled") : t("simpleMode.pages.tasks.paused")}</button>
+              <button
+                type="button"
+                onClick={() => task.sessionId && onOpenConversation(task.sessionId)}
+                disabled={!task.sessionId}
+              >
+                <MessageSquareText size={14} />
+                {t("simpleMode.pages.tasks.openConversation")}
+              </button>
             </div>
           </article>
         ))}
-        {!loading && jobs.length === 0 ? <EmptyState>{t("simpleMode.pages.tasks.empty")}</EmptyState> : null}
+        {!loading && tasks.length === 0 ? <EmptyState>{t("simpleMode.pages.tasks.empty")}</EmptyState> : null}
       </div>
     </SimplePageFrame>
   );

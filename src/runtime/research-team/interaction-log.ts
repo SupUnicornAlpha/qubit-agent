@@ -41,32 +41,50 @@ export async function logResearchTeamInteraction(input: {
  *
  * A2A TASK_RESULT 是内部协议记录；客户端右栏读取的是
  * research_team_interaction。两者不能互相替代。续跑/重试可能再次经过同一终态，
- * 因此用固定 phase 做 workflow 级幂等，避免用户看到重复答复。
+ * 因此对聊天入口按 conversationTurnId 做单轮幂等，避免重试产生重复答复，同时允许
+ * 同一 workflow 的后续对话轮次各自写入右栏。没有轮次 ID 的旧入口仍保持 workflow
+ * 级幂等。
  */
 export async function projectWorkflowFinalAnswer(input: {
   workflowRunId: string;
   contentText: string;
   sourceTaskType?: string;
+  conversationTurnId?: string;
   payloadJson?: Record<string, unknown>;
 }): Promise<boolean> {
   const contentText = input.contentText.trim();
   if (!contentText) return false;
+  const conversationTurnId = input.conversationTurnId?.trim() || null;
 
   try {
     await getDb();
     const sqlite = getSqliteForTesting();
-    const existing = sqlite
-      .prepare(
-        `SELECT 1
-         FROM research_team_interaction
-         WHERE workflow_run_id = ?
-           AND from_role = 'orchestrator'
-           AND to_role = 'user'
-           AND kind = 'llm_message'
-           AND json_extract(payload_json, '$.phase') = 'workflow_final_answer'
-         LIMIT 1`
-      )
-      .get(input.workflowRunId);
+    const existing = conversationTurnId
+      ? sqlite
+          .prepare(
+            `SELECT 1
+             FROM research_team_interaction
+             WHERE workflow_run_id = ?
+               AND from_role = 'orchestrator'
+               AND to_role = 'user'
+               AND kind = 'llm_message'
+               AND json_extract(payload_json, '$.phase') = 'workflow_final_answer'
+               AND json_extract(payload_json, '$.conversationTurnId') = ?
+             LIMIT 1`
+          )
+          .get(input.workflowRunId, conversationTurnId)
+      : sqlite
+          .prepare(
+            `SELECT 1
+             FROM research_team_interaction
+             WHERE workflow_run_id = ?
+               AND from_role = 'orchestrator'
+               AND to_role = 'user'
+               AND kind = 'llm_message'
+               AND json_extract(payload_json, '$.phase') = 'workflow_final_answer'
+             LIMIT 1`
+          )
+          .get(input.workflowRunId);
     if (existing) {
       await completeWorkflowConversationAssistant({
         workflowRunId: input.workflowRunId,
@@ -85,6 +103,7 @@ export async function projectWorkflowFinalAnswer(input: {
         phase: "workflow_final_answer",
         ...(input.sourceTaskType ? { sourceTaskType: input.sourceTaskType } : {}),
         ...(input.payloadJson ?? {}),
+        ...(conversationTurnId ? { conversationTurnId } : {}),
       },
     });
     await completeWorkflowConversationAssistant({

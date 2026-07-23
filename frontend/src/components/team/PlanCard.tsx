@@ -44,7 +44,15 @@ const STATUS_COLOR: Record<PlanStepStatus, string> = {
   skipped: "#a1a1aa",
 };
 
-export function PlanCard({ plan }: { plan: OrchestratorPlan | null }) {
+export function PlanCard({
+  plan,
+  onExecute,
+  executeDisabled = false,
+}: {
+  plan: OrchestratorPlan | null;
+  onExecute?: () => void;
+  executeDisabled?: boolean;
+}) {
   const [open, setOpen] = useState(true);
   const steps = plan?.steps ?? [];
   if (steps.length === 0) return null;
@@ -111,6 +119,22 @@ export function PlanCard({ plan }: { plan: OrchestratorPlan | null }) {
               </li>
             ))}
           </ol>
+          {mode === "plan" && onExecute ? (
+            <div style={styles.actions}>
+              <button
+                type="button"
+                style={{
+                  ...styles.executeButton,
+                  ...(executeDisabled ? styles.executeButtonDisabled : null),
+                }}
+                disabled={executeDisabled}
+                onClick={onExecute}
+              >
+                按此计划执行 · Goal
+              </button>
+              <span style={styles.executeHint}>保留当前计划并切换到自主闭环执行</span>
+            </div>
+          ) : null}
         </>
       ) : null}
     </div>
@@ -185,4 +209,23 @@ const styles: Record<string, CSSProperties> = {
   titleDone: { color: "#71717a", textDecoration: "line-through" },
   titleActive: { color: "#e4e4e7", fontWeight: 600 },
   note: { color: "#71717a", fontWeight: 400 },
+  actions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "2px 10px 10px 32px",
+  },
+  executeButton: {
+    border: "1px solid rgba(56,189,248,0.55)",
+    borderRadius: 6,
+    background: "rgba(56,189,248,0.13)",
+    color: "#bae6fd",
+    padding: "5px 9px",
+    fontFamily: "inherit",
+    fontSize: 10,
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  executeButtonDisabled: { opacity: 0.45, cursor: "not-allowed" },
+  executeHint: { color: "#71717a", fontSize: 9 },
 };

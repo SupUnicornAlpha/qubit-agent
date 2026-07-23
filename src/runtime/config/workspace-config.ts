@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { ALL_AGENT_ROLES } from "../../types/entities";
+import { AGENT_CONTROL_PLANE_TOOLS } from "../agent-control-mode";
 import { topologyTeamToolName } from "../orchestration/topology-dispatch";
 import type { RuntimeAgentDefinition } from "../types";
 
@@ -84,7 +85,13 @@ export function buildDefaultSandboxPoliciesFromDefinitions(
   // call_team_<role> 是运行时按已启用专家注入的 orchestrator 工具，不在各 definition.tools 里，
   // 但必须进 default-policy 白名单，否则 dispatch 会 sandbox_blocked。
   const topologyTools = definitions.map((d) => topologyTeamToolName(d.role));
-  const tools = [...new Set([...definitions.flatMap((d) => d.tools), ...topologyTools])].sort();
+  const tools = [
+    ...new Set([
+      ...definitions.flatMap((d) => d.tools),
+      ...topologyTools,
+      ...AGENT_CONTROL_PLANE_TOOLS,
+    ]),
+  ].sort();
   const mcps = [...new Set(definitions.flatMap((d) => d.mcpServers))].sort();
   return [
     {

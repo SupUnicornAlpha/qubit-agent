@@ -215,7 +215,13 @@ export async function createConversationTurn(
         taskId: randomUUID(),
         taskType: "orchestrator_chat",
         assignedRole: "orchestrator",
-        params: { goal: message, context },
+        params: {
+          goal: message,
+          context,
+          // 同一 workflow 可以包含多轮 Orchestrator 对话。终答投影必须按轮次幂等，
+          // 不能让第一轮答复阻止后续轮次写入右栏的 research_team_interaction。
+          conversationTurnId: turn.assistantMessage.id,
+        },
       },
     });
     return {

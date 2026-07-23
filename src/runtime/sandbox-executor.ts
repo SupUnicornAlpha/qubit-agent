@@ -2,6 +2,7 @@ import { getDb } from "../db/sqlite/client";
 import { sandboxPolicy, sandboxViolationLog } from "../db/sqlite/schema";
 import type { RuntimeAgentDefinition } from "./types";
 import { eq } from "drizzle-orm";
+import { isAgentControlPlaneTool } from "./agent-control-mode";
 import { resolveConnectorForTool } from "./tools/tool-routes";
 
 type SandboxViolationType =
@@ -37,7 +38,8 @@ export interface LoadedSandboxPolicy {
  * 这里只接收已 resolve 出的 connector 名。
  */
 export function isToolAuthorized(policy: LoadedSandboxPolicy, toolName: string): boolean {
-  return policy.allowedTools.has(toolName);
+  // update_plan 等 harness 控制面能力只写当前 workflow 内部状态，不应被业务白名单误杀。
+  return isAgentControlPlaneTool(toolName) || policy.allowedTools.has(toolName);
 }
 
 export function isConnectorAuthorized(policy: LoadedSandboxPolicy, connectorName: string): boolean {
@@ -424,4 +426,3 @@ export class SandboxExecutor {
 }
 
 export const sandboxExecutor = new SandboxExecutor();
-

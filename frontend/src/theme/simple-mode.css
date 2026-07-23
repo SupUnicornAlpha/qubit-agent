@@ -189,7 +189,19 @@
   overflow-x: hidden !important;
   overflow-y: auto !important;
   overscroll-behavior: contain;
+  pointer-events: auto;
+  touch-action: pan-y;
+  scrollbar-width: auto;
   scrollbar-gutter: stable;
+}
+
+.qb-simple-shell .qb-chat-messages::-webkit-scrollbar {
+  width: 12px;
+}
+
+.qb-simple-shell .qb-chat-messages::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border-width: 3px;
 }
 
 .qb-simple-shell .qb-chat-error {
@@ -208,6 +220,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   min-height: 44px;
   border-bottom: 1px solid #f0f0ed;
   color: #777773;
@@ -215,8 +228,44 @@
 }
 
 .qb-simple-chat-context button {
+  flex-shrink: 0;
   color: #0f7479;
   font-weight: 600;
+}
+
+.qb-simple-session-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--qs-muted, #777773);
+}
+
+.qb-simple-session-picker > span {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.qb-simple-session-picker select {
+  width: min(360px, 52vw);
+  min-width: 0;
+  height: 30px;
+  padding: 0 28px 0 9px;
+  border: 1px solid var(--qs-border, #e6e6e1);
+  border-radius: var(--qs-radius, 7px);
+  background: var(--qs-surface, #fff);
+  color: var(--qs-text, #242424);
+  font: inherit;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.qb-simple-session-picker select:focus-visible {
+  outline: 2px solid var(--qs-accent, #147f85);
+  outline-offset: 2px;
 }
 
 .qb-simple-shell .qb-chat-panel--simple .qb-chat-bubble {
@@ -416,6 +465,8 @@
   .qb-simple-shell .qb-chat-panel--simple { padding: 0 14px; }
   .qb-simple-chat-prompts { grid-template-columns: 1fr; }
   .qb-simple-composer__mode-hint { display: none; }
+  .qb-simple-session-picker > span { display: none; }
+  .qb-simple-session-picker select { width: min(58vw, 280px); }
 }
 
 /* ─── Theme-aware simple workspace ─────────────────────────────────────── */
@@ -748,9 +799,17 @@ html[data-qb-style="comic-book"] .qb-simple-chat-prompts button:nth-child(2n) { 
 }
 
 .qb-simple-row__title { color: var(--qs-text); font-size: 13px; font-weight: 700; line-height: 1.45; }
+.qb-simple-row__body { min-width: 0; }
 .qb-simple-row__meta,
 .qb-simple-row__time { margin-top: 4px; color: var(--qs-muted); font-size: 11px; line-height: 1.45; }
 .qb-simple-row__time { margin: 0; white-space: nowrap; }
+.qb-simple-row__error {
+  margin-top: 5px;
+  color: var(--qs-danger);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 
 .qb-simple-row__actions { display: flex; align-items: center; gap: 7px; }
 .qb-simple-row__actions button {
@@ -780,6 +839,16 @@ html[data-qb-style="comic-book"] .qb-simple-chat-prompts button:nth-child(2n) { 
   padding: 2px 6px;
   font-size: 9px;
 }
+.qb-simple-tags .qb-simple-task-status--running {
+  border-color: color-mix(in srgb, var(--qs-accent) 60%, var(--qs-border));
+  color: var(--qs-accent);
+}
+.qb-simple-tags .qb-simple-task-status--waiting {
+  border-color: color-mix(in srgb, var(--qs-warning) 60%, var(--qs-border));
+  color: var(--qs-warning);
+}
+.qb-simple-tags .qb-simple-task-status--completed { color: var(--qs-success); }
+.qb-simple-tags .qb-simple-task-status--failed { color: var(--qs-danger); }
 
 .qb-simple-resolved { display: inline-flex; align-items: center; gap: 5px; color: var(--qs-success); font-size: 10px; }
 .qb-simple-empty { padding: 48px 12px; color: var(--qs-muted); font-size: 13px; text-align: center; }

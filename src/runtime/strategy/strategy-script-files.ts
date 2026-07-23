@@ -100,6 +100,8 @@ export async function listWorkflowArtifactSummary(
 ): Promise<{
   workflowDir: string;
   reportPath: string | null;
+  planMarkdownPath: string | null;
+  planJsonPath: string | null;
   strategyFolders: string[];
 }> {
   const workflowDir = workflowArtifactDir(projectId, workflowRunId);
@@ -110,6 +112,20 @@ export async function listWorkflowArtifactSummary(
   } catch {
     reportPath = null;
   }
+  let planMarkdownPath: string | null = null;
+  let planJsonPath: string | null = null;
+  try {
+    await readFile(join(workflowDir, "PLAN.md"), "utf8");
+    planMarkdownPath = join(workflowDir, "PLAN.md");
+  } catch {
+    planMarkdownPath = null;
+  }
+  try {
+    await readFile(join(workflowDir, "plan.json"), "utf8");
+    planJsonPath = join(workflowDir, "plan.json");
+  } catch {
+    planJsonPath = null;
+  }
   const strategiesDir = join(workflowDir, "strategies");
   let strategyFolders: string[] = [];
   try {
@@ -118,5 +134,5 @@ export async function listWorkflowArtifactSummary(
   } catch {
     strategyFolders = [];
   }
-  return { workflowDir, reportPath, strategyFolders };
+  return { workflowDir, reportPath, planMarkdownPath, planJsonPath, strategyFolders };
 }

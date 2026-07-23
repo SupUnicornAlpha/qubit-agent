@@ -143,6 +143,7 @@ import type {
   StrategyGenomeRecord,
   StepStreamEvent,
   BuiltinConnectorConfig,
+  AgentControlMode,
   AgentLoopKind,
   WorkflowProcessConfig,
 } from "../../api/types";
@@ -1234,7 +1235,21 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
         <div className="qb-chat-main" style={styles.chatMain}>
           {simpleMode ? (
             <div className="qb-simple-chat-context">
-              <span>{chatSessions.find((session) => session.id === selectedSessionId)?.title ?? t("chat.sidebar.defaultSessionTitle")}</span>
+              <label className="qb-simple-session-picker">
+                <span>{t("simpleMode.sessionPicker")}</span>
+                <select
+                  value={selectedSessionId ?? ""}
+                  aria-label={t("simpleMode.sessionPickerAria")}
+                  onChange={(event) => onSelectSession(event.target.value)}
+                  disabled={chatSessions.length === 0}
+                >
+                  {chatSessions.map((session) => (
+                    <option key={session.id} value={session.id}>
+                      {session.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button type="button" onClick={() => void onCreateSession()}>
                 {t("simpleMode.newChat")}
               </button>
@@ -5645,6 +5660,10 @@ const TeamDashboardPanel: FC = () => {
         (ev) =>
           ev.kind === "message" &&
           ev.fromRole === role &&
+          // tool_call 只是执行轨迹，不是对流式自然语言答复的持久化接管。
+          // 若把它算作 covered，Orchestrator 一调用工具，右栏的在飞回答就会消失；
+          // OrchestratorChatPanel 随后又会过滤 tool_call，最终两边都没有可见文本。
+          (ev.messageKind === "llm_message" || ev.messageKind == null) &&
           ev.id !== `streaming:${role}` &&
           new Date(ev.ts).getTime() >= bubbleTs - 1500
       );
@@ -5654,7 +5673,7 @@ const TeamDashboardPanel: FC = () => {
         id: `streaming:${role}`,
         ts: s.ts,
         fromRole: role,
-        toRole: "orchestrator",
+        toRole: role === "orchestrator" ? "user" : "orchestrator",
         messageKind: "llm_message",
         contentText: `${text} ▌`,
       });
@@ -6489,9 +6508,12 @@ const TeamDashboardPanel: FC = () => {
    * （直接答 / assign_task 派单 / run_analyst_team 全队）。区别于「启动团队分析」按钮（handleRun=直接全队）。
    * 结果经 token firehose 流式 + team-graph 轮询出现在右栏；发送后清空 composer。
    */
-  const handleOrchestratorChat = async () => {
+  const handleOrchestratorChat = async (options?: {
+    message?: string;
+    agentMode?: AgentControlMode;
+  }) => {
     const wf = workflowRunId.trim();
-    const msg = teamAnalysisContext.trim();
+    const msg = (options?.message ?? teamAnalysisContext).trim();
     if (!wf) {
       setError("请先选择工作流");
       return;
@@ -6505,7 +6527,7 @@ const TeamDashboardPanel: FC = () => {
     }
     setError(null);
     pushUserEcho(msg);
-    setTeamAnalysisContext("");
+    if (!options?.message) setTeamAnalysisContext("");
     setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
     try {
@@ -6516,7 +6538,7 @@ const TeamDashboardPanel: FC = () => {
         message: msg,
         hitlMode: teamHitlMode,
         roleReasoner,
-        agentMode: teamAgentMode,
+        agentMode: options?.agentMode ?? teamAgentMode,
         processConfig: workflowProcessConfig,
       });
       setSelectedConversationSessionId(turn.sessionId);
@@ -9177,6 +9199,15 @@ const TeamDashboardPanel: FC = () => {
               await interruptWorkflow(wf);
             }}
             plan={teamPlan}
+            onExecutePlan={() => {
+              const approvedMessage =
+                "计划已确认。请严格按照当前 workflow 已保存的计划开始执行，持续更新每一步状态，并在完成后给出证据、结论和未完成项。";
+              setTeamAgentMode("goal");
+              void handleOrchestratorChat({
+                message: approvedMessage,
+                agentMode: "goal",
+              });
+            }}
             activity={activeRationale}
             artifacts={teamArtifacts}
             artifactsLoading={teamArtifactsLoading}

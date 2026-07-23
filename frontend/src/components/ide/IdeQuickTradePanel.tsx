@@ -206,11 +206,13 @@ export const IdeQuickTradePanel: FC<{
       <label style={styles.lab}>
         {t("ide.quickTrade.leverage", { n: leverage })}
         <input
+          className="qb-range-input"
           style={styles.range}
           type="range"
           min={1}
           max={20}
           value={leverage}
+          onInput={(e) => setLeverage(Number(e.currentTarget.value))}
           onChange={(e) => setLeverage(Number(e.target.value))}
         />
       </label>

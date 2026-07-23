@@ -1,5 +1,19 @@
 import type { AgentControlMode } from "../types/loop";
 
+/**
+ * Harness 控制面工具不属于业务工具权限面。
+ *
+ * 它们只能修改当前 workflow 自身的运行态，不访问行情、不派单、不写外部系统；
+ * 因而不能依赖可能滞后的业务 sandbox allow-list，否则会出现“prompt 要求调用，
+ * sandbox 又拒绝”的自相矛盾。
+ */
+export const AGENT_CONTROL_PLANE_TOOLS = ["update_plan"] as const;
+const AGENT_CONTROL_PLANE_TOOL_SET = new Set<string>(AGENT_CONTROL_PLANE_TOOLS);
+
+export function isAgentControlPlaneTool(toolName: string): boolean {
+  return AGENT_CONTROL_PLANE_TOOL_SET.has(toolName);
+}
+
 export type AgentPlanStepStatus = "pending" | "in_progress" | "done" | "skipped";
 
 export interface AgentPlanStepSnapshot {
@@ -149,6 +163,7 @@ export function buildAgentControlModePrompt(
       "- 本轮只澄清目标、识别依赖/风险并形成可执行计划；不得实际查询行情、派发专家、运行回测或写入业务数据。",
       "- 必须调用一次 `update_plan`，写入 3-7 个可验证步骤；所有尚未执行的步骤保持 pending。",
       "- 建好计划后用 `tool=none` 返回：目标理解、关键假设、执行顺序、验收条件和阻塞项。",
+      "- 你不能自行退出 Plan 模式。告知用户可点击计划卡片中的“按此计划执行”，或手动切换到 Goal/Agent 后再发送。",
       "- 不得使用“已查询、已验证、已完成”等措辞描述尚未执行的事情。",
     ].join("\n");
   }

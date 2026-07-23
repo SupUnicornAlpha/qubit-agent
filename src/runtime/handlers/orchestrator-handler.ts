@@ -15,24 +15,24 @@
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
+import { getA2APool } from "../a2a/a2a-pool";
 import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
 import { buildTaskResult } from "../a2a/task-result";
-import { getA2APool } from "../a2a/a2a-pool";
+import { onWorkflowTerminal } from "../monitor/observability-hook";
 import {
   failResearchTeamExecuteJob,
   parseResearchTeamExecutePayload,
   runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
-import { parseHitlApproval } from "../workflow/hitl-service";
 import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
 import { projectWorkflowFinalAnswer } from "../research-team/interaction-log";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
-import { onWorkflowTerminal } from "../monitor/observability-hook";
+import { parseHitlApproval } from "../workflow/hitl-service";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 
 async function setWorkflowStatus(
   workflowId: string,
-  status: "completed" | "failed" | "running" | "awaiting_approval",
+  status: "completed" | "failed" | "running" | "awaiting_approval"
 ): Promise<void> {
   await setWorkflowState(workflowId, status, { reason: "orchestrator-handler" });
   if (status === "completed" || status === "failed") {
@@ -51,7 +51,7 @@ function receiverForRole(role: AgentRole, fallback: string): string {
 type OrchestratorTaskHandler = (
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope,
-  payload: TaskAssignPayload,
+  payload: TaskAssignPayload
 ) => Promise<void>;
 
 /** 兼容 ReAct finalize 的多种形态，统一抽取面向用户的自然语言终答。 */
@@ -74,7 +74,8 @@ export function extractWorkflowFinalAnswer(finalResponse: unknown): string {
 async function projectReactResult(
   workflowId: string,
   taskType: string,
-  result: Awaited<ReturnType<typeof runA2aReactTaskAssign>>
+  result: Awaited<ReturnType<typeof runA2aReactTaskAssign>>,
+  conversationTurnId?: string
 ): Promise<void> {
   if (!result) return;
   let answer = extractWorkflowFinalAnswer(result.finalResponse);
@@ -95,6 +96,7 @@ async function projectReactResult(
     workflowRunId: workflowId,
     contentText: answer,
     sourceTaskType: taskType,
+    ...(conversationTurnId ? { conversationTurnId } : {}),
     payloadJson: {
       terminalStatus: result.terminalStatus,
       ...(handoff ? { handoff } : {}),
@@ -155,9 +157,7 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
     return;
   }
 
-  const hitlApproval = parseHitlApproval(
-    (payload.params as Record<string, unknown>).hitlApproval,
-  );
+  const hitlApproval = parseHitlApproval((payload.params as Record<string, unknown>).hitlApproval);
 
   const outcome = await runTeamResearchAndPersist({
     workflowRunId: msg.workflowId,
@@ -224,9 +224,12 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
  * run_analyst_team 跑全队（见 reason.ts 注入的调度决策指引）。跑完把它的最终自然语言
  * 答复落库为 orchestrator→user 交互，供右栏对话框持久展示（token 已实时流式）。
  */
-const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg) => {
+const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg, payload) => {
   const res = await runA2aReactTaskAssign(ctx, msg);
-  await projectReactResult(msg.workflowId, "orchestrator_chat", res);
+  const rawTurnId = (payload.params as Record<string, unknown> | undefined)?.conversationTurnId;
+  const conversationTurnId =
+    typeof rawTurnId === "string" && rawTurnId.trim() ? rawTurnId.trim() : undefined;
+  await projectReactResult(msg.workflowId, "orchestrator_chat", res, conversationTurnId);
 };
 
 const ORCHESTRATOR_TASK_HANDLERS: Record<string, OrchestratorTaskHandler> = {
@@ -279,7 +282,7 @@ export function createOrchestratorHandler(): RuntimeRoleHandler {
       await projectReactResult(msg.workflowId, payload.taskType, result);
     },
     onShutdown: async () => {
-      console.log(`[RoleHandler:orchestrator] shutdown`);
+      console.log("[RoleHandler:orchestrator] shutdown");
     },
   };
 }

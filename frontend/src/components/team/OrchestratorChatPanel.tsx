@@ -76,6 +76,8 @@ export interface OrchestratorChatPanelProps {
   onInterrupt: () => Promise<void>;
   /** Agent / Plan / Goal：Orchestrator 的分步计划（update_plan 推流），置于对话框顶部 */
   plan?: OrchestratorPlan | null;
+  /** Plan 审批后保留计划并以 Goal 模式继续同一 workflow */
+  onExecutePlan?: () => void;
   /** Coding-Agent 体验 P1：当前「正在调用什么、为何」活动行（tool_rationale 推流） */
   activity?: { tool: string; why: string } | null;
   /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
@@ -115,6 +117,7 @@ export function OrchestratorChatPanel({
   onInject,
   onInterrupt,
   plan,
+  onExecutePlan,
   activity,
   artifacts,
   artifactsLoading = false,
@@ -281,7 +284,11 @@ export function OrchestratorChatPanel({
 
       {/* Body：计划卡片 + 当前活动 + 内联 HITL + 产物卡片 + 对话流 */}
       <div ref={scrollRef} style={styles.body} data-qb-orchestrator-chat>
-        <PlanCard plan={plan ?? null} />
+        <PlanCard
+          plan={plan ?? null}
+          onExecute={onExecutePlan}
+          executeDisabled={running || chatInFlight}
+        />
         {activity?.why ? (
           <div style={styles.activityLine}>
             <span style={styles.activitySpinner} aria-hidden>

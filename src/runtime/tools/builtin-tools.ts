@@ -7,6 +7,7 @@ import { appendAuditLog } from "../audit/audit-chain-service";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
 import { stepStreamBus } from "../langgraph/event-stream";
 import { resolveAgentControlMode } from "../../types/loop";
+import type { AgentPlanSnapshot, AgentPlanStepStatus } from "../agent-control-mode";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
@@ -74,6 +75,7 @@ import {
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import { parseHitlApproval } from "../workflow/hitl-service";
+import { writeWorkflowPlanArtifacts } from "../workflow/plan-artifact";
 import { isLikelyProjectIdFormat } from "../langgraph/nodes/project-id";
 import { resolveConnectorForTool } from "./tool-routes";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
@@ -145,15 +147,20 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
 
   /**
    * update_plan —— 编排器维护一份对用户可见的分步计划/TODO。写入 workflow_run.plan_json 并经 SSE
-   * `type:"plan"` 推流给右栏「计划卡片」。best-effort：失败仅 warn，不影响主推理
-   * （计划是 UI 投影，不是权威态）。params: { steps: [{id?,title,status?,note?}] }，
+   * `type:"plan"` 推流给右栏「计划卡片」，并镜像到当前 workflow workspace 的
+   * PLAN.md + plan.json。workflow_run.plan_json 是权威态，workspace 文件用于审计、
+   * 外部 loop 与恢复。params: { steps: [{id?,title,status?,note?}] }，
    * status ∈ pending|in_progress|done|skipped。
    */
   update_plan: async (ctx, params) => {
+    if (ctx.definition.role !== "orchestrator") {
+      throw new Error("update_plan: only the workflow orchestrator may update the shared plan");
+    }
     const db = await getDb();
     const workflowMeta = (
       await db
         .select({
+          projectId: workflowRun.projectId,
           goal: workflowRun.goal,
           loopOptionsJson: workflowRun.loopOptionsJson,
         })
@@ -161,22 +168,36 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         .where(eq(workflowRun.id, ctx.workflowId))
         .limit(1)
     )[0];
+    if (!workflowMeta) throw new Error(`update_plan: workflow not found: ${ctx.workflowId}`);
     const mode = resolveAgentControlMode(workflowMeta?.loopOptionsJson);
     const rawSteps = Array.isArray(params.steps) ? params.steps : [];
-    const allowed = new Set(["pending", "in_progress", "done", "skipped"]);
-    const steps: Array<{ id: string; title: string; status: string; note?: string }> = [];
+    const allowed = new Set<AgentPlanStepStatus>([
+      "pending",
+      "in_progress",
+      "done",
+      "skipped",
+    ]);
+    const steps: Array<{
+      id: string;
+      title: string;
+      status: AgentPlanStepStatus;
+      note?: string;
+    }> = [];
     for (let i = 0; i < rawSteps.length && steps.length < 20; i++) {
       const o = (rawSteps[i] ?? {}) as Record<string, unknown>;
       const title = String(o.title ?? o.text ?? "").trim();
       if (!title) continue;
       const requestedStatus = String(o.status ?? "pending").trim();
       // Plan 模式只设计未来动作，不能把尚未执行的步骤伪装成 done。
-      const status = mode === "plan" ? "pending" : requestedStatus;
+      const normalizedStatus = allowed.has(requestedStatus as AgentPlanStepStatus)
+        ? (requestedStatus as AgentPlanStepStatus)
+        : "pending";
+      const status: AgentPlanStepStatus = mode === "plan" ? "pending" : normalizedStatus;
       const note = o.note != null ? String(o.note).slice(0, 300) : undefined;
       steps.push({
         id: (String(o.id ?? "").trim() || `s${i + 1}`).slice(0, 40),
         title: title.slice(0, 200),
-        status: allowed.has(status) ? status : "pending",
+        status,
         ...(note ? { note } : {}),
       });
     }
@@ -194,10 +215,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
             ? "executing"
             : "planning"
         : "planning";
-    const plan = {
+    const plan: AgentPlanSnapshot = {
       mode,
       goal: {
-        text: workflowMeta?.goal ?? "",
+        text: workflowMeta.goal,
         status: goalStatus,
         completedSteps,
         totalSteps: steps.length,
@@ -205,13 +226,22 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       steps,
       updatedAt: new Date().toISOString(),
     };
+    await db
+      .update(workflowRun)
+      .set({ planJson: plan as never })
+      .where(eq(workflowRun.id, ctx.workflowId));
+
+    let artifactPaths: Awaited<ReturnType<typeof writeWorkflowPlanArtifacts>> | null = null;
+    let workspaceWarning: string | null = null;
     try {
-      await db
-        .update(workflowRun)
-        .set({ planJson: plan as never })
-        .where(eq(workflowRun.id, ctx.workflowId));
+      artifactPaths = await writeWorkflowPlanArtifacts({
+        projectId: workflowMeta.projectId,
+        workflowRunId: ctx.workflowId,
+        plan,
+      });
     } catch (e) {
-      console.warn(`[update_plan] persist failed: ${(e as Error).message}`);
+      workspaceWarning = e instanceof Error ? e.message : String(e);
+      console.warn(`[update_plan] workspace mirror failed: ${workspaceWarning}`);
     }
     try {
       stepStreamBus.publish({
@@ -222,13 +252,17 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         type: "plan",
         stepIndex: 0,
         ts: Date.now(),
-        payload: plan,
+        payload: plan as unknown as Record<string, unknown>,
       });
     } catch (e) {
       console.warn(`[update_plan] publish failed: ${(e as Error).message}`);
     }
     return {
       ok: true,
+      persisted: true,
+      workspaceMirrored: Boolean(artifactPaths),
+      workspaceDir: artifactPaths?.workflowDir ?? null,
+      ...(workspaceWarning ? { workspaceWarning } : {}),
       stepCount: steps.length,
       done: steps.filter((s) => s.status === "done").length,
     };

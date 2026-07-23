@@ -1,5 +1,8 @@
 /** Yahoo Finance RSS (headline feed) — lightweight parse, no XML dependency. */
 
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { marketDataFetch } from "./market-data-network";
+
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
 
 export interface RssHeadlineItem {
@@ -33,7 +36,9 @@ export function parseRssHeadlineItems(xml: string, limit: number): RssHeadlineIt
   const re = /<item>([\s\S]*?)<\/item>/gi;
   let m: RegExpExecArray | null;
   let idx = 0;
-  while ((m = re.exec(xml)) && out.length < limit) {
+  while (out.length < limit) {
+    m = re.exec(xml);
+    if (!m) break;
     const block = m[1];
     const title = extractCdataOrText(block, "title");
     const link = extractCdataOrText(block, "link");
@@ -51,14 +56,24 @@ export function parseRssHeadlineItems(xml: string, limit: number): RssHeadlineIt
   return out;
 }
 
-export async function fetchYahooHeadlineRss(ticker: string, limit: number): Promise<RssHeadlineItem[]> {
+export async function fetchYahooHeadlineRss(
+  ticker: string,
+  limit: number,
+  settings: BuiltinConnectorInitConfigs = {}
+): Promise<RssHeadlineItem[]> {
   const t = ticker.trim();
   if (!t) return [];
   const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(t)}&region=US&lang=en-US`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 12_000);
   try {
-    const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/rss+xml,*/*" }, signal: ctrl.signal });
+    const res = await marketDataFetch(
+      "yahoo_chart",
+      settings,
+      url,
+      { headers: { "User-Agent": UA, Accept: "application/rss+xml,*/*" }, signal: ctrl.signal },
+      12_000
+    );
     if (!res.ok) return [];
     const xml = await res.text();
     return parseRssHeadlineItems(xml, Math.min(Math.max(limit, 1), 30));
