@@ -3,7 +3,10 @@ import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
 import { getDb, getSqliteForTesting } from "../../../db/sqlite/client";
 import { workflowRun } from "../../../db/sqlite/schema";
-import { resolveAgentControlMode } from "../../../types/loop";
+import {
+  resolveAgentControlMode,
+  resolveWorkflowProcessConfig,
+} from "../../../types/loop";
 import {
   buildArtifactGapHint,
   checkRequiredArtifacts,
@@ -44,6 +47,10 @@ import { resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 import { buildToolRecoveryPlan } from "./tool-recovery-policy";
+import {
+  assessWorkflowProcessGate,
+  resolveEffectiveWorkflowProcessConfig,
+} from "../../workflow/process-config";
 
 /**
  * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 最多 push back 几次。
@@ -77,6 +84,10 @@ export async function actNode(
     .limit(1);
   const projectId = workflowRows[0]?.projectId;
   const agentMode = resolveAgentControlMode(workflowRows[0]?.loopOptionsJson);
+  const processConfig = resolveEffectiveWorkflowProcessConfig(
+    resolveWorkflowProcessConfig(workflowRows[0]?.loopOptionsJson),
+    agentMode
+  );
   const planSnapshot = workflowRows[0]?.planJson;
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
   const availableTools = effective.tools;
@@ -164,6 +175,67 @@ export async function actNode(
             reason: "control_mode_gate_unsatisfied",
             error: message,
             answerText,
+            iteration: state.iteration,
+            role: state.agentDefinition.role,
+          },
+        };
+      }
+    }
+
+    if (state.agentDefinition.role === "orchestrator" && processConfig) {
+      const successfulBusinessToolCalls = state.toolCalls.filter(
+        (call) =>
+          call.status === "success" &&
+          call.toolName !== "update_plan" &&
+          call.toolName !== "tool/update_plan"
+      ).length;
+      const processGate = assessWorkflowProcessGate({
+        config: processConfig,
+        plan: parseAgentPlanSnapshot(planSnapshot),
+        successfulBusinessToolCalls,
+      });
+      if (!processGate.ok) {
+        const retryCount = state.controlModeGapRetryCount ?? 0;
+        const message = processGate.reasons.join(" ");
+        if (retryCount < MAX_CONTROL_MODE_GATE_RETRIES) {
+          const observation = {
+            level: "warn",
+            workflowProcessGate: true,
+            code: "WORKFLOW_PROCESS_GATE_PENDING",
+            retryCount: retryCount + 1,
+            maxRetries: MAX_CONTROL_MODE_GATE_RETRIES,
+            message,
+          };
+          emit({
+            runId: state.runId,
+            workflowId: state.workflowId,
+            traceId: state.traceId,
+            role: state.agentDefinition.role,
+            type: "observe",
+            stepIndex: state.iteration,
+            ts: Date.now(),
+            payload: observation,
+          });
+          return {
+            observations: [...state.observations, observation],
+            controlModeGapRetryCount: retryCount + 1,
+          };
+        }
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "error",
+              workflowProcessGate: true,
+              code: "WORKFLOW_PROCESS_GATE_UNSATISFIED",
+              message,
+            },
+          ],
+          finalResponse: {
+            status: "terminated",
+            reason: "workflow_process_gate_unsatisfied",
+            error: message,
+            answerText: `流程完成门禁未通过：${message}`,
             iteration: state.iteration,
             role: state.agentDefinition.role,
           },

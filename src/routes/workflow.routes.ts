@@ -284,6 +284,8 @@ workflowRouter.patch("/:id", async (c) => {
       sessionId?: string | null;
       goal?: string;
       status?: (typeof workflowStatusEnum)[number];
+      /** 模板 / SOP / 门控等流程配置与执行模式统一收敛到 loop options。 */
+      loopOptionsJson?: Partial<LoopOptionsJson>;
     }>()
     .catch(() => ({}));
   const db = await getDb();
@@ -312,6 +314,12 @@ workflowRouter.patch("/:id", async (c) => {
       if (!s[0]) return c.json({ error: "session not found", sessionId: body.sessionId }, 404);
     }
     patch.sessionId = body.sessionId;
+  }
+  if (body.loopOptionsJson && typeof body.loopOptionsJson === "object") {
+    patch.loopOptionsJson = {
+      ...((cur.loopOptionsJson as Record<string, unknown> | null) ?? {}),
+      ...body.loopOptionsJson,
+    } as never;
   }
   if (Object.keys(patch).length === 0 && pendingStatus === null) {
     return c.json({ data: cur });

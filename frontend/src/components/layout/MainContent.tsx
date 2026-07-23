@@ -5,8 +5,8 @@ import {
   chatHealth,
   checkBrokerHealth,
   createChatSession,
+  createConversationTurn,
   getOrCreateDefaultProject,
-  createSessionMessage,
   createIntentOrder,
   createWorkflow,
   getAgentsConfig,
@@ -89,7 +89,6 @@ import {
   resolveWorkflowHitl,
   injectWorkflowMessage,
   interruptWorkflow,
-  runOrchestratorChat,
   listFactors,
   listStrategyVersions,
   listStrategyScripts,
@@ -145,7 +144,7 @@ import type {
   StepStreamEvent,
   BuiltinConnectorConfig,
   AgentLoopKind,
-  AgentControlMode,
+  WorkflowProcessConfig,
 } from "../../api/types";
 import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
@@ -208,6 +207,7 @@ import {
   type OrchestratorArtifact,
 } from "../team/OrchestratorChatPanel";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
+import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
 import {
   classifyWorkflow,
   groupWorkflowOptions,
@@ -420,6 +420,8 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
   const setChatMessages = useAppStore((s) => s.setChatMessages);
   const streamEvents = useAppStore((s) => s.streamEvents);
   const pushStreamEvent = useAppStore((s) => s.pushStreamEvent);
+  const chatAgentMode = useAppStore((s) => s.agentControlMode);
+  const setChatAgentMode = useAppStore((s) => s.setAgentControlMode);
   const { t } = useTranslation();
 
   const [workspaceId, setWorkspaceId] = useState("");
@@ -1080,42 +1082,18 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
       const trimmed = input.trim();
       const block = chartContext ? formatChartContextBlock(chartContext) : "";
       const combinedGoal = block ? `${block}\n\n${trimmed}` : trimmed;
-      const userMsg = await createSessionMessage({
+      const turn = await createConversationTurn({
         sessionId: selectedSessionId,
-        role: "user",
-        sender: "user",
-        content: combinedGoal,
-        status: "running",
-      });
-      const assistantMsg = await createSessionMessage({
-        sessionId: selectedSessionId,
-        role: "assistant",
-        sender: "orchestrator",
-        content: "",
-        status: "running",
-      });
-      const created = await createWorkflow({
         projectId,
-        goal: combinedGoal,
-        mode: "research",
-        sessionId: selectedSessionId,
-        source: "chat",
-        messageId: userMsg.id,
+        message: combinedGoal,
+        workflowMode: "research",
         reuseSessionWorkflow: true,
         loopKind: chatLoopKind,
-        // 把对话 HITL 三档策略落到 workflow_run.loop_options_json，hitl-gate.ts 会读它。
-        // P1-H：v1 hitlChat 字段不再前端写入；后端 resolveChatHitlMode 仍读老 DB row 的 v1 字段。
-        loopOptionsJson: {
-          hitlChatMode: chatHitlMode,
-        },
+        hitlMode: chatHitlMode,
+        agentMode: chatAgentMode,
       });
-      await patchSessionMessage({
-        messageId: assistantMsg.id,
-        workflowRunIds: [created.data.id],
-      });
-      await patchSessionMessage({ messageId: userMsg.id, status: "completed" });
-      if (created.runId) {
-        bindStream(created.data.id, created.runId, assistantMsg.id);
+      if (turn.runId) {
+        bindStream(turn.workflowRunId, turn.runId, turn.assistantMessage.id);
       }
       await reloadSessionMessages(selectedSessionId);
       setInput("");
@@ -1374,6 +1352,9 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
             style={styles.chatForm}
             onSubmit={onSend}
           >
+            {!simpleMode ? (
+              <AgentModePicker value={chatAgentMode} onChange={setChatAgentMode} />
+            ) : null}
             {!simpleMode ? <label style={{ ...styles.chatMeta, display: "flex", alignItems: "center", gap: 6 }}>
               {t("chat.form.loopLabel")}
               <select
@@ -1422,9 +1403,30 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
                 placeholder={t("chat.form.placeholder")}
               />
             )}
-            <button className={simpleMode ? "qb-simple-composer__send" : "qb-btn-primary-brand"} type="submit" disabled={!input.trim()}>
-              {simpleMode ? "↑" : t("common.action.send")}
-            </button>
+            {simpleMode ? (
+              <div className="qb-simple-composer__footer">
+                <AgentModePicker
+                  value={chatAgentMode}
+                  onChange={setChatAgentMode}
+                  variant="simple"
+                />
+                <span className="qb-simple-composer__mode-hint">
+                  {getAgentModeOption(chatAgentMode).hint}
+                </span>
+                <button
+                  className="qb-simple-composer__send"
+                  type="submit"
+                  disabled={!input.trim()}
+                  title={`使用 ${getAgentModeOption(chatAgentMode).label} 模式发送`}
+                >
+                  ↑
+                </button>
+              </div>
+            ) : (
+              <button className="qb-btn-primary-brand" type="submit" disabled={!input.trim()}>
+                {t("common.action.send")}
+              </button>
+            )}
           </form>
         </div>
 
@@ -4777,6 +4779,54 @@ const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
   research: "研究画布 · 拓扑 / 实时流 / 结论",
 };
 
+const WORKFLOW_SOP_PRESETS: ReadonlyArray<{
+  id: string;
+  label: string;
+  description: string;
+  steps: NonNullable<WorkflowProcessConfig["sopSteps"]>;
+}> = [
+  {
+    id: "adaptive",
+    label: "自适应",
+    description: "不固定步骤，由 Agent 根据目标动态规划。",
+    steps: [],
+  },
+  {
+    id: "deep_research",
+    label: "深度研究",
+    description: "先校验数据，再形成观点、反证与结论。",
+    steps: [
+      { id: "scope", title: "澄清范围与时效要求", required: true },
+      { id: "evidence", title: "获取并交叉验证行情、基本面与新闻", required: true },
+      { id: "thesis", title: "形成主观点、反证和风险清单", required: true },
+      { id: "deliver", title: "输出带证据与时点的研究结论", required: true },
+    ],
+  },
+  {
+    id: "factor_validation",
+    label: "因子验证",
+    description: "从定义、数据、回测到稳健性检查的标准流程。",
+    steps: [
+      { id: "definition", title: "给出因子定义、方向与经济含义", required: true },
+      { id: "data", title: "校验样本、频率、缺失值与未来函数", required: true },
+      { id: "backtest", title: "执行 IC、分层或组合回测", required: true },
+      { id: "robustness", title: "检查换手、成本、分期与稳健性", required: true },
+      { id: "artifact", title: "登记可复用因子产物与评估结果", required: true },
+    ],
+  },
+  {
+    id: "event_driven",
+    label: "事件驱动",
+    description: "突出新闻时效、事件链和市场反应验证。",
+    steps: [
+      { id: "latest", title: "获取最新事件并标注发布时间", required: true },
+      { id: "timeline", title: "串联近期事件与历史背景", required: true },
+      { id: "market", title: "验证价格、成交量与同业反应", required: true },
+      { id: "impact", title: "评估影响路径、持续期与风险", required: true },
+    ],
+  },
+];
+
 /** 活动栏图标：Web 端用 Lucide 对齐 SF Symbols 语义（见 `appleUiSymbols.ts` 与 [SF Symbols](https://developer.apple.com/cn/sf-symbols/)）。 */
 const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
   run: Rocket,
@@ -4832,6 +4882,11 @@ const TeamDashboardPanel: FC = () => {
   /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
   const [promptTemplateId, setPromptTemplateId] = useState("");
+  const [workflowSopPreset, setWorkflowSopPreset] = useState("adaptive");
+  const [workflowRequirePlan, setWorkflowRequirePlan] = useState(false);
+  const [workflowRequireEvidence, setWorkflowRequireEvidence] = useState(false);
+  const [workflowMinSuccessfulTools, setWorkflowMinSuccessfulTools] = useState(1);
+  const [workflowConfigSaving, setWorkflowConfigSaving] = useState(false);
   /**
    * Agent 底座/引擎：团队里每个角色单轮 reason 用哪个引擎
    * （docs/CLI_AGENT_PROJECTION_DESIGN.md 模型 B）。写入 loopOptions.roleReasoner，
@@ -4839,7 +4894,10 @@ const TeamDashboardPanel: FC = () => {
    */
   const [roleReasoner, setRoleReasoner] = useState<AgentLoopKind>("native");
   /** Agent / Plan / Goal 工作模式；与上面的推理引擎选择正交。 */
-  const [teamAgentMode, setTeamAgentMode] = useState<AgentControlMode>("agent");
+  const teamAgentMode = useAppStore((s) => s.agentControlMode);
+  const setTeamAgentMode = useAppStore((s) => s.setAgentControlMode);
+  const selectedConversationSessionId = useAppStore((s) => s.selectedSessionId);
+  const setSelectedConversationSessionId = useAppStore((s) => s.setSelectedSessionId);
 
   /**
    * 切换 scope 模式时清空"上一模式特有"的输入，避免数据串台到下一次提交。
@@ -5758,8 +5816,12 @@ const TeamDashboardPanel: FC = () => {
     setTeamArtifactsLoading(true);
     setTeamArtifactsError(null);
     const load = async () => {
-      const scriptsRequest = teamResearchSessionId
-        ? listStrategyScripts(teamResearchSessionId, { workflowRunId: wf })
+      const workflowRow = workflowOptions.find((row) => String(row.id) === wf);
+      const workflowLinkedSessionId =
+        typeof workflowRow?.sessionId === "string" ? workflowRow.sessionId : "";
+      const artifactSessionId = workflowLinkedSessionId || teamResearchSessionId;
+      const scriptsRequest = artifactSessionId
+        ? listStrategyScripts(artifactSessionId, { workflowRunId: wf })
         : Promise.resolve([]);
       const [factorResult, strategyResult, scriptResult] = await Promise.allSettled([
         listFactors({ workflowRunId: wf }),
@@ -5829,7 +5891,7 @@ const TeamDashboardPanel: FC = () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [workflowRunId, activeTab, teamResearchSessionId]);
+  }, [workflowRunId, activeTab, teamResearchSessionId, workflowOptions]);
 
   useEffect(() => {
     const el = liveFeedScrollRef.current;
@@ -5961,6 +6023,77 @@ const TeamDashboardPanel: FC = () => {
     () => workflowOptions.find((w) => String(w.id) === workflowRunId) ?? null,
     [workflowOptions, workflowRunId]
   );
+
+  const workflowProcessConfig = useMemo<WorkflowProcessConfig>(() => {
+    const preset =
+      WORKFLOW_SOP_PRESETS.find((item) => item.id === workflowSopPreset) ??
+      WORKFLOW_SOP_PRESETS[0];
+    return {
+      ...(promptTemplateId ? { templateId: promptTemplateId } : {}),
+      sopPreset: preset.id,
+      sopSteps: preset.steps,
+      gates: {
+        requirePlanCompleted: workflowRequirePlan,
+        requireEvidence: workflowRequireEvidence,
+        minSuccessfulToolCalls: Math.max(1, workflowMinSuccessfulTools),
+      },
+    };
+  }, [
+    promptTemplateId,
+    workflowSopPreset,
+    workflowRequirePlan,
+    workflowRequireEvidence,
+    workflowMinSuccessfulTools,
+  ]);
+
+  const hydratedWorkflowConfigRef = useRef("");
+  useEffect(() => {
+    if (!workflowRunId || !selectedWorkflowRow) return;
+    if (hydratedWorkflowConfigRef.current === workflowRunId) return;
+    hydratedWorkflowConfigRef.current = workflowRunId;
+    const rawLoopOptions = selectedWorkflowRow.loopOptionsJson;
+    let loopOptions: Record<string, unknown> = {};
+    if (rawLoopOptions && typeof rawLoopOptions === "object") {
+      loopOptions = rawLoopOptions as Record<string, unknown>;
+    } else if (typeof rawLoopOptions === "string") {
+      try {
+        loopOptions = JSON.parse(rawLoopOptions) as Record<string, unknown>;
+      } catch {
+        loopOptions = {};
+      }
+    }
+    const config =
+      loopOptions.processConfig && typeof loopOptions.processConfig === "object"
+        ? (loopOptions.processConfig as WorkflowProcessConfig)
+        : null;
+    const presetId =
+      typeof config?.sopPreset === "string" &&
+      WORKFLOW_SOP_PRESETS.some((item) => item.id === config.sopPreset)
+        ? config.sopPreset
+        : "adaptive";
+    setPromptTemplateId(
+      typeof config?.templateId === "string" ? config.templateId : ""
+    );
+    setWorkflowSopPreset(presetId);
+    setWorkflowRequirePlan(config?.gates?.requirePlanCompleted === true);
+    setWorkflowRequireEvidence(config?.gates?.requireEvidence === true);
+    setWorkflowMinSuccessfulTools(
+      Math.max(1, Number(config?.gates?.minSuccessfulToolCalls ?? 1))
+    );
+  }, [workflowRunId, selectedWorkflowRow]);
+
+  useEffect(() => {
+    if (
+      workflowSessionId &&
+      workflowSessionId !== selectedConversationSessionId
+    ) {
+      setSelectedConversationSessionId(workflowSessionId);
+    }
+  }, [
+    workflowSessionId,
+    selectedConversationSessionId,
+    setSelectedConversationSessionId,
+  ]);
 
   /**
    * 选中工作流是否已结束（completed/failed/cancelled）。用于右栏「继续研究」模式：
@@ -6203,8 +6336,15 @@ const TeamDashboardPanel: FC = () => {
       getRiskConfig().then(setRiskConfigState).catch(() => {});
       getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
       const wfRows = await refreshWorkflowOptions();
-      if (!workflowRunId && wfRows[0]?.id) {
-        setWorkflowRunId(String(wfRows[0].id));
+      if (!workflowRunId) {
+        const activeSessionId = useAppStore.getState().selectedSessionId;
+        const sessionWorkflow = activeSessionId
+          ? wfRows.find((row) => String(row.sessionId ?? "") === activeSessionId)
+          : null;
+        const initialWorkflow = sessionWorkflow ?? wfRows[0];
+        if (initialWorkflow?.id) {
+          setWorkflowRunId(String(initialWorkflow.id));
+        }
       }
       await refreshBrokerAndComp();
     })().catch(() => {});
@@ -6317,6 +6457,33 @@ const TeamDashboardPanel: FC = () => {
     }
   }, [running, teamPendingHitl, error]);
 
+  const saveWorkflowProcessConfig = async () => {
+    const workflowId = workflowRunId.trim();
+    if (!workflowId) {
+      setError("请先选择工作流");
+      return;
+    }
+    setWorkflowConfigSaving(true);
+    setError(null);
+    setWorkflowNotice(null);
+    try {
+      await patchWorkflow(workflowId, {
+        loopOptionsJson: {
+          processConfig: workflowProcessConfig,
+          agentMode: teamAgentMode,
+          hitlMode: teamHitlMode,
+          roleReasoner,
+        },
+      });
+      await refreshWorkflowOptions();
+      setWorkflowNotice("流程配置已保存；普通对话与工作流会共用同一会话记录。");
+    } catch (e) {
+      setError(`保存流程配置失败：${(e as Error).message}`);
+    } finally {
+      setWorkflowConfigSaving(false);
+    }
+  };
+
   /**
    * 对话消息入口（composer 发送/继续）：交给 Orchestrator 跑 ReAct 自主判断
    * （直接答 / assign_task 派单 / run_analyst_team 全队）。区别于「启动团队分析」按钮（handleRun=直接全队）。
@@ -6330,13 +6497,29 @@ const TeamDashboardPanel: FC = () => {
       return;
     }
     if (!msg) return;
+    const sessionId = workflowSessionId || teamResearchSessionId;
+    const projectId = effectiveResearchProjectId || teamResearchProjectId;
+    if (!sessionId || !projectId) {
+      setError("当前工作流尚未关联有效项目/会话，无法发送消息。");
+      return;
+    }
     setError(null);
     pushUserEcho(msg);
     setTeamAnalysisContext("");
     setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
     try {
-      await runOrchestratorChat(wf, msg, teamHitlMode, roleReasoner, teamAgentMode);
+      const turn = await createConversationTurn({
+        sessionId,
+        projectId,
+        workflowRunId: wf,
+        message: msg,
+        hitlMode: teamHitlMode,
+        roleReasoner,
+        agentMode: teamAgentMode,
+        processConfig: workflowProcessConfig,
+      });
+      setSelectedConversationSessionId(turn.sessionId);
       void refreshWorkflowOptions();
       void loadTeamGraph({ preserveSelection: true });
     } catch (e) {
@@ -6356,6 +6539,12 @@ const TeamDashboardPanel: FC = () => {
     if (teamAgentMode === "plan" || teamAgentMode === "goal") {
       const wfId = workflowRunId.trim();
       if (!wfId || !researchScopePayload) return;
+      const sessionId = workflowSessionId || teamResearchSessionId;
+      const projectId = effectiveResearchProjectId || teamResearchProjectId;
+      if (!sessionId || !projectId) {
+        setError("当前工作流尚未关联有效项目/会话，无法启动。");
+        return;
+      }
       const scopeText = JSON.stringify(researchScopePayload);
       const objective = [
         teamAgentMode === "plan"
@@ -6371,13 +6560,17 @@ const TeamDashboardPanel: FC = () => {
       setOrchestratorChatInFlight(true);
       setRunProgress(teamAgentMode === "plan" ? "Orchestrator 正在制定计划…" : "Goal 正在自主执行…");
       try {
-        await runOrchestratorChat(
-          wfId,
-          objective,
-          teamHitlMode,
+        const turn = await createConversationTurn({
+          sessionId,
+          projectId,
+          workflowRunId: wfId,
+          message: objective,
+          hitlMode: teamHitlMode,
           roleReasoner,
-          teamAgentMode
-        );
+          agentMode: teamAgentMode,
+          processConfig: workflowProcessConfig,
+        });
+        setSelectedConversationSessionId(turn.sessionId);
         void refreshWorkflowOptions();
         void loadTeamGraph({ preserveSelection: true });
       } catch (e) {
@@ -6401,6 +6594,14 @@ const TeamDashboardPanel: FC = () => {
         setRunning(false);
         return;
       }
+      await patchWorkflow(wfId, {
+        loopOptionsJson: {
+          processConfig: workflowProcessConfig,
+          agentMode: teamAgentMode,
+          hitlMode: teamHitlMode,
+          roleReasoner,
+        },
+      });
       setActiveTab("research");
       const unsubscribe = subscribeDebateStream({
         workflowRunId: wfId,
@@ -6417,7 +6618,9 @@ const TeamDashboardPanel: FC = () => {
         workflowRunId: wfId,
         ticker: researchScopePayload?.symbols?.[0] ?? ticker.trim(),
         scope: researchScopePayload ?? undefined,
-        context: teamAnalysisContext.trim() || undefined,
+        context:
+          teamAnalysisContext.trim() ||
+          `启动流程化研究：${JSON.stringify(researchScopePayload)}`,
         timeoutMs,
         signal: abortCtl.signal,
         hitlMode: teamHitlMode,
@@ -6499,9 +6702,16 @@ const TeamDashboardPanel: FC = () => {
         source: "manual",
         reuseSessionWorkflow: false,
         skipDispatch: true,
+        loopOptionsJson: {
+          processConfig: workflowProcessConfig,
+          agentMode: teamAgentMode,
+          hitlMode: teamHitlMode,
+          roleReasoner,
+        },
       });
       await refreshWorkflowOptions();
       setWorkflowRunId(String(created.data.id));
+      setSelectedConversationSessionId(teamResearchSessionId);
       if (!geneProjectId && teamResearchProjectId) setGeneProjectId(teamResearchProjectId);
     } catch (e) {
       setError((e as Error).message);
@@ -6600,6 +6810,7 @@ const TeamDashboardPanel: FC = () => {
     try {
       await patchWorkflow(workflowRunId.trim(), { sessionId: teamResearchSessionId });
       await refreshWorkflowOptions();
+      setSelectedConversationSessionId(teamResearchSessionId);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -7196,6 +7407,7 @@ const TeamDashboardPanel: FC = () => {
                             type="button"
                             onClick={() => {
                               setWorkflowRunId(id);
+                              if (sid) setSelectedConversationSessionId(sid);
                               setWorkflowNotice(null);
                             }}
                             style={workflowListStyles.itemMain}
@@ -8441,7 +8653,7 @@ const TeamDashboardPanel: FC = () => {
             <summary style={teamStyles.runControlsSummary}>
               <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#fde68a" }}>
-                  ⚙ 启动设置
+                  ⚙ 流程配置与启动
                 </span>
                 {running ? (
                   <span style={{ fontSize: 11, color: "#38bdf8" }}>
@@ -8462,6 +8674,109 @@ const TeamDashboardPanel: FC = () => {
               <span style={{ fontSize: 11, color: "#a1a1aa" }}>点击折叠/展开</span>
             </summary>
             <div style={teamStyles.runControlsBody}>
+              <div
+                style={{
+                  padding: "10px",
+                  border: "1px solid #3f3f46",
+                  borderRadius: 6,
+                  background: "#111113",
+                  display: "grid",
+                  gridTemplateColumns: "minmax(112px, 0.75fr) minmax(150px, 1.25fr)",
+                  gap: 10,
+                  alignItems: "end",
+                }}
+              >
+                <label style={{ display: "grid", gap: 5, fontSize: 11, color: "#a1a1aa" }}>
+                  流程 SOP
+                  <select
+                    style={{ ...teamStyles.input, fontSize: 12 }}
+                    value={workflowSopPreset}
+                    onChange={(event) => setWorkflowSopPreset(event.target.value)}
+                    disabled={running}
+                  >
+                    {WORKFLOW_SOP_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
+                  <span style={{ fontSize: 11, color: "#71717a" }}>
+                    {WORKFLOW_SOP_PRESETS.find((item) => item.id === workflowSopPreset)
+                      ?.description ?? ""}
+                  </span>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "#d4d4d8" }}>
+                      <input
+                        type="checkbox"
+                        checked={workflowRequirePlan}
+                        onChange={(event) => setWorkflowRequirePlan(event.target.checked)}
+                        disabled={running}
+                      />
+                      完成计划后才能结束
+                    </label>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "#d4d4d8" }}>
+                      <input
+                        type="checkbox"
+                        checked={workflowRequireEvidence}
+                        onChange={(event) => setWorkflowRequireEvidence(event.target.checked)}
+                        disabled={running}
+                      />
+                      要求工具证据
+                    </label>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: workflowRequireEvidence ? "#d4d4d8" : "#71717a" }}>
+                      至少
+                      <input
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={workflowMinSuccessfulTools}
+                        onChange={(event) =>
+                          setWorkflowMinSuccessfulTools(
+                            Math.max(1, Math.min(20, Number(event.target.value) || 1))
+                          )
+                        }
+                        disabled={running || !workflowRequireEvidence}
+                        style={{
+                          width: 42,
+                          padding: "2px 4px",
+                          background: "transparent",
+                          color: "#e4e4e7",
+                          border: "1px solid #3f3f46",
+                          borderRadius: 4,
+                          fontSize: 11,
+                        }}
+                      />
+                      次成功调用
+                    </label>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  onClick={() => void saveWorkflowProcessConfig()}
+                  disabled={!workflowRunId || running || workflowConfigSaving}
+                  style={{
+                    gridColumn: "1 / -1",
+                    justifySelf: "end",
+                    fontSize: 11,
+                    padding: "6px 10px",
+                  }}
+                >
+                  {workflowConfigSaving ? "保存中…" : "保存流程配置"}
+                </button>
+                <div
+                  style={{
+                    gridColumn: "1 / -1",
+                    fontSize: 10,
+                    lineHeight: 1.45,
+                    color: "#71717a",
+                  }}
+                >
+                  模板：{promptTemplateId || "无"} · 工作模式在右侧输入框下方随时切换。普通对话与工作流共用同一会话；这里仅配置可复用 SOP 与运行门控。
+                </div>
+              </div>
               <div style={teamStyles.runControlsGrid}>
                 <div
                   style={{
@@ -8731,7 +9046,7 @@ const TeamDashboardPanel: FC = () => {
               <ResearchOutputTabs
                 projectId={effectiveResearchProjectId}
                 workflowRunId={workflowRunId}
-                sessionId={teamResearchSessionId}
+                sessionId={workflowSessionId || teamResearchSessionId}
                 onOpenFactorInWorkbench={(factor) => {
                   setQuantContext({
                     projectId: factor.projectId,

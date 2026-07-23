@@ -660,6 +660,27 @@ export async function createWorkflow(input: WorkflowCreateInput): Promise<{
   return httpPost("/api/v1/workflows", input);
 }
 
+export async function createConversationTurn(input: {
+  sessionId: string;
+  projectId: string;
+  message: string;
+  workflowRunId?: string;
+  workflowMode?: import("./types").WorkflowMode;
+  reuseSessionWorkflow?: boolean;
+  loopKind?: import("./types").AgentLoopKind;
+  roleReasoner?: import("./types").AgentLoopKind;
+  hitlMode?: "off" | "ai" | "always";
+  agentMode?: import("./types").AgentControlMode;
+  processConfig?: import("./types").WorkflowProcessConfig;
+}): Promise<import("./types").ConversationTurnResult> {
+  const { sessionId, ...body } = input;
+  const res = await httpPost<{
+    ok: boolean;
+    data: import("./types").ConversationTurnResult;
+  }>(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/turns`, body);
+  return res.data;
+}
+
 /**
  * Agent 心跳 / loop 活跃度。
  *
@@ -951,6 +972,7 @@ export async function patchWorkflow(
     sessionId?: string | null;
     goal?: string;
     status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+    loopOptionsJson?: Partial<import("./types").LoopOptionsJson>;
   }
 ): Promise<{ data: Record<string, unknown> }> {
   return httpPatch<{ data: Record<string, unknown> }>(

@@ -11,6 +11,33 @@ export type AgentLoopKind = z.infer<typeof AgentLoopKindSchema>;
 export const AgentControlModeSchema = z.enum(["agent", "plan", "goal"]);
 export type AgentControlMode = z.infer<typeof AgentControlModeSchema>;
 
+export const WorkflowSopStepSchema = z.object({
+  id: z.string().min(1).max(64),
+  title: z.string().min(1).max(200),
+  required: z.boolean().optional().default(true),
+});
+
+export const WorkflowGateConfigSchema = z.object({
+  /** 结束前必须存在一份计划，且没有 pending / in_progress 步骤。 */
+  requirePlanCompleted: z.boolean().optional().default(false),
+  /** 结束前至少要有 minSuccessfulToolCalls 次真实业务工具成功。 */
+  requireEvidence: z.boolean().optional().default(false),
+  minSuccessfulToolCalls: z.number().int().min(1).max(50).optional().default(1),
+});
+
+/**
+ * Workflow 只是 Conversation 的流程化运行配置：模板、SOP 和完成门控都收敛在这里。
+ * 它不拥有第二套消息模型；消息仍属于 chat_session。
+ */
+export const WorkflowProcessConfigSchema = z.object({
+  templateId: z.string().max(120).optional(),
+  sopPreset: z.string().max(80).optional(),
+  sopSteps: z.array(WorkflowSopStepSchema).max(20).optional().default([]),
+  gates: WorkflowGateConfigSchema.optional().default({}),
+});
+
+export type WorkflowProcessConfig = z.infer<typeof WorkflowProcessConfigSchema>;
+
 /** Per-workflow overrides for external CLI loops (stored in workflow_run.loop_options_json). */
 export const LoopOptionsJsonSchema = z
   .object({
@@ -75,6 +102,8 @@ export const LoopOptionsJsonSchema = z
      *   - goal：自主规划、执行、验证并闭环；允许按需召唤拓扑外专家
      */
     agentMode: AgentControlModeSchema.optional(),
+    /** Conversation 的流程化执行配置；仅 workflow 界面额外暴露。 */
+    processConfig: WorkflowProcessConfigSchema.optional(),
     /**
      * @deprecated 旧版“编排体验”字段。只为历史 DB/API 兼容保留：
      * native -> agent，coding_agent -> goal。新代码必须写 agentMode。
@@ -104,6 +133,11 @@ export function resolveAgentControlMode(raw: unknown): AgentControlMode {
   const options = parseLoopOptionsJson(raw);
   if (options.agentMode) return options.agentMode;
   return options.experience === "coding_agent" ? "goal" : "agent";
+}
+
+export function resolveWorkflowProcessConfig(raw: unknown): WorkflowProcessConfig | null {
+  const options = parseLoopOptionsJson(raw);
+  return options.processConfig ?? null;
 }
 
 export function normalizeLoopKind(raw: unknown): AgentLoopKind {

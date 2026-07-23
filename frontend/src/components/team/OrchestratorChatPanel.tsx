@@ -25,6 +25,7 @@ import {
   useState,
 } from "react";
 import { type AgentControlMode } from "../../api/types";
+import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
@@ -95,16 +96,6 @@ const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hin
   { id: "always", label: "每步确认", hint: "每次规划完成都暂停，等你批准/拒绝" },
 ];
 
-const AGENT_MODE_OPTIONS: ReadonlyArray<{
-  id: AgentControlMode;
-  label: string;
-  hint: string;
-}> = [
-  { id: "agent", label: "Agent", hint: "直接回答或按需调用工具、分析师团队" },
-  { id: "plan", label: "Plan", hint: "只生成可验证计划，不执行研究工具或外部写入" },
-  { id: "goal", label: "Goal", hint: "自主规划、执行并验证，直到目标闭环" },
-];
-
 export function OrchestratorChatPanel({
   workflowRunId,
   events,
@@ -172,8 +163,7 @@ export function OrchestratorChatPanel({
    */
   const showActive = running || chatInFlight;
   const composerMode: "chat" | "inject" = running ? "inject" : "chat";
-  const selectedAgentMode =
-    AGENT_MODE_OPTIONS.find((option) => option.id === agentMode) ?? AGENT_MODE_OPTIONS[0];
+  const selectedAgentMode = getAgentModeOption(agentMode);
   const hasContent = composerValue.trim().length > 0;
   const canSend = wfId.length > 0 && hasContent && !injecting;
   // 现已统一走 orchestrator 自主对话；以下 props 保留接口兼容但不再约束发送。
@@ -400,39 +390,11 @@ export function OrchestratorChatPanel({
         />
         <div style={styles.composerBar}>
           <div style={styles.composerMeta}>
-            <label
-              style={{
-                ...styles.agentModePicker,
-                ...(running ? styles.agentModePickerDisabled : null),
-              }}
-              title={
-                running
-                  ? "当前团队任务运行中；工作模式将在任务结束后的下一条新对话中生效"
-                  : `下一条消息使用 ${selectedAgentMode.label} 模式：${selectedAgentMode.hint}`
-              }
-            >
-              <span style={styles.agentModeMark} aria-hidden>
-                {agentMode === "goal" ? "◆" : agentMode === "plan" ? "≡" : "✦"}
-              </span>
-              <select
-                aria-label="下一条消息的工作模式"
-                value={agentMode}
-                disabled={running}
-                onChange={(event) =>
-                  onAgentModeChange(event.target.value as AgentControlMode)
-                }
-                style={styles.agentModeSelect}
-              >
-                {AGENT_MODE_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <span style={styles.agentModeChevron} aria-hidden>
-                ▾
-              </span>
-            </label>
+            <AgentModePicker
+              value={agentMode}
+              onChange={onAgentModeChange}
+              disabled={running}
+            />
             <span style={styles.composerHint}>{composerHint}</span>
           </div>
           <button
@@ -692,35 +654,6 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: 8,
   },
-  agentModePicker: {
-    flexShrink: 0,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    height: 28,
-    padding: "0 7px",
-    border: "1px solid #3f3f46",
-    borderRadius: 7,
-    background: "rgba(255,255,255,0.035)",
-    color: "#d4d4d8",
-    cursor: "pointer",
-  },
-  agentModePickerDisabled: { opacity: 0.55, cursor: "not-allowed" },
-  agentModeMark: { color: "#60a5fa", fontSize: 11, lineHeight: 1 },
-  agentModeSelect: {
-    appearance: "none",
-    WebkitAppearance: "none",
-    border: 0,
-    outline: 0,
-    padding: 0,
-    background: "transparent",
-    color: "inherit",
-    fontFamily: "inherit",
-    fontSize: 11,
-    fontWeight: 600,
-    cursor: "inherit",
-  },
-  agentModeChevron: { color: "#71717a", fontSize: 9, lineHeight: 1 },
   composerHint: {
     flex: 1,
     minWidth: 0,

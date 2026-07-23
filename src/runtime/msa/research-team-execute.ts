@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
+import { workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
+import {
+  resolveAgentControlMode,
+  resolveWorkflowProcessConfig,
+} from "../../types/loop";
 import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { StepStreamEvent } from "../langgraph/state";
@@ -13,6 +19,10 @@ import {
 } from "../agent-readiness/quality/artifact-checker";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import type { HitlApprovalPayload } from "../workflow/hitl-service";
+import {
+  assessWorkflowProcessGate,
+  resolveEffectiveWorkflowProcessConfig,
+} from "../workflow/process-config";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 import {
   completeAnalystResearchJob,
@@ -245,14 +255,53 @@ export interface RunTeamResearchPersistDeps {
   pauseJob?: typeof pauseAnalystResearchJobForHitl;
   /** 把 analyst job 标 failed；默认 `failResearchTeamExecuteJob` */
   failJob?: typeof failResearchTeamExecuteJob;
-  verifyArtifacts?: (workflowRunId: string) => Promise<{ ok: boolean; detail?: string }>;
+  verifyArtifacts?: (
+    workflowRunId: string,
+    teamResult?: AnalystTeamResult
+  ) => Promise<{ ok: boolean; detail?: string }>;
 }
 
 async function defaultVerifyArtifacts(
   workflowRunId: string,
+  teamResult?: AnalystTeamResult
 ): Promise<{ ok: boolean; detail?: string }> {
-  await getDb();
+  const db = await getDb();
   const sqlite = getSqliteForTesting();
+  const workflows = await db
+    .select()
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
+  const workflow = workflows[0];
+  const processConfig = resolveEffectiveWorkflowProcessConfig(
+    resolveWorkflowProcessConfig(workflow?.loopOptionsJson),
+    resolveAgentControlMode(workflow?.loopOptionsJson)
+  );
+  if (processConfig) {
+    const row = sqlite
+      .query(
+        `SELECT COUNT(*) AS count
+           FROM tool_call_log
+          WHERE workflow_run_id = ? AND status = 'success'`
+      )
+      .get(workflowRunId) as { count?: number } | null;
+    const successfulBusinessToolCalls = Math.max(
+      Number(row?.count ?? 0),
+      teamResult?.attendedRoles?.length ?? 0,
+      teamResult?.report?.trim() ? 1 : 0
+    );
+    const processGate = assessWorkflowProcessGate({
+      config: processConfig,
+      // A returned teamResult means the specialized pipeline's planning/execution phase closed.
+      plan: teamResult
+        ? { steps: [{ id: "research-team", title: "研究团队流程", status: "done" }] }
+        : null,
+      successfulBusinessToolCalls,
+    });
+    if (!processGate.ok) {
+      return { ok: false, detail: processGate.reasons.join(" ") };
+    }
+  }
   const scenario = resolveScenarioKey(sqlite, workflowRunId);
   if (!scenario) return { ok: true };
   const check = checkRequiredArtifacts(sqlite, scenario, workflowRunId);
@@ -306,7 +355,7 @@ export async function runTeamResearchAndPersist(
       params: input.parsed,
       hitlApproval: input.hitlApproval,
     });
-    const artifactGate = await verifyArtifacts(input.workflowRunId);
+    const artifactGate = await verifyArtifacts(input.workflowRunId, teamResult);
     if (!artifactGate.ok) {
       throw new Error(
         `research_artifact_gate_failed: ${artifactGate.detail ?? "required artifacts missing"}`,

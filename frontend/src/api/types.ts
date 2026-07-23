@@ -205,6 +205,23 @@ export interface RecommendationStats {
 export type AgentLoopKind = "native" | "claude_cli" | "codex_cli";
 export type AgentControlMode = "agent" | "plan" | "goal";
 
+export interface WorkflowSopStep {
+  id: string;
+  title: string;
+  required?: boolean;
+}
+
+export interface WorkflowProcessConfig {
+  templateId?: string;
+  sopPreset?: string;
+  sopSteps?: WorkflowSopStep[];
+  gates?: {
+    requirePlanCompleted?: boolean;
+    requireEvidence?: boolean;
+    minSuccessfulToolCalls?: number;
+  };
+}
+
 export interface LoopOptionsJson {
   command?: string;
   extraArgs?: string[];
@@ -232,6 +249,10 @@ export interface LoopOptionsJson {
   hitlMode?: "off" | "ai" | "always";
   /** Agent 工作模式；与 AgentLoopKind（推理引擎）正交。 */
   agentMode?: AgentControlMode;
+  /** 研究团队各角色使用的推理引擎。 */
+  roleReasoner?: AgentLoopKind;
+  /** Workflow 在统一会话之上的流程化配置。 */
+  processConfig?: WorkflowProcessConfig;
   /** @deprecated 历史兼容：native -> agent，coding_agent -> goal。 */
   experience?: "native" | "coding_agent";
 }
@@ -603,6 +624,14 @@ export interface ChatMessage {
   createdAt: string;
   workflowRunIds?: string[];
   errorMessage?: string | null;
+}
+
+export interface ConversationTurnResult {
+  sessionId: string;
+  workflowRunId: string;
+  runId?: string;
+  userMessage: ChatMessage;
+  assistantMessage: ChatMessage;
 }
 
 /** Persisted strategy bundle from IDE (linked to session + optional research workflow run). */

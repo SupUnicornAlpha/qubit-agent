@@ -7,22 +7,16 @@
  * GET  /api/v1/analyst/fusion/:workflowId   — 查询工作流的信号融合结果
  */
 
-import { randomUUID } from "node:crypto";
-import { desc, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
-import {
-  analystSignal,
-  researchTeamInteraction,
-  signalFusionResult,
-  workflowRun,
-} from "../db/sqlite/schema";
-import { dispatchTaskToRole } from "../runtime/agent-pool";
+import { analystSignal, signalFusionResult, workflowRun } from "../db/sqlite/schema";
+import { ensureWorkflowConversation } from "../runtime/conversation/conversation-projection";
+import { createConversationTurn } from "../runtime/conversation/conversation-turn-service";
 import { getAnalystResearchJob } from "../runtime/msa/analyst-research-jobs";
 import { LaunchAnalystTeamError, launchAnalystTeam } from "../runtime/msa/launch-analyst-team";
 import { getLatestFusionForWorkflow } from "../runtime/msa/signal-fusion";
 import { buildTeamWorkflowGraph } from "../runtime/msa/team-workflow-graph";
-import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import { SEED_AGENT_ROLE_CATALOG } from "../runtime/seed-agent-roles";
 import type { AgentControlMode } from "../types/loop";
 import type { ResearchScopeInput } from "../types/research-scope";
@@ -128,94 +122,39 @@ analystRouter.post("/orchestrator-chat", async (c) => {
   if (!workflowRunId) return c.json({ error: "workflowRunId is required" }, 400);
   if (!message) return c.json({ error: "message is required" }, 400);
 
-  const db = await getDb();
-  const wf = await db.select().from(workflowRun).where(eq(workflowRun.id, workflowRunId)).limit(1);
-  if (!wf[0]) return c.json({ error: "workflow not found" }, 404);
-
-  // 与 /run 一致：标 running + 重置 startedAt（防 stuck 看门狗误杀）。
-  await db
-    .update(workflowRun)
-    .set({ status: "running", startedAt: new Date().toISOString(), endedAt: null })
-    .where(eq(workflowRun.id, workflowRunId));
-
-  {
-    const hitlValid =
-      body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always";
-    const reasonerValid =
-      body.roleReasoner === "native" ||
-      body.roleReasoner === "claude_cli" ||
-      body.roleReasoner === "codex_cli";
-    const experienceValid = body.experience === "native" || body.experience === "coding_agent";
-    const agentModeValid =
-      body.agentMode === "agent" || body.agentMode === "plan" || body.agentMode === "goal";
-    if (hitlValid || reasonerValid || agentModeValid || experienceValid) {
-      const cur = (wf[0].loopOptionsJson as Record<string, unknown> | null) ?? {};
-      const compatibleAgentMode = agentModeValid
+  try {
+    const conversation = await ensureWorkflowConversation(workflowRunId);
+    const compatibleAgentMode =
+      body.agentMode === "agent" || body.agentMode === "plan" || body.agentMode === "goal"
         ? body.agentMode
         : body.experience === "coding_agent"
           ? "goal"
           : body.experience === "native"
             ? "agent"
             : undefined;
-      await db
-        .update(workflowRun)
-        .set({
-          loopOptionsJson: {
-            ...cur,
-            ...(hitlValid ? { hitlMode: body.hitlMode } : {}),
-            ...(reasonerValid ? { roleReasoner: body.roleReasoner } : {}),
-            ...(compatibleAgentMode ? { agentMode: compatibleAgentMode } : {}),
-          } as never,
-        })
-        .where(eq(workflowRun.id, workflowRunId));
-    }
-  }
-
-  // 用户消息落库为 user→orchestrator 交互（右栏展示 + 进入会话 transcript）。
-  await logResearchTeamInteraction({
-    workflowRunId,
-    fromRole: "user",
-    toRole: "orchestrator",
-    kind: "llm_message",
-    contentText: message.slice(0, 4000),
-  });
-
-  // 本会话上下文 = 该 workflow 最近的对话/事件（不含本条 user 消息，避免重复）。
-  const recent = await db
-    .select({
-      fromRole: researchTeamInteraction.fromRole,
-      toRole: researchTeamInteraction.toRole,
-      contentText: researchTeamInteraction.contentText,
-    })
-    .from(researchTeamInteraction)
-    .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
-    .orderBy(desc(researchTeamInteraction.createdAt))
-    .limit(31);
-  recent.reverse();
-  const transcript = recent
-    .slice(0, -1) // 去掉刚落库的本条
-    .map((r) => `- ${r.fromRole} → ${r.toRole}: ${(r.contentText ?? "").slice(0, 600)}`)
-    .join("\n");
-  const context = transcript
-    ? `## 本次会话上下文（最近对话，按时间）\n${transcript}`
-    : "（本会话暂无历史对话）";
-
-  const taskId = randomUUID();
-  try {
-    await dispatchTaskToRole({
-      workflowId: workflowRunId,
-      role: "orchestrator",
-      payload: {
-        taskId,
-        taskType: "orchestrator_chat",
-        assignedRole: "orchestrator",
-        params: { goal: message, context },
-      },
+    const hitlMode =
+      body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always"
+        ? body.hitlMode
+        : undefined;
+    const roleReasoner =
+      body.roleReasoner === "native" ||
+      body.roleReasoner === "claude_cli" ||
+      body.roleReasoner === "codex_cli"
+        ? body.roleReasoner
+        : undefined;
+    const data = await createConversationTurn({
+      sessionId: conversation.sessionId,
+      projectId: conversation.projectId,
+      workflowRunId,
+      message,
+      ...(hitlMode ? { hitlMode } : {}),
+      ...(roleReasoner ? { roleReasoner } : {}),
+      ...(compatibleAgentMode ? { agentMode: compatibleAgentMode } : {}),
     });
+    return c.json({ ok: true, status: "running", data }, 202);
   } catch (err) {
     return c.json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
   }
-  return c.json({ ok: true, status: "running" }, 202);
 });
 
 /**

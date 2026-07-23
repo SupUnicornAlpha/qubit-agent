@@ -3,14 +3,16 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
-import type { AgentControlMode } from "../../types/loop";
+import { type AgentControlMode, resolveWorkflowProcessConfig } from "../../types/loop";
 import {
   type ResearchScopeInput,
   classifyResearchInput,
   resolveResearchScope,
 } from "../../types/research-scope";
 import { dispatchTaskToRole } from "../agent-pool";
+import { projectWorkflowUserMessage } from "../conversation/conversation-projection";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import { buildWorkflowProcessPrompt } from "../workflow/process-config";
 import {
   failAnalystResearchJob,
   getLatestJobTickerByWorkflow,
@@ -102,6 +104,13 @@ export async function launchAnalystTeam(
   if (!wf[0]) {
     throw new LaunchAnalystTeamError("workflow_not_found", "workflow not found", 404);
   }
+  const userVisibleContext = effectiveContext?.trim();
+  const processPrompt = buildWorkflowProcessPrompt(
+    resolveWorkflowProcessConfig(wf[0].loopOptionsJson)
+  );
+  const executionContext = [userVisibleContext, processPrompt]
+    .filter((item): item is string => Boolean(item?.trim()))
+    .join("\n\n");
 
   const loopPatch: Record<string, unknown> = {};
   if (input.hitlMode === "off" || input.hitlMode === "ai" || input.hitlMode === "always") {
@@ -141,13 +150,17 @@ export async function launchAnalystTeam(
     startedAt: Date.now(),
   });
 
-  if (effectiveContext?.trim()) {
+  if (userVisibleContext) {
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
       fromRole: "user",
       toRole: "orchestrator",
       kind: "llm_message",
-      contentText: effectiveContext.trim().slice(0, 4000),
+      contentText: userVisibleContext.slice(0, 4000),
+    });
+    await projectWorkflowUserMessage({
+      workflowRunId: input.workflowRunId,
+      content: userVisibleContext.slice(0, 4000),
     });
   }
 
@@ -178,7 +191,7 @@ export async function launchAnalystTeam(
           jobId,
           ticker: effectiveTicker ?? scope.primarySymbol,
           scope: effectiveScope ?? undefined,
-          context: effectiveContext,
+          context: executionContext || undefined,
           analystRoles: analystRoles ?? undefined,
           analystDefinitionIds: analystDefinitionIds ?? undefined,
         },

@@ -4,6 +4,10 @@ import { eq } from "drizzle-orm";
 import { closeDb, getDb } from "../db/sqlite/client";
 import { runMigrations } from "../db/sqlite/migrate";
 import { workflowRun } from "../db/sqlite/schema";
+import {
+  completeWorkflowConversationAssistant,
+  projectWorkflowUserMessage,
+} from "../runtime/conversation/conversation-projection";
 
 async function jsonOf(res: Response) {
   return (await res.json()) as Record<string, unknown>;
@@ -153,6 +157,52 @@ describe("api minimal integration", () => {
     expect(((detail.data as Record<string, unknown>).workflow as Record<string, unknown>).id).toBe(
       workflowId
     );
+  });
+
+  test("workflow conversation projects into the same chat session", async () => {
+    const db = await getDb();
+    const workflowId = crypto.randomUUID();
+    await db.insert(workflowRun).values({
+      id: workflowId,
+      projectId,
+      sessionId,
+      goal: "unified conversation",
+      mode: "research",
+      source: "manual",
+      status: "running",
+    });
+    await projectWorkflowUserMessage({
+      workflowRunId: workflowId,
+      content: "按 SOP 分析这个标的",
+    });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: workflowId,
+      content: "已完成证据验证。",
+    });
+    await projectWorkflowUserMessage({
+      workflowRunId: workflowId,
+      content: "按 SOP 分析这个标的",
+    });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: workflowId,
+      content: "已按相同要求完成第二轮验证。",
+    });
+
+    const response = await app.request(
+      new Request(`http://test/api/v1/chat/sessions/${sessionId}/messages`)
+    );
+    expect(response.status).toBe(200);
+    const payload = await jsonOf(response);
+    const messages = payload.data as Array<Record<string, unknown>>;
+    const workflowMessages = messages.filter((message) =>
+      (message.workflowRunIds as string[] | undefined)?.includes(workflowId)
+    );
+    expect(workflowMessages.map((message) => message.content)).toEqual([
+      "按 SOP 分析这个标的",
+      "已完成证据验证。",
+      "按 SOP 分析这个标的",
+      "已按相同要求完成第二轮验证。",
+    ]);
   });
 
   test("monitor: summary endpoint", async () => {

@@ -6,7 +6,12 @@ import {
   chatMessageWorkflowLink,
   workflowRun,
 } from "../../../db/sqlite/schema";
-import { resolveAgentControlMode, type AgentControlMode } from "../../../types/loop";
+import {
+  type AgentControlMode,
+  type WorkflowProcessConfig,
+  resolveAgentControlMode,
+  resolveWorkflowProcessConfig,
+} from "../../../types/loop";
 import { buildAgentControlModePrompt } from "../../agent-control-mode";
 import {
   type PromptMode,
@@ -37,6 +42,10 @@ import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
+import {
+  buildWorkflowProcessPrompt,
+  resolveEffectiveWorkflowProcessConfig,
+} from "../../workflow/process-config";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 
 export interface ReasonStepMeta {
@@ -157,6 +166,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
   sessionId: string | null;
   source: string | null;
   agentMode: AgentControlMode;
+  processConfig: WorkflowProcessConfig | null;
 }> {
   const db = await getDb();
   const wfRows = await db
@@ -169,7 +179,14 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
     .from(workflowRun)
     .where(eq(workflowRun.id, workflowId))
     .limit(1);
-  if (!wfRows[0]) return { projectId: null, sessionId: null, source: null, agentMode: "agent" };
+  if (!wfRows[0])
+    return {
+      projectId: null,
+      sessionId: null,
+      source: null,
+      agentMode: "agent",
+      processConfig: null,
+    };
   return {
     projectId: wfRows[0].projectId ?? null,
     sessionId: wfRows[0].sessionId ?? null,
@@ -179,6 +196,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
      */
     source: wfRows[0].source ?? null,
     agentMode: resolveAgentControlMode(wfRows[0].loopOptionsJson),
+    processConfig: resolveWorkflowProcessConfig(wfRows[0].loopOptionsJson),
   };
 }
 
@@ -336,11 +354,13 @@ export async function reasonNode(
     sessionId: string | null;
     source: string | null;
     agentMode: AgentControlMode;
+    processConfig: WorkflowProcessConfig | null;
   } = {
     projectId: null,
     sessionId: null,
     source: null,
     agentMode: "agent",
+    processConfig: null,
   };
   try {
     workflowMeta = await loadWorkflowMeta(state.workflowId);
@@ -652,9 +672,18 @@ export async function reasonNode(
       workflowMeta.agentMode,
       state.agentDefinition.role === "orchestrator"
     );
+    const processBlock =
+      state.agentDefinition.role === "orchestrator"
+        ? buildWorkflowProcessPrompt(
+            resolveEffectiveWorkflowProcessConfig(
+              workflowMeta.processConfig,
+              workflowMeta.agentMode
+            )
+          )
+        : "";
     const systemWithWorkStyle = `${systemWithScenarioContract}\n\n---\n${WORK_STYLE_BLOCK}${
       modeBlock ? `\n\n---\n${modeBlock}` : ""
-    }`;
+    }${processBlock ? `\n\n---\n${processBlock}` : ""}`;
     const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithWorkStyle, {
       tools,
       mcpServers,

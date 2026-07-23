@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { researchTeamInteraction } from "../../db/sqlite/schema";
+import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
 
 export type ResearchTeamInteractionKind = "llm_message" | "tool_call" | "signal_submit";
 
@@ -66,7 +67,13 @@ export async function projectWorkflowFinalAnswer(input: {
          LIMIT 1`
       )
       .get(input.workflowRunId);
-    if (existing) return false;
+    if (existing) {
+      await completeWorkflowConversationAssistant({
+        workflowRunId: input.workflowRunId,
+        content: contentText,
+      });
+      return false;
+    }
 
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
@@ -79,6 +86,10 @@ export async function projectWorkflowFinalAnswer(input: {
         ...(input.sourceTaskType ? { sourceTaskType: input.sourceTaskType } : {}),
         ...(input.payloadJson ?? {}),
       },
+    });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: input.workflowRunId,
+      content: contentText,
     });
     return true;
   } catch (err) {

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type {
   AgentSummary,
   AgentsConfigResponse,
+  AgentControlMode,
   ChatMessage,
   ChatSession,
   StepStreamEvent,
@@ -199,6 +200,9 @@ export interface AppState {
   /** 面向日常研究的简洁入口 / 完整专业工作台。两种模式共享同一套数据与工作流。 */
   interfaceMode: InterfaceMode;
   setInterfaceMode: (mode: InterfaceMode) => void;
+  /** 普通对话、简洁模式与 Workflow composer 共享的下一条消息工作模式。 */
+  agentControlMode: AgentControlMode;
+  setAgentControlMode: (mode: AgentControlMode) => void;
   /** 默认风格下的配色（`html[data-qb-theme]`） */
   uiPalette: UiPaletteId;
   setUiPalette: (palette: UiPaletteId) => void;
@@ -305,6 +309,24 @@ const defaultChartOverlays: ChartOverlaysState = {
 const TRADER_CFG_KEY = "qubit-trader-agent-config-v1";
 const EXPLORER_OPEN_LS = "qubit:explorerOpen";
 const INTERFACE_MODE_LS = "qubit:interfaceMode";
+const AGENT_CONTROL_MODE_LS = "qubit:agentControlMode";
+
+function readAgentControlMode(): AgentControlMode {
+  try {
+    const value = localStorage.getItem(AGENT_CONTROL_MODE_LS);
+    return value === "plan" || value === "goal" ? value : "agent";
+  } catch {
+    return "agent";
+  }
+}
+
+function persistAgentControlMode(mode: AgentControlMode) {
+  try {
+    localStorage.setItem(AGENT_CONTROL_MODE_LS, mode);
+  } catch {
+    /* ignore */
+  }
+}
 
 function readInterfaceMode(): InterfaceMode {
   try {
@@ -381,6 +403,11 @@ export const useAppStore = create<AppState>((set) => ({
   setInterfaceMode: (interfaceMode) => {
     persistInterfaceMode(interfaceMode);
     set({ interfaceMode });
+  },
+  agentControlMode: readAgentControlMode(),
+  setAgentControlMode: (agentControlMode) => {
+    persistAgentControlMode(agentControlMode);
+    set({ agentControlMode });
   },
   ...(() => {
     const initial = readUiAppearance();

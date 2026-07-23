@@ -10,8 +10,17 @@ import {
   workflowRun,
   workspace,
 } from "../db/sqlite/schema";
+import { createConversationTurn } from "../runtime/conversation/conversation-turn-service";
 import { exportStrategyScriptToWorkflowDir } from "../runtime/strategy/strategy-script-files";
 import { hardDeleteChatSession } from "../runtime/workflow/hard-delete";
+import {
+  type AgentControlMode,
+  AgentControlModeSchema,
+  type AgentLoopKind,
+  AgentLoopKindSchema,
+  type WorkflowProcessConfig,
+  WorkflowProcessConfigSchema,
+} from "../types/loop";
 
 export const chatRouter = new Hono();
 
@@ -82,6 +91,75 @@ chatRouter.post("/sessions", async (c) => {
   });
   const created = await db.select().from(chatSession).where(eq(chatSession.id, id)).limit(1);
   return c.json({ data: created[0] }, 201);
+});
+
+/**
+ * 统一会话 turn：普通对话与 Workflow 对话共用。
+ * - 不传 workflowRunId：为当前会话创建/复用执行 workflow。
+ * - 传 workflowRunId：在同一会话中继续该流程，沿用模板/SOP/门控配置。
+ */
+chatRouter.post("/sessions/:sessionId/turns", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const body = await c.req
+    .json<{
+      projectId?: string;
+      message?: string;
+      workflowRunId?: string;
+      workflowMode?: "research" | "backtest" | "simulation" | "live";
+      reuseSessionWorkflow?: boolean;
+      loopKind?: AgentLoopKind;
+      roleReasoner?: AgentLoopKind;
+      hitlMode?: "off" | "ai" | "always";
+      agentMode?: AgentControlMode;
+      processConfig?: WorkflowProcessConfig;
+    }>()
+    .catch(() => ({}));
+  const projectId = body.projectId?.trim() ?? "";
+  const message = body.message?.trim() ?? "";
+  if (!projectId || !message) {
+    return c.json({ ok: false, error: "projectId and message are required" }, 400);
+  }
+  const loopKind = AgentLoopKindSchema.safeParse(body.loopKind);
+  const roleReasoner = AgentLoopKindSchema.safeParse(body.roleReasoner);
+  const agentMode = AgentControlModeSchema.safeParse(body.agentMode);
+  const processConfig = WorkflowProcessConfigSchema.safeParse(body.processConfig);
+  const hitlMode =
+    body.hitlMode === "off" || body.hitlMode === "ai" || body.hitlMode === "always"
+      ? body.hitlMode
+      : undefined;
+  const workflowMode =
+    body.workflowMode === "research" ||
+    body.workflowMode === "backtest" ||
+    body.workflowMode === "simulation" ||
+    body.workflowMode === "live"
+      ? body.workflowMode
+      : undefined;
+  if (body.processConfig !== undefined && !processConfig.success) {
+    return c.json({ ok: false, error: "invalid workflow processConfig" }, 400);
+  }
+  try {
+    const data = await createConversationTurn({
+      sessionId,
+      projectId,
+      message,
+      ...(body.workflowRunId?.trim() ? { workflowRunId: body.workflowRunId.trim() } : {}),
+      ...(workflowMode ? { workflowMode } : {}),
+      ...(body.reuseSessionWorkflow !== undefined
+        ? { reuseSessionWorkflow: body.reuseSessionWorkflow }
+        : {}),
+      ...(loopKind.success ? { loopKind: loopKind.data } : {}),
+      ...(roleReasoner.success ? { roleReasoner: roleReasoner.data } : {}),
+      ...(hitlMode ? { hitlMode } : {}),
+      ...(agentMode.success ? { agentMode: agentMode.data } : {}),
+      ...(processConfig.success ? { processConfig: processConfig.data } : {}),
+    });
+    return c.json({ ok: true, data }, 202);
+  } catch (error) {
+    const messageText = error instanceof Error ? error.message : String(error);
+    const status = messageText.includes("not found") ? 404 : 400;
+    if (status === 404) return c.json({ ok: false, error: messageText }, 404);
+    return c.json({ ok: false, error: messageText }, 400);
+  }
 });
 
 const purposeEnum = ["research", "live_trading", "both"] as const;
