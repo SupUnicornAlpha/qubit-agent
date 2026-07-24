@@ -1,9 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { AgentRole } from "../../types/entities";
-import {
-  getBundledManifestPath,
-  resolveEnabledFsiBundles,
-} from "./fsi-config";
+import { getBundledManifestPath, resolveEnabledFsiBundles } from "./fsi-config";
 import type { FsiManifest } from "./fsi-types";
 
 let cached: FsiManifest | null = null;
@@ -52,15 +49,33 @@ export async function listActiveFsiSkillIds(): Promise<string[]> {
 
 export async function getFsiWorkflowPlaybookPathsForRole(
   role: AgentRole
-): Promise<Array<{ slug: string; path: string; maxChars: number }>> {
+): Promise<
+  Array<{ slug: string; label: string; path: string; maxChars: number; searchText: string }>
+> {
   const manifest = await loadFsiManifest();
-  const out: Array<{ slug: string; path: string; maxChars: number }> = [];
+  const out: Array<{
+    slug: string;
+    label: string;
+    path: string;
+    maxChars: number;
+    searchText: string;
+  }> = [];
   for (const [slug, wf] of Object.entries(manifest.agentWorkflows)) {
     if (!wf.fuseIntoRoles.includes(role)) continue;
     out.push({
       slug,
+      label: wf.label,
       path: wf.playbookPath,
       maxChars: wf.playbookMaxChars ?? 3500,
+      searchText: [
+        slug,
+        wf.label,
+        ...wf.skillIds,
+        ...(wf.steeringExamples ?? []).flatMap((example) => [
+          example.event,
+          example.description ?? "",
+        ]),
+      ].join(" "),
     });
   }
   return out;

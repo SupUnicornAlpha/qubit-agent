@@ -34,13 +34,24 @@ import {
   computePromptBudget,
   estimateTokens,
   getContextWindow,
+  truncatePromptText,
 } from "../../llm/token-budget";
+import {
+  loadWorkflowTokenBudgetStatus,
+  type WorkflowTokenBudgetStatus,
+} from "../../llm/workflow-token-budget";
 import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import { buildSuggestedCallChainBlock } from "../../orchestration/topology-dispatch";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
-import { assembleAgentSystemPrompt, parseToolCallFromReason } from "../../tools/tool-call-format";
+import {
+  assembleAgentSystemPrompt,
+  buildNativeQubitToolDefinition,
+  nativeToolCallToSentinel,
+  parseToolCallFromReason,
+  selectRelevantToolsForPrompt,
+} from "../../tools/tool-call-format";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
 import { buildHitlResumePromptBlock } from "../../workflow/hitl-service";
 import {
@@ -87,6 +98,11 @@ export interface ReasonStepMeta {
    * 落到 llm_call_log.requestMetaJson.lengthRetryUsed，让监控能挑出"被自动救过的调用"。
    */
   lengthRetryUsed?: boolean;
+  nativeToolCallingUsed?: boolean;
+  tokenBudgetSoftLimitReached?: boolean;
+  promptComponentChars?: Record<string, number>;
+  promptEstimatedTokens?: number;
+  promptCompacted?: boolean;
 }
 
 export interface ReasonNodeOutput {
@@ -215,7 +231,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
  *   • research / scheduler / api 等独立 workflow：没有 link，直接返回空 —— 杜绝
  *     "Orchestrator 给分析师发的 brief 莫名其妙带上前一个任务的标的"。
  */
-async function loadSessionContext(workflowId: string, limit = 8): Promise<string[]> {
+async function loadSessionContext(workflowId: string, limit = 6): Promise<string[]> {
   const db = await getDb();
   const rows = await db
     .select({
@@ -232,7 +248,12 @@ async function loadSessionContext(workflowId: string, limit = 8): Promise<string
 
   return rows
     .reverse()
-    .map((m) => `[${m.role}/${m.status}] ${String(m.content ?? "").trim()}`)
+    .map(
+      (m) =>
+        `[${m.role}/${m.status}] ${String(m.content ?? "")
+          .trim()
+          .slice(0, 1600)}`
+    )
     .filter((line) => line.length > 0);
 }
 
@@ -297,6 +318,10 @@ export async function reasonNode(
   // 监控 V2 P1：prompt 长度（不存原文，仅用于 llm_call_log.requestMetaJson）
   let systemPromptLen = 0;
   let userPromptLen = 0;
+  let nativeToolCallingUsed = false;
+  let promptCompacted = false;
+  let promptEstimatedTokens = 0;
+  let promptComponentChars: Record<string, number> = {};
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
   const payloadParams = (payload.params ?? {}) as Record<string, unknown>;
@@ -368,8 +393,10 @@ export async function reasonNode(
     agentMode: "agent",
     processConfig: null,
   };
+  let workflowTokenBudget: WorkflowTokenBudgetStatus | null = null;
   try {
     workflowMeta = await loadWorkflowMeta(state.workflowId);
+    workflowTokenBudget = await loadWorkflowTokenBudgetStatus(await getDb(), state.workflowId);
   } catch {
     // 静默：缺 meta 时直接走默认路径（不注入 HITL 自评 + skill 召回也会自动跳过）
   }
@@ -379,6 +406,26 @@ export async function reasonNode(
     mcpServers.splice(0, mcpServers.length);
   }
   const hasTools = tools.length > 0 || mcpServers.length > 0;
+  const taskQuery = [
+    typeof payloadGoal === "string" ? payloadGoal : JSON.stringify(payloadGoal),
+    slotTicker,
+    slotContext.slice(0, 600),
+    JSON.stringify(state.observations.slice(-1)).slice(0, 600),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const configuredMaxPromptTools = Number(process.env["QUBIT_MAX_PROMPT_TOOLS"] ?? "16");
+  const promptTools = selectRelevantToolsForPrompt(
+    tools,
+    taskQuery,
+    Number.isFinite(configuredMaxPromptTools)
+      ? Math.max(4, Math.floor(configuredMaxPromptTools))
+      : 16
+  );
+  const nativeToolCalling =
+    hasTools &&
+    promptTools.length > 0 &&
+    process.env["QUBIT_NATIVE_TOOL_CALLING_DISABLED"] !== "1";
 
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
@@ -510,14 +557,14 @@ export async function reasonNode(
   /**
    * P1-6：在拼接 userPrompt 之前算 prompt budget，把 observations 压缩到余量内。
    *
-   * fixedPromptTokens：粗略估算 userPrompt 静态部分（goal + context + skill block + session）+
-   * 留出 systemPrompt 大头（保守 8K，实际 6K-12K 浮动）。我们不解 systemPrompt 字符串
-   * （那段比较稳定，按经验值预留），重点压缩 observations 这条最易爆炸的尾巴。
+   * fixedPromptTokens：估算 userPrompt 静态部分（goal + context + skill block + session）+
+   * systemPrompt 预留。最终 system/user prompt 还会分别经过字符硬上限裁剪；这里重点
+   * 先压缩 observations 这条最易爆炸的尾巴。
    */
   const fixedSnippet = [
     typeof payloadGoal === "string" ? payloadGoal : JSON.stringify(payloadGoal),
     slotTicker,
-    slotContext.slice(0, 12000),
+    slotContext.slice(0, 6000),
     hitlResumeBlock,
     recalledSkillsBlock,
     recalledExperienceBlock,
@@ -526,7 +573,16 @@ export async function reasonNode(
   ]
     .filter(Boolean)
     .join("\n");
-  const fixedPromptTokens = estimateTokens(fixedSnippet) + 8_000; // 8K 给 systemPrompt
+  const configuredPerCallPromptLimit = Number(
+    process.env["QUBIT_MAX_PROMPT_TOKENS_PER_CALL"] ?? "18000"
+  );
+  const perCallPromptLimit =
+    workflowTokenBudget?.policy.maxPromptTokensPerCall ??
+    (Number.isFinite(configuredPerCallPromptLimit) && configuredPerCallPromptLimit > 0
+      ? Math.floor(configuredPerCallPromptLimit)
+      : 18_000);
+  const fixedPromptTokens =
+    estimateTokens(fixedSnippet) + Math.min(12_000, Math.floor(perCallPromptLimit * 0.6));
   const contextWindow = getContextWindow(modelConfig.model);
   /**
    * maxOutputTokens：尊重 agent 的 llmConfig（默认 4096）。compactor 用 8192 做保守估算
@@ -540,16 +596,19 @@ export async function reasonNode(
     }
     return 8_192;
   })();
-  const promptBudget = computePromptBudget({
-    contextWindow,
-    maxOutputTokens: sampledMaxOut,
-  });
+  const promptBudget = Math.min(
+    computePromptBudget({
+      contextWindow,
+      maxOutputTokens: sampledMaxOut,
+    }),
+    perCallPromptLimit
+  );
 
   const compactedResult = compactObservations(state.observations, {
     fixedPromptTokens,
     promptBudget,
-    keepRecent: 6,
-    maxCharsPerObservation: 4_000,
+    keepRecent: 3,
+    maxCharsPerObservation: 2_500,
   });
   const previousObservations = compactedResult.observations;
   if (
@@ -574,7 +633,7 @@ export async function reasonNode(
     `**任务目标**：${payloadGoal}`,
     slotTicker ? `**标的**：${slotTicker}` : "",
     slotContext
-      ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 12000)}`
+      ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 6000)}`
       : "",
     hitlResumeBlock ? `\n${hitlResumeBlock}` : "",
     recalledSkillsBlock ? `\n${recalledSkillsBlock}` : "",
@@ -592,27 +651,39 @@ export async function reasonNode(
   /**
    * 运行中「随时插话」：用户在循环跑动时追加的指令（run-react-loop 在每轮 reason 前
    * drain 后累加到 contextMemory.injectedUserMessages）。作为高优先级实时指引拼进
-   * userPrompt——只展示最近 5 条，避免无界增长污染上下文。
+   * userPrompt——只展示最近 3 条，避免无界增长污染上下文。
    */
   const injectedUserMessages = Array.isArray(state.contextMemory["injectedUserMessages"])
     ? (state.contextMemory["injectedUserMessages"] as string[])
     : [];
   if (injectedUserMessages.length > 0) {
-    const recent = injectedUserMessages.slice(-5);
+    const recent = injectedUserMessages.slice(-3);
     userPromptParts.push(
       `\n**用户实时追加指令（${injectedUserMessages.length} 条，请优先采纳最新意图）**：`,
       ...recent.map((m, i) => `${injectedUserMessages.length - recent.length + i + 1}. ${m}`)
     );
   }
 
-  if (hasTools) {
+  if (hasTools && !nativeToolCalling) {
     userPromptParts.push(
       "",
       '若本步需要调用工具，请在分析文字之后附上**唯一一个** JSON 工具调用块（见系统提示中的格式）；若仅需文字结论则使用 `{"tool":"none"}`。'
     );
   }
 
-  const userPrompt = userPromptParts.filter(Boolean).join("\n");
+  if (workflowTokenBudget?.softLimitReached) {
+    userPromptParts.push(
+      "\n**Token 预算提醒**：本工作流已达到软预算，请停止扩展新分支，只完成当前最小可验证结论。"
+    );
+  }
+  const rawUserPrompt = userPromptParts.filter(Boolean).join("\n");
+  const userPromptResult = truncatePromptText(
+    rawUserPrompt,
+    workflowTokenBudget?.policy.maxUserPromptChars ?? 24_000,
+    "user prompt"
+  );
+  const userPrompt = userPromptResult.text;
+  promptCompacted ||= userPromptResult.truncated;
 
   try {
     const baseSystem = await resolveEffectiveSystemPrompt(
@@ -623,6 +694,11 @@ export async function reasonNode(
       role: state.agentDefinition.role,
       basePrompt: baseSystem,
       declaredSkillIds: state.agentDefinition.skills ?? [],
+      queryText: taskQuery,
+      maxSkills: 2,
+      maxSkillChars: 6000,
+      maxPlaybooks: 1,
+      maxPlaybookChars: 2500,
     });
     /** Goal 模式把固定拓扑降级为建议调用链；Agent / Plan 仍遵守画布拓扑。 */
     const topologyBlock =
@@ -693,12 +769,36 @@ export async function reasonNode(
     const systemWithWorkStyle = `${systemWithScenarioContract}\n\n---\n${WORK_STYLE_BLOCK}${
       modeBlock ? `\n\n---\n${modeBlock}` : ""
     }${processBlock ? `\n\n---\n${processBlock}` : ""}`;
-    const { full: systemPrompt } = assembleAgentSystemPrompt(systemWithWorkStyle, {
-      tools,
-      mcpServers,
-    });
+    const { full: rawSystemPrompt, toolsBlock } = assembleAgentSystemPrompt(
+      systemWithWorkStyle,
+      {
+        tools: promptTools,
+        mcpServers,
+        nativeToolCalling,
+      }
+    );
+    const systemPromptResult = truncatePromptText(
+      rawSystemPrompt,
+      workflowTokenBudget?.policy.maxSystemPromptChars ?? 20_000,
+      "system prompt"
+    );
+    const systemPrompt = systemPromptResult.text;
+    promptCompacted ||= systemPromptResult.truncated;
     systemPromptLen = systemPrompt.length;
     userPromptLen = userPrompt.length;
+    promptEstimatedTokens = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+    promptComponentChars = {
+      baseSystem: baseSystem.length,
+      fsiAdded: Math.max(0, fsiSystem.length - baseSystem.length),
+      topologyAndRuntime: Math.max(0, systemWithWorkStyle.length - fsiSystem.length),
+      tools: toolsBlock.length,
+      systemFinal: systemPrompt.length,
+      userGoalAndContext: fixedSnippet.length,
+      observations: JSON.stringify(previousObservations).length,
+      userFinal: userPrompt.length,
+      selectedTools: promptTools.length,
+      authorizedTools: tools.length,
+    };
     console.log(
       `[reason] invoking LLM role=${state.agentDefinition.role} provider=${modelConfig.provider}:${modelConfig.model} ` +
         `systemChars=${systemPromptLen} userChars=${userPromptLen}`
@@ -713,10 +813,14 @@ export async function reasonNode(
       maxOutputTokens: 2048,
       ...samplingFromAgent,
     };
+    const nativeToolDefinition = nativeToolCalling
+      ? buildNativeQubitToolDefinition(promptTools)
+      : null;
     const llmResult = await invokeWithFallback(modelConfig, {
       systemPrompt,
       userPrompt,
       sampling: samplingForReason,
+      ...(nativeToolDefinition ? { tools: [nativeToolDefinition] } : {}),
       onToken: (token) => {
         emit({
           runId: state.runId,
@@ -731,6 +835,23 @@ export async function reasonNode(
       },
     });
     answer = llmResult.answer;
+    if (nativeToolDefinition) {
+      const nativeSentinel = llmResult.toolCalls
+        ?.map((call) => nativeToolCallToSentinel(call, promptTools))
+        .find((value): value is string => Boolean(value));
+      if (nativeSentinel) {
+        answer = `${answer.trim()}\n\n${nativeSentinel}`.trim();
+        nativeToolCallingUsed = true;
+      } else {
+        const legacyParsed = parseToolCallFromReason(answer, promptTools);
+        if (legacyParsed.kind === "parse_error") {
+          answer = `${answer.trim()}\n\n<TOOL_CALL>\n${JSON.stringify({
+            tool: "none",
+            summary: "模型未请求工具，按最终文字结论处理",
+          })}\n</TOOL_CALL>`.trim();
+        }
+      }
+    }
     modelFallbackUsed = llmResult.fallbackUsed;
     usage = llmResult.usage;
     measuredLatencyMs = llmResult.latencyMs;
@@ -749,8 +870,12 @@ export async function reasonNode(
 
     // P0-5: 解析失败时单次重试。仅当本轮真有可调用工具，且解析器认为
     // 输出"既不是合法工具调用、也不是合法 none"时才触发，避免无意义的重调。
-    if (hasTools && process.env.QUBIT_REASON_RETRY_DISABLED !== "1") {
-      const parsed = parseToolCallFromReason(answer, tools);
+    if (
+      hasTools &&
+      !nativeToolDefinition &&
+      process.env.QUBIT_REASON_RETRY_DISABLED !== "1"
+    ) {
+      const parsed = parseToolCallFromReason(answer, promptTools);
       if (parsed.kind === "parse_error") {
         const retryStartedAt = Date.now();
         const retryUserPrompt = [
@@ -793,7 +918,7 @@ export async function reasonNode(
             },
           });
           // 仅当重试解析得动才接受；否则保留原 answer，把决定权交给 act 节点报 parse_error
-          const retriedParsed = parseToolCallFromReason(retryResult.answer, tools);
+          const retriedParsed = parseToolCallFromReason(retryResult.answer, promptTools);
           if (retriedParsed.kind !== "parse_error") {
             answer = retryResult.answer;
             parseRetryUsed = true;
@@ -902,6 +1027,13 @@ export async function reasonNode(
       ...(finishReason ? { finishReason } : {}),
       ...(responseId ? { responseId } : {}),
       ...(lengthRetryUsed ? { lengthRetryUsed: true } : {}),
+      ...(nativeToolCallingUsed ? { nativeToolCallingUsed: true } : {}),
+      ...(workflowTokenBudget?.softLimitReached
+        ? { tokenBudgetSoftLimitReached: true }
+        : {}),
+      promptComponentChars,
+      promptEstimatedTokens,
+      promptCompacted,
     },
   };
 }

@@ -53,7 +53,10 @@ export async function resolveFsiPlaybookBody(
 }
 
 /** 将 skill id 列表解析为可注入 prompt 的合并正文 */
-export async function assembleFsiSkillsBlock(skillIds: string[]): Promise<string> {
+export async function assembleFsiSkillsBlock(
+  skillIds: string[],
+  options?: { maxTotalChars?: number }
+): Promise<string> {
   const unique = [...new Set(skillIds.filter((id) => id.startsWith("fsi/")))];
   if (unique.length === 0) return "";
   const root = getFsiContentRoot();
@@ -66,7 +69,7 @@ export async function assembleFsiSkillsBlock(skillIds: string[]): Promise<string
   }
 
   const parts: string[] = ["## FSI Skills（Anthropic Financial Services）"];
-  let budget = maxSkillInjectTotalChars();
+  let budget = options?.maxTotalChars ?? maxSkillInjectTotalChars();
   for (const id of unique) {
     if (budget <= 0) break;
     const resolved = await resolveFsiSkillBody(id);

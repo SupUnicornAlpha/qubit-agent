@@ -38,9 +38,27 @@ export const WorkflowProcessConfigSchema = z.object({
 
 export type WorkflowProcessConfig = z.infer<typeof WorkflowProcessConfigSchema>;
 
+export const WorkflowTokenBudgetSchema = z.object({
+  /** 工作流累计 token 硬上限；达到后不再发起新的 LLM 调用。 */
+  maxTotalTokens: z.number().int().min(1_000).max(10_000_000).optional(),
+  /** 达到该比例后要求 Agent 收口，不再扩展新研究分支。 */
+  softLimitRatio: z.number().min(0.5).max(0.99).optional(),
+  /** 单次调用的 prompt token 预算，独立于模型 context window。 */
+  maxPromptTokensPerCall: z.number().int().min(1_000).max(200_000).optional(),
+  /** system / user 两部分的字符硬上限，防止组件叠加绕过 token 预算。 */
+  maxSystemPromptChars: z.number().int().min(2_000).max(200_000).optional(),
+  maxUserPromptChars: z.number().int().min(2_000).max(200_000).optional(),
+});
+
+export type WorkflowTokenBudget = z.infer<typeof WorkflowTokenBudgetSchema>;
+
 /** Per-workflow overrides for external CLI loops (stored in workflow_run.loop_options_json). */
 export const LoopOptionsJsonSchema = z
   .object({
+    /** native ReAct 的工作流级迭代上限；显式纳入 schema，避免解析时被 strip。 */
+    maxIterations: z.number().int().min(1).max(100).optional(),
+    /** LLM 成本与上下文预算。 */
+    tokenBudget: WorkflowTokenBudgetSchema.optional(),
     /** Override workflow execution_path when loop_kind is native (graph | a2a). */
     executionPath: z.enum(["graph", "a2a"]).optional(),
     /** Full path or binary name on PATH */

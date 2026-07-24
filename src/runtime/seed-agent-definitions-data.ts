@@ -34,7 +34,7 @@ function def(
     outputs: partial.outputs ?? ROLE_OUTPUTS[role] ?? [],
     subscriptions: partial.subscriptions ?? ["TASK_ASSIGN"],
     llmProvider: partial.llmProvider ?? "",
-    maxIterations: partial.maxIterations ?? 20,
+    maxIterations: partial.maxIterations ?? 10,
     sandboxPolicyId: partial.sandboxPolicyId ?? "default-policy",
     enabled: partial.enabled ?? true,
   };
@@ -84,7 +84,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
-    maxIterations: 24,
+    maxIterations: 8,
   }),
   def({
     id: "def-market-data",
@@ -100,7 +100,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "write_snapshot",
       "call_mcp",
     ],
-    maxIterations: 12,
+    maxIterations: 5,
   }),
   def({
     id: "def-news-event",
@@ -118,7 +118,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "code.run_python",
       "call_mcp",
     ],
-    maxIterations: 12,
+    maxIterations: 5,
   }),
   def({
     id: "def-analyst-fundamental",
@@ -150,7 +150,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 14,
+    maxIterations: 7,
   }),
   def({
     id: "def-analyst-technical",
@@ -190,7 +190,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 14,
+    maxIterations: 7,
   }),
   def({
     id: "def-analyst-sentiment",
@@ -223,7 +223,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 14,
+    maxIterations: 7,
   }),
   def({
     id: "def-analyst-macro",
@@ -253,7 +253,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "edit_agent_pack",
       "call_mcp",
     ],
-    maxIterations: 14,
+    maxIterations: 7,
   }),
   def({
     id: "def-research",
@@ -314,7 +314,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     ],
     subscriptions: ["TASK_ASSIGN", "MODEL_UPDATE"],
     /** 因子研究迭代步数较多（list→evaluate→promote 多次） */
-    maxIterations: 28,
+    maxIterations: 10,
   }),
   def({
     id: "def-backtest",
@@ -351,7 +351,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "skill.archive",
       "call_mcp",
     ],
-    maxIterations: 20,
+    maxIterations: 8,
   }),
   def({
     id: "def-risk",
@@ -396,7 +396,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "skill.archive",
     ],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
-    maxIterations: 14,
+    maxIterations: 6,
   }),
   /**
    * M9.P5：专项 Walk-Forward / Regime 验证 Agent，复用 backtest_engineer role
@@ -428,7 +428,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "call_mcp",
     ],
     /** Walk-forward 至少跑 3 段，每段独立 backtest.run → 工具调用轮数较多 */
-    maxIterations: 24,
+    maxIterations: 12,
   }),
 ];
 

@@ -13,6 +13,7 @@ import { reasonNode } from "../langgraph/nodes/reason";
 import { shouldStopReactLoopAfterObserve } from "../langgraph/react-loop-policy";
 import type { AgentGraphState, StepStreamEvent } from "../langgraph/state";
 import { resolveLlmForAgent } from "../llm/llm-router";
+import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
 import { sandboxExecutor } from "../sandbox-executor";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
@@ -171,6 +172,36 @@ async function runReason(
 ): Promise<AgentGraphState> {
   const { db, agentInstanceId, emit } = params;
   const nextIteration = state.iteration + 1;
+  const tokenBudget = await loadWorkflowTokenBudgetStatus(db, params.workflowId);
+  if (tokenBudget.hardLimitReached) {
+    emit({
+      runId: params.runId,
+      workflowId: params.workflowId,
+      traceId: params.traceId,
+      role: params.def.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: {
+        code: "WORKFLOW_TOKEN_BUDGET_EXHAUSTED",
+        usedTokens: tokenBudget.usedTokens,
+        maxTotalTokens: tokenBudget.policy.maxTotalTokens,
+        message: "工作流 Token 预算已耗尽，已停止新的模型调用。",
+      },
+    });
+    const blocked = {
+      ...state,
+      finalResponse: {
+        status: "terminated",
+        reason: "token_budget_exhausted",
+        usedTokens: tokenBudget.usedTokens,
+        maxTotalTokens: tokenBudget.policy.maxTotalTokens,
+        iteration: state.iteration,
+      },
+    };
+    snapshotState(params, "reason", state.iteration, blocked);
+    return blocked;
+  }
   const iterationCheck = await sandboxExecutor.checkIterationLimit({
     runId: params.runId,
     workflowId: params.workflowId,
@@ -344,6 +375,19 @@ async function runReason(
         fallbackUsed: reasonResult.meta.fallbackUsed,
         ...(reasonResult.meta.parseRetryUsed ? { parseRetryUsed: true } : {}),
         ...(reasonResult.meta.lengthRetryUsed ? { lengthRetryUsed: true } : {}),
+        ...(reasonResult.meta.nativeToolCallingUsed ? { nativeToolCallingUsed: true } : {}),
+        ...(reasonResult.meta.tokenBudgetSoftLimitReached
+          ? { tokenBudgetSoftLimitReached: true }
+          : {}),
+        ...(reasonResult.meta.promptComponentChars
+          ? { promptComponentChars: reasonResult.meta.promptComponentChars }
+          : {}),
+        ...(reasonResult.meta.promptEstimatedTokens !== undefined
+          ? { promptEstimatedTokens: reasonResult.meta.promptEstimatedTokens }
+          : {}),
+        ...(reasonResult.meta.promptCompacted ? { promptCompacted: true } : {}),
+        workflowTokenBudgetUsedBeforeCall: tokenBudget.usedTokens,
+        workflowTokenBudgetMax: tokenBudget.policy.maxTotalTokens,
         iteration: nextIteration,
         agentRole: params.def.role,
       },

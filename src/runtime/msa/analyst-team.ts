@@ -607,7 +607,34 @@ async function runAnalystTeamCore(params: {
   let pipelineKind: AgentGroupPipelineKind = "msa_fusion";
   const groupDescription: string | null = null;
 
-  const analystSlots = slots.filter((s) => slotProducesSignal(s));
+  let analystSlots = slots.filter((s) => slotProducesSignal(s));
+  const explicitAnalystSelection =
+    (params.analystDefinitionIds?.length ?? 0) > 0 || (params.analystRoles?.length ?? 0) > 0;
+  if (
+    !explicitAnalystSelection &&
+    process.env["QUBIT_ADAPTIVE_TEAM_FANOUT_DISABLED"] !== "1" &&
+    analystSlots.length > 2
+  ) {
+    const query = `${scope.displayLabel} ${userContext}`.toLowerCase();
+    const roleHints: Partial<Record<AgentRole, string[]>> = {
+      analyst_technical: ["技术", "趋势", "动量", "k线", "因子", "策略", "回测"],
+      analyst_fundamental: ["基本面", "财报", "估值", "盈利", "行业", "公司"],
+      analyst_sentiment: ["新闻", "事件", "舆情", "情绪", "催化"],
+      analyst_macro: ["宏观", "政策", "利率", "周期", "汇率", "通胀"],
+    };
+    analystSlots = analystSlots
+      .map((slot, index) => ({
+        slot,
+        index,
+        score: (roleHints[slot.role] ?? []).reduce(
+          (score, hint) => score + (query.includes(hint) ? 1 : 0),
+          0
+        ),
+      }))
+      .sort((a, b) => b.score - a.score || a.index - b.index)
+      .slice(0, 2)
+      .map((item) => item.slot);
+  }
   const auxSlots = slots.filter((s) => slotIsAuxReporter(s));
   /**
    * strategyPipelineMode：跳过 MSA 共识评估、跳过辩论触发条件、跳过 placeholder

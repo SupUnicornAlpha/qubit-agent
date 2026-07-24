@@ -88,7 +88,7 @@ function getResolvedFsi(): ResolvedFsi {
     seedMcpCatalog:
       process.env["QUBIT_FSI_SEED_MCP"] === "false" ? false : (file.seedMcpCatalog ?? true),
     contentRootOverride: process.env["QUBIT_FSI_CONTENT_ROOT"]?.trim() || undefined,
-    maxSkillInjectChars: Number(process.env["QUBIT_FSI_MAX_SKILL_CHARS"] ?? 24000) || 24000,
+    maxSkillInjectChars: Number(process.env["QUBIT_FSI_MAX_SKILL_CHARS"] ?? 6000) || 6000,
   };
   return resolved;
 }

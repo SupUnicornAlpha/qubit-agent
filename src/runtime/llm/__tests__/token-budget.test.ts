@@ -16,6 +16,7 @@ import {
   estimateTokens,
   estimateTokensOfJson,
   getContextWindow,
+  truncatePromptText,
 } from "../token-budget";
 
 describe("estimateTokens (P1-6)", () => {
@@ -35,12 +36,34 @@ describe("estimateTokens (P1-6)", () => {
     expect(estimateTokens("a".repeat(1000))).toBe(250);
   });
 
+  test("中文按更高密度估算，避免 chars/4 低估", () => {
+    expect(estimateTokens("量化研究智能体")).toBeGreaterThan(estimateTokens("abcdefg"));
+    expect(estimateTokens("中".repeat(150))).toBe(100);
+  });
+
   test("estimateTokensOfJson 处理对象", () => {
     expect(estimateTokensOfJson({ a: 1, b: "hello" })).toBeGreaterThan(0);
     /** circular → 不抛错，返回 0 */
     const a: Record<string, unknown> = {};
     a["self"] = a;
     expect(estimateTokensOfJson(a)).toBe(0);
+  });
+});
+
+describe("truncatePromptText", () => {
+  test("未超预算时原样返回", () => {
+    const result = truncatePromptText("hello", 100);
+    expect(result.text).toBe("hello");
+    expect(result.truncated).toBe(false);
+  });
+
+  test("超预算时保留首尾并标记压缩", () => {
+    const result = truncatePromptText(`HEAD-${"x".repeat(1000)}-TAIL`, 200, "test");
+    expect(result.truncated).toBe(true);
+    expect(result.text.startsWith("HEAD-")).toBe(true);
+    expect(result.text.endsWith("-TAIL")).toBe(true);
+    expect(result.text).toContain("test compacted");
+    expect(result.finalChars).toBeLessThanOrEqual(200);
   });
 });
 

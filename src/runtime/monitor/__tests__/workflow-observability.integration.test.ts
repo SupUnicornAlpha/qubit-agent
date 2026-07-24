@@ -186,9 +186,20 @@ describe("getWorkflowObservability · F-P0-05 集成", () => {
         promptTokens: 400,
         completionTokens: 100,
         totalTokens: 500,
+        promptCachedTokens: 200,
         latencyMs: 1000,
         status: "success",
         costUsd: 0.005,
+        requestMetaJson: {
+          nativeToolCallingUsed: true,
+          promptCompacted: true,
+          iteration: 2,
+          promptComponentChars: {
+            systemFinal: 9000,
+            userGoalAndContext: 3000,
+            tools: 400,
+          },
+        },
       },
       {
         id: "llm-fund-2",
@@ -295,6 +306,19 @@ describe("getWorkflowObservability · F-P0-05 集成", () => {
     // 9999 token 的 noise 行不应进 totalTokenCount
     expect(obs.llm.totalTokenCount).not.toBe(12199);
     expect(obs.llm.totalTokenCount).toBe(2200);
+  });
+
+  test("返回预算、缓存、原生工具与 Prompt 组件效率归因", async () => {
+    const obs = await getWorkflowObservability(WORKFLOW_ID);
+    expect(obs.efficiency.averageTokensPerCall).toBe(550);
+    expect(obs.efficiency.promptTokenShare).toBeCloseTo(0.8, 5);
+    expect(obs.efficiency.cachedPromptTokenShare).toBeCloseTo(200 / 1760, 5);
+    expect(obs.efficiency.nativeToolCallingRate).toBe(0.25);
+    expect(obs.efficiency.compactedCalls).toBe(1);
+    expect(obs.efficiency.promptComponentsChars.systemFinal).toBe(9000);
+    expect(obs.efficiency.tokenBudget.usedTokens).toBe(2200);
+    expect(obs.efficiency.tokenBudget.utilization).toBeGreaterThan(0);
+    expect(obs.efficiency.estimatedWasteTokens.repeatedStaticContext).toBeGreaterThan(0);
   });
 
   test("空 workflow（无任何调用）返回 null token 字段 + 空 byAgentRole", async () => {

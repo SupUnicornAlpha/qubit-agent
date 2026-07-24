@@ -7,17 +7,17 @@
  * fetch_klines 返回 500 根 K 线一次几 K tokens）。
  *
  * 这个模块提供三件事：
- *   1. `estimateTokens(text)`：粗略估算（按 chars/4，与 OpenAI tiktoken 同数量级，足够做预算决策）
+ *   1. `estimateTokens(text)`：中英文混合感知估算，避免 chars/4 严重低估中文
  *   2. `getContextWindow(provider, model)`：从 known-models 表查真实 contextWindow，未知模型 fallback 128K
  *   3. `compactObservations(observations, budget)`：按预算压缩 observation 列表：
  *      - 单条 > maxPerObservation chars → 截断到 maxPerObservation，并保留尾部 marker
  *      - 加总仍超 budget → 从前往后丢弃，保留最近 N 步 + 早期步骤的 stub 摘要
  *
- * 显式不做（留给 P2）：
+ * 设计边界：
  *   - 不调 LLM-as-summarizer 做"含义压缩"。LLM 摘要可以更精炼但要再发一次请求、增加成本；
- *     当前先用截断 + stub 试水，看是否能解决 74K → 60K 的问题
- *   - 不动 systemPrompt / skill recall block；那些由 prompt assembly 决定，
- *     compactor 只管 observation 数组
+ *     当前使用中英文感知预算、截断与 stub，避免为了省 token 再制造一次模型调用
+ *   - observation 由本模块压缩；systemPrompt / skill / session 则由 reason prompt
+ *     assembly 分别按组件预算裁剪
  */
 
 /** 现代模型 contextWindow 真实值（截至 2026-06）。未列出的模型走默认 128K. */
@@ -70,17 +70,71 @@ export const DEFAULT_CONTEXT_WINDOW = 128_000;
 /**
  * 估算文本的 token 数。
  *
- * 采用 `Math.ceil(text.length / 4)` 近似：
- *   - 英文：约 3.5-4.5 chars/token（OpenAI tiktoken 经验值）
- *   - 中文：约 1-1.5 chars/token，会被低估；但 prompt 里中文占比一般 < 50%，整体仍偏保守
- *   - JSON：约 3-5 chars/token，估算合理
- *
- * 我们故意取偏小的除数（4 → 偏大估计），让 budget 决策保守，避免实际超 window。
- * 真正 tokenizer 太重（需要拉 tiktoken 模型文件），且 P1-6 阶段不需要精度。
+ * 拉丁字符按 4 chars/token，CJK/日文假名/韩文按 1.5 chars/token，emoji 与其它
+ * 非 ASCII 字符按 2 chars/token。它不是计费 tokenizer，但比统一 chars/4 更适合
+ * 本项目中文 Prompt，且故意略偏保守。
  */
 export function estimateTokens(text: string | undefined | null): number {
   if (!text) return 0;
-  return Math.ceil(text.length / 4);
+  let ascii = 0;
+  let cjk = 0;
+  let other = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0x7f) {
+      ascii += 1;
+    } else if (
+      (code >= 0x3400 && code <= 0x9fff) ||
+      (code >= 0x3040 && code <= 0x30ff) ||
+      (code >= 0xac00 && code <= 0xd7af)
+    ) {
+      cjk += 1;
+    } else {
+      other += 1;
+    }
+  }
+  return Math.ceil(ascii / 4 + cjk / 1.5 + other / 2);
+}
+
+export type PromptTruncationResult = {
+  text: string;
+  originalChars: number;
+  finalChars: number;
+  estimatedTokens: number;
+  truncated: boolean;
+};
+
+/**
+ * 按字符硬上限收缩 Prompt，同时保留开头的角色/契约与结尾的工具/输出约束。
+ * 不在这里调用 LLM 摘要，避免为了省 token 再制造一次调用。
+ */
+export function truncatePromptText(
+  text: string,
+  maxChars: number,
+  label = "prompt"
+): PromptTruncationResult {
+  const safeMax = Math.max(64, Math.floor(maxChars));
+  if (text.length <= safeMax) {
+    return {
+      text,
+      originalChars: text.length,
+      finalChars: text.length,
+      estimatedTokens: estimateTokens(text),
+      truncated: false,
+    };
+  }
+  const marker = `\n\n…[${label} compacted ${text.length - safeMax} chars]…\n\n`;
+  const available = Math.max(0, safeMax - marker.length);
+  const headChars = Math.ceil(available * 0.72);
+  const tailChars = available - headChars;
+  const compacted = `${text.slice(0, headChars)}${marker}${text.slice(-tailChars)}`;
+  return {
+    text: compacted,
+    originalChars: text.length,
+    finalChars: compacted.length,
+    estimatedTokens: estimateTokens(compacted),
+    truncated: true,
+  };
 }
 
 /**

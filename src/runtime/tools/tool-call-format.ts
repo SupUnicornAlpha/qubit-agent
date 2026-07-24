@@ -1,6 +1,8 @@
 import { getToolCatalogMap, resolveToolAlias } from "./tool-catalog";
 import { isBuiltinTool } from "./builtin-tools";
 import { resolveConnectorForTool } from "./tool-routes";
+import type { LlmToolCallRequest, LlmToolDefinition } from "../llm/gateway";
+import type { ToolCatalogEntry } from "./types";
 
 /**
  * 每个 MCP server 在 prompt 块里展示的真实工具清单。
@@ -28,9 +30,129 @@ export type ParsedToolCall =
   | { kind: "none"; summary?: string }
   | { kind: "parse_error"; message: string };
 
+const CATEGORY_HINTS: Record<string, string[]> = {
+  orchestration: ["派发", "专家", "团队", "计划", "步骤", "协作", "agent", "team", "plan"],
+  market: ["行情", "价格", "k线", "成交量", "quote", "price", "market", "kline"],
+  research: ["研究", "因子", "指标", "估值", "筛选", "股票", "factor", "research", "valuation"],
+  backtest: ["回测", "策略", "oos", "walk-forward", "backtest", "strategy"],
+  trading: ["交易", "订单", "买入", "卖出", "止盈", "止损", "仓位", "order", "trade"],
+  risk: ["风险", "回撤", "var", "集中度", "流动性", "risk"],
+  sentiment: ["新闻", "舆情", "事件", "情绪", "news", "sentiment"],
+  macro: ["宏观", "利率", "政策", "通胀", "macro"],
+  memory: ["记忆", "经验", "skill", "memory"],
+  audit: ["审计", "报告", "血缘", "audit", "lineage"],
+  exec: ["网页", "代码", "命令", "文件", "web", "exec", "cli"],
+};
+
+function toolRelevanceScore(
+  name: string,
+  query: string,
+  entry: ToolCatalogEntry
+): number {
+  let score = query.includes(name.toLowerCase()) ? 20 : 0;
+  const normalizedName = name.toLowerCase().replace(/[._-]/g, " ");
+  for (const token of normalizedName.split(/\s+/).filter(Boolean)) {
+    if (query.includes(token)) score += 4;
+  }
+  for (const hint of CATEGORY_HINTS[entry.category ?? "orchestration"] ?? []) {
+    if (query.includes(hint)) score += 2;
+  }
+  return score;
+}
+
+/**
+ * 只向模型暴露与当前目标最相关的工具；授权集合本身不变，因此不会删除已有能力。
+ * 编排、计划与 MCP 路由工具始终保留，剩余槽位按任务关键词和工具类别排序。
+ */
+export function selectRelevantToolsForPrompt(
+  availableTools: string[],
+  queryText: string,
+  maxTools = 16
+): string[] {
+  const unique = [...new Set(availableTools.filter(Boolean))];
+  if (unique.length <= maxTools) return unique;
+  const catalog = getToolCatalogMap();
+  const query = queryText.toLowerCase();
+  const always = new Set(
+    unique.filter(
+      (name) =>
+        name === "assign_task" ||
+        name === "update_plan" ||
+        name === "call_mcp" ||
+        name.startsWith("call_team_")
+      )
+  );
+  const effectiveMax = Math.max(1, maxTools, always.size);
+  const ranked = unique
+    .filter((name) => !always.has(name))
+    .map((name, index) => ({
+      name,
+      index,
+      score: toolRelevanceScore(
+        name,
+        query,
+        catalog.get(name) ?? {
+          name,
+          kind: "builtin",
+          description: "",
+          category: "orchestration",
+        }
+      ),
+    }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+  return [...always, ...ranked.map((item) => item.name)].slice(0, effectiveMax);
+}
+
+export function buildNativeQubitToolDefinition(tools: string[]): LlmToolDefinition | null {
+  const unique = [...new Set(tools.filter(Boolean))];
+  if (unique.length === 0) return null;
+  const catalog = getToolCatalogMap();
+  const descriptions = unique
+    .map((name) => {
+      const description = catalog.get(name)?.description ?? "";
+      return `${name}: ${description.slice(0, 120)}`;
+    })
+    .join("\n");
+  return {
+    name: "qubit_action",
+    description:
+      "选择并调用一个 QUBIT 已授权工具。一次只调用一个；若无需工具，直接返回文字，不要调用本函数。\n" +
+      descriptions,
+    parameters: {
+      type: "object",
+      properties: {
+        tool: { type: "string", enum: unique },
+        params: {
+          type: "object",
+          description: "该工具的业务参数；不要传 workflowRunId/projectId。",
+          additionalProperties: true,
+        },
+      },
+      required: ["tool", "params"],
+      additionalProperties: false,
+    },
+  };
+}
+
+export function nativeToolCallToSentinel(
+  call: LlmToolCallRequest,
+  availableTools: string[]
+): string | null {
+  if (call.name !== "qubit_action") return null;
+  const tool = typeof call.args["tool"] === "string" ? call.args["tool"] : "";
+  if (!isAllowedTool(tool, availableTools)) return null;
+  const params =
+    call.args["params"] && typeof call.args["params"] === "object" && !Array.isArray(call.args["params"])
+      ? (call.args["params"] as Record<string, unknown>)
+      : {};
+  return `<TOOL_CALL>\n${JSON.stringify({ tool, params })}\n</TOOL_CALL>`;
+}
+
 /** 构建注入 LLM 的「可用工具」说明块（缺口 A） */
 export function buildAgentToolsPromptBlock(params: {
   tools: string[];
+  /** 原生 function/tool calling 已启用时，只注入简短规则，schema 由 gateway 传递。 */
+  nativeToolCalling?: boolean;
   /**
    * MCP server 列表。
    * - 旧用法：`["mathjs", "mcp-financex"]` —— 仅注入 server 名，LLM 需自己猜工具
@@ -45,6 +167,13 @@ export function buildAgentToolsPromptBlock(params: {
   }
 
   const catalog = getToolCatalogMap();
+  if (params.nativeToolCalling) {
+    return [
+      "## 工具调用",
+      "本轮已启用原生结构化工具调用。需要工具时调用 `qubit_action`，一次只选一个工具；无需工具时直接给出结论。",
+      "不得编造执行结果；工具失败后遵守 observation.recovery，禁止无变化重复调用。",
+    ].join("\n");
+  }
   const lines: string[] = [
     "## 可用工具（本轮已授权）",
     "回复末尾必须输出**且仅输出一个**工具调用块。**首选** sentinel 格式（最稳）：",
@@ -151,7 +280,11 @@ export function buildAgentToolsPromptBlock(params: {
 /** 与 LangGraph reason 节点一致：pack/DB 合并正文 + 工具/MCP 说明块 */
 export function assembleAgentSystemPrompt(
   baseSystemPrompt: string,
-  params: { tools: string[]; mcpServers?: Array<McpServerPromptHint> }
+  params: {
+    tools: string[];
+    mcpServers?: Array<McpServerPromptHint>;
+    nativeToolCalling?: boolean;
+  }
 ): { full: string; toolsBlock: string } {
   const toolsBlock = buildAgentToolsPromptBlock(params);
   const full = toolsBlock ? `${baseSystemPrompt}\n\n${toolsBlock}` : baseSystemPrompt;

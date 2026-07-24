@@ -44,21 +44,21 @@ import { stripToolCallSentinels } from "../tools/tool-call-format";
 import { formatResearchScopePreamble } from "./analyst-team-scope";
 
 /**
- * 单 slot 在 ReAct 内核里允许的最大轮数。提到 8（原 6）：
+ * 单 slot 在 ReAct 内核里允许的最大轮数，当前收口到 6：
  *
  * Wave-3 / W5（2026-06-10 复盘）：旧 prompt 写"先用工具，再出 JSON"暗示线性 2 步；
  * LLM 经常 1 工具 + 1 JSON 就停，没真正进入 ReAct 的"假设→验证→修正"循环。
- * 把 cap 抬到 8 是给"自驱多轮交叉验证"留 token 预算；不会让单 slot 跑爆——
- * `def.maxIterations` 仍然是真实下限（min 取小）。
+ * 6 轮足够容纳"假设→验证→修正→结论"，同时避免低价值尾轮持续消耗 token；
+ * `def.maxIterations` 仍然是真实上限之一（两者取小）。
  */
-const TEAM_SLOT_MAX_ITERATIONS = 8;
+const TEAM_SLOT_MAX_ITERATIONS = 6;
 
 /**
  * "wave 分析师 ReAct 档位"默认值映射。caller（analyst-team.ts）传入 group.pipelineKind
  * 时按这张表挑迭代上限，否则走默认。
  *
  * - msa_fusion：典型的多分析师投票场景，鼓励单分析师做交叉验证 → 4 轮
- * - sequential_research：策略撰写/实盘下单 pipeline，工具链路本来就长 → 6 轮
+ * - sequential_research：策略撰写/实盘下单 pipeline，工具链路本来就长 → 5 轮
  * - event_radar / factor_discovery：事件/因子聚焦 → 3 轮足够
  */
 export type AnalystReactDepth = "minimal" | "standard" | "deep";
@@ -84,7 +84,7 @@ export function pickAnalystReactDepth(input: {
 export const ANALYST_REACT_ITERATIONS: Record<AnalystReactDepth, number> = {
   minimal: 3,
   standard: 4,
-  deep: 6,
+  deep: 5,
 };
 
 async function loadRuntimeDefinition(
@@ -101,8 +101,8 @@ async function loadRuntimeDefinition(
   const d = row[0];
   /**
    * W5：reactCap 决定该 slot 在本批 wave 内的上限：
-   *   - 默认 reactCap = TEAM_SLOT_MAX_ITERATIONS（8）
-   *   - caller 按 pipelineKind 传 ANALYST_REACT_ITERATIONS[depth] (3/4/6)
+   *   - 默认 reactCap = TEAM_SLOT_MAX_ITERATIONS（6）
+   *   - caller 按 pipelineKind 传 ANALYST_REACT_ITERATIONS[depth] (3/4/5)
    *   - 与 def.maxIterations 取小值，避免 def 的低 cap 被覆盖（def 可能显式设 2）
    */
   const cap = Math.max(1, Math.min(reactCap, TEAM_SLOT_MAX_ITERATIONS));
