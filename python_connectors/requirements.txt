@@ -19,10 +19,15 @@ yfinance>=0.2.40
 # backtrader>=1.9.78
 # vnpy>=3.9.0
 
-# Broker (optional — user enables real trading via OpenD / IB Gateway / CCXT)
+# Broker (optional — install only for enabled providers)
 # futu-api>=9.0.0
 # ib-insync>=0.9.86
 # ccxt>=4.0.0
+# Same runtime as the Tonghuashun SuperMind desktop client:
+# tick_trade_api  # distributed with SuperMind, not a public cross-platform wheel
+# Eastmoney EMT (Windows only; requires EMT brokerage entitlement):
+# vnpy>=3.9.0
+# vnpy_emt
 
 # Dev / test
 pytest>=8.0.0

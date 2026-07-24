@@ -3,7 +3,7 @@
 HTTP bridge so the Bun runtime can call real brokers via `broker_account.base_url`.
 
 Endpoints:
-  GET  /health?provider=futu|ib&accountRef=...&providerConfig={json}
+  GET  /health?provider=futu|ib|ccxt|alpaca|supermind|eastmoney_emt&providerConfig={json}
   POST /orders
   GET  /orders?brokerOrderId=...
   POST /orders/cancel
@@ -13,6 +13,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -45,20 +46,12 @@ def _connector() -> Any:
     return get_connector()
 
 
-_CONN: Any | None = None
-
-
-def get_conn() -> Any:
-    global _CONN
-    if _CONN is None:
-        _CONN = _connector()
-    return _CONN
-
-
 def _init_conn(payload: dict[str, Any]) -> Any:
-    conn = get_conn()
+    # The HTTP server is threaded. Keep provider/config request-scoped so concurrent
+    # requests for different brokers cannot overwrite a shared mutable connector.
+    # Individual adapters still cache their underlying SDK sessions where appropriate.
+    conn = _connector()
     provider = str(payload.get("provider") or os.environ.get("QUBIT_BROKER_PROVIDER", "futu"))
-    os.environ["QUBIT_BROKER_PROVIDER"] = provider
     paper = payload.get("paper")
     if paper is None:
         paper = os.environ.get("QUBIT_BROKER_PAPER", "1") in ("1", "true", "yes")
@@ -80,15 +73,27 @@ class Handler(BaseHTTPRequestHandler):
         logger.info("%s - %s", self.address_string(), fmt % args)
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._authorized():
+            return
+        try:
+            self._handle_get()
+        except Exception as error:  # noqa: BLE001
+            logger.exception("GET %s failed", self.path)
+            self._json(502, {"ok": False, "error": str(error)})
+
+    def _handle_get(self) -> None:
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
+        header_provider_config = self.headers.get("X-Qubit-Provider-Config")
+        header_paper = self.headers.get("X-Qubit-Paper")
 
         if parsed.path == "/health":
             provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
-            pc_raw = (qs.get("providerConfig") or ["{}"])[0]
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
             conn = _init_conn(
                 {
                     "provider": provider,
+                    "paper": header_paper in ("1", "true", "yes") if header_paper is not None else None,
                     "providerConfig": _parse_provider_config(str(pc_raw)),
                 }
             )
@@ -106,8 +111,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/orders":
             broker_order_id = (qs.get("brokerOrderId") or [""])[0]
             provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
-            pc_raw = (qs.get("providerConfig") or ["{}"])[0]
-            paper = (qs.get("paper") or ["true"])[0] in ("1", "true", "yes")
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
+            paper_raw = header_paper or (qs.get("paper") or ["true"])[0]
+            paper = paper_raw in ("1", "true", "yes")
             conn = _init_conn(
                 {
                     "provider": provider,
@@ -125,8 +131,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/fills":
             broker_order_id = (qs.get("brokerOrderId") or [""])[0]
             provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
-            pc_raw = (qs.get("providerConfig") or ["{}"])[0]
-            paper = (qs.get("paper") or ["true"])[0] in ("1", "true", "yes")
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
+            paper_raw = header_paper or (qs.get("paper") or ["true"])[0]
+            paper = paper_raw in ("1", "true", "yes")
             conn = _init_conn(
                 {
                     "provider": provider,
@@ -143,8 +150,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/positions":
             provider = (qs.get("provider") or [os.environ.get("QUBIT_BROKER_PROVIDER", "futu")])[0]
-            pc_raw = (qs.get("providerConfig") or ["{}"])[0]
-            paper = (qs.get("paper") or ["true"])[0] in ("1", "true", "yes")
+            pc_raw = header_provider_config or (qs.get("providerConfig") or ["{}"])[0]
+            paper_raw = header_paper or (qs.get("paper") or ["true"])[0]
+            paper = paper_raw in ("1", "true", "yes")
             conn = _init_conn(
                 {
                     "provider": provider,
@@ -162,6 +170,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._authorized():
+            return
+        try:
+            self._handle_post()
+        except Exception as error:  # noqa: BLE001
+            logger.exception("POST %s failed", self.path)
+            self._json(502, {"ok": False, "error": str(error)})
+
+    def _handle_post(self) -> None:
         parsed = urlparse(self.path)
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -211,12 +228,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _authorized(self) -> bool:
+        expected = os.environ.get("QUBIT_BROKER_AUTH_TOKEN", "")
+        if not expected:
+            return True
+        supplied = self.headers.get("Authorization", "")
+        if hmac.compare_digest(supplied, f"Bearer {expected}"):
+            return True
+        self._json(401, {"ok": False, "error": "unauthorized"})
+        return False
+
 
 def main() -> None:
+    host = os.environ.get("QUBIT_BROKER_HOST", "127.0.0.1")
     port = int(os.environ.get("QUBIT_BROKER_PORT", "18765"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     logger.info(
-        "listening on http://127.0.0.1:%s (GET /health /orders /fills /positions, POST /orders /orders/cancel)",
+        "listening on http://%s:%s (GET /health /orders /fills /positions, POST /orders /orders/cancel)",
+        host,
         port,
     )
     server.serve_forever()

@@ -44,6 +44,7 @@ import {
   buildPortfolioRebalancePlan,
   executePortfolioRebalance,
 } from "../runtime/execution/portfolio-rebalance-service";
+import { isBrokerProvider, type BrokerProvider } from "../types/broker";
 
 export const executionRouter = new Hono();
 
@@ -64,7 +65,7 @@ executionRouter.get("/audit/verify", async (c) => {
 executionRouter.post("/reconciliation/positions/remediate", async (c) => {
   const body = await c.req.json<{
     projectId?: string;
-    provider?: "futu" | "ib" | "ccxt";
+    provider?: BrokerProvider;
     accountRef?: string;
     expectedPlanHash?: string;
     confirmation?: string;
@@ -337,7 +338,7 @@ executionRouter.get("/reconciliation/positions", async (c) => {
   if (!projectId || !provider) {
     return c.json({ ok: false, error: "projectId and provider are required" }, 400);
   }
-  if (provider !== "futu" && provider !== "ib" && provider !== "ccxt") {
+  if (!isBrokerProvider(provider)) {
     return c.json({ ok: false, error: "unsupported provider" }, 400);
   }
   const accountRef = c.req.query("accountRef");
@@ -352,7 +353,7 @@ executionRouter.get("/reconciliation/positions", async (c) => {
 executionRouter.post("/reconciliation/positions/scan", async (c) => {
   const body = await c.req.json<{
     projectId?: string;
-    provider?: "futu" | "ib" | "ccxt";
+    provider?: BrokerProvider;
     accountRef?: string;
   }>();
   if (!body.projectId || !body.provider) {

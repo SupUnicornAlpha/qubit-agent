@@ -4,7 +4,7 @@ import { getDb } from "../../db/sqlite/client";
 import { alertEvent, communicationMessageLog, scheduledJob, scheduledJobRun } from "../../db/sqlite/schema";
 import { runAutoExecution, type ScheduledExecutionPayload } from "../reia/auto-execution";
 import { scanPositionReconciliation } from "../execution/position-reconciliation-service";
-import type { BrokerProvider } from "../../types/broker";
+import { isBrokerProvider, type BrokerProvider } from "../../types/broker";
 import { createAndDispatchWorkflow } from "./workflow-service";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 
@@ -50,11 +50,11 @@ export function parsePositionReconciliationJobPayload(
   if (parseScheduledJobKind(raw) !== "position_reconciliation") return null;
   const payload = raw as Record<string, unknown>;
   const provider = String(payload["provider"] ?? "");
-  if (!["futu", "ib", "ccxt", "alpaca"].includes(provider)) return null;
+  if (!isBrokerProvider(provider)) return null;
   const accountRef = typeof payload["accountRef"] === "string" ? payload["accountRef"].trim() : "";
   return {
     kind: "position_reconciliation",
-    provider: provider as BrokerProvider,
+    provider,
     ...(accountRef ? { accountRef } : {}),
   };
 }

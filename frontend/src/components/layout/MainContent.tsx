@@ -134,6 +134,7 @@ import type {
   SessionA2AMessageItem,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
+  BrokerProvider,
   WorkflowCompensationTaskRecord,
   AnalystTeamGraphPayload,
   AnalystTeamGraphInteraction,
@@ -5282,7 +5283,7 @@ const TeamDashboardPanel: FC = () => {
   const [intentTargetPrice, setIntentTargetPrice] = useState(1500);
   const [intentOrders, setIntentOrdersState] = useState<IntentOrderRecord[]>([]);
   const [selectedIntentId, setSelectedIntentId] = useState("");
-  const [brokerProvider, setBrokerProvider] = useState<"futu" | "ib">("futu");
+  const [brokerProvider, setBrokerProvider] = useState<BrokerProvider>("futu");
   const [brokerAccountRef, setBrokerAccountRef] = useState("default");
   const [brokerMode, setBrokerMode] = useState<"mock" | "sandbox" | "live">("mock");
   const [brokerBaseUrl, setBrokerBaseUrl] = useState("");
@@ -8061,10 +8062,14 @@ const TeamDashboardPanel: FC = () => {
               <select
                 style={teamStyles.input}
                 value={brokerProvider}
-                onChange={(e) => setBrokerProvider(e.target.value as "futu" | "ib")}
+                onChange={(e) => setBrokerProvider(e.target.value as BrokerProvider)}
               >
                 <option value="futu">futu</option>
                 <option value="ib">ib</option>
+                <option value="ccxt">ccxt</option>
+                <option value="alpaca">alpaca</option>
+                <option value="supermind">同花顺 SuperMind</option>
+                <option value="eastmoney_emt">东方财富 EMT</option>
               </select>
             </div>
             <button type="button" className="qb-btn-secondary" onClick={() => void createIntentNow()}>

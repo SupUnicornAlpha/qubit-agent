@@ -24,6 +24,7 @@ import type {
   AlertEventRecord,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
+  BrokerProvider,
   CommunicationChannelRecord,
   CommunicationMessageLogRecord,
   IntegrationAdapterDescriptor,
@@ -2809,7 +2810,7 @@ export async function executeIntentConfirmed(input: {
   confirmToken?: string;
   deviationThreshold?: number;
   forceDryRun?: boolean;
-  provider?: "futu" | "ib";
+  provider?: BrokerProvider;
 }): Promise<{
   gate: {
     executeMode: "paper" | "live";
@@ -2823,7 +2824,7 @@ export async function executeIntentConfirmed(input: {
     priceDeviationPct: number;
     quantityDeviationPct: number;
     threshold: number;
-    provider?: "futu" | "ib";
+    provider?: BrokerProvider;
     brokerOrderId?: string;
   };
 }> {
@@ -2841,7 +2842,7 @@ export async function executeIntentConfirmed(input: {
       priceDeviationPct: number;
       quantityDeviationPct: number;
       threshold: number;
-      provider?: "futu" | "ib";
+      provider?: BrokerProvider;
       brokerOrderId?: string;
     };
   }>("/api/v1/reia/safety/execute-confirmed", input);
@@ -2865,7 +2866,7 @@ export async function cleanupExecutionConfirmTickets(): Promise<{ cleaned: numbe
   return res.data;
 }
 
-export async function listBrokerAccounts(provider?: "futu" | "ib"): Promise<BrokerAccountRecord[]> {
+export async function listBrokerAccounts(provider?: BrokerProvider): Promise<BrokerAccountRecord[]> {
   const suffix = provider ? `?provider=${provider}` : "";
   const res = await httpGet<{ ok: boolean; data: BrokerAccountRecord[] }>(
     `/api/v1/reia/broker/accounts${suffix}`
@@ -2874,7 +2875,7 @@ export async function listBrokerAccounts(provider?: "futu" | "ib"): Promise<Brok
 }
 
 export async function upsertBrokerAccount(input: {
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef: string;
   mode?: "mock" | "sandbox" | "live";
   baseUrl?: string;
@@ -2890,10 +2891,10 @@ export async function upsertBrokerAccount(input: {
 }
 
 export async function checkBrokerHealth(input: {
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef: string;
 }): Promise<{
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   status: "healthy" | "degraded" | "down";
   message: string;
   checkedAt: string;
@@ -2901,7 +2902,7 @@ export async function checkBrokerHealth(input: {
   const res = await httpPost<{
     ok: boolean;
     data: {
-      provider: "futu" | "ib" | "ccxt";
+      provider: BrokerProvider;
       status: "healthy" | "degraded" | "down";
       message: string;
       checkedAt: string;
@@ -2911,7 +2912,7 @@ export async function checkBrokerHealth(input: {
 }
 
 export async function listBrokerEvents(
-  provider?: "futu" | "ib",
+  provider?: BrokerProvider,
   limit = 100
 ): Promise<BrokerOrderEventRecord[]> {
   const query = new URLSearchParams();
@@ -3764,7 +3765,7 @@ export async function cancelTraderOrder(input: {
 
 export type PositionReconciliationReport = {
   projectId: string;
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef: string | null;
   asof: string;
   summary: {
@@ -3803,7 +3804,7 @@ export type PositionRemediationPlan = {
 
 export async function getPositionReconciliation(input: {
   projectId: string;
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef?: string;
 }): Promise<PositionReconciliationReport> {
   const query = new URLSearchParams({ projectId: input.projectId, provider: input.provider });
@@ -3816,7 +3817,7 @@ export async function getPositionReconciliation(input: {
 
 export async function scanPositionReconciliation(input: {
   projectId: string;
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef?: string;
 }): Promise<{
   report: PositionReconciliationReport;
@@ -3836,7 +3837,7 @@ export async function scanPositionReconciliation(input: {
 
 export async function remediatePositionReconciliation(input: {
   projectId: string;
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef?: string;
   expectedPlanHash: string;
   strategyRuntimeId: string;

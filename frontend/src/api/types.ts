@@ -1325,11 +1325,46 @@ export interface CcxtProviderConfig {
   market?: "CRYPTO";
 }
 
-export type BrokerProviderConfig = FutuProviderConfig | IbProviderConfig | CcxtProviderConfig;
+export interface AlpacaProviderConfig {
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  secretEnv?: string;
+  market?: "US";
+}
+
+export interface SuperMindProviderConfig {
+  accountId?: string;
+  marketPriceType?: number;
+  limitPriceType?: number;
+  market?: "CN";
+}
+
+export interface EastmoneyEmtProviderConfig {
+  connectionSetting?: Record<string, unknown>;
+  connectionSettingEnv?: string;
+  connectWaitSeconds?: number;
+  market?: "CN";
+}
+
+export type BrokerProvider =
+  | "futu"
+  | "ib"
+  | "ccxt"
+  | "alpaca"
+  | "supermind"
+  | "eastmoney_emt";
+
+export type BrokerProviderConfig =
+  | FutuProviderConfig
+  | IbProviderConfig
+  | CcxtProviderConfig
+  | AlpacaProviderConfig
+  | SuperMindProviderConfig
+  | EastmoneyEmtProviderConfig;
 
 export interface BrokerAccountRecord {
   id: string;
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   accountRef: string;
   mode: "mock" | "sandbox" | "live";
   baseUrl?: string | null;
@@ -1347,7 +1382,7 @@ export interface BrokerOrderEventRecord {
   id: string;
   intentOrderId?: string | null;
   executionReportId?: string | null;
-  provider: "futu" | "ib" | "ccxt";
+  provider: BrokerProvider;
   eventType: "submit" | "ack" | "partial_fill" | "fill" | "cancel" | "reject" | "health_check";
   brokerOrderId?: string | null;
   status: string;

@@ -18,8 +18,10 @@ export type {
   BrokerProvider,
   BrokerProviderConfig,
   CcxtProviderConfig,
+  EastmoneyEmtProviderConfig,
   FutuProviderConfig,
   IbProviderConfig,
+  SuperMindProviderConfig,
 } from "../../types/broker";
 
 /**
@@ -28,13 +30,13 @@ export type {
  *
  * - BrokerOrderSide   = OrderSide （完全等价）
  * - BrokerOrderType   ⊂ OrderType（broker 层只支持 market/limit，stop/stop_limit 未实现）
- * - BrokerOrderStatus ⊂ BrokerOrderStatus(core)（broker 层不返回 partially_filled/expired）
+ * - BrokerOrderStatus ⊂ BrokerOrderStatus(core)（broker 层不返回 expired）
  */
 export type BrokerOrderSide = CoreOrderSide;
 export type BrokerOrderType = Extract<CoreOrderType, "market" | "limit">;
 export type BrokerOrderStatus = Extract<
   CoreBrokerOrderStatus,
-  "submitted" | "filled" | "rejected" | "cancelled"
+  "submitted" | "partially_filled" | "filled" | "rejected" | "cancelled"
 >;
 
 export interface BrokerSubmitOrderInput {
@@ -386,6 +388,66 @@ class MockIbConnector implements BrokerConnector {
   }
 }
 
+class MockCnBrokerConnector implements BrokerConnector {
+  readonly mode = "mock" as const;
+
+  constructor(
+    readonly provider: Extract<BrokerProvider, "supermind" | "eastmoney_emt">,
+    readonly accountRef = `${provider}-mock`,
+  ) {}
+
+  async submitOrder(input: BrokerSubmitOrderInput): Promise<BrokerOrderResult> {
+    const base = input.limitPrice ?? 100;
+    const slipPct = (Math.random() - 0.5) * 0.006;
+    return {
+      provider: this.provider,
+      brokerOrderId: `${this.provider}-${Date.now()}-${randomUUID().slice(0, 8)}`,
+      status: "filled",
+      actualPrice: Number((base * (1 + slipPct)).toFixed(4)),
+      actualQuantity: input.quantity,
+      executionTimeMs: Math.floor(80 + Math.random() * 220),
+      raw: { venue: `MOCK_${this.provider.toUpperCase()}`, ticker: input.ticker },
+    };
+  }
+
+  async cancelOrder(_brokerOrderId: string): Promise<void> {}
+
+  async getOrder(brokerOrderId: string): Promise<BrokerOrderResult> {
+    return {
+      provider: this.provider,
+      brokerOrderId,
+      status: "filled",
+      actualPrice: 100,
+      actualQuantity: 0,
+      executionTimeMs: 1,
+    };
+  }
+
+  async getFills(brokerOrderId: string): Promise<BrokerFill[]> {
+    return [{
+      brokerOrderId,
+      fillQty: 100,
+      fillPrice: 100,
+      filledAt: new Date().toISOString(),
+    }];
+  }
+
+  async getPositions(): Promise<BrokerPosition[]> {
+    return [];
+  }
+
+  async healthCheck(): Promise<BrokerHealthResult> {
+    return {
+      provider: this.provider,
+      status: "healthy",
+      message: `mock ${this.provider} ready`,
+      checkedAt: new Date().toISOString(),
+      latencyMs: 20,
+      accountRef: this.accountRef,
+    };
+  }
+}
+
 class HttpBrokerConnector implements BrokerConnector {
   readonly provider: BrokerProvider;
   readonly mode: "sandbox" | "live";
@@ -411,7 +473,14 @@ class HttpBrokerConnector implements BrokerConnector {
       url,
       {
         method,
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          "x-qubit-provider-config": JSON.stringify(this.runtime.providerConfig ?? {}),
+          "x-qubit-paper": String(paperFromMode(this.runtime.mode, this.runtime.paper)),
+          ...(process.env.QUBIT_BROKER_AUTH_TOKEN
+            ? { authorization: `Bearer ${process.env.QUBIT_BROKER_AUTH_TOKEN}` }
+            : {}),
+        },
         body: body ? JSON.stringify(body) : undefined,
       },
       BROKER_HTTP_TIMEOUT_MS,
@@ -450,6 +519,7 @@ class HttpBrokerConnector implements BrokerConnector {
       provider: this.provider,
       accountRef: this.accountRef,
       brokerOrderId,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
     });
     const payload = await this.requestJson("GET", `/orders?${qs.toString()}`);
     return {
@@ -468,6 +538,7 @@ class HttpBrokerConnector implements BrokerConnector {
       provider: this.provider,
       accountRef: this.accountRef,
       brokerOrderId,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
     });
     const payload = await this.requestJson("GET", `/fills?${qs.toString()}`);
     const fills = payload.fills;
@@ -487,6 +558,7 @@ class HttpBrokerConnector implements BrokerConnector {
     const qs = new URLSearchParams({
       provider: this.provider,
       accountRef: this.accountRef,
+      paper: String(paperFromMode(this.runtime.mode, this.runtime.paper)),
     });
     const payload = await this.requestJson("GET", `/positions?${qs.toString()}`);
     const positions = payload.positions;
@@ -505,15 +577,21 @@ class HttpBrokerConnector implements BrokerConnector {
   async healthCheck(): Promise<BrokerHealthResult> {
     const started = Date.now();
     try {
-      const cfg = this.runtime.providerConfig ?? {};
       const qs = new URLSearchParams({
         provider: this.provider,
         accountRef: this.accountRef,
-        providerConfig: JSON.stringify(cfg),
       });
       const res = await fetchWithTimeout(
         `${this.baseUrl}/health?${qs.toString()}`,
-        undefined,
+        {
+          headers: {
+            "x-qubit-provider-config": JSON.stringify(this.runtime.providerConfig ?? {}),
+            "x-qubit-paper": String(paperFromMode(this.runtime.mode, this.runtime.paper)),
+            ...(process.env.QUBIT_BROKER_AUTH_TOKEN
+              ? { authorization: `Bearer ${process.env.QUBIT_BROKER_AUTH_TOKEN}` }
+              : {}),
+          },
+        },
         BROKER_HTTP_TIMEOUT_MS,
       );
       const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -553,6 +631,8 @@ const DEFAULT_MOCK: Record<BrokerProvider, BrokerConnector> = {
   ib: new MockIbConnector(),
   ccxt: new MockCcxtConnector(),
   alpaca: new MockAlpacaConnector(),
+  supermind: new MockCnBrokerConnector("supermind"),
+  eastmoney_emt: new MockCnBrokerConnector("eastmoney_emt"),
 };
 
 export function getBrokerConnector(provider: BrokerProvider): BrokerConnector {
@@ -564,6 +644,9 @@ export function createBrokerConnector(config: BrokerRuntimeConfig): BrokerConnec
     if (config.provider === "futu") return new MockFutuConnector(config.accountRef);
     if (config.provider === "ccxt") return new MockCcxtConnector(config.accountRef);
     if (config.provider === "alpaca") return new MockAlpacaConnector(config.accountRef);
+    if (config.provider === "supermind" || config.provider === "eastmoney_emt") {
+      return new MockCnBrokerConnector(config.provider, config.accountRef);
+    }
     return new MockIbConnector(config.accountRef);
   }
   if (!config.baseUrl) throw new Error(`missing broker baseUrl for ${config.provider}(${config.mode})`);

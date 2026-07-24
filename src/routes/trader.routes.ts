@@ -13,6 +13,7 @@ import { cancelTraderWorkflows } from "../runtime/trader/trader-workflow";
 import { queryKlines } from "../runtime/market/klines-query";
 import { getDb } from "../db/sqlite/client";
 import type { OrderSide, OrderType } from "../types/entities";
+import type { BrokerProvider } from "../types/broker";
 import {
   normalizeExecutionMarket,
   recordExecutionMark,
@@ -206,7 +207,7 @@ traderRouter.post("/orders/cancel", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     orderIntentId?: string;
     brokerOrderId?: string;
-    provider?: "futu" | "ib" | "ccxt";
+    provider?: BrokerProvider;
     workflowRunId?: string;
   };
   try {

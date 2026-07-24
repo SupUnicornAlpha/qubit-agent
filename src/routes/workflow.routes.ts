@@ -168,7 +168,7 @@ workflowRouter.post("/scheduled-jobs", async (c) => {
     parseScheduledJobKind(body.payloadJson) === "position_reconciliation" &&
     !parsePositionReconciliationJobPayload(body.payloadJson)
   ) {
-    return c.json({ error: "position_reconciliation requires provider futu/ib/ccxt/alpaca" }, 400);
+    return c.json({ error: "position_reconciliation requires a supported broker provider" }, 400);
   }
   const db = await getDb();
   const id = randomUUID();
@@ -212,7 +212,7 @@ workflowRouter.patch("/scheduled-jobs/:id", async (c) => {
     parseScheduledJobKind(payloadJson) === "position_reconciliation" &&
     !parsePositionReconciliationJobPayload(payloadJson)
   ) {
-    return c.json({ error: "position_reconciliation requires provider futu/ib/ccxt/alpaca" }, 400);
+    return c.json({ error: "position_reconciliation requires a supported broker provider" }, 400);
   }
   const nextRunAt = computeNextRunAt(cronExpr, new Date());
   await db

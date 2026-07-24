@@ -10,6 +10,8 @@ Bun runtime 通过 `qubit-broker` connector → `executeIntentLive` → 这个 H
 | `futu` | 港 / 美股 | 富途模拟账号 | `futu.py` | ✅ 需装 OpenD + 富途账号 |
 | `ib` | 全资产含期权 | IB Paper Trading | `ib.py` | ✅ 需装 TWS/IB Gateway + IB 账号 |
 | `ccxt` | 加密 | Exchange testnet | `ccxt_adapter.py` | ✅ 注册即用 |
+| `supermind` | A 股 | 取决于同花顺账户权限 | `supermind.py` | ✅ 需 SuperMind 客户端与交易权限 |
+| `eastmoney_emt` | A 股 | 取决于 EMT 柜台权限 | `eastmoney_emt.py` | ✅ Windows + VeighNa EMT |
 
 ---
 
@@ -38,13 +40,13 @@ export ALPACA_API_SECRET=xxxxxxxxxxxxxxxxxxxx
 
 # 启动
 cd python_connectors
-python broker_http_server.py --port 9100
+python broker_http_server.py
 ```
 
 健康检查：
 
 ```bash
-curl 'http://127.0.0.1:9100/health?provider=alpaca'
+curl 'http://127.0.0.1:18765/health?provider=alpaca'
 # {"healthy":true,"message":"alpaca paper ok","account_status":"ACTIVE","buying_power":"100000",...}
 ```
 
@@ -61,7 +63,7 @@ INSERT OR REPLACE INTO broker_account (
   'alpaca',
   'paper_default',
   'sandbox',
-  'http://127.0.0.1:9100',
+  'http://127.0.0.1:18765',
   '{"baseUrl":"https://paper-api.alpaca.markets"}',
   1, 1
 );
@@ -122,7 +124,7 @@ export QUBIT_FUTU_OPEND_HOST=127.0.0.1
 export QUBIT_FUTU_OPEND_PORT=11111
 
 cd python_connectors
-python broker_http_server.py --port 9100
+python broker_http_server.py
 ```
 
 ### 2.3 配置 broker_account
@@ -135,7 +137,7 @@ INSERT OR REPLACE INTO broker_account (
   'futu',
   'paper_default',
   'sandbox',
-  'http://127.0.0.1:9100',
+  'http://127.0.0.1:18765',
   '{"opendHost":"127.0.0.1","opendPort":11111,"market":"US"}',
   0, 1
 );
@@ -159,12 +161,77 @@ export QUBIT_IB_PORT=7497
 export QUBIT_IB_CLIENT_ID=1
 
 cd python_connectors
-python broker_http_server.py --port 9100
+python broker_http_server.py
 ```
 
 ---
 
-## 4. 切换 / 同时跑多 provider
+## 4. 同花顺 SuperMind
+
+同花顺接入使用 SuperMind 本地 `TradeAPI`。HTTP Sidecar 必须运行在已安装 SuperMind SDK、
+已登录客户端且已开通交易权限的环境中；SDK 缺失时健康检查会明确返回 `down`，不会模拟成功。
+
+```json
+{
+  "provider": "supermind",
+  "accountRef": "ths-live",
+  "mode": "live",
+  "baseUrl": "http://127.0.0.1:18765",
+  "providerConfig": {
+    "accountId": "你的资金账户",
+    "market": "CN"
+  }
+}
+```
+
+在 SuperMind Python 环境启动：
+
+```bash
+cd python_connectors
+python broker_http_server.py
+```
+
+支持健康检查、委托、撤单、订单查询、成交查询和持仓查询。A 股卖出数量由适配器转换为负数；
+限价单必须提供 `limitPrice`。市价委托默认调用 SuperMind 的最新价下单；如需智能委托，
+可配置官方 `pricetype`（例如 `3` 为最新价、`17` 为市价）。
+
+## 5. 东方财富 EMT
+
+东方财富接入基于 VeighNa `vnpy_emt.EmtGateway`。该网关依赖东方财富 EMT 柜台授权和
+Windows 原生交易 SDK，因此建议在 Windows 主机单独运行 Sidecar，QUBIT 主进程仍可运行在
+macOS/Linux，通过内网 HTTP 调用。
+
+```powershell
+pip install vnpy vnpy_emt
+$env:QUBIT_EMT_CONNECTION_JSON='{"用户名":"...","密码":"...","客户端号":1}'
+$env:QUBIT_BROKER_HOST='0.0.0.0'
+$env:QUBIT_BROKER_AUTH_TOKEN='生成一个高强度随机值'
+python broker_http_server.py
+```
+
+账户配置：
+
+```json
+{
+  "provider": "eastmoney_emt",
+  "accountRef": "emt-live",
+  "mode": "live",
+  "baseUrl": "http://windows-sidecar:18765",
+  "providerConfig": {
+    "connectionSettingEnv": "QUBIT_EMT_CONNECTION_JSON",
+    "connectWaitSeconds": 2,
+    "market": "CN"
+  }
+}
+```
+
+`connectionSetting` 的字段名称随 EMT/VeighNa 插件版本变化，必须以当前环境
+`EmtGateway.default_setting` 为准。生产环境推荐 `connectionSettingEnv`，避免把密码写入
+SQLite；管理界面仍支持直接填写 JSON，便于本地联调。跨主机监听时请在 QUBIT 后端与
+Windows Sidecar 同时配置相同的 `QUBIT_BROKER_AUTH_TOKEN`，只开放可信内网，并通过主机
+防火墙限制 QUBIT 服务端 IP；默认仍只监听 `127.0.0.1`。
+
+## 6. 切换 / 同时跑多 provider
 
 `broker_account` 是按 provider 唯一 default 的，可以同时配多个：
 
@@ -187,7 +254,7 @@ await qubitBroker.submitOrder(intent, {
 
 ---
 
-## 5. 调试 / 常见问题
+## 7. 调试 / 常见问题
 
 | 现象 | 排查 |
 |---|---|
@@ -197,4 +264,6 @@ await qubitBroker.submitOrder(intent, {
 | Alpaca 422 unprocessable | `qty` 必须是字符串，limit_price 也是字符串；symbol 大写 |
 | Futu `ret=-1 OpenD not found` | OpenD 没启动 / 端口不对 |
 | IB `Connection refused` | TWS/Gateway 没开 / API 没启用 |
-
+| SuperMind SDK 不可用 | Sidecar 不在 SuperMind Python 环境，或客户端/交易权限未开通 |
+| EMT SDK 不可用 | 必须在 Windows 安装 `vnpy`、`vnpy_emt` 并申请 EMT 柜台权限 |
+| EMT connectionSetting required | 配置 `connectionSettingEnv`，或按 `EmtGateway.default_setting` 填 JSON |

@@ -2,12 +2,16 @@ import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { checkBrokerHealth, listBrokerAccounts, listBrokerEvents, upsertBrokerAccount } from "../../api/backend";
 import type {
+  AlpacaProviderConfig,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
+  BrokerProvider,
   BrokerProviderConfig,
   CcxtProviderConfig,
+  EastmoneyEmtProviderConfig,
   FutuProviderConfig,
   IbProviderConfig,
+  SuperMindProviderConfig,
 } from "../../api/types";
 
 const wrap: CSSProperties = {
@@ -93,10 +97,15 @@ const statusColor = (s: BrokerAccountRecord["healthStatus"]): string => {
 };
 
 function buildProviderConfig(
-  provider: "futu" | "ib" | "ccxt",
+  provider: BrokerProvider,
   futu: FutuProviderConfig,
   ib: IbProviderConfig,
-  ccxt: CcxtProviderConfig
+  ccxt: CcxtProviderConfig,
+  alpaca: AlpacaProviderConfig,
+  supermind: SuperMindProviderConfig,
+  emtConnectionJson: string,
+  emtConnectionEnv: string,
+  emtConnectWaitSeconds: number,
 ): BrokerProviderConfig {
   if (provider === "futu") {
     return {
@@ -115,6 +124,37 @@ function buildProviderConfig(
       apiKeyRef: ccxt.apiKeyRef?.trim() || undefined,
     };
   }
+  if (provider === "alpaca") {
+    return {
+      baseUrl: alpaca.baseUrl?.trim() || undefined,
+      apiKeyEnv: alpaca.apiKeyEnv?.trim() || "ALPACA_API_KEY_ID",
+      secretEnv: alpaca.secretEnv?.trim() || "ALPACA_API_SECRET",
+      market: "US",
+    };
+  }
+  if (provider === "supermind") {
+    return {
+      accountId: supermind.accountId?.trim() || undefined,
+      marketPriceType: supermind.marketPriceType,
+      limitPriceType: supermind.limitPriceType,
+      market: "CN",
+    };
+  }
+  if (provider === "eastmoney_emt") {
+    const parsed = JSON.parse(emtConnectionJson || "{}") as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("东方财富 EMT connectionSetting 必须是 JSON 对象");
+    }
+    if (Object.keys(parsed as Record<string, unknown>).length === 0 && !emtConnectionEnv.trim()) {
+      throw new Error("请填写 EMT connectionSetting JSON 或凭据环境变量名");
+    }
+    return {
+      connectionSetting: parsed as Record<string, unknown>,
+      connectionSettingEnv: emtConnectionEnv.trim() || undefined,
+      connectWaitSeconds: emtConnectWaitSeconds,
+      market: "CN",
+    };
+  }
   return {
     host: ib.host?.trim() || "127.0.0.1",
     port: ib.port ?? 7497,
@@ -124,7 +164,7 @@ function buildProviderConfig(
 }
 
 export const BrokerAccountsPanel: FC = () => {
-  const [provider, setProvider] = useState<"futu" | "ib" | "ccxt">("futu");
+  const [provider, setProvider] = useState<BrokerProvider>("futu");
   const [accountRef, setAccountRef] = useState("default");
   const [mode, setMode] = useState<"mock" | "sandbox" | "live">("mock");
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:18765");
@@ -145,6 +185,17 @@ export const BrokerAccountsPanel: FC = () => {
     defaultType: "spot",
     market: "CRYPTO",
   });
+  const [alpacaConfig, setAlpacaConfig] = useState<AlpacaProviderConfig>({
+    apiKeyEnv: "ALPACA_API_KEY_ID",
+    secretEnv: "ALPACA_API_SECRET",
+    market: "US",
+  });
+  const [supermindConfig, setSupermindConfig] = useState<SuperMindProviderConfig>({
+    market: "CN",
+  });
+  const [emtConnectionJson, setEmtConnectionJson] = useState("{}");
+  const [emtConnectionEnv, setEmtConnectionEnv] = useState("QUBIT_EMT_CONNECTION_JSON");
+  const [emtConnectWaitSeconds, setEmtConnectWaitSeconds] = useState(2);
   const [accounts, setAccounts] = useState<BrokerAccountRecord[]>([]);
   const [events, setEvents] = useState<BrokerOrderEventRecord[]>([]);
   const [statusLine, setStatusLine] = useState<string | null>(null);
@@ -190,6 +241,25 @@ export const BrokerAccountsPanel: FC = () => {
         market: "CRYPTO",
         apiKeyRef: (cfg as CcxtProviderConfig).apiKeyRef,
       });
+    } else if (a.provider === "alpaca") {
+      setAlpacaConfig({
+        baseUrl: (cfg as AlpacaProviderConfig).baseUrl,
+        apiKeyEnv: (cfg as AlpacaProviderConfig).apiKeyEnv ?? "ALPACA_API_KEY_ID",
+        secretEnv: (cfg as AlpacaProviderConfig).secretEnv ?? "ALPACA_API_SECRET",
+        market: "US",
+      });
+    } else if (a.provider === "supermind") {
+      setSupermindConfig({
+        accountId: (cfg as SuperMindProviderConfig).accountId,
+        marketPriceType: (cfg as SuperMindProviderConfig).marketPriceType,
+        limitPriceType: (cfg as SuperMindProviderConfig).limitPriceType,
+        market: "CN",
+      });
+    } else if (a.provider === "eastmoney_emt") {
+      const emt = cfg as EastmoneyEmtProviderConfig;
+      setEmtConnectionJson(JSON.stringify(emt.connectionSetting ?? {}, null, 2));
+      setEmtConnectionEnv(emt.connectionSettingEnv ?? "QUBIT_EMT_CONNECTION_JSON");
+      setEmtConnectWaitSeconds(emt.connectWaitSeconds ?? 2);
     } else {
       setIbConfig({
         host: (cfg as IbProviderConfig).host ?? "127.0.0.1",
@@ -208,7 +278,17 @@ export const BrokerAccountsPanel: FC = () => {
         accountRef: accountRef.trim() || "default",
         mode,
         baseUrl: mode === "mock" ? undefined : baseUrl.trim() || undefined,
-        providerConfig: buildProviderConfig(provider, futuConfig, ibConfig, ccxtConfig),
+        providerConfig: buildProviderConfig(
+          provider,
+          futuConfig,
+          ibConfig,
+          ccxtConfig,
+          alpacaConfig,
+          supermindConfig,
+          emtConnectionJson,
+          emtConnectionEnv,
+          emtConnectWaitSeconds,
+        ),
         isDefault,
         enabled: true,
       });
@@ -237,7 +317,7 @@ export const BrokerAccountsPanel: FC = () => {
     <div style={wrap}>
       <h2 style={title}>券商账户配置</h2>
       <p style={lead}>
-        登记富途（Futu OpenD）、盈透（IB Gateway）或加密货币（CCXT / Binance 等）连接参数。{" "}
+        登记富途、盈透、CCXT、Alpaca、同花顺 SuperMind 或东方财富 EMT 连接参数。{" "}
         <strong>mock</strong> 为后端本地模拟；<strong>sandbox</strong> 对应富途模拟盘（TrdEnv.SIMULATE）；{" "}
         <strong>live</strong> 为实盘。非 mock 模式需填写 HTTP 桥地址（默认{" "}
         <code style={{ fontSize: 12 }}>http://127.0.0.1:18765</code>）并运行{" "}
@@ -250,11 +330,14 @@ export const BrokerAccountsPanel: FC = () => {
           <select
             style={input}
             value={provider}
-            onChange={(e) => setProvider(e.target.value as "futu" | "ib" | "ccxt")}
+            onChange={(e) => setProvider(e.target.value as BrokerProvider)}
           >
             <option value="futu">Futu 富途</option>
             <option value="ib">Interactive Brokers</option>
             <option value="ccxt">CCXT 加密货币</option>
+            <option value="alpaca">Alpaca 美股</option>
+            <option value="supermind">同花顺 SuperMind</option>
+            <option value="eastmoney_emt">东方财富 EMT</option>
           </select>
         </div>
         <div style={field}>
@@ -364,6 +447,99 @@ export const BrokerAccountsPanel: FC = () => {
               placeholder="QUBIT_CCXT_API_KEY"
             />
           </div>
+        </div>
+      ) : provider === "alpaca" ? (
+        <div style={row}>
+          <div style={{ ...field, flex: 1 }}>
+            <span style={label}>交易 API Base URL（可选）</span>
+            <input
+              style={{ ...input, width: "100%" }}
+              value={alpacaConfig.baseUrl ?? ""}
+              onChange={(e) => setAlpacaConfig((c) => ({ ...c, baseUrl: e.target.value }))}
+              placeholder="https://paper-api.alpaca.markets"
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>API Key 环境变量</span>
+            <input
+              style={input}
+              value={alpacaConfig.apiKeyEnv ?? ""}
+              onChange={(e) => setAlpacaConfig((c) => ({ ...c, apiKeyEnv: e.target.value }))}
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>Secret 环境变量</span>
+            <input
+              style={input}
+              value={alpacaConfig.secretEnv ?? ""}
+              onChange={(e) => setAlpacaConfig((c) => ({ ...c, secretEnv: e.target.value }))}
+            />
+          </div>
+        </div>
+      ) : provider === "supermind" ? (
+        <div style={row}>
+          <div style={{ ...field, flex: 1 }}>
+            <span style={label}>SuperMind 资金账户 ID</span>
+            <input
+              style={{ ...input, width: "100%" }}
+              value={supermindConfig.accountId ?? ""}
+              onChange={(e) => setSupermindConfig((c) => ({ ...c, accountId: e.target.value }))}
+              placeholder="必填；由同花顺 SuperMind 客户端提供"
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>智能委托 pricetype（可选）</span>
+            <input
+              style={input}
+              type="number"
+              value={supermindConfig.marketPriceType ?? ""}
+              onChange={(e) =>
+                setSupermindConfig((c) => ({
+                  ...c,
+                  marketPriceType: e.target.value ? Number(e.target.value) : undefined,
+                }))
+              }
+              placeholder="留空=最新价；3=最新价；17=市价"
+            />
+          </div>
+          <p style={{ ...lead, margin: 0, flexBasis: "100%" }}>
+            实盘需在已开通权限并登录的 SuperMind Python 环境运行 HTTP Sidecar。
+          </p>
+        </div>
+      ) : provider === "eastmoney_emt" ? (
+        <div style={row}>
+          <div style={{ ...field, flex: 1, minWidth: 420 }}>
+            <span style={label}>EMT connectionSetting JSON</span>
+            <textarea
+              style={{ ...input, width: "100%", minHeight: 132, resize: "vertical", fontFamily: "monospace" }}
+              value={emtConnectionJson}
+              onChange={(e) => setEmtConnectionJson(e.target.value)}
+              placeholder={'{"用户名":"...","密码":"...","客户端号":1}'}
+            />
+          </div>
+          <div style={{ ...field, flex: 1, minWidth: 260 }}>
+            <span style={label}>凭据 JSON 环境变量（推荐）</span>
+            <input
+              style={{ ...input, width: "100%" }}
+              value={emtConnectionEnv}
+              onChange={(e) => setEmtConnectionEnv(e.target.value)}
+              placeholder="QUBIT_EMT_CONNECTION_JSON"
+            />
+          </div>
+          <div style={field}>
+            <span style={label}>连接等待秒数</span>
+            <input
+              style={input}
+              type="number"
+              min={0}
+              max={30}
+              value={emtConnectWaitSeconds}
+              onChange={(e) => setEmtConnectWaitSeconds(Number(e.target.value))}
+            />
+          </div>
+          <p style={{ ...lead, margin: 0, flexBasis: "100%" }}>
+            EMT Sidecar 仅在 Windows 运行；字段名必须与当前 <code>EmtGateway.default_setting</code> 一致。
+          </p>
         </div>
       ) : (
         <div style={row}>

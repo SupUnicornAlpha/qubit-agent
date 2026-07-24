@@ -1,5 +1,5 @@
 """
-Broker gateway — Futu / IB adapters behind a stable execute() interface.
+Broker gateway — multi-broker adapters behind a stable execute() interface.
 
 Requires (user installs as needed):
   pip install futu-api        # Futu OpenD must be running locally
@@ -15,8 +15,10 @@ from typing import Any
 from connectors.base import BaseConnector
 from connectors.broker_gateway import alpaca as alpaca_adapter
 from connectors.broker_gateway import ccxt_adapter
+from connectors.broker_gateway import eastmoney_emt as eastmoney_emt_adapter
 from connectors.broker_gateway import futu as futu_adapter
 from connectors.broker_gateway import ib as ib_adapter
+from connectors.broker_gateway import supermind as supermind_adapter
 
 logger = logging.getLogger("broker_gateway")
 
@@ -66,6 +68,10 @@ class BrokerGatewayConnector(BaseConnector):
             return ccxt_adapter.healthcheck(cfg)
         if self._provider == "alpaca":
             return alpaca_adapter.healthcheck(cfg)
+        if self._provider == "supermind":
+            return supermind_adapter.healthcheck(cfg)
+        if self._provider == "eastmoney_emt":
+            return eastmoney_emt_adapter.healthcheck(cfg)
         return {"healthy": False, "message": f"unknown provider {self._provider}"}
 
     def _healthcheck_cfg(self) -> dict[str, Any]:
@@ -116,6 +122,10 @@ class BrokerGatewayConnector(BaseConnector):
             return ccxt_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
         if self._provider == "alpaca":
             return alpaca_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
+        if self._provider == "supermind":
+            return supermind_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
+        if self._provider == "eastmoney_emt":
+            return eastmoney_emt_adapter.submit_order(ticker, side, qty, limit_price, order_type, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _cancel_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +140,10 @@ class BrokerGatewayConnector(BaseConnector):
             return ccxt_adapter.cancel_order(broker_order_id, paper, cfg)
         if self._provider == "alpaca":
             return alpaca_adapter.cancel_order(broker_order_id, paper, cfg)
+        if self._provider == "supermind":
+            return supermind_adapter.cancel_order(broker_order_id, paper, cfg)
+        if self._provider == "eastmoney_emt":
+            return eastmoney_emt_adapter.cancel_order(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_order(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -144,6 +158,10 @@ class BrokerGatewayConnector(BaseConnector):
             return ccxt_adapter.get_order(broker_order_id, paper, cfg)
         if self._provider == "alpaca":
             return alpaca_adapter.get_order(broker_order_id, paper, cfg)
+        if self._provider == "supermind":
+            return supermind_adapter.get_order(broker_order_id, paper, cfg)
+        if self._provider == "eastmoney_emt":
+            return eastmoney_emt_adapter.get_order(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_fills(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -158,6 +176,10 @@ class BrokerGatewayConnector(BaseConnector):
             return ccxt_adapter.get_fills(broker_order_id, paper, cfg)
         if self._provider == "alpaca":
             return alpaca_adapter.get_fills(broker_order_id, paper, cfg)
+        if self._provider == "supermind":
+            return supermind_adapter.get_fills(broker_order_id, paper, cfg)
+        if self._provider == "eastmoney_emt":
+            return eastmoney_emt_adapter.get_fills(broker_order_id, paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
     def _get_positions(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -171,6 +193,10 @@ class BrokerGatewayConnector(BaseConnector):
             return ccxt_adapter.get_positions(paper, cfg)
         if self._provider == "alpaca":
             return alpaca_adapter.get_positions(paper, cfg)
+        if self._provider == "supermind":
+            return supermind_adapter.get_positions(paper, cfg)
+        if self._provider == "eastmoney_emt":
+            return eastmoney_emt_adapter.get_positions(paper, cfg)
         raise ValueError(f"unsupported provider {self._provider}")
 
 

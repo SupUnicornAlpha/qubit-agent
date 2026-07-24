@@ -10,6 +10,7 @@ import {
   scheduledJobRun,
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType } from "../../types/entities";
+import type { BrokerProvider } from "../../types/broker";
 import { processExecutionTasks } from "../execution/execution-worker";
 import {
   createOrderIntentFromReiaPayload,
@@ -202,7 +203,7 @@ export async function placeTraderBracketOrder(input: {
 export async function cancelTraderOrder(input: {
   orderIntentId?: string;
   brokerOrderId?: string;
-  provider?: "futu" | "ib" | "ccxt";
+  provider?: BrokerProvider;
   workflowRunId?: string;
 }): Promise<{ cancelled: boolean; detail: string }> {
   const db = await getDb();

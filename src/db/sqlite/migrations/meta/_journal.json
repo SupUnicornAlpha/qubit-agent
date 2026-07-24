@@ -666,6 +666,13 @@
       "when": 1814140800000,
       "tag": "0095_market_data_source_control_plane",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1814227200000,
+      "tag": "0096_broker_cn_providers",
+      "breakpoints": true
     }
   ]
 }

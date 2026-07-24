@@ -1763,7 +1763,9 @@ export const strategySignalDedup = sqliteTable(
 
 export const brokerAccount = sqliteTable("broker_account", {
   id: id(),
-  provider: text("provider", { enum: ["futu", "ib", "ccxt"] }).notNull(),
+  provider: text("provider", {
+    enum: ["futu", "ib", "ccxt", "alpaca", "supermind", "eastmoney_emt"],
+  }).notNull(),
   accountRef: text("account_ref").notNull(),
   mode: text("mode", { enum: ["mock", "sandbox", "live"] })
     .notNull()
@@ -1785,7 +1787,9 @@ export const brokerOrderEvent = sqliteTable("broker_order_event", {
   id: id(),
   intentOrderId: text("intent_order_id").references(() => intentOrder.id),
   executionReportId: text("execution_report_id").references(() => executionReport.id),
-  provider: text("provider", { enum: ["futu", "ib", "ccxt"] }).notNull(),
+  provider: text("provider", {
+    enum: ["futu", "ib", "ccxt", "alpaca", "supermind", "eastmoney_emt"],
+  }).notNull(),
   eventType: text("event_type", {
     enum: ["submit", "ack", "partial_fill", "fill", "cancel", "reject", "health_check"],
   }).notNull(),

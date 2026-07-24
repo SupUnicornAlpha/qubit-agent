@@ -1,10 +1,14 @@
 /**
- * MCP stdio server for QUBIT broker operations (Futu/IB via broker_account).
+ * MCP stdio server for QUBIT broker operations via broker_account.
  * Run: `bun run src/runtime/mcp/broker-mcp-server.ts`
  */
 import { Buffer } from "node:buffer";
 import { runMigrations } from "../../db/sqlite/migrate";
-import type { BrokerProvider } from "../../types/broker";
+import {
+  BROKER_PROVIDERS,
+  isBrokerProvider,
+  type BrokerProvider,
+} from "../../types/broker";
 import { checkBrokerAccountHealth } from "../execution/broker/broker-admin";
 import {
   brokerCancelOrder,
@@ -43,17 +47,21 @@ async function* readMcpMessages(): AsyncGenerator<Record<string, unknown>> {
 }
 
 function providerFromArgs(args: Record<string, unknown>): BrokerProvider {
-  return args.provider === "ib" ? "ib" : "futu";
+  if (args.provider == null) return "futu";
+  if (!isBrokerProvider(args.provider)) {
+    throw new Error(`unsupported broker provider: ${String(args.provider)}`);
+  }
+  return args.provider;
 }
 
 const TOOLS = [
   {
     name: "broker_health_check",
-    description: "Check broker account health (OpenD / IB gateway).",
+    description: "Check configured broker account health.",
     inputSchema: {
       type: "object",
       properties: {
-        provider: { type: "string", enum: ["futu", "ib"] },
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
         accountRef: { type: "string" },
       },
       required: ["provider", "accountRef"],
@@ -66,7 +74,7 @@ const TOOLS = [
       type: "object",
       properties: {
         intentOrderId: { type: "string" },
-        provider: { type: "string", enum: ["futu", "ib"] },
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
         accountRef: { type: "string" },
         paper: { type: "boolean" },
       },
@@ -79,7 +87,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        provider: { type: "string", enum: ["futu", "ib"] },
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
         accountRef: { type: "string" },
         brokerOrderId: { type: "string" },
         intentOrderId: { type: "string" },
@@ -93,7 +101,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        provider: { type: "string", enum: ["futu", "ib"] },
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
         accountRef: { type: "string" },
         brokerOrderId: { type: "string" },
       },
@@ -106,7 +114,7 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        provider: { type: "string", enum: ["futu", "ib"] },
+        provider: { type: "string", enum: [...BROKER_PROVIDERS] },
         accountRef: { type: "string" },
       },
     },

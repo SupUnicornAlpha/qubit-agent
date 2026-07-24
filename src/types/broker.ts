@@ -9,7 +9,20 @@
  * `runtime/reia/`，未来 P2 阶段可考虑迁移到 `runtime/execution/broker/`。
  */
 
-export type BrokerProvider = "futu" | "ib" | "ccxt" | "alpaca";
+export const BROKER_PROVIDERS = [
+  "futu",
+  "ib",
+  "ccxt",
+  "alpaca",
+  "supermind",
+  "eastmoney_emt",
+] as const;
+
+export type BrokerProvider = (typeof BROKER_PROVIDERS)[number];
+
+export function isBrokerProvider(value: unknown): value is BrokerProvider {
+  return typeof value === "string" && BROKER_PROVIDERS.includes(value as BrokerProvider);
+}
 
 export type FutuProviderConfig = {
   opendHost?: string;
@@ -48,11 +61,27 @@ export type AlpacaProviderConfig = {
   market?: "US";
 };
 
+export type SuperMindProviderConfig = {
+  accountId?: string;
+  marketPriceType?: number;
+  limitPriceType?: number;
+  market?: "CN";
+};
+
+export type EastmoneyEmtProviderConfig = {
+  connectionSetting?: Record<string, unknown>;
+  connectionSettingEnv?: string;
+  connectWaitSeconds?: number;
+  market?: "CN";
+};
+
 export type BrokerProviderConfig =
   | FutuProviderConfig
   | IbProviderConfig
   | CcxtProviderConfig
-  | AlpacaProviderConfig;
+  | AlpacaProviderConfig
+  | SuperMindProviderConfig
+  | EastmoneyEmtProviderConfig;
 
 export type BrokerAccountRow = {
   id: string;

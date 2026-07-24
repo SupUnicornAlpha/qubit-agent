@@ -661,5 +661,38 @@ describe("api minimal integration", () => {
     expect(healthJson.ok).toBe(true);
     const health = healthJson.data as Record<string, unknown>;
     expect(health.status).toBe("healthy");
+
+    for (const provider of ["supermind", "eastmoney_emt"] as const) {
+      const cnUpsertRes = await app.request(
+        new Request("http://test/api/v1/reia/broker/accounts/upsert", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            provider,
+            accountRef: `${provider}-mock`,
+            mode: "mock",
+            providerConfig:
+              provider === "supermind"
+                ? { accountId: "mock-account", market: "CN" }
+                : { connectionSettingEnv: "QUBIT_EMT_CONNECTION_JSON", market: "CN" },
+          }),
+        })
+      );
+      expect(cnUpsertRes.status).toBe(200);
+      const cnUpsertJson = await jsonOf(cnUpsertRes);
+      expect(cnUpsertJson.ok).toBe(true);
+      expect((cnUpsertJson.data as Record<string, unknown>).provider).toBe(provider);
+
+      const cnHealthRes = await app.request(
+        new Request("http://test/api/v1/reia/broker/health-check", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ provider, accountRef: `${provider}-mock` }),
+        })
+      );
+      expect(cnHealthRes.status).toBe(200);
+      const cnHealthJson = await jsonOf(cnHealthRes);
+      expect((cnHealthJson.data as Record<string, unknown>).status).toBe("healthy");
+    }
   });
 });

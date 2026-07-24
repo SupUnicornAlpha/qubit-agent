@@ -21,7 +21,7 @@ import type {
   PositionReconciliationReport,
   StrategyRuntimeRecord,
 } from "../../api/backend";
-import type { IndicatorStrategyScriptRecord } from "../../api/types";
+import type { BrokerProvider, IndicatorStrategyScriptRecord } from "../../api/types";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
 import { ChartMarketSelect } from "../chart/ChartMarketSelect";
 import { useTraderAgentEngine } from "../../hooks/useTraderAgentEngine";
@@ -288,7 +288,7 @@ export const TraderLivePanel: FC = () => {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [userCmd, setUserCmd] = useState("");
   const [lastOrderIntentId, setLastOrderIntentId] = useState<string | null>(null);
-  const [reconcileProvider, setReconcileProvider] = useState<"futu" | "ib" | "ccxt">("futu");
+  const [reconcileProvider, setReconcileProvider] = useState<BrokerProvider>("futu");
   const [reconcileReport, setReconcileReport] = useState<PositionReconciliationReport | null>(null);
   const [remediationPlan, setRemediationPlan] = useState<PositionRemediationPlan | null>(null);
   const [remediationRuntimeId, setRemediationRuntimeId] = useState("");
@@ -553,12 +553,15 @@ export const TraderLivePanel: FC = () => {
                 style={styles.select}
                 value={reconcileProvider}
                 onChange={(event) =>
-                  setReconcileProvider(event.target.value as "futu" | "ib" | "ccxt")
+                  setReconcileProvider(event.target.value as BrokerProvider)
                 }
               >
                 <option value="futu">Futu</option>
                 <option value="ib">IB</option>
                 <option value="ccxt">CCXT</option>
+                <option value="alpaca">Alpaca</option>
+                <option value="supermind">同花顺 SuperMind</option>
+                <option value="eastmoney_emt">东方财富 EMT</option>
               </select>
             </label>
             <button

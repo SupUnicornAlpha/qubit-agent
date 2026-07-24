@@ -17,14 +17,11 @@ import {
   brokerHealthCheck,
   resolveBrokerAccount,
 } from "../../runtime/execution/broker/broker-service";
-import type { BrokerProvider } from "../../types/broker";
+import { isBrokerProvider, type BrokerProvider } from "../../types/broker";
 import { ExecutionConnector, type ModifyOrderParams } from "./execution.connector";
 
 function asProvider(v: unknown): BrokerProvider {
-  if (v === "ib") return "ib";
-  if (v === "ccxt") return "ccxt";
-  if (v === "alpaca") return "alpaca";
-  return "futu";
+  return isBrokerProvider(v) ? v : "futu";
 }
 
 export class QubitBrokerConnector extends ExecutionConnector {
@@ -35,7 +32,7 @@ export class QubitBrokerConnector extends ExecutionConnector {
     capabilities: ["submit_order", "cancel_order", "get_fills", "get_positions", "health_check"],
     assetClasses: ["stock", "crypto"],
     latencyProfile: "low",
-    description: "QUBIT broker execution via configured broker_account (Futu/IB/CCXT).",
+    description: "QUBIT broker execution via configured broker_account.",
   };
 
   protected async onInit(): Promise<void> {
@@ -83,7 +80,11 @@ export class QubitBrokerConnector extends ExecutionConnector {
 
     const result = paper
       ? await executeIntentPaper({ intentOrderId })
-      : await executeIntentLive({ intentOrderId, provider, accountRef });
+      : await executeIntentLive({
+          intentOrderId,
+          provider,
+          ...(accountRef ? { accountRef } : {}),
+        });
 
     const brokerOrderId =
       "brokerOrderId" in result && result.brokerOrderId
@@ -118,7 +119,10 @@ export class QubitBrokerConnector extends ExecutionConnector {
 
   async getPositions(accountId: string): Promise<ConnectorPosition[]> {
     const provider = asProvider(process.env.QUBIT_BROKER_PROVIDER);
-    const positions = await brokerGetPositions({ provider, accountRef: accountId || undefined });
+    const positions = await brokerGetPositions({
+      provider,
+      ...(accountId ? { accountRef: accountId } : {}),
+    });
     return positions.map((p) => ({
       accountId: accountId || "default",
       symbol: p.symbol,
