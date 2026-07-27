@@ -42,9 +42,9 @@ export VITE_BACKEND_URL="http://127.0.0.1:${PACKAGED_PORT}"
 echo "==> [7/8] stage for Tauri"
 TARGET="$(rustc --print host-tuple)"
 mkdir -p src-tauri/binaries
-cp dist/bundle/bin/qubit "src-tauri/binaries/qubit-${TARGET}"
+cp dist/bundle/bin/qubit "src-tauri/binaries/qubit-sidecar-${TARGET}"
 
-echo "    sidecar: src-tauri/binaries/qubit-${TARGET}"
+echo "    sidecar: src-tauri/binaries/qubit-sidecar-${TARGET}"
 echo "    resources: dist/bundle/resources → \$RESOURCE/bundle/"
 
 if [[ "${RUN_TAURI}" == true ]]; then

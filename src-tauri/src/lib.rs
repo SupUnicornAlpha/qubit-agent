@@ -323,7 +323,7 @@ fn spawn_backend_sidecar(
         return spawn_dev_bun_backend(handle, state);
     }
 
-    let sidecar = handle.shell().sidecar("qubit");
+    let sidecar = handle.shell().sidecar("qubit-sidecar");
     let Ok(sidecar) = sidecar else {
         #[cfg(debug_assertions)]
         {

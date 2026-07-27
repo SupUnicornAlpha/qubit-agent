@@ -13,7 +13,7 @@
       "identifier": "shell:allow-spawn",
       "allow": [
         {
-          "name": "qubit",
+          "name": "qubit-sidecar",
           "sidecar": true
         }
       ]
@@ -22,7 +22,7 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "qubit",
+          "name": "qubit-sidecar",
           "sidecar": true
         }
       ]

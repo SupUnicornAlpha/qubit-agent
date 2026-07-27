@@ -28,7 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/qubit"],
+    "externalBin": ["binaries/qubit-sidecar"],
     "resources": {
       "../dist/bundle/resources/": "bundle/"
     },
