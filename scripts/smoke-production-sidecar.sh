@@ -42,19 +42,32 @@ PORT="${PORT}" \
 "${BIN}" start >"${LOG}" 2>&1 &
 PID=$!
 
-for _ in $(seq 1 90); do
+READY=false
+for _ in $(seq 1 240); do
   if ! kill -0 "${PID}" 2>/dev/null; then
     echo "[sidecar-smoke] sidecar exited before readiness" >&2
     tail -n 120 "${LOG}" >&2
     exit 1
   fi
   if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/health" >"${HEALTH_FILE}" 2>/dev/null; then
-    break
+    if HEALTH_FILE="${HEALTH_FILE}" bun -e '
+      const health = await Bun.file(process.env.HEALTH_FILE).json();
+      process.exit(health.marketData?.status && health.marketData.status !== "checking" ? 0 : 1);
+    ' >/dev/null 2>&1; then
+      READY=true
+      break
+    fi
   fi
   sleep 0.5
 done
 
-HEALTH="$(curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/health")"
+if [[ "${READY}" != true ]]; then
+  echo "[sidecar-smoke] market readiness gate did not finish within 120s" >&2
+  tail -n 120 "${LOG}" >&2
+  exit 1
+fi
+
+HEALTH="$(cat "${HEALTH_FILE}")"
 SOURCES="$(curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/v1/market/data-sources")"
 BUILD="$(curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/v1/_meta/build-info")"
 

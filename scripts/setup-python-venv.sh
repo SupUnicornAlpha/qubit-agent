@@ -5,6 +5,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="${ROOT}/dist/bundle/resources/python-venv"
 REQ="${ROOT}/python_connectors/requirements.txt"
+COMPLETE=false
+
+cleanup_incomplete_venv() {
+  if [[ "${COMPLETE}" != true ]]; then
+    echo "[setup-python-venv] removing incomplete venv"
+    rm -rf "${VENV_DIR}"
+  fi
+}
+trap cleanup_incomplete_venv EXIT
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "[setup-python-venv] python3 not found — skip bundled venv (app will create venv on first run)"
@@ -24,4 +33,5 @@ echo "[setup-python-venv] pip install -r requirements.txt"
 "${PY}" -m pip install --upgrade pip
 "${PY}" -m pip install -r "${REQ}"
 
+COMPLETE=true
 echo "[setup-python-venv] done"
