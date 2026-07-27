@@ -338,7 +338,8 @@ monitorRouter.get("/sessions/:id/a2a-messages", async (c) => {
 });
 
 /**
- * 简洁模式任务列表：任务是非 Orchestrator Agent 的一次实际执行，而不是定时调度配置。
+ * 简洁模式任务列表：包含 workflow 主任务与非 Orchestrator Agent 的实际执行，
+ * 而不是定时调度配置。
  *
  * 以 A2A TASK_ASSIGN 为第一事实来源，并补齐没有消息总线记录的团队/本地 Agent 实例。
  * 返回 sessionId + workflowRunId，前端可直接回到发起该任务的同一段对话。
@@ -1035,6 +1036,7 @@ monitorRouter.get("/memory/experiences", async (c) => {
 
   const subKind = c.req.query("subKind") ?? undefined;
   const definitionId = c.req.query("definitionId") ?? undefined;
+  const workflowRunId = c.req.query("workflowRunId")?.trim() || undefined;
   const pinnedOnly = c.req.query("pinnedOnly") === "1" || c.req.query("pinnedOnly") === "true";
   const archMode =
     (c.req.query("archivalMode") as "exclude_archived" | "only_archived" | "all" | undefined) ??
@@ -1065,9 +1067,11 @@ monitorRouter.get("/memory/experiences", async (c) => {
     limit: fetchLimit,
   });
 
-  let filtered = rows;
+  let filtered = workflowRunId
+    ? rows.filter((row) => row.sourceRunId === workflowRunId)
+    : rows;
   if (q) {
-    filtered = rows.filter((r) => {
+    filtered = filtered.filter((r) => {
       const summary = (r.contentJson.summary ?? "").toLowerCase();
       const body = (r.contentJson.body ?? "").toString().toLowerCase();
       const tags = r.tagsJson.join(" ").toLowerCase();

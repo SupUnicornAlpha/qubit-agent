@@ -84,10 +84,34 @@ export const ToolDiagnosticsPanel: FC<ToolDiagnosticsPanelProps> = ({
         <Kpi
           label="成功率"
           value={`${successRatePct}%`}
-          accent={summary.successRate >= 0.9 ? "#22c55e" : summary.successRate >= 0.5 ? "#eab308" : "#ef4444"}
+          accent={
+            summary.successRate >= 0.9
+              ? "#22c55e"
+              : summary.successRate >= 0.5
+                ? "#eab308"
+                : "#ef4444"
+          }
         />
-        <Kpi label="失败" value={String(summary.errorCount)} accent={summary.errorCount > 0 ? "#ef4444" : undefined} />
-        <Kpi label="超时" value={String(summary.timeoutCount)} accent={summary.timeoutCount > 0 ? "#eab308" : undefined} />
+        <Kpi
+          label="失败"
+          value={String(summary.errorCount)}
+          accent={summary.errorCount > 0 ? "#ef4444" : undefined}
+        />
+        <Kpi
+          label="空数据"
+          value={String(summary.noDataCount)}
+          accent={summary.noDataCount > 0 ? "#eab308" : undefined}
+        />
+        <Kpi
+          label="调度超时"
+          value={String(summary.dispatchTimeoutCount)}
+          accent={summary.dispatchTimeoutCount > 0 ? "#f97316" : undefined}
+        />
+        <Kpi
+          label="超时"
+          value={String(summary.timeoutCount)}
+          accent={summary.timeoutCount > 0 ? "#eab308" : undefined}
+        />
         <Kpi
           label="沙箱阻断"
           value={String(summary.sandboxBlockedCount)}
@@ -147,7 +171,9 @@ const ErrorTopCard: FC<{ rows: MonitorToolDiagnostics["errorTop"] }> = ({ rows }
   );
 };
 
-const SandboxViolationsCard: FC<{ rows: MonitorToolDiagnostics["sandboxViolations"] }> = ({ rows }) => {
+const SandboxViolationsCard: FC<{ rows: MonitorToolDiagnostics["sandboxViolations"] }> = ({
+  rows,
+}) => {
   return (
     <section>
       <h4 style={{ ...panelTitle, color: "#f97316" }}>沙箱阻断分类（看为何被沙箱拒绝）</h4>
@@ -167,7 +193,10 @@ const SandboxViolationsCard: FC<{ rows: MonitorToolDiagnostics["sandboxViolation
                 <td style={{ ...styles.td, fontWeight: 600 }}>{r.violationType}</td>
                 <td style={{ ...styles.td, color: "#f97316" }}>{r.count}</td>
                 <td style={styles.td}>{new Date(r.lastSeenAt).toLocaleString()}</td>
-                <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 10 }} title={r.samplePolicyId ?? ""}>
+                <td
+                  style={{ ...styles.td, fontFamily: "monospace", fontSize: 10 }}
+                  title={r.samplePolicyId ?? ""}
+                >
                   {r.samplePolicyId ? `${r.samplePolicyId.slice(0, 8)}…` : "—"}
                 </td>
               </tr>
@@ -206,7 +235,9 @@ const RecentCallsTable: FC<{
           <tbody>
             {calls.map((c) => (
               <tr key={c.id}>
-                <td style={{ ...styles.td, fontSize: 11 }}>{new Date(c.createdAt).toLocaleString()}</td>
+                <td style={{ ...styles.td, fontSize: 11 }}>
+                  {new Date(c.createdAt).toLocaleString()}
+                </td>
                 <td style={styles.td}>
                   <StatusTag status={c.status} />
                 </td>
@@ -245,7 +276,9 @@ const RecentCallsTable: FC<{
   );
 };
 
-const StatusTag: FC<{ status: MonitorToolDiagnostics["recentCalls"][number]["status"] }> = ({ status }) => {
+const StatusTag: FC<{ status: MonitorToolDiagnostics["recentCalls"][number]["status"] }> = ({
+  status,
+}) => {
   const { bg, fg, label } = (() => {
     switch (status) {
       case "success":

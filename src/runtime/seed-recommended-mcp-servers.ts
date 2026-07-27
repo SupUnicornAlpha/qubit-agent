@@ -28,6 +28,8 @@ export const RECOMMENDED_MCP_NAMES = {
 export type RecommendedMcpPreset = {
   name: string;
   transport: "stdio" | "http" | "ws";
+  /** New-install default only. Existing user choice is never overwritten by seed. */
+  defaultEnabled?: boolean;
   command?: string;
   url?: string;
   capabilitiesJson?: Record<string, unknown>;
@@ -52,10 +54,39 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
       url: "https://tradingcalc.io/api/mcp",
       registrySlug: "io.github.SKalinin909/tradingcalc",
       description: "合约/期货数学：PnL、强平、仓位、carry 等 19 个工具（官方 Registry）",
+      capabilitiesJson: {
+        tools: [
+          { name: "workflow.run_pnl_planning", desc: "计算期货交易净 PnL、ROE 与手续费" },
+          { name: "workflow.run_position_sizing", desc: "按账户风险和止损计算仓位" },
+          {
+            name: "workflow.run_pre_trade_check",
+            desc: "完整交易前检查：仓位、强平、盈亏平衡与资金费",
+          },
+          { name: "workflow.run_liquidation_safety", desc: "计算逐仓强平价与安全距离" },
+          { name: "workflow.run_dca_entry", desc: "多档建仓的均价与盈亏平衡" },
+          { name: "workflow.run_scale_out", desc: "多档止盈的加权退出价与总回报" },
+          { name: "workflow.run_carry_trade", desc: "资金费 carry 的净收益与盈亏平衡天数" },
+          {
+            name: "workflow.run_funding_breakeven",
+            desc: "覆盖资金费与手续费所需的价格变化",
+          },
+          {
+            name: "workflow.run_funding_arbitrage",
+            desc: "两个交易所间资金费套利的年化收益",
+          },
+          { name: "workflow.run_scenario_planning", desc: "按多个目标价生成完整 PnL 情景表" },
+          { name: "workflow.run_exit_target", desc: "反算达到目标 ROE 所需退出价" },
+          { name: "primitive.hedge_ratio", desc: "计算永续合约对冲比例" },
+          { name: "system.verify", desc: "运行服务端公式自校验向量" },
+        ],
+      },
     },
     {
       name: RECOMMENDED_MCP_NAMES.FINANCEX,
       transport: "stdio",
+      // 1.0.11 repeatedly exits during tools/call. Keep it available as an
+      // opt-in compatibility preset, but do not expose it by default.
+      defaultEnabled: false,
       command: "npx -y mcp-financex@1.0.11",
       registrySlug: "npm:mcp-financex",
       description: "股票/加密行情、技术指标、期权、SEC 披露与 DCF（Yahoo，免 API Key）",
@@ -86,13 +117,11 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
           { name: "get_quote_batch", desc: "批量标的实时行情（稳定）" },
           {
             name: "get_historical_data",
-            desc:
-              "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。优先用 qubit-data/fetch_klines 拉 OHLCV。",
+            desc: "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。优先用 qubit-data/fetch_klines 拉 OHLCV。",
           },
           {
             name: "search_ticker",
-            desc:
-              "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。可用 qubit-data/fetch_klines 直接传 symbol 验证存在性。",
+            desc: "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。可用 qubit-data/fetch_klines 直接传 symbol 验证存在性。",
           },
           { name: "get_market_news", desc: "标的新闻头条" },
           { name: "calculate_indicator", desc: "技术指标计算（RSI/MACD/MA…）" },
@@ -101,8 +130,7 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
           { name: "get_analyst_ratings", desc: "分析师评级与目标价" },
           {
             name: "analyze_news_impact",
-            desc:
-              "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。优先用 qubit-news/fetch_news_sentiment 做情绪聚合。",
+            desc: "⚠ mcp-financex 1.0.11 实测不稳定（子进程崩）。优先用 qubit-news/fetch_news_sentiment 做情绪聚合。",
           },
           { name: "get_options_chain", desc: "期权链（到期日 + 行权价）" },
           { name: "get_earnings_calendar", desc: "财报日历" },
@@ -119,14 +147,12 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
           { name: "get_insider_trades", desc: "Form 4 内部人交易（legacy alias）" },
           {
             name: "get_financial_statements",
-            desc:
-              "⚠ mcp-financex 1.0.11 实测不稳定（子进程在 financials.js:175 处崩）。没有可靠替代——若必须取财报，可降级为基于 get_quote 的估值代理或直接在 reasoning 里标注 unavailable。",
+            desc: "⚠ mcp-financex 1.0.11 实测不稳定（子进程在 financials.js:175 处崩）。没有可靠替代——若必须取财报，可降级为基于 get_quote 的估值代理或直接在 reasoning 里标注 unavailable。",
           },
           { name: "calculate_dcf_valuation", desc: "DCF 内在价值估算" },
           {
             name: "compare_peer_companies",
-            desc:
-              "可比公司估值/财务对比。⚠ 参数 symbols 必须是含 **≥2 个** 标的的数组（如 [\"AAPL\",\"MSFT\"]），只传 1 个会被服务端直接拒绝（At least 2 symbols are required）。",
+            desc: '可比公司估值/财务对比。⚠ 参数 symbols 必须是含 **≥2 个** 标的的数组（如 ["AAPL","MSFT"]），只传 1 个会被服务端直接拒绝（At least 2 symbols are required）。',
           },
         ],
       },
@@ -237,7 +263,6 @@ export function defaultQuantMcpServers(): string[] {
   const names = [
     RECOMMENDED_MCP_NAMES.MATHJS,
     RECOMMENDED_MCP_NAMES.TRADINGCALC,
-    RECOMMENDED_MCP_NAMES.FINANCEX,
     /**
      * Wave-1：3 个零-key 公开金融 MCP 默认全部派给 quant 角色 —— mcp-financex 1.0.11
      * 不稳定时这三家是稳定 fallback；同时它们各自侧重不同：
@@ -282,7 +307,9 @@ export async function seedRecommendedMcpServers(): Promise<void> {
           command: preset.command ?? existing[0].command,
           url: preset.url ?? existing[0].url,
           capabilitiesJson: caps,
-          enabled: true,
+          // Seeds refresh metadata and endpoints, but must never undo a user's
+          // disable/quarantine decision.
+          enabled: existing[0].enabled,
         })
         .where(eq(mcpServerConfig.id, existing[0].id));
     } else {
@@ -294,7 +321,7 @@ export async function seedRecommendedMcpServers(): Promise<void> {
         command: preset.command ?? null,
         url: preset.url ?? null,
         capabilitiesJson: caps,
-        enabled: true,
+        enabled: preset.defaultEnabled ?? true,
       });
     }
     upserted += 1;

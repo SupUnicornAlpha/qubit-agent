@@ -14,10 +14,13 @@ export type McpSummaryRow = {
   serverName: string;
   totalCalls: number;
   successCount: number;
+  fallbackCount: number;
+  nativeSuccessCount: number;
   failedCount: number;
   timeoutCount: number;
   sandboxBlockedCount: number;
   successRate: number;
+  nativeSuccessRate: number;
   avgLatencyMs: number | null;
   /** 来自 mcp_server_health，可能为 null（启动后该 server 还没调用过） */
   health: {
@@ -35,6 +38,7 @@ export type McpSummaryRow = {
     toolName: string;
     totalCalls: number;
     successCount: number;
+    fallbackCount: number;
     failedCount: number;
   }>;
   lastCalledAt: string | null;
@@ -54,6 +58,7 @@ export async function getMcpSummary(input?: {
       serverName: mcpCallLog.serverName,
       toolName: mcpCallLog.toolName,
       status: mcpCallLog.status,
+      responseJson: mcpCallLog.responseJson,
       latencyMs: mcpCallLog.latencyMs,
       createdAt: mcpCallLog.createdAt,
       sessionId: workflowRun.sessionId,
@@ -70,12 +75,21 @@ export async function getMcpSummary(input?: {
   const healthRows = await db.select().from(mcpServerHealth);
   const healthByServer = new Map(healthRows.map((row) => [row.serverName, row]));
 
-  type Acc = Omit<McpSummaryRow, "successRate" | "avgLatencyMs" | "health" | "byTool"> & {
+  type Acc = Omit<
+    McpSummaryRow,
+    "successRate" | "nativeSuccessRate" | "avgLatencyMs" | "health" | "byTool"
+  > & {
     latSum: number;
     latCount: number;
     byToolMap: Map<
       string,
-      { toolName: string; totalCalls: number; successCount: number; failedCount: number }
+      {
+        toolName: string;
+        totalCalls: number;
+        successCount: number;
+        fallbackCount: number;
+        failedCount: number;
+      }
     >;
   };
   const grouped = new Map<string, Acc>();
@@ -86,6 +100,8 @@ export async function getMcpSummary(input?: {
         serverName: r.serverName,
         totalCalls: 0,
         successCount: 0,
+        fallbackCount: 0,
+        nativeSuccessCount: 0,
         failedCount: 0,
         timeoutCount: 0,
         sandboxBlockedCount: 0,
@@ -97,8 +113,12 @@ export async function getMcpSummary(input?: {
       grouped.set(r.serverName, acc);
     }
     acc.totalCalls += 1;
-    if (r.status === "success") acc.successCount += 1;
-    else if (r.status === "timeout") acc.timeoutCount += 1;
+    const fallback = isMcpFallbackResponse(r.responseJson);
+    if (r.status === "success") {
+      acc.successCount += 1;
+      if (fallback) acc.fallbackCount += 1;
+      else acc.nativeSuccessCount += 1;
+    } else if (r.status === "timeout") acc.timeoutCount += 1;
     else if (r.status === "sandbox_blocked") acc.sandboxBlockedCount += 1;
     else acc.failedCount += 1;
     if (typeof r.latencyMs === "number") {
@@ -111,11 +131,14 @@ export async function getMcpSummary(input?: {
       toolName: r.toolName,
       totalCalls: 0,
       successCount: 0,
+      fallbackCount: 0,
       failedCount: 0,
     };
     tool.totalCalls += 1;
-    if (r.status === "success") tool.successCount += 1;
-    else tool.failedCount += 1;
+    if (r.status === "success") {
+      tool.successCount += 1;
+      if (fallback) tool.fallbackCount += 1;
+    } else tool.failedCount += 1;
     acc.byToolMap.set(r.toolName, tool);
   }
 
@@ -126,6 +149,8 @@ export async function getMcpSummary(input?: {
         serverName: h.serverName,
         totalCalls: 0,
         successCount: 0,
+        fallbackCount: 0,
+        nativeSuccessCount: 0,
         failedCount: 0,
         timeoutCount: 0,
         sandboxBlockedCount: 0,
@@ -144,13 +169,16 @@ export async function getMcpSummary(input?: {
         serverName: acc.serverName,
         totalCalls: acc.totalCalls,
         successCount: acc.successCount,
+        fallbackCount: acc.fallbackCount,
+        nativeSuccessCount: acc.nativeSuccessCount,
         failedCount: acc.failedCount,
         timeoutCount: acc.timeoutCount,
         sandboxBlockedCount: acc.sandboxBlockedCount,
         successRate:
           acc.totalCalls > 0 ? Number((acc.successCount / acc.totalCalls).toFixed(4)) : 0,
-        avgLatencyMs:
-          acc.latCount > 0 ? Number((acc.latSum / acc.latCount).toFixed(2)) : null,
+        nativeSuccessRate:
+          acc.totalCalls > 0 ? Number((acc.nativeSuccessCount / acc.totalCalls).toFixed(4)) : 0,
+        avgLatencyMs: acc.latCount > 0 ? Number((acc.latSum / acc.latCount).toFixed(2)) : null,
         health: h
           ? {
               circuitState: h.circuitState,
@@ -170,6 +198,20 @@ export async function getMcpSummary(input?: {
       };
     })
     .sort((a, b) => b.totalCalls - a.totalCalls);
+}
+
+export function isMcpFallbackResponse(response: unknown): boolean {
+  if (!response || typeof response !== "object" || Array.isArray(response)) return false;
+  const root = response as Record<string, unknown>;
+  const mcpResult =
+    root.mcpResult && typeof root.mcpResult === "object" && !Array.isArray(root.mcpResult)
+      ? (root.mcpResult as Record<string, unknown>)
+      : root;
+  const output =
+    mcpResult.output && typeof mcpResult.output === "object" && !Array.isArray(mcpResult.output)
+      ? (mcpResult.output as Record<string, unknown>)
+      : mcpResult;
+  return Boolean(output.__mcp_fallback);
 }
 
 function clampInt(v: number, min: number, max: number): number {

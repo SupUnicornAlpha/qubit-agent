@@ -425,14 +425,16 @@ agentRouter.delete("/definitions/:id", async (c) => {
 
 agentRouter.post("/definitions/:id/prompt-preview", async (c) => {
   const definitionId = c.req.param("id");
-  const body = await c.req.json<{
-    systemPrompt?: string;
-    promptMode?: PromptMode;
-    toolsJson?: unknown;
-    mcpServersJson?: unknown;
-    skillsJson?: unknown;
-    subscriptionsJson?: unknown;
-  }>().catch(() => ({}));
+  const body = await c.req
+    .json<{
+      systemPrompt?: string;
+      promptMode?: PromptMode;
+      toolsJson?: unknown;
+      mcpServersJson?: unknown;
+      skillsJson?: unknown;
+      subscriptionsJson?: unknown;
+    }>()
+    .catch(() => ({}));
   const db = await getDb();
   const preview = await buildAgentPromptPreview(db, {
     definitionId,
@@ -1028,7 +1030,7 @@ agentRouter.get("/mcp/servers", async (c) => {
     .from(mcpServerConfig)
     .where(
       projectId
-        ? or(eq(mcpServerConfig.projectId, projectId), eq(mcpServerConfig.projectId, null))
+        ? or(eq(mcpServerConfig.projectId, projectId), isNull(mcpServerConfig.projectId))
         : undefined
     )
     .orderBy(desc(mcpServerConfig.createdAt));
@@ -1069,7 +1071,7 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
     transport?: "stdio" | "http" | "ws";
     command?: string;
     url?: string;
-    capabilitiesJson?: unknown[];
+    capabilitiesJson?: unknown;
     enabled?: boolean;
   }>();
   if (!body.name || !body.transport) {
@@ -1084,7 +1086,7 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
         eq(mcpServerConfig.name, body.name),
         body.projectId
           ? eq(mcpServerConfig.projectId, body.projectId)
-          : eq(mcpServerConfig.projectId, null)
+          : isNull(mcpServerConfig.projectId)
       )
     )
     .limit(1);
@@ -1572,7 +1574,8 @@ agentRouter.post("/skills/installs", async (c) => {
       .toLowerCase()
       .replace(/[^a-z0-9._:-]+/g, "-")
       .replace(/^-+|-+$/g, "");
-    const externalSkillId = body.externalSkillId?.trim() || `manual:${normalizedManualId || skillName}`;
+    const externalSkillId =
+      body.externalSkillId?.trim() || `manual:${normalizedManualId || skillName}`;
     const tags = Array.isArray(body.tags)
       ? body.tags.map((x) => String(x).trim()).filter(Boolean)
       : [];
@@ -1717,7 +1720,10 @@ agentRouter.get("/skills/library", async (c) => {
   const includeArchived = c.req.query("includeArchived") === "true";
   const stateRaw = c.req.query("state") ?? "";
   const { skillService } = await import("../runtime/skills/skill-service");
-  const opts: { includeArchived?: boolean; state?: "active" | "stale" | "archived" | "pending_review" } = {};
+  const opts: {
+    includeArchived?: boolean;
+    state?: "active" | "stale" | "archived" | "pending_review";
+  } = {};
   if (includeArchived) opts.includeArchived = true;
   if (["active", "stale", "archived", "pending_review"].includes(stateRaw)) {
     opts.state = stateRaw as "active" | "stale" | "archived" | "pending_review";
@@ -1807,7 +1813,9 @@ agentRouter.post("/skills/evolve", async (c) => {
     baseSkillId: body.baseSkillId,
     ...(body.datasetId ? { datasetId: body.datasetId } : {}),
     ...(body.iterations !== undefined ? { iterations: body.iterations } : {}),
-    ...(body.candidatesPerIteration !== undefined ? { candidatesPerIteration: body.candidatesPerIteration } : {}),
+    ...(body.candidatesPerIteration !== undefined
+      ? { candidatesPerIteration: body.candidatesPerIteration }
+      : {}),
     triggeredBy: body.triggeredBy ?? "api",
   });
   return c.json({ data: result });
@@ -1827,11 +1835,21 @@ agentRouter.get("/skills/evolve/runs", async (c) => {
 const decommissionedGroupMessage =
   "agent-group orchestration has been decommissioned; orchestrator now dispatches enabled specialists directly";
 
-agentRouter.get("/agent-groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.post("/agent-groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.patch("/agent-groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.delete("/agent-groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.get("/agent-groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.get("/agent-groups", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.post("/agent-groups", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.patch("/agent-groups/:id", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.delete("/agent-groups/:id", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.get("/agent-groups/:id", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
 agentRouter.post("/agent-groups/:id/members", (c) =>
   c.json({ ok: false, error: decommissionedGroupMessage }, 410)
 );
@@ -1839,7 +1857,13 @@ agentRouter.delete("/agent-groups/:id/members/:memberId", (c) =>
   c.json({ ok: false, error: decommissionedGroupMessage }, 410)
 );
 agentRouter.get("/groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.get("/groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.get("/groups/:id", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
 agentRouter.post("/groups", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.patch("/groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
-agentRouter.delete("/groups/:id", (c) => c.json({ ok: false, error: decommissionedGroupMessage }, 410));
+agentRouter.patch("/groups/:id", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);
+agentRouter.delete("/groups/:id", (c) =>
+  c.json({ ok: false, error: decommissionedGroupMessage }, 410)
+);

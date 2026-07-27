@@ -4,6 +4,7 @@ import type { getDb } from "../../db/sqlite/client";
 import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
+import { parseAgentPlanSnapshot } from "../agent-control-mode";
 import { writeCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
 import { actNode } from "../langgraph/nodes/act";
 import { hitlGateNode } from "../langgraph/nodes/hitl-gate";
@@ -136,6 +137,18 @@ async function resolveEffectiveMaxIterations(params: RunReactLoopParams): Promis
     // fall through to agent definition default
   }
   return params.def.maxIterations;
+}
+
+async function loadGoalControlState(
+  params: RunReactLoopParams
+): Promise<"paused" | "cleared" | null> {
+  const rows = await params.db
+    .select({ planJson: workflowRun.planJson })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, params.workflowId))
+    .limit(1);
+  const status = parseAgentPlanSnapshot(rows[0]?.planJson)?.goal?.status;
+  return status === "paused" || status === "cleared" ? status : null;
 }
 
 /** perceive 节点：写 step0 + perceiveNode + snapshot。 */
@@ -536,6 +549,29 @@ function isTerminalStatus(state: AgentGraphState): boolean {
   return st === "awaiting_approval" || st === "terminated";
 }
 
+export function isTaskDeadlineExpired(
+  payload: TaskAssignPayload,
+  nowMs: number = Date.now()
+): boolean {
+  if (!payload.deadline) return false;
+  const deadlineMs = Date.parse(payload.deadline);
+  return Number.isFinite(deadlineMs) && nowMs >= deadlineMs;
+}
+
+function terminateAtTaskDeadline(state: AgentGraphState): AgentGraphState {
+  return {
+    ...state,
+    finalResponse: {
+      status: "terminated",
+      reason: "task_deadline_exceeded",
+      role: state.agentDefinition.role,
+      iteration: state.iteration,
+      answerText:
+        "专家子任务达到调度截止时间，已停止继续发起新一轮工具或模型调用。该状态不代表底层数据源不可用。",
+    },
+  };
+}
+
 /**
  * 跑完整条 ReAct 循环并返回 finalize 后的 state。
  *
@@ -564,6 +600,27 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
 
   // while 主体对应原 conditionalEdges：reason→hitl_gate→act→observe→（回 reason / finalize）
   for (;;) {
+    if (isTaskDeadlineExpired(effectiveParams.payload)) {
+      state = terminateAtTaskDeadline(state);
+      break;
+    }
+    const goalControlState = await loadGoalControlState(effectiveParams);
+    if (goalControlState) {
+      state = {
+        ...state,
+        finalResponse: {
+          status: goalControlState === "paused" ? "awaiting_approval" : "completed",
+          reason: goalControlState === "paused" ? "goal_paused" : "goal_cleared",
+          answerText:
+            goalControlState === "paused"
+              ? "Goal 已按用户要求暂停；恢复后会从当前计划继续。"
+              : "Goal 已由用户清除，当前执行已停止。",
+          iteration: state.iteration,
+          role: effectiveParams.def.role,
+        },
+      };
+      break;
+    }
     // 运行中「随时插话」：drain 本工作流面向本角色的注入消息，累加进 contextMemory，
     // 供本轮及后续 reason 拼进 LLM 上下文（软注入，不打断循环；失败 fail-soft）。
     try {

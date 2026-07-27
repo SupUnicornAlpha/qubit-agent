@@ -69,6 +69,10 @@ const pack: LocalePack = {
       newChat: "New chat",
       sessionPicker: "Conversation",
       sessionPickerAria: "Select conversation",
+      workflowScope: {
+        clear: "Clear workflow filter",
+        showConversation: "Show whole conversation",
+      },
       you: "You",
       heroTitle: "Start with an investment question",
       heroDescription: "Qubit uses the existing research, factor, strategy, and backtest stack, then turns its work into one clear line of evidence, decisions, and risks.",
@@ -93,6 +97,7 @@ const pack: LocalePack = {
           openConversation: "Open conversation",
           unlinkedConversation: "Unlinked conversation",
           a2a: "A2A delegation",
+          workflow: "Workflow task",
           local: "Agent execution",
           primaryAgent: "Primary agent",
           steps: "steps",
@@ -104,7 +109,7 @@ const pack: LocalePack = {
             failed: "Failed",
             cancelled: "Cancelled",
           },
-          empty: "This conversation has no sub-agent or non-orchestrator execution records yet.",
+          empty: "There are no workflow or agent execution records in this scope yet.",
         },
         alerts: {
           eyebrow: "ATTENTION",

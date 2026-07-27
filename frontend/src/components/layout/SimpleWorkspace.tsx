@@ -35,6 +35,7 @@ export const SimpleWorkspace: FC = () => {
   const { t } = useTranslation();
   const [page, setPage] = useState<SimplePage>("chat");
   const [projectId, setProjectId] = useState("");
+  const [focusedWorkflowRunId, setFocusedWorkflowRunId] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -52,8 +53,9 @@ export const SimpleWorkspace: FC = () => {
     };
   }, []);
 
-  const openTaskConversation = (sessionId: string) => {
+  const openTaskConversation = (sessionId: string, workflowRunId: string) => {
     setSelectedSessionId(sessionId);
+    setFocusedWorkflowRunId(workflowRunId);
     setPage("chat");
   };
 
@@ -84,6 +86,16 @@ export const SimpleWorkspace: FC = () => {
           })}
         </nav>
         <div className="qb-simple-header__actions">
+          {focusedWorkflowRunId ? (
+            <button
+              className="qb-simple-workflow-scope"
+              type="button"
+              title={t("simpleMode.workflowScope.clear")}
+              onClick={() => setFocusedWorkflowRunId(null)}
+            >
+              workflow {focusedWorkflowRunId.slice(0, 8)} ×
+            </button>
+          ) : null}
           <span className={`qb-simple-status${connected ? " qb-simple-status--online" : ""}`}>
             {connected ? t("simpleMode.online") : t("simpleMode.offline")}
           </span>
@@ -106,7 +118,13 @@ export const SimpleWorkspace: FC = () => {
         </div>
       </header>
       <main className="qb-simple-main">
-        {page === "chat" ? <ChatPanel displayMode="simple" /> : null}
+        {page === "chat" ? (
+          <ChatPanel
+            displayMode="simple"
+            workflowRunId={focusedWorkflowRunId}
+            onWorkflowFocusChange={setFocusedWorkflowRunId}
+          />
+        ) : null}
         {page === "tasks" ? (
           <SimpleTasksPage
             projectId={projectId}
@@ -115,8 +133,18 @@ export const SimpleWorkspace: FC = () => {
           />
         ) : null}
         {page === "alerts" ? <SimpleAlertsPage /> : null}
-        {page === "memory" ? <SimpleMemoryPage projectId={projectId} /> : null}
-        {page === "artifacts" ? <SimpleArtifactsPage projectId={projectId} /> : null}
+        {page === "memory" ? (
+          <SimpleMemoryPage
+            projectId={projectId}
+            workflowRunId={focusedWorkflowRunId}
+          />
+        ) : null}
+        {page === "artifacts" ? (
+          <SimpleArtifactsPage
+            projectId={projectId}
+            workflowRunId={focusedWorkflowRunId}
+          />
+        ) : null}
       </main>
       <footer className="qb-simple-footer">{t("simpleMode.disclaimer")}</footer>
     </div>

@@ -50,6 +50,22 @@ describe("aggregateSummary", () => {
     expect(r.timeoutCount).toBe(1);
     expect(r.sandboxBlockedCount).toBe(1);
     expect(r.successRate).toBe(0.4);
+    expect(r.transportErrorCount).toBe(1);
+    expect(r.noDataCount).toBe(0);
+    expect(r.dispatchTimeoutCount).toBe(0);
+  });
+
+  test("语义空数据与团队调度超时分桶，不互相污染", () => {
+    const r = aggregateSummary("foo", [
+      row({ status: "error", errorMessage: "semantic_data_failure:items_empty" }),
+      row({
+        status: "error",
+        errorMessage: "semantic_data_failure:dispatch_timeout_data_unknown",
+      }),
+    ]);
+    expect(r.noDataCount).toBe(1);
+    expect(r.dispatchTimeoutCount).toBe(1);
+    expect(r.transportErrorCount).toBe(0);
   });
 
   test("avgLatencyMs 仅统计 typeof 'number' 的样本", () => {
@@ -83,10 +99,7 @@ describe("aggregateSummary", () => {
   });
 
   test("toolKind 从行内继承（取最后看到的）", () => {
-    const r = aggregateSummary("foo", [
-      row({ toolKind: "skill" }),
-      row({ toolKind: "mcp" }),
-    ]);
+    const r = aggregateSummary("foo", [row({ toolKind: "skill" }), row({ toolKind: "mcp" })]);
     expect(r.toolKind).toBe("mcp");
   });
 });
@@ -232,18 +245,13 @@ describe("aggregateErrorTop", () => {
   });
 
   test("limit 截断", () => {
-    const rows = ["a", "b", "c", "d", "e"].map((m) =>
-      row({ status: "error", errorMessage: m })
-    );
+    const rows = ["a", "b", "c", "d", "e"].map((m) => row({ status: "error", errorMessage: m }));
     expect(aggregateErrorTop(rows, 2).length).toBe(2);
   });
 
   test("errorMessage 为 null → 归 '(empty)' 桶", () => {
     const r = aggregateErrorTop(
-      [
-        row({ status: "error", errorMessage: null }),
-        row({ status: "error", errorMessage: null }),
-      ],
+      [row({ status: "error", errorMessage: null }), row({ status: "error", errorMessage: null })],
       10
     );
     expect(r[0]?.errorMessage).toBe("(empty)");

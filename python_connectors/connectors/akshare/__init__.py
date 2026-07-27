@@ -84,6 +84,8 @@ class AKShareConnector(BaseConnector):
             return self._fetch_bars(payload)
         if operation == "fetch_news":
             return self._fetch_news(payload)
+        if operation == "fetch_chip_distribution":
+            return self._fetch_chip_distribution(payload)
         raise ValueError(f"Unknown operation: {operation}")
 
     def _fetch_bars(self, params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -98,6 +100,8 @@ class AKShareConnector(BaseConnector):
             os.environ.pop("HTTPS_PROXY", None)
             os.environ.pop("http_proxy", None)
             os.environ.pop("https_proxy", None)
+            os.environ.pop("ALL_PROXY", None)
+            os.environ.pop("all_proxy", None)
         symbol = str(params.get("symbol", "")).strip()
         exchange = str(params.get("exchange", "")).strip()
         period = str(params.get("period", "1d"))
@@ -246,6 +250,55 @@ class AKShareConnector(BaseConnector):
     def _fetch_news(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         _ = params
         return []
+
+    def _fetch_chip_distribution(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        proxy_url = str(params.get("proxyUrl") or "").strip()
+        if proxy_url:
+            os.environ["HTTP_PROXY"] = proxy_url
+            os.environ["HTTPS_PROXY"] = proxy_url
+            os.environ["http_proxy"] = proxy_url
+            os.environ["https_proxy"] = proxy_url
+        else:
+            os.environ.pop("HTTP_PROXY", None)
+            os.environ.pop("HTTPS_PROXY", None)
+            os.environ.pop("http_proxy", None)
+            os.environ.pop("https_proxy", None)
+            os.environ.pop("ALL_PROXY", None)
+            os.environ.pop("all_proxy", None)
+        symbol = str(params.get("symbol", "")).strip()
+        exchange = str(params.get("exchange", "")).strip()
+        code = _to_a_share_code(symbol, exchange)
+        if not code:
+            raise ValueError("akshare chip distribution supports China A-share symbols only")
+        adjust_type = str(params.get("adjustType", "none"))
+        adjust = {"pre": "qfq", "post": "hfq"}.get(adjust_type, "")
+        df = self._ak.stock_cyq_em(symbol=code, adjust=adjust)
+        if df is None or getattr(df, "empty", True):
+            return []
+
+        def value(row: Any, name: str) -> float:
+            raw = row.get(name, 0)
+            return float(raw) if raw is not None else 0.0
+
+        rows: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "exchange": exchange or "UNKNOWN",
+                    "source": "akshare_eastmoney",
+                    "date": str(row.get("日期", ""))[:10],
+                    "winnerRate": value(row, "获利比例"),
+                    "averageCost": value(row, "平均成本"),
+                    "cost90Low": value(row, "90成本-低"),
+                    "cost90High": value(row, "90成本-高"),
+                    "concentration90": value(row, "90集中度"),
+                    "cost70Low": value(row, "70成本-低"),
+                    "cost70High": value(row, "70成本-高"),
+                    "concentration70": value(row, "70集中度"),
+                }
+            )
+        return rows
 
 
 def get_connector() -> AKShareConnector:

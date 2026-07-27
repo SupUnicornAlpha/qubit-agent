@@ -4,6 +4,22 @@ import { agentDefinition } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 
 export const TOPOLOGY_TEAM_TOOL_PREFIX = "call_team_";
+const TOPOLOGY_TIMEOUT_BUFFER_MS = 10_000;
+
+const TOPOLOGY_TASK_TIMEOUT_BY_ROLE: Partial<Record<AgentRole, number>> = {
+  market_data: 90_000,
+  news_event: 90_000,
+  analyst_macro: 150_000,
+  analyst_fundamental: 150_000,
+  analyst_technical: 150_000,
+  analyst_sentiment: 150_000,
+  research: 180_000,
+  backtest: 180_000,
+  risk: 120_000,
+  portfolio_manager: 120_000,
+  execution: 120_000,
+  memory: 90_000,
+};
 
 /** 已合并/退役角色 → 当前内置角色（派单兼容） */
 export const DISPATCH_ROLE_ALIASES: Partial<Record<AgentRole, AgentRole>> = {
@@ -59,7 +75,7 @@ export function topologyTeamToolName(role: AgentRole): string {
 
 export function topologyTeamToolDescription(role: AgentRole, agentName?: string): string {
   const label = agentName ? `${agentName}（${role}）` : role;
-  return `向 ${label} 派发任务（Graph/A2A）；参数 goal 必填`;
+  return `向 ${label} 派发长任务（Graph/A2A）；参数 goal 必填。返回 dispatchStatus=timeout 仅表示专家调度超时，不代表底层数据源不可用`;
 }
 
 export function isTopologyTeamTool(toolName: string): boolean {
@@ -70,6 +86,57 @@ export function parseRoleFromTopologyTeamTool(toolName: string): AgentRole | nul
   if (!isTopologyTeamTool(toolName)) return null;
   const role = toolName.slice(TOPOLOGY_TEAM_TOOL_PREFIX.length);
   return role.length > 0 ? (role as AgentRole) : null;
+}
+
+export function resolveTopologyTaskTimeoutMs(
+  role: AgentRole,
+  configuredValue: string | number | undefined = process.env.TOPOLOGY_TASK_TIMEOUT_MS
+): number {
+  const configured = Number(configuredValue);
+  if (configuredValue !== undefined && Number.isFinite(configured)) {
+    return Math.min(Math.max(configured, 10_000), 300_000);
+  }
+  return TOPOLOGY_TASK_TIMEOUT_BY_ROLE[resolveDispatchRole(role)] ?? 120_000;
+}
+
+export function resolveTopologyToolTimeoutMs(toolName: string): number | undefined {
+  const role = parseRoleFromTopologyTeamTool(toolName);
+  if (!role) return undefined;
+  return resolveTopologyTaskTimeoutMs(role) + TOPOLOGY_TIMEOUT_BUFFER_MS;
+}
+
+export function buildTopologySpecialistExecutionContract(role: AgentRole): string {
+  const common = [
+    "## 专家子任务执行合同（硬约束）",
+    "- 这是 Orchestrator 派发的有界子任务；只完成 goal 指定的最小结果，不扩写通用报告。",
+    "- readiness / data_sources 只允许在尚无本轮健康证据时调用一次；已有成功结果不得重复探测。",
+    "- 核心业务工具成功后，下一轮必须用 `tool=none` 汇总结果并结束，不得为了凑完整度继续调用辅助工具。",
+    "- 调度超时、模型超时与数据不可用是三种不同状态；只有真实拉取返回 no_data/no_bars/全 provider 失败，才可判定数据不可用。",
+  ];
+  if (role === "market_data") {
+    common.push(
+      "- 行情任务最短链路：市场识别（可复用已注入结果）→ 一次真实 fetch_klines/fetch_bars/fetch_ticks → 立即总结；成功拉数后禁止再次调用 readiness。"
+    );
+  }
+  if (role === "research") {
+    common.push(
+      "- 单标的研究不得用 factor.autoEvaluate/IC/RankIC 证明有效性；IC 是横截面指标，至少需要 3 只标的。单标的应使用时序指标或 backtest，或明确扩展可比股票池后再做横截面评估。"
+    );
+  }
+  return common.join("\n");
+}
+
+export function isRedundantTopologyProbe(input: {
+  taskType: string;
+  targetName: string;
+  priorToolCalls: Array<Record<string, unknown>>;
+}): boolean {
+  if (input.taskType !== "topology_dispatch") return false;
+  const probe = input.targetName.split("/").at(-1) ?? input.targetName;
+  if (!["market.readiness", "market.data_sources"].includes(probe)) return false;
+  return input.priorToolCalls.some(
+    (call) => call.status === "success" && call.toolName === input.targetName
+  );
 }
 
 export async function loadOrchestratorTopologyForWorkflow(): Promise<OrchestratorTopologyContext> {

@@ -8,7 +8,7 @@ export type SubAgentTaskStatus =
 
 export interface SubAgentTaskRecord {
   id: string;
-  source: "a2a_assignment" | "agent_execution";
+  source: "workflow" | "a2a_assignment" | "agent_execution";
   taskId: string | null;
   taskType: string | null;
   traceId: string | null;
@@ -190,6 +190,71 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
 
   const records: SubAgentTaskRecord[] = [];
   const assignedExecutionKeys = new Set<string>();
+  const orchestratorByWorkflow = new Map<
+    string,
+    { instance: SubAgentTaskInstanceRow; definition: SubAgentTaskDefinitionRow }
+  >();
+
+  for (const instance of input.instances) {
+    const definition = definitionById.get(instance.definitionId);
+    if (!definition || definition.role !== "orchestrator") continue;
+    const previous = orchestratorByWorkflow.get(instance.workflowRunId);
+    const currentStartedAt = instance.startedAt ?? "";
+    const previousStartedAt = previous?.instance.startedAt ?? "";
+    if (!previous || currentStartedAt >= previousStartedAt) {
+      orchestratorByWorkflow.set(instance.workflowRunId, { instance, definition });
+    }
+  }
+
+  // 简洁模式的“任务”首先是 workflow 主任务，而不只是被委派的子 Agent。
+  // 即使一个对话只运行了 Orchestrator，也必须能从任务页找到并回到对应对话。
+  for (const workflow of input.workflows) {
+    const orchestrator = orchestratorByWorkflow.get(workflow.id);
+    const instance = orchestrator?.instance;
+    const definition = orchestrator?.definition;
+    const stepStats = instance
+      ? stepsByExecution.get(`${workflow.id}:${instance.id}`)
+      : undefined;
+
+    records.push({
+      id: `workflow:${workflow.id}`,
+      source: "workflow",
+      taskId: null,
+      taskType: "workflow",
+      traceId: null,
+      projectId: workflow.projectId,
+      sessionId: workflow.sessionId,
+      sessionTitle: workflow.sessionId
+        ? (input.sessionTitles?.get(workflow.sessionId) ?? null)
+        : null,
+      workflowRunId: workflow.id,
+      workflowGoal: workflow.goal,
+      workflowStatus: workflow.status,
+      instanceId: instance?.id ?? "",
+      agentRole: definition?.role ?? "orchestrator",
+      agentName: definition?.name ?? "Orchestrator",
+      parentInstanceId: null,
+      parentAgentRole: null,
+      parentAgentName: null,
+      a2aContext: null,
+      status: resolveStatus({
+        workflowStatus: workflow.status,
+        instanceStatus: instance?.status ?? workflow.status,
+        instanceEndedAt: instance?.endedAt ?? workflow.endedAt,
+        resultPayload: undefined,
+      }),
+      title: workflow.goal,
+      summary: null,
+      currentIteration: instance?.currentIteration ?? 0,
+      stepCount: stepStats?.count ?? 0,
+      latestPhase: stepStats?.latest?.phase ?? null,
+      latestStepAt: stepStats?.latest?.createdAt ?? null,
+      assignedAt: workflow.startedAt,
+      completedAt: workflow.endedAt ?? instance?.endedAt ?? null,
+      errorMessage: clipped(instance?.errorMessage ?? null, 500),
+    });
+  }
+
   const assignments = input.messages
     .filter((message) => message.messageType === "TASK_ASSIGN" && message.receiverInstanceId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));

@@ -78,6 +78,8 @@ export interface OrchestratorChatPanelProps {
   plan?: OrchestratorPlan | null;
   /** Plan 审批后保留计划并以 Goal 模式继续同一 workflow */
   onExecutePlan?: () => void;
+  /** Goal 生命周期控制：暂停、恢复、编辑和清除。 */
+  onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
   /** Coding-Agent 体验 P1：当前「正在调用什么、为何」活动行（tool_rationale 推流） */
   activity?: { tool: string; why: string } | null;
   /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
@@ -118,6 +120,7 @@ export function OrchestratorChatPanel({
   onInterrupt,
   plan,
   onExecutePlan,
+  onGoalAction,
   activity,
   artifacts,
   artifactsLoading = false,
@@ -287,6 +290,7 @@ export function OrchestratorChatPanel({
         <PlanCard
           plan={plan ?? null}
           onExecute={onExecutePlan}
+          onGoalAction={onGoalAction}
           executeDisabled={running || chatInFlight}
         />
         {activity?.why ? (

@@ -63,8 +63,9 @@ QUBIT 面向量化研究与交易自动化场景，将 **自研 ReAct Agent Runt
 | **桌面端** | Tauri v2 客户端，生产 Sidecar、迁移 / seed、DuckDB 原生依赖与后端 readiness 状态 |
 
 三种工作模式与研究团队角色的推理引擎配置相互独立；团队角色仍可选择自研进程内
-ReAct、Claude CLI 或 Codex CLI。Plan 的“只规划”由运行时工具权限强制执行；Goal 在计划仍有
-`pending / in_progress` 步骤或缺少实际执行证据时不会提前结束。旧工作流中的
+ReAct、Claude CLI 或 Codex CLI。Plan 的“只规划”由运行时工具权限强制执行；Goal 把目标文本
+作为完成条件，持久化结果、约束、验证标准和证据，并支持暂停、恢复、编辑与清除。计划仍有
+`pending / in_progress` 步骤、全部步骤被跳过或缺少实际执行证据时不会提前结束。旧工作流中的
 `experience: native / coding_agent` 会分别兼容映射为 Agent / Goal，新接口统一使用
 `loopOptionsJson.agentMode`。
 

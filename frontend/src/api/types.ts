@@ -11,6 +11,79 @@ export interface KlineBar {
   timestamp: string;
 }
 
+export interface MarketQuote {
+  symbol: string;
+  exchange: string;
+  source: string;
+  lastPrice: number;
+  bidPrice?: number;
+  bidVolume?: number;
+  askPrice?: number;
+  askVolume?: number;
+  timestamp: string;
+  freshnessMs: number;
+}
+
+export interface MarketOrderBookLevel {
+  price: number;
+  volume: number;
+  orderCount?: number;
+}
+
+export interface MarketOrderBook {
+  symbol: string;
+  exchange: string;
+  source: string;
+  bids: MarketOrderBookLevel[];
+  asks: MarketOrderBookLevel[];
+  timestamp: string;
+  freshnessMs: number;
+}
+
+export interface MarketTrade {
+  id: string;
+  symbol: string;
+  exchange: string;
+  source: string;
+  price: number;
+  volume: number;
+  side: "buy" | "sell" | "neutral" | "unknown";
+  timestamp: string;
+}
+
+export interface ChipDistributionPoint {
+  symbol: string;
+  exchange: string;
+  source: string;
+  date: string;
+  winnerRate: number;
+  averageCost: number;
+  cost90Low: number;
+  cost90High: number;
+  concentration90: number;
+  cost70Low: number;
+  cost70High: number;
+  concentration70: number;
+}
+
+export interface MarketStreamEvent {
+  kind:
+    | "status"
+    | "heartbeat"
+    | "quote"
+    | "order_book"
+    | "trade"
+    | "bar"
+    | "backfill";
+  sequence: number;
+  symbol: string;
+  exchange: string;
+  timeframe: string;
+  source: string;
+  emittedAt: string;
+  data: unknown;
+}
+
 export interface KlinesResponseMeta {
   timeframe: string;
   period: string;
@@ -723,7 +796,7 @@ export type SubAgentTaskStatus =
 
 export interface SubAgentTaskRecord {
   id: string;
-  source: "a2a_assignment" | "agent_execution";
+  source: "workflow" | "a2a_assignment" | "agent_execution";
   taskId: string | null;
   taskType: string | null;
   traceId: string | null;

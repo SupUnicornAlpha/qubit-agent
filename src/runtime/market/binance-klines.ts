@@ -1,4 +1,11 @@
-import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
+import type {
+  BarData,
+  FetchBarsParams,
+  FetchOrderBookParams,
+  FetchTradesParams,
+  OrderBookData,
+  TradeData,
+} from "../../connectors/data/data.connector";
 import { isCryptoMarket, symbolToBinancePair } from "./crypto-market";
 import { marketDataFetch } from "./market-data-network";
 
@@ -158,4 +165,75 @@ export async function fetchBinanceTicker(
     volume: Number.isFinite(volume) ? volume : 0,
     timestamp: new Date().toISOString(),
   };
+}
+
+export async function fetchBinanceOrderBook(
+  params: FetchOrderBookParams,
+  settings?: Record<string, unknown>
+): Promise<OrderBookData> {
+  const baseUrl = resolveBinanceBaseUrl(settings);
+  const pair = symbolToBinancePair(params.symbol, params.exchange);
+  const depth = Math.max(5, Math.min(Math.floor(params.depth ?? 20), 100));
+  const url = `${baseUrl}/api/v3/depth?symbol=${encodeURIComponent(pair)}&limit=${depth}`;
+  const response = await marketDataFetch(
+    "binance_crypto",
+    networkSettings(settings),
+    url,
+    { headers: { Accept: "application/json" } }
+  );
+  const payload = (await response.json()) as {
+    bids?: Array<[string, string]>;
+    asks?: Array<[string, string]>;
+  };
+  if (!response.ok) throw new Error(`binance depth HTTP ${response.status}`);
+  const timestamp = new Date().toISOString();
+  return {
+    symbol: params.symbol,
+    exchange: params.exchange || "CRYPTO",
+    source: "binance_crypto",
+    bids: (payload.bids ?? [])
+      .map(([price, volume]) => ({ price: Number(price), volume: Number(volume) }))
+      .filter((level) => Number.isFinite(level.price) && Number.isFinite(level.volume)),
+    asks: (payload.asks ?? [])
+      .map(([price, volume]) => ({ price: Number(price), volume: Number(volume) }))
+      .filter((level) => Number.isFinite(level.price) && Number.isFinite(level.volume)),
+    timestamp,
+    freshnessMs: 0,
+  };
+}
+
+export async function fetchBinanceTrades(
+  params: FetchTradesParams,
+  settings?: Record<string, unknown>
+): Promise<TradeData[]> {
+  const baseUrl = resolveBinanceBaseUrl(settings);
+  const pair = symbolToBinancePair(params.symbol, params.exchange);
+  const limit = Math.max(1, Math.min(Math.floor(params.limit ?? 50), 1000));
+  const url = `${baseUrl}/api/v3/trades?symbol=${encodeURIComponent(pair)}&limit=${limit}`;
+  const response = await marketDataFetch(
+    "binance_crypto",
+    networkSettings(settings),
+    url,
+    { headers: { Accept: "application/json" } }
+  );
+  const payload = (await response.json()) as Array<{
+    id?: number;
+    price?: string;
+    qty?: string;
+    time?: number;
+    isBuyerMaker?: boolean;
+  }>;
+  if (!response.ok) throw new Error(`binance trades HTTP ${response.status}`);
+  return (Array.isArray(payload) ? payload : [])
+    .map((trade, index): TradeData => ({
+      id: `binance:${pair}:${trade.id ?? index}`,
+      symbol: params.symbol,
+      exchange: params.exchange || "CRYPTO",
+      source: "binance_crypto",
+      price: Number(trade.price),
+      volume: Number(trade.qty),
+      side: trade.isBuyerMaker ? "sell" : "buy",
+      timestamp: new Date(trade.time ?? Date.now()).toISOString(),
+    }))
+    .filter((trade) => Number.isFinite(trade.price) && Number.isFinite(trade.volume));
 }

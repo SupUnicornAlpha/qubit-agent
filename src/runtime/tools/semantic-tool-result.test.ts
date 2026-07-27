@@ -76,4 +76,20 @@ describe("detectSemanticToolFailure", () => {
       })
     ).toBe("nested_error:a2a_gather_timeout");
   });
+
+  test("does not misclassify team dispatch timeout as market data outage", () => {
+    expect(
+      detectSemanticToolFailure("call_team_market_data", {
+        builtinResult: {
+          dispatched: true,
+          completed: false,
+          success: false,
+          dispatchStatus: "timeout",
+          dataAvailability: "unknown",
+          errorMessage:
+            "team_dispatch_timeout: market_data 专家未回包；这不代表底层数据源不可用",
+        },
+      })
+    ).toBe("dispatch_timeout_data_unknown");
+  });
 });

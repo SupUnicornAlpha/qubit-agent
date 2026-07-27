@@ -19,6 +19,15 @@ export function backendFetchUrl(path: string): string {
   return new URL(p, `${getBackendBaseUrl()}/`).href;
 }
 
+export function backendWebSocketUrl(topic?: string): string {
+  const url = new URL(getBackendBaseUrl());
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.pathname = "/";
+  url.search = "";
+  if (topic) url.searchParams.set("topic", topic);
+  return url.href;
+}
+
 export function setBackendBaseUrl(url: string): void {
   localStorage.setItem(BACKEND_URL_KEY, url.trim().replace(/\/+$/, ""));
 }
@@ -68,4 +77,3 @@ export async function httpPut<T>(path: string, body?: unknown): Promise<T> {
 export async function httpDelete<T>(path: string): Promise<T> {
   return request<T>(path, { method: "DELETE" });
 }
-

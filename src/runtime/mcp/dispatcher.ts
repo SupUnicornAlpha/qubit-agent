@@ -39,6 +39,41 @@ function stringifyResult(result: unknown): Record<string, unknown> {
   return { value: result as string | number | boolean | null };
 }
 
+export type McpFailureDisposition = {
+  retryable: boolean;
+  circuitRelevant: boolean;
+  healthStatus: "failed" | "timeout";
+};
+
+/**
+ * Server health must describe transport/runtime availability, not whether the
+ * model chose a valid tool name or supplied a valid business argument.
+ */
+export function classifyMcpFailure(error: Error): McpFailureDisposition {
+  const message = error.message ?? String(error);
+  const isTimeout = /\btimeout\b|\btimed?\s*out\b|\bETIMEDOUT\b/i.test(message);
+  const callerOrDataFailure =
+    /Unknown tool|UNKNOWN_TOOL|validation|invalid (?:argument|parameter|input)|is required|at least \d+|not found or disabled|tool binding disabled|unauthorized|forbidden|unsupported|market_data_unavailable|no[_ ](?:data|bars)|news_evidence_unavailable/i.test(
+      message
+    );
+  if (callerOrDataFailure) {
+    return {
+      retryable: false,
+      circuitRelevant: false,
+      healthStatus: isTimeout ? "timeout" : "failed",
+    };
+  }
+  return {
+    retryable:
+      isTimeout ||
+      /\b5\d{2}\b|\b429\b|ECONN|EAI_AGAIN|socket|transport|stream closed|subprocess|子进程|stdout|circuit breaker/i.test(
+        message
+      ),
+    circuitRelevant: true,
+    healthStatus: isTimeout ? "timeout" : "failed",
+  };
+}
+
 /** Higher = more specific for dispatch (definition → project → exact tool name). */
 function bindingSpecificityScore(
   row: McpBindingRow,
@@ -348,6 +383,7 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
         };
       },
       {
+        classifyFailure: classifyMcpFailure,
         /**
          * 监控修复：重试中途失败也如实回写 DB health。
          *
@@ -360,9 +396,9 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
          * 之外的 assertMcpServerNotOpen 就拦了），所以不会二次膨胀。
          */
         onAttemptFailure: async (_attempt, attemptErr) => {
-          const m = attemptErr.message ?? String(attemptErr);
-          const st: "failed" | "timeout" = /timeout/i.test(m) ? "timeout" : "failed";
-          await recordMcpCallResult(input.serverName, st, m);
+          const disposition = classifyMcpFailure(attemptErr);
+          if (!disposition.circuitRelevant) return;
+          await recordMcpCallResult(input.serverName, disposition.healthStatus, attemptErr.message);
         },
       }
     );

@@ -82,8 +82,8 @@ describe("buildSubAgentTasks", () => {
       sessionTitles: new Map([["session-1", "东山精密研究"]]),
     });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.source === "a2a_assignment")).toMatchObject({
       id: "assign-1",
       source: "a2a_assignment",
       taskId: "task-news",
@@ -103,7 +103,7 @@ describe("buildSubAgentTasks", () => {
     });
   });
 
-  test("补齐没有 TASK_ASSIGN 的非 Orchestrator 实例，并排除 Orchestrator", () => {
+  test("补齐 workflow 主任务与没有 TASK_ASSIGN 的非 Orchestrator 实例", () => {
     const rows = buildSubAgentTasks({
       workflows: [{ ...workflow, status: "failed", endedAt: "2026-07-23T01:03:00.000Z" }],
       definitions,
@@ -133,8 +133,16 @@ describe("buildSubAgentTasks", () => {
       steps: [],
     });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.source === "workflow")).toMatchObject({
+      id: "workflow:wf-1",
+      workflowRunId: "wf-1",
+      agentRole: "orchestrator",
+      title: "分析东山精密近期行情与新闻",
+      status: "failed",
+      errorMessage: "orchestrator failed",
+    });
+    expect(rows.find((row) => row.source === "agent_execution")).toMatchObject({
       id: "agent:wf-1:tech-1",
       source: "agent_execution",
       agentRole: "analyst_technical",

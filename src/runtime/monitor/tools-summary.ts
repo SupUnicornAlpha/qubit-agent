@@ -24,11 +24,35 @@ export type ToolSummaryRow = {
   successRate: number; // 0..1
   /** Empty/no-data responses are persisted as errors; expose them separately from transport faults. */
   noDataCount: number;
+  /** Team/A2A dispatch timed out before the child result arrived; data availability is unknown. */
+  dispatchTimeoutCount: number;
   transportErrorCount: number;
   effectiveDataSuccessRate: number; // success / (success + no-data + transport errors + timeout)
   avgLatencyMs: number | null;
   lastCalledAt: string | null;
 };
+
+export type ToolFailureBucket = "no_data" | "dispatch_timeout" | "other";
+
+export function classifyToolFailureForMonitoring(errorMessage: string | null): ToolFailureBucket {
+  const message = (errorMessage ?? "").toLowerCase();
+  if (
+    message.includes("semantic_data_failure:dispatch_timeout_data_unknown") ||
+    message.includes("team_dispatch_timeout") ||
+    message.includes("a2a_gather_timeout")
+  ) {
+    return "dispatch_timeout";
+  }
+  if (
+    /semantic_data_failure:(semantic_empty_result|[^:]*_empty|bar_count_zero|no_bars|no_data|data_status_unavailable|synthetic_data)/i.test(
+      message
+    ) ||
+    message.includes("no_factor_values_written")
+  ) {
+    return "no_data";
+  }
+  return "other";
+}
 
 export async function getToolsSummary(input?: {
   /** 时间窗口（分钟），默认 1440=24h，最大 7 * 24 * 60 */
@@ -95,6 +119,7 @@ export async function getToolsSummary(input?: {
         timeoutCount: 0,
         sandboxBlockedCount: 0,
         noDataCount: 0,
+        dispatchTimeoutCount: 0,
         transportErrorCount: 0,
         lastCalledAt: null,
         latSum: 0,
@@ -108,7 +133,9 @@ export async function getToolsSummary(input?: {
     else if (r.status === "sandbox_blocked") acc.sandboxBlockedCount += 1;
     else {
       acc.errorCount += 1;
-      if ((r.errorMessage ?? "").startsWith("semantic_data_failure:")) acc.noDataCount += 1;
+      const bucket = classifyToolFailureForMonitoring(r.errorMessage);
+      if (bucket === "no_data") acc.noDataCount += 1;
+      else if (bucket === "dispatch_timeout") acc.dispatchTimeoutCount += 1;
       else acc.transportErrorCount += 1;
     }
     if (typeof r.latencyMs === "number") {
@@ -133,6 +160,7 @@ export async function getToolsSummary(input?: {
         successRate:
           acc.totalCalls > 0 ? Number((acc.successCount / acc.totalCalls).toFixed(4)) : 0,
         noDataCount: acc.noDataCount,
+        dispatchTimeoutCount: acc.dispatchTimeoutCount,
         transportErrorCount: acc.transportErrorCount,
         effectiveDataSuccessRate:
           acc.successCount + acc.errorCount + acc.timeoutCount > 0

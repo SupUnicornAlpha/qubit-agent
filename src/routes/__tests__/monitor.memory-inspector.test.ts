@@ -63,6 +63,7 @@ async function seed(
     qualityScore: number;
     archived: boolean;
     definitionId: string | null;
+    sourceRunId: string | null;
     metadataJson: Record<string, unknown>;
   }> = {}
 ): Promise<Experience> {
@@ -81,6 +82,7 @@ async function seed(
     qualityScore: over.qualityScore ?? 0.5,
     pinned: over.pinned ?? false,
     validFrom: NOW,
+    sourceRunId: over.sourceRunId ?? null,
     metadataJson: over.metadataJson ?? {},
   });
   if (over.archived) {
@@ -133,6 +135,21 @@ describe("GET /memory/experiences", () => {
 
     const { body } = await get("/memory/experiences?projectId=p1&q=aapl");
     expect(body.data.items.length).toBe(3); // 前 3 条都应命中
+  });
+
+  test("workflowRunId 只返回对应 workflow 沉淀的记忆", async () => {
+    await seed({ summary: "wf-a memory", sourceRunId: "wf-a" });
+    await seed({ summary: "wf-b memory", sourceRunId: "wf-b" });
+    await seed({ summary: "legacy memory", sourceRunId: null });
+
+    const { body } = await get(
+      "/memory/experiences?projectId=p1&workflowRunId=wf-a"
+    );
+    expect(body.data.total).toBe(1);
+    expect(body.data.items[0]).toMatchObject({
+      summary: "wf-a memory",
+      sourceRunId: "wf-a",
+    });
   });
 
   test("pinnedOnly + archivalMode", async () => {

@@ -445,6 +445,64 @@ export async function getKlines(params: {
   }>(`/api/v1/market/klines?${q.toString()}`);
 }
 
+export async function getMarketQuote(params: {
+  symbol: string;
+  exchange?: string;
+}): Promise<import("./types").MarketQuote> {
+  const query = new URLSearchParams({ symbol: params.symbol });
+  if (params.exchange) query.set("exchange", params.exchange);
+  const response = await httpGet<{
+    ok: boolean;
+    data: import("./types").MarketQuote;
+  }>(`/api/v1/market/quote?${query.toString()}`);
+  return response.data;
+}
+
+export async function getMarketOrderBook(params: {
+  symbol: string;
+  exchange?: string;
+  depth?: number;
+}): Promise<import("./types").MarketOrderBook> {
+  const query = new URLSearchParams({ symbol: params.symbol });
+  if (params.exchange) query.set("exchange", params.exchange);
+  if (params.depth != null) query.set("depth", String(params.depth));
+  const response = await httpGet<{
+    ok: boolean;
+    data: import("./types").MarketOrderBook;
+  }>(`/api/v1/market/order-book?${query.toString()}`);
+  return response.data;
+}
+
+export async function getMarketTrades(params: {
+  symbol: string;
+  exchange?: string;
+  limit?: number;
+}): Promise<import("./types").MarketTrade[]> {
+  const query = new URLSearchParams({ symbol: params.symbol });
+  if (params.exchange) query.set("exchange", params.exchange);
+  if (params.limit != null) query.set("limit", String(params.limit));
+  const response = await httpGet<{
+    ok: boolean;
+    data: import("./types").MarketTrade[];
+  }>(`/api/v1/market/trades?${query.toString()}`);
+  return response.data;
+}
+
+export async function getChipDistribution(params: {
+  symbol: string;
+  exchange?: string;
+  adjust?: "none" | "pre" | "post";
+}): Promise<import("./types").ChipDistributionPoint[]> {
+  const query = new URLSearchParams({ symbol: params.symbol });
+  if (params.exchange) query.set("exchange", params.exchange);
+  if (params.adjust) query.set("adjust", params.adjust);
+  const response = await httpGet<{
+    ok: boolean;
+    data: import("./types").ChipDistributionPoint[];
+  }>(`/api/v1/market/chip-distribution?${query.toString()}`);
+  return response.data;
+}
+
 export async function getMarketNewsBrief(params: {
   symbol: string;
   exchange?: string;
@@ -674,6 +732,7 @@ export async function createConversationTurn(input: {
   hitlMode?: "off" | "ai" | "always";
   agentMode?: import("./types").AgentControlMode;
   processConfig?: import("./types").WorkflowProcessConfig;
+  preserveGoal?: boolean;
 }): Promise<import("./types").ConversationTurnResult> {
   const { sessionId, ...body } = input;
   const res = await httpPost<{
@@ -980,6 +1039,16 @@ export async function patchWorkflow(
   return httpPatch<{ data: Record<string, unknown> }>(
     `/api/v1/workflows/${encodeURIComponent(workflowId)}`,
     input as Record<string, unknown>
+  );
+}
+
+export async function updateWorkflowGoal(
+  workflowId: string,
+  input: { action: "pause" | "resume" | "edit" | "clear"; text?: string }
+): Promise<{ data: import("../components/team/PlanCard").OrchestratorPlan | null }> {
+  return httpPatch<{ data: import("../components/team/PlanCard").OrchestratorPlan | null }>(
+    `/api/v1/workflows/${encodeURIComponent(workflowId)}/goal`,
+    input
   );
 }
 
@@ -1685,6 +1754,10 @@ export type MonitorToolSummaryRow = {
   timeoutCount: number;
   sandboxBlockedCount: number;
   successRate: number;
+  noDataCount: number;
+  dispatchTimeoutCount: number;
+  transportErrorCount: number;
+  effectiveDataSuccessRate: number;
   avgLatencyMs: number | null;
   lastCalledAt: string | null;
 };
@@ -1713,10 +1786,13 @@ export type MonitorMcpSummaryRow = {
   serverName: string;
   totalCalls: number;
   successCount: number;
+  fallbackCount: number;
+  nativeSuccessCount: number;
   failedCount: number;
   timeoutCount: number;
   sandboxBlockedCount: number;
   successRate: number;
+  nativeSuccessRate: number;
   avgLatencyMs: number | null;
   health: {
     circuitState: "closed" | "open" | "half_open";
@@ -1732,6 +1808,7 @@ export type MonitorMcpSummaryRow = {
     toolName: string;
     totalCalls: number;
     successCount: number;
+    fallbackCount: number;
     failedCount: number;
   }>;
   lastCalledAt: string | null;
@@ -1828,6 +1905,7 @@ export type MonitorMcpDiagCall = {
   errorCode: string | null;
   latencyMs: number | null;
   retryCount: number;
+  fallback: boolean;
   workflowRunId: string;
   agentStepId: string;
   createdAt: string;
@@ -1845,6 +1923,7 @@ export type MonitorMcpByToolStat = {
   toolName: string;
   totalCalls: number;
   successCount: number;
+  fallbackCount: number;
   failedCount: number;
   timeoutCount: number;
   sandboxBlockedCount: number;
@@ -1857,10 +1936,13 @@ export type MonitorMcpDiagnostics = {
   summary: {
     totalCalls: number;
     successCount: number;
+    fallbackCount: number;
+    nativeSuccessCount: number;
     failedCount: number;
     timeoutCount: number;
     sandboxBlockedCount: number;
     successRate: number;
+    nativeSuccessRate: number;
     avgLatencyMs: number | null;
     lastCalledAt: string | null;
   };
@@ -2866,7 +2948,9 @@ export async function cleanupExecutionConfirmTickets(): Promise<{ cleaned: numbe
   return res.data;
 }
 
-export async function listBrokerAccounts(provider?: BrokerProvider): Promise<BrokerAccountRecord[]> {
+export async function listBrokerAccounts(
+  provider?: BrokerProvider
+): Promise<BrokerAccountRecord[]> {
   const suffix = provider ? `?provider=${provider}` : "";
   const res = await httpGet<{ ok: boolean; data: BrokerAccountRecord[] }>(
     `/api/v1/reia/broker/accounts${suffix}`
@@ -3810,7 +3894,7 @@ export async function getPositionReconciliation(input: {
   const query = new URLSearchParams({ projectId: input.projectId, provider: input.provider });
   if (input.accountRef) query.set("accountRef", input.accountRef);
   const res = await httpGet<{ ok: boolean; data: PositionReconciliationReport }>(
-    `/api/v1/execution/reconciliation/positions?${query.toString()}`,
+    `/api/v1/execution/reconciliation/positions?${query.toString()}`
   );
   return res.data;
 }
@@ -3967,7 +4051,7 @@ export async function createPortfolioAllocationPlan(input: {
         maxSectorGross: input.maxSectorGross,
       },
       includeHistoricalRisk: true,
-    },
+    }
   );
   if (!res.ok) throw new Error(res.error ?? "portfolio_allocation_failed");
   return res.data;
@@ -4609,8 +4693,7 @@ export async function listBacktestJobs(filter?: {
     qs.push(`strategy_version_id=${encodeURIComponent(filter.strategyVersionId)}`);
   if (filter?.status) qs.push(`status=${encodeURIComponent(filter.status)}`);
   if (filter?.projectId) qs.push(`project_id=${encodeURIComponent(filter.projectId)}`);
-  if (filter?.workflowRunId)
-    qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
+  if (filter?.workflowRunId) qs.push(`workflow_run_id=${encodeURIComponent(filter.workflowRunId)}`);
   const url = `/api/v1/backtest-jobs${qs.length ? `?${qs.join("&")}` : ""}`;
   const res = await httpGet<{ ok: boolean; data: BacktestJobRecord[] }>(url);
   return res.data;

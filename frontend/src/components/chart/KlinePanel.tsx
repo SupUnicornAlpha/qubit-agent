@@ -20,7 +20,10 @@ import type {
   KlinesResponseMeta,
   MarketDataReadiness,
   MarketDataSourceRecord,
+  MarketQuote,
+  MarketStreamEvent,
 } from "../../api/types";
+import { backendWebSocketUrl } from "../../api/client";
 import { CHART_TIMEFRAMES, chartControlStyle } from "../../lib/chartSpec";
 import {
   formatKlinesErrorMessage,
@@ -33,6 +36,7 @@ import type { TraderMarkerRecord } from "../../store";
 import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
 import { NewsBriefSection } from "./NewsBriefSection";
+import { bollinger, macd, rsi } from "../../lib/technicalIndicators";
 
 function toChartTime(bar: KlineBar, timeframe: string): Time {
   const tf = timeframe.toLowerCase();
@@ -154,6 +158,36 @@ function lineFromEma(bars: KlineBar[], timeframe: string, period: number): LineD
   return out;
 }
 
+function lineFromValues(
+  bars: KlineBar[],
+  timeframe: string,
+  values: Array<number | null>
+): LineData[] {
+  return bars.flatMap((bar, index) => {
+    const value = values[index];
+    return value === null || !Number.isFinite(value)
+      ? []
+      : [{ time: toChartTime(bar, timeframe), value }];
+  });
+}
+
+function histogramFromValues(
+  bars: KlineBar[],
+  timeframe: string,
+  values: Array<number | null>
+): HistogramData[] {
+  return bars.flatMap((bar, index) => {
+    const value = values[index];
+    return value === null || !Number.isFinite(value)
+      ? []
+      : [{
+          time: toChartTime(bar, timeframe),
+          value,
+          color: value >= 0 ? "rgba(38, 166, 154, 0.72)" : "rgba(239, 83, 80, 0.72)",
+        }];
+  });
+}
+
 export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }> = ({
   embedded,
   linkTraderMarkers,
@@ -174,6 +208,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   const volRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const smaLineRef = useRef<ISeriesApi<"Line"> | null>(null);
   const emaLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbUpperRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbMiddleRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdSignalRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdHistogramRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
   const chartOverlays = useAppStore((s) => s.chartOverlays);
   const uiPalette = useAppStore((s) => s.uiPalette);
@@ -233,8 +274,61 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       lineWidth: 2,
       title: "EMA20",
     });
+    const bbUpper = chart.addLineSeries({
+      color: "rgba(14, 165, 233, 0.72)",
+      lineWidth: 1,
+      title: "BB Upper",
+    });
+    const bbMiddle = chart.addLineSeries({
+      color: "rgba(148, 163, 184, 0.68)",
+      lineWidth: 1,
+      title: "BB Middle",
+    });
+    const bbLower = chart.addLineSeries({
+      color: "rgba(14, 165, 233, 0.72)",
+      lineWidth: 1,
+      title: "BB Lower",
+    });
+    const rsiLine = chart.addLineSeries({
+      color: "rgba(245, 158, 11, 0.95)",
+      lineWidth: 2,
+      title: "RSI14",
+      priceScaleId: "rsi",
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+    });
+    const macdLine = chart.addLineSeries({
+      color: "rgba(59, 130, 246, 0.95)",
+      lineWidth: 2,
+      title: "MACD",
+      priceScaleId: "macd",
+    });
+    const macdSignal = chart.addLineSeries({
+      color: "rgba(245, 158, 11, 0.95)",
+      lineWidth: 1,
+      title: "Signal",
+      priceScaleId: "macd",
+    });
+    const macdHistogram = chart.addHistogramSeries({
+      title: "MACD Hist",
+      priceScaleId: "macd",
+    });
+    chart.priceScale("rsi").applyOptions({
+      scaleMargins: { top: 0.72, bottom: 0.03 },
+      autoScale: true,
+    });
+    chart.priceScale("macd").applyOptions({
+      scaleMargins: { top: 0.72, bottom: 0.03 },
+      autoScale: true,
+    });
     smaLineRef.current = smaLine;
     emaLineRef.current = emaLine;
+    bbUpperRef.current = bbUpper;
+    bbMiddleRef.current = bbMiddle;
+    bbLowerRef.current = bbLower;
+    rsiRef.current = rsiLine;
+    macdRef.current = macdLine;
+    macdSignalRef.current = macdSignal;
+    macdHistogramRef.current = macdHistogram;
 
     chartRef.current = chart;
     candleRef.current = candle;
@@ -251,6 +345,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       volRef.current = null;
       smaLineRef.current = null;
       emaLineRef.current = null;
+      bbUpperRef.current = null;
+      bbMiddleRef.current = null;
+      bbLowerRef.current = null;
+      rsiRef.current = null;
+      macdRef.current = null;
+      macdSignalRef.current = null;
+      macdHistogramRef.current = null;
     };
   }, [layoutChart, embedded, isLightChart]);
 
@@ -299,6 +400,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         volRef.current?.setData([]);
         smaLineRef.current?.setData([]);
         emaLineRef.current?.setData([]);
+        bbUpperRef.current?.setData([]);
+        bbMiddleRef.current?.setData([]);
+        bbLowerRef.current?.setData([]);
+        rsiRef.current?.setData([]);
+        macdRef.current?.setData([]);
+        macdSignalRef.current?.setData([]);
+        macdHistogramRef.current?.setData([]);
         return;
       }
       setLastBars(res.data);
@@ -309,12 +417,39 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         const vols = barsToVolume(res.data, spec.timeframe);
         c.setData(candles);
         v.setData(vols);
-        const { sma20, ema20 } = useAppStore.getState().chartOverlays;
+        const { sma20, ema20, rsi14, macd: showMacd, bb20 } =
+          useAppStore.getState().chartOverlays;
+        const closes = res.data.map((bar) => bar.close);
         smaLineRef.current?.setData(
           sma20 && res.data.length >= 20 ? lineFromSma(res.data, spec.timeframe, 20) : []
         );
         emaLineRef.current?.setData(
           ema20 && res.data.length >= 20 ? lineFromEma(res.data, spec.timeframe, 20) : []
+        );
+        const bb = bollinger(closes, 20, 2);
+        bbUpperRef.current?.setData(
+          bb20 ? lineFromValues(res.data, spec.timeframe, bb.upper) : []
+        );
+        bbMiddleRef.current?.setData(
+          bb20 ? lineFromValues(res.data, spec.timeframe, bb.middle) : []
+        );
+        bbLowerRef.current?.setData(
+          bb20 ? lineFromValues(res.data, spec.timeframe, bb.lower) : []
+        );
+        rsiRef.current?.setData(
+          rsi14 ? lineFromValues(res.data, spec.timeframe, rsi(closes, 14)) : []
+        );
+        const macdSeries = macd(closes);
+        macdRef.current?.setData(
+          showMacd ? lineFromValues(res.data, spec.timeframe, macdSeries.macd) : []
+        );
+        macdSignalRef.current?.setData(
+          showMacd ? lineFromValues(res.data, spec.timeframe, macdSeries.signal) : []
+        );
+        macdHistogramRef.current?.setData(
+          showMacd
+            ? histogramFromValues(res.data, spec.timeframe, macdSeries.histogram)
+            : []
         );
         chartRef.current?.timeScale().fitContent();
       }
@@ -353,15 +488,190 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   }, [chartReloadNonce, load]);
 
   useEffect(() => {
+    const spec = chartSpec;
+    if (!spec.symbol.trim()) return;
+    let socket: WebSocket | null = null;
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let staleTimer: ReturnType<typeof setInterval> | null = null;
+    let reconnectAttempt = 0;
+    let lastMessageAt = Date.now();
+    let lastSequence = 0;
+
+    const applyBackfill = (bars: KlineBar[]) => {
+      if (bars.length === 0) return;
+      const sorted = [...bars].sort((left, right) =>
+        left.timestamp.localeCompare(right.timestamp)
+      );
+      const trimmed = sorted.slice(-spec.limit);
+      setLastBars(trimmed);
+      candleRef.current?.setData(barsToCandles(trimmed, spec.timeframe));
+      volRef.current?.setData(barsToVolume(trimmed, spec.timeframe));
+    };
+
+    const applyBar = (bar: KlineBar) => {
+      candleRef.current?.update({
+        time: toChartTime(bar, spec.timeframe),
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+      });
+      volRef.current?.update({
+        time: toChartTime(bar, spec.timeframe),
+        value: bar.volume,
+        color:
+          bar.close >= bar.open
+            ? "rgba(38, 166, 154, 0.45)"
+            : "rgba(239, 83, 80, 0.45)",
+      });
+      setLastBars((current) => {
+        const next = [...current];
+        const existing = next.findIndex((item) => item.timestamp === bar.timestamp);
+        if (existing >= 0) next[existing] = bar;
+        else next.push(bar);
+        next.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+        return next.slice(-spec.limit);
+      });
+    };
+
+    const applyQuote = (quote: MarketQuote) => {
+      setLastBars((current) => {
+        if (current.length === 0 || !Number.isFinite(quote.lastPrice)) return current;
+        const next = [...current];
+        const previous = next[next.length - 1]!;
+        const updated: KlineBar = {
+          ...previous,
+          close: quote.lastPrice,
+          high: Math.max(previous.high, quote.lastPrice),
+          low: Math.min(previous.low, quote.lastPrice),
+        };
+        next[next.length - 1] = updated;
+        candleRef.current?.update({
+          time: toChartTime(updated, spec.timeframe),
+          open: updated.open,
+          high: updated.high,
+          low: updated.low,
+          close: updated.close,
+        });
+        return next;
+      });
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimer) return;
+      reconnectAttempt += 1;
+      const delayMs = Math.min(15_000, 500 * 2 ** Math.min(reconnectAttempt, 5));
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delayMs);
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      socket = new WebSocket(backendWebSocketUrl("market"));
+      socket.addEventListener("open", () => {
+        reconnectAttempt = 0;
+        lastMessageAt = Date.now();
+        socket?.send(
+          JSON.stringify({
+            action: "subscribe_market",
+            subscription: {
+              symbol: spec.symbol.trim(),
+              exchange: spec.exchange.trim(),
+              timeframe: spec.timeframe,
+              channels: ["quote", "bar"],
+            },
+          })
+        );
+      });
+      socket.addEventListener("message", (message) => {
+        lastMessageAt = Date.now();
+        try {
+          const envelope = JSON.parse(String(message.data)) as {
+            topic?: string;
+            payload?: MarketStreamEvent;
+          };
+          const event = envelope.payload;
+          if (envelope.topic !== "market" || !event?.kind) return;
+          if (event.sequence > 0 && lastSequence > 0 && event.sequence > lastSequence + 1) {
+            requestChartReload();
+          }
+          if (event.sequence > 0) lastSequence = event.sequence;
+          if (event.kind === "backfill" && Array.isArray(event.data)) {
+            applyBackfill(event.data as KlineBar[]);
+          } else if (event.kind === "bar" && event.data && typeof event.data === "object") {
+            applyBar(event.data as KlineBar);
+          } else if (event.kind === "quote" && event.data && typeof event.data === "object") {
+            applyQuote(event.data as MarketQuote);
+          }
+        } catch {
+          /* ignore malformed market stream events */
+        }
+      });
+      socket.addEventListener("close", scheduleReconnect);
+      socket.addEventListener("error", () => socket?.close());
+    };
+
+    connect();
+    staleTimer = setInterval(() => {
+      if (Date.now() - lastMessageAt > 45_000) socket?.close();
+      else if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: "ping" }));
+      }
+    }, 15_000);
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (staleTimer) clearInterval(staleTimer);
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ action: "unsubscribe_market" }));
+      }
+      socket?.close();
+    };
+  }, [
+    chartSpec.symbol,
+    chartSpec.exchange,
+    chartSpec.timeframe,
+    chartSpec.limit,
+    requestChartReload,
+  ]);
+
+  useEffect(() => {
     if (lastBars.length === 0) {
       smaLineRef.current?.setData([]);
       emaLineRef.current?.setData([]);
+      bbUpperRef.current?.setData([]);
+      bbMiddleRef.current?.setData([]);
+      bbLowerRef.current?.setData([]);
+      rsiRef.current?.setData([]);
+      macdRef.current?.setData([]);
+      macdSignalRef.current?.setData([]);
+      macdHistogramRef.current?.setData([]);
       return;
     }
     const tf = chartSpec.timeframe;
-    const { sma20, ema20 } = chartOverlays;
+    const { sma20, ema20, rsi14, macd: showMacd, bb20 } = chartOverlays;
+    const closes = lastBars.map((bar) => bar.close);
     smaLineRef.current?.setData(sma20 && lastBars.length >= 20 ? lineFromSma(lastBars, tf, 20) : []);
     emaLineRef.current?.setData(ema20 && lastBars.length >= 20 ? lineFromEma(lastBars, tf, 20) : []);
+    const bb = bollinger(closes, 20, 2);
+    bbUpperRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.upper) : []);
+    bbMiddleRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.middle) : []);
+    bbLowerRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.lower) : []);
+    rsiRef.current?.setData(rsi14 ? lineFromValues(lastBars, tf, rsi(closes, 14)) : []);
+    const macdSeries = macd(closes);
+    macdRef.current?.setData(
+      showMacd ? lineFromValues(lastBars, tf, macdSeries.macd) : []
+    );
+    macdSignalRef.current?.setData(
+      showMacd ? lineFromValues(lastBars, tf, macdSeries.signal) : []
+    );
+    macdHistogramRef.current?.setData(
+      showMacd ? histogramFromValues(lastBars, tf, macdSeries.histogram) : []
+    );
   }, [chartOverlays, lastBars, chartSpec.timeframe]);
 
   const bringToChat = () => {

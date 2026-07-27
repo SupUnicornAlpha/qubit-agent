@@ -5,6 +5,7 @@ import { executeAgentReact } from "../langgraph/execute-agent-react";
 import { stepStreamBus } from "../langgraph/event-stream";
 import type { RuntimeHandlerContext } from "../types";
 import { buildTaskResult } from "./task-result";
+import type { AgentGraphState } from "../langgraph/state";
 
 /**
  * Topology dispatch is a child task of an already-running workflow. Its instance
@@ -13,6 +14,75 @@ import { buildTaskResult } from "./task-result";
  */
 export function ownsWorkflowTerminalState(payload: TaskAssignPayload): boolean {
   return payload.taskType !== "topology_dispatch";
+}
+
+export type TopologyTaskEvidence = {
+  kind: "market_data" | "tool_result";
+  verified: true;
+  sourceTool: string | null;
+  result: unknown;
+};
+
+export function extractTopologyTaskEvidence(
+  role: string,
+  state: Pick<AgentGraphState, "toolCalls" | "observations">
+): TopologyTaskEvidence | null {
+  const successfulTools = [...state.toolCalls].reverse().filter((call) => call.status === "success");
+  const sourceTool =
+    (role === "market_data"
+      ? successfulTools.find((call) =>
+          /(fetch_klines|fetch_bars|fetch_ticks|get_quote|get_price)/i.test(
+            String(call.toolName ?? "")
+          )
+        )
+      : successfulTools.find(
+          (call) =>
+            !["market.readiness", "market.data_sources", "market.resolve_symbol"].includes(
+              String(call.toolName ?? "")
+            )
+        ))?.toolName ?? null;
+
+  for (const observation of [...state.observations].reverse()) {
+    const raw =
+      observation.connectorResult ??
+      observation.mcpResult ??
+      observation.builtinResult ??
+      observation.analystTeamResult;
+    if (raw === undefined || raw === null) continue;
+
+    if (role === "market_data" && Array.isArray(raw) && raw.length > 0) {
+      const bars = raw.filter(
+        (item): item is Record<string, unknown> =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item)
+      );
+      if (bars.length === 0) continue;
+      const latest = [...bars].sort((a, b) =>
+        String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? ""))
+      ).at(-1);
+      return {
+        kind: "market_data",
+        verified: true,
+        sourceTool: typeof sourceTool === "string" ? sourceTool : null,
+        result: {
+          dataAvailable: true,
+          barCount: bars.length,
+          symbol: latest?.symbol ?? bars[0]?.symbol ?? null,
+          exchange: latest?.exchange ?? bars[0]?.exchange ?? null,
+          latestClose: latest?.close ?? null,
+          asof: latest?.timestamp ?? null,
+        },
+      };
+    }
+    if (role === "market_data") continue;
+
+    return {
+      kind: "tool_result",
+      verified: true,
+      sourceTool: typeof sourceTool === "string" ? sourceTool : null,
+      result: raw,
+    };
+  }
+  return null;
 }
 
 /**
@@ -42,7 +112,7 @@ export async function runA2aReactTaskAssign(
   const resume = (payload.params as Record<string, unknown> | undefined)?.resume === true;
 
   try {
-    const { finalResponse, terminalStatus } = await executeAgentReact({
+    const { finalState, finalResponse, terminalStatus } = await executeAgentReact({
       runId,
       workflowId,
       traceId,
@@ -73,14 +143,27 @@ export async function runA2aReactTaskAssign(
 
     if (ownsTerminalState) onWorkflowTerminal(workflowId, terminalStatus);
 
+    const taskEvidence = ownsTerminalState
+      ? null
+      : extractTopologyTaskEvidence(ctx.definition.role, finalState);
+    const evidenceSalvaged = taskEvidence?.verified === true;
+    const taskResult = taskEvidence
+      ? {
+          ...finalResponse,
+          taskEvidence,
+          originalTerminalStatus: terminalStatus,
+          ...(terminalStatus === "failed" ? { status: "completed_with_verified_evidence" } : {}),
+        }
+      : finalResponse;
+
     await ctx.send({
       workflowId,
       traceId,
       receiverAgent: msg.senderAgent,
       messageType: "TASK_RESULT",
       payload: buildTaskResult(payload.taskId, ctx.definition.role, {
-        success: terminalStatus !== "failed",
-        result: finalResponse,
+        success: terminalStatus !== "failed" || evidenceSalvaged,
+        result: taskResult,
       }),
       priority: msg.priority,
     });

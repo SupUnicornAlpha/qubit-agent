@@ -39,10 +39,31 @@ describe("aggregateSummary (mcp)", () => {
     ]);
     expect(r.totalCalls).toBe(5);
     expect(r.successCount).toBe(1);
+    expect(r.nativeSuccessCount).toBe(1);
+    expect(r.fallbackCount).toBe(0);
     expect(r.failedCount).toBe(2);
     expect(r.timeoutCount).toBe(1);
     expect(r.sandboxBlockedCount).toBe(1);
     expect(r.successRate).toBe(0.2);
+  });
+
+  test("fallback is separated from native MCP success", () => {
+    const r = aggregateSummary([
+      row({
+        status: "success",
+        responseJson: {
+          mcpResult: {
+            output: { value: 1, __mcp_fallback: { routed_to: "qubit-data" } },
+          },
+        },
+      }),
+      row({ status: "success" }),
+    ]);
+    expect(r.successCount).toBe(2);
+    expect(r.fallbackCount).toBe(1);
+    expect(r.nativeSuccessCount).toBe(1);
+    expect(r.successRate).toBe(1);
+    expect(r.nativeSuccessRate).toBe(0.5);
   });
 
   test("空输入 → 0 totalCalls", () => {
@@ -72,10 +93,7 @@ describe("aggregateErrorTop (mcp)", () => {
 
   test("errorCode 为 null → '(<status>)' 兜底", () => {
     const r = aggregateErrorTop(
-      [
-        row({ status: "failed", errorCode: null }),
-        row({ status: "timeout", errorCode: null }),
-      ],
+      [row({ status: "failed", errorCode: null }), row({ status: "timeout", errorCode: null })],
       10
     );
     const keys = r.map((x) => x.errorCode).sort();
@@ -116,9 +134,24 @@ describe("aggregateByTool (mcp)", () => {
     const fetch = r.find((x) => x.toolName === "fetch")!;
     expect(search.totalCalls).toBe(3);
     expect(search.successCount).toBe(1);
+    expect(search.fallbackCount).toBe(0);
     expect(search.failedCount).toBe(1);
     expect(search.timeoutCount).toBe(1);
     expect(fetch.sandboxBlockedCount).toBe(1);
+  });
+
+  test("byTool counts connector fallback separately", () => {
+    const r = aggregateByTool([
+      row({
+        toolName: "get_quote",
+        status: "success",
+        responseJson: {
+          mcpResult: { output: { __mcp_fallback: { routed_to: "qubit-data" } } },
+        },
+      }),
+    ]);
+    expect(r[0]?.successCount).toBe(1);
+    expect(r[0]?.fallbackCount).toBe(1);
   });
 
   test("avgLatencyMs 仅统计有 latency 的样本", () => {

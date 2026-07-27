@@ -48,6 +48,8 @@ function buildSnapshotJson(state: AgentGraphState): Record<string, unknown> {
     observations: state.observations,
     finalResponse: state.finalResponse,
     contextMemory: state.contextMemory,
+    artifactGapRetryCount: state.artifactGapRetryCount,
+    controlModeGapRetryCount: state.controlModeGapRetryCount,
     eventsTail: events.slice(-EVENT_TAIL_LIMIT),
     eventsCount: events.length,
   };
@@ -238,6 +240,9 @@ export function restoreStateFromSnapshot(
     events: eventsTail,
     ...(typeof snap.artifactGapRetryCount === "number"
       ? { artifactGapRetryCount: snap.artifactGapRetryCount }
+      : {}),
+    ...(typeof snap.controlModeGapRetryCount === "number"
+      ? { controlModeGapRetryCount: snap.controlModeGapRetryCount }
       : {}),
   };
 

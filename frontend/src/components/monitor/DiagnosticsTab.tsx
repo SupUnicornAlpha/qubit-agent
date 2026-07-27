@@ -312,6 +312,7 @@ const McpList: FC<{
             <th style={{ ...styles.th, width: 70 }}>熔断</th>
             <th style={{ ...styles.th, width: 50 }}>调用</th>
             <th style={{ ...styles.th, width: 50 }}>失败</th>
+            <th style={{ ...styles.th, width: 60 }}>降级</th>
             <th style={{ ...styles.th, width: 70 }}>成功率</th>
           </tr>
         </thead>
@@ -346,6 +347,9 @@ const McpList: FC<{
                   }}
                 >
                   {r.failedCount + r.timeoutCount}
+                </td>
+                <td style={{ ...styles.td, color: r.fallbackCount > 0 ? "#3b82f6" : undefined }}>
+                  {r.fallbackCount}
                 </td>
                 <td
                   style={{

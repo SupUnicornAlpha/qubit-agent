@@ -29,6 +29,7 @@ import type { AlertEventRecord, SubAgentTaskRecord } from "../../api/types";
 import { useTranslation } from "../../i18n";
 
 type ProjectScope = { projectId: string };
+type WorkflowScope = ProjectScope & { workflowRunId?: string | null };
 
 function formatTime(value?: string | null): string {
   if (!value) return "—";
@@ -65,7 +66,10 @@ const PageError: FC<{ text: string }> = ({ text }) => (
 );
 
 export const SimpleTasksPage: FC<
-  ProjectScope & { sessionId: string | null; onOpenConversation: (sessionId: string) => void }
+  ProjectScope & {
+    sessionId: string | null;
+    onOpenConversation: (sessionId: string, workflowRunId: string) => void;
+  }
 > = ({ projectId, sessionId, onOpenConversation }) => {
   const { t } = useTranslation();
   const [tasks, setTasks] = useState<SubAgentTaskRecord[]>([]);
@@ -73,14 +77,18 @@ export const SimpleTasksPage: FC<
   const [error, setError] = useState("");
 
   const reload = useCallback(async () => {
-    if (!projectId || !sessionId) {
+    if (!projectId) {
       setTasks([]);
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const result = await listSubAgentTasks({ projectId, sessionId, limit: 120 });
+      const result = await listSubAgentTasks({
+        projectId,
+        ...(sessionId ? { sessionId } : {}),
+        limit: 120,
+      });
       setTasks(result.items);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("simpleMode.pages.loadFailed"));
@@ -156,8 +164,11 @@ export const SimpleTasksPage: FC<
                 <span>
                   {task.source === "a2a_assignment"
                     ? t("simpleMode.pages.tasks.a2a")
-                    : t("simpleMode.pages.tasks.local")}
+                    : task.source === "workflow"
+                      ? t("simpleMode.pages.tasks.workflow")
+                      : t("simpleMode.pages.tasks.local")}
                 </span>
+                <span>workflow {task.workflowRunId.slice(0, 8)}</span>
                 <span>{task.stepCount} {t("simpleMode.pages.tasks.steps")}</span>
                 {task.latestPhase ? <span>{task.latestPhase}</span> : null}
               </div>
@@ -165,7 +176,10 @@ export const SimpleTasksPage: FC<
             <div className="qb-simple-row__actions">
               <button
                 type="button"
-                onClick={() => task.sessionId && onOpenConversation(task.sessionId)}
+                onClick={() =>
+                  task.sessionId &&
+                  onOpenConversation(task.sessionId, task.workflowRunId)
+                }
                 disabled={!task.sessionId}
               >
                 <MessageSquareText size={14} />
@@ -243,7 +257,7 @@ export const SimpleAlertsPage: FC = () => {
   );
 };
 
-export const SimpleMemoryPage: FC<ProjectScope> = ({ projectId }) => {
+export const SimpleMemoryPage: FC<WorkflowScope> = ({ projectId, workflowRunId }) => {
   const { t } = useTranslation();
   const [items, setItems] = useState<MemoryExperienceListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -255,7 +269,12 @@ export const SimpleMemoryPage: FC<ProjectScope> = ({ projectId }) => {
     setLoading(true);
     setError("");
     try {
-      const result = await listMemoryExperiences({ projectId, limit: 50, orderBy: "valid_from_desc" });
+      const result = await listMemoryExperiences({
+        projectId,
+        ...(workflowRunId ? { workflowRunId } : {}),
+        limit: 50,
+        orderBy: "valid_from_desc",
+      });
       setItems(result.items);
       setTotal(result.total);
     } catch (caught) {
@@ -263,7 +282,7 @@ export const SimpleMemoryPage: FC<ProjectScope> = ({ projectId }) => {
     } finally {
       setLoading(false);
     }
-  }, [projectId, t]);
+  }, [projectId, t, workflowRunId]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -283,7 +302,10 @@ export const SimpleMemoryPage: FC<ProjectScope> = ({ projectId }) => {
             <div className="qb-simple-row__body">
               <div className="qb-simple-row__title">{item.summary}</div>
               <div className="qb-simple-row__meta">{item.kind} / {item.subKind || "general"} · quality {item.qualityScore.toFixed(2)} · used {item.useCount}</div>
-              <div className="qb-simple-tags">{item.tags.slice(0, 5).map((tag) => <span key={tag}>{tag}</span>)}</div>
+              <div className="qb-simple-tags">
+                {item.sourceRunId ? <span>workflow {item.sourceRunId.slice(0, 8)}</span> : null}
+                {item.tags.slice(0, 5).map((tag) => <span key={tag}>{tag}</span>)}
+              </div>
             </div>
             <div className="qb-simple-row__time">{formatTime(item.validFrom)}</div>
           </article>
@@ -300,9 +322,10 @@ type ArtifactEntry = {
   title: string;
   meta: string;
   createdAt: string;
+  workflowRunId: string | null;
 };
 
-export const SimpleArtifactsPage: FC<ProjectScope> = ({ projectId }) => {
+export const SimpleArtifactsPage: FC<WorkflowScope> = ({ projectId, workflowRunId }) => {
   const { t } = useTranslation();
   const [factors, setFactors] = useState<FactorRecord[]>([]);
   const [strategies, setStrategies] = useState<StrategyVersionFlatRecord[]>([]);
@@ -316,9 +339,9 @@ export const SimpleArtifactsPage: FC<ProjectScope> = ({ projectId }) => {
     setError("");
     try {
       const [nextFactors, nextStrategies, nextBacktests] = await Promise.all([
-        listFactors({ projectId }),
-        listStrategyVersions({ projectId }),
-        listBacktestJobs({ projectId }),
+        listFactors({ projectId, ...(workflowRunId ? { workflowRunId } : {}) }),
+        listStrategyVersions({ projectId, ...(workflowRunId ? { workflowRunId } : {}) }),
+        listBacktestJobs({ projectId, ...(workflowRunId ? { workflowRunId } : {}) }),
       ]);
       setFactors(nextFactors);
       setStrategies(nextStrategies);
@@ -328,14 +351,14 @@ export const SimpleArtifactsPage: FC<ProjectScope> = ({ projectId }) => {
     } finally {
       setLoading(false);
     }
-  }, [projectId, t]);
+  }, [projectId, t, workflowRunId]);
 
   useEffect(() => { void reload(); }, [reload]);
 
   const entries = useMemo<ArtifactEntry[]>(() => [
-    ...factors.map((factor) => ({ id: factor.id, kind: "factor" as const, title: factor.name, meta: `${factor.category} · ${factor.status} · ${factor.universe}`, createdAt: factor.createdAt })),
-    ...strategies.map((strategy) => ({ id: strategy.id, kind: "strategy" as const, title: strategy.strategyName, meta: `${strategy.versionTag} · ${strategy.strategyStyle}`, createdAt: strategy.createdAt })),
-    ...backtests.map((backtest) => ({ id: backtest.id, kind: "backtest" as const, title: `${t("simpleMode.pages.artifacts.backtest")} ${backtest.id.slice(0, 8)}`, meta: `${backtest.status} · ${backtest.engineKey}${backtest.result ? ` · return ${(backtest.result.metrics.totalReturn * 100).toFixed(2)}%` : ""}`, createdAt: backtest.startedAt })),
+    ...factors.map((factor) => ({ id: factor.id, kind: "factor" as const, title: factor.name, meta: `${factor.category} · ${factor.status} · ${factor.universe}`, createdAt: factor.createdAt, workflowRunId: factor.workflowRunId })),
+    ...strategies.map((strategy) => ({ id: strategy.id, kind: "strategy" as const, title: strategy.strategyName, meta: `${strategy.versionTag} · ${strategy.strategyStyle}`, createdAt: strategy.createdAt, workflowRunId: strategy.workflowRunId })),
+    ...backtests.map((backtest) => ({ id: backtest.id, kind: "backtest" as const, title: `${t("simpleMode.pages.artifacts.backtest")} ${backtest.id.slice(0, 8)}`, meta: `${backtest.status} · ${backtest.engineKey}${backtest.result ? ` · return ${(backtest.result.metrics.totalReturn * 100).toFixed(2)}%` : ""}`, createdAt: backtest.startedAt, workflowRunId: backtest.workflowRunId })),
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [backtests, factors, strategies, t]);
 
   const iconFor = (kind: ArtifactEntry["kind"]) => kind === "factor" ? <FlaskConical size={17} /> : kind === "strategy" ? <FileCode2 size={17} /> : <Play size={17} />;
@@ -360,6 +383,11 @@ export const SimpleArtifactsPage: FC<ProjectScope> = ({ projectId }) => {
             <div className="qb-simple-row__body">
               <div className="qb-simple-row__title">{entry.title}</div>
               <div className="qb-simple-row__meta">{entry.kind} · {entry.meta}</div>
+              {entry.workflowRunId ? (
+                <div className="qb-simple-tags">
+                  <span>workflow {entry.workflowRunId.slice(0, 8)}</span>
+                </div>
+              ) : null}
             </div>
             <div className="qb-simple-row__time">{formatTime(entry.createdAt)}</div>
           </article>

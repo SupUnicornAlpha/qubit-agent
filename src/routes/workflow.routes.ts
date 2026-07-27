@@ -3,11 +3,14 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../db/sqlite/client";
 import { chatSession, scheduledJob, scheduledJobRun, workflowRun } from "../db/sqlite/schema";
+import { parseAgentPlanSnapshot } from "../runtime/agent-control-mode";
 import { computeWorkflowHeartbeat, heartbeatStreamBus } from "../runtime/heartbeat/agent-heartbeat";
+import { buildWorkflowLineage } from "../runtime/lineage/workflow-lineage-service";
 import {
   failAnalystResearchJob,
   findActiveAnalystJobsByWorkflow,
 } from "../runtime/msa/analyst-research-jobs";
+import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
 import {
   listWorkflowArtifactSummary,
   readWorkflowReportArtifact,
@@ -21,20 +24,18 @@ import {
 import { hardDeleteWorkflowRun } from "../runtime/workflow/hard-delete";
 import { listPendingHitlRequests, resolveHitlRequest } from "../runtime/workflow/hitl-service";
 import {
-  countQueuedUserMessages,
-  enqueueUserMessage,
-} from "../runtime/workflow/user-message-queue";
-import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
-import { logResearchTeamInteraction } from "../runtime/research-team/interaction-log";
-import {
   computeNextRunAt,
   parsePositionReconciliationJobPayload,
   parseScheduledJobKind,
   workflowScheduler,
 } from "../runtime/workflow/scheduler";
+import {
+  countQueuedUserMessages,
+  enqueueUserMessage,
+} from "../runtime/workflow/user-message-queue";
+import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
-import { buildWorkflowLineage } from "../runtime/lineage/workflow-lineage-service";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -48,7 +49,7 @@ workflowRouter.get("/", async (c) => {
   const limit = Number.isFinite(limitValue) ? Math.max(1, Math.min(500, limitValue)) : 200;
   const where = and(
     projectId ? eq(workflowRun.projectId, projectId) : undefined,
-    includeCancelled ? undefined : ne(workflowRun.status, "cancelled"),
+    includeCancelled ? undefined : ne(workflowRun.status, "cancelled")
   );
   const rows = await db
     .select()
@@ -332,6 +333,84 @@ workflowRouter.patch("/:id", async (c) => {
   }
   const updated = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
   return c.json({ data: updated[0] });
+});
+
+/**
+ * Goal 生命周期控制。Goal 状态与可见计划共同持久化在 plan_json，避免出现 UI 已暂停、
+ * ReAct 却仍把旧计划当作 active 的双重事实源。
+ */
+workflowRouter.patch("/:id/goal", async (c) => {
+  const id = c.req.param("id");
+  type GoalActionBody = {
+    action?: "pause" | "resume" | "edit" | "clear";
+    text?: string;
+  };
+  const body = await c.req
+    .json<GoalActionBody>()
+    .catch(() => ({}) as GoalActionBody);
+  if (!body.action || !["pause", "resume", "edit", "clear"].includes(body.action)) {
+    return c.json({ error: "action must be pause, resume, edit, or clear" }, 400);
+  }
+  const db = await getDb();
+  const row = (await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1))[0];
+  if (!row) return c.json({ error: "Not found" }, 404);
+  const plan = parseAgentPlanSnapshot(row.planJson);
+  if (!plan || plan.mode !== "goal") {
+    return c.json({ error: "workflow has no active goal" }, 409);
+  }
+  if (body.action === "clear") {
+    const clearedAt = new Date().toISOString();
+    await db
+      .update(workflowRun)
+      .set({
+        planJson: {
+          mode: "goal",
+          goal: { text: "", status: "cleared", completedSteps: 0, totalSteps: 0 },
+          steps: [],
+          updatedAt: clearedAt,
+        } as never,
+      })
+      .where(eq(workflowRun.id, id));
+    requestInterrupt(id);
+    return c.json({ ok: true, data: null });
+  }
+  const text = body.text?.trim();
+  if (body.action === "edit" && !text) {
+    return c.json({ error: "text is required when editing a goal" }, 400);
+  }
+  const now = new Date().toISOString();
+  const next = {
+    ...plan,
+    goal: {
+      ...plan.goal,
+      ...(text ? { text } : {}),
+      ...(body.action === "pause"
+        ? { status: "paused" as const }
+        : body.action === "resume"
+          ? { status: "executing" as const }
+          : {}),
+    },
+    updatedAt: now,
+  };
+  await db
+    .update(workflowRun)
+    .set({
+      planJson: next as never,
+      ...(text ? { goal: text } : {}),
+    })
+    .where(eq(workflowRun.id, id));
+  if (body.action === "pause") {
+    requestInterrupt(id);
+    await setWorkflowState(id, "awaiting_approval", { reason: "goal.pause" });
+  }
+  if (body.action === "edit" && text) {
+    await enqueueUserMessage({
+      workflowRunId: id,
+      targetRole: "orchestrator",
+      content: `用户已编辑当前 Goal。新的目标与完成条件如下：${text}`,
+    });
+  }
+  return c.json({ ok: true, data: next });
 });
 
 /**

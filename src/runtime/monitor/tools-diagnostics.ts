@@ -14,13 +14,12 @@
  */
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
+import { agentStep, sandboxViolationLog, toolCallLog, workflowRun } from "../../db/sqlite/schema";
 import {
-  agentStep,
-  sandboxViolationLog,
-  toolCallLog,
-  workflowRun,
-} from "../../db/sqlite/schema";
-import type { ToolKind, ToolSummaryRow } from "./tools-summary";
+  classifyToolFailureForMonitoring,
+  type ToolKind,
+  type ToolSummaryRow,
+} from "./tools-summary";
 
 export type ToolStatus = "success" | "error" | "timeout" | "sandbox_blocked";
 
@@ -146,10 +145,17 @@ export async function getToolDiagnostics(input: {
      */
     const sandboxWorkflowIds = Array.from(
       new Set(
-        rows.filter((r) => r.status === "sandbox_blocked" && r.workflowRunId).map((r) => r.workflowRunId!)
+        rows
+          .filter((r) => r.status === "sandbox_blocked" && r.workflowRunId)
+          .map((r) => r.workflowRunId!)
       )
     );
-    sandboxViolations = await querySandboxViolations(db, sandboxWorkflowIds, sinceIso, input.toolName);
+    sandboxViolations = await querySandboxViolations(
+      db,
+      sandboxWorkflowIds,
+      sinceIso,
+      input.toolName
+    );
   }
 
   return {
@@ -177,6 +183,9 @@ export function aggregateSummary(toolName: string, rows: RawRow[]): ToolSummaryR
   let error = 0;
   let timeout = 0;
   let sandbox = 0;
+  let noData = 0;
+  let dispatchTimeout = 0;
+  let otherError = 0;
   let latSum = 0;
   let latCount = 0;
   let lastCalledAt: string | null = null;
@@ -186,7 +195,13 @@ export function aggregateSummary(toolName: string, rows: RawRow[]): ToolSummaryR
     if (r.status === "success") success += 1;
     else if (r.status === "timeout") timeout += 1;
     else if (r.status === "sandbox_blocked") sandbox += 1;
-    else error += 1;
+    else {
+      error += 1;
+      const bucket = classifyToolFailureForMonitoring(r.errorMessage);
+      if (bucket === "no_data") noData += 1;
+      else if (bucket === "dispatch_timeout") dispatchTimeout += 1;
+      else otherError += 1;
+    }
     /**
      * 治理 #4：latency 统计排除 sandbox_blocked。这类调用在 act.ts 里被沙箱在
      * 真正起 timer（startedAt）之前就拦下，从未真实执行；但 recordToolCallStart
@@ -210,6 +225,13 @@ export function aggregateSummary(toolName: string, rows: RawRow[]): ToolSummaryR
     timeoutCount: timeout,
     sandboxBlockedCount: sandbox,
     successRate: total > 0 ? Number((success / total).toFixed(4)) : 0,
+    noDataCount: noData,
+    dispatchTimeoutCount: dispatchTimeout,
+    transportErrorCount: otherError,
+    effectiveDataSuccessRate:
+      success + error + timeout > 0
+        ? Number((success / (success + error + timeout)).toFixed(4))
+        : 0,
     avgLatencyMs: latCount > 0 ? Number((latSum / latCount).toFixed(2)) : null,
     lastCalledAt,
   };
@@ -263,7 +285,10 @@ export function normalizeErrorMessage(raw: string | null): string {
   let s = raw.trim();
   if (s.length > 240) s = s.slice(0, 240) + "…";
   // UUID
-  s = s.replace(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, "<uuid>");
+  s = s.replace(
+    /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g,
+    "<uuid>"
+  );
   // ISO 时间戳
   s = s.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g, "<ts>");
   // 8+ 位纯数字
@@ -315,7 +340,7 @@ async function querySandboxViolations(
     .from(sandboxViolationLog)
     .where(
       and(
-        gte(sandboxViolationLog.createdAt, sinceIso),
+        gte(sandboxViolationLog.createdAt, sinceIso)
         // inArray 的 type 在 P1 里调过；这里 workflowRunIds 是普通 string[]
       )
     )
@@ -339,7 +364,12 @@ async function querySandboxViolations(
 
   const grouped = new Map<
     string,
-    { count: number; lastSeenAt: string; sampleWorkflowRunId: string | null; samplePolicyId: string | null }
+    {
+      count: number;
+      lastSeenAt: string;
+      sampleWorkflowRunId: string | null;
+      samplePolicyId: string | null;
+    }
   >();
   for (const r of filtered) {
     let cur = grouped.get(r.violationType);

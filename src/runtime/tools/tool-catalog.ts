@@ -35,7 +35,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // 编排
   update_plan: {
     description:
-      "更新对用户可见的分步计划/TODO（params: steps=[{id?,title,status?,note?}]，status∈pending|in_progress|done|skipped）。开工前先列 3-5 步，每完成一步就更新其状态。",
+      "更新对用户可见的分步计划/TODO（params: steps=[{id?,title,status?,note?}], successCriteria?:string[], constraints?:string[]；status∈pending|in_progress|done|skipped）。Goal 开工前先写可验证的完成标准和 3-5 步计划，每完成一步就更新状态；skipped 必须写原因。",
     category: "orchestration",
   },
   "web.fetch": {
@@ -95,11 +95,12 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "market.data_sources": {
     description:
-      "查看行情源能力与实时治理状态：市场/周期覆盖、凭证、成功率、P95、最近错误、熔断、优先级和 fallback。可按 market/timeframe 过滤。",
+      "查看行情源能力与实时治理状态：市场/周期覆盖、凭证、成功率、P95、最近错误、熔断、优先级和 fallback。可按 market/timeframe 过滤。注意：这是 source probe 状态，不代表 call_team_market_data 的 A2A 调度状态；团队超时不能据此改判为行情源不可用。",
     category: "market",
   },
   "market.readiness": {
-    description: "查看启动行情 readiness gate；只有真实样本探针通过才会报告 ready。",
+    description:
+      "查看启动行情 source readiness gate；只有真实样本探针通过才会报告 ready。它证明至少一个底层源可直拉，不证明专家团队调度一定在时限内完成。",
     category: "market",
   },
   fetch_bars: {
@@ -114,7 +115,26 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "市场感知的 OHLCV K 线：支持单个 symbol/ticker/code 或批量 symbols/tickers，兼容 timeframe/period/interval 与 limit/count/bars；自动判断市场，并按源覆盖、周期、凭证、健康度、优先级和熔断状态依次降级。失败会明确返回所有尝试源，不得盲目重复。",
     category: "market",
   },
-  fetch_ticks: { description: "拉取 Tick/盘口快照（简化实现）", category: "market" },
+  fetch_ticks: {
+    description: "拉取真实 L1 Tick 快照；无真实源时明确失败，绝不返回模拟报价",
+    category: "market",
+  },
+  fetch_quote: {
+    description: "拉取标准化实时/准实时报价，包含来源、时间戳与新鲜度",
+    category: "market",
+  },
+  fetch_order_book: {
+    description: "拉取标准化买卖盘口；CN 当前支持东财五档，CRYPTO 支持 Binance 深度",
+    category: "market",
+  },
+  fetch_trades: {
+    description: "拉取逐笔成交/Time & Sales，并标准化主动买卖方向",
+    category: "market",
+  },
+  fetch_chip_distribution: {
+    description: "拉取 A 股筹码分布：获利比例、平均成本、70%/90% 成本区间及集中度",
+    category: "market",
+  },
   fetch_price_data: {
     description: "K 线 + 最新技术指标快照（SMA/RSI/MACD/布林）",
     category: "market",

@@ -65,6 +65,7 @@ import {
   listSessionMessages,
   patchSessionMessage,
   patchWorkflow,
+  updateWorkflowGoal,
   reloadAgents,
   processWorkflowCompensations,
   evolveGenePool,
@@ -407,9 +408,16 @@ const PendingHitlFetchRow: FC<{
   );
 };
 
-export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "simple" }> = ({
+export const ChatPanel: FC<{
+  ideEmbedded?: boolean;
+  displayMode?: "standard" | "simple";
+  workflowRunId?: string | null;
+  onWorkflowFocusChange?: (workflowRunId: string | null) => void;
+}> = ({
   ideEmbedded,
   displayMode = "standard",
+  workflowRunId = null,
+  onWorkflowFocusChange,
 }) => {
   const simpleMode = displayMode === "simple";
   const chartContext = useAppStore((s) => s.chartContext);
@@ -724,6 +732,7 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
 
   const onSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
+    onWorkflowFocusChange?.(null);
   };
 
   const onCreateSession = async () => {
@@ -1093,7 +1102,9 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
         loopKind: chatLoopKind,
         hitlMode: chatHitlMode,
         agentMode: chatAgentMode,
+        ...(workflowRunId ? { workflowRunId } : {}),
       });
+      onWorkflowFocusChange?.(turn.workflowRunId);
       if (turn.runId) {
         bindStream(turn.workflowRunId, turn.runId, turn.assistantMessage.id);
       }
@@ -1105,6 +1116,11 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
       setErrorText(err instanceof Error ? err.message : "发送失败");
     }
   };
+
+  const visibleChatMessages =
+    simpleMode && workflowRunId
+      ? chatMessages.filter((message) => message.workflowRunIds?.includes(workflowRunId))
+      : chatMessages;
 
   return (
     <div
@@ -1254,6 +1270,11 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
               <button type="button" onClick={() => void onCreateSession()}>
                 {t("simpleMode.newChat")}
               </button>
+              {workflowRunId ? (
+                <button type="button" onClick={() => onWorkflowFocusChange?.(null)}>
+                  {t("simpleMode.workflowScope.showConversation")}
+                </button>
+              ) : null}
             </div>
           ) : <div style={styles.chatBoardToggleRow}>
             <button
@@ -1268,7 +1289,7 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
             </button>
           </div>}
           <div className="qb-chat-messages" style={styles.chatMessages}>
-            {simpleMode && chatMessages.length === 0 ? (
+            {simpleMode && visibleChatMessages.length === 0 ? (
               <div className="qb-simple-chat-welcome">
                 <span className="qb-simple-chat-welcome__eyebrow">QUBIT RESEARCH</span>
                 <h1>{t("simpleMode.heroTitle")}</h1>
@@ -1286,7 +1307,7 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
                 </div>
               </div>
             ) : null}
-            {chatMessages.map((msg) => (
+            {visibleChatMessages.map((msg) => (
               <div key={msg.id} className={`qb-chat-bubble qb-chat-bubble--${msg.role}`}>
                 <div className="qb-chat-bubble__meta">
                   {simpleMode
@@ -1308,8 +1329,21 @@ export const ChatPanel: FC<{ ideEmbedded?: boolean; displayMode?: "standard" | "
                     </span>
                   )}
                 </div>
-                {!simpleMode && msg.workflowRunIds?.length ? (
-                  <div className="qb-chat-bubble__meta">workflow: {msg.workflowRunIds.join(", ")}</div>
+                {msg.workflowRunIds?.length ? (
+                  <div className="qb-chat-bubble__meta">
+                    {simpleMode
+                      ? msg.workflowRunIds.map((id) => (
+                          <button
+                            key={id}
+                            type="button"
+                            className="qb-simple-chat-workflow-link"
+                            onClick={() => onWorkflowFocusChange?.(id)}
+                          >
+                            workflow {id.slice(0, 8)}
+                          </button>
+                        ))
+                      : `workflow: ${msg.workflowRunIds.join(", ")}`}
+                  </div>
                 ) : null}
                 {msg.status === "awaiting_approval" &&
                 msg.workflowRunIds?.[0] &&
@@ -6512,6 +6546,7 @@ const TeamDashboardPanel: FC = () => {
   const handleOrchestratorChat = async (options?: {
     message?: string;
     agentMode?: AgentControlMode;
+    preserveGoal?: boolean;
   }) => {
     const wf = workflowRunId.trim();
     const msg = (options?.message ?? teamAnalysisContext).trim();
@@ -6541,6 +6576,7 @@ const TeamDashboardPanel: FC = () => {
         roleReasoner,
         agentMode: options?.agentMode ?? teamAgentMode,
         processConfig: workflowProcessConfig,
+        ...(options?.preserveGoal ? { preserveGoal: true } : {}),
       });
       setSelectedConversationSessionId(turn.sessionId);
       void refreshWorkflowOptions();
@@ -9212,6 +9248,45 @@ const TeamDashboardPanel: FC = () => {
                 message: approvedMessage,
                 agentMode: "goal",
               });
+            }}
+            onGoalAction={(action) => {
+              const wf = workflowRunId.trim();
+              if (!wf) return;
+              void (async () => {
+                try {
+                  let text: string | undefined;
+                  if (action === "edit") {
+                    text =
+                      window
+                        .prompt(
+                          "编辑 Goal（结果、约束和完成标准）",
+                          teamPlan?.goal?.text ?? ""
+                        )
+                        ?.trim() || undefined;
+                    if (!text) return;
+                  }
+                  const result = await updateWorkflowGoal(wf, {
+                    action,
+                    ...(text ? { text } : {}),
+                  });
+                  setTeamPlan(result.data);
+                  if (action === "resume") {
+                    setTeamAgentMode("goal");
+                    await handleOrchestratorChat({
+                      message: "请从当前 Goal 的已保存计划和进度继续执行，直到满足完成标准。",
+                      agentMode: "goal",
+                      preserveGoal: true,
+                    });
+                  } else if (action === "pause") {
+                    setRunProgress("Goal 已暂停");
+                    setOrchestratorChatInFlight(false);
+                  } else if (action === "clear") {
+                    setRunProgress("");
+                  }
+                } catch (e) {
+                  setError(`Goal 操作失败：${(e as Error).message}`);
+                }
+              })();
             }}
             activity={activeRationale}
             artifacts={teamArtifacts}

@@ -4,10 +4,7 @@
  * 工具/换参而不是反复重试同一个错。
  */
 import { describe, expect, test } from "bun:test";
-import {
-  buildMcpRetryHint,
-  classifyToolError,
-} from "../tool-error-classifier";
+import { buildMcpRetryHint, classifyToolError } from "../tool-error-classifier";
 
 describe("classifyToolError", () => {
   test("识别 transient 错误（timeout / 5xx / 429 / abort / 子进程退出）", () => {
@@ -29,12 +26,12 @@ describe("classifyToolError", () => {
    * mcp-financex 的 subprocess_exit 失败（10 次）本可重试却没重试。钉死为 transient。
    */
   test("中文子进程崩溃/断流（本仓自产）→ transient", () => {
-    expect(
-      classifyToolError("MCP stdio: 子进程在 tools/call 阶段提前退出 (exit code=1)")
-    ).toBe("transient");
-    expect(
-      classifyToolError("MCP stdio: 子进程在 initialize 阶段提前退出 (exit code=?)")
-    ).toBe("transient");
+    expect(classifyToolError("MCP stdio: 子进程在 tools/call 阶段提前退出 (exit code=1)")).toBe(
+      "transient"
+    );
+    expect(classifyToolError("MCP stdio: 子进程在 initialize 阶段提前退出 (exit code=?)")).toBe(
+      "transient"
+    );
     // 带 [server/tool] 前缀（prefixStdioToolError）仍 transient
     expect(
       classifyToolError(
@@ -42,9 +39,9 @@ describe("classifyToolError", () => {
       )
     ).toBe("transient");
     // jsonrpc-ndjson 断流消息
-    expect(
-      classifyToolError("MCP RPC: 子进程在响应 id=3 前关闭了 stdout（无任何输出）")
-    ).toBe("transient");
+    expect(classifyToolError("MCP RPC: 子进程在响应 id=3 前关闭了 stdout（无任何输出）")).toBe(
+      "transient"
+    );
   });
 
   test("中文 transient pattern 不误伤协议不兼容（拒绝了 protocolVersion 重试无意义）", () => {
@@ -75,9 +72,13 @@ describe("classifyToolError", () => {
   test("P1-D：connector / builtin 常见错误归类", () => {
     expect(classifyToolError("connector_call_failed")).toBe("unknown");
     expect(classifyToolError("connector qubit-news returned errorCode=timeout")).toBe("transient");
-    expect(classifyToolError("Tool \"factor.query\" is not implemented")).toBe("permanent");
+    expect(classifyToolError('Tool "factor.query" is not implemented')).toBe("permanent");
     expect(classifyToolError("factor.register: project_id is required")).toBe("permanent");
     expect(classifyToolError("ETIMEDOUT during connector call")).toBe("transient");
+    expect(classifyToolError("semantic_data_failure:dispatch_timeout_data_unknown")).toBe(
+      "transient"
+    );
+    expect(classifyToolError("semantic_data_failure:items_empty")).toBe("permanent");
   });
 });
 

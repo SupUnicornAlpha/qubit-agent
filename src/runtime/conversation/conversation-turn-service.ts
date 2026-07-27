@@ -8,6 +8,7 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 import type { AgentControlMode, AgentLoopKind, WorkflowProcessConfig } from "../../types/loop";
+import { parseAgentPlanSnapshot } from "../agent-control-mode";
 import { dispatchTaskToRole } from "../agent-pool";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { clearWorkflowCheckpointForNewTurn } from "../workflow/checkpoint-turn";
@@ -31,6 +32,8 @@ export interface CreateConversationTurnInput {
   hitlMode?: "off" | "ai" | "always";
   agentMode?: AgentControlMode;
   processConfig?: WorkflowProcessConfig;
+  /** 在同一 Goal 上继续/转向，不把本条引导消息当成一个全新的目标。 */
+  preserveGoal?: boolean;
 }
 
 export interface ConversationTurnResult {
@@ -188,12 +191,41 @@ export async function createConversationTurn(
     (workflow.loopOptionsJson as Record<string, unknown> | null) ?? {},
     input
   );
+  const currentPlan = parseAgentPlanSnapshot(workflow.planJson);
+  const promotePlanToGoal =
+    input.agentMode === "goal" && currentPlan?.mode === "plan" && Boolean(currentPlan.steps.length);
+  const continueExistingGoal =
+    input.agentMode === "goal" &&
+    input.preserveGoal === true &&
+    currentPlan?.mode === "goal" &&
+    Boolean(currentPlan.steps.length);
+  const goalText =
+    promotePlanToGoal || continueExistingGoal
+      ? currentPlan?.goal?.text?.trim() || workflow.goal
+      : message;
+  const nextPlan =
+    promotePlanToGoal || continueExistingGoal
+      ? {
+          ...currentPlan,
+          mode: "goal" as const,
+          goal: {
+            ...currentPlan.goal,
+            text: goalText,
+            status: "executing" as const,
+          },
+          updatedAt: new Date().toISOString(),
+        }
+      : input.agentMode === "goal" || input.agentMode === "plan"
+        ? null
+        : workflow.planJson;
   await db
     .update(workflowRun)
     .set({
       status: "running",
       startedAt: new Date().toISOString(),
       endedAt: null,
+      ...(input.agentMode === "goal" || input.agentMode === "plan" ? { goal: goalText } : {}),
+      planJson: nextPlan as never,
       loopOptionsJson: loopOptionsJson as never,
     })
     .where(eq(workflowRun.id, workflow.id));

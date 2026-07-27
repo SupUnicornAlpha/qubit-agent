@@ -95,4 +95,46 @@ describe("executeWithPolicy onAttemptFailure", () => {
     );
     expect(result).toBe(42);
   });
+
+  it("non-retryable failure stops after the first attempt", async () => {
+    let calls = 0;
+    await expect(
+      executeWithPolicy(
+        {
+          scopeKey: uniqueScope("permanent"),
+          retry: { maxAttempts: 5, backoffMs: 0, backoffMultiplier: 1 },
+          circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000 },
+        },
+        async () => {
+          calls += 1;
+          throw new Error("invalid argument");
+        },
+        {
+          classifyFailure: () => ({ retryable: false, circuitRelevant: false }),
+        }
+      )
+    ).rejects.toThrow("invalid argument");
+    expect(calls).toBe(1);
+  });
+
+  it("circuit-irrelevant failures do not open the circuit", async () => {
+    const scopeKey = uniqueScope("not-circuit-relevant");
+    const policy = {
+      scopeKey,
+      retry: NO_RETRY,
+      circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000 },
+    };
+    await expect(
+      executeWithPolicy(
+        policy,
+        async () => {
+          throw new Error("Unknown tool");
+        },
+        {
+          classifyFailure: () => ({ retryable: false, circuitRelevant: false }),
+        }
+      )
+    ).rejects.toThrow("Unknown tool");
+    await expect(executeWithPolicy(policy, async () => "healthy")).resolves.toBe("healthy");
+  });
 });

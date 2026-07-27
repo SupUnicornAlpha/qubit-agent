@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig } from "../../db/sqlite/schema";
 import { isMcpServerInCooldown } from "../monitor/mcp-health-tracker";
@@ -18,6 +18,28 @@ export type EnabledMcpServerInfo = {
   /** capabilities_json.tools 注入的真实工具清单；为空表示尚未注入 */
   tools?: McpToolDescriptor[];
 };
+
+/**
+ * Keep the prompt tool surface consistent with the MCP servers that survived
+ * configuration, health/cooldown and sandbox filtering.
+ *
+ * Merely telling the model "no MCP is enabled" is not enough when `call_mcp`
+ * remains in the native tool schema: models can still select that valid enum
+ * value from an older system-prompt example. Removing it from the executable
+ * surface makes an unavailable MCP call unrepresentable.
+ */
+export function filterMcpToolsByAvailability(
+  tools: string[],
+  enabledServerNames: Iterable<string>
+): string[] {
+  const enabled = new Set(enabledServerNames);
+  return tools.filter((tool) => {
+    if (tool === "call_mcp") return enabled.size > 0;
+    if (!tool.startsWith("mcp:")) return true;
+    const serverName = tool.split(":", 3)[1] ?? "";
+    return enabled.has(serverName);
+  });
+}
 
 function parseTools(raw: unknown): McpToolDescriptor[] | undefined {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
@@ -39,8 +61,11 @@ function parseTools(raw: unknown): McpToolDescriptor[] | undefined {
  * 仅保留已在 mcp_server_config 中注册且 enabled 的服务名。
  * 避免将 qubit-news 等 connector 名或未启用的 fsi-* 写入 Agent 的 MCP 白名单。
  */
-export async function resolveEnabledMcpServerNames(names: string[]): Promise<string[]> {
-  const enabled = await resolveEnabledMcpServers(names);
+export async function resolveEnabledMcpServerNames(
+  names: string[],
+  projectId?: string
+): Promise<string[]> {
+  const enabled = await resolveEnabledMcpServers(names, projectId);
   return enabled.map((s) => s.name);
 }
 
@@ -51,7 +76,10 @@ export async function resolveEnabledMcpServerNames(names: string[]): Promise<str
  * 每个 server 真实暴露的工具名，避免 LLM 凭训练记忆瞎喊
  * `get_financials / list_available_tools` 这种不存在的工具。
  */
-export async function resolveEnabledMcpServers(names: string[]): Promise<EnabledMcpServerInfo[]> {
+export async function resolveEnabledMcpServers(
+  names: string[],
+  projectId?: string
+): Promise<EnabledMcpServerInfo[]> {
   const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
   if (unique.length === 0) return [];
 
@@ -59,19 +87,28 @@ export async function resolveEnabledMcpServers(names: string[]): Promise<Enabled
   const rows = await db
     .select({
       name: mcpServerConfig.name,
+      projectId: mcpServerConfig.projectId,
       capabilitiesJson: mcpServerConfig.capabilitiesJson,
     })
     .from(mcpServerConfig)
     .where(
       and(
         eq(mcpServerConfig.enabled, true),
-        isNull(mcpServerConfig.projectId),
+        projectId
+          ? or(eq(mcpServerConfig.projectId, projectId), isNull(mcpServerConfig.projectId))
+          : isNull(mcpServerConfig.projectId),
         inArray(mcpServerConfig.name, unique)
       )
     );
 
   const byName = new Map<string, EnabledMcpServerInfo>();
-  for (const row of rows) {
+  // Project-scoped configuration overrides the global row, matching dispatcher.ts.
+  const sortedRows = [...rows].sort((a, b) => {
+    const aSpecific = projectId && a.projectId === projectId ? 1 : 0;
+    const bSpecific = projectId && b.projectId === projectId ? 1 : 0;
+    return aSpecific - bSpecific;
+  });
+  for (const row of sortedRows) {
     const tools = parseTools(row.capabilitiesJson);
     byName.set(row.name, tools ? { name: row.name, tools } : { name: row.name });
   }

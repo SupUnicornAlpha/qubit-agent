@@ -40,9 +40,15 @@ import {
   loadWorkflowTokenBudgetStatus,
   type WorkflowTokenBudgetStatus,
 } from "../../llm/workflow-token-budget";
-import { resolveEnabledMcpServers } from "../../mcp/resolve-enabled-mcp-servers";
+import {
+  filterMcpToolsByAvailability,
+  resolveEnabledMcpServers,
+} from "../../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
-import { buildSuggestedCallChainBlock } from "../../orchestration/topology-dispatch";
+import {
+  buildSuggestedCallChainBlock,
+  buildTopologySpecialistExecutionContract,
+} from "../../orchestration/topology-dispatch";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import {
@@ -349,36 +355,10 @@ export async function reasonNode(
    */
   const sessionContext = await loadSessionContext(state.workflowId);
 
-  const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
   /**
-   * 拉取 enabled MCP server **+ 真实工具清单**（capabilities_json.tools），
-   * 注入 prompt 让 LLM 看到 mcp-financex 真实可调的工具名（如 `get_financial_statements`），
-   * 而不是凭训练记忆瞎喊 `get_financials` / `list_available_tools`。
-   * 详见 resolve-enabled-mcp-servers.ts 与 tool-call-format.ts。
-   */
-  const enabledMcpServers = await resolveEnabledMcpServers(state.agentDefinition.mcpServers ?? []);
-
-  /**
-   * 授权前移（治理 #1）：把 effective tools + enabled MCP server 先按 sandbox policy
-   * 裁剪到「真正可调用」的子集，再注入 prompt。被 policy 拒的工具根本不出现在
-   * 「可用工具」块里，LLM 不会反复挑禁用工具浪费 reason 轮次。act 阶段 check*Call
-   * 仍保留为 deny-by-default 兜底（见 sandbox-executor.filterAuthorizedTools 注释）。
-   */
-  const authorized = await sandboxExecutor.filterAuthorizedTools(
-    state.agentDefinition,
-    effective.tools,
-    enabledMcpServers.map((s) => s.name)
-  );
-  let tools = authorized.tools;
-  const allowedMcpNames = new Set(authorized.mcpServers);
-  const mcpServers = enabledMcpServers.filter((s) => allowedMcpNames.has(s.name));
-
-  /**
-   * v2 HITL：source 用于决定是否注入"对话 HITL 自评 prompt"，所以从这里开始
-   * 整个函数都需要 workflowMeta。skill 召回里也会用到 projectId，下面 try 块
-   * 直接复用同一个 meta，避免对 workflow_run 表二次查询。
-   *
-   * 查询失败不阻塞（典型场景：异步 cleanup 后 workflow 被删），降级到没注入。
+   * Tool/MCP availability must use the same project context as dispatch. Loading
+   * workflow metadata after resolving MCP servers made the prompt global-only,
+   * while dispatcher supported project overrides.
    */
   let workflowMeta: {
     projectId: string | null;
@@ -398,8 +378,47 @@ export async function reasonNode(
     workflowMeta = await loadWorkflowMeta(state.workflowId);
     workflowTokenBudget = await loadWorkflowTokenBudgetStatus(await getDb(), state.workflowId);
   } catch {
-    // 静默：缺 meta 时直接走默认路径（不注入 HITL 自评 + skill 召回也会自动跳过）
+    // Missing workflow metadata must not block reasoning.
   }
+
+  const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
+  /**
+   * 拉取 enabled MCP server **+ 真实工具清单**（capabilities_json.tools），
+   * 注入 prompt 让 LLM 看到 mcp-financex 真实可调的工具名（如 `get_financial_statements`），
+   * 而不是凭训练记忆瞎喊 `get_financials` / `list_available_tools`。
+   * 详见 resolve-enabled-mcp-servers.ts 与 tool-call-format.ts。
+   */
+  const enabledMcpServers = await resolveEnabledMcpServers(
+    state.agentDefinition.mcpServers ?? [],
+    workflowMeta.projectId ?? undefined
+  );
+
+  /**
+   * 授权前移（治理 #1）：把 effective tools + enabled MCP server 先按 sandbox policy
+   * 裁剪到「真正可调用」的子集，再注入 prompt。被 policy 拒的工具根本不出现在
+   * 「可用工具」块里，LLM 不会反复挑禁用工具浪费 reason 轮次。act 阶段 check*Call
+   * 仍保留为 deny-by-default 兜底（见 sandbox-executor.filterAuthorizedTools 注释）。
+   */
+  const authorized = await sandboxExecutor.filterAuthorizedTools(
+    state.agentDefinition,
+    effective.tools,
+    enabledMcpServers.map((s) => s.name)
+  );
+  let tools = authorized.tools;
+  const allowedMcpNames = new Set(authorized.mcpServers);
+  const mcpServers = enabledMcpServers.filter((s) => allowedMcpNames.has(s.name));
+  tools = filterMcpToolsByAvailability(
+    tools,
+    mcpServers.map((server) => server.name)
+  );
+
+  /**
+   * v2 HITL：source 用于决定是否注入"对话 HITL 自评 prompt"，所以从这里开始
+   * 整个函数都需要 workflowMeta。skill 召回里也会用到 projectId，下面 try 块
+   * 直接复用同一个 meta，避免对 workflow_run 表二次查询。
+   *
+   * 查询失败不阻塞（典型场景：异步 cleanup 后 workflow 被删），降级到没注入。
+   */
   if (workflowMeta.agentMode === "plan") {
     // Prompt 层只暴露 update_plan；act 节点仍有独立硬拦截，防止模型手写隐藏工具名。
     tools = tools.filter((tool) => tool === "update_plan");
@@ -423,9 +442,7 @@ export async function reasonNode(
       : 16
   );
   const nativeToolCalling =
-    hasTools &&
-    promptTools.length > 0 &&
-    process.env["QUBIT_NATIVE_TOOL_CALLING_DISABLED"] !== "1";
+    hasTools && promptTools.length > 0 && process.env["QUBIT_NATIVE_TOOL_CALLING_DISABLED"] !== "1";
 
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
@@ -732,7 +749,7 @@ export async function reasonNode(
      */
     const systemWithDispatch =
       state.agentDefinition.role === "orchestrator"
-        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，默认由你作为唯一大脑做决策**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只缺一块证据或一个专业判断 → 用 \`assign_task\` 把子任务派给对应专家（如 analyst_technical / analyst_macro / research / risk），等回包后由你整合。\n- 需要多视角时，也优先**分别**派给 2-3 个专家，再由你自己比较与裁决；不要为了“完整流程”一次拉起整队。\n- 除非用户明确要求“完整团队报告 / 团队会审”，否则不要使用批量团队编排思路。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 交付纪律（重要）\n- 你和专家都应围绕**当前技术目标**交付最小必要结果：结论、关键证据、下一步。\n- 除非用户明确要求，**不要生成长报告、模板化章节、完整 Executive Summary、冗长复盘**。\n- 若用户要的是某个技术判断、一个候选名单、一段回测结论或一个风险结论，就只交付那个，不要顺手扩写成整份报告。\n\n## 计划可见（重要）\n当任务需要**多步**（派单、连续工具调用）时：**动手前先调 \`update_plan\` 列出 3-5 步**（每步一句话，status=pending），让用户看到你打算怎么做；**每完成一步就再调一次 \`update_plan\`**把该步 status 改为 done、下一步改为 in_progress。一句话能答的简单问题**不必**建计划。${
+        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，默认由你作为唯一大脑做决策**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只缺一块证据或一个专业判断 → 优先用拓扑中现成的 \`call_team_<role>\` 定向派给该专家；仅当没有对应拓扑工具时才用 \`assign_task\`。\n- 需要多视角时，也只按需分别派给 2-3 个专家，再由你自己比较与裁决；不要为了“完整流程”一次拉起整队。\n- 除非用户明确要求“完整团队报告 / 团队会审”，否则不要使用批量团队编排思路。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 交付纪律（重要）\n- 你和专家都应围绕**当前技术目标**交付最小必要结果：结论、关键证据、下一步。\n- 除非用户明确要求，**不要生成长报告、模板化章节、完整 Executive Summary、冗长复盘**。\n- 若用户要的是某个技术判断、一个候选名单、一段回测结论或一个风险结论，就只交付那个，不要顺手扩写成整份报告。\n\n## 计划可见（重要）\n- 只有需要 **3 个以上不同业务动作** 的任务才调用一次 \`update_plan\` 建计划；单次专家派单、一次行情拉取或一句话能答的任务禁止建计划，直接执行。\n- 建计划后必须立即执行下一项业务工具；禁止连续调用 \`update_plan\`。\n- 只有阶段发生实质变化时才更新计划，整个任务通常不超过“开工一次 + 收口一次”两次计划写入；计划维护不能替代业务执行。${
             workflowMeta.agentMode === "goal"
               ? "\n\n## 按需召唤专家（Goal 模式）\n当前为 Goal 模式：若需要团队当前编组里没有的专长，可以直接 `assign_task` 派给对应专家角色，系统会按需拉入；但必须把结果和验证状态同步回计划。"
               : ""
@@ -742,6 +759,11 @@ export async function reasonNode(
     const systemWithScenarioContract = focusedScenarioBlock
       ? `${systemWithDispatch}\n\n---\n${focusedScenarioBlock}`
       : systemWithDispatch;
+    const topologyTaskContract =
+      String(payload.taskType ?? "") === "topology_dispatch" &&
+      state.agentDefinition.role !== "orchestrator"
+        ? buildTopologySpecialistExecutionContract(state.agentDefinition.role)
+        : "";
     /** 通用运行时工作纪律：增量推进、失败自适应、先查后做；无需重新 seed Agent。 */
     const WORK_STYLE_BLOCK = [
       "## 工作方式（重要）",
@@ -766,17 +788,16 @@ export async function reasonNode(
             )
           )
         : "";
-    const systemWithWorkStyle = `${systemWithScenarioContract}\n\n---\n${WORK_STYLE_BLOCK}${
+    const systemWithWorkStyle = `${systemWithScenarioContract}${
+      topologyTaskContract ? `\n\n---\n${topologyTaskContract}` : ""
+    }\n\n---\n${WORK_STYLE_BLOCK}${
       modeBlock ? `\n\n---\n${modeBlock}` : ""
     }${processBlock ? `\n\n---\n${processBlock}` : ""}`;
-    const { full: rawSystemPrompt, toolsBlock } = assembleAgentSystemPrompt(
-      systemWithWorkStyle,
-      {
-        tools: promptTools,
-        mcpServers,
-        nativeToolCalling,
-      }
-    );
+    const { full: rawSystemPrompt, toolsBlock } = assembleAgentSystemPrompt(systemWithWorkStyle, {
+      tools: promptTools,
+      mcpServers,
+      nativeToolCalling,
+    });
     const systemPromptResult = truncatePromptText(
       rawSystemPrompt,
       workflowTokenBudget?.policy.maxSystemPromptChars ?? 20_000,
@@ -870,11 +891,7 @@ export async function reasonNode(
 
     // P0-5: 解析失败时单次重试。仅当本轮真有可调用工具，且解析器认为
     // 输出"既不是合法工具调用、也不是合法 none"时才触发，避免无意义的重调。
-    if (
-      hasTools &&
-      !nativeToolDefinition &&
-      process.env.QUBIT_REASON_RETRY_DISABLED !== "1"
-    ) {
+    if (hasTools && !nativeToolDefinition && process.env.QUBIT_REASON_RETRY_DISABLED !== "1") {
       const parsed = parseToolCallFromReason(answer, promptTools);
       if (parsed.kind === "parse_error") {
         const retryStartedAt = Date.now();
@@ -1028,9 +1045,7 @@ export async function reasonNode(
       ...(responseId ? { responseId } : {}),
       ...(lengthRetryUsed ? { lengthRetryUsed: true } : {}),
       ...(nativeToolCallingUsed ? { nativeToolCallingUsed: true } : {}),
-      ...(workflowTokenBudget?.softLimitReached
-        ? { tokenBudgetSoftLimitReached: true }
-        : {}),
+      ...(workflowTokenBudget?.softLimitReached ? { tokenBudgetSoftLimitReached: true } : {}),
       promptComponentChars,
       promptEstimatedTokens,
       promptCompacted,

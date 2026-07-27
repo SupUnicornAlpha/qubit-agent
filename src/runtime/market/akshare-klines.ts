@@ -1,5 +1,10 @@
 import { join } from "node:path";
-import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
+import type {
+  BarData,
+  ChipDistributionData,
+  FetchBarsParams,
+  FetchChipDistributionParams,
+} from "../../connectors/data/data.connector";
 import { PythonConnectorBridgeImpl } from "../../connectors/python-bridge";
 import { config } from "../../config";
 import { getPythonConnectorsDir, resolvePythonBin } from "../app-paths";
@@ -32,7 +37,7 @@ async function getAkshareBridge(): Promise<PythonConnectorBridgeImpl> {
         name: "akshare-python",
         version: "1.0.0",
         connectorType: "data",
-        capabilities: ["fetch_bars"],
+        capabilities: ["fetch_bars", "fetch_chip_distribution"],
         assetClasses: ["stock"],
         latencyProfile: "batch",
         description: "AKShare Python subprocess bridge for A-share OHLCV",
@@ -105,4 +110,30 @@ export function fetchAkshareTencentBars(
   settings: BuiltinConnectorInitConfigs = {},
 ): Promise<BarData[]> {
   return fetchAkshareBars(params, settings, "tencent");
+}
+
+export async function fetchAkshareChipDistribution(
+  params: FetchChipDistributionParams,
+  settings: BuiltinConnectorInitConfigs = {}
+): Promise<ChipDistributionData[]> {
+  if (!isChinaAShareMarket(params.symbol, params.exchange || "")) {
+    throw new Error("akshare chip distribution supports China A-share symbols only");
+  }
+  const client = await getAkshareBridge();
+  const proxyUrl = marketDataProxyForPython(settings, "akshare");
+  const payload = {
+    symbol: params.symbol,
+    exchange: params.exchange || "",
+    adjustType: params.adjustType ?? "none",
+    proxyUrl,
+  };
+  try {
+    return await client.execute<ChipDistributionData[]>("fetch_chip_distribution", payload);
+  } catch (error) {
+    if (!proxyUrl) throw error;
+    return client.execute<ChipDistributionData[]>("fetch_chip_distribution", {
+      ...payload,
+      proxyUrl: null,
+    });
+  }
 }

@@ -38,6 +38,10 @@ import { governanceRouter } from "./routes/governance.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/langgraph/event-stream";
 import { getMarketDataReadiness } from "./runtime/market/market-data-health";
+import {
+  marketStreamGateway,
+  type MarketStreamSubscription,
+} from "./runtime/market/market-stream-gateway";
 
 void registerBuiltinConnectors();
 
@@ -144,6 +148,7 @@ app.onError((err, c) => {
 interface WsData {
   id: string;
   topic?: string;
+  marketUnsubscribe?: () => void;
 }
 
 const wsClients = new Map<string, ServerWebSocket<WsData>>();
@@ -186,15 +191,57 @@ export function createServer() {
       },
       message(ws, raw) {
         try {
-          const msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
+          const msg = JSON.parse(typeof raw === "string" ? raw : raw.toString()) as {
+            subscribe?: string;
+            action?: string;
+            subscription?: MarketStreamSubscription;
+          };
           if (msg.subscribe) {
             ws.data.topic = msg.subscribe;
+          }
+          if (msg.action === "subscribe_market" && msg.subscription) {
+            ws.data.marketUnsubscribe?.();
+            ws.data.topic = "market";
+            ws.data.marketUnsubscribe = marketStreamGateway.subscribe(
+              msg.subscription,
+              (event) => {
+                try {
+                  ws.send(JSON.stringify({ topic: "market", payload: event }));
+                } catch {
+                  ws.data.marketUnsubscribe?.();
+                  delete ws.data.marketUnsubscribe;
+                }
+              }
+            );
+            ws.send(
+              JSON.stringify({
+                topic: "market",
+                payload: {
+                  kind: "status",
+                  sequence: 0,
+                  data: { status: "subscribed" },
+                  symbol: msg.subscription.symbol,
+                  exchange: msg.subscription.exchange ?? "",
+                  timeframe: msg.subscription.timeframe ?? "1m",
+                  source: "qubit_market_gateway",
+                  emittedAt: new Date().toISOString(),
+                },
+              })
+            );
+          }
+          if (msg.action === "unsubscribe_market") {
+            ws.data.marketUnsubscribe?.();
+            delete ws.data.marketUnsubscribe;
+          }
+          if (msg.action === "ping") {
+            ws.send(JSON.stringify({ topic: "pong", payload: { ts: new Date().toISOString() } }));
           }
         } catch {
           // ignore malformed
         }
       },
       close(ws) {
+        ws.data.marketUnsubscribe?.();
         wsClients.delete(ws.data.id);
       },
     },

@@ -10,10 +10,7 @@
  */
 import type { FC } from "react";
 import { useEffect, useState } from "react";
-import {
-  getMonitorMcpDiagnostics,
-  type MonitorMcpDiagnostics,
-} from "../../api/backend";
+import { getMonitorMcpDiagnostics, type MonitorMcpDiagnostics } from "../../api/backend";
 import { Kpi, styles } from "./monitor-shared";
 import { TimeseriesChart } from "./TimeseriesChart";
 
@@ -73,6 +70,7 @@ export const McpDiagnosticsPanel: FC<McpDiagnosticsPanelProps> = ({
 
   const { summary, latency, errorTop, byTool, recentCalls, health } = data;
   const successRatePct = (summary.successRate * 100).toFixed(1);
+  const nativeSuccessRatePct = (summary.nativeSuccessRate * 100).toFixed(1);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -81,7 +79,7 @@ export const McpDiagnosticsPanel: FC<McpDiagnosticsPanelProps> = ({
       <div className="qb-monitor__kpi-row" style={styles.kpiRow}>
         <Kpi label="调用数" value={String(summary.totalCalls)} />
         <Kpi
-          label="成功率"
+          label="端到端成功率"
           value={`${successRatePct}%`}
           accent={
             summary.successRate >= 0.9
@@ -91,8 +89,32 @@ export const McpDiagnosticsPanel: FC<McpDiagnosticsPanelProps> = ({
                 : "#ef4444"
           }
         />
-        <Kpi label="失败" value={String(summary.failedCount)} accent={summary.failedCount > 0 ? "#ef4444" : undefined} />
-        <Kpi label="超时" value={String(summary.timeoutCount)} accent={summary.timeoutCount > 0 ? "#eab308" : undefined} />
+        <Kpi
+          label="MCP 原生成功率"
+          value={`${nativeSuccessRatePct}%`}
+          accent={
+            summary.nativeSuccessRate >= 0.9
+              ? "#22c55e"
+              : summary.nativeSuccessRate >= 0.5
+                ? "#eab308"
+                : "#ef4444"
+          }
+        />
+        <Kpi
+          label="Fallback"
+          value={String(summary.fallbackCount)}
+          accent={summary.fallbackCount > 0 ? "#3b82f6" : undefined}
+        />
+        <Kpi
+          label="失败"
+          value={String(summary.failedCount)}
+          accent={summary.failedCount > 0 ? "#ef4444" : undefined}
+        />
+        <Kpi
+          label="超时"
+          value={String(summary.timeoutCount)}
+          accent={summary.timeoutCount > 0 ? "#eab308" : undefined}
+        />
         <Kpi
           label="沙箱阻断"
           value={String(summary.sandboxBlockedCount)}
@@ -245,6 +267,7 @@ const ByToolCard: FC<{ rows: MonitorMcpDiagnostics["byTool"] }> = ({ rows }) => 
               <th style={styles.th}>Tool</th>
               <th style={{ ...styles.th, width: 60 }}>调用</th>
               <th style={{ ...styles.th, width: 60 }}>成功</th>
+              <th style={{ ...styles.th, width: 70 }}>Fallback</th>
               <th style={{ ...styles.th, width: 60 }}>失败</th>
               <th style={{ ...styles.th, width: 60 }}>超时</th>
               <th style={{ ...styles.th, width: 80 }}>沙箱</th>
@@ -259,6 +282,9 @@ const ByToolCard: FC<{ rows: MonitorMcpDiagnostics["byTool"] }> = ({ rows }) => 
                 </td>
                 <td style={styles.td}>{r.totalCalls}</td>
                 <td style={{ ...styles.td, color: "#22c55e" }}>{r.successCount}</td>
+                <td style={{ ...styles.td, color: r.fallbackCount > 0 ? "#3b82f6" : undefined }}>
+                  {r.fallbackCount}
+                </td>
                 <td style={{ ...styles.td, color: r.failedCount > 0 ? "#ef4444" : undefined }}>
                   {r.failedCount}
                 </td>

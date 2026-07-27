@@ -22,9 +22,13 @@ export interface OrchestratorPlan {
   mode?: AgentControlMode;
   goal?: {
     text?: string;
-    status?: "planning" | "executing" | "completed" | "blocked";
+    status?: "planning" | "executing" | "paused" | "completed" | "blocked" | "cleared";
     completedSteps?: number;
     totalSteps?: number;
+    successCriteria?: string[];
+    constraints?: string[];
+    verification?: { evidenceCount?: number; summary?: string; verifiedAt?: string };
+    blocker?: string;
   };
   steps: PlanStep[];
   updatedAt?: string;
@@ -47,30 +51,33 @@ const STATUS_COLOR: Record<PlanStepStatus, string> = {
 export function PlanCard({
   plan,
   onExecute,
+  onGoalAction,
   executeDisabled = false,
 }: {
   plan: OrchestratorPlan | null;
   onExecute?: () => void;
+  onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
   executeDisabled?: boolean;
 }) {
   const [open, setOpen] = useState(true);
   const steps = plan?.steps ?? [];
   if (steps.length === 0) return null;
 
-  const done = steps.filter((s) => s.status === "done").length;
+  const done = steps.filter((s) => s.status === "done" || s.status === "skipped").length;
   const active = steps.find((s) => s.status === "in_progress");
   const mode = plan?.mode ?? "agent";
-  const headerLabel =
-    mode === "plan" ? "规划方案" : mode === "goal" ? "目标进度" : "执行计划";
+  const headerLabel = mode === "plan" ? "规划方案" : mode === "goal" ? "目标进度" : "执行计划";
   const modeLabel = mode === "plan" ? "PLAN" : mode === "goal" ? "GOAL" : "AGENT";
   const goalStatusLabel =
     plan?.goal?.status === "completed"
       ? "已完成"
-      : plan?.goal?.status === "blocked"
-        ? "受阻"
-        : plan?.goal?.status === "executing"
-          ? "执行中"
-          : "规划中";
+      : plan?.goal?.status === "paused"
+        ? "已暂停"
+        : plan?.goal?.status === "blocked"
+          ? "受阻"
+          : plan?.goal?.status === "executing"
+            ? "执行中"
+            : "规划中";
 
   return (
     <div style={styles.box}>
@@ -92,6 +99,9 @@ export function PlanCard({
         <>
           {mode === "goal" && plan?.goal?.text ? (
             <div style={styles.goalText}>{plan.goal.text}</div>
+          ) : null}
+          {mode === "goal" && (plan?.goal?.successCriteria?.length ?? 0) > 0 ? (
+            <div style={styles.criteria}>完成标准：{plan?.goal?.successCriteria?.join("；")}</div>
           ) : null}
           <ol style={styles.list}>
             {steps.map((s) => (
@@ -133,6 +143,37 @@ export function PlanCard({
                 按此计划执行 · Goal
               </button>
               <span style={styles.executeHint}>保留当前计划并切换到自主闭环执行</span>
+            </div>
+          ) : null}
+          {mode === "goal" && onGoalAction ? (
+            <div style={styles.actions}>
+              {plan?.goal?.status === "paused" ? (
+                <button
+                  type="button"
+                  style={styles.goalAction}
+                  onClick={() => onGoalAction("resume")}
+                >
+                  恢复
+                </button>
+              ) : plan?.goal?.status !== "completed" && plan?.goal?.status !== "blocked" ? (
+                <button
+                  type="button"
+                  style={styles.goalAction}
+                  onClick={() => onGoalAction("pause")}
+                >
+                  暂停
+                </button>
+              ) : null}
+              <button type="button" style={styles.goalAction} onClick={() => onGoalAction("edit")}>
+                编辑目标
+              </button>
+              <button
+                type="button"
+                style={styles.goalActionDanger}
+                onClick={() => onGoalAction("clear")}
+              >
+                清除
+              </button>
             </div>
           ) : null}
         </>
@@ -194,6 +235,12 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.45,
   },
+  criteria: {
+    margin: "0 10px 7px",
+    color: "#a5b4fc",
+    fontSize: 10,
+    lineHeight: 1.45,
+  },
   list: {
     listStyle: "none",
     margin: 0,
@@ -224,6 +271,24 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
     fontSize: 10,
     fontWeight: 600,
+    cursor: "pointer",
+  },
+  goalAction: {
+    border: "1px solid rgba(125,211,252,0.4)",
+    borderRadius: 5,
+    padding: "3px 8px",
+    background: "rgba(56,189,248,0.08)",
+    color: "#bae6fd",
+    fontSize: 10,
+    cursor: "pointer",
+  },
+  goalActionDanger: {
+    border: "1px solid rgba(248,113,113,0.35)",
+    borderRadius: 5,
+    padding: "3px 8px",
+    background: "rgba(248,113,113,0.06)",
+    color: "#fca5a5",
+    fontSize: 10,
     cursor: "pointer",
   },
   executeButtonDisabled: { opacity: 0.45, cursor: "not-allowed" },

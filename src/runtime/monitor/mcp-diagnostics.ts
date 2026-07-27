@@ -13,6 +13,7 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCallLog, mcpServerHealth, workflowRun } from "../../db/sqlite/schema";
+import { isMcpFallbackResponse } from "./mcp-summary";
 import { normalizeErrorMessage } from "./tools-diagnostics";
 
 export type McpStatus = "success" | "timeout" | "failed" | "sandbox_blocked";
@@ -24,6 +25,7 @@ export type McpDiagnosticsCall = {
   errorCode: string | null;
   latencyMs: number | null;
   retryCount: number;
+  fallback: boolean;
   workflowRunId: string;
   agentStepId: string;
   createdAt: string;
@@ -54,6 +56,7 @@ export type McpByToolStat = {
   toolName: string;
   totalCalls: number;
   successCount: number;
+  fallbackCount: number;
   failedCount: number;
   timeoutCount: number;
   sandboxBlockedCount: number;
@@ -67,10 +70,13 @@ export type McpDiagnosticsResult = {
   summary: {
     totalCalls: number;
     successCount: number;
+    fallbackCount: number;
+    nativeSuccessCount: number;
     failedCount: number;
     timeoutCount: number;
     sandboxBlockedCount: number;
     successRate: number;
+    nativeSuccessRate: number;
     avgLatencyMs: number | null;
     lastCalledAt: string | null;
   };
@@ -129,6 +135,7 @@ export async function getMcpDiagnostics(input: {
     errorCode: r.errorCode ?? null,
     latencyMs: r.latencyMs ?? null,
     retryCount: r.retryCount ?? 0,
+    fallback: isMcpFallbackResponse(r.responseJson),
     workflowRunId: r.workflowRunId,
     agentStepId: r.agentStepId,
     createdAt: r.createdAt,
@@ -183,6 +190,8 @@ type RawMcpRow = {
 
 export function aggregateSummary(rows: RawMcpRow[]): McpDiagnosticsResult["summary"] {
   let success = 0;
+  let fallback = 0;
+  let nativeSuccess = 0;
   let failed = 0;
   let timeout = 0;
   let sandbox = 0;
@@ -190,8 +199,11 @@ export function aggregateSummary(rows: RawMcpRow[]): McpDiagnosticsResult["summa
   let latCount = 0;
   let lastCalledAt: string | null = null;
   for (const r of rows) {
-    if (r.status === "success") success += 1;
-    else if (r.status === "timeout") timeout += 1;
+    if (r.status === "success") {
+      success += 1;
+      if (isMcpFallbackResponse(r.responseJson)) fallback += 1;
+      else nativeSuccess += 1;
+    } else if (r.status === "timeout") timeout += 1;
     else if (r.status === "sandbox_blocked") sandbox += 1;
     else failed += 1;
     if (typeof r.latencyMs === "number") {
@@ -204,10 +216,13 @@ export function aggregateSummary(rows: RawMcpRow[]): McpDiagnosticsResult["summa
   return {
     totalCalls: total,
     successCount: success,
+    fallbackCount: fallback,
+    nativeSuccessCount: nativeSuccess,
     failedCount: failed,
     timeoutCount: timeout,
     sandboxBlockedCount: sandbox,
     successRate: total > 0 ? Number((success / total).toFixed(4)) : 0,
+    nativeSuccessRate: total > 0 ? Number((nativeSuccess / total).toFixed(4)) : 0,
     avgLatencyMs: latCount > 0 ? Number((latSum / latCount).toFixed(2)) : null,
     lastCalledAt,
   };
@@ -249,7 +264,12 @@ export function aggregateErrorTop(rows: RawMcpRow[], limit: number): McpErrorTop
    */
   const map = new Map<
     string,
-    { count: number; lastSeenAt: string; sampleWorkflowRunId: string | null; sampleMessage: string | null }
+    {
+      count: number;
+      lastSeenAt: string;
+      sampleWorkflowRunId: string | null;
+      sampleMessage: string | null;
+    }
   >();
   for (const r of rows) {
     if (r.status === "success") continue;
@@ -314,6 +334,7 @@ export function aggregateByTool(rows: RawMcpRow[]): McpByToolStat[] {
     {
       totalCalls: number;
       successCount: number;
+      fallbackCount: number;
       failedCount: number;
       timeoutCount: number;
       sandboxBlockedCount: number;
@@ -327,6 +348,7 @@ export function aggregateByTool(rows: RawMcpRow[]): McpByToolStat[] {
       cur = {
         totalCalls: 0,
         successCount: 0,
+        fallbackCount: 0,
         failedCount: 0,
         timeoutCount: 0,
         sandboxBlockedCount: 0,
@@ -336,8 +358,10 @@ export function aggregateByTool(rows: RawMcpRow[]): McpByToolStat[] {
       map.set(r.toolName, cur);
     }
     cur.totalCalls += 1;
-    if (r.status === "success") cur.successCount += 1;
-    else if (r.status === "timeout") cur.timeoutCount += 1;
+    if (r.status === "success") {
+      cur.successCount += 1;
+      if (isMcpFallbackResponse(r.responseJson)) cur.fallbackCount += 1;
+    } else if (r.status === "timeout") cur.timeoutCount += 1;
     else if (r.status === "sandbox_blocked") cur.sandboxBlockedCount += 1;
     else cur.failedCount += 1;
     if (typeof r.latencyMs === "number") {
@@ -350,6 +374,7 @@ export function aggregateByTool(rows: RawMcpRow[]): McpByToolStat[] {
       toolName,
       totalCalls: v.totalCalls,
       successCount: v.successCount,
+      fallbackCount: v.fallbackCount,
       failedCount: v.failedCount,
       timeoutCount: v.timeoutCount,
       sandboxBlockedCount: v.sandboxBlockedCount,

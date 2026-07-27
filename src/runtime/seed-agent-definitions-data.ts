@@ -84,19 +84,23 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
-    maxIterations: 8,
+    maxIterations: 12,
   }),
   def({
     id: "def-market-data",
     role: "market_data",
     name: "行情数据",
-    version: "2.1.0",
+    version: "2.2.0",
     systemPrompt: PROMPT_MARKET_DATA,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,
       "fetch_bars",
       "fetch_klines",
       "fetch_ticks",
+      "fetch_quote",
+      "fetch_order_book",
+      "fetch_trades",
+      "fetch_chip_distribution",
       "write_snapshot",
       "call_mcp",
     ],
@@ -168,12 +172,16 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * 3.2.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
      * sector/industry 拿真实候选 ticker。
      */
-    version: "3.2.0",
+    version: "3.3.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,
       "fetch_price_data",
       "fetch_klines",
+      "fetch_quote",
+      "fetch_order_book",
+      "fetch_trades",
+      "fetch_chip_distribution",
       "compute_indicators",
       "detect_patterns",
       // M9.P2：量化锚点 — 看现成动量/反转/波动因子的 RankIC

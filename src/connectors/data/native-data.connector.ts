@@ -3,7 +3,7 @@ import {
   loadBuiltinConnectorSettings,
 } from "../../runtime/config/builtin-connector-settings";
 import { fetchAkshareBars, fetchAkshareTencentBars } from "../../runtime/market/akshare-klines";
-import { fetchBinanceBars, fetchBinanceTicker } from "../../runtime/market/binance-klines";
+import { fetchBinanceBars } from "../../runtime/market/binance-klines";
 import { isCryptoMarket } from "../../runtime/market/crypto-market";
 import { fetchEastMoneyBars, isChinaAShareMarket } from "../../runtime/market/eastmoney-klines";
 import {
@@ -38,6 +38,12 @@ import {
 } from "../../runtime/market/yfinance-klines";
 import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
+import {
+  queryChipDistribution,
+  queryMarketOrderBook,
+  queryMarketQuote,
+  queryMarketTrades,
+} from "../../runtime/market/microstructure-query";
 import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
 import {
   type AssetInfoData,
@@ -45,16 +51,24 @@ import {
   DataConnector,
   type DividendItem,
   type EarningsItem,
+  type ChipDistributionData,
   type FetchAssetInfoParams,
   type FetchBarsParams,
+  type FetchChipDistributionParams,
   type FetchDividendsParams,
   type FetchEarningsParams,
   type FetchFundamentalsParams,
   type FetchNewsParams,
+  type FetchOrderBookParams,
+  type FetchQuoteParams,
   type FetchTicksParams,
+  type FetchTradesParams,
   type FundamentalData,
   type NewsData,
+  type OrderBookData,
+  type QuoteData,
   type TickData,
+  type TradeData,
 } from "./data.connector";
 
 const TUSHARE_ENDPOINT = "https://api.tushare.pro";
@@ -157,6 +171,10 @@ export class QubitNativeDataConnector extends DataConnector {
       "fetch_bars",
       "fetch_klines",
       "fetch_ticks",
+      "fetch_quote",
+      "fetch_order_book",
+      "fetch_trades",
+      "fetch_chip_distribution",
       "fetch_price_data",
       "fetch_financial_data",
       "fetch_fundamentals",
@@ -737,44 +755,42 @@ export class QubitNativeDataConnector extends DataConnector {
 
   async fetchTicks(params: FetchTicksParams): Promise<TickData[]> {
     if (!params.symbol?.trim()) throw new Error("fetch_ticks: symbol is required");
-    if (isCryptoMarket(params.symbol, params.exchange || "")) {
-      try {
-        const liveSettings = await loadBuiltinConnectorSettings();
-        const dataCfg = (liveSettings["qubit-data"] ?? {}) as Record<string, unknown>;
-        const t = await fetchBinanceTicker(params.symbol, params.exchange, dataCfg);
-        return [
-          {
-            symbol: params.symbol,
-            exchange: params.exchange || "CRYPTO",
-            lastPrice: t.lastPrice,
-            bidPrice: t.bidPrice,
-            askPrice: t.askPrice,
-            bidVolume: 0,
-            askVolume: 0,
-            volume: t.volume,
-            timestamp: t.timestamp,
-          },
-        ];
-      } catch (e) {
-        console.warn(
-          `[qubit-data] fetch_ticks Binance failed for ${params.symbol}`,
-          e instanceof Error ? e.message : e
-        );
-      }
-    }
+    const quote = await queryMarketQuote(params);
     return [
       {
         symbol: params.symbol,
-        exchange: params.exchange || "UNKNOWN",
-        lastPrice: 100,
-        bidPrice: 99.9,
-        askPrice: 100.1,
-        bidVolume: 100,
-        askVolume: 100,
-        volume: 1_000_000,
-        timestamp: new Date(`${params.date}T09:30:00Z`).toISOString(),
+        exchange: quote.exchange,
+        lastPrice: quote.lastPrice,
+        bidPrice: quote.bidPrice ?? quote.lastPrice,
+        askPrice: quote.askPrice ?? quote.lastPrice,
+        bidVolume: quote.bidVolume ?? 0,
+        askVolume: quote.askVolume ?? 0,
+        volume: quote.volume ?? 0,
+        timestamp: quote.timestamp,
       },
     ];
+  }
+
+  override async fetchQuote(params: FetchQuoteParams): Promise<QuoteData> {
+    if (!params.symbol?.trim()) throw new Error("fetch_quote: symbol is required");
+    return queryMarketQuote(params);
+  }
+
+  override async fetchOrderBook(params: FetchOrderBookParams): Promise<OrderBookData> {
+    if (!params.symbol?.trim()) throw new Error("fetch_order_book: symbol is required");
+    return queryMarketOrderBook(params);
+  }
+
+  override async fetchTrades(params: FetchTradesParams): Promise<TradeData[]> {
+    if (!params.symbol?.trim()) throw new Error("fetch_trades: symbol is required");
+    return queryMarketTrades(params);
+  }
+
+  override async fetchChipDistribution(
+    params: FetchChipDistributionParams
+  ): Promise<ChipDistributionData[]> {
+    if (!params.symbol?.trim()) throw new Error("fetch_chip_distribution: symbol is required");
+    return queryChipDistribution(params);
   }
 
   async fetchNews(_params: FetchNewsParams): Promise<NewsData[]> {

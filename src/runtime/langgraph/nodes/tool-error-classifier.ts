@@ -27,6 +27,8 @@ const TRANSIENT_PATTERNS: RegExp[] = [
   /\btransport closed\b/i,
   /\bsubprocess\s+exited\b/i,
   /\bcircuit breaker open\b/i,
+  /\bdispatch_timeout_data_unknown\b/i,
+  /\bteam_dispatch_timeout\b/i,
   /*
    * 本仓自产的中文子进程崩溃/断流消息（瞬时崩，重试可能成功）：
    *   - stdio-session._formatStdioExitErrorMessage → "子进程在 <phase> 阶段提前退出"
@@ -49,6 +51,7 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\brequired\b.*\b(missing|absent|empty)/i,
   /\bis\s+required\b/i,
   /\bis\s+not\s+implemented\b/i,
+  /semantic_data_failure:(?:semantic_empty_result|[^:\s]*_empty|bar_count_zero|no_bars|no_data|data_status_unavailable|synthetic_data)/i,
 ];
 
 const BLOCKED_PATTERNS: RegExp[] = [

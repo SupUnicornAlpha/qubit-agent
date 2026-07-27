@@ -16,6 +16,10 @@ import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
 import {
+  isRedundantTopologyProbe,
+  resolveTopologyToolTimeoutMs,
+} from "../../orchestration/topology-dispatch";
+import {
   assessGoalPlanCompletion,
   isToolAllowedInAgentControlMode,
   parseAgentPlanSnapshot,
@@ -353,6 +357,37 @@ export async function actNode(
       }
     }
 
+    if (state.agentDefinition.role === "orchestrator" && agentMode === "goal") {
+      const completedPlan = parseAgentPlanSnapshot(planSnapshot);
+      if (completedPlan?.goal) {
+        const evidenceCount = state.toolCalls.filter(
+          (call) =>
+            call.status === "success" &&
+            call.toolName !== "update_plan" &&
+            call.toolName !== "tool/update_plan"
+        ).length;
+        const completedAt = new Date().toISOString();
+        await db
+          .update(workflowRun)
+          .set({
+            planJson: {
+              ...completedPlan,
+              goal: {
+                ...completedPlan.goal,
+                status: "completed",
+                verification: {
+                  evidenceCount,
+                  summary: summary.slice(0, 1000),
+                  verifiedAt: completedAt,
+                },
+              },
+              updatedAt: completedAt,
+            } as never,
+          })
+          .where(eq(workflowRun.id, state.workflowId));
+      }
+    }
+
     emit({
       runId: state.runId,
       workflowId: state.workflowId,
@@ -487,6 +522,8 @@ export async function actNode(
       : effectiveToolName;
   const toolKind = mcp ? "mcp" : toolRouteToToolKind(executionRoute?.route ?? "builtin");
   const toolCallId = crypto.randomUUID();
+  const inboundPayload = state.inboundMessage.payload as Record<string, unknown>;
+  const taskType = String(inboundPayload.taskType ?? "");
   /**
    * 治理 #2（取代 F-P0-12 的 isLikelyProjectIdFormat 启发式补丁）：
    *
@@ -573,6 +610,46 @@ export async function actNode(
         { toolName: targetName, status: "governance_blocked", reason: governance.reason },
       ],
       observations: [...state.observations, recoveryObservation],
+    };
+  }
+
+  if (
+    isRedundantTopologyProbe({
+      taskType,
+      targetName,
+      priorToolCalls: state.toolCalls,
+    })
+  ) {
+    const message =
+      `本轮已成功调用 ${targetName}，禁止重复健康探测。` +
+      "若核心业务数据已取得，请立即用 tool=none 汇总；否则直接调用尚未执行的业务工具。";
+    const observation = {
+      level: "warn",
+      toolGovernance: true,
+      code: "REDUNDANT_TOPOLOGY_PROBE",
+      message,
+      recovery: {
+        nextAction: "continue_with_limits",
+        allowSameToolRetry: false,
+        guidance: message,
+      },
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: observation,
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        { toolName: targetName, status: "governance_blocked", reason: message },
+      ],
+      observations: [...state.observations, observation],
     };
   }
 
@@ -705,12 +782,14 @@ export async function actNode(
   }
 
   const startedAt = Date.now();
+  const topologyToolTimeoutMs = resolveTopologyToolTimeoutMs(effectiveToolName);
   const execution = await sandboxExecutor.enforceToolTimeout({
     runId: state.runId,
     workflowId: state.workflowId,
     traceId: state.traceId,
     agentInstanceId,
     definition: state.agentDefinition,
+    ...(topologyToolTimeoutMs !== undefined ? { timeoutMs: topologyToolTimeoutMs } : {}),
     /**
      * P1-D：3 个分支（mcp/connector/builtin）的错误处理统一为
      * `{result:"error", toolError:true, errorSource, errorMessage}`，让 ReAct 后续

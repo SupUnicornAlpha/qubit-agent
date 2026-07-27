@@ -7,7 +7,11 @@ import { appendAuditLog } from "../audit/audit-chain-service";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
 import { stepStreamBus } from "../langgraph/event-stream";
 import { resolveAgentControlMode } from "../../types/loop";
-import type { AgentPlanSnapshot, AgentPlanStepStatus } from "../agent-control-mode";
+import {
+  parseAgentPlanSnapshot,
+  type AgentPlanSnapshot,
+  type AgentPlanStepStatus,
+} from "../agent-control-mode";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
@@ -58,6 +62,7 @@ import {
   loadOrchestratorTopologyForWorkflow,
   parseRoleFromTopologyTeamTool,
   resolveDispatchRole,
+  resolveTopologyTaskTimeoutMs,
 } from "../orchestration/topology-dispatch";
 import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
 import { ruleService } from "../rule/rule-service";
@@ -133,13 +138,15 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const rows = await listMarketDataSources();
     return {
       readiness: getMarketDataReadiness(),
+      readinessScope: "source_probe_only",
+      dispatchReadiness: "not_checked",
       sources: rows.filter(
         (row) =>
           (!market || row.supportedMarkets.includes(market)) &&
           (!timeframe || row.supportedTimeframes.includes(timeframe))
       ),
       guidance:
-        "先用 market.resolve_symbol 确认市场；再用此健康清单选择源。fetch_klines 会自动按优先级、凭证和熔断状态降级，不要原样重复调用已 open/down 的源。",
+        "先用 market.resolve_symbol 确认市场；再用此健康清单选择源。fetch_klines 会自动按优先级、凭证和熔断状态降级，不要原样重复调用已 open/down 的源。此结果仅代表数据源探针，不代表 call_team_* 调度健康。",
     };
   },
 
@@ -163,6 +170,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
           projectId: workflowRun.projectId,
           goal: workflowRun.goal,
           loopOptionsJson: workflowRun.loopOptionsJson,
+          planJson: workflowRun.planJson,
         })
         .from(workflowRun)
         .where(eq(workflowRun.id, ctx.workflowId))
@@ -205,11 +213,29 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const skippedSteps = steps.filter((step) => step.status === "skipped").length;
     const hasActive = steps.some((step) => step.status === "in_progress");
     const allTerminal = steps.length > 0 && completedSteps + skippedSteps === steps.length;
+    const previousPlan = parseAgentPlanSnapshot(workflowMeta.planJson);
+    const normalizeGoalList = (
+      value: unknown,
+      fallback: string[] | undefined
+    ): string[] | undefined => {
+      if (!Array.isArray(value)) return fallback;
+      const result = value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim().slice(0, 300))
+        .filter(Boolean)
+        .slice(0, 10);
+      return result.length > 0 ? result : fallback;
+    };
+    const successCriteria = normalizeGoalList(
+      params.successCriteria ?? params.success_criteria,
+      previousPlan?.goal?.successCriteria
+    );
+    const constraints = normalizeGoalList(params.constraints, previousPlan?.goal?.constraints);
     const goalStatus =
       mode === "goal"
         ? allTerminal
           ? completedSteps > 0
-            ? "completed"
+            ? "executing"
             : "blocked"
           : hasActive || completedSteps > 0
             ? "executing"
@@ -222,6 +248,11 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         status: goalStatus,
         completedSteps,
         totalSteps: steps.length,
+        ...(successCriteria ? { successCriteria } : {}),
+        ...(constraints ? { constraints } : {}),
+        ...(goalStatus === "blocked"
+          ? { blocker: "所有计划步骤均被跳过，没有可验证的已完成工作。" }
+          : {}),
       },
       steps,
       updatedAt: new Date().toISOString(),
@@ -2606,6 +2637,8 @@ async function dispatchTeamAgentTask(
   role: AgentRole;
   runId: string;
   via: string;
+  dispatchStatus: "completed" | "timeout";
+  dataAvailability: "available" | "unknown" | "not_applicable";
   result?: unknown;
   errorMessage?: string | null;
 }> {
@@ -2636,18 +2669,16 @@ async function dispatchTeamAgentTask(
       ? (params.params as Record<string, unknown>)
       : {};
 
+  const gatherTimeoutMs = resolveTopologyTaskTimeoutMs(targetRole);
   const payload: TaskAssignPayload = {
     taskId: String(params.taskId ?? randomUUID()),
     taskType: String(params.taskType ?? "topology_dispatch"),
     assignedRole: targetRole,
     params: { goal, ...extra, ...(role !== targetRole ? { requestedRole: role } : {}) },
+    deadline: new Date(Date.now() + Math.max(gatherTimeoutMs - 5_000, 5_000)).toISOString(),
   };
 
   // 先登记再派发，避免进程内总线的快速 TASK_RESULT 在 waiter 建立前到达。
-  const configuredTimeoutMs = Number(process.env.TOPOLOGY_TASK_TIMEOUT_MS ?? 120_000);
-  const gatherTimeoutMs = Number.isFinite(configuredTimeoutMs)
-    ? Math.min(Math.max(configuredTimeoutMs, 10_000), 300_000)
-    : 120_000;
   const pendingResult = getA2AGather().expect([payload.taskId], { timeoutMs: gatherTimeoutMs });
   const { runId } = await dispatchTaskToRole({
     workflowId: ctx.workflowId,
@@ -2657,15 +2688,38 @@ async function dispatchTeamAgentTask(
     senderId: ctx.agentInstanceId,
   });
   const gathered = (await pendingResult).get(payload.taskId);
+  const timedOut = Boolean(gathered?.timedOut);
+  const gatheredRecord =
+    gathered?.result && typeof gathered.result === "object"
+      ? (gathered.result as Record<string, unknown>)
+      : null;
+  const taskEvidence =
+    gatheredRecord?.taskEvidence && typeof gatheredRecord.taskEvidence === "object"
+      ? (gatheredRecord.taskEvidence as Record<string, unknown>)
+      : null;
+  const dataAvailable =
+    targetRole === "market_data" &&
+    taskEvidence?.verified === true &&
+    taskEvidence.kind === "market_data";
   return {
     dispatched: true,
-    completed: !gathered?.timedOut,
+    completed: !timedOut,
     success: Boolean(gathered?.success),
     role: targetRole,
     runId,
     via: "topology_dispatch",
+    dispatchStatus: timedOut ? "timeout" : "completed",
+    dataAvailability: timedOut ? "unknown" : dataAvailable ? "available" : "not_applicable",
     ...(gathered?.result !== undefined ? { result: gathered.result } : {}),
-    ...(gathered?.errorMessage !== undefined ? { errorMessage: gathered.errorMessage } : {}),
+    ...(timedOut
+      ? {
+          errorMessage:
+            `team_dispatch_timeout: ${targetRole} 专家在 ${gatherTimeoutMs}ms 内未回包；` +
+            "这不代表底层数据源不可用，禁止据此宣告 no_data。",
+        }
+      : gathered?.errorMessage !== undefined
+        ? { errorMessage: gathered.errorMessage }
+        : {}),
   };
 }
 

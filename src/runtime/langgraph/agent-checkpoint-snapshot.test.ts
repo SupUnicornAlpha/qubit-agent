@@ -350,6 +350,8 @@ describe("agent-checkpoint-snapshot", () => {
     state.toolCalls = [{ tool: "tool_x", ok: true }];
     state.observations = [{ r: "obs1" }, { r: "obs2" }];
     state.contextMemory = { ticker: "MSFT" };
+    state.artifactGapRetryCount = 1;
+    state.controlModeGapRetryCount = 2;
 
     await writeCheckpointSnapshot({
       runId: "e2e-run",
@@ -376,6 +378,8 @@ describe("agent-checkpoint-snapshot", () => {
     expect(restored.toolCalls).toEqual([{ tool: "tool_x", ok: true }]);
     expect(restored.observations).toEqual([{ r: "obs1" }, { r: "obs2" }]);
     expect(restored.contextMemory).toEqual({ ticker: "MSFT" });
+    expect(restored.artifactGapRetryCount).toBe(1);
+    expect(restored.controlModeGapRetryCount).toBe(2);
     // 完整 def 来自传入参数，而非快照里被裁剪的版本
     expect(restored.agentDefinition.tools).toEqual(["tool_x", "tool_y"]);
     expect(restored.agentDefinition.systemPrompt).toBe("FULL system prompt only in DB");

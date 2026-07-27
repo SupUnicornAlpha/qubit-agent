@@ -112,6 +112,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       hitlMode?: "off" | "ai" | "always";
       agentMode?: AgentControlMode;
       processConfig?: WorkflowProcessConfig;
+      preserveGoal?: boolean;
     }>()
     .catch(() => ({}));
   const projectId = body.projectId?.trim() ?? "";
@@ -152,6 +153,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       ...(hitlMode ? { hitlMode } : {}),
       ...(agentMode.success ? { agentMode: agentMode.data } : {}),
       ...(processConfig.success ? { processConfig: processConfig.data } : {}),
+      ...(body.preserveGoal === true ? { preserveGoal: true } : {}),
     });
     return c.json({ ok: true, data }, 202);
   } catch (error) {

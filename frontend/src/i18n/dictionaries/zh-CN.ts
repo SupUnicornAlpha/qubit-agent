@@ -69,6 +69,10 @@ const pack: LocalePack = {
       newChat: "新对话",
       sessionPicker: "当前对话",
       sessionPickerAria: "选择对话",
+      workflowScope: {
+        clear: "清除 workflow 筛选",
+        showConversation: "查看整个对话",
+      },
       you: "你",
       heroTitle: "从一个投资问题开始",
       heroDescription: "Qubit 会调用现有研究、因子、策略与回测能力，并把结论、证据和风险压缩成一条清晰的研究主线。",
@@ -93,6 +97,7 @@ const pack: LocalePack = {
           openConversation: "打开对话",
           unlinkedConversation: "未关联对话",
           a2a: "A2A 委派",
+          workflow: "Workflow 主任务",
           local: "Agent 执行",
           primaryAgent: "主 Agent",
           steps: "步",
@@ -104,7 +109,7 @@ const pack: LocalePack = {
             failed: "失败",
             cancelled: "已取消",
           },
-          empty: "当前对话还没有子 Agent 或非 Orchestrator 的执行记录。",
+          empty: "当前范围内还没有 workflow 或 Agent 执行记录。",
         },
         alerts: {
           eyebrow: "ATTENTION",

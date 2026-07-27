@@ -35,6 +35,13 @@ import {
   getMarketDataReadiness,
   runMarketDataHealthChecks,
 } from "../runtime/market/market-data-health";
+import {
+  queryChipDistribution,
+  queryMarketOrderBook,
+  queryMarketQuote,
+  queryMarketTrades,
+} from "../runtime/market/microstructure-query";
+import { marketStreamGateway } from "../runtime/market/market-stream-gateway";
 
 export const marketRouter = new Hono();
 
@@ -60,6 +67,84 @@ marketRouter.post("/data-sources/health", async (c) => {
 });
 
 marketRouter.get("/readiness", (c) => c.json({ ok: true, data: getMarketDataReadiness() }));
+marketRouter.get("/stream/metrics", (c) =>
+  c.json({ ok: true, data: marketStreamGateway.snapshot() })
+);
+
+marketRouter.get("/quote", async (c) => {
+  try {
+    const symbol = c.req.query("symbol")?.trim() ?? "";
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    const data = await queryMarketQuote({
+      symbol,
+      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      503
+    );
+  }
+});
+
+marketRouter.get("/order-book", async (c) => {
+  try {
+    const symbol = c.req.query("symbol")?.trim() ?? "";
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    const depth = Number(c.req.query("depth") ?? 5);
+    const data = await queryMarketOrderBook({
+      symbol,
+      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      depth: Number.isFinite(depth) ? depth : 5,
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      503
+    );
+  }
+});
+
+marketRouter.get("/trades", async (c) => {
+  try {
+    const symbol = c.req.query("symbol")?.trim() ?? "";
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    const limit = Number(c.req.query("limit") ?? 50);
+    const data = await queryMarketTrades({
+      symbol,
+      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      limit: Number.isFinite(limit) ? limit : 50,
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      503
+    );
+  }
+});
+
+marketRouter.get("/chip-distribution", async (c) => {
+  try {
+    const symbol = c.req.query("symbol")?.trim() ?? "";
+    if (!symbol) return c.json({ ok: false, error: "symbol is required" }, 400);
+    const adjust = c.req.query("adjust");
+    const adjustType = adjust === "pre" || adjust === "post" ? adjust : "none";
+    const data = await queryChipDistribution({
+      symbol,
+      ...(c.req.query("exchange") ? { exchange: c.req.query("exchange")! } : {}),
+      adjustType,
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    return c.json(
+      { ok: false, error: error instanceof Error ? error.message : String(error) },
+      503
+    );
+  }
+});
 
 interface SmaBacktestPost {
   kind?: string;

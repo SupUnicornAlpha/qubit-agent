@@ -36,6 +36,24 @@ export abstract class DataConnector extends BaseConnector {
     throw new Error("fetch_asset_info: not supported by this connector");
   }
 
+  async fetchQuote(_params: FetchQuoteParams): Promise<QuoteData> {
+    throw new Error("fetch_quote: not supported by this connector");
+  }
+
+  async fetchOrderBook(_params: FetchOrderBookParams): Promise<OrderBookData> {
+    throw new Error("fetch_order_book: not supported by this connector");
+  }
+
+  async fetchTrades(_params: FetchTradesParams): Promise<TradeData[]> {
+    throw new Error("fetch_trades: not supported by this connector");
+  }
+
+  async fetchChipDistribution(
+    _params: FetchChipDistributionParams
+  ): Promise<ChipDistributionData[]> {
+    throw new Error("fetch_chip_distribution: not supported by this connector");
+  }
+
   protected async onExecute<TOutput>(operation: string, payload: unknown): Promise<TOutput> {
     switch (operation) {
       case "fetch_bars":
@@ -52,6 +70,16 @@ export abstract class DataConnector extends BaseConnector {
         return this.fetchEarnings(payload as FetchEarningsParams) as unknown as TOutput;
       case "fetch_asset_info":
         return this.fetchAssetInfo(payload as FetchAssetInfoParams) as unknown as TOutput;
+      case "fetch_quote":
+        return this.fetchQuote(payload as FetchQuoteParams) as unknown as TOutput;
+      case "fetch_order_book":
+        return this.fetchOrderBook(payload as FetchOrderBookParams) as unknown as TOutput;
+      case "fetch_trades":
+        return this.fetchTrades(payload as FetchTradesParams) as unknown as TOutput;
+      case "fetch_chip_distribution":
+        return this.fetchChipDistribution(
+          payload as FetchChipDistributionParams
+        ) as unknown as TOutput;
       default:
         throw new Error(`DataConnector: unknown operation "${operation}"`);
     }
@@ -99,6 +127,84 @@ export interface TickData {
   askVolume: number;
   volume: number;
   timestamp: string;
+}
+
+export interface FetchQuoteParams {
+  symbol: string;
+  exchange?: string;
+}
+
+export interface QuoteData {
+  symbol: string;
+  exchange: string;
+  source: string;
+  lastPrice: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  previousClose?: number;
+  volume?: number;
+  turnover?: number;
+  bidPrice?: number;
+  bidVolume?: number;
+  askPrice?: number;
+  askVolume?: number;
+  timestamp: string;
+  freshnessMs: number;
+}
+
+export interface FetchOrderBookParams extends FetchQuoteParams {
+  depth?: number;
+}
+
+export interface OrderBookLevel {
+  price: number;
+  volume: number;
+  orderCount?: number;
+}
+
+export interface OrderBookData {
+  symbol: string;
+  exchange: string;
+  source: string;
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  timestamp: string;
+  freshnessMs: number;
+}
+
+export interface FetchTradesParams extends FetchQuoteParams {
+  limit?: number;
+}
+
+export interface TradeData {
+  id: string;
+  symbol: string;
+  exchange: string;
+  source: string;
+  price: number;
+  volume: number;
+  side: "buy" | "sell" | "neutral" | "unknown";
+  timestamp: string;
+}
+
+export interface FetchChipDistributionParams extends FetchQuoteParams {
+  adjustType?: "none" | "pre" | "post";
+}
+
+export interface ChipDistributionData {
+  symbol: string;
+  exchange: string;
+  source: string;
+  date: string;
+  winnerRate: number;
+  averageCost: number;
+  cost90Low: number;
+  cost90High: number;
+  concentration90: number;
+  cost70Low: number;
+  cost70High: number;
+  concentration70: number;
 }
 
 export interface FetchNewsParams {

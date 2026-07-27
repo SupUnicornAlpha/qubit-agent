@@ -53,6 +53,15 @@ export interface ExternalCallOptions {
    * 回调内抛错不影响主流程（被吞 + warn），observability 不该拖垮业务。
    */
   onAttemptFailure?: (attempt: number, error: Error) => void | Promise<void>;
+  /**
+   * Decide whether a failure is worth retrying and whether it represents
+   * infrastructure health. Validation/unknown-tool errors should normally be
+   * neither retried nor counted toward a circuit breaker.
+   */
+  classifyFailure?: (error: Error) => {
+    retryable: boolean;
+    circuitRelevant: boolean;
+  };
 }
 
 export async function executeWithPolicy<T>(
@@ -70,10 +79,7 @@ export async function executeWithPolicy<T>(
   const key = policyKey(policy);
   const circuit = circuitByKey.get(key) ?? { failures: 0 };
   const now = Date.now();
-  if (
-    circuit.openedAt &&
-    now - circuit.openedAt < policy.circuitBreaker.cooldownMs
-  ) {
+  if (circuit.openedAt && now - circuit.openedAt < policy.circuitBreaker.cooldownMs) {
     throw new Error("circuit breaker open");
   }
   if (circuit.openedAt && now - circuit.openedAt >= policy.circuitBreaker.cooldownMs) {
@@ -100,11 +106,17 @@ export async function executeWithPolicy<T>(
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      circuit.failures += 1;
-      if (circuit.failures >= policy.circuitBreaker.failureThreshold) {
-        circuit.openedAt = Date.now();
+      const failure = options?.classifyFailure?.(lastError) ?? {
+        retryable: true,
+        circuitRelevant: true,
+      };
+      if (failure.circuitRelevant) {
+        circuit.failures += 1;
+        if (circuit.failures >= policy.circuitBreaker.failureThreshold) {
+          circuit.openedAt = Date.now();
+        }
+        circuitByKey.set(key, circuit);
       }
-      circuitByKey.set(key, circuit);
       if (options?.onAttemptFailure) {
         // observability 钩子失败不该拖垮业务：吞 + warn
         try {
@@ -115,8 +127,9 @@ export async function executeWithPolicy<T>(
           );
         }
       }
-      if (attempt >= policy.retry.maxAttempts) break;
-      const backoff = policy.retry.backoffMs * Math.pow(policy.retry.backoffMultiplier, attempt - 1);
+      if (!failure.retryable || attempt >= policy.retry.maxAttempts) break;
+      const backoff =
+        policy.retry.backoffMs * Math.pow(policy.retry.backoffMultiplier, attempt - 1);
       await Bun.sleep(backoff);
     }
   }
@@ -126,4 +139,3 @@ export async function executeWithPolicy<T>(
 function policyKey(policy: ExternalCallPolicy): string {
   return `${policy.scopeKey}:${policy.circuitBreaker.failureThreshold}:${policy.circuitBreaker.cooldownMs}:${policy.retry.maxAttempts}`;
 }
-

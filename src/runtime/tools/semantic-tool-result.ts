@@ -28,6 +28,9 @@ function inspect(value: unknown, depth: number): string | null {
   }
   if (typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
+  if (record.dispatchStatus === "timeout" && record.dataAvailability === "unknown") {
+    return "dispatch_timeout_data_unknown";
+  }
   if (record.success === false) {
     return typeof record.errorMessage === "string" && record.errorMessage.trim()
       ? normalizeReason(record.errorMessage)

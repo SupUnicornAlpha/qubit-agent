@@ -197,9 +197,27 @@ export interface RecordToolCallErrorInput extends BaseFinalizeInput {
   errorMessage: string;
 }
 
+export function classifyToolErrorCode(source: ToolErrorSource, message: string): string {
+  if (source !== "mcp") return `${source}_call_failed`;
+  if (/not found or disabled/i.test(message)) return "mcp_server_disabled";
+  if (/Unknown tool|UNKNOWN_TOOL/i.test(message)) return "mcp_unknown_tool";
+  if (/tool binding disabled/i.test(message)) return "mcp_tool_disabled";
+  if (/validation|invalid (?:argument|parameter|input)|is required|at least \d+/i.test(message)) {
+    return "mcp_invalid_arguments";
+  }
+  if (/\btimeout\b|\btimed?\s*out\b|\bETIMEDOUT\b/i.test(message)) return "mcp_timeout";
+  if (/subprocess|子进程|stdout|stream closed|transport closed/i.test(message)) {
+    return "mcp_transport_exit";
+  }
+  if (/market_data_unavailable|no[_ ](?:data|bars)|news_evidence_unavailable/i.test(message)) {
+    return "mcp_data_unavailable";
+  }
+  return "mcp_call_failed";
+}
+
 export async function recordToolCallError(input: RecordToolCallErrorInput): Promise<void> {
   const db = await getDb();
-  const errorCode = `${input.errorSource}_call_failed`;
+  const errorCode = classifyToolErrorCode(input.errorSource, input.errorMessage);
 
   await db
     .update(toolCallLog)

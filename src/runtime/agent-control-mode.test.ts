@@ -70,6 +70,42 @@ describe("Goal completion gate", () => {
     expect(result.code).toBe("complete");
   });
 
+  test("rejects all-skipped, undocumented skips, and concurrent active steps", () => {
+    expect(
+      assessGoalPlanCompletion({
+        steps: [{ id: "s1", title: "无法执行", status: "skipped", note: "缺少权限" }],
+      }).code
+    ).toBe("no_completed_work");
+    expect(
+      assessGoalPlanCompletion({
+        steps: [
+          { id: "s1", title: "已验证", status: "done" },
+          { id: "s2", title: "未执行", status: "skipped" },
+        ],
+      }).code
+    ).toBe("undocumented_skip");
+    expect(
+      assessGoalPlanCompletion({
+        steps: [
+          { id: "s1", title: "任务一", status: "in_progress" },
+          { id: "s2", title: "任务二", status: "in_progress" },
+        ],
+      }).code
+    ).toBe("invalid_progress");
+  });
+
+  test("does not complete a paused or blocked goal", () => {
+    const steps = [{ id: "s1", title: "验证", status: "done" as const }];
+    expect(assessGoalPlanCompletion({ goal: { status: "paused" }, steps }).code).toBe("paused");
+    expect(
+      assessGoalPlanCompletion({
+        goal: { status: "blocked", blocker: "等待用户凭证" },
+        steps,
+      }).code
+    ).toBe("blocked");
+    expect(assessGoalPlanCompletion({ goal: { status: "cleared" }, steps }).code).toBe("cleared");
+  });
+
   test("normalizes malformed plan entries defensively", () => {
     expect(
       parseAgentPlanSnapshot({
@@ -79,6 +115,27 @@ describe("Goal completion gate", () => {
     ).toEqual({
       mode: "goal",
       steps: [{ id: "s1", title: "有效步骤", status: "pending" }],
+    });
+  });
+
+  test("preserves goal criteria, constraints, pause state, and verification", () => {
+    expect(
+      parseAgentPlanSnapshot({
+        mode: "goal",
+        goal: {
+          text: "完成迁移",
+          status: "paused",
+          successCriteria: ["测试通过"],
+          constraints: ["不改 API"],
+          verification: { evidenceCount: 2, summary: "bun test 通过", verifiedAt: "now" },
+        },
+        steps: [{ title: "验证", status: "done" }],
+      })?.goal
+    ).toMatchObject({
+      status: "paused",
+      successCriteria: ["测试通过"],
+      constraints: ["不改 API"],
+      verification: { evidenceCount: 2, summary: "bun test 通过", verifiedAt: "now" },
     });
   });
 });
