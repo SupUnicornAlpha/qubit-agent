@@ -34,31 +34,13 @@ python_connectors/wheels/*
 !python_connectors/wheels/README.md
 *.pyc
 
-# Product docs (PRD / ERD) — tracked separately; README screenshots are public
+# Product / design / interview docs — local only (maintainer private)
+# README screenshots remain public for the landing page.
 docs/*
 !docs/screenshots/
 !docs/screenshots/**
-!docs/LOOP_DRIVERS.md
-!docs/ARCHITECTURE.md
-!docs/QUANT_READINESS_ASSESSMENT.md
-!docs/QUANT_AGENT_PRODUCT_ROADMAP_P0_P2.md
-!docs/TOKEN_EFFICIENCY_ROADMAP_P0_P2.md
-!docs/FACTOR_RULE_STRATEGY_DESIGN.md
-!docs/AGENT_STABILITY_REVIEW.md
-!docs/HITL_REDESIGN.md
-!docs/MONITORING_V2_DESIGN.md
-!docs/ENVIRONMENT_MANAGER_DESIGN.md
-!docs/MEMORY_V2_DESIGN.md
-!docs/SELF_EVOLVING_AGENT_DESIGN.md
-!docs/SELF_EVOLVING_AGENT_P10_BACKLOG.md
-!docs/P0_REMEDIATION_PLAN.md
-!docs/TOOL_MCP_RELIABILITY_AND_EVOLUTION_REVIEW.md
-!docs/canvases/
-!docs/canvases/**
 
 # Private interview / job-search material (local only)
-docs/INTERVIEW_PREP.md
-docs/INTERVIEW_*.md
 interview/
 *.interview.md
 .tmp-broker-test-home/
