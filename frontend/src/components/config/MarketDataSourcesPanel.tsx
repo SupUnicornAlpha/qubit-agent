@@ -103,7 +103,7 @@ export const MarketDataSourcesPanel: FC = () => {
           <strong>{readiness.status.toUpperCase()}</strong>
           <span>{readiness.message}</span>
           <span style={styles.readinessMeta}>
-            健康源 {readiness.healthySources.length} · 市场 {readiness.readyMarkets.join(" / ") || "无"} · {compactTime(readiness.checkedAt)}
+            日线源 {readiness.healthySources.length} · 历史市场 {readiness.readyMarkets.join(" / ") || "无"} · 实时市场 {(readiness.realtimeReadyMarkets ?? []).join(" / ") || "无"} · {compactTime(readiness.checkedAt)}
           </span>
         </div>
       ) : null}

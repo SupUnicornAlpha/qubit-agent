@@ -33,6 +33,7 @@ import {
   countQueuedUserMessages,
   enqueueUserMessage,
 } from "../runtime/workflow/user-message-queue";
+import { requestWorkflowCancellation } from "../runtime/workflow/workflow-cancellation";
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
@@ -435,6 +436,9 @@ workflowRouter.delete("/:id", async (c) => {
     .then((b) => b?.hard === true)
     .catch(() => false);
   const isHard = hardQuery === "true" || hardQuery === "1" || bodyHard;
+
+  // 先打断当前 LLM HTTP/SSE 请求；仅改 DB status 会让后台继续生成并消耗 token。
+  requestWorkflowCancellation(id);
 
   // Best-effort 终止 in-memory analyst job：避免软删 / 硬删后后台任务还在 spinning，
   // 继续写 DB / 烧 token，并让前端轮询看到"任务还在跑"的错觉。

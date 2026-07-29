@@ -9,14 +9,10 @@ import {
 describe("OpenAI-compatible endpoint normalization", () => {
   test("accepts either an API root or a full chat completions endpoint", () => {
     expect(
-      normalizeOpenAICompatibleBaseUrl(
-        "https://open.bigmodel.cn/api/paas/v4/chat/completions",
-      ),
+      normalizeOpenAICompatibleBaseUrl("https://open.bigmodel.cn/api/paas/v4/chat/completions")
     ).toBe("https://open.bigmodel.cn/api/paas/v4");
     expect(
-      resolveOpenAICompatibleChatCompletionsUrl(
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      ),
+      resolveOpenAICompatibleChatCompletionsUrl("https://dashscope.aliyuncs.com/compatible-mode/v1")
     ).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
   });
 
@@ -27,37 +23,94 @@ describe("OpenAI-compatible endpoint normalization", () => {
   });
 });
 
-describe("Zhipu non-stream gateway", () => {
-  const originalCompatStream = process.env["QUBIT_LLM_COMPAT_STREAM"];
+describe("OpenAI-compatible streaming gateway", () => {
+  const originalCompatStream = process.env.QUBIT_LLM_COMPAT_STREAM;
+  const originalCompatNonStream = process.env.QUBIT_LLM_COMPAT_NON_STREAM;
   let fetchSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    delete process.env["QUBIT_LLM_COMPAT_STREAM"];
+    process.env.QUBIT_LLM_COMPAT_STREAM = undefined;
+    process.env.QUBIT_LLM_COMPAT_NON_STREAM = undefined;
     fetchSpy = spyOn(globalThis, "fetch");
   });
 
   afterEach(() => {
     fetchSpy.mockRestore();
-    if (originalCompatStream === undefined) delete process.env["QUBIT_LLM_COMPAT_STREAM"];
-    else process.env["QUBIT_LLM_COMPAT_STREAM"] = originalCompatStream;
+    process.env.QUBIT_LLM_COMPAT_STREAM = originalCompatStream;
+    process.env.QUBIT_LLM_COMPAT_NON_STREAM = originalCompatNonStream;
   });
 
-  test("does not duplicate version or chat completion path", async () => {
+  test("defaults to true streaming and does not duplicate the endpoint path", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     fetchSpy.mockImplementation((url: string | URL, init?: RequestInit) => {
       calls.push({
         url: String(url),
         body: JSON.parse(String(init?.body ?? "{}")),
       });
+      const encoder = new TextEncoder();
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              for (const data of [
+                {
+                  id: "zhipu-test",
+                  choices: [{ delta: { content: "O" }, finish_reason: null }],
+                },
+                {
+                  id: "zhipu-test",
+                  choices: [{ delta: { content: "K" }, finish_reason: "stop" }],
+                  usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
+                },
+              ]) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+              }
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }
+        )
+      );
+    });
+
+    const tokens: string[] = [];
+    const result = await runLlmGateway({
+      config: {
+        provider: "zhipu",
+        model: "glm5.2",
+        apiKey: "test-key",
+        baseUrl: "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+      },
+      systemPrompt: "system",
+      userPrompt: "ping",
+      onToken: (token) => tokens.push(token),
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://open.bigmodel.cn/api/paas/v4/chat/completions");
+    expect(calls[0]?.body.model).toBe("glm-5.2");
+    expect(calls[0]?.body.stream).toBe(true);
+    expect(tokens).toEqual(["O", "K"]);
+    expect(result.answer).toBe("OK");
+  });
+
+  test("explicit non-stream fallback remains available for legacy proxies", async () => {
+    process.env.QUBIT_LLM_COMPAT_NON_STREAM = "1";
+    fetchSpy.mockImplementation((_url: string | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body ?? "{}")).stream).toBe(false);
       return Promise.resolve(
         new Response(
           JSON.stringify({
-            id: "zhipu-test",
+            id: "zhipu-non-stream",
             choices: [{ message: { content: "OK" }, finish_reason: "stop" }],
             usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 },
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
       );
     });
 
@@ -73,10 +126,6 @@ describe("Zhipu non-stream gateway", () => {
       onToken: () => {},
     });
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("https://open.bigmodel.cn/api/paas/v4/chat/completions");
-    expect(calls[0]?.body.model).toBe("glm-5.2");
-    expect(calls[0]?.body.stream).toBe(false);
     expect(result.answer).toBe("OK");
   });
 });

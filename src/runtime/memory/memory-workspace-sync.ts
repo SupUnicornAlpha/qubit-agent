@@ -8,6 +8,9 @@
  * 触发：
  *   - consolidateFromWorkflow 完成后自动同步参与的每个 agent（A1→A2 链）
  *   - 也可由 Agent 主动调 memory.refresh_workspace 工具触发
+ *
+ * Context Protocol 05：冷镜像 **仅保留 identity / execution_profile**；
+ * 因子结论、策略、研究 stance 等走 `recall_finance`，禁止再灌进 system。
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -18,7 +21,6 @@ import {
   agentDefinition,
   agentProfile,
   longtermMemory,
-  midtermMemory,
 } from "../../db/sqlite/schema";
 import { config } from "../../config";
 import { resolvePackRoot } from "../agent/agent-pack-service";
@@ -27,7 +29,6 @@ const SYNC_HEADER =
   "<!-- Auto-synced from DB by MemoryConsolidationService. Manual edits will be overwritten. -->\n";
 
 const MAX_LONGTERM_PER_TYPE = 10;
-const MAX_MIDTERM = 8;
 
 export interface SyncMemoryResult {
   packRoot: string;
@@ -57,7 +58,7 @@ export async function syncMemoryFromDb(definitionId: string): Promise<SyncMemory
 
   await mkdir(workspaceDir, { recursive: true });
 
-  // 1. 拉 longterm（按 memoryType 分组）
+  // 1. 拉 longterm —— Context Protocol：仅 execution_profile（identity）
   const longtermRows = await db
     .select()
     .from(longtermMemory)
@@ -65,8 +66,10 @@ export async function syncMemoryFromDb(definitionId: string): Promise<SyncMemory
     .orderBy(desc(longtermMemory.asofTime))
     .limit(MAX_LONGTERM_PER_TYPE * 5);
 
+  const IDENTITY_TYPES = new Set(["execution_profile"]);
   const longtermByType = new Map<string, typeof longtermRows>();
   for (const row of longtermRows) {
+    if (!IDENTITY_TYPES.has(row.memoryType)) continue;
     const list = longtermByType.get(row.memoryType) ?? [];
     if (list.length < MAX_LONGTERM_PER_TYPE) {
       list.push(row);
@@ -74,13 +77,15 @@ export async function syncMemoryFromDb(definitionId: string): Promise<SyncMemory
     }
   }
 
-  // 2. 拉 midterm（按 asofTime desc）
-  const midtermRows = await db
-    .select()
-    .from(midtermMemory)
-    .where(eq(midtermMemory.definitionId, definitionId))
-    .orderBy(desc(midtermMemory.asofTime))
-    .limit(MAX_MIDTERM);
+  // 2. midterm 不再写入冷镜像（金融/工作流总结走 Experience recall）
+  const midtermRows: Array<{
+    id: string;
+    memoryType: string;
+    contentJson: unknown;
+    asofTime: string;
+    timeWindowStart: string;
+    timeWindowEnd: string;
+  }> = [];
 
   // 3. 渲染 markdown
   const md = renderMemoryMarkdown({
@@ -97,8 +102,8 @@ export async function syncMemoryFromDb(definitionId: string): Promise<SyncMemory
     packRoot,
     packMemoryPath,
     workspaceMemoryPath,
-    longtermCount: longtermRows.length,
-    midtermCount: midtermRows.length,
+    longtermCount: [...longtermByType.values()].reduce((n, rows) => n + rows.length, 0),
+    midtermCount: 0,
   };
 }
 
@@ -128,14 +133,17 @@ export function renderMemoryMarkdown(input: RenderInput): string {
   const now = new Date().toISOString();
   const lines: string[] = [];
 
-  lines.push(`# Long-term Memory · ${input.definitionName} (${input.role})`);
+  lines.push(`# Identity Memory · ${input.definitionName} (${input.role})`);
   lines.push("");
-  lines.push(`> 由 MemoryConsolidationService 自动维护；同步时间：${now}`);
+  lines.push(`> Context Protocol：冷镜像仅 identity / execution_profile；同步时间：${now}`);
+  lines.push(
+    "> 金融结论（因子/策略/研究）请依赖运行时 `## Memory · Finance Recall`，勿在此文件堆积。"
+  );
   lines.push("");
 
-  // Long-term
+  // Identity only
   if (input.longtermByType.size > 0) {
-    lines.push("## 长期记忆（longterm）");
+    lines.push("## 执行画像（execution_profile）");
     lines.push("");
     for (const [memoryType, rows] of input.longtermByType.entries()) {
       lines.push(`### ${memoryType} (${rows.length})`);
@@ -148,15 +156,15 @@ export function renderMemoryMarkdown(input: RenderInput): string {
       lines.push("");
     }
   } else {
-    lines.push("## 长期记忆（longterm）");
+    lines.push("## 执行画像（execution_profile）");
     lines.push("");
-    lines.push("_暂无长期记忆。Agent 完成工作流后会自动归纳；也可主动调 memory.consolidate_longterm 工具。_");
+    lines.push("_暂无执行画像。可通过 write_memory(memoryType=execution_profile) 写入风险偏好等身份信息。_");
     lines.push("");
   }
 
-  // Mid-term
+  // midterm 保留渲染分支以兼容旧测试输入，但默认同步传入空数组
   if (input.midtermRows.length > 0) {
-    lines.push("## 近期工作流总结（midterm）");
+    lines.push("## 近期工作流总结（midterm · legacy）");
     lines.push("");
     for (const row of input.midtermRows) {
       const content = extractContent(row.contentJson);
@@ -165,16 +173,13 @@ export function renderMemoryMarkdown(input: RenderInput): string {
       lines.push(truncate(content, 500));
       lines.push("");
     }
-  } else {
-    lines.push("## 近期工作流总结（midterm）");
-    lines.push("");
-    lines.push("_暂无中期记忆。完成一次工作流后会自动生成。_");
-    lines.push("");
   }
 
   lines.push("---");
   lines.push("");
-  lines.push("_此文件由系统自动同步，请勿手工编辑。如需添加长期经验，使用 `write_memory` 工具，并选择合适的 layer/memoryType。_");
+  lines.push(
+    "_此文件由系统自动同步。金融结构化记忆请用 Experience / FinanceRecall；identity 用 execution_profile。_"
+  );
 
   return lines.join("\n");
 }

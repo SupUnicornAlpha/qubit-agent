@@ -1,5 +1,9 @@
 import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { RuntimeAgentDefinition } from "../types";
+import {
+  createEmptyWorkingMemory,
+} from "../context/working-memory";
+import type { WorkingMemory } from "../context/types";
 
 export type StepEventType =
   | "token"
@@ -39,6 +43,8 @@ export interface AgentGraphState {
   // runtime state
   iteration: number;
   contextMemory: Record<string, unknown>;
+  /** Context Protocol L2：结构化短时工作记忆（一等字段） */
+  workingMemory: WorkingMemory;
   plannedAction: string | null;
   reasonText: string | null;
   toolCalls: Array<Record<string, unknown>>;
@@ -81,6 +87,7 @@ export function createInitialGraphState(input: {
     inboundMessage: input.inboundMessage,
     iteration: 0,
     contextMemory: {},
+    workingMemory: createEmptyWorkingMemory(),
     plannedAction: null,
     reasonText: null,
     toolCalls: [],

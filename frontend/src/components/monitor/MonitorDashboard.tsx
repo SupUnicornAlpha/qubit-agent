@@ -25,6 +25,7 @@ import type {
   WorkflowMode,
   WorkflowObservability,
   WorkflowQualitySnapshotRecord,
+  WorkflowTimeline,
 } from "../../api/types";
 import {
   ackAlert,
@@ -40,6 +41,7 @@ import {
   getSessionAgentsBoard,
   getWorkflowDetail,
   getWorkflowObservability,
+  getWorkflowTimeline,
   listAgents,
   listAgentQuality,
   listAlerts,
@@ -85,6 +87,8 @@ export const MonitorDashboard: FC = () => {
   const streamEvents = useAppStore((s) => s.streamEvents);
   const pushStreamEvent = useAppStore((s) => s.pushStreamEvent);
   const clearStreamEvents = useAppStore((s) => s.clearStreamEvents);
+  const monitorWorkflowFocus = useAppStore((s) => s.monitorWorkflowFocus);
+  const setMonitorWorkflowFocus = useAppStore((s) => s.setMonitorWorkflowFocus);
 
   const [projectId, setProjectId] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -102,6 +106,7 @@ export const MonitorDashboard: FC = () => {
   const [workspaceId, setWorkspaceId] = useState("");
   const [projects, setProjects] = useState<Array<{ id: string; name: string }>>([]);
   const [goal, setGoal] = useState("Run orchestrator workflow");
+  const [projectReady, setProjectReady] = useState(false);
   const [mode, setMode] = useState<WorkflowMode>("research");
   const [createLoopKind, setCreateLoopKind] = useState<AgentLoopKind>("native");
   const [sessionFilter, setSessionFilter] = useState("");
@@ -110,6 +115,7 @@ export const MonitorDashboard: FC = () => {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
   const [drawerDetail, setDrawerDetail] = useState("");
   const [workflowObservability, setWorkflowObservability] = useState<WorkflowObservability | null>(null);
+  const [workflowTimeline, setWorkflowTimeline] = useState<WorkflowTimeline | null>(null);
   const [qualitySnapshots, setQualitySnapshots] = useState<WorkflowQualitySnapshotRecord[]>([]);
   const [agentQuality, setAgentQuality] = useState<AgentRuntimeMetricRecord[]>([]);
   const [alerts, setAlerts] = useState<AlertEventRecord[]>([]);
@@ -373,6 +379,7 @@ export const MonitorDashboard: FC = () => {
    */
   useEffect(() => {
     if (!projectId) return;
+    setProjectReady(false);
     void (async () => {
       try {
         const defaultSession = await getDefaultProjectSession(projectId);
@@ -383,6 +390,8 @@ export const MonitorDashboard: FC = () => {
       setSessionFilter("");
       setSelectedWorkflowId(null);
       setDrawerDetail("");
+      setWorkflowTimeline(null);
+      setProjectReady(true);
     })().catch(console.error);
   }, [projectId]);
 
@@ -439,22 +448,33 @@ export const MonitorDashboard: FC = () => {
     await onSearch();
   };
 
-  const onSelectWorkflow = async (workflowId: string) => {
+  const onSelectWorkflow = useCallback(async (workflowId: string) => {
     setSelectedWorkflowId(workflowId);
     try {
-      const [detail, obs] = await Promise.all([
+      const [detail, obs, timeline] = await Promise.all([
         getWorkflowDetail(workflowId),
         getWorkflowObservability(workflowId),
+        getWorkflowTimeline(workflowId),
       ]);
       setDrawerDetail(JSON.stringify(detail, null, 2));
       setWorkflowObservability(obs);
+      setWorkflowTimeline(timeline);
       const snaps = await listWorkflowQuality(workflowId);
       setQualitySnapshots(snaps);
     } catch (e) {
       setDrawerDetail(e instanceof Error ? e.message : "加载失败");
       setWorkflowObservability(null);
+      setWorkflowTimeline(null);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!monitorWorkflowFocus || !projectReady) return;
+    const workflowId = monitorWorkflowFocus;
+    setMonitorWorkflowFocus(null);
+    setScope("workflow");
+    void onSelectWorkflow(workflowId);
+  }, [monitorWorkflowFocus, onSelectWorkflow, projectReady, setMonitorWorkflowFocus]);
 
   const refreshAlerts = async () => {
     setAlerts(
@@ -671,6 +691,7 @@ export const MonitorDashboard: FC = () => {
           selectedWorkflowId={selectedWorkflowId}
           drawerDetail={drawerDetail}
           workflowObservability={workflowObservability}
+          workflowTimeline={workflowTimeline}
           qualitySnapshots={qualitySnapshots}
           qualityLineData={qualityLineData}
           sessionFilter={sessionFilter}

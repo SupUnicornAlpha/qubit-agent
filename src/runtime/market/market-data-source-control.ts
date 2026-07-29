@@ -2,20 +2,17 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { marketDataSource, marketDataSourceCall } from "../../db/sqlite/schema";
 import {
-  loadBuiltinConnectorSettings,
   type BuiltinConnectorInitConfigs,
+  loadBuiltinConnectorSettings,
 } from "../config/builtin-connector-settings";
-import type { MarketCode } from "./resolve-ticker-market";
 import type { KlinesDataSourceMeta, KlinesDataSourceSetting } from "./klines-data-source";
 import {
+  type MarketDataFailureKind,
   classifyMarketDataFailure,
   formatMarketDataFailure,
-  type MarketDataFailureKind,
 } from "./market-data-errors";
-import {
-  resolveMarketDataNetworkRoute,
-  type MarketDataNetworkMode,
-} from "./market-data-network";
+import { type MarketDataNetworkMode, resolveMarketDataNetworkRoute } from "./market-data-network";
+import type { MarketCode } from "./resolve-ticker-market";
 
 export type OperationalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
 
@@ -70,7 +67,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     name: "Binance Market Data",
     vendor: "Binance",
     markets: ["CRYPTO"],
-    timeframes: ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "4h", "1d"],
     credentialMode: "none",
     priority: 85,
     isFallback: false,
@@ -81,7 +78,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     name: "EastMoney Kline",
     vendor: "东方财富",
     markets: ["CN"],
-    timeframes: ["1m", "5m", "15m", "30m", "1h", "4h", "1d"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "4h", "1d"],
     credentialMode: "none",
     priority: 75,
     isFallback: true,
@@ -103,7 +100,7 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     name: "AKShare Tencent Daily",
     vendor: "腾讯证券 / AKShare",
     markets: ["CN"],
-    timeframes: ["1d"],
+    timeframes: ["quote", "1d"],
     credentialMode: "none",
     priority: 60,
     isFallback: true,
@@ -138,7 +135,10 @@ const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 60_000;
 const upstreamBackoffUntil = new Map<MarketDataUpstreamFamily, number>();
 
-function credentialsReady(def: MarketDataSourceDefinition, settings: BuiltinConnectorInitConfigs): boolean {
+function credentialsReady(
+  def: MarketDataSourceDefinition,
+  settings: BuiltinConnectorInitConfigs
+): boolean {
   const cfg = settings["qubit-data"] ?? {};
   if (def.credentialMode === "none") return true;
   if (def.id === "tushare_daily") {
@@ -208,7 +208,12 @@ export interface MarketDataSourceView {
   isFallback: boolean;
   upstreamFamily: MarketDataUpstreamFamily;
   failureKind: MarketDataFailureKind | null;
-  availabilityStatus: "ready" | "credentials_missing" | "backing_off" | "misconfigured" | "unavailable";
+  availabilityStatus:
+    | "ready"
+    | "credentials_missing"
+    | "backing_off"
+    | "misconfigured"
+    | "unavailable";
   retryAt: string | null;
   networkMode: MarketDataNetworkMode;
   networkRoute: "direct" | "config" | "environment" | "system" | "invalid";
@@ -261,8 +266,12 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
       name: row.name,
       vendor: row.vendor,
       status: row.status,
-      supportedMarkets: Array.isArray(row.supportedMarketsJson) ? row.supportedMarketsJson as string[] : [],
-      supportedTimeframes: Array.isArray(row.supportedTimeframesJson) ? row.supportedTimeframesJson as string[] : [],
+      supportedMarkets: Array.isArray(row.supportedMarketsJson)
+        ? (row.supportedMarketsJson as string[])
+        : [],
+      supportedTimeframes: Array.isArray(row.supportedTimeframesJson)
+        ? (row.supportedTimeframesJson as string[])
+        : [],
       credentialMode: row.credentialMode,
       credentialsReady: row.credentialsReady,
       healthStatus: row.healthStatus,
@@ -353,7 +362,9 @@ export async function recordMarketDataSourceAttempt(input: {
     symbol: input.symbol,
     status: input.status,
     latencyMs: Math.max(0, Math.round(input.latencyMs)),
-    errorMessage: failed ? formatMarketDataFailure(input.error ?? input.status) : input.error ?? null,
+    errorMessage: failed
+      ? formatMarketDataFailure(input.error ?? input.status)
+      : (input.error ?? null),
   });
   await db
     .update(marketDataSource)
@@ -366,7 +377,11 @@ export async function recordMarketDataSourceAttempt(input: {
       consecutiveFailures: consecutive,
       lastError: failed ? formatMarketDataFailure(input.error ?? input.status) : null,
       circuitState: opened ? "open" : input.status === "success" ? "closed" : row.circuitState,
-      circuitOpenedAt: opened ? new Date().toISOString() : input.status === "success" ? null : row.circuitOpenedAt,
+      circuitOpenedAt: opened
+        ? new Date().toISOString()
+        : input.status === "success"
+          ? null
+          : row.circuitOpenedAt,
     })
     .where(eq(marketDataSource.id, input.sourceId));
 }
@@ -407,7 +422,10 @@ export async function selectMarketDataSourcePlan(input: {
   const healthOrdered = [...eligible].sort(
     (a, b) => healthRank[b.healthStatus] - healthRank[a.healthStatus] || b.priority - a.priority
   );
-  const dedupeFamilies = (items: MarketDataSourceView[], excludedFamily?: MarketDataUpstreamFamily) => {
+  const dedupeFamilies = (
+    items: MarketDataSourceView[],
+    excludedFamily?: MarketDataUpstreamFamily
+  ) => {
     const seen = new Set<MarketDataUpstreamFamily>();
     return items.filter((row) => {
       const family = DEF_BY_ID.get(row.id as OperationalMarketDataSource)?.upstreamFamily;
@@ -428,10 +446,7 @@ export async function selectMarketDataSourcePlan(input: {
   if (!explicitEligible) {
     return dedupeFamilies(healthOrdered).map((row) => row.id as OperationalMarketDataSource);
   }
-  return [
-    explicit as OperationalMarketDataSource,
-    ...fallbackIds,
-  ];
+  return [explicit as OperationalMarketDataSource, ...fallbackIds];
 }
 
 export function marketSourceDefinition(id: string): MarketDataSourceDefinition | undefined {

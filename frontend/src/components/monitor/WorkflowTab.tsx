@@ -16,6 +16,7 @@ import {
 import type {
   WorkflowObservability,
   WorkflowQualitySnapshotRecord,
+  WorkflowTimeline,
 } from "../../api/types";
 import {
   Kpi,
@@ -33,6 +34,7 @@ export type WorkflowTabProps = {
   selectedWorkflowId: string | null;
   drawerDetail: string;
   workflowObservability: WorkflowObservability | null;
+  workflowTimeline: WorkflowTimeline | null;
   qualitySnapshots: WorkflowQualitySnapshotRecord[];
   qualityLineData: { idx: number; score: number; tools: number; errors: number }[];
   sessionFilter: string;
@@ -50,6 +52,7 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
   selectedWorkflowId,
   drawerDetail,
   workflowObservability,
+  workflowTimeline,
   qualityLineData,
   sessionFilter,
   setSessionFilter,
@@ -60,6 +63,37 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
   onSelectWorkflow,
   onCreateQuality,
 }) => {
+  const traceItems = workflowTimeline
+    ? [
+        ...workflowTimeline.conversationMessages.map((message) => ({
+          id: `conversation-${message.id}`,
+          at: message.createdAt,
+          label: `${message.role === "user" ? "用户" : message.sender} · ${message.status}`,
+          kind: "会话",
+          detail: message.content,
+          traceId: message.traceId,
+        })),
+        ...workflowTimeline.a2aMessages.map((message) => ({
+          id: `a2a-${message.id}`,
+          at: message.createdAt,
+          label: `${message.senderRole} → ${message.receiverRole ?? "broadcast"} · ${message.messageType}`,
+          kind: "A2A",
+          detail: JSON.stringify(message.payloadJson, null, 2),
+          traceId: message.traceId,
+        })),
+        ...workflowTimeline.steps.map((step) => ({
+          id: `step-${step.id}`,
+          at: step.createdAt,
+          label: `${step.phase}${step.stepIndex != null ? ` · #${step.stepIndex}` : ""}`,
+          kind: "执行",
+          detail:
+            [step.thought, step.observation].filter(Boolean).join("\n\n") ||
+            `${step.toolCalls.length} 次工具调用`,
+          traceId: "",
+        })),
+      ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
+    : [];
+
   return (
     <>
       <h3 className="qb-monitor__section" style={styles.subTitle}>
@@ -252,7 +286,40 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
       </div>
 
       <h3 className="qb-monitor__section" style={styles.subTitle}>
-        工作流 · SSE（仅当前选中 workflow）
+        工作流 · 对话 Trace（持久化）
+      </h3>
+      <div style={styles.streamList}>
+        {!selectedWorkflowId ? (
+          <div style={styles.empty}>请先在表格中选择一条工作流</div>
+        ) : !workflowTimeline ? (
+          <div style={styles.empty}>正在加载该工作流的会话、A2A 与执行记录…</div>
+        ) : traceItems.length === 0 ? (
+          <div style={styles.empty}>该工作流暂无可追溯记录</div>
+        ) : (
+          traceItems.slice(-200).map((item) => (
+            <article key={item.id} style={styles.streamBox}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                <strong>{item.kind}</strong>
+                <span>{item.label}</span>
+                <time style={{ marginLeft: "auto", color: "var(--qb-main-meta, #71717a)" }}>
+                  {new Date(item.at).toLocaleString()}
+                </time>
+              </div>
+              {item.traceId ? (
+                <div style={{ color: "var(--qb-main-meta, #71717a)", marginBottom: 6 }}>
+                  trace: {item.traceId}
+                </div>
+              ) : null}
+              <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                {item.detail.slice(0, 4000)}
+              </div>
+            </article>
+          ))
+        )}
+      </div>
+
+      <h3 className="qb-monitor__section" style={styles.subTitle}>
+        工作流 · 实时 Trace（仅当前选中 workflow）
       </h3>
       <div style={styles.streamList}>
         {!selectedWorkflowId ? (

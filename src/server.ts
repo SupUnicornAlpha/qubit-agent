@@ -107,6 +107,7 @@ app.get("/api/v1/workflows/:id/stream", (c) => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 });
@@ -118,6 +119,7 @@ app.get("/api/v1/workflows/:id/stream/:runId", (c) => {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 });

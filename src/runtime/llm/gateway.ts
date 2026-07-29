@@ -81,6 +81,8 @@ export interface LlmGatewayInput {
   systemPrompt: string;
   userPrompt: string;
   onToken: (token: string) => void;
+  /** 用户停止 workflow 时中断当前 provider 请求，避免后台继续生成并计费。 */
+  signal?: AbortSignal;
   /** P0-3：调用方自定义采样参数；不传走默认值。 */
   sampling?: LlmSamplingOverrides;
   /**
@@ -372,7 +374,11 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for openai provider");
   }
-  const client = new OpenAI({ apiKey, baseURL: input.config.baseUrl });
+  const client = new OpenAI({
+    apiKey,
+    baseURL: input.config.baseUrl,
+    fetch: globalThis.fetch,
+  });
   const startedAt = Date.now();
   const sampling = input.sampling ?? {};
   const temperature = sampling.temperature ?? 0.1;
@@ -395,7 +401,9 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
     stream: true as const,
     stream_options: { include_usage: true },
   });
-  const stream = await client.chat.completions.create(requestBody);
+  const stream = await client.chat.completions.create(requestBody, {
+    signal: input.signal,
+  });
   let answer = "";
   let usage: LlmTokenUsage | undefined;
   let firstTokenLatencyMs: number | undefined;
@@ -515,6 +523,7 @@ async function runOpenAIResponses(input: LlmGatewayInput): Promise<LlmGatewayRes
         ...(useStream ? { Accept: "text/event-stream" } : {}),
       },
       body: JSON.stringify(reqBody),
+      ...(input.signal ? { signal: input.signal } : {}),
     },
     LLM_FETCH_TIMEOUT_MS,
   );
@@ -792,6 +801,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   const client = new OpenAI({
     apiKey,
     baseURL: normalizedBaseUrl,
+    fetch: globalThis.fetch,
   });
   const startedAt = Date.now();
   const resolvedModel = normalizeOpenAICompatibleModel(provider, input.config.model || def.model);
@@ -817,7 +827,10 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     stream: true as const,
     stream_options: { include_usage: true },
   });
-  if (process.env["QUBIT_LLM_COMPAT_STREAM"] !== "1") {
+  const compatNonStream =
+    process.env["QUBIT_LLM_COMPAT_NON_STREAM"] === "1" ||
+    process.env["QUBIT_LLM_COMPAT_STREAM"] === "0";
+  if (compatNonStream) {
     return runOpenAICompatibleNonStream(input, {
       baseUrl: normalizedBaseUrl,
       apiKey,
@@ -826,7 +839,9 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
       startedAt,
     });
   }
-  const stream = await client.chat.completions.create(requestBody);
+  const stream = await client.chat.completions.create(requestBody, {
+    signal: input.signal,
+  });
   let answer = "";
   let usage: LlmTokenUsage | undefined;
   let firstTokenLatencyMs: number | undefined;
@@ -935,6 +950,7 @@ async function runOpenAICompatibleNonStream(
         Authorization: `Bearer ${resolved.apiKey}`,
       },
       body: JSON.stringify(body),
+      ...(input.signal ? { signal: input.signal } : {}),
     },
     LLM_FETCH_TIMEOUT_MS
   );
@@ -1097,6 +1113,7 @@ async function runAnthropic(input: LlmGatewayInput): Promise<LlmGatewayResult> {
         ...(toAnthropicTools(input.tools) ? { tools: toAnthropicTools(input.tools) } : {}),
         ...(useStream ? { stream: true } : {}),
       }),
+      ...(input.signal ? { signal: input.signal } : {}),
     },
     LLM_FETCH_TIMEOUT_MS,
   );
@@ -1357,6 +1374,7 @@ async function runOllama(input: LlmGatewayInput): Promise<LlmGatewayResult> {
         ],
         ...(Object.keys(options).length ? { options } : {}),
       }),
+      ...(input.signal ? { signal: input.signal } : {}),
     },
     LLM_FETCH_TIMEOUT_MS,
   );

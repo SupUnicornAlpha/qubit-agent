@@ -134,9 +134,14 @@ function resolveStatus(input: {
   instanceStatus: string;
   instanceEndedAt: string | null;
   resultPayload: Record<string, unknown> | undefined;
+  preferInstanceTerminal?: boolean;
 }): SubAgentTaskStatus {
   if (input.resultPayload) {
     return input.resultPayload.success === false ? "failed" : "completed";
+  }
+  if (input.preferInstanceTerminal) {
+    if (input.instanceStatus === "error") return "failed";
+    if (input.instanceStatus === "stopped" || input.instanceEndedAt) return "completed";
   }
   if (input.instanceStatus === "error" || input.workflowStatus === "failed") return "failed";
   if (input.workflowStatus === "cancelled") return "cancelled";
@@ -154,7 +159,25 @@ function resolveStatus(input: {
 
 function resultError(payload?: Record<string, unknown>): string | null {
   if (!payload || payload.success !== false) return null;
-  return clipped(asText(payload.errorMessage), 500);
+  const result = asRecord(payload.result);
+  const reason = asText(result.reason);
+  const usedTokens = Number(result.usedTokens);
+  const maxTotalTokens = Number(result.maxTotalTokens);
+  const budgetDetail =
+    reason === "token_budget_exhausted" &&
+    Number.isFinite(usedTokens) &&
+    Number.isFinite(maxTotalTokens)
+      ? `Token 预算耗尽（本轮任务树已使用 ${usedTokens} / ${maxTotalTokens}）`
+      : null;
+  return clipped(
+    asText(payload.errorMessage) ??
+      asText(result.errorMessage) ??
+      asText(result.error) ??
+      asText(result.message) ??
+      budgetDetail ??
+      reason,
+    500
+  );
 }
 
 /**
@@ -168,7 +191,19 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
   const definitionById = new Map(input.definitions.map((row) => [row.id, row]));
   const instanceById = new Map(input.instances.map((row) => [row.id, row]));
   const taskResultByKey = new Map<string, SubAgentTaskMessageRow>();
+  const workflowFailureById = new Map<
+    string,
+    { createdAt: string; payload: Record<string, unknown> }
+  >();
   const stepsByExecution = new Map<string, { count: number; latest: SubAgentTaskStepRow | null }>();
+  const executionInstancesByDefinition = new Map<string, SubAgentTaskInstanceRow[]>();
+
+  for (const instance of input.instances) {
+    const key = `${instance.workflowRunId}:${instance.definitionId}`;
+    const bucket = executionInstancesByDefinition.get(key) ?? [];
+    bucket.push(instance);
+    executionInstancesByDefinition.set(key, bucket);
+  }
 
   for (const step of input.steps) {
     const key = `${step.workflowRunId}:${step.agentInstanceId}`;
@@ -186,6 +221,18 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
     const key = `${message.workflowRunId}:${message.senderInstanceId}:${taskId}`;
     const previous = taskResultByKey.get(key);
     if (!previous || message.createdAt > previous.createdAt) taskResultByKey.set(key, message);
+
+    const sender = instanceById.get(message.senderInstanceId);
+    const senderDefinition = sender ? definitionById.get(sender.definitionId) : undefined;
+    if (senderDefinition?.role === "orchestrator" && payload.success === false) {
+      const previousFailure = workflowFailureById.get(message.workflowRunId);
+      if (!previousFailure || message.createdAt > previousFailure.createdAt) {
+        workflowFailureById.set(message.workflowRunId, {
+          createdAt: message.createdAt,
+          payload,
+        });
+      }
+    }
   }
 
   const records: SubAgentTaskRecord[] = [];
@@ -212,9 +259,7 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
     const orchestrator = orchestratorByWorkflow.get(workflow.id);
     const instance = orchestrator?.instance;
     const definition = orchestrator?.definition;
-    const stepStats = instance
-      ? stepsByExecution.get(`${workflow.id}:${instance.id}`)
-      : undefined;
+    const stepStats = instance ? stepsByExecution.get(`${workflow.id}:${instance.id}`) : undefined;
 
     records.push({
       id: `workflow:${workflow.id}`,
@@ -251,13 +296,16 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
       latestStepAt: stepStats?.latest?.createdAt ?? null,
       assignedAt: workflow.startedAt,
       completedAt: workflow.endedAt ?? instance?.endedAt ?? null,
-      errorMessage: clipped(instance?.errorMessage ?? null, 500),
+      errorMessage:
+        resultError(workflowFailureById.get(workflow.id)?.payload) ??
+        clipped(instance?.errorMessage ?? null, 500),
     });
   }
 
   const assignments = input.messages
     .filter((message) => message.messageType === "TASK_ASSIGN" && message.receiverInstanceId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const assignedDefinitionKeys = new Set<string>();
 
   for (const assignment of assignments) {
     const workflow = workflowById.get(assignment.workflowRunId);
@@ -273,7 +321,24 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
     const result =
       taskId !== null ? taskResultByKey.get(`${workflow.id}:${instance.id}:${taskId}`) : undefined;
     const resultPayload = result ? asRecord(result.payloadJson) : undefined;
-    const stepStats = stepsByExecution.get(`${workflow.id}:${instance.id}`);
+    /**
+     * TASK_ASSIGN 指向常驻 pool instance，executeAgentReact 则为这次调用创建 workflow
+     * 内的 execution instance。用 definition + 启动时间把两者配对，任务卡片才能展示
+     * 真实步骤数，又不把 execution instance 作为第二条重复任务暴露出来。
+     */
+    const assignmentTime = Date.parse(assignment.createdAt);
+    const executionInstance = (
+      executionInstancesByDefinition.get(`${workflow.id}:${definition.id}`) ?? []
+    )
+      .filter((candidate) => candidate.id !== instance.id && candidate.startedAt)
+      .map((candidate) => ({
+        candidate,
+        distance: Math.abs(Date.parse(candidate.startedAt ?? "") - assignmentTime),
+      }))
+      .filter((entry) => Number.isFinite(entry.distance) && entry.distance <= 5_000)
+      .sort((a, b) => a.distance - b.distance)[0]?.candidate;
+    const stepInstance = executionInstance ?? instance;
+    const stepStats = stepsByExecution.get(`${workflow.id}:${stepInstance.id}`);
     const copy = resolveTitle(payload, definition.name, taskType);
     const parentInstance = instanceById.get(assignment.senderInstanceId);
     const parentDefinition = parentInstance
@@ -281,6 +346,7 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
       : undefined;
     const params = asRecord(payload.params);
     assignedExecutionKeys.add(`${workflow.id}:${instance.id}`);
+    assignedDefinitionKeys.add(`${workflow.id}:${definition.id}`);
 
     records.push({
       id: assignment.id,
@@ -311,13 +377,16 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
       }),
       title: copy.title,
       summary: copy.summary,
-      currentIteration: instance.currentIteration,
+      currentIteration: stepInstance.currentIteration,
       stepCount: stepStats?.count ?? 0,
       latestPhase: stepStats?.latest?.phase ?? null,
       latestStepAt: stepStats?.latest?.createdAt ?? null,
       assignedAt: assignment.createdAt,
-      completedAt: result?.createdAt ?? instance.endedAt ?? workflow.endedAt,
-      errorMessage: resultError(resultPayload) ?? clipped(instance.errorMessage, 500),
+      completedAt:
+        result?.createdAt ?? executionInstance?.endedAt ?? instance.endedAt ?? workflow.endedAt,
+      errorMessage:
+        resultError(resultPayload) ??
+        clipped(executionInstance?.errorMessage ?? instance.errorMessage, 500),
     });
   }
 
@@ -327,6 +396,10 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
     if (!workflow || !definition || definition.role === "orchestrator") continue;
     const executionKey = `${workflow.id}:${instance.id}`;
     if (assignedExecutionKeys.has(executionKey)) continue;
+    // A2A handler 会为一次 TASK_ASSIGN 创建独立 execution instance，而消息本身引用
+    // 常驻 Agent pool instance。两者 definition 相同但 instanceId 不同；任务页应以
+    // TASK_ASSIGN/TASK_RESULT 为第一事实来源，隐藏这个内部执行镜像，避免同一任务显示两次。
+    if (assignedDefinitionKeys.has(`${workflow.id}:${definition.id}`)) continue;
     const stepStats = stepsByExecution.get(executionKey);
 
     records.push({
@@ -355,6 +428,7 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
         instanceStatus: instance.status,
         instanceEndedAt: instance.endedAt,
         resultPayload: undefined,
+        preferInstanceTerminal: true,
       }),
       title: `${definition.name} · ${clipped(workflow.goal, 120) ?? "agent task"}`,
       summary: null,

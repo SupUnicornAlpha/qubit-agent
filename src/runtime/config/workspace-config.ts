@@ -251,6 +251,84 @@ export function mergeBuiltinSandboxPoliciesIntoUserFile(
   return { policies: merged, mutated };
 }
 
+function versionParts(version: string): number[] {
+  return version
+    .split(".")
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+}
+
+function isOlderVersion(candidate: string, baseline: string): boolean {
+  const left = versionParts(candidate);
+  const right = versionParts(baseline);
+  const size = Math.max(left.length, right.length);
+  for (let index = 0; index < size; index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0);
+    if (delta !== 0) return delta < 0;
+  }
+  return false;
+}
+
+/**
+ * Keep the editable workspace file, but never let an old generated builtin
+ * snapshot downgrade runtime capabilities after DB seeding.
+ *
+ * User-added tools/MCPs/skills/subscriptions are retained. A builtin prompt is
+ * refreshed only when its file version is older than the code baseline; custom
+ * definitions that do not exist in the seed are untouched.
+ */
+export function mergeBuiltinAgentDefinitionsIntoUserFile(
+  fileDefinitions: RuntimeAgentDefinition[],
+  seedDefinitions: RuntimeAgentDefinition[]
+): { definitions: RuntimeAgentDefinition[]; mutated: boolean } {
+  let mutated = false;
+  const seedById = new Map(seedDefinitions.map((definition) => [definition.id, definition]));
+  const fileIds = new Set(fileDefinitions.map((definition) => definition.id));
+  const definitions = fileDefinitions.map((fileDefinition) => {
+    const seed = seedById.get(fileDefinition.id);
+    if (!seed) return fileDefinition;
+
+    const tools = unionStrings(fileDefinition.tools, seed.tools);
+    const mcpServers = unionStrings(fileDefinition.mcpServers, seed.mcpServers);
+    const skills = unionStrings(fileDefinition.skills, seed.skills);
+    const subscriptions = unionStrings(
+      fileDefinition.subscriptions,
+      seed.subscriptions
+    ) as RuntimeAgentDefinition["subscriptions"];
+    const upgrade = isOlderVersion(fileDefinition.version, seed.version);
+    const changed =
+      upgrade ||
+      !sameSet(fileDefinition.tools, tools) ||
+      !sameSet(fileDefinition.mcpServers, mcpServers) ||
+      !sameSet(fileDefinition.skills, skills) ||
+      !sameSet(fileDefinition.subscriptions, subscriptions);
+    if (!changed) return fileDefinition;
+    mutated = true;
+    return {
+      ...fileDefinition,
+      ...(upgrade
+        ? {
+            role: seed.role,
+            name: seed.name,
+            version: seed.version,
+            systemPrompt: seed.systemPrompt,
+          }
+        : {}),
+      tools,
+      mcpServers,
+      skills,
+      subscriptions,
+    };
+  });
+
+  for (const seed of seedDefinitions) {
+    if (fileIds.has(seed.id)) continue;
+    definitions.push(seed);
+    mutated = true;
+  }
+  return { definitions, mutated };
+}
+
 function unionStrings(a: string[], b: string[]): string[] {
   const set = new Set<string>();
   for (const x of a) set.add(x);
@@ -277,6 +355,8 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
    * 给 unit test 显式传 false 关掉以便测试初始写入路径。
    */
   mergeBuiltinSandboxPolicies?: boolean;
+  /** 默认 true：升级旧 builtin Agent 快照，同时保留 user 扩展能力。 */
+  mergeBuiltinAgentDefinitions?: boolean;
 }): Promise<void> {
   const rootDir = params.rootDir ?? process.cwd();
   const configDir = join(rootDir, ".qubit");
@@ -289,6 +369,25 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
       JSON.stringify({ definitions: params.definitions }, null, 2),
       "utf-8"
     );
+  } else if (params.mergeBuiltinAgentDefinitions !== false) {
+    try {
+      const raw = await readFile(agentsFile, "utf-8");
+      const parsed = AgentsFileSchema.safeParse(JSON.parse(raw));
+      if (parsed.success) {
+        const { definitions, mutated } = mergeBuiltinAgentDefinitionsIntoUserFile(
+          parsed.data.definitions as RuntimeAgentDefinition[],
+          params.definitions
+        );
+        if (mutated) {
+          await writeFile(agentsFile, JSON.stringify({ definitions }, null, 2), "utf-8");
+          console.log(
+            "[Workspace] agents.json: upgraded builtin definitions and retained user extensions."
+          );
+        }
+      }
+    } catch {
+      // 损坏文件交给 loadWorkspaceRuntimeConfig 报 parseError；不在 bootstrap 静默覆盖。
+    }
   }
   if (params.refresh || !existsSync(sandboxFile)) {
     await writeFile(sandboxFile, JSON.stringify({ policies: params.policies }, null, 2), "utf-8");
@@ -307,7 +406,7 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
     if (mutated) {
       await writeFile(sandboxFile, JSON.stringify({ policies }, null, 2), "utf-8");
       console.log(
-        `[Workspace] sandbox.json: union new builtin tools/MCPs into existing user policies.`
+        "[Workspace] sandbox.json: union new builtin tools/MCPs into existing user policies."
       );
     }
   } catch {

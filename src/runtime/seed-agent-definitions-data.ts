@@ -90,7 +90,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-market-data",
     role: "market_data",
     name: "行情数据",
-    version: "2.2.0",
+    version: "2.3.0",
     systemPrompt: PROMPT_MARKET_DATA,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,

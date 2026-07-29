@@ -21,6 +21,11 @@ import { stripToolCallSentinels } from "../tools/tool-call-format";
 import type { RuntimeAgentDefinition } from "../types";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { drainUserMessages } from "../workflow/user-message-queue";
+import {
+  getWorkflowCancellationSignal,
+  isWorkflowCancellationRequested,
+  WorkflowCancelledError,
+} from "../workflow/workflow-cancellation";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 const DEFAULT_REASON_NODE_TIMEOUT_MS = 180_000;
@@ -288,6 +293,14 @@ async function runReason(
       `reason node timed out after ${reasonNodeTimeoutMs()}ms`
     );
   } catch (err) {
+    if (
+      err instanceof WorkflowCancelledError ||
+      isWorkflowCancellationRequested(params.workflowId)
+    ) {
+      const cancelled = terminateByUser(state);
+      snapshotState(params, "reason", state.iteration, cancelled);
+      return cancelled;
+    }
     const errorMessage = err instanceof Error ? err.message : String(err);
     const latencyMs = Date.now() - reasonStartedAt;
     const displayThought = `LLM reasoning failed: ${errorMessage}`;
@@ -572,12 +585,28 @@ function terminateAtTaskDeadline(state: AgentGraphState): AgentGraphState {
   };
 }
 
+function terminateByUser(state: AgentGraphState): AgentGraphState {
+  return {
+    ...state,
+    finalResponse: {
+      status: "terminated",
+      reason: "user_cancelled",
+      role: state.agentDefinition.role,
+      iteration: state.iteration,
+      answerText: "已按你的要求停止生成。",
+    },
+  };
+}
+
 /**
  * 跑完整条 ReAct 循环并返回 finalize 后的 state。
  *
  * 抛出行为与原 StateGraph 一致：act 内非 HITL 异常会向上抛（caller 统一出口兜底）。
  */
 export async function runReactLoop(params: RunReactLoopParams): Promise<RunReactLoopResult> {
+  // 捕获“本次执行”自己的 signal。workflow id 被下一轮复用并 clear 后，旧 signal 仍保持
+  // aborted，避免上一轮工具调用晚结束后死灰复燃。
+  const cancellationSignal = getWorkflowCancellationSignal(params.workflowId);
   const effectiveMaxIterations = await resolveEffectiveMaxIterations(params);
   const effectiveParams =
     effectiveMaxIterations === params.def.maxIterations
@@ -600,6 +629,13 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
 
   // while 主体对应原 conditionalEdges：reason→hitl_gate→act→observe→（回 reason / finalize）
   for (;;) {
+    if (
+      cancellationSignal.aborted ||
+      isWorkflowCancellationRequested(effectiveParams.workflowId)
+    ) {
+      state = terminateByUser(state);
+      break;
+    }
     if (isTaskDeadlineExpired(effectiveParams.payload)) {
       state = terminateAtTaskDeadline(state);
       break;

@@ -105,7 +105,10 @@ export interface MarketDataReadiness {
   checkedAt: string | null;
   healthySources: string[];
   readyMarkets: string[];
+  realtimeHealthySources?: string[];
+  realtimeReadyMarkets?: string[];
   targetMarkets: string[];
+  scope?: "historical_and_realtime";
   message: string;
 }
 
@@ -379,7 +382,7 @@ export interface StepStreamEvent {
   ts: number;
   payload: Record<string, unknown>;
   loopKind?: AgentLoopKind;
-  source?: "native" | "cli";
+  source?: "native" | "cli" | "a2a";
 }
 
 export type ToolCatalogCategory =
@@ -744,13 +747,31 @@ export interface SessionOverview {
 
 export interface WorkflowTimeline {
   workflowId: string;
-  instances: unknown[];
+  instances: Array<{
+    id: string;
+    role: string;
+    name: string;
+    status: string;
+    currentIteration: number;
+  }>;
+  conversationMessages: Array<{
+    id: string;
+    traceId: string;
+    role: "user" | "assistant" | "system";
+    sender: "user" | "orchestrator" | "agent" | "system";
+    content: string;
+    status: string;
+    createdAt: string;
+  }>;
+  a2aMessages: SessionA2AMessageItem[];
   steps: Array<
     {
       id: string;
       phase: string;
       createdAt: string;
+      stepIndex?: number;
       thought?: string | null;
+      observation?: string | null;
     } & { toolCalls: unknown[] }
   >;
 }

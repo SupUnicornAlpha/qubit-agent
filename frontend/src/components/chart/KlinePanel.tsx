@@ -4,11 +4,8 @@ import {
   ColorType,
   CrosshairMode,
   createChart,
-  type CandlestickData,
-  type HistogramData,
   type IChartApi,
   type ISeriesApi,
-  type LineData,
   type SeriesMarker,
   type Time,
   type UTCTimestamp,
@@ -37,16 +34,16 @@ import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
 import { NewsBriefSection } from "./NewsBriefSection";
 import { bollinger, macd, rsi } from "../../lib/technicalIndicators";
-
-function toChartTime(bar: KlineBar, timeframe: string): Time {
-  const tf = timeframe.toLowerCase();
-  if (tf === "1d" || tf === "1w") {
-    const d = bar.timestamp.slice(0, 10);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d as Time;
-  }
-  const sec = Math.floor(new Date(bar.timestamp).getTime() / 1000);
-  return sec as UTCTimestamp;
-}
+import {
+  barsToCandles,
+  barsToVolume,
+  histogramFromValues,
+  lineFromEma,
+  lineFromSma,
+  lineFromValues,
+  normalizeKlineBars,
+  toChartTime,
+} from "../../lib/klineSeries";
 
 function markerToChartTime(m: TraderMarkerRecord, lastBars: KlineBar[], timeframe: string): Time | null {
   if (m.barTime) {
@@ -91,101 +88,6 @@ function chartThemeOptions(light: boolean) {
     rightPriceScale: { borderColor: "#3f3f46" },
     timeScale: { borderColor: "#3f3f46", timeVisible: true, secondsVisible: false },
   };
-}
-
-function barsToCandles(bars: KlineBar[], timeframe: string): CandlestickData[] {
-  const out: CandlestickData[] = [];
-  let lastT: number | string | undefined;
-  for (const b of bars) {
-    const t = toChartTime(b, timeframe);
-    const key = typeof t === "number" ? t : String(t);
-    if (lastT !== undefined && key === lastT) continue;
-    lastT = key as never;
-    out.push({
-      time: t,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close,
-    });
-  }
-  return out;
-}
-
-function barsToVolume(bars: KlineBar[], timeframe: string): HistogramData[] {
-  const candles = barsToCandles(bars, timeframe);
-  const byTime = new Map<string, KlineBar>();
-  for (const b of bars) {
-    const t = toChartTime(b, timeframe);
-    const key = typeof t === "number" ? String(t) : String(t);
-    byTime.set(key, b);
-  }
-  return candles.map((c) => {
-    const key = typeof c.time === "number" ? String(c.time) : String(c.time);
-    const b = byTime.get(key);
-    const up = b ? b.close >= b.open : c.close >= c.open;
-    return {
-      time: c.time,
-      value: b?.volume ?? 0,
-      color: up ? "rgba(38, 166, 154, 0.45)" : "rgba(239, 83, 80, 0.45)",
-    };
-  });
-}
-
-function lineFromSma(bars: KlineBar[], timeframe: string, period: number): LineData[] {
-  const candles = barsToCandles(bars, timeframe);
-  const out: LineData[] = [];
-  for (let i = period - 1; i < bars.length; i++) {
-    let s = 0;
-    for (let j = 0; j < period; j++) s += bars[i - j].close;
-    out.push({ time: candles[i].time, value: s / period });
-  }
-  return out;
-}
-
-function lineFromEma(bars: KlineBar[], timeframe: string, period: number): LineData[] {
-  const candles = barsToCandles(bars, timeframe);
-  if (bars.length < period) return [];
-  let emaVal = 0;
-  for (let j = 0; j < period; j++) emaVal += bars[period - 1 - j].close;
-  emaVal /= period;
-  const k = 2 / (period + 1);
-  const out: LineData[] = [{ time: candles[period - 1].time, value: emaVal }];
-  for (let i = period; i < bars.length; i++) {
-    emaVal = bars[i].close * k + emaVal * (1 - k);
-    out.push({ time: candles[i].time, value: emaVal });
-  }
-  return out;
-}
-
-function lineFromValues(
-  bars: KlineBar[],
-  timeframe: string,
-  values: Array<number | null>
-): LineData[] {
-  return bars.flatMap((bar, index) => {
-    const value = values[index];
-    return value === null || !Number.isFinite(value)
-      ? []
-      : [{ time: toChartTime(bar, timeframe), value }];
-  });
-}
-
-function histogramFromValues(
-  bars: KlineBar[],
-  timeframe: string,
-  values: Array<number | null>
-): HistogramData[] {
-  return bars.flatMap((bar, index) => {
-    const value = values[index];
-    return value === null || !Number.isFinite(value)
-      ? []
-      : [{
-          time: toChartTime(bar, timeframe),
-          value,
-          color: value >= 0 ? "rgba(38, 166, 154, 0.72)" : "rgba(239, 83, 80, 0.72)",
-        }];
-  });
 }
 
 export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }> = ({
@@ -353,7 +255,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       macdSignalRef.current = null;
       macdHistogramRef.current = null;
     };
-  }, [layoutChart, embedded, isLightChart]);
+  }, [layoutChart, embedded]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -409,50 +311,11 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
         macdHistogramRef.current?.setData([]);
         return;
       }
-      setLastBars(res.data);
-      const c = candleRef.current;
-      const v = volRef.current;
-      if (c && v) {
-        const candles = barsToCandles(res.data, spec.timeframe);
-        const vols = barsToVolume(res.data, spec.timeframe);
-        c.setData(candles);
-        v.setData(vols);
-        const { sma20, ema20, rsi14, macd: showMacd, bb20 } =
-          useAppStore.getState().chartOverlays;
-        const closes = res.data.map((bar) => bar.close);
-        smaLineRef.current?.setData(
-          sma20 && res.data.length >= 20 ? lineFromSma(res.data, spec.timeframe, 20) : []
-        );
-        emaLineRef.current?.setData(
-          ema20 && res.data.length >= 20 ? lineFromEma(res.data, spec.timeframe, 20) : []
-        );
-        const bb = bollinger(closes, 20, 2);
-        bbUpperRef.current?.setData(
-          bb20 ? lineFromValues(res.data, spec.timeframe, bb.upper) : []
-        );
-        bbMiddleRef.current?.setData(
-          bb20 ? lineFromValues(res.data, spec.timeframe, bb.middle) : []
-        );
-        bbLowerRef.current?.setData(
-          bb20 ? lineFromValues(res.data, spec.timeframe, bb.lower) : []
-        );
-        rsiRef.current?.setData(
-          rsi14 ? lineFromValues(res.data, spec.timeframe, rsi(closes, 14)) : []
-        );
-        const macdSeries = macd(closes);
-        macdRef.current?.setData(
-          showMacd ? lineFromValues(res.data, spec.timeframe, macdSeries.macd) : []
-        );
-        macdSignalRef.current?.setData(
-          showMacd ? lineFromValues(res.data, spec.timeframe, macdSeries.signal) : []
-        );
-        macdHistogramRef.current?.setData(
-          showMacd
-            ? histogramFromValues(res.data, spec.timeframe, macdSeries.histogram)
-            : []
-        );
-        chartRef.current?.timeScale().fitContent();
+      const normalized = normalizeKlineBars(res.data, spec.timeframe, spec.limit);
+      if (normalized.length === 0) {
+        setError("行情数据包含无效或重复时间戳，无法绘制 K 线");
       }
+      setLastBars(normalized);
     } catch (e) {
       let msg = e instanceof Error ? e.message : String(e);
       try {
@@ -500,39 +363,13 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
 
     const applyBackfill = (bars: KlineBar[]) => {
       if (bars.length === 0) return;
-      const sorted = [...bars].sort((left, right) =>
-        left.timestamp.localeCompare(right.timestamp)
-      );
-      const trimmed = sorted.slice(-spec.limit);
-      setLastBars(trimmed);
-      candleRef.current?.setData(barsToCandles(trimmed, spec.timeframe));
-      volRef.current?.setData(barsToVolume(trimmed, spec.timeframe));
+      setLastBars(normalizeKlineBars(bars, spec.timeframe, spec.limit));
     };
 
     const applyBar = (bar: KlineBar) => {
-      candleRef.current?.update({
-        time: toChartTime(bar, spec.timeframe),
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-      });
-      volRef.current?.update({
-        time: toChartTime(bar, spec.timeframe),
-        value: bar.volume,
-        color:
-          bar.close >= bar.open
-            ? "rgba(38, 166, 154, 0.45)"
-            : "rgba(239, 83, 80, 0.45)",
-      });
-      setLastBars((current) => {
-        const next = [...current];
-        const existing = next.findIndex((item) => item.timestamp === bar.timestamp);
-        if (existing >= 0) next[existing] = bar;
-        else next.push(bar);
-        next.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
-        return next.slice(-spec.limit);
-      });
+      setLastBars((current) =>
+        normalizeKlineBars([...current, bar], spec.timeframe, spec.limit)
+      );
     };
 
     const applyQuote = (quote: MarketQuote) => {
@@ -547,13 +384,6 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
           low: Math.min(previous.low, quote.lastPrice),
         };
         next[next.length - 1] = updated;
-        candleRef.current?.update({
-          time: toChartTime(updated, spec.timeframe),
-          open: updated.open,
-          high: updated.high,
-          low: updated.low,
-          close: updated.close,
-        });
         return next;
       });
     };
@@ -640,38 +470,50 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
   ]);
 
   useEffect(() => {
-    if (lastBars.length === 0) {
-      smaLineRef.current?.setData([]);
-      emaLineRef.current?.setData([]);
-      bbUpperRef.current?.setData([]);
-      bbMiddleRef.current?.setData([]);
-      bbLowerRef.current?.setData([]);
-      rsiRef.current?.setData([]);
-      macdRef.current?.setData([]);
-      macdSignalRef.current?.setData([]);
-      macdHistogramRef.current?.setData([]);
-      return;
+    try {
+      const tf = chartSpec.timeframe;
+      candleRef.current?.setData(barsToCandles(lastBars, tf));
+      volRef.current?.setData(barsToVolume(lastBars, tf));
+      if (lastBars.length === 0) {
+        smaLineRef.current?.setData([]);
+        emaLineRef.current?.setData([]);
+        bbUpperRef.current?.setData([]);
+        bbMiddleRef.current?.setData([]);
+        bbLowerRef.current?.setData([]);
+        rsiRef.current?.setData([]);
+        macdRef.current?.setData([]);
+        macdSignalRef.current?.setData([]);
+        macdHistogramRef.current?.setData([]);
+        return;
+      }
+      const { sma20, ema20, rsi14, macd: showMacd, bb20 } = chartOverlays;
+      const closes = lastBars.map((bar) => bar.close);
+      smaLineRef.current?.setData(
+        sma20 && lastBars.length >= 20 ? lineFromSma(lastBars, tf, 20) : []
+      );
+      emaLineRef.current?.setData(
+        ema20 && lastBars.length >= 20 ? lineFromEma(lastBars, tf, 20) : []
+      );
+      const bb = bollinger(closes, 20, 2);
+      bbUpperRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.upper) : []);
+      bbMiddleRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.middle) : []);
+      bbLowerRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.lower) : []);
+      rsiRef.current?.setData(rsi14 ? lineFromValues(lastBars, tf, rsi(closes, 14)) : []);
+      const macdSeries = macd(closes);
+      macdRef.current?.setData(
+        showMacd ? lineFromValues(lastBars, tf, macdSeries.macd) : []
+      );
+      macdSignalRef.current?.setData(
+        showMacd ? lineFromValues(lastBars, tf, macdSeries.signal) : []
+      );
+      macdHistogramRef.current?.setData(
+        showMacd ? histogramFromValues(lastBars, tf, macdSeries.histogram) : []
+      );
+    } catch (chartError) {
+      const message =
+        chartError instanceof Error ? chartError.message : String(chartError);
+      setError(`K线渲染失败：${message}`);
     }
-    const tf = chartSpec.timeframe;
-    const { sma20, ema20, rsi14, macd: showMacd, bb20 } = chartOverlays;
-    const closes = lastBars.map((bar) => bar.close);
-    smaLineRef.current?.setData(sma20 && lastBars.length >= 20 ? lineFromSma(lastBars, tf, 20) : []);
-    emaLineRef.current?.setData(ema20 && lastBars.length >= 20 ? lineFromEma(lastBars, tf, 20) : []);
-    const bb = bollinger(closes, 20, 2);
-    bbUpperRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.upper) : []);
-    bbMiddleRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.middle) : []);
-    bbLowerRef.current?.setData(bb20 ? lineFromValues(lastBars, tf, bb.lower) : []);
-    rsiRef.current?.setData(rsi14 ? lineFromValues(lastBars, tf, rsi(closes, 14)) : []);
-    const macdSeries = macd(closes);
-    macdRef.current?.setData(
-      showMacd ? lineFromValues(lastBars, tf, macdSeries.macd) : []
-    );
-    macdSignalRef.current?.setData(
-      showMacd ? lineFromValues(lastBars, tf, macdSeries.signal) : []
-    );
-    macdHistogramRef.current?.setData(
-      showMacd ? histogramFromValues(lastBars, tf, macdSeries.histogram) : []
-    );
   }, [chartOverlays, lastBars, chartSpec.timeframe]);
 
   const bringToChat = () => {

@@ -7,6 +7,7 @@ import type { AgentExecutionPath } from "../../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../../types/loop";
 import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
 import { clearWorkflowCheckpointForNewTurn } from "./checkpoint-turn";
+import { clearWorkflowCancellation } from "./workflow-cancellation";
 import { dispatchTaskToRole } from "../agent-pool";
 import { setWorkflowState } from "./workflow-state-machine";
 
@@ -133,6 +134,8 @@ export async function createAndDispatchWorkflow(
 
   let runId: string | undefined;
   if (!input.skipDispatch) {
+    // 同一会话会复用 workflow id；新一轮必须清掉上一轮用户停止留下的取消信号。
+    clearWorkflowCancellation(id);
     const taskType = input.taskType ?? "workflow_start";
     if (taskType === "workflow_start" && shouldReuse) {
       await clearWorkflowCheckpointForNewTurn(id);

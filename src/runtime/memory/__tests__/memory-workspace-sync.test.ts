@@ -1,53 +1,38 @@
 /**
- * MemoryWorkspaceSync 纯函数测试 — M10.A2
+ * MemoryWorkspaceSync 纯函数测试 — M10.A2 + Context Protocol 05
  *
- * 只测 renderMemoryMarkdown（不依赖 DB），DB 集成测试在 contract 测试里。
+ * 冷镜像仅 identity / execution_profile；金融结论走 FinanceRecall。
  */
 
 import { describe, expect, test } from "bun:test";
 import { renderMemoryMarkdown } from "../memory-workspace-sync";
 
 describe("MemoryWorkspaceSync — renderMemoryMarkdown", () => {
-  test("空记忆 → 输出占位 markdown，含 hint 信息", () => {
+  test("空记忆 → identity 占位 + FinanceRecall 提示", () => {
     const md = renderMemoryMarkdown({
       definitionName: "Research Lead",
       role: "research",
       longtermByType: new Map(),
       midtermRows: [],
     });
-    expect(md).toContain("# Long-term Memory · Research Lead (research)");
-    expect(md).toContain("由 MemoryConsolidationService 自动维护");
-    expect(md).toContain("暂无长期记忆");
-    expect(md).toContain("暂无中期记忆");
-    expect(md).toContain("memory.consolidate_longterm");
+    expect(md).toContain("# Identity Memory · Research Lead (research)");
+    expect(md).toContain("Finance Recall");
+    expect(md).toContain("暂无执行画像");
+    expect(md).toContain("execution_profile");
   });
 
-  test("长期记忆按类型分节", () => {
+  test("execution_profile 按类型分节；其它类型也可渲染（兼容传入）", () => {
     const longtermByType = new Map([
       [
-        "factor_archive",
+        "execution_profile",
         [
           {
             id: "lt1",
-            memoryType: "factor_archive",
-            contentJson: { content: "momentum_20d RankIC=0.045 IR=0.82 已上线" },
+            memoryType: "execution_profile",
+            contentJson: { content: "riskTolerance=medium preferredUniverse=CN-A" },
             confidenceScore: 0.85,
             asofTime: "2026-05-21T10:00:00Z",
             validFrom: "2026-05-21T10:00:00Z",
-            validTo: null,
-          },
-        ],
-      ],
-      [
-        "playbook",
-        [
-          {
-            id: "lt2",
-            memoryType: "playbook",
-            contentJson: { content: "牛市行情下偏好动量因子" },
-            confidenceScore: null,
-            asofTime: "2026-05-20T08:00:00Z",
-            validFrom: "2026-05-20T08:00:00Z",
             validTo: null,
           },
         ],
@@ -59,14 +44,12 @@ describe("MemoryWorkspaceSync — renderMemoryMarkdown", () => {
       longtermByType,
       midtermRows: [],
     });
-    expect(md).toContain("### factor_archive (1)");
-    expect(md).toContain("### playbook (1)");
-    expect(md).toContain("momentum_20d RankIC=0.045");
+    expect(md).toContain("### execution_profile (1)");
+    expect(md).toContain("riskTolerance=medium");
     expect(md).toContain("conf=0.85");
-    expect(md).toContain("牛市行情下偏好动量因子");
   });
 
-  test("中期记忆按时间排列 + 截断", () => {
+  test("legacy midterm 仍可渲染（兼容），但默认同步不再拉取", () => {
     const longText = "x".repeat(800);
     const md = renderMemoryMarkdown({
       definitionName: "Test",
@@ -84,8 +67,8 @@ describe("MemoryWorkspaceSync — renderMemoryMarkdown", () => {
       ],
     });
     expect(md).toContain("### 2026-05-21 11:30 · simulation_note");
-    expect(md).toContain("(truncated)"); // 长内容应被截断
-    expect(md.length).toBeLessThan(2000);
+    expect(md).toContain("(truncated)");
+    expect(md).toContain("midterm · legacy");
   });
 
   test("contentJson 是 string 时直接当 content 用", () => {
@@ -115,6 +98,6 @@ describe("MemoryWorkspaceSync — renderMemoryMarkdown", () => {
       midtermRows: [],
     });
     expect(md).toContain("此文件由系统自动同步");
-    expect(md).toContain("write_memory");
+    expect(md).toContain("execution_profile");
   });
 });

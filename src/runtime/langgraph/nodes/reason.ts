@@ -25,6 +25,21 @@ import {
   getExperienceStore,
   renderRecallBlockForPrompt,
 } from "../../experience";
+import { isFinanceSubKind } from "../../context/types";
+import {
+  allAxioms,
+  isContextProtocolEnabled,
+} from "../../context/axioms";
+import { assembleContextEnvelope } from "../../context/assemble-context-prompt";
+import {
+  FinanceRecall,
+  renderFinanceRecallBlockForPrompt,
+} from "../../context/finance-recall";
+import { renderSlotContextForPrompt } from "../../context/handoff";
+import {
+  isWorkingMemoryEmpty,
+  renderWorkingMemoryForPrompt,
+} from "../../context/working-memory";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { agentLlmConfigToSampling } from "../../llm/agent-llm-config";
 import type { LlmTokenUsage } from "../../llm/gateway";
@@ -340,7 +355,12 @@ export async function reasonNode(
     payload.goal ??
     payload.message ??
     JSON.stringify(state.inboundMessage.payload);
-  const slotContext = typeof payloadParams.context === "string" ? payloadParams.context.trim() : "";
+  const slotContextRaw = payloadParams.context;
+  const slotContextRendered = renderSlotContextForPrompt(slotContextRaw);
+  const slotContext =
+    typeof slotContextRaw === "string"
+      ? slotContextRaw.trim()
+      : slotContextRendered;
   const slotTicker = typeof payloadParams.ticker === "string" ? payloadParams.ticker.trim() : "";
   const hitlResumeBlock = buildHitlResumePromptBlock({
     approval: payloadParams.hitlApproval,
@@ -421,7 +441,10 @@ export async function reasonNode(
 
   // M11: 召回相关 skill。失败不阻塞推理（skill 表可能在新 workspace 还没建）。
   let recalledSkillsBlock = "";
-  // Memory V2 P1：在 skill 召回旁拼一个 experience 召回块；与 skill 完全独立的失败域
+  // Memory V2 / Context Protocol：finance 与 general 分槽
+  let recalledFinanceBlock = "";
+  let recalledGeneralBlock = "";
+  // 兼容旧路径：合并块（协议关闭时只用这个）
   let recalledExperienceBlock = "";
   // Self-Evolving Agent P9：PnL-aware skill 引导块（"该 agent 最近 7d 最赚钱 top-3"）
   // 跟语义召回完全独立的失败域；总闸关 / 无 PnL 数据 → 空串自然跳过
@@ -471,40 +494,90 @@ export async function reasonNode(
         }
       }
 
-      // ── Memory V2 P1/P2：ExperienceRecall（与 skill 召回并存，独立失败域）──
-      //   P2 升级：当 OPENAI_API_KEY 存在 → 自动启用 hybrid（embedding+keyword）；
-      //   缺 key 时 getDefaultEmbeddingClient() 返 null，Recall 降级到 keyword-only
-      //   （getDefaultEmbeddingClient 在 src/runtime/llm/embedding-client.ts）
+      // ── Memory V2 + Context Protocol：FinanceRecall / general Experience ──
       try {
         const { getDefaultEmbeddingClient } = await import("../../llm/embedding-client");
         const { getExperienceVectorStore } = await import(
           "../../experience/experience-vector-store"
         );
         const embeddingClient = getDefaultEmbeddingClient();
-        const recall = new ExperienceRecall({
+        const recallOpts = {
           store: getExperienceStore(),
           bus: getExperienceBus(),
           ...(embeddingClient ? { embeddingClient, vectorStore: getExperienceVectorStore() } : {}),
-        });
-        const recallHits = await withOptionalContextTimeout(
-          "experience.recall",
-          recall.recall({
-            projectId: meta.projectId,
-            definitionId: state.agentDefinition.id,
-            role: state.agentDefinition.role,
-            query,
-            topK: 5,
-            workflowRunId: state.workflowId,
-          }),
-          []
-        );
-        if (recallHits.length > 0) {
-          recalledExperienceBlock = renderRecallBlockForPrompt(recallHits);
-          if (process.env.DEBUG_MEMORY_V2) {
-            console.log(
-              `[reason] recalled ${recallHits.length} experiences for ${state.agentDefinition.role}`
-            );
+        };
+        const symbolsFromSlot = slotTicker ? [slotTicker] : [];
+        const decisionCutoff =
+          typeof payloadParams.decisionCutoff === "string"
+            ? payloadParams.decisionCutoff
+            : typeof payloadParams.asof === "string"
+              ? payloadParams.asof
+              : undefined;
+
+        if (isContextProtocolEnabled()) {
+          const financeRecall = new FinanceRecall(recallOpts);
+          const financeHits = await withOptionalContextTimeout(
+            "experience.finance_recall",
+            financeRecall.recall({
+              projectId: meta.projectId,
+              definitionId: state.agentDefinition.id,
+              role: state.agentDefinition.role,
+              query,
+              topK: 5,
+              workflowRunId: state.workflowId,
+              ...(symbolsFromSlot.length ? { symbols: symbolsFromSlot } : {}),
+              ...(decisionCutoff ? { decisionCutoff } : {}),
+            }),
+            []
+          );
+          if (financeHits.length > 0) {
+            recalledFinanceBlock = renderFinanceRecallBlockForPrompt(financeHits);
           }
+
+          const generalRecall = new ExperienceRecall(recallOpts);
+          const generalHits = await withOptionalContextTimeout(
+            "experience.recall",
+            generalRecall.recall({
+              projectId: meta.projectId,
+              definitionId: state.agentDefinition.id,
+              role: state.agentDefinition.role,
+              query,
+              topK: 5,
+              workflowRunId: state.workflowId,
+            }),
+            []
+          );
+          const nonFinance = generalHits.filter((h) => !isFinanceSubKind(h.experience.subKind));
+          if (nonFinance.length > 0) {
+            recalledGeneralBlock = renderRecallBlockForPrompt(nonFinance);
+          }
+          recalledExperienceBlock = [recalledFinanceBlock, recalledGeneralBlock]
+            .filter(Boolean)
+            .join("\n\n");
+        } else {
+          const recall = new ExperienceRecall(recallOpts);
+          const recallHits = await withOptionalContextTimeout(
+            "experience.recall",
+            recall.recall({
+              projectId: meta.projectId,
+              definitionId: state.agentDefinition.id,
+              role: state.agentDefinition.role,
+              query,
+              topK: 5,
+              workflowRunId: state.workflowId,
+            }),
+            []
+          );
+          if (recallHits.length > 0) {
+            recalledExperienceBlock = renderRecallBlockForPrompt(recallHits);
+            recalledGeneralBlock = recalledExperienceBlock;
+          }
+        }
+
+        if (process.env.DEBUG_MEMORY_V2 && recalledExperienceBlock) {
+          console.log(
+            `[reason] recalled experiences for ${state.agentDefinition.role} (ctxProtocol=${isContextProtocolEnabled()})`
+          );
         }
       } catch (err) {
         if (process.env.DEBUG_MEMORY_V2) {
@@ -559,7 +632,8 @@ export async function reasonNode(
     slotContext.slice(0, 6000),
     hitlResumeBlock,
     recalledSkillsBlock,
-    recalledExperienceBlock,
+    recalledFinanceBlock || recalledExperienceBlock,
+    recalledGeneralBlock,
     pnlAwareSkillBlock,
     sessionContext.join("\n"),
   ]
@@ -625,11 +699,13 @@ export async function reasonNode(
     `**任务目标**：${payloadGoal}`,
     slotTicker ? `**标的**：${slotTicker}` : "",
     slotContext
-      ? `\n**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContext.slice(0, 6000)}`
+      ? `\n${slotContextRendered || `**任务上下文**：\n${String(slotContext).slice(0, 6000)}`}`
       : "",
     hitlResumeBlock ? `\n${hitlResumeBlock}` : "",
     recalledSkillsBlock ? `\n${recalledSkillsBlock}` : "",
-    recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
+    recalledFinanceBlock ? `\n${recalledFinanceBlock}` : "",
+    !recalledFinanceBlock && recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
+    recalledGeneralBlock && recalledFinanceBlock ? `\n${recalledGeneralBlock}` : "",
     pnlAwareSkillBlock ? `\n${pnlAwareSkillBlock}` : "",
     sessionContext.length
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
@@ -668,7 +744,82 @@ export async function reasonNode(
       "\n**Token 预算提醒**：本工作流已达到软预算，请停止扩展新分支，只完成当前最小可验证结论。"
     );
   }
-  const rawUserPrompt = userPromptParts.filter(Boolean).join("\n");
+
+  let rawUserPrompt: string;
+  if (isContextProtocolEnabled()) {
+    const goalSlot = [
+      `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
+      "",
+      `**任务目标**：${payloadGoal}`,
+      slotTicker ? `**标的**：${slotTicker}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const slotBlock = slotContextRendered
+      ? slotContextRendered.slice(0, 6000)
+      : typeof slotContextRaw === "string" && slotContextRaw.trim()
+        ? `**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContextRaw.trim().slice(0, 6000)}`
+        : "";
+    const workingBlock = isContextProtocolEnabled()
+      ? !isWorkingMemoryEmpty(state.workingMemory)
+        ? renderWorkingMemoryForPrompt(state.workingMemory)
+        : previousObservations.length
+          ? `**历史观测（共 ${state.observations.length} 步，按 token 预算压缩到最近 ${previousObservations.length} 条；早期已 stub 化）**：\n${JSON.stringify(previousObservations, null, 2)}`
+          : ""
+      : previousObservations.length
+        ? `**历史观测（共 ${state.observations.length} 步，按 token 预算压缩到最近 ${previousObservations.length} 条；早期已 stub 化）**：\n${JSON.stringify(previousObservations, null, 2)}`
+        : "";
+    const sessionBlock = sessionContext.length
+      ? `**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
+      : "";
+    const controlParts: string[] = [];
+    if (hitlResumeBlock) controlParts.push(hitlResumeBlock);
+    if (injectedUserMessages.length > 0) {
+      const recent = injectedUserMessages.slice(-3);
+      controlParts.push(
+        `**用户实时追加指令（${injectedUserMessages.length} 条，请优先采纳最新意图）**：`,
+        ...recent.map((m, i) => `${injectedUserMessages.length - recent.length + i + 1}. ${m}`)
+      );
+    }
+    if (hasTools && !nativeToolCalling) {
+      controlParts.push(
+        '若本步需要调用工具，请在分析文字之后附上**唯一一个** JSON 工具调用块（见系统提示中的格式）；若仅需文字结论则使用 `{"tool":"none"}`。'
+      );
+    }
+    if (workflowTokenBudget?.softLimitReached) {
+      controlParts.push(
+        "**Token 预算提醒**：本工作流已达到软预算，请停止扩展新分支，只完成当前最小可验证结论。"
+      );
+    }
+    if (state.iteration > 1) controlParts.push(`**当前迭代**：第 ${state.iteration} 轮`);
+    if (pnlAwareSkillBlock) controlParts.push(pnlAwareSkillBlock);
+
+    const envelope = assembleContextEnvelope({
+      workflowRunId: state.workflowId,
+      definitionId: state.agentDefinition.id,
+      role: state.agentDefinition.role,
+      ...(typeof payloadParams.decisionCutoff === "string"
+        ? { decisionCutoff: payloadParams.decisionCutoff }
+        : typeof payloadParams.asof === "string"
+          ? { decisionCutoff: payloadParams.asof }
+          : {}),
+      axiomsApplied: allAxioms(),
+      softOmitLowPriority: Boolean(workflowTokenBudget?.softLimitReached),
+      slots: {
+        goal: goalSlot,
+        ...(slotBlock ? { slot: slotBlock } : {}),
+        ...(recalledFinanceBlock ? { recall_finance: recalledFinanceBlock } : {}),
+        ...(recalledSkillsBlock ? { recall_skill: recalledSkillsBlock } : {}),
+        ...(recalledGeneralBlock ? { recall_general: recalledGeneralBlock } : {}),
+        ...(sessionBlock ? { session: sessionBlock } : {}),
+        ...(workingBlock ? { working: workingBlock } : {}),
+        ...(controlParts.length ? { control: controlParts.join("\n") } : {}),
+      },
+    });
+    rawUserPrompt = envelope.rendered?.user ?? userPromptParts.filter(Boolean).join("\n");
+  } else {
+    rawUserPrompt = userPromptParts.filter(Boolean).join("\n");
+  }
   const userPromptResult = truncatePromptText(
     rawUserPrompt,
     workflowTokenBudget?.policy.maxUserPromptChars ?? 24_000,

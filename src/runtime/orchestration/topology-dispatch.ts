@@ -105,7 +105,18 @@ export function resolveTopologyToolTimeoutMs(toolName: string): number | undefin
   return resolveTopologyTaskTimeoutMs(role) + TOPOLOGY_TIMEOUT_BUFFER_MS;
 }
 
-export function buildTopologySpecialistExecutionContract(role: AgentRole): string {
+export type MarketDataRequestMode = "realtime" | "historical";
+
+/** Prevent live-price requests from being satisfied by a stale daily bar. */
+export function classifyMarketDataRequestMode(goal: string): MarketDataRequestMode {
+  return /实时|现价|当前(?:价格|价|行情)|今天(?:价格|价|行情|走势|涨跌)|今日(?:价格|价|行情|走势|涨跌)|最新(?:价格|价|行情)|盘中|盘口|逐笔|买一|卖一|real[- ]?time|live\s+quote|current\s+price/i.test(
+    goal
+  )
+    ? "realtime"
+    : "historical";
+}
+
+export function buildTopologySpecialistExecutionContract(role: AgentRole, goal = ""): string {
   const common = [
     "## 专家子任务执行合同（硬约束）",
     "- 这是 Orchestrator 派发的有界子任务；只完成 goal 指定的最小结果，不扩写通用报告。",
@@ -114,9 +125,19 @@ export function buildTopologySpecialistExecutionContract(role: AgentRole): strin
     "- 调度超时、模型超时与数据不可用是三种不同状态；只有真实拉取返回 no_data/no_bars/全 provider 失败，才可判定数据不可用。",
   ];
   if (role === "market_data") {
-    common.push(
-      "- 行情任务最短链路：市场识别（可复用已注入结果）→ 一次真实 fetch_klines/fetch_bars/fetch_ticks → 立即总结；成功拉数后禁止再次调用 readiness。"
-    );
+    const mode = classifyMarketDataRequestMode(goal);
+    common.push(`- 本任务的数据模式由运行时判定为 **${mode}**。`);
+    if (mode === "realtime") {
+      common.push(
+        '- 实时任务最短链路：市场识别（可复用）→ `fetch_quote`；Quote 失败才依次降级到 `fetch_ticks`、`fetch_klines(timeframe="1m")`、`fetch_klines(timeframe="5m")`。禁止用日 K 成功冒充实时行情。',
+        "- 实时结果必须返回 source、timestamp/asOf、freshnessMs；若只能取得昨收/旧 K 线，明确标记 stale，不得报告为当前价。"
+      );
+    } else {
+      common.push(
+        "- 历史行情任务最短链路：市场识别（可复用）→ 一次真实 `fetch_klines`/`fetch_bars` → 立即总结。"
+      );
+    }
+    common.push("- 核心行情工具成功后禁止再次调用 readiness。");
   }
   if (role === "research") {
     common.push(

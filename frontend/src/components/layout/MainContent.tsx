@@ -1,6 +1,6 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { Loader2, Network, Rocket, Settings, type LucideIcon } from "lucide-react";
+import { Network, Rocket, Settings, type LucideIcon } from "lucide-react";
 import {
   chatHealth,
   checkBrokerHealth,
@@ -12,15 +12,11 @@ import {
   getAgentsConfig,
   getDefaultWorkspace,
   getDebateConfig,
-  getDebateTurns,
-  getDebateVerdict,
   getDefaultProjectSession,
   getExecutionSafetyConfig,
   getAnalystTeamGraph,
-  getSignalFusion,
   initGenePool,
   getRiskConfig,
-  getRiskVetoLogs,
   listGeneGenerations,
   listGeneTrends,
   listGenomes,
@@ -32,8 +28,6 @@ import {
   loginWindSession,
   reconnectWindSession,
   getIntentExecutionView,
-  getSessionAgentsBoard,
-  getSessionA2AMessages,
   listBrokerAccounts,
   listBrokerEvents,
   listMcpBindings,
@@ -58,8 +52,6 @@ import {
   getAgentDefinitionPack,
   listChatSessions,
   listMonitorWorkflows,
-  getWorkflowArtifacts,
-  saveWorkflowReportArtifact,
   listIntentOrders,
   listProjects,
   listSessionMessages,
@@ -69,8 +61,6 @@ import {
   reloadAgents,
   processWorkflowCompensations,
   evolveGenePool,
-  runAnalystTeam,
-  AnalystJobPollError,
   runScreener,
   executeIntentConfirmed,
   saveModelConfig,
@@ -85,7 +75,6 @@ import {
   upsertMcpSource,
   upsertMcpServer,
   requestExecutionConfirmation,
-  subscribeDebateStream,
   listPendingWorkflowHitl,
   resolveWorkflowHitl,
   injectWorkflowMessage,
@@ -107,13 +96,9 @@ import type {
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentSkillRecord,
-  AnalystTeamResult,
   DebateConfig,
   DebateStreamEvent,
-  DebateTurnRecord,
-  DebateVerdictRecord,
   RiskConfig,
-  RiskVetoLogRecord,
   GeneGenerationRecord,
   GeneTrendPoint,
   IntentOrderRecord,
@@ -131,8 +116,6 @@ import type {
   SkillMarketStatusDto,
   ScreenerCandidateRecord,
   ScreenerRunRecord,
-  SessionAgentBoardItem,
-  SessionA2AMessageItem,
   BrokerAccountRecord,
   BrokerOrderEventRecord,
   BrokerProvider,
@@ -149,11 +132,9 @@ import type {
   AgentLoopKind,
   WorkflowProcessConfig,
 } from "../../api/types";
-import { groupStreamEventsByRun } from "../../lib/groupStreamEventsByRun";
 import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
 import { useAppStore, type ChartContextPayload } from "../../store";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
-import { StreamTimelineGroupCard } from "../chat/StreamTimelineGroupCard";
 import {
   clearChatStreamBinding,
   hydrateStaleChatMessages,
@@ -169,7 +150,6 @@ import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type Te
 import { TeamAgentPixelOffice } from "../team/TeamAgentPixelOffice";
 import { formatEdgeSelectionSummary, isToolGraphEdge } from "../../lib/teamGraphEdgeVisual";
 import {
-  buildResearchScopePayload,
   filterPromptTemplates,
   instrumentLabel,
   scopeModeLabel,
@@ -210,6 +190,7 @@ import {
   type OrchestratorArtifact,
 } from "../team/OrchestratorChatPanel";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
+import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
 import {
   classifyWorkflow,
@@ -295,11 +276,6 @@ function formatChartContextBlock(ctx: ChartContextPayload): string {
   return lines.join("\n");
 }
 
-function shortWorkflowLabel(workflowRunId: string): string {
-  return workflowRunId.length > 12 ? `${workflowRunId.slice(0, 8)}…` : workflowRunId;
-}
-
-const CHAT_SESSION_AGENT_BOARD_LS = "qubit:chatSessionAgentBoardOpen";
 const CHAT_SIDEBAR_WIDTH_LS = "qubit:chatSidebarWidthPx";
 
 function readChatSidebarWidthPx(): number {
@@ -311,46 +287,6 @@ function readChatSidebarWidthPx(): number {
     /* ignore */
   }
   return 220;
-}
-
-function readSessionAgentBoardOpen(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const v = localStorage.getItem(CHAT_SESSION_AGENT_BOARD_LS);
-    if (v === "false") return false;
-    if (v === "true") return true;
-  } catch {
-    /* ignore */
-  }
-  return true;
-}
-
-function groupAgentsBoardByRole(
-  agents: SessionAgentBoardItem[]
-): Array<{ role: string; displayName: string; instances: SessionAgentBoardItem[] }> {
-  const byRole = new Map<string, SessionAgentBoardItem[]>();
-  for (const a of agents) {
-    const list = byRole.get(a.role) ?? [];
-    list.push(a);
-    byRole.set(a.role, list);
-  }
-  for (const list of byRole.values()) {
-    list.sort((a, b) => {
-      const ta = a.workflowStartedAt ? new Date(a.workflowStartedAt).getTime() : 0;
-      const tb = b.workflowStartedAt ? new Date(b.workflowStartedAt).getTime() : 0;
-      if (tb !== ta) return tb - ta;
-      return b.instanceId.localeCompare(a.instanceId);
-    });
-  }
-  const roles = [...byRole.keys()].sort((a, b) => {
-    if (a === "orchestrator") return -1;
-    if (b === "orchestrator") return 1;
-    return a.localeCompare(b);
-  });
-  return roles.map((role) => {
-    const instances = byRole.get(role) ?? [];
-    return { role, displayName: instances[0]?.name ?? "unknown", instances };
-  });
 }
 
 /**
@@ -432,6 +368,8 @@ export const ChatPanel: FC<{
   const pushStreamEvent = useAppStore((s) => s.pushStreamEvent);
   const chatAgentMode = useAppStore((s) => s.agentControlMode);
   const setChatAgentMode = useAppStore((s) => s.setAgentControlMode);
+  const setActiveView = useAppStore((s) => s.setActiveView);
+  const setMonitorWorkflowFocus = useAppStore((s) => s.setMonitorWorkflowFocus);
   const { t } = useTranslation();
 
   const [workspaceId, setWorkspaceId] = useState("");
@@ -477,11 +415,6 @@ export const ChatPanel: FC<{
     setChatDraftPrefill(null);
   }, [chatDraftPrefill, setChatDraftPrefill]);
 
-  const [agentsBoard, setAgentsBoard] = useState<SessionAgentBoardItem[]>([]);
-  const [expandedAgentRoles, setExpandedAgentRoles] = useState<Set<string>>(() => new Set());
-  const [a2aMessages, setA2aMessages] = useState<SessionA2AMessageItem[]>([]);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [sessionAgentBoardOpen, setSessionAgentBoardOpen] = useState(readSessionAgentBoardOpen);
   const [chatSidebarWidthPx, setChatSidebarWidthPx] = useState(readChatSidebarWidthPx);
   const chatLayoutRef = useRef<HTMLDivElement | null>(null);
   const bindStreamRef = useRef<
@@ -503,34 +436,23 @@ export const ChatPanel: FC<{
    * 同步链路内（bindStream → reloadSessionMessages）能立刻读到最新值。
    */
   const activeStreamMessageIdsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(CHAT_SESSION_AGENT_BOARD_LS, String(sessionAgentBoardOpen));
-    } catch {
-      /* ignore */
-    }
-  }, [sessionAgentBoardOpen]);
+  const activeStreamClosersRef = useRef<Map<string, () => void>>(new Map());
+  const [streamRunByMessageId, setStreamRunByMessageId] = useState<Record<string, string>>({});
 
   const chatGridTemplateColumns = useMemo(() => {
     const w = chatSidebarWidthPx;
     const grip = 6;
-    if (sessionAgentBoardOpen) {
-      return ideEmbedded
-        ? `minmax(120px, ${w}px) ${grip}px minmax(0, 1fr) minmax(120px, 20%)`
-        : `minmax(140px, ${w}px) ${grip}px minmax(0, 1fr) minmax(160px, 1fr)`;
-    }
     return ideEmbedded
       ? `minmax(120px, ${w}px) ${grip}px minmax(0, 1fr)`
       : `minmax(140px, ${w}px) ${grip}px minmax(0, 1fr)`;
-  }, [sessionAgentBoardOpen, ideEmbedded, chatSidebarWidthPx]);
+  }, [ideEmbedded, chatSidebarWidthPx]);
 
   useLayoutEffect(() => {
     const el = chatLayoutRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const clamp = () => {
       const rect = el.getBoundingClientRect();
-      const ratioMax = sessionAgentBoardOpen ? 0.38 : 0.52;
+      const ratioMax = 0.52;
       const maxW = Math.min(560, Math.floor(rect.width * ratioMax));
       const minW = ideEmbedded ? 120 : 140;
       setChatSidebarWidthPx((prev) => Math.min(maxW, Math.max(minW, prev)));
@@ -541,7 +463,7 @@ export const ChatPanel: FC<{
     ro.observe(el);
     clamp();
     return () => ro.disconnect();
-  }, [sessionAgentBoardOpen, ideEmbedded]);
+  }, [ideEmbedded]);
 
   const onChatSidebarResizeMouseDown = useCallback(
     (e: ReactMouseEvent) => {
@@ -553,7 +475,7 @@ export const ChatPanel: FC<{
       const startW = chatSidebarWidthPx;
       const clampW = (candidate: number) => {
         const rect = layout.getBoundingClientRect();
-        const ratioMax = sessionAgentBoardOpen ? 0.38 : 0.52;
+        const ratioMax = 0.52;
         const maxW = Math.min(560, Math.floor(rect.width * ratioMax));
         const minW = ideEmbedded ? 120 : 140;
         return Math.min(maxW, Math.max(minW, Math.round(candidate)));
@@ -579,65 +501,8 @@ export const ChatPanel: FC<{
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [chatSidebarWidthPx, sessionAgentBoardOpen, ideEmbedded]
+    [chatSidebarWidthPx, ideEmbedded]
   );
-
-  const agentsBoardByRole = useMemo(() => groupAgentsBoardByRole(agentsBoard), [agentsBoard]);
-
-  const sessionWorkflowIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const msg of chatMessages) {
-      for (const wid of msg.workflowRunIds ?? []) ids.add(wid);
-    }
-    return ids;
-  }, [chatMessages]);
-
-  const timelineItems = useMemo(() => {
-    type StreamGroupItem = {
-      kind: "stream_group";
-      id: string;
-      at: number;
-      workflowRunId: string;
-      runId: string;
-      firstTs: number;
-      roleSummary: string;
-      steps: Array<{ ts: number; label: string; detail: string }>;
-    };
-    type A2aTimelineItem = {
-      kind: "a2a";
-      id: string;
-      at: number;
-      workflowRunId: string;
-      text: string;
-      detail: string;
-    };
-    type TimelineItem = StreamGroupItem | A2aTimelineItem;
-
-    const filterSet = sessionWorkflowIds.size === 0 ? null : sessionWorkflowIds;
-    const grouped = groupStreamEventsByRun(streamEvents, filterSet);
-
-    const streamGroups: StreamGroupItem[] = grouped.map((g) => ({
-      kind: "stream_group" as const,
-      id: `stream-group-${g.workflowRunId}::${g.runId}`,
-      at: g.at,
-      workflowRunId: g.workflowRunId,
-      runId: g.runId,
-      firstTs: g.firstTs,
-      roleSummary: g.roleSummary,
-      steps: g.steps,
-    }));
-
-    const a2aPart: A2aTimelineItem[] = a2aMessages.map((m) => ({
-      id: `a2a-${m.id}`,
-      at: new Date(m.createdAt).getTime(),
-      kind: "a2a" as const,
-      workflowRunId: m.workflowRunId,
-      text: `${m.senderRole} → ${m.receiverRole ?? "broadcast"} · ${m.messageType}`,
-      detail: JSON.stringify(m.payloadJson).slice(0, 200),
-    }));
-
-    return [...streamGroups, ...a2aPart].sort((a, b) => b.at - a.at).slice(0, 60) as TimelineItem[];
-  }, [streamEvents, a2aMessages, sessionWorkflowIds]);
 
   const reloadSessionMessages = useCallback(
     async (sessionId: string) => {
@@ -710,29 +575,14 @@ export const ChatPanel: FC<{
     );
   }, [selectedSessionId, reloadSessionMessages]);
 
-  useEffect(() => {
-    if (!selectedSessionId) return;
-    setExpandedAgentRoles(new Set());
-    void getSessionAgentsBoard(selectedSessionId)
-      .then(setAgentsBoard)
-      .catch(() => setAgentsBoard([]));
-    void getSessionA2AMessages(selectedSessionId, 120)
-      .then(setA2aMessages)
-      .catch(() => setA2aMessages([]));
-  }, [selectedSessionId, refreshKey]);
-
-  const toggleAgentRoleExpanded = (role: string) => {
-    setExpandedAgentRoles((prev) => {
-      const next = new Set(prev);
-      if (next.has(role)) next.delete(role);
-      else next.add(role);
-      return next;
-    });
-  };
-
   const onSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
     onWorkflowFocusChange?.(null);
+  };
+
+  const openWorkflowTrace = (workflowId: string) => {
+    setMonitorWorkflowFocus(workflowId);
+    setActiveView("monitor");
   };
 
   const onCreateSession = async () => {
@@ -804,6 +654,9 @@ export const ChatPanel: FC<{
       return;
     }
     activeStreamMessageIdsRef.current.add(assistantMessageId);
+    setStreamRunByMessageId((prev) =>
+      prev[assistantMessageId] === runId ? prev : { ...prev, [assistantMessageId]: runId }
+    );
     persistChatStreamBinding(assistantMessageId, workflowId, runId);
     let buffer = "";
     let streamDone = false;
@@ -827,7 +680,9 @@ export const ChatPanel: FC<{
        * grace-timeout 三个出口共用同一个 stopStream，保证占位永远被释放。
        */
       activeStreamMessageIdsRef.current.delete(assistantMessageId);
+      activeStreamClosersRef.current.delete(assistantMessageId);
     };
+    activeStreamClosersRef.current.set(assistantMessageId, stopStream);
 
     esClose = subscribeWorkflowStream({
       workflowId,
@@ -901,7 +756,6 @@ export const ChatPanel: FC<{
               m.id === assistantMessageId ? { ...m, content: finalText, status: msgStatus } : m
             )
           );
-          setRefreshKey((v) => v + 1);
           stopStream();
         }
         if (event.type === "error") {
@@ -928,7 +782,6 @@ export const ChatPanel: FC<{
                 : m
             )
           );
-          setRefreshKey((v) => v + 1);
           stopStream();
         }
       },
@@ -953,7 +806,6 @@ export const ChatPanel: FC<{
               m.id === assistantMessageId ? { ...m, content: cleanedBuffer, status: "completed" } : m
             )
           );
-          setRefreshKey((v) => v + 1);
           stopStream();
           return;
         }
@@ -985,7 +837,6 @@ export const ChatPanel: FC<{
                 : m
             )
           );
-          setRefreshKey((v) => v + 1);
           stopStream();
         }, 3000); // 3s grace period (was 450ms — too aggressive)
       },
@@ -1121,6 +972,51 @@ export const ChatPanel: FC<{
     simpleMode && workflowRunId
       ? chatMessages.filter((message) => message.workflowRunIds?.includes(workflowRunId))
       : chatMessages;
+
+  const activeAssistantMessage = [...visibleChatMessages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        (message.status === "running" || message.status === "queued") &&
+        Boolean(message.workflowRunIds?.[0])
+    );
+
+  const handleStopGeneration = async () => {
+    const message = activeAssistantMessage;
+    const workflowId = message?.workflowRunIds?.[0];
+    if (!message || !workflowId) return;
+    const partial = stripToolCallSentinels(message.content).trim();
+    const stoppedContent = partial
+      ? `${partial}\n\n_已停止生成_`
+      : "⏹️ 已停止生成";
+    // 先收 UI/SSE，再请求后端取消；即使网络返回慢，按钮也应立即反馈。
+    activeStreamClosersRef.current.get(message.id)?.();
+    setChatMessages((prev) =>
+      prev.map((item) =>
+        item.id === message.id
+          ? {
+              ...item,
+              content: stoppedContent,
+              status: "failed",
+              errorMessage: "stopped by user",
+            }
+          : item
+      )
+    );
+    try {
+      await deleteWorkflow(workflowId);
+      await patchSessionMessage({
+        messageId: message.id,
+        content: stoppedContent,
+        status: "failed",
+        errorMessage: "stopped by user",
+      });
+      setErrorText("");
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : "停止生成失败");
+    }
+  };
 
   return (
     <div
@@ -1276,18 +1172,7 @@ export const ChatPanel: FC<{
                 </button>
               ) : null}
             </div>
-          ) : <div style={styles.chatBoardToggleRow}>
-            <button
-              type="button"
-              className="qb-btn-ghost qb-btn--compact"
-              onClick={() => setSessionAgentBoardOpen((o) => !o)}
-              title={
-                sessionAgentBoardOpen ? t("chat.board.hideTitle") : t("chat.board.showTitle")
-              }
-            >
-              {sessionAgentBoardOpen ? t("chat.board.hide") : t("chat.board.show")}
-            </button>
-          </div>}
+          ) : null}
           <div className="qb-chat-messages" style={styles.chatMessages}>
             {simpleMode && visibleChatMessages.length === 0 ? (
               <div className="qb-simple-chat-welcome">
@@ -1329,6 +1214,14 @@ export const ChatPanel: FC<{
                     </span>
                   )}
                 </div>
+                {msg.role === "assistant" && streamRunByMessageId[msg.id] ? (
+                  <ChatExecutionActivity
+                    events={streamEvents.filter(
+                      (event) => event.runId === streamRunByMessageId[msg.id]
+                    )}
+                    running={msg.status === "running" || msg.status === "queued"}
+                  />
+                ) : null}
                 {msg.workflowRunIds?.length ? (
                   <div className="qb-chat-bubble__meta">
                     {simpleMode
@@ -1342,7 +1235,17 @@ export const ChatPanel: FC<{
                             workflow {id.slice(0, 8)}
                           </button>
                         ))
-                      : `workflow: ${msg.workflowRunIds.join(", ")}`}
+                    : msg.workflowRunIds.map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className="qb-btn-ghost qb-btn--compact"
+                          onClick={() => openWorkflowTrace(id)}
+                          title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
+                        >
+                          查看 Trace · {id.slice(0, 8)}
+                        </button>
+                      ))}
                   </div>
                 ) : null}
                 {msg.status === "awaiting_approval" &&
@@ -1400,7 +1303,14 @@ export const ChatPanel: FC<{
             className={simpleMode ? "qb-simple-composer" : undefined}
             data-qb-simple-composer={simpleMode ? "true" : undefined}
             style={styles.chatForm}
-            onSubmit={onSend}
+            onSubmit={
+              activeAssistantMessage
+                ? (event) => {
+                    event.preventDefault();
+                    void handleStopGeneration();
+                  }
+                : onSend
+            }
           >
             {!simpleMode ? (
               <AgentModePicker value={chatAgentMode} onChange={setChatAgentMode} />
@@ -1465,148 +1375,32 @@ export const ChatPanel: FC<{
                 </span>
                 <button
                   className="qb-simple-composer__send"
-                  type="submit"
-                  disabled={!input.trim()}
-                  title={`使用 ${getAgentModeOption(chatAgentMode).label} 模式发送`}
+                  type={activeAssistantMessage ? "button" : "submit"}
+                  disabled={!activeAssistantMessage && !input.trim()}
+                  onClick={activeAssistantMessage ? () => void handleStopGeneration() : undefined}
+                  title={
+                    activeAssistantMessage
+                      ? "停止生成"
+                      : `使用 ${getAgentModeOption(chatAgentMode).label} 模式发送`
+                  }
+                  aria-label={activeAssistantMessage ? "停止生成" : "发送消息"}
                 >
-                  ↑
+                  {activeAssistantMessage ? "■" : "↑"}
                 </button>
               </div>
             ) : (
-              <button className="qb-btn-primary-brand" type="submit" disabled={!input.trim()}>
-                {t("common.action.send")}
+              <button
+                className={activeAssistantMessage ? "qb-btn-danger" : "qb-btn-primary-brand"}
+                type={activeAssistantMessage ? "button" : "submit"}
+                disabled={!activeAssistantMessage && !input.trim()}
+                onClick={activeAssistantMessage ? () => void handleStopGeneration() : undefined}
+              >
+                {activeAssistantMessage ? "停止" : t("common.action.send")}
               </button>
             )}
           </form>
         </div>
 
-        {!simpleMode && sessionAgentBoardOpen ? (
-        <div className="qb-chat-board-col" style={styles.boardCol}>
-          <div style={styles.boardColHeader}>
-            <h3 style={{ ...styles.subTitle, margin: 0 }}>会话 Agent 看板</h3>
-            <button
-              type="button"
-              className="qb-btn-ghost qb-btn--compact"
-              onClick={() => setSessionAgentBoardOpen(false)}
-              title="隐藏右侧看板"
-            >
-              隐藏
-            </button>
-          </div>
-          <div style={styles.boardColScroll}>
-            <div style={styles.boardList}>
-              {agentsBoardByRole.map((group) => {
-                const expanded = expandedAgentRoles.has(group.role);
-                const newest = group.instances[0];
-                const runningN = group.instances.filter((i) => i.status === "running").length;
-                return (
-                  <div key={group.role} style={styles.boardCard}>
-                    <button
-                      type="button"
-                      onClick={() => toggleAgentRoleExpanded(group.role)}
-                      style={styles.boardRoleToggle}
-                    >
-                      <div style={styles.cardName}>{group.role}</div>
-                      <div style={styles.cardDesc}>
-                        {group.displayName !== group.role ? `${group.displayName} · ` : ""}
-                        {group.instances.length} 个 workflow
-                        {runningN > 0 ? ` · ${runningN} 运行中` : ""}
-                      </div>
-                      {!expanded && newest ? (
-                        <div style={styles.cardDesc}>
-                          最近: {newest.status} · {newest.latestStep?.phase ?? "-"} #
-                          {newest.latestStep?.stepIndex ?? "-"}
-                          {newest.workflowStartedAt
-                            ? ` · ${new Date(newest.workflowStartedAt).toLocaleString()}`
-                            : ""}
-                        </div>
-                      ) : null}
-                      <div style={{ ...styles.chatMeta, marginTop: 4 }}>{expanded ? "▼ 收起" : "▶ 展开各 workflow"}</div>
-                    </button>
-                    {expanded ? (
-                      <div style={styles.boardNested}>
-                        {group.instances.map((item) => (
-                          <div key={item.instanceId} style={styles.boardNestedRow}>
-                            <div style={styles.cardDesc} title={item.workflowRunId}>
-                              workflow: <code style={styles.boardMono}>{shortWorkflowLabel(item.workflowRunId)}</code>
-                              {item.workflowMode ? ` · ${item.workflowMode}` : ""}
-                              {item.workflowStatus ? ` · ${item.workflowStatus}` : ""}
-                            </div>
-                            <div style={styles.cardDesc}>
-                              {item.workflowStartedAt
-                                ? new Date(item.workflowStartedAt).toLocaleString()
-                                : "—"}
-                            </div>
-                            <div style={styles.cardDesc}>
-                              status: {item.status} · iteration: {item.currentIteration}
-                            </div>
-                            <div style={styles.cardDesc}>
-                              latest: {item.latestStep?.phase ?? "-"} #{item.latestStep?.stepIndex ?? "-"}
-                            </div>
-                            {item.lastError ? <div style={styles.errorText}>{item.lastError}</div> : null}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            <h3 style={{ ...styles.subTitle, marginTop: 14 }}>Agent 间对话（A2A）</h3>
-            <div style={styles.boardList}>
-              {a2aMessages.slice(0, 30).map((msg) => (
-                <div key={msg.id} style={styles.boardCard}>
-                  <div style={styles.cardName}>
-                    {msg.senderRole} → {msg.receiverRole ?? "broadcast"}
-                  </div>
-                  <div style={styles.cardDesc}>type: {msg.messageType}</div>
-                  <div style={styles.cardDesc}>workflow: {msg.workflowRunId}</div>
-                  <div style={styles.cardDesc}>
-                    {new Date(msg.createdAt).toLocaleString()}
-                  </div>
-                  <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>
-                    {JSON.stringify(msg.payloadJson).slice(0, 220)}
-                  </div>
-                </div>
-              ))}
-              {a2aMessages.length === 0 ? (
-                <div style={styles.chatMeta}>暂无 A2A 消息（当前路径主要是 GraphRunner 直连执行）</div>
-              ) : null}
-            </div>
-            <h3 style={{ ...styles.subTitle, marginTop: 14 }}>统一执行时间线</h3>
-            <div style={styles.boardList}>
-              {timelineItems.map((item) => {
-                if (item.kind === "stream_group") {
-                  return (
-                    <StreamTimelineGroupCard
-                      key={item.id}
-                      item={{
-                        workflowRunId: item.workflowRunId,
-                        runId: item.runId,
-                        at: item.at,
-                        firstTs: item.firstTs,
-                        roleSummary: item.roleSummary,
-                        steps: item.steps,
-                      }}
-                    />
-                  );
-                }
-                return (
-                  <div key={item.id} style={styles.boardCard}>
-                    <div style={styles.cardName}>A2A · {new Date(item.at).toLocaleTimeString()}</div>
-                    <div style={styles.cardDesc}>{item.text}</div>
-                    <div style={styles.cardDesc}>workflow: {item.workflowRunId}</div>
-                    <div style={{ ...styles.chatMeta, marginTop: 6, whiteSpace: "pre-wrap" }}>{item.detail}</div>
-                  </div>
-                );
-              })}
-              {timelineItems.length === 0 ? (
-                <div style={styles.chatMeta}>暂无时间线事件</div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-        ) : null}
       </div>
     </div>
   );
@@ -4549,7 +4343,7 @@ const styles: Record<string, CSSProperties> = {
   },
   chatLayout: {
     display: "grid",
-    /** 列宽由 ChatPanel 内联 gridTemplateColumns 控制（会话列表 px + 拖拽条 + 主区 + 可选看板） */
+    /** 列宽由 ChatPanel 内联 gridTemplateColumns 控制（会话列表 px + 拖拽条 + 主对话区） */
     gridTemplateRows: "minmax(0, 1fr)",
     gap: 10,
     flex: 1,
@@ -4645,14 +4439,6 @@ const styles: Record<string, CSSProperties> = {
     overflow: "hidden",
     flex: 1,
   },
-  chatBoardToggleRow: {
-    display: "flex",
-    justifyContent: "flex-end",
-    alignItems: "center",
-    flexShrink: 0,
-    marginBottom: 6,
-    minWidth: 0,
-  },
   chatMessages: {
     flex: 1,
     minHeight: 0,
@@ -4700,89 +4486,10 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 12px",
     marginBottom: 10,
   },
-  boardCol: {
-    border: "1px solid var(--qb-chat-border, #27272a)",
-    borderRadius: 8,
-    padding: 10,
-    background: "var(--qb-board-col-bg, #111114)",
-    minWidth: 0,
-    minHeight: 0,
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-  },
-  boardColHeader: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 8,
-    flexShrink: 0,
-    marginBottom: 8,
-    minWidth: 0,
-  },
-  boardColScroll: {
-    flex: 1,
-    minHeight: 0,
-    minWidth: 0,
-    overflowY: "auto",
-    overflowX: "hidden",
-  },
-  boardList: { display: "flex", flexDirection: "column", gap: 8 },
-  boardCard: {
-    background: "var(--qb-board-card-bg, #18181b)",
-    border: "1px solid var(--qb-chat-border, #27272a)",
-    borderRadius: 8,
-    padding: 10,
-    minWidth: 0,
-    overflowWrap: "anywhere",
-  },
-  boardRoleToggle: {
-    display: "block",
-    width: "100%",
-    margin: 0,
-    padding: 0,
-    border: "none",
-    background: "transparent",
-    color: "inherit",
-    cursor: "pointer",
-    textAlign: "left" as const,
-    font: "inherit",
-  },
-  boardNested: {
-    marginTop: 10,
-    paddingLeft: 8,
-    borderLeft: "2px solid var(--qb-chat-border, #3f3f46)",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 10,
-  },
-  boardNestedRow: {
-    paddingBottom: 8,
-    borderBottom: "1px solid var(--qb-chat-border, #27272a)",
-  },
-  boardMono: {
-    fontSize: 11,
-    background: "var(--qb-main-input-bg, #18181b)",
-    padding: "1px 4px",
-    borderRadius: 4,
-  },
   errorText: { fontSize: 12, color: "#fca5a5", marginTop: 6 },
 };
 
 // ─── TeamDashboardPanel ───────────────────────────────────────────────────────
-
-const SIGNAL_COLOR: Record<string, string> = {
-  buy: "#22c55e",
-  sell: "#ef4444",
-  hold: "#f59e0b",
-};
-
-const ROLE_DISPLAY: Record<string, string> = {
-  analyst_fundamental: "基本面",
-  analyst_technical: "技术面",
-  analyst_sentiment: "情绪面",
-  analyst_macro: "宏观面",
-};
 
 function formatDebateStreamLine(ev: DebateStreamEvent): string {
   const time = new Date(ev.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -4929,14 +4636,13 @@ const TeamDashboardPanel: FC = () => {
   const [optionExpiry, setOptionExpiry] = useState("");
   const [optionStrike, setOptionStrike] = useState("");
   const [optionRight, setOptionRight] = useState<"call" | "put" | "">("call");
-  /** 传给后端的分析上下文（对应 runAnalystTeam.context）；空则后端使用默认 */
+  /** 右侧 Orchestrator 输入框的研究上下文。 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
   const [promptTemplateId, setPromptTemplateId] = useState("");
   const [workflowSopPreset, setWorkflowSopPreset] = useState("adaptive");
   const [workflowRequirePlan, setWorkflowRequirePlan] = useState(false);
   const [workflowRequireEvidence, setWorkflowRequireEvidence] = useState(false);
   const [workflowMinSuccessfulTools, setWorkflowMinSuccessfulTools] = useState(1);
-  const [workflowConfigSaving, setWorkflowConfigSaving] = useState(false);
   /**
    * Agent 底座/引擎：团队里每个角色单轮 reason 用哪个引擎
    * （docs/CLI_AGENT_PROJECTION_DESIGN.md 模型 B）。写入 loopOptions.roleReasoner，
@@ -5006,40 +4712,6 @@ const TeamDashboardPanel: FC = () => {
     setResearchInstrument(next);
   };
 
-  const researchScopePayload = useMemo(
-    () =>
-      buildResearchScopePayload({
-        mode: scopeMode,
-        ticker,
-        basketTickers,
-        sectorName,
-        sectorPeers,
-        exploreTheme,
-        exploreCandidates,
-        instrument: researchInstrument,
-        optionUnderlying,
-        optionContract,
-        optionExpiry,
-        optionStrike,
-        optionRight,
-      }),
-    [
-      scopeMode,
-      ticker,
-      basketTickers,
-      sectorName,
-      sectorPeers,
-      exploreTheme,
-      exploreCandidates,
-      researchInstrument,
-      optionUnderlying,
-      optionContract,
-      optionExpiry,
-      optionStrike,
-      optionRight,
-    ]
-  );
-
   const availablePromptTemplates = useMemo(
     () => filterPromptTemplates(scopeMode, researchInstrument),
     [scopeMode, researchInstrument]
@@ -5055,12 +4727,8 @@ const TeamDashboardPanel: FC = () => {
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
   const [running, setRunning] = useState(false);
-  /**
-   * orchestrator-chat 路径专用：composer 对话走 ReAct（非 handleRun 全队分析）。
-   * 与 `running` 分离，避免右栏误判为「注入模式」；仍驱动轮询 / 运行徽标 / 进度收口。
-   */
+  /** 右侧 composer 对话走 Orchestrator ReAct；与团队运行态分离。 */
   const [orchestratorChatInFlight, setOrchestratorChatInFlight] = useState(false);
-  const [result, setResult] = useState<AnalystTeamResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 工作流面板的成功/中性提示（区别于上方红色 error callout）。 */
   const [workflowNotice, setWorkflowNotice] = useState<string | null>(null);
@@ -5249,7 +4917,7 @@ const TeamDashboardPanel: FC = () => {
     confidenceThreshold: 0.55,
     maxRounds: 2,
   });
-  const [liveDebateEvents, setLiveDebateEvents] = useState<DebateStreamEvent[]>([]);
+  const [liveDebateEvents] = useState<DebateStreamEvent[]>([]);
   /**
    * Token 级流式：workflow firehose 推来的、尚未落库的「在飞」LLM 输出，按 role 累积。
    * 每条在 displayedLiveFeedEvents 里合成一个 `streaming:${role}` 气泡逐字显示；
@@ -5291,14 +4959,11 @@ const TeamDashboardPanel: FC = () => {
   const [teamArtifacts, setTeamArtifacts] = useState<OrchestratorArtifact[]>([]);
   const [teamArtifactsLoading, setTeamArtifactsLoading] = useState(false);
   const [teamArtifactsError, setTeamArtifactsError] = useState<string | null>(null);
-  const [replayTurns, setReplayTurns] = useState<DebateTurnRecord[]>([]);
-  const [replayVerdict, setReplayVerdict] = useState<DebateVerdictRecord | null>(null);
   const [riskConfig, setRiskConfigState] = useState<RiskConfig>({
     vetoThreshold: 0.7,
     blockConfidenceThreshold: 0.35,
     severityMode: "balanced",
   });
-  const [riskVetoLogs, setRiskVetoLogs] = useState<RiskVetoLogRecord[]>([]);
   const [screenerUniverse, setScreenerUniverse] = useState<"CN-A" | "US" | "HK">("CN-A");
   const [screenerTopN, setScreenerTopN] = useState(5);
   const [screenerRuns, setScreenerRunsState] = useState<ScreenerRunRecord[]>([]);
@@ -5353,7 +5018,6 @@ const TeamDashboardPanel: FC = () => {
   const setQuantTab = useAppStore((s) => s.setQuantTab);
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
   const setQuantContext = useAppStore((s) => s.setQuantContext);
-  const setCfgSubPage = useAppStore((s) => s.setConfigSubPage);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -6026,47 +5690,6 @@ const TeamDashboardPanel: FC = () => {
     return { hotRoles, hotEdgeKeys, isRunning: running || hasAliveHeartbeat };
   }, [filteredGraphDisplay?.interactions, running, agentHeartbeats, workflowOptions, workflowRunId]);
 
-  const enabledResearchAnalystDefCount = useMemo(() => {
-    if (agentDefBundles == null) return null;
-    return agentDefBundles.filter((b) => {
-      if (!RESEARCH_TEAM_SLOT_ROLE_SET.has(b.definition.role)) return false;
-      return b.definition.enabled !== false;
-    }).length;
-  }, [agentDefBundles]);
-
-  /** 是否禁用「启动团队分析」按钮。 */
-  const teamRunDisabled = useMemo(() => {
-    if (running) return true;
-    if (!researchScopePayload || !workflowRunId) return true;
-    if (teamAgentMode === "plan") return false;
-    if (enabledResearchAnalystDefCount === null) return true;
-    if (enabledResearchAnalystDefCount === 0) return true;
-    return false;
-  }, [
-    running,
-    researchScopePayload,
-    workflowRunId,
-    teamAgentMode,
-    enabledResearchAnalystDefCount,
-  ]);
-
-  const teamRunDisabledTitle = useMemo(() => {
-    if (running) return "分析进行中";
-    if (!researchScopePayload) return "请先填写研究范围（标的/篮子/板块）";
-    if (!workflowRunId) return "请先选择工作流";
-    if (teamAgentMode === "plan") return "";
-    if (enabledResearchAnalystDefCount === null) return "正在加载 Agent 定义…";
-    if (enabledResearchAnalystDefCount === 0)
-      return "数据库中暂无已启用的研究团队槽位定义（analyst_* / research / backtest / risk* 等），请先到配置中心启用或执行种子";
-    return "";
-  }, [
-    running,
-    researchScopePayload,
-    workflowRunId,
-    teamAgentMode,
-    enabledResearchAnalystDefCount,
-  ]);
-
   const workflowSessionId = useMemo(() => {
     const row = workflowOptions.find((w) => String(w.id) === workflowRunId);
     const sid = row?.sessionId;
@@ -6229,59 +5852,6 @@ const TeamDashboardPanel: FC = () => {
       .filter((group) => group.rows.length > 0);
   }, [groupedWorkflowOptions, workflowListQuery, workflowStatusFilter]);
 
-  /** 切换工作流：加载该工作流的磁盘报告与融合摘要（策略脚本列表已下放到量化工坊） */
-  useEffect(() => {
-    const wf = workflowRunId.trim();
-    if (!wf) {
-      setResult(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      setResult(null);
-      try {
-        const artifacts = await getWorkflowArtifacts(wf);
-        if (cancelled) return;
-        const fusion = await getSignalFusion(wf).catch(() => null);
-        if (cancelled) return;
-        const reportBody =
-          fusion?.report?.trim() ||
-          artifacts.report?.trim() ||
-          "";
-        if (fusion) {
-          setResult({
-            fusionId: fusion.fusionId,
-            ticker: fusion.ticker,
-            fusedSignal: fusion.fusedSignal,
-            fusedConfidence: fusion.fusedConfidence,
-            debateTriggered: fusion.debateTriggered,
-            breakdown: fusion.breakdown ?? [],
-            report:
-              reportBody ||
-              "（已恢复融合摘要；完整报告见磁盘 report.md 或重新运行团队分析。）",
-            debate: fusion.debate,
-            risk: fusion.risk,
-          });
-        } else if (artifacts.report?.trim()) {
-          setResult({
-            fusionId: "",
-            ticker: ticker.trim() || "—",
-            fusedSignal: "hold",
-            fusedConfidence: 0,
-            debateTriggered: false,
-            breakdown: [],
-            report: artifacts.report,
-          });
-        }
-      } catch {
-        /* artifacts/fusion 拉不到时静默；result 已被设为 null 兜底 */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [workflowRunId]);
-
   useEffect(() => {
     const onMove = (e: globalThis.MouseEvent) => {
       const d = teamColDrag.current;
@@ -6420,27 +5990,6 @@ const TeamDashboardPanel: FC = () => {
   const [runProgress, setRunProgress] = useState<string>("");
 
   /**
-   * 「等待上限（分钟）」：前端轮询多久后停止等待。注意：超时后**后端任务仍在运行**，
-   * 只是前端不再等结果；用户可在拓扑/对话流刷新查看，或调大上限重新启动。
-   * 0 表示「不超时」，一直轮询直到完成 / 失败 / 用户点击「停止等待」。
-   */
-  const [pollTimeoutMin, setPollTimeoutMin] = useState<number>(() => {
-    if (typeof window === "undefined") return 30;
-    const raw = window.localStorage.getItem("qb.analyst-poll-timeout-min");
-    const n = Number(raw);
-    if (Number.isFinite(n) && n >= 0) return n;
-    return 30;
-  });
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("qb.analyst-poll-timeout-min", String(pollTimeoutMin));
-  }, [pollTimeoutMin]);
-  const pollAbortRef = useRef<AbortController | null>(null);
-  const handleStopWaiting = () => {
-    pollAbortRef.current?.abort();
-  };
-
-  /**
    * v2：Orchestrator 规划后 HITL 三档模式（参考 docs/HITL_REDESIGN.md）。
    *   - 'off'：永不主动询问；硬规则（资金/规模/失败重试）仍触发
    *   - 'ai'：默认 — Orchestrator 自评 needed=true 或硬规则命中才触发
@@ -6471,15 +6020,6 @@ const TeamDashboardPanel: FC = () => {
   } | null>(null);
 
   /**
-   * 中栏底部「启动设置」面板的折叠态。
-   * 默认关闭（不挡中栏内容）；当 running / 等待 HITL / 有 error 时自动展开
-   * 让用户能立刻看到「停止等待 / 跳到 HITL / 错误信息」这些关键控件。
-   * 用 onToggle 同步 React state ↔ details DOM，避免「props open 强制覆盖
-   * 用户手动折叠」的尴尬。
-   */
-  const [runControlsOpen, setRunControlsOpen] = useState(false);
-
-  /**
    * 中栏底部「研究产出」抽屉的折叠态（因子/策略/脚本/草稿）。
    * 从右栏迁移而来：右栏现在是 Orchestrator 主对话框，产物下移到中栏底部，可隐去。
    * 持久化到 localStorage，默认折叠（不挤占对话/拓扑）。
@@ -6501,47 +6041,8 @@ const TeamDashboardPanel: FC = () => {
   }, [outputsDrawerOpen]);
 
   /**
-   * 当出现关键运行态（running / 等待 HITL / 有 error）时强制展开启动面板，
-   * 让用户能直接看到「停止等待 / 跳到 HITL banner / 错误内容」这些关键控件。
-   * 状态消退后**不**主动关闭，由用户自行选择保留还是折叠。
-   */
-  useEffect(() => {
-    if (running || teamPendingHitl || error) {
-      setRunControlsOpen(true);
-    }
-  }, [running, teamPendingHitl, error]);
-
-  const saveWorkflowProcessConfig = async () => {
-    const workflowId = workflowRunId.trim();
-    if (!workflowId) {
-      setError("请先选择工作流");
-      return;
-    }
-    setWorkflowConfigSaving(true);
-    setError(null);
-    setWorkflowNotice(null);
-    try {
-      await patchWorkflow(workflowId, {
-        loopOptionsJson: {
-          processConfig: workflowProcessConfig,
-          agentMode: teamAgentMode,
-          hitlMode: teamHitlMode,
-          roleReasoner,
-        },
-      });
-      await refreshWorkflowOptions();
-      setWorkflowNotice("流程配置已保存；普通对话与工作流会共用同一会话记录。");
-    } catch (e) {
-      setError(`保存流程配置失败：${(e as Error).message}`);
-    } finally {
-      setWorkflowConfigSaving(false);
-    }
-  };
-
-  /**
-   * 对话消息入口（composer 发送/继续）：交给 Orchestrator 跑 ReAct 自主判断
-   * （直接答 / assign_task 派单 / run_analyst_team 全队）。区别于「启动团队分析」按钮（handleRun=直接全队）。
-   * 结果经 token firehose 流式 + team-graph 轮询出现在右栏；发送后清空 composer。
+   * 唯一研究执行入口：右侧 composer 交给 Orchestrator 自主判断
+   * （直接答 / assign_task 派单 / run_analyst_team 全队）。
    */
   const handleOrchestratorChat = async (options?: {
     message?: string;
@@ -6585,164 +6086,6 @@ const TeamDashboardPanel: FC = () => {
       setOrchestratorChatInFlight(false);
       setError((e as Error).message);
       setRunProgress("");
-    }
-  };
-
-  const handleRun = async () => {
-    /**
-     * researchScopePayload 可为 null —— completed 后「继续对话」时左栏研究范围常为空，
-     * 此时不带 ticker/scope 发起，后端用该 workflow 上次跑过的 ticker 兜底（沿用同一标的）。
-     * 正常「启动」按钮受 teamRunDisabled 约束，scope 一定非空，不受此放宽影响。
-     */
-    if (!researchScopePayload && !workflowRunId.trim()) return;
-    if (teamAgentMode === "plan" || teamAgentMode === "goal") {
-      const wfId = workflowRunId.trim();
-      if (!wfId || !researchScopePayload) return;
-      const sessionId = workflowSessionId || teamResearchSessionId;
-      const projectId = effectiveResearchProjectId || teamResearchProjectId;
-      if (!sessionId || !projectId) {
-        setError("当前工作流尚未关联有效项目/会话，无法启动。");
-        return;
-      }
-      const scopeText = JSON.stringify(researchScopePayload);
-      const objective = [
-        teamAgentMode === "plan"
-          ? "请只制定以下量化研究任务的可执行计划，不要开始查询数据或派发任务。"
-          : "请自主完成以下量化研究目标，先建立计划，再执行、验证并闭环。",
-        `研究范围：${scopeText}`,
-        teamAnalysisContext.trim() ? `补充要求：${teamAnalysisContext.trim()}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      setError(null);
-      pushUserEcho(objective);
-      setOrchestratorChatInFlight(true);
-      setRunProgress(teamAgentMode === "plan" ? "Orchestrator 正在制定计划…" : "Goal 正在自主执行…");
-      try {
-        const turn = await createConversationTurn({
-          sessionId,
-          projectId,
-          workflowRunId: wfId,
-          message: objective,
-          hitlMode: teamHitlMode,
-          roleReasoner,
-          agentMode: teamAgentMode,
-          processConfig: workflowProcessConfig,
-        });
-        setSelectedConversationSessionId(turn.sessionId);
-        void refreshWorkflowOptions();
-        void loadTeamGraph({ preserveSelection: true });
-      } catch (e) {
-        setOrchestratorChatInFlight(false);
-        setRunProgress("");
-        setError((e as Error).message);
-      }
-      return;
-    }
-    setError(null);
-    setRunning(true);
-    setResult(null);
-    setLiveDebateEvents([]);
-    setReplayTurns([]);
-    setReplayVerdict(null);
-    setRunProgress("正在启动分析任务...");
-    try {
-      const wfId = workflowRunId;
-      if (!wfId) {
-        setError("请先选择工作流");
-        setRunning(false);
-        return;
-      }
-      await patchWorkflow(wfId, {
-        loopOptionsJson: {
-          processConfig: workflowProcessConfig,
-          agentMode: teamAgentMode,
-          hitlMode: teamHitlMode,
-          roleReasoner,
-        },
-      });
-      setActiveTab("research");
-      const unsubscribe = subscribeDebateStream({
-        workflowRunId: wfId,
-        onEvent: (event) => {
-          setLiveDebateEvents((prev) => [...prev.slice(-49), event]);
-        },
-        onError: () => {},
-      });
-      void loadTeamGraph({ preserveSelection: true });
-      const abortCtl = new AbortController();
-      pollAbortRef.current = abortCtl;
-      const timeoutMs = pollTimeoutMin > 0 ? pollTimeoutMin * 60_000 : 0;
-      const res = await runAnalystTeam({
-        workflowRunId: wfId,
-        ticker: researchScopePayload?.symbols?.[0] ?? ticker.trim(),
-        scope: researchScopePayload ?? undefined,
-        context:
-          teamAnalysisContext.trim() ||
-          `启动流程化研究：${JSON.stringify(researchScopePayload)}`,
-        timeoutMs,
-        signal: abortCtl.signal,
-        hitlMode: teamHitlMode,
-        roleReasoner,
-        agentMode: teamAgentMode,
-        onAwaitingApproval: (info) => {
-          setTeamPendingHitl({
-            jobId: info.jobId,
-            requestId: info.requestId,
-            title: info.title || "Orchestrator 规划完成，待人工确认",
-            summary: info.summary || "",
-          });
-          setRunProgress("Orchestrator 规划已完成，等待人工审批…");
-        },
-        onResume: () => {
-          setTeamPendingHitl(null);
-          setRunProgress("已批准，分析师团队继续执行…");
-        },
-        onProgress: (elapsedMs) => {
-          const secs = Math.floor(elapsedMs / 1000);
-          const limitText = pollTimeoutMin > 0 ? `（等待上限 ${pollTimeoutMin}m）` : "（不限时）";
-          setRunProgress(
-            `分析进行中… 已用时 ${secs}s${limitText} · 多 Agent LLM 推理，请耐心等待`
-          );
-        },
-      });
-      unsubscribe();
-      setResult(res);
-      setRunProgress("");
-      setActiveTab("research");
-      if (wfId && res.report?.trim()) {
-        void saveWorkflowReportArtifact(wfId, {
-          report: res.report,
-          ticker: res.ticker || ticker.trim() || undefined,
-        }).catch(() => {});
-      }
-      void loadTeamGraph();
-      if (res.debate?.sessionId) {
-        const [turns, verdict] = await Promise.all([
-          getDebateTurns(res.debate.sessionId),
-          getDebateVerdict(res.debate.sessionId),
-        ]);
-        setReplayTurns(turns);
-        setReplayVerdict(verdict);
-      }
-      const vetoLogs = await getRiskVetoLogs(wfId);
-      setRiskVetoLogs(vetoLogs);
-    } catch (e) {
-      if (e instanceof AnalystJobPollError && (e.reason === "timeout" || e.reason === "aborted")) {
-        // 这两种都不算"任务失败"——后端可能还在跑，只是前端不再等了。
-        setError(e.message);
-        setRunProgress(
-          e.reason === "aborted"
-            ? "已停止等待（任务可能仍在后台运行；可在拓扑/对话流刷新查看）"
-            : `等待上限 ${pollTimeoutMin}m 已到（任务可能仍在后台运行；可调大上限或刷新查看）`
-        );
-      } else {
-        setError((e as Error).message);
-        setRunProgress("");
-      }
-    } finally {
-      pollAbortRef.current = null;
-      setRunning(false);
     }
   };
 
@@ -6790,13 +6133,10 @@ const TeamDashboardPanel: FC = () => {
     setWorkflowNotice(null);
     try {
       await deleteWorkflow(target);
-      // 当前正在分析的就是被取消的那个时，要让"分析中"轮询/按钮立即收手。
       if (target === workflowRunId.trim()) {
-        pollAbortRef.current?.abort();
         setRunning(false);
         setRunProgress("");
         setTeamPendingHitl(null);
-        setResult(null);
       }
       const rows = await refreshWorkflowOptions();
       if (target === workflowRunId.trim()) {
@@ -6820,13 +6160,10 @@ const TeamDashboardPanel: FC = () => {
     setWorkflowNotice(null);
     try {
       const result = await deleteWorkflow(id, { hard: true });
-      // 与 cancel 同样：清掉"分析中"状态 + 让轮询退出，避免轮询打到已删 workflow 拿到 404。
       if (id === workflowRunId.trim()) {
-        pollAbortRef.current?.abort();
         setRunning(false);
         setRunProgress("");
         setTeamPendingHitl(null);
-        setResult(null);
       }
       const rows = await refreshWorkflowOptions();
       if (id === workflowRunId.trim()) {
@@ -7623,10 +6960,7 @@ const TeamDashboardPanel: FC = () => {
             ) : null}
           </div>
 
-          {/**
-           * 「等待上限 / HITL / 启动团队分析」整段已迁移到中栏底部（可折叠）。
-           * 左栏只保留工作流选择 + 拓扑只读视图，避免左栏过长 + 关键操作分散。
-           */}
+          {/** 左栏只保留工作流选择与拓扑只读视图。 */}
           <div style={{ marginTop: 14, borderTop: "1px solid #27272a", paddingTop: 12 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#cbd5e1", marginBottom: 6 }}>工作流对话拓扑（只读）</div>
             <p style={{ fontSize: 11, color: "#71717a", marginBottom: 8 }}>
@@ -8346,7 +7680,7 @@ const TeamDashboardPanel: FC = () => {
                    * v2 修复：Banner 只要 workflowRunId 有效就常驻挂载，由 banner 内部用
                    * listPendingWorkflowHitl 自动发现 pending。这样即使 `teamPendingHitl`
                    * state 还没被 onAwaitingApproval 回调填充（例如刷新页面 / 切换工作流 /
-                   * 自动触发的硬规则 HITL 没走 runAnalystTeam pollAnalystJob 链路），
+                   * 自动触发的硬规则 HITL 尚未回填本地 state），
                    * 红框位置也能看到询问卡片，而不是"看不到按钮只能再输一句继续"。
                    *
                    * triggerKey 用 workflowRunId 兜底；当 onAwaitingApproval 回调发生时
@@ -8363,7 +7697,8 @@ const TeamDashboardPanel: FC = () => {
                     }}
                   />
                 ) : null}
-                <ResizableY
+                {!teamPaneVisible("right") ? (
+                  <ResizableY
                   defaultHeight={360}
                   minHeight={200}
                   maxHeight={1200}
@@ -8543,17 +7878,17 @@ const TeamDashboardPanel: FC = () => {
                       ) : null}
                     </div>
                   )}
-                </ResizableY>
+                  </ResizableY>
+                ) : null}
               </div>
               {graphSelection?.kind === "node" ? (
-                <div style={{ marginTop: 14 }}>
+                <div style={{ marginTop: 14 }} data-qb-team-agent-dialogue-shell>
                   <ResizableY
                     defaultHeight={420}
                     minHeight={220}
                     maxHeight={1400}
                     storageKey="qb.agent-run-h"
                     collapsed={agentRunCollapsed}
-                    wrapperData={{ "data-qb-team-live-feed-shell": "" }}
                     style={{
                       border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
                       borderRadius: 8,
@@ -8575,117 +7910,20 @@ const TeamDashboardPanel: FC = () => {
                     />
                   </ResizableY>
                 </div>
-              ) : null}
-              <div
-                style={{
-                  marginTop: 18,
-                  borderTop:
-                    "1px solid var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, #2a2a30))",
-                  paddingTop: 12,
-                }}
-              >
-                <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>分析结论</h3>
-                {!result && (
-                  <div style={{ ...teamStyles.empty, marginTop: 8 }}>
-                    暂无结论；切换工作流后会自动加载该工作流已落库的融合结果。
-                  </div>
-                )}
-                {result && (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={teamStyles.heroBox}>
-                      <span style={{ ...teamStyles.heroBadge, color: SIGNAL_COLOR[result.fusedSignal] }}>
-                        {result.fusedSignal.toUpperCase()}
-                      </span>
-                      <div style={teamStyles.heroMeta}>
-                        <span>置信度：{(result.fusedConfidence * 100).toFixed(0)}%</span>
-                      </div>
-                    </div>
-                    <h3 style={teamStyles.sectionTitle}>多信号融合 (MSA)</h3>
-                    <div style={teamStyles.radarGrid}>
-                      {result.breakdown.map((b) => (
-                        <div key={b.role} style={teamStyles.radarCard}>
-                          <div style={teamStyles.radarRole}>{ROLE_DISPLAY[b.role] ?? b.role}</div>
-                          <div style={{ ...teamStyles.radarSignal, color: SIGNAL_COLOR[b.signal] }}>{b.signal.toUpperCase()}</div>
-                          <div style={teamStyles.radarBar}>
-                            <div
-                              style={{
-                                ...teamStyles.radarFill,
-                                width: `${Math.round(b.confidence * 100)}%`,
-                                background: SIGNAL_COLOR[b.signal],
-                              }}
-                            />
-                          </div>
-                          <div style={teamStyles.radarConf}>{(b.confidence * 100).toFixed(0)}%</div>
-                        </div>
-                      ))}
-                    </div>
-                    {result.debate ? (
-                      <>
-                        <h3 style={teamStyles.sectionTitle}>辩论裁决</h3>
-                        <div style={teamStyles.debateBox}>
-                          <div>裁决：{result.debate.verdict}</div>
-                          <div>最终立场：{result.debate.finalStance.toUpperCase()}</div>
-                          <div style={teamStyles.debateReason}>{result.debate.reasoning}</div>
-                        </div>
-                      </>
-                    ) : null}
-                    {result.risk ? (
-                      <>
-                        <h3 style={teamStyles.sectionTitle}>风控</h3>
-                        <div
-                          style={{
-                            ...teamStyles.riskBox,
-                            borderColor: result.risk.vetoed ? "#7f1d1d" : "#14532d",
-                            background: result.risk.vetoed ? "#3f1d1d" : "#052e16",
-                          }}
-                        >
-                          <div>{result.risk.vetoed ? "已拦截" : "通过"} · {result.risk.severity}</div>
-                          <div>{result.risk.reason}</div>
-                        </div>
-                      </>
-                    ) : null}
-                    {(replayTurns.length > 0 || replayVerdict) && (
-                      <>
-                        <h3 style={teamStyles.sectionTitle}>辩论回放</h3>
-                        <div style={teamStyles.replayBox}>
-                          {replayTurns.map((t) => (
-                            <div key={t.id} style={teamStyles.replayTurn}>
-                              <div style={teamStyles.replayMeta}>
-                                第 {t.roundNumber} 轮 · {t.speakerRole} · {t.stance.toUpperCase()} ·{" "}
-                                {(t.confidence * 100).toFixed(0)}%
-                              </div>
-                              <div>{t.statement}</div>
-                            </div>
-                          ))}
-                          {replayVerdict ? (
-                            <div style={teamStyles.replayVerdict}>
-                              裁决：{replayVerdict.finalStance.toUpperCase()} · 共识度{" "}
-                              {(replayVerdict.consensusScore * 100).toFixed(0)}%
-                              <br />
-                              {replayVerdict.reasoning}
-                            </div>
-                          ) : null}
-                        </div>
-                      </>
-                    )}
-                    {riskVetoLogs.length > 0 ? (
-                      <>
-                        <h3 style={teamStyles.sectionTitle}>风控拦截记录</h3>
-                        <div style={teamStyles.replayBox}>
-                          {riskVetoLogs.slice(0, 8).map((v) => (
-                            <div key={v.id} style={teamStyles.replayTurn}>
-                              <div style={teamStyles.replayMeta}>
-                                {new Date(v.createdAt).toLocaleString()} · {v.severity}
-                              </div>
-                              <div>{v.vetoReason}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                )}
-              </div>
+              ) : (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "14px 16px",
+                    border: "1px dashed var(--qb-team-live-feed-row-border, var(--qb-sidebar-border, #3f3f46))",
+                    borderRadius: 8,
+                    color: "var(--qb-team-meta, #a1a1aa)",
+                    fontSize: 12,
+                  }}
+                >
+                  点击研究画布中的 Agent 节点，查看该 Agent 的对话、工具调用与执行轨迹。
+                </div>
+              )}
             </>
           )}
         </div>
@@ -8694,396 +7932,8 @@ const TeamDashboardPanel: FC = () => {
             </div>
           </div>
           {/**
-           * 中栏底部「启动设置」面板：从左栏迁移过来。
-           * - 默认折叠（HTML5 details 自带），点击 summary 展开
-           * - flex-shrink:0 + 顶边线让它贴在中栏底部，不参与中栏主区滚动
-           * - 包含等待上限 / HITL / 启动按钮
-           */}
-          {/**
-           * 受控折叠：state `runControlsOpen` 是 source of truth，
-           * onToggle 同步用户手动展开/折叠的 DOM 状态到 state，避免 props 覆盖。
-           * useEffect 监听 running/HITL/error 出现时自动 setRunControlsOpen(true)。
-           */}
-          <details
-            className="qb-mcp-details"
-            style={teamStyles.runControlsFooter}
-            open={runControlsOpen}
-            onToggle={(e) => {
-              const isOpen = (e.currentTarget as HTMLDetailsElement).open;
-              if (isOpen !== runControlsOpen) setRunControlsOpen(isOpen);
-            }}
-          >
-            <summary style={teamStyles.runControlsSummary}>
-              <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#fde68a" }}>
-                  ⚙ 流程配置与启动
-                </span>
-                {running ? (
-                  <span style={{ fontSize: 11, color: "#38bdf8" }}>
-                    ● 分析进行中
-                  </span>
-                ) : null}
-                {teamPendingHitl ? (
-                  <span style={{ fontSize: 11, color: "#fbbf24" }}>
-                    ⏸ 等待人工确认
-                  </span>
-                ) : null}
-                {!running && !teamPendingHitl && error ? (
-                  <span style={{ fontSize: 11, color: "#fca5a5" }}>
-                    ✕ 上轮失败
-                  </span>
-                ) : null}
-              </span>
-              <span style={{ fontSize: 11, color: "#a1a1aa" }}>点击折叠/展开</span>
-            </summary>
-            <div style={teamStyles.runControlsBody}>
-              <div
-                style={{
-                  padding: "10px",
-                  border: "1px solid #3f3f46",
-                  borderRadius: 6,
-                  background: "#111113",
-                  display: "grid",
-                  gridTemplateColumns: "minmax(112px, 0.75fr) minmax(150px, 1.25fr)",
-                  gap: 10,
-                  alignItems: "end",
-                }}
-              >
-                <label style={{ display: "grid", gap: 5, fontSize: 11, color: "#a1a1aa" }}>
-                  流程 SOP
-                  <select
-                    style={{ ...teamStyles.input, fontSize: 12 }}
-                    value={workflowSopPreset}
-                    onChange={(event) => setWorkflowSopPreset(event.target.value)}
-                    disabled={running}
-                  >
-                    {WORKFLOW_SOP_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div style={{ display: "grid", gap: 6, minWidth: 0 }}>
-                  <span style={{ fontSize: 11, color: "#71717a" }}>
-                    {WORKFLOW_SOP_PRESETS.find((item) => item.id === workflowSopPreset)
-                      ?.description ?? ""}
-                  </span>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "#d4d4d8" }}>
-                      <input
-                        type="checkbox"
-                        checked={workflowRequirePlan}
-                        onChange={(event) => setWorkflowRequirePlan(event.target.checked)}
-                        disabled={running}
-                      />
-                      完成计划后才能结束
-                    </label>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: "#d4d4d8" }}>
-                      <input
-                        type="checkbox"
-                        checked={workflowRequireEvidence}
-                        onChange={(event) => setWorkflowRequireEvidence(event.target.checked)}
-                        disabled={running}
-                      />
-                      要求工具证据
-                    </label>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, color: workflowRequireEvidence ? "#d4d4d8" : "#71717a" }}>
-                      至少
-                      <input
-                        type="number"
-                        min={1}
-                        max={20}
-                        value={workflowMinSuccessfulTools}
-                        onChange={(event) =>
-                          setWorkflowMinSuccessfulTools(
-                            Math.max(1, Math.min(20, Number(event.target.value) || 1))
-                          )
-                        }
-                        disabled={running || !workflowRequireEvidence}
-                        style={{
-                          width: 42,
-                          padding: "2px 4px",
-                          background: "transparent",
-                          color: "#e4e4e7",
-                          border: "1px solid #3f3f46",
-                          borderRadius: 4,
-                          fontSize: 11,
-                        }}
-                      />
-                      次成功调用
-                    </label>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="qb-btn-secondary"
-                  onClick={() => void saveWorkflowProcessConfig()}
-                  disabled={!workflowRunId || running || workflowConfigSaving}
-                  style={{
-                    gridColumn: "1 / -1",
-                    justifySelf: "end",
-                    fontSize: 11,
-                    padding: "6px 10px",
-                  }}
-                >
-                  {workflowConfigSaving ? "保存中…" : "保存流程配置"}
-                </button>
-                <div
-                  style={{
-                    gridColumn: "1 / -1",
-                    fontSize: 10,
-                    lineHeight: 1.45,
-                    color: "#71717a",
-                  }}
-                >
-                  模板：{promptTemplateId || "无"} · 工作模式在右侧输入框下方随时切换。普通对话与工作流共用同一会话；这里仅配置可复用 SOP 与运行门控。
-                </div>
-              </div>
-              <div style={teamStyles.runControlsGrid}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    flexWrap: "wrap",
-                    fontSize: 11,
-                    color: "var(--qb-team-meta, #a1a1aa)",
-                  }}
-                >
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                    等待上限
-                    <input
-                      type="number"
-                      min={0}
-                      max={720}
-                      step={5}
-                      value={pollTimeoutMin}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        setPollTimeoutMin(Number.isFinite(n) && n >= 0 ? n : 0);
-                      }}
-                      style={{
-                        width: 56,
-                        padding: "2px 6px",
-                        background: "transparent",
-                        color: "#e4e4e7",
-                        border: "1px solid #3f3f46",
-                        borderRadius: 4,
-                        fontSize: 11,
-                      }}
-                      title="前端等多少分钟还没结果就停止轮询。后端任务不受影响，仍会跑完并落库。0 = 不超时。"
-                    />
-                    分钟
-                  </label>
-                  {[15, 30, 60, 120, 0].map((m) => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setPollTimeoutMin(m)}
-                      style={{
-                        padding: "2px 8px",
-                        fontSize: 11,
-                        background: pollTimeoutMin === m ? "#27272a" : "transparent",
-                        color: pollTimeoutMin === m ? "#f4f4f5" : "#a1a1aa",
-                        border: "1px solid #3f3f46",
-                        borderRadius: 4,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {m === 0 ? "不超时" : `${m}m`}
-                    </button>
-                  ))}
-                  <span style={{ marginLeft: "auto", color: "#71717a" }}>
-                    超时只是不再轮询，后端任务仍会继续
-                  </span>
-                </div>
-              </div>
-              {enabledResearchAnalystDefCount === 0 && agentDefBundles !== null ? (
-                <div className="qb-callout qb-callout--warning" role="status" style={{ marginTop: 10 }}>
-                  <div>
-                    当前数据库里没有<strong>已启用</strong>的研究团队槽位定义（<code style={{ fontSize: 11 }}>analyst_fundamental</code>、
-                    <code style={{ fontSize: 11 }}>research</code>、<code style={{ fontSize: 11 }}>backtest</code>、
-                    <code style={{ fontSize: 11 }}>risk</code> 等），无法启动分析。请在下方按<strong>Agent 定义</strong>勾选参与成员（与配置中心已发布定义一致）。
-                  </div>
-                  <div className="qb-callout__actions">
-                    <button
-                      type="button"
-                      className="qb-btn-secondary"
-                      style={{ fontSize: 12, padding: "6px 12px" }}
-                      onClick={() => {
-                        setActiveView("config");
-                        setCfgSubPage("agent");
-                      }}
-                    >
-                      打开「配置中心 → Agent」
-                    </button>
-                    <button
-                      type="button"
-                      className="qb-btn-secondary"
-                      style={{ fontSize: 12, padding: "6px 12px" }}
-                      onClick={() => void listAgentDefinitions().then(setAgentDefBundles)}
-                    >
-                      刷新定义列表
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-              <div
-                style={{
-                  marginTop: 10,
-                  padding: "8px 10px",
-                  border: "1px solid #3f3f46",
-                  borderRadius: 6,
-                  background: teamHitlMode === "off" ? "transparent" : "#1c1917",
-                  fontSize: 12,
-                  color: "#d4d4d8",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 6,
-                }}
-              >
-                <span style={{ color: "#fde68a", fontWeight: 500 }}>
-                  Orchestrator 人工介入（HITL）
-                </span>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {(
-                    [
-                      { id: "off", label: "关闭", hint: "仅资金/规模/重试硬规则触发" },
-                      { id: "ai", label: "由 AI 决定", hint: "默认 — AI 觉得需要才问" },
-                      { id: "always", label: "每次都问", hint: "每次规划都人工确认" },
-                    ] as const
-                  ).map((opt) => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setTeamHitlMode(opt.id)}
-                      disabled={running}
-                      title={opt.hint}
-                      style={{
-                        flex: 1,
-                        padding: "4px 6px",
-                        fontSize: 11,
-                        border: "1px solid",
-                        borderColor: teamHitlMode === opt.id ? "#fbbf24" : "#3f3f46",
-                        background: teamHitlMode === opt.id ? "#3f2d11" : "transparent",
-                        color: teamHitlMode === opt.id ? "#fde68a" : "#a1a1aa",
-                        borderRadius: 4,
-                        cursor: running ? "not-allowed" : "pointer",
-                      }}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                <span style={{ color: "#71717a", fontSize: 11 }}>
-                  {teamHitlMode === "off"
-                    ? "AI 主动询问已关闭；高风险（交易/大规模/重试）仍会暂停"
-                    : teamHitlMode === "ai"
-                      ? "Orchestrator 自评 + 硬规则共同决定是否暂停"
-                      : "每次规划完成都暂停，等你批准/拒绝"}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <button
-                  type="button"
-                  className="qb-btn-primary-brand"
-                  style={{ flex: 1 }}
-                  onClick={handleRun}
-                  disabled={teamRunDisabled}
-                  title={teamRunDisabledTitle}
-                >
-                  {running
-                    ? "分析中…"
-                    : teamAgentMode === "plan"
-                      ? "生成研究计划"
-                      : teamAgentMode === "goal"
-                        ? "启动自主目标"
-                        : "启动团队分析"}
-                </button>
-                {running ? (
-                  <button
-                    type="button"
-                    className="qb-btn-secondary"
-                    style={{ fontSize: 12, padding: "6px 12px" }}
-                    onClick={handleStopWaiting}
-                    title="立即停止前端轮询。后端任务不会被中断；如需中断请用「取消当前工作流」"
-                  >
-                    停止等待
-                  </button>
-                ) : null}
-              </div>
-              {running && runProgress && (
-                <div
-                  style={{
-                    background: "#1e293b",
-                    color: "#38bdf8",
-                    fontSize: 12,
-                    padding: "8px 10px",
-                    marginTop: 10,
-                    borderRadius: 6,
-                    border: "1px solid #334155",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  <Loader2 size={14} className="team-loader-spin" aria-hidden style={{ flexShrink: 0 }} />
-                  <span>{runProgress}</span>
-                </div>
-              )}
-              {teamPendingHitl ? (
-                <button
-                  type="button"
-                  role="alert"
-                  onClick={() => {
-                    if (activeTab !== "research") setActiveTab("research");
-                    const el = document.querySelector("[data-qb-team-hitl-banner]");
-                    if (el) (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "center" });
-                  }}
-                  style={{
-                    marginTop: 10,
-                    padding: "10px 12px",
-                    borderRadius: 6,
-                    background: "#1f1d12",
-                    border: "1px solid #b45309",
-                    color: "#fde68a",
-                    fontSize: 12,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                  title="跳到画布查看完整 HITL 卡片"
-                >
-                  <span aria-hidden>⏸</span>
-                  <span style={{ flex: 1, minWidth: 0, color: "#fef3c7" }}>
-                    {teamPendingHitl.title || "Orchestrator 规划待人工确认"}
-                  </span>
-                  <span style={{ color: "#fbbf24", fontSize: 11 }}>↑ 跳到画布</span>
-                </button>
-              ) : null}
-              {error ? (
-                <div className="qb-callout qb-callout--danger" role="alert" style={{ marginTop: 10 }}>
-                  <div className="qb-callout__row">
-                    <span style={{ flex: 1, minWidth: 0 }}>{error}</span>
-                    <button
-                      type="button"
-                      className="qb-callout__dismiss"
-                      onClick={() => setError(null)}
-                      aria-label="关闭提示"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </details>
-          {/**
            * 中栏底部「研究产出」抽屉（从右栏迁移）：因子 / 策略 / 脚本 / 草稿。
-           * 可折叠隐去；与「启动设置」一样 flexShrink:0 贴在中栏底部，不参与主区滚动。
+           * 可折叠隐去；flexShrink:0 贴在中栏底部，不参与主区滚动。
            */}
           <details
             className="qb-mcp-details"
@@ -9205,6 +8055,8 @@ const TeamDashboardPanel: FC = () => {
             chatInFlight={orchestratorChatInFlight}
             completed={selectedWorkflowCompleted}
             runProgress={runProgress}
+            errorMessage={error}
+            onErrorDismiss={() => setError(null)}
             hitlMode={teamHitlMode}
             onHitlModeChange={setTeamHitlMode}
             agentMode={teamAgentMode}
@@ -9219,8 +8071,7 @@ const TeamDashboardPanel: FC = () => {
             composerValue={teamAnalysisContext}
             onComposerChange={setTeamAnalysisContext}
             onSend={() => {
-              // composer 发送/继续 = 交给 Orchestrator 自主判断（答/派单/全队）。
-              // 「启动团队分析」按钮才是直接全队（handleRun）。
+              // 唯一执行入口：交给 Orchestrator 自主判断（答 / 派单 / 全队）。
               void handleOrchestratorChat();
             }}
             onInject={async (content) => {
@@ -9456,12 +8307,7 @@ const teamStyles: Record<string, CSSProperties> = {
     minHeight: 0,
     minWidth: 0,
   },
-  /**
-   * 中栏底部「启动设置」面板：贴在 ideCenterWrap 下方。
-   * - flexShrink: 0：不参与中栏主区滚动，永远占自然高度
-   * - 顶部加 borderTop 视觉分隔
-   * - background 比中栏主区稍亮，提示这是个独立操作区
-   */
+  /** 中栏底部研究产出抽屉。 */
   runControlsFooter: {
     flexShrink: 0,
     borderTop: "1px solid var(--qb-team-shell-border, #2d2d32)",
@@ -9486,22 +8332,6 @@ const teamStyles: Record<string, CSSProperties> = {
     top: 0,
     background: "var(--qb-team-run-footer-summary-bg, #16161a)",
     zIndex: 1,
-  },
-  runControlsBody: {
-    padding: "8px 16px 14px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 0,
-  },
-  /**
-   * 上半"等待上限 + 控制项"两列响应式 grid：宽够时左右排，窄时折回单列。
-   * 让中栏底部 panel 在常规屏幕利用横向空间。
-   */
-  runControlsGrid: {
-    display: "grid",
-    gridTemplateColumns: "minmax(220px, 1fr) minmax(260px, 1.6fr)",
-    gap: 12,
-    alignItems: "start",
   },
   teamActivityBar: {
     width: 52,
@@ -9628,74 +8458,7 @@ const teamStyles: Record<string, CSSProperties> = {
     fontSize: 13,
     outline: "none",
   },
-  resultBox: { marginTop: 12 },
-  heroBox: {
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-    background: "var(--qb-team-hero-bg, #18181b)",
-    border: "1px solid var(--qb-team-hero-border, #27272a)",
-    borderRadius: 8,
-    padding: "12px 16px",
-    marginBottom: 16,
-  },
-  heroBadge: { fontSize: 28, fontWeight: 700 },
-  heroMeta: { display: "flex", flexDirection: "column", gap: 4, fontSize: 13, color: "var(--qb-team-meta, #a1a1aa)" },
-  debateTag: {
-    background: "var(--qb-team-debate-tag-bg, #78350f)",
-    color: "var(--qb-team-debate-tag-fg, #fde68a)",
-    borderRadius: 4,
-    padding: "2px 8px",
-    fontSize: 12,
-    width: "fit-content",
-  },
   sectionTitle: { color: "var(--qb-team-section-fg, #e4e4e7)", fontSize: 14, marginBottom: 10 },
-  debateBox: {
-    background: "var(--qb-team-debate-bg, #1a1424)",
-    border: "1px solid var(--qb-team-debate-border, #3b2b63)",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
-    color: "var(--qb-team-debate-fg, #ddd6fe)",
-    fontSize: 12,
-    display: "grid",
-    gap: 6,
-  },
-  debateReason: { color: "var(--qb-team-debate-accent, #a78bfa)" },
-  riskBox: {
-    border: "1px solid",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
-    color: "var(--qb-team-section-fg, #e4e4e7)",
-    fontSize: 12,
-    display: "grid",
-    gap: 6,
-  },
-  replayBox: {
-    background: "var(--qb-team-replay-bg, #18181b)",
-    border: "1px solid var(--qb-team-input-border, #27272a)",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 16,
-    display: "grid",
-    gap: 8,
-    maxHeight: 260,
-    overflow: "auto",
-  },
-  replayTurn: {
-    borderBottom: "1px dashed var(--qb-team-table-row-border, #3f3f46)",
-    paddingBottom: 6,
-  },
-  replayMeta: { fontSize: 11, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 4 },
-  replayVerdict: {
-    background: "var(--qb-team-debate-bg, #1a1424)",
-    border: "1px solid var(--qb-team-debate-border, #3b2b63)",
-    borderRadius: 6,
-    padding: 8,
-    color: "var(--qb-team-debate-fg, #ddd6fe)",
-    fontSize: 12,
-  },
   trendBox: {
     border: "1px solid var(--qb-team-input-border, #27272a)",
     borderRadius: 8,
@@ -9772,26 +8535,6 @@ const teamStyles: Record<string, CSSProperties> = {
     marginTop: 4,
     fontSize: 11,
   },
-  radarGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 },
-  radarCard: {
-    background: "var(--qb-team-radar-bg, #18181b)",
-    border: "1px solid var(--qb-team-input-border, #27272a)",
-    borderRadius: 8,
-    padding: "10px 12px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-  },
-  radarRole: { fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)" },
-  radarSignal: { fontSize: 18, fontWeight: 700 },
-  radarBar: {
-    height: 4,
-    background: "var(--qb-team-radar-bar-bg, #27272a)",
-    borderRadius: 2,
-    overflow: "hidden",
-  },
-  radarFill: { height: "100%", borderRadius: 2, transition: "width 0.4s" },
-  radarConf: { fontSize: 11, color: "var(--qb-team-meta, #71717a)" },
   report: {
     background: "var(--qb-team-report-bg, #18181b)",
     border: "1px solid var(--qb-team-input-border, #27272a)",

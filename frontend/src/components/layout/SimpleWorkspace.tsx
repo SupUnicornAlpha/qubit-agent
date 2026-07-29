@@ -61,7 +61,7 @@ export const SimpleWorkspace: FC = () => {
 
   return (
     <div className="qb-simple-shell">
-      <header className="qb-simple-header">
+      <header className="qb-simple-header" data-tauri-drag-region>
         <button className="qb-simple-brand" type="button" aria-label="Qubit">
           <img src="/icon.png" alt="" width={24} height={24} />
           <span>Qubit</span>

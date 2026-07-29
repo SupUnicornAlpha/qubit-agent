@@ -243,7 +243,8 @@ export async function executeAgentReact(
   }
 
   const finalResponse = (state.finalResponse ?? { status: "completed" }) as Record<string, unknown>;
-  const frStatus = String(finalResponse["status"] ?? "completed");
+  const frStatus = String(finalResponse.status ?? "completed");
+  const userCancelled = String(finalResponse.reason ?? "") === "user_cancelled";
   const terminalStatus: ExecuteAgentReactResult["terminalStatus"] =
     frStatus === "awaiting_approval"
       ? "awaiting_approval"
@@ -255,7 +256,9 @@ export async function executeAgentReact(
     .update(agentInstance)
     .set({
       status:
-        terminalStatus === "failed"
+        userCancelled
+          ? "stopped"
+          : terminalStatus === "failed"
           ? "error"
           : terminalStatus === "awaiting_approval"
             ? "running"
@@ -270,7 +273,14 @@ export async function executeAgentReact(
     })
     .where(eq(agentInstance.id, agentInstanceId));
 
-  if (params.updateWorkflowStatus) {
+  const workflowStatus = (
+    await db
+      .select({ status: workflowRun.status })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, params.workflowId))
+      .limit(1)
+  )[0]?.status;
+  if (params.updateWorkflowStatus && workflowStatus !== "cancelled" && !userCancelled) {
     await setWorkflowState(params.workflowId, terminalStatus, {
       reason: "execute-agent-react",
     });

@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { RuntimeAgentDefinition } from "../../types";
 import {
+  type WorkspaceSandboxPolicy,
   buildDefaultSandboxPoliciesFromDefinitions,
   ensureWorkspaceRuntimeConfigFiles,
+  mergeBuiltinAgentDefinitionsIntoUserFile,
   mergeBuiltinSandboxPoliciesIntoUserFile,
-  type WorkspaceSandboxPolicy,
 } from "../workspace-config";
-import type { RuntimeAgentDefinition } from "../../types";
 
 const defs: RuntimeAgentDefinition[] = [
   {
@@ -55,6 +56,38 @@ describe("buildDefaultSandboxPoliciesFromDefinitions", () => {
   });
 });
 
+describe("mergeBuiltinAgentDefinitionsIntoUserFile", () => {
+  test("upgrades an old builtin while retaining user-added tools", () => {
+    const baseline = defs[0];
+    if (!baseline) throw new Error("missing market baseline");
+    const old = {
+      ...baseline,
+      version: "0.9.0",
+      systemPrompt: "old prompt",
+      tools: ["fetch_price_data", "user-tool"],
+    };
+    const seed = {
+      ...baseline,
+      version: "2.3.0",
+      systemPrompt: "realtime routing baseline",
+      tools: ["fetch_price_data", "fetch_quote"],
+    };
+    const { definitions, mutated } = mergeBuiltinAgentDefinitionsIntoUserFile([old], [seed]);
+    expect(mutated).toBe(true);
+    expect(definitions[0]?.version).toBe("2.3.0");
+    expect(definitions[0]?.systemPrompt).toBe("realtime routing baseline");
+    expect(definitions[0]?.tools).toEqual(["fetch_price_data", "fetch_quote", "user-tool"]);
+  });
+
+  test("does not overwrite a custom definition outside the builtin seed", () => {
+    const baseline = defs[0];
+    if (!baseline) throw new Error("missing market baseline");
+    const custom = { ...baseline, id: "user-market", version: "9.0.0" };
+    const { definitions } = mergeBuiltinAgentDefinitionsIntoUserFile([custom], defs);
+    expect(definitions.find((definition) => definition.id === "user-market")).toEqual(custom);
+  });
+});
+
 /**
  * Round 8 复盘（2026-06-08）：`.qubit/sandbox.json` 在用户机上是历史快照，
  * SEED_AGENT_DEFINITIONS 新增 builtin tool（如 strategy.create_version）后，
@@ -89,10 +122,9 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
     const fileSandbox: WorkspaceSandboxPolicy[] = [
       { ...seedPolicy, allowedTools: ["a"], allowedMcpServers: [] },
     ];
-    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(
-      fileSandbox,
-      [seedPolicy]
-    );
+    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [
+      seedPolicy,
+    ]);
     expect(mutated).toBe(true);
     const merged = policies.find((p) => p.id === "default-policy");
     expect(merged?.allowedTools.sort()).toEqual(["a", "b", "c"]);
@@ -103,17 +135,11 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
     const fileSandbox: WorkspaceSandboxPolicy[] = [
       { ...seedPolicy, allowedTools: ["a", "b", "c", "user-extra"] },
     ];
-    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(
-      fileSandbox,
-      [seedPolicy]
-    );
-    expect(mutated).toBe(false);
-    expect(policies[0]?.allowedTools.sort()).toEqual([
-      "a",
-      "b",
-      "c",
-      "user-extra",
+    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [
+      seedPolicy,
     ]);
+    expect(mutated).toBe(false);
+    expect(policies[0]?.allowedTools.sort()).toEqual(["a", "b", "c", "user-extra"]);
   });
 
   test("user 在 default-policy 加的额外工具/MCP 必须保留", () => {
@@ -124,23 +150,13 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
         allowedMcpServers: ["mcp-1", "user-mcp"],
       },
     ];
-    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(
-      fileSandbox,
-      [seedPolicy]
-    );
+    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [
+      seedPolicy,
+    ]);
     expect(mutated).toBe(true);
     const merged = policies.find((p) => p.id === "default-policy");
-    expect(merged?.allowedTools.sort()).toEqual([
-      "a",
-      "b",
-      "c",
-      "user-private-tool",
-    ]);
-    expect(merged?.allowedMcpServers.sort()).toEqual([
-      "mcp-1",
-      "mcp-2",
-      "user-mcp",
-    ]);
+    expect(merged?.allowedTools.sort()).toEqual(["a", "b", "c", "user-private-tool"]);
+    expect(merged?.allowedMcpServers.sort()).toEqual(["mcp-1", "mcp-2", "user-mcp"]);
   });
 
   test("user 自定义 policy（非 SEED id）完全不动", () => {
@@ -154,20 +170,16 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
       { ...seedPolicy, allowedTools: ["a"] },
       userPolicy,
     ];
-    const { policies } = mergeBuiltinSandboxPoliciesIntoUserFile(
-      fileSandbox,
-      [seedPolicy]
-    );
+    const { policies } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [seedPolicy]);
     const custom = policies.find((p) => p.id === "my-custom");
     expect(custom?.allowedTools).toEqual(["only-user-tool"]);
   });
 
   test("文件里缺 SEED policy（如全新工作区）→ 整条 SEED policy 加入，mutated=true", () => {
     const fileSandbox: WorkspaceSandboxPolicy[] = [];
-    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(
-      fileSandbox,
-      [seedPolicy]
-    );
+    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [
+      seedPolicy,
+    ]);
     expect(mutated).toBe(true);
     expect(policies.find((p) => p.id === "default-policy")?.allowedTools.sort()).toEqual([
       "a",
@@ -180,10 +192,7 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
     const fileSandbox: WorkspaceSandboxPolicy[] = [
       { ...seedPolicy, allowedTools: ["a"], maxIterationsPerRun: 99 },
     ];
-    const { policies } = mergeBuiltinSandboxPoliciesIntoUserFile(
-      fileSandbox,
-      [seedPolicy]
-    );
+    const { policies } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [seedPolicy]);
     const merged = policies.find((p) => p.id === "default-policy");
     expect(merged?.maxIterationsPerRun).toBe(99);
   });
@@ -257,6 +266,40 @@ describe("ensureWorkspaceRuntimeConfigFiles · sandbox.json union 行为", () =>
     expect(dp?.allowedTools).toContain("strategy.create_version");
     expect(dp?.allowedTools).toContain("order.create_intent");
     expect(dp?.allowedTools).toContain("user-private-tool"); // user 自加项保留
+  });
+
+  test("agents.json 旧 builtin 会升级且不会再覆盖新 seed", async () => {
+    writeFileSync(
+      join(tmpRoot, ".qubit", "agents.json"),
+      JSON.stringify({
+        definitions: [
+          {
+            ...defs[0],
+            version: "0.8.0",
+            systemPrompt: "stale",
+            tools: ["user-tool"],
+          },
+        ],
+      })
+    );
+    writeFileSync(
+      join(tmpRoot, ".qubit", "sandbox.json"),
+      JSON.stringify({ policies: [seedPolicy] })
+    );
+
+    await ensureWorkspaceRuntimeConfigFiles({
+      rootDir: tmpRoot,
+      definitions: defs,
+      policies: [seedPolicy],
+    });
+
+    const after = JSON.parse(readFileSync(join(tmpRoot, ".qubit", "agents.json"), "utf-8")) as {
+      definitions: RuntimeAgentDefinition[];
+    };
+    const market = after.definitions.find((definition) => definition.id === "def-market");
+    expect(market?.version).toBe("1");
+    expect(market?.tools).toContain("fetch_price_data");
+    expect(market?.tools).toContain("user-tool");
   });
 
   test("mergeBuiltinSandboxPolicies=false → 不做合并", async () => {

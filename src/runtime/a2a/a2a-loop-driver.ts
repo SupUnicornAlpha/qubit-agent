@@ -1,8 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { a2aRouter } from "../../messaging/a2a";
+import type { TaskAssignPayload } from "../../types/a2a";
 import type { DispatchToLoopParams, LoopDriver } from "../loop/loop-driver";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
 import { getA2APool } from "./a2a-pool";
+
+export function attachA2aExecutionRunId(
+  payload: TaskAssignPayload,
+  executionRunId: string
+): TaskAssignPayload {
+  return {
+    ...payload,
+    executionRunId,
+  };
+}
 
 export class A2ALoopDriver implements LoopDriver {
   readonly kind = "native" as const;
@@ -16,6 +27,7 @@ export class A2ALoopDriver implements LoopDriver {
     const receiverId = pool.getInstanceIdForRole(params.role);
     const traceId = params.traceId ?? randomUUID();
     const runId = randomUUID();
+    const payload = attachA2aExecutionRunId(params.payload, runId);
 
     let senderId: string;
     try {
@@ -30,7 +42,7 @@ export class A2ALoopDriver implements LoopDriver {
       senderAgent: senderId,
       receiverAgent: receiverId,
       messageType: "TASK_ASSIGN",
-      payload: params.payload,
+      payload,
       priority: 50,
     });
 

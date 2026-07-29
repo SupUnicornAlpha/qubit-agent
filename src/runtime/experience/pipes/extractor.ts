@@ -28,6 +28,9 @@
  *   R3 [semantic · iteration_summary]
  *      role ∈ {research, orchestrator} 且 final_answer 非空
  *      → 写一条 semantic({sub_kind:iteration_summary})，summary=goal + final_answer 截断
+ *
+ *   R4 [semantic · regime]（Context Protocol P1）
+ *   R5 [semantic · research_conclusion]（Context Protocol P1 · zod 门禁）
  */
 
 import type { Experience, ExperienceContent } from "../../../types/entities";
@@ -284,7 +287,125 @@ defineRule("R3_iteration_summary", async (ctx) => {
   });
 });
 
+// ── R4: regime 关键词 → semantic.regime ───────────────────────────────────────
+
+const REGIME_REGEX =
+  /\b(risk[\s_-]?on|risk[\s_-]?off|高波|低波|牛市|熊市|震荡市|regime)\b/i;
+
+defineRule("R4_regime", async (ctx) => {
+  const answer = ctx.participant.finalAnswer?.trim() ?? "";
+  if (!answer || !REGIME_REGEX.test(answer)) return null;
+
+  const asof = (ctx.summary.endedAt ?? new Date().toISOString()).slice(0, 10);
+  let label = "unknown";
+  const lower = answer.toLowerCase();
+  if (/risk[\s_-]?off|熊市|避险/.test(lower)) label = "risk_off";
+  else if (/risk[\s_-]?on|牛市|风险偏好/.test(lower)) label = "risk_on";
+  else if (/震荡|高波|低波/.test(lower)) label = "range";
+
+  return ctx.store.insert({
+    kind: "semantic",
+    subKind: "regime",
+    scope: "project",
+    scopeId: ctx.summary.projectId,
+    definitionId: null,
+    visibility: "project_shared",
+    contentJson: {
+      summary: `[regime] ${label} · ${truncate(answer, 200)}`,
+      body: answer,
+    },
+    tagsJson: ["rule:R4", `regime:${label}`, "tier:intermediate"],
+    metadataJson: {
+      market: "unknown",
+      label,
+      asof,
+      confidence: 0.55,
+      memoryTier: "intermediate",
+    },
+    validFrom: ctx.summary.endedAt ?? new Date().toISOString(),
+    sourceRunId: ctx.summary.workflowRunId,
+    qualityScore: 0.5,
+  });
+});
+
+// ── R5: research_conclusion（需过 zod；缺字段则跳过）──────────────────────────
+
+defineRule("R5_research_conclusion", async (ctx) => {
+  if (!ITERATION_ROLES.has(ctx.participant.role.toLowerCase())) return null;
+  const answer = ctx.participant.finalAnswer?.trim() ?? "";
+  if (!answer) return null;
+
+  const { validateResearchConclusionMeta } = await import("../../context/finance-memory-schemas");
+
+  const symbols = extractSymbolsFromText(`${ctx.summary.goal}\n${answer}`);
+  if (symbols.length === 0) return null;
+
+  let stance: "bull" | "bear" | "neutral" | "hold" | "unknown" = "unknown";
+  const lower = answer.toLowerCase();
+  if (/看多|做多|bullish|\bbull\b|上破|买入/.test(lower)) stance = "bull";
+  else if (/看空|做空|bearish|\bbear\b|下破|卖出/.test(lower)) stance = "bear";
+  else if (/中性|观望|hold|震荡/.test(lower)) stance = "neutral";
+
+  const asof = (ctx.summary.endedAt ?? new Date().toISOString()).slice(0, 10);
+  const meta = {
+    symbols,
+    stance,
+    confidence: 0.55,
+    asof,
+    thesis: truncate(answer, 400),
+    workflowRunId: ctx.summary.workflowRunId,
+    memoryTier: "intermediate" as const,
+  };
+  const validated = validateResearchConclusionMeta(meta);
+  if (!validated.ok) return null;
+
+  return ctx.store.insert({
+    kind: "semantic",
+    subKind: "research_conclusion",
+    scope: "project",
+    scopeId: ctx.summary.projectId,
+    definitionId: null,
+    visibility: "project_shared",
+    contentJson: {
+      summary: `[conclusion/${stance}] ${symbols.slice(0, 3).join(",")} · ${truncate(answer, 160)}`,
+      body: answer,
+    },
+    tagsJson: [
+      "rule:R5",
+      `stance:${stance}`,
+      "tier:intermediate",
+      ...symbols.slice(0, 5).map((s) => `symbol:${s}`),
+    ],
+    metadataJson: validated.data,
+    validFrom: ctx.summary.endedAt ?? new Date().toISOString(),
+    sourceRunId: ctx.summary.workflowRunId,
+    qualityScore: 0.55,
+  });
+});
+
 // ───────────────────────── 工具函数 ─────────────────────────
+
+function extractSymbolsFromText(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const patterns = [
+    /\b[0-9]{6}(?:\.(?:SH|SZ|BJ))?\b/g,
+    /\b[0-9]{5}\.HK\b/gi,
+    /\b[A-Z]{1,5}\b/g,
+  ];
+  for (const re of patterns) {
+    for (const m of text.matchAll(re)) {
+      const s = m[0]!.toUpperCase();
+      if (s.length < 2) continue;
+      if (["THE", "AND", "FOR", "WITH", "FROM", "THIS"].includes(s)) continue;
+      if (seen.has(s)) continue;
+      seen.add(s);
+      out.push(s);
+      if (out.length >= 8) return out;
+    }
+  }
+  return out;
+}
 
 function truncate(s: string, n: number): string {
   if (!s) return "";

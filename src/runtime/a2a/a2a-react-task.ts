@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { A2AMessageEnvelope, TaskAssignPayload } from "../../types/a2a";
-import { onWorkflowTerminal } from "../monitor/observability-hook";
-import { executeAgentReact } from "../langgraph/execute-agent-react";
 import { stepStreamBus } from "../langgraph/event-stream";
+import { executeAgentReact } from "../langgraph/execute-agent-react";
+import type { AgentGraphState } from "../langgraph/state";
+import { onWorkflowTerminal } from "../monitor/observability-hook";
 import type { RuntimeHandlerContext } from "../types";
 import { buildTaskResult } from "./task-result";
-import type { AgentGraphState } from "../langgraph/state";
 
 /**
  * Topology dispatch is a child task of an already-running workflow. Its instance
@@ -27,11 +27,13 @@ export function extractTopologyTaskEvidence(
   role: string,
   state: Pick<AgentGraphState, "toolCalls" | "observations">
 ): TopologyTaskEvidence | null {
-  const successfulTools = [...state.toolCalls].reverse().filter((call) => call.status === "success");
+  const successfulTools = [...state.toolCalls]
+    .reverse()
+    .filter((call) => call.status === "success");
   const sourceTool =
     (role === "market_data"
       ? successfulTools.find((call) =>
-          /(fetch_klines|fetch_bars|fetch_ticks|get_quote|get_price)/i.test(
+          /(fetch_klines|fetch_bars|fetch_ticks|fetch_quote|fetch_order_book|fetch_trades|get_quote|get_price)/i.test(
             String(call.toolName ?? "")
           )
         )
@@ -40,7 +42,8 @@ export function extractTopologyTaskEvidence(
             !["market.readiness", "market.data_sources", "market.resolve_symbol"].includes(
               String(call.toolName ?? "")
             )
-        ))?.toolName ?? null;
+        )
+    )?.toolName ?? null;
 
   for (const observation of [...state.observations].reverse()) {
     const raw =
@@ -56,9 +59,9 @@ export function extractTopologyTaskEvidence(
           Boolean(item) && typeof item === "object" && !Array.isArray(item)
       );
       if (bars.length === 0) continue;
-      const latest = [...bars].sort((a, b) =>
-        String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? ""))
-      ).at(-1);
+      const latest = [...bars]
+        .sort((a, b) => String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")))
+        .at(-1);
       return {
         kind: "market_data",
         verified: true,
@@ -70,6 +73,29 @@ export function extractTopologyTaskEvidence(
           exchange: latest?.exchange ?? bars[0]?.exchange ?? null,
           latestClose: latest?.close ?? null,
           asof: latest?.timestamp ?? null,
+        },
+      };
+    }
+    if (
+      role === "market_data" &&
+      typeof raw === "object" &&
+      !Array.isArray(raw) &&
+      typeof (raw as Record<string, unknown>).lastPrice === "number"
+    ) {
+      const quote = raw as Record<string, unknown>;
+      return {
+        kind: "market_data",
+        verified: true,
+        sourceTool: typeof sourceTool === "string" ? sourceTool : null,
+        result: {
+          dataAvailable: true,
+          dataKind: "quote",
+          symbol: quote.symbol ?? null,
+          exchange: quote.exchange ?? null,
+          source: quote.source ?? null,
+          lastPrice: quote.lastPrice,
+          asof: quote.timestamp ?? null,
+          freshnessMs: quote.freshnessMs ?? null,
         },
       };
     }
@@ -88,6 +114,18 @@ export function extractTopologyTaskEvidence(
 /**
  * Run the shared ReAct loop for an A2A TASK_ASSIGN, then reply with TASK_RESULT.
  */
+export function resolveA2aExecutionRunId(payload: TaskAssignPayload): string {
+  return payload.executionRunId?.trim() || randomUUID();
+}
+
+export function resolveA2aSpecialistMaxIterations(configured: number): number {
+  // 专家任务还有 payload.deadline 和 topology tool timeout 两层时间护栏。
+  // 固定压到 5 轮会让“检查数据源 → 解析标的 → 拉数据 → 降级重试 → 总结”这类
+  // 正常链路在最后总结前被 max_iterations 截断。8 轮给恢复链路留出空间，同时
+  // 仍避免异常 Agent 无限循环。
+  return Math.min(Math.max(1, configured), 8);
+}
+
 export async function runA2aReactTaskAssign(
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope
@@ -95,13 +133,21 @@ export async function runA2aReactTaskAssign(
   { finalResponse: Record<string, unknown>; terminalStatus: "completed" | "failed" } | undefined
 > {
   const payload = msg.payload as TaskAssignPayload;
-  const runId = randomUUID();
+  /**
+   * `dispatchTaskToRole` 会把这个 ID 先返回给 HTTP 调用方，前端随即订阅对应 SSE。
+   * 必须复用 payload 中的 executionRunId；历史上这里再次 randomUUID，导致调用方
+   * 永远订阅到一条没有 token 的空流，只能等最终落库后一次性看到完整答案。
+   */
+  const runId = resolveA2aExecutionRunId(payload);
   const traceId = msg.traceId;
   const workflowId = msg.workflowId;
   const ownsTerminalState = ownsWorkflowTerminalState(payload);
   const definition = ownsTerminalState
     ? ctx.definition
-    : { ...ctx.definition, maxIterations: Math.min(ctx.definition.maxIterations, 5) };
+    : {
+        ...ctx.definition,
+        maxIterations: resolveA2aSpecialistMaxIterations(ctx.definition.maxIterations),
+      };
 
   /**
    * 自研 snapshot 续跑：workflow_resume 的 payload.params.resume=true 时，

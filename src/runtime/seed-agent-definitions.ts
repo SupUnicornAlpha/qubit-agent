@@ -266,6 +266,22 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
       .insert(agentDefinition)
       .values(baseValues)
       .onConflictDoUpdate({ target: agentDefinition.id, set: updateSet });
+    const seeded = await db
+      .select({
+        version: agentDefinition.version,
+        toolsJson: agentDefinition.toolsJson,
+      })
+      .from(agentDefinition)
+      .where(eq(agentDefinition.id, def.id))
+      .limit(1);
+    const seededTools = Array.isArray(seeded[0]?.toolsJson) ? seeded[0].toolsJson : [];
+    const missingTools = def.tools.filter((tool) => !seededTools.includes(tool));
+    if (seeded[0]?.version !== def.version || missingTools.length > 0) {
+      throw new Error(
+        `agent_definition_seed_drift: ${def.id} expected version=${def.version}, ` +
+          `actual=${seeded[0]?.version ?? "missing"}, missingTools=${missingTools.join(",") || "none"}`
+      );
+    }
     resetCount += 1;
     if (perFieldHit) perFieldPreservedCount += 1;
 

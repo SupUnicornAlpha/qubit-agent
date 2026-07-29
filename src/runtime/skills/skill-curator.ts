@@ -148,10 +148,31 @@ export class SkillCurator {
         result.archived += applied.archived;
         result.consolidated += applied.consolidated;
       }
-      result.actions = [
-        ...auto.actions,
-        ...llmActions,
-      ];
+
+      result.actions = [...auto.actions, ...llmActions];
+
+      // Context Protocol P1：strategy_recipe → agent_skill 晋升
+      try {
+        const { promoteStrategyRecipes } = await import("../context/promote-strategy-recipe");
+        const promo = await promoteStrategyRecipes({
+          projectId,
+          mode: mode === "live" ? "live" : "dry_run",
+        });
+        if (promo.promoted > 0 || promo.scanned > 0) {
+          result.consolidated += mode === "live" ? promo.promoted : 0;
+          result.actions.push({
+            kind: "promote_strategy_recipe",
+            reason: `scanned=${promo.scanned} promoted=${promo.promoted} dup=${promo.skippedDuplicate}`,
+            skillIds: promo.skillIds,
+          } as never);
+        }
+      } catch (err) {
+        console.warn(
+          "[SkillCurator] strategy_recipe promote skipped:",
+          err instanceof Error ? err.message : err
+        );
+      }
+
       result.summaryText = this.renderSummary(result);
 
       await db

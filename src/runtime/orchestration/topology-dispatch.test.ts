@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildTopologySpecialistExecutionContract,
+  classifyMarketDataRequestMode,
   isRedundantTopologyProbe,
   isTopologyTeamTool,
   mergeOrchestratorToolsJson,
@@ -74,10 +75,21 @@ describe("topology-dispatch", () => {
   });
 
   test("specialist contract distinguishes dispatch timeout from data failure", () => {
-    const marketContract = buildTopologySpecialistExecutionContract("market_data");
+    const marketContract = buildTopologySpecialistExecutionContract(
+      "market_data",
+      "获取 603986 今天实时行情"
+    );
     expect(marketContract).toContain("调度超时");
     expect(marketContract).toContain("禁止再次调用 readiness");
+    expect(marketContract).toContain("fetch_quote");
+    expect(marketContract).toContain("禁止用日 K 成功冒充实时行情");
     const researchContract = buildTopologySpecialistExecutionContract("research");
     expect(researchContract).toContain("单标的研究不得用 factor.autoEvaluate");
+  });
+
+  test("classifies live-price requests without treating ordinary history as realtime", () => {
+    expect(classifyMarketDataRequestMode("获取兆易创新今天实时行情")).toBe("realtime");
+    expect(classifyMarketDataRequestMode("What is the current price of AAPL?")).toBe("realtime");
+    expect(classifyMarketDataRequestMode("获取兆易创新最近 30 个交易日 K 线")).toBe("historical");
   });
 });

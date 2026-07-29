@@ -150,4 +150,121 @@ describe("buildSubAgentTasks", () => {
       errorMessage: "K 线数据不可用",
     });
   });
+
+  test("A2A 结果是任务状态第一事实源，并隐藏内部 execution instance 镜像", () => {
+    const failedWorkflow = {
+      ...workflow,
+      status: "failed",
+      endedAt: "2026-07-23T01:03:00.000Z",
+    };
+    const rows = buildSubAgentTasks({
+      workflows: [failedWorkflow],
+      definitions,
+      instances: [
+        {
+          id: "orch-pool",
+          definitionId: "def-orch",
+          workflowRunId: "pool-workflow",
+          status: "idle",
+          currentIteration: 0,
+          startedAt: null,
+          endedAt: null,
+          errorMessage: null,
+        },
+        {
+          id: "news-pool",
+          definitionId: "def-news",
+          workflowRunId: "pool-workflow",
+          status: "idle",
+          currentIteration: 0,
+          startedAt: null,
+          endedAt: null,
+          errorMessage: null,
+        },
+        {
+          id: "news-execution",
+          definitionId: "def-news",
+          workflowRunId: "wf-1",
+          status: "stopped",
+          currentIteration: 2,
+          startedAt: "2026-07-23T01:01:00.000Z",
+          endedAt: "2026-07-23T01:02:00.000Z",
+          errorMessage: null,
+        },
+      ],
+      messages: [
+        {
+          id: "assign-news",
+          workflowRunId: "wf-1",
+          traceId: "trace-news",
+          senderInstanceId: "orch-pool",
+          receiverInstanceId: "news-pool",
+          messageType: "TASK_ASSIGN",
+          payloadJson: {
+            taskId: "task-news",
+            taskType: "topology_dispatch",
+            params: { goal: "收集新闻" },
+          },
+          createdAt: "2026-07-23T01:01:00.000Z",
+        },
+        {
+          id: "result-news",
+          workflowRunId: "wf-1",
+          traceId: "trace-news",
+          senderInstanceId: "news-pool",
+          receiverInstanceId: "orch-pool",
+          messageType: "TASK_RESULT",
+          payloadJson: {
+            taskId: "task-news",
+            success: false,
+            result: {
+              reason: "token_budget_exhausted",
+              usedTokens: 103_852,
+              maxTotalTokens: 100_000,
+            },
+          },
+          createdAt: "2026-07-23T01:02:00.000Z",
+        },
+        {
+          id: "result-workflow",
+          workflowRunId: "wf-1",
+          traceId: "trace-news",
+          senderInstanceId: "orch-pool",
+          receiverInstanceId: "orch-pool",
+          messageType: "TASK_RESULT",
+          payloadJson: {
+            taskId: "workflow-task",
+            success: false,
+            result: {
+              reason: "token_budget_exhausted",
+              usedTokens: 103_852,
+              maxTotalTokens: 100_000,
+            },
+          },
+          createdAt: "2026-07-23T01:03:00.000Z",
+        },
+      ],
+      steps: [
+        {
+          workflowRunId: "wf-1",
+          agentInstanceId: "news-execution",
+          phase: "observe",
+          stepIndex: 2,
+          createdAt: "2026-07-23T01:01:30.000Z",
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.source === "a2a_assignment")).toMatchObject({
+      status: "failed",
+      errorMessage: "Token 预算耗尽（本轮任务树已使用 103852 / 100000）",
+      stepCount: 1,
+    });
+    expect(rows.find((row) => row.source === "workflow")).toMatchObject({
+      status: "failed",
+      errorMessage: "Token 预算耗尽（本轮任务树已使用 103852 / 100000）",
+    });
+    expect(rows.some((row) => row.source === "agent_execution")).toBe(false);
+  });
 });

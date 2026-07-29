@@ -6,6 +6,8 @@ import {
   agentDefinition,
   agentInstance,
   agentStep,
+  chatMessage,
+  chatMessageWorkflowLink,
   chatSession,
   sandboxViolationLog,
   toolCallLog,
@@ -188,18 +190,51 @@ monitorRouter.get("/sessions/:id/overview", async (c) => {
 monitorRouter.get("/workflows/:id/timeline", async (c) => {
   const db = await getDb();
   const workflowId = c.req.param("id");
-  const [instances, steps] = await Promise.all([
+  const [instances, definitions, steps, messages, conversationRows] = await Promise.all([
     db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowId)),
+    db.select().from(agentDefinition),
     db
       .select()
       .from(agentStep)
       .where(eq(agentStep.workflowRunId, workflowId))
       .orderBy(agentStep.createdAt),
+    db
+      .select()
+      .from(a2aMessage)
+      .where(eq(a2aMessage.workflowRunId, workflowId))
+      .orderBy(a2aMessage.createdAt),
+    db
+      .select({
+        message: chatMessage,
+        traceId: chatMessageWorkflowLink.traceId,
+      })
+      .from(chatMessageWorkflowLink)
+      .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
+      .where(eq(chatMessageWorkflowLink.workflowRunId, workflowId))
+      .orderBy(chatMessage.createdAt),
   ]);
   const stepIds = steps.map((item) => item.id);
   const tools =
     stepIds.length > 0
       ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
+      : [];
+  const currentInstanceIds = new Set(instances.map((item) => item.id));
+  const referencedInstanceIds = [
+    ...new Set(
+      messages
+        .flatMap((message) => [message.senderInstanceId, message.receiverInstanceId])
+        .filter(
+          (instanceId): instanceId is string =>
+            typeof instanceId === "string" && !currentInstanceIds.has(instanceId)
+        )
+    ),
+  ];
+  const referencedInstances =
+    referencedInstanceIds.length > 0
+      ? await db
+          .select()
+          .from(agentInstance)
+          .where(inArray(agentInstance.id, referencedInstanceIds))
       : [];
   const toolsByStep = new Map<string, typeof tools>();
   for (const tool of tools) {
@@ -207,10 +242,32 @@ monitorRouter.get("/workflows/:id/timeline", async (c) => {
     bucket.push(tool);
     toolsByStep.set(tool.agentStepId, bucket);
   }
+  const definitionById = new Map(definitions.map((item) => [item.id, item]));
+  const roleByInstanceId = new Map(
+    [...instances, ...referencedInstances].map((item) => [
+      item.id,
+      definitionById.get(item.definitionId)?.role ?? "unknown",
+    ])
+  );
   return c.json({
     data: {
       workflowId,
-      instances,
+      instances: instances.map((item) => ({
+        ...item,
+        role: roleByInstanceId.get(item.id) ?? "unknown",
+        name: definitionById.get(item.definitionId)?.name ?? "unknown",
+      })),
+      conversationMessages: conversationRows.map(({ message, traceId }) => ({
+        ...message,
+        traceId,
+      })),
+      a2aMessages: messages.map((message) => ({
+        ...message,
+        senderRole: roleByInstanceId.get(message.senderInstanceId) ?? "unknown",
+        receiverRole: message.receiverInstanceId
+          ? (roleByInstanceId.get(message.receiverInstanceId) ?? "unknown")
+          : null,
+      })),
       steps: steps.map((step) => ({
         ...step,
         toolCalls: toolsByStep.get(step.id) ?? [],

@@ -330,6 +330,7 @@ async function invokeOnceWithLengthRetry(
       config,
     });
   } catch (err) {
+    if (input.signal?.aborted) throw err;
     /**
      * length-retry 自身失败不应该让原本"成功但截断"的结果丢失 — 把首次
      * 结果当作可用答案返回，由 caller 自己决定怎么处理截断。
@@ -394,6 +395,8 @@ export async function invokeWithFallback(
     const { result, lengthRetryUsed } = await invokeOnceWithLengthRetry(primaryConfig, input);
     return projectResult(result, primaryConfig, { fallbackUsed: false, lengthRetryUsed });
   } catch (err) {
+    // 用户停止不应触发模型 fallback；否则会在另一个 provider 上继续生成/计费。
+    if (input.signal?.aborted) throw err;
     const defaultCfg = await loadModelConfig();
     if (
       !defaultCfg ||

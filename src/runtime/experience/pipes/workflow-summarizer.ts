@@ -68,6 +68,13 @@ export interface ParsedSummary {
   artifacts: string[];
   lessons: string[];
   followups: string[];
+  /** Context Protocol P1：金融业务引用 */
+  financeRefs?: {
+    factorIds?: string[];
+    compositionIds?: string[];
+    symbols?: string[];
+    asof?: string;
+  };
 }
 
 export interface SummarizerOptions {
@@ -222,7 +229,13 @@ async function summarizeOnceInternal(
         "workflow_summary",
         `mode:${ctx.mode}`,
         `roles:${ctx.rolesInvolved.join("+")}`,
+        ...(parsed.financeRefs?.symbols?.slice(0, 5).map((s) => `symbol:${s}`) ?? []),
       ],
+      metadataJson: {
+        memoryTier: "intermediate",
+        ...(parsed.financeRefs ? { financeRefs: parsed.financeRefs } : {}),
+        ...(parsed.financeRefs?.asof ? { asof: parsed.financeRefs.asof } : {}),
+      },
       validFrom: now.toISOString(),
       sourceRunId: workflowRunId,
       // semantic 总结质量中等；后续 Janitor 会按召回 / 执行重算
@@ -248,7 +261,13 @@ const SUMMARY_SCHEMA_HINT = `\`\`\`json
   "key_findings": ["关键发现 1（具体、可量化）", "关键发现 2", "..."],
   "artifacts": ["产出的因子/策略/报告/order_intent 名（最多 5 个）"],
   "lessons": ["执行过程中验证有效的招式 1", "招式 2", "..."],
-  "followups": ["下一步可探索的方向 1", "方向 2"]
+  "followups": ["下一步可探索的方向 1", "方向 2"],
+  "finance_refs": {
+    "factor_ids": ["可选：触达过的 factorId"],
+    "composition_ids": ["可选：触达过的 compositionId"],
+    "symbols": ["可选：标的"],
+    "asof": "可选：ISO 日期"
+  }
 }
 \`\`\``;
 
@@ -297,10 +316,36 @@ export function parseSummaryJson(raw: string): ParsedSummary | null {
       artifacts: asArr("artifacts"),
       lessons: asArr("lessons"),
       followups: asArr("followups"),
+      ...(parseFinanceRefs(obj["finance_refs"])
+        ? { financeRefs: parseFinanceRefs(obj["finance_refs"])! }
+        : {}),
     };
   } catch {
     return null;
   }
+}
+
+function parseFinanceRefs(raw: unknown): ParsedSummary["financeRefs"] | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const asIds = (k: string): string[] => {
+    const v = o[k] ?? o[k.replace(/_/g, "")];
+    if (!Array.isArray(v)) return [];
+    return v.filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+  };
+  const factorIds = asIds("factor_ids").length ? asIds("factor_ids") : asIds("factorIds");
+  const compositionIds = asIds("composition_ids").length
+    ? asIds("composition_ids")
+    : asIds("compositionIds");
+  const symbols = asIds("symbols");
+  const asof = typeof o["asof"] === "string" ? o["asof"] : undefined;
+  if (!factorIds.length && !compositionIds.length && !symbols.length && !asof) return null;
+  return {
+    ...(factorIds.length ? { factorIds } : {}),
+    ...(compositionIds.length ? { compositionIds } : {}),
+    ...(symbols.length ? { symbols } : {}),
+    ...(asof ? { asof } : {}),
+  };
 }
 
 function renderSummaryBody(parsed: ParsedSummary, ctx: SummarizerWorkflowContext): string {

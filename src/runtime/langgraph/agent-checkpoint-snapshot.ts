@@ -4,6 +4,8 @@ import { getDb } from "../../db/sqlite/client";
 import { agentCheckpointSnapshot } from "../../db/sqlite/schema";
 import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { RuntimeAgentDefinition } from "../types";
+import type { WorkingMemory } from "../context/types";
+import { ensureWorkingMemory } from "../context/working-memory";
 import { type AgentGraphState, createInitialGraphState } from "./state";
 
 /**
@@ -48,6 +50,7 @@ function buildSnapshotJson(state: AgentGraphState): Record<string, unknown> {
     observations: state.observations,
     finalResponse: state.finalResponse,
     contextMemory: state.contextMemory,
+    workingMemory: state.workingMemory,
     artifactGapRetryCount: state.artifactGapRetryCount,
     controlModeGapRetryCount: state.controlModeGapRetryCount,
     eventsTail: events.slice(-EVENT_TAIL_LIMIT),
@@ -232,6 +235,12 @@ export function restoreStateFromSnapshot(
     ...base,
     iteration: typeof snap.iteration === "number" ? snap.iteration : loaded.iteration,
     contextMemory: (snap.contextMemory as Record<string, unknown>) ?? {},
+    workingMemory: ensureWorkingMemory(
+      (snap.workingMemory as WorkingMemory | undefined) ??
+        ((snap.contextMemory as Record<string, unknown> | undefined)?.["working"] as
+          | WorkingMemory
+          | undefined)
+    ),
     plannedAction: (snap.plannedAction as string | null) ?? null,
     reasonText: (snap.reasonText as string | null) ?? null,
     toolCalls: (snap.toolCalls as AgentGraphState["toolCalls"]) ?? [],

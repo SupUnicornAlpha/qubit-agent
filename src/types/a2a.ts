@@ -33,6 +33,11 @@ export const TaskAssignPayloadSchema = z.object({
   params: z.record(z.unknown()),
   deadline: z.string().optional(),
   assignedRole: z.custom<AgentRole>(),
+  /**
+   * 调度器预先分配的执行流 ID。调用方会立即用它订阅逐 token SSE，worker 必须沿用，
+   * 不能在真正执行时再生成另一个 ID。
+   */
+  executionRunId: z.string().min(1).optional(),
 });
 
 export type TaskAssignPayload = z.infer<typeof TaskAssignPayloadSchema>;

@@ -162,20 +162,57 @@ export function evaluateDecay(
 ): DecayDecision {
   if (exp.pinned) return "noop";
 
-  // 已设 decay_at → 看是否到了归档时机
+  const tier = resolveMemoryTier(exp);
+
+  // 已设 decay_at → 看是否到了归档时机（shallow 更快归档）
   if (exp.decayAt) {
+    const archiveDays = tier === "shallow" ? 2 : DECAY_TO_ARCHIVE_DAYS;
     const decayAtTs = new Date(exp.decayAt).getTime();
-    const archiveCutoff = decayAtTs + DECAY_TO_ARCHIVE_DAYS * 86_400_000;
+    const archiveCutoff = decayAtTs + archiveDays * 86_400_000;
     if (now.getTime() >= archiveCutoff) return "archive";
     return "noop";
   }
 
-  // 尚未 decay：仅 quality 低 + valid_from 足够久 才标
-  if (exp.qualityScore >= threshold) return "noop";
+  // shallow：过 TTL 直接 mark_decay（即使 quality 尚可）
+  if (tier === "shallow") {
+    const decayHours =
+      typeof exp.metadataJson?.["decayHours"] === "number"
+        ? Number(exp.metadataJson["decayHours"])
+        : 48;
+    const ageMs = now.getTime() - new Date(exp.validFrom).getTime();
+    if (ageMs >= decayHours * 3_600_000) return "mark_decay";
+  }
+
+  // deep：提高阈值，更难触发衰减
+  const effectiveThreshold = tier === "deep" ? threshold * 0.5 : threshold;
+  const triggerDays =
+    tier === "deep"
+      ? DECAY_TRIGGER_WINDOW_DAYS * 3
+      : tier === "intermediate"
+        ? DECAY_TRIGGER_WINDOW_DAYS * 2
+        : DECAY_TRIGGER_WINDOW_DAYS;
+
+  if (exp.qualityScore >= effectiveThreshold) return "noop";
   const daysSince = (now.getTime() - new Date(exp.validFrom).getTime()) / 86_400_000;
-  if (daysSince < DECAY_TRIGGER_WINDOW_DAYS) return "noop";
+  if (daysSince < triggerDays) return "noop";
 
   return "mark_decay";
+}
+
+function resolveMemoryTier(exp: Experience): "shallow" | "intermediate" | "deep" {
+  const meta = exp.metadataJson ?? {};
+  if (meta["memoryTier"] === "shallow" || meta["memoryTier"] === "intermediate" || meta["memoryTier"] === "deep") {
+    return meta["memoryTier"];
+  }
+  const tag = exp.tagsJson.find((t) => t.startsWith("tier:"));
+  if (tag === "tier:shallow") return "shallow";
+  if (tag === "tier:intermediate") return "intermediate";
+  if (tag === "tier:deep") return "deep";
+  if (exp.subKind === "market_snapshot") return "shallow";
+  if (exp.subKind === "factor_archive" || exp.subKind === "strategy_recipe" || exp.subKind === "playbook") {
+    return "deep";
+  }
+  return "intermediate";
 }
 
 function clamp(v: number, lo: number, hi: number): number {

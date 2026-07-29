@@ -565,10 +565,11 @@ export class FactorService {
 
     const db = await getDb();
     const evaluationId = randomUUID();
+    const asof = input.asof ?? new Date().toISOString().slice(0, 10);
     await db.insert(factorEvalTable).values({
       id: evaluationId,
       factorId: f.id,
-      asof: input.asof ?? new Date().toISOString().slice(0, 10),
+      asof,
       universe: f.universe,
       providerId: null,
       ic: result.ic,
@@ -581,6 +582,43 @@ export class FactorService {
       latencyMs: result.latencyMs,
       error: result.error ?? null,
     });
+
+    // Context Protocol P0：成功评估 → 自动写 factor_archive（带 factorId+asof）
+    if (!result.error) {
+      try {
+        const { isContextProtocolEnabled } = await import("../context/axioms");
+        if (isContextProtocolEnabled()) {
+          const { upsertFactorArchiveExperience } = await import(
+            "../context/finance-memory-writer"
+          );
+          await upsertFactorArchiveExperience({
+            projectId: f.projectId,
+            meta: {
+              factorId: f.id,
+              evaluationId,
+              name: f.name,
+              category: f.category,
+              universe: f.universe,
+              horizon: String(f.horizon),
+              ...(typeof result.ic === "number" ? { ic: result.ic } : {}),
+              ...(typeof result.rankIc === "number" ? { rankIc: result.rankIc } : {}),
+              ...(typeof result.ir === "number" ? { ir: result.ir } : {}),
+              asof,
+              ...(typeof result.sampleSize === "number"
+                ? { sampleSize: result.sampleSize }
+                : {}),
+              memoryTier: "deep",
+            },
+            sourceRunId: f.workflowRunId,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          `[factor.evaluate] finance archive write skipped:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
 
     return { ...result, evaluationId };
   }

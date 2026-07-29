@@ -1,19 +1,20 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
+import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { fetchAkshareBars, fetchAkshareTencentBars } from "./akshare-klines";
 import { fetchBinanceBars } from "./binance-klines";
 import { fetchEastMoneyBars } from "./eastmoney-klines";
-import { fetchYahooFinanceBars, type KlinesDataSourceMeta } from "./klines-data-source";
+import { type KlinesDataSourceMeta, fetchYahooFinanceBars } from "./klines-data-source";
+import { marketDataFetch } from "./market-data-network";
 import {
   listMarketDataSources,
-  marketSourceDefinition,
   marketSourceBackoffUntil,
+  marketSourceDefinition,
   recordMarketDataSourceAttempt,
 } from "./market-data-source-control";
-import { fetchYfinanceBars } from "./yfinance-klines";
+import { queryMarketQuote } from "./microstructure-query";
 import { getWindSessionStatus } from "./wind-klines";
-import { marketDataFetch } from "./market-data-network";
-import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
+import { fetchYfinanceBars } from "./yfinance-klines";
 
 const PROBE_TIMEOUT_MS = 20_000;
 
@@ -22,7 +23,10 @@ export interface MarketDataReadiness {
   checkedAt: string | null;
   healthySources: string[];
   readyMarkets: string[];
+  realtimeHealthySources: string[];
+  realtimeReadyMarkets: string[];
   targetMarkets: string[];
+  scope: "historical_and_realtime";
   message: string;
 }
 
@@ -31,8 +35,11 @@ let readiness: MarketDataReadiness = {
   checkedAt: null,
   healthySources: [],
   readyMarkets: [],
+  realtimeHealthySources: [],
+  realtimeReadyMarkets: [],
   targetMarkets: ["CN", "US", "CRYPTO"],
-  message: "行情数据源正在执行启动探针",
+  scope: "historical_and_realtime",
+  message: "行情数据源正在执行历史与实时能力探针",
 };
 
 export function getMarketDataReadiness(): MarketDataReadiness {
@@ -78,7 +85,7 @@ function probeParams(source: KlinesDataSourceMeta): FetchBarsParams {
 async function probeTushare(
   params: FetchBarsParams,
   token: string,
-  settings: BuiltinConnectorInitConfigs,
+  settings: BuiltinConnectorInitConfigs
 ): Promise<BarData[]> {
   const res = await marketDataFetch("tushare_daily", settings, "https://api.tushare.pro", {
     method: "POST",
@@ -98,7 +105,8 @@ async function probeTushare(
   const text = await res.text();
   if (!res.ok) throw new Error(`tushare HTTP ${res.status}: ${text.slice(0, 160)}`);
   const json = JSON.parse(text) as { code?: number; msg?: string; data?: { items?: unknown[][] } };
-  if (json.code && json.code !== 0) throw new Error(`tushare code=${json.code}: ${json.msg ?? "unknown"}`);
+  if (json.code && json.code !== 0)
+    throw new Error(`tushare code=${json.code}: ${json.msg ?? "unknown"}`);
   return (json.data?.items ?? []).map((_, i) => ({
     symbol: "600000",
     exchange: "SH",
@@ -161,7 +169,18 @@ async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): 
     } else if (sourceId === "wind") {
       const session = await getWindSessionStatus(settings);
       if (!session.connected) throw new Error(session.message || "Wind terminal not connected");
-      bars = [{ ...params, open: 0, high: 0, low: 0, close: 0, volume: 0, turnover: 0, timestamp: new Date().toISOString() } as BarData];
+      bars = [
+        {
+          ...params,
+          open: 0,
+          high: 0,
+          low: 0,
+          close: 0,
+          volume: 0,
+          turnover: 0,
+          timestamp: new Date().toISOString(),
+        } as BarData,
+      ];
     }
     if (bars.length === 0) throw new Error("health probe returned no rows");
     await recordMarketDataSourceAttempt({
@@ -189,6 +208,56 @@ async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): 
   }
 }
 
+export function isQuoteFreshForReadiness(
+  market: "CN" | "CRYPTO",
+  freshnessMs: number,
+  now = new Date()
+): boolean {
+  if (!Number.isFinite(freshnessMs) || freshnessMs < 0) return false;
+  if (market === "CRYPTO") return freshnessMs <= 2 * 60_000;
+
+  // China Standard Time without relying on the host timezone.
+  const cn = new Date(now.getTime() + 8 * 60 * 60_000);
+  const weekday = cn.getUTCDay();
+  const minutes = cn.getUTCHours() * 60 + cn.getUTCMinutes();
+  const duringTradingSession =
+    weekday >= 1 &&
+    weekday <= 5 &&
+    ((minutes >= 9 * 60 + 15 && minutes <= 11 * 60 + 35) ||
+      (minutes >= 12 * 60 + 55 && minutes <= 15 * 60 + 10));
+  return duringTradingSession ? freshnessMs <= 5 * 60_000 : freshnessMs <= 4 * 86_400_000;
+}
+
+async function probeRealtimeOne(market: "CN" | "CRYPTO"): Promise<{
+  market: "CN" | "CRYPTO";
+  sourceId: "eastmoney" | "akshare_tencent" | "binance_crypto";
+  ok: boolean;
+}> {
+  const symbol = market === "CN" ? "600000.SH" : "BTCUSDT";
+  const exchange = market === "CN" ? "SH" : "CRYPTO";
+  try {
+    const quote = await queryMarketQuote({ symbol, exchange });
+    if (!isQuoteFreshForReadiness(market, quote.freshnessMs)) {
+      throw new Error(
+        `stale realtime quote: asof=${quote.timestamp}, freshnessMs=${quote.freshnessMs}`
+      );
+    }
+    const sourceId =
+      market === "CRYPTO"
+        ? "binance_crypto"
+        : quote.source === "tencent"
+          ? "akshare_tencent"
+          : "eastmoney";
+    return { market, sourceId, ok: true };
+  } catch {
+    return {
+      market,
+      sourceId: market === "CN" ? "eastmoney" : "binance_crypto",
+      ok: false,
+    };
+  }
+}
+
 export async function runMarketDataHealthChecks(sourceId?: string): Promise<MarketDataReadiness> {
   const all = await listMarketDataSources();
   const ids = sourceId
@@ -209,10 +278,17 @@ export async function runMarketDataHealthChecks(sourceId?: string): Promise<Mark
         const familyResults: Array<{ id: KlinesDataSourceMeta; ok: boolean }> = [];
         for (const id of familyIds) familyResults.push({ id, ok: await probeOne(id) });
         return familyResults;
-      }),
+      })
     );
     results.push(...groupedResults.flat());
   }
+  const realtimeResults = sourceId
+    ? sourceId === "eastmoney"
+      ? [await probeRealtimeOne("CN")]
+      : sourceId === "binance_crypto"
+        ? [await probeRealtimeOne("CRYPTO")]
+        : []
+    : await Promise.all([probeRealtimeOne("CN"), probeRealtimeOne("CRYPTO")]);
   const refreshed = await listMarketDataSources();
   const healthySources = refreshed.filter((s) => s.healthStatus === "healthy").map((s) => s.id);
   const readyMarkets = Array.from(
@@ -223,6 +299,12 @@ export async function runMarketDataHealthChecks(sourceId?: string): Promise<Mark
     )
   );
   const targetMarkets = readiness.targetMarkets;
+  const realtimeHealthySources = realtimeResults
+    .filter((result) => result.ok)
+    .map((result) => result.sourceId);
+  const realtimeReadyMarkets = realtimeResults
+    .filter((result) => result.ok)
+    .map((result) => result.market);
   const targetReady = targetMarkets.filter((market) => readyMarkets.includes(market));
   const status: MarketDataReadiness["status"] =
     healthySources.length === 0
@@ -235,13 +317,16 @@ export async function runMarketDataHealthChecks(sourceId?: string): Promise<Mark
     checkedAt: new Date().toISOString(),
     healthySources,
     readyMarkets,
+    realtimeHealthySources,
+    realtimeReadyMarkets,
     targetMarkets,
+    scope: "historical_and_realtime",
     message:
       status === "ready"
-        ? `目标市场均有可用数据源：${targetMarkets.join(" / ")}`
+        ? `历史 K 线可用：${targetMarkets.join(" / ")}；实时 Quote 可用：${realtimeReadyMarkets.join(" / ") || "无"}`
         : status === "degraded"
-          ? `部分市场可用（${targetReady.join(" / ") || "无目标市场"}）；请求将按健康度降级`
-          : "没有数据源通过真实样本探针；行情工具将明确返回 unavailable",
+          ? `历史 K 线部分可用（${targetReady.join(" / ") || "无目标市场"}）；实时 Quote 可用：${realtimeReadyMarkets.join(" / ") || "无"}`
+          : `没有历史数据源通过真实样本探针；实时 Quote 可用：${realtimeReadyMarkets.join(" / ") || "无"}`,
   };
   console.log(
     `[MarketData] readiness=${status} healthy=${healthySources.join(",") || "none"} probes=${results.map((r) => `${r.id}:${r.ok ? "ok" : "fail"}`).join(",")}`
@@ -250,6 +335,10 @@ export async function runMarketDataHealthChecks(sourceId?: string): Promise<Mark
 }
 
 export async function runMarketDataReadinessGate(): Promise<MarketDataReadiness> {
-  readiness = { ...readiness, status: "checking", message: "行情数据源正在执行启动探针" };
+  readiness = {
+    ...readiness,
+    status: "checking",
+    message: "行情数据源正在执行历史与实时能力探针",
+  };
   return runMarketDataHealthChecks();
 }

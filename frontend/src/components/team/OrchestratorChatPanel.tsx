@@ -55,6 +55,9 @@ export interface OrchestratorChatPanelProps {
   completed: boolean;
   /** 运行进度文案（running 时显示在 composer 上方） */
   runProgress: string;
+  /** 当前执行或工作流操作错误，统一在右侧 composer 上方展示 */
+  errorMessage?: string | null;
+  onErrorDismiss?: () => void;
   /** 自主 / HITL 模式 */
   hitlMode: OrchestratorHitlMode;
   onHitlModeChange: (mode: OrchestratorHitlMode) => void;
@@ -106,6 +109,8 @@ export function OrchestratorChatPanel({
   running,
   chatInFlight = false,
   runProgress,
+  errorMessage = null,
+  onErrorDismiss,
   hitlMode,
   onHitlModeChange,
   agentMode,
@@ -386,7 +391,22 @@ export function OrchestratorChatPanel({
 
       {/* Footer：进度 + composer */}
       <div style={styles.footer}>
-        {running && runProgress ? <div style={styles.progress}>{runProgress}</div> : null}
+        {showActive && runProgress ? <div style={styles.progress}>{runProgress}</div> : null}
+        {errorMessage ? (
+          <div style={styles.error} role="alert">
+            <span style={{ flex: 1, minWidth: 0 }}>{errorMessage}</span>
+            {onErrorDismiss ? (
+              <button
+                type="button"
+                style={styles.errorDismiss}
+                onClick={onErrorDismiss}
+                aria-label="关闭错误提示"
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         {injectHint ? <div style={styles.injectHint}>{injectHint}</div> : null}
         <textarea
           style={styles.composer}
@@ -551,6 +571,28 @@ const styles: Record<string, CSSProperties> = {
     border: "1px solid #1e3a52",
     borderRadius: 6,
     padding: "5px 8px",
+  },
+  error: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    fontSize: 11,
+    lineHeight: 1.45,
+    color: "#fecaca",
+    background: "rgba(127,29,29,0.28)",
+    border: "1px solid rgba(248,113,113,0.45)",
+    borderRadius: 6,
+    padding: "6px 8px",
+  },
+  errorDismiss: {
+    flexShrink: 0,
+    border: 0,
+    background: "transparent",
+    color: "#fca5a5",
+    cursor: "pointer",
+    fontSize: 16,
+    lineHeight: 1,
+    padding: 0,
   },
   composer: {
     width: "100%",

@@ -32,6 +32,7 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentInstance } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole, AnalystSignalValue } from "../../types/entities";
+import { buildContextHandoffV1 } from "../context/handoff";
 import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import { invokeWithFallback, resolveLlmForAgent } from "../llm/llm-router";
 import { resolveRoleReasoner } from "./role-reasoner";
@@ -418,6 +419,15 @@ export async function runResearchTeamSlotReact(params: {
    * MSA fan-out 隔离：4 个 analyst slot 并发执行各自独立 `runId`，自研 snapshot
    * 天然按 runId 隔离，无需额外 thread 后缀（原 LangGraph thread_id 隔离已下线）。
    */
+  const handoffContext = buildContextHandoffV1({
+    goal: userGoal,
+    ...(params.ticker ? { symbols: [params.ticker] } : {}),
+    narrative: params.context,
+    evidence: {
+      kind: "analysis",
+      verified: false,
+    },
+  });
   const payload: TaskAssignPayload = {
     taskId: runId,
     taskType: "analyst_team_slot",
@@ -426,7 +436,7 @@ export async function runResearchTeamSlotReact(params: {
       goal: userGoal,
       ticker: params.ticker,
       scope: params.scope,
-      context: params.context,
+      context: handoffContext,
       forceLoop: true,
       teamSlot: true,
     },

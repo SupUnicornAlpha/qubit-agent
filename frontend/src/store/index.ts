@@ -215,6 +215,9 @@ export interface AppState {
   setUiTheme: (palette: UiPaletteId) => void;
   activeView: ActiveView;
   setActiveView: (view: ActiveView) => void;
+  /** 从对话等页面跳转到运行监控时，要求自动聚焦的 workflow。 */
+  monitorWorkflowFocus: string | null;
+  setMonitorWorkflowFocus: (workflowRunId: string | null) => void;
   /** 侧栏 Explorer 面板（导航树）是否展开 */
   explorerOpen: boolean;
   setExplorerOpen: (open: boolean) => void;
@@ -438,6 +441,8 @@ export const useAppStore = create<AppState>((set) => ({
   },
   activeView: "chat",
   setActiveView: (view) => set({ activeView: view }),
+  monitorWorkflowFocus: null,
+  setMonitorWorkflowFocus: (monitorWorkflowFocus) => set({ monitorWorkflowFocus }),
   explorerOpen: readExplorerOpen(),
   setExplorerOpen: (explorerOpen) => {
     persistExplorerOpen(explorerOpen);

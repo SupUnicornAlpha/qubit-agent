@@ -34,6 +34,7 @@ import {
 } from "../../tools/capability-gate";
 import { injectContextParams } from "../../tools/context-params";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
+import { applyToolResultToWorkingMemory } from "../../context/working-memory";
 import {
   recordToolCallError,
   recordToolCallSandboxBlocked,
@@ -1143,6 +1144,12 @@ export async function actNode(
         ...state.observations,
         { level: "error", message: execution.result.reason ?? "tool timeout" },
       ],
+      workingMemory: applyToolResultToWorkingMemory(state.workingMemory, {
+        step: state.iteration,
+        tool: targetName,
+        ok: false,
+        errorMessage: execution.result.reason ?? "tool timeout",
+      }),
     };
   }
 
@@ -1265,6 +1272,12 @@ export async function actNode(
           reasonText: state.reasonText,
         },
       ],
+      workingMemory: applyToolResultToWorkingMemory(state.workingMemory, {
+        step: state.iteration,
+        tool: targetName,
+        ok: false,
+        errorMessage: errMsg,
+      }),
     };
   }
 
@@ -1347,6 +1360,13 @@ export async function actNode(
   return {
     toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success" }],
     observations: nextObservations,
+    workingMemory: applyToolResultToWorkingMemory(state.workingMemory, {
+      step: state.iteration,
+      tool: targetName,
+      ok: true,
+      result: toolResult,
+      oneLiner: `${targetName} ok (${latencyMs}ms)`,
+    }),
     // 成功推进后清零“连续提前结束”计数，避免长 Goal 因早期一次试探性收口被累计误杀。
     controlModeGapRetryCount: 0,
   };
