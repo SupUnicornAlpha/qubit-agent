@@ -51,6 +51,8 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\brequired\b.*\b(missing|absent|empty)/i,
   /\bis\s+required\b/i,
   /\bis\s+not\s+implemented\b/i,
+  /\bmissing_symbol\b/i,
+  /\barity_violation\b/i,
   /semantic_data_failure:(?:semantic_empty_result|[^:\s]*_empty|bar_count_zero|no_bars|no_data|data_status_unavailable|synthetic_data)/i,
 ];
 
@@ -58,6 +60,7 @@ const BLOCKED_PATTERNS: RegExp[] = [
   /\bsandbox\b/i,
   /\bblocked\b/i,
   /\bnot_allowed\b/i,
+  /\bgate_denied\b/i,
   /\bdisabled\b/i,
   /\bcircuit\b/i, // circuit breaker open 也算软封禁
 ];

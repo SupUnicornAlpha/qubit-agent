@@ -90,7 +90,8 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // 行情
   "market.resolve_symbol": {
     description:
-      "调用行情工具前统一识别 symbol 所属市场和 exchange，返回 CN/HK/US/CRYPTO 等市场、置信度和判断原因。",
+      "调用行情工具前统一识别 symbol 所属市场和 exchange，返回 CN/HK/US/CRYPTO 等市场、置信度和判断原因。" +
+      "支持单个 symbol/ticker/code 或批量 symbols/tickers；单标返回扁平结果，多标返回 {results,count}。",
     category: "market",
   },
   "market.data_sources": {
@@ -116,11 +117,15 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
   },
   fetch_ticks: {
-    description: "拉取真实 L1 Tick 快照；无真实源时明确失败，绝不返回模拟报价",
+    description:
+      "拉取真实 L1 Tick 快照；无真实源时明确失败，绝不返回模拟报价。" +
+      "支持单个 symbol/ticker/code 或批量 symbols/tickers；单标返回 Tick 数组，多标返回 {ticks,warnings?}。",
     category: "market",
   },
   fetch_quote: {
-    description: "拉取标准化实时/准实时报价，包含来源、时间戳与新鲜度",
+    description:
+      "拉取标准化实时/准实时报价，包含来源、时间戳与新鲜度。" +
+      "支持单个 symbol/ticker/code 或批量 symbols/tickers；单标返回扁平 Quote，多标返回 {quotes,warnings?}。",
     category: "market",
   },
   fetch_order_book: {

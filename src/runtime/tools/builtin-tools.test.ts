@@ -279,3 +279,29 @@ describe("connector bootstrap", () => {
     expect(connectorRegistry.get("qubit-broker")).toBeDefined();
   });
 });
+
+describe("market.resolve_symbol ToolContract", () => {
+  test("batch symbols returns {results,count}", async () => {
+    const out = (await dispatchBuiltinTool("market.resolve_symbol", ctx, {
+      symbols: ["603986.SH", "002384.SZ"],
+    })) as { results: unknown[]; count: number };
+    expect(out.count).toBe(2);
+    expect(out.results).toHaveLength(2);
+  });
+
+  test("single symbol stays flat (no results wrapper)", async () => {
+    const out = (await dispatchBuiltinTool("market.resolve_symbol", ctx, {
+      symbol: "AAPL",
+    })) as { symbol?: string; results?: unknown };
+    expect(out.results).toBeUndefined();
+    expect(typeof out.symbol === "string" || typeof (out as { ticker?: string }).ticker === "string").toBe(
+      true
+    );
+  });
+
+  test("empty params → missing_symbol", async () => {
+    await expect(dispatchBuiltinTool("market.resolve_symbol", ctx, {})).rejects.toThrow(
+      /missing_symbol/
+    );
+  });
+});

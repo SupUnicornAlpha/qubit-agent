@@ -30,6 +30,7 @@ import {
   extractKlinesSymbols,
   normalizeKlinesToolRequest,
 } from "../../runtime/market/normalize-klines-request";
+import { extractSymbolArgs, receivedParamKeys } from "../../runtime/market/normalize-symbol-args";
 import {
   fetchYfinanceAssetInfo,
   fetchYfinanceBars,
@@ -342,6 +343,100 @@ export class QubitNativeDataConnector extends DataConnector {
         } as TOutput;
       }
       return bars as TOutput;
+    }
+    if (operation === "fetch_quote") {
+      const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+      const p = raw as Record<string, unknown>;
+      // Prefer contract-normalized symbols from act; fall back to local extract.
+      const requestedSymbols =
+        Array.isArray(p.symbols) && p.symbols.every((s) => typeof s === "string")
+          ? [...new Set((p.symbols as string[]).map((s) => s.trim()).filter(Boolean))]
+          : extractSymbolArgs(p);
+      if (requestedSymbols.length === 0) {
+        throw new Error(
+          `missing_symbol: fetch_quote: symbol/ticker or symbols/tickers is required (receivedKeys=${receivedParamKeys(p)})`
+        );
+      }
+      const quotes: QuoteData[] = [];
+      const errors: string[] = [];
+      const hintExchange = typeof p.exchange === "string" ? p.exchange : undefined;
+      for (const requestedSymbol of requestedSymbols) {
+        try {
+          const resolution = resolveTickerMarket(requestedSymbol, {
+            ...(hintExchange ? { hintExchange } : {}),
+          });
+          quotes.push(
+            await this.fetchQuote({
+              symbol: resolution.symbol || requestedSymbol,
+              exchange: resolution.exchange,
+            })
+          );
+        } catch (error) {
+          errors.push(
+            `${requestedSymbol}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+      if (quotes.length === 0) {
+        throw new Error(`market_data_unavailable: fetch_quote batch failed: ${errors.join(" | ")}`);
+      }
+      if (errors.length > 0) {
+        console.warn(`[qubit-data] fetch_quote batch partially failed: ${errors.join(" | ")}`);
+      }
+      if (requestedSymbols.length === 1) return quotes[0] as TOutput;
+      return {
+        quotes,
+        ...(errors.length > 0 ? { warnings: errors } : {}),
+      } as TOutput;
+    }
+    if (operation === "fetch_ticks") {
+      const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+      const p = raw as Record<string, unknown>;
+      const requestedSymbols =
+        Array.isArray(p.symbols) && p.symbols.every((s) => typeof s === "string")
+          ? [...new Set((p.symbols as string[]).map((s) => s.trim()).filter(Boolean))]
+          : extractSymbolArgs(p);
+      if (requestedSymbols.length === 0) {
+        throw new Error(
+          `missing_symbol: fetch_ticks: symbol/ticker or symbols/tickers is required (receivedKeys=${receivedParamKeys(p)})`
+        );
+      }
+      const ticks: TickData[] = [];
+      const errors: string[] = [];
+      const hintExchange = typeof p.exchange === "string" ? p.exchange : undefined;
+      const date =
+        typeof p.date === "string" && p.date.trim()
+          ? p.date.trim()
+          : new Date().toISOString().slice(0, 10);
+      for (const requestedSymbol of requestedSymbols) {
+        try {
+          const resolution = resolveTickerMarket(requestedSymbol, {
+            ...(hintExchange ? { hintExchange } : {}),
+          });
+          ticks.push(
+            ...(await this.fetchTicks({
+              symbol: resolution.symbol || requestedSymbol,
+              exchange: resolution.exchange,
+              date,
+            }))
+          );
+        } catch (error) {
+          errors.push(
+            `${requestedSymbol}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+      if (ticks.length === 0) {
+        throw new Error(`market_data_unavailable: fetch_ticks batch failed: ${errors.join(" | ")}`);
+      }
+      if (errors.length > 0) {
+        console.warn(`[qubit-data] fetch_ticks batch partially failed: ${errors.join(" | ")}`);
+      }
+      if (requestedSymbols.length === 1) return ticks as TOutput;
+      return {
+        ticks,
+        ...(errors.length > 0 ? { warnings: errors } : {}),
+      } as TOutput;
     }
     if (operation === "fetch_financial_data") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
@@ -754,7 +849,11 @@ export class QubitNativeDataConnector extends DataConnector {
   }
 
   async fetchTicks(params: FetchTicksParams): Promise<TickData[]> {
-    if (!params.symbol?.trim()) throw new Error("fetch_ticks: symbol is required");
+    if (!params.symbol?.trim()) {
+      throw new Error(
+        `missing_symbol: fetch_ticks: symbol is required (receivedKeys=${receivedParamKeys(params as unknown as Record<string, unknown>)})`
+      );
+    }
     const quote = await queryMarketQuote(params);
     return [
       {
@@ -772,7 +871,11 @@ export class QubitNativeDataConnector extends DataConnector {
   }
 
   override async fetchQuote(params: FetchQuoteParams): Promise<QuoteData> {
-    if (!params.symbol?.trim()) throw new Error("fetch_quote: symbol is required");
+    if (!params.symbol?.trim()) {
+      throw new Error(
+        `missing_symbol: fetch_quote: symbol is required (receivedKeys=${receivedParamKeys(params as unknown as Record<string, unknown>)})`
+      );
+    }
     return queryMarketQuote(params);
   }
 

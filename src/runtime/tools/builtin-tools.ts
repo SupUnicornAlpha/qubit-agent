@@ -39,9 +39,12 @@ import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-
 import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
+import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import { listMarketDataSources } from "../market/market-data-source-control";
 import { getMarketDataReadiness } from "../market/market-data-health";
+import { applyToolContract, isToolContractEnabled } from "./tool-contract";
+import { getToolContract } from "./tool-contract-registry";
 import { detectRegimeFromBars } from "../market/regime";
 import {
   computeBollinger,
@@ -125,11 +128,19 @@ function optionalFiniteNumber(value: unknown): number | null {
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   "market.resolve_symbol": async (_ctx, params) => {
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
-    if (!symbol) throw new Error("market.resolve_symbol: symbol is required");
-    return resolveTickerMarket(symbol, {
-      ...(typeof params.exchange === "string" ? { hintExchange: params.exchange } : {}),
-    });
+    const contract = isToolContractEnabled() ? getToolContract("market.resolve_symbol") : undefined;
+    const canonical = contract ? applyToolContract(contract, params) : params;
+    const symbols =
+      Array.isArray(canonical.symbols) && canonical.symbols.length > 0
+        ? (canonical.symbols as string[])
+        : extractSymbolArgs(canonical);
+    if (symbols.length === 0) {
+      requireSymbols(params, { arity: "either", toolName: "market.resolve_symbol" });
+    }
+    const hint =
+      typeof canonical.exchange === "string" ? { hintExchange: canonical.exchange as string } : {};
+    const results = symbols.map((symbol) => resolveTickerMarket(symbol, hint));
+    return results.length === 1 ? results[0]! : { results, count: results.length };
   },
 
   "market.data_sources": async (_ctx, params) => {
@@ -138,7 +149,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const rows = await listMarketDataSources();
     return {
       readiness: getMarketDataReadiness(),
-      readinessScope: "source_probe_only",
+      readinessScope: "historical_and_realtime",
       dispatchReadiness: "not_checked",
       sources: rows.filter(
         (row) =>
@@ -146,7 +157,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
           (!timeframe || row.supportedTimeframes.includes(timeframe))
       ),
       guidance:
-        "先用 market.resolve_symbol 确认市场；再用此健康清单选择源。fetch_klines 会自动按优先级、凭证和熔断状态降级，不要原样重复调用已 open/down 的源。此结果仅代表数据源探针，不代表 call_team_* 调度健康。",
+        "先用 market.resolve_symbol 确认市场。实时/现价请求必须先看 realtimeReadyMarkets 并调用 fetch_quote；历史 K 线再调用 fetch_klines。不要用 readyMarkets（日线能力）冒充实时能力，也不要原样重复调用已 open/down 的源。此结果不代表 call_team_* 调度健康。",
     };
   },
 

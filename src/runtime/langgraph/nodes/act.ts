@@ -28,6 +28,10 @@ import { logResearchTeamInteraction } from "../../research-team/interaction-log"
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
+import {
+  authorizeCapability,
+  isCapabilityGateEnabled,
+} from "../../tools/capability-gate";
 import { injectContextParams } from "../../tools/context-params";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import {
@@ -47,6 +51,8 @@ import {
   toolRouteToTargetKind,
   toolRouteToToolKind,
 } from "../../tools/tool-dispatch-resolver";
+import { applyToolContract, isToolContractEnabled } from "../../tools/tool-contract";
+import { getToolContract } from "../../tools/tool-contract-registry";
 import { resolveConnectorForServerAlias } from "../../tools/tool-routes";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
@@ -541,6 +547,176 @@ export async function actNode(
     projectId,
   });
 
+  /** CapabilityGate (docs/agent-contracts/02) — authorize before sandbox/execute. */
+  let gateTimeoutMs: number | undefined;
+  if (isCapabilityGateEnabled()) {
+    const gate = await authorizeCapability({
+      name: effectiveToolName,
+      agentDefinition: state.agentDefinition,
+      workflowId: state.workflowId,
+      ...(projectId ? { projectId } : {}),
+      ...(agentMode ? { agentMode } : {}),
+      ...(mcp
+        ? { isMcp: true, serverName: mcp.serverName, mcpTool: mcp.toolName }
+        : {}),
+    });
+    if (!gate.ok) {
+      const allowHint =
+        gate.allowlist && gate.allowlist.length > 0
+          ? ` allowed=[${gate.allowlist.join(", ")}]`
+          : "";
+      const reason = `${gate.message}.${allowHint} ${gate.hint}`.trim();
+      const observation = {
+        level: "warn" as const,
+        toolGovernance: true,
+        capabilityGate: true,
+        code: gate.code,
+        message: reason,
+        recovery: {
+          nextAction: "switch_tool" as const,
+          allowSameToolRetry: false,
+          ...(gate.allowlist ? { alternatives: gate.allowlist } : {}),
+          guidance: gate.hint,
+        },
+      };
+      /** 设计 02 §4.6：Deny 也写 tool_call_log（复用 sandbox_blocked + gate_denied 前缀）。 */
+      await recordToolCallStart({
+        toolCallId,
+        agentStepId,
+        workflowRunId: state.workflowId,
+        traceId: state.traceId,
+        agentDefinitionId: state.agentDefinition.id,
+        targetName,
+        toolKind,
+        targetKind,
+        ...(mcp ? { mcp } : {}),
+        reasonText: state.reasonText ?? "",
+        contextMemory: state.contextMemory,
+      });
+      await recordToolCallSandboxBlocked({
+        toolCallId,
+        hasMcp: Boolean(mcp),
+        reason,
+        violationType: gate.code,
+      });
+      emit({
+        runId: state.runId,
+        workflowId: state.workflowId,
+        traceId: state.traceId,
+        role: state.agentDefinition.role,
+        type: "tool_call_end",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: {
+          toolCallId,
+          status: "blocked_by_sandbox",
+          reason,
+          targetKind,
+          targetName,
+          capabilityGate: true,
+          code: gate.code,
+        },
+      });
+      emit({
+        runId: state.runId,
+        workflowId: state.workflowId,
+        traceId: state.traceId,
+        role: state.agentDefinition.role,
+        type: "observe",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: observation,
+      });
+      return {
+        toolCalls: [
+          ...state.toolCalls,
+          { toolCallId, toolName: targetName, status: "governance_blocked", reason },
+        ],
+        observations: [...state.observations, observation],
+      };
+    }
+    gateTimeoutMs = gate.timeoutMs;
+  }
+
+  /** ToolContract (docs/agent-contracts/01) — normalize/validate registered tools. */
+  if (isToolContractEnabled() && !mcp) {
+    const contract = getToolContract(effectiveToolName);
+    if (contract) {
+      try {
+        enrichedToolParams = applyToolContract(contract, enrichedToolParams);
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        const observation = {
+          level: "warn" as const,
+          toolGovernance: true,
+          toolContract: true,
+          code: "TOOL_CONTRACT_VALIDATION_FAILED",
+          message: reason,
+          recovery: {
+            nextAction: "switch_tool" as const,
+            allowSameToolRetry: false,
+            guidance:
+              "请按工具契约修正参数（例如使用 symbol 或 symbols[]），不要原样重试。",
+          },
+        };
+        /** 设计 01 P0：验参失败落 tool_call_log，errorClass 由 classifier 判 permanent。 */
+        await recordToolCallStart({
+          toolCallId,
+          agentStepId,
+          workflowRunId: state.workflowId,
+          traceId: state.traceId,
+          agentDefinitionId: state.agentDefinition.id,
+          targetName,
+          toolKind,
+          targetKind,
+          reasonText: state.reasonText ?? "",
+          contextMemory: state.contextMemory,
+        });
+        await recordToolCallError({
+          toolCallId,
+          hasMcp: false,
+          latencyMs: 0,
+          errorSource: connectorTarget ? "connector" : "builtin",
+          errorMessage: reason,
+        });
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "tool_call_end",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: {
+            toolCallId,
+            status: "error",
+            reason,
+            targetKind,
+            targetName,
+            toolContract: true,
+          },
+        });
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: observation,
+        });
+        return {
+          toolCalls: [
+            ...state.toolCalls,
+            { toolCallId, toolName: targetName, status: "governance_blocked", reason },
+          ],
+          observations: [...state.observations, observation],
+        };
+      }
+    }
+  }
+
   if (!isToolAllowedInAgentControlMode(agentMode, effectiveToolName)) {
     const reason = `Plan 模式只允许 update_plan；工具 ${targetName} 已被运行时拦截。请先形成计划，不要执行任务。`;
     const observation = {
@@ -789,7 +965,11 @@ export async function actNode(
     traceId: state.traceId,
     agentInstanceId,
     definition: state.agentDefinition,
-    ...(topologyToolTimeoutMs !== undefined ? { timeoutMs: topologyToolTimeoutMs } : {}),
+    ...(gateTimeoutMs !== undefined
+      ? { timeoutMs: gateTimeoutMs }
+      : topologyToolTimeoutMs !== undefined
+        ? { timeoutMs: topologyToolTimeoutMs }
+        : {}),
     /**
      * P1-D：3 个分支（mcp/connector/builtin）的错误处理统一为
      * `{result:"error", toolError:true, errorSource, errorMessage}`，让 ReAct 后续
@@ -828,7 +1008,7 @@ export async function actNode(
             targetName: connectorTarget,
             intent: effectiveToolName,
             payload: { operation: effectiveToolName, params: enrichedToolParams },
-            timeoutMs: policy.maxToolCallMs,
+            timeoutMs: gateTimeoutMs ?? policy.maxToolCallMs,
           });
           const response = await defaultAcpCaller.call(request);
           if (response.status !== "success") {

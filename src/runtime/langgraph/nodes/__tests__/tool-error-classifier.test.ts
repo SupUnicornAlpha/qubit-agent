@@ -56,12 +56,27 @@ describe("classifyToolError", () => {
     expect(classifyToolError("invalid argument: end < start")).toBe("permanent");
     expect(classifyToolError("symbol AAPL not_found in provider universe")).toBe("permanent");
     expect(classifyToolError("MCP HTTP 401: unauthorized")).toBe("permanent");
+    expect(
+      classifyToolError(
+        "missing_symbol: fetch_quote: symbol/ticker or symbols/tickers is required (receivedKeys=(none))"
+      )
+    ).toBe("permanent");
+    expect(
+      classifyToolError(
+        "arity_violation: fetch_ticks: expects exactly one symbol, got 2 (receivedKeys=symbols)"
+      )
+    ).toBe("permanent");
   });
 
   test("识别 blocked 错误（沙箱 / 熔断 / disabled）", () => {
     expect(classifyToolError("sandbox denied tool call: not in allow list")).toBe("blocked");
     expect(classifyToolError("circuit breaker open for mcp:xxx:yyy")).toBe("blocked");
     expect(classifyToolError("mcp tool binding disabled: news/get_headlines")).toBe("blocked");
+    expect(
+      classifyToolError(
+        'gate_denied:mcp_server_disabled: mcp server "mcp-financex" is not enabled or in cooldown'
+      )
+    ).toBe("blocked");
   });
 
   test("无匹配模式归 unknown（保守不重试）", () => {

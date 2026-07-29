@@ -41,15 +41,13 @@ import {
   type WorkflowTokenBudgetStatus,
 } from "../../llm/workflow-token-budget";
 import {
-  filterMcpToolsByAvailability,
-  resolveEnabledMcpServers,
-} from "../../mcp/resolve-enabled-mcp-servers";
-import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
-import {
   buildSuggestedCallChainBlock,
   buildTopologySpecialistExecutionContract,
 } from "../../orchestration/topology-dispatch";
-import { sandboxExecutor } from "../../sandbox-executor";
+import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import {
+  listAuthorizedCapabilities,
+} from "../../tools/capability-gate";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import {
   assembleAgentSystemPrompt,
@@ -60,6 +58,11 @@ import {
 } from "../../tools/tool-call-format";
 import { buildChatHitlSelfCheckPromptBlock } from "../../workflow/hitl-hint-parse";
 import { buildHitlResumePromptBlock } from "../../workflow/hitl-service";
+import {
+  getWorkflowCancellationSignal,
+  isWorkflowCancellationRequested,
+  WorkflowCancelledError,
+} from "../../workflow/workflow-cancellation";
 import {
   buildWorkflowProcessPrompt,
   resolveEffectiveWorkflowProcessConfig,
@@ -328,6 +331,7 @@ export async function reasonNode(
   let promptCompacted = false;
   let promptEstimatedTokens = 0;
   let promptComponentChars: Record<string, number> = {};
+  const cancellationSignal = getWorkflowCancellationSignal(state.workflowId);
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
   const payloadParams = (payload.params ?? {}) as Record<string, unknown>;
@@ -381,49 +385,20 @@ export async function reasonNode(
     // Missing workflow metadata must not block reasoning.
   }
 
+  /**
+   * CapabilityGate 投影（docs/agent-contracts/02）：工具面与 authorize 同源。
+   * plan 模式裁剪、enabled MCP、sandbox 白名单均在 listAuthorizedCapabilities 内完成。
+   * topology / collaboration 仍来自 resolveEffectiveAgentTools。
+   */
   const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
-  /**
-   * 拉取 enabled MCP server **+ 真实工具清单**（capabilities_json.tools），
-   * 注入 prompt 让 LLM 看到 mcp-financex 真实可调的工具名（如 `get_financial_statements`），
-   * 而不是凭训练记忆瞎喊 `get_financials` / `list_available_tools`。
-   * 详见 resolve-enabled-mcp-servers.ts 与 tool-call-format.ts。
-   */
-  const enabledMcpServers = await resolveEnabledMcpServers(
-    state.agentDefinition.mcpServers ?? [],
-    workflowMeta.projectId ?? undefined
-  );
-
-  /**
-   * 授权前移（治理 #1）：把 effective tools + enabled MCP server 先按 sandbox policy
-   * 裁剪到「真正可调用」的子集，再注入 prompt。被 policy 拒的工具根本不出现在
-   * 「可用工具」块里，LLM 不会反复挑禁用工具浪费 reason 轮次。act 阶段 check*Call
-   * 仍保留为 deny-by-default 兜底（见 sandbox-executor.filterAuthorizedTools 注释）。
-   */
-  const authorized = await sandboxExecutor.filterAuthorizedTools(
-    state.agentDefinition,
-    effective.tools,
-    enabledMcpServers.map((s) => s.name)
-  );
-  let tools = authorized.tools;
-  const allowedMcpNames = new Set(authorized.mcpServers);
-  const mcpServers = enabledMcpServers.filter((s) => allowedMcpNames.has(s.name));
-  tools = filterMcpToolsByAvailability(
-    tools,
-    mcpServers.map((server) => server.name)
-  );
-
-  /**
-   * v2 HITL：source 用于决定是否注入"对话 HITL 自评 prompt"，所以从这里开始
-   * 整个函数都需要 workflowMeta。skill 召回里也会用到 projectId，下面 try 块
-   * 直接复用同一个 meta，避免对 workflow_run 表二次查询。
-   *
-   * 查询失败不阻塞（典型场景：异步 cleanup 后 workflow 被删），降级到没注入。
-   */
-  if (workflowMeta.agentMode === "plan") {
-    // Prompt 层只暴露 update_plan；act 节点仍有独立硬拦截，防止模型手写隐藏工具名。
-    tools = tools.filter((tool) => tool === "update_plan");
-    mcpServers.splice(0, mcpServers.length);
-  }
+  const capabilitySurface = await listAuthorizedCapabilities({
+    agentDefinition: state.agentDefinition,
+    workflowId: state.workflowId,
+    ...(workflowMeta.projectId ? { projectId: workflowMeta.projectId } : {}),
+    ...(workflowMeta.agentMode ? { agentMode: workflowMeta.agentMode } : {}),
+  });
+  let tools = capabilitySurface.tools;
+  const mcpServers = [...capabilitySurface.mcpServers];
   const hasTools = tools.length > 0 || mcpServers.length > 0;
   const taskQuery = [
     typeof payloadGoal === "string" ? payloadGoal : JSON.stringify(payloadGoal),
@@ -762,7 +737,10 @@ export async function reasonNode(
     const topologyTaskContract =
       String(payload.taskType ?? "") === "topology_dispatch" &&
       state.agentDefinition.role !== "orchestrator"
-        ? buildTopologySpecialistExecutionContract(state.agentDefinition.role)
+        ? buildTopologySpecialistExecutionContract(
+            state.agentDefinition.role,
+            String((payload.params as Record<string, unknown> | undefined)?.goal ?? "")
+          )
         : "";
     /** 通用运行时工作纪律：增量推进、失败自适应、先查后做；无需重新 seed Agent。 */
     const WORK_STYLE_BLOCK = [
@@ -842,6 +820,7 @@ export async function reasonNode(
       userPrompt,
       sampling: samplingForReason,
       ...(nativeToolDefinition ? { tools: [nativeToolDefinition] } : {}),
+      signal: cancellationSignal,
       onToken: (token) => {
         emit({
           runId: state.runId,
@@ -916,6 +895,7 @@ export async function reasonNode(
             systemPrompt,
             userPrompt: retryUserPrompt,
             sampling: samplingForReason,
+            signal: cancellationSignal,
             onToken: (token) => {
               emit({
                 runId: state.runId,
@@ -997,6 +977,9 @@ export async function reasonNode(
       }
     }
   } catch (error) {
+    if (cancellationSignal.aborted || isWorkflowCancellationRequested(state.workflowId)) {
+      throw new WorkflowCancelledError(state.workflowId);
+    }
     const errMsg = (error as Error).message ?? String(error);
     const fallback = `LLM gateway error: ${errMsg}`;
     for (const token of fallback.split(/\s+/).filter(Boolean)) {
