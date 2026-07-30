@@ -6,7 +6,7 @@
  *
  * 设计：
  *   - 接 catalogId 必传；其它字段全 optional，回 catalog 默认值
- *   - upsert mcp_server_config + mcp_tool_binding（serverName + null definitionId）
+ *   - upsert mcp_server_config + 默认 `*` binding + 可选具体 tool binding
  *   - 写 mcp_catalog_install 一行（auditing；installedBy 传 'user' / 'auto_installer'）
  *   - 不真去 spawn server / ping —— P9 范围只到"写 binding 让 mcp tool 解析路径生效"
  *
@@ -25,6 +25,10 @@ import {
   mcpServerConfig,
   mcpToolBinding,
 } from "../../db/sqlite/schema.js";
+import {
+  MCP_WILDCARD_TOOL,
+  syncServerDefaultStarBinding,
+} from "./default-star-binding.js";
 
 export class CatalogNotFoundError extends Error {
   constructor(catalogId: string) {
@@ -104,43 +108,57 @@ export async function installMcpCatalogToProject(
     });
   }
 
-  // ── upsert mcp_tool_binding (server + tool + definitionId=null) ──
-  const toolName = (input.toolName ?? "").trim() || catalog.defaultToolName || "ping";
-  const existingBinding = await db
-    .select()
-    .from(mcpToolBinding)
-    .where(
-      and(
-        eq(mcpToolBinding.serverName, serverName),
-        eq(mcpToolBinding.toolName, toolName),
-        isNull(mcpToolBinding.definitionId)
-      )
-    )
-    .limit(1);
+  // ── 默认 `*` binding（配完即用）+ 可选具体 tool binding ──
+  const timeoutMs = input.timeoutMs ?? catalog.defaultTimeoutMs;
+  const starSync = await syncServerDefaultStarBinding({
+    serverName,
+    projectId: null,
+    enabled: true,
+    timeoutMs,
+  });
+
+  const explicitTool = (input.toolName ?? "").trim() || (catalog.defaultToolName || "").trim();
+  const toolName = explicitTool || MCP_WILDCARD_TOOL;
   let reusedBinding = false;
-  if (existingBinding[0]) {
-    reusedBinding = true;
-    await db
-      .update(mcpToolBinding)
-      .set({
+
+  if (toolName !== MCP_WILDCARD_TOOL) {
+    const existingBinding = await db
+      .select()
+      .from(mcpToolBinding)
+      .where(
+        and(
+          eq(mcpToolBinding.serverName, serverName),
+          eq(mcpToolBinding.toolName, toolName),
+          isNull(mcpToolBinding.definitionId)
+        )
+      )
+      .limit(1);
+    if (existingBinding[0]) {
+      reusedBinding = true;
+      await db
+        .update(mcpToolBinding)
+        .set({
+          enabled: true,
+          timeoutMs,
+          retryPolicyJson: catalog.defaultRetryPolicyJson,
+          rateLimitJson: catalog.defaultRateLimitJson,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(mcpToolBinding.id, existingBinding[0].id));
+    } else {
+      await db.insert(mcpToolBinding).values({
+        id: randomUUID(),
+        serverName,
+        toolName,
+        definitionId: null,
         enabled: true,
-        timeoutMs: input.timeoutMs ?? catalog.defaultTimeoutMs,
+        timeoutMs,
         retryPolicyJson: catalog.defaultRetryPolicyJson,
         rateLimitJson: catalog.defaultRateLimitJson,
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(mcpToolBinding.id, existingBinding[0].id));
+      });
+    }
   } else {
-    await db.insert(mcpToolBinding).values({
-      id: randomUUID(),
-      serverName,
-      toolName,
-      definitionId: null,
-      enabled: true,
-      timeoutMs: input.timeoutMs ?? catalog.defaultTimeoutMs,
-      retryPolicyJson: catalog.defaultRetryPolicyJson,
-      rateLimitJson: catalog.defaultRateLimitJson,
-    });
+    reusedBinding = !starSync.created;
   }
 
   // ── 写 audit 行 mcp_catalog_install ──

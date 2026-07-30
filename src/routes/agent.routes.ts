@@ -48,6 +48,7 @@ import {
   setAgentDefinitionBindings,
 } from "../runtime/agent/agent-binding-service";
 import { reloadAgentPool } from "../runtime/agent-pool";
+import { syncServerDefaultStarBinding } from "../runtime/mcp/default-star-binding";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
   installCatalogItemToProject,
@@ -1091,6 +1092,7 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
     )
     .limit(1);
   if (existing[0]) {
+    const nextEnabled = body.enabled ?? existing[0].enabled;
     await db
       .update(mcpServerConfig)
       .set({
@@ -1098,9 +1100,14 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
         command: body.command ?? existing[0].command,
         url: body.url ?? existing[0].url,
         capabilitiesJson: toJsonValue(body.capabilitiesJson ?? existing[0].capabilitiesJson),
-        enabled: body.enabled ?? existing[0].enabled,
+        enabled: nextEnabled,
       })
       .where(eq(mcpServerConfig.id, existing[0].id));
+    await syncServerDefaultStarBinding({
+      serverName: body.name,
+      projectId: body.projectId ?? null,
+      enabled: nextEnabled,
+    });
     const updated = await db
       .select()
       .from(mcpServerConfig)
@@ -1109,6 +1116,7 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
     return c.json({ data: updated[0] });
   }
   const id = crypto.randomUUID();
+  const createdEnabled = body.enabled ?? true;
   await db.insert(mcpServerConfig).values({
     id,
     name: body.name,
@@ -1117,7 +1125,12 @@ agentRouter.post("/mcp/servers/upsert", async (c) => {
     command: body.command ?? null,
     url: body.url ?? null,
     capabilitiesJson: toJsonValue(body.capabilitiesJson ?? []),
-    enabled: body.enabled ?? true,
+    enabled: createdEnabled,
+  });
+  await syncServerDefaultStarBinding({
+    serverName: body.name,
+    projectId: body.projectId ?? null,
+    enabled: createdEnabled,
   });
   const created = await db
     .select()

@@ -11,6 +11,10 @@ import {
 } from "../../db/sqlite/schema";
 import { dispatchMcpToolCall } from "./dispatcher";
 import {
+  MCP_WILDCARD_TOOL,
+  syncServerDefaultStarBinding,
+} from "./default-star-binding";
+import {
   ensureDefaultRegistrySource,
   listRegistrySources,
   syncRegistrySource,
@@ -233,42 +237,53 @@ export async function installCatalogItemToProject(input: {
     });
   }
 
-  const toolName = input.toolName?.trim() || item.defaultToolName || "ping";
-  const bindingRows = await db
-    .select()
-    .from(mcpToolBinding)
-    .where(
-      and(
-        eq(mcpToolBinding.projectId, input.projectId),
-        eq(mcpToolBinding.serverName, scopedName),
-        eq(mcpToolBinding.toolName, toolName),
-        isNull(mcpToolBinding.definitionId)
+  const timeoutMs = input.timeoutMs ?? item.defaultTimeoutMs ?? 20_000;
+  await syncServerDefaultStarBinding({
+    serverName: scopedName,
+    projectId: input.projectId,
+    enabled: true,
+    timeoutMs,
+  });
+
+  const explicitTool = input.toolName?.trim() || (item.defaultToolName || "").trim();
+  const toolName = explicitTool || MCP_WILDCARD_TOOL;
+  if (toolName !== MCP_WILDCARD_TOOL) {
+    const bindingRows = await db
+      .select()
+      .from(mcpToolBinding)
+      .where(
+        and(
+          eq(mcpToolBinding.projectId, input.projectId),
+          eq(mcpToolBinding.serverName, scopedName),
+          eq(mcpToolBinding.toolName, toolName),
+          isNull(mcpToolBinding.definitionId)
+        )
       )
-    )
-    .limit(1);
-  if (bindingRows[0]) {
-    await db
-      .update(mcpToolBinding)
-      .set({
+      .limit(1);
+    if (bindingRows[0]) {
+      await db
+        .update(mcpToolBinding)
+        .set({
+          enabled: true,
+          timeoutMs: input.timeoutMs ?? item.defaultTimeoutMs ?? bindingRows[0].timeoutMs,
+          retryPolicyJson: item.defaultRetryPolicyJson ?? bindingRows[0].retryPolicyJson,
+          rateLimitJson: item.defaultRateLimitJson ?? bindingRows[0].rateLimitJson,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(mcpToolBinding.id, bindingRows[0].id));
+    } else {
+      await db.insert(mcpToolBinding).values({
+        id: randomUUID(),
+        projectId: input.projectId,
+        definitionId: null,
+        serverName: scopedName,
+        toolName,
         enabled: true,
-        timeoutMs: input.timeoutMs ?? item.defaultTimeoutMs ?? bindingRows[0].timeoutMs,
-        retryPolicyJson: item.defaultRetryPolicyJson ?? bindingRows[0].retryPolicyJson,
-        rateLimitJson: item.defaultRateLimitJson ?? bindingRows[0].rateLimitJson,
-        updatedAt: new Date().toISOString(),
-      })
-      .where(eq(mcpToolBinding.id, bindingRows[0].id));
-  } else {
-    await db.insert(mcpToolBinding).values({
-      id: randomUUID(),
-      projectId: input.projectId,
-      definitionId: null,
-      serverName: scopedName,
-      toolName,
-      enabled: true,
-      timeoutMs: input.timeoutMs ?? item.defaultTimeoutMs ?? 20_000,
-      retryPolicyJson: item.defaultRetryPolicyJson ?? {},
-      rateLimitJson: item.defaultRateLimitJson ?? {},
-    });
+        timeoutMs,
+        retryPolicyJson: item.defaultRetryPolicyJson ?? {},
+        rateLimitJson: item.defaultRateLimitJson ?? {},
+      });
+    }
   }
 
   const installId = randomUUID();

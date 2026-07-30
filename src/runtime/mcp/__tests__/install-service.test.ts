@@ -1,10 +1,10 @@
 /**
  * P9 install-service 单测：抽自 agent.routes 的 install 主体。
  *   1) catalog 不存在 → CatalogNotFoundError
- *   2) 全新装：写 mcp_server_config + mcp_tool_binding + mcp_catalog_install
+ *   2) 全新装：写 mcp_server_config + `*` + 具体 tool binding + mcp_catalog_install
  *   3) 已有 server name → 复用 + 更新（reusedServer=true）
  *   4) 已有 binding (server+tool+null def) → 复用 + 重新 enable
- *   5) toolName 缺省 → 用 catalog.defaultToolName，再缺 → "ping"
+ *   5) toolName 缺省 → 用 catalog.defaultToolName，再缺 → "*"
  *   6) installedBy 透传到 audit 行
  */
 
@@ -22,6 +22,7 @@ import {
   mcpServerConfig,
   mcpToolBinding,
 } from "../../../db/sqlite/schema";
+import { MCP_WILDCARD_TOOL } from "../default-star-binding";
 import { CatalogNotFoundError, installMcpCatalogToProject } from "../install-service";
 
 beforeAll(async () => {
@@ -66,7 +67,7 @@ describe("installMcpCatalogToProject", () => {
     ).rejects.toThrow(CatalogNotFoundError);
   });
 
-  test("全新装：建 server + binding + audit", async () => {
+  test("全新装：建 server + * + 具体 tool + audit", async () => {
     const r = await installMcpCatalogToProject({
       catalogId: "c_slack",
       serverName: "slack-prod",
@@ -85,13 +86,14 @@ describe("installMcpCatalogToProject", () => {
     expect(s).toBeDefined();
     expect(s!.command).toBe("npx -y @x/slack");
 
-    const [b] = await db
+    const bindings = await db
       .select()
       .from(mcpToolBinding)
       .where(eq(mcpToolBinding.serverName, "slack-prod"));
-    expect(b).toBeDefined();
-    expect(b!.toolName).toBe("post_message");
-    expect(b!.timeoutMs).toBe(30_000);
+    expect(bindings.length).toBe(2);
+    const byTool = new Map(bindings.map((b) => [b.toolName, b]));
+    expect(byTool.get(MCP_WILDCARD_TOOL)?.enabled).toBe(true);
+    expect(byTool.get("post_message")?.timeoutMs).toBe(30_000);
 
     const [a] = await db
       .select()
@@ -121,7 +123,7 @@ describe("installMcpCatalogToProject", () => {
       .select()
       .from(mcpToolBinding)
       .where(eq(mcpToolBinding.serverName, "slack-prod"));
-    expect(bindings.length).toBe(1);
+    expect(bindings.length).toBe(2);
   });
 
   test("toolName 显式覆盖 catalog default", async () => {
@@ -133,7 +135,7 @@ describe("installMcpCatalogToProject", () => {
     expect(r.toolName).toBe("list_channels");
   });
 
-  test("catalog 无 defaultToolName + 未传 → fallback 'ping'", async () => {
+  test("catalog 无 defaultToolName + 未传 → fallback '*'", async () => {
     const db = await getDb();
     await db
       .insert(mcpCatalog)
@@ -146,7 +148,13 @@ describe("installMcpCatalogToProject", () => {
       })
       .run();
     const r = await installMcpCatalogToProject({ catalogId: "c_void", serverName: "void-srv" });
-    expect(r.toolName).toBe("ping");
+    expect(r.toolName).toBe(MCP_WILDCARD_TOOL);
+    const bindings = await db
+      .select()
+      .from(mcpToolBinding)
+      .where(eq(mcpToolBinding.serverName, "void-srv"));
+    expect(bindings.length).toBe(1);
+    expect(bindings[0]!.toolName).toBe(MCP_WILDCARD_TOOL);
   });
 
   test("installedBy='auto_installer' → audit 行透传", async () => {

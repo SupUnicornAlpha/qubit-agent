@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb } from "../db/sqlite/client";
-import { mcpServerConfig, mcpToolBinding } from "../db/sqlite/schema";
+import { mcpServerConfig } from "../db/sqlite/schema";
+import { syncServerDefaultStarBinding } from "./mcp/default-star-binding";
 
 export const QUBIT_BROKER_MCP_NAME = "qubit-broker";
 
@@ -42,35 +43,12 @@ export async function seedBrokerMcpServer(): Promise<void> {
     });
   }
 
-  const bindingExisting = await db
-    .select()
-    .from(mcpToolBinding)
-    .where(
-      and(
-        eq(mcpToolBinding.serverName, QUBIT_BROKER_MCP_NAME),
-        eq(mcpToolBinding.toolName, "*"),
-        isNull(mcpToolBinding.projectId),
-        isNull(mcpToolBinding.definitionId)
-      )
-    )
-    .limit(1);
-
-  if (!bindingExisting[0]) {
-    await db.insert(mcpToolBinding).values({
-      id: randomUUID(),
-      projectId: null,
-      definitionId: null,
-      serverName: QUBIT_BROKER_MCP_NAME,
-      toolName: "*",
-      enabled: true,
-      timeoutMs: 120_000,
-    });
-  } else if (!bindingExisting[0].enabled) {
-    await db
-      .update(mcpToolBinding)
-      .set({ enabled: true, updatedAt: new Date().toISOString() })
-      .where(eq(mcpToolBinding.id, bindingExisting[0].id));
-  }
+  await syncServerDefaultStarBinding({
+    serverName: QUBIT_BROKER_MCP_NAME,
+    projectId: null,
+    enabled: true,
+    timeoutMs: 120_000,
+  });
 
   console.log(`[Seed] Upserted MCP server "${QUBIT_BROKER_MCP_NAME}" with default tool binding.`);
 }

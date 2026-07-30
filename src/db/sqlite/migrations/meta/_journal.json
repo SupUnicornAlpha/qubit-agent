@@ -687,6 +687,13 @@
       "when": 1814400000000,
       "tag": "0098_a2a_durable_task_protocol",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1814486400000,
+      "tag": "0099_mcp_default_star_binding",
+      "breakpoints": true
     }
   ]
 }
