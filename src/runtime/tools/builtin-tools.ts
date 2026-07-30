@@ -3,49 +3,55 @@ import { and, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
-import { appendAuditLog } from "../audit/audit-chain-service";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
-import { stepStreamBus } from "../langgraph/event-stream";
-import { resolveAgentControlMode } from "../../types/loop";
 import {
-  parseAgentPlanSnapshot,
-  type AgentPlanSnapshot,
-  type AgentPlanStepStatus,
-} from "../agent-control-mode";
-import type { TaskAssignPayload } from "../../types/a2a";
+  instrument as instrumentTable,
+  strategy as strategyTable,
+  strategyVersion as strategyVersionTable,
+} from "../../db/sqlite/schema";
+import { type A2ATaskState, type TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
 import type { AgentSkillOutcome } from "../../types/entities";
+import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
+import { resolveAgentControlMode } from "../../types/loop";
+import { requestA2ATaskCancellation } from "../a2a/a2a-task-cancellation";
+import { waitForA2ATaskTerminal } from "../a2a/a2a-task-service";
+import {
+  type AgentPlanSnapshot,
+  type AgentPlanStepStatus,
+  parseAgentPlanSnapshot,
+} from "../agent-control-mode";
 import { dispatchTaskToRole } from "../agent-pool";
-import { getA2AGather } from "../a2a/a2a-gather";
 import {
   type AgentPackSelfEditTarget,
   getDataDir,
   writePackSelfEditMarkdown,
 } from "../agent/agent-pack-service";
+import { appendAuditLog } from "../audit/audit-chain-service";
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
 import {
-  recommendationService,
   type RecommendationSide,
+  recommendationService,
 } from "../effect-validation/recommendation-service";
 import { writeExecCallLog } from "../exec/exec-call-log";
 import { getExecProvider } from "../exec/registry";
 import { checkArgs, checkCwdScope, renderArgTemplate, runExec } from "../exec/runner";
 import type { ExecResult } from "../exec/types";
+import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
-import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
+import { stepStreamBus } from "../react/event-stream";
+import { isLikelyProjectIdFormat } from "../react/nodes/project-id";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
+import { getMarketDataReadiness } from "../market/market-data-health";
+import { listMarketDataSources } from "../market/market-data-source-control";
 import { queryMarketNewsBrief } from "../market/news-brief-query";
 import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
-import { resolveTickerMarket } from "../market/resolve-ticker-market";
-import { listMarketDataSources } from "../market/market-data-source-control";
-import { getMarketDataReadiness } from "../market/market-data-health";
-import { applyToolContract, isToolContractEnabled } from "./tool-contract";
-import { getToolContract } from "./tool-contract-registry";
 import { detectRegimeFromBars } from "../market/regime";
+import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import {
   computeBollinger,
   computeMacd,
@@ -53,11 +59,11 @@ import {
   computeSma,
   snapshotIndicators,
 } from "../market/technical-indicators";
+import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
 import {
   buildParsedResearchTeamFromToolParams,
   runResearchTeamFromOrchestrator,
 } from "../msa/research-team-execute";
-import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
 import { type RawAnalystSignal, fuseSignals } from "../msa/signal-fusion";
 import {
   assertTopologyTargetAllowed,
@@ -65,9 +71,11 @@ import {
   loadOrchestratorTopologyForWorkflow,
   parseRoleFromTopologyTeamTool,
   resolveDispatchRole,
+  resolveTopologyTaskLeaseMs,
   resolveTopologyTaskTimeoutMs,
 } from "../orchestration/topology-dispatch";
 import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
+import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
 import { ruleService } from "../rule/rule-service";
 import type { RuleAppliesTo, RuleLang, RuleStatus } from "../rule/rule-service";
 import { runPythonSandbox } from "../sandbox/python-sandbox";
@@ -75,16 +83,10 @@ import { runStockScreener } from "../screener/stock-screener";
 import { skillService } from "../skills/skill-service";
 import { strategyComposer } from "../strategy/strategy-composer";
 import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
-import {
-  strategy as strategyTable,
-  strategyVersion as strategyVersionTable,
-  instrument as instrumentTable,
-} from "../../db/sqlite/schema";
-import { createOrderIntentWithExecution } from "../execution/order-intent-service";
-import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import { parseHitlApproval } from "../workflow/hitl-service";
 import { writeWorkflowPlanArtifacts } from "../workflow/plan-artifact";
-import { isLikelyProjectIdFormat } from "../langgraph/nodes/project-id";
+import { applyToolContract, isToolContractEnabled } from "./tool-contract";
+import { getToolContract } from "./tool-contract-registry";
 import { resolveConnectorForTool } from "./tool-routes";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 
@@ -190,12 +192,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!workflowMeta) throw new Error(`update_plan: workflow not found: ${ctx.workflowId}`);
     const mode = resolveAgentControlMode(workflowMeta?.loopOptionsJson);
     const rawSteps = Array.isArray(params.steps) ? params.steps : [];
-    const allowed = new Set<AgentPlanStepStatus>([
-      "pending",
-      "in_progress",
-      "done",
-      "skipped",
-    ]);
+    const allowed = new Set<AgentPlanStepStatus>(["pending", "in_progress", "done", "skipped"]);
     const steps: Array<{
       id: string;
       title: string;
@@ -1056,7 +1053,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
       ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
       ...(definition ? { definition } : {}),
-      // ctx.workflowId 在 langgraph act 节点保证非空；落库后用于研究产出严格过滤
+      // ctx.workflowId 在 react act 节点保证非空；落库后用于研究产出严格过滤
       ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
       // lineage（migration 0080）：所有 builtin tool 路径默认归为 'agent'，
       // 让前端 LineageBadge 能与 IDE / REST 直接调用的 'user' 路径区分。
@@ -2645,12 +2642,15 @@ async function dispatchTeamAgentTask(
   dispatched: boolean;
   completed: boolean;
   success: boolean;
+  taskId: string;
   role: AgentRole;
   runId: string;
   via: string;
   dispatchStatus: "completed" | "timeout";
   dataAvailability: "available" | "unknown" | "not_applicable";
   result?: unknown;
+  errorCode?: string | null;
+  taskStatus?: A2ATaskState | "timeout" | "awaiting_approval";
   errorMessage?: string | null;
 }> {
   const targetRole = resolveDispatchRole(role);
@@ -2681,28 +2681,60 @@ async function dispatchTeamAgentTask(
       : {};
 
   const gatherTimeoutMs = resolveTopologyTaskTimeoutMs(targetRole);
+  const leaseMs = resolveTopologyTaskLeaseMs();
   const payload: TaskAssignPayload = {
     taskId: String(params.taskId ?? randomUUID()),
     taskType: String(params.taskType ?? "topology_dispatch"),
     assignedRole: targetRole,
+    goal,
+    ...(Array.isArray(params.acceptanceCriteria)
+      ? {
+          acceptanceCriteria: params.acceptanceCriteria.filter(
+            (value): value is string => typeof value === "string"
+          ),
+        }
+      : {}),
+    acceptance:
+      targetRole === "market_data"
+        ? { requiredEvidence: "market_data" }
+        : { requiredEvidence: "analysis" },
     params: { goal, ...extra, ...(role !== targetRole ? { requestedRole: role } : {}) },
+    // 子任务墙钟与 gather 对齐；通信失联由 lease+TASK_PROGRESS 处理，不靠提前掐死孩子。
     deadline: new Date(Date.now() + Math.max(gatherTimeoutMs - 5_000, 5_000)).toISOString(),
   };
 
-  // 先登记再派发，避免进程内总线的快速 TASK_RESULT 在 waiter 建立前到达。
-  const pendingResult = getA2AGather().expect([payload.taskId], { timeoutMs: gatherTimeoutMs });
-  const { runId } = await dispatchTaskToRole({
+  const dispatch = await dispatchTaskToRole({
     workflowId: ctx.workflowId,
     role: targetRole,
     payload,
     traceId: ctx.traceId,
     senderId: ctx.agentInstanceId,
   });
-  const gathered = (await pendingResult).get(payload.taskId);
-  const timedOut = Boolean(gathered?.timedOut);
+  // A2A Task is durable before dispatch.  Do not use an in-memory gather as
+  // the source of truth: a parent can now reconstruct this wait after restart.
+  const waited = await waitForA2ATaskTerminal(payload.taskId, {
+    timeoutMs: gatherTimeoutMs,
+    leaseMs,
+  });
+  const task = waited.task;
+  const timedOut = waited.timedOut;
+  if (timedOut) {
+    await requestA2ATaskCancellation(
+      payload.taskId,
+      waited.timeoutReason === "lease_expired"
+        ? `team_dispatch_timeout: ${targetRole} 专家通信 lease 失联`
+        : `team_dispatch_timeout: ${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包`
+    );
+  }
+  const result = task?.result;
+  const taskError = task?.error && typeof task.error === "object"
+    ? (task.error as Record<string, unknown>)
+    : null;
+  const taskStatus =
+    task?.status === "input_required" ? "awaiting_approval" : task?.status;
   const gatheredRecord =
-    gathered?.result && typeof gathered.result === "object"
-      ? (gathered.result as Record<string, unknown>)
+    result && typeof result === "object"
+      ? (result as Record<string, unknown>)
       : null;
   const taskEvidence =
     gatheredRecord?.taskEvidence && typeof gatheredRecord.taskEvidence === "object"
@@ -2712,26 +2744,52 @@ async function dispatchTeamAgentTask(
     targetRole === "market_data" &&
     taskEvidence?.verified === true &&
     taskEvidence.kind === "market_data";
-  return {
+  const errorMessage = timedOut
+    ? waited.timeoutReason === "lease_expired"
+      ? `team_dispatch_timeout: ${targetRole} 专家通信 lease 失联（连续无 TASK_PROGRESS）；` +
+        "这不代表底层数据源不可用，禁止据此宣告 no_data。"
+      : `team_dispatch_timeout: ${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包；` +
+        "这不代表底层数据源不可用，禁止据此宣告 no_data。"
+    : typeof taskError?.message === "string"
+      ? taskError.message
+      : null;
+  const output: {
+    dispatched: boolean;
+    completed: boolean;
+    success: boolean;
+    taskId: string;
+    role: AgentRole;
+    runId: string;
+    via: string;
+    dispatchStatus: "completed" | "timeout";
+    dataAvailability: "available" | "unknown" | "not_applicable";
+    result?: unknown;
+    errorCode?: string | null;
+    taskStatus?: A2ATaskState | "timeout" | "awaiting_approval";
+    errorMessage?: string | null;
+  } = {
     dispatched: true,
-    completed: !timedOut,
-    success: Boolean(gathered?.success),
+    completed: Boolean(task && !timedOut),
+    success: task?.status === "completed",
+    taskId: payload.taskId,
     role: targetRole,
-    runId,
+    runId: dispatch.runId,
     via: "topology_dispatch",
     dispatchStatus: timedOut ? "timeout" : "completed",
     dataAvailability: timedOut ? "unknown" : dataAvailable ? "available" : "not_applicable",
-    ...(gathered?.result !== undefined ? { result: gathered.result } : {}),
-    ...(timedOut
-      ? {
-          errorMessage:
-            `team_dispatch_timeout: ${targetRole} 专家在 ${gatherTimeoutMs}ms 内未回包；` +
-            "这不代表底层数据源不可用，禁止据此宣告 no_data。",
-        }
-      : gathered?.errorMessage !== undefined
-        ? { errorMessage: gathered.errorMessage }
-        : {}),
   };
+  if (result !== undefined) output.result = result;
+  if (timedOut) {
+    output.errorCode = "a2a_gather_timeout";
+    output.taskStatus = "timeout";
+  } else if (typeof taskError?.code === "string") {
+    output.errorCode = taskError.code;
+    if (taskStatus) output.taskStatus = taskStatus;
+  } else if (task && taskStatus) {
+    output.taskStatus = taskStatus;
+  }
+  if (errorMessage) output.errorMessage = errorMessage;
+  return output;
 }
 
 export function isBuiltinTool(toolName: string): boolean {

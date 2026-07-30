@@ -8,6 +8,7 @@ import {
   OrderIntentPayloadSchema,
   RiskBlockPayloadSchema,
   TaskAssignPayloadSchema,
+  TaskProgressPayloadSchema,
   TaskResultPayloadSchema,
   type A2AMessageEnvelope,
 } from "../types/a2a";
@@ -27,6 +28,7 @@ import { messageBus } from "./bus";
 const PAYLOAD_SCHEMAS: Record<A2AMessageType, { parse: (v: unknown) => unknown }> = {
   TASK_ASSIGN: TaskAssignPayloadSchema,
   TASK_RESULT: TaskResultPayloadSchema,
+  TASK_PROGRESS: TaskProgressPayloadSchema,
   RISK_BLOCK: RiskBlockPayloadSchema,
   ORDER_INTENT: OrderIntentPayloadSchema,
   MODEL_UPDATE: { parse: (v: unknown) => v }, // 暂无 schema，原样放行
@@ -67,10 +69,11 @@ export class A2ARouter {
   async route(message: A2AMessageEnvelope): Promise<void> {
     this._validateEnvelopeAndPayload(message);
     this._enforceGovernance(message);
+    // Durability precedes local delivery.  The in-process bus is deliberately
+    // an adapter, not the source of truth; publishing first could permanently
+    // lose an A2A envelope if the process exits between emit and persistence.
+    await persistA2AMessage(message);
     messageBus.publish(message);
-    void persistA2AMessage(message).catch((err) => {
-      console.error("[A2ARouter] failed to persist message:", err);
-    });
   }
 
   /**

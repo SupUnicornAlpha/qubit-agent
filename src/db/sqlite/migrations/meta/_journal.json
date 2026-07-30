@@ -680,6 +680,13 @@
       "when": 1814313600000,
       "tag": "0097_unique_mcp_server_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1814400000000,
+      "tag": "0098_a2a_durable_task_protocol",
+      "breakpoints": true
     }
   ]
 }

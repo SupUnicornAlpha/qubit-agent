@@ -16,7 +16,7 @@ import { mcpCallLog, mcpServerHealth, workflowRun } from "../../db/sqlite/schema
 import { isMcpFallbackResponse } from "./mcp-summary";
 import { normalizeErrorMessage } from "./tools-diagnostics";
 
-export type McpStatus = "success" | "timeout" | "failed" | "sandbox_blocked";
+export type McpStatus = "running" | "success" | "timeout" | "failed" | "sandbox_blocked";
 
 export type McpDiagnosticsCall = {
   id: string;
@@ -205,7 +205,9 @@ export function aggregateSummary(rows: RawMcpRow[]): McpDiagnosticsResult["summa
       else nativeSuccess += 1;
     } else if (r.status === "timeout") timeout += 1;
     else if (r.status === "sandbox_blocked") sandbox += 1;
-    else failed += 1;
+    else if (r.status === "running") {
+      // Start records have no terminal outcome yet.
+    } else failed += 1;
     if (typeof r.latencyMs === "number") {
       latSum += r.latencyMs;
       latCount += 1;

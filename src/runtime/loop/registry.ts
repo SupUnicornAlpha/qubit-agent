@@ -13,7 +13,7 @@ export function getLoopDriver(kind: AgentLoopKind): LoopDriver {
     case "codex_cli":
       return codex;
     default:
-      // native / 未知 kind 均走 A2A（GraphRunner 已删除）
+      // native / 未知 kind 均走 A2A（graph 派发已删除）
       return a2aLoopDriver;
   }
 }

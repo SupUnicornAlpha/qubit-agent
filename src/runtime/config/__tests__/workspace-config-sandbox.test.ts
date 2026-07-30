@@ -196,6 +196,18 @@ describe("mergeBuiltinSandboxPoliciesIntoUserFile", () => {
     const merged = policies.find((p) => p.id === "default-policy");
     expect(merged?.maxIterationsPerRun).toBe(99);
   });
+
+  test("将历史 default-policy 的 20 轮阈值迁移到新的 seed 默认值", () => {
+    const fileSandbox: WorkspaceSandboxPolicy[] = [
+      { ...seedPolicy, allowedTools: ["a"], maxIterationsPerRun: 20 },
+    ];
+    const upgradedSeed = { ...seedPolicy, maxIterationsPerRun: 64 };
+    const { policies, mutated } = mergeBuiltinSandboxPoliciesIntoUserFile(fileSandbox, [
+      upgradedSeed,
+    ]);
+    expect(mutated).toBe(true);
+    expect(policies.find((policy) => policy.id === "default-policy")?.maxIterationsPerRun).toBe(64);
+  });
 });
 
 /**

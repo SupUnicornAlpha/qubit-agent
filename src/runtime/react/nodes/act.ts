@@ -3,10 +3,7 @@ import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
 import { getDb, getSqliteForTesting } from "../../../db/sqlite/client";
 import { workflowRun } from "../../../db/sqlite/schema";
-import {
-  resolveAgentControlMode,
-  resolveWorkflowProcessConfig,
-} from "../../../types/loop";
+import { resolveAgentControlMode, resolveWorkflowProcessConfig } from "../../../types/loop";
 import {
   buildArtifactGapHint,
   checkRequiredArtifacts,
@@ -28,10 +25,7 @@ import { logResearchTeamInteraction } from "../../research-team/interaction-log"
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
-import {
-  authorizeCapability,
-  isCapabilityGateEnabled,
-} from "../../tools/capability-gate";
+import { authorizeCapability, isCapabilityGateEnabled } from "../../tools/capability-gate";
 import { injectContextParams } from "../../tools/context-params";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import { applyToolResultToWorkingMemory } from "../../context/working-memory";
@@ -550,6 +544,8 @@ export async function actNode(
 
   /** CapabilityGate (docs/agent-contracts/02) — authorize before sandbox/execute. */
   let gateTimeoutMs: number | undefined;
+  let capabilityGateAllowed = false;
+  let toolContractName: string | undefined;
   if (isCapabilityGateEnabled()) {
     const gate = await authorizeCapability({
       name: effectiveToolName,
@@ -557,9 +553,7 @@ export async function actNode(
       workflowId: state.workflowId,
       ...(projectId ? { projectId } : {}),
       ...(agentMode ? { agentMode } : {}),
-      ...(mcp
-        ? { isMcp: true, serverName: mcp.serverName, mcpTool: mcp.toolName }
-        : {}),
+      ...(mcp ? { isMcp: true, serverName: mcp.serverName, mcpTool: mcp.toolName } : {}),
     });
     if (!gate.ok) {
       const allowHint =
@@ -593,12 +587,14 @@ export async function actNode(
         ...(mcp ? { mcp } : {}),
         reasonText: state.reasonText ?? "",
         contextMemory: state.contextMemory,
+        governance: { capabilityGate: "denied" },
       });
       await recordToolCallSandboxBlocked({
         toolCallId,
         hasMcp: Boolean(mcp),
         reason,
         violationType: gate.code,
+        capabilityGate: true,
       });
       emit({
         runId: state.runId,
@@ -637,12 +633,14 @@ export async function actNode(
       };
     }
     gateTimeoutMs = gate.timeoutMs;
+    capabilityGateAllowed = true;
   }
 
   /** ToolContract (docs/agent-contracts/01) — normalize/validate registered tools. */
   if (isToolContractEnabled() && !mcp) {
     const contract = getToolContract(effectiveToolName);
     if (contract) {
+      toolContractName = contract.name;
       try {
         enrichedToolParams = applyToolContract(contract, enrichedToolParams);
       } catch (err) {
@@ -656,8 +654,7 @@ export async function actNode(
           recovery: {
             nextAction: "switch_tool" as const,
             allowSameToolRetry: false,
-            guidance:
-              "请按工具契约修正参数（例如使用 symbol 或 symbols[]），不要原样重试。",
+            guidance: "请按工具契约修正参数（例如使用 symbol 或 symbols[]），不要原样重试。",
           },
         };
         /** 设计 01 P0：验参失败落 tool_call_log，errorClass 由 classifier 判 permanent。 */
@@ -672,6 +669,11 @@ export async function actNode(
           targetKind,
           reasonText: state.reasonText ?? "",
           contextMemory: state.contextMemory,
+          governance: {
+            ...(capabilityGateAllowed ? { capabilityGate: "allowed" } : {}),
+            contractName: contract.name,
+            contractRejected: true,
+          },
         });
         await recordToolCallError({
           toolCallId,
@@ -679,6 +681,8 @@ export async function actNode(
           latencyMs: 0,
           errorSource: connectorTarget ? "connector" : "builtin",
           errorMessage: reason,
+          contractCode: reason.split(":", 1)[0] ?? "contract_validation_failed",
+          contractRejected: true,
         });
         emit({
           runId: state.runId,
@@ -871,6 +875,14 @@ export async function actNode(
     ...(mcp ? { mcp } : {}),
     reasonText: state.reasonText ?? "",
     contextMemory: state.contextMemory,
+    ...(capabilityGateAllowed || toolContractName
+      ? {
+          governance: {
+            ...(capabilityGateAllowed ? { capabilityGate: "allowed" } : {}),
+            ...(toolContractName ? { contractName: toolContractName } : {}),
+          },
+        }
+      : {}),
   });
 
   const check = mcp

@@ -35,7 +35,7 @@ import type {
  */
 export type ExperienceEvent =
   /**
-   * 每个 agent_step 写入后由 langgraph executor emit。
+   * 每个 agent_step 写入后由 react loop emit。
    * Writer 订阅 → 追加到 episodic（按 workflow 折叠）。
    */
   | {

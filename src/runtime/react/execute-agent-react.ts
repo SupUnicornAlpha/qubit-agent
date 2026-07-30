@@ -5,15 +5,15 @@ import { agentInstance, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
 import type { AgentLoopKind } from "../../types/loop";
-import { runReactLoop } from "../react/run-react-loop";
+import { runReactLoop } from "./run-react-loop";
 import type { RuntimeAgentDefinition } from "../types";
+import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
+import { setWorkflowState } from "../workflow/workflow-state-machine";
 import {
   loadLatestCheckpointSnapshot,
   restoreStateFromSnapshot,
 } from "./agent-checkpoint-snapshot";
 import { stepStreamBus } from "./event-stream";
-import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
-import { setWorkflowState } from "../workflow/workflow-state-machine";
 import { resolveForceReactLoop } from "./react-loop-policy";
 import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
 
@@ -42,6 +42,14 @@ export type ExecuteAgentReactParams = {
    *   用 initialState 跑的行为一致）。
    */
   resume?: boolean;
+  /** Process-local cancellation for a dispatched A2A child task. */
+  isTaskCancellationRequested?: () => boolean;
+  /** Topology child → parent TASK_PROGRESS (lease renewal). */
+  onTaskProgress?: (event: {
+    phase: "start" | "reason" | "act" | "observe" | "heartbeat" | "other";
+    iteration: number;
+    detail?: string;
+  }) => void | Promise<void>;
 };
 
 export type ExecuteAgentReactResult = {
@@ -152,11 +160,7 @@ export async function executeAgentReact(
   if (params.resume) {
     const loaded = await loadLatestCheckpointSnapshot(params.workflowId);
     if (loaded) {
-      const restored = restoreStateFromSnapshot(
-        loaded,
-        params.def,
-        initialState.inboundMessage
-      );
+      const restored = restoreStateFromSnapshot(loaded, params.def, initialState.inboundMessage);
       // 让 resume 后的 state 与 emit 共享同一个 events 数组引用（emit 推 initialState.events），
       // 与 fresh 路径行为一致；快照里的 eventsTail 有损且不重放，丢弃即可。
       resumeFromState = {
@@ -200,6 +204,10 @@ export async function executeAgentReact(
       agentInstanceId,
       forceReactLoop,
       initialState,
+      ...(params.isTaskCancellationRequested
+        ? { isTaskCancellationRequested: params.isTaskCancellationRequested }
+        : {}),
+      ...(params.onTaskProgress ? { onTaskProgress: params.onTaskProgress } : {}),
       ...(resumeFromState ? { resumeFromState } : {}),
       emit,
     });
@@ -255,10 +263,9 @@ export async function executeAgentReact(
   await db
     .update(agentInstance)
     .set({
-      status:
-        userCancelled
-          ? "stopped"
-          : terminalStatus === "failed"
+      status: userCancelled
+        ? "stopped"
+        : terminalStatus === "failed"
           ? "error"
           : terminalStatus === "awaiting_approval"
             ? "running"
@@ -266,8 +273,10 @@ export async function executeAgentReact(
       endedAt: terminalStatus === "awaiting_approval" ? null : new Date().toISOString(),
       ...(terminalStatus === "failed" && rethrow
         ? {
-            errorMessage:
-              (rethrow instanceof Error ? rethrow.message : String(rethrow)).slice(0, 2000),
+            errorMessage: (rethrow instanceof Error ? rethrow.message : String(rethrow)).slice(
+              0,
+              2000
+            ),
           }
         : {}),
     })

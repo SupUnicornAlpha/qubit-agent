@@ -21,7 +21,7 @@ import {
   type ToolSummaryRow,
 } from "./tools-summary";
 
-export type ToolStatus = "success" | "error" | "timeout" | "sandbox_blocked";
+export type ToolStatus = "running" | "success" | "error" | "timeout" | "sandbox_blocked";
 
 export type ToolDiagnosticsCall = {
   id: string;
@@ -195,7 +195,9 @@ export function aggregateSummary(toolName: string, rows: RawRow[]): ToolSummaryR
     if (r.status === "success") success += 1;
     else if (r.status === "timeout") timeout += 1;
     else if (r.status === "sandbox_blocked") sandbox += 1;
-    else {
+    else if (r.status === "running") {
+      // Start records have no terminal outcome yet.
+    } else {
       error += 1;
       const bucket = classifyToolFailureForMonitoring(r.errorMessage);
       if (bucket === "no_data") noData += 1;

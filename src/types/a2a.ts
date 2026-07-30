@@ -1,6 +1,46 @@
 import { z } from "zod";
 import type { A2AMessageType, AgentRole } from "./entities";
 
+/**
+ * Internal transport stays local, but task semantics deliberately mirror the
+ * A2A protocol: a task is the durable unit of delegated work and messages are
+ * merely delivery events around that task.
+ */
+export const A2ATaskStateSchema = z.enum([
+  "submitted",
+  "working",
+  "input_required",
+  "completed",
+  "failed",
+  "cancelled",
+  "rejected",
+]);
+export type A2ATaskState = z.infer<typeof A2ATaskStateSchema>;
+
+export const A2ATaskTerminalStates = new Set<A2ATaskState>([
+  "completed",
+  "failed",
+  "cancelled",
+  "rejected",
+]);
+
+export function isA2ATaskTerminal(state: A2ATaskState): boolean {
+  return A2ATaskTerminalStates.has(state);
+}
+
+export const A2ATaskEventTypeSchema = z.enum([
+  "submitted",
+  "working",
+  "progress",
+  "artifact",
+  "input_required",
+  "completed",
+  "failed",
+  "cancelled",
+  "rejected",
+]);
+export type A2ATaskEventType = z.infer<typeof A2ATaskEventTypeSchema>;
+
 // ─── A2A Message Schema ───────────────────────────────────────────────────────
 
 export const A2AMessageSchema = z.object({
@@ -12,6 +52,7 @@ export const A2AMessageSchema = z.object({
   messageType: z.enum([
     "TASK_ASSIGN",
     "TASK_RESULT",
+    "TASK_PROGRESS",
     "RISK_BLOCK",
     "ORDER_INTENT",
     "MODEL_UPDATE",
@@ -30,6 +71,15 @@ export type A2AMessageEnvelope = z.infer<typeof A2AMessageSchema>;
 export const TaskAssignPayloadSchema = z.object({
   taskId: z.string(),
   taskType: z.string(),
+  /** V2 first-class goal; legacy callers may still put it in params.goal. */
+  goal: z.string().min(1).optional(),
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
+  acceptance: z
+    .object({
+      requiredEvidence: z.enum(["market_data", "news", "analysis", "none"]).optional(),
+      maxToolCalls: z.number().int().positive().optional(),
+    })
+    .optional(),
   params: z.record(z.unknown()),
   deadline: z.string().optional(),
   assignedRole: z.custom<AgentRole>(),
@@ -42,13 +92,75 @@ export const TaskAssignPayloadSchema = z.object({
 
 export type TaskAssignPayload = z.infer<typeof TaskAssignPayloadSchema>;
 
-export const TaskResultPayloadSchema = z.object({
-  taskId: z.string(),
-  success: z.boolean(),
-  result: z.unknown().nullable(),
-  errorMessage: z.string().nullable().optional(),
-  durationMs: z.number().int().min(0),
+/**
+ * Specialist → parent lease heartbeat / phase signal.
+ * Does not settle gather; only renews the communication lease.
+ */
+export const TaskProgressPayloadSchema = z.object({
+  taskId: z.string().min(1),
+  phase: z.enum(["start", "reason", "act", "observe", "heartbeat", "other"]),
+  iteration: z.number().int().min(0).optional(),
+  role: z.custom<AgentRole>().optional(),
+  detail: z.string().max(500).optional(),
+  ts: z.string().optional(),
 });
+
+export type TaskProgressPayload = z.infer<typeof TaskProgressPayloadSchema>;
+
+export const TaskResultStatusSchema = z.enum([
+  "completed",
+  "failed",
+  "timeout",
+  "awaiting_approval",
+  "cancelled",
+]);
+
+export type TaskResultStatus = z.infer<typeof TaskResultStatusSchema>;
+
+export function isA2ATaskContractV2Enabled(): boolean {
+  return process.env.A2A_TASK_CONTRACT_V2 !== "0";
+}
+
+/**
+ * V2 fields are optional only so persisted V1 messages remain readable. Any
+ * payload that opts into V2 status must obey the terminal/error contract.
+ */
+export const TaskResultPayloadSchema = z
+  .object({
+    taskId: z.string(),
+    success: z.boolean(),
+    status: TaskResultStatusSchema.optional(),
+    result: z.unknown().nullable(),
+    errorCode: z.string().min(1).nullable().optional(),
+    errorMessage: z.string().min(1).nullable().optional(),
+    evidence: z
+      .object({
+        kind: z.string().min(1),
+        verified: z.boolean(),
+        detail: z.record(z.unknown()).optional(),
+      })
+      .optional(),
+    summary: z.string().min(1).optional(),
+    durationMs: z.number().int().min(0),
+  })
+  .superRefine((value, ctx) => {
+    if (!isA2ATaskContractV2Enabled() || !value.status) return; // V1 compatibility / rollback.
+    if (value.status === "completed" && !value.success) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "completed TASK_RESULT must succeed" });
+    }
+    if (value.status !== "completed" && value.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "non-completed TASK_RESULT cannot succeed",
+      });
+    }
+    if (value.status !== "completed" && (!value.errorCode || !value.errorMessage)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "failed TASK_RESULT requires errorCode and errorMessage",
+      });
+    }
+  });
 
 export type TaskResultPayload = z.infer<typeof TaskResultPayloadSchema>;
 

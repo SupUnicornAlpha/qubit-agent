@@ -6,19 +6,32 @@ import type { AgentRole } from "../../types/entities";
 export const TOPOLOGY_TEAM_TOOL_PREFIX = "call_team_";
 const TOPOLOGY_TIMEOUT_BUFFER_MS = 10_000;
 
+/**
+ * 任务墙钟：专家子任务硬上限（含 gather / child deadline）。
+ *
+ * 研究任务会包含多个数据源、MCP 降级及复核；六分钟在上游慢响应时不足以完成一次
+ * 正常恢复。心跳 lease 仍会及时识别失联任务，用户也可随时取消，因此将常规研究
+ * 窗口提升到 15 分钟，而非把慢任务直接标成失败。
+ */
+export const TOPOLOGY_TASK_WALL_CLOCK_MS = 900_000;
+/** 通信 lease：连续无 TASK_PROGRESS 则视为失联（可被 progress/心跳续期） */
+export const TOPOLOGY_TASK_LEASE_MS = 90_000;
+/** 专家侧心跳间隔（发 TASK_PROGRESS phase=heartbeat） */
+export const TOPOLOGY_TASK_HEARTBEAT_MS = 30_000;
+
 const TOPOLOGY_TASK_TIMEOUT_BY_ROLE: Partial<Record<AgentRole, number>> = {
-  market_data: 90_000,
-  news_event: 90_000,
-  analyst_macro: 150_000,
-  analyst_fundamental: 150_000,
-  analyst_technical: 150_000,
-  analyst_sentiment: 150_000,
-  research: 180_000,
-  backtest: 180_000,
-  risk: 120_000,
-  portfolio_manager: 120_000,
-  execution: 120_000,
-  memory: 90_000,
+  market_data: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  news_event: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  analyst_macro: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  analyst_fundamental: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  analyst_technical: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  analyst_sentiment: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  research: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  backtest: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  risk: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  portfolio_manager: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  execution: TOPOLOGY_TASK_WALL_CLOCK_MS,
+  memory: TOPOLOGY_TASK_WALL_CLOCK_MS,
 };
 
 /** 已合并/退役角色 → 当前内置角色（派单兼容） */
@@ -94,9 +107,31 @@ export function resolveTopologyTaskTimeoutMs(
 ): number {
   const configured = Number(configuredValue);
   if (configuredValue !== undefined && Number.isFinite(configured)) {
-    return Math.min(Math.max(configured, 10_000), 300_000);
+    // 显式配置可支持长研究，但保留一小时的防失控上限；正常运行不应被默认阈值截断。
+    return Math.min(Math.max(configured, 10_000), 3_600_000);
   }
-  return TOPOLOGY_TASK_TIMEOUT_BY_ROLE[resolveDispatchRole(role)] ?? 120_000;
+  return TOPOLOGY_TASK_TIMEOUT_BY_ROLE[resolveDispatchRole(role)] ?? TOPOLOGY_TASK_WALL_CLOCK_MS;
+}
+
+/** 无 progress 的通信失联阈值；有 TASK_PROGRESS 时 gather 会续期，但不超过墙钟。 */
+export function resolveTopologyTaskLeaseMs(
+  configuredValue: string | number | undefined = process.env.TOPOLOGY_TASK_LEASE_MS
+): number {
+  const configured = Number(configuredValue);
+  if (configuredValue !== undefined && Number.isFinite(configured)) {
+    return Math.min(Math.max(configured, 5_000), 300_000);
+  }
+  return TOPOLOGY_TASK_LEASE_MS;
+}
+
+export function resolveTopologyTaskHeartbeatMs(
+  configuredValue: string | number | undefined = process.env.TOPOLOGY_TASK_HEARTBEAT_MS
+): number {
+  const configured = Number(configuredValue);
+  if (configuredValue !== undefined && Number.isFinite(configured)) {
+    return Math.min(Math.max(configured, 5_000), 120_000);
+  }
+  return TOPOLOGY_TASK_HEARTBEAT_MS;
 }
 
 export function resolveTopologyToolTimeoutMs(toolName: string): number | undefined {

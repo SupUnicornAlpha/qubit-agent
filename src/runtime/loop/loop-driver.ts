@@ -7,6 +7,14 @@ export interface DispatchToLoopParams {
   role: AgentRole;
   payload: TaskAssignPayload;
   traceId?: string;
+  senderId?: string;
+}
+
+export interface LoopDispatchResult {
+  runId: string;
+  receiverId?: string;
+  senderId?: string;
+  traceId?: string;
 }
 
 /**
@@ -14,5 +22,5 @@ export interface DispatchToLoopParams {
  */
 export interface LoopDriver {
   readonly kind: AgentLoopKind;
-  dispatchTask(params: DispatchToLoopParams): Promise<{ runId: string }>;
+  dispatchTask(params: DispatchToLoopParams): Promise<LoopDispatchResult>;
 }

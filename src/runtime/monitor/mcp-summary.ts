@@ -120,7 +120,7 @@ export async function getMcpSummary(input?: {
       else acc.nativeSuccessCount += 1;
     } else if (r.status === "timeout") acc.timeoutCount += 1;
     else if (r.status === "sandbox_blocked") acc.sandboxBlockedCount += 1;
-    else acc.failedCount += 1;
+    else if (r.status !== "running") acc.failedCount += 1;
     if (typeof r.latencyMs === "number") {
       acc.latSum += r.latencyMs;
       acc.latCount += 1;
@@ -138,7 +138,7 @@ export async function getMcpSummary(input?: {
     if (r.status === "success") {
       tool.successCount += 1;
       if (fallback) tool.fallbackCount += 1;
-    } else tool.failedCount += 1;
+    } else if (r.status !== "running") tool.failedCount += 1;
     acc.byToolMap.set(r.toolName, tool);
   }
 

@@ -46,7 +46,7 @@ export function startWriterPipe(opts: WriterOptions): WriterHandle {
    * 同一 workflow 的 episodic upsert 必须串行，否则并发 emit 会让多个 handler
    * 同时跑 `findOpenEpisodicForWorkflow` 都返回 null，结果各自插一条 → 折叠失败。
    *
-   * 生产里 langgraph executor 串行 emit step 不会触发此 race，但单测和未来如果
+   * 生产里 react loop 串行 emit step 不会触发此 race，但单测和未来如果
    * 引入并发 emitter 时仍需要保护。用 per-key Promise chain（轻量且无外部依赖）。
    */
   const episodicLock = new Map<string, Promise<unknown>>();

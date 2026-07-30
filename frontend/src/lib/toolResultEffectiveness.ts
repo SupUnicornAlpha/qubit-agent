@@ -14,7 +14,7 @@
  * 规则故意保守：只有明确判断为"空"或"早夭"才降级，其他保持 ok。
  */
 
-export type ToolResultBadge = "ok" | "empty" | "failed" | "suspect";
+export type ToolResultBadge = "running" | "ok" | "empty" | "failed" | "suspect";
 
 export type ToolResultVerdict = {
   badge: ToolResultBadge;
@@ -112,6 +112,9 @@ export function analyzeToolEffectiveness(input: {
   errorCode?: string | null;
 }): ToolResultVerdict {
   const status = (input.status ?? "").toLowerCase();
+  if (status === "running") {
+    return { badge: "running", reason: "调用已发起，等待终态结果" };
+  }
   if (status !== "success") {
     const detail = input.errorMessage || input.errorCode || status || "调用失败";
     return { badge: "failed", reason: detail };
@@ -140,6 +143,7 @@ export const TOOL_BADGE_STYLE: Record<
   ToolResultBadge,
   { label: string; color: string; bg: string; icon: string }
 > = {
+  running: { label: "执行中", color: "#60a5fa", bg: "rgba(59,130,246,0.12)", icon: "◌" },
   ok: { label: "成功", color: "#86efac", bg: "rgba(34,197,94,0.12)", icon: "✓" },
   empty: { label: "成功 · 空数据", color: "#fbbf24", bg: "rgba(251,191,36,0.12)", icon: "⚠" },
   suspect: { label: "成功 · 可疑", color: "#fb923c", bg: "rgba(251,146,60,0.12)", icon: "?" },

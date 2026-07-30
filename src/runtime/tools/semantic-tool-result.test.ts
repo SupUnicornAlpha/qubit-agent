@@ -86,10 +86,24 @@ describe("detectSemanticToolFailure", () => {
           success: false,
           dispatchStatus: "timeout",
           dataAvailability: "unknown",
-          errorMessage:
-            "team_dispatch_timeout: market_data 专家未回包；这不代表底层数据源不可用",
+          errorMessage: "team_dispatch_timeout: market_data 专家未回包；这不代表底层数据源不可用",
         },
       })
     ).toBe("dispatch_timeout_data_unknown");
+  });
+
+  test("uses a TaskResult v2 error code instead of an unstructured fallback", () => {
+    expect(
+      detectSemanticToolFailure("call_team_analyst_technical", {
+        builtinResult: {
+          dispatched: true,
+          completed: true,
+          success: false,
+          taskStatus: "failed",
+          errorCode: "task_deadline_exceeded",
+          errorMessage: "specialist deadline elapsed",
+        },
+      })
+    ).toBe("task_deadline_exceeded");
   });
 });

@@ -4,6 +4,7 @@ export type SubAgentTaskStatus =
   | "waiting"
   | "completed"
   | "failed"
+  | "timeout"
   | "cancelled";
 
 export interface SubAgentTaskRecord {
@@ -115,7 +116,7 @@ function resolveTitle(
   taskType: string | null
 ): { title: string; summary: string | null } {
   const params = asRecord(payload.params);
-  const goal = asText(params.goal);
+  const goal = asText(payload.goal) ?? asText(params.goal);
   const message = asText(params.message);
   const context = asText(params.context);
   const ticker = asText(params.ticker);
@@ -137,6 +138,9 @@ function resolveStatus(input: {
   preferInstanceTerminal?: boolean;
 }): SubAgentTaskStatus {
   if (input.resultPayload) {
+    if (input.resultPayload.status === "timeout") return "timeout";
+    if (input.resultPayload.status === "awaiting_approval") return "waiting";
+    if (input.resultPayload.status === "cancelled") return "cancelled";
     return input.resultPayload.success === false ? "failed" : "completed";
   }
   if (input.preferInstanceTerminal) {
@@ -158,7 +162,7 @@ function resolveStatus(input: {
 }
 
 function resultError(payload?: Record<string, unknown>): string | null {
-  if (!payload || payload.success !== false) return null;
+  if (!payload || (payload.success !== false && payload.status === undefined)) return null;
   const result = asRecord(payload.result);
   const reason = asText(result.reason);
   const usedTokens = Number(result.usedTokens);
@@ -171,6 +175,7 @@ function resultError(payload?: Record<string, unknown>): string | null {
       : null;
   return clipped(
     asText(payload.errorMessage) ??
+      asText(payload.errorCode) ??
       asText(result.errorMessage) ??
       asText(result.error) ??
       asText(result.message) ??
@@ -220,7 +225,10 @@ export function buildSubAgentTasks(input: BuildSubAgentTasksInput): SubAgentTask
     if (!taskId) continue;
     const key = `${message.workflowRunId}:${message.senderInstanceId}:${taskId}`;
     const previous = taskResultByKey.get(key);
-    if (!previous || message.createdAt > previous.createdAt) taskResultByKey.set(key, message);
+    // A timeout/cancellation receipt is terminal. A late child response must
+    // not overwrite it in the task board, otherwise the UI and Gather disagree
+    // after a parent has already moved on.
+    if (!previous || message.createdAt < previous.createdAt) taskResultByKey.set(key, message);
 
     const sender = instanceById.get(message.senderInstanceId);
     const senderDefinition = sender ? definitionById.get(sender.definitionId) : undefined;

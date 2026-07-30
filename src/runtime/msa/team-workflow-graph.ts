@@ -360,13 +360,13 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     edgeMap.set(k, cur);
   };
 
-  const bumpToolEdge = (agentRole: string, success: boolean) => {
+  const bumpToolEdge = (agentRole: string, success: boolean | null) => {
     if (!agentRole || agentRole === "__tools__") return;
     const k = undirectedKey(agentRole, "__tools__");
     const cur = edgeMap.get(k) ?? emptyAgg();
     cur.toolCount += 1;
-    if (success) cur.toolSuccessCount += 1;
-    else cur.toolFailCount += 1;
+    if (success === true) cur.toolSuccessCount += 1;
+    else if (success === false) cur.toolFailCount += 1;
     edgeMap.set(k, cur);
   };
 
@@ -425,10 +425,10 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
 
   const toolOk = (status: string) => status === "success";
   for (const t of toolCalls) {
-    bumpToolEdge(t.agentRole, toolOk(t.status));
+    bumpToolEdge(t.agentRole, t.status === "running" ? null : toolOk(t.status));
   }
   for (const m of mcpCalls) {
-    bumpToolEdge(m.agentRole, toolOk(m.status));
+    bumpToolEdge(m.agentRole, m.status === "running" ? null : toolOk(m.status));
   }
   for (const sr of skillRows) {
     const role = sr.definitionId ? defRole.get(sr.definitionId) : undefined;

@@ -198,6 +198,19 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
   }
 
   if (outcome.kind === "awaiting_approval") {
+    await ctx.send({
+      workflowId: msg.workflowId,
+      traceId: msg.traceId,
+      receiverAgent: msg.senderAgent,
+      messageType: "TASK_RESULT",
+      payload: buildTaskResult(payload.taskId, "orchestrator", {
+        status: "awaiting_approval",
+        errorCode: "awaiting_approval",
+        errorMessage: "研究团队正在等待人工审批",
+        result: { taskType: "research_team_execute" },
+      }),
+      priority: msg.priority,
+    });
     return;
   }
 

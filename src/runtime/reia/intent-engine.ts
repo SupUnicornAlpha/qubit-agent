@@ -4,7 +4,10 @@ import { getDb } from "../../db/sqlite/client";
 import { brokerOrderEvent, executionReport, intentDeviation, intentOrder } from "../../db/sqlite/schema";
 import type { BrokerProvider } from "./broker-connector";
 import { getBrokerConnector } from "./broker-connector";
-import { connectorForAccount, resolveBrokerAccount } from "./broker-service";
+import {
+  connectorForAccount,
+  resolveBrokerAccount,
+} from "../execution/broker/broker-service";
 import { executeWithPolicy } from "../external-call/policy";
 
 const DEFAULT_DEVIATION_THRESHOLD = 0.015; // 1.5%

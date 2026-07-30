@@ -1,0 +1,14 @@
+import { buildRunEnvelope } from "./run-envelope";
+import { enqueueHardFailures } from "./regression-queue";
+import { scoreRunEnvelope } from "./scorecard";
+
+/** 在 workflow 完结后调用；当前不接入热路径，以免 P0 观测逻辑影响生产执行。 */
+export async function scoreProductionRun(input: {
+  workflowRunId: string;
+  harnessVersion?: string;
+}) {
+  const envelope = await buildRunEnvelope({ ...input, suite: "production" });
+  const scorecard = scoreRunEnvelope(envelope);
+  const regressionCandidates = await enqueueHardFailures(scorecard);
+  return { envelope, scorecard, regressionCandidates };
+}

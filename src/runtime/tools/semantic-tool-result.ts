@@ -31,10 +31,13 @@ function inspect(value: unknown, depth: number): string | null {
   if (record.dispatchStatus === "timeout" && record.dataAvailability === "unknown") {
     return "dispatch_timeout_data_unknown";
   }
+  if (typeof record.errorCode === "string" && record.errorCode.trim()) {
+    return record.errorCode.trim().toLowerCase();
+  }
   if (record.success === false) {
     return typeof record.errorMessage === "string" && record.errorMessage.trim()
       ? normalizeReason(record.errorMessage)
-      : "reported_failure";
+      : "task_failed";
   }
   if (record.completed === false) return "child_task_timeout";
   if (typeof record.error === "string" && record.error.trim()) {

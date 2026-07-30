@@ -1834,7 +1834,7 @@ export async function listMonitorMcpSummary(input?: {
  */
 export type MonitorToolDiagCall = {
   id: string;
-  status: "success" | "error" | "timeout" | "sandbox_blocked";
+  status: "running" | "success" | "error" | "timeout" | "sandbox_blocked";
   errorMessage: string | null;
   latencyMs: number | null;
   retryCount: number;
@@ -1901,7 +1901,7 @@ export async function getMonitorToolDiagnostics(input: {
 export type MonitorMcpDiagCall = {
   id: string;
   toolName: string;
-  status: "success" | "timeout" | "failed" | "sandbox_blocked";
+  status: "running" | "success" | "timeout" | "failed" | "sandbox_blocked";
   errorCode: string | null;
   latencyMs: number | null;
   retryCount: number;

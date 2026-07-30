@@ -51,7 +51,8 @@ const DEFAULT_SANDBOX_POLICY = {
   canReadLiveMarket: false,
   canSubmitOrder: false,
   maxToolCallMs: 30_000,
-  maxIterationsPerRun: 20,
+  // ReAct / A2A 已有 deadline、取消和工具超时。20 轮会截断正常的多专家研究。
+  maxIterationsPerRun: 64,
   maxOutputTokens: 4096,
   isolationLevel: "none" as const,
 };

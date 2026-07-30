@@ -35,8 +35,9 @@ import { llmProviderRouter } from "./routes/llm-provider.routes";
 import { metaRouter } from "./routes/meta.routes";
 import { recommendationRouter } from "./routes/recommendation.routes";
 import { governanceRouter } from "./routes/governance.routes";
+import { a2aRouter } from "./routes/a2a.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
-import { stepStreamBus } from "./runtime/langgraph/event-stream";
+import { stepStreamBus } from "./runtime/react/event-stream";
 import { getMarketDataReadiness } from "./runtime/market/market-data-health";
 import {
   marketStreamGateway,
@@ -94,6 +95,7 @@ app.route("/api/v1/strategy-compositions", strategyCompositionRouter);
 app.route("/api/v1/quant", quantRouter);
 app.route("/api/v1/recommendations", recommendationRouter);
 app.route("/api/v1/governance", governanceRouter);
+app.route("/api/v1/a2a", a2aRouter);
 // M10: LLM Provider 配置（per-Agent 模型路由 + 默认降级）
 app.route("/api/v1/llm-providers", llmProviderRouter);
 // 后端元信息：commit / startedAt / pid / watchMode，便于"代码到底有没有生效"快速排查

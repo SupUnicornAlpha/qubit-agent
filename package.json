@@ -3,9 +3,7 @@
   "version": "0.1.0",
   "description": "QUBIT - Open-source quantitative research Agent platform",
   "private": true,
-  "workspaces": [
-    "frontend"
-  ],
+  "workspaces": ["frontend"],
   "scripts": {
     "dev": "bun run src/index.ts",
     "dev:backend": "bash scripts/dev-backend.sh",
@@ -23,7 +21,8 @@
     "sync:fsi-vendor": "bash scripts/sync-fsi-vendor.sh",
     "sync:workspace-agents": "bun run src/scripts/sync-workspace-agents-json.ts",
     "init:agent-packs": "bun run src/scripts/init-quant-agent-pack-prompts.ts",
-    "acceptance:langgraph": "bun run src/runtime/langgraph/minimum-acceptance.ts",
+    "benchmark:qubit": "bun run scripts/run-qubit-benchmark.ts",
+    "benchmark:qubit:l0": "bun run scripts/run-bench-l0.ts",
     "mcp-bridge": "bun run src/runtime/loop/mcp-bridge-server.ts",
     "lint": "biome lint src",
     "format": "biome format --write src",

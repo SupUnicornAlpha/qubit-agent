@@ -46,11 +46,13 @@ function defaultTotalTokens(input: {
   // 这里统计的是整条任务树的 token 总和，而不是单次模型调用；100K 会让一个正常的
   // 多 Agent 研究在第二、三个专家处被误杀。预算仍按 workflow.startedAt 隔离到当前
   // 对话轮次，因此提高单轮上限不会让长对话的历史 token 永久累积。
-  if (input.source === "chat") return 400_000;
+  // 一轮研究可能由编排器、多个专家和工具恢复回合共同消耗 token。预算按 startedAt
+  // 只统计当前轮次，故默认 1M 不会把长对话历史永久累加为“额度耗尽”。
+  if (input.source === "chat") return 1_000_000;
   if (input.mode === "live") return 120_000;
   if (input.mode === "backtest" || input.mode === "simulation") return 250_000;
-  if (input.researchScenarioId) return 300_000;
-  return 400_000;
+  if (input.researchScenarioId) return 1_000_000;
+  return 1_000_000;
 }
 
 export function resolveWorkflowTokenBudget(

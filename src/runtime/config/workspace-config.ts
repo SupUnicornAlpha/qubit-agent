@@ -49,7 +49,7 @@ const SandboxPolicySchema = z.object({
   allowedHosts: z.array(z.string()).default([]),
   allowedFsPaths: z.array(z.string()).default([]),
   maxToolCallMs: z.number().int().positive().default(30_000),
-  maxIterationsPerRun: z.number().int().positive().default(20),
+  maxIterationsPerRun: z.number().int().positive().default(64),
   maxOutputTokens: z.number().int().positive().default(4096),
   isolationLevel: z.enum(["none", "process", "vm"]).default("none"),
   canWriteMemory: z.boolean().default(true),
@@ -104,7 +104,7 @@ export function buildDefaultSandboxPoliciesFromDefinitions(
       allowedHosts: [],
       allowedFsPaths: [],
       maxToolCallMs: 30_000,
-      maxIterationsPerRun: 20,
+      maxIterationsPerRun: 64,
       maxOutputTokens: 4096,
       isolationLevel: "none",
       canWriteMemory: true,
@@ -209,7 +209,9 @@ export async function loadWorkspaceRuntimeConfig(
  * 这里做"软合并"：按 id 找到文件里 builtin policy（如 default-policy），把 SEED
  * 版本的 allowedTools / allowedMcpServers union 进去，user 自加的额外项保留；
  * 其他 policy（user 自定义、FSI preset）完全不动。其他字段（maxIterationsPerRun、
- * canSubmitOrder 等）尊重 user 文件值，避免覆盖 user 的安全约束。
+ * canSubmitOrder 等）尊重 user 文件值，避免覆盖 user 的安全约束；但 historical
+ * default-policy 的 20 是旧版本自动生成的默认值，而不是明确的用户定制，需一次性
+ * 升级到当前 seed，防止每次启动反复把 DB 的新默认值覆盖回旧阈值。
  */
 export function mergeBuiltinSandboxPoliciesIntoUserFile(
   fileSandbox: WorkspaceSandboxPolicy[],
@@ -232,12 +234,19 @@ export function mergeBuiltinSandboxPoliciesIntoUserFile(
 
     const toolsChanged = !sameSet(file.allowedTools, toolsUnion);
     const mcpChanged = !sameSet(file.allowedMcpServers, mcpUnion);
-    if (toolsChanged || mcpChanged) mutated = true;
+    const migrateLegacyDefaultIterationLimit =
+      file.id === "default-policy" &&
+      file.maxIterationsPerRun === 20 &&
+      seed.maxIterationsPerRun > file.maxIterationsPerRun;
+    if (toolsChanged || mcpChanged || migrateLegacyDefaultIterationLimit) mutated = true;
 
     merged.push({
       ...file,
       allowedTools: toolsUnion,
       allowedMcpServers: mcpUnion,
+      ...(migrateLegacyDefaultIterationLimit
+        ? { maxIterationsPerRun: seed.maxIterationsPerRun }
+        : {}),
     });
   }
 

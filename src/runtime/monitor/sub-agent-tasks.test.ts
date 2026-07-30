@@ -267,4 +267,82 @@ describe("buildSubAgentTasks", () => {
     });
     expect(rows.some((row) => row.source === "agent_execution")).toBe(false);
   });
+
+  test("timeout receipt is terminal and a later child result cannot overwrite it", () => {
+    const rows = buildSubAgentTasks({
+      workflows: [workflow],
+      definitions,
+      instances: [
+        {
+          id: "orch-1",
+          definitionId: "def-orch",
+          workflowRunId: "wf-1",
+          status: "running",
+          currentIteration: 1,
+          startedAt: workflow.startedAt,
+          endedAt: null,
+          errorMessage: null,
+        },
+        {
+          id: "news-pool-1",
+          definitionId: "def-news",
+          workflowRunId: "pool-workflow",
+          status: "running",
+          currentIteration: 1,
+          startedAt: workflow.startedAt,
+          endedAt: null,
+          errorMessage: null,
+        },
+      ],
+      messages: [
+        {
+          id: "assign-timeout",
+          workflowRunId: "wf-1",
+          traceId: "trace-timeout",
+          senderInstanceId: "orch-1",
+          receiverInstanceId: "news-pool-1",
+          messageType: "TASK_ASSIGN",
+          payloadJson: {
+            taskId: "task-timeout",
+            taskType: "topology_dispatch",
+            goal: "收集新闻",
+            params: {},
+          },
+          createdAt: "2026-07-23T01:01:00.000Z",
+        },
+        {
+          id: "timeout-receipt",
+          workflowRunId: "wf-1",
+          traceId: "trace-timeout",
+          senderInstanceId: "news-pool-1",
+          receiverInstanceId: "orch-1",
+          messageType: "TASK_RESULT",
+          payloadJson: {
+            taskId: "task-timeout",
+            success: false,
+            status: "timeout",
+            errorCode: "a2a_gather_timeout",
+            errorMessage: "child deadline elapsed",
+            result: null,
+          },
+          createdAt: "2026-07-23T01:02:00.000Z",
+        },
+        {
+          id: "late-result",
+          workflowRunId: "wf-1",
+          traceId: "trace-timeout",
+          senderInstanceId: "news-pool-1",
+          receiverInstanceId: "orch-1",
+          messageType: "TASK_RESULT",
+          payloadJson: { taskId: "task-timeout", success: true, status: "completed", result: {} },
+          createdAt: "2026-07-23T01:03:00.000Z",
+        },
+      ],
+      steps: [],
+    });
+    expect(rows.find((row) => row.source === "a2a_assignment")).toMatchObject({
+      status: "timeout",
+      errorMessage: "child deadline elapsed",
+    });
+  });
 });

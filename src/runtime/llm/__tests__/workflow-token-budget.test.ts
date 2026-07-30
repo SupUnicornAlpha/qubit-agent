@@ -8,7 +8,7 @@ import {
 } from "../workflow-token-budget";
 
 describe("resolveWorkflowTokenBudget", () => {
-  test("chat 多 Agent 单轮默认拥有 400K 预算", () => {
+  test("chat 多 Agent 单轮默认拥有 1M 预算", () => {
     const chat = resolveWorkflowTokenBudget(undefined, {
       source: "chat",
       mode: "research",
@@ -19,8 +19,8 @@ describe("resolveWorkflowTokenBudget", () => {
       mode: "research",
       researchScenarioId: "factor_research",
     });
-    expect(chat.maxTotalTokens).toBe(400_000);
-    expect(research.maxTotalTokens).toBe(300_000);
+    expect(chat.maxTotalTokens).toBe(1_000_000);
+    expect(research.maxTotalTokens).toBe(1_000_000);
   });
 
   test("workflow override 覆盖默认值", () => {
@@ -68,15 +68,15 @@ describe("resolveWorkflowTokenBudget", () => {
     const status = await loadWorkflowTokenBudgetStatus(db, "reused-workflow");
 
     expect(status.usedTokens).toBe(20_000);
-    expect(status.remainingTokens).toBe(380_000);
+    expect(status.remainingTokens).toBe(980_000);
     expect(status.hardLimitReached).toBe(false);
 
     sqlite.exec(`
       INSERT INTO llm_call_log (workflow_run_id, total_tokens, created_at)
-      VALUES ('reused-workflow', 390000, '2026-07-29T05:49:00.000Z');
+      VALUES ('reused-workflow', 990000, '2026-07-29T05:49:00.000Z');
     `);
     const exhaustedCurrentTurn = await loadWorkflowTokenBudgetStatus(db, "reused-workflow");
-    expect(exhaustedCurrentTurn.usedTokens).toBe(410_000);
+    expect(exhaustedCurrentTurn.usedTokens).toBe(1_010_000);
     expect(exhaustedCurrentTurn.hardLimitReached).toBe(true);
     sqlite.close();
   });

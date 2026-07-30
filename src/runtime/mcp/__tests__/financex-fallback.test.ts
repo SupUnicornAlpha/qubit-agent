@@ -11,7 +11,11 @@
  * 用 mock 替代 queryBarsRange / queryMarketNewsBrief，避免真实拉 Yahoo（不稳定）。
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
-import { tryFinancexFallback, FINANCEX_FALLBACK_TOOLS } from "../financex-fallback";
+import {
+  tryFinancexFallback,
+  FINANCEX_FALLBACK_TOOLS,
+  resolveFinancexFallbackToolName,
+} from "../financex-fallback";
 
 /** 通过 mock.module 替换底层数据源 */
 const originalEnv = process.env;
@@ -50,6 +54,13 @@ describe("tryFinancexFallback router 守门 (P0-2)", () => {
     expect(FINANCEX_FALLBACK_TOOLS.has("get_quote_batch")).toBe(true);
     expect(FINANCEX_FALLBACK_TOOLS.has("get_historical_data")).toBe(true);
     expect(FINANCEX_FALLBACK_TOOLS.has("get_market_news")).toBe(true);
+  });
+
+  test("将历史 prompt 中的兼容工具名映射到安全 fallback", () => {
+    expect(resolveFinancexFallbackToolName("get_stock_quote")).toBe("get_quote");
+    expect(resolveFinancexFallbackToolName("get_realtime_quotes")).toBe("get_quote_batch");
+    expect(resolveFinancexFallbackToolName("get_stock_bars")).toBe("get_historical_data");
+    expect(resolveFinancexFallbackToolName("get_options_chain")).toBeNull();
   });
 
   test("get_quote 缺 symbol → 抛清晰错误", async () => {
@@ -185,6 +196,19 @@ describe("tryFinancexFallback 数据路径 (mock queryBarsRange)", () => {
     expect(out.count).toBe(2);
     expect(out.quotes[0]!.symbol).toBe("AAPL");
     expect(out.quotes[1]!.symbol).toBe("MSFT");
+  });
+
+  test("get_stock_quote 别名也能在 financex 不可用时返回行情", async () => {
+    const r = await tryFinancexFallback({
+      serverName: "mcp-financex",
+      toolName: "get_stock_quote",
+      arguments: { symbol: "AAPL" },
+      reason: "circuit_open",
+    });
+    expect(r?.toolName).toBe("get_stock_quote");
+    expect((r?.output as Record<string, unknown>).__mcp_fallback).toMatchObject({
+      canonical_tool: "get_quote",
+    });
   });
 
   test("get_quote 单 symbol 拉不到 K 线 → 返回 error 字段而非抛错", async () => {

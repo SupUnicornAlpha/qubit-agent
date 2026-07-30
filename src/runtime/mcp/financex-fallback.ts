@@ -38,6 +38,24 @@ export const FINANCEX_FALLBACK_TOOLS = new Set([
   "get_market_news",
 ]);
 
+/**
+ * Prompt / historical traces use several financex-compatible aliases.  Resolve
+ * them before deciding whether a disabled financex server can safely fall back
+ * to the built-in read-only market/news connectors.
+ */
+const FINANCEX_FALLBACK_ALIASES: Readonly<Record<string, string>> = {
+  get_stock_quote: "get_quote",
+  get_realtime_quotes: "get_quote_batch",
+  get_market_data: "get_quote_batch",
+  get_stock_bars: "get_historical_data",
+  get_klines: "get_historical_data",
+};
+
+export function resolveFinancexFallbackToolName(toolName: string): string | null {
+  const canonical = FINANCEX_FALLBACK_ALIASES[toolName] ?? toolName;
+  return FINANCEX_FALLBACK_TOOLS.has(canonical) ? canonical : null;
+}
+
 /** 入参里抽 symbol（financex 不同工具字段名略不同：symbol / ticker / symbols / tickers） */
 function pickSymbols(args: Record<string, unknown>): string[] {
   const out = new Set<string>();
@@ -245,11 +263,12 @@ export async function tryFinancexFallback(input: {
   originalError?: Error;
 }): Promise<McpDispatchResult | null> {
   if (input.serverName !== "mcp-financex") return null;
-  if (!FINANCEX_FALLBACK_TOOLS.has(input.toolName)) return null;
+  const canonicalToolName = resolveFinancexFallbackToolName(input.toolName);
+  if (!canonicalToolName) return null;
 
   const args = input.arguments ?? {};
   let output: Record<string, unknown>;
-  switch (input.toolName) {
+  switch (canonicalToolName) {
     case "get_quote":
     case "get_quote_batch":
       output = await fallbackGetQuote(args);
@@ -275,9 +294,10 @@ export async function tryFinancexFallback(input: {
       __mcp_fallback: {
         original_server: input.serverName,
         original_tool: input.toolName,
+        canonical_tool: canonicalToolName,
         reason: input.reason,
         original_error: input.originalError?.message ?? null,
-        routed_to: input.toolName === "get_market_news" ? "qubit-news" : "qubit-data",
+        routed_to: canonicalToolName === "get_market_news" ? "qubit-news" : "qubit-data",
       },
     },
   };

@@ -101,7 +101,7 @@ export type SetWorkflowStateOptions = {
 export async function setWorkflowState(
   workflowId: string,
   toStatus: WorkflowStatus,
-  options: SetWorkflowStateOptions = {},
+  options: SetWorkflowStateOptions = {}
 ): Promise<SetWorkflowStateResult> {
   const db = await getDb();
   const endedAtMode = options.endedAt ?? "auto";
@@ -117,7 +117,7 @@ export async function setWorkflowState(
   if (!transitionAllowed) {
     console.warn(
       `[workflow-state] illegal transition: ${previous} → ${toStatus} (workflowId=${workflowId})` +
-        (options.reason ? ` reason=${options.reason}` : ""),
+        (options.reason ? ` reason=${options.reason}` : "")
     );
   }
 
@@ -144,23 +144,36 @@ export async function setWorkflowState(
         .where(
           and(
             eq(agentInstance.workflowRunId, workflowId),
-            or(ne(agentInstance.status, "stopped"), isNull(agentInstance.endedAt)),
-          ),
+            or(ne(agentInstance.status, "stopped"), isNull(agentInstance.endedAt))
+          )
         );
     } catch (e) {
       console.warn(
-        `[workflow-state] reap agent instances failed (workflowId=${workflowId}): ${(e as Error).message}`,
+        `[workflow-state] reap agent instances failed (workflowId=${workflowId}): ${(e as Error).message}`
       );
     }
+
+    /**
+     * Benchmark / flywheel P0：终态后异步生成生产 scorecard。评分绝不影响状态落库；
+     * 同一终态重复写入也允许，候选队列会按 workflow + assertion 去重。
+     */
+    queueMicrotask(() => {
+      void import("../benchmark/production-score")
+        .then(({ scoreProductionRun }) => scoreProductionRun({ workflowRunId: workflowId }))
+        .catch((error) => {
+          console.warn(
+            `[workflow-state] benchmark scorecard failed (workflowId=${workflowId}): ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        });
+    });
   }
 
   return { previous, current: toStatus, transitionAllowed };
 }
 
 /** 测试用：暴露合法迁移检查，避免直接 export 内部常量。 */
-export function _isAllowedTransitionForTest(
-  from: WorkflowStatus,
-  to: WorkflowStatus,
-): boolean {
+export function _isAllowedTransitionForTest(from: WorkflowStatus, to: WorkflowStatus): boolean {
   return isAllowedTransition(from, to);
 }

@@ -1,12 +1,12 @@
 /**
  * tool_call_log / mcp_call_log 两张表的统一写入服务。
  *
- * P1-G 收敛：之前 `langgraph/nodes/act.ts` 直接 `db.insert(...) / .update(...)`
+ * P1-G 收敛：之前 `react/nodes/act.ts` 直接 `db.insert(...) / .update(...)`
  * 散写日志表共 7 处，每处都要重复处理"mcp 可能为空 → 不写 mcp_call_log"和
  * "成功/失败/超时对应不同 status 字符串"的细节。本文件把 ACT 节点对工具
  * 调用日志的所有写入聚合成 5 个语义化函数：
  *   - recordToolCallStart      工具调用开始（同时初始化 tool_call_log /
- *                              mcp_call_log，status 先记 "success" + latency=1，
+ *                              mcp_call_log，status 先记 "running"，
  *                              终态由后续 record* 覆盖）
  *   - recordToolCallSandboxBlocked 沙箱拒绝
  *   - recordToolCallTimeout    工具超时（sandbox.enforceToolTimeout 兜底）
@@ -15,7 +15,7 @@
  *
  * Schema 收敛 C5-1（2026-06）：原来还会同步写入 `acp_call` 表保留一份
  * caller / target / intent 维度的"事件性"审计；但全仓代码扫描后该表 4 个 insert
- * 之外**仅 `langgraph/minimum-acceptance.ts` 这个一次性脚本读取**，0 个 monitor
+ * 之外**仅历史验收脚本读取**，0 个 monitor
  * 端点 / 0 个前端组件消费。同样字段（status / latency / errorCode）已落在
  * tool_call_log 与 mcp_call_log，acp_call 退化为"持续写入但没有任何聚合查询"的
  * 冗余表，遂随 migration 0069 一同删除。
@@ -24,7 +24,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { mcpCallLog, toolCallLog } from "../../db/sqlite/schema";
-import { classifyToolError } from "../langgraph/nodes/tool-error-classifier";
+import { classifyToolError } from "../react/nodes/tool-error-classifier";
 
 export type ToolTargetKind = "mcp" | "tool" | "connector";
 export type ToolKind = "mcp" | "builtin" | "acp_connector";
@@ -59,12 +59,18 @@ export interface RecordToolCallStartInput {
   mcpCircuitState?: "closed" | "open" | "half_open" | null;
   reasonText: string;
   contextMemory?: unknown;
+  /** 仅存治理结论，不存原始参数；供 benchmark 判断 contract / gate 覆盖。 */
+  governance?: {
+    capabilityGate?: "allowed" | "denied";
+    contractName?: string;
+    contractRejected?: boolean;
+  };
 }
 
 /**
- * 初始化 tool_call_log（必写）+ mcp_call_log（仅 MCP 路径写）。两条记录在
- * 写入时都先标 status="success" + latencyMs=1，后续 record* 函数会按真实终态
- * update 覆盖。这种"乐观初始化"是 P0-4 之前的设计，保留以兼容现有监控查询。
+ * 初始化 tool_call_log（必写）+ mcp_call_log（仅 MCP 路径写）。记录在写入时标记
+ * 为 running；只有终态 helper 才能写 success/error/timeout，避免前端把 A2A 派单
+ * 已受理误展示成专家已经完成。
  */
 export async function recordToolCallStart(input: RecordToolCallStartInput): Promise<void> {
   const db = await getDb();
@@ -87,9 +93,10 @@ export async function recordToolCallStart(input: RecordToolCallStartInput): Prom
       contextMemory: input.contextMemory,
       targetKind: input.targetKind,
       mcp: input.mcp ?? null,
+      governance: input.governance ?? null,
     },
-    status: "success",
-    latencyMs: 1,
+    status: "running",
+    latencyMs: null,
   });
   if (input.mcp) {
     await db.insert(mcpCallLog).values({
@@ -110,8 +117,8 @@ export async function recordToolCallStart(input: RecordToolCallStartInput): Prom
         reasonText: input.reasonText,
         arguments: input.mcp.arguments,
       },
-      status: "success",
-      latencyMs: 1,
+      status: "running",
+      latencyMs: null,
     });
   }
 }
@@ -131,6 +138,7 @@ interface BaseFinalizeInput {
 export interface RecordToolCallSandboxBlockedInput extends BaseFinalizeInput {
   reason: string;
   violationType?: string | undefined;
+  capabilityGate?: boolean;
 }
 
 export async function recordToolCallSandboxBlocked(
@@ -142,6 +150,7 @@ export async function recordToolCallSandboxBlocked(
     .set({
       status: "sandbox_blocked",
       errorMessage: input.reason ?? "blocked by sandbox",
+      responseJson: { capabilityGate: input.capabilityGate ?? false },
       /** 沙箱拒绝天然归 blocked（迁移 0084 一等列） */
       errorClass: "blocked",
     })
@@ -195,6 +204,8 @@ export interface RecordToolCallErrorInput extends BaseFinalizeInput {
   latencyMs: number;
   errorSource: ToolErrorSource;
   errorMessage: string;
+  contractCode?: string;
+  contractRejected?: boolean;
 }
 
 export function classifyToolErrorCode(source: ToolErrorSource, message: string): string {
@@ -234,6 +245,8 @@ export async function recordToolCallError(input: RecordToolCallErrorInput): Prom
         toolError: true,
         errorSource: input.errorSource,
         errorMessage: input.errorMessage,
+        ...(input.contractCode ? { contractCode: input.contractCode } : {}),
+        ...(input.contractRejected ? { contractRejected: true } : {}),
       },
     })
     .where(eq(toolCallLog.id, input.toolCallId));

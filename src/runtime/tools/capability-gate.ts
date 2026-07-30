@@ -3,27 +3,30 @@
  * See docs/agent-contracts/02-capability-gate.md
  */
 
+import type { AgentControlMode } from "../../types/loop";
+import { isAgentControlPlaneTool, isToolAllowedInAgentControlMode } from "../agent-control-mode";
+import { FINANCEX_FALLBACK_TOOLS, resolveFinancexFallbackToolName } from "../mcp/financex-fallback";
 import {
-  isAgentControlPlaneTool,
-  isToolAllowedInAgentControlMode,
-} from "../agent-control-mode";
-import { resolveEnabledMcpServers, filterMcpToolsByAvailability } from "../mcp/resolve-enabled-mcp-servers";
+  type EnabledMcpServerInfo,
+  filterMcpToolsByAvailability,
+  resolveEnabledMcpServers,
+} from "../mcp/resolve-enabled-mcp-servers";
 import { resolveEffectiveAgentTools } from "../orchestration/resolve-effective-tools";
 import {
   isTopologyTeamTool,
+  loadOrchestratorTopologyForWorkflow,
   resolveTopologyToolTimeoutMs,
 } from "../orchestration/topology-dispatch";
 import {
+  type LoadedSandboxPolicy,
   isConnectorAuthorized,
   isMcpAuthorized,
   isToolAuthorized,
   sandboxExecutor,
-  type LoadedSandboxPolicy,
 } from "../sandbox-executor";
-import type { AgentControlMode } from "../../types/loop";
 import type { RuntimeAgentDefinition } from "../types";
-import { getToolContract } from "./tool-contract-registry";
 import { isToolContractEnabled, timeoutMsForClass } from "./tool-contract";
+import { getToolContract } from "./tool-contract-registry";
 import { resolveToolExecutionRoute } from "./tool-dispatch-resolver";
 import { resolveConnectorForTool } from "./tool-routes";
 
@@ -66,7 +69,7 @@ export type CapabilityDeny = {
 export type CapabilityDecision = CapabilityAllow | CapabilityDeny;
 
 export function isCapabilityGateEnabled(): boolean {
-  return process.env["CAPABILITY_GATE_ENABLED"] !== "0";
+  return process.env.CAPABILITY_GATE_ENABLED !== "0";
 }
 
 export type AuthorizedCapabilitySurface = {
@@ -74,6 +77,16 @@ export type AuthorizedCapabilitySurface = {
   mcpServerNames: string[];
   mcpServers: Array<{ name: string; tools?: Array<{ name: string; desc?: string }> }>;
 };
+
+function financexFallbackPromptServer(): EnabledMcpServerInfo {
+  return {
+    name: "mcp-financex",
+    tools: [...FINANCEX_FALLBACK_TOOLS].sort().map((name) => ({
+      name,
+      desc: "financex 不可用时自动降级到内置只读行情/新闻数据源",
+    })),
+  };
+}
 
 /**
  * Prompt-facing projection — same rules as authorize where applicable.
@@ -89,14 +102,25 @@ export async function listAuthorizedCapabilities(input: {
     input.agentDefinition.mcpServers ?? [],
     input.projectId ?? undefined
   );
+  const policy = await sandboxExecutor.loadPolicy(input.agentDefinition);
+  const financexFallbackEnabled =
+    input.agentDefinition.mcpServers.includes("mcp-financex") &&
+    isMcpAuthorized(policy, "mcp-financex") &&
+    !enabledMcpServers.some((server) => server.name === "mcp-financex");
+  // A disabled financex process is not exposed as a remote MCP.  Its four
+  // documented read-only operations are virtualized by dispatcher fallback,
+  // so include that narrow surface in the prompt and avoid wasted retry turns.
+  const availableMcpServers = financexFallbackEnabled
+    ? [...enabledMcpServers, financexFallbackPromptServer()]
+    : enabledMcpServers;
   const authorized = await sandboxExecutor.filterAuthorizedTools(
     input.agentDefinition,
     effective.tools,
-    enabledMcpServers.map((s) => s.name)
+    availableMcpServers.map((s) => s.name)
   );
   let tools = filterMcpToolsByAvailability(authorized.tools, authorized.mcpServers);
   const allowedMcpNames = new Set(authorized.mcpServers);
-  let mcpServers = enabledMcpServers.filter((s) => allowedMcpNames.has(s.name));
+  let mcpServers = availableMcpServers.filter((s) => allowedMcpNames.has(s.name));
 
   if (input.agentMode === "plan") {
     tools = tools.filter((tool) => tool === "update_plan" || isAgentControlPlaneTool(tool));
@@ -120,10 +144,7 @@ export async function authorizeCapability(call: CapabilityCall): Promise<Capabil
   }
 
   const toolName = call.name;
-  if (
-    agentMode &&
-    !isToolAllowedInAgentControlMode(agentMode as AgentControlMode, toolName)
-  ) {
+  if (agentMode && !isToolAllowedInAgentControlMode(agentMode as AgentControlMode, toolName)) {
     return deny(
       "plan_mode_blocked",
       `Plan 模式不允许工具 ${toolName}`,
@@ -186,6 +207,17 @@ async function authorizeMcp(
   call: CapabilityCall,
   policy: LoadedSandboxPolicy
 ): Promise<CapabilityDecision> {
+  // `call_mcp` is the native entry point.  Checking only the target server
+  // would let a hand-written tool call bypass the prompt surface, which
+  // already filters this name through the normal tool allowlist.
+  if (!isToolAuthorized(policy, call.name)) {
+    return deny(
+      "tool_not_allowed",
+      `工具 \"${call.name}\" 不在沙箱白名单`,
+      "请只调用当前可用工具列表中的 call_mcp，或调整 sandbox 策略。"
+    );
+  }
+
   const serverName = (call.serverName ?? "").trim();
   if (!serverName) {
     return deny(
@@ -211,6 +243,19 @@ async function authorizeMcp(
   );
   const allowlist = enabled.map((s) => s.name).sort();
   if (!enabled.some((s) => s.name === serverName)) {
+    // financex 的这组工具会在 dispatcher 中被改写为内置、只读的行情/新闻查询。
+    // 允许它们穿过“远端 server 当前不可用”的可用性检查，才能进入该 fallback；
+    // sandbox MCP 白名单和工具入口白名单已在上方校验，未映射的 financex 工具及其他
+    // MCP 仍照常拒绝，绝不把冷却 server 本身重新启用。
+    if (serverName === "mcp-financex" && resolveFinancexFallbackToolName(call.mcpTool ?? "")) {
+      return {
+        ok: true,
+        canonicalName: `${serverName}/${call.mcpTool}`,
+        kind: "mcp",
+        serverName,
+        timeoutMs: timeoutMsForClass("mcp", policy.maxToolCallMs),
+      };
+    }
     return deny(
       "mcp_server_disabled",
       `mcp server "${serverName}" is not enabled or in cooldown`,
@@ -228,12 +273,27 @@ async function authorizeMcp(
   };
 }
 
-function authorizeTeam(toolName: string, policy: LoadedSandboxPolicy): CapabilityDecision {
+async function authorizeTeam(
+  toolName: string,
+  policy: LoadedSandboxPolicy
+): Promise<CapabilityDecision> {
   if (!isToolAuthorized(policy, toolName)) {
     return deny(
       "tool_not_allowed",
       `team 工具 ${toolName} 不在沙箱白名单`,
       "将 call_team_* 加入 sandbox allowedTools 或 agent definition.tools。"
+    );
+  }
+
+  // The sandbox can authorize a historical/dangling tool name.  It must still
+  // map to an enabled specialist before it is advertised as executable.
+  const topology = await loadOrchestratorTopologyForWorkflow();
+  if (!topology.toolNames.includes(toolName)) {
+    return deny(
+      "topology_role_blocked",
+      `team 工具 ${toolName} 没有对应的已启用专家角色`,
+      "请从当前拓扑提供的 call_team_<role> 工具中选择目标。",
+      topology.toolNames
     );
   }
   const timeoutMs =

@@ -17,9 +17,9 @@
  *   - 单次执行幂等；并发由"同一 project 只允许一个 running" guard 保证
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentSkill, skillCuratorRun } from "../../db/sqlite/schema";
+import { agentSkill, skillCuratorRun, skillRecallLog } from "../../db/sqlite/schema";
 import type { AgentSkill, SkillCuratorMode } from "../../types/entities";
 import { invokeWithFallback } from "../llm/llm-router";
 import { loadModelConfig } from "../config/model-config";
@@ -27,6 +27,9 @@ import { skillService } from "./skill-service";
 
 const STALE_THRESHOLD_DAYS = 30;
 const ARCHIVE_THRESHOLD_DAYS = 60;
+const PENDING_REVIEW_TTL_DAYS = 14;
+const QUALITY_RECALL_MIN = 20;
+const QUALITY_EXECUTED_RATE_MAX = 0.05;
 /** 自动归档仅适用于这些来源（用户 / 市场 skill 由人工管理） */
 const AUTO_ARCHIVE_SOURCES = new Set(["agent_created", "evolved"]);
 
@@ -56,7 +59,7 @@ actions:
 \`\`\``;
 
 export interface CuratorActionItem {
-  kind: "archive" | "consolidate" | "rename" | "none";
+  kind: "archive" | "consolidate" | "rename" | "mark_stale" | "propose_archive" | "none";
   skillId?: string;
   primarySkillId?: string;
   duplicateSkillIds?: string[];
@@ -210,8 +213,10 @@ export class SkillCurator {
 
   /**
    * 阶段 1：确定性自动状态迁移（无需 LLM）。
+   *   - pending_review 14d 未审批 → stale（仅自动来源）
    *   - 30d 未用 → stale
    *   - 60d 未用且 agent_created → archived
+   *   - 召回 ≥20 且执行率 <5% → propose_archive（默认不自动删除）
    *
    * dry_run 仅"统计"应转换的数量但不真写；live 才动 DB。
    */
@@ -235,6 +240,23 @@ export class SkillCurator {
     const now = Date.now();
     const staleThreshold = now - STALE_THRESHOLD_DAYS * 86400_000;
     const archiveThreshold = now - ARCHIVE_THRESHOLD_DAYS * 86400_000;
+    const pendingThreshold = now - PENDING_REVIEW_TTL_DAYS * 86400_000;
+    const qualityRows = await db
+      .select({
+        skillId: skillRecallLog.skillId,
+        recallCount: sql<number>`count(*)`,
+        executedCount: sql<number>`sum(case when ${skillRecallLog.executed} then 1 else 0 end)`,
+      })
+      .from(skillRecallLog)
+      .innerJoin(agentSkill, eq(skillRecallLog.skillId, agentSkill.id))
+      .where(eq(agentSkill.projectId, projectId))
+      .groupBy(skillRecallLog.skillId);
+    const qualityBySkillId = new Map(
+      qualityRows.map((row) => [
+        row.skillId,
+        { recallCount: Number(row.recallCount ?? 0), executedCount: Number(row.executedCount ?? 0) },
+      ])
+    );
 
     let markedStale = 0;
     let archived = 0;
@@ -242,9 +264,42 @@ export class SkillCurator {
 
     for (const s of all) {
       const lastUsed = s.lastUsedAt ? Date.parse(s.lastUsedAt) : Date.parse(s.createdAt);
+      const automaticallyManaged = AUTO_ARCHIVE_SOURCES.has(s.source);
+      if (s.state === "pending_review" && automaticallyManaged && lastUsed < pendingThreshold) {
+        actions.push({
+          kind: "mark_stale",
+          skillId: s.id,
+          reason: `pending_review unapproved ${Math.floor((now - lastUsed) / 86400_000)}d → stale`,
+        });
+        if (mode === "live") {
+          await db
+            .update(agentSkill)
+            .set({ state: "stale", updatedAt: new Date().toISOString() })
+            .where(eq(agentSkill.id, s.id));
+        }
+        markedStale += 1;
+        continue;
+      }
+
+      const quality = qualityBySkillId.get(s.id);
+      const executedRate = quality && quality.recallCount > 0 ? quality.executedCount / quality.recallCount : 0;
+      if (
+        automaticallyManaged &&
+        quality &&
+        quality.recallCount >= QUALITY_RECALL_MIN &&
+        executedRate < QUALITY_EXECUTED_RATE_MAX
+      ) {
+        // Deliberately a proposal even in live mode: recall logs are noisy and
+        // the contract explicitly protects auto-created skills from false GC.
+        actions.push({
+          kind: "propose_archive",
+          skillId: s.id,
+          reason: `quality candidate: recalls=${quality.recallCount}, executed=${quality.executedCount}, rate=${(executedRate * 100).toFixed(1)}%`,
+        });
+      }
       if (lastUsed > staleThreshold) continue;
 
-      if (lastUsed < archiveThreshold && AUTO_ARCHIVE_SOURCES.has(s.source) && s.state === "stale") {
+      if (lastUsed < archiveThreshold && automaticallyManaged && s.state === "stale") {
         actions.push({
           kind: "archive",
           skillId: s.id,
@@ -256,7 +311,7 @@ export class SkillCurator {
         archived += 1;
       } else if (s.state !== "stale") {
         actions.push({
-          kind: "none",
+          kind: "mark_stale",
           skillId: s.id,
           reason: `unused ${Math.floor((now - lastUsed) / 86400_000)}d → marked stale`,
         });
@@ -452,7 +507,7 @@ function applyField(target: Partial<CuratorActionItem>, key: string, value: stri
   const k = key.replace(/_(\w)/g, (_, c) => c.toUpperCase());
   const stripped = value.replace(/^['"]/, "").replace(/['"]$/, "");
   if (key === "kind") {
-    if (["archive", "consolidate", "rename", "none"].includes(stripped)) {
+    if (["archive", "consolidate", "rename", "mark_stale", "propose_archive", "none"].includes(stripped)) {
       target.kind = stripped as CuratorActionItem["kind"];
     }
     return;

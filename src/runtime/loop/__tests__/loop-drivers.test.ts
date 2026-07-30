@@ -1,12 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import { a2aLoopDriver } from "../../a2a/a2a-loop-driver";
 import { normalizeLoopKind } from "../../../types/loop";
 import { parseCliLoopLine, sniffNativeSessionId } from "../loop-protocol";
-import { nativeLoopDriver } from "../native-loop-driver";
 import { getLoopDriver } from "../registry";
 
 describe("getLoopDriver", () => {
-  it("returns native driver", () => {
-    expect(getLoopDriver("native")).toBe(nativeLoopDriver);
+  it("routes native to A2A driver", () => {
+    expect(getLoopDriver("native")).toBe(a2aLoopDriver);
   });
   it("returns Claude CLI driver", () => {
     expect(getLoopDriver("claude_cli")).toBe(getLoopDriver("claude_cli"));

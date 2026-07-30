@@ -39,6 +39,13 @@ export class AgentRuntime {
   private readonly instanceOnlyRouting: boolean;
   private running = false;
 
+  /**
+   * `definition.maxIterations` 是 ReAct 推理步数，不是 A2A 信封数量。把两者混用会让
+   * 正常的 progress / resume / result 消息在多轮研究中被无声丢弃。这里仅保留一个
+   * 很高的抗消息风暴保险丝，实际推理上限由 sandbox ReAct policy 统一执行。
+   */
+  private static readonly MAX_A2A_MESSAGES_PER_WORKFLOW = 512;
+
   constructor(
     definition: RuntimeAgentDefinition,
     handler: RuntimeRoleHandler,
@@ -154,7 +161,7 @@ export class AgentRuntime {
 
     try {
       const iteration = this.markIteration(msg.workflowId);
-      if (iteration > this.definition.maxIterations) {
+      if (iteration > AgentRuntime.MAX_A2A_MESSAGES_PER_WORKFLOW) {
         await this.send({
           workflowId: msg.workflowId,
           traceId: msg.traceId,
@@ -163,9 +170,9 @@ export class AgentRuntime {
           payload: {
             alertType: "iteration_exceeded",
             severity: "error",
-            message: `max_iterations exceeded for role=${this.definition.role}`,
+            message: `A2A message safety limit exceeded for role=${this.definition.role}`,
             metadata: {
-              maxIterations: this.definition.maxIterations,
+              maxMessages: AgentRuntime.MAX_A2A_MESSAGES_PER_WORKFLOW,
               current: iteration,
             },
           },

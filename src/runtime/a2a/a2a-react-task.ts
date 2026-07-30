@@ -1,11 +1,37 @@
 import { randomUUID } from "node:crypto";
-import type { A2AMessageEnvelope, TaskAssignPayload } from "../../types/a2a";
-import { stepStreamBus } from "../langgraph/event-stream";
-import { executeAgentReact } from "../langgraph/execute-agent-react";
-import type { AgentGraphState } from "../langgraph/state";
+import type { A2AMessageEnvelope, TaskAssignPayload, TaskProgressPayload } from "../../types/a2a";
+import { stepStreamBus } from "../react/event-stream";
+import { executeAgentReact } from "../react/execute-agent-react";
+import type { AgentGraphState } from "../react/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
+import { resolveTopologyTaskHeartbeatMs } from "../orchestration/topology-dispatch";
 import type { RuntimeHandlerContext } from "../types";
+import { clearA2ATaskCancellation, isA2ATaskCancellationRequested } from "./a2a-task-cancellation";
+import { completeA2ATask, markA2ATaskWorking, recordA2ATaskProgress } from "./a2a-task-service";
 import { buildTaskResult } from "./task-result";
+
+function taskFailureDetails(finalResponse: Record<string, unknown>): {
+  status: "failed" | "timeout" | "cancelled";
+  errorCode: string;
+  errorMessage: string;
+} {
+  const reason = String(finalResponse.reason ?? "task_failed");
+  const answer = String(finalResponse.error ?? finalResponse.answerText ?? "").trim();
+  if (reason === "task_deadline_exceeded" || reason === "reason_timeout") {
+    return { status: "timeout", errorCode: reason, errorMessage: answer || "专家子任务执行超时" };
+  }
+  if (reason === "a2a_task_cancelled" || reason === "user_cancelled") {
+    return { status: "cancelled", errorCode: reason, errorMessage: answer || "专家子任务已取消" };
+  }
+  return { status: "failed", errorCode: reason, errorMessage: answer || "专家子任务未完成" };
+}
+
+function taskSummary(finalResponse: Record<string, unknown>): string | undefined {
+  for (const candidate of [finalResponse.answerText, finalResponse.summary, finalResponse.reason]) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim().slice(0, 500);
+  }
+  return undefined;
+}
 
 /**
  * Topology dispatch is a child task of an already-running workflow. Its instance
@@ -119,11 +145,51 @@ export function resolveA2aExecutionRunId(payload: TaskAssignPayload): string {
 }
 
 export function resolveA2aSpecialistMaxIterations(configured: number): number {
-  // 专家任务还有 payload.deadline 和 topology tool timeout 两层时间护栏。
-  // 固定压到 5 轮会让“检查数据源 → 解析标的 → 拉数据 → 降级重试 → 总结”这类
-  // 正常链路在最后总结前被 max_iterations 截断。8 轮给恢复链路留出空间，同时
-  // 仍避免异常 Agent 无限循环。
-  return Math.min(Math.max(1, configured), 8);
+  // 专家任务需要完成“检查数据源 → 解析标的 → 拉数据 → 降级重试 → 交叉验证 → 总结”。
+  // 8 轮会在正常恢复链路尚未产出结论时截断。墙钟 deadline、可取消任务和 sandbox
+  // policy 已是独立护栏，因此这里提供可完成研究的执行预算，而不是第二个失败阈值。
+  return Math.min(Math.max(24, configured), 32);
+}
+
+/** 编排器负责汇总多专家结果、处理降级并形成最终答复，必须与 sandbox 预算对齐。 */
+export function resolveA2aOrchestratorMaxIterations(configured: number): number {
+  return Math.min(Math.max(64, configured), 64);
+}
+
+async function sendTaskProgress(
+  ctx: RuntimeHandlerContext,
+  msg: A2AMessageEnvelope,
+  payload: TaskAssignPayload,
+  event: {
+    phase: TaskProgressPayload["phase"];
+    iteration?: number;
+    detail?: string;
+  }
+): Promise<void> {
+  // Topology children report lease health back to the assigner; primary workflow
+  // owners (non-topology) have no gather waiter to renew.
+  if (ownsWorkflowTerminalState(payload)) return;
+  try {
+    await ctx.send({
+      workflowId: msg.workflowId,
+      traceId: msg.traceId,
+      receiverAgent: msg.senderAgent,
+      messageType: "TASK_PROGRESS",
+      payload: {
+        taskId: payload.taskId,
+        phase: event.phase,
+        ...(event.iteration !== undefined ? { iteration: Math.max(0, event.iteration) } : {}),
+        role: ctx.definition.role,
+        ...(event.detail ? { detail: event.detail.slice(0, 500) } : {}),
+        ts: new Date().toISOString(),
+      } satisfies TaskProgressPayload,
+      priority: 20,
+    });
+  } catch (err) {
+    console.warn(
+      `[a2a-react-task] TASK_PROGRESS failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
 }
 
 export async function runA2aReactTaskAssign(
@@ -142,12 +208,15 @@ export async function runA2aReactTaskAssign(
   const traceId = msg.traceId;
   const workflowId = msg.workflowId;
   const ownsTerminalState = ownsWorkflowTerminalState(payload);
-  const definition = ownsTerminalState
-    ? ctx.definition
-    : {
-        ...ctx.definition,
-        maxIterations: resolveA2aSpecialistMaxIterations(ctx.definition.maxIterations),
-      };
+  const definition = {
+    ...ctx.definition,
+    maxIterations:
+      ctx.definition.role === "orchestrator"
+        ? resolveA2aOrchestratorMaxIterations(ctx.definition.maxIterations)
+        : ownsTerminalState
+          ? ctx.definition.maxIterations
+          : resolveA2aSpecialistMaxIterations(ctx.definition.maxIterations),
+  };
 
   /**
    * 自研 snapshot 续跑：workflow_resume 的 payload.params.resume=true 时，
@@ -156,8 +225,39 @@ export async function runA2aReactTaskAssign(
    * 不带 resume —— 让 orchestrator 重跑 ReAct，由 hitlApproval 自然进入上下文。
    */
   const resume = (payload.params as Record<string, unknown> | undefined)?.resume === true;
+  const startedAt = Date.now();
+  const heartbeatMs = resolveTopologyTaskHeartbeatMs();
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  const emitProgress = async (event: {
+    phase: TaskProgressPayload["phase"];
+    iteration?: number;
+    detail?: string;
+  }) => {
+    const progress: TaskProgressPayload = {
+      taskId: payload.taskId,
+      phase: event.phase,
+      ...(event.iteration !== undefined ? { iteration: Math.max(0, event.iteration) } : {}),
+      role: ctx.definition.role,
+      ...(event.detail ? { detail: event.detail.slice(0, 500) } : {}),
+      ts: new Date().toISOString(),
+    };
+    // The durable A2A event is authoritative; a transient local bus failure
+    // must not erase progress or make a restarted parent lose the task.
+    await recordA2ATaskProgress(payload.taskId, progress);
+    await sendTaskProgress(ctx, msg, payload, event);
+  };
 
   try {
+    await markA2ATaskWorking(payload.taskId);
+    await emitProgress({ phase: "start", iteration: 0 });
+    if (!ownsWorkflowTerminalState(payload)) {
+      heartbeatTimer = setInterval(() => {
+        void emitProgress({ phase: "heartbeat" });
+      }, heartbeatMs);
+      (heartbeatTimer as { unref?: () => void }).unref?.();
+    }
+
     const { finalState, finalResponse, terminalStatus } = await executeAgentReact({
       runId,
       workflowId,
@@ -169,6 +269,8 @@ export async function runA2aReactTaskAssign(
       streamSource: "a2a",
       updateWorkflowStatus: ownsTerminalState,
       resume,
+      isTaskCancellationRequested: () => isA2ATaskCancellationRequested(payload.taskId),
+      onTaskProgress: (event) => emitProgress(event),
     });
 
     /**
@@ -176,14 +278,27 @@ export async function runA2aReactTaskAssign(
      * 会把"等审批"的工作流跑进 quality snapshot / alert 评估，污染监控指标，
      * 而且类型上 onWorkflowTerminal 只接受 completed/failed，是借 union 宽度蒙混过的。
      *
-     * P0-3 R5：同理也不能发 TASK_RESULT(success=true) —— 那是个半成品消息，
-     * 让上游 handler 误以为任务跑完了。awaiting_approval 时本任务挂起，等用户审批
-     * 之后由 resolveHitlRequest 重新派发，此处直接 return 让本次 invocation 结束即可。
+     * P0-3 R5：不能发 TASK_RESULT(success=true)。但 V2 会发可观察的
+     * awaiting_approval receipt，避免上游 Gather 无期限等到自己的 timeout。
      */
     if (terminalStatus === "awaiting_approval") {
-      console.log(
-        `[a2a-react] workflow=${workflowId} agent=${ctx.definition.role} suspended awaiting HITL; skip TASK_RESULT / onWorkflowTerminal`
-      );
+      const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
+        status: "awaiting_approval",
+        errorCode: "awaiting_approval",
+        errorMessage: "专家子任务正在等待人工审批",
+        result: finalResponse,
+        ...(taskSummary(finalResponse) ? { summary: taskSummary(finalResponse) } : {}),
+        durationMs: Date.now() - startedAt,
+      });
+      await completeA2ATask(payload.taskId, taskResultPayload);
+      await ctx.send({
+        workflowId,
+        traceId,
+        receiverAgent: msg.senderAgent,
+        messageType: "TASK_RESULT",
+        payload: taskResultPayload,
+        priority: msg.priority,
+      });
       return;
     }
 
@@ -202,15 +317,37 @@ export async function runA2aReactTaskAssign(
         }
       : finalResponse;
 
+    const failure =
+      terminalStatus === "failed" && !evidenceSalvaged ? taskFailureDetails(finalResponse) : null;
+    const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
+      status: failure?.status ?? "completed",
+      success: terminalStatus !== "failed" || evidenceSalvaged,
+      result: taskResult,
+      ...(failure ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage } : {}),
+      ...(taskEvidence
+        ? {
+            evidence: {
+              kind: taskEvidence.kind,
+              verified: taskEvidence.verified,
+              detail: {
+                sourceTool: taskEvidence.sourceTool,
+                ...(taskEvidence.result && typeof taskEvidence.result === "object"
+                  ? (taskEvidence.result as Record<string, unknown>)
+                  : {}),
+              },
+            },
+          }
+        : {}),
+      ...(taskSummary(finalResponse) ? { summary: taskSummary(finalResponse) } : {}),
+      durationMs: Date.now() - startedAt,
+    });
+    await completeA2ATask(payload.taskId, taskResultPayload);
     await ctx.send({
       workflowId,
       traceId,
       receiverAgent: msg.senderAgent,
       messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, ctx.definition.role, {
-        success: terminalStatus !== "failed" || evidenceSalvaged,
-        result: taskResult,
-      }),
+      payload: taskResultPayload,
       priority: msg.priority,
     });
 
@@ -226,21 +363,27 @@ export async function runA2aReactTaskAssign(
      */
     const message = err instanceof Error ? err.message : String(err);
     if (ownsTerminalState) onWorkflowTerminal(workflowId, "failed");
+    const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
+      status: "failed",
+      errorCode: "a2a_task_execution_error",
+      result: { error: message },
+      errorMessage: message,
+      durationMs: Date.now() - startedAt,
+    });
+    await completeA2ATask(payload.taskId, taskResultPayload);
 
     await ctx.send({
       workflowId,
       traceId,
       receiverAgent: msg.senderAgent,
       messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, ctx.definition.role, {
-        success: false,
-        result: { error: message },
-        errorMessage: message,
-      }),
+      payload: taskResultPayload,
       priority: msg.priority,
     });
     return undefined;
   } finally {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    clearA2ATaskCancellation(payload.taskId);
     setTimeout(() => stepStreamBus.close(runId), 250);
   }
 }

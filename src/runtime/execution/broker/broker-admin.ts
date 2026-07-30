@@ -1,6 +1,5 @@
 /**
- * P2-D 物理迁移：原 `src/runtime/reia/broker-admin.ts` → 这里。
- * 与 broker-service 一同归到 execution/broker/。
+ * Broker 账户管理 / 健康检查（execution 层）。
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";

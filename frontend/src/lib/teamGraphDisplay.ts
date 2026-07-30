@@ -224,7 +224,7 @@ export function buildFilteredTeamGraphDisplay(
     const cur = toolStatsByRole.get(t.agentRole) ?? { total: 0, success: 0, fail: 0 };
     cur.total += 1;
     if (toolOk(t.status)) cur.success += 1;
-    else cur.fail += 1;
+    else if (t.status !== "running") cur.fail += 1;
     toolStatsByRole.set(t.agentRole, cur);
   }
   for (const m of teamGraph.mcpCalls ?? []) {
@@ -232,7 +232,7 @@ export function buildFilteredTeamGraphDisplay(
     const cur = toolStatsByRole.get(m.agentRole) ?? { total: 0, success: 0, fail: 0 };
     cur.total += 1;
     if (toolOk(m.status)) cur.success += 1;
-    else cur.fail += 1;
+    else if (m.status !== "running") cur.fail += 1;
     toolStatsByRole.set(m.agentRole, cur);
   }
 

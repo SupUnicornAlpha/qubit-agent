@@ -5,14 +5,14 @@ import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { parseAgentPlanSnapshot } from "../agent-control-mode";
-import { writeCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
-import { actNode } from "../langgraph/nodes/act";
-import { hitlGateNode } from "../langgraph/nodes/hitl-gate";
-import { observeNode } from "../langgraph/nodes/observe";
-import { perceiveNode } from "../langgraph/nodes/perceive";
-import { reasonNode } from "../langgraph/nodes/reason";
-import { shouldStopReactLoopAfterObserve } from "../langgraph/react-loop-policy";
-import type { AgentGraphState, StepStreamEvent } from "../langgraph/state";
+import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
+import { actNode } from "./nodes/act";
+import { hitlGateNode } from "./nodes/hitl-gate";
+import { observeNode } from "./nodes/observe";
+import { perceiveNode } from "./nodes/perceive";
+import { reasonNode } from "./nodes/reason";
+import { shouldStopReactLoopAfterObserve } from "./react-loop-policy";
+import type { AgentGraphState, StepStreamEvent } from "./state";
 import { resolveLlmForAgent } from "../llm/llm-router";
 import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
@@ -22,9 +22,9 @@ import type { RuntimeAgentDefinition } from "../types";
 import { HitlAwaitingApprovalError } from "../workflow/hitl-service";
 import { drainUserMessages } from "../workflow/user-message-queue";
 import {
+  WorkflowCancelledError,
   getWorkflowCancellationSignal,
   isWorkflowCancellationRequested,
-  WorkflowCancelledError,
 } from "../workflow/workflow-cancellation";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
@@ -63,20 +63,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 }
 
 /**
- * 自研 ReAct 循环：用纯 `while` 取代退化的单 channel LangGraph StateGraph。
+ * 自研 ReAct 循环：纯 `while` 状态机（perceive → reason → hitl_gate → act → observe）。
  *
- * 设计原则（迁移自 execute-agent-react.ts 的 StateGraph 拓扑，行为等价）：
+ * 设计原则：
  *  - 节点序：perceive(fresh) → while{ reason → hitl_gate → act → observe → 决策 } → finalize
- *  - 6 个 node 仍是 `src/runtime/langgraph/nodes/*` 的纯函数，未改动；本文件只负责编排
- *    + 把原 StateGraph node 闭包里的副作用（insertAgentStep / writeLlmCallLog /
- *    checkIterationLimit / snapshot）原样搬过来，顺序与原实现逐行对齐。
- *  - 分支映射（对应原 execute-agent-react.ts:412-442 的 conditionalEdges）：
+ *  - 6 个 node 是 `src/runtime/react/nodes/*` 的纯函数；本文件负责编排
+ *    + 副作用（insertAgentStep / writeLlmCallLog / checkIterationLimit / snapshot）
+ *  - 分支：
  *      hitl_gate 后 awaiting_approval/terminated → 跳出循环走 finalize
  *      act 后 awaiting_approval/terminated → 跳出循环走 finalize（HITL pause 在 act
  *        内被 catch 转 finalResponse）
  *      observe 后 5 分支：finalResponse / !forceReactLoop / shouldStop /
  *        iteration>=max / 否则回 reason
- *  - artifact gate push-back 天然支持：observe 不写 finalResponse → shouldStop=false →
+ *  - artifact gate push-back：observe 不写 finalResponse → shouldStop=false →
  *    iteration<max → 回 reason 重跑。
  *
  * 不负责：workflow_run.status / agent_instance 终态写 / final 帧 emit / resume —
@@ -94,6 +93,17 @@ export interface RunReactLoopParams {
   forceReactLoop: boolean;
   /** 初始状态（fresh perceive 入口）。 */
   initialState: AgentGraphState;
+  /** A topology child can be cancelled without cancelling its parent workflow. */
+  isTaskCancellationRequested?: () => boolean;
+  /**
+   * A2A lease heartbeat / phase signal for topology children.
+   * Fail-soft: callers must not let progress errors abort the ReAct loop.
+   */
+  onTaskProgress?: (event: {
+    phase: "start" | "reason" | "act" | "observe" | "heartbeat" | "other";
+    iteration: number;
+    detail?: string;
+  }) => void | Promise<void>;
   /**
    * 自研 resume 入口（阶段 2）：传入则**跳过 perceive**，直接用此 state 进入 while
    * 循环（从下一轮 reason 重入）。来自 `restoreStateFromSnapshot`。
@@ -598,6 +608,37 @@ function terminateByUser(state: AgentGraphState): AgentGraphState {
   };
 }
 
+function terminateByTaskCancellation(state: AgentGraphState): AgentGraphState {
+  return {
+    ...state,
+    finalResponse: {
+      status: "terminated",
+      reason: "a2a_task_cancelled",
+      role: state.agentDefinition.role,
+      iteration: state.iteration,
+      answerText: "该专家子任务已因调度超时被停止；这不代表底层数据源不可用。",
+    },
+  };
+}
+
+async function emitTaskProgress(
+  params: RunReactLoopParams,
+  event: {
+    phase: "start" | "reason" | "act" | "observe" | "heartbeat" | "other";
+    iteration: number;
+    detail?: string;
+  }
+): Promise<void> {
+  if (!params.onTaskProgress) return;
+  try {
+    await params.onTaskProgress(event);
+  } catch (err) {
+    console.warn(
+      `[run-react-loop] onTaskProgress failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
 /**
  * 跑完整条 ReAct 循环并返回 finalize 后的 state。
  *
@@ -629,10 +670,11 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
 
   // while 主体对应原 conditionalEdges：reason→hitl_gate→act→observe→（回 reason / finalize）
   for (;;) {
-    if (
-      cancellationSignal.aborted ||
-      isWorkflowCancellationRequested(effectiveParams.workflowId)
-    ) {
+    if (effectiveParams.isTaskCancellationRequested?.()) {
+      state = terminateByTaskCancellation(state);
+      break;
+    }
+    if (cancellationSignal.aborted || isWorkflowCancellationRequested(effectiveParams.workflowId)) {
       state = terminateByUser(state);
       break;
     }
@@ -680,16 +722,40 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
       console.warn(`[run-react-loop] drainUserMessages failed: ${(e as Error).message}`);
     }
 
+    await emitTaskProgress(effectiveParams, {
+      phase: "reason",
+      iteration: state.iteration,
+    });
     state = await runReason(effectiveParams, state);
     // 沙箱迭代限流：reason 已写 terminated finalResponse → 直接 finalize
     if (isTerminalStatus(state)) break;
+    if (effectiveParams.isTaskCancellationRequested?.()) {
+      state = terminateByTaskCancellation(state);
+      break;
+    }
 
     state = await runHitlGate(effectiveParams, state);
     if (isTerminalStatus(state)) break;
+    if (effectiveParams.isTaskCancellationRequested?.()) {
+      state = terminateByTaskCancellation(state);
+      break;
+    }
 
+    await emitTaskProgress(effectiveParams, {
+      phase: "act",
+      iteration: state.iteration,
+    });
     state = await runAct(effectiveParams, state);
     if (isTerminalStatus(state)) break;
+    if (effectiveParams.isTaskCancellationRequested?.()) {
+      state = terminateByTaskCancellation(state);
+      break;
+    }
 
+    await emitTaskProgress(effectiveParams, {
+      phase: "observe",
+      iteration: state.iteration,
+    });
     state = await runObserve(effectiveParams, state);
     // observe 后 5 分支（对应原 :430-442）
     if (state.finalResponse) break;

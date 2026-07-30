@@ -258,6 +258,7 @@ export interface McpServerConfig {
 export type A2AMessageType =
   | "TASK_ASSIGN"
   | "TASK_RESULT"
+  | "TASK_PROGRESS"
   | "RISK_BLOCK"
   | "ORDER_INTENT"
   | "MODEL_UPDATE"

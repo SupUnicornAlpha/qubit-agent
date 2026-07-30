@@ -4,7 +4,7 @@ import { getDb } from "../../db/sqlite/client";
 import { analystResearchJob, workflowHitlRequest, workflowRun } from "../../db/sqlite/schema";
 import { normalizeLoopKind } from "../../types/loop";
 import { dispatchTaskToRole } from "../agent-pool";
-import { loadLatestCheckpointSnapshot } from "../langgraph/agent-checkpoint-snapshot";
+import { loadLatestCheckpointSnapshot } from "../react/agent-checkpoint-snapshot";
 import { ClaudeCliLoopDriver, CodexCliLoopDriver } from "../loop/cli-loop-driver";
 import {
   failAnalystResearchJob,

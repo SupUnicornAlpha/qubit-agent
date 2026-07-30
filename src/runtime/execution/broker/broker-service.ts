@@ -1,15 +1,8 @@
 /**
- * P2-D 物理迁移：原 `src/runtime/reia/broker-service.ts` → 这里。
+ * Broker 账户解析与订单桥接（execution 层）。
  *
- * 语义层级：broker-service 属 execution 层（撮合 → 实盘 broker 桥），不属
- * REIA。原放在 reia 下导致 `execution → reia` 反向依赖 cycle。
- *
- * broker-connector.ts 仍在 reia/ 下（intent-engine 强依赖；下一轮再迁），
- * 因此本文件仍 `import "../../reia/broker-connector"`，但方向已经是
- * execution/broker → reia/broker-connector（单向 adapter，无 cycle）。
- *
- * 旧路径 `src/runtime/reia/broker-service.ts` 改为 deprecated re-export，
- * 保留 1-2 个版本以便外部 import 平滑迁移。
+ * broker-connector.ts 仍在 reia/（intent-engine 强依赖）；本文件单向依赖
+ * `reia/broker-connector`，无 cycle。
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";

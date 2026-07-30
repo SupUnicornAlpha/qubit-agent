@@ -322,15 +322,12 @@ qubit-agent/
 bun run lint          # Biome lint
 bun run check         # lint + format 检查
 bun test              # 集成测试
-bun run acceptance:langgraph  # 历史兼容脚本名：验证当前自研 ReAct 主链路
 bun run build         # 编译生产后端（含项目约定的 DuckDB external 处理）
 ```
 
-> **命名说明**：项目已移除 LangGraph 框架依赖和 checkpoint 表。当前原生执行链路是
-> `src/runtime/react/run-react-loop.ts` 中的纯 `while` ReAct 状态机，Agent 间派发统一走
-> A2A 消息总线，恢复使用自研 `agent_checkpoint_snapshot`。代码中的
-> `src/runtime/langgraph/` 与 `acceptance:langgraph` 是迁移期间保留的兼容路径 / 命令名，
-> 不代表运行时仍依赖 LangGraph。
+> **执行链路**：自研 ReAct 状态机在 `src/runtime/react/`（`run-react-loop.ts` + `nodes/*`）。
+> Agent 间派发统一走 A2A 消息总线，恢复使用自研 `agent_checkpoint_snapshot`。
+> 已不再依赖 LangGraph 框架。
 
 ### Agent Benchmark
 

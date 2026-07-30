@@ -9,8 +9,8 @@ import {
   resolveWorkflowProcessConfig,
 } from "../../types/loop";
 import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
-import { stepStreamBus } from "../langgraph/event-stream";
-import type { StepStreamEvent } from "../langgraph/state";
+import { stepStreamBus } from "../react/event-stream";
+import type { StepStreamEvent } from "../react/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import {
   buildArtifactGapHint,

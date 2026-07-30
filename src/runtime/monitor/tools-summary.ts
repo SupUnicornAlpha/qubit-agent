@@ -131,7 +131,9 @@ export async function getToolsSummary(input?: {
     if (r.status === "success") acc.successCount += 1;
     else if (r.status === "timeout") acc.timeoutCount += 1;
     else if (r.status === "sandbox_blocked") acc.sandboxBlockedCount += 1;
-    else {
+    else if (r.status === "running") {
+      // Visible live call; not a failed completed call.
+    } else {
       acc.errorCount += 1;
       const bucket = classifyToolFailureForMonitoring(r.errorMessage);
       if (bucket === "no_data") acc.noDataCount += 1;

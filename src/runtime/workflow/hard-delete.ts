@@ -63,6 +63,7 @@ const WORKFLOW_DIRECT_TABLES = [
   "session_memory",
   "signal_fusion_result",
   "trader_context_message",
+  "user_message_queue",
   "workflow_compensation_task",
   "workflow_quality_snapshot",
 ] as const;
@@ -178,9 +179,53 @@ export async function hardDeleteWorkflowRun(
       .run(workflowRunId);
     details.sandbox_violation_log = sandboxDel.changes;
 
+    // Workflow 级经验是该次运行的派生记忆；硬删除 workflow 时必须一并删除，
+    // 不能只依赖 FK 的 SET NULL，否则会留下再也无法追溯来源的 orphan memory。
+    const experienceDel = sqlite
+      .prepare("DELETE FROM experience WHERE source_run_id = ?")
+      .run(workflowRunId);
+    details.experience = experienceDel.changes;
+
+    // 有些审计/产物记录不以 workflow_run_id 直接归属，但仍引用本次运行
+    // 创建的 agent_instance。删除实例前必须清理或解除这些反向引用；否则
+    // SQLite 的 FK 会正确阻止硬删除。
+    const a2aInstanceDel = sqlite
+      .prepare(
+        "DELETE FROM a2a_message WHERE sender_instance_id IN (SELECT id FROM agent_instance WHERE workflow_run_id = ?) OR receiver_instance_id IN (SELECT id FROM agent_instance WHERE workflow_run_id = ?)"
+      )
+      .run(workflowRunId, workflowRunId);
+    details.a2a_message = (details.a2a_message ?? 0) + a2aInstanceDel.changes;
+
+    for (const table of [
+      "audit_log",
+      "backtest_run",
+      "research_experiment",
+      "risk_decision",
+      "simulation_run",
+    ] as const) {
+      const r = sqlite
+        .prepare(
+          `UPDATE ${table} SET agent_instance_id = NULL WHERE agent_instance_id IN (SELECT id FROM agent_instance WHERE workflow_run_id = ?)`
+        )
+        .run(workflowRunId);
+      details[`${table}_agent_instance_set_null`] = r.changes;
+    }
+    const strategyOwner = sqlite
+      .prepare(
+        "UPDATE strategy SET owner_instance_id = NULL WHERE owner_instance_id IN (SELECT id FROM agent_instance WHERE workflow_run_id = ?)"
+      )
+      .run(workflowRunId);
+    details.strategy_owner_instance_set_null = strategyOwner.changes;
+
     // 1.4) 三级 FK 链：必须先于二级删，否则中间表（如 broker_order）一旦被清，
     // 孤儿子表（如 fill）会在 COMMIT 报 FK 违规。
-    for (const { table, via, viaColumn, viaParent, viaParentColumn } of WORKFLOW_DEEP_INDIRECT_TABLES) {
+    for (const {
+      table,
+      via,
+      viaColumn,
+      viaParent,
+      viaParentColumn,
+    } of WORKFLOW_DEEP_INDIRECT_TABLES) {
       const r = sqlite
         .prepare(
           `DELETE FROM ${table} WHERE ${viaColumn} IN (

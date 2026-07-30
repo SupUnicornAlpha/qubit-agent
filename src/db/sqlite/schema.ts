@@ -70,8 +70,7 @@ export const workflowRun = sqliteTable("workflow_run", {
     .notNull()
     .default("native"),
   /**
-   * native 循环下的执行路径。收敛后唯一总线为 a2a；"graph" 枚举仅兼容历史 DB 行，
-   * 实际不再路由到 LangGraph（resolveExecutionPath 对 native 恒返回 a2a）。
+   * native 循环下的执行路径。收敛后唯一总线为 a2a；"graph" 枚举仅兼容历史 DB 行。
    */
   executionPath: text("execution_path", { enum: ["graph", "a2a"] })
     .notNull()
@@ -792,6 +791,7 @@ export const a2aMessage = sqliteTable("a2a_message", {
     enum: [
       "TASK_ASSIGN",
       "TASK_RESULT",
+      "TASK_PROGRESS",
       "RISK_BLOCK",
       "ORDER_INTENT",
       "MODEL_UPDATE",
@@ -803,6 +803,86 @@ export const a2aMessage = sqliteTable("a2a_message", {
   priority: integer("priority").notNull().default(50),
   createdAt: createdAt(),
 });
+
+/**
+ * Durable A2A task projection.  `a2a_message` remains the immutable envelope
+ * audit log; this table is the authoritative lifecycle state used by waiting,
+ * recovery and the UI.  It intentionally does not FK agent ids: a pool
+ * instance can be replaced while a task is still resumable.
+ */
+export const a2aTask = sqliteTable(
+  "a2a_task",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    contextId: text("context_id").notNull(),
+    parentTaskId: text("parent_task_id"),
+    traceId: text("trace_id").notNull(),
+    senderAgentId: text("sender_agent_id").notNull(),
+    receiverAgentId: text("receiver_agent_id").notNull(),
+    receiverRole: text("receiver_role").notNull(),
+    status: text("status", {
+      enum: ["submitted", "working", "input_required", "completed", "failed", "cancelled", "rejected"],
+    })
+      .notNull()
+      .default("submitted"),
+    revision: integer("revision").notNull().default(0),
+    idempotencyKey: text("idempotency_key").notNull(),
+    inputJson: text("input_json", { mode: "json" }).notNull().default({}),
+    resultJson: text("result_json", { mode: "json" }),
+    errorJson: text("error_json", { mode: "json" }),
+    deadlineAt: text("deadline_at"),
+    startedAt: text("started_at"),
+    completedAt: text("completed_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    byWorkflow: index("idx_a2a_task_workflow_created").on(table.workflowRunId, table.createdAt),
+    byReceiverStatus: index("idx_a2a_task_receiver_status").on(
+      table.receiverAgentId,
+      table.status,
+      table.updatedAt
+    ),
+    idempotency: uniqueIndex("uq_a2a_task_workflow_idempotency").on(
+      table.workflowRunId,
+      table.idempotencyKey
+    ),
+  })
+);
+
+/** Ordered A2A TaskStatusUpdate / TaskArtifactUpdate stream for replay and SSE. */
+export const a2aTaskEvent = sqliteTable(
+  "a2a_task_event",
+  {
+    id: id(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => a2aTask.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    eventType: text("event_type", {
+      enum: [
+        "submitted",
+        "working",
+        "progress",
+        "artifact",
+        "input_required",
+        "completed",
+        "failed",
+        "cancelled",
+        "rejected",
+      ],
+    }).notNull(),
+    payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (table) => ({
+    taskSequence: uniqueIndex("uq_a2a_task_event_sequence").on(table.taskId, table.sequence),
+    byTaskSequence: index("idx_a2a_task_event_task_sequence").on(table.taskId, table.sequence),
+  })
+);
 
 // Schema 收敛 C5-1（migration 0070）：`acp_call` 已删除。
 // 4 个终态 helper 之外只有 minimum-acceptance 脚本读 1 处行数断言，0 个
@@ -856,7 +936,7 @@ export const toolCallLog = sqliteTable("tool_call_log", {
   requestJson: text("request_json", { mode: "json" }).notNull(),
   responseJson: text("response_json", { mode: "json" }),
   status: text("status", {
-    enum: ["success", "error", "timeout", "sandbox_blocked"],
+    enum: ["running", "success", "error", "timeout", "sandbox_blocked"],
   }).notNull(),
   latencyMs: integer("latency_ms"),
   errorMessage: text("error_message"),
@@ -979,7 +1059,9 @@ export const mcpCallLog = sqliteTable("mcp_call_log", {
   circuitState: text("circuit_state", { enum: ["closed", "open", "half_open"] }),
   requestJson: text("request_json", { mode: "json" }).notNull(),
   responseJson: text("response_json", { mode: "json" }),
-  status: text("status", { enum: ["success", "timeout", "failed", "sandbox_blocked"] }).notNull(),
+  status: text("status", {
+    enum: ["running", "success", "timeout", "failed", "sandbox_blocked"],
+  }).notNull(),
   errorCode: text("error_code"),
   latencyMs: integer("latency_ms"),
   createdAt: createdAt(),

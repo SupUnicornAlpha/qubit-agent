@@ -6,6 +6,7 @@ import type { AgentRole } from "../types/entities";
 import { normalizeLoopKind } from "../types/loop";
 import { a2aLoopDriver } from "./a2a/a2a-loop-driver";
 import { getA2APool } from "./a2a/a2a-pool";
+import type { LoopDispatchResult } from "./loop/loop-driver";
 import { getLoopDriver } from "./loop/registry";
 
 export function getRuntimeAgents() {
@@ -42,7 +43,7 @@ export async function dispatchTaskToRole(params: {
   payload: TaskAssignPayload;
   traceId?: string;
   senderId?: string;
-}): Promise<{ runId: string }> {
+}): Promise<LoopDispatchResult> {
   const db = await getDb();
   const rows = await db
     .select()

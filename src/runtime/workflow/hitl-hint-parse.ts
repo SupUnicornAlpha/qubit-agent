@@ -4,7 +4,7 @@
  * 由两条路径使用：
  *   1. **研究团队 orchestrator plan**（`analyst-team-pipeline.ts#runOrchestratorPlanning`）：
  *      LLM 在 Markdown 简报后追加分隔符 + JSON。详见 docs/HITL_REDESIGN.md §5。
- *   2. **对话 orchestrator reason**（`langgraph/nodes/hitl-gate.ts`）：
+ *   2. **对话 orchestrator reason**（`react/nodes/hitl-gate.ts`）：
  *      LLM 在 reasonText 末尾的 `<TOOL_CALL>` 之**外**追加同样格式，让对话 HITL
  *      也能落 single_choice / multi_choice / free_form，而不是只画 approve/reject。
  *

@@ -7,8 +7,8 @@ import { parseLoopOptionsJson } from "../../types/loop";
 import { dispatchTaskToRole } from "../agent-pool";
 // P2-A Batch 2：续跑改走 dispatchTaskToRole（由 agent-pool 按 path 决定），
 // 不再直接调 graphRunner.resumeRoleTask；保留 import 注释作为历史指引。
-import { stepStreamBus } from "../langgraph/event-stream";
-import type { StepStreamEvent } from "../langgraph/state";
+import { stepStreamBus } from "../react/event-stream";
+import type { StepStreamEvent } from "../react/state";
 import {
   findPendingAnalystJobByWorkflow,
   resumeAnalystResearchJob,

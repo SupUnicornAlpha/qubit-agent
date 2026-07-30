@@ -23,7 +23,7 @@ import { workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
-import { executeAgentReact } from "../langgraph/execute-agent-react";
+import { executeAgentReact } from "../react/execute-agent-react";
 import type { RuntimeAgentDefinition } from "../types";
 
 export type RoleReasonerKind = "native" | "claude_cli" | "codex_cli";

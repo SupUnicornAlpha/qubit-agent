@@ -15,7 +15,12 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentSkill, agentSkillRun, skillMarketInstall } from "../../db/sqlite/schema";
+import {
+  agentSkill,
+  agentSkillRun,
+  skillMarketInstall,
+  skillRecallLog,
+} from "../../db/sqlite/schema";
 import type {
   AgentSkill,
   AgentSkillOutcome,
@@ -26,6 +31,113 @@ import type {
 const MAX_SKILL_BODY_BYTES = 16 * 1024; // 16KB 上限，对齐 Hermes Phase 1 推荐 default
 const MAX_SKILL_DESCRIPTION_LEN = 500; // 用于 LLM 检索的描述，对齐 Hermes tool description budget
 const DEFAULT_SEARCH_TOPK = 5;
+
+/** SkillContract §4.1：与 workflow mode 解耦的稳定召回语义。 */
+export type SkillModeTag = "research" | "simulation" | "trading" | "general";
+
+export type SkillRecallQuality = {
+  recallCount: number;
+  executedCount: number;
+  executedRate: number;
+  multiplier: number;
+};
+
+export type SkillSearchHit = {
+  skill: AgentSkill;
+  score: number;
+  rank: number;
+  quality: SkillRecallQuality;
+};
+
+const RESEARCH_DENY_PATTERNS = [
+  /(?:^|[:_-])order[-_]?intent(?:$|[:_-])/i,
+  /(?:^|[:_-])trading(?:$|[:_-])/i,
+  /(?:^|[:_-])broker(?:$|[:_-])/i,
+  /(?:^|[:_-]).*(?:buy|sell)[-_]checklist(?:$|[:_-])/i,
+];
+
+function metadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+export function normalizeSkillRecallMode(mode?: string | null): SkillModeTag | null {
+  switch (mode?.trim().toLowerCase()) {
+    case "research":
+      return "research";
+    case "backtest":
+    case "simulation":
+      return "simulation";
+    case "live":
+    case "trading":
+      return "trading";
+    case "general":
+      return "general";
+    default:
+      return null;
+  }
+}
+
+/**
+ * Legacy rows remain compatible: missing modeTags means inferred only for
+ * unambiguous trading/quant/fsi names; everything else stays general.
+ */
+export function inferSkillModeTags(input: {
+  name: string;
+  category?: string | null;
+  metadata?: unknown;
+}): SkillModeTag[] {
+  const metadata = metadataRecord(input.metadata);
+  const declared = metadata.modeTags;
+  if (Array.isArray(declared)) {
+    const tags = declared.filter(
+      (value): value is SkillModeTag =>
+        typeof value === "string" &&
+        ["research", "simulation", "trading", "general"].includes(value)
+    );
+    if (tags.length > 0) return [...new Set(tags)];
+  }
+  const haystack = `${input.name} ${input.category ?? ""}`.toLowerCase();
+  if (/(order[-_]?intent|trading|broker|buy[-_]?checklist|sell[-_]?checklist)/.test(haystack)) {
+    return ["trading"];
+  }
+  if (/quant[:._-]|factor|backtest|alpha\d*/.test(haystack)) {
+    return ["research", "simulation"];
+  }
+  if (/fsi[:._-]/.test(haystack)) return ["research"];
+  return ["general"];
+}
+
+export function skillExecutionQuality(
+  recallCount: number,
+  executedCount: number
+): SkillRecallQuality {
+  const safeRecall = Math.max(0, recallCount);
+  const safeExecuted = Math.min(Math.max(0, executedCount), safeRecall);
+  const executedRate = safeRecall > 0 ? safeExecuted / safeRecall : 0;
+  // Cold starts remain neutral. Once we have a meaningful sample, never-used
+  // skills receive the explicit 0.2 penalty agreed in SkillContract §4.2.
+  const multiplier = safeRecall < 5 ? 0.7 : safeExecuted === 0 ? 0.2 : 0.4 + 0.6 * executedRate;
+  return { recallCount: safeRecall, executedCount: safeExecuted, executedRate, multiplier };
+}
+
+function isResearchDeniedSkill(skill: AgentSkill): boolean {
+  const haystack = `${skill.name} ${skill.category} ${skill.description}`;
+  return RESEARCH_DENY_PATTERNS.some((pattern) => pattern.test(haystack));
+}
+
+function attachModeTags(
+  metadata: Record<string, unknown>,
+  name: string,
+  category?: string
+): Record<string, unknown> {
+  if (Array.isArray(metadata.modeTags) && metadata.modeTags.length > 0) return metadata;
+  return {
+    ...metadata,
+    modeTags: inferSkillModeTags({ name, ...(category ? { category } : {}), metadata }),
+  };
+}
 
 export interface CreateSkillInput {
   projectId: string;
@@ -79,6 +191,12 @@ export interface SkillSearchInput {
   definitionId?: string | null;
   topK?: number;
   includeArchived?: boolean;
+  /** workflow.mode（research/backtest/simulation/live）或 SkillContract tag。 */
+  mode?: string | null;
+  /** 可选任务标签；命中时加分，不以此硬过滤。 */
+  goalTags?: string[];
+  /** legacy callers may request stale/pending rows; reason uses the strict default. */
+  includeInactive?: boolean;
 }
 
 function normalizeName(raw: string): string {
@@ -176,13 +294,15 @@ export class SkillService {
       successCount: 0,
       failCount: 0,
       lastUsedAt: null,
-      metadataJson: input.metadata ?? {},
+      metadataJson: attachModeTags(input.metadata ?? {}, name, input.category),
       recommendedToolsJson: serializeRecommendedTools(input.recommendedTools),
       createdBy: input.createdBy ?? "agent",
       createdAt: now,
       updatedAt: now,
     });
-    return (await this.findById(id))!;
+    const created = await this.findById(id);
+    if (!created) throw new Error(`SkillService.create: skill ${id} was not persisted`);
+    return created;
   }
 
   async findById(skillId: string): Promise<AgentSkill | null> {
@@ -218,6 +338,11 @@ export class SkillService {
       input.metadata !== undefined
         ? { ...((existing.metadataJson as Record<string, unknown>) ?? {}), ...input.metadata }
         : (existing.metadataJson as Record<string, unknown>);
+    const normalizedMetadata = attachModeTags(
+      merged ?? {},
+      existing.name,
+      input.category ?? existing.category
+    );
 
     await db
       .update(agentSkill)
@@ -231,11 +356,14 @@ export class SkillService {
         ...(input.recommendedTools !== undefined
           ? { recommendedToolsJson: serializeRecommendedTools(input.recommendedTools) }
           : {}),
-        metadataJson: merged,
+        metadataJson: normalizedMetadata,
         updatedAt: now,
       })
       .where(eq(agentSkill.id, input.skillId));
-    return (await this.findById(input.skillId))!;
+    const patched = await this.findById(input.skillId);
+    if (!patched)
+      throw new Error(`SkillService.patch: skill ${input.skillId} was not found after update`);
+    return patched;
   }
 
   async archive(skillId: string, reason?: string): Promise<AgentSkill> {
@@ -252,7 +380,9 @@ export class SkillService {
 
   /** 软排序检索：pinned > active.last_used desc > use_count > created_at */
   async search(input: SkillSearchInput): Promise<AgentSkill[]> {
-    return (await this.searchWithMeta(input)).map((h) => h.skill);
+    // `search()` is retained for curator/UI compatibility. Agent reasoning uses
+    // `searchWithMeta()` directly and therefore gets the strict active-only contract.
+    return (await this.searchWithMeta({ ...input, includeInactive: true })).map((h) => h.skill);
   }
 
   /**
@@ -261,9 +391,7 @@ export class SkillService {
    * 与 `search()` 共享同一套打分逻辑；纯函数 + 返回排名后的 `{ skill, score, rank }[]`。
    * 不破坏 `search()` 旧契约（其它 caller 不变）。
    */
-  async searchWithMeta(
-    input: SkillSearchInput
-  ): Promise<Array<{ skill: AgentSkill; score: number; rank: number }>> {
+  async searchWithMeta(input: SkillSearchInput): Promise<SkillSearchHit[]> {
     const db = await getDb();
     const topK = Math.min(Math.max(input.topK ?? DEFAULT_SEARCH_TOPK, 1), 20);
     const includeArchived = Boolean(input.includeArchived);
@@ -272,13 +400,48 @@ export class SkillService {
     if (!includeArchived) {
       conditions.push(ne(agentSkill.state, "archived"));
     }
+    if (!includeArchived && !input.includeInactive) {
+      conditions.push(eq(agentSkill.state, "active"));
+    }
     const all = (await db
       .select()
       .from(agentSkill)
       .where(and(...conditions))) as AgentSkill[];
 
+    const qualityRows = await db
+      .select({
+        skillId: skillRecallLog.skillId,
+        recallCount: sql<number>`count(*)`,
+        executedCount: sql<number>`sum(case when ${skillRecallLog.executed} then 1 else 0 end)`,
+      })
+      .from(skillRecallLog)
+      .innerJoin(agentSkill, eq(skillRecallLog.skillId, agentSkill.id))
+      .where(eq(agentSkill.projectId, input.projectId))
+      .groupBy(skillRecallLog.skillId);
+    const qualityById = new Map(
+      qualityRows.map((row) => [
+        row.skillId,
+        skillExecutionQuality(Number(row.recallCount ?? 0), Number(row.executedCount ?? 0)),
+      ])
+    );
+
     const query = (input.query ?? "").trim().toLowerCase();
-    const scored = all.map((s) => {
+    const recallMode = normalizeSkillRecallMode(input.mode);
+    const modeFilterEnabled = process.env.SKILL_MODE_FILTER !== "0";
+    const goalTags = new Set(
+      (input.goalTags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean)
+    );
+    const eligible = all.filter((skill) => {
+      if (!modeFilterEnabled || !recallMode) return true;
+      const tags = inferSkillModeTags({
+        name: skill.name,
+        category: skill.category,
+        metadata: skill.metadataJson,
+      });
+      if (recallMode === "research" && isResearchDeniedSkill(skill)) return false;
+      return tags.includes("general") || tags.includes(recallMode);
+    });
+    const scored = eligible.map((s) => {
       const ownsByDef = input.definitionId && s.definitionId === input.definitionId ? 1 : 0;
       const pinScore = s.pinned ? 8 : 0;
       const stateScore = s.state === "active" ? 2 : s.state === "pending_review" ? 1 : -1;
@@ -294,17 +457,36 @@ export class SkillService {
           if (haystack.includes(t)) queryScore += 2;
         }
       }
+      const metadata = metadataRecord(s.metadataJson);
+      const declaredGoalTags = Array.isArray(metadata.goalTags)
+        ? metadata.goalTags.filter((tag): tag is string => typeof tag === "string")
+        : [];
+      const goalTagBoost = declaredGoalTags.some((tag) => goalTags.has(tag.toLowerCase()))
+        ? 1.25
+        : 0;
+      const quality = qualityById.get(s.id) ?? skillExecutionQuality(0, 0);
       return {
         skill: s,
-        score: pinScore + stateScore + recencyScore + useScore + queryScore + ownsByDef * 1.5,
+        // Pinned skills retain their explicit user boost; quality only adjusts
+        // the evidence-based portion, so a user pin is never silently erased.
+        score:
+          pinScore +
+          (stateScore + recencyScore + useScore + queryScore + ownsByDef * 1.5 + goalTagBoost) *
+            quality.multiplier,
+        quality,
       };
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, topK).map((x, idx) => ({ skill: x.skill, score: x.score, rank: idx }));
+    return scored
+      .slice(0, topK)
+      .map((x, idx) => ({ skill: x.skill, score: x.score, rank: idx, quality: x.quality }));
   }
 
   /** 列出指定项目下的全部 skill；用于 Curator / UI */
-  async list(projectId: string, opts?: { includeArchived?: boolean; state?: AgentSkillState }): Promise<AgentSkill[]> {
+  async list(
+    projectId: string,
+    opts?: { includeArchived?: boolean; state?: AgentSkillState }
+  ): Promise<AgentSkill[]> {
     const db = await getDb();
     const conds = [eq(agentSkill.projectId, projectId)];
     if (opts?.state) conds.push(eq(agentSkill.state, opts.state));
@@ -313,7 +495,11 @@ export class SkillService {
       .select()
       .from(agentSkill)
       .where(and(...conds))
-      .orderBy(desc(agentSkill.pinned), desc(agentSkill.lastUsedAt), asc(agentSkill.name))) as AgentSkill[];
+      .orderBy(
+        desc(agentSkill.pinned),
+        desc(agentSkill.lastUsedAt),
+        asc(agentSkill.name)
+      )) as AgentSkill[];
   }
 
   /**
@@ -336,9 +522,7 @@ export class SkillService {
       skill = await this.findByName(input.projectId, input.skillId);
     }
     if (!skill) {
-      throw new Error(
-        `skill_not_found: "${input.skillId}" 不是 agent_skill 表里的 UUID 或 name`
-      );
+      throw new Error(`skill_not_found: "${input.skillId}" 不是 agent_skill 表里的 UUID 或 name`);
     }
     // 使用真实 skill.id 写入，而不是 LLM 传过来的字符串（可能是 name）。
     const skillRowId = skill.id;
@@ -391,7 +575,10 @@ export class SkillService {
    * 把外部市场（skill_market_install）安装记录镜像到 agent_skill，
    * 让"无论来源是 agent / 用户 / 市场"的 skill 走同一个检索器。
    */
-  async mirrorFromMarketInstall(installId: string, opts?: { bodyMd?: string }): Promise<AgentSkill | null> {
+  async mirrorFromMarketInstall(
+    installId: string,
+    opts?: { bodyMd?: string }
+  ): Promise<AgentSkill | null> {
     const db = await getDb();
     const rows = await db
       .select()
@@ -412,7 +599,8 @@ export class SkillService {
       projectId: inst.projectId,
       name,
       description: (inst.description ?? "").slice(0, MAX_SKILL_DESCRIPTION_LEN),
-      bodyMd: opts?.bodyMd ?? `# ${inst.skillName}\n\n_来源：${inst.registry} (${inst.externalSkillId})_`,
+      bodyMd:
+        opts?.bodyMd ?? `# ${inst.skillName}\n\n_来源：${inst.registry} (${inst.externalSkillId})_`,
       category: "imported",
       source: "open_skill_market",
       externalInstallId: inst.id,
@@ -437,7 +625,10 @@ export function renderSkillsBlockForPrompt(skills: AgentSkill[]): string {
     lines.push(`> ${s.description || "(no description)"}`);
     lines.push("");
     // body 截断到 1.2KB 防 prompt 爆炸
-    const body = s.bodyMd.length > 1200 ? s.bodyMd.slice(0, 1200) + "\n…(截断，调 skill.view 看全文)" : s.bodyMd;
+    const body =
+      s.bodyMd.length > 1200
+        ? s.bodyMd.slice(0, 1200) + "\n…(截断，调 skill.view 看全文)"
+        : s.bodyMd;
     lines.push(body.trim());
     lines.push("");
   }

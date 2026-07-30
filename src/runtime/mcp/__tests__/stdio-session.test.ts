@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { _formatStdioExitErrorMessage, prefixStdioToolError } from "../stdio-session";
-import { classifyToolError } from "../../langgraph/nodes/tool-error-classifier";
+import { classifyToolError } from "../../react/nodes/tool-error-classifier";
 
 /*
  * F-P0-07 regression：之前 stderrBuf 用 `.slice(-1200)` 按字节截断，eval batch 2

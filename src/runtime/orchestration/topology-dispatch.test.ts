@@ -34,16 +34,16 @@ describe("topology-dispatch", () => {
   });
 
   test("team tool timeout always outlives its inner gather budget", () => {
-    expect(resolveTopologyTaskTimeoutMs("market_data", undefined)).toBe(90_000);
-    expect(resolveTopologyTaskTimeoutMs("research", undefined)).toBe(180_000);
-    expect(resolveTopologyToolTimeoutMs("call_team_market_data")).toBe(100_000);
-    expect(resolveTopologyToolTimeoutMs("call_team_research")).toBe(190_000);
+    expect(resolveTopologyTaskTimeoutMs("market_data", undefined)).toBe(900_000);
+    expect(resolveTopologyTaskTimeoutMs("research", undefined)).toBe(900_000);
+    expect(resolveTopologyToolTimeoutMs("call_team_market_data")).toBe(910_000);
+    expect(resolveTopologyToolTimeoutMs("call_team_research")).toBe(910_000);
     expect(resolveTopologyToolTimeoutMs("fetch_klines")).toBeUndefined();
   });
 
   test("configured topology timeout is bounded", () => {
     expect(resolveTopologyTaskTimeoutMs("research", "5000")).toBe(10_000);
-    expect(resolveTopologyTaskTimeoutMs("research", "999999")).toBe(300_000);
+    expect(resolveTopologyTaskTimeoutMs("research", "99999999")).toBe(3_600_000);
   });
 
   test("blocks repeated readiness probes only for topology child tasks", () => {

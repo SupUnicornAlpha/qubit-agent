@@ -206,6 +206,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
   projectId: string | null;
   sessionId: string | null;
   source: string | null;
+  mode: string | null;
   agentMode: AgentControlMode;
   processConfig: WorkflowProcessConfig | null;
 }> {
@@ -215,6 +216,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
       projectId: workflowRun.projectId,
       sessionId: workflowRun.sessionId,
       source: workflowRun.source,
+      mode: workflowRun.mode,
       loopOptionsJson: workflowRun.loopOptionsJson,
     })
     .from(workflowRun)
@@ -225,6 +227,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
       projectId: null,
       sessionId: null,
       source: null,
+      mode: null,
       agentMode: "agent",
       processConfig: null,
     };
@@ -236,6 +239,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
      * 其它 source（manual/api/scheduler/trader/research-team 直接派的）不需要这段提示。
      */
     source: wfRows[0].source ?? null,
+    mode: wfRows[0].mode ?? null,
     agentMode: resolveAgentControlMode(wfRows[0].loopOptionsJson),
     processConfig: resolveWorkflowProcessConfig(wfRows[0].loopOptionsJson),
   };
@@ -388,12 +392,14 @@ export async function reasonNode(
     projectId: string | null;
     sessionId: string | null;
     source: string | null;
+    mode: string | null;
     agentMode: AgentControlMode;
     processConfig: WorkflowProcessConfig | null;
   } = {
     projectId: null,
     sessionId: null,
     source: null,
+    mode: null,
     agentMode: "agent",
     processConfig: null,
   };
@@ -466,6 +472,7 @@ export async function reasonNode(
           query,
           definitionId: state.agentDefinition.id,
           topK: 3,
+          mode: meta.mode,
         }),
         []
       );

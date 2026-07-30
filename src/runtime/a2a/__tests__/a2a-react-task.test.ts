@@ -5,6 +5,7 @@ import {
   extractTopologyTaskEvidence,
   ownsWorkflowTerminalState,
   resolveA2aExecutionRunId,
+  resolveA2aOrchestratorMaxIterations,
   resolveA2aSpecialistMaxIterations,
 } from "../a2a-react-task";
 
@@ -44,9 +45,14 @@ describe("A2A execution stream identity", () => {
 
 describe("A2A specialist iteration budget", () => {
   test("allows recovery and summary turns without removing the safety cap", () => {
-    expect(resolveA2aSpecialistMaxIterations(5)).toBe(5);
-    expect(resolveA2aSpecialistMaxIterations(12)).toBe(8);
-    expect(resolveA2aSpecialistMaxIterations(0)).toBe(1);
+    expect(resolveA2aSpecialistMaxIterations(5)).toBe(24);
+    expect(resolveA2aSpecialistMaxIterations(24)).toBe(24);
+    expect(resolveA2aSpecialistMaxIterations(80)).toBe(32);
+  });
+
+  test("aligns the orchestrator budget with the sandbox policy", () => {
+    expect(resolveA2aOrchestratorMaxIterations(24)).toBe(64);
+    expect(resolveA2aOrchestratorMaxIterations(80)).toBe(64);
   });
 });
 

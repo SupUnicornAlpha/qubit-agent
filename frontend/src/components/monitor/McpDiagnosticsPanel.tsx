@@ -372,6 +372,8 @@ const StatusTag: FC<{ status: MonitorMcpDiagnostics["recentCalls"][number]["stat
     switch (status) {
       case "success":
         return { bg: "rgba(34, 197, 94, 0.16)", fg: "#22c55e", label: "成功" };
+      case "running":
+        return { bg: "rgba(59, 130, 246, 0.16)", fg: "#60a5fa", label: "执行中" };
       case "timeout":
         return { bg: "rgba(234, 179, 8, 0.16)", fg: "#eab308", label: "timeout" };
       case "sandbox_blocked":
