@@ -31,13 +31,16 @@ import {
   isContextProtocolEnabled,
 } from "../../context/axioms";
 import { assembleContextEnvelope } from "../../context/assemble-context-prompt";
+import { incContextMetric } from "../../context/context-metrics";
 import {
   FinanceRecall,
   renderFinanceRecallBlockForPrompt,
 } from "../../context/finance-recall";
 import { renderSlotContextForPrompt } from "../../context/handoff";
+import { getTurnBindingByWorkflow } from "../../conversation/turn-binding";
 import {
   isWorkingMemoryEmpty,
+  maybeFoldWorkingMemory,
   renderWorkingMemoryForPrompt,
 } from "../../context/working-memory";
 import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
@@ -767,15 +770,10 @@ export async function reasonNode(
       : typeof slotContextRaw === "string" && slotContextRaw.trim()
         ? `**任务上下文（数据快照 / 编排简报 / 前置结论）**：\n${slotContextRaw.trim().slice(0, 6000)}`
         : "";
-    const workingBlock = isContextProtocolEnabled()
-      ? !isWorkingMemoryEmpty(state.workingMemory)
-        ? renderWorkingMemoryForPrompt(state.workingMemory)
-        : previousObservations.length
-          ? `**历史观测（共 ${state.observations.length} 步，按 token 预算压缩到最近 ${previousObservations.length} 条；早期已 stub 化）**：\n${JSON.stringify(previousObservations, null, 2)}`
-          : ""
-      : previousObservations.length
-        ? `**历史观测（共 ${state.observations.length} 步，按 token 预算压缩到最近 ${previousObservations.length} 条；早期已 stub 化）**：\n${JSON.stringify(previousObservations, null, 2)}`
-        : "";
+    const foldedWorking = maybeFoldWorkingMemory(state.workingMemory);
+    const workingBlock = !isWorkingMemoryEmpty(foldedWorking)
+      ? renderWorkingMemoryForPrompt(foldedWorking)
+      : "";
     const sessionBlock = sessionContext.length
       ? `**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "";
@@ -801,10 +799,24 @@ export async function reasonNode(
     if (state.iteration > 1) controlParts.push(`**当前迭代**：第 ${state.iteration} 轮`);
     if (pnlAwareSkillBlock) controlParts.push(pnlAwareSkillBlock);
 
+    const turnBinding = getTurnBindingByWorkflow(state.workflowId);
+    const turnId =
+      typeof payloadParams.turnId === "string"
+        ? payloadParams.turnId
+        : typeof payloadParams.conversationTurnId === "string"
+          ? payloadParams.conversationTurnId
+          : turnBinding?.turnId;
+    const sessionId =
+      typeof payloadParams.sessionId === "string"
+        ? payloadParams.sessionId
+        : turnBinding?.sessionId;
+
     const envelope = assembleContextEnvelope({
       workflowRunId: state.workflowId,
       definitionId: state.agentDefinition.id,
       role: state.agentDefinition.role,
+      ...(sessionId ? { sessionId } : {}),
+      ...(turnId ? { turnId } : {}),
       ...(typeof payloadParams.decisionCutoff === "string"
         ? { decisionCutoff: payloadParams.decisionCutoff }
         : typeof payloadParams.asof === "string"
@@ -812,6 +824,7 @@ export async function reasonNode(
           : {}),
       axiomsApplied: allAxioms(),
       softOmitLowPriority: Boolean(workflowTokenBudget?.softLimitReached),
+      hardMaxUserChars: workflowTokenBudget?.policy.maxUserPromptChars ?? 24_000,
       slots: {
         goal: goalSlot,
         ...(slotBlock ? { slot: slotBlock } : {}),
@@ -823,7 +836,10 @@ export async function reasonNode(
         ...(controlParts.length ? { control: controlParts.join("\n") } : {}),
       },
     });
-    rawUserPrompt = envelope.rendered?.user ?? userPromptParts.filter(Boolean).join("\n");
+    incContextMetric("context.envelope_assemble", 1, {
+      role: state.agentDefinition.role,
+    });
+    rawUserPrompt = envelope.rendered?.user ?? "";
   } else {
     rawUserPrompt = userPromptParts.filter(Boolean).join("\n");
   }

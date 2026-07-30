@@ -598,6 +598,25 @@ export class PnlAttributor {
             })
             .run();
         }
+        // P2：pnl_episode Experience（默认写；失败不阻断 snapshot）
+        try {
+          const { upsertPnlEpisodeExperience } = await import("../context/finance-memory-writer");
+          await upsertPnlEpisodeExperience({
+            meta: {
+              strategyRuntimeId: runtimeId,
+              tradingDay: s.tradingDay,
+              symbol: s.symbol,
+              realized: s.realizedPnlDaily,
+              unrealized: s.unrealizedPnlDaily,
+              fee: s.feeDaily,
+              turnover: s.turnoverDaily,
+              asof: s.tradingDay,
+              memoryTier: "intermediate",
+            },
+          });
+        } catch {
+          /* experience 写失败不阻断 pnl snapshot */
+        }
       }
     });
   }

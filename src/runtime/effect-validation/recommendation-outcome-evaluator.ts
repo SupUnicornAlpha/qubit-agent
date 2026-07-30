@@ -232,17 +232,36 @@ export async function evaluateRecommendationOutcomes(
         }
         summary.evaluated += 1;
         const benchmarkReturnPct = returnBetween(benchmarkBars, result.entryAt, result.exitAt);
+        const excessReturnPct =
+          benchmarkReturnPct == null ? null : result.returnPct - benchmarkReturnPct;
         await recommendationService.recordOutcome({
           recommendationId: signal.id,
           horizonDays,
           ...result,
           benchmarkReturnPct,
-          excessReturnPct:
-            benchmarkReturnPct == null ? null : result.returnPct - benchmarkReturnPct,
+          excessReturnPct,
           hit: result.outcome === "win",
           evaluatedAt: now.toISOString(),
           evaluationError: null,
         });
+        // P2 A3/A4：后验写回 research_conclusion DecisionRecord（失败不阻断评估）
+        try {
+          const { applyRecommendationOutcomeToExperiences } = await import(
+            "../context/decision-outcome"
+          );
+          await applyRecommendationOutcomeToExperiences({
+            projectId: signal.projectId,
+            workflowRunId: signal.workflowRunId,
+            symbol: signal.symbol,
+            confidence: signal.confidence,
+            tradeOutcome: result.outcome,
+            returnPct: result.returnPct,
+            excessReturnPct,
+            scoredAt: now.toISOString(),
+          });
+        } catch {
+          /* experience 写回失败不阻断 recommendation outcome */
+        }
       }
       if (signal.status === "active" && signal.expiresAt && signal.expiresAt <= now.toISOString()) {
         await recommendationService.setStatus(signal.id, "expired");

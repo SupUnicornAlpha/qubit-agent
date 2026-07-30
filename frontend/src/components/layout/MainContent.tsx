@@ -82,6 +82,7 @@ import {
   listFactors,
   listStrategyVersions,
   listStrategyScripts,
+  subscribeSessionEvents,
   subscribeWorkflowStream,
   subscribeWorkflowEvents,
   listWorkflowCompensations,
@@ -575,6 +576,34 @@ export const ChatPanel: FC<{
     );
   }, [selectedSessionId, reloadSessionMessages]);
 
+  /** 06：对话页订 Session ClientEvent；HITL 走 approval.requested */
+  useEffect(() => {
+    if (!selectedSessionId) return;
+    return subscribeSessionEvents({
+      sessionId: selectedSessionId,
+      onEvent: (event) => {
+        if (event.type === "approval.requested") {
+          const requestId = String(
+            (event.item?.payload as { requestId?: string } | undefined)?.requestId ??
+              event.item?.id ??
+              ""
+          );
+          if (!requestId) return;
+          // 绑定到当前 running 的助手消息（若有）
+          setChatMessages((prev) => {
+            const running = [...prev]
+              .reverse()
+              .find((m) => m.role === "assistant" && m.status === "running");
+            if (running) {
+              setHitlRequestByMessageId((map) => ({ ...map, [running.id]: requestId }));
+            }
+            return prev;
+          });
+        }
+      },
+    });
+  }, [selectedSessionId]);
+
   const onSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
     onWorkflowFocusChange?.(null);
@@ -949,15 +978,17 @@ export const ChatPanel: FC<{
         projectId,
         message: combinedGoal,
         workflowMode: "research",
+        turnMode: workflowRunId ? "continue_goal" : "continue_goal",
         reuseSessionWorkflow: true,
         loopKind: chatLoopKind,
         hitlMode: chatHitlMode,
         agentMode: chatAgentMode,
         ...(workflowRunId ? { workflowRunId } : {}),
       });
-      onWorkflowFocusChange?.(turn.workflowRunId);
-      if (turn.runId) {
-        bindStream(turn.workflowRunId, turn.runId, turn.assistantMessage.id);
+      onWorkflowFocusChange?.(turn.runId);
+      const streamRunId = turn.agentRunId ?? turn.runId;
+      if (streamRunId) {
+        bindStream(turn.runId, streamRunId, turn.assistantMessage.id);
       }
       await reloadSessionMessages(selectedSessionId);
       setInput("");
@@ -1933,6 +1964,28 @@ const ConfigPanel: FC = () => {
     return Boolean(row.url?.trim());
   };
 
+  /** 探测用真实工具名：通配 `*` 不能直接 RPC，回退到 capabilities / ping。 */
+  const resolveMcpProbeToolName = (
+    row: McpServerConfigRecord,
+    binding?: McpToolBindingRecord
+  ): string => {
+    const fromBind = binding?.toolName?.trim();
+    if (fromBind && fromBind !== "*") return fromBind;
+    const caps = row.capabilitiesJson;
+    if (caps && typeof caps === "object" && !Array.isArray(caps)) {
+      const tools = (caps as { tools?: unknown }).tools;
+      if (Array.isArray(tools)) {
+        for (const item of tools) {
+          if (item && typeof item === "object" && typeof (item as { name?: unknown }).name === "string") {
+            const name = (item as { name: string }).name.trim();
+            if (name && name !== "*") return name;
+          }
+        }
+      }
+    }
+    return "ping";
+  };
+
   const formatMcpProbeDetail = (e: unknown): string => {
     const raw = e instanceof Error ? e.message : String(e);
     const jsonMatch = raw.match(/^HTTP \d+:([\s\S]*)$/);
@@ -1961,17 +2014,7 @@ const ConfigPanel: FC = () => {
       return;
     }
     const bind = binding ?? pickBindingForMcpServer(row.name);
-    if (!bind?.toolName?.trim()) {
-      setMcpProbeByServer((prev) => ({
-        ...prev,
-        [key]: {
-          status: "error",
-          message: "未绑定工具，无法探测连通性",
-          checkedAt: new Date().toISOString(),
-        },
-      }));
-      return;
-    }
+    const toolName = resolveMcpProbeToolName(row, bind);
     setMcpProbeByServer((prev) => ({
       ...prev,
       [key]: { status: "checking", checkedAt: new Date().toISOString() },
@@ -1980,7 +2023,7 @@ const ConfigPanel: FC = () => {
       const out = await testMcpCall({
         projectId: currentProjectId || undefined,
         serverName: row.name,
-        toolName: bind.toolName.trim(),
+        toolName,
         arguments: { ping: true, ts: Date.now() },
       });
       setMcpTestOutput(JSON.stringify(out, null, 2));
@@ -1988,7 +2031,7 @@ const ConfigPanel: FC = () => {
         ...prev,
         [key]: {
           status: "ok",
-          message: out.accepted ? `工具「${bind.toolName}」调用成功` : `工具「${bind.toolName}」返回未接受`,
+          message: out.accepted ? `工具「${toolName}」调用成功` : `工具「${toolName}」返回未接受`,
           checkedAt: new Date().toISOString(),
         },
       }));
@@ -2687,11 +2730,11 @@ const ConfigPanel: FC = () => {
           <>
             <h3 style={styles.subTitle}>已注册的 MCP</h3>
             <p className="qb-config-hint">
-              每张卡片展示连接规格与最近一次探测结果。点击卡片打开<strong>高级 JSON 编辑</strong>（含 server + binding）；打开时会尝试探测连通性。
+              保存并启用 Server 即可使用；默认自动覆盖全部工具（通配策略）。点击卡片打开<strong>高级 JSON 编辑</strong>，打开时会尝试探测连通性。
             </p>
             <div style={styles.meta}>
               <span>Server: {mcpServers.length}</span>
-              <span>绑定: {mcpBindings.length}</span>
+              <span>策略行: {mcpBindings.length}</span>
               <span>市场安装: {mcpMarketInstalls.length}</span>
             </div>
             <div style={styles.grid}>
@@ -2728,13 +2771,9 @@ const ConfigPanel: FC = () => {
                             color: "var(--qb-pill-error-fg)",
                             text: `连通：失败${probe.message ? ` · ${shortMsg(probe.message)}` : ""}`,
                           }
-                        : specOk && bindCount > 0
+                        : specOk
                           ? { bg: "var(--qb-pill-muted-bg)", color: "var(--qb-pill-muted-fg)", text: "连通：打开卡片以检测" }
-                          : {
-                              bg: "var(--qb-pill-muted-bg)",
-                              color: "var(--qb-pill-muted-fg)",
-                              text: bindCount === 0 ? "连通：需 binding" : "连通：待检测",
-                            };
+                          : { bg: "var(--qb-pill-muted-bg)", color: "var(--qb-pill-muted-fg)", text: "连通：待检测" };
                 const dotColor =
                   probe?.status === "checking"
                     ? "#60a5fa"
@@ -2746,9 +2785,7 @@ const ConfigPanel: FC = () => {
                           ? "#52525b"
                           : !specOk
                             ? "#f97316"
-                            : bindCount === 0
-                              ? "#a1a1aa"
-                              : "#eab308";
+                            : "#eab308";
                 const selected = focusedMcpServerId === row.id && mcpAdvancedEditorOpen;
                 return (
                   <button
@@ -2775,7 +2812,8 @@ const ConfigPanel: FC = () => {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={styles.cardName}>{row.name}</div>
                         <div style={styles.cardDesc}>
-                          {row.transport} · {row.enabled ? "启用" : "禁用"} · {bindCount} 个工具绑定
+                          {row.transport} · {row.enabled ? "启用" : "禁用"}
+                          {bindCount > 0 ? ` · ${bindCount} 条策略` : ""}
                         </div>
                         <div style={styles.cardDesc}>
                           {row.projectId ? `项目: ${row.projectId.slice(0, 8)}…` : "作用域: 全局"}
@@ -2830,7 +2868,10 @@ const ConfigPanel: FC = () => {
             </details>
 
             <details className="qb-mcp-details" style={styles.mcpDetails}>
-              <summary style={styles.mcpDetailsSummary}>表单：工具绑定与快速测试</summary>
+              <summary style={styles.mcpDetailsSummary}>高级：超时 / 重试策略与快速测试（可选）</summary>
+              <p className="qb-config-hint" style={{ marginTop: 0 }}>
+                保存 Server 已自动启用全部工具。此处仅在需要按工具覆盖 timeout、或手动探测某个工具时使用；tool name 填 <code>*</code> 表示整 server 默认策略。
+              </p>
               <div style={{ ...styles.form, paddingBottom: 10, flexWrap: "wrap" }}>
                 <select
                   style={styles.select}
@@ -2847,7 +2888,7 @@ const ConfigPanel: FC = () => {
                   style={styles.input}
                   value={mcpToolName}
                   onChange={(e) => setMcpToolName(e.target.value)}
-                  placeholder="tool name"
+                  placeholder="tool name 或 *"
                 />
                 <input
                   style={styles.input}
@@ -2857,7 +2898,7 @@ const ConfigPanel: FC = () => {
                   placeholder="timeout ms"
                 />
                 <button className="qb-btn-secondary" type="button" onClick={() => void saveMcpBindingNow()}>
-                  保存绑定
+                  保存策略
                 </button>
                 <button className="qb-btn-primary-brand" type="button" onClick={() => void testMcpNow()}>
                   测试 MCP
@@ -3116,7 +3157,7 @@ const ConfigPanel: FC = () => {
                   <pre className="qb-config-stream-box">{JSON.stringify(mcpMarketInstalls, null, 2)}</pre>
                 </details>
                 <details style={styles.mcpDetailsNested}>
-                  <summary style={styles.mcpDetailsSummarySmall}>工具绑定列表</summary>
+                  <summary style={styles.mcpDetailsSummarySmall}>策略列表（含默认 *）</summary>
                   <pre className="qb-config-stream-box">{JSON.stringify(mcpBindings, null, 2)}</pre>
                 </details>
               </div>
@@ -6073,6 +6114,7 @@ const TeamDashboardPanel: FC = () => {
         projectId,
         workflowRunId: wf,
         message: msg,
+        turnMode: "continue_goal",
         hitlMode: teamHitlMode,
         roleReasoner,
         agentMode: options?.agentMode ?? teamAgentMode,

@@ -13,12 +13,18 @@ import { dispatchTaskToRole } from "../agent-pool";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { clearWorkflowCheckpointForNewTurn } from "../workflow/checkpoint-turn";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
+import { publishTurnStarted } from "./client-event-bus";
 import {
   completeWorkflowConversationAssistant,
   createConversationTurnMessages,
   createWorkflowConversationTurnMessages,
   linkConversationMessageToWorkflow,
 } from "./conversation-projection";
+import { registerTurnRunBinding } from "./turn-binding";
+import {
+  type ConversationTurnMode,
+  resolveTurnMode,
+} from "./turn-mode";
 
 export interface CreateConversationTurnInput {
   sessionId: string;
@@ -26,20 +32,30 @@ export interface CreateConversationTurnInput {
   message: string;
   workflowRunId?: string;
   workflowMode?: "research" | "backtest" | "simulation" | "live";
+  /** @deprecated 使用 turnMode；false → new_goal */
   reuseSessionWorkflow?: boolean;
+  /** 显式 Turn 模式（06 协议） */
+  turnMode?: ConversationTurnMode;
   loopKind?: AgentLoopKind;
   roleReasoner?: AgentLoopKind;
   hitlMode?: "off" | "ai" | "always";
   agentMode?: AgentControlMode;
   processConfig?: WorkflowProcessConfig;
-  /** 在同一 Goal 上继续/转向，不把本条引导消息当成一个全新的目标。 */
+  /** @deprecated 映射为 continue_goal */
   preserveGoal?: boolean;
 }
 
 export interface ConversationTurnResult {
   sessionId: string;
+  /** 本轮用户消息 id（Turn 稳定身份） */
+  turnId: string;
+  /** primary Run = workflow_run.id */
+  runId: string;
+  /** @deprecated 与 runId 相同；保留兼容 */
   workflowRunId: string;
-  runId?: string;
+  /** orchestrator agent instance run（可选） */
+  agentRunId?: string;
+  turnMode: ConversationTurnMode;
   userMessage: typeof chatMessage.$inferSelect;
   assistantMessage: typeof chatMessage.$inferSelect;
 }
@@ -94,6 +110,41 @@ function mergeLoopOptions(
   };
 }
 
+function finalizeTurnResult(input: {
+  sessionId: string;
+  turnId: string;
+  workflowRunId: string;
+  turnMode: ConversationTurnMode;
+  agentRunId?: string;
+  userMessage: typeof chatMessage.$inferSelect;
+  assistantMessage: typeof chatMessage.$inferSelect;
+}): ConversationTurnResult {
+  registerTurnRunBinding({
+    sessionId: input.sessionId,
+    turnId: input.turnId,
+    workflowRunId: input.workflowRunId,
+    ...(input.agentRunId ? { agentRunId: input.agentRunId } : {}),
+    turnMode: input.turnMode,
+  });
+  publishTurnStarted({
+    sessionId: input.sessionId,
+    turnId: input.turnId,
+    runId: input.workflowRunId,
+    turnMode: input.turnMode,
+    ...(input.agentRunId ? { agentRunId: input.agentRunId } : {}),
+  });
+  return {
+    sessionId: input.sessionId,
+    turnId: input.turnId,
+    runId: input.workflowRunId,
+    workflowRunId: input.workflowRunId,
+    turnMode: input.turnMode,
+    ...(input.agentRunId ? { agentRunId: input.agentRunId } : {}),
+    userMessage: input.userMessage,
+    assistantMessage: input.assistantMessage,
+  };
+}
+
 export async function createConversationTurn(
   input: CreateConversationTurnInput
 ): Promise<ConversationTurnResult> {
@@ -111,11 +162,19 @@ export async function createConversationTurn(
     throw new Error("session does not belong to project");
   }
 
+  const turnMode = resolveTurnMode({
+    turnMode: input.turnMode,
+    reuseSessionWorkflow: input.reuseSessionWorkflow,
+    preserveGoal: input.preserveGoal,
+    hasWorkflowRunId: Boolean(input.workflowRunId),
+  });
+
   if (!input.workflowRunId) {
     const turn = await createConversationTurnMessages({
       sessionId: input.sessionId,
       content: message,
     });
+    const turnId = turn.userMessage.id;
     try {
       const latestChatWorkflow = await db
         .select({ loopOptionsJson: workflowRun.loopOptionsJson })
@@ -129,6 +188,7 @@ export async function createConversationTurn(
         )
         .orderBy(desc(workflowRun.startedAt))
         .limit(1);
+      const reuseSessionWorkflow = turnMode === "continue_goal";
       const created = await createAndDispatchWorkflow({
         projectId: input.projectId,
         goal: message,
@@ -136,7 +196,7 @@ export async function createConversationTurn(
         sessionId: input.sessionId,
         source: "chat",
         messageId: turn.userMessage.id,
-        reuseSessionWorkflow: input.reuseSessionWorkflow ?? true,
+        reuseSessionWorkflow,
         loopKind: input.loopKind,
         loopOptionsJson: mergeLoopOptions(
           (latestChatWorkflow[0]?.loopOptionsJson as Record<string, unknown> | null) ?? {},
@@ -144,12 +204,18 @@ export async function createConversationTurn(
         ),
       });
       await linkConversationMessageToWorkflow(turn.assistantMessage.id, created.data.id);
-      return {
+      // 每一轮用户发言都清 ReAct checkpoint，避免旧 final/observations 串台；
+      // turnMode 只决定是否复用 primary Run / 是否保留 Goal plan。
+      await clearWorkflowCheckpointForNewTurn(created.data.id);
+      return finalizeTurnResult({
         sessionId: input.sessionId,
+        turnId,
         workflowRunId: created.data.id,
-        ...(created.runId ? { runId: created.runId } : {}),
-        ...turn,
-      };
+        turnMode,
+        ...(created.runId ? { agentRunId: created.runId } : {}),
+        userMessage: turn.userMessage,
+        assistantMessage: turn.assistantMessage,
+      });
     } catch (error) {
       await db
         .update(chatMessage)
@@ -187,6 +253,7 @@ export async function createConversationTurn(
     workflowRunId: workflow.id,
     content: message,
   });
+  const turnId = turn.userMessage.id;
   const loopOptionsJson = mergeLoopOptions(
     (workflow.loopOptionsJson as Record<string, unknown> | null) ?? {},
     input
@@ -195,8 +262,8 @@ export async function createConversationTurn(
   const promotePlanToGoal =
     input.agentMode === "goal" && currentPlan?.mode === "plan" && Boolean(currentPlan.steps.length);
   const continueExistingGoal =
+    turnMode === "continue_goal" &&
     input.agentMode === "goal" &&
-    input.preserveGoal === true &&
     currentPlan?.mode === "goal" &&
     Boolean(currentPlan.steps.length);
   const goalText =
@@ -224,7 +291,9 @@ export async function createConversationTurn(
       status: "running",
       startedAt: new Date().toISOString(),
       endedAt: null,
-      ...(input.agentMode === "goal" || input.agentMode === "plan" ? { goal: goalText } : {}),
+      ...(input.agentMode === "goal" || input.agentMode === "plan" || turnMode === "new_goal"
+        ? { goal: goalText }
+        : {}),
       planJson: nextPlan as never,
       loopOptionsJson: loopOptionsJson as never,
     })
@@ -238,6 +307,7 @@ export async function createConversationTurn(
     contentText: message.slice(0, 4000),
   });
   const context = await buildWorkflowConversationContext(workflow.id, turn.userMessage.id);
+  // 每轮用户发言清 ReAct checkpoint；Goal 文本/plan 由 turnMode + agentMode 保留。
   await clearWorkflowCheckpointForNewTurn(workflow.id);
   try {
     const out = await dispatchTaskToRole({
@@ -250,19 +320,22 @@ export async function createConversationTurn(
         params: {
           goal: message,
           context,
-          // 同一 workflow 可以包含多轮 Orchestrator 对话。终答投影必须按轮次幂等，
-          // 不能让第一轮答复阻止后续轮次写入右栏的 research_team_interaction。
           conversationTurnId: turn.assistantMessage.id,
+          turnId,
+          turnMode,
+          sessionId: input.sessionId,
         },
       },
     });
-    return {
+    return finalizeTurnResult({
       sessionId: turn.sessionId,
+      turnId,
       workflowRunId: workflow.id,
-      runId: out.runId,
+      turnMode,
+      agentRunId: out.runId,
       userMessage: turn.userMessage,
       assistantMessage: turn.assistantMessage,
-    };
+    });
   } catch (error) {
     await completeWorkflowConversationAssistant({
       workflowRunId: workflow.id,

@@ -4,6 +4,7 @@
  */
 
 import { incContextMetric } from "./context-metrics";
+import { isWorkingMemorySummarizeEnabled } from "./axioms";
 import type { WorkingMemory, WorkingMemoryFinanceRefs } from "./types";
 
 export function createEmptyWorkingMemory(now = new Date()): WorkingMemory {
@@ -190,4 +191,43 @@ export function isWorkingMemoryEmpty(wm: WorkingMemory | null | undefined): bool
     !m.debate &&
     !(m.financeRefs.factorIds?.length || m.financeRefs.symbols?.length)
   );
+}
+
+/**
+ * P2：可选折叠（默认关）。`CONTEXT_WORKING_SUMMARIZE=1` 时压缩 trail / 假设，
+ * 热路径仍不做 LLM；真正 LLM 摘要留给终态 Reflector。
+ */
+export function maybeFoldWorkingMemory(
+  wm: WorkingMemory | null | undefined,
+  opts?: { force?: boolean; maxTrail?: number; maxHypotheses?: number }
+): WorkingMemory {
+  const m = ensureWorkingMemory(wm);
+  if (!opts?.force && !isWorkingMemorySummarizeEnabled()) return m;
+
+  const maxTrail = opts?.maxTrail ?? 6;
+  const maxHypotheses = opts?.maxHypotheses ?? 4;
+  const keptStatus = new Set(["open", "supported"]);
+  const hypotheses = m.hypotheses
+    .filter((h) => keptStatus.has(h.status))
+    .slice(0, maxHypotheses)
+    .map((h) => ({
+      ...h,
+      text: h.text.slice(0, 120),
+    }));
+
+  const trailStub = m.trailStub.slice(-maxTrail).map((t) => ({
+    ...t,
+    oneLiner: t.oneLiner.slice(0, 100),
+  }));
+
+  const next: WorkingMemory = {
+    ...m,
+    hypotheses,
+    openQuestions: m.openQuestions.slice(0, 4).map((q) => q.slice(0, 100)),
+    decisions: m.decisions.slice(0, 6).map((d) => d.slice(0, 80)),
+    trailStub,
+    updatedAt: new Date().toISOString(),
+  };
+  incContextMetric("context.working_fold", 1);
+  return next;
 }

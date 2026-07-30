@@ -12,3 +12,4 @@ export * from "./finance-recall";
 export * from "./working-memory";
 export * from "./handoff";
 export * from "./promote-strategy-recipe";
+export * from "./decision-outcome";

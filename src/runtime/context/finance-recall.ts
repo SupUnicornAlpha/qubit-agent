@@ -174,10 +174,18 @@ export class FinanceRecall {
 
     const use = Math.max(exp.useCount, 1);
     const successRate = exp.successCount / use;
-    const outcomeWeight = Math.min(
-      1,
-      0.4 * exp.qualityScore + 0.6 * (Number.isFinite(successRate) ? successRate : 0.5)
-    );
+    const outcomeWeight = computeOutcomeWeight(exp, successRate);
+
+    if (
+      typeof (meta["decisionRecord"] as { outcome?: { brierContribution?: number } } | undefined)
+        ?.outcome?.brierContribution === "number"
+    ) {
+      const brier = Number(
+        (meta["decisionRecord"] as { outcome: { brierContribution: number } }).outcome
+          .brierContribution
+      );
+      incContextMetric("finance.decision_brier", Math.round(brier * 1000));
+    }
 
     let domainBoost = 0;
     if (symbols?.length) {
@@ -252,4 +260,40 @@ export function renderFinanceRecallBlockForPrompt(results: FinanceRecallResult[]
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return `${s.slice(0, max)}…`;
+}
+
+/**
+ * A4：有 DecisionRecord.outcome 时用真实后验；否则 quality×successRate 代理。
+ * success → 偏高权重（1−brier）；fail → 压低；partial → 中性偏低。
+ */
+export function computeOutcomeWeight(exp: Experience, successRateFallback: number): number {
+  const meta = exp.metadataJson ?? {};
+  const dr = meta["decisionRecord"];
+  if (dr && typeof dr === "object") {
+    const record = dr as {
+      confidence?: number;
+      outcome?: { label?: string; brierContribution?: number };
+    };
+    const outcome = record.outcome;
+    if (outcome?.label === "success" || outcome?.label === "fail") {
+      const conf =
+        typeof record.confidence === "number" && Number.isFinite(record.confidence)
+          ? Math.max(0, Math.min(1, record.confidence))
+          : 0.7;
+      const y = outcome.label === "success" ? 1 : 0;
+      const brier =
+        typeof outcome.brierContribution === "number" && Number.isFinite(outcome.brierContribution)
+          ? outcome.brierContribution
+          : (conf - y) ** 2;
+      const calibrated = Math.max(0, Math.min(1, 1 - brier));
+      if (outcome.label === "success") return Math.max(0.35, calibrated);
+      return Math.min(0.4, Math.max(0.05, calibrated * 0.5));
+    }
+    if (outcome?.label === "partial") return 0.45;
+    if (outcome?.label === "unknown") return 0.35;
+  }
+  return Math.min(
+    1,
+    0.4 * exp.qualityScore + 0.6 * (Number.isFinite(successRateFallback) ? successRateFallback : 0.5)
+  );
 }

@@ -22,11 +22,18 @@ export interface AssembleSlotsInput {
   workflowRunId: string;
   definitionId: string;
   role: string;
+  sessionId?: string;
+  turnId?: string;
   decisionCutoff?: string;
   slots: Partial<Record<ContextSlotId, string | ContextSlotContent>>;
   budget?: Partial<Record<ContextSlotId, ContextSlotBudget>>;
   /** soft budget 时按 priority 从低到高 omit */
   softOmitLowPriority?: boolean;
+  /**
+   * 硬上限（user 总字符）。槽裁后仍超限则按 priority omit；
+   * 永不 omit goal / slot / recall_finance。
+   */
+  hardMaxUserChars?: number;
   axiomsApplied?: ContextAxiomId[];
 }
 
@@ -87,8 +94,13 @@ export function assembleContextEnvelope(input: AssembleSlotsInput): ContextEnvel
   if (input.softOmitLowPriority) {
     const softMax =
       Number(process.env["QUBIT_SOFT_USER_PROMPT_CHARS"] ?? "20000") || 20_000;
-    slots = omitUntilUnder(slots, budget, softMax, USER_SLOT_ORDER);
+    slots = omitUntilUnder(slots, budget, softMax, USER_SLOT_ORDER, "omit_soft");
   }
+
+  const hardMax =
+    input.hardMaxUserChars ??
+    (Number(process.env["QUBIT_HARD_USER_PROMPT_CHARS"] ?? "24000") || 24_000);
+  slots = omitUntilUnder(slots, budget, hardMax, USER_SLOT_ORDER, "omit_hard");
 
   const userParts: string[] = [];
   for (const id of USER_SLOT_ORDER) {
@@ -106,6 +118,8 @@ export function assembleContextEnvelope(input: AssembleSlotsInput): ContextEnvel
     workflowRunId: input.workflowRunId,
     definitionId: input.definitionId,
     role: input.role,
+    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.decisionCutoff ? { decisionCutoff: input.decisionCutoff } : {}),
     axiomsApplied: input.axiomsApplied ?? allAxioms(),
     slots,
@@ -121,7 +135,8 @@ function omitUntilUnder(
   slots: Partial<Record<ContextSlotId, ContextSlotContent>>,
   budget: Record<ContextSlotId, ContextSlotBudget>,
   softMax: number,
-  order: ContextSlotId[]
+  order: ContextSlotId[],
+  metricMode: "omit_soft" | "omit_hard" = "omit_soft"
 ): Partial<Record<ContextSlotId, ContextSlotContent>> {
   const next = { ...slots };
   const total = () =>
@@ -133,11 +148,11 @@ function omitUntilUnder(
   );
   for (const id of byPriority) {
     if (total() <= softMax) break;
-    // 永不 omit goal / recall_finance
-    if (id === "goal" || id === "recall_finance") continue;
+    // 永不 omit goal / slot / recall_finance
+    if (id === "goal" || id === "slot" || id === "recall_finance") continue;
     if (next[id]) {
       delete next[id];
-      incContextMetric("context.slot_truncated_rate", 1, { slot: id, mode: "omit_soft" });
+      incContextMetric("context.slot_truncated_rate", 1, { slot: id, mode: metricMode });
     }
   }
   return next;

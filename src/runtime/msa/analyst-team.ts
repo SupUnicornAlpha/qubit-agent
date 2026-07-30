@@ -573,6 +573,38 @@ async function runAnalystTeamCore(params: {
   const userContext = params.context ?? defaultResearchUserContext(scope);
   const dataContext = await buildAnalystTeamDataContext({ scope });
   let context = [dataContext, userContext].filter((s) => s.trim().length > 0).join("\n\n");
+  // P2：market_snapshot 默认关；白名单 FINANCE_MARKET_SNAPSHOT_WRITE=1 时落 Experience
+  try {
+    const { isMarketSnapshotWriteEnabled } = await import("../context/axioms");
+    if (isMarketSnapshotWriteEnabled()) {
+      const rows = await db
+        .select({ projectId: workflowRun.projectId })
+        .from(workflowRun)
+        .where(eq(workflowRun.id, workflowRunId))
+        .limit(1);
+      const projectId = rows[0]?.projectId;
+      if (projectId) {
+        const { upsertMarketSnapshotExperience } = await import("../context/finance-memory-writer");
+        const symbols = scope.symbols.filter((s) => typeof s === "string" && s.trim().length > 0);
+        if (symbols.length > 0) {
+          await upsertMarketSnapshotExperience({
+            projectId,
+            sourceRunId: workflowRunId,
+            meta: {
+              symbols: symbols.slice(0, 12),
+              asof: new Date().toISOString(),
+              indicatorsBrief: dataContext.slice(0, 1500),
+              dataSource: "analyst-team-context",
+              decayHours: 48,
+              memoryTier: "shallow",
+            },
+          });
+        }
+      }
+    }
+  } catch {
+    /* snapshot 写失败不阻断研究 */
+  }
   const orchestratorSlot = await resolveOrchestratorSlot(db);
   let slots = await resolveAnalystSlots({ db });
   if (params.analystDefinitionIds && params.analystDefinitionIds.length > 0) {

@@ -107,6 +107,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       workflowRunId?: string;
       workflowMode?: "research" | "backtest" | "simulation" | "live";
       reuseSessionWorkflow?: boolean;
+      turnMode?: "new_goal" | "continue_goal";
       loopKind?: AgentLoopKind;
       roleReasoner?: AgentLoopKind;
       hitlMode?: "off" | "ai" | "always";
@@ -135,6 +136,8 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
     body.workflowMode === "live"
       ? body.workflowMode
       : undefined;
+  const turnMode =
+    body.turnMode === "new_goal" || body.turnMode === "continue_goal" ? body.turnMode : undefined;
   if (body.processConfig !== undefined && !processConfig.success) {
     return c.json({ ok: false, error: "invalid workflow processConfig" }, 400);
   }
@@ -148,6 +151,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       ...(body.reuseSessionWorkflow !== undefined
         ? { reuseSessionWorkflow: body.reuseSessionWorkflow }
         : {}),
+      ...(turnMode ? { turnMode } : {}),
       ...(loopKind.success ? { loopKind: loopKind.data } : {}),
       ...(roleReasoner.success ? { roleReasoner: roleReasoner.data } : {}),
       ...(hitlMode ? { hitlMode } : {}),
@@ -162,6 +166,24 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
     if (status === 404) return c.json({ ok: false, error: messageText }, 404);
     return c.json({ ok: false, error: messageText }, 400);
   }
+});
+
+/**
+ * Session 级统一 ClientEvent SSE（06 协议）。
+ * 投影自 stepStream + HITL；需先 POST turns 建立 Turn 绑定。
+ */
+chatRouter.get("/sessions/:sessionId/events", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const { clientEventBus } = await import("../runtime/conversation/client-event-bus");
+  const stream = clientEventBus.createSessionSseStream(sessionId);
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 });
 
 const purposeEnum = ["research", "live_trading", "both"] as const;

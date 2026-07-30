@@ -704,10 +704,35 @@ export interface ChatMessage {
 
 export interface ConversationTurnResult {
   sessionId: string;
+  /** 本轮用户消息 id（Turn 稳定身份） */
+  turnId: string;
+  /** primary Run = workflow_run.id */
+  runId: string;
+  /** @deprecated 与 runId 相同 */
   workflowRunId: string;
-  runId?: string;
+  agentRunId?: string;
+  turnMode: "new_goal" | "continue_goal";
   userMessage: ChatMessage;
   assistantMessage: ChatMessage;
+}
+
+/** Session 级统一客户端事件（06 协议） */
+export type ClientEventType =
+  | "turn.started"
+  | "item.delta"
+  | "item.completed"
+  | "approval.requested"
+  | "turn.completed"
+  | "turn.failed";
+
+export interface ClientEvent {
+  version: 1;
+  sessionId: string;
+  turnId: string;
+  runId: string;
+  type: ClientEventType;
+  item?: { id: string; kind: string; payload: unknown };
+  ts: number;
 }
 
 /** Persisted strategy bundle from IDE (linked to session + optional research workflow run). */

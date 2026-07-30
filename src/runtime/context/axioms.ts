@@ -51,6 +51,16 @@ export function isFinanceMemoryStrict(): boolean {
   return process.env["FINANCE_MEMORY_STRICT"] !== "0";
 }
 
+/** P2：market_snapshot 默认关；FINANCE_MARKET_SNAPSHOT_WRITE=1 开启 */
+export function isMarketSnapshotWriteEnabled(): boolean {
+  return process.env["FINANCE_MARKET_SNAPSHOT_WRITE"] === "1";
+}
+
+/** P2：WorkingMemory LLM/规则折叠默认关；CONTEXT_WORKING_SUMMARIZE=1 开启 */
+export function isWorkingMemorySummarizeEnabled(): boolean {
+  return process.env["CONTEXT_WORKING_SUMMARIZE"] === "1";
+}
+
 /** 05 §4.2 默认槽位预算 */
 export const DEFAULT_SLOT_BUDGETS: Record<ContextSlotId, ContextSlotBudget> = {
   identity: { maxChars: 8_000, compress: "truncate", priority: 100 },

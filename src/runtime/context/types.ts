@@ -40,6 +40,9 @@ export interface ContextEnvelope {
   workflowRunId: string;
   definitionId: string;
   role: string;
+  /** 06 Session/Turn：可选绑定，便于 metric / 审计 */
+  sessionId?: string;
+  turnId?: string;
   /** A6：回测/仿真 cutoff；召回过滤 asof > cutoff */
   decisionCutoff?: string;
   axiomsApplied: ContextAxiomId[];

@@ -727,6 +727,7 @@ export async function createConversationTurn(input: {
   workflowRunId?: string;
   workflowMode?: import("./types").WorkflowMode;
   reuseSessionWorkflow?: boolean;
+  turnMode?: "new_goal" | "continue_goal";
   loopKind?: import("./types").AgentLoopKind;
   roleReasoner?: import("./types").AgentLoopKind;
   hitlMode?: "off" | "ai" | "always";
@@ -3270,6 +3271,74 @@ export function subscribeWorkflowEvents(params: {
           if (!parsed) continue;
           try {
             params.onEvent(JSON.parse(parsed.data) as StepStreamEvent);
+          } catch {
+            // ignore malformed JSON
+          }
+        }
+      }
+    } catch (e) {
+      if (!active) return;
+      const name = e instanceof Error ? e.name : "";
+      if (name === "AbortError") return;
+      params.onError?.(new Event("fetch-error"));
+    }
+  };
+
+  void run();
+
+  return () => {
+    active = false;
+    ac.abort();
+  };
+}
+
+/**
+ * Session 级统一 ClientEvent SSE（06 协议）。
+ * 对话页优先订此流；研究团队页可继续用 subscribeWorkflowEvents。
+ */
+export function subscribeSessionEvents(params: {
+  sessionId: string;
+  onEvent: (event: import("./types").ClientEvent) => void;
+  onError?: (err: Event) => void;
+}): () => void {
+  const url = backendFetchUrl(
+    `/api/v1/chat/sessions/${encodeURIComponent(params.sessionId)}/events`
+  );
+  const ac = new AbortController();
+  let active = true;
+
+  const run = async (): Promise<void> => {
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+        signal: ac.signal,
+        cache: "no-store",
+      });
+      if (!res.ok || !res.body) {
+        if (active) params.onError?.(new Event("http-error"));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (active) {
+        const { done, value } = await reader.read();
+        if (value) buf += decoder.decode(value, { stream: true });
+        if (done) {
+          buf += decoder.decode();
+          break;
+        }
+        buf = buf.replace(/\r\n/g, "\n");
+        for (;;) {
+          const sep = buf.indexOf("\n\n");
+          if (sep < 0) break;
+          const block = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const parsed = parseSseBlock(block);
+          if (!parsed) continue;
+          try {
+            params.onEvent(JSON.parse(parsed.data) as import("./types").ClientEvent);
           } catch {
             // ignore malformed JSON
           }

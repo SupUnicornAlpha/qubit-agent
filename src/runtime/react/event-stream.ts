@@ -1,4 +1,9 @@
 import type { StepStreamEvent } from "./state";
+import { getTurnBindingByWorkflow } from "../conversation/turn-binding";
+import {
+  clientEventBus,
+  projectStepStreamToClientEvent,
+} from "../conversation/client-event-bus";
 
 type StreamController = ReadableStreamDefaultController<Uint8Array>;
 
@@ -201,6 +206,16 @@ class StepStreamBus {
           // ignore broken stream
         }
       }
+    }
+
+    // 投影到 Session 级 ClientEvent（有 Turn 绑定时）
+    const binding = getTurnBindingByWorkflow(event.workflowId);
+    if (binding) {
+      const clientEv = projectStepStreamToClientEvent(event, {
+        sessionId: binding.sessionId,
+        turnId: binding.turnId,
+      });
+      if (clientEv) clientEventBus.publish(clientEv);
     }
   }
 

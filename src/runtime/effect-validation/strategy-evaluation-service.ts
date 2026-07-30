@@ -99,7 +99,29 @@ export class StrategyEvaluationService {
         createdBy: "system",
       });
     }
-    return this.getByBacktestRunId(job.id);
+    const record = await this.getByBacktestRunId(job.id);
+    // P2：回测评估 → strategy_eval Experience（失败不阻断 gate）
+    try {
+      const { upsertStrategyEvalExperience } = await import("../context/finance-memory-writer");
+      await upsertStrategyEvalExperience({
+        projectId,
+        sourceRunId: job.workflowRunId,
+        meta: {
+          compositionId: job.compositionId ?? undefined,
+          strategyVersionId: job.strategyVersionId,
+          backtestRunId: job.id,
+          evalKind: "backtest",
+          metrics: { ...(job.result?.metrics ?? {}), sampleSize: job.result?.meta.sampleSize },
+          qualityScore,
+          pass,
+          asof: job.config.endDate ?? new Date().toISOString().slice(0, 10),
+          memoryTier: "intermediate",
+        },
+      });
+    } catch {
+      /* finance memory 写失败不阻断 strategy_eval_run */
+    }
+    return record;
   }
 
   async getByBacktestRunId(backtestRunId: string): Promise<StrategyEvaluationRecord | null> {

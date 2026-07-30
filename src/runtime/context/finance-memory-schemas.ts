@@ -55,6 +55,48 @@ export const StrategyRecipeMetaSchema = z.object({
 
 export type StrategyRecipeMeta = z.infer<typeof StrategyRecipeMetaSchema>;
 
+export const StrategyEvalMetaSchema = z.object({
+  compositionId: z.string().min(1).optional(),
+  strategyVersionId: z.string().min(1).optional(),
+  backtestRunId: z.string().min(1).optional(),
+  evalKind: z
+    .enum(["backtest", "paper", "live", "walk_forward", "recommendation"])
+    .default("backtest"),
+  metrics: z.record(z.unknown()).default({}),
+  universe: z.string().optional(),
+  qualityScore: z.number().min(0).max(1).optional(),
+  pass: z.boolean().optional(),
+  asof: z.string().min(1),
+  memoryTier: z.literal("intermediate").default("intermediate"),
+});
+
+export type StrategyEvalMeta = z.infer<typeof StrategyEvalMetaSchema>;
+
+export const PnlEpisodeMetaSchema = z.object({
+  strategyRuntimeId: z.string().min(1).optional(),
+  tradingDay: z.string().min(1),
+  symbol: z.string().min(1),
+  realized: z.number(),
+  unrealized: z.number().optional(),
+  fee: z.number().optional(),
+  turnover: z.number().optional(),
+  asof: z.string().min(1),
+  memoryTier: z.literal("intermediate").default("intermediate"),
+});
+
+export type PnlEpisodeMeta = z.infer<typeof PnlEpisodeMetaSchema>;
+
+export const MarketSnapshotMetaSchema = z.object({
+  symbols: z.array(z.string().min(1)).min(1),
+  asof: z.string().min(1),
+  indicatorsBrief: z.string().min(1),
+  dataSource: z.string().min(1).default("analyst-team-context"),
+  decayHours: z.number().positive().default(48),
+  memoryTier: z.literal("shallow").default("shallow"),
+});
+
+export type MarketSnapshotMeta = z.infer<typeof MarketSnapshotMetaSchema>;
+
 export type FinanceMemoryValidateOk<T> = { ok: true; data: T };
 export type FinanceMemoryValidateErr = {
   ok: false;
@@ -102,6 +144,51 @@ export function validateStrategyRecipeMeta(
       ok: false,
       errorCode: "finance_memory_schema_invalid",
       message: "strategy_recipe metadata invalid",
+      issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+    };
+  }
+  return { ok: true, data: parsed.data };
+}
+
+export function validateStrategyEvalMeta(
+  raw: unknown
+): FinanceMemoryValidateOk<StrategyEvalMeta> | FinanceMemoryValidateErr {
+  const parsed = StrategyEvalMetaSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errorCode: "finance_memory_schema_invalid",
+      message: "strategy_eval metadata invalid",
+      issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+    };
+  }
+  return { ok: true, data: parsed.data };
+}
+
+export function validatePnlEpisodeMeta(
+  raw: unknown
+): FinanceMemoryValidateOk<PnlEpisodeMeta> | FinanceMemoryValidateErr {
+  const parsed = PnlEpisodeMetaSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errorCode: "finance_memory_schema_invalid",
+      message: "pnl_episode metadata invalid",
+      issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+    };
+  }
+  return { ok: true, data: parsed.data };
+}
+
+export function validateMarketSnapshotMeta(
+  raw: unknown
+): FinanceMemoryValidateOk<MarketSnapshotMeta> | FinanceMemoryValidateErr {
+  const parsed = MarketSnapshotMetaSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errorCode: "finance_memory_schema_invalid",
+      message: "market_snapshot metadata invalid",
       issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
     };
   }
