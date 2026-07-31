@@ -141,4 +141,44 @@ describe("teamGraphDisplay fan-out (__team__) compat", () => {
       expect(e.b).not.toBe("__team__");
     }
   });
+
+  test("未使用时不常驻 msa / signal_fusion；有通信时才入图", () => {
+    const teamGraph: AnalystTeamGraphPayload = {
+      nodes: [
+        { id: "orchestrator", role: "orchestrator", label: "Orchestrator" },
+        { id: "research", role: "research", label: "Research" },
+        { id: "msa", role: "msa", label: "MSA" },
+        { id: "signal_fusion", role: "signal_fusion", label: "Fusion" },
+      ],
+      edges: [],
+      interactions: [
+        mkInteraction({
+          fromRole: "orchestrator",
+          toRole: "research",
+          contentText: "按需派单",
+        }),
+      ],
+      toolCalls: [],
+      mcpCalls: [],
+    };
+    const idle = buildFilteredTeamGraphDisplay(teamGraph, ["research"]);
+    const idleRoles = idle.nodes.map((n) => n.role);
+    expect(idleRoles.includes("msa")).toBe(false);
+    expect(idleRoles.includes("signal_fusion")).toBe(false);
+    expect(idleRoles.includes("research")).toBe(true);
+
+    const withMsa: AnalystTeamGraphPayload = {
+      ...teamGraph,
+      interactions: [
+        ...teamGraph.interactions,
+        mkInteraction({
+          fromRole: "orchestrator",
+          toRole: "msa",
+          contentText: "启动融合",
+        }),
+      ],
+    };
+    const used = buildFilteredTeamGraphDisplay(withMsa, ["research"]);
+    expect(used.nodes.map((n) => n.role).includes("msa")).toBe(true);
+  });
 });

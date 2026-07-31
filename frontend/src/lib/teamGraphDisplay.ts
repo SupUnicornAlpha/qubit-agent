@@ -158,9 +158,11 @@ export function aggregateEdgesFromInteractions(
 }
 
 /**
- * 按左侧勾选的分析师过滤展示图，但保留与外部角色（如 msa）的实际通信边。
+ * 按左侧勾选的分析师过滤展示图。
+ * orchestrator 始终保留；msa / signal_fusion 等外部角色**仅在实际出现通信或轨迹时**入图，
+ * 避免未启用 MSA 时拓扑上常驻「融合」节点。
  */
-const ALWAYS_VISIBLE_GRAPH_ROLES = new Set(["orchestrator", "msa", "signal_fusion"]);
+const ALWAYS_VISIBLE_GRAPH_ROLES = new Set(["orchestrator"]);
 
 function mergeEdge(prev: AnalystTeamGraphEdge, next: AnalystTeamGraphEdge): AnalystTeamGraphEdge {
   return {
@@ -195,6 +197,9 @@ export function buildFilteredTeamGraphDisplay(
       for (const t of readTargetRoles(i.payloadJson)) nodeRoles.add(t);
     }
   }
+  // 实际通信触及的外部角色（如本次真的跑了 MSA）纳入 allow，才能显示其工具/步骤
+  for (const role of nodeRoles) allow.add(role);
+
   for (const t of teamGraph.toolCalls ?? []) {
     if (allow.has(t.agentRole)) nodeRoles.add(t.agentRole);
   }
