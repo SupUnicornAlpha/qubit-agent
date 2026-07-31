@@ -1,6 +1,6 @@
 import type { AssertionResult, RunEnvelope, RunScorecard } from "./contracts";
 
-const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
 
 function assertion(id: string, status: AssertionResult["status"], detail: string): AssertionResult {
   return { id, status, detail };

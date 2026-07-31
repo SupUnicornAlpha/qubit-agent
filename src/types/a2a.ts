@@ -11,6 +11,7 @@ export const A2ATaskStateSchema = z.enum([
   "working",
   "input_required",
   "completed",
+  "partial",
   "failed",
   "cancelled",
   "rejected",
@@ -19,6 +20,7 @@ export type A2ATaskState = z.infer<typeof A2ATaskStateSchema>;
 
 export const A2ATaskTerminalStates = new Set<A2ATaskState>([
   "completed",
+  "partial",
   "failed",
   "cancelled",
   "rejected",
@@ -35,6 +37,7 @@ export const A2ATaskEventTypeSchema = z.enum([
   "artifact",
   "input_required",
   "completed",
+  "partial",
   "failed",
   "cancelled",
   "rejected",
@@ -109,6 +112,7 @@ export type TaskProgressPayload = z.infer<typeof TaskProgressPayloadSchema>;
 
 export const TaskResultStatusSchema = z.enum([
   "completed",
+  "partial",
   "failed",
   "timeout",
   "awaiting_approval",

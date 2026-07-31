@@ -87,7 +87,10 @@ export async function runReadiness(input: RunReadinessInput): Promise<RunReadine
     projectId: input.projectId,
     goal: recipe.workflow.goal,
     inputParams: scenarioInputParamsFromRecipe(recipe),
-    loopOverrides: recipe.workflow.loopOptionsJson as never,
+    loopOverrides: {
+      ...(recipe.workflow.loopOptionsJson as Record<string, unknown>),
+      benchmarkNamespace: true,
+    } as never,
   });
   const workflowRunId = launched.workflowRunId;
 

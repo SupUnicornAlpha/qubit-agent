@@ -66,16 +66,17 @@ export interface ScenarioRecipe {
   /**
    * 默认期望终态。runner 会等到 workflow_run.status 进入 expectedTerminalStatus
    * 之一才开始抓快照。
+   * `partial`：硬预算/契约收口但已保留证据（见 workflow-state-machine），必须视为终态，
+   * 否则 readiness/benchmark 会空等到 timeout。
    */
-  expectedTerminalStatus: ReadonlyArray<"completed" | "failed" | "cancelled" | "timeout">;
+  expectedTerminalStatus: ReadonlyArray<
+    "completed" | "partial" | "failed" | "cancelled" | "timeout"
+  >;
 }
 
-const DEFAULT_TERMINAL: ReadonlyArray<"completed" | "failed" | "cancelled" | "timeout"> = [
-  "completed",
-  "failed",
-  "cancelled",
-  "timeout",
-];
+const DEFAULT_TERMINAL: ReadonlyArray<
+  "completed" | "partial" | "failed" | "cancelled" | "timeout"
+> = ["completed", "partial", "failed", "cancelled", "timeout"];
 
 /**
  * 5 场景配方
@@ -128,7 +129,11 @@ export const SCENARIO_RECIPES: Record<ScenarioRecipe["key"], ScenarioRecipe> = {
         "评测目标：对 NVDA / AMD / INTC 三只半导体股做横向对比，要求 analyst_signal 至少落 3 条（每只一条）且 ticker 字段三家齐；输出每家多空观点 + 相对排序。",
       hitlMode: "off",
     },
-    scenarioInputParams: { ticker: "NVDA,AMD,INTC", debateRounds: 1 },
+    // Use the explicit basket contract instead of a comma-separated ticker.
+    // This forces scenario bootstrap to create per-ticker research children and
+    // lets the artifact gate verify ticker coverage rather than accepting one
+    // aggregate analyst response.
+    scenarioInputParams: { symbols: ["NVDA", "AMD", "INTC"], debateRounds: 1 },
     expectedTerminalStatus: DEFAULT_TERMINAL,
   },
   research_theme: {

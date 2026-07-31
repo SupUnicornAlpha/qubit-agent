@@ -9,6 +9,7 @@ import {
 import {
   type AgentControlMode,
   type WorkflowProcessConfig,
+  parseLoopOptionsJson,
   resolveAgentControlMode,
   resolveWorkflowProcessConfig,
 } from "../../../types/loop";
@@ -26,16 +27,10 @@ import {
   renderRecallBlockForPrompt,
 } from "../../experience";
 import { isFinanceSubKind } from "../../context/types";
-import {
-  allAxioms,
-  isContextProtocolEnabled,
-} from "../../context/axioms";
+import { allAxioms, isContextProtocolEnabled } from "../../context/axioms";
 import { assembleContextEnvelope } from "../../context/assemble-context-prompt";
 import { incContextMetric } from "../../context/context-metrics";
-import {
-  FinanceRecall,
-  renderFinanceRecallBlockForPrompt,
-} from "../../context/finance-recall";
+import { FinanceRecall, renderFinanceRecallBlockForPrompt } from "../../context/finance-recall";
 import { renderSlotContextForPrompt } from "../../context/handoff";
 import { getTurnBindingByWorkflow } from "../../conversation/turn-binding";
 import {
@@ -63,9 +58,15 @@ import {
   buildTopologySpecialistExecutionContract,
 } from "../../orchestration/topology-dispatch";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import { listAuthorizedCapabilities } from "../../tools/capability-gate";
 import {
-  listAuthorizedCapabilities,
-} from "../../tools/capability-gate";
+  buildRuntimeCapabilityManifestForRuntime,
+  renderRuntimeCapabilityManifest,
+} from "../../tools/data-capability-manifest";
+import {
+  listWorkflowArtifactsForContext,
+  renderWorkflowArtifactContext,
+} from "../../tools/workflow-artifact-ledger";
 import { renderSkillsBlockForPrompt, skillService } from "../../skills/skill-service";
 import {
   assembleAgentSystemPrompt,
@@ -212,6 +213,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
   mode: string | null;
   agentMode: AgentControlMode;
   processConfig: WorkflowProcessConfig | null;
+  benchmarkNamespace: boolean;
 }> {
   const db = await getDb();
   const wfRows = await db
@@ -233,6 +235,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
       mode: null,
       agentMode: "agent",
       processConfig: null,
+      benchmarkNamespace: false,
     };
   return {
     projectId: wfRows[0].projectId ?? null,
@@ -245,6 +248,7 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
     mode: wfRows[0].mode ?? null,
     agentMode: resolveAgentControlMode(wfRows[0].loopOptionsJson),
     processConfig: resolveWorkflowProcessConfig(wfRows[0].loopOptionsJson),
+    benchmarkNamespace: parseLoopOptionsJson(wfRows[0].loopOptionsJson).benchmarkNamespace === true,
   };
 }
 
@@ -365,9 +369,7 @@ export async function reasonNode(
   const slotContextRaw = payloadParams.context;
   const slotContextRendered = renderSlotContextForPrompt(slotContextRaw);
   const slotContext =
-    typeof slotContextRaw === "string"
-      ? slotContextRaw.trim()
-      : slotContextRendered;
+    typeof slotContextRaw === "string" ? slotContextRaw.trim() : slotContextRendered;
   const slotTicker = typeof payloadParams.ticker === "string" ? payloadParams.ticker.trim() : "";
   const hitlResumeBlock = buildHitlResumePromptBlock({
     approval: payloadParams.hitlApproval,
@@ -398,6 +400,7 @@ export async function reasonNode(
     mode: string | null;
     agentMode: AgentControlMode;
     processConfig: WorkflowProcessConfig | null;
+    benchmarkNamespace: boolean;
   } = {
     projectId: null,
     sessionId: null,
@@ -405,6 +408,7 @@ export async function reasonNode(
     mode: null,
     agentMode: "agent",
     processConfig: null,
+    benchmarkNamespace: false,
   };
   let workflowTokenBudget: WorkflowTokenBudgetStatus | null = null;
   try {
@@ -426,7 +430,21 @@ export async function reasonNode(
     ...(workflowMeta.projectId ? { projectId: workflowMeta.projectId } : {}),
     ...(workflowMeta.agentMode ? { agentMode: workflowMeta.agentMode } : {}),
   });
-  let tools = capabilitySurface.tools;
+  const capabilityManifest = await buildRuntimeCapabilityManifestForRuntime({
+    tools: capabilitySurface.tools,
+    goal: typeof payloadGoal === "string" ? payloadGoal : null,
+    ticker: slotTicker,
+  });
+  const capabilityManifestBlock = renderRuntimeCapabilityManifest(capabilityManifest);
+  let workflowArtifactBlock = "";
+  try {
+    workflowArtifactBlock = renderWorkflowArtifactContext(
+      await listWorkflowArtifactsForContext(state.workflowId)
+    );
+  } catch {
+    // Artifact ledger is optional during rolling migration; reasoning must continue.
+  }
+  let tools = capabilityManifest.tools;
   const mcpServers = [...capabilitySurface.mcpServers];
   const hasTools = tools.length > 0 || mcpServers.length > 0;
   const taskQuery = [
@@ -460,7 +478,7 @@ export async function reasonNode(
   let pnlAwareSkillBlock = "";
   try {
     const meta = workflowMeta;
-    if (meta.projectId) {
+    if (meta.projectId && !meta.benchmarkNamespace) {
       const query = [
         typeof payloadGoal === "string" ? payloadGoal : String(payloadGoal ?? ""),
         slotTicker,
@@ -645,6 +663,8 @@ export async function reasonNode(
     recalledFinanceBlock || recalledExperienceBlock,
     recalledGeneralBlock,
     pnlAwareSkillBlock,
+    capabilityManifestBlock,
+    workflowArtifactBlock,
     sessionContext.join("\n"),
   ]
     .filter(Boolean)
@@ -717,6 +737,8 @@ export async function reasonNode(
     !recalledFinanceBlock && recalledExperienceBlock ? `\n${recalledExperienceBlock}` : "",
     recalledGeneralBlock && recalledFinanceBlock ? `\n${recalledGeneralBlock}` : "",
     pnlAwareSkillBlock ? `\n${pnlAwareSkillBlock}` : "",
+    capabilityManifestBlock ? `\n${capabilityManifestBlock}` : "",
+    workflowArtifactBlock ? `\n${workflowArtifactBlock}` : "",
     sessionContext.length
       ? `\n**会话历史（最近 ${sessionContext.length} 条）**：\n${sessionContext.join("\n")}`
       : "",
@@ -798,6 +820,8 @@ export async function reasonNode(
     }
     if (state.iteration > 1) controlParts.push(`**当前迭代**：第 ${state.iteration} 轮`);
     if (pnlAwareSkillBlock) controlParts.push(pnlAwareSkillBlock);
+    if (capabilityManifestBlock) controlParts.push(capabilityManifestBlock);
+    if (workflowArtifactBlock) controlParts.push(workflowArtifactBlock);
 
     const turnBinding = getTurnBindingByWorkflow(state.workflowId);
     const turnId =

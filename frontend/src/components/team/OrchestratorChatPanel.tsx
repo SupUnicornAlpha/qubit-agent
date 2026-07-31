@@ -26,7 +26,9 @@ import {
 } from "react";
 import { type AgentControlMode } from "../../api/types";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
+import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
+import { SubAgentRunsPanel } from "./SubAgentRunsPanel";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
 
@@ -85,6 +87,11 @@ export interface OrchestratorChatPanelProps {
   onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
   /** Coding-Agent 体验 P1：当前「正在调用什么、为何」活动行（tool_rationale 推流） */
   activity?: { tool: string; why: string } | null;
+  /**
+   * Orchestrator 已派发的子 Agent 运行摘要（可展开看内部轨迹）。
+   * 让用户在右栏直接看见「谁在跑」，不必先点中间拓扑。
+   */
+  subAgentRuns?: SubAgentRunSummary[];
   /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
   artifacts: OrchestratorArtifact[];
   artifactsLoading?: boolean;
@@ -127,8 +134,8 @@ export function OrchestratorChatPanel({
   onExecutePlan,
   onGoalAction,
   activity,
-  artifacts,
-  artifactsLoading = false,
+  subAgentRuns = [],
+  artifacts,  artifactsLoading = false,
   artifactsError = null,
   onOpenArtifact,
   sendDisabled,
@@ -163,7 +170,7 @@ export function OrchestratorChatPanel({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [events.length, runProgress]);
+  }, [events.length, runProgress, subAgentRuns.length]);
 
   /**
    * 发送语义：
@@ -281,11 +288,10 @@ export function OrchestratorChatPanel({
             );
           })}
         </div>
-        {/* 只聚焦 Orchestrator：对用户输出=气泡，对子 Agent 的 A2A=折叠卡片 */}
+        {/* Orchestrator 主视角 + 子 Agent 进度卡片（可展开看内部轨迹） */}
         <div style={styles.scopeRow}>
           <span style={styles.scopeHint}>
-            显示 Orchestrator 对你的输出和折叠工具调用；对子 Agent 的派单也会折叠展示。子
-            Agent 之间的完整对话请点中间拓扑图的节点查看。
+            显示 Orchestrator 对你的输出、工具调用，以及已派发专家的实时进度。点击专家卡片可展开其内部运行状态。
           </span>
         </div>
       </div>
@@ -310,6 +316,7 @@ export function OrchestratorChatPanel({
             </span>
           </div>
         ) : null}
+        <SubAgentRunsPanel runs={subAgentRuns} />
         {wfId ? (
           <TeamHitlBanner
             workflowRunId={wfId}
@@ -383,8 +390,8 @@ export function OrchestratorChatPanel({
             !wfId
               ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
               : running
-                ? "Orchestrator 已启动，正在规划与派发…"
-                : "输入研究指令并发送，Orchestrator 将开始工作。子 Agent 的对话可在中间拓扑图点击节点查看。"
+                ? "Orchestrator 已启动，正在规划与按需派发专家…"
+                : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
           }
         />
       </div>

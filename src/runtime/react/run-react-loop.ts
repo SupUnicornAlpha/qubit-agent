@@ -192,7 +192,7 @@ async function runPerceive(
 /**
  * reason 节点：iteration+1 → 沙箱迭代限流 → 写 reason step → reasonNode →
  * 回写 token/latency → writeLlmCallLog → snapshot。
- * 返回 null 表示被沙箱迭代限流终止（state 已写 finalResponse=terminated）。
+ * 返回 null 表示被沙箱迭代限流收口（state 已写 finalResponse=partial）。
  */
 async function runReason(
   params: RunReactLoopParams,
@@ -220,7 +220,7 @@ async function runReason(
     const blocked = {
       ...state,
       finalResponse: {
-        status: "terminated",
+        status: "partial",
         reason: "token_budget_exhausted",
         usedTokens: tokenBudget.usedTokens,
         maxTotalTokens: tokenBudget.policy.maxTotalTokens,
@@ -256,7 +256,7 @@ async function runReason(
     const blocked = {
       ...state,
       finalResponse: {
-        status: "terminated",
+        status: "partial",
         reason: "sandbox_iteration_limit",
         iteration: state.iteration,
       },
@@ -353,7 +353,7 @@ async function runReason(
       ...state,
       iteration: nextIteration,
       finalResponse: {
-        status: "terminated",
+        status: errorMessage.includes("timed out") ? "partial" : "terminated",
         reason: errorMessage.includes("timed out") ? "reason_timeout" : "reason_error",
         error: errorMessage,
         iteration: nextIteration,
@@ -521,7 +521,7 @@ export function extractFinalizeAnswerText(
   return "";
 }
 
-/** finalize 节点：补 finalResponse（completed / max_iterations terminated）+ snapshot。 */
+/** finalize 节点：补 finalResponse（completed / max_iterations partial）+ snapshot。 */
 function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentGraphState {
   if (state.finalResponse) {
     snapshotState(params, "finalize", state.iteration, state);
@@ -547,7 +547,7 @@ function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentG
   const availableAnswer = extractFinalizeAnswerText(state);
   const finalResponse = exceeded
     ? {
-        status: "terminated",
+        status: "partial",
         reason: "max_iterations",
         iteration: state.iteration,
         answerText: availableAnswer
@@ -566,10 +566,10 @@ function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentG
   return merged;
 }
 
-/** finalResponse.status 是否为终态（awaiting_approval / terminated），与原条件边一致。 */
+/** finalResponse.status 是否为终态（awaiting_approval / partial / terminated），与原条件边一致。 */
 function isTerminalStatus(state: AgentGraphState): boolean {
   const st = state.finalResponse?.status;
-  return st === "awaiting_approval" || st === "terminated";
+  return st === "awaiting_approval" || st === "partial" || st === "terminated";
 }
 
 export function isTaskDeadlineExpired(
@@ -585,7 +585,7 @@ function terminateAtTaskDeadline(state: AgentGraphState): AgentGraphState {
   return {
     ...state,
     finalResponse: {
-      status: "terminated",
+      status: "partial",
       reason: "task_deadline_exceeded",
       role: state.agentDefinition.role,
       iteration: state.iteration,

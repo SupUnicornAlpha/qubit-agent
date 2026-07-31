@@ -129,6 +129,15 @@ describe("B 类 · 工具调用质量", () => {
     expect(r["B-1"]).toBe(1);
   });
 
+  test("B-1 别名召回：eastmoney_quote + company_news 也应命中 get_quote/news", async () => {
+    const { wfId, stepId } = await setupWfWithStep();
+    await insertTool({ wfId, stepId, toolName: "eastmoney_quote", toolKind: "mcp", i: 1 });
+    await insertTool({ wfId, stepId, toolName: "company_news", toolKind: "mcp", i: 1 });
+    const sqlite = getSqliteForTesting();
+    const r = await collectToolQuality(sqlite, { workflowRunId: wfId, scenario: "research" });
+    expect(r["B-1"]).toBe(1);
+  });
+
   test("B-1 必备工具召回：research 只调 get_quote → 0.5", async () => {
     const { wfId, stepId } = await setupWfWithStep();
     await insertTool({ wfId, stepId, toolName: "get_quote", toolKind: "mcp", i: 1 });

@@ -55,10 +55,24 @@ describe("benchmark upgrade gate", () => {
     expect(result.promotionEligible).toBe(true);
   });
 
-  test("fails an upgrade when token consumption exceeds the case budget", () => {
+  test("soft-over token consumption still passes resource (does not block research)", () => {
     const result = evaluateUpgradeGate({
       benchmarkCase,
       snapshot: snapshot({ "C-3-total": benchmarkCase.budget.maxTotalTokens + 1 }),
+      grade,
+      scorecard: completeScorecard(),
+      durationMs: 1_000,
+    });
+    expect(result.status).toBe("pass");
+    const resource = result.dimensions.find((item) => item.name === "resource");
+    expect(resource?.status).toBe("pass");
+    expect(resource?.detail.startsWith("soft_over")).toBe(true);
+  });
+
+  test("fails resource only on hard overrun (3x budget or iteration blow-up)", () => {
+    const result = evaluateUpgradeGate({
+      benchmarkCase,
+      snapshot: snapshot({ "C-3-total": benchmarkCase.budget.maxTotalTokens * 3 + 1 }),
       grade,
       scorecard: completeScorecard(),
       durationMs: 1_000,

@@ -6,12 +6,21 @@ import type { AgentGraphState } from "../react/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { resolveTopologyTaskHeartbeatMs } from "../orchestration/topology-dispatch";
 import type { RuntimeHandlerContext } from "../types";
-import { clearA2ATaskCancellation, isA2ATaskCancellationRequested } from "./a2a-task-cancellation";
-import { completeA2ATask, markA2ATaskWorking, recordA2ATaskProgress } from "./a2a-task-service";
+import {
+  clearA2ATaskCancellation,
+  isA2ATaskCancellationRequested,
+  requestA2ATaskCancellation,
+} from "./a2a-task-cancellation";
+import {
+  completeA2ATask,
+  listOpenA2ATasksForWorkflow,
+  markA2ATaskWorking,
+  recordA2ATaskProgress,
+} from "./a2a-task-service";
 import { buildTaskResult } from "./task-result";
 
 function taskFailureDetails(finalResponse: Record<string, unknown>): {
-  status: "failed" | "timeout" | "cancelled";
+  status: "partial" | "failed" | "timeout" | "cancelled";
   errorCode: string;
   errorMessage: string;
 } {
@@ -22,6 +31,9 @@ function taskFailureDetails(finalResponse: Record<string, unknown>): {
   }
   if (reason === "a2a_task_cancelled" || reason === "user_cancelled") {
     return { status: "cancelled", errorCode: reason, errorMessage: answer || "专家子任务已取消" };
+  }
+  if (String(finalResponse.status ?? "") === "partial") {
+    return { status: "partial", errorCode: reason, errorMessage: answer || "专家子任务部分完成" };
   }
   return { status: "failed", errorCode: reason, errorMessage: answer || "专家子任务未完成" };
 }
@@ -196,7 +208,8 @@ export async function runA2aReactTaskAssign(
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope
 ): Promise<
-  { finalResponse: Record<string, unknown>; terminalStatus: "completed" | "failed" } | undefined
+  | { finalResponse: Record<string, unknown>; terminalStatus: "completed" | "partial" | "failed" }
+  | undefined
 > {
   const payload = msg.payload as TaskAssignPayload;
   /**
@@ -246,6 +259,19 @@ export async function runA2aReactTaskAssign(
     // must not erase progress or make a restarted parent lose the task.
     await recordA2ATaskProgress(payload.taskId, progress);
     await sendTaskProgress(ctx, msg, payload, event);
+  };
+
+  const cancelOpenChildrenForTerminal = async (status: "completed" | "partial" | "failed") => {
+    if (!ownsTerminalState) return;
+    // A terminal parent must not leave specialists consuming tools in the
+    // background. The interrupt is cooperative in-process and the task state
+    // is persisted for reconnect/recovery.
+    const openChildren = await listOpenA2ATasksForWorkflow(workflowId, payload.taskId);
+    await Promise.all(
+      openChildren.map((task) =>
+        requestA2ATaskCancellation(task.id, `workflow_${status}_by_parent`)
+      )
+    );
   };
 
   try {
@@ -302,26 +328,34 @@ export async function runA2aReactTaskAssign(
       return;
     }
 
-    if (ownsTerminalState) onWorkflowTerminal(workflowId, terminalStatus);
+    if (ownsTerminalState) {
+      await cancelOpenChildrenForTerminal(terminalStatus);
+      onWorkflowTerminal(workflowId, terminalStatus);
+    }
 
     const taskEvidence = ownsTerminalState
       ? null
       : extractTopologyTaskEvidence(ctx.definition.role, finalState);
-    const evidenceSalvaged = taskEvidence?.verified === true;
     const taskResult = taskEvidence
       ? {
           ...finalResponse,
           taskEvidence,
           originalTerminalStatus: terminalStatus,
-          ...(terminalStatus === "failed" ? { status: "completed_with_verified_evidence" } : {}),
+          // Evidence remains useful to the parent, but never upgrades a
+          // failed/exhausted child into a successful task.
+          ...(terminalStatus === "failed" || terminalStatus === "partial"
+            ? { status: "failed_with_partial_evidence" }
+            : {}),
         }
       : finalResponse;
 
     const failure =
-      terminalStatus === "failed" && !evidenceSalvaged ? taskFailureDetails(finalResponse) : null;
+      terminalStatus === "failed" || terminalStatus === "partial"
+        ? taskFailureDetails(finalResponse)
+        : null;
     const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
       status: failure?.status ?? "completed",
-      success: terminalStatus !== "failed" || evidenceSalvaged,
+      success: terminalStatus === "completed",
       result: taskResult,
       ...(failure ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage } : {}),
       ...(taskEvidence
@@ -362,7 +396,10 @@ export async function runA2aReactTaskAssign(
      *   - TASK_RESULT(success=false)：A2A 上游 handler 需要的失败回执
      */
     const message = err instanceof Error ? err.message : String(err);
-    if (ownsTerminalState) onWorkflowTerminal(workflowId, "failed");
+    if (ownsTerminalState) {
+      await cancelOpenChildrenForTerminal("failed");
+      onWorkflowTerminal(workflowId, "failed");
+    }
     const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
       status: "failed",
       errorCode: "a2a_task_execution_error",

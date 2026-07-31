@@ -32,10 +32,10 @@ import { setWorkflowState } from "../workflow/workflow-state-machine";
 
 async function setWorkflowStatus(
   workflowId: string,
-  status: "completed" | "failed" | "running" | "awaiting_approval"
+  status: "completed" | "partial" | "failed" | "running" | "awaiting_approval"
 ): Promise<void> {
   await setWorkflowState(workflowId, status, { reason: "orchestrator-handler" });
-  if (status === "completed" || status === "failed") {
+  if (status === "completed" || status === "partial" || status === "failed") {
     onWorkflowTerminal(workflowId, status);
   }
 }

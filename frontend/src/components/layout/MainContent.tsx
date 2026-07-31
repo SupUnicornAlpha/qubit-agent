@@ -190,6 +190,7 @@ import {
   OrchestratorChatPanel,
   type OrchestratorArtifact,
 } from "../team/OrchestratorChatPanel";
+import { buildSubAgentRunSummaries } from "../../lib/subAgentRuns";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
 import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
@@ -5238,6 +5239,21 @@ const TeamDashboardPanel: FC = () => {
     return buildFilteredTeamGraphDisplay(teamGraph, participatingAnalystRoles);
   }, [teamGraph, participatingAnalystRoles]);
 
+  /** 右栏「专家进度」：从 graph + 流式态 + 心跳推导已派发子 Agent。 */
+  const subAgentRuns = useMemo(() => {
+    const heartbeatsByRole: Record<string, { alive: boolean; lastPhase?: string | null }> = {};
+    for (const hb of agentHeartbeats?.heartbeats ?? []) {
+      if (!hb.role) continue;
+      heartbeatsByRole[hb.role] = { alive: hb.alive, lastPhase: hb.lastPhase };
+    }
+    return buildSubAgentRunSummaries({
+      graph: teamGraph,
+      streamingByRole,
+      workflowRunning: running || orchestratorChatInFlight,
+      heartbeatsByRole,
+    });
+  }, [teamGraph, streamingByRole, running, orchestratorChatInFlight, agentHeartbeats]);
+
   const graphNodeDetail = useMemo((): {
     inbound: AnalystTeamGraphInteraction[];
     outbound: AnalystTeamGraphInteraction[];
@@ -5673,7 +5689,10 @@ const TeamDashboardPanel: FC = () => {
     const wfRow = workflowOptions.find((w) => String(w.id) === workflowRunId);
     const wfStatus = typeof wfRow?.status === "string" ? wfRow.status : "";
     const wfTerminal =
-      wfStatus === "completed" || wfStatus === "failed" || wfStatus === "cancelled";
+      wfStatus === "completed" ||
+      wfStatus === "partial" ||
+      wfStatus === "failed" ||
+      wfStatus === "cancelled";
     if (wfTerminal && !running) {
       return { hotRoles: new Set<string>(), hotEdgeKeys: new Set<string>(), isRunning: false };
     }
@@ -5821,7 +5840,7 @@ const TeamDashboardPanel: FC = () => {
   const selectedWorkflowCompleted = useMemo(() => {
     if (running) return false;
     const st = selectedWorkflowRow?.status;
-    return st === "completed" || st === "failed" || st === "cancelled";
+    return st === "completed" || st === "partial" || st === "failed" || st === "cancelled";
   }, [selectedWorkflowRow, running]);
 
   const selectedWorkflowKind = useMemo(
@@ -6568,7 +6587,7 @@ const TeamDashboardPanel: FC = () => {
               <option value="codex_cli">Codex CLI</option>
             </select>
             <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              每个角色单轮推理用的引擎；仍走团队编排（MSA），CLI 不可用时自动回退自研。
+              每个角色单轮推理用的引擎；Orchestrator 按需派发专家，CLI 不可用时自动回退自研。
             </div>
           </div>
           {scopeMode === "single" ? (
@@ -6756,6 +6775,7 @@ const TeamDashboardPanel: FC = () => {
                 <option value="all">全部状态</option>
                 <option value="running">running</option>
                 <option value="completed">completed</option>
+                <option value="partial">partial</option>
                 <option value="failed">failed</option>
                 <option value="awaiting_review">awaiting_review</option>
                 <option value="pending">pending</option>
@@ -7573,7 +7593,8 @@ const TeamDashboardPanel: FC = () => {
         >
           <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>多 Agent 对话拓扑</h3>
           <p style={{ fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 12 }}>
-            拓扑与实时对话流同屏；虚线/灰边为计划拓扑，实线为已发生对话。Orchestrator 在任务启动时向各成员派发。策略/回测在 MSA 融合后执行。分析进行中自动轮询。
+            拓扑与实时对话流同屏；虚线/灰边为计划拓扑，实线为已发生对话。Orchestrator
+            按需派发专家并整合结论。分析进行中自动轮询；右栏可直接展开专家内部进度。
           </p>
           {!workflowRunId.trim() ? (
             <div style={teamStyles.empty}>请先在左侧栏选择工作流 ID</div>
@@ -8182,6 +8203,7 @@ const TeamDashboardPanel: FC = () => {
               })();
             }}
             activity={activeRationale}
+            subAgentRuns={subAgentRuns}
             artifacts={teamArtifacts}
             artifactsLoading={teamArtifactsLoading}
             artifactsError={teamArtifactsError}
@@ -8803,6 +8825,11 @@ const workflowStatusBadgeStyle: Record<string, CSSProperties> = {
     color: "var(--qb-wf-status-done-fg, #a5b4fc)",
     borderColor: "var(--qb-wf-status-done-border, #3730a3)",
     background: "var(--qb-wf-status-done-bg, rgba(55,48,163,0.25))",
+  },
+  partial: {
+    color: "var(--qb-wf-status-partial-fg, #fde68a)",
+    borderColor: "var(--qb-wf-status-partial-border, #a16207)",
+    background: "var(--qb-wf-status-partial-bg, rgba(161,98,7,0.25))",
   },
   failed: {
     color: "var(--qb-wf-status-failed-fg, #fecaca)",

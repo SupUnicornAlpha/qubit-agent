@@ -67,11 +67,12 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
       },
     ],
     requiredTools: [
-      // 研究场景至少要拿过价格 + 看过新闻/财报；用前缀匹配以兼容多 MCP 实现
+      // 研究场景至少要拿过价格 + 看过新闻/财报；用前缀/别名匹配以兼容多 MCP 实现
       "get_quote",
       "news",
     ],
-    goalKeywords: ["AAPL", "估值", "见解"],
+    // 泛化词；具体 ticker 由 goal / inputParams 动态提取，避免写死 AAPL 导致 TSLA case 误伤
+    goalKeywords: ["估值", "风险"],
     consistencyChecks: [
       {
         name: "fusion ↔ signal",
@@ -103,7 +104,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
       },
     ],
     requiredTools: ["get_quote", "news"],
-    goalKeywords: ["NVDA", "AMD", "对比"],
+    goalKeywords: ["对比", "估值", "风险"],
     consistencyChecks: [
       {
         name: "fusion ↔ signal",
@@ -115,21 +116,25 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
 
   research_theme: {
     scenario: "research_theme",
+    /**
+     * P0：research_theme 目前 alias 到 stock_screening 流水线，验收应对齐筛选项产物，
+     * 而不是 analyst_signal（否则 A-1 恒为 0）。
+     */
     requiredArtifacts: [
       {
-        table: "analyst_signal",
-        countSql: `SELECT COUNT(*) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
+        table: "screener_candidate",
+        countSql: `
+          SELECT COUNT(*) AS c
+          FROM screener_candidate
+          WHERE screener_run_id IN (
+            SELECT id FROM screener_run WHERE workflow_run_id = ?
+          )`,
         minRows: 3,
-        nonNullColumns: ["reasoning", "ticker"],
-      },
-      {
-        table: "analyst_signal_distinct_tickers",
-        countSql: `SELECT COUNT(DISTINCT ticker) AS c FROM analyst_signal WHERE workflow_run_id = ?`,
-        minRows: 3,
+        nonNullColumns: ["ticker", "score"],
       },
     ],
-    requiredTools: ["screener", "get_quote", "news"],
-    goalKeywords: ["AI", "算力", "细分"],
+    requiredTools: ["screener", "get_quote"],
+    goalKeywords: ["主题", "行业", "风险"],
     consistencyChecks: [],
   },
 
@@ -174,7 +179,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
       },
     ],
     requiredTools: ["screener", "recommendation.record"],
-    goalKeywords: ["momentum", "估值", "新闻"],
+    goalKeywords: ["动量", "估值", "候选"],
     consistencyChecks: [],
   },
 

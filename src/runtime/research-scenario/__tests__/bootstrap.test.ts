@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { researchScenarioRegistry } from "../registry";
-import { researchScenarioService } from "../service";
+import { buildAnalystLaunchInput, researchScenarioService } from "../service";
 import { BUILTIN_RESEARCH_SCENARIOS } from "../scenarios-seed";
 import { bootstrapProviders } from "../../provider/bootstrap";
 import { runMigrations } from "../../../db/sqlite/migrate";
@@ -56,5 +56,18 @@ describe("Research scenario bootstrap + service", () => {
         inputParams: {},
       })
     ).rejects.toThrow(/scenario_not_found/);
+  });
+
+  test("multi ticker input becomes an explicit basket rather than a comma ticker", () => {
+    expect(
+      buildAnalystLaunchInput({
+        scenarioKey: "research_multi",
+        inputParams: { symbols: ["NVDA", "AMD", "INTC"] },
+        goal: "compare semiconductors",
+      })
+    ).toMatchObject({
+      scope: { kind: "basket", symbols: ["NVDA", "AMD", "INTC"] },
+      analystRoles: ["market_data", "analyst_fundamental", "analyst_technical"],
+    });
   });
 });

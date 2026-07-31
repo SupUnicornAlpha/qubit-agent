@@ -52,7 +52,7 @@ export type ExperienceEvent =
       type: "workflow_terminal";
       workflowRunId: string;
       projectId: string;
-      status: Extract<WorkflowStatus, "completed" | "failed">;
+      status: Extract<WorkflowStatus, "completed" | "partial" | "failed">;
     }
   /**
    * Recall 召回出一条 experience 后 emit（fire-and-forget）。

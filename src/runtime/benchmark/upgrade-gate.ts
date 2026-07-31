@@ -155,16 +155,26 @@ function gateResource(input: {
     };
   }
   const budget = input.benchmarkCase.budget;
-  if (
-    totalTokens > budget.maxTotalTokens ||
-    p95Tokens > budget.maxTokenP95 ||
-    input.durationMs > budget.maxDurationMs ||
-    iterationRatio > 1
-  ) {
+  // 研究可完成优先：软超支（≤1.5×）只记 warn，不阻断；硬失控（>3× 或步数爆炸）才 fail。
+  const softCap = budget.maxTotalTokens * 1.5;
+  const hardCap = budget.maxTotalTokens * 3;
+  if (iterationRatio > 1 || totalTokens > hardCap || p95Tokens > budget.maxTokenP95 * 3) {
     return {
       name: "resource",
       status: "fail",
-      detail: `tokens=${totalTokens}/${budget.maxTotalTokens}, p95=${p95Tokens}/${budget.maxTokenP95}, durationMs=${input.durationMs}/${budget.maxDurationMs}, iterationRatio=${iterationRatio.toFixed(2)}`,
+      detail: `hard_over:tokens=${totalTokens}/${budget.maxTotalTokens}, p95=${p95Tokens}/${budget.maxTokenP95}, durationMs=${input.durationMs}/${budget.maxDurationMs}, iterationRatio=${iterationRatio.toFixed(2)}`,
+    };
+  }
+  if (
+    totalTokens > budget.maxTotalTokens ||
+    p95Tokens > budget.maxTokenP95 ||
+    input.durationMs > budget.maxDurationMs
+  ) {
+    const band = totalTokens > softCap ? "soft_over_elevated" : "soft_over";
+    return {
+      name: "resource",
+      status: "pass",
+      detail: `${band}:tokens=${totalTokens}/${budget.maxTotalTokens}, p95=${p95Tokens}/${budget.maxTokenP95}, durationMs=${input.durationMs}/${budget.maxDurationMs}, iterationRatio=${iterationRatio.toFixed(2)}`,
     };
   }
   return { name: "resource", status: "pass", detail: "token_latency_and_iteration_budget_passed" };

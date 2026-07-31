@@ -9,6 +9,7 @@ import {
   checkRequiredArtifacts,
   resolveScenarioKey,
 } from "../../agent-readiness/quality/artifact-checker";
+import { getScenarioExpectation } from "../../agent-readiness/quality/scenario-expectations";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
 import { dispatchMcpToolCall } from "../../mcp/dispatcher";
 import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
@@ -27,7 +28,26 @@ import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execut
 import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
 import { authorizeCapability, isCapabilityGateEnabled } from "../../tools/capability-gate";
 import { injectContextParams } from "../../tools/context-params";
+import {
+  buildRuntimeCapabilityManifestForRuntime,
+  isToolBlockedByRuntimeCapability,
+} from "../../tools/data-capability-manifest";
+import {
+  buildNotAttemptedDataGaps,
+  classifyDataGap,
+  toolMatchesRequiredCapability,
+} from "../../tools/data-gap";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
+import {
+  buildToolCallFingerprint,
+  findReusableSuccessfulToolCall,
+  shouldTerminateForNoProgress,
+} from "../../tools/tool-call-dedup";
+import {
+  findWorkflowArtifactByFingerprint,
+  recordWorkflowDataGap,
+  recordWorkflowToolArtifact,
+} from "../../tools/workflow-artifact-ledger";
 import { applyToolResultToWorkingMemory } from "../../context/working-memory";
 import {
   recordToolCallError,
@@ -70,6 +90,7 @@ import {
  */
 const MAX_ARTIFACT_GATE_RETRIES = 2;
 const MAX_CONTROL_MODE_GATE_RETRIES = 2;
+const MAX_REQUIRED_TOOL_GATE_RETRIES = 1;
 
 export async function actNode(
   state: AgentGraphState,
@@ -265,6 +286,135 @@ export async function actNode(
     })();
     const scenarioKey = sqliteHandle ? resolveScenarioKey(sqliteHandle, state.workflowId) : null;
     if (sqliteHandle && scenarioKey) {
+      const requiredTools = getScenarioExpectation(scenarioKey).requiredTools;
+      const terminalPayload = state.inboundMessage.payload as Record<string, unknown>;
+      const terminalTicker =
+        typeof terminalPayload.ticker === "string"
+          ? terminalPayload.ticker
+          : typeof terminalPayload.symbol === "string"
+            ? terminalPayload.symbol
+            : null;
+      const terminalManifest = await buildRuntimeCapabilityManifestForRuntime({
+        tools: availableTools,
+        goal: typeof terminalPayload.goal === "string" ? terminalPayload.goal : null,
+        ticker: terminalTicker,
+      });
+      const unavailableRequired = requiredTools.flatMap((capability) => {
+        const runnable = terminalManifest.tools.some((toolName) =>
+          toolMatchesRequiredCapability(toolName, capability)
+        );
+        if (runnable) return [];
+        const blocked = terminalManifest.unavailable.find((entry) =>
+          toolMatchesRequiredCapability(entry.toolName, capability)
+        );
+        return [
+          {
+            kind: blocked?.status === "no_coverage" ? "no_coverage" : "unconfigured",
+            capability,
+            market: terminalManifest.market,
+            provider: blocked?.provider ?? null,
+            reason:
+              blocked?.reason ??
+              `当前 Agent 的已授权工具集中没有可完成 ${capability} 的工具；这不是“无数据”。`,
+            retryable: false,
+          } as const,
+        ];
+      });
+      const attemptableRequired = requiredTools.filter((capability) =>
+        terminalManifest.tools.some((toolName) =>
+          toolMatchesRequiredCapability(toolName, capability)
+        )
+      );
+      const notAttempted = buildNotAttemptedDataGaps({
+        requiredCapabilities: attemptableRequired,
+        attemptedTools: state.toolCalls.map((call) => String(call.toolName ?? "")),
+        market: terminalManifest.market,
+      });
+      const requiredToolRetryCount = state.requiredToolGapRetryCount ?? 0;
+      if (notAttempted.length > 0 && requiredToolRetryCount < MAX_REQUIRED_TOOL_GATE_RETRIES) {
+        const message = `场景必备能力尚未调用：${notAttempted
+          .map((gap) => gap.capability)
+          .join("、")}。这属于 not_attempted，不能作为“无数据”结束；请先调用一个可用的对应工具。`;
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: {
+            level: "warn",
+            code: "REQUIRED_TOOL_GATE_NOT_ATTEMPTED",
+            scenario: scenarioKey,
+            dataGaps: [...notAttempted, ...unavailableRequired],
+            retryCount: requiredToolRetryCount + 1,
+            maxRetries: MAX_REQUIRED_TOOL_GATE_RETRIES,
+            message,
+          },
+        });
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "warn",
+              code: "REQUIRED_TOOL_GATE_NOT_ATTEMPTED",
+              scenario: scenarioKey,
+              dataGaps: [...notAttempted, ...unavailableRequired],
+              hint: message,
+            },
+          ],
+          requiredToolGapRetryCount: requiredToolRetryCount + 1,
+        };
+      }
+      if (notAttempted.length > 0) {
+        const message = `场景必备能力在补救后仍未调用：${notAttempted
+          .map((gap) => gap.capability)
+          .join("、")}。系统仅交付当前已有证据，不能标记为 completed。`;
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "warn",
+              code: "REQUIRED_TOOL_GATE_UNSATISFIED",
+              scenario: scenarioKey,
+              dataGaps: [...notAttempted, ...unavailableRequired],
+              hint: message,
+            },
+          ],
+          finalResponse: {
+            status: "partial",
+            reason: "required_tool_gate_unsatisfied",
+            answerText: message,
+            iteration: state.iteration,
+            role: state.agentDefinition.role,
+          },
+        };
+      }
+      if (unavailableRequired.length > 0) {
+        const message = `场景所需能力当前不可用：${unavailableRequired
+          .map((gap) => `${gap.capability}（${gap.kind}）`)
+          .join("、")}。系统不会把未配置或无覆盖误报为无数据。`;
+        return {
+          observations: [
+            ...state.observations,
+            {
+              level: "warn",
+              code: "REQUIRED_TOOL_CAPABILITY_UNAVAILABLE",
+              scenario: scenarioKey,
+              dataGaps: unavailableRequired,
+              hint: message,
+            },
+          ],
+          finalResponse: {
+            status: "partial",
+            reason: "required_tool_capability_unavailable",
+            answerText: message,
+            iteration: state.iteration,
+            role: state.agentDefinition.role,
+          },
+        };
+      }
       const gate = checkRequiredArtifacts(sqliteHandle, scenarioKey, state.workflowId);
       const retryCount = state.artifactGapRetryCount ?? 0;
       if (!gate.ok && retryCount < MAX_ARTIFACT_GATE_RETRIES) {
@@ -542,6 +692,87 @@ export async function actNode(
     projectId,
   });
 
+  const runtimeCapabilityManifest = await buildRuntimeCapabilityManifestForRuntime({
+    tools: [targetName],
+    goal:
+      typeof inboundPayload.goal === "string"
+        ? inboundPayload.goal
+        : typeof enrichedToolParams.goal === "string"
+          ? enrichedToolParams.goal
+          : null,
+    ticker:
+      typeof enrichedToolParams.ticker === "string"
+        ? enrichedToolParams.ticker
+        : typeof enrichedToolParams.symbol === "string"
+          ? enrichedToolParams.symbol
+          : null,
+    symbol: typeof enrichedToolParams.symbol === "string" ? enrichedToolParams.symbol : null,
+    exchange: typeof enrichedToolParams.exchange === "string" ? enrichedToolParams.exchange : null,
+  });
+  const capabilityUnavailable = isToolBlockedByRuntimeCapability(
+    runtimeCapabilityManifest,
+    targetName
+  );
+  if (capabilityUnavailable) {
+    const gap = {
+      kind: capabilityUnavailable.status === "unconfigured" ? "unconfigured" : "no_coverage",
+      market: runtimeCapabilityManifest.market,
+      capability: targetName,
+      provider: targetName.includes("/") ? (targetName.split("/", 1)[0] ?? null) : null,
+      reason: capabilityUnavailable.reason,
+      retryable: false,
+    } as const;
+    const unavailableFingerprint = buildToolCallFingerprint({
+      targetName,
+      params:
+        mcp && mcp.arguments && typeof mcp.arguments === "object" && !Array.isArray(mcp.arguments)
+          ? (mcp.arguments as Record<string, unknown>)
+          : enrichedToolParams,
+    });
+    void recordWorkflowDataGap({
+      workflowRunId: state.workflowId,
+      fingerprint: unavailableFingerprint,
+      toolName: targetName,
+      gap,
+      producerTaskId: typeof inboundPayload.taskId === "string" ? inboundPayload.taskId : null,
+    }).catch(() => {});
+    const observation = {
+      level: "warn" as const,
+      toolGovernance: true,
+      capabilityManifest: true,
+      code: capabilityUnavailable.code,
+      dataGap: gap,
+      message: capabilityUnavailable.reason,
+      recovery: {
+        nextAction: "switch_tool" as const,
+        allowSameToolRetry: false,
+        guidance: "请改用已展示的可用工具，或明确配置该市场的实时数据 provider。",
+      },
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: observation,
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        {
+          toolCallId,
+          toolName: targetName,
+          status: "governance_blocked",
+          reason: capabilityUnavailable.reason,
+        },
+      ],
+      observations: [...state.observations, observation],
+    };
+  }
+
   /** CapabilityGate (docs/agent-contracts/02) — authorize before sandbox/execute. */
   let gateTimeoutMs: number | undefined;
   let capabilityGateAllowed = false;
@@ -794,6 +1025,181 @@ export async function actNode(
     };
   }
 
+  /**
+   * 同一 ReAct（以及 checkpoint resume）内的同参成功读请求直接复用。
+   * 过去 `factor.list({})`、resolve_symbol、fetch_quote 会在模型看到简略
+   * observation 后被原样重发；这里在真正执行前拦截，避免再次消耗步数和 token。
+   */
+  const fingerprintParams = mcp
+    ? mcp.arguments && typeof mcp.arguments === "object" && !Array.isArray(mcp.arguments)
+      ? (mcp.arguments as Record<string, unknown>)
+      : {}
+    : enrichedToolParams;
+  const requestFingerprint = buildToolCallFingerprint({ targetName, params: fingerprintParams });
+  const reusableCall = findReusableSuccessfulToolCall({
+    targetName,
+    fingerprint: requestFingerprint,
+    priorToolCalls: state.toolCalls,
+  });
+  if (reusableCall) {
+    const noProgressRetryCount = (state.noProgressRetryCount ?? 0) + 1;
+    const priorStep = reusableCall.stepIndex ?? "earlier";
+    const message = `已在本任务第 ${priorStep} 步成功取得相同 ${targetName} 请求的结果，禁止原样重复调用。请基于已有结果继续分析、调用尚未执行的工具，或用 tool=none 汇总。`;
+    const observation = {
+      level: "warn" as const,
+      toolGovernance: true,
+      code: "DUPLICATE_SUCCESSFUL_TOOL_CALL",
+      toolName: targetName,
+      fingerprint: requestFingerprint,
+      reusedToolCallId: reusableCall.toolCallId ?? null,
+      message,
+      recovery: {
+        nextAction: "continue_with_limits" as const,
+        allowSameToolRetry: false,
+        guidance: message,
+      },
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: observation,
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        {
+          toolCallId,
+          toolName: targetName,
+          status: "deduplicated",
+          fingerprint: requestFingerprint,
+          reusedToolCallId: reusableCall.toolCallId ?? null,
+          stepIndex: state.iteration,
+          completedAt: Date.now(),
+          reason: message,
+        },
+      ],
+      observations: [...state.observations, observation],
+      ...(shouldTerminateForNoProgress(noProgressRetryCount)
+        ? {
+            finalResponse: {
+              status: "partial",
+              reason: "no_progress_repeated_tool_calls",
+              iteration: state.iteration,
+              answerText:
+                "已连续重复请求同一份已验证数据，系统已停止空转。请基于已有证据汇总，或在新任务中明确变更标的、时间范围、数据源或时间粒度。",
+            },
+          }
+        : { noProgressRetryCount }),
+    };
+  }
+
+  /**
+   * An A2A re-dispatch starts with a fresh GraphState, so in-memory toolCalls
+   * cannot see earlier evidence. Consult the workflow ledger before executing
+   * the same canonical request again and inject the retained result directly.
+   */
+  const reusableArtifact = await findWorkflowArtifactByFingerprint(
+    state.workflowId,
+    requestFingerprint
+  );
+  if (reusableArtifact) {
+    if (reusableArtifact.kind === "DataGap") {
+      const knownGap = reusableArtifact.payload.dataGap;
+      const message = `本 workflow 已确认 ${targetName} 的数据缺口：${JSON.stringify(knownGap)}。禁止原样重试；请切换可用能力或基于现有证据交付。`;
+      const observation = {
+        level: "warn" as const,
+        workflowArtifactReuse: true,
+        code: "WORKFLOW_DATA_GAP_REUSED",
+        artifactId: reusableArtifact.id,
+        dataGap: knownGap,
+        message,
+        recovery: {
+          nextAction: "switch_tool" as const,
+          allowSameToolRetry: false,
+          guidance: message,
+        },
+      };
+      emit({
+        runId: state.runId,
+        workflowId: state.workflowId,
+        traceId: state.traceId,
+        role: state.agentDefinition.role,
+        type: "observe",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: observation,
+      });
+      return {
+        toolCalls: [
+          ...state.toolCalls,
+          {
+            toolCallId,
+            toolName: targetName,
+            status: "governance_blocked",
+            fingerprint: requestFingerprint,
+            artifactId: reusableArtifact.id,
+            stepIndex: state.iteration,
+            completedAt: Date.now(),
+            reason: message,
+          },
+        ],
+        observations: [...state.observations, observation],
+      };
+    }
+    const message = `已复用本 workflow 的 ${reusableArtifact.kind}（由任务 ${reusableArtifact.producerTaskId ?? "unknown"} 产出），不重复调用 ${targetName}。请使用该事实继续分析或汇总。`;
+    const observation = {
+      level: "info" as const,
+      workflowArtifactReuse: true,
+      code: "WORKFLOW_ARTIFACT_REUSED",
+      artifactId: reusableArtifact.id,
+      artifactKind: reusableArtifact.kind,
+      toolName: targetName,
+      asOf: reusableArtifact.asOf,
+      freshnessMs: reusableArtifact.freshnessMs,
+      message,
+      ...reusableArtifact.payload,
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: observation,
+    });
+    return {
+      toolCalls: [
+        ...state.toolCalls,
+        {
+          toolCallId,
+          toolName: targetName,
+          status: "reused_workflow_artifact",
+          fingerprint: requestFingerprint,
+          artifactId: reusableArtifact.id,
+          stepIndex: state.iteration,
+          completedAt: Date.now(),
+          reason: message,
+        },
+      ],
+      observations: [...state.observations, observation],
+      workingMemory: applyToolResultToWorkingMemory(state.workingMemory, {
+        step: state.iteration,
+        tool: targetName,
+        ok: true,
+        result: reusableArtifact.payload,
+        oneLiner: `${targetName} reused workflow artifact ${reusableArtifact.id}`,
+      }),
+      noProgressRetryCount: 0,
+    };
+  }
+
   if (
     isRedundantTopologyProbe({
       taskType,
@@ -873,6 +1279,7 @@ export async function actNode(
     toolKind,
     targetKind,
     ...(mcp ? { mcp } : {}),
+    requestFingerprint,
     reasonText: state.reasonText ?? "",
     contextMemory: state.contextMemory,
     ...(capabilityGateAllowed || toolContractName
@@ -1221,6 +1628,23 @@ export async function actNode(
       },
     });
     const errorClass = classifyToolError(errMsg);
+    const dataGap = classifyDataGap({
+      toolName: targetName,
+      params:
+        mcp && mcp.arguments && typeof mcp.arguments === "object" && !Array.isArray(mcp.arguments)
+          ? (mcp.arguments as Record<string, unknown>)
+          : enrichedToolParams,
+      message: errMsg,
+    });
+    if (dataGap) {
+      void recordWorkflowDataGap({
+        workflowRunId: state.workflowId,
+        fingerprint: requestFingerprint,
+        toolName: targetName,
+        gap: dataGap,
+        producerTaskId: typeof inboundPayload.taskId === "string" ? inboundPayload.taskId : null,
+      }).catch(() => {});
+    }
     recordWorkflowToolFailure({
       workflowId: state.workflowId,
       targetName,
@@ -1253,6 +1677,7 @@ export async function actNode(
         errorSource,
         message: errMsg,
         errorClass,
+        ...(dataGap ? { dataGap } : {}),
         retryable,
         hint: `${hint} ${recovery.guidance}`,
         recovery,
@@ -1278,6 +1703,7 @@ export async function actNode(
           errorSource,
           message: errMsg,
           errorClass,
+          ...(dataGap ? { dataGap } : {}),
           retryable,
           hint: `${hint} ${recovery.guidance}`,
           recovery,
@@ -1314,7 +1740,6 @@ export async function actNode(
     toolName: targetName,
     mcpServerName: mcp?.serverName ?? null,
     definitionId: state.agentDefinition.id ?? null,
-    outcome: "success",
   }).catch(() => {
     /** hook 自身已 try/catch + warn，这里再兜底防止未捕获 rejection */
   });
@@ -1349,6 +1774,27 @@ export async function actNode(
   });
 
   const toolResult = execution.ok && execution.value ? execution.value : {};
+  const producerTaskId =
+    typeof inboundPayload.taskId === "string" && inboundPayload.taskId.trim()
+      ? inboundPayload.taskId
+      : null;
+  try {
+    await recordWorkflowToolArtifact({
+      workflowRunId: state.workflowId,
+      fingerprint: requestFingerprint,
+      toolName: targetName,
+      result: toolResult,
+      producerTaskId,
+    });
+  } catch (error) {
+    // Ledger is a reuse accelerator, not a reason to turn an otherwise valid
+    // tool response into a failed research task.
+    console.warn(
+      `[act] workflow artifact write skipped for ${targetName}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
   const nextObservations = [...state.observations];
   if (toolResult["analystTeamResult"]) {
     nextObservations.push({ analystTeamResult: toolResult["analystTeamResult"] });
@@ -1370,7 +1816,17 @@ export async function actNode(
   }
 
   return {
-    toolCalls: [...state.toolCalls, { toolCallId, toolName: targetName, status: "success" }],
+    toolCalls: [
+      ...state.toolCalls,
+      {
+        toolCallId,
+        toolName: targetName,
+        status: "success",
+        fingerprint: requestFingerprint,
+        stepIndex: state.iteration,
+        completedAt: Date.now(),
+      },
+    ],
     observations: nextObservations,
     workingMemory: applyToolResultToWorkingMemory(state.workingMemory, {
       step: state.iteration,
@@ -1381,5 +1837,6 @@ export async function actNode(
     }),
     // 成功推进后清零“连续提前结束”计数，避免长 Goal 因早期一次试探性收口被累计误杀。
     controlModeGapRetryCount: 0,
+    noProgressRetryCount: 0,
   };
 }

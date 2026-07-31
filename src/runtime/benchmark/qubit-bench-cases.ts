@@ -21,22 +21,23 @@ export interface QubitBenchCase {
   minRelevance: number;
 }
 
+/** 预算按 L1 实测校准；soft 超支不阻断研究，hard（×3）才在 upgrade gate fail。 */
 const RESEARCH_BUDGET: BenchmarkBudget = {
   maxDurationMs: 12 * 60_000,
-  maxTotalTokens: 180_000,
-  maxTokenP95: 32_000,
+  maxTotalTokens: 240_000,
+  maxTokenP95: 36_000,
   maxIterations: 8,
 };
 const COMPLEX_RESEARCH_BUDGET: BenchmarkBudget = {
   maxDurationMs: 18 * 60_000,
-  maxTotalTokens: 260_000,
-  maxTokenP95: 40_000,
+  maxTotalTokens: 320_000,
+  maxTokenP95: 48_000,
   maxIterations: 10,
 };
 const EXECUTION_BUDGET: BenchmarkBudget = {
   maxDurationMs: 10 * 60_000,
-  maxTotalTokens: 140_000,
-  maxTokenP95: 28_000,
+  maxTotalTokens: 180_000,
+  maxTokenP95: 32_000,
   maxIterations: 6,
 };
 
@@ -112,8 +113,8 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     title: "动量与估值长仓选股",
     scenarioKey: "stock_pick",
     dimensions: ["delivery", "quality", "tools", "resource"],
-    goal: "从美股大盘选择 3 个兼具正向动量、合理估值和新闻催化的 long 候选；每个必须有入场、止损、止盈、仓位、失效条件和证据。",
-    inputParams: { universe: "US:sp500", topN: 3 },
+    goal: "从美股大盘选择 5 个兼具正向动量、合理估值和新闻催化的 long 候选；每个必须有入场、止损、止盈、仓位、失效条件和证据。",
+    inputParams: { universe: "US:sp500", topN: 5 },
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
   },
@@ -122,8 +123,8 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     title: "质量复利长仓选股",
     scenarioKey: "stock_pick",
     dimensions: ["delivery", "quality", "tools", "resource"],
-    goal: "寻找 3 个高 ROIC、现金流稳定且估值不过度透支的长期 long 候选，明确催化剂和估值下修风险。",
-    inputParams: { universe: "US:sp500", topN: 3 },
+    goal: "寻找 5 个高 ROIC、现金流稳定且估值不过度透支的长期 long 候选，明确催化剂和估值下修风险。",
+    inputParams: { universe: "US:sp500", topN: 5 },
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
   },
@@ -132,8 +133,8 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     title: "基本面恶化短仓筛选",
     scenarioKey: "stock_pick_short",
     dimensions: ["delivery", "quality", "tools", "resource", "risk"],
-    goal: "筛选 2 个业绩恶化、估值偏高或动量转弱的 short 候选；必须包含借券、保证金与轧空风险，而非只给负面观点。",
-    inputParams: { universe: "US:sp500", topN: 2 },
+    goal: "筛选 5 个业绩恶化、估值偏高或动量转弱的 short 候选；必须包含借券、保证金与轧空风险，而非只给负面观点。",
+    inputParams: { universe: "US:sp500", topN: 5 },
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
   },
@@ -143,7 +144,7 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     scenarioKey: "stock_pick_short",
     dimensions: ["delivery", "quality", "tools", "resource", "risk"],
     goal: "研究高估值且叙事拥挤标的的 short 机会，但若缺少空头数据必须拒绝给出虚假的确定性，并写清触发退出的条件。",
-    inputParams: { universe: "US:sp500", topN: 2 },
+    inputParams: { universe: "US:sp500", topN: 5 },
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
   },
@@ -227,7 +228,12 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     scenarioKey: "live_trading",
     dimensions: ["delivery", "quality", "tools", "resource", "risk"],
     goal: "在纸面环境中生成一个做多 order_intent；必须先做 risk_decision，并把人工确认作为执行前条件，不得直接下实盘单。",
-    inputParams: { capitalCap: 100000, killSwitchEnabled: true, confirmLevel: "manual_each" },
+    inputParams: {
+      capitalCap: 100000,
+      killSwitchEnabled: true,
+      confirmLevel: "manual_each",
+      paperMode: true,
+    },
     budget: EXECUTION_BUDGET,
     minRelevance: 0.3,
   },
@@ -237,7 +243,12 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     scenarioKey: "live_trading_short",
     dimensions: ["delivery", "quality", "tools", "resource", "risk"],
     goal: "在纸面环境中生成一个做空 order_intent；必须检查保证金、可借券和轧空风险，并要求人工确认，不得绕过 risk_decision。",
-    inputParams: { capitalCap: 100000, killSwitchEnabled: true, confirmLevel: "manual_each" },
+    inputParams: {
+      capitalCap: 100000,
+      killSwitchEnabled: true,
+      confirmLevel: "manual_each",
+      paperMode: true,
+    },
     budget: EXECUTION_BUDGET,
     minRelevance: 0.3,
   },

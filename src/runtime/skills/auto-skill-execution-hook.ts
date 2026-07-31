@@ -14,17 +14,14 @@
  * 本钩子的策略：
  *   1. act 节点 tool call 成功后立刻调用本函数（fire-and-forget，不阻塞 graph）。
  *   2. 找该 workflowRunId 下所有 executed=false 的 skill_recall_log。
- *   3. 判定流程（W2 改造，2026-06-11）：
- *        a. 优先看 skill.recommended_tools_json：toolName 精确出现或前缀命中 → 标 executed
- *           （高置信度，无误报）。
- *        b. 该列表为空时退回旧的子串匹配：toolName / mcpServerName 中 ≥4 字的 token
- *           被 skill 的 name/description/bodyMd 包含 → 标 executed（兼容存量 skill）。
- *   4. 命中即调 `skillService.recordUsage`，自动翻 executed=true + 写 agent_skill_run +
- *      累计 useCount/successCount。
+ *   3. 只看 skill.recommended_tools_json：toolName 精确出现或前缀命中才标 executed。
+ *      空白名单不再退回 body 子串匹配；那种猜测在生产 trace 中把 `factor.list`
+ *      等工具的成功错误归因给数百个 skill。
+ *   4. 命中即调 `skillService.recordUsage`，自动翻 executed=true + 写 agent_skill_run，
+ *      但 outcome 必须是 unknown；只有显式 `skill.use_record` 可记为 success。
  *
  * 误报控制：
- *   - W2 路径不做模糊匹配（精确 / 前缀），完全无误报。
- *   - Fallback 子串匹配只接受 ≥ 4 字符 token，避免 "tool"/"data" 全命中。
+ *   - 不做模糊匹配（精确 / 前缀），避免将“读到一个同名词”误判为遵循 Skill。
  *   - 失败仅 warn，不抛错。
  *   - 单次 act 节点最多扫几十条召回行，DB 开销可接受。
  */
@@ -33,6 +30,7 @@ import { getDb } from "../../db/sqlite/client";
 import { agentSkill, skillRecallLog } from "../../db/sqlite/schema";
 import type { AgentSkillOutcome } from "../../types/entities";
 import { skillService } from "./skill-service";
+import { isBenchmarkWorkflow } from "../benchmark/benchmark-namespace";
 
 export interface AutoMarkInput {
   workflowRunId: string;
@@ -41,7 +39,7 @@ export interface AutoMarkInput {
   /** 若是 MCP，server 名（如 "publicfinance"），帮助匹配 skill 提到的 server */
   mcpServerName?: string | null;
   definitionId?: string | null;
-  /** 该 tool call 是否成功；默认 success */
+  /** @deprecated 自动 hook 永远记录 unknown；成功只能由 skill.use_record 写入。 */
   outcome?: AgentSkillOutcome;
 }
 
@@ -53,9 +51,6 @@ export interface AutoMarkResult {
   /** 成功翻 executed=true 并写 agent_skill_run 的条数 */
   recorded: number;
 }
-
-/** body 太长会拖慢字符串匹配；限制看前 8KB 已覆盖所有 step-by-step skill */
-const MAX_BODY_LOOKUP_BYTES = 8 * 1024;
 
 /** ≥ 4 个字符的 token 才参与匹配，避免 "tool"/"data" 等通用词全命中 */
 const MIN_TOKEN_LENGTH = 4;
@@ -91,7 +86,7 @@ export function matchRecommendedTool(
   return false;
 }
 
-/** 安全解析 recommendedToolsJson；任何异常都退回空数组（让 hook 走 fallback 路径）。 */
+/** 安全解析 recommendedToolsJson；任何异常都退回空数组（不会自动归因）。 */
 export function parseRecommendedToolsJson(raw: string | null | undefined): string[] {
   if (!raw) return [];
   try {
@@ -129,10 +124,8 @@ export async function autoMarkRecalledSkillsAsExecuted(
   input: AutoMarkInput
 ): Promise<AutoMarkResult> {
   const result: AutoMarkResult = { scanned: 0, matched: [], recorded: 0 };
-  const tokens = buildSearchTokens(input.toolName, input.mcpServerName);
-  if (tokens.length === 0) return result;
-
   try {
+    if (await isBenchmarkWorkflow(input.workflowRunId)) return result;
     const db = await getDb();
     const pendings = await db
       .select({ skillId: skillRecallLog.skillId })
@@ -152,9 +145,6 @@ export async function autoMarkRecalledSkillsAsExecuted(
     const skills = await db
       .select({
         id: agentSkill.id,
-        name: agentSkill.name,
-        description: agentSkill.description,
-        bodyMd: agentSkill.bodyMd,
         projectId: agentSkill.projectId,
         definitionId: agentSkill.definitionId,
         recommendedToolsJson: agentSkill.recommendedToolsJson,
@@ -164,23 +154,7 @@ export async function autoMarkRecalledSkillsAsExecuted(
 
     for (const skill of skills) {
       const recommended = parseRecommendedToolsJson(skill.recommendedToolsJson);
-      let hit = false;
-      let matchSource: "recommended" | "fallback_substring" = "fallback_substring";
-      if (recommended.length > 0) {
-        if (matchRecommendedTool(recommended, input.toolName, input.mcpServerName)) {
-          hit = true;
-          matchSource = "recommended";
-        }
-        /**
-         * 显式列出 recommended 但不命中 → 不走 fallback。
-         * 设计理由：作者既然写了白名单，就应该完整列出。fallback 只服务"还没写白名单"的存量 skill。
-         */
-      } else {
-        const body = (skill.bodyMd ?? "").slice(0, MAX_BODY_LOOKUP_BYTES);
-        const haystack = `${skill.name} ${skill.description ?? ""} ${body}`.toLowerCase();
-        hit = tokens.some((t) => haystack.includes(t));
-      }
-      if (!hit) continue;
+      if (!matchRecommendedTool(recommended, input.toolName, input.mcpServerName)) continue;
       result.matched.push(skill.id);
 
       try {
@@ -189,9 +163,11 @@ export async function autoMarkRecalledSkillsAsExecuted(
           projectId: skill.projectId,
           workflowRunId: input.workflowRunId,
           definitionId: input.definitionId ?? skill.definitionId ?? null,
-          outcome: input.outcome ?? "success",
+          // A tool response cannot prove the whole skill was followed.  Keep
+          // this fixed even if an old caller still passes outcome="success".
+          outcome: "unknown",
           notes:
-            `auto-hook[${matchSource}]: tool=${input.toolName}` +
+            `auto-hook[recommended]: tool=${input.toolName}` +
             (input.mcpServerName ? ` server=${input.mcpServerName}` : ""),
         });
         result.recorded += 1;
@@ -204,7 +180,9 @@ export async function autoMarkRecalledSkillsAsExecuted(
     }
     return result;
   } catch (err) {
-    console.warn(`[auto-skill-exec-hook] scan failed wf=${input.workflowRunId}: ${(err as Error).message}`);
+    console.warn(
+      `[auto-skill-exec-hook] scan failed wf=${input.workflowRunId}: ${(err as Error).message}`
+    );
     return result;
   }
 }

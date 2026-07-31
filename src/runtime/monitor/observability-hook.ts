@@ -6,8 +6,9 @@ import { consolidateFromWorkflow } from "../memory/memory-consolidation";
 import { syncMemoryForWorkflow } from "../memory/memory-workspace-sync";
 import { createAlertsFromWorkflowQuality } from "./alert-service";
 import { createWorkflowQualitySnapshot } from "./quality-metrics";
+import { isBenchmarkWorkflow } from "../benchmark/benchmark-namespace";
 
-export type WorkflowTerminalStatus = "completed" | "failed";
+export type WorkflowTerminalStatus = "completed" | "partial" | "failed";
 
 /**
  * Fire-and-forget hook when a workflow reaches a terminal state.
@@ -21,8 +22,12 @@ export type WorkflowTerminalStatus = "completed" | "failed";
 export function onWorkflowTerminal(workflowId: string, status: WorkflowTerminalStatus): void {
   void (async () => {
     try {
+      if (await isBenchmarkWorkflow(workflowId)) return;
       const snapshot = await createWorkflowQualitySnapshot(workflowId);
-      await createAlertsFromWorkflowQuality(workflowId, { status, snapshot });
+      await createAlertsFromWorkflowQuality(workflowId, {
+        status,
+        ...(snapshot ? { snapshot } : {}),
+      });
     } catch (err) {
       console.warn(
         `[observability] terminal hook failed for workflow ${workflowId}:`,

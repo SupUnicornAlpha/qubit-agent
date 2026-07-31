@@ -105,16 +105,25 @@ function metricA5(
 // ── A-2 ────────────────────────────────────────────────────────────────────
 
 const TICKER_RX = /\b[A-Z]{2,5}\b/g;
+/** 中文目标里常见的标的分隔：NVDA、AMD、INTC / MSFT,CRM */
+const TICKER_SPLIT_RX = /[A-Z]{1,5}(?:\.[A-Z]{1,2})?/g;
 
 function extractKeywords(goal: string, declared: ReadonlyArray<string>): string[] {
   const out = new Set<string>();
   for (const k of declared) {
     if (k.trim()) out.add(k.trim());
   }
-  // 额外把 goal 里的"看起来是 ticker"的大写字母组也吸进来——避免 keywords 配置漏掉
+  // goal 里的 ticker（英文词边界）
   for (const m of goal.matchAll(TICKER_RX)) {
-    if (!["READINESS", "AGENT", "API", "USA"].includes(m[0])) {
+    if (!["READINESS", "AGENT", "API", "USA", "AI", "IC", "IR", "ROIC"].includes(m[0])) {
       out.add(m[0]);
+    }
+  }
+  // 再扫一遍宽松 ticker（覆盖 "NVDA、AMD" 这类无词边界场景）
+  for (const m of goal.matchAll(TICKER_SPLIT_RX)) {
+    const t = m[0];
+    if (t.length >= 2 && !["READINESS", "AGENT", "API", "USA", "AI", "IC", "IR", "ROIC"].includes(t)) {
+      out.add(t);
     }
   }
   return [...out];
@@ -132,7 +141,7 @@ function fetchSearchHaystack(
   scenario: ScenarioRecipe["key"]
 ): string {
   const parts: string[] = [];
-  if (scenario === "research") {
+  if (scenario === "research" || scenario === "research_multi") {
     const sigs = sqlite
       .prepare(
         `SELECT ticker, reasoning, signal FROM analyst_signal WHERE workflow_run_id = ?`
@@ -145,7 +154,11 @@ function fetchSearchHaystack(
       )
       .all(workflowRunId) as Array<{ ticker: string; sig: string }>;
     for (const f of fus) parts.push(f.ticker, f.sig);
-  } else if (scenario === "stock_pick" || scenario === "stock_pick_short") {
+  } else if (
+    scenario === "stock_pick" ||
+    scenario === "stock_pick_short" ||
+    scenario === "research_theme"
+  ) {
     const cands = sqlite
       .prepare(
         `SELECT sc.ticker, sc.company_name AS company
@@ -177,14 +190,14 @@ function fetchSearchHaystack(
       )
       .all(workflowRunId) as Array<{ name: string; expr: string; category: string }>;
     for (const f of facs) parts.push(f.name, f.expr, f.category);
-  } else if (scenario === "strategy") {
+  } else if (scenario === "strategy" || scenario === "strategy_long_short") {
     const vers = sqlite
       .prepare(
         `SELECT version_tag AS tag FROM strategy_version WHERE workflow_run_id = ?`
       )
       .all(workflowRunId) as Array<{ tag: string }>;
     for (const v of vers) parts.push(v.tag);
-  } else if (scenario === "live_trading") {
+  } else if (scenario === "live_trading" || scenario === "live_trading_short") {
     const ois = sqlite
       .prepare(
         `SELECT oi.side, oi.order_type AS ot, i.symbol

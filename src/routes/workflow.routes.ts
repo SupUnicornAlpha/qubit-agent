@@ -37,6 +37,7 @@ import { requestWorkflowCancellation } from "../runtime/workflow/workflow-cancel
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
+import { isBenchmarkNamespace } from "../runtime/benchmark/benchmark-namespace";
 import type { AgentExecutionPath } from "../types/execution-path";
 import type { AgentLoopKind, LoopOptionsJson } from "../types/loop";
 
@@ -46,6 +47,7 @@ workflowRouter.get("/", async (c) => {
   const db = await getDb();
   const projectId = c.req.query("projectId")?.trim();
   const includeCancelled = c.req.query("includeCancelled") === "true";
+  const includeBenchmark = c.req.query("includeBenchmark") === "true";
   const limitValue = Number(c.req.query("limit") ?? "200");
   const limit = Number.isFinite(limitValue) ? Math.max(1, Math.min(500, limitValue)) : 200;
   const where = and(
@@ -58,7 +60,11 @@ workflowRouter.get("/", async (c) => {
     .where(where)
     .orderBy(desc(workflowRun.startedAt))
     .limit(limit);
-  return c.json({ data: rows });
+  return c.json({
+    data: includeBenchmark
+      ? rows
+      : rows.filter((row) => !isBenchmarkNamespace(row.loopOptionsJson)),
+  });
 });
 
 workflowRouter.post("/", async (c) => {
@@ -277,7 +283,14 @@ workflowRouter.delete("/scheduled-jobs/:id", async (c) => {
   return c.json({ ok: true, id });
 });
 
-const workflowStatusEnum = ["pending", "running", "completed", "failed", "cancelled"] as const;
+const workflowStatusEnum = [
+  "pending",
+  "running",
+  "completed",
+  "partial",
+  "failed",
+  "cancelled",
+] as const;
 
 workflowRouter.patch("/:id", async (c) => {
   const id = c.req.param("id");
@@ -346,9 +359,7 @@ workflowRouter.patch("/:id/goal", async (c) => {
     action?: "pause" | "resume" | "edit" | "clear";
     text?: string;
   };
-  const body = await c.req
-    .json<GoalActionBody>()
-    .catch(() => ({}) as GoalActionBody);
+  const body = await c.req.json<GoalActionBody>().catch(() => ({}) as GoalActionBody);
   if (!body.action || !["pause", "resume", "edit", "clear"].includes(body.action)) {
     return c.json({ error: "action must be pause, resume, edit, or clear" }, 400);
   }

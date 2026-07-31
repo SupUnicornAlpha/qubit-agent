@@ -20,6 +20,7 @@ const COMMON_UNIVERSE_ENUM = [
 const FACTOR_CATEGORY_ENUM = [
   { value: "value", label: "价值" },
   { value: "momentum", label: "动量" },
+  { value: "reversal", label: "反转" },
   { value: "volatility", label: "波动" },
   { value: "news", label: "新闻/情绪" },
   { value: "quality", label: "质量" },
@@ -281,7 +282,7 @@ export const STOCK_SCREENING_SCENARIO: ResearchScenarioSpec = {
     topN: {
       type: "number",
       default: 30,
-      min: 5,
+      min: 2,
       max: 200,
       description: "候选数量",
       group: "basic",
@@ -510,14 +511,15 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
   inputSchema: {
     strategyId: {
       type: "string",
-      required: true,
-      description: "实盘运行的策略 ID",
+      // 纸面 / benchmark 可缺省：由 harness 用纸面 stub；真·实盘再强制绑定
+      required: false,
+      description: "实盘/纸面运行的策略 ID（纸面可留空）",
       group: "basic",
     },
     brokerAccountId: {
       type: "string",
-      required: true,
-      description: "券商账号 ID",
+      required: false,
+      description: "券商账号 ID（纸面可留空）",
       group: "basic",
     },
     capitalCap: {
@@ -541,6 +543,12 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
         { value: "manual_first", label: "首单人工" },
       ],
       default: "manual_first",
+      group: "basic",
+    },
+    paperMode: {
+      type: "boolean",
+      default: true,
+      description: "纸面模式：只生成 order_intent + risk_decision，不下实盘单",
       group: "basic",
     },
   },

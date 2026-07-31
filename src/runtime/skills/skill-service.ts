@@ -154,7 +154,7 @@ export interface CreateSkillInput {
   version?: string;
   state?: AgentSkillState;
   pinned?: boolean;
-  /** W2：显式声明此 skill 推荐使用的 tool 全名白名单。空 / 未传时 hook 退回子串匹配。 */
+  /** 显式声明此 skill 推荐使用的 tool 全名白名单；空白名单不会自动归因。 */
   recommendedTools?: string[];
 }
 
@@ -167,7 +167,7 @@ export interface PatchSkillInput {
   state?: AgentSkillState;
   metadata?: Record<string, unknown>;
   bumpVersion?: boolean;
-  /** W2：覆盖 recommendedTools 白名单（`null` / `[]` 都表示清空，回退子串匹配）。 */
+  /** 覆盖 recommendedTools 白名单（`null` / `[]` 都表示清空且不自动归因）。 */
   recommendedTools?: string[] | null;
 }
 

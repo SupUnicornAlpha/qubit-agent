@@ -1033,7 +1033,7 @@ export async function patchWorkflow(
   input: {
     sessionId?: string | null;
     goal?: string;
-    status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+    status?: "pending" | "running" | "completed" | "partial" | "failed" | "cancelled";
     loopOptionsJson?: Partial<import("./types").LoopOptionsJson>;
   }
 ): Promise<{ data: Record<string, unknown> }> {

@@ -11,6 +11,7 @@ import {
   getA2ATask,
   listA2ATaskEvents,
   listA2ATasksForWorkflow,
+  listOpenA2ATasksForWorkflow,
   markA2ATaskWorking,
   recordA2ATaskProgress,
   waitForA2ATaskTerminal,
@@ -126,5 +127,75 @@ describe("durable internal A2A task protocol", () => {
     const waited = await waitForA2ATaskTerminal(taskId, { timeoutMs: 100, leaseMs: 100 });
     expect(waited.timedOut).toBe(false);
     expect(waited.task?.status).toBe("input_required");
+  });
+
+  test("an explicit failed result stays failed even if a buggy sender sets success", async () => {
+    const taskId = randomUUID();
+    await createA2ATask({
+      workflowId,
+      traceId: randomUUID(),
+      senderAgentId: randomUUID(),
+      receiverAgentId: randomUUID(),
+      receiverRole: "market_data",
+      payload: taskPayload(taskId),
+    });
+    await completeA2ATask(taskId, {
+      taskId,
+      status: "failed",
+      success: true,
+      result: { partialEvidence: true },
+      errorCode: "max_iterations",
+      errorMessage: "partial evidence is not completion",
+      durationMs: 1,
+    });
+    expect((await getA2ATask(taskId))?.status).toBe("failed");
+  });
+
+  test("persists a resource-limited result as partial, never completed", async () => {
+    const taskId = randomUUID();
+    await createA2ATask({
+      workflowId,
+      traceId: randomUUID(),
+      senderAgentId: randomUUID(),
+      receiverAgentId: randomUUID(),
+      receiverRole: "market_data",
+      payload: taskPayload(taskId),
+    });
+    await completeA2ATask(
+      taskId,
+      buildTaskResult(taskId, "market_data", {
+        status: "partial",
+        errorCode: "max_iterations",
+        errorMessage: "保留了部分已验证行情，但达到轮次上限",
+        result: { partialEvidence: true },
+        durationMs: 1,
+      })
+    );
+    expect((await getA2ATask(taskId))?.status).toBe("partial");
+    expect((await listOpenA2ATasksForWorkflow(workflowId)).map((task) => task.id)).not.toContain(
+      taskId
+    );
+  });
+
+  test("lists only unfinished child tasks for a workflow terminal transition", async () => {
+    const openId = randomUUID();
+    const completeId = randomUUID();
+    for (const taskId of [openId, completeId]) {
+      await createA2ATask({
+        workflowId,
+        traceId: randomUUID(),
+        senderAgentId: randomUUID(),
+        receiverAgentId: randomUUID(),
+        receiverRole: "market_data",
+        payload: taskPayload(taskId),
+      });
+    }
+    await completeA2ATask(
+      completeId,
+      buildTaskResult(completeId, "market_data", { status: "completed", durationMs: 1 })
+    );
+    expect((await listOpenA2ATasksForWorkflow(workflowId)).map((task) => task.id)).toEqual([
+      openId,
+    ]);
   });
 });

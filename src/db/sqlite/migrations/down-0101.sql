@@ -1,0 +1,2 @@
+-- Data repair migration: no safe down migration. The original false-success
+-- evidence is retained in notes with suspect_auto_attribution for audit.

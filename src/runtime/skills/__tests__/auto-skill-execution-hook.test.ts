@@ -2,7 +2,7 @@
  * Wave-1（2026-06-10）：auto-skill-execution-hook 单元测试。
  *
  * 两层覆盖：
- *   1. buildSearchTokens 纯函数 —— 无 DB 依赖，覆盖 token 拆分与最小长度过滤
+ *   1. recommendedTools 白名单纯函数 —— 无 DB 依赖
  *   2. autoMarkRecalledSkillsAsExecuted DB 集成 —— 用真实 sqlite + runMigrations
  *      初始化最小数据，验证：
  *        - 命中 → skill_recall_log.executed 翻 true + agent_skill_run 写入
@@ -18,7 +18,6 @@ import * as schema from "../../../db/sqlite/schema";
 import { skillService } from "../skill-service";
 import {
   autoMarkRecalledSkillsAsExecuted,
-  buildSearchTokens,
   matchRecommendedTool,
   parseRecommendedToolsJson,
 } from "../auto-skill-execution-hook";
@@ -82,42 +81,8 @@ async function insertRecall(skillId: string, opts: { rank?: number; score?: numb
   });
 }
 
-describe("buildSearchTokens", () => {
-  test("拆分 builtin tool 名 (factor.register) → 全名 + 子段", () => {
-    const tokens = buildSearchTokens("factor.register");
-    expect(tokens).toContain("factor.register");
-    expect(tokens).toContain("factor");
-    expect(tokens).toContain("register");
-  });
-
-  test("拆分 connector 名 (qubit-data/fetch_klines) → 全名 + 子段", () => {
-    const tokens = buildSearchTokens("qubit-data/fetch_klines");
-    expect(tokens).toContain("qubit-data/fetch_klines");
-    expect(tokens).toContain("qubit-data");
-    expect(tokens).toContain("fetch_klines");
-  });
-
-  test("mcpServerName 单独加入", () => {
-    const tokens = buildSearchTokens("treasury_rates", "publicfinance");
-    expect(tokens).toContain("treasury_rates");
-    expect(tokens).toContain("publicfinance");
-  });
-
-  test("长度 < 4 的子段被过滤（避免 'tool'/'data' 等通用词全命中）", () => {
-    const tokens = buildSearchTokens("a.b.factor");
-    expect(tokens).not.toContain("a");
-    expect(tokens).not.toContain("b");
-    expect(tokens).toContain("factor");
-  });
-
-  test("token 自动小写", () => {
-    const tokens = buildSearchTokens("PublicFinance.Treasury_Rates");
-    expect(tokens.every((t) => t === t.toLowerCase())).toBe(true);
-  });
-});
-
 describe("autoMarkRecalledSkillsAsExecuted", () => {
-  test("命中：skill bodyMd 包含 toolName → executed 翻 true + agent_skill_run 写入", async () => {
+  test("仅显式白名单命中才翻 executed，自动结果必须为 unknown", async () => {
     const skill = await skillService.create({
       projectId,
       definitionId: null,
@@ -128,13 +93,13 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
       category: "quant",
       source: "user_authored",
       createdBy: "test",
+      recommendedTools: ["factor.register"],
     });
     await insertRecall(skill.id);
 
     const res = await autoMarkRecalledSkillsAsExecuted({
       workflowRunId,
       toolName: "factor.register",
-      outcome: "success",
     });
     expect(res.scanned).toBe(1);
     expect(res.matched).toEqual([skill.id]);
@@ -158,7 +123,7 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
       .from(schema.agentSkillRun)
       .where(eq(schema.agentSkillRun.skillId, skill.id));
     expect(runRow.length).toBe(1);
-    expect(runRow[0]?.outcome).toBe("success");
+    expect(runRow[0]?.outcome).toBe("unknown");
   });
 
   test("不命中：skill bodyMd 与 toolName 无关 → 不动", async () => {
@@ -192,7 +157,7 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
     expect(recallRow[0]?.executed).toBe(false);
   });
 
-  test("多 pending：只命中一个 → 只翻一个", async () => {
+  test("多 pending：只命中一个显式白名单 → 只翻一个", async () => {
     const skillHit = await skillService.create({
       projectId,
       definitionId: null,
@@ -202,6 +167,7 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
       category: "quant",
       source: "user_authored",
       createdBy: "test",
+      recommendedTools: ["mcp:publicfinance"],
     });
     const skillMiss = await skillService.create({
       projectId,
@@ -220,7 +186,6 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
       workflowRunId,
       toolName: "treasury_rates",
       mcpServerName: "publicfinance",
-      outcome: "success",
     });
     expect(res.scanned).toBe(2);
     expect(res.matched).toEqual([skillHit.id]);
@@ -237,7 +202,7 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
     expect(res.recorded).toBe(0);
   });
 
-  test("mcpServerName 通过 server 名命中（即使 toolName 不在 body 里）", async () => {
+  test("mcpServerName 通过显式 server 白名单命中", async () => {
     const skill = await skillService.create({
       projectId,
       definitionId: null,
@@ -247,6 +212,7 @@ describe("autoMarkRecalledSkillsAsExecuted", () => {
       category: "quant",
       source: "user_authored",
       createdBy: "test",
+      recommendedTools: ["mcp:publicfinance"],
     });
     await insertRecall(skill.id);
 
@@ -276,13 +242,13 @@ describe("matchRecommendedTool / parseRecommendedToolsJson (W2 helpers)", () => 
   });
 
   test("mcp:<server> 通过 server 名命中", () => {
-    expect(
-      matchRecommendedTool(["mcp:publicfinance"], "treasury_rates", "publicfinance")
-    ).toBe(true);
+    expect(matchRecommendedTool(["mcp:publicfinance"], "treasury_rates", "publicfinance")).toBe(
+      true
+    );
     expect(matchRecommendedTool(["mcp:publicfinance"], "treasury_rates", "yahoo")).toBe(false);
   });
 
-  test("空白名单永远不命中（让 caller fallback）", () => {
+  test("空白名单永远不命中", () => {
     expect(matchRecommendedTool([], "factor.register")).toBe(false);
   });
 
@@ -388,7 +354,7 @@ describe("autoMarkRecalledSkillsAsExecuted · W2 recommended_tools 优先", () =
     expect(res.recorded).toBe(1);
   });
 
-  test("空白名单 skill 仍走 fallback 子串匹配（不 break 存量行为）", async () => {
+  test("空白名单 skill 不再走 body 子串匹配", async () => {
     const skill = await skillService.create({
       projectId,
       definitionId: null,
@@ -407,7 +373,7 @@ describe("autoMarkRecalledSkillsAsExecuted · W2 recommended_tools 优先", () =
       toolName: "factor.register",
       outcome: "success",
     });
-    expect(res.matched).toEqual([skill.id]);
-    expect(res.recorded).toBe(1);
+    expect(res.matched).toEqual([]);
+    expect(res.recorded).toBe(0);
   });
 });

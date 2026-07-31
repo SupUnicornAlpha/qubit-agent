@@ -28,12 +28,13 @@ export type WorkflowStatus =
   | "pending"
   | "running"
   | "completed"
+  | "partial"
   | "failed"
   | "cancelled"
   | "awaiting_approval";
 
 /** 写入 `workflow_run.status` 后认为"工作流终结"的状态集合（用于决定是否写 endedAt） */
-const TERMINAL_STATUSES = new Set<WorkflowStatus>(["completed", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set<WorkflowStatus>(["completed", "partial", "failed", "cancelled"]);
 
 /**
  * 合法迁移表。`*` 表示来自任何已有状态都允许。
@@ -53,13 +54,27 @@ const TERMINAL_STATUSES = new Set<WorkflowStatus>(["completed", "failed", "cance
  */
 const ALLOWED_TRANSITIONS: Record<WorkflowStatus, ReadonlySet<WorkflowStatus | "*">> = {
   /** to=pending：reuse 同 session 工作流时把已 完结/取消 的 chat workflow 改回 pending */
-  pending: new Set<WorkflowStatus | "*">(["pending", "completed", "failed", "cancelled"]),
+  pending: new Set<WorkflowStatus | "*">([
+    "pending",
+    "completed",
+    "partial",
+    "failed",
+    "cancelled",
+  ]),
   /** to=running：首派 / 幂等保持 / HITL resume / 失败后 restore-running 直接转 running */
-  running: new Set<WorkflowStatus | "*">(["pending", "running", "awaiting_approval", "failed"]),
+  running: new Set<WorkflowStatus | "*">([
+    "pending",
+    "running",
+    "awaiting_approval",
+    "partial",
+    "failed",
+  ]),
   /** to=awaiting_approval：仅在 running 时（act/team helper）能进入 HITL 暂停；幂等保留 */
   awaiting_approval: new Set<WorkflowStatus | "*">(["running", "awaiting_approval"]),
   /** to=completed：必须从 running 或 awaiting_approval 完结；幂等保留 */
   completed: new Set<WorkflowStatus | "*">(["running", "awaiting_approval", "completed"]),
+  /** partial：硬预算/截止时间等导致收口，但已保留可用证据；可被显式 retry/resume。 */
+  partial: new Set<WorkflowStatus | "*">(["running", "awaiting_approval", "partial"]),
   /** to=failed：从所有"未终态"都能失败；幂等保留 */
   failed: new Set<WorkflowStatus | "*">(["pending", "running", "awaiting_approval", "failed"]),
   /** to=cancelled：用户/系统在任何时刻都能取消（包括 trader-workflow 取消 dup 幂等） */

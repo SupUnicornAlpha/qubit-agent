@@ -59,7 +59,15 @@ export const workflowRun = sqliteTable("workflow_run", {
     .notNull()
     .default("manual"),
   status: text("status", {
-    enum: ["pending", "running", "completed", "failed", "cancelled", "awaiting_approval"],
+    enum: [
+      "pending",
+      "running",
+      "completed",
+      "partial",
+      "failed",
+      "cancelled",
+      "awaiting_approval",
+    ],
   })
     .notNull()
     .default("pending"),
@@ -824,7 +832,16 @@ export const a2aTask = sqliteTable(
     receiverAgentId: text("receiver_agent_id").notNull(),
     receiverRole: text("receiver_role").notNull(),
     status: text("status", {
-      enum: ["submitted", "working", "input_required", "completed", "failed", "cancelled", "rejected"],
+      enum: [
+        "submitted",
+        "working",
+        "input_required",
+        "completed",
+        "partial",
+        "failed",
+        "cancelled",
+        "rejected",
+      ],
     })
       .notNull()
       .default("submitted"),
@@ -870,6 +887,7 @@ export const a2aTaskEvent = sqliteTable(
         "artifact",
         "input_required",
         "completed",
+        "partial",
         "failed",
         "cancelled",
         "rejected",
@@ -881,6 +899,42 @@ export const a2aTaskEvent = sqliteTable(
   (table) => ({
     taskSequence: uniqueIndex("uq_a2a_task_event_sequence").on(table.taskId, table.sequence),
     byTaskSequence: index("idx_a2a_task_event_task_sequence").on(table.taskId, table.sequence),
+  })
+);
+
+/**
+ * Workflow-scoped facts produced by tool calls. Unlike an agent checkpoint,
+ * this survives a new A2A execution run and is queryable by canonical request
+ * fingerprint before a specialist repeats symbol resolution or market reads.
+ */
+export const workflowArtifactLedger = sqliteTable(
+  "workflow_artifact_ledger",
+  {
+    id: id(),
+    workflowRunId: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    fingerprint: text("fingerprint").notNull(),
+    artifactKind: text("artifact_kind").notNull(),
+    toolName: text("tool_name").notNull(),
+    payloadJson: text("payload_json", { mode: "json" }).notNull().default({}),
+    producerTaskId: text("producer_task_id"),
+    asOf: text("as_of"),
+    freshnessMs: integer("freshness_ms"),
+    expiresAt: text("expires_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    workflowFingerprint: uniqueIndex("uq_workflow_artifact_ledger_fingerprint").on(
+      table.workflowRunId,
+      table.fingerprint
+    ),
+    reusable: index("idx_workflow_artifact_ledger_reusable").on(
+      table.workflowRunId,
+      table.expiresAt,
+      table.createdAt
+    ),
   })
 );
 
@@ -911,56 +965,60 @@ export const agentStep = sqliteTable("agent_step", {
   createdAt: createdAt(),
 });
 
-export const toolCallLog = sqliteTable("tool_call_log", {
-  id: id(),
-  agentStepId: text("agent_step_id")
-    .notNull()
-    .references(() => agentStep.id),
-  /**
-   * v2 P1 起新写入端直接落 workflow_run_id，避免老路径必须 join agent_step；
-   * 旧行保持 NULL，前端 fallback 走 join 兼容。
-   */
-  workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
-  /**
-   * 监控 v3 P0 冗余列（迁移 0064）：直接记录调用方 agent 的 definitionId，
-   * 让 /monitor/timeseries 等"按 Agent 切分"的查询不必 3 跳 join
-   * (tool_call_log → agent_step → agent_instance → agent_definition)。
-   * 旧行保持 NULL；timeseries 在 groupBy=agentDefinitionId 时直接过滤掉 NULL。
-   */
-  agentDefinitionId: text("agent_definition_id").references(() => agentDefinition.id),
-  /** v2 P1：retry 上下文跨记录关联（idempotency / 多次 retry 同一 trace） */
-  traceId: text("trace_id"),
-  retryCount: integer("retry_count").notNull().default(0),
-  toolName: text("tool_name").notNull(),
-  toolKind: text("tool_kind", { enum: ["acp_connector", "mcp", "skill", "builtin"] }).notNull(),
-  requestJson: text("request_json", { mode: "json" }).notNull(),
-  responseJson: text("response_json", { mode: "json" }),
-  status: text("status", {
-    enum: ["running", "success", "error", "timeout", "sandbox_blocked"],
-  }).notNull(),
-  latencyMs: integer("latency_ms"),
-  errorMessage: text("error_message"),
-  /**
-   * 工具错误分类（迁移 0084）：把原本只埋在 response_json.toolError / observation
-   * 里的 `classifyToolError` 结果提成一等列。让"工具错误排查"类查询
-   * （按 transient/permanent/blocked 切分、统计可重试错误占比）走单列索引，
-   * 不必再 `responseJson LIKE '%"toolError":true%'` 全表扫。
-   *
-   * 语义：
-   *   - status=success            → NULL
-   *   - status=error              → transient | permanent | blocked | unknown（classifyToolError）
-   *   - status=timeout            → "transient"（超时天然可重试）
-   *   - status=sandbox_blocked    → "blocked"
-   * 旧行保持 NULL（迁移不回填）；监控端 fallback 仍可读 response_json。
-   */
-  errorClass: text("error_class", {
-    enum: ["transient", "permanent", "blocked", "unknown"],
-  }),
-  createdAt: createdAt(),
-}, (t) => [
-  /** 工具错误排查：按 status + errorClass 切分，配合 createdAt 做时间窗聚合 */
-  index("idx_tool_call_log_status_class_created").on(t.status, t.errorClass, t.createdAt),
-]);
+export const toolCallLog = sqliteTable(
+  "tool_call_log",
+  {
+    id: id(),
+    agentStepId: text("agent_step_id")
+      .notNull()
+      .references(() => agentStep.id),
+    /**
+     * v2 P1 起新写入端直接落 workflow_run_id，避免老路径必须 join agent_step；
+     * 旧行保持 NULL，前端 fallback 走 join 兼容。
+     */
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id),
+    /**
+     * 监控 v3 P0 冗余列（迁移 0064）：直接记录调用方 agent 的 definitionId，
+     * 让 /monitor/timeseries 等"按 Agent 切分"的查询不必 3 跳 join
+     * (tool_call_log → agent_step → agent_instance → agent_definition)。
+     * 旧行保持 NULL；timeseries 在 groupBy=agentDefinitionId 时直接过滤掉 NULL。
+     */
+    agentDefinitionId: text("agent_definition_id").references(() => agentDefinition.id),
+    /** v2 P1：retry 上下文跨记录关联（idempotency / 多次 retry 同一 trace） */
+    traceId: text("trace_id"),
+    retryCount: integer("retry_count").notNull().default(0),
+    toolName: text("tool_name").notNull(),
+    toolKind: text("tool_kind", { enum: ["acp_connector", "mcp", "skill", "builtin"] }).notNull(),
+    requestJson: text("request_json", { mode: "json" }).notNull(),
+    responseJson: text("response_json", { mode: "json" }),
+    status: text("status", {
+      enum: ["running", "success", "error", "timeout", "sandbox_blocked"],
+    }).notNull(),
+    latencyMs: integer("latency_ms"),
+    errorMessage: text("error_message"),
+    /**
+     * 工具错误分类（迁移 0084）：把原本只埋在 response_json.toolError / observation
+     * 里的 `classifyToolError` 结果提成一等列。让"工具错误排查"类查询
+     * （按 transient/permanent/blocked 切分、统计可重试错误占比）走单列索引，
+     * 不必再 `responseJson LIKE '%"toolError":true%'` 全表扫。
+     *
+     * 语义：
+     *   - status=success            → NULL
+     *   - status=error              → transient | permanent | blocked | unknown（classifyToolError）
+     *   - status=timeout            → "transient"（超时天然可重试）
+     *   - status=sandbox_blocked    → "blocked"
+     * 旧行保持 NULL（迁移不回填）；监控端 fallback 仍可读 response_json。
+     */
+    errorClass: text("error_class", {
+      enum: ["transient", "permanent", "blocked", "unknown"],
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    /** 工具错误排查：按 status + errorClass 切分，配合 createdAt 做时间窗聚合 */
+    index("idx_tool_call_log_status_class_created").on(t.status, t.errorClass, t.createdAt),
+  ]
+);
 
 /**
  * Exec 能力源调用日志（migration 0075）。
@@ -1414,14 +1472,20 @@ export const marketDataSource = sqliteTable("market_data_source", {
     .notNull()
     .default("active"),
   supportedMarketsJson: text("supported_markets_json", { mode: "json" }).notNull().default("[]"),
-  supportedTimeframesJson: text("supported_timeframes_json", { mode: "json" }).notNull().default("[]"),
+  supportedTimeframesJson: text("supported_timeframes_json", { mode: "json" })
+    .notNull()
+    .default("[]"),
   credentialMode: text("credential_mode", {
     enum: ["none", "token", "account", "terminal"],
-  }).notNull().default("none"),
+  })
+    .notNull()
+    .default("none"),
   credentialsReady: integer("credentials_ready", { mode: "boolean" }).notNull().default(false),
   healthStatus: text("health_status", {
     enum: ["unknown", "healthy", "degraded", "down"],
-  }).notNull().default("unknown"),
+  })
+    .notNull()
+    .default("unknown"),
   lastHealthcheckAt: text("last_healthcheck_at"),
   lastLatencyMs: integer("last_latency_ms"),
   p95LatencyMs: integer("p95_latency_ms"),
@@ -1431,7 +1495,9 @@ export const marketDataSource = sqliteTable("market_data_source", {
   lastError: text("last_error"),
   circuitState: text("circuit_state", {
     enum: ["closed", "open", "half_open"],
-  }).notNull().default("closed"),
+  })
+    .notNull()
+    .default("closed"),
   circuitOpenedAt: text("circuit_opened_at"),
   priority: integer("priority").notNull().default(50),
   isFallback: integer("is_fallback", { mode: "boolean" }).notNull().default(false),
@@ -1550,7 +1616,9 @@ export const orderIntent = sqliteTable("order_intent", {
   ocoGroupId: text("oco_group_id"),
   activationStatus: text("activation_status", {
     enum: ["active", "held", "waiting_trigger", "triggered"],
-  }).notNull().default("active"),
+  })
+    .notNull()
+    .default("active"),
   timeInForce: text("time_in_force", {
     enum: ["day", "gtc", "ioc", "fok"],
   }).notNull(),
@@ -1682,7 +1750,18 @@ export const executionTaskEvent = sqliteTable("execution_task_event", {
     .notNull()
     .references(() => executionTask.id, { onDelete: "cascade" }),
   eventType: text("event_type", {
-    enum: ["dispatch", "trigger", "activate", "ack", "partial_fill", "fill", "cancel", "reject", "timeout", "retry"],
+    enum: [
+      "dispatch",
+      "trigger",
+      "activate",
+      "ack",
+      "partial_fill",
+      "fill",
+      "cancel",
+      "reject",
+      "timeout",
+      "retry",
+    ],
   }).notNull(),
   eventPayloadJson: text("event_payload_json", { mode: "json" }).notNull().default("{}"),
   eventAt: text("event_at").notNull(),
@@ -2792,8 +2871,12 @@ export const componentEvalRun = sqliteTable(
   "component_eval_run",
   {
     id: id(),
-    projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
-    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, { onDelete: "set null" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    workflowRunId: text("workflow_run_id").references(() => workflowRun.id, {
+      onDelete: "set null",
+    }),
     componentKind: text("component_kind", { enum: ["agent", "prompt", "tool", "model"] }).notNull(),
     componentId: text("component_id").notNull(),
     versionId: text("version_id").notNull(),
@@ -2810,9 +2893,9 @@ export const componentEvalRun = sqliteTable(
       table.projectId,
       table.componentKind,
       table.componentId,
-      table.createdAt,
+      table.createdAt
     ),
-  ],
+  ]
 );
 
 /** 挖掘任务编排留痕：因子挖掘 / 规则挖掘 / 协演化 */
@@ -3369,7 +3452,7 @@ export const executionMarkPrice = sqliteTable(
   (table) => [
     uniqueIndex("idx_execution_mark_market_symbol").on(table.market, table.symbol),
     index("idx_execution_mark_freshness").on(table.fetchedAt),
-  ],
+  ]
 );
 
 /**

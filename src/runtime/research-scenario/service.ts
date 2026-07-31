@@ -5,6 +5,7 @@
  */
 
 import type { ResearchScopeInput } from "../../types/research-scope";
+import type { AgentRole } from "../../types/entities";
 import { launchAnalystTeam } from "../msa/launch-analyst-team";
 import { providerResolver } from "../provider/resolver";
 import { createAndDispatchWorkflow } from "../workflow/workflow-service";
@@ -228,6 +229,7 @@ export class ResearchScenarioService {
         ...(launchInput.ticker !== undefined ? { ticker: launchInput.ticker } : {}),
         ...(launchInput.scope !== undefined ? { scope: launchInput.scope } : {}),
         context: launchInput.context,
+        ...(launchInput.analystRoles ? { analystRoles: launchInput.analystRoles } : {}),
         researchScenarioKey: plan.scenarioKey,
         hitlMode: "off",
       });
@@ -255,11 +257,11 @@ function buildScenarioGoal(scenarioKey: string, params: Record<string, unknown>)
   return `运行研究场景 ${scenarioKey}${parts.length ? `：${parts.join("；")}` : ""}`;
 }
 
-function buildAnalystLaunchInput(input: {
+export function buildAnalystLaunchInput(input: {
   scenarioKey: string;
   inputParams: Record<string, unknown>;
   goal: string;
-}): { ticker?: string; scope?: ResearchScopeInput; context: string } {
+}): { ticker?: string; scope?: ResearchScopeInput; context: string; analystRoles?: AgentRole[] } {
   const params = input.inputParams;
   const explicitContext = firstString(params, ["context"]);
   const explicitScope =
@@ -271,17 +273,20 @@ function buildAnalystLaunchInput(input: {
   const theme =
     firstString(params, ["theme", "strategyHint", "ruleTheme", "factorCategory", "universe"]) ??
     input.goal;
+  const analystRoles = minimalAnalystRolesForScenario(input.scenarioKey);
 
   if (ticker) {
     return {
       ticker,
       context: explicitContext ?? input.goal,
+      ...(analystRoles ? { analystRoles } : {}),
     };
   }
   if (explicitScope) {
     return {
       scope: explicitScope,
       context: explicitContext ?? input.goal,
+      ...(analystRoles ? { analystRoles } : {}),
     };
   }
   if (symbols.length === 1) {
@@ -290,18 +295,35 @@ function buildAnalystLaunchInput(input: {
     return {
       ticker: symbol,
       context: explicitContext ?? input.goal,
+      ...(analystRoles ? { analystRoles } : {}),
     };
   }
   if (symbols.length > 1) {
     return {
       scope: { kind: "basket", symbols, theme },
       context: explicitContext ?? input.goal,
+      ...(analystRoles ? { analystRoles } : {}),
     };
   }
   return {
     scope: { kind: "explore", theme },
     context: explicitContext ?? input.goal,
+    ...(analystRoles ? { analystRoles } : {}),
   };
+}
+
+/**
+ * A standard equity study needs data, fundamentals and technical analysis.
+ * News is deliberately not a default child until a real news provider is
+ * configured; otherwise the team fans out into a known-unavailable path and
+ * later presents the absence as analyst disagreement. Other scenarios keep
+ * their registered/default team behavior.
+ */
+function minimalAnalystRolesForScenario(scenarioKey: string): AgentRole[] | undefined {
+  if (scenarioKey === "research" || scenarioKey === "research_multi") {
+    return ["market_data", "analyst_fundamental", "analyst_technical"];
+  }
+  return undefined;
 }
 
 function firstString(params: Record<string, unknown>, keys: string[]): string | undefined {

@@ -228,24 +228,40 @@ export async function completeA2ATask(
   taskId: string,
   result: TaskResultPayload
 ): Promise<A2ATaskSnapshot | null> {
+  /**
+   * `success` is a compatibility convenience, never an override for an
+   * explicit terminal status. The old `status === completed || success`
+   * condition converted failed topology tasks carrying partial evidence into
+   * durable completed tasks.
+   */
   const status: A2ATaskState =
-    result.status === "completed" || result.success
-      ? "completed"
-      : result.status === "cancelled"
-        ? "cancelled"
-        : result.status === "awaiting_approval"
-          ? "input_required"
-          : "failed";
+    result.status === "completed"
+      ? result.success
+        ? "completed"
+        : "failed"
+      : result.status === "partial"
+        ? "partial"
+        : result.status === "cancelled"
+          ? "cancelled"
+          : result.status === "awaiting_approval"
+            ? "input_required"
+            : result.status === "failed" || result.status === "timeout"
+              ? "failed"
+              : result.success
+                ? "completed"
+                : "failed";
   return appendA2ATaskEvent({
     taskId,
     eventType:
       status === "completed"
         ? "completed"
-        : status === "cancelled"
-          ? "cancelled"
-          : status === "input_required"
-            ? "input_required"
-            : "failed",
+        : status === "partial"
+          ? "partial"
+          : status === "cancelled"
+            ? "cancelled"
+            : status === "input_required"
+              ? "input_required"
+              : "failed",
     status,
     payload: {
       taskId,
@@ -296,6 +312,19 @@ export async function listA2ATasksForWorkflow(
     .orderBy(desc(a2aTask.createdAt))
     .limit(Math.max(1, Math.min(500, limit)));
   return rows.map(asSnapshot);
+}
+
+/**
+ * Return only unfinished delegated work so a workflow terminal transition can
+ * cooperatively cancel its children. The caller owns cancellation because this
+ * service must remain independent of the process-local interrupt registry.
+ */
+export async function listOpenA2ATasksForWorkflow(
+  workflowId: string,
+  exceptTaskId?: string
+): Promise<A2ATaskSnapshot[]> {
+  const tasks = await listA2ATasksForWorkflow(workflowId, 500);
+  return tasks.filter((task) => !isA2ATaskTerminal(task.status) && task.id !== exceptTaskId);
 }
 
 /**

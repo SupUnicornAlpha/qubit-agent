@@ -157,6 +157,7 @@ export async function computeWorkflowHeartbeat(
 export function isWorkflowTerminalStatus(status: string): boolean {
   return (
     status === "completed" ||
+    status === "partial" ||
     status === "failed" ||
     status === "stopped" ||
     status === "canceled" ||

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { agentInstance, workflowRun } from "../../db/sqlite/schema";
+import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
 import type { AgentLoopKind } from "../../types/loop";
@@ -16,6 +16,7 @@ import {
 import { stepStreamBus } from "./event-stream";
 import { resolveForceReactLoop } from "./react-loop-policy";
 import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
+import { listWorkflowArtifactReferences } from "../tools/workflow-artifact-ledger";
 
 export type ExecuteAgentReactParams = {
   runId: string;
@@ -55,8 +56,84 @@ export type ExecuteAgentReactParams = {
 export type ExecuteAgentReactResult = {
   finalState: AgentGraphState;
   finalResponse: Record<string, unknown>;
-  terminalStatus: "completed" | "failed" | "awaiting_approval";
+  terminalStatus: "completed" | "partial" | "failed" | "awaiting_approval";
 };
+
+/**
+ * Keep the workflow/A2A terminal state faithful to the final response.
+ * A partial is a terminal answer with preserved evidence, not a successful
+ * completion and not an execution exception.
+ */
+export function resolveTerminalStatus(
+  finalResponse: Record<string, unknown>
+): ExecuteAgentReactResult["terminalStatus"] {
+  const status = String(finalResponse.status ?? "completed");
+  if (status === "awaiting_approval") return "awaiting_approval";
+  if (status === "partial") return "partial";
+  return status === "terminated" ? "failed" : "completed";
+}
+
+async function persistWorkflowFinalAnswer(input: {
+  workflowId: string;
+  agentInstanceId: string;
+  runId: string;
+  terminalStatus: ExecuteAgentReactResult["terminalStatus"];
+  finalResponse: Record<string, unknown>;
+  state: AgentGraphState;
+}): Promise<void> {
+  try {
+    const db = await getDb();
+    const artifactRefs = await listWorkflowArtifactReferences(input.workflowId);
+    const dataGaps = input.state.observations
+      .filter((observation) => observation.toolError || observation.dataGap || observation.dataGaps)
+      .slice(-8)
+      .map((observation) => ({
+        code: observation.code ?? null,
+        message: observation.message ?? null,
+        ...(observation.dataGap ? { dataGap: observation.dataGap } : {}),
+        ...(Array.isArray(observation.dataGaps) ? { dataGaps: observation.dataGaps } : {}),
+      }));
+    const values = {
+      agentInstanceId: input.agentInstanceId,
+      workflowRunId: input.workflowId,
+      stepIndex: input.state.iteration,
+      phase: "observe" as const,
+      thought: "Persist workflow final answer",
+      actionType: "final_answer" as const,
+      actionJson: {
+        runId: input.runId,
+        terminalStatus: input.terminalStatus,
+        terminalReason: input.finalResponse.reason ?? null,
+        answerText: input.finalResponse.answerText ?? input.finalResponse.summary ?? null,
+        artifactRefs,
+        dataGaps,
+      },
+      observationJson: input.finalResponse,
+    };
+    // A retry/resume may reach the same terminal workflow twice. Keep a single
+    // canonical user-facing final event instead of appending duplicates.
+    const existing = await db
+      .select({ id: agentStep.id })
+      .from(agentStep)
+      .where(
+        and(eq(agentStep.workflowRunId, input.workflowId), eq(agentStep.actionType, "final_answer"))
+      )
+      .limit(1);
+    if (existing[0]) {
+      await db.update(agentStep).set(values).where(eq(agentStep.id, existing[0].id));
+    } else {
+      await db.insert(agentStep).values({ id: randomUUID(), ...values });
+    }
+  } catch (error) {
+    // Never turn a completed user-facing workflow into a failure because its
+    // observability write could not be persisted.
+    console.warn(
+      `[execute-agent-react] final_answer persistence skipped: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
 
 /**
  * Shared perceive→reason→act→observe ReAct loop for graph and A2A native paths.
@@ -251,14 +328,8 @@ export async function executeAgentReact(
   }
 
   const finalResponse = (state.finalResponse ?? { status: "completed" }) as Record<string, unknown>;
-  const frStatus = String(finalResponse.status ?? "completed");
   const userCancelled = String(finalResponse.reason ?? "") === "user_cancelled";
-  const terminalStatus: ExecuteAgentReactResult["terminalStatus"] =
-    frStatus === "awaiting_approval"
-      ? "awaiting_approval"
-      : frStatus === "terminated"
-        ? "failed"
-        : "completed";
+  const terminalStatus = resolveTerminalStatus(finalResponse);
 
   await db
     .update(agentInstance)
@@ -292,6 +363,17 @@ export async function executeAgentReact(
   if (params.updateWorkflowStatus && workflowStatus !== "cancelled" && !userCancelled) {
     await setWorkflowState(params.workflowId, terminalStatus, {
       reason: "execute-agent-react",
+    });
+  }
+
+  if (params.updateWorkflowStatus && terminalStatus !== "awaiting_approval") {
+    await persistWorkflowFinalAnswer({
+      workflowId: params.workflowId,
+      agentInstanceId,
+      runId: params.runId,
+      terminalStatus,
+      finalResponse,
+      state,
     });
   }
 

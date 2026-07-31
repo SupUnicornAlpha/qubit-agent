@@ -49,6 +49,7 @@ import {
   readPackFiles,
 } from "../agent/agent-pack-service";
 import { buildAnalystTeamDataContext } from "./analyst-team-context";
+import { isBenchmarkNamespace } from "../benchmark/benchmark-namespace";
 import { enrichSystemPromptWithFsi } from "../fsi/fsi-prompt-enricher";
 import {
   decideShouldDebate,
@@ -546,11 +547,13 @@ export async function runAnalystTeam(params: {
   const scope = resolveResearchScope({ ticker: params.ticker, scope: params.scope });
 
   if (scope.symbols.length > 1 && scope.kind === "basket") {
-    const perSymbolResults: AnalystTeamResult[] = [];
-    for (const sym of scope.symbols) {
-      const sub = await runAnalystTeamCore({ ...params, ticker: sym, scope });
-      perSymbolResults.push(sub);
-    }
+    // A basket is independent per ticker until MSA fusion. Running them in
+    // parallel prevents a slow/unavailable provider for one name from hiding
+    // the other names' evidence behind a serial queue. Promise.all preserves
+    // the input order, which keeps downstream ticker coverage deterministic.
+    const perSymbolResults = await Promise.all(
+      scope.symbols.map((ticker) => runAnalystTeamCore({ ...params, ticker, scope }))
+    );
     return mergeMultiSymbolAnalystResults(scope, perSymbolResults);
   }
 
@@ -578,12 +581,12 @@ async function runAnalystTeamCore(params: {
     const { isMarketSnapshotWriteEnabled } = await import("../context/axioms");
     if (isMarketSnapshotWriteEnabled()) {
       const rows = await db
-        .select({ projectId: workflowRun.projectId })
+        .select({ projectId: workflowRun.projectId, loopOptionsJson: workflowRun.loopOptionsJson })
         .from(workflowRun)
         .where(eq(workflowRun.id, workflowRunId))
         .limit(1);
       const projectId = rows[0]?.projectId;
-      if (projectId) {
+      if (projectId && !isBenchmarkNamespace(rows[0]?.loopOptionsJson)) {
         const { upsertMarketSnapshotExperience } = await import("../context/finance-memory-writer");
         const symbols = scope.symbols.filter((s) => typeof s === "string" && s.trim().length > 0);
         if (symbols.length > 0) {

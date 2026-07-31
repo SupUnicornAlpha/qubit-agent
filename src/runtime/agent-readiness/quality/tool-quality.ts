@@ -54,17 +54,37 @@ function readToolCalls(sqlite: Database, workflowRunId: string): ToolCallRow[] {
 
 // ── B-1 ────────────────────────────────────────────────────────────────────
 
+/**
+ * 必备工具别名：expectation 用稳定逻辑名，匹配时覆盖 connector / builtin 真名。
+ * 任一别名作为 toolName 子串命中即算召回。
+ */
+const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
+  get_quote: ["get_quote", "quote", "yfinance", "eastmoney", "ticker_price", "market_quote"],
+  news: ["news", "headline", "filing", "earnings", "announcement"],
+  screener: ["screener", "run_screener", "stock_screen", "screen_stocks"],
+  "recommendation.record": ["recommendation.record", "recommendation_record", "record_recommendation"],
+  factor: ["factor", "factor.register", "factor.compute", "factor.autoEvaluate"],
+  strategy: ["strategy", "strategy.create", "strategy.compose", "strategy.create_version"],
+  order: ["order", "submit_order", "order_intent", "create_intent"],
+  risk: ["risk", "rule.evaluate", "risk_decision", "risk.check"],
+};
+
+function toolMatchesRequired(toolName: string, required: string): boolean {
+  const t = toolName.toLowerCase();
+  const aliases = REQUIRED_TOOL_ALIASES[required] ?? [required];
+  return aliases.some((alias) => t.includes(alias.toLowerCase()));
+}
+
 function metricB1(
   rows: ToolCallRow[],
   required: ReadonlyArray<string>
 ): { value: number; matched: string[]; missed: string[] } {
   if (!required.length) return { value: 1, matched: [], missed: [] };
-  const distinctTools = new Set(rows.map((r) => r.toolName.toLowerCase()));
+  const distinctTools = [...new Set(rows.map((r) => r.toolName))];
   const matched: string[] = [];
   const missed: string[] = [];
   for (const req of required) {
-    const reqLow = req.toLowerCase();
-    const hit = [...distinctTools].some((t) => t.includes(reqLow));
+    const hit = distinctTools.some((t) => toolMatchesRequired(t, req));
     if (hit) matched.push(req);
     else missed.push(req);
   }

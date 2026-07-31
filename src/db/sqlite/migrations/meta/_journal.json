@@ -694,6 +694,20 @@
       "when": 1814486400000,
       "tag": "0099_mcp_default_star_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1814572800000,
+      "tag": "0100_workflow_artifact_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1814659200000,
+      "tag": "0101_quarantine_skill_fallback_attribution",
+      "breakpoints": true
     }
   ]
 }

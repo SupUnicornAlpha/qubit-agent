@@ -123,6 +123,11 @@ export const LoopOptionsJsonSchema = z
     /** Conversation 的流程化执行配置；仅 workflow 界面额外暴露。 */
     processConfig: WorkflowProcessConfigSchema.optional(),
     /**
+     * Readiness/benchmark 专用运行命名空间。它可执行真实工具，但不得污染
+     * production memory、skill attribution/promotion、质量聚合或用户工作流列表。
+     */
+    benchmarkNamespace: z.boolean().optional(),
+    /**
      * @deprecated 旧版“编排体验”字段。只为历史 DB/API 兼容保留：
      * native -> agent，coding_agent -> goal。新代码必须写 agentMode。
      */

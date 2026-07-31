@@ -59,6 +59,8 @@ export interface RecordToolCallStartInput {
   mcpCircuitState?: "closed" | "open" | "half_open" | null;
   reasonText: string;
   contextMemory?: unknown;
+  /** Stable, redacted request identity used for repeat-call diagnostics. */
+  requestFingerprint?: string;
   /** 仅存治理结论，不存原始参数；供 benchmark 判断 contract / gate 覆盖。 */
   governance?: {
     capabilityGate?: "allowed" | "denied";
@@ -93,6 +95,7 @@ export async function recordToolCallStart(input: RecordToolCallStartInput): Prom
       contextMemory: input.contextMemory,
       targetKind: input.targetKind,
       mcp: input.mcp ?? null,
+      requestFingerprint: input.requestFingerprint ?? null,
       governance: input.governance ?? null,
     },
     status: "running",

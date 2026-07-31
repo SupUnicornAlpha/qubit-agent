@@ -74,9 +74,16 @@ async function launchBenchmarkCase(benchmarkCase: QubitBenchCase): Promise<strin
   const payload = (await response.json().catch(() => ({}))) as {
     data?: { workflowRunId?: string };
     error?: string;
+    details?: { invalidInputs?: Array<{ field: string; error: string }> };
   };
   if (!response.ok || !payload.data?.workflowRunId) {
-    throw new Error(`launch_${response.status}:${payload.error ?? "unexpected_response"}`);
+    const invalid = payload.details?.invalidInputs
+      ?.map((item) => `${item.field}:${item.error}`)
+      .join(",")
+      ?? "";
+    throw new Error(
+      `launch_${response.status}:${payload.error ?? "unexpected_response"}${invalid ? `:${invalid}` : ""}`
+    );
   }
   return payload.data.workflowRunId;
 }

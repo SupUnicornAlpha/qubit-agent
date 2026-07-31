@@ -1,8 +1,6 @@
 import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { RuntimeAgentDefinition } from "../types";
-import {
-  createEmptyWorkingMemory,
-} from "../context/working-memory";
+import { createEmptyWorkingMemory } from "../context/working-memory";
 import type { WorkingMemory } from "../context/types";
 
 export type StepEventType =
@@ -65,11 +63,15 @@ export interface AgentGraphState {
    * undefined / 0 = 还没触发过；max 2（详见 act.ts MAX_ARTIFACT_GATE_RETRIES）。
    */
   artifactGapRetryCount?: number;
+  /** Scenario required-tool gate retry count; prevents `tool=none` before B-1 is even attempted. */
+  requiredToolGapRetryCount?: number;
   /**
    * Agent control mode 的终态门禁重试计数：
    * Plan 要求至少落一份计划；Goal 要求计划步骤全部进入 done/skipped。
    */
   controlModeGapRetryCount?: number;
+  /** Consecutive blocked duplicate requests; reset by a real tool execution. */
+  noProgressRetryCount?: number;
 }
 
 export function createInitialGraphState(input: {

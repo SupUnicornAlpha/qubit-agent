@@ -21,7 +21,13 @@ export interface Project {
 }
 
 export type WorkflowMode = "research" | "backtest" | "simulation" | "live";
-export type WorkflowStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type WorkflowStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled";
 
 export interface WorkflowRun {
   id: string;

@@ -52,7 +52,9 @@ function buildSnapshotJson(state: AgentGraphState): Record<string, unknown> {
     contextMemory: state.contextMemory,
     workingMemory: state.workingMemory,
     artifactGapRetryCount: state.artifactGapRetryCount,
+    requiredToolGapRetryCount: state.requiredToolGapRetryCount,
     controlModeGapRetryCount: state.controlModeGapRetryCount,
+    noProgressRetryCount: state.noProgressRetryCount,
     eventsTail: events.slice(-EVENT_TAIL_LIMIT),
     eventsCount: events.length,
   };
@@ -166,9 +168,7 @@ export async function loadLatestSnapshotByRunId(runId: string): Promise<LoadedSn
  *
  * 返回删除的行数（best-effort 不抛；失败仅 warn，与 writeCheckpointSnapshot 一致）。
  */
-export async function deleteCheckpointSnapshotsForWorkflow(
-  workflowRunId: string
-): Promise<number> {
+export async function deleteCheckpointSnapshotsForWorkflow(workflowRunId: string): Promise<number> {
   try {
     const db = await getDb();
     const deleted = await db
@@ -250,8 +250,14 @@ export function restoreStateFromSnapshot(
     ...(typeof snap.artifactGapRetryCount === "number"
       ? { artifactGapRetryCount: snap.artifactGapRetryCount }
       : {}),
+    ...(typeof snap.requiredToolGapRetryCount === "number"
+      ? { requiredToolGapRetryCount: snap.requiredToolGapRetryCount }
+      : {}),
     ...(typeof snap.controlModeGapRetryCount === "number"
       ? { controlModeGapRetryCount: snap.controlModeGapRetryCount }
+      : {}),
+    ...(typeof snap.noProgressRetryCount === "number"
+      ? { noProgressRetryCount: snap.noProgressRetryCount }
       : {}),
   };
 
