@@ -18,18 +18,47 @@ export type DataGap = {
 };
 
 const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
-  get_quote: ["get_quote", "quote", "price", "klines", "bars"],
-  news: ["news", "headline", "filing", "earnings", "announcement"],
+  get_quote: [
+    "get_quote",
+    "fetch_quote",
+    "fetch_price_data",
+    "fetch_klines",
+    "fetch_bars",
+    "quote",
+    "ticker_price",
+    "market_quote",
+  ],
+  news: [
+    "fetch_news",
+    "news_sentiment",
+    "news",
+    "headline",
+    "filing",
+    "earnings",
+    "announcement",
+  ],
   screener: ["screener", "run_screener", "stock_screen", "screen_stocks"],
   "recommendation.record": [
     "recommendation.record",
     "recommendation_record",
     "record_recommendation",
   ],
-  factor: ["factor", "factor.register", "factor.compute", "factor.autoevaluate"],
-  strategy: ["strategy", "strategy.create", "strategy.compose", "strategy.create_version"],
-  order: ["order", "submit_order", "order_intent", "create_intent"],
-  risk: ["risk", "rule.evaluate", "risk_decision", "risk.check"],
+  factor: [
+    "factor.register",
+    "factor.compute",
+    "factor.evaluate",
+    "factor.autoevaluate",
+    "factor.list",
+    "compute_factors",
+  ],
+  strategy: [
+    "strategy.create_version",
+    "strategy.compose",
+    "strategy.create",
+    "version_strategy",
+  ],
+  order: ["order.create_intent", "submit_order", "order_intent", "create_intent"],
+  risk: ["evaluate_risk", "rule.evaluate", "risk_decision", "risk.check", "call_team_risk"],
 };
 
 export function toolMatchesRequiredCapability(toolName: string, required: string): boolean {

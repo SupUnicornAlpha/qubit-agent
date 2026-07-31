@@ -33,10 +33,13 @@ import {
   isToolBlockedByRuntimeCapability,
 } from "../../tools/data-capability-manifest";
 import {
-  buildNotAttemptedDataGaps,
   classifyDataGap,
-  toolMatchesRequiredCapability,
 } from "../../tools/data-gap";
+import {
+  assessRequiredToolGate,
+  listAuthorizedToolsFromSqlite,
+  listWorkflowAttemptedToolsFromSqlite,
+} from "../../tools/required-tool-gate";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import {
   buildToolCallFingerprint,
@@ -299,35 +302,18 @@ export async function actNode(
         goal: typeof terminalPayload.goal === "string" ? terminalPayload.goal : null,
         ticker: terminalTicker,
       });
-      const unavailableRequired = requiredTools.flatMap((capability) => {
-        const runnable = terminalManifest.tools.some((toolName) =>
-          toolMatchesRequiredCapability(toolName, capability)
-        );
-        if (runnable) return [];
-        const blocked = terminalManifest.unavailable.find((entry) =>
-          toolMatchesRequiredCapability(entry.toolName, capability)
-        );
-        return [
-          {
-            kind: blocked?.status === "no_coverage" ? "no_coverage" : "unconfigured",
-            capability,
-            market: terminalManifest.market,
-            provider: blocked?.provider ?? null,
-            reason:
-              blocked?.reason ??
-              `当前 Agent 的已授权工具集中没有可完成 ${capability} 的工具；这不是“无数据”。`,
-            retryable: false,
-          } as const,
-        ];
-      });
-      const attemptableRequired = requiredTools.filter((capability) =>
-        terminalManifest.tools.some((toolName) =>
-          toolMatchesRequiredCapability(toolName, capability)
-        )
+      const authorizedTools = listAuthorizedToolsFromSqlite(sqliteHandle, availableTools);
+      const attemptedTools = listWorkflowAttemptedToolsFromSqlite(
+        sqliteHandle,
+        state.workflowId,
+        state.toolCalls.map((call) => String(call.toolName ?? ""))
       );
-      const notAttempted = buildNotAttemptedDataGaps({
-        requiredCapabilities: attemptableRequired,
-        attemptedTools: state.toolCalls.map((call) => String(call.toolName ?? "")),
+      const { unavailableRequired, notAttempted } = assessRequiredToolGate({
+        requiredTools,
+        authorizedTools,
+        attemptedTools,
+        runnableTools: terminalManifest.tools,
+        unavailableManifestTools: terminalManifest.unavailable,
         market: terminalManifest.market,
       });
       const requiredToolRetryCount = state.requiredToolGapRetryCount ?? 0;

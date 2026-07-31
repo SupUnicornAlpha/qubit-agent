@@ -1,13 +1,16 @@
 /**
  * B 类 · 工具/Skill 调用质量。
  *
- *   B-1 必备工具召回率   = matched / required（按 scenario.requiredTools 子串前缀匹配）
+ *   B-1 必备工具召回率   = matched / scorableRequired
+ *                          scorable = required − waived（manifest/DataGap/未授权）
  *   B-2 参数合理性比例   = 1 - 异常参数 / 总调用（异常 = qty<=0 / NaN 数值 / 空 symbol）
  *   B-3 工具失败率       = error_count / total（同原 T-1，但保留按 toolKind 分桶）
  *   B-7 单元素最大重复数 = max((toolName, requestHash) → count)（绿 ≤ 2，黄 3-4，红 ≥ 5）
  *
  * 设计取舍：
  *   - B-1 子串匹配（不精确名称比对）：avoid "get_quote" vs "yahoo_finance.get_quote" 写死
+ *   - B-1 与 runtime capability 对齐：未配置新闻 / DataGap(unconfigured|no_coverage) /
+ *     项目内无授权工具的能力不进入分母，避免把“诚实不可用”打成召回失败
  *   - B-2 参数检查只看"明显坏值"，不试图深度 schema 校验（schema 在 dispatcher 层已有）
  *   - B-7 用 hash(JSON.stringify(request))，对 request 做 stable 序列化
  */
@@ -15,6 +18,8 @@ import type { Database } from "bun:sqlite";
 
 import { getScenarioExpectation } from "./scenario-expectations";
 import type { ScenarioRecipe } from "../scenarios";
+import { toolMatchesRequiredCapability } from "../../tools/data-gap";
+import { listAuthorizedToolsFromSqlite } from "../../tools/required-tool-gate";
 
 export interface ToolQualityInput {
   workflowRunId: string;
@@ -30,6 +35,7 @@ export interface ToolQualityResult {
     requiredTools: ReadonlyArray<string>;
     matchedTools: ReadonlyArray<string>;
     missedTools: ReadonlyArray<string>;
+    waivedTools: ReadonlyArray<string>;
     failureByKind: Record<string, { errors: number; total: number }>;
     repeatedCallTop: ReadonlyArray<{ toolName: string; count: number }>;
   };
@@ -52,43 +58,106 @@ function readToolCalls(sqlite: Database, workflowRunId: string): ToolCallRow[] {
     .all(workflowRunId) as ToolCallRow[];
 }
 
-// ── B-1 ────────────────────────────────────────────────────────────────────
+function tableExists(sqlite: Database, name: string): boolean {
+  const row = sqlite
+    .prepare(`SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name = ?`)
+    .get(name) as { ok?: number } | undefined;
+  return Boolean(row?.ok);
+}
+
+function readDataGapWaivers(sqlite: Database, workflowRunId: string): Set<string> {
+  const waived = new Set<string>();
+  if (!tableExists(sqlite, "workflow_artifact_ledger")) return waived;
+  const rows = sqlite
+    .prepare(
+      `SELECT tool_name AS toolName, payload_json AS payloadJson
+       FROM workflow_artifact_ledger
+       WHERE workflow_run_id = ?
+         AND artifact_kind = 'DataGap'`
+    )
+    .all(workflowRunId) as Array<{ toolName: string; payloadJson: string }>;
+  for (const row of rows) {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload =
+        typeof row.payloadJson === "string"
+          ? (JSON.parse(row.payloadJson) as Record<string, unknown>)
+          : ((row.payloadJson as Record<string, unknown>) ?? {});
+    } catch {
+      payload = {};
+    }
+    const kind = String(payload.kind ?? "");
+    if (kind !== "unconfigured" && kind !== "no_coverage") continue;
+    const capability = String(payload.capability ?? row.toolName ?? "").trim();
+    if (capability) waived.add(capability);
+  }
+  return waived;
+}
+
+function newsProviderConfigured(sqlite: Database): boolean | null {
+  if (!tableExists(sqlite, "builtin_connector_settings")) return null;
+  const row = sqlite
+    .prepare(`SELECT config_json AS configJson FROM builtin_connector_settings WHERE id = 'default'`)
+    .get() as { configJson?: string } | undefined;
+  if (!row?.configJson) return null;
+  try {
+    const parsed =
+      typeof row.configJson === "string"
+        ? (JSON.parse(row.configJson) as Record<string, unknown>)
+        : (row.configJson as Record<string, unknown>);
+    const news = (parsed["qubit-news"] ?? {}) as Record<string, unknown>;
+    const base = typeof news.newsApiBaseUrl === "string" ? news.newsApiBaseUrl.trim() : "";
+    const synthetic = news.syntheticWhenEmpty === true || news.syntheticWhenEmpty === "true";
+    return base.length > 0 && !synthetic;
+  } catch {
+    return null;
+  }
+}
 
 /**
- * 必备工具别名：expectation 用稳定逻辑名，匹配时覆盖 connector / builtin 真名。
- * 任一别名作为 toolName 子串命中即算召回。
+ * Capabilities that should not count against B-1 because they were never
+ * honestly callable for this workflow / environment.
  */
-const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
-  get_quote: ["get_quote", "quote", "yfinance", "eastmoney", "ticker_price", "market_quote"],
-  news: ["news", "headline", "filing", "earnings", "announcement"],
-  screener: ["screener", "run_screener", "stock_screen", "screen_stocks"],
-  "recommendation.record": ["recommendation.record", "recommendation_record", "record_recommendation"],
-  factor: ["factor", "factor.register", "factor.compute", "factor.autoEvaluate"],
-  strategy: ["strategy", "strategy.create", "strategy.compose", "strategy.create_version"],
-  order: ["order", "submit_order", "order_intent", "create_intent"],
-  risk: ["risk", "rule.evaluate", "risk_decision", "risk.check"],
-};
-
-function toolMatchesRequired(toolName: string, required: string): boolean {
-  const t = toolName.toLowerCase();
-  const aliases = REQUIRED_TOOL_ALIASES[required] ?? [required];
-  return aliases.some((alias) => t.includes(alias.toLowerCase()));
+export function listWaivedRequiredTools(
+  sqlite: Database,
+  workflowRunId: string,
+  required: ReadonlyArray<string>
+): string[] {
+  const authorized = listAuthorizedToolsFromSqlite(sqlite, []);
+  const gapWaivers = readDataGapWaivers(sqlite, workflowRunId);
+  const newsOk = newsProviderConfigured(sqlite);
+  return required.filter((capability) => {
+    if (gapWaivers.has(capability)) return true;
+    if (capability === "news" && newsOk === false) return true;
+    if (authorized.length === 0) return false;
+    return !authorized.some((tool) => toolMatchesRequiredCapability(tool, capability));
+  });
 }
 
 function metricB1(
   rows: ToolCallRow[],
-  required: ReadonlyArray<string>
-): { value: number; matched: string[]; missed: string[] } {
-  if (!required.length) return { value: 1, matched: [], missed: [] };
+  required: ReadonlyArray<string>,
+  waived: ReadonlyArray<string>
+): { value: number; matched: string[]; missed: string[]; waived: string[] } {
+  const waivedSet = new Set(waived);
+  const scorable = required.filter((req) => !waivedSet.has(req));
+  if (!scorable.length) {
+    return { value: 1, matched: [], missed: [], waived: [...waived] };
+  }
   const distinctTools = [...new Set(rows.map((r) => r.toolName))];
   const matched: string[] = [];
   const missed: string[] = [];
-  for (const req of required) {
-    const hit = distinctTools.some((t) => toolMatchesRequired(t, req));
+  for (const req of scorable) {
+    const hit = distinctTools.some((t) => toolMatchesRequiredCapability(t, req));
     if (hit) matched.push(req);
     else missed.push(req);
   }
-  return { value: matched.length / required.length, matched, missed };
+  return {
+    value: matched.length / scorable.length,
+    matched,
+    missed,
+    waived: [...waived],
+  };
 }
 
 // ── B-2 ────────────────────────────────────────────────────────────────────
@@ -99,23 +168,18 @@ function isAbnormalRequest(raw: string | null | undefined): boolean {
   try {
     obj = typeof raw === "string" ? JSON.parse(raw) : raw;
   } catch {
-    // 非 JSON 不算异常（builtin 工具可能传 string）
     return false;
   }
   if (typeof obj !== "object" || obj === null) return false;
   const r = obj as Record<string, unknown>;
-  // 1) qty 必须 > 0
   if (typeof r.qty === "number" && (Number.isNaN(r.qty) || r.qty <= 0)) return true;
   if (typeof r.quantity === "number" && (Number.isNaN(r.quantity) || r.quantity <= 0))
     return true;
-  // 2) price 不允许负
   if (typeof r.price === "number" && (Number.isNaN(r.price) || r.price < 0)) return true;
-  // 3) symbol/ticker 字段必须非空字符串
   for (const key of ["symbol", "ticker"]) {
     const v = r[key];
     if (v !== undefined && (typeof v !== "string" || v.trim() === "")) return true;
   }
-  // 4) date / asof 字符串必须形如 YYYY-MM-DD（如果存在）
   for (const key of ["date", "asof"]) {
     const v = r[key];
     if (typeof v === "string" && !/^\d{4}-\d{2}-\d{2}/.test(v)) return true;
@@ -194,7 +258,8 @@ export async function collectToolQuality(
 ): Promise<ToolQualityResult> {
   const exp = getScenarioExpectation(input.scenario);
   const rows = readToolCalls(sqlite, input.workflowRunId);
-  const b1 = metricB1(rows, exp.requiredTools);
+  const waived = listWaivedRequiredTools(sqlite, input.workflowRunId, exp.requiredTools);
+  const b1 = metricB1(rows, exp.requiredTools, waived);
   const b2 = metricB2(rows);
   const b3 = metricB3(rows);
   const b7 = metricB7(rows);
@@ -207,6 +272,7 @@ export async function collectToolQuality(
       requiredTools: exp.requiredTools,
       matchedTools: b1.matched,
       missedTools: b1.missed,
+      waivedTools: b1.waived,
       failureByKind: b3.byKind,
       repeatedCallTop: b7.top,
     },

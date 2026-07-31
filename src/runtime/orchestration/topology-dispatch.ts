@@ -323,14 +323,39 @@ export function assertTopologyTargetAllowed(
   }
 }
 
-/** Orchestrator 静态基础工具（不含专家派单工具） */
+/** Orchestrator 静态基础工具（不含专家派单工具）；与 seed 3.8 合同写工具对齐。 */
 export const ORCHESTRATOR_BASE_TOOLS = [
+  "update_plan",
   "assign_task",
+  "market.resolve_symbol",
+  "market.data_sources",
+  "market.readiness",
   "evaluate_risk",
   "edit_agent_pack",
+  "search_memory",
+  "memory.consolidate_longterm",
+  "memory.refresh_workspace",
+  "skill.search",
+  "skill.use_record",
+  "skill.create",
+  "skill.patch",
+  "skill.archive",
+  "run_screener",
+  "recommendation.record",
+  "factor.list",
+  "factor.register",
+  "factor.evaluate",
+  "factor.autoEvaluate",
+  "strategy.create_version",
+  "strategy.compose",
+  "order.create_intent",
   "call_mcp",
 ] as const;
 
+/**
+ * Merge seed/base orchestrator tools with topology `call_team_*` tools.
+ * Must not wipe seed contract tools when topology sync runs after agent seed.
+ */
 export function mergeOrchestratorToolsJson(topologyToolNames: string[]): string[] {
   return [...new Set([...ORCHESTRATOR_BASE_TOOLS, ...topologyToolNames])];
 }

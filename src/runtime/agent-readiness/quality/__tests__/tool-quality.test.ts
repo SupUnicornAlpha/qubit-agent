@@ -153,6 +153,43 @@ describe("B 类 · 工具调用质量", () => {
     expect(r["B-1"]).toBe(0);
   });
 
+  test("B-1 对 DataGap(unconfigured) 能力豁免分母", async () => {
+    const { wfId, stepId } = await setupWfWithStep();
+    await insertTool({ wfId, stepId, toolName: "get_quote", toolKind: "mcp", i: 1 });
+    const sqlite = getSqliteForTesting();
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS workflow_artifact_ledger (
+        id TEXT PRIMARY KEY,
+        workflow_run_id TEXT,
+        fingerprint TEXT,
+        artifact_kind TEXT,
+        tool_name TEXT,
+        payload_json TEXT,
+        created_at TEXT
+      );
+    `);
+    sqlite
+      .prepare(
+        `INSERT INTO workflow_artifact_ledger
+         (id, workflow_run_id, fingerprint, artifact_kind, tool_name, payload_json, created_at)
+         VALUES (?, ?, ?, 'DataGap', 'fetch_news', ?, datetime('now'))`
+      )
+      .run(
+        `gap-${crypto.randomUUID()}`,
+        wfId,
+        `gap-news-${wfId}`,
+        JSON.stringify({
+          kind: "unconfigured",
+          capability: "news",
+          market: "US",
+          reason: "news provider missing",
+        })
+      );
+    const r = await collectToolQuality(sqlite, { workflowRunId: wfId, scenario: "research" });
+    expect(r.details.waivedTools).toContain("news");
+    expect(r["B-1"]).toBe(1);
+  });
+
   test("B-2 参数合理性：qty 为负的 order 调用应被识别为异常", async () => {
     const { wfId, stepId } = await setupWfWithStep();
     await insertTool({

@@ -56,8 +56,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * 3.7.0（2026-07）：默认编排模式从“批量团队研究”切到“Orchestrator 作为大脑按需派单”。
      * `run_analyst_team` / `summarize_team_decision` / `fuse_signals` 保留为兼容能力，
      * 但不再作为 Orchestrator 默认工具面，避免任务一上来就跑偏成团队会审或长报告。
+     * 3.8.0（2026-07-31）：补齐场景合同写工具（recommendation / factor / strategy / order），
+     * 避免完成门禁把未授权能力误标为 unconfigured，同时允许编排器在不派单时直接落库。
      */
-    version: "3.7.0",
+    version: "3.8.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       "update_plan",
@@ -81,6 +83,15 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
        * 详见 analyst-team-context.ts 的 explore prompt 与 stock-screener.ts。
        */
       "run_screener",
+      // 2026-07-31 §11：场景 requiredTools 对应的最小写工具面
+      "recommendation.record",
+      "factor.list",
+      "factor.register",
+      "factor.evaluate",
+      "factor.autoEvaluate",
+      "strategy.create_version",
+      "strategy.compose",
+      "order.create_intent",
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
@@ -274,8 +285,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      *        让 research agent 能直接用本地 CLI（duckdb 查数据集 / jq 处理 JSON / git 版本化策略）
      *        以及把长 horizon 写因子任务派给外部 agentic CLI（claude-code / aider）。
      *        两者均为 lifecycle=experimental，必须经 EXEC_PROVIDERS 白名单 + cwd 边界 + arg 元字符防御。
+     * 4.3.0：补 recommendation.record，与选股/主题场景合同对齐。
      */
-    version: "4.2.0",
+    version: "4.3.0",
     systemPrompt: PROMPT_RESEARCH,
     tools: [
       // 基础数据
@@ -296,6 +308,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "strategy.create_version",
       "strategy.compose",
       "order.create_intent",
+      "recommendation.record",
       "discovery.run",
       "discovery.promote",
       "backtest.run",

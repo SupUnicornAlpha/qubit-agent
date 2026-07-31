@@ -708,6 +708,13 @@
       "when": 1814659200000,
       "tag": "0101_quarantine_skill_fallback_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1814745600000,
+      "tag": "0102_mcp_call_log_running_status",
+      "breakpoints": true
     }
   ]
 }

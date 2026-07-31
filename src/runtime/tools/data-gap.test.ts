@@ -54,4 +54,9 @@ describe("data gap taxonomy", () => {
     expect(toolMatchesRequiredCapability("qubit-data/fetch_klines", "get_quote")).toBe(true);
     expect(toolMatchesRequiredCapability("qubit-data/fetch_klines", "news")).toBe(false);
   });
+
+  test("does not treat evaluate_risk as an order capability", () => {
+    expect(toolMatchesRequiredCapability("evaluate_risk", "risk")).toBe(true);
+    expect(toolMatchesRequiredCapability("evaluate_risk", "order")).toBe(false);
+  });
 });
