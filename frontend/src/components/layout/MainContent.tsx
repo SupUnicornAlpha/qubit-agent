@@ -1,35 +1,20 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
-import { Network, Rocket, Settings, type LucideIcon } from "lucide-react";
 import {
   chatHealth,
-  checkBrokerHealth,
   createChatSession,
   createConversationTurn,
   getOrCreateDefaultProject,
-  createIntentOrder,
   createWorkflow,
   getAgentsConfig,
   getDefaultWorkspace,
-  getDebateConfig,
   getDefaultProjectSession,
-  getExecutionSafetyConfig,
   getAnalystTeamGraph,
-  initGenePool,
-  getRiskConfig,
-  listGeneGenerations,
-  listGeneTrends,
-  listGenomes,
-  listScreenerCandidates,
-  listScreenerRuns,
   getModelConfig,
   getBuiltinConnectorConfig,
   getWindSessionStatus,
   loginWindSession,
   reconnectWindSession,
-  getIntentExecutionView,
-  listBrokerAccounts,
-  listBrokerEvents,
   listMcpBindings,
   listMcpMarketCatalog,
   listMcpProjectInstalls,
@@ -52,29 +37,19 @@ import {
   getAgentDefinitionPack,
   listChatSessions,
   listMonitorWorkflows,
-  listIntentOrders,
   listProjects,
   listSessionMessages,
   patchSessionMessage,
   patchWorkflow,
   updateWorkflowGoal,
   reloadAgents,
-  processWorkflowCompensations,
-  evolveGenePool,
-  runScreener,
-  executeIntentConfirmed,
   saveModelConfig,
   saveBuiltinConnectorConfig,
-  saveDebateConfig,
-  saveExecutionSafetyConfig,
-  saveRiskConfig,
   testMcpCall,
   testMcpProjectInstall,
-  upsertBrokerAccount,
   upsertMcpBinding,
   upsertMcpSource,
   upsertMcpServer,
-  requestExecutionConfirmation,
   listPendingWorkflowHitl,
   resolveWorkflowHitl,
   injectWorkflowMessage,
@@ -85,8 +60,6 @@ import {
   subscribeSessionEvents,
   subscribeWorkflowStream,
   subscribeWorkflowEvents,
-  listWorkflowCompensations,
-  enqueueWorkflowCompensation,
   installMcpMarket,
   syncMcpSource,
   uninstallMcpProjectInstall,
@@ -97,16 +70,6 @@ import type {
   AgentMemoryStatsResponse,
   AgentPackResponse,
   AgentSkillRecord,
-  DebateConfig,
-  DebateStreamEvent,
-  RiskConfig,
-  GeneGenerationRecord,
-  GeneTrendPoint,
-  IntentOrderRecord,
-  IntentDeviationRecord,
-  ExecutionReportRecord,
-  ExecutionSafetyCheckResult,
-  ExecutionSafetyConfig,
   McpServerConfigRecord,
   McpCatalogItemRecord,
   McpProjectInstallRecord,
@@ -115,23 +78,15 @@ import type {
   OpenSkillMarketEntryDto,
   SkillMarketInstallRecord,
   SkillMarketStatusDto,
-  ScreenerCandidateRecord,
-  ScreenerRunRecord,
-  BrokerAccountRecord,
-  BrokerOrderEventRecord,
-  BrokerProvider,
-  WorkflowCompensationTaskRecord,
   AnalystTeamGraphPayload,
   AnalystTeamGraphInteraction,
   AnalystTeamGraphAgentStep,
   AnalystTeamGraphToolCall,
   AnalystTeamGraphMcpCall,
-  StrategyGenomeRecord,
   StepStreamEvent,
   BuiltinConnectorConfig,
   AgentControlMode,
   AgentLoopKind,
-  WorkflowProcessConfig,
 } from "../../api/types";
 import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
 import { useAppStore, type ChartContextPayload } from "../../store";
@@ -4533,37 +4488,6 @@ const styles: Record<string, CSSProperties> = {
 
 // ─── TeamDashboardPanel ───────────────────────────────────────────────────────
 
-function formatDebateStreamLine(ev: DebateStreamEvent): string {
-  const time = new Date(ev.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-  switch (ev.type) {
-    case "debate_start": {
-      const p = ev.payload as { topic?: string; maxRounds?: number };
-      return `[${time}] 辩论开始 · ${String(p.topic ?? "").slice(0, 160)}（最多 ${p.maxRounds ?? "?"} 轮）`;
-    }
-    case "debate_turn": {
-      const p = ev.payload as {
-        roundNumber?: number;
-        speakerRole?: string;
-        statement?: string;
-        stance?: string;
-      };
-      return `[${time}] 辩论 R${p.roundNumber ?? "?"} · ${p.speakerRole ?? "?"} (${p.stance ?? ""})\n${String(p.statement ?? "").slice(0, 800)}`;
-    }
-    case "debate_verdict": {
-      const p = ev.payload as { reasoning?: string; finalStance?: string; verdict?: string };
-      return `[${time}] 辩论裁决 · ${String(p.finalStance ?? "")} / ${String(p.verdict ?? "")}\n${String(p.reasoning ?? "").slice(0, 600)}`;
-    }
-    case "debate_end":
-      return `[${time}] 辩论结束`;
-    default:
-      return `[${time}] ${ev.type}`;
-  }
-}
-
-/** 研究团队中间栏侧栏自上而下：研究画布、工具与配置 */
-const TEAM_CENTER_VIEWS = ["research", "run"] as const;
-type TeamCenterView = (typeof TEAM_CENTER_VIEWS)[number];
-
 /** 团队页大三栏 key —— 用于显隐控制 / localStorage 序列化 */
 type TeamPaneKey = "left" | "center" | "right";
 const TEAM_PANES: readonly TeamPaneKey[] = ["left", "center", "right"];
@@ -4573,65 +4497,6 @@ const TEAM_PANE_LABEL: Record<TeamPaneKey, string> = {
   right: "Orchestrator 对话",
 };
 const TEAM_PANES_LS_KEY = "qubit-agent.teamPanes.hidden.v1";
-const TEAM_VIEW_TITLE: Record<TeamCenterView, string> = {
-  run: "发起分析 · 工具与配置",
-  research: "研究画布 · 拓扑 / 实时流 / 结论",
-};
-
-const WORKFLOW_SOP_PRESETS: ReadonlyArray<{
-  id: string;
-  label: string;
-  description: string;
-  steps: NonNullable<WorkflowProcessConfig["sopSteps"]>;
-}> = [
-  {
-    id: "adaptive",
-    label: "自适应",
-    description: "不固定步骤，由 Agent 根据目标动态规划。",
-    steps: [],
-  },
-  {
-    id: "deep_research",
-    label: "深度研究",
-    description: "先校验数据，再形成观点、反证与结论。",
-    steps: [
-      { id: "scope", title: "澄清范围与时效要求", required: true },
-      { id: "evidence", title: "获取并交叉验证行情、基本面与新闻", required: true },
-      { id: "thesis", title: "形成主观点、反证和风险清单", required: true },
-      { id: "deliver", title: "输出带证据与时点的研究结论", required: true },
-    ],
-  },
-  {
-    id: "factor_validation",
-    label: "因子验证",
-    description: "从定义、数据、回测到稳健性检查的标准流程。",
-    steps: [
-      { id: "definition", title: "给出因子定义、方向与经济含义", required: true },
-      { id: "data", title: "校验样本、频率、缺失值与未来函数", required: true },
-      { id: "backtest", title: "执行 IC、分层或组合回测", required: true },
-      { id: "robustness", title: "检查换手、成本、分期与稳健性", required: true },
-      { id: "artifact", title: "登记可复用因子产物与评估结果", required: true },
-    ],
-  },
-  {
-    id: "event_driven",
-    label: "事件驱动",
-    description: "突出新闻时效、事件链和市场反应验证。",
-    steps: [
-      { id: "latest", title: "获取最新事件并标注发布时间", required: true },
-      { id: "timeline", title: "串联近期事件与历史背景", required: true },
-      { id: "market", title: "验证价格、成交量与同业反应", required: true },
-      { id: "impact", title: "评估影响路径、持续期与风险", required: true },
-    ],
-  },
-];
-
-/** 活动栏图标：Web 端用 Lucide 对齐 SF Symbols 语义（见 `appleUiSymbols.ts` 与 [SF Symbols](https://developer.apple.com/cn/sf-symbols/)）。 */
-const TEAM_CENTER_GLYPH: Record<TeamCenterView, LucideIcon> = {
-  run: Rocket,
-  research: Network,
-};
-
 /** 画布可多选高亮的团队成员角色（与后端研究团队槽位一致；空集表示不过滤） */
 /** 拓扑画布固定视口高度，避免 ResizeObserver↔SVG 高度互相撑开导致无限增高 */
 /**
@@ -4681,10 +4546,6 @@ const TeamDashboardPanel: FC = () => {
   /** 右侧 Orchestrator 输入框的研究上下文。 */
   const [teamAnalysisContext, setTeamAnalysisContext] = useState("");
   const [promptTemplateId, setPromptTemplateId] = useState("");
-  const [workflowSopPreset, setWorkflowSopPreset] = useState("adaptive");
-  const [workflowRequirePlan, setWorkflowRequirePlan] = useState(false);
-  const [workflowRequireEvidence, setWorkflowRequireEvidence] = useState(false);
-  const [workflowMinSuccessfulTools, setWorkflowMinSuccessfulTools] = useState(1);
   /**
    * Agent 底座/引擎：团队里每个角色单轮 reason 用哪个引擎
    * （docs/CLI_AGENT_PROJECTION_DESIGN.md 模型 B）。写入 loopOptions.roleReasoner，
@@ -4841,67 +4702,8 @@ const TeamDashboardPanel: FC = () => {
    * 避免 window.confirm 在某些 webview / 浏览器下被静默拦截、用户误以为按钮失效。
    */
   const [pendingHardDeleteWfId, setPendingHardDeleteWfId] = useState<string | null>(null);
-  /** 列表展示对话框：搜索关键字 + 状态筛选（status="all" 表示不过滤） */
+  /** 左侧会话列表仅按关键字检索；执行状态留给后台监控。 */
   const [workflowListQuery, setWorkflowListQuery] = useState("");
-  const [workflowStatusFilter, setWorkflowStatusFilter] = useState<string>("all");
-  const [activeTab, setActiveTab] = useState<TeamCenterView>("research");
-
-  /**
-   * 团队页面 tab 可见性。每个 tab 默认可见；用户可通过中栏 nav 末尾的齿轮
-   * popover 隐藏不关心的 tab，状态写到 localStorage 持久化。
-   * - 至少保留一个可见 tab，避免「全部隐藏 → nav 空白没法操作」
-   * - 当当前 active tab 被隐藏时，自动跳到第一个可见 tab
-   */
-  const TEAM_VIEW_VISIBILITY_LS_KEY = "qubit-agent.teamCenterView.hidden.v1";
-  const [hiddenTeamViews, setHiddenTeamViews] = useState<Set<TeamCenterView>>(() => {
-    try {
-      const raw = localStorage.getItem(TEAM_VIEW_VISIBILITY_LS_KEY);
-      if (!raw) return new Set();
-      const arr = JSON.parse(raw);
-      if (!Array.isArray(arr)) return new Set();
-      const allowed = new Set(TEAM_CENTER_VIEWS);
-      return new Set(arr.filter((v): v is TeamCenterView => allowed.has(v as TeamCenterView)));
-    } catch {
-      return new Set();
-    }
-  });
-  const visibleTeamViews = useMemo(
-    () => TEAM_CENTER_VIEWS.filter((v) => !hiddenTeamViews.has(v)),
-    [hiddenTeamViews],
-  );
-  const persistHiddenTeamViews = useCallback((next: Set<TeamCenterView>) => {
-    try {
-      localStorage.setItem(TEAM_VIEW_VISIBILITY_LS_KEY, JSON.stringify([...next]));
-    } catch {
-      /* localStorage 不可用 / quota exceeded 时静默；UI 状态本地仍然生效 */
-    }
-  }, []);
-  const toggleTeamViewVisibility = useCallback(
-    (view: TeamCenterView) => {
-      setHiddenTeamViews((prev) => {
-        const next = new Set(prev);
-        if (next.has(view)) {
-          next.delete(view);
-        } else {
-          if (TEAM_CENTER_VIEWS.length - next.size <= 1) {
-            return prev;
-          }
-          next.add(view);
-        }
-        persistHiddenTeamViews(next);
-        return next;
-      });
-    },
-    [persistHiddenTeamViews],
-  );
-  /** active tab 被隐藏时跳到第一个可见 tab */
-  useEffect(() => {
-    if (hiddenTeamViews.has(activeTab) && visibleTeamViews.length > 0) {
-      const first = visibleTeamViews[0];
-      if (first) setActiveTab(first);
-    }
-  }, [hiddenTeamViews, activeTab, visibleTeamViews]);
-  const [teamViewMenuOpen, setTeamViewMenuOpen] = useState(false);
 
   /**
    * 团队页大三栏（左：研究与工作流 / 中：研究画布 / 右：研究产出）的显隐控制。
@@ -4955,11 +4757,6 @@ const TeamDashboardPanel: FC = () => {
     [hiddenTeamPanes],
   );
 
-  const [debateConfig, setDebateConfigState] = useState<DebateConfig>({
-    confidenceThreshold: 0.55,
-    maxRounds: 2,
-  });
-  const [liveDebateEvents] = useState<DebateStreamEvent[]>([]);
   /**
    * Token 级流式：workflow firehose 推来的、尚未落库的「在飞」LLM 输出，按 role 累积。
    * 每条在 displayedLiveFeedEvents 里合成一个 `streaming:${role}` 气泡逐字显示；
@@ -5001,48 +4798,6 @@ const TeamDashboardPanel: FC = () => {
   const [teamArtifacts, setTeamArtifacts] = useState<OrchestratorArtifact[]>([]);
   const [teamArtifactsLoading, setTeamArtifactsLoading] = useState(false);
   const [teamArtifactsError, setTeamArtifactsError] = useState<string | null>(null);
-  const [riskConfig, setRiskConfigState] = useState<RiskConfig>({
-    vetoThreshold: 0.7,
-    blockConfidenceThreshold: 0.35,
-    severityMode: "balanced",
-  });
-  const [screenerUniverse, setScreenerUniverse] = useState<"CN-A" | "US" | "HK">("CN-A");
-  const [screenerTopN, setScreenerTopN] = useState(5);
-  const [screenerRuns, setScreenerRunsState] = useState<ScreenerRunRecord[]>([]);
-  const [selectedScreenerRunId, setSelectedScreenerRunId] = useState("");
-  const [screenerCandidates, setScreenerCandidates] = useState<ScreenerCandidateRecord[]>([]);
-  const [geneProjectId, setGeneProjectId] = useState("");
-  const [genePopulationSize, setGenePopulationSize] = useState(8);
-  const [geneMutationRate, setGeneMutationRate] = useState(0.12);
-  const [geneGenerations, setGeneGenerations] = useState<GeneGenerationRecord[]>([]);
-  const [selectedGenerationId, setSelectedGenerationId] = useState("");
-  const [genomes, setGenomes] = useState<StrategyGenomeRecord[]>([]);
-  const [geneTrends, setGeneTrends] = useState<GeneTrendPoint[]>([]);
-  const [intentTicker, setIntentTicker] = useState("600519");
-  const [intentDirection, setIntentDirection] = useState<"long" | "short" | "close">("long");
-  const [intentQty, setIntentQty] = useState(100);
-  const [intentTargetPrice, setIntentTargetPrice] = useState(1500);
-  const [intentOrders, setIntentOrdersState] = useState<IntentOrderRecord[]>([]);
-  const [selectedIntentId, setSelectedIntentId] = useState("");
-  const [brokerProvider, setBrokerProvider] = useState<BrokerProvider>("futu");
-  const [brokerAccountRef, setBrokerAccountRef] = useState("default");
-  const [brokerMode, setBrokerMode] = useState<"mock" | "sandbox" | "live">("mock");
-  const [brokerBaseUrl, setBrokerBaseUrl] = useState("");
-  const [brokerAccounts, setBrokerAccounts] = useState<BrokerAccountRecord[]>([]);
-  const [brokerEvents, setBrokerEvents] = useState<BrokerOrderEventRecord[]>([]);
-  const [compTasks, setCompTasks] = useState<WorkflowCompensationTaskRecord[]>([]);
-  const [executionSafetyConfig, setExecutionSafetyConfigState] = useState<ExecutionSafetyConfig>({
-    dryRunOnly: true,
-    requireDoubleConfirm: true,
-    confirmTokenTtlSec: 300,
-    finalRiskScoreThreshold: 0.75,
-  });
-  const [lastSafetyCheck, setLastSafetyCheck] = useState<ExecutionSafetyCheckResult | null>(null);
-  const [intentView, setIntentView] = useState<{
-    intent: IntentOrderRecord | null;
-    report: ExecutionReportRecord | null;
-    deviation: IntentDeviationRecord | null;
-  } | null>(null);
 
   const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
@@ -5120,9 +4875,8 @@ const TeamDashboardPanel: FC = () => {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "research") return;
     void loadTeamGraph();
-  }, [activeTab, loadTeamGraph]);
+  }, [loadTeamGraph]);
 
   /** 分析 / orchestrator-chat 进行中轮询拓扑与台账，便于右栏对话实时更新 */
   useEffect(() => {
@@ -5162,16 +4916,8 @@ const TeamDashboardPanel: FC = () => {
         body: `${describeInteractionRouting(row)} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 1200)}`,
       });
     }
-    liveDebateEvents.forEach((ev, i) => {
-      rows.push({
-        key: `d-${i}-${ev.ts}-${ev.type}`,
-        t: ev.ts,
-        kind: "debate",
-        body: formatDebateStreamLine(ev),
-      });
-    });
     return rows.sort((a, b) => a.t - b.t).slice(-200);
-  }, [teamGraph, participatingAnalystRoles, liveDebateEvents]);
+  }, [teamGraph, participatingAnalystRoles]);
 
   const liveFeedScrollRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -5347,48 +5093,6 @@ const TeamDashboardPanel: FC = () => {
         payloadJson: row.payloadJson,
       });
     }
-    liveDebateEvents.forEach((ev, i) => {
-      const p = (ev.payload ?? {}) as {
-        topic?: string;
-        maxRounds?: number;
-        roundNumber?: number;
-        speakerRole?: string;
-        statement?: string;
-        stance?: string;
-        reasoning?: string;
-        finalStance?: string;
-        verdict?: string;
-      };
-      let text = "";
-      switch (ev.type) {
-        case "debate_start":
-          text = `${String(p.topic ?? "").slice(0, 200)}（最多 ${p.maxRounds ?? "?"} 轮）`;
-          break;
-        case "debate_turn":
-          text = String(p.statement ?? "").slice(0, 1200);
-          break;
-        case "debate_verdict":
-          text = `${String(p.finalStance ?? "")} / ${String(p.verdict ?? "")}\n${String(
-            p.reasoning ?? ""
-          ).slice(0, 800)}`;
-          break;
-        case "debate_end":
-          text = "";
-          break;
-        default:
-          text = JSON.stringify(p).slice(0, 400);
-      }
-      events.push({
-        kind: "debate",
-        id: `d-${i}-${ev.ts}-${ev.type}`,
-        ts: new Date(ev.ts).toISOString(),
-        debateType: ev.type,
-        speakerRole: p.speakerRole ?? null,
-        round: p.roundNumber ?? null,
-        stance: p.stance ?? null,
-        text,
-      });
-    });
     // 用户提示词回显：合成 fromRole="user" 的消息事件，让用户即时看到自己发过的指令/插话。
     // 后端已把同样的提示词落库为 user→orchestrator 交互（约 2.5s 后随轮询出现）；这里对已
     // 落库的同内容回显去重，避免乐观回显与持久化交互并列成两条。
@@ -5442,7 +5146,6 @@ const TeamDashboardPanel: FC = () => {
     graphEdgeDetail,
     teamGraph,
     participatingAnalystRoles,
-    liveDebateEvents,
     streamingByRole,
     userEchoes,
   ]);
@@ -5458,7 +5161,7 @@ const TeamDashboardPanel: FC = () => {
    */
   useEffect(() => {
     const wf = workflowRunId.trim();
-    if (!wf || activeTab !== "research") return;
+    if (!wf) return;
     setStreamingByRole({});
     setUserEchoes([]);
     setTeamPlan(null);
@@ -5541,7 +5244,7 @@ const TeamDashboardPanel: FC = () => {
         settleRefetchTimerRef.current = null;
       }
     };
-  }, [workflowRunId, activeTab]);
+  }, [workflowRunId]);
 
   /**
    * 沉淀式交接：teamGraph 刷新后，若某个仍在屏的流式气泡已被持久化 interaction 覆盖
@@ -5579,7 +5282,7 @@ const TeamDashboardPanel: FC = () => {
    */
   useEffect(() => {
     const wf = workflowRunId.trim();
-    if (!wf || activeTab !== "research") {
+    if (!wf) {
       setTeamArtifacts([]);
       setTeamArtifactsLoading(false);
       setTeamArtifactsError(null);
@@ -5666,18 +5369,18 @@ const TeamDashboardPanel: FC = () => {
       alive = false;
       clearInterval(timer);
     };
-  }, [workflowRunId, activeTab, teamResearchSessionId, workflowOptions]);
+  }, [workflowRunId, teamResearchSessionId, workflowOptions]);
 
   useEffect(() => {
     const el = liveFeedScrollRef.current;
-    if (!el || activeTab !== "research") return;
+    if (!el) return;
     /**
      * 关闭自动跟随时不再强制滚到底，否则用户翻回去看上方对话立刻又被
      * 新事件挤回最底部，体验非常差。仅当 autoFollow=true 时执行滚动。
      */
     if (!liveFeedAutoFollowRef.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [displayedLiveFeedRows, running, activeTab, liveFeedAutoFollow]);
+  }, [displayedLiveFeedRows, running, liveFeedAutoFollow]);
 
   const teamGraphActivity = useMemo((): TeamGraphActivity => {
     /**
@@ -5761,64 +5464,6 @@ const TeamDashboardPanel: FC = () => {
     [workflowOptions, workflowRunId]
   );
 
-  const workflowProcessConfig = useMemo<WorkflowProcessConfig>(() => {
-    const preset =
-      WORKFLOW_SOP_PRESETS.find((item) => item.id === workflowSopPreset) ??
-      WORKFLOW_SOP_PRESETS[0];
-    return {
-      ...(promptTemplateId ? { templateId: promptTemplateId } : {}),
-      sopPreset: preset.id,
-      sopSteps: preset.steps,
-      gates: {
-        requirePlanCompleted: workflowRequirePlan,
-        requireEvidence: workflowRequireEvidence,
-        minSuccessfulToolCalls: Math.max(1, workflowMinSuccessfulTools),
-      },
-    };
-  }, [
-    promptTemplateId,
-    workflowSopPreset,
-    workflowRequirePlan,
-    workflowRequireEvidence,
-    workflowMinSuccessfulTools,
-  ]);
-
-  const hydratedWorkflowConfigRef = useRef("");
-  useEffect(() => {
-    if (!workflowRunId || !selectedWorkflowRow) return;
-    if (hydratedWorkflowConfigRef.current === workflowRunId) return;
-    hydratedWorkflowConfigRef.current = workflowRunId;
-    const rawLoopOptions = selectedWorkflowRow.loopOptionsJson;
-    let loopOptions: Record<string, unknown> = {};
-    if (rawLoopOptions && typeof rawLoopOptions === "object") {
-      loopOptions = rawLoopOptions as Record<string, unknown>;
-    } else if (typeof rawLoopOptions === "string") {
-      try {
-        loopOptions = JSON.parse(rawLoopOptions) as Record<string, unknown>;
-      } catch {
-        loopOptions = {};
-      }
-    }
-    const config =
-      loopOptions.processConfig && typeof loopOptions.processConfig === "object"
-        ? (loopOptions.processConfig as WorkflowProcessConfig)
-        : null;
-    const presetId =
-      typeof config?.sopPreset === "string" &&
-      WORKFLOW_SOP_PRESETS.some((item) => item.id === config.sopPreset)
-        ? config.sopPreset
-        : "adaptive";
-    setPromptTemplateId(
-      typeof config?.templateId === "string" ? config.templateId : ""
-    );
-    setWorkflowSopPreset(presetId);
-    setWorkflowRequirePlan(config?.gates?.requirePlanCompleted === true);
-    setWorkflowRequireEvidence(config?.gates?.requireEvidence === true);
-    setWorkflowMinSuccessfulTools(
-      Math.max(1, Number(config?.gates?.minSuccessfulToolCalls ?? 1))
-    );
-  }, [workflowRunId, selectedWorkflowRow]);
-
   useEffect(() => {
     if (
       workflowSessionId &&
@@ -5890,7 +5535,6 @@ const TeamDashboardPanel: FC = () => {
 
   /**
    * 列表视图实际渲染用的分组结果：在 `groupedWorkflowOptions` 之上再叠加
-   *   - 状态筛选（cancelled 已经在 refreshWorkflowOptions 时过滤掉，此处仅过滤 running/completed/failed/awaiting_review/pending 等）
    *   - 关键字搜索（在 goal / id 上 includes）
    * 空组会被丢掉，避免列表里出现一堆空标题。
    */
@@ -5899,9 +5543,6 @@ const TeamDashboardPanel: FC = () => {
     return groupedWorkflowOptions
       .map((group) => {
         const rows = group.rows.filter((row) => {
-          if (workflowStatusFilter !== "all" && String(row.status ?? "") !== workflowStatusFilter) {
-            return false;
-          }
           if (!query) return true;
           const goal = typeof row.goal === "string" ? row.goal.toLowerCase() : "";
           const id = String(row.id ?? "").toLowerCase();
@@ -5910,7 +5551,7 @@ const TeamDashboardPanel: FC = () => {
         return { ...group, rows };
       })
       .filter((group) => group.rows.length > 0);
-  }, [groupedWorkflowOptions, workflowListQuery, workflowStatusFilter]);
+  }, [groupedWorkflowOptions, workflowListQuery]);
 
   useEffect(() => {
     const onMove = (e: globalThis.MouseEvent) => {
@@ -5968,7 +5609,7 @@ const TeamDashboardPanel: FC = () => {
 
   useLayoutEffect(() => {
     const el = graphWrapRef.current;
-    if (!el || activeTab !== "research") return;
+    if (!el) return;
     const applyWidth = (width: number) => {
       const w = Math.max(320, Math.floor(width));
       setGraphSize((prev) => (prev.w === w && prev.h === graphHeight ? prev : { w, h: graphHeight }));
@@ -5980,7 +5621,7 @@ const TeamDashboardPanel: FC = () => {
     ro.observe(el);
     applyWidth(el.getBoundingClientRect().width);
     return () => ro.disconnect();
-  }, [activeTab, graphHeight]);
+  }, [graphHeight]);
 
   useEffect(() => {
     setGraphSelection(null);
@@ -6016,9 +5657,6 @@ const TeamDashboardPanel: FC = () => {
         setTeamResearchProjectId("");
         setTeamResearchSessionId("");
       }
-      getDebateConfig().then(setDebateConfigState).catch(() => {});
-      getRiskConfig().then(setRiskConfigState).catch(() => {});
-      getExecutionSafetyConfig().then(setExecutionSafetyConfigState).catch(() => {});
       const wfRows = await refreshWorkflowOptions();
       if (!workflowRunId) {
         const activeSessionId = useAppStore.getState().selectedSessionId;
@@ -6030,22 +5668,8 @@ const TeamDashboardPanel: FC = () => {
           setWorkflowRunId(String(initialWorkflow.id));
         }
       }
-      await refreshBrokerAndComp();
     })().catch(() => {});
   }, []);
-  useEffect(() => {
-    const row = workflowOptions.find((item) => String(item.id) === workflowRunId);
-    if (!row) return;
-    const projectId = row.projectId ? String(row.projectId) : "";
-    if (projectId && !geneProjectId) {
-      setGeneProjectId(projectId);
-    }
-  }, [workflowRunId, workflowOptions, geneProjectId]);
-
-  useEffect(() => {
-    if (!workflowRunId) return;
-    void refreshIntentOrders().catch(() => {});
-  }, [workflowRunId]);
 
   const [runProgress, setRunProgress] = useState<string>("");
 
@@ -6137,7 +5761,6 @@ const TeamDashboardPanel: FC = () => {
         hitlMode: teamHitlMode,
         roleReasoner,
         agentMode: options?.agentMode ?? teamAgentMode,
-        processConfig: workflowProcessConfig,
         ...(options?.preserveGoal ? { preserveGoal: true } : {}),
       });
       setSelectedConversationSessionId(turn.sessionId);
@@ -6166,7 +5789,6 @@ const TeamDashboardPanel: FC = () => {
         reuseSessionWorkflow: false,
         skipDispatch: true,
         loopOptionsJson: {
-          processConfig: workflowProcessConfig,
           agentMode: teamAgentMode,
           hitlMode: teamHitlMode,
           roleReasoner,
@@ -6175,7 +5797,6 @@ const TeamDashboardPanel: FC = () => {
       await refreshWorkflowOptions();
       setWorkflowRunId(String(created.data.id));
       setSelectedConversationSessionId(teamResearchSessionId);
-      if (!geneProjectId && teamResearchProjectId) setGeneProjectId(teamResearchProjectId);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -6273,216 +5894,6 @@ const TeamDashboardPanel: FC = () => {
     }
   };
 
-  const saveDebateRuntimeConfig = async () => {
-    try {
-      const next = await saveDebateConfig(debateConfig);
-      setDebateConfigState(next);
-    } catch (e) {
-      setError(`保存辩论配置失败: ${(e as Error).message}`);
-    }
-  };
-
-  const saveRiskRuntimeConfig = async () => {
-    try {
-      const next = await saveRiskConfig(riskConfig);
-      setRiskConfigState(next);
-    } catch (e) {
-      setError(`保存风控配置失败: ${(e as Error).message}`);
-    }
-  };
-
-  const runScreenerNow = async () => {
-    if (!workflowRunId) {
-      setError("请先填写 workflowRunId，再运行选股。");
-      return;
-    }
-    try {
-      const out = await runScreener({
-        workflowRunId,
-        universe: screenerUniverse,
-        topN: screenerTopN,
-      });
-      const runs = await listScreenerRuns(workflowRunId);
-      setScreenerRunsState(runs);
-      setSelectedScreenerRunId(out.screenerRunId);
-      const candidates = await listScreenerCandidates(out.screenerRunId);
-      setScreenerCandidates(candidates);
-    } catch (e) {
-      setError(`运行选股失败: ${(e as Error).message}`);
-    }
-  };
-
-  const initGenePoolNow = async () => {
-    if (!geneProjectId) {
-      setError("请填写 Gene ProjectId");
-      return;
-    }
-    try {
-      await initGenePool({
-        projectId: geneProjectId,
-        populationSize: genePopulationSize,
-        mutationRate: geneMutationRate,
-      });
-      const gens = await listGeneGenerations(geneProjectId);
-      setGeneGenerations(gens);
-      if (gens[0]) {
-        setSelectedGenerationId(gens[0].id);
-        const rows = await listGenomes(gens[0].id);
-        setGenomes(rows);
-      }
-      const trends = await listGeneTrends(geneProjectId);
-      setGeneTrends(trends);
-    } catch (e) {
-      setError(`初始化基因池失败: ${(e as Error).message}`);
-    }
-  };
-
-  const evolveNow = async () => {
-    if (!geneProjectId) {
-      setError("请填写 Gene ProjectId");
-      return;
-    }
-    try {
-      await evolveGenePool(geneProjectId);
-      const gens = await listGeneGenerations(geneProjectId);
-      setGeneGenerations(gens);
-      if (gens[0]) {
-        setSelectedGenerationId(gens[0].id);
-        const rows = await listGenomes(gens[0].id);
-        setGenomes(rows);
-      }
-      const trends = await listGeneTrends(geneProjectId);
-      setGeneTrends(trends);
-    } catch (e) {
-      setError(`演化失败: ${(e as Error).message}`);
-    }
-  };
-
-  const refreshIntentOrders = async () => {
-    if (!workflowRunId) return;
-    const rows = await listIntentOrders(workflowRunId);
-    setIntentOrdersState(rows);
-  };
-
-  const createIntentNow = async () => {
-    if (!workflowRunId) {
-      setError("请先填写 workflowRunId");
-      return;
-    }
-    try {
-      const created = await createIntentOrder({
-        workflowRunId,
-        ticker: intentTicker,
-        direction: intentDirection,
-        quantity: intentQty,
-        targetPrice: intentTargetPrice,
-        rationale: "manual REIA test",
-      });
-      await refreshIntentOrders();
-      setSelectedIntentId(created.id);
-      const view = await getIntentExecutionView(created.id);
-      setIntentView(view);
-    } catch (e) {
-      setError(`创建意图失败: ${(e as Error).message}`);
-    }
-  };
-
-  const executeIntentNow = async () => {
-    if (!selectedIntentId) {
-      setError("请选择一个意图订单");
-      return;
-    }
-    try {
-      const check = await requestExecutionConfirmation(selectedIntentId);
-      setLastSafetyCheck(check);
-      const shouldContinue = window.confirm(
-        [
-          `最终风控得分: ${(check.finalRiskScore * 100).toFixed(1)}%`,
-          `执行模式: ${check.dryRunOnly ? "仅演练(Paper)" : "允许实盘(Live)"}`,
-          `双重确认: ${check.requireDoubleConfirm ? "开启" : "关闭"}`,
-          check.blockers.length ? `阻断原因: ${check.blockers.join(", ")}` : "无阻断原因",
-          "确认继续执行？",
-        ].join("\n")
-      );
-      if (!shouldContinue) return;
-      if (check.blockers.length > 0 && !check.dryRunOnly) {
-        setError(`执行被阻断：${check.blockers.join(", ")}`);
-        return;
-      }
-      await executeIntentConfirmed({
-        intentOrderId: selectedIntentId,
-        confirmToken: check.confirmToken,
-        provider: brokerProvider,
-      });
-      await refreshIntentOrders();
-      const view = await getIntentExecutionView(selectedIntentId);
-      setIntentView(view);
-    } catch (e) {
-      setError(`执行意图失败: ${(e as Error).message}`);
-    }
-  };
-
-  const loadIntentView = async (intentId: string) => {
-    setSelectedIntentId(intentId);
-    const view = await getIntentExecutionView(intentId);
-    setIntentView(view);
-  };
-
-  const saveExecutionSafetyRuntimeConfig = async () => {
-    try {
-      const next = await saveExecutionSafetyConfig(executionSafetyConfig);
-      setExecutionSafetyConfigState(next);
-    } catch (e) {
-      setError(`保存执行安全配置失败: ${(e as Error).message}`);
-    }
-  };
-
-  const refreshBrokerAndComp = async () => {
-    const [accounts, events, tasks] = await Promise.all([
-      listBrokerAccounts(),
-      listBrokerEvents(undefined, 30),
-      listWorkflowCompensations({ workflowRunId: workflowRunId || undefined, limit: 30 }),
-    ]);
-    setBrokerAccounts(accounts);
-    setBrokerEvents(events);
-    setCompTasks(tasks);
-  };
-
-  const saveBrokerAccountNow = async () => {
-    await upsertBrokerAccount({
-      provider: brokerProvider,
-      accountRef: brokerAccountRef || "default",
-      mode: brokerMode,
-      baseUrl: brokerBaseUrl || undefined,
-      enabled: true,
-    });
-    await refreshBrokerAndComp();
-  };
-
-  const checkBrokerNow = async () => {
-    const out = await checkBrokerHealth({ provider: brokerProvider, accountRef: brokerAccountRef || "default" });
-    setError(`Broker健康检查: ${out.provider} ${out.status} ${out.message}`);
-    await refreshBrokerAndComp();
-  };
-
-  const enqueueRetryNow = async () => {
-    if (!workflowRunId) {
-      setError("请选择 workflowRunId 后再加入补偿队列");
-      return;
-    }
-    await enqueueWorkflowCompensation({
-      workflowRunId,
-      actionType: "retry_from_start",
-      reason: "manual enqueue from team dashboard",
-    });
-    await refreshBrokerAndComp();
-  };
-
-  const processCompNow = async () => {
-    const out = await processWorkflowCompensations(5);
-    setError(`补偿队列处理: picked=${out.picked}, success=${out.success}, failed=${out.failed}`);
-    await refreshBrokerAndComp();
-  };
 
   return (
     <div style={teamStyles.container}>
@@ -6751,7 +6162,7 @@ const TeamDashboardPanel: FC = () => {
                 刷新
               </button>
             </div>
-            {/* 筛选条：类型 + 状态 + 关键字。所有筛选都在前端 useMemo 中做，避免每次都打后端。 */}
+            {/* 会话检索：类型 + 关键字。执行状态仅用于后台监控与失败诊断。 */}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
               <select
                 style={{ ...teamStyles.input, flex: "1 1 110px", minWidth: 110, fontSize: 12 }}
@@ -6765,20 +6176,6 @@ const TeamDashboardPanel: FC = () => {
                     {WORKFLOW_KIND_LABEL[k]}
                   </option>
                 ))}
-              </select>
-              <select
-                style={{ ...teamStyles.input, flex: "1 1 100px", minWidth: 100, fontSize: 12 }}
-                value={workflowStatusFilter}
-                onChange={(e) => setWorkflowStatusFilter(e.target.value)}
-                aria-label="工作流状态筛选"
-              >
-                <option value="all">全部状态</option>
-                <option value="running">running</option>
-                <option value="completed">completed</option>
-                <option value="partial">partial</option>
-                <option value="failed">failed</option>
-                <option value="awaiting_review">awaiting_review</option>
-                <option value="pending">pending</option>
               </select>
               <input
                 type="search"
@@ -6840,7 +6237,6 @@ const TeamDashboardPanel: FC = () => {
                       const id = String(row.id ?? "");
                       const goal = typeof row.goal === "string" ? row.goal.trim() : "";
                       const status = String(row.status ?? "—");
-                      const mode = String(row.mode ?? "—");
                       const sid = typeof row.sessionId === "string" ? row.sessionId.trim() : "";
                       const startedAt =
                         typeof row.startedAt === "string" && row.startedAt
@@ -6848,16 +6244,11 @@ const TeamDashboardPanel: FC = () => {
                           : "";
                       const selected = id === workflowRunId;
                       const pendingDel = pendingHardDeleteWfId === id;
-                      const statusAccent =
-                        workflowStatusBadgeStyle[status] ?? workflowStatusBadgeStyle._default;
                       return (
                         <div
                           key={id}
                           style={{
                             ...workflowListStyles.item,
-                            // 未选中时也根据状态点一道左色条（failed=红、running=绿…）；
-                            // 选中时再被 itemSelected 的紫色覆盖，紫色优先表达"当前选中"。
-                            borderLeftColor: String(statusAccent.borderColor ?? "transparent"),
                             ...(selected ? workflowListStyles.itemSelected : null),
                           }}
                         >
@@ -6872,21 +6263,11 @@ const TeamDashboardPanel: FC = () => {
                             title={goal || id}
                             aria-pressed={selected}
                           >
-                            {/*
-                              状态徽章独占一行（在标题之上）：
-                                - 之前放在标题前同一行时，"awaiting_approval" 这种长徽章会占走一大块宽度，
-                                  把标题挤掉一截
-                                - 现在抬到顶部独立成行，标题获得整行宽度可用 + ellipsis 兜底
-                            */}
-                            <span
-                              style={{
-                                ...workflowListStyles.statusBadge,
-                                ...(workflowStatusBadgeStyle[status] ?? workflowStatusBadgeStyle._default),
-                              }}
-                              title={`状态：${status}`}
-                            >
-                              {status}
-                            </span>
+                            {status === "failed" ? (
+                              <span style={{ color: "#fca5a5", fontSize: 11, marginBottom: 4 }} role="status">
+                                本次执行未能完成，可在下方继续补充问题
+                              </span>
+                            ) : null}
                             <div style={workflowListStyles.itemTitleRow}>
                               <span style={workflowListStyles.itemTitle}>
                                 {goal || `(no goal) ${id.slice(0, 8)}`}
@@ -6894,7 +6275,6 @@ const TeamDashboardPanel: FC = () => {
                             </div>
                             <div style={workflowListStyles.itemMeta}>
                               <code style={workflowListStyles.itemId}>{id.slice(0, 8)}…</code>
-                              <span>mode: {mode}</span>
                               {startedAt ? <span>{startedAt}</span> : null}
                               {!sid ? (
                                 <span style={{ color: "#a78bfa" }} title="该工作流尚未关联会话">
@@ -7062,531 +6442,21 @@ const TeamDashboardPanel: FC = () => {
         {teamPaneVisible("center") ? (
         <div style={teamStyles.centerCol}>
           <div style={teamStyles.ideCenterWrap}>
-            <nav style={teamStyles.teamActivityBar} aria-label="研究团队视图">
-              {visibleTeamViews.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  title={TEAM_VIEW_TITLE[t]}
-                  aria-current={activeTab === t ? "page" : undefined}
-                  style={{
-                    ...teamStyles.teamActBtn,
-                    ...(activeTab === t ? teamStyles.teamActBtnActive : {}),
-                  }}
-                  onClick={() => setActiveTab(t)}
-                >
-                  {(() => {
-                    const Glyph = TEAM_CENTER_GLYPH[t];
-                    return (
-                      <Glyph
-                        size={20}
-                        strokeWidth={1.75}
-                        color="currentColor"
-                        aria-hidden
-                      />
-                    );
-                  })()}
-                </button>
-              ))}
-              {/**
-               * 齿轮按钮：展开 popover 让用户勾选哪些 tab 显示。
-               * 至少保留一个可见 tab（toggleTeamViewVisibility 内已兜底）。
-               * 可见性写入 localStorage 持久化。
-               */}
-              <div style={{ marginTop: "auto", position: "relative" }}>
-                <button
-                  type="button"
-                  title="管理 Tab 显示"
-                  aria-haspopup="menu"
-                  aria-expanded={teamViewMenuOpen}
-                  onClick={() => setTeamViewMenuOpen((v) => !v)}
-                  style={{
-                    ...teamStyles.teamActBtn,
-                    ...(teamViewMenuOpen ? teamStyles.teamActBtnActive : {}),
-                  }}
-                >
-                  <Settings size={18} strokeWidth={1.75} color="currentColor" aria-hidden />
-                </button>
-                {teamViewMenuOpen ? (
-                  <>
-                    {/* 点空白处关闭 popover */}
-                    <div
-                      onClick={() => setTeamViewMenuOpen(false)}
-                      style={{
-                        position: "fixed",
-                        inset: 0,
-                        zIndex: 20,
-                        background: "transparent",
-                      }}
-                    />
-                    <div
-                      role="menu"
-                      style={{
-                        position: "absolute",
-                        left: "calc(100% + 6px)",
-                        bottom: 0,
-                        zIndex: 21,
-                        minWidth: 240,
-                        padding: "8px 10px",
-                        background: "var(--qb-team-input-bg, #15151a)",
-                        border: "1px solid var(--qb-team-input-border, #2d2d32)",
-                        borderRadius: 8,
-                        boxShadow: "0 12px 28px rgba(0, 0, 0, 0.45)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: "#a1a1aa",
-                          fontWeight: 600,
-                          padding: "2px 4px",
-                          letterSpacing: "0.04em",
-                        }}
-                      >
-                        显示哪些 Tab
-                      </div>
-                      {TEAM_CENTER_VIEWS.map((t) => {
-                        const visible = !hiddenTeamViews.has(t);
-                        const lastVisible = visibleTeamViews.length === 1 && visible;
-                        return (
-                          <label
-                            key={t}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              padding: "5px 4px",
-                              fontSize: 12,
-                              color: "#e4e4e7",
-                              cursor: lastVisible ? "not-allowed" : "pointer",
-                              opacity: lastVisible ? 0.55 : 1,
-                            }}
-                            title={lastVisible ? "至少保留一个 Tab 可见" : ""}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={visible}
-                              disabled={lastVisible}
-                              onChange={() => toggleTeamViewVisibility(t)}
-                            />
-                            <span>{TEAM_VIEW_TITLE[t]}</span>
-                          </label>
-                        );
-                      })}
-                      <div
-                        style={{
-                          fontSize: 10,
-                          color: "#71717a",
-                          marginTop: 4,
-                          paddingTop: 6,
-                          borderTop: "1px solid var(--qb-team-input-border, #2d2d32)",
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        偏好已写入本机 localStorage，下次自动恢复。
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </nav>
             <div className="qb-team-main-stage" style={teamStyles.teamMainStage}>
               <header className="qb-team-editor-titlebar" style={teamStyles.teamEditorTitleBar}>
-                <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>{TEAM_VIEW_TITLE[activeTab]}</span>
+                <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>研究画布 · 拓扑 / 实时流 / 结论</span>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {running ? (
                     <span style={{ color: "#38bdf8", fontSize: 11 }}>
                       ● 分析进行中 · 拓扑与对话每 2.5s 刷新
                     </span>
                   ) : null}
-                  {graphLoading && activeTab === "research" ? (
+                  {graphLoading ? (
                     <span style={{ color: "#a1a1aa", fontSize: 11 }}>加载图数据…</span>
                   ) : null}
                 </span>
               </header>
               <div style={teamStyles.teamEditorBody}>
-      {/* Run Panel */}
-      {activeTab === "run" && (
-        <div style={teamStyles.panel}>
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>辩论触发阈值（低于触发）</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                value={debateConfig.confidenceThreshold}
-                onChange={(e) =>
-                  setDebateConfigState((prev) => ({
-                    ...prev,
-                    confidenceThreshold: Number(e.target.value),
-                  }))
-                }
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>最大辩论轮次</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={1}
-                max={5}
-                value={debateConfig.maxRounds}
-                onChange={(e) =>
-                  setDebateConfigState((prev) => ({
-                    ...prev,
-                    maxRounds: Number(e.target.value),
-                  }))
-                }
-              />
-            </div>
-            <button type="button" className="qb-btn-secondary" onClick={() => void saveDebateRuntimeConfig()}>
-              保存辩论配置
-            </button>
-          </div>
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>风险否决阈值（风险分 ≥ 阈值拦截）</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                value={riskConfig.vetoThreshold}
-                onChange={(e) =>
-                  setRiskConfigState((prev) => ({
-                    ...prev,
-                    vetoThreshold: Number(e.target.value),
-                  }))
-                }
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>低置信阻断阈值</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                value={riskConfig.blockConfidenceThreshold}
-                onChange={(e) =>
-                  setRiskConfigState((prev) => ({
-                    ...prev,
-                    blockConfidenceThreshold: Number(e.target.value),
-                  }))
-                }
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>风控烈度</label>
-              <select
-                style={teamStyles.input}
-                value={riskConfig.severityMode}
-                onChange={(e) =>
-                  setRiskConfigState((prev) => ({
-                    ...prev,
-                    severityMode: e.target.value as RiskConfig["severityMode"],
-                  }))
-                }
-              >
-                <option value="conservative">conservative</option>
-                <option value="balanced">balanced</option>
-                <option value="aggressive">aggressive</option>
-              </select>
-            </div>
-            <button type="button" className="qb-btn-secondary" onClick={() => void saveRiskRuntimeConfig()}>
-              保存风控配置
-            </button>
-          </div>
-
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>选股市场</label>
-              <select
-                style={teamStyles.input}
-                value={screenerUniverse}
-                onChange={(e) => setScreenerUniverse(e.target.value as "CN-A" | "US" | "HK")}
-              >
-                <option value="CN-A">CN-A</option>
-                <option value="US">US</option>
-                <option value="HK">HK</option>
-              </select>
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>TopN</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={1}
-                max={20}
-                value={screenerTopN}
-                onChange={(e) => setScreenerTopN(Number(e.target.value))}
-              />
-            </div>
-            <button type="button" className="qb-btn-secondary" onClick={() => void runScreenerNow()}>
-              运行选股
-            </button>
-          </div>
-
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>Gene ProjectId</label>
-              <input
-                style={teamStyles.input}
-                value={geneProjectId}
-                onChange={(e) => setGeneProjectId(e.target.value)}
-                placeholder="project id"
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>种群大小</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={3}
-                max={20}
-                value={genePopulationSize}
-                onChange={(e) => setGenePopulationSize(Number(e.target.value))}
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>变异率</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={0.01}
-                max={0.5}
-                step={0.01}
-                value={geneMutationRate}
-                onChange={(e) => setGeneMutationRate(Number(e.target.value))}
-              />
-            </div>
-            <button type="button" className="qb-btn-secondary" onClick={() => void initGenePoolNow()}>
-              初始化基因池
-            </button>
-            <button type="button" className="qb-btn-secondary" onClick={() => void evolveNow()}>
-              演化一代
-            </button>
-          </div>
-
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>执行安全：仅演练</label>
-              <select
-                style={teamStyles.input}
-                value={executionSafetyConfig.dryRunOnly ? "yes" : "no"}
-                onChange={(e) =>
-                  setExecutionSafetyConfigState((prev) => ({
-                    ...prev,
-                    dryRunOnly: e.target.value === "yes",
-                  }))
-                }
-              >
-                <option value="yes">yes</option>
-                <option value="no">no</option>
-              </select>
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>双重确认</label>
-              <select
-                style={teamStyles.input}
-                value={executionSafetyConfig.requireDoubleConfirm ? "yes" : "no"}
-                onChange={(e) =>
-                  setExecutionSafetyConfigState((prev) => ({
-                    ...prev,
-                    requireDoubleConfirm: e.target.value === "yes",
-                  }))
-                }
-              >
-                <option value="yes">yes</option>
-                <option value="no">no</option>
-              </select>
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>确认 token TTL(秒)</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={30}
-                max={3600}
-                value={executionSafetyConfig.confirmTokenTtlSec}
-                onChange={(e) =>
-                  setExecutionSafetyConfigState((prev) => ({
-                    ...prev,
-                    confirmTokenTtlSec: Number(e.target.value),
-                  }))
-                }
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>最终风险阈值</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={0}
-                max={1}
-                step={0.01}
-                value={executionSafetyConfig.finalRiskScoreThreshold}
-                onChange={(e) =>
-                  setExecutionSafetyConfigState((prev) => ({
-                    ...prev,
-                    finalRiskScoreThreshold: Number(e.target.value),
-                  }))
-                }
-              />
-            </div>
-            <button
-              type="button"
-              className="qb-btn-secondary"
-              onClick={() => void saveExecutionSafetyRuntimeConfig()}
-            >
-              保存执行安全配置
-            </button>
-          </div>
-
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>Intent Ticker</label>
-              <input style={teamStyles.input} value={intentTicker} onChange={(e) => setIntentTicker(e.target.value)} />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>方向</label>
-              <select
-                style={teamStyles.input}
-                value={intentDirection}
-                onChange={(e) => setIntentDirection(e.target.value as "long" | "short" | "close")}
-              >
-                <option value="long">long</option>
-                <option value="short">short</option>
-                <option value="close">close</option>
-              </select>
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>数量</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={1}
-                value={intentQty}
-                onChange={(e) => setIntentQty(Number(e.target.value))}
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>目标价</label>
-              <input
-                style={teamStyles.input}
-                type="number"
-                min={0.01}
-                step={0.01}
-                value={intentTargetPrice}
-                onChange={(e) => setIntentTargetPrice(Number(e.target.value))}
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>Broker</label>
-              <select
-                style={teamStyles.input}
-                value={brokerProvider}
-                onChange={(e) => setBrokerProvider(e.target.value as BrokerProvider)}
-              >
-                <option value="futu">futu</option>
-                <option value="ib">ib</option>
-                <option value="ccxt">ccxt</option>
-                <option value="alpaca">alpaca</option>
-                <option value="supermind">同花顺 SuperMind</option>
-                <option value="eastmoney_emt">东方财富 EMT</option>
-              </select>
-            </div>
-            <button type="button" className="qb-btn-secondary" onClick={() => void createIntentNow()}>
-              创建意图
-            </button>
-            <button type="button" className="qb-btn-secondary" onClick={() => void executeIntentNow()}>
-              安全确认后执行
-            </button>
-            <button type="button" className="qb-btn-secondary" onClick={() => void refreshIntentOrders()}>
-              刷新意图列表
-            </button>
-          </div>
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>Broker 账号</label>
-              <input
-                style={teamStyles.input}
-                value={brokerAccountRef}
-                onChange={(e) => setBrokerAccountRef(e.target.value)}
-                placeholder="account ref"
-              />
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>Broker 模式</label>
-              <select style={teamStyles.input} value={brokerMode} onChange={(e) => setBrokerMode(e.target.value as "mock" | "sandbox" | "live")}>
-                <option value="mock">mock</option>
-                <option value="sandbox">sandbox</option>
-                <option value="live">live</option>
-              </select>
-            </div>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>Broker Base URL</label>
-              <input
-                style={teamStyles.input}
-                value={brokerBaseUrl}
-                onChange={(e) => setBrokerBaseUrl(e.target.value)}
-                placeholder="http://broker-api"
-              />
-            </div>
-            <button type="button" className="qb-btn-secondary" onClick={() => void saveBrokerAccountNow()}>
-              保存 Broker 账号
-            </button>
-            <button type="button" className="qb-btn-secondary" onClick={() => void checkBrokerNow()}>
-              健康检查
-            </button>
-          </div>
-          <div style={teamStyles.configRow}>
-            <button type="button" className="qb-btn-secondary" onClick={() => void refreshBrokerAndComp()}>
-              刷新补偿与Broker状态
-            </button>
-            <button type="button" className="qb-btn-secondary" onClick={() => void enqueueRetryNow()}>
-              加入失败补偿队列
-            </button>
-            <button type="button" className="qb-btn-secondary" onClick={() => void processCompNow()}>
-              执行补偿队列
-            </button>
-          </div>
-          <div style={teamStyles.configRow}>
-            <div style={teamStyles.field}>
-              <label style={teamStyles.label}>意图订单选择器（联动）</label>
-              <select style={teamStyles.input} value={selectedIntentId} onChange={(e) => void loadIntentView(e.target.value)}>
-                <option value="">请选择 intent</option>
-                {intentOrders.map((it) => (
-                  <option key={it.id} value={it.id}>
-                    {it.ticker} · {it.direction} · {it.status}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div style={{ fontSize: 10, color: "#52525b", marginTop: 8, lineHeight: 1.5 }}>
-            本地缓存：选股 {screenerRuns.length} · 候选 {screenerCandidates.length} · 基因世代 {geneGenerations.length} ·
-            基因组 {genomes.length} · 趋势 {geneTrends.length} · Broker {brokerAccounts.length} · Broker 事件{" "}
-            {brokerEvents.length} · 补偿 {compTasks.length}
-            {lastSafetyCheck ? " · 安全校验已缓存" : ""}
-            {intentView?.intent ? " · 意图执行视图已缓存" : ""}
-            {selectedScreenerRunId ? ` · 选股 run ${selectedScreenerRunId.slice(0, 8)}…` : ""}
-            {selectedGenerationId ? ` · 世代 ${selectedGenerationId.slice(0, 8)}…` : ""}
-          </div>
-
-        </div>
-      )}
-
-      {activeTab === "research" && (
         <div
           data-qb-team-research-panel
           style={{ ...teamStyles.panel, display: "flex", flexDirection: "column", minHeight: 0 }}
@@ -7990,7 +6860,6 @@ const TeamDashboardPanel: FC = () => {
             </>
           )}
         </div>
-      )}
               </div>
             </div>
           </div>
@@ -8777,73 +7646,10 @@ const workflowListStyles: Record<string, CSSProperties> = {
     paddingTop: 2,
     borderTop: "1px dashed var(--qb-team-table-row-border, #27272a)",
   },
-  statusBadge: {
-    fontSize: 10,
-    padding: "1px 8px",
-    borderRadius: 10,
-    border: "1px solid transparent",
-    fontWeight: 600,
-    flexShrink: 0,
-    /**
-     * 在 flex column 父容器里默认会被 stretch 到整行宽度，
-     * 显式 alignSelf 让胶囊保持紧贴文字的尺寸（fit-content 行为）。
-     */
-    alignSelf: "flex-start",
-    letterSpacing: "0.02em",
-  },
   actionBtn: {
     fontSize: 11,
     padding: "3px 10px",
     minWidth: 0,
     lineHeight: 1.4,
-  },
-};
-
-/**
- * 状态徽章配色：按 workflow_run.status 区分。
- *
- * 颜色用 css 变量（带 fallback 兜底），让各主题（默认深色 / 简洁 / glass …）
- * 都能从样式表里 override，而不需要碰这里的 inline style。
- */
-const workflowStatusBadgeStyle: Record<string, CSSProperties> = {
-  running: {
-    color: "var(--qb-wf-status-running-fg, #86efac)",
-    borderColor: "var(--qb-wf-status-running-border, #166534)",
-    background: "var(--qb-wf-status-running-bg, rgba(22,101,52,0.25))",
-  },
-  pending: {
-    color: "var(--qb-wf-status-pending-fg, #fde68a)",
-    borderColor: "var(--qb-wf-status-pending-border, #854d0e)",
-    background: "var(--qb-wf-status-pending-bg, rgba(133,77,14,0.25))",
-  },
-  awaiting_review: {
-    color: "var(--qb-wf-status-pending-fg, #fde68a)",
-    borderColor: "var(--qb-wf-status-pending-border, #854d0e)",
-    background: "var(--qb-wf-status-pending-bg, rgba(133,77,14,0.25))",
-  },
-  completed: {
-    color: "var(--qb-wf-status-done-fg, #a5b4fc)",
-    borderColor: "var(--qb-wf-status-done-border, #3730a3)",
-    background: "var(--qb-wf-status-done-bg, rgba(55,48,163,0.25))",
-  },
-  partial: {
-    color: "var(--qb-wf-status-partial-fg, #fde68a)",
-    borderColor: "var(--qb-wf-status-partial-border, #a16207)",
-    background: "var(--qb-wf-status-partial-bg, rgba(161,98,7,0.25))",
-  },
-  failed: {
-    color: "var(--qb-wf-status-failed-fg, #fecaca)",
-    borderColor: "var(--qb-wf-status-failed-border, #7f1d1d)",
-    background: "var(--qb-wf-status-failed-bg, rgba(127,29,29,0.30))",
-  },
-  cancelled: {
-    color: "var(--qb-wf-status-cancelled-fg, #a1a1aa)",
-    borderColor: "var(--qb-wf-status-cancelled-border, #3f3f46)",
-    background: "var(--qb-wf-status-cancelled-bg, rgba(63,63,70,0.30))",
-  },
-  _default: {
-    color: "var(--qb-wf-status-default-fg, #d4d4d8)",
-    borderColor: "var(--qb-wf-status-default-border, #3f3f46)",
-    background: "var(--qb-wf-status-default-bg, rgba(63,63,70,0.25))",
   },
 };

@@ -54,7 +54,7 @@ function newerTs(a: string | null | undefined, b: string | null | undefined): st
 function latestToolHeadline(tools: AnalystTeamGraphToolCall[]): string | null {
   if (tools.length === 0) return null;
   const t = tools[tools.length - 1]!;
-  const name = t.toolName || t.connectorId || "tool";
+  const name = t.toolName || "tool";
   if (t.status === "error" || t.errorMessage) return `工具失败 · ${name}`;
   if (t.status === "running" || t.status === "pending" || t.status === "in_progress") {
     return `正在调用 · ${name}`;
