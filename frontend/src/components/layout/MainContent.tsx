@@ -44,6 +44,7 @@ import {
   updateWorkflowGoal,
   reloadAgents,
   saveModelConfig,
+  testEmbeddingModelConfig,
   saveBuiltinConnectorConfig,
   testMcpCall,
   testMcpProjectInstall,
@@ -1431,6 +1432,15 @@ const ConfigPanel: FC = () => {
   const [modelApiKey, setModelApiKey] = useState("");
   const [modelApiKeyConfigured, setModelApiKeyConfigured] = useState(false);
   const [modelBaseUrl, setModelBaseUrl] = useState("");
+  const [embeddingEnabled, setEmbeddingEnabled] = useState(true);
+  const [embeddingModel, setEmbeddingModel] = useState("text-embedding-3-small");
+  const [embeddingApiKey, setEmbeddingApiKey] = useState("");
+  const [embeddingApiKeyConfigured, setEmbeddingApiKeyConfigured] = useState(false);
+  const [embeddingBaseUrl, setEmbeddingBaseUrl] = useState("");
+  const [embeddingDimensions, setEmbeddingDimensions] = useState("");
+  const [embeddingRuntimeHint, setEmbeddingRuntimeHint] = useState("");
+  const [embeddingTestMsg, setEmbeddingTestMsg] = useState<string | null>(null);
+  const [embeddingBusy, setEmbeddingBusy] = useState(false);
   const [tushareToken, setTushareToken] = useState("");
   const [windUsername, setWindUsername] = useState("");
   const [windPassword, setWindPassword] = useState("");
@@ -1667,6 +1677,24 @@ const ConfigPanel: FC = () => {
       setModelApiKey(cfg.apiKey ?? "");
       setModelApiKeyConfigured(Boolean(cfg.apiKeyConfigured));
       setModelBaseUrl(cfg.baseUrl ?? "");
+      const emb = cfg.embedding;
+      setEmbeddingEnabled(emb?.enabled ?? true);
+      setEmbeddingModel(emb?.model ?? "text-embedding-3-small");
+      setEmbeddingApiKey("");
+      setEmbeddingApiKeyConfigured(Boolean(emb?.apiKeyConfigured));
+      setEmbeddingBaseUrl(emb?.baseUrl ?? "");
+      setEmbeddingDimensions(
+        emb?.dimensions != null && Number.isFinite(emb.dimensions) ? String(emb.dimensions) : ""
+      );
+      if (emb?.runtime) {
+        setEmbeddingRuntimeHint(
+          emb.runtime.configured
+            ? `就绪 · ${emb.runtime.model ?? "?"} · dim=${emb.runtime.dimension ?? "?"} · source=${emb.runtime.source}`
+            : `未就绪 · source=${emb.runtime.source}（将降级为 keyword-only）`
+        );
+      } else {
+        setEmbeddingRuntimeHint("");
+      }
     });
     void getBuiltinConnectorConfig()
       .then(hydrateBuiltinConnectorForm)
@@ -2412,6 +2440,155 @@ const ConfigPanel: FC = () => {
               >
                 保存默认配置
               </button>
+            </div>
+
+            <h3 style={{ ...styles.subTitle, marginTop: 24 }}>Embedding 模型（向量化）</h3>
+            <p className="qb-config-hint">
+              用于 Experience / Memory 等落库前的文本向量化。默认走 OpenAI-compatible
+              Embeddings API（如 <code>text-embedding-3-small</code>）。API Key / Base URL
+              留空时复用上方默认 LLM 凭证，再回退 <code>OPENAI_API_KEY</code>。
+            </p>
+            <div style={styles.form}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 13,
+                  color: "var(--qb-body-fg)",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={embeddingEnabled}
+                  onChange={(e) => setEmbeddingEnabled(e.target.checked)}
+                />
+                启用 Embedding（关闭后召回降级为 keyword-only）
+              </label>
+              <input
+                style={styles.input}
+                value={embeddingModel}
+                placeholder="模型名，如 text-embedding-3-small"
+                onChange={(e) => setEmbeddingModel(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                type="password"
+                autoComplete="new-password"
+                value={embeddingApiKey}
+                placeholder={
+                  embeddingApiKeyConfigured
+                    ? "Embedding API Key 已配置；输入新值可替换（留空则复用默认 LLM Key）"
+                    : "Embedding API Key（可选；留空复用默认 LLM / OPENAI_API_KEY）"
+                }
+                onChange={(e) => setEmbeddingApiKey(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                value={embeddingBaseUrl}
+                placeholder="Embedding Base URL（可选；留空复用默认 LLM）"
+                onChange={(e) => setEmbeddingBaseUrl(e.target.value)}
+              />
+              <input
+                style={styles.input}
+                value={embeddingDimensions}
+                placeholder="输出维度（可选，如 1536；仅部分模型支持）"
+                onChange={(e) => setEmbeddingDimensions(e.target.value)}
+              />
+              {embeddingRuntimeHint ? (
+                <p className="qb-config-hint qb-config-hint--tight" style={{ margin: 0 }}>
+                  运行时：{embeddingRuntimeHint}
+                </p>
+              ) : null}
+              {embeddingTestMsg ? (
+                <p className="qb-config-hint qb-config-hint--tight" style={{ margin: 0 }}>
+                  {embeddingTestMsg}
+                </p>
+              ) : null}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="qb-btn-primary-brand"
+                  disabled={embeddingBusy}
+                  onClick={() => {
+                    const dimRaw = embeddingDimensions.trim();
+                    const dimParsed = dimRaw ? Number(dimRaw) : null;
+                    if (dimRaw && (!Number.isFinite(dimParsed) || (dimParsed ?? 0) <= 0)) {
+                      setEmbeddingTestMsg("维度必须是正整数");
+                      return;
+                    }
+                    setEmbeddingBusy(true);
+                    setEmbeddingTestMsg(null);
+                    void saveModelConfig({
+                      embedding: {
+                        enabled: embeddingEnabled,
+                        model: embeddingModel.trim() || "text-embedding-3-small",
+                        ...(embeddingApiKey.trim()
+                          ? { apiKey: embeddingApiKey.trim() }
+                          : {}),
+                        baseUrl: embeddingBaseUrl.trim() || undefined,
+                        dimensions: dimParsed,
+                      },
+                    })
+                      .then((saved) => {
+                        setEmbeddingApiKey("");
+                        setEmbeddingApiKeyConfigured(Boolean(saved.embedding?.apiKeyConfigured));
+                        setEmbeddingEnabled(saved.embedding?.enabled ?? true);
+                        setEmbeddingModel(saved.embedding?.model ?? "text-embedding-3-small");
+                        setEmbeddingBaseUrl(saved.embedding?.baseUrl ?? "");
+                        setEmbeddingDimensions(
+                          saved.embedding?.dimensions != null
+                            ? String(saved.embedding.dimensions)
+                            : ""
+                        );
+                        const rt = saved.embedding?.runtime;
+                        setEmbeddingRuntimeHint(
+                          rt
+                            ? rt.configured
+                              ? `就绪 · ${rt.model ?? "?"} · dim=${rt.dimension ?? "?"} · source=${rt.source}`
+                              : `未就绪 · source=${rt.source}`
+                            : "已保存"
+                        );
+                        setEmbeddingTestMsg("Embedding 配置已保存");
+                      })
+                      .catch((err: unknown) => {
+                        setEmbeddingTestMsg(
+                          `保存失败：${err instanceof Error ? err.message : String(err)}`
+                        );
+                      })
+                      .finally(() => setEmbeddingBusy(false));
+                  }}
+                >
+                  保存 Embedding 配置
+                </button>
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  disabled={embeddingBusy}
+                  onClick={() => {
+                    setEmbeddingBusy(true);
+                    setEmbeddingTestMsg(null);
+                    void testEmbeddingModelConfig()
+                      .then((res) => {
+                        if (res.ok && res.data) {
+                          setEmbeddingTestMsg(
+                            `探测成功：${res.data.model} · dim=${res.data.dimension} · ${res.data.latencyMs}ms · tokens=${res.data.tokensUsed}`
+                          );
+                        } else {
+                          setEmbeddingTestMsg(`探测失败：${res.error ?? "unknown"}`);
+                        }
+                      })
+                      .catch((err: unknown) => {
+                        setEmbeddingTestMsg(
+                          `探测失败：${err instanceof Error ? err.message : String(err)}`
+                        );
+                      })
+                      .finally(() => setEmbeddingBusy(false));
+                  }}
+                >
+                  测试 Embedding
+                </button>
+              </div>
             </div>
 
             <h3 style={{ ...styles.subTitle, marginTop: 24 }}>多 LLM Provider（per-Agent 路由）</h3>

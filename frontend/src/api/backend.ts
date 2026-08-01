@@ -1335,9 +1335,29 @@ export async function getModelConfig(): Promise<ModelConfig> {
   return res.data;
 }
 
-export async function saveModelConfig(input: Partial<ModelConfig>): Promise<ModelConfig> {
+export async function saveModelConfig(
+  input: Partial<Omit<ModelConfig, "embedding">> & {
+    embedding?: Partial<NonNullable<ModelConfig["embedding"]>> | null;
+  }
+): Promise<ModelConfig> {
   const res = await httpPost<{ data: ModelConfig }>("/api/v1/agents/model-config", input);
   return res.data;
+}
+
+export async function testEmbeddingModelConfig(text?: string): Promise<{
+  ok: boolean;
+  data?: {
+    model: string;
+    dimension: number;
+    tokensUsed: number;
+    latencyMs: number;
+    sampleNorm: number;
+  };
+  error?: string;
+}> {
+  return httpPost("/api/v1/agents/model-config/embedding/test", {
+    ...(text ? { text } : {}),
+  });
 }
 
 export async function getBuiltinConnectorConfig(): Promise<BuiltinConnectorConfig> {

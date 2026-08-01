@@ -25,6 +25,10 @@
  */
 
 import OpenAI from "openai";
+import {
+  loadModelConfigSync,
+  resolveEmbeddingRuntimeOptions,
+} from "../config/model-config";
 
 // ───────────────────────── 接口 ─────────────────────────
 
@@ -58,6 +62,11 @@ export interface OpenAIEmbeddingOptions {
   baseURL?: string;
   /** OpenAI 单 batch 上限 2048；保守用 256 */
   maxBatchSize?: number;
+  /**
+   * 可选输出维度（text-embedding-3-* 支持）。
+   * 传入后会覆盖 MODEL_DIMENSIONS 默认值，并随请求发给 API。
+   */
+  dimensions?: number;
 }
 
 const DEFAULT_MODEL = "text-embedding-3-small";
@@ -73,10 +82,13 @@ export class OpenAIEmbeddingClient implements EmbeddingClient {
   readonly dimension: number;
   private readonly client: OpenAI;
   private readonly maxBatchSize: number;
+  private readonly requestDimensions: number | undefined;
 
   constructor(opts: OpenAIEmbeddingOptions = {}) {
     this.model = opts.model ?? DEFAULT_MODEL;
-    this.dimension = MODEL_DIMENSIONS[this.model] ?? DEFAULT_DIMENSION;
+    this.requestDimensions = opts.dimensions;
+    this.dimension =
+      opts.dimensions ?? MODEL_DIMENSIONS[this.model] ?? DEFAULT_DIMENSION;
     this.maxBatchSize = Math.max(1, Math.min(2048, opts.maxBatchSize ?? 256));
     const apiKey = opts.apiKey ?? process.env.OPENAI_API_KEY;
     if (!apiKey) {
@@ -105,6 +117,7 @@ export class OpenAIEmbeddingClient implements EmbeddingClient {
       const res = await this.client.embeddings.create({
         model: this.model,
         input: sanitized,
+        ...(this.requestDimensions ? { dimensions: this.requestDimensions } : {}),
       });
       // res.data 顺序与 input 顺序一致（OpenAI 文档保证）
       for (let k = 0; k < res.data.length; k += 1) {
@@ -254,22 +267,82 @@ function l2Normalize(v: number[]): number[] {
 // ───────────────────────── 默认 client 工厂 ─────────────────────────
 
 let _client: EmbeddingClient | null = null;
+/** When true, `_client` was set by tests and must not be rebuilt from config. */
+let _clientPinned = false;
+/** Test-only override for credential resolution (avoids reading developer model.json). */
+let _resolveOverride:
+  | ReturnType<typeof resolveEmbeddingRuntimeOptions>
+  | null
+  | undefined;
 
 /**
  * 取进程内默认 client：
- *   - 优先用 setEmbeddingClientForTesting 注入的 mock；
- *   - 否则若 OPENAI_API_KEY 存在 → OpenAIEmbeddingClient；
- *   - 否则返回 null（caller 应降级，比如 Recall 走 keyword-only）。
+ *   1. setEmbeddingClientForTesting 注入的 mock（测试钉住）；
+ *   2. `.qubit/model.json` 的 embedding 段（可复用顶层 chat apiKey/baseUrl）；
+ *   3. 环境变量 OPENAI_API_KEY（向后兼容）；
+ *   4. 否则 null（caller 应降级，比如 Recall 走 keyword-only）。
+ *
+ * 配置变更后请调用 `resetDefaultEmbeddingClient()`，否则进程内缓存不会刷新。
  */
 export function getDefaultEmbeddingClient(): EmbeddingClient | null {
+  if (_clientPinned) return _client;
   if (_client) return _client;
-  if (process.env.OPENAI_API_KEY) {
-    _client = new OpenAIEmbeddingClient();
-    return _client;
-  }
-  return null;
+
+  const resolved =
+    _resolveOverride ?? resolveEmbeddingRuntimeOptions(loadModelConfigSync());
+  if (!resolved.enabled || !resolved.apiKey) return null;
+
+  _client = new OpenAIEmbeddingClient({
+    model: resolved.model,
+    apiKey: resolved.apiKey,
+    ...(resolved.baseURL ? { baseURL: resolved.baseURL } : {}),
+    ...(resolved.dimensions ? { dimensions: resolved.dimensions } : {}),
+  });
+  return _client;
+}
+
+/** Drop cached client so next getDefaultEmbeddingClient() re-reads model.json / env. */
+export function resetDefaultEmbeddingClient(): void {
+  if (_clientPinned) return;
+  _client = null;
 }
 
 export function setEmbeddingClientForTesting(c: EmbeddingClient | null): void {
   _client = c;
+  _clientPinned = c !== null;
+}
+
+export function setEmbeddingResolveOverrideForTesting(
+  value: ReturnType<typeof resolveEmbeddingRuntimeOptions> | null | undefined
+): void {
+  _resolveOverride = value;
+  if (!_clientPinned) _client = null;
+}
+
+/** Public view of resolved embedding settings (no secrets) for config UI / diagnostics. */
+export function describeDefaultEmbeddingClient(): {
+  configured: boolean;
+  model: string | null;
+  dimension: number | null;
+  source: string;
+  baseUrlConfigured: boolean;
+} {
+  if (_clientPinned && _client) {
+    return {
+      configured: true,
+      model: _client.model,
+      dimension: _client.dimension,
+      source: "injected",
+      baseUrlConfigured: false,
+    };
+  }
+  const resolved =
+    _resolveOverride ?? resolveEmbeddingRuntimeOptions(loadModelConfigSync());
+  return {
+    configured: Boolean(resolved.enabled && resolved.apiKey),
+    model: resolved.model,
+    dimension: resolved.dimensions ?? MODEL_DIMENSIONS[resolved.model] ?? DEFAULT_DIMENSION,
+    source: resolved.source,
+    baseUrlConfigured: Boolean(resolved.baseURL),
+  };
 }

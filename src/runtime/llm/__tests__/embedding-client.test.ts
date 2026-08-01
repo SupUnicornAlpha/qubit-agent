@@ -16,15 +16,21 @@ import {
   cosineSimilarity,
   getDefaultEmbeddingClient,
   hashEmbed,
+  resetDefaultEmbeddingClient,
   setEmbeddingClientForTesting,
+  setEmbeddingResolveOverrideForTesting,
 } from "../embedding-client";
 
 beforeEach(() => {
   setEmbeddingClientForTesting(null);
+  setEmbeddingResolveOverrideForTesting(undefined);
+  resetDefaultEmbeddingClient();
 });
 
 afterEach(() => {
   setEmbeddingClientForTesting(null);
+  setEmbeddingResolveOverrideForTesting(undefined);
+  resetDefaultEmbeddingClient();
 });
 
 describe("MockEmbeddingClient — 基础行为", () => {
@@ -94,15 +100,30 @@ describe("cosineSimilarity — 健壮性", () => {
 });
 
 describe("getDefaultEmbeddingClient — 工厂", () => {
-  test("无 mock、无 OPENAI_API_KEY → null（caller 应降级）", () => {
-    const oldKey = process.env.OPENAI_API_KEY;
-    process.env.OPENAI_API_KEY = undefined;
-    try {
-      const c = getDefaultEmbeddingClient();
-      expect(c).toBeNull();
-    } finally {
-      if (oldKey) process.env.OPENAI_API_KEY = oldKey;
-    }
+  test("无 mock、无凭证 → null（caller 应降级）", () => {
+    setEmbeddingResolveOverrideForTesting({
+      enabled: true,
+      model: "text-embedding-3-small",
+      apiKey: undefined,
+      baseURL: undefined,
+      dimensions: undefined,
+      source: "missing_credentials",
+    });
+    expect(getDefaultEmbeddingClient()).toBeNull();
+  });
+
+  test("model.json 解析结果可构造 OpenAI client（不发请求）", () => {
+    setEmbeddingResolveOverrideForTesting({
+      enabled: true,
+      model: "text-embedding-3-large",
+      apiKey: "sk-from-config",
+      baseURL: "https://api.example.com/v1",
+      dimensions: 1024,
+      source: "model.json",
+    });
+    const c = getDefaultEmbeddingClient();
+    expect(c?.model).toBe("text-embedding-3-large");
+    expect(c?.dimension).toBe(1024);
   });
 
   test("setEmbeddingClientForTesting 后命中 mock", () => {

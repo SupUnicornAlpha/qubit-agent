@@ -463,12 +463,31 @@ export interface AgentsConfigResponse {
   };
 }
 
+export interface EmbeddingModelConfig {
+  enabled: boolean;
+  model: string;
+  apiKey: string;
+  apiKeyConfigured?: boolean;
+  baseUrl?: string;
+  /** null clears a previously saved dimensions override. */
+  dimensions?: number | null;
+  /** Server-resolved readiness (no secrets). */
+  runtime?: {
+    configured: boolean;
+    model: string | null;
+    dimension: number | null;
+    source: string;
+    baseUrlConfigured: boolean;
+  };
+}
+
 export interface ModelConfig {
   provider: "openai" | "anthropic" | "ollama" | "deepseek" | "qwen" | "zhipu" | "mock";
   model: string;
   apiKey: string;
   apiKeyConfigured?: boolean;
   baseUrl?: string;
+  embedding?: EmbeddingModelConfig;
 }
 
 /** Persisted builtin connector init payloads (`qubit-data`, `qubit-news`). */

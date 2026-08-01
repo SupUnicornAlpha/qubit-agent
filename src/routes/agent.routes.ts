@@ -35,6 +35,11 @@ import {
   saveBuiltinConnectorSettings,
 } from "../runtime/config/builtin-connector-settings";
 import { loadModelConfig, saveModelConfig } from "../runtime/config/model-config";
+import {
+  describeDefaultEmbeddingClient,
+  getDefaultEmbeddingClient,
+  resetDefaultEmbeddingClient,
+} from "../runtime/llm/embedding-client";
 import { loadWorkspaceRuntimeConfig } from "../runtime/config/workspace-config";
 import {
   deleteAgentDefinitionById,
@@ -970,6 +975,38 @@ agentRouter.get("/config", async (c) => {
   });
 });
 
+function toModelConfigResponse(config: {
+  provider: string;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+  embedding?: {
+    enabled: boolean;
+    model: string;
+    apiKey?: string;
+    baseUrl?: string;
+    dimensions?: number;
+  };
+}) {
+  const emb = config.embedding;
+  return {
+    provider: config.provider,
+    model: config.model,
+    baseUrl: config.baseUrl,
+    apiKey: "",
+    apiKeyConfigured: Boolean(config.apiKey),
+    embedding: {
+      enabled: emb?.enabled ?? true,
+      model: emb?.model ?? "text-embedding-3-small",
+      baseUrl: emb?.baseUrl,
+      apiKey: "",
+      apiKeyConfigured: Boolean(emb?.apiKey),
+      dimensions: emb?.dimensions,
+      runtime: describeDefaultEmbeddingClient(),
+    },
+  };
+}
+
 agentRouter.get("/model-config", async (c) => {
   const config = (await loadModelConfig()) ?? {
     provider: "mock",
@@ -977,13 +1014,7 @@ agentRouter.get("/model-config", async (c) => {
     apiKey: "",
   };
   return c.json({
-    data: {
-      provider: config.provider,
-      model: config.model,
-      baseUrl: config.baseUrl,
-      apiKey: "",
-      apiKeyConfigured: Boolean(config.apiKey),
-    },
+    data: toModelConfigResponse(config),
   });
 });
 
@@ -993,22 +1024,97 @@ agentRouter.post("/model-config", async (c) => {
     model?: string;
     apiKey?: string;
     baseUrl?: string;
+    embedding?: {
+      enabled?: boolean;
+      model?: string;
+      apiKey?: string;
+      baseUrl?: string;
+      dimensions?: number | null;
+    } | null;
   }>();
   const saved = await saveModelConfig({
     ...(body.provider ? { provider: body.provider } : {}),
     ...(body.model ? { model: body.model } : {}),
     ...(body.apiKey?.trim() ? { apiKey: body.apiKey.trim() } : {}),
     ...(body.baseUrl !== undefined ? { baseUrl: body.baseUrl } : {}),
+    ...(body.embedding !== undefined
+      ? {
+          embedding:
+            body.embedding === null
+              ? null
+              : {
+                  ...(body.embedding.enabled !== undefined
+                    ? { enabled: body.embedding.enabled }
+                    : {}),
+                  ...(body.embedding.model !== undefined
+                    ? { model: body.embedding.model }
+                    : {}),
+                  ...(body.embedding.apiKey?.trim()
+                    ? { apiKey: body.embedding.apiKey.trim() }
+                    : {}),
+                  ...(body.embedding.baseUrl !== undefined
+                    ? { baseUrl: body.embedding.baseUrl || undefined }
+                    : {}),
+                  ...(body.embedding.dimensions === null
+                    ? { dimensions: undefined }
+                    : body.embedding.dimensions !== undefined
+                      ? { dimensions: body.embedding.dimensions }
+                      : {}),
+                },
+        }
+      : {}),
   });
+  resetDefaultEmbeddingClient();
   return c.json({
-    data: {
-      provider: saved.provider,
-      model: saved.model,
-      baseUrl: saved.baseUrl,
-      apiKey: "",
-      apiKeyConfigured: Boolean(saved.apiKey),
-    },
+    data: toModelConfigResponse(saved),
   });
+});
+
+/** Smoke-test embedding with current resolved credentials (does not persist). */
+agentRouter.post("/model-config/embedding/test", async (c) => {
+  resetDefaultEmbeddingClient();
+  const client = getDefaultEmbeddingClient();
+  if (!client) {
+    const runtime = describeDefaultEmbeddingClient();
+    return c.json(
+      {
+        ok: false,
+        error:
+          runtime.source === "disabled"
+            ? "Embedding 已禁用"
+            : "未配置 Embedding 凭证：请在配置中心填写 embedding/默认 LLM 的 API Key，或设置 OPENAI_API_KEY",
+        runtime,
+      },
+      400
+    );
+  }
+  try {
+    const body = await c.req.json<{ text?: string }>().catch(() => ({} as { text?: string }));
+    const text = (body.text?.trim() || "qubit embedding probe").slice(0, 500);
+    const result = await client.embed([text]);
+    const vector = result.vectors[0] ?? [];
+    return c.json({
+      ok: true,
+      data: {
+        model: client.model,
+        dimension: vector.length || client.dimension,
+        tokensUsed: result.tokensUsed,
+        latencyMs: result.latencyMs,
+        sampleNorm: Number(
+          Math.sqrt(vector.reduce((acc, x) => acc + x * x, 0)).toFixed(6)
+        ),
+      },
+    });
+  } catch (err) {
+    return c.json(
+      {
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+        runtime: describeDefaultEmbeddingClient(),
+      },
+      502
+    );
+  }
 });
 
 agentRouter.get("/builtin-connector-config", async (c) => {
