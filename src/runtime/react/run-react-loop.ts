@@ -26,6 +26,15 @@ import {
   getWorkflowCancellationSignal,
   isWorkflowCancellationRequested,
 } from "../workflow/workflow-cancellation";
+import {
+  ensureFactsPort,
+  evaluateDeliveryVerdict,
+  getRuntimeSqlite,
+  getWorkflowFactsPort,
+  isDeliveryVerdictEnforceEnabled,
+  persistDeliveryVerdict,
+} from "../policy";
+import { resolveEffectiveAgentTools } from "../orchestration/resolve-effective-tools";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 const DEFAULT_REASON_NODE_TIMEOUT_MS = 180_000;
@@ -545,26 +554,99 @@ function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentG
     });
   }
   const availableAnswer = extractFinalizeAnswerText(state);
-  const finalResponse = exceeded
-    ? {
-        status: "partial",
-        reason: "max_iterations",
-        iteration: state.iteration,
-        answerText: availableAnswer
-          ? `执行达到最大轮次，以下为收口前最后一版可用分析：\n\n${availableAnswer}`
-          : "工具调用已结束，但 Orchestrator 在达到最大执行轮次前未生成可验证的最终正文。请重试本轮任务或提高最大迭代次数。",
-      }
-    : {
-        status: "completed",
-        role: params.def.role,
-        iteration: state.iteration,
-        observation: state.observations.at(-1) ?? {},
-        ...(availableAnswer ? { answerText: availableAnswer } : {}),
-      };
+  const delivery = evaluateWorkflowDelivery(params.workflowId, availableAnswer);
+  const delivered =
+    delivery?.state === "delivered" || delivery?.state === "delivered_with_gaps";
+  const enforce = isDeliveryVerdictEnforceEnabled();
+  // Never salvage to completed on row-count/attempted alone. Only DeliveryVerdict
+  // "delivered*" counts when enforce is on; otherwise fall back to partial.
+  const contractOk = exceeded ? (enforce ? Boolean(delivered) : false) : false;
+
+  let finalResponse: AgentGraphState["finalResponse"];
+  if (exceeded && !contractOk) {
+    const reasonCodes = delivery?.reasonCodes?.length
+      ? `（${delivery.reasonCodes.slice(0, 4).join(", ")}）`
+      : "";
+    finalResponse = {
+      status: "partial",
+      reason: delivery ? "max_iterations_delivery_unsatisfied" : "max_iterations",
+      iteration: state.iteration,
+      answerText: availableAnswer
+        ? `执行达到最大轮次，交付谓词未满足${reasonCodes}。以下为收口前最后一版可用分析：\n\n${availableAnswer}`
+        : `工具调用已结束，但交付谓词未满足${reasonCodes}。请重试本轮任务或提高最大迭代次数。`,
+      deliveryVerdict: delivery ?? undefined,
+    };
+  } else if (exceeded && contractOk) {
+    finalResponse = {
+      status: "completed",
+      reason: "max_iterations_delivery_satisfied",
+      role: params.def.role,
+      iteration: state.iteration,
+      observation: state.observations.at(-1) ?? {},
+      answerText: availableAnswer
+        ? `执行达到最大轮次，但 DeliveryVerdict 已满足，按已有证据完成交付：\n\n${availableAnswer}`
+        : "执行达到最大轮次，但 DeliveryVerdict 已满足。",
+      deliveryVerdict: delivery ?? undefined,
+    };
+  } else {
+    finalResponse = {
+      status: "completed",
+      role: params.def.role,
+      iteration: state.iteration,
+      observation: state.observations.at(-1) ?? {},
+      ...(availableAnswer ? { answerText: availableAnswer } : {}),
+      ...(delivery ? { deliveryVerdict: delivery } : {}),
+    };
+  }
+  if (delivery) {
+    void persistDeliveryVerdict({ workflowId: params.workflowId, verdict: delivery });
+  }
   const merged = { ...state, finalResponse };
   snapshotState(params, "finalize", state.iteration, merged);
   return merged;
 }
+
+function evaluateWorkflowDelivery(workflowId: string, answerText: string) {
+  try {
+    const port = getWorkflowFactsPort();
+    const snapshot = port.loadSnapshot(workflowId, { includeA2a: true });
+    if (!snapshot.scenarioKey) return null;
+    return evaluateDeliveryVerdict({
+      sqlite: getRuntimeSqlite(),
+      snapshot,
+      answerText,
+      enforceBenchmarkTerms: false,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function attachIterationSnapshot(
+  params: RunReactLoopParams,
+  state: AgentGraphState
+): Promise<AgentGraphState> {
+  try {
+    await ensureFactsPort();
+    const effective = await resolveEffectiveAgentTools(params.def, params.workflowId);
+    const snapshot = getWorkflowFactsPort().loadSnapshot(params.workflowId, {
+      availableTools: effective.tools,
+      extraAttemptedTools: state.toolCalls.map((call) => String(call.toolName ?? "")),
+      includeA2a: true,
+    });
+    return { ...state, scenarioSnapshot: snapshot };
+  } catch {
+    return { ...state, scenarioSnapshot: state.scenarioSnapshot ?? null };
+  }
+}
+
+/** @deprecated kept for tests that may still patch — prefer evaluateWorkflowDelivery */
+function isScenarioContractSatisfied(workflowId: string): boolean {
+  const verdict = evaluateWorkflowDelivery(workflowId, "");
+  return verdict?.state === "delivered" || verdict?.state === "delivered_with_gaps";
+}
+
+void isScenarioContractSatisfied;
 
 /** finalResponse.status 是否为终态（awaiting_approval / partial / terminated），与原条件边一致。 */
 function isTerminalStatus(state: AgentGraphState): boolean {
@@ -722,6 +804,9 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
       console.warn(`[run-react-loop] drainUserMessages failed: ${(e as Error).message}`);
     }
 
+    // One Snapshot per iteration for reason/act/finalize consumers.
+    state = await attachIterationSnapshot(effectiveParams, state);
+
     await emitTaskProgress(effectiveParams, {
       phase: "reason",
       iteration: state.iteration,
@@ -765,6 +850,8 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
     // 否则回 reason 继续下一轮
   }
 
+  // Refresh snapshot once more before finalize so DeliveryVerdict sees latest writes.
+  state = await attachIterationSnapshot(effectiveParams, state);
   state = runFinalize(effectiveParams, state);
   return { state };
 }

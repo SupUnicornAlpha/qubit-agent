@@ -57,7 +57,12 @@ import {
   buildSuggestedCallChainBlock,
   buildTopologySpecialistExecutionContract,
 } from "../../orchestration/topology-dispatch";
-import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
+import {
+  intersectCapabilityWithEffectiveTools,
+  resolveEffectiveAgentTools,
+} from "../../orchestration/resolve-effective-tools";
+import { resolveRegistryScenarioKey } from "../../research-scenario/scenario-key-aliases";
+import { resolveScenarioRecipe } from "../../policy/scenario-recipe";
 import { listAuthorizedCapabilities } from "../../tools/capability-gate";
 import {
   buildRuntimeCapabilityManifestForRuntime,
@@ -140,27 +145,31 @@ export interface ReasonNodeOutput {
   meta: ReasonStepMeta;
 }
 
-const FOCUSED_RESEARCH_SCENARIO_GUIDANCE: Record<string, string[]> = {
-  factor_research: [
-    "目标仅是因子研究，不得扩展成个股基本面、宏观、情绪或多空会审。",
-    "优先由你直接调用 factor.register、factor.compute、factor.autoEvaluate；确需专家时最多派给 research 或 analyst_technical。",
-    "完成条件是产生可追溯的 factor_definition_batch 和 factor_evaluation_report；没有真实入库因子时必须明确失败或继续修复，禁止声称研究完成。",
-  ],
-  stock_screening: [
-    "目标仅是股票筛选与可执行推荐，不得扩展成通用团队研究报告。",
-    "只调用筛选、行情、推荐记录与必要风险工具；确需专家时最多派给 research、analyst_technical 或 risk。",
-    "完成条件是产生结构化候选与 recommendation 记录，包含 asof、置信度、入场区间、止盈、止损和证据血缘；没有推荐产物时不得完成。",
-  ],
-  news_event_radar: [
-    "目标仅是新闻事件雷达，不得扩展成四维分析或个股推荐报告。",
-    "只调用新闻/事件工具；确需专家时最多派给 analyst_sentiment 或 research。",
-    "完成条件是产生带来源、asof、新鲜度和影响方向的事件清单；stub、synthetic 或空数据不得当作有效证据。",
-  ],
-  strategy_authoring: [
-    "目标仅是生成可回测策略及其验证结果，不得扩展成多角色会审。",
-    "完成条件是产生策略版本和真实回测指标；没有 OOS/成本后结果时不得声称策略可信。",
-  ],
-};
+/** Recipe is the single source of scenario prompt constraints (no FOCUSED_* dual-write). */
+export function buildFocusedResearchScenarioPrompt(scenarioKey: string | null): string {
+  if (!scenarioKey) return "";
+  const recipe =
+    resolveScenarioRecipe(scenarioKey) ??
+    resolveScenarioRecipe(resolveRegistryScenarioKey(scenarioKey) ?? "");
+  if (!recipe) return "";
+  const checklist = recipe.checklistPrompt ?? [];
+  const opsHint =
+    recipe.key === "factor"
+      ? "- 因子表达式默认 lang=qlib_expr；使用 Ref/Mean/Std 等，勿写未声明的 Python 名（shift/pd/np）。"
+      : null;
+  return [
+    `## 专业研究场景硬约束：${scenarioKey} @${recipe.version}`,
+    "本任务由 Orchestrator 统一裁决，但不得自动扩成通用研究团队或固定多 Agent 流程。",
+    "答案须包含五段：goal / evidence / decision / risks / gaps。",
+    "禁止把行情探活失败写成唯一结案；系统不会代执行业务写工具，须你自行调用。",
+    ...checklist.map((rule) => `- ${rule}`),
+    opsHint,
+    "- 工具返回空数组、barCount=0、no_bars、no_data 或仅 transport success 时，视为数据失败，不得显示为研究证据。",
+    "- 最终答复只包含场景合同要求的结构化结果、关键证据和阻塞项，不生成额外长报告。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 const OPTIONAL_CONTEXT_TIMEOUT_MS = Number(
   process.env["QUBIT_REASON_OPTIONAL_CONTEXT_TIMEOUT_MS"] ?? "2500"
@@ -191,19 +200,6 @@ async function withOptionalContextTimeout<T>(
   } finally {
     if (timer) clearTimeout(timer);
   }
-}
-
-export function buildFocusedResearchScenarioPrompt(scenarioKey: string | null): string {
-  if (!scenarioKey) return "";
-  const rules = FOCUSED_RESEARCH_SCENARIO_GUIDANCE[scenarioKey];
-  if (!rules) return "";
-  return [
-    `## 专业研究场景硬约束：${scenarioKey}`,
-    "本任务由 Orchestrator 统一裁决，但不得自动扩成通用研究团队或固定多 Agent 流程。",
-    ...rules.map((rule) => `- ${rule}`),
-    "- 工具返回空数组、barCount=0、no_bars、no_data 或仅 transport success 时，视为数据失败，不得显示为研究证据。",
-    "- 最终答复只包含场景合同要求的结构化结果、关键证据和阻塞项，不生成额外长报告。",
-  ].join("\n");
 }
 
 async function loadWorkflowMeta(workflowId: string): Promise<{
@@ -430,8 +426,16 @@ export async function reasonNode(
     ...(workflowMeta.projectId ? { projectId: workflowMeta.projectId } : {}),
     ...(workflowMeta.agentMode ? { agentMode: workflowMeta.agentMode } : {}),
   });
+  // Keep authorization and current scenario progress separate, then expose
+  // only their intersection.  The previous implementation calculated
+  // `effective` but discarded its tools here, so the LLM repeatedly selected
+  // stale probe/read tools which Act could no longer execute.
+  const authorizedEffectiveTools = intersectCapabilityWithEffectiveTools(
+    capabilitySurface.tools,
+    effective.tools
+  );
   const capabilityManifest = await buildRuntimeCapabilityManifestForRuntime({
-    tools: capabilitySurface.tools,
+    tools: authorizedEffectiveTools,
     goal: typeof payloadGoal === "string" ? payloadGoal : null,
     ticker: slotTicker,
   });
@@ -444,7 +448,7 @@ export async function reasonNode(
   } catch {
     // Artifact ledger is optional during rolling migration; reasoning must continue.
   }
-  let tools = capabilityManifest.tools;
+  const tools = capabilityManifest.tools;
   const mcpServers = [...capabilitySurface.mcpServers];
   const hasTools = tools.length > 0 || mcpServers.length > 0;
   const taskQuery = [
@@ -945,7 +949,9 @@ export async function reasonNode(
       "## 工作方式（重要）",
       "- **增量推进**：把任务拆成小步，一步步来；每步只做一件事，拿到结果再决定下一步，不要一次性假设整条流程。",
       "- **先查后做**：动手前若有 `search_memory` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；稳定的方法与产物可以复用。",
-      "- **实时状态必须重验**：记忆里的“行情源不可用 / 网络失败 / 凭证缺失 / 熔断”是过期风险很高的历史状态，只能作提示，不能替代当前探测。只要当前工具面有 `market.readiness` / `market.data_sources` / `fetch_klines`，在本工作流尚无同类失败证据时，必须至少做一次当前健康检查或真实拉取后，才能宣告数据不可用。",
+      focusedScenarioBlock
+        ? "- **场景探活预算**：本场景默认不重复 `market.readiness`；探活失败记为 data-gap，不得当作唯一结案。"
+        : "- **实时状态必须重验**：记忆里的“行情源不可用 / 网络失败 / 凭证缺失 / 熔断”是过期风险很高的历史状态，只能作提示，不能替代当前探测。只要当前工具面有 `market.readiness` / `market.data_sources` / `fetch_klines`，在本工作流尚无同类失败证据时，必须至少做一次当前健康检查或真实拉取后，才能宣告数据不可用。",
       "- **失败自适应**：工具失败时先读取最近 observation 的 `recovery`：`retry_once` 只允许原调用再试一次，`switch_tool` 必须从 alternatives 换源并按新工具参数重组调用，`continue_with_limits` 禁止继续空转。",
       "- **无数据交付**：没有可靠数据时仍完成不依赖该数据的部分；明确列出已知事实、缺失证据、采用的假设和置信度。核心结论依赖缺失事实时，只给‘若 A 则 B’的条件式结论，并说明拿到什么数据后如何验证。",
       "- **最小交付**：只返回完成当前目标所需的最小结果；除非明确要求，不要主动生成长报告、固定模板章节或泛泛总结。",

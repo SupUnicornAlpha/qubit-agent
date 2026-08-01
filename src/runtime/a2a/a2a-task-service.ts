@@ -328,6 +328,30 @@ export async function listOpenA2ATasksForWorkflow(
 }
 
 /**
+ * Return only descendants of a particular parent task.  A workflow's root
+ * TASK_ASSIGN remains `working` until its own handler writes TASK_RESULT, so
+ * cancelling every open task during a workflow terminal transition can race
+ * and cancel that root envelope itself.
+ */
+export async function listOpenChildA2ATasks(
+  workflowId: string,
+  parentTaskId: string
+): Promise<A2ATaskSnapshot[]> {
+  const tasks = await listA2ATasksForWorkflow(workflowId, 500);
+  return tasks.filter(
+    (task) => !isA2ATaskTerminal(task.status) && task.parentTaskId === parentTaskId
+  );
+}
+
+/** Open delegated tasks only; used by recovery sweeps, never root envelopes. */
+export async function listOpenDelegatedA2ATasksForWorkflow(
+  workflowId: string
+): Promise<A2ATaskSnapshot[]> {
+  const tasks = await listA2ATasksForWorkflow(workflowId, 500);
+  return tasks.filter((task) => !isA2ATaskTerminal(task.status) && Boolean(task.parentTaskId));
+}
+
+/**
  * Events are append-only and sequence-numbered, allowing a client to resume
  * from its last observed sequence instead of relying on a live process stream.
  */

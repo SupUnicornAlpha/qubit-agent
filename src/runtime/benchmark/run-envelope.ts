@@ -3,6 +3,7 @@ import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { checkRequiredArtifacts } from "../agent-readiness/quality/artifact-checker";
 import { SCENARIO_EXPECTATIONS } from "../agent-readiness/quality/scenario-expectations";
 import type { ScenarioRecipe } from "../agent-readiness/scenarios";
+import { readLatestDeliveryVerdict } from "../policy/delivery-ledger";
 import type { RunEnvelope, RunTool } from "./contracts";
 
 export interface BuildRunEnvelopeInput {
@@ -55,6 +56,7 @@ export async function buildRunEnvelope(input: BuildRunEnvelopeInput): Promise<Ru
   }>;
   const delivery = readDelivery(sqlite, input.workflowRunId);
   const executionRisk = readExecutionRisk(sqlite, input.workflowRunId, scenarioKey);
+  const verdict = readLatestDeliveryVerdict(sqlite, input.workflowRunId);
 
   return {
     workflowRunId: input.workflowRunId,
@@ -80,6 +82,13 @@ export async function buildRunEnvelope(input: BuildRunEnvelopeInput): Promise<Ru
       missing: artifactCheck?.missing.map((item) => item.table) ?? [],
     },
     delivery,
+    deliveryVerdict: verdict
+      ? {
+          available: true,
+          state: verdict.state,
+          reasonCodes: verdict.reasonCodes,
+        }
+      : { available: false },
     ...(toolTelemetry.contract ? { contract: toolTelemetry.contract } : {}),
     ...(toolTelemetry.capability ? { capability: toolTelemetry.capability } : {}),
     ...(executionRisk.risk ? { risk: executionRisk.risk } : {}),

@@ -114,9 +114,15 @@ export class AcpCaller {
 
 // ─── Factory helpers ──────────────────────────────────────────────────────────
 
-export function buildAcpRequest(partial: Omit<AcpRequest, "traceId">): AcpRequest {
+export function buildAcpRequest(
+  partial: Omit<AcpRequest, "traceId" | "inputSchemaVersion" | "riskLevel" | "priority"> &
+    Partial<Pick<AcpRequest, "inputSchemaVersion" | "riskLevel" | "priority">>
+): AcpRequest {
   return {
     traceId: randomUUID(),
+    inputSchemaVersion: "1.0",
+    riskLevel: "low",
+    priority: 50,
     ...partial,
   };
 }

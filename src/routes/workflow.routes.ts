@@ -87,14 +87,16 @@ workflowRouter.post("/", async (c) => {
     projectId: body.projectId,
     goal: body.goal,
     mode: body.mode,
-    sessionId: body.sessionId,
-    source: body.source,
-    messageId: body.messageId,
-    reuseSessionWorkflow: body.reuseSessionWorkflow,
+    ...(body.sessionId !== undefined ? { sessionId: body.sessionId } : {}),
+    ...(body.source !== undefined ? { source: body.source } : {}),
+    ...(body.messageId !== undefined ? { messageId: body.messageId } : {}),
+    ...(body.reuseSessionWorkflow !== undefined
+      ? { reuseSessionWorkflow: body.reuseSessionWorkflow }
+      : {}),
     skipDispatch: body.skipDispatch === true,
-    loopKind: body.loopKind,
-    loopOptionsJson: body.loopOptionsJson,
-    executionPath: body.executionPath,
+    ...(body.loopKind !== undefined ? { loopKind: body.loopKind } : {}),
+    ...(body.loopOptionsJson !== undefined ? { loopOptionsJson: body.loopOptionsJson } : {}),
+    ...(body.executionPath !== undefined ? { executionPath: body.executionPath } : {}),
   });
   return c.json(created, 201);
 });
@@ -110,10 +112,10 @@ workflowRouter.post("/compensation/enqueue", async (c) => {
   if (!body.workflowRunId) return c.json({ ok: false, error: "workflowRunId is required" }, 400);
   const data = await enqueueCompensationTask({
     workflowRunId: body.workflowRunId,
-    actionType: body.actionType,
-    reason: body.reason,
-    payloadJson: body.payloadJson,
-    maxRetries: body.maxRetries,
+    ...(body.actionType !== undefined ? { actionType: body.actionType } : {}),
+    ...(body.reason !== undefined ? { reason: body.reason } : {}),
+    ...(body.payloadJson !== undefined ? { payloadJson: body.payloadJson } : {}),
+    ...(body.maxRetries !== undefined ? { maxRetries: body.maxRetries } : {}),
   });
   return c.json({ ok: true, data });
 });
@@ -122,16 +124,18 @@ workflowRouter.get("/compensation/tasks", async (c) => {
   const status = c.req.query("status");
   const workflowRunId = c.req.query("workflowRunId");
   const limit = Number(c.req.query("limit") ?? 100);
-  const data = await listCompensationTasks({
-    status: status || undefined,
-    workflowRunId: workflowRunId || undefined,
+  const input: Parameters<typeof listCompensationTasks>[0] = {
     limit: Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 100,
-  });
+  };
+  if (status) input.status = status;
+  if (workflowRunId) input.workflowRunId = workflowRunId;
+  const data = await listCompensationTasks(input);
   return c.json({ ok: true, data });
 });
 
 workflowRouter.post("/compensation/process", async (c) => {
-  const body = await c.req.json<{ limit?: number }>().catch(() => ({}));
+  type Body = { limit?: number };
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
   const data = await processCompensationQueue(
     body.limit ? Math.max(1, Math.min(50, body.limit)) : 10
   );
@@ -302,7 +306,12 @@ workflowRouter.patch("/:id", async (c) => {
       /** 模板 / SOP / 门控等流程配置与执行模式统一收敛到 loop options。 */
       loopOptionsJson?: Partial<LoopOptionsJson>;
     }>()
-    .catch(() => ({}));
+    .catch(() => ({} as {
+      sessionId?: string | null;
+      goal?: string;
+      status?: (typeof workflowStatusEnum)[number];
+      loopOptionsJson?: Partial<LoopOptionsJson>;
+    }));
   const db = await getDb();
   const rows = await db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1);
   if (!rows[0]) return c.json({ error: "Not found" }, 404);
@@ -504,7 +513,8 @@ workflowRouter.get("/:id/lineage", async (c) => {
 
 workflowRouter.put("/:id/artifacts/report", async (c) => {
   const id = c.req.param("id");
-  const body = await c.req.json<{ report?: string; ticker?: string }>().catch(() => ({}));
+  type Body = { report?: string; ticker?: string };
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
   const report = typeof body.report === "string" ? body.report : "";
   if (!report.trim()) return c.json({ error: "report is required" }, 400);
   const db = await getDb();
@@ -514,7 +524,7 @@ workflowRouter.put("/:id/artifacts/report", async (c) => {
     projectId: rows[0].projectId,
     workflowRunId: id,
     report,
-    ticker: typeof body.ticker === "string" ? body.ticker : undefined,
+    ...(typeof body.ticker === "string" ? { ticker: body.ticker } : {}),
   });
   return c.json({ data: { reportPath } });
 });
@@ -534,7 +544,7 @@ workflowRouter.post("/:id/inject-message", async (c) => {
   const workflowRunId = c.req.param("id");
   const body = await c.req
     .json<{ content?: string; targetRole?: string | null }>()
-    .catch(() => ({}));
+    .catch(() => ({} as { content?: string; targetRole?: string | null }));
   const content = (body.content ?? "").trim();
   if (!content) {
     return c.json({ error: "content is required" }, 400);
@@ -595,14 +605,18 @@ workflowRouter.post("/:id/hitl/:requestId/resolve", async (c) => {
       response?: Record<string, unknown> | null;
       resolvedBy?: string;
     }>()
-    .catch(() => ({}));
+    .catch(() => ({} as {
+      decision?: "approved" | "rejected";
+      response?: Record<string, unknown> | null;
+      resolvedBy?: string;
+    }));
   if (body.decision !== "approved" && body.decision !== "rejected") {
     return c.json({ error: "decision must be 'approved' or 'rejected'" }, 400);
   }
   const result = await resolveHitlRequest({
     requestId,
     decision: body.decision,
-    resolvedBy: body.resolvedBy,
+    ...(body.resolvedBy !== undefined ? { resolvedBy: body.resolvedBy } : {}),
     response: body.response ?? null,
   });
   return c.json({ ok: true, data: result });
@@ -613,11 +627,11 @@ workflowRouter.post("/:id/hitl/:requestId/approve", async (c) => {
   const requestId = c.req.param("requestId");
   const body = await c.req
     .json<{ resolvedBy?: string; response?: Record<string, unknown> | null }>()
-    .catch(() => ({}));
+    .catch(() => ({} as { resolvedBy?: string; response?: Record<string, unknown> | null }));
   const result = await resolveHitlRequest({
     requestId,
     decision: "approved",
-    resolvedBy: body.resolvedBy,
+    ...(body.resolvedBy !== undefined ? { resolvedBy: body.resolvedBy } : {}),
     response: body.response ?? null,
   });
   return c.json({ ok: true, data: result });
@@ -627,11 +641,11 @@ workflowRouter.post("/:id/hitl/:requestId/reject", async (c) => {
   const requestId = c.req.param("requestId");
   const body = await c.req
     .json<{ resolvedBy?: string; response?: Record<string, unknown> | null }>()
-    .catch(() => ({}));
+    .catch(() => ({} as { resolvedBy?: string; response?: Record<string, unknown> | null }));
   const result = await resolveHitlRequest({
     requestId,
     decision: "rejected",
-    resolvedBy: body.resolvedBy,
+    ...(body.resolvedBy !== undefined ? { resolvedBy: body.resolvedBy } : {}),
     response: body.response ?? null,
   });
   return c.json({ ok: true, data: result });

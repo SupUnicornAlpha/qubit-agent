@@ -60,8 +60,3 @@ export function deriveMcpServerOrigin(
   }
   return "manual";
 }
-
-/** 内置 MCP server 名集合（外部需要直接判定时使用） */
-export function getBuiltinMcpServerNames(): ReadonlySet<string> {
-  return BUILTIN_MCP_NAMES;
-}

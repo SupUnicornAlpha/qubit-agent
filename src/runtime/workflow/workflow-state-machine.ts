@@ -182,6 +182,17 @@ export async function setWorkflowState(
             }`
           );
         });
+      void import("../a2a/reconcile-stale")
+        .then(({ reconcileStaleA2aTasksForWorkflow }) =>
+          reconcileStaleA2aTasksForWorkflow(workflowId, toStatus)
+        )
+        .catch((error) => {
+          console.warn(
+            `[workflow-state] a2a reconcile failed (workflowId=${workflowId}): ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        });
     });
   }
 

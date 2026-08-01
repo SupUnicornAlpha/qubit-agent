@@ -2,6 +2,7 @@ import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { RuntimeAgentDefinition } from "../types";
 import { createEmptyWorkingMemory } from "../context/working-memory";
 import type { WorkingMemory } from "../context/types";
+import type { ScenarioRuntimeSnapshot } from "../policy";
 
 export type StepEventType =
   | "token"
@@ -72,6 +73,11 @@ export interface AgentGraphState {
   controlModeGapRetryCount?: number;
   /** Consecutive blocked duplicate requests; reset by a real tool execution. */
   noProgressRetryCount?: number;
+  /**
+   * Per-iteration ScenarioRuntimeSnapshot (FactsPort). Shared by reason/act/finalize
+   * so hot path does not re-query sqlite for the same facts.
+   */
+  scenarioSnapshot?: ScenarioRuntimeSnapshot | null;
 }
 
 export function createInitialGraphState(input: {

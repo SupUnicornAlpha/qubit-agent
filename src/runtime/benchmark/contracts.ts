@@ -55,6 +55,12 @@ export interface RunEnvelope {
     observed: boolean;
     hasUserFinalAnswer?: boolean;
   };
+  /** Thin-loop DeliveryVerdict projection; missing → observability incomplete for promotion. */
+  deliveryVerdict?: {
+    available: boolean;
+    state?: "delivered" | "delivered_with_gaps" | "partial" | "failed";
+    reasonCodes?: string[];
+  };
   /** P0 已有来源尚未记录 contract / capability telemetry，须显式标 skipped。 */
   contract?: { telemetryAvailable: boolean; permanentExecutionCount: number };
   capability?: { telemetryAvailable: boolean; disabledMcpExecutionCount: number };
@@ -97,4 +103,5 @@ export interface RunScorecard {
   score: number;
   /** 缺 telemetry 的历史 run 可评分，但不得作为 challenger 晋级证据。 */
   promotionEligible: boolean;
+  deliveryVerdict?: RunEnvelope["deliveryVerdict"];
 }

@@ -56,6 +56,20 @@ function gateDelivery(input: {
 }): UpgradeGateDimension {
   const required = new Set(["H1", "H2", "H3"]);
   const assertions = input.scorecard.layers.hard.assertions.filter((item) => required.has(item.id));
+  const verdict = input.scorecard.deliveryVerdict;
+  if (
+    verdict?.available &&
+    verdict.state &&
+    verdict.state !== "delivered" &&
+    verdict.state !== "delivered_with_gaps" &&
+    input.snapshot.workflowStatus === "completed"
+  ) {
+    return {
+      name: "delivery",
+      status: "fail",
+      detail: `delivery_verdict_${verdict.state}:${(verdict.reasonCodes ?? []).slice(0, 3).join(",")}`,
+    };
+  }
   if (
     input.snapshot.workflowStatus !== "completed" ||
     assertions.some((item) => item.status === "fail")
@@ -187,6 +201,8 @@ function gateObservability(input: {
   const required = new Set(["H6", "H7"]);
   if (input.benchmarkCase.scenarioKey.startsWith("live_trading")) required.add("H8");
   if (input.benchmarkCase.dimensions.includes("risk")) required.add("H9");
+  // Scenario cases with a completed workflow should record DeliveryVerdict for promotion.
+  if (input.benchmarkCase.scenarioKey) required.add("H-DV");
   const skipped = input.scorecard.layers.hard.assertions
     .filter((item) => item.status === "skipped" && required.has(item.id))
     .map((item) => item.id);

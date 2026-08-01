@@ -12,6 +12,8 @@ import {
   listA2ATaskEvents,
   listA2ATasksForWorkflow,
   listOpenA2ATasksForWorkflow,
+  listOpenChildA2ATasks,
+  listOpenDelegatedA2ATasksForWorkflow,
   markA2ATaskWorking,
   recordA2ATaskProgress,
   waitForA2ATaskTerminal,
@@ -197,5 +199,36 @@ describe("durable internal A2A task protocol", () => {
     expect((await listOpenA2ATasksForWorkflow(workflowId)).map((task) => task.id)).toEqual([
       openId,
     ]);
+  });
+
+  test("does not treat the root envelope as a cancellable delegated child", async () => {
+    const rootId = randomUUID();
+    const childId = randomUUID();
+    await createA2ATask({
+      workflowId,
+      traceId: randomUUID(),
+      senderAgentId: randomUUID(),
+      receiverAgentId: randomUUID(),
+      receiverRole: "orchestrator",
+      payload: { ...taskPayload(rootId), assignedRole: "orchestrator" },
+    });
+    await createA2ATask({
+      workflowId,
+      traceId: randomUUID(),
+      senderAgentId: randomUUID(),
+      receiverAgentId: randomUUID(),
+      receiverRole: "market_data",
+      payload: {
+        ...taskPayload(childId),
+        params: { goal: "获取 603986 的实时行情", parentTaskId: rootId },
+      },
+    });
+
+    expect((await listOpenChildA2ATasks(workflowId, rootId)).map((task) => task.id)).toEqual([
+      childId,
+    ]);
+    expect((await listOpenDelegatedA2ATasksForWorkflow(workflowId)).map((task) => task.id)).toEqual(
+      [childId]
+    );
   });
 });

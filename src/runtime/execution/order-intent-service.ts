@@ -193,7 +193,7 @@ export async function createOrderIntentWithExecution(
   if (risk.outcome === "block") {
     await db
       .update(orderIntent)
-      .set({ lifecycleStatus: "rejected", lifecycleUpdatedAt: riskEvaluatedAt })
+      .set({ lifecycleStatus: "risk_blocked", lifecycleUpdatedAt: riskEvaluatedAt })
       .where(eq(orderIntent.id, orderIntentId));
     const tid = randomUUID();
     await db.insert(executionTask).values({
@@ -229,7 +229,7 @@ export async function createOrderIntentWithExecution(
   if (risk.outcome === "review") {
     await db
       .update(orderIntent)
-      .set({ lifecycleStatus: "risk_checked", lifecycleUpdatedAt: riskEvaluatedAt })
+      .set({ lifecycleStatus: "pending_approval", lifecycleUpdatedAt: riskEvaluatedAt })
       .where(eq(orderIntent.id, orderIntentId));
     const expiresAt = new Date(Date.now() + REVIEW_TICKET_TTL_MS).toISOString();
     riskReviewTicketId = randomUUID();

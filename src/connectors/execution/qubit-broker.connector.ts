@@ -31,7 +31,7 @@ export class QubitBrokerConnector extends ExecutionConnector {
     connectorType: "execution",
     capabilities: ["submit_order", "cancel_order", "get_fills", "get_positions", "health_check"],
     assetClasses: ["stock", "crypto"],
-    latencyProfile: "low",
+    latencyProfile: "neartime",
     description: "QUBIT broker execution via configured broker_account.",
   };
 

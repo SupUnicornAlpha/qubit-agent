@@ -6,6 +6,7 @@ import {
   isBuiltinTool,
   isRoutedTool,
   listRegisteredBuiltinTools,
+  resolveDelegatedParentTaskId,
 } from "./builtin-tools";
 import { buildToolCatalog } from "./tool-catalog";
 import { resolveConnectorForTool } from "./tool-routes";
@@ -23,6 +24,14 @@ describe("tool routes", () => {
     expect(isBuiltinTool("assign_task")).toBe(true);
     expect(isBuiltinTool("fetch_klines")).toBe(false);
     expect(isBuiltinTool("call_team_research")).toBe(true);
+  });
+});
+
+describe("topology delegation lineage", () => {
+  test("carries the inbound A2A task as the durable parent", () => {
+    expect(resolveDelegatedParentTaskId({ taskId: " parent-task " })).toBe("parent-task");
+    expect(resolveDelegatedParentTaskId({ taskId: "  " })).toBeNull();
+    expect(resolveDelegatedParentTaskId(undefined)).toBeNull();
   });
 });
 

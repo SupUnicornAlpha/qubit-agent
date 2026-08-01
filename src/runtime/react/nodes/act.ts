@@ -1,13 +1,19 @@
 import { eq } from "drizzle-orm";
 import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
 import { connectorRegistry } from "../../../connectors/registry";
-import { getDb, getSqliteForTesting } from "../../../db/sqlite/client";
+import { getDb } from "../../../db/sqlite/client";
+import {
+  decideToolNoneGate,
+  getRuntimeSqlite,
+  getWorkflowFactsPort,
+  planContractRecovery,
+  type ScenarioRuntimeSnapshot,
+} from "../../policy";
 import { workflowRun } from "../../../db/sqlite/schema";
 import { resolveAgentControlMode, resolveWorkflowProcessConfig } from "../../../types/loop";
 import {
   buildArtifactGapHint,
   checkRequiredArtifacts,
-  resolveScenarioKey,
 } from "../../agent-readiness/quality/artifact-checker";
 import { getScenarioExpectation } from "../../agent-readiness/quality/scenario-expectations";
 import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
@@ -34,12 +40,13 @@ import {
 } from "../../tools/data-capability-manifest";
 import {
   classifyDataGap,
+  toolMatchesRequiredCapability,
 } from "../../tools/data-gap";
 import {
   assessRequiredToolGate,
-  listAuthorizedToolsFromSqlite,
-  listWorkflowAttemptedToolsFromSqlite,
+  buildRequiredToolNextActionHint,
 } from "../../tools/required-tool-gate";
+import { SCENARIO_STALL_TOOLS } from "../../research-scenario/scenario-key-aliases";
 import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
 import {
   buildToolCallFingerprint,
@@ -91,9 +98,29 @@ import {
  * 同时受 def.maxIterations 上限保护（execute-agent-react.ts:438）—— 即便 gate 想 push back
  * 但已到 max iteration，graph 会自然 finalize。
  */
-const MAX_ARTIFACT_GATE_RETRIES = 2;
+const MAX_ARTIFACT_GATE_RETRIES = 4;
 const MAX_CONTROL_MODE_GATE_RETRIES = 2;
-const MAX_REQUIRED_TOOL_GATE_RETRIES = 1;
+/** Allow several reason turns after a premature tool=none before failing the gate. */
+const MAX_REQUIRED_TOOL_GATE_RETRIES = 4;
+
+/** Prefer per-iteration FactsPort snapshot; fall back once if missing. */
+function resolveSharedSnapshot(
+  state: AgentGraphState,
+  availableTools: readonly string[]
+): ScenarioRuntimeSnapshot | null {
+  if (state.scenarioSnapshot?.workflowId === state.workflowId) {
+    return state.scenarioSnapshot;
+  }
+  try {
+    return getWorkflowFactsPort().loadSnapshot(state.workflowId, {
+      availableTools,
+      extraAttemptedTools: state.toolCalls.map((call) => String(call.toolName ?? "")),
+      includeA2a: true,
+    });
+  } catch {
+    return null;
+  }
+}
 
 export async function actNode(
   state: AgentGraphState,
@@ -273,23 +300,12 @@ export async function actNode(
     }
 
     /**
-     * P2 artifact gate：在写 finalResponse 之前反查 scenario 的 requiredArtifacts。
-     * 三种结局：
-     *   - 反查不到 scenario（workflow 未 tag / 旧 DB） → fallback 老行为，直接 finalize
-     *   - 反查到 + 已满足 → 直接 finalize
-     *   - 反查到 + 未满足 + retry < MAX → push back observation，让 graph 回 reason
-     *   - 反查到 + 未满足 + retry ≥ MAX → 放行 finalize（让 A-1=0 真实暴露给评测）
+     * Scenario gate (Policy): act only applies decideToolNoneGate over the
+     * shared per-iteration Snapshot — no scenario SQL / recovery orchestration here.
      */
-    const sqliteHandle = (() => {
-      try {
-        return getSqliteForTesting();
-      } catch {
-        return null;
-      }
-    })();
-    const scenarioKey = sqliteHandle ? resolveScenarioKey(sqliteHandle, state.workflowId) : null;
-    if (sqliteHandle && scenarioKey) {
-      const requiredTools = getScenarioExpectation(scenarioKey).requiredTools;
+    const sharedSnapshot = resolveSharedSnapshot(state, availableTools);
+    if (sharedSnapshot?.scenarioKey) {
+      const scenarioKey = sharedSnapshot.scenarioKey;
       const terminalPayload = state.inboundMessage.payload as Record<string, unknown>;
       const terminalTicker =
         typeof terminalPayload.ticker === "string"
@@ -302,195 +318,143 @@ export async function actNode(
         goal: typeof terminalPayload.goal === "string" ? terminalPayload.goal : null,
         ticker: terminalTicker,
       });
-      const authorizedTools = listAuthorizedToolsFromSqlite(sqliteHandle, availableTools);
-      const attemptedTools = listWorkflowAttemptedToolsFromSqlite(
-        sqliteHandle,
-        state.workflowId,
-        state.toolCalls.map((call) => String(call.toolName ?? ""))
-      );
+      const requiredTools = getScenarioExpectation(scenarioKey).requiredTools;
       const { unavailableRequired, notAttempted } = assessRequiredToolGate({
         requiredTools,
-        authorizedTools,
-        attemptedTools,
+        authorizedTools: sharedSnapshot.authorizedTools,
+        attemptedTools: sharedSnapshot.attemptedTools,
         runnableTools: terminalManifest.tools,
         unavailableManifestTools: terminalManifest.unavailable,
         market: terminalManifest.market,
       });
-      const requiredToolRetryCount = state.requiredToolGapRetryCount ?? 0;
-      if (notAttempted.length > 0 && requiredToolRetryCount < MAX_REQUIRED_TOOL_GATE_RETRIES) {
-        const message = `场景必备能力尚未调用：${notAttempted
-          .map((gap) => gap.capability)
-          .join("、")}。这属于 not_attempted，不能作为“无数据”结束；请先调用一个可用的对应工具。`;
-        emit({
-          runId: state.runId,
-          workflowId: state.workflowId,
-          traceId: state.traceId,
-          role: state.agentDefinition.role,
-          type: "observe",
-          stepIndex: state.iteration,
-          ts: Date.now(),
-          payload: {
-            level: "warn",
-            code: "REQUIRED_TOOL_GATE_NOT_ATTEMPTED",
-            scenario: scenarioKey,
-            dataGaps: [...notAttempted, ...unavailableRequired],
-            retryCount: requiredToolRetryCount + 1,
-            maxRetries: MAX_REQUIRED_TOOL_GATE_RETRIES,
-            message,
+      const artifactMissing = sharedSnapshot.missingArtifactTables.map((table) => ({
+        table,
+        rows: 0,
+        minRows: 1,
+      }));
+      const sqliteHandle = (() => {
+        try {
+          return getRuntimeSqlite();
+        } catch {
+          return null;
+        }
+      })();
+      if (sqliteHandle) {
+        const decision = decideToolNoneGate({
+          snapshot: {
+            ...sharedSnapshot,
+            notAttemptedCapabilities: notAttempted.map((gap) => gap.capability),
+            unavailableCapabilities: unavailableRequired.map((gap) => gap.capability),
           },
+          sqlite: sqliteHandle,
+          availableTools,
+          goal: typeof terminalPayload.goal === "string" ? terminalPayload.goal : null,
+          requiredToolRetryCount: state.requiredToolGapRetryCount ?? 0,
+          artifactRetryCount: state.artifactGapRetryCount ?? 0,
+          maxRequiredToolRetries: MAX_REQUIRED_TOOL_GATE_RETRIES,
+          maxArtifactRetries: MAX_ARTIFACT_GATE_RETRIES,
+          notAttempted,
+          unavailableRequired,
+          artifactOk: sharedSnapshot.artifactsOk,
+          artifactMissing:
+            artifactMissing.length > 0
+              ? artifactMissing
+              : checkRequiredArtifacts(
+                  sqliteHandle,
+                  scenarioKey as Parameters<typeof checkRequiredArtifacts>[1],
+                  state.workflowId
+                ).missing,
         });
-        return {
-          observations: [
-            ...state.observations,
-            {
+
+        if (decision.kind === "push_back") {
+          emit({
+            runId: state.runId,
+            workflowId: state.workflowId,
+            traceId: state.traceId,
+            role: state.agentDefinition.role,
+            type: "observe",
+            stepIndex: state.iteration,
+            ts: Date.now(),
+            payload: {
               level: "warn",
-              code: "REQUIRED_TOOL_GATE_NOT_ATTEMPTED",
+              code: decision.code,
               scenario: scenarioKey,
               dataGaps: [...notAttempted, ...unavailableRequired],
-              hint: message,
+              message: decision.message,
+              suggestedTool: decision.recovery.nextTool,
+              draftParams: decision.recovery.draftParams ?? {},
             },
-          ],
-          requiredToolGapRetryCount: requiredToolRetryCount + 1,
-        };
-      }
-      if (notAttempted.length > 0) {
-        const message = `场景必备能力在补救后仍未调用：${notAttempted
-          .map((gap) => gap.capability)
-          .join("、")}。系统仅交付当前已有证据，不能标记为 completed。`;
-        return {
-          observations: [
-            ...state.observations,
-            {
-              level: "warn",
-              code: "REQUIRED_TOOL_GATE_UNSATISFIED",
-              scenario: scenarioKey,
-              dataGaps: [...notAttempted, ...unavailableRequired],
-              hint: message,
-            },
-          ],
-          finalResponse: {
-            status: "partial",
-            reason: "required_tool_gate_unsatisfied",
-            answerText: message,
-            iteration: state.iteration,
+          });
+          return {
+            observations: [
+              ...state.observations,
+              {
+                level: "warn",
+                code: decision.code,
+                scenario: scenarioKey,
+                dataGaps: [...notAttempted, ...unavailableRequired],
+                hint: decision.message,
+                suggestedTool: decision.recovery.nextTool,
+                draftParams: decision.recovery.draftParams ?? {},
+              },
+            ],
+            ...(decision.bumpRequiredToolRetry
+              ? { requiredToolGapRetryCount: (state.requiredToolGapRetryCount ?? 0) + 1 }
+              : {}),
+            ...(decision.bumpArtifactRetry
+              ? { artifactGapRetryCount: (state.artifactGapRetryCount ?? 0) + 1, noProgressRetryCount: 0 }
+              : {}),
+          };
+        }
+
+        if (decision.kind === "partial_stop") {
+          const isArtifact = decision.code === "ARTIFACT_GATE_UNSATISFIED";
+          const answerText = isArtifact
+            ? [
+                decision.message,
+                "系统不会用空数据或模拟结果冒充成功。请恢复可用数据源后重试。",
+                cleanedReason && cleanedReason !== "no tool requested"
+                  ? `当前可交付说明：\n${cleanedReason}`
+                  : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n")
+            : decision.message;
+          emit({
+            runId: state.runId,
+            workflowId: state.workflowId,
+            traceId: state.traceId,
             role: state.agentDefinition.role,
-          },
-        };
-      }
-      if (unavailableRequired.length > 0) {
-        const message = `场景所需能力当前不可用：${unavailableRequired
-          .map((gap) => `${gap.capability}（${gap.kind}）`)
-          .join("、")}。系统不会把未配置或无覆盖误报为无数据。`;
-        return {
-          observations: [
-            ...state.observations,
-            {
-              level: "warn",
-              code: "REQUIRED_TOOL_CAPABILITY_UNAVAILABLE",
+            type: "observe",
+            stepIndex: state.iteration,
+            ts: Date.now(),
+            payload: {
+              level: isArtifact ? "error" : "warn",
+              code: decision.code,
               scenario: scenarioKey,
-              dataGaps: unavailableRequired,
-              hint: message,
+              message: decision.message,
             },
-          ],
-          finalResponse: {
-            status: "partial",
-            reason: "required_tool_capability_unavailable",
-            answerText: message,
-            iteration: state.iteration,
-            role: state.agentDefinition.role,
-          },
-        };
-      }
-      const gate = checkRequiredArtifacts(sqliteHandle, scenarioKey, state.workflowId);
-      const retryCount = state.artifactGapRetryCount ?? 0;
-      if (!gate.ok && retryCount < MAX_ARTIFACT_GATE_RETRIES) {
-        const hint = buildArtifactGapHint(gate);
-        emit({
-          runId: state.runId,
-          workflowId: state.workflowId,
-          traceId: state.traceId,
-          role: state.agentDefinition.role,
-          type: "observe",
-          stepIndex: state.iteration,
-          ts: Date.now(),
-          payload: {
-            level: "warn",
-            artifactGapHint: true,
-            scenario: scenarioKey,
-            missing: gate.missing,
-            retryCount: retryCount + 1,
-            maxRetries: MAX_ARTIFACT_GATE_RETRIES,
-            message: `[artifact gate] 拦截 tool=none：${gate.missing
-              .map((m) => `${m.table}=${m.rows}/${m.minRows}`)
-              .join(", ")}`,
-          },
-        });
-        return {
-          observations: [
-            ...state.observations,
-            {
-              level: "warn",
-              artifactGapHint: true,
-              scenario: scenarioKey,
-              missing: gate.missing,
-              retryCount: retryCount + 1,
-              maxRetries: MAX_ARTIFACT_GATE_RETRIES,
-              hint,
-              reasonText: state.reasonText,
+          });
+          return {
+            observations: [
+              ...state.observations,
+              {
+                level: isArtifact ? "error" : "warn",
+                code: decision.code,
+                scenario: scenarioKey,
+                hint: decision.message,
+              },
+            ],
+            finalResponse: {
+              status: isArtifact ? "terminated" : "partial",
+              reason: decision.reason,
+              ...(isArtifact ? { error: decision.message } : {}),
+              answerText,
+              iteration: state.iteration,
+              role: state.agentDefinition.role,
             },
-          ],
-          artifactGapRetryCount: retryCount + 1,
-          /** 关键：不写 finalResponse，shouldStopReactLoopAfterObserve 不命中 → 回 reason */
-        };
-      }
-      if (!gate.ok) {
-        const hint = buildArtifactGapHint(gate);
-        const missing = gate.missing.map((m) => `${m.table}=${m.rows}/${m.minRows}`).join(", ");
-        const answerText = [
-          `任务未能完成：必需产物在 ${MAX_ARTIFACT_GATE_RETRIES} 次修复后仍不完整（${missing}）。`,
-          "系统不会用空数据或模拟结果冒充成功。请恢复可用数据源后重试。",
-          cleanedReason && cleanedReason !== "no tool requested"
-            ? `当前可交付说明：\n${cleanedReason}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        emit({
-          runId: state.runId,
-          workflowId: state.workflowId,
-          traceId: state.traceId,
-          role: state.agentDefinition.role,
-          type: "observe",
-          stepIndex: state.iteration,
-          ts: Date.now(),
-          payload: {
-            level: "error",
-            code: "ARTIFACT_GATE_UNSATISFIED",
-            scenario: scenarioKey,
-            missing: gate.missing,
-            message: hint,
-          },
-        });
-        return {
-          observations: [
-            ...state.observations,
-            {
-              level: "error",
-              code: "ARTIFACT_GATE_UNSATISFIED",
-              scenario: scenarioKey,
-              missing: gate.missing,
-              hint,
-            },
-          ],
-          finalResponse: {
-            status: "terminated",
-            reason: "artifact_gate_unsatisfied",
-            error: hint,
-            answerText,
-            iteration: state.iteration,
-            role: state.agentDefinition.role,
-          },
-        };
+          };
+        }
       }
     }
 
@@ -1022,7 +986,151 @@ export async function actNode(
       : {}
     : enrichedToolParams;
   const requestFingerprint = buildToolCallFingerprint({ targetName, params: fingerprintParams });
+
+  // While scenario write-contract tools remain not_attempted, do not burn the
+  // budget re-running inventory/probe tools (even with different params).
+  if (SCENARIO_STALL_TOOLS.has(targetName)) {
+    const priorSuccessCount = state.toolCalls.filter(
+      (call) =>
+        String(call.toolName ?? "") === targetName &&
+        (call.status === "success" || call.status === "deduplicated")
+    ).length;
+    // Allow one extra screener pass for param tweaks; other stall tools get one shot.
+    const maxAllowed = targetName === "run_screener" ? 2 : 1;
+    if (priorSuccessCount >= maxAllowed) {
+      let nextActionHint: string | null = null;
+      const stallSnapshot = resolveSharedSnapshot(state, availableTools);
+      try {
+        if (stallSnapshot?.scenarioKey) {
+          const requiredTools = getScenarioExpectation(stallSnapshot.scenarioKey).requiredTools;
+          const { notAttempted } = assessRequiredToolGate({
+            requiredTools,
+            authorizedTools: stallSnapshot.authorizedTools,
+            attemptedTools: stallSnapshot.attemptedTools,
+            runnableTools: availableTools,
+            unavailableManifestTools: [],
+            market: "UNKNOWN",
+          });
+          const stillNeededForContract = notAttempted.some((gap) =>
+            toolMatchesRequiredCapability(targetName, gap.capability)
+          );
+          if (notAttempted.length > 0 && !stillNeededForContract) {
+            nextActionHint = buildRequiredToolNextActionHint({ notAttempted });
+            try {
+              const sqliteHandle = getRuntimeSqlite();
+              const goal =
+                typeof inboundPayload.goal === "string" ? inboundPayload.goal : null;
+              const recovery = planContractRecovery({
+                sqlite: sqliteHandle,
+                snapshot: stallSnapshot,
+                availableTools,
+                goal,
+                notAttempted,
+              });
+              if (recovery.hint) {
+                nextActionHint = `${nextActionHint}\n\n${recovery.hint}`;
+              }
+            } catch {
+              /* keep nextActionHint */
+            }
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
+      if (nextActionHint) {
+        const message = `已成功调用过 ${targetName}；场景合同工具尚未完成，禁止继续探活/重复盘点。\n\n${nextActionHint}`;
+        const observation = {
+          level: "warn" as const,
+          toolGovernance: true,
+          code: "SCENARIO_STALL_TOOL_BLOCKED",
+          toolName: targetName,
+          fingerprint: requestFingerprint,
+          message,
+          recovery: {
+            nextAction: "switch_tool" as const,
+            allowSameToolRetry: false,
+            guidance: message,
+          },
+        };
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: observation,
+        });
+        return {
+          toolCalls: [
+            ...state.toolCalls,
+            {
+              toolCallId,
+              toolName: targetName,
+              status: "deduplicated",
+              fingerprint: requestFingerprint,
+              stepIndex: state.iteration,
+              completedAt: Date.now(),
+              reason: message,
+            },
+          ],
+          observations: [...state.observations, observation],
+          noProgressRetryCount: 0,
+        };
+      }
+
+      // Always block after stall budget even without next-action hint.
+      {
+        const message = `已成功调用过 ${targetName}；场景合同工具尚未完成，禁止继续探活/重复盘点。${
+          nextActionHint ? `\n\n${nextActionHint}` : ""
+        }`;
+        const observation = {
+          level: "warn" as const,
+          toolGovernance: true,
+          code: "SCENARIO_STALL_TOOL_BLOCKED",
+          toolName: targetName,
+          fingerprint: requestFingerprint,
+          message,
+          recovery: {
+            nextAction: "switch_tool" as const,
+            allowSameToolRetry: false,
+            guidance: message,
+          },
+        };
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: observation,
+        });
+        return {
+          toolCalls: [
+            ...state.toolCalls,
+            {
+              toolCallId,
+              toolName: targetName,
+              status: "deduplicated",
+              fingerprint: requestFingerprint,
+              stepIndex: state.iteration,
+              completedAt: Date.now(),
+              reason: message,
+            },
+          ],
+          observations: [...state.observations, observation],
+          noProgressRetryCount: 0,
+        };
+      }
+    }
+  }
+
   const reusableCall = findReusableSuccessfulToolCall({
+
     targetName,
     fingerprint: requestFingerprint,
     priorToolCalls: state.toolCalls,
@@ -1030,7 +1138,43 @@ export async function actNode(
   if (reusableCall) {
     const noProgressRetryCount = (state.noProgressRetryCount ?? 0) + 1;
     const priorStep = reusableCall.stepIndex ?? "earlier";
-    const message = `已在本任务第 ${priorStep} 步成功取得相同 ${targetName} 请求的结果，禁止原样重复调用。请基于已有结果继续分析、调用尚未执行的工具，或用 tool=none 汇总。`;
+    let message = `已在本任务第 ${priorStep} 步成功取得相同 ${targetName} 请求的结果，禁止原样重复调用。请基于已有结果继续分析、调用尚未执行的工具，或用 tool=none 汇总。`;
+    let nextActionHint: string | null = null;
+    try {
+      const snapshot = resolveSharedSnapshot(state, availableTools);
+      if (snapshot?.scenarioKey) {
+        const requiredTools = getScenarioExpectation(snapshot.scenarioKey).requiredTools;
+        const { notAttempted } = assessRequiredToolGate({
+          requiredTools,
+          authorizedTools: snapshot.authorizedTools,
+          attemptedTools: snapshot.attemptedTools,
+          runnableTools: availableTools,
+          unavailableManifestTools: [],
+          market: "UNKNOWN",
+        });
+        nextActionHint = buildRequiredToolNextActionHint({ notAttempted });
+        if (!nextActionHint && !snapshot.artifactsOk) {
+          nextActionHint = [
+            "## 合同工具已调用但必备产物仍缺失",
+            buildArtifactGapHint({
+              ok: false,
+              missing: snapshot.missingArtifactTables.map((table) => ({
+                table,
+                rows: 0,
+                minRows: 1,
+              })),
+              scenario: snapshot.scenarioKey,
+            } as never),
+            "禁止重复已成功工具；请调用上方恢复顺序中的写工具补齐产物。",
+          ].join("\n");
+        }
+        if (nextActionHint) {
+          message = `${message}\n\n${nextActionHint}`;
+        }
+      }
+    } catch {
+      /* best-effort redirect; fall through to default no-progress handling */
+    }
     const observation = {
       level: "warn" as const,
       toolGovernance: true,
@@ -1040,7 +1184,9 @@ export async function actNode(
       reusedToolCallId: reusableCall.toolCallId ?? null,
       message,
       recovery: {
-        nextAction: "continue_with_limits" as const,
+        nextAction: (nextActionHint ? "switch_tool" : "continue_with_limits") as
+          | "switch_tool"
+          | "continue_with_limits",
         allowSameToolRetry: false,
         guidance: message,
       },
@@ -1055,6 +1201,10 @@ export async function actNode(
       ts: Date.now(),
       payload: observation,
     });
+    // If contract tools are still missing, do not terminate as no_progress —
+    // force another reason turn with an explicit next-action checklist.
+    const shouldTerminate =
+      !nextActionHint && shouldTerminateForNoProgress(noProgressRetryCount);
     return {
       toolCalls: [
         ...state.toolCalls,
@@ -1070,7 +1220,7 @@ export async function actNode(
         },
       ],
       observations: [...state.observations, observation],
-      ...(shouldTerminateForNoProgress(noProgressRetryCount)
+      ...(shouldTerminate
         ? {
             finalResponse: {
               status: "partial",
@@ -1080,7 +1230,7 @@ export async function actNode(
                 "已连续重复请求同一份已验证数据，系统已停止空转。请基于已有证据汇总，或在新任务中明确变更标的、时间范围、数据源或时间粒度。",
             },
           }
-        : { noProgressRetryCount }),
+        : { noProgressRetryCount: nextActionHint ? 0 : noProgressRetryCount }),
     };
   }
 
@@ -1386,7 +1536,7 @@ export async function actNode(
       if (mcp) {
         try {
           const mcpResult = await dispatchMcpToolCall({
-            projectId: projectId ?? undefined,
+            ...(projectId ? { projectId } : {}),
             definitionId: state.agentDefinition.id,
             serverName: mcp.serverName,
             toolName: mcp.toolName,
@@ -1459,9 +1609,9 @@ export async function actNode(
             runId: state.runId,
             traceId: state.traceId,
             agentInstanceId,
-            projectId,
+            ...(projectId ? { projectId } : {}),
             definition: state.agentDefinition,
-            reasonText: state.reasonText,
+            ...(state.reasonText ? { reasonText: state.reasonText } : {}),
             inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
             /**
              * 透传 toolCallId / agentStepId 给 builtin handler，让 shell.exec /
@@ -1759,7 +1909,10 @@ export async function actNode(
     payloadJson: { toolCallId, toolName, targetKind, status: "success", result: execution.value },
   });
 
-  const toolResult = execution.ok && execution.value ? execution.value : {};
+  const toolResult: Record<string, unknown> =
+    execution.ok && execution.value && typeof execution.value === "object"
+      ? (execution.value as Record<string, unknown>)
+      : {};
   const producerTaskId =
     typeof inboundPayload.taskId === "string" && inboundPayload.taskId.trim()
       ? inboundPayload.taskId
@@ -1799,6 +1952,53 @@ export async function actNode(
   }
   if (toolResult["fusionResult"]) {
     nextObservations.push({ fusionResult: toolResult["fusionResult"] });
+  }
+
+  // After a successful call, if scenario contract tools remain not_attempted,
+  // push an explicit next-action so the model does not burn the budget on
+  // another screener/list/readiness probe.
+  try {
+    const snapshot = resolveSharedSnapshot(state, availableTools);
+    if (snapshot?.scenarioKey) {
+      const requiredTools = getScenarioExpectation(snapshot.scenarioKey).requiredTools;
+      const attemptedTools = [...new Set([...snapshot.attemptedTools, targetName])];
+      const { notAttempted } = assessRequiredToolGate({
+        requiredTools,
+        authorizedTools: snapshot.authorizedTools,
+        attemptedTools,
+        runnableTools: availableTools,
+        unavailableManifestTools: [],
+        market: "UNKNOWN",
+      });
+      const hint = buildRequiredToolNextActionHint({ notAttempted });
+      if (hint) {
+        nextObservations.push({
+          level: "warn",
+          code: "REQUIRED_TOOL_NEXT_ACTION",
+          scenario: snapshot.scenarioKey,
+          afterTool: targetName,
+          hint,
+        });
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: {
+            level: "warn",
+            code: "REQUIRED_TOOL_NEXT_ACTION",
+            scenario: snapshot.scenarioKey,
+            afterTool: targetName,
+            message: hint,
+          },
+        });
+      }
+    }
+  } catch {
+    /* best-effort */
   }
 
   return {

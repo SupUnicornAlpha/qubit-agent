@@ -25,8 +25,8 @@ function pearson(x: number[], y: number[]): number {
   let dx = 0;
   let dy = 0;
   for (let i = 0; i < n; i++) {
-    const vx = x[i] - mx;
-    const vy = y[i] - my;
+    const vx = (x[i] ?? 0) - mx;
+    const vy = (y[i] ?? 0) - my;
     num += vx * vy;
     dx += vx * vx;
     dy += vy * vy;
@@ -69,11 +69,15 @@ export class QubitNativeResearchConnector extends ResearchConnector {
     const closes = bars.map((b) => b.close);
     const fwd: number[] = [];
     for (let i = 1; i < closes.length; i++) {
-      fwd.push(closes[i - 1] > 0 ? (closes[i] - closes[i - 1]) / closes[i - 1] : 0);
+      const previous = closes[i - 1] ?? 0;
+      const current = closes[i] ?? 0;
+      fwd.push(previous > 0 ? (current - previous) / previous : 0);
     }
     const mom: number[] = [];
     for (let i = 5; i < closes.length; i++) {
-      mom.push(closes[i - 5] > 0 ? (closes[i] - closes[i - 5]) / closes[i - 5] : 0);
+      const previous = closes[i - 5] ?? 0;
+      const current = closes[i] ?? 0;
+      mom.push(previous > 0 ? (current - previous) / previous : 0);
     }
     const factorName = params.factorDefinitions[0]?.name ?? "momentum_5d";
     const ic = pearson(mom.slice(0, fwd.length), fwd.slice(4));

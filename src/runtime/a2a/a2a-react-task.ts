@@ -13,7 +13,7 @@ import {
 } from "./a2a-task-cancellation";
 import {
   completeA2ATask,
-  listOpenA2ATasksForWorkflow,
+  listOpenChildA2ATasks,
   markA2ATaskWorking,
   recordA2ATaskProgress,
 } from "./a2a-task-service";
@@ -163,9 +163,14 @@ export function resolveA2aSpecialistMaxIterations(configured: number): number {
   return Math.min(Math.max(24, configured), 32);
 }
 
-/** 编排器负责汇总多专家结果、处理降级并形成最终答复，必须与 sandbox 预算对齐。 */
+/**
+ * The workflow's loopOptionsJson is the authoritative orchestration budget.
+ * Do not turn every A2A orchestration into 64 turns: that masks missing stop
+ * conditions and multiplies stale tool proposals.  Callers that genuinely
+ * need a larger budget set it explicitly on the workflow.
+ */
 export function resolveA2aOrchestratorMaxIterations(configured: number): number {
-  return Math.min(Math.max(64, configured), 64);
+  return Math.max(1, Math.floor(configured));
 }
 
 async function sendTaskProgress(
@@ -266,7 +271,7 @@ export async function runA2aReactTaskAssign(
     // A terminal parent must not leave specialists consuming tools in the
     // background. The interrupt is cooperative in-process and the task state
     // is persisted for reconnect/recovery.
-    const openChildren = await listOpenA2ATasksForWorkflow(workflowId, payload.taskId);
+    const openChildren = await listOpenChildA2ATasks(workflowId, payload.taskId);
     await Promise.all(
       openChildren.map((task) =>
         requestA2ATaskCancellation(task.id, `workflow_${status}_by_parent`)

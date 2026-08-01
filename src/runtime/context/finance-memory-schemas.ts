@@ -3,7 +3,6 @@
  */
 
 import { z } from "zod";
-import type { MemoryTier } from "./types";
 
 export const FactorArchiveMetaSchema = z.object({
   factorId: z.string().min(1),
@@ -193,24 +192,4 @@ export function validateMarketSnapshotMeta(
     };
   }
   return { ok: true, data: parsed.data };
-}
-
-export function defaultTierForSubKind(subKind: string): MemoryTier {
-  switch (subKind) {
-    case "market_snapshot":
-      return "shallow";
-    case "research_conclusion":
-    case "regime":
-    case "pnl_episode":
-    case "strategy_eval":
-    case "postmortem":
-      return "intermediate";
-    case "factor_archive":
-    case "strategy_recipe":
-    case "playbook":
-    case "execution_profile":
-      return "deep";
-    default:
-      return "intermediate";
-  }
 }

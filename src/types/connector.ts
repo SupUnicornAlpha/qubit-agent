@@ -87,6 +87,8 @@ export interface ConnectorOrderIntent {
   price?: number;
   timeInForce: TimeInForce;
   riskSignature?: string;
+  /** Connector-specific execution hints, such as broker provider/account and paper mode. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface ConnectorOrder {

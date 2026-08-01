@@ -435,7 +435,14 @@ agentRouter.post("/definitions/:id/prompt-preview", async (c) => {
       skillsJson?: unknown;
       subscriptionsJson?: unknown;
     }>()
-    .catch(() => ({}));
+    .catch(() => ({} as {
+      systemPrompt?: string;
+      promptMode?: PromptMode;
+      toolsJson?: unknown;
+      mcpServersJson?: unknown;
+      skillsJson?: unknown;
+      subscriptionsJson?: unknown;
+    }));
   const db = await getDb();
   const preview = await buildAgentPromptPreview(db, {
     definitionId,
@@ -538,7 +545,7 @@ agentRouter.put("/definitions/:id/pack/files", async (c) => {
       dataDir,
       definitionId,
       configRootUri: profile?.configRootUri ?? "",
-      agentMarkdown: body.agentMarkdown,
+      ...(body.agentMarkdown !== undefined ? { agentMarkdown: body.agentMarkdown } : {}),
       soulMarkdown: body.soulMarkdown ?? "",
       promptMarkdown: body.promptMarkdown ?? "",
     });
@@ -1243,8 +1250,8 @@ agentRouter.post("/mcp/test", async (c) => {
   }
   try {
     const data = await dispatchMcpToolCall({
-      projectId: body.projectId,
-      definitionId: body.definitionId,
+      ...(body.projectId !== undefined ? { projectId: body.projectId } : {}),
+      ...(body.definitionId !== undefined ? { definitionId: body.definitionId } : {}),
       serverName: body.serverName,
       toolName: body.toolName,
       arguments: body.arguments ?? {},
@@ -1349,14 +1356,14 @@ agentRouter.post("/mcp/sources", async (c) => {
   }>();
   if (!body.name || !body.baseUrl) return c.json({ error: "name and baseUrl are required" }, 400);
   const data = await upsertMcpSource({
-    id: body.id,
     name: body.name,
     baseUrl: body.baseUrl,
-    authType: body.authType,
-    authRef: body.authRef,
-    enabled: body.enabled,
-    isDefault: body.isDefault,
-    syncIntervalSec: body.syncIntervalSec,
+    ...(body.id !== undefined ? { id: body.id } : {}),
+    ...(body.authType !== undefined ? { authType: body.authType } : {}),
+    ...(body.authRef !== undefined ? { authRef: body.authRef } : {}),
+    ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+    ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}),
+    ...(body.syncIntervalSec !== undefined ? { syncIntervalSec: body.syncIntervalSec } : {}),
   });
   return c.json({ data }, 201);
 });
@@ -1377,11 +1384,11 @@ agentRouter.patch("/mcp/sources/:id", async (c) => {
     id,
     name: body.name,
     baseUrl: body.baseUrl,
-    authType: body.authType,
-    authRef: body.authRef,
-    enabled: body.enabled,
-    isDefault: body.isDefault,
-    syncIntervalSec: body.syncIntervalSec,
+    ...(body.authType !== undefined ? { authType: body.authType } : {}),
+    ...(body.authRef !== undefined ? { authRef: body.authRef } : {}),
+    ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+    ...(body.isDefault !== undefined ? { isDefault: body.isDefault } : {}),
+    ...(body.syncIntervalSec !== undefined ? { syncIntervalSec: body.syncIntervalSec } : {}),
   });
   if (body.isDefault) await setDefaultSource(id);
   return c.json({ data });
@@ -1402,9 +1409,9 @@ agentRouter.get("/mcp/market/catalog", async (c) => {
   const page = pageRaw ? Number(pageRaw) : 1;
   const pageSize = pageSizeRaw ? Number(pageSizeRaw) : 24;
   const data = await listCatalogItemsPaginated({
-    sourceId: sourceId || undefined,
-    q: q || undefined,
-    risk,
+    ...(sourceId ? { sourceId } : {}),
+    ...(q ? { q } : {}),
+    ...(risk ? { risk } : {}),
     page: Number.isFinite(page) ? page : 1,
     pageSize: Number.isFinite(pageSize) ? pageSize : 24,
   });
@@ -1429,11 +1436,11 @@ agentRouter.post("/mcp/market/install", async (c) => {
     projectId: body.projectId,
     catalogItemId: body.catalogItemId,
     serverName: body.serverName,
-    installedBy: body.installedBy,
-    command: body.command,
-    url: body.url,
-    toolName: body.toolName,
-    timeoutMs: body.timeoutMs,
+    ...(body.installedBy !== undefined ? { installedBy: body.installedBy } : {}),
+    ...(body.command !== undefined ? { command: body.command } : {}),
+    ...(body.url !== undefined ? { url: body.url } : {}),
+    ...(body.toolName !== undefined ? { toolName: body.toolName } : {}),
+    ...(body.timeoutMs !== undefined ? { timeoutMs: body.timeoutMs } : {}),
   });
   return c.json({ data }, 201);
 });
@@ -1463,11 +1470,11 @@ agentRouter.post("/mcp/market/installs/:id/test", async (c) => {
   const installId = c.req.param("id");
   const body = await c.req
     .json<{ toolName?: string; arguments?: Record<string, unknown> }>()
-    .catch(() => ({}));
+    .catch(() => ({} as { toolName?: string; arguments?: Record<string, unknown> }));
   const data = await testProjectInstall({
     installId,
-    toolName: body.toolName,
-    arguments: body.arguments,
+    ...(body.toolName !== undefined ? { toolName: body.toolName } : {}),
+    ...(body.arguments !== undefined ? { arguments: body.arguments } : {}),
   });
   return c.json({ ok: true, data });
 });
@@ -1486,7 +1493,7 @@ agentRouter.get("/skills/market/status", (c) => {
 agentRouter.post("/skills/market/refresh", async (c) => {
   const body = await c.req
     .json<{ baseUrl?: string; provider?: string; apiKey?: string }>()
-    .catch(() => ({}));
+    .catch(() => ({} as { baseUrl?: string; provider?: string; apiKey?: string }));
   const provider = (body.provider ?? "skillsmp").toLowerCase();
   try {
     if (provider === "open") {
@@ -1541,7 +1548,9 @@ agentRouter.get("/skills/market/search", async (c) => {
       q,
       page: safePage,
       pageSize: safePageSize,
-      apiKey: process.env.SKILLSMP_API_KEY,
+      ...(process.env.SKILLSMP_API_KEY !== undefined
+        ? { apiKey: process.env.SKILLSMP_API_KEY }
+        : {}),
     });
     return c.json({ data });
   } catch (err) {

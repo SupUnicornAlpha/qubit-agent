@@ -101,7 +101,7 @@ export async function pollPendingBrokerOrders(db: DbClient, nowIso: string): Pro
         await db
           .update(orderIntent)
           .set({
-            lifecycleStatus: live.status === "rejected" ? "rejected" : "cancelled",
+            lifecycleStatus: live.status === "rejected" ? "broker_rejected" : "cancelled",
             lifecycleUpdatedAt: nowIso,
           })
           .where(eq(orderIntent.id, task.orderIntentId));

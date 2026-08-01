@@ -432,8 +432,8 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
 };
 
 /** 取场景 expectation；未知场景抛错（避免静默 0 分） */
-export function getScenarioExpectation(scenario: ScenarioRecipe["key"]): ScenarioExpectation {
-  const exp = SCENARIO_EXPECTATIONS[scenario];
+export function getScenarioExpectation(scenario: string): ScenarioExpectation {
+  const exp = (SCENARIO_EXPECTATIONS as Record<string, ScenarioExpectation | undefined>)[scenario];
   if (!exp) {
     throw new Error(`[scenario-expectations] unknown scenario: ${scenario}`);
   }

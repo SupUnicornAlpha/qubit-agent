@@ -1,4 +1,4 @@
-import type { ConnectorConfig, ConnectorMeta, HealthCheckResult } from "../../types/connector";
+import type { ConnectorMeta } from "../../types/connector";
 import { BaseConnector } from "../base.connector";
 
 /**

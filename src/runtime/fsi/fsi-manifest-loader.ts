@@ -31,22 +31,6 @@ export async function resolveActiveFsiSkillIdsForRole(role: AgentRole): Promise<
   return [...new Set([...fromBundles, ...fromRole, ...fromWorkflows])];
 }
 
-export async function listActiveFsiSkillIds(): Promise<string[]> {
-  const manifest = await loadFsiManifest();
-  const roles = Object.keys(manifest.roleSkillDefaults) as AgentRole[];
-  const all = new Set<string>();
-  for (const role of roles) {
-    for (const id of await resolveActiveFsiSkillIdsForRole(role)) all.add(id);
-  }
-  const bundles = resolveEnabledFsiBundles();
-  for (const bundleId of bundles) {
-    const bundle = manifest.bundles[bundleId];
-    if (!bundle) continue;
-    for (const id of bundle.skillIds) all.add(id);
-  }
-  return [...all];
-}
-
 export async function getFsiWorkflowPlaybookPathsForRole(
   role: AgentRole
 ): Promise<

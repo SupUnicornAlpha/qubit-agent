@@ -12,7 +12,7 @@ export function computeSma(values: number[], period: number): number[] {
       out.push(Number.NaN);
     } else {
       let s = 0;
-      for (let j = 0; j < p; j++) s += values[i - j];
+      for (let j = 0; j < p; j++) s += values[i - j] ?? 0;
       out.push(s / p);
     }
   }
@@ -28,7 +28,7 @@ export function computeEma(values: number[], period: number): number[] {
     if (i === 0) {
       out.push(prev);
     } else {
-      prev = values[i] * k + prev * (1 - k);
+      prev = (values[i] ?? 0) * k + prev * (1 - k);
       out.push(prev);
     }
   }
@@ -42,7 +42,7 @@ export function computeRsi(values: number[], period = 14): number[] {
   let gain = 0;
   let loss = 0;
   for (let i = 1; i <= p; i++) {
-    const d = values[i] - values[i - 1];
+    const d = (values[i] ?? 0) - (values[i - 1] ?? 0);
     if (d >= 0) gain += d;
     else loss -= d;
   }
@@ -50,7 +50,7 @@ export function computeRsi(values: number[], period = 14): number[] {
   let avgLoss = loss / p;
   out[p] = avgLoss < 1e-12 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
   for (let i = p + 1; i < values.length; i++) {
-    const d = values[i] - values[i - 1];
+    const d = (values[i] ?? 0) - (values[i - 1] ?? 0);
     const g = d > 0 ? d : 0;
     const l = d < 0 ? -d : 0;
     avgGain = (avgGain * (p - 1) + g) / p;
@@ -74,9 +74,9 @@ export function computeMacd(
 ): MacdSeries {
   const emaFast = computeEma(values, fast);
   const emaSlow = computeEma(values, slow);
-  const macd = values.map((_, i) => emaFast[i] - emaSlow[i]);
+  const macd = values.map((_, i) => (emaFast[i] ?? 0) - (emaSlow[i] ?? 0));
   const signal = computeEma(macd.map((v) => (Number.isFinite(v) ? v : 0)), signalPeriod);
-  const histogram = macd.map((m, i) => m - signal[i]);
+  const histogram = macd.map((m, i) => m - (signal[i] ?? 0));
   return { macd, signal, histogram };
 }
 
@@ -97,7 +97,7 @@ export function computeBollinger(values: number[], period = 20, stdMult = 2): Bo
       continue;
     }
     const window = values.slice(i - period + 1, i + 1);
-    const mean = middle[i];
+    const mean = middle[i] ?? Number.NaN;
     const variance = window.reduce((a, x) => a + (x - mean) ** 2, 0) / period;
     const std = Math.sqrt(variance);
     upper.push(mean + stdMult * std);
@@ -122,9 +122,10 @@ export interface IndicatorSnapshot {
 export function snapshotIndicators(bars: BarData[], symbol: string): IndicatorSnapshot {
   const closes = numSeries(bars);
   const n = closes.length;
-  const last = n > 0 ? closes[n - 1] : 0;
+  const last = n > 0 ? (closes[n - 1] ?? 0) : 0;
+  const close20Ago = n >= 21 ? closes[n - 21] : undefined;
   const ret20 =
-    n >= 21 && closes[n - 21] > 0 ? (last - closes[n - 21]) / closes[n - 21] : 0;
+    close20Ago !== undefined && close20Ago > 0 ? (last - close20Ago) / close20Ago : 0;
   const sma20Arr = computeSma(closes, 20);
   const sma60Arr = computeSma(closes, 60);
   const rsi = computeRsi(closes, 14);
@@ -136,16 +137,16 @@ export function snapshotIndicators(bars: BarData[], symbol: string): IndicatorSn
     barCount: n,
     lastClose: last,
     return20d: ret20,
-    sma20: lastIdx >= 0 && Number.isFinite(sma20Arr[lastIdx]) ? sma20Arr[lastIdx] : null,
-    sma60: lastIdx >= 0 && Number.isFinite(sma60Arr[lastIdx]) ? sma60Arr[lastIdx] : null,
-    rsi14: lastIdx >= 0 && Number.isFinite(rsi[lastIdx]) ? rsi[lastIdx] : null,
-    macd: lastIdx >= 0 && Number.isFinite(macd.macd[lastIdx]) ? macd.macd[lastIdx] : null,
+    sma20: lastIdx >= 0 && Number.isFinite(sma20Arr[lastIdx]) ? (sma20Arr[lastIdx] ?? null) : null,
+    sma60: lastIdx >= 0 && Number.isFinite(sma60Arr[lastIdx]) ? (sma60Arr[lastIdx] ?? null) : null,
+    rsi14: lastIdx >= 0 && Number.isFinite(rsi[lastIdx]) ? (rsi[lastIdx] ?? null) : null,
+    macd: lastIdx >= 0 && Number.isFinite(macd.macd[lastIdx]) ? (macd.macd[lastIdx] ?? null) : null,
     macdSignal:
-      lastIdx >= 0 && Number.isFinite(macd.signal[lastIdx]) ? macd.signal[lastIdx] : null,
+      lastIdx >= 0 && Number.isFinite(macd.signal[lastIdx]) ? (macd.signal[lastIdx] ?? null) : null,
     bollinger: {
-      upper: lastIdx >= 0 && Number.isFinite(bb.upper[lastIdx]) ? bb.upper[lastIdx] : null,
-      middle: lastIdx >= 0 && Number.isFinite(bb.middle[lastIdx]) ? bb.middle[lastIdx] : null,
-      lower: lastIdx >= 0 && Number.isFinite(bb.lower[lastIdx]) ? bb.lower[lastIdx] : null,
+      upper: lastIdx >= 0 && Number.isFinite(bb.upper[lastIdx]) ? (bb.upper[lastIdx] ?? null) : null,
+      middle: lastIdx >= 0 && Number.isFinite(bb.middle[lastIdx]) ? (bb.middle[lastIdx] ?? null) : null,
+      lower: lastIdx >= 0 && Number.isFinite(bb.lower[lastIdx]) ? (bb.lower[lastIdx] ?? null) : null,
     },
   };
 }

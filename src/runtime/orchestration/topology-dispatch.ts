@@ -359,7 +359,3 @@ export const ORCHESTRATOR_BASE_TOOLS = [
 export function mergeOrchestratorToolsJson(topologyToolNames: string[]): string[] {
   return [...new Set([...ORCHESTRATOR_BASE_TOOLS, ...topologyToolNames])];
 }
-
-export function stripTopologyToolsFromList(tools: string[]): string[] {
-  return tools.filter((tool) => !isTopologyTeamTool(tool));
-}

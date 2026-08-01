@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { REQUIRED_CAPABILITY_PRIMARY_TOOL } from "../research-scenario/scenario-key-aliases";
 import {
   buildNotAttemptedDataGaps,
   toolMatchesRequiredCapability,
@@ -77,6 +78,27 @@ export function listWorkflowAttemptedToolsFromSqlite(
   return [...attempted];
 }
 
+/** Distinct tool names with semantic success on this workflow. */
+export function listWorkflowSuccessfulToolsFromSqlite(
+  sqlite: Database,
+  workflowRunId: string,
+  stateSuccessfulTools: readonly string[] = []
+): string[] {
+  const rows = sqlite
+    .prepare(
+      `SELECT DISTINCT tool_name AS toolName
+       FROM tool_call_log
+       WHERE workflow_run_id = ?
+         AND lower(coalesce(status, '')) IN ('success', 'ok', 'completed')`
+    )
+    .all(workflowRunId) as Array<{ toolName: string }>;
+  const successful = new Set<string>(stateSuccessfulTools.filter(Boolean));
+  for (const row of rows) {
+    if (row.toolName) successful.add(row.toolName);
+  }
+  return [...successful];
+}
+
 export function assessRequiredToolGate(input: {
   requiredTools: readonly string[];
   authorizedTools: readonly string[];
@@ -132,4 +154,25 @@ export function assessRequiredToolGate(input: {
     authorizedTools: authorized,
     attemptedTools: [...input.attemptedTools],
   };
+}
+
+/** Human-readable next action when required capabilities remain not_attempted. */
+export function buildRequiredToolNextActionHint(input: {
+  notAttempted: readonly DataGap[];
+}): string | null {
+  if (input.notAttempted.length === 0) return null;
+  const seen = new Set<string>();
+  const steps: string[] = [];
+  for (const gap of input.notAttempted) {
+    const tool = REQUIRED_CAPABILITY_PRIMARY_TOOL[gap.capability] ?? gap.capability;
+    if (seen.has(tool)) continue;
+    seen.add(tool);
+    steps.push(`${gap.capability} → 立即调用 \`${tool}\``);
+  }
+  return [
+    "## 合同工具尚未调用（禁止继续探活/重复 list）",
+    `未满足能力：${input.notAttempted.map((g) => g.capability).join("、")}。`,
+    ...steps.map((s) => `- ${s}`),
+    "下一动作必须是上表中的合同工具之一；禁止 market.readiness / resolve_symbol / 重复 factor.list / 空 update_plan。",
+  ].join("\n");
 }

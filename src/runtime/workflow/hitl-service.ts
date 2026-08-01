@@ -392,7 +392,7 @@ export function evaluateChatHitlTrigger(input: {
       source: "mode_always",
       reason: "用户设置每次工具调用都需要人工确认",
       inputKind: input.hitlHint?.inputKind ?? "approve_only",
-      options: input.hitlHint?.options,
+      ...(input.hitlHint?.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
   }
   if (mode === "off") {
@@ -406,7 +406,7 @@ export function evaluateChatHitlTrigger(input: {
       source: "ai_hint",
       reason: input.hitlHint.reason ?? "Orchestrator 主动请求人工确认（reason 缺省）",
       inputKind: input.hitlHint.inputKind ?? "approve_only",
-      options: input.hitlHint.options,
+      ...(input.hitlHint.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
   }
   return { trigger: false, source: "none", reason: "" };
@@ -523,7 +523,7 @@ export function evaluateTeamHitlTrigger(input: {
       source: "rule_scale",
       reason: `规模较大：${input.symbols.length} 标的 / ${input.analystSlotCount} 分析师`,
       inputKind: input.hitlHint?.inputKind ?? "approve_only",
-      options: input.hitlHint?.options,
+      ...(input.hitlHint?.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
   }
 
@@ -534,7 +534,7 @@ export function evaluateTeamHitlTrigger(input: {
       source: "rule_retry",
       reason: "上次同标的分析失败，建议确认本次规划",
       inputKind: input.hitlHint?.inputKind ?? "approve_only",
-      options: input.hitlHint?.options,
+      ...(input.hitlHint?.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
   }
 
@@ -545,7 +545,7 @@ export function evaluateTeamHitlTrigger(input: {
       source: "mode_always",
       reason: "用户设置每次规划都人工确认",
       inputKind: input.hitlHint?.inputKind ?? "approve_only",
-      options: input.hitlHint?.options,
+      ...(input.hitlHint?.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
   }
 
@@ -556,7 +556,7 @@ export function evaluateTeamHitlTrigger(input: {
       source: "ai",
       reason: input.hitlHint.reason ?? "Orchestrator 判定本次规划需要人工确认",
       inputKind: input.hitlHint.inputKind ?? "approve_only",
-      options: input.hitlHint.options,
+      ...(input.hitlHint.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
   }
 
@@ -853,7 +853,7 @@ export async function pauseForUserInterrupt(input: {
  */
 async function getRecentSameTickerStatus(
   ticker: string,
-  mode: string
+  mode: "research" | "backtest" | "simulation" | "live"
 ): Promise<"completed" | "failed" | null> {
   if (!ticker.trim()) return null;
   const db = await getDb();

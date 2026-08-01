@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   alertEvent,
@@ -103,16 +103,4 @@ export async function getMonitorSummary(input?: {
     instanceErrors,
     stuckThresholdMinutes: stuckMinutes,
   };
-}
-
-export async function scanStuckWorkflows(stuckMinutes = DEFAULT_STUCK_MINUTES) {
-  const db = await getDb();
-  const stuckBefore = new Date(Date.now() - stuckMinutes * 60 * 1000).toISOString();
-  const rows = await db
-    .select()
-    .from(workflowRun)
-    .where(and(eq(workflowRun.status, "running"), lt(workflowRun.startedAt, stuckBefore)))
-    .orderBy(workflowRun.startedAt)
-    .limit(50);
-  return rows;
 }

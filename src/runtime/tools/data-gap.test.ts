@@ -59,4 +59,15 @@ describe("data gap taxonomy", () => {
     expect(toolMatchesRequiredCapability("evaluate_risk", "risk")).toBe(true);
     expect(toolMatchesRequiredCapability("evaluate_risk", "order")).toBe(false);
   });
+
+  test("factor.list is inventory-only and does not satisfy the factor write contract", () => {
+    expect(toolMatchesRequiredCapability("factor.list", "factor")).toBe(false);
+    expect(toolMatchesRequiredCapability("factor.register", "factor")).toBe(true);
+    expect(toolMatchesRequiredCapability("factor.autoEvaluate", "factor")).toBe(false);
+  });
+
+  test("order.create_intent satisfies risk because it embeds pre-trade risk_decision", () => {
+    expect(toolMatchesRequiredCapability("order.create_intent", "order")).toBe(true);
+    expect(toolMatchesRequiredCapability("order.create_intent", "risk")).toBe(true);
+  });
 });

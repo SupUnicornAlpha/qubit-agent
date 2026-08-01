@@ -1628,7 +1628,18 @@ export const orderIntent = sqliteTable("order_intent", {
   strategyRuntimeId: text("strategy_runtime_id"),
   signalBarTime: text("signal_bar_time"),
   lifecycleStatus: text("lifecycle_status", {
-    enum: ["created", "risk_checked", "submitted", "partial", "filled", "cancelled", "rejected"],
+    enum: [
+      "created",
+      "risk_checked",
+      "pending_approval",
+      "risk_blocked",
+      "broker_rejected",
+      "submitted",
+      "partial",
+      "filled",
+      "cancelled",
+      "rejected",
+    ],
   })
     .notNull()
     .default("created"),

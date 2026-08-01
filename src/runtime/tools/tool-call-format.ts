@@ -304,22 +304,22 @@ function extractJsonToolBlock(text: string): string | null {
   // 1. sentinel
   const sentinels = [...text.matchAll(/<TOOL_CALL>\s*([\s\S]*?)\s*<\/TOOL_CALL>/gi)];
   if (sentinels.length > 0) {
-    const inner = sentinels[sentinels.length - 1][1]?.trim();
+    const inner = sentinels[sentinels.length - 1]?.[1]?.trim();
     if (inner && inner.startsWith("{")) return inner;
   }
 
   // 2. fenced —— 取最后一个含 "tool" 的
   const fences = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)];
   for (let i = fences.length - 1; i >= 0; i--) {
-    const inner = fences[i][1]?.trim();
+    const inner = fences[i]?.[1]?.trim();
     if (inner && inner.startsWith("{") && inner.includes('"tool"')) return inner;
   }
 
   // 3. 启发式
   const matches = [...text.matchAll(/\{[\s\S]*?\}/g)];
   for (let i = matches.length - 1; i >= 0; i--) {
-    const candidate = matches[i][0];
-    if (candidate.includes('"tool"')) return candidate;
+    const candidate = matches[i]?.[0];
+    if (candidate?.includes('"tool"')) return candidate;
   }
   return null;
 }
@@ -414,7 +414,7 @@ export function parseToolCallFromReason(
         : typeof parsed["message"] === "string"
           ? parsed["message"]
           : undefined;
-    return { kind: "none", summary };
+    return { kind: "none", ...(summary !== undefined ? { summary } : {}) };
   }
 
   if (!isAllowedTool(toolName, availableTools)) {
@@ -438,7 +438,7 @@ export function parseToolCallFromReason(
     };
   }
 
-  return { kind: "tool", toolName, params, mcp };
+  return { kind: "tool", toolName, params, ...(mcp !== undefined ? { mcp } : {}) };
 }
 
 /** sentinel 含前后换行一并吃掉，避免产生连续空行残留 */

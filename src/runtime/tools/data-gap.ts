@@ -47,8 +47,8 @@ const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
     "factor.register",
     "factor.compute",
     "factor.evaluate",
-    "factor.autoevaluate",
-    "factor.list",
+    // autoEvaluate often re-scores existing factors without creating a
+    // workflow-scoped factor_definition; do not count it as the write contract.
     "compute_factors",
   ],
   strategy: [
@@ -58,7 +58,15 @@ const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
     "version_strategy",
   ],
   order: ["order.create_intent", "submit_order", "order_intent", "create_intent"],
-  risk: ["evaluate_risk", "rule.evaluate", "risk_decision", "risk.check", "call_team_risk"],
+  // order.create_intent runs pre-trade risk and writes risk_decision.
+  risk: [
+    "evaluate_risk",
+    "rule.evaluate",
+    "risk_decision",
+    "risk.check",
+    "call_team_risk",
+    "order.create_intent",
+  ],
 };
 
 export function toolMatchesRequiredCapability(toolName: string, required: string): boolean {

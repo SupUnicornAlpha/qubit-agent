@@ -136,33 +136,41 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       const paper = args.paper === true;
       return paper
         ? executeIntentPaper({ intentOrderId })
-        : executeIntentLive({ intentOrderId, provider, accountRef });
+        : executeIntentLive({
+            intentOrderId,
+            provider,
+            ...(accountRef !== undefined ? { accountRef } : {}),
+          });
     }
     case "broker_cancel_order": {
       const provider = providerFromArgs(args);
       const brokerOrderId = String(args.brokerOrderId ?? "");
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
+      const intentOrderId = typeof args.intentOrderId === "string" ? args.intentOrderId : undefined;
       await brokerCancelOrder({
         provider,
-        accountRef: typeof args.accountRef === "string" ? args.accountRef : undefined,
+        ...(accountRef !== undefined ? { accountRef } : {}),
         brokerOrderId,
-        intentOrderId: typeof args.intentOrderId === "string" ? args.intentOrderId : undefined,
+        ...(intentOrderId !== undefined ? { intentOrderId } : {}),
       });
       return { ok: true };
     }
     case "broker_get_fills": {
       const provider = providerFromArgs(args);
       const brokerOrderId = String(args.brokerOrderId ?? "");
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
       return brokerGetFills({
         provider,
-        accountRef: typeof args.accountRef === "string" ? args.accountRef : undefined,
+        ...(accountRef !== undefined ? { accountRef } : {}),
         brokerOrderId,
       });
     }
     case "broker_get_positions": {
       const provider = providerFromArgs(args);
+      const accountRef = typeof args.accountRef === "string" ? args.accountRef : undefined;
       return brokerGetPositions({
         provider,
-        accountRef: typeof args.accountRef === "string" ? args.accountRef : undefined,
+        ...(accountRef !== undefined ? { accountRef } : {}),
       });
     }
     default:

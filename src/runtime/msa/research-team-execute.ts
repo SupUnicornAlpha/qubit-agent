@@ -53,7 +53,10 @@ export function parseResearchTeamExecutePayload(
   const jobId = typeof pr.jobId === "string" ? pr.jobId : "";
   const ticker = typeof pr.ticker === "string" ? pr.ticker.trim() : "";
   const scope = (pr.scope as ResearchScopeInput | null | undefined) ?? undefined;
-  const resolved = resolveResearchScope({ ticker, scope });
+  const resolved = resolveResearchScope({
+    ...(ticker ? { ticker } : {}),
+    ...(scope !== undefined ? { scope } : {}),
+  });
 
   if (!jobId || (!ticker && !scope && resolved.primarySymbol === "UNKNOWN")) {
     return {
@@ -84,10 +87,10 @@ export function parseResearchTeamExecutePayload(
     params: {
       jobId,
       ticker: ticker || resolved.primarySymbol,
-      scope,
-      context,
-      analystDefinitionIds,
-      analystRoles,
+      ...(scope !== undefined ? { scope } : {}),
+      ...(context !== undefined ? { context } : {}),
+      ...(analystDefinitionIds !== undefined ? { analystDefinitionIds } : {}),
+      ...(analystRoles !== undefined ? { analystRoles } : {}),
     },
   };
 }
@@ -109,10 +112,12 @@ export async function executeResearchTeamWorkflow(input: {
   const teamResult = await runAnalystTeam({
     workflowRunId: input.workflowRunId,
     ticker: input.params.ticker,
-    scope: input.params.scope,
-    context: input.params.context,
-    analystRoles: input.params.analystRoles,
-    analystDefinitionIds: input.params.analystDefinitionIds,
+    ...(input.params.scope !== undefined ? { scope: input.params.scope } : {}),
+    ...(input.params.context !== undefined ? { context: input.params.context } : {}),
+    ...(input.params.analystRoles !== undefined ? { analystRoles: input.params.analystRoles } : {}),
+    ...(input.params.analystDefinitionIds !== undefined
+      ? { analystDefinitionIds: input.params.analystDefinitionIds }
+      : {}),
     hitlApproval: input.hitlApproval ?? null,
   });
   await completeAnalystResearchJob(input.params.jobId, teamResult);
@@ -157,10 +162,10 @@ export function buildParsedResearchTeamFromToolParams(input: {
   return {
     jobId: input.jobId ?? randomUUID(),
     ticker,
-    scope,
-    context,
-    analystDefinitionIds,
-    analystRoles,
+    ...(scope !== undefined ? { scope } : {}),
+    ...(context !== undefined ? { context } : {}),
+    ...(analystDefinitionIds !== undefined ? { analystDefinitionIds } : {}),
+    ...(analystRoles !== undefined ? { analystRoles } : {}),
   };
 }
 

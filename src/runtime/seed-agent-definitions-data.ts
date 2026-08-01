@@ -18,9 +18,32 @@ import {
 } from "./seed-agent-prompts";
 import type { RuntimeAgentDefinition } from "./types";
 
-function def(
-  partial: RuntimeAgentDefinition & { enabled?: boolean }
-): RuntimeAgentDefinition {
+type SeedDefinition = Omit<
+  RuntimeAgentDefinition,
+  | "mcpServers"
+  | "skills"
+  | "outputs"
+  | "subscriptions"
+  | "llmProvider"
+  | "maxIterations"
+  | "sandboxPolicyId"
+  | "enabled"
+> &
+  Partial<
+    Pick<
+      RuntimeAgentDefinition,
+      | "mcpServers"
+      | "skills"
+      | "outputs"
+      | "subscriptions"
+      | "llmProvider"
+      | "maxIterations"
+      | "sandboxPolicyId"
+      | "enabled"
+    >
+  >;
+
+function def(partial: SeedDefinition): RuntimeAgentDefinition {
   const role = partial.role;
   return {
     ...partial,

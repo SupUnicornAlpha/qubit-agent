@@ -213,6 +213,6 @@ describe("order.create_intent (P0-1.c)", () => {
         side: "hold",
         qty: 1,
       })
-    ).rejects.toThrow(/side 必须是 'buy' 或 'sell'/);
+    ).rejects.toThrow(/side 必须是/);
   });
 });

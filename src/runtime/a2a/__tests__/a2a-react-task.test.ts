@@ -50,9 +50,9 @@ describe("A2A specialist iteration budget", () => {
     expect(resolveA2aSpecialistMaxIterations(80)).toBe(32);
   });
 
-  test("aligns the orchestrator budget with the sandbox policy", () => {
-    expect(resolveA2aOrchestratorMaxIterations(24)).toBe(64);
-    expect(resolveA2aOrchestratorMaxIterations(80)).toBe(64);
+  test("does not silently inflate the orchestrator beyond the workflow budget", () => {
+    expect(resolveA2aOrchestratorMaxIterations(24)).toBe(24);
+    expect(resolveA2aOrchestratorMaxIterations(80)).toBe(80);
   });
 });
 

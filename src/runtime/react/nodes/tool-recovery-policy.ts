@@ -94,7 +94,7 @@ function findAlternatives(
     .map((name) => catalog.get(name))
     .filter(
       (entry): entry is NonNullable<typeof entry> =>
-        Boolean(entry) &&
+        entry !== undefined &&
         entry.category === failed.category &&
         entry.lifecycle !== "stub" &&
         entry.lifecycle !== "deprecated"

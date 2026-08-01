@@ -241,7 +241,3 @@ export function searchOpenSkillMarketEntriesPaginated(
 export function getOpenSkillMarketEntry(id: string): OpenSkillMarketEntry | undefined {
   return cache?.byId.get(id);
 }
-
-export function listOpenSkillRepositories(): Record<string, OpenSkillMarketRepository> {
-  return cache?.repositories ?? {};
-}

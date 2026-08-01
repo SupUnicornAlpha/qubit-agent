@@ -17,18 +17,7 @@ import {
   type ScenarioLaunchInput,
   type ScenarioValidateResult,
 } from "./types";
-
-const SCENARIO_KEY_ALIASES: Record<string, string> = {
-  research: "analyst_debate",
-  research_multi: "analyst_debate",
-  research_theme: "stock_screening",
-  stock_pick: "stock_screening",
-  stock_pick_short: "stock_screening",
-  factor: "factor_research",
-  strategy: "strategy_authoring",
-  strategy_long_short: "strategy_authoring",
-  live_trading_short: "live_trading",
-};
+import { SCENARIO_KEY_ALIASES } from "./scenario-key-aliases";
 
 function validateInput(
   schema: Record<string, FieldSchema>,

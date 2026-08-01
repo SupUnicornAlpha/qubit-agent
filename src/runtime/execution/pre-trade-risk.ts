@@ -299,6 +299,32 @@ export async function evaluatePreTradeForIntent(
     reason = aggregateNotes.length ? aggregateNotes.join("; ") : "manual_review_required";
   }
 
+  // Benchmark / paper path: even with zero enabled rules, persist an allow
+  // decision so live_trading artifact + H8 telemetry contracts are observable.
+  if (rules.length === 0) {
+    const paperRuleId = randomUUID();
+    await db.insert(riskRule).values({
+      id: paperRuleId,
+      projectId,
+      name: "paper_default_allow",
+      scope: "pre_trade",
+      ruleExpr: JSON.stringify({ kind: "max_notional", max: 1e12 }),
+      severity: "info",
+      enabled: true,
+      version: 1,
+    });
+    await db.insert(riskDecision).values({
+      id: randomUUID(),
+      orderIntentId,
+      riskRuleId: paperRuleId,
+      agentInstanceId: null,
+      decision: outcome,
+      reason,
+      evaluatedAt: nowIso,
+      signature: signRiskDecision(orderIntentId, paperRuleId, outcome),
+    });
+  }
+
   return { outcome, reason };
 }
 
@@ -327,12 +353,12 @@ async function insertHitAndDecision(
     orderIntentId: string;
     rule: typeof riskRule.$inferSelect;
     violated: boolean;
-    hitValue?: number;
-    thresholdValue?: number;
+    hitValue?: number | undefined;
+    thresholdValue?: number | undefined;
     message: string;
     nowIso: string;
-    decisionOverride?: "allow" | "block" | "review";
-    hitSeverityOverride?: "info" | "warn" | "block" | "critical";
+    decisionOverride?: "allow" | "block" | "review" | undefined;
+    hitSeverityOverride?: "info" | "warn" | "block" | "critical" | undefined;
   }
 ): Promise<void> {
   const {

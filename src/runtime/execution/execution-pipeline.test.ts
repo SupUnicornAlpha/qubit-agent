@@ -196,7 +196,7 @@ describe("execution pipeline (memory sqlite)", () => {
       .select()
       .from(schema.orderIntent)
       .where(eq(schema.orderIntent.id, created.orderIntentId));
-    expect(rejectedIntent[0]?.lifecycleStatus).toBe("rejected");
+    expect(rejectedIntent[0]?.lifecycleStatus).toBe("risk_blocked");
 
     await processExecutionTasks(db);
 

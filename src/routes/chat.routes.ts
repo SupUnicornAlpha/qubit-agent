@@ -100,22 +100,23 @@ chatRouter.post("/sessions", async (c) => {
  */
 chatRouter.post("/sessions/:sessionId/turns", async (c) => {
   const sessionId = c.req.param("sessionId");
+  type TurnBody = {
+    projectId?: string;
+    message?: string;
+    workflowRunId?: string;
+    workflowMode?: "research" | "backtest" | "simulation" | "live";
+    reuseSessionWorkflow?: boolean;
+    turnMode?: "new_goal" | "continue_goal";
+    loopKind?: AgentLoopKind;
+    roleReasoner?: AgentLoopKind;
+    hitlMode?: "off" | "ai" | "always";
+    agentMode?: AgentControlMode;
+    processConfig?: WorkflowProcessConfig;
+    preserveGoal?: boolean;
+  };
   const body = await c.req
-    .json<{
-      projectId?: string;
-      message?: string;
-      workflowRunId?: string;
-      workflowMode?: "research" | "backtest" | "simulation" | "live";
-      reuseSessionWorkflow?: boolean;
-      turnMode?: "new_goal" | "continue_goal";
-      loopKind?: AgentLoopKind;
-      roleReasoner?: AgentLoopKind;
-      hitlMode?: "off" | "ai" | "always";
-      agentMode?: AgentControlMode;
-      processConfig?: WorkflowProcessConfig;
-      preserveGoal?: boolean;
-    }>()
-    .catch(() => ({}));
+    .json<TurnBody>()
+    .catch(() => ({}) as TurnBody);
   const projectId = body.projectId?.trim() ?? "";
   const message = body.message?.trim() ?? "";
   if (!projectId || !message) {
@@ -256,7 +257,9 @@ chatRouter.post("/sessions/:sessionId/strategy-scripts", async (c) => {
     sessionId,
     body.workflowRunId ?? undefined
   );
-  if (!wfCheck.ok) return c.json(wfCheck.body, wfCheck.status);
+  if (!wfCheck.ok) {
+    return wfCheck.status === 404 ? c.json(wfCheck.body, 404) : c.json(wfCheck.body, 400);
+  }
   const purpose = body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : "both";
   const chartJson =
     body.chartSnapshotJson && typeof body.chartSnapshotJson === "object"
@@ -328,7 +331,9 @@ chatRouter.patch("/strategy-scripts/:scriptId", async (c) => {
     row.sessionId,
     body.workflowRunId !== undefined ? body.workflowRunId : row.workflowRunId
   );
-  if (!wfCheck.ok) return c.json(wfCheck.body, wfCheck.status);
+  if (!wfCheck.ok) {
+    return wfCheck.status === 404 ? c.json(wfCheck.body, 404) : c.json(wfCheck.body, 400);
+  }
   const purpose = body.purpose && purposeEnum.includes(body.purpose) ? body.purpose : row.purpose;
   const patch: Partial<typeof indicatorStrategyScript.$inferInsert> = {
     updatedAt: new Date().toISOString(),

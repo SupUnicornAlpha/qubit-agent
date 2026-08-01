@@ -16,11 +16,6 @@ export function requestInterrupt(workflowRunId: string): void {
   pending.add(workflowRunId);
 }
 
-/** 是否有未消费的中断请求（只读，不清除）。 */
-export function isInterruptRequested(workflowRunId: string): boolean {
-  return pending.has(workflowRunId);
-}
-
 /** 取走并清除中断请求；返回此前是否置位（check-and-clear，避免重复触发）。 */
 export function consumeInterrupt(workflowRunId: string): boolean {
   return pending.delete(workflowRunId);

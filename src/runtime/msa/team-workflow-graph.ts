@@ -432,14 +432,14 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   }
   for (const sr of skillRows) {
     const role = sr.definitionId ? defRole.get(sr.definitionId) : undefined;
-    if (role && role !== "unknown") bumpSkillEdge(role);
+    if (role) bumpSkillEdge(role);
   }
 
   const nodeRoles = new Set<string>();
   for (const k of edgeMap.keys()) {
     const [x, y] = k.split("||");
-    nodeRoles.add(x);
-    nodeRoles.add(y);
+    if (x) nodeRoles.add(x);
+    if (y) nodeRoles.add(y);
   }
   for (const r of rows) {
     nodeRoles.add(r.fromRole);
@@ -453,7 +453,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   /** 本工作流实例上的角色（含 orchestrator、各 analyst 槽位等），避免仅有边外角色时漏节点 */
   for (const inst of instances) {
     const role = defRole.get(inst.definitionId);
-    if (role && role !== "unknown") nodeRoles.add(role);
+    if (role) nodeRoles.add(role);
   }
 
   const nodes: TeamGraphNode[] = [...nodeRoles]
@@ -467,7 +467,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     }));
 
   const edges: TeamGraphEdge[] = [...edgeMap.entries()].map(([key, agg]) => {
-    const [a, b] = key.split("||");
+    const [a = "unknown", b = "unknown"] = key.split("||");
     return {
       key,
       a,

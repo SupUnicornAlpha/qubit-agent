@@ -68,7 +68,7 @@ function floorToMinute(input: Date): Date {
 export function supportsCronExpression(expr: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
-  const [minute, hour, day, month, weekday] = parts;
+  const [minute = "", hour = "", day = "", month = "", weekday = ""] = parts;
   if (![hour, day, month, weekday].every((item) => item === "*")) return false;
   return minute === "*" || /^\*\/\d+$/.test(minute);
 }
@@ -106,16 +106,21 @@ function parseScheduledPayload(raw: unknown): ScheduledExecutionPayload | null {
   if (!ticker || !["long", "short", "close"].includes(String(direction))) return null;
   if (!Number.isFinite(quantity) || quantity <= 0) return null;
   if (!Number.isFinite(targetPrice) || targetPrice <= 0) return null;
+  const rationale = typeof payload["rationale"] === "string" ? payload["rationale"] : undefined;
+  const expectedReturn = Number.isFinite(Number(payload["expectedReturn"]))
+    ? Number(payload["expectedReturn"])
+    : undefined;
+  const expectedRisk = Number.isFinite(Number(payload["expectedRisk"]))
+    ? Number(payload["expectedRisk"])
+    : undefined;
   return {
     ticker,
     direction: direction as "long" | "short" | "close",
     quantity,
     targetPrice,
-    rationale: typeof payload["rationale"] === "string" ? payload["rationale"] : undefined,
-    expectedReturn: Number.isFinite(Number(payload["expectedReturn"]))
-      ? Number(payload["expectedReturn"])
-      : undefined,
-    expectedRisk: Number.isFinite(Number(payload["expectedRisk"])) ? Number(payload["expectedRisk"]) : undefined,
+    ...(rationale !== undefined ? { rationale } : {}),
+    ...(expectedReturn !== undefined ? { expectedReturn } : {}),
+    ...(expectedRisk !== undefined ? { expectedRisk } : {}),
     brokerProvider: payload["brokerProvider"] === "ib" ? "ib" : "futu",
   };
 }
@@ -163,7 +168,7 @@ function parseTriggerGate(raw: unknown): TriggerGateConfig {
 }
 
 function parseHmToMinutes(hm: string): number {
-  const [h, m] = hm.split(":").map((v) => Number(v));
+  const [h = Number.NaN, m = Number.NaN] = hm.split(":").map((v) => Number(v));
   if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
   return Math.max(0, Math.min(23, h)) * 60 + Math.max(0, Math.min(59, m));
 }
@@ -290,15 +295,15 @@ export async function executeScheduledJobAction(
     | undefined;
   const created = await (dependencies.dispatchWorkflow ?? createAndDispatchWorkflow)({
     projectId: job.projectId,
-    sessionId: job.sessionId ?? undefined,
+    ...(job.sessionId !== null ? { sessionId: job.sessionId } : {}),
     source: "api",
     goal,
     mode,
     taskType: "scheduled_workflow_start",
     params: { scheduledJobId: job.id, triggerAt: triggerAtIso },
-    loopKind,
-    loopOptionsJson,
-    executionPath,
+    ...(loopKind !== undefined ? { loopKind } : {}),
+    ...(loopOptionsJson !== undefined ? { loopOptionsJson } : {}),
+    ...(executionPath !== undefined ? { executionPath } : {}),
   });
 
   let intentOrderId: string | undefined;
@@ -313,7 +318,11 @@ export async function executeScheduledJobAction(
     intentOrderId = auto.intentOrderId;
     executionReportId = auto.executionReportId;
   }
-  return { workflowRunId: created.data.id, intentOrderId, executionReportId };
+  return {
+    workflowRunId: created.data.id,
+    ...(intentOrderId !== undefined ? { intentOrderId } : {}),
+    ...(executionReportId !== undefined ? { executionReportId } : {}),
+  };
 }
 
 async function runJob(job: typeof scheduledJob.$inferSelect, triggerAtIso: string): Promise<void> {

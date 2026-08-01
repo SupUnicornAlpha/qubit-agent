@@ -42,6 +42,7 @@ export function scoreRunEnvelope(envelope: RunEnvelope): RunScorecard {
     pass: hardPass && trajectoryPass,
     score,
     promotionEligible: hardPass && hardComplete && trajectoryPass,
+    ...(envelope.deliveryVerdict ? { deliveryVerdict: envelope.deliveryVerdict } : {}),
   };
 }
 
@@ -73,6 +74,29 @@ function scoreHard(envelope: RunEnvelope): AssertionResult[] {
       envelope.artifactGate.ok
         ? assertion("H3", "pass", "required_artifacts_present")
         : assertion("H3", "fail", `missing_artifacts:${envelope.artifactGate.missing.join(",")}`)
+    );
+  }
+
+  // DeliveryVerdict Hard: completed runs with a recorded partial/failed verdict cannot pass.
+  if (!envelope.deliveryVerdict) {
+    results.push(assertion("H-DV", "skipped", "delivery_verdict_projection_unavailable"));
+  } else if (!envelope.deliveryVerdict.available) {
+    results.push(assertion("H-DV", "skipped", "delivery_verdict_not_recorded"));
+  } else if (
+    envelope.terminal.status === "completed" &&
+    envelope.deliveryVerdict.state !== "delivered" &&
+    envelope.deliveryVerdict.state !== "delivered_with_gaps"
+  ) {
+    results.push(
+      assertion(
+        "H-DV",
+        "fail",
+        `delivery_verdict_${envelope.deliveryVerdict.state}:${(envelope.deliveryVerdict.reasonCodes ?? []).slice(0, 4).join(",")}`
+      )
+    );
+  } else {
+    results.push(
+      assertion("H-DV", "pass", `delivery_verdict=${envelope.deliveryVerdict.state ?? "unknown"}`)
     );
   }
 

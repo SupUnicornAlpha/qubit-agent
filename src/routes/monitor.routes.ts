@@ -103,15 +103,16 @@ function toExperienceListItem(r: Experience) {
 monitorRouter.get("/summary", async (c) => {
   const sessionId = c.req.query("sessionId");
   const stuckMinutes = c.req.query("stuckMinutes");
-  const data = await getMonitorSummary({
-    sessionId: sessionId || undefined,
-    stuckMinutes: stuckMinutes ? Number(stuckMinutes) : undefined,
-  });
+  const input: Parameters<typeof getMonitorSummary>[0] = {};
+  if (sessionId) input.sessionId = sessionId;
+  if (stuckMinutes) input.stuckMinutes = Number(stuckMinutes);
+  const data = await getMonitorSummary(input);
   return c.json({ ok: true, data });
 });
 
 monitorRouter.post("/alerts/scan-stuck", async (c) => {
-  const body = await c.req.json<{ stuckMinutes?: number }>().catch(() => ({}));
+  type Body = { stuckMinutes?: number };
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
   const data = await createStuckWorkflowAlerts(body.stuckMinutes ?? 120);
   return c.json({ ok: true, data });
 });
@@ -607,18 +608,22 @@ monitorRouter.get("/quality/workflows/:id/snapshots", async (c) => {
 });
 
 monitorRouter.post("/quality/agents/aggregate", async (c) => {
-  const body = await c.req.json<{ windowStart?: string; windowEnd?: string }>().catch(() => ({}));
-  const data = await aggregateAgentRuntimeMetrics({
-    windowStart: body.windowStart,
-    windowEnd: body.windowEnd,
-  });
+  type Body = { windowStart?: string; windowEnd?: string };
+  const body: Body = await c.req.json<Body>().catch(() => ({}) as Body);
+  const input: Parameters<typeof aggregateAgentRuntimeMetrics>[0] = {};
+  if (body.windowStart !== undefined) input.windowStart = body.windowStart;
+  if (body.windowEnd !== undefined) input.windowEnd = body.windowEnd;
+  const data = await aggregateAgentRuntimeMetrics(input);
   return c.json({ ok: true, data });
 });
 
 monitorRouter.get("/quality/agents/metrics", async (c) => {
   const windowStart = c.req.query("windowStart");
   const windowEnd = c.req.query("windowEnd");
-  const data = await listAgentRuntimeMetrics({ windowStart, windowEnd });
+  const input: Parameters<typeof listAgentRuntimeMetrics>[0] = {};
+  if (windowStart) input.windowStart = windowStart;
+  if (windowEnd) input.windowEnd = windowEnd;
+  const data = await listAgentRuntimeMetrics(input);
   return c.json({ ok: true, data });
 });
 
@@ -951,12 +956,12 @@ monitorRouter.get("/alerts", async (c) => {
   const scopeId = c.req.query("scopeId");
   const status = c.req.query("status") as "open" | "ack" | "resolved" | undefined;
   const limit = c.req.query("limit");
-  const data = await listAlerts({
-    scopeType,
-    scopeId,
-    status,
-    limit: limit ? Number(limit) : undefined,
-  });
+  const input: Parameters<typeof listAlerts>[0] = {};
+  if (scopeType) input.scopeType = scopeType;
+  if (scopeId) input.scopeId = scopeId;
+  if (status) input.status = status;
+  if (limit) input.limit = Number(limit);
+  const data = await listAlerts(input);
   return c.json({ ok: true, data });
 });
 
@@ -977,7 +982,7 @@ monitorRouter.post("/alerts/:id/resolve", async (c) => {
 monitorRouter.post("/alerts/resolve-by-scope", async (c) => {
   const body = await c.req
     .json<{ scopeType?: "workflow" | "agent" | "system"; scopeId?: string }>()
-    .catch(() => ({}));
+    .catch(() => ({} as { scopeType?: "workflow" | "agent" | "system"; scopeId?: string }));
   if (!body.scopeType || !body.scopeId) {
     return c.json({ ok: false, error: "scopeType and scopeId required" }, 400);
   }
@@ -999,14 +1004,20 @@ monitorRouter.post("/eval/datasets", async (c) => {
       sourceDesc?: string;
       metaJson?: Record<string, unknown>;
     }>()
-    .catch(() => ({}));
+    .catch(() => ({} as {
+      name?: string;
+      version?: string;
+      scenario?: string;
+      sourceDesc?: string;
+      metaJson?: Record<string, unknown>;
+    }));
   if (!body.name) return c.json({ ok: false, error: "name is required" }, 400);
   const data = await createEvalDataset({
     name: body.name,
-    version: body.version,
-    scenario: body.scenario,
-    sourceDesc: body.sourceDesc,
-    metaJson: body.metaJson,
+    ...(body.version !== undefined ? { version: body.version } : {}),
+    ...(body.scenario !== undefined ? { scenario: body.scenario } : {}),
+    ...(body.sourceDesc !== undefined ? { sourceDesc: body.sourceDesc } : {}),
+    ...(body.metaJson !== undefined ? { metaJson: body.metaJson } : {}),
   });
   return c.json({ ok: true, data });
 });
@@ -1019,13 +1030,18 @@ monitorRouter.post("/eval/runs", async (c) => {
       toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
       baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
     }>()
-    .catch(() => ({}));
+    .catch(() => ({} as {
+      datasetId?: string;
+      caseCount?: number;
+      toggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+      baselineToggle?: { msa?: boolean; sdp?: boolean; rfv?: boolean };
+    }));
   if (!body.datasetId) return c.json({ ok: false, error: "datasetId is required" }, 400);
   const data = await runEval({
     datasetId: body.datasetId,
-    caseCount: body.caseCount,
-    toggle: body.toggle,
-    baselineToggle: body.baselineToggle,
+    ...(body.caseCount !== undefined ? { caseCount: body.caseCount } : {}),
+    ...(body.toggle !== undefined ? { toggle: body.toggle } : {}),
+    ...(body.baselineToggle !== undefined ? { baselineToggle: body.baselineToggle } : {}),
   });
   return c.json({ ok: true, data });
 });

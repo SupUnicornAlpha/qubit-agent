@@ -43,10 +43,12 @@ traderRouter.post("/purge-workflows", async (c) => {
     projectId?: string;
   };
   const db = await getDb();
-  const cancelled = await cancelTraderWorkflows(db, {
-    sessionId: body.sessionId?.trim() || undefined,
-    projectId: body.projectId?.trim() || undefined,
-  });
+  const input: Parameters<typeof cancelTraderWorkflows>[1] = {};
+  const sessionId = body.sessionId?.trim();
+  const projectId = body.projectId?.trim();
+  if (sessionId) input.sessionId = sessionId;
+  if (projectId) input.projectId = projectId;
+  const cancelled = await cancelTraderWorkflows(db, input);
   return c.json({ ok: true, data: { cancelledIds: cancelled, count: cancelled.length } });
 });
 
@@ -71,7 +73,7 @@ traderRouter.post("/context/message", async (c) => {
   const data = await appendTraderUserMessage({
     workflowRunId: body.workflowRunId.trim(),
     text: body.text,
-    kind: body.kind,
+    ...(body.kind !== undefined ? { kind: body.kind } : {}),
   });
   return c.json({ ok: true, data });
 });
@@ -104,7 +106,7 @@ traderRouter.post("/orders", async (c) => {
     if ((body.orderType === "market" || price == null) && body.symbol) {
       const { bars } = await queryKlines({
         symbol: body.symbol,
-        exchange: body.exchange,
+        ...(body.exchange !== undefined ? { exchange: body.exchange } : {}),
         timeframe: body.timeframe ?? "1d",
         limit: 2,
       });
@@ -130,11 +132,11 @@ traderRouter.post("/orders", async (c) => {
       qty: Number(body.qty ?? 100),
       price: price ?? null,
       orderType: body.orderType ?? "limit",
-      timeframe: body.timeframe,
-      rationale: body.rationale,
+      ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
+      ...(body.rationale !== undefined ? { rationale: body.rationale } : {}),
       executionMode: body.executionMode ?? "paper",
-      strategyRuntimeId: body.strategyRuntimeId,
-      signalBarTime: body.signalBarTime,
+      ...(body.strategyRuntimeId !== undefined ? { strategyRuntimeId: body.strategyRuntimeId } : {}),
+      ...(body.signalBarTime !== undefined ? { signalBarTime: body.signalBarTime } : {}),
     });
     return c.json({ ok: true, data });
   } catch (e) {
@@ -165,7 +167,7 @@ traderRouter.post("/orders/bracket", async (c) => {
   try {
     const { bars, meta } = await queryKlines({
       symbol: body.symbol,
-      exchange: body.exchange,
+      ...(body.exchange !== undefined ? { exchange: body.exchange } : {}),
       timeframe: body.timeframe ?? "1m",
       limit: 2,
     });
@@ -236,7 +238,7 @@ traderRouter.get("/feed", async (c) => {
     workflowRunId,
     symbol,
     exchange,
-    since,
+    ...(since !== undefined ? { since } : {}),
     includeNews,
   });
   return c.json({ ok: true, data });
@@ -293,7 +295,7 @@ traderRouter.post("/command", async (c) => {
       side: parsed.action,
       qty: parsed.qty ?? 100,
       orderType: "market",
-      timeframe: body.timeframe,
+      ...(body.timeframe !== undefined ? { timeframe: body.timeframe } : {}),
       rationale: `user_command:${body.text}`,
       executionMode: body.executionMode ?? "paper",
     });

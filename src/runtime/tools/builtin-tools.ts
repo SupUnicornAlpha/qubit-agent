@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
 import { agentProfile, workflowRun } from "../../db/sqlite/schema";
 import {
   instrument as instrumentTable,
+  recommendationSnapshot,
   strategy as strategyTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
@@ -15,8 +16,7 @@ import type { AnalystSignalValue } from "../../types/entities";
 import type { AgentSkillOutcome } from "../../types/entities";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import { resolveAgentControlMode } from "../../types/loop";
-import { requestA2ATaskCancellation } from "../a2a/a2a-task-cancellation";
-import { waitForA2ATaskTerminal } from "../a2a/a2a-task-service";
+import { getA2aPorts } from "../a2a/ports";
 import {
   type AgentPlanSnapshot,
   type AgentPlanStepStatus,
@@ -43,7 +43,7 @@ import type { ExecResult } from "../exec/types";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
-import { stepStreamBus } from "../react/event-stream";
+import { getStepStreamPorts } from "../ports/step-stream";
 import { isLikelyProjectIdFormat } from "../react/nodes/project-id";
 import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
 import { getMarketDataReadiness } from "../market/market-data-health";
@@ -283,7 +283,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       console.warn(`[update_plan] workspace mirror failed: ${workspaceWarning}`);
     }
     try {
-      stepStreamBus.publish({
+      getStepStreamPorts().publish({
         runId: ctx.runId,
         workflowId: ctx.workflowId,
         traceId: ctx.traceId,
@@ -460,8 +460,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       fusionSummary,
       msaSignal,
       msaConfidence,
-      attendedRoles,
-      missingRoles,
+      ...(attendedRoles ? { attendedRoles } : {}),
+      ...(missingRoles ? { missingRoles } : {}),
     });
   },
 
@@ -490,7 +490,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     return fuseSignals({
       workflowRunId,
       signals,
-      tickerHint: ticker || undefined,
+      ...(ticker ? { tickerHint: ticker } : {}),
     });
   },
 
@@ -558,9 +558,13 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const n = closes.length - 1;
     let goldenCross = false;
     let deathCross = false;
-    if (n >= 1 && Number.isFinite(fast[n]) && Number.isFinite(slow[n])) {
-      goldenCross = fast[n - 1] <= slow[n - 1] && fast[n] > slow[n];
-      deathCross = fast[n - 1] >= slow[n - 1] && fast[n] < slow[n];
+    const previousFast = fast[n - 1] ?? Number.NaN;
+    const previousSlow = slow[n - 1] ?? Number.NaN;
+    const currentFast = fast[n] ?? Number.NaN;
+    const currentSlow = slow[n] ?? Number.NaN;
+    if (n >= 1 && Number.isFinite(currentFast) && Number.isFinite(currentSlow)) {
+      goldenCross = previousFast <= previousSlow && currentFast > currentSlow;
+      deathCross = previousFast >= previousSlow && currentFast < currentSlow;
     }
     return {
       symbol,
@@ -617,7 +621,9 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   fetch_macro_data: async (_ctx, params) => {
-    return BUILTIN_HANDLERS.compute_macro_indicators(_ctx, params);
+    const computeMacroIndicators = BUILTIN_HANDLERS.compute_macro_indicators;
+    if (!computeMacroIndicators) throw new Error("compute_macro_indicators is not registered");
+    return computeMacroIndicators(_ctx, params);
   },
 
   analyze_social_media: async (_ctx, params) => {
@@ -893,7 +899,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     try {
       await skillService.recordUsage({
         skillId,
-        projectId: ctx.projectId,
+        ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
         workflowRunId: ctx.workflowId,
         agentInstanceId: ctx.agentInstanceId,
         definitionId: ctx.definition.id,
@@ -975,9 +981,10 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       criteriaRaw && typeof criteriaRaw === "object" && !Array.isArray(criteriaRaw)
         ? (criteriaRaw as Record<string, unknown>)
         : {};
+    const universe = params.universe as "CN-A" | "US" | "HK" | "CRYPTO" | "ALL" | undefined;
     return runStockScreener({
       workflowRunId: ctx.workflowId,
-      universe: params.universe as "CN-A" | "US" | "HK" | "CRYPTO" | "ALL" | undefined,
+      ...(universe ? { universe } : {}),
       criteria: {
         ...(typeof criteria["minMarketCapBillion"] === "number"
           ? { minMarketCapBillion: criteria["minMarketCapBillion"] as number }
@@ -1039,15 +1046,35 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       if (dr.minVariance !== undefined) cfg.minVariance = Number(dr.minVariance);
       dryRun = cfg;
     }
-    const expr = String(
+    const exprRaw = String(
       params.expr ?? params.expression ?? params.factor_expression ?? params.factorExpression ?? ""
     ).trim();
+    const {
+      normalizeFactorExpression,
+      inferFactorLang,
+      formatUnsupportedExpressionError,
+    } = await import("../policy/factor-expression-contract");
+    const normalized = normalizeFactorExpression(exprRaw);
+    if (normalized.unsupported.length > 0) {
+      throw new Error(
+        formatUnsupportedExpressionError({
+          expr: exprRaw,
+          reason: `contains unsupported symbols: ${normalized.unsupported.join(", ")}`,
+          rewrites: normalized.rewrites,
+        })
+      );
+    }
+    const lang = inferFactorLang(
+      normalized.expr,
+      params.lang ? String(params.lang) : null
+    );
+    const expr = normalized.expr;
     return factorService.register({
       projectId,
       name: String(params.name ?? "").trim(),
       category: String(params.category ?? "momentum") as FactorCategory,
       expr,
-      ...(params.lang ? { lang: String(params.lang) as FactorLang } : {}),
+      lang: lang as FactorLang,
       ...(params.universe ? { universe: String(params.universe) } : {}),
       ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
       ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
@@ -1965,7 +1992,17 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
    * 返回：{ orderIntentId, executionTaskId, riskOutcome, riskReason, riskReviewTicketId }
    */
   "order.create_intent": async (ctx, params) => {
-    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    let strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    if (!strategyVersionId && ctx.workflowId) {
+      const db = await getDb();
+      const latest = await db
+        .select({ id: strategyVersionTable.id })
+        .from(strategyVersionTable)
+        .where(eq(strategyVersionTable.workflowRunId, ctx.workflowId))
+        .orderBy(desc(strategyVersionTable.createdAt))
+        .limit(1);
+      strategyVersionId = latest[0]?.id ?? "";
+    }
     if (!strategyVersionId) {
       throw new Error(
         "order.create_intent: strategy_version_id is required。先调 strategy.create_version 拿到 id。"
@@ -1978,14 +2015,27 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const sideRaw = String(params.side ?? "")
       .trim()
       .toLowerCase();
-    if (sideRaw !== "buy" && sideRaw !== "sell") {
-      throw new Error(`order.create_intent: side 必须是 'buy' 或 'sell'，收到: ${sideRaw}`);
+    const sideMap: Record<string, OrderSide> = {
+      buy: "buy",
+      long: "buy",
+      bullish: "buy",
+      sell: "sell",
+      short: "sell",
+      bearish: "sell",
+    };
+    const side = sideMap[sideRaw];
+    if (!side) {
+      throw new Error(
+        `order.create_intent: side 必须是 'buy'/'sell'（或 long/short），收到: ${sideRaw}`
+      );
     }
-    const side: OrderSide = sideRaw as OrderSide;
-    const qty = Number(params.qty ?? 0);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      throw new Error(`order.create_intent: qty 必须是正数，收到: ${qty}`);
+    const qtyRaw = Number(params.qty);
+    if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
+      throw new Error(
+        `order.create_intent: qty 必须是正数，收到: ${String(params.qty ?? "")}`
+      );
     }
+    const qty = qtyRaw;
     const orderTypeRaw = String(params.order_type ?? "market")
       .trim()
       .toLowerCase();
@@ -2071,17 +2121,24 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       timeInForce,
       market,
       symbol: sym,
-      timeframe: typeof params.timeframe === "string" ? (params.timeframe as string) : undefined,
+      timeframe: typeof params.timeframe === "string" ? (params.timeframe as string) : null,
       dispatchMode,
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
     });
 
+    const paperLifecycle =
+      result.riskOutcome === "block"
+        ? "risk_blocked"
+        : result.riskOutcome === "review"
+          ? "pending_approval"
+          : "risk_checked";
     return {
       orderIntentId: result.orderIntentId,
       executionTaskId: result.executionTaskId,
       riskOutcome: result.riskOutcome,
       riskReason: result.riskReason,
       riskReviewTicketId: result.riskReviewTicketId,
+      paperLifecycle,
       symbol: sym,
       side,
       qty,
@@ -2091,6 +2148,11 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   "recommendation.record": async (ctx, params) => {
+    if (!ctx.workflowId) {
+      throw new Error(
+        "recommendation.record: ctx.workflowId is required so recommendation_snapshot binds to the workflow"
+      );
+    }
     const symbol = String(params.symbol ?? params.ticker ?? "").trim();
     if (!symbol) {
       throw new Error("recommendation.record: symbol/ticker is required");
@@ -2137,9 +2199,14 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       riskRewardRatio: optionalFiniteNumber(params.risk_reward_ratio ?? params.riskRewardRatio),
       rationale: String(params.rationale ?? params.reasoning ?? ""),
       evidence,
-      invalidation: Array.isArray(params.invalidation_conditions)
-        ? params.invalidation_conditions
-        : [],
+      invalidation:
+        Array.isArray(params.invalidation_conditions) && params.invalidation_conditions.length > 0
+          ? params.invalidation_conditions
+          : [
+              "价格跌破止损价",
+              "关键基本面假设失效（业绩/指引大幅低于预期）",
+              "持有期结束仍未触发目标价",
+            ],
       watchConditions: Array.isArray(params.watch_conditions) ? params.watch_conditions : [],
       benchmarkSymbol: typeof params.benchmark_symbol === "string" ? params.benchmark_symbol : null,
       expiresAt: typeof params.expires_at === "string" ? params.expires_at : null,
@@ -2152,17 +2219,46 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       agentInstanceId: ctx.agentInstanceId,
       ...(typeof params.asof === "string" ? { asof: params.asof } : {}),
     });
+    // Write-after-read: tool success must mean snapshot is queryable for this workflow+side.
+    const db = await getDb();
+    const verified = await db
+      .select({ id: recommendationSnapshot.id })
+      .from(recommendationSnapshot)
+      .where(
+        and(
+          eq(recommendationSnapshot.id, result.id),
+          eq(recommendationSnapshot.workflowRunId, ctx.workflowId),
+          eq(recommendationSnapshot.side, side)
+        )
+      )
+      .limit(1);
+    if (!verified[0]) {
+      throw new Error(
+        `recommendation.record: write-after-read failed (id=${result.id}, workflow=${ctx.workflowId}, side=${side})`
+      );
+    }
     return {
       recommendationId: result.id,
       symbol: result.symbol,
       side,
+      workflowRunId: ctx.workflowId,
       next_steps:
         "推荐已进入 DecisionSignal 生命周期；outcome worker 会按 horizon_days 自动回填效果。",
     };
   },
 
   "strategy.compose": async (ctx, params) => {
-    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    let strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    if (!strategyVersionId && ctx.workflowId) {
+      const db = await getDb();
+      const latest = await db
+        .select({ id: strategyVersionTable.id })
+        .from(strategyVersionTable)
+        .where(eq(strategyVersionTable.workflowRunId, ctx.workflowId))
+        .orderBy(desc(strategyVersionTable.createdAt))
+        .limit(1);
+      strategyVersionId = latest[0]?.id ?? "";
+    }
     if (!strategyVersionId) {
       throw new Error("strategy.compose: strategy_version_id is required");
     }
@@ -2391,7 +2487,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     const cwdCheck = checkCwdScope(cwd, provider, {
-      projectId: ctx.projectId,
+      ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
       workflowId: ctx.workflowId,
     });
     if (!cwdCheck.ok) {
@@ -2532,7 +2628,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     const cwdCheck = checkCwdScope(cwd, provider, {
-      projectId: ctx.projectId,
+      ...(ctx.projectId ? { projectId: ctx.projectId } : {}),
       workflowId: ctx.workflowId,
     });
     if (!cwdCheck.ok) {
@@ -2634,6 +2730,13 @@ async function isGoalMode(workflowId: string): Promise<boolean> {
   }
 }
 
+export function resolveDelegatedParentTaskId(
+  inboundPayload: Record<string, unknown> | undefined
+): string | null {
+  const taskId = inboundPayload?.taskId;
+  return typeof taskId === "string" && taskId.trim() ? taskId.trim() : null;
+}
+
 async function dispatchTeamAgentTask(
   ctx: BuiltinToolContext,
   role: AgentRole,
@@ -2679,6 +2782,11 @@ async function dispatchTeamAgentTask(
     typeof params.params === "object" && params.params && !Array.isArray(params.params)
       ? (params.params as Record<string, unknown>)
       : {};
+  // Preserve the durable A2A parent/child relation. Without this, topology
+  // specialists look like independent root envelopes in `a2a_task`, so
+  // completion cannot distinguish a running parent from delegated work and a
+  // terminal parent cannot cancel only its own children.
+  const inboundTaskId = resolveDelegatedParentTaskId(ctx.inboundPayload);
 
   const gatherTimeoutMs = resolveTopologyTaskTimeoutMs(targetRole);
   const leaseMs = resolveTopologyTaskLeaseMs();
@@ -2698,7 +2806,12 @@ async function dispatchTeamAgentTask(
       targetRole === "market_data"
         ? { requiredEvidence: "market_data" }
         : { requiredEvidence: "analysis" },
-    params: { goal, ...extra, ...(role !== targetRole ? { requestedRole: role } : {}) },
+    params: {
+      goal,
+      ...extra,
+      ...(inboundTaskId ? { parentTaskId: inboundTaskId } : {}),
+      ...(role !== targetRole ? { requestedRole: role } : {}),
+    },
     // 子任务墙钟与 gather 对齐；通信失联由 lease+TASK_PROGRESS 处理，不靠提前掐死孩子。
     deadline: new Date(Date.now() + Math.max(gatherTimeoutMs - 5_000, 5_000)).toISOString(),
   };
@@ -2712,19 +2825,21 @@ async function dispatchTeamAgentTask(
   });
   // A2A Task is durable before dispatch.  Do not use an in-memory gather as
   // the source of truth: a parent can now reconstruct this wait after restart.
-  const waited = await waitForA2ATaskTerminal(payload.taskId, {
+  const a2aPorts = getA2aPorts();
+  const waited = await a2aPorts.waitForTerminal(payload.taskId, {
     timeoutMs: gatherTimeoutMs,
     leaseMs,
   });
   const task = waited.task;
   const timedOut = waited.timedOut;
   if (timedOut) {
-    await requestA2ATaskCancellation(
-      payload.taskId,
-      waited.timeoutReason === "lease_expired"
-        ? `team_dispatch_timeout: ${targetRole} 专家通信 lease 失联`
-        : `team_dispatch_timeout: ${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包`
-    );
+    await a2aPorts.requestCancellation(payload.taskId, {
+      reason: "team_dispatch_timeout",
+      detail:
+        waited.timeoutReason === "lease_expired"
+          ? `${targetRole} 专家通信 lease 失联`
+          : `${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包`,
+    });
   }
   const result = task?.result;
   const taskError = task?.error && typeof task.error === "object"

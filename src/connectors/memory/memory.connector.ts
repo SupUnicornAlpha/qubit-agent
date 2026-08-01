@@ -1,5 +1,4 @@
 import type {
-  Connector,
   MemoryConnector,
   MemoryFilters,
   MemoryMetadata,

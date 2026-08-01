@@ -4,7 +4,7 @@
  * Compiled to a single binary via: bun build --compile src/cli.ts --outfile dist/qubit
  */
 
-const [, , command, ...args] = process.argv;
+const [, , command] = process.argv;
 
 async function main() {
   switch (command) {

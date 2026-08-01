@@ -475,10 +475,12 @@ function mergeMultiSymbolAnalystResults(
     throw new Error("mergeMultiSymbolAnalystResults: empty results");
   }
   if (results.length === 1) {
+    const first = results[0];
+    if (!first) throw new Error("mergeMultiSymbolAnalystResults: missing first result");
     return {
-      ...results[0],
+      ...first,
       scope,
-      perSymbol: [{ symbol: results[0].ticker, result: stripScopeFields(results[0]) }],
+      perSymbol: [{ symbol: first.ticker, result: stripScopeFields(first) }],
     };
   }
 
@@ -503,6 +505,8 @@ function mergeMultiSymbolAnalystResults(
         `### ${r.ticker}\n\n**${r.fusedSignal.toUpperCase()}**（${(r.fusedConfidence * 100).toFixed(0)}%）\n\n${r.report.split("\n").slice(2).join("\n").slice(0, 4000)}`
     ),
   ].join("\n\n");
+  const debate = results.find((result) => result.debate)?.debate;
+  const risk = results.find((result) => result.risk)?.risk;
 
   return {
     fusionId: results.map((r) => r.fusionId).join(","),
@@ -519,8 +523,9 @@ function mergeMultiSymbolAnalystResults(
       }))
     ),
     report,
-    debate: results.find((r) => r.debate)?.debate,
-    risk: results.find((r) => r.risk)?.risk,
+    fusionSummary: report,
+    ...(debate !== undefined ? { debate } : {}),
+    ...(risk !== undefined ? { risk } : {}),
   };
 }
 
@@ -544,7 +549,10 @@ export async function runAnalystTeam(params: {
   traceId?: string;
   hitlApproval?: import("../workflow/hitl-service").HitlApprovalPayload | null;
 }): Promise<AnalystTeamResult> {
-  const scope = resolveResearchScope({ ticker: params.ticker, scope: params.scope });
+  const scope = resolveResearchScope({
+    ...(params.ticker !== undefined ? { ticker: params.ticker } : {}),
+    ...(params.scope !== undefined ? { scope: params.scope } : {}),
+  });
 
   if (scope.symbols.length > 1 && scope.kind === "basket") {
     // A basket is independent per ticker until MSA fusion. Running them in
@@ -742,7 +750,7 @@ async function runAnalystTeamCore(params: {
     instanceBySlotIndex[i] = instanceId;
     await db.insert(agentInstance).values({
       id: instanceId,
-      definitionId: waveSlots[i].definitionId,
+      definitionId: waveSlots[i]?.definitionId ?? "",
       workflowRunId,
       status: "running",
       currentIteration: 0,
@@ -985,7 +993,10 @@ async function runAnalystTeamCore(params: {
           };
           outputByRole.set(slot.role, fallback);
           rawSignals.push(fallback);
-          persistSignals.push({ agentInstanceId: instanceId, signal: fallback });
+          persistSignals.push({
+            signal: fallback,
+            ...(instanceId !== undefined ? { agentInstanceId: instanceId } : {}),
+          });
           await logResearchTeamInteraction({
             workflowRunId,
             fromRole: slot.role,
@@ -1398,7 +1409,9 @@ async function runAnalystTeamCore(params: {
     ticker,
     fusedSignal: fusionResult.fusedSignal,
     fusedConfidence: fusionResult.fusedConfidence,
-    debateConsensusScore: debate?.consensusScore,
+    ...(debate?.consensusScore !== undefined
+      ? { debateConsensusScore: debate.consensusScore }
+      : {}),
   });
 
   /**
@@ -1449,8 +1462,8 @@ async function runAnalystTeamCore(params: {
     fusionSummary: reportCore,
     attendedRoles,
     missingRoles,
-    debate,
-    risk,
+    ...(debate !== undefined ? { debate } : {}),
+    ...(risk !== undefined ? { risk } : {}),
   };
 }
 

@@ -4,6 +4,7 @@ import {
   clientEventBus,
   projectStepStreamToClientEvent,
 } from "../conversation/client-event-bus";
+import { setStepStreamPorts } from "../ports/step-stream";
 
 type StreamController = ReadableStreamDefaultController<Uint8Array>;
 
@@ -241,4 +242,11 @@ class StepStreamBus {
 }
 
 export const stepStreamBus = new StepStreamBus();
+
+// Wire Emitter port so tools never import this module directly.
+setStepStreamPorts({
+  publish: (event) => {
+    stepStreamBus.publish(event as never);
+  },
+});
 

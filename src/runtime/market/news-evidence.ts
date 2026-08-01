@@ -101,7 +101,3 @@ export function assessNewsEvidence<T extends NewsEvidenceItem>(
     latestPublishedAt: accepted[0]?.publishedAt ?? null,
   };
 }
-
-export function newsDataIsSynthetic(item: NewsData): boolean {
-  return isSynthetic(item);
-}

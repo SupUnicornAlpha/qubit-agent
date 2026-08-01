@@ -20,7 +20,7 @@
  *   - 子进程 / DB 故障 → 500 + { ok:false, code:"internal" }（堆栈不外泄）
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   EnvRegistryError,
   envRegistryService,
@@ -92,10 +92,10 @@ environmentRouter.post("/registry", async (c) => {
       kind: body.kind,
       packageName: body.packageName,
       displayName: body.displayName,
-      description: body.description,
+      ...(body.description !== undefined ? { description: body.description } : {}),
       versionSpec: body.versionSpec ?? null,
-      optional: body.optional,
-      capability: body.capability,
+      ...(body.optional !== undefined ? { optional: body.optional } : {}),
+      ...(body.capability !== undefined ? { capability: body.capability } : {}),
     });
     return c.json({ ok: true, data: created }, 201);
   } catch (e) {
@@ -226,7 +226,7 @@ environmentRouter.get("/install-log", async (c) => {
 
 /* ───────────────────────── error mapping ───────────────────────── */
 
-type RouteContext = Parameters<Parameters<typeof environmentRouter.get>[1]>[0];
+type RouteContext = Context;
 
 function mapEnvRegistryError(c: RouteContext, e: unknown) {
   if (e instanceof EnvRegistryError) {

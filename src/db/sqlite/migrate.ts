@@ -91,7 +91,54 @@ export async function runMigrations(): Promise<void> {
     const direction: MigrationDriftDirection = actual < expected ? "missing" : "ahead";
     throw new MigrationDriftError(expected, actual, dir, direction);
   }
+  repairPartialOrderIntentLifecycle();
   console.log(`[DB] SQLite migrations applied (${actual}/${expected}).`);
+}
+
+/**
+ * 0089 was recorded applied on some datadirs while `client_order_id` never landed
+ * (statement-breakpoint partial apply). Repair idempotently so paper orders work.
+ */
+export function repairPartialOrderIntentLifecycle(dbPath?: string): void {
+  const path = dbPath ?? join(config.dataDir, "db", "core.sqlite");
+  if (!existsSync(path)) return;
+  const sqlite = new Database(path);
+  try {
+    const table = sqlite
+      .query<{ name: string }, []>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='order_intent'"
+      )
+      .get();
+    if (!table) return;
+    const cols = new Set(
+      (
+        sqlite.query<{ name: string }, []>("PRAGMA table_info(order_intent)").all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name)
+    );
+    if (!cols.has("client_order_id")) {
+      sqlite.exec("ALTER TABLE order_intent ADD COLUMN client_order_id TEXT");
+      console.log("[DB] repaired order_intent.client_order_id");
+    }
+    if (!cols.has("lifecycle_updated_at")) {
+      sqlite.exec(
+        "ALTER TABLE order_intent ADD COLUMN lifecycle_updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+      );
+      console.log("[DB] repaired order_intent.lifecycle_updated_at");
+    }
+    sqlite.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_order_intent_client_order_id
+        ON order_intent(client_order_id)
+        WHERE client_order_id IS NOT NULL
+    `);
+  } catch (error) {
+    console.warn(
+      `[DB] order_intent lifecycle repair skipped: ${error instanceof Error ? error.message : String(error)}`
+    );
+  } finally {
+    sqlite.close();
+  }
 }
 
 /** 读 `_journal.json` 的 entries 数；任何异常返回 0（等价于"跳过检查"） */

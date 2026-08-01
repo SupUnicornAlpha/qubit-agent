@@ -31,7 +31,7 @@ function sma(values: number[], period: number): number[] {
       out.push(Number.NaN);
     } else {
       let s = 0;
-      for (let j = 0; j < period; j++) s += values[i - j];
+      for (let j = 0; j < period; j++) s += values[i - j] ?? 0;
       out.push(s / period);
     }
   }
@@ -58,16 +58,20 @@ export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktest
   for (let i = 0; i < bars.length; i++) {
     const f = smaF[i];
     const s = smaS[i];
+    const previousFast = i > 0 ? smaF[i - 1] : undefined;
+    const previousSlow = i > 0 ? smaS[i - 1] : undefined;
+    const bar = bars[i];
+    if (!bar) continue;
     if (
       i > 0 &&
       Number.isFinite(f) &&
       Number.isFinite(s) &&
-      Number.isFinite(smaF[i - 1]) &&
-      Number.isFinite(smaS[i - 1])
+      Number.isFinite(previousFast) &&
+      Number.isFinite(previousSlow)
     ) {
-      const crossUp = smaF[i - 1] <= smaS[i - 1] && f > s;
-      const crossDown = smaF[i - 1] >= smaS[i - 1] && f < s;
-      const price = bars[i].close;
+      const crossUp = (previousFast ?? 0) <= (previousSlow ?? 0) && (f ?? 0) > (s ?? 0);
+      const crossDown = (previousFast ?? 0) >= (previousSlow ?? 0) && (f ?? 0) < (s ?? 0);
+      const price = bar.close;
       if (crossUp && position === 0 && cash > 0 && price > 0) {
         const lot = (cash * (1 - fee)) / price;
         shares = lot;
@@ -82,8 +86,8 @@ export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktest
         trades++;
       }
     }
-    const eq = cash + shares * bars[i].close;
-    equityCurve.push({ time: bars[i].timestamp, equity: eq });
+    const eq = cash + shares * bar.close;
+    equityCurve.push({ time: bar.timestamp, equity: eq });
   }
 
   const firstEq = equityCurve[0]?.equity ?? p.initialCapital;
@@ -100,8 +104,9 @@ export function runSmaCrossoverBacktest(bars: BarData[], p: SmaCrossoverBacktest
 
   const rets: number[] = [];
   for (let i = 1; i < equityCurve.length; i++) {
-    const a = equityCurve[i - 1].equity;
-    const b = equityCurve[i].equity;
+    const a = equityCurve[i - 1]?.equity;
+    const b = equityCurve[i]?.equity;
+    if (a === undefined || b === undefined) continue;
     if (a > 1e-8) rets.push((b - a) / a);
   }
   let sharpeApprox = 0;
