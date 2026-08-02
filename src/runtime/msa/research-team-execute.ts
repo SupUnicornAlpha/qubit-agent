@@ -4,10 +4,7 @@ import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
-import {
-  resolveAgentControlMode,
-  resolveWorkflowProcessConfig,
-} from "../../types/loop";
+import { resolveAgentControlMode, resolveWorkflowProcessConfig } from "../../types/loop";
 import { resolveResearchScope, type ResearchScopeInput } from "../../types/research-scope";
 import { stepStreamBus } from "../react/event-stream";
 import type { StepStreamEvent } from "../react/state";
@@ -24,6 +21,12 @@ import {
   resolveEffectiveWorkflowProcessConfig,
 } from "../workflow/process-config";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
+import {
+  evaluateDeliveryVerdict,
+  getRuntimeSqlite,
+  loadScenarioRuntimeSnapshot,
+  persistDeliveryVerdict,
+} from "../policy";
 import {
   completeAnalystResearchJob,
   failAnalystResearchJob,
@@ -97,10 +100,7 @@ export function parseResearchTeamExecutePayload(
 
 export async function failResearchTeamExecuteJob(jobId: string, error: unknown): Promise<void> {
   if (!jobId) return;
-  await failAnalystResearchJob(
-    jobId,
-    error instanceof Error ? error : new Error(String(error))
-  );
+  await failAnalystResearchJob(jobId, error instanceof Error ? error : new Error(String(error)));
 }
 
 /** 运行研究团队并标记 job 完成（不含 workflow / A2A 消息副作用） */
@@ -135,8 +135,7 @@ export function buildParsedResearchTeamFromToolParams(input: {
 }): ParsedResearchTeamExecute {
   const pr = input.params;
   const inbound = input.inboundPayload ?? {};
-  const ticker =
-    String(pr.ticker ?? inbound["ticker"] ?? "").trim() || "UNKNOWN";
+  const ticker = String(pr.ticker ?? inbound["ticker"] ?? "").trim() || "UNKNOWN";
   const scopeRaw = pr.scope ?? inbound["scope"];
   const scope =
     scopeRaw && typeof scopeRaw === "object" && !Array.isArray(scopeRaw)
@@ -204,11 +203,7 @@ export async function runResearchTeamFromOrchestrator(input: {
 
   if (outcome.kind === "completed") return outcome.teamResult;
   if (outcome.kind === "awaiting_approval") {
-    throw new HitlAwaitingApprovalError(
-      outcome.requestId,
-      input.workflowRunId,
-      outcome.title
-    );
+    throw new HitlAwaitingApprovalError(outcome.requestId, input.workflowRunId, outcome.title);
   }
   throw outcome.error;
 }
@@ -250,7 +245,7 @@ export interface RunTeamResearchPersistDeps {
    */
   setWorkflowStatus?: (
     workflowRunId: string,
-    status: "completed" | "failed" | "awaiting_approval" | "running",
+    status: "completed" | "failed" | "awaiting_approval" | "running"
   ) => Promise<void>;
   /** SSE 事件汇；默认 `stepStreamBus.publish` */
   publishEvent?: (event: StepStreamEvent) => void;
@@ -264,6 +259,51 @@ export interface RunTeamResearchPersistDeps {
     workflowRunId: string,
     teamResult?: AnalystTeamResult
   ) => Promise<{ ok: boolean; detail?: string }>;
+  /** 研究团队是 ReAct loop 的旁路，需显式写入统一的终态交付账本。 */
+  persistDelivery?: (
+    workflowRunId: string,
+    teamResult: AnalystTeamResult,
+    context?: string
+  ) => Promise<void>;
+}
+
+function buildResearchTeamDeliveryAnswer(teamResult: AnalystTeamResult, context?: string): string {
+  const evidence = teamResult.fusionSummary.trim() || teamResult.report.trim();
+  const gaps = teamResult.missingRoles?.length
+    ? `未完成角色：${teamResult.missingRoles.join(", ")}`
+    : "未发现缺席角色；仍应以报告中标注的数据限制为准。";
+  return [
+    "## 目标",
+    context?.trim() || `完成 ${teamResult.ticker} 的研究团队分析。`,
+    "## 证据",
+    evidence,
+    "## 结论",
+    teamResult.report.trim() || `综合信号：${teamResult.fusedSignal}。`,
+    "## 风险",
+    teamResult.risk?.reason ?? "请以低置信度和数据可用性限制审慎决策。",
+    "## 数据缺口",
+    gaps,
+  ].join("\n\n");
+}
+
+async function defaultPersistDelivery(
+  workflowRunId: string,
+  teamResult: AnalystTeamResult,
+  context?: string
+): Promise<void> {
+  // MSA 是 A2A team 的旁路终态。这里读本地 workflow facts 即可；不要在完成
+  // transaction 上再聚合未结的父 A2A task，否则 ledger 的审计辅助路径可能反向阻塞
+  // lifecycle 的 running → completed 状态迁移。
+  const sqlite = getRuntimeSqlite();
+  const snapshot = loadScenarioRuntimeSnapshot({ sqlite, workflowId: workflowRunId });
+  if (!snapshot.scenarioKey) return;
+  const verdict = evaluateDeliveryVerdict({
+    sqlite,
+    snapshot,
+    answerText: buildResearchTeamDeliveryAnswer(teamResult, context),
+    enforceBenchmarkTerms: false,
+  });
+  await persistDeliveryVerdict({ workflowId: workflowRunId, verdict });
 }
 
 async function defaultVerifyArtifacts(
@@ -315,7 +355,7 @@ async function defaultVerifyArtifacts(
 
 async function defaultSetWorkflowStatus(
   workflowRunId: string,
-  status: "completed" | "failed" | "awaiting_approval" | "running",
+  status: "completed" | "failed" | "awaiting_approval" | "running"
 ): Promise<void> {
   await setWorkflowState(workflowRunId, status, { reason: "research-team-execute" });
 }
@@ -332,7 +372,7 @@ export async function runTeamResearchAndPersist(
     parsed: ParsedResearchTeamExecute;
     hitlApproval: HitlApprovalPayload | null;
   },
-  deps: RunTeamResearchPersistDeps = {},
+  deps: RunTeamResearchPersistDeps = {}
 ): Promise<ResearchTeamOutcome> {
   const execute = deps.execute ?? executeResearchTeamWorkflow;
   const setStatus = deps.setWorkflowStatus ?? defaultSetWorkflowStatus;
@@ -341,6 +381,7 @@ export async function runTeamResearchAndPersist(
   const pauseJob = deps.pauseJob ?? pauseAnalystResearchJobForHitl;
   const failJob = deps.failJob ?? failResearchTeamExecuteJob;
   const verifyArtifacts = deps.verifyArtifacts ?? defaultVerifyArtifacts;
+  const persistDelivery = deps.persistDelivery ?? defaultPersistDelivery;
 
   try {
     /**
@@ -363,9 +404,10 @@ export async function runTeamResearchAndPersist(
     const artifactGate = await verifyArtifacts(input.workflowRunId, teamResult);
     if (!artifactGate.ok) {
       throw new Error(
-        `research_artifact_gate_failed: ${artifactGate.detail ?? "required artifacts missing"}`,
+        `research_artifact_gate_failed: ${artifactGate.detail ?? "required artifacts missing"}`
       );
     }
+    await persistDelivery(input.workflowRunId, teamResult, input.parsed.context);
     await setStatus(input.workflowRunId, "completed");
     terminal(input.workflowRunId, "completed");
     publish({
@@ -396,7 +438,7 @@ export async function runTeamResearchAndPersist(
         resumePayload: input.parsed,
       });
       console.log(
-        `[research-team] workflow=${input.workflowRunId} paused awaiting HITL requestId=${err.requestId} job=${input.parsed.jobId}`,
+        `[research-team] workflow=${input.workflowRunId} paused awaiting HITL requestId=${err.requestId} job=${input.parsed.jobId}`
       );
       await setStatus(input.workflowRunId, "awaiting_approval");
       publish({
@@ -420,7 +462,7 @@ export async function runTeamResearchAndPersist(
     const wrapped = err instanceof Error ? err : new Error(String(err));
     console.error(
       `[research-team] workflow=${input.workflowRunId} research_team_execute FAILED:`,
-      wrapped.stack ?? wrapped.message,
+      wrapped.stack ?? wrapped.message
     );
     await failJob(input.parsed.jobId, wrapped);
     await setStatus(input.workflowRunId, "failed");

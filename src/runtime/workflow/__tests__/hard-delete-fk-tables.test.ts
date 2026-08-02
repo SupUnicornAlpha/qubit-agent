@@ -222,7 +222,50 @@ describe("hardDeleteWorkflowRun: v2 monitoring 衍生表", () => {
       .from(schema.agentSkillRun)
       .where(drizzle.eq(schema.agentSkillRun.skillId, skillId));
     expect(skillRunRows.length).toBe(1);
-    expect(skillRunRows[0].workflowRunId).toBeNull();
+    expect(skillRunRows.at(0)?.workflowRunId).toBeNull();
+  });
+
+  test("覆盖 workflow_delivery_verdict", async () => {
+    const db = await getDb();
+    const wfId = `wf-${crypto.randomUUID()}`;
+    await db.insert(schema.workflowRun).values({
+      id: wfId,
+      projectId: PROJECT_ID,
+      sessionId: null,
+      goal: "hd-fk-delivery-verdict",
+      mode: "research",
+      source: "api",
+      status: "completed",
+    });
+
+    // migration 0103 的表尚未纳入 Drizzle schema；这里用原生 SQLite 验证其
+    // NO ACTION FK 能被 hardDeleteWorkflowRun 正确清理。
+    const sqlite = (
+      db as unknown as {
+        $client: {
+          prepare: (sql: string) => {
+            run: (...args: unknown[]) => unknown;
+            get: (...args: unknown[]) => unknown;
+          };
+        };
+      }
+    ).$client;
+    sqlite
+      .prepare(
+        `INSERT INTO workflow_delivery_verdict (
+          id, workflow_run_id, state, evaluator_version
+        ) VALUES (?, ?, 'delivered', 'hard-delete-test')`
+      )
+      .run(`verdict-${crypto.randomUUID()}`, wfId);
+
+    const result = await hardDeleteWorkflowRun(wfId);
+    expect(result.details.workflow_run).toBe(1);
+    expect(result.details.workflow_delivery_verdict).toBe(1);
+
+    const left = sqlite
+      .prepare("SELECT COUNT(*) AS count FROM workflow_delivery_verdict WHERE workflow_run_id = ?")
+      .get(wfId) as { count: number };
+    expect(left.count).toBe(0);
   });
 
   /**

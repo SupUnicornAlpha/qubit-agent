@@ -38,7 +38,6 @@ function makeParsed(overrides: Partial<ParsedResearchTeamExecute> = {}): ParsedR
     jobId: "job-1",
     ticker: "AAPL",
     scope: null,
-    agentGroupId: null,
     ...overrides,
   };
 }
@@ -50,6 +49,7 @@ function makeMockDeps(): {
   terminalCalls: Array<[string, "completed" | "failed"]>;
   pauseJobCalls: Array<{ jobId: string; requestId: string; title: string }>;
   failJobCalls: Array<{ jobId: string; err: unknown }>;
+  persistDeliveryCalls: Array<{ workflowRunId: string; context: string | undefined }>;
   setExecuteResult: (result: () => Promise<AnalystTeamResult>) => void;
 } {
   const setStatusCalls: Array<[string, string]> = [];
@@ -57,6 +57,7 @@ function makeMockDeps(): {
   const terminalCalls: Array<[string, "completed" | "failed"]> = [];
   const pauseJobCalls: Array<{ jobId: string; requestId: string; title: string }> = [];
   const failJobCalls: Array<{ jobId: string; err: unknown }> = [];
+  const persistDeliveryCalls: Array<{ workflowRunId: string; context: string | undefined }> = [];
 
   let executeImpl: () => Promise<AnalystTeamResult> = async () => {
     throw new Error("executeImpl not set");
@@ -75,13 +76,16 @@ function makeMockDeps(): {
     onTerminal: (workflowId, status) => {
       terminalCalls.push([workflowId, status]);
     },
-    pauseJob: (jobId, input) => {
+    pauseJob: async (jobId, input) => {
       pauseJobCalls.push({ jobId, requestId: input.requestId, title: input.title });
     },
-    failJob: (jobId, err) => {
+    failJob: async (jobId, err) => {
       failJobCalls.push({ jobId, err });
     },
     verifyArtifacts: async () => ({ ok: true }),
+    persistDelivery: async (workflowRunId, _teamResult, context) => {
+      persistDeliveryCalls.push({ workflowRunId, context });
+    },
   };
 
   return {
@@ -91,6 +95,7 @@ function makeMockDeps(): {
     terminalCalls,
     pauseJobCalls,
     failJobCalls,
+    persistDeliveryCalls,
     setExecuteResult: (fn) => {
       executeImpl = fn;
     },
@@ -131,7 +136,7 @@ describe("runTeamResearchAndPersist", () => {
         parsed: makeParsed(),
         hitlApproval: null,
       },
-      m.deps,
+      m.deps
     );
 
     expect(outcome.kind).toBe("completed");
@@ -148,6 +153,7 @@ describe("runTeamResearchAndPersist", () => {
       ["wf-1", "completed"],
     ]);
     expect(m.terminalCalls).toEqual([["wf-1", "completed"]]);
+    expect(m.persistDeliveryCalls).toEqual([{ workflowRunId: "wf-1", context: undefined }]);
     expect(m.pauseJobCalls.length).toBe(0);
     expect(m.failJobCalls.length).toBe(0);
     expect(m.publishedEvents.length).toBe(1);
@@ -172,7 +178,7 @@ describe("runTeamResearchAndPersist", () => {
         parsed,
         hitlApproval: null,
       },
-      m.deps,
+      m.deps
     );
 
     expect(outcome.kind).toBe("awaiting_approval");
@@ -214,7 +220,7 @@ describe("runTeamResearchAndPersist", () => {
         parsed: makeParsed({ jobId: "job-3" }),
         hitlApproval: null,
       },
-      m.deps,
+      m.deps
     );
 
     expect(outcome.kind).toBe("failed");
@@ -239,8 +245,9 @@ describe("runTeamResearchAndPersist", () => {
 
   test("artifact gate: 产物缺失时不得把团队结果标 completed", async () => {
     const m = makeMockDeps();
-    m.setExecuteResult(async () =>
-      ({ fusionId: "fusion-gap", fusedSignal: "hold", fusedConfidence: 0.1 }) as AnalystTeamResult
+    m.setExecuteResult(
+      async () =>
+        ({ fusionId: "fusion-gap", fusedSignal: "hold", fusedConfidence: 0.1 }) as AnalystTeamResult
     );
     m.deps.verifyArtifacts = async () => ({
       ok: false,
@@ -255,7 +262,7 @@ describe("runTeamResearchAndPersist", () => {
         parsed: makeParsed({ jobId: "job-gap" }),
         hitlApproval: null,
       },
-      m.deps,
+      m.deps
     );
 
     expect(outcome.kind).toBe("failed");
@@ -284,7 +291,7 @@ describe("runTeamResearchAndPersist", () => {
         parsed: makeParsed(),
         hitlApproval: null,
       },
-      m.deps,
+      m.deps
     );
 
     expect(m.failJobCalls.length).toBe(0);

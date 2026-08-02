@@ -25,10 +25,10 @@ import {
   renderHealthMarkdown,
 } from "../src/runtime/agent-readiness/health-aggregator";
 import { writeHealthCanvas } from "../src/runtime/agent-readiness/health-canvas";
+import { DEFAULT_USER_PROJECT_ID } from "../src/runtime/bootstrap/ensure-default-workspace";
 
 const DEV_SERVER = process.env["QUBIT_DEV_SERVER"] ?? "http://127.0.0.1:17385";
-const PROJECT_ID =
-  process.env["QUBIT_READINESS_PROJECT_ID"] ?? "0489e81b-4c6a-4f80-a674-51a10bf23564";
+const PROJECT_ID = process.env["QUBIT_READINESS_PROJECT_ID"] ?? DEFAULT_USER_PROJECT_ID;
 const OUTPUT_DIR = resolve(process.env["QUBIT_READINESS_OUT"] ?? "./out/agent-readiness");
 const WAIT_TIMEOUT_MS = Number(process.env["QUBIT_READINESS_WAIT_MS"] ?? 5 * 60_000);
 const POLL_MS = Number(process.env["QUBIT_READINESS_POLL_MS"] ?? 2000);
@@ -41,9 +41,7 @@ const FLAGS = (() => {
   const a = process.argv.slice(2);
   const noJudge = a.includes("--no-judge");
   const judgeModel = a.find((s) => s.startsWith("--judge-model="))?.split("=")[1];
-  const judgeMaxArtifacts = Number(
-    a.find((s) => s.startsWith("--judge-max="))?.split("=")[1] ?? 5
-  );
+  const judgeMaxArtifacts = Number(a.find((s) => s.startsWith("--judge-max="))?.split("=")[1] ?? 5);
   return { noJudge, judgeModel, judgeMaxArtifacts };
 })();
 
@@ -169,7 +167,9 @@ async function ensureExecutionBenchmarkPrerequisites(): Promise<{
       .get() as { id?: string } | undefined;
     strategyId = strategy?.id ?? "";
     const account = sqlite
-      .prepare(`SELECT id FROM broker_account WHERE enabled = 1 ORDER BY is_default DESC, updated_at DESC LIMIT 1`)
+      .prepare(
+        `SELECT id FROM broker_account WHERE enabled = 1 ORDER BY is_default DESC, updated_at DESC LIMIT 1`
+      )
       .get() as { id?: string } | undefined;
     brokerAccountId = account?.id ?? "";
   } finally {
@@ -177,7 +177,9 @@ async function ensureExecutionBenchmarkPrerequisites(): Promise<{
   }
 
   if (!strategyId) {
-    throw new Error("execution benchmark requires at least one strategy; strategy scenarios produced none");
+    throw new Error(
+      "execution benchmark requires at least one strategy; strategy scenarios produced none"
+    );
   }
   if (!brokerAccountId) {
     const response = await fetch(`${DEV_SERVER}/api/v1/reia/broker/accounts/upsert`, {
@@ -193,7 +195,9 @@ async function ensureExecutionBenchmarkPrerequisites(): Promise<{
     });
     const payload = (await response.json()) as { data?: { id?: string }; error?: string };
     if (!response.ok || !payload.data?.id) {
-      throw new Error(`unable to provision benchmark mock broker: ${payload.error ?? response.status}`);
+      throw new Error(
+        `unable to provision benchmark mock broker: ${payload.error ?? response.status}`
+      );
     }
     brokerAccountId = payload.data.id;
   }
@@ -282,9 +286,7 @@ function renderSummaryMarkdown(results: ScenarioResult[]): string {
   const validScores = results
     .map((r) => r.weightedScore)
     .filter((v): v is number => typeof v === "number");
-  const avg = validScores.length
-    ? validScores.reduce((a, b) => a + b, 0) / validScores.length
-    : 0;
+  const avg = validScores.length ? validScores.reduce((a, b) => a + b, 0) / validScores.length : 0;
   const overall: OverallGrade =
     avg >= 0.9 ? "A" : avg >= 0.75 ? "B" : avg >= 0.6 ? "C" : avg >= 0.4 ? "D" : "F";
   lines.push(`## 总体等级：**${overall}**（平均加权 ${avg.toFixed(2)}）`);
@@ -292,9 +294,7 @@ function renderSummaryMarkdown(results: ScenarioResult[]): string {
 
   lines.push("## 场景汇总（AQM 主指标 + 各类小分）");
   lines.push("");
-  lines.push(
-    "| 场景 | workflowRunId | 状态 | 总分 | A 内容 | B 工具 | C LLM | D 编排 | 用时 |"
-  );
+  lines.push("| 场景 | workflowRunId | 状态 | 总分 | A 内容 | B 工具 | C LLM | D 编排 | 用时 |");
   lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
   for (const r of results) {
     const cs = r.categoryScores;
@@ -307,10 +307,23 @@ function renderSummaryMarkdown(results: ScenarioResult[]): string {
   lines.push("## 主要指标明细（AQM 16 项）");
   lines.push("");
   const mainIds = [
-    "A-1", "A-2", "A-3", "A-4",
-    "B-1", "B-2", "B-3", "B-7",
-    "C-1", "C-2", "C-3-total", "C-5",
-    "D-1", "D-2", "D-3", "D-4", "D-5",
+    "A-1",
+    "A-2",
+    "A-3",
+    "A-4",
+    "B-1",
+    "B-2",
+    "B-3",
+    "B-7",
+    "C-1",
+    "C-2",
+    "C-3-total",
+    "C-5",
+    "D-1",
+    "D-2",
+    "D-3",
+    "D-4",
+    "D-5",
   ];
   lines.push(`| 场景 | ${mainIds.join(" | ")} |`);
   lines.push(`| --- | ${mainIds.map(() => "---").join(" | ")} |`);
@@ -438,14 +451,10 @@ async function main() {
   let judgeClient: JudgeClient | undefined;
   if (!FLAGS.noJudge) {
     try {
-      judgeClient = await createJudgeClient(
-        FLAGS.judgeModel ? { model: FLAGS.judgeModel } : {}
-      );
+      judgeClient = await createJudgeClient(FLAGS.judgeModel ? { model: FLAGS.judgeModel } : {});
       console.log("  judge      : client ready");
     } catch (err) {
-      console.warn(
-        `  ⚠ judge 初始化失败 (${(err as Error).message})；自动降级到 --no-judge`
-      );
+      console.warn(`  ⚠ judge 初始化失败 (${(err as Error).message})；自动降级到 --no-judge`);
       judgeClient = undefined;
     }
   }
@@ -464,14 +473,18 @@ async function main() {
     Array.from({ length: Math.min(CONCURRENCY, SCENARIO_ORDER.length) }, () => worker())
   );
 
-  const summaryPath = join(OUTPUT_DIR, `evaluation-summary-${new Date().toISOString().replace(/[:.]/g, "-")}.md`);
+  const summaryPath = join(
+    OUTPUT_DIR,
+    `evaluation-summary-${new Date().toISOString().replace(/[:.]/g, "-")}.md`
+  );
   await writeFile(summaryPath, renderSummaryMarkdown(results), "utf8");
 
   /**
    * Round 7 复盘（2026-06-08）：每轮自动生成 Cursor canvas，让用户能在 IDE 旁边看可视化报告。
    * 失败不阻塞 process.exit；canvas 仅是锦上添花。
    */
-  const roundLabel = process.env["QUBIT_READINESS_ROUND_LABEL"] ?? `Round-${new Date().toISOString().slice(0, 10)}`;
+  const roundLabel =
+    process.env["QUBIT_READINESS_ROUND_LABEL"] ?? `Round-${new Date().toISOString().slice(0, 10)}`;
   const canvasFileName = `agent-readiness-${roundLabel.replace(/\s+/g, "-").toLowerCase()}`;
   let canvasPath: string | null = null;
   try {

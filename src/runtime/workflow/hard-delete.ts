@@ -65,6 +65,9 @@ const WORKFLOW_DIRECT_TABLES = [
   "trader_context_message",
   "user_message_queue",
   "workflow_compensation_task",
+  // migration 0103: DeliveryVerdict 是 workflow 终态的 append-only ledger，FK 为
+  // NO ACTION；不先删会让 cleanup 在 COMMIT 阶段因 FK 失败而留下整条 workflow。
+  "workflow_delivery_verdict",
   "workflow_quality_snapshot",
 ] as const;
 

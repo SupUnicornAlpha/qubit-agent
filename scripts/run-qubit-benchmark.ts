@@ -18,9 +18,10 @@ import {
 import { buildRunEnvelope } from "../src/runtime/benchmark/run-envelope";
 import { scoreRunEnvelope } from "../src/runtime/benchmark/scorecard";
 import { type UpgradeGateResult, evaluateUpgradeGate } from "../src/runtime/benchmark/upgrade-gate";
+import { DEFAULT_USER_PROJECT_ID } from "../src/runtime/bootstrap/ensure-default-workspace";
 
 const DEV_SERVER = process.env.QUBIT_DEV_SERVER ?? "http://127.0.0.1:17385";
-const PROJECT_ID = process.env.QUBIT_BENCH_PROJECT_ID ?? "0489e81b-4c6a-4f80-a674-51a10bf23564";
+const PROJECT_ID = process.env.QUBIT_BENCH_PROJECT_ID ?? DEFAULT_USER_PROJECT_ID;
 const label = process.env.QUBIT_BENCH_LABEL ?? new Date().toISOString().replace(/[:.]/g, "-");
 const outputDir = resolve(process.env.QUBIT_BENCH_OUT ?? join("out", "qubit-bench", "L1", label));
 const selected = resolveCases();
@@ -77,10 +78,8 @@ async function launchBenchmarkCase(benchmarkCase: QubitBenchCase): Promise<strin
     details?: { invalidInputs?: Array<{ field: string; error: string }> };
   };
   if (!response.ok || !payload.data?.workflowRunId) {
-    const invalid = payload.details?.invalidInputs
-      ?.map((item) => `${item.field}:${item.error}`)
-      .join(",")
-      ?? "";
+    const invalid =
+      payload.details?.invalidInputs?.map((item) => `${item.field}:${item.error}`).join(",") ?? "";
     throw new Error(
       `launch_${response.status}:${payload.error ?? "unexpected_response"}${invalid ? `:${invalid}` : ""}`
     );
