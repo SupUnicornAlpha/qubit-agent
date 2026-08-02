@@ -1,15 +1,5 @@
 /**
- * 拓扑画布对 fan-out 广播 (toRole=__team__) 的展开/兼容回归测试。
- *
- * 关键场景：
- *   - aggregateEdgesFromInteractions 应该把一条 from=orchestrator,
- *     to=__team__, payloadJson.targetRoles=[A, B, C] 的 row 展开成 3 条边
- *     (orchestrator,A) (orchestrator,B) (orchestrator,C)，**不**保留 __team__ 边。
- *   - 没有 targetRoles 时退化为单条 from→__team__ 边，保留旧行为。
- *   - filterInteractionsForEdge 在选中 (orchestrator, A) 时，应该把 fan-out
- *     广播 row 也列出来 —— 这样用户点开 edge 详情能看到这条原始广播。
- *   - buildFilteredTeamGraphDisplay 在 nodeRoles 里不应该包含 __team__；
- *     fan-out 目标里的角色应被列入展示节点。
+ * 拓扑画布：fan-out 广播展开 + 活动作用域节点（默认仅 user/orchestrator）。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -52,14 +42,12 @@ describe("teamGraphDisplay fan-out (__team__) compat", () => {
       }),
     ];
     const edges = aggregateEdgesFromInteractions(rows);
-    /** 应该有 3 条 (orchestrator, analyst_*) 边，没有 (orchestrator, __team__) */
     expect(edges.length).toBe(3);
     const keys = new Set(edges.map((e) => e.key));
     expect(keys.has("analyst_fundamental||orchestrator")).toBe(true);
     expect(keys.has("analyst_technical||orchestrator")).toBe(true);
     expect(keys.has("analyst_macro||orchestrator")).toBe(true);
     expect([...keys].some((k) => k.includes("__team__"))).toBe(false);
-    /** 每条边都只命中一次 */
     for (const e of edges) {
       expect(e.messageCount).toBe(1);
     }
@@ -92,16 +80,13 @@ describe("teamGraphDisplay fan-out (__team__) compat", () => {
       }),
     ];
     const edge = filterInteractionsForEdge(rows, "orchestrator", "analyst_fundamental");
-    /** 两条都该命中：fan-out 广播 + analyst→orchestrator 回执 */
     expect(edge.length).toBe(2);
 
     const macroEdge = filterInteractionsForEdge(rows, "orchestrator", "analyst_macro");
-    /** 只有 fan-out 广播 */
     expect(macroEdge.length).toBe(1);
     expect(macroEdge[0]?.toRole).toBe("__team__");
 
     const otherEdge = filterInteractionsForEdge(rows, "orchestrator", "analyst_technical");
-    /** technical 不在 targetRoles 列表 → 不命中 */
     expect(otherEdge.length).toBe(0);
   });
 
@@ -124,61 +109,127 @@ describe("teamGraphDisplay fan-out (__team__) compat", () => {
       toolCalls: [],
       mcpCalls: [],
     };
-    const filtered = buildFilteredTeamGraphDisplay(teamGraph, [
-      "analyst_fundamental",
-      "analyst_technical",
-    ]);
-    /** 节点列表里不应有 __team__ */
+    const filtered = buildFilteredTeamGraphDisplay(teamGraph);
     const nodeIds = filtered.nodes.map((n) => n.role);
     expect(nodeIds.includes("__team__")).toBe(false);
-    /** 但 fan-out 目标 analyst_technical 应该被加进去（哪怕原 nodes 里没有） */
     expect(nodeIds.includes("analyst_technical")).toBe(true);
-    /** orchestrator 也应在（属于 ALWAYS_VISIBLE_GRAPH_ROLES + 在 interaction.fromRole） */
     expect(nodeIds.includes("orchestrator")).toBe(true);
-    /** edges 同理不该有 __team__ */
     for (const e of filtered.edges) {
       expect(e.a).not.toBe("__team__");
       expect(e.b).not.toBe("__team__");
     }
   });
+});
 
-  test("未使用时不常驻 msa / signal_fusion；有通信时才入图", () => {
+describe("teamGraphDisplay activity-scoped nodes", () => {
+  test("空闲时只展示 user + orchestrator，不铺未调用槽位", () => {
     const teamGraph: AnalystTeamGraphPayload = {
       nodes: [
-        { id: "orchestrator", role: "orchestrator", label: "Orchestrator" },
-        { id: "research", role: "research", label: "Research" },
-        { id: "msa", role: "msa", label: "MSA" },
-        { id: "signal_fusion", role: "signal_fusion", label: "Fusion" },
+        { id: "user", role: "user", label: "用户" },
+        { id: "orchestrator", role: "orchestrator", label: "编排器" },
+        { id: "risk", role: "risk", label: "risk" },
+        { id: "research", role: "research", label: "research" },
+        { id: "backtest", role: "backtest", label: "backtest" },
+        { id: "analyst_fundamental", role: "analyst_fundamental", label: "fundamental" },
+        { id: "custom_alpha", role: "custom_alpha", label: "custom" },
       ],
-      edges: [],
+      edges: [
+        {
+          key: "orchestrator||research",
+          a: "orchestrator",
+          b: "research",
+          messageCount: 0,
+          toolCount: 0,
+        },
+      ],
       interactions: [
         mkInteraction({
-          fromRole: "orchestrator",
-          toRole: "research",
-          contentText: "按需派单",
+          fromRole: "user",
+          toRole: "orchestrator",
+          contentText: "帮我看看 NVDA",
         }),
       ],
       toolCalls: [],
       mcpCalls: [],
     };
-    const idle = buildFilteredTeamGraphDisplay(teamGraph, ["research"]);
-    const idleRoles = idle.nodes.map((n) => n.role);
-    expect(idleRoles.includes("msa")).toBe(false);
-    expect(idleRoles.includes("signal_fusion")).toBe(false);
-    expect(idleRoles.includes("research")).toBe(true);
 
-    const withMsa: AnalystTeamGraphPayload = {
-      ...teamGraph,
+    const filtered = buildFilteredTeamGraphDisplay(teamGraph, [
+      "risk",
+      "research",
+      "backtest",
+      "analyst_fundamental",
+    ]);
+    const roles = new Set(filtered.nodes.map((n) => n.role));
+    expect([...roles].sort()).toEqual(["orchestrator", "user"]);
+    expect(filtered.edges.length).toBe(1);
+    expect(filtered.edges[0]?.a === "orchestrator" || filtered.edges[0]?.b === "orchestrator").toBe(
+      true
+    );
+  });
+
+  test("任意被调用的新角色都会入图（不钉死角色类型）", () => {
+    const teamGraph: AnalystTeamGraphPayload = {
+      nodes: [
+        { id: "user", role: "user", label: "用户" },
+        { id: "orchestrator", role: "orchestrator", label: "编排器" },
+        { id: "factor_scout", role: "factor_scout", label: "Factor Scout" },
+      ],
+      edges: [],
       interactions: [
-        ...teamGraph.interactions,
+        mkInteraction({
+          fromRole: "user",
+          toRole: "orchestrator",
+          contentText: "发现新因子",
+        }),
+        mkInteraction({
+          fromRole: "orchestrator",
+          toRole: "factor_scout",
+          contentText: "请筛选候选因子",
+        }),
+      ],
+      toolCalls: [],
+      mcpCalls: [],
+    };
+
+    const filtered = buildFilteredTeamGraphDisplay(teamGraph);
+    const roles = new Set(filtered.nodes.map((n) => n.role));
+    expect(roles.has("user")).toBe(true);
+    expect(roles.has("orchestrator")).toBe(true);
+    expect(roles.has("factor_scout")).toBe(true);
+    expect(roles.size).toBe(3);
+  });
+
+  test("有通信时 msa 才入图；未使用时不常驻", () => {
+    const base: AnalystTeamGraphPayload = {
+      nodes: [
+        { id: "orchestrator", role: "orchestrator", label: "Orchestrator" },
+        { id: "msa", role: "msa", label: "MSA" },
+      ],
+      edges: [],
+      interactions: [
+        mkInteraction({
+          fromRole: "orchestrator",
+          toRole: "user",
+          contentText: "直接答复",
+        }),
+      ],
+      toolCalls: [],
+      mcpCalls: [],
+    };
+    const idle = buildFilteredTeamGraphDisplay(base);
+    expect(idle.nodes.map((n) => n.role).includes("msa")).toBe(false);
+
+    const used = buildFilteredTeamGraphDisplay({
+      ...base,
+      interactions: [
+        ...base.interactions,
         mkInteraction({
           fromRole: "orchestrator",
           toRole: "msa",
           contentText: "启动融合",
         }),
       ],
-    };
-    const used = buildFilteredTeamGraphDisplay(withMsa, ["research"]);
+    });
     expect(used.nodes.map((n) => n.role).includes("msa")).toBe(true);
   });
 });

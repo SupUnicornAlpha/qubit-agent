@@ -158,11 +158,10 @@ export function aggregateEdgesFromInteractions(
 }
 
 /**
- * 按左侧勾选的分析师过滤展示图。
- * orchestrator 始终保留；msa / signal_fusion 等外部角色**仅在实际出现通信或轨迹时**入图，
- * 避免未启用 MSA 时拓扑上常驻「融合」节点。
+ * 拓扑默认常驻角色：用户 + 编排器。
+ * 其他任意 Agent role（不限 analyst_* / research / msa …）仅在出现实际活动时入图。
  */
-const ALWAYS_VISIBLE_GRAPH_ROLES = new Set(["orchestrator"]);
+const ALWAYS_VISIBLE_GRAPH_ROLES = new Set(["user", "orchestrator"]);
 
 function mergeEdge(prev: AnalystTeamGraphEdge, next: AnalystTeamGraphEdge): AnalystTeamGraphEdge {
   return {
@@ -176,40 +175,60 @@ function mergeEdge(prev: AnalystTeamGraphEdge, next: AnalystTeamGraphEdge): Anal
   };
 }
 
+function isExcludedGraphNodeRole(role: string): boolean {
+  return !role || role === "unknown" || role === TEAM_BROADCAST_ROLE;
+}
+
+/**
+ * 按「实际活动」裁剪拓扑：默认只展示 user / orchestrator；
+ * 任意被派发、有交互、工具、MCP 或 agent_step 的角色再动态加入。
+ *
+ * `participatingRoles` 保留兼容参数（旧调用方），但**不再**作为节点种子——
+ * 避免把未调用的槽位角色铺满画布；未来新 Agent 类型也不需要改白名单。
+ */
 export function buildFilteredTeamGraphDisplay(
   teamGraph: AnalystTeamGraphPayload,
-  participatingRoles: string[]
+  _participatingRoles: string[] = []
 ): AnalystTeamGraphPayload {
-  if (!participatingRoles.length) return teamGraph;
+  void _participatingRoles;
 
-  const allow = new Set(participatingRoles);
-  for (const r of ALWAYS_VISIBLE_GRAPH_ROLES) allow.add(r);
-  const interactions = (teamGraph.interactions ?? []).filter(
-    (i) => allow.has(i.fromRole) || allow.has(i.toRole)
-  );
+  const nodeRoles = new Set<string>(ALWAYS_VISIBLE_GRAPH_ROLES);
 
-  const nodeRoles = new Set<string>(participatingRoles);
-  for (const i of interactions) {
-    nodeRoles.add(i.fromRole);
-    /** __team__ 是 fan-out 广播的伪 toRole，绝不应被加成图节点 */
-    if (i.toRole !== TEAM_BROADCAST_ROLE) nodeRoles.add(i.toRole);
+  for (const i of teamGraph.interactions ?? []) {
+    if (!isExcludedGraphNodeRole(i.fromRole)) nodeRoles.add(i.fromRole);
     if (i.toRole === TEAM_BROADCAST_ROLE) {
-      for (const t of readTargetRoles(i.payloadJson)) nodeRoles.add(t);
+      for (const t of readTargetRoles(i.payloadJson)) {
+        if (!isExcludedGraphNodeRole(t)) nodeRoles.add(t);
+      }
+    } else if (!isExcludedGraphNodeRole(i.toRole)) {
+      nodeRoles.add(i.toRole);
     }
   }
-  // 实际通信触及的外部角色（如本次真的跑了 MSA）纳入 allow，才能显示其工具/步骤
-  for (const role of nodeRoles) allow.add(role);
-
   for (const t of teamGraph.toolCalls ?? []) {
-    if (allow.has(t.agentRole)) nodeRoles.add(t.agentRole);
+    if (!isExcludedGraphNodeRole(t.agentRole)) nodeRoles.add(t.agentRole);
   }
   for (const m of teamGraph.mcpCalls ?? []) {
-    if (allow.has(m.agentRole)) nodeRoles.add(m.agentRole);
+    if (!isExcludedGraphNodeRole(m.agentRole)) nodeRoles.add(m.agentRole);
   }
+  for (const s of teamGraph.agentSteps ?? []) {
+    if (!isExcludedGraphNodeRole(s.agentRole)) nodeRoles.add(s.agentRole);
+  }
+  // 有真实流量的边端点（含 __tools__ / __skills__）；纯规划空边不拉节点
+  for (const e of teamGraph.edges ?? []) {
+    const skillCount = (e as { skillCount?: number }).skillCount ?? 0;
+    if (e.messageCount === 0 && e.toolCount === 0 && skillCount === 0) continue;
+    if (!isExcludedGraphNodeRole(e.a)) nodeRoles.add(e.a);
+    if (!isExcludedGraphNodeRole(e.b)) nodeRoles.add(e.b);
+  }
+
+  const allow = new Set(nodeRoles);
+  const interactions = (teamGraph.interactions ?? []).filter((i) =>
+    interactionMatchesAllow(i, allow)
+  );
 
   const nodeByRole = new Map(teamGraph.nodes.map((n) => [n.role, n]));
   const nodes: AnalystTeamGraphNode[] = [...nodeRoles]
-    .filter((r) => r !== "unknown")
+    .filter((r) => !isExcludedGraphNodeRole(r))
     .sort()
     .map((role) => {
       const existing = nodeByRole.get(role);
@@ -244,13 +263,17 @@ export function buildFilteredTeamGraphDisplay(
   const edgesFromLog = aggregateEdgesFromInteractions(interactions, toolStatsByRole);
 
   const edgeByKey = new Map<string, AnalystTeamGraphEdge>();
+  // 不再保留「规划空边」——未调用的角色不应靠虚线拓扑提前占位
+  for (const e of edgesFromLog) {
+    if (!nodeRoles.has(e.a) || !nodeRoles.has(e.b)) continue;
+    const prev = edgeByKey.get(e.key);
+    edgeByKey.set(e.key, prev ? mergeEdge(prev, e) : e);
+  }
+  // 保留后端已聚合、且两端都在活动节点上的有流量边（含 tool/skill）
   for (const e of teamGraph.edges ?? []) {
     if (!nodeRoles.has(e.a) || !nodeRoles.has(e.b)) continue;
-    if (e.messageCount === 0 && e.toolCount === 0) {
-      edgeByKey.set(e.key, e);
-    }
-  }
-  for (const e of edgesFromLog) {
+    const skillCount = (e as { skillCount?: number }).skillCount ?? 0;
+    if (e.messageCount === 0 && e.toolCount === 0 && skillCount === 0) continue;
     const prev = edgeByKey.get(e.key);
     edgeByKey.set(e.key, prev ? mergeEdge(prev, e) : e);
   }

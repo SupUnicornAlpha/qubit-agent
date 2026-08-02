@@ -143,19 +143,20 @@ function renderSummary(results: readonly CaseResult[]): string {
     `- label: \`${label}\``,
     `- project: \`${PROJECT_ID}\``,
     `- backend: \`${DEV_SERVER}\``,
-    `- cases: ${results.length}; pass: ${passed}; incomplete: ${incomplete}; fail: ${failed}`,
+    `- cases: ${results.length}; upgrade_pass: ${passed}; incomplete: ${incomplete}; fail: ${failed}`,
+    `- research_success: ${results.filter((r) => r.gate?.researchSuccess === "pass").length}/${results.length}`,
     "",
-    "| Case | Scenario | Gate | Score | Delivery | Quality | Tools | Resource | Observability |",
-    "| --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
+    "| Case | Scenario | Upgrade | Research | Score | Delivery | Quality | Tools | Resource | Observability |",
+    "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
   ];
   for (const result of results) {
     if (!result.gate) {
-      lines.push(`| ${result.id} | ${result.scenarioKey} | FAIL | 0.00 | - | - | - | - | - |`);
+      lines.push(`| ${result.id} | ${result.scenarioKey} | FAIL | FAIL | 0.00 | - | - | - | - | - |`);
       continue;
     }
     const dimensions = new Map(result.gate.dimensions.map((item) => [item.name, item.status]));
     lines.push(
-      `| ${result.id} | ${result.scenarioKey} | ${result.gate.status.toUpperCase()} | ${result.gate.score.toFixed(2)} | ${dimensions.get("delivery")} | ${dimensions.get("quality")} | ${dimensions.get("tools")} | ${dimensions.get("resource")} | ${dimensions.get("observability")} |`
+      `| ${result.id} | ${result.scenarioKey} | ${result.gate.status.toUpperCase()} | ${(result.gate.researchSuccess ?? "fail").toUpperCase()} | ${result.gate.score.toFixed(2)} | ${dimensions.get("delivery")} | ${dimensions.get("quality")} | ${dimensions.get("tools")} | ${dimensions.get("resource")} | ${dimensions.get("observability")} |`
     );
   }
   lines.push("", "## Failure / incomplete details", "");
@@ -169,7 +170,7 @@ function renderSummary(results: readonly CaseResult[]): string {
     lines.push("");
   }
   lines.push(
-    "> 只有所有 case 均为 PASS，才可将本报告作为升级门禁通过证据；INCOMPLETE 表示缺失观测，不能当作通过。",
+    "> **Upgrade** = 晋级门禁（严）；**Research** = 研究可用（软）。只有 Upgrade 全 PASS 才可作为 challenger 晋级证据；Research PASS 表示任务已有可验证副作用。",
     ""
   );
   return lines.join("\n");
@@ -182,7 +183,9 @@ for (const benchmarkCase of selected) {
   console.log(`▶ ${benchmarkCase.id} ${benchmarkCase.title}`);
   const result = await runCase(benchmarkCase);
   results.push(result);
-  console.log(`  ${result.gate?.status ?? "fail"} ${result.error ?? ""}`.trim());
+  console.log(
+    `  upgrade=${result.gate?.status ?? "fail"} research=${result.gate?.researchSuccess ?? "fail"} ${result.error ?? ""}`.trim()
+  );
 }
 const summary = renderSummary(results);
 await writeFile(join(outputDir, "summary.md"), summary, "utf8");

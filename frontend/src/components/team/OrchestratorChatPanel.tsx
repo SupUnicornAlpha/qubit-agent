@@ -370,7 +370,7 @@ export function OrchestratorChatPanel({
         <LiveConversationView
           events={visibleEvents}
           selfRole="orchestrator"
-          contentMaxLength={6000}
+          contentMaxLength={12000}
           collapseA2AFromRole="orchestrator"
           collapseToolCalls
           onOpenRef={(ref) => {

@@ -22,7 +22,7 @@ export function getContractAutoAdvanceMode(): ContractAutoAdvanceMode {
   return raw === "dispatch" ? "dispatch" : "hint";
 }
 
-/** When true (default), max_iterations salvage requires DeliveryVerdict.state === delivered. */
+/** When true (default), finalize salvage requires DeliveryVerdict.researchOk (soft floor). */
 export function isDeliveryVerdictEnforceEnabled(): boolean {
   const raw = env("QUBIT_DELIVERY_VERDICT_ENFORCE");
   if (raw === undefined || raw === "") return true;

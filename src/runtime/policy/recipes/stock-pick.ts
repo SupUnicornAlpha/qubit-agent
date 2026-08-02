@@ -3,7 +3,7 @@ import type { ScenarioRecipe } from "../types";
 export const stockPickRecipe: ScenarioRecipe = {
   key: "stock_pick",
   aliases: ["stock_screening", "stock_pick_long", "sp"],
-  version: "2026-08-01.1",
+  version: "2026-08-03.1",
   capabilityOwners: {
     screener: "research",
     "recommendation.record": "research",
@@ -27,12 +27,14 @@ export const stockPickRecipe: ScenarioRecipe = {
       {
         table: "screener_candidate",
         minRows: 3,
+        researchMinRows: 1,
         requiredFields: ["ticker", "score"],
         scope: "workflow",
       },
       {
         table: "recommendation_snapshot",
         minRows: 3,
+        researchMinRows: 1,
         requiredFields: ["symbol", "rationale"],
         scope: "workflow",
       },

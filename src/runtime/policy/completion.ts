@@ -1,6 +1,10 @@
 /**
  * CompletionEvaluator — sole author of DeliveryVerdict.
  * Does not mutate workflow lifecycle status.
+ *
+ * Split (Codex/Claude/Hermes-aligned):
+ * - researchOk / soft gaps → runtime may complete
+ * - upgradeOk → promotion / bench upgrade gate
  */
 
 import type { Database } from "bun:sqlite";
@@ -23,6 +27,7 @@ export function evaluateDeliveryVerdict(input: {
     resolveScenarioRecipe(input.snapshot.scenarioKey) ??
     null;
   const reasonCodes: string[] = [];
+  const softReasonCodes: string[] = [];
   const missingArtifacts: string[] = [];
   const missingCapabilities: string[] = [];
   const dataGaps: DeliveryVerdict["dataGaps"] = [];
@@ -35,25 +40,31 @@ export function evaluateDeliveryVerdict(input: {
     return {
       state: "partial",
       reasonCodes: ["scenario_recipe_missing"],
+      softReasonCodes: answer.schemaOk ? [] : ["answer_schema_unsatisfied"],
       missingArtifacts: [],
       missingCapabilities: [],
       dataGaps: [],
       answer,
+      researchOk: false,
+      upgradeOk: false,
       evaluatorVersion: EVALUATOR_VERSION,
       recipeKey: null,
       recipeVersion: null,
     };
   }
 
-  // Artifacts: prefer scenario-expectations SQL counts + optional requiredFields.
   for (const artifact of recipe.completion.artifacts) {
     const count = countArtifact(input.sqlite, input.snapshot, artifact.table, recipe);
-    if (count < artifact.minRows) {
+    const researchFloor = artifact.researchMinRows ?? 1;
+    if (researchFloor > 0 && count < researchFloor) {
       missingArtifacts.push(artifact.table);
       reasonCodes.push(`missing_artifact:${artifact.table}`);
       continue;
     }
-    if (artifact.requiredFields && artifact.requiredFields.length > 0) {
+    if (count < artifact.minRows) {
+      softReasonCodes.push(`artifact_underfill:${artifact.table}:${count}/${artifact.minRows}`);
+    }
+    if (artifact.requiredFields && artifact.requiredFields.length > 0 && count > 0) {
       const fieldOk = checkRequiredFields(
         input.sqlite,
         input.snapshot.workflowId,
@@ -61,8 +72,7 @@ export function evaluateDeliveryVerdict(input: {
         artifact.requiredFields
       );
       if (!fieldOk) {
-        missingArtifacts.push(`${artifact.table}:fields`);
-        reasonCodes.push(`artifact_fields_incomplete:${artifact.table}`);
+        softReasonCodes.push(`artifact_fields_incomplete:${artifact.table}`);
       }
     }
   }
@@ -86,7 +96,7 @@ export function evaluateDeliveryVerdict(input: {
   }
 
   if (input.snapshot.a2aGap) {
-    reasonCodes.push("a2a_gap");
+    softReasonCodes.push("a2a_gap");
   }
 
   const { mustIncludeTerms: _benchmarkTerms, ...productAnswerSchema } =
@@ -96,23 +106,24 @@ export function evaluateDeliveryVerdict(input: {
     : productAnswerSchema;
   const answer = assertAnswerSchema(answerSchema, input.answerText);
   if (!answer.schemaOk) {
-    reasonCodes.push("answer_schema_unsatisfied");
+    softReasonCodes.push("answer_schema_unsatisfied");
   }
 
+  const researchOk =
+    missingArtifacts.length === 0 &&
+    missingCapabilities.length === 0 &&
+    !dataGaps.some((gap) => gap.class === "infra_error");
+
+  const upgradeOk =
+    researchOk &&
+    softReasonCodes.length === 0 &&
+    answer.schemaOk &&
+    dataGaps.length === 0;
+
   let state: DeliveryVerdict["state"];
-  if (
-    missingArtifacts.length === 0 &&
-    missingCapabilities.length === 0 &&
-    answer.schemaOk &&
-    dataGaps.length === 0
-  ) {
+  if (upgradeOk) {
     state = "delivered";
-  } else if (
-    missingArtifacts.length === 0 &&
-    missingCapabilities.length === 0 &&
-    answer.schemaOk &&
-    (dataGaps.length > 0 || input.snapshot.a2aGap)
-  ) {
+  } else if (researchOk) {
     state = "delivered_with_gaps";
   } else if (dataGaps.some((gap) => gap.class === "infra_error")) {
     state = "failed";
@@ -122,11 +133,14 @@ export function evaluateDeliveryVerdict(input: {
 
   return {
     state,
-    reasonCodes: [...new Set(reasonCodes)],
+    reasonCodes: [...new Set([...reasonCodes, ...softReasonCodes])],
+    softReasonCodes: [...new Set(softReasonCodes)],
     missingArtifacts,
     missingCapabilities,
     dataGaps,
     answer,
+    researchOk,
+    upgradeOk,
     evaluatorVersion: EVALUATOR_VERSION,
     recipeKey: recipe.key,
     recipeVersion: recipe.version,
@@ -154,7 +168,6 @@ function countArtifact(
   } catch {
     /* fall through */
   }
-  // Fallback naive counts for recipe-only tables.
   const fallbackSql: Record<string, string> = {
     order_intent: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?`,
     risk_decision: `SELECT COUNT(*) AS c FROM risk_decision WHERE workflow_run_id = ?`,
@@ -191,7 +204,7 @@ function checkRequiredFields(
       columns: ["symbol", "rationale"],
     },
     factor_definition: {
-      sql: `SELECT name AS name, expression AS expression FROM factor_definition WHERE workflow_run_id = ? LIMIT 5`,
+      sql: `SELECT name AS name, expr AS expression FROM factor_definition WHERE workflow_run_id = ? LIMIT 5`,
       columns: ["name", "expression"],
     },
     order_intent: {
@@ -204,7 +217,7 @@ function checkRequiredFields(
       columns: ["decision"],
     },
     strategy_version: {
-      sql: `SELECT name AS name FROM strategy_version WHERE workflow_run_id = ? LIMIT 5`,
+      sql: `SELECT version_tag AS name FROM strategy_version WHERE workflow_run_id = ? LIMIT 5`,
       columns: ["name"],
     },
     screener_candidate: {

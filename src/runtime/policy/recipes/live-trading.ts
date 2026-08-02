@@ -3,7 +3,7 @@ import type { ScenarioRecipe } from "../types";
 export const liveTradingRecipe: ScenarioRecipe = {
   key: "live_trading",
   aliases: ["paper_trading", "lt"],
-  version: "2026-08-01.1",
+  version: "2026-08-03.1",
   capabilityOwners: {
     strategy: "strategy",
     order: "execution",
@@ -11,10 +11,16 @@ export const liveTradingRecipe: ScenarioRecipe = {
   },
   roleToolAllowlist: {
     orchestrator: ["update_plan", "topology.dispatch"],
-    execute: ["strategy.create_version", "order.create_intent", "evaluate_risk"],
+    execute: ["strategy.create_version", "order.create_intent"],
   },
   stallBudget: {
-    tools: ["market.readiness", "market.resolve_symbol", "update_plan", "evaluate_risk"],
+    tools: [
+      "market.readiness",
+      "market.resolve_symbol",
+      "update_plan",
+      "evaluate_risk",
+      "strategy.create_version",
+    ],
     key: "tool_fingerprint",
     maxSuccess: 1,
     onExceed: "strip_from_surface",
@@ -28,12 +34,15 @@ export const liveTradingRecipe: ScenarioRecipe = {
       {
         table: "order_intent",
         minRows: 1,
+        researchMinRows: 1,
         requiredFields: ["symbol", "side", "qty", "strategy_version_id"],
         scope: "workflow",
       },
       {
         table: "risk_decision",
         minRows: 1,
+        /** risk_decision is upgrade-grade; research floor is order_intent. */
+        researchMinRows: 0,
         requiredFields: ["decision"],
         scope: "workflow",
       },
@@ -44,9 +53,9 @@ export const liveTradingRecipe: ScenarioRecipe = {
     },
   },
   checklistPrompt: [
-    "1. 若尚无 strategy_version_id：先 strategy.create_version",
-    "2. order.create_intent：必须传 symbol、side=buy|sell（勿用 direction）、qty>0、上一步返回的 strategy_version_id、dispatch_mode=paper",
-    "3. 确保 risk_decision 落库（order.create_intent 会内嵌 pre-trade）",
+    "1. 若尚无 strategy_version_id：先 strategy.create_version（成功一次即可）",
+    "2. 立刻调用 order.create_intent（symbol、side=buy|sell、qty>0、strategy_version_id、dispatch_mode=paper）；禁止 submit_order / 单独 evaluate_risk 代替",
+    "3. risk_decision 由 order.create_intent 内嵌；不要先走券商 submit",
     "4. 输出五段答案；不得仅以行情不可用结案",
   ],
 };

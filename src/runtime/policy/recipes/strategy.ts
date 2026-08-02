@@ -3,7 +3,7 @@ import type { ScenarioRecipe } from "../types";
 export const strategyRecipe: ScenarioRecipe = {
   key: "strategy",
   aliases: ["strategy_authoring", "st", "long_short"],
-  version: "2026-08-01.1",
+  version: "2026-08-03.1",
   capabilityOwners: {
     strategy: "strategy",
   },
@@ -32,12 +32,14 @@ export const strategyRecipe: ScenarioRecipe = {
       {
         table: "strategy_version",
         minRows: 1,
+        researchMinRows: 1,
         requiredFields: ["name"],
         scope: "workflow",
       },
       {
         table: "strategy_composition",
         minRows: 1,
+        researchMinRows: 0,
         scope: "workflow",
       },
     ],

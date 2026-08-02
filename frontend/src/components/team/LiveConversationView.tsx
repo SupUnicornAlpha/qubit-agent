@@ -255,8 +255,12 @@ const MessageRow: FC<{
   const { t } = useTranslation();
   const isSelf = ev.fromRole === selfRole;
   const accent = avatarColorFor(ev.fromRole).bg;
+  // reasonText 是 ReAct 对用户可见的调用理由 / 阶段性说明；不要把 runtime 内部字段名
+  // "reasoning" 直接暴露成「思维链」，以免和供应商不提供的隐藏推理混淆。
+  const messageKindLabel =
+    ev.messageKind === "reasoning_progress" ? "过程说明" : ev.messageKind;
   const tagText = `${formatRoleName(ev.fromRole)} → ${formatRoleName(ev.toRole)}${
-    ev.messageKind ? ` · ${ev.messageKind}` : ""
+    messageKindLabel ? ` · ${messageKindLabel}` : ""
   }${ev.toolName ? ` · ${ev.toolName}` : ""}`;
   const bubbleBg = isSelf ? "rgba(245,158,11,0.08)" : "rgba(96,165,250,0.06)";
   const bubbleBorder = isSelf
@@ -273,7 +277,10 @@ const MessageRow: FC<{
    * 其它种类（handoff、纯 ack 等短文本）继续走更轻量的内联文本分支。
    */
   const useMarkdown =
-    (ev.messageKind === "llm_message" || ev.messageKind == null) && looksLikeMarkdown(content);
+    (ev.messageKind === "llm_message" ||
+      ev.messageKind === "reasoning_progress" ||
+      ev.messageKind == null) &&
+    looksLikeMarkdown(content);
 
   return (
     <div

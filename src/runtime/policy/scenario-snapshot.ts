@@ -33,7 +33,13 @@ export interface ScenarioRuntimeSnapshot {
   missingArtifactTables: string[];
   /** Full artifact facts let terminal policy stay read-only and pure. */
   missingArtifacts: ArtifactGapDetail[];
+  /** Upgrade-grade artifact completeness (full minRows from expectations). */
   artifactsOk: boolean;
+  /**
+   * Research-floor completeness: every recipe artifact with researchMinRows>0 has ≥ floor rows.
+   * Used by soft terminal gates so underfill does not hard-block finalize.
+   */
+  researchArtifactsOk: boolean;
   factorDefinitionCount: number;
   /** Recovery inputs, preloaded by the FactsPort instead of queried in policy. */
   activeFactorIds: string[];
@@ -67,6 +73,7 @@ export function loadScenarioRuntimeSnapshot(input: {
   let missingArtifactTables: string[] = [];
   let missingArtifacts: ArtifactGapDetail[] = [];
   let artifactsOk = true;
+  let researchArtifactsOk = true;
 
   if (scenarioKey) {
     try {
@@ -85,6 +92,12 @@ export function loadScenarioRuntimeSnapshot(input: {
       artifactsOk = artifacts.ok;
       missingArtifactTables = artifacts.missing.map((item) => item.table);
       missingArtifacts = artifacts.missing;
+      researchArtifactsOk = computeResearchArtifactsOk({
+        sqlite: input.sqlite,
+        workflowId: input.workflowId,
+        recipe,
+        missingArtifactTables,
+      });
     } catch {
       /* leave defaults */
     }
@@ -102,6 +115,7 @@ export function loadScenarioRuntimeSnapshot(input: {
     missingArtifactTables,
     missingArtifacts,
     artifactsOk,
+    researchArtifactsOk,
     factorDefinitionCount: countFactorDefinitions(input.sqlite, input.workflowId),
     activeFactorIds: listActiveFactorIds(input.sqlite, input.workflowId, 3),
     latestFactorDefinitionId: latestFactorDefinitionId(input.sqlite, input.workflowId),
@@ -109,6 +123,46 @@ export function loadScenarioRuntimeSnapshot(input: {
     strategyVersionId: latestStrategyVersionId(input.sqlite, input.workflowId),
     loadedAtMs: Date.now(),
   };
+}
+
+function computeResearchArtifactsOk(input: {
+  sqlite: Database;
+  workflowId: string;
+  recipe: ScenarioRecipe | null;
+  missingArtifactTables: string[];
+}): boolean {
+  if (!input.recipe) return input.missingArtifactTables.length === 0;
+  for (const artifact of input.recipe.completion.artifacts) {
+    const floor = artifact.researchMinRows ?? 1;
+    if (floor <= 0) continue;
+    const count = countTableRows(input.sqlite, input.workflowId, artifact.table);
+    if (count < floor) return false;
+  }
+  return true;
+}
+
+function countTableRows(sqlite: Database, workflowId: string, table: string): number {
+  const sql: Record<string, string> = {
+    recommendation_snapshot: `SELECT COUNT(*) AS c FROM recommendation_snapshot WHERE workflow_run_id = ?`,
+    screener_candidate: `SELECT COUNT(*) AS c FROM screener_candidate sc
+      JOIN screener_run sr ON sr.id = sc.screener_run_id WHERE sr.workflow_run_id = ?`,
+    factor_definition: `SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?`,
+    factor_evaluation: `SELECT COUNT(*) AS c FROM factor_evaluation fe
+      JOIN factor_definition fd ON fd.id = fe.factor_id WHERE fd.workflow_run_id = ?`,
+    strategy_version: `SELECT COUNT(*) AS c FROM strategy_version WHERE workflow_run_id = ?`,
+    strategy_composition: `SELECT COUNT(*) AS c FROM strategy_composition WHERE workflow_run_id = ?`,
+    order_intent: `SELECT COUNT(*) AS c FROM order_intent WHERE workflow_run_id = ?`,
+    risk_decision: `SELECT COUNT(*) AS c FROM risk_decision rd
+      JOIN order_intent oi ON oi.id = rd.order_intent_id WHERE oi.workflow_run_id = ?`,
+  };
+  const query = sql[table];
+  if (!query) return 0;
+  try {
+    const row = sqlite.prepare(query).get(workflowId) as { c: number } | undefined;
+    return Number(row?.c ?? 0);
+  } catch {
+    return 0;
+  }
 }
 
 function listActiveFactorIds(sqlite: Database, workflowId: string, limit: number): string[] {

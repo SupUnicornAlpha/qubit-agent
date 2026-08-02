@@ -39,6 +39,16 @@ export function normalizeFactorExpression(expr: string): {
     rewrites.push("delay→Ref");
   }
 
+  // Dry-run series is finite; clamp huge lookbacks (e.g. 252) so register can succeed.
+  next = next.replace(/\bRef\s*\(\s*([^,]+?)\s*,\s*(\d+)\s*\)/gi, (_m, series: string, raw: string) => {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 80) {
+      rewrites.push(`Ref(${n})→Ref(21)`);
+      return `Ref(${String(series).trim()}, 21)`;
+    }
+    return `Ref(${String(series).trim()}, ${raw})`;
+  });
+
   // Flag clearly-python-only names that qlib won't define.
   for (const name of ["pd", "np", "pandas", "numpy", "DataFrame"]) {
     if (new RegExp(`\\b${name}\\b`).test(next)) {

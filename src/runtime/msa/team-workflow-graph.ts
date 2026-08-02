@@ -435,9 +435,17 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     if (role) bumpSkillEdge(role);
   }
 
-  const nodeRoles = new Set<string>();
+  /**
+   * 节点按「实际活动」入图：默认只保证 orchestrator（+ 交互里出现的 user）。
+   * 任意其他角色（不限 analyst_* / research / …）仅在出现交互、工具、MCP、技能边或
+   * agent_step 时加入——避免预创建 instance 槽位把整支未调用团队铺满拓扑。
+   */
+  const nodeRoles = new Set<string>(["orchestrator"]);
   for (const k of edgeMap.keys()) {
     const [x, y] = k.split("||");
+    const agg = edgeMap.get(k);
+    // 仅统计有真实流量的边端点；纯规划空边不拉节点
+    if (!agg || (agg.messageCount === 0 && agg.toolCount === 0 && agg.skillCount === 0)) continue;
     if (x) nodeRoles.add(x);
     if (y) nodeRoles.add(y);
   }
@@ -447,17 +455,10 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   }
   for (const t of toolCalls) nodeRoles.add(t.agentRole);
   for (const m of mcpCalls) nodeRoles.add(m.agentRole);
-  nodeRoles.add("msa");
-  nodeRoles.add("orchestrator");
-
-  /** 本工作流实例上的角色（含 orchestrator、各 analyst 槽位等），避免仅有边外角色时漏节点 */
-  for (const inst of instances) {
-    const role = defRole.get(inst.definitionId);
-    if (role) nodeRoles.add(role);
-  }
+  for (const s of agentSteps) nodeRoles.add(s.agentRole);
 
   const nodes: TeamGraphNode[] = [...nodeRoles]
-    .filter((r) => r !== "unknown")
+    .filter((r) => r !== "unknown" && r !== "__team__")
     .sort()
     .map((role) => ({
       id: role,

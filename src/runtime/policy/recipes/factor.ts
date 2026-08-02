@@ -3,7 +3,7 @@ import type { ScenarioRecipe } from "../types";
 export const factorRecipe: ScenarioRecipe = {
   key: "factor",
   aliases: ["factor_research", "f"],
-  version: "2026-08-01.1",
+  version: "2026-08-03.1",
   capabilityOwners: {
     factor: "factor",
   },
@@ -26,12 +26,15 @@ export const factorRecipe: ScenarioRecipe = {
       {
         table: "factor_definition",
         minRows: 1,
+        researchMinRows: 1,
         requiredFields: ["name", "expression"],
         scope: "workflow",
       },
       {
         table: "factor_evaluation",
         minRows: 1,
+        /** Research may complete after register; evaluate is upgrade-grade. */
+        researchMinRows: 0,
         scope: "workflow",
       },
     ],
@@ -41,7 +44,7 @@ export const factorRecipe: ScenarioRecipe = {
     },
   },
   checklistPrompt: [
-    "1. factor.register（qlib_expr：close / Ref(close, 21) - 1；勿用未声明 Python 名）",
+    "1. factor.register（qlib_expr：close / Ref(close, 21) - 1；勿用 Ref(close,252) 超长窗；勿用未声明 Python 名）",
     "2. factor.compute → factor.evaluate 或 factor.autoEvaluate 闭环",
     "3. 输出五段答案；禁止仅 list 旧因子结案",
   ],

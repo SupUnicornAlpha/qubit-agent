@@ -34,13 +34,17 @@ async function main() {
   if (restored > 0) {
     console.log(`[QUBIT] Restored ${restored} strategy runtime(s)`);
   }
-  const wfRestore = await restoreRunningWorkflows();
-  if (wfRestore.scanned > 0) {
-    console.log(
-      `[QUBIT] Workflow sweep: scanned=${wfRestore.scanned} resumed=${wfRestore.resumed} ` +
-        `cliResumed=${wfRestore.cliResumed} enqueuedRetry=${wfRestore.enqueuedRetry} ` +
-        `markedFailed=${wfRestore.markedFailed}`
-    );
+  if (process.env.QUBIT_SKIP_WORKFLOW_RESTORE === "1") {
+    console.log("[QUBIT] Workflow sweep skipped (QUBIT_SKIP_WORKFLOW_RESTORE=1)");
+  } else {
+    const wfRestore = await restoreRunningWorkflows();
+    if (wfRestore.scanned > 0) {
+      console.log(
+        `[QUBIT] Workflow sweep: scanned=${wfRestore.scanned} resumed=${wfRestore.resumed} ` +
+          `cliResumed=${wfRestore.cliResumed} enqueuedRetry=${wfRestore.enqueuedRetry} ` +
+          `markedFailed=${wfRestore.markedFailed}`
+      );
+    }
   }
   workflowScheduler.start();
   executionWorker.start();

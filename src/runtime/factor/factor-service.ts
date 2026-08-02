@@ -975,7 +975,7 @@ function runQlibExprDryRun(
   const finiteCounts: number[] = [];
   const flatValues: number[] = [];
   for (const sym of DRY_RUN_SYMBOLS) {
-    const series = synthGbmSeries(sym, 90);
+    const series = synthGbmSeries(sym, 320);
     let factorSeries: Array<number | null>;
     try {
       factorSeries = evalQlibExpr(ast, series);
@@ -1079,7 +1079,7 @@ async function runPythonExprDryRun(
   const errorsBySymbol: Record<string, string> = {};
 
   for (const sym of DRY_RUN_SYMBOLS) {
-    const series = synthGbmSeries(sym, 90);
+    const series = synthGbmSeries(sym, 320);
     const resp = await runPythonSandbox({
       code,
       vars: {

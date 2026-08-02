@@ -10,10 +10,19 @@ export type DataGapClass = "unconfigured" | "no_coverage" | "no_data" | "infra_e
 export interface DeliveryVerdict {
   state: DeliveryState;
   reasonCodes: string[];
+  /** Soft quality gaps (answer schema, underfill vs upgrade minRows). Do not block lifecycle. */
+  softReasonCodes: string[];
   missingArtifacts: string[];
   missingCapabilities: string[];
   dataGaps: Array<{ capability: string; class: DataGapClass }>;
   answer: { schemaOk: boolean; missingSections: string[] };
+  /**
+   * Runtime lifecycle may complete when true (tools + research-floor artifacts).
+   * Independent of upgrade-grade answer schema / full minRows.
+   */
+  researchOk: boolean;
+  /** Full recipe contract including answer schema and upgrade minRows. */
+  upgradeOk: boolean;
   evaluatorVersion: string;
   recipeKey: string | null;
   recipeVersion: string | null;
@@ -21,7 +30,13 @@ export interface DeliveryVerdict {
 
 export interface ArtifactPredicate {
   table: string;
+  /** Upgrade / promotion threshold. */
   minRows: number;
+  /**
+   * Research / lifecycle floor. Default 1.
+   * 0 = optional for researchOk (still counted for upgradeOk via minRows).
+   */
+  researchMinRows?: number;
   requiredFields?: string[];
   scope: "workflow" | "project";
   /** Optional SQL override; when absent, CompletionEvaluator uses scenario-expectations. */
@@ -82,7 +97,7 @@ export interface RecoverySuggestion {
   draftParams?: Record<string, unknown>;
 }
 
-export const EVALUATOR_VERSION = "2026-08-01.1";
+export const EVALUATOR_VERSION = "2026-08-02.1";
 
 /** Business write tools that must never be silently dispatched by Recovery. */
 export const BUSINESS_WRITE_TOOLS: ReadonlySet<string> = new Set([

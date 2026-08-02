@@ -39,6 +39,11 @@ function completeScorecard() {
     scenarioKey: benchmarkCase.scenarioKey,
     risk: { telemetryAvailable: true, decisionRecorded: true },
     shortRisk: { telemetryAvailable: true, coverageRecorded: true },
+    deliveryVerdict: {
+      available: true,
+      state: "delivered",
+      reasonCodes: [],
+    },
   });
 }
 
@@ -53,6 +58,20 @@ describe("benchmark upgrade gate", () => {
     });
     expect(result.status).toBe("pass");
     expect(result.promotionEligible).toBe(true);
+    expect(result.researchSuccess).toBe("pass");
+  });
+
+  test("researchSuccess can pass when upgrade quality is soft on A-2", () => {
+    const result = evaluateUpgradeGate({
+      benchmarkCase,
+      snapshot: snapshot({ "A-2": 0 }),
+      grade: { weightedScore: 0.5 } as SnapshotGrade,
+      scorecard: completeScorecard(),
+      durationMs: 1_000,
+    });
+    // Soft quality: A-1=1 + A-2=0 still passes quality with soft_quality detail.
+    expect(result.dimensions.find((d) => d.name === "quality")?.status).toBe("pass");
+    expect(result.researchSuccess).toBe("pass");
   });
 
   test("soft-over token consumption still passes resource (does not block research)", () => {
@@ -81,7 +100,7 @@ describe("benchmark upgrade gate", () => {
     expect(result.dimensions.find((item) => item.name === "resource")?.status).toBe("fail");
   });
 
-  test("marks telemetry gaps incomplete instead of granting a false pass", () => {
+  test("telemetry gaps are soft on observability but still block promotion", () => {
     const {
       contract: _contract,
       capability: _capability,
@@ -91,10 +110,21 @@ describe("benchmark upgrade gate", () => {
       benchmarkCase,
       snapshot: snapshot(),
       grade,
-      scorecard: scoreRunEnvelope({ ...withoutTelemetry, suite: "L1" }),
+      scorecard: scoreRunEnvelope({
+        ...withoutTelemetry,
+        suite: "L1",
+        deliveryVerdict: {
+          available: true,
+          state: "delivered_with_gaps",
+          reasonCodes: ["answer_schema_unsatisfied"],
+        },
+      }),
       durationMs: 1_000,
     });
-    expect(result.status).toBe("incomplete");
+    expect(result.status).toBe("pass");
+    expect(result.dimensions.find((d) => d.name === "observability")?.detail).toContain(
+      "telemetry_soft_missing"
+    );
     expect(result.promotionEligible).toBe(false);
   });
 });

@@ -66,15 +66,27 @@ export function readLatestDeliveryVerdict(
         }
       | undefined;
     if (!row) return null;
+    const reasonCodes = JSON.parse(row.reason_codes_json || "[]") as string[];
+    const softReasonCodes = reasonCodes.filter(
+      (code) =>
+        code === "answer_schema_unsatisfied" ||
+        code === "a2a_gap" ||
+        code.startsWith("artifact_underfill:") ||
+        code.startsWith("artifact_fields_incomplete:")
+    );
+    const researchOk = row.state === "delivered" || row.state === "delivered_with_gaps";
     return {
       state: row.state,
-      reasonCodes: JSON.parse(row.reason_codes_json || "[]") as string[],
+      reasonCodes,
+      softReasonCodes,
       missingArtifacts: JSON.parse(row.missing_artifacts_json || "[]") as string[],
       missingCapabilities: JSON.parse(row.missing_capabilities_json || "[]") as string[],
       dataGaps: JSON.parse(row.data_gaps_json || "[]") as DeliveryVerdict["dataGaps"],
       answer: JSON.parse(
         row.answer_json || '{"schemaOk":false,"missingSections":[]}'
       ) as DeliveryVerdict["answer"],
+      researchOk,
+      upgradeOk: row.state === "delivered",
       evaluatorVersion: row.evaluator_version,
       recipeKey: row.recipe_key,
       recipeVersion: row.recipe_version,

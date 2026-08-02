@@ -17,6 +17,12 @@ describe("factor expression contract", () => {
     expect(inferFactorLang(normalized.expr)).toBe("qlib_expr");
   });
 
+  test("clamps huge Ref lookbacks for dry-run viability", () => {
+    const normalized = normalizeFactorExpression("close / Ref(close, 252) - 1");
+    expect(normalized.expr).toContain("Ref(close, 21)");
+    expect(normalized.rewrites.some((r) => r.includes("252"))).toBe(true);
+  });
+
   test("flags python-only symbols", () => {
     const normalized = normalizeFactorExpression("pd.Series(close).pct_change()");
     expect(normalized.unsupported).toContain("pd");
@@ -40,6 +46,7 @@ describe("tool surface second hop", () => {
       missingArtifactTables: ["order_intent"],
       missingArtifacts: [],
       artifactsOk: false,
+      researchArtifactsOk: false,
       factorDefinitionCount: 0,
       activeFactorIds: [],
       latestFactorDefinitionId: null,
@@ -59,9 +66,45 @@ describe("tool surface second hop", () => {
       snapshot,
       role: "execute",
     });
-    expect(tools).toContain("order.create_intent");
+    expect(tools).toEqual(["order.create_intent"]);
     expect(tools).not.toContain("market.readiness");
     expect(tools).not.toContain("factor.list");
+    expect(tools).not.toContain("evaluate_risk");
+  });
+
+  test("live trading strips submit_order before order_intent", () => {
+    const snapshot = {
+      workflowId: "wf",
+      scenarioKey: "live_trading",
+      recipe: resolveScenarioRecipe("live_trading"),
+      authorizedTools: [],
+      attemptedTools: ["strategy.create_version"],
+      successfulTools: ["strategy.create_version"],
+      notAttemptedCapabilities: ["order.create_intent"],
+      unavailableCapabilities: [],
+      missingArtifactTables: ["order_intent", "risk_decision"],
+      missingArtifacts: [],
+      artifactsOk: false,
+      researchArtifactsOk: false,
+      factorDefinitionCount: 0,
+      activeFactorIds: [],
+      latestFactorDefinitionId: null,
+      screenerTopSymbol: null,
+      strategyVersionId: "sv-1",
+      loadedAtMs: Date.now(),
+    } satisfies ScenarioRuntimeSnapshot;
+
+    const tools = applyToolSurface({
+      tools: [
+        "order.create_intent",
+        "qubit-broker/submit_order",
+        "qubit-risk/evaluate_risk",
+        "strategy.create_version",
+      ],
+      snapshot,
+      role: "execute",
+    });
+    expect(tools).toEqual(["order.create_intent"]);
   });
 
   test("after factor registration, exposes evaluation instead of duplicate registration", () => {
@@ -77,6 +120,7 @@ describe("tool surface second hop", () => {
       missingArtifactTables: ["factor_evaluation"],
       missingArtifacts: [],
       artifactsOk: false,
+      researchArtifactsOk: true,
       factorDefinitionCount: 1,
       activeFactorIds: [],
       latestFactorDefinitionId: null,

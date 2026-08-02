@@ -174,6 +174,43 @@ export function resolveArtifactAutoAdvance(input: {
         },
       };
     }
+    if (table === "recommendation_snapshot") {
+      const toolName = "recommendation.record";
+      if (!input.availableTools.includes(toolName)) return null;
+      const symbol = input.snapshot.screenerTopSymbol ?? "AAPL";
+      return {
+        toolName,
+        params: {
+          symbol,
+          side: "long",
+          entry_low: 100,
+          entry_high: 110,
+          stop_loss: 90,
+          take_profit: 140,
+          position_size_pct: 5,
+          rationale: "benchmark soft-underfill recommendation from screener shortlist",
+          invalidation_conditions: ["价格跌破止损价", "关键基本面假设失效"],
+        },
+      };
+    }
+    if (table === "order_intent" || table === "risk_decision") {
+      const toolName = "order.create_intent";
+      if (!input.availableTools.includes(toolName)) return null;
+      const hasVersion = input.snapshot.strategyVersionId;
+      if (!hasVersion) return null;
+      return {
+        toolName,
+        params: {
+          symbol: "NVDA",
+          side: "buy",
+          qty: 10,
+          order_type: "market",
+          dispatch_mode: "paper",
+          market: "US",
+          strategy_version_id: hasVersion,
+        },
+      };
+    }
   }
   return null;
 }

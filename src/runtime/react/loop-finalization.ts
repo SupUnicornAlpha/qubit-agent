@@ -5,6 +5,7 @@ import {
   isDeliveryVerdictEnforceEnabled,
   persistDeliveryVerdict,
 } from "../policy";
+import type { DeliveryVerdict } from "../policy/types";
 import { stripToolCallSentinels } from "../tools/tool-call-format";
 import type { RuntimeAgentDefinition } from "../types";
 import type { AgentGraphState, StepStreamEvent } from "./state";
@@ -41,15 +42,30 @@ export function extractFinalizeAnswerText(
   return "";
 }
 
-/** Finalize only decides the terminal response and records the delivery verdict. */
+/** Finalize decides terminal response and always records DeliveryVerdict when possible. */
 export function finalizeLoopState(
   context: LoopFinalizationContext,
   state: AgentGraphState
 ): AgentGraphState {
-  if (state.finalResponse) {
-    context.snapshot("finalize", state.iteration, state);
-    return state;
+  const availableAnswer = extractFinalizeAnswerText(state);
+  const delivery = evaluateWorkflowDelivery(context.workflowId, availableAnswer);
+
+  if (delivery) {
+    void persistDeliveryVerdict({ workflowId: context.workflowId, verdict: delivery });
   }
+
+  // Early terminal (unproductive / HITL / reason_error): enrich + align lifecycle to researchOk.
+  if (state.finalResponse) {
+    const mergedResponse = alignExistingFinalResponse({
+      existing: state.finalResponse,
+      delivery,
+      availableAnswer,
+    });
+    const merged = { ...state, finalResponse: mergedResponse };
+    context.snapshot("finalize", state.iteration, merged);
+    return merged;
+  }
+
   const exceeded = context.forceReactLoop && state.iteration >= context.def.maxIterations;
   if (exceeded) {
     context.emit({
@@ -67,13 +83,10 @@ export function finalizeLoopState(
       },
     });
   }
-  const availableAnswer = extractFinalizeAnswerText(state);
-  const delivery = evaluateWorkflowDelivery(context.workflowId, availableAnswer);
-  const delivered = delivery?.state === "delivered" || delivery?.state === "delivered_with_gaps";
+  // Soft gate: lifecycle completes on researchOk. Null delivery ⇒ not researchOk.
+  const researchOk = Boolean(delivery?.researchOk);
   const enforce = isDeliveryVerdictEnforceEnabled();
-  // Never salvage to completed on row-count/attempted alone. Only DeliveryVerdict
-  // "delivered*" counts when enforce is on; otherwise fall back to partial.
-  const contractOk = exceeded ? (enforce ? Boolean(delivered) : false) : false;
+  const contractOk = exceeded ? (enforce ? researchOk : false) : researchOk || !enforce;
 
   let finalResponse: AgentGraphState["finalResponse"];
   if (exceeded && !contractOk) {
@@ -85,21 +98,37 @@ export function finalizeLoopState(
       reason: delivery ? "max_iterations_delivery_unsatisfied" : "max_iterations",
       iteration: state.iteration,
       answerText: availableAnswer
-        ? `执行达到最大轮次，交付谓词未满足${reasonCodes}。以下为收口前最后一版可用分析：\n\n${availableAnswer}`
-        : `工具调用已结束，但交付谓词未满足${reasonCodes}。请重试本轮任务或提高最大迭代次数。`,
+        ? `执行达到最大轮次，研究交付底线未满足${reasonCodes}。以下为收口前最后一版可用分析：\n\n${availableAnswer}`
+        : `工具调用已结束，但研究交付底线未满足${reasonCodes}。请重试本轮任务或提高最大迭代次数。`,
       deliveryVerdict: delivery ?? undefined,
     };
   } else if (exceeded && contractOk) {
+    const softNote =
+      delivery && !delivery.upgradeOk && delivery.softReasonCodes.length > 0
+        ? `（软缺口：${delivery.softReasonCodes.slice(0, 3).join(", ")}）`
+        : "";
     finalResponse = {
       status: "completed",
-      reason: "max_iterations_delivery_satisfied",
+      reason: delivery?.upgradeOk
+        ? "max_iterations_delivery_satisfied"
+        : "max_iterations_research_ok",
       role: context.def.role,
       iteration: state.iteration,
       observation: state.observations.at(-1) ?? {},
       answerText: availableAnswer
-        ? `执行达到最大轮次，但 DeliveryVerdict 已满足，按已有证据完成交付：\n\n${availableAnswer}`
-        : "执行达到最大轮次，但 DeliveryVerdict 已满足。",
+        ? `执行达到最大轮次，研究交付底线已满足${softNote}：\n\n${availableAnswer}`
+        : `执行达到最大轮次，研究交付底线已满足${softNote}。`,
       deliveryVerdict: delivery ?? undefined,
+    };
+  } else if (!contractOk && enforce) {
+    finalResponse = {
+      status: "partial",
+      reason: "delivery_research_unsatisfied",
+      iteration: state.iteration,
+      answerText: availableAnswer
+        ? `研究交付底线未满足（${(delivery?.reasonCodes ?? ["delivery_unavailable"]).slice(0, 4).join(", ")}）。\n\n${availableAnswer}`
+        : `研究交付底线未满足（${(delivery?.reasonCodes ?? ["delivery_unavailable"]).slice(0, 4).join(", ")}）。`,
+      ...(delivery ? { deliveryVerdict: delivery } : {}),
     };
   } else {
     finalResponse = {
@@ -111,15 +140,42 @@ export function finalizeLoopState(
       ...(delivery ? { deliveryVerdict: delivery } : {}),
     };
   }
-  if (delivery) {
-    void persistDeliveryVerdict({ workflowId: context.workflowId, verdict: delivery });
-  }
   const merged = { ...state, finalResponse };
   context.snapshot("finalize", state.iteration, merged);
   return merged;
 }
 
-function evaluateWorkflowDelivery(workflowId: string, answerText: string) {
+function alignExistingFinalResponse(input: {
+  existing: NonNullable<AgentGraphState["finalResponse"]>;
+  delivery: DeliveryVerdict | null;
+  availableAnswer: string;
+}): NonNullable<AgentGraphState["finalResponse"]> {
+  const { existing, delivery, availableAnswer } = input;
+  const enforce = isDeliveryVerdictEnforceEnabled();
+  let status = existing.status;
+  // Don't override HITL / hard terminates.
+  const sticky = new Set(["awaiting_approval", "terminated", "cancelled", "failed"]);
+  if (enforce && delivery && !sticky.has(String(status))) {
+    if (status === "completed" && !delivery.researchOk) {
+      status = "partial";
+    } else if (
+      (status === "partial" || status === "running") &&
+      delivery.researchOk &&
+      existing.reason === "unproductive_turn_budget_exhausted"
+    ) {
+      // Soft: unproductive stop but research floor met → completed.
+      status = "completed";
+    }
+  }
+  return {
+    ...existing,
+    status,
+    ...(delivery ? { deliveryVerdict: delivery } : {}),
+    ...(availableAnswer && !existing.answerText ? { answerText: availableAnswer } : {}),
+  };
+}
+
+function evaluateWorkflowDelivery(workflowId: string, answerText: string): DeliveryVerdict | null {
   try {
     const port = getWorkflowFactsPort();
     const snapshot = port.loadSnapshot(workflowId, { includeA2a: true });
@@ -131,6 +187,23 @@ function evaluateWorkflowDelivery(workflowId: string, answerText: string) {
       enforceBenchmarkTerms: false,
     });
   } catch {
-    return null;
+    // Persist a minimal verdict so H-DV is never silently skipped on scenario runs.
+    return {
+      state: "partial",
+      reasonCodes: ["delivery_eval_unavailable"],
+      softReasonCodes: ["delivery_eval_unavailable"],
+      missingArtifacts: [],
+      missingCapabilities: [],
+      dataGaps: [],
+      answer: {
+        schemaOk: false,
+        missingSections: ["goal", "evidence", "decision", "risks", "gaps"],
+      },
+      researchOk: false,
+      upgradeOk: false,
+      evaluatorVersion: "fallback",
+      recipeKey: null,
+      recipeVersion: null,
+    };
   }
 }

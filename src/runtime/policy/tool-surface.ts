@@ -86,18 +86,67 @@ export function applyToolSurface(input: {
     if (narrowed.length > 0) next = narrowed;
   }
 
+  // Stock-pick second hop: after screener, force recommendation.record until upgrade rows filled.
+  if (
+    (snapshot.scenarioKey === "stock_pick" ||
+      snapshot.recipe?.key === "stock_pick" ||
+      snapshot.notAttemptedCapabilities.includes("recommendation.record")) &&
+    snapshot.attemptedTools.some((t) => t === "run_screener" || t.endsWith("/run_screener")) &&
+    (snapshot.missingArtifactTables.includes("recommendation_snapshot") || !snapshot.artifactsOk)
+  ) {
+    const prefer = new Set(["recommendation.record"]);
+    const narrowed = next.filter((toolName) => {
+      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      return prefer.has(base) || prefer.has(toolName);
+    });
+    if (narrowed.length > 0) next = narrowed;
+  }
+
+  const isLive =
+    snapshot.scenarioKey === "live_trading" || snapshot.recipe?.key === "live_trading";
+  const isStrategy =
+    snapshot.scenarioKey === "strategy" || snapshot.recipe?.key === "strategy";
+
+  // Live trading: strip broker submit until order_intent exists (paper path uses create_intent).
+  if (isLive && snapshot.missingArtifactTables.includes("order_intent")) {
+    next = next.filter((toolName) => {
+      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      return (
+        base !== "submit_order" &&
+        !toolName.endsWith("/submit_order") &&
+        base !== "evaluate_risk" &&
+        !toolName.endsWith("/evaluate_risk")
+      );
+    });
+  }
+
+  // Live trading: never advertise order before a strategy version exists.
+  if (isLive && !snapshot.strategyVersionId) {
+    next = next.filter((toolName) => {
+      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      return base !== "order.create_intent" && toolName !== "order.create_intent";
+    });
+  }
+
   // Second-hop narrowing: after strategy version exists, prefer compose/order/backtest.
   if (snapshot.strategyVersionId) {
-    const openOrder = snapshot.notAttemptedCapabilities.some((c) =>
-      ["order", "risk", "order.create_intent"].includes(c)
-    );
-    const openStrategyCompose = snapshot.missingArtifactTables.includes("strategy_composition");
-    if (openOrder || openStrategyCompose) {
-      const prefer = new Set(
-        openOrder
-          ? ["order.create_intent", "strategy.compose", "evaluate_risk", "strategy.create_version"]
-          : ["strategy.compose", "backtest.run", "run_backtest", "strategy.create_version"]
-      );
+    const openOrder =
+      isLive &&
+      (snapshot.missingArtifactTables.includes("order_intent") ||
+        snapshot.notAttemptedCapabilities.some((c) =>
+          ["order", "risk", "order.create_intent"].includes(c)
+        ));
+    const openStrategyCompose =
+      isStrategy && snapshot.missingArtifactTables.includes("strategy_composition");
+    if (openOrder) {
+      const prefer = new Set(["order.create_intent"]);
+      const narrowed = next.filter((toolName) => {
+        const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+        return prefer.has(base) || prefer.has(toolName);
+      });
+      if (narrowed.length > 0) next = narrowed;
+    } else if (openStrategyCompose) {
+      const prefer = new Set(["strategy.compose", "backtest.run", "run_backtest"]);
       const narrowed = next.filter((toolName) => {
         const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
         return prefer.has(base) || prefer.has(toolName);

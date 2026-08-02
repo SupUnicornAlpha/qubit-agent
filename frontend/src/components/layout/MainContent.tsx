@@ -89,7 +89,6 @@ import type {
   AgentControlMode,
   AgentLoopKind,
 } from "../../api/types";
-import { RESEARCH_TEAM_SLOT_ROLE_SET } from "../../lib/researchTeamRoles";
 import { useAppStore, type ChartContextPayload } from "../../store";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import {
@@ -117,7 +116,6 @@ import {
   buildFilteredTeamGraphDisplay,
   describeInteractionRouting,
   filterInteractionsForEdge,
-  interactionMatchesAllow,
 } from "../../lib/teamGraphDisplay";
 import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
 import { MonitorDashboard } from "../monitor/MonitorDashboard";
@@ -4936,8 +4934,11 @@ const TeamDashboardPanel: FC = () => {
 
   /**
    * Token 级流式：workflow firehose 推来的、尚未落库的「在飞」LLM 输出，按 role 累积。
-   * 每条在 displayedLiveFeedEvents 里合成一个 `streaming:${role}` 气泡逐字显示；
-   * 该 role 的 step 落库（step_persisted/final/observe）后清空，交还给轮询的正式消息。
+   * 每条在 displayedLiveFeedEvents 里合成一个 `streaming:${role}` 气泡逐字显示。
+   *
+   * 这里故意只保存该 role 当前一轮的 buffer；已经收口的轮次由 agent_step.reason
+   * 回填为「过程说明」事件（见 displayedLiveFeedEvents），这样既逐字流式，又不会在
+   * 工具调用后丢失前一轮文字。
    */
   const [streamingByRole, setStreamingByRole] = useState<
     Record<string, { text: string; ts: string }>
@@ -4945,7 +4946,7 @@ const TeamDashboardPanel: FC = () => {
   /**
    * 已「收口」的 role 集合：某 role 的当前流式段已收到 observe/step_persisted/final，
    * 文本不再追加、等待持久化消息接管。下一轮首个 token 到来时据此重置该 role 文本
-   * （避免多轮 ReAct 文本无限拼接），teamGraph 带出对应 interaction 后被清空。
+   * （避免多轮 ReAct 文本无限拼接），teamGraph 带出对应 reason step 后被清空。
    */
   const settledRolesRef = useRef<Set<string>>(new Set());
   /** 收口事件防抖回拉 teamGraph 的 timer（chat 路径无 2.5s 轮询，靠它带出最终答复）。 */
@@ -4985,7 +4986,6 @@ const TeamDashboardPanel: FC = () => {
    * setter 服务于已删除的「策略与代码」details 块；state / handler / setter 全部
    * 清理。需要把 Agent 产出的代码片段拉到 IDE / 实盘页时，请走量化工坊（onOpenStrategyInComposer）。
    */
-  const [agentDefBundles, setAgentDefBundles] = useState<AgentDefinitionBundle[] | null>(null);
   const [teamResearchProjectId, setTeamResearchProjectId] = useState("");
   const [teamResearchSessionId, setTeamResearchSessionId] = useState("");
   const setActiveView = useAppStore((s) => s.setActiveView);
@@ -5065,27 +5065,11 @@ const TeamDashboardPanel: FC = () => {
     return () => window.clearInterval(id);
   }, [running, orchestratorChatInFlight, workflowRunId, loadTeamGraph]);
 
-  const participatingAnalystRoles = useMemo(() => {
-    if (!agentDefBundles?.length) return [];
-    const roles: string[] = [];
-    for (const b of agentDefBundles) {
-      const r = b.definition.role;
-      if (RESEARCH_TEAM_SLOT_ROLE_SET.has(r) && b.definition.enabled !== false) roles.push(r);
-    }
-    return roles;
-  }, [agentDefBundles]);
-
-  /** 研究拓扑默认展示当前启用的研究团队槽位角色。 */
-
   const mergedLiveFeedRows = useMemo(() => {
     type Row = { key: string; t: number; kind: "interaction" | "debate"; body: string };
     const rows: Row[] = [];
-    const allow =
-      participatingAnalystRoles.length > 0
-        ? new Set([...participatingAnalystRoles, "orchestrator", "user"])
-        : null;
+    // 实时流跟随活动拓扑：不按固定槽位白名单裁剪，任意被调用的 Agent 交互都可见
     for (const row of teamGraph?.interactions ?? []) {
-      if (!interactionMatchesAllow(row, allow)) continue;
       rows.push({
         key: `i-${row.id}`,
         t: new Date(row.createdAt).getTime() || 0,
@@ -5094,7 +5078,7 @@ const TeamDashboardPanel: FC = () => {
       });
     }
     return rows.sort((a, b) => a.t - b.t).slice(-200);
-  }, [teamGraph, participatingAnalystRoles]);
+  }, [teamGraph]);
 
   const liveFeedScrollRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -5158,9 +5142,9 @@ const TeamDashboardPanel: FC = () => {
 
   const filteredGraphDisplay = useMemo((): AnalystTeamGraphPayload | null => {
     if (!teamGraph) return null;
-    if (!participatingAnalystRoles.length) return teamGraph;
-    return buildFilteredTeamGraphDisplay(teamGraph, participatingAnalystRoles);
-  }, [teamGraph, participatingAnalystRoles]);
+    // 默认只展示 user + orchestrator；任意其他 Agent 在被调用后才入图（不钉死角色类型）
+    return buildFilteredTeamGraphDisplay(teamGraph);
+  }, [teamGraph]);
 
   /** 右栏「专家进度」：从 graph + 流式态 + 心跳推导已派发子 Agent。 */
   const subAgentRuns = useMemo(() => {
@@ -5250,13 +5234,8 @@ const TeamDashboardPanel: FC = () => {
       }
       return events;
     }
-    const allow =
-      participatingAnalystRoles.length > 0
-        ? new Set([...participatingAnalystRoles, "orchestrator", "user"])
-        : null;
     const persistedUserContents = new Set<string>();
     for (const row of teamGraph?.interactions ?? []) {
-      if (!interactionMatchesAllow(row, allow)) continue;
       if (row.fromRole === "user") persistedUserContents.add(row.contentText.trim());
       events.push({
         kind: "message",
@@ -5285,24 +5264,54 @@ const TeamDashboardPanel: FC = () => {
         contentText: e.content,
       });
     }
+    /**
+     * ReAct 的 reason step 是模型本轮的可见过程说明（例如调用理由），不是供应商的
+     * 隐藏思维链。原来右栏只读取 interaction：中间轮次只存在 agent_step，因而在
+     * 工具调用后看起来只剩最后一段终态答复。把 Orchestrator 的已收口 reason step
+     * 并入同一时间线，令每一轮可回看；终态正文相同的那一段交由正式消息呈现，避免重影。
+     */
+    const finalAnswerTexts = new Set(
+      (teamGraph?.interactions ?? [])
+        .filter(
+          (row) =>
+            row.fromRole === "orchestrator" &&
+            row.toRole === "user" &&
+            row.kind === "llm_message" &&
+            row.payloadJson &&
+            typeof row.payloadJson === "object" &&
+            (row.payloadJson as Record<string, unknown>).phase === "workflow_final_answer"
+        )
+        .map((row) => row.contentText.trim())
+        .filter(Boolean)
+    );
+    for (const step of teamGraph?.agentSteps ?? []) {
+      if (step.agentRole !== "orchestrator" || step.phase !== "reason") continue;
+      const text = stripToolCallSentinels(step.thought).trim();
+      if (!text || text === "Reasoning with LLM provider" || finalAnswerTexts.has(text)) continue;
+      events.push({
+        kind: "message",
+        id: `reason-step:${step.id}`,
+        ts: step.createdAt,
+        fromRole: "orchestrator",
+        toRole: "user",
+        messageKind: "reasoning_progress",
+        contentText: text,
+        payloadJson: { phase: "reasoning_progress", stepIndex: step.stepIndex },
+      });
+    }
     // 合成 token 级「在飞」流式气泡：每个有累积文本的 role 一个，置于队尾（ts=now 兜底）。
     for (const [role, s] of Object.entries(streamingByRole)) {
       const text = stripToolCallSentinels(s.text).trim();
       if (!text) continue;
-      if (allow && !allow.has(role)) continue;
-      // 沉淀去重：若已存在同 role 且不早于气泡的持久化消息，正式气泡已接管，跳过在飞气泡，
-      // 杜绝交接瞬间（teamGraph 已更新但 prune effect 尚未跑完一拍）的「重影」。
-      const bubbleTs = new Date(s.ts).getTime();
+      // agent_step 已拿到同一份完整 reason 文本时，用持久化的「过程说明」接管，
+      // 而非任意同 role 的工具记录。旧逻辑在 tool_call 写库后就删流，正是右栏只剩
+      // 最后一段文本的原因。
       const covered = events.some(
         (ev) =>
           ev.kind === "message" &&
           ev.fromRole === role &&
-          // tool_call 只是执行轨迹，不是对流式自然语言答复的持久化接管。
-          // 若把它算作 covered，Orchestrator 一调用工具，右栏的在飞回答就会消失；
-          // OrchestratorChatPanel 随后又会过滤 tool_call，最终两边都没有可见文本。
-          (ev.messageKind === "llm_message" || ev.messageKind == null) &&
-          ev.id !== `streaming:${role}` &&
-          new Date(ev.ts).getTime() >= bubbleTs - 1500
+          ev.messageKind === "reasoning_progress" &&
+          ev.contentText.trim() === text
       );
       if (covered) continue;
       events.push({
@@ -5311,21 +5320,15 @@ const TeamDashboardPanel: FC = () => {
         ts: s.ts,
         fromRole: role,
         toRole: role === "orchestrator" ? "user" : "orchestrator",
-        messageKind: "llm_message",
+        messageKind: "reasoning_progress",
         contentText: `${text} ▌`,
+        payloadJson: { phase: "reasoning_progress", streaming: true },
       });
     }
     return events
       .sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0))
       .slice(-200);
-  }, [
-    graphSelection,
-    graphEdgeDetail,
-    teamGraph,
-    participatingAnalystRoles,
-    streamingByRole,
-    userEchoes,
-  ]);
+  }, [graphSelection, graphEdgeDetail, teamGraph, streamingByRole, userEchoes]);
 
   /**
    * Token 级流式订阅：研究团队 tab + 有 workflow 时，连 workflow firehose，把各 agent 的
@@ -5333,7 +5336,7 @@ const TeamDashboardPanel: FC = () => {
    *
    * 收口（step_persisted/final/observe/error）不再立即删在飞气泡——那会让流式文本「闪一下
    * 变空白」、且 chat 路径没有 2.5s 轮询去接管。改为：标记该 role 已收口，让气泡留在屏上
-   * 直到 teamGraph 带出对应持久化消息再平滑替换（见下方 prune effect + displayedLiveFeed 去重）。
+   * 直到 teamGraph 带出对应 agent_step.reason 再平滑替换（见下方 prune effect + displayedLiveFeed 去重）。
    * 终态事件（final/error）额外防抖回拉一次 teamGraph，带出 orchestrator 跑完后才落库的最终答复。
    */
   useEffect(() => {
@@ -5424,25 +5427,30 @@ const TeamDashboardPanel: FC = () => {
   }, [workflowRunId]);
 
   /**
-   * 沉淀式交接：teamGraph 刷新后，若某个仍在屏的流式气泡已被持久化 interaction 覆盖
-   * （同 role 且 createdAt >= 气泡 ts，留 1.5s skew 容时钟/落库微差），则删除该 role 的
-   * 在飞缓冲——此时正式气泡已就位，流式文本平滑让位，无空白也无重影。
+   * 沉淀式交接：仅在同 role 的 reason step 已保存了**相同完整文本**时才删在飞缓冲。
+   * 绝不能以 tool_call 作为接管信号：工具记录先于下一轮 reason 落库，会把右栏的
+   * 过程输出过早清掉。
    */
   useEffect(() => {
-    const interactions = teamGraph?.interactions;
-    if (!interactions?.length) return;
+    const steps = teamGraph?.agentSteps;
+    if (!steps?.length) return;
+    const persistedTextsByRole = new Map<string, Set<string>>();
+    for (const step of steps) {
+      if (step.phase !== "reason") continue;
+      const text = stripToolCallSentinels(step.thought).trim();
+      if (!text || text === "Reasoning with LLM provider") continue;
+      const texts = persistedTextsByRole.get(step.agentRole) ?? new Set<string>();
+      texts.add(text);
+      persistedTextsByRole.set(step.agentRole, texts);
+    }
     setStreamingByRole((prev) => {
       const roles = Object.keys(prev);
       if (!roles.length) return prev;
       let changed = false;
       const next = { ...prev };
       for (const role of roles) {
-        const bubbleTs = new Date(prev[role]?.ts ?? 0).getTime();
-        const covered = interactions.some(
-          (row) =>
-            row.fromRole === role &&
-            new Date(row.createdAt).getTime() >= bubbleTs - 1500
-        );
+        const text = stripToolCallSentinels(prev[role]?.text).trim();
+        const covered = Boolean(text && persistedTextsByRole.get(role)?.has(text));
         if (covered) {
           delete next[role];
           settledRolesRef.current.delete(role);
@@ -5802,7 +5810,7 @@ const TeamDashboardPanel: FC = () => {
 
   useEffect(() => {
     setGraphSelection(null);
-  }, [workflowRunId, participatingAnalystRoles]);
+  }, [workflowRunId]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -5813,9 +5821,6 @@ const TeamDashboardPanel: FC = () => {
 
   useEffect(() => {
     void (async () => {
-      void listAgentDefinitions()
-        .then(setAgentDefBundles)
-        .catch(() => setAgentDefBundles([]));
       try {
         // 单租户兜底 workspace；详见 src/runtime/bootstrap/ensure-default-workspace.ts。
         const dft = await getDefaultWorkspace();

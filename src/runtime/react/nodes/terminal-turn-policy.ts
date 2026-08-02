@@ -115,7 +115,8 @@ export async function handleToolNoneAction(input: {
       maxArtifactRetries: MAX_ARTIFACT_GATE_RETRIES,
       notAttempted,
       unavailableRequired,
-      artifactOk: sharedSnapshot.artifactsOk,
+      // Soft terminal gate: research-floor artifacts suffice to finalize.
+      artifactOk: sharedSnapshot.researchArtifactsOk,
       artifactMissing: sharedSnapshot.missingArtifacts,
     });
 
