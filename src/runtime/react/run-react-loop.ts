@@ -5,14 +5,6 @@ import { agentInstance, agentStep, workflowRun } from "../../db/sqlite/schema";
 import type { TaskAssignPayload } from "../../types/a2a";
 import { parseLoopOptionsJson } from "../../types/loop";
 import { parseAgentPlanSnapshot } from "../agent-control-mode";
-import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
-import { actNode } from "./nodes/act";
-import { hitlGateNode } from "./nodes/hitl-gate";
-import { observeNode } from "./nodes/observe";
-import { perceiveNode } from "./nodes/perceive";
-import { reasonNode } from "./nodes/reason";
-import { shouldStopReactLoopAfterObserve } from "./react-loop-policy";
-import type { AgentGraphState, StepStreamEvent } from "./state";
 import { resolveLlmForAgent } from "../llm/llm-router";
 import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
 import { writeLlmCallLog } from "../monitor/llm-call-logger";
@@ -26,15 +18,29 @@ import {
   getWorkflowCancellationSignal,
   isWorkflowCancellationRequested,
 } from "../workflow/workflow-cancellation";
+import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
 import {
-  ensureFactsPort,
-  evaluateDeliveryVerdict,
-  getRuntimeSqlite,
-  getWorkflowFactsPort,
-  isDeliveryVerdictEnforceEnabled,
-  persistDeliveryVerdict,
-} from "../policy";
-import { resolveEffectiveAgentTools } from "../orchestration/resolve-effective-tools";
+  didTurnMakeProgress,
+  nextUnproductiveTurnCount,
+  shouldStopForUnproductiveTurns,
+} from "./iteration-budget-policy";
+import { loadIterationContext } from "./iteration-context";
+import { extractFinalizeAnswerText, finalizeLoopState } from "./loop-finalization";
+import {
+  type TaskProgressEvent,
+  isTaskDeadlineExpired,
+  reportTaskProgress,
+  terminateAtTaskDeadline,
+  terminateByTaskCancellation,
+  terminateByUser,
+} from "./loop-lifecycle";
+import { actNode } from "./nodes/act";
+import { hitlGateNode } from "./nodes/hitl-gate";
+import { observeNode } from "./nodes/observe";
+import { perceiveNode } from "./nodes/perceive";
+import { reasonNode } from "./nodes/reason";
+import { shouldStopReactLoopAfterObserve } from "./react-loop-policy";
+import type { AgentGraphState, StepStreamEvent } from "./state";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
 const DEFAULT_REASON_NODE_TIMEOUT_MS = 180_000;
@@ -108,11 +114,7 @@ export interface RunReactLoopParams {
    * A2A lease heartbeat / phase signal for topology children.
    * Fail-soft: callers must not let progress errors abort the ReAct loop.
    */
-  onTaskProgress?: (event: {
-    phase: "start" | "reason" | "act" | "observe" | "heartbeat" | "other";
-    iteration: number;
-    detail?: string;
-  }) => void | Promise<void>;
+  onTaskProgress?: (event: TaskProgressEvent) => void | Promise<void>;
   /**
    * 自研 resume 入口（阶段 2）：传入则**跳过 perceive**，直接用此 state 进入 while
    * 循环（从下一轮 reason 重入）。来自 `restoreStateFromSnapshot`。
@@ -147,7 +149,12 @@ function snapshotState(
   });
 }
 
-async function resolveEffectiveMaxIterations(params: RunReactLoopParams): Promise<number> {
+type LoopBudget = {
+  maxIterations: number;
+  maxConsecutiveUnproductiveTurns?: number;
+};
+
+async function resolveLoopBudget(params: RunReactLoopParams): Promise<LoopBudget> {
   try {
     const rows = await params.db
       .select({ loopOptionsJson: workflowRun.loopOptionsJson })
@@ -156,11 +163,17 @@ async function resolveEffectiveMaxIterations(params: RunReactLoopParams): Promis
       .limit(1);
     const parsed = parseLoopOptionsJson(rows[0]?.loopOptionsJson) as Record<string, unknown>;
     const loopMax = Number(parsed.maxIterations);
-    if (Number.isFinite(loopMax) && loopMax > 0) return Math.floor(loopMax);
+    return {
+      maxIterations:
+        Number.isFinite(loopMax) && loopMax > 0 ? Math.floor(loopMax) : params.def.maxIterations,
+      ...(typeof parsed.maxConsecutiveUnproductiveTurns === "number"
+        ? { maxConsecutiveUnproductiveTurns: parsed.maxConsecutiveUnproductiveTurns }
+        : {}),
+    };
   } catch {
     // fall through to agent definition default
   }
-  return params.def.maxIterations;
+  return { maxIterations: params.def.maxIterations };
 }
 
 async function loadGoalControlState(
@@ -515,135 +528,53 @@ async function runObserve(
  * `{ reason: "max_iterations" }`，导致 Orchestrator 明明已经有一版分析正文，
  * 用户侧却只能看到工具轨迹。这里剥离 tool sentinel，并依次回退到最近 observation。
  */
-export function extractFinalizeAnswerText(
-  state: Pick<AgentGraphState, "reasonText" | "observations">
-): string {
-  const candidates: unknown[] = [state.reasonText];
-  for (const observation of [...state.observations].reverse()) {
-    candidates.push(observation.answerText, observation.reasonText, observation.summary);
-  }
-  for (const candidate of candidates) {
-    if (typeof candidate !== "string") continue;
-    const cleaned = stripToolCallSentinels(candidate).trim();
-    if (cleaned && cleaned !== "no tool requested") return cleaned;
-  }
-  return "";
-}
+export { extractFinalizeAnswerText } from "./loop-finalization";
 
 /** finalize 节点：补 finalResponse（completed / max_iterations partial）+ snapshot。 */
 function runFinalize(params: RunReactLoopParams, state: AgentGraphState): AgentGraphState {
-  if (state.finalResponse) {
-    snapshotState(params, "finalize", state.iteration, state);
-    return state;
-  }
-  const exceeded = params.forceReactLoop && state.iteration >= params.def.maxIterations;
-  if (exceeded) {
-    params.emit({
+  return finalizeLoopState(
+    {
       runId: params.runId,
       workflowId: params.workflowId,
       traceId: params.traceId,
-      role: params.def.role,
-      type: "observe",
-      stepIndex: state.iteration,
-      ts: Date.now(),
-      payload: {
-        code: "MAX_ITERATIONS",
-        alertType: "iteration_exceeded",
-        message: "react loop terminated by max iterations",
-      },
-    });
-  }
-  const availableAnswer = extractFinalizeAnswerText(state);
-  const delivery = evaluateWorkflowDelivery(params.workflowId, availableAnswer);
-  const delivered =
-    delivery?.state === "delivered" || delivery?.state === "delivered_with_gaps";
-  const enforce = isDeliveryVerdictEnforceEnabled();
-  // Never salvage to completed on row-count/attempted alone. Only DeliveryVerdict
-  // "delivered*" counts when enforce is on; otherwise fall back to partial.
-  const contractOk = exceeded ? (enforce ? Boolean(delivered) : false) : false;
-
-  let finalResponse: AgentGraphState["finalResponse"];
-  if (exceeded && !contractOk) {
-    const reasonCodes = delivery?.reasonCodes?.length
-      ? `（${delivery.reasonCodes.slice(0, 4).join(", ")}）`
-      : "";
-    finalResponse = {
-      status: "partial",
-      reason: delivery ? "max_iterations_delivery_unsatisfied" : "max_iterations",
-      iteration: state.iteration,
-      answerText: availableAnswer
-        ? `执行达到最大轮次，交付谓词未满足${reasonCodes}。以下为收口前最后一版可用分析：\n\n${availableAnswer}`
-        : `工具调用已结束，但交付谓词未满足${reasonCodes}。请重试本轮任务或提高最大迭代次数。`,
-      deliveryVerdict: delivery ?? undefined,
-    };
-  } else if (exceeded && contractOk) {
-    finalResponse = {
-      status: "completed",
-      reason: "max_iterations_delivery_satisfied",
-      role: params.def.role,
-      iteration: state.iteration,
-      observation: state.observations.at(-1) ?? {},
-      answerText: availableAnswer
-        ? `执行达到最大轮次，但 DeliveryVerdict 已满足，按已有证据完成交付：\n\n${availableAnswer}`
-        : "执行达到最大轮次，但 DeliveryVerdict 已满足。",
-      deliveryVerdict: delivery ?? undefined,
-    };
-  } else {
-    finalResponse = {
-      status: "completed",
-      role: params.def.role,
-      iteration: state.iteration,
-      observation: state.observations.at(-1) ?? {},
-      ...(availableAnswer ? { answerText: availableAnswer } : {}),
-      ...(delivery ? { deliveryVerdict: delivery } : {}),
-    };
-  }
-  if (delivery) {
-    void persistDeliveryVerdict({ workflowId: params.workflowId, verdict: delivery });
-  }
-  const merged = { ...state, finalResponse };
-  snapshotState(params, "finalize", state.iteration, merged);
-  return merged;
+      def: params.def,
+      forceReactLoop: params.forceReactLoop,
+      emit: params.emit,
+      snapshot: (phase, stepIndex, merged) => snapshotState(params, phase, stepIndex, merged),
+    },
+    state
+  );
 }
 
-function evaluateWorkflowDelivery(workflowId: string, answerText: string) {
-  try {
-    const port = getWorkflowFactsPort();
-    const snapshot = port.loadSnapshot(workflowId, { includeA2a: true });
-    if (!snapshot.scenarioKey) return null;
-    return evaluateDeliveryVerdict({
-      sqlite: getRuntimeSqlite(),
-      snapshot,
-      answerText,
-      enforceBenchmarkTerms: false,
-    });
-  } catch {
-    return null;
-  }
-}
-
-async function attachIterationSnapshot(
+async function attachIterationContext(
   params: RunReactLoopParams,
   state: AgentGraphState
 ): Promise<AgentGraphState> {
   try {
-    await ensureFactsPort();
-    const effective = await resolveEffectiveAgentTools(params.def, params.workflowId);
-    const snapshot = getWorkflowFactsPort().loadSnapshot(params.workflowId, {
-      availableTools: effective.tools,
-      extraAttemptedTools: state.toolCalls.map((call) => String(call.toolName ?? "")),
-      includeA2a: true,
+    const iterationContext = await loadIterationContext({
+      db: params.db,
+      workflowId: params.workflowId,
+      definition: params.def,
+      state,
     });
-    return { ...state, scenarioSnapshot: snapshot };
+    return {
+      ...state,
+      iterationContext,
+      scenarioSnapshot: iterationContext.snapshot,
+    };
   } catch {
-    return { ...state, scenarioSnapshot: state.scenarioSnapshot ?? null };
+    return {
+      ...state,
+      iterationContext: state.iterationContext ?? null,
+      scenarioSnapshot: state.scenarioSnapshot ?? null,
+    };
   }
 }
 
 /** @deprecated kept for tests that may still patch — prefer evaluateWorkflowDelivery */
 function isScenarioContractSatisfied(workflowId: string): boolean {
-  const verdict = evaluateWorkflowDelivery(workflowId, "");
-  return verdict?.state === "delivered" || verdict?.state === "delivered_with_gaps";
+  void workflowId;
+  return false;
 }
 
 void isScenarioContractSatisfied;
@@ -654,72 +585,7 @@ function isTerminalStatus(state: AgentGraphState): boolean {
   return st === "awaiting_approval" || st === "partial" || st === "terminated";
 }
 
-export function isTaskDeadlineExpired(
-  payload: TaskAssignPayload,
-  nowMs: number = Date.now()
-): boolean {
-  if (!payload.deadline) return false;
-  const deadlineMs = Date.parse(payload.deadline);
-  return Number.isFinite(deadlineMs) && nowMs >= deadlineMs;
-}
-
-function terminateAtTaskDeadline(state: AgentGraphState): AgentGraphState {
-  return {
-    ...state,
-    finalResponse: {
-      status: "partial",
-      reason: "task_deadline_exceeded",
-      role: state.agentDefinition.role,
-      iteration: state.iteration,
-      answerText:
-        "专家子任务达到调度截止时间，已停止继续发起新一轮工具或模型调用。该状态不代表底层数据源不可用。",
-    },
-  };
-}
-
-function terminateByUser(state: AgentGraphState): AgentGraphState {
-  return {
-    ...state,
-    finalResponse: {
-      status: "terminated",
-      reason: "user_cancelled",
-      role: state.agentDefinition.role,
-      iteration: state.iteration,
-      answerText: "已按你的要求停止生成。",
-    },
-  };
-}
-
-function terminateByTaskCancellation(state: AgentGraphState): AgentGraphState {
-  return {
-    ...state,
-    finalResponse: {
-      status: "terminated",
-      reason: "a2a_task_cancelled",
-      role: state.agentDefinition.role,
-      iteration: state.iteration,
-      answerText: "该专家子任务已因调度超时被停止；这不代表底层数据源不可用。",
-    },
-  };
-}
-
-async function emitTaskProgress(
-  params: RunReactLoopParams,
-  event: {
-    phase: "start" | "reason" | "act" | "observe" | "heartbeat" | "other";
-    iteration: number;
-    detail?: string;
-  }
-): Promise<void> {
-  if (!params.onTaskProgress) return;
-  try {
-    await params.onTaskProgress(event);
-  } catch (err) {
-    console.warn(
-      `[run-react-loop] onTaskProgress failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-}
+export { isTaskDeadlineExpired } from "./loop-lifecycle";
 
 /**
  * 跑完整条 ReAct 循环并返回 finalize 后的 state。
@@ -730,7 +596,8 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
   // 捕获“本次执行”自己的 signal。workflow id 被下一轮复用并 clear 后，旧 signal 仍保持
   // aborted，避免上一轮工具调用晚结束后死灰复燃。
   const cancellationSignal = getWorkflowCancellationSignal(params.workflowId);
-  const effectiveMaxIterations = await resolveEffectiveMaxIterations(params);
+  const loopBudget = await resolveLoopBudget(params);
+  const effectiveMaxIterations = loopBudget.maxIterations;
   const effectiveParams =
     effectiveMaxIterations === params.def.maxIterations
       ? params
@@ -805,9 +672,10 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
     }
 
     // One Snapshot per iteration for reason/act/finalize consumers.
-    state = await attachIterationSnapshot(effectiveParams, state);
+    state = await attachIterationContext(effectiveParams, state);
 
-    await emitTaskProgress(effectiveParams, {
+    const beforeAct = state;
+    await reportTaskProgress(effectiveParams.onTaskProgress, {
       phase: "reason",
       iteration: state.iteration,
     });
@@ -826,7 +694,7 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
       break;
     }
 
-    await emitTaskProgress(effectiveParams, {
+    await reportTaskProgress(effectiveParams.onTaskProgress, {
       phase: "act",
       iteration: state.iteration,
     });
@@ -837,11 +705,54 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
       break;
     }
 
-    await emitTaskProgress(effectiveParams, {
+    await reportTaskProgress(effectiveParams.onTaskProgress, {
       phase: "observe",
       iteration: state.iteration,
     });
     state = await runObserve(effectiveParams, state);
+    const consecutiveUnproductiveTurns = nextUnproductiveTurnCount({
+      previous: state.consecutiveUnproductiveTurns,
+      madeProgress: didTurnMakeProgress({ beforeAct, afterObserve: state }),
+    });
+    state = { ...state, consecutiveUnproductiveTurns };
+    if (
+      shouldStopForUnproductiveTurns({
+        consecutiveUnproductiveTurns,
+        ...(loopBudget.maxConsecutiveUnproductiveTurns !== undefined
+          ? { maxConsecutiveUnproductiveTurns: loopBudget.maxConsecutiveUnproductiveTurns }
+          : {}),
+      })
+    ) {
+      const answerText = extractFinalizeAnswerText(state);
+      effectiveParams.emit({
+        runId: effectiveParams.runId,
+        workflowId: effectiveParams.workflowId,
+        traceId: effectiveParams.traceId,
+        role: effectiveParams.def.role,
+        type: "observe",
+        stepIndex: state.iteration,
+        ts: Date.now(),
+        payload: {
+          code: "UNPRODUCTIVE_TURN_BUDGET_EXHAUSTED",
+          consecutiveUnproductiveTurns,
+          maxConsecutiveUnproductiveTurns: loopBudget.maxConsecutiveUnproductiveTurns ?? 3,
+          message: "连续回合没有产生新的成功工具证据，已停止自动重试并保留当前结果。",
+        },
+      });
+      state = {
+        ...state,
+        finalResponse: {
+          status: "partial",
+          reason: "unproductive_turn_budget_exhausted",
+          iteration: state.iteration,
+          role: effectiveParams.def.role,
+          answerText:
+            answerText ||
+            "本次执行连续未产生新的有效证据，已停止自动重试。请补充参数、调整目标或开始下一轮会话。",
+        },
+      };
+      break;
+    }
     // observe 后 5 分支（对应原 :430-442）
     if (state.finalResponse) break;
     if (!effectiveParams.forceReactLoop) break;
@@ -851,7 +762,7 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
   }
 
   // Refresh snapshot once more before finalize so DeliveryVerdict sees latest writes.
-  state = await attachIterationSnapshot(effectiveParams, state);
+  state = await attachIterationContext(effectiveParams, state);
   state = runFinalize(effectiveParams, state);
   return { state };
 }

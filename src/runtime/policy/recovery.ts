@@ -2,23 +2,23 @@
  * RecoveryPlanner — default hint-only. Never silently writes business tables.
  */
 
-import { resolveArtifactAutoAdvance, resolveContractAutoAdvance } from "../tools/contract-auto-advance";
+import {
+  resolveArtifactAutoAdvance,
+  resolveContractAutoAdvance,
+} from "../tools/contract-auto-advance";
 import type { DataGap } from "../tools/data-gap";
-import { BUSINESS_WRITE_TOOLS, type RecoverySuggestion } from "./types";
 import { canDispatchBusinessAutoAdvance, getContractAutoAdvanceMode } from "./flags";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
-import type { Database } from "bun:sqlite";
+import { BUSINESS_WRITE_TOOLS, type RecoverySuggestion } from "./types";
 
 export function planContractRecovery(input: {
-  sqlite: Database;
   snapshot: ScenarioRuntimeSnapshot;
   availableTools: readonly string[];
   goal?: string | null;
   notAttempted: readonly DataGap[];
 }): RecoverySuggestion {
   const draft = resolveContractAutoAdvance({
-    sqlite: input.sqlite,
-    workflowId: input.snapshot.workflowId,
+    snapshot: input.snapshot,
     notAttempted: input.notAttempted,
     availableTools: input.availableTools,
     ...(input.goal !== undefined ? { goal: input.goal } : {}),
@@ -27,14 +27,11 @@ export function planContractRecovery(input: {
 }
 
 export function planArtifactRecovery(input: {
-  sqlite: Database;
   snapshot: ScenarioRuntimeSnapshot;
   availableTools: readonly string[];
 }): RecoverySuggestion {
   const draft = resolveArtifactAutoAdvance({
-    sqlite: input.sqlite,
-    workflowId: input.snapshot.workflowId,
-    missingTables: input.snapshot.missingArtifactTables,
+    snapshot: input.snapshot,
     availableTools: input.availableTools,
   });
   return toSuggestion(draft, input.snapshot);

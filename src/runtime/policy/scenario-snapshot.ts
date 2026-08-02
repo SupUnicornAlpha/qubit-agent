@@ -5,11 +5,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { getScenarioExpectation } from "../agent-readiness/quality/scenario-expectations";
+import type { A2aTaskFact, ChildEvidenceFact } from "../a2a/evidence-aggregate";
 import {
+  type ArtifactGapDetail,
   checkRequiredArtifacts,
   resolveScenarioKey,
 } from "../agent-readiness/quality/artifact-checker";
+import { getScenarioExpectation } from "../agent-readiness/quality/scenario-expectations";
 import {
   assessRequiredToolGate,
   listAuthorizedToolsFromSqlite,
@@ -18,7 +20,6 @@ import {
 } from "../tools/required-tool-gate";
 import { resolveScenarioRecipe } from "./scenario-recipe";
 import type { ScenarioRecipe } from "./types";
-import type { A2aTaskFact, ChildEvidenceFact } from "../a2a/evidence-aggregate";
 
 export interface ScenarioRuntimeSnapshot {
   workflowId: string;
@@ -30,8 +31,14 @@ export interface ScenarioRuntimeSnapshot {
   notAttemptedCapabilities: string[];
   unavailableCapabilities: string[];
   missingArtifactTables: string[];
+  /** Full artifact facts let terminal policy stay read-only and pure. */
+  missingArtifacts: ArtifactGapDetail[];
   artifactsOk: boolean;
   factorDefinitionCount: number;
+  /** Recovery inputs, preloaded by the FactsPort instead of queried in policy. */
+  activeFactorIds: string[];
+  latestFactorDefinitionId: string | null;
+  screenerTopSymbol: string | null;
   strategyVersionId: string | null;
   loadedAtMs: number;
   /** Populated by FactsPort when includeA2a is true. */
@@ -50,20 +57,15 @@ export function loadScenarioRuntimeSnapshot(input: {
   const recipe = resolveScenarioRecipe(scenarioKey);
   const available = [...(input.availableTools ?? [])];
   const authorizedTools = listAuthorizedToolsFromSqlite(input.sqlite, available);
-  const attemptedTools = listWorkflowAttemptedToolsFromSqlite(
-    input.sqlite,
-    input.workflowId,
-    [...(input.extraAttemptedTools ?? [])]
-  );
-  const successfulTools = listWorkflowSuccessfulToolsFromSqlite(
-    input.sqlite,
-    input.workflowId,
-    []
-  );
+  const attemptedTools = listWorkflowAttemptedToolsFromSqlite(input.sqlite, input.workflowId, [
+    ...(input.extraAttemptedTools ?? []),
+  ]);
+  const successfulTools = listWorkflowSuccessfulToolsFromSqlite(input.sqlite, input.workflowId, []);
 
   let notAttemptedCapabilities: string[] = [];
   let unavailableCapabilities: string[] = [];
   let missingArtifactTables: string[] = [];
+  let missingArtifacts: ArtifactGapDetail[] = [];
   let artifactsOk = true;
 
   if (scenarioKey) {
@@ -82,6 +84,7 @@ export function loadScenarioRuntimeSnapshot(input: {
       const artifacts = checkRequiredArtifacts(input.sqlite, scenarioKey, input.workflowId);
       artifactsOk = artifacts.ok;
       missingArtifactTables = artifacts.missing.map((item) => item.table);
+      missingArtifacts = artifacts.missing;
     } catch {
       /* leave defaults */
     }
@@ -97,17 +100,37 @@ export function loadScenarioRuntimeSnapshot(input: {
     notAttemptedCapabilities,
     unavailableCapabilities,
     missingArtifactTables,
+    missingArtifacts,
     artifactsOk,
     factorDefinitionCount: countFactorDefinitions(input.sqlite, input.workflowId),
+    activeFactorIds: listActiveFactorIds(input.sqlite, input.workflowId, 3),
+    latestFactorDefinitionId: latestFactorDefinitionId(input.sqlite, input.workflowId),
+    screenerTopSymbol: pickScreenerTopSymbol(input.sqlite, input.workflowId),
     strategyVersionId: latestStrategyVersionId(input.sqlite, input.workflowId),
     loadedAtMs: Date.now(),
   };
 }
 
+function listActiveFactorIds(sqlite: Database, workflowId: string, limit: number): string[] {
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT id AS id FROM factor_definition
+         WHERE workflow_run_id = ? AND coalesce(status, 'active') != 'archived'
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(workflowId, limit) as Array<{ id: string }>;
+    return rows.map((row) => row.id).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function countFactorDefinitions(sqlite: Database, workflowId: string): number {
   try {
     const row = sqlite
-      .prepare(`SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?`)
+      .prepare("SELECT COUNT(*) AS c FROM factor_definition WHERE workflow_run_id = ?")
       .get(workflowId) as { c: number } | undefined;
     return Number(row?.c ?? 0);
   } catch {
@@ -126,6 +149,41 @@ function latestStrategyVersionId(sqlite: Database, workflowId: string): string |
       )
       .get(workflowId) as { id?: string } | undefined;
     return row?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function latestFactorDefinitionId(sqlite: Database, workflowId: string): string | null {
+  try {
+    const row = sqlite
+      .prepare(
+        `SELECT id AS id FROM factor_definition
+         WHERE workflow_run_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(workflowId) as { id?: string } | undefined;
+    return row?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function pickScreenerTopSymbol(sqlite: Database, workflowId: string): string | null {
+  try {
+    const row = sqlite
+      .prepare(
+        `SELECT sc.ticker AS ticker
+         FROM screener_candidate sc
+         JOIN screener_run sr ON sr.id = sc.screener_run_id
+         WHERE sr.workflow_run_id = ?
+         ORDER BY sc.score DESC
+         LIMIT 1`
+      )
+      .get(workflowId) as { ticker?: string } | undefined;
+    const ticker = (row?.ticker ?? "").trim().toUpperCase();
+    return ticker || null;
   } catch {
     return null;
   }

@@ -55,6 +55,7 @@ function buildSnapshotJson(state: AgentGraphState): Record<string, unknown> {
     requiredToolGapRetryCount: state.requiredToolGapRetryCount,
     controlModeGapRetryCount: state.controlModeGapRetryCount,
     noProgressRetryCount: state.noProgressRetryCount,
+    consecutiveUnproductiveTurns: state.consecutiveUnproductiveTurns,
     eventsTail: events.slice(-EVENT_TAIL_LIMIT),
     eventsCount: events.length,
   };
@@ -258,6 +259,9 @@ export function restoreStateFromSnapshot(
       : {}),
     ...(typeof snap.noProgressRetryCount === "number"
       ? { noProgressRetryCount: snap.noProgressRetryCount }
+      : {}),
+    ...(typeof snap.consecutiveUnproductiveTurns === "number"
+      ? { consecutiveUnproductiveTurns: snap.consecutiveUnproductiveTurns }
       : {}),
   };
 

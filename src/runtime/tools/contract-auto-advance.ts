@@ -6,19 +6,19 @@
  * AGENT_RUNTIME_QUALITY_AND_THIN_LOOP_PLAN.
  */
 
-import type { Database } from "bun:sqlite";
+import type { ScenarioRuntimeSnapshot } from "../policy/scenario-snapshot";
 import { REQUIRED_CAPABILITY_PRIMARY_TOOL } from "../research-scenario/scenario-key-aliases";
 import type { DataGap } from "./data-gap";
 
 export function resolveContractAutoAdvance(input: {
-  sqlite: Database;
-  workflowId: string;
+  snapshot: ScenarioRuntimeSnapshot;
   notAttempted: readonly DataGap[];
   availableTools: readonly string[];
   goal?: string | null;
 }): { toolName: string; params: Record<string, unknown> } | null {
-  if (input.notAttempted.length === 0) return null;
-  const capability = input.notAttempted[0]!.capability;
+  const firstGap = input.notAttempted[0];
+  if (!firstGap) return null;
+  const capability = firstGap.capability;
   const toolName = REQUIRED_CAPABILITY_PRIMARY_TOOL[capability] ?? capability;
   if (!input.availableTools.includes(toolName)) return null;
 
@@ -26,7 +26,7 @@ export function resolveContractAutoAdvance(input: {
     return {
       toolName,
       params: {
-        name: `bench-long-only-momentum-value-quality-${input.workflowId.slice(0, 8)}`,
+        name: `bench-long-only-momentum-value-quality-${input.snapshot.workflowId.slice(0, 8)}`,
         style: "low_freq",
         description:
           "benchmark long-only multi-factor strategy combining value quality momentum factors with rebalance and backtest assumptions",
@@ -39,7 +39,7 @@ export function resolveContractAutoAdvance(input: {
     return {
       toolName,
       params: {
-        name: `mom_21d_cs_${input.workflowId.slice(0, 6)}`,
+        name: `mom_21d_cs_${input.snapshot.workflowId.slice(0, 6)}`,
         expression: "close / Ref(close, 21) - 1",
         universe: "CN-A:hs300",
         category: "momentum",
@@ -49,12 +49,12 @@ export function resolveContractAutoAdvance(input: {
   }
 
   if (toolName === "order.create_intent") {
-    const hasVersion = latestStrategyVersionId(input.sqlite, input.workflowId);
+    const hasVersion = input.snapshot.strategyVersionId;
     if (!hasVersion && input.availableTools.includes("strategy.create_version")) {
       return {
         toolName: "strategy.create_version",
         params: {
-          name: `bench-live-${input.workflowId.slice(0, 8)}`,
+          name: `bench-live-${input.snapshot.workflowId.slice(0, 8)}`,
           style: "low_freq",
           description: "benchmark paper live_trading strategy shell",
           universe: "US",
@@ -77,7 +77,7 @@ export function resolveContractAutoAdvance(input: {
   }
 
   if (toolName === "recommendation.record") {
-    const symbol = pickScreenerSymbol(input.sqlite, input.workflowId) ?? inferSymbolFromGoal(input.goal);
+    const symbol = input.snapshot.screenerTopSymbol ?? inferSymbolFromGoal(input.goal);
     if (!symbol) return null;
     return {
       toolName,
@@ -114,9 +114,7 @@ export function resolveContractAutoAdvance(input: {
 
 /** When required tools are done but artifacts remain, advance the next producer. */
 export function resolveArtifactAutoAdvance(input: {
-  sqlite: Database;
-  workflowId: string;
-  missingTables: readonly string[];
+  snapshot: ScenarioRuntimeSnapshot;
   availableTools: readonly string[];
 }): { toolName: string; params: Record<string, unknown> } | null {
   const priority = [
@@ -129,7 +127,7 @@ export function resolveArtifactAutoAdvance(input: {
     "risk_decision",
   ];
   for (const table of priority) {
-    if (!input.missingTables.includes(table)) continue;
+    if (!input.snapshot.missingArtifactTables.includes(table)) continue;
     if (table === "strategy_composition") {
       const toolName = "strategy.compose";
       if (!input.availableTools.includes(toolName)) return null;
@@ -138,7 +136,7 @@ export function resolveArtifactAutoAdvance(input: {
         params: {
           kind: "factor_weighted",
           weight_method: "equal",
-          factor_ids: listActiveFactorIds(input.sqlite, 3),
+          factor_ids: input.snapshot.activeFactorIds,
         },
       };
     }
@@ -165,7 +163,7 @@ export function resolveArtifactAutoAdvance(input: {
           ? "factor.evaluate"
           : null;
       if (!toolName) return null;
-      const factorId = latestFactorDefinitionId(input.sqlite, input.workflowId);
+      const factorId = input.snapshot.latestFactorDefinitionId;
       if (!factorId) return null;
       return {
         toolName,
@@ -180,78 +178,11 @@ export function resolveArtifactAutoAdvance(input: {
   return null;
 }
 
-function latestStrategyVersionId(sqlite: Database, workflowId: string): string | null {
-  try {
-    const row = sqlite
-      .prepare(
-        `SELECT id AS id FROM strategy_version
-         WHERE workflow_run_id = ?
-         ORDER BY created_at DESC
-         LIMIT 1`
-      )
-      .get(workflowId) as { id?: string } | undefined;
-    return row?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function listActiveFactorIds(sqlite: Database, limit: number): string[] {
-  try {
-    const rows = sqlite
-      .prepare(
-        `SELECT id AS id FROM factor_definition
-         WHERE coalesce(status, 'active') != 'archived'
-         ORDER BY created_at DESC
-         LIMIT ?`
-      )
-      .all(limit) as Array<{ id: string }>;
-    return rows.map((row) => row.id).filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function latestFactorDefinitionId(sqlite: Database, workflowId: string): string | null {
-  try {
-    const row = sqlite
-      .prepare(
-        `SELECT id AS id FROM factor_definition
-         WHERE workflow_run_id = ?
-         ORDER BY created_at DESC
-         LIMIT 1`
-      )
-      .get(workflowId) as { id?: string } | undefined;
-    return row?.id ?? null;
-  } catch {
-    return null;
-  }
-}
-
 function inferSymbolFromGoal(goal: string | null | undefined): string | null {
   if (!goal) return null;
   const match = goal.match(/\b([A-Z]{1,5})(?:\.[A-Z]{1,2})?\b/);
-  if (!match) return null;
-  const symbol = match[1]!;
+  const symbol = match?.[1];
+  if (!symbol) return null;
   if (["US", "CN", "IC", "IR", "AI", "API", "GPU"].includes(symbol)) return null;
   return symbol;
-}
-
-function pickScreenerSymbol(sqlite: Database, workflowId: string): string | null {
-  try {
-    const row = sqlite
-      .prepare(
-        `SELECT sc.ticker AS ticker
-         FROM screener_candidate sc
-         JOIN screener_run sr ON sr.id = sc.screener_run_id
-         WHERE sr.workflow_run_id = ?
-         ORDER BY sc.score DESC
-         LIMIT 1`
-      )
-      .get(workflowId) as { ticker?: string } | undefined;
-    const ticker = (row?.ticker ?? "").trim().toUpperCase();
-    return ticker || null;
-  } catch {
-    return null;
-  }
 }

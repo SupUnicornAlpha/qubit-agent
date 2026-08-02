@@ -91,7 +91,7 @@ import {
   buildWorkflowProcessPrompt,
   resolveEffectiveWorkflowProcessConfig,
 } from "../../workflow/process-config";
-import type { AgentGraphState, StepStreamEvent } from "../state";
+import type { AgentGraphState, IterationContext, StepStreamEvent } from "../state";
 
 export interface ReasonStepMeta {
   /** Wall-clock latency of the LLM round-trip (including streaming and any retry). */
@@ -202,7 +202,10 @@ async function withOptionalContextTimeout<T>(
   }
 }
 
-async function loadWorkflowMeta(workflowId: string): Promise<{
+async function loadWorkflowMeta(
+  workflowId: string,
+  iterationContext?: IterationContext | null
+): Promise<{
   projectId: string | null;
   sessionId: string | null;
   source: string | null;
@@ -242,8 +245,9 @@ async function loadWorkflowMeta(workflowId: string): Promise<{
      */
     source: wfRows[0].source ?? null,
     mode: wfRows[0].mode ?? null,
-    agentMode: resolveAgentControlMode(wfRows[0].loopOptionsJson),
-    processConfig: resolveWorkflowProcessConfig(wfRows[0].loopOptionsJson),
+    agentMode: iterationContext?.agentMode ?? resolveAgentControlMode(wfRows[0].loopOptionsJson),
+    processConfig:
+      iterationContext?.processConfig ?? resolveWorkflowProcessConfig(wfRows[0].loopOptionsJson),
     benchmarkNamespace: parseLoopOptionsJson(wfRows[0].loopOptionsJson).benchmarkNamespace === true,
   };
 }
@@ -408,7 +412,7 @@ export async function reasonNode(
   };
   let workflowTokenBudget: WorkflowTokenBudgetStatus | null = null;
   try {
-    workflowMeta = await loadWorkflowMeta(state.workflowId);
+    workflowMeta = await loadWorkflowMeta(state.workflowId, state.iterationContext);
     workflowTokenBudget = await loadWorkflowTokenBudgetStatus(await getDb(), state.workflowId);
   } catch {
     // Missing workflow metadata must not block reasoning.
@@ -419,7 +423,9 @@ export async function reasonNode(
    * plan 模式裁剪、enabled MCP、sandbox 白名单均在 listAuthorizedCapabilities 内完成。
    * topology / collaboration 仍来自 resolveEffectiveAgentTools。
    */
-  const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
+  const effective =
+    state.iterationContext?.effectiveTools ??
+    (await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId));
   const capabilitySurface = await listAuthorizedCapabilities({
     agentDefinition: state.agentDefinition,
     workflowId: state.workflowId,

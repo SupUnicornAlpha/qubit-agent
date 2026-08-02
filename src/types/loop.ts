@@ -57,6 +57,11 @@ export const LoopOptionsJsonSchema = z
   .object({
     /** native ReAct 的工作流级迭代上限；显式纳入 schema，避免解析时被 strip。 */
     maxIterations: z.number().int().min(1).max(100).optional(),
+    /**
+     * 连续没有新增成功工具证据的 turn 上限。它与 maxIterations 分工：前者
+     * 阻止 recovery/hint 空转，后者只是 availability hard cap。
+     */
+    maxConsecutiveUnproductiveTurns: z.number().int().min(1).max(20).optional(),
     /** LLM 成本与上下文预算。 */
     tokenBudget: WorkflowTokenBudgetSchema.optional(),
     /** Override workflow execution_path when loop_kind is native (graph | a2a). */

@@ -3,26 +3,15 @@ import { and, desc, eq } from "drizzle-orm";
 import { NativeMemoryConnector } from "../../connectors/memory/native/native.memory.connector";
 import { getDb } from "../../db/sqlite/client";
 import { analystSignal, longtermMemory, midtermMemory } from "../../db/sqlite/schema";
-import { agentProfile, workflowRun } from "../../db/sqlite/schema";
+import { agentProfile } from "../../db/sqlite/schema";
 import {
   instrument as instrumentTable,
   recommendationSnapshot,
   strategy as strategyTable,
   strategyVersion as strategyVersionTable,
 } from "../../db/sqlite/schema";
-import { type A2ATaskState, type TaskAssignPayload } from "../../types/a2a";
-import type { AgentRole } from "../../types/entities";
-import type { AnalystSignalValue } from "../../types/entities";
 import type { AgentSkillOutcome } from "../../types/entities";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
-import { resolveAgentControlMode } from "../../types/loop";
-import { getA2aPorts } from "../a2a/ports";
-import {
-  type AgentPlanSnapshot,
-  type AgentPlanStepStatus,
-  parseAgentPlanSnapshot,
-} from "../agent-control-mode";
-import { dispatchTaskToRole } from "../agent-pool";
 import {
   type AgentPackSelfEditTarget,
   getDataDir,
@@ -43,37 +32,14 @@ import type { ExecResult } from "../exec/types";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
-import { getStepStreamPorts } from "../ports/step-stream";
-import { isLikelyProjectIdFormat } from "../react/nodes/project-id";
-import { computeDateRangeForLimit, queryBarsRange } from "../market/klines-query";
-import { getMarketDataReadiness } from "../market/market-data-health";
-import { listMarketDataSources } from "../market/market-data-source-control";
-import { queryMarketNewsBrief } from "../market/news-brief-query";
-import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-args";
-import { detectRegimeFromBars } from "../market/regime";
-import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import {
-  computeBollinger,
-  computeMacd,
-  computeRsi,
-  computeSma,
-  snapshotIndicators,
-} from "../market/technical-indicators";
-import { summarizeTeamDecision } from "../msa/analyst-team-pipeline";
-import {
-  buildParsedResearchTeamFromToolParams,
-  runResearchTeamFromOrchestrator,
-} from "../msa/research-team-execute";
-import { type RawAnalystSignal, fuseSignals } from "../msa/signal-fusion";
-import {
-  assertTopologyTargetAllowed,
   isTopologyTeamTool,
-  loadOrchestratorTopologyForWorkflow,
   parseRoleFromTopologyTeamTool,
-  resolveDispatchRole,
-  resolveTopologyTaskLeaseMs,
-  resolveTopologyTaskTimeoutMs,
 } from "../orchestration/topology-dispatch";
+import { isLikelyProjectIdFormat } from "./context-params";
+import { ORCHESTRATION_HANDLERS } from "./orchestration-handlers";
+import { dispatchTeamAgentTask } from "../orchestration/team-dispatch-adapter";
+export { resolveDelegatedParentTaskId } from "../orchestration/team-dispatch-adapter";
 import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
 import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
 import { ruleService } from "../rule/rule-service";
@@ -83,10 +49,7 @@ import { runStockScreener } from "../screener/stock-screener";
 import { skillService } from "../skills/skill-service";
 import { strategyComposer } from "../strategy/strategy-composer";
 import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
-import { parseHitlApproval } from "../workflow/hitl-service";
-import { writeWorkflowPlanArtifacts } from "../workflow/plan-artifact";
-import { applyToolContract, isToolContractEnabled } from "./tool-contract";
-import { getToolContract } from "./tool-contract-registry";
+import { MARKET_ANALYSIS_HANDLERS } from "./market-analysis-handlers";
 import { resolveConnectorForTool } from "./tool-routes";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 
@@ -129,183 +92,9 @@ function optionalFiniteNumber(value: unknown): number | null {
 
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
-  "market.resolve_symbol": async (_ctx, params) => {
-    const contract = isToolContractEnabled() ? getToolContract("market.resolve_symbol") : undefined;
-    const canonical = contract ? applyToolContract(contract, params) : params;
-    const symbols =
-      Array.isArray(canonical.symbols) && canonical.symbols.length > 0
-        ? (canonical.symbols as string[])
-        : extractSymbolArgs(canonical);
-    if (symbols.length === 0) {
-      requireSymbols(params, { arity: "either", toolName: "market.resolve_symbol" });
-    }
-    const hint =
-      typeof canonical.exchange === "string" ? { hintExchange: canonical.exchange as string } : {};
-    const results = symbols.map((symbol) => resolveTickerMarket(symbol, hint));
-    return results.length === 1 ? results[0]! : { results, count: results.length };
-  },
+  ...ORCHESTRATION_HANDLERS,
+  ...MARKET_ANALYSIS_HANDLERS,
 
-  "market.data_sources": async (_ctx, params) => {
-    const market = typeof params.market === "string" ? params.market.toUpperCase() : "";
-    const timeframe = typeof params.timeframe === "string" ? params.timeframe : "";
-    const rows = await listMarketDataSources();
-    return {
-      readiness: getMarketDataReadiness(),
-      readinessScope: "historical_and_realtime",
-      dispatchReadiness: "not_checked",
-      sources: rows.filter(
-        (row) =>
-          (!market || row.supportedMarkets.includes(market)) &&
-          (!timeframe || row.supportedTimeframes.includes(timeframe))
-      ),
-      guidance:
-        "先用 market.resolve_symbol 确认市场。实时/现价请求必须先看 realtimeReadyMarkets 并调用 fetch_quote；历史 K 线再调用 fetch_klines。不要用 readyMarkets（日线能力）冒充实时能力，也不要原样重复调用已 open/down 的源。此结果不代表 call_team_* 调度健康。",
-    };
-  },
-
-  "market.readiness": async () => getMarketDataReadiness(),
-
-  /**
-   * update_plan —— 编排器维护一份对用户可见的分步计划/TODO。写入 workflow_run.plan_json 并经 SSE
-   * `type:"plan"` 推流给右栏「计划卡片」，并镜像到当前 workflow workspace 的
-   * PLAN.md + plan.json。workflow_run.plan_json 是权威态，workspace 文件用于审计、
-   * 外部 loop 与恢复。params: { steps: [{id?,title,status?,note?}] }，
-   * status ∈ pending|in_progress|done|skipped。
-   */
-  update_plan: async (ctx, params) => {
-    if (ctx.definition.role !== "orchestrator") {
-      throw new Error("update_plan: only the workflow orchestrator may update the shared plan");
-    }
-    const db = await getDb();
-    const workflowMeta = (
-      await db
-        .select({
-          projectId: workflowRun.projectId,
-          goal: workflowRun.goal,
-          loopOptionsJson: workflowRun.loopOptionsJson,
-          planJson: workflowRun.planJson,
-        })
-        .from(workflowRun)
-        .where(eq(workflowRun.id, ctx.workflowId))
-        .limit(1)
-    )[0];
-    if (!workflowMeta) throw new Error(`update_plan: workflow not found: ${ctx.workflowId}`);
-    const mode = resolveAgentControlMode(workflowMeta?.loopOptionsJson);
-    const rawSteps = Array.isArray(params.steps) ? params.steps : [];
-    const allowed = new Set<AgentPlanStepStatus>(["pending", "in_progress", "done", "skipped"]);
-    const steps: Array<{
-      id: string;
-      title: string;
-      status: AgentPlanStepStatus;
-      note?: string;
-    }> = [];
-    for (let i = 0; i < rawSteps.length && steps.length < 20; i++) {
-      const o = (rawSteps[i] ?? {}) as Record<string, unknown>;
-      const title = String(o.title ?? o.text ?? "").trim();
-      if (!title) continue;
-      const requestedStatus = String(o.status ?? "pending").trim();
-      // Plan 模式只设计未来动作，不能把尚未执行的步骤伪装成 done。
-      const normalizedStatus = allowed.has(requestedStatus as AgentPlanStepStatus)
-        ? (requestedStatus as AgentPlanStepStatus)
-        : "pending";
-      const status: AgentPlanStepStatus = mode === "plan" ? "pending" : normalizedStatus;
-      const note = o.note != null ? String(o.note).slice(0, 300) : undefined;
-      steps.push({
-        id: (String(o.id ?? "").trim() || `s${i + 1}`).slice(0, 40),
-        title: title.slice(0, 200),
-        status,
-        ...(note ? { note } : {}),
-      });
-    }
-    const completedSteps = steps.filter((step) => step.status === "done").length;
-    const skippedSteps = steps.filter((step) => step.status === "skipped").length;
-    const hasActive = steps.some((step) => step.status === "in_progress");
-    const allTerminal = steps.length > 0 && completedSteps + skippedSteps === steps.length;
-    const previousPlan = parseAgentPlanSnapshot(workflowMeta.planJson);
-    const normalizeGoalList = (
-      value: unknown,
-      fallback: string[] | undefined
-    ): string[] | undefined => {
-      if (!Array.isArray(value)) return fallback;
-      const result = value
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim().slice(0, 300))
-        .filter(Boolean)
-        .slice(0, 10);
-      return result.length > 0 ? result : fallback;
-    };
-    const successCriteria = normalizeGoalList(
-      params.successCriteria ?? params.success_criteria,
-      previousPlan?.goal?.successCriteria
-    );
-    const constraints = normalizeGoalList(params.constraints, previousPlan?.goal?.constraints);
-    const goalStatus =
-      mode === "goal"
-        ? allTerminal
-          ? completedSteps > 0
-            ? "executing"
-            : "blocked"
-          : hasActive || completedSteps > 0
-            ? "executing"
-            : "planning"
-        : "planning";
-    const plan: AgentPlanSnapshot = {
-      mode,
-      goal: {
-        text: workflowMeta.goal,
-        status: goalStatus,
-        completedSteps,
-        totalSteps: steps.length,
-        ...(successCriteria ? { successCriteria } : {}),
-        ...(constraints ? { constraints } : {}),
-        ...(goalStatus === "blocked"
-          ? { blocker: "所有计划步骤均被跳过，没有可验证的已完成工作。" }
-          : {}),
-      },
-      steps,
-      updatedAt: new Date().toISOString(),
-    };
-    await db
-      .update(workflowRun)
-      .set({ planJson: plan as never })
-      .where(eq(workflowRun.id, ctx.workflowId));
-
-    let artifactPaths: Awaited<ReturnType<typeof writeWorkflowPlanArtifacts>> | null = null;
-    let workspaceWarning: string | null = null;
-    try {
-      artifactPaths = await writeWorkflowPlanArtifacts({
-        projectId: workflowMeta.projectId,
-        workflowRunId: ctx.workflowId,
-        plan,
-      });
-    } catch (e) {
-      workspaceWarning = e instanceof Error ? e.message : String(e);
-      console.warn(`[update_plan] workspace mirror failed: ${workspaceWarning}`);
-    }
-    try {
-      getStepStreamPorts().publish({
-        runId: ctx.runId,
-        workflowId: ctx.workflowId,
-        traceId: ctx.traceId,
-        role: ctx.definition.role,
-        type: "plan",
-        stepIndex: 0,
-        ts: Date.now(),
-        payload: plan as unknown as Record<string, unknown>,
-      });
-    } catch (e) {
-      console.warn(`[update_plan] publish failed: ${(e as Error).message}`);
-    }
-    return {
-      ok: true,
-      persisted: true,
-      workspaceMirrored: Boolean(artifactPaths),
-      workspaceDir: artifactPaths?.workflowDir ?? null,
-      ...(workspaceWarning ? { workspaceWarning } : {}),
-      stepCount: steps.length,
-      done: steps.filter((s) => s.status === "done").length,
-    };
-  },
   /**
    * web.fetch —— 读取一个公开网页/接口并返回正文文本（Coding-Agent 体验 P2，
    * docs/CODING_AGENT_EXPERIENCE_DESIGN.md）。**只读外联**，带 SSRF 防护：
@@ -384,116 +173,6 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       clearTimeout(timer);
     }
   },
-  assign_task: async (ctx, params) => {
-    const role = String(params.role ?? params.targetRole ?? "").trim() as AgentRole;
-    if (!role) throw new Error("assign_task: role is required");
-    return dispatchTeamAgentTask(ctx, role, params);
-  },
-
-  run_analyst_team: async (ctx, params) => {
-    const parsed = buildParsedResearchTeamFromToolParams({
-      workflowRunId: ctx.workflowId,
-      params: params as Record<string, unknown>,
-      ...(ctx.inboundPayload !== undefined ? { inboundPayload: ctx.inboundPayload } : {}),
-    });
-    return runResearchTeamFromOrchestrator({
-      workflowRunId: ctx.workflowId,
-      runId: ctx.runId,
-      traceId: ctx.traceId,
-      parsed,
-      hitlApproval: parseHitlApproval(
-        (ctx.inboundPayload?.["params"] as Record<string, unknown> | undefined)?.["hitlApproval"]
-      ),
-      ensureJob: true,
-    });
-  },
-
-  /**
-   * 2026-06 新增：对 `run_analyst_team` 输出做"全局兜底总结"。
-   *
-   * 设计意图：
-   *   - 老路径在 `runAnalystTeam` 内部强制跑一次 LLM 决策汇总，每个 workflow 都多 1 次
-   *     ~2-5s 调用 + 让 Orchestrator 出现 ReAct 之外的裸 LLM 调用。
-   *   - 新路径把这次调用拆成本工具，由 Orchestrator 在 ReAct loop 中按需调（典型条件：
-   *     fusedConfidence < 0.6 / breakdown 信号分歧 / missingRoles >= 2）。
-   *   - 工具复用 `ctx.definition.systemPrompt` 作为 Orchestrator 的人格 prompt，保证语义
-   *     与历史 `runOrchestratorDecision` 一致。
-   *
-   * 入参兼容下划线 / 驼峰双风格，避免 LLM 写错参数名硬性失败。
-   */
-  summarize_team_decision: async (ctx, params) => {
-    const fusionSummary = String(params.fusion_summary ?? params.fusionSummary ?? "").trim();
-    const ticker = String(params.ticker ?? "").trim();
-    if (!fusionSummary || !ticker) {
-      throw new Error(
-        "summarize_team_decision: fusion_summary 与 ticker 必填（请把 run_analyst_team 返回值中的 fusionSummary 与 ticker 原样传入）"
-      );
-    }
-    const allowedSignals: ReadonlyArray<AnalystSignalValue> = ["buy", "sell", "hold"];
-    const rawSignal = String(
-      params.msa_signal ?? params.msaSignal ?? params.fused_signal ?? "hold"
-    ).toLowerCase();
-    const msaSignal = (
-      allowedSignals.includes(rawSignal as AnalystSignalValue) ? rawSignal : "hold"
-    ) as AnalystSignalValue;
-    const confidenceRaw = Number(
-      params.msa_confidence ?? params.msaConfidence ?? params.fused_confidence ?? 0.5
-    );
-    const msaConfidence = Number.isFinite(confidenceRaw)
-      ? Math.max(0, Math.min(1, confidenceRaw))
-      : 0.5;
-
-    const pickRoles = (key1: string, key2: string): AgentRole[] | undefined => {
-      const raw = params[key1] ?? params[key2];
-      if (!Array.isArray(raw)) return undefined;
-      return raw.filter(
-        (r): r is AgentRole => typeof r === "string" && r.length > 0
-      ) as AgentRole[];
-    };
-    const attendedRoles = pickRoles("attended_roles", "attendedRoles");
-    const missingRoles = pickRoles("missing_roles", "missingRoles");
-
-    return summarizeTeamDecision({
-      workflowRunId: ctx.workflowId,
-      ticker,
-      orchestratorSystemPrompt: ctx.definition.systemPrompt,
-      fusionSummary,
-      msaSignal,
-      msaConfidence,
-      ...(attendedRoles ? { attendedRoles } : {}),
-      ...(missingRoles ? { missingRoles } : {}),
-    });
-  },
-
-  fuse_signals: async (ctx, params) => {
-    const db = await getDb();
-    const workflowRunId = String(params.workflowRunId ?? ctx.workflowId);
-    const ticker = String(params.ticker ?? "");
-    let signals: RawAnalystSignal[] = [];
-    if (Array.isArray(params.signals)) {
-      signals = params.signals as RawAnalystSignal[];
-    } else {
-      const rows = await db
-        .select()
-        .from(analystSignal)
-        .where(eq(analystSignal.workflowRunId, workflowRunId));
-      signals = rows.map((r) => ({
-        definitionId: r.agentInstanceId ?? r.analystRole,
-        analystRole: r.analystRole as AgentRole,
-        ticker: r.ticker,
-        signal: r.signal,
-        confidence: r.confidence,
-        reasoning: r.reasoning ?? "",
-        dataSnapshot: (r.dataSnapshotJson as Record<string, unknown>) ?? {},
-      }));
-    }
-    return fuseSignals({
-      workflowRunId,
-      signals,
-      ...(ticker ? { tickerHint: ticker } : {}),
-    });
-  },
-
   edit_agent_pack: async (ctx, params) => {
     const targetRaw = params["target"];
     const markdown = typeof params["markdown"] === "string" ? params["markdown"] : "";
@@ -518,130 +197,6 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
       markdown,
     });
     return { target: targetRaw, ...written };
-  },
-
-  compute_indicators: async (_ctx, params) => {
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
-    if (!symbol) throw new Error("compute_indicators: symbol is required");
-    const exchange = String(params.exchange ?? "");
-    const timeframe = String(params.timeframe ?? "1d");
-    const limit = Math.max(30, Math.min(Number(params.limit ?? 120), 500));
-    const { period, startDate, endDate } = computeDateRangeForLimit(timeframe, limit);
-    const bars = await queryBarsRange({ symbol, exchange, period, startDate, endDate });
-    const closes = bars.map((b) => b.close);
-    return {
-      symbol,
-      barCount: bars.length,
-      snapshot: snapshotIndicators(bars, symbol),
-      series: {
-        sma20: computeSma(closes, 20).slice(-5),
-        rsi14: computeRsi(closes, 14).slice(-5),
-        macd: computeMacd(closes).macd.slice(-5),
-        bollinger: {
-          upper: computeBollinger(closes).upper.slice(-5),
-          lower: computeBollinger(closes).lower.slice(-5),
-        },
-      },
-    };
-  },
-
-  detect_patterns: async (_ctx, params) => {
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
-    if (!symbol) throw new Error("detect_patterns: symbol is required");
-    const exchange = String(params.exchange ?? "");
-    const { period, startDate, endDate } = computeDateRangeForLimit("1d", 120);
-    const bars = await queryBarsRange({ symbol, exchange, period, startDate, endDate });
-    const regime = detectRegimeFromBars(bars);
-    const closes = bars.map((b) => b.close);
-    const fast = computeSma(closes, 5);
-    const slow = computeSma(closes, 20);
-    const n = closes.length - 1;
-    let goldenCross = false;
-    let deathCross = false;
-    const previousFast = fast[n - 1] ?? Number.NaN;
-    const previousSlow = slow[n - 1] ?? Number.NaN;
-    const currentFast = fast[n] ?? Number.NaN;
-    const currentSlow = slow[n] ?? Number.NaN;
-    if (n >= 1 && Number.isFinite(currentFast) && Number.isFinite(currentSlow)) {
-      goldenCross = previousFast <= previousSlow && currentFast > currentSlow;
-      deathCross = previousFast >= previousSlow && currentFast < currentSlow;
-    }
-    return {
-      symbol,
-      regime,
-      patterns: [
-        ...(goldenCross ? [{ name: "golden_cross", strength: 0.7 }] : []),
-        ...(deathCross ? [{ name: "death_cross", strength: 0.7 }] : []),
-      ],
-    };
-  },
-
-  compute_valuation: async (_ctx, params) => {
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
-    if (!symbol) throw new Error("compute_valuation: symbol is required");
-    const exchange = String(params.exchange ?? "");
-    const { period, startDate, endDate } = computeDateRangeForLimit("1d", 252);
-    const bars = await queryBarsRange({ symbol, exchange, period, startDate, endDate });
-    const closes = bars.map((b) => b.close);
-    const last = closes[closes.length - 1] ?? 0;
-    const mean252 = closes.length > 0 ? closes.reduce((a, b) => a + b, 0) / closes.length : last;
-    const peProxy = mean252 > 0 ? last / mean252 : null;
-    return {
-      symbol,
-      lastClose: last,
-      meanPrice252d: mean252,
-      peProxy,
-      note: "PE 为价格/252日均价的简化代理，非真实财报 PE；接入财报数据后可替换",
-    };
-  },
-
-  compute_macro_indicators: async (_ctx, params) => {
-    const benchmark = String(params.benchmark ?? params.symbol ?? "000300");
-    const exchange = String(params.exchange ?? "SH");
-    const { period, startDate, endDate } = computeDateRangeForLimit("1d", 120);
-    const bars = await queryBarsRange({
-      symbol: benchmark,
-      exchange,
-      period,
-      startDate,
-      endDate,
-    });
-    const regime = detectRegimeFromBars(bars);
-    return {
-      benchmark,
-      regime: regime.regime,
-      features: regime.features,
-      riskAppetite:
-        regime.regime.includes("uptrend") || regime.regime === "drift_up"
-          ? "risk_on"
-          : regime.regime.includes("down") || regime.regime === "high_volatility"
-            ? "risk_off"
-            : "neutral",
-    };
-  },
-
-  fetch_macro_data: async (_ctx, params) => {
-    const computeMacroIndicators = BUILTIN_HANDLERS.compute_macro_indicators;
-    if (!computeMacroIndicators) throw new Error("compute_macro_indicators is not registered");
-    return computeMacroIndicators(_ctx, params);
-  },
-
-  analyze_social_media: async (_ctx, params) => {
-    const keywords = Array.isArray(params.keywords)
-      ? params.keywords.map(String)
-      : [String(params.symbol ?? params.ticker ?? "")];
-    const brief = await queryMarketNewsBrief({
-      symbol: keywords[0] ?? "",
-      exchange: String(params.exchange ?? ""),
-      limit: 8,
-    });
-    const items = [...brief.symbolNews, ...brief.sectorNews];
-    return {
-      keywords,
-      discussionVolume: items.length,
-      headlines: items.slice(0, 5).map((i) => i.title),
-      note: "基于新闻头条的舆情代理；完整社交数据需外接 API",
-    };
   },
 
   write_memory: async (ctx, params) => {
@@ -1049,11 +604,8 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     const exprRaw = String(
       params.expr ?? params.expression ?? params.factor_expression ?? params.factorExpression ?? ""
     ).trim();
-    const {
-      normalizeFactorExpression,
-      inferFactorLang,
-      formatUnsupportedExpressionError,
-    } = await import("../policy/factor-expression-contract");
+    const { normalizeFactorExpression, inferFactorLang, formatUnsupportedExpressionError } =
+      await import("../policy/factor-expression-contract");
     const normalized = normalizeFactorExpression(exprRaw);
     if (normalized.unsupported.length > 0) {
       throw new Error(
@@ -1064,10 +616,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
         })
       );
     }
-    const lang = inferFactorLang(
-      normalized.expr,
-      params.lang ? String(params.lang) : null
-    );
+    const lang = inferFactorLang(normalized.expr, params.lang ? String(params.lang) : null);
     const expr = normalized.expr;
     return factorService.register({
       projectId,
@@ -2031,9 +1580,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
     const qtyRaw = Number(params.qty);
     if (!Number.isFinite(qtyRaw) || qtyRaw <= 0) {
-      throw new Error(
-        `order.create_intent: qty 必须是正数，收到: ${String(params.qty ?? "")}`
-      );
+      throw new Error(`order.create_intent: qty 必须是正数，收到: ${String(params.qty ?? "")}`);
     }
     const qty = qtyRaw;
     const orderTypeRaw = String(params.order_type ?? "market")
@@ -2713,198 +2260,6 @@ async function resolveProjectIdForWorkflow(ctx: BuiltinToolContext): Promise<str
       .limit(1)
   )[0];
   return row?.projectId ?? "";
-}
-
-/** Goal 模式允许 Orchestrator 按目标按需召唤当前拓扑之外的专家。 */
-async function isGoalMode(workflowId: string): Promise<boolean> {
-  try {
-    const db = await getDb();
-    const rows = await db
-      .select({ loopOptionsJson: workflowRun.loopOptionsJson })
-      .from(workflowRun)
-      .where(eq(workflowRun.id, workflowId))
-      .limit(1);
-    return resolveAgentControlMode(rows[0]?.loopOptionsJson) === "goal";
-  } catch {
-    return false; // 读失败按默认 native 处理（保守，rails 不变）
-  }
-}
-
-export function resolveDelegatedParentTaskId(
-  inboundPayload: Record<string, unknown> | undefined
-): string | null {
-  const taskId = inboundPayload?.taskId;
-  return typeof taskId === "string" && taskId.trim() ? taskId.trim() : null;
-}
-
-async function dispatchTeamAgentTask(
-  ctx: BuiltinToolContext,
-  role: AgentRole,
-  params: Record<string, unknown>
-): Promise<{
-  dispatched: boolean;
-  completed: boolean;
-  success: boolean;
-  taskId: string;
-  role: AgentRole;
-  runId: string;
-  via: string;
-  dispatchStatus: "completed" | "timeout";
-  dataAvailability: "available" | "unknown" | "not_applicable";
-  result?: unknown;
-  errorCode?: string | null;
-  taskStatus?: A2ATaskState | "timeout" | "awaiting_approval";
-  errorMessage?: string | null;
-}> {
-  const targetRole = resolveDispatchRole(role);
-  const topology = await loadOrchestratorTopologyForWorkflow();
-  if (ctx.definition.role === "orchestrator" && topology && topology.targets.length > 0) {
-    // Goal 模式放开「角色集锁死」——编排器可按需拉入团队拓扑之外的有效专家。
-    // 默认 Agent 模式保持
-    // 严格校验（rails 不变）。dispatchTaskToRole 仍会对不存在定义的角色报运行时错误兜底。
-    const goalMode = await isGoalMode(ctx.workflowId);
-    if (goalMode) {
-      const onEdge = topology.targets.some((t) => t.role === targetRole);
-      if (!onEdge) {
-        console.info(
-          `[dispatchTeamAgentTask] Goal 模式：放行拓扑外角色 '${targetRole}'（按需拉入专家）`
-        );
-      }
-    } else {
-      assertTopologyTargetAllowed(topology, targetRole);
-    }
-  }
-
-  const goal = String(params.goal ?? params.message ?? "").trim();
-  if (!goal) throw new Error("dispatch team agent: goal is required");
-
-  const extra =
-    typeof params.params === "object" && params.params && !Array.isArray(params.params)
-      ? (params.params as Record<string, unknown>)
-      : {};
-  // Preserve the durable A2A parent/child relation. Without this, topology
-  // specialists look like independent root envelopes in `a2a_task`, so
-  // completion cannot distinguish a running parent from delegated work and a
-  // terminal parent cannot cancel only its own children.
-  const inboundTaskId = resolveDelegatedParentTaskId(ctx.inboundPayload);
-
-  const gatherTimeoutMs = resolveTopologyTaskTimeoutMs(targetRole);
-  const leaseMs = resolveTopologyTaskLeaseMs();
-  const payload: TaskAssignPayload = {
-    taskId: String(params.taskId ?? randomUUID()),
-    taskType: String(params.taskType ?? "topology_dispatch"),
-    assignedRole: targetRole,
-    goal,
-    ...(Array.isArray(params.acceptanceCriteria)
-      ? {
-          acceptanceCriteria: params.acceptanceCriteria.filter(
-            (value): value is string => typeof value === "string"
-          ),
-        }
-      : {}),
-    acceptance:
-      targetRole === "market_data"
-        ? { requiredEvidence: "market_data" }
-        : { requiredEvidence: "analysis" },
-    params: {
-      goal,
-      ...extra,
-      ...(inboundTaskId ? { parentTaskId: inboundTaskId } : {}),
-      ...(role !== targetRole ? { requestedRole: role } : {}),
-    },
-    // 子任务墙钟与 gather 对齐；通信失联由 lease+TASK_PROGRESS 处理，不靠提前掐死孩子。
-    deadline: new Date(Date.now() + Math.max(gatherTimeoutMs - 5_000, 5_000)).toISOString(),
-  };
-
-  const dispatch = await dispatchTaskToRole({
-    workflowId: ctx.workflowId,
-    role: targetRole,
-    payload,
-    traceId: ctx.traceId,
-    senderId: ctx.agentInstanceId,
-  });
-  // A2A Task is durable before dispatch.  Do not use an in-memory gather as
-  // the source of truth: a parent can now reconstruct this wait after restart.
-  const a2aPorts = getA2aPorts();
-  const waited = await a2aPorts.waitForTerminal(payload.taskId, {
-    timeoutMs: gatherTimeoutMs,
-    leaseMs,
-  });
-  const task = waited.task;
-  const timedOut = waited.timedOut;
-  if (timedOut) {
-    await a2aPorts.requestCancellation(payload.taskId, {
-      reason: "team_dispatch_timeout",
-      detail:
-        waited.timeoutReason === "lease_expired"
-          ? `${targetRole} 专家通信 lease 失联`
-          : `${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包`,
-    });
-  }
-  const result = task?.result;
-  const taskError = task?.error && typeof task.error === "object"
-    ? (task.error as Record<string, unknown>)
-    : null;
-  const taskStatus =
-    task?.status === "input_required" ? "awaiting_approval" : task?.status;
-  const gatheredRecord =
-    result && typeof result === "object"
-      ? (result as Record<string, unknown>)
-      : null;
-  const taskEvidence =
-    gatheredRecord?.taskEvidence && typeof gatheredRecord.taskEvidence === "object"
-      ? (gatheredRecord.taskEvidence as Record<string, unknown>)
-      : null;
-  const dataAvailable =
-    targetRole === "market_data" &&
-    taskEvidence?.verified === true &&
-    taskEvidence.kind === "market_data";
-  const errorMessage = timedOut
-    ? waited.timeoutReason === "lease_expired"
-      ? `team_dispatch_timeout: ${targetRole} 专家通信 lease 失联（连续无 TASK_PROGRESS）；` +
-        "这不代表底层数据源不可用，禁止据此宣告 no_data。"
-      : `team_dispatch_timeout: ${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包；` +
-        "这不代表底层数据源不可用，禁止据此宣告 no_data。"
-    : typeof taskError?.message === "string"
-      ? taskError.message
-      : null;
-  const output: {
-    dispatched: boolean;
-    completed: boolean;
-    success: boolean;
-    taskId: string;
-    role: AgentRole;
-    runId: string;
-    via: string;
-    dispatchStatus: "completed" | "timeout";
-    dataAvailability: "available" | "unknown" | "not_applicable";
-    result?: unknown;
-    errorCode?: string | null;
-    taskStatus?: A2ATaskState | "timeout" | "awaiting_approval";
-    errorMessage?: string | null;
-  } = {
-    dispatched: true,
-    completed: Boolean(task && !timedOut),
-    success: task?.status === "completed",
-    taskId: payload.taskId,
-    role: targetRole,
-    runId: dispatch.runId,
-    via: "topology_dispatch",
-    dispatchStatus: timedOut ? "timeout" : "completed",
-    dataAvailability: timedOut ? "unknown" : dataAvailable ? "available" : "not_applicable",
-  };
-  if (result !== undefined) output.result = result;
-  if (timedOut) {
-    output.errorCode = "a2a_gather_timeout";
-    output.taskStatus = "timeout";
-  } else if (typeof taskError?.code === "string") {
-    output.errorCode = taskError.code;
-    if (taskStatus) output.taskStatus = taskStatus;
-  } else if (task && taskStatus) {
-    output.taskStatus = taskStatus;
-  }
-  if (errorMessage) output.errorMessage = errorMessage;
-  return output;
 }
 
 export function isBuiltinTool(toolName: string): boolean {

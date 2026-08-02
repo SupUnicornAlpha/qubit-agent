@@ -1,5 +1,7 @@
 import type { A2AMessageEnvelope } from "../../types/a2a";
+import type { AgentControlMode, WorkflowProcessConfig } from "../../types/loop";
 import type { RuntimeAgentDefinition } from "../types";
+import type { EffectiveToolsResult } from "../orchestration/resolve-effective-tools";
 import { createEmptyWorkingMemory } from "../context/working-memory";
 import type { WorkingMemory } from "../context/types";
 import type { ScenarioRuntimeSnapshot } from "../policy";
@@ -30,6 +32,25 @@ export interface StepStreamEvent {
   /** When set, identifies which agent loop produced this frame (native vs external CLI). */
   loopKind?: import("../../types/loop").AgentLoopKind;
   source?: "native" | "cli" | "a2a";
+}
+
+/**
+ * Immutable facts loaded once before a reason → act turn.
+ *
+ * Nodes consume this value instead of independently loading workflow metadata,
+ * the effective tool surface, or a scenario snapshot. It is intentionally a
+ * value object: policy receives facts, not database handles or dispatchers.
+ */
+export interface IterationContext {
+  workflowId: string;
+  projectId: string | null;
+  agentMode: AgentControlMode;
+  processConfig: WorkflowProcessConfig | null;
+  planJson: unknown;
+  availableTools: string[];
+  effectiveTools: EffectiveToolsResult;
+  snapshot: ScenarioRuntimeSnapshot | null;
+  loadedAtMs: number;
 }
 
 export interface AgentGraphState {
@@ -73,11 +94,15 @@ export interface AgentGraphState {
   controlModeGapRetryCount?: number;
   /** Consecutive blocked duplicate requests; reset by a real tool execution. */
   noProgressRetryCount?: number;
+  /** Runner-owned budget for turns that produced no successful tool evidence. */
+  consecutiveUnproductiveTurns?: number;
   /**
    * Per-iteration ScenarioRuntimeSnapshot (FactsPort). Shared by reason/act/finalize
    * so hot path does not re-query sqlite for the same facts.
    */
   scenarioSnapshot?: ScenarioRuntimeSnapshot | null;
+  /** Shared metadata/facts for the current loop iteration. */
+  iterationContext?: IterationContext | null;
 }
 
 export function createInitialGraphState(input: {

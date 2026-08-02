@@ -2,13 +2,12 @@
  * Scenario gate decisions for the loop — pure over Snapshot (no sqlite in caller).
  */
 
+import { buildArtifactGapHint } from "../agent-readiness/quality/artifact-checker";
 import type { DataGap } from "../tools/data-gap";
 import { buildRequiredToolNextActionHint } from "../tools/required-tool-gate";
-import { buildArtifactGapHint } from "../agent-readiness/quality/artifact-checker";
 import { planArtifactRecovery, planContractRecovery } from "./recovery";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
 import type { RecoverySuggestion } from "./types";
-import type { Database } from "bun:sqlite";
 
 export type ScenarioGateDecision =
   | { kind: "allow_finalize" }
@@ -29,7 +28,6 @@ export type ScenarioGateDecision =
 
 export function decideToolNoneGate(input: {
   snapshot: ScenarioRuntimeSnapshot;
-  sqlite: Database;
   availableTools: readonly string[];
   goal?: string | null;
   requiredToolRetryCount: number;
@@ -58,10 +56,9 @@ export function decideToolNoneGate(input: {
   if (input.notAttempted.length > 0) {
     if (input.requiredToolRetryCount < input.maxRequiredToolRetries) {
       const recovery = planContractRecovery({
-        sqlite: input.sqlite,
         snapshot,
         availableTools: input.availableTools,
-        goal: input.goal,
+        ...(input.goal !== undefined ? { goal: input.goal } : {}),
         notAttempted: input.notAttempted,
       });
       const nextActionHint =
@@ -101,7 +98,6 @@ export function decideToolNoneGate(input: {
   if (!input.artifactOk) {
     if (input.artifactRetryCount < input.maxArtifactRetries) {
       const recovery = planArtifactRecovery({
-        sqlite: input.sqlite,
         snapshot,
         availableTools: input.availableTools,
       });

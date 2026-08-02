@@ -26,6 +26,19 @@ export interface ContextParamSource {
   projectId?: string | null | undefined;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LEGACY_PROJ_RE = /^proj-[a-z0-9\-]+$/i;
+
+/**
+ * Validate a caller-supplied project id only for compatibility fallbacks.
+ * Normal runtime calls use injectContextParams and never trust this value.
+ */
+export function isLikelyProjectIdFormat(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return Boolean(trimmed) && (UUID_RE.test(trimmed) || LEGACY_PROJ_RE.test(trimmed));
+}
+
 /**
  * 无条件覆盖上下文绑定参数。返回新对象（不原地修改入参）。
  *

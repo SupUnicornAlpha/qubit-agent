@@ -5,7 +5,6 @@ import { resolveScenarioRecipe } from "./scenario-recipe";
 import { BUSINESS_WRITE_TOOLS } from "./types";
 import { planContractRecovery } from "./recovery";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
-import type { Database } from "bun:sqlite";
 
 describe("scenario recipes", () => {
   test("resolves aliases to pin-versioned recipes", () => {
@@ -20,9 +19,18 @@ describe("answer schema", () => {
   test("requires labeled sections", () => {
     const ok = assertAnswerSchema(
       { requiredSections: ["goal", "evidence", "decision", "risks", "gaps"] },
-      ["## goal", "做多 NVDA", "## evidence", "kline", "## decision", "buy", "## risks", "波动", "## gaps", "无"].join(
-        "\n"
-      )
+      [
+        "## goal",
+        "做多 NVDA",
+        "## evidence",
+        "kline",
+        "## decision",
+        "buy",
+        "## risks",
+        "波动",
+        "## gaps",
+        "无",
+      ].join("\n")
     );
     expect(ok.schemaOk).toBe(true);
     expect(ok.missingSections).toEqual([]);
@@ -58,19 +66,17 @@ describe("recovery planner", () => {
       notAttemptedCapabilities: ["order"],
       unavailableCapabilities: [],
       missingArtifactTables: [],
+      missingArtifacts: [],
       artifactsOk: false,
       factorDefinitionCount: 0,
+      activeFactorIds: [],
+      latestFactorDefinitionId: null,
+      screenerTopSymbol: null,
       strategyVersionId: null,
       loadedAtMs: Date.now(),
     } satisfies ScenarioRuntimeSnapshot;
 
     const suggestion = planContractRecovery({
-      sqlite: {
-        prepare: () => ({
-          get: () => undefined,
-          all: () => [],
-        }),
-      } as unknown as Database,
       snapshot,
       availableTools: ["order.create_intent", "strategy.create_version"],
       goal: "纸面做多 AAPL",

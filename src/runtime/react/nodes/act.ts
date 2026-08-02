@@ -1,53 +1,17 @@
-import { eq } from "drizzle-orm";
-import { registerBuiltinConnectors } from "../../../connectors/bootstrap";
-import { connectorRegistry } from "../../../connectors/registry";
-import { getDb } from "../../../db/sqlite/client";
-import {
-  decideToolNoneGate,
-  getRuntimeSqlite,
-  getWorkflowFactsPort,
-  planContractRecovery,
-  type ScenarioRuntimeSnapshot,
-} from "../../policy";
-import { workflowRun } from "../../../db/sqlite/schema";
-import { resolveAgentControlMode, resolveWorkflowProcessConfig } from "../../../types/loop";
-import {
-  buildArtifactGapHint,
-  checkRequiredArtifacts,
-} from "../../agent-readiness/quality/artifact-checker";
+import { planContractRecovery } from "../../policy";
+import { buildArtifactGapHint } from "../../agent-readiness/quality/artifact-checker";
 import { getScenarioExpectation } from "../../agent-readiness/quality/scenario-expectations";
-import { buildAcpRequest, defaultAcpCaller } from "../../../messaging/acp";
-import { dispatchMcpToolCall } from "../../mcp/dispatcher";
-import { resolveEffectiveAgentTools } from "../../orchestration/resolve-effective-tools";
-import {
-  isRedundantTopologyProbe,
-  resolveTopologyToolTimeoutMs,
-} from "../../orchestration/topology-dispatch";
-import {
-  assessGoalPlanCompletion,
-  isToolAllowedInAgentControlMode,
-  parseAgentPlanSnapshot,
-} from "../../agent-control-mode";
+import { isRedundantTopologyProbe } from "../../orchestration/topology-dispatch";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
-import { dispatchBuiltinTool, isBuiltinTool } from "../../tools/builtin-tools";
-import { authorizeCapability, isCapabilityGateEnabled } from "../../tools/capability-gate";
-import { injectContextParams } from "../../tools/context-params";
-import {
-  buildRuntimeCapabilityManifestForRuntime,
-  isToolBlockedByRuntimeCapability,
-} from "../../tools/data-capability-manifest";
-import {
-  classifyDataGap,
-  toolMatchesRequiredCapability,
-} from "../../tools/data-gap";
+import { classifyDataGap, toolMatchesRequiredCapability } from "../../tools/data-gap";
 import {
   assessRequiredToolGate,
   buildRequiredToolNextActionHint,
 } from "../../tools/required-tool-gate";
 import { SCENARIO_STALL_TOOLS } from "../../research-scenario/scenario-key-aliases";
-import { parseToolCallFromReason, stripToolCallSentinels } from "../../tools/tool-call-format";
+import { parseToolCallFromReason } from "../../tools/tool-call-format";
 import {
   buildToolCallFingerprint,
   findReusableSuccessfulToolCall,
@@ -67,59 +31,20 @@ import {
   recordToolCallTimeout,
 } from "../../tools/tool-call-log-service";
 import { detectSemanticToolFailure } from "../../tools/semantic-tool-result";
-import {
-  evaluateToolGovernance,
-  recordWorkflowToolFailure,
-} from "../../tools/tool-governance-policy";
-import {
-  resolveToolExecutionRoute,
-  toolRouteToTargetKind,
-  toolRouteToToolKind,
-} from "../../tools/tool-dispatch-resolver";
-import { applyToolContract, isToolContractEnabled } from "../../tools/tool-contract";
-import { getToolContract } from "../../tools/tool-contract-registry";
-import { resolveConnectorForServerAlias } from "../../tools/tool-routes";
+import { recordWorkflowToolFailure } from "../../tools/tool-governance-policy";
 import type { AgentGraphState, StepStreamEvent } from "../state";
 import { buildMcpRetryHint, classifyToolError } from "./tool-error-classifier";
 import { buildToolRecoveryPlan } from "./tool-recovery-policy";
-import {
-  assessWorkflowProcessGate,
-  resolveEffectiveWorkflowProcessConfig,
-} from "../../workflow/process-config";
+import { handleToolNoneAction } from "./terminal-turn-policy";
+import { admitTool } from "./tool-admission";
+import { executeAdmittedTool } from "./tool-executor";
+import { buildToolPlan } from "./tool-plan";
 
-/**
- * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 最多 push back 几次。
- *
- * 触发：LLM 输出 `{"tool":"none"}` 想停机 + scenario 的 requiredArtifacts 还没满足。
- * 上限 2：第 1/2 次把 hint 塞回 observation 让 graph 回 reason 再跑；第 3 次仍未
- * 补齐则以 artifact_gate_unsatisfied 明确失败。禁止缺产物却写 completed；同时保留
- * 面向用户的失败答复，让客户端知道缺什么、为什么无法继续。
- *
- * 同时受 def.maxIterations 上限保护（execute-agent-react.ts:438）—— 即便 gate 想 push back
- * 但已到 max iteration，graph 会自然 finalize。
- */
-const MAX_ARTIFACT_GATE_RETRIES = 4;
-const MAX_CONTROL_MODE_GATE_RETRIES = 2;
-/** Allow several reason turns after a premature tool=none before failing the gate. */
-const MAX_REQUIRED_TOOL_GATE_RETRIES = 4;
-
-/** Prefer per-iteration FactsPort snapshot; fall back once if missing. */
-function resolveSharedSnapshot(
-  state: AgentGraphState,
-  availableTools: readonly string[]
-): ScenarioRuntimeSnapshot | null {
-  if (state.scenarioSnapshot?.workflowId === state.workflowId) {
-    return state.scenarioSnapshot;
-  }
-  try {
-    return getWorkflowFactsPort().loadSnapshot(state.workflowId, {
-      availableTools,
-      extraAttemptedTools: state.toolCalls.map((call) => String(call.toolName ?? "")),
-      includeA2a: true,
-    });
-  } catch {
-    return null;
-  }
+/** Nodes consume the runner-owned facts; they must not reload snapshots mid-turn. */
+function resolveSharedSnapshot(state: AgentGraphState) {
+  const context = state.iterationContext;
+  if (context?.workflowId === state.workflowId) return context.snapshot;
+  return state.scenarioSnapshot?.workflowId === state.workflowId ? state.scenarioSnapshot : null;
 }
 
 export async function actNode(
@@ -128,415 +53,28 @@ export async function actNode(
   agentInstanceId: string,
   agentStepId: string
 ): Promise<Partial<AgentGraphState>> {
-  const db = await getDb();
-  const workflowRows = await db
-    .select({
-      projectId: workflowRun.projectId,
-      loopOptionsJson: workflowRun.loopOptionsJson,
-      planJson: workflowRun.planJson,
-    })
-    .from(workflowRun)
-    .where(eq(workflowRun.id, state.workflowId))
-    .limit(1);
-  const projectId = workflowRows[0]?.projectId;
-  const agentMode = resolveAgentControlMode(workflowRows[0]?.loopOptionsJson);
-  const processConfig = resolveEffectiveWorkflowProcessConfig(
-    resolveWorkflowProcessConfig(workflowRows[0]?.loopOptionsJson),
-    agentMode
-  );
-  const planSnapshot = workflowRows[0]?.planJson;
-  const effective = await resolveEffectiveAgentTools(state.agentDefinition, state.workflowId);
-  const availableTools = effective.tools;
+  const iterationContext = state.iterationContext;
+  if (!iterationContext || iterationContext.workflowId !== state.workflowId) {
+    throw new Error("actNode requires runner-owned IterationContext");
+  }
+  const projectId = iterationContext.projectId ?? undefined;
+  const agentMode = iterationContext.agentMode;
+  const processConfig = iterationContext.processConfig;
+  const planSnapshot = iterationContext.planJson;
+  const availableTools = iterationContext.availableTools;
   const parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
 
   if (parsed.kind === "none") {
-    const cleanedReason = stripToolCallSentinels(state.reasonText ?? "");
-    const summary = parsed.summary?.trim() || cleanedReason.slice(0, 2000) || "no tool requested";
-
-    if (state.agentDefinition.role === "orchestrator" && agentMode !== "agent") {
-      const parsedPlan = parseAgentPlanSnapshot(planSnapshot);
-      const goalAssessment =
-        agentMode === "goal"
-          ? assessGoalPlanCompletion(planSnapshot)
-          : {
-              ok: Boolean(parsedPlan?.steps.length),
-              code: "missing_plan" as const,
-              message: "Plan 模式必须先调用 update_plan 保存可执行计划，再返回给用户。",
-              pendingStepIds: [] as string[],
-            };
-      const hasExecutionEvidence =
-        agentMode !== "goal" ||
-        state.toolCalls.some(
-          (call) =>
-            call.status === "success" &&
-            call.toolName !== "update_plan" &&
-            call.toolName !== "tool/update_plan"
-        );
-      const gateOk = goalAssessment.ok && hasExecutionEvidence;
-      if (!gateOk) {
-        const retryCount = state.controlModeGapRetryCount ?? 0;
-        const message = !goalAssessment.ok
-          ? goalAssessment.message
-          : "Goal 模式尚无业务工具或专家执行成功的验证证据，不能仅更新计划后直接结束。";
-        if (retryCount < MAX_CONTROL_MODE_GATE_RETRIES) {
-          const observation = {
-            level: "warn",
-            controlModeGate: true,
-            code:
-              agentMode === "plan"
-                ? "PLAN_REQUIRED"
-                : hasExecutionEvidence
-                  ? "GOAL_PLAN_INCOMPLETE"
-                  : "GOAL_EVIDENCE_REQUIRED",
-            agentMode,
-            pendingStepIds: goalAssessment.pendingStepIds,
-            retryCount: retryCount + 1,
-            maxRetries: MAX_CONTROL_MODE_GATE_RETRIES,
-            message,
-          };
-          emit({
-            runId: state.runId,
-            workflowId: state.workflowId,
-            traceId: state.traceId,
-            role: state.agentDefinition.role,
-            type: "observe",
-            stepIndex: state.iteration,
-            ts: Date.now(),
-            payload: observation,
-          });
-          return {
-            observations: [...state.observations, observation],
-            controlModeGapRetryCount: retryCount + 1,
-          };
-        }
-        const answerText = [
-          `${agentMode === "plan" ? "计划生成" : "目标执行"}未通过完成门禁：${message}`,
-          cleanedReason ? `当前说明：\n${cleanedReason}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        return {
-          observations: [
-            ...state.observations,
-            {
-              level: "error",
-              controlModeGate: true,
-              code: "CONTROL_MODE_GATE_UNSATISFIED",
-              agentMode,
-              message,
-            },
-          ],
-          finalResponse: {
-            status: "terminated",
-            reason: "control_mode_gate_unsatisfied",
-            error: message,
-            answerText,
-            iteration: state.iteration,
-            role: state.agentDefinition.role,
-          },
-        };
-      }
-    }
-
-    if (state.agentDefinition.role === "orchestrator" && processConfig) {
-      const successfulBusinessToolCalls = state.toolCalls.filter(
-        (call) =>
-          call.status === "success" &&
-          call.toolName !== "update_plan" &&
-          call.toolName !== "tool/update_plan"
-      ).length;
-      const processGate = assessWorkflowProcessGate({
-        config: processConfig,
-        plan: parseAgentPlanSnapshot(planSnapshot),
-        successfulBusinessToolCalls,
-      });
-      if (!processGate.ok) {
-        const retryCount = state.controlModeGapRetryCount ?? 0;
-        const message = processGate.reasons.join(" ");
-        if (retryCount < MAX_CONTROL_MODE_GATE_RETRIES) {
-          const observation = {
-            level: "warn",
-            workflowProcessGate: true,
-            code: "WORKFLOW_PROCESS_GATE_PENDING",
-            retryCount: retryCount + 1,
-            maxRetries: MAX_CONTROL_MODE_GATE_RETRIES,
-            message,
-          };
-          emit({
-            runId: state.runId,
-            workflowId: state.workflowId,
-            traceId: state.traceId,
-            role: state.agentDefinition.role,
-            type: "observe",
-            stepIndex: state.iteration,
-            ts: Date.now(),
-            payload: observation,
-          });
-          return {
-            observations: [...state.observations, observation],
-            controlModeGapRetryCount: retryCount + 1,
-          };
-        }
-        return {
-          observations: [
-            ...state.observations,
-            {
-              level: "error",
-              workflowProcessGate: true,
-              code: "WORKFLOW_PROCESS_GATE_UNSATISFIED",
-              message,
-            },
-          ],
-          finalResponse: {
-            status: "terminated",
-            reason: "workflow_process_gate_unsatisfied",
-            error: message,
-            answerText: `流程完成门禁未通过：${message}`,
-            iteration: state.iteration,
-            role: state.agentDefinition.role,
-          },
-        };
-      }
-    }
-
-    /**
-     * Scenario gate (Policy): act only applies decideToolNoneGate over the
-     * shared per-iteration Snapshot — no scenario SQL / recovery orchestration here.
-     */
-    const sharedSnapshot = resolveSharedSnapshot(state, availableTools);
-    if (sharedSnapshot?.scenarioKey) {
-      const scenarioKey = sharedSnapshot.scenarioKey;
-      const terminalPayload = state.inboundMessage.payload as Record<string, unknown>;
-      const terminalTicker =
-        typeof terminalPayload.ticker === "string"
-          ? terminalPayload.ticker
-          : typeof terminalPayload.symbol === "string"
-            ? terminalPayload.symbol
-            : null;
-      const terminalManifest = await buildRuntimeCapabilityManifestForRuntime({
-        tools: availableTools,
-        goal: typeof terminalPayload.goal === "string" ? terminalPayload.goal : null,
-        ticker: terminalTicker,
-      });
-      const requiredTools = getScenarioExpectation(scenarioKey).requiredTools;
-      const { unavailableRequired, notAttempted } = assessRequiredToolGate({
-        requiredTools,
-        authorizedTools: sharedSnapshot.authorizedTools,
-        attemptedTools: sharedSnapshot.attemptedTools,
-        runnableTools: terminalManifest.tools,
-        unavailableManifestTools: terminalManifest.unavailable,
-        market: terminalManifest.market,
-      });
-      const artifactMissing = sharedSnapshot.missingArtifactTables.map((table) => ({
-        table,
-        rows: 0,
-        minRows: 1,
-      }));
-      const sqliteHandle = (() => {
-        try {
-          return getRuntimeSqlite();
-        } catch {
-          return null;
-        }
-      })();
-      if (sqliteHandle) {
-        const decision = decideToolNoneGate({
-          snapshot: {
-            ...sharedSnapshot,
-            notAttemptedCapabilities: notAttempted.map((gap) => gap.capability),
-            unavailableCapabilities: unavailableRequired.map((gap) => gap.capability),
-          },
-          sqlite: sqliteHandle,
-          availableTools,
-          goal: typeof terminalPayload.goal === "string" ? terminalPayload.goal : null,
-          requiredToolRetryCount: state.requiredToolGapRetryCount ?? 0,
-          artifactRetryCount: state.artifactGapRetryCount ?? 0,
-          maxRequiredToolRetries: MAX_REQUIRED_TOOL_GATE_RETRIES,
-          maxArtifactRetries: MAX_ARTIFACT_GATE_RETRIES,
-          notAttempted,
-          unavailableRequired,
-          artifactOk: sharedSnapshot.artifactsOk,
-          artifactMissing:
-            artifactMissing.length > 0
-              ? artifactMissing
-              : checkRequiredArtifacts(
-                  sqliteHandle,
-                  scenarioKey as Parameters<typeof checkRequiredArtifacts>[1],
-                  state.workflowId
-                ).missing,
-        });
-
-        if (decision.kind === "push_back") {
-          emit({
-            runId: state.runId,
-            workflowId: state.workflowId,
-            traceId: state.traceId,
-            role: state.agentDefinition.role,
-            type: "observe",
-            stepIndex: state.iteration,
-            ts: Date.now(),
-            payload: {
-              level: "warn",
-              code: decision.code,
-              scenario: scenarioKey,
-              dataGaps: [...notAttempted, ...unavailableRequired],
-              message: decision.message,
-              suggestedTool: decision.recovery.nextTool,
-              draftParams: decision.recovery.draftParams ?? {},
-            },
-          });
-          return {
-            observations: [
-              ...state.observations,
-              {
-                level: "warn",
-                code: decision.code,
-                scenario: scenarioKey,
-                dataGaps: [...notAttempted, ...unavailableRequired],
-                hint: decision.message,
-                suggestedTool: decision.recovery.nextTool,
-                draftParams: decision.recovery.draftParams ?? {},
-              },
-            ],
-            ...(decision.bumpRequiredToolRetry
-              ? { requiredToolGapRetryCount: (state.requiredToolGapRetryCount ?? 0) + 1 }
-              : {}),
-            ...(decision.bumpArtifactRetry
-              ? { artifactGapRetryCount: (state.artifactGapRetryCount ?? 0) + 1, noProgressRetryCount: 0 }
-              : {}),
-          };
-        }
-
-        if (decision.kind === "partial_stop") {
-          const isArtifact = decision.code === "ARTIFACT_GATE_UNSATISFIED";
-          const answerText = isArtifact
-            ? [
-                decision.message,
-                "系统不会用空数据或模拟结果冒充成功。请恢复可用数据源后重试。",
-                cleanedReason && cleanedReason !== "no tool requested"
-                  ? `当前可交付说明：\n${cleanedReason}`
-                  : "",
-              ]
-                .filter(Boolean)
-                .join("\n\n")
-            : decision.message;
-          emit({
-            runId: state.runId,
-            workflowId: state.workflowId,
-            traceId: state.traceId,
-            role: state.agentDefinition.role,
-            type: "observe",
-            stepIndex: state.iteration,
-            ts: Date.now(),
-            payload: {
-              level: isArtifact ? "error" : "warn",
-              code: decision.code,
-              scenario: scenarioKey,
-              message: decision.message,
-            },
-          });
-          return {
-            observations: [
-              ...state.observations,
-              {
-                level: isArtifact ? "error" : "warn",
-                code: decision.code,
-                scenario: scenarioKey,
-                hint: decision.message,
-              },
-            ],
-            finalResponse: {
-              status: isArtifact ? "terminated" : "partial",
-              reason: decision.reason,
-              ...(isArtifact ? { error: decision.message } : {}),
-              answerText,
-              iteration: state.iteration,
-              role: state.agentDefinition.role,
-            },
-          };
-        }
-      }
-    }
-
-    if (state.agentDefinition.role === "orchestrator" && agentMode === "goal") {
-      const completedPlan = parseAgentPlanSnapshot(planSnapshot);
-      if (completedPlan?.goal) {
-        const evidenceCount = state.toolCalls.filter(
-          (call) =>
-            call.status === "success" &&
-            call.toolName !== "update_plan" &&
-            call.toolName !== "tool/update_plan"
-        ).length;
-        const completedAt = new Date().toISOString();
-        await db
-          .update(workflowRun)
-          .set({
-            planJson: {
-              ...completedPlan,
-              goal: {
-                ...completedPlan.goal,
-                status: "completed",
-                verification: {
-                  evidenceCount,
-                  summary: summary.slice(0, 1000),
-                  verifiedAt: completedAt,
-                },
-              },
-              updatedAt: completedAt,
-            } as never,
-          })
-          .where(eq(workflowRun.id, state.workflowId));
-      }
-    }
-
-    emit({
-      runId: state.runId,
-      workflowId: state.workflowId,
-      traceId: state.traceId,
-      role: state.agentDefinition.role,
-      type: "observe",
-      stepIndex: state.iteration,
-      ts: Date.now(),
-      payload: {
-        level: "info",
-        skippedToolCall: true,
-        summary,
-      },
+    return handleToolNoneAction({
+      state,
+      emit,
+      agentMode,
+      processConfig,
+      planSnapshot,
+      availableTools,
+      summary: parsed.summary,
     });
-    /**
-     * 关键修复（防 ReAct 死循环）：
-     * LLM 明确表达"无需调用工具"时，应将 reason 阶段的文字结论作为本轮终态
-     * 直接 finalize。先前实现只产生 observation，但 reason 节点会强制把
-     * `plannedAction` 写成 `"tool_call"`（只要 hasTools），导致
-     * `shouldStopReactLoopAfterObserve` 永远不命中 stop，ReAct 反复重跑同一
-     * 提示，token 持续累积，前端看到的就是「Orchestrator 一直循环」的现象。
-     */
-    return {
-      observations: [
-        ...state.observations,
-        {
-          level: "info",
-          skippedToolCall: true,
-          reasonText: state.reasonText,
-          summary: parsed.summary,
-        },
-      ],
-      finalResponse: {
-        status: "completed",
-        role: state.agentDefinition.role,
-        iteration: state.iteration,
-        skippedToolCall: true,
-        summary,
-        /**
-         * answerText = 完整去 sentinel 的 reason 文本（即 LLM 面向用户的自然语言答复）。
-         * summary 可能只是 LLM 自带的「为何不调工具」式摘要句，不一定是实质答案；
-         * orchestrator_chat 落库 orchestrator→user 时优先用 answerText 取完整答复。
-         */
-        answerText: cleanedReason || summary,
-      },
-    };
   }
-
   if (parsed.kind === "parse_error") {
     emit({
       runId: state.runId,
@@ -561,33 +99,23 @@ export async function actNode(
     };
   }
 
-  const { toolName, params: toolParams, mcp: parsedMcp } = parsed;
-  /**
-   * 治理 #2：上下文绑定参数（workflowRunId / projectId）由 harness 在
-   * resolve 出权威 projectId 后用 injectContextParams 无条件注入（见 line ~290）。
-   * 这里先按 LLM 原始 params 起步；连 connector-alias rewrite 分支也只动业务参数。
-   */
-  let enrichedToolParams: Record<string, unknown> = { ...toolParams };
+  const toolPlan = await buildToolPlan({
+    parsed,
+    workflowId: state.workflowId,
+    projectId,
+  });
+  const {
+    requestedToolName: toolName,
+    effectiveToolName,
+    mcp,
+    executionRoute,
+    connectorTarget,
+    targetKind,
+    targetName,
+    toolKind,
+  } = toolPlan;
+  let enrichedToolParams = toolPlan.params;
 
-  /** LLM 误用 call_mcp(serverName=qubit-news) 时转 connector 执行 */
-  let mcp = parsedMcp;
-  let effectiveToolName = toolName;
-  if (parsedMcp) {
-    await registerBuiltinConnectors();
-    const connectorAlias = resolveConnectorForServerAlias(parsedMcp.serverName);
-    if (connectorAlias && connectorRegistry.get(connectorAlias)) {
-      mcp = undefined;
-      effectiveToolName = parsedMcp.toolName;
-      enrichedToolParams["operation"] = parsedMcp.toolName;
-      Object.assign(enrichedToolParams, parsedMcp.arguments ?? {});
-    }
-  }
-
-  /**
-   * Runtime 4.5：统一工具路由（alias → builtin 优先 → connector）。
-   * MCP connector 别名改写仍在上面的 block 完成。
-   */
-  const executionRoute = mcp ? null : resolveToolExecutionRoute(effectiveToolName);
   if (executionRoute) {
     if (executionRoute.aliased) {
       emit({
@@ -608,25 +136,11 @@ export async function actNode(
         },
       });
     }
-    effectiveToolName = executionRoute.effectiveName;
   }
 
-  const connectorTarget =
-    !mcp && executionRoute?.route === "connector" ? executionRoute.connectorName : undefined;
-  const targetKind: "mcp" | "tool" | "connector" = mcp
-    ? "mcp"
-    : toolRouteToTargetKind(executionRoute?.route ?? "builtin");
-  const targetName = mcp
-    ? `${mcp.serverName}/${mcp.toolName}`
-    : connectorTarget
-      ? `${connectorTarget}/${effectiveToolName}`
-      : effectiveToolName;
-  const toolKind = mcp ? "mcp" : toolRouteToToolKind(executionRoute?.route ?? "builtin");
-  const toolCallId = crypto.randomUUID();
-  const inboundPayload = state.inboundMessage.payload as Record<string, unknown>;
-  const taskType = String(inboundPayload.taskType ?? "");
   /**
-   * 治理 #2（取代 F-P0-12 的 isLikelyProjectIdFormat 启发式补丁）：
+   * ToolPlan 已在运行器的权威 workflow/project 上绑定上下文参数，取代
+   * 旧的 isLikelyProjectIdFormat 启发式补丁：模型传入什么都不能覆盖它们。
    *
    * workflowRunId / projectId / project_id 是**上下文绑定参数**，由 harness 从
    * 权威上下文（state.workflowId / workflow_run.project_id）**无条件注入并覆盖**
@@ -637,343 +151,22 @@ export async function actNode(
    * 再到 factor.autoEvaluate 内部 register 时触发 FK constraint failed。
    * 改为 harness 单一事实源后，LLM 填什么都不影响——这类参数对它透明。
    */
-  enrichedToolParams = injectContextParams(enrichedToolParams, {
-    workflowRunId: state.workflowId,
+  const toolCallId = crypto.randomUUID();
+  const inboundPayload = state.inboundMessage.payload as Record<string, unknown>;
+  const taskType = String(inboundPayload.taskType ?? "");
+
+  const admission = await admitTool({
+    state,
+    emit,
+    plan: toolPlan,
     projectId,
+    agentMode,
+    agentStepId,
+    toolCallId,
   });
-
-  const runtimeCapabilityManifest = await buildRuntimeCapabilityManifestForRuntime({
-    tools: [targetName],
-    goal:
-      typeof inboundPayload.goal === "string"
-        ? inboundPayload.goal
-        : typeof enrichedToolParams.goal === "string"
-          ? enrichedToolParams.goal
-          : null,
-    ticker:
-      typeof enrichedToolParams.ticker === "string"
-        ? enrichedToolParams.ticker
-        : typeof enrichedToolParams.symbol === "string"
-          ? enrichedToolParams.symbol
-          : null,
-    symbol: typeof enrichedToolParams.symbol === "string" ? enrichedToolParams.symbol : null,
-    exchange: typeof enrichedToolParams.exchange === "string" ? enrichedToolParams.exchange : null,
-  });
-  const capabilityUnavailable = isToolBlockedByRuntimeCapability(
-    runtimeCapabilityManifest,
-    targetName
-  );
-  if (capabilityUnavailable) {
-    const gap = {
-      kind: capabilityUnavailable.status === "unconfigured" ? "unconfigured" : "no_coverage",
-      market: runtimeCapabilityManifest.market,
-      capability: targetName,
-      provider: targetName.includes("/") ? (targetName.split("/", 1)[0] ?? null) : null,
-      reason: capabilityUnavailable.reason,
-      retryable: false,
-    } as const;
-    const unavailableFingerprint = buildToolCallFingerprint({
-      targetName,
-      params:
-        mcp && mcp.arguments && typeof mcp.arguments === "object" && !Array.isArray(mcp.arguments)
-          ? (mcp.arguments as Record<string, unknown>)
-          : enrichedToolParams,
-    });
-    void recordWorkflowDataGap({
-      workflowRunId: state.workflowId,
-      fingerprint: unavailableFingerprint,
-      toolName: targetName,
-      gap,
-      producerTaskId: typeof inboundPayload.taskId === "string" ? inboundPayload.taskId : null,
-    }).catch(() => {});
-    const observation = {
-      level: "warn" as const,
-      toolGovernance: true,
-      capabilityManifest: true,
-      code: capabilityUnavailable.code,
-      dataGap: gap,
-      message: capabilityUnavailable.reason,
-      recovery: {
-        nextAction: "switch_tool" as const,
-        allowSameToolRetry: false,
-        guidance: "请改用已展示的可用工具，或明确配置该市场的实时数据 provider。",
-      },
-    };
-    emit({
-      runId: state.runId,
-      workflowId: state.workflowId,
-      traceId: state.traceId,
-      role: state.agentDefinition.role,
-      type: "observe",
-      stepIndex: state.iteration,
-      ts: Date.now(),
-      payload: observation,
-    });
-    return {
-      toolCalls: [
-        ...state.toolCalls,
-        {
-          toolCallId,
-          toolName: targetName,
-          status: "governance_blocked",
-          reason: capabilityUnavailable.reason,
-        },
-      ],
-      observations: [...state.observations, observation],
-    };
-  }
-
-  /** CapabilityGate (docs/agent-contracts/02) — authorize before sandbox/execute. */
-  let gateTimeoutMs: number | undefined;
-  let capabilityGateAllowed = false;
-  let toolContractName: string | undefined;
-  if (isCapabilityGateEnabled()) {
-    const gate = await authorizeCapability({
-      name: effectiveToolName,
-      agentDefinition: state.agentDefinition,
-      workflowId: state.workflowId,
-      ...(projectId ? { projectId } : {}),
-      ...(agentMode ? { agentMode } : {}),
-      ...(mcp ? { isMcp: true, serverName: mcp.serverName, mcpTool: mcp.toolName } : {}),
-    });
-    if (!gate.ok) {
-      const allowHint =
-        gate.allowlist && gate.allowlist.length > 0
-          ? ` allowed=[${gate.allowlist.join(", ")}]`
-          : "";
-      const reason = `${gate.message}.${allowHint} ${gate.hint}`.trim();
-      const observation = {
-        level: "warn" as const,
-        toolGovernance: true,
-        capabilityGate: true,
-        code: gate.code,
-        message: reason,
-        recovery: {
-          nextAction: "switch_tool" as const,
-          allowSameToolRetry: false,
-          ...(gate.allowlist ? { alternatives: gate.allowlist } : {}),
-          guidance: gate.hint,
-        },
-      };
-      /** 设计 02 §4.6：Deny 也写 tool_call_log（复用 sandbox_blocked + gate_denied 前缀）。 */
-      await recordToolCallStart({
-        toolCallId,
-        agentStepId,
-        workflowRunId: state.workflowId,
-        traceId: state.traceId,
-        agentDefinitionId: state.agentDefinition.id,
-        targetName,
-        toolKind,
-        targetKind,
-        ...(mcp ? { mcp } : {}),
-        reasonText: state.reasonText ?? "",
-        contextMemory: state.contextMemory,
-        governance: { capabilityGate: "denied" },
-      });
-      await recordToolCallSandboxBlocked({
-        toolCallId,
-        hasMcp: Boolean(mcp),
-        reason,
-        violationType: gate.code,
-        capabilityGate: true,
-      });
-      emit({
-        runId: state.runId,
-        workflowId: state.workflowId,
-        traceId: state.traceId,
-        role: state.agentDefinition.role,
-        type: "tool_call_end",
-        stepIndex: state.iteration,
-        ts: Date.now(),
-        payload: {
-          toolCallId,
-          status: "blocked_by_sandbox",
-          reason,
-          targetKind,
-          targetName,
-          capabilityGate: true,
-          code: gate.code,
-        },
-      });
-      emit({
-        runId: state.runId,
-        workflowId: state.workflowId,
-        traceId: state.traceId,
-        role: state.agentDefinition.role,
-        type: "observe",
-        stepIndex: state.iteration,
-        ts: Date.now(),
-        payload: observation,
-      });
-      return {
-        toolCalls: [
-          ...state.toolCalls,
-          { toolCallId, toolName: targetName, status: "governance_blocked", reason },
-        ],
-        observations: [...state.observations, observation],
-      };
-    }
-    gateTimeoutMs = gate.timeoutMs;
-    capabilityGateAllowed = true;
-  }
-
-  /** ToolContract (docs/agent-contracts/01) — normalize/validate registered tools. */
-  if (isToolContractEnabled() && !mcp) {
-    const contract = getToolContract(effectiveToolName);
-    if (contract) {
-      toolContractName = contract.name;
-      try {
-        enrichedToolParams = applyToolContract(contract, enrichedToolParams);
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        const observation = {
-          level: "warn" as const,
-          toolGovernance: true,
-          toolContract: true,
-          code: "TOOL_CONTRACT_VALIDATION_FAILED",
-          message: reason,
-          recovery: {
-            nextAction: "switch_tool" as const,
-            allowSameToolRetry: false,
-            guidance: "请按工具契约修正参数（例如使用 symbol 或 symbols[]），不要原样重试。",
-          },
-        };
-        /** 设计 01 P0：验参失败落 tool_call_log，errorClass 由 classifier 判 permanent。 */
-        await recordToolCallStart({
-          toolCallId,
-          agentStepId,
-          workflowRunId: state.workflowId,
-          traceId: state.traceId,
-          agentDefinitionId: state.agentDefinition.id,
-          targetName,
-          toolKind,
-          targetKind,
-          reasonText: state.reasonText ?? "",
-          contextMemory: state.contextMemory,
-          governance: {
-            ...(capabilityGateAllowed ? { capabilityGate: "allowed" } : {}),
-            contractName: contract.name,
-            contractRejected: true,
-          },
-        });
-        await recordToolCallError({
-          toolCallId,
-          hasMcp: false,
-          latencyMs: 0,
-          errorSource: connectorTarget ? "connector" : "builtin",
-          errorMessage: reason,
-          contractCode: reason.split(":", 1)[0] ?? "contract_validation_failed",
-          contractRejected: true,
-        });
-        emit({
-          runId: state.runId,
-          workflowId: state.workflowId,
-          traceId: state.traceId,
-          role: state.agentDefinition.role,
-          type: "tool_call_end",
-          stepIndex: state.iteration,
-          ts: Date.now(),
-          payload: {
-            toolCallId,
-            status: "error",
-            reason,
-            targetKind,
-            targetName,
-            toolContract: true,
-          },
-        });
-        emit({
-          runId: state.runId,
-          workflowId: state.workflowId,
-          traceId: state.traceId,
-          role: state.agentDefinition.role,
-          type: "observe",
-          stepIndex: state.iteration,
-          ts: Date.now(),
-          payload: observation,
-        });
-        return {
-          toolCalls: [
-            ...state.toolCalls,
-            { toolCallId, toolName: targetName, status: "governance_blocked", reason },
-          ],
-          observations: [...state.observations, observation],
-        };
-      }
-    }
-  }
-
-  if (!isToolAllowedInAgentControlMode(agentMode, effectiveToolName)) {
-    const reason = `Plan 模式只允许 update_plan；工具 ${targetName} 已被运行时拦截。请先形成计划，不要执行任务。`;
-    const observation = {
-      level: "warn",
-      toolGovernance: true,
-      controlModeGate: true,
-      code: "PLAN_MODE_EXECUTION_BLOCKED",
-      agentMode,
-      message: reason,
-      recovery: {
-        nextAction: "switch_tool",
-        allowSameToolRetry: false,
-        alternatives: ["update_plan"],
-        guidance: "改用 update_plan 保存计划；随后用 tool=none 返回计划说明。",
-      },
-    };
-    emit({
-      runId: state.runId,
-      workflowId: state.workflowId,
-      traceId: state.traceId,
-      role: state.agentDefinition.role,
-      type: "observe",
-      stepIndex: state.iteration,
-      ts: Date.now(),
-      payload: observation,
-    });
-    return {
-      toolCalls: [
-        ...state.toolCalls,
-        { toolName: targetName, status: "governance_blocked", reason },
-      ],
-      observations: [...state.observations, observation],
-    };
-  }
-
-  const governance = evaluateToolGovernance({
-    workflowId: state.workflowId,
-    targetName,
-    params: mcp ? mcp.arguments : enrichedToolParams,
-  });
-  if (!governance.allowed) {
-    const recoveryObservation = {
-      level: "warn",
-      toolGovernance: true,
-      code: governance.code,
-      market: governance.market,
-      message: governance.reason,
-      recovery: {
-        nextAction: "switch_tool",
-        allowSameToolRetry: false,
-        guidance: governance.reason,
-      },
-    };
-    emit({
-      runId: state.runId,
-      workflowId: state.workflowId,
-      traceId: state.traceId,
-      role: state.agentDefinition.role,
-      type: "observe",
-      stepIndex: state.iteration,
-      ts: Date.now(),
-      payload: recoveryObservation,
-    });
-    return {
-      toolCalls: [
-        ...state.toolCalls,
-        { toolName: targetName, status: "governance_blocked", reason: governance.reason },
-      ],
-      observations: [...state.observations, recoveryObservation],
-    };
-  }
+  if (!admission.ok) return admission.patch;
+  enrichedToolParams = admission.params;
+  const { gateTimeoutMs, capabilityGateAllowed, toolContractName } = admission;
 
   /**
    * 同一 ReAct（以及 checkpoint resume）内的同参成功读请求直接复用。
@@ -999,7 +192,7 @@ export async function actNode(
     const maxAllowed = targetName === "run_screener" ? 2 : 1;
     if (priorSuccessCount >= maxAllowed) {
       let nextActionHint: string | null = null;
-      const stallSnapshot = resolveSharedSnapshot(state, availableTools);
+      const stallSnapshot = resolveSharedSnapshot(state);
       try {
         if (stallSnapshot?.scenarioKey) {
           const requiredTools = getScenarioExpectation(stallSnapshot.scenarioKey).requiredTools;
@@ -1016,22 +209,15 @@ export async function actNode(
           );
           if (notAttempted.length > 0 && !stillNeededForContract) {
             nextActionHint = buildRequiredToolNextActionHint({ notAttempted });
-            try {
-              const sqliteHandle = getRuntimeSqlite();
-              const goal =
-                typeof inboundPayload.goal === "string" ? inboundPayload.goal : null;
-              const recovery = planContractRecovery({
-                sqlite: sqliteHandle,
-                snapshot: stallSnapshot,
-                availableTools,
-                goal,
-                notAttempted,
-              });
-              if (recovery.hint) {
-                nextActionHint = `${nextActionHint}\n\n${recovery.hint}`;
-              }
-            } catch {
-              /* keep nextActionHint */
+            const goal = typeof inboundPayload.goal === "string" ? inboundPayload.goal : null;
+            const recovery = planContractRecovery({
+              snapshot: stallSnapshot,
+              availableTools,
+              goal,
+              notAttempted,
+            });
+            if (recovery.hint) {
+              nextActionHint = `${nextActionHint}\n\n${recovery.hint}`;
             }
           }
         }
@@ -1130,7 +316,6 @@ export async function actNode(
   }
 
   const reusableCall = findReusableSuccessfulToolCall({
-
     targetName,
     fingerprint: requestFingerprint,
     priorToolCalls: state.toolCalls,
@@ -1141,7 +326,7 @@ export async function actNode(
     let message = `已在本任务第 ${priorStep} 步成功取得相同 ${targetName} 请求的结果，禁止原样重复调用。请基于已有结果继续分析、调用尚未执行的工具，或用 tool=none 汇总。`;
     let nextActionHint: string | null = null;
     try {
-      const snapshot = resolveSharedSnapshot(state, availableTools);
+      const snapshot = resolveSharedSnapshot(state);
       if (snapshot?.scenarioKey) {
         const requiredTools = getScenarioExpectation(snapshot.scenarioKey).requiredTools;
         const { notAttempted } = assessRequiredToolGate({
@@ -1158,11 +343,7 @@ export async function actNode(
             "## 合同工具已调用但必备产物仍缺失",
             buildArtifactGapHint({
               ok: false,
-              missing: snapshot.missingArtifactTables.map((table) => ({
-                table,
-                rows: 0,
-                minRows: 1,
-              })),
+              missing: snapshot.missingArtifacts,
               scenario: snapshot.scenarioKey,
             } as never),
             "禁止重复已成功工具；请调用上方恢复顺序中的写工具补齐产物。",
@@ -1203,8 +384,7 @@ export async function actNode(
     });
     // If contract tools are still missing, do not terminate as no_progress —
     // force another reason turn with an explicit next-action checklist.
-    const shouldTerminate =
-      !nextActionHint && shouldTerminateForNoProgress(noProgressRetryCount);
+    const shouldTerminate = !nextActionHint && shouldTerminateForNoProgress(noProgressRetryCount);
     return {
       toolCalls: [
         ...state.toolCalls,
@@ -1514,145 +694,15 @@ export async function actNode(
   }
 
   const startedAt = Date.now();
-  const topologyToolTimeoutMs = resolveTopologyToolTimeoutMs(effectiveToolName);
-  const execution = await sandboxExecutor.enforceToolTimeout({
-    runId: state.runId,
-    workflowId: state.workflowId,
-    traceId: state.traceId,
+  const execution = await executeAdmittedTool({
+    state,
+    plan: toolPlan,
+    params: enrichedToolParams,
+    projectId,
     agentInstanceId,
-    definition: state.agentDefinition,
-    ...(gateTimeoutMs !== undefined
-      ? { timeoutMs: gateTimeoutMs }
-      : topologyToolTimeoutMs !== undefined
-        ? { timeoutMs: topologyToolTimeoutMs }
-        : {}),
-    /**
-     * P1-D：3 个分支（mcp/connector/builtin）的错误处理统一为
-     * `{result:"error", toolError:true, errorSource, errorMessage}`，让 ReAct 后续
-     * 走 classifier + hint 回写 observation，不再让 connector/builtin 错误
-     * 打爆整个 graph（在 P0-C 之前会被 executeAgentReact catch 标 status=failed）。
-     */
-    action: async () => {
-      if (mcp) {
-        try {
-          const mcpResult = await dispatchMcpToolCall({
-            ...(projectId ? { projectId } : {}),
-            definitionId: state.agentDefinition.id,
-            serverName: mcp.serverName,
-            toolName: mcp.toolName,
-            arguments: mcp.arguments,
-          });
-          return { result: "ok" as const, mcpResult };
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          return {
-            result: "error" as const,
-            toolError: true,
-            errorSource: "mcp" as const,
-            errorMessage,
-          };
-        }
-      }
-      if (connectorTarget) {
-        try {
-          const policy = await sandboxExecutor.loadPolicy(state.agentDefinition);
-          const request = buildAcpRequest({
-            sessionId: state.inboundMessage.messageId,
-            workflowId: state.workflowId,
-            senderAgent: agentInstanceId,
-            targetKind: "connector",
-            targetName: connectorTarget,
-            intent: effectiveToolName,
-            payload: { operation: effectiveToolName, params: enrichedToolParams },
-            timeoutMs: gateTimeoutMs ?? policy.maxToolCallMs,
-          });
-          const response = await defaultAcpCaller.call(request);
-          if (response.status !== "success") {
-            /**
-             * 2026-06-05 监控复盘 #3 修复：之前只把 `response.errorCode` 当 errorMessage
-             * 给 LLM（如 "ACP_CONNECTOR_ERROR"），detail 全丢，LLM 无法自修。
-             * 现在拼上 errorDetail（lastError.message slice 800）：
-             *   "ACP_CONNECTOR_ERROR: factor 4f... not found in this project"
-             * 这样 LLM 在下一轮 react 能看到具体原因，自修参数 / 切换工具。
-             */
-            const code = response.errorCode ?? response.status ?? "connector_call_failed";
-            const detail = response.errorDetail?.trim();
-            const errorMessage = detail ? `${code}: ${detail}` : code;
-            return {
-              result: "error" as const,
-              toolError: true,
-              errorSource: "connector" as const,
-              errorMessage,
-            };
-          }
-          return { result: "ok" as const, connectorResult: response.result };
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          return {
-            result: "error" as const,
-            toolError: true,
-            errorSource: "connector" as const,
-            errorMessage,
-          };
-        }
-      }
-      if (isBuiltinTool(effectiveToolName)) {
-        try {
-          const enrichedParams = {
-            ...enrichedToolParams,
-            ticker:
-              (enrichedToolParams["ticker"] as string | undefined) ??
-              (enrichedToolParams["symbol"] as string | undefined),
-          };
-          const toolCtx = {
-            workflowId: state.workflowId,
-            runId: state.runId,
-            traceId: state.traceId,
-            agentInstanceId,
-            ...(projectId ? { projectId } : {}),
-            definition: state.agentDefinition,
-            ...(state.reasonText ? { reasonText: state.reasonText } : {}),
-            inboundPayload: state.inboundMessage.payload as Record<string, unknown>,
-            /**
-             * 透传 toolCallId / agentStepId 给 builtin handler，让 shell.exec /
-             * cli_agent.run 能在 exec_call_log（与 tool_call_log 1:1 同主键）落库。
-             */
-            toolCallId,
-            agentStepId,
-          };
-          const builtinResult = await dispatchBuiltinTool(
-            effectiveToolName,
-            toolCtx,
-            enrichedParams
-          );
-          if (effectiveToolName === "run_analyst_team") {
-            return { result: "ok" as const, analystTeamResult: builtinResult };
-          }
-          if (effectiveToolName === "edit_agent_pack") {
-            return { result: "ok" as const, packEdit: builtinResult };
-          }
-          if (effectiveToolName === "fuse_signals") {
-            return { result: "ok" as const, fusionResult: builtinResult };
-          }
-          return { result: "ok" as const, builtinResult };
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          return {
-            result: "error" as const,
-            toolError: true,
-            errorSource: "builtin" as const,
-            errorMessage,
-          };
-        }
-      }
-      return {
-        result: "error" as const,
-        toolError: true,
-        errorSource: "unknown" as const,
-        errorMessage: `Tool "${effectiveToolName}" is not implemented. Add it to builtin-tools or tool-routes (connector).`,
-      };
-    },
-    meta: { toolName: effectiveToolName },
+    agentStepId,
+    toolCallId,
+    gateTimeoutMs,
   });
 
   if (!execution.ok) {
@@ -1958,7 +1008,7 @@ export async function actNode(
   // push an explicit next-action so the model does not burn the budget on
   // another screener/list/readiness probe.
   try {
-    const snapshot = resolveSharedSnapshot(state, availableTools);
+    const snapshot = resolveSharedSnapshot(state);
     if (snapshot?.scenarioKey) {
       const requiredTools = getScenarioExpectation(snapshot.scenarioKey).requiredTools;
       const attemptedTools = [...new Set([...snapshot.attemptedTools, targetName])];

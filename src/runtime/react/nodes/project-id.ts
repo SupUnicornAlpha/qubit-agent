@@ -14,14 +14,5 @@
  *
  * 其它一律返回 false（让上层 fallback 到 ctx.projectId / workflow_run.project_id）。
  */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const LEGACY_PROJ_RE = /^proj-[a-z0-9\-]+$/i;
-
-export function isLikelyProjectIdFormat(value: unknown): boolean {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return false;
-  if (UUID_RE.test(trimmed)) return true;
-  if (LEGACY_PROJ_RE.test(trimmed)) return true;
-  return false;
-}
+/** @deprecated Import from runtime/tools/context-params instead. */
+export { isLikelyProjectIdFormat } from "../../tools/context-params";

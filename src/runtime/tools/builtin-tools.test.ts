@@ -12,10 +12,10 @@ import { buildToolCatalog } from "./tool-catalog";
 import { resolveConnectorForTool } from "./tool-routes";
 
 describe("tool routes", () => {
-  test("connector routes for market and backtest tools", () => {
+  test("connector routes exclude tools migrated to builtin", () => {
     expect(resolveConnectorForTool("fetch_klines")).toBe("qubit-data");
     expect(resolveConnectorForTool("run_backtest")).toBe("qubit-backtest");
-    expect(resolveConnectorForTool("compute_factors")).toBe("qubit-research");
+    expect(resolveConnectorForTool("compute_factors")).toBeUndefined();
     expect(resolveConnectorForTool("evaluate_risk")).toBe("qubit-risk");
   });
 
