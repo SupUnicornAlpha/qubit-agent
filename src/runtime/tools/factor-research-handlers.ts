@@ -1,0 +1,833 @@
+import { backtestJobService } from "../backtest/backtest-job-service";
+import { discoveryService } from "../discovery/discovery-service";
+import type { DiscoveryKind } from "../discovery/discovery-service";
+import { factorService } from "../factor/factor-service";
+import type { FactorCategory, FactorLang, FactorStatus } from "../factor/factor-service";
+import { isLikelyProjectIdFormat } from "./context-params";
+export { resolveDelegatedParentTaskId } from "../orchestration/team-dispatch-adapter";
+import type { FactorComputeRow, RuleEvalContext } from "../provider/types";
+import { factorBacktestPromotionService } from "../quant/factor-backtest-promotion-service";
+import { ruleService } from "../rule/rule-service";
+import type { RuleAppliesTo, RuleLang, RuleStatus } from "../rule/rule-service";
+import { PYTHON_HANDLER } from "./python-handler";
+import type { BuiltinToolHandler } from "./types";
+
+/**
+ * LLM 经常把 `factor.compute / factor.evaluate / factor.autoEvaluate` 的入参写成：
+ *   - factor_ids: ["..."]（复数，模仿其他批量接口）
+ *   - factorId（camelCase，模仿 JS 命名风格）
+ * 现实工具签名是单数 `factor_id`。这里做防御性别名回退，避免把"猜错参数风格"
+ * 的良性错误升级成"硬性 fail"。
+ *
+ * 优先级：factor_id > factorId > factor_ids[0] > factorIds[0]。
+ */
+function pickFactorId(params: Record<string, unknown>): string {
+  const direct = params.factor_id ?? params.factorId;
+  if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
+  for (const key of ["factor_ids", "factorIds"]) {
+    const arr = params[key];
+    if (Array.isArray(arr)) {
+      const first = arr.find((v): v is string => typeof v === "string" && v.trim().length > 0);
+      if (first) return first.trim();
+    }
+  }
+  return "";
+}
+
+/** start_date / startDate；end_date / endDate 等下划线/驼峰双兼容取值。 */
+function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "end_date"): string {
+  const camel = snake === "start_date" ? "startDate" : "endDate";
+  const v = params[snake] ?? params[camel];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Factor, rule, discovery and backtest handlers. */
+export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
+  // ─── M2：因子/规则/策略 三段式 Agent 工具 ────────────────────────────────
+  // 详见 docs/FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3
+  // 调用方向：handler → Service → ProviderResolver → 具体 Provider 实现
+
+  "factor.register": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("factor.register: project_id is required");
+    const definitionRaw = params.definition;
+    const definition =
+      definitionRaw && typeof definitionRaw === "object" && !Array.isArray(definitionRaw)
+        ? (definitionRaw as Record<string, unknown>)
+        : undefined;
+    /**
+     * P0-2: Agent 触发的因子注册默认启用 dry-run 闸门（详见 AGENT_STABILITY_REVIEW.md §四-P0-2）。
+     * - LLM 显式传 dry_run=false / 0 / "off" 时可关闭（仅供 IDE / 调试场景；不建议生产路径关）
+     * - 自定义阈值：dry_run = { minRows: 20, minVariance: 1e-10 }
+     */
+    const dryRunParam = params.dry_run ?? params.dryRun;
+    let dryRun: boolean | { minRows?: number; minVariance?: number } = true;
+    if (
+      dryRunParam === false ||
+      dryRunParam === "false" ||
+      dryRunParam === 0 ||
+      dryRunParam === "off"
+    ) {
+      dryRun = false;
+    } else if (dryRunParam && typeof dryRunParam === "object" && !Array.isArray(dryRunParam)) {
+      const cfg: { minRows?: number; minVariance?: number } = {};
+      const dr = dryRunParam as Record<string, unknown>;
+      if (dr.min_rows !== undefined) cfg.minRows = Number(dr.min_rows);
+      if (dr.minRows !== undefined) cfg.minRows = Number(dr.minRows);
+      if (dr.min_variance !== undefined) cfg.minVariance = Number(dr.min_variance);
+      if (dr.minVariance !== undefined) cfg.minVariance = Number(dr.minVariance);
+      dryRun = cfg;
+    }
+    const exprRaw = String(
+      params.expr ?? params.expression ?? params.factor_expression ?? params.factorExpression ?? ""
+    ).trim();
+    const { normalizeFactorExpression, inferFactorLang, formatUnsupportedExpressionError } =
+      await import("../policy/factor-expression-contract");
+    const normalized = normalizeFactorExpression(exprRaw);
+    if (normalized.unsupported.length > 0) {
+      throw new Error(
+        formatUnsupportedExpressionError({
+          expr: exprRaw,
+          reason: `contains unsupported symbols: ${normalized.unsupported.join(", ")}`,
+          rewrites: normalized.rewrites,
+        })
+      );
+    }
+    const lang = inferFactorLang(normalized.expr, params.lang ? String(params.lang) : null);
+    const expr = normalized.expr;
+    return factorService.register({
+      projectId,
+      name: String(params.name ?? "").trim(),
+      category: String(params.category ?? "momentum") as FactorCategory,
+      expr,
+      lang: lang as FactorLang,
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.horizon !== undefined ? { horizon: Number(params.horizon) } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      ...(definition ? { definition } : {}),
+      // ctx.workflowId 在 react act 节点保证非空；落库后用于研究产出严格过滤
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      // lineage（migration 0080）：所有 builtin tool 路径默认归为 'agent'，
+      // 让前端 LineageBadge 能与 IDE / REST 直接调用的 'user' 路径区分。
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+      dryRun,
+    });
+  },
+
+  "factor.compute": async (_ctx, params) => {
+    /**
+     * 入参兼容：
+     *   - factor_id（推荐）/ factorId（camelCase）/ factor_ids[0]（LLM 误用复数）
+     *   - start_date / startDate ；end_date / endDate
+     *
+     * 历史 bug：LLM 凭训练记忆把 factor.compute 写成
+     *   `compute_factors({factor_ids:[..], startDate, endDate})`
+     * 直接抛"factor_id is required"，整条 research → backtest 流水线断掉。
+     * 工具层做防御性别名映射 + builtin alias 已把 compute_factors 路由到 factor.compute，
+     * 这样 LLM 即使猜错参数风格也能跑通。
+     */
+    const factorId = pickFactorId(params);
+    if (!factorId) {
+      throw new Error("factor.compute: factor_id (or factor_ids[0]) is required");
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : undefined;
+    const result = await factorService.compute({
+      factorId,
+      startDate: pickDateParam(params, "start_date"),
+      endDate: pickDateParam(params, "end_date"),
+      ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+    if (result.meta.rowCount === 0) {
+      throw new Error(
+        `factor.compute: no_factor_values_written (factor_id=${factorId}). 行情源在该 symbols/区间没有返回可计算数据；不要继续调用 factor.autoEvaluate。请切换可用数据源、市场或 symbols 后最多重试一次；仍为空则明确报告数据不可用并终止因子评估。`
+      );
+    }
+    return result;
+  },
+
+  "factor.evaluate": async (_ctx, params) => {
+    const factorId = pickFactorId(params);
+    if (!factorId) throw new Error("factor.evaluate: factor_id is required");
+    const valuesRaw = params.values;
+    const values = Array.isArray(valuesRaw) ? (valuesRaw as FactorComputeRow[]) : [];
+    const futureRaw = params.future_returns;
+    const futureReturns = Array.isArray(futureRaw) ? (futureRaw as FactorComputeRow[]) : undefined;
+    return factorService.evaluate({
+      factorId,
+      values,
+      ...(futureReturns ? { futureReturns } : {}),
+      ...(params.asof ? { asof: String(params.asof) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "rule.register": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("rule.register: project_id is required");
+    if (params.dsl === undefined) throw new Error("rule.register: dsl is required");
+    return ruleService.register({
+      projectId,
+      name: String(params.name ?? "").trim(),
+      ...(params.description ? { description: String(params.description) } : {}),
+      ...(params.applies_to ? { appliesTo: String(params.applies_to) as RuleAppliesTo } : {}),
+      ...(params.lang ? { lang: String(params.lang) as RuleLang } : {}),
+      dsl: params.dsl,
+      ...(params.status ? { status: String(params.status) as RuleStatus } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      // lineage（migration 0080）：tool 路径全部标 agent
+      createdBy: "agent",
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+    });
+  },
+
+  "rule.evaluate": async (_ctx, params) => {
+    const ruleId = String(params.rule_id ?? "").trim();
+    if (!ruleId) throw new Error("rule.evaluate: rule_id is required");
+    const contextRaw = params.context;
+    if (!contextRaw || typeof contextRaw !== "object" || Array.isArray(contextRaw)) {
+      throw new Error("rule.evaluate: context object is required");
+    }
+    return ruleService.evaluate({
+      ruleId,
+      context: contextRaw as unknown as RuleEvalContext,
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    });
+  },
+
+  "factor.list": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("factor.list: project_id is required");
+    return factorService.list({
+      projectId,
+      ...(params.category ? { category: String(params.category) as FactorCategory } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+    });
+  },
+
+  "factor.autoEvaluate": async (ctx, params) => {
+    /**
+     * 一步式自动评估入参兼容（E1 修复）。
+     *
+     * 历史 bug（WF 44ca3acf 实测）：LLM 沿用旧 `run_experiment` 风格，传入
+     *   `{name, description, factor_expression, symbols, start_date, end_date, horizon_days}`
+     * alias resolver 把 `run_experiment` 翻成 `factor.autoEvaluate`，
+     * 但参数 schema 完全不同 —— autoEvaluate 要 `factor_id`，旧 run_experiment
+     * 是"传 expr 直接跑"。结果 LLM 收到 3 次 `factor_id is required`，
+     * 整个 fundamental/technical 因子链路断掉。
+     *
+     * 兼容方案：当 LLM 传了 expr/factor_expression 但没传 factor_id，
+     * 我们就**先 factor.register（dryRun=false）** 拿 id，再 autoEvaluate，
+     * 把"一步式"对外暴露的语义补回去。
+     */
+    let factorId = pickFactorId(params);
+    const exprRaw =
+      typeof params.factor_expression === "string"
+        ? params.factor_expression
+        : typeof params.expr === "string"
+          ? (params.expr as string)
+          : "";
+    const isOneShot = exprRaw.trim().length > 0 && !factorId;
+
+    const startDate = pickDateParam(params, "start_date");
+    const endDate = pickDateParam(params, "end_date");
+    if (!startDate || !endDate) {
+      throw new Error("factor.autoEvaluate: start_date and end_date are required");
+    }
+
+    if (!factorId && exprRaw.trim().length > 0) {
+      /**
+       * 双保险（B+ Phase 1.1）：act 入口已 rewrite placeholder，但这里仍做
+       * 形态校验，避免任何旁路绕过 act（e.g. 直接 dispatchBuiltinTool 单测）。
+       *
+       * 优先级：ctx.projectId（来自 workflow_run.project_id）> params["project_id"]
+       *   （仅当形态合法时使用），其他情况报清晰错误。
+       */
+      const fromParams = String(params.project_id ?? "").trim();
+      const projectId = ctx.projectId
+        ? ctx.projectId
+        : isLikelyProjectIdFormat(fromParams)
+          ? fromParams
+          : "";
+      if (!projectId) {
+        throw new Error(
+          "factor.autoEvaluate: factor_id 缺失且无可用 project_id，无法自动注册因子。请先 factor.register 拿到 factor_id，再调 factor.autoEvaluate。"
+        );
+      }
+      const name = String(params.name ?? `auto_${Date.now()}`).trim();
+      /**
+       * 2026-06-05 P1 修复（监控复盘 #3）：name idempotent reuse。
+       *
+       * LLM 收到 `no_factor_values: factor=X; 先跑 compute` 后经常**用同 name + 同
+       * expr 再调一遍 autoEvaluate**（错误地以为重试就能跳过 compute 步骤）。
+       * 旧实现里 register 触发 `factor_name_already_exists` → autoEvaluate 直接挂，
+       * LLM 看到这个错也不知道该改用 factor.compute → 死循环。
+       * 现在 catch 该错误，inline 查 existing factor 的 id 复用，返回业务正确的
+       * `no_factor_values` 继续提示去 compute，链路一致。
+       */
+      try {
+        const registered = await factorService.register({
+          projectId,
+          name,
+          category: String(params.category ?? "momentum") as FactorCategory,
+          expr: exprRaw.trim(),
+          ...(params.lang
+            ? { lang: String(params.lang) as FactorLang }
+            : { lang: "qlib_expr" as FactorLang }),
+          ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+          createdBy: "agent",
+          ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+          /** F-P0-10：标识此次 register 是 autoEvaluate 内部副作用 → emit team-graph interaction */
+          autoRegisteredVia: "factor.autoEvaluate",
+          agentRole: ctx.definition.role,
+        });
+        factorId = registered.id;
+      } catch (err) {
+        const msg = (err as Error).message || "";
+        if (msg.includes("factor_name_already_exists")) {
+          const existing = await factorService.findByProjectAndName(projectId, name);
+          if (existing) {
+            factorId = existing.id;
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+
+      /**
+       * B+ Phase T1.2：register 成功 / 复用既有 id 后，**自动跑一次 compute**
+       * 把 factor_value 落到 DuckDB，避免随后的 autoEvaluate 抛 `no_factor_values`。
+       *
+       * 历史：12/12 失败诊断中 6 次都是 LLM 用一步式 expr+name 调用，handler 只
+       * register 没 compute → autoEvaluate 拉空 values 报 no_factor_values → LLM
+       * 习惯性重试 autoEvaluate（同名 → already_exists / 复用 id → 还是空 values）→
+       * 死循环。修复后 register-then-compute-then-evaluate 三步走 atomically。
+       *
+       * 容错：compute 失败不直接抛，而是把错误信息附在 autoEvaluate 抛错里给
+       * LLM，避免 compute 的 provider/缺数据问题被吞掉。
+       */
+      const computeSymbolsRaw = params.symbols;
+      const computeSymbols = Array.isArray(computeSymbolsRaw)
+        ? computeSymbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+        : undefined;
+      try {
+        const computeResult = await factorService.compute({
+          factorId,
+          startDate,
+          endDate,
+          ...(computeSymbols && computeSymbols.length > 0 ? { symbols: computeSymbols } : {}),
+          ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+        });
+        if (computeResult.meta.rowCount === 0) {
+          throw new Error(
+            "no_factor_values_written: 行情源在该 symbols/区间没有返回可计算数据；" +
+              "不要继续 autoEvaluate，请切换数据源、市场或 symbols 后最多重试一次。"
+          );
+        }
+      } catch (err) {
+        const partial = isOneShot
+          ? `partial_success: factor_definition 已创建（factor_id=${factorId}），但 factor_evaluation 未创建。`
+          : `factor_id=${factorId}`;
+        throw new Error(
+          `factor.autoEvaluate: ${partial} 内部 factor.compute 失败: ${(err as Error).message}。请检查 expr 语法 / symbols 是否有真实 K 线数据 / provider 是否可用。`
+        );
+      }
+    }
+
+    if (!factorId) {
+      throw new Error(
+        "factor.autoEvaluate: 调用必须满足以下任一：(A) 传 `factor_id` (UUID, 来自 factor.register 或 factor.list)；" +
+          "(B) 一步式新因子模式：同时传 `factor_expression` (或 `expr`) + `name` + `project_id`。" +
+          "你两种参数都没传 —— 先用 factor.list 看本项目下已有因子，或直接传 expr+name 走 (B) 模式。"
+      );
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : undefined;
+
+    /**
+     * P0-3 修（Round 6 复盘）：早拦 cross-section symbol 不足。
+     *
+     * Round 6 实测 LLM 用已存在的 factor_id + `symbols=["AAPL"]` 直接调 autoEvaluate
+     * （**纯 evaluate 路径**，不走一步式 register+compute），下游 IC=0/RankIC=0/IR=0，
+     * 但顶层 result="ok" → LLM 把脏 0 写进 strategy。在工具入口就抛清晰错误。
+     *
+     * 范围限制：**仅纯 evaluate 路径** 校验（即用户传 factor_id 而非一步式 expr）。
+     * 一步式（exprRaw 非空 → 先 register+compute）放过，让 service 层 cross_section_too_few_symbols
+     * 在 evaluate 之前兜底；这样既不破坏一步式的合法测试入参，又能在 LLM 直接 evaluate 时教育它。
+     *
+     * 允许例外：LLM 没传 symbols（symbols=undefined）→ service 层用 factor_value 表里
+     * 已存在的全部 symbols（factor.compute 时录的），service 层会做最终防线检查。
+     */
+    if (!isOneShot && symbols !== undefined && symbols.length > 0 && symbols.length < 3) {
+      throw new Error(
+        `factor.autoEvaluate: symbols 数量过少（当前 ${symbols.length} 只: ${symbols.join(",")}）。IC/RankIC 是 **横截面** 指标，每日至少需要 3 只 symbols 才能计算 Pearson/Spearman；推荐 ≥ 10 只。请改用 ≥3 只 symbols 重跑，例如 ["AAPL","MSFT","NVDA","GOOG","META"]，或不传 symbols（用 factor.compute 时录入的全部 symbols）。`
+      );
+    }
+
+    const decayRaw = params.decay_horizons;
+    const decayHorizons = Array.isArray(decayRaw)
+      ? decayRaw.filter((n): n is number => typeof n === "number")
+      : undefined;
+    const evaluateInput = {
+      factorId,
+      startDate,
+      endDate,
+      ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.horizon_days !== undefined ? { horizonDays: Number(params.horizon_days) } : {}),
+      ...(decayHorizons && decayHorizons.length > 0 ? { decayHorizons } : {}),
+      ...(params.group_count !== undefined ? { groupCount: Number(params.group_count) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+    };
+    try {
+      return await factorService.autoEvaluate(evaluateInput);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      /**
+       * 已有 factor_id 路径也做一次 compute→evaluate 自愈。
+       *
+       * 原先只有 expr 一步式路径会自动 compute；模型从 factor.list 拿到既有 id 后
+       * 直接 autoEvaluate，遇到 no_factor_values 必须自己再拼一次 compute，实测经常
+       * 连续重试 autoEvaluate。工具层只自愈一次，零行则明确终止，避免循环。
+       */
+      if (isOneShot || !message.includes("no_factor_values")) throw err;
+      const computeResult = await factorService.compute({
+        factorId,
+        startDate,
+        endDate,
+        ...(symbols && symbols.length > 0 ? { symbols } : {}),
+        ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      });
+      if (computeResult.meta.rowCount === 0) {
+        throw new Error(
+          `factor.autoEvaluate: no_factor_values_written (factor_id=${factorId}). 已自动执行一次 factor.compute，但行情源仍未返回数据；不要继续重试 autoEvaluate。请切换数据源、市场或 symbols，仍为空则明确报告数据不可用。`
+        );
+      }
+      return factorService.autoEvaluate(evaluateInput);
+    }
+  },
+
+  /**
+   * M9.P5：批量评估多个因子 + 自动聚合统计。
+   *
+   * 用途：当 Agent 在 factor.list 拿到一组候选因子（如 5-10 个）后，
+   *   一次性评估全部并按 RankIC 排序、识别最佳/最差因子；避免多轮工具调用。
+   *
+   * 实现：串行 autoEvaluate（避免 DuckDB 连接竞争），错误的因子单独标 error
+   *   但不中断整批；返回聚合 summary（平均 RankIC、approve 候选数等）。
+   *
+   * 真要算因子间相关性矩阵：让 Agent 在拿到 batch 结果后用 code.run_python +
+   *   factor.compute 取值矩阵自己算（避免本工具变得过重）。
+   */
+  "factor.evaluate.batch": async (_ctx, params) => {
+    const idsRaw = params.factor_ids;
+    const factorIds = Array.isArray(idsRaw)
+      ? idsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (factorIds.length === 0) {
+      throw new Error("factor.evaluate.batch: factor_ids (string[]) is required and non-empty");
+    }
+    if (factorIds.length > 30) {
+      throw new Error(
+        `factor.evaluate.batch: max 30 factors per batch (got ${factorIds.length}); 拆分多批调用`
+      );
+    }
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.evaluate.batch: start_date and end_date are required");
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : undefined;
+    const horizonDays = params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
+
+    type BatchItem = {
+      factor_id: string;
+      ic?: number;
+      rank_ic?: number;
+      ir?: number;
+      turnover?: number;
+      sample_size?: number;
+      latency_ms?: number;
+      evaluation_id?: string;
+      error?: string;
+    };
+    const items: BatchItem[] = [];
+    let totalLatency = 0;
+    for (const fid of factorIds) {
+      try {
+        const r = await factorService.autoEvaluate({
+          factorId: fid,
+          startDate,
+          endDate,
+          ...(symbols && symbols.length > 0 ? { symbols } : {}),
+          ...(horizonDays !== undefined ? { horizonDays } : {}),
+        });
+        items.push({
+          factor_id: fid,
+          ic: r.ic,
+          rank_ic: r.rankIc,
+          ir: r.ir,
+          turnover: r.turnover,
+          sample_size: r.sampleSize,
+          latency_ms: r.latencyMs,
+          ...(r.evaluationId ? { evaluation_id: r.evaluationId } : {}),
+        });
+        totalLatency += r.latencyMs ?? 0;
+      } catch (e) {
+        items.push({
+          factor_id: fid,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+
+    // 显著性判读阈值（对齐 PROMPT_RESEARCH 中的 HAC 显著性约束）
+    const finite = items.filter(
+      (i): i is BatchItem & { rank_ic: number; ir: number; sample_size: number } =>
+        i.error === undefined &&
+        typeof i.rank_ic === "number" &&
+        typeof i.ir === "number" &&
+        typeof i.sample_size === "number" &&
+        Number.isFinite(i.rank_ic) &&
+        Number.isFinite(i.ir)
+    );
+    const significant = finite.filter(
+      (i) => Math.abs(i.rank_ic) > 0.02 && Math.abs(i.ir) > 0.5 && i.sample_size >= 60
+    );
+    const sortedByRankIc = [...finite].sort((a, b) => Math.abs(b.rank_ic) - Math.abs(a.rank_ic));
+    const meanRankIc =
+      finite.length > 0 ? finite.reduce((sum, i) => sum + i.rank_ic, 0) / finite.length : 0;
+    const meanIr = finite.length > 0 ? finite.reduce((sum, i) => sum + i.ir, 0) / finite.length : 0;
+
+    return {
+      ok: true,
+      requested: factorIds.length,
+      succeeded: items.length - items.filter((i) => i.error).length,
+      failed: items.filter((i) => i.error).length,
+      total_latency_ms: totalLatency,
+      summary: {
+        mean_rank_ic: meanRankIc,
+        mean_ir: meanIr,
+        significant_count: significant.length,
+        significant_factor_ids: significant.map((s) => s.factor_id),
+        best_factor: sortedByRankIc[0]?.factor_id ?? null,
+        worst_factor:
+          sortedByRankIc.length > 0 ? sortedByRankIc[sortedByRankIc.length - 1]?.factor_id : null,
+      },
+      results: items,
+    };
+  },
+
+  /**
+   * factor.mine.llm —— P0-4：LLM 一次产 N 个 + 内置评估闸门
+   *
+   * 详见 docs/AGENT_STABILITY_REVIEW.md §四-P0-4
+   *
+   * 工作流：
+   *   1. 接收 LLM 在 reason 节点一次性生成的 `expressions: string[]`（>= min_count，默认 5）
+   *   2. 走 discoveryService(kind=factor_llm)：合成 / 真实数据 → 算每个的 IC + RankIC
+   *   3. 按 |IC| 排序，取 top_k（默认 5）
+   *   4. 若 `auto_promote=true`（默认 true）：把 |IC| >= ic_threshold（默认 0.02）的候选自动注册为
+   *      项目下 `draft` 因子（带 lineage，走 factor.register 同一通道，保留 dry-run 闸门）
+   *   5. 返回 jobId + candidates + promoted（包含失败原因，便于 LLM 下一轮调整表达式）
+   *
+   * 关键稳定性保证：
+   *   - expressions.length < min_count → reject（强制 LLM 多产，避免"一次只敢产 1 个但选不到好的"）
+   *   - 所有候选 |IC| 都低于阈值 → 仍返回 candidates 但 promoted=0 + warning，让 LLM 重产
+   *   - 失败候选（parse/insufficient/error）也回传，**不**计入 promote
+   */
+  "factor.mine.llm": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("factor.mine.llm: project_id is required");
+
+    const exprsRaw = params.expressions;
+    const expressions = Array.isArray(exprsRaw)
+      ? exprsRaw.map((e) => String(e ?? "").trim()).filter(Boolean)
+      : [];
+    const minCount = Number(params.min_count ?? 5);
+    if (expressions.length < minCount) {
+      throw new Error(
+        `factor.mine.llm: expressions.length(${expressions.length}) < min_count(${minCount}); 一次至少产${minCount}个 qlib_expr 表达式以充分利用评估闸门`
+      );
+    }
+
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (symbols.length === 0) throw new Error("factor.mine.llm: symbols is required");
+
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.mine.llm: start_date and end_date are required");
+    }
+
+    const topK = Number(params.top_k ?? 5);
+    const horizonDays = params.horizon_days !== undefined ? Number(params.horizon_days) : undefined;
+    const icThreshold = Number(params.ic_threshold ?? 0.02);
+    const autoPromote = params.auto_promote !== false;
+    const namePrefix = String(params.name_prefix ?? "llm_mined").trim() || "llm_mined";
+    const category = (params.category ? String(params.category) : "momentum") as FactorCategory;
+
+    const job = await discoveryService.submitAndRun({
+      projectId,
+      kind: "factor_llm",
+      symbols,
+      startDate,
+      endDate,
+      expressions,
+      topK,
+      ...(horizonDays !== undefined ? { horizonDays } : {}),
+      // 落到 discovery_job.workflow_run_id；promoteCandidate 再透传到 factor.workflow_run_id
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+    });
+
+    // 候选闸门：只 promote 通过 IC 阈值的
+    const eligible = job.candidates.filter(
+      (c) => !c.error && Math.abs(c.metrics.ic) >= icThreshold
+    );
+
+    const promoted: Array<{
+      candidate_id: string;
+      factor_id: string;
+      name: string;
+      ic: number;
+      rank_ic: number;
+    }> = [];
+    const promote_errors: Array<{ candidate_id: string; error: string }> = [];
+
+    if (autoPromote) {
+      const ts = Date.now().toString(36);
+      for (let i = 0; i < eligible.length; i++) {
+        const cand = eligible[i];
+        if (!cand) continue;
+        const factorName = `${namePrefix}_${ts}_${i + 1}`;
+        try {
+          const rec = await discoveryService.promoteCandidate(job.id, cand.id, {
+            name: factorName,
+            category,
+            status: "draft",
+          });
+          promoted.push({
+            candidate_id: cand.id,
+            factor_id: rec.id,
+            name: rec.name,
+            ic: cand.metrics.ic,
+            rank_ic: cand.metrics.rankIc,
+          });
+        } catch (e) {
+          promote_errors.push({
+            candidate_id: cand.id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      job_id: job.id,
+      requested: expressions.length,
+      evaluated: job.candidates.length,
+      eligible: eligible.length,
+      promoted_count: promoted.length,
+      ic_threshold: icThreshold,
+      top_candidates: job.candidates.slice(0, topK).map((c) => ({
+        candidate_id: c.id,
+        expr: c.expr,
+        ic: c.metrics.ic,
+        rank_ic: c.metrics.rankIc,
+        sample_size: c.metrics.sampleSize,
+        score: c.metrics.score,
+        ...(c.error ? { error: c.error } : {}),
+      })),
+      promoted,
+      ...(promote_errors.length > 0 ? { promote_errors } : {}),
+      ...(eligible.length === 0
+        ? {
+            warning: `no_candidate_passed_ic_threshold(${icThreshold}); 建议：(1) 检查表达式是否过于简单 (2) 降低 ic_threshold (3) 让 LLM 重新生成一组`,
+          }
+        : {}),
+    };
+  },
+
+  "discovery.run": async (ctx, params) => {
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    if (!projectId) throw new Error("discovery.run: project_id is required");
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (symbols.length === 0) throw new Error("discovery.run: symbols is required");
+    return discoveryService.submitAndRun({
+      projectId,
+      kind: String(params.kind ?? "factor_alpha101") as DiscoveryKind,
+      symbols,
+      startDate: String(params.start_date ?? "").trim(),
+      endDate: String(params.end_date ?? "").trim(),
+      ...(params.horizon_days !== undefined ? { horizonDays: Number(params.horizon_days) } : {}),
+      ...(params.top_k !== undefined ? { topK: Number(params.top_k) } : {}),
+      ...(params.candidate_count !== undefined
+        ? { candidateCount: Number(params.candidate_count) }
+        : {}),
+      ...(params.seed !== undefined && typeof params.seed === "number"
+        ? { seed: params.seed }
+        : {}),
+      // 关联到本工作流：promoteCandidate 时把 workflowRunId 透传给 factor.register
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+    });
+  },
+
+  "discovery.promote": async (_ctx, params) => {
+    const jobId = String(params.job_id ?? "").trim();
+    const candidateId = String(params.candidate_id ?? "").trim();
+    const name = String(params.name ?? "").trim();
+    if (!jobId) throw new Error("discovery.promote: job_id is required");
+    if (!candidateId) throw new Error("discovery.promote: candidate_id is required");
+    if (!name) throw new Error("discovery.promote: name is required");
+    return discoveryService.promoteCandidate(jobId, candidateId, {
+      name,
+      ...(params.category ? { category: String(params.category) as FactorCategory } : {}),
+      ...(params.status ? { status: String(params.status) as FactorStatus } : {}),
+    });
+  },
+
+  "backtest.run": async (ctx, params) => {
+    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+    if (!strategyVersionId) throw new Error("backtest.run: strategy_version_id is required");
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      : [];
+    if (symbols.length === 0) throw new Error("backtest.run: symbols is required");
+    const startDate = String(params.start_date ?? "").trim();
+    const endDate = String(params.end_date ?? "").trim();
+    if (!startDate || !endDate) throw new Error("backtest.run: start_date / end_date are required");
+
+    const compositionId = params.composition_id ? String(params.composition_id) : undefined;
+    const rawSignal = params.signals;
+    const signals =
+      !compositionId && rawSignal && typeof rawSignal === "object" && !Array.isArray(rawSignal)
+        ? (rawSignal as Record<string, unknown>)
+        : undefined;
+    if (!compositionId && !signals) {
+      throw new Error("backtest.run: composition_id or signals is required");
+    }
+
+    const costsRaw = params.costs;
+    const costs =
+      costsRaw && typeof costsRaw === "object" && !Array.isArray(costsRaw)
+        ? {
+            commissionBps: Number((costsRaw as Record<string, unknown>).commissionBps ?? 5),
+            slippageBps: Number((costsRaw as Record<string, unknown>).slippageBps ?? 5),
+          }
+        : undefined;
+
+    return backtestJobService.submitAndRun({
+      strategyVersionId,
+      symbols,
+      startDate,
+      endDate,
+      ...(compositionId ? { compositionId } : {}),
+      ...(signals
+        ? {
+            signals: {
+              kind: String((signals as Record<string, unknown>).kind ?? "factor_score"),
+              expr: String((signals as Record<string, unknown>).expr ?? ""),
+              lang: String((signals as Record<string, unknown>).lang ?? "qlib_expr"),
+              ...((signals as Record<string, unknown>).reverse ? { reverse: true } : {}),
+            } as never,
+          }
+        : {}),
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.capital !== undefined ? { capital: Number(params.capital) } : {}),
+      ...(costs ? { costs } : {}),
+      ...(params.rebalance
+        ? { rebalance: String(params.rebalance) as "daily" | "weekly" | "monthly" }
+        : {}),
+      ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
+      ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      // lineage（migration 0080）：tool 路径标 agent
+      createdBy: "agent",
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+    });
+  },
+
+  "factor.promote_backtest": async (ctx, params) => {
+    const factorIdsRaw = params.factor_ids ?? params.factorIds;
+    const factorIds = Array.isArray(factorIdsRaw)
+      ? factorIdsRaw.filter(
+          (value): value is string => typeof value === "string" && value.trim().length > 0
+        )
+      : [];
+    if (factorIds.length === 0) {
+      throw new Error("factor.promote_backtest: factor_ids (string[]) is required");
+    }
+    const startDate = String(params.start_date ?? params.startDate ?? "").trim();
+    const endDate = String(params.end_date ?? params.endDate ?? "").trim();
+    if (!startDate || !endDate) {
+      throw new Error("factor.promote_backtest: start_date / end_date are required");
+    }
+    const symbolsRaw = params.symbols;
+    const symbols = Array.isArray(symbolsRaw)
+      ? symbolsRaw.filter(
+          (value): value is string => typeof value === "string" && value.trim().length > 0
+        )
+      : undefined;
+    const costsRaw = params.costs;
+    const costs =
+      costsRaw && typeof costsRaw === "object" && !Array.isArray(costsRaw)
+        ? {
+            commissionBps: Number((costsRaw as Record<string, unknown>).commissionBps ?? 5),
+            slippageBps: Number((costsRaw as Record<string, unknown>).slippageBps ?? 5),
+          }
+        : undefined;
+    const projectId = String(params.project_id ?? ctx.projectId ?? "").trim();
+    return factorBacktestPromotionService.promoteAndBacktest({
+      ...(projectId ? { projectId } : {}),
+      factorIds,
+      startDate,
+      endDate,
+      ...(symbols && symbols.length > 0 ? { symbols } : {}),
+      ...(params.universe ? { universe: String(params.universe) } : {}),
+      ...(params.strategy_name ? { strategyName: String(params.strategy_name) } : {}),
+      ...(params.version_tag ? { versionTag: String(params.version_tag) } : {}),
+      ...(params.composition_name ? { compositionName: String(params.composition_name) } : {}),
+      ...(params.description ? { description: String(params.description) } : {}),
+      ...(params.capital !== undefined ? { capital: Number(params.capital) } : {}),
+      ...(costs ? { costs } : {}),
+      ...(params.rebalance
+        ? { rebalance: String(params.rebalance) as "daily" | "weekly" | "monthly" }
+        : {}),
+      ...(params.top_n !== undefined ? { topN: Number(params.top_n) } : {}),
+      ...(params.benchmark ? { benchmark: String(params.benchmark) } : {}),
+      ...(params.provider_key ? { providerKey: String(params.provider_key) } : {}),
+      createdBy: "agent",
+      ...(ctx.workflowId ? { workflowRunId: ctx.workflowId } : {}),
+      ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+    });
+  },
+
+  "code.run_python": PYTHON_HANDLER,
+};
