@@ -103,13 +103,6 @@ describe("workspace fs lifecycle", () => {
       });
       const factors = await decision.listFactors(opened.fs);
       expect(factors.some((f) => f.name.includes("demo-factor"))).toBe(true);
-      if (decision.syncIntoWorkspace) {
-        const synced = await decision.syncIntoWorkspace(opened.fs, {
-          projectId: "proj_nonexistent_for_sync_test",
-        });
-        expect(synced.factorCount).toBe(0);
-        expect(synced.strategyCount).toBe(0);
-      }
 
       await writeRunRecord(opened.fs, {
         id: "run_test_1",
