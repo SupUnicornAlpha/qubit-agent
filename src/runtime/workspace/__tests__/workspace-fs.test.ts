@@ -8,10 +8,14 @@ import {
   openWorkspaceById,
   resolveInsideRoot,
   resolveProviders,
+  registerMemoryProvider,
+  listRegisteredProviderKinds,
   buildWorkspaceBootstrapPack,
   slugifyWorkspaceName,
   WorkspacePathError,
+  WorkspaceProviderError,
   writeRunRecord,
+  createBuiltinFsMemoryProvider,
 } from "../index";
 
 describe("workspace path safety", () => {
@@ -122,5 +126,35 @@ describe("workspace fs lifecycle", () => {
     } finally {
       // QUBIT_DATA_DIR 由测试 harness 管理，勿整目录删除以免误伤其它用例
     }
+  });
+});
+
+describe("workspace provider registry", () => {
+  test("lists builtin + external stub kinds", () => {
+    const kinds = listRegisteredProviderKinds();
+    expect(kinds.memory).toContain("builtin.fs_memory");
+    expect(kinds.memory).toContain("external.http_memory");
+    expect(kinds.decision).toContain("builtin.local_quant");
+    expect(kinds.decision).toContain("external.decision_stub");
+  });
+
+  test("unknown kind fails closed", async () => {
+    const dataDir = process.env.QUBIT_DATA_DIR?.trim() || (await mkdtemp(join(tmpdir(), "qb-ws-")));
+    const created = await createFsWorkspace({ name: "provider-strict", dataDir });
+    const badManifest = {
+      ...created.manifest,
+      providers: {
+        ...created.manifest.providers,
+        memory: { kind: "vendor.unknown_memory", config: {} },
+      },
+    };
+    expect(() => resolveProviders(badManifest)).toThrow(WorkspaceProviderError);
+    const fallback = resolveProviders(badManifest, { allowBuiltinFallback: true });
+    expect(fallback.memory.kind).toBe("builtin.fs_memory");
+  });
+
+  test("registerMemoryProvider extends registry", () => {
+    registerMemoryProvider("test.custom_memory", () => createBuiltinFsMemoryProvider());
+    expect(listRegisteredProviderKinds().memory).toContain("test.custom_memory");
   });
 });

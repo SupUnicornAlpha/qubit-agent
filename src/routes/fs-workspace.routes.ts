@@ -8,8 +8,10 @@ import {
   openWorkspaceById,
   openWorkspaceByRoot,
   resolveProviders,
+  listRegisteredProviderKinds,
   buildWorkspaceBootstrapPack,
   WorkspacePathError,
+  WorkspaceProviderError,
   writeRunRecord,
 } from "../runtime/workspace";
 
@@ -17,6 +19,7 @@ export const fsWorkspaceRouter = new Hono();
 
 function errStatus(e: unknown): number {
   if (e instanceof WorkspacePathError) return 400;
+  if (e instanceof WorkspaceProviderError) return 400;
   const msg = e instanceof Error ? e.message : String(e);
   if (msg.includes("not found") || msg.includes("Not a workspace") || msg.includes("Not found")) {
     return 404;
@@ -41,6 +44,11 @@ fsWorkspaceRouter.get("/", async (c) => {
   } catch (e) {
     return jsonError(c, e);
   }
+});
+
+/** 已注册 Memory / Decision Provider kinds（供 UI / 外部适配探活） */
+fsWorkspaceRouter.get("/provider-kinds", async (c) => {
+  return c.json({ data: listRegisteredProviderKinds() });
 });
 
 fsWorkspaceRouter.post("/", async (c) => {

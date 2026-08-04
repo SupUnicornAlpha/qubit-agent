@@ -13,7 +13,17 @@ export {
   registerMemoryProvider,
   registerDecisionProvider,
   listRegisteredProviderKinds,
+  WorkspaceProviderError,
   type DecisionEngineProvider,
   type OpenedWorkspace,
   type ResolvedProviders,
+  type ResolveProvidersOptions,
 } from "./providers/resolve";
+export {
+  EXTERNAL_HTTP_MEMORY_KIND,
+  createExternalHttpMemoryStub,
+} from "./providers/external-http-memory";
+export {
+  EXTERNAL_DECISION_STUB_KIND,
+  createExternalDecisionStub,
+} from "./providers/external-decision-stub";

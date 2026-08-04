@@ -36,9 +36,12 @@ python_connectors/wheels/*
 
 # Product / design / interview docs — local only (maintainer private)
 # README screenshots remain public for the landing page.
+# Qubit Prime 规划稿（Workbench / Runtime）入库以便协作评审。
 docs/*
 !docs/screenshots/
 !docs/screenshots/**
+!docs/qubit-prime/
+!docs/qubit-prime/**
 
 # Private interview / job-search material (local only)
 interview/

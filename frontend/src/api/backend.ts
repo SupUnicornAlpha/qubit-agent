@@ -741,6 +741,16 @@ export async function listFsWorkspaces(): Promise<
   return res.data ?? [];
 }
 
+export async function listFsWorkspaceProviderKinds(): Promise<{
+  memory: string[];
+  decision: string[];
+}> {
+  const res = await httpGet<{ data: { memory: string[]; decision: string[] } }>(
+    "/api/v1/fs-workspaces/provider-kinds"
+  );
+  return res.data;
+}
+
 export async function createFsWorkspaceApi(input: {
   name: string;
   description?: string;

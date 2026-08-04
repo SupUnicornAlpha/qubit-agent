@@ -1,5 +1,11 @@
+/**
+ * Workspace Provider 注册与解析。
+ * 未知 kind 默认失败；勿静默回退到 builtin（避免配置写错却“看起来正常”）。
+ */
 import { createBuiltinFsMemoryProvider, type MemoryProvider } from "./fs-memory";
 import { createLocalQuantDecisionProvider } from "./local-quant";
+import { createExternalHttpMemoryStub } from "./external-http-memory";
+import { createExternalDecisionStub } from "./external-decision-stub";
 import type { WorkspaceManifest } from "../types";
 import type { WorkspaceFs } from "../workspace-fs";
 
@@ -26,23 +32,36 @@ export type ResolvedProviders = {
   decision: DecisionEngineProvider;
 };
 
+export class WorkspaceProviderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkspaceProviderError";
+  }
+}
+
 type MemoryFactory = () => MemoryProvider;
 type DecisionFactory = () => DecisionEngineProvider;
 
 const memoryRegistry = new Map<string, MemoryFactory>([
   ["builtin.fs_memory", () => createBuiltinFsMemoryProvider()],
+  ["external.http_memory", () => createExternalHttpMemoryStub()],
 ]);
 
 const decisionRegistry = new Map<string, DecisionFactory>([
   ["builtin.local_quant", () => createLocalQuantDecisionProvider()],
+  ["external.decision_stub", () => createExternalDecisionStub()],
 ]);
 
 export function registerMemoryProvider(kind: string, factory: MemoryFactory): void {
-  memoryRegistry.set(kind, factory);
+  const k = kind.trim();
+  if (!k) throw new WorkspaceProviderError("memory provider kind is required");
+  memoryRegistry.set(k, factory);
 }
 
 export function registerDecisionProvider(kind: string, factory: DecisionFactory): void {
-  decisionRegistry.set(kind, factory);
+  const k = kind.trim();
+  if (!k) throw new WorkspaceProviderError("decision provider kind is required");
+  decisionRegistry.set(k, factory);
 }
 
 export function listRegisteredProviderKinds(): {
@@ -50,28 +69,53 @@ export function listRegisteredProviderKinds(): {
   decision: string[];
 } {
   return {
-    memory: [...memoryRegistry.keys()],
-    decision: [...decisionRegistry.keys()],
+    memory: [...memoryRegistry.keys()].sort(),
+    decision: [...decisionRegistry.keys()].sort(),
   };
 }
 
-export function resolveProviders(manifest: WorkspaceManifest): ResolvedProviders {
+export type ResolveProvidersOptions = {
+  /**
+   * 未知 kind 是否回退 builtin（默认 false）。
+   * 仅调试/迁移脚本应显式打开。
+   */
+  allowBuiltinFallback?: boolean;
+};
+
+export function resolveProviders(
+  manifest: WorkspaceManifest,
+  opts?: ResolveProvidersOptions
+): ResolvedProviders {
   const memoryKind = manifest.providers.memory?.kind || "builtin.fs_memory";
   const decisionKind = manifest.providers.decision?.kind || "builtin.local_quant";
+  const allowFallback = opts?.allowBuiltinFallback === true;
 
-  const memoryFactory = memoryRegistry.get(memoryKind) ?? memoryRegistry.get("builtin.fs_memory")!;
-  const decisionFactory =
-    decisionRegistry.get(decisionKind) ?? decisionRegistry.get("builtin.local_quant")!;
-
-  if (!memoryRegistry.has(memoryKind)) {
+  let memoryFactory = memoryRegistry.get(memoryKind);
+  if (!memoryFactory) {
+    if (!allowFallback) {
+      throw new WorkspaceProviderError(
+        `Unknown memory provider "${memoryKind}". Registered: ${[...memoryRegistry.keys()].join(", ")}`
+      );
+    }
     console.warn(
       `[workspace] memory provider "${memoryKind}" not registered; falling back to builtin.fs_memory`
     );
+    memoryFactory = memoryRegistry.get("builtin.fs_memory")!;
   }
-  if (!decisionRegistry.has(decisionKind)) {
+
+  let decisionFactory = decisionRegistry.get(decisionKind);
+  if (!decisionFactory) {
+    if (!allowFallback) {
+      throw new WorkspaceProviderError(
+        `Unknown decision provider "${decisionKind}". Registered: ${[
+          ...decisionRegistry.keys(),
+        ].join(", ")}`
+      );
+    }
     console.warn(
       `[workspace] decision provider "${decisionKind}" not registered; falling back to builtin.local_quant`
     );
+    decisionFactory = decisionRegistry.get("builtin.local_quant")!;
   }
 
   return {
