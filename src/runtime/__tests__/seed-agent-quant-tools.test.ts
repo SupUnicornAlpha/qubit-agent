@@ -1,9 +1,7 @@
 /**
- * Seed Agent 定义 — 量化工坊工具装载契约测试
+ * Seed Agent 定义 — 精品工具面契约
  *
- * 确保「因子研究 / 回测 / 风控」等编组的成员 Agent 默认装上 M2 / M6 新工具，
- * 否则用户在 UI 选「因子研究」编组发起对话时，Agent 看不到 factor.* / discovery.*
- * / backtest.run / code.run_python 等关键工具。
+ * 2026-08-04：专家 ≤10 官方 tool；Orchestrator 持有合同写工具与派单权。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -20,6 +18,19 @@ import { BUILTIN_GROUP_LAYOUTS } from "../seed-agent-definitions";
 
 const BY_ID = new Map(SEED_AGENT_DEFINITIONS.map((d) => [d.id, d]));
 
+const SPECIALIST_IDS = [
+  "def-market-data",
+  "def-news-event",
+  "def-analyst-fundamental",
+  "def-analyst-technical",
+  "def-analyst-sentiment",
+  "def-analyst-macro",
+  "def-research",
+  "def-backtest",
+  "def-risk",
+  "def-walk-forward-validator",
+] as const;
+
 function expectTools(defId: string, requiredTools: string[]) {
   const def = BY_ID.get(defId);
   expect(def).toBeDefined();
@@ -28,25 +39,40 @@ function expectTools(defId: string, requiredTools: string[]) {
   }
 }
 
-describe("Seed Agent 定义 — 量化工坊工具契约", () => {
-  test("def-research 包含 M2/M6 全套因子+规则+组合+挖掘+回测+沙箱工具", () => {
+describe("Seed Agent 定义 — 精品工具面契约", () => {
+  test("每个专家 Agent 默认授权工具 ≤10", () => {
+    for (const id of SPECIALIST_IDS) {
+      const def = BY_ID.get(id)!;
+      expect(def.tools.length, `${id} has ${def.tools.length} tools`).toBeLessThanOrEqual(10);
+    }
+  });
+
+  test("专家默认保留最小 skill.search + skill.use_record", () => {
+    for (const id of SPECIALIST_IDS) {
+      expectTools(id, ["skill.search", "skill.use_record"]);
+    }
+  });
+
+  test("def-research 保留因子→策略→回测主链，不含 discovery/下单/行情狂刷", () => {
     expectTools("def-research", [
       "factor.register",
       "factor.compute",
       "factor.evaluate",
       "factor.list",
-      "factor.autoEvaluate",
-      "rule.register",
-      "rule.evaluate",
+      "strategy.create_version",
       "strategy.compose",
-      "discovery.run",
-      "discovery.promote",
       "backtest.run",
-      "code.run_python",
     ]);
+    const research = BY_ID.get("def-research")!;
+    expect(research.tools).not.toContain("discovery.run");
+    expect(research.tools).not.toContain("order.create_intent");
+    expect(research.tools).not.toContain("fetch_klines");
+    expect(research.tools).not.toContain("recommendation.record");
+    expect(research.tools).not.toContain("shell.exec");
+    expect(research.tools).not.toContain("cli_agent.run");
   });
 
-  test("def-backtest 可调用事件驱动 backtest.run + factor.list + code.run_python", () => {
+  test("def-backtest 可调用事件驱动 backtest.run + factor 计算", () => {
     expectTools("def-backtest", [
       "backtest.run",
       "factor.list",
@@ -55,8 +81,13 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     ]);
   });
 
-  test("def-risk 可在 chat 中创建/执行规则 + 沙箱代码执行", () => {
-    expectTools("def-risk", ["rule.register", "rule.evaluate", "code.run_python"]);
+  test("def-risk 签核本职，不挂行情/MCP/skill 编辑", () => {
+    expectTools("def-risk", ["rule.register", "rule.evaluate", "sign_intent", "evaluate_risk"]);
+    const risk = BY_ID.get("def-risk")!;
+    expect(risk.tools).not.toContain("fetch_klines");
+    expect(risk.tools).not.toContain("call_mcp");
+    expect(risk.tools).not.toContain("skill.create");
+    expect(risk.tools).not.toContain("code.run_python");
   });
 
   test("因子研究编组成员的 definition 都存在", () => {
@@ -78,27 +109,27 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     }
   });
 
-  test("升级后 def-research / def-backtest / def-risk 版本号都跳到 4.x", () => {
+  test("def-research / def-backtest / def-risk 版本号都在 4.x", () => {
     for (const id of ["def-research", "def-backtest", "def-risk"]) {
       const def = BY_ID.get(id)!;
       expect(def.version.startsWith("4.")).toBe(true);
     }
   });
 
-  test("M9.P2 升级：4 个分析师 + news 都装上 factor.list + factor.autoEvaluate + code.run_python", () => {
-    const M9_ANALYSTS = [
-      "def-analyst-fundamental",
-      "def-analyst-technical",
-      "def-analyst-sentiment",
-      "def-analyst-macro",
-    ];
-    for (const id of M9_ANALYSTS) {
-      expectTools(id, ["factor.list", "factor.autoEvaluate", "code.run_python"]);
-    }
-    expectTools("def-news-event", ["code.run_python"]);
+  test("分析师不自带行情治理；基本面不含 klines", () => {
+    const fundamental = BY_ID.get("def-analyst-fundamental")!;
+    expect(fundamental.tools).not.toContain("fetch_klines");
+    expect(fundamental.tools).not.toContain("market.readiness");
+    expectTools("def-analyst-fundamental", ["fetch_fundamentals", "compute_valuation"]);
+
+    expectTools("def-analyst-technical", ["fetch_klines", "compute_indicators"]);
+    expect(BY_ID.get("def-analyst-technical")!.tools).not.toContain("market.readiness");
+
+    expectTools("def-news-event", ["fetch_news", "fetch_news_sentiment"]);
+    expect(BY_ID.get("def-news-event")!.tools).not.toContain("code.run_python");
   });
 
-  test("M9.P2 升级：4 个分析师 + news 版本号跳到 3.x", () => {
+  test("分析师 / news 版本号在 3.x；market_data 在 2.x", () => {
     for (const id of [
       "def-analyst-fundamental",
       "def-analyst-technical",
@@ -106,12 +137,12 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
       "def-analyst-macro",
       "def-news-event",
     ]) {
-      const def = BY_ID.get(id)!;
-      expect(def.version.startsWith("3.")).toBe(true);
+      expect(BY_ID.get(id)!.version.startsWith("3.")).toBe(true);
     }
+    expect(BY_ID.get("def-market-data")!.version.startsWith("2.")).toBe(true);
   });
 
-  test("M9.P5 升级：新增 def-walk-forward-validator agent，装齐 backtest.run + factor.evaluate.batch + code.run_python", () => {
+  test("def-walk-forward-validator 装齐 backtest + batch evaluate", () => {
     const def = BY_ID.get("def-walk-forward-validator");
     expect(def).toBeDefined();
     expect(def!.role).toBe("backtest_engineer");
@@ -124,14 +155,12 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     ]);
   });
 
-  test("M9.P5 升级：grp-discovery 包含 def-walk-forward-validator 成员", () => {
+  test("grp-discovery 包含 def-walk-forward-validator 成员", () => {
     expect(DISCOVERY_GROUP.memberDefinitionIds).toContain("def-walk-forward-validator");
     expect(DISCOVERY_GROUP.memberRoles).toContain("backtest_engineer");
   });
 
-  test("BUILTIN_AGENT_GROUPS 中的每个 group 都必须有 BUILTIN_GROUP_LAYOUTS（防止 seed 时崩溃）", () => {
-    // 历史回归：M1 一次性引入 9 个新 group 但忘配 layout，导致首个 group
-    // 在 seed 阶段直接抛 "Missing builtin layout for agent group ..." 让整个 backend 启动失败。
+  test("BUILTIN_AGENT_GROUPS 中的每个 group 都必须有 BUILTIN_GROUP_LAYOUTS", () => {
     const missing: string[] = [];
     for (const grp of BUILTIN_AGENT_GROUPS) {
       if (!BUILTIN_GROUP_LAYOUTS[grp.id]) missing.push(grp.id);
@@ -150,71 +179,107 @@ describe("Seed Agent 定义 — 量化工坊工具契约", () => {
     expect(broken).toEqual([]);
   });
 
-  // M10.A2 契约：核心 Agent 需要装上长期记忆使用工具
-  test("M10.A2 升级：def-orchestrator 装上长期记忆工具（search/consolidate/refresh）", () => {
+  test("Orchestrator 持有合同写工具 + 记忆 + skill 全套，不挂团队兼容大工具", () => {
     expectTools("def-orchestrator", [
+      "update_plan",
+      "assign_task",
+      "run_screener",
+      "recommendation.record",
+      "factor.register",
+      "strategy.create_version",
+      "order.create_intent",
+      "rule.register",
+      "discovery.run",
+      "backtest.run",
       "search_memory",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
     ]);
-    const def = BY_ID.get("def-orchestrator");
-    // 版本上限放宽到 3.x（含 3.4 / 3.5 等小版本），任何 minor bump 不要无脑挂这个 test
-    expect(def!.version).toMatch(/^3\./);
-    expect(def!.tools).not.toContain("run_analyst_team");
-    expect(def!.tools).not.toContain("summarize_team_decision");
-    expect(def!.tools).not.toContain("fuse_signals");
+    const def = BY_ID.get("def-orchestrator")!;
+    expect(def.version).toMatch(/^3\./);
+    expect(def.tools).not.toContain("run_analyst_team");
+    expect(def.tools).not.toContain("summarize_team_decision");
+    expect(def.tools).not.toContain("fuse_signals");
+    expect(def.tools).not.toContain("fetch_klines");
   });
 
-  test("M10.A2 升级：def-research 装上长期记忆工具", () => {
-    expectTools("def-research", [
-      "search_memory",
-      "memory.consolidate_longterm",
-      "memory.refresh_workspace",
-    ]);
-    const def = BY_ID.get("def-research");
-    // 4.1（M10.A2）→ 4.2（exec 接入，加 shell.exec / cli_agent.run），都满足 M10.A2 契约
-    expect(def!.version).toMatch(/^4\./);
-  });
-
-  test("M10.A2 升级：所有装上 consolidate_longterm 的 agent 必须也装 search_memory（确保闭环）", () => {
+  test("装上 consolidate_longterm 的 agent 必须也装 search_memory", () => {
     for (const def of SEED_AGENT_DEFINITIONS) {
-      const hasConsolidate = def.tools.includes("memory.consolidate_longterm");
-      if (hasConsolidate) {
+      if (def.tools.includes("memory.consolidate_longterm")) {
         expect(def.tools).toContain("search_memory");
       }
     }
   });
 
-  test("M11 升级：9 个核心 role 默认订阅 skill.search + skill.use_record（让 LLM 能复用历史 skill）", () => {
-    const minimalSkillRoles = [
-      "def-orchestrator",
-      "def-analyst-fundamental",
-      "def-analyst-technical",
-      "def-analyst-sentiment",
-      "def-analyst-macro",
-      "def-research",
-      "def-backtest",
-      "def-risk",
-      "def-walk-forward-validator",
+  test("仅 orchestrator 默认装齐 skill 编辑全套", () => {
+    const fullToolset = [
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
     ];
-    for (const id of minimalSkillRoles) {
-      const def = BY_ID.get(id);
-      expect(def, `${id} missing from seed definitions`).toBeDefined();
-      expect(def!.tools, `${id} missing skill.search`).toContain("skill.search");
-      expect(def!.tools, `${id} missing skill.use_record`).toContain("skill.use_record");
+    for (const tool of fullToolset) {
+      expect(BY_ID.get("def-orchestrator")!.tools).toContain(tool);
+    }
+    for (const id of ["def-research", "def-backtest", "def-risk"]) {
+      expect(BY_ID.get(id)!.tools).not.toContain("skill.create");
+      expect(BY_ID.get(id)!.tools).not.toContain("skill.patch");
+      expect(BY_ID.get(id)!.tools).not.toContain("skill.archive");
     }
   });
 
-  test("M11 升级：orchestrator/research/backtest/risk 装齐 skill 全套（与 SKILLS_NUDGE 提示词自洽）", () => {
-    // 这 4 个 role 的 systemPrompt 都注入了完整 SKILLS_NUDGE（含 skill.create/patch/archive 引导），
-    // 必须配套订阅这 3 个工具，否则 LLM 会调到一个没订阅的工具。
-    const fullSkillRoles = ["def-orchestrator", "def-research", "def-backtest", "def-risk"];
-    const fullToolset = ["skill.search", "skill.use_record", "skill.create", "skill.patch", "skill.archive"];
-    for (const id of fullSkillRoles) {
-      const def = BY_ID.get(id);
-      expect(def, `${id} missing from seed definitions`).toBeDefined();
-      for (const tool of fullToolset) {
-        expect(def!.tools, `${id} missing ${tool}`).toContain(tool);
+  test("低可用 / stub / 跨域工具不在默认授权面", () => {
+    const forbiddenByRole: Record<string, string[]> = {
+      "def-market-data": [
+        "fetch_order_book",
+        "fetch_trades",
+        "fetch_chip_distribution",
+        "fetch_bars",
+        "fetch_ticks",
+        "write_snapshot",
+        "call_mcp",
+      ],
+      "def-analyst-technical": [
+        "fetch_order_book",
+        "run_screener",
+        "run_experiment",
+        "edit_agent_pack",
+        "market.readiness",
+      ],
+      "def-analyst-fundamental": [
+        "run_screener",
+        "edit_agent_pack",
+        "fetch_financial_data",
+        "fetch_klines",
+      ],
+      "def-analyst-sentiment": [
+        "analyze_social_media",
+        "extract_event",
+        "score_sentiment",
+        "run_screener",
+        "factor.register",
+      ],
+      "def-news-event": ["extract_event", "score_sentiment", "code.run_python"],
+      "def-research": [
+        "shell.exec",
+        "cli_agent.run",
+        "order.create_intent",
+        "run_experiment",
+        "discovery.run",
+        "fetch_klines",
+      ],
+      "def-risk": ["call_mcp", "skill.create", "fetch_klines", "code.run_python"],
+    };
+    for (const [id, forbidden] of Object.entries(forbiddenByRole)) {
+      const def = BY_ID.get(id)!;
+      for (const tool of forbidden) {
+        expect(def.tools, `${id} should not expose ${tool}`).not.toContain(tool);
       }
     }
   });

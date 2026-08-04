@@ -69,7 +69,7 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
   outputContract: { primary: "analyst_signal_fusion", secondary: ["debate_transcript"] },
   requiredCapabilities: [],
   toolPreset: {
-    builtinTools: ["run_analyst_team", "fetch_bars", "fetch_news"],
+    builtinTools: ["run_analyst_team", "fetch_klines", "fetch_news"],
     connectors: ["qubit-data", "qubit-news", "qubit-research"],
     mcpServers: [],
     defaultParams: {},
@@ -113,13 +113,8 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
     { kind: "backtest", level: "required" },
   ],
   toolPreset: {
-    builtinTools: [
-      "factor.list",
-      "strategy.create_version",
-      "strategy.compose",
-      "backtest.run",
-      "run_backtest",
-    ],
+    // 精品面：版本 → 组合 → 回测；去掉 list / 旧别名空转
+    builtinTools: ["strategy.create_version", "strategy.compose", "backtest.run"],
     connectors: ["qubit-data", "qubit-backtest", "qubit-risk"],
     mcpServers: [],
     defaultParams: {},
@@ -412,9 +407,9 @@ export const PORTFOLIO_MANAGEMENT_SCENARIO: ResearchScenarioSpec = {
   ],
   toolPreset: {
     // NOTE: portfolio.optimize / portfolio.rebalance 尚未实装（FACTOR_RULE_STRATEGY_DESIGN.md §3.6 / P3）
-    // 过渡：先用 compute_factors 看暴露 + run_backtest 跑历史；factor.list 选可用因子
+    // 过渡：先用 factor.compute 看暴露 + backtest.run 跑历史；factor.list 选可用因子
     // TODO: P3 落地后切回 portfolio.optimize / portfolio.rebalance
-    builtinTools: ["factor.list", "compute_factors", "run_backtest"],
+    builtinTools: ["factor.list", "factor.compute", "backtest.run"],
     connectors: ["qubit-research", "qubit-backtest"],
     mcpServers: [],
     defaultParams: {},
@@ -556,16 +551,9 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
     { kind: "rule_engine", level: "required" },
   ],
   toolPreset: {
-    // Paper / bench: create a strategy version then order_intent (embeds pre-trade risk).
-    builtinTools: [
-      "strategy.create_version",
-      "order.create_intent",
-      "evaluate_risk",
-      "rule.evaluate",
-      "submit_order",
-      "cancel_order",
-      "get_fills",
-    ],
+    // 精品纸面路径：建版本 → order_intent（内嵌 pre-trade risk）。
+    // 禁止 rule.evaluate / evaluate_risk / submit_order 抢路径。
+    builtinTools: ["strategy.create_version", "order.create_intent"],
     connectors: ["qubit-broker", "qubit-risk"],
     mcpServers: [],
     defaultParams: {},
@@ -614,7 +602,7 @@ export const POSTMORTEM_SCENARIO: ResearchScenarioSpec = {
     { kind: "factor_compute", level: "required" },
   ],
   toolPreset: {
-    builtinTools: ["factor.list", "get_fills", "fetch_bars"],
+    builtinTools: ["factor.list", "get_fills", "fetch_klines"],
     connectors: ["qubit-data", "qubit-research"],
     mcpServers: [],
     defaultParams: {},
@@ -667,7 +655,7 @@ export const NEWS_EVENT_RADAR_SCENARIO: ResearchScenarioSpec = {
   outputContract: { primary: "event_radar_report", secondary: ["impact_alerts"] },
   requiredCapabilities: [],
   toolPreset: {
-    builtinTools: ["fetch_news", "fetch_bars"],
+    builtinTools: ["fetch_news", "fetch_klines"],
     connectors: ["qubit-news", "qubit-data"],
     mcpServers: [],
     defaultParams: {},

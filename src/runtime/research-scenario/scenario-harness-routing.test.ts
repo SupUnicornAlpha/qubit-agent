@@ -32,7 +32,17 @@ describe("scenario harness routing for bench recipe keys", () => {
     expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).toContain(
       "strategy.create_version"
     );
-    expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).toContain("evaluate_risk");
+    expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).toEqual([
+      "strategy.create_version",
+      "order.create_intent",
+    ]);
+    expect(builtinByKey("strategy_authoring")?.toolPreset?.builtinTools).toEqual([
+      "strategy.create_version",
+      "strategy.compose",
+      "backtest.run",
+    ]);
+    expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).not.toContain("evaluate_risk");
+    expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).not.toContain("rule.evaluate");
   });
 
   test("focused prompt applies to recipe keys, not only registry keys", () => {

@@ -63,58 +63,62 @@ function def(partial: SeedDefinition): RuntimeAgentDefinition {
   };
 }
 
+/**
+ * 2026-08-04 精品工具面：
+ * - 专家 Agent 默认 ≤10 个官方 tool，本职能力独占
+ * - Orchestrator 不设上限：持有场景合同写工具 + 派单 + 记忆/skill
+ * - 行情治理工具只留给 market_data（或 Orchestrator 做 readiness 探活）
+ */
 const MARKET_GOVERNANCE_TOOLS = [
   "market.resolve_symbol",
   "market.data_sources",
   "market.readiness",
 ] as const;
 
-/** 内置 Agent 定义（10 个）：Orchestrator + 数据/新闻 + 四维分析师 + 研究/回测/风控 */
+/** 内置 Agent 定义：Orchestrator + 数据/新闻 + 四维分析师 + 研究/回测/风控 */
 export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   def({
     id: "def-orchestrator",
     role: "orchestrator",
     name: "编排器",
     /**
-     * 3.7.0（2026-07）：默认编排模式从“批量团队研究”切到“Orchestrator 作为大脑按需派单”。
-     * `run_analyst_team` / `summarize_team_decision` / `fuse_signals` 保留为兼容能力，
-     * 但不再作为 Orchestrator 默认工具面，避免任务一上来就跑偏成团队会审或长报告。
-     * 3.8.0（2026-07-31）：补齐场景合同写工具（recommendation / factor / strategy / order），
-     * 避免完成门禁把未授权能力误标为 unconfigured，同时允许编排器在不派单时直接落库。
+     * 3.9.0（2026-08-04）：合同写权限集中到编排器；专家只保留领域精品工具。
+     * 派单优先 call_team_* / assign_task；本角色直接落 recommendation / factor /
+     * strategy / order 合同，避免「专家空转行情、合同永远不写」。
      */
-    version: "3.8.0",
+    version: "3.9.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
+      // 编排
       "update_plan",
       "assign_task",
-      ...MARKET_GOVERNANCE_TOOLS,
-      "evaluate_risk",
-      "edit_agent_pack",
-      // M10.A2：playbook 复用 + postmortem 沉淀
-      "search_memory",
-      "memory.consolidate_longterm",
-      "memory.refresh_workspace",
-      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
-      "skill.search",
-      "skill.use_record",
-      "skill.create",
-      "skill.patch",
-      "skill.archive",
-      /**
-       * 2026-06-05 监控复盘 #4 / C：探索类任务（用户提"AI 半导体板块机会"/
-       * "分析下哪些便宜银行股"）首选 — 按 sector/industry 拿 200+ 真实候选 ticker。
-       * 详见 analyst-team-context.ts 的 explore prompt 与 stock-screener.ts。
-       */
+      "market.resolve_symbol",
+      "market.readiness",
+      // 场景合同写（主责）
       "run_screener",
-      // 2026-07-31 §11：场景 requiredTools 对应的最小写工具面
       "recommendation.record",
       "factor.list",
       "factor.register",
       "factor.evaluate",
       "factor.autoEvaluate",
+      "discovery.run",
+      "discovery.promote",
       "strategy.create_version",
       "strategy.compose",
+      "backtest.run",
       "order.create_intent",
+      "evaluate_risk",
+      "rule.register",
+      "rule.evaluate",
+      // 记忆 / skill / 逃生舱
+      "search_memory",
+      "memory.consolidate_longterm",
+      "memory.refresh_workspace",
+      "skill.search",
+      "skill.use_record",
+      "skill.create",
+      "skill.patch",
+      "skill.archive",
       "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
@@ -124,19 +128,15 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-market-data",
     role: "market_data",
     name: "行情数据",
-    version: "2.3.0",
+    /** 2.5.0：只保留取证五件套；ticks/snapshot/MCP 外移。 */
+    version: "2.5.0",
     systemPrompt: PROMPT_MARKET_DATA,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,
-      "fetch_bars",
       "fetch_klines",
-      "fetch_ticks",
       "fetch_quote",
-      "fetch_order_book",
-      "fetch_trades",
-      "fetch_chip_distribution",
-      "write_snapshot",
-      "call_mcp",
+      "skill.search",
+      "skill.use_record",
     ],
     maxIterations: 5,
   }),
@@ -144,17 +144,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-news-event",
     role: "news_event",
     name: "新闻事件",
-    /** 3.0.0：M9.P2 装上事件→因子链路（聚合 daily event_score 用） */
-    version: "3.0.0",
+    /** 3.3.0：新闻双件套 + 最小 skill。 */
+    version: "3.3.0",
     systemPrompt: PROMPT_NEWS_EVENT,
     tools: [
       "fetch_news",
       "fetch_news_sentiment",
-      "extract_event",
-      "score_sentiment",
-      // M9.P2：把事件聚合成 daily event_score 时间序列
-      "code.run_python",
-      "call_mcp",
+      "skill.search",
+      "skill.use_record",
     ],
     maxIterations: 5,
   }),
@@ -163,316 +160,151 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "analyst_fundamental",
     name: "基本面研究员",
     /**
-     * 3.0.0：M9.P2 装上量化锚点工具（factor.list value/quality + autoEvaluate + 沙箱）
-     * 3.1.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
-     * sector/industry 拿真实候选 ticker，不再反复 fetch_klines 试错。
+     * 3.5.0：本职=财报/估值。禁止自拉 klines——行情由 market_data 提供。
      */
-    version: "3.1.0",
+    version: "3.5.0",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
-      ...MARKET_GOVERNANCE_TOOLS,
-      "fetch_financial_data",
       "fetch_fundamentals",
-      "fetch_klines",
       "compute_valuation",
-      // M9.P2：量化锚点 — 看现成价值/质量因子的 RankIC
-      "factor.list",
-      "factor.autoEvaluate",
-      // M9.P2：沙箱 — DCF / 敏感度表 / 同业百分位
       "code.run_python",
-      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
-      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找候选 ticker
-      "run_screener",
-      "edit_agent_pack",
-      "call_mcp",
     ],
-    maxIterations: 7,
+    maxIterations: 6,
   }),
   def({
     id: "def-analyst-technical",
     role: "analyst_technical",
     name: "量化策略师",
-    /**
-     * 3.0.0：M9.P2 装上量化工坊全套（动量/反转/波动因子 + run_experiment + 沙箱）。
-     * 3.1.0：评估报告 P2-E — 去掉 `run_backtest` 工具授权。
-     *
-     *   原因：PROMPT_ANALYST_TECHNICAL（seed-agent-prompts.ts:528）明确写
-     *   "信号 > 0.7 即触发 backtest 外抛"——technical 只产因子/规则信号，
-     *   不亲自跑回测；保留 run_backtest 会让 LLM 误把 backtest 作为本角色
-     *   职责吞掉一轮迭代，token 浪费 + 与 backtest 角色重复（参见调研：
-     *   3 个 def 的工具集中 run_backtest 唯一可去重的 1 个）。
-     * 3.2.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
-     * sector/industry 拿真实候选 ticker。
-     */
-    version: "3.3.0",
+    /** 3.5.0：K 线 + 指标 + 形态 + 最小 skill。 */
+    version: "3.5.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
-      ...MARKET_GOVERNANCE_TOOLS,
-      "fetch_price_data",
       "fetch_klines",
-      "fetch_quote",
-      "fetch_order_book",
-      "fetch_trades",
-      "fetch_chip_distribution",
       "compute_indicators",
       "detect_patterns",
-      // M9.P2：量化锚点 — 看现成动量/反转/波动因子的 RankIC
-      "factor.list",
-      "factor.autoEvaluate",
-      "run_experiment",
-      // M9.P2：沙箱 — RSI 截面排名、量价相关性
       "code.run_python",
-      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
-      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找候选 ticker
-      "run_screener",
-      "edit_agent_pack",
-      "call_mcp",
     ],
-    maxIterations: 7,
+    maxIterations: 6,
   }),
   def({
     id: "def-analyst-sentiment",
     role: "analyst_sentiment",
     name: "舆情分析师",
-    /**
-     * 3.0.0：M9.P2 装上事件→sentiment 因子工具（factor.register + autoEvaluate + 沙箱）
-     * 3.1.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
-     * sector/industry 拿真实候选 ticker。
-     */
-    version: "3.1.0",
+    /** 3.5.0：只读新闻证据并解读；注册因子交给编排器/research。 */
+    version: "3.5.0",
     systemPrompt: PROMPT_ANALYST_SENTIMENT,
     tools: [
       "fetch_news",
       "fetch_news_sentiment",
-      "analyze_social_media",
-      "extract_event",
-      "score_sentiment",
-      // M9.P2：把事件聚合成情绪因子入库
-      "factor.list",
-      "factor.register",
-      "factor.autoEvaluate",
-      // M9.P2：沙箱 — 大批量新闻聚合 / 情绪 decay 曲线
       "code.run_python",
-      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
-      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找候选 ticker
-      "run_screener",
-      "edit_agent_pack",
-      "call_mcp",
     ],
-    maxIterations: 7,
+    maxIterations: 6,
   }),
   def({
     id: "def-analyst-macro",
     role: "analyst_macro",
     name: "宏观策略师",
-    /**
-     * 3.0.0：M9.P2 装上跨市场相关性 + regime 量化工具（factor.list macro + 沙箱）
-     * 3.1.0（2026-06-05 监控复盘 #4 / C）：加 run_screener，探索类任务能按
-     * sector/industry 找跨市场候选 ticker。
-     */
-    version: "3.1.0",
+    /** 3.5.0：宏观指标 + 必要跨市场 K 线。 */
+    version: "3.5.0",
     systemPrompt: PROMPT_ANALYST_MACRO,
     tools: [
-      ...MARKET_GOVERNANCE_TOOLS,
       "fetch_klines",
       "compute_macro_indicators",
-      // M9.P2：量化锚点 — 看现成宏观因子（如果项目里 promote 过）
-      "factor.list",
-      "factor.autoEvaluate",
-      // M9.P2：沙箱 — 跨市场相关性矩阵 + regime 检测
       "code.run_python",
-      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
-      // 2026-06-05 监控复盘 #4 / C：探索类任务时按 sector/industry 找跨市场候选 ticker
-      "run_screener",
-      "edit_agent_pack",
-      "call_mcp",
     ],
-    maxIterations: 7,
+    maxIterations: 6,
   }),
   def({
     id: "def-research",
     role: "research",
     name: "策略研究",
     /**
-     * 4.0.0：装齐 M2/M6 量化工坊全套工具；
-     * 4.1.0：长期记忆使用规约（M10.A2）— factor_archive/playbook 复用 + consolidation；
-     * 4.2.0：接入 Exec 能力源 — shell.exec / cli_agent.run（2026 CLI vs MCP hybrid 方案）：
-     *        让 research agent 能直接用本地 CLI（duckdb 查数据集 / jq 处理 JSON / git 版本化策略）
-     *        以及把长 horizon 写因子任务派给外部 agentic CLI（claude-code / aider）。
-     *        两者均为 lifecycle=experimental，必须经 EXEC_PROVIDERS 白名单 + cwd 边界 + arg 元字符防御。
-     * 4.3.0：补 recommendation.record，与选股/主题场景合同对齐。
+     * 4.5.0：因子→策略→回测主链 + 最小 skill（恰 10）。
+     * discovery / 推荐落库 / 下单由 Orchestrator 主责。
      */
-    version: "4.3.0",
+    version: "4.5.0",
     systemPrompt: PROMPT_RESEARCH,
     tools: [
-      // 基础数据
-      ...MARKET_GOVERNANCE_TOOLS,
-      "fetch_klines",
-      "compute_factors",
-      "compute_indicators",
-      // M2 因子三段式
       "factor.register",
       "factor.compute",
       "factor.evaluate",
-      // M6.2 自动评估 + 挖掘 + 组合 + 回测一键
       "factor.list",
       "factor.autoEvaluate",
-      "rule.register",
-      "rule.evaluate",
-      // 2026-06-08 P0-1.b / P0-1.c：补"最后一公里"产物落库工具
       "strategy.create_version",
       "strategy.compose",
-      "order.create_intent",
-      "recommendation.record",
-      "discovery.run",
-      "discovery.promote",
       "backtest.run",
-      // M7.3 沙箱代码执行（拿大量数据做自由分析 / 算 IC 矩阵 / 算相关性等）
-      "code.run_python",
-      // Exec 能力源：本地 CLI 工具 + 外部 agentic CLI（详见 src/runtime/exec/types.ts）
-      "shell.exec",
-      "cli_agent.run",
-      // M10.A2 长期记忆 — factor_archive / playbook 复用 + 主动 consolidate
-      "search_memory",
-      "memory.consolidate_longterm",
-      "memory.refresh_workspace",
-      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
       "skill.search",
       "skill.use_record",
-      "skill.create",
-      "skill.patch",
-      "skill.archive",
-      // 兼容旧链路
-      "run_experiment",
-      "version_strategy",
-      "edit_agent_pack",
-      "call_mcp",
     ],
     subscriptions: ["TASK_ASSIGN", "MODEL_UPDATE"],
-    /** 因子研究迭代步数较多（list→evaluate→promote 多次） */
     maxIterations: 10,
   }),
   def({
     id: "def-backtest",
     role: "backtest",
-    /**
-     * 4.0.0：装上事件驱动回测 backtest.run + 沙箱代码执行；
-     * 4.1.0：接入 Exec 能力源（shell.exec），让回测 agent 用 duckdb 直查 parquet 结果集、
-     *        git 管理回测产物快照。暂不开 cli_agent.run——回测主要是数值计算，外包给
-     *        coding agent 价值不大。
-     */
-    version: "4.1.0",
+    /** 4.3.0：回测主路径 + 最小 skill；全套 skill 编辑仍在编排器。 */
+    version: "4.3.0",
     name: "回测",
     systemPrompt: PROMPT_BACKTEST,
     tools: [
-      ...MARKET_GOVERNANCE_TOOLS,
-      "fetch_klines",
+      "backtest.run",
       "run_backtest",
       "get_backtest_status",
-      "compute_indicators",
-      // M2/M6 事件驱动回测
-      "backtest.run",
-      // 拉因子列表，配合 backtest.run 手写 signals
       "factor.list",
       "factor.compute",
-      // 自由分析（如计算多回测同图 metrics、回归归因）
+      "fetch_klines",
       "code.run_python",
-      // Exec 能力源：duckdb 直查 parquet 回测产物 / git 版本化回测脚本
-      "shell.exec",
-      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
       "skill.search",
       "skill.use_record",
-      "skill.create",
-      "skill.patch",
-      "skill.archive",
-      "call_mcp",
     ],
     maxIterations: 8,
   }),
   def({
     id: "def-risk",
     role: "risk",
-    /**
-     * 4.1.0：补 fetch_klines 工具授权。
-     *
-     * 之前 risk 在 strategy-pipeline 末端跑时 thought 反复说"本角色的授权工具集
-     * 中没有任何行情/查询工具（无 fetch_klines、无 search_asset）"——只能拉规则
-     * 就 stopped，无法独立验证标的真实性、估算波动率、跑 VaR / Stress Test
-     * 所需的历史 pnl 序列。
-     *
-     * 现在加入 fetch_klines：风控角色仍以"签核 / 否决"为主，但允许它在数据
-     * 不足时主动拉单标的日线，自行估算波动率分位 / 流动性 / 尾部风险，
-     * 输出更可执行的 conditional 条件。
-     */
-    version: "4.1.0",
+    /** 4.3.0：签核本职 + 最小 skill；不再挂行情/MCP。 */
+    version: "4.3.0",
     name: "风控",
     systemPrompt: PROMPT_RISK,
     tools: [
-      ...MARKET_GOVERNANCE_TOOLS,
       "evaluate_risk",
       "sign_intent",
       "load_rules",
       "check_concentration",
       "assess_liquidity",
-      // M2 规则三段式
       "rule.register",
       "rule.evaluate",
-      // 沙箱：跑暴露 / 集中度 / VaR 计算
-      "code.run_python",
-      /**
-       * 4.1.0 新增：行情数据查询。让 risk 在 portfolio pnl 序列缺失时也能
-       * 主动拉单标的日线、自行估算历史波动率 + VaR，避免"无数据就不出意见"。
-       */
-      "fetch_klines",
-      // M11：程序性记忆全套（与 SKILLS_NUDGE 提示词自洽）
       "skill.search",
       "skill.use_record",
-      "skill.create",
-      "skill.patch",
-      "skill.archive",
     ],
     subscriptions: ["TASK_ASSIGN", "ORDER_INTENT"],
     maxIterations: 6,
   }),
-  /**
-   * M9.P5：专项 Walk-Forward / Regime 验证 Agent，复用 backtest_engineer role
-   * （在 RETIRED_BUILTIN_DEFINITION_IDS 里复活，因为 walk-forward 与一般 backtest 关注点不同）
-   */
   def({
     id: "def-walk-forward-validator",
     role: "backtest_engineer",
     name: "Walk-Forward 验证师",
-    version: "1.0.0",
+    version: "1.2.0",
     systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
     tools: [
-      ...MARKET_GOVERNANCE_TOOLS,
-      // 多次跑回测（不同区间 / symbols）
       "backtest.run",
-      "run_backtest",
       "get_backtest_status",
-      // 看现成因子 RankIC 做 cross-section check
       "factor.list",
       "factor.autoEvaluate",
       "factor.evaluate.batch",
-      // 拉行情做 regime detection
-      "fetch_klines",
-      // 沙箱：跨段比对 / Fama-French 归因 / Realized vol
       "code.run_python",
-      // M11：程序性记忆（复用历史 skill 流程 + 记录用量）
       "skill.search",
       "skill.use_record",
-      "call_mcp",
     ],
-    /** Walk-forward 至少跑 3 段，每段独立 backtest.run → 工具调用轮数较多 */
-    maxIterations: 12,
+    maxIterations: 10,
   }),
 ];
 

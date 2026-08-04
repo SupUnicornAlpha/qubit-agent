@@ -67,40 +67,54 @@ export function mcpServers(...names: string[]): string[] {
   return [...new Set(names)];
 }
 
-/** 挂载量化 MCP 的角色（与 SEED 10 人 roster 对齐） */
+/** 挂载量化 MCP 的角色（与 SEED 10 人 roster 对齐）
+ * 4.4 / 2026-08：专家按专业域收窄 MCP，不再给所有人灌满 QUANT+PUBLIC+FSI。
+ */
 export const QUANT_MCP_ROLES = new Set<AgentRole>([
   "orchestrator",
   "market_data",
-  "news_event",
   "research",
   "backtest",
+  "backtest_engineer",
   "analyst_fundamental",
   "analyst_technical",
-  "analyst_sentiment",
   "analyst_macro",
-  "risk",
 ]);
 
-/** 可挂载 FSI 机构 MCP 的角色 */
+/** 可挂载 FSI 机构 MCP 的角色（仅基本面/舆情/新闻/研究需要） */
 export const FSI_MCP_ROLES = new Set<AgentRole>([
   "orchestrator",
   "research",
   "analyst_fundamental",
   "analyst_sentiment",
+  "news_event",
+]);
+
+/**
+ * 公开金融 MCP：按角色定向，不再随 QUANT_MCP_ROLES 全家桶。
+ * - investor-agent：行情/技术/估值兜底
+ * - publicfinance / us-gov：基本面 + 宏观
+ */
+export const PUBLIC_FINANCE_MCP_ROLES = new Set<AgentRole>([
+  "orchestrator",
+  "research",
+  "analyst_fundamental",
   "analyst_macro",
   "news_event",
+  "analyst_sentiment",
 ]);
 
 export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[] {
   const out = [...base];
   if (QUANT_MCP_ROLES.has(role)) {
     for (const n of QUANT_MCP) if (!out.includes(n)) out.push(n);
-    /**
-     * Wave-1（2026-06-10）：QUANT_MCP_ROLES 自动也获得 3 个零-key 公开金融 MCP。
-     * 跟 QUANT_MCP 是 ADD 关系不是 REPLACE —— 先给 LLM 多选一些，让它在
-     * mcp-financex 不可用时有 fallback 路径（投递给 evaluator 看是否使用）。
-     */
+  }
+  if (PUBLIC_FINANCE_MCP_ROLES.has(role)) {
     for (const n of PUBLIC_FINANCE_MCP) if (!out.includes(n)) out.push(n);
+  } else if (role === "market_data" || role === "analyst_technical") {
+    // 行情/技术只需 investor-agent 作 MCP 兜底，不必挂 SEC/FRED 全家桶
+    const investor = RECOMMENDED_MCP_NAMES.INVESTOR_AGENT;
+    if (!out.includes(investor)) out.push(investor);
   }
   if (FSI_MCP_ROLES.has(role)) {
     for (const n of FSI_DATA_MCP) if (!out.includes(n)) out.push(n);

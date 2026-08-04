@@ -2,8 +2,8 @@ import type { ScenarioRecipe } from "../types";
 
 export const liveTradingRecipe: ScenarioRecipe = {
   key: "live_trading",
-  aliases: ["paper_trading", "lt"],
-  version: "2026-08-03.1",
+  aliases: ["paper_trading", "live_trading_short", "lt"],
+  version: "2026-08-04.1",
   capabilityOwners: {
     strategy: "strategy",
     order: "execution",
@@ -54,8 +54,8 @@ export const liveTradingRecipe: ScenarioRecipe = {
   },
   checklistPrompt: [
     "1. 若尚无 strategy_version_id：先 strategy.create_version（成功一次即可）",
-    "2. 立刻调用 order.create_intent（symbol、side=buy|sell、qty>0、strategy_version_id、dispatch_mode=paper）；禁止 submit_order / 单独 evaluate_risk 代替",
-    "3. risk_decision 由 order.create_intent 内嵌；不要先走券商 submit",
+    "2. 立刻调用 order.create_intent（symbol、side=buy|sell、qty>0、strategy_version_id、dispatch_mode=paper）；禁止 submit_order / 单独 evaluate_risk / rule.evaluate 代替",
+    "3. risk_decision 由 order.create_intent 内嵌；不要先走券商 submit 或 rule.evaluate",
     "4. 输出五段答案；不得仅以行情不可用结案",
   ],
 };

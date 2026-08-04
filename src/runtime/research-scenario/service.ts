@@ -257,8 +257,19 @@ export function buildAnalystLaunchInput(input: {
     params.scope && typeof params.scope === "object" && !Array.isArray(params.scope)
       ? (params.scope as ResearchScopeInput)
       : undefined;
-  const ticker = firstString(params, ["ticker", "symbol", "primarySymbol"]);
-  const symbols = firstStringArray(params, ["symbols", "tickers"]);
+  const tickerInput = firstString(params, ["ticker", "symbol", "primarySymbol"]);
+  // API callers commonly submit a comma-separated `ticker` field for a
+  // comparison.  Normalize it here into an explicit basket before the A2A
+  // payload is made, rather than relying on every downstream boundary to
+  // rediscover the multi-symbol intent.
+  const tickerSymbols = tickerInput
+    ? tickerInput
+        .split(/[,，、\s]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+  const ticker = tickerSymbols.length === 1 ? tickerSymbols[0] : undefined;
+  const symbols = [...new Set([...firstStringArray(params, ["symbols", "tickers"]), ...tickerSymbols])];
   const theme =
     firstString(params, ["theme", "strategyHint", "ruleTheme", "factorCategory", "universe"]) ??
     input.goal;
@@ -302,15 +313,26 @@ export function buildAnalystLaunchInput(input: {
 }
 
 /**
- * A standard equity study needs data, fundamentals and technical analysis.
- * News is deliberately not a default child until a real news provider is
- * configured; otherwise the team fans out into a known-unavailable path and
- * later presents the absence as analyst disagreement. Other scenarios keep
- * their registered/default team behavior.
+ * A standard equity study needs data, fundamentals, technical and news.
+ * news_event owns fetch_news (H-DV / B-1 news capability); fundamentals /
+ * technical keep klines but must not be the only path after quote evidence.
  */
 function minimalAnalystRolesForScenario(scenarioKey: string): AgentRole[] | undefined {
-  if (scenarioKey === "research" || scenarioKey === "research_multi") {
-    return ["market_data", "analyst_fundamental", "analyst_technical"];
+  if (scenarioKey === "research") {
+    return ["market_data", "analyst_fundamental", "analyst_technical", "news_event"];
+  }
+  // The multi-name delivery contract requires at least three independent
+  // signals.  market_data is an auxiliary reporter, so include macro as a
+  // third signal-producing analyst instead of creating an impossible 3-signal
+  // gate from a two-analyst roster. news_event closes the news capability.
+  if (scenarioKey === "research_multi") {
+    return [
+      "market_data",
+      "analyst_fundamental",
+      "analyst_technical",
+      "analyst_macro",
+      "news_event",
+    ];
   }
   return undefined;
 }

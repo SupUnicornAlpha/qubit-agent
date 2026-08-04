@@ -18,6 +18,10 @@ const DEFAULT_STALL_TOOLS = [
   "update_plan",
   "run_screener",
   "evaluate_risk",
+  "fetch_klines",
+  "fetch_quote",
+  "fetch_bars",
+  "fetch_price_data",
 ] as const;
 
 export function applyToolSurface(input: {
@@ -62,7 +66,7 @@ export function applyToolSurface(input: {
         return base === "factor.register" || toolName === "factor.register";
       });
     }
-  } else if (!snapshot.artifactsOk && snapshot.attemptedTools.length > 0) {
+  } else if (!snapshot.researchArtifactsOk && snapshot.attemptedTools.length > 0) {
     next = applyMissingArtifactToolFilter({
       tools: next,
       missingTables: snapshot.missingArtifactTables,
@@ -75,6 +79,7 @@ export function applyToolSurface(input: {
   // evaluating the first one.
   if (
     snapshot.factorDefinitionCount > 0 &&
+    !snapshot.researchArtifactsOk &&
     snapshot.missingArtifactTables.includes("factor_evaluation")
   ) {
     const evaluationTools = new Set(["factor.compute", "factor.evaluate", "factor.autoEvaluate"]);
@@ -86,15 +91,63 @@ export function applyToolSurface(input: {
     if (narrowed.length > 0) next = narrowed;
   }
 
-  // Stock-pick second hop: after screener, force recommendation.record until upgrade rows filled.
+  // Research second hop: after quote evidence, force news before more klines.
+  // Specialists without fetch_news must not fall back to an unbounded kline surface —
+  // strip quote tools so they finish writing, while news_event / orchestrator can fill news.
+  if (
+    (snapshot.scenarioKey === "research" ||
+      snapshot.scenarioKey === "research_multi" ||
+      snapshot.scenarioKey === "research_theme" ||
+      snapshot.recipe?.key === "research") &&
+    snapshot.attemptedTools.some((t) => {
+      const base = t.includes("/") ? t.split("/").pop()! : t;
+      return base === "fetch_klines" || base === "fetch_quote" || base === "fetch_bars";
+    }) &&
+    snapshot.notAttemptedCapabilities.includes("news")
+  ) {
+    const prefer = new Set(["fetch_news", "fetch_news_sentiment"]);
+    const narrowed = next.filter((toolName) => {
+      const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+      return prefer.has(base) || prefer.has(toolName);
+    });
+    if (narrowed.length > 0) {
+      next = narrowed;
+    } else {
+      // Stall filter may have emptied `next` (specialist lacks news tools).
+      // Strip quote churn from the authorized input surface instead.
+      const source = next.length > 0 ? next : [...tools];
+      next = source.filter((toolName) => {
+        const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+        return (
+          base !== "fetch_klines" &&
+          base !== "fetch_quote" &&
+          base !== "fetch_bars" &&
+          base !== "fetch_price_data" &&
+          base !== "market.readiness" &&
+          base !== "market.resolve_symbol" &&
+          base !== "market.data_sources"
+        );
+      });
+    }
+  }
+
+  // Stock-pick second hop: after screener, prefer quote + recommendation until research floor filled.
+  // Keep fetch_klines so B-1 get_quote can still land (narrowing to record-only blocked quote).
   if (
     (snapshot.scenarioKey === "stock_pick" ||
+      snapshot.scenarioKey === "stock_pick_short" ||
       snapshot.recipe?.key === "stock_pick" ||
       snapshot.notAttemptedCapabilities.includes("recommendation.record")) &&
     snapshot.attemptedTools.some((t) => t === "run_screener" || t.endsWith("/run_screener")) &&
+    !snapshot.researchArtifactsOk &&
     (snapshot.missingArtifactTables.includes("recommendation_snapshot") || !snapshot.artifactsOk)
   ) {
-    const prefer = new Set(["recommendation.record"]);
+    const prefer = new Set([
+      "recommendation.record",
+      "fetch_klines",
+      "fetch_bars",
+      "get_quote",
+    ]);
     const narrowed = next.filter((toolName) => {
       const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
       return prefer.has(base) || prefer.has(toolName);
@@ -107,7 +160,8 @@ export function applyToolSurface(input: {
   const isStrategy =
     snapshot.scenarioKey === "strategy" || snapshot.recipe?.key === "strategy";
 
-  // Live trading: strip broker submit until order_intent exists (paper path uses create_intent).
+  // Live trading: strip broker submit / standalone risk probes until order_intent exists.
+  // rule.evaluate looks like "risk" for B-1 aliases but does not write risk_decision for an intent.
   if (isLive && snapshot.missingArtifactTables.includes("order_intent")) {
     next = next.filter((toolName) => {
       const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
@@ -115,7 +169,9 @@ export function applyToolSurface(input: {
         base !== "submit_order" &&
         !toolName.endsWith("/submit_order") &&
         base !== "evaluate_risk" &&
-        !toolName.endsWith("/evaluate_risk")
+        !toolName.endsWith("/evaluate_risk") &&
+        base !== "rule.evaluate" &&
+        !toolName.endsWith("/rule.evaluate")
       );
     });
   }
@@ -161,7 +217,16 @@ export function applyToolSurface(input: {
     recipe: snapshot.recipe,
   });
 
-  return next.length > 0 ? next : [...tools];
+  // Never undo intentional surface narrowing by restoring the full authorized
+  // set — an empty (or nearly empty) next surface is preferable to re-enabling
+  // stall tools that just exhausted their budget.
+  if (next.length > 0) return next;
+  const strippedStall = tools.filter((toolName) => {
+    const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
+    const budgetTools = new Set(snapshot.recipe?.stallBudget.tools ?? DEFAULT_STALL_TOOLS);
+    return !budgetTools.has(base) && !budgetTools.has(toolName);
+  });
+  return strippedStall.length > 0 ? strippedStall : [];
 }
 
 function applyStallBudgetStrip(input: {

@@ -57,14 +57,14 @@ describe("buildDefaultSandboxPoliciesFromDefinitions", () => {
 });
 
 describe("mergeBuiltinAgentDefinitionsIntoUserFile", () => {
-  test("upgrades an old builtin while retaining user-added tools", () => {
+  test("upgrades an old builtin and replaces tools with curated seed surface", () => {
     const baseline = defs[0];
     if (!baseline) throw new Error("missing market baseline");
     const old = {
       ...baseline,
       version: "0.9.0",
       systemPrompt: "old prompt",
-      tools: ["fetch_price_data", "user-tool"],
+      tools: ["fetch_price_data", "user-tool", "fetch_ticks"],
     };
     const seed = {
       ...baseline,
@@ -76,7 +76,22 @@ describe("mergeBuiltinAgentDefinitionsIntoUserFile", () => {
     expect(mutated).toBe(true);
     expect(definitions[0]?.version).toBe("2.3.0");
     expect(definitions[0]?.systemPrompt).toBe("realtime routing baseline");
-    expect(definitions[0]?.tools).toEqual(["fetch_price_data", "fetch_quote", "user-tool"]);
+    // 精品面：版本升级时用 seed 工具面整体替换，不再 union 残留旧工具
+    expect(definitions[0]?.tools).toEqual(["fetch_price_data", "fetch_quote"]);
+  });
+
+  test("same version but drifted tools are reset to seed surface", () => {
+    const baseline = defs[0];
+    if (!baseline) throw new Error("missing market baseline");
+    const drifted = {
+      ...baseline,
+      version: baseline.version,
+      tools: [...baseline.tools, "stale_legacy_tool"],
+    };
+    const { definitions, mutated } = mergeBuiltinAgentDefinitionsIntoUserFile([drifted], [baseline]);
+    expect(mutated).toBe(true);
+    expect(definitions[0]?.tools).toEqual([...baseline.tools].sort());
+    expect(definitions[0]?.tools).not.toContain("stale_legacy_tool");
   });
 
   test("does not overwrite a custom definition outside the builtin seed", () => {
@@ -280,7 +295,7 @@ describe("ensureWorkspaceRuntimeConfigFiles · sandbox.json union 行为", () =>
     expect(dp?.allowedTools).toContain("user-private-tool"); // user 自加项保留
   });
 
-  test("agents.json 旧 builtin 会升级且不会再覆盖新 seed", async () => {
+  test("agents.json 旧 builtin 会升级到 curated seed 工具面", async () => {
     writeFileSync(
       join(tmpRoot, ".qubit", "agents.json"),
       JSON.stringify({
@@ -310,8 +325,9 @@ describe("ensureWorkspaceRuntimeConfigFiles · sandbox.json union 行为", () =>
     };
     const market = after.definitions.find((definition) => definition.id === "def-market");
     expect(market?.version).toBe("1");
-    expect(market?.tools).toContain("fetch_price_data");
-    expect(market?.tools).toContain("user-tool");
+    expect(market?.systemPrompt).toBe(defs[0]?.systemPrompt);
+    expect(market?.tools).toEqual([...(defs[0]?.tools ?? [])].sort());
+    expect(market?.tools).not.toContain("user-tool");
   });
 
   test("mergeBuiltinSandboxPolicies=false → 不做合并", async () => {

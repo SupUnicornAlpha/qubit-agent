@@ -280,11 +280,13 @@ function isOlderVersion(candidate: string, baseline: string): boolean {
 
 /**
  * Keep the editable workspace file, but never let an old generated builtin
- * snapshot downgrade runtime capabilities after DB seeding.
+ * snapshot freeze a bloated tool surface after code curation.
  *
- * User-added tools/MCPs/skills/subscriptions are retained. A builtin prompt is
- * refreshed only when its file version is older than the code baseline; custom
- * definitions that do not exist in the seed are untouched.
+ * Builtin tool/mcp/skill lists are owned by SEED_AGENT_DEFINITIONS. On version
+ * upgrade OR tool-surface drift, replace those arrays with the seed baseline
+ * (instead of forever union-growing). Custom definitions outside the seed are
+ * untouched. Per-field DB `user_overrides_json` still protects explicit UI edits
+ * during config→DB sync.
  */
 export function mergeBuiltinAgentDefinitionsIntoUserFile(
   fileDefinitions: RuntimeAgentDefinition[],
@@ -297,32 +299,25 @@ export function mergeBuiltinAgentDefinitionsIntoUserFile(
     const seed = seedById.get(fileDefinition.id);
     if (!seed) return fileDefinition;
 
-    const tools = unionStrings(fileDefinition.tools, seed.tools);
-    const mcpServers = unionStrings(fileDefinition.mcpServers, seed.mcpServers);
-    const skills = unionStrings(fileDefinition.skills, seed.skills);
-    const subscriptions = unionStrings(
-      fileDefinition.subscriptions,
-      seed.subscriptions
-    ) as RuntimeAgentDefinition["subscriptions"];
+    const tools = [...seed.tools].sort();
+    const mcpServers = [...seed.mcpServers].sort();
+    const skills = [...seed.skills].sort();
+    const subscriptions = [...seed.subscriptions].sort() as RuntimeAgentDefinition["subscriptions"];
     const upgrade = isOlderVersion(fileDefinition.version, seed.version);
-    const changed =
-      upgrade ||
+    const surfaceDrift =
       !sameSet(fileDefinition.tools, tools) ||
       !sameSet(fileDefinition.mcpServers, mcpServers) ||
       !sameSet(fileDefinition.skills, skills) ||
       !sameSet(fileDefinition.subscriptions, subscriptions);
+    const changed = upgrade || surfaceDrift;
     if (!changed) return fileDefinition;
     mutated = true;
     return {
       ...fileDefinition,
-      ...(upgrade
-        ? {
-            role: seed.role,
-            name: seed.name,
-            version: seed.version,
-            systemPrompt: seed.systemPrompt,
-          }
-        : {}),
+      role: seed.role,
+      name: seed.name,
+      version: seed.version,
+      systemPrompt: seed.systemPrompt,
       tools,
       mcpServers,
       skills,
@@ -390,7 +385,7 @@ export async function ensureWorkspaceRuntimeConfigFiles(params: {
         if (mutated) {
           await writeFile(agentsFile, JSON.stringify({ definitions }, null, 2), "utf-8");
           console.log(
-            "[Workspace] agents.json: upgraded builtin definitions and retained user extensions."
+            "[Workspace] agents.json: refreshed builtin definitions to curated seed tool surfaces."
           );
         }
       }

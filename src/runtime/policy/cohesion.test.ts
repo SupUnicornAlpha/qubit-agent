@@ -99,12 +99,143 @@ describe("tool surface second hop", () => {
         "order.create_intent",
         "qubit-broker/submit_order",
         "qubit-risk/evaluate_risk",
+        "rule.evaluate",
         "strategy.create_version",
       ],
       snapshot,
       role: "execute",
     });
     expect(tools).toEqual(["order.create_intent"]);
+    expect(tools).not.toContain("rule.evaluate");
+  });
+
+  test("stock pick after screener keeps quote + recommendation tools", () => {
+    const snapshot = {
+      workflowId: "wf",
+      scenarioKey: "stock_pick",
+      recipe: resolveScenarioRecipe("stock_pick"),
+      authorizedTools: [],
+      attemptedTools: ["run_screener"],
+      successfulTools: ["run_screener"],
+      notAttemptedCapabilities: ["get_quote", "recommendation.record"],
+      unavailableCapabilities: [],
+      missingArtifactTables: ["recommendation_snapshot"],
+      missingArtifacts: [],
+      artifactsOk: false,
+      researchArtifactsOk: false,
+      factorDefinitionCount: 0,
+      activeFactorIds: [],
+      latestFactorDefinitionId: null,
+      screenerTopSymbol: "AAPL",
+      strategyVersionId: null,
+      loadedAtMs: Date.now(),
+    } satisfies ScenarioRuntimeSnapshot;
+
+    const tools = applyToolSurface({
+      tools: [
+        "run_screener",
+        "fetch_klines",
+        "recommendation.record",
+        "update_plan",
+        "factor.list",
+      ],
+      snapshot,
+      role: "research",
+    });
+    expect(tools).toContain("recommendation.record");
+    expect(tools).toContain("fetch_klines");
+    expect(tools).not.toContain("run_screener");
+    expect(tools).not.toContain("factor.list");
+  });
+
+  test("research after klines prefers news tools", () => {
+    const snapshot = {
+      workflowId: "wf",
+      scenarioKey: "research_multi",
+      recipe: resolveScenarioRecipe("research_multi"),
+      authorizedTools: [],
+      attemptedTools: ["qubit-data/fetch_klines"],
+      successfulTools: [
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+      ],
+      notAttemptedCapabilities: ["news"],
+      unavailableCapabilities: [],
+      missingArtifactTables: [],
+      missingArtifacts: [],
+      artifactsOk: false,
+      researchArtifactsOk: false,
+      factorDefinitionCount: 0,
+      activeFactorIds: [],
+      latestFactorDefinitionId: null,
+      screenerTopSymbol: null,
+      strategyVersionId: null,
+      loadedAtMs: Date.now(),
+    } satisfies ScenarioRuntimeSnapshot;
+
+    const tools = applyToolSurface({
+      tools: [
+        "fetch_klines",
+        "fetch_news",
+        "run_analyst_team",
+        "update_plan",
+        "market.readiness",
+      ],
+      snapshot,
+      role: "research",
+    });
+    expect(tools).toEqual(["fetch_news"]);
+    expect(tools).not.toContain("fetch_klines");
+    expect(tools).not.toContain("market.readiness");
+  });
+
+  test("research after klines strips quote tools when agent lacks fetch_news", () => {
+    const snapshot = {
+      workflowId: "wf",
+      scenarioKey: "research",
+      recipe: resolveScenarioRecipe("research"),
+      authorizedTools: [],
+      attemptedTools: ["qubit-data/fetch_klines"],
+      successfulTools: [
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+        "qubit-data/fetch_klines",
+      ],
+      notAttemptedCapabilities: ["news"],
+      unavailableCapabilities: [],
+      missingArtifactTables: [],
+      missingArtifacts: [],
+      artifactsOk: false,
+      researchArtifactsOk: false,
+      factorDefinitionCount: 0,
+      activeFactorIds: [],
+      latestFactorDefinitionId: null,
+      screenerTopSymbol: null,
+      strategyVersionId: null,
+      loadedAtMs: Date.now(),
+    } satisfies ScenarioRuntimeSnapshot;
+
+    const tools = applyToolSurface({
+      tools: [
+        "fetch_klines",
+        "fetch_price_data",
+        "compute_indicators",
+        "code.run_python",
+        "market.readiness",
+      ],
+      snapshot,
+      role: "analyst_technical",
+    });
+    expect(tools).toContain("compute_indicators");
+    expect(tools).toContain("code.run_python");
+    expect(tools).not.toContain("fetch_klines");
+    expect(tools).not.toContain("fetch_price_data");
+    expect(tools).not.toContain("market.readiness");
   });
 
   test("after factor registration, exposes evaluation instead of duplicate registration", () => {
@@ -120,7 +251,7 @@ describe("tool surface second hop", () => {
       missingArtifactTables: ["factor_evaluation"],
       missingArtifacts: [],
       artifactsOk: false,
-      researchArtifactsOk: true,
+      researchArtifactsOk: false,
       factorDefinitionCount: 1,
       activeFactorIds: [],
       latestFactorDefinitionId: null,
