@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 import type { ServerWebSocket } from "bun";
 import { config } from "./config";
 import { workspaceRouter } from "./routes/workspace.routes";
+import { fsWorkspaceRouter } from "./routes/fs-workspace.routes";
 import { workflowRouter } from "./routes/workflow.routes";
 import { agentRouter } from "./routes/agent.routes";
 import { chatRouter } from "./routes/chat.routes";
@@ -64,6 +65,7 @@ app.get("/health", (c) => {
 });
 
 app.route("/api/v1/workspaces", workspaceRouter);
+app.route("/api/v1/fs-workspaces", fsWorkspaceRouter);
 app.route("/api/v1/workflows", workflowRouter);
 app.route("/api/v1/agents", agentRouter);
 app.route("/api/v1/chat", chatRouter);
