@@ -24,13 +24,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { type AgentControlMode } from "../../api/types";
+import { type AgentControlMode, type StepStreamEvent } from "../../api/types";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
+import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
 import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
+import { OrchestratorLiveStatus } from "./OrchestratorLiveStatus";
 import { SubAgentRunsPanel } from "./SubAgentRunsPanel";
+import { AgentRunPanel } from "./AgentRunChatView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
+import { buildChatExecutionActivity } from "../chat/ChatExecutionActivity";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
 
@@ -42,6 +46,8 @@ export interface OrchestratorArtifact {
   subtitle?: string;
   projectId?: string | null;
   workflowRunId?: string | null;
+  /** 用于插入对话流的时间锚点 */
+  createdAt?: string | null;
 }
 
 export interface OrchestratorChatPanelProps {
@@ -87,12 +93,16 @@ export interface OrchestratorChatPanelProps {
   onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
   /** Coding-Agent 体验 P1：当前「正在调用什么、为何」活动行（tool_rationale 推流） */
   activity?: { tool: string; why: string } | null;
+  /** firehose 近时 step 事件，驱动工具调用中 / A2A 实时卡 */
+  streamEvents?: StepStreamEvent[];
+  /** Orchestrator 当前流式思考文本（token 缓冲） */
+  thinkingText?: string | null;
   /**
    * Orchestrator 已派发的子 Agent 运行摘要（可展开看内部轨迹）。
    * 让用户在右栏直接看见「谁在跑」，不必先点中间拓扑。
    */
   subAgentRuns?: SubAgentRunSummary[];
-  /** 本工作流已生成的产物（因子/策略/脚本），内联在对话框顶部展示 */
+  /** 本工作流已生成的产物（因子/策略/脚本）；对话流内联 + 顶部精简汇总 */
   artifacts: OrchestratorArtifact[];
   artifactsLoading?: boolean;
   artifactsError?: string | null;
@@ -102,6 +112,17 @@ export interface OrchestratorChatPanelProps {
   sendDisabled: boolean;
   /** 启动禁用原因（tooltip） */
   sendDisabledReason: string;
+  /** 可折叠 Run 条：工作流切换 / 新建（研究设置仍可回左栏） */
+  runStrip?: {
+    expanded: boolean;
+    onExpandedChange: (open: boolean) => void;
+    summary: string;
+    options: Array<{ id: string; label: string; status?: string }>;
+    onSelect: (id: string) => void;
+    onCreate: () => void;
+    onOpenResearchSettings?: () => void;
+    creating?: boolean;
+  };
 }
 
 const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hint: string }> = [
@@ -134,19 +155,47 @@ export function OrchestratorChatPanel({
   onExecutePlan,
   onGoalAction,
   activity,
+  streamEvents = [],
+  thinkingText = null,
   subAgentRuns = [],
   artifacts,  artifactsLoading = false,
   artifactsError = null,
   onOpenArtifact,
   sendDisabled,
   sendDisabledReason,
+  runStrip,
 }: OrchestratorChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [injectHint, setInjectHint] = useState<string | null>(null);
   const [injecting, setInjecting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
-  const [artifactsOpen, setArtifactsOpen] = useState(true);
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const [focusedSubAgentRole, setFocusedSubAgentRole] = useState<string | null>(null);
+  const [statusRailPinned, setStatusRailPinned] = useState(() => {
+    try {
+      return window.localStorage.getItem("qb.orchestrator.statusRailPinned") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const subConversationRef = useRef<HTMLDivElement | null>(null);
   const wfId = workflowRunId.trim();
+  const focusedSubAgent = useMemo(
+    () => subAgentRuns.find((run) => run.role === focusedSubAgentRole) ?? null,
+    [subAgentRuns, focusedSubAgentRole]
+  );
+
+  const toggleStatusRailPinned = () => {
+    setStatusRailPinned((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("qb.orchestrator.statusRailPinned", next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
 
   /**
    * 本对话框只聚焦 Orchestrator 与用户：
@@ -170,7 +219,16 @@ export function OrchestratorChatPanel({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [events.length, runProgress, subAgentRuns.length]);
+  }, [events.length, runProgress, subAgentRuns.length, streamEvents.length, thinkingText, activity]);
+
+  useEffect(() => {
+    if (!focusedSubAgent) setFocusedSubAgentRole(null);
+  }, [focusedSubAgent]);
+
+  useEffect(() => {
+    if (!focusedSubAgent || !subConversationRef.current) return;
+    subConversationRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focusedSubAgent]);
 
   /**
    * 发送语义：
@@ -178,9 +236,24 @@ export function OrchestratorChatPanel({
    *   - 其余（空闲/已完成）：发送 = 交给 Orchestrator **自主判断**（onSend → orchestrator-chat：
    *     直接答 / assign_task 派单 / run_analyst_team 全队）。是对话，不需要研究范围，
    *     故不受 sendDisabled 约束。「启动团队分析」按钮才是直接全队。
+   *
+   * showActive 不能只看 running/chatInFlight：final 后专家/工具仍可能在飞，
+   * 仍应显示 ● 运行中（Cursor/Codex 风格）。
    */
-  const showActive = running || chatInFlight;
-  const composerMode: "chat" | "inject" = running ? "inject" : "chat";
+  const toolsRunning = useMemo(
+    () =>
+      buildChatExecutionActivity(streamEvents, true).tools.some(
+        (tool) => tool.status === "running"
+      ),
+    [streamEvents]
+  );
+  const expertsActive = subAgentRuns.some(
+    (run) => run.status === "running" || run.status === "queued"
+  );
+  const thinking = Boolean(thinkingText?.trim());
+  const showActive =
+    running || chatInFlight || expertsActive || toolsRunning || thinking;
+  const composerMode: "chat" | "inject" = running || expertsActive ? "inject" : "chat";
   const selectedAgentMode = getAgentModeOption(agentMode);
   const hasContent = composerValue.trim().length > 0;
   const canSend = wfId.length > 0 && hasContent && !injecting;
@@ -228,7 +301,7 @@ export function OrchestratorChatPanel({
 
   return (
     <div style={styles.root}>
-      {/* Header：标题 + 运行徽标 + 模式切换 */}
+      {/* Header：标题 + 运行徽标 */}
       <div style={styles.header}>
         <div style={styles.titleRow}>
           <span style={styles.title}>Orchestrator</span>
@@ -265,64 +338,146 @@ export function OrchestratorChatPanel({
             </button>
           ) : null}
         </div>
-        <div style={styles.modeRow} role="radiogroup" aria-label="自主 / HITL 模式">
-          {MODE_OPTIONS.map((opt) => {
-            const active = hitlMode === opt.id;
-            return (
-              <button
-                key={opt.id}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                disabled={running}
-                title={opt.hint}
-                onClick={() => onHitlModeChange(opt.id)}
-                style={{
-                  ...styles.modeBtn,
-                  ...(active ? styles.modeBtnActive : null),
-                  ...(running ? styles.modeBtnDisabled : null),
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-        {/* Orchestrator 主视角 + 子 Agent 进度卡片（可展开看内部轨迹） */}
         <div style={styles.scopeRow}>
           <span style={styles.scopeHint}>
-            显示 Orchestrator 对你的输出、工具调用，以及已派发专家的实时进度。点击专家卡片可展开其内部运行状态。
+            显示 Orchestrator 对你的输出、工具调用，以及已派发专家的实时进度。点击专家可跳转到独立子对话查看完整轨迹。
           </span>
         </div>
       </div>
 
-      {/* Body：计划卡片 + 当前活动 + 内联 HITL + 产物卡片 + 对话流 */}
+      {runStrip ? (
+        <div style={styles.runStrip} data-qb-orch-run-strip>
+          <button
+            type="button"
+            style={styles.runStripToggle}
+            onClick={() => runStrip.onExpandedChange(!runStrip.expanded)}
+            aria-expanded={runStrip.expanded}
+          >
+            <span style={styles.runStripTitle}>
+              {runStrip.expanded ? "▾" : "▸"} Run · {wfId ? wfId.slice(0, 8) : "未选择"}
+            </span>
+            <span style={styles.runStripSummary}>{runStrip.summary}</span>
+          </button>
+          {runStrip.expanded ? (
+            <div style={styles.runStripBody}>
+              <label style={styles.runStripLabel}>
+                当前工作流
+                <select
+                  style={styles.runStripSelect}
+                  value={wfId}
+                  onChange={(e) => runStrip.onSelect(e.target.value)}
+                >
+                  <option value="">选择工作流…</option>
+                  {runStrip.options.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                      {opt.status ? ` · ${opt.status}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div style={styles.runStripActions}>
+                <button
+                  type="button"
+                  className="qb-btn-primary-brand"
+                  style={styles.runStripBtn}
+                  disabled={runStrip.creating}
+                  onClick={() => runStrip.onCreate()}
+                >
+                  {runStrip.creating ? "创建中…" : "新建工作流"}
+                </button>
+                {runStrip.onOpenResearchSettings ? (
+                  <button
+                    type="button"
+                    style={styles.runStripLink}
+                    onClick={() => runStrip.onOpenResearchSettings?.()}
+                  >
+                    研究设置（左栏）
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* 状态轨：Plan / 运行态 / 工具 / A2A 专家进度；可固定顶端或随正文滚走 */}
+      {statusRailPinned ? (
+        <div style={styles.statusRail} data-qb-orch-status-rail="pinned">
+          <StatusRailToolbar pinned onToggle={toggleStatusRailPinned} />
+          <StatusRailContent
+            plan={plan ?? null}
+            onExecutePlan={onExecutePlan}
+            onGoalAction={onGoalAction}
+            executeDisabled={running || chatInFlight || expertsActive}
+            running={running}
+            chatInFlight={chatInFlight}
+            pendingHitlRequestId={pendingHitlRequestId}
+            activity={activity}
+            streamEvents={streamEvents}
+            subAgentRuns={subAgentRuns}
+            thinkingText={thinkingText}
+            showActive={showActive}
+            focusedSubAgentRole={focusedSubAgentRole}
+            onSelectRun={(run) => setFocusedSubAgentRole(run.role)}
+          />
+        </div>
+      ) : null}
+
+      {/* Body：对话流（工具/A2A 穿插） */}
       <div ref={scrollRef} style={styles.body} data-qb-orchestrator-chat>
-        <PlanCard
-          plan={plan ?? null}
-          onExecute={onExecutePlan}
-          onGoalAction={onGoalAction}
-          executeDisabled={running || chatInFlight}
-        />
-        {activity?.why ? (
-          <div style={styles.activityLine}>
-            <span style={styles.activitySpinner} aria-hidden>
-              ⠋
-            </span>
-            <span style={styles.activityText}>
-              {activity.tool ? <strong>调用 {activity.tool}</strong> : null}
-              {activity.tool ? "：" : null}
-              {activity.why}
-            </span>
+        {!statusRailPinned ? (
+          <div style={styles.statusRailInScroll} data-qb-orch-status-rail="scroll">
+            <StatusRailToolbar pinned={false} onToggle={toggleStatusRailPinned} />
+            <StatusRailContent
+              plan={plan ?? null}
+              onExecutePlan={onExecutePlan}
+              onGoalAction={onGoalAction}
+              executeDisabled={running || chatInFlight || expertsActive}
+              running={running}
+              chatInFlight={chatInFlight}
+              pendingHitlRequestId={pendingHitlRequestId}
+              activity={activity}
+              streamEvents={streamEvents}
+              subAgentRuns={subAgentRuns}
+              thinkingText={thinkingText}
+              showActive={showActive}
+              focusedSubAgentRole={focusedSubAgentRole}
+              onSelectRun={(run) => setFocusedSubAgentRole(run.role)}
+            />
           </div>
         ) : null}
-        <SubAgentRunsPanel runs={subAgentRuns} />
-        {wfId ? (
-          <TeamHitlBanner
-            workflowRunId={wfId}
-            triggerKey={pendingHitlRequestId ?? wfId}
-            onResolved={onHitlResolved}
-          />
+        {focusedSubAgent ? (
+          <section ref={subConversationRef} style={styles.subConversation} aria-label="专家子对话上下文">
+            <div style={styles.subConversationHeader}>
+              <div style={{ minWidth: 0 }}>
+                <div style={styles.subConversationTitle}>专家子对话 · {focusedSubAgent.role}</div>
+                <div style={styles.subConversationMeta}>
+                  可向下滚动查看该专家的派单、推理、工具调用与回传；主对话不会被覆盖。
+                </div>
+              </div>
+              <button
+                type="button"
+                style={styles.closeSubConversation}
+                onClick={() => setFocusedSubAgentRole(null)}
+              >
+                返回主对话
+              </button>
+            </div>
+            <div style={styles.subConversationBody}>
+              <AgentRunPanel
+                data={{
+                  role: focusedSubAgent.role,
+                  inbound: focusedSubAgent.inbound,
+                  outbound: focusedSubAgent.outbound,
+                  steps: focusedSubAgent.steps,
+                  tools: focusedSubAgent.tools,
+                  mcps: focusedSubAgent.mcps,
+                }}
+                defaultMode="chat"
+              />
+            </div>
+          </section>
         ) : null}
         {artifacts.length > 0 || artifactsLoading || artifactsError ? (
           <div style={styles.artifactBox}>
@@ -336,6 +491,7 @@ export function OrchestratorChatPanel({
                 {artifactsOpen ? "▾" : "▸"}
               </span>
               📦 本轮产物（{artifacts.length}）
+              <span style={styles.artifactHint}>汇总 · 卡片已按产出位置插入对话</span>
             </button>
             {artifactsOpen ? (
               <div style={styles.artifactList}>
@@ -373,6 +529,9 @@ export function OrchestratorChatPanel({
           contentMaxLength={12000}
           collapseA2AFromRole="orchestrator"
           collapseToolCalls
+          layout="stream"
+          artifacts={artifacts}
+          onOpenArtifact={onOpenArtifact}
           onOpenRef={(ref) => {
             // 交接信封里的产物引用 → 复用产物打开逻辑（factor / strategy_version）。
             const kind =
@@ -396,9 +555,27 @@ export function OrchestratorChatPanel({
         />
       </div>
 
-      {/* Footer：进度 + composer */}
+      {/* Footer：HITL 在输入框与模式选择之上 */}
       <div style={styles.footer}>
+        {wfId ? (
+          <TeamHitlBanner
+            workflowRunId={wfId}
+            triggerKey={pendingHitlRequestId ?? wfId}
+            onResolved={onHitlResolved}
+          />
+        ) : null}
         {showActive && runProgress ? <div style={styles.progress}>{runProgress}</div> : null}
+        {showActive && !runProgress ? (
+          <div style={styles.progress}>
+            {thinking
+              ? "思考输出中…"
+              : toolsRunning
+                ? "工具调用进行中…"
+                : expertsActive
+                  ? "专家 Agent 运行中…"
+                  : "Orchestrator 仍在运行…"}
+          </div>
+        ) : null}
         {errorMessage ? (
           <div style={styles.error} role="alert">
             <span style={{ flex: 1, minWidth: 0 }}>{errorMessage}</span>
@@ -434,6 +611,21 @@ export function OrchestratorChatPanel({
               onChange={onAgentModeChange}
               disabled={running}
             />
+            <label style={styles.hitlSelectLabel} title="选择本次对话的人工确认策略">
+              <span>HITL</span>
+              <select
+                value={hitlMode}
+                disabled={running}
+                onChange={(event) => onHitlModeChange(event.target.value as OrchestratorHitlMode)}
+                style={{ ...styles.hitlSelect, ...(running ? styles.modeBtnDisabled : null) }}
+              >
+                {MODE_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <span style={styles.composerHint}>{composerHint}</span>
           </div>
           <button
@@ -462,11 +654,97 @@ export function OrchestratorChatPanel({
   );
 }
 
+function StatusRailToolbar({
+  pinned,
+  onToggle,
+}: {
+  pinned: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div style={styles.statusRailToolbar}>
+      <span style={styles.statusRailTitle}>运行状态 · Plan / 工具 / A2A</span>
+      <button
+        type="button"
+        style={styles.statusRailPinBtn}
+        onClick={onToggle}
+        title={pinned ? "取消固定，随正文滚动" : "固定在顶部，始终可见"}
+        aria-pressed={pinned}
+      >
+        {pinned ? "已固定" : "可滚走"}
+      </button>
+    </div>
+  );
+}
+
+function StatusRailContent({
+  plan,
+  onExecutePlan,
+  onGoalAction,
+  executeDisabled,
+  running,
+  chatInFlight,
+  pendingHitlRequestId,
+  activity,
+  streamEvents,
+  subAgentRuns,
+  thinkingText,
+  showActive,
+  focusedSubAgentRole,
+  onSelectRun,
+}: {
+  plan: OrchestratorPlan | null;
+  onExecutePlan?: () => void;
+  onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
+  executeDisabled: boolean;
+  running: boolean;
+  chatInFlight: boolean;
+  pendingHitlRequestId: string | null;
+  activity?: { tool: string; why: string } | null;
+  streamEvents: StepStreamEvent[];
+  subAgentRuns: SubAgentRunSummary[];
+  thinkingText?: string | null;
+  showActive: boolean;
+  focusedSubAgentRole: string | null;
+  onSelectRun: (run: SubAgentRunSummary) => void;
+}) {
+  return (
+    <>
+      <PlanCard
+        plan={plan}
+        onExecute={onExecutePlan}
+        onGoalAction={onGoalAction}
+        executeDisabled={executeDisabled}
+      />
+      <OrchestratorLiveStatus
+        running={running}
+        chatInFlight={chatInFlight}
+        pendingHitl={Boolean(pendingHitlRequestId)}
+        activity={activity}
+        streamEvents={streamEvents}
+        subAgentRuns={subAgentRuns}
+        thinkingText={thinkingText}
+      />
+      {streamEvents.length > 0 || showActive ? (
+        <div style={styles.executionWrap}>
+          <ChatExecutionActivity events={streamEvents} running={showActive} />
+        </div>
+      ) : null}
+      <SubAgentRunsPanel
+        runs={subAgentRuns}
+        selectedRole={focusedSubAgentRole}
+        onSelectRun={onSelectRun}
+      />
+    </>
+  );
+}
+
 const styles: Record<string, CSSProperties> = {
   root: {
     display: "flex",
     flexDirection: "column",
     flex: 1,
+    height: "100%",
     minHeight: 0,
     gap: 0,
   },
@@ -477,6 +755,53 @@ const styles: Record<string, CSSProperties> = {
     gap: 8,
     paddingBottom: 10,
     borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
+  },
+  runStrip: {
+    flexShrink: 0,
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    marginBottom: 8,
+    paddingBottom: 8,
+  },
+  runStripToggle: {
+    width: "100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 2,
+    border: "none",
+    background: "transparent",
+    color: "#e4e4e7",
+    cursor: "pointer",
+    padding: "4px 0",
+    textAlign: "left",
+  },
+  runStripTitle: { fontSize: 12, fontWeight: 600, color: "#93c5fd" },
+  runStripSummary: { fontSize: 11, color: "#a1a1aa" },
+  runStripBody: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8 },
+  runStripLabel: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    fontSize: 11,
+    color: "#a1a1aa",
+  },
+  runStripSelect: {
+    fontSize: 12,
+    padding: "6px 8px",
+    borderRadius: 6,
+    border: "1px solid #3f3f46",
+    background: "#18181b",
+    color: "#e4e4e7",
+  },
+  runStripActions: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  runStripBtn: { fontSize: 12, padding: "6px 10px" },
+  runStripLink: {
+    border: "none",
+    background: "transparent",
+    color: "#38bdf8",
+    fontSize: 11,
+    cursor: "pointer",
+    padding: 0,
   },
   titleRow: { display: "flex", alignItems: "center", gap: 8 },
   title: { fontSize: 14, fontWeight: 600, color: "#e4e4e7", letterSpacing: 0.3 },
@@ -518,7 +843,6 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     fontFamily: "inherit",
   },
-  modeRow: { display: "flex", gap: 6 },
   scopeRow: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" },
   scopeBtn: {
     padding: "2px 8px",
@@ -537,25 +861,51 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 600,
   },
   scopeHint: { fontSize: 10, color: "#71717a", flex: 1, minWidth: 0 },
-  modeBtn: {
-    flex: 1,
-    padding: "5px 6px",
-    fontSize: 11,
+  modeBtnDisabled: { cursor: "not-allowed", opacity: 0.6 },
+  statusRail: {
+    flexShrink: 0,
+    maxHeight: "42%",
+    overflowY: "auto",
+    overflowX: "hidden",
+    padding: "8px 2px 6px",
+    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  statusRailInScroll: {
+    marginBottom: 10,
+    paddingBottom: 8,
+    borderBottom: "1px dashed rgba(63,63,70,0.7)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  statusRailToolbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginBottom: 2,
+  },
+  statusRailTitle: {
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "#71717a",
+  },
+  statusRailPinBtn: {
+    padding: "2px 8px",
+    fontSize: 10,
+    fontWeight: 600,
     border: "1px solid #3f3f46",
-    background: "transparent",
+    background: "rgba(39,39,42,0.6)",
     color: "#a1a1aa",
-    borderRadius: 6,
+    borderRadius: 999,
     cursor: "pointer",
     fontFamily: "inherit",
-    transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
   },
-  modeBtnActive: {
-    borderColor: "#60a5fa",
-    background: "rgba(96,165,250,0.16)",
-    color: "#93c5fd",
-    fontWeight: 600,
-  },
-  modeBtnDisabled: { cursor: "not-allowed", opacity: 0.6 },
   body: {
     flex: "1 1 0",
     minHeight: 0,
@@ -638,6 +988,12 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
     textAlign: "left",
   },
+  artifactHint: {
+    marginLeft: "auto",
+    fontSize: 10,
+    fontWeight: 500,
+    color: "#71717a",
+  },
   artifactList: {
     display: "flex",
     flexDirection: "column",
@@ -707,6 +1063,38 @@ const styles: Record<string, CSSProperties> = {
   },
   activitySpinner: { color: "#38bdf8", animation: "qbPulse 1.1s ease-in-out infinite" },
   activityText: { minWidth: 0, color: "#cbd5e1" },
+  executionWrap: {
+    marginBottom: 8,
+  },
+  subConversation: {
+    marginBottom: 10,
+    border: "1px solid rgba(139,92,246,0.5)",
+    borderRadius: 10,
+    overflow: "hidden",
+    background: "rgba(30,27,55,0.34)",
+  },
+  subConversationHeader: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 10,
+    padding: "9px 10px",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+  },
+  subConversationTitle: { fontSize: 12, fontWeight: 650, color: "#e9d5ff" },
+  subConversationMeta: { marginTop: 3, fontSize: 10.5, lineHeight: 1.4, color: "#a78bfa" },
+  closeSubConversation: {
+    flexShrink: 0,
+    padding: "4px 7px",
+    border: "1px solid rgba(167,139,250,0.5)",
+    borderRadius: 6,
+    color: "#ddd6fe",
+    background: "rgba(139,92,246,0.15)",
+    cursor: "pointer",
+    fontSize: 10.5,
+    fontFamily: "inherit",
+  },
+  subConversationBody: { height: 500, minHeight: 300 },
   composerBar: { display: "flex", alignItems: "center", gap: 8 },
   composerMeta: {
     flex: 1,
@@ -724,6 +1112,24 @@ const styles: Record<string, CSSProperties> = {
     fontSize: 10.5,
     color: "#71717a",
     lineHeight: 1.4,
+  },
+  hitlSelectLabel: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    color: "#a1a1aa",
+    fontSize: 10.5,
+  },
+  hitlSelect: {
+    maxWidth: 106,
+    padding: "3px 20px 3px 6px",
+    border: "1px solid #3f3f46",
+    borderRadius: 6,
+    background: "#18181b",
+    color: "#e4e4e7",
+    fontSize: 10.5,
+    fontFamily: "inherit",
   },
   sendBtn: { flexShrink: 0, fontSize: 12, padding: "6px 16px" },
   sendBtnDisabled: { opacity: 0.5, cursor: "not-allowed" },

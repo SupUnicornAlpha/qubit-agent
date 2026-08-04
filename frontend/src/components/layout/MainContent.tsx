@@ -1,6 +1,7 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
 import { createPortal } from "react-dom";
+import { PanelLeft, PanelTop, Plus } from "lucide-react";
 import {
   chatHealth,
   createChatSession,
@@ -85,6 +86,7 @@ import type {
   AnalystTeamGraphAgentStep,
   AnalystTeamGraphToolCall,
   AnalystTeamGraphMcpCall,
+  ChatMessage,
   StepStreamEvent,
   BuiltinConnectorConfig,
   AgentControlMode,
@@ -92,6 +94,7 @@ import type {
 } from "../../api/types";
 import { useAppStore, type ChartContextPayload } from "../../store";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
+import { IconToolbarButton } from "../ui/IconToolbarButton";
 import {
   clearChatStreamBinding,
   hydrateStaleChatMessages,
@@ -113,13 +116,14 @@ import {
   latestSuccessfulMarketLink,
   type ResearchCanvasToolHit,
 } from "../../lib/researchCanvasToolLink";
-import { coerceChartMarketExchange } from "../../lib/chartSpec";
+import { coerceChartMarketExchange, guessChartExchangeFromSymbol } from "../../lib/chartSpec";
 import { buildResearchMarketSymbolList } from "../../lib/researchMarketSymbols";
 import { chartPatchFromResearchScope } from "../../lib/researchScopeChartLink";
 import { formatEdgeSelectionSummary, isToolGraphEdge } from "../../lib/teamGraphEdgeVisual";
 import {
   filterPromptTemplates,
   instrumentLabel,
+  parseSymbolList,
   scopeModeLabel,
   type ResearchInstrumentUi,
   type ResearchScopeMode,
@@ -156,6 +160,7 @@ import {
   OrchestratorChatPanel,
   type OrchestratorArtifact,
 } from "../team/OrchestratorChatPanel";
+import { FsWorkspaceExplorer } from "../workspace/FsWorkspaceExplorer";
 import { buildSubAgentRunSummaries } from "../../lib/subAgentRuns";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
 import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
@@ -246,6 +251,9 @@ function formatChartContextBlock(ctx: ChartContextPayload): string {
 }
 
 const CHAT_SIDEBAR_WIDTH_LS = "qubit:chatSidebarWidthPx";
+const CHAT_SESSION_LAYOUT_LS = "qubit:chatSessionLayout";
+
+type ChatSessionLayout = "top" | "left";
 
 function readChatSidebarWidthPx(): number {
   if (typeof window === "undefined") return 220;
@@ -256,6 +264,23 @@ function readChatSidebarWidthPx(): number {
     /* ignore */
   }
   return 220;
+}
+
+function readChatSessionLayout(): ChatSessionLayout {
+  if (typeof window === "undefined") return "top";
+  try {
+    return localStorage.getItem(CHAT_SESSION_LAYOUT_LS) === "left" ? "left" : "top";
+  } catch {
+    return "top";
+  }
+}
+
+function persistChatSessionLayout(layout: ChatSessionLayout) {
+  try {
+    localStorage.setItem(CHAT_SESSION_LAYOUT_LS, layout);
+  } catch {
+    /* ignore */
+  }
 }
 
 /**
@@ -313,6 +338,37 @@ const PendingHitlFetchRow: FC<{
   );
 };
 
+type ChatStreamTurn =
+  | { kind: "user" | "system"; message: ChatMessage }
+  | { kind: "assistant"; key: string; messages: ChatMessage[] };
+
+/** Cursor 风格：用户消息单独一块；连续 assistant 合并为一段正文流。 */
+function groupChatMessagesIntoStreamTurns(messages: ChatMessage[]): ChatStreamTurn[] {
+  const turns: ChatStreamTurn[] = [];
+  let assistantBuf: ChatMessage[] = [];
+
+  const flushAssistant = () => {
+    if (assistantBuf.length === 0) return;
+    turns.push({
+      kind: "assistant",
+      key: `assist:${assistantBuf[0]!.id}:${assistantBuf[assistantBuf.length - 1]!.id}`,
+      messages: assistantBuf,
+    });
+    assistantBuf = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      flushAssistant();
+      turns.push({ kind: message.role, message });
+      continue;
+    }
+    assistantBuf.push(message);
+  }
+  flushAssistant();
+  return turns;
+}
+
 export const ChatPanel: FC<{
   ideEmbedded?: boolean;
   displayMode?: "standard" | "simple";
@@ -329,6 +385,8 @@ export const ChatPanel: FC<{
 }) => {
   const simpleMode = displayMode === "simple";
   const hideSessions = simpleMode || hideSessionSidebar;
+  const showSessionChrome = !hideSessions;
+  const [sessionLayout, setSessionLayout] = useState<ChatSessionLayout>(readChatSessionLayout);
   const chartContext = useAppStore((s) => s.chartContext);
   const setChartContext = useAppStore((s) => s.setChartContext);
   const chatSessions = useAppStore((s) => s.chatSessions);
@@ -419,6 +477,11 @@ export const ChatPanel: FC<{
       ? `minmax(120px, ${w}px) ${grip}px minmax(0, 1fr)`
       : `minmax(140px, ${w}px) ${grip}px minmax(0, 1fr)`;
   }, [ideEmbedded, chatSidebarWidthPx]);
+
+  const applySessionLayout = (layout: ChatSessionLayout) => {
+    setSessionLayout(layout);
+    persistChatSessionLayout(layout);
+  };
 
   useLayoutEffect(() => {
     const el = chatLayoutRef.current;
@@ -976,6 +1039,11 @@ export const ChatPanel: FC<{
       ? chatMessages.filter((message) => message.workflowRunIds?.includes(workflowRunId))
       : chatMessages;
 
+  const chatTurns = useMemo(
+    () => groupChatMessagesIntoStreamTurns(visibleChatMessages),
+    [visibleChatMessages]
+  );
+
   const activeAssistantMessage = [...visibleChatMessages]
     .reverse()
     .find(
@@ -984,6 +1052,14 @@ export const ChatPanel: FC<{
         (message.status === "running" || message.status === "queued") &&
         Boolean(message.workflowRunIds?.[0])
     );
+
+  const pendingHitlMessage =
+    [...visibleChatMessages]
+      .reverse()
+      .find(
+        (message) =>
+          message.status === "awaiting_approval" && Boolean(message.workflowRunIds?.[0])
+      ) ?? null;
 
   const handleStopGeneration = async () => {
     const message = activeAssistantMessage;
@@ -1047,106 +1123,257 @@ export const ChatPanel: FC<{
       </div>
       <div
         ref={chatLayoutRef}
-        className={simpleMode ? "qb-simple-chat-layout" : undefined}
+        className={[
+          simpleMode ? "qb-simple-chat-layout" : undefined,
+          showSessionChrome ? `qb-chat-layout--sessions-${sessionLayout}` : "qb-chat-layout--sessions-hidden",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        data-qb-chat-session-layout={showSessionChrome ? sessionLayout : "hidden"}
         style={{
           ...styles.chatLayout,
           ...(ideEmbedded ? styles.chatLayoutIde : {}),
-          gridTemplateColumns: simpleMode ? "minmax(0, 1fr)" : chatGridTemplateColumns,
+          ...(showSessionChrome && sessionLayout === "left"
+            ? { display: "grid", gridTemplateColumns: chatGridTemplateColumns }
+            : {
+                display: "flex",
+                flexDirection: "column",
+                gridTemplateColumns: "none",
+              }),
         }}
       >
-        {!simpleMode ? <div className="qb-chat-sidebar" style={styles.chatSidebar}>
-          <button
-            type="button"
-            className="qb-btn-primary-brand"
-            style={{ flexShrink: 0, alignSelf: "stretch" }}
-            onClick={() => void onCreateSession()}
+        {showSessionChrome ? (
+          <div
+            className={`qb-chat-sidebar qb-chat-sessions qb-chat-sessions--${sessionLayout}`}
+            style={{
+              ...styles.chatSidebar,
+              ...(sessionLayout === "top" ? styles.chatSessionsTop : null),
+            }}
           >
-            {t("chat.sidebar.newSession")}
-          </button>
-          <div className="qb-chat-session-list" style={styles.chatSessionList}>
-            {chatSessions.map((session) => (
-              <div
-                key={session.id}
-                style={{
-                  ...styles.chatSessionItem,
-                  ...(selectedSessionId === session.id ? styles.chatSessionItemActive : {}),
-                  display: "flex",
-                  alignItems: "stretch",
-                  gap: 4,
-                  padding: 0,
-                }}
-              >
-                <button
-                  type="button"
+            <div
+              className="qb-chat-sessions__toolbar"
+              style={{
+                ...styles.chatSessionsToolbar,
+                ...(sessionLayout === "top" ? styles.chatSessionsToolbarTop : null),
+              }}
+            >
+              {sessionLayout === "top" ? (
+                <div
+                  className={`qb-chat-session-list qb-chat-session-list--top`}
                   style={{
-                    flex: 1,
-                    background: "transparent",
-                    border: 0,
-                    color: "inherit",
-                    textAlign: "left",
-                    cursor: "pointer",
-                    padding: "8px 10px",
-                    minWidth: 0,
+                    ...styles.chatSessionList,
+                    ...styles.chatSessionListTop,
+                    ...styles.chatSessionListTopInline,
                   }}
-                  onClick={() => void onSelectSession(session.id)}
-                  title={session.title}
                 >
+                  {chatSessions.map((session) => (
+                    <div
+                      key={session.id}
+                      className="qb-chat-session-item qb-chat-session-item--top"
+                      style={{
+                        ...styles.chatSessionItem,
+                        ...(selectedSessionId === session.id ? styles.chatSessionItemActive : {}),
+                        display: "flex",
+                        alignItems: "stretch",
+                        gap: 4,
+                        padding: 0,
+                        ...styles.chatSessionItemTop,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        style={{
+                          flex: 1,
+                          background: "transparent",
+                          border: 0,
+                          color: "inherit",
+                          textAlign: "left",
+                          cursor: "pointer",
+                          padding: "6px 10px",
+                          minWidth: 0,
+                        }}
+                        onClick={() => void onSelectSession(session.id)}
+                        title={session.title}
+                      >
+                        <div
+                          style={{
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            fontSize: 12,
+                          }}
+                        >
+                          {session.title}
+                        </div>
+                        <div className="qb-chat-bubble__meta">
+                          {new Date(session.updatedAt).toLocaleString()}
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={
+                          pendingDeleteSessionId === session.id
+                            ? t("chat.sidebar.confirmDeletePending", { title: session.title })
+                            : t("chat.sidebar.deleteSession", { title: session.title })
+                        }
+                        title={
+                          pendingDeleteSessionId === session.id
+                            ? t("chat.sidebar.confirmDeleteTitle")
+                            : t("chat.sidebar.deleteSessionTitle")
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleClickDeleteSession(session.id, session.title);
+                        }}
+                        style={{
+                          background:
+                            pendingDeleteSessionId === session.id ? "#7f1d1d" : "transparent",
+                          border: 0,
+                          color: pendingDeleteSessionId === session.id ? "#fecaca" : "#a1a1aa",
+                          cursor: "pointer",
+                          padding: "0 8px",
+                          fontSize: pendingDeleteSessionId === session.id ? 11 : 16,
+                          lineHeight: 1,
+                          alignSelf: "stretch",
+                          fontWeight: pendingDeleteSessionId === session.id ? 600 : 400,
+                        }}
+                      >
+                        {pendingDeleteSessionId === session.id
+                          ? t("common.action.confirmAgain")
+                          : "×"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div
+                className="qb-chat-sessions__actions"
+                style={styles.chatSessionActions}
+                role="toolbar"
+                aria-label={t("chat.sidebar.actionsAria")}
+              >
+                <IconToolbarButton
+                  Icon={Plus}
+                  label={t("chat.sidebar.newSession")}
+                  onClick={() => void onCreateSession()}
+                />
+                <span style={styles.chatSessionActionDivider} aria-hidden />
+                <div
+                  className="qb-chat-sessions__layout-toggle"
+                  style={styles.chatSessionLayoutToggle}
+                  role="group"
+                  aria-label={t("chat.sidebar.layoutGroupAria")}
+                >
+                  <IconToolbarButton
+                    Icon={PanelTop}
+                    label={t("chat.sidebar.layoutTopTitle")}
+                    active={sessionLayout === "top"}
+                    onClick={() => applySessionLayout("top")}
+                  />
+                  <IconToolbarButton
+                    Icon={PanelLeft}
+                    label={t("chat.sidebar.layoutLeftTitle")}
+                    active={sessionLayout === "left"}
+                    onClick={() => applySessionLayout("left")}
+                  />
+                </div>
+              </div>
+            </div>
+            {sessionLayout === "left" ? (
+              <div
+                className="qb-chat-session-list qb-chat-session-list--left"
+                style={styles.chatSessionList}
+              >
+                {chatSessions.map((session) => (
                   <div
+                    key={session.id}
+                    className="qb-chat-session-item qb-chat-session-item--left"
                     style={{
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
+                      ...styles.chatSessionItem,
+                      ...(selectedSessionId === session.id ? styles.chatSessionItemActive : {}),
+                      display: "flex",
+                      alignItems: "stretch",
+                      gap: 4,
+                      padding: 0,
                     }}
                   >
-                    {session.title}
+                    <button
+                      type="button"
+                      style={{
+                        flex: 1,
+                        background: "transparent",
+                        border: 0,
+                        color: "inherit",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        padding: "8px 10px",
+                        minWidth: 0,
+                      }}
+                      onClick={() => void onSelectSession(session.id)}
+                      title={session.title}
+                    >
+                      <div
+                        style={{
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {session.title}
+                      </div>
+                      <div className="qb-chat-bubble__meta">
+                        {new Date(session.updatedAt).toLocaleString()}
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={
+                        pendingDeleteSessionId === session.id
+                          ? t("chat.sidebar.confirmDeletePending", { title: session.title })
+                          : t("chat.sidebar.deleteSession", { title: session.title })
+                      }
+                      title={
+                        pendingDeleteSessionId === session.id
+                          ? t("chat.sidebar.confirmDeleteTitle")
+                          : t("chat.sidebar.deleteSessionTitle")
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleClickDeleteSession(session.id, session.title);
+                      }}
+                      style={{
+                        background:
+                          pendingDeleteSessionId === session.id ? "#7f1d1d" : "transparent",
+                        border: 0,
+                        color: pendingDeleteSessionId === session.id ? "#fecaca" : "#a1a1aa",
+                        cursor: "pointer",
+                        padding: "0 8px",
+                        fontSize: pendingDeleteSessionId === session.id ? 11 : 16,
+                        lineHeight: 1,
+                        alignSelf: "stretch",
+                        fontWeight: pendingDeleteSessionId === session.id ? 600 : 400,
+                      }}
+                    >
+                      {pendingDeleteSessionId === session.id
+                        ? t("common.action.confirmAgain")
+                        : "×"}
+                    </button>
                   </div>
-                  <div className="qb-chat-bubble__meta">
-                    {new Date(session.updatedAt).toLocaleString()}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  aria-label={
-                    pendingDeleteSessionId === session.id
-                      ? t("chat.sidebar.confirmDeletePending", { title: session.title })
-                      : t("chat.sidebar.deleteSession", { title: session.title })
-                  }
-                  title={
-                    pendingDeleteSessionId === session.id
-                      ? t("chat.sidebar.confirmDeleteTitle")
-                      : t("chat.sidebar.deleteSessionTitle")
-                  }
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleClickDeleteSession(session.id, session.title);
-                  }}
-                  style={{
-                    background:
-                      pendingDeleteSessionId === session.id ? "#7f1d1d" : "transparent",
-                    border: 0,
-                    color: pendingDeleteSessionId === session.id ? "#fecaca" : "#a1a1aa",
-                    cursor: "pointer",
-                    padding: "0 8px",
-                    fontSize: pendingDeleteSessionId === session.id ? 11 : 16,
-                    lineHeight: 1,
-                    alignSelf: "stretch",
-                    fontWeight: pendingDeleteSessionId === session.id ? 600 : 400,
-                  }}
-                >
-                  {pendingDeleteSessionId === session.id ? t("common.action.confirmAgain") : "×"}
-                </button>
+                ))}
               </div>
-            ))}
+            ) : null}
           </div>
-        </div> : null}
+        ) : null}
 
-        {!hideSessions ? <button
-          type="button"
-          aria-label={t("chat.sidebar.resizerAria")}
-          title={t("chat.sidebar.resizerTitle")}
-          onMouseDown={onChatSidebarResizeMouseDown}
-          style={styles.chatColResizer}
-        /> : null}
+        {showSessionChrome && sessionLayout === "left" ? (
+          <button
+            type="button"
+            aria-label={t("chat.sidebar.resizerAria")}
+            title={t("chat.sidebar.resizerTitle")}
+            onMouseDown={onChatSidebarResizeMouseDown}
+            style={styles.chatColResizer}
+          />
+        ) : null}
 
         <div className="qb-chat-main" style={styles.chatMain}>
           {simpleMode ? (
@@ -1195,113 +1422,150 @@ export const ChatPanel: FC<{
                 </div>
               </div>
             ) : null}
-            {visibleChatMessages.map((msg) => (
-              <div key={msg.id} className={`qb-chat-bubble qb-chat-bubble--${msg.role}`}>
-                <div className="qb-chat-bubble__meta">
-                  {simpleMode
-                    ? msg.role === "user"
-                      ? t("simpleMode.you")
-                      : "Qubit"
-                    : `${msg.role} · ${msg.status}`}
-                </div>
-                <div className="qb-chat-markdown">
-                  {msg.content ? (
-                    <MarkdownBubble text={msg.content} />
-                  ) : msg.status === "running" || msg.status === "queued" ? (
-                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>
-                      {t("chat.bubble.streaming")}
-                    </span>
-                  ) : (
-                    <span style={{ color: "var(--qb-chat-meta-fg)" }}>
-                      {t("chat.bubble.empty")}
-                    </span>
-                  )}
-                </div>
-                {msg.role === "assistant" && streamRunByMessageId[msg.id] ? (
-                  <ChatExecutionActivity
-                    events={streamEvents.filter(
-                      (event) => event.runId === streamRunByMessageId[msg.id]
-                    )}
-                    running={msg.status === "running" || msg.status === "queued"}
-                  />
-                ) : null}
-                {msg.workflowRunIds?.length ? (
+            {chatTurns.map((turn) => {
+              if (turn.kind === "assistant") {
+                const msgs = turn.messages;
+                const last = msgs[msgs.length - 1]!;
+                const combined = msgs
+                  .map((m) => m.content.trim())
+                  .filter(Boolean)
+                  .join("\n\n");
+                const running = msgs.some(
+                  (m) => m.status === "running" || m.status === "queued"
+                );
+              const streamMsg =
+                [...msgs].reverse().find((m) => streamRunByMessageId[m.id]) ?? last;
+              const streamRunId = streamRunByMessageId[streamMsg.id];
+              const workflowIds: string[] = [
+                ...new Set(msgs.flatMap((m) => m.workflowRunIds ?? [])),
+              ];
+
+              return (
+                  <div
+                    key={turn.key}
+                    className="qb-chat-turn qb-chat-turn--assistant qb-chat-bubble qb-chat-bubble--agent"
+                    data-qb-chat-stream="assistant"
+                  >
+                    <div className="qb-chat-bubble__meta">
+                      {simpleMode
+                        ? "Qubit"
+                        : `assistant · ${last.status}${
+                            msgs.length > 1 ? ` · ${msgs.length} segments` : ""
+                          }`}
+                    </div>
+                    <div className="qb-chat-markdown">
+                      {combined ? (
+                        <MarkdownBubble text={combined} />
+                      ) : running ? (
+                        <span style={{ color: "var(--qb-chat-meta-fg)" }}>
+                          {t("chat.bubble.streaming")}
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--qb-chat-meta-fg)" }}>
+                          {t("chat.bubble.empty")}
+                        </span>
+                      )}
+                    </div>
+                  {streamRunId ? (
+                    <ChatExecutionActivity
+                      events={streamEvents.filter((event) => event.runId === streamRunId)}
+                      running={running}
+                    />
+                  ) : null}
+                  {workflowIds.length ? (
+                    <div className="qb-chat-bubble__meta">
+                      {simpleMode
+                        ? workflowIds.map((id) => (
+                            <button
+                              key={id}
+                              type="button"
+                              className="qb-simple-chat-workflow-link"
+                              onClick={() => onWorkflowFocusChange?.(id)}
+                            >
+                              workflow {id.slice(0, 8)}
+                            </button>
+                          ))
+                        : workflowIds.map((id) => (
+                            <button
+                              key={id}
+                              type="button"
+                              className="qb-btn-ghost qb-btn--compact"
+                              onClick={() => openWorkflowTrace(id)}
+                              title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
+                            >
+                              查看 Trace · {id.slice(0, 8)}
+                            </button>
+                          ))}
+                    </div>
+                  ) : null}
+                  </div>
+                );
+              }
+
+              const msg = turn.message;
+              return (
+                <div
+                  key={msg.id}
+                  className={`qb-chat-turn qb-chat-turn--${msg.role} qb-chat-bubble qb-chat-bubble--${msg.role === "user" ? "user" : "agent"}`}
+                  data-qb-chat-stream={msg.role}
+                >
                   <div className="qb-chat-bubble__meta">
                     {simpleMode
-                      ? msg.workflowRunIds.map((id) => (
-                          <button
-                            key={id}
-                            type="button"
-                            className="qb-simple-chat-workflow-link"
-                            onClick={() => onWorkflowFocusChange?.(id)}
-                          >
-                            workflow {id.slice(0, 8)}
-                          </button>
-                        ))
-                    : msg.workflowRunIds.map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          className="qb-btn-ghost qb-btn--compact"
-                          onClick={() => openWorkflowTrace(id)}
-                          title={`在运行监控中查看 workflow ${id} 的完整 Trace`}
-                        >
-                          查看 Trace · {id.slice(0, 8)}
-                        </button>
-                      ))}
+                      ? msg.role === "user"
+                        ? t("simpleMode.you")
+                        : "Qubit"
+                      : `${msg.role} · ${msg.status}`}
                   </div>
-                ) : null}
-                {msg.status === "awaiting_approval" &&
-                msg.workflowRunIds?.[0] &&
-                !hitlRequestByMessageId[msg.id] ? (
-                  /**
-                   * 兜底：消息状态卡在 awaiting_approval 但我们手里没 requestId（典型场景：
-                   * 用户刷新页 / 切换 session 后 SSE 没收到 hitl_request 事件；或者多次发送
-                   * 同会话工作流被复用，老 requestId 早已 resolved）。这种情况展示一个"加载/
-                   * 重试"按钮主动去后端拉 pending，命中后下次渲染会落到下面正常按钮分支。
-                   * 这样用户至少不会面对一个看上去"卡死"的 awaiting 气泡。
-                   */
-                  <PendingHitlFetchRow
-                    workflowRunId={msg.workflowRunIds[0]!}
-                    onFound={(requestId) =>
-                      setHitlRequestByMessageId((prev) => ({ ...prev, [msg.id]: requestId }))
-                    }
-                  />
-                ) : null}
-                {msg.status === "awaiting_approval" &&
-                msg.workflowRunIds?.[0] &&
-                hitlRequestByMessageId[msg.id] ? (
-                  (() => {
-                    const reqId = hitlRequestByMessageId[msg.id]!;
-                    const workflowId = msg.workflowRunIds![0]!;
-                    const inflight = hitlInflightRequestIds.has(reqId);
-                    /**
-                     * v2：原本这里硬编码两个按钮 + 调老 `approveWorkflowHitl` / `rejectWorkflowHitl`
-                     * 端点，永远不带 response。导致**对话窗口里**所有 HITL 都只能画 approve_only，
-                     * 即便后端 hitl-gate.ts 已经按 LLM 的 hitlHint 写出了 single_choice /
-                     * multi_choice / free_form。改造为 `<ChatHitlPromptControls />`：
-                     *   1. 内部 `listPendingWorkflowHitl` 拉到 inputKind/inputSchemaJson
-                     *   2. 按 inputKind 复用 `<HitlInputArea />` 渲染对应输入
-                     *   3. 提交时把 decision + response 经回调交回 `handleHitlDecision`，
-                     *      统一走 `resolveWorkflowHitl`，与团队画布同协议。
-                     * 父组件的"防重订阅 / SSE 重绑 / patch 消息状态"逻辑都保留在
-                     * handleHitlDecision，不被这个改造打断。
-                     */
-                    return (
-                      <ChatHitlPromptControls
-                        workflowRunId={workflowId}
-                        requestId={reqId}
-                        inflight={inflight}
-                        onDecision={(decision, response) =>
-                          void handleHitlDecision(msg.id, workflowId, reqId, decision, response)
-                        }
-                      />
-                    );
-                  })()
-                ) : null}
-              </div>
-            ))}
+                  <div className="qb-chat-markdown">
+                    {msg.content ? (
+                      <MarkdownBubble text={msg.content} />
+                    ) : (
+                      <span style={{ color: "var(--qb-chat-meta-fg)" }}>
+                        {t("chat.bubble.empty")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+          {pendingHitlMessage && pendingHitlMessage.workflowRunIds?.[0] ? (
+            <div className="qb-chat-hitl-dock" style={{ padding: "0 0 8px", flexShrink: 0 }}>
+              {!hitlRequestByMessageId[pendingHitlMessage.id] ? (
+                <PendingHitlFetchRow
+                  workflowRunId={pendingHitlMessage.workflowRunIds[0]!}
+                  onFound={(requestId) =>
+                    setHitlRequestByMessageId((prev) => ({
+                      ...prev,
+                      [pendingHitlMessage.id]: requestId,
+                    }))
+                  }
+                />
+              ) : (
+                (() => {
+                  const reqId = hitlRequestByMessageId[pendingHitlMessage.id]!;
+                  const workflowId = pendingHitlMessage.workflowRunIds![0]!;
+                  const inflight = hitlInflightRequestIds.has(reqId);
+                  return (
+                    <ChatHitlPromptControls
+                      workflowRunId={workflowId}
+                      requestId={reqId}
+                      inflight={inflight}
+                      onDecision={(decision, response) =>
+                        void handleHitlDecision(
+                          pendingHitlMessage.id,
+                          workflowId,
+                          reqId,
+                          decision,
+                          response
+                        )
+                      }
+                    />
+                  );
+                })()
+              )}
+            </div>
+          ) : null}
           <form
             className={simpleMode ? "qb-simple-composer" : undefined}
             data-qb-simple-composer={simpleMode ? "true" : undefined}
@@ -4593,15 +4857,70 @@ const styles: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
   },
+  chatSessionsTop: {
+    flexShrink: 0,
+    maxHeight: 120,
+    width: "100%",
+    flex: "0 0 auto",
+    padding: "6px 8px",
+  },
+  chatSessionsToolbar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+    marginBottom: 8,
+    flexWrap: "nowrap",
+  },
+  chatSessionsToolbarTop: {
+    marginBottom: 0,
+    gap: 8,
+    minWidth: 0,
+  },
+  chatSessionActions: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 2,
+    flexShrink: 0,
+    marginLeft: "auto",
+  },
+  chatSessionActionDivider: {
+    width: 1,
+    height: 16,
+    margin: "0 4px",
+    background: "var(--qb-chat-border, #3f3f46)",
+    opacity: 0.85,
+  },
+  chatSessionLayoutToggle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 2,
+  },
   chatSessionList: {
     display: "flex",
     flexDirection: "column",
-    gap: 8,
-    marginTop: 8,
-    flex: 1,
-    minHeight: 0,
+    gap: 6,
     overflowY: "auto",
     overflowX: "hidden",
+    minHeight: 0,
+    flex: 1,
+  },
+  chatSessionListTop: {
+    flexDirection: "row",
+    overflowX: "auto",
+    overflowY: "hidden",
+    flex: "0 0 auto",
+    paddingBottom: 2,
+  },
+  chatSessionListTopInline: {
+    flex: "1 1 auto",
+    minWidth: 0,
+    marginBottom: 0,
+  },
+  chatSessionItemTop: {
+    minWidth: 132,
+    maxWidth: 200,
+    flex: "0 0 auto",
   },
   chatSessionItem: {
     border: "1px solid var(--qb-chat-border, #27272a)",
@@ -4627,6 +4946,7 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
     overflow: "hidden",
     flex: 1,
+    width: "100%",
   },
   chatMessages: {
     flex: 1,
@@ -4898,6 +5218,82 @@ const TeamDashboardPanel: FC = () => {
   const [workflowListQuery, setWorkflowListQuery] = useState("");
   /** 研究画布行情区：多标的网格 vs 单图焦点 */
   const [marketKlineLayout, setMarketKlineLayout] = useState<"grid" | "single">("grid");
+  /** 左栏：FS 课题树 vs 原工作流配置 */
+  const [leftRailMode, setLeftRailMode] = useState<"workspace" | "workflow">(() => {
+    try {
+      return window.localStorage.getItem("qb.team.leftRailMode") === "workflow"
+        ? "workflow"
+        : "workspace";
+    } catch {
+      return "workspace";
+    }
+  });
+  const [runStripExpanded, setRunStripExpanded] = useState(() => {
+    try {
+      return window.localStorage.getItem("qb.team.runStripExpanded") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const [creatingTeamWorkflow, setCreatingTeamWorkflow] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("qb.team.leftRailMode", leftRailMode);
+    } catch {
+      /* ignore */
+    }
+  }, [leftRailMode]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("qb.team.runStripExpanded", runStripExpanded ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [runStripExpanded]);
+
+  const fsWorkspaceCreateDefaults = useMemo(() => {
+    const symbolsRaw =
+      scopeMode === "basket"
+        ? parseSymbolList(basketTickers || ticker)
+        : scopeMode === "sector"
+          ? [...parseSymbolList(sectorPeers), ...parseSymbolList(ticker)]
+          : scopeMode === "explore"
+            ? parseSymbolList(exploreCandidates)
+            : researchInstrument === "option"
+              ? parseSymbolList(optionUnderlying || ticker)
+              : parseSymbolList(ticker);
+    const symbols = [...new Set(symbolsRaw)].slice(0, 32).map((symbol) => ({
+      symbol,
+      exchange: coerceChartMarketExchange(guessChartExchangeFromSymbol(symbol)),
+    }));
+    const focusSym = symbols[0]?.symbol || ticker.trim().toUpperCase();
+    return {
+      name:
+        `${scopeModeLabel(scopeMode)} · ${focusSym || sectorName || exploreTheme || "课题"}`.slice(
+          0,
+          80
+        ),
+      mode: scopeMode,
+      symbols,
+      focus: focusSym
+        ? {
+            symbol: focusSym,
+            exchange: coerceChartMarketExchange(guessChartExchangeFromSymbol(focusSym)),
+          }
+        : undefined,
+    };
+  }, [
+    scopeMode,
+    basketTickers,
+    ticker,
+    sectorPeers,
+    exploreCandidates,
+    researchInstrument,
+    optionUnderlying,
+    sectorName,
+    exploreTheme,
+  ]);
 
   /**
    * 团队页大三栏（左：研究与工作流 / 中：研究画布 / 右：研究产出）的显隐控制。
@@ -5683,6 +6079,7 @@ const TeamDashboardPanel: FC = () => {
             subtitle: f.status === "draft" ? "草稿" : f.category,
             projectId: f.projectId,
             workflowRunId: f.workflowRunId,
+            createdAt: f.createdAt,
           }))
         );
       } else {
@@ -5697,6 +6094,7 @@ const TeamDashboardPanel: FC = () => {
             subtitle: v.versionTag,
             projectId: v.projectId,
             workflowRunId: v.workflowRunId,
+            createdAt: v.createdAt,
           }))
         );
       } else {
@@ -5710,6 +6108,7 @@ const TeamDashboardPanel: FC = () => {
             title: s.name,
             subtitle: s.purpose,
             workflowRunId: s.workflowRunId ?? wf,
+            createdAt: s.createdAt,
           }))
         );
       } else {
@@ -6140,6 +6539,7 @@ const TeamDashboardPanel: FC = () => {
       return;
     }
     setError(null);
+    setCreatingTeamWorkflow(true);
     try {
       const created = await createWorkflow({
         projectId: teamResearchProjectId,
@@ -6160,6 +6560,8 @@ const TeamDashboardPanel: FC = () => {
       setSelectedConversationSessionId(teamResearchSessionId);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setCreatingTeamWorkflow(false);
     }
   };
 
@@ -6317,11 +6719,49 @@ const TeamDashboardPanel: FC = () => {
           }}
         >
           {/**
-           * 上半设置区独立滚动容器：标题 + scope/instrument/标的/模板/分析提示。
-           * maxHeight: 55%（来自 teamStyles.leftRailSettings）—— 留 45% 给下半工作流区。
+           * 左栏顶：视图切换。工作区 = FS 课题树；工作流 = 原研究设置 + 列表。
            */}
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", marginBottom: 8 }}>
+            研究
+          </div>
+          <div
+            className="qb-team-graph-view-toggle"
+            role="tablist"
+            aria-label="左栏视图"
+            style={{ marginBottom: 10, alignSelf: "flex-start" }}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={leftRailMode === "workspace"}
+              className={leftRailMode === "workspace" ? "is-active" : ""}
+              onClick={() => setLeftRailMode("workspace")}
+            >
+              工作区
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={leftRailMode === "workflow"}
+              className={leftRailMode === "workflow" ? "is-active" : ""}
+              onClick={() => setLeftRailMode("workflow")}
+            >
+              工作流
+            </button>
+          </div>
+          {leftRailMode === "workspace" ? (
+            <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <FsWorkspaceExplorer
+                createDefaults={fsWorkspaceCreateDefaults}
+                onOpenWorkflowSettings={() => setLeftRailMode("workflow")}
+              />
+            </div>
+          ) : (
+            <>
           <div style={teamStyles.leftRailSettings}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-team-section-fg, #e4e4e7)", marginBottom: 10 }}>研究与工作流</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 10 }}>
+            研究与工作流
+          </div>
           <div style={teamStyles.field}>
             <label style={teamStyles.label}>研究范围</label>
             <select
@@ -6783,6 +7223,8 @@ const TeamDashboardPanel: FC = () => {
             )}
           </div>
           </div>
+            </>
+          )}
         </aside>
         ) : null}
         {/**
@@ -7611,6 +8053,27 @@ const TeamDashboardPanel: FC = () => {
             }}
             sendDisabled={!workflowRunId.trim()}
             sendDisabledReason={!workflowRunId.trim() ? "请先选择工作流" : ""}
+            runStrip={{
+              expanded: runStripExpanded,
+              onExpandedChange: setRunStripExpanded,
+              summary: `${scopeModeLabel(scopeMode)} · ${
+                ticker.trim() || sectorName || exploreTheme || "未设标的"
+              } · ${workflowRunId.trim() ? "已选 Run" : "未选 Run"}`,
+              options: workflowOptions.map((row) => ({
+                id: String(row.id ?? ""),
+                label: (typeof row.goal === "string" && row.goal.trim()) || String(row.id ?? "").slice(0, 8),
+                status: String(row.status ?? ""),
+              })),
+              onSelect: (id) => {
+                setWorkflowRunId(id);
+                const row = workflowOptions.find((w) => String(w.id) === id);
+                const sid = typeof row?.sessionId === "string" ? row.sessionId.trim() : "";
+                if (sid) setSelectedConversationSessionId(sid);
+              },
+              onCreate: () => void handleCreateTeamWorkflow(),
+              onOpenResearchSettings: () => setLeftRailMode("workflow"),
+              creating: creatingTeamWorkflow,
+            }}
           />
           );
 

@@ -708,6 +708,97 @@ export async function getOrCreateDefaultProject(): Promise<{
   return res.data;
 }
 
+/** FS-first 课题 Workspace（与 DB /workspaces 并列） */
+export type FsWorkspaceManifest = {
+  schemaVersion: number;
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  description?: string;
+  defaultFocus?: { symbol: string; exchange?: string };
+  providers: {
+    memory: { kind: string };
+    decision: { kind: string };
+    market?: { kind: string };
+  };
+};
+
+export type FsWorkspaceTreeNode = {
+  id: string;
+  name: string;
+  kind: string;
+  relPath?: string;
+  children?: FsWorkspaceTreeNode[];
+};
+
+export async function listFsWorkspaces(): Promise<
+  Array<{ rootPath: string; manifest: FsWorkspaceManifest }>
+> {
+  const res = await httpGet<{
+    data: Array<{ rootPath: string; manifest: FsWorkspaceManifest }>;
+  }>("/api/v1/fs-workspaces");
+  return res.data ?? [];
+}
+
+export async function createFsWorkspaceApi(input: {
+  name: string;
+  description?: string;
+  slug?: string;
+  seedUniverse?: {
+    symbols?: Array<{ symbol: string; exchange?: string }>;
+    mode?: string;
+  };
+  defaultFocus?: { symbol: string; exchange?: string };
+}): Promise<{ rootPath: string; manifest: FsWorkspaceManifest }> {
+  const res = await httpPost<{
+    data: { rootPath: string; manifest: FsWorkspaceManifest };
+  }>("/api/v1/fs-workspaces", input);
+  return res.data;
+}
+
+export async function getFsWorkspaceTree(
+  id: string,
+  opts?: { maxDepth?: number }
+): Promise<FsWorkspaceTreeNode> {
+  const q = new URLSearchParams();
+  if (opts?.maxDepth != null) q.set("maxDepth", String(opts.maxDepth));
+  const qs = q.toString();
+  const res = await httpGet<{ data: FsWorkspaceTreeNode }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(id)}/tree${qs ? `?${qs}` : ""}`
+  );
+  return res.data;
+}
+
+export async function getFsWorkspaceFile(
+  id: string,
+  path: string
+): Promise<{ path: string; content: string }> {
+  const q = new URLSearchParams({ path });
+  const res = await httpGet<{ data: { path: string; content: string } }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(id)}/file?${q}`
+  );
+  return res.data;
+}
+
+export async function putFsWorkspaceRun(
+  workspaceId: string,
+  runId: string,
+  body: {
+    title: string;
+    status: string;
+    workflowId?: string;
+    sessionId?: string;
+    modelId?: string;
+    focus?: { symbol?: string; exchange?: string };
+  }
+): Promise<void> {
+  await httpPut(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/runs/${encodeURIComponent(runId)}`,
+    body
+  );
+}
+
 export async function listAgents(): Promise<AgentSummary[]> {
   const res = await httpGet<{ data: AgentSummary[] }>("/api/v1/agents");
   return res.data;
@@ -969,20 +1060,41 @@ export async function interruptWorkflow(
 }
 
 /**
- * v2：HITL 卡片支持的 4 种交互形态。
+ * v2：HITL 卡片支持的交互形态。
  * - approve_only：批准 / 拒绝（v1 兼容默认值）
  * - single_choice：单选（inputSchema.options 列出选项）
  * - multi_choice：多选（同上 + 可选 min/maxSelect）
  * - free_form：自由文本（inputSchema.placeholder/maxLength）
+ * - form：结构化填空（inputSchema.fields）
+ * 选择题可同时带 allowFreeText / fields，做「选题 + 填空」。
  */
-export type HitlInputKind = "approve_only" | "single_choice" | "multi_choice" | "free_form";
+export type HitlInputKind =
+  | "approve_only"
+  | "single_choice"
+  | "multi_choice"
+  | "free_form"
+  | "form";
+
+export interface HitlInputField {
+  key: string;
+  label: string;
+  type?: "text" | "number";
+  required?: boolean;
+  placeholder?: string;
+}
 
 export interface HitlInputSchema {
+  /** 面向用户的问题正文（优先于 title 展示） */
+  question?: string;
   options?: Array<{ label: string; value: string; description?: string }>;
+  /** 选择题是否允许额外补充说明 */
+  allowFreeText?: boolean;
   placeholder?: string;
   maxLength?: number;
   minSelect?: number;
   maxSelect?: number;
+  /** form / 选择题附带的填空字段 */
+  fields?: HitlInputField[];
 }
 
 export interface HitlPendingRequest {
@@ -1007,9 +1119,10 @@ export async function listPendingWorkflowHitl(workflowId: string): Promise<HitlP
 /**
  * v2 统一端点 — 推荐前端使用。
  *   - approve_only：response 省略
- *   - single_choice：response = { value: string }
- *   - multi_choice：response = { values: string[] }
+ *   - single_choice：response = { value: string } (+ 可选 text / fields)
+ *   - multi_choice：response = { values: string[] } (+ 可选 text / fields)
  *   - free_form：response = { text: string }
+ *   - form：response = { fields: Record<string, string> } (+ 可选 text)
  * 详见 docs/HITL_REDESIGN.md §8。
  */
 export async function resolveWorkflowHitl(
