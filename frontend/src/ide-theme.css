@@ -1100,8 +1100,30 @@
   }
 }
 
+@keyframes qbSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes qbPulseDot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.55);
+    opacity: 1;
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(56, 189, 248, 0);
+    opacity: 0.85;
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+    opacity: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .team-loader-spin {
+  .team-loader-spin,
+  .qb-orch-live-status__spin {
     animation: none;
   }
 }

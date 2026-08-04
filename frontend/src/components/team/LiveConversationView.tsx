@@ -3,6 +3,11 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "../../i18n";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import {
+  groupArtifactsByInsertAnchor,
+  type StreamInsertArtifact,
+  type TimestampedStreamAnchor,
+} from "./artifactStreamInsert";
+import {
   TEAM_BROADCAST_ROLE,
   avatarColorFor,
   avatarLabelFor,
@@ -74,6 +79,17 @@ export type LiveConversationViewProps = {
    */
   collapseToolCalls?: boolean;
   /**
+   * `stream`（默认）：Cursor 风格——用户消息单独一块，同一次查询内助手正文连续追加，
+   * 不再每个 llm_message 一个气泡；tool / A2A 仍独立卡片。
+   * `bubbles`：旧 IM 气泡流。
+   */
+  layout?: "stream" | "bubbles";
+  /**
+   * 本轮产物：在 stream 布局下按「创建工具 → 时间序」插入对话流对应位置。
+   */
+  artifacts?: StreamInsertArtifact[];
+  onOpenArtifact?: (artifact: StreamInsertArtifact) => void;
+  /**
    * 点击交接信封里的产物引用（data_refs，如 factor / strategy_version）时回调。
    * 不传则产物引用渲染为静态标签（仍展示，不可点）。
    */
@@ -103,6 +119,9 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
   emptyText,
   collapseA2AFromRole,
   collapseToolCalls = false,
+  layout = "stream",
+  artifacts = [],
+  onOpenArtifact,
   onOpenRef,
 }) => {
   const { t } = useTranslation();
@@ -110,7 +129,13 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
     return [...events].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
   }, [events]);
 
-  if (sorted.length === 0) {
+  const streamParts = useMemo(() => {
+    if (layout !== "stream") return [];
+    const base = buildStreamParts(sorted, selfRole, collapseA2AFromRole);
+    return injectArtifactParts(base, artifacts);
+  }, [layout, sorted, selfRole, collapseA2AFromRole, artifacts]);
+
+  if (sorted.length === 0 && artifacts.length === 0) {
     return (
       <div
         data-qb-live-conv-empty
@@ -121,6 +146,65 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
         }}
       >
         {emptyText ?? t("team.conversation.empty")}
+      </div>
+    );
+  }
+
+  if (layout === "stream") {
+    return (
+      <div data-qb-live-conv data-qb-live-conv-layout="stream" style={streamContainerStyle}>
+        {streamParts.map((part) => {
+          switch (part.kind) {
+            case "user":
+              return (
+                <UserStreamBlock key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />
+              );
+            case "assistant":
+              return (
+                <AssistantStreamBlock
+                  key={part.key}
+                  events={part.events}
+                  maxLen={contentMaxLength}
+                  onOpenRef={onOpenRef}
+                />
+              );
+            case "tool":
+              return (
+                <ToolCallCard
+                  key={part.ev.id}
+                  ev={part.ev}
+                  maxLen={contentMaxLength}
+                  collapsedByDefault={collapseToolCalls}
+                />
+              );
+            case "a2a":
+              return <A2ACard key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />;
+            case "broadcast":
+              return <BroadcastBanner key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />;
+            case "debate":
+              return <DebateBanner key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />;
+            case "system":
+              return <SystemBanner key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />;
+            case "message":
+              return (
+                <MessageRow
+                  key={part.ev.id}
+                  ev={part.ev}
+                  selfRole={selfRole}
+                  maxLen={contentMaxLength}
+                  onOpenRef={onOpenRef}
+                />
+              );
+            case "artifact":
+              return (
+                <InlineArtifactCards
+                  key={part.key}
+                  artifacts={part.artifacts}
+                  onOpenArtifact={onOpenArtifact}
+                />
+              );
+          }
+        })}
       </div>
     );
   }
@@ -177,6 +261,358 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
       })}
     </div>
   );
+};
+
+type StreamPart =
+  | { kind: "user"; ev: LiveConversationMessageEvent }
+  | { kind: "assistant"; key: string; events: LiveConversationMessageEvent[] }
+  | { kind: "tool"; ev: LiveConversationMessageEvent }
+  | { kind: "a2a"; ev: LiveConversationMessageEvent }
+  | { kind: "broadcast"; ev: LiveConversationMessageEvent }
+  | { kind: "message"; ev: LiveConversationMessageEvent }
+  | { kind: "debate"; ev: LiveConversationDebateEvent }
+  | { kind: "system"; ev: LiveConversationSystemEvent }
+  | { kind: "artifact"; key: string; artifacts: StreamInsertArtifact[] };
+
+function isAssistantNarrative(
+  ev: LiveConversationMessageEvent,
+  collapseA2AFromRole?: string
+): boolean {
+  if (ev.messageKind === "tool_call") return false;
+  if (ev.toRole === TEAM_BROADCAST_ROLE) return false;
+  if (
+    collapseA2AFromRole &&
+    ev.fromRole === collapseA2AFromRole &&
+    ev.toRole !== "user"
+  ) {
+    return false;
+  }
+  if (ev.fromRole === "user") return false;
+  return true;
+}
+
+function buildStreamParts(
+  sorted: LiveConversationEvent[],
+  _selfRole: string,
+  collapseA2AFromRole?: string
+): StreamPart[] {
+  const parts: StreamPart[] = [];
+  let assistantBuf: LiveConversationMessageEvent[] = [];
+
+  const flushAssistant = () => {
+    if (assistantBuf.length === 0) return;
+    parts.push({
+      kind: "assistant",
+      key: `assist:${assistantBuf[0]!.id}:${assistantBuf[assistantBuf.length - 1]!.id}`,
+      events: assistantBuf,
+    });
+    assistantBuf = [];
+  };
+
+  for (const ev of sorted) {
+    if (ev.kind === "debate") {
+      flushAssistant();
+      parts.push({ kind: "debate", ev });
+      continue;
+    }
+    if (ev.kind === "system") {
+      flushAssistant();
+      parts.push({ kind: "system", ev });
+      continue;
+    }
+    // message
+    if (ev.messageKind === "tool_call") {
+      flushAssistant();
+      parts.push({ kind: "tool", ev });
+      continue;
+    }
+    if (
+      collapseA2AFromRole &&
+      ev.fromRole === collapseA2AFromRole &&
+      ev.toRole !== "user"
+    ) {
+      flushAssistant();
+      parts.push({ kind: "a2a", ev });
+      continue;
+    }
+    if (ev.toRole === TEAM_BROADCAST_ROLE) {
+      flushAssistant();
+      parts.push({ kind: "broadcast", ev });
+      continue;
+    }
+    if (ev.fromRole === "user") {
+      flushAssistant();
+      parts.push({ kind: "user", ev });
+      continue;
+    }
+    if (isAssistantNarrative(ev, collapseA2AFromRole)) {
+      assistantBuf.push(ev);
+      continue;
+    }
+    flushAssistant();
+    parts.push({ kind: "message", ev });
+  }
+  flushAssistant();
+  return parts;
+}
+
+function partTimestamp(part: StreamPart): string | null {
+  switch (part.kind) {
+    case "user":
+    case "tool":
+    case "a2a":
+    case "broadcast":
+    case "message":
+    case "debate":
+    case "system":
+      return part.ev.ts;
+    case "assistant":
+      return part.events[part.events.length - 1]?.ts ?? null;
+    case "artifact":
+      return part.artifacts[part.artifacts.length - 1]?.createdAt ?? null;
+  }
+}
+
+function injectArtifactParts(
+  parts: StreamPart[],
+  artifacts: StreamInsertArtifact[]
+): StreamPart[] {
+  if (artifacts.length === 0) return parts;
+
+  const anchors: TimestampedStreamAnchor[] = parts.map((part, index) => {
+    if (part.kind === "tool") {
+      return {
+        index,
+        isTool: true,
+        toolName: part.ev.toolName,
+        contentText: part.ev.contentText,
+        ts: part.ev.ts,
+      };
+    }
+    return {
+      index,
+      isTool: false,
+      ts: partTimestamp(part),
+    };
+  });
+
+  const grouped = groupArtifactsByInsertAnchor(anchors, artifacts);
+  if (grouped.size === 0) return parts;
+
+  if (parts.length === 0) {
+    const head = grouped.get(-1) ?? [];
+    const rest = [...grouped.entries()]
+      .filter(([k]) => k !== -1)
+      .flatMap(([, list]) => list);
+    const all = [...head, ...rest];
+    if (all.length === 0) return parts;
+    return [
+      {
+        kind: "artifact",
+        key: `art:only:${all.map((a) => a.id).join(",")}`,
+        artifacts: all,
+      },
+    ];
+  }
+
+  const out: StreamPart[] = [];
+  const prepend = grouped.get(-1);
+  if (prepend?.length) {
+    out.push({
+      kind: "artifact",
+      key: `art:pre:${prepend.map((a) => a.id).join(",")}`,
+      artifacts: prepend,
+    });
+  }
+
+  for (let i = 0; i < parts.length; i++) {
+    out.push(parts[i]!);
+    const arts = grouped.get(i);
+    if (arts?.length) {
+      out.push({
+        kind: "artifact",
+        key: `art:${i}:${arts.map((a) => a.id).join(",")}`,
+        artifacts: arts,
+      });
+    }
+  }
+  return out;
+}
+
+const InlineArtifactCards: FC<{
+  artifacts: StreamInsertArtifact[];
+  onOpenArtifact?: (artifact: StreamInsertArtifact) => void;
+}> = ({ artifacts, onOpenArtifact }) => {
+  return (
+    <div data-qb-live-stream="artifact" style={inlineArtifactWrapStyle}>
+      <div style={streamMetaStyle}>产物</div>
+      <div style={inlineArtifactListStyle}>
+        {artifacts.map((a) => (
+          <button
+            key={`${a.kind}:${a.id}`}
+            type="button"
+            style={inlineArtifactCardStyle}
+            title={`打开${a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}：${a.title}`}
+            onClick={() => onOpenArtifact?.(a)}
+          >
+            <span style={inlineArtifactKindStyle}>
+              {a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}
+            </span>
+            <span style={inlineArtifactTitleStyle}>{a.title}</span>
+            {a.subtitle ? <span style={inlineArtifactSubStyle}>{a.subtitle}</span> : null}
+            <span style={inlineArtifactOpenStyle}>打开 ↗</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const streamContainerStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+  padding: "8px 4px 16px",
+  fontFamily: "ui-sans-serif, system-ui, sans-serif",
+};
+
+const inlineArtifactWrapStyle: CSSProperties = {
+  alignSelf: "stretch",
+};
+
+const inlineArtifactListStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
+
+const inlineArtifactCardStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  padding: "7px 10px",
+  background: "rgba(96,165,250,0.08)",
+  border: "1px solid rgba(96,165,250,0.4)",
+  borderRadius: 8,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  textAlign: "left",
+  width: "100%",
+  color: "inherit",
+};
+
+const inlineArtifactKindStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 10,
+  padding: "1px 6px",
+  borderRadius: 4,
+  border: "1px solid rgba(96,165,250,0.5)",
+  color: "#93c5fd",
+};
+
+const inlineArtifactTitleStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  fontSize: 12,
+  color: "#e4e4e7",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+
+const inlineArtifactSubStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 10,
+  color: "#71717a",
+};
+
+const inlineArtifactOpenStyle: CSSProperties = {
+  flexShrink: 0,
+  fontSize: 10,
+  color: "#60a5fa",
+};
+
+const UserStreamBlock: FC<{
+  ev: LiveConversationMessageEvent;
+  maxLen: number;
+}> = ({ ev, maxLen }) => {
+  const text = truncate(ev.contentText || "", maxLen);
+  return (
+    <div data-qb-live-stream="user" style={userStreamStyle}>
+      <div style={streamMetaStyle}>{formatTs(ev.ts)} · You</div>
+      <div style={userStreamBodyStyle}>{text}</div>
+    </div>
+  );
+};
+
+const AssistantStreamBlock: FC<{
+  events: LiveConversationMessageEvent[];
+  maxLen: number;
+  onOpenRef?: (ref: { kind: string; id: string }) => void;
+}> = ({ events, maxLen, onOpenRef }) => {
+  const combined = events
+    .map((e) => e.contentText.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const content = truncate(combined || "", maxLen);
+  const last = events[events.length - 1]!;
+  const useMarkdown = looksLikeMarkdown(content);
+  void onOpenRef;
+  return (
+    <div data-qb-live-stream="assistant" style={assistantStreamStyle}>
+      <div style={streamMetaStyle}>
+        {formatTs(last.ts)} · {formatRoleName(last.fromRole)}
+        {events.length > 1 ? ` · ${events.length} segments` : ""}
+      </div>
+      <div style={assistantStreamBodyStyle}>
+        {content ? (
+          useMarkdown ? (
+            <MarkdownBubble text={content} />
+          ) : (
+            <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{content}</div>
+          )
+        ) : (
+          <span style={{ color: "var(--qb-team-meta, #71717a)" }}>…</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const streamMetaStyle: CSSProperties = {
+  fontSize: 11,
+  color: "var(--qb-team-meta, #71717a)",
+  marginBottom: 6,
+  fontWeight: 600,
+  letterSpacing: "0.02em",
+};
+
+const userStreamStyle: CSSProperties = {
+  alignSelf: "stretch",
+  padding: "8px 10px",
+  borderRadius: 6,
+  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(255,255,255,0.06)",
+};
+
+const userStreamBodyStyle: CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1.55,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+  color: "var(--qb-body-fg, #e4e4e7)",
+};
+
+const assistantStreamStyle: CSSProperties = {
+  alignSelf: "stretch",
+  padding: "2px 2px 8px",
+};
+
+const assistantStreamBodyStyle: CSSProperties = {
+  fontSize: 13,
+  lineHeight: 1.6,
+  color: "var(--qb-body-fg, #e4e4e7)",
+  minWidth: 0,
 };
 
 const containerStyle: CSSProperties = {

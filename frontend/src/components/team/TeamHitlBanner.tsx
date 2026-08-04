@@ -3,7 +3,7 @@
  *
  * 设计要点（详见 docs/HITL_REDESIGN.md）：
  *   - 自包含：仅靠 workflowRunId + triggerKey 拉详情；父组件无需关心 inputKind
- *   - 4 种交互形态：approve_only / single_choice / multi_choice / free_form
+ *   - 交互形态：approve_only / single_choice / multi_choice / free_form / form
  *   - 拒绝按钮永远在；其余按钮根据 inputKind 决定是否启用 + 校验
  *   - 多个 pending 时取最新一条；后续可考虑展开列表（P2）
  */
@@ -46,6 +46,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
   const [choice, setChoice] = useState<string>("");
   const [multiChoice, setMultiChoice] = useState<string[]>([]);
   const [freeText, setFreeText] = useState<string>("");
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
 
   const refresh = useCallback(async () => {
     if (!workflowRunId.trim()) {
@@ -59,6 +60,7 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
       setChoice("");
       setMultiChoice([]);
       setFreeText("");
+      setFieldValues({});
     } catch (e) {
       setState({ pending: null, busy: false, error: (e as Error).message });
     }
@@ -109,7 +111,14 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
     try {
       const response =
         decision === "approved"
-          ? buildHitlResponsePayload({ inputKind, schema, choice, multiChoice, freeText })
+          ? buildHitlResponsePayload({
+              inputKind,
+              schema,
+              choice,
+              multiChoice,
+              freeText,
+              fieldValues,
+            })
           : null;
       await resolveWorkflowHitl(workflowRunId.trim(), p.id, decision, response);
       setState({ pending: null, busy: false, error: null });
@@ -146,6 +155,8 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
         setMultiChoice={setMultiChoice}
         freeText={freeText}
         setFreeText={setFreeText}
+        fieldValues={fieldValues}
+        setFieldValues={setFieldValues}
         disabled={state.busy}
       />
 

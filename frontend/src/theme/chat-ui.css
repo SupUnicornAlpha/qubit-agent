@@ -8,9 +8,66 @@ html {
   --qb-chat-page-bg: var(--qb-bg-root, #0d0d0f);
 }
 
-[data-qb-chat-panel] {
+[data-qb-chat-panel],
+[data-qb-orchestrator-chat] {
   color: var(--qb-body-fg);
+}
+
+[data-qb-chat-panel] {
   background: var(--qb-chat-page-bg);
+}
+
+[data-qb-chat-panel] .qb-chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+[data-qb-chat-panel] .qb-chat-sessions__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+[data-qb-chat-panel] .qb-chat-sessions--top {
+  width: 100%;
+  border-color: transparent;
+  background: transparent;
+  padding: 4px 2px 8px;
+}
+
+[data-qb-chat-panel] .qb-chat-sessions--top .qb-chat-sessions__toolbar {
+  min-height: 34px;
+}
+
+[data-qb-chat-panel] .qb-chat-layout--sessions-top,
+[data-qb-chat-panel] .qb-chat-layout--sessions-hidden {
+  width: 100%;
+  min-width: 0;
+}
+
+[data-qb-chat-panel] .qb-chat-main {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* Cursor 风格正文：助手段去气泡壳，用户保留轻量块；连续 segment 已在组件里拼进一段 */
+[data-qb-chat-panel] .qb-chat-turn--assistant.qb-chat-bubble--agent,
+[data-qb-chat-panel] [data-qb-chat-stream="assistant"].qb-chat-bubble--agent {
+  align-self: stretch;
+  max-width: 100%;
+  padding: 2px 2px 10px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-qb-chat-panel] .qb-chat-turn--user.qb-chat-bubble--user,
+[data-qb-chat-panel] [data-qb-chat-stream="user"].qb-chat-bubble--user {
+  align-self: stretch;
+  max-width: min(92%, 100%);
 }
 
 [data-qb-chat-panel] .qb-chat-bubble {
@@ -55,7 +112,8 @@ html {
   color: inherit;
 }
 
-[data-qb-chat-panel] .qb-chat-execution {
+[data-qb-chat-panel] .qb-chat-execution,
+[data-qb-orchestrator-chat] .qb-chat-execution {
   margin-top: 10px;
   border: 1px solid color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 78%, transparent);
   border-radius: var(--qb-radius-md, 8px);
@@ -63,7 +121,8 @@ html {
   background: color-mix(in srgb, var(--qb-chat-bubble-agent-bg, #18181b) 88%, transparent);
 }
 
-[data-qb-chat-panel] .qb-chat-execution__toggle {
+[data-qb-chat-panel] .qb-chat-execution__toggle,
+[data-qb-orchestrator-chat] .qb-chat-execution__toggle {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -78,19 +137,22 @@ html {
   text-align: left;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__summary {
+[data-qb-chat-panel] .qb-chat-execution__summary,
+[data-qb-orchestrator-chat] .qb-chat-execution__summary {
   margin-left: auto;
   color: var(--qb-chat-meta-fg);
   font-size: 10px;
 }
 
-[data-qb-chat-panel] .qb-chat-execution__list {
+[data-qb-chat-panel] .qb-chat-execution__list,
+[data-qb-orchestrator-chat] .qb-chat-execution__list {
   display: grid;
   gap: 6px;
   padding: 0 8px 8px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card {
+[data-qb-chat-panel] .qb-chat-call-card,
+[data-qb-orchestrator-chat] .qb-chat-call-card {
   border: 1px solid color-mix(in srgb, var(--qb-chat-bubble-border, #3f3f46) 70%, transparent);
   border-radius: 7px;
   background: color-mix(in srgb, var(--qb-chat-page-bg) 72%, transparent);
@@ -98,22 +160,28 @@ html {
 }
 
 [data-qb-chat-panel] .qb-chat-call-card--a2a,
-[data-qb-chat-panel] .qb-chat-call-card summary {
+[data-qb-chat-panel] .qb-chat-call-card summary,
+[data-qb-orchestrator-chat] .qb-chat-call-card--a2a,
+[data-qb-orchestrator-chat] .qb-chat-call-card summary {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 9px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card summary {
+[data-qb-chat-panel] .qb-chat-call-card summary,
+[data-qb-orchestrator-chat] .qb-chat-call-card summary {
   cursor: pointer;
   list-style: none;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card summary::-webkit-details-marker { display: none; }
+[data-qb-chat-panel] .qb-chat-call-card summary::-webkit-details-marker,
+[data-qb-orchestrator-chat] .qb-chat-call-card summary::-webkit-details-marker { display: none; }
 
 [data-qb-chat-panel] .qb-chat-call-card--a2a > div,
-[data-qb-chat-panel] .qb-chat-call-card__body {
+[data-qb-chat-panel] .qb-chat-call-card__body,
+[data-qb-orchestrator-chat] .qb-chat-call-card--a2a > div,
+[data-qb-orchestrator-chat] .qb-chat-call-card__body {
   display: flex;
   flex: 1;
   min-width: 0;
@@ -121,11 +189,13 @@ html {
   gap: 2px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card span {
+[data-qb-chat-panel] .qb-chat-call-card span,
+[data-qb-orchestrator-chat] .qb-chat-call-card span {
   color: var(--qb-chat-meta-fg);
 }
 
-[data-qb-chat-panel] .qb-chat-call-card pre {
+[data-qb-chat-panel] .qb-chat-call-card pre,
+[data-qb-orchestrator-chat] .qb-chat-call-card pre {
   max-height: 220px;
   margin: 0;
   padding: 8px 10px;
@@ -136,12 +206,19 @@ html {
   font-size: 10px;
 }
 
-[data-qb-chat-panel] .qb-chat-call-card__spin {
+[data-qb-chat-panel] .qb-chat-call-card__spin,
+[data-qb-orchestrator-chat] .qb-chat-call-card__spin {
   flex: none;
   animation: qb-chat-call-spin .9s linear infinite;
 }
 
 @keyframes qb-chat-call-spin { to { transform: rotate(360deg); } }
+
+.qb-orch-live-status__spin {
+  animation: qbSpin 1s linear infinite;
+  color: #38bdf8;
+  flex-shrink: 0;
+}
 
 [data-qb-chat-panel] .qb-btn-danger {
   border: 1px solid #ef4444;
@@ -254,6 +331,16 @@ html[data-qb-style="comic-book"] [data-qb-chat-panel] .qb-chat-bubble--user {
 
 html[data-qb-style="comic-book"] [data-qb-chat-panel] .qb-chat-bubble--agent {
   transform: rotate(-0.25deg);
+}
+
+html[data-qb-style="comic-book"] [data-qb-chat-panel] .qb-chat-turn--assistant.qb-chat-bubble--agent,
+html[data-qb-style="comic-book"] [data-qb-chat-panel] [data-qb-chat-stream="assistant"].qb-chat-bubble--agent {
+  transform: none;
+  box-shadow: none;
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 2px 2px 10px;
 }
 
 html[data-qb-style="comic-book"] [data-qb-chat-panel] .qb-chat-markdown th,

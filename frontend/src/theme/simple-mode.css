@@ -318,6 +318,13 @@
   font-size: 14px;
 }
 
+.qb-simple-shell .qb-chat-panel--simple .qb-chat-turn--assistant.qb-chat-bubble--agent {
+  padding: 4px 0 16px;
+  width: 100%;
+  background: transparent;
+  border: none;
+}
+
 .qb-simple-shell .qb-chat-panel--simple .qb-chat-bubble--user {
   padding: 10px 14px;
   border-radius: 14px;

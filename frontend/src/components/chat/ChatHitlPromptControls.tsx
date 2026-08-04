@@ -3,13 +3,12 @@
  *
  * 历史：对话窗口（MainContent.tsx）的 awaiting_approval 气泡只画了两个按钮，并且直
  * 接调 `approveWorkflowHitl` / `rejectWorkflowHitl` 老端点，永远不带 `response`。
- * 后端虽然 v2 已支持 single_choice / multi_choice / free_form（见 hitl-service.ts +
- * 0044/0045 迁移），UI 上对话路径却**永远只能画 approve_only**。
+ * 后端已支持 single_choice / multi_choice / free_form / form（见 hitl-service.ts）。
  *
  * 本组件做三件事：
  *   1. 通过 `listPendingWorkflowHitl` 拉到 requestId 对应的 `inputKind` + `inputSchemaJson`
  *      —— 父组件只需要 messageId / workflowRunId / requestId 三个 key
- *   2. 按 inputKind 复用 `<HitlInputArea />` 渲染选择题 / 自由输入
+ *   2. 按 inputKind 复用 `<HitlInputArea />` 渲染选择题 / 填空 / 自由输入
  *   3. 提交时统一走 `resolveWorkflowHitl`（带 response），与团队 banner 同协议
  *
  * 不影响"防重订阅"等父组件状态：保留 `inflight` 入参，让 MainContent 仍能用
@@ -61,6 +60,7 @@ export function ChatHitlPromptControls({
   const [choice, setChoice] = useState<string>("");
   const [multiChoice, setMultiChoice] = useState<string[]>([]);
   const [freeText, setFreeText] = useState<string>("");
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -114,7 +114,14 @@ export function ChatHitlPromptControls({
     try {
       const response =
         decision === "approved"
-          ? buildHitlResponsePayload({ inputKind, schema, choice, multiChoice, freeText })
+          ? buildHitlResponsePayload({
+              inputKind,
+              schema,
+              choice,
+              multiChoice,
+              freeText,
+              fieldValues,
+            })
           : null;
       onDecision(decision, response);
     } catch (e) {
@@ -141,6 +148,8 @@ export function ChatHitlPromptControls({
         setMultiChoice={setMultiChoice}
         freeText={freeText}
         setFreeText={setFreeText}
+        fieldValues={fieldValues}
+        setFieldValues={setFieldValues}
         disabled={inflight}
       />
 

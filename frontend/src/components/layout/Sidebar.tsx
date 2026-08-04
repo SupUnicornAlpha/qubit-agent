@@ -1,9 +1,12 @@
 import type { FC } from "react";
-import { Sparkles } from "lucide-react";
-import { useAppStore, type ConfigSubPage, type QuantTab } from "../../store";
+import { MessageSquare, Sparkles } from "lucide-react";
+import { useAppStore, type ConfigSubPage, type ExplorerSection, type QuantTab } from "../../store";
 import type { NavKey } from "../../lib/navIcons";
 import { NavGlyph } from "../../lib/navIcons";
 import { useTranslation } from "../../i18n";
+import { ExplorerAssetsPanel } from "../../shell/pro/ExplorerAssetsPanel";
+import { ExplorerSessionsPanel } from "../../shell/pro/ExplorerSessionsPanel";
+import { ExplorerWorkspaceTree } from "../../shell/pro/ExplorerWorkspaceTree";
 
 /** 仅承载结构（id 与 i18n key），具体 label 在渲染时通过 `t()` 解析。 */
 const QUANT_SUB: readonly { id: QuantTab; i18nKey: string }[] = [
@@ -47,10 +50,14 @@ export const Sidebar: FC = () => {
   const setActiveView = useAppStore((s) => s.setActiveView);
   const explorerOpen = useAppStore((s) => s.explorerOpen);
   const setExplorerOpen = useAppStore((s) => s.setExplorerOpen);
+  const explorerSection = useAppStore((s) => s.explorerSection);
+  const setExplorerSection = useAppStore((s) => s.setExplorerSection);
   const configSubPage = useAppStore((s) => s.configSubPage);
   const setConfigSubPage = useAppStore((s) => s.setConfigSubPage);
   const quantTab = useAppStore((s) => s.quantTab);
   const setQuantTab = useAppStore((s) => s.setQuantTab);
+  const agentPanelOpen = useAppStore((s) => s.agentPanelOpen);
+  const toggleAgentPanelOpen = useAppStore((s) => s.toggleAgentPanelOpen);
   const { t } = useTranslation();
   const activeItem = NAV_ITEMS.find((n) => n.key === activeView) ?? NAV_ITEMS[0];
   const activeLabel = t(activeItem.i18nKey);
@@ -58,6 +65,10 @@ export const Sidebar: FC = () => {
   const goNav = (key: NavKey) => {
     setActiveView(key);
     if (key === "config") setConfigSubPage("llm");
+    if (key === "chat") {
+      // 专业壳：对话优先落到右侧 Agent 栏
+      if (!agentPanelOpen) toggleAgentPanelOpen();
+    }
   };
 
   /** 活动栏：仅再次点击当前图标时切换 Explorer；切换其他视图不改变 Explorer 开闭 */
@@ -121,6 +132,24 @@ export const Sidebar: FC = () => {
             </button>
           );
         })}
+        <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          className={[
+            "qb-nav-activity-btn",
+            agentPanelOpen ? "qb-nav-activity-btn--active" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          title={t("proShell.agent.toggleTitle")}
+          aria-label={t("proShell.agent.toggleTitle")}
+          aria-pressed={agentPanelOpen}
+          onClick={() => toggleAgentPanelOpen()}
+        >
+          <span style={styles.activityIcon}>
+            <MessageSquare size={18} strokeWidth={2} />
+          </span>
+        </button>
       </div>
       {explorerOpen ? (
         <div className="qb-explorer-panel" style={styles.explorer}>
@@ -132,79 +161,106 @@ export const Sidebar: FC = () => {
               {t("sidebar.brand.meta")}
             </div>
           </div>
-          <div style={styles.group}>
-            <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-              {t("sidebar.group.nav")}
-            </div>
-            {NAV_ITEMS.map((item) => (
+          <div className="qb-explorer-sections" role="tablist" aria-label={t("proShell.explorer.sectionsAria")}>
+            {(
+              [
+                ["pages", t("proShell.explorer.pages")],
+                ["sessions", t("proShell.explorer.sessions")],
+                ["workspace", t("proShell.explorer.workspace")],
+                ["assets", t("proShell.explorer.assets")],
+              ] as const satisfies ReadonlyArray<readonly [ExplorerSection, string]>
+            ).map(([id, label]) => (
               <button
-                key={item.key}
+                key={id}
                 type="button"
-                onClick={() => goNav(item.key)}
-                className={`qb-nav-row${activeView === item.key ? " qb-nav-row--active" : ""}`}
+                role="tab"
+                aria-selected={explorerSection === id}
+                onClick={() => setExplorerSection(id)}
               >
-                <span style={styles.icon}>
-                  <NavGlyph navKey={item.key} size={16} />
-                </span>
-                <span style={styles.label}>{t(item.i18nKey)}</span>
+                {label}
               </button>
             ))}
           </div>
-          {activeView === "config" ? (
-            <div style={styles.group}>
-              <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-                {t("sidebar.group.configSub")}
+          {explorerSection === "sessions" ? <ExplorerSessionsPanel /> : null}
+          {explorerSection === "workspace" ? <ExplorerWorkspaceTree /> : null}
+          {explorerSection === "assets" ? <ExplorerAssetsPanel /> : null}
+          {explorerSection === "pages" ? (
+            <div style={{ ...styles.pagesScroll }}>
+              <div style={styles.group}>
+                <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+                  {t("sidebar.group.nav")}
+                </div>
+                {NAV_ITEMS.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => goNav(item.key)}
+                    className={`qb-nav-row${activeView === item.key ? " qb-nav-row--active" : ""}`}
+                  >
+                    <span style={styles.icon}>
+                      <NavGlyph navKey={item.key} size={16} />
+                    </span>
+                    <span style={styles.label}>{t(item.i18nKey)}</span>
+                  </button>
+                ))}
               </div>
-              {CONFIG_CENTER_SUB.map((sub) => (
-                <button
-                  key={sub.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveView("config");
-                    setConfigSubPage(sub.id);
-                  }}
-                  className={`qb-nav-row${configSubPage === sub.id ? " qb-nav-row--active" : ""}`}
-                >
-                  <span style={styles.label}>{t(sub.i18nKey)}</span>
-                </button>
-              ))}
+              {activeView === "config" ? (
+                <div style={styles.group}>
+                  <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+                    {t("sidebar.group.configSub")}
+                  </div>
+                  {CONFIG_CENTER_SUB.map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveView("config");
+                        setConfigSubPage(sub.id);
+                      }}
+                      className={`qb-nav-row${configSubPage === sub.id ? " qb-nav-row--active" : ""}`}
+                    >
+                      <span style={styles.label}>{t(sub.i18nKey)}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {activeView === "quant" ? (
+                <div style={styles.group}>
+                  <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+                    {t("sidebar.group.quantSub")}
+                  </div>
+                  {QUANT_SUB.map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveView("quant");
+                        setQuantTab(sub.id);
+                      }}
+                      className={`qb-nav-row${quantTab === sub.id ? " qb-nav-row--active" : ""}`}
+                    >
+                      <span style={styles.label}>{t(sub.i18nKey)}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div style={styles.group}>
+                <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
+                  {t("sidebar.group.currentContext")}
+                </div>
+                <div className="qb-context-card">
+                  <div className="qb-sidebar-strong-text" style={styles.contextTitle}>
+                    {activeLabel}
+                  </div>
+                  <div className="qb-sidebar-muted-text" style={styles.contextMeta}>
+                    {t("sidebar.context.moduleLabel", { name: activeLabel })}
+                    {activeView === "config" ? ` · ${configSubPage}` : ""}
+                    {activeView === "quant" ? ` · ${quantTab}` : ""}
+                  </div>
+                </div>
+              </div>
             </div>
           ) : null}
-          {activeView === "quant" ? (
-            <div style={styles.group}>
-              <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-                {t("sidebar.group.quantSub")}
-              </div>
-              {QUANT_SUB.map((sub) => (
-                <button
-                  key={sub.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveView("quant");
-                    setQuantTab(sub.id);
-                  }}
-                  className={`qb-nav-row${quantTab === sub.id ? " qb-nav-row--active" : ""}`}
-                >
-                  <span style={styles.label}>{t(sub.i18nKey)}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div style={styles.group}>
-            <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
-              {t("sidebar.group.currentContext")}
-            </div>
-            <div className="qb-context-card">
-              <div className="qb-sidebar-strong-text" style={styles.contextTitle}>
-                {activeLabel}
-              </div>
-              <div className="qb-sidebar-muted-text" style={styles.contextMeta}>
-                {t("sidebar.context.moduleLabel", { name: activeLabel })}
-                {activeView === "config" ? ` · ${configSubPage}` : ""}
-                {activeView === "quant" ? ` · ${quantTab}` : ""}
-              </div>
-            </div>
-          </div>
         </div>
       ) : null}
     </nav>
@@ -241,7 +297,14 @@ const styles: Record<string, React.CSSProperties> = {
     flex: "0 0 auto",
     display: "flex",
     flexDirection: "column",
+    minHeight: 0,
     overflow: "hidden",
+  },
+  pagesScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflow: "auto",
+    paddingBottom: 12,
   },
   brand: {
     padding: "10px 12px 10px",

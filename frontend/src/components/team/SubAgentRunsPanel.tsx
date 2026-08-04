@@ -1,12 +1,10 @@
 /**
  * 右栏 Orchestrator 对话内的「子 Agent 运行」面板。
- * 折叠态：谁在跑 + 一行活动摘要；展开态：复用 AgentRunPanel 看内部轨迹。
+ * 点击专家后由父级跳转到独立的子对话上下文，避免把完整轨迹挤在进度卡里。
  */
 import type { CSSProperties, FC } from "react";
-import { useEffect, useState } from "react";
 import type { SubAgentRunSummary, SubAgentRunStatus } from "../../lib/subAgentRuns";
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
-import { AgentRunPanel } from "./AgentRunChatView";
 
 const STATUS_LABEL: Record<SubAgentRunStatus, string> = {
   queued: "排队中",
@@ -24,14 +22,9 @@ const STATUS_COLOR: Record<SubAgentRunStatus, string> = {
 
 export const SubAgentRunsPanel: FC<{
   runs: SubAgentRunSummary[];
-}> = ({ runs }) => {
-  const [expanded, setExpanded] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (expanded && !runs.some((r) => r.role === expanded)) {
-      setExpanded(null);
-    }
-  }, [runs, expanded]);
+  selectedRole?: string | null;
+  onSelectRun?: (run: SubAgentRunSummary) => void;
+}> = ({ runs, selectedRole = null, onSelectRun }) => {
 
   if (runs.length === 0) return null;
 
@@ -47,15 +40,16 @@ export const SubAgentRunsPanel: FC<{
       </div>
       <div style={styles.list}>
         {runs.map((run) => {
-          const open = expanded === run.role;
+          const selected = selectedRole === run.role;
           const { bg, fg } = avatarColorFor(run.role);
           return (
             <div key={run.role} style={styles.card}>
               <button
                 type="button"
-                style={styles.summaryBtn}
-                aria-expanded={open}
-                onClick={() => setExpanded((v) => (v === run.role ? null : run.role))}
+                style={{ ...styles.summaryBtn, ...(selected ? styles.summaryBtnSelected : null) }}
+                aria-pressed={selected}
+                onClick={() => onSelectRun?.(run)}
+                title={`打开${formatRoleName(run.role)}的子对话上下文`}
               >
                 <span
                   aria-hidden
@@ -94,24 +88,9 @@ export const SubAgentRunsPanel: FC<{
                   </span>
                 </span>
                 <span aria-hidden style={styles.chevron}>
-                  {open ? "▾" : "▸"}
+                  {selected ? "打开中" : "查看对话 ▸"}
                 </span>
               </button>
-              {open ? (
-                <div style={styles.detail}>
-                  <AgentRunPanel
-                    data={{
-                      role: run.role,
-                      inbound: run.inbound,
-                      outbound: run.outbound,
-                      steps: run.steps,
-                      tools: run.tools,
-                      mcps: run.mcps,
-                    }}
-                    defaultMode="chat"
-                  />
-                </div>
-              ) : null}
             </div>
           );
         })}
@@ -165,6 +144,10 @@ const styles: Record<string, CSSProperties> = {
     textAlign: "left",
     fontFamily: "inherit",
     color: "inherit",
+  },
+  summaryBtnSelected: {
+    background: "rgba(56,189,248,0.12)",
+    boxShadow: "inset 2px 0 0 #38bdf8",
   },
   avatar: {
     flexShrink: 0,
@@ -226,13 +209,8 @@ const styles: Record<string, CSSProperties> = {
   chevron: {
     flexShrink: 0,
     fontSize: 10,
-    color: "#71717a",
+    color: "#7dd3fc",
     marginTop: 4,
-  },
-  detail: {
-    maxHeight: 360,
-    overflow: "auto",
-    borderTop: "1px solid rgba(255,255,255,0.06)",
-    background: "rgba(8,8,10,0.55)",
+    whiteSpace: "nowrap",
   },
 };

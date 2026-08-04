@@ -25,6 +25,7 @@ import "./theme/quant-industrial.css";
 import "./theme/quant-comic-book.css";
 import "./theme/quant-sci-fi-hud.css";
 import "./theme/simple-mode.css";
+import "./theme/prime-chrome.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element not found");

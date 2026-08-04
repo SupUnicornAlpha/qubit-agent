@@ -3,10 +3,9 @@ import { useEffect } from "react";
 import { getHealth } from "./api/backend";
 import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
-import { MainContent } from "./components/layout/MainContent";
 import { SimpleWorkspace } from "./components/layout/SimpleWorkspace";
-import { Sidebar } from "./components/layout/Sidebar";
-import { TopBar } from "./components/layout/TopBar";
+import { AgentDockProvider } from "./shell/pro/AgentDockContext";
+import { ProWorkbench } from "./shell/pro/ProWorkbench";
 import { useTranslation } from "./i18n";
 import { useAppStore } from "./store";
 
@@ -99,31 +98,29 @@ const App: FC = () => {
   }, [setBackendConnected, setBackendHint, t]);
 
   return (
-    <div className={`qb-app-root qb-app-root--${interfaceMode}`} style={styles.root}>
-      {interfaceMode === "simple" ? (
-        <SimpleWorkspace />
-      ) : (
-        <>
-          <div className="qb-gh-bg-layer" aria-hidden>
-            <span className="qb-gh-bg-layer__base" />
-            <span className="qb-gh-bg-layer__orbs" />
-            <span className="qb-gh-bg-layer__aurora" />
-            <span className="qb-a3d-spatial-grid" />
-            <span className="qb-gh-bg-layer__sweep" />
-            <span className="qb-gh-bg-layer__wave" />
-            <span className="qb-a3d-scene-deco" aria-hidden>
-              <span className="qb-a3d-prism-shadow" />
-              <span className="qb-a3d-prism" />
-            </span>
-          </div>
-          <TopBar />
-          <div className="qb-a3d-stage" style={styles.body}>
-            <Sidebar />
-            <MainContent />
-          </div>
-        </>
-      )}
-    </div>
+    <AgentDockProvider>
+      <div className={`qb-app-root qb-app-root--${interfaceMode}`} style={styles.root}>
+        {interfaceMode === "simple" ? (
+          <SimpleWorkspace />
+        ) : (
+          <>
+            <div className="qb-gh-bg-layer" aria-hidden>
+              <span className="qb-gh-bg-layer__base" />
+              <span className="qb-gh-bg-layer__orbs" />
+              <span className="qb-gh-bg-layer__aurora" />
+              <span className="qb-a3d-spatial-grid" />
+              <span className="qb-gh-bg-layer__sweep" />
+              <span className="qb-gh-bg-layer__wave" />
+              <span className="qb-a3d-scene-deco" aria-hidden>
+                <span className="qb-a3d-prism-shadow" />
+                <span className="qb-a3d-prism" />
+              </span>
+            </div>
+            <ProWorkbench />
+          </>
+        )}
+      </div>
+    </AgentDockProvider>
   );
 };
 
@@ -137,13 +134,6 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
     maxWidth: "100vw",
     color: "var(--qb-body-fg, #e4e4e7)",
-    overflow: "hidden",
-  },
-  body: {
-    display: "flex",
-    flex: 1,
-    minWidth: 0,
-    minHeight: 0,
     overflow: "hidden",
   },
 };
