@@ -10,6 +10,9 @@ export {
 } from "./providers/fs-memory";
 export {
   resolveProviders,
+  registerMemoryProvider,
+  registerDecisionProvider,
+  listRegisteredProviderKinds,
   type DecisionEngineProvider,
   type OpenedWorkspace,
   type ResolvedProviders,

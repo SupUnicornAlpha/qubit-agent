@@ -78,7 +78,8 @@ describe("workspace fs lifecycle", () => {
       const layers3 = await opened.fs.loadAgentInstructions();
       expect(layers3.layers[0]?.path).toBe("AGENTS.md");
 
-      const { memory } = resolveProviders(opened.manifest);
+      const { memory, decision } = resolveProviders(opened.manifest);
+      expect(decision.kind).toBe("builtin.local_quant");
       const entry = await memory.upsert(opened.fs, {
         title: "估值框架",
         body: "半导体用 PS 不用 PE",
@@ -92,6 +93,23 @@ describe("workspace fs lifecycle", () => {
       expect(hitsMem.length).toBeGreaterThan(0);
       const boot = await memory.loadBootstrap(opened.fs);
       expect(boot.includes("估值框架") || boot.includes("置顶")).toBe(true);
+      await memory.remove(opened.fs, entry.id);
+      const afterRemove = await memory.list(opened.fs, {});
+      expect(afterRemove.some((e) => e.id === entry.id)).toBe(false);
+
+      await opened.fs.writeJson("research/factors/demo-factor.json", {
+        id: "f1",
+        name: "demo",
+      });
+      const factors = await decision.listFactors(opened.fs);
+      expect(factors.some((f) => f.name.includes("demo-factor"))).toBe(true);
+      if (decision.syncIntoWorkspace) {
+        const synced = await decision.syncIntoWorkspace(opened.fs, {
+          projectId: "proj_nonexistent_for_sync_test",
+        });
+        expect(synced.factorCount).toBe(0);
+        expect(synced.strategyCount).toBe(0);
+      }
 
       await writeRunRecord(opened.fs, {
         id: "run_test_1",

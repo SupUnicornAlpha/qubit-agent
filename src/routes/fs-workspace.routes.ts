@@ -223,6 +223,46 @@ fsWorkspaceRouter.get("/:id/memory/bootstrap", async (c) => {
   }
 });
 
+fsWorkspaceRouter.delete("/:id/memory/:entryId", async (c) => {
+  try {
+    const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
+    const { memory } = resolveProviders(manifest);
+    await memory.remove(fs, c.req.param("entryId"));
+    return c.json({ data: { ok: true } });
+  } catch (e) {
+    return jsonError(c, e);
+  }
+});
+
+fsWorkspaceRouter.get("/:id/memory/:entryId", async (c) => {
+  try {
+    const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
+    const { memory } = resolveProviders(manifest);
+    const entry = await memory.get(fs, c.req.param("entryId"));
+    if (!entry) return c.json({ error: "Not found" }, 404);
+    return c.json({ data: entry });
+  } catch (e) {
+    return jsonError(c, e);
+  }
+});
+
+fsWorkspaceRouter.post("/:id/decision/sync", async (c) => {
+  try {
+    const body = await c.req.json<{ projectId?: string }>().catch(() => ({}));
+    const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
+    if (!projectId) return c.json({ error: "projectId is required" }, 400);
+    const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
+    const { decision } = resolveProviders(manifest);
+    if (!decision.syncIntoWorkspace) {
+      return c.json({ error: "decision provider does not support sync" }, 400);
+    }
+    const result = await decision.syncIntoWorkspace(fs, { projectId });
+    return c.json({ data: result });
+  } catch (e) {
+    return jsonError(c, e);
+  }
+});
+
 fsWorkspaceRouter.put("/:id/runs/:runId", async (c) => {
   try {
     const body = await c.req.json<{

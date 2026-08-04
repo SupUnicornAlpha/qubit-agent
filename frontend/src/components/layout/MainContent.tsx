@@ -6775,6 +6775,7 @@ const TeamDashboardPanel: FC = () => {
               createDefaults={fsWorkspaceCreateDefaults}
               onOpenWorkflowSettings={() => setLeftRailMode("workflow")}
               activeRunId={workflowRunId.trim() || null}
+              projectId={effectiveResearchProjectId || teamResearchProjectId || null}
             />
             </div>
           ) : (

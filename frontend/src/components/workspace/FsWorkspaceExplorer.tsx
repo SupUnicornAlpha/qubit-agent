@@ -8,11 +8,13 @@ import {
   createFsWorkspaceApi,
   getFsWorkspaceTree,
   listFsWorkspaces,
+  syncFsWorkspaceDecision,
   type FsWorkspaceManifest,
   type FsWorkspaceTreeNode,
 } from "../../api/backend";
 import { coerceChartMarketExchange, guessChartExchangeFromSymbol } from "../../lib/chartSpec";
 import { useAppStore } from "../../store";
+import { WorkspaceMemoryPanel } from "./WorkspaceMemoryPanel";
 
 export type FsWorkspaceExplorerProps = {
   /** 从当前研究范围一键建课题时的默认名 / 种子 */
@@ -26,6 +28,8 @@ export type FsWorkspaceExplorerProps = {
   onOpenWorkflowSettings?: () => void;
   /** 当前工作流 id：树上高亮对应 runs/<id> */
   activeRunId?: string | null;
+  /** 同步工坊资产用的 projectId */
+  projectId?: string | null;
 };
 
 export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
@@ -33,6 +37,7 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
   compact = false,
   onOpenWorkflowSettings,
   activeRunId = null,
+  projectId = null,
 }) => {
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const requestChartReload = useAppStore((s) => s.requestChartReload);
@@ -51,6 +56,9 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const [showMemory, setShowMemory] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [proposeBody, setProposeBody] = useState<string | null>(null);
 
   const refreshList = useCallback(async () => {
     const rows = await listFsWorkspaces();
@@ -183,6 +191,10 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       toggle(node.id);
       return;
     }
+    if (node.kind === "memory_entry" || node.relPath?.startsWith("memory/entries/")) {
+      setShowMemory(true);
+      return;
+    }
     // universe / watchlist / 标的：尝试读 JSON 不强制；点名文件若像 ticker 则切行情
     if (node.name === "universe.json" || node.name === "watchlist.json") {
       setActiveView("team");
@@ -302,6 +314,61 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
           打开工作流 / 研究设置 →
         </button>
       ) : null}
+      <div style={styles.actionsRow}>
+        <button
+          type="button"
+          style={styles.linkBtn}
+          disabled={!activeId}
+          onClick={() => setShowMemory((v) => !v)}
+        >
+          {showMemory ? "收起记忆" : "长期记忆"}
+        </button>
+        <button
+          type="button"
+          style={styles.linkBtn}
+          disabled={!activeId || !projectId || syncing}
+          onClick={() =>
+            void (async () => {
+              if (!activeId || !projectId) return;
+              setSyncing(true);
+              setError(null);
+              try {
+                const r = await syncFsWorkspaceDecision(activeId, projectId);
+                setTreeNonce((n) => n + 1);
+                setError(null);
+                window.alert?.(
+                  `已同步因子 ${r.factorCount} · 策略 ${r.strategyCount}`
+                );
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+              } finally {
+                setSyncing(false);
+              }
+            })()
+          }
+        >
+          {syncing ? "同步中…" : "同步工坊资产"}
+        </button>
+        <button
+          type="button"
+          style={styles.linkBtn}
+          disabled={!activeId}
+          onClick={() => {
+            setProposeBody("（在此粘贴需沉淀的结论）");
+            setShowMemory(true);
+          }}
+        >
+          提议沉淀
+        </button>
+      </div>
+      {showMemory && activeId ? (
+        <WorkspaceMemoryPanel
+          workspaceId={activeId}
+          proposeBody={proposeBody}
+          onConsumedPropose={() => setProposeBody(null)}
+          onClose={() => setShowMemory(false)}
+        />
+      ) : null}
       {loading ? (
         <div style={styles.meta}>加载中…</div>
       ) : tree ? (
@@ -367,6 +434,7 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     padding: 0,
   },
+  actionsRow: { display: "flex", flexWrap: "wrap", gap: 10 },
   meta: { fontSize: 12, color: "#a1a1aa", padding: "8px 0" },
   tree: { flex: 1, minHeight: 0, overflow: "auto" },
   nodeBtn: {

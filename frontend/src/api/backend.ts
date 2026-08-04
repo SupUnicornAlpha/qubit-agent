@@ -799,6 +799,86 @@ export async function putFsWorkspaceRun(
   );
 }
 
+export type FsMemoryEntry = {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  pinned?: boolean;
+  tags?: string[];
+  source?: "user" | "agent_proposal" | "import";
+  relPath?: string;
+  score?: number;
+};
+
+export async function listFsWorkspaceMemory(
+  workspaceId: string,
+  opts?: { q?: string; pinned?: boolean; limit?: number }
+): Promise<FsMemoryEntry[]> {
+  const q = new URLSearchParams();
+  if (opts?.q) q.set("q", opts.q);
+  if (opts?.pinned != null) q.set("pinned", opts.pinned ? "1" : "0");
+  if (opts?.limit != null) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  const res = await httpGet<{ data: FsMemoryEntry[] }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/memory${qs ? `?${qs}` : ""}`
+  );
+  return res.data ?? [];
+}
+
+export async function getFsWorkspaceMemory(
+  workspaceId: string,
+  entryId: string
+): Promise<FsMemoryEntry | null> {
+  try {
+    const res = await httpGet<{ data: FsMemoryEntry }>(
+      `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/memory/${encodeURIComponent(entryId)}`
+    );
+    return res.data;
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertFsWorkspaceMemory(
+  workspaceId: string,
+  body: {
+    id?: string;
+    title: string;
+    body: string;
+    pinned?: boolean;
+    tags?: string[];
+    source?: "user" | "agent_proposal" | "import";
+  }
+): Promise<FsMemoryEntry> {
+  const res = await httpPost<{ data: FsMemoryEntry }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/memory`,
+    body
+  );
+  return res.data;
+}
+
+export async function deleteFsWorkspaceMemory(
+  workspaceId: string,
+  entryId: string
+): Promise<void> {
+  await httpDelete(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/memory/${encodeURIComponent(entryId)}`
+  );
+}
+
+export async function syncFsWorkspaceDecision(
+  workspaceId: string,
+  projectId: string
+): Promise<{ factorCount: number; strategyCount: number }> {
+  const res = await httpPost<{ data: { factorCount: number; strategyCount: number } }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/decision/sync`,
+    { projectId }
+  );
+  return res.data;
+}
+
 export async function listAgents(): Promise<AgentSummary[]> {
   const res = await httpGet<{ data: AgentSummary[] }>("/api/v1/agents");
   return res.data;
