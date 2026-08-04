@@ -5239,6 +5239,8 @@ const TeamDashboardPanel: FC = () => {
     }
   });
   const [creatingTeamWorkflow, setCreatingTeamWorkflow] = useState(false);
+  /** 新建工作流二次确认（Tauri 下不用 window.confirm） */
+  const [pendingCreateWorkflow, setPendingCreateWorkflow] = useState(false);
 
   useEffect(() => {
     try {
@@ -6553,6 +6555,7 @@ const TeamDashboardPanel: FC = () => {
   const handleCreateTeamWorkflow = async () => {
     if (!teamResearchProjectId || !teamResearchSessionId) {
       setError("尚未解析到默认项目/会话，无法创建工作流。请检查工作区是否可用。");
+      setPendingCreateWorkflow(false);
       return;
     }
     setError(null);
@@ -6584,11 +6587,22 @@ const TeamDashboardPanel: FC = () => {
           focus: fsWorkspaceCreateDefaults.focus,
         }).catch(() => undefined);
       }
+      setPendingCreateWorkflow(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setCreatingTeamWorkflow(false);
     }
+  };
+
+  const requestCreateTeamWorkflow = () => {
+    if (creatingTeamWorkflow) return;
+    setPendingCreateWorkflow(true);
+    setRunStripExpanded(true);
+  };
+
+  const cancelPendingCreateWorkflow = () => {
+    setPendingCreateWorkflow(false);
   };
 
   /**
@@ -6835,13 +6849,14 @@ const TeamDashboardPanel: FC = () => {
             />
             </div>
           ) : (
-            <>
+            <div style={teamStyles.leftRailWorkflowPane}>
           <div style={teamStyles.leftRailSettings}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 8 }}>
             工作流列表
           </div>
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
             研究设置已迁至右侧 Orchestrator 的 <strong>Run 条</strong>（展开即可编辑范围 / 标的 / 提示）。
+            新建工作流等同开启一次新研究，需确认。
           </p>
           <button
             type="button"
@@ -6918,16 +6933,51 @@ const TeamDashboardPanel: FC = () => {
               "取消 / 硬删除"仍下放到每个 list 行内，按工作流即可操作。
             */}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
-              <button
-                type="button"
-                className="qb-btn-secondary"
-                style={{ fontSize: 12, padding: "6px 10px" }}
-                onClick={() => void handleCreateTeamWorkflow()}
-                disabled={!teamResearchProjectId || !teamResearchSessionId}
-                title={!teamResearchSessionId ? "正在解析默认会话…" : "创建仅用于研究团队的工作流（不触发总控编排）"}
-              >
-                新建工作流
-              </button>
+              {pendingCreateWorkflow ? (
+                <>
+                  <button
+                    type="button"
+                    className="qb-btn-primary-brand"
+                    style={{ fontSize: 12, padding: "6px 10px" }}
+                    onClick={() => void handleCreateTeamWorkflow()}
+                    disabled={
+                      creatingTeamWorkflow ||
+                      !teamResearchProjectId ||
+                      !teamResearchSessionId
+                    }
+                    title="确认后将创建一条新的研究工作流（等同新研究回合）"
+                  >
+                    {creatingTeamWorkflow ? "创建中…" : "确认新建工作流"}
+                  </button>
+                  <button
+                    type="button"
+                    className="qb-btn-secondary"
+                    style={{ fontSize: 12, padding: "6px 10px" }}
+                    onClick={cancelPendingCreateWorkflow}
+                    disabled={creatingTeamWorkflow}
+                  >
+                    取消
+                  </button>
+                  <span style={{ fontSize: 11, color: "#fbbf24", alignSelf: "center" }}>
+                    新建工作流 = 新研究回合，确认后才会创建
+                  </span>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="qb-btn-secondary"
+                  style={{ fontSize: 12, padding: "6px 10px" }}
+                  onClick={requestCreateTeamWorkflow}
+                  disabled={!teamResearchProjectId || !teamResearchSessionId}
+                  title={
+                    !teamResearchSessionId
+                      ? "正在解析默认会话…"
+                      : "创建仅用于研究团队的工作流（不触发总控编排）"
+                  }
+                >
+                  新建工作流
+                </button>
+              )}
               {workflowRunId.trim() && !workflowSessionId && teamResearchSessionId ? (
                 <button
                   type="button"
@@ -7147,7 +7197,7 @@ const TeamDashboardPanel: FC = () => {
             )}
           </div>
           </div>
-            </>
+            </div>
           )}
         </aside>
         ) : null}
@@ -8017,9 +8067,17 @@ const TeamDashboardPanel: FC = () => {
                   }).catch(() => undefined);
                 }
               },
-              onCreate: () => void handleCreateTeamWorkflow(),
+              onCreate: () => {
+                if (pendingCreateWorkflow) {
+                  void handleCreateTeamWorkflow();
+                  return;
+                }
+                requestCreateTeamWorkflow();
+              },
               onOpenResearchSettings: () => setLeftRailMode("workflow"),
               creating: creatingTeamWorkflow,
+              createConfirmPending: pendingCreateWorkflow,
+              onCancelCreate: cancelPendingCreateWorkflow,
               settingsContent: researchSettingsPanel,
             }}
           />
@@ -8137,23 +8195,27 @@ const teamStyles: Record<string, CSSProperties> = {
     borderRadius: 0,
     padding: 14,
     /**
-     * 用 CSS Grid 做"设置区按内容自然撑开 / 工作流区占余高自滚"：
-     *   - 第一行 `auto`：设置区按内容自然高度（不会被压缩）
-     *   - 第二行 `minmax(220px, 1fr)`：工作流区占余高，但不少于 220px
-     * 之前用 `flex` 给设置区设 `maxHeight: 55%` 导致设置区被压成只剩一个下拉，
-     * 体验回退；回到 grid 方案后用户能完整看到「研究范围 / 工具类型 / 标的输入
-     * / 模板 / 分析提示」全套设置。
+     * 外层 flex 列：标题 + 工作区/工作流 Tab 贴顶；
+     * 下方内容区 flex:1。勿再用 2 行 grid 包整栏——否则 Tab 会占满 1fr，
+     * 把 Workspace 树挤到栏底（中间大片空白）。
      */
-    display: "grid",
-    gridTemplateRows: "auto minmax(220px, 1fr)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
     alignSelf: "stretch",
     minHeight: 0,
     overflow: "hidden",
   },
+  /** 工作流模式下：设置提示 + 列表的内层 grid */
+  leftRailWorkflowPane: {
+    flex: 1,
+    minHeight: 0,
+    display: "grid",
+    gridTemplateRows: "auto minmax(180px, 1fr)",
+    overflow: "hidden",
+  },
   /**
-   * 上半「设置区」：标题 / scope / instrument / 标的输入 / 模板 / 分析提示。
-   * grid 第一行 auto 按内容撑开，不再设 maxHeight。
-   * 自身允许 overflow:auto 兜底 —— 屏幕特别矮时设置区也能内滚，不会把工作流挤掉。
+   * 上半「设置区」：研究设置入口提示（表单已迁 Run 条）。
    */
   leftRailSettings: {
     minHeight: 0,
@@ -8163,8 +8225,6 @@ const teamStyles: Record<string, CSSProperties> = {
   },
   /**
    * 下半「工作流」滚动容器。
-   * grid 第二行 `minmax(220px, 1fr)` 占余高；自身 overflow auto 内滚，
-   * 工作流列表自身 maxHeight 已取消、跟随本容器一起滚动 —— 单一短滚动条。
    */
   leftRailWorkflows: {
     minHeight: 0,

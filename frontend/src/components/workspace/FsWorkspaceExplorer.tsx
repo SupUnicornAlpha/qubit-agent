@@ -62,6 +62,10 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
   const [showMemory, setShowMemory] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [proposeBody, setProposeBody] = useState<string | null>(null);
+  /** 切换课题待确认的目标 id（Tauri 不用 window.confirm） */
+  const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
+  /** 新建课题待确认：empty=空课题 / scope=从研究范围 */
+  const [pendingCreate, setPendingCreate] = useState<"empty" | "scope" | null>(null);
 
   const refreshList = useCallback(async () => {
     const rows = await listFsWorkspaces();
@@ -125,6 +129,7 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
   const handleCreate = async (fromScope: boolean) => {
     setCreating(true);
     setError(null);
+    setPendingCreate(null);
     try {
       const name =
         (fromScope ? createDefaults?.name : newName.trim()) ||
@@ -145,6 +150,7 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       await refreshList();
       setActiveId(created.manifest.id);
       setActiveFsWorkspaceId(created.manifest.id);
+      setPendingSwitchId(null);
       await loadTree(created.manifest.id);
       if (created.manifest.defaultFocus?.symbol) {
         setChartSpec({
@@ -163,7 +169,15 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
     }
   };
 
+  const requestCreate = (fromScope: boolean) => {
+    if (creating) return;
+    setPendingSwitchId(null);
+    setPendingCreate(fromScope ? "scope" : "empty");
+  };
+
   const onSelectWorkspace = async (id: string) => {
+    setPendingSwitchId(null);
+    setPendingCreate(null);
     setActiveId(id);
     setActiveFsWorkspaceId(id);
     setError(null);
@@ -184,6 +198,17 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  const requestSwitchWorkspace = (id: string) => {
+    if (!id || id === activeId) return;
+    setPendingCreate(null);
+    setPendingSwitchId(id);
+  };
+
+  const pendingSwitchName =
+    pendingSwitchId != null
+      ? list.find((r) => r.manifest.id === pendingSwitchId)?.manifest.name ?? pendingSwitchId
+      : null;
 
   const toggle = (id: string) => {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -280,12 +305,12 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       <div style={styles.toolbar}>
         <select
           style={styles.select}
-          value={activeId ?? ""}
+          value={pendingSwitchId ?? activeId ?? ""}
           onChange={(e) => {
             const id = e.target.value;
-            if (id) void onSelectWorkspace(id);
+            if (id) requestSwitchWorkspace(id);
           }}
-          disabled={loading || list.length === 0}
+          disabled={loading || list.length === 0 || creating}
         >
           {list.length === 0 ? (
             <option value="">尚无课题</option>
@@ -302,11 +327,63 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
           style={styles.iconBtn}
           disabled={creating}
           title="新建空课题"
-          onClick={() => void handleCreate(false)}
+          onClick={() => requestCreate(false)}
         >
           <Plus size={14} />
         </button>
       </div>
+      {pendingSwitchId && pendingSwitchName ? (
+        <div style={styles.confirmBanner} role="status">
+          <span>
+            切换到课题「{pendingSwitchName}」？上下文与记忆边界会随之切换。
+          </span>
+          <div style={styles.confirmActions}>
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              style={styles.confirmBtn}
+              onClick={() => void onSelectWorkspace(pendingSwitchId)}
+            >
+              确认切换
+            </button>
+            <button
+              type="button"
+              style={styles.linkBtn}
+              onClick={() => setPendingSwitchId(null)}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {pendingCreate ? (
+        <div style={styles.confirmBanner} role="status">
+          <span>
+            {pendingCreate === "scope"
+              ? `从当前研究范围创建课题「${createDefaults?.name || newName.trim() || "新课题"}」？`
+              : `新建空课题${newName.trim() ? `「${newName.trim()}」` : ""}？`}
+          </span>
+          <div style={styles.confirmActions}>
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              style={styles.confirmBtn}
+              disabled={creating}
+              onClick={() => void handleCreate(pendingCreate === "scope")}
+            >
+              {creating ? "创建中…" : "确认创建"}
+            </button>
+            <button
+              type="button"
+              style={styles.linkBtn}
+              disabled={creating}
+              onClick={() => setPendingCreate(null)}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      ) : null}
       {!compact ? (
         <div style={styles.createRow}>
           <input
@@ -321,9 +398,9 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
               className="qb-btn-primary-brand"
               style={styles.createFromScope}
               disabled={creating}
-              onClick={() => void handleCreate(true)}
+              onClick={() => requestCreate(true)}
             >
-              {creating ? "创建中…" : "从当前研究范围建课题"}
+              从当前研究范围建课题
             </button>
           ) : null}
         </div>
@@ -454,6 +531,20 @@ const styles: Record<string, CSSProperties> = {
     padding: 0,
   },
   actionsRow: { display: "flex", flexWrap: "wrap", gap: 10 },
+  confirmBanner: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    padding: "8px 10px",
+    borderRadius: 8,
+    border: "1px solid rgba(251, 191, 36, 0.35)",
+    background: "rgba(251, 191, 36, 0.08)",
+    color: "#fde68a",
+    fontSize: 11,
+    lineHeight: 1.45,
+  },
+  confirmActions: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" },
+  confirmBtn: { fontSize: 11, padding: "5px 10px" },
   meta: { fontSize: 12, color: "#a1a1aa", padding: "8px 0" },
   tree: { flex: 1, minHeight: 0, overflow: "auto" },
   nodeBtn: {

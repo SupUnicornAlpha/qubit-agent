@@ -124,6 +124,9 @@ export interface OrchestratorChatPanelProps {
     /** @deprecated 设置已嵌在 Run 条；保留跳转左栏工作流列表 */
     onOpenResearchSettings?: () => void;
     creating?: boolean;
+    /** 已点「新建」待二次确认 */
+    createConfirmPending?: boolean;
+    onCancelCreate?: () => void;
     /** 研究设置表单（展开后显示） */
     settingsContent?: ReactNode;
   };
@@ -381,15 +384,40 @@ export function OrchestratorChatPanel({
                 </select>
               </label>
               <div style={styles.runStripActions}>
-                <button
-                  type="button"
-                  className="qb-btn-primary-brand"
-                  style={styles.runStripBtn}
-                  disabled={runStrip.creating}
-                  onClick={() => runStrip.onCreate()}
-                >
-                  {runStrip.creating ? "创建中…" : "新建工作流"}
-                </button>
+                {runStrip.createConfirmPending ? (
+                  <>
+                    <button
+                      type="button"
+                      className="qb-btn-primary-brand"
+                      style={styles.runStripBtn}
+                      disabled={runStrip.creating}
+                      onClick={() => runStrip.onCreate()}
+                    >
+                      {runStrip.creating ? "创建中…" : "确认新建工作流"}
+                    </button>
+                    <button
+                      type="button"
+                      style={styles.runStripLink}
+                      disabled={runStrip.creating}
+                      onClick={() => runStrip.onCancelCreate?.()}
+                    >
+                      取消
+                    </button>
+                    <span style={styles.runStripConfirmHint}>
+                      新建 = 新研究回合
+                    </span>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="qb-btn-primary-brand"
+                    style={styles.runStripBtn}
+                    disabled={runStrip.creating}
+                    onClick={() => runStrip.onCreate()}
+                  >
+                    {runStrip.creating ? "创建中…" : "新建工作流"}
+                  </button>
+                )}
                 {runStrip.onOpenResearchSettings ? (
                   <button
                     type="button"
@@ -801,6 +829,7 @@ const styles: Record<string, CSSProperties> = {
     color: "#e4e4e7",
   },
   runStripActions: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  runStripConfirmHint: { fontSize: 11, color: "#fbbf24" },
   runStripSettings: {
     maxHeight: 360,
     overflow: "auto",
