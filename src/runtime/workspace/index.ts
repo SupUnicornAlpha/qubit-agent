@@ -2,6 +2,7 @@ export * from "./types";
 export * from "./path-safety";
 export * from "./workspace-fs";
 export * from "./service";
+export * from "./agent-bootstrap";
 export {
   createBuiltinFsMemoryProvider,
   BUILTIN_FS_MEMORY_KIND,

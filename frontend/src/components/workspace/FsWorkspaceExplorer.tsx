@@ -24,20 +24,26 @@ export type FsWorkspaceExplorerProps = {
   };
   compact?: boolean;
   onOpenWorkflowSettings?: () => void;
+  /** 当前工作流 id：树上高亮对应 runs/<id> */
+  activeRunId?: string | null;
 };
 
 export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
   createDefaults,
   compact = false,
   onOpenWorkflowSettings,
+  activeRunId = null,
 }) => {
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const requestChartReload = useAppStore((s) => s.requestChartReload);
   const setActiveView = useAppStore((s) => s.setActiveView);
+  const setActiveFsWorkspaceId = useAppStore((s) => s.setActiveFsWorkspaceId);
+  const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
 
   const [list, setList] = useState<Array<{ rootPath: string; manifest: FsWorkspaceManifest }>>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(activeFsWorkspaceId);
   const [tree, setTree] = useState<FsWorkspaceTreeNode | null>(null);
+  const [treeNonce, setTreeNonce] = useState(0);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     "workspace:": true,
   });
@@ -72,9 +78,13 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       try {
         const rows = await refreshList();
         if (cancelled) return;
-        if (rows[0]) {
-          setActiveId(rows[0].manifest.id);
-          await loadTree(rows[0].manifest.id);
+        const preferred =
+          (activeFsWorkspaceId && rows.find((r) => r.manifest.id === activeFsWorkspaceId)) ||
+          rows[0];
+        if (preferred) {
+          setActiveId(preferred.manifest.id);
+          setActiveFsWorkspaceId(preferred.manifest.id);
+          await loadTree(preferred.manifest.id);
         } else {
           setActiveId(null);
           setTree(null);
@@ -88,7 +98,18 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [loadTree, refreshList]);
+  }, [loadTree, refreshList, setActiveFsWorkspaceId]);
+
+  useEffect(() => {
+    if (!activeId) return;
+    void loadTree(activeId).catch(() => undefined);
+  }, [treeNonce, activeId, loadTree]);
+
+  useEffect(() => {
+    if (!activeRunId || !activeId) return;
+    const t = window.setTimeout(() => setTreeNonce((n) => n + 1), 400);
+    return () => window.clearTimeout(t);
+  }, [activeRunId, activeId]);
 
   const handleCreate = async (fromScope: boolean) => {
     setCreating(true);
@@ -110,8 +131,9 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
         defaultFocus: fromScope ? createDefaults?.focus : undefined,
       });
       setNewName("");
-      const rows = await refreshList();
+      await refreshList();
       setActiveId(created.manifest.id);
+      setActiveFsWorkspaceId(created.manifest.id);
       await loadTree(created.manifest.id);
       if (created.manifest.defaultFocus?.symbol) {
         setChartSpec({
@@ -123,7 +145,6 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
         });
         requestChartReload();
       }
-      void rows;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -133,6 +154,7 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
 
   const onSelectWorkspace = async (id: string) => {
     setActiveId(id);
+    setActiveFsWorkspaceId(id);
     setError(null);
     try {
       await loadTree(id);
@@ -186,6 +208,11 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
     const isOpen = !!expanded[node.id];
     const Icon = isFolder ? Folder : FileCode2;
     const Chevron = isOpen ? ChevronDown : ChevronRight;
+    const isActiveRun =
+      Boolean(activeRunId) &&
+      (node.relPath === `runs/${activeRunId}` ||
+        node.relPath === `runs/${activeRunId}/run.json` ||
+        node.name === activeRunId);
     return (
       <div key={node.id}>
         <button
@@ -194,13 +221,17 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
           style={{
             ...styles.nodeBtn,
             paddingLeft: 6 + depth * 12,
+            ...(isActiveRun ? styles.nodeActiveRun : null),
           }}
           onClick={() => onOpenNode(node)}
           title={node.relPath || node.name}
         >
           {isFolder ? <Chevron size={12} strokeWidth={2} /> : <span style={{ width: 12 }} />}
           <Icon size={13} strokeWidth={2} />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{node.name}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+            {isActiveRun ? "▶ " : ""}
+            {node.name}
+          </span>
         </button>
         {isFolder && isOpen
           ? (node.children ?? []).map((child) => renderNode(child, depth + 1))
@@ -352,5 +383,10 @@ const styles: Record<string, CSSProperties> = {
     paddingRight: 6,
     cursor: "pointer",
     textAlign: "left",
+  },
+  nodeActiveRun: {
+    background: "rgba(56,189,248,0.12)",
+    color: "#7dd3fc",
+    borderRadius: 4,
   },
 };

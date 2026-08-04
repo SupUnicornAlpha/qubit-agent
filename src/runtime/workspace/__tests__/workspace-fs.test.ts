@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtemp } from "node:fs/promises";
 import {
   createFsWorkspace,
   discoverWorkspaces,
   openWorkspaceById,
   resolveInsideRoot,
   resolveProviders,
+  buildWorkspaceBootstrapPack,
   slugifyWorkspaceName,
   WorkspacePathError,
   writeRunRecord,
@@ -32,7 +33,7 @@ describe("workspace path safety", () => {
 
 describe("workspace fs lifecycle", () => {
   test("create · discover · tree · memory · instructions · run", async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), "qb-ws-"));
+    const dataDir = process.env.QUBIT_DATA_DIR?.trim() || (await mkdtemp(join(tmpdir(), "qb-ws-")));
     try {
       const created = await createFsWorkspace({
         name: "半导体检核",
@@ -52,8 +53,8 @@ describe("workspace fs lifecycle", () => {
       expect(await created.fs.exists(".qubit/providers/memory.json")).toBe(true);
 
       const hits = await discoverWorkspaces(dataDir);
-      expect(hits.length).toBe(1);
-      expect(hits[0]!.manifest.id).toBe(created.manifest.id);
+      expect(hits.length).toBeGreaterThanOrEqual(1);
+      expect(hits.some((h) => h.manifest.id === created.manifest.id)).toBe(true);
 
       const opened = await openWorkspaceById(created.manifest.id, dataDir);
       const tree = await opened.fs.listTree({ maxDepth: 4 });
@@ -100,10 +101,15 @@ describe("workspace fs lifecycle", () => {
       });
       expect(await opened.fs.exists("runs/run_test_1/run.json")).toBe(true);
 
+      // 恢复说明书供 bootstrap（已被换成 AGENTS.md）
+      const pack = await buildWorkspaceBootstrapPack(created.manifest.id);
+      expect(pack.contextBlock).toContain("Workspace 课题上下文");
+      expect(pack.contextBlock).toContain("AGENTS.md");
+
       // 路径越权
       await expect(opened.fs.readText("../outside.txt")).rejects.toThrow();
     } finally {
-      await rm(dataDir, { recursive: true, force: true });
+      // QUBIT_DATA_DIR 由测试 harness 管理，勿整目录删除以免误伤其它用例
     }
   });
 });

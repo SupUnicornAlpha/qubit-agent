@@ -30,7 +30,11 @@ export type ActiveView =
   | "broker"
   | "config";
 
+/** `advanced` = 专业 IDE 壳（文档中的 uxMode=pro）；保留 advanced 以兼容已有 localStorage。 */
 export type InterfaceMode = "simple" | "advanced";
+
+/** 专业壳 Explorer 分区：页面导航 / 会话 / Workspace 树 / 投研资产 */
+export type ExplorerSection = "pages" | "sessions" | "workspace" | "assets";
 
 /** 量化工作台 tab */
 export type QuantTab = "factor" | "discovery" | "composer" | "backtest" | "script";
@@ -222,6 +226,15 @@ export interface AppState {
   explorerOpen: boolean;
   setExplorerOpen: (open: boolean) => void;
   toggleExplorerOpen: () => void;
+  /** 专业壳 Explorer 内容分区 */
+  explorerSection: ExplorerSection;
+  setExplorerSection: (section: ExplorerSection) => void;
+  /** 专业壳右侧 Agent 对话栏 */
+  agentPanelOpen: boolean;
+  setAgentPanelOpen: (open: boolean) => void;
+  toggleAgentPanelOpen: () => void;
+  agentPanelWidthPx: number;
+  setAgentPanelWidthPx: (width: number) => void;
   chartContext: ChartContextPayload | null;
   setChartContext: (v: ChartContextPayload | null) => void;
   configSubPage: ConfigSubPage;
@@ -245,6 +258,9 @@ export interface AppState {
   requestChartReload: () => void;
   chartSpec: ChartSpecState;
   setChartSpec: (patch: Partial<ChartSpecState>) => void;
+  /** 当前激活的 FS Workspace（课题）id */
+  activeFsWorkspaceId: string | null;
+  setActiveFsWorkspaceId: (id: string | null) => void;
   chartOverlays: ChartOverlaysState;
   toggleChartOverlay: (key: ChartOverlayKey) => void;
   idePanels: IdePanelsState;
@@ -311,8 +327,11 @@ const defaultChartOverlays: ChartOverlaysState = {
 
 const TRADER_CFG_KEY = "qubit-trader-agent-config-v1";
 const EXPLORER_OPEN_LS = "qubit:explorerOpen";
+const EXPLORER_SECTION_LS = "qubit:explorerSection";
 const INTERFACE_MODE_LS = "qubit:interfaceMode";
 const AGENT_CONTROL_MODE_LS = "qubit:agentControlMode";
+const AGENT_PANEL_OPEN_LS = "qubit:agentPanelOpen";
+const AGENT_PANEL_WIDTH_LS = "qubit:agentPanelWidthPx";
 
 function readAgentControlMode(): AgentControlMode {
   try {
@@ -331,9 +350,18 @@ function persistAgentControlMode(mode: AgentControlMode) {
   }
 }
 
+function applyUxModeAttr(mode: InterfaceMode) {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-qb-ux", mode === "advanced" ? "pro" : "simple");
+}
+
 function readInterfaceMode(): InterfaceMode {
   try {
-    return localStorage.getItem(INTERFACE_MODE_LS) === "advanced" ? "advanced" : "simple";
+    const raw = localStorage.getItem(INTERFACE_MODE_LS);
+    // 兼容规划文档键 qubit-ux-mode-v1
+    const ux = localStorage.getItem("qubit-ux-mode-v1");
+    if (raw === "advanced" || ux === "pro") return "advanced";
+    return "simple";
   } catch {
     return "simple";
   }
@@ -342,6 +370,60 @@ function readInterfaceMode(): InterfaceMode {
 function persistInterfaceMode(mode: InterfaceMode) {
   try {
     localStorage.setItem(INTERFACE_MODE_LS, mode);
+    localStorage.setItem("qubit-ux-mode-v1", mode === "advanced" ? "pro" : "simple");
+  } catch {
+    /* ignore */
+  }
+  applyUxModeAttr(mode);
+}
+
+function readExplorerSection(): ExplorerSection {
+  try {
+    const v = localStorage.getItem(EXPLORER_SECTION_LS);
+    if (v === "workspace" || v === "assets" || v === "pages" || v === "sessions") return v;
+  } catch {
+    /* ignore */
+  }
+  return "pages";
+}
+
+function persistExplorerSection(section: ExplorerSection) {
+  try {
+    localStorage.setItem(EXPLORER_SECTION_LS, section);
+  } catch {
+    /* ignore */
+  }
+}
+
+function readAgentPanelOpen(): boolean {
+  try {
+    return localStorage.getItem(AGENT_PANEL_OPEN_LS) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function persistAgentPanelOpen(open: boolean) {
+  try {
+    localStorage.setItem(AGENT_PANEL_OPEN_LS, open ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+function readAgentPanelWidthPx(): number {
+  try {
+    const n = Number.parseInt(localStorage.getItem(AGENT_PANEL_WIDTH_LS) ?? "", 10);
+    if (Number.isFinite(n) && n >= 280 && n <= 1100) return n;
+  } catch {
+    /* ignore */
+  }
+  return 480;
+}
+
+function persistAgentPanelWidthPx(width: number) {
+  try {
+    localStorage.setItem(AGENT_PANEL_WIDTH_LS, String(width));
   } catch {
     /* ignore */
   }
@@ -402,7 +484,11 @@ export const useAppStore = create<AppState>((set) => ({
   setBackendConnected: (v) => set({ backendConnected: v }),
   backendHint: null,
   setBackendHint: (v) => set({ backendHint: v }),
-  interfaceMode: readInterfaceMode(),
+  interfaceMode: (() => {
+    const mode = readInterfaceMode();
+    applyUxModeAttr(mode);
+    return mode;
+  })(),
   setInterfaceMode: (interfaceMode) => {
     persistInterfaceMode(interfaceMode);
     set({ interfaceMode });
@@ -453,6 +539,27 @@ export const useAppStore = create<AppState>((set) => ({
     persistExplorerOpen(next);
     set({ explorerOpen: next });
   },
+  explorerSection: readExplorerSection(),
+  setExplorerSection: (explorerSection) => {
+    persistExplorerSection(explorerSection);
+    set({ explorerSection });
+  },
+  agentPanelOpen: readAgentPanelOpen(),
+  setAgentPanelOpen: (agentPanelOpen) => {
+    persistAgentPanelOpen(agentPanelOpen);
+    set({ agentPanelOpen });
+  },
+  toggleAgentPanelOpen: () => {
+    const next = !useAppStore.getState().agentPanelOpen;
+    persistAgentPanelOpen(next);
+    set({ agentPanelOpen: next });
+  },
+  agentPanelWidthPx: readAgentPanelWidthPx(),
+  setAgentPanelWidthPx: (agentPanelWidthPx) => {
+    const width = Math.min(1100, Math.max(320, Math.round(agentPanelWidthPx)));
+    persistAgentPanelWidthPx(width);
+    set({ agentPanelWidthPx: width });
+  },
   chartContext: null,
   setChartContext: (chartContext) => set({ chartContext }),
   configSubPage: "llm",
@@ -475,6 +582,22 @@ export const useAppStore = create<AppState>((set) => ({
       persistChartSpec(chartSpec);
       return { chartSpec };
     }),
+  activeFsWorkspaceId: (() => {
+    try {
+      return window.localStorage.getItem("qb.active-fs-workspace-id");
+    } catch {
+      return null;
+    }
+  })(),
+  setActiveFsWorkspaceId: (id) => {
+    try {
+      if (id) window.localStorage.setItem("qb.active-fs-workspace-id", id);
+      else window.localStorage.removeItem("qb.active-fs-workspace-id");
+    } catch {
+      /* ignore */
+    }
+    set({ activeFsWorkspaceId: id });
+  },
   chartOverlays: { ...defaultChartOverlays },
   toggleChartOverlay: (key) =>
     set((s) => {

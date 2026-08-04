@@ -825,6 +825,7 @@ export async function createConversationTurn(input: {
   agentMode?: import("./types").AgentControlMode;
   processConfig?: import("./types").WorkflowProcessConfig;
   preserveGoal?: boolean;
+  fsWorkspaceId?: string;
 }): Promise<import("./types").ConversationTurnResult> {
   const { sessionId, ...body } = input;
   const res = await httpPost<{

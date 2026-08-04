@@ -8,6 +8,7 @@ import {
   createConversationTurn,
   getOrCreateDefaultProject,
   createWorkflow,
+  putFsWorkspaceRun,
   getAgentsConfig,
   getDefaultWorkspace,
   getDefaultProjectSession,
@@ -5445,6 +5446,7 @@ const TeamDashboardPanel: FC = () => {
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const chartReloadNonce = useAppStore((s) => s.chartReloadNonce);
   const requestChartReload = useAppStore((s) => s.requestChartReload);
+  const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -6522,7 +6524,16 @@ const TeamDashboardPanel: FC = () => {
         roleReasoner,
         agentMode: options?.agentMode ?? teamAgentMode,
         ...(options?.preserveGoal ? { preserveGoal: true } : {}),
+        ...(activeFsWorkspaceId ? { fsWorkspaceId: activeFsWorkspaceId } : {}),
       });
+      if (activeFsWorkspaceId) {
+        void putFsWorkspaceRun(activeFsWorkspaceId, wf, {
+          title: msg.slice(0, 120),
+          status: "running",
+          workflowId: wf,
+          sessionId,
+        }).catch(() => undefined);
+      }
       setSelectedConversationSessionId(turn.sessionId);
       void refreshWorkflowOptions();
       void loadTeamGraph({ preserveSelection: true });
@@ -6558,6 +6569,15 @@ const TeamDashboardPanel: FC = () => {
       await refreshWorkflowOptions();
       setWorkflowRunId(String(created.data.id));
       setSelectedConversationSessionId(teamResearchSessionId);
+      if (activeFsWorkspaceId) {
+        void putFsWorkspaceRun(activeFsWorkspaceId, String(created.data.id), {
+          title: `研究团队 · ${scopeModeLabel(scopeMode)} · ${ticker.trim() || sectorName || "标的"}`,
+          status: "queued",
+          workflowId: String(created.data.id),
+          sessionId: teamResearchSessionId,
+          focus: fsWorkspaceCreateDefaults.focus,
+        }).catch(() => undefined);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -6751,10 +6771,11 @@ const TeamDashboardPanel: FC = () => {
           </div>
           {leftRailMode === "workspace" ? (
             <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <FsWorkspaceExplorer
-                createDefaults={fsWorkspaceCreateDefaults}
-                onOpenWorkflowSettings={() => setLeftRailMode("workflow")}
-              />
+            <FsWorkspaceExplorer
+              createDefaults={fsWorkspaceCreateDefaults}
+              onOpenWorkflowSettings={() => setLeftRailMode("workflow")}
+              activeRunId={workflowRunId.trim() || null}
+            />
             </div>
           ) : (
             <>
@@ -8069,6 +8090,16 @@ const TeamDashboardPanel: FC = () => {
                 const row = workflowOptions.find((w) => String(w.id) === id);
                 const sid = typeof row?.sessionId === "string" ? row.sessionId.trim() : "";
                 if (sid) setSelectedConversationSessionId(sid);
+                if (activeFsWorkspaceId && id) {
+                  void putFsWorkspaceRun(activeFsWorkspaceId, id, {
+                    title:
+                      (typeof row?.goal === "string" && row.goal.trim()) ||
+                      id.slice(0, 8),
+                    status: String(row?.status ?? "queued"),
+                    workflowId: id,
+                    sessionId: sid || undefined,
+                  }).catch(() => undefined);
+                }
               },
               onCreate: () => void handleCreateTeamWorkflow(),
               onOpenResearchSettings: () => setLeftRailMode("workflow"),

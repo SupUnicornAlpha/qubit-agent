@@ -113,6 +113,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
     agentMode?: AgentControlMode;
     processConfig?: WorkflowProcessConfig;
     preserveGoal?: boolean;
+    fsWorkspaceId?: string;
   };
   const body = await c.req
     .json<TurnBody>()
@@ -159,6 +160,7 @@ chatRouter.post("/sessions/:sessionId/turns", async (c) => {
       ...(agentMode.success ? { agentMode: agentMode.data } : {}),
       ...(processConfig.success ? { processConfig: processConfig.data } : {}),
       ...(body.preserveGoal === true ? { preserveGoal: true } : {}),
+      ...(body.fsWorkspaceId?.trim() ? { fsWorkspaceId: body.fsWorkspaceId.trim() } : {}),
     });
     return c.json({ ok: true, data }, 202);
   } catch (error) {

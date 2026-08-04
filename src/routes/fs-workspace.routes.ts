@@ -8,6 +8,7 @@ import {
   openWorkspaceById,
   openWorkspaceByRoot,
   resolveProviders,
+  buildWorkspaceBootstrapPack,
   WorkspacePathError,
   writeRunRecord,
 } from "../runtime/workspace";
@@ -119,6 +120,15 @@ fsWorkspaceRouter.get("/:id/instructions", async (c) => {
     const { fs } = await openWorkspaceById(c.req.param("id"));
     const { layers } = await fs.loadAgentInstructions();
     return c.json({ data: { layers } });
+  } catch (e) {
+    return jsonError(c, e);
+  }
+});
+
+fsWorkspaceRouter.get("/:id/bootstrap", async (c) => {
+  try {
+    const pack = await buildWorkspaceBootstrapPack(c.req.param("id"));
+    return c.json({ data: pack });
   } catch (e) {
     return jsonError(c, e);
   }

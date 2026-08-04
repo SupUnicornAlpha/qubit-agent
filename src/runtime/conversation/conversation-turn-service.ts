@@ -25,6 +25,7 @@ import {
   type ConversationTurnMode,
   resolveTurnMode,
 } from "./turn-mode";
+import { buildWorkspaceBootstrapPack, writeRunRecord, openWorkspaceById } from "../workspace";
 
 export interface CreateConversationTurnInput {
   sessionId: string;
@@ -43,6 +44,8 @@ export interface CreateConversationTurnInput {
   processConfig?: WorkflowProcessConfig;
   /** @deprecated 映射为 continue_goal */
   preserveGoal?: boolean;
+  /** FS Workspace id：注入说明书/记忆/宇宙到 Orchestrator context */
+  fsWorkspaceId?: string;
 }
 
 export interface ConversationTurnResult {
@@ -306,7 +309,28 @@ export async function createConversationTurn(
     kind: "llm_message",
     contentText: message.slice(0, 4000),
   });
-  const context = await buildWorkflowConversationContext(workflow.id, turn.userMessage.id);
+  let context = await buildWorkflowConversationContext(workflow.id, turn.userMessage.id);
+  const fsWorkspaceId = input.fsWorkspaceId?.trim();
+  if (fsWorkspaceId) {
+    try {
+      const pack = await buildWorkspaceBootstrapPack(fsWorkspaceId);
+      context = `${pack.contextBlock}\n\n${context}`;
+      const { fs, manifest } = await openWorkspaceById(fsWorkspaceId);
+      await writeRunRecord(fs, {
+        id: workflow.id,
+        title: workflow.goal || message.slice(0, 80),
+        status: "running",
+        workflowId: workflow.id,
+        sessionId: input.sessionId,
+        focus: manifest.defaultFocus,
+      });
+    } catch (err) {
+      console.warn(
+        `[workspace] bootstrap failed for ${fsWorkspaceId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
   // 每轮用户发言清 ReAct checkpoint；Goal 文本/plan 由 turnMode + agentMode 保留。
   await clearWorkflowCheckpointForNewTurn(workflow.id);
   try {
