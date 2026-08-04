@@ -118,7 +118,8 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   compute_valuation: async (_ctx, params) => {
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
+    const symbols = extractSymbolArgs(params as Record<string, unknown>);
+    const symbol = symbols[0]?.trim() ?? "";
     if (!symbol) throw new Error("compute_valuation: symbol is required");
     const exchange = String(params.exchange ?? "");
     const { period, startDate, endDate } = computeDateRangeForLimit("1d", 252);

@@ -18,7 +18,7 @@ import {
 import type { AgentRole } from "../../types/entities";
 import type { AnalystSignalValue } from "../../types/entities";
 import { exportStrategyScriptToWorkflowDir } from "../strategy/strategy-script-files";
-import { runLlmGateway } from "../llm/gateway";
+import { invokeWithFallback } from "../llm/llm-router";
 import { loadModelConfig } from "../config/model-config";
 import {
   type HandoffEnvelope,
@@ -217,7 +217,7 @@ function buildRoleScaffold(role: AgentRole | string): string {
   if (r === "analyst_sentiment") {
     return [
       "**职责**：新闻情绪、社媒热度、机构持仓变化、做空利息。",
-      "**工具方向**：fetch_news_sentiment → analyze_social_media → score_sentiment。",
+      "**工具方向**：fetch_news → fetch_news_sentiment →（可选）code.run_python 聚合 / factor.register。",
       "**不要做**：估值计算 / K 线技术分析（其它角色负责）。",
       "**交付**：一段 JSON 信号 `{signal:'buy|sell|hold', confidence:0-1, reasoning:'...'}`。",
     ].join("\n");
@@ -293,9 +293,16 @@ ${HITL_HINT_DELIMITER}
 
 inputKind 选择：
 - "approve_only"：你确信路径但希望用户确认 → 提供原因即可
-- "single_choice"：有 2-4 条合理路径，让用户选一条 → 必带 options=[{label,value}]
-- "free_form"：需要用户给一句话指引 → options 为空
+- "single_choice"：有 2-4 条合理路径，让用户选一条 → 必带 options=[{label,value}]；可选 allowFreeText / fields
 - "multi_choice"：让用户勾选要包含/排除的角色或步骤 → 必带 options
+- "free_form"：需要用户给一句话指引 → options 为空
+- "form"：需要用户填结构化参数（成本/股数等）→ 必带 fields=[{key,label,type?}]
+
+示例（选择题 + 补充说明）：
+\`{"needed": true, "question": "本轮研究侧重点？", "inputKind": "single_choice", "options": [{"label": "动量优先", "value": "momentum"}, {"label": "基本面优先", "value": "fundamental"}], "allowFreeText": true}\`
+
+示例（填空）：
+\`{"needed": true, "question": "请补充持仓信息", "inputKind": "form", "fields": [{"key": "cost", "label": "成本价"}, {"key": "shares", "label": "股数", "type": "number"}]}\`
 
 如确信无需人工，输出 \`{"needed": false, "reason": "常规多头 + 4 个标准分析师", "inputKind": "approve_only"}\` 即可。
 
@@ -312,8 +319,7 @@ ${input.dataAndUserContext}`;
 
   let answer = "";
   try {
-    const result = await runLlmGateway({
-      config: modelConfig,
+    const result = await invokeWithFallback(modelConfig, {
       systemPrompt: input.orchestrator.systemPrompt,
       userPrompt: enrichedUserPrompt,
       onToken: () => {},
@@ -429,8 +435,7 @@ ${input.fusionSummary}`;
 
   let answer = "";
   try {
-    const result = await runLlmGateway({
-      config: modelConfig,
+    const result = await invokeWithFallback(modelConfig, {
       systemPrompt: input.orchestratorSystemPrompt,
       userPrompt,
       onToken: () => {},

@@ -17,6 +17,7 @@ import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { AgentRole } from "../../types/entities";
 import { getA2APool } from "../a2a/a2a-pool";
 import { runA2aReactTaskAssign } from "../a2a/a2a-react-task";
+import { completeA2ATask, markA2ATaskWorking } from "../a2a/a2a-task-service";
 import { buildTaskResult } from "../a2a/task-result";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import {
@@ -150,10 +151,37 @@ const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) 
  * 差异仅在于入口（HTTP 按钮 → TASK_ASSIGN vs LLM 工具调用）。
  */
 const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payload) => {
+  // This is a short-circuit handler rather than a ReAct task.  It therefore
+  // must own the same durable A2A lifecycle that runA2aReactTaskAssign owns
+  // for normal assignments; otherwise the team can finish and leave its
+  // parent task in `submitted`, which makes workflow callers wait until their
+  // timeout despite a completed analyst report.
+  await markA2ATaskWorking(payload.taskId);
+
+  const completeAndSend = async (result: ReturnType<typeof buildTaskResult>) => {
+    await completeA2ATask(payload.taskId, result);
+    await ctx.send({
+      workflowId: msg.workflowId,
+      traceId: msg.traceId,
+      receiverAgent: msg.senderAgent,
+      messageType: "TASK_RESULT",
+      payload: result,
+      priority: msg.priority,
+    });
+  };
+
   const parsed = parseResearchTeamExecutePayload(payload);
   if (!parsed.ok) {
     await failResearchTeamExecuteJob(parsed.jobId, parsed.error);
     await setWorkflowStatus(msg.workflowId, "failed");
+    await completeAndSend(
+      buildTaskResult(payload.taskId, "orchestrator", {
+        success: false,
+        result: { taskType: "research_team_execute", error: parsed.error },
+        errorCode: "invalid_research_team_payload",
+        errorMessage: parsed.error,
+      })
+    );
     return;
   }
 
@@ -178,12 +206,8 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
         fusedConfidence: outcome.teamResult.fusedConfidence,
       },
     });
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, "orchestrator", {
+    await completeAndSend(
+      buildTaskResult(payload.taskId, "orchestrator", {
         result: {
           taskType: "research_team_execute",
           fusionId: outcome.teamResult.fusionId,
@@ -191,44 +215,33 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
           fusedConfidence: outcome.teamResult.fusedConfidence,
           report: outcome.teamResult.report || outcome.teamResult.fusionSummary,
         },
-      }),
-      priority: msg.priority,
-    });
+      })
+    );
     return;
   }
 
   if (outcome.kind === "awaiting_approval") {
-    await ctx.send({
-      workflowId: msg.workflowId,
-      traceId: msg.traceId,
-      receiverAgent: msg.senderAgent,
-      messageType: "TASK_RESULT",
-      payload: buildTaskResult(payload.taskId, "orchestrator", {
+    await completeAndSend(
+      buildTaskResult(payload.taskId, "orchestrator", {
         status: "awaiting_approval",
         errorCode: "awaiting_approval",
         errorMessage: "研究团队正在等待人工审批",
         result: { taskType: "research_team_execute" },
-      }),
-      priority: msg.priority,
-    });
+      })
+    );
     return;
   }
 
-  await ctx.send({
-    workflowId: msg.workflowId,
-    traceId: msg.traceId,
-    receiverAgent: msg.senderAgent,
-    messageType: "TASK_RESULT",
-    payload: buildTaskResult(payload.taskId, "orchestrator", {
+  await completeAndSend(
+    buildTaskResult(payload.taskId, "orchestrator", {
       success: false,
       result: {
         taskType: "research_team_execute",
         error: outcome.error.message,
       },
       errorMessage: outcome.error.message,
-    }),
-    priority: msg.priority,
-  });
+    })
+  );
 };
 
 /**

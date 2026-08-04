@@ -62,11 +62,14 @@ export function resolveContractAutoAdvance(input: {
       };
     }
     const symbol = inferSymbolFromGoal(input.goal) ?? "AAPL";
+    const shortSide =
+      input.snapshot.scenarioKey === "live_trading_short" ||
+      input.snapshot.scenarioKey?.includes("short");
     return {
       toolName,
       params: {
         symbol,
-        side: "buy",
+        side: shortSide ? "sell" : "buy",
         qty: 10,
         order_type: "market",
         dispatch_mode: "paper",
@@ -79,19 +82,22 @@ export function resolveContractAutoAdvance(input: {
   if (toolName === "recommendation.record") {
     const symbol = input.snapshot.screenerTopSymbol ?? inferSymbolFromGoal(input.goal);
     if (!symbol) return null;
+    const shortSide =
+      input.snapshot.scenarioKey === "stock_pick_short" ||
+      input.snapshot.scenarioKey?.includes("short");
     return {
       toolName,
       params: {
         symbol,
-        side: "long",
+        side: shortSide ? "short" : "long",
         entry_low: 100,
         entry_high: 110,
-        stop_loss: 90,
-        take_profit: 140,
+        stop_loss: shortSide ? 120 : 90,
+        take_profit: shortSide ? 70 : 140,
         position_size_pct: 5,
         rationale: "benchmark auto-advance recommendation from screener shortlist",
         invalidation_conditions: [
-          "价格跌破止损价",
+          shortSide ? "价格升破止损价" : "价格跌破止损价",
           "关键基本面假设失效",
           "持有期结束仍未触发目标价",
         ],
@@ -177,19 +183,33 @@ export function resolveArtifactAutoAdvance(input: {
     if (table === "recommendation_snapshot") {
       const toolName = "recommendation.record";
       if (!input.availableTools.includes(toolName)) return null;
-      const symbol = input.snapshot.screenerTopSymbol ?? "AAPL";
+      const recorded = new Set(
+        (input.snapshot.recommendationSymbols ?? []).map((symbol) => symbol.toUpperCase())
+      );
+      const symbol =
+        input.snapshot.screenerCandidateSymbols?.find(
+          (candidate) => !recorded.has(candidate.toUpperCase())
+        ) ??
+        input.snapshot.screenerTopSymbol ??
+        "AAPL";
+      const shortSide =
+        input.snapshot.scenarioKey === "stock_pick_short" ||
+        input.snapshot.scenarioKey?.includes("short");
       return {
         toolName,
         params: {
           symbol,
-          side: "long",
+          side: shortSide ? "short" : "long",
           entry_low: 100,
           entry_high: 110,
-          stop_loss: 90,
-          take_profit: 140,
+          stop_loss: shortSide ? 120 : 90,
+          take_profit: shortSide ? 70 : 140,
           position_size_pct: 5,
           rationale: "benchmark soft-underfill recommendation from screener shortlist",
-          invalidation_conditions: ["价格跌破止损价", "关键基本面假设失效"],
+          invalidation_conditions: [
+            shortSide ? "价格升破止损价" : "价格跌破止损价",
+            "关键基本面假设失效",
+          ],
         },
       };
     }
@@ -198,11 +218,14 @@ export function resolveArtifactAutoAdvance(input: {
       if (!input.availableTools.includes(toolName)) return null;
       const hasVersion = input.snapshot.strategyVersionId;
       if (!hasVersion) return null;
+      const shortSide =
+        input.snapshot.scenarioKey === "live_trading_short" ||
+        input.snapshot.scenarioKey?.includes("short");
       return {
         toolName,
         params: {
           symbol: "NVDA",
-          side: "buy",
+          side: shortSide ? "sell" : "buy",
           qty: 10,
           order_type: "market",
           dispatch_mode: "paper",

@@ -2,14 +2,10 @@
  * 共享 HITL 自评提示（`hitlHint`）解析。
  *
  * 由两条路径使用：
- *   1. **研究团队 orchestrator plan**（`analyst-team-pipeline.ts#runOrchestratorPlanning`）：
- *      LLM 在 Markdown 简报后追加分隔符 + JSON。详见 docs/HITL_REDESIGN.md §5。
- *   2. **对话 orchestrator reason**（`react/nodes/hitl-gate.ts`）：
- *      LLM 在 reasonText 末尾的 `<TOOL_CALL>` 之**外**追加同样格式，让对话 HITL
- *      也能落 single_choice / multi_choice / free_form，而不是只画 approve/reject。
+ *   1. **研究团队 orchestrator plan**（`analyst-team-pipeline.ts#runOrchestratorPlanning`）
+ *   2. **对话 orchestrator reason**（`react/nodes/hitl-gate.ts`）
  *
- * 两条路径用同一个分隔符 + 同一个 parser，避免协议漂移；同时也让 `analyst-team`
- * 已有的单测继续按原行为通过。
+ * 2026-08：扩展 form 填空、allowFreeText、独立提问（可无 TOOL_CALL）。
  */
 
 export type OrchestratorHitlHint = {
@@ -17,10 +13,23 @@ export type OrchestratorHitlHint = {
   needed?: boolean;
   /** ≤200 字短句，会写入 UI 给用户看 */
   reason?: string;
+  /** 完整问题（可长于 reason） */
+  question?: string;
   /** 推荐的交互形态；缺省 `approve_only` */
-  inputKind?: "approve_only" | "single_choice" | "multi_choice" | "free_form";
+  inputKind?: "approve_only" | "single_choice" | "multi_choice" | "free_form" | "form";
   /** single_choice / multi_choice 形态的选项 */
   options?: Array<{ label: string; value: string; description?: string }>;
+  /** 选择题是否允许额外补充说明 */
+  allowFreeText?: boolean;
+  /** form / 选择题附带的填空字段 */
+  fields?: Array<{
+    key: string;
+    label: string;
+    type?: "text" | "number";
+    required?: boolean;
+    placeholder?: string;
+  }>;
+  placeholder?: string;
 };
 
 export type OrchestratorPlanResult = {
@@ -32,9 +41,6 @@ export const HITL_HINT_DELIMITER = "---HITL_HINT_JSON---";
 
 /**
  * 从 LLM 全文里抠出分隔符之后的 HITL JSON 块；同时返回去掉 hint 段的 brief。
- *
- * 解析容错：找不到分隔符或 JSON 无效都视为 hitlHint=null（让 evaluator 走 mode 默认）。
- * 同样宽松对待 `inputKind` 字段——只接受白名单值，其它一律 undefined。
  */
 export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
   const idx = answer.indexOf(HITL_HINT_DELIMITER);
@@ -47,12 +53,19 @@ export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
     const raw = JSON.parse(m[0]) as Record<string, unknown>;
     const needed = raw.needed === true ? true : raw.needed === false ? false : undefined;
     const reason = typeof raw.reason === "string" ? raw.reason.slice(0, 200) : undefined;
+    const question =
+      typeof raw.question === "string"
+        ? raw.question.slice(0, 500)
+        : typeof raw.prompt === "string"
+          ? raw.prompt.slice(0, 500)
+          : undefined;
     const inputKindRaw = raw.inputKind;
     const inputKind: OrchestratorHitlHint["inputKind"] =
       inputKindRaw === "single_choice" ||
       inputKindRaw === "multi_choice" ||
       inputKindRaw === "free_form" ||
-      inputKindRaw === "approve_only"
+      inputKindRaw === "approve_only" ||
+      inputKindRaw === "form"
         ? inputKindRaw
         : undefined;
     const options =
@@ -67,57 +80,76 @@ export function parsePlanWithHitlHint(answer: string): OrchestratorPlanResult {
             description: typeof o.description === "string" ? o.description : undefined,
           }))
         : undefined;
-    return { brief, hitlHint: { needed, reason, inputKind, options } };
+    const fields =
+      Array.isArray(raw.fields)
+        ? (raw.fields as Array<Record<string, unknown>>)
+            .filter(
+              (f) => f && typeof f === "object" && typeof f.key === "string" && String(f.key).trim()
+            )
+            .map((f) => ({
+              key: String(f.key).trim(),
+              label: String(f.label ?? f.key ?? "").trim(),
+              type: f.type === "number" ? ("number" as const) : ("text" as const),
+              required: f.required !== false,
+              placeholder:
+                typeof f.placeholder === "string" ? f.placeholder.slice(0, 200) : undefined,
+            }))
+        : undefined;
+    return {
+      brief,
+      hitlHint: {
+        needed,
+        reason,
+        question,
+        inputKind,
+        options,
+        allowFreeText: raw.allowFreeText === true ? true : undefined,
+        fields,
+        placeholder: typeof raw.placeholder === "string" ? raw.placeholder.slice(0, 300) : undefined,
+      },
+    };
   } catch {
     return { brief, hitlHint: null };
   }
 }
 
-/**
- * 对话 orchestrator 复用的便捷封装：从 reasonText 里只抠 hitlHint。
- * 与团队版区别：忽略 brief 部分，因为对话 reasonText 本身就是给前端显示的；
- * 解析失败也不会污染 brief，调用方拿不到 hint 就当用户没暗示。
- */
 export function extractHitlHintFromText(text: string | null | undefined): OrchestratorHitlHint | null {
   if (!text) return null;
   return parsePlanWithHitlHint(text).hitlHint;
 }
 
 /**
- * 对话 orchestrator 的 system prompt 增量：教 LLM 何时主动出 HITL 选择题。
- *
- * 与团队 plan 区别：
- *   - 团队 plan 是一次性输出 brief + hitlHint；
- *   - 对话 reason 是逐轮 ReAct，hitlHint 选项要克制（多数轮不需要打扰），
- *     所以默认 `needed=false`，只有特定信号才升级到 `needed=true`。
- *
- * 这个块只在 `role === 'orchestrator'` 且工作流 source = chat 的情况注入；
- * 分析师 / research / risk 等次级 agent 不会画 HITL，注入只会噪声化 LLM 输出。
+ * 对话 orchestrator 的 system prompt 增量：何时主动出 HITL 提问 / 选择题 / 填空。
  */
 export function buildChatHitlSelfCheckPromptBlock(): string {
   return [
-    "## HITL 自评（仅对话 orchestrator 适用）",
-    "在你按工具说明输出 `<TOOL_CALL>` 之后，如果**本轮工具调用**需要让用户在执行前介入，",
-    `**可选**追加分隔符 \`${HITL_HINT_DELIMITER}\` 与一段 JSON，例如：`,
+    "## HITL 人机协作（提问 / 选择题 / 填空 → 用户作答后 resume）",
+    "当你需要用户做决策、补参数、或在多条路径中拍板时，在输出末尾追加：",
     "",
     "```",
     HITL_HINT_DELIMITER,
-    '{"needed": true, "reason": "存在两条合理执行路径", "inputKind": "single_choice",',
-    ' "options": [{"label": "走 A 方案（保守）", "value": "a"}, {"label": "走 B 方案（激进）", "value": "b"}]}',
+    '{"needed": true, "question": "你希望优先降低成本还是控制回撤？",',
+    ' "inputKind": "single_choice",',
+    ' "options": [{"label": "摊低成本（可加仓）", "value": "avg_down"}, {"label": "控制回撤（偏防守）", "value": "defend"}],',
+    ' "allowFreeText": true, "placeholder": "可选：补充持仓量/成本/可承受亏损"}',
     "```",
     "",
-    "判定依据（`needed=true` 的典型场景）：",
-    "- 你识别到 ≥2 条同样合理的执行路径，希望用户拍板；",
-    "- 用户原始意图含糊（如「帮我看一下」「随便分析下」），需要一句话指引；",
-    "- 工具调用即将改变外部状态（下单、写入配置、删除等），但**该工具不在内置高危名单**里。",
+    "也可单独填空（form）：",
+    "```",
+    HITL_HINT_DELIMITER,
+    '{"needed": true, "question": "请补充关键参数以便继续", "inputKind": "form",',
+    ' "fields": [{"key": "cost", "label": "持仓成本", "required": true}, {"key": "shares", "label": "股数", "type": "number"}]}',
+    "```",
     "",
-    "`inputKind` 选择：",
-    "- `approve_only`：你已经选好路径，只想确认 → `options` 可省；",
-    "- `single_choice`：路径间选一条 → **必带 options=[{label,value}]**；",
-    "- `multi_choice`：勾选多个子项（如要包含哪些分析维度） → **必带 options**；",
-    "- `free_form`：希望用户用自然语言给指引 → `options` 可省。",
+    "`inputKind`：",
+    "- `approve_only`：只确认/拒绝（高危工具系统会强制此形态）",
+    "- `single_choice` / `multi_choice`：必带 `options`；可选 `allowFreeText` + `fields`",
+    "- `free_form`：一整段自然语言",
+    "- `form`：结构化填空，必带 `fields=[{key,label,...}]`",
     "",
-    "其余情况**不要**追加该块——绝大多数工具调用都是常规读数据/计算/报告，不需要打扰用户。",
-    "（系统已对下单 / 删除 / 自修改 prompt 等高危工具做硬规则拦截，无需你重复声明。）",
+    "**可以不挂 `<TOOL_CALL>` 就提问**：若你只需要用户回答再决定下一步，输出思考 + HITL 块即可",
+    "（系统会 pause，用户提交后 resume，并把答案注入你的下一轮上下文）。",
+    "",
+    "常规拉数/计算**不要**打扰用户。高危下单/删除无需你自声明，系统硬规则会拦截。",
   ].join("\n");
 }

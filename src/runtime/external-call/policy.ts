@@ -80,7 +80,9 @@ export async function executeWithPolicy<T>(
   const circuit = circuitByKey.get(key) ?? { failures: 0 };
   const now = Date.now();
   if (circuit.openedAt && now - circuit.openedAt < policy.circuitBreaker.cooldownMs) {
-    throw new Error("circuit breaker open");
+    const remainMs = policy.circuitBreaker.cooldownMs - (now - circuit.openedAt);
+    const remainSec = Math.max(1, Math.ceil(remainMs / 1000));
+    throw new Error(`circuit breaker open: ${key} (retry after ~${remainSec}s)`);
   }
   if (circuit.openedAt && now - circuit.openedAt >= policy.circuitBreaker.cooldownMs) {
     circuit.failures = 0;

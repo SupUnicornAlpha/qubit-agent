@@ -12,6 +12,9 @@ describe("scenario recipes", () => {
     expect(resolveScenarioRecipe("sp")?.version).toMatch(/^2026-/);
     expect(resolveScenarioRecipe("factor_research")?.key).toBe("factor");
     expect(resolveScenarioRecipe("lt")?.key).toBe("live_trading");
+    expect(resolveScenarioRecipe("stock_pick_short")?.key).toBe("stock_pick");
+    expect(resolveScenarioRecipe("strategy_long_short")?.key).toBe("strategy");
+    expect(resolveScenarioRecipe("live_trading_short")?.key).toBe("live_trading");
   });
 });
 

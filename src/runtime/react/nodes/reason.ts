@@ -42,11 +42,13 @@ import { enrichSystemPromptWithFsi } from "../../fsi/fsi-prompt-enricher";
 import { agentLlmConfigToSampling } from "../../llm/agent-llm-config";
 import type { LlmTokenUsage } from "../../llm/gateway";
 import { invokeWithFallback, resolveLlmForAgent } from "../../llm/llm-router";
+import { LlmGatewayError, type LlmGatewayErrorJson } from "../../llm/llm-gateway-error";
 import {
   compactObservations,
   computePromptBudget,
   estimateTokens,
   getContextWindow,
+  resolveRolePromptBudget,
   truncatePromptText,
 } from "../../llm/token-budget";
 import {
@@ -56,6 +58,7 @@ import {
 import {
   buildSuggestedCallChainBlock,
   buildTopologySpecialistExecutionContract,
+  shouldForceTopologySpecialistSynthesis,
 } from "../../orchestration/topology-dispatch";
 import {
   intersectCapabilityWithEffectiveTools,
@@ -131,6 +134,12 @@ export interface ReasonStepMeta {
    * 落到 llm_call_log.requestMetaJson.lengthRetryUsed，让监控能挑出"被自动救过的调用"。
    */
   lengthRetryUsed?: boolean;
+  /** Gateway transport/provider attempts across invokes in this reason turn. */
+  transportAttempts?: number;
+  /** Last structured gateway error code (even if later recovered). */
+  gatewayErrorCode?: string;
+  /** Compact structured error payload for request_meta_json.gatewayError. */
+  gatewayError?: Record<string, unknown>;
   nativeToolCallingUsed?: boolean;
   tokenBudgetSoftLimitReached?: boolean;
   promptComponentChars?: Record<string, number>;
@@ -292,6 +301,61 @@ async function loadSessionContext(workflowId: string, limit = 6): Promise<string
     .filter((line) => line.length > 0);
 }
 
+function mergeAbortSignals(
+  ...signals: Array<AbortSignal | undefined>
+): AbortSignal | undefined {
+  const active = signals.filter((s): s is AbortSignal => Boolean(s));
+  if (active.length === 0) return undefined;
+  if (active.length === 1) return active[0];
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any(active);
+  }
+  const controller = new AbortController();
+  for (const signal of active) {
+    if (signal.aborted) {
+      controller.abort(signal.reason);
+      return controller.signal;
+    }
+    signal.addEventListener(
+      "abort",
+      () => {
+        if (!controller.signal.aborted) controller.abort(signal.reason);
+      },
+      { once: true }
+    );
+  }
+  return controller.signal;
+}
+
+/** Wall-clock context so models don't invent "today" when calling market tools. */
+export function formatReasonClockContext(now: Date = new Date()): string {
+  const utcIso = now.toISOString();
+  const utcDate = utcIso.slice(0, 10);
+  const shanghai = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(now);
+  const shanghaiDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  return [
+    `**系统时钟（权威 as-of，禁止臆造）**：`,
+    `- UTC now: ${utcIso}（UTC 日 ${utcDate}）`,
+    `- Asia/Shanghai: ${shanghai}（交易日历日 ${shanghaiDate}）`,
+    `- 拉行情前先确定时间窗：优先显式传 startDate+endDate；缺省用 endDate=${shanghaiDate}（或 UTC ${utcDate}）+ limit≈250 根日线。`,
+    `- 用户说“现在/今天/近期”一律相对上述 as-of，不得用训练记忆里的旧日期。`,
+  ].join("\n");
+}
+
 async function resolveEffectiveSystemPrompt(
   definitionId: string,
   dbSystemPrompt: string
@@ -324,7 +388,8 @@ async function resolveEffectiveSystemPrompt(
 
 export async function reasonNode(
   state: AgentGraphState,
-  emit: (event: StepStreamEvent) => void
+  emit: (event: StepStreamEvent) => void,
+  options?: { signal?: AbortSignal }
 ): Promise<ReasonNodeOutput> {
   /**
    * M10.B1: per-Agent 模型路由 + 默认模型降级。
@@ -350,6 +415,8 @@ export async function reasonNode(
   let responseId: string | undefined;
   /** 网关 P2：是否被 length-retry 自救过（任一次 invokeWithFallback 触发即 true） */
   let lengthRetryUsed = false;
+  let transportAttempts = 0;
+  let lastGatewayError: LlmGatewayErrorJson | undefined;
   // 监控 V2 P1：prompt 长度（不存原文，仅用于 llm_call_log.requestMetaJson）
   let systemPromptLen = 0;
   let userPromptLen = 0;
@@ -357,7 +424,8 @@ export async function reasonNode(
   let promptCompacted = false;
   let promptEstimatedTokens = 0;
   let promptComponentChars: Record<string, number> = {};
-  const cancellationSignal = getWorkflowCancellationSignal(state.workflowId);
+  const workflowCancellationSignal = getWorkflowCancellationSignal(state.workflowId);
+  const cancellationSignal = mergeAbortSignals(workflowCancellationSignal, options?.signal);
 
   const payload = state.inboundMessage.payload as Record<string, unknown>;
   const payloadParams = (payload.params ?? {}) as Record<string, unknown>;
@@ -454,7 +522,14 @@ export async function reasonNode(
   } catch {
     // Artifact ledger is optional during rolling migration; reasoning must continue.
   }
-  const tools = capabilityManifest.tools;
+  const topologySynthesisRequired = shouldForceTopologySpecialistSynthesis({
+    taskType: String(payload.taskType ?? ""),
+    role: state.agentDefinition.role,
+    toolCalls: state.toolCalls,
+  });
+  // Reserve a final LLM turn for a user-facing conclusion instead of allowing
+  // a delegated specialist to spend all iterations on equivalent data calls.
+  const tools = topologySynthesisRequired ? [] : capabilityManifest.tools;
   const mcpServers = [...capabilitySurface.mcpServers];
   const hasTools = tools.length > 0 || mcpServers.length > 0;
   const taskQuery = [
@@ -682,30 +757,56 @@ export async function reasonNode(
   const configuredPerCallPromptLimit = Number(
     process.env["QUBIT_MAX_PROMPT_TOKENS_PER_CALL"] ?? "18000"
   );
-  const perCallPromptLimit =
+  const llmCfg =
+    state.agentDefinition.llmConfig &&
+    typeof state.agentDefinition.llmConfig === "object" &&
+    !Array.isArray(state.agentDefinition.llmConfig)
+      ? (state.agentDefinition.llmConfig as Record<string, unknown>)
+      : {};
+  const roleBudget = resolveRolePromptBudget(state.agentDefinition.role, {
+    ...(typeof llmCfg["maxPromptTokens"] === "number"
+      ? { maxPromptTokens: llmCfg["maxPromptTokens"] as number }
+      : {}),
+    ...(typeof llmCfg["maxCharsPerObservation"] === "number"
+      ? { maxCharsPerObservation: llmCfg["maxCharsPerObservation"] as number }
+      : {}),
+    ...(typeof llmCfg["keepRecentObservations"] === "number"
+      ? { keepRecent: llmCfg["keepRecentObservations"] as number }
+      : {}),
+  });
+  const perCallPromptLimit = Math.min(
     workflowTokenBudget?.policy.maxPromptTokensPerCall ??
-    (Number.isFinite(configuredPerCallPromptLimit) && configuredPerCallPromptLimit > 0
-      ? Math.floor(configuredPerCallPromptLimit)
-      : 18_000);
+      (Number.isFinite(configuredPerCallPromptLimit) && configuredPerCallPromptLimit > 0
+        ? Math.floor(configuredPerCallPromptLimit)
+        : 18_000),
+    roleBudget.maxPromptTokens
+  );
   const fixedPromptTokens =
     estimateTokens(fixedSnippet) + Math.min(12_000, Math.floor(perCallPromptLimit * 0.6));
-  const contextWindow = getContextWindow(modelConfig.model);
+  const agentContextWindow =
+    typeof llmCfg["contextWindow"] === "number" &&
+    Number.isFinite(llmCfg["contextWindow"]) &&
+    (llmCfg["contextWindow"] as number) > 0
+      ? (llmCfg["contextWindow"] as number)
+      : null;
+  const contextWindow = getContextWindow(
+    modelConfig.model,
+    agentContextWindow ?? modelConfig.contextWindow ?? null
+  );
   /**
    * maxOutputTokens：尊重 agent 的 llmConfig（默认 4096）。compactor 用 8192 做保守估算
    * 防止 length-retry 自动翻倍后超 window。
    */
   const sampledMaxOut = (() => {
-    const cfg = state.agentDefinition.llmConfig;
-    if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
-      const v = (cfg as Record<string, unknown>)["maxOutputTokens"];
-      if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.max(v, 8_192);
-    }
+    const v = llmCfg["maxOutputTokens"];
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.max(v, 8_192);
     return 8_192;
   })();
   const promptBudget = Math.min(
     computePromptBudget({
       contextWindow,
       maxOutputTokens: sampledMaxOut,
+      safetyRatio: roleBudget.safetyRatio,
     }),
     perCallPromptLimit
   );
@@ -713,8 +814,8 @@ export async function reasonNode(
   const compactedResult = compactObservations(state.observations, {
     fixedPromptTokens,
     promptBudget,
-    keepRecent: 3,
-    maxCharsPerObservation: 2_500,
+    keepRecent: roleBudget.keepRecent,
+    maxCharsPerObservation: roleBudget.maxCharsPerObservation,
   });
   const previousObservations = compactedResult.observations;
   if (
@@ -733,8 +834,11 @@ export async function reasonNode(
     );
   }
 
+  const clockContext = formatReasonClockContext();
   const userPromptParts = [
     `你是 ${state.agentDefinition.role} Agent，请根据以下任务目标给出分析与回应。`,
+    "",
+    clockContext,
     "",
     `**任务目标**：${payloadGoal}`,
     slotTicker ? `**标的**：${slotTicker}` : "",
@@ -754,6 +858,9 @@ export async function reasonNode(
       : "",
     previousObservations.length
       ? `\n**历史观测（共 ${state.observations.length} 步，按 token 预算压缩到最近 ${previousObservations.length} 条；早期已 stub 化）**：\n${JSON.stringify(previousObservations, null, 2)}`
+      : "",
+    topologySynthesisRequired
+      ? "\n**专家取证上限已到**：已有证据足以先交付。现在禁止再调用工具；请输出完整结论、关键证据、风险与缺口，并使用 `tool=none` 结束。"
       : "",
     state.iteration > 1 ? `\n**当前迭代**：第 ${state.iteration} 轮` : "",
   ];
@@ -826,6 +933,11 @@ export async function reasonNode(
     if (workflowTokenBudget?.softLimitReached) {
       controlParts.push(
         "**Token 预算提醒**：本工作流已达到软预算，请停止扩展新分支，只完成当前最小可验证结论。"
+      );
+    }
+    if (topologySynthesisRequired) {
+      controlParts.push(
+        "**专家取证上限已到**：已有证据足以先交付。现在禁止再调用工具；请输出完整结论、关键证据、风险与缺口，并使用 `tool=none` 结束。"
       );
     }
     if (state.iteration > 1) controlParts.push(`**当前迭代**：第 ${state.iteration} 轮`);
@@ -1052,14 +1164,6 @@ export async function reasonNode(
       if (nativeSentinel) {
         answer = `${answer.trim()}\n\n${nativeSentinel}`.trim();
         nativeToolCallingUsed = true;
-      } else {
-        const legacyParsed = parseToolCallFromReason(answer, promptTools);
-        if (legacyParsed.kind === "parse_error") {
-          answer = `${answer.trim()}\n\n<TOOL_CALL>\n${JSON.stringify({
-            tool: "none",
-            summary: "模型未请求工具，按最终文字结论处理",
-          })}\n</TOOL_CALL>`.trim();
-        }
       }
     }
     modelFallbackUsed = llmResult.fallbackUsed;
@@ -1069,6 +1173,8 @@ export async function reasonNode(
     finishReason = llmResult.finishReason;
     responseId = llmResult.responseId;
     if (llmResult.lengthRetryUsed) lengthRetryUsed = true;
+    transportAttempts += llmResult.transportAttempts ?? 1;
+    if (llmResult.lastError) lastGatewayError = llmResult.lastError;
     llmCallSucceeded = true;
     if (modelFallbackUsed) {
       console.warn(
@@ -1080,7 +1186,7 @@ export async function reasonNode(
 
     // P0-5: 解析失败时单次重试。仅当本轮真有可调用工具，且解析器认为
     // 输出"既不是合法工具调用、也不是合法 none"时才触发，避免无意义的重调。
-    if (hasTools && !nativeToolDefinition && process.env.QUBIT_REASON_RETRY_DISABLED !== "1") {
+    if (hasTools && process.env.QUBIT_REASON_RETRY_DISABLED !== "1") {
       const parsed = parseToolCallFromReason(answer, promptTools);
       if (parsed.kind === "parse_error") {
         const retryStartedAt = Date.now();
@@ -1171,6 +1277,8 @@ export async function reasonNode(
             if (retryResult.finishReason) finishReason = retryResult.finishReason;
             if (retryResult.responseId) responseId = retryResult.responseId;
             if (retryResult.lengthRetryUsed) lengthRetryUsed = true;
+            transportAttempts += retryResult.transportAttempts ?? 1;
+            if (retryResult.lastError) lastGatewayError = retryResult.lastError;
             console.log(
               `[reason] agent ${state.agentDefinition.role} parse-retry succeeded (orig parse_error → retried OK)`
             );
@@ -1187,11 +1295,21 @@ export async function reasonNode(
       }
     }
   } catch (error) {
-    if (cancellationSignal.aborted || isWorkflowCancellationRequested(state.workflowId)) {
+    if (
+      workflowCancellationSignal.aborted ||
+      isWorkflowCancellationRequested(state.workflowId)
+    ) {
       throw new WorkflowCancelledError(state.workflowId);
     }
-    const errMsg = (error as Error).message ?? String(error);
-    const fallback = `LLM gateway error: ${errMsg}`;
+    const errMsg = LlmGatewayError.is(error)
+      ? error.toLogLine()
+      : ((error as Error).message ?? String(error));
+    const fallback = LlmGatewayError.is(error)
+      ? error.toLogLine()
+      : `LLM gateway error: ${errMsg}`;
+    if (LlmGatewayError.is(error)) {
+      lastGatewayError = error.toJSON();
+    }
     for (const token of fallback.split(/\s+/).filter(Boolean)) {
       if (!token) continue;
       emit({
@@ -1237,6 +1355,13 @@ export async function reasonNode(
       ...(finishReason ? { finishReason } : {}),
       ...(responseId ? { responseId } : {}),
       ...(lengthRetryUsed ? { lengthRetryUsed: true } : {}),
+      ...(transportAttempts > 0 ? { transportAttempts } : {}),
+      ...(lastGatewayError
+        ? {
+            gatewayErrorCode: lastGatewayError.code,
+            gatewayError: lastGatewayError as unknown as Record<string, unknown>,
+          }
+        : {}),
       ...(nativeToolCallingUsed ? { nativeToolCallingUsed: true } : {}),
       ...(workflowTokenBudget?.softLimitReached ? { tokenBudgetSoftLimitReached: true } : {}),
       promptComponentChars,

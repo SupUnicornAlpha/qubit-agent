@@ -4,6 +4,8 @@ import { agentDefinition } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
 
 export const TOPOLOGY_TEAM_TOOL_PREFIX = "call_team_";
+/** Bound evidence gathering so a specialist always reserves a turn to synthesize. */
+export const MAX_TOPOLOGY_SPECIALIST_EVIDENCE_TOOLS = 10;
 const TOPOLOGY_TIMEOUT_BUFFER_MS = 10_000;
 
 /**
@@ -157,6 +159,7 @@ export function buildTopologySpecialistExecutionContract(role: AgentRole, goal =
     "- 这是 Orchestrator 派发的有界子任务；只完成 goal 指定的最小结果，不扩写通用报告。",
     "- readiness / data_sources 只允许在尚无本轮健康证据时调用一次；已有成功结果不得重复探测。",
     "- 核心业务工具成功后，下一轮必须用 `tool=none` 汇总结果并结束，不得为了凑完整度继续调用辅助工具。",
+    `- 最多允许 ${MAX_TOPOLOGY_SPECIALIST_EVIDENCE_TOOLS} 次有效工具取证；到达上限时系统将撤回工具面，必须基于已有证据交付结论并标注缺口。`,
     "- 调度超时、模型超时与数据不可用是三种不同状态；只有真实拉取返回 no_data/no_bars/全 provider 失败，才可判定数据不可用。",
   ];
   if (role === "market_data") {
@@ -193,6 +196,21 @@ export function isRedundantTopologyProbe(input: {
   return input.priorToolCalls.some(
     (call) => call.status === "success" && call.toolName === input.targetName
   );
+}
+
+export function shouldForceTopologySpecialistSynthesis(input: {
+  taskType: string;
+  role: AgentRole | string;
+  toolCalls: ReadonlyArray<{ toolName?: string | null; status?: string | null }>;
+}): boolean {
+  if (input.taskType !== "topology_dispatch" || input.role === "orchestrator") return false;
+  const successfulEvidenceCalls = input.toolCalls.filter(
+    (call) =>
+      call.status === "success" &&
+      call.toolName !== "update_plan" &&
+      call.toolName !== "tool/update_plan"
+  ).length;
+  return successfulEvidenceCalls >= MAX_TOPOLOGY_SPECIALIST_EVIDENCE_TOOLS;
 }
 
 export async function loadOrchestratorTopologyForWorkflow(): Promise<OrchestratorTopologyContext> {

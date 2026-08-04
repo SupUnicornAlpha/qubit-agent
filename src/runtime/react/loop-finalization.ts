@@ -83,10 +83,16 @@ export function finalizeLoopState(
       },
     });
   }
-  // Soft gate: lifecycle completes on researchOk. Null delivery ⇒ not researchOk.
-  const researchOk = Boolean(delivery?.researchOk);
+  // Product runtime completes when its minimum research contract is met.
+  // Upgrade-grade row counts and answer-schema checks stay in DeliveryVerdict
+  // as observable quality gaps; they are not a reason to terminate a useful
+  // research workflow as partial after it already has valid evidence.
+  const deliveryComplete = Boolean(delivery?.researchOk);
   const enforce = isDeliveryVerdictEnforceEnabled();
-  const contractOk = exceeded ? (enforce ? researchOk : false) : researchOk || !enforce;
+  // A scenario with an evaluated verdict never bypasses the lifecycle gate via
+  // the compatibility flag. The flag only preserves legacy non-scenario runs
+  // where no delivery contract exists.
+  const contractOk = delivery ? deliveryComplete : !enforce;
 
   let finalResponse: AgentGraphState["finalResponse"];
   if (exceeded && !contractOk) {
@@ -155,7 +161,7 @@ function alignExistingFinalResponse(input: {
   let status = existing.status;
   // Don't override HITL / hard terminates.
   const sticky = new Set(["awaiting_approval", "terminated", "cancelled", "failed"]);
-  if (enforce && delivery && !sticky.has(String(status))) {
+  if (delivery && !sticky.has(String(status))) {
     if (status === "completed" && !delivery.researchOk) {
       status = "partial";
     } else if (

@@ -45,6 +45,10 @@ export interface ScenarioRuntimeSnapshot {
   activeFactorIds: string[];
   latestFactorDefinitionId: string | null;
   screenerTopSymbol: string | null;
+  /** Ranked screener symbols, used to avoid recovery repeatedly writing the same recommendation. */
+  screenerCandidateSymbols?: string[];
+  /** Existing recommendation symbols for the workflow, normalized to uppercase. */
+  recommendationSymbols?: string[];
   strategyVersionId: string | null;
   loadedAtMs: number;
   /** Populated by FactsPort when includeA2a is true. */
@@ -120,6 +124,8 @@ export function loadScenarioRuntimeSnapshot(input: {
     activeFactorIds: listActiveFactorIds(input.sqlite, input.workflowId, 3),
     latestFactorDefinitionId: latestFactorDefinitionId(input.sqlite, input.workflowId),
     screenerTopSymbol: pickScreenerTopSymbol(input.sqlite, input.workflowId),
+    screenerCandidateSymbols: listScreenerCandidateSymbols(input.sqlite, input.workflowId),
+    recommendationSymbols: listRecommendationSymbols(input.sqlite, input.workflowId),
     strategyVersionId: latestStrategyVersionId(input.sqlite, input.workflowId),
     loadedAtMs: Date.now(),
   };
@@ -240,5 +246,39 @@ function pickScreenerTopSymbol(sqlite: Database, workflowId: string): string | n
     return ticker || null;
   } catch {
     return null;
+  }
+}
+
+function listScreenerCandidateSymbols(sqlite: Database, workflowId: string): string[] {
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT sc.ticker AS ticker
+         FROM screener_candidate sc
+         JOIN screener_run sr ON sr.id = sc.screener_run_id
+         WHERE sr.workflow_run_id = ?
+         ORDER BY sc.score DESC
+         LIMIT 20`
+      )
+      .all(workflowId) as Array<{ ticker?: string }>;
+    return [...new Set(rows.map((row) => (row.ticker ?? "").trim().toUpperCase()).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
+function listRecommendationSymbols(sqlite: Database, workflowId: string): string[] {
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT symbol FROM recommendation_snapshot
+         WHERE workflow_run_id = ?
+         ORDER BY created_at DESC
+         LIMIT 50`
+      )
+      .all(workflowId) as Array<{ symbol?: string }>;
+    return [...new Set(rows.map((row) => (row.symbol ?? "").trim().toUpperCase()).filter(Boolean))];
+  } catch {
+    return [];
   }
 }

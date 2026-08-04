@@ -127,31 +127,5 @@ export function decideToolNoneGate(input: {
     };
   }
 
-  // Soft underfill nudge: research floor ok, but upgrade minRows still short.
-  // Push back a couple of times, then allow finalize (soft gate).
-  if (!snapshot.artifactsOk && input.artifactRetryCount < 2) {
-    const recovery = planArtifactRecovery({
-      snapshot,
-      availableTools: input.availableTools,
-    });
-    if (recovery.nextTool) {
-      return {
-        kind: "push_back",
-        code: "ARTIFACT_UNDERFILL_SOFT",
-        message: [
-          "研究地板已满足，但升级级产物仍不足；请再补一轮写工具后再结案。",
-          recovery.hint,
-          recovery.draftParams
-            ? `草稿参数：${JSON.stringify(recovery.draftParams)}`
-            : null,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        recovery,
-        bumpArtifactRetry: true,
-      };
-    }
-  }
-
   return { kind: "allow_finalize" };
 }

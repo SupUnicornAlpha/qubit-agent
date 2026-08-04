@@ -17,6 +17,17 @@ export interface AgentLlmConfig {
   topP?: number;
   maxOutputTokens?: number;
   reasoningEffort?: "low" | "medium" | "high";
+  /**
+   * Optional per-agent context window override (tokens). Falls back to
+   * llm_provider_config.context_window then known-model table.
+   */
+  contextWindow?: number;
+  /** Soft cap for a single reason prompt (tokens). Overrides role defaults. */
+  maxPromptTokens?: number;
+  /** Max chars kept per observation before stubbing. */
+  maxCharsPerObservation?: number;
+  /** How many recent observations to keep verbatim. */
+  keepRecentObservations?: number;
 }
 
 /**

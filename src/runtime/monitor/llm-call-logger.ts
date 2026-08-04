@@ -77,6 +77,13 @@ export type LlmCallLogInput = {
   userPromptLen?: number;
   /** 已 redact 的额外元信息（可选；调用方应自己跑 redactPayload 后再传入） */
   extraMeta?: Record<string, unknown>;
+  /**
+   * Gateway resilience fields (recommended in extraMeta):
+   *   - transportAttempts: number
+   *   - gatewayErrorCode: PROVIDER_BUSY | TRANSPORT | CIRCUIT_OPEN | …
+   *   - gatewayError: structured JSON from LlmGatewayError.toJSON()
+   *   - lengthRetryUsed / fallbackUsed / parseRetryUsed
+   */
 };
 
 /** 错误消息截断长度，防止把 LLM 异常堆栈整体写进 sqlite */

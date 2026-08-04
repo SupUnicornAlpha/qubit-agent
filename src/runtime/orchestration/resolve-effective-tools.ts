@@ -145,9 +145,26 @@ export async function resolveEffectiveAgentTools(
       ? normalizeToolNames([...scenarioTools, ...SCENARIO_SUPPORT_TOOLS])
       : [];
 
-  const baseRaw = scenarioScopedTools.length
-    ? scenarioScopedTools
-    : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, "web.fetch"]);
+  /**
+   * A scenario preset describes the workflow-level contract, not a specialist
+   * capability whitelist.  Applying it as the only surface for every analyst
+   * made a global progress fact (for example, another analyst already fetched
+   * price) narrow a fundamental specialist to `fetch_news`, which it is not
+   * authorized to run.  The prompt then had enabled MCP servers but zero
+   * callable tools, so the model's valid `call_mcp` action was rejected.
+   *
+   * Keep the preset strict for the orchestrator, which owns contract progress.
+   * Specialists instead begin with their declared, sandbox-governed tool set;
+   * the same progress filter may prioritize a next action but cannot invent a
+   * capability they do not own.
+   */
+  const specialistDeclaredTools = normalizeToolNames([...(def.tools ?? []), "web.fetch"]);
+  const baseRaw =
+    scenarioScopedTools.length && def.role === "orchestrator"
+      ? scenarioScopedTools
+      : scenarioScopedTools.length
+        ? specialistDeclaredTools
+        : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, "web.fetch"]);
 
   const base = scenarioScopedTools.length
     ? filterScenarioToolsForContractProgress({

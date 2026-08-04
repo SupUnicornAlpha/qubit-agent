@@ -1,10 +1,10 @@
 import type { A2AMessageEnvelope } from "../../types/a2a";
 import type { AgentControlMode, WorkflowProcessConfig } from "../../types/loop";
-import type { RuntimeAgentDefinition } from "../types";
-import type { EffectiveToolsResult } from "../orchestration/resolve-effective-tools";
-import { createEmptyWorkingMemory } from "../context/working-memory";
 import type { WorkingMemory } from "../context/types";
+import { createEmptyWorkingMemory } from "../context/working-memory";
+import type { EffectiveToolsResult } from "../orchestration/resolve-effective-tools";
 import type { ScenarioRuntimeSnapshot } from "../policy";
+import type { RuntimeAgentDefinition } from "../types";
 
 export type StepEventType =
   | "token"
@@ -77,12 +77,12 @@ export interface AgentGraphState {
   /**
    * P2 优先级（Round 7 复盘 2026-06-08）：artifact gate 已 push back 多少次。
    *
-   * 当 LLM 输出 `{"tool":"none"}` 想停机但 scenario 的 requiredArtifacts 还没满足，
-   * act 节点会阻止 finalResponse 写入并把 hint 塞进 observation，让 graph 回 reason
-   * 再跑一轮。为防死循环，最多 push back 2 次；超过就放行（写 finalResponse），让评测
-   * 真实记录"未落库 → A-1=0"，而不是把工作流卡死。
+   * 当 LLM 输出 `{"tool":"none"}` 想停机但 scenario 的完整 requiredArtifacts
+   * 还没满足，act 节点会阻止 finalResponse 写入并把 hint 塞进 observation，让 graph 回
+   * reason 再跑一轮。达到重试上限后必须以 partial 收口，绝不能把未完成任务写成
+   * completed。
    *
-   * undefined / 0 = 还没触发过；max 2（详见 act.ts MAX_ARTIFACT_GATE_RETRIES）。
+   * undefined / 0 = 还没触发过；max 4（详见 terminal-turn-policy.ts）。
    */
   artifactGapRetryCount?: number;
   /** Scenario required-tool gate retry count; prevents `tool=none` before B-1 is even attempted. */
@@ -96,6 +96,11 @@ export interface AgentGraphState {
   noProgressRetryCount?: number;
   /** Runner-owned budget for turns that produced no successful tool evidence. */
   consecutiveUnproductiveTurns?: number;
+  /**
+   * How many times we already injected a scenario recovery nudge instead of
+   * stopping on the unproductive budget. Caps soft-recovery to avoid infinite loops.
+   */
+  unproductiveRecoveryCount?: number;
   /**
    * Per-iteration ScenarioRuntimeSnapshot (FactsPort). Shared by reason/act/finalize
    * so hot path does not re-query sqlite for the same facts.

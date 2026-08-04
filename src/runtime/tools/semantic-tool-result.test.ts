@@ -106,4 +106,19 @@ describe("detectSemanticToolFailure", () => {
       })
     ).toBe("task_deadline_exceeded");
   });
+
+  test("keeps verified partial topology evidence available to the parent", () => {
+    expect(
+      detectSemanticToolFailure("call_team_analyst_technical", {
+        builtinResult: {
+          dispatched: true,
+          completed: true,
+          success: true,
+          taskStatus: "partial",
+          partialEvidence: true,
+          result: { taskEvidence: { verified: true, kind: "tool_result" } },
+        },
+      })
+    ).toBeNull();
+  });
 });

@@ -283,7 +283,7 @@ export class QubitNativeDataConnector extends DataConnector {
         for (const requestedSymbol of requestedSymbols) {
           const normalized = normalizeKlinesToolRequest(
             { ...p, symbol: requestedSymbol },
-            { timeframe: "1d", limit: 120 }
+            { timeframe: "1d", limit: 250 }
           );
           const computedRange = computeDateRangeForLimit(
             normalized.timeframe,
@@ -317,7 +317,7 @@ export class QubitNativeDataConnector extends DataConnector {
         }
         return merged as TOutput;
       }
-      const normalized = normalizeKlinesToolRequest(p, { timeframe: "1d", limit: 120 });
+      const normalized = normalizeKlinesToolRequest(p, { timeframe: "1d", limit: 250 });
       const { symbol, exchange, timeframe, limit } = normalized;
       if (!symbol) throw new Error(`${operation}: symbol is required`);
       const computedRange = computeDateRangeForLimit(timeframe, limit);
@@ -441,7 +441,7 @@ export class QubitNativeDataConnector extends DataConnector {
     if (operation === "fetch_financial_data") {
       const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
       const p = raw as Record<string, unknown>;
-      const normalized = normalizeKlinesToolRequest(p, { timeframe: "1d", limit: 120 });
+      const normalized = normalizeKlinesToolRequest(p, { timeframe: "1d", limit: 252 });
       const { symbol, exchange } = normalized;
       if (!symbol) throw new Error("fetch_financial_data: symbol is required");
       const limit = Math.max(30, Math.min(normalized.limit, 500));

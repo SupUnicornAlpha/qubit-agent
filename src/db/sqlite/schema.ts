@@ -134,7 +134,9 @@ export const workflowHitlRequest = sqliteTable("workflow_hitl_request", {
   scope: text("scope", { enum: ["chat_orchestrator", "team_orchestrator"] })
     .notNull()
     .default("chat_orchestrator"),
-  requestKind: text("request_kind", { enum: ["tool_call", "team_research_plan"] })
+  requestKind: text("request_kind", {
+    enum: ["tool_call", "team_research_plan", "user_question"],
+  })
     .notNull()
     .default("tool_call"),
   status: text("status", { enum: ["pending", "approved", "rejected"] })
@@ -149,19 +151,21 @@ export const workflowHitlRequest = sqliteTable("workflow_hitl_request", {
    *   - single_choice：单选（inputSchemaJson.options 给选项数组）
    *   - multi_choice：多选（同上 + minSelect/maxSelect）
    *   - free_form：自由文本（inputSchemaJson.placeholder/maxLength）
+   *   - form：结构化填空（inputSchemaJson.fields）
    * 详见 docs/HITL_REDESIGN.md
    */
   inputKind: text("input_kind", {
-    enum: ["approve_only", "single_choice", "multi_choice", "free_form"],
+    enum: ["approve_only", "single_choice", "multi_choice", "free_form", "form"],
   })
     .notNull()
     .default("approve_only"),
-  /** 渲染所需 schema（options 列表、placeholder、maxLength 等）。approve_only 为 {}. */
+  /** 渲染所需 schema（options 列表、placeholder、maxLength、fields 等）。approve_only 为 {}. */
   inputSchemaJson: text("input_schema_json", { mode: "json" }).notNull().default({}),
   /**
    * 用户实际选择 / 输入的内容；approve_only 时保持 NULL。
    * single_choice → { value: string }；multi_choice → { values: string[] }；
-   * free_form → { text: string }
+   * free_form → { text: string }；form → { fields: Record<string,string> }；
+   * 选择题也可附带 text / fields（allowFreeText）。
    */
   responseJson: text("response_json", { mode: "json" }),
   createdAt: createdAt(),

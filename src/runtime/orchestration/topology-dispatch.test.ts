@@ -9,6 +9,7 @@ import {
   resolveDispatchRole,
   resolveTopologyTaskTimeoutMs,
   resolveTopologyToolTimeoutMs,
+  shouldForceTopologySpecialistSynthesis,
   topologyTeamToolName,
 } from "./topology-dispatch";
 
@@ -96,5 +97,26 @@ describe("topology-dispatch", () => {
     expect(classifyMarketDataRequestMode("获取兆易创新今天实时行情")).toBe("realtime");
     expect(classifyMarketDataRequestMode("What is the current price of AAPL?")).toBe("realtime");
     expect(classifyMarketDataRequestMode("获取兆易创新最近 30 个交易日 K 线")).toBe("historical");
+  });
+
+  test("reserves a synthesis turn for a delegated specialist", () => {
+    const toolCalls = Array.from({ length: 10 }, () => ({
+      toolName: "fetch_klines",
+      status: "success",
+    }));
+    expect(
+      shouldForceTopologySpecialistSynthesis({
+        taskType: "topology_dispatch",
+        role: "analyst_technical",
+        toolCalls,
+      })
+    ).toBe(true);
+    expect(
+      shouldForceTopologySpecialistSynthesis({
+        taskType: "orchestrator_chat",
+        role: "orchestrator",
+        toolCalls,
+      })
+    ).toBe(false);
   });
 });

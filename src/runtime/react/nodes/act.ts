@@ -1,7 +1,10 @@
 import { planContractRecovery } from "../../policy";
 import { buildArtifactGapHint } from "../../agent-readiness/quality/artifact-checker";
 import { getScenarioExpectation } from "../../agent-readiness/quality/scenario-expectations";
-import { isRedundantTopologyProbe } from "../../orchestration/topology-dispatch";
+import {
+  isRedundantTopologyProbe,
+  shouldForceTopologySpecialistSynthesis,
+} from "../../orchestration/topology-dispatch";
 import { logResearchTeamInteraction } from "../../research-team/interaction-log";
 import { sandboxExecutor } from "../../sandbox-executor";
 import { autoMarkRecalledSkillsAsExecuted } from "../../skills/auto-skill-execution-hook";
@@ -23,6 +26,7 @@ import {
   recordWorkflowToolArtifact,
 } from "../../tools/workflow-artifact-ledger";
 import { applyToolResultToWorkingMemory } from "../../context/working-memory";
+import { compactToolObservationValue } from "../../tools/compact-tool-observation";
 import {
   recordToolCallError,
   recordToolCallSandboxBlocked,
@@ -62,7 +66,83 @@ export async function actNode(
   const processConfig = iterationContext.processConfig;
   const planSnapshot = iterationContext.planJson;
   const availableTools = iterationContext.availableTools;
-  const parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
+  let parsed = parseToolCallFromReason(state.reasonText ?? "", availableTools);
+
+  /**
+   * A market-data child used to repeatedly resolve the same symbol and exhaust
+   * its no-progress budget without ever fetching a bar.  Once a symbol has
+   * been resolved in this task, the next repeated resolve is deterministically
+   * advanced to the historical-data tool with the same symbol.  This preserves
+   * the model-selected instrument while preventing an inventory loop.
+   */
+  const resolvedSymbol =
+    parsed.kind === "tool"
+      ? typeof parsed.params.symbol === "string"
+        ? parsed.params.symbol.trim()
+        : typeof parsed.params.ticker === "string"
+          ? parsed.params.ticker.trim()
+          : ""
+      : "";
+
+  if (
+    parsed.kind === "tool" &&
+    state.agentDefinition.role === "market_data" &&
+    (parsed.toolName === "market.resolve_symbol" || parsed.toolName === "resolve_symbol") &&
+    resolvedSymbol.length > 0 &&
+    availableTools.includes("fetch_klines") &&
+    state.toolCalls.some(
+      (call) =>
+        String(call.toolName ?? "") === "market.resolve_symbol" &&
+        (call.status === "success" || call.status === "deduplicated")
+    )
+  ) {
+    parsed = {
+      kind: "tool",
+      toolName: "fetch_klines",
+      params: {
+        ...parsed.params,
+        symbol: resolvedSymbol,
+      },
+    };
+    emit({
+      runId: state.runId,
+      workflowId: state.workflowId,
+      traceId: state.traceId,
+      role: state.agentDefinition.role,
+      type: "observe",
+      stepIndex: state.iteration,
+      ts: Date.now(),
+      payload: {
+        level: "info",
+        code: "MARKET_RESOLUTION_AUTO_ADVANCE",
+        message: "标的已识别，系统将重复的市场识别推进为 fetch_klines。",
+        suggestedTool: "fetch_klines",
+      },
+    });
+  }
+
+  // The reason node deliberately gets a final tool-free synthesis turn once a
+  // topology specialist has enough evidence. Guard against a stale provider
+  // tool call so it cannot burn the remaining turn budget.
+  const inboundPayloadForSynthesis = state.inboundMessage.payload as Record<string, unknown>;
+  if (
+    shouldForceTopologySpecialistSynthesis({
+      taskType: String(inboundPayloadForSynthesis.taskType ?? ""),
+      role: state.agentDefinition.role,
+      toolCalls: state.toolCalls,
+    }) &&
+    parsed.kind !== "none"
+  ) {
+    return handleToolNoneAction({
+      state,
+      emit,
+      agentMode,
+      processConfig,
+      planSnapshot,
+      availableTools,
+      summary: "专家已达到取证上限，基于已有证据收口",
+    });
+  }
 
   if (parsed.kind === "none") {
     return handleToolNoneAction({
@@ -986,22 +1066,47 @@ export async function actNode(
   }
   const nextObservations = [...state.observations];
   if (toolResult["analystTeamResult"]) {
-    nextObservations.push({ analystTeamResult: toolResult["analystTeamResult"] });
+    nextObservations.push({
+      analystTeamResult: compactToolObservationValue(
+        targetName,
+        toolResult["analystTeamResult"]
+      ),
+    });
   }
   if (toolResult["mcpResult"]) {
-    nextObservations.push({ mcpResult: toolResult["mcpResult"] });
+    nextObservations.push({
+      mcpResult: compactToolObservationValue(targetName, toolResult["mcpResult"]),
+    });
   }
   if (toolResult["connectorResult"] !== undefined) {
-    nextObservations.push({ connectorResult: toolResult["connectorResult"] });
+    nextObservations.push({
+      connectorResult: compactToolObservationValue(targetName, toolResult["connectorResult"]),
+    });
   }
   if (toolResult["packEdit"]) {
     nextObservations.push({ packEdit: toolResult["packEdit"] });
   }
   if (toolResult["builtinResult"]) {
-    nextObservations.push({ builtinResult: toolResult["builtinResult"] });
+    nextObservations.push({
+      builtinResult: compactToolObservationValue(targetName, toolResult["builtinResult"]),
+    });
   }
   if (toolResult["fusionResult"]) {
     nextObservations.push({ fusionResult: toolResult["fusionResult"] });
+  }
+
+  // Arrays returned directly by connectors (e.g. fetch_klines → BarData[]) don't have
+  // a connectorResult key; still shrink them for the next reason call.
+  if (
+    Array.isArray(execution.value) &&
+    !toolResult["connectorResult"] &&
+    !toolResult["builtinResult"] &&
+    !toolResult["mcpResult"]
+  ) {
+    nextObservations.push({
+      tool: targetName,
+      connectorResult: compactToolObservationValue(targetName, execution.value),
+    });
   }
 
   // After a successful call, if scenario contract tools remain not_attempted,

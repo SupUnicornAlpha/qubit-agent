@@ -16,7 +16,7 @@ import {
 import { setWorkflowState } from "./workflow-state-machine";
 
 export type HitlScope = "chat_orchestrator" | "team_orchestrator";
-export type HitlRequestKind = "tool_call" | "team_research_plan";
+export type HitlRequestKind = "tool_call" | "team_research_plan" | "user_question";
 export type HitlRequestStatus = "pending" | "approved" | "rejected";
 
 export class HitlAwaitingApprovalError extends Error {
@@ -31,7 +31,12 @@ export class HitlAwaitingApprovalError extends Error {
   }
 }
 
-export type HitlInputKind = "approve_only" | "single_choice" | "multi_choice" | "free_form";
+export type HitlInputKind =
+  | "approve_only"
+  | "single_choice"
+  | "multi_choice"
+  | "free_form"
+  | "form";
 
 export type HitlInputOption = {
   label: string;
@@ -39,12 +44,26 @@ export type HitlInputOption = {
   description?: string;
 };
 
+export type HitlInputField = {
+  key: string;
+  label: string;
+  type?: "text" | "number";
+  required?: boolean;
+  placeholder?: string;
+};
+
 export type HitlInputSchema = {
+  /** 面向用户的问题正文（优先于 title/summary 展示） */
+  question?: string;
   options?: HitlInputOption[];
+  /** 选择题下是否额外允许补充说明 */
+  allowFreeText?: boolean;
   placeholder?: string;
   maxLength?: number;
   minSelect?: number;
   maxSelect?: number;
+  /** form：结构化填空 */
+  fields?: HitlInputField[];
 };
 
 export type HitlApprovalPayload = {
@@ -93,8 +112,33 @@ function parseHitlInputSchema(raw: unknown): HitlInputSchema {
         }))
         .filter((option) => option.value.length > 0)
     : undefined;
+  const fields = Array.isArray(value.fields)
+    ? value.fields
+        .filter(
+          (field): field is Record<string, unknown> =>
+            Boolean(field) &&
+            typeof field === "object" &&
+            !Array.isArray(field) &&
+            typeof (field as Record<string, unknown>).key === "string"
+        )
+        .map((field) => ({
+          key: String(field.key).trim(),
+          label: String(field.label ?? field.key).trim(),
+          type: field.type === "number" ? ("number" as const) : ("text" as const),
+          required: field.required !== false,
+          ...(typeof field.placeholder === "string" && field.placeholder.trim()
+            ? { placeholder: field.placeholder.trim().slice(0, 200) }
+            : {}),
+        }))
+        .filter((field) => field.key.length > 0)
+        .slice(0, 12)
+    : undefined;
   return {
+    ...(typeof value.question === "string" && value.question.trim()
+      ? { question: value.question.trim().slice(0, 500) }
+      : {}),
     ...(options ? { options } : {}),
+    ...(value.allowFreeText === true ? { allowFreeText: true } : {}),
     ...(typeof value.placeholder === "string" ? { placeholder: value.placeholder } : {}),
     ...(typeof value.maxLength === "number" && Number.isFinite(value.maxLength)
       ? { maxLength: Math.max(1, Math.floor(value.maxLength)) }
@@ -105,6 +149,7 @@ function parseHitlInputSchema(raw: unknown): HitlInputSchema {
     ...(typeof value.maxSelect === "number" && Number.isFinite(value.maxSelect)
       ? { maxSelect: Math.max(0, Math.floor(value.maxSelect)) }
       : {}),
+    ...(fields && fields.length > 0 ? { fields } : {}),
   };
 }
 
@@ -114,13 +159,53 @@ export function normalizeHitlInput(
 ): { inputKind: HitlInputKind; inputSchema: HitlInputSchema } {
   const requestedKind = inputKind ?? "approve_only";
   const schema = parseHitlInputSchema(inputSchema);
-  if (requestedKind === "approve_only") {
-    return { inputKind: "approve_only", inputSchema: {} };
+  const question =
+    typeof schema.question === "string" && schema.question.trim()
+      ? schema.question.trim().slice(0, 500)
+      : undefined;
+
+  // 有 fields 且无 options 时提升为 form（含误标 approve_only / 缺省 kind）
+  if (
+    requestedKind === "form" ||
+    (Boolean(schema.fields?.length) &&
+      !(schema.options && schema.options.length > 0) &&
+      requestedKind !== "free_form")
+  ) {
+    const fields = schema.fields ?? [];
+    if (fields.length === 0) {
+      return {
+        inputKind: "free_form",
+        inputSchema: {
+          ...(question ? { question } : {}),
+          placeholder: schema.placeholder?.slice(0, 300) ?? "请填写你的回复",
+          maxLength: Math.min(schema.maxLength ?? 500, 4000),
+        },
+      };
+    }
+    return {
+      inputKind: "form",
+      inputSchema: {
+        ...(question ? { question } : {}),
+        fields,
+        ...(schema.allowFreeText ? { allowFreeText: true } : {}),
+        ...(schema.placeholder ? { placeholder: schema.placeholder.slice(0, 300) } : {}),
+        maxLength: Math.min(schema.maxLength ?? 500, 4000),
+      },
+    };
   }
+
+  if (requestedKind === "approve_only") {
+    return {
+      inputKind: "approve_only",
+      inputSchema: question ? { question } : {},
+    };
+  }
+
   if (requestedKind === "free_form") {
     return {
       inputKind: "free_form",
       inputSchema: {
+        ...(question ? { question } : {}),
         ...(schema.placeholder ? { placeholder: schema.placeholder.slice(0, 300) } : {}),
         maxLength: Math.min(schema.maxLength ?? 500, 4000),
       },
@@ -131,9 +216,20 @@ export function normalizeHitlInput(
     ...new Map((schema.options ?? []).map((option) => [option.value, option])).values(),
   ].slice(0, 20);
   if (uniqueOptions.length === 0) {
+    if (schema.fields && schema.fields.length > 0) {
+      return {
+        inputKind: "form",
+        inputSchema: {
+          ...(question ? { question } : {}),
+          fields: schema.fields,
+          maxLength: Math.min(schema.maxLength ?? 500, 4000),
+        },
+      };
+    }
     return {
       inputKind: "free_form",
       inputSchema: {
+        ...(question ? { question } : {}),
         placeholder: "候选选项生成失败，请直接输入希望 Agent 采用的路径",
         maxLength: 500,
       },
@@ -142,7 +238,14 @@ export function normalizeHitlInput(
   if (requestedKind === "single_choice") {
     return {
       inputKind: "single_choice",
-      inputSchema: { options: uniqueOptions },
+      inputSchema: {
+        ...(question ? { question } : {}),
+        options: uniqueOptions,
+        ...(schema.allowFreeText ? { allowFreeText: true } : {}),
+        ...(schema.placeholder ? { placeholder: schema.placeholder.slice(0, 300) } : {}),
+        maxLength: Math.min(schema.maxLength ?? 500, 4000),
+        ...(schema.fields && schema.fields.length > 0 ? { fields: schema.fields } : {}),
+      },
     };
   }
   const minSelect = Math.min(Math.max(schema.minSelect ?? 1, 0), uniqueOptions.length);
@@ -152,8 +255,51 @@ export function normalizeHitlInput(
   );
   return {
     inputKind: "multi_choice",
-    inputSchema: { options: uniqueOptions, minSelect, maxSelect },
+    inputSchema: {
+      ...(question ? { question } : {}),
+      options: uniqueOptions,
+      minSelect,
+      maxSelect,
+      ...(schema.allowFreeText ? { allowFreeText: true } : {}),
+      ...(schema.placeholder ? { placeholder: schema.placeholder.slice(0, 300) } : {}),
+      maxLength: Math.min(schema.maxLength ?? 500, 4000),
+      ...(schema.fields && schema.fields.length > 0 ? { fields: schema.fields } : {}),
+    },
   };
+}
+
+function validateOptionalFreeText(
+  schema: HitlInputSchema,
+  response: Record<string, unknown>
+): { text?: string } {
+  if (!schema.allowFreeText) return {};
+  const text = typeof response.text === "string" ? response.text.trim() : "";
+  if (!text) return {};
+  const maxLength = schema.maxLength ?? 500;
+  if (text.length > maxLength) {
+    throw new Error(`HITL free text exceeds maxLength=${maxLength}`);
+  }
+  return { text };
+}
+
+function validateFormFields(
+  schema: HitlInputSchema,
+  response: Record<string, unknown>
+): Record<string, string> {
+  const fields = schema.fields ?? [];
+  const raw =
+    response.fields && typeof response.fields === "object" && !Array.isArray(response.fields)
+      ? (response.fields as Record<string, unknown>)
+      : {};
+  const out: Record<string, string> = {};
+  for (const field of fields) {
+    const value = typeof raw[field.key] === "string" ? String(raw[field.key]).trim() : "";
+    if (!value && field.required !== false) {
+      throw new Error(`HITL form requires field "${field.key}"`);
+    }
+    if (value) out[field.key] = value.slice(0, schema.maxLength ?? 500);
+  }
+  return out;
 }
 
 export function validateHitlResponse(input: {
@@ -165,8 +311,18 @@ export function validateHitlResponse(input: {
   if (input.decision === "rejected") return null;
   const schema = parseHitlInputSchema(input.inputSchema);
   const response = input.response ?? null;
-  if (input.inputKind === "approve_only") return null;
+  if (input.inputKind === "approve_only") {
+    if (!response) return null;
+    const extra = validateOptionalFreeText({ ...schema, allowFreeText: true }, response);
+    return Object.keys(extra).length > 0 ? extra : null;
+  }
   if (!response) throw new Error(`HITL ${input.inputKind} response is required`);
+
+  if (input.inputKind === "form") {
+    const fields = validateFormFields(schema, response);
+    const extra = validateOptionalFreeText(schema, response);
+    return { fields, ...extra };
+  }
 
   if (input.inputKind === "single_choice") {
     const value = typeof response.value === "string" ? response.value.trim() : "";
@@ -175,7 +331,14 @@ export function validateHitlResponse(input: {
     if (allowed.size === 0 || !allowed.has(value)) {
       throw new Error("HITL single_choice response is not one of the allowed options");
     }
-    return { value };
+    const formFields =
+      schema.fields && schema.fields.length > 0 ? validateFormFields(schema, response) : null;
+    const extra = validateOptionalFreeText(schema, response);
+    return {
+      value,
+      ...(formFields && Object.keys(formFields).length > 0 ? { fields: formFields } : {}),
+      ...extra,
+    };
   }
 
   if (input.inputKind === "multi_choice") {
@@ -202,7 +365,14 @@ export function validateHitlResponse(input: {
     if (values.length > maxSelect) {
       throw new Error(`HITL multi_choice allows at most ${maxSelect} selections`);
     }
-    return { values };
+    const formFields =
+      schema.fields && schema.fields.length > 0 ? validateFormFields(schema, response) : null;
+    const extra = validateOptionalFreeText(schema, response);
+    return {
+      values,
+      ...(formFields && Object.keys(formFields).length > 0 ? { fields: formFields } : {}),
+      ...extra,
+    };
   }
 
   const text = typeof response.text === "string" ? response.text.trim() : "";
@@ -274,28 +444,56 @@ export function buildHitlResumePromptBlock(input: {
   );
   const response = approval.response ?? {};
   let humanDecision = "用户已批准按原计划继续。";
+  if (
+    response.fields &&
+    typeof response.fields === "object" &&
+    !Array.isArray(response.fields)
+  ) {
+    const entries = Object.entries(response.fields as Record<string, unknown>)
+      .filter(([, v]) => typeof v === "string" && String(v).trim())
+      .map(([k, v]) => `${k}=${String(v).trim()}`);
+    if (entries.length > 0) {
+      humanDecision = `用户填写：${entries.join("；")}`;
+    }
+  }
   if (typeof response.text === "string" && response.text.trim()) {
-    humanDecision = `用户补充指引：${response.text.trim().slice(0, 1000)}`;
+    const textPart = `用户补充指引：${response.text.trim().slice(0, 1000)}`;
+    humanDecision =
+      humanDecision === "用户已批准按原计划继续。"
+        ? textPart
+        : `${humanDecision}\n${textPart}`;
   } else if (Array.isArray(response.values)) {
     const labels = response.values
       .filter((value): value is string => typeof value === "string")
       .map((value) => labelByValue.get(value) ?? value);
-    if (labels.length > 0) humanDecision = `用户选择了多个选项：${labels.join("、")}`;
+    if (labels.length > 0) {
+      const choicePart = `用户选择了多个选项：${labels.join("、")}`;
+      humanDecision =
+        humanDecision.startsWith("用户填写") || humanDecision.startsWith("用户补充")
+          ? `${choicePart}\n${humanDecision}`
+          : choicePart;
+    }
   } else if (typeof response.value === "string" && response.value.trim()) {
     const value = response.value.trim();
-    humanDecision = `用户选择：${labelByValue.get(value) ?? value}`;
+    const choicePart = `用户选择：${labelByValue.get(value) ?? value}`;
+    humanDecision =
+      humanDecision.startsWith("用户填写") || humanDecision.startsWith("用户补充")
+        ? `${choicePart}\n${humanDecision}`
+        : choicePart;
   }
   const approvedAction =
     typeof payload.toolName === "string"
       ? `原待确认工具：${payload.toolName}\n原工具参数：${canonicalJson(payload.toolParams ?? {})}`
-      : typeof payload.planBrief === "string"
-        ? `原待确认规划：${payload.planBrief.slice(0, 1200)}`
-        : "";
+      : typeof payload.question === "string"
+        ? `原提问：${String(payload.question).slice(0, 800)}`
+        : typeof payload.planBrief === "string"
+          ? `原待确认规划：${payload.planBrief.slice(0, 1200)}`
+          : "";
   return [
     "## 人工确认后的恢复指令（最高优先级）",
     humanDecision,
     approvedAction,
-    "继续执行时必须吸收用户选择；若调用工具与原待确认动作不同，必须重新接受当前 HITL 策略评估，不能复用旧审批。",
+    "继续执行时必须吸收用户选择与填写内容；若调用工具与原待确认动作不同，必须重新接受当前 HITL 策略评估，不能复用旧审批。",
   ]
     .filter(Boolean)
     .join("\n");
@@ -404,7 +602,7 @@ export function evaluateChatHitlTrigger(input: {
     return {
       trigger: true,
       source: "ai_hint",
-      reason: input.hitlHint.reason ?? "Orchestrator 主动请求人工确认（reason 缺省）",
+      reason: input.hitlHint.question ?? input.hitlHint.reason ?? "Orchestrator 主动请求人工确认",
       inputKind: input.hitlHint.inputKind ?? "approve_only",
       ...(input.hitlHint.options !== undefined ? { options: input.hitlHint.options } : {}),
     };
@@ -439,13 +637,34 @@ function resolveHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" 
 export type HitlHint = {
   /** Orchestrator 自评是否需要 HITL；undefined 时按 mode 默认 */
   needed?: boolean;
-  /** 自评原因（短句，写入 UI 给用户看） */
+  /** 自评原因 / 问题短句（写入 UI） */
   reason?: string;
+  /** 完整问题正文（优先展示） */
+  question?: string;
   /** 自评推荐的交互形态；缺省 approve_only */
   inputKind?: HitlInputKind;
   /** 自评配套的选项（single/multi_choice 形态用） */
   options?: Array<{ label: string; value: string; description?: string }>;
+  /** 选择题是否允许额外补充说明 */
+  allowFreeText?: boolean;
+  /** 结构化填空字段 */
+  fields?: HitlInputField[];
+  placeholder?: string;
 };
+
+/** 从 LLM hint 组装 inputSchema（供 gate / team pause 共用） */
+export function buildHitlInputSchemaFromHint(
+  hint: HitlHint | null | undefined
+): Record<string, unknown> {
+  if (!hint) return {};
+  return {
+    ...(hint.question ? { question: hint.question } : hint.reason ? { question: hint.reason } : {}),
+    ...(hint.options ? { options: hint.options } : {}),
+    ...(hint.allowFreeText ? { allowFreeText: true } : {}),
+    ...(hint.fields ? { fields: hint.fields } : {}),
+    ...(hint.placeholder ? { placeholder: hint.placeholder } : {}),
+  };
+}
 
 export type HitlTriggerDecision = {
   trigger: boolean;
@@ -772,12 +991,15 @@ export async function pauseForTeamOrchestratorHitl(input: {
   const reasonHeader = decision.reason ? `[HITL 原因] ${decision.reason}\n\n` : "";
   const summary = (reasonHeader + input.planBrief).slice(0, 8000);
 
-  const inputSchema =
-    decision.inputKind === "single_choice" || decision.inputKind === "multi_choice"
-      ? { options: decision.options ?? [] }
-      : decision.inputKind === "free_form"
-        ? { placeholder: "请用一句话告诉 Orchestrator 你的侧重点", maxLength: 500 }
-        : {};
+  const inputSchema = {
+    ...buildHitlInputSchemaFromHint(input.hitlHint),
+    ...(decision.inputKind === "single_choice" || decision.inputKind === "multi_choice"
+      ? { options: decision.options ?? input.hitlHint?.options ?? [] }
+      : {}),
+    ...(decision.inputKind === "free_form" && !input.hitlHint?.placeholder
+      ? { placeholder: "请用一句话告诉 Orchestrator 你的侧重点", maxLength: 500 }
+      : {}),
+  };
 
   const { id } = await createHitlRequest({
     workflowRunId: input.workflowRunId,
@@ -794,8 +1016,10 @@ export async function pauseForTeamOrchestratorHitl(input: {
       symbols: input.symbols ?? [input.ticker],
       slotRoles: input.slotRoles,
       planBrief: input.planBrief,
+      question: input.hitlHint?.question ?? input.hitlHint?.reason ?? decision.reason,
       triggerSource: decision.source,
       triggerReason: decision.reason,
+      hitlHint: input.hitlHint ?? null,
     },
     inputKind: decision.inputKind,
     inputSchema,

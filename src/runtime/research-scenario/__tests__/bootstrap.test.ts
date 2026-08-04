@@ -67,7 +67,24 @@ describe("Research scenario bootstrap + service", () => {
       })
     ).toMatchObject({
       scope: { kind: "basket", symbols: ["NVDA", "AMD", "INTC"] },
-      analystRoles: ["market_data", "analyst_fundamental", "analyst_technical"],
+      analystRoles: [
+        "market_data",
+        "analyst_fundamental",
+        "analyst_technical",
+        "analyst_macro",
+      ],
+    });
+  });
+
+  test("comma-separated ticker input becomes an explicit basket", () => {
+    expect(
+      buildAnalystLaunchInput({
+        scenarioKey: "research_multi",
+        inputParams: { ticker: "NVDA, AMD, INTC" },
+        goal: "compare semiconductors",
+      })
+    ).toMatchObject({
+      scope: { kind: "basket", symbols: ["NVDA", "AMD", "INTC"] },
     });
   });
 });

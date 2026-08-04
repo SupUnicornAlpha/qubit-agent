@@ -69,9 +69,70 @@ describe("extractHitlHintFromText", () => {
     expect(hint).toBeNull();
   });
 
-  test("空 / null 输入 → null", () => {
-    expect(extractHitlHintFromText("")).toBeNull();
-    expect(extractHitlHintFromText(null)).toBeNull();
-    expect(extractHitlHintFromText(undefined)).toBeNull();
+  test("form + allowFreeText 解析", () => {
+    const hint = extractHitlHintFromText(
+      [
+        "请先确认持仓参数。",
+        HITL_HINT_DELIMITER,
+        JSON.stringify({
+          needed: true,
+          question: "请补充持仓信息",
+          inputKind: "form",
+          fields: [
+            { key: "cost", label: "成本价", required: true },
+            { key: "shares", label: "股数", type: "number" },
+          ],
+          allowFreeText: true,
+          placeholder: "可选备注",
+        }),
+      ].join("\n")
+    );
+    expect(hint?.needed).toBe(true);
+    expect(hint?.inputKind).toBe("form");
+    expect(hint?.question).toBe("请补充持仓信息");
+    expect(hint?.fields).toHaveLength(2);
+    expect(hint?.fields?.[1]?.type).toBe("number");
+    expect(hint?.allowFreeText).toBe(true);
+  });
+
+  test("选择题 allowFreeText + fields", () => {
+    const hint = extractHitlHintFromText(
+      REASON_WITH_TOOL_CALL(
+        JSON.stringify({
+          needed: true,
+          question: "摊成本还是防守？",
+          inputKind: "single_choice",
+          options: [
+            { label: "摊低成本", value: "avg_down" },
+            { label: "控制回撤", value: "defend" },
+          ],
+          allowFreeText: true,
+          fields: [{ key: "budget", label: "可加仓金额" }],
+        })
+      )
+    );
+    expect(hint?.inputKind).toBe("single_choice");
+    expect(hint?.allowFreeText).toBe(true);
+    expect(hint?.fields?.[0]?.key).toBe("budget");
+  });
+
+  test("无 TOOL_CALL 也可解析独立提问 hint", () => {
+    const hint = extractHitlHintFromText(
+      [
+        "在继续前需要你拍板。",
+        HITL_HINT_DELIMITER,
+        JSON.stringify({
+          needed: true,
+          question: "优先哪个目标？",
+          inputKind: "single_choice",
+          options: [
+            { label: "A", value: "a" },
+            { label: "B", value: "b" },
+          ],
+        }),
+      ].join("\n")
+    );
+    expect(hint?.needed).toBe(true);
+    expect(hint?.question).toBe("优先哪个目标？");
   });
 });

@@ -137,4 +137,21 @@ describe("executeWithPolicy onAttemptFailure", () => {
     ).rejects.toThrow("Unknown tool");
     await expect(executeWithPolicy(policy, async () => "healthy")).resolves.toBe("healthy");
   });
+
+  it("open circuit error includes scope and retry-after hint", async () => {
+    const scopeKey = uniqueScope("open-msg");
+    const policy = {
+      scopeKey,
+      retry: NO_RETRY,
+      circuitBreaker: { failureThreshold: 1, cooldownMs: 60_000 },
+    };
+    await expect(
+      executeWithPolicy(policy, async () => {
+        throw new Error("boom");
+      })
+    ).rejects.toThrow("boom");
+    await expect(
+      executeWithPolicy(policy, async () => "should-not-run")
+    ).rejects.toThrow(/circuit breaker open: .*retry after ~/);
+  });
 });

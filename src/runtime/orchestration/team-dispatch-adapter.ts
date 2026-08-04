@@ -57,6 +57,8 @@ export async function dispatchTeamAgentTask(
   errorCode?: string | null;
   taskStatus?: A2ATaskState | "timeout" | "awaiting_approval";
   errorMessage?: string | null;
+  /** 子任务未完全收口，但已回传可验证证据；父 Agent 应消费该证据。 */
+  partialEvidence?: boolean;
 }> {
   const targetRole = resolveDispatchRole(role);
   const topology = await loadOrchestratorTopologyForWorkflow();
@@ -153,6 +155,9 @@ export async function dispatchTeamAgentTask(
     gatheredRecord?.taskEvidence && typeof gatheredRecord.taskEvidence === "object"
       ? (gatheredRecord.taskEvidence as Record<string, unknown>)
       : null;
+  // 子任务可能在拿到真实证据后触发轮次上限。证据可用性与子任务是否完美收口
+  // 必须分离，否则 Orchestrator 会把可用回传当失败并重复派单。
+  const hasVerifiedEvidence = taskEvidence?.verified === true;
   const dataAvailable =
     targetRole === "market_data" &&
     taskEvidence?.verified === true &&
@@ -181,7 +186,7 @@ export async function dispatchTeamAgentTask(
   } = {
     dispatched: true,
     completed: Boolean(task && !timedOut),
-    success: task?.status === "completed",
+    success: task?.status === "completed" || hasVerifiedEvidence,
     taskId: payload.taskId,
     role: targetRole,
     runId: dispatch.runId,
@@ -190,15 +195,16 @@ export async function dispatchTeamAgentTask(
     dataAvailability: timedOut ? "unknown" : dataAvailable ? "available" : "not_applicable",
   };
   if (result !== undefined) output.result = result;
+  if (hasVerifiedEvidence && task?.status !== "completed") output.partialEvidence = true;
   if (timedOut) {
     output.errorCode = "a2a_gather_timeout";
     output.taskStatus = "timeout";
-  } else if (typeof taskError?.code === "string") {
+  } else if (!hasVerifiedEvidence && typeof taskError?.code === "string") {
     output.errorCode = taskError.code;
     if (taskStatus) output.taskStatus = taskStatus;
   } else if (task && taskStatus) {
     output.taskStatus = taskStatus;
   }
-  if (errorMessage) output.errorMessage = errorMessage;
+  if (errorMessage && !hasVerifiedEvidence) output.errorMessage = errorMessage;
   return output;
 }

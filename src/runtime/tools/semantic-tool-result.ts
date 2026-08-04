@@ -28,6 +28,9 @@ function inspect(value: unknown, depth: number): string | null {
   }
   if (typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
+  // A topology child can be partial after already attaching verified evidence.
+  // That is usable parent input, not a semantic data failure.
+  if (record.partialEvidence === true) return null;
   if (record.dispatchStatus === "timeout" && record.dataAvailability === "unknown") {
     return "dispatch_timeout_data_unknown";
   }

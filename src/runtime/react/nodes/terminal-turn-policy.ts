@@ -34,6 +34,7 @@ export async function handleToolNoneAction(input: {
   const cleanedReason = stripToolCallSentinels(state.reasonText ?? "");
   const summary = input.summary?.trim() || cleanedReason.slice(0, 2000) || "no tool requested";
 
+  const sharedSnapshotEarly = state.iterationContext?.snapshot ?? state.scenarioSnapshot ?? null;
   const controlDecision = decideTerminalControl({
     role: state.agentDefinition.role,
     agentMode,
@@ -42,6 +43,10 @@ export async function handleToolNoneAction(input: {
     toolCalls: state.toolCalls,
     controlModeGapRetryCount: state.controlModeGapRetryCount,
     cleanedReason,
+    // undefined：无场景快照时保持旧行为（仅 0 工具时拦 deferred）
+    ...(sharedSnapshotEarly
+      ? { researchFloorMet: sharedSnapshotEarly.researchArtifactsOk }
+      : {}),
   });
   if (controlDecision.kind !== "allow") {
     emit({
@@ -115,7 +120,9 @@ export async function handleToolNoneAction(input: {
       maxArtifactRetries: MAX_ARTIFACT_GATE_RETRIES,
       notAttempted,
       unavailableRequired,
-      // Soft terminal gate: research-floor artifacts suffice to finalize.
+      // Runtime should only enforce the minimum research floor.  Upgrade-grade
+      // row counts and answer-schema checks remain visible in DeliveryVerdict,
+      // but must not consume the loop on repeated recovery attempts.
       artifactOk: sharedSnapshot.researchArtifactsOk,
       artifactMissing: sharedSnapshot.missingArtifacts,
     });

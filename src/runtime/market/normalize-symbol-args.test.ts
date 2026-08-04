@@ -20,6 +20,12 @@ describe("extractSymbolArgs / requireSymbols", () => {
     ]);
   });
 
+  test("accepts symbols as scalar string (common LLM mistake)", () => {
+    expect(extractSymbolArgs({ symbols: "AAPL" })).toEqual(["AAPL"]);
+    expect(extractSymbolArgs({ symbols: "AAPL,MSFT" })).toEqual(["AAPL", "MSFT"]);
+    expect(extractSymbolArgs({ tickers: "603986.SH" })).toEqual(["603986.SH"]);
+  });
+
   test("requireSymbols missing → missing_symbol + receivedKeys", () => {
     expect(() => requireSymbols({}, { arity: "either", toolName: "fetch_quote" })).toThrow(
       ToolContractParamError

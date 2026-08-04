@@ -113,7 +113,9 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   fetch_klines: {
     description:
-      "市场感知的 OHLCV K 线：支持单个 symbol/ticker/code 或批量 symbols/tickers，兼容 timeframe/period/interval 与 limit/count/bars；自动判断市场，并按源覆盖、周期、凭证、健康度、优先级和熔断状态依次降级。失败会明确返回所有尝试源，不得盲目重复。",
+      "市场感知的 OHLCV K 线：支持单个 symbol/ticker/code 或批量 symbols/tickers；兼容 timeframe/period/interval 与 limit/count/bars、startDate|from、endDate|to|asOf。" +
+      "模型通常不知道“今天”：调用前须先确定 as-of（当前 UTC/交易所日），缺省 limit=250（约 1Y 日线）并以今天为 endDate；只传一端日期时系统会按 limit 补全另一端。" +
+      "自动判断市场，并按源覆盖、周期、凭证、健康度、优先级和熔断状态依次降级。失败会明确返回所有尝试源，不得盲目重复。",
     category: "market",
   },
   fetch_ticks: {

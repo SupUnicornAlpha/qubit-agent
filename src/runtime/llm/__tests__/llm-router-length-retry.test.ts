@@ -195,6 +195,67 @@ describe("invokeWithFallback · P2 length-retry", () => {
     });
     expect(calls[1]?.maxOutputTokens).toBe(32_768);
   });
+
+  test("socket reset 会在同一 provider 上重试，而不是直接交给 reason 节点收口", async () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    runSpy.mockImplementation(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.reject(
+          new Error("The socket connection was closed unexpectedly. For more information, pass verbose")
+        );
+      }
+      return Promise.resolve(ok("recovered", "stop"));
+    });
+
+    const result = await invokeWithFallback(MOCK_CONFIG, {
+      systemPrompt: "s",
+      userPrompt: "u",
+      onToken: () => {},
+    });
+
+    expect(calls).toBe(2);
+    expect(result.answer).toBe("recovered");
+    warnSpy.mockRestore();
+  });
+
+  test("provider 503 忙碌会被视作瞬时故障并重试", async () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    runSpy.mockImplementation(() => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new Error("503 Service is too busy"));
+      return Promise.resolve(ok("recovered after 503", "stop"));
+    });
+
+    const result = await invokeWithFallback(MOCK_CONFIG, {
+      systemPrompt: "s",
+      userPrompt: "u",
+      onToken: () => {},
+    });
+
+    expect(calls).toBe(2);
+    expect(result.answer).toBe("recovered after 503");
+    expect(result.transportAttempts).toBe(2);
+    warnSpy.mockRestore();
+  });
+
+  test("AUTH 错误不会吞掉后去 fallback（默认模型即使不同）", async () => {
+    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    runSpy.mockImplementation(() =>
+      Promise.reject(new Error("OPENAI_API_KEY is required for openai provider"))
+    );
+    // loadModelConfig is mocked indirectly by same provider — ensure reject before fallback path
+    await expect(
+      invokeWithFallback(MOCK_CONFIG, {
+        systemPrompt: "s",
+        userPrompt: "u",
+        onToken: () => {},
+      })
+    ).rejects.toMatchObject({ code: "AUTH", fallbackEligible: false });
+    warnSpy.mockRestore();
+  });
 });
 
 /** 让 ts 编译器认可上面 `mock` 的引入（避免未用 import 警告） */

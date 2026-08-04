@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { RuntimeModelConfig } from "../config/model-config";
 import { executeWithPolicy } from "../external-call/policy";
 import { fetchWithTimeout, LLM_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
+import { classifyLlmGatewayError } from "./llm-gateway-error";
 import { modelCapability, sanitizeChatCompletionsBody } from "./model-capabilities";
 import { readSseEvents } from "./sse-stream";
 
@@ -1440,21 +1441,38 @@ function runMock(input: LlmGatewayInput): LlmGatewayResult {
 
 export async function runLlmGateway(input: LlmGatewayInput): Promise<LlmGatewayResult> {
   const provider = input.config.provider;
-  return executeWithPolicy(
-    {
-      scopeKey: `llm:${provider}:${input.config.model}`,
-      // 流式输出场景默认不重试，避免 token 重复写入前端流。
-      retry: { maxAttempts: 1, backoffMs: 200, backoffMultiplier: 2 },
-      circuitBreaker: { failureThreshold: 4, cooldownMs: 20_000 },
-    },
-    async () => {
-      if (provider === "openai") return runOpenAI(input);
-      if (provider === "anthropic") return runAnthropic(input);
-      if (provider === "ollama") return runOllama(input);
-      if (provider === "deepseek" || provider === "qwen" || provider === "zhipu") {
-        return runOpenAICompatible(input);
+  const model = input.config.model;
+  try {
+    return await executeWithPolicy(
+      {
+        scopeKey: `llm:${provider}:${model}`,
+        // Streaming must not auto-retry inside the policy layer (duplicate tokens).
+        // Transport retries live in llm-router where the stream boundary is known.
+        retry: { maxAttempts: 1, backoffMs: 200, backoffMultiplier: 2 },
+        // Slightly more tolerant: brief provider blips should not open the breaker
+        // before router-level retries have a chance.
+        circuitBreaker: { failureThreshold: 5, cooldownMs: 20_000 },
+      },
+      async () => {
+        if (provider === "openai") return runOpenAI(input);
+        if (provider === "anthropic") return runAnthropic(input);
+        if (provider === "ollama") return runOllama(input);
+        if (provider === "deepseek" || provider === "qwen" || provider === "zhipu") {
+          return runOpenAICompatible(input);
+        }
+        return runMock(input);
+      },
+      {
+        classifyFailure: (error) => {
+          const classified = classifyLlmGatewayError(error, { provider, model });
+          return {
+            retryable: false, // policy-layer retry disabled for streaming safety
+            circuitRelevant: classified.circuitRelevant,
+          };
+        },
       }
-      return runMock(input);
-    }
-  );
+    );
+  } catch (error) {
+    throw classifyLlmGatewayError(error, { provider, model });
+  }
 }

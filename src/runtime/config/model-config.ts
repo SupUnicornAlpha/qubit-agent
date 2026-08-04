@@ -32,6 +32,8 @@ const ModelConfigSchema = z.object({
   model: z.string().min(1).default("gpt-4o-mini"),
   apiKey: z.string().default(""),
   baseUrl: z.string().optional(),
+  /** Optional explicit context window (tokens); used by reason budget when set. */
+  contextWindow: z.number().int().positive().optional(),
   embedding: EmbeddingModelConfigSchema.optional(),
 });
 

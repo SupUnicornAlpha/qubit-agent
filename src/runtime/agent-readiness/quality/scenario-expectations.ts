@@ -178,7 +178,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         minRows: 2,
       },
     ],
-    requiredTools: ["screener", "recommendation.record"],
+    requiredTools: ["screener", "get_quote", "recommendation.record"],
     goalKeywords: ["动量", "估值", "候选"],
     consistencyChecks: [],
   },
@@ -223,7 +223,7 @@ export const SCENARIO_EXPECTATIONS: Record<ScenarioRecipe["key"], ScenarioExpect
         minRows: 2,
       },
     ],
-    requiredTools: ["screener", "recommendation.record"],
+    requiredTools: ["screener", "get_quote", "recommendation.record"],
     // 做空场景：关键词命中是给 A-2（内容相关性）打分用，要求产物文本里出现
     // 做空 / 估值 / 风险等词，A-3 由 LLM-Judge 进一步打专业度分。
     goalKeywords: ["做空", "估值", "风险"],

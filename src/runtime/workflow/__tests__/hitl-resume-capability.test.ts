@@ -109,4 +109,85 @@ describe("HITL choice and resume capability", () => {
     ).toBe(false);
     expect(matchesHitlToolPayload(payload, "broker.cancel_order", payload.toolParams)).toBe(false);
   });
+
+  test("form validates required fields and optional free text", () => {
+    const schema = {
+      fields: [
+        { key: "cost", label: "成本", required: true },
+        { key: "shares", label: "股数", type: "number" as const, required: true },
+      ],
+      allowFreeText: true,
+    };
+    expect(
+      validateHitlResponse({
+        decision: "approved",
+        inputKind: "form",
+        inputSchema: schema,
+        response: { fields: { cost: "12.5", shares: "1000" }, text: "偏防守" },
+      })
+    ).toEqual({ fields: { cost: "12.5", shares: "1000" }, text: "偏防守" });
+    expect(() =>
+      validateHitlResponse({
+        decision: "approved",
+        inputKind: "form",
+        inputSchema: schema,
+        response: { fields: { cost: "12.5" } },
+      })
+    ).toThrow('HITL form requires field "shares"');
+  });
+
+  test("single choice can include free text and fields when allowed", () => {
+    const schema = {
+      options: [
+        { label: "摊低成本", value: "avg_down" },
+        { label: "控制回撤", value: "defend" },
+      ],
+      allowFreeText: true,
+      fields: [{ key: "budget", label: "预算" }],
+    };
+    expect(
+      validateHitlResponse({
+        decision: "approved",
+        inputKind: "single_choice",
+        inputSchema: schema,
+        response: { value: "avg_down", text: "分两批", fields: { budget: "5万" } },
+      })
+    ).toEqual({ value: "avg_down", text: "分两批", fields: { budget: "5万" } });
+  });
+
+  test("resume prompt includes form fields and user question payload", () => {
+    const prompt = buildHitlResumePromptBlock({
+      approval: {
+        requestId: "req-q",
+        decision: "approved",
+        response: { fields: { cost: "18.2", shares: "2000" }, value: "avg_down" },
+      },
+      payload: {
+        question: "摊成本还是防守？",
+      },
+      inputSchema: {
+        options: [{ label: "摊低成本", value: "avg_down" }],
+        fields: [
+          { key: "cost", label: "成本" },
+          { key: "shares", label: "股数" },
+        ],
+      },
+    });
+    expect(prompt).toContain("用户选择：摊低成本");
+    expect(prompt).toContain("用户填写：cost=18.2；shares=2000");
+    expect(prompt).toContain("原提问：摊成本还是防守？");
+  });
+
+  test("normalize promotes fields-only schema to form", () => {
+    expect(
+      normalizeHitlInput("approve_only", {
+        fields: [{ key: "cost", label: "成本" }],
+      })
+    ).toMatchObject({
+      inputKind: "form",
+      inputSchema: {
+        fields: [{ key: "cost", label: "成本", type: "text", required: true }],
+      },
+    });
+  });
 });

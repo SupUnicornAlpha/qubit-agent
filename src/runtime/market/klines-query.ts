@@ -73,17 +73,17 @@ export function timeframeWindowMs(timeframe: string, period: FetchBarsParams["pe
  */
 export function computeDateRangeForLimit(
   timeframe: string,
-  limit: number
+  limit: number,
+  asOfMs: number = Date.now()
 ): { startDate: string; endDate: string; period: FetchBarsParams["period"] } {
   const period = timeframeToPeriod(timeframe);
   const tf = normalizeTimeframe(timeframe);
   const n = Math.max(1, Math.min(limit, 2000));
   const win = timeframeWindowMs(tf, period) * (n - 1);
 
-  const endDaily = new Date();
-  endDaily.setUTCHours(0, 0, 0, 0);
-
   if (period === "1d") {
+    const endDaily = new Date(asOfMs);
+    endDaily.setUTCHours(0, 0, 0, 0);
     const endMs = endDaily.getTime();
     const startMs = endMs - win;
     return {
@@ -93,7 +93,7 @@ export function computeDateRangeForLimit(
     };
   }
 
-  const endMs = Date.now();
+  const endMs = asOfMs;
   const startMs = endMs - win;
   return {
     startDate: new Date(startMs).toISOString(),

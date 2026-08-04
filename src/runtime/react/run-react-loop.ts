@@ -19,9 +19,12 @@ import {
   isWorkflowCancellationRequested,
 } from "../workflow/workflow-cancellation";
 import { writeCheckpointSnapshot } from "./agent-checkpoint-snapshot";
+import { planArtifactRecovery, planContractRecovery } from "../policy/recovery";
+import type { DataGap } from "../tools/data-gap";
 import {
   didTurnMakeProgress,
   nextUnproductiveTurnCount,
+  shouldRecoverFromUnproductiveBudget,
   shouldStopForUnproductiveTurns,
 } from "./iteration-budget-policy";
 import { loadIterationContext } from "./iteration-context";
@@ -43,7 +46,7 @@ import { shouldStopReactLoopAfterObserve } from "./react-loop-policy";
 import type { AgentGraphState, StepStreamEvent } from "./state";
 
 type Db = Awaited<ReturnType<typeof getDb>>;
-const DEFAULT_REASON_NODE_TIMEOUT_MS = 180_000;
+const DEFAULT_REASON_NODE_TIMEOUT_MS = 240_000;
 
 function reasonNodeTimeoutMs(): number {
   const raw = process.env.QUBIT_REASON_NODE_TIMEOUT_MS?.trim();
@@ -65,15 +68,42 @@ function parseProviderModel(llmProvider: string | null | undefined): {
   };
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-  });
+/**
+ * Race a factory against a timer; abort the linked signal on timeout so in-flight
+ * LLM fetches stop instead of keeping the gateway socket warm.
+ */
+async function withTimeoutAbortable<T>(
+  factory: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  message: string,
+  parentSignal?: AbortSignal
+): Promise<T> {
+  const controller = new AbortController();
+  const onParentAbort = () => {
+    if (!controller.signal.aborted) controller.abort(parentSignal?.reason);
+  };
+  if (parentSignal?.aborted) {
+    controller.abort(parentSignal.reason);
+  } else {
+    parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    if (!controller.signal.aborted) {
+      controller.abort(new Error(message));
+    }
+  }, timeoutMs);
   try {
-    return await Promise.race([promise, timeout]);
+    return await factory(controller.signal);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      const reason = controller.signal.reason;
+      if (reason instanceof Error) throw reason;
+      throw new Error(message);
+    }
+    throw err;
   } finally {
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", onParentAbort);
   }
 }
 
@@ -319,10 +349,12 @@ async function runReason(
   const reasonStartedAt = Date.now();
   let reasonResult: Awaited<ReturnType<typeof reasonNode>>;
   try {
-    reasonResult = await withTimeout(
-      reasonNode({ ...state, iteration: nextIteration }, emit),
+    reasonResult = await withTimeoutAbortable(
+      (signal) =>
+        reasonNode({ ...state, iteration: nextIteration }, emit, { signal }),
       reasonNodeTimeoutMs(),
-      `reason node timed out after ${reasonNodeTimeoutMs()}ms`
+      `reason node timed out after ${reasonNodeTimeoutMs()}ms`,
+      getWorkflowCancellationSignal(params.workflowId)
     );
   } catch (err) {
     if (
@@ -356,6 +388,9 @@ async function runReason(
         iteration: nextIteration,
         agentRole: params.def.role,
         reasonNodeTimeoutMs: reasonNodeTimeoutMs(),
+        ...(errorMessage.includes("timed out")
+          ? { gatewayErrorCode: "TIMEOUT", transportAttempts: 1 }
+          : {}),
       },
     });
     emit({
@@ -433,6 +468,15 @@ async function runReason(
         fallbackUsed: reasonResult.meta.fallbackUsed,
         ...(reasonResult.meta.parseRetryUsed ? { parseRetryUsed: true } : {}),
         ...(reasonResult.meta.lengthRetryUsed ? { lengthRetryUsed: true } : {}),
+        ...(reasonResult.meta.transportAttempts !== undefined
+          ? { transportAttempts: reasonResult.meta.transportAttempts }
+          : {}),
+        ...(reasonResult.meta.gatewayErrorCode
+          ? { gatewayErrorCode: reasonResult.meta.gatewayErrorCode }
+          : {}),
+        ...(reasonResult.meta.gatewayError
+          ? { gatewayError: reasonResult.meta.gatewayError }
+          : {}),
         ...(reasonResult.meta.nativeToolCallingUsed ? { nativeToolCallingUsed: true } : {}),
         ...(reasonResult.meta.tokenBudgetSoftLimitReached
           ? { tokenBudgetSoftLimitReached: true }
@@ -674,7 +718,6 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
     // One Snapshot per iteration for reason/act/finalize consumers.
     state = await attachIterationContext(effectiveParams, state);
 
-    const beforeAct = state;
     await reportTaskProgress(effectiveParams.onTaskProgress, {
       phase: "reason",
       iteration: state.iteration,
@@ -698,6 +741,7 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
       phase: "act",
       iteration: state.iteration,
     });
+    const beforeAct = state;
     state = await runAct(effectiveParams, state);
     if (isTerminalStatus(state)) break;
     if (effectiveParams.isTaskCancellationRequested?.()) {
@@ -723,35 +767,94 @@ export async function runReactLoop(params: RunReactLoopParams): Promise<RunReact
           : {}),
       })
     ) {
-      const answerText = extractFinalizeAnswerText(state);
-      effectiveParams.emit({
-        runId: effectiveParams.runId,
-        workflowId: effectiveParams.workflowId,
-        traceId: effectiveParams.traceId,
-        role: effectiveParams.def.role,
-        type: "observe",
-        stepIndex: state.iteration,
-        ts: Date.now(),
-        payload: {
-          code: "UNPRODUCTIVE_TURN_BUDGET_EXHAUSTED",
+      const snap = state.iterationContext?.snapshot ?? state.scenarioSnapshot ?? null;
+      const canRecover =
+        snap != null &&
+        shouldRecoverFromUnproductiveBudget({
+          researchFloorMet: snap.researchArtifactsOk,
+          notAttemptedCapabilities: snap.notAttemptedCapabilities,
+          missingArtifactTables: snap.missingArtifactTables,
+          unproductiveRecoveryCount: state.unproductiveRecoveryCount,
+        });
+      if (canRecover && snap) {
+        const availableTools = state.iterationContext?.availableTools ?? [];
+        const notAttempted: DataGap[] = snap.notAttemptedCapabilities.map((capability) => ({
+          kind: "not_attempted",
+          capability,
+          market: "unknown",
+          provider: null,
+          reason: "not_attempted_after_unproductive_turns",
+          retryable: true,
+        }));
+        const recovery =
+          notAttempted.length > 0
+            ? planContractRecovery({
+                snapshot: snap,
+                availableTools,
+                notAttempted,
+              })
+            : planArtifactRecovery({ snapshot: snap, availableTools });
+        const recoveryCount = (state.unproductiveRecoveryCount ?? 0) + 1;
+        const observation = {
+          level: "warn",
+          code: "UNPRODUCTIVE_TURN_RECOVERY",
           consecutiveUnproductiveTurns,
-          maxConsecutiveUnproductiveTurns: loopBudget.maxConsecutiveUnproductiveTurns ?? 3,
-          message: "连续回合没有产生新的成功工具证据，已停止自动重试并保留当前结果。",
-        },
-      });
-      state = {
-        ...state,
-        finalResponse: {
-          status: "partial",
-          reason: "unproductive_turn_budget_exhausted",
-          iteration: state.iteration,
+          recoveryCount,
+          suggestedTool: recovery.nextTool,
+          draftParams: recovery.draftParams ?? {},
+          message:
+            "连续回合没有新的成功工具证据，但场景研究地板仍未满足。" +
+            "请立刻调用下一跳写工具，不要继续口述计划。\n" +
+            recovery.hint,
+        };
+        effectiveParams.emit({
+          runId: effectiveParams.runId,
+          workflowId: effectiveParams.workflowId,
+          traceId: effectiveParams.traceId,
           role: effectiveParams.def.role,
-          answerText:
-            answerText ||
-            "本次执行连续未产生新的有效证据，已停止自动重试。请补充参数、调整目标或开始下一轮会话。",
-        },
-      };
-      break;
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: observation,
+        });
+        state = {
+          ...state,
+          consecutiveUnproductiveTurns: 0,
+          unproductiveRecoveryCount: recoveryCount,
+          observations: [...state.observations, observation],
+        };
+        // Fall through to normal continue/break checks below (no finalResponse).
+      } else {
+        const answerText = extractFinalizeAnswerText(state);
+        effectiveParams.emit({
+          runId: effectiveParams.runId,
+          workflowId: effectiveParams.workflowId,
+          traceId: effectiveParams.traceId,
+          role: effectiveParams.def.role,
+          type: "observe",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: {
+            code: "UNPRODUCTIVE_TURN_BUDGET_EXHAUSTED",
+            consecutiveUnproductiveTurns,
+            maxConsecutiveUnproductiveTurns: loopBudget.maxConsecutiveUnproductiveTurns ?? 4,
+            message: "连续回合没有产生新的成功工具证据，已停止自动重试并保留当前结果。",
+          },
+        });
+        state = {
+          ...state,
+          finalResponse: {
+            status: "partial",
+            reason: "unproductive_turn_budget_exhausted",
+            iteration: state.iteration,
+            role: effectiveParams.def.role,
+            answerText:
+              answerText ||
+              "本次执行连续未产生新的有效证据，已停止自动重试。请补充参数、调整目标或开始下一轮会话。",
+          },
+        };
+        break;
+      }
     }
     // observe 后 5 分支（对应原 :430-442）
     if (state.finalResponse) break;

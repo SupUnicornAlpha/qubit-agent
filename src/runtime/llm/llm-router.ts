@@ -20,6 +20,13 @@ import { llmProviderConfig } from "../../db/sqlite/schema";
 import { eq } from "drizzle-orm";
 import { loadModelConfig, type RuntimeModelConfig } from "../config/model-config";
 import { runLlmGateway, type LlmGatewayInput, type LlmTokenUsage } from "./gateway";
+import {
+  classifyLlmGatewayError,
+  isFallbackEligibleLlmGatewayError,
+  isRetryableLlmGatewayError,
+  LlmGatewayError,
+  type LlmGatewayErrorJson,
+} from "./llm-gateway-error";
 
 export type LlmProvider = RuntimeModelConfig["provider"];
 
@@ -109,6 +116,11 @@ export async function loadProviderFromDb(
     model: row.modelName,
     apiKey,
     ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
+    ...(typeof row.contextWindow === "number" &&
+    Number.isFinite(row.contextWindow) &&
+    row.contextWindow > 0
+      ? { contextWindow: row.contextWindow }
+      : {}),
   };
   return config;
 }
@@ -252,10 +264,20 @@ export interface InvokeWithFallbackResult {
   fallbackUsed: boolean;
   /** P2：本次调用是否被 length-retry 自救过（即 max_tokens 翻倍重试一次）。 */
   lengthRetryUsed: boolean;
+  /** Observability: transport/provider retries consumed on the winning model path. */
+  transportAttempts?: number;
+  /** Observability: last structured gateway error seen before success/fallback/throw. */
+  lastError?: LlmGatewayErrorJson;
 }
 
 /** length-retry 的 max_tokens 硬上限：避免误读 finishReason 让单次调用炸到天文数字。 */
 const LENGTH_RETRY_MAX_TOKENS_CAP = 32_768;
+const TRANSPORT_RETRY_ATTEMPTS = 4;
+/** Base delay for 503/network retries: 1s, 2s, 4s… */
+const TRANSPORT_RETRY_BASE_MS = 1_000;
+const TRANSPORT_RETRY_MAX_MS = 8_000;
+/** When provider circuit is open, wait this long once before a final attempt. */
+const CIRCUIT_OPEN_WAIT_MS = 21_000;
 /** 截断信号：触发自动 length-retry。涵盖 OpenAI / Anthropic / Responses 三套语义。 */
 const TRUNCATION_FINISH_REASONS: ReadonlySet<string> = new Set([
   "length",
@@ -269,11 +291,109 @@ function isTruncated(finishReason: string | undefined): boolean {
   return TRUNCATION_FINISH_REASONS.has(finishReason.toLowerCase());
 }
 
+/**
+ * A provider socket reset is transient infrastructure failure, not an agent
+ * decision.  Retrying here keeps the reason node from turning a one-off fetch
+ * reset into a user-visible "LLM gateway error" final answer.
+ *
+ * Prefer structured classification; regex kept only for pre-structured callers.
+ */
+export function isRetryableTransportError(error: unknown): boolean {
+  return isRetryableLlmGatewayError(error);
+}
+
+/** @deprecated use classifyLlmGatewayError(error).code === "CIRCUIT_OPEN" */
+export function isCircuitOpenError(error: unknown): boolean {
+  return classifyLlmGatewayError(error).code === "CIRCUIT_OPEN";
+}
+
+function transportRetryDelayMs(attempt: number, error: unknown): number {
+  const classified = classifyLlmGatewayError(error);
+  if (classified.retryAfterMs !== undefined && classified.retryAfterMs > 0) {
+    return Math.min(CIRCUIT_OPEN_WAIT_MS, classified.retryAfterMs);
+  }
+  if (classified.code === "CIRCUIT_OPEN") return CIRCUIT_OPEN_WAIT_MS;
+  if (classified.code === "RATE_LIMIT") {
+    return Math.min(TRANSPORT_RETRY_MAX_MS, TRANSPORT_RETRY_BASE_MS * 2 ** attempt);
+  }
+  const exp = Math.min(TRANSPORT_RETRY_MAX_MS, TRANSPORT_RETRY_BASE_MS * 2 ** (attempt - 1));
+  return exp;
+}
+
+function logGatewayEvent(
+  event: string,
+  fields: Record<string, string | number | boolean | undefined | null>
+): void {
+  const body = Object.entries(fields)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `${k}=${String(v)}`)
+    .join(" ");
+  console.warn(`[LlmRouter] ${event}${body ? ` ${body}` : ""}`);
+}
+
+async function runGatewayWithTransportRetry(
+  config: RuntimeModelConfig,
+  input: Omit<LlmGatewayInput, "config">
+): Promise<{
+  result: Awaited<ReturnType<typeof runLlmGateway>>;
+  transportAttempts: number;
+  lastError?: LlmGatewayErrorJson;
+}> {
+  const retryEnabled = process.env.QUBIT_LLM_TRANSPORT_RETRY_DISABLED !== "1";
+  let lastError: unknown;
+  let lastJson: LlmGatewayErrorJson | undefined;
+  for (let attempt = 1; attempt <= TRANSPORT_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await runLlmGateway({ ...input, config });
+      return {
+        result,
+        transportAttempts: attempt,
+        ...(lastJson ? { lastError: lastJson } : {}),
+      };
+    } catch (error) {
+      lastError = error;
+      const classified = classifyLlmGatewayError(error, {
+        provider: config.provider,
+        model: config.model,
+        attempt,
+      });
+      lastJson = classified.toJSON();
+      const mayRetry =
+        retryEnabled &&
+        !input.signal?.aborted &&
+        attempt < TRANSPORT_RETRY_ATTEMPTS &&
+        classified.retryable;
+      if (!mayRetry) {
+        throw classified;
+      }
+      const delayMs = transportRetryDelayMs(attempt, classified);
+      logGatewayEvent("transport_retry", {
+        provider: config.provider,
+        model: config.model,
+        code: classified.code,
+        attempt: `${attempt + 1}/${TRANSPORT_RETRY_ATTEMPTS}`,
+        delayMs,
+        message: classified.message.slice(0, 180),
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw classifyLlmGatewayError(
+    lastError ?? new Error("unreachable: transport retry exhausted"),
+    { provider: config.provider, model: config.model }
+  );
+}
+
 /** 把 LlmGatewayResult 投影成 InvokeWithFallbackResult 的公共字段（兼顾 exactOptional）。 */
 function projectResult(
   result: Awaited<ReturnType<typeof runLlmGateway>>,
   modelUsed: RuntimeModelConfig,
-  flags: { fallbackUsed: boolean; lengthRetryUsed: boolean },
+  flags: {
+    fallbackUsed: boolean;
+    lengthRetryUsed: boolean;
+    transportAttempts?: number;
+    lastError?: LlmGatewayErrorJson;
+  },
 ): InvokeWithFallbackResult {
   return {
     answer: result.answer,
@@ -288,6 +408,10 @@ function projectResult(
     modelUsed,
     fallbackUsed: flags.fallbackUsed,
     lengthRetryUsed: flags.lengthRetryUsed,
+    ...(flags.transportAttempts !== undefined
+      ? { transportAttempts: flags.transportAttempts }
+      : {}),
+    ...(flags.lastError ? { lastError: flags.lastError } : {}),
   };
 }
 
@@ -301,13 +425,26 @@ async function invokeOnceWithLengthRetry(
 ): Promise<{
   result: Awaited<ReturnType<typeof runLlmGateway>>;
   lengthRetryUsed: boolean;
+  transportAttempts: number;
+  lastError?: LlmGatewayErrorJson;
 }> {
-  const first = await runLlmGateway({ ...input, config });
+  const firstAttempt = await runGatewayWithTransportRetry(config, input);
+  const first = firstAttempt.result;
   if (process.env["QUBIT_LLM_LENGTH_RETRY_DISABLED"] === "1") {
-    return { result: first, lengthRetryUsed: false };
+    return {
+      result: first,
+      lengthRetryUsed: false,
+      transportAttempts: firstAttempt.transportAttempts,
+      ...(firstAttempt.lastError ? { lastError: firstAttempt.lastError } : {}),
+    };
   }
   if (!isTruncated(first.finishReason)) {
-    return { result: first, lengthRetryUsed: false };
+    return {
+      result: first,
+      lengthRetryUsed: false,
+      transportAttempts: firstAttempt.transportAttempts,
+      ...(firstAttempt.lastError ? { lastError: firstAttempt.lastError } : {}),
+    };
   }
   /**
    * 计算下一次 maxOutputTokens：原 sampling 没指定就以 4096 起步（与
@@ -315,19 +452,26 @@ async function invokeOnceWithLengthRetry(
    */
   const prevMax = input.sampling?.maxOutputTokens ?? 4096;
   if (prevMax >= LENGTH_RETRY_MAX_TOKENS_CAP) {
-    return { result: first, lengthRetryUsed: false };
+    return {
+      result: first,
+      lengthRetryUsed: false,
+      transportAttempts: firstAttempt.transportAttempts,
+      ...(firstAttempt.lastError ? { lastError: firstAttempt.lastError } : {}),
+    };
   }
   const nextMax = Math.min(LENGTH_RETRY_MAX_TOKENS_CAP, Math.max(prevMax * 2, prevMax + 1024));
-  console.warn(
-    `[LlmRouter] truncated finishReason=${first.finishReason} ` +
-      `(${config.provider}:${config.model}) → length-retry maxOutputTokens ${prevMax} → ${nextMax}`,
-  );
-  let second: Awaited<ReturnType<typeof runLlmGateway>>;
+  logGatewayEvent("length_retry", {
+    provider: config.provider,
+    model: config.model,
+    finishReason: first.finishReason,
+    prevMax,
+    nextMax,
+  });
+  let secondAttempt: Awaited<ReturnType<typeof runGatewayWithTransportRetry>>;
   try {
-    second = await runLlmGateway({
+    secondAttempt = await runGatewayWithTransportRetry(config, {
       ...input,
       sampling: { ...(input.sampling ?? {}), maxOutputTokens: nextMax },
-      config,
     });
   } catch (err) {
     if (input.signal?.aborted) throw err;
@@ -335,11 +479,24 @@ async function invokeOnceWithLengthRetry(
      * length-retry 自身失败不应该让原本"成功但截断"的结果丢失 — 把首次
      * 结果当作可用答案返回，由 caller 自己决定怎么处理截断。
      */
-    console.warn(
-      `[LlmRouter] length-retry threw (${(err as Error).message}); keeping first truncated result`,
-    );
-    return { result: first, lengthRetryUsed: false };
+    const classified = classifyLlmGatewayError(err, {
+      provider: config.provider,
+      model: config.model,
+    });
+    logGatewayEvent("length_retry_failed", {
+      provider: config.provider,
+      model: config.model,
+      code: classified.code,
+      message: classified.message.slice(0, 180),
+    });
+    return {
+      result: first,
+      lengthRetryUsed: false,
+      transportAttempts: firstAttempt.transportAttempts,
+      lastError: classified.toJSON(),
+    };
   }
+  const second = secondAttempt.result;
   /**
    * 合并 usage / latency。retry 的 firstTokenLatencyMs **不**覆盖 first：caller 视
    * 角第一次 token 进来的时间才是真正的 TTFT；retry 是网关层补救，对体验透明。
@@ -356,7 +513,16 @@ async function invokeOnceWithLengthRetry(
     ...(second.finishReason ? { finishReason: second.finishReason } : {}),
     ...(mergeUsage(first.usage, second.usage) ? { usage: mergeUsage(first.usage, second.usage)! } : {}),
   };
-  return { result: merged, lengthRetryUsed: true };
+  return {
+    result: merged,
+    lengthRetryUsed: true,
+    transportAttempts: firstAttempt.transportAttempts + secondAttempt.transportAttempts,
+    ...(secondAttempt.lastError
+      ? { lastError: secondAttempt.lastError }
+      : firstAttempt.lastError
+        ? { lastError: firstAttempt.lastError }
+        : {}),
+  };
 }
 
 function mergeUsage(
@@ -392,25 +558,79 @@ export async function invokeWithFallback(
   input: Omit<LlmGatewayInput, "config">
 ): Promise<InvokeWithFallbackResult> {
   try {
-    const { result, lengthRetryUsed } = await invokeOnceWithLengthRetry(primaryConfig, input);
-    return projectResult(result, primaryConfig, { fallbackUsed: false, lengthRetryUsed });
+    const { result, lengthRetryUsed, transportAttempts, lastError } =
+      await invokeOnceWithLengthRetry(primaryConfig, input);
+    return projectResult(result, primaryConfig, {
+      fallbackUsed: false,
+      lengthRetryUsed,
+      transportAttempts,
+      ...(lastError ? { lastError } : {}),
+    });
   } catch (err) {
     // 用户停止不应触发模型 fallback；否则会在另一个 provider 上继续生成/计费。
     if (input.signal?.aborted) throw err;
+    const classified = classifyLlmGatewayError(err, {
+      provider: primaryConfig.provider,
+      model: primaryConfig.model,
+    });
+    if (!isFallbackEligibleLlmGatewayError(classified)) {
+      logGatewayEvent("fallback_skipped", {
+        provider: primaryConfig.provider,
+        model: primaryConfig.model,
+        code: classified.code,
+        reason: "not_fallback_eligible",
+      });
+      throw classified;
+    }
     const defaultCfg = await loadModelConfig();
     if (
       !defaultCfg ||
       (defaultCfg.provider === primaryConfig.provider && defaultCfg.model === primaryConfig.model)
     ) {
-      throw err;
+      throw classified;
     }
-    console.warn(
-      `[LlmRouter] primary model failed (${primaryConfig.provider}:${primaryConfig.model}), ` +
-        `falling back to default (${defaultCfg.provider}:${defaultCfg.model}): ` +
-        (err instanceof Error ? err.message : String(err))
-    );
-    const { result, lengthRetryUsed } = await invokeOnceWithLengthRetry(defaultCfg, input);
-    return projectResult(result, defaultCfg, { fallbackUsed: true, lengthRetryUsed });
+    logGatewayEvent("fallback", {
+      from: `${primaryConfig.provider}:${primaryConfig.model}`,
+      to: `${defaultCfg.provider}:${defaultCfg.model}`,
+      code: classified.code,
+      message: classified.message.slice(0, 180),
+    });
+    try {
+      const { result, lengthRetryUsed, transportAttempts, lastError } =
+        await invokeOnceWithLengthRetry(defaultCfg, input);
+      return projectResult(result, defaultCfg, {
+        fallbackUsed: true,
+        lengthRetryUsed,
+        transportAttempts,
+        lastError: lastError ?? classified.toJSON(),
+      });
+    } catch (fallbackErr) {
+      const fallbackClassified = classifyLlmGatewayError(fallbackErr, {
+        provider: defaultCfg.provider,
+        model: defaultCfg.model,
+      });
+      logGatewayEvent("fallback_failed", {
+        provider: defaultCfg.provider,
+        model: defaultCfg.model,
+        code: fallbackClassified.code,
+        primaryCode: classified.code,
+      });
+      // Prefer the fallback error (latest), but keep primary code in message for ops.
+      throw new LlmGatewayError(
+        fallbackClassified.code,
+        `${fallbackClassified.message} (primary failed with ${classified.code})`,
+        {
+          provider: fallbackClassified.provider ?? defaultCfg.provider,
+          model: fallbackClassified.model ?? defaultCfg.model,
+          httpStatus: fallbackClassified.httpStatus,
+          retryable: fallbackClassified.retryable,
+          fallbackEligible: false,
+          circuitRelevant: fallbackClassified.circuitRelevant,
+          retryAfterMs: fallbackClassified.retryAfterMs,
+          cause: fallbackErr,
+        }
+      );
+    }
   }
 }
 

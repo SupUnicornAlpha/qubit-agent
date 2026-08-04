@@ -56,6 +56,8 @@ export const KNOWN_MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "deepseek-chat": 128_000,
   "deepseek-r2": 128_000,
   "deepseek-reasoner": 128_000,
+  "deepseek-v4-pro": 128_000,
+  "deepseek-v4-flash": 128_000,
   // Qwen ───────────────────────────────────────────────────────────
   "qwen3-max": 256_000,
   "qwen3-plus": 256_000,
@@ -179,6 +181,73 @@ export function getContextWindow(
   }
   if (best) return best.window;
   return DEFAULT_CONTEXT_WINDOW;
+}
+
+/**
+ * Per-role soft prompt budgets. Large market/tool agents get tighter caps so
+ * TTFT stays usable on reasoning models (DeepSeek v4-pro first token often
+ * grows with prompt size). Agent llmConfig overrides these.
+ */
+export type RolePromptBudgetProfile = {
+  maxPromptTokens: number;
+  maxCharsPerObservation: number;
+  keepRecent: number;
+  /** safetyRatio for computePromptBudget (lower → leave more headroom / less fill). */
+  safetyRatio: number;
+};
+
+const DEFAULT_ROLE_BUDGET: RolePromptBudgetProfile = {
+  maxPromptTokens: 14_000,
+  maxCharsPerObservation: 2_000,
+  keepRecent: 3,
+  safetyRatio: 0.65,
+};
+
+export const ROLE_PROMPT_BUDGETS: Record<string, RolePromptBudgetProfile> = {
+  orchestrator: {
+    maxPromptTokens: 16_000,
+    maxCharsPerObservation: 1_800,
+    keepRecent: 3,
+    safetyRatio: 0.65,
+  },
+  market_data: {
+    maxPromptTokens: 11_000,
+    maxCharsPerObservation: 1_600,
+    keepRecent: 2,
+    safetyRatio: 0.6,
+  },
+  analyst_technical: {
+    maxPromptTokens: 12_000,
+    maxCharsPerObservation: 1_600,
+    keepRecent: 2,
+    safetyRatio: 0.6,
+  },
+  research: {
+    maxPromptTokens: 14_000,
+    maxCharsPerObservation: 2_000,
+    keepRecent: 3,
+    safetyRatio: 0.65,
+  },
+  news_event: {
+    maxPromptTokens: 12_000,
+    maxCharsPerObservation: 1_800,
+    keepRecent: 2,
+    safetyRatio: 0.6,
+  },
+};
+
+export function resolveRolePromptBudget(
+  role: string | undefined | null,
+  overrides?: Partial<RolePromptBudgetProfile> | null
+): RolePromptBudgetProfile {
+  const base = (role && ROLE_PROMPT_BUDGETS[role]) || DEFAULT_ROLE_BUDGET;
+  return {
+    maxPromptTokens: overrides?.maxPromptTokens ?? base.maxPromptTokens,
+    maxCharsPerObservation:
+      overrides?.maxCharsPerObservation ?? base.maxCharsPerObservation,
+    keepRecent: overrides?.keepRecent ?? base.keepRecent,
+    safetyRatio: overrides?.safetyRatio ?? base.safetyRatio,
+  };
 }
 
 /**
