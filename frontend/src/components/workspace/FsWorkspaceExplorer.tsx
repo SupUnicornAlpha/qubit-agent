@@ -30,6 +30,8 @@ export type FsWorkspaceExplorerProps = {
   activeRunId?: string | null;
   /** 同步工坊资产用的 projectId */
   projectId?: string | null;
+  /** 打开普通文件 → 中栏编辑器 */
+  onOpenFile?: (info: { workspaceId: string; path: string; name: string }) => void;
 };
 
 export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
@@ -38,6 +40,7 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
   onOpenWorkflowSettings,
   activeRunId = null,
   projectId = null,
+  onOpenFile,
 }) => {
   const setChartSpec = useAppStore((s) => s.setChartSpec);
   const requestChartReload = useAppStore((s) => s.requestChartReload);
@@ -195,8 +198,24 @@ export const FsWorkspaceExplorer: FC<FsWorkspaceExplorerProps> = ({
       setShowMemory(true);
       return;
     }
+    // 可编辑文本文件 → 中栏
+    const rel = node.relPath?.trim();
+    if (
+      rel &&
+      activeId &&
+      onOpenFile &&
+      node.kind !== "folder" &&
+      /\.(md|json|txt|py|ts|tsx|js|jsx|yml|yaml|toml|csv|sql)$/i.test(node.name)
+    ) {
+      onOpenFile({ workspaceId: activeId, path: rel, name: node.name });
+      return;
+    }
     // universe / watchlist / 标的：尝试读 JSON 不强制；点名文件若像 ticker 则切行情
     if (node.name === "universe.json" || node.name === "watchlist.json") {
+      if (rel && activeId && onOpenFile) {
+        onOpenFile({ workspaceId: activeId, path: rel, name: node.name });
+        return;
+      }
       setActiveView("team");
       return;
     }

@@ -162,6 +162,8 @@ import {
   type OrchestratorArtifact,
 } from "../team/OrchestratorChatPanel";
 import { FsWorkspaceExplorer } from "../workspace/FsWorkspaceExplorer";
+import { WorkspaceFilePane } from "../workspace/WorkspaceFilePane";
+import { TeamResearchSettingsPanel } from "../team/TeamResearchSettingsPanel";
 import { buildSubAgentRunSummaries } from "../../lib/subAgentRuns";
 import { ChatHitlPromptControls } from "../chat/ChatHitlPromptControls";
 import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
@@ -5428,8 +5430,12 @@ const TeamDashboardPanel: FC = () => {
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
   /** 研究中栏画布：拓扑 / 行情 / 新闻 / 工具结果 */
   const [researchCanvasTab, setResearchCanvasTab] = useState<
-    "topology" | "market" | "news" | "tools"
+    "topology" | "market" | "news" | "tools" | "file"
   >("topology");
+  const [openWsFile, setOpenWsFile] = useState<{
+    workspaceId: string;
+    path: string;
+  } | null>(null);
   const lastLinkedToolIdRef = useRef<string | null>(null);
   /**
    * 注：原 `strategyScripts` / `workflowArtifactHint` / `teamCodePick` / 多个 store
@@ -6678,6 +6684,49 @@ const TeamDashboardPanel: FC = () => {
   };
 
 
+  const researchSettingsPanel = (
+    <TeamResearchSettingsPanel
+      styles={teamStyles}
+      compact
+      scopeMode={scopeMode}
+      onScopeModeChange={handleScopeModeChange}
+      researchInstrument={researchInstrument}
+      onResearchInstrumentChange={handleResearchInstrumentChange}
+      roleReasoner={roleReasoner}
+      onRoleReasonerChange={setRoleReasoner}
+      ticker={ticker}
+      onTickerChange={setTicker}
+      basketTickers={basketTickers}
+      onBasketTickersChange={setBasketTickers}
+      sectorName={sectorName}
+      onSectorNameChange={setSectorName}
+      sectorPeers={sectorPeers}
+      onSectorPeersChange={setSectorPeers}
+      exploreTheme={exploreTheme}
+      onExploreThemeChange={setExploreTheme}
+      exploreCandidates={exploreCandidates}
+      onExploreCandidatesChange={setExploreCandidates}
+      optionUnderlying={optionUnderlying}
+      onOptionUnderlyingChange={setOptionUnderlying}
+      optionContract={optionContract}
+      onOptionContractChange={setOptionContract}
+      optionExpiry={optionExpiry}
+      onOptionExpiryChange={setOptionExpiry}
+      optionStrike={optionStrike}
+      onOptionStrikeChange={setOptionStrike}
+      optionRight={optionRight}
+      onOptionRightChange={setOptionRight}
+      promptTemplateId={promptTemplateId}
+      onApplyPromptTemplate={applyPromptTemplate}
+      availablePromptTemplates={availablePromptTemplates}
+      teamAnalysisContext={teamAnalysisContext}
+      onTeamAnalysisContextChange={setTeamAnalysisContext}
+      onClearPromptTemplateId={() => setPromptTemplateId("")}
+      scopeModeLabel={scopeModeLabel}
+      instrumentLabel={instrumentLabel}
+    />
+  );
+
   return (
     <div style={teamStyles.container}>
       <div data-qb-team-shell style={teamStyles.teamWorkbenchShell}>
@@ -6773,190 +6822,43 @@ const TeamDashboardPanel: FC = () => {
             <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <FsWorkspaceExplorer
               createDefaults={fsWorkspaceCreateDefaults}
-              onOpenWorkflowSettings={() => setLeftRailMode("workflow")}
+              onOpenWorkflowSettings={() => {
+                setRunStripExpanded(true);
+                setLeftRailMode("workflow");
+              }}
               activeRunId={workflowRunId.trim() || null}
               projectId={effectiveResearchProjectId || teamResearchProjectId || null}
+              onOpenFile={({ workspaceId, path }) => {
+                setOpenWsFile({ workspaceId, path });
+                setResearchCanvasTab("file");
+              }}
             />
             </div>
           ) : (
             <>
           <div style={teamStyles.leftRailSettings}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 10 }}>
-            研究与工作流
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 8 }}>
+            工作流列表
           </div>
-          <div style={teamStyles.field}>
-            <label style={teamStyles.label}>研究范围</label>
-            <select
-              style={teamStyles.input}
-              value={scopeMode}
-              onChange={(e) => handleScopeModeChange(e.target.value as ResearchScopeMode)}
-            >
-              <option value="single">单标的</option>
-              <option value="basket">多标的篮子</option>
-              <option value="sector">板块</option>
-              <option value="explore">自由探索（无固定标的）</option>
-            </select>
-          </div>
-          <div style={{ ...teamStyles.field, marginTop: 8 }}>
-            <label style={teamStyles.label}>工具类型</label>
-            <select
-              style={teamStyles.input}
-              value={researchInstrument}
-              onChange={(e) => handleResearchInstrumentChange(e.target.value as ResearchInstrumentUi)}
-            >
-              <option value="equity_long">股票多头</option>
-              <option value="equity_short">股票做空</option>
-              <option value="option">期权</option>
-            </select>
-          </div>
-          <div style={{ ...teamStyles.field, marginTop: 8 }}>
-            <label style={teamStyles.label}>Agent 底座</label>
-            <select
-              style={teamStyles.input}
-              value={roleReasoner}
-              onChange={(e) => setRoleReasoner(e.target.value as AgentLoopKind)}
-            >
-              <option value="native">自研（进程内 ReAct）</option>
-              <option value="claude_cli">Claude CLI</option>
-              <option value="codex_cli">Codex CLI</option>
-            </select>
-            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              每个角色单轮推理用的引擎；Orchestrator 按需派发专家，CLI 不可用时自动回退自研。
-            </div>
-          </div>
-          {scopeMode === "single" ? (
-            <div style={{ ...teamStyles.field, marginTop: 8 }}>
-              <label style={teamStyles.label}>标的代码</label>
-              <input
-                style={teamStyles.input}
-                value={ticker}
-                onChange={(e) => setTicker(e.target.value)}
-                placeholder={researchInstrument === "option" ? "标的或 OCC 合约" : "e.g. AAPL / 600519"}
-              />
-            </div>
-          ) : null}
-          {scopeMode === "basket" ? (
-            <div style={{ ...teamStyles.field, marginTop: 8 }}>
-              <label style={teamStyles.label}>篮子标的（逗号分隔，至少 2 个）</label>
-              <textarea
-                style={teamStyles.textarea}
-                rows={2}
-                value={basketTickers}
-                onChange={(e) => setBasketTickers(e.target.value)}
-                placeholder="e.g. AAPL, MSFT, NVDA"
-              />
-            </div>
-          ) : null}
-          {scopeMode === "sector" ? (
-            <>
-              <div style={{ ...teamStyles.field, marginTop: 8 }}>
-                <label style={teamStyles.label}>板块名称</label>
-                <input
-                  style={teamStyles.input}
-                  value={sectorName}
-                  onChange={(e) => setSectorName(e.target.value)}
-                  placeholder="e.g. 半导体 / 新能源"
-                />
-              </div>
-              <div style={{ ...teamStyles.field, marginTop: 8 }}>
-                <label style={teamStyles.label}>成分股（逗号分隔，必填）</label>
-                <textarea
-                  style={teamStyles.textarea}
-                  rows={2}
-                  value={sectorPeers}
-                  onChange={(e) => setSectorPeers(e.target.value)}
-                  placeholder="e.g. NVDA, AMD, AVGO"
-                />
-              </div>
-            </>
-          ) : null}
-          {scopeMode === "explore" ? (
-            <>
-              <div style={{ ...teamStyles.field, marginTop: 8 }}>
-                <label style={teamStyles.label}>研究主题（必填，越具体越好）</label>
-                <textarea
-                  style={teamStyles.textarea}
-                  rows={2}
-                  value={exploreTheme}
-                  onChange={(e) => setExploreTheme(e.target.value)}
-                  placeholder="e.g. AI 推理芯片的轮动机会 / 美联储会议前后的避险标的"
-                />
-              </div>
-              <div style={{ ...teamStyles.field, marginTop: 8 }}>
-                <label style={teamStyles.label}>候选标的（可选，留空则由 Orchestrator 自主筛选）</label>
-                <textarea
-                  style={teamStyles.textarea}
-                  rows={2}
-                  value={exploreCandidates}
-                  onChange={(e) => setExploreCandidates(e.target.value)}
-                  placeholder="可写也可留空，e.g. NVDA, AMD, AVGO, TSM"
-                />
-              </div>
-            </>
-          ) : null}
-          {researchInstrument === "option" && scopeMode === "single" ? (
-            <div style={{ ...teamStyles.field, marginTop: 8 }}>
-              <label style={teamStyles.label}>期权（可选）</label>
-              <input
-                style={teamStyles.input}
-                value={optionUnderlying}
-                onChange={(e) => setOptionUnderlying(e.target.value)}
-                placeholder="标的 NVDA"
-              />
-              <input
-                style={{ ...teamStyles.input, marginTop: 6 }}
-                value={optionContract}
-                onChange={(e) => setOptionContract(e.target.value)}
-                placeholder="合约 OCC"
-              />
-              <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-                <input style={{ ...teamStyles.input, flex: "1 1 90px" }} value={optionExpiry} onChange={(e) => setOptionExpiry(e.target.value)} placeholder="到期" />
-                <input style={{ ...teamStyles.input, flex: "1 1 70px" }} value={optionStrike} onChange={(e) => setOptionStrike(e.target.value)} placeholder="行权价" />
-                <select style={{ ...teamStyles.input, flex: "0 0 72px" }} value={optionRight} onChange={(e) => setOptionRight(e.target.value as "call" | "put" | "")}>
-                  <option value="call">Call</option><option value="put">Put</option>
-                </select>
-              </div>
-            </div>
-          ) : null}
-          <div style={{ ...teamStyles.field, marginTop: 10 }}>
-            <label style={teamStyles.label}>分析提示模板（可选，选中后自动填入下方文本框）</label>
-            <select
-              style={teamStyles.input}
-              value={promptTemplateId}
-              onChange={(e) => applyPromptTemplate(e.target.value)}
-            >
-              <option value="">— 不使用模板 —</option>
-              {availablePromptTemplates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label} · {t.summary}
-                </option>
-              ))}
-            </select>
-            {availablePromptTemplates.length === 0 ? (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--qb-team-muted-fg, #71717a)",
-                  marginTop: 4,
-                }}
-              >
-                当前 {scopeModeLabel(scopeMode)} + {instrumentLabel(researchInstrument)} 组合暂无内置模板，可自行填写下方提示。
-              </div>
-            ) : null}
-          </div>
-          <div style={{ ...teamStyles.field, marginTop: 10 }}>
-            <label style={teamStyles.label}>分析提示（可选，覆盖默认）</label>
-            <textarea
-              style={teamStyles.textarea}
-              rows={6}
-              value={teamAnalysisContext}
-              onChange={(e) => {
-                setTeamAnalysisContext(e.target.value);
-                if (promptTemplateId) setPromptTemplateId("");
-              }}
-              placeholder={`留空则使用默认分析提示。当前：${scopeModeLabel(scopeMode)} · ${instrumentLabel(researchInstrument)}`}
-            />
-          </div>
+          <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
+            研究设置已迁至右侧 Orchestrator 的 <strong>Run 条</strong>（展开即可编辑范围 / 标的 / 提示）。
+          </p>
+          <button
+            type="button"
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#38bdf8",
+              fontSize: 12,
+              cursor: "pointer",
+              padding: 0,
+              marginBottom: 8,
+              textAlign: "left",
+            }}
+            onClick={() => setRunStripExpanded(true)}
+          >
+            打开 Run 条研究设置 →
+          </button>
           </div>
           {/**
            * 下半工作流区独立滚动容器：工作流筛选 + 列表 + 新建按钮 + 拓扑。
@@ -7313,6 +7215,9 @@ const TeamDashboardPanel: FC = () => {
                 ["market", "行情 K 线"],
                 ["news", "新闻资讯"],
                 ["tools", `工具结果${researchCanvasToolHits.length ? ` (${researchCanvasToolHits.length})` : ""}`],
+                ...(openWsFile
+                  ? [["file", `文件 · ${openWsFile.path.split("/").pop() || "编辑"}`] as const]
+                  : []),
               ] as const
             ).map(([id, label]) => (
               <button
@@ -7328,6 +7233,16 @@ const TeamDashboardPanel: FC = () => {
             ))}
           </div>
 
+          {researchCanvasTab === "file" && openWsFile ? (
+            <WorkspaceFilePane
+              workspaceId={openWsFile.workspaceId}
+              path={openWsFile.path}
+              onClose={() => {
+                setOpenWsFile(null);
+                setResearchCanvasTab("topology");
+              }}
+            />
+          ) : null}
           {researchCanvasTab === "market" ? (
             <div
               style={{
@@ -8105,6 +8020,7 @@ const TeamDashboardPanel: FC = () => {
               onCreate: () => void handleCreateTeamWorkflow(),
               onOpenResearchSettings: () => setLeftRailMode("workflow"),
               creating: creatingTeamWorkflow,
+              settingsContent: researchSettingsPanel,
             }}
           />
           );

@@ -781,6 +781,17 @@ export async function getFsWorkspaceFile(
   return res.data;
 }
 
+export async function putFsWorkspaceFile(
+  id: string,
+  path: string,
+  content: string
+): Promise<void> {
+  await httpPut(`/api/v1/fs-workspaces/${encodeURIComponent(id)}/file`, {
+    path,
+    content,
+  });
+}
+
 export async function putFsWorkspaceRun(
   workspaceId: string,
   runId: string,

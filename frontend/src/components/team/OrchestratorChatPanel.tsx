@@ -19,6 +19,7 @@
 import {
   type CSSProperties,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -112,7 +113,7 @@ export interface OrchestratorChatPanelProps {
   sendDisabled: boolean;
   /** 启动禁用原因（tooltip） */
   sendDisabledReason: string;
-  /** 可折叠 Run 条：工作流切换 / 新建（研究设置仍可回左栏） */
+  /** 可折叠 Run 条：工作流切换 / 新建 / 研究设置主体 */
   runStrip?: {
     expanded: boolean;
     onExpandedChange: (open: boolean) => void;
@@ -120,8 +121,11 @@ export interface OrchestratorChatPanelProps {
     options: Array<{ id: string; label: string; status?: string }>;
     onSelect: (id: string) => void;
     onCreate: () => void;
+    /** @deprecated 设置已嵌在 Run 条；保留跳转左栏工作流列表 */
     onOpenResearchSettings?: () => void;
     creating?: boolean;
+    /** 研究设置表单（展开后显示） */
+    settingsContent?: ReactNode;
   };
 }
 
@@ -392,10 +396,13 @@ export function OrchestratorChatPanel({
                     style={styles.runStripLink}
                     onClick={() => runStrip.onOpenResearchSettings?.()}
                   >
-                    研究设置（左栏）
+                    工作流列表（左栏）
                   </button>
                 ) : null}
               </div>
+              {runStrip.settingsContent ? (
+                <div style={styles.runStripSettings}>{runStrip.settingsContent}</div>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -794,6 +801,11 @@ const styles: Record<string, CSSProperties> = {
     color: "#e4e4e7",
   },
   runStripActions: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  runStripSettings: {
+    maxHeight: 360,
+    overflow: "auto",
+    paddingRight: 2,
+  },
   runStripBtn: { fontSize: 12, padding: "6px 10px" },
   runStripLink: {
     border: "none",
