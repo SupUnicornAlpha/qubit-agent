@@ -12,6 +12,11 @@ import {
   TOOL_BADGE_STYLE,
   type ToolResultBadge,
 } from "../../lib/toolResultEffectiveness";
+import {
+  classifyResearchCanvasToolName,
+  extractMarketRefFromToolPayload,
+  type ResearchCanvasToolKind,
+} from "../../lib/researchCanvasToolLink";
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import { looksLikeMarkdown } from "./LiveConversationView";
@@ -23,6 +28,14 @@ export type AgentRunPanelData = {
   steps: AnalystTeamGraphAgentStep[];
   tools: AnalystTeamGraphToolCall[];
   mcps: AnalystTeamGraphMcpCall[];
+};
+
+export type AgentRunOpenInCanvasTarget = {
+  toolName: string;
+  kind: ResearchCanvasToolKind;
+  symbol: string | null;
+  exchange: string | null;
+  requestJson?: unknown;
 };
 
 type ViewMode = "chat" | "compact";
@@ -41,7 +54,9 @@ export const AgentRunPanel: FC<{
    */
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
-}> = ({ data, defaultMode = "chat", collapsed = false, onToggleCollapsed }) => {
+  /** 行情/新闻类工具 → 研究中栏画布打开 */
+  onOpenInCanvas?: (target: AgentRunOpenInCanvasTarget) => void;
+}> = ({ data, defaultMode = "chat", collapsed = false, onToggleCollapsed, onOpenInCanvas }) => {
   const { t } = useTranslation();
   const [mode, setMode] = useState<ViewMode>(defaultMode);
   const totals = {
@@ -224,7 +239,11 @@ export const AgentRunPanel: FC<{
             padding: "8px 10px 16px",
           }}
         >
-          {mode === "chat" ? <AgentRunChatView {...data} /> : <AgentRunCompactView {...data} />}
+          {mode === "chat" ? (
+            <AgentRunChatView {...data} onOpenInCanvas={onOpenInCanvas} />
+          ) : (
+            <AgentRunCompactView {...data} onOpenInCanvas={onOpenInCanvas} />
+          )}
         </div>
       )}
     </div>
@@ -244,6 +263,7 @@ export type AgentRunChatViewProps = {
   mcps: AnalystTeamGraphMcpCall[];
   /** 是否仅显示有效（ok）+ 警告（empty/suspect/failed），过滤掉空 thought 之类。 */
   compact?: boolean;
+  onOpenInCanvas?: (target: AgentRunOpenInCanvasTarget) => void;
 };
 
 type ChatItem =
@@ -292,6 +312,7 @@ export const AgentRunChatView: FC<AgentRunChatViewProps> = ({
   tools,
   mcps,
   compact = false,
+  onOpenInCanvas,
 }) => {
   const { t } = useTranslation();
   const items = useMemo<ChatItem[]>(() => {
@@ -309,17 +330,18 @@ export const AgentRunChatView: FC<AgentRunChatViewProps> = ({
   }, [inbound, outbound, steps, tools, mcps, compact]);
 
   if (items.length === 0) {
-    return (
-      <div style={{ fontSize: 12, color: "#71717a", padding: "12px 0" }}>
-        {t("team.agentRun.empty")}
-      </div>
-    );
+    return <div style={{ fontSize: 12, color: "#71717a", padding: "12px 4px" }}>{t("team.agentRun.empty")}</div>;
   }
 
   return (
     <div style={containerStyle}>
       {items.map((item) => (
-        <ChatRow key={`${item.kind}:${item.raw.id}`} item={item} role={role} />
+        <ChatRow
+          key={`${item.kind}:${item.raw.id}`}
+          item={item}
+          role={role}
+          onOpenInCanvas={onOpenInCanvas}
+        />
       ))}
     </div>
   );
@@ -332,16 +354,47 @@ const containerStyle: CSSProperties = {
   padding: "8px 4px 16px",
 };
 
-const ChatRow: FC<{ item: ChatItem; role: string }> = ({ item, role }) => {
+function canvasTargetFromTool(
+  toolName: string,
+  requestJson: unknown
+): AgentRunOpenInCanvasTarget {
+  const kind = classifyResearchCanvasToolName(toolName);
+  const ref = extractMarketRefFromToolPayload(requestJson);
+  return {
+    toolName,
+    kind,
+    symbol: ref.symbol,
+    exchange: ref.exchange,
+    requestJson,
+  };
+}
+
+const openInCanvasBtnStyle: CSSProperties = {
+  fontSize: 11,
+  color: "#60a5fa",
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  padding: 0,
+  fontFamily: "inherit",
+  textDecoration: "underline",
+  textUnderlineOffset: 2,
+};
+
+const ChatRow: FC<{
+  item: ChatItem;
+  role: string;
+  onOpenInCanvas?: (target: AgentRunOpenInCanvasTarget) => void;
+}> = ({ item, role, onOpenInCanvas }) => {
   switch (item.kind) {
     case "inbound":
       return <MsgBubble item={item} selfRole={role} side="left" />;
     case "outbound":
       return <MsgBubble item={item} selfRole={role} side="right" />;
     case "tool":
-      return <ToolBubble tool={item.raw} />;
+      return <ToolBubble tool={item.raw} onOpenInCanvas={onOpenInCanvas} />;
     case "mcp":
-      return <McpBubble mcp={item.raw} />;
+      return <McpBubble mcp={item.raw} onOpenInCanvas={onOpenInCanvas} />;
     case "step":
       return <StepBubble step={item.raw} role={role} />;
   }
@@ -505,7 +558,10 @@ const Badge: FC<{ badge: ToolResultBadge; reason: string; latencyMs?: number | n
   );
 };
 
-const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
+const ToolBubble: FC<{
+  tool: AnalystTeamGraphToolCall;
+  onOpenInCanvas?: (target: AgentRunOpenInCanvasTarget) => void;
+}> = ({ tool, onOpenInCanvas }) => {
   const { t } = useTranslation();
   const verdict = analyzeToolEffectiveness({
     status: tool.status,
@@ -513,6 +569,8 @@ const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
     latencyMs: tool.latencyMs ?? null,
     errorMessage: tool.errorMessage ?? null,
   });
+  const canvasTarget = canvasTargetFromTool(tool.toolName, tool.requestJson);
+  const canOpen = Boolean(onOpenInCanvas) && (canvasTarget.kind === "market" || canvasTarget.kind === "news");
   return (
     <div style={centerCardStyle}>
       <div style={{ ...tsLabel, marginBottom: 4 }}>
@@ -529,6 +587,15 @@ const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
       >
         <span style={{ fontWeight: 600, color: "#d4d4d8", fontSize: 12 }}>{tool.toolName}</span>
         <Badge badge={verdict.badge} reason={verdict.reason} latencyMs={tool.latencyMs} />
+        {canOpen ? (
+          <button
+            type="button"
+            style={openInCanvasBtnStyle}
+            onClick={() => onOpenInCanvas?.(canvasTarget)}
+          >
+            {canvasTarget.kind === "news" ? "在新闻视图打开" : "在行情视图打开"}
+          </button>
+        ) : null}
       </div>
       {verdict.badge !== "ok" ? (
         <div style={{ fontSize: 11, color: TOOL_BADGE_STYLE[verdict.badge].color, marginBottom: 6 }}>
@@ -556,7 +623,10 @@ const ToolBubble: FC<{ tool: AnalystTeamGraphToolCall }> = ({ tool }) => {
   );
 };
 
-const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
+const McpBubble: FC<{
+  mcp: AnalystTeamGraphMcpCall;
+  onOpenInCanvas?: (target: AgentRunOpenInCanvasTarget) => void;
+}> = ({ mcp, onOpenInCanvas }) => {
   const { t } = useTranslation();
   const verdict = analyzeToolEffectiveness({
     status: mcp.status,
@@ -564,6 +634,9 @@ const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
     latencyMs: mcp.latencyMs ?? null,
     errorCode: mcp.errorCode ?? null,
   });
+  const fullName = `${mcp.serverName}/${mcp.toolName}`;
+  const canvasTarget = canvasTargetFromTool(fullName, mcp.requestJson);
+  const canOpen = Boolean(onOpenInCanvas) && (canvasTarget.kind === "market" || canvasTarget.kind === "news");
   return (
     <div style={centerCardStyle}>
       <div style={{ ...tsLabel, marginBottom: 4 }}>
@@ -580,6 +653,15 @@ const McpBubble: FC<{ mcp: AnalystTeamGraphMcpCall }> = ({ mcp }) => {
       >
         <span style={{ fontWeight: 600, color: "#d4d4d8", fontSize: 12 }}>{mcp.toolName}</span>
         <Badge badge={verdict.badge} reason={verdict.reason} latencyMs={mcp.latencyMs} />
+        {canOpen ? (
+          <button
+            type="button"
+            style={openInCanvasBtnStyle}
+            onClick={() => onOpenInCanvas?.(canvasTarget)}
+          >
+            {canvasTarget.kind === "news" ? "在新闻视图打开" : "在行情视图打开"}
+          </button>
+        ) : null}
       </div>
       {verdict.badge !== "ok" ? (
         <div style={{ fontSize: 11, color: TOOL_BADGE_STYLE[verdict.badge].color, marginBottom: 6 }}>
@@ -693,13 +775,9 @@ const preStyle: CSSProperties = {
  * 旧版"紧凑列表"视图——在 chat 视图下不顺手时切回来用。
  * 与 chat 视图共用 effectiveness 徽章逻辑，确保两边对"假成功"判定一致。
  */
-const AgentRunCompactView: FC<AgentRunPanelData> = ({
-  inbound,
-  outbound,
-  steps,
-  tools,
-  mcps,
-}) => {
+const AgentRunCompactView: FC<
+  AgentRunPanelData & { onOpenInCanvas?: (target: AgentRunOpenInCanvasTarget) => void }
+> = ({ inbound, outbound, steps, tools, mcps, onOpenInCanvas }) => {
   const { t } = useTranslation();
   const hasCalls = tools.length > 0 || mcps.length > 0;
   return (
@@ -721,12 +799,25 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
               errorMessage: tc.errorMessage ?? null,
             });
             const c = TOOL_BADGE_STYLE[v.badge];
+            const canvasTarget = canvasTargetFromTool(tc.toolName, tc.requestJson);
+            const canOpen =
+              Boolean(onOpenInCanvas) &&
+              (canvasTarget.kind === "market" || canvasTarget.kind === "news");
             return (
               <details key={tc.id} style={{ marginBottom: 6 }}>
                 <summary style={{ cursor: "pointer", color: c.color }}>
                   [{formatTs(tc.createdAt)}] {tc.toolKind} · {tc.toolName} · {c.icon} {c.label}
                   {tc.latencyMs != null ? ` · ${tc.latencyMs}ms` : ""}
                 </summary>
+                {canOpen ? (
+                  <button
+                    type="button"
+                    style={{ ...openInCanvasBtnStyle, margin: "4px 0" }}
+                    onClick={() => onOpenInCanvas?.(canvasTarget)}
+                  >
+                    {canvasTarget.kind === "news" ? "在新闻视图打开" : "在行情视图打开"}
+                  </button>
+                ) : null}
                 {v.badge !== "ok" ? (
                   <div style={{ fontSize: 11, color: c.color, margin: "4px 0" }}>{v.reason}</div>
                 ) : null}
@@ -754,12 +845,26 @@ const AgentRunCompactView: FC<AgentRunPanelData> = ({
               errorCode: m.errorCode ?? null,
             });
             const c = TOOL_BADGE_STYLE[v.badge];
+            const fullName = `${m.serverName}/${m.toolName}`;
+            const canvasTarget = canvasTargetFromTool(fullName, m.requestJson);
+            const canOpen =
+              Boolean(onOpenInCanvas) &&
+              (canvasTarget.kind === "market" || canvasTarget.kind === "news");
             return (
               <details key={m.id} style={{ marginBottom: 6 }}>
                 <summary style={{ cursor: "pointer", color: c.color }}>
                   [MCP] {m.serverName}/{m.toolName} · {c.icon} {c.label}
                   {m.latencyMs != null ? ` · ${m.latencyMs}ms` : ""}
                 </summary>
+                {canOpen ? (
+                  <button
+                    type="button"
+                    style={{ ...openInCanvasBtnStyle, margin: "4px 0" }}
+                    onClick={() => onOpenInCanvas?.(canvasTarget)}
+                  >
+                    {canvasTarget.kind === "news" ? "在新闻视图打开" : "在行情视图打开"}
+                  </button>
+                ) : null}
                 {v.badge !== "ok" ? (
                   <div style={{ fontSize: 11, color: c.color, margin: "4px 0" }}>{v.reason}</div>
                 ) : null}

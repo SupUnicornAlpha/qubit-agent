@@ -125,6 +125,28 @@ export function coerceChartMarketExchange(raw: string): string {
   return DEFAULT_CHART_SPEC.exchange;
 }
 
+/**
+ * 从标的代码启发式推断交易所（左栏研究范围 → 画布联动用）。
+ * 有明确 exchange 时仍应优先用 coerceChartMarketExchange。
+ */
+export function guessChartExchangeFromSymbol(symbol: string): string {
+  const sym = symbol.trim().toUpperCase();
+  if (!sym) return DEFAULT_CHART_SPEC.exchange;
+  if (sym.includes(".")) {
+    const suf = sym.split(".").pop() ?? "";
+    return coerceChartMarketExchange(suf);
+  }
+  if (/^\d{6}$/.test(sym)) {
+    if (sym.startsWith("6") || sym.startsWith("9")) return "SH";
+    if (sym.startsWith("0") || sym.startsWith("3")) return "SZ";
+    if (sym.startsWith("4") || sym.startsWith("8")) return "BJ";
+  }
+  if (/^\d{5}$/.test(sym)) return "HK";
+  if (/^[A-Z]{1,5}$/.test(sym)) return "US";
+  if (/^[A-Z0-9]+USDT?$/.test(sym) || sym.includes("BTC") || sym.includes("ETH")) return "CRYPTO";
+  return DEFAULT_CHART_SPEC.exchange;
+}
+
 export const CHART_SPEC_STORAGE_KEY = "qubit-chart-spec-v1";
 
 export function readPersistedChartSpec(): ChartSpec {

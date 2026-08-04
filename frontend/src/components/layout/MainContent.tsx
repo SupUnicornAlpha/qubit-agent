@@ -1,5 +1,6 @@
 import type { CSSProperties, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
+import { createPortal } from "react-dom";
 import {
   chatHealth,
   createChatSession,
@@ -101,9 +102,20 @@ import {
   stripToolCallSentinels,
 } from "../../lib/chatMessageHydration";
 import { KlinePanel } from "../chart/KlinePanel";
+import { NewsBriefSection } from "../chart/NewsBriefSection";
 import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
 import { TeamAgentPixelOffice } from "../team/TeamAgentPixelOffice";
+import { ResearchMultiKlineGrid } from "../team/ResearchMultiKlineGrid";
+import { ResearchToolResultsPanel } from "../team/ResearchToolResultsPanel";
+import {
+  buildResearchCanvasToolHits,
+  latestSuccessfulMarketLink,
+  type ResearchCanvasToolHit,
+} from "../../lib/researchCanvasToolLink";
+import { coerceChartMarketExchange } from "../../lib/chartSpec";
+import { buildResearchMarketSymbolList } from "../../lib/researchMarketSymbols";
+import { chartPatchFromResearchScope } from "../../lib/researchScopeChartLink";
 import { formatEdgeSelectionSummary, isToolGraphEdge } from "../../lib/teamGraphEdgeVisual";
 import {
   filterPromptTemplates,
@@ -155,6 +167,7 @@ import {
   type WorkflowKind,
 } from "../../lib/workflowKind";
 import { quantNavigationForArtifact } from "../../lib/quantArtifactNavigation";
+import { useAgentDockOptional } from "../../shell/pro/AgentDockContext";
 
 export const MainContent: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
@@ -303,15 +316,19 @@ const PendingHitlFetchRow: FC<{
 export const ChatPanel: FC<{
   ideEmbedded?: boolean;
   displayMode?: "standard" | "simple";
+  /** 专业壳：会话列表在左侧 Explorer，Agent 栏内隐藏会话侧栏 */
+  hideSessionSidebar?: boolean;
   workflowRunId?: string | null;
   onWorkflowFocusChange?: (workflowRunId: string | null) => void;
 }> = ({
   ideEmbedded,
   displayMode = "standard",
+  hideSessionSidebar = false,
   workflowRunId = null,
   onWorkflowFocusChange,
 }) => {
   const simpleMode = displayMode === "simple";
+  const hideSessions = simpleMode || hideSessionSidebar;
   const chartContext = useAppStore((s) => s.chartContext);
   const setChartContext = useAppStore((s) => s.setChartContext);
   const chatSessions = useAppStore((s) => s.chatSessions);
@@ -1123,7 +1140,7 @@ export const ChatPanel: FC<{
           </div>
         </div> : null}
 
-        {!simpleMode ? <button
+        {!hideSessions ? <button
           type="button"
           aria-label={t("chat.sidebar.resizerAria")}
           title={t("chat.sidebar.resizerTitle")}
@@ -4879,6 +4896,8 @@ const TeamDashboardPanel: FC = () => {
   const [pendingHardDeleteWfId, setPendingHardDeleteWfId] = useState<string | null>(null);
   /** 左侧会话列表仅按关键字检索；执行状态留给后台监控。 */
   const [workflowListQuery, setWorkflowListQuery] = useState("");
+  /** 研究画布行情区：多标的网格 vs 单图焦点 */
+  const [marketKlineLayout, setMarketKlineLayout] = useState<"grid" | "single">("grid");
 
   /**
    * 团队页大三栏（左：研究与工作流 / 中：研究画布 / 右：研究产出）的显隐控制。
@@ -4932,6 +4951,27 @@ const TeamDashboardPanel: FC = () => {
     [hiddenTeamPanes],
   );
 
+  /** 专业壳：Orchestrator 右栏外挂到 ProAgentPanel，避免双右栏 */
+  const interfaceMode = useAppStore((s) => s.interfaceMode);
+  const setAgentPanelOpen = useAppStore((s) => s.setAgentPanelOpen);
+  const agentDock = useAgentDockOptional();
+  const proDockAgent = interfaceMode === "advanced" && Boolean(agentDock);
+  const showInlineTeamRight = teamPaneVisible("right") && !proDockAgent;
+  const rightEffectivelyPresent = teamPaneVisible("right") || proDockAgent;
+
+  useEffect(() => {
+    if (!agentDock) return;
+    if (!proDockAgent) {
+      if (agentDock.source === "team") agentDock.setSource(null);
+      return;
+    }
+    agentDock.setSource("team");
+    setAgentPanelOpen(true);
+    return () => {
+      agentDock.setSource(null);
+    };
+  }, [agentDock, proDockAgent, setAgentPanelOpen]);
+
   /**
    * Token 级流式：workflow firehose 推来的、尚未落库的「在飞」LLM 输出，按 role 累积。
    * 每条在 displayedLiveFeedEvents 里合成一个 `streaming:${role}` 气泡逐字显示。
@@ -4959,6 +4999,14 @@ const TeamDashboardPanel: FC = () => {
     ts: number;
   } | null>(null);
   /**
+   * Orchestrator 右栏：缓存 firehose 近时 step 事件（工具起止 / A2A），
+   * 供 Cursor 风格运行态条与 ChatExecutionActivity 使用。
+   * 切换 workflow 时清空；容量上限避免内存膨胀。
+   */
+  const [orchestratorStreamEvents, setOrchestratorStreamEvents] = useState<StepStreamEvent[]>(
+    []
+  );
+  /**
    * 用户在右侧 Orchestrator 对话框发出的提示词回显（启动指令 / 运行中插话）。
    * 合成成 fromRole="user" 的消息事件并入实时流，让用户看到自己说过什么。
    */
@@ -4981,6 +5029,11 @@ const TeamDashboardPanel: FC = () => {
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
+  /** 研究中栏画布：拓扑 / 行情 / 新闻 / 工具结果 */
+  const [researchCanvasTab, setResearchCanvasTab] = useState<
+    "topology" | "market" | "news" | "tools"
+  >("topology");
+  const lastLinkedToolIdRef = useRef<string | null>(null);
   /**
    * 注：原 `strategyScripts` / `workflowArtifactHint` / `teamCodePick` / 多个 store
    * setter 服务于已删除的「策略与代码」details 块；state / handler / setter 全部
@@ -4992,6 +5045,10 @@ const TeamDashboardPanel: FC = () => {
   const setQuantTab = useAppStore((s) => s.setQuantTab);
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
   const setQuantContext = useAppStore((s) => s.setQuantContext);
+  const chartSpec = useAppStore((s) => s.chartSpec);
+  const setChartSpec = useAppStore((s) => s.setChartSpec);
+  const chartReloadNonce = useAppStore((s) => s.chartReloadNonce);
+  const requestChartReload = useAppStore((s) => s.requestChartReload);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -5145,6 +5202,119 @@ const TeamDashboardPanel: FC = () => {
     // 默认只展示 user + orchestrator；任意其他 Agent 在被调用后才入图（不钉死角色类型）
     return buildFilteredTeamGraphDisplay(teamGraph);
   }, [teamGraph]);
+
+  const researchCanvasToolHits = useMemo(
+    () =>
+      buildResearchCanvasToolHits({
+        toolCalls: teamGraph?.toolCalls,
+        mcpCalls: teamGraph?.mcpCalls,
+        limit: 100,
+      }),
+    [teamGraph]
+  );
+
+  /** 行情 Tab：焦点 + 研究范围 + 工具联动标的 → 多标的网格 */
+  const researchMarketSymbols = useMemo(
+    () =>
+      buildResearchMarketSymbolList({
+        focusSymbol: chartSpec.symbol,
+        focusExchange: chartSpec.exchange,
+        scope: {
+          mode: scopeMode,
+          ticker,
+          basketTickers,
+          sectorPeers,
+          exploreCandidates,
+          instrument: researchInstrument,
+          optionUnderlying,
+        },
+        toolHits: researchCanvasToolHits,
+        limit: 8,
+      }),
+    [
+      chartSpec.symbol,
+      chartSpec.exchange,
+      scopeMode,
+      ticker,
+      basketTickers,
+      sectorPeers,
+      exploreCandidates,
+      researchInstrument,
+      optionUnderlying,
+      researchCanvasToolHits,
+    ]
+  );
+
+  const applyCanvasMarketLink = useCallback(
+    (hit: ResearchCanvasToolHit, tab: "market" | "news") => {
+      if (hit.symbol) {
+        setChartSpec({
+          symbol: hit.symbol,
+          ...(hit.exchange
+            ? { exchange: coerceChartMarketExchange(hit.exchange) }
+            : {}),
+        });
+        requestChartReload();
+      }
+      setResearchCanvasTab(tab);
+    },
+    [requestChartReload, setChartSpec]
+  );
+
+  // 工具联动：新的成功行情/新闻调用自动同步标的；每个 workflow 首次命中时切到对应画布。
+  useEffect(() => {
+    const link = latestSuccessfulMarketLink(researchCanvasToolHits);
+    if (!link?.symbol) return;
+    if (lastLinkedToolIdRef.current === link.id) return;
+    const isFirst = lastLinkedToolIdRef.current == null;
+    lastLinkedToolIdRef.current = link.id;
+    setChartSpec({
+      symbol: link.symbol,
+      ...(link.exchange ? { exchange: coerceChartMarketExchange(link.exchange) } : {}),
+    });
+    requestChartReload();
+    if (isFirst) {
+      setResearchCanvasTab(link.kind === "news" ? "news" : "market");
+    }
+  }, [researchCanvasToolHits, requestChartReload, setChartSpec]);
+
+  useEffect(() => {
+    lastLinkedToolIdRef.current = null;
+  }, [workflowRunId]);
+
+  // 左栏研究范围 → 画布标的联动（单标的/篮子首标/板块成分首标/期权标的）
+  useEffect(() => {
+    const patch = chartPatchFromResearchScope({
+      mode: scopeMode,
+      ticker,
+      basketTickers,
+      sectorPeers,
+      exploreCandidates,
+      instrument: researchInstrument,
+      optionUnderlying,
+    });
+    if (!patch) return;
+    if (
+      chartSpec.symbol.toUpperCase() === patch.symbol &&
+      chartSpec.exchange.toUpperCase() === patch.exchange
+    ) {
+      return;
+    }
+    setChartSpec(patch);
+    requestChartReload();
+    // 仅在用户改左栏研究范围时写入；不把 chartSpec 放进依赖，避免工具联动后回写互踢
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional
+  }, [
+    scopeMode,
+    ticker,
+    basketTickers,
+    sectorPeers,
+    exploreCandidates,
+    researchInstrument,
+    optionUnderlying,
+    requestChartReload,
+    setChartSpec,
+  ]);
 
   /** 右栏「专家进度」：从 graph + 流式态 + 心跳推导已派发子 Agent。 */
   const subAgentRuns = useMemo(() => {
@@ -5346,11 +5516,20 @@ const TeamDashboardPanel: FC = () => {
     setUserEchoes([]);
     setTeamPlan(null);
     setActiveRationale(null);
+    setOrchestratorStreamEvents([]);
     settledRolesRef.current = new Set();
+    const ORCHESTRATOR_STREAM_CAP = 120;
     const unsubscribe = subscribeWorkflowEvents({
       workflowId: wf,
       onEvent: (event) => {
         const role = event.role || "unknown";
+        if (
+          event.type === "tool_call_start" ||
+          event.type === "tool_call_end" ||
+          (event.source === "a2a" && event.type !== "token")
+        ) {
+          setOrchestratorStreamEvents((prev) => [...prev, event].slice(-ORCHESTRATOR_STREAM_CAP));
+        }
         if (event.type === "plan") {
           // Coding-Agent 体验 P1：分步计划/TODO 快照 → 右栏计划卡片。
           const steps = Array.isArray(event.payload?.["steps"])
@@ -6626,11 +6805,26 @@ const TeamDashboardPanel: FC = () => {
           <div style={teamStyles.ideCenterWrap}>
             <div className="qb-team-main-stage" style={teamStyles.teamMainStage}>
               <header className="qb-team-editor-titlebar" style={teamStyles.teamEditorTitleBar}>
-                <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>研究画布 · 拓扑 / 实时流 / 结论</span>
+                <span style={{ fontWeight: 600, color: "var(--qb-team-titlebar-fg, #e4e4e7)" }}>
+                  研究画布 · 拓扑 / 行情 / 新闻 / 工具
+                </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {researchMarketSymbols.length > 0 ? (
+                    <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                      {researchMarketSymbols.length > 1
+                        ? `${researchMarketSymbols.length} 个标的 · 焦点 ${chartSpec.symbol || "—"}${
+                            chartSpec.exchange ? `.${chartSpec.exchange}` : ""
+                          }`
+                        : `联动标的 ${chartSpec.symbol || researchMarketSymbols[0]?.symbol}${
+                            chartSpec.exchange || researchMarketSymbols[0]?.exchange
+                              ? `.${chartSpec.exchange || researchMarketSymbols[0]?.exchange}`
+                              : ""
+                          }`}
+                    </span>
+                  ) : null}
                   {running ? (
                     <span style={{ color: "#38bdf8", fontSize: 11 }}>
-                      ● 分析进行中 · 拓扑与对话每 2.5s 刷新
+                      ● 分析进行中 · 拓扑与工具每 2.5s 刷新
                     </span>
                   ) : null}
                   {graphLoading ? (
@@ -6643,13 +6837,158 @@ const TeamDashboardPanel: FC = () => {
           data-qb-team-research-panel
           style={{ ...teamStyles.panel, display: "flex", flexDirection: "column", minHeight: 0 }}
         >
+          <div
+            className="qb-team-graph-view-toggle"
+            role="tablist"
+            aria-label="研究画布视图"
+            style={{ marginBottom: 10, alignSelf: "flex-start" }}
+          >
+            {(
+              [
+                ["topology", "对话拓扑"],
+                ["market", "行情 K 线"],
+                ["news", "新闻资讯"],
+                ["tools", `工具结果${researchCanvasToolHits.length ? ` (${researchCanvasToolHits.length})` : ""}`],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={researchCanvasTab === id}
+                className={researchCanvasTab === id ? "is-active" : ""}
+                onClick={() => setResearchCanvasTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {researchCanvasTab === "market" ? (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 420,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                padding: 10,
+                border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                borderRadius: 8,
+                overflow: "hidden",
+                background: "var(--qb-team-live-feed-bg, #08080a)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexShrink: 0,
+                }}
+              >
+                <div
+                  className="qb-team-graph-view-toggle"
+                  role="group"
+                  aria-label="K 线布局"
+                >
+                  <button
+                    type="button"
+                    className={marketKlineLayout === "grid" ? "is-active" : ""}
+                    onClick={() => setMarketKlineLayout("grid")}
+                  >
+                    多标的网格
+                    {researchMarketSymbols.length > 1
+                      ? ` (${researchMarketSymbols.length})`
+                      : ""}
+                  </button>
+                  <button
+                    type="button"
+                    className={marketKlineLayout === "single" ? "is-active" : ""}
+                    onClick={() => setMarketKlineLayout("single")}
+                  >
+                    单图焦点
+                  </button>
+                </div>
+                <span style={{ fontSize: 11, color: "#71717a" }}>
+                  {chartSpec.timeframe} · {chartSpec.limit} 根
+                </span>
+              </div>
+              {marketKlineLayout === "grid" ? (
+                <ResearchMultiKlineGrid
+                  symbols={researchMarketSymbols}
+                  timeframe={chartSpec.timeframe}
+                  limit={chartSpec.limit}
+                  reloadNonce={chartReloadNonce}
+                  focusKey={
+                    chartSpec.symbol
+                      ? `${chartSpec.symbol.toUpperCase()}@@${coerceChartMarketExchange(
+                          chartSpec.exchange || ""
+                        ).toUpperCase()}`
+                      : null
+                  }
+                  onFocus={(row) => {
+                    setChartSpec({
+                      symbol: row.symbol,
+                      exchange: coerceChartMarketExchange(row.exchange),
+                    });
+                    requestChartReload();
+                  }}
+                />
+              ) : (
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 360,
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    borderRadius: 8,
+                  }}
+                >
+                  <KlinePanel embedded />
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {researchCanvasTab === "news" ? (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 360,
+                display: "flex",
+                flexDirection: "column",
+                border: "1px solid var(--qb-team-live-feed-border, #2a2a30)",
+                borderRadius: 8,
+                overflow: "hidden",
+              }}
+            >
+              <NewsBriefSection
+                symbol={chartSpec.symbol}
+                exchange={chartSpec.exchange}
+                reloadNonce={chartReloadNonce}
+              />
+            </div>
+          ) : null}
+
+          {researchCanvasTab === "tools" ? (
+            <ResearchToolResultsPanel
+              hits={researchCanvasToolHits}
+              onOpenMarket={(hit) => applyCanvasMarketLink(hit, "market")}
+              onOpenNews={(hit) => applyCanvasMarketLink(hit, "news")}
+            />
+          ) : null}
+
+          {researchCanvasTab === "topology" ? (
+            <>
           <h3 style={{ ...teamStyles.sectionTitle, marginTop: 0 }}>多 Agent 对话拓扑</h3>
           <p style={{ fontSize: 12, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 12 }}>
-            拓扑与实时对话流同屏；虚线/灰边为计划拓扑，实线为已发生对话。Orchestrator
-            按需派发专家并整合结论。分析进行中自动轮询；右栏可直接展开专家内部进度。
+            默认只显示用户与编排器，其它 Agent 被调用后才入图。工具调用会联动到「行情 / 新闻 / 工具结果」视图。
           </p>
           {!workflowRunId.trim() ? (
-            <div style={teamStyles.empty}>请先在左侧栏选择工作流 ID</div>
+            <div style={teamStyles.empty}>请先在左侧栏选择或新建工作流</div>
           ) : (
             <>
               <div style={{ ...teamStyles.row, flexWrap: "wrap", gap: 8 }}>
@@ -6790,7 +7129,7 @@ const TeamDashboardPanel: FC = () => {
                  * HITL 主入口已迁到右栏 Orchestrator 对话框（内联卡片）。
                  * 这里仅在右栏被隐藏时作为兜底，避免同一询问出现两张卡片。
                  */}
-                {!teamPaneVisible("right") && workflowRunId.trim() ? (
+                {!rightEffectivelyPresent && workflowRunId.trim() ? (
                   /**
                    * v2 修复：Banner 只要 workflowRunId 有效就常驻挂载，由 banner 内部用
                    * listPendingWorkflowHitl 自动发现 pending。这样即使 `teamPendingHitl`
@@ -6812,7 +7151,7 @@ const TeamDashboardPanel: FC = () => {
                     }}
                   />
                 ) : null}
-                {!teamPaneVisible("right") ? (
+                {!rightEffectivelyPresent ? (
                   <ResizableY
                   defaultHeight={360}
                   minHeight={200}
@@ -7022,6 +7361,18 @@ const TeamDashboardPanel: FC = () => {
                       }}
                       collapsed={agentRunCollapsed}
                       onToggleCollapsed={() => setAgentRunCollapsed((v) => !v)}
+                      onOpenInCanvas={(target) => {
+                        if (target.symbol) {
+                          setChartSpec({
+                            symbol: target.symbol,
+                            ...(target.exchange
+                              ? { exchange: coerceChartMarketExchange(target.exchange) }
+                              : {}),
+                          });
+                          requestChartReload();
+                        }
+                        setResearchCanvasTab(target.kind === "news" ? "news" : "market");
+                      }}
                     />
                   </ResizableY>
                 </div>
@@ -7041,6 +7392,8 @@ const TeamDashboardPanel: FC = () => {
               )}
             </>
           )}
+            </>
+          ) : null}
         </div>
               </div>
             </div>
@@ -7135,7 +7488,7 @@ const TeamDashboardPanel: FC = () => {
         </div>
         ) : null}
 
-        {teamPaneVisible("center") && teamPaneVisible("right") ? (
+        {teamPaneVisible("center") && showInlineTeamRight ? (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -7145,23 +7498,8 @@ const TeamDashboardPanel: FC = () => {
           />
         ) : null}
 
-        {teamPaneVisible("right") ? (
-        <aside
-          style={{
-            ...teamStyles.rightRail,
-            ...(!teamPaneVisible("center")
-              ? { flex: 1, minWidth: 0, width: "auto" }
-              : { width: teamRightW, flexShrink: 0 }),
-            alignSelf: "stretch",
-          }}
-        >
-          {/**
-           * Agent IDE 形态：右栏改为 Orchestrator 主对话面板。
-           * - 与 Orchestrator 持续对话（composer → 启动/续跑）
-           * - 自主 / HITL 模式切换内置在 Header
-           * - HITL 询问内联在对话流顶部（TeamHitlBanner），不再埋在画布下方
-           * 生成的产物（因子/策略/脚本/草稿）已下移到中栏底部「研究产出」抽屉。
-           */}
+        {(() => {
+          const orchestratorPanel = (
           <OrchestratorChatPanel
             workflowRunId={workflowRunId}
             events={displayedLiveFeedEvents}
@@ -7254,6 +7592,8 @@ const TeamDashboardPanel: FC = () => {
               })();
             }}
             activity={activeRationale}
+            streamEvents={orchestratorStreamEvents}
+            thinkingText={streamingByRole.orchestrator?.text ?? null}
             subAgentRuns={subAgentRuns}
             artifacts={teamArtifacts}
             artifactsLoading={teamArtifactsLoading}
@@ -7272,8 +7612,26 @@ const TeamDashboardPanel: FC = () => {
             sendDisabled={!workflowRunId.trim()}
             sendDisabledReason={!workflowRunId.trim() ? "请先选择工作流" : ""}
           />
+          );
+
+          if (proDockAgent && agentDock?.hostEl) {
+            return createPortal(orchestratorPanel, agentDock.hostEl);
+          }
+          if (!showInlineTeamRight) return null;
+          return (
+        <aside
+          style={{
+            ...teamStyles.rightRail,
+            ...(!teamPaneVisible("center")
+              ? { flex: 1, minWidth: 0, width: "auto" }
+              : { width: teamRightW, flexShrink: 0 }),
+            alignSelf: "stretch",
+          }}
+        >
+          {orchestratorPanel}
         </aside>
-        ) : null}
+          );
+        })()}
       </div>
       </div>
     </div>
