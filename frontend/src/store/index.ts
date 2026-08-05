@@ -33,6 +33,9 @@ export type ActiveView =
 /** `advanced` = 专业 IDE 壳（文档中的 uxMode=pro）；保留 advanced 以兼容已有 localStorage。 */
 export type InterfaceMode = "simple" | "advanced";
 
+/** 专业壳 chrome 密度（html[data-qb-density]） */
+export type ChromeDensity = "default" | "compact";
+
 /** 专业壳 Explorer 分区：页面导航 / 会话 / Workspace 树 / 投研资产 */
 export type ExplorerSection = "pages" | "sessions" | "workspace" | "assets";
 
@@ -204,6 +207,10 @@ export interface AppState {
   /** 面向日常研究的简洁入口 / 完整专业工作台。两种模式共享同一套数据与工作流。 */
   interfaceMode: InterfaceMode;
   setInterfaceMode: (mode: InterfaceMode) => void;
+  /** 专业壳密度：default | compact */
+  chromeDensity: ChromeDensity;
+  setChromeDensity: (density: ChromeDensity) => void;
+  toggleChromeDensity: () => void;
   /** 普通对话、简洁模式与 Workflow composer 共享的下一条消息工作模式。 */
   agentControlMode: AgentControlMode;
   setAgentControlMode: (mode: AgentControlMode) => void;
@@ -344,6 +351,7 @@ const INTERFACE_MODE_LS = "qubit:interfaceMode";
 const AGENT_CONTROL_MODE_LS = "qubit:agentControlMode";
 const AGENT_PANEL_OPEN_LS = "qubit:agentPanelOpen";
 const AGENT_PANEL_WIDTH_LS = "qubit:agentPanelWidthPx";
+const CHROME_DENSITY_LS = "qubit:chromeDensity";
 
 function readAgentControlMode(): AgentControlMode {
   try {
@@ -365,6 +373,28 @@ function persistAgentControlMode(mode: AgentControlMode) {
 function applyUxModeAttr(mode: InterfaceMode) {
   if (typeof document === "undefined") return;
   document.documentElement.setAttribute("data-qb-ux", mode === "advanced" ? "pro" : "simple");
+}
+
+function applyChromeDensityAttr(density: ChromeDensity) {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-qb-density", density);
+}
+
+function readChromeDensity(): ChromeDensity {
+  try {
+    return localStorage.getItem(CHROME_DENSITY_LS) === "compact" ? "compact" : "default";
+  } catch {
+    return "default";
+  }
+}
+
+function persistChromeDensity(density: ChromeDensity) {
+  try {
+    localStorage.setItem(CHROME_DENSITY_LS, density);
+  } catch {
+    /* ignore */
+  }
+  applyChromeDensityAttr(density);
 }
 
 function readInterfaceMode(): InterfaceMode {
@@ -504,6 +534,20 @@ export const useAppStore = create<AppState>((set) => ({
   setInterfaceMode: (interfaceMode) => {
     persistInterfaceMode(interfaceMode);
     set({ interfaceMode });
+  },
+  chromeDensity: (() => {
+    const density = readChromeDensity();
+    applyChromeDensityAttr(density);
+    return density;
+  })(),
+  setChromeDensity: (chromeDensity) => {
+    persistChromeDensity(chromeDensity);
+    set({ chromeDensity });
+  },
+  toggleChromeDensity: () => {
+    const next = useAppStore.getState().chromeDensity === "compact" ? "default" : "compact";
+    persistChromeDensity(next);
+    set({ chromeDensity: next });
   },
   agentControlMode: readAgentControlMode(),
   setAgentControlMode: (agentControlMode) => {

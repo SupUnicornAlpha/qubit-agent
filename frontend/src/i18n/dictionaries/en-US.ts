@@ -755,6 +755,9 @@ const pack: LocalePack = {
         hideAgent: "Hide Agent",
         showAgent: "Show Agent",
         toSimple: "Simple chat",
+        densityDefault: "Density·Default",
+        densityCompact: "Density·Compact",
+        densityHint: "Toggle pro chrome density",
       },
       chat: {
         movedToAgent: "Chat is docked in the right Agent panel (Cursor-style).",

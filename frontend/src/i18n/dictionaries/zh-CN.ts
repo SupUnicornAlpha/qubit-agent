@@ -746,6 +746,9 @@ const pack: LocalePack = {
         hideAgent: "隐藏 Agent",
         showAgent: "显示 Agent",
         toSimple: "简洁对话",
+        densityDefault: "密度·默认",
+        densityCompact: "密度·紧凑",
+        densityHint: "切换专业壳 chrome 密度",
       },
       chat: {
         movedToAgent: "对话已固定在右侧 Agent 栏（Cursor 风格）。",

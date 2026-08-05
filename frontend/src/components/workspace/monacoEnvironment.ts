@@ -1,10 +1,10 @@
 /**
- * Vite 下 Monaco worker 入口（避免默认 CDN / 错 worker）。
- * 须在加载 Editor 前执行。
+ * Vite 下 Monaco worker 入口（monaco-editor@0.56+ 走 package exports）。
+ * 正确子路径：monaco-editor/editor/...（不要写 esm/vs/...，会被 exports 错映射）。
  */
-import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
+import editorWorker from "monaco-editor/editor/editor.worker?worker";
+import jsonWorker from "monaco-editor/language/json/json.worker?worker";
+import tsWorker from "monaco-editor/language/typescript/ts.worker?worker";
 
 declare global {
   interface Window {

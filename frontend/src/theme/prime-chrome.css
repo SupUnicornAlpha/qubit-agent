@@ -13,6 +13,36 @@ html[data-qb-ux="pro"] {
   --qb-p-accent: var(--qb-blue, #3794ff);
 }
 
+/** U6 密度档：更紧凑的 Activity / Status / Tab */
+html[data-qb-ux="pro"][data-qb-density="compact"] {
+  --qb-p-fs-xs: 10px;
+  --qb-p-fs-sm: 11px;
+  --qb-p-fs-md: 12px;
+  --qb-p-fs-lg: 13px;
+  --qb-p-activity-w: 44px;
+  --qb-p-statusbar-h: 20px;
+  --qb-p-tab-h: 28px;
+}
+
+html[data-qb-ux="pro"][data-qb-density="compact"] .qb-pro-statusbar {
+  font-size: var(--qb-p-fs-sm);
+  min-height: var(--qb-p-statusbar-h);
+}
+
+html[data-qb-ux="pro"][data-qb-density="compact"] .qb-sidebar-activity {
+  width: var(--qb-p-activity-w);
+}
+
+html[data-qb-ux="pro"][data-qb-density="compact"] .qb-nav-activity-btn {
+  padding: 6px 0;
+}
+
+html[data-qb-ux="pro"][data-qb-density="compact"] .qb-topbar {
+  min-height: 36px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 html[data-qb-ux="pro"] .qb-app-root--advanced {
   background: var(--qb-bg-root);
 }

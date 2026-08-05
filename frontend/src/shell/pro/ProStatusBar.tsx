@@ -13,6 +13,8 @@ export const ProStatusBar: FC = () => {
   const setInterfaceMode = useAppStore((s) => s.setInterfaceMode);
   const lifecycle = useAppStore((s) => s.proAgentLifecycle);
   const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
+  const chromeDensity = useAppStore((s) => s.chromeDensity);
+  const toggleChromeDensity = useAppStore((s) => s.toggleChromeDensity);
   const { t } = useTranslation();
 
   const page = getPageDescriptor(activeView);
@@ -63,6 +65,15 @@ export const ProStatusBar: FC = () => {
           }}
         >
           ⌘K
+        </button>
+        <button
+          type="button"
+          title={t("proShell.status.densityHint")}
+          onClick={() => toggleChromeDensity()}
+        >
+          {chromeDensity === "compact"
+            ? t("proShell.status.densityCompact")
+            : t("proShell.status.densityDefault")}
         </button>
         <button type="button" onClick={() => setAgentPanelOpen(!agentPanelOpen)}>
           {agentPanelOpen ? t("proShell.status.hideAgent") : t("proShell.status.showAgent")}

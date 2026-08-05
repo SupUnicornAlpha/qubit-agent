@@ -125,6 +125,19 @@ export const CommandPalette: FC = () => {
         },
       },
       {
+        id: "shell:density",
+        label:
+          useAppStore.getState().chromeDensity === "compact"
+            ? t("proShell.status.densityDefault")
+            : t("proShell.status.densityCompact"),
+        group: t("proShell.command.groupShell"),
+        keywords: "density compact chrome",
+        run: () => {
+          useAppStore.getState().toggleChromeDensity();
+          close();
+        },
+      },
+      {
         id: "agent:toggle",
         label: agentPanelOpen
           ? t("proShell.status.hideAgent")
