@@ -7203,10 +7203,24 @@ export const TeamDashboardPanel: FC = () => {
                   ) : null}
                 </span>
               </header>
-              <div style={teamStyles.teamEditorBody}>
+              <div
+                style={{
+                  ...teamStyles.teamEditorBody,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
         <div
           data-qb-team-research-panel
-          style={{ ...teamStyles.panel, display: "flex", flexDirection: "column", minHeight: 0 }}
+          style={{
+            ...teamStyles.panel,
+            display: "flex",
+            flexDirection: "column",
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+          }}
         >
           <div
             className="qb-team-graph-view-toggle"
