@@ -14,10 +14,11 @@
 
 | 文档 | 内容 | 状态 |
 |------|------|------|
-| [01-runtime-core-rust.zh-CN.md](./01-runtime-core-rust.zh-CN.md) | Rust Agent Runtime Core：**§2 模块边界已拍**、§4 Codex 对照、crate、协议、HA、里程碑 | v0.3 · 边界已冻 |
-| [02-ui-cursor-workbench.zh-CN.md](./02-ui-cursor-workbench.zh-CN.md) | UI：双壳 simple/pro、**保留风格与页面**、专业工作区（workspace/策略/因子/持仓） | v0.2 · 双壳已冻 |
+| [01-runtime-core-rust.zh-CN.md](./01-runtime-core-rust.zh-CN.md) | Rust Agent Runtime Core：**§2 边界**、§4 Codex 对照、**§6.6 ExecutionKind**、**§6.8 HITL Inbox**、**§11.4 进程级双核（TS 过渡）**、**§15 Context Protocol** | **v0.8 · M0–M6 ✅ · Bun 接入🚧** |
+| [02-ui-cursor-workbench.zh-CN.md](./02-ui-cursor-workbench.zh-CN.md) | UI：双壳 simple/pro、Workspace FS、PageHost、Monaco、Provider | **v0.5 · U0–U7 ✅ · U8 未完** |
 | [03-quant-agent-data-decision-upgrade.zh-CN.md](./03-quant-agent-data-decision-upgrade.zh-CN.md) | 量化 Agent、实时数据质量、确定性决策与归因闭环；明确 Core / Tool Host / 外部数据面的归属 | v0.1 · 归属已对齐 01 |
-| （后续）`04-protocol-json-schema/` | Session/Turn/Event 的 JSON Schema / protobuf 草案 | 拍板后落地 |
+| [04-internet-tools-and-plugin-system.zh-CN.md](./04-internet-tools-and-plugin-system.zh-CN.md) | 联网 P0 + 插件双轨 P1 + **OAuth 连接器 P2 已落地** | v0.5 · P2 已落地 |
+| （后续）`05-protocol-json-schema/` | Session/Turn/Event 的 JSON Schema / protobuf 草案 | 拍板后落地 |
 
 上游基线（必读）：
 
@@ -45,11 +46,15 @@
 | **B2** | 官方 Tool | **L0 元工具 IN**（plan/文件/HITL helper）；**量化官方工具 HOST**（可 Bun 桥） |
 | **B3** | Artifact gate / 交付底线 | **求值引擎 IN**；谓词/schema/soft-delivery **DATA（Recipe）** |
 | **B4** | 上下文 / 长期记忆 | **WorkingMemory + 组装/compact 骨架 IN**；向量/LTM **OUT（工具或 memory 服）** |
+| **B5** | Agent 分类 | Core 只认 **ExecutionKind**：`primary` / `subagent` / `reactor`；**primary 可被其他 Agent 调用**；业务角色外置 |
+| **B6** | 双核迁移 | **进程级** `QUBIT_CORE_BACKEND`；TS 仅过渡；Rust 稳后 **删除 TS Core**（保留 protocol-ts 给 UI） |
+| **B7** | HITL 出口 | **HitlInbox 审批缓冲**；IDE 与 IM 同消费；primary / reactor 共用（subagent 上交） |
 | **U1** | UI 壳模型 | **双壳**：简洁=对话优先；专业=IDE 工作区；共享会话/数据 |
 | **U2** | 风格与页面 | **全部保留**：现有 `data-qb-style` + 现有页面；双模式均可达到 |
 | **U3** | 专业工作区 | Workspace 树可浏览；SideBar/编辑器可操作 **策略 / 因子 / 持仓** 等 |
+| **P1** | 扩展安装模型 | **双轨**：自建 Plugins 管理（`PluginManifest`）**且** Skill/MCP **可直装**；不互斥、共底层表；Codex/Claude 包仅导入适配 |
 
-边界明细见 [`01` §2](./01-runtime-core-rust.zh-CN.md#2-边界什么是-core什么不是)；UI 明细见 [`02`](./02-ui-cursor-workbench.zh-CN.md)。
+边界明细见 [`01` §2](./01-runtime-core-rust.zh-CN.md#2-边界什么是-core什么不是)；UI 明细见 [`02`](./02-ui-cursor-workbench.zh-CN.md)；插件双轨见 [`04`](./04-internet-tools-and-plugin-system.zh-CN.md)。
 
 ---
 
@@ -114,3 +119,11 @@ Prime 算「可用」至少同时满足：
 | 2026-08-04 | v0.2 | 冻结 O1/O4/O5；01 增补 §4 Codex 对照 |
 | 2026-08-04 | v0.3 | 冻结 B1–B4 模块边界；01 §2 扩为总表 |
 | 2026-08-04 | v0.4 | 冻结 U1–U3：双壳 + 保留风格/页面 + 专业工作区资产 |
+| 2026-08-05 | v0.5 | 01→v0.4：ExecutionKind、双核 CoreRuntime、Context Protocol（§15）；README 增 B5/B6 |
+| 2026-08-05 | v0.6 | 拍板 O10–O13 → 01 v0.5；README 增 B7（HITL Inbox）；B5/B6 收紧为已拍表述 |
+| 2026-08-05 | v0.7 | 新增 04：互联网工具包 P0 + 插件体系规划；原 protocol schema 顺延为 05 |
+| 2026-08-05 | v0.8 | **开码**：`crates/` M0 protocol + M1 runtime/app-server 骨架落地（见 `crates/README.md`） |
+| 2026-08-05 | v0.8 | 04→v0.2：拍板插件互操作（MCP/Skills 复用，Codex/Claude 包仅导入）；P1 为下一步 |
+| 2026-08-05 | v0.9 | 04→v0.3 + README **P1**：自建插件管理与 Skill/MCP 直装双轨并存 |
+| 2026-08-05 | v0.10 | 04→v0.4：P1 插件管理落地（registry/API/导入/Plugins UI） |
+| 2026-08-05 | v0.11 | 04→v0.5：P2 OAuth 连接器（connector_auth + MCP Bearer 注入） |
