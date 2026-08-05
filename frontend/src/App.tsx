@@ -5,6 +5,7 @@ import { syncBackendUrlForDesktop } from "./api/packaged-backend";
 import { isTauriEnv, tauriBackendStatus, tauriStartBackend } from "./api/tauri";
 import { SimpleWorkspace } from "./components/layout/SimpleWorkspace";
 import { AgentDockProvider } from "./shell/pro/AgentDockContext";
+import { CommandPalette } from "./shell/pro/CommandPalette";
 import { ProWorkbench } from "./shell/pro/ProWorkbench";
 import { useTranslation } from "./i18n";
 import { useAppStore } from "./store";
@@ -120,6 +121,7 @@ const App: FC = () => {
           </>
         )}
       </div>
+      <CommandPalette />
     </AgentDockProvider>
   );
 };

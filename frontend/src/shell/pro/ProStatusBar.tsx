@@ -55,6 +55,15 @@ export const ProStatusBar: FC = () => {
         <span>{stateLabel}</span>
       </div>
       <div className="qb-pro-statusbar__right">
+        <button
+          type="button"
+          title="⌘K / Ctrl+K"
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent("qb:open-command-palette"));
+          }}
+        >
+          ⌘K
+        </button>
         <button type="button" onClick={() => setAgentPanelOpen(!agentPanelOpen)}>
           {agentPanelOpen ? t("proShell.status.hideAgent") : t("proShell.status.showAgent")}
         </button>
