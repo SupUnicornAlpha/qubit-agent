@@ -112,6 +112,16 @@ export interface MarketDataReadiness {
   message: string;
 }
 
+/** Prime D1 feed tier — drives snapshot quality / live admission. */
+export type MarketFeedClass =
+  | "L0_research_fallback"
+  | "L1_strategy_validation"
+  | "L2_realtime_observe"
+  | "L3_trading";
+
+/** Prime D1 license / allowed use for a market source. */
+export type MarketLicenseUse = "research_only" | "observe_only" | "trading_allowed";
+
 export interface MarketDataSourceRecord {
   id: string;
   name: string;
@@ -131,7 +141,11 @@ export interface MarketDataSourceRecord {
   circuitOpenedAt: string | null;
   priority: number;
   isFallback: boolean;
-  upstreamFamily: "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo";
+  upstreamFamily: "wind" | "tushare" | "binance" | "eastmoney" | "tencent" | "yahoo" | "yfinance";
+  /** Prime D1 */
+  feedClass?: MarketFeedClass;
+  /** Prime D1 */
+  licenseUse?: MarketLicenseUse;
   failureKind: "credentials_missing" | "network_blocked" | "rate_limited" | "upstream_down" | "no_data" | "misconfigured" | "unknown" | null;
   availabilityStatus: "ready" | "credentials_missing" | "backing_off" | "misconfigured" | "unavailable";
   retryAt: string | null;
@@ -279,7 +293,7 @@ export interface RecommendationStats {
 }
 
 export type AgentLoopKind = "native" | "claude_cli" | "codex_cli";
-export type AgentControlMode = "agent" | "plan" | "goal";
+export type AgentControlMode = "agent" | "plan" | "goal" | "ask" | "diagnose";
 
 export interface WorkflowSopStep {
   id: string;
@@ -499,6 +513,8 @@ export interface BuiltinConnectorConfig {
 export interface AgentDefinitionRecord {
   id: string;
   role: string;
+  /** Prime Core：primary | subagent | reactor；缺省时前端按 role 推导展示 */
+  executionKind?: "primary" | "subagent" | "reactor";
   name: string;
   version: string;
   systemPrompt: string;

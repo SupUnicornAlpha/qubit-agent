@@ -4,12 +4,23 @@
  * A hard iteration cap protects availability, but it is not a progress signal.
  * Stop earlier only after consecutive turns produced no new usable observation;
  * otherwise let a productive turn use the remaining token/time budget.
+ *
+ * Unproductive-turn early stop is OFF by default: it was mis-firing on team
+ * specialists (call_team_* → semantic_data_failure:unproductive_turn_budget_exhausted)
+ * after real evidence was already attached. Re-enable with
+ * QUBIT_UNPRODUCTIVE_BUDGET=1.
  */
 import type { AgentGraphState } from "./state";
 
 export const DEFAULT_MAX_CONSECUTIVE_UNPRODUCTIVE_TURNS = 4;
 /** Soft recoveries allowed when research floor still unmet before hard-stopping. */
 export const DEFAULT_MAX_UNPRODUCTIVE_RECOVERIES = 2;
+
+/** When false, shouldStopForUnproductiveTurns never trips. */
+export function isUnproductiveBudgetEnabled(): boolean {
+  const raw = (process.env.QUBIT_UNPRODUCTIVE_BUDGET ?? "0").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on";
+}
 
 // Control-plane writes can be successful without producing task evidence. They
 // must not reset the budget, otherwise an agent can evade it by repeatedly
@@ -38,6 +49,7 @@ export function shouldStopForUnproductiveTurns(input: {
   consecutiveUnproductiveTurns: number;
   maxConsecutiveUnproductiveTurns?: number;
 }): boolean {
+  if (!isUnproductiveBudgetEnabled()) return false;
   const max = input.maxConsecutiveUnproductiveTurns ?? DEFAULT_MAX_CONSECUTIVE_UNPRODUCTIVE_TURNS;
   return input.consecutiveUnproductiveTurns >= max;
 }

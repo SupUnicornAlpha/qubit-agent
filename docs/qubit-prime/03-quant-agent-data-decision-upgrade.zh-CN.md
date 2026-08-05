@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 文档状态 | **规划稿 v0.1 · 归属裁决已与 01 边界对齐** |
+| 文档状态 | **规划稿 v0.2 · 归属裁决已与 01 边界对齐；券商行情桥已落地可插拔骨架** |
 | 日期 | 2026-08-04 |
 | 目标 | 把量化 Agent 从「会调用行情工具」升级为**可验证数据 → 可审计判断 → 确定性风控执行 → 事后归因**的闭环 |
 | 依赖 | [01 Runtime Core](./01-runtime-core-rust.zh-CN.md) 的 §2 模块边界；现有 Bun `market/*`、`execution/*`、A2A 与 Python connectors |
@@ -81,6 +81,31 @@ flowchart LR
 | L3 · 交易级 | 自动下单定价、风控、订单簿策略 | 受许可实时 feed 或券商/交易所 gateway；独立冗余与质量 SLA | **是，但须通过准入** |
 
 **硬规则**：公共源、抓取源和来源不明的聚合数据可以继续是 L0 fallback，但不能被静默提升为 L3。实时并不等于高质量；高质量至少要可说明授权范围、延迟、事件顺序、缺口处理和历史回放一致性。
+
+### 3.1.1 券商行情桥（可插拔 L2）
+
+交易与行情**分进程、分协议**：
+
+| 能力 | 实现 | 扩展方式 |
+|------|------|----------|
+| 下单 / 持仓 / 成交 | `python_connectors/broker_http_server.py` → `broker_gateway/*` | 新增 adapter + `BrokerProvider` |
+| 实时 quote / trade 推流 | `python_connectors/market_bridge/` + Bun `broker-market-bridge.ts` | 注册 descriptor + provider + env URL |
+
+内置桥：`futu`（OpenQuote）、`ib` / `supermind`（槽位，不伪造价格）。控制面源 id：`futu_bridge` / `ib_bridge` / `supermind_bridge`（`feedClass=L2_realtime_observe`，`streamOnly`，不进入历史 K 线 plan）。详见 [market-data-realtime.md](../market-data-realtime.md) 与 `python_connectors/market_bridge/README.md`。
+
+**Futu 打通**：官方插件 `connector:futu` + `futu-runtime.ts` 读取券商账户 OpenD 配置，自动拉起交易 HTTP（:18765）与行情 WS（:8765），并写入 `QUBIT_FUTU_MARKET_WS_URL`。保存 Futu sandbox/live 账户或调用 `POST /market/stream/bridges/futu/ensure` 即可。
+
+### 3.1.2 交易接入现状与缺口（审计）
+
+| Provider | 交易 HTTP | 行情 WS 桥 | 备注 |
+|----------|-----------|------------|------|
+| futu | ✅ OpenSecTradeContext | ✅ OpenQuote（需 OpenD + 行情权限） | 交易/行情可同机双进程 |
+| ib | ✅ ib_insync | 🟡 stub 槽位 | 行情需再接 reqMktData |
+| supermind（同花顺） | ✅ tick_trade_api | 🟡 stub 槽位 | SDK 偏交易；行情 API 待厂商环境 |
+| alpaca / ccxt | ✅ | — | 美股/加密；行情另走交易所源 |
+| eastmoney_emt | ✅（Windows） | — | 交易专用 |
+
+缺口：同花顺/IB 真实 quote push；L3 交易级 feed 准入与双源冗余；桥进程健康进 readiness（当前以 env URL 配置为 credentialsReady）。
 
 ### 3.2 统一市场事件契约（Market Event Contract v2）
 
@@ -283,6 +308,9 @@ Core 不订阅 tick，也不理解 `SSE`、`Wind` 或 `order book`。它只看�
 | 现有实现 | Prime 迁移位置 | 首步 |
 |----------|---------------|------|
 | `src/runtime/market/market-stream-gateway.ts` | OUT 数据面 gateway | 镜像写 `MarketEvent v2`、补 `dataRef` |
+| `src/runtime/market/broker-market-bridge.ts` | OUT 券商行情桥注册表 | 可插拔 futu/ib/supermind；与交易 HTTP 分离 |
+| `python_connectors/market_bridge/` | OUT 行情 WS 桥进程 | OpenQuote / stub；契约对齐 realtime 文档 |
+| `python_connectors/broker_http_server.py` | OUT 交易 HTTP 桥 | 保持与行情桥进程隔离 |
 | `src/runtime/market/market-data-source-control.ts` | OUT 控制面 / HOST 配置 | 增加许可、feed class、upstream independence |
 | `src/runtime/market/point-in-time-contract.ts` | OUT 数据质量服务 | 升级为 snapshot-level verdict；保留基础 OHLC 校验 |
 | `src/runtime/market/market-data-health.ts` | OUT 质量与观测 | 从健康检查扩到 freshness/gap/divergence |
@@ -315,4 +343,5 @@ Core 不订阅 tick，也不理解 `SSE`、`Wind` 或 `order book`。它只看�
 
 | 日期 | 版本 | 说明 |
 |------|------|------|
+| 2026-08-05 | v0.2 | 接入可插拔券商行情桥；审计交易 vs 行情分轨与缺口 |
 | 2026-08-04 | v0.1 | 初稿：冻结数据面/研究/执行归属，定义 Market Event、Snapshot、Thesis 与绞杀路径 |

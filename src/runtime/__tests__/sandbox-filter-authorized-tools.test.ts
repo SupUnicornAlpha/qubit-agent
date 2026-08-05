@@ -85,6 +85,16 @@ describe("sandboxExecutor.filterAuthorizedTools", () => {
     expect(tools).toEqual(["update_plan"]);
   });
 
+  test("官方互联网工具 web.fetch/web.search 不受业务工具白名单漂移影响", async () => {
+    const def = makeDef("pol-allow-builtin");
+    const { tools } = await sandboxExecutor.filterAuthorizedTools(
+      def,
+      ["web.fetch", "web.search", "edit_agent_pack"],
+      []
+    );
+    expect(tools.sort()).toEqual(["web.fetch", "web.search"]);
+  });
+
   test("MCP server：仅保留 allowedMcpServers 命中的", async () => {
     const def = makeDef("pol-allow-builtin");
     const { mcpServers } = await sandboxExecutor.filterAuthorizedTools(

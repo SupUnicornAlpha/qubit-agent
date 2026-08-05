@@ -1,0 +1,20 @@
+{
+  "instrument": {
+    "symbol": "600519",
+    "venue": "SSE",
+    "assetClass": "equity"
+  },
+  "feed": "licensed_realtime",
+  "kind": "quote",
+  "asOf": "2026-08-04T01:30:00.130000Z",
+  "freshness": "fresh",
+  "completeness": "complete",
+  "consistency": "insufficient_peers",
+  "structure": "valid",
+  "pointInTime": "point_in_time_valid",
+  "licenseUse": "research_only",
+  "tradable": false,
+  "useClass": "research_only",
+  "reasons": ["license:research_only", "consistency:insufficient_peers"],
+  "snapshotId": "mkt_snapshot_01fixture"
+}

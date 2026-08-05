@@ -66,9 +66,57 @@ async function main() {
    */
   attachExperiencePipes();
 
-  // Start HTTP + WS server
+  // 先听端口（Legacy Bridge 可被 Core 回调），再拉起/附着 Rust Core。
   const server = createServer();
   console.log(`[QUBIT] Server listening on http://${config.host}:${config.port}`);
+
+  const bridgeHost = config.host === "localhost" ? "127.0.0.1" : config.host;
+  const bridgeUrl = `http://${bridgeHost}:${config.port}/api/v1/prime-bridge`;
+  process.env.QUBIT_LEGACY_BRIDGE_URL =
+    process.env.QUBIT_LEGACY_BRIDGE_URL?.trim() || bridgeUrl;
+
+  const { ensureRustCoreRunning, stopOwnedRustCore } = await import(
+    "./runtime/prime/spawn-core"
+  );
+  const { attachPrimeCore, resolveAttachMode } = await import("./runtime/prime/attach");
+  const attachMode = resolveAttachMode(config.coreBackend);
+
+  if (config.spawnRustCore && attachMode !== "ts") {
+    const core = await ensureRustCoreRunning({
+      rustCoreUrl: config.rustCoreUrl,
+      bridgeUrl: process.env.QUBIT_LEGACY_BRIDGE_URL,
+    });
+    console.log(
+      `[QUBIT] Rust Core: spawned=${core.spawned} url=${core.url}` +
+        (core.pid ? ` pid=${core.pid}` : "") +
+        ` (${core.reason})`
+    );
+  }
+
+  const attach = await attachPrimeCore({
+    mode: attachMode,
+    rustCoreUrl: config.rustCoreUrl,
+  });
+  console.log(
+    `[QUBIT] Prime Core attach: mode=${attach.mode} active=${attach.activeBackend} ` +
+      `healthy=${attach.healthy} synced=${attach.syncedSpecs ?? "-"} (${attach.reason})`
+  );
+  console.log(
+    `[QUBIT] Core backend=${attach.activeBackend}` +
+      (attach.activeBackend === "rust" ? ` url=${attach.rustCoreUrl}` : "") +
+      ` bridge=${process.env.QUBIT_LEGACY_BRIDGE_URL}`
+  );
+
+  // Block silent TS ReAct fallback when debugging / defaulting to Rust Core.
+  if (attachMode === "rust" && (!attach.healthy || attach.activeBackend !== "rust")) {
+    console.error(
+      `[QUBIT] FATAL: QUBIT_CORE_BACKEND=rust but Core is not healthy ` +
+        `(active=${attach.activeBackend}, reason=${attach.reason}). ` +
+        `Refusing to fall back to TS. Build/start qubit-app-server or set ` +
+        `QUBIT_CORE_BACKEND=ts / QUBIT_CORE_STRICT=0 explicitly.`
+    );
+    process.exit(1);
+  }
 
   // 行情 readiness 会访问多个外部 provider，网络异常时可能耗时数十秒。
   // 必须在 HTTP 已监听后异步执行：服务先以 degraded/checking 对外提供 `/health`，
@@ -90,9 +138,9 @@ async function main() {
       });
   }
 
-  // Graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log("\n[QUBIT] Shutting down...");
+  const shutdown = async (signal: string) => {
+    console.log(`\n[QUBIT] Shutting down (${signal})...`);
+    stopOwnedRustCore();
     workflowScheduler.stop();
     executionWorker.stop();
     recommendationOutcomeWorker.stop();
@@ -103,19 +151,12 @@ async function main() {
     await stopAllAgents();
     server.stop();
     process.exit(0);
-  });
+  };
 
-  process.on("SIGTERM", async () => {
-    workflowScheduler.stop();
-    executionWorker.stop();
-    recommendationOutcomeWorker.stop();
-    strategyRuntimeWorker.stop();
-    monitorAggregatorWorker.stop();
-    experienceMaintenanceWorker.stop();
-    skillSelfEvolveWorker.stop();
-    await stopAllAgents();
-    server.stop();
-    process.exit(0);
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("exit", () => {
+    stopOwnedRustCore();
   });
 }
 

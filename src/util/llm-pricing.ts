@@ -101,6 +101,9 @@ const PRICE_TABLE: ReadonlyMap<string, PriceRow> = new Map<string, PriceRow>([
   ["deepseek:deepseek-chat", { inUsdPerM: 0.27, outUsdPerM: 1.1 }],
   ["deepseek:deepseek-reasoner", { inUsdPerM: 0.55, outUsdPerM: 2.19 }],
   ["deepseek:deepseek-r1", { inUsdPerM: 0.55, outUsdPerM: 2.19 }],
+  /** DeepSeek V4 flash (OpenAI-compatible surface; priced like chat until official sheet lands) */
+  ["deepseek:deepseek-v4-flash", { inUsdPerM: 0.27, outUsdPerM: 1.1 }],
+  ["deepseek:deepseek-v4", { inUsdPerM: 0.27, outUsdPerM: 1.1 }],
   ["qwen:qwen-plus", { inUsdPerM: 0.4, outUsdPerM: 1.2 }],
   ["qwen:qwen-max", { inUsdPerM: 1.4, outUsdPerM: 4.2 }],
   ["zhipu:glm-4", { inUsdPerM: 0.5, outUsdPerM: 1.5 }],
@@ -155,8 +158,52 @@ const PROVIDER_CACHE_WRITE_MULTIPLIER: ReadonlyMap<string, number> = new Map([
  *
  * 输出保留 6 位小数（约 1 个 token 量级），避免微调用因 round 丢失。
  */
+/**
+ * Normalize provider labels for pricing / llm_call_log.
+ * Core historically tagged all OpenAI-compatible clients as `openai_compatible`,
+ * which missed PRICE_TABLE / PROVIDER_FALLBACK and forced cost_usd=0 → UI "—".
+ */
+export function resolveLlmProviderForPricing(
+  provider: string,
+  model?: string | null,
+  baseUrl?: string | null
+): string {
+  const raw = (provider || "").trim().toLowerCase();
+  const modelL = (model || "").trim().toLowerCase();
+  const baseL = (baseUrl || "").trim().toLowerCase();
+
+  if (raw && raw !== "openai_compatible" && raw !== "prime_core" && raw !== "unknown") {
+    return raw;
+  }
+  if (
+    raw === "deepseek" ||
+    modelL.includes("deepseek") ||
+    baseL.includes("deepseek")
+  ) {
+    return "deepseek";
+  }
+  if (raw === "anthropic" || modelL.includes("claude") || baseL.includes("anthropic")) {
+    return "anthropic";
+  }
+  if (raw === "qwen" || modelL.includes("qwen") || baseL.includes("dashscope")) {
+    return "qwen";
+  }
+  if (raw === "zhipu" || modelL.includes("glm") || baseL.includes("bigmodel")) {
+    return "zhipu";
+  }
+  if (raw === "ollama" || baseL.includes("11434")) {
+    return "ollama";
+  }
+  if (raw === "openai" || modelL.startsWith("gpt-") || modelL.startsWith("o1") || modelL.startsWith("o3")) {
+    return "openai";
+  }
+  // Generic OpenAI-compatible without hints — treat as openai fallback pricing.
+  if (raw === "openai_compatible") return "openai";
+  return raw || "unknown";
+}
+
 export function estimateLlmCostUsd(input: LlmPricingInput): number {
-  const provider = input.provider.toLowerCase();
+  const provider = resolveLlmProviderForPricing(input.provider, input.model);
   const key = `${provider}:${input.model}`.toLowerCase();
   const exact = PRICE_TABLE.get(key);
   const row = exact ?? PROVIDER_FALLBACK.get(provider);

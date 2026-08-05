@@ -7,8 +7,16 @@ export type AgentLoopKind = z.infer<typeof AgentLoopKindSchema>;
  * 面向用户的 Agent 工作模式。它与 AgentLoopKind 正交：
  * - loop kind 决定“用哪个推理执行引擎”
  * - control mode 决定“本次任务允许做到哪一步”
+ *
+ * 与 Core `InteractionMode` 对齐：agent | plan | goal | ask | diagnose。
  */
-export const AgentControlModeSchema = z.enum(["agent", "plan", "goal"]);
+export const AgentControlModeSchema = z.enum([
+  "agent",
+  "plan",
+  "goal",
+  "ask",
+  "diagnose",
+]);
 export type AgentControlMode = z.infer<typeof AgentControlModeSchema>;
 
 export const WorkflowSopStepSchema = z.object({
@@ -118,6 +126,8 @@ export const LoopOptionsJsonSchema = z
      *   - agent：普通执行；按需调用工具和既定团队成员
      *   - plan：只分析并生成计划；运行时硬性禁止业务工具、派单和外部写入
      *   - goal：自主规划、执行、验证并闭环；允许按需召唤拓扑外专家
+     *   - ask：问答/分析；只读工具面（对齐 Core InteractionMode::Ask）
+     *   - diagnose：检查/根因归因（对齐 Core InteractionMode::Diagnose）
      */
     agentMode: AgentControlModeSchema.optional(),
     /** Conversation 的流程化执行配置；仅 workflow 界面额外暴露。 */
@@ -132,6 +142,11 @@ export const LoopOptionsJsonSchema = z
      * native -> agent，coding_agent -> goal。新代码必须写 agentMode。
      */
     experience: z.enum(["native", "coding_agent"]).optional(),
+    /**
+     * FS Workspace id（课题工作区）。写入 loop_options_json，供 pipe/bridge
+     * 解析记忆与说明书作用域；非 Core `wf_*` session workspace。
+     */
+    fsWorkspaceId: z.string().min(1).optional(),
   })
   .strip();
 

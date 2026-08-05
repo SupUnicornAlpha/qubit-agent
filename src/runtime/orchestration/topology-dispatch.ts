@@ -2,6 +2,13 @@ import { asc, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { agentDefinition } from "../../db/sqlite/schema";
 import type { AgentRole } from "../../types/entities";
+import {
+  ORCHESTRATOR_PRIME_BASE_TOOLS,
+  stripOrchestratorTeamCompatTools,
+} from "../market/contracts/prime-tool-host-surface";
+
+/** Orchestrator 静态基础工具（不含专家派单工具）；与 seed 4.0 / Prime D6 对齐。 */
+export { ORCHESTRATOR_PRIME_BASE_TOOLS as ORCHESTRATOR_BASE_TOOLS };
 
 export const TOPOLOGY_TEAM_TOOL_PREFIX = "call_team_";
 /** Bound evidence gathering so a specialist always reserves a turn to synthesize. */
@@ -341,39 +348,13 @@ export function assertTopologyTargetAllowed(
   }
 }
 
-/** Orchestrator 静态基础工具（不含专家派单工具）；与 seed 3.8 合同写工具对齐。 */
-export const ORCHESTRATOR_BASE_TOOLS = [
-  "update_plan",
-  "assign_task",
-  "market.resolve_symbol",
-  "market.data_sources",
-  "market.readiness",
-  "evaluate_risk",
-  "edit_agent_pack",
-  "search_memory",
-  "memory.consolidate_longterm",
-  "memory.refresh_workspace",
-  "skill.search",
-  "skill.use_record",
-  "skill.create",
-  "skill.patch",
-  "skill.archive",
-  "run_screener",
-  "recommendation.record",
-  "factor.list",
-  "factor.register",
-  "factor.evaluate",
-  "factor.autoEvaluate",
-  "strategy.create_version",
-  "strategy.compose",
-  "order.create_intent",
-  "call_mcp",
-] as const;
-
 /**
  * Merge seed/base orchestrator tools with topology `call_team_*` tools.
  * Must not wipe seed contract tools when topology sync runs after agent seed.
+ * Strips team-compat bulk tools (run_analyst_team / fuse_signals / …).
  */
 export function mergeOrchestratorToolsJson(topologyToolNames: string[]): string[] {
-  return [...new Set([...ORCHESTRATOR_BASE_TOOLS, ...topologyToolNames])];
+  return stripOrchestratorTeamCompatTools([
+    ...new Set([...ORCHESTRATOR_PRIME_BASE_TOOLS, ...topologyToolNames]),
+  ]);
 }

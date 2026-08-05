@@ -58,6 +58,12 @@ export type AgentOutput =
 export interface RuntimeAgentDefinition {
   id: string;
   role: AgentRole;
+  /**
+   * Prime Core execution kind (01 §6.6). Optional on legacy / test fixtures;
+   * seed / DB loader fill via `resolveExecutionKind({ role })` when absent.
+   * Core never branches on `role` — only on this field.
+   */
+  executionKind?: "primary" | "subagent" | "reactor";
   name: string;
   version: string;
   systemPrompt: string;

@@ -20,7 +20,7 @@ import {
   setCachedKlinesBars,
 } from "../../runtime/market/klines-request-cache";
 import {
-  type OperationalMarketDataSource,
+  type HistoricalMarketDataSource,
   recordMarketDataSourceAttempt,
   selectMarketDataSourcePlan,
 } from "../../runtime/market/market-data-source-control";
@@ -561,7 +561,7 @@ export class QubitNativeDataConnector extends DataConnector {
 
   private async fetchBarsFromSources(
     params: FetchBarsParams,
-    forcedSource?: OperationalMarketDataSource,
+    forcedSource?: HistoricalMarketDataSource,
     loadedSettings?: BuiltinConnectorInitConfigs
   ): Promise<BarData[]> {
     const liveSettings = loadedSettings ?? (await loadBuiltinConnectorSettings());

@@ -69,6 +69,99 @@ const MARKET_CONTRACTS: ToolContract[] = [
     sideEffects: "none",
     lifecycle: "active",
   },
+  {
+    name: "market.snapshot.get",
+    kind: "builtin",
+    category: "market",
+    arity: "either",
+    normalize: (raw) => {
+      const snapshotId = typeof raw.snapshotId === "string" ? raw.snapshotId.trim() : "";
+      if (snapshotId) return { ...raw, snapshotId };
+      return normalizeMarketSymbolParams(raw, {
+        arity: "either",
+        toolName: "market.snapshot.get",
+      });
+    },
+    requiredAfterNormalize: [],
+    errorCodes: {
+      ...MARKET_SYMBOL_ERRORS,
+      snapshot_not_found: "permanent",
+      market_snapshot_empty: "retryable",
+      invalid_asOf: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "none",
+    lifecycle: "active",
+  },
+  {
+    name: "research.thesis.write",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    normalize: (raw) => {
+      const snapshotId = String(raw.snapshotId ?? raw.snapshot_id ?? "").trim();
+      const symbols = extractSymbolArgs(raw);
+      const scope = Array.isArray(raw.instrumentScope)
+        ? (raw.instrumentScope as unknown[]).map(String)
+        : Array.isArray(raw.instrument_scope)
+          ? (raw.instrument_scope as unknown[]).map(String)
+          : symbols;
+      return {
+        ...raw,
+        ...(snapshotId ? { snapshotId } : {}),
+        ...(scope.length > 0 ? { instrumentScope: scope, symbols: scope } : {}),
+      };
+    },
+    requiredAfterNormalize: ["snapshotId"],
+    errorCodes: {
+      missing_snapshotId: "permanent",
+      missing_instrumentScope: "permanent",
+      invalid_confidence: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "research.forecast_book.get",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    normalize: normalizePassthrough,
+    errorCodes: {
+      forecast_book_not_found: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "none",
+    lifecycle: "active",
+  },
+  {
+    name: "research.forecast_book.link",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    normalize: normalizePassthrough,
+    errorCodes: {
+      forecast_book_missing_snapshot: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "portfolio.construct",
+    kind: "builtin",
+    category: "trading",
+    arity: "either",
+    normalize: normalizePassthrough,
+    errorCodes: {
+      thesis_not_found: "permanent",
+      snapshot_thesis_mismatch: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "none",
+    lifecycle: "active",
+  },
 ];
 
 const BY_NAME = new Map(MARKET_CONTRACTS.map((c) => [c.name, c]));

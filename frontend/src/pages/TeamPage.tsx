@@ -5,6 +5,7 @@ import { createConversationTurn, getOrCreateDefaultProject, createWorkflow, putF
 import type { AnalystTeamGraphPayload, AnalystTeamGraphInteraction, AnalystTeamGraphAgentStep, AnalystTeamGraphToolCall, AnalystTeamGraphMcpCall, StepStreamEvent, AgentControlMode, AgentLoopKind } from "../api/types";
 import { useAppStore } from "../store";
 import { stripToolCallSentinels } from "../lib/chatMessageHydration";
+import { isNarrativeNearDuplicate } from "../lib/narrativeNearDuplicate";
 import { KlinePanel } from "../components/chart/KlinePanel";
 import { NewsBriefSection } from "../components/chart/NewsBriefSection";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../components/ide/TeamAgentGraph";
@@ -878,26 +879,30 @@ export const TeamDashboardPanel: FC = () => {
      * ReAct 的 reason step 是模型本轮的可见过程说明（例如调用理由），不是供应商的
      * 隐藏思维链。原来右栏只读取 interaction：中间轮次只存在 agent_step，因而在
      * 工具调用后看起来只剩最后一段终态答复。把 Orchestrator 的已收口 reason step
-     * 并入同一时间线，令每一轮可回看；终态正文相同的那一段交由正式消息呈现，避免重影。
+     * 并入同一时间线，令每一轮可回看；终态正文相同 / 近重复的「收到」开场白交由
+     * 正式消息呈现，避免重影。
      */
-    const finalAnswerTexts = new Set(
-      (teamGraph?.interactions ?? [])
-        .filter(
-          (row) =>
-            row.fromRole === "orchestrator" &&
-            row.toRole === "user" &&
-            row.kind === "llm_message" &&
-            row.payloadJson &&
-            typeof row.payloadJson === "object" &&
-            (row.payloadJson as Record<string, unknown>).phase === "workflow_final_answer"
-        )
-        .map((row) => row.contentText.trim())
-        .filter(Boolean)
-    );
+    const finalAnswerTexts = (teamGraph?.interactions ?? [])
+      .filter(
+        (row) =>
+          row.fromRole === "orchestrator" &&
+          row.toRole === "user" &&
+          row.kind === "llm_message" &&
+          row.payloadJson &&
+          typeof row.payloadJson === "object" &&
+          (row.payloadJson as Record<string, unknown>).phase === "workflow_final_answer"
+      )
+      .map((row) => row.contentText.trim())
+      .filter(Boolean);
+    const finalAnswerSet = new Set(finalAnswerTexts);
+    const seenReasonNarratives: string[] = [];
     for (const step of teamGraph?.agentSteps ?? []) {
       if (step.agentRole !== "orchestrator" || step.phase !== "reason") continue;
       const text = stripToolCallSentinels(step.thought).trim();
-      if (!text || text === "Reasoning with LLM provider" || finalAnswerTexts.has(text)) continue;
+      if (!text || text === "Reasoning with LLM provider" || finalAnswerSet.has(text)) continue;
+      if (finalAnswerTexts.some((final) => isNarrativeNearDuplicate(text, final))) continue;
+      if (seenReasonNarratives.some((prev) => isNarrativeNearDuplicate(text, prev))) continue;
+      seenReasonNarratives.push(text);
       events.push({
         kind: "message",
         id: `reason-step:${step.id}`,
@@ -980,7 +985,13 @@ export const TeamDashboardPanel: FC = () => {
           setTeamPlan({
             steps,
             updatedAt: String(event.payload?.["updatedAt"] ?? ""),
-            ...(mode === "agent" || mode === "plan" || mode === "goal" ? { mode } : {}),
+            ...(mode === "agent" ||
+            mode === "plan" ||
+            mode === "goal" ||
+            mode === "ask" ||
+            mode === "diagnose"
+              ? { mode }
+              : {}),
             ...(goal && typeof goal === "object"
               ? { goal: goal as NonNullable<OrchestratorPlan["goal"]> }
               : {}),

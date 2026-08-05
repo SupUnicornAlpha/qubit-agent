@@ -9,6 +9,7 @@ import { getDb } from "../../db/sqlite/client";
 import { agentDefinition, agentSkill, project } from "../../db/sqlite/schema";
 import { resolveFsiSkillBody } from "../fsi/fsi-skill-resolver";
 import { syncBuiltinQuantSkillsForProject } from "./seed-builtin-quant-skills";
+import { pruneNoiseSkillsForProject } from "./prune-noise-skills";
 import { skillService } from "./skill-service";
 
 const FRONTMATTER_DESC_RE =
@@ -113,7 +114,7 @@ export async function syncDefinitionSkillsForProject(projectId: string): Promise
     if (ok) n += 1;
   }
   /**
-   * Wave-1（2026-06-10）：在 FSI 镜像之后追加 11 个内置 quant skill。
+   * Wave-1/2：在 FSI 镜像之后追加内置 quant skill（含 GitHub 改编）。
    * quant skill 不依赖 FSI 内容包或 env，是金融研究 base layer；幂等。
    */
   try {
@@ -121,6 +122,16 @@ export async function syncDefinitionSkillsForProject(projectId: string): Promise
   } catch (err) {
     console.warn(
       `[Seed:quant-skills] sync failed for project ${projectId}: ${(err as Error).message}`
+    );
+  }
+  try {
+    const pruned = await pruneNoiseSkillsForProject(projectId);
+    if (pruned > 0) {
+      console.log(`[Seed:skills] pruned ${pruned} noise skill(s) for project ${projectId}`);
+    }
+  } catch (err) {
+    console.warn(
+      `[Seed:skills] prune failed for project ${projectId}: ${(err as Error).message}`
     );
   }
   return n;

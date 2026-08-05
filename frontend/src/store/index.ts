@@ -376,10 +376,20 @@ const AGENT_PANEL_OPEN_LS = "qubit:agentPanelOpen";
 const AGENT_PANEL_WIDTH_LS = "qubit:agentPanelWidthPx";
 const CHROME_DENSITY_LS = "qubit:chromeDensity";
 
+const AGENT_CONTROL_MODES = new Set<AgentControlMode>([
+  "agent",
+  "ask",
+  "plan",
+  "goal",
+  "diagnose",
+]);
+
 function readAgentControlMode(): AgentControlMode {
   try {
     const value = localStorage.getItem(AGENT_CONTROL_MODE_LS);
-    return value === "plan" || value === "goal" ? value : "agent";
+    return value && AGENT_CONTROL_MODES.has(value as AgentControlMode)
+      ? (value as AgentControlMode)
+      : "agent";
   } catch {
     return "agent";
   }

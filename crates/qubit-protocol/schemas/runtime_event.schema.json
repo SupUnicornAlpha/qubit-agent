@@ -1,0 +1,399 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeEvent",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "seq",
+        "ts",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "ts": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "turn_started"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "iteration",
+        "seq",
+        "text",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "iteration": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "token"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "args",
+        "call_id",
+        "name",
+        "seq",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "args": true,
+        "call_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "tool_started"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "call_id",
+        "observation_ref",
+        "ok",
+        "seq",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "call_id": {
+          "type": "string"
+        },
+        "observation_ref": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "tool_finished"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "inbox_id",
+        "prompt",
+        "seq",
+        "type"
+      ],
+      "properties": {
+        "inbox_id": {
+          "type": "string"
+        },
+        "prompt": {
+          "$ref": "#/definitions/HitlPrompt"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "hitl_requested"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "plan",
+        "seq",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "plan": true,
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "plan_updated"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "delivery",
+        "lifecycle",
+        "seq",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "delivery": {
+          "$ref": "#/definitions/DeliveryVerdict"
+        },
+        "lifecycle": {
+          "$ref": "#/definitions/Lifecycle"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "turn_completed"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "error",
+        "seq",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/ErrorObject"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "turn_failed"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "reason",
+        "seq",
+        "type"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "runtime_degraded"
+          ]
+        }
+      }
+    }
+  ],
+  "definitions": {
+    "DeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "delivered",
+        "delivered_with_gaps",
+        "partial",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "DeliveryVerdict": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "reasons": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "$ref": "#/definitions/DeliveryStatus"
+        }
+      }
+    },
+    "ErrorObject": {
+      "type": "object",
+      "required": [
+        "code",
+        "message"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "data": true,
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "HitlInputKind": {
+      "type": "string",
+      "enum": [
+        "approve_only",
+        "single_choice",
+        "multi_choice",
+        "free_form"
+      ]
+    },
+    "HitlOption": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "HitlPrompt": {
+      "type": "object",
+      "required": [
+        "body",
+        "created_at",
+        "id",
+        "input_kind",
+        "title",
+        "turn_id"
+      ],
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "hard_rule": {
+          "default": false,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input_kind": {
+          "$ref": "#/definitions/HitlInputKind"
+        },
+        "options": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HitlOption"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      }
+    },
+    "Lifecycle": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "failed",
+        "cancelled",
+        "awaiting_hitl"
+      ]
+    }
+  }
+}

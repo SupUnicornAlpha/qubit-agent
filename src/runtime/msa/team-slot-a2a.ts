@@ -82,6 +82,7 @@ function minimalSlotDefinition(definitionId: string, role: AgentRole): RuntimeAg
   return {
     id: definitionId,
     role,
+    executionKind: "subagent",
     name: `team-slot-${role}`,
     version: "team-a2a",
     systemPrompt: "",

@@ -24,6 +24,11 @@ import type {
 } from "../../api/types";
 import { agentDisplayLabel, agentSelectOptionLabel } from "../../lib/agentDisplay";
 import { AGENT_ROLE_OPTIONS, isBuiltinAgentDefinitionId } from "../../lib/agentRoles";
+import {
+  EXECUTION_KIND_OPTIONS,
+  executionKindForRole,
+  type ExecutionKind,
+} from "../../lib/executionKind";
 import type { ConfigSubPage } from "../../store";
 import { AgentRuntimeTab } from "./AgentRuntimeTab";
 import { IconToolbarButton } from "../ui/IconToolbarButton";
@@ -73,6 +78,8 @@ export type ConfigAgentPanelProps = {
   setDraftDisplayName: (v: string) => void;
   draftDescription: string;
   setDraftDescription: (v: string) => void;
+  draftExecutionKind: ExecutionKind;
+  setDraftExecutionKind: (v: ExecutionKind) => void;
   draftTools: string[];
   setDraftTools: (v: string[] | ((prev: string[]) => string[])) => void;
   draftMaxIterations: number;
@@ -174,6 +181,8 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
   setDraftDisplayName,
   draftDescription,
   setDraftDescription,
+  draftExecutionKind,
+  setDraftExecutionKind,
   draftTools,
   setDraftTools,
   draftMaxIterations,
@@ -206,6 +215,9 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
     draftDisplayName.trim() ||
     (selectedBundle ? agentDisplayLabel(selectedBundle) : def?.name || def?.role || "Agent");
   const [newRole, setNewRole] = useState<string>(AGENT_ROLE_OPTIONS[0] ?? "research");
+  const [newExecutionKind, setNewExecutionKind] = useState<ExecutionKind>(
+    executionKindForRole(AGENT_ROLE_OPTIONS[0] ?? "research")
+  );
   const [newDisplayName, setNewDisplayName] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
@@ -520,11 +532,33 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
             }}
           >
             <div style={{ flex: "1 1 160px", minWidth: 0 }}>
-              <span style={label}>新建 Agent（角色）</span>
-              <select style={input} value={newRole} onChange={(e) => setNewRole(e.target.value)}>
+              <span style={label}>新建 Agent · 业务角色（labels）</span>
+              <select
+                style={input}
+                value={newRole}
+                onChange={(e) => {
+                  const role = e.target.value;
+                  setNewRole(role);
+                  setNewExecutionKind(executionKindForRole(role));
+                }}
+              >
                 {AGENT_ROLE_OPTIONS.map((r) => (
                   <option key={r} value={r}>
                     {r}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+              <span style={label}>Core 执行类型</span>
+              <select
+                style={input}
+                value={newExecutionKind}
+                onChange={(e) => setNewExecutionKind(e.target.value as ExecutionKind)}
+              >
+                {EXECUTION_KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
                   </option>
                 ))}
               </select>
@@ -547,6 +581,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                 setCreateBusy(true);
                 void createAgentDefinition({
                   role: newRole,
+                  executionKind: newExecutionKind,
                   displayName: newDisplayName.trim() || undefined,
                 })
                   .then((bundle) => {
@@ -598,6 +633,24 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
           {agentUiTab === "overview" && selectedBundle ? (
             <div className="qb-agent-field-grid">
               <div>
+                <span style={label}>Core 执行类型（ExecutionKind）</span>
+                <select
+                  style={input}
+                  value={draftExecutionKind}
+                  onChange={(e) => setDraftExecutionKind(e.target.value as ExecutionKind)}
+                >
+                  {EXECUTION_KIND_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
+                  Rust Core 只按此类型调度；保存草稿即同步到 Core。角色{" "}
+                  <code>{selectedBundle.definition.role}</code> 仅作 labels。
+                </p>
+              </div>
+              <div>
                 <span style={label}>中文显示名（保存草稿后生效）</span>
                 <input
                   style={input}
@@ -606,8 +659,8 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
                   placeholder={agentDisplayLabel(selectedBundle)}
                 />
                 <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
-                  角色 <code>{selectedBundle.definition.role}</code> · 内置名{" "}
-                  {selectedBundle.definition.name}
+                  内置名 {selectedBundle.definition.name} · id{" "}
+                  <code>{selectedBundle.definition.id}</code>
                 </p>
               </div>
               <div>
@@ -957,6 +1010,7 @@ export const ConfigAgentPanel: FC<ConfigAgentPanelProps> = ({
               mcpServersJson: draftMcpServerNames,
               skillsJson: draftSkills,
               subscriptionsJson: draftSubscriptions,
+              executionKind: draftExecutionKind,
               /**
                * 留空 → 写入空串：resolveLlmForAgent 看到空串会跳过 DB/inline 查找，
                * 直接降级到 .qubit/model.json 的默认模型（"" 在 if(agentProvider) 中为

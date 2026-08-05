@@ -120,9 +120,17 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     const fundamental = BY_ID.get("def-analyst-fundamental")!;
     expect(fundamental.tools).not.toContain("fetch_klines");
     expect(fundamental.tools).not.toContain("market.readiness");
-    expectTools("def-analyst-fundamental", ["fetch_fundamentals", "compute_valuation"]);
+    expectTools("def-analyst-fundamental", [
+      "fetch_fundamentals",
+      "compute_valuation",
+      "research.thesis.write",
+    ]);
 
-    expectTools("def-analyst-technical", ["fetch_klines", "compute_indicators"]);
+    expectTools("def-analyst-technical", [
+      "fetch_klines",
+      "compute_indicators",
+      "research.thesis.write",
+    ]);
     expect(BY_ID.get("def-analyst-technical")!.tools).not.toContain("market.readiness");
 
     expectTools("def-news-event", ["fetch_news", "fetch_news_sentiment"]);
@@ -183,14 +191,22 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expectTools("def-orchestrator", [
       "update_plan",
       "assign_task",
+      "market.resolve_symbol",
+      "market.snapshot.get",
+      "research.thesis.write",
+      "research.forecast_book.get",
+      "portfolio.construct",
+      "order.create_intent",
       "run_screener",
       "recommendation.record",
       "factor.register",
-      "strategy.create_version",
-      "order.create_intent",
-      "rule.register",
       "discovery.run",
+      "discovery.promote",
+      "strategy.create_version",
+      "strategy.compose",
       "backtest.run",
+      "evaluate_risk",
+      "rule.register",
       "search_memory",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
@@ -199,12 +215,17 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "skill.create",
       "skill.patch",
       "skill.archive",
+      "call_mcp",
     ]);
     const def = BY_ID.get("def-orchestrator")!;
-    expect(def.version).toMatch(/^3\./);
+    expect(def.version).toMatch(/^4\./);
     expect(def.tools).not.toContain("run_analyst_team");
     expect(def.tools).not.toContain("summarize_team_decision");
     expect(def.tools).not.toContain("fuse_signals");
+    expect(def.tools).not.toContain("edit_agent_pack");
+    expect(def.tools).not.toContain("market.readiness");
+    expect(def.tools).not.toContain("factor.list");
+    expect(def.tools).not.toContain("research.forecast_book.link");
     expect(def.tools).not.toContain("fetch_klines");
   });
 

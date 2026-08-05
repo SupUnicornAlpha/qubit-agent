@@ -25,11 +25,12 @@ export type ResourceOrigin =
   | "open_skill_market";
 
 const PRESETS: Record<ResourceOrigin, { label: string; color: string; bg: string; tip: string }> = {
+  /** `agent_skill.source` 直接映射 + 官方预制（builtin）。 */
   builtin: {
-    label: "内置",
+    label: "官方预制",
     color: "#93c5fd",
     bg: "rgba(59,130,246,0.12)",
-    tip: "项目自带，随安装包分发；可禁用但不可删除",
+    tip: "随系统 content-pack / seed 分发的官方 skill，可编辑但建议保留",
   },
   market: {
     label: "市场",
@@ -55,30 +56,29 @@ const PRESETS: Record<ResourceOrigin, { label: string; color: string; bg: string
     bg: "rgba(251,191,36,0.12)",
     tip: "从 Open Skill Market 安装",
   },
-  /** `agent_skill.source` 直接映射的四档：归纳 / 演化 / 用户手写 / 市场镜像。 */
   agent_created: {
-    label: "本地归纳",
+    label: "Agent 归纳",
     color: "#6ee7b7",
     bg: "rgba(16,185,129,0.12)",
-    tip: "Agent 在完成复杂任务后由 curator 归纳出的 skill（类 Hermes 程序性记忆）",
+    tip: "Agent 在完成复杂任务后由 curator 归纳出的 skill",
   },
   evolved: {
-    label: "演化",
+    label: "Agent 演化",
     color: "#fda4af",
     bg: "rgba(244,63,94,0.12)",
-    tip: "GEPA-lite evolver 在 baseline 之上突变得到的新版本，待审批后转 active",
+    tip: "evolver 在 baseline 之上突变得到的新版本，待审批后转 active",
   },
   user_authored: {
-    label: "手写",
+    label: "个人编写",
     color: "#c4b5fd",
     bg: "rgba(167,139,250,0.12)",
-    tip: "用户在配置中心手动新增的 skill",
+    tip: "用户在配置中心手动新增或编辑的 skill",
   },
   open_skill_market: {
-    label: "市场镜像",
+    label: "网络下载",
     color: "#fbbf24",
     bg: "rgba(251,191,36,0.12)",
-    tip: "从 Open Skill Market / SkillsMP 安装后镜像到 agent_skill 表，便于统一检索",
+    tip: "从 Open Skill Market / SkillsMP / GitHub 安装后镜像到 agent_skill",
   },
 };
 

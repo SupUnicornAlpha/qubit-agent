@@ -14,6 +14,8 @@ describe("resolveAgentControlMode", () => {
     expect(resolveAgentControlMode({ agentMode: "agent" })).toBe("agent");
     expect(resolveAgentControlMode({ agentMode: "plan" })).toBe("plan");
     expect(resolveAgentControlMode({ agentMode: "goal" })).toBe("goal");
+    expect(resolveAgentControlMode({ agentMode: "ask" })).toBe("ask");
+    expect(resolveAgentControlMode({ agentMode: "diagnose" })).toBe("diagnose");
   });
 
   test("maps legacy coding_agent to goal while canonical field wins", () => {
@@ -37,10 +39,23 @@ describe("Plan mode execution boundary", () => {
     expect(isToolAllowedInAgentControlMode("goal", "assign_task")).toBe(true);
   });
 
+  test("ask mode is read-only control plane", () => {
+    expect(isToolAllowedInAgentControlMode("ask", "update_plan")).toBe(true);
+    expect(isToolAllowedInAgentControlMode("ask", "workspace.read")).toBe(true);
+    expect(isToolAllowedInAgentControlMode("ask", "fetch_klines")).toBe(false);
+    expect(isToolAllowedInAgentControlMode("ask", "assign_task")).toBe(false);
+    expect(isToolAllowedInAgentControlMode("diagnose", "fetch_klines")).toBe(true);
+  });
+
   test("prompt explicitly forbids execution and requires a persisted plan", () => {
     const prompt = buildAgentControlModePrompt("plan", true);
     expect(prompt).toContain("不得实际查询行情");
     expect(prompt).toContain("必须调用一次 `update_plan`");
+  });
+
+  test("ask / diagnose prompts describe mode boundaries", () => {
+    expect(buildAgentControlModePrompt("ask", true)).toContain("Ask（只读问答）");
+    expect(buildAgentControlModePrompt("diagnose", true)).toContain("检查（Diagnose）");
   });
 });
 

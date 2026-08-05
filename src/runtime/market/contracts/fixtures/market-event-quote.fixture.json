@@ -1,0 +1,37 @@
+{
+  "eventId": "mev_01fixture_quote",
+  "kind": "quote",
+  "instrument": {
+    "symbol": "600519",
+    "venue": "SSE",
+    "assetClass": "equity"
+  },
+  "eventTs": "2026-08-04T01:30:00.123456Z",
+  "recvTs": "2026-08-04T01:30:00.130000Z",
+  "source": {
+    "provider": "wind",
+    "feed": "licensed_realtime",
+    "upstreamFamily": "wind",
+    "feedClass": "L2_realtime_observe",
+    "licenseUse": "research_only"
+  },
+  "sequence": {
+    "channel": "quote:SSE:600519",
+    "value": 981273,
+    "isContiguous": true,
+    "providerSequenceAvailable": true
+  },
+  "schemaVersion": 2,
+  "payload": {
+    "lastPrice": 1688.5,
+    "bidPrice": 1688.0,
+    "askPrice": 1688.8
+  },
+  "rawPayloadHash": "sha256:fixture_quote_payload",
+  "quality": {
+    "state": "observed",
+    "freshnessMs": 7,
+    "revision": 0
+  },
+  "ingestedAt": "2026-08-04T01:30:00.131000Z"
+}

@@ -584,6 +584,50 @@ export const skillMarketInstall = sqliteTable(
   })
 );
 
+/**
+ * OAuth2 connector credentials (P2 plugins).
+ * Tokens stored plaintext locally (same policy as llm_provider_config.api_key_secret).
+ */
+export const connectorAuth = sqliteTable(
+  "connector_auth",
+  {
+    id: id(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    pluginId: text("plugin_id").notNull(),
+    provider: text("provider").notNull().default("generic_oauth2"),
+    displayName: text("display_name").notNull().default(""),
+    status: text("status", {
+      enum: ["pending", "connected", "error", "revoked"],
+    })
+      .notNull()
+      .default("pending"),
+    clientId: text("client_id").notNull().default(""),
+    clientSecret: text("client_secret").notNull().default(""),
+    authorizeUrl: text("authorize_url").notNull().default(""),
+    tokenUrl: text("token_url").notNull().default(""),
+    scopes: text("scopes").notNull().default(""),
+    redirectUri: text("redirect_uri").notNull().default(""),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    tokenType: text("token_type").notNull().default("Bearer"),
+    expiresAt: text("expires_at"),
+    state: text("state"),
+    errorMessage: text("error_message"),
+    mcpServerName: text("mcp_server_name"),
+    metaJson: text("meta_json", { mode: "json" }).notNull().default("{}"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => ({
+    projectPluginUnique: uniqueIndex("idx_connector_auth_project_plugin").on(
+      table.projectId,
+      table.pluginId
+    ),
+  })
+);
+
 export const agentDefinition = sqliteTable("agent_definition", {
   id: id(),
   role: text("role", {
@@ -614,6 +658,18 @@ export const agentDefinition = sqliteTable("agent_definition", {
       "memory_curator",
     ],
   }).notNull(),
+  /**
+   * Prime Core 执行类型（migration 0105）。Core 只按此字段分支调度：
+   *   - primary  : 用户会话主 Agent
+   *   - subagent : 被 invoke 的专家
+   *   - reactor  : 事件/队列唤醒
+   * legacy `role` 仅作业务标签（→ AgentSpec.labels），不再驱动 Core 分支。
+   */
+  executionKind: text("execution_kind", {
+    enum: ["primary", "subagent", "reactor"],
+  })
+    .notNull()
+    .default("subagent"),
   name: text("name").notNull(),
   version: text("version").notNull().default("1.0.0"),
   systemPrompt: text("system_prompt").notNull(),

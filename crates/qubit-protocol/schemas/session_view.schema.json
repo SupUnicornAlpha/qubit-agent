@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SessionView",
+  "type": "object",
+  "required": [
+    "agent_instance_id",
+    "agent_spec_id",
+    "created_at_ms",
+    "event_seq",
+    "execution_kind",
+    "session_id",
+    "status",
+    "updated_at_ms",
+    "workspace_id"
+  ],
+  "properties": {
+    "agent_instance_id": {
+      "type": "string"
+    },
+    "agent_spec_id": {
+      "type": "string"
+    },
+    "created_at_ms": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "event_seq": {
+      "description": "Monotonic event seq for `events.subscribe(from_seq)`.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0.0
+    },
+    "execution_kind": {
+      "$ref": "#/definitions/ExecutionKind"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/definitions/SessionStatus"
+    },
+    "updated_at_ms": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "workspace_id": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "ExecutionKind": {
+      "description": "Who may own user turns, who is invoke-only, who is event-driven.",
+      "oneOf": [
+        {
+          "description": "User-facing hub; may also be invoked by other agents.",
+          "type": "string",
+          "enum": [
+            "primary"
+          ]
+        },
+        {
+          "description": "Expert; invoke-only; isolated context window.",
+          "type": "string",
+          "enum": [
+            "subagent"
+          ]
+        },
+        {
+          "description": "External trigger (MQ / A2A / webhook / domain event).",
+          "type": "string",
+          "enum": [
+            "reactor"
+          ]
+        }
+      ]
+    },
+    "SessionStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "archived",
+        "degraded"
+      ]
+    }
+  }
+}

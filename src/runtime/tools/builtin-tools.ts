@@ -17,18 +17,23 @@ import { EXECUTION_HANDLERS } from "./execution-handlers";
 import { FACTOR_RESEARCH_HANDLERS } from "./factor-research-handlers";
 import { MARKET_ANALYSIS_HANDLERS } from "./market-analysis-handlers";
 import { MEMORY_HANDLERS } from "./memory-handlers";
+import { PRIME_MEMORY_HANDLERS } from "./prime-memory-handlers";
 import { REPORTING_HANDLERS } from "./reporting-handlers";
+import { RESEARCH_THESIS_HANDLERS } from "./research-thesis-handlers";
 import { SKILL_HANDLERS } from "./skill-handlers";
 import { STRATEGY_EXECUTION_HANDLERS } from "./strategy-execution-handlers";
 import { resolveConnectorForTool } from "./tool-routes";
 import type { BuiltinToolContext, BuiltinToolHandler } from "./types";
 import { WEB_FETCH_HANDLER } from "./web-fetch-handler";
+import { WEB_SEARCH_HANDLER } from "./web-search-handler";
 
 /** Tools implemented in-process (not routed to ACP connectors). */
 const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   ...ORCHESTRATION_HANDLERS,
   ...MARKET_ANALYSIS_HANDLERS,
+  ...RESEARCH_THESIS_HANDLERS,
   ...MEMORY_HANDLERS,
+  ...PRIME_MEMORY_HANDLERS,
   ...SKILL_HANDLERS,
   ...EXECUTION_HANDLERS,
   ...REPORTING_HANDLERS,
@@ -36,6 +41,7 @@ const BUILTIN_HANDLERS: Record<string, BuiltinToolHandler> = {
   ...STRATEGY_EXECUTION_HANDLERS,
 
   "web.fetch": WEB_FETCH_HANDLER,
+  "web.search": WEB_SEARCH_HANDLER,
   edit_agent_pack: async (ctx, params) => {
     const targetRaw = params.target;
     const markdown = typeof params.markdown === "string" ? params.markdown : "";

@@ -1,0 +1,18 @@
+[package]
+name = "qubit-policy"
+description = "Qubit Prime recipe loader → PolicySnapshot (DATA; engine stays in Core)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qubit-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+hex = "0.4"
+
+[dev-dependencies]
+serde_json = { workspace = true }

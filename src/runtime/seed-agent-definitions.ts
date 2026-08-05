@@ -223,6 +223,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
     const baseValues = {
       id: def.id,
       role: def.role,
+      executionKind: def.executionKind,
       name: def.name,
       version: def.version,
       systemPrompt: def.systemPrompt,
@@ -251,6 +252,7 @@ export async function seedAgentDefinitions(options: SeedOptions = {}): Promise<S
       }
       updateSet[key] = value;
     };
+    maybeAdd("execution_kind", "executionKind", def.executionKind);
     maybeAdd("system_prompt", "systemPrompt", def.systemPrompt);
     maybeAdd("tools_json", "toolsJson", def.tools);
     maybeAdd("mcp_servers_json", "mcpServersJson", mcpServers);

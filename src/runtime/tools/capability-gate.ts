@@ -125,6 +125,16 @@ export async function listAuthorizedCapabilities(input: {
   if (input.agentMode === "plan") {
     tools = tools.filter((tool) => tool === "update_plan" || isAgentControlPlaneTool(tool));
     mcpServers = [];
+  } else if (input.agentMode === "ask") {
+    tools = tools.filter(
+      (tool) =>
+        tool === "update_plan" ||
+        tool === "workspace.read" ||
+        tool === "workspace.list" ||
+        tool === "session.diagnose" ||
+        isAgentControlPlaneTool(tool)
+    );
+    mcpServers = [];
   }
 
   return {
@@ -145,11 +155,18 @@ export async function authorizeCapability(call: CapabilityCall): Promise<Capabil
 
   const toolName = call.name;
   if (agentMode && !isToolAllowedInAgentControlMode(agentMode as AgentControlMode, toolName)) {
+    const askBlocked = agentMode === "ask";
     return deny(
-      "plan_mode_blocked",
-      `Plan 模式不允许工具 ${toolName}`,
-      "改用 update_plan 保存计划，或退出 Plan 模式后再执行。",
-      ["update_plan"]
+      askBlocked ? "ask_mode_blocked" : "plan_mode_blocked",
+      askBlocked
+        ? `Ask 模式不允许工具 ${toolName}`
+        : `Plan 模式不允许工具 ${toolName}`,
+      askBlocked
+        ? "Ask 仅允许只读控制面工具，或切换到 Agent/Goal 后再执行。"
+        : "改用 update_plan 保存计划，或退出 Plan 模式后再执行。",
+      askBlocked
+        ? ["update_plan", "workspace.read", "workspace.list", "session.diagnose"]
+        : ["update_plan"]
     );
   }
 

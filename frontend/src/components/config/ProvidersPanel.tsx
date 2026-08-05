@@ -24,7 +24,6 @@ import {
   type ProviderKind,
   type ProviderRecord,
 } from "../../api/backend";
-import { MarketDataSourcesPanel } from "./MarketDataSourcesPanel";
 
 const KIND_LABELS: Record<ProviderKind, string> = {
   factor_compute: "因子计算",
@@ -128,8 +127,9 @@ export const ProvidersPanel: FC = () => {
 
   return (
     <div style={styles.shell}>
-      <MarketDataSourcesPanel />
-      <div style={styles.divider} />
+      <p style={styles.crossLink}>
+        行情源健康、Prime feed class / license 与证据链工具面已迁到配置中心「数据源 / 工具」页。
+      </p>
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Provider 注册中心</div>
@@ -312,7 +312,16 @@ const styles: Record<string, CSSProperties> = {
     gap: 16,
     color: "var(--qb-body-fg, inherit)",
   },
-  divider: { height: 1, background: "var(--qb-sidebar-border, var(--qb-border-subtle))" },
+  crossLink: {
+    margin: 0,
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: "var(--qb-main-meta, var(--qb-text-muted))",
+    padding: "8px 10px",
+    borderRadius: 6,
+    border: "1px solid var(--qb-sidebar-border, var(--qb-border))",
+    background: "var(--qb-main-panel-bg, transparent)",
+  },
   header: {
     display: "flex",
     alignItems: "flex-start",

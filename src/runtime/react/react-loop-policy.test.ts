@@ -6,6 +6,7 @@ import type { AgentGraphState } from "./state";
 const baseDef: RuntimeAgentDefinition = {
   id: "def-test",
   role: "analyst_fundamental",
+  executionKind: "subagent",
   name: "Test",
   version: "1",
   systemPrompt: "",

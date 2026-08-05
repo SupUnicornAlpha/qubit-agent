@@ -1,4 +1,5 @@
 import type { AgentDefinitionBundle } from "../api/types";
+import { resolveExecutionKind } from "./executionKind";
 
 /** 内置角色中文展示名（profile.displayName 为空时的回退） */
 export const AGENT_ROLE_DISPLAY_ZH: Record<string, string> = {
@@ -33,10 +34,14 @@ export function agentDisplayLabel(bundle: {
 export function agentSelectOptionLabel(bundle: AgentDefinitionBundle): string {
   const zh = agentDisplayLabel(bundle);
   const role = bundle.definition.role;
+  const kind = resolveExecutionKind({
+    executionKind: bundle.definition.executionKind,
+    role,
+  });
   const ver = bundle.definition.version;
   const disabled = bundle.definition.enabled === false ? "（已禁用）" : "";
   if (zh === role || zh === bundle.definition.name) {
-    return `${role} · ${ver} — ${zh}${disabled}`;
+    return `${kind} · ${role} · ${ver} — ${zh}${disabled}`;
   }
-  return `${role} · ${ver} — ${zh}（${bundle.definition.name}）${disabled}`;
+  return `${kind} · ${role} · ${ver} — ${zh}（${bundle.definition.name}）${disabled}`;
 }

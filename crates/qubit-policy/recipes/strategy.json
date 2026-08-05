@@ -1,0 +1,58 @@
+{
+  "key": "strategy",
+  "aliases": ["strategy_authoring", "strategy_long_short", "st", "long_short"],
+  "version": "2026-08-05.3",
+  "capability_owners": {
+    "strategy": "strategy"
+  },
+  "role_tool_allowlist": {
+    "orchestrator": ["update_plan", "topology.dispatch"],
+    "strategy": ["strategy.create_version", "strategy.compose", "backtest.run"]
+  },
+  "stall_budget": {
+    "tools": [
+      "market.readiness",
+      "market.resolve_symbol",
+      "factor.list",
+      "run_screener",
+      "update_plan",
+      "run_backtest",
+      "mcp:mathjs:evaluate"
+    ],
+    "key": "tool_fingerprint",
+    "max_success": 3,
+    "on_exceed": "strip_from_surface"
+  },
+  "recovery": {
+    "after_probe_failure": "continue_without_realtime",
+    "forbid_gap_as_final_answer": true
+  },
+  "completion": {
+    "artifacts": [
+      {
+        "table": "strategy_version",
+        "min_rows": 1,
+        "research_min_rows": 1,
+        "required_fields": ["name"],
+        "scope": "workflow"
+      },
+      {
+        "table": "strategy_composition",
+        "min_rows": 1,
+        "research_min_rows": 0,
+        "scope": "workflow"
+      }
+    ],
+    "required_tools": [{ "capability": "strategy", "min_success": 1 }],
+    "answer_schema": {
+      "required_sections": ["goal", "evidence", "decision", "risks", "gaps"]
+    }
+  },
+  "checklist_prompt": [
+    "1. strategy.create_version",
+    "2. strategy.compose",
+    "3. backtest.run（如工具面允许）",
+    "4. 输出五段答案；禁止 screener/readiness/factor.list 代替策略交付",
+    "同类工具连打 ≤3 次后必须写终答，禁止无目的刷屏"
+  ]
+}

@@ -26,14 +26,34 @@ describe("iteration-budget-policy", () => {
     expect(nextUnproductiveTurnCount({ previous: 3, madeProgress: false })).toBe(4);
   });
 
-  test("default stop threshold is 4", () => {
-    expect(DEFAULT_MAX_CONSECUTIVE_UNPRODUCTIVE_TURNS).toBe(4);
-    expect(
-      shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 3 })
-    ).toBe(false);
-    expect(
-      shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 4 })
-    ).toBe(true);
+  test("default stop threshold is 4 when budget enabled", () => {
+    const prev = process.env.QUBIT_UNPRODUCTIVE_BUDGET;
+    process.env.QUBIT_UNPRODUCTIVE_BUDGET = "1";
+    try {
+      expect(DEFAULT_MAX_CONSECUTIVE_UNPRODUCTIVE_TURNS).toBe(4);
+      expect(
+        shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 3 })
+      ).toBe(false);
+      expect(
+        shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 4 })
+      ).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.QUBIT_UNPRODUCTIVE_BUDGET;
+      else process.env.QUBIT_UNPRODUCTIVE_BUDGET = prev;
+    }
+  });
+
+  test("unproductive budget is off by default", () => {
+    const prev = process.env.QUBIT_UNPRODUCTIVE_BUDGET;
+    delete process.env.QUBIT_UNPRODUCTIVE_BUDGET;
+    try {
+      expect(
+        shouldStopForUnproductiveTurns({ consecutiveUnproductiveTurns: 99 })
+      ).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.QUBIT_UNPRODUCTIVE_BUDGET;
+      else process.env.QUBIT_UNPRODUCTIVE_BUDGET = prev;
+    }
   });
 
   test("detects gateway failure text", () => {

@@ -92,6 +92,32 @@ describe("detectSemanticToolFailure", () => {
     ).toBe("dispatch_timeout_data_unknown");
   });
 
+  test("does not treat unproductive budget stop as semantic data failure", () => {
+    expect(
+      detectSemanticToolFailure("call_team_market_data", {
+        builtinResult: {
+          dispatched: true,
+          completed: true,
+          success: false,
+          errorCode: "unproductive_turn_budget_exhausted",
+          errorMessage: "收到。目标明确：…",
+          partialEvidence: true,
+        },
+      })
+    ).toBeNull();
+    expect(
+      detectSemanticToolFailure("call_team_market_data", {
+        builtinResult: {
+          dispatched: true,
+          completed: true,
+          success: false,
+          errorCode: "unproductive_turn_budget_exhausted",
+          errorMessage: "收到。目标明确：…",
+        },
+      })
+    ).toBeNull();
+  });
+
   test("uses a TaskResult v2 error code instead of an unstructured fallback", () => {
     expect(
       detectSemanticToolFailure("call_team_analyst_technical", {

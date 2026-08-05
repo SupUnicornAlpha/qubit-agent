@@ -69,7 +69,15 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
   outputContract: { primary: "analyst_signal_fusion", secondary: ["debate_transcript"] },
   requiredCapabilities: [],
   toolPreset: {
-    builtinTools: ["run_analyst_team", "fetch_klines", "fetch_news"],
+    builtinTools: [
+      "update_plan",
+      "assign_task",
+      "market.snapshot.get",
+      "research.thesis.write",
+      "portfolio.construct",
+      "fetch_klines",
+      "fetch_news",
+    ],
     connectors: ["qubit-data", "qubit-news", "qubit-research"],
     mcpServers: [],
     defaultParams: {},

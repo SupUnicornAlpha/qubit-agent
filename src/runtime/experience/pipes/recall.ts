@@ -59,6 +59,11 @@ export interface RecallContext {
   agentStepId?: string | null;
   /** 单测可关掉，避免污染外部 Bus */
   silentEmit?: boolean;
+  /**
+   * FS Workspace id：有值时按 `scope=workspace` 召回，并仍合并 `scope=project`
+   *（过渡期双查询），避免旧 project 维经验丢失。
+   */
+  workspaceId?: string | null;
 }
 
 export interface RecallResult {
@@ -229,40 +234,45 @@ export class ExperienceRecall {
       const sharedKinds = kinds.filter(
         (k) => k === "semantic" || k === "procedural" || k === "identity"
       );
-      if (sharedKinds.length > 0) {
-        const hits = await vstore.search(
-          queryVec,
-          {
-            scope: "project",
-            scopeId: ctx.projectId,
-            model: client.model,
-            dimension: client.dimension,
-            kinds: sharedKinds,
-            visibilities: ["project_shared"],
-          },
-          lance
-        );
-        for (const h of hits) out.set(h.experienceId, h);
-      }
 
-      if (kinds.includes("reflective") && ctx.definitionId) {
-        const hits = await vstore.search(
-          queryVec,
-          {
-            scope: "project",
-            scopeId: ctx.projectId,
-            model: client.model,
-            dimension: client.dimension,
-            kinds: ["reflective"],
-            visibilities: ["agent_private"],
-            definitionId: ctx.definitionId,
-          },
-          lance
-        );
-        for (const h of hits) {
-          // 若同 id 已被 shared 命中（理论不应该，但保护），取分高的
-          const existing = out.get(h.experienceId);
-          if (!existing || h.score > existing.score) out.set(h.experienceId, h);
+      for (const target of recallScopeTargets(ctx)) {
+        if (sharedKinds.length > 0) {
+          const hits = await vstore.search(
+            queryVec,
+            {
+              scope: target.scope,
+              scopeId: target.scopeId,
+              model: client.model,
+              dimension: client.dimension,
+              kinds: sharedKinds,
+              visibilities: ["project_shared"],
+            },
+            lance
+          );
+          for (const h of hits) {
+            const existing = out.get(h.experienceId);
+            if (!existing || h.score > existing.score) out.set(h.experienceId, h);
+          }
+        }
+
+        if (kinds.includes("reflective") && ctx.definitionId) {
+          const hits = await vstore.search(
+            queryVec,
+            {
+              scope: target.scope,
+              scopeId: target.scopeId,
+              model: client.model,
+              dimension: client.dimension,
+              kinds: ["reflective"],
+              visibilities: ["agent_private"],
+              definitionId: ctx.definitionId,
+            },
+            lance
+          );
+          for (const h of hits) {
+            const existing = out.get(h.experienceId);
+            if (!existing || h.score > existing.score) out.set(h.experienceId, h);
+          }
         }
       }
     } catch (err) {
@@ -277,38 +287,40 @@ export class ExperienceRecall {
   private async collectPool(ctx: RecallContext, kinds: ExperienceKind[]): Promise<Experience[]> {
     const out: Experience[] = [];
 
-    // semantic / procedural / identity → project_shared
+    // semantic / procedural / identity → project_shared（workspace 过渡期双查）
     const sharedKinds = kinds.filter(
       (k) => k === "semantic" || k === "procedural" || k === "identity"
     );
-    if (sharedKinds.length > 0) {
-      const shared = await this.store.query({
-        kind: sharedKinds,
-        scope: "project",
-        scopeId: ctx.projectId,
-        archivalMode: "exclude_archived",
-        orderBy: "quality_desc",
-        limit: POOL_LIMIT_PER_KIND,
-      });
-      out.push(...shared);
-    }
+    for (const target of recallScopeTargets(ctx)) {
+      if (sharedKinds.length > 0) {
+        const shared = await this.store.query({
+          kind: sharedKinds,
+          scope: target.scope,
+          scopeId: target.scopeId,
+          archivalMode: "exclude_archived",
+          orderBy: "quality_desc",
+          limit: POOL_LIMIT_PER_KIND,
+        });
+        out.push(...shared);
+      }
 
-    // reflective → 仅 ctx.definitionId 自己
-    if (kinds.includes("reflective") && ctx.definitionId) {
-      const own = await this.store.query({
-        kind: "reflective",
-        scope: "project",
-        scopeId: ctx.projectId,
-        definitionId: ctx.definitionId,
-        archivalMode: "exclude_archived",
-        orderBy: "quality_desc",
-        limit: POOL_LIMIT_PER_KIND,
-      });
-      out.push(...own);
+      // reflective → 仅 ctx.definitionId 自己
+      if (kinds.includes("reflective") && ctx.definitionId) {
+        const own = await this.store.query({
+          kind: "reflective",
+          scope: target.scope,
+          scopeId: target.scopeId,
+          definitionId: ctx.definitionId,
+          archivalMode: "exclude_archived",
+          orderBy: "quality_desc",
+          limit: POOL_LIMIT_PER_KIND,
+        });
+        out.push(...own);
+      }
     }
 
     // episodic 通常不召回（噪声大）；P2 起按 sub_kind=workflow_trail 选择性扩展
-    return out;
+    return mergeExperiences([], out);
   }
 
   private scoreOne(
@@ -371,6 +383,17 @@ export class ExperienceRecall {
 }
 
 // ───────────────────────── 纯函数辅助 ─────────────────────────
+
+/** workspace 过渡期：有 workspaceId 时双查 workspace + project；否则仅 project。 */
+export function recallScopeTargets(
+  ctx: Pick<RecallContext, "projectId" | "workspaceId">
+): Array<{ scope: "workspace" | "project"; scopeId: string }> {
+  const targets: Array<{ scope: "workspace" | "project"; scopeId: string }> = [];
+  const ws = ctx.workspaceId?.trim();
+  if (ws) targets.push({ scope: "workspace", scopeId: ws });
+  if (ctx.projectId) targets.push({ scope: "project", scopeId: ctx.projectId });
+  return targets;
+}
 
 export function tokenize(query: string): string[] {
   if (!query) return [];

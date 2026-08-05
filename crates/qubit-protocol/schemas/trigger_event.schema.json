@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TriggerEvent",
+  "type": "object",
+  "required": [
+    "event_id",
+    "payload",
+    "source"
+  ],
+  "properties": {
+    "correlation_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "payload": true,
+    "source": {
+      "$ref": "#/definitions/TriggerSpec"
+    },
+    "target_spec_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "definitions": {
+    "TriggerSpec": {
+      "description": "External wake-up sources for [`ExecutionKind::Reactor`].",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "topic"
+          ],
+          "properties": {
+            "filter": true,
+            "kind": {
+              "type": "string",
+              "enum": [
+                "queue"
+              ]
+            },
+            "topic": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "capability",
+            "kind"
+          ],
+          "properties": {
+            "capability": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "a2a"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "webhook"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "secret_ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "event_name",
+            "kind"
+          ],
+          "properties": {
+            "event_name": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "domain_event"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "cron",
+            "kind"
+          ],
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "schedule"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

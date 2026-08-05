@@ -42,12 +42,14 @@ export interface QuantSkillSpec {
 }
 
 /**
- * 11 个 Wave-1 内置金融 skill。
+ * 11 + Wave-2 金融 skill（GitHub 量化 skill 改编）。
  *
  * 选型原则：
- *   - 覆盖现有 11 个 def 的核心使用场景（基本面/技术/宏观/情绪/research/risk/backtest/live trading）
- *   - 每条 ≈ 1-3KB markdown，包含可被 LLM 直接拆解执行的 step-by-step 流程
- *   - 优先调用既有 builtin tool / connector / MCP（投递就用、零额外接入）
+ *   - 覆盖现有 def 的核心场景（基本面/技术/宏观/情绪/research/risk/backtest/live）
+ *   - 每条 ≈ 1-3KB markdown，可被 LLM 直接拆解执行
+ *   - 优先调用既有 builtin tool / connector / MCP
+ *   - Wave-2 改编自公开 Agent Skills（agiprolabs/claude-trading-skills 等），
+ *     正文标注 adaptedFrom，工具面 remap 到 Qubit Prime
  */
 export const SEED_QUANT_SKILLS: ReadonlyArray<QuantSkillSpec> = [
   {
@@ -115,6 +117,30 @@ export const SEED_QUANT_SKILLS: ReadonlyArray<QuantSkillSpec> = [
     fileName: "order-intent-buy-checklist.md",
     roles: ["research", "risk"],
     tags: ["live-trading", "order", "intent", "checklist"],
+  },
+  {
+    slug: "pairs-cointegration",
+    fileName: "pairs-cointegration.md",
+    roles: ["analyst_technical", "research", "backtest"],
+    tags: ["pairs", "cointegration", "mean-reversion", "alpha"],
+  },
+  {
+    slug: "kelly-position-sizing",
+    fileName: "kelly-position-sizing.md",
+    roles: ["research", "risk"],
+    tags: ["sizing", "kelly", "risk", "portfolio"],
+  },
+  {
+    slug: "walk-forward-validation",
+    fileName: "walk-forward-validation.md",
+    roles: ["backtest", "research"],
+    tags: ["backtest", "validation", "overfitting", "walk-forward"],
+  },
+  {
+    slug: "portfolio-analytics",
+    fileName: "portfolio-analytics.md",
+    roles: ["research", "risk", "backtest"],
+    tags: ["portfolio", "analytics", "performance", "risk"],
   },
 ] as const;
 
@@ -202,6 +228,8 @@ export async function syncBuiltinQuantSkillsForProject(projectId: string): Promi
           roles: [...spec.roles],
           tags: [...spec.tags],
           syncedFrom: "seed-builtin-quant-skills",
+          official: true,
+          originKind: "official",
         },
       });
     } else {
@@ -219,6 +247,8 @@ export async function syncBuiltinQuantSkillsForProject(projectId: string): Promi
           roles: [...spec.roles],
           tags: [...spec.tags],
           syncedFrom: "seed-builtin-quant-skills",
+          official: true,
+          originKind: "official",
         },
       });
     }

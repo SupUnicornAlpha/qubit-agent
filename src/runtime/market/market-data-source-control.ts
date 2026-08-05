@@ -13,8 +13,18 @@ import {
 } from "./market-data-errors";
 import { type MarketDataNetworkMode, resolveMarketDataNetworkRoute } from "./market-data-network";
 import type { MarketCode } from "./resolve-ticker-market";
+import type { MarketFeedClass, MarketLicenseUse } from "./contracts/market-event-v2";
+import {
+  type BrokerMarketBridgeSourceId,
+  bridgeIdForSourceId,
+  isBrokerBridgeConfigured,
+  isBrokerMarketBridgeSourceId,
+} from "./broker-market-bridge";
 
-export type OperationalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
+export type HistoricalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
+export type OperationalMarketDataSource =
+  | HistoricalMarketDataSource
+  | BrokerMarketBridgeSourceId;
 
 export type MarketSourceHealth = "unknown" | "healthy" | "degraded" | "down";
 export type MarketSourceCircuit = "closed" | "open" | "half_open";
@@ -25,7 +35,10 @@ export type MarketDataUpstreamFamily =
   | "eastmoney"
   | "tencent"
   | "yfinance"
-  | "yahoo";
+  | "yahoo"
+  | "futu"
+  | "ib"
+  | "supermind";
 
 export interface MarketDataSourceDefinition {
   id: OperationalMarketDataSource;
@@ -37,6 +50,15 @@ export interface MarketDataSourceDefinition {
   priority: number;
   isFallback: boolean;
   upstreamFamily: MarketDataUpstreamFamily;
+  /** Prime D1: feed tier for admission control. */
+  feedClass: MarketFeedClass;
+  /** Prime D1: license / allowed use for this source. */
+  licenseUse: MarketLicenseUse;
+  /**
+   * Stream/WS-only sources must not enter historical kline source plans.
+   * Credentials = bridge WS URL configured.
+   */
+  streamOnly?: boolean;
 }
 
 export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
@@ -50,6 +72,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 95,
     isFallback: false,
     upstreamFamily: "wind",
+    feedClass: "L1_strategy_validation",
+    licenseUse: "research_only",
   },
   {
     id: "tushare_daily",
@@ -61,6 +85,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 90,
     isFallback: false,
     upstreamFamily: "tushare",
+    feedClass: "L1_strategy_validation",
+    licenseUse: "research_only",
   },
   {
     id: "binance_crypto",
@@ -72,6 +98,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 85,
     isFallback: false,
     upstreamFamily: "binance",
+    feedClass: "L2_realtime_observe",
+    licenseUse: "observe_only",
   },
   {
     id: "eastmoney",
@@ -83,6 +111,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 75,
     isFallback: true,
     upstreamFamily: "eastmoney",
+    feedClass: "L0_research_fallback",
+    licenseUse: "research_only",
   },
   {
     id: "akshare",
@@ -94,6 +124,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 65,
     isFallback: true,
     upstreamFamily: "eastmoney",
+    feedClass: "L0_research_fallback",
+    licenseUse: "research_only",
   },
   {
     id: "akshare_tencent",
@@ -105,6 +137,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 60,
     isFallback: true,
     upstreamFamily: "tencent",
+    feedClass: "L0_research_fallback",
+    licenseUse: "research_only",
   },
   {
     id: "yfinance",
@@ -116,6 +150,8 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 55,
     isFallback: true,
     upstreamFamily: "yfinance",
+    feedClass: "L0_research_fallback",
+    licenseUse: "research_only",
   },
   {
     id: "yahoo_chart",
@@ -127,6 +163,50 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     priority: 40,
     isFallback: true,
     upstreamFamily: "yahoo",
+    feedClass: "L0_research_fallback",
+    licenseUse: "research_only",
+  },
+  {
+    id: "futu_bridge",
+    name: "Futu OpenQuote Bridge",
+    vendor: "富途 OpenD",
+    markets: ["CN", "HK", "US"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "1d"],
+    credentialMode: "terminal",
+    priority: 88,
+    isFallback: false,
+    upstreamFamily: "futu",
+    feedClass: "L2_realtime_observe",
+    licenseUse: "observe_only",
+    streamOnly: true,
+  },
+  {
+    id: "ib_bridge",
+    name: "IB Market Bridge",
+    vendor: "Interactive Brokers",
+    markets: ["US", "HK"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "1d"],
+    credentialMode: "terminal",
+    priority: 87,
+    isFallback: false,
+    upstreamFamily: "ib",
+    feedClass: "L2_realtime_observe",
+    licenseUse: "observe_only",
+    streamOnly: true,
+  },
+  {
+    id: "supermind_bridge",
+    name: "Tonghuashun SuperMind Quote Bridge",
+    vendor: "同花顺 SuperMind",
+    markets: ["CN"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "1d"],
+    credentialMode: "terminal",
+    priority: 86,
+    isFallback: false,
+    upstreamFamily: "supermind",
+    feedClass: "L2_realtime_observe",
+    licenseUse: "observe_only",
+    streamOnly: true,
   },
 ];
 
@@ -150,7 +230,26 @@ function credentialsReady(
       (typeof cfg.windUsername === "string" && cfg.windUsername.trim().length > 0)
     );
   }
+  if (def.streamOnly && isBrokerMarketBridgeSourceId(def.id)) {
+    const bridgeId = bridgeIdForSourceId(def.id);
+    return bridgeId ? isBrokerBridgeConfigured(bridgeId) : false;
+  }
   return false;
+}
+
+/** Recompute credentialsReady from live env/settings and persist (e.g. after Futu ensure). */
+export async function syncMarketDataSourceCredentials(
+  settings?: BuiltinConnectorInitConfigs
+): Promise<void> {
+  const db = await getDb();
+  const resolved = settings ?? (await loadBuiltinConnectorSettings());
+  for (const def of MARKET_DATA_SOURCE_DEFINITIONS) {
+    const ready = credentialsReady(def, resolved);
+    await db
+      .update(marketDataSource)
+      .set({ credentialsReady: ready })
+      .where(eq(marketDataSource.id, def.id));
+  }
 }
 
 export async function bootstrapMarketDataSources(
@@ -207,6 +306,8 @@ export interface MarketDataSourceView {
   priority: number;
   isFallback: boolean;
   upstreamFamily: MarketDataUpstreamFamily;
+  feedClass: MarketFeedClass;
+  licenseUse: MarketLicenseUse;
   failureKind: MarketDataFailureKind | null;
   availabilityStatus:
     | "ready"
@@ -240,6 +341,15 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
     const completed = calls.filter((c) => c.status !== "blocked");
     const successes = completed.filter((c) => c.status === "success").length;
     const def = DEF_BY_ID.get(row.id as OperationalMarketDataSource);
+    // Live recompute: bridge WS env / tokens can change after bootstrap without a DB write.
+    const ready = def ? credentialsReady(def, settings) : row.credentialsReady;
+    if (def && ready !== row.credentialsReady) {
+      void db
+        .update(marketDataSource)
+        .set({ credentialsReady: ready })
+        .where(eq(marketDataSource.id, row.id))
+        .catch(() => undefined);
+    }
     const failure = row.lastError ? classifyMarketDataFailure(row.lastError) : null;
     const retryUntil = def ? (upstreamBackoffUntil.get(def.upstreamFamily) ?? 0) : 0;
     let networkMode: MarketDataNetworkMode = "auto";
@@ -252,7 +362,7 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
       networkMode = "proxy";
       networkRoute = "invalid";
     }
-    const availabilityStatus: MarketDataSourceView["availabilityStatus"] = !row.credentialsReady
+    const availabilityStatus: MarketDataSourceView["availabilityStatus"] = !ready
       ? "credentials_missing"
       : networkRoute === "invalid"
         ? "misconfigured"
@@ -273,7 +383,7 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
         ? (row.supportedTimeframesJson as string[])
         : [],
       credentialMode: row.credentialMode,
-      credentialsReady: row.credentialsReady,
+      credentialsReady: ready,
       healthStatus: row.healthStatus,
       lastHealthcheckAt: row.lastHealthcheckAt,
       successRate: completed.length > 0 ? successes / completed.length : null,
@@ -285,6 +395,8 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
       priority: row.priority,
       isFallback: row.isFallback,
       upstreamFamily: def?.upstreamFamily ?? "yahoo",
+      feedClass: def?.feedClass ?? "L0_research_fallback",
+      licenseUse: def?.licenseUse ?? "research_only",
       failureKind: failure?.kind ?? null,
       availabilityStatus,
       retryAt: retryUntil > Date.now() ? new Date(retryUntil).toISOString() : null,
@@ -313,7 +425,7 @@ export async function patchMarketDataSource(
 }
 
 export async function recordMarketDataSourceAttempt(input: {
-  sourceId: KlinesDataSourceMeta;
+  sourceId: OperationalMarketDataSource | KlinesDataSourceMeta;
   market: string;
   timeframe: string;
   symbol: string;
@@ -391,7 +503,7 @@ export async function selectMarketDataSourcePlan(input: {
   timeframe: string;
   mode: KlinesDataSourceSetting;
   settings: BuiltinConnectorInitConfigs;
-}): Promise<OperationalMarketDataSource[]> {
+}): Promise<HistoricalMarketDataSource[]> {
   const rows = await listMarketDataSources();
   const explicit = input.mode !== "auto" && input.mode !== "synthetic" ? input.mode : null;
   const now = Date.now();
@@ -399,6 +511,8 @@ export async function selectMarketDataSourcePlan(input: {
     if (row.status !== "active" || !row.credentialsReady) return false;
     if (!row.supportedMarkets.includes(input.market)) return false;
     if (!row.supportedTimeframes.includes(input.timeframe)) return false;
+    const def = DEF_BY_ID.get(row.id as OperationalMarketDataSource);
+    if (!def || def.streamOnly) return false;
     if (
       row.id === "wind" &&
       input.mode !== "wind" &&
@@ -406,8 +520,7 @@ export async function selectMarketDataSourcePlan(input: {
       typeof input.settings["qubit-data"]?.windUsername !== "string"
     )
       return false;
-    const def = DEF_BY_ID.get(row.id as OperationalMarketDataSource);
-    if (!def || row.availabilityStatus === "misconfigured") return false;
+    if (row.availabilityStatus === "misconfigured") return false;
     if ((upstreamBackoffUntil.get(def.upstreamFamily) ?? 0) > now) return false;
     if (row.circuitState !== "open") return true;
     const openedAt = row.circuitOpenedAt ? Date.parse(row.circuitOpenedAt) : now;
@@ -435,18 +548,18 @@ export async function selectMarketDataSourcePlan(input: {
     });
   };
   const orderedRows = dedupeFamilies(healthOrdered);
-  const ordered = orderedRows.map((r) => r.id as OperationalMarketDataSource);
+  const ordered = orderedRows.map((r) => r.id as HistoricalMarketDataSource);
   if (!explicit) return ordered;
   const explicitEligible = eligible.some((row) => row.id === explicit);
   const explicitFamily = DEF_BY_ID.get(explicit as OperationalMarketDataSource)?.upstreamFamily;
   const fallbackIds = dedupeFamilies(
     healthOrdered.filter((row) => row.isFallback),
     explicitFamily
-  ).map((row) => row.id as OperationalMarketDataSource);
+  ).map((row) => row.id as HistoricalMarketDataSource);
   if (!explicitEligible) {
-    return dedupeFamilies(healthOrdered).map((row) => row.id as OperationalMarketDataSource);
+    return dedupeFamilies(healthOrdered).map((row) => row.id as HistoricalMarketDataSource);
   }
-  return [explicit as OperationalMarketDataSource, ...fallbackIds];
+  return [explicit as HistoricalMarketDataSource, ...fallbackIds];
 }
 
 export function marketSourceDefinition(id: string): MarketDataSourceDefinition | undefined {

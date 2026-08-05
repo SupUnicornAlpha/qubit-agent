@@ -176,7 +176,7 @@ const pack: LocalePack = {
       },
       config: {
         llm: "LLM",
-        datasources: "Data sources",
+        datasources: "Data / tools",
         plugins: "Plugins",
         mcp: "MCP",
         skills: "Skills",

@@ -1,0 +1,227 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HitlInboxItem",
+  "type": "object",
+  "required": [
+    "agent_instance_id",
+    "created_at_ms",
+    "execution_kind",
+    "inbox_id",
+    "prompt",
+    "session_id",
+    "source",
+    "status",
+    "turn_id",
+    "workspace_id"
+  ],
+  "properties": {
+    "agent_instance_id": {
+      "type": "string"
+    },
+    "channel_hints": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/HitlChannelHint"
+      }
+    },
+    "created_at_ms": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "execution_kind": {
+      "$ref": "#/definitions/ExecutionKind"
+    },
+    "expires_at_ms": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    },
+    "inbox_id": {
+      "type": "string"
+    },
+    "prompt": {
+      "$ref": "#/definitions/HitlPrompt"
+    },
+    "session_id": {
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/definitions/HitlSource"
+    },
+    "status": {
+      "$ref": "#/definitions/HitlInboxStatus"
+    },
+    "turn_id": {
+      "type": "string"
+    },
+    "workspace_id": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "ExecutionKind": {
+      "description": "Who may own user turns, who is invoke-only, who is event-driven.",
+      "oneOf": [
+        {
+          "description": "User-facing hub; may also be invoked by other agents.",
+          "type": "string",
+          "enum": [
+            "primary"
+          ]
+        },
+        {
+          "description": "Expert; invoke-only; isolated context window.",
+          "type": "string",
+          "enum": [
+            "subagent"
+          ]
+        },
+        {
+          "description": "External trigger (MQ / A2A / webhook / domain event).",
+          "type": "string",
+          "enum": [
+            "reactor"
+          ]
+        }
+      ]
+    },
+    "HitlChannelHint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "ide_panel"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "target_ref"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "im_webhook"
+              ]
+            },
+            "target_ref": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "notification"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "HitlInboxStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "expired",
+        "cancelled"
+      ]
+    },
+    "HitlInputKind": {
+      "type": "string",
+      "enum": [
+        "approve_only",
+        "single_choice",
+        "multi_choice",
+        "free_form"
+      ]
+    },
+    "HitlOption": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    },
+    "HitlPrompt": {
+      "type": "object",
+      "required": [
+        "body",
+        "created_at",
+        "id",
+        "input_kind",
+        "title",
+        "turn_id"
+      ],
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "hard_rule": {
+          "default": false,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input_kind": {
+          "$ref": "#/definitions/HitlInputKind"
+        },
+        "options": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HitlOption"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      }
+    },
+    "HitlSource": {
+      "type": "string",
+      "enum": [
+        "user_turn",
+        "invocation",
+        "reactor_trigger"
+      ]
+    }
+  }
+}

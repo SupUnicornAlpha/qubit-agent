@@ -9,7 +9,7 @@
  *   - 精度（6 位小数）
  */
 import { describe, expect, test } from "bun:test";
-import { estimateLlmCostUsd } from "../llm-pricing";
+import { estimateLlmCostUsd, resolveLlmProviderForPricing } from "../llm-pricing";
 
 describe("estimateLlmCostUsd · 精确价表", () => {
   test("gpt-4o：prompt $2.5 / completion $10 per 1M", () => {
@@ -40,6 +40,36 @@ describe("estimateLlmCostUsd · 精确价表", () => {
       completionTokens: 1_000_000,
     });
     expect(cost).toBe(1.37);
+  });
+});
+
+describe("estimateLlmCostUsd · Core openai_compatible / deepseek-v4", () => {
+  test("openai_compatible + deepseek-v4-flash resolves to deepseek pricing", () => {
+    const cost = estimateLlmCostUsd({
+      provider: "openai_compatible",
+      model: "deepseek-v4-flash",
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+    expect(cost).toBe(1.37);
+  });
+
+  test("deepseek-v4-flash exact row", () => {
+    const cost = estimateLlmCostUsd({
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+      promptTokens: 1_000_000,
+      completionTokens: 0,
+    });
+    expect(cost).toBe(0.27);
+  });
+});
+
+describe("resolveLlmProviderForPricing", () => {
+  test("maps openai_compatible + deepseek model → deepseek", () => {
+    expect(resolveLlmProviderForPricing("openai_compatible", "deepseek-v4-flash")).toBe(
+      "deepseek"
+    );
   });
 });
 

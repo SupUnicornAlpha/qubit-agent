@@ -288,6 +288,50 @@ describe("connector bootstrap", () => {
   });
 });
 
+describe("research.thesis.write builtin", () => {
+  test("is registered and catalogued", () => {
+    expect(isBuiltinTool("research.thesis.write")).toBe(true);
+    expect(isBuiltinTool("research.forecast_book.get")).toBe(true);
+    expect(isBuiltinTool("research.forecast_book.link")).toBe(true);
+    expect(isBuiltinTool("portfolio.construct")).toBe(true);
+    const entry = buildToolCatalog().find((row) => row.name === "research.thesis.write");
+    expect(entry?.category).toBe("research");
+    expect(entry?.description).toContain("thesisId");
+  });
+
+  test("requires snapshotId", async () => {
+    await expect(
+      dispatchBuiltinTool("research.thesis.write", ctx, {
+        symbols: ["AAPL"],
+        direction: "long",
+      })
+    ).rejects.toThrow(/snapshotId/);
+  });
+});
+
+describe("market.snapshot.get builtin", () => {
+  test("is registered as builtin and catalogued", () => {
+    expect(isBuiltinTool("market.snapshot.get")).toBe(true);
+    const entry = buildToolCatalog().find((row) => row.name === "market.snapshot.get");
+    expect(entry?.category).toBe("market");
+    expect(entry?.description).toContain("snapshotId");
+  });
+
+  test("missing symbol rejects", async () => {
+    await expect(dispatchBuiltinTool("market.snapshot.get", ctx, {})).rejects.toThrow(
+      /missing_symbol/
+    );
+  });
+
+  test("unknown snapshotId rejects", async () => {
+    await expect(
+      dispatchBuiltinTool("market.snapshot.get", ctx, {
+        snapshotId: "mkt_snapshot_does_not_exist_zzzz",
+      })
+    ).rejects.toThrow(/snapshot_not_found/);
+  });
+});
+
 describe("market.resolve_symbol ToolContract", () => {
   test("batch symbols returns {results,count}", async () => {
     const out = (await dispatchBuiltinTool("market.resolve_symbol", ctx, {

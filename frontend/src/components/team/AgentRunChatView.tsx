@@ -18,8 +18,8 @@ import {
   type ResearchCanvasToolKind,
 } from "../../lib/researchCanvasToolLink";
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
+import { looksLikeMarkdown } from "../../lib/looksLikeMarkdown";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
-import { looksLikeMarkdown } from "./LiveConversationView";
 
 export type AgentRunPanelData = {
   role: string;

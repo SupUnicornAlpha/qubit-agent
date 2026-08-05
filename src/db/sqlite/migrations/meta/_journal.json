@@ -722,6 +722,20 @@
       "when": 1814832000000,
       "tag": "0103_workflow_delivery_verdict",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1814918400000,
+      "tag": "0104_connector_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1815004800000,
+      "tag": "0105_agent_definition_execution_kind",
+      "breakpoints": true
     }
   ]
 }

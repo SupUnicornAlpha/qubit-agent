@@ -1,0 +1,48 @@
+{
+  "snapshotId": "mkt_snapshot_01fixture",
+  "asOf": "2026-08-04T01:30:00.130000Z",
+  "purpose": "research",
+  "universe": ["SSE:600519"],
+  "window": {
+    "start": "2026-08-01T00:00:00.000Z",
+    "end": "2026-08-04T01:30:00.130000Z"
+  },
+  "sources": [
+    {
+      "provider": "wind",
+      "feed": "licensed_realtime",
+      "upstreamFamily": "wind",
+      "feedClass": "L2_realtime_observe",
+      "licenseUse": "research_only"
+    }
+  ],
+  "sourceRevisions": {
+    "wind": 0
+  },
+  "qualityVerdict": {
+    "instrument": {
+      "symbol": "600519",
+      "venue": "SSE",
+      "assetClass": "equity"
+    },
+    "feed": "licensed_realtime",
+    "kind": "quote",
+    "asOf": "2026-08-04T01:30:00.130000Z",
+    "freshness": "fresh",
+    "completeness": "complete",
+    "consistency": "insufficient_peers",
+    "structure": "valid",
+    "pointInTime": "point_in_time_valid",
+    "licenseUse": "research_only",
+    "tradable": false,
+    "useClass": "research_only",
+    "reasons": ["license:research_only"],
+    "snapshotId": "mkt_snapshot_01fixture"
+  },
+  "adjustMethod": "none",
+  "timezone": "Asia/Shanghai",
+  "calendarVersion": "sse-2026.1",
+  "eventRefs": ["mev_01fixture_quote"],
+  "createdAt": "2026-08-04T01:30:00.200000Z",
+  "schemaVersion": 2
+}

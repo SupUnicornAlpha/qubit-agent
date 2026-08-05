@@ -5,6 +5,8 @@ import { z } from "zod";
 import { ALL_AGENT_ROLES } from "../../types/entities";
 import { AGENT_CONTROL_PLANE_TOOLS } from "../agent-control-mode";
 import { topologyTeamToolName } from "../orchestration/topology-dispatch";
+import { INTERNET_BUILTIN_TOOLS } from "../tools/internet-tools";
+import { resolveExecutionKind } from "../prime/execution-kind";
 import type { RuntimeAgentDefinition } from "../types";
 
 const AgentRoleSchema = z.enum(ALL_AGENT_ROLES as unknown as [string, ...string[]]);
@@ -22,6 +24,7 @@ const A2ATypeSchema = z.enum([
 const AgentDefSchema = z.object({
   id: z.string().min(1),
   role: AgentRoleSchema,
+  executionKind: z.enum(["primary", "subagent", "reactor"]).optional(),
   name: z.string().min(1),
   version: z.string().default("1.0.0"),
   systemPrompt: z.string().default(""),
@@ -90,6 +93,7 @@ export function buildDefaultSandboxPoliciesFromDefinitions(
       ...definitions.flatMap((d) => d.tools),
       ...topologyTools,
       ...AGENT_CONTROL_PLANE_TOOLS,
+      ...INTERNET_BUILTIN_TOOLS,
     ]),
   ].sort();
   const mcps = [...new Set(definitions.flatMap((d) => d.mcpServers))].sort();
@@ -189,7 +193,15 @@ export async function loadWorkspaceRuntimeConfig(
   return {
     exists: true,
     config: {
-      definitions: agentsParsed.data.definitions as RuntimeAgentDefinition[],
+      definitions: agentsParsed.data.definitions.map(
+        (d): RuntimeAgentDefinition => ({
+          ...(d as RuntimeAgentDefinition),
+          executionKind: resolveExecutionKind({
+            executionKind: d.executionKind,
+            role: d.role,
+          }),
+        })
+      ),
       policies: sandboxParsed.data.policies,
     },
     configDir,
@@ -315,6 +327,7 @@ export function mergeBuiltinAgentDefinitionsIntoUserFile(
     return {
       ...fileDefinition,
       role: seed.role,
+      ...(seed.executionKind ? { executionKind: seed.executionKind } : {}),
       name: seed.name,
       version: seed.version,
       systemPrompt: seed.systemPrompt,

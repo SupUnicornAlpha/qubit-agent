@@ -2,14 +2,13 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
-  agentDefinition,
   agentInstance,
   project,
   workflowRun,
   workspace,
 } from "../../db/sqlite/schema";
-import { SEED_AGENT_DEFINITIONS } from "../seed-agent-definitions-data";
 import { AgentRuntime } from "../agent-runtime";
+import { resolveEffectiveAgentDefinitions } from "../config/resolve-effective-config";
 import {
   computeConfigHash,
   startWorkspaceConfigWatcher,
@@ -17,7 +16,6 @@ import {
   type WorkspaceConfigWatcherHandle,
 } from "../config/workspace-config-watcher";
 import { getRoleHandler } from "../handlers/role-handlers";
-import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import type { RuntimeAgentDefinition } from "../types";
 import type { AgentRole } from "../../types/entities";
 import {
@@ -41,8 +39,7 @@ export class A2APool {
 
   async start(): Promise<void> {
     if (this.started) return;
-    // 启动前先把 .qubit/*.json 配置 sync 进 DB（原 GraphRunner.syncFromWorkspaceConfig
-    // 职责，现移到 workspace-config-watcher），再从 DB 加载 definitions。
+    // 启动前先把 .qubit/*.json 投影进 DB；运行时 definitions 以 JSON 为真源 + overrides。
     await syncWorkspaceConfigToDbFromFiles();
     await this.ensurePoolInfrastructure();
     const definitions = await this.loadDefinitions();
@@ -234,31 +231,7 @@ export class A2APool {
   }
 
   private async loadDefinitions(): Promise<RuntimeAgentDefinition[]> {
-    const db = await getDb();
-    const dbDefs = await db.select().from(agentDefinition);
-    if (dbDefs.length === 0) {
-      return SEED_AGENT_DEFINITIONS.filter((d) => d.enabled);
-    }
-    return dbDefs
-      .map(
-        (d): RuntimeAgentDefinition => ({
-          id: d.id,
-          role: d.role,
-          name: d.name,
-          version: d.version,
-          systemPrompt: d.systemPrompt,
-          tools: d.toolsJson as string[],
-          mcpServers: d.mcpServersJson as string[],
-          skills: d.skillsJson as string[],
-          subscriptions: d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"],
-          llmProvider: d.llmProvider,
-          llmConfig: parseLlmConfigJson(d.llmConfigJson),
-          maxIterations: d.maxIterations,
-          sandboxPolicyId: d.sandboxPolicyId,
-          enabled: Boolean(d.enabled),
-        })
-      )
-      .filter((d) => d.enabled);
+    return resolveEffectiveAgentDefinitions();
   }
 
   private async ensurePoolInstance(def: RuntimeAgentDefinition): Promise<string> {

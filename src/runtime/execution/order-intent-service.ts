@@ -14,6 +14,8 @@ import type {
   TimeInForce,
 } from "../../types/entities";
 import { appendAuditLog } from "../audit/audit-chain-service";
+import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-binding";
+import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
 import { evaluatePreTradeForIntent } from "./pre-trade-risk";
 
 const REVIEW_TICKET_TTL_MS = 86_400_000;
@@ -47,6 +49,12 @@ export interface CreateOrderIntentInput {
   brokerAccountId?: string | null;
   /** 调用方幂等键；缺省使用本次 order_intent id。 */
   clientOrderId?: string | null;
+  /** Prime D3: immutable market snapshot binding for execution admission. */
+  snapshotId?: string | null;
+  /** Prime D5: research thesis binding for executable intents. */
+  thesisId?: string | null;
+  /** Force quality gate even for paper paths (auto strategies). */
+  requireDataQualityGate?: boolean;
 }
 
 export interface CreateOrderIntentResult {
@@ -55,6 +63,9 @@ export interface CreateOrderIntentResult {
   riskOutcome: RiskDecisionResult;
   riskReason: string;
   riskReviewTicketId: string | null;
+  dataQualityWarnings?: string[];
+  snapshotId?: string | null;
+  thesisId?: string | null;
 }
 
 function audit(
@@ -105,6 +116,20 @@ export async function createOrderIntentWithExecution(
   const traceId = input.traceId ?? randomUUID();
   const accountId = input.accountId ?? BUILTIN_PAPER_TRADING_ACCOUNT_ID;
   const requestedClientOrderId = input.clientOrderId?.trim() || null;
+  const dispatchMode = input.dispatchMode ?? "paper";
+
+  const evidence = await resolveExecutionEvidenceBinding({
+    thesisId: input.thesisId,
+    snapshotId: input.snapshotId,
+    dispatchMode,
+    requireQualityGate: input.requireDataQualityGate === true,
+  });
+  if (!evidence.ok) {
+    throw new Error(`${evidence.code}:${evidence.reason}`);
+  }
+  const dataQualityWarnings = evidence.warnings;
+  const boundSnapshotId = evidence.snapshotId;
+  const boundThesisId = evidence.thesisId;
 
   if (requestedClientOrderId) {
     const existingIntents = await db
@@ -132,12 +157,14 @@ export async function createOrderIntentWithExecution(
         riskOutcome,
         riskReason: task?.lastError ?? "idempotent_replay",
         riskReviewTicketId: null,
+        dataQualityWarnings,
+        snapshotId: boundSnapshotId,
+        thesisId: boundThesisId,
       };
     }
   }
 
   const orderIntentId = randomUUID();
-  const dispatchMode = input.dispatchMode ?? "paper";
   const activationStatus = input.parentOrderIntentId
     ? "held"
     : conditional
@@ -181,7 +208,14 @@ export async function createOrderIntentWithExecution(
     action: "order_intent_created",
     resourceType: "order_intent",
     resourceId: orderIntentId,
-    detail: { workflowRunId: input.workflowRunId, strategyVersionId: input.strategyVersionId },
+    detail: {
+      workflowRunId: input.workflowRunId,
+      strategyVersionId: input.strategyVersionId,
+      snapshotId: boundSnapshotId,
+      thesisId: boundThesisId,
+      dataQualityWarnings,
+      qualityUseClass: evidence.quality.verdict?.useClass ?? null,
+    },
   });
 
   const risk = await evaluatePreTradeForIntent(db, orderIntentId);
@@ -189,6 +223,19 @@ export async function createOrderIntentWithExecution(
 
   let executionTaskId: string | null = null;
   let riskReviewTicketId: string | null = null;
+
+  const linkBook = async (extra?: { riskDecisionIds?: string[] }) => {
+    if (!boundThesisId) return;
+    try {
+      await linkForecastBookEntry(boundThesisId, {
+        orderIntentIds: [orderIntentId],
+        riskDecisionIds: extra?.riskDecisionIds,
+        attributionNotes: [`order_intent:${risk.outcome}`],
+      });
+    } catch {
+      // Forecast book is OUT harness — never block execution on link failure.
+    }
+  };
 
   if (risk.outcome === "block") {
     await db
@@ -217,12 +264,16 @@ export async function createOrderIntentWithExecution(
       resourceId: tid,
       detail: { orderIntentId, reason: risk.reason },
     });
+    await linkBook();
     return {
       orderIntentId,
       executionTaskId,
       riskOutcome: risk.outcome,
       riskReason: risk.reason,
       riskReviewTicketId: null,
+      dataQualityWarnings,
+      snapshotId: boundSnapshotId,
+      thesisId: boundThesisId,
     };
   }
 
@@ -266,12 +317,16 @@ export async function createOrderIntentWithExecution(
       detail: { orderIntentId, executionTaskId: tid },
     });
 
+    await linkBook();
     return {
       orderIntentId,
       executionTaskId,
       riskOutcome: risk.outcome,
       riskReason: risk.reason,
       riskReviewTicketId,
+      dataQualityWarnings,
+      snapshotId: boundSnapshotId,
+      thesisId: boundThesisId,
     };
   }
 
@@ -302,12 +357,16 @@ export async function createOrderIntentWithExecution(
     detail: { orderIntentId, activationStatus, taskStatus: readyTaskStatus },
   });
 
+  await linkBook();
   return {
     orderIntentId,
     executionTaskId: tid,
     riskOutcome: risk.outcome,
     riskReason: risk.reason,
     riskReviewTicketId: null,
+    dataQualityWarnings,
+    snapshotId: boundSnapshotId,
+    thesisId: boundThesisId,
   };
 }
 

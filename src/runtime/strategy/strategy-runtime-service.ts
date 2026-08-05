@@ -250,6 +250,8 @@ export async function submitRuntimeOrder(
     signalBarTime: input.signalBarTime,
     dispatchMode,
     brokerAccountId: runtime.brokerAccountId,
+    // Live auto-trading always requires a tradable snapshot (Prime D3).
+    requireDataQualityGate: dispatchMode === "live",
   });
 
   if (result.riskOutcome === "block") {

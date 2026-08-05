@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TurnStart",
+  "type": "object",
+  "required": [
+    "idempotency_key",
+    "input",
+    "session_id"
+  ],
+  "properties": {
+    "idempotency_key": {
+      "type": "string"
+    },
+    "input": {
+      "$ref": "#/definitions/UserInput"
+    },
+    "session_id": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "AttachmentRef": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "file"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "kline_context"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "ref"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "artifact_ref"
+              ]
+            },
+            "ref": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "UserInput": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "attachments": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AttachmentRef"
+          }
+        },
+        "client_meta": true,
+        "text": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ export type WorkflowArtifactKind =
   | "NewsEvidence"
   | "FactorInventory"
   | "Recommendation"
+  | "ResearchThesis"
   | "DataGap";
 
 export type WorkflowArtifact = {
@@ -36,12 +37,15 @@ export function classifyWorkflowArtifactKind(toolName: string): WorkflowArtifact
   if (/fetch_(?:fundamentals|financial_data)|fetch_earnings|fetch_dividends/.test(tool)) {
     return "FundamentalSnapshot";
   }
-  if (/fetch_(?:quote|ticks|klines|bars)|get_quote|fetch_price_data/.test(tool)) {
+  if (
+    /fetch_(?:quote|ticks|klines|bars)|get_quote|fetch_price_data|snapshot\.get/.test(tool)
+  ) {
     return "MarketSnapshot";
   }
   if (/news|sentiment|filing/.test(tool)) return "NewsEvidence";
   if (/factor\.list|list_factors/.test(tool)) return "FactorInventory";
   if (/recommendation\.record|record_recommendation/.test(tool)) return "Recommendation";
+  if (/thesis\.write|research\.thesis/.test(tool)) return "ResearchThesis";
   return null;
 }
 

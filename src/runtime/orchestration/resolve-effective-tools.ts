@@ -12,6 +12,7 @@ import {
   ensureFactsPort,
   getWorkflowFactsPort,
 } from "../policy";
+import { stripOrchestratorTeamCompatTools } from "../market/contracts/prime-tool-host-surface";
 import {
   buildAgentCollaborationHint,
   buildTopologyToolsPromptBlock,
@@ -28,23 +29,25 @@ export type EffectiveToolsResult = {
   scenarioKey: string | null;
 };
 
-const ORCHESTRATOR_COMPAT_TEAM_TOOLS = new Set([
-  "run_analyst_team",
-  "summarize_team_decision",
-  "fuse_signals",
-]);
-
 const SCENARIO_SUPPORT_TOOLS = new Set(["update_plan"]);
+
+/** Research-default internet builtins; always attached outside strict orchestrator scenario presets. */
+const INTERNET_SUPPORT_TOOLS = ["web.fetch", "web.search"] as const;
+/** Orchestrator only needs symbol resolve + immutable snapshot (Prime D6). */
+const ORCHESTRATOR_PRIME_MARKET_TOOLS = ["market.resolve_symbol", "market.snapshot.get"] as const;
 const MARKET_GOVERNANCE_TOOLS = [
   "market.resolve_symbol",
   "market.data_sources",
   "market.readiness",
+  "market.snapshot.get",
 ] as const;
 const MARKET_DATA_TOOLS = new Set([
   "fetch_klines",
   "fetch_price_data",
   "fetch_financial_data",
   "fetch_ticks",
+  "fetch_quote",
+  "market.snapshot.get",
   ...MARKET_GOVERNANCE_TOOLS,
 ]);
 
@@ -53,7 +56,10 @@ function normalizeToolNames(names: string[]): string[] {
 }
 
 export function attachMarketGovernanceTools(role: string, tools: string[]): string[] {
-  return role === "orchestrator" || tools.some((tool) => MARKET_DATA_TOOLS.has(tool))
+  if (role === "orchestrator") {
+    return normalizeToolNames([...tools, ...ORCHESTRATOR_PRIME_MARKET_TOOLS]);
+  }
+  return tools.some((tool) => MARKET_DATA_TOOLS.has(tool))
     ? normalizeToolNames([...tools, ...MARKET_GOVERNANCE_TOOLS])
     : tools;
 }
@@ -158,13 +164,16 @@ export async function resolveEffectiveAgentTools(
    * the same progress filter may prioritize a next action but cannot invent a
    * capability they do not own.
    */
-  const specialistDeclaredTools = normalizeToolNames([...(def.tools ?? []), "web.fetch"]);
+  const specialistDeclaredTools = normalizeToolNames([
+    ...(def.tools ?? []),
+    ...INTERNET_SUPPORT_TOOLS,
+  ]);
   const baseRaw =
     scenarioScopedTools.length && def.role === "orchestrator"
       ? scenarioScopedTools
       : scenarioScopedTools.length
         ? specialistDeclaredTools
-        : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, "web.fetch"]);
+        : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, ...INTERNET_SUPPORT_TOOLS]);
 
   const base = scenarioScopedTools.length
     ? filterScenarioToolsForContractProgress({
@@ -186,9 +195,10 @@ export async function resolveEffectiveAgentTools(
     };
   }
 
+  // Prime D6: strip team-compat bulk tools on every orchestrator path (incl. scenario).
   if (scenarioScopedTools.length > 0) {
     return {
-      tools: base,
+      tools: stripOrchestratorTeamCompatTools(base),
       topologyContext: null,
       topologyPromptBlock: "",
       collaborationHint: "",
@@ -199,10 +209,8 @@ export async function resolveEffectiveAgentTools(
 
   const topologyContext = await loadOrchestratorTopologyForWorkflow();
   const topologyTools = topologyContext?.toolNames ?? [];
-  const tools = normalizeToolNames(
-    [...base, ...topologyTools, "update_plan"].filter(
-      (toolName) => !ORCHESTRATOR_COMPAT_TEAM_TOOLS.has(toolName)
-    )
+  const tools = stripOrchestratorTeamCompatTools(
+    normalizeToolNames([...base, ...topologyTools, "update_plan"])
   );
   const topologyPromptBlock = buildTopologyToolsPromptBlock(topologyContext);
 

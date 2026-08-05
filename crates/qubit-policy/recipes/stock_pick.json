@@ -1,0 +1,66 @@
+{
+  "key": "stock_pick",
+  "aliases": ["stock_screening", "stock_pick_long", "stock_pick_short", "sp"],
+  "version": "2026-08-05.3",
+  "capability_owners": {
+    "screener": "research",
+    "get_quote": "research",
+    "recommendation.record": "research"
+  },
+  "role_tool_allowlist": {
+    "orchestrator": ["update_plan", "agent.invoke", "topology.dispatch"],
+    "research": ["run_screener", "fetch_klines", "recommendation.record"]
+  },
+  "stall_budget": {
+    "tools": [
+      "market.readiness",
+      "market.resolve_symbol",
+      "update_plan",
+      "factor.list",
+      "mcp:mathjs:evaluate",
+      "mcp:investor-agent:historical_prices",
+      "mcp:investor-agent:technical_indicator",
+      "mcp:investor-agent:get_stock_info"
+    ],
+    "key": "tool_fingerprint",
+    "max_success": 3,
+    "on_exceed": "strip_from_surface"
+  },
+  "recovery": {
+    "after_probe_failure": "continue_without_realtime",
+    "forbid_gap_as_final_answer": true
+  },
+  "completion": {
+    "artifacts": [
+      {
+        "table": "screener_candidate",
+        "min_rows": 3,
+        "research_min_rows": 1,
+        "required_fields": ["ticker", "score"],
+        "scope": "workflow"
+      },
+      {
+        "table": "recommendation_snapshot",
+        "min_rows": 3,
+        "research_min_rows": 1,
+        "required_fields": ["symbol", "rationale"],
+        "scope": "workflow"
+      }
+    ],
+    "required_tools": [
+      { "capability": "screener", "min_success": 1 },
+      { "capability": "get_quote", "min_success": 1 },
+      { "capability": "recommendation.record", "min_success": 1 }
+    ],
+    "answer_schema": {
+      "required_sections": ["goal", "evidence", "decision", "risks", "gaps"]
+    }
+  },
+  "checklist_prompt": [
+    "1. run_screener 产出候选（top_n 足够覆盖目标只数）",
+    "2. fetch_klines 获取候选行情，失败时记录数据缺口；不得以未调用替代无数据",
+    "3. 对候选逐只 recommendation.record（side=long，含入场/止损/止盈/仓位/invalidation）",
+    "4. 输出五段答案；禁止 readiness/list 空转结案",
+    "同类工具连打 ≤3 次后必须写终答，禁止 mathjs/行情工具刷屏"
+  ]
+}

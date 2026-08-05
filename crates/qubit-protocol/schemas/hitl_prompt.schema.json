@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HitlPrompt",
+  "type": "object",
+  "required": [
+    "body",
+    "created_at",
+    "id",
+    "input_kind",
+    "title",
+    "turn_id"
+  ],
+  "properties": {
+    "body": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "integer",
+      "format": "int64"
+    },
+    "hard_rule": {
+      "default": false,
+      "type": "boolean"
+    },
+    "id": {
+      "type": "string"
+    },
+    "input_kind": {
+      "$ref": "#/definitions/HitlInputKind"
+    },
+    "options": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/HitlOption"
+      }
+    },
+    "title": {
+      "type": "string"
+    },
+    "turn_id": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "HitlInputKind": {
+      "type": "string",
+      "enum": [
+        "approve_only",
+        "single_choice",
+        "multi_choice",
+        "free_form"
+      ]
+    },
+    "HitlOption": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

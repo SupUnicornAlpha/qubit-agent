@@ -6,6 +6,10 @@ import { extractSymbolArgs, requireSymbols } from "../market/normalize-symbol-ar
 import { detectRegimeFromBars } from "../market/regime";
 import { resolveTickerMarket } from "../market/resolve-ticker-market";
 import {
+  getOrCreateMarketSnapshot,
+  isMarketSnapshotGetEnabled,
+} from "../market/contracts/market-snapshot-service";
+import {
   computeBollinger,
   computeMacd,
   computeRsi,
@@ -49,11 +53,54 @@ export const MARKET_ANALYSIS_HANDLERS: Record<string, BuiltinToolHandler> = {
           (!timeframe || row.supportedTimeframes.includes(timeframe))
       ),
       guidance:
-        "先用 market.resolve_symbol 确认市场。实时/现价请求必须先看 realtimeReadyMarkets 并调用 fetch_quote；历史 K 线再调用 fetch_klines。不要用 readyMarkets（日线能力）冒充实时能力，也不要原样重复调用已 open/down 的源。此结果不代表 call_team_* 调度健康。",
+        "先用 market.resolve_symbol 确认市场。研究/回测优先 market.snapshot.get 固定 snapshotId；实时/现价再看 realtimeReadyMarkets 并调用 fetch_quote；原始历史 K 线用 fetch_klines。不要用 readyMarkets（日线能力）冒充实时能力，也不要原样重复调用已 open/down 的源。此结果不代表 call_team_* 调度健康。",
     };
   },
 
   "market.readiness": async () => getMarketDataReadiness(),
+
+  "market.snapshot.get": async (_ctx, params) => {
+    if (!isMarketSnapshotGetEnabled()) {
+      throw new Error("market.snapshot.get is disabled (QUBIT_MARKET_SNAPSHOT_GET=0)");
+    }
+    const contract = isToolContractEnabled() ? getToolContract("market.snapshot.get") : undefined;
+    const canonical = contract ? applyToolContract(contract, params) : params;
+
+    const snapshotId =
+      typeof canonical.snapshotId === "string" ? canonical.snapshotId.trim() : "";
+    if (snapshotId) {
+      return getOrCreateMarketSnapshot({ snapshotId });
+    }
+
+    const symbols =
+      Array.isArray(canonical.symbols) && canonical.symbols.length > 0
+        ? (canonical.symbols as string[]).map(String)
+        : extractSymbolArgs(canonical);
+    if (symbols.length === 0) {
+      requireSymbols(params, { arity: "either", toolName: "market.snapshot.get" });
+    }
+
+    const purposeRaw =
+      typeof canonical.purpose === "string" ? canonical.purpose.trim().toLowerCase() : "research";
+    const purpose =
+      purposeRaw === "backtest" ||
+      purposeRaw === "observe" ||
+      purposeRaw === "trading" ||
+      purposeRaw === "risk"
+        ? purposeRaw
+        : "research";
+
+    return getOrCreateMarketSnapshot({
+      symbols,
+      exchange: typeof canonical.exchange === "string" ? canonical.exchange : undefined,
+      asOf: typeof canonical.asOf === "string" ? canonical.asOf : undefined,
+      purpose,
+      timeframe: typeof canonical.timeframe === "string" ? canonical.timeframe : undefined,
+      limit: typeof canonical.limit === "number" ? canonical.limit : undefined,
+      adjustMethod: typeof canonical.adjustMethod === "string" ? canonical.adjustMethod : undefined,
+      timezone: typeof canonical.timezone === "string" ? canonical.timezone : undefined,
+    });
+  },
 
   compute_indicators: async (_ctx, params) => {
     const symbol = String(params.symbol ?? params.ticker ?? "").trim();

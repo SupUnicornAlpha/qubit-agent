@@ -1390,6 +1390,7 @@ export async function createAgentDefinition(input: {
   name?: string;
   systemPrompt?: string;
   displayName?: string;
+  executionKind?: "primary" | "subagent" | "reactor";
 }): Promise<AgentDefinitionBundle> {
   const res = await httpPost<{ data: AgentDefinitionBundle }>("/api/v1/agents/definitions", input);
   return res.data;
@@ -1523,6 +1524,7 @@ export async function createAgentDraft(params: {
   mcpServersJson?: unknown;
   skillsJson?: unknown;
   subscriptionsJson?: unknown;
+  executionKind?: "primary" | "subagent" | "reactor";
   profile?: {
     displayName?: string;
     soulFileRef?: string;
@@ -3255,6 +3257,27 @@ export async function checkBrokerHealth(input: {
   return res.data;
 }
 
+/** Start local Futu trade HTTP + quote WS bridges from configured OpenD account. */
+export async function ensureFutuMarketBridges(): Promise<{
+  configured: boolean;
+  message: string;
+  trade: { healthy: boolean; url: string; running: boolean };
+  quote: { running: boolean; url: string };
+  marketWsUrl: string | null;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      configured: boolean;
+      message: string;
+      trade: { healthy: boolean; url: string; running: boolean };
+      quote: { running: boolean; url: string };
+      marketWsUrl: string | null;
+    };
+  }>("/api/v1/market/stream/bridges/futu/ensure", {});
+  return res.data;
+}
+
 export async function listBrokerEvents(
   provider?: BrokerProvider,
   limit = 100
@@ -3978,6 +4001,200 @@ export async function testMcpProjectInstall(input: {
     toolName: input.toolName,
     arguments: input.arguments,
   });
+  return res.data;
+}
+
+/** Plugins 管理（轨 A） */
+export type PluginListTab = "featured" | "installed" | "catalog" | "all";
+
+export interface PluginListItemDto {
+  id: string;
+  name: string;
+  version?: string;
+  description: string;
+  category: string;
+  visibility: string;
+  kind: string;
+  ref: Record<string, unknown>;
+  safetyLevel: string;
+  auth?: { type?: string; scopes?: string[] };
+  origin?: { format?: string; sourcePath?: string; note?: string };
+  installed: boolean;
+  installKey?: string;
+  installStatus?: string;
+  installedAt?: string;
+  warnings?: string[];
+  oauthConnected?: boolean;
+  oauthStatus?: string;
+  oauthExpiresAt?: string | null;
+  oauthError?: string | null;
+  oauthMcpServerName?: string | null;
+}
+
+export async function listPlugins(input?: {
+  projectId?: string;
+  q?: string;
+  tab?: PluginListTab;
+  page?: number;
+  pageSize?: number;
+}): Promise<{ items: PluginListItemDto[]; total: number; page: number; pageSize: number }> {
+  const qs = new URLSearchParams();
+  if (input?.projectId) qs.set("projectId", input.projectId);
+  if (input?.q) qs.set("q", input.q);
+  if (input?.tab) qs.set("tab", input.tab);
+  if (input?.page) qs.set("page", String(input.page));
+  if (input?.pageSize) qs.set("pageSize", String(input.pageSize));
+  const suffix = qs.toString();
+  const res = await httpGet<{
+    data: { items: PluginListItemDto[]; total: number; page: number; pageSize: number };
+  }>(`/api/v1/agents/plugins${suffix ? `?${suffix}` : ""}`);
+  return res.data;
+}
+
+export async function listInstalledPlugins(projectId: string): Promise<PluginListItemDto[]> {
+  const res = await httpGet<{ data: PluginListItemDto[] }>(
+    `/api/v1/agents/plugins/installed?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
+export async function installPlugin(input: {
+  projectId: string;
+  targetId: string;
+  kind?: "mcp" | "skill" | "builtin_pack";
+  serverName?: string;
+}): Promise<{ item: PluginListItemDto; warnings: string[] }> {
+  const res = await httpPost<{ data: PluginListItemDto; warnings?: string[] }>(
+    "/api/v1/agents/plugins/install",
+    input
+  );
+  return { item: res.data, warnings: res.warnings ?? [] };
+}
+
+export async function uninstallPlugin(input: {
+  projectId: string;
+  installKey: string;
+}): Promise<void> {
+  await httpDelete(
+    `/api/v1/agents/plugins/installs/${encodeURIComponent(input.installKey)}?projectId=${encodeURIComponent(input.projectId)}`
+  );
+}
+
+export async function importPluginPackage(input: {
+  projectId: string;
+  format: "codex_plugin" | "claude_plugin" | "agent_skills";
+  rootPath: string;
+}): Promise<{
+  manifest: PluginListItemDto;
+  skillInstallIds: string[];
+  mcpServerNames: string[];
+  warnings: string[];
+}> {
+  const res = await httpPost<{
+    data: {
+      ok: true;
+      manifest: PluginListItemDto;
+      skillInstallIds: string[];
+      mcpServerNames: string[];
+      warnings: string[];
+    };
+  }>("/api/v1/agents/plugins/import", input);
+  return res.data;
+}
+
+/** P2 OAuth connectors */
+export interface ConnectorAuthPublicDto {
+  id: string;
+  projectId: string;
+  pluginId: string;
+  provider: string;
+  displayName: string;
+  status: string;
+  scopes: string;
+  authorizeUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  redirectUri: string;
+  mcpServerName: string | null;
+  expiresAt: string | null;
+  errorMessage: string | null;
+  hasClientSecret: boolean;
+  connected: boolean;
+  updatedAt: string;
+}
+
+export async function listConnectorAuthStatus(
+  projectId: string
+): Promise<ConnectorAuthPublicDto[]> {
+  const res = await httpGet<{ data: ConnectorAuthPublicDto[] }>(
+    `/api/v1/plugins/oauth/status?projectId=${encodeURIComponent(projectId)}`
+  );
+  return res.data;
+}
+
+export async function upsertOauthConnection(input: {
+  projectId: string;
+  pluginId: string;
+  clientId: string;
+  clientSecret?: string;
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  scopes?: string;
+  redirectUri?: string;
+  mcpServerName?: string | null;
+  displayName?: string;
+}): Promise<ConnectorAuthPublicDto> {
+  const res = await httpPost<{ data: ConnectorAuthPublicDto }>(
+    "/api/v1/plugins/oauth/connections",
+    input
+  );
+  return res.data;
+}
+
+export async function beginOauthAuthorize(input: {
+  projectId: string;
+  pluginId: string;
+}): Promise<{ authorizeUrl: string; state: string }> {
+  const qs = new URLSearchParams({
+    projectId: input.projectId,
+    pluginId: input.pluginId,
+  });
+  const res = await httpGet<{ data: { authorizeUrl: string; state: string } }>(
+    `/api/v1/plugins/oauth/authorize?${qs.toString()}`
+  );
+  return res.data;
+}
+
+export async function disconnectOauthConnection(input: {
+  projectId: string;
+  pluginId: string;
+}): Promise<ConnectorAuthPublicDto> {
+  const res = await httpDelete<{ data: ConnectorAuthPublicDto }>(
+    `/api/v1/plugins/oauth/connections/${encodeURIComponent(input.pluginId)}?projectId=${encodeURIComponent(input.projectId)}`
+  );
+  return res.data;
+}
+
+export async function getOauthPreset(pluginId: string): Promise<{
+  pluginId: string;
+  provider: string;
+  displayName: string;
+  authorizeUrl?: string;
+  tokenUrl?: string;
+  scopes?: string;
+  defaultRedirectUri: string;
+}> {
+  const res = await httpGet<{
+    data: {
+      pluginId: string;
+      provider: string;
+      displayName: string;
+      authorizeUrl?: string;
+      tokenUrl?: string;
+      scopes?: string;
+      defaultRedirectUri: string;
+    };
+  }>(`/api/v1/plugins/oauth/presets/${encodeURIComponent(pluginId)}`);
   return res.data;
 }
 

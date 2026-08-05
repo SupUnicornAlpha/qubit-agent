@@ -27,7 +27,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "../../db/sqlite/client";
 import { llmCallLog } from "../../db/sqlite/schema";
-import { estimateLlmCostUsd } from "../../util/llm-pricing";
+import { estimateLlmCostUsd, resolveLlmProviderForPricing } from "../../util/llm-pricing";
 
 export type LlmCallLogInput = {
   workflowRunId: string;
@@ -115,10 +115,11 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
      *   - cacheCreation: Anthropic 1.25× 写加价
      * reasoningTokens 已计入 completionTokens，不重复计费，仅作为打点字段。
      */
+    const billingProvider = resolveLlmProviderForPricing(input.provider, input.model);
     const cost =
       prompt !== null || completion !== null
         ? estimateLlmCostUsd({
-            provider: input.provider,
+            provider: billingProvider,
             model: input.model,
             promptTokens: prompt ?? 0,
             completionTokens: completion ?? 0,
@@ -152,7 +153,7 @@ export async function writeLlmCallLog(input: LlmCallLogInput): Promise<void> {
       workflowRunId: input.workflowRunId,
       agentStepId: input.agentStepId,
       agentDefinitionId: input.agentDefinitionId ?? null,
-      provider: input.provider,
+      provider: billingProvider,
       model: input.model,
       promptTokens: prompt,
       completionTokens: completion,

@@ -38,6 +38,7 @@ export const USER_BINDABLE_FIELDS = [
   "max_iterations",
   "sandbox_policy_id",
   "enabled",
+  "execution_kind",
 ] as const;
 
 export type UserBindableField = (typeof USER_BINDABLE_FIELDS)[number];
@@ -253,6 +254,8 @@ function mapColumnNameToDrizzleField(col: UserBindableField): string {
       return "sandboxPolicyId";
     case "enabled":
       return "enabled";
+    case "execution_kind":
+      return "executionKind";
   }
 }
 
@@ -276,5 +279,7 @@ function resetValueFor(col: UserBindableField): unknown {
       return undefined;
     case "enabled":
       return undefined;
+    case "execution_kind":
+      return "subagent";
   }
 }

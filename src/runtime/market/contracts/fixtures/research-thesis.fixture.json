@@ -1,0 +1,24 @@
+{
+  "thesisId": "thesis_01fixture",
+  "snapshotId": "mkt_snapshot_01fixture",
+  "instrumentScope": ["SSE:600519"],
+  "direction": "long",
+  "horizon": "5d",
+  "confidence": 0.62,
+  "claims": [
+    {
+      "claim": "近端量价结构支持温和上行",
+      "evidenceRefs": ["mev_01fixture_quote"],
+      "counterEvidenceRefs": []
+    }
+  ],
+  "invalidation": [
+    {
+      "condition": "跌破近5日低点且放量",
+      "observable": "SSE:600519.bar.1d.low"
+    }
+  ],
+  "knownUnknowns": ["当晚是否有管理层公告"],
+  "modelAndPromptVersion": "fixture/v0",
+  "createdAt": "2026-08-04T01:31:00.000Z"
+}

@@ -14,6 +14,11 @@ import {
 } from "./microstructure-query";
 import { resolveTickerMarket } from "./resolve-ticker-market";
 import { MarketBarAggregator } from "./market-stream-aggregator";
+import {
+  marketEventMirrorJournal,
+  safeMirrorMarketStreamEvent,
+} from "./contracts/market-event-mirror";
+import { selectBrokerMarketBridge } from "./broker-market-bridge";
 
 export type MarketStreamEventKind =
   | "status"
@@ -54,6 +59,9 @@ export interface MarketStreamMetrics {
   averageLatencyMs: number | null;
   p95LatencyMs: number | null;
   staleEvents: number;
+  /** D1 side-path MarketEvent v2 mirror counts (observability only). */
+  mirroredMarketEvents: number;
+  mirrorErrors: number;
 }
 
 type Listener = (event: MarketStreamEvent) => void;
@@ -405,7 +413,7 @@ class BridgeStreamSession extends BaseSession {
     input: Required<MarketStreamSubscription>,
     hooks: SessionHooks,
     private readonly bridgeUrl: string,
-    private readonly provider: "futu" | "ib"
+    private readonly provider: string
   ) {
     super(input, hooks);
     this.aggregator = new MarketBarAggregator(
@@ -570,6 +578,8 @@ class MarketStreamGateway {
     averageLatencyMs: null,
     p95LatencyMs: null,
     staleEvents: 0,
+    mirroredMarketEvents: 0,
+    mirrorErrors: 0,
   };
 
   subscribe(inputRaw: MarketStreamSubscription, listener: Listener): () => void {
@@ -595,6 +605,11 @@ class MarketStreamGateway {
           this.metrics.eventsPublished += 1;
           this.metrics.lastEventAt = event.emittedAt;
           this.observeFreshness(kind, data);
+          // D1: side-path mirror — never blocks dispatch on failure.
+          safeMirrorMarketStreamEvent(event);
+          const mirror = marketEventMirrorJournal.metrics();
+          this.metrics.mirroredMarketEvents = mirror.mirrored;
+          this.metrics.mirrorErrors = mirror.errors;
           try {
             this.sessions.get(key)?.dispatch(event);
           } catch (error) {
@@ -650,20 +665,18 @@ class MarketStreamGateway {
   ): StreamSession {
     const resolution = resolveTickerMarket(input.symbol, { hintExchange: input.exchange });
     if (resolution.market === "CRYPTO") return new BinanceStreamSession(input, hooks);
-    const preferred = (process.env.QUBIT_MARKET_STREAM_PROVIDER ?? "").trim().toLowerCase();
-    const futuUrl = process.env.QUBIT_FUTU_MARKET_WS_URL?.trim();
-    const ibUrl = process.env.QUBIT_IB_MARKET_WS_URL?.trim();
-    if (preferred === "futu" && futuUrl) {
-      return new BridgeStreamSession(input, hooks, futuUrl, "futu");
+    // Lazy: if Futu account exists but WS env not set yet, kick ensure (non-blocking retry on next subscribe).
+    if (
+      !process.env.QUBIT_FUTU_MARKET_WS_URL?.trim() &&
+      (resolution.market === "CN" || resolution.market === "HK" || resolution.market === "US")
+    ) {
+      void import("./futu-runtime")
+        .then((m) => m.ensureFutuRuntime())
+        .catch(() => undefined);
     }
-    if (preferred === "ib" && ibUrl) {
-      return new BridgeStreamSession(input, hooks, ibUrl, "ib");
-    }
-    if ((resolution.market === "CN" || resolution.market === "HK") && futuUrl) {
-      return new BridgeStreamSession(input, hooks, futuUrl, "futu");
-    }
-    if (resolution.market === "US" && ibUrl) {
-      return new BridgeStreamSession(input, hooks, ibUrl, "ib");
+    const bridge = selectBrokerMarketBridge({ market: resolution.market });
+    if (bridge) {
+      return new BridgeStreamSession(input, hooks, bridge.url, bridge.id);
     }
     return new PollingStreamSession(input, hooks);
   }

@@ -16,6 +16,9 @@ import {
   PROMPT_RISK,
   PROMPT_WALK_FORWARD_VALIDATOR,
 } from "./seed-agent-prompts";
+import {
+  executionKindForRole,
+} from "./prime/role-to-execution-kind";
 import type { RuntimeAgentDefinition } from "./types";
 
 type SeedDefinition = Omit<
@@ -28,6 +31,7 @@ type SeedDefinition = Omit<
   | "maxIterations"
   | "sandboxPolicyId"
   | "enabled"
+  | "executionKind"
 > &
   Partial<
     Pick<
@@ -40,6 +44,7 @@ type SeedDefinition = Omit<
       | "maxIterations"
       | "sandboxPolicyId"
       | "enabled"
+      | "executionKind"
     >
   >;
 
@@ -47,6 +52,7 @@ function def(partial: SeedDefinition): RuntimeAgentDefinition {
   const role = partial.role;
   return {
     ...partial,
+    executionKind: partial.executionKind ?? executionKindForRole(role),
     /** 仅真实 MCP（mathjs / mcp-financex / 已启用的 fsi-*）；connector 走 tools 列表，勿写入 mcpServers */
     mcpServers: resolveSeedMcpServers(role, partial.mcpServers ?? []),
     skills: partial.skills ?? ROLE_SKILLS[role] ?? [],
@@ -73,6 +79,7 @@ const MARKET_GOVERNANCE_TOOLS = [
   "market.resolve_symbol",
   "market.data_sources",
   "market.readiness",
+  "market.snapshot.get",
 ] as const;
 
 /** 内置 Agent 定义：Orchestrator + 数据/新闻 + 四维分析师 + 研究/回测/风控 */
@@ -82,34 +89,33 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "orchestrator",
     name: "编排器",
     /**
-     * 3.9.0（2026-08-04）：合同写权限集中到编排器；专家只保留领域精品工具。
-     * 派单优先 call_team_* / assign_task；本角色直接落 recommendation / factor /
-     * strategy / order 合同，避免「专家空转行情、合同永远不写」。
+     * 4.0.0（Prime D6）：单 Agent 经 Tool Host 消费 snapshot→thesis→portfolio→intent；
+     * 去掉团队兼容大工具与专家本职探测工具；A2A 仍走旧桥（call_team_* / assign_task）。
      */
-    version: "3.9.0",
+    version: "4.0.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       // 编排
       "update_plan",
       "assign_task",
+      // Prime HOST 证据链（D2–D5）
       "market.resolve_symbol",
-      "market.readiness",
+      "market.snapshot.get",
+      "research.thesis.write",
+      "research.forecast_book.get",
+      "portfolio.construct",
+      "order.create_intent",
       // 场景合同写（主责）
       "run_screener",
       "recommendation.record",
-      "factor.list",
       "factor.register",
-      "factor.evaluate",
-      "factor.autoEvaluate",
       "discovery.run",
       "discovery.promote",
       "strategy.create_version",
       "strategy.compose",
       "backtest.run",
-      "order.create_intent",
       "evaluate_risk",
       "rule.register",
-      "rule.evaluate",
       // 记忆 / skill / 逃生舱
       "search_memory",
       "memory.consolidate_longterm",
@@ -128,8 +134,8 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-market-data",
     role: "market_data",
     name: "行情数据",
-    /** 2.5.0：只保留取证五件套；ticks/snapshot/MCP 外移。 */
-    version: "2.5.0",
+    /** 2.6.0：取证五件套 + 不可变 snapshot.get（Prime D2）。 */
+    version: "2.6.0",
     systemPrompt: PROMPT_MARKET_DATA,
     tools: [
       ...MARKET_GOVERNANCE_TOOLS,
@@ -160,13 +166,15 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "analyst_fundamental",
     name: "基本面研究员",
     /**
-     * 3.5.0：本职=财报/估值。禁止自拉 klines——行情由 market_data 提供。
+     * 3.6.0：本职=财报/估值 + 结构化 thesis（Prime D4）。
+     * 禁止自拉 klines——行情由 market_data 提供。
      */
-    version: "3.5.0",
+    version: "3.6.0",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
       "fetch_fundamentals",
       "compute_valuation",
+      "research.thesis.write",
       "code.run_python",
       "skill.search",
       "skill.use_record",
@@ -177,13 +185,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-technical",
     role: "analyst_technical",
     name: "量化策略师",
-    /** 3.5.0：K 线 + 指标 + 形态 + 最小 skill。 */
-    version: "3.5.0",
+    /** 3.6.0：K 线 + 指标 + 形态 + 结构化 thesis。 */
+    version: "3.6.0",
     systemPrompt: PROMPT_ANALYST_TECHNICAL,
     tools: [
       "fetch_klines",
       "compute_indicators",
       "detect_patterns",
+      "research.thesis.write",
       "code.run_python",
       "skill.search",
       "skill.use_record",
@@ -194,12 +203,13 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-sentiment",
     role: "analyst_sentiment",
     name: "舆情分析师",
-    /** 3.5.0：只读新闻证据并解读；注册因子交给编排器/research。 */
-    version: "3.5.0",
+    /** 3.6.0：新闻证据 + 结构化 thesis；注册因子交给编排器/research。 */
+    version: "3.6.0",
     systemPrompt: PROMPT_ANALYST_SENTIMENT,
     tools: [
       "fetch_news",
       "fetch_news_sentiment",
+      "research.thesis.write",
       "code.run_python",
       "skill.search",
       "skill.use_record",
@@ -210,12 +220,13 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-analyst-macro",
     role: "analyst_macro",
     name: "宏观策略师",
-    /** 3.5.0：宏观指标 + 必要跨市场 K 线。 */
-    version: "3.5.0",
+    /** 3.6.0：宏观指标 + 必要跨市场 K 线 + 结构化 thesis。 */
+    version: "3.6.0",
     systemPrompt: PROMPT_ANALYST_MACRO,
     tools: [
       "fetch_klines",
       "compute_macro_indicators",
+      "research.thesis.write",
       "code.run_python",
       "skill.search",
       "skill.use_record",

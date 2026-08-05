@@ -33,6 +33,8 @@ import { type ReflectionRunRepo, getReflectionRunRepo } from "../reflection-run-
 export interface ReflectorWorkflowContext {
   workflowRunId: string;
   projectId: string;
+  /** FS Workspace id；有值时写入 scope=workspace */
+  fsWorkspaceId?: string | null;
   status: "completed" | "failed";
   mode: string;
   goal: string;
@@ -241,6 +243,9 @@ async function reflectOnceInternal(
 
     const producedIds: string[] = [];
     const cap = Math.min(MAX_REFLECTIVE_PER_RUN, lessons.length);
+    const writeScope = ctx.fsWorkspaceId?.trim()
+      ? ({ scope: "workspace" as const, scopeId: ctx.fsWorkspaceId.trim() })
+      : ({ scope: "project" as const, scopeId: ctx.projectId });
     for (let i = 0; i < cap; i++) {
       const lesson = lessons[i];
       if (!lesson) continue;
@@ -248,8 +253,7 @@ async function reflectOnceInternal(
         const exp = await opts.store.insert({
           kind: "reflective",
           subKind: lesson.subKind,
-          scope: "project",
-          scopeId: ctx.projectId,
+          ...writeScope,
           // ← 用户决策 4：reflective 隔离到产生者 agent
           definitionId: ctx.definitionId ?? "orchestrator",
           visibility: "agent_private",

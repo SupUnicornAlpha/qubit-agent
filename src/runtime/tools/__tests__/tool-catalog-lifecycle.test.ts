@@ -10,9 +10,20 @@ function find(name: string): ToolCatalogEntry {
 
 describe("tool-catalog lifecycle metadata", () => {
   test("default tools without explicit lifecycle remain stable (lifecycle undefined)", () => {
-    expect(find("run_analyst_team").lifecycle).toBeUndefined();
+    expect(find("assign_task").lifecycle).toBeUndefined();
     expect(find("fetch_klines").lifecycle).toBeUndefined();
     expect(find("evaluate_risk").lifecycle).toBeUndefined();
+  });
+
+  test("Prime D6 team-compat tools are deprecated without transparent alias", () => {
+    for (const name of ["run_analyst_team", "summarize_team_decision", "fuse_signals"]) {
+      const e = find(name);
+      expect(e.lifecycle).toBe("deprecated" satisfies ToolLifecycle);
+      expect(e.replacedBy).toBeTruthy();
+      expect(e.deprecationReason).toBeTruthy();
+      expect(resolveToolAlias(name).aliased).toBe(false);
+      expect(resolveToolAlias(name).resolved).toBe(name);
+    }
   });
 
   test("remaining stubs are labeled lifecycle=stub with a deprecationReason", () => {
@@ -112,14 +123,13 @@ describe("resolveToolAlias (Step 3 — deprecated 别名透明跳转)", () => {
   });
 
   test("防御：不会出现链式跳转（target 自己是 deprecated 会拒绝 alias）", () => {
-    // 当前所有 7 个 replacedBy 目标都不是 deprecated，所以 alias 都生效
-    // 但 resolveToolAlias 实现里的 target.lifecycle !== "deprecated" 守卫必须存在
-    // —— 用所有 deprecated 工具的 resolved 来反向验证
+    // 当前所有透明 alias 的 deprecated 工具的 replacedBy 目标都不是 deprecated
+    // —— resolveAlias:false 的 sunset 工具不参与 alias，跳过
     const all = buildToolCatalog();
     const deprecatedNames = all.filter((e) => e.lifecycle === "deprecated").map((e) => e.name);
     for (const name of deprecatedNames) {
       const r = resolveToolAlias(name);
-      expect(r.aliased).toBe(true);
+      if (!r.aliased) continue;
       const targetEntry = all.find((e) => e.name === r.resolved);
       expect(targetEntry).toBeDefined();
       expect(targetEntry!.lifecycle, `${name} -> ${r.resolved}: target must not be deprecated`).not.toBe("deprecated");

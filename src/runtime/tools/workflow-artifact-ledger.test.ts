@@ -41,6 +41,8 @@ beforeEach(async () => {
 describe("workflow artifact ledger", () => {
   test("classifies only reusable evidence reads", () => {
     expect(classifyWorkflowArtifactKind("market.resolve_symbol")).toBe("SymbolResolution");
+    expect(classifyWorkflowArtifactKind("market.snapshot.get")).toBe("MarketSnapshot");
+    expect(classifyWorkflowArtifactKind("research.thesis.write")).toBe("ResearchThesis");
     expect(classifyWorkflowArtifactKind("qubit-data/fetch_quote")).toBe("MarketSnapshot");
     expect(classifyWorkflowArtifactKind("qubit-data/fetch_fundamentals")).toBe(
       "FundamentalSnapshot"

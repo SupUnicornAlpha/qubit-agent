@@ -1269,6 +1269,11 @@ export async function resolveHitlRequest(input: {
    * graph workflow 行为完全等价（agent-pool 内部仍走 graphRunner.resumeRoleTask）。
    */
   const taskId = randomUUID();
+  const hitlPayload = row.payloadJson as Record<string, unknown>;
+  const primeCoreInboxId =
+    typeof hitlPayload.primeCoreInboxId === "string"
+      ? hitlPayload.primeCoreInboxId
+      : undefined;
   const dispatchResult = await dispatchTaskToRole({
     workflowId: row.workflowRunId,
     role: "orchestrator",
@@ -1285,9 +1290,10 @@ export async function resolveHitlRequest(input: {
           decision: "approved",
           response: validatedResponse,
         },
-        hitlPayload: row.payloadJson as Record<string, unknown>,
+        hitlPayload,
         hitlInputKind: row.inputKind,
         hitlInputSchema: row.inputSchemaJson,
+        ...(primeCoreInboxId ? { primeCoreInboxId } : {}),
       },
     },
   });

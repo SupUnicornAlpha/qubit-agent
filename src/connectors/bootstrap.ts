@@ -15,6 +15,7 @@ import { seedEnvRegistry } from "../runtime/environment/seed-env-registry";
 import { bootstrapProviders } from "../runtime/provider/bootstrap";
 import { bootstrapResearchScenarios } from "../runtime/research-scenario/bootstrap";
 import { bootstrapMarketDataSources } from "../runtime/market/market-data-source-control";
+import { ensureFutuRuntime } from "../runtime/market/futu-runtime";
 
 export type { BuiltinConnectorInitConfigs };
 
@@ -62,6 +63,10 @@ export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConf
     const configs = initConfigs ?? (await loadBuiltinConnectorSettings());
     await bootstrapMarketDataSources(configs);
     await connectorRegistry.initAll(configs);
+    // If a Futu broker account is already configured, bring up trade/quote bridges.
+    void ensureFutuRuntime().catch((e) => {
+      console.warn(`[Bootstrap] ensureFutuRuntime skipped: ${(e as Error).message}`);
+    });
   })();
   return bootstrapPromise;
 }

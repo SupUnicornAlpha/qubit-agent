@@ -1,0 +1,55 @@
+{
+  "key": "factor",
+  "aliases": ["factor_research", "f"],
+  "version": "2026-08-05.3",
+  "capability_owners": {
+    "factor": "factor"
+  },
+  "role_tool_allowlist": {
+    "orchestrator": ["update_plan", "topology.dispatch"],
+    "factor": ["factor.register", "factor.compute", "factor.evaluate", "factor.autoEvaluate", "factor.list"]
+  },
+  "stall_budget": {
+    "tools": [
+      "market.readiness",
+      "market.resolve_symbol",
+      "factor.list",
+      "update_plan",
+      "mcp:mathjs:evaluate"
+    ],
+    "key": "tool_fingerprint",
+    "max_success": 3,
+    "on_exceed": "strip_from_surface"
+  },
+  "recovery": {
+    "after_probe_failure": "continue_without_realtime",
+    "forbid_gap_as_final_answer": true
+  },
+  "completion": {
+    "artifacts": [
+      {
+        "table": "factor_definition",
+        "min_rows": 1,
+        "research_min_rows": 1,
+        "required_fields": ["name", "expression"],
+        "scope": "workflow"
+      },
+      {
+        "table": "factor_evaluation",
+        "min_rows": 1,
+        "research_min_rows": 0,
+        "scope": "workflow"
+      }
+    ],
+    "required_tools": [{ "capability": "factor", "min_success": 1 }],
+    "answer_schema": {
+      "required_sections": ["goal", "evidence", "decision", "risks", "gaps"]
+    }
+  },
+  "checklist_prompt": [
+    "1. factor.register（qlib_expr：close / Ref(close, 21) - 1；勿用 Ref(close,252) 超长窗；勿用未声明 Python 名）",
+    "2. factor.compute → factor.evaluate 或 factor.autoEvaluate 闭环",
+    "3. 输出五段答案；禁止仅 list 旧因子结案",
+    "同类工具连打 ≤3 次后必须写终答"
+  ]
+}

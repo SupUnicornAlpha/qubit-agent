@@ -270,6 +270,18 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       );
     }
     const dispatchMode = dispatchModeRaw as "paper" | "live";
+    const snapshotId = String(params.snapshot_id ?? params.snapshotId ?? "").trim() || null;
+    const thesisId = String(params.thesis_id ?? params.thesisId ?? "").trim() || null;
+    if (dispatchMode === "live" && !thesisId) {
+      throw new Error(
+        "order.create_intent: dispatch_mode=live 必须传 thesisId（先 research.thesis.write；snapshot 可从 thesis 派生）"
+      );
+    }
+    if (dispatchMode === "live" && !snapshotId && !thesisId) {
+      throw new Error(
+        "order.create_intent: dispatch_mode=live 必须传 snapshotId 或 thesisId"
+      );
+    }
 
     /**
      * workflowRunId 必须可解析：order_intent.workflow_run_id 通过 FK 引用 workflow_run.id。
@@ -320,6 +332,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       symbol: sym,
       timeframe: typeof params.timeframe === "string" ? (params.timeframe as string) : null,
       dispatchMode,
+      snapshotId,
+      thesisId,
+      requireDataQualityGate: snapshotId != null || thesisId != null,
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
     });
 
@@ -337,6 +352,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       riskReviewTicketId: result.riskReviewTicketId,
       paperLifecycle,
       symbol: sym,
+      snapshotId: result.snapshotId ?? snapshotId,
+      thesisId: result.thesisId ?? thesisId,
+      dataQualityWarnings: result.dataQualityWarnings ?? [],
       side,
       qty,
       orderType,

@@ -54,10 +54,26 @@ interface RawWorkflow {
     status: string;
     startedAt: string;
     endedAt: string | null;
+    fsWorkspaceId: string | null;
   };
   instances: RawInstance[];
   steps: Array<{ role: string; thought: string; actionType: string }>;
   failedTools: Array<{ role: string; toolName: string; errorClass: string }>;
+}
+
+/** Resolve FS workspace id from workflow loop options or env. */
+function resolveFsWorkspaceId(loopOptionsJson: unknown): string | null {
+  if (loopOptionsJson && typeof loopOptionsJson === "object" && !Array.isArray(loopOptionsJson)) {
+    const o = loopOptionsJson as Record<string, unknown>;
+    for (const key of ["fsWorkspaceId", "fs_workspace_id", "workspaceId"] as const) {
+      const v = o[key];
+      if (typeof v === "string" && v.trim() && !v.startsWith("wf_")) {
+        return v.trim();
+      }
+    }
+  }
+  const env = process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID?.trim();
+  return env || null;
 }
 
 /** 折叠相邻重复（与 extractor 的 toolChain 语义一致）。 */
@@ -82,12 +98,23 @@ async function readWorkflowForPipes(workflowRunId: string): Promise<RawWorkflow 
       status: workflowRun.status,
       startedAt: workflowRun.startedAt,
       endedAt: workflowRun.endedAt,
+      loopOptionsJson: workflowRun.loopOptionsJson,
     })
     .from(workflowRun)
     .where(eq(workflowRun.id, workflowRunId))
     .limit(1);
-  const wf = wfRow[0];
-  if (!wf) return null;
+  const row = wfRow[0];
+  if (!row) return null;
+  const wf = {
+    id: row.id,
+    projectId: row.projectId,
+    goal: row.goal,
+    mode: row.mode,
+    status: row.status,
+    startedAt: row.startedAt,
+    endedAt: row.endedAt,
+    fsWorkspaceId: resolveFsWorkspaceId(row.loopOptionsJson),
+  };
 
   const defs = await db
     .select({ id: agentDefinition.id, role: agentDefinition.role })
@@ -240,6 +267,7 @@ export const sqliteExtractorLoader: ExtractorLoader = {
           stepCount: i.stepCount,
         })),
         episodicIds: [],
+        fsWorkspaceId: raw.wf.fsWorkspaceId,
       };
     } catch (err) {
       console.warn(`[pipe-loaders] extractor loader failed wf=${workflowRunId}: ${errToStr(err)}`);
@@ -289,6 +317,7 @@ export const sqliteReflectorLoader: ReflectorLoader = {
         definitionId: orch?.definitionId ?? null,
         episodicIds: [],
         recentStepsText,
+        fsWorkspaceId: raw.wf.fsWorkspaceId,
       };
     } catch (err) {
       console.warn(`[pipe-loaders] reflector loader failed wf=${workflowRunId}: ${errToStr(err)}`);

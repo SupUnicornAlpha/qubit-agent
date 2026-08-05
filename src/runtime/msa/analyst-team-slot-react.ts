@@ -35,6 +35,7 @@ import type { AgentRole, AnalystSignalValue } from "../../types/entities";
 import { buildContextHandoffV1 } from "../context/handoff";
 import { parseLlmConfigJson } from "../llm/agent-llm-config";
 import { invokeWithFallback, resolveLlmForAgent } from "../llm/llm-router";
+import { resolveExecutionKind } from "../prime/execution-kind";
 import { resolveRoleReasoner } from "./role-reasoner";
 import { resolveEnabledMcpServerNames } from "../mcp/resolve-enabled-mcp-servers";
 import type { RuntimeAgentDefinition } from "../types";
@@ -107,9 +108,14 @@ async function loadRuntimeDefinition(
    *   - 与 def.maxIterations 取小值，避免 def 的低 cap 被覆盖（def 可能显式设 2）
    */
   const cap = Math.max(1, Math.min(reactCap, TEAM_SLOT_MAX_ITERATIONS));
+  const llmConfig = parseLlmConfigJson(d.llmConfigJson);
   return {
     id: d.id,
     role: d.role as AgentRole,
+    executionKind: resolveExecutionKind({
+      executionKind: d.executionKind,
+      role: d.role,
+    }),
     name: d.name,
     version: d.version,
     systemPrompt: d.systemPrompt,
@@ -118,7 +124,7 @@ async function loadRuntimeDefinition(
     skills: (d.skillsJson as string[]) ?? [],
     subscriptions: (d.subscriptionsJson as RuntimeAgentDefinition["subscriptions"]) ?? ["TASK_ASSIGN"],
     llmProvider: d.llmProvider,
-    llmConfig: parseLlmConfigJson(d.llmConfigJson),
+    ...(llmConfig ? { llmConfig } : {}),
     maxIterations: Math.min(d.maxIterations ?? cap, cap),
     sandboxPolicyId: d.sandboxPolicyId,
     enabled: Boolean(d.enabled),

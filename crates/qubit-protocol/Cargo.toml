@@ -1,0 +1,16 @@
+[package]
+name = "qubit-protocol"
+description = "Qubit Prime shared protocol types (ExecutionKind, Session/Turn, Context, HITL, Delivery)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

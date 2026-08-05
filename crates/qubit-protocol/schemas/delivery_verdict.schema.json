@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DeliveryVerdict",
+  "type": "object",
+  "required": [
+    "status"
+  ],
+  "properties": {
+    "reasons": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "$ref": "#/definitions/DeliveryStatus"
+    }
+  },
+  "definitions": {
+    "DeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "delivered",
+        "delivered_with_gaps",
+        "partial",
+        "failed",
+        "cancelled"
+      ]
+    }
+  }
+}

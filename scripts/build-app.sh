@@ -28,8 +28,21 @@ bash scripts/prepare-bundle-resources.sh
 echo "==> [3/8] python venv (optional, same OS/arch as build host)"
 bash scripts/setup-python-venv.sh || true
 
-echo "==> [4/8] compile backend binary"
+echo "==> [4/8] compile backend binary + qubit-app-server"
 bash scripts/build-backend.sh dist/bundle/bin/qubit
+echo "    building qubit-app-server (release)..."
+cargo build -p qubit-app-server --release
+APP_SERVER_SRC="${CARGO_TARGET_DIR:-target}/release/qubit-app-server"
+if [[ ! -x "${APP_SERVER_SRC}" ]]; then
+  # fallback debug if release path missing
+  cargo build -p qubit-app-server
+  APP_SERVER_SRC="${CARGO_TARGET_DIR:-target}/debug/qubit-app-server"
+fi
+mkdir -p dist/bundle/bin dist/bundle/resources/bin
+cp "${APP_SERVER_SRC}" dist/bundle/bin/qubit-app-server
+cp "${APP_SERVER_SRC}" dist/bundle/resources/bin/qubit-app-server
+chmod +x dist/bundle/bin/qubit-app-server dist/bundle/resources/bin/qubit-app-server
+echo "    app-server: dist/bundle/bin/qubit-app-server"
 
 echo "==> [5/8] production sidecar smoke"
 bash scripts/smoke-production-sidecar.sh dist/bundle/bin/qubit

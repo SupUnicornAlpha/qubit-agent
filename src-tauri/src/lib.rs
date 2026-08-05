@@ -241,8 +241,12 @@ fn spawn_dev_bun_backend(
     let child = Command::new("bash")
         .arg("-lc")
         .arg(format!(
-            "PORT={} HOST=127.0.0.1 QUBIT_APP_ROOT='{}' QUBIT_DATA_DIR='{}' QUBIT_BUN_WATCH={} {} src/index.ts",
-            BACKEND_PORT, app_root_str, data_dir_str, watch_flag, bun_cmd
+            "PORT={} HOST=127.0.0.1 QUBIT_APP_ROOT='{}' QUBIT_DATA_DIR='{}' QUBIT_BUN_WATCH={} \
+QUBIT_CORE_BACKEND=rust QUBIT_CORE_STRICT=1 QUBIT_UNPRODUCTIVE_BUDGET=0 \
+QUBIT_RUST_CORE_URL=http://127.0.0.1:8787 \
+QUBIT_LEGACY_BRIDGE_URL=http://127.0.0.1:{}/api/v1/prime-bridge \
+{} src/index.ts",
+            BACKEND_PORT, app_root_str, data_dir_str, watch_flag, BACKEND_PORT, bun_cmd
         ))
         .current_dir("..")
         .stdout(Stdio::from(log_file))
@@ -346,12 +350,27 @@ fn spawn_backend_sidecar(
         .ok_or_else(|| "data_dir path is not UTF-8".to_string())?
         .to_string();
 
-    let (_rx, child) = sidecar
+    let app_server_bin = app_root.join("bin").join("qubit-app-server");
+    let mut cmd = sidecar
         .env("QUBIT_APP_ROOT", app_root_str)
         .env("QUBIT_DATA_DIR", data_dir_str)
         .env("PORT", BACKEND_PORT)
         .env("HOST", "127.0.0.1")
         .env("NODE_ENV", "production")
+        .env("QUBIT_CORE_BACKEND", "rust")
+        .env("QUBIT_CORE_STRICT", "1")
+        .env("QUBIT_UNPRODUCTIVE_BUDGET", "0")
+        .env("QUBIT_RUST_CORE_URL", "http://127.0.0.1:8787")
+        .env(
+            "QUBIT_LEGACY_BRIDGE_URL",
+            format!("http://127.0.0.1:{BACKEND_PORT}/api/v1/prime-bridge"),
+        );
+    if app_server_bin.is_file() {
+        if let Some(p) = app_server_bin.to_str() {
+            cmd = cmd.env("QUBIT_APP_SERVER_BIN", p);
+        }
+    }
+    let (_rx, child) = cmd
         .spawn()
         .map_err(|e| format!("sidecar spawn: {e}"))?;
 

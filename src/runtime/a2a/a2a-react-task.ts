@@ -5,6 +5,12 @@ import { executeAgentReact } from "../react/execute-agent-react";
 import type { AgentGraphState } from "../react/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { resolveTopologyTaskHeartbeatMs } from "../orchestration/topology-dispatch";
+import { resolveCoreBackend } from "../prime/core-runtime";
+import { runOrchestratorTaskViaCore } from "../prime/run-orchestrator-via-core";
+import {
+  reasonSpecialistViaCore,
+  resolveCalleeSpecId,
+} from "../prime/run-specialist-via-core";
 import type { RuntimeHandlerContext } from "../types";
 import {
   clearA2ATaskCancellation,
@@ -280,6 +286,101 @@ export async function runA2aReactTaskAssign(
   };
 
   try {
+    // Prime Core valve: orchestrator → turn.start；专家 role → agent.invoke。
+    // 避免在 rust 后端再进 executeAgentReact（为裁剪 TS ReAct 铺路）。
+    if (resolveCoreBackend() === "rust") {
+      if (ctx.definition.role === "orchestrator") {
+        return runOrchestratorTaskViaCore(ctx, msg, payload);
+      }
+
+      await markA2ATaskWorking(payload.taskId);
+      await emitProgress({ phase: "start", iteration: 0, detail: "prime_core_invoke" });
+      const params = (payload.params ?? {}) as Record<string, unknown>;
+      const goal =
+        (typeof params.goal === "string" && params.goal.trim()) ||
+        (typeof params.context === "string" && params.context.trim()) ||
+        `A2A task ${payload.taskType} for ${ctx.definition.role}`;
+      const context =
+        typeof params.context === "string" && params.context !== goal
+          ? params.context
+          : undefined;
+
+      const out = await reasonSpecialistViaCore({
+        workflowRunId: workflowId,
+        runId,
+        traceId: msg.traceId,
+        calleeSpecId: resolveCalleeSpecId({
+          definitionId: definition.id,
+          role: ctx.definition.role,
+        }),
+        role: ctx.definition.role,
+        goal,
+        ...(context ? { context } : {}),
+        maxIterations: definition.maxIterations,
+      });
+
+      const failed = out.state === "failed" || out.state === "cancelled";
+      const terminalStatus: "completed" | "partial" | "failed" = failed
+        ? "failed"
+        : "completed";
+      const finalResponse: Record<string, unknown> = {
+        answerText: out.text,
+        reasonText: out.text,
+        status: terminalStatus,
+        backend: "rust",
+        invocationId: out.invocationId,
+        childSessionId: out.childSessionId,
+      };
+
+      stepStreamBus.publish({
+        runId,
+        workflowId,
+        traceId,
+        role: ctx.definition.role,
+        type: failed ? "error" : "final",
+        stepIndex: 0,
+        ts: Date.now(),
+        payload: failed
+          ? { error: out.text, backend: "rust" }
+          : { answerText: out.text, backend: "rust" },
+        loopKind: "native",
+        source: "a2a",
+      });
+
+      if (ownsTerminalState) {
+        await cancelOpenChildrenForTerminal(terminalStatus);
+        onWorkflowTerminal(workflowId, terminalStatus);
+      }
+
+      const failure = failed
+        ? {
+            status: "failed" as const,
+            errorCode: "prime_core_invoke",
+            errorMessage: out.text.slice(0, 500),
+          }
+        : null;
+      const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
+        status: failure?.status ?? "completed",
+        success: terminalStatus === "completed",
+        result: finalResponse,
+        ...(failure
+          ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage }
+          : {}),
+        summary: out.text.slice(0, 500),
+        durationMs: Date.now() - startedAt,
+      });
+      await completeA2ATask(payload.taskId, taskResultPayload);
+      await ctx.send({
+        workflowId,
+        traceId,
+        receiverAgent: msg.senderAgent,
+        messageType: "TASK_RESULT",
+        payload: taskResultPayload,
+        priority: msg.priority,
+      });
+      return { finalResponse, terminalStatus };
+    }
+
     await markA2ATaskWorking(payload.taskId);
     await emitProgress({ phase: "start", iteration: 0 });
     if (!ownsWorkflowTerminalState(payload)) {

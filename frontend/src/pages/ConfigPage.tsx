@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
-import { getAgentsConfig, getDefaultWorkspace, getModelConfig, getBuiltinConnectorConfig, getWindSessionStatus, loginWindSession, reconnectWindSession, listMcpBindings, listMcpMarketCatalog, listMcpProjectInstalls, listMcpSources, listMcpServers, appendAgentDraftSkills, deleteSkillMarketInstall, getSkillMarketStatus, installManualSkill, installSkillFromMarket, listSkillLibrary, listSkillMarketInstalls, patchAgentSkill, listAgentDefinitions, refreshSkillMarketRegistry, searchSkillMarket, getAgentDefinitionMemoryStats, getAgentDefinitionPack, listProjects, reloadAgents, saveModelConfig, testEmbeddingModelConfig, saveBuiltinConnectorConfig, testMcpCall, testMcpProjectInstall, upsertMcpBinding, upsertMcpSource, upsertMcpServer, installMcpMarket, syncMcpSource, uninstallMcpProjectInstall } from "../api/backend";
-import type { AgentDefinitionBundle, AgentDefinitionRecord, AgentMemoryStatsResponse, AgentPackResponse, AgentSkillRecord, McpServerConfigRecord, McpCatalogItemRecord, McpProjectInstallRecord, McpRegistrySourceRecord, McpToolBindingRecord, OpenSkillMarketEntryDto, SkillMarketInstallRecord, SkillMarketStatusDto, BuiltinConnectorConfig } from "../api/types";
+import { getAgentsConfig, getDefaultWorkspace, getModelConfig, getBuiltinConnectorConfig, getWindSessionStatus, loginWindSession, reconnectWindSession, listMcpBindings, listMcpMarketCatalog, listMcpProjectInstalls, listMcpSources, listMcpServers, appendAgentDraftSkills, deleteSkillMarketInstall, getSkillMarketStatus, installManualSkill, installSkillFromMarket, listSkillMarketInstalls, listAgentDefinitions, refreshSkillMarketRegistry, searchSkillMarket, getAgentDefinitionMemoryStats, getAgentDefinitionPack, listProjects, reloadAgents, saveModelConfig, testEmbeddingModelConfig, saveBuiltinConnectorConfig, testMcpCall, testMcpProjectInstall, upsertMcpBinding, upsertMcpSource, upsertMcpServer, installMcpMarket, syncMcpSource, uninstallMcpProjectInstall } from "../api/backend";
+import type { AgentDefinitionBundle, AgentDefinitionRecord, AgentMemoryStatsResponse, AgentPackResponse, McpServerConfigRecord, McpCatalogItemRecord, McpProjectInstallRecord, McpRegistrySourceRecord, McpToolBindingRecord, OpenSkillMarketEntryDto, SkillMarketInstallRecord, SkillMarketStatusDto, BuiltinConnectorConfig } from "../api/types";
 import { useAppStore } from "../store";
 import { agentDisplayLabel } from "../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../components/config/ConfigAgentPanel";
+import { resolveExecutionKind, type ExecutionKind } from "../lib/executionKind";
 import { IntegrationCenterPanel } from "../components/config/IntegrationCenterPanel";
+import { MarketDataSourcesPanel } from "../components/config/MarketDataSourcesPanel";
 import { PluginsPanel } from "../components/config/PluginsPanel";
 import { ScheduledJobsPanel } from "../components/config/ScheduledJobsPanel";
 import { ProvidersPanel } from "../components/config/ProvidersPanel";
+import { ToolSurfacePanel } from "../components/config/ToolSurfacePanel";
+import { SkillsLibraryPanel } from "../components/config/SkillsLibraryPanel";
 import { LlmProvidersList } from "../components/config/LlmProvidersList";
 import { OriginBadge } from "../components/common/OriginBadge";
 import { PythonRuntimeCard } from "../components/common/PythonRuntimeCard";
@@ -41,6 +45,7 @@ export const ConfigPanel: FC = () => {
   const [draftMcpServerNames, setDraftMcpServerNames] = useState<string[]>([]);
   const [draftDisplayName, setDraftDisplayName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
+  const [draftExecutionKind, setDraftExecutionKind] = useState<ExecutionKind>("subagent");
   const [draftTools, setDraftTools] = useState<string[]>([]);
   const [draftMaxIterations, setDraftMaxIterations] = useState(20);
   const [draftSkills, setDraftSkills] = useState<string[]>([]);
@@ -123,9 +128,6 @@ export const ConfigPanel: FC = () => {
   const [skillMarketTotalPages, setSkillMarketTotalPages] = useState(1);
   const SKILL_MARKET_PAGE_SIZE = 24;
   const [skillInstalls, setSkillInstalls] = useState<SkillMarketInstallRecord[]>([]);
-  /** 由 curator / evolver / 用户手写 / 市场镜像汇总到 agent_skill 表的统一 skill 库。 */
-  const [skillLibrary, setSkillLibrary] = useState<AgentSkillRecord[]>([]);
-  const [skillLibraryIncludeArchived, setSkillLibraryIncludeArchived] = useState(false);
   const [skillRefreshBusy, setSkillRefreshBusy] = useState(false);
   const [skillAppendDefinitionId, setSkillAppendDefinitionId] = useState("");
   const [manualSkillName, setManualSkillName] = useState("");
@@ -281,6 +283,12 @@ export const ConfigPanel: FC = () => {
         setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
         setDraftPromptTemplateRef(b.profile?.promptTemplateRef ?? "");
         setDraftLlmProvider(b.draft?.llmProvider ?? b.definition.llmProvider ?? "");
+        setDraftExecutionKind(
+          resolveExecutionKind({
+            executionKind: b.definition.executionKind,
+            role: b.definition.role,
+          })
+        );
       }
     }
     try {
@@ -332,13 +340,6 @@ export const ConfigPanel: FC = () => {
     if (activeConfigSubPage !== "skills" || !currentProjectId) return;
     void listSkillMarketInstalls(currentProjectId).then(setSkillInstalls);
   }, [activeConfigSubPage, currentProjectId]);
-
-  useEffect(() => {
-    if (activeConfigSubPage !== "skills" || !currentProjectId) return;
-    void listSkillLibrary(currentProjectId, { includeArchived: skillLibraryIncludeArchived })
-      .then(setSkillLibrary)
-      .catch(() => setSkillLibrary([]));
-  }, [activeConfigSubPage, currentProjectId, skillLibraryIncludeArchived]);
 
   const loadMcpMarketPage = useCallback(
     async (page: number) => {
@@ -493,6 +494,12 @@ export const ConfigPanel: FC = () => {
     setDraftMcpServerNames(parseAgentMcpServerNames(b.draft?.mcpServersJson ?? b.definition.mcpServersJson));
     setDraftDisplayName(b.profile?.displayName?.trim() || agentDisplayLabel(b));
     setDraftDescription(b.profile?.description ?? "");
+    setDraftExecutionKind(
+      resolveExecutionKind({
+        executionKind: b.definition.executionKind,
+        role: b.definition.role,
+      })
+    );
     const parseStrList = (v: unknown): string[] =>
       Array.isArray(v)
         ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
@@ -987,7 +994,8 @@ export const ConfigPanel: FC = () => {
         {(
           [
             ["llm", "LLM"],
-            ["datasources", "数据源"],
+            ["datasources", "数据源 / 工具"],
+            ["plugins", "插件"],
             ["mcp", "MCP"],
             ["skills", "Skills"],
             ["agent", "Agent"],
@@ -1224,13 +1232,17 @@ export const ConfigPanel: FC = () => {
         ) : null}
         {activeConfigSubPage === "datasources" ? (
           <>
-            <h3 style={styles.subTitle}>数据源（qubit-data / qubit-news）</h3>
+            <MarketDataSourcesPanel />
+            <div style={{ height: 1, margin: "20px 0", background: "var(--qb-sidebar-border, #27272a)" }} />
+            <ToolSurfacePanel />
+            <div style={{ height: 1, margin: "20px 0", background: "var(--qb-sidebar-border, #27272a)" }} />
+            <h3 style={styles.subTitle}>连接凭证与网络（qubit-data / qubit-news）</h3>
             <p className="qb-config-hint qb-config-hint--tight">
-              在客户端填写后写入本机数据库（~/.quant-agent/db），启动时与保存后都会重新注入连接器；无需环境变量。
+              凭证写入本机数据库，启动与保存后注入连接器。上方「行情数据源控制面」决定启用/优先级与
+              Prime 档位；此处配置 token、Wind、代理与新闻 API。
               <br />
-              K 线数据源 <code style={{ fontSize: 11 }}>klinesDataSource</code>：默认「自动」为 A 股优先{" "}
-              <strong>东方财富</strong>；配置 Wind 账号后 A 股可走 <strong>Wind</strong>；加密货币走 <strong>Binance</strong>；
-              有 Tushare token 时 A 股日线可走 Tushare；美股等走 Yahoo。
+              K 线默认路由 <code style={{ fontSize: 11 }}>klinesDataSource=auto</code>：A 股优先东方财富；有
+              Wind 账号可走 Wind；加密走 Binance；有 Tushare token 时 A 股日线可走 Tushare；美股等走 Yahoo。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
@@ -2419,207 +2431,10 @@ export const ConfigPanel: FC = () => {
               )}
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                margin: "20px 0 8px",
-              }}
-            >
-              <h4 style={{ ...styles.subTitle, fontSize: 14, margin: 0 }}>
-                归纳与演化（agent_skill）
-              </h4>
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  fontSize: 12,
-                  color: "var(--qb-main-meta)",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={skillLibraryIncludeArchived}
-                  onChange={(e) => setSkillLibraryIncludeArchived(e.target.checked)}
-                />
-                显示已归档
-              </label>
-            </div>
-            <p className="qb-config-hint" style={{ margin: "0 0 8px" }}>
-              Agent 在执行复杂任务后由 curator 沉淀的程序性记忆，以及 evolver
-              基于 baseline 突变得到的演化版本（类 Hermes / GEPA 机制）。pending_review
-              的演化产物需要审批后才会转 active。
-            </p>
             {!currentProjectId ? (
               <p className="qb-config-hint">加载配置后可按项目记录归纳；请先进入配置中心触发加载。</p>
             ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: "var(--qb-main-meta)" }}>
-                      <th style={{ padding: "6px 8px" }}>name</th>
-                      <th style={{ padding: "6px 8px" }}>描述</th>
-                      <th style={{ padding: "6px 8px" }}>来源</th>
-                      <th style={{ padding: "6px 8px" }}>状态</th>
-                      <th style={{ padding: "6px 8px" }}>version</th>
-                      <th style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>使用 / 成功</th>
-                      <th style={{ padding: "6px 8px" }}>最近使用</th>
-                      <th style={{ padding: "6px 8px" }}>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {skillLibrary.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} style={{ padding: 12, color: "var(--qb-main-meta)" }}>
-                          暂无 agent_skill 记录。等待 Agent 在工作流里触发 curator/evolver，或在
-                          运维脚本里执行 `bun run src/scripts/run-skill-curator.ts`。
-                        </td>
-                      </tr>
-                    ) : (
-                      skillLibrary.map((s) => {
-                        const reviewing = s.state === "pending_review";
-                        return (
-                          <tr
-                            key={s.id}
-                            style={{
-                              borderTop: "1px solid #27272a",
-                              color: "var(--qb-body-fg)",
-                              opacity: s.state === "archived" ? 0.55 : 1,
-                            }}
-                          >
-                            <td
-                              style={{
-                                padding: "8px",
-                                fontFamily: "ui-monospace, monospace",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {s.pinned ? "★ " : ""}
-                              {s.name}
-                            </td>
-                            <td style={{ padding: "8px", maxWidth: 320 }}>
-                              {s.description.length > 140
-                                ? `${s.description.slice(0, 140)}…`
-                                : s.description}
-                            </td>
-                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
-                              <OriginBadge origin={s.source} style={{ marginLeft: 0 }} />
-                            </td>
-                            <td
-                              style={{
-                                padding: "8px",
-                                whiteSpace: "nowrap",
-                                color: reviewing
-                                  ? "#f87171"
-                                  : s.state === "archived"
-                                    ? "var(--qb-main-meta)"
-                                    : "var(--qb-body-fg)",
-                              }}
-                            >
-                              {s.state}
-                            </td>
-                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>{s.version}</td>
-                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
-                              {s.useCount} / {s.successCount}
-                              {s.failCount > 0 ? (
-                                <span style={{ color: "#fca5a5" }}> · 失败 {s.failCount}</span>
-                              ) : null}
-                            </td>
-                            <td
-                              style={{
-                                padding: "8px",
-                                whiteSpace: "nowrap",
-                                color: "var(--qb-main-meta)",
-                              }}
-                            >
-                              {s.lastUsedAt ? new Date(s.lastUsedAt).toLocaleString() : "—"}
-                            </td>
-                            <td style={{ padding: "8px", whiteSpace: "nowrap" }}>
-                              <button
-                                type="button"
-                                className="qb-btn-ghost qb-btn--compact"
-                                onClick={() => {
-                                  const preview = s.bodyMd?.slice(0, 4000) || "(empty)";
-                                  window.alert(`# ${s.name}\n\n${preview}`);
-                                }}
-                              >
-                                查看
-                              </button>
-                              <button
-                                type="button"
-                                className="qb-btn-ghost qb-btn--compact"
-                                onClick={() =>
-                                  void patchAgentSkill(s.id, { pinned: !s.pinned })
-                                    .then(() =>
-                                      listSkillLibrary(currentProjectId, {
-                                        includeArchived: skillLibraryIncludeArchived,
-                                      })
-                                    )
-                                    .then(setSkillLibrary)
-                                }
-                              >
-                                {s.pinned ? "取消置顶" : "置顶"}
-                              </button>
-                              {reviewing ? (
-                                <button
-                                  type="button"
-                                  className="qb-btn-secondary qb-btn--compact"
-                                  onClick={() =>
-                                    void patchAgentSkill(s.id, { state: "active" })
-                                      .then(() =>
-                                        listSkillLibrary(currentProjectId, {
-                                          includeArchived: skillLibraryIncludeArchived,
-                                        })
-                                      )
-                                      .then(setSkillLibrary)
-                                  }
-                                >
-                                  审批通过
-                                </button>
-                              ) : null}
-                              {s.state !== "archived" ? (
-                                <button
-                                  type="button"
-                                  className="qb-btn-ghost qb-btn--compact"
-                                  onClick={() =>
-                                    void patchAgentSkill(s.id, { state: "archived" })
-                                      .then(() =>
-                                        listSkillLibrary(currentProjectId, {
-                                          includeArchived: skillLibraryIncludeArchived,
-                                        })
-                                      )
-                                      .then(setSkillLibrary)
-                                  }
-                                >
-                                  归档
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="qb-btn-ghost qb-btn--compact"
-                                  onClick={() =>
-                                    void patchAgentSkill(s.id, { state: "active" })
-                                      .then(() =>
-                                        listSkillLibrary(currentProjectId, {
-                                          includeArchived: skillLibraryIncludeArchived,
-                                        })
-                                      )
-                                      .then(setSkillLibrary)
-                                  }
-                                >
-                                  恢复
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <SkillsLibraryPanel projectId={currentProjectId} />
             )}
           </>
         ) : null}
@@ -2684,6 +2499,8 @@ export const ConfigPanel: FC = () => {
             setDraftDisplayName={setDraftDisplayName}
             draftDescription={draftDescription}
             setDraftDescription={setDraftDescription}
+            draftExecutionKind={draftExecutionKind}
+            setDraftExecutionKind={setDraftExecutionKind}
             draftTools={draftTools}
             setDraftTools={setDraftTools}
             draftMaxIterations={draftMaxIterations}

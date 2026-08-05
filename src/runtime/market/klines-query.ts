@@ -116,6 +116,8 @@ export async function queryKlines(params: {
   exchange?: string;
   timeframe?: string;
   limit?: number;
+  /** Point-in-time anchor for the requested window (ms since epoch). */
+  asOfMs?: number;
 }): Promise<{ bars: BarData[]; meta: KlinesMeta; error?: KlinesErrorPayload }> {
   const symbol = params.symbol?.trim();
   if (!symbol) {
@@ -135,7 +137,11 @@ export async function queryKlines(params: {
   const timeframe = normalizeTimeframe(params.timeframe);
   const requestedLimit = Math.max(1, Math.min(params.limit ?? 300, 2000));
 
-  const { startDate, endDate, period } = computeDateRangeForLimit(timeframe, requestedLimit);
+  const { startDate, endDate, period } = computeDateRangeForLimit(
+    timeframe,
+    requestedLimit,
+    params.asOfMs ?? Date.now()
+  );
 
   const connector = connectorRegistry.get("qubit-data");
   if (!connector) {

@@ -47,6 +47,14 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
       url: "https://gateway.pipeworx.io/mathjs/mcp",
       registrySlug: "io.github.pipeworx-io/mathjs",
       description: "Math.js 表达式求值（官方 Registry，免 API Key）",
+      capabilitiesJson: {
+        tools: [
+          {
+            name: "evaluate",
+            desc: "求值数学表达式。必填 arguments.expression（如 \"1+1\" 或 \"sqrt(16)\"），不要用 expr。",
+          },
+        ],
+      },
     },
     {
       name: RECOMMENDED_MCP_NAMES.TRADINGCALC,
@@ -234,14 +242,21 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
 
   presets.push({
     name: RECOMMENDED_MCP_NAMES.INVESTOR_AGENT,
-    transport: "stdio",
-    command: "npx -y investor-agent",
-    registrySlug: "npm:investor-agent",
+    /**
+     * v2 已迁到 Cloudflare Workers HTTP；npm `investor-agent` 包已不存在，
+     * `npx -y investor-agent` 会 404（腾讯镜像 / registry.npmjs 均失败）。
+     */
+    transport: "http",
+    url: "https://investor.ferdousbhai.com/mcp",
+    registrySlug: "io.github.ferdousbhai/investor-agent",
     description:
-      "Yahoo Finance 股票/期权/财报 + CNN Fear&Greed + Crypto F&G + 技术指标（零 API key，作 mcp-financex 1.0.11 不稳定时的稳定替代）",
+      "Yahoo Finance 股票/期权/财报 + CNN Fear&Greed + 技术指标（HTTP，零 API key；作 mcp-financex 不稳定时的稳定替代）",
     capabilitiesJson: {
       tools: [
-        { name: "get_stock_info", desc: "股票基本面：价格 / 财务 / 财报 / 持股 / 分析师评级" },
+        {
+          name: "get_stock_info",
+          desc: "股票基本面。必填 symbol（如 AAPL）+ modules 数组（如 [\"price\",\"summaryDetail\"]）",
+        },
         { name: "historical_prices", desc: "OHLCV 价格历史（默认 1y weekly，limit 100）" },
         { name: "get_options", desc: "期权合约（按 open interest 排序，默认 top 25/类）" },
         { name: "market_movers", desc: "涨幅榜 / 跌幅榜 / 最活跃" },
@@ -283,6 +298,7 @@ export function mergeMcpServers(base: string[], extra: string[]): string[] {
 }
 
 export async function seedRecommendedMcpServers(): Promise<void> {
+  const { syncServerDefaultStarBinding } = await import("./mcp/default-star-binding");
   const db = await getDb();
   const presets = buildRecommendedMcpPresets();
   let upserted = 0;
@@ -299,17 +315,23 @@ export async function seedRecommendedMcpServers(): Promise<void> {
       description: preset.description,
     };
 
+    let enabled = preset.defaultEnabled ?? true;
     if (existing[0]) {
+      enabled = existing[0].enabled;
+      const nextCommand =
+        preset.transport === "stdio" ? (preset.command ?? existing[0].command) : null;
+      const nextUrl =
+        preset.transport === "stdio" ? (preset.url ?? existing[0].url) : (preset.url ?? existing[0].url);
       await db
         .update(mcpServerConfig)
         .set({
           transport: preset.transport,
-          command: preset.command ?? existing[0].command,
-          url: preset.url ?? existing[0].url,
+          command: nextCommand,
+          url: nextUrl,
           capabilitiesJson: caps,
           // Seeds refresh metadata and endpoints, but must never undo a user's
           // disable/quarantine decision.
-          enabled: existing[0].enabled,
+          enabled,
         })
         .where(eq(mcpServerConfig.id, existing[0].id));
     } else {
@@ -321,9 +343,14 @@ export async function seedRecommendedMcpServers(): Promise<void> {
         command: preset.command ?? null,
         url: preset.url ?? null,
         capabilitiesJson: caps,
-        enabled: preset.defaultEnabled ?? true,
+        enabled,
       });
     }
+    await syncServerDefaultStarBinding({
+      serverName: preset.name,
+      projectId: null,
+      enabled,
+    });
     upserted += 1;
   }
 

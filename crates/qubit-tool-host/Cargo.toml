@@ -1,0 +1,23 @@
+[package]
+name = "qubit-tool-host"
+description = "Qubit Prime tool host — Legacy Bun bridge (L2) and future MCP/sandbox adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+qubit-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+axum = { workspace = true }
+serde_json = { workspace = true }

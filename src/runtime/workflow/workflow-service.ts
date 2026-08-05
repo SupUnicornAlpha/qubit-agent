@@ -41,6 +41,9 @@ export async function createAndDispatchWorkflow(
   const parsedOpts = parseLoopOptionsJson(loopOpts);
   const executionPath =
     input.executionPath ?? parsedOpts.executionPath ?? config.agentExecutionPath;
+  if (parsedOpts.fsWorkspaceId?.trim()) {
+    process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID = parsedOpts.fsWorkspaceId.trim();
+  }
 
   const shouldReuse =
     Boolean(input.sessionId) &&

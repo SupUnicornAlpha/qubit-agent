@@ -182,6 +182,8 @@ export const AgentRuntimeTab: FC<{
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [showSectionPrompt, setShowSectionPrompt] = useState(false);
   const [toolCatalog, setToolCatalog] = useState<ToolCatalogEntry[]>([]);
+  const [showDeprecatedTools, setShowDeprecatedTools] = useState(false);
+  const [showStubTools, setShowStubTools] = useState(false);
 
   useEffect(() => {
     void getAgentToolCatalog()
@@ -204,6 +206,10 @@ export const AgentRuntimeTab: FC<{
     return Array.from(s);
   }, [draftMcpServerNames, mcpServers]);
   const orphanMcp = draftMcpServerNames.filter((n) => !knownServerNames.has(n));
+  const disabledSelectedMcp = draftMcpServerNames.filter((n) => {
+    const row = mcpServers.find((s) => s.name === n);
+    return row ? !row.enabled : false;
+  });
 
   const skillPool = useMemo(() => {
     const s = new Set<string>(draftSkills);
@@ -222,9 +228,36 @@ export const AgentRuntimeTab: FC<{
     const s = new Set<string>(knownToolPool);
     for (const e of toolCatalog) s.add(e.name);
     for (const t of draftTools) s.add(t);
-    return Array.from(s).sort();
-  }, [knownToolPool, draftTools, toolCatalog]);
+    return Array.from(s)
+      .filter((name) => {
+        const life = toolCatalogByName.get(name)?.lifecycle;
+        if (life === "deprecated" && !showDeprecatedTools && !draftTools.includes(name)) return false;
+        if (life === "stub" && !showStubTools && !draftTools.includes(name)) return false;
+        return true;
+      })
+      .sort();
+  }, [
+    knownToolPool,
+    draftTools,
+    toolCatalog,
+    toolCatalogByName,
+    showDeprecatedTools,
+    showStubTools,
+  ]);
 
+  const deprecatedSelected = useMemo(
+    () => draftTools.filter((t) => toolCatalogByName.get(t)?.lifecycle === "deprecated"),
+    [draftTools, toolCatalogByName]
+  );
+
+  const stripDeprecatedTools = () => {
+    setDraftTools((prev) => prev.filter((t) => toolCatalogByName.get(t)?.lifecycle !== "deprecated"));
+  };
+
+  const pruneDisabledMcp = () => {
+    const enabled = new Set(mcpServers.filter((s) => s.enabled).map((s) => s.name));
+    setDraftMcpServerNames((prev) => prev.filter((n) => enabled.has(n)));
+  };
   const subscriptionPool = useMemo(
     () => ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK", "ORDER_INTENT", "MODEL_UPDATE", "MEMORY_WRITE"],
     []
@@ -238,6 +271,18 @@ export const AgentRuntimeTab: FC<{
           (!currentProjectId || b.projectId === currentProjectId || b.projectId == null)
       ),
     [mcpBindings, def.id, currentProjectId]
+  );
+
+  const globalStarBindings = useMemo(
+    () =>
+      mcpBindings.filter(
+        (b) =>
+          b.definitionId == null &&
+          b.toolName === "*" &&
+          b.enabled !== false &&
+          draftMcpServerNames.includes(b.serverName)
+      ),
+    [mcpBindings, draftMcpServerNames]
   );
 
   const refreshPreview = useCallback(() => {
@@ -312,9 +357,33 @@ export const AgentRuntimeTab: FC<{
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--qb-body-fg, #e4e4e7)" }}>内置工具</span>
           <span style={{ fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
-            悬停查看简介 · 勾选写入 tools_json（保存草稿后生效）·
-            <span style={{ opacity: 0.7 }}> deprecated/stub 的工具仍可调用，但不建议新订阅</span>
+            悬停查看简介 · 勾选写入 tools_json · 默认隐藏 deprecated/stub
           </span>
+          <button
+            type="button"
+            className="qb-btn-ghost qb-btn--compact"
+            onClick={() => setShowDeprecatedTools((v) => !v)}
+          >
+            {showDeprecatedTools ? "隐藏 deprecated" : "显示 deprecated"}
+          </button>
+          <button
+            type="button"
+            className="qb-btn-ghost qb-btn--compact"
+            onClick={() => setShowStubTools((v) => !v)}
+          >
+            {showStubTools ? "隐藏 stub" : "显示 stub"}
+          </button>
+          {deprecatedSelected.length > 0 ? (
+            <button
+              type="button"
+              className="qb-btn-ghost qb-btn--compact"
+              style={{ color: "#fbbf24" }}
+              onClick={stripDeprecatedTools}
+              title={`移除已勾选的 deprecated：${deprecatedSelected.join(", ")}`}
+            >
+              清理已勾选 deprecated（{deprecatedSelected.length}）
+            </button>
+          ) : null}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
           {toolPool.map((t) => {
@@ -365,10 +434,16 @@ export const AgentRuntimeTab: FC<{
           <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={selectAllEnabledMcp}>
             勾选全部已启用
           </button>
+          <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={pruneDisabledMcp}>
+            去掉已禁用
+          </button>
           <button type="button" className="qb-btn-ghost qb-btn--compact" onClick={() => setDraftMcpServerNames([])}>
             清空
           </button>
         </div>
+        <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--qb-main-meta, #71717a)" }}>
+          运行时只会对「已启用 + 在白名单」的 server 暴露 call_mcp；禁用的 FSI 即便勾着也不会进 prompt。
+        </p>
         <div className="qb-mcp-pool">
           {mcpServers.length === 0 ? (
             <span style={{ fontSize: 12, color: "var(--qb-sidebar-muted, #71717a)" }}>暂无 MCP，请先到「MCP」页添加。</span>
@@ -408,6 +483,11 @@ export const AgentRuntimeTab: FC<{
         {orphanMcp.length > 0 ? (
           <p style={{ margin: "8px 0 0", fontSize: 11, color: "#eab308" }}>
             白名单中未登记的服务：{orphanMcp.join(", ")}
+          </p>
+        ) : null}
+        {disabledSelectedMcp.length > 0 ? (
+          <p style={{ margin: "8px 0 0", fontSize: 11, color: "#eab308" }}>
+            白名单含已禁用服务（不会进运行时）：{disabledSelectedMcp.join(", ")} · 点「去掉已禁用」清理
           </p>
         ) : null}
       </section>
@@ -474,18 +554,32 @@ export const AgentRuntimeTab: FC<{
         <section
           style={{ paddingTop: 12, borderTop: "1px solid var(--qb-main-input-border, #27272a)" }}
         >
-          <span style={label}>本 Agent 的 MCP 工具绑定</span>
+          <span style={label}>MCP 工具绑定</span>
+          <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--qb-main-meta, #71717a)", lineHeight: 1.45 }}>
+            call_mcp 不要求本 Agent 专属绑定。工作区默认 <code>*</code> 即可调用；下方专属绑定只用于覆盖超时/禁用某工具。
+          </p>
+          {globalStarBindings.length > 0 ? (
+            <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--qb-body-fg, #d4d4d8)" }}>
+              工作区默认：{globalStarBindings.map((b) => b.serverName).join("、")}（tool=*）
+            </p>
+          ) : (
+            <p style={{ margin: "0 0 8px", fontSize: 12, color: "#eab308" }}>
+              白名单内尚无工作区默认 * 绑定——可到 MCP 页启用 server，或下方手动加 *。
+            </p>
+          )}
           {agentScopedBindings.length > 0 ? (
             <ul style={{ margin: "0 0 10px", paddingLeft: 18, fontSize: 12, color: "var(--qb-body-fg, #d4d4d8)" }}>
               {agentScopedBindings.map((b) => (
                 <li key={b.id}>
-                  {b.serverName} · {b.toolName}
+                  本 Agent · {b.serverName} · {b.toolName}
                   {b.timeoutMs != null ? ` · ${b.timeoutMs}ms` : ""}
                 </li>
               ))}
             </ul>
           ) : (
-            <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--qb-sidebar-muted, #52525b)" }}>尚无绑定。</p>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--qb-sidebar-muted, #52525b)" }}>
+              本 Agent 无专属绑定（正常，会走工作区默认）。
+            </p>
           )}
           <div style={{ display: "grid", gap: 8, maxWidth: 480 }}>
             <select style={input} value={effectiveBindServer} onChange={(e) => setRegServer(e.target.value)}>

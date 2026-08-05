@@ -25,6 +25,11 @@ import type { AgentRole } from "../../types/entities";
 import { normalizeLoopKind, parseLoopOptionsJson } from "../../types/loop";
 import { executeAgentReact } from "../react/execute-agent-react";
 import type { RuntimeAgentDefinition } from "../types";
+import { resolveCoreBackend } from "../prime/core-runtime";
+import {
+  reasonSpecialistViaCore,
+  resolveCalleeSpecId,
+} from "../prime/run-specialist-via-core";
 
 export type RoleReasonerKind = "native" | "claude_cli" | "codex_cli";
 
@@ -62,16 +67,33 @@ export interface RoleReasoner {
 }
 
 /**
- * 自研引擎：进程内 LangGraph ReAct。
- *
- * 行为与重构前 `runResearchTeamSlotReact` 内联调用 `executeAgentReact` 逐字一致：
- * 同样的 `streamLoopKind/streamSource/updateWorkflowStatus`，同样的 text 取值
- * （`finalState.reasonText` 优先，空则回退 `finalResponse` 的 JSON 串）。
+ * 自研引擎：进程内 LangGraph ReAct；`QUBIT_CORE_BACKEND=rust` 时改走 Core invoke。
  */
 export class NativeRoleReasoner implements RoleReasoner {
   readonly kind = "native" as const;
 
   async reason(req: RoleReasonRequest): Promise<RoleReasonOutcome> {
+    if (resolveCoreBackend() === "rust") {
+      const out = await reasonSpecialistViaCore({
+        workflowRunId: req.workflowRunId,
+        runId: req.runId,
+        traceId: req.traceId,
+        calleeSpecId: resolveCalleeSpecId({
+          definitionId: req.def.id,
+          role: req.role,
+        }),
+        role: req.role,
+        goal: req.userGoal,
+        context: req.context,
+        maxIterations: req.def.maxIterations,
+      });
+      return {
+        text: out.text,
+        ...(out.childSessionId ? { sessionId: out.childSessionId } : {}),
+        source: "native",
+      };
+    }
+
     const result = await executeAgentReact({
       runId: req.runId,
       workflowId: req.workflowRunId,

@@ -123,7 +123,7 @@ export async function launchAnalystTeam(
   ) {
     loopPatch.roleReasoner = input.roleReasoner;
   }
-  if (input.agentMode === "agent" || input.agentMode === "plan" || input.agentMode === "goal") {
+  if (input.agentMode === "agent" || input.agentMode === "plan" || input.agentMode === "goal" || input.agentMode === "ask" || input.agentMode === "diagnose") {
     loopPatch.agentMode = input.agentMode;
   }
   const loopOptionsJson =

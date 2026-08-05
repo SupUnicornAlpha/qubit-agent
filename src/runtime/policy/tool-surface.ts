@@ -22,6 +22,11 @@ const DEFAULT_STALL_TOOLS = [
   "fetch_quote",
   "fetch_bars",
   "fetch_price_data",
+  "mcp:mathjs:evaluate",
+  "mcp:investor-agent:historical_prices",
+  "mcp:investor-agent:technical_indicator",
+  "mcp:investor-agent:get_stock_info",
+  "call_mcp",
 ] as const;
 
 export function applyToolSurface(input: {

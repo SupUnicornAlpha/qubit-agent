@@ -75,7 +75,11 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
     ];
   });
   const mode =
-    record.mode === "agent" || record.mode === "plan" || record.mode === "goal"
+    record.mode === "agent" ||
+    record.mode === "plan" ||
+    record.mode === "goal" ||
+    record.mode === "ask" ||
+    record.mode === "diagnose"
       ? record.mode
       : undefined;
   const goalRecord =
@@ -91,33 +95,55 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
     goalRecord?.status === "cleared"
       ? goalRecord.status
       : undefined;
+  const completedSteps =
+    typeof goalRecord?.completedSteps === "number"
+      ? goalRecord.completedSteps
+      : typeof goalRecord?.completed_steps === "number"
+        ? goalRecord.completed_steps
+        : undefined;
+  const totalSteps =
+    typeof goalRecord?.totalSteps === "number"
+      ? goalRecord.totalSteps
+      : typeof goalRecord?.total_steps === "number"
+        ? goalRecord.total_steps
+        : undefined;
+  const successCriteriaRaw = Array.isArray(goalRecord?.successCriteria)
+    ? goalRecord.successCriteria
+    : Array.isArray(goalRecord?.success_criteria)
+      ? goalRecord.success_criteria
+      : null;
+  const constraintsRaw = Array.isArray(goalRecord?.constraints)
+    ? goalRecord.constraints
+    : null;
+  const updatedAt =
+    typeof record.updatedAt === "string"
+      ? record.updatedAt
+      : typeof record.updated_at === "string"
+        ? record.updated_at
+        : undefined;
   return {
     steps,
     ...(mode ? { mode } : {}),
-    ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
     ...(goalRecord
       ? {
           goal: {
             ...(typeof goalRecord.text === "string" ? { text: goalRecord.text } : {}),
             ...(goalStatus ? { status: goalStatus } : {}),
-            ...(typeof goalRecord.completedSteps === "number"
-              ? { completedSteps: goalRecord.completedSteps }
-              : {}),
-            ...(typeof goalRecord.totalSteps === "number"
-              ? { totalSteps: goalRecord.totalSteps }
-              : {}),
-            ...(Array.isArray(goalRecord.successCriteria)
+            ...(typeof completedSteps === "number" ? { completedSteps } : {}),
+            ...(typeof totalSteps === "number" ? { totalSteps } : {}),
+            ...(successCriteriaRaw
               ? {
-                  successCriteria: goalRecord.successCriteria
+                  successCriteria: successCriteriaRaw
                     .filter((item): item is string => typeof item === "string")
                     .map((item) => item.trim().slice(0, 300))
                     .filter(Boolean)
                     .slice(0, 10),
                 }
               : {}),
-            ...(Array.isArray(goalRecord.constraints)
+            ...(constraintsRaw
               ? {
-                  constraints: goalRecord.constraints
+                  constraints: constraintsRaw
                     .filter((item): item is string => typeof item === "string")
                     .map((item) => item.trim().slice(0, 300))
                     .filter(Boolean)
@@ -162,12 +188,24 @@ export function parseAgentPlanSnapshot(raw: unknown): AgentPlanSnapshot | null {
   };
 }
 
+/** Ask 模式只读控制面（对齐 Core InteractionMode::Ask）。 */
+const ASK_MODE_TOOLS = new Set([
+  "update_plan",
+  "workspace.read",
+  "workspace.list",
+  "session.diagnose",
+]);
+
 /**
- * Plan 模式是运行时能力边界，不依赖模型自觉。update_plan 是唯一允许执行的工具；
- * tool=none 不是工具调用，由 act 节点的计划存在性门禁另行处理。
+ * Plan / Ask 是运行时能力边界，不依赖模型自觉。
+ * - plan：仅 update_plan
+ * - ask：只读控制面工具
+ * - agent / goal / diagnose：全工具面（再由 sandbox / policy 收窄）
  */
 export function isToolAllowedInAgentControlMode(mode: AgentControlMode, toolName: string): boolean {
-  return mode !== "plan" || toolName === "update_plan";
+  if (mode === "plan") return toolName === "update_plan";
+  if (mode === "ask") return ASK_MODE_TOOLS.has(toolName);
+  return true;
 }
 
 export function assessGoalPlanCompletion(rawPlan: unknown): {
@@ -274,13 +312,27 @@ export function buildAgentControlModePrompt(
   isOrchestrator: boolean
 ): string {
   if (!isOrchestrator) {
-    return mode === "plan"
-      ? [
-          "## 当前工作模式：Plan",
-          "你只负责分析与提出计划，不得调用业务工具、派发任务、获取实时数据或写入外部状态。",
-          "如收到执行型子任务，请返回建议步骤和依赖，不要声称已经执行。",
-        ].join("\n")
-      : "";
+    if (mode === "plan") {
+      return [
+        "## 当前工作模式：Plan",
+        "你只负责分析与提出计划，不得调用业务工具、派发任务、获取实时数据或写入外部状态。",
+        "如收到执行型子任务，请返回建议步骤和依赖，不要声称已经执行。",
+      ].join("\n");
+    }
+    if (mode === "ask") {
+      return [
+        "## 当前工作模式：Ask",
+        "你只做问答与分析；不得派单、下单、写业务状态。",
+        "仅可使用只读控制面工具（update_plan / workspace.read / workspace.list / session.diagnose）。",
+      ].join("\n");
+    }
+    if (mode === "diagnose") {
+      return [
+        "## 当前工作模式：检查（Diagnose）",
+        "聚焦根因与失败归因；优先复盘工具账本、错误码与数据缺口，再给可验证的修复建议。",
+      ].join("\n");
+    }
+    return "";
   }
   if (mode === "plan") {
     return [
@@ -303,6 +355,24 @@ export function buildAgentControlModePrompt(
       "- 无法完成的步骤必须标记 skipped 并写明原因；全部步骤都 skipped 时目标是 blocked，不是 completed。",
       "- 用户可以在运行中补充上下文或调整约束；采纳最新指令，但不得因此扩大权限、沙箱或审批边界。",
       "- 最终答复区分已完成、未完成、验证证据和后续动作，禁止把部分完成包装成全部成功。",
+    ].join("\n");
+  }
+  if (mode === "ask") {
+    return [
+      "## 当前工作模式：Ask（只读问答）",
+      "- 用已有上下文与只读工具回答问题；禁止派发专家、写推荐/下单/改策略或刷业务工具。",
+      "- 允许工具：`update_plan`（可选）、`workspace.read`、`workspace.list`、`session.diagnose`。",
+      "- 信息不足时明确列出缺口与下一步建议，而不是假装已取数。",
+      "- 用户若要执行研究/交易，应提示切换到 Agent / Goal。",
+    ].join("\n");
+  }
+  if (mode === "diagnose") {
+    return [
+      "## 当前工作模式：检查（Diagnose）",
+      "- 目标是定位失败根因与可复现证据，而不是直接推进交易/选股交付。",
+      "- 优先复盘工具失败、数据缺口、政策熔断、HITL 阻塞与会话账本；必要时可调用诊断与只读工具。",
+      "- 输出：现象 → 证据 → 根因假设 → 已排除项 → 建议修复/重试步骤。",
+      "- 不要把检查结论包装成已完成的业务交付。",
     ].join("\n");
   }
   return [

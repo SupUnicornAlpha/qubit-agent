@@ -1,0 +1,312 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "InvocationRequest",
+  "type": "object",
+  "required": [
+    "budget",
+    "callee_spec_id",
+    "caller_instance_id",
+    "goal",
+    "invocation_id",
+    "parent_session_id",
+    "parent_turn_id"
+  ],
+  "properties": {
+    "budget": {
+      "$ref": "#/definitions/InvocationBudget"
+    },
+    "callee_spec_id": {
+      "type": "string"
+    },
+    "caller_instance_id": {
+      "type": "string"
+    },
+    "deadline_ms": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int64"
+    },
+    "goal": {
+      "type": "string"
+    },
+    "handoff_in": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ContextHandoffV1"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "invocation_id": {
+      "type": "string"
+    },
+    "parent_session_id": {
+      "type": "string"
+    },
+    "parent_turn_id": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "ClaimStance": {
+      "type": "string",
+      "enum": [
+        "bull",
+        "bear",
+        "neutral",
+        "unknown"
+      ]
+    },
+    "ClaimStatus": {
+      "type": "string",
+      "enum": [
+        "open",
+        "supported",
+        "refuted",
+        "stale"
+      ]
+    },
+    "ContextHandoffV1": {
+      "description": "Structured handoff returned by subagent / reactor / invoked primary.",
+      "type": "object",
+      "required": [
+        "goal",
+        "version"
+      ],
+      "properties": {
+        "asof": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claims": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WorkingClaim"
+          }
+        },
+        "debate": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WorkingDebate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/HandoffEvidence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "finance_refs": {
+          "default": {
+            "composition_ids": [],
+            "evaluation_ids": [],
+            "factor_ids": [],
+            "symbols": []
+          },
+          "allOf": [
+            {
+              "$ref": "#/definitions/WorkingMemoryFinanceRefs"
+            }
+          ]
+        },
+        "goal": {
+          "type": "string"
+        },
+        "narrative": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symbols": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "HandoffEvidence": {
+      "type": "object",
+      "required": [
+        "kind",
+        "verified"
+      ],
+      "properties": {
+        "detail": true,
+        "kind": {
+          "$ref": "#/definitions/HandoffEvidenceKind"
+        },
+        "verified": {
+          "type": "boolean"
+        }
+      }
+    },
+    "HandoffEvidenceKind": {
+      "type": "string",
+      "enum": [
+        "market_data",
+        "news",
+        "analysis",
+        "factor",
+        "none"
+      ]
+    },
+    "InvocationBudget": {
+      "type": "object",
+      "required": [
+        "max_iterations"
+      ],
+      "properties": {
+        "max_iterations": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "max_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "tool_surface_override": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "WorkingClaim": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "text"
+      ],
+      "properties": {
+        "confidence": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "evidence_refs": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "stance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ClaimStance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/ClaimStatus"
+        },
+        "symbols": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "WorkingDebate": {
+      "type": "object",
+      "properties": {
+        "bear_points": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bull_points": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolution": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "WorkingMemoryFinanceRefs": {
+      "type": "object",
+      "properties": {
+        "composition_ids": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evaluation_ids": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "factor_ids": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "symbols": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

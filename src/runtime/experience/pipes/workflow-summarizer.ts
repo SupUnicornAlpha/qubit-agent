@@ -41,6 +41,8 @@ import type { ExperienceStore } from "../experience-store";
 export interface SummarizerWorkflowContext {
   workflowRunId: string;
   projectId: string;
+  /** FS Workspace id；有值时写入 scope=workspace */
+  fsWorkspaceId?: string | null;
   goal: string;
   mode: string;
   startedAt: string;
@@ -209,11 +211,13 @@ async function summarizeOnceInternal(
   }
 
   try {
+    const writeScope = ctx.fsWorkspaceId?.trim()
+      ? ({ scope: "workspace" as const, scopeId: ctx.fsWorkspaceId.trim() })
+      : ({ scope: "project" as const, scopeId: ctx.projectId });
     const inserted = await opts.store.insert({
       kind: "semantic",
       subKind: "workflow_summary",
-      scope: "project",
-      scopeId: ctx.projectId,
+      ...writeScope,
       visibility: "workspace_shared",
       contentJson: {
         summary: parsed.goalRecap,

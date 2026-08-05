@@ -13,6 +13,7 @@ export {
   canDispatchBusinessAutoAdvance,
 } from "./flags";
 export { resolveScenarioRecipe, listScenarioRecipes } from "./scenario-recipe";
+export { listLoadedRecipes, mapRecipeJson } from "./load-recipe-json";
 export { assertAnswerSchema } from "./answer-schema";
 export {
   loadScenarioRuntimeSnapshot,

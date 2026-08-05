@@ -31,6 +31,11 @@ import {
   listMarketDataSources,
   patchMarketDataSource,
 } from "../runtime/market/market-data-source-control";
+import { brokerBridgeStatusSnapshot } from "../runtime/market/broker-market-bridge";
+import {
+  ensureFutuRuntime,
+  getFutuRuntimeStatus,
+} from "../runtime/market/futu-runtime";
 import {
   getMarketDataReadiness,
   runMarketDataHealthChecks,
@@ -70,6 +75,20 @@ marketRouter.get("/readiness", (c) => c.json({ ok: true, data: getMarketDataRead
 marketRouter.get("/stream/metrics", (c) =>
   c.json({ ok: true, data: marketStreamGateway.snapshot() })
 );
+
+/** Pluggable broker market-data bridges (Futu / IB / SuperMind / …). */
+marketRouter.get("/stream/bridges", async (c) =>
+  c.json({
+    ok: true,
+    data: brokerBridgeStatusSnapshot(),
+    futuRuntime: await getFutuRuntimeStatus(),
+  })
+);
+
+marketRouter.post("/stream/bridges/futu/ensure", async (c) => {
+  const status = await ensureFutuRuntime();
+  return c.json({ ok: true, data: status });
+});
 
 marketRouter.get("/quote", async (c) => {
   try {

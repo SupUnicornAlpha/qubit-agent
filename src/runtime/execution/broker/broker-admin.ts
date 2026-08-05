@@ -7,6 +7,10 @@ import { getDb } from "../../../db/sqlite/client";
 import { brokerAccount, brokerOrderEvent } from "../../../db/sqlite/schema";
 import type { BrokerProvider, BrokerProviderConfig } from "../../../types/broker";
 import { brokerHealthCheck, connectorForAccount, resolveBrokerAccount } from "./broker-service";
+import {
+  applyFutuAccountDefaults,
+  ensureFutuRuntime,
+} from "../../market/futu-runtime";
 
 export async function listBrokerAccounts(provider?: BrokerProvider) {
   const db = await getDb();
@@ -25,6 +29,12 @@ export async function upsertBrokerAccount(input: {
   enabled?: boolean;
 }) {
   const db = await getDb();
+  const futuDefaults = applyFutuAccountDefaults({
+    provider: input.provider,
+    mode: input.mode,
+    baseUrl: input.baseUrl,
+  });
+  const baseUrl = futuDefaults.baseUrl ?? input.baseUrl;
 
   if (input.isDefault) {
     await db
@@ -43,7 +53,7 @@ export async function upsertBrokerAccount(input: {
       .update(brokerAccount)
       .set({
         mode: input.mode ?? existed[0].mode,
-        baseUrl: input.baseUrl ?? existed[0].baseUrl,
+        baseUrl: baseUrl ?? existed[0].baseUrl,
         providerConfigJson: input.providerConfig ?? existed[0].providerConfigJson,
         isDefault: input.isDefault ?? existed[0].isDefault,
         enabled: input.enabled ?? existed[0].enabled,
@@ -51,6 +61,9 @@ export async function upsertBrokerAccount(input: {
       })
       .where(eq(brokerAccount.id, existed[0].id));
     const rows = await db.select().from(brokerAccount).where(eq(brokerAccount.id, existed[0].id)).limit(1);
+    if (input.provider === "futu" && (input.enabled ?? existed[0].enabled) !== false) {
+      void ensureFutuRuntime().catch(() => undefined);
+    }
     return rows[0];
   }
   const id = randomUUID();
@@ -59,13 +72,16 @@ export async function upsertBrokerAccount(input: {
     provider: input.provider,
     accountRef: input.accountRef,
     mode: input.mode ?? "mock",
-    baseUrl: input.baseUrl ?? null,
+    baseUrl: baseUrl ?? null,
     providerConfigJson: input.providerConfig ?? {},
     isDefault: input.isDefault ?? false,
     enabled: input.enabled ?? true,
     healthStatus: "unknown",
   });
   const rows = await db.select().from(brokerAccount).where(eq(brokerAccount.id, id)).limit(1);
+  if (input.provider === "futu" && (input.enabled ?? true)) {
+    void ensureFutuRuntime().catch(() => undefined);
+  }
   return rows[0];
 }
 

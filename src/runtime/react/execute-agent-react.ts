@@ -17,6 +17,7 @@ import { stepStreamBus } from "./event-stream";
 import { resolveForceReactLoop } from "./react-loop-policy";
 import { type AgentGraphState, type StepStreamEvent, createInitialGraphState } from "./state";
 import { listWorkflowArtifactReferences } from "../tools/workflow-artifact-ledger";
+import { assertTsReactAllowed } from "../prime/ts-react-residual";
 
 export type ExecuteAgentReactParams = {
   runId: string;
@@ -141,6 +142,10 @@ async function persistWorkflowFinalAnswer(input: {
 export async function executeAgentReact(
   params: ExecuteAgentReactParams
 ): Promise<ExecuteAgentReactResult> {
+  assertTsReactAllowed(
+    `role=${params.def.role} taskType=${params.payload.taskType} workflow=${params.workflowId}`
+  );
+
   const db = await getDb();
   const agentInstanceId = params.agentInstanceId ?? randomUUID();
   const streamLoopKind = params.streamLoopKind ?? "native";

@@ -12,6 +12,15 @@ describe("attachMarketGovernanceTools", () => {
     expect(tools).toContain("market.resolve_symbol");
     expect(tools).toContain("market.data_sources");
     expect(tools).toContain("market.readiness");
+    expect(tools).toContain("market.snapshot.get");
+  });
+
+  test("orchestrator only gets Prime market tools (resolve + snapshot)", () => {
+    const tools = attachMarketGovernanceTools("orchestrator", ["assign_task", "evaluate_risk"]);
+    expect(tools).toContain("market.resolve_symbol");
+    expect(tools).toContain("market.snapshot.get");
+    expect(tools).not.toContain("market.data_sources");
+    expect(tools).not.toContain("market.readiness");
   });
 
   test("keeps unrelated specialist tool surfaces narrow", () => {

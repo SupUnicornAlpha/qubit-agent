@@ -49,4 +49,18 @@ echo "[dev-backend] starting on :$PORT"
 echo "[dev-backend]   QUBIT_APP_ROOT=$QUBIT_APP_ROOT"
 echo "[dev-backend]   QUBIT_DATA_DIR=$QUBIT_DATA_DIR"
 echo "[dev-backend]   watch=$WATCH_FLAG"
+export QUBIT_CORE_BACKEND="${QUBIT_CORE_BACKEND:-rust}"
+export QUBIT_RUST_CORE_URL="${QUBIT_RUST_CORE_URL:-http://127.0.0.1:8787}"
+export QUBIT_LEGACY_BRIDGE_URL="${QUBIT_LEGACY_BRIDGE_URL:-http://${HOST}:${PORT}/api/v1/prime-bridge}"
+# Block silent TS ReAct fallback while debugging Rust Core.
+export QUBIT_CORE_STRICT="${QUBIT_CORE_STRICT:-1}"
+# Unproductive-turn early stop off (prevents call_team_* false data failures).
+export QUBIT_UNPRODUCTIVE_BUDGET="${QUBIT_UNPRODUCTIVE_BUDGET:-0}"
+# Core turn poll timeout (orchestrator await). Long research may need 5+ minutes.
+export QUBIT_PRIME_TURN_TIMEOUT_MS="${QUBIT_PRIME_TURN_TIMEOUT_MS:-300000}"
+echo "[dev-backend]   QUBIT_CORE_BACKEND=$QUBIT_CORE_BACKEND"
+echo "[dev-backend]   QUBIT_RUST_CORE_URL=$QUBIT_RUST_CORE_URL"
+echo "[dev-backend]   QUBIT_CORE_STRICT=$QUBIT_CORE_STRICT"
+echo "[dev-backend]   QUBIT_UNPRODUCTIVE_BUDGET=$QUBIT_UNPRODUCTIVE_BUDGET"
+echo "[dev-backend]   QUBIT_PRIME_TURN_TIMEOUT_MS=$QUBIT_PRIME_TURN_TIMEOUT_MS"
 exec "${BUN_CMD[@]}" src/index.ts

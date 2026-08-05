@@ -25,6 +25,13 @@ import {
   parseResearchTeamExecutePayload,
   runTeamResearchAndPersist,
 } from "../msa/research-team-execute";
+import { resolveCoreBackend } from "../prime/core-runtime";
+import { ensureCoreSession } from "../prime/ensure-core-session";
+import { projectTeamResearchEdges } from "../prime/project-core-to-graph";
+import {
+  runOrchestratorChatViaCore,
+  runOrchestratorTaskViaCore,
+} from "../prime/run-orchestrator-via-core";
 import { parseHandoffEnvelope } from "../research-team/handoff-envelope";
 import { projectWorkflowFinalAnswer } from "../research-team/interaction-log";
 import type { RuntimeHandlerContext, RuntimeRoleHandler } from "../types";
@@ -121,6 +128,10 @@ async function projectReactResult(
  * runA2aReactTaskAssign 内部已处理 awaiting_approval / failed 分支并自己发 TASK_RESULT。
  */
 const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) => {
+  if (resolveCoreBackend() === "rust") {
+    await runOrchestratorTaskViaCore(ctx, msg, payload);
+    return;
+  }
   try {
     const result = await runA2aReactTaskAssign(ctx, msg);
     await projectReactResult(msg.workflowId, payload.taskType, result);
@@ -151,11 +162,9 @@ const handleWorkflowResume: OrchestratorTaskHandler = async (ctx, msg, payload) 
  * 差异仅在于入口（HTTP 按钮 → TASK_ASSIGN vs LLM 工具调用）。
  */
 const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payload) => {
-  // This is a short-circuit handler rather than a ReAct task.  It therefore
-  // must own the same durable A2A lifecycle that runA2aReactTaskAssign owns
-  // for normal assignments; otherwise the team can finish and leave its
-  // parent task in `submitted`, which makes workflow callers wait until their
-  // timeout despite a completed analyst report.
+  // Short-circuit MSA (not ReAct). Under rust valve we still run Bun team pipeline
+  // (slot ReAct lives in Bun until Core has team recipe), but bind Core session +
+  // project topology edges so TeamPage stays consistent.
   await markA2ATaskWorking(payload.taskId);
 
   const completeAndSend = async (result: ReturnType<typeof buildTaskResult>) => {
@@ -169,6 +178,17 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
       priority: msg.priority,
     });
   };
+
+  if (resolveCoreBackend() === "rust") {
+    try {
+      await ensureCoreSession({ workflowId: msg.workflowId, interactionMode: "agent" });
+    } catch (err) {
+      console.warn(
+        "[research_team_execute] ensureCoreSession failed:",
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
 
   const parsed = parseResearchTeamExecutePayload(payload);
   if (!parsed.ok) {
@@ -196,6 +216,14 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
   });
 
   if (outcome.kind === "completed") {
+    if (resolveCoreBackend() === "rust") {
+      await projectTeamResearchEdges({
+        workflowRunId: msg.workflowId,
+        attendedRoles: outcome.teamResult.attendedRoles,
+        ticker: outcome.teamResult.ticker,
+        fusionId: outcome.teamResult.fusionId,
+      });
+    }
     await projectWorkflowFinalAnswer({
       workflowRunId: msg.workflowId,
       contentText: outcome.teamResult.report || outcome.teamResult.fusionSummary,
@@ -204,6 +232,7 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
         fusionId: outcome.teamResult.fusionId,
         fusedSignal: outcome.teamResult.fusedSignal,
         fusedConfidence: outcome.teamResult.fusedConfidence,
+        ...(resolveCoreBackend() === "rust" ? { backend: "rust", phase: "prime_team_msa_bridge" } : {}),
       },
     });
     await completeAndSend(
@@ -246,11 +275,14 @@ const handleResearchTeamExecute: OrchestratorTaskHandler = async (ctx, msg, payl
 
 /**
  * orchestrator_chat：研究团队页的「对话消息」入口（非「启动团队分析」按钮）。
- * 让 orchestrator 跑 ReAct 自主判断——直接回答 / assign_task 派给特定子 agent /
- * run_analyst_team 跑全队（见 reason.ts 注入的调度决策指引）。跑完把它的最终自然语言
- * 答复落库为 orchestrator→user 交互，供右栏对话框持久展示（token 已实时流式）。
+ * QUBIT_CORE_BACKEND=rust → Prime Core startTurn + 投影 research_team_interaction；
+ * 否则仍走 TS ReAct（过渡期）。
  */
 const handleOrchestratorChat: OrchestratorTaskHandler = async (ctx, msg, payload) => {
+  if (resolveCoreBackend() === "rust") {
+    await runOrchestratorChatViaCore(ctx, msg, payload);
+    return;
+  }
   const res = await runA2aReactTaskAssign(ctx, msg);
   const rawTurnId = (payload.params as Record<string, unknown> | undefined)?.conversationTurnId;
   const conversationTurnId =
@@ -304,8 +336,12 @@ export function createOrchestratorHandler(): RuntimeRoleHandler {
         return;
       }
 
-      const result = await runA2aReactTaskAssign(ctx, msg);
-      await projectReactResult(msg.workflowId, payload.taskType, result);
+      const result = await (resolveCoreBackend() === "rust"
+        ? runOrchestratorTaskViaCore(ctx, msg, payload)
+        : runA2aReactTaskAssign(ctx, msg));
+      if (resolveCoreBackend() !== "rust") {
+        await projectReactResult(msg.workflowId, payload.taskType, result);
+      }
     },
     onShutdown: async () => {
       console.log("[RoleHandler:orchestrator] shutdown");

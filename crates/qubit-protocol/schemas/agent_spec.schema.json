@@ -1,0 +1,275 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentSpec",
+  "description": "Versioned agent configuration. Business meaning lives in labels / prompt refs.",
+  "type": "object",
+  "required": [
+    "display_name",
+    "enabled",
+    "execution_kind",
+    "id",
+    "identity_prompt_ref",
+    "max_iterations",
+    "tool_surface_ref",
+    "version"
+  ],
+  "properties": {
+    "allowed_callers": {
+      "description": "Empty → kind defaults (subagent: primary only; primary: configured callers).",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/CallerSelector"
+      }
+    },
+    "default_recipe_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "execution_kind": {
+      "$ref": "#/definitions/ExecutionKind"
+    },
+    "hitl_profile_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "type": "string"
+    },
+    "identity_prompt_ref": {
+      "type": "string"
+    },
+    "labels": {
+      "description": "Free-form labels (orchestrator / research / …). Core must not match on these.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "max_iterations": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0.0
+    },
+    "model_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool_surface_ref": {
+      "type": "string"
+    },
+    "triggers": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/TriggerSpec"
+      }
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "CallerSelector": {
+      "description": "Who is allowed to `agent.invoke` this spec.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "kind"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "spec_id"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "label"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "label"
+              ]
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Field renamed from `kind` to avoid serde internal-tag clash with `tag = \"kind\"`.",
+          "type": "object",
+          "required": [
+            "execution_kind",
+            "kind"
+          ],
+          "properties": {
+            "execution_kind": {
+              "$ref": "#/definitions/ExecutionKind"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "execution_kind"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "ExecutionKind": {
+      "description": "Who may own user turns, who is invoke-only, who is event-driven.",
+      "oneOf": [
+        {
+          "description": "User-facing hub; may also be invoked by other agents.",
+          "type": "string",
+          "enum": [
+            "primary"
+          ]
+        },
+        {
+          "description": "Expert; invoke-only; isolated context window.",
+          "type": "string",
+          "enum": [
+            "subagent"
+          ]
+        },
+        {
+          "description": "External trigger (MQ / A2A / webhook / domain event).",
+          "type": "string",
+          "enum": [
+            "reactor"
+          ]
+        }
+      ]
+    },
+    "TriggerSpec": {
+      "description": "External wake-up sources for [`ExecutionKind::Reactor`].",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "topic"
+          ],
+          "properties": {
+            "filter": true,
+            "kind": {
+              "type": "string",
+              "enum": [
+                "queue"
+              ]
+            },
+            "topic": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "capability",
+            "kind"
+          ],
+          "properties": {
+            "capability": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "a2a"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "webhook"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "secret_ref": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "event_name",
+            "kind"
+          ],
+          "properties": {
+            "event_name": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "domain_event"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "cron",
+            "kind"
+          ],
+          "properties": {
+            "cron": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "schedule"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

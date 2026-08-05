@@ -354,7 +354,22 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
           });
         } else if (server.transport === "http") {
           const url = httpEndpointFromServer(server.url, caps);
-          const headers = httpHeadersFromCaps(caps);
+          const headers = {
+            ...httpHeadersFromCaps(caps),
+            ...(await (async () => {
+              try {
+                const { resolveMcpOAuthHeaders } = await import(
+                  "../plugins/oauth-service"
+                );
+                return await resolveMcpOAuthHeaders({
+                  projectId: input.projectId,
+                  serverName: server.name,
+                });
+              } catch {
+                return {};
+              }
+            })()),
+          };
           result = await callMcpHttpTool({
             postUrl: url,
             toolName: input.toolName,

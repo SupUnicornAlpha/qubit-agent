@@ -110,7 +110,14 @@ function mergeLoopOptions(
     ...(input.roleReasoner ? { roleReasoner: input.roleReasoner } : {}),
     ...(input.agentMode ? { agentMode: input.agentMode } : {}),
     ...(input.processConfig ? { processConfig: input.processConfig } : {}),
+    ...(input.fsWorkspaceId?.trim() ? { fsWorkspaceId: input.fsWorkspaceId.trim() } : {}),
   };
+}
+
+/** Soft process-wide default so bridge/pipe loaders see the active FS workspace. */
+function activateFsWorkspaceEnv(fsWorkspaceId: string | undefined): void {
+  const id = fsWorkspaceId?.trim();
+  if (id) process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID = id;
 }
 
 function finalizeTurnResult(input: {
@@ -171,6 +178,7 @@ export async function createConversationTurn(
     preserveGoal: input.preserveGoal,
     hasWorkflowRunId: Boolean(input.workflowRunId),
   });
+  activateFsWorkspaceEnv(input.fsWorkspaceId);
 
   if (!input.workflowRunId) {
     const turn = await createConversationTurnMessages({

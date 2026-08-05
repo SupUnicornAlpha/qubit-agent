@@ -1,0 +1,226 @@
+/**
+ * Prime Bridge memory tools — dual recall (Experience + FS) and workspace FS search.
+ *
+ * Bridged via `/api/v1/prime-bridge` allowlist (`memory.recall`, `workspace.memory.search`,
+ * `workspace.context.snapshot`).
+ */
+import { eq } from "drizzle-orm";
+import { getDb } from "../../db/sqlite/client";
+import { workflowRun } from "../../db/sqlite/schema";
+import { FinanceRecall } from "../context/finance-recall";
+import { getExperienceBus, getExperienceStore } from "../experience";
+import { ExperienceRecall } from "../experience/pipes/recall";
+import { buildWorkspaceBootstrapPack, openWorkspaceById, resolveProviders } from "../workspace";
+import type { BuiltinToolHandler } from "./types";
+
+export type MemoryRecallHit = {
+  title: string;
+  summary: string;
+  sub_kind?: string;
+  score: number;
+  source: "experience" | "fs";
+};
+
+/** FS workspace id from params (not Core `wf_*` session workspace). */
+export function resolveFsWorkspaceIdFromParams(
+  params: Record<string, unknown>
+): string | null {
+  const direct =
+    (typeof params.fs_workspace_id === "string" && params.fs_workspace_id.trim()) ||
+    (typeof params.fsWorkspaceId === "string" && params.fsWorkspaceId.trim()) ||
+    "";
+  if (direct) return direct;
+
+  const raw =
+    (typeof params.workspace_id === "string" && params.workspace_id.trim()) ||
+    (typeof params.workspaceId === "string" && params.workspaceId.trim()) ||
+    "";
+  if (!raw || raw.startsWith("wf_")) return null;
+  return raw;
+}
+
+async function resolveProjectId(
+  ctx: { projectId?: string; workflowId?: string },
+  params: Record<string, unknown>
+): Promise<string> {
+  const fromParams =
+    (typeof params.project_id === "string" && params.project_id.trim()) ||
+    (typeof params.projectId === "string" && params.projectId.trim()) ||
+    "";
+  if (fromParams) return fromParams;
+  if (ctx.projectId?.trim()) return ctx.projectId.trim();
+  if (!ctx.workflowId) return "";
+  const db = await getDb();
+  const row = (
+    await db
+      .select({ projectId: workflowRun.projectId })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, ctx.workflowId))
+      .limit(1)
+  )[0];
+  return row?.projectId ?? "";
+}
+
+function truncate(s: string, n: number): string {
+  if (!s) return "";
+  return s.length > n ? `${s.slice(0, n - 1)}…` : s;
+}
+
+async function searchFsMemory(
+  workspaceId: string,
+  query: string,
+  topK: number
+): Promise<MemoryRecallHit[]> {
+  const { fs, manifest } = await openWorkspaceById(workspaceId);
+  const { memory } = resolveProviders(manifest, { allowBuiltinFallback: true });
+  const rows = await memory.search(fs, query, { limit: topK });
+  return rows.map((e) => ({
+    title: e.title || e.id,
+    summary: truncate(e.body ?? "", 400),
+    score: typeof e.score === "number" ? e.score : 0,
+    source: "fs" as const,
+  }));
+}
+
+export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
+  "memory.recall": async (ctx, params) => {
+    const query = String(params.query ?? params.q ?? "").trim();
+    if (!query) throw new Error("memory.recall: query is required");
+    const topK = Math.max(1, Math.min(20, Number(params.topK ?? params.top_k ?? 8) || 8));
+    const mode = String(params.mode ?? "").trim().toLowerCase();
+    const projectId = await resolveProjectId(ctx, params);
+    if (!projectId) {
+      throw new Error("memory.recall: project_id required (or workflow must bind a project)");
+    }
+
+    const includeFs =
+      params.include_fs === true ||
+      params.includeFs === true ||
+      Boolean(resolveFsWorkspaceIdFromParams(params));
+    const fsWorkspaceId = resolveFsWorkspaceIdFromParams(params);
+
+    const { getDefaultEmbeddingClient } = await import("../llm/embedding-client");
+    const { getExperienceVectorStore } = await import("../experience/experience-vector-store");
+    const embeddingClient = getDefaultEmbeddingClient();
+    const recallOpts = {
+      store: getExperienceStore(),
+      bus: getExperienceBus(),
+      ...(embeddingClient
+        ? { embeddingClient, vectorStore: getExperienceVectorStore() }
+        : {}),
+    };
+
+    const recallCtx = {
+      projectId,
+      definitionId: ctx.definition?.id ?? null,
+      query,
+      topK,
+      workflowRunId: ctx.workflowId,
+      silentEmit: true,
+      ...(fsWorkspaceId ? { workspaceId: fsWorkspaceId } : {}),
+    };
+
+    const hits: MemoryRecallHit[] = [];
+
+    if (mode === "finance") {
+      const financeRecall = new FinanceRecall(recallOpts);
+      const financeHits = await financeRecall.recall(recallCtx);
+      for (const h of financeHits) {
+        const exp = h.experience;
+        hits.push({
+          title: truncate(exp.contentJson.summary ?? exp.id, 120),
+          summary: truncate(String(exp.contentJson.body ?? exp.contentJson.summary ?? ""), 400),
+          ...(exp.subKind ? { sub_kind: exp.subKind } : {}),
+          score: h.score,
+          source: "experience",
+        });
+      }
+    } else {
+      const recall = new ExperienceRecall(recallOpts);
+      const results = await recall.recall(recallCtx);
+      for (const h of results) {
+        const exp = h.experience;
+        hits.push({
+          title: truncate(exp.contentJson.summary ?? exp.id, 120),
+          summary: truncate(String(exp.contentJson.body ?? exp.contentJson.summary ?? ""), 400),
+          ...(exp.subKind ? { sub_kind: exp.subKind } : {}),
+          score: h.score,
+          source: "experience",
+        });
+      }
+    }
+
+    if (includeFs && fsWorkspaceId) {
+      try {
+        const fsHits = await searchFsMemory(fsWorkspaceId, query, topK);
+        hits.push(...fsHits);
+      } catch (err) {
+        console.warn(
+          `[memory.recall] fs search failed workspace=${fsWorkspaceId}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    hits.sort((a, b) => b.score - a.score);
+    return { hits: hits.slice(0, topK * 2) };
+  },
+
+  "workspace.memory.search": async (_ctx, params) => {
+    const query = String(params.query ?? params.q ?? "").trim();
+    if (!query) throw new Error("workspace.memory.search: query is required");
+    const workspaceId = resolveFsWorkspaceIdFromParams(params);
+    if (!workspaceId) {
+      throw new Error(
+        "workspace.memory.search: fs_workspace_id or workspace_id (non-wf_) is required"
+      );
+    }
+    const topK = Math.max(1, Math.min(50, Number(params.topK ?? params.top_k ?? 20) || 20));
+    const { fs, manifest } = await openWorkspaceById(workspaceId);
+    const { memory } = resolveProviders(manifest, { allowBuiltinFallback: true });
+    const rows = await memory.search(fs, query, { limit: topK });
+    return {
+      workspaceId: manifest.id,
+      query,
+      results: rows.map((e) => ({
+        id: e.id,
+        title: e.title,
+        body: e.body,
+        tags: e.tags ?? [],
+        pinned: Boolean(e.pinned),
+        score: e.score ?? 0,
+        source: e.source ?? "user",
+        updatedAt: e.updatedAt,
+      })),
+    };
+  },
+
+  "workspace.context.snapshot": async (_ctx, params) => {
+    const workspaceId = resolveFsWorkspaceIdFromParams(params);
+    if (!workspaceId) {
+      throw new Error(
+        "workspace.context.snapshot: fs_workspace_id or workspace_id (non-wf_) is required"
+      );
+    }
+    const pack = await buildWorkspaceBootstrapPack(workspaceId);
+    const openFilesRaw = params.open_files ?? params.openFiles;
+    const open_files = Array.isArray(openFilesRaw)
+      ? openFilesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+      : undefined;
+
+    let context_block = pack.contextBlock;
+    if (open_files?.length) {
+      context_block = `${context_block}\n\n### Open files\n${open_files.map((f) => `- ${f}`).join("\n")}`;
+    }
+
+    const rulesCount = pack.instructionsText
+      ? pack.instructionsText.split(/^### /m).filter((s) => s.trim()).length
+      : 0;
+
+    return {
+      context_block,
+      ...(open_files?.length ? { open_files } : {}),
+      ...(rulesCount > 0 ? { rules_count: rulesCount } : {}),
+    };
+  },
+};

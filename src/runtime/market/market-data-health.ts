@@ -4,9 +4,15 @@ import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-se
 import { fetchAkshareBars, fetchAkshareTencentBars } from "./akshare-klines";
 import { fetchBinanceBars } from "./binance-klines";
 import { fetchEastMoneyBars } from "./eastmoney-klines";
+import {
+  bridgeIdForSourceId,
+  isBrokerMarketBridgeSourceId,
+  resolveBridgeWsUrl,
+} from "./broker-market-bridge";
 import { type KlinesDataSourceMeta, fetchYahooFinanceBars } from "./klines-data-source";
 import { marketDataFetch } from "./market-data-network";
 import {
+  type OperationalMarketDataSource,
   listMarketDataSources,
   marketSourceBackoffUntil,
   marketSourceDefinition,
@@ -17,6 +23,35 @@ import { getWindSessionStatus } from "./wind-klines";
 import { fetchYfinanceBars } from "./yfinance-klines";
 
 const PROBE_TIMEOUT_MS = 20_000;
+
+async function probeWsListenPort(wsUrl: string): Promise<boolean> {
+  try {
+    const httpish = wsUrl.replace(/^ws/i, "http");
+    const u = new URL(httpish);
+    const host = u.hostname || "127.0.0.1";
+    const port = u.port ? Number(u.port) : wsUrl.startsWith("wss") ? 443 : 80;
+    const conn = await Bun.connect({
+      hostname: host,
+      port,
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+        error() {},
+        close() {},
+      },
+    });
+    try {
+      conn.end();
+    } catch {
+      /* ignore */
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface MarketDataReadiness {
   status: "checking" | "ready" | "degraded" | "down";
@@ -46,9 +81,18 @@ export function getMarketDataReadiness(): MarketDataReadiness {
   return readiness;
 }
 
-function probeParams(source: KlinesDataSourceMeta): FetchBarsParams {
+function probeParams(source: OperationalMarketDataSource | KlinesDataSourceMeta): FetchBarsParams {
   const end = new Date();
   const start = new Date(end.getTime() - 45 * 86_400_000);
+  if (isBrokerMarketBridgeSourceId(source)) {
+    return {
+      symbol: source === "ib_bridge" ? "AAPL" : "600000",
+      exchange: source === "ib_bridge" ? "US" : "SH",
+      period: "1d",
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+    };
+  }
   if (source === "binance_crypto") {
     return {
       symbol: "BTCUSDT",
@@ -120,7 +164,10 @@ async function probeTushare(
   }));
 }
 
-async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): Promise<boolean> {
+async function probeOne(
+  sourceId: OperationalMarketDataSource | KlinesDataSourceMeta,
+  ignoreBackoff = false
+): Promise<boolean> {
   const settings = await loadBuiltinConnectorSettings();
   const source = (await listMarketDataSources()).find((s) => s.id === sourceId);
   const params = probeParams(sourceId);
@@ -129,6 +176,9 @@ async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): 
   try {
     if (!source || source.status !== "active") throw new Error("source disabled");
     if (!source.credentialsReady) {
+      const bridgeHint = isBrokerMarketBridgeSourceId(sourceId)
+        ? " — 仅启动 OpenD 不够：需配置启用的 Futu 券商账户，并确保行情桥（QUBIT_FUTU_MARKET_WS_URL / POST …/bridges/futu/ensure）"
+        : "";
       await recordMarketDataSourceAttempt({
         sourceId,
         market,
@@ -136,7 +186,7 @@ async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): 
         symbol: params.symbol,
         status: "blocked",
         latencyMs: Date.now() - started,
-        error: `credentials missing (${source.credentialMode})`,
+        error: `credentials missing (${source.credentialMode})${bridgeHint}`,
         healthcheck: true,
       });
       return false;
@@ -154,6 +204,30 @@ async function probeOne(sourceId: KlinesDataSourceMeta, ignoreBackoff = false): 
         healthcheck: true,
       });
       return false;
+    }
+    // Stream-only broker bridges: require WS URL + listening TCP port.
+    if (isBrokerMarketBridgeSourceId(sourceId)) {
+      const bridgeId = bridgeIdForSourceId(sourceId);
+      const wsUrl = bridgeId ? resolveBridgeWsUrl(bridgeId) : undefined;
+      if (!wsUrl) {
+        throw new Error(
+          "quote bridge WS URL not configured (QUBIT_FUTU_MARKET_WS_URL / ensure futu bridges)"
+        );
+      }
+      const portOpen = await probeWsListenPort(wsUrl);
+      if (!portOpen) {
+        throw new Error(`quote bridge not listening at ${wsUrl}`);
+      }
+      await recordMarketDataSourceAttempt({
+        sourceId,
+        market,
+        timeframe: "quote",
+        symbol: params.symbol,
+        status: "success",
+        latencyMs: Date.now() - started,
+        healthcheck: true,
+      });
+      return true;
     }
     let bars: BarData[] = [];
     if (sourceId === "yahoo_chart") bars = await fetchYahooFinanceBars(params, settings);
@@ -261,21 +335,21 @@ async function probeRealtimeOne(market: "CN" | "CRYPTO"): Promise<{
 export async function runMarketDataHealthChecks(sourceId?: string): Promise<MarketDataReadiness> {
   const all = await listMarketDataSources();
   const ids = sourceId
-    ? all.filter((s) => s.id === sourceId).map((s) => s.id as KlinesDataSourceMeta)
-    : all.map((s) => s.id as KlinesDataSourceMeta);
-  const results: Array<{ id: KlinesDataSourceMeta; ok: boolean }> = [];
+    ? all.filter((s) => s.id === sourceId).map((s) => s.id as OperationalMarketDataSource)
+    : all.map((s) => s.id as OperationalMarketDataSource);
+  const results: Array<{ id: OperationalMarketDataSource; ok: boolean }> = [];
   if (sourceId) {
     const id = ids[0];
     if (id) results.push({ id, ok: await probeOne(id, true) });
   } else {
-    const groups = new Map<string, KlinesDataSourceMeta[]>();
+    const groups = new Map<string, OperationalMarketDataSource[]>();
     for (const id of ids) {
       const family = marketSourceDefinition(id)?.upstreamFamily ?? id;
       groups.set(family, [...(groups.get(family) ?? []), id]);
     }
     const groupedResults = await Promise.all(
       [...groups.values()].map(async (familyIds) => {
-        const familyResults: Array<{ id: KlinesDataSourceMeta; ok: boolean }> = [];
+        const familyResults: Array<{ id: OperationalMarketDataSource; ok: boolean }> = [];
         for (const id of familyIds) familyResults.push({ id, ok: await probeOne(id) });
         return familyResults;
       })

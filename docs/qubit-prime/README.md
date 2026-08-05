@@ -16,9 +16,10 @@
 |------|------|------|
 | [01-runtime-core-rust.zh-CN.md](./01-runtime-core-rust.zh-CN.md) | Rust Agent Runtime Core：**§2 边界**、§4 Codex 对照、**§6.6 ExecutionKind**、**§6.8 HITL Inbox**、**§11.4 进程级双核（TS 过渡）**、**§15 Context Protocol** | **v0.8 · M0–M6 ✅ · Bun 接入🚧** |
 | [02-ui-cursor-workbench.zh-CN.md](./02-ui-cursor-workbench.zh-CN.md) | UI：双壳 simple/pro、Workspace FS、PageHost、Monaco、Provider | **v0.5 · U0–U7 ✅ · U8 未完** |
-| [03-quant-agent-data-decision-upgrade.zh-CN.md](./03-quant-agent-data-decision-upgrade.zh-CN.md) | 量化 Agent、实时数据质量、确定性决策与归因闭环；明确 Core / Tool Host / 外部数据面的归属 | v0.1 · 归属已对齐 01 |
+| [03-quant-agent-data-decision-upgrade.zh-CN.md](./03-quant-agent-data-decision-upgrade.zh-CN.md) | 量化 Agent、实时数据质量、确定性决策与归因闭环；明确 Core / Tool Host / 外部数据面的归属；券商行情桥可插拔骨架 | v0.2 · 归属已对齐 01 |
 | [04-internet-tools-and-plugin-system.zh-CN.md](./04-internet-tools-and-plugin-system.zh-CN.md) | 联网 P0 + 插件双轨 P1 + **OAuth 连接器 P2 已落地** | v0.5 · P2 已落地 |
-| （后续）`05-protocol-json-schema/` | Session/Turn/Event 的 JSON Schema / protobuf 草案 | 拍板后落地 |
+| [05-framework-storage-memory-health.zh-CN.md](./05-framework-storage-memory-health.zh-CN.md) | 核心框架健康度 · JSON/FS vs SQLite 分层 · 长期记忆与 Workspace 关联 | **v0.3 · O1 SSE + Recipe 单源 + Bridge 扩** |
+| （后续）`06-protocol-json-schema/` | Session/Turn/Event 的 JSON Schema / protobuf 草案 | 拍板后落地 |
 
 上游基线（必读）：
 
@@ -127,3 +128,6 @@ Prime 算「可用」至少同时满足：
 | 2026-08-05 | v0.9 | 04→v0.3 + README **P1**：自建插件管理与 Skill/MCP 直装双轨并存 |
 | 2026-08-05 | v0.10 | 04→v0.4：P1 插件管理落地（registry/API/导入/Plugins UI） |
 | 2026-08-05 | v0.11 | 04→v0.5：P2 OAuth 连接器（connector_auth + MCP Bearer 注入） |
+| 2026-08-05 | v0.12 | 新增 05：框架健康度 / 存储分层 / 长期记忆与 Workspace；原 protocol schema 顺延为 06 |
+| 2026-08-05 | v0.13 | 05→v0.2：CoreDb Session/HITL、BridgeRecall、JSON agents 真源、scope=workspace |
+| 2026-08-05 | v0.14 | 05→v0.3：SSE `/events`、protocol-ts、Recipe JSON 单源、Bridge L2、WorkspacePort、fsWorkspaceId |

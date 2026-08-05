@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SessionCreate",
+  "type": "object",
+  "required": [
+    "agent_ref"
+  ],
+  "properties": {
+    "agent_ref": {
+      "type": "string"
+    },
+    "mode": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "workspace_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

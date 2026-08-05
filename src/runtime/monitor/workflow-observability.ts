@@ -9,6 +9,35 @@ import {
   toolCallLog,
 } from "../../db/sqlite/schema";
 import { loadWorkflowTokenBudgetStatus } from "../llm/workflow-token-budget";
+import { estimateLlmCostUsd } from "../../util/llm-pricing";
+
+function sampleCountFromMeta(meta: unknown): number {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return 1;
+  const n = (meta as Record<string, unknown>)["sampleCount"];
+  if (typeof n === "number" && Number.isFinite(n) && n >= 1) return Math.floor(n);
+  return 1;
+}
+
+function effectiveLlmCostUsd(row: {
+  provider: string;
+  model: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  costUsd: number | null;
+}): number {
+  if (typeof row.costUsd === "number" && Number.isFinite(row.costUsd) && row.costUsd > 0) {
+    return row.costUsd;
+  }
+  if (row.promptTokens == null && row.completionTokens == null) {
+    return typeof row.costUsd === "number" && Number.isFinite(row.costUsd) ? row.costUsd : 0;
+  }
+  return estimateLlmCostUsd({
+    provider: row.provider,
+    model: row.model,
+    promptTokens: row.promptTokens ?? 0,
+    completionTokens: row.completionTokens ?? 0,
+  });
+}
 
 /**
  * Per-workflow observability 汇总。
@@ -144,18 +173,22 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
    * 老字段 totalTokenCount 用 llm_call_log.totalTokens 求和；如果该表没行
    * （非常老的 workflow 或 P1 之前的），回退到 agent_step.tokenCount 兼容。
    */
-  const llmCallsTotal = llmRows.length;
+  const llmCallsTotal = llmRows.reduce(
+    (a, r) => a + sampleCountFromMeta(r.requestMetaJson),
+    0
+  );
   const sumLlmTokens = llmRows.reduce((a, r) => a + (r.totalTokens ?? 0), 0);
   const sumLlmPromptTokens = llmRows.reduce((a, r) => a + (r.promptTokens ?? 0), 0);
   const sumLlmCompletionTokens = llmRows.reduce((a, r) => a + (r.completionTokens ?? 0), 0);
-  const sumLlmCostUsd = llmRows.reduce((a, r) => a + (r.costUsd ?? 0), 0);
+  const sumLlmCostUsd = llmRows.reduce((a, r) => a + effectiveLlmCostUsd(r), 0);
   const sumAgentStepTokens =
     reasonSteps.reduce((acc, s) => acc + (s.tokenCount ?? 0), 0) || 0;
   const totalTokenCount =
     sumLlmTokens > 0 ? sumLlmTokens : sumAgentStepTokens > 0 ? sumAgentStepTokens : null;
   const totalPromptTokens = sumLlmPromptTokens > 0 ? sumLlmPromptTokens : null;
   const totalCompletionTokens = sumLlmCompletionTokens > 0 ? sumLlmCompletionTokens : null;
-  const totalCostUsd = sumLlmCostUsd > 0 ? sumLlmCostUsd : null;
+  // Keep 0 when we have LLM rows (e.g. ollama); only null when there is no LLM usage at all.
+  const totalCostUsd = llmRows.length > 0 ? sumLlmCostUsd : null;
   const sumCachedPromptTokens = llmRows.reduce((a, r) => a + (r.promptCachedTokens ?? 0), 0);
 
   const promptComponentsChars: Record<string, number> = {};
@@ -293,11 +326,11 @@ export async function getWorkflowObservability(workflowRunId: string): Promise<W
   for (const r of llmRows) {
     const role = r.agentDefinitionId ? (roleByDef.get(r.agentDefinitionId) ?? "unknown") : "internal_llm";
     const agg = ensure(roleAggMap, role);
-    agg.llmCalls += 1;
+    agg.llmCalls += sampleCountFromMeta(r.requestMetaJson);
     agg.llmTokens += r.totalTokens ?? 0;
     agg.llmPromptTokens += r.promptTokens ?? 0;
     agg.llmCompletionTokens += r.completionTokens ?? 0;
-    agg.llmCostUsd += r.costUsd ?? 0;
+    agg.llmCostUsd += effectiveLlmCostUsd(r);
   }
 
   const byAgentRole: WorkflowObservability["byAgentRole"] = [...roleAggMap.values()]

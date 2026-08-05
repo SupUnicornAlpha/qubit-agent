@@ -32,3 +32,7 @@ if (!process.env["QUBIT_DATA_DIR"]?.trim()) {
   process.env["HOME"] = dir;
   console.log(`[test-setup] QUBIT_DATA_DIR -> ${dir}`);
 }
+
+// 测试进程禁止自动拉起 qubit-app-server（避免端口污染 / 长生命周期子进程）。
+process.env.QUBIT_SKIP_CORE_SPAWN = process.env.QUBIT_SKIP_CORE_SPAWN ?? "1";
+if (!process.env.NODE_ENV) process.env.NODE_ENV = "test";

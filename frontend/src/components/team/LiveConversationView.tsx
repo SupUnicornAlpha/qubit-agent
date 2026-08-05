@@ -1,6 +1,7 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "../../i18n";
+import { looksLikeMarkdown } from "../../lib/looksLikeMarkdown";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import {
   groupArtifactsByInsertAnchor,
@@ -13,6 +14,9 @@ import {
   avatarLabelFor,
   formatRoleName,
 } from "./conversationAvatar";
+
+/** 兼容旧引用：`import { looksLikeMarkdown } from "./LiveConversationView"` */
+export { looksLikeMarkdown } from "../../lib/looksLikeMarkdown";
 
 /**
  * 通用 IM 风格对话流。
@@ -654,33 +658,6 @@ const tsLabel: CSSProperties = {
   color: "var(--qb-team-meta, #71717a)",
   fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
 };
-
-/**
- * 启发式判断 LLM 消息是否值得走 Markdown 渲染：
- * - GFM 表格：连续两行都出现 `|`；
- * - 标题：行首 `# ` ~ `###### `；
- * - 引用：行首 `> `；
- * - 有序/无序列表：行首 `- ` / `* ` / `1. `；
- * - 围栏代码块：``` 或 ~~~；
- * - 链接：`[text](url)`；
- * 任一命中即视为 markdown。否则走更省渲染开销的 plain text 分支。
- */
-export function looksLikeMarkdown(text: string): boolean {
-  if (!text) return false;
-  if (/```|~~~/.test(text)) return true;
-  if (/\[[^\]]+\]\([^)]+\)/.test(text)) return true;
-  if (/(^|\n)#{1,6}\s/.test(text)) return true;
-  if (/(^|\n)>\s/.test(text)) return true;
-  if (/(^|\n)\s*([-*+]\s|\d+\.\s)/.test(text)) return true;
-  // GFM table 需要至少表头 + 分隔行两行 `|`：
-  const lines = text.split("\n");
-  let pipeLines = 0;
-  for (const line of lines) {
-    if (line.includes("|")) pipeLines++;
-    if (pipeLines >= 2) return true;
-  }
-  return false;
-}
 
 const MessageRow: FC<{
   ev: LiveConversationMessageEvent;

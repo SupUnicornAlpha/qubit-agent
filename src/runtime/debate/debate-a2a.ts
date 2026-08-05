@@ -103,6 +103,7 @@ function debateRuntimeDef(definitionId: string, role: AgentRole): RuntimeAgentDe
   return {
     id: definitionId,
     role,
+    executionKind: "subagent",
     name: `debate-${role}`,
     version: "debate-a2a",
     systemPrompt: "",

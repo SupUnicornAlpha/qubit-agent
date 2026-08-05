@@ -17,6 +17,7 @@ function minimalDef(definitionId: string, role: string): RuntimeAgentDefinition 
   return {
     id: definitionId,
     role: role as RuntimeAgentDefinition["role"],
+    executionKind: "subagent",
     name: `stub-${role}`,
     version: "test",
     systemPrompt: "",

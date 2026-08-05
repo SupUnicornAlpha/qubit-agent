@@ -108,6 +108,8 @@ export interface ScenarioLaunchInput {
   inputParams: Record<string, unknown>;
   providerOverrides?: Array<{ kind: ProviderKind; providerKey?: string; providerId?: string }>;
   loopOverrides?: Partial<LoopDefaults>;
+  /** FS Workspace id → merged into workflow loopOptionsJson */
+  fsWorkspaceId?: string;
 }
 
 export class ScenarioError extends Error {

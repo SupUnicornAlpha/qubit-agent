@@ -79,6 +79,7 @@ export async function syncWorkspaceConfigToDb(input: {
     const baseValues = {
       id: def.id,
       role: def.role,
+      executionKind: def.executionKind,
       name: def.name,
       version: def.version,
       systemPrompt: def.systemPrompt,
@@ -103,6 +104,7 @@ export async function syncWorkspaceConfigToDb(input: {
       if (preserveField(col)) return;
       updateSet[key] = value;
     };
+    maybeAdd("execution_kind", "executionKind", def.executionKind);
     maybeAdd("system_prompt", "systemPrompt", def.systemPrompt);
     maybeAdd("tools_json", "toolsJson", def.tools);
     maybeAdd("mcp_servers_json", "mcpServersJson", def.mcpServers);

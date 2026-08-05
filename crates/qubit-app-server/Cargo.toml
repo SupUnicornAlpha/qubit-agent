@@ -1,0 +1,24 @@
+[package]
+name = "qubit-app-server"
+description = "Qubit Prime App Server — WS/HTTP JSON-RPC shell over CoreRuntime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "qubit-app-server"
+path = "src/main.rs"
+
+[dependencies]
+qubit-protocol = { workspace = true }
+qubit-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+axum = { version = "0.8", features = ["json"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower-http = { version = "0.6", features = ["cors"] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }

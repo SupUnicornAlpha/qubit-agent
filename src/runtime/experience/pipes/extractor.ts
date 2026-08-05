@@ -33,7 +33,7 @@
  *   R5 [semantic · research_conclusion]（Context Protocol P1 · zod 门禁）
  */
 
-import type { Experience, ExperienceContent } from "../../../types/entities";
+import type { Experience, ExperienceContent, ExperienceScope } from "../../../types/entities";
 import type { ExperienceBus, Unsubscribe } from "../experience-bus";
 import type { ExperienceStore } from "../experience-store";
 
@@ -42,6 +42,8 @@ import type { ExperienceStore } from "../experience-store";
 export interface ExtractorWorkflowSummary {
   workflowRunId: string;
   projectId: string;
+  /** FS Workspace id；有值时写入 scope=workspace */
+  fsWorkspaceId?: string | null;
   goal: string;
   mode: "research" | "backtest" | "simulation" | "live";
   status: "completed" | "failed";
@@ -58,6 +60,16 @@ export interface ExtractorWorkflowSummary {
   }>;
   /** 已由 Writer 落下的 episodic（用于建立 derive_from 链；可空） */
   episodicIds: string[];
+}
+
+/** Prefer workspace scope when FS workspace id is present. */
+function writeScope(summary: ExtractorWorkflowSummary): {
+  scope: ExperienceScope;
+  scopeId: string;
+} {
+  const ws = summary.fsWorkspaceId?.trim();
+  if (ws) return { scope: "workspace", scopeId: ws };
+  return { scope: "project", scopeId: summary.projectId };
 }
 
 export interface ExtractorLoader {
@@ -164,12 +176,12 @@ defineRule("R1_factor_archive", async (ctx) => {
   if (!ctx.participant.finalAnswer) return null;
   if (!QUANT_METRIC_REGEX.test(ctx.participant.finalAnswer)) return null;
 
-  // 去重：同 project + 同 goal 半小时内只写一条
+  // 去重：同 scope + 同 goal 半小时内只写一条
+  const scope = writeScope(ctx.summary);
   const recent = await ctx.store.query({
     kind: "semantic",
     subKind: "factor_archive",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...scope,
     limit: 20,
     orderBy: "created_desc",
   });
@@ -183,8 +195,7 @@ defineRule("R1_factor_archive", async (ctx) => {
   return ctx.store.insert({
     kind: "semantic",
     subKind: "factor_archive",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...scope,
     definitionId: null, // semantic 默认共享 ← 用户决策 4
     visibility: "project_shared",
     contentJson: {
@@ -216,12 +227,12 @@ defineRule("R2_workflow_play", async (ctx) => {
 
   const signature = ctx.participant.toolChain.join(">");
 
-  // 同 project + 同 signature 不重复
+  // 同 scope + 同 signature 不重复
+  const scope = writeScope(ctx.summary);
   const recent = await ctx.store.query({
     kind: "procedural",
     subKind: "workflow_play",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...scope,
     limit: 50,
     orderBy: "created_desc",
   });
@@ -236,8 +247,7 @@ defineRule("R2_workflow_play", async (ctx) => {
   return ctx.store.insert({
     kind: "procedural",
     subKind: "workflow_play",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...scope,
     definitionId: ctx.participant.definitionId, // 起始归属是产生者；project_shared 让别人也能用
     visibility: "project_shared",
     contentJson: {
@@ -270,8 +280,7 @@ defineRule("R3_iteration_summary", async (ctx) => {
   return ctx.store.insert({
     kind: "semantic",
     subKind: "iteration_summary",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...writeScope(ctx.summary),
     definitionId: null,
     visibility: "project_shared",
     contentJson: {
@@ -306,8 +315,7 @@ defineRule("R4_regime", async (ctx) => {
   return ctx.store.insert({
     kind: "semantic",
     subKind: "regime",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...writeScope(ctx.summary),
     definitionId: null,
     visibility: "project_shared",
     contentJson: {
@@ -362,8 +370,7 @@ defineRule("R5_research_conclusion", async (ctx) => {
   return ctx.store.insert({
     kind: "semantic",
     subKind: "research_conclusion",
-    scope: "project",
-    scopeId: ctx.summary.projectId,
+    ...writeScope(ctx.summary),
     definitionId: null,
     visibility: "project_shared",
     contentJson: {

@@ -1,0 +1,66 @@
+{
+  "key": "research",
+  "aliases": ["research_multi", "research_theme", "rs", "rm", "rt"],
+  "version": "2026-08-05.3",
+  "capability_owners": {
+    "get_quote": "research",
+    "news": "research"
+  },
+  "role_tool_allowlist": {
+    "orchestrator": ["update_plan", "topology.dispatch"],
+    "research": ["fetch_klines", "fetch_quote", "fetch_news", "research.thesis.write"]
+  },
+  "stall_budget": {
+    "tools": [
+      "market.readiness",
+      "market.data_sources",
+      "update_plan",
+      "fetch_klines",
+      "fetch_quote",
+      "fetch_bars",
+      "fetch_price_data",
+      "mcp:mathjs:evaluate",
+      "mcp:investor-agent:historical_prices",
+      "mcp:investor-agent:technical_indicator",
+      "mcp:investor-agent:get_stock_info",
+      "call_mcp"
+    ],
+    "key": "tool_fingerprint",
+    "max_success": 3,
+    "on_exceed": "strip_from_surface"
+  },
+  "recovery": {
+    "after_probe_failure": "degrade_source",
+    "forbid_gap_as_final_answer": true
+  },
+  "completion": {
+    "artifacts": [
+      {
+        "table": "analyst_signal",
+        "min_rows": 2,
+        "required_fields": ["ticker", "reasoning"],
+        "scope": "workflow"
+      },
+      {
+        "table": "signal_fusion_result",
+        "min_rows": 1,
+        "scope": "workflow"
+      }
+    ],
+    "required_tools": [
+      { "capability": "get_quote", "min_success": 1 },
+      { "capability": "news", "min_success": 1 }
+    ],
+    "answer_schema": {
+      "required_sections": ["goal", "evidence", "decision", "risks", "gaps"]
+    }
+  },
+  "checklist_prompt": [
+    "1. fetch_klines 取价（够用即可，禁止对同一证据面空转连打）",
+    "2. fetch_news 取新闻/事件；缺新闻必须显式记录缺口，不得只刷行情",
+    "3. 产出结构化判断（research.thesis.write，须绑 snapshotId 若已取快照）",
+    "4. 输出五段答案；探活失败走 data-gap，不得当唯一结案",
+    "同类工具（含 mathjs / historical_prices / technical_indicator）成功 ≤3 次后必须停手写终答",
+    "有足够证据后下一轮只输出最终回答，不再发 tool_calls"
+  ]
+}

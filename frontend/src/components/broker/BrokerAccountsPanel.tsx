@@ -1,6 +1,6 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { checkBrokerHealth, listBrokerAccounts, listBrokerEvents, upsertBrokerAccount } from "../../api/backend";
+import { checkBrokerHealth, ensureFutuMarketBridges, listBrokerAccounts, listBrokerEvents, upsertBrokerAccount } from "../../api/backend";
 import type {
   AlpacaProviderConfig,
   BrokerAccountRecord,
@@ -313,15 +313,30 @@ export const BrokerAccountsPanel: FC = () => {
     }
   };
 
+  const runEnsureFutu = async () => {
+    setStatusLine(null);
+    try {
+      const out = await ensureFutuMarketBridges();
+      setStatusLine(
+        `Futu 打通 · ${out.message} · 交易 ${out.trade.healthy ? "OK" : "未就绪"} (${out.trade.url}) · 行情 ${
+          out.quote.running ? "OK" : "未就绪"
+        } (${out.marketWsUrl ?? out.quote.url})`
+      );
+      await refresh();
+    } catch (e) {
+      setStatusLine(`Futu 打通失败：${(e as Error).message}`);
+    }
+  };
+
   return (
     <div style={wrap}>
       <h2 style={title}>券商账户配置</h2>
       <p style={lead}>
         登记富途、盈透、CCXT、Alpaca、同花顺 SuperMind 或东方财富 EMT 连接参数。{" "}
         <strong>mock</strong> 为后端本地模拟；<strong>sandbox</strong> 对应富途模拟盘（TrdEnv.SIMULATE）；{" "}
-        <strong>live</strong> 为实盘。非 mock 模式需填写 HTTP 桥地址（默认{" "}
-        <code style={{ fontSize: 12 }}>http://127.0.0.1:18765</code>）并运行{" "}
-        <code style={{ fontSize: 12 }}>python broker_http_server.py</code>。
+        <strong>live</strong> 为实盘。保存 Futu 的 sandbox/live 账户时会自动默认交易桥{" "}
+        <code style={{ fontSize: 12 }}>http://127.0.0.1:18765</code>，并尝试拉起交易 HTTP + 行情 WS
+        （OpenD 共用 opendHost/opendPort）。也可点「打通 Futu 行情+交易」。
       </p>
 
       <div style={row}>
@@ -593,6 +608,11 @@ export const BrokerAccountsPanel: FC = () => {
         <button type="button" className="qb-btn-secondary" onClick={() => void runHealthCheck()}>
           健康检查
         </button>
+        {provider === "futu" ? (
+          <button type="button" className="qb-btn-secondary" onClick={() => void runEnsureFutu()}>
+            打通 Futu 行情+交易
+          </button>
+        ) : null}
         <button type="button" className="qb-btn-secondary" onClick={() => void refresh()} disabled={loading}>
           {loading ? "刷新中…" : "刷新列表"}
         </button>

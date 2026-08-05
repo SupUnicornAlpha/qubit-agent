@@ -147,6 +147,10 @@ export class ResearchScenarioService {
     });
 
     const loop = { ...spec.loopDefaults, ...(input.loopOverrides ?? {}) };
+    const fsWorkspaceId = input.fsWorkspaceId?.trim();
+    if (fsWorkspaceId) {
+      (loop as Record<string, unknown>).fsWorkspaceId = fsWorkspaceId;
+    }
 
     return {
       scenarioKey: requestedKey,
@@ -183,6 +187,14 @@ export class ResearchScenarioService {
 
     const goal = input.goal?.trim() || buildScenarioGoal(plan.scenarioKey, plan.inputParams);
     const useAnalystTeam = plan.registryScenarioKey === "analyst_debate";
+    const fsWorkspaceId =
+      input.fsWorkspaceId?.trim() ||
+      (typeof plan.loopOptions.fsWorkspaceId === "string"
+        ? plan.loopOptions.fsWorkspaceId.trim()
+        : "");
+    if (fsWorkspaceId) {
+      process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID = fsWorkspaceId;
+    }
     const created = await createAndDispatchWorkflow({
       projectId: input.projectId,
       goal,
@@ -203,6 +215,7 @@ export class ResearchScenarioService {
         ...plan.loopOptions,
         scenarioKey: plan.scenarioKey,
         registryScenarioKey: plan.registryScenarioKey,
+        ...(fsWorkspaceId ? { fsWorkspaceId } : {}),
       } as never,
     });
 

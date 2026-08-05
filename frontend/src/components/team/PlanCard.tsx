@@ -66,8 +66,26 @@ export function PlanCard({
   const done = steps.filter((s) => s.status === "done" || s.status === "skipped").length;
   const active = steps.find((s) => s.status === "in_progress");
   const mode = plan?.mode ?? "agent";
-  const headerLabel = mode === "plan" ? "规划方案" : mode === "goal" ? "目标进度" : "执行计划";
-  const modeLabel = mode === "plan" ? "PLAN" : mode === "goal" ? "GOAL" : "AGENT";
+  const headerLabel =
+    mode === "plan"
+      ? "规划方案"
+      : mode === "goal"
+        ? "目标进度"
+        : mode === "ask"
+          ? "问答要点"
+          : mode === "diagnose"
+            ? "Diagnose 进度"
+            : "执行计划";
+  const modeLabel =
+    mode === "plan"
+      ? "PLAN"
+      : mode === "goal"
+        ? "GOAL"
+        : mode === "ask"
+          ? "ASK"
+          : mode === "diagnose"
+            ? "DIAGNOSE"
+            : "AGENT";
   const goalStatusLabel =
     plan?.goal?.status === "completed"
       ? "已完成"

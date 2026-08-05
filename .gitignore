@@ -96,3 +96,7 @@ frontend/src/assets/pixel-office/raw/
 
 # Agent readiness eval outputs (per-run JSON / MD reports, traces, run.log)
 out/
+
+# Prime Rust workspace
+/target/
+crates/**/target/

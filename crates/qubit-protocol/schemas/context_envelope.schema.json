@@ -1,0 +1,157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ContextEnvelope",
+  "type": "object",
+  "required": [
+    "agent_spec_id",
+    "execution_kind",
+    "version"
+  ],
+  "properties": {
+    "agent_spec_id": {
+      "type": "string"
+    },
+    "axioms_applied": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "budget": {
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/ContextSlotBudget"
+      }
+    },
+    "decision_cutoff": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "execution_kind": {
+      "$ref": "#/definitions/ExecutionKind"
+    },
+    "rendered": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/RenderedPrompt"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "slots": {
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/ContextSlotContent"
+      }
+    },
+    "turn_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "definitions": {
+    "CompressMode": {
+      "type": "string",
+      "enum": [
+        "truncate",
+        "stub",
+        "summarize",
+        "omit"
+      ]
+    },
+    "ContextSlotBudget": {
+      "type": "object",
+      "required": [
+        "compress",
+        "max_chars",
+        "priority"
+      ],
+      "properties": {
+        "compress": {
+          "$ref": "#/definitions/CompressMode"
+        },
+        "max_chars": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "priority": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "ContextSlotContent": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "meta": true,
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "ExecutionKind": {
+      "description": "Who may own user turns, who is invoke-only, who is event-driven.",
+      "oneOf": [
+        {
+          "description": "User-facing hub; may also be invoked by other agents.",
+          "type": "string",
+          "enum": [
+            "primary"
+          ]
+        },
+        {
+          "description": "Expert; invoke-only; isolated context window.",
+          "type": "string",
+          "enum": [
+            "subagent"
+          ]
+        },
+        {
+          "description": "External trigger (MQ / A2A / webhook / domain event).",
+          "type": "string",
+          "enum": [
+            "reactor"
+          ]
+        }
+      ]
+    },
+    "RenderedPrompt": {
+      "type": "object",
+      "required": [
+        "system",
+        "user"
+      ],
+      "properties": {
+        "system": {
+          "type": "string"
+        },
+        "user": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

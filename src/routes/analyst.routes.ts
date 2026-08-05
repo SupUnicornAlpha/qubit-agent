@@ -58,13 +58,13 @@ analystRouter.post("/run", async (c) => {
     agentMode?: AgentControlMode;
   }>();
 
-  if (body.agentMode === "plan" || body.agentMode === "goal") {
+  if (body.agentMode === "plan" || body.agentMode === "goal" || body.agentMode === "ask" || body.agentMode === "diagnose") {
     return c.json(
       {
         ok: false,
         code: "agent_mode_requires_orchestrator",
         error:
-          "Plan/Goal 模式必须通过 /orchestrator-chat 进入受控 ReAct harness；/run 只用于显式启动固定研究团队。",
+          "Plan/Goal/Ask/检查 模式必须通过 /orchestrator-chat 进入受控 ReAct harness；/run 只用于显式启动固定研究团队。",
       },
       409
     );
@@ -125,7 +125,11 @@ analystRouter.post("/orchestrator-chat", async (c) => {
   try {
     const conversation = await ensureWorkflowConversation(workflowRunId);
     const compatibleAgentMode =
-      body.agentMode === "agent" || body.agentMode === "plan" || body.agentMode === "goal"
+      body.agentMode === "agent" ||
+      body.agentMode === "plan" ||
+      body.agentMode === "goal" ||
+      body.agentMode === "ask" ||
+      body.agentMode === "diagnose"
         ? body.agentMode
         : body.experience === "coding_agent"
           ? "goal"

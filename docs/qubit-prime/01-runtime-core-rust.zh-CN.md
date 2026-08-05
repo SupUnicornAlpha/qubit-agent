@@ -2,11 +2,12 @@
 
 | 项 | 内容 |
 |----|------|
-| 文档状态 | **规划稿 v0.3 · 边界已拍（§2）· 其余待拍板** |
-| 日期 | 2026-08-04 |
+| 文档状态 | **落地稿 v0.15 · Agent 配置页 / DB 对齐 ExecutionKind；Core Spec 从 DB 同步** |
+| 日期 | 2026-08-05 |
 | 目标 | 高可用（HA）、薄循环、可观测、可恢复的 Agent Runtime Core（Rust） |
-| 非目标（v1） | 全量搬迁 market / broker / workshop；完整 A2A 多 Agent 拓扑；替换模型供应商 |
-| 上游对齐 | Codex 式 harness 形状；现仓 thin-loop / policy / DeliveryVerdict |
+| 非目标（v1） | 全量搬迁 market / broker / workshop；完整 A2A 多 Agent 拓扑；替换模型供应商；把业务角色（researcher 等）编进 Core |
+| 上游对齐 | Codex 式 harness 形状；Claude Code 式槽位组装；现仓 thin-loop / policy / DeliveryVerdict / Context Protocol |
+| **代码落点** | 仓库根 `Cargo.toml` workspace：`crates/{qubit-protocol,qubit-policy,qubit-runtime,qubit-tool-host,qubit-app-server}`；Bun 适配 `src/runtime/prime/` |
 
 ---
 
@@ -17,15 +18,16 @@
 3. [目标架构](#3-目标架构)
 4. [核心 Rust 代码架构与 Codex 对照](#4-核心-rust-代码架构与-codex-对照)
 5. [Crate 拆分](#5-crate-拆分)
-6. [领域模型与协议草案](#6-领域模型与协议草案)
+6. [领域模型与协议草案](#6-领域模型与协议草案)（含 **§6.6 ExecutionKind** · **§6.8 HITL** · **§6.9 InteractionMode**）
 7. [薄 Loop 状态机](#7-薄-loop-状态机)
 8. [工具执行与宿主隔离](#8-工具执行与宿主隔离)
 9. [高可用（HA）设计](#9-高可用ha设计)
 10. [Policy / Delivery 与现仓对齐](#10-policy--delivery-与现仓对齐)
-11. [与旧 Bun Runtime 的绞杀接法](#11-与旧-bun-runtime-的绞杀接法)
+11. [与旧 Bun Runtime 的绞杀接法](#11-与旧-bun-runtime-的绞杀接法)（含 **§11.4 双核：进程级 · TS 过渡后删除**）
 12. [可观测性与验收](#12-可观测性与验收)
 13. [实施里程碑](#13-实施里程碑)
 14. [风险、回滚、开放问题](#14-风险回滚开放问题)
+15. [Context Protocol（Core 内）](#15-context-protocolcore-内)（Codex / Claude Code 对照 · 量化槽位 · 结构体）
 
 ---
 
@@ -153,8 +155,10 @@ flowchart LR
 | Cancel / timeout | **IN** | 全链路 `CancelToken` |
 | Checkpoint / 恢复 | **IN** | desktop HA；见 §9 |
 | Event bus + seq | **IN** | 客户端续订 |
-| HITL gate（暂停/恢复/幂等） | **IN** | 形态对齐 HITL v2；文案/选项可来自模型或硬规则数据 |
+| HITL gate（暂停/恢复/幂等） | **IN** | 形态对齐 HITL v2；**权威状态进 HitlInbox**（§6.8） |
+| HITL **审批缓冲 / Inbox** | **IN** | IDE / IM 同消费；primary 与 reactor 共用 |
 | HITL **硬规则内容**（资金阈值等） | **DATA** | 规则表/配置；求值可在 Core，阈值不写死业务魔法数散落 |
+| IM / 飞书等推送适配 | **OUT** | 只转发 Inbox 项并回调 `hitl.respond` |
 | App Server（WS JSON-RPC） | **IN**（`app-server` crate） | 与 harness 同发布，但不进 `run_turn` |
 
 #### B. A2A / 多 Agent / 编排
@@ -193,14 +197,17 @@ flowchart LR
 
 | 模块 | 归属 | 说明 |
 |------|------|------|
-| WorkingMemory（短时结构化记忆） | **IN** | turn/session 作用域 |
-| Prompt **组装骨架**（history + tools + system slots） | **IN** | 槽位有，文案外置 |
+| **Context Protocol**（Envelope / Slot / Budget / Axiom） | **IN** | **已拍方向**：协议与组装在 Core；详见 **[§15](#15-context-protocolcore-内)** |
+| WorkingMemory（短时结构化记忆） | **IN** | turn/session 作用域；含量化结构化字段 |
+| Prompt **组装骨架**（history + tools + system/user slots） | **IN** | 槽位有序拼接；文案与召回结果外置注入 |
 | Observation compact **骨架**（截断/摘要接口） | **IN** | 策略参数可 DATA |
 | Token budget 记账 / 超限行为钩子 | **IN** | 限额数字来自配置/DATA |
-| 业务 system prompt / seed roles / FSI 文案 | **OUT** | 配置或 policy 注入字符串，不编译进 loop |
-| **长期记忆**写路径、向量索引、LanceDB/检索 | **OUT** | **已拍**：经 memory 类 **HOST 工具**或独立 memory 服 |
+| `RecallPort` / `WorkspaceContextPort`（检索接口） | **IN（端口）** | Core 只认 trait；实现 OUT |
+| 业务 system prompt / seed 文案 / FSI 话术 | **OUT** | 配置或 policy 注入字符串，不编译进 loop |
+| **长期记忆**写路径、向量索引、LanceDB/检索实现 | **OUT** | **已拍**：经 memory 类 **HOST 工具**或独立 memory 服，经 `RecallPort` 回填槽位 |
+| Workspace 文件树 / 策略·因子索引实现 | **OUT** | 经 `WorkspaceContextPort` 或 L0 文件工具回填 `slot` |
 | Experience embedder / pipes | **OUT** | 可工具化后挂 HOST |
-| Auto-compact（Codex 级 remote compact） | **LATER** | v1 简单截断即可 |
+| Auto-compact（Codex 级 remote compact） | **LATER** | v1 简单截断 + 本地摘要；远程 compact 后置 |
 
 #### F. Policy / 场景 / 质量
 
@@ -230,13 +237,18 @@ flowchart LR
 | 「交付规则先在 Rust 里写死 SP/ST」 | **拒**：引擎 IN、规则 DATA |
 | 「长期记忆表也由 Core checkpoint 顺手管」 | **拒**：LTM OUT；避免 harness 变数据平台 |
 | 「没有 artifact 谓词就先当 delivered」 | **拒**：无谓词则 verdict 只能是未知/partial，不能默认真交付 |
+| 「Core 枚举 researcher / analyst_* 方便派单」 | **拒**：只用 `ExecutionKind`；业务名当 `labels` / prompt（§6.6） |
+| 「TS 和 Rust 各维护一套事件类型」 | **拒**：`qubit-protocol` 单源 + conformance（§11.4） |
 
 ### 2.5 不变式（硬）
 
 1. Core **永不** `import` 量化领域业务 crate（market/strategy/broker/…）。  
 2. 领域能力只能以 **ToolResult / Policy 数据 / 注入字符串** 进入循环。  
 3. `DeliveryEvaluator` 可以否决「假完成」；**不可以**替模型写业务工具参数。  
-4. A2A 与 LTM 的引入不得扭曲 `run_turn` 形状——只许 **端口 / 工具**，不许嵌套第二套编排状态机进 Acting。
+4. A2A 与 LTM 的引入不得扭曲 `run_turn` 形状——只许 **端口 / 工具**，不许嵌套第二套编排状态机进 Acting。  
+5. Core **永不**按业务角色名（researcher 等）分支；只按 **`ExecutionKind` + PolicySnapshot`**。  
+6. Context 组装在 Core；召回/workspace **实现**在外，经 **Port** 回填槽位（§15）。  
+7. TS Core 与 Rust Core 若并存，必须服从同一 **`CoreRuntime` / protocol schema**（§11.4）。
 
 ### 2.6 对照旧仓模块目录（迁移动线提示）
 
@@ -854,13 +866,26 @@ qubit-runtime/
     session/
       manager.rs          # Session 生命周期
       turn.rs             # Turn 状态机
+      task.rs             # SessionTask（Regular …）
+      agent_binding.rs    # AgentSpec 绑定（ExecutionKind，非业务 role）
     loop_/
       engine.rs           # run_turn
       reason_port.rs      # trait ModelClient
       act.rs              # 解析 tool_calls → 调度（薄）
       observe.rs          # 归一化 observation
+    context/              # Context Protocol（§15）
+      envelope.rs         # ContextEnvelope / slots
+      assemble.rs         # 按槽位预算拼装 Prompt
+      working_memory.rs
+      compact.rs          # v1 截断；LATER 摘要/remote
+      ports.rs            # RecallPort / WorkspaceContextPort
+    agent/                # 执行类型与调用面（§6.6–§6.7）
+      kind.rs             # ExecutionKind
+      invocation.rs       # Subagent / Reactor 调用
+      handoff.rs
     hitl/
       gate.rs
+      inbox.rs            # HitlInbox（IDE/IM 审批缓冲 · §6.8）
     checkpoint/
       store.rs            # SQLite
       recover.rs
@@ -882,11 +907,15 @@ qubit-runtime/
 | 实体 | 含义 | ID |
 |------|------|-----|
 | `WorkspaceRef` | 本地工作区根 | path / uuid |
-| `Session` | 一次连续对话 / 研究会话 | `ses_*` |
-| `Turn` | 用户一条输入触发的完整循环 | `trn_*` |
+| `AgentSpec` / `AgentInstance` | 可配置 Agent（**ExecutionKind**，非业务 role） | `def_*` / `inst_*` |
+| `Session` | 一次连续对话 / 研究会话（通常绑 primary） | `ses_*` |
+| `Turn` | 用户一条输入或一次 trigger/invoke 触发的完整循环 | `trn_*` |
 | `Iteration` | turn 内一次 model→tools 轮 | `u32` |
-| `ToolCall` | 单次工具调用 | `tc_*`（客户端或模型提供；服务端规范化） |
-| `HitlPrompt` | 人工闸门请求 | `hitl_*` |
+| `InvocationRecord` | primary→subagent 调用 | `inv_*` |
+| `TriggerEvent` | reactor 外部唤醒 | `evt_*`（幂等） |
+| `ToolCall` | 单次工具调用 | `tc_*` |
+| `HitlPrompt` / `HitlInboxItem` | 人工闸门 + 审批缓冲项 | `hitl_*` / `inbox_*` |
+| `ContextEnvelope` | 本轮提示词槽位快照 | 随 turn/iteration |
 | `Checkpoint` | 可恢复快照 | `cp_*` / `(session, turn, seq)` |
 | `DeliveryVerdict` | 交付判定 | 枚举 + reasons |
 
@@ -992,6 +1021,386 @@ struct CheckpointRecord {
 
 写入策略：**状态迁移成功后** fsync/事务提交；高频 `token` **不进** checkpoint（只进事件 log，可截断）。
 
+### 6.6 Agent 执行类型（ExecutionKind）——不要业务角色枚举
+
+> **已拍板（2026-08-05）**：Core **不**内建 `researcher` / `analyst_technical` 这类 **业务角色**。  
+> 现仓 `AgentRole` 动物园属于 **配置层标签 / Prompt 文案 / 工具面预设**，迁到 Recipe / AgentSpec 的 **标签与字符串**，不进 `run_turn` 分支。  
+> Core 只认识 **执行类型（ExecutionKind）**。  
+> **O10–O13 同步拍板**：三类 kind 定稿；subagent **隔离窗口**；HITL 走 **审批缓冲**（§6.8）；双核仅 **进程级**且 TS 为过渡（§11.4）。
+
+#### 6.6.1 三种执行类型（v1）
+
+| ExecutionKind | 产品语义 | Core 行为约束 |
+|---------------|----------|---------------|
+| **`primary`** | 主 Agent：用户对话核心节点；**也可被其他 Agent 调用** | 可拥有用户可见 `Session`；可接 `turn.start` **与** `agent.invoke`；可派 `subagent`；HITL → **审批缓冲**（§6.8） |
+| **`subagent`** | 专家 Agent：被调用干活 | **禁止**直接接用户 chat；只接受 `agent.invoke`；**完全隔离上下文窗口**（不灌 parent transcript）；返回 `Handoff` 后窗口可丢 |
+| **`reactor`** | 外部消息唤醒（MQ / A2A / webhook / 新闻事件等） | 由 `TriggerIngress` 唤醒；创建短命 `Session`/`Turn` 或挂到指定 primary；若需 HITL → **同一审批缓冲**（非阻塞弹窗独占） |
+
+```text
+用户 UI ──turn.start──► primary ◄──agent.invoke── 其他 primary /（授权）调用方
+                           │
+                           ├──agent.invoke──► subagent（隔离窗口）──Handoff──►
+                           │
+外部事件 ──TriggerIngress──► reactor ──(可选 notify)──► primary / ledger
+                           │
+                     HITL ──► HitlInbox（IDE / IM 审批）──respond──► 恢复 turn
+```
+
+**刻意不做的**：
+
+- 不把 `news_event` / `researcher_bull` 写进 Rust `match`。
+- 不把「辩论 / MSA」做成第四种 ExecutionKind（仍是 OUT 编排或 Recipe 工作流）。
+- Codex 的 Compact/Review 是 **TaskKind**，不是 Agent 执行类型；我们继续用 `SessionTask`，与 `ExecutionKind` 正交。
+- **不**把 primary 改成「只能人机对话」——primary 是 **可对话 + 可被调用** 的枢纽。
+
+#### 6.6.2 与现仓对照（绞杀映射）
+
+| 现仓 | Prime |
+|------|-------|
+| `role: "orchestrator"` | `execution_kind: primary` + `labels: ["orchestrator"]`（标签仅供 UI/分析） |
+| `role: "researcher" | "analyst_*" | …` | `execution_kind: subagent` + `labels` + `system_prompt_ref` + tool surface |
+| 订阅 `TASK_ASSIGN` / 未来 MQ 消费者 | `execution_kind: reactor` + `triggers[]` |
+| `AgentRole` 枚举进 loop | **删除**；loop 只读 `ExecutionKind` + `PolicySnapshot` |
+
+#### 6.6.3 核心结构体（协议层 · `qubit-protocol`）
+
+```rust
+/// 执行类型：决定「谁可以发起 turn、谁可以被谁调用」
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionKind {
+    Primary,
+    Subagent,
+    Reactor,
+}
+
+/// Agent 配置（可版本化；业务语义只活在字符串/标签/策略引用里）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentSpec {
+    pub id: String,                       // def_* / agt_*
+    pub version: String,
+    pub display_name: String,
+    pub execution_kind: ExecutionKind,
+    /// 自由标签：orchestrator / research / news … —— Core 不当分支条件
+    pub labels: Vec<String>,
+    /// system / identity 文案：外置引用，不编译进 harness
+    pub identity_prompt_ref: String,      // file:// or policy key
+    pub default_recipe_id: Option<String>,
+    pub tool_surface_ref: String,         // → Policy / Host 解析
+    pub model_ref: Option<String>,
+    pub max_iterations: u32,
+    pub hitl_profile_ref: Option<String>,
+    /// 谁可以 invoke 本 Agent：spec_id 或 label 选择器；空 = 按 kind 默认策略
+    /// - subagent：默认仅 primary（及配置的 callers）
+    /// - primary：允许其他 primary / 授权调用方（实现「主 Agent 可被调用」）
+    /// - reactor：通常不走 invoke，走 TriggerIngress
+    pub allowed_callers: Vec<CallerSelector>,
+    /// 仅 reactor：触发源
+    pub triggers: Vec<TriggerSpec>,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallerSelector {
+    SpecId { id: String },
+    Label { label: String },
+    ExecutionKind { kind: ExecutionKind },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TriggerSpec {
+    /// 消息队列 / 内部 bus
+    Queue { topic: String, filter: Option<serde_json::Value> },
+    /// A2A / 外部 agent 投递（实现可先桥）
+    A2a { capability: String },
+    /// HTTP webhook
+    Webhook { path: String, secret_ref: Option<String> },
+    /// 领域事件名（如 news.ingested）——名字是配置，不是 Core 枚举业务
+    DomainEvent { event_name: String },
+    /// Cron / 定时
+    Schedule { cron: String },
+}
+
+/// 运行时实例（绑定工作区）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentInstance {
+    pub instance_id: String,              // inst_*
+    pub spec_id: String,
+    pub workspace_id: String,
+    pub parent_instance_id: Option<String>, // subagent 隶属（可选；invoke 时也可临时挂载）
+    pub status: AgentInstanceStatus,      // Ready | Busy | Disabled | Degraded
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentInstanceStatus {
+    Ready,
+    Busy,
+    Disabled,
+    Degraded,
+}
+```
+
+#### 6.6.4 Core 接口（行为闸门）
+
+```rust
+/// 解析「这次 turn 是否合法」——唯一允许按 ExecutionKind 分支的地方之一
+pub trait AgentAdmission: Send + Sync {
+    fn admit_user_turn(&self, agent: &AgentInstance, spec: &AgentSpec)
+        -> Result<(), AdmissionError>;
+    fn admit_invocation(&self, caller: &AgentInstance, callee: &AgentSpec)
+        -> Result<(), AdmissionError>;
+    fn admit_trigger(&self, spec: &AgentSpec, trigger: &TriggerEvent)
+        -> Result<(), AdmissionError>;
+}
+
+/// 已拍板默认规则：
+/// - UserTurn     → 仅 Primary
+/// - Invocation   → callee ∈ {Subagent, Primary}；caller 通过 callee.allowed_callers
+///                  （primary←primary / primary←授权方 显式允许；subagent 默认仅 primary）
+/// - Trigger      → 仅 Reactor；topic/event 匹配 triggers[]
+/// - Subagent 禁止 UserTurn；Reactor 禁止 UserTurn（除非将来另开配置，v1 不做）
+```
+
+### 6.7 Agent 关系与调用面
+
+#### 6.7.1 关系种类
+
+| 关系 | 含义 | 持久化 |
+|------|------|--------|
+| **Affiliation（隶属）** | `subagent.instance.parent_instance_id → primary` | AgentInstance |
+| **Invocation（调用）** | 一次 caller→callee（含 **primary→primary**、primary→subagent） | InvocationRecord（可进 checkpoint） |
+| **Subscription（订阅）** | reactor 订阅 TriggerSpec | AgentSpec.triggers |
+| **Delegation report** | callee 完成后 Handoff / artifact 回写 caller WorkingMemory | Handoff + ledger effects |
+
+```mermaid
+flowchart TB
+  P1[Primary A]
+  P2[Primary B]
+  S1[Subagent · research-shaped]
+  S2[Subagent · risk-shaped]
+  R[Reactor · news ingress]
+
+  P1 -->|invoke| S1
+  P1 -->|invoke| S2
+  P2 -->|invoke primary| P1
+  R -->|optional notify / attach| P1
+  S1 -->|Handoff| P1
+  S2 -->|Handoff| P1
+```
+
+#### 6.7.2 调用与交接结构体
+
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvocationRequest {
+    pub invocation_id: String,            // inv_*
+    pub parent_session_id: String,
+    pub parent_turn_id: String,
+    pub caller_instance_id: String,
+    pub callee_spec_id: String,
+    pub goal: String,
+    pub handoff_in: Option<ContextHandoffV1>,
+    pub deadline_ms: Option<i64>,
+    pub budget: InvocationBudget,         // max_iterations / max_tokens / tool_surface_override
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvocationBudget {
+    pub max_iterations: u32,
+    pub max_tokens: Option<u32>,
+    pub tool_surface_override: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvocationRecord {
+    pub request: InvocationRequest,
+    pub child_session_id: String,
+    pub child_turn_id: String,
+    pub state: InvocationState,           // Running | Completed | Failed | Cancelled | TimedOut
+    pub handoff_out: Option<ContextHandoffV1>,
+    pub delivery: Option<DeliveryVerdict>,
+}
+
+/// 子 Agent / Reactor / 被调 primary 回传的结构化交接（对齐现仓 ContextHandoffV1）
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ContextHandoffV1 {
+    pub version: u32,                     // 1
+    pub goal: String,
+    pub symbols: Vec<String>,
+    pub asof: Option<String>,
+    pub claims: Vec<WorkingClaim>,
+    pub finance_refs: WorkingMemoryFinanceRefs,
+    pub evidence: Option<HandoffEvidence>,
+    pub debate: Option<WorkingDebate>,
+    pub narrative: Option<String>,
+}
+
+#[async_trait]
+pub trait InvocationPort: Send + Sync {
+    /// 派调用；callee 可为 subagent **或** primary（Admission 放行后）
+    /// subagent：新建隔离 Session；primary：可挂已有 Session 或按策略开子 Session
+    async fn invoke(
+        &self,
+        req: InvocationRequest,
+        cancel: CancelToken,
+    ) -> Result<InvocationRecord, RuntimeError>;
+}
+
+#[async_trait]
+pub trait TriggerIngress: Send + Sync {
+    /// 外部适配器（MQ/A2A/webhook）规范化后进入
+    async fn ingest(&self, event: TriggerEvent) -> Result<Option<String /*turn_id*/>, RuntimeError>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TriggerEvent {
+    pub event_id: String,                 // 幂等键
+    pub source: TriggerSpec,              // 或精简 tag
+    pub payload: serde_json::Value,       // 原始载荷；Core 不解释业务字段
+    pub workspace_id: Option<String>,
+    pub target_spec_id: Option<String>,   // 路由提示；缺省按 triggers 匹配
+    pub correlation_id: Option<String>,
+}
+```
+
+#### 6.7.3 `run_turn` 仍薄：调用是工具或端口，不是第二套编排环
+
+- v1 推荐：`agent.invoke` 作为 **L0 元工具**（或薄 `InvocationPort`），Acting 阶段调用；caller turn 可选择等待或挂起。
+- **禁止**在 `act` 内嵌 MSA/wave/辩论状态机（与 §2.B / O5 一致）。
+- Reactor 的 A2A 传输实现可先走旧 Bun 桥；Core 只看见 `TriggerEvent`。
+
+#### 6.7.4 JSON-RPC 增补（相对 §6.3）
+
+| method | 谁调用 | 说明 |
+|--------|--------|------|
+| `agent.list` | UI | 返回 AgentSpec 视图（含 execution_kind） |
+| `agent.invoke` | primary 工具路径 / 内部 | 可指向 subagent **或** 另一 primary |
+| `trigger.ingest` | 内部 ingress 适配器 | MQ/webhook 进程调 App Server |
+| `session.create` | UI | `agentRef` 必须解析为 **primary**（Admission） |
+| `hitl.inbox.list` / `hitl.respond` | IDE / IM 适配器 | 审批缓冲（§6.8） |
+
+### 6.8 HITL 审批缓冲（Inbox）——IDE / IM 统一出口
+
+> **已拍板（O12）**：Reactor 需要人审时，**不是**在事件循环里堵一个模态框，而是把 `HitlPrompt` **写入审批缓冲区**；用户在 **Workbench IDE** 或 **IM 机器人**里审批。  
+> **Primary 同样走这套缓冲**（对话里可同时 toast/面板，但权威状态在 Inbox）。  
+> Subagent 默认 **不**直接对用户发 HITL；若工具触发硬规则，上交给 caller（通常 primary）的 Inbox，或按 profile 记到同一 workspace 缓冲。
+
+#### 6.8.1 模型
+
+```text
+run_turn 遇 HITL
+  → checkpoint AwaitingHitl（强制 fsync）
+  → HitlInbox.append(prompt)          # 权威队列
+  → emit hitl.requested（带 inboxId） # IDE / IM 订阅同一事件
+  → 等待 hitl.respond（任一通道）
+  → 恢复 turn
+```
+
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HitlInboxItem {
+    pub inbox_id: String,                 // inbox_*
+    pub prompt: HitlPrompt,               // 见 §6.4
+    pub workspace_id: String,
+    pub session_id: String,
+    pub turn_id: String,
+    pub agent_instance_id: String,
+    pub execution_kind: ExecutionKind,
+    pub source: HitlSource,               // UserTurn | Invocation | ReactorTrigger
+    pub status: HitlInboxStatus,          // Pending | Approved | Rejected | Expired | Cancelled
+    pub created_at_ms: i64,
+    pub expires_at_ms: Option<i64>,
+    pub channel_hints: Vec<HitlChannelHint>, // IdePanel | ImWebhook | …
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HitlChannelHint {
+    IdePanel,
+    ImWebhook { target_ref: String },
+    Notification,
+}
+
+#[async_trait]
+pub trait HitlInbox: Send + Sync {
+    async fn enqueue(&self, item: HitlInboxItem) -> Result<(), RuntimeError>;
+    async fn list_pending(&self, filter: HitlInboxFilter) -> Result<Vec<HitlInboxItem>, RuntimeError>;
+    async fn respond(&self, inbox_id: &str, response: HitlResponse) -> Result<(), RuntimeError>;
+}
+```
+
+#### 6.8.2 通道适配（OUT / App Server 边）
+
+| 通道 | 职责 |
+|------|------|
+| Workbench IDE | 订阅 `hitl.requested`；Inbox 面板展示；调用 `hitl.respond` |
+| IM（飞书/Slack/…） | App Server 或旁路 bot **转发** Inbox 项；回调写入同一 `hitl.respond` |
+| Core | **只认 Inbox + respond**；不知 IM 厂商 |
+
+**不变式**：任一通道应答成功后，Inbox 项终态唯一；重复 respond 幂等。
+
+### 6.9 InteractionMode（Plan / Goal / Ask…）——与 ExecutionKind 正交
+
+> **问题**：Cursor 等产品有 Agent / Plan / Debug / Multitask / Ask 等 **runtime 模式**；现仓也有 `agent | plan | goal`。这些 Core 支持吗？和 `primary/subagent/reactor` 什么关系？量化场景怎么用？
+
+#### 6.9.1 两轴分离（硬）
+
+| 轴 | 回答的问题 | 例子 |
+|----|------------|------|
+| **ExecutionKind** | **谁**在跑、可否对话/被调/被事件唤醒 | `primary` / `subagent` / `reactor` |
+| **InteractionMode** | **这一会话允许怎么干活**（工具门禁 / 交付标准 / 提示槽） | `agent` / `plan` / `goal` / `ask` / `diagnose` |
+
+- **不是**第四种 ExecutionKind。  
+- **不是**第二套 `run_turn` 状态机。  
+- Core **支持**：Session 携带 `interaction_mode`；Acting 前做工具准入；Goal 模式参与 Delivery 谓词；`update_plan` 为 L0 元工具写 `AgentPlanSnapshot`。  
+- **Multitask**：**不是**独立 InteractionMode —— 语义是 primary **并行 `agent.invoke` 多个 subagent**（InvocationPort + 并行上限配置）。
+
+#### 6.9.2 与 Cursor 菜单对照
+
+| Cursor UI | Qubit InteractionMode | Core 行为 |
+|-----------|----------------------|-----------|
+| **Agent** | `agent`（默认） | 全工具面（再经 Policy 收窄） |
+| **Plan** | `plan` | **仅**允许 `update_plan`（+ 极少只读 L0）；禁止业务副作用工具 |
+| **Ask** | `ask` | 问答 / 只读；拒写库、下单、派单类工具 |
+| **Debug**（Cursor） | **`diagnose`** | 根因/失败归因：ledger / `session.diagnose` / 失败重放；Delivery 偏「根因已记录」。**不用 debug 作产品名**（易与调试器混淆） |
+| **Multitask** | （无独立枚举） | UI 开关 → `max_parallel_invocations`；loop 仍是多次 invoke |
+| （无直接对应） | `goal` | 现仓已有：必须维护 goal+steps；完成度进 Delivery |
+
+#### 6.9.3 量化金融场景：哪些值得做
+
+| 模式 | 量化场景 | 建议 |
+|------|----------|------|
+| **agent** | 日常研究对话、选股编排、策略迭代 | **必做**（默认） |
+| **plan** | 先写「因子→回测→风控」步骤，不跑行情/不写合同 | **必做**（防误触实盘/贵 API） |
+| **goal** | 「本周完成某因子 IC>0.03 且过 PIT」多步闭环 | **必做**（对齐 DeliveryVerdict） |
+| **ask** | 「解释这根 K 线 / 这个因子公式」纯问答 | **应做**（省工具预算、防误写） |
+| **diagnose** | 回测失败、工具幂等冲突、Delivery partial 归因 | **应做**（与 EffectLedger 强相关；wire=`diagnose`，兼容旧串 `debug`） |
+| **Multitask** | 多标的并行研究、多分析师 subagent | **应做**（靠 invoke 并行，不新开模式枚举） |
+
+#### 6.9.4 协议形状（已进 `qubit-protocol`）
+
+```rust
+pub enum InteractionMode { Agent, Plan, Goal, Ask, Diagnose }
+
+pub struct SessionView {
+    // …
+    pub interaction_mode: InteractionMode,
+    // …
+}
+
+pub struct AgentPlanSnapshot {
+    pub mode: Option<InteractionMode>,
+    pub goal: Option<AgentGoalSnapshot>,
+    pub steps: Vec<AgentPlanStep>,
+    pub updated_at: Option<String>,
+}
+```
+
+**门禁落点**：`InteractionMode::allows_tool` 在 Core Acting 前拦截；更细的场景工具面仍由 **PolicySnapshot（DATA）** 决定。Plan 模式与现仓一致：`plan → 只准 update_plan`。
+
 ---
 
 ## 7. 薄 Loop 状态机
@@ -1040,6 +1449,8 @@ fn run_turn(session, input, cancel):
 | 在 act 内读业务 SQLite 判 artifact | 循环变厚 | `delivery` + ledger 谓词 |
 | Orchestrator 探活死循环 | 烧掉预算 | Recipe 预算 + Host 缓存工具 |
 | 自动 `dispatchBuiltinTool` 默认参 | 与 thin-loop 计划冲突 | 删除；改为可观测的 nudge 事件 |
+| 按 `AgentRole` / researcher 等业务枚举分支 | 把领域角色焊死进 harness | `ExecutionKind` + labels/Recipe（§6.6） |
+| 在 Core 内直连向量库拼 prompt | harness 变数据平台 | `RecallPort`（§15） |
 
 ### 7.3 Model 端口
 
@@ -1238,6 +1649,106 @@ Prime 将其注册为 L2 tools。桥必须返回标准 `ToolResult.effects`，�
 2. DeliveryVerdict 对照
 3. HITL round-trip 对照
 
+### 11.4 双核可切换（TS Core ↔ Rust Core）——**过渡阀门，非长期双栈**
+
+> **已拍板（O13）**：切换粒度 = **进程级**（`QUBIT_CORE_BACKEND=ts|rust`）。  
+> **不做** per-session / per-recipe 切换。  
+> **意图**：只为绞杀期保留 TS harness；**Rust 稳定并切流完成后删除 TS Core 热路径**，不保留双实现。  
+> `packages/protocol-ts`（给 frontend 的类型）可长期保留；`src/runtime` 里的 loop/core **退役删除**。
+
+#### 11.4.1 单一事实来源：`qubit-protocol`
+
+```text
+                    ┌─────────────────────────┐
+                    │  schemas/ (JSON Schema) │
+                    │  qubit-protocol (Rust)  │
+                    └───────────┬─────────────┘
+                                │ codegen
+              ┌─────────────────┼─────────────────┐
+              ▼                                   ▼
+     packages/protocol-ts/                 crates/* 使用同构类型
+     (Zod / TS types · 可长期)             serde 结构体
+              │                                   │
+              ▼                                   ▼
+     src/runtime/prime-adapter/            crates/qubit-runtime
+     TsCoreRuntime（过渡期）               实现同一 RPC 语义
+              │                                   │
+              └────────────┬──────────────────────┘
+                           ▼
+              进程启动时二选一（QUBIT_CORE_BACKEND）
+              Rust 稳定后：只留 rust；删除 TS adapter + 旧 loop
+```
+
+**规则**：
+
+1. 一切跨端消息 **只**从 schema 生成；禁止 TS/Rust 各写一份漂移类型。  
+2. **仅进程级**选择后端；重启进程才能切换。  
+3. Tool Host / Policy / 客户端 **禁止**依赖「背后是哪国语言」。  
+4. 迁移完成定义：默认 `rust`、conformance 全绿、**删除** `TsCoreRuntime` 与旧 `executeAgentReact` 热路径。
+
+#### 11.4.2 同构端口（过渡期 TS 与 Rust 共用语义）
+
+```typescript
+// packages/protocol-ts — 概念接口（过渡期 TsCoreRuntime 与 Rust 都必须满足）
+export interface CoreRuntime {
+  createSession(req: SessionCreate): Promise<SessionView>;
+  startTurn(req: TurnStart): Promise<{ turnId: string }>;
+  cancelTurn(req: TurnCancel): Promise<{ ok: true }>;
+  respondHitl(req: HitlRespond): Promise<{ ok: true }>;
+  listHitlInbox?(req: HitlInboxFilter): Promise<HitlInboxItem[]>;
+  subscribeEvents(req: EventsSubscribe): AsyncIterable<RuntimeEvent>;
+  invokeAgent(req: InvocationRequest): Promise<InvocationRecord>;
+  ingestTrigger(req: TriggerEvent): Promise<{ turnId?: string }>;
+  health(): Promise<RuntimeHealth>;
+}
+```
+
+```rust
+// crates/qubit-runtime — 同名语义（终态唯一实现）
+#[async_trait]
+pub trait CoreRuntime: Send + Sync {
+    async fn create_session(&self, req: SessionCreate) -> Result<SessionView, RuntimeError>;
+    async fn start_turn(&self, req: TurnStart) -> Result<TurnStartResult, RuntimeError>;
+    async fn cancel_turn(&self, req: TurnCancel) -> Result<(), RuntimeError>;
+    async fn respond_hitl(&self, req: HitlRespond) -> Result<(), RuntimeError>;
+    async fn list_hitl_inbox(&self, filter: HitlInboxFilter) -> Result<Vec<HitlInboxItem>, RuntimeError>;
+    fn subscribe_events(&self, req: EventsSubscribe) -> EventStream;
+    async fn invoke_agent(&self, req: InvocationRequest) -> Result<InvocationRecord, RuntimeError>;
+    async fn ingest_trigger(&self, req: TriggerEvent) -> Result<Option<String>, RuntimeError>;
+    async fn health(&self) -> RuntimeHealth;
+}
+```
+
+过渡期：把现有 `executeAgentReact` **包一层** `TsCoreRuntime`，对齐事件 / Delivery / HitlInbox，再切进程到 Rust。
+
+#### 11.4.3 切换矩阵
+
+| 层 | 可切换？ | 做法 |
+|----|----------|------|
+| UI / Workbench | 否（应无感） | 只认 JSON-RPC |
+| 进程后端 | **是 · 仅进程级** | `QUBIT_CORE_BACKEND=ts\|rust` |
+| per-session / per-recipe | **否** | 已拍板不做 |
+| Context Protocol 组装 | 过渡期双实现 | 同一 fixture；Rust 稳后删 TS |
+| Tool Host | 共享 | 两边打同一 Host |
+| Checkpoint 库 | **分目录** | `prime/runtime.sqlite` vs 旧库 |
+| Policy Recipe | 共享文件 | 两边只读同一 JSON |
+
+#### 11.4.4 一致性闸门（过渡期防漂移）
+
+| 闸门 | 内容 |
+|------|------|
+| Schema CI | 改 protocol → 同时生成 TS + Rust |
+| Conformance suite | 同一 fixture：事件序 + DeliveryVerdict + HitlInbox |
+| Context golden | Envelope → rendered 槽位边界一致 |
+| Kill-switch | 进程改回 `ts`；Rust 稳后 **移除该开关与 TS 实现** |
+
+#### 11.4.5 落地顺序（以删除 TS Core 为终点）
+
+1. **冻 protocol schema**（M0）并生成 TS 包（frontend 长期用）。  
+2. TS 侧 `TsCoreRuntime` 适配器（旧 loop 外包）——过渡。  
+3. Rust 实现同一 RPC；进程 flag 灰度。  
+4. 默认切 `rust` → soak → **删除 TS harness / TsCoreRuntime**（S4）；只留 `protocol-ts` 给 UI。
+
 ---
 
 ## 12. 可观测性与验收
@@ -1264,17 +1775,75 @@ Prime 将其注册为 L2 tools。桥必须返回标准 `ToolResult.effects`，�
 
 ## 13. 实施里程碑
 
-| 里程碑 | 产出 | 预估 |
-|--------|------|------|
-| **M0 · 协议冻结** | `qubit-protocol` + JSON Schema；O1–O6 拍板回写 README | 1–2 周 |
-| **M1 · 骨架** | app-server + 内存 Session + 假 Model/Tool | 2–3 周 |
-| **M2 · Checkpoint HA** | SQLite checkpoint + 恢复 + HITL | 2–3 周 |
-| **M3 · 真模型 + L0/L1 工具** | OpenAI-compatible + MCP + file tools | 3–4 周 |
-| **M4 · Legacy Bridge** | 接 关键量化 builtin；flag 灰度 | 2–3 周 |
-| **M5 · Delivery + Policy** | Recipe snapshot + verdict；对照测试 | 2–3 周 |
-| **M6 · 硬化** | 取消、背压、supervisor、soak kill-9 | 2 周 |
+| 里程碑 | 产出 | 预估 | **状态（2026-08-05）** |
+|--------|------|------|------------------------|
+| **M0 · 协议冻结** | `qubit-protocol` + JSON Schema（含 ExecutionKind / ContextEnvelope）；O1–O13 拍板 | 1–2 周 | ✅ |
+| **M1 · 骨架** | app-server + 内存 Session + 假 Model/Tool；HTTP JSON-RPC | 2–3 周 | ✅ |
+| **M2 · Checkpoint HA** | SQLite checkpoint + 恢复 + HITL Inbox | 2–3 周 | ✅ |
+| **M3 · 真模型 + L0 + Context** | OpenAI-compatible + `update_plan` L0 + ContextAssembler | 3–4 周 | ✅ 骨架 |
+| **M4 · Legacy Bridge** | Bun `prime-bridge` + `qubit-tool-host`；灰度 market.* | 2–3 周 | ✅ |
+| **M5 · Delivery + Policy + invoke** | `qubit-policy` Recipe → snapshot；DeliveryEvaluator；`agent.invoke` 隔离窗口 | 2–3 周 | ✅ |
+| **M6 · 硬化 + Reactor** | cancel 可抢；supervisor 背压；`trigger.ingest`；kill-9 checkpoint | 2 周 | ✅ |
+| **M6+ · Bun 接入** | `QUBIT_CORE_BACKEND` + `src/runtime/prime/`；seed → AgentSpec；可行性冒烟 | — | ✅ 阀门 + 冒烟 |
+| **M6++ · Chat 适配** | `orchestrator_chat`→Core；session↔workflow；投影拓扑 | — | ✅ 阀门（默认仍 `ts`） |
+| **M6+++ · Resume/Team** | `workflow_resume`/默认任务→Core；Core HITL→Bun Inbox；team MSA 桥接投影 | — | ✅ 阀门 |
+| **M6++++ · Slot/A2A** | `NativeRoleReasoner` + `runA2aReactTaskAssign` → `agent.invoke` | — | ✅ 阀门 |
+| **M6+++++ · 裁剪前置** | `executeAgentReact` 硬护栏；残留调用面清单；删除闸门 | — | ✅ |
+| **M7 · 接入** | boot `attachPrimeCore`（auto）；`prime:up`；bridge+`market.snapshot.get`；`/health.prime` | — | ✅ |
+| **M7+ · 自启 Core** | Bun `ensureRustCoreRunning`；Tauri/dev 注入 rust；默认 `QUBIT_CORE_BACKEND=rust`；打包带 app-server | — | ✅ |
 
 合计约 **3.5–5 人月** 到「可灰度的 Core」（单 Agent）。不含完整 A2A / UI。
+
+### 13.1 当前能力速查
+
+| 能力 | RPC / 入口 | 备注 |
+|------|------------|------|
+| Session / Turn | `session.create` / `turn.start` / `turn.cancel` | start 立即返回 turnId；`TurnView.answer_text` 终态回传 |
+| HITL | `hitl.inbox.list` / `hitl.respond` | Core awaiting_hitl → Bun `createHitlRequest`（`primeCoreInboxId`） |
+| Agents | `agent.list` / `agent.upsert` | Core 只认 ExecutionKind |
+| Invoke | `agent.invoke` | slot / A2A 专家 → `reasonSpecialistViaCore` |
+| Bridge | Bun `/api/v1/prime-bridge` | resolve_symbol / readiness / data_sources / snapshot.get |
+| **默认路径** | `QUBIT_CORE_BACKEND=rust` | Bun **自动 spawn** `qubit-app-server`；失败回落 ts（除非 STRICT） |
+| Boot | `ensureRustCoreRunning` + `attachPrimeCore` | 先听 HTTP → spawn Core → sync specs |
+| 客户端 | Tauri / `dev:backend` | 只起 Bun；Core 随 Bun 生命周期 |
+| TS ReAct 护栏 | `assertTsReactAllowed` | rust 下默认禁止 `executeAgentReact` |
+| 健康检查 | `GET /health` → `prime` | mode / activeBackend / syncedSpecs |
+
+### 13.2 接入用法
+
+**客户端 / 开发（推荐）**：只起 Bun/Tauri——Bun 会自动 spawn Core，默认 rust。
+
+```bash
+bun run dev:tauri
+# 或
+bun run dev:backend
+```
+
+`GET /health` → `prime.activeBackend` 应为 `"rust"`（需已 `cargo build -p qubit-app-server`）。
+
+强制旧路径：`QUBIT_CORE_BACKEND=ts`。禁止自启：`QUBIT_SKIP_CORE_SPAWN=1`。严格模式：`QUBIT_CORE_STRICT=1`。
+
+### 13.3 删除 TS ReAct 前置清单
+
+**直接调用 `executeAgentReact(` 仅 2 处**（均已阀门，见 `src/runtime/prime/ts-react-residual.ts`）：
+
+| 文件 | rust 行为 |
+|------|-----------|
+| `a2a/a2a-react-task.ts` | Core turn / invoke |
+| `msa/role-reasoner.ts` | Core invoke |
+
+**明确 OUT（不进 Core loop，可长期留 Bun）**：
+
+- `order-intent-handler.ts`（ORDER_INTENT 签名转发，无 ReAct）
+- MSA wave/fusion 协调（`analyst-team.ts` 等）
+- CLI reasoner（`claude_cli` / `codex_cli`）
+
+**删除闸门**（满足后再删 `execute-agent-react` / `run-react-loop`）：
+
+1. 默认长期跑 `activeBackend=rust` soak（无 `QUBIT_ALLOW_TS_REACT_UNDER_RUST`）
+2. Bridge 覆盖 primary/subagent 所需 L2 工具（持续扩 allowlist）
+3. 生产流量不再走 `ts` 后端
+4. CI 以 rust 路径冒烟为 gate
 
 ---
 
@@ -1308,6 +1877,270 @@ Prime 将其注册为 L2 tools。桥必须返回标准 `ToolResult.effects`，�
 | O7 | Reasoning 崩溃策略 | A) Failed+retryable  B) 自动重采样 | **A** |
 | O8 | App Server 框架 | A) axum+手写 JSON-RPC  B) jsonrpsee | **B 或 axum 自研轻量；偏好实现简单者** |
 | O9 | Model 路由复用 | A) v1 子集  B) 完整搬迁 length-retry 等 | **A，列差距表逐项补** |
+| **O10** | Agent 执行类型集合 | A) primary/subagent/reactor  B) 再加 teammate  C) 仅 primary+subagent | **已拍板：A**；且 **primary 可被其他 Agent invoke** |
+| **O11** | Subagent 上下文 | A) 完全隔离窗口  B) 共享 parent transcript | **已拍板：A** |
+| **O12** | Reactor / Primary HITL | A) 禁止  B) 升级到 primary 会话弹窗  C) **统一审批缓冲（IDE/IM）** | **已拍板：C**（§6.8；primary 同款） |
+| **O13** | 双核切换粒度 | A) **进程级**  B) per-session  C) per-recipe | **已拍板：A**；TS 仅过渡，Rust 稳后删除 TS Core |
+
+---
+
+## 15. Context Protocol（Core 内）
+
+> **结论**：上下文协议属于 **Core**。  
+> Core 负责 **Envelope / 槽位预算 / 拼装顺序 / WorkingMemory / compact 骨架 / 召回端口**；  
+> 长期记忆索引、向量库、workspace 扫描实现、业务文案 **OUT**，经端口回填槽位。  
+> 现仓 `src/runtime/context/*` 是直接迁移动线（重写进 `qubit-runtime/src/context/`，协议形状保持）。
+
+### 15.1 上游怎么做（对照）
+
+#### Codex
+
+| 机制 | 做法 | 我们学什么 |
+|------|------|------------|
+| `ContextManager` | 维护 conversation items；注入 World State（CWD、shell、日期） | Session 级「环境槽」与历史分列 |
+| `Prompt` 组装 | instructions + tools + history → sample | 组装在 Core，不在 UI |
+| Compact | 超阈值：`/responses/compact`（远程 opaque）或本地 summary handoff | v1 本地截断/摘要；远程后置 |
+| 业务无知 | 不知「改哪个产品需求」 | 同：不知股票；量化结构走 **typed slots** 而非 loop 分支 |
+
+参考：[Unrolling the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/) · 上游 `codex-rs/core/src/context_manager/` · `compact*.rs`
+
+#### Claude Code
+
+| 机制 | 做法 | 我们学什么 |
+|------|------|------------|
+| Fragment pipeline | ~数十片段 → 有序 system sections；静态/动态分区以利 prompt cache | **槽位 + 优先级**；identity/tools 偏静态，recall/working 偏动态 |
+| CLAUDE.md | 项目指令作 user/project context 注入，不一定进 system 前缀 | Workspace 约定文件 → `slot` 槽（OUT 扫描，IN 注入） |
+| Subagent 窗口 | Explore/Plan 等子代理 **独立 context**，只回摘要 | 对齐 `ExecutionKind::Subagent`（§6.6） |
+| Compaction cascade | tool result 预算 → collapse → fork 摘要 | Observation compact + 后置 auto-compact |
+| 条件片段 | 按 agent 类型省略昂贵片段 | 按 ExecutionKind / Recipe **开关槽位**，不是按业务 role 写死 |
+
+参考：Claude Code 公开文档 [context window](https://code.claude.com/docs/en/context-window.md) · 社区对 assembly pipeline 的拆解（fragment / cache boundary）
+
+#### 共通命题 → Qubit 映射
+
+```text
+有限 context budget
+  → 分槽 + 优先级裁剪（我们已有 ContextSlotBudget）
+  → 历史 compact（Codex/Claude）
+  → 检索外置、结果进槽（我们的 RecallPort）
+  → 子 Agent 隔离窗口（Claude；我们的 subagent）
+  → 结构化领域记忆（我们的 finance slots / DecisionRecord —— Codex/Claude 无，Qubit 增量）
+```
+
+### 15.2 协议不变式（对齐现仓 A1–A6）
+
+| ID | 公理 | Core 含义 |
+|----|------|-----------|
+| A1 | 结构化交接 | Subagent/Reactor 回传优先 `ContextHandoffV1`，辩论不当真相 |
+| A2 | 分层衰减 | MemoryTier：working → shallow → intermediate → deep |
+| A3 | 决策可后验 | `DecisionRecord` 含 confidence / asof / outcome |
+| A4 | 结果加权召回 | `recall_finance` 合分含 outcomeWeight（实现 OUT，字段 IN） |
+| A5 | 工具定真 | Experience 只存 ref/摘要；计算走 Tool |
+| A6 | 防前视 PIT | `decisionCutoff` 硬过滤召回 |
+
+### 15.3 槽位模型（拼装骨架 · IN）
+
+沿用并冻结现仓 `ContextSlotId`（可在 schema 演进，但 v1 不改名）：
+
+| Slot | 侧 | 内容来源 | 典型压缩 |
+|------|----|----------|----------|
+| `identity` | system | AgentSpec.identity_prompt_ref + ExecutionKind 约束文案 | truncate |
+| `tools` | system | ToolSurface 摘要 / 策略提示 | truncate |
+| `control` | system/user | 预算、HITL、安全提醒 | truncate |
+| `goal` | user | 本 turn 用户目标 / InvocationRequest.goal | truncate |
+| `slot` | user | **Workspace** 上下文：打开文件、策略/因子焦点、CLAUDE.md 类约定 | truncate |
+| `recall_finance` | user | LTM/Experience **金融结构化**召回 | truncate（高优先，硬限下不 omit） |
+| `recall_skill` | user | Skill / playbook 召回 | truncate |
+| `recall_general` | user | 通用记忆召回 | 可 omit |
+| `session` | user | 会话级摘要 / 最近 handoff | truncate |
+| `working` | user | WorkingMemory 渲染 | stub / summarize |
+
+**拼装顺序（与现仓一致）**：
+
+- System：`identity` → `tools` → `control`
+- User：`goal` → `slot` → `recall_finance` → `recall_skill` → `recall_general` → `session` → `working` → `control`
+
+```mermaid
+flowchart LR
+  subgraph IN["Core · assemble"]
+    ENV[ContextEnvelope]
+    ASM[assemble_prompt]
+    WM[WorkingMemory]
+  end
+
+  subgraph PORTS["Ports · 实现 OUT"]
+    RP[RecallPort]
+    WP[WorkspaceContextPort]
+    IP[IdentityPromptLoader]
+  end
+
+  subgraph OUT["OUT stores"]
+    LTM[(向量 / Experience DB)]
+    WS[Workspace files / 策略因子索引]
+    PROMPTS[prompt files / Recipe]
+  end
+
+  IP --> ENV
+  WP --> ENV
+  RP --> ENV
+  WM --> ENV
+  ENV --> ASM
+  LTM --> RP
+  WS --> WP
+  PROMPTS --> IP
+  ASM --> SAMPLE[ModelClient.sample]
+```
+
+### 15.4 量化金融结构化内容（协议内一等公民）
+
+这些类型进 **`qubit-protocol`**，由 WorkingMemory / Handoff / recall 槽消费；**不是** loop 分支：
+
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkingMemory {
+    pub version: u32,                     // 1
+    pub hypotheses: Vec<WorkingClaim>,
+    pub open_questions: Vec<String>,
+    pub decisions: Vec<String>,
+    pub debate: Option<WorkingDebate>,
+    pub finance_refs: WorkingMemoryFinanceRefs,
+    pub trail_stub: Vec<TrailStub>,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkingMemoryFinanceRefs {
+    pub factor_ids: Vec<String>,
+    pub composition_ids: Vec<String>,
+    pub evaluation_ids: Vec<String>,
+    pub symbols: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DecisionRecord {
+    pub id: String,
+    pub domain: DecisionDomain,           // research|factor|strategy|trade|regime
+    pub symbols: Vec<String>,
+    pub stance: Option<Stance>,
+    pub confidence: f64,
+    pub asof: String,
+    pub thesis: String,
+    pub horizon: Option<String>,
+    pub quant_anchor: Option<QuantAnchor>,
+    pub source_run_id: String,
+    pub outcome: Option<DecisionOutcome>,
+}
+
+/// Experience / LTM 条目的金融 subKind（召回路由用；实现 OUT）
+pub const FINANCE_SUB_KINDS: &[&str] = &[
+    "factor_archive",
+    "strategy_eval",
+    "regime",
+    "market_snapshot",
+    "research_conclusion",
+    "pnl_episode",
+    "strategy_recipe",
+    "playbook",
+    "postmortem",
+    "execution_profile",
+];
+```
+
+**`recall_finance` 槽渲染约定（规划）**：
+
+1. 条目必须带 `asof`；若 Envelope 有 `decision_cutoff`，过滤 `asof > cutoff`（A6）。  
+2. 优先 subKind：`research_conclusion` / `factor_archive` / `strategy_recipe` / `regime` / `strategy_eval` / `playbook`。  
+3. 正文只放 **摘要 + ref**；全量行情/回测曲线不进 prompt（A5）。
+
+### 15.5 组装与端口接口
+
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ContextEnvelope {
+    pub version: String,                  // "1"
+    pub session_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub agent_spec_id: String,
+    pub execution_kind: ExecutionKind,
+    pub decision_cutoff: Option<String>,
+    pub axioms_applied: Vec<String>,      // A1..A6
+    pub slots: BTreeMap<String, ContextSlotContent>,
+    pub budget: BTreeMap<String, ContextSlotBudget>,
+    pub rendered: Option<RenderedPrompt>, // system + user
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ContextSlotBudget {
+    pub max_chars: u32,
+    pub compress: CompressMode,           // truncate|stub|summarize|omit
+    pub priority: u32,
+}
+
+#[async_trait]
+pub trait ContextAssembler: Send + Sync {
+    async fn build(
+        &self,
+        sess: &Session,
+        ctx: &TurnContext,
+        snap: &PolicySnapshot,
+        surface: &ToolSurface,
+    ) -> Result<ContextEnvelope, ContextError>;
+}
+
+#[async_trait]
+pub trait RecallPort: Send + Sync {
+    async fn recall_finance(&self, q: FinanceRecallQuery) -> Result<Vec<RecallHit>, ContextError>;
+    async fn recall_skill(&self, q: SkillRecallQuery) -> Result<Vec<RecallHit>, ContextError>;
+    async fn recall_general(&self, q: GeneralRecallQuery) -> Result<Vec<RecallHit>, ContextError>;
+}
+
+#[async_trait]
+pub trait WorkspaceContextPort: Send + Sync {
+    /// 打开文件、焦点资产、工作区约定（类 CLAUDE.md）→ 填 slot
+    async fn snapshot(&self, workspace_id: &str, focus: &WorkspaceFocus)
+        -> Result<WorkspaceContextSlice, ContextError>;
+}
+
+#[async_trait]
+pub trait IdentityPromptLoader: Send + Sync {
+    async fn load(&self, spec: &AgentSpec) -> Result<String, ContextError>;
+}
+```
+
+`run_turn` 内调用点（接 §4.4 / §7）：
+
+```text
+snapshot = policy.load(...)
+surface  = tools.resolve_surface(...)
+envelope = context_assembler.build(...)   # 内部打 Recall/Workspace/Identity 端口
+sample   = models.sample(envelope.rendered + history_tail, ...)
+```
+
+### 15.6 Compact 策略（v1 → LATER）
+
+| 阶段 | 策略 |
+|------|------|
+| v1 | 按槽 `max_chars` truncate；observation stub；超硬限按 priority omit（永不 omit `goal` / `slot` / `recall_finance`） |
+| v1.5 | WorkingMemory LLM/规则折叠（现仓 flag 形） |
+| LATER | Codex 式 mid-turn compact；可选 provider compact endpoint |
+
+### 15.7 与 ExecutionKind 的交互
+
+| Kind | Context 差异 |
+|------|----------------|
+| `primary` | 全槽位；可含长 session；HITL → Inbox（control 槽可提示「有待审项」） |
+| `subagent` | **已拍：完全隔离窗口**——只带 `identity` + `goal` + `handoff_in` + 必要 `recall_*`；**不灌** parent 全文 transcript |
+| `reactor` | 偏 `goal`（TriggerEvent 映射）+ `recall_finance`；精简 `session`；HITL → **同一 HitlInbox** |
+
+### 15.8 迁移动线（现仓 → Prime）
+
+| 现仓路径 | Prime |
+|----------|-------|
+| `context/types.ts` | `qubit-protocol` + `runtime/context/envelope.rs` |
+| `assemble-context-prompt.ts` | `runtime/context/assemble.rs` |
+| `working-memory.ts` / `handoff.ts` | `working_memory.rs` / `agent/handoff.rs` |
+| `finance-recall.ts` / memory writers | **OUT** 实现 `RecallPort`（HOST 或 memory 服） |
+| `axioms.ts` | 文档 + 配置；断言进 conformance |
 
 ---
 
@@ -1320,9 +2153,11 @@ Prime 将其注册为 L2 tools。桥必须返回标准 `ToolResult.effects`，�
 | `run_turn` 不知业务 | 同左 |
 | App Server JSON-RPC | WS + JSON-RPC（同形） |
 | 成功=副作用 | DeliveryVerdict + EffectLedger |
-| Compact / prompt cache | 后期；v1 简单截断 |
+| Compact / prompt cache | 后期；v1 简单截断 + 槽位预算（§15） |
 | 工具多在 sampling 内执行 | **显式 Acting**（HA） |
 | 多客户端共用 harness | Workbench / 旧 UI / CLI |
+| （无）业务角色枚举 | **ExecutionKind** only（§6.6）；业务标签外置 |
+| （弱）领域结构化记忆 | **Finance slots + DecisionRecord**（§15） |
 
 ## 附录 B — 修订记录
 
@@ -1331,3 +2166,15 @@ Prime 将其注册为 L2 tools。桥必须返回标准 `ToolResult.effects`，�
 | 2026-08-04 | v0.1 | 首版深度规划，待拍板后开 `crates/` |
 | 2026-08-04 | v0.2 | 新增 §4：Rust 代码架构与 Codex 对照（图 + 代码） |
 | 2026-08-04 | v0.3 | §2 模块边界拍板：A2A/Tool/Artifact·交付/上下文·LTM 总表 |
+| 2026-08-05 | v0.4 | §6.6–6.7 ExecutionKind；§11.4 双核切换；§15 Context Protocol |
+| 2026-08-05 | v0.5 | 拍板 O10–O13：primary 可被 invoke；subagent 隔离窗；HITL Inbox（§6.8）；双核仅进程级且 TS 过渡后删除 |
+| 2026-08-05 | v0.6 | §6.9 InteractionMode（Agent/Plan/Goal/Ask/Diagnose · Multitask=并行 invoke）；M2 checkpoint |
+| 2026-08-05 | v0.7 | `debug`→`diagnose`；启动 M3（ContextAssembler / OpenAI client / L0 update_plan） |
+| 2026-08-05 | v0.8 | Bun 双核阀门 + seed→AgentSpec 冒烟 |
+| 2026-08-05 | v0.9 | `orchestrator_chat`→Core；session↔workflow 绑定；拓扑投影；`TurnView.answer_text` |
+| 2026-08-05 | v0.10 | resume/默认任务→Core；Core HITL↔Bun Inbox；team MSA 桥接投影 |
+| 2026-08-05 | v0.11 | slot / A2A 专家 → `agent.invoke`（`reasonSpecialistViaCore`） |
+| 2026-08-05 | v0.12 | `executeAgentReact` 硬护栏 + 残留调用面清单 + 删除闸门 |
+| 2026-08-05 | v0.13 | boot `attachPrimeCore`（默认 auto）；`prime:up`；bridge 扩 snapshot；`/health.prime` |
+| 2026-08-05 | v0.14 | Bun 自启 Core；默认 rust；Tauri/dev-backend 注入；打包复制 app-server |
+| 2026-08-05 | v0.15 | `agent_definition.execution_kind`；配置页可编 Core 类型；release/reload → DB→AgentSpec 同步 Core |

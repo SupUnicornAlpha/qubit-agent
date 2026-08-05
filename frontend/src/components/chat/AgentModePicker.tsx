@@ -8,8 +8,10 @@ export const AGENT_MODE_OPTIONS: ReadonlyArray<{
   hint: string;
 }> = [
   { id: "agent", label: "Agent", icon: "✦", hint: "直接回答或按需调用工具、分析师团队" },
+  { id: "ask", label: "Ask", icon: "?", hint: "问答与分析；只读工具，不写业务、不派单" },
   { id: "plan", label: "Plan", icon: "≡", hint: "只生成可验证计划，不执行研究工具或外部写入" },
   { id: "goal", label: "Goal", icon: "◆", hint: "自主规划、执行并验证，直到目标闭环" },
+  { id: "diagnose", label: "diagnose", icon: "◎", hint: "根因/失败归因：诊断工具 + 运行账本回放" },
 ];
 
 export function getAgentModeOption(mode: AgentControlMode) {

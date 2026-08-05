@@ -13,6 +13,11 @@ type ToolMetaEntry = {
   lifecycle?: ToolLifecycle;
   replacedBy?: string;
   deprecationReason?: string;
+  /**
+   * When lifecycle=deprecated: if false, keep the original tool name on dispatch
+   * (UI-only sunset). Default true = transparent alias to replacedBy.
+   */
+  resolveAlias?: boolean;
 };
 
 /** 工具分类（配置中心 hover / 筛选） */
@@ -40,23 +45,42 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "web.fetch": {
     description:
-      "读取一个公开网页/接口正文（params: url, maxChars?）。只读外联、仅 http/https、内网/元数据地址被拒。用于查阅公开资料/新闻/文档。",
-    category: "exec",
+      "读取一个公开网页/接口正文（params: url, maxChars?）。只读外联、仅 http/https、内网/元数据地址被拒；返回 title/finalUrl/text，source=web。用于查阅公开资料/新闻/文档。已知 URL 时用；未知则先 web.search。",
+    category: "research",
+  },
+  "web.search": {
+    description:
+      "公开网页搜索（params: query, count?≤10）。返回 title/url/snippet 列表，source=web。默认 DuckDuckGo；生产可设 WEB_SEARCH_PROVIDER=brave|serper。查到 URL 后用 web.fetch 读正文。不可作实盘行情源。",
+    category: "research",
   },
   assign_task: { description: "向指定角色 Agent 派发工作流任务", category: "orchestration" },
   run_analyst_team: {
     description:
-      "兼容性团队批量研究入口。默认不推荐；优先由 orchestrator 用 assign_task / call_team_<role> 按需调用专家，再自行整合结论。",
+      "[Deprecated] 兼容性团队批量研究入口。Prime D6 起退出 Orchestrator 默认表面；请用 assign_task / call_team_<role>，再走 snapshot→thesis→portfolio→intent。",
     category: "orchestration",
+    lifecycle: "deprecated",
+    replacedBy: "assign_task",
+    deprecationReason:
+      "Prime D6：单 Agent 经 Tool Host 证据链收口；团队批量入口仅保留 handler 供旧桥对照，不透明 alias",
+    resolveAlias: false,
   },
   summarize_team_decision: {
     description:
-      "对 run_analyst_team 结果做全局兜底总结（仅在 confidence<0.6 / 信号分歧 / 签到不全时调用；高置信场景不需调）。入参：fusion_summary, ticker, msa_signal, msa_confidence, attended_roles?, missing_roles?",
+      "[Deprecated] 对 run_analyst_team 结果做全局兜底总结。Prime D6 起退出默认表面；改由 Orchestrator 自行整合专家结论。",
     category: "orchestration",
+    lifecycle: "deprecated",
+    replacedBy: "assign_task",
+    deprecationReason: "Prime D6：团队批量总结不再挂在单 Agent 表面",
+    resolveAlias: false,
   },
   fuse_signals: {
-    description: "合并多分析师 buy/sell/hold 信号为统一结论",
+    description:
+      "[Deprecated] 合并多分析师 buy/sell/hold 信号。Prime D6 起改用 research.thesis.write 结构化收口。",
     category: "orchestration",
+    lifecycle: "deprecated",
+    replacedBy: "research.thesis.write",
+    deprecationReason: "Prime D6：信号融合由 thesis / portfolio 证据链替代",
+    resolveAlias: false,
   },
   check_risk: {
     description: "编排链路中的风控检查（调用 qubit-risk）",
@@ -103,6 +127,40 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     description:
       "查看启动行情 source readiness gate；只有真实样本探针通过才会报告 ready。它证明至少一个底层源可直拉，不证明专家团队调度一定在时限内完成。",
     category: "market",
+  },
+  "market.snapshot.get": {
+    description:
+      "D2/D3：生成或复用不可变市场快照，返回 snapshotId / dataRef / qualityVerdict / asOf / warnings。" +
+      "研究、回测应引用 snapshotId；下单前须保证 qualityVerdict.tradable=true（仅 L3 + trading_allowed + 质量门通过）。" +
+      "支持 symbols[] 或 symbol；可传 asOf/purpose/timeframe/limit；也可只传 snapshotId 回放。" +
+      "质量不足时仍返回快照但带 warnings（研究 fail transparent）；订单入口会 fail closed。",
+    category: "market",
+  },
+  "research.thesis.write": {
+    description:
+      "写入结构化 ResearchThesis（Prime D4）：必须绑定 snapshotId，返回幂等 thesisId，并自动开立 forecast book 条目。" +
+      "必填：snapshotId + instrumentScope/symbols + direction(long|short|neutral)。" +
+      "可选：horizon、confidence、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。" +
+      "研究结论应走本工具，而不是只写 Markdown；后续归因用 research.forecast_book.*。",
+    category: "research",
+  },
+  "research.forecast_book.get": {
+    description:
+      "读取 forecast book 条目（thesis ↔ 风险审批 / 订单 / 成交 / 持有期结果）。传 thesisId 或 entryId。",
+    category: "research",
+  },
+  "research.forecast_book.link": {
+    description:
+      "向 forecast book 幂等追加链接：recommendationId、riskDecisionIds、orderIntentIds、fillIds、holdingPeriodResult。" +
+      "不改动下单/风控状态机，仅做评测归因旁路。",
+    category: "research",
+  },
+  "portfolio.construct": {
+    description:
+      "确定性组合构建（Prime D5）：必须绑定 thesisId（snapshot 可从 thesis 派生）。" +
+      "基于 thesis 方向/标的或显式 candidates[] 调用分配引擎，返回 TargetPortfolio（含 portfolioId/rows/exposures）。" +
+      "不经 LLM 裁决仓位；可选 capital/grossLimit/netLimit/perPositionMax。",
+    category: "trading",
   },
   fetch_bars: {
     description: "拉取 OHLCV K 线（多数据源：Yahoo/东财/AkShare 等）",
@@ -386,7 +444,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 包 createOrderIntentWithExecution，默认 paper mode 安全；走完 pre-trade risk 检查后落 order_intent。
      */
     description:
-      "下达一个交易意向（落 order_intent + 走 pre-trade risk 检查 + execution_task 派发）。**必填**：`strategy_version_id` (来自 strategy.create_version) + `symbol` + `side` ('buy'|'sell') + `qty` (>0)。可选：`order_type` ('market'|'limit'，默认 market) + `price` (limit 必填) + `time_in_force` ('day'|'gtc'，默认 day) + `market` (默认 US) + `dispatch_mode` ('paper'|'live'，**默认 paper 安全**)。**调用顺序**：strategy.create_version → strategy.compose → order.create_intent。Live 实盘前请人工 review，模型默认走 paper。",
+      "下达一个交易意向（落 order_intent + 证据绑定 + 数据质量门 + pre-trade risk + execution_task）。**必填**：`strategy_version_id` + `symbol` + `side` + `qty`。" +
+      "可选：`thesis_id`/`thesisId`（Prime D5）、`snapshot_id`/`snapshotId`、`order_type`、`price`、`time_in_force`、`market`、`dispatch_mode`（默认 paper）。" +
+      "**Live 必须传 thesisId**（snapshot 可从 thesis 派生，且 qualityVerdict.tradable=true）。传了 snapshot/thesis 但质量不过关时拒绝。" +
+      "研究级 paper 可暂不传（会记 warning）。成功后旁路写入 forecast book。",
     category: "trading",
   },
   "recommendation.record": {
@@ -550,7 +611,11 @@ export function resolveToolAlias(name: string): {
   replacedBy?: string;
 } {
   const meta = TOOL_META[name];
-  if (meta?.lifecycle === "deprecated" && meta.replacedBy) {
+  if (
+    meta?.lifecycle === "deprecated" &&
+    meta.replacedBy &&
+    meta.resolveAlias !== false
+  ) {
     const target = TOOL_META[meta.replacedBy];
     // 防御：target 必须存在且本身不是 deprecated（避免链式跳转）
     if (target && target.lifecycle !== "deprecated") {

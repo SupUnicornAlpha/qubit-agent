@@ -21,6 +21,10 @@ describe("market data source control plane", () => {
     expect(rows.find((row) => row.id === "tushare_daily")?.credentialsReady).toBe(false);
     expect(rows.find((row) => row.id === "wind")?.credentialsReady).toBe(false);
     expect(rows.find((row) => row.id === "eastmoney")?.supportedMarkets).toContain("CN");
+    expect(rows.find((row) => row.id === "eastmoney")?.feedClass).toBe("L0_research_fallback");
+    expect(rows.find((row) => row.id === "eastmoney")?.licenseUse).toBe("research_only");
+    expect(rows.find((row) => row.id === "binance_crypto")?.feedClass).toBe("L2_realtime_observe");
+    expect(rows.find((row) => row.id === "wind")?.licenseUse).toBe("research_only");
   });
 
   test("auto routes each market to capable sources in priority order", async () => {

@@ -1,0 +1,37 @@
+{
+  "key": "open",
+  "aliases": ["chat", "freeform"],
+  "version": "2026-08-05.2",
+  "stall_budget": {
+    "tools": [
+      "mcp:mathjs:evaluate",
+      "mcp:investor-agent:historical_prices",
+      "mcp:investor-agent:technical_indicator",
+      "mcp:investor-agent:get_stock_info",
+      "update_plan",
+      "call_mcp"
+    ],
+    "key": "tool_fingerprint",
+    "max_success": 3,
+    "on_exceed": "strip_from_surface"
+  },
+  "recovery": {
+    "after_probe_failure": "continue_without_realtime",
+    "forbid_gap_as_final_answer": false
+  },
+  "completion": {
+    "artifacts": [],
+    "required_tools": [],
+    "answer_schema": {
+      "required_sections": [],
+      "min_chars": 80
+    }
+  },
+  "checklist_prompt": [
+    "同类工具（含相同参数指纹）成功 ≤3 次后必须停手，用已有 observation 写中文终答",
+    "禁止把 mathjs evaluate / historical_prices / technical_indicator 当刷屏工具",
+    "有足够证据后下一轮只输出最终回答，不再发 tool_calls",
+    "算数优先一次表达式；禁止把字符串拼接拆成多次 evaluate",
+    "宁可给出带 [待核实] 的部分结论，也不要无限取数直到超时"
+  ]
+}

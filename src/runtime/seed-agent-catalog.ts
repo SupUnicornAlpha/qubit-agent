@@ -7,11 +7,10 @@ import type { AgentRole } from "../types/entities";
 import type { AgentOutput } from "./types";
 import { RECOMMENDED_MCP_NAMES } from "./seed-recommended-mcp-servers";
 
-/** 量化平台通用 MCP（math / financex 等） */
+/** 量化平台通用 MCP（math / 合约计算；financex 默认禁用，不自动灌入白名单） */
 export const QUANT_MCP = [
   RECOMMENDED_MCP_NAMES.MATHJS,
   RECOMMENDED_MCP_NAMES.TRADINGCALC,
-  RECOMMENDED_MCP_NAMES.FINANCEX,
 ] as const;
 
 /**
@@ -116,9 +115,7 @@ export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[]
     const investor = RECOMMENDED_MCP_NAMES.INVESTOR_AGENT;
     if (!out.includes(investor)) out.push(investor);
   }
-  if (FSI_MCP_ROLES.has(role)) {
-    for (const n of FSI_DATA_MCP) if (!out.includes(n)) out.push(n);
-  }
+  // FSI 机构 MCP 默认 DB disabled；不再灌进 seed 白名单（启用后在 UI 勾选即可）
   return out;
 }
 

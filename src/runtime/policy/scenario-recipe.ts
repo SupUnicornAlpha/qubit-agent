@@ -1,17 +1,7 @@
 import type { ScenarioRecipe } from "./types";
-import { stockPickRecipe } from "./recipes/stock-pick";
-import { factorRecipe } from "./recipes/factor";
-import { strategyRecipe } from "./recipes/strategy";
-import { liveTradingRecipe } from "./recipes/live-trading";
-import { researchRecipe } from "./recipes/research";
+import { listLoadedRecipes } from "./load-recipe-json";
 
-const RECIPES: ScenarioRecipe[] = [
-  stockPickRecipe,
-  factorRecipe,
-  strategyRecipe,
-  liveTradingRecipe,
-  researchRecipe,
-];
+const RECIPES: ScenarioRecipe[] = listLoadedRecipes();
 
 const BY_KEY = new Map<string, ScenarioRecipe>();
 for (const recipe of RECIPES) {

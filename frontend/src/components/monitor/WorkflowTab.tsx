@@ -216,7 +216,9 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
                   value={
                     workflowObservability.llm.totalCostUsd != null
                       ? workflowObservability.llm.totalCostUsd.toFixed(4)
-                      : "—"
+                      : workflowObservability.llm.llmCalls > 0
+                        ? "0.0000"
+                        : "—"
                   }
                 />
                 <Kpi
@@ -255,7 +257,9 @@ export const WorkflowTab: FC<WorkflowTabProps> = ({
                             <td style={styles.td}>{r.mcpCalls}</td>
                             <td style={styles.td}>{r.tokens ?? "—"}</td>
                             <td style={styles.td}>
-                              {r.llmCostUsd > 0 ? r.llmCostUsd.toFixed(4) : "—"}
+                              {r.tokens != null || r.llmCalls > 0
+                                ? (r.llmCostUsd ?? 0).toFixed(4)
+                                : "—"}
                             </td>
                           </tr>
                         ))}

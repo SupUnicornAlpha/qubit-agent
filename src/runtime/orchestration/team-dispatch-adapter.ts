@@ -154,21 +154,33 @@ export async function dispatchTeamAgentTask(
   const taskEvidence =
     gatheredRecord?.taskEvidence && typeof gatheredRecord.taskEvidence === "object"
       ? (gatheredRecord.taskEvidence as Record<string, unknown>)
-      : null;
+      : task?.evidence && typeof task.evidence === "object"
+        ? (task.evidence as Record<string, unknown>)
+        : null;
   // 子任务可能在拿到真实证据后触发轮次上限。证据可用性与子任务是否完美收口
   // 必须分离，否则 Orchestrator 会把可用回传当失败并重复派单。
   const hasVerifiedEvidence = taskEvidence?.verified === true;
   const dataAvailable =
     targetRole === "market_data" &&
     taskEvidence?.verified === true &&
-    taskEvidence.kind === "market_data";
+    (taskEvidence.kind === "market_data" ||
+      String(taskEvidence.kind ?? "").includes("market"));
+  const controlPlaneCode =
+    typeof taskError?.code === "string" ? taskError.code.trim().toLowerCase() : "";
+  const isControlPlaneStop =
+    controlPlaneCode === "unproductive_turn_budget_exhausted" ||
+    controlPlaneCode === "max_iterations" ||
+    controlPlaneCode === "max_iterations_reached" ||
+    controlPlaneCode === "iteration_budget_exhausted";
   const errorMessage = timedOut
     ? waited.timeoutReason === "lease_expired"
       ? `team_dispatch_timeout: ${targetRole} 专家通信 lease 失联（连续无 TASK_PROGRESS）；这不代表底层数据源不可用，禁止据此宣告 no_data。`
       : `team_dispatch_timeout: ${targetRole} 专家在墙钟 ${gatherTimeoutMs}ms 内未回包；这不代表底层数据源不可用，禁止据此宣告 no_data。`
-    : typeof taskError?.message === "string"
-      ? taskError.message
-      : null;
+    : isControlPlaneStop
+      ? null
+      : typeof taskError?.message === "string"
+        ? taskError.message
+        : null;
   const output: {
     dispatched: boolean;
     completed: boolean;
@@ -183,9 +195,12 @@ export async function dispatchTeamAgentTask(
     errorCode?: string | null;
     taskStatus?: A2ATaskState | "timeout" | "awaiting_approval";
     errorMessage?: string | null;
+    partialEvidence?: boolean;
   } = {
     dispatched: true,
     completed: Boolean(task && !timedOut),
+    // Control-plane early stop must not look like a data outage; parent reads
+    // result + partialEvidence instead of retrying as "no_data".
     success: task?.status === "completed" || hasVerifiedEvidence,
     taskId: payload.taskId,
     role: targetRole,
@@ -195,16 +210,26 @@ export async function dispatchTeamAgentTask(
     dataAvailability: timedOut ? "unknown" : dataAvailable ? "available" : "not_applicable",
   };
   if (result !== undefined) output.result = result;
-  if (hasVerifiedEvidence && task?.status !== "completed") output.partialEvidence = true;
+  if (
+    (hasVerifiedEvidence || isControlPlaneStop) &&
+    task?.status !== "completed"
+  ) {
+    output.partialEvidence = true;
+  }
   if (timedOut) {
     output.errorCode = "a2a_gather_timeout";
     output.taskStatus = "timeout";
-  } else if (!hasVerifiedEvidence && typeof taskError?.code === "string") {
+  } else if (!hasVerifiedEvidence && !isControlPlaneStop && typeof taskError?.code === "string") {
     output.errorCode = taskError.code;
     if (taskStatus) output.taskStatus = taskStatus;
   } else if (task && taskStatus) {
     output.taskStatus = taskStatus;
+    if (isControlPlaneStop && typeof taskError?.code === "string") {
+      output.errorCode = taskError.code;
+    }
   }
-  if (errorMessage && !hasVerifiedEvidence) output.errorMessage = errorMessage;
+  if (errorMessage && !hasVerifiedEvidence && !isControlPlaneStop) {
+    output.errorMessage = errorMessage;
+  }
   return output;
 }

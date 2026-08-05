@@ -33,10 +33,18 @@ describe("topology-dispatch", () => {
     expect(merged).toContain("run_screener");
     expect(merged).toContain("recommendation.record");
     expect(merged).toContain("factor.register");
+    expect(merged).toContain("market.snapshot.get");
+    expect(merged).toContain("research.thesis.write");
+    expect(merged).toContain("portfolio.construct");
     expect(merged).toContain("strategy.create_version");
     expect(merged).toContain("order.create_intent");
     expect(merged).toContain("call_team_research");
     expect(merged).toContain("call_team_backtest");
+    expect(merged).not.toContain("run_analyst_team");
+    expect(merged).not.toContain("fuse_signals");
+    expect(merged).not.toContain("edit_agent_pack");
+    expect(merged).not.toContain("market.readiness");
+    expect(merged).not.toContain("factor.list");
   });
 
   test("team tool timeout always outlives its inner gather budget", () => {

@@ -53,6 +53,11 @@ import {
   setAgentDefinitionBindings,
 } from "../runtime/agent/agent-binding-service";
 import { reloadAgentPool } from "../runtime/agent-pool";
+import {
+  isExecutionKind,
+  resolveExecutionKind,
+  syncPrimeSpecsFromDbIfRust,
+} from "../runtime/prime";
 import { syncServerDefaultStarBinding } from "../runtime/mcp/default-star-binding";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import {
@@ -232,10 +237,12 @@ agentRouter.get("/", (c) => {
 
 agentRouter.post("/reload", async (c) => {
   const result = await reloadAgentPool();
+  const prime = await syncPrimeSpecsFromDbIfRust();
   return c.json({
     ok: true,
     before: result.before,
     after: result.after,
+    prime,
   });
 });
 
@@ -252,11 +259,13 @@ agentRouter.post("/builtin/reload", async (c) => {
   const clearedOverrides = await clearAllAgentDefinitionOverrides();
   const report = await seedAgentDefinitions({ force: true });
   const runtimeReload = await reloadAgentPool();
+  const prime = await syncPrimeSpecsFromDbIfRust();
   return c.json({
     ok: true,
     report,
     clearedOverrides,
     runtime: { before: runtimeReload.before, after: runtimeReload.after },
+    prime,
   });
 });
 
@@ -339,12 +348,20 @@ agentRouter.post("/definitions", async (c) => {
     name?: string;
     systemPrompt?: string;
     displayName?: string;
+    executionKind?: string;
   }>();
   const roleRaw = typeof body.role === "string" ? body.role.trim() : "";
   if (!roleRaw || !(ALL_AGENT_ROLES as readonly string[]).includes(roleRaw)) {
     return c.json({ error: "invalid or missing role" }, 400);
   }
   const role = roleRaw as AgentRole;
+  const executionKind = resolveExecutionKind({
+    executionKind: body.executionKind,
+    role,
+  });
+  if (body.executionKind != null && body.executionKind !== "" && !isExecutionKind(body.executionKind)) {
+    return c.json({ error: "invalid executionKind (primary|subagent|reactor)" }, 400);
+  }
   const db = await getDb();
   const policies = await db
     .select()
@@ -368,6 +385,7 @@ agentRouter.post("/definitions", async (c) => {
   await db.insert(agentDefinition).values({
     id,
     role,
+    executionKind,
     name,
     version: "1.0.0",
     systemPrompt,
@@ -396,6 +414,7 @@ agentRouter.post("/definitions", async (c) => {
     configSyncedAt: "",
   });
   await reloadAgentPool();
+  await syncPrimeSpecsFromDbIfRust();
   const rows = await db.select().from(agentDefinition).where(eq(agentDefinition.id, id)).limit(1);
   const profRows = await db
     .select()
@@ -426,6 +445,7 @@ agentRouter.delete("/definitions/:id", async (c) => {
     return c.json({ error: result.reason ?? "delete failed" }, status);
   }
   await reloadAgentPool();
+  await syncPrimeSpecsFromDbIfRust();
   return c.json({ ok: true, deletedId: definitionId });
 });
 
@@ -742,6 +762,8 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
     versionTag?: string;
     changeNote?: string;
     createdBy?: string;
+    /** Prime Core ExecutionKind；保存草稿时立即写入 definition（并标 user override）。 */
+    executionKind?: string;
     profile?: {
       displayName?: string;
       soulFileRef?: string;
@@ -762,6 +784,9 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
     .limit(1);
   if (!existed[0]) return c.json({ error: "Agent definition not found" }, 404);
   const source = existed[0];
+  if (body.executionKind != null && body.executionKind !== "" && !isExecutionKind(body.executionKind)) {
+    return c.json({ error: "invalid executionKind (primary|subagent|reactor)" }, 400);
+  }
   const draftId = crypto.randomUUID();
   await db.insert(agentDefinitionDraft).values({
     id: draftId,
@@ -778,6 +803,24 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
     changeNote: body.changeNote ?? "",
     createdBy: body.createdBy ?? "user",
   });
+  if (isExecutionKind(body.executionKind)) {
+    const overrides = {
+      ...((typeof source.userOverridesJson === "object" &&
+      source.userOverridesJson &&
+      !Array.isArray(source.userOverridesJson)
+        ? source.userOverridesJson
+        : {}) as Record<string, boolean>),
+      execution_kind: true,
+    };
+    await db
+      .update(agentDefinition)
+      .set({
+        executionKind: body.executionKind,
+        userOverridesJson: overrides,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(agentDefinition.id, definitionId));
+  }
   if (body.profile) {
     const profileRows = await db
       .select()
@@ -817,6 +860,9 @@ agentRouter.post("/definitions/:id/draft", async (c) => {
         configSyncedAt: "",
       });
     }
+  }
+  if (isExecutionKind(body.executionKind)) {
+    await syncPrimeSpecsFromDbIfRust();
   }
   const created = await db
     .select()
@@ -933,9 +979,11 @@ agentRouter.post("/definitions/:id/release", async (c) => {
     db.select().from(agentDefinition).where(eq(agentDefinition.id, definitionId)).limit(1),
     reloadAgentPool(),
   ]);
+  const prime = await syncPrimeSpecsFromDbIfRust();
   return c.json({
     data: released[0],
     release: { id: releaseId, reloaded: runtimeReload.after },
+    prime,
   });
 });
 
@@ -1583,6 +1631,113 @@ agentRouter.post("/mcp/market/installs/:id/test", async (c) => {
     ...(body.arguments !== undefined ? { arguments: body.arguments } : {}),
   });
   return c.json({ ok: true, data });
+});
+
+/** Plugins 管理（轨 A）：投影 MCP/Skill 直装 + 官方 pack + 本地包导入 */
+agentRouter.get("/plugins", async (c) => {
+  const { listPlugins } = await import("../runtime/plugins/registry");
+  const projectId = c.req.query("projectId")?.trim() || undefined;
+  const q = c.req.query("q")?.trim() || undefined;
+  const tabRaw = c.req.query("tab")?.trim();
+  const tab =
+    tabRaw === "featured" ||
+    tabRaw === "installed" ||
+    tabRaw === "catalog" ||
+    tabRaw === "all"
+      ? tabRaw
+      : "all";
+  const page = Number(c.req.query("page") ?? 1);
+  const pageSize = Number(c.req.query("pageSize") ?? 40);
+  const data = await listPlugins({
+    ...(projectId ? { projectId } : {}),
+    ...(q ? { q } : {}),
+    tab,
+    page: Number.isFinite(page) ? page : 1,
+    pageSize: Number.isFinite(pageSize) ? pageSize : 40,
+  });
+  return c.json({ data });
+});
+
+agentRouter.get("/plugins/installed", async (c) => {
+  const { listInstalledPlugins } = await import("../runtime/plugins/registry");
+  const projectId = c.req.query("projectId")?.trim();
+  if (!projectId) return c.json({ error: "projectId required" }, 400);
+  const data = await listInstalledPlugins(projectId);
+  return c.json({ data });
+});
+
+agentRouter.post("/plugins/install", async (c) => {
+  const { installPlugin } = await import("../runtime/plugins/registry");
+  const body = await c.req.json<{
+    projectId?: string;
+    targetId?: string;
+    kind?: "mcp" | "skill" | "builtin_pack" | "connector";
+    serverName?: string;
+    installedBy?: string;
+  }>();
+  const projectId = body.projectId?.trim();
+  const targetId = body.targetId?.trim();
+  if (!projectId || !targetId) {
+    return c.json({ error: "projectId and targetId required" }, 400);
+  }
+  const result = await installPlugin({
+    projectId,
+    targetId,
+    ...(body.kind ? { kind: body.kind } : {}),
+    ...(body.serverName ? { serverName: body.serverName } : {}),
+    ...(body.installedBy ? { installedBy: body.installedBy } : {}),
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ data: result.item, warnings: result.warnings ?? [] }, 201);
+});
+
+agentRouter.delete("/plugins/installs/:installKey", async (c) => {
+  const { uninstallPlugin } = await import("../runtime/plugins/registry");
+  const installKey = decodeURIComponent(c.req.param("installKey"));
+  const projectId = c.req.query("projectId")?.trim();
+  if (!projectId) return c.json({ error: "projectId required" }, 400);
+  const result = await uninstallPlugin({ projectId, installKey });
+  if (!result.ok) {
+    return c.json({ error: result.error }, (result.status as 400 | 404) ?? 400);
+  }
+  return c.json({ ok: true, message: result.message });
+});
+
+agentRouter.post("/plugins/import", async (c) => {
+  const { importPluginPackage } = await import("../runtime/plugins/registry");
+  const body = await c.req.json<{
+    projectId?: string;
+    format?: "codex_plugin" | "claude_plugin" | "agent_skills";
+    rootPath?: string;
+    installedBy?: string;
+  }>();
+  const projectId = body.projectId?.trim();
+  const rootPath = body.rootPath?.trim();
+  const format = body.format;
+  if (!projectId || !rootPath || !format) {
+    return c.json({ error: "projectId, format, rootPath required" }, 400);
+  }
+  if (
+    format !== "codex_plugin" &&
+    format !== "claude_plugin" &&
+    format !== "agent_skills"
+  ) {
+    return c.json({ error: "format must be codex_plugin|claude_plugin|agent_skills" }, 400);
+  }
+  try {
+    const data = await importPluginPackage({
+      projectId,
+      format,
+      rootPath,
+      ...(body.installedBy ? { installedBy: body.installedBy } : {}),
+    });
+    return c.json({ data }, 201);
+  } catch (error) {
+    return c.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      400
+    );
+  }
 });
 
 agentRouter.get("/skills/market/status", (c) => {

@@ -3,6 +3,7 @@ import { sandboxPolicy, sandboxViolationLog } from "../db/sqlite/schema";
 import type { RuntimeAgentDefinition } from "./types";
 import { eq } from "drizzle-orm";
 import { isAgentControlPlaneTool } from "./agent-control-mode";
+import { isInternetBuiltinTool } from "./tools/internet-tools";
 import { resolveConnectorForTool } from "./tools/tool-routes";
 
 type SandboxViolationType =
@@ -39,7 +40,13 @@ export interface LoadedSandboxPolicy {
  */
 export function isToolAuthorized(policy: LoadedSandboxPolicy, toolName: string): boolean {
   // update_plan 等 harness 控制面能力只写当前 workflow 内部状态，不应被业务白名单误杀。
-  return isAgentControlPlaneTool(toolName) || policy.allowedTools.has(toolName);
+  // web.fetch / web.search 是官方研究联网能力（handler 内自带 SSRF），同样不能因 sandbox
+  // allow-list 滞后而出现「effective tools 强制附带、act 又拒」的漂移。
+  return (
+    isAgentControlPlaneTool(toolName) ||
+    isInternetBuiltinTool(toolName) ||
+    policy.allowedTools.has(toolName)
+  );
 }
 
 export function isConnectorAuthorized(policy: LoadedSandboxPolicy, connectorName: string): boolean {

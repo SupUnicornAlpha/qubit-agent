@@ -22,6 +22,7 @@ import { strategyRuntimeRouter } from "./routes/strategy-runtime.routes";
 import { traderRouter } from "./routes/trader.routes";
 import { fsiRouter } from "./routes/fsi.routes";
 import { systemRouter } from "./routes/system.routes";
+import { primeBridgeRouter } from "./routes/prime-bridge.routes";
 import { environmentRouter } from "./routes/environment.routes";
 import { providerRouter } from "./routes/provider.routes";
 import { researchScenarioRouter } from "./routes/research-scenario.routes";
@@ -37,9 +38,11 @@ import { metaRouter } from "./routes/meta.routes";
 import { recommendationRouter } from "./routes/recommendation.routes";
 import { governanceRouter } from "./routes/governance.routes";
 import { a2aRouter } from "./routes/a2a.routes";
+import { pluginsOauthRouter } from "./routes/plugins-oauth.routes";
 import { registerBuiltinConnectors } from "./connectors/bootstrap";
 import { stepStreamBus } from "./runtime/react/event-stream";
 import { getMarketDataReadiness } from "./runtime/market/market-data-health";
+import { getPrimeAttachStatus } from "./runtime/prime/attach";
 import {
   marketStreamGateway,
   type MarketStreamSubscription,
@@ -56,11 +59,24 @@ app.use("*", logger());
 
 app.get("/health", (c) => {
   const marketData = getMarketDataReadiness();
+  const st = getPrimeAttachStatus();
   return c.json({
     status: marketData.status === "ready" ? "ok" : "degraded",
     version: "0.1.0",
     ts: new Date().toISOString(),
     marketData,
+    ...(st
+      ? {
+          prime: {
+            mode: st.mode,
+            activeBackend: st.activeBackend,
+            healthy: st.healthy,
+            rustCoreUrl: st.rustCoreUrl,
+            syncedSpecs: st.syncedSpecs,
+            reason: st.reason,
+          },
+        }
+      : {}),
   });
 });
 
@@ -68,6 +84,7 @@ app.route("/api/v1/workspaces", workspaceRouter);
 app.route("/api/v1/fs-workspaces", fsWorkspaceRouter);
 app.route("/api/v1/workflows", workflowRouter);
 app.route("/api/v1/agents", agentRouter);
+app.route("/api/v1/plugins/oauth", pluginsOauthRouter);
 app.route("/api/v1/chat", chatRouter);
 app.route("/api/v1/monitor", monitorRouter);
 app.route("/api/v1/integrations", integrationsRouter);
@@ -83,6 +100,7 @@ app.route("/api/v1/strategy-runtimes", strategyRuntimeRouter);
 app.route("/api/v1/trader", traderRouter);
 app.route("/api/v1/fsi", fsiRouter);
 app.route("/api/v1/system", systemRouter);
+app.route("/api/v1/prime-bridge", primeBridgeRouter);
 // M1 + M2：Provider 抽象层 / 研究场景 / 因子-规则-策略 三段式
 app.route("/api/v1/providers", providerRouter);
 app.route("/api/v1/environment", environmentRouter);

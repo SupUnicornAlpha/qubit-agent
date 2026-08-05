@@ -1,11 +1,42 @@
 const DATA_TOOL_PATTERN =
   /(fetch|get_quote|get_price|get_market_news|get_financial|get_fundamental|get_earnings|klines|bars|news|call_team_)/i;
 
+/**
+ * Control-plane / loop codes are not "data unavailable". Treating them as
+ * semantic_data_failure made Orchestrator abandon verified team evidence and
+ * restart planning ("收到…改用自有工具链").
+ */
+const CONTROL_PLANE_FAILURE_CODES = new Set([
+  "unproductive_turn_budget_exhausted",
+  "max_iterations",
+  "max_iterations_reached",
+  "iteration_budget_exhausted",
+  "a2a_task_cancelled",
+  "user_cancelled",
+  "hitl_rejected",
+  "delivery_rejected",
+]);
+// Timeouts stay classifiable (dispatch_timeout_data_unknown / task_deadline_exceeded)
+// so monitoring can distinguish stall vs empty data — but budget stops must not.
+
+export function isControlPlaneFailureCode(code: string | null | undefined): boolean {
+  if (!code) return false;
+  const normalized = code.trim().toLowerCase().replace(/^semantic_data_failure:/, "");
+  if (CONTROL_PLANE_FAILURE_CODES.has(normalized)) return true;
+  for (const part of normalized.split(/[:/|]/)) {
+    const p = part.trim();
+    if (p && CONTROL_PLANE_FAILURE_CODES.has(p)) return true;
+  }
+  return false;
+}
+
 export function detectSemanticToolFailure(toolName: string, value: unknown): string | null {
   if (!DATA_TOOL_PATTERN.test(toolName)) return null;
   const payload = unwrap(value);
   if (Array.isArray(payload) && payload.length === 0) return "semantic_empty_result";
-  return inspect(payload, 0);
+  const failure = inspect(payload, 0);
+  if (failure && isControlPlaneFailureCode(failure)) return null;
+  return failure;
 }
 
 function unwrap(value: unknown): unknown {
