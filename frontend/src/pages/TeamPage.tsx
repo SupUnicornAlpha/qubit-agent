@@ -179,6 +179,11 @@ export const TeamDashboardPanel: FC = () => {
   const [running, setRunning] = useState(false);
   /** 右侧 composer 对话走 Orchestrator ReAct；与团队运行态分离。 */
   const [orchestratorChatInFlight, setOrchestratorChatInFlight] = useState(false);
+  /**
+   * 运行中「追加对话」队列：inject 入队给 Bun ReAct；同时本地保留，
+   * 以便 Core turn 结束后自动续跑（Core 不走 drainUserMessages）。
+   */
+  const pendingFollowUpsRef = useRef<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   /** 工作流面板的成功/中性提示（区别于上方红色 error callout）。 */
   const [workflowNotice, setWorkflowNotice] = useState<string | null>(null);
@@ -222,7 +227,10 @@ export const TeamDashboardPanel: FC = () => {
             setAgentHeartbeats(snap);
           },
           onEnd: () => {
-            /** 服务端会在 onEnd 后再延迟关流；这里不主动 abort，让最后一帧到位。 */
+            /** 心跳流结束通常意味着本轮 Agent 已无存活实例 → 同步 UI 空闲。 */
+            if (cancelled) return;
+            setOrchestratorChatInFlight(false);
+            setRunProgress("");
           },
           onError: async () => {
             if (cancelled || didFallbackToPoll) return;
@@ -417,6 +425,13 @@ export const TeamDashboardPanel: FC = () => {
     Record<string, { text: string; ts: string }>
   >({});
   /**
+   * 供应商隐藏思考（reasoning_content 等）：按 role 只保留「当前一轮」。
+   * 新一轮替换；正文 token / 收口 → status=done（虚框折叠）；不进对话正文。
+   */
+  const [reasoningByRole, setReasoningByRole] = useState<
+    Record<string, { text: string; status: "streaming" | "done"; ts: string; stepIndex?: number }>
+  >({});
+  /**
    * 已「收口」的 role 集合：某 role 的当前流式段已收到 observe/step_persisted/final，
    * 文本不再追加、等待持久化消息接管。下一轮首个 token 到来时据此重置该 role 文本
    * （避免多轮 ReAct 文本无限拼接），teamGraph 带出对应 reason step 后被清空。
@@ -532,6 +547,15 @@ export const TeamDashboardPanel: FC = () => {
   useEffect(() => {
     refreshWorkflowOptionsRef.current = refreshWorkflowOptions;
   }, [refreshWorkflowOptions]);
+
+  const handleOrchestratorChatRef = useRef<
+    ((options?: {
+      message?: string;
+      agentMode?: AgentControlMode;
+      preserveGoal?: boolean;
+      skipEcho?: boolean;
+    }) => Promise<void>) | null
+  >(null);
 
   useEffect(() => {
     const refreshVisibleList = () => {
@@ -772,6 +796,27 @@ export const TeamDashboardPanel: FC = () => {
     });
   }, [teamGraph, streamingByRole, running, orchestratorChatInFlight, agentHeartbeats]);
 
+  /**
+   * 右栏虚框：优先 orchestrator 本轮思考；否则取最近更新的 role（专家也在跑时可见）。
+   */
+  const liveReasoning = useMemo(() => {
+    const orch = reasoningByRole.orchestrator;
+    if (orch?.text?.trim()) {
+      return { text: orch.text, status: orch.status, role: "orchestrator" as const };
+    }
+    let best: { text: string; status: "streaming" | "done"; role: string; ts: string } | null =
+      null;
+    for (const [role, row] of Object.entries(reasoningByRole)) {
+      if (!row.text?.trim()) continue;
+      if (!best || row.ts > best.ts) {
+        best = { text: row.text, status: row.status, role, ts: row.ts };
+      }
+    }
+    return best
+      ? { text: best.text, status: best.status, role: best.role }
+      : null;
+  }, [reasoningByRole]);
+
   const graphNodeDetail = useMemo((): {
     inbound: AnalystTeamGraphInteraction[];
     outbound: AnalystTeamGraphInteraction[];
@@ -899,7 +944,14 @@ export const TeamDashboardPanel: FC = () => {
     for (const step of teamGraph?.agentSteps ?? []) {
       if (step.agentRole !== "orchestrator" || step.phase !== "reason") continue;
       const text = stripToolCallSentinels(step.thought).trim();
-      if (!text || text === "Reasoning with LLM provider" || finalAnswerSet.has(text)) continue;
+      if (
+        !text ||
+        text === "Reasoning with LLM provider" ||
+        /^Prime Core (reasoning|acting)/i.test(text) ||
+        finalAnswerSet.has(text)
+      ) {
+        continue;
+      }
       if (finalAnswerTexts.some((final) => isNarrativeNearDuplicate(text, final))) continue;
       if (seenReasonNarratives.some((prev) => isNarrativeNearDuplicate(text, prev))) continue;
       seenReasonNarratives.push(text);
@@ -958,11 +1010,13 @@ export const TeamDashboardPanel: FC = () => {
     const wf = workflowRunId.trim();
     if (!wf) return;
     setStreamingByRole({});
+    setReasoningByRole({});
     setUserEchoes([]);
     setTeamPlan(null);
     setActiveRationale(null);
     setOrchestratorStreamEvents([]);
     settledRolesRef.current = new Set();
+    pendingFollowUpsRef.current = [];
     const ORCHESTRATOR_STREAM_CAP = 120;
     const unsubscribe = subscribeWorkflowEvents({
       workflowId: wf,
@@ -971,7 +1025,7 @@ export const TeamDashboardPanel: FC = () => {
         if (
           event.type === "tool_call_start" ||
           event.type === "tool_call_end" ||
-          (event.source === "a2a" && event.type !== "token")
+          (event.source === "a2a" && event.type !== "token" && event.type !== "reasoning_token")
         ) {
           setOrchestratorStreamEvents((prev) => [...prev, event].slice(-ORCHESTRATOR_STREAM_CAP));
         }
@@ -1007,9 +1061,41 @@ export const TeamDashboardPanel: FC = () => {
           });
           return;
         }
+        if (event.type === "reasoning_token") {
+          const piece = String(event.payload?.["token"] ?? event.payload?.["text"] ?? "");
+          if (!piece) return;
+          const stepIndex =
+            typeof event.stepIndex === "number" ? event.stepIndex : undefined;
+          const ts = new Date(event.ts).toISOString();
+          setReasoningByRole((prev) => {
+            const cur = prev[role];
+            const newRound =
+              !cur ||
+              cur.status === "done" ||
+              (stepIndex !== undefined &&
+                cur.stepIndex !== undefined &&
+                cur.stepIndex !== stepIndex);
+            return {
+              ...prev,
+              [role]: {
+                text: (newRound ? "" : cur.text) + piece,
+                status: "streaming",
+                ts,
+                ...(stepIndex !== undefined ? { stepIndex } : {}),
+              },
+            };
+          });
+          return;
+        }
         if (event.type === "token") {
           const piece = String(event.payload?.["token"] ?? event.payload?.["text"] ?? "");
           if (!piece) return;
+          // 正文开始 → 折叠本轮隐藏思考（仍可点开回看，直到下轮替换）。
+          setReasoningByRole((prev) => {
+            const cur = prev[role];
+            if (!cur?.text.trim() || cur.status === "done") return prev;
+            return { ...prev, [role]: { ...cur, status: "done" } };
+          });
           // 上一段已收口 → 新轮首个 token 重置该 role 文本（否则多轮 ReAct 会无限拼接）。
           const resetting = settledRolesRef.current.delete(role);
           setStreamingByRole((prev) => ({
@@ -1027,10 +1113,55 @@ export const TeamDashboardPanel: FC = () => {
         ) {
           // 该 role 的一步已收口：标记（不删），保留流式文本等持久化消息接管。
           settledRolesRef.current.add(role);
+          setReasoningByRole((prev) => {
+            const cur = prev[role];
+            if (!cur?.text.trim() || cur.status === "done") return prev;
+            return { ...prev, [role]: { ...cur, status: "done" } };
+          });
           if (event.type === "final" || event.type === "error") {
             setActiveRationale(null); // 终态：清掉「正在调用」活动行
-            setOrchestratorChatInFlight(false);
-            setRunProgress("");
+            // 强制收口未配对的 tool_call_start，避免「工具还在跑」拖住运行徽标
+            setOrchestratorStreamEvents((prev) => {
+              const open = new Map<string, StepStreamEvent>();
+              for (const ev of prev) {
+                const id = String(
+                  ev.payload.toolCallId ?? `${ev.runId}:${ev.stepIndex}`
+                );
+                if (ev.type === "tool_call_start") open.set(id, ev);
+                if (ev.type === "tool_call_end") open.delete(id);
+              }
+              if (open.size === 0) return prev;
+              const now = Date.now();
+              const closes: StepStreamEvent[] = [...open.entries()].map(
+                ([id, start]) => ({
+                  ...start,
+                  type: "tool_call_end",
+                  ts: now,
+                  payload: {
+                    ...start.payload,
+                    toolCallId: id,
+                    status: event.type === "error" ? "failed" : "success",
+                  },
+                })
+              );
+              return [...prev, ...closes].slice(-ORCHESTRATOR_STREAM_CAP);
+            });
+            const followUps = pendingFollowUpsRef.current.splice(0);
+            if (event.type === "final" && followUps.length > 0) {
+              // 本轮结束后自动续跑追加对话（Cursor 式 queue）
+              setOrchestratorChatInFlight(true);
+              setRunProgress("继续处理追加对话…");
+              const nextMsg = followUps.join("\n\n");
+              queueMicrotask(() => {
+                void handleOrchestratorChatRef.current?.({
+                  message: nextMsg,
+                  skipEcho: true,
+                });
+              });
+            } else {
+              setOrchestratorChatInFlight(false);
+              setRunProgress("");
+            }
             // chat 路径：终态后 orchestrator→user 答复才落库，防抖回拉 + 刷新工作流状态。
             if (settleRefetchTimerRef.current) clearTimeout(settleRefetchTimerRef.current);
             settleRefetchTimerRef.current = setTimeout(() => {
@@ -1566,6 +1697,8 @@ export const TeamDashboardPanel: FC = () => {
     message?: string;
     agentMode?: AgentControlMode;
     preserveGoal?: boolean;
+    /** 追加队列续跑时勿重复 echo（inject 时已写入） */
+    skipEcho?: boolean;
   }) => {
     const wf = workflowRunId.trim();
     const msg = (options?.message ?? teamAnalysisContext).trim();
@@ -1581,7 +1714,7 @@ export const TeamDashboardPanel: FC = () => {
       return;
     }
     setError(null);
-    pushUserEcho(msg);
+    if (!options?.skipEcho) pushUserEcho(msg);
     if (!options?.message) setTeamAnalysisContext("");
     setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
@@ -1615,6 +1748,8 @@ export const TeamDashboardPanel: FC = () => {
       setRunProgress("");
     }
   };
+
+  handleOrchestratorChatRef.current = handleOrchestratorChat;
 
   const handleCreateTeamWorkflow = async () => {
     if (!teamResearchProjectId || !teamResearchSessionId) {
@@ -2481,11 +2616,21 @@ export const TeamDashboardPanel: FC = () => {
           ) : null}
 
           {researchCanvasTab === "tools" ? (
-            <ResearchToolResultsPanel
-              hits={researchCanvasToolHits}
-              onOpenMarket={(hit) => applyCanvasMarketLink(hit, "market")}
-              onOpenNews={(hit) => applyCanvasMarketLink(hit, "news")}
-            />
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+              }}
+            >
+              <ResearchToolResultsPanel
+                hits={researchCanvasToolHits}
+                onOpenMarket={(hit) => applyCanvasMarketLink(hit, "market")}
+                onOpenNews={(hit) => applyCanvasMarketLink(hit, "news")}
+              />
+            </div>
           ) : null}
 
           {researchCanvasTab === "topology" ? (
@@ -2928,7 +3073,9 @@ export const TeamDashboardPanel: FC = () => {
             </summary>
             <div style={{ padding: "10px 16px 14px" }}>
               <p style={{ fontSize: 11, color: "#71717a", marginTop: 0, marginBottom: 10, lineHeight: 1.45 }}>
-                展示当前研究项目下 Agent 生成的<strong>草稿 / 因子 / 策略 / 脚本</strong>。注意「策略」读 strategy_version（需 Agent 调 version_strategy 或真单触发），research 流水线吐出的 Python on_bar 脚本会落在「脚本」tab。
+                展示当前工作流下 Agent 生成的<strong>推荐 / 草稿 / 因子 / 策略 / 脚本</strong>。
+                Rust Core 主路径写入的是「推荐」（recommendation.record）；「策略」需
+                strategy.create_version，「脚本」来自 research 流水线的 Python on_bar。
               </p>
               <ResearchOutputTabs
                 projectId={effectiveResearchProjectId}
@@ -3038,17 +3185,52 @@ export const TeamDashboardPanel: FC = () => {
               const wf = workflowRunId.trim();
               if (!wf) throw new Error("请先选择工作流");
               pushUserEcho(content);
+              pendingFollowUpsRef.current.push(content);
               /**
                * 广播（targetRole=null）：团队跑动时 orchestrator 不跑 react-loop（只一次规划调用），
                * 真正在跑 loop 的是各分析师 slot——由它们在下一轮 reason 前 drain 并采纳。
+               * Core 路径额外靠 pendingFollowUpsRef 在 final 后自动续跑。
                */
-              const res = await injectWorkflowMessage(wf, content, null);
-              return res.queued;
+              try {
+                const res = await injectWorkflowMessage(wf, content, null);
+                return Math.max(res.queued, pendingFollowUpsRef.current.length);
+              } catch {
+                return pendingFollowUpsRef.current.length;
+              }
             }}
             onInterrupt={async () => {
               const wf = workflowRunId.trim();
               if (!wf) throw new Error("请先选择工作流");
+              // 乐观空闲：按钮立刻反馈，不等后端 cancel 回包
+              pendingFollowUpsRef.current = [];
+              setOrchestratorChatInFlight(false);
+              setRunning(false);
+              setRunProgress("");
+              setActiveRationale(null);
+              setOrchestratorStreamEvents((prev) => {
+                const open = new Map<string, StepStreamEvent>();
+                for (const ev of prev) {
+                  const id = String(
+                    ev.payload.toolCallId ?? `${ev.runId}:${ev.stepIndex}`
+                  );
+                  if (ev.type === "tool_call_start") open.set(id, ev);
+                  if (ev.type === "tool_call_end") open.delete(id);
+                }
+                if (open.size === 0) return prev;
+                const now = Date.now();
+                return [
+                  ...prev,
+                  ...[...open.entries()].map(([id, start]) => ({
+                    ...start,
+                    type: "tool_call_end" as const,
+                    ts: now,
+                    payload: { ...start.payload, toolCallId: id, status: "cancelled" },
+                  })),
+                ];
+              });
               await interruptWorkflow(wf);
+              void loadTeamGraph({ preserveSelection: true });
+              void refreshWorkflowOptions();
             }}
             plan={teamPlan}
             onExecutePlan={() => {
@@ -3101,7 +3283,16 @@ export const TeamDashboardPanel: FC = () => {
             }}
             activity={activeRationale}
             streamEvents={orchestratorStreamEvents}
-            thinkingText={streamingByRole.orchestrator?.text ?? null}
+            thinkingText={
+              running || orchestratorChatInFlight
+                ? streamingByRole.orchestrator?.text ?? null
+                : null
+            }
+            liveReasoning={
+              running || orchestratorChatInFlight || liveReasoning?.status === "streaming"
+                ? liveReasoning
+                : null
+            }
             subAgentRuns={subAgentRuns}
             artifacts={teamArtifacts}
             artifactsLoading={teamArtifactsLoading}

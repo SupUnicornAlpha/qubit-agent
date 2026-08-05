@@ -11,11 +11,13 @@ export const recommendationRouter = new Hono();
 recommendationRouter.get("/", async (c) => {
   try {
     const projectId = c.req.query("project_id");
+    const workflowRunId = c.req.query("workflow_run_id") ?? c.req.query("workflowRunId");
     const symbol = c.req.query("symbol");
     const side = c.req.query("side") as RecommendationSide | undefined;
     const status = c.req.query("status") as RecommendationStatus | undefined;
     const data = await recommendationService.list({
       ...(projectId ? { projectId } : {}),
+      ...(workflowRunId ? { workflowRunId } : {}),
       ...(symbol ? { symbol } : {}),
       ...(side ? { side } : {}),
       ...(status ? { status } : {}),

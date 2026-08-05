@@ -7,6 +7,7 @@ import {
   registerBrokerMarketBridge,
   resolveBridgeWsUrl,
   selectBrokerMarketBridge,
+  setBrokerBridgeHealthHints,
 } from "./broker-market-bridge";
 
 const ENV_KEYS = [
@@ -37,6 +38,7 @@ function restoreBridgeEnv(): void {
 
 afterEach(() => {
   restoreBridgeEnv();
+  setBrokerBridgeHealthHints([]);
 });
 
 describe("broker-market-bridge", () => {
@@ -75,6 +77,33 @@ describe("broker-market-bridge", () => {
     process.env.QUBIT_IB_MARKET_WS_URL = "ws://ib";
     expect(selectBrokerMarketBridge({ market: "US" })?.id).toBe("ib");
     expect(selectBrokerMarketBridge({ market: "CN" })).toBeNull();
+  });
+
+  test("auto prefers healthy broker over configured-but-down peer", () => {
+    clearBridgeEnv();
+    process.env.QUBIT_FUTU_MARKET_WS_URL = "ws://futu";
+    process.env.QUBIT_IB_MARKET_WS_URL = "ws://ib";
+    setBrokerBridgeHealthHints([
+      { sourceId: "futu_bridge", credentialsReady: true, healthStatus: "down" },
+      { sourceId: "ib_bridge", credentialsReady: true, healthStatus: "healthy" },
+    ]);
+    expect(selectBrokerMarketBridge({ market: "US" })?.id).toBe("ib");
+    setBrokerBridgeHealthHints([
+      { sourceId: "futu_bridge", credentialsReady: true, healthStatus: "healthy" },
+      { sourceId: "ib_bridge", credentialsReady: true, healthStatus: "unknown" },
+    ]);
+    expect(selectBrokerMarketBridge({ market: "US" })?.id).toBe("futu");
+    setBrokerBridgeHealthHints([]);
+  });
+
+  test("skips broker marked credentials_missing in auto path", () => {
+    clearBridgeEnv();
+    process.env.QUBIT_FUTU_MARKET_WS_URL = "ws://futu";
+    setBrokerBridgeHealthHints([
+      { sourceId: "futu_bridge", credentialsReady: false, healthStatus: "unknown" },
+    ]);
+    expect(selectBrokerMarketBridge({ market: "CN" })).toBeNull();
+    setBrokerBridgeHealthHints([]);
   });
 
   test("registerBrokerMarketBridge extends selection", () => {

@@ -477,6 +477,7 @@ const pack: LocalePack = {
       },
       outputTabs: {
         ariaLabel: "Research output tabs",
+        signals: "Signals",
         drafts: "Drafts",
         factors: "Factors",
         strategies: "Strategies",

@@ -82,6 +82,12 @@ export interface LlmGatewayInput {
   systemPrompt: string;
   userPrompt: string;
   onToken: (token: string) => void;
+  /**
+   * 供应商「隐藏思考」增量（DeepSeek `reasoning_content`、Anthropic `thinking_delta`、
+   * OpenAI Responses reasoning summary 等）。**不**写入 answer / onToken，避免污染正文
+   * 与 schema 校验；仅给 UI 虚框流式展示。未传则静默丢弃（仍计 reasoningTokens）。
+   */
+  onReasoningToken?: (token: string) => void;
   /** 用户停止 workflow 时中断当前 provider 请求，避免后台继续生成并计费。 */
   signal?: AbortSignal;
   /** P0-3：调用方自定义采样参数；不传走默认值。 */
@@ -93,6 +99,12 @@ export interface LlmGatewayInput {
    * 不传 = 完全保持 P2 行为，answer 字段照常给文本（含 `<TOOL_CALL>` sentinel）。
    */
   tools?: LlmToolDefinition[];
+}
+
+/** 推送思考增量；无订阅方时 no-op。永不进入 answer。 */
+function emitReasoningToken(input: LlmGatewayInput, token: string): void {
+  if (!token) return;
+  input.onReasoningToken?.(token);
 }
 
 export interface LlmTokenUsage {
@@ -417,7 +429,7 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
       responseId = (chunk as { id: string }).id;
     }
     const delta = chunk.choices[0]?.delta as
-      | { content?: string; tool_calls?: unknown }
+      | { content?: string; reasoning_content?: string; tool_calls?: unknown }
       | undefined;
     const token = delta?.content ?? "";
     if (token) {
@@ -426,6 +438,10 @@ async function runOpenAIChat(input: LlmGatewayInput): Promise<LlmGatewayResult> 
       }
       answer += token;
       input.onToken(token);
+    }
+    const reasoningDelta = delta?.reasoning_content;
+    if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
+      emitReasoningToken(input, reasoningDelta);
     }
     /** P3-3：原生 tool_calls delta 增量入账 */
     if (delta && Array.isArray(delta.tool_calls)) {
@@ -687,6 +703,15 @@ async function consumeResponsesStream(
         answer += delta;
         input.onToken(delta);
       }
+    } else if (
+      t === "response.reasoning_summary_text.delta" ||
+      t === "response.reasoning_text.delta"
+    ) {
+      /** o-series / gpt-5：推理摘要走独立事件，不进正文。 */
+      const delta = parsed["delta"];
+      if (typeof delta === "string" && delta.length > 0) {
+        emitReasoningToken(input, delta);
+      }
     } else if (t === "response.output_item.added") {
       const item = parsed["item"] as
         | { type?: string; call_id?: string; name?: string }
@@ -851,12 +876,10 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
   const compatToolCallAcc: ToolCallAccumulator = new Map();
   /**
    * P2：DeepSeek-R1 / deepseek-reasoner 在 chat.completions 流里把推理过程放在
-   * `delta.reasoning_content`（不是 `delta.content`）。我们刻意**不**把这部分推到
-   * onToken / answer：
-   *   1) 它是模型的内部独白，不该污染最终输出 / 前端 UI / 下游 schema 校验；
-   *   2) 上游 DeepSeek 不暴露 `reasoning_tokens`，需要自己按字符估算（≈chars/4）。
-   * 累积长度后，如果 chunkUsage 没给 reasoning_tokens，再用估算值兜底填到
-   * usage.reasoningTokens，让监控能看到 reasoning ratio。
+   * `delta.reasoning_content`（不是 `delta.content`）。**不**写入 onToken / answer：
+   *   1) 内部独白不污染正文 / schema 校验；
+   *   2) 经 optional `onReasoningToken` 推给 UI 虚框（DeepSeek 式思考展示）；
+   *   3) 上游常不给 reasoning_tokens，按 chars/4 估算填 usage.reasoningTokens。
    */
   let reasoningContentChars = 0;
   for await (const chunk of stream) {
@@ -880,6 +903,7 @@ async function runOpenAICompatible(input: LlmGatewayInput): Promise<LlmGatewayRe
     const reasoningDelta = delta?.reasoning_content;
     if (typeof reasoningDelta === "string" && reasoningDelta.length > 0) {
       reasoningContentChars += reasoningDelta.length;
+      emitReasoningToken(input, reasoningDelta);
     }
     const fr = pickFinishReason(chunk.choices[0]?.finish_reason);
     if (fr) finishReason = fr;
@@ -979,11 +1003,28 @@ async function runOpenAICompatibleNonStream(
     };
   };
   const choice = json.choices?.[0];
-  const answer = choice?.message?.content ?? "";
+  const message = choice?.message as
+    | {
+        content?: string | null;
+        reasoning_content?: string | null;
+        tool_calls?: Array<{
+          id?: string;
+          function?: { name?: string; arguments?: unknown };
+        }>;
+      }
+    | undefined;
+  const reasoningFull =
+    typeof message?.reasoning_content === "string" ? message.reasoning_content : "";
+  if (reasoningFull) {
+    for (const token of splitForPseudoStreaming(reasoningFull)) {
+      emitReasoningToken(input, token);
+    }
+  }
+  const answer = message?.content ?? "";
   for (const token of splitForPseudoStreaming(answer)) {
     input.onToken(token);
   }
-  const toolCalls = choice?.message?.tool_calls
+  const toolCalls = message?.tool_calls
     ?.map((call) => {
       const parsed = parseToolArguments(call.function?.arguments);
       return call.id && call.function?.name
@@ -1279,6 +1320,19 @@ async function consumeAnthropicStream(
             answer += token;
             input.onToken(token);
           }
+        } else if (
+          delta &&
+          (delta["type"] === "thinking_delta" || delta["type"] === "reasoning_delta") &&
+          typeof delta["thinking"] === "string"
+        ) {
+          emitReasoningToken(input, delta["thinking"] as string);
+        } else if (
+          delta &&
+          (delta["type"] === "thinking_delta" || delta["type"] === "reasoning_delta") &&
+          typeof delta["text"] === "string"
+        ) {
+          /** 部分代理把 thinking 放在 text 字段 */
+          emitReasoningToken(input, delta["text"] as string);
         } else if (
           delta &&
           delta["type"] === "input_json_delta" &&

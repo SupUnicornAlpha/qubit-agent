@@ -128,20 +128,50 @@ fn tool_parameters_schema(name: &str) -> Value {
         return json!({
             "type": "object",
             "properties": {
-                "callee_spec_id": { "type": "string" },
-                "goal": { "type": "string" },
+                "callee_spec_id": {
+                    "type": "string",
+                    "description": "Target agent id or role label, e.g. def-news-event / news_event / 新闻事件"
+                },
+                "agent_ref": { "type": "string", "description": "Alias of callee_spec_id" },
+                "role": { "type": "string", "description": "Alias of callee_spec_id (role/label)" },
+                "goal": { "type": "string", "description": "Task for the subagent" },
+                "task": { "type": "string", "description": "Alias of goal" },
                 "handoff": { "type": "object" }
             },
-            "required": ["goal"]
+            "required": ["goal", "callee_spec_id"]
         });
     }
     if bare == "update_plan" {
         return json!({
             "type": "object",
             "properties": {
-                "steps": { "type": "array", "items": { "type": "object" } },
-                "mode": { "type": "string" }
-            }
+                "mode": { "type": "string", "description": "agent|plan|goal|ask|diagnose" },
+                "goal": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string" },
+                        "status": { "type": "string" },
+                        "success_criteria": { "type": "array", "items": { "type": "string" } }
+                    }
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string", "description": "Optional; auto s1/s2… if omitted" },
+                            "title": { "type": "string" },
+                            "status": {
+                                "type": "string",
+                                "description": "pending|in_progress|done|skipped"
+                            },
+                            "note": { "type": "string" }
+                        },
+                        "required": ["title"]
+                    }
+                }
+            },
+            "required": ["steps"]
         });
     }
     if bare.starts_with("mcp:mathjs:") {

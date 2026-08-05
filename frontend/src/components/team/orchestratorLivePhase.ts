@@ -49,7 +49,8 @@ export function resolveOrchestratorLivePhase(input: {
   const activityModel = buildChatExecutionActivity(input.streamEvents, true);
   const runningTools = activityModel.tools.filter((tool) => tool.status === "running");
   const [firstTool] = runningTools;
-  if (firstTool) {
+  // 终态后未配对的 tool_call_start 不应继续撑着「调用中」动画
+  if (firstTool && (input.running || input.chatInFlight)) {
     return {
       kind: "tool",
       label: runningTools.length > 1 ? `调用 ${runningTools.length} 个工具` : `调用 ${firstTool.name}`,
@@ -57,7 +58,7 @@ export function resolveOrchestratorLivePhase(input: {
     };
   }
 
-  if (input.activity?.why) {
+  if (input.activity?.why && (input.running || input.chatInFlight)) {
     return {
       kind: "tool",
       label: input.activity.tool ? `调用 ${input.activity.tool}` : "执行中",
@@ -65,8 +66,9 @@ export function resolveOrchestratorLivePhase(input: {
     };
   }
 
+  // 残留流式文本在终态后仍可能留在 buffer；只有本轮仍在飞时才显示「思考中」
   const thinking = input.thinkingText?.trim();
-  if (thinking) {
+  if (thinking && (input.running || input.chatInFlight)) {
     return {
       kind: "thinking",
       label: "思考中",

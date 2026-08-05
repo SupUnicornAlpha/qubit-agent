@@ -135,7 +135,12 @@ export function projectStepStreamToClientEvent(
     });
   }
 
-  if (event.type === "token" || event.type === "plan" || event.type === "tool_rationale") {
+  if (
+    event.type === "token" ||
+    event.type === "reasoning_token" ||
+    event.type === "plan" ||
+    event.type === "tool_rationale"
+  ) {
     return makeClientEvent({
       ...base,
       type: "item.delta",

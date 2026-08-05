@@ -3,6 +3,7 @@ import {
   buildResearchCanvasToolHits,
   classifyResearchCanvasToolName,
   extractMarketRefFromToolPayload,
+  extractMarketRefFromToolResponse,
   latestSuccessfulMarketLink,
 } from "./researchCanvasToolLink";
 
@@ -10,6 +11,8 @@ describe("researchCanvasToolLink", () => {
   test("classifies market and news tools by name pattern", () => {
     expect(classifyResearchCanvasToolName("qubit-data/fetch_klines")).toBe("market");
     expect(classifyResearchCanvasToolName("fetch_quote")).toBe("market");
+    expect(classifyResearchCanvasToolName("market.snapshot.get")).toBe("market");
+    expect(classifyResearchCanvasToolName("market.resolve_symbol")).toBe("market");
     expect(classifyResearchCanvasToolName("mcp-financex/fetch_news")).toBe("news");
     expect(classifyResearchCanvasToolName("assign_task")).toBe("other");
   });
@@ -27,6 +30,35 @@ describe("researchCanvasToolLink", () => {
         arguments: { ticker: "600519", market: "SH" },
       })
     ).toEqual({ symbol: "600519", exchange: "SH" });
+  });
+
+  test("extracts symbol from Prime Core contextMemory.args", () => {
+    expect(
+      extractMarketRefFromToolPayload({
+        reasonText: "prime_core:market.resolve_symbol",
+        contextMemory: { backend: "rust", args: { symbol: "ASTS" } },
+        targetKind: "tool",
+      })
+    ).toEqual({ symbol: "ASTS", exchange: null });
+
+    expect(
+      extractMarketRefFromToolPayload({
+        contextMemory: {
+          args: { arguments: { ticker: "SPCX" }, query: "SPCX MACD" },
+        },
+      })
+    ).toEqual({ symbol: "SPCX", exchange: null });
+  });
+
+  test("extracts symbol from snapshot response instrument", () => {
+    expect(
+      extractMarketRefFromToolResponse({
+        ok: true,
+        qualityVerdict: {
+          instrument: { symbol: "ASTS", venue: "US" },
+        },
+      })
+    ).toEqual({ symbol: "ASTS", exchange: "US" });
   });
 
   test("builds hits and picks latest successful market link", () => {
@@ -57,6 +89,24 @@ describe("researchCanvasToolLink", () => {
           agentStepId: "s2",
           requestJson: {},
         },
+        {
+          id: "3",
+          agentRole: "orchestrator",
+          agentInstanceId: "i0",
+          toolName: "market.snapshot.get",
+          toolKind: "builtin",
+          status: "success",
+          latencyMs: 50,
+          createdAt: "2026-08-04T07:03:00.000Z",
+          agentStepId: "s3",
+          requestJson: {
+            reasonText: "prime_core:market.snapshot.get",
+            contextMemory: { args: { symbol: "ASTS" } },
+          },
+          responseJson: {
+            qualityVerdict: { instrument: { symbol: "ASTS", venue: "US" } },
+          },
+        },
       ],
       mcpCalls: [
         {
@@ -74,10 +124,11 @@ describe("researchCanvasToolLink", () => {
       ],
     });
 
-    expect(hits[0]?.toolName).toBe("news/fetch_news");
-    expect(hits[0]?.kind).toBe("news");
+    expect(hits[0]?.toolName).toBe("market.snapshot.get");
+    expect(hits[0]?.kind).toBe("market");
+    expect(hits[0]?.symbol).toBe("ASTS");
     const link = latestSuccessfulMarketLink(hits);
-    expect(link?.symbol).toBe("AAPL");
-    expect(link?.kind).toBe("news");
+    expect(link?.symbol).toBe("ASTS");
+    expect(link?.kind).toBe("market");
   });
 });

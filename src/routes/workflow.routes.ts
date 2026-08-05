@@ -34,6 +34,7 @@ import {
   enqueueUserMessage,
 } from "../runtime/workflow/user-message-queue";
 import { requestWorkflowCancellation } from "../runtime/workflow/workflow-cancellation";
+import { cancelActiveCoreTurnForWorkflow } from "../runtime/prime/cancel-active-turn";
 import { requestInterrupt } from "../runtime/workflow/workflow-interrupt";
 import { createAndDispatchWorkflow } from "../runtime/workflow/workflow-service";
 import { setWorkflowState } from "../runtime/workflow/workflow-state-machine";
@@ -578,14 +579,25 @@ workflowRouter.get("/:id/inject-message/pending", async (c) => {
 });
 
 /**
- * 协作式中断：标记本工作流"请求中断"。团队编排在下一个 wave 边界命中后，会起一个
- * free_form HITL 停在断点等用户输入新提示词，再走既有恢复链续跑（见 pauseForUserInterrupt）。
- * 进程内信号，立即返回；真正暂停发生在下一个安全断点。
+ * 停止 / 协作式中断：
+ * 1) 标记 Bun 侧 interrupt（团队 wave 边界停到 HITL）
+ * 2) 若有 Prime Core 在飞 turn，立刻 cancelTurn（Cursor 式 Stop）
+ * 立即返回；UI 应乐观切到空闲。
  */
 workflowRouter.post("/:id/interrupt", async (c) => {
   const workflowRunId = c.req.param("id");
   requestInterrupt(workflowRunId);
-  return c.json({ ok: true, data: { workflowRunId, requested: true } });
+  const core = await cancelActiveCoreTurnForWorkflow(workflowRunId);
+  return c.json({
+    ok: true,
+    data: {
+      workflowRunId,
+      requested: true,
+      coreCancelled: core.cancelled,
+      ...(core.turnId ? { turnId: core.turnId } : {}),
+      ...(core.reason ? { coreReason: core.reason } : {}),
+    },
+  });
 });
 
 /**

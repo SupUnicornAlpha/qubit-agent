@@ -1,6 +1,7 @@
 import type { CSSProperties, FC, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "../../i18n";
+import { formatLargeJsonPreview } from "../../lib/formatLargeJsonPreview";
 import { looksLikeMarkdown } from "../../lib/looksLikeMarkdown";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
 import {
@@ -14,9 +15,11 @@ import {
   avatarLabelFor,
   formatRoleName,
 } from "./conversationAvatar";
+import { limitConsecutiveToolParts } from "./liveConversationToolLimit";
 
 /** 兼容旧引用：`import { looksLikeMarkdown } from "./LiveConversationView"` */
 export { looksLikeMarkdown } from "../../lib/looksLikeMarkdown";
+export { limitConsecutiveToolParts } from "./liveConversationToolLimit";
 
 /**
  * 通用 IM 风格对话流。
@@ -136,7 +139,7 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
   const streamParts = useMemo(() => {
     if (layout !== "stream") return [];
     const base = buildStreamParts(sorted, selfRole, collapseA2AFromRole);
-    return injectArtifactParts(base, artifacts);
+    return limitConsecutiveToolParts(injectArtifactParts(base, artifacts));
   }, [layout, sorted, selfRole, collapseA2AFromRole, artifacts]);
 
   if (sorted.length === 0 && artifacts.length === 0) {
@@ -180,6 +183,22 @@ export const LiveConversationView: FC<LiveConversationViewProps> = ({
                   maxLen={contentMaxLength}
                   collapsedByDefault={collapseToolCalls}
                 />
+              );
+            case "tool_overflow":
+              return (
+                <div
+                  key={part.key}
+                  data-qb-tool-overflow
+                  style={{
+                    fontSize: 11,
+                    color: "var(--qb-team-meta, #71717a)",
+                    padding: "4px 8px",
+                    margin: "2px 0 6px",
+                    borderLeft: "2px solid var(--qb-border, #3f3f46)",
+                  }}
+                >
+                  还有 {part.hiddenCount} 次工具调用已折叠 · 完整列表见上方「调用过程」
+                </div>
               );
             case "a2a":
               return <A2ACard key={part.ev.id} ev={part.ev} maxLen={contentMaxLength} />;
@@ -271,6 +290,7 @@ type StreamPart =
   | { kind: "user"; ev: LiveConversationMessageEvent }
   | { kind: "assistant"; key: string; events: LiveConversationMessageEvent[] }
   | { kind: "tool"; ev: LiveConversationMessageEvent }
+  | { kind: "tool_overflow"; key: string; hiddenCount: number }
   | { kind: "a2a"; ev: LiveConversationMessageEvent }
   | { kind: "broadcast"; ev: LiveConversationMessageEvent }
   | { kind: "message"; ev: LiveConversationMessageEvent }
@@ -370,6 +390,8 @@ function partTimestamp(part: StreamPart): string | null {
     case "debate":
     case "system":
       return part.ev.ts;
+    case "tool_overflow":
+      return null;
     case "assistant":
       return part.events[part.events.length - 1]?.ts ?? null;
     case "artifact":
@@ -1077,16 +1099,21 @@ function parseToolCallText(text: string, fallbackName: string | null | undefined
   return { statusIcon: icon, status, latencyMs: latency, body: rest };
 }
 
-function tryPrettyJson(body: string): { isJson: boolean; pretty: string } {
+function tryPrettyJson(body: string): { isJson: boolean; pretty: string; truncated: boolean } {
   const trimmed = body.trim();
-  if (!trimmed) return { isJson: false, pretty: "" };
+  if (!trimmed) return { isJson: false, pretty: "", truncated: false };
   const looksJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-  if (!looksJson) return { isJson: false, pretty: body };
+  if (!looksJson) {
+    const preview = formatLargeJsonPreview(body, { maxChars: 6_000, maxLines: 120 });
+    return { isJson: false, pretty: preview.text, truncated: preview.truncated };
+  }
   try {
-    const parsed = JSON.parse(trimmed);
-    return { isJson: true, pretty: JSON.stringify(parsed, null, 2) };
+    const parsed = JSON.parse(trimmed) as unknown;
+    const preview = formatLargeJsonPreview(parsed, { maxChars: 6_000, maxLines: 120 });
+    return { isJson: true, pretty: preview.text, truncated: preview.truncated };
   } catch {
-    return { isJson: false, pretty: body };
+    const preview = formatLargeJsonPreview(body, { maxChars: 6_000, maxLines: 120 });
+    return { isJson: false, pretty: preview.text, truncated: preview.truncated };
   }
 }
 
@@ -1137,11 +1164,11 @@ const ToolCallCard: FC<{
   const statusLabel = t(`team.conversation.toolCall.status.${pieces.status}`);
   const toolCallAria = t("team.conversation.toolCall.ariaLabel");
   const toolName = ev.toolName || "tool";
-  const { isJson, pretty } = tryPrettyJson(pieces.body);
+  const { isJson, pretty, truncated } = tryPrettyJson(pieces.body);
   const fullBody = truncate(pretty, maxLen);
   const lines = fullBody.split("\n");
   const collapsable =
-    Boolean(pieces.body) && (collapsedByDefault || lines.length > COLLAPSED_BODY_LINES);
+    Boolean(pieces.body) && (collapsedByDefault || lines.length > COLLAPSED_BODY_LINES || truncated);
   const [expanded, setExpanded] = useState(false);
   const visibleBody =
     expanded || !collapsable ? fullBody : lines.slice(0, COLLAPSED_BODY_LINES).join("\n");
@@ -1285,10 +1312,15 @@ const ToolCallCard: FC<{
             fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            maxHeight: expanded ? "60vh" : undefined,
-            overflowY: expanded ? "auto" : "hidden",
+            maxHeight: expanded ? "40vh" : "12em",
+            overflowY: "auto",
           }}
         >
+          {truncated ? (
+            <span style={{ color: "var(--qb-team-meta, #71717a)", display: "block", marginBottom: 4 }}>
+              （大结果已截断预览）
+            </span>
+          ) : null}
           {visibleBody}
           {!expanded && collapsable ? (
             <span style={{ color: "var(--qb-team-meta, #71717a)" }}>{"\n…"}</span>

@@ -122,9 +122,58 @@ export interface SelectedBrokerMarketBridge {
   upstreamFamily: BrokerMarketBridgeDescriptor["upstreamFamily"];
 }
 
+export type BrokerBridgeHealthHint = {
+  credentialsReady: boolean;
+  healthStatus: "healthy" | "unknown" | "degraded" | "down";
+};
+
+/** Populated from market-data control plane so stream auto can prefer healthy brokers. */
+const bridgeHealthHints = new Map<BrokerMarketBridgeSourceId, BrokerBridgeHealthHint>();
+
+export function setBrokerBridgeHealthHints(
+  hints: ReadonlyArray<{
+    sourceId: string;
+    credentialsReady: boolean;
+    healthStatus: BrokerBridgeHealthHint["healthStatus"];
+  }>
+): void {
+  bridgeHealthHints.clear();
+  for (const hint of hints) {
+    if (!isBrokerMarketBridgeSourceId(hint.sourceId)) continue;
+    bridgeHealthHints.set(hint.sourceId, {
+      credentialsReady: hint.credentialsReady,
+      healthStatus: hint.healthStatus,
+    });
+  }
+}
+
+export function getBrokerBridgeHealthHint(
+  sourceId: BrokerMarketBridgeSourceId
+): BrokerBridgeHealthHint | undefined {
+  return bridgeHealthHints.get(sourceId);
+}
+
+function bridgeHealthRank(sourceId: BrokerMarketBridgeSourceId): number {
+  const hint = bridgeHealthHints.get(sourceId);
+  if (!hint || !hint.credentialsReady) return 0;
+  switch (hint.healthStatus) {
+    case "healthy":
+      return 4;
+    case "unknown":
+      return 3;
+    case "degraded":
+      return 2;
+    case "down":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
 /**
  * Pick a configured bridge for the resolved market.
- * Preference: `QUBIT_MARKET_STREAM_PROVIDER` → market-matched first configured bridge.
+ * Preference: `QUBIT_MARKET_STREAM_PROVIDER` → market-matched bridges ranked by
+ * control-plane health (healthy first), then stable vendor order.
  */
 export function selectBrokerMarketBridge(input: {
   market: MarketCode | string;
@@ -138,12 +187,19 @@ export function selectBrokerMarketBridge(input: {
     const url = resolveBridgeWsUrl(preferred);
     const desc = registry.get(preferred);
     if (url && desc) {
-      return {
-        id: desc.id,
-        sourceId: desc.sourceId,
-        url,
-        upstreamFamily: desc.upstreamFamily,
-      };
+      const hint = bridgeHealthHints.get(desc.sourceId);
+      // Explicit env override still wins even if health is unknown; only skip when
+      // control plane has marked credentials missing after a recent sync.
+      if (hint && hint.credentialsReady === false) {
+        /* fall through to market auto */
+      } else {
+        return {
+          id: desc.id,
+          sourceId: desc.sourceId,
+          url,
+          upstreamFamily: desc.upstreamFamily,
+        };
+      }
     }
   }
 
@@ -151,23 +207,39 @@ export function selectBrokerMarketBridge(input: {
   const candidates = [...registry.values()].filter((d) =>
     d.markets.some((m) => m === market)
   );
-  // Stable order: futu → supermind → ib for CN/HK; ib first for US via market filter.
   const order: BrokerMarketBridgeId[] =
     market === "US" ? ["ib", "futu", "supermind"] : ["futu", "supermind", "ib"];
-  for (const id of order) {
+
+  const scored: Array<{
+    desc: BrokerMarketBridgeDescriptor;
+    url: string;
+    rank: number;
+    orderIdx: number;
+  }> = [];
+  for (let i = 0; i < order.length; i++) {
+    const id = order[i]!;
     const desc = candidates.find((c) => c.id === id);
     if (!desc) continue;
     const url = resolveBridgeWsUrl(desc.id);
-    if (url) {
-      return {
-        id: desc.id,
-        sourceId: desc.sourceId,
-        url,
-        upstreamFamily: desc.upstreamFamily,
-      };
-    }
+    if (!url) continue;
+    const hint = bridgeHealthHints.get(desc.sourceId);
+    if (hint && !hint.credentialsReady) continue;
+    scored.push({
+      desc,
+      url,
+      rank: bridgeHealthRank(desc.sourceId),
+      orderIdx: i,
+    });
   }
-  return null;
+  scored.sort((a, b) => b.rank - a.rank || a.orderIdx - b.orderIdx);
+  const best = scored[0];
+  if (!best) return null;
+  return {
+    id: best.desc.id,
+    sourceId: best.desc.sourceId,
+    url: best.url,
+    upstreamFamily: best.desc.upstreamFamily,
+  };
 }
 
 export function brokerBridgeStatusSnapshot(): Array<{

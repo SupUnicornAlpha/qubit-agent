@@ -23,6 +23,7 @@ import {
   resolveMcpInvokeTarget,
 } from "../runtime/prime/bridge-mcp";
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
+import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
 import type { BuiltinToolContext } from "../runtime/tools/types";
@@ -43,6 +44,9 @@ const BRIDGED_TOOLS = [
   "research.forecast_book.get",
   "portfolio.construct",
   "recommendation.record",
+  "strategy.create_version",
+  "strategy.compose",
+  "factor.mine.llm",
   "workspace.context.snapshot",
 ] as const;
 
@@ -97,11 +101,14 @@ function bridgeContext(
     enabled: true,
   } as RuntimeAgentDefinition;
 
+  // Prefer the real monitor agent_instance created for this Core turn.
+  // Never invent "inst-prime-bridge" — audit_log FK would fail on recommendation.record.
+  const monitor = getCoreMonitorHandle(activity.workflowId, activity.runId);
   return {
     workflowId: activity.workflowId,
     runId: activity.runId,
     traceId: activity.traceId,
-    agentInstanceId: "inst-prime-bridge",
+    agentInstanceId: monitor?.agentInstanceId ?? "",
     definition,
     toolCallId: callId,
   };

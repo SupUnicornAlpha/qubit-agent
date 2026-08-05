@@ -17,6 +17,9 @@ export type KlinesDataSourceSetting =
   | "yfinance"
   | "binance_crypto"
   | "wind"
+  | "futu_bridge"
+  | "ib_bridge"
+  | "supermind_bridge"
   | "synthetic";
 
 /** Value exposed in `GET /market/klines` meta and used internally after resolution. */
@@ -29,6 +32,9 @@ export type KlinesDataSourceMeta =
   | "yfinance"
   | "binance_crypto"
   | "wind"
+  | "futu_bridge"
+  | "ib_bridge"
+  | "supermind_bridge"
   | "synthetic";
 
 const UA = "Mozilla/5.0 (compatible; QubitAgent/1.0; +https://github.com/)";
@@ -43,9 +49,20 @@ export function parseKlinesDataSourceSetting(raw: unknown): KlinesDataSourceSett
     raw === "yfinance" ||
     raw === "binance_crypto" ||
     raw === "wind" ||
+    raw === "futu_bridge" ||
+    raw === "futu" ||
+    raw === "ib_bridge" ||
+    raw === "ib" ||
+    raw === "supermind_bridge" ||
+    raw === "supermind" ||
+    raw === "ifind" ||
+    raw === "ths" ||
     raw === "synthetic" ||
     raw === "auto"
   ) {
+    if (raw === "futu") return "futu_bridge";
+    if (raw === "ib") return "ib_bridge";
+    if (raw === "supermind" || raw === "ifind" || raw === "ths") return "supermind_bridge";
     return raw;
   }
   return "auto";
@@ -61,6 +78,12 @@ export function resolveEffectiveKlinesSource(params: {
   hasTushareToken: boolean;
   /** Wind 子进程 + 终端已连通（probe 或 healthcheck 通过） */
   hasWindAvailable?: boolean;
+  /** Futu OpenD 账户已配置且历史通道可用 */
+  hasFutuAvailable?: boolean;
+  /** IB Gateway / TWS 已配置 */
+  hasIbAvailable?: boolean;
+  /** 同花顺 iFinD 凭据已配置（supermind_bridge 历史通道） */
+  hasIfindAvailable?: boolean;
   symbol?: string;
   exchange?: string;
 }): KlinesDataSourceMeta {
@@ -69,6 +92,15 @@ export function resolveEffectiveKlinesSource(params: {
   if (mode === "binance_crypto") return "binance_crypto";
   if (mode === "wind") {
     return params.hasWindAvailable ? "wind" : "synthetic";
+  }
+  if (mode === "futu_bridge") {
+    return params.hasFutuAvailable === false ? "synthetic" : "futu_bridge";
+  }
+  if (mode === "ib_bridge") {
+    return params.hasIbAvailable === false ? "synthetic" : "ib_bridge";
+  }
+  if (mode === "supermind_bridge") {
+    return params.hasIfindAvailable === false ? "synthetic" : "supermind_bridge";
   }
   if (mode === "eastmoney") return "eastmoney";
   if (mode === "akshare") return "akshare";
@@ -87,10 +119,25 @@ export function resolveEffectiveKlinesSource(params: {
     params.symbol !== undefined
       ? isChinaAShareMarket(params.symbol, params.exchange ?? "")
       : false;
+  const market = resolveTickerMarket(params.symbol ?? "", {
+    hintExchange: params.exchange,
+  }).market;
 
-  /** auto：加密 → Binance；Wind 可用且 A 股 → Wind；日线有 Tushare token → Tushare；A 股 → 东方财富；否则 Yahoo */
+  /**
+   * auto：加密 → Binance；Wind(A) → iFinD/同花顺(A) → Futu → IB(US/HK) → Tushare → 东财 → Yahoo
+   */
   if (crypto) return "binance_crypto";
   if (china && params.hasWindAvailable) return "wind";
+  if (china && params.hasIfindAvailable) return "supermind_bridge";
+  if (
+    params.hasFutuAvailable &&
+    (market === "CN" || market === "HK" || market === "US")
+  ) {
+    return "futu_bridge";
+  }
+  if (params.hasIbAvailable && (market === "US" || market === "HK")) {
+    return "ib_bridge";
+  }
   if (params.period === "1d" && params.hasTushareToken) return "tushare_daily";
   if (china) return "eastmoney";
   return "yahoo_chart";

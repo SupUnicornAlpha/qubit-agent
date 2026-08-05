@@ -122,20 +122,31 @@ fn render_working(wm: &WorkingMemory) -> String {
 
 fn mode_control_text(mode: InteractionMode) -> String {
     match mode {
-        InteractionMode::Plan => {
-            "MODE=plan: only call update_plan; do not execute side-effect tools.".into()
-        }
-        InteractionMode::Goal => {
-            "MODE=goal: maintain goal+steps via update_plan; verify completion before finishing."
-                .into()
-        }
+        InteractionMode::Plan => concat!(
+            "MODE=plan: only call update_plan; do not execute side-effect tools.\n",
+            "Write 3-7 pending steps, then answer with tool=none. Do not mark steps done in Plan mode."
+        )
+        .into(),
+        InteractionMode::Goal => concat!(
+            "MODE=goal: you MUST keep the plan current via update_plan while executing.\n",
+            "Rules:\n",
+            "1) Before/while working: keep exactly one step status=in_progress.\n",
+            "2) After finishing a step: set it to done (or skipped with a reason) before the next tool batch.\n",
+            "3) Do not finish (tool=none) while any step is still pending or in_progress.\n",
+            "4) Never leave the plan stuck at all-pending after you have already used tools."
+        )
+        .into(),
         InteractionMode::Ask => {
             "MODE=ask: answer with analysis; prefer read-only tools.".into()
         }
         InteractionMode::Diagnose => {
             "MODE=diagnose: focus on root-cause, ledger, and failure attribution.".into()
         }
-        InteractionMode::Agent => "MODE=agent: full tool surface within policy.".into(),
+        InteractionMode::Agent => concat!(
+            "MODE=agent: full tool surface within policy.\n",
+            "For multi-step research: call update_plan early, keep one in_progress step, and mark done/skipped as you go so the UI plan progress stays truthful."
+        )
+        .into(),
     }
 }
 

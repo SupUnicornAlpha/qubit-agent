@@ -1,6 +1,11 @@
 import type { CSSProperties, FC } from "react";
 import { useMemo, useState } from "react";
 import type { ResearchCanvasToolHit } from "../../lib/researchCanvasToolLink";
+import {
+  estimateJsonSizeLabel,
+  formatLargeJsonPreview,
+  stringifyJsonFull,
+} from "../../lib/formatLargeJsonPreview";
 import { formatRoleName } from "./conversationAvatar";
 
 const KIND_LABEL: Record<ResearchCanvasToolHit["kind"], string> = {
@@ -19,14 +24,48 @@ function formatTs(ts: string): string {
   return ts;
 }
 
-function tryPretty(v: unknown): string {
-  if (v == null) return "";
-  try {
-    return JSON.stringify(v, null, 2);
-  } catch {
-    return String(v);
-  }
-}
+const JsonBlock: FC<{ label: string; value: unknown; defaultOpen?: boolean }> = ({
+  label,
+  value,
+  defaultOpen = false,
+}) => {
+  const preview = useMemo(() => formatLargeJsonPreview(value), [value]);
+  const size = useMemo(() => estimateJsonSizeLabel(value), [value]);
+  const [copied, setCopied] = useState(false);
+
+  const copyFull = async () => {
+    try {
+      await navigator.clipboard.writeText(stringifyJsonFull(value));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      /* clipboard may be denied */
+    }
+  };
+
+  return (
+    <details open={defaultOpen && !preview.truncated ? true : undefined}>
+      <summary style={styles.detailsSummary}>
+        {label}
+        <span style={styles.sizeBadge}>{size}</span>
+        {preview.truncated ? <span style={styles.truncBadge}>已截断预览</span> : null}
+      </summary>
+      <div style={styles.preWrap}>
+        <div style={styles.preToolbar}>
+          <button type="button" style={styles.copyBtn} onClick={() => void copyFull()}>
+            {copied ? "已复制" : "复制完整 JSON"}
+          </button>
+          {preview.truncated ? (
+            <span style={styles.truncHint}>
+              预览约 {preview.lineCount} 行 / {preview.charCount.toLocaleString()} 字符，大数组已折叠
+            </span>
+          ) : null}
+        </div>
+        <pre style={styles.pre}>{preview.text || "—"}</pre>
+      </div>
+    </details>
+  );
+};
 
 export const ResearchToolResultsPanel: FC<{
   hits: ResearchCanvasToolHit[];
@@ -81,6 +120,7 @@ export const ResearchToolResultsPanel: FC<{
           const open = expanded === hit.id;
           const ok = hit.status === "success";
           const failed = hit.status === "error" || hit.status === "failed";
+          const respSize = estimateJsonSizeLabel(hit.responseJson);
           return (
             <div key={hit.id} style={styles.card}>
               <button
@@ -108,6 +148,7 @@ export const ResearchToolResultsPanel: FC<{
                   {hit.status}
                 </span>
                 {hit.symbol ? <span style={styles.symbol}>{hit.symbol}</span> : null}
+                <span style={styles.sizeBadge}>{respSize}</span>
                 <span style={styles.meta}>
                   {formatRoleName(hit.agentRole)} · {formatTs(hit.createdAt)}
                   {hit.latencyMs != null ? ` · ${hit.latencyMs}ms` : ""}
@@ -132,14 +173,8 @@ export const ResearchToolResultsPanel: FC<{
                   {hit.errorMessage ? (
                     <div style={styles.error}>错误：{hit.errorMessage}</div>
                   ) : null}
-                  <details open>
-                    <summary style={styles.detailsSummary}>请求</summary>
-                    <pre style={styles.pre}>{tryPretty(hit.requestJson) || "—"}</pre>
-                  </details>
-                  <details>
-                    <summary style={styles.detailsSummary}>响应</summary>
-                    <pre style={styles.pre}>{tryPretty(hit.responseJson) || "—"}</pre>
-                  </details>
+                  <JsonBlock label="请求" value={hit.requestJson} defaultOpen={false} />
+                  <JsonBlock label="响应" value={hit.responseJson} defaultOpen={false} />
                 </div>
               ) : null}
             </div>
@@ -203,6 +238,8 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 8,
     background: "rgba(8,8,10,0.72)",
     overflow: "hidden",
+    // 默认 flex-shrink:1 会把 70+ 条卡片压成细线；禁止收缩，交给 list 滚动。
+    flexShrink: 0,
   },
   summary: {
     width: "100%",
@@ -210,7 +247,8 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     alignItems: "center",
     gap: 8,
-    padding: "8px 10px",
+    padding: "10px 12px",
+    minHeight: 40,
     background: "transparent",
     border: "none",
     color: "inherit",
@@ -263,10 +301,51 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     fontSize: 11,
     color: "#a1a1aa",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 8,
   },
+  sizeBadge: {
+    fontSize: 10,
+    color: "#71717a",
+    padding: "0 5px",
+    borderRadius: 4,
+    border: "1px solid #3f3f46",
+  },
+  truncBadge: {
+    fontSize: 10,
+    color: "#fbbf24",
+    padding: "0 5px",
+    borderRadius: 4,
+    border: "1px solid rgba(251,191,36,0.35)",
+  },
+  preWrap: {
+    marginTop: 6,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    minWidth: 0,
+  },
+  preToolbar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    flexWrap: "wrap",
+  },
+  copyBtn: {
+    fontSize: 10,
+    padding: "2px 8px",
+    borderRadius: 4,
+    border: "1px solid #3f3f46",
+    background: "rgba(255,255,255,0.04)",
+    color: "#a1a1aa",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  },
+  truncHint: { fontSize: 10, color: "#71717a" },
   pre: {
-    margin: "6px 0 0",
-    maxHeight: 220,
+    margin: 0,
+    maxHeight: 200,
     overflow: "auto",
     fontSize: 11,
     lineHeight: 1.45,
@@ -274,5 +353,9 @@ const styles: Record<string, CSSProperties> = {
     wordBreak: "break-word",
     color: "#cbd5e1",
     fontFamily: "ui-monospace, Menlo, Monaco, Consolas, monospace",
+    background: "rgba(0,0,0,0.28)",
+    border: "1px solid rgba(255,255,255,0.05)",
+    borderRadius: 6,
+    padding: "8px 10px",
   },
 };

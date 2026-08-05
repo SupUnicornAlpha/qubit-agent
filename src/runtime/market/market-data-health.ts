@@ -1,4 +1,7 @@
 import type { BarData, FetchBarsParams } from "../../connectors/data/data.connector";
+import { getDb } from "../../db/sqlite/client";
+import { marketDataSource } from "../../db/sqlite/schema";
+import { eq } from "drizzle-orm";
 import { loadBuiltinConnectorSettings } from "../config/builtin-connector-settings";
 import type { BuiltinConnectorInitConfigs } from "../config/builtin-connector-settings";
 import { fetchAkshareBars, fetchAkshareTencentBars } from "./akshare-klines";
@@ -10,6 +13,7 @@ import {
   resolveBridgeWsUrl,
 } from "./broker-market-bridge";
 import { type KlinesDataSourceMeta, fetchYahooFinanceBars } from "./klines-data-source";
+import { formatMarketDataFailure } from "./market-data-errors";
 import { marketDataFetch } from "./market-data-network";
 import {
   type OperationalMarketDataSource,
@@ -21,6 +25,9 @@ import {
 import { queryMarketQuote } from "./microstructure-query";
 import { getWindSessionStatus } from "./wind-klines";
 import { fetchYfinanceBars } from "./yfinance-klines";
+import { fetchFutuBars } from "./futu-klines";
+import { fetchIbBars } from "./ib-klines";
+import { fetchIfindBars } from "./ifind-klines";
 
 const PROBE_TIMEOUT_MS = 20_000;
 
@@ -205,7 +212,67 @@ async function probeOne(
       });
       return false;
     }
-    // Stream-only broker bridges: require WS URL + listening TCP port.
+    // Broker bridges with historical K-line: history probe must succeed to mark healthy.
+    // Quote WS-only must NOT mark healthy — that caused auto to route history to a
+    // broken OpenQuote path (e.g. missing futu-api) while UI showed "健康".
+    if (sourceId === "futu_bridge" || sourceId === "ib_bridge" || sourceId === "supermind_bridge") {
+      const bridgeId =
+        sourceId === "futu_bridge" ? "futu" : sourceId === "ib_bridge" ? "ib" : "supermind";
+      let historyErr: string | null = null;
+      try {
+        const bars =
+          sourceId === "futu_bridge"
+            ? await fetchFutuBars(params)
+            : sourceId === "ib_bridge"
+              ? await fetchIbBars(params)
+              : await fetchIfindBars(params, settings);
+        if (bars.length > 0) {
+          await recordMarketDataSourceAttempt({
+            sourceId,
+            market,
+            timeframe: "1d",
+            symbol: params.symbol,
+            status: "success",
+            latencyMs: Date.now() - started,
+            healthcheck: true,
+          });
+          return true;
+        }
+        historyErr = `${sourceId} history returned empty`;
+      } catch (e) {
+        historyErr = e instanceof Error ? e.message : String(e);
+      }
+      const wsUrl = resolveBridgeWsUrl(bridgeId);
+      const wsOk = Boolean(wsUrl && (await probeWsListenPort(wsUrl)));
+      await recordMarketDataSourceAttempt({
+        sourceId,
+        market,
+        timeframe: "1d",
+        symbol: params.symbol,
+        status: "error",
+        latencyMs: Date.now() - started,
+        error: historyErr ?? "history unavailable",
+        healthcheck: true,
+      });
+      // Keep quote-port signal in lastError suffix for ops; never treat WS-only as healthy.
+      if (wsOk) {
+        const db = await getDb();
+        await db
+          .update(marketDataSource)
+          .set({
+            healthStatus: "degraded",
+            lastError: formatMarketDataFailure(
+              `${historyErr ?? "history unavailable"} (quote WS listening)`
+            ),
+            lastHealthcheckAt: new Date().toISOString(),
+            circuitState: "closed",
+            circuitOpenedAt: null,
+            consecutiveFailures: 0,
+          })
+          .where(eq(marketDataSource.id, sourceId));
+      }
+      return false;
+    }
     if (isBrokerMarketBridgeSourceId(sourceId)) {
       const bridgeId = bridgeIdForSourceId(sourceId);
       const wsUrl = bridgeId ? resolveBridgeWsUrl(bridgeId) : undefined;

@@ -1,6 +1,7 @@
 import { Check, LoaderCircle, Network, Wrench, X } from "lucide-react";
 import { type FC, useMemo, useState } from "react";
 import type { StepStreamEvent } from "../../api/types";
+import { formatLargeJsonPreview } from "../../lib/formatLargeJsonPreview";
 
 type ToolActivity = {
   id: string;
@@ -103,6 +104,11 @@ export const ChatExecutionActivity: FC<{
           ) : null}
           {tools.map((tool) => {
             const failed = tool.status === "failed" || tool.status === "blocked";
+            const detailPreview = formatLargeJsonPreview(tool.detail, {
+              maxChars: 4_000,
+              maxLines: 80,
+              maxArrayItems: 16,
+            });
             return (
               <details
                 className={`qb-chat-call-card qb-chat-call-card--${tool.status}`}
@@ -123,6 +129,7 @@ export const ChatExecutionActivity: FC<{
                             : tool.status === "blocked"
                               ? "已阻止"
                               : "失败"}
+                      {detailPreview.truncated ? " · 结果已截断预览" : ""}
                     </span>
                   </span>
                   {tool.status === "running" ? (
@@ -133,7 +140,7 @@ export const ChatExecutionActivity: FC<{
                     <Check size={14} aria-hidden />
                   )}
                 </summary>
-                <pre>{JSON.stringify(tool.detail, null, 2)}</pre>
+                <pre>{detailPreview.text}</pre>
               </details>
             );
           })}

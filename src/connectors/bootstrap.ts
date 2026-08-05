@@ -63,10 +63,39 @@ export function registerBuiltinConnectors(initConfigs?: BuiltinConnectorInitConf
     const configs = initConfigs ?? (await loadBuiltinConnectorSettings());
     await bootstrapMarketDataSources(configs);
     await connectorRegistry.initAll(configs);
-    // If a Futu broker account is already configured, bring up trade/quote bridges.
-    void ensureFutuRuntime().catch((e) => {
-      console.warn(`[Bootstrap] ensureFutuRuntime skipped: ${(e as Error).message}`);
-    });
+    // If a Futu broker account is already configured, bring up trade/quote bridges
+    // and mark history credentials for klines auto routing.
+    void ensureFutuRuntime()
+      .then(async () => {
+        const { refreshFutuAccountCache } = await import("../runtime/market/futu-klines");
+        const { refreshIbAccountCache } = await import("../runtime/market/ib-klines");
+        const { refreshIfindAccountCache } = await import("../runtime/market/ifind-klines");
+        const { syncMarketDataSourceCredentials } = await import(
+          "../runtime/market/market-data-source-control"
+        );
+        await refreshFutuAccountCache();
+        await refreshIbAccountCache();
+        await refreshIfindAccountCache(configs);
+        await syncMarketDataSourceCredentials(configs);
+      })
+      .catch((e) => {
+        console.warn(`[Bootstrap] ensureFutuRuntime skipped: ${(e as Error).message}`);
+      });
+    // IB / iFinD history credentials without requiring Futu runtime.
+    void (async () => {
+      try {
+        const { refreshIbAccountCache } = await import("../runtime/market/ib-klines");
+        const { refreshIfindAccountCache } = await import("../runtime/market/ifind-klines");
+        const { syncMarketDataSourceCredentials } = await import(
+          "../runtime/market/market-data-source-control"
+        );
+        await refreshIbAccountCache();
+        await refreshIfindAccountCache(configs);
+        await syncMarketDataSourceCredentials(configs);
+      } catch (e) {
+        console.warn(`[Bootstrap] IB/iFinD credential sync skipped: ${(e as Error).message}`);
+      }
+    })();
   })();
   return bootstrapPromise;
 }

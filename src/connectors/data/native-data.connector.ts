@@ -37,6 +37,15 @@ import {
   fetchYfinanceDividends,
   fetchYfinanceEarnings,
 } from "../../runtime/market/yfinance-klines";
+import { fetchFutuBars, isFutuAccountConfiguredCached } from "../../runtime/market/futu-klines";
+import { resolveFutuOpenDConfig } from "../../runtime/market/futu-runtime";
+import { fetchIbBars, isIbAccountConfiguredCached } from "../../runtime/market/ib-klines";
+import { resolveIbGatewayConfig } from "../../runtime/market/ib-runtime";
+import {
+  fetchIfindBars,
+  isIfindConfiguredCached,
+  refreshIfindAccountCache,
+} from "../../runtime/market/ifind-klines";
 import { fetchWithTimeout, DEFAULT_FETCH_TIMEOUT_MS } from "../../util/fetch-with-timeout";
 import { snapshotIndicators } from "../../runtime/market/technical-indicators";
 import {
@@ -207,18 +216,75 @@ export class QubitNativeDataConnector extends DataConnector {
       (liveSettings["qubit-data"] as Record<string, unknown> | undefined)?.klinesDataSource
     );
     const windIntent = hasWindIntent(liveSettings, klinesMode);
+    let futuReady = isFutuAccountConfiguredCached();
+    if (!futuReady) {
+      try {
+        const openD = await resolveFutuOpenDConfig();
+        futuReady = Boolean(openD);
+        const { markFutuAccountConfigured } = await import("../../runtime/market/futu-klines");
+        markFutuAccountConfigured(futuReady);
+      } catch {
+        futuReady = false;
+      }
+    }
+    let ibReady = isIbAccountConfiguredCached();
+    if (!ibReady) {
+      try {
+        const gw = await resolveIbGatewayConfig();
+        ibReady = Boolean(gw);
+        const { markIbAccountConfigured } = await import("../../runtime/market/ib-klines");
+        markIbAccountConfigured(ibReady);
+      } catch {
+        ibReady = false;
+      }
+    }
+    let ifindReady = isIfindConfiguredCached();
+    if (!ifindReady) {
+      try {
+        ifindReady = await refreshIfindAccountCache(liveSettings);
+      } catch {
+        ifindReady = false;
+      }
+    }
     const daily = resolveEffectiveKlinesSource({
       settings: liveSettings,
       period: "1d",
       hasTushareToken: hasToken,
       hasWindAvailable: windIntent,
+      hasFutuAvailable: futuReady,
+      hasIbAvailable: ibReady,
+      hasIfindAvailable: ifindReady,
     });
     const intraday = resolveEffectiveKlinesSource({
       settings: liveSettings,
       period: "5m",
       hasTushareToken: hasToken,
       hasWindAvailable: windIntent,
+      hasFutuAvailable: futuReady,
+      hasIbAvailable: ibReady,
+      hasIfindAvailable: ifindReady,
     });
+    if (daily === "supermind_bridge") {
+      return {
+        status: "healthy",
+        message:
+          "qubit-data: K 线 → 同花顺 iFinD（需 iFinDPy + QUBIT_IFIND_*；SuperMind 回测 history 不可外置）",
+      };
+    }
+    if (daily === "ib_bridge") {
+      return {
+        status: "healthy",
+        message:
+          "qubit-data: K 线 → IB Gateway/TWS（需 ib_insync + API 已开；历史 reqHistoricalData）",
+      };
+    }
+    if (daily === "futu_bridge") {
+      return {
+        status: "healthy",
+        message:
+          "qubit-data: K 线 → Futu OpenD（需本机 OpenD + futu-api；历史 request_history_kline）",
+      };
+    }
     if (daily === "wind") {
       return {
         status: "healthy",
@@ -573,6 +639,36 @@ export class QubitNativeDataConnector extends DataConnector {
 
     const mode = forcedSource ?? parseKlinesDataSourceSetting(klinesRaw);
     const windIntent = hasWindIntent(liveSettings, mode);
+    let futuReady = isFutuAccountConfiguredCached();
+    if (!futuReady && (mode === "auto" || mode === "futu_bridge")) {
+      try {
+        const { markFutuAccountConfigured } = await import("../../runtime/market/futu-klines");
+        const openD = await resolveFutuOpenDConfig();
+        futuReady = Boolean(openD);
+        markFutuAccountConfigured(futuReady);
+      } catch {
+        futuReady = false;
+      }
+    }
+    let ibReady = isIbAccountConfiguredCached();
+    if (!ibReady && (mode === "auto" || mode === "ib_bridge")) {
+      try {
+        const { markIbAccountConfigured } = await import("../../runtime/market/ib-klines");
+        const gw = await resolveIbGatewayConfig();
+        ibReady = Boolean(gw);
+        markIbAccountConfigured(ibReady);
+      } catch {
+        ibReady = false;
+      }
+    }
+    let ifindReady = isIfindConfiguredCached();
+    if (!ifindReady && (mode === "auto" || mode === "supermind_bridge")) {
+      try {
+        ifindReady = await refreshIfindAccountCache(liveSettings);
+      } catch {
+        ifindReady = false;
+      }
+    }
     const effective =
       forcedSource ??
       resolveEffectiveKlinesSource({
@@ -580,6 +676,9 @@ export class QubitNativeDataConnector extends DataConnector {
         period: params.period,
         hasTushareToken: hasTushare,
         hasWindAvailable: windIntent,
+        hasFutuAvailable: futuReady,
+        hasIbAvailable: ibReady,
+        hasIfindAvailable: ifindReady,
         symbol: params.symbol,
         exchange: params.exchange,
       });
@@ -676,6 +775,83 @@ export class QubitNativeDataConnector extends DataConnector {
         if (forcedSource) throw e;
         return [];
       }
+    }
+
+    if (effective === "futu_bridge") {
+      try {
+        const bars = await fetchFutuBars(params);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `Futu returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `Futu request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+        if (forcedSource) throw e;
+      }
+      if (!forcedSource && isChinaAShareMarket(params.symbol, params.exchange || "")) {
+        try {
+          const fallback = await fetchEastMoneyBars(params, liveSettings);
+          if (fallback.length > 0) {
+            console.warn(
+              `[qubit-data] Futu unavailable or empty; fell back to East Money for ${params.symbol}`
+            );
+            return fallback;
+          }
+        } catch {
+          /* logged below */
+        }
+      }
+      if (mode === "futu_bridge") return [];
+    }
+
+    if (effective === "ib_bridge") {
+      try {
+        const bars = await fetchIbBars(params);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `IB returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `IB request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+        if (forcedSource) throw e;
+      }
+      if (mode === "ib_bridge") return [];
+    }
+
+    if (effective === "supermind_bridge") {
+      try {
+        const bars = await fetchIfindBars(params, liveSettings);
+        if (bars.length > 0) return bars;
+        this.logFetchBarsEmpty(
+          `iFinD returned no usable OHLCV (symbol=${params.symbol}, period=${params.period}, window=${params.startDate}…${params.endDate})`
+        );
+      } catch (e) {
+        this.logFetchBarsEmpty(
+          `iFinD request failed (symbol=${params.symbol}, exchange=${params.exchange ?? ""})`,
+          e instanceof Error ? e.message : e
+        );
+        if (forcedSource) throw e;
+      }
+      if (!forcedSource && isChinaAShareMarket(params.symbol, params.exchange || "")) {
+        try {
+          const fallback = await fetchEastMoneyBars(params, liveSettings);
+          if (fallback.length > 0) {
+            console.warn(
+              `[qubit-data] iFinD unavailable or empty; fell back to East Money for ${params.symbol}`
+            );
+            return fallback;
+          }
+        } catch {
+          /* logged below */
+        }
+      }
+      if (mode === "supermind_bridge") return [];
     }
 
     if (effective === "binance_crypto") {

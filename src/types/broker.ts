@@ -66,6 +66,9 @@ export type SuperMindProviderConfig = {
   marketPriceType?: number;
   limitPriceType?: number;
   market?: "CN";
+  /** 同花顺 iFinD 历史行情账号（桌面侧历史 K 线；非 SuperMind 回测 history） */
+  ifindUsername?: string;
+  ifindPassword?: string;
 };
 
 export type EastmoneyEmtProviderConfig = {

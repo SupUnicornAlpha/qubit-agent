@@ -19,7 +19,11 @@ import {
   bridgeIdForSourceId,
   isBrokerBridgeConfigured,
   isBrokerMarketBridgeSourceId,
+  setBrokerBridgeHealthHints,
 } from "./broker-market-bridge";
+import { isFutuAccountConfiguredCached } from "./futu-klines";
+import { isIbAccountConfiguredCached } from "./ib-klines";
+import { isIfindConfiguredCached } from "./ifind-klines";
 
 export type HistoricalMarketDataSource = Exclude<KlinesDataSourceMeta, "synthetic">;
 export type OperationalMarketDataSource =
@@ -171,42 +175,42 @@ export const MARKET_DATA_SOURCE_DEFINITIONS: MarketDataSourceDefinition[] = [
     name: "Futu OpenQuote Bridge",
     vendor: "富途 OpenD",
     markets: ["CN", "HK", "US"],
-    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "1d"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "4h", "1d"],
     credentialMode: "terminal",
     priority: 88,
     isFallback: false,
     upstreamFamily: "futu",
     feedClass: "L2_realtime_observe",
     licenseUse: "observe_only",
-    streamOnly: true,
+    // Historical K-line via OpenQuote + realtime via market_bridge WS.
   },
   {
     id: "ib_bridge",
     name: "IB Market Bridge",
     vendor: "Interactive Brokers",
     markets: ["US", "HK"],
-    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "1d"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "4h", "1d"],
     credentialMode: "terminal",
     priority: 87,
     isFallback: false,
     upstreamFamily: "ib",
     feedClass: "L2_realtime_observe",
     licenseUse: "observe_only",
-    streamOnly: true,
+    // Historical via ib_insync reqHistoricalData + realtime WS when configured.
   },
   {
     id: "supermind_bridge",
-    name: "Tonghuashun SuperMind Quote Bridge",
-    vendor: "同花顺 SuperMind",
-    markets: ["CN"],
-    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "1d"],
+    name: "Tonghuashun iFinD / SuperMind",
+    vendor: "同花顺 iFinD",
+    markets: ["CN", "HK"],
+    timeframes: ["quote", "1m", "5m", "15m", "30m", "1h", "4h", "1d"],
     credentialMode: "terminal",
     priority: 86,
     isFallback: false,
     upstreamFamily: "supermind",
     feedClass: "L2_realtime_observe",
     licenseUse: "observe_only",
-    streamOnly: true,
+    // Historical via iFinDPy (THS_HistoryQuotes); SuperMind TradeAPI has no external history.
   },
 ];
 
@@ -234,6 +238,35 @@ function credentialsReady(
     const bridgeId = bridgeIdForSourceId(def.id);
     return bridgeId ? isBrokerBridgeConfigured(bridgeId) : false;
   }
+  if (def.id === "futu_bridge") {
+    // History needs OpenD account; stream also counts WS URL as ready.
+    return (
+      isBrokerBridgeConfigured("futu") ||
+      isFutuAccountConfiguredCached() ||
+      Boolean(process.env.QUBIT_FUTU_OPEND_HOST?.trim())
+    );
+  }
+  if (def.id === "ib_bridge") {
+    return (
+      isBrokerBridgeConfigured("ib") ||
+      isIbAccountConfiguredCached() ||
+      Boolean(process.env.QUBIT_IB_HOST?.trim())
+    );
+  }
+  if (def.id === "supermind_bridge") {
+    const data = cfg as Record<string, unknown>;
+    const ifindUser =
+      (typeof data.ifindUsername === "string" && data.ifindUsername.trim()) ||
+      process.env.QUBIT_IFIND_USERNAME?.trim();
+    const ifindPass =
+      (typeof data.ifindPassword === "string" && data.ifindPassword.trim()) ||
+      process.env.QUBIT_IFIND_PASSWORD?.trim();
+    return (
+      isBrokerBridgeConfigured("supermind") ||
+      isIfindConfiguredCached() ||
+      Boolean(ifindUser && ifindPass)
+    );
+  }
   return false;
 }
 
@@ -243,6 +276,26 @@ export async function syncMarketDataSourceCredentials(
 ): Promise<void> {
   const db = await getDb();
   const resolved = settings ?? (await loadBuiltinConnectorSettings());
+  try {
+    const { resolveFutuOpenDConfig } = await import("./futu-runtime");
+    const { markFutuAccountConfigured } = await import("./futu-klines");
+    const openD = await resolveFutuOpenDConfig();
+    markFutuAccountConfigured(Boolean(openD));
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { refreshIbAccountCache } = await import("./ib-klines");
+    await refreshIbAccountCache();
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { refreshIfindAccountCache } = await import("./ifind-klines");
+    await refreshIfindAccountCache(resolved);
+  } catch {
+    /* ignore */
+  }
   for (const def of MARKET_DATA_SOURCE_DEFINITIONS) {
     const ready = credentialsReady(def, resolved);
     await db
@@ -250,6 +303,8 @@ export async function syncMarketDataSourceCredentials(
       .set({ credentialsReady: ready })
       .where(eq(marketDataSource.id, def.id));
   }
+  // Refresh in-memory bridge health hints used by realtime auto selection.
+  await listMarketDataSources();
 }
 
 export async function bootstrapMarketDataSources(
@@ -364,7 +419,7 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
     }
     const availabilityStatus: MarketDataSourceView["availabilityStatus"] = !ready
       ? "credentials_missing"
-      : networkRoute === "invalid"
+      : networkRoute === "invalid" || failure?.kind === "misconfigured"
         ? "misconfigured"
         : retryUntil > Date.now()
           ? "backing_off"
@@ -404,6 +459,15 @@ export async function listMarketDataSources(): Promise<MarketDataSourceView[]> {
       networkRoute,
     });
   }
+  setBrokerBridgeHealthHints(
+    out
+      .filter((row) => isBrokerMarketBridgeSourceId(row.id))
+      .map((row) => ({
+        sourceId: row.id,
+        credentialsReady: row.credentialsReady,
+        healthStatus: row.healthStatus,
+      }))
+  );
   return out.sort((a, b) => b.priority - a.priority);
 }
 
@@ -445,9 +509,13 @@ export async function recordMarketDataSourceAttempt(input: {
   const failed = input.status === "empty" || input.status === "error";
   const def = DEF_BY_ID.get(input.sourceId as OperationalMarketDataSource);
   const failure = failed ? classifyMarketDataFailure(input.error ?? input.status) : null;
-  // no_data is normally symbol/window-specific (bad ticker, delisted instrument,
-  // exchange holiday). It must not globally trip a source circuit for other symbols.
-  const impactsSourceHealth = failed && failure?.kind !== "no_data";
+  // no_data is symbol/window-specific; misconfigured / missing credentials
+  // are install/config issues — neither should open the global source circuit.
+  const impactsSourceHealth =
+    failed &&
+    failure?.kind !== "no_data" &&
+    failure?.kind !== "misconfigured" &&
+    failure?.kind !== "credentials_missing";
   if (def && input.status === "success") upstreamBackoffUntil.delete(def.upstreamFamily);
   if (def && failure?.retryAfterMs && failure.kind !== "no_data") {
     upstreamBackoffUntil.set(def.upstreamFamily, Date.now() + failure.retryAfterMs);
@@ -560,6 +628,37 @@ export async function selectMarketDataSourcePlan(input: {
     return dedupeFamilies(healthOrdered).map((row) => row.id as HistoricalMarketDataSource);
   }
   return [explicit as HistoricalMarketDataSource, ...fallbackIds];
+}
+
+/** Test helper: clear sticky circuit/health/backoff so plan ranking is deterministic. */
+export async function resetMarketDataSourceRuntimeStateForTests(): Promise<void> {
+  upstreamBackoffUntil.clear();
+  try {
+    const { markFutuAccountConfigured } = await import("./futu-klines");
+    markFutuAccountConfigured(false);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { markIbAccountConfigured } = await import("./ib-klines");
+    markIbAccountConfigured(false);
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { markIfindConfigured } = await import("./ifind-klines");
+    markIfindConfigured(false);
+  } catch {
+    /* ignore */
+  }
+  const db = await getDb();
+  await db.update(marketDataSource).set({
+    healthStatus: "unknown",
+    consecutiveFailures: 0,
+    lastError: null,
+    circuitState: "closed",
+    circuitOpenedAt: null,
+  });
 }
 
 export function marketSourceDefinition(id: string): MarketDataSourceDefinition | undefined {

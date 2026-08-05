@@ -20,7 +20,7 @@ yfinance>=0.2.40
 # vnpy>=3.9.0
 
 # Broker (optional — install only for enabled providers)
-# futu-api>=9.0.0
+futu-api>=9.0.0
 # ib-insync>=0.9.86
 # ccxt>=4.0.0
 # Same runtime as the Tonghuashun SuperMind desktop client:
@@ -30,7 +30,7 @@ yfinance>=0.2.40
 # vnpy_emt
 
 # Market-data WS bridge (optional — python -m market_bridge.server)
-# websockets>=12.0
+websockets>=12.0
 
 # Dev / test
 pytest>=8.0.0

@@ -71,6 +71,21 @@ const BUILTIN_PYTHON_META: ReadonlyArray<
     capability: "data-source/yfinance",
   },
   {
+    name: "futu-api",
+    displayName: "Futu OpenAPI",
+    description:
+      "富途 OpenD 行情/交易 SDK。历史 K 线（futu_bridge）与 market_bridge --provider futu 都需要；未安装时健康检查不得标为 healthy。",
+    optional: true,
+    capability: "data-source/futu",
+  },
+  {
+    name: "websockets",
+    displayName: "websockets",
+    description: "Python 行情桥 market_bridge.server 依赖。",
+    optional: true,
+    capability: "market-bridge",
+  },
+  {
     name: "pytest",
     displayName: "pytest",
     description: "Python 单测框架（开发依赖；不影响 runtime）。",

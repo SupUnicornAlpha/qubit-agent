@@ -24,6 +24,13 @@ export function classifyMarketDataFailure(error: unknown): MarketDataFailure {
   if (/credentials missing|token is missing|api key.*missing|未配置.*凭证/i.test(message)) {
     return { kind: "credentials_missing", message, retryAfterMs: null };
   }
+  if (
+    /No module named|ModuleNotFoundError|not installed|pip install|iFinDPy not|ib_insync not|futu-api not/i.test(
+      message
+    )
+  ) {
+    return { kind: "misconfigured", message, retryAfterMs: null };
+  }
   if (/HTTP 429|too many requests|rate.?limit/i.test(message)) {
     return {
       kind: "rate_limited",

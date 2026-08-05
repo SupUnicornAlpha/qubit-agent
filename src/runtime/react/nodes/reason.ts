@@ -1155,6 +1155,18 @@ export async function reasonNode(
           payload: { token, provider: modelConfig.provider, model: modelConfig.model },
         });
       },
+      onReasoningToken: (token) => {
+        emit({
+          runId: state.runId,
+          workflowId: state.workflowId,
+          traceId: state.traceId,
+          role: state.agentDefinition.role,
+          type: "reasoning_token",
+          stepIndex: state.iteration,
+          ts: Date.now(),
+          payload: { token, provider: modelConfig.provider, model: modelConfig.model },
+        });
+      },
     });
     answer = llmResult.answer;
     if (nativeToolDefinition) {
@@ -1219,6 +1231,23 @@ export async function reasonNode(
                 traceId: state.traceId,
                 role: state.agentDefinition.role,
                 type: "token",
+                stepIndex: state.iteration,
+                ts: Date.now(),
+                payload: {
+                  token,
+                  provider: modelConfig.provider,
+                  model: modelConfig.model,
+                  retry: true,
+                },
+              });
+            },
+            onReasoningToken: (token) => {
+              emit({
+                runId: state.runId,
+                workflowId: state.workflowId,
+                traceId: state.traceId,
+                role: state.agentDefinition.role,
+                type: "reasoning_token",
                 stepIndex: state.iteration,
                 ts: Date.now(),
                 payload: {

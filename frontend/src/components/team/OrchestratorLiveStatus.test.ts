@@ -47,6 +47,20 @@ describe("resolveOrchestratorLivePhase", () => {
     expect(phase && "label" in phase ? phase.label : "").toContain("strategy.create_version");
   });
 
+  test("idle ignores dangling tool_call_start", () => {
+    const phase = resolveOrchestratorLivePhase({
+      running: false,
+      chatInFlight: false,
+      pendingHitl: false,
+      activity: null,
+      streamEvents: [
+        event("tool_call_start", { toolCallId: "1", toolName: "strategy.create_version" }),
+      ],
+      subAgentRuns: [],
+    });
+    expect(phase).toBeNull();
+  });
+
   test("shows expert progress when no open tools", () => {
     const phase = resolveOrchestratorLivePhase({
       running: false,
@@ -116,6 +130,19 @@ describe("resolveOrchestratorLivePhase", () => {
       thinkingText: "先盘点因子池…",
     });
     expect(phase?.kind).toBe("thinking");
+  });
+
+  test("idle ignores leftover thinking text when turn finished", () => {
+    const phase = resolveOrchestratorLivePhase({
+      running: false,
+      chatInFlight: false,
+      pendingHitl: false,
+      activity: null,
+      streamEvents: [],
+      subAgentRuns: [],
+      thinkingText: "Prime Core reasoning… # 兆易创新",
+    });
+    expect(phase).toBeNull();
   });
 
   test("idle when nothing active", () => {

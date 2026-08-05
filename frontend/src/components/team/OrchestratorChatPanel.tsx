@@ -1,20 +1,12 @@
 /**
  * Orchestrator 主对话面板（右栏 · Agent IDE 形态）
  *
- * 设计目标（见对话记录 · 2026-06）：把"和 Orchestrator 对话"做成 coding-agent 风格的
- * 右侧常驻面板，而不是把人工介入埋在画布下方的橙色 banner 里。
- *
- *   顶部 Header：标题 + 运行徽标 + 自主/HITL 模式切换（完全自主 ⇄ 人工介入）
- *   中部 Body  ：内联 HITL 卡片（复用 TeamHitlBanner）+ 以 Orchestrator 为主视角的对话流
- *   底部 Footer：输入框 composer —— 空闲时把指令喂给 Orchestrator 并启动/继续研究
- *
- * 本组件刻意保持"展示 + 受控回调"，真正的运行/HITL 业务逻辑仍在 MainContent：
- *   - onSend(text)：把 text 作为分析提示（context）并启动团队分析（idle 时）
- *   - HITL 应答走 TeamHitlBanner 自包含链路（listPendingWorkflowHitl / resolveWorkflowHitl）
- *
- * 后端尚不支持"向运行中的 Orchestrator 随时注入消息"——运行中且无 pending HITL 时，
- * composer 会被禁用并提示"将在 Orchestrator 暂停征询时回复"。这是已知边界，待后端
- * 消息注入能力落地后再放开（见任务单）。
+ *   顶部 Header：标题 + 运行徽标 + 自主/HITL 模式切换
+ *   中部 Body  ：内联 HITL 卡片 + Orchestrator 主视角对话流
+ *   底部 Footer：composer —— Cursor 式发送键：
+ *     - 空闲 + 有内容 → 发送（新 turn）
+ *     - 运行中 + 有内容 → 追加对话（inject，下一轮 reason 采纳）
+ *     - 运行中 + 无内容 → 停止（interrupt / cancel Core turn）
  */
 import {
   type CSSProperties,
@@ -34,6 +26,10 @@ import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
 import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
 import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
+import {
+  type LiveReasoningState,
+  ThinkingGhostBox,
+} from "./ThinkingGhostBox";
 import { OrchestratorLiveStatus } from "./OrchestratorLiveStatus";
 import { SubAgentRunsPanel } from "./SubAgentRunsPanel";
 import { AgentRunPanel } from "./AgentRunChatView";
@@ -105,6 +101,11 @@ export interface OrchestratorChatPanelProps {
   /** Orchestrator 当前流式思考文本（token 缓冲） */
   thinkingText?: string | null;
   /**
+   * 供应商隐藏思考（reasoning_content）：DeepSeek 式虚框，不进正文。
+   * 每轮替换；正文 token / 终态到来后折叠。
+   */
+  liveReasoning?: LiveReasoningState | null;
+  /**
    * Orchestrator 已派发的子 Agent 运行摘要（可展开看内部轨迹）。
    * 让用户在右栏直接看见「谁在跑」，不必先点中间拓扑。
    */
@@ -170,8 +171,10 @@ export function OrchestratorChatPanel({
   activity,
   streamEvents = [],
   thinkingText = null,
+  liveReasoning = null,
   subAgentRuns = [],
-  artifacts,  artifactsLoading = false,
+  artifacts,
+  artifactsLoading = false,
   artifactsError = null,
   onOpenArtifact,
   sendDisabled,
@@ -237,7 +240,16 @@ export function OrchestratorChatPanel({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [events.length, runProgress, subAgentRuns.length, streamEvents.length, thinkingText, activity]);
+  }, [
+    events.length,
+    runProgress,
+    subAgentRuns.length,
+    streamEvents.length,
+    thinkingText,
+    liveReasoning?.text,
+    liveReasoning?.status,
+    activity,
+  ]);
 
   useEffect(() => {
     if (!focusedSubAgent) setFocusedSubAgentRole(null);
@@ -249,14 +261,13 @@ export function OrchestratorChatPanel({
   }, [focusedSubAgent]);
 
   /**
-   * 发送语义：
-   *   - 运行中：发送 = 把文本「注入」运行中的 Orchestrator（onInject，下一轮 reason 生效）
-   *   - 其余（空闲/已完成）：发送 = 交给 Orchestrator **自主判断**（onSend → orchestrator-chat：
-   *     直接答 / assign_task 派单 / run_analyst_team 全队）。是对话，不需要研究范围，
-   *     故不受 sendDisabled 约束。「启动团队分析」按钮才是直接全队。
+   * 发送语义（对齐 Cursor）：
+   *   - 运行中 + 有输入 → 追加对话（onInject）
+   *   - 运行中 + 空输入 → 停止（onInterrupt）
+   *   - 空闲 + 有输入 → 新 turn（onSend）
    *
-   * showActive 不能只看 running/chatInFlight：final 后专家/工具仍可能在飞，
-   * 仍应显示 ● 运行中（Cursor/Codex 风格）。
+   * showActive：本轮在飞 / 专家或工具仍在跑。thinking 文本在 final 后可能残留，
+   * 只在 chatInFlight/running 时计入，避免「其实跑完了还显示运行中」。
    */
   const toolsRunning = useMemo(
     () =>
@@ -268,13 +279,17 @@ export function OrchestratorChatPanel({
   const expertsActive = subAgentRuns.some(
     (run) => run.status === "running" || run.status === "queued"
   );
-  const thinking = Boolean(thinkingText?.trim());
-  const showActive =
-    running || chatInFlight || expertsActive || toolsRunning || thinking;
-  const composerMode: "chat" | "inject" = running || expertsActive ? "inject" : "chat";
+  const liveTurn =
+    running || chatInFlight || expertsActive || toolsRunning;
+  const thinking = Boolean(thinkingText?.trim()) && (running || chatInFlight);
+  const showActive = liveTurn || thinking;
+  /** 有实质工作在飞时，发送走追加；否则开新 turn */
+  const composerMode: "chat" | "inject" = liveTurn ? "inject" : "chat";
   const selectedAgentMode = getAgentModeOption(agentMode);
   const hasContent = composerValue.trim().length > 0;
-  const canSend = wfId.length > 0 && hasContent && !injecting;
+  const showStop = showActive && !hasContent && !pendingHitlRequestId;
+  const canSend = wfId.length > 0 && hasContent && !injecting && !interrupting;
+  const canStop = wfId.length > 0 && showStop && !interrupting;
   // 现已统一走 orchestrator 自主对话；以下 props 保留接口兼容但不再约束发送。
   void completed;
   void sendDisabled;
@@ -291,7 +306,7 @@ export function OrchestratorChatPanel({
         onComposerChange("");
         setMemoryMentions([]);
         setInjectHint(
-          `已发送给 Orchestrator，将在它下一轮思考时采纳${queued > 1 ? `（队列 ${queued} 条待消费）` : ""}`
+          `已追加到当前对话，将在 Orchestrator 下一轮思考时采纳${queued > 1 ? `（队列 ${queued} 条待消费）` : ""}`
         );
       } catch (e) {
         setInjectHint(`发送失败：${(e as Error).message}`);
@@ -310,6 +325,20 @@ export function OrchestratorChatPanel({
       setMemoryMentions([]);
       setMemoryPickerOpen(false);
       onSend(text);
+    }
+  };
+
+  const doStop = async () => {
+    if (!canStop) return;
+    setInterrupting(true);
+    setInjectHint(null);
+    try {
+      await onInterrupt();
+      setInjectHint("已停止当前 Agent 运行");
+    } catch (e) {
+      setInjectHint(`停止失败：${(e as Error).message}`);
+    } finally {
+      setInterrupting(false);
     }
   };
 
@@ -342,19 +371,22 @@ export function OrchestratorChatPanel({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // Cmd/Ctrl+Enter 发送，回车换行（coding-agent 习惯）
+    // Cmd/Ctrl+Enter：有内容则发送/追加；运行中无内容则停止
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      void doSend();
+      if (showStop) void doStop();
+      else void doSend();
     }
   };
 
   const composerHint =
     wfId.length === 0
       ? "请先在左侧选择或新建工作流"
-      : composerMode === "inject"
-        ? "Orchestrator 运行中 —— 发送的指令会在它下一轮思考时被采纳（Cmd/Ctrl+Enter）"
-        : `${selectedAgentMode.hint}（Cmd/Ctrl+Enter 发送）`;
+      : showStop
+        ? "Agent 运行中 —— 点停止结束本轮，或输入内容追加对话"
+        : composerMode === "inject"
+          ? "运行中追加对话 —— 指令会在下一轮思考时被采纳（Cmd/Ctrl+Enter）"
+          : `${selectedAgentMode.hint}（Cmd/Ctrl+Enter 发送）`;
 
   return (
     <div style={styles.root}>
@@ -369,31 +401,6 @@ export function OrchestratorChatPanel({
           ) : (
             <span style={styles.idleBadge}>○ 空闲</span>
           )}
-          {running && !pendingHitlRequestId ? (
-            <button
-              type="button"
-              disabled={interrupting}
-              title="在下一个安全断点暂停，等你输入新提示词后继续"
-              onClick={async () => {
-                setInterrupting(true);
-                setInjectHint(null);
-                try {
-                  await onInterrupt();
-                  setInjectHint("已请求中断，将在下一个断点暂停并等你输入新提示词…");
-                } catch (e) {
-                  setInjectHint(`中断请求失败：${(e as Error).message}`);
-                } finally {
-                  setInterrupting(false);
-                }
-              }}
-              style={{
-                ...styles.interruptBtn,
-                ...(interrupting ? styles.modeBtnDisabled : null),
-              }}
-            >
-              {interrupting ? "中断中…" : "⏸ 中断"}
-            </button>
-          ) : null}
         </div>
         <div style={styles.scopeRow}>
           <span style={styles.scopeHint}>
@@ -638,6 +645,7 @@ export function OrchestratorChatPanel({
                 : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
           }
         />
+        <ThinkingGhostBox reasoning={liveReasoning} />
       </div>
 
       {/* Footer：HITL 在输入框与模式选择之上 */}
@@ -755,15 +763,15 @@ export function OrchestratorChatPanel({
             <AgentModePicker
               value={agentMode}
               onChange={onAgentModeChange}
-              disabled={running}
+              disabled={showActive}
             />
             <label style={styles.hitlSelectLabel} title="选择本次对话的人工确认策略">
               <span>HITL</span>
               <select
                 value={hitlMode}
-                disabled={running}
+                disabled={showActive}
                 onChange={(event) => onHitlModeChange(event.target.value as OrchestratorHitlMode)}
-                style={{ ...styles.hitlSelect, ...(running ? styles.modeBtnDisabled : null) }}
+                style={{ ...styles.hitlSelect, ...(showActive ? styles.modeBtnDisabled : null) }}
               >
                 {MODE_OPTIONS.map((opt) => (
                   <option key={opt.id} value={opt.id}>
@@ -774,26 +782,43 @@ export function OrchestratorChatPanel({
             </label>
             <span style={styles.composerHint}>{composerHint}</span>
           </div>
-          <button
-            type="button"
-            className="qb-btn-primary-brand"
-            style={{ ...styles.sendBtn, ...(canSend ? null : styles.sendBtnDisabled) }}
-            disabled={!canSend}
-            title={
-              canSend
-                ? composerMode === "inject"
-                  ? "发送给运行中的 Orchestrator"
-                  : `使用 ${selectedAgentMode.label} 模式发送给 Orchestrator`
-                : "请输入内容"
-            }
-            onClick={() => void doSend()}
-          >
-            {injecting
-              ? "发送中…"
-              : composerMode === "inject"
-                ? "发送给 Orchestrator"
-                : "发送"}
-          </button>
+          {showStop ? (
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              style={{
+                ...styles.sendBtn,
+                ...styles.stopBtn,
+                ...(canStop ? null : styles.sendBtnDisabled),
+              }}
+              disabled={!canStop}
+              title="停止当前 Agent 运行"
+              onClick={() => void doStop()}
+            >
+              {interrupting ? "停止中…" : "停止"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="qb-btn-primary-brand"
+              style={{ ...styles.sendBtn, ...(canSend ? null : styles.sendBtnDisabled) }}
+              disabled={!canSend}
+              title={
+                canSend
+                  ? composerMode === "inject"
+                    ? "追加到当前对话"
+                    : `使用 ${selectedAgentMode.label} 模式发送给 Orchestrator`
+                  : "请输入内容"
+              }
+              onClick={() => void doSend()}
+            >
+              {injecting
+                ? "发送中…"
+                : composerMode === "inject"
+                  ? "追加"
+                  : "发送"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1343,5 +1368,9 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
   },
   sendBtn: { flexShrink: 0, fontSize: 12, padding: "6px 16px" },
+  stopBtn: {
+    background: "var(--qb-danger, #b91c1c)",
+    borderColor: "var(--qb-danger, #b91c1c)",
+  },
   sendBtnDisabled: { opacity: 0.5, cursor: "not-allowed" },
 };

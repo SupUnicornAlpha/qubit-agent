@@ -8,6 +8,8 @@ import type { RuntimeAgentDefinition } from "../types";
 
 export type StepEventType =
   | "token"
+  /** 供应商隐藏思考增量（reasoning_content 等）；不进正文，仅 UI 虚框 */
+  | "reasoning_token"
   | "tool_call_start"
   | "tool_call_end"
   | "observe"

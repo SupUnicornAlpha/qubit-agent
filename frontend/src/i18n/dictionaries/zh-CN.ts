@@ -476,6 +476,7 @@ const pack: LocalePack = {
       },
       outputTabs: {
         ariaLabel: "研究产出 tabs",
+        signals: "推荐",
         drafts: "草稿",
         factors: "因子",
         strategies: "策略",

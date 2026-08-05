@@ -71,6 +71,8 @@ export const ConfigPanel: FC = () => {
   const [tushareToken, setTushareToken] = useState("");
   const [windUsername, setWindUsername] = useState("");
   const [windPassword, setWindPassword] = useState("");
+  const [ifindUsername, setIfindUsername] = useState("");
+  const [ifindPassword, setIfindPassword] = useState("");
   const [windStartWaitSec, setWindStartWaitSec] = useState(60);
   const [windAutoLogin, setWindAutoLogin] = useState(true);
   const [windSession, setWindSession] = useState<{
@@ -91,6 +93,9 @@ export const ConfigPanel: FC = () => {
     | "yfinance"
     | "binance_crypto"
     | "wind"
+    | "futu_bridge"
+    | "ib_bridge"
+    | "supermind_bridge"
     | "synthetic"
   >("auto");
   const [cryptoUseTestnet, setCryptoUseTestnet] = useState(false);
@@ -166,6 +171,8 @@ export const ConfigPanel: FC = () => {
     setTushareToken(typeof d.tushareToken === "string" ? d.tushareToken : "");
     setWindUsername(typeof d.windUsername === "string" ? d.windUsername : "");
     setWindPassword(typeof d.windPassword === "string" ? d.windPassword : "");
+    setIfindUsername(typeof d.ifindUsername === "string" ? d.ifindUsername : "");
+    setIfindPassword(typeof d.ifindPassword === "string" ? d.ifindPassword : "");
     const wsw = d["windStartWaitSec"];
     setWindStartWaitSec(
       typeof wsw === "number" && Number.isFinite(wsw)
@@ -185,9 +192,23 @@ export const ConfigPanel: FC = () => {
       kds === "yfinance" ||
       kds === "binance_crypto" ||
       kds === "wind" ||
+      kds === "futu_bridge" ||
+      kds === "futu" ||
+      kds === "ib_bridge" ||
+      kds === "ib" ||
+      kds === "supermind_bridge" ||
+      kds === "supermind" ||
+      kds === "ifind" ||
+      kds === "ths" ||
       kds === "synthetic" ||
       kds === "auto"
-        ? kds
+        ? kds === "futu"
+          ? "futu_bridge"
+          : kds === "ib"
+            ? "ib_bridge"
+            : kds === "supermind" || kds === "ifind" || kds === "ths"
+              ? "supermind_bridge"
+              : kds
         : "auto"
     );
     const testnet = d["cryptoUseTestnet"];
@@ -1241,8 +1262,9 @@ export const ConfigPanel: FC = () => {
               凭证写入本机数据库，启动与保存后注入连接器。上方「行情数据源控制面」决定启用/优先级与
               Prime 档位；此处配置 token、Wind、代理与新闻 API。
               <br />
-              K 线默认路由 <code style={{ fontSize: 11 }}>klinesDataSource=auto</code>：A 股优先东方财富；有
-              Wind 账号可走 Wind；加密走 Binance；有 Tushare token 时 A 股日线可走 Tushare；美股等走 Yahoo。
+              K 线默认路由 <code style={{ fontSize: 11 }}>klinesDataSource=auto</code>：历史
+              OHLCV 按健康与凭证排序（Wind / <strong>同花顺 iFinD</strong> / Futu / IB / 东方财富 /
+              Binance / Tushare / Yahoo）。券商桥同时可提供实时 L2：已打通且健康时订阅行情会自动优先选用。
             </p>
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--qb-body-fg)" }}>
@@ -1262,13 +1284,23 @@ export const ConfigPanel: FC = () => {
                         | "yfinance"
                         | "binance_crypto"
                         | "wind"
+                        | "futu_bridge"
+                        | "ib_bridge"
+                        | "supermind_bridge"
                         | "synthetic"
                     )
                   }
                 >
-                  <option value="auto">自动（A 股 → 东方财富 / 有 Wind 账号 → Wind；加密 → Binance；有 Tushare → 日线；其它 → Yahoo）</option>
+                  <option value="auto">
+                    自动（健康优先：Wind → iFinD → Futu → IB → 东财 / Binance / Tushare / Yahoo）
+                  </option>
                   <option value="eastmoney">东方财富（A 股日线 + 分钟/小时，免费）</option>
                   <option value="wind">Wind 万得（需本地终端 + WindPy）</option>
+                  <option value="supermind_bridge">
+                    同花顺 iFinD（历史 K 线；需 iFinDPy；SuperMind 回测 history 不可外置）
+                  </option>
+                  <option value="futu_bridge">Futu OpenD（历史 K 线 + 实时桥，需 OpenD + futu-api）</option>
+                  <option value="ib_bridge">IB Gateway/TWS（历史 K 线，需 ib_insync）</option>
                   <option value="binance_crypto">Binance（加密货币 K 线 / 报价，公开 API）</option>
                   <option value="akshare">AKShare（A 股，需 Python: pip install akshare pandas）</option>
                   <option value="akshare_tencent">腾讯证券 / AKShare（日线独立备用源）</option>
@@ -1427,6 +1459,28 @@ export const ConfigPanel: FC = () => {
                 ) : null}
               </div>
             ) : null}
+            {(klinesDataSource === "supermind_bridge" || klinesDataSource === "auto") ? (
+              <div style={{ ...styles.form, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <input
+                  style={{ ...styles.input, minWidth: 160 }}
+                  value={ifindUsername}
+                  onChange={(e) => setIfindUsername(e.target.value)}
+                  placeholder="同花顺 iFinD 账号"
+                  autoComplete="username"
+                />
+                <input
+                  style={{ ...styles.input, minWidth: 160 }}
+                  type="password"
+                  value={ifindPassword}
+                  onChange={(e) => setIfindPassword(e.target.value)}
+                  placeholder="同花顺 iFinD 密码"
+                  autoComplete="current-password"
+                />
+                <span style={{ fontSize: 12, color: "var(--qb-muted-fg, #888)" }}>
+                  历史 K 线走 iFinDPy（非 SuperMind 回测 history）；也可用环境变量 QUBIT_IFIND_*
+                </span>
+              </div>
+            ) : null}
             <div style={{ ...styles.form, flexWrap: "wrap" }}>
               <input
                 style={{ ...styles.input, minWidth: 200 }}
@@ -1474,6 +1528,8 @@ export const ConfigPanel: FC = () => {
                       windPassword: windPassword.trim() || undefined,
                       windStartWaitSec,
                       windAutoLogin: windAutoLogin || undefined,
+                      ifindUsername: ifindUsername.trim() || undefined,
+                      ifindPassword: ifindPassword.trim() || undefined,
                       cryptoUseTestnet: cryptoUseTestnet || undefined,
                       marketDataNetworkMode,
                       marketDataProxyUrl: marketDataProxyUrl.trim() || undefined,

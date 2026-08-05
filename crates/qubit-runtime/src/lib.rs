@@ -47,5 +47,9 @@ pub use ports::{CoreRuntimeService, StartedTurn};
 pub use session::SessionManager;
 pub use store::MemoryStore;
 pub use supervisor::{RuntimeLimits, TurnSupervisor};
-pub use tools::{FakeToolHost, L0ToolHost, ToolHost};
+pub use tools::{
+    extract_agent_invoke_callee_hint, extract_agent_invoke_goal, infer_callee_from_goal,
+    parse_update_plan_args, parse_update_plan_args_for_session, resolve_callee_spec_id,
+    FakeToolHost, L0ToolHost, ToolHost,
+};
 pub use trigger::{TriggerIngress, TriggerIngressService};

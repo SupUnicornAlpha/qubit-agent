@@ -117,6 +117,86 @@ async fn update_plan_l0_persists_on_session() {
 }
 
 #[tokio::test]
+async fn update_plan_l0_accepts_steps_without_id() {
+    let plan_args = json!({
+        "steps": [
+            {"title": "resolve symbol", "status": "pending"},
+            {"title": "fetch snapshot", "status": "in_progress"}
+        ]
+    });
+    let scripted = ScriptedModelClient::sequence(vec![
+        SampleResponse {
+            text: "planning".into(),
+            tool_calls: vec![NormalizedToolCall {
+                call_id: "tc1".into(),
+                name: "update_plan".into(),
+                args: plan_args,
+            }],
+            request_hitl: false,
+            hitl_title: None,
+            hitl_body: None,
+            ..Default::default()
+        },
+        SampleResponse {
+            text: "ok".into(),
+            tool_calls: vec![],
+            request_hitl: false,
+            hitl_title: None,
+            hitl_body: None,
+            ..Default::default()
+        },
+    ]);
+    let rt = CoreRuntimeService::new_with_model(Arc::new(scripted));
+    rt.seed_defaults().await;
+    let session = rt
+        .create_session(SessionCreate {
+            workspace_id: None,
+            agent_ref: AgentSpecId::new("def-primary"),
+            interaction_mode: InteractionMode::Agent,
+            mode: Some("agent".into()),
+        })
+        .await
+        .unwrap();
+
+    let started = rt
+        .start_turn(TurnStart {
+            session_id: session.session_id.clone(),
+            input: UserInput {
+                text: "continue research".into(),
+                attachments: vec![],
+                client_meta: None,
+            },
+            idempotency_key: "plan-noid-1".into(),
+        })
+        .await
+        .unwrap();
+    rt.await_turn_terminal(&started.turn_id, Duration::from_secs(2))
+        .await
+        .unwrap();
+
+    let snap = rt.store().get_session(&session.session_id).await.unwrap();
+    let turn = snap.active_turn.expect("turn");
+    assert!(
+        !turn
+            .answer_text
+            .as_deref()
+            .unwrap_or("")
+            .contains("Prime Core turn failed"),
+        "turn should not fail on missing step id: {:?}",
+        turn.answer_text
+    );
+    let plan = rt
+        .store()
+        .get_plan(&session.session_id)
+        .await
+        .unwrap()
+        .expect("plan saved");
+    assert_eq!(plan.steps.len(), 2);
+    assert_eq!(plan.steps[0].id, "s1");
+    assert_eq!(plan.steps[1].id, "s2");
+}
+
+#[tokio::test]
 async fn diagnose_alias_from_legacy_debug_string() {
     assert_eq!(
         InteractionMode::parse("debug"),

@@ -116,6 +116,7 @@ export async function runSystemBootstrap(input?: {
 export async function listRecommendations(
   params: {
     projectId?: string;
+    workflowRunId?: string;
     symbol?: string;
     side?: RecommendationSide;
     status?: RecommendationStatus;
@@ -124,6 +125,7 @@ export async function listRecommendations(
 ): Promise<RecommendationRecord[]> {
   const query = new URLSearchParams();
   if (params.projectId) query.set("project_id", params.projectId);
+  if (params.workflowRunId) query.set("workflow_run_id", params.workflowRunId);
   if (params.symbol) query.set("symbol", params.symbol);
   if (params.side) query.set("side", params.side);
   if (params.status) query.set("status", params.status);
@@ -1172,16 +1174,29 @@ export async function runOrchestratorChat(
 }
 
 /**
- * 协作式中断：请求中断正在运行的团队研究。团队会在下一个 wave 边界停在断点，起一个
- * free_form HITL 等用户输入新提示词后续跑。立即返回（真正暂停发生在下一个安全断点）。
+ * 停止当前 Agent 运行（Cursor 式 Stop）：
+ * - Bun 协作 interrupt（团队 wave 边界）
+ * - 若有 Prime Core 在飞 turn，同步 cancelTurn
  */
 export async function interruptWorkflow(
   workflowId: string
-): Promise<{ workflowRunId: string; requested: boolean }> {
-  const res = await httpPost<{ ok: boolean; data: { workflowRunId: string; requested: boolean } }>(
-    `/api/v1/workflows/${workflowId}/interrupt`,
-    {}
-  );
+): Promise<{
+  workflowRunId: string;
+  requested: boolean;
+  coreCancelled?: boolean;
+  turnId?: string;
+  coreReason?: string;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      workflowRunId: string;
+      requested: boolean;
+      coreCancelled?: boolean;
+      turnId?: string;
+      coreReason?: string;
+    };
+  }>(`/api/v1/workflows/${workflowId}/interrupt`, {});
   return res.data;
 }
 

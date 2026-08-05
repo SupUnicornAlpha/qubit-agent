@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
-import { recommendationOutcome, recommendationSnapshot, workflowRun } from "../../db/sqlite/schema";
+import {
+  agentInstance,
+  recommendationOutcome,
+  recommendationSnapshot,
+  workflowRun,
+} from "../../db/sqlite/schema";
 import { appendAuditLog } from "../audit/audit-chain-service";
 
 export type RecommendationSide = "long" | "short" | "neutral";
@@ -101,6 +106,13 @@ export class RecommendationService {
       scenarioKey ??= wf.researchScenarioId ?? "";
     }
 
+    // audit_log.agent_instance_id → agent_instance FK；Prime Bridge 曾用假 id
+    // （inst-prime-bridge）导致「推荐已写入、工具却报 FOREIGN KEY failed」。
+    const agentInstanceId = await resolveExistingAgentInstanceId(
+      db,
+      input.agentInstanceId
+    );
+
     const id = randomUUID();
     await db.insert(recommendationSnapshot).values({
       id,
@@ -130,15 +142,15 @@ export class RecommendationService {
       sourceArtifactKind: input.sourceArtifactKind ?? null,
       sourceArtifactId: input.sourceArtifactId ?? null,
       createdBy: input.createdBy ?? "agent",
-      agentInstanceId: input.agentInstanceId ?? null,
+      agentInstanceId,
       asof: input.asof ?? new Date().toISOString(),
     });
     await appendAuditLog(db, {
       traceId: `recommendation:${id}`,
       workflowRunId: input.workflowRunId,
-      agentInstanceId: input.agentInstanceId ?? null,
+      agentInstanceId,
       actorType: input.createdBy === "user" ? "user" : "agent",
-      actorId: input.createdBy ?? input.agentInstanceId ?? "recommendation_service",
+      actorId: input.createdBy ?? agentInstanceId ?? "recommendation_service",
       action: "recommendation_recorded",
       resourceType: "recommendation_snapshot",
       resourceId: id,
@@ -232,6 +244,7 @@ export class RecommendationService {
   async list(
     input: {
       projectId?: string;
+      workflowRunId?: string;
       symbol?: string;
       side?: RecommendationSide;
       status?: RecommendationStatus;
@@ -241,6 +254,9 @@ export class RecommendationService {
     const db = await getDb();
     const conditions = [
       input.projectId ? eq(recommendationSnapshot.projectId, input.projectId) : undefined,
+      input.workflowRunId
+        ? eq(recommendationSnapshot.workflowRunId, input.workflowRunId)
+        : undefined,
       input.symbol
         ? eq(recommendationSnapshot.symbol, input.symbol.trim().toUpperCase())
         : undefined,
@@ -357,6 +373,21 @@ export class RecommendationService {
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0.5;
   return Math.max(0, Math.min(1, value));
+}
+
+/** Drop synthetic / stale ids that would violate audit_log → agent_instance FK. */
+async function resolveExistingAgentInstanceId(
+  db: Awaited<ReturnType<typeof getDb>>,
+  candidate: string | null | undefined
+): Promise<string | null> {
+  const id = typeof candidate === "string" ? candidate.trim() : "";
+  if (!id) return null;
+  const rows = await db
+    .select({ id: agentInstance.id })
+    .from(agentInstance)
+    .where(eq(agentInstance.id, id))
+    .limit(1);
+  return rows[0]?.id ?? null;
 }
 
 function finiteOrNull(value: number | null | undefined): number | null {

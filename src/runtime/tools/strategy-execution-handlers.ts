@@ -368,11 +368,23 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         "recommendation.record: ctx.workflowId is required so recommendation_snapshot binds to the workflow"
       );
     }
-    const symbol = String(params.symbol ?? params.ticker ?? "").trim();
+    // Models often nest fields under `arguments`; top-level wins on conflict.
+    const nested =
+      params.arguments &&
+      typeof params.arguments === "object" &&
+      !Array.isArray(params.arguments)
+        ? (params.arguments as Record<string, unknown>)
+        : null;
+    const p: Record<string, unknown> = nested ? { ...nested, ...params } : params;
+    delete p.arguments;
+
+    const symbol = String(p.symbol ?? p.ticker ?? "")
+      .trim()
+      .replace(/^(US|HK|CN|SH|SZ):/i, "");
     if (!symbol) {
       throw new Error("recommendation.record: symbol/ticker is required");
     }
-    const sideRaw = String(params.side ?? "long")
+    const sideRaw = String(p.side ?? "long")
       .trim()
       .toLowerCase();
     const sideMap: Record<string, RecommendationSide> = {
@@ -391,48 +403,48 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         `recommendation.record: side must be long/short/neutral (or buy/sell/hold), got ${sideRaw}`
       );
     }
-    const horizonDays = Number(params.horizon_days ?? params.horizonDays ?? 20);
-    const confidence = Number(params.confidence ?? 0.5);
-    const scoreRaw = params.score;
-    const evidenceRaw = params.evidence ?? params.evidence_json;
+    const horizonDays = Number(p.horizon_days ?? p.horizonDays ?? 20);
+    const confidence = Number(p.confidence ?? 0.5);
+    const scoreRaw = p.score;
+    const evidenceRaw = p.evidence ?? p.evidence_json;
     const evidence = Array.isArray(evidenceRaw) ? evidenceRaw : [];
     const result = await recommendationService.record({
       workflowRunId: ctx.workflowId,
       symbol,
-      market: typeof params.market === "string" ? params.market : "US",
+      market: typeof p.market === "string" ? p.market : "US",
       side,
       horizonDays: Number.isFinite(horizonDays) && horizonDays > 0 ? Math.floor(horizonDays) : 20,
       confidence: Number.isFinite(confidence) ? confidence : 0.5,
       score: scoreRaw !== undefined && Number.isFinite(Number(scoreRaw)) ? Number(scoreRaw) : null,
-      entryLow: optionalFiniteNumber(params.entry_low ?? params.entryLow),
-      entryHigh: optionalFiniteNumber(params.entry_high ?? params.entryHigh),
-      stopLoss: optionalFiniteNumber(params.stop_loss ?? params.stopLoss),
+      entryLow: optionalFiniteNumber(p.entry_low ?? p.entryLow),
+      entryHigh: optionalFiniteNumber(p.entry_high ?? p.entryHigh),
+      stopLoss: optionalFiniteNumber(p.stop_loss ?? p.stopLoss),
       takeProfit: optionalFiniteNumber(
-        params.take_profit ?? params.takeProfit ?? params.target_price
+        p.take_profit ?? p.takeProfit ?? p.target_price
       ),
-      positionSizePct: optionalFiniteNumber(params.position_size_pct ?? params.positionSizePct),
-      riskRewardRatio: optionalFiniteNumber(params.risk_reward_ratio ?? params.riskRewardRatio),
-      rationale: String(params.rationale ?? params.reasoning ?? ""),
+      positionSizePct: optionalFiniteNumber(p.position_size_pct ?? p.positionSizePct),
+      riskRewardRatio: optionalFiniteNumber(p.risk_reward_ratio ?? p.riskRewardRatio),
+      rationale: String(p.rationale ?? p.reasoning ?? ""),
       evidence,
       invalidation:
-        Array.isArray(params.invalidation_conditions) && params.invalidation_conditions.length > 0
-          ? params.invalidation_conditions
+        Array.isArray(p.invalidation_conditions) && p.invalidation_conditions.length > 0
+          ? p.invalidation_conditions
           : [
               "价格跌破止损价",
               "关键基本面假设失效（业绩/指引大幅低于预期）",
               "持有期结束仍未触发目标价",
             ],
-      watchConditions: Array.isArray(params.watch_conditions) ? params.watch_conditions : [],
-      benchmarkSymbol: typeof params.benchmark_symbol === "string" ? params.benchmark_symbol : null,
-      expiresAt: typeof params.expires_at === "string" ? params.expires_at : null,
-      dataAsof: typeof params.data_asof === "string" ? params.data_asof : null,
+      watchConditions: Array.isArray(p.watch_conditions) ? p.watch_conditions : [],
+      benchmarkSymbol: typeof p.benchmark_symbol === "string" ? p.benchmark_symbol : null,
+      expiresAt: typeof p.expires_at === "string" ? p.expires_at : null,
+      dataAsof: typeof p.data_asof === "string" ? p.data_asof : null,
       sourceArtifactKind:
-        typeof params.source_artifact_kind === "string" ? params.source_artifact_kind : null,
+        typeof p.source_artifact_kind === "string" ? p.source_artifact_kind : null,
       sourceArtifactId:
-        typeof params.source_artifact_id === "string" ? params.source_artifact_id : null,
+        typeof p.source_artifact_id === "string" ? p.source_artifact_id : null,
       createdBy: "agent",
-      agentInstanceId: ctx.agentInstanceId,
-      ...(typeof params.asof === "string" ? { asof: params.asof } : {}),
+      agentInstanceId: ctx.agentInstanceId || null,
+      ...(typeof p.asof === "string" ? { asof: p.asof } : {}),
     });
     // Write-after-read: tool success must mean snapshot is queryable for this workflow+side.
     const db = await getDb();

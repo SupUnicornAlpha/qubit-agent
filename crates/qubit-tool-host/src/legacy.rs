@@ -22,6 +22,9 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "research.forecast_book.get",
     "portfolio.construct",
     "recommendation.record",
+    "strategy.create_version",
+    "strategy.compose",
+    "factor.mine.llm",
     "workspace.context.snapshot",
 ];
 

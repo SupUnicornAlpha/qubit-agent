@@ -12,6 +12,10 @@ describe("market data failure classification", () => {
       "credentials_missing"
     );
     expect(classifyMarketDataFailure("health probe returned no rows").kind).toBe("no_data");
+    expect(classifyMarketDataFailure("No module named 'futu'").kind).toBe("misconfigured");
+    expect(classifyMarketDataFailure("futu-api not installed; pip install futu-api").kind).toBe(
+      "misconfigured"
+    );
   });
 
   test("formats a stable category prefix for persistence", () => {

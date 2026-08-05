@@ -98,6 +98,62 @@ describe("OpenAI-compatible streaming gateway", () => {
     expect(result.answer).toBe("OK");
   });
 
+  test("streams reasoning_content to onReasoningToken without polluting answer", async () => {
+    fetchSpy.mockImplementation(() => {
+      const encoder = new TextEncoder();
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              for (const data of [
+                {
+                  id: "r1",
+                  choices: [{ delta: { reasoning_content: "先想" }, finish_reason: null }],
+                },
+                {
+                  id: "r1",
+                  choices: [{ delta: { reasoning_content: "一步" }, finish_reason: null }],
+                },
+                {
+                  id: "r1",
+                  choices: [{ delta: { content: "结论" }, finish_reason: "stop" }],
+                  usage: { prompt_tokens: 2, completion_tokens: 4, total_tokens: 6 },
+                },
+              ]) {
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+              }
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          }
+        )
+      );
+    });
+
+    const tokens: string[] = [];
+    const reasoning: string[] = [];
+    const result = await runLlmGateway({
+      config: {
+        provider: "deepseek",
+        model: "deepseek-reasoner",
+        apiKey: "test-key",
+        baseUrl: "https://api.deepseek.com",
+      },
+      systemPrompt: "system",
+      userPrompt: "ping",
+      onToken: (token) => tokens.push(token),
+      onReasoningToken: (token) => reasoning.push(token),
+    });
+
+    expect(reasoning).toEqual(["先想", "一步"]);
+    expect(tokens).toEqual(["结论"]);
+    expect(result.answer).toBe("结论");
+  });
+
   test("explicit non-stream fallback remains available for legacy proxies", async () => {
     process.env.QUBIT_LLM_COMPAT_NON_STREAM = "1";
     fetchSpy.mockImplementation((_url: string | URL, init?: RequestInit) => {

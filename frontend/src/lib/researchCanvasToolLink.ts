@@ -24,7 +24,7 @@ export type ResearchCanvasToolHit = {
 };
 
 const MARKET_TOOL_RE =
-  /(fetch_klines|fetch_bars|get_klines|klines|fetch_quote|get_quote|fetch_price|price_data|market\.resolve_symbol|resolve_symbol)/i;
+  /(fetch_klines|fetch_bars|get_klines|klines|fetch_quote|get_quote|fetch_price|price_data|market\.resolve_symbol|market\.snapshot|resolve_symbol|technical_indicator|historical_prices)/i;
 const NEWS_TOOL_RE = /(fetch_news|get_news|news_brief|market_news|news\.|headline)/i;
 
 export function classifyResearchCanvasToolName(toolName: string): ResearchCanvasToolKind {
@@ -50,18 +50,69 @@ function pickString(obj: Record<string, unknown> | null, keys: string[]): string
   return null;
 }
 
-/** 从 requestJson / 常见 params 包装里抽 symbol / exchange。 */
+const SYMBOL_KEYS = ["symbol", "ticker", "code", "sec_id", "instrument", "underlying"];
+const EXCHANGE_KEYS = ["exchange", "market", "exch", "mic", "venue"];
+
+function pickRef(bag: Record<string, unknown> | null): {
+  symbol: string | null;
+  exchange: string | null;
+} {
+  return {
+    symbol: pickString(bag, SYMBOL_KEYS),
+    exchange: pickString(bag, EXCHANGE_KEYS),
+  };
+}
+
+/**
+ * 从 requestJson / 常见 params 包装里抽 symbol / exchange。
+ * 兼容：
+ * - `{ params|arguments|input: { symbol } }`
+ * - Prime Core / tool_call_log：`{ contextMemory: { args: { symbol } } }`
+ * - 模型再包一层：`{ arguments: { ticker } }`
+ */
 export function extractMarketRefFromToolPayload(payload: unknown): {
   symbol: string | null;
   exchange: string | null;
 } {
   const root = asRecord(payload);
-  const params = asRecord(root?.params) ?? asRecord(root?.arguments) ?? asRecord(root?.input) ?? root;
-  const nested = asRecord(params?.params) ?? asRecord(params?.query);
-  const bag = nested ?? params;
+  const contextMemory = asRecord(root?.contextMemory);
+  const cmArgs = asRecord(contextMemory?.args);
+  const params =
+    asRecord(root?.params) ??
+    asRecord(root?.arguments) ??
+    asRecord(root?.input) ??
+    cmArgs ??
+    root;
+
+  const nested =
+    asRecord(params?.params) ??
+    asRecord(params?.arguments) ??
+    asRecord(params?.query) ??
+    null;
+
+  // 顶层优先，嵌套补缺
+  const top = pickRef(params);
+  const deep = pickRef(nested);
   return {
-    symbol: pickString(bag, ["symbol", "ticker", "code", "sec_id", "instrument", "underlying"]),
-    exchange: pickString(bag, ["exchange", "market", "exch", "mic"]),
+    symbol: top.symbol ?? deep.symbol,
+    exchange: top.exchange ?? deep.exchange,
+  };
+}
+
+/** 从工具响应补抽标的（如 market.snapshot.get → qualityVerdict.instrument）。 */
+export function extractMarketRefFromToolResponse(payload: unknown): {
+  symbol: string | null;
+  exchange: string | null;
+} {
+  const root = asRecord(payload);
+  const quality = asRecord(root?.qualityVerdict);
+  const instrument =
+    asRecord(root?.instrument) ?? asRecord(quality?.instrument) ?? null;
+  const top = pickRef(root);
+  const fromInst = pickRef(instrument);
+  return {
+    symbol: top.symbol ?? fromInst.symbol,
+    exchange: top.exchange ?? fromInst.exchange,
   };
 }
 
@@ -75,7 +126,14 @@ export function buildResearchCanvasToolHits(input: {
 
   for (const t of input.toolCalls ?? []) {
     const kind = classifyResearchCanvasToolName(t.toolName);
-    const ref = extractMarketRefFromToolPayload(t.requestJson);
+    let ref = extractMarketRefFromToolPayload(t.requestJson);
+    if (!ref.symbol) {
+      const fromResp = extractMarketRefFromToolResponse(t.responseJson);
+      ref = {
+        symbol: fromResp.symbol,
+        exchange: ref.exchange ?? fromResp.exchange,
+      };
+    }
     hits.push({
       id: `tool:${t.id}`,
       kind,
@@ -95,7 +153,14 @@ export function buildResearchCanvasToolHits(input: {
   for (const m of input.mcpCalls ?? []) {
     const fullName = `${m.serverName}/${m.toolName}`;
     const kind = classifyResearchCanvasToolName(fullName);
-    const ref = extractMarketRefFromToolPayload(m.requestJson);
+    let ref = extractMarketRefFromToolPayload(m.requestJson);
+    if (!ref.symbol) {
+      const fromResp = extractMarketRefFromToolResponse(m.responseJson);
+      ref = {
+        symbol: fromResp.symbol,
+        exchange: ref.exchange ?? fromResp.exchange,
+      };
+    }
     hits.push({
       id: `mcp:${m.id}`,
       kind,
