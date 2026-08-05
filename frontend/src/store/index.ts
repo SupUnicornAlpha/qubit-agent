@@ -262,6 +262,12 @@ export interface AppState {
   activeFsWorkspaceId: string | null;
   setActiveFsWorkspaceId: (id: string | null) => void;
   /**
+   * 跨面板打开 Workspace 文件（Assets / 命令面板 → 研究画布文件 Tab）。
+   * TeamDashboardPanel 消费后清空。
+   */
+  pendingWorkspaceFile: { workspaceId: string; path: string } | null;
+  setPendingWorkspaceFile: (file: { workspaceId: string; path: string } | null) => void;
+  /**
    * 专业壳 StatusBar 的 Agent 生命周期（研究团队 / 对话运行态写入）。
    * 文档 V7：Status/壳层显示 Agent State。
    */
@@ -604,6 +610,8 @@ export const useAppStore = create<AppState>((set) => ({
     }
     set({ activeFsWorkspaceId: id });
   },
+  pendingWorkspaceFile: null,
+  setPendingWorkspaceFile: (pendingWorkspaceFile) => set({ pendingWorkspaceFile }),
   proAgentLifecycle: "idle",
   setProAgentLifecycle: (proAgentLifecycle) => set({ proAgentLifecycle }),
   chartOverlays: { ...defaultChartOverlays },

@@ -254,6 +254,38 @@ fsWorkspaceRouter.get("/:id/memory/:entryId", async (c) => {
   }
 });
 
+fsWorkspaceRouter.get("/:id/decision/strategies", async (c) => {
+  try {
+    const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
+    const { decision } = resolveProviders(manifest);
+    const rows = await decision.listStrategies(fs);
+    return c.json({
+      data: {
+        kind: decision.kind,
+        items: rows,
+      },
+    });
+  } catch (e) {
+    return jsonError(c, e);
+  }
+});
+
+fsWorkspaceRouter.get("/:id/decision/factors", async (c) => {
+  try {
+    const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
+    const { decision } = resolveProviders(manifest);
+    const rows = await decision.listFactors(fs);
+    return c.json({
+      data: {
+        kind: decision.kind,
+        items: rows,
+      },
+    });
+  } catch (e) {
+    return jsonError(c, e);
+  }
+});
+
 fsWorkspaceRouter.post("/:id/decision/sync", async (c) => {
   try {
     const body = await c.req.json<{ projectId?: string }>().catch(() => ({}));

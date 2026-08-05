@@ -900,6 +900,30 @@ export async function syncFsWorkspaceDecision(
   return res.data;
 }
 
+export type FsDecisionAssetItem = {
+  id: string;
+  name: string;
+  relPath?: string;
+};
+
+export async function listFsWorkspaceDecisionStrategies(
+  workspaceId: string
+): Promise<{ kind: string; items: FsDecisionAssetItem[] }> {
+  const res = await httpGet<{ data: { kind: string; items: FsDecisionAssetItem[] } }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/decision/strategies`
+  );
+  return res.data;
+}
+
+export async function listFsWorkspaceDecisionFactors(
+  workspaceId: string
+): Promise<{ kind: string; items: FsDecisionAssetItem[] }> {
+  const res = await httpGet<{ data: { kind: string; items: FsDecisionAssetItem[] } }>(
+    `/api/v1/fs-workspaces/${encodeURIComponent(workspaceId)}/decision/factors`
+  );
+  return res.data;
+}
+
 export async function listAgents(): Promise<AgentSummary[]> {
   const res = await httpGet<{ data: AgentSummary[] }>("/api/v1/agents");
   return res.data;

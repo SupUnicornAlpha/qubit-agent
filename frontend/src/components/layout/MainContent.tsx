@@ -5456,6 +5456,8 @@ const TeamDashboardPanel: FC = () => {
   const requestChartReload = useAppStore((s) => s.requestChartReload);
   const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
   const setProAgentLifecycle = useAppStore((s) => s.setProAgentLifecycle);
+  const pendingWorkspaceFile = useAppStore((s) => s.pendingWorkspaceFile);
+  const setPendingWorkspaceFile = useAppStore((s) => s.setPendingWorkspaceFile);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -6482,6 +6484,16 @@ const TeamDashboardPanel: FC = () => {
         : "idle";
     setProAgentLifecycle(next);
   }, [teamPendingHitl, running, orchestratorChatInFlight, setProAgentLifecycle]);
+
+  useEffect(() => {
+    if (!pendingWorkspaceFile) return;
+    setOpenWsFile({
+      workspaceId: pendingWorkspaceFile.workspaceId,
+      path: pendingWorkspaceFile.path,
+    });
+    setResearchCanvasTab("file");
+    setPendingWorkspaceFile(null);
+  }, [pendingWorkspaceFile, setPendingWorkspaceFile]);
 
   /**
    * 中栏底部「研究产出」抽屉的折叠态（因子/策略/脚本/草稿）。
