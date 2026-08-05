@@ -207,10 +207,9 @@ const pack: LocalePack = {
       leftColumn: {
         ariaLabel: "左侧工作台工具",
         editor: "代码编辑",
-        indicator: "指标 IDE",
         editorEmptyTitle: "Workspace 文件编辑",
         editorEmptyBody:
-          "对话已固定在右侧 Agent。在此用 Monaco 编辑课题文件；从左侧 Explorer 打开 .md / .py / .ts 等。",
+          "对话在右侧 Agent。此处用 Monaco 编辑课题文件；从 Explorer 打开 .md / .py / .ts 等。",
         editorNeedWorkspace: "尚未选择 Workspace，请先在 Explorer 创建建或切换课题。",
         openExplorer: "打开 Explorer",
       },

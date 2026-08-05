@@ -208,7 +208,6 @@ const pack: LocalePack = {
       leftColumn: {
         ariaLabel: "Left workbench tools",
         editor: "Code editor",
-        indicator: "Indicator IDE",
         editorEmptyTitle: "Workspace file editor",
         editorEmptyBody:
           "Chat lives in the right Agent panel. Edit workspace files here with Monaco — open .md / .py / .ts from the Explorer.",

@@ -298,9 +298,9 @@ export interface AppState {
   setIdeActiveStrategyScriptId: (v: string | null) => void;
   ideAiPrompt: string;
   setIdeAiPrompt: (v: string) => void;
-  /** IDE 左栏工具：editor（Monaco）| indicator；对话在右侧 Agent */
-  ideLeftTab: "editor" | "indicator";
-  setIdeLeftTab: (v: "editor" | "indicator") => void;
+  /** IDE 左栏工具（v1 仅 editor；见 ideLeftTools） */
+  ideLeftTab: "editor";
+  setIdeLeftTab: (v: "editor") => void;
   chatDraftPrefill: string | null;
   setChatDraftPrefill: (v: string | null) => void;
   agents: AgentSummary[];

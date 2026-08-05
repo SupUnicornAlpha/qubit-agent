@@ -59,7 +59,7 @@ const PURPOSE_TONE: Record<
 
 export const ScriptStudioTab: FC = () => {
   const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
-  const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
+  const setActiveView = useAppStore((s) => s.setActiveView);
   const setActiveStrategyScriptId = useAppStore((s) => s.setIdeActiveStrategyScriptId);
   const handoff = useAppStore((s) => s.quantHandoff);
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
@@ -149,16 +149,15 @@ export const ScriptStudioTab: FC = () => {
   );
 
   /**
-   * 跳到 Strategy IDE 编辑：写入 store 的 `ideActiveStrategyScriptId`，
-   * 然后建议用户切到「研究工作台」侧边栏。IDE 那侧的 `IdeIndicatorIdePanel`
-   * 会自动 applyScript() 把代码回填编辑器。
+   * 跳到研究工作台 Monaco：脚本仍以工坊/DB 为准；
+   * 若已同步到 Workspace FS，可在 Explorer 打开对应 .py。
    */
   const onOpenInIde = useCallback(() => {
     if (!detail) return;
     setActiveStrategyScriptId(detail.id);
-    setIdeLeftTab("indicator");
-    setInfo("已切到 Indicator IDE，请在左侧导航打开「研究工作台」继续编辑");
-  }, [detail, setActiveStrategyScriptId, setIdeLeftTab]);
+    setActiveView("ide");
+    setInfo("已打开研究工作台代码编辑。请从 Explorer 打开 Workspace 中的脚本文件；本工坊可继续只读检视。");
+  }, [detail, setActiveStrategyScriptId, setActiveView]);
 
   const onCopyCode = useCallback(async (code: string, label: string) => {
     try {
@@ -371,14 +370,13 @@ export const ScriptStudioTab: FC = () => {
           <div style={{ fontWeight: 600, color: "var(--qb-text-strong)", marginBottom: 4, marginTop: 12 }}>
             在哪里编辑？
           </div>
-          研究工作台 → 左栏切换到 <strong>Indicator</strong> tab → <code>IdeIndicatorIdePanel</code> 编辑器。
-          点上方「在 IDE 编辑」会把当前脚本灌进去。
+          研究工作台左栏 <strong>Monaco</strong> 编辑 Workspace 文件；脚本请先同步/落到课题 FS，再从 Explorer 打开。
+          「在 IDE 打开」会切到工作台。
 
           <div style={{ fontWeight: 600, color: "var(--qb-text-strong)", marginBottom: 4, marginTop: 12 }}>
             为什么这里不能编辑？
           </div>
-          编辑器复杂度（Monaco + 双 buffer + AI 助手 + 保存路径）已经存在于 Indicator IDE。
-          重复实现一份没意义。这里专注：项目维度只读检视、跨 session 列表、跳转入口。
+          编辑落在 Workspace Monaco（单一真相源）。这里专注：项目维度只读检视、跨 session 列表、跳转入口。
 
           <div style={{ fontWeight: 600, color: "var(--qb-text-strong)", marginBottom: 4, marginTop: 12 }}>
             Backlog

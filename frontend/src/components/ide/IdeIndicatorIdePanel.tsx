@@ -1,3 +1,7 @@
+/**
+ * @deprecated 已从 IDE 左栏移除；指标/脚本编辑改走 Workspace Monaco + 脚本工坊。
+ * 文件暂留以免外部深链/实验引用断裂，勿再挂到 IdeLeftColumn。
+ */
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {

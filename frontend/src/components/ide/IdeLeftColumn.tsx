@@ -1,50 +1,40 @@
 import type { CSSProperties, FC } from "react";
-import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
 import { IdeEditorPane } from "./IdeEditorPane";
-import { IdeIndicatorIdePanel } from "./IdeIndicatorIdePanel";
-import { listIdeLeftTools, type IdeLeftTabId } from "./ideLeftTools";
+import { listIdeLeftTools } from "./ideLeftTools";
 
+/**
+ * IDE 左栏：默认仅代码编辑。工具数 > 1 时显示 Tab（见 ideLeftTools 注册表）。
+ */
 export const IdeLeftColumn: FC = () => {
-  const ideLeftTab = useAppStore((s) => s.ideLeftTab);
-  const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
   const { t } = useTranslation();
   const tools = listIdeLeftTools();
+  const showTabs = tools.length > 1;
 
   return (
     <div style={styles.root} data-qb-ide-left-column>
-      <div style={styles.tabsWrap} role="tablist" aria-label={t("ide.leftColumn.ariaLabel")}>
-        <div className="qb-segmented qb-segmented--inline" style={styles.segmented}>
-          {tools.map((tool) => (
-            <button
-              key={tool.id}
-              type="button"
-              role="tab"
-              aria-selected={ideLeftTab === tool.id}
-              className={`qb-segmented__tab${ideLeftTab === tool.id ? " qb-segmented__tab--active" : ""}`}
-              onClick={() => setIdeLeftTab(tool.id)}
-            >
-              {t(tool.titleKey)}
-            </button>
-          ))}
+      {showTabs ? (
+        <div style={styles.tabsWrap} role="tablist" aria-label={t("ide.leftColumn.ariaLabel")}>
+          <div className="qb-segmented qb-segmented--inline" style={styles.segmented}>
+            {tools.map((tool) => (
+              <button
+                key={tool.id}
+                type="button"
+                role="tab"
+                aria-selected
+                className="qb-segmented__tab qb-segmented__tab--active"
+              >
+                {t(tool.titleKey)}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
       <div style={styles.body}>
-        <IdeLeftToolBody tab={ideLeftTab} />
+        <IdeEditorPane />
       </div>
     </div>
   );
-};
-
-const IdeLeftToolBody: FC<{ tab: IdeLeftTabId }> = ({ tab }) => {
-  switch (tab) {
-    case "editor":
-      return <IdeEditorPane />;
-    case "indicator":
-      return <IdeIndicatorIdePanel />;
-    default:
-      return <IdeEditorPane />;
-  }
 };
 
 const styles: Record<string, CSSProperties> = {
