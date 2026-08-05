@@ -1,16 +1,10 @@
 /**
- * 中栏打开 Workspace FS 文件：Tokyo 编辑器预览/保存（Monaco 路线降级）。
+ * 中栏打开 Workspace FS 文件：Monaco 编辑/保存（Tokyo 降级）。
  */
 import type { CSSProperties, FC } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { getFsWorkspaceFile, putFsWorkspaceFile } from "../../api/backend";
-import { inferTokyoLanguage } from "../../lib/tokyoSyntaxHighlight";
-import { TokyoCodeEditor } from "../code/TokyoCodeEditor";
-
-function languageFromPath(path: string) {
-  const ext = path.includes(".") ? path.split(".").pop() : "";
-  return inferTokyoLanguage(ext);
-}
+import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
 
 export const WorkspaceFilePane: FC<{
   workspaceId: string;
@@ -23,7 +17,6 @@ export const WorkspaceFilePane: FC<{
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const dirty = content !== baseline;
-  const language = useMemo(() => languageFromPath(path), [path]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,15 +81,7 @@ export const WorkspaceFilePane: FC<{
       {loading ? (
         <div style={styles.meta}>加载中…</div>
       ) : (
-        <TokyoCodeEditor
-          value={content}
-          onChange={setContent}
-          language={language}
-          filename={path}
-          flex={1}
-          minHeight={360}
-          maxHeight="100%"
-        />
+        <WorkspaceCodeEditor value={content} onChange={setContent} path={path} />
       )}
     </div>
   );

@@ -11,10 +11,12 @@
     "build:office-atlas": "bun run scripts/build-office-atlas.ts"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-shell": "^2.2.0",
     "lightweight-charts": "^4.2.0",
     "lucide-react": "0.468.0",
+    "monaco-editor": "^0.56.0",
     "phaser": "3.90.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",

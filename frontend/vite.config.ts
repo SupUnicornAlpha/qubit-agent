@@ -24,8 +24,21 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    include: ["monaco-editor", "@monaco-editor/react"],
+  },
+  worker: {
+    format: "es",
+  },
   build: {
     outDir: "dist",
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("monaco-editor")) return "monaco";
+        },
+      },
+    },
   },
 });
