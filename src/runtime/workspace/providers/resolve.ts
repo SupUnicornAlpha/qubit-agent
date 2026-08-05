@@ -2,35 +2,19 @@
  * Workspace Provider 注册与解析。
  * 未知 kind 默认失败；勿静默回退到 builtin（避免配置写错却“看起来正常”）。
  */
+import type { ProviderRef, WorkspaceManifest } from "../types";
+import type { WorkspaceFs } from "../workspace-fs";
 import { createBuiltinFsMemoryProvider, type MemoryProvider } from "./fs-memory";
 import { createLocalQuantDecisionProvider } from "./local-quant";
-import { createExternalHttpMemoryStub } from "./external-http-memory";
-import { createExternalDecisionStub } from "./external-decision-stub";
-import type { WorkspaceManifest } from "../types";
-import type { WorkspaceFs } from "../workspace-fs";
+import { createExternalHttpMemoryProvider } from "./external-http-memory";
+import {
+  createExternalHttpDecisionProvider,
+  EXTERNAL_DECISION_STUB_KIND,
+  EXTERNAL_HTTP_DECISION_KIND,
+} from "./external-decision-stub";
+import type { DecisionEngineProvider, ResolvedProviders } from "./provider-types";
 
-export type DecisionEngineProvider = {
-  readonly kind: string;
-  listStrategies(ws: WorkspaceFs): Promise<Array<{ id: string; name: string; relPath?: string }>>;
-  listFactors(ws: WorkspaceFs): Promise<Array<{ id: string; name: string; relPath?: string }>>;
-  openStrategy?(
-    ws: WorkspaceFs,
-    id: string
-  ): Promise<{ relPath?: string; externalUrl?: string }>;
-  runBacktest?(
-    ws: WorkspaceFs,
-    req: { strategyId: string; params?: Record<string, unknown> }
-  ): Promise<{ runId: string; artifactRelPath?: string }>;
-  syncIntoWorkspace?(
-    ws: WorkspaceFs,
-    opts: { projectId: string }
-  ): Promise<{ factorCount: number; strategyCount: number }>;
-};
-
-export type ResolvedProviders = {
-  memory: MemoryProvider;
-  decision: DecisionEngineProvider;
-};
+export type { DecisionEngineProvider, ResolvedProviders } from "./provider-types";
 
 export class WorkspaceProviderError extends Error {
   constructor(message: string) {
@@ -39,17 +23,18 @@ export class WorkspaceProviderError extends Error {
   }
 }
 
-type MemoryFactory = () => MemoryProvider;
-type DecisionFactory = () => DecisionEngineProvider;
+type MemoryFactory = (ref: ProviderRef) => MemoryProvider;
+type DecisionFactory = (ref: ProviderRef) => DecisionEngineProvider;
 
 const memoryRegistry = new Map<string, MemoryFactory>([
   ["builtin.fs_memory", () => createBuiltinFsMemoryProvider()],
-  ["external.http_memory", () => createExternalHttpMemoryStub()],
+  ["external.http_memory", (ref) => createExternalHttpMemoryProvider(ref)],
 ]);
 
 const decisionRegistry = new Map<string, DecisionFactory>([
   ["builtin.local_quant", () => createLocalQuantDecisionProvider()],
-  ["external.decision_stub", () => createExternalDecisionStub()],
+  [EXTERNAL_HTTP_DECISION_KIND, (ref) => createExternalHttpDecisionProvider(ref)],
+  [EXTERNAL_DECISION_STUB_KIND, (ref) => createExternalHttpDecisionProvider(ref)],
 ]);
 
 export function registerMemoryProvider(kind: string, factory: MemoryFactory): void {
@@ -86,8 +71,14 @@ export function resolveProviders(
   manifest: WorkspaceManifest,
   opts?: ResolveProvidersOptions
 ): ResolvedProviders {
-  const memoryKind = manifest.providers.memory?.kind || "builtin.fs_memory";
-  const decisionKind = manifest.providers.decision?.kind || "builtin.local_quant";
+  const memoryRef: ProviderRef = manifest.providers.memory ?? {
+    kind: "builtin.fs_memory",
+  };
+  const decisionRef: ProviderRef = manifest.providers.decision ?? {
+    kind: "builtin.local_quant",
+  };
+  const memoryKind = memoryRef.kind || "builtin.fs_memory";
+  const decisionKind = decisionRef.kind || "builtin.local_quant";
   const allowFallback = opts?.allowBuiltinFallback === true;
 
   let memoryFactory = memoryRegistry.get(memoryKind);
@@ -119,8 +110,8 @@ export function resolveProviders(
   }
 
   return {
-    memory: memoryFactory(),
-    decision: decisionFactory(),
+    memory: memoryFactory(memoryRef),
+    decision: decisionFactory(decisionRef),
   };
 }
 

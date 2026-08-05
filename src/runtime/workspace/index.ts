@@ -21,9 +21,12 @@ export {
 } from "./providers/resolve";
 export {
   EXTERNAL_HTTP_MEMORY_KIND,
+  createExternalHttpMemoryProvider,
   createExternalHttpMemoryStub,
 } from "./providers/external-http-memory";
 export {
+  EXTERNAL_HTTP_DECISION_KIND,
   EXTERNAL_DECISION_STUB_KIND,
+  createExternalHttpDecisionProvider,
   createExternalDecisionStub,
 } from "./providers/external-decision-stub";
