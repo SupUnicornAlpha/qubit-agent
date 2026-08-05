@@ -9,7 +9,7 @@ import { ProStatusBar } from "./ProStatusBar";
 
 /**
  * 专业 IDE 壳：TopBar（矮）+ Activity/Explorer + 页面宿主 + 右侧 Agent + StatusBar。
- * 现有页面仍由 MainContent 按 activeView 渲染。
+ * 中栏经 MainContent → pages/PageHost 按 activeView 挂载注册表页面。
  */
 export const ProWorkbench: FC = () => {
   const activeView = useAppStore((s) => s.activeView);

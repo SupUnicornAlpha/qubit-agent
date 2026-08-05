@@ -107,7 +107,6 @@ import {
 } from "../../lib/chatMessageHydration";
 import { KlinePanel } from "../chart/KlinePanel";
 import { NewsBriefSection } from "../chart/NewsBriefSection";
-import { IdeResearchWorkbench } from "../ide/IdeResearchWorkbench";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../ide/TeamAgentGraph";
 import { TeamAgentPixelOffice } from "../team/TeamAgentPixelOffice";
 import { ResearchMultiKlineGrid } from "../team/ResearchMultiKlineGrid";
@@ -134,9 +133,6 @@ import {
   describeInteractionRouting,
   filterInteractionsForEdge,
 } from "../../lib/teamGraphDisplay";
-import { BrokerAccountsPanel } from "../broker/BrokerAccountsPanel";
-import { MonitorDashboard } from "../monitor/MonitorDashboard";
-import { TraderLivePanel } from "../trader/TraderLivePanel";
 import { useTranslation } from "../../i18n";
 import { agentDisplayLabel } from "../../lib/agentDisplay";
 import { ConfigAgentPanel, parseAgentMcpServerNames, type AgentConfigUiTab } from "../config/ConfigAgentPanel";
@@ -147,7 +143,6 @@ import { LlmProvidersList } from "../config/LlmProvidersList";
 import { OriginBadge } from "../common/OriginBadge";
 import { PythonRuntimeCard } from "../common/PythonRuntimeCard";
 import { EnvironmentPanel } from "../environment/EnvironmentPanel";
-import { QuantStudioPanel } from "../quant/QuantStudioPanel";
 import { ResearchOutputTabs } from "../team/ResearchOutputTabs";
 import { AgentRunPanel } from "../team/AgentRunChatView";
 import {
@@ -177,70 +172,8 @@ import {
 import { quantNavigationForArtifact } from "../../lib/quantArtifactNavigation";
 import { useAgentDockOptional } from "../../shell/pro/AgentDockContext";
 
-export const MainContent: FC = () => {
-  const activeView = useAppStore((s) => s.activeView);
-  if (activeView === "ide") {
-    return (
-      <main style={styles.mainIde}>
-        <IdeResearchWorkbench renderChat={() => <ChatPanel ideEmbedded />} />
-      </main>
-    );
-  }
-  if (activeView === "chart") {
-    return (
-      <main style={styles.mainIde}>
-        <KlinePanel />
-      </main>
-    );
-  }
-  if (activeView === "trader") {
-    return (
-      <main style={styles.mainTrader}>
-        <TraderLivePanel />
-      </main>
-    );
-  }
-  if (activeView === "chat") {
-    return (
-      <main style={styles.mainChat}>
-        <ChatPanel />
-      </main>
-    );
-  }
-  if (activeView === "team") {
-    return (
-      <main style={styles.mainTeam}>
-        <TeamDashboardPanel />
-      </main>
-    );
-  }
-  if (activeView === "broker") {
-    return (
-      <main style={styles.main}>
-        <BrokerAccountsPanel />
-      </main>
-    );
-  }
-  if (activeView === "quant") {
-    return (
-      <main style={styles.main}>
-        <QuantStudioPanel />
-      </main>
-    );
-  }
-  if (activeView === "config") {
-    return (
-      <main style={styles.main}>
-        <ConfigPanel />
-      </main>
-    );
-  }
-  return (
-    <main style={styles.main}>
-      <MonitorDashboard />
-    </main>
-  );
-};
+/** 页面路由已迁至 `pages/PageHost`；本文件保留 Chat/Team/Config 等页面实现。 */
+export { PageHost as MainContent } from "../../pages/PageHost";
 
 function formatChartContextBlock(ctx: ChartContextPayload): string {
   const lines = [
@@ -1676,7 +1609,7 @@ export const ChatPanel: FC<{
   );
 };
 
-const ConfigPanel: FC = () => {
+export const ConfigPanel: FC = () => {
   const setConfigData = useAppStore((s) => s.setConfigData);
   const reloadSummary = useAppStore((s) => s.reloadSummary);
   const setReloadSummary = useAppStore((s) => s.setReloadSummary);
@@ -5039,7 +4972,7 @@ function computeTopologyHeight(nodeCount: number, viewportHeight: number): numbe
   );
 }
 
-const TeamDashboardPanel: FC = () => {
+export const TeamDashboardPanel: FC = () => {
   const [ticker, setTicker] = useState("");
   const [scopeMode, setScopeMode] = useState<ResearchScopeMode>("single");
   const [basketTickers, setBasketTickers] = useState("");
