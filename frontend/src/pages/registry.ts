@@ -1,9 +1,18 @@
 /**
- * 页面注册表（02 §12 / U5）：PageId → 元数据。
- * 实际组件挂载见 `PageHost`；本表供壳层导航 / Status / 命令面板共用，
- * 禁止在此直接堆业务 JSX，避免与 MainContent 巨石双写。
+ * 页面注册表（02 §12 / U5）：PageId → 元数据 + 组件。
+ * 业务 JSX 在各 Page 文件；本表供壳层导航 / Status / 命令面板 / PageHost 共用。
  */
+import type { ComponentType } from "react";
 import type { ActiveView, InterfaceMode } from "../store";
+import { BrokerAccountsPanel } from "../components/broker/BrokerAccountsPanel";
+import { KlinePanel } from "../components/chart/KlinePanel";
+import { IdeResearchWorkbench } from "../components/ide/IdeResearchWorkbench";
+import { MonitorDashboard } from "../components/monitor/MonitorDashboard";
+import { QuantStudioPanel } from "../components/quant/QuantStudioPanel";
+import { TraderLivePanel } from "../components/trader/TraderLivePanel";
+import { ChatPanel } from "./ChatPage";
+import { ConfigPanel } from "./ConfigPage";
+import { TeamDashboardPanel } from "./TeamPage";
 
 export type PageShell = "simple" | "pro";
 
@@ -20,22 +29,87 @@ export type PageDescriptor = {
   order: number;
   /** 中栏 main 布局变体 */
   layout: PageLayout;
+  /** 页面根组件 */
+  component: ComponentType;
 };
 
 /**
  * 与 store ActiveView 对齐。simple 壳收敛入口；pro 全开。
- * 新增页面：先登记这里，再在 PageHost 的 PAGE_COMPONENT 挂载。
+ * 新增页面：登记这里即可被 PageHost / 导航 / Cmd+K 发现。
  */
 export const PAGE_REGISTRY: readonly PageDescriptor[] = [
-  { id: "chat", titleKey: "sidebar.nav.chat", shells: ["simple", "pro"], order: 10, layout: "chat" },
-  { id: "team", titleKey: "sidebar.nav.team", shells: ["pro"], order: 20, layout: "team" },
-  { id: "ide", titleKey: "sidebar.nav.ide", shells: ["pro"], order: 30, layout: "ide" },
-  { id: "chart", titleKey: "sidebar.nav.chart", shells: ["pro"], order: 40, layout: "ide" },
-  { id: "quant", titleKey: "sidebar.nav.quant", shells: ["pro"], order: 50, layout: "default" },
-  { id: "trader", titleKey: "sidebar.nav.trader", shells: ["pro"], order: 60, layout: "trader" },
-  { id: "broker", titleKey: "sidebar.nav.broker", shells: ["pro"], order: 70, layout: "default" },
-  { id: "monitor", titleKey: "sidebar.nav.monitor", shells: ["simple", "pro"], order: 80, layout: "default" },
-  { id: "config", titleKey: "sidebar.nav.config", shells: ["simple", "pro"], order: 90, layout: "default" },
+  {
+    id: "chat",
+    titleKey: "sidebar.nav.chat",
+    shells: ["simple", "pro"],
+    order: 10,
+    layout: "chat",
+    component: ChatPanel,
+  },
+  {
+    id: "team",
+    titleKey: "sidebar.nav.team",
+    shells: ["pro"],
+    order: 20,
+    layout: "team",
+    component: TeamDashboardPanel,
+  },
+  {
+    id: "ide",
+    titleKey: "sidebar.nav.ide",
+    shells: ["pro"],
+    order: 30,
+    layout: "ide",
+    component: IdeResearchWorkbench,
+  },
+  {
+    id: "chart",
+    titleKey: "sidebar.nav.chart",
+    shells: ["pro"],
+    order: 40,
+    layout: "ide",
+    component: KlinePanel,
+  },
+  {
+    id: "quant",
+    titleKey: "sidebar.nav.quant",
+    shells: ["pro"],
+    order: 50,
+    layout: "default",
+    component: QuantStudioPanel,
+  },
+  {
+    id: "trader",
+    titleKey: "sidebar.nav.trader",
+    shells: ["pro"],
+    order: 60,
+    layout: "trader",
+    component: TraderLivePanel,
+  },
+  {
+    id: "broker",
+    titleKey: "sidebar.nav.broker",
+    shells: ["pro"],
+    order: 70,
+    layout: "default",
+    component: BrokerAccountsPanel,
+  },
+  {
+    id: "monitor",
+    titleKey: "sidebar.nav.monitor",
+    shells: ["simple", "pro"],
+    order: 80,
+    layout: "default",
+    component: MonitorDashboard,
+  },
+  {
+    id: "config",
+    titleKey: "sidebar.nav.config",
+    shells: ["simple", "pro"],
+    order: 90,
+    layout: "default",
+    component: ConfigPanel,
+  },
 ] as const;
 
 export function listPagesForShell(shell: PageShell): PageDescriptor[] {

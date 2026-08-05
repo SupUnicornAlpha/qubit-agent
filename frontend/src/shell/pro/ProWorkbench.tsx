@@ -8,8 +8,7 @@ import { ProAgentPanel } from "./ProAgentPanel";
 import { ProStatusBar } from "./ProStatusBar";
 
 /**
- * 专业 IDE 壳：TopBar（矮）+ Activity/Explorer + 页面宿主 + 右侧 Agent + StatusBar。
- * 中栏经 MainContent → pages/PageHost 按 activeView 挂载注册表页面。
+ * 专业 IDE 壳：TopBar（矮）+ Activity/Explorer + PageHost + 右侧 Agent + StatusBar。
  */
 export const ProWorkbench: FC = () => {
   const activeView = useAppStore((s) => s.activeView);

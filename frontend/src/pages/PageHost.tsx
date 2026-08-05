@@ -1,26 +1,10 @@
 /**
- * 页面宿主（02 §3.2 / U5）：按 PageId 渲染既有页面，不在此堆业务逻辑。
- * MainContent 巨石里的 Chat/Team/Config 经 lazy 挂载，避免与本模块循环依赖。
+ * 页面宿主（02 §3.2 / U5）：按注册表渲染页面，不在此堆业务逻辑。
  */
-import { lazy, Suspense, type CSSProperties, type ComponentType, type FC } from "react";
-import { BrokerAccountsPanel } from "../components/broker/BrokerAccountsPanel";
-import { KlinePanel } from "../components/chart/KlinePanel";
-import { IdeResearchWorkbench } from "../components/ide/IdeResearchWorkbench";
-import { MonitorDashboard } from "../components/monitor/MonitorDashboard";
-import { QuantStudioPanel } from "../components/quant/QuantStudioPanel";
-import { TraderLivePanel } from "../components/trader/TraderLivePanel";
-import { useAppStore, type ActiveView } from "../store";
+import type { CSSProperties, FC } from "react";
+import { useAppStore } from "../store";
 import { getPageDescriptor, type PageLayout } from "./registry";
-
-const ChatPanel = lazy(() =>
-  import("../components/layout/MainContent").then((m) => ({ default: m.ChatPanel }))
-);
-const TeamDashboardPanel = lazy(() =>
-  import("../components/layout/MainContent").then((m) => ({ default: m.TeamDashboardPanel }))
-);
-const ConfigPanel = lazy(() =>
-  import("../components/layout/MainContent").then((m) => ({ default: m.ConfigPanel }))
-);
+import { MonitorDashboard } from "../components/monitor/MonitorDashboard";
 
 const shellStyle: Record<PageLayout, CSSProperties> = {
   default: { flex: 1, minWidth: 0, minHeight: 0, overflow: "auto", padding: 24 },
@@ -64,40 +48,16 @@ const shellStyle: Record<PageLayout, CSSProperties> = {
   },
 };
 
-const IdePage: FC = () => <IdeResearchWorkbench />;
-
-const PAGE_COMPONENT: Record<ActiveView, ComponentType> = {
-  chat: ChatPanel,
-  team: TeamDashboardPanel,
-  ide: IdePage,
-  chart: KlinePanel,
-  quant: QuantStudioPanel,
-  trader: TraderLivePanel,
-  broker: BrokerAccountsPanel,
-  monitor: MonitorDashboard,
-  config: ConfigPanel,
-};
-
-function PageFallback() {
-  return (
-    <div style={{ padding: 24, color: "var(--qb-sidebar-muted, #9d9d9d)", fontSize: 13 }}>
-      Loading…
-    </div>
-  );
-}
-
 /** 中栏 / 简洁壳共用的页面宿主 */
 export const PageHost: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
   const desc = getPageDescriptor(activeView);
   const layout = desc?.layout ?? "default";
-  const Page = PAGE_COMPONENT[activeView] ?? MonitorDashboard;
+  const Page = desc?.component ?? MonitorDashboard;
 
   return (
     <main className="qb-page-host" data-page={activeView} style={shellStyle[layout]}>
-      <Suspense fallback={<PageFallback />}>
-        <Page />
-      </Suspense>
+      <Page />
     </main>
   );
 };
