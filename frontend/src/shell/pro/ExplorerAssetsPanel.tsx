@@ -102,14 +102,6 @@ export const ExplorerAssetsPanel: FC = () => {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    if (activeFsWorkspaceId && source !== "workspace") {
-      // 有课题时默认偏向工作区投影，但不强制打断用户已选手动工坊
-    } else if (!activeFsWorkspaceId && source === "workspace") {
-      setSource("workshop");
-    }
-  }, [activeFsWorkspaceId, source]);
-
   const openWsAsset = (item: FsDecisionAssetItem) => {
     if (!activeFsWorkspaceId) return;
     const path = item.relPath || item.id;
