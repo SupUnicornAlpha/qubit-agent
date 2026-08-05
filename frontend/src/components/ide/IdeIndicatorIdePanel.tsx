@@ -25,7 +25,7 @@ export const IdeIndicatorIdePanel: FC = () => {
   const ideActiveStrategyScriptId = useAppStore((s) => s.ideActiveStrategyScriptId);
   const setIdeActiveStrategyScriptId = useAppStore((s) => s.setIdeActiveStrategyScriptId);
   const setChatDraftPrefill = useAppStore((s) => s.setChatDraftPrefill);
-  const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
+  const setAgentPanelOpen = useAppStore((s) => s.setAgentPanelOpen);
   const selectedSessionId = useAppStore((s) => s.selectedSessionId);
   const chatSessions = useAppStore((s) => s.chatSessions);
   const chartSpec = useAppStore((s) => s.chartSpec);
@@ -163,7 +163,7 @@ export const IdeIndicatorIdePanel: FC = () => {
       code: ideStrategySource,
     });
     setChatDraftPrefill(block);
-    setIdeLeftTab("chat");
+    setAgentPanelOpen(true);
   };
 
   const badgeText = ideActiveStrategyScriptId

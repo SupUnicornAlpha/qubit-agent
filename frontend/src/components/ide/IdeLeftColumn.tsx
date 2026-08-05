@@ -1,42 +1,50 @@
-import type { CSSProperties, FC, ReactNode } from "react";
+import type { CSSProperties, FC } from "react";
 import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
+import { IdeEditorPane } from "./IdeEditorPane";
 import { IdeIndicatorIdePanel } from "./IdeIndicatorIdePanel";
+import { listIdeLeftTools, type IdeLeftTabId } from "./ideLeftTools";
 
-export const IdeLeftColumn: FC<{ renderChat: () => ReactNode }> = ({ renderChat }) => {
+export const IdeLeftColumn: FC = () => {
   const ideLeftTab = useAppStore((s) => s.ideLeftTab);
   const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
   const { t } = useTranslation();
+  const tools = listIdeLeftTools();
 
   return (
-    <div style={styles.root}>
+    <div style={styles.root} data-qb-ide-left-column>
       <div style={styles.tabsWrap} role="tablist" aria-label={t("ide.leftColumn.ariaLabel")}>
         <div className="qb-segmented qb-segmented--inline" style={styles.segmented}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={ideLeftTab === "chat"}
-            className={`qb-segmented__tab${ideLeftTab === "chat" ? " qb-segmented__tab--active" : ""}`}
-            onClick={() => setIdeLeftTab("chat")}
-          >
-            {t("ide.leftColumn.chat")}
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={ideLeftTab === "indicator"}
-            className={`qb-segmented__tab${ideLeftTab === "indicator" ? " qb-segmented__tab--active" : ""}`}
-            onClick={() => setIdeLeftTab("indicator")}
-          >
-            {t("ide.leftColumn.indicator")}
-          </button>
+          {tools.map((tool) => (
+            <button
+              key={tool.id}
+              type="button"
+              role="tab"
+              aria-selected={ideLeftTab === tool.id}
+              className={`qb-segmented__tab${ideLeftTab === tool.id ? " qb-segmented__tab--active" : ""}`}
+              onClick={() => setIdeLeftTab(tool.id)}
+            >
+              {t(tool.titleKey)}
+            </button>
+          ))}
         </div>
       </div>
       <div style={styles.body}>
-        {ideLeftTab === "chat" ? renderChat() : <IdeIndicatorIdePanel />}
+        <IdeLeftToolBody tab={ideLeftTab} />
       </div>
     </div>
   );
+};
+
+const IdeLeftToolBody: FC<{ tab: IdeLeftTabId }> = ({ tab }) => {
+  switch (tab) {
+    case "editor":
+      return <IdeEditorPane />;
+    case "indicator":
+      return <IdeIndicatorIdePanel />;
+    default:
+      return <IdeEditorPane />;
+  }
 };
 
 const styles: Record<string, CSSProperties> = {

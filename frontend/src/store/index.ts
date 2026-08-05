@@ -298,8 +298,9 @@ export interface AppState {
   setIdeActiveStrategyScriptId: (v: string | null) => void;
   ideAiPrompt: string;
   setIdeAiPrompt: (v: string) => void;
-  ideLeftTab: "chat" | "indicator";
-  setIdeLeftTab: (v: "chat" | "indicator") => void;
+  /** IDE 左栏工具：editor（Monaco）| indicator；对话在右侧 Agent */
+  ideLeftTab: "editor" | "indicator";
+  setIdeLeftTab: (v: "editor" | "indicator") => void;
   chatDraftPrefill: string | null;
   setChatDraftPrefill: (v: string | null) => void;
   agents: AgentSummary[];
@@ -685,7 +686,7 @@ export const useAppStore = create<AppState>((set) => ({
   setIdeActiveStrategyScriptId: (v) => set({ ideActiveStrategyScriptId: v }),
   ideAiPrompt: "",
   setIdeAiPrompt: (v) => set({ ideAiPrompt: v }),
-  ideLeftTab: "chat",
+  ideLeftTab: "editor",
   setIdeLeftTab: (v) => set({ ideLeftTab: v }),
   chatDraftPrefill: null,
   setChatDraftPrefill: (v) => set({ chatDraftPrefill: v }),

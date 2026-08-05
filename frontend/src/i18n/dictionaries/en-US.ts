@@ -201,14 +201,19 @@ const pack: LocalePack = {
     },
     ide: {
       workbench: {
-        gutterAriaLabel: "Resize chat / chart split",
+        gutterAriaLabel: "Resize editor / chart split",
         emptyCenter:
           "Chart and backtest are hidden. Open 'Chart' or 'Backtest' from the toolbar above to restore them.",
       },
       leftColumn: {
-        ariaLabel: "Left workbench mode",
-        chat: "Chat workbench",
+        ariaLabel: "Left workbench tools",
+        editor: "Code editor",
         indicator: "Indicator IDE",
+        editorEmptyTitle: "Workspace file editor",
+        editorEmptyBody:
+          "Chat lives in the right Agent panel. Edit workspace files here with Monaco — open .md / .py / .ts from the Explorer.",
+        editorNeedWorkspace: "No Workspace selected. Create or switch one in Explorer first.",
+        openExplorer: "Open Explorer",
       },
       toolbar: {
         labels: {

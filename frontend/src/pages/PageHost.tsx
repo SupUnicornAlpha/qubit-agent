@@ -64,11 +64,7 @@ const shellStyle: Record<PageLayout, CSSProperties> = {
   },
 };
 
-const IdePage: FC = () => (
-  <Suspense fallback={null}>
-    <IdeResearchWorkbench renderChat={() => <ChatPanel ideEmbedded />} />
-  </Suspense>
-);
+const IdePage: FC = () => <IdeResearchWorkbench />;
 
 const PAGE_COMPONENT: Record<ActiveView, ComponentType> = {
   chat: ChatPanel,

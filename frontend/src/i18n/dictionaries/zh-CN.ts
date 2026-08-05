@@ -201,13 +201,18 @@ const pack: LocalePack = {
     },
     ide: {
       workbench: {
-        gutterAriaLabel: "调整对话与 K 线宽度",
+        gutterAriaLabel: "调整编辑器与 K 线宽度",
         emptyCenter: "已隐藏 K 线 / 回测。在上方工具栏打开「K线」或「回测」即可恢复。",
       },
       leftColumn: {
-        ariaLabel: "左侧工作台模式",
-        chat: "对话工作台",
+        ariaLabel: "左侧工作台工具",
+        editor: "代码编辑",
         indicator: "指标 IDE",
+        editorEmptyTitle: "Workspace 文件编辑",
+        editorEmptyBody:
+          "对话已固定在右侧 Agent。在此用 Monaco 编辑课题文件；从左侧 Explorer 打开 .md / .py / .ts 等。",
+        editorNeedWorkspace: "尚未选择 Workspace，请先在 Explorer 创建建或切换课题。",
+        openExplorer: "打开 Explorer",
       },
       toolbar: {
         labels: {

@@ -29,6 +29,7 @@ export const ExplorerAssetsPanel: FC = () => {
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
   const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
   const setPendingWorkspaceFile = useAppStore((s) => s.setPendingWorkspaceFile);
+  const setIdeLeftTab = useAppStore((s) => s.setIdeLeftTab);
   const { t } = useTranslation();
 
   const [tab, setTab] = useState<AssetTab>("strategies");
@@ -107,7 +108,8 @@ export const ExplorerAssetsPanel: FC = () => {
     const path = item.relPath || item.id;
     if (!path) return;
     setPendingWorkspaceFile({ workspaceId: activeFsWorkspaceId, path });
-    setActiveView("team");
+    setIdeLeftTab("editor");
+    setActiveView("ide");
   };
 
   const handleSync = async () => {

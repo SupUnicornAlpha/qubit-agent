@@ -1,4 +1,4 @@
-import type { CSSProperties, FC, ReactNode } from "react";
+import type { CSSProperties, FC } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KlinePanel } from "../chart/KlinePanel";
@@ -12,7 +12,8 @@ import { IdeWorkbenchToolbar } from "./IdeWorkbenchToolbar";
 const MIN_IDE_LEFT_PCT = 22;
 const MAX_IDE_LEFT_PCT = 68;
 
-export const IdeResearchWorkbench: FC<{ renderChat: () => ReactNode }> = ({ renderChat }) => {
+/** 左栏编辑器宿主 + 中栏 K 线/回测；对话在右侧 Agent，不再嵌入左栏。 */
+export const IdeResearchWorkbench: FC = () => {
   const idePanels = useAppStore((s) => s.idePanels);
   const ideQuickTradeOpen = useAppStore((s) => s.ideQuickTradeOpen);
   const { t } = useTranslation();
@@ -55,7 +56,7 @@ export const IdeResearchWorkbench: FC<{ renderChat: () => ReactNode }> = ({ rend
         {idePanels.left ? (
           <>
             <div style={{ ...styles.leftPane, flexBasis: `${leftPct}%` }}>
-              <IdeLeftColumn renderChat={renderChat} />
+              <IdeLeftColumn />
             </div>
             <div
               role="separator"
