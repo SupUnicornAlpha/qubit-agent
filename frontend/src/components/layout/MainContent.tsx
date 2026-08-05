@@ -5455,6 +5455,7 @@ const TeamDashboardPanel: FC = () => {
   const chartReloadNonce = useAppStore((s) => s.chartReloadNonce);
   const requestChartReload = useAppStore((s) => s.requestChartReload);
   const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
+  const setProAgentLifecycle = useAppStore((s) => s.setProAgentLifecycle);
 
   const teamTriRef = useRef<HTMLDivElement | null>(null);
   const [teamLeftW, setTeamLeftW] = useState(268);
@@ -6472,6 +6473,15 @@ const TeamDashboardPanel: FC = () => {
     title: string;
     summary: string;
   } | null>(null);
+
+  useEffect(() => {
+    const next = teamPendingHitl
+      ? "awaiting_hitl"
+      : running || orchestratorChatInFlight
+        ? "running"
+        : "idle";
+    setProAgentLifecycle(next);
+  }, [teamPendingHitl, running, orchestratorChatInFlight, setProAgentLifecycle]);
 
   /**
    * 中栏底部「研究产出」抽屉的折叠态（因子/策略/脚本/草稿）。
@@ -7951,9 +7961,10 @@ const TeamDashboardPanel: FC = () => {
             }}
             composerValue={teamAnalysisContext}
             onComposerChange={setTeamAnalysisContext}
-            onSend={() => {
+            fsWorkspaceId={activeFsWorkspaceId}
+            onSend={(message) => {
               // 唯一执行入口：交给 Orchestrator 自主判断（答 / 派单 / 全队）。
-              void handleOrchestratorChat();
+              void handleOrchestratorChat(message ? { message } : undefined);
             }}
             onInject={async (content) => {
               const wf = workflowRunId.trim();

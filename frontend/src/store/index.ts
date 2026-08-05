@@ -261,6 +261,12 @@ export interface AppState {
   /** 当前激活的 FS Workspace（课题）id */
   activeFsWorkspaceId: string | null;
   setActiveFsWorkspaceId: (id: string | null) => void;
+  /**
+   * 专业壳 StatusBar 的 Agent 生命周期（研究团队 / 对话运行态写入）。
+   * 文档 V7：Status/壳层显示 Agent State。
+   */
+  proAgentLifecycle: "idle" | "running" | "awaiting_hitl";
+  setProAgentLifecycle: (lifecycle: "idle" | "running" | "awaiting_hitl") => void;
   chartOverlays: ChartOverlaysState;
   toggleChartOverlay: (key: ChartOverlayKey) => void;
   idePanels: IdePanelsState;
@@ -598,6 +604,8 @@ export const useAppStore = create<AppState>((set) => ({
     }
     set({ activeFsWorkspaceId: id });
   },
+  proAgentLifecycle: "idle",
+  setProAgentLifecycle: (proAgentLifecycle) => set({ proAgentLifecycle }),
   chartOverlays: { ...defaultChartOverlays },
   toggleChartOverlay: (key) =>
     set((s) => {

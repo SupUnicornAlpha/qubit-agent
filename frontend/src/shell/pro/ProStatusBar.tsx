@@ -1,18 +1,22 @@
 import type { FC } from "react";
 import { useAppStore } from "../../store";
 import { useTranslation } from "../../i18n";
+import { getPageDescriptor } from "../../pages/registry";
 
 export type ProAgentLifecycle = "idle" | "running" | "awaiting_hitl";
 
-export const ProStatusBar: FC<{ lifecycle?: ProAgentLifecycle }> = ({
-  lifecycle = "idle",
-}) => {
+export const ProStatusBar: FC = () => {
   const connected = useAppStore((s) => s.backendConnected);
   const activeView = useAppStore((s) => s.activeView);
   const agentPanelOpen = useAppStore((s) => s.agentPanelOpen);
   const setAgentPanelOpen = useAppStore((s) => s.setAgentPanelOpen);
   const setInterfaceMode = useAppStore((s) => s.setInterfaceMode);
+  const lifecycle = useAppStore((s) => s.proAgentLifecycle);
+  const activeFsWorkspaceId = useAppStore((s) => s.activeFsWorkspaceId);
   const { t } = useTranslation();
+
+  const page = getPageDescriptor(activeView);
+  const pageLabel = page ? t(page.titleKey) : t(`sidebar.nav.${activeView}`);
 
   const stateLabel =
     lifecycle === "running"
@@ -38,7 +42,15 @@ export const ProStatusBar: FC<{ lifecycle?: ProAgentLifecycle }> = ({
           {connected ? t("common.backend.connected") : t("common.backend.offline")}
         </span>
         <span aria-hidden>·</span>
-        <span>{t(`sidebar.nav.${activeView}`)}</span>
+        <span>{pageLabel}</span>
+        {activeFsWorkspaceId ? (
+          <>
+            <span aria-hidden>·</span>
+            <span title={activeFsWorkspaceId}>
+              WS {activeFsWorkspaceId.slice(0, 8)}…
+            </span>
+          </>
+        ) : null}
         <span aria-hidden>·</span>
         <span>{stateLabel}</span>
       </div>

@@ -26,6 +26,10 @@ import {
   useState,
 } from "react";
 import { type AgentControlMode, type StepStreamEvent } from "../../api/types";
+import {
+  listFsWorkspaceMemory,
+  type FsMemoryEntry,
+} from "../../api/backend";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
 import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
 import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
@@ -80,12 +84,14 @@ export interface OrchestratorChatPanelProps {
   /** composer 文本（受控；与左栏「分析提示」共享同一 state） */
   composerValue: string;
   onComposerChange: (value: string) => void;
-  /** 空闲时发送：把 composerValue 作为指令启动团队分析 */
-  onSend: () => void;
+  /** 空闲时发送；可传入已展开文案（含 @记忆 正文） */
+  onSend: (message?: string) => void;
   /** 运行中发送：把 composerValue 注入运行中的 Orchestrator，返回队列剩余条数 */
   onInject: (content: string) => Promise<number>;
   /** 协作式中断：请求在下一个安全断点暂停，等用户输入新提示词后续跑 */
   onInterrupt: () => Promise<void>;
+  /** 当前 FS Workspace：@记忆 引用列表来源 */
+  fsWorkspaceId?: string | null;
   /** Agent / Plan / Goal：Orchestrator 的分步计划（update_plan 推流），置于对话框顶部 */
   plan?: OrchestratorPlan | null;
   /** Plan 审批后保留计划并以 Goal 模式继续同一 workflow */
@@ -171,6 +177,7 @@ export function OrchestratorChatPanel({
   sendDisabled,
   sendDisabledReason,
   runStrip,
+  fsWorkspaceId = null,
 }: OrchestratorChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [injectHint, setInjectHint] = useState<string | null>(null);
@@ -178,6 +185,10 @@ export function OrchestratorChatPanel({
   const [interrupting, setInterrupting] = useState(false);
   const [artifactsOpen, setArtifactsOpen] = useState(false);
   const [focusedSubAgentRole, setFocusedSubAgentRole] = useState<string | null>(null);
+  const [memoryPickerOpen, setMemoryPickerOpen] = useState(false);
+  const [memoryHits, setMemoryHits] = useState<FsMemoryEntry[]>([]);
+  const [memoryMentions, setMemoryMentions] = useState<FsMemoryEntry[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const [statusRailPinned, setStatusRailPinned] = useState(() => {
     try {
       return window.localStorage.getItem("qb.orchestrator.statusRailPinned") !== "0";
@@ -278,6 +289,7 @@ export function OrchestratorChatPanel({
       try {
         const queued = await onInject(text);
         onComposerChange("");
+        setMemoryMentions([]);
         setInjectHint(
           `已发送给 Orchestrator，将在它下一轮思考时采纳${queued > 1 ? `（队列 ${queued} 条待消费）` : ""}`
         );
@@ -287,8 +299,46 @@ export function OrchestratorChatPanel({
         setInjecting(false);
       }
     } else {
-      onSend();
+      let text = composerValue.trim();
+      if (memoryMentions.length > 0) {
+        const block = memoryMentions
+          .map((m) => `### ${m.title}\n${m.body.trim() || "（空正文）"}`)
+          .join("\n\n");
+        text = `${text}\n\n---\n[Workspace @记忆]\n${block}`;
+      }
+      onComposerChange("");
+      setMemoryMentions([]);
+      setMemoryPickerOpen(false);
+      onSend(text);
     }
+  };
+
+  const openMemoryPicker = async () => {
+    if (!fsWorkspaceId) {
+      setInjectHint("请先在左栏选择 FS 工作区，再 @记忆");
+      return;
+    }
+    setMemoryPickerOpen((v) => !v);
+    if (memoryPickerOpen) return;
+    setMemoryLoading(true);
+    try {
+      const rows = await listFsWorkspaceMemory(fsWorkspaceId, { limit: 30 });
+      setMemoryHits(rows);
+    } catch (e) {
+      setInjectHint(`加载记忆失败：${(e as Error).message}`);
+      setMemoryPickerOpen(false);
+    } finally {
+      setMemoryLoading(false);
+    }
+  };
+
+  const toggleMemoryMention = (entry: FsMemoryEntry) => {
+    setMemoryMentions((prev) => {
+      if (prev.some((m) => m.id === entry.id)) {
+        return prev.filter((m) => m.id !== entry.id);
+      }
+      return [...prev, entry];
+    });
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -627,6 +677,55 @@ export function OrchestratorChatPanel({
           </div>
         ) : null}
         {injectHint ? <div style={styles.injectHint}>{injectHint}</div> : null}
+        {memoryMentions.length > 0 ? (
+          <div style={styles.memoryChips} data-qb-orch-memory-chips>
+            {memoryMentions.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                style={styles.memoryChip}
+                title="再次点击移除"
+                onClick={() => toggleMemoryMention(m)}
+              >
+                @记忆 · {m.title}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {memoryPickerOpen ? (
+          <div style={styles.memoryPicker} data-qb-orch-memory-picker>
+            <div style={styles.memoryPickerHead}>
+              <span>选择要引用的长期记忆</span>
+              <button type="button" style={styles.runStripLink} onClick={() => setMemoryPickerOpen(false)}>
+                关闭
+              </button>
+            </div>
+            {memoryLoading ? (
+              <div style={styles.composerHint}>加载中…</div>
+            ) : memoryHits.length === 0 ? (
+              <div style={styles.composerHint}>当前工作区暂无记忆条目</div>
+            ) : (
+              memoryHits.map((m) => {
+                const selected = memoryMentions.some((x) => x.id === m.id);
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    style={{
+                      ...styles.memoryPickItem,
+                      ...(selected ? styles.memoryPickItemActive : null),
+                    }}
+                    onClick={() => toggleMemoryMention(m)}
+                  >
+                    {selected ? "✓ " : ""}
+                    {m.pinned ? "📌 " : ""}
+                    {m.title}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : null}
         <textarea
           style={styles.composer}
           value={composerValue}
@@ -636,11 +735,23 @@ export function OrchestratorChatPanel({
           placeholder={
             composerMode === "inject"
               ? "给运行中的 Orchestrator 追加指令，例如：把重点放到现金流质量上…"
-              : "和 Orchestrator 对话，例如：总结一下结论 / 重做一次技术面 / 对当前标的做深度尽调…"
+              : "和 Orchestrator 对话，例如：总结一下结论 / 重做一次技术面；可用 @记忆 引用课题沉淀…"
           }
         />
         <div style={styles.composerBar}>
           <div style={styles.composerMeta}>
+            <button
+              type="button"
+              style={{
+                ...styles.memoryAtBtn,
+                ...(!fsWorkspaceId ? styles.modeBtnDisabled : null),
+              }}
+              disabled={!fsWorkspaceId}
+              title={fsWorkspaceId ? "引用当前工作区长期记忆" : "先选择 FS 工作区"}
+              onClick={() => void openMemoryPicker()}
+            >
+              @记忆
+            </button>
             <AgentModePicker
               value={agentMode}
               onChange={onAgentModeChange}
@@ -1136,6 +1247,65 @@ const styles: Record<string, CSSProperties> = {
     fontFamily: "inherit",
   },
   subConversationBody: { height: 500, minHeight: 300 },
+  memoryChips: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    marginBottom: 6,
+  },
+  memoryChip: {
+    border: "1px solid rgba(56,189,248,0.35)",
+    background: "rgba(56,189,248,0.12)",
+    color: "#7dd3fc",
+    borderRadius: 999,
+    fontSize: 11,
+    padding: "3px 8px",
+    cursor: "pointer",
+  },
+  memoryPicker: {
+    marginBottom: 8,
+    padding: 8,
+    borderRadius: 8,
+    border: "1px solid #3f3f46",
+    background: "#121216",
+    maxHeight: 160,
+    overflow: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+  },
+  memoryPickerHead: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontSize: 11,
+    color: "#a1a1aa",
+    marginBottom: 4,
+  },
+  memoryPickItem: {
+    textAlign: "left",
+    border: "none",
+    background: "transparent",
+    color: "#d4d4d8",
+    fontSize: 12,
+    padding: "4px 6px",
+    borderRadius: 4,
+    cursor: "pointer",
+  },
+  memoryPickItemActive: {
+    background: "rgba(56,189,248,0.15)",
+    color: "#7dd3fc",
+  },
+  memoryAtBtn: {
+    flexShrink: 0,
+    border: "1px solid #3f3f46",
+    background: "#27272a",
+    color: "#e4e4e7",
+    borderRadius: 6,
+    fontSize: 11,
+    padding: "4px 8px",
+    cursor: "pointer",
+  },
   composerBar: { display: "flex", alignItems: "center", gap: 8 },
   composerMeta: {
     flex: 1,

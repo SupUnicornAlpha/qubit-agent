@@ -7,6 +7,7 @@ import { useTranslation } from "../../i18n";
 import { ExplorerAssetsPanel } from "../../shell/pro/ExplorerAssetsPanel";
 import { ExplorerSessionsPanel } from "../../shell/pro/ExplorerSessionsPanel";
 import { ExplorerWorkspaceTree } from "../../shell/pro/ExplorerWorkspaceTree";
+import { listPagesForShell } from "../../pages/registry";
 
 /** 仅承载结构（id 与 i18n key），具体 label 在渲染时通过 `t()` 解析。 */
 const QUANT_SUB: readonly { id: QuantTab; i18nKey: string }[] = [
@@ -190,17 +191,17 @@ export const Sidebar: FC = () => {
                 <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
                   {t("sidebar.group.nav")}
                 </div>
-                {NAV_ITEMS.map((item) => (
+                {listPagesForShell("pro").map((page) => (
                   <button
-                    key={item.key}
+                    key={page.id}
                     type="button"
-                    onClick={() => goNav(item.key)}
-                    className={`qb-nav-row${activeView === item.key ? " qb-nav-row--active" : ""}`}
+                    onClick={() => goNav(page.id as NavKey)}
+                    className={`qb-nav-row${activeView === page.id ? " qb-nav-row--active" : ""}`}
                   >
                     <span style={styles.icon}>
-                      <NavGlyph navKey={item.key} size={16} />
+                      <NavGlyph navKey={page.id as NavKey} size={16} />
                     </span>
-                    <span style={styles.label}>{t(item.i18nKey)}</span>
+                    <span style={styles.label}>{t(page.titleKey)}</span>
                   </button>
                 ))}
               </div>
