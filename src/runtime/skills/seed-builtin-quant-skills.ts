@@ -71,6 +71,12 @@ export const SEED_QUANT_SKILLS: ReadonlyArray<QuantSkillSpec> = [
     tags: ["momentum", "technical", "alpha"],
   },
   {
+    slug: "technical-macd-kdj-volume-factors",
+    fileName: "technical-macd-kdj-volume-factors.md",
+    roles: ["research", "analyst_technical", "orchestrator"],
+    tags: ["technical", "macd", "kdj", "volume", "factor", "alpha"],
+  },
+  {
     slug: "mean-reversion-bollinger",
     fileName: "mean-reversion-bollinger.md",
     roles: ["analyst_technical"],

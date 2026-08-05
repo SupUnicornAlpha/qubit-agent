@@ -24,6 +24,10 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "recommendation.record",
     "strategy.create_version",
     "strategy.compose",
+    "factor.register",
+    "factor.list",
+    "factor.compute",
+    "factor.autoEvaluate",
     "factor.mine.llm",
     "workspace.context.snapshot",
 ];

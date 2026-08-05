@@ -66,9 +66,17 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
    * 返回：{ strategyId, strategyVersionId, versionTag }
    */
   "strategy.create_version": async (ctx, params) => {
-    const name = String(params.name ?? "").trim();
+    const nestedStrategy =
+      params.strategy && typeof params.strategy === "object" && !Array.isArray(params.strategy)
+        ? (params.strategy as Record<string, unknown>)
+        : null;
+    const name = String(
+      params.name ?? params.strategyName ?? nestedStrategy?.name ?? ""
+    ).trim();
     if (!name) {
-      throw new Error("strategy.create_version: name (策略名) is required");
+      throw new Error(
+        "strategy.create_version: name (策略名) is required（也接受 strategyName / strategy.name）"
+      );
     }
     /**
      * projectId 解析：优先 ctx（来自 workflow_run.project_id），其次 params 显式传入；

@@ -439,6 +439,7 @@ export const QUANT_SKILLS = {
   peadDrift: "quant:alpha-pead-drift",
   piotroskiFScore: "quant:quality-piotroski-f-score",
   momentum52w: "quant:momentum-52w-breakout",
+  technicalMacdKdjVolume: "quant:technical-macd-kdj-volume-factors",
   meanReversionBb: "quant:mean-reversion-bollinger",
   volRegime: "quant:vol-regime-classifier",
   yieldCurveRecession: "quant:yield-curve-recession-probe",
@@ -452,7 +453,7 @@ export const QUANT_SKILLS = {
 const Q = QUANT_SKILLS;
 
 export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
-  orchestrator: skills(S.compsAnalysis, S.thesisTracker, Q.factorIcIrReport),
+  orchestrator: skills(S.compsAnalysis, S.thesisTracker, Q.factorIcIrReport, Q.technicalMacdKdjVolume),
   market_data: skills(S.cleanDataXls),
   news_event: skills(
     "sentiment-analysis",
@@ -475,6 +476,7 @@ export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
     Q.factorIcIrReport,
     Q.peadDrift,
     Q.momentum52w,
+    Q.technicalMacdKdjVolume,
     Q.volRegime,
     Q.orderIntentBuy
   ),
@@ -511,10 +513,11 @@ export const ROLE_SKILLS: Partial<Record<AgentRole, string[]>> = {
     "technical-analysis",
     /** M9.P3：技术面也是动量因子家族最常用 */
     "momentum-factor",
-    /** Wave-1：动量 / 均值回归 / vol regime 三件套 */
+    /** Wave-1：动量 / 均值回归 / vol regime 三件套 + MACD/KDJ/量价落库 */
     Q.momentum52w,
     Q.meanReversionBb,
-    Q.volRegime
+    Q.volRegime,
+    Q.technicalMacdKdjVolume
   ),
   analyst_sentiment: skills(
     "sentiment-analysis",

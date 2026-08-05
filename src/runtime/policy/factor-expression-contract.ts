@@ -16,6 +16,10 @@ export const SUPPORTED_QLIB_OPS = [
   "Delta",
   "Abs",
   "Log",
+  "EMA",
+  "Slope",
+  "Sign",
+  "IfPos",
 ] as const;
 
 /** Rewrite common LLM aliases into qlib_expr operators. */

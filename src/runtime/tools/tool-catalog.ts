@@ -390,7 +390,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // M2：因子/规则/策略 三段式工具（详见 FACTOR_RULE_STRATEGY_DESIGN.md §6.1-6.3）
   "factor.register": {
     description:
-      "注册因子并返回 `factor_id`（落 factor_definition；走 Provider.validateExpr 做语法校验）。必填：`name`、`category`、`expr`（也兼容 `expression` / `factor_expression`）、`lang:'qlib_expr'|'python'`；可选：`universe`、`horizon`、`dry_run:false`。后续 factor.compute 必须使用这里返回的 factor_id。",
+      "注册因子并返回 `factor_id`（落 factor_definition）。必填：`name`、`category`、`expr`（兼容 `expression`/`factor_expression`）、`lang:'qlib_expr'|'python'`；可选 `universe`/`horizon`/`dry_run:false`。参数平铺在顶层，不要包在 `arguments` 里。优先技术/量价示例：`EMA(close,12)-EMA(close,26)`、`(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)`、`volume/Mean(volume,20)`。后续 factor.compute 必须用返回的 factor_id。",
     category: "research",
   },
   "factor.compute": {
@@ -425,7 +425,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 现在补这个让"最后一公里"能写库。
      */
     description:
-      "创建一个新的策略版本（落 strategy + strategy_version，按 (project_id, name) 幂等）。**必填 `name`** (策略名)，可选 `style` ('low_freq'|'mid_freq'|'high_freq'|'options'|'futures'，默认 low_freq) / `description` / `universe` / `version_tag` (默认按已有版本数自增 v{N+1})。**调用顺序**：① strategy.create_version 拿 strategyVersionId → ② strategy.compose 组合 factor/rule → ③ backtest.run / order.create_intent。",
+      "创建一个新的策略版本（落 strategy + strategy_version，按 (project_id, name) 幂等）。**必填顶层 `name`**（也接受 `strategyName` / `strategy.name`），可选 `style` ('low_freq'|'mid_freq'|'high_freq'|'options'|'futures'，默认 low_freq) / `description` / `universe` / `version_tag`。参数平铺，不要包在 `arguments` 里。**调用顺序**：① strategy.create_version 拿 strategyVersionId → ② strategy.compose → ③ backtest.run / order.create_intent。",
     category: "research",
   },
   "strategy.compose": {
@@ -487,7 +487,7 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "factor.mine.llm": {
     description:
-      "LLM 一次性产 N 个 qlib_expr 因子表达式 + 内置评估闸门：传 expressions[] (>=min_count，默认 5) → 跑 IC → 取 top_k → 自动 promote |IC|≥ic_threshold(默认 0.02) 的为 draft 因子。返回 job_id + top_candidates + promoted。详见 AGENT_STABILITY_REVIEW.md §四-P0-4。",
+      "批量挖因子并闸门 promote：必填 `expressions:string[]`（≥min_count 默认5 的 qlib_expr）、`symbols[]`、`start_date`、`end_date`；可选 `top_k`/`ic_threshold`/`auto_promote`/`name_prefix`/`category`。不要只传 task/targets。表达式应覆盖动量+MACD/KDJ+量价，例如 EMA(close,12)-EMA(close,26)、(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)、volume/Mean(volume,20)。返回 job_id + candidates + promoted。",
     category: "research",
   },
   "discovery.promote": {

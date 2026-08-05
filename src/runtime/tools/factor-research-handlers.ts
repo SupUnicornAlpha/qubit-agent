@@ -559,7 +559,10 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     const minCount = Number(params.min_count ?? 5);
     if (expressions.length < minCount) {
       throw new Error(
-        `factor.mine.llm: expressions.length(${expressions.length}) < min_count(${minCount}); 一次至少产${minCount}个 qlib_expr 表达式以充分利用评估闸门`
+        `factor.mine.llm: expressions.length(${expressions.length}) < min_count(${minCount}). ` +
+          `必须传 expressions:string[]（≥${minCount} 条 qlib_expr），不要只传 task/targets。` +
+          `示例: ["EMA(close,12)-EMA(close,26)","(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)","volume/Mean(volume,20)","close/Ref(close,20)-1","Corr(volume,Abs(Delta(close,1)),20)"]。` +
+          `若只要注册 1 条，请改用 factor.register。`
       );
     }
 

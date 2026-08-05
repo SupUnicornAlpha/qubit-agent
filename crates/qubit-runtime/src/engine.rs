@@ -34,6 +34,7 @@ const TOOL_LOOP_HARNESS: &str = r#"
 4. 有足够证据后下一轮只输出最终回答，不再发 tool_calls。
 5. 宁可给出带 [待核实] 的部分结论，也不要无限取数直到超时。
 6. 若本轮已建立 update_plan 步骤：每完成一块工作必须再调 update_plan 推进 status（in_progress→done/skipped）；禁止计划一直停在全 pending。
+7. 因子相关：只用点号工具名 factor.register / factor.compute / factor.autoEvaluate / factor.mine.llm；禁止 factor_register 等假名；参数平铺勿包 arguments；创建因子必须 register 落库，禁止只写口头因子表或把工具缺口当终答。
 "#;
 
 fn stall_fingerprint(tool_name: &str, args: &serde_json::Value, key: &str) -> String {

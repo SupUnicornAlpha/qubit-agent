@@ -171,9 +171,16 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     if (!query) throw new Error("workspace.memory.search: query is required");
     const workspaceId = resolveFsWorkspaceIdFromParams(params);
     if (!workspaceId) {
-      throw new Error(
-        "workspace.memory.search: fs_workspace_id or workspace_id (non-wf_) is required"
-      );
+      // Core often only has wf_<uuid>; soft-empty so agent can continue with memory.recall.
+      return {
+        workspaceId: null,
+        query,
+        results: [],
+        skipped: true,
+        reason: "no_fs_workspace_id",
+        summary:
+          "workspace.memory.search skipped: Core session workspace (wf_*) is not an FS workspace. Prefer memory.recall({query}) or pass fs_workspace_id.",
+      };
     }
     const topK = Math.max(1, Math.min(50, Number(params.topK ?? params.top_k ?? 20) || 20));
     const { fs, manifest } = await openWorkspaceById(workspaceId);
@@ -198,9 +205,13 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
   "workspace.context.snapshot": async (_ctx, params) => {
     const workspaceId = resolveFsWorkspaceIdFromParams(params);
     if (!workspaceId) {
-      throw new Error(
-        "workspace.context.snapshot: fs_workspace_id or workspace_id (non-wf_) is required"
-      );
+      // Soft-empty: Core injects wf_* as workspace_id; FS pack is optional for research turns.
+      return {
+        context_block:
+          "(no FS workspace bound — Core session uses wf_* id only; continue without workspace rules)",
+        skipped: true,
+        reason: "no_fs_workspace_id",
+      };
     }
     const pack = await buildWorkspaceBootstrapPack(workspaceId);
     const openFilesRaw = params.open_files ?? params.openFiles;

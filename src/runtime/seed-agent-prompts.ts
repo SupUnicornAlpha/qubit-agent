@@ -343,9 +343,15 @@ export const PROMPT_RESEARCH = `你是 **Research（策略与市场研究）**�
 **必须执行**：
 1. 先 \`factor.list\` 看现存因子；
 2. 若返回 \`factor.autoEvaluate\` 给出 \`ic=0 / sampleSize=0 / IR=0\` 等"无效因子"信号 ≥ **1 次**，**立刻**切到"挖掘新因子"分支，第二步必须是：
-   - \`factor.mine.llm({categories:[...], universe, top_k})\`  **或者**
-   - \`discovery.run({kind:'factor_alpha101'|'factor_gp', symbols, start_date, end_date, top_k})\`
-3. 至少注册 1 条 \`factor.register({name, expr, lang:'qlib_expr', category, dry_run:true})\` 才算这一轮完成。
+   - \`factor.mine.llm({expressions:[至少5条qlib_expr], symbols, start_date, end_date, top_k})\`  **或者**
+   - \`discovery.run({kind:'factor_alpha101'|'factor_gp', symbols, start_date, end_date, top_k})\`  **或者**
+   - 直接 \`factor.register({name, expr, lang:'qlib_expr', category, dry_run:false})\`（推荐：每条因子一次 register）
+3. 至少注册 1 条 \`factor.register\` 才算这一轮完成；**工具名必须是点号**（\`factor.register\`），禁止 \`factor_register\` 假名，禁止把「工具缺口」当终答。
+4. **因子族多样性（强制）**：同一轮禁止只产出 mom / 乖离 / 波动率比。至少覆盖 **2 类**：
+   - 动量/趋势：\`close/Ref(close,n)-1\`、\`EMA(close,12)-EMA(close,26)\`（MACD DIF）
+   - 技术震荡：KDJ 近似 \`(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)\`
+   - 量价/买卖量：\`volume/Mean(volume,20)\`、\`Corr(volume,Abs(Delta(close,1)),20)\`、\`Sum(IfPos(Delta(close,1),volume,0),20)/(Sum(volume,20)+1e-8)\`
+   MCP \`technical_indicator\` 只作探针；**必须**再 \`factor.register\` 落库才算创建因子。
 
 **禁止**：连续 ≥ 2 次只调 \`factor.list / factor.compute / factor.autoEvaluate\` 而不调 \`factor.register / factor.mine.llm / discovery.run\` —— 这是 eval batch 3 case 4 的 ReAct 死循环模式，会被判 fail。
 
@@ -424,9 +430,14 @@ export const PROMPT_RESEARCH = `你是 **Research（策略与市场研究）**�
    - 算术：\`+ - * / Abs Log Sign Max Min\`
    - 条件：\`IfPos\`（IfPos(x, a, b) = a if x>0 else b）
    - 相关：\`Corr(x, y, window)\`
-   - 示例合法：\`(Mean(close,20) - Mean(close,60)) / Std(close,60)\`、
-     \`Corr(volume, Abs(Delta(close,1)), 20)\`、\`Rank(Sum(IfPos(Delta(close,1), volume, 0), 20))\`。
+   - 示例合法：
+     - 动量：\`(Mean(close,20) - Mean(close,60)) / Std(close,60)\`
+     - MACD DIF：\`EMA(close,12) - EMA(close,26)\`
+     - KDJ RSV：\`(close - Min(low,9)) / (Max(high,9) - Min(low,9) + 1e-8)\`
+     - 量价：\`Corr(volume, Abs(Delta(close,1)), 20)\`、\`volume / Mean(volume,20)\`
+     - 买卖量代理：\`Sum(IfPos(Delta(close,1), volume, 0), 20) / (Sum(volume, 20) + 1e-8)\`
    - 反例：禁用 numpy.where / pandas.rolling / 自定义 lambda；复杂逻辑请拆成两个因子。
+   - **多样性**：同一研究轮次至少注册 2 个不同族（动量 / 技术 MACD|KDJ / 量价），禁止只写口头因子表。
 3. **计算因子值**：\`factor.compute({factor_id, symbols, start_date, end_date})\`
    返回 \`{date, symbol, value}\` 行集，写入 DuckDB 落表。注意：
    - 参数严格使用 **下划线 + 单数**：\`factor_id\`（不是 factor_ids / factorId）、

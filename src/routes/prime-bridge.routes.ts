@@ -8,11 +8,14 @@
  * Enable from Rust with QUBIT_LEGACY_BRIDGE_URL=http://127.0.0.1:<port>/api/v1/prime-bridge
  *
  * L2 surface (strangler):
- *   - market.* + memory.* + research/portfolio tools + workspace.context.snapshot (static allowlist)
+ *   - market.* + memory.* + research/portfolio/factor/strategy tools + workspace.context.snapshot
  *   - MCP via `mcp:<server>:<tool>` / `call_mcp` → dispatchMcpToolCall
  */
 
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { getDb } from "../db/sqlite/client";
+import { workflowRun } from "../db/sqlite/schema";
 import {
   getPrimeBridgeRunContext,
   workflowIdFromCoreWorkspace,
@@ -46,11 +49,72 @@ const BRIDGED_TOOLS = [
   "recommendation.record",
   "strategy.create_version",
   "strategy.compose",
+  "factor.register",
+  "factor.list",
+  "factor.compute",
+  "factor.autoEvaluate",
   "factor.mine.llm",
   "workspace.context.snapshot",
 ] as const;
 
 const BRIDGED_SET = new Set<string>(BRIDGED_TOOLS);
+
+/**
+ * Models often nest real params under `arguments`; top-level wins on conflict.
+ * Also normalizes common aliases so handlers that only look at one key still work.
+ */
+export function unwrapBridgeToolArgs(
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  const nested =
+    args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
+      ? (args.arguments as Record<string, unknown>)
+      : null;
+  const out: Record<string, unknown> = nested ? { ...nested, ...args } : { ...args };
+  delete out.arguments;
+
+  if (out.projectId == null && typeof out.project_id === "string") {
+    out.projectId = out.project_id;
+  }
+  if (out.project_id == null && typeof out.projectId === "string") {
+    out.project_id = out.projectId;
+  }
+  if (out.name == null) {
+    const strategyName =
+      typeof out.strategyName === "string"
+        ? out.strategyName
+        : out.strategy &&
+            typeof out.strategy === "object" &&
+            !Array.isArray(out.strategy) &&
+            typeof (out.strategy as { name?: unknown }).name === "string"
+          ? String((out.strategy as { name: string }).name)
+          : null;
+    if (strategyName) out.name = strategyName;
+  }
+  if (out.symbols == null && Array.isArray(out.targets)) {
+    out.symbols = out.targets;
+  }
+  if (out.snapshotId == null && typeof out.snapshot_id === "string") {
+    out.snapshotId = out.snapshot_id;
+  }
+  return out;
+}
+
+async function projectIdForWorkflow(workflowId: string): Promise<string | undefined> {
+  if (!workflowId || workflowId === "prime-bridge") return undefined;
+  try {
+    const db = await getDb();
+    const rows = await db
+      .select({ projectId: workflowRun.projectId })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowId))
+      .limit(1);
+    const id = rows[0]?.projectId?.trim();
+    return id || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function resolveBridgeActivity(params: Record<string, unknown>, callId: string): {
   workflowId: string;
@@ -81,7 +145,8 @@ function resolveBridgeActivity(params: Record<string, unknown>, callId: string):
 
 function bridgeContext(
   callId: string,
-  activity: { workflowId: string; runId: string; traceId: string }
+  activity: { workflowId: string; runId: string; traceId: string },
+  projectId?: string
 ): BuiltinToolContext {
   const definition = {
     id: "def-prime-bridge",
@@ -109,6 +174,7 @@ function bridgeContext(
     runId: activity.runId,
     traceId: activity.traceId,
     agentInstanceId: monitor?.agentInstanceId ?? "",
+    ...(projectId ? { projectId } : {}),
     definition,
     toolCallId: callId,
   };
@@ -270,11 +336,13 @@ primeBridgeRouter.post("/rpc", async (c) => {
       const params = body.params ?? {};
       const name = String(params.name ?? "");
       const callId = String(params.call_id ?? crypto.randomUUID());
-      const args =
+      const rawArgs =
         params.args && typeof params.args === "object"
           ? (params.args as Record<string, unknown>)
           : {};
+      const args = unwrapBridgeToolArgs(rawArgs);
       const activity = resolveBridgeActivity(params, callId);
+      const projectId = await projectIdForWorkflow(activity.workflowId);
 
       if (isMcpBridgeToolName(name)) {
         return invokeMcpViaBridge({
@@ -319,7 +387,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
       try {
         const observation = await dispatchBuiltinTool(
           name,
-          bridgeContext(callId, activity),
+          bridgeContext(callId, activity, projectId),
           args
         );
         if (activity.workflowId !== "prime-bridge") {
