@@ -21,6 +21,7 @@ const QUANT_SUB: readonly { id: QuantTab; i18nKey: string }[] = [
 const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; i18nKey: string }[] = [
   { id: "llm", i18nKey: "sidebar.config.llm" },
   { id: "datasources", i18nKey: "sidebar.config.datasources" },
+  { id: "plugins", i18nKey: "sidebar.config.plugins" },
   { id: "mcp", i18nKey: "sidebar.config.mcp" },
   { id: "skills", i18nKey: "sidebar.config.skills" },
   { id: "agent", i18nKey: "sidebar.config.agent" },
@@ -43,10 +44,8 @@ const NAV_ITEMS: readonly { key: NavKey; i18nKey: string }[] = [
 ];
 
 const ACTIVITY_BAR_WIDTH = 52;
-const EXPLORER_WIDTH = 208;
-const SIDEBAR_WIDTH_OPEN = ACTIVITY_BAR_WIDTH + EXPLORER_WIDTH;
 
-export const Sidebar: FC = () => {
+export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
   const activeView = useAppStore((s) => s.activeView);
   const setActiveView = useAppStore((s) => s.setActiveView);
   const explorerOpen = useAppStore((s) => s.explorerOpen);
@@ -93,8 +92,12 @@ export const Sidebar: FC = () => {
       className={`qb-sidebar-shell${explorerOpen ? "" : " qb-sidebar-shell--explorer-collapsed"}`}
       style={{
         ...styles.nav,
-        width: explorerOpen ? SIDEBAR_WIDTH_OPEN : ACTIVITY_BAR_WIDTH,
-        minWidth: explorerOpen ? SIDEBAR_WIDTH_OPEN : ACTIVITY_BAR_WIDTH,
+        ...(fill
+          ? styles.navFill
+          : {
+              width: explorerOpen ? ACTIVITY_BAR_WIDTH + 208 : ACTIVITY_BAR_WIDTH,
+              minWidth: explorerOpen ? ACTIVITY_BAR_WIDTH + 208 : ACTIVITY_BAR_WIDTH,
+            }),
       }}
       aria-label={t("topbar.navAriaLabel")}
     >
@@ -276,6 +279,14 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     transition: "width 0.18s ease, min-width 0.18s ease",
   },
+  navFill: {
+    width: "100%",
+    height: "100%",
+    minWidth: 0,
+    minHeight: 0,
+    flexShrink: 1,
+    transition: "none",
+  },
   activityBar: {
     width: ACTIVITY_BAR_WIDTH,
     minWidth: ACTIVITY_BAR_WIDTH,
@@ -293,9 +304,9 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 0,
   },
   explorer: {
-    width: EXPLORER_WIDTH,
-    minWidth: EXPLORER_WIDTH,
-    flex: "0 0 auto",
+    flex: 1,
+    minWidth: 120,
+    width: "auto",
     display: "flex",
     flexDirection: "column",
     minHeight: 0,

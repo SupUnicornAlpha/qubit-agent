@@ -749,6 +749,10 @@ const pack: LocalePack = {
         toggleTitle: "显示/隐藏 Agent 面板",
         resizeAria: "拖动调整 Agent 面板宽度",
       },
+      resize: {
+        sideCenter: "拖动调整侧栏与编辑区宽度",
+        centerAgent: "拖动调整编辑区与 Agent 宽度",
+      },
       status: {
         agentIdle: "Agent: IDLE",
         agentRunning: "Agent: RUNNING",

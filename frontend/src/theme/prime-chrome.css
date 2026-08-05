@@ -64,6 +64,45 @@ html[data-qb-ux="pro"] .qb-pro-workbench__body {
   overflow: hidden;
 }
 
+html[data-qb-ux="pro"] .qb-pro-panel-group {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+}
+
+html[data-qb-ux="pro"] .qb-pro-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-qb-ux="pro"] .qb-pro-panel--sidebar,
+html[data-qb-ux="pro"] .qb-pro-panel--agent {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-qb-ux="pro"] .qb-pro-panel--center {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-qb-ux="pro"] .qb-pro-resize-handle {
+  width: 4px;
+  flex: 0 0 4px;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+html[data-qb-ux="pro"] .qb-pro-resize-handle:hover,
+html[data-qb-ux="pro"] .qb-pro-resize-handle[data-resize-handle-active],
+html[data-qb-ux="pro"] .qb-pro-resize-handle[data-resize-handle-state="drag"],
+html[data-qb-ux="pro"] .qb-pro-resize-handle[data-resize-handle-state="hover"] {
+  background: var(--qb-p-accent, #3794ff);
+}
+
 html[data-qb-ux="pro"] .qb-pro-workbench__center {
   display: flex;
   flex: 1;

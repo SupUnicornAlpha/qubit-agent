@@ -758,6 +758,10 @@ const pack: LocalePack = {
         toggleTitle: "Toggle Agent panel",
         resizeAria: "Resize Agent panel",
       },
+      resize: {
+        sideCenter: "Resize sidebar and editor",
+        centerAgent: "Resize editor and Agent",
+      },
       status: {
         agentIdle: "Agent: IDLE",
         agentRunning: "Agent: RUNNING",
