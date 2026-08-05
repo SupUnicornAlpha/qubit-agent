@@ -2,8 +2,8 @@
 
 | 项 | 内容 |
 |----|------|
-| 文档状态 | **规划稿 v0.4 · Workspace FS 契约与可插拔 Provider 已写清** |
-| 日期 | 2026-08-04 |
+| 文档状态 | **落地跟踪 v0.5 · U0–U7 主线已落地；U8（LSP / PrimeTransport / Custom Editor 深化）未完** |
+| 日期 | 2026-08-05 |
 | 目标 | **保留现有风格与页面**；在此之上演进双壳：简洁=对话优先，专业=可操作 IDE 工作区 |
 | 参考 | Cursor 三栏密度；Claude Code / Codex 项目管理；现仓 `displayMode` 与 `data-qb-style` |
 | 非目标（v1） | 完整 VS Code 扩展生态；扔掉旧皮肤/旧页面重做站 |
@@ -555,6 +555,8 @@ interface MemoryProvider {
 
 外部记忆模块：实现同一接口，在 `.qubit/providers/memory.json` 指向 `kind`；条目仍建议在树中可导航（Provider 返回 `MemoryEntry[]`，Explorer 投影为「置顶/最近」）。
 
+**已落地样例（U7）**：`external.http_memory` — 配置 `config.baseUrl`（可选 `apiKey` / `timeoutMs` / `headers`）后走 REST：`/entries`、`/search`、`/bootstrap`。未配 `baseUrl` fail-closed。代码：`src/runtime/workspace/providers/external-http-memory.ts`。
+
 #### 7.5.3 `DecisionEngineProvider` — 决策 / 量化引擎（可替换）
 
 内置默认：`builtin.local_quant`（对接现网工坊因子/策略/回测 API，并把材料**同步或投影**到 `decision/`）。  
@@ -571,6 +573,7 @@ interface DecisionEngineProvider {
 }
 ```
 
+**已落地样例（U7）**：`external.http_decision`（`external.decision_stub` 为兼容别名）— `config.baseUrl` + `/strategies`、`/factors`、`POST /sync`；sync 若带回 `relPath`+`content` 会镜像进 Workspace FS。代码：`src/runtime/workspace/providers/external-decision-stub.ts`。
 #### 7.5.4 `MarketDataProvider`（可选）
 
 负责宇宙解析、行情指针、权限档位提示（L0–L3 见 03 文档）；**不**把实时流塞进 Git。`input/universe.json` 存意图；真实 bar 仍走数据面工具。
@@ -788,22 +791,22 @@ html[data-qb-ux="pro"] {
 
 ### 9.4 布局拖拽（pro）
 
-优先 `react-resizable-panels`（O-U2 建议）；宽度持久化。
+优先 `react-resizable-panels`（O-U2）：**已落地**于专业壳 `ProWorkbench`（Side / Editor / Agent），`autoSaveId=qubit:pro-workbench-v1` 持久化；Agent 宽同步 `agentPanelWidthPx`。IDE 内部「编辑器 | K 线」仍可用自建 gutter（可选再迁）。
 
 ---
 
 ## 10. 编辑器与 LSP 路线
 
-| 阶段 | 能力 |
-|------|------|
-| U1 | 双壳骨架 + 页面注册表 + 风格保留验收 |
-| U2 | 专业：WorkspaceFs + Explorer 可读可打开（含骨架） |
-| U3 | 研究团队：左栏切 Explorer；右栏 Run 条可折叠（工作流迁出） |
-| U4 | QUBIT.md 链 + builtin.fs_memory；策略/因子经 DecisionProvider |
-| U5 | Monaco 为主编辑器；旧 Tokyo 降级 |
-| U6 | Page Host 嵌团队/监控/配置等 |
-| U7 | 外部 Memory/Decision Provider 适配；@记忆 |
-| U8 | Python LSP；diff；Kline/Backtest Custom Editor |
+| 阶段 | 能力 | 状态（2026-08-05） |
+|------|------|-------------------|
+| U1 | 双壳骨架 + 页面注册表 + 风格保留验收 | **已落地** |
+| U2 | 专业：WorkspaceFs + Explorer 可读可打开（含骨架） | **已落地** |
+| U3 | 研究团队：左栏切 Explorer；右栏 Run 条可折叠（工作流迁出） | **已落地**（含 U3b/U3c） |
+| U4 | QUBIT.md 链 + builtin.fs_memory；策略/因子经 DecisionProvider | **已落地** |
+| U5 | Monaco 为主编辑器；旧 Tokyo 降级 | **已落地**（IDE 左栏多 Tab + 基线 Diff） |
+| U6 | Page Host 嵌团队/监控/配置等 | **薄宿主已落地**（`pages/PageHost` + `registry.component`；Team/Config/Chat 已迁出 MainContent） |
+| U7 | 外部 Memory/Decision Provider 适配；@记忆 | **已落地**（HTTP 样例 + Orchestrator @记忆 chips） |
+| U8 | Python LSP；diff 深化；Kline/Backtest Custom Editor；PrimeTransport | **部分**：基线 Diff 有；LSP / Custom Editor 宿主 / PrimeTransport **未完** |
 
 ---
 
@@ -849,21 +852,24 @@ UI Transport
 ```text
 frontend/src/
   shell/
-    simple/              # 演进简洁壳（现 simple-mode）
-    pro/                 # IDE Workbench 壳
-  pages/registry.ts      # PageId → 组件（保住现有页面）
-  workspace/             # WorkspaceFs · Provider 注册 · Explorer 适配 · 记忆/决策默认实现
+    simple/              # 演进简洁壳（现 SimpleWorkspace）
+    pro/                 # IDE Workbench 壳（PanelGroup 分割）
+  pages/
+    registry.ts          # PageId → 元数据 + component
+    PageHost.tsx         # 中栏宿主
+    ChatPage.tsx / ConfigPage.tsx / TeamPage.tsx
+  components/workspace/  # Explorer · Monaco · Memory 面板
   theme/
-    appearance.ts        # 风格 id 保留
-    styles/*             # 原风格 CSS 保留
-    prime-chrome.css     # 仅 pro chrome 密度
-  transport/
+    appearance.ts
+    styles/*
+    prime-chrome.css     # pro chrome + 密度档
+src/runtime/workspace/   # WorkspaceFs · Provider 注册（含 external.http_*）
 ```
 
 约束：
 
-1. `data-qb-style` 全套保留；加 `data-qb-ux=simple|pro`。
-2. **禁止**继续膨胀 `MainContent.tsx`；页面迁注册表。
+1. `data-qb-style` 全套保留；加 `data-qb-ux=simple|pro`（及 `data-qb-density`）。
+2. **禁止**继续膨胀 `MainContent.tsx`；页面已迁 `pages/*`，`MainContent` 仅兼容 re-export。
 3. 旧布局可作 `legacy` 回退 flag，但默认路径走向双壳。
 4. Feature：`QUBIT_UX_MODE` / localStorage；Tauri 菜单可切换。
 
@@ -880,38 +886,38 @@ frontend/src/
 
 ## 13. 实施里程碑
 
-| 里程碑 | 产出 | 预估 |
-|--------|------|------|
-| **U0** | 页面注册表盘点 + 风格在双壳冒烟 | 3–5 天 |
-| **U1** | 双壳可切换；共享会话；简洁=对话 | 1–2 周 |
-| **U2** | pro：Activity + 右栏 Agent + Status | 1–2 周 |
-| **U3** | WorkspaceFs + 目录骨架 + Explorer 读树（无 DB 可打开本地课题） | 1–2 周 |
-| **U3b** | 研究团队：工作流迁右栏 Run 条（可折叠）；左栏改 Explorer | 1 周 |
-| **U3c** | QUBIT.md 指令链 + Run 注入；builtin.fs_memory | 1 周 |
-| **U4** | DecisionEngine builtin.local_quant 投影；策略/因子双入口 | 1–2 周 |
-| **U5** | Page Host 迁入团队/工坊/监控/配置 | 2–3 周 |
-| **U6** | Monaco + 密度档 + 命令面板 | 1–2 周 |
-| **U7** | 可插拔 Memory/Decision Provider 外部适配样例 + @记忆 | 1–2 周 |
-| **U8** | PrimeTransport | 与 Core 并行 |
+| 里程碑 | 产出 | 预估 | 状态（2026-08-05） |
+|--------|------|------|-------------------|
+| **U0** | 页面注册表盘点 + 风格在双壳冒烟 | 3–5 天 | **完成** |
+| **U1** | 双壳可切换；共享会话；简洁=对话 | 1–2 周 | **完成** |
+| **U2** | pro：Activity + 右栏 Agent + Status | 1–2 周 | **完成**（含 resizable panels） |
+| **U3** | WorkspaceFs + 目录骨架 + Explorer 读树 | 1–2 周 | **完成** |
+| **U3b** | 研究团队：工作流迁右栏 Run 条；左栏 Explorer | 1 周 | **完成** |
+| **U3c** | QUBIT.md 指令链 + Run 注入；builtin.fs_memory | 1 周 | **完成** |
+| **U4** | DecisionEngine builtin.local_quant 投影；策略/因子双入口 | 1–2 周 | **完成** |
+| **U5** | Page Host 迁入团队/工坊/监控/配置 | 2–3 周 | **完成（薄宿主）**；子模块可继续拆 |
+| **U6** | Monaco + 密度档 + 命令面板 | 1–2 周 | **完成**（+ 多 Tab / 基线 Diff） |
+| **U7** | 外部 Memory/Decision Provider 样例 + @记忆 | 1–2 周 | **完成** |
+| **U8** | PrimeTransport；Python LSP；Custom Editor 深化 | 与 Core 并行 | **未完** |
 
 ---
 
 ## 14. 验收标准
 
-| ID | 标准 |
-|----|------|
-| V0 | 6 种 `data-qb-style` 在 simple/pro 下均可切换且无白屏 |
-| V1 | 现有页面能力经注册表在 simple 入口与 pro Tab **均可打开** |
-| V2 | simple 默认几乎全是对话；无需先懂 IDE |
-| V3 | pro 同时可见 Activity + Side + Editor/宿主 + Agent |
-| V4 | 无 DB 也能打开本地 Workspace 目录树并读写约定路径下的文件/产物 |
-| V5 | pro 可查看并打开 **策略 / 因子 / 持仓** 相关视图（经 DecisionEngine 或双入口） |
-| V5b | 研究团队：左栏为 Explorer；新建/切换工作流在右栏 **可折叠 Run 条**完成 |
-| V5c | 每个 Workspace 可见 **长期记忆**；经 MemoryProvider；可 @ 进对话 |
-| V5d | 根指令优先加载 `QUBIT.md`，可回退 `AGENTS.md` / `CLAUDE.md`；Run 启动注入说明书摘要 |
-| V6 | 切换 simple↔pro 不丢失当前会话与 HITL |
-| V7 | Status/壳层显示 Agent State；HITL 不依赖 `window.confirm` |
-| V8 | （后续）Monaco 编辑策略源码并保存 |
+| ID | 标准 | 状态（2026-08-05） |
+|----|------|-------------------|
+| V0 | 6 种 `data-qb-style` 在 simple/pro 下均可切换且无白屏 | **通过** |
+| V1 | 现有页面能力经注册表在 simple 入口与 pro Tab **均可打开** | **通过**（`PAGE_REGISTRY`） |
+| V2 | simple 默认几乎全是对话；无需先懂 IDE | **通过** |
+| V3 | pro 同时可见 Activity + Side + Editor/宿主 + Agent | **通过** |
+| V4 | 无 DB 也能打开本地 Workspace 目录树并读写约定路径下的文件/产物 | **通过** |
+| V5 | pro 可查看并打开 **策略 / 因子 / 持仓** 相关视图（经 DecisionEngine 或双入口） | **通过** |
+| V5b | 研究团队：左栏为 Explorer；新建/切换工作流在右栏 **可折叠 Run 条**完成 | **通过** |
+| V5c | 每个 Workspace 可见 **长期记忆**；经 MemoryProvider；可 @ 进对话 | **通过** |
+| V5d | 根指令优先加载 `QUBIT.md`，可回退 `AGENTS.md` / `CLAUDE.md`；Run 启动注入说明书摘要 | **通过** |
+| V6 | 切换 simple↔pro 不丢失当前会话与 HITL | **通过**（共享 store） |
+| V7 | Status/壳层显示 Agent State；HITL 不依赖 `window.confirm` | **通过** |
+| V8 | Monaco 编辑策略/课题源码并保存 | **基本通过**（Workspace 多 Tab + 保存；工坊脚本→FS 仍可加强） |
 
 ---
 
@@ -930,9 +936,9 @@ frontend/src/
 | O-U19 | Agent 说明书文件名 | 仅 QUBIT.md / 仅 AGENTS.md / 优先 QUBIT 回退 AGENTS/CLAUDE | **已拍：优先 QUBIT.md，回退 AGENTS.md / CLAUDE.md** |
 | O-U20 | 默认 MemoryProvider | builtin.fs_memory / 外挂优先 | **已拍：builtin.fs_memory 默认，可替换** |
 | O-U21 | 默认 DecisionProvider | builtin.local_quant / 外挂优先 | **已拍：builtin.local_quant 默认，可替换** |
-| O-U1 | StatusBar 色 | 深灰底+蓝点 vs 经典蓝 | 建议深灰底 |
-| O-U2 | split 库 | `react-resizable-panels` | 建议 B |
-| O-U3 | pro 默认密度 | Default 13/14 | 建议 A |
+| O-U1 | StatusBar 色 | 深灰底+蓝点 vs 经典蓝 | 建议深灰底（已偏深灰实现） |
+| O-U2 | split 库 | `react-resizable-panels` | **已拍并落地：B** |
+| O-U3 | pro 默认密度 | Default 13/14 | 建议 A；**Compact 档已可选** |
 | O-U7 | Agent 默认宽 | 400px | 建议 A |
 | O-U10 | `assets` 与 `lab` 是否合并 | 合并 vs 分视图 | 建议 v1 分设，重复则后再合并 |
 | O-U11 | 持仓是否进简洁顶栏 | 要 / 不要 | 建议不要，入口二级即可 |
@@ -962,3 +968,4 @@ frontend/src/
 | 2026-08-04 | v0.2 | **纠偏**：保留全部风格与页面；双壳 simple/pro；专业工作区含 workspace + 策略/因子/持仓 |
 | 2026-08-04 | v0.3 | **Workspace 混合树**（课题→生命周期/类型）；**Runs 子节点**；**长期记忆**节点（条目+索引）；研究团队「研究与工作流」**迁右栏可折叠 Run 条** |
 | 2026-08-04 | v0.4 | **FS 优先 Workspace**：目录契约、`WorkspaceManifest`/`WorkspaceFs`、可插拔 Memory/Decision/Market Provider；借鉴 Claude Code / Codex（QUBIT.md 优先并回退 AGENTS/CLAUDE）；Agent 工作协议与 DB 兼容策略 |
+| 2026-08-05 | v0.5 | **落地跟踪**：U0–U7 / V0–V8 主线标注完成；PageHost 拆分、Monaco 多 Tab+Diff、`react-resizable-panels`、`external.http_memory` / `external.http_decision`；U8（LSP / PrimeTransport / Custom Editor）列为剩余 |
