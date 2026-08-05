@@ -36,6 +36,19 @@ export type InterfaceMode = "simple" | "advanced";
 /** 专业壳 chrome 密度（html[data-qb-density]） */
 export type ChromeDensity = "default" | "compact";
 
+/** IDE EditorArea 打开的文件 Tab（02 openEditors 薄实现） */
+export type IdeEditorTab = {
+  id: string;
+  workspaceId: string;
+  path: string;
+};
+
+export type IdeEditorSurface = "edit" | "diff";
+
+export function ideEditorTabId(workspaceId: string, path: string): string {
+  return `${workspaceId}::${path}`;
+}
+
 /** 专业壳 Explorer 分区：页面导航 / 会话 / Workspace 树 / 投研资产 */
 export type ExplorerSection = "pages" | "sessions" | "workspace" | "assets";
 
@@ -190,6 +203,7 @@ export interface IdePanelsState {
 export type ConfigSubPage =
   | "llm"
   | "datasources"
+  | "plugins"
   | "mcp"
   | "skills"
   | "agent"
@@ -269,11 +283,19 @@ export interface AppState {
   activeFsWorkspaceId: string | null;
   setActiveFsWorkspaceId: (id: string | null) => void;
   /**
-   * 跨面板打开 Workspace 文件（Assets / 命令面板 → 研究画布文件 Tab）。
-   * TeamDashboardPanel 消费后清空。
+   * 跨面板打开 Workspace 文件（Assets / Explorer → IDE 多 Tab 或研究画布）。
+   * 消费者：IdeEditorPane / TeamPage；消费后清空。
    */
   pendingWorkspaceFile: { workspaceId: string; path: string } | null;
   setPendingWorkspaceFile: (file: { workspaceId: string; path: string } | null) => void;
+  /** IDE 左栏已打开的编辑器 Tab */
+  ideEditorTabs: IdeEditorTab[];
+  ideActiveEditorTabId: string | null;
+  ideEditorSurface: IdeEditorSurface;
+  openIdeEditorTab: (file: { workspaceId: string; path: string }) => void;
+  closeIdeEditorTab: (tabId: string) => void;
+  setIdeActiveEditorTabId: (tabId: string | null) => void;
+  setIdeEditorSurface: (surface: IdeEditorSurface) => void;
   /**
    * 专业壳 StatusBar 的 Agent 生命周期（研究团队 / 对话运行态写入）。
    * 文档 V7：Status/壳层显示 Agent State。
@@ -657,6 +679,40 @@ export const useAppStore = create<AppState>((set) => ({
   },
   pendingWorkspaceFile: null,
   setPendingWorkspaceFile: (pendingWorkspaceFile) => set({ pendingWorkspaceFile }),
+  ideEditorTabs: [],
+  ideActiveEditorTabId: null,
+  ideEditorSurface: "edit",
+  openIdeEditorTab: (file) => {
+    const id = ideEditorTabId(file.workspaceId, file.path);
+    set((s) => {
+      const exists = s.ideEditorTabs.some((t) => t.id === id);
+      return {
+        ideEditorTabs: exists
+          ? s.ideEditorTabs
+          : [...s.ideEditorTabs, { id, workspaceId: file.workspaceId, path: file.path }],
+        ideActiveEditorTabId: id,
+        ideEditorSurface: "edit",
+      };
+    });
+  },
+  closeIdeEditorTab: (tabId) => {
+    set((s) => {
+      const tabs = s.ideEditorTabs.filter((t) => t.id !== tabId);
+      let active = s.ideActiveEditorTabId;
+      if (active === tabId) {
+        const idx = s.ideEditorTabs.findIndex((t) => t.id === tabId);
+        const neighbor = tabs[Math.max(0, idx - 1)] ?? tabs[0] ?? null;
+        active = neighbor?.id ?? null;
+      }
+      return {
+        ideEditorTabs: tabs,
+        ideActiveEditorTabId: active,
+        ideEditorSurface: active ? s.ideEditorSurface : "edit",
+      };
+    });
+  },
+  setIdeActiveEditorTabId: (ideActiveEditorTabId) => set({ ideActiveEditorTabId }),
+  setIdeEditorSurface: (ideEditorSurface) => set({ ideEditorSurface }),
   proAgentLifecycle: "idle",
   setProAgentLifecycle: (proAgentLifecycle) => set({ proAgentLifecycle }),
   chartOverlays: { ...defaultChartOverlays },

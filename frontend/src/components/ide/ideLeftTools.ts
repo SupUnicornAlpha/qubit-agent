@@ -2,12 +2,13 @@
  * IDE 左栏工具注册（可扩展）。
  * v1 仅挂 Monaco 代码编辑；对话在右侧 Agent。
  *
- * 后续可考虑（尚未实现，按需登记）：
- * - diff：Agent / 人工改文件前后对比
+ * 后续可考虑（按需登记为独立工具，或挂在 Editor 表面切换上）：
  * - preview：Markdown / 研究报告预览
  * - problems：语法、回测、工具失败列表
  * - outline：策略/因子符号大纲
  * - output：Python 回测 / 脚本运行日志（亦可放底栏 Panel）
+ *
+ * Diff：已作为 IdeEditorPane 的 surface（相对磁盘基线），不必再占左栏工具 Tab。
  */
 export type IdeLeftTabId = "editor";
 

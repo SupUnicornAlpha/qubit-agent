@@ -177,6 +177,7 @@ const pack: LocalePack = {
       config: {
         llm: "LLM",
         datasources: "Data sources",
+        plugins: "Plugins",
         mcp: "MCP",
         skills: "Skills",
         agent: "Agent",
@@ -213,6 +214,11 @@ const pack: LocalePack = {
           "Chat lives in the right Agent panel. Edit workspace files here with Monaco — open .md / .py / .ts from the Explorer.",
         editorNeedWorkspace: "No Workspace selected. Create or switch one in Explorer first.",
         openExplorer: "Open Explorer",
+        editorTabsAria: "Open editors",
+        closeTab: "Close tab",
+        surfaceAria: "Editor surface",
+        surfaceEdit: "Edit",
+        surfaceDiff: "Diff",
       },
       toolbar: {
         labels: {

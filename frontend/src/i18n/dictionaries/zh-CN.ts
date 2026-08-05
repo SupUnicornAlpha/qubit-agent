@@ -177,6 +177,7 @@ const pack: LocalePack = {
       config: {
         llm: "LLM",
         datasources: "数据源",
+        plugins: "插件",
         mcp: "MCP",
         skills: "Skills",
         agent: "Agent",
@@ -212,6 +213,11 @@ const pack: LocalePack = {
           "对话在右侧 Agent。此处用 Monaco 编辑课题文件；从 Explorer 打开 .md / .py / .ts 等。",
         editorNeedWorkspace: "尚未选择 Workspace，请先在 Explorer 创建建或切换课题。",
         openExplorer: "打开 Explorer",
+        editorTabsAria: "已打开的编辑器",
+        closeTab: "关闭标签",
+        surfaceAria: "编辑器表面",
+        surfaceEdit: "编辑",
+        surfaceDiff: "Diff",
       },
       toolbar: {
         labels: {

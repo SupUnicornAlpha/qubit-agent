@@ -1,22 +1,57 @@
 /**
- * 中栏打开 Workspace FS 文件：Monaco 编辑/保存（Tokyo 降级）。
+ * Workspace 文件：Monaco 编辑 / Diff（相对打开时的磁盘基线）。
  */
+import { DiffEditor } from "@monaco-editor/react";
 import type { CSSProperties, FC } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getFsWorkspaceFile, putFsWorkspaceFile } from "../../api/backend";
+import type { IdeEditorSurface } from "../../store";
 import { WorkspaceCodeEditor } from "./WorkspaceCodeEditor";
+
+function langFromPath(path: string): string {
+  const ext = (path.includes(".") ? path.split(".").pop() : "")?.toLowerCase() || "";
+  switch (ext) {
+    case "ts":
+    case "tsx":
+      return "typescript";
+    case "js":
+    case "jsx":
+      return "javascript";
+    case "py":
+      return "python";
+    case "json":
+      return "json";
+    case "md":
+    case "markdown":
+      return "markdown";
+    case "yml":
+    case "yaml":
+      return "yaml";
+    case "toml":
+      return "ini";
+    case "sql":
+      return "sql";
+    default:
+      return "plaintext";
+  }
+}
 
 export const WorkspaceFilePane: FC<{
   workspaceId: string;
   path: string;
   onClose?: () => void;
-}> = ({ workspaceId, path, onClose }) => {
+  /** edit = Monaco；diff = 相对磁盘基线（打开/上次保存） */
+  surface?: IdeEditorSurface;
+}> = ({ workspaceId, path, onClose, surface = "edit" }) => {
   const [content, setContent] = useState("");
   const [baseline, setBaseline] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [hostSize, setHostSize] = useState({ w: 0, h: 0 });
+  const hostRef = useRef<HTMLDivElement | null>(null);
   const dirty = content !== baseline;
+  const language = useMemo(() => langFromPath(path), [path]);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +74,22 @@ export const WorkspaceFilePane: FC<{
     };
   }, [workspaceId, path]);
 
+  useEffect(() => {
+    if (surface !== "diff") return;
+    const host = hostRef.current;
+    if (!host) return;
+    const apply = () => {
+      const rect = host.getBoundingClientRect();
+      const w = Math.max(0, Math.floor(rect.width));
+      const h = Math.max(0, Math.floor(rect.height));
+      setHostSize((prev) => (prev.w === w && prev.h === h ? prev : { w, h }));
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [surface, loading]);
+
   const save = async () => {
     setSaving(true);
     setError(null);
@@ -53,11 +104,14 @@ export const WorkspaceFilePane: FC<{
   };
 
   return (
-    <div style={styles.root} data-qb-workspace-file-pane>
+    <div style={styles.root} data-qb-workspace-file-pane data-surface={surface}>
       <div style={styles.head}>
         <div style={styles.titleBlock}>
           <strong style={styles.title}>{path.split("/").pop()}</strong>
           <span style={styles.path}>{path}</span>
+          {surface === "diff" ? (
+            <span style={styles.diffHint}>左：已保存基线 · 右：当前缓冲</span>
+          ) : null}
         </div>
         <div style={styles.actions}>
           {dirty ? <span style={styles.dirty}>未保存</span> : null}
@@ -80,6 +134,32 @@ export const WorkspaceFilePane: FC<{
       {error ? <div style={styles.error}>{error}</div> : null}
       {loading ? (
         <div style={styles.meta}>加载中…</div>
+      ) : surface === "diff" ? (
+        <div ref={hostRef} style={styles.diffHost}>
+          <DiffEditor
+            height={hostSize.h > 0 ? hostSize.h : 360}
+            width={hostSize.w > 0 ? hostSize.w : undefined}
+            theme="vs-dark"
+            language={language}
+            original={baseline}
+            modified={content}
+            onMount={(ed) => {
+              const modified = ed.getModifiedEditor();
+              modified.onDidChangeModelContent(() => {
+                setContent(modified.getValue());
+              });
+            }}
+            options={{
+              readOnly: false,
+              originalEditable: false,
+              renderSideBySide: true,
+              minimap: { enabled: false },
+              fontSize: 13,
+              automaticLayout: true,
+              scrollBeyondLastLine: false,
+            }}
+          />
+        </div>
       ) : (
         <WorkspaceCodeEditor value={content} onChange={setContent} path={path} />
       )}
@@ -111,6 +191,7 @@ const styles: Record<string, CSSProperties> = {
   titleBlock: { display: "flex", flexDirection: "column", gap: 2, minWidth: 0 },
   title: { color: "#e4e4e7", fontSize: 13 },
   path: { color: "#71717a", fontSize: 11, wordBreak: "break-all" },
+  diffHint: { color: "#71717a", fontSize: 10 },
   actions: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 },
   dirty: { color: "#fbbf24", fontSize: 11 },
   btn: { fontSize: 12, padding: "5px 10px" },
@@ -123,4 +204,12 @@ const styles: Record<string, CSSProperties> = {
   },
   error: { color: "#fca5a5", fontSize: 12 },
   meta: { color: "#a1a1aa", fontSize: 12, padding: 12 },
+  diffHost: {
+    flex: 1,
+    minHeight: 360,
+    borderRadius: 6,
+    overflow: "hidden",
+    border: "1px solid #2a2a30",
+    background: "#1e1e1e",
+  },
 };
