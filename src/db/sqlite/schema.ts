@@ -1802,7 +1802,7 @@ export const executionTask = sqliteTable(
     lastError: text("last_error"),
     traceId: text("trace_id").notNull().default(""),
     brokerAccountId: text("broker_account_id").references(() => brokerAccount.id),
-    dispatchMode: text("dispatch_mode", { enum: ["paper", "live"] })
+    dispatchMode: text("dispatch_mode", { enum: ["paper", "live", "sim"] })
       .notNull()
       .default("paper"),
     createdAt: createdAt(),
@@ -1924,7 +1924,7 @@ export const strategyRuntime = sqliteTable("strategy_runtime", {
   })
     .notNull()
     .default("stopped"),
-  executionMode: text("execution_mode", { enum: ["paper", "live"] })
+  executionMode: text("execution_mode", { enum: ["paper", "live", "sim"] })
     .notNull()
     .default("paper"),
   market: text("market").notNull(),

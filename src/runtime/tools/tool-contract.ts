@@ -83,7 +83,7 @@ export function applyToolContract(
       const value = canonical[key];
       if (value === undefined || value === null || value === "") {
         throw new Error(
-          `missing_symbol: ${contract.name}: required field "${key}" missing after normalize`
+          `missing_${key}: ${contract.name}: required field "${key}" missing after normalize`
         );
       }
       if (key === "symbols" && Array.isArray(value) && value.length === 0) {

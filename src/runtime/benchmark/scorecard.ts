@@ -1,6 +1,15 @@
 import type { AssertionResult, RunEnvelope, RunScorecard } from "./contracts";
+import { scoreSoftDimensions } from "./soft-dimensions";
 
 const TERMINAL_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
+
+/** Hard / Trajectory / Soft / Outcome 默认权重（与技术方案 §5.1 对齐）。 */
+const WEIGHTS = {
+  hard: 0.4,
+  trajectory: 0.25,
+  soft: 0.15,
+  outcome: 0.2,
+} as const;
 
 function assertion(id: string, status: AssertionResult["status"], detail: string): AssertionResult {
   return { id, status, detail };
@@ -9,10 +18,13 @@ function assertion(id: string, status: AssertionResult["status"], detail: string
 /**
  * 对一个归一化 RunEnvelope 打分。Hard 采用 fail-closed；缺少尚未埋点的证据为
  * skipped，而非 pass，因而不会污染 challenger 晋级。
+ *
+ * Soft 多维（工具 / 记忆 / 编排 / recipe / content）为诊断分，不可单独判定 pass。
  */
 export function scoreRunEnvelope(envelope: RunEnvelope): RunScorecard {
   const hard = scoreHard(envelope);
   const trajectory = scoreTrajectory(envelope);
+  const soft = scoreSoftDimensions(envelope);
   const hardPass = hard.every((item) => item.status !== "fail");
   const hardComplete = hard.every(
     (item) =>
@@ -21,8 +33,16 @@ export function scoreRunEnvelope(envelope: RunEnvelope): RunScorecard {
       item.detail === "not_a_short_scenario"
   );
   const trajectoryPass = !trajectory.veto;
-  const outcomeScore = 0.5; // 未成熟后验为中性，不奖惩本次过程质量。
-  const score = hardPass ? 0.4 + (trajectory.score ?? 0) * 0.25 + outcomeScore * 0.2 : 0;
+  // Outcome 未成熟 → 中性 0.5，不奖惩过程质量。
+  const outcomeNeutral = 0.5;
+  const softScore = soft.status === "scored" && soft.score !== null ? soft.score : 0.5;
+  const trajScore = trajectory.score ?? 0.5;
+  const score = hardPass
+    ? WEIGHTS.hard * 1 +
+      WEIGHTS.trajectory * trajScore +
+      WEIGHTS.soft * softScore +
+      WEIGHTS.outcome * outcomeNeutral
+    : 0;
 
   return {
     workflowRunId: envelope.workflowRunId,
@@ -35,8 +55,12 @@ export function scoreRunEnvelope(envelope: RunEnvelope): RunScorecard {
         score: hardPass ? 1 : 0,
         assertions: hard,
       },
-      trajectory: trajectory,
-      soft: { score: null, status: "skipped" },
+      trajectory,
+      soft: {
+        score: soft.score,
+        status: soft.status,
+        dimensions: soft.dimensions,
+      },
       outcome: { score: null, status: "pending" },
     },
     pass: hardPass && trajectoryPass,
@@ -188,11 +212,16 @@ function scoreTrajectory(envelope: RunEnvelope): RunScorecard["layers"]["traject
     return count + Number(Boolean(previous?.semanticEmpty && previous.name === tool.name));
   }, 0);
   const reinjectCount = envelope.artifactGate.reinjectCount ?? null;
+  const requiredToolRecall =
+    envelope.recipe?.telemetryAvailable && envelope.recipe.requiredTools.length > 0
+      ? envelope.recipe.matchedTools.length / envelope.recipe.requiredTools.length
+      : null;
   const values = [
     toolSuccessRate,
     toolSuccessRate === null ? null : duplicateToolCalls <= 2 ? 1 : 0,
     toolSuccessRate === null ? null : semanticEmptyRetries <= 1 ? 1 : 0,
     reinjectCount === null ? null : reinjectCount <= 2 ? 1 : 0,
+    requiredToolRecall,
   ].filter((value): value is number => value !== null);
   const score = values.length
     ? values.reduce((sum, value) => sum + value, 0) / values.length
@@ -202,6 +231,12 @@ function scoreTrajectory(envelope: RunEnvelope): RunScorecard["layers"]["traject
     pass: !veto,
     veto,
     score,
-    metrics: { toolSuccessRate, duplicateToolCalls, semanticEmptyRetries, reinjectCount },
+    metrics: {
+      toolSuccessRate,
+      duplicateToolCalls,
+      semanticEmptyRetries,
+      reinjectCount,
+      requiredToolRecall,
+    },
   };
 }

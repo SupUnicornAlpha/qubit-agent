@@ -100,7 +100,7 @@ export async function constructTargetPortfolio(
   // Snapshot may be missing in pure unit tests that only have thesis; candidates can still be explicit.
   const barsByInstrument = snapshot?.barsByInstrument ?? {};
 
-  const candidates =
+  let candidates =
     input.candidates && input.candidates.length > 0
       ? input.candidates
       : candidatesFromThesis({
@@ -111,9 +111,26 @@ export async function constructTargetPortfolio(
           barsByInstrument,
         });
 
+  // Fill missing/zero prices from snapshot bars (models often pass allocation weights only).
+  candidates = candidates.map((c) => {
+    if (c.price > 0) return c;
+    const keys = [c.symbol, `CN:${c.symbol}`, `US:${c.symbol}`, `HK:${c.symbol}`];
+    let price = 0;
+    for (const key of keys) {
+      const bars = barsByInstrument[key];
+      const close = bars?.at(-1)?.close;
+      if (Number.isFinite(close) && (close as number) > 0) {
+        price = close as number;
+        break;
+      }
+    }
+    return { ...c, price: price > 0 ? price : 100 };
+  }).filter((c) => c.symbol);
+
   if (candidates.length === 0) {
     throw new Error(
-      "portfolio.construct: no candidates (neutral thesis needs explicit candidates[])"
+      "portfolio.construct: no candidates — neutral thesis 必须传 candidates[] 或 allocation[{symbol,weight}]；" +
+        "long/short thesis 需 instrumentScope 非空。勿只传 allocation 却省略 symbol。"
     );
   }
 

@@ -9,6 +9,15 @@
     "agent_ref": {
       "type": "string"
     },
+    "interaction_mode": {
+      "description": "Preferred: typed interaction mode. Legacy string `mode` still accepted via alias.",
+      "default": "agent",
+      "allOf": [
+        {
+          "$ref": "#/definitions/InteractionMode"
+        }
+      ]
+    },
     "mode": {
       "type": [
         "string",
@@ -19,6 +28,48 @@
       "type": [
         "string",
         "null"
+      ]
+    }
+  },
+  "definitions": {
+    "InteractionMode": {
+      "description": "How this Session/Turn is allowed to act.\n\nOrthogonal to [`crate::ExecutionKind`]: - ExecutionKind = who may talk / be invoked / be triggered - InteractionMode = what the loop may do this session",
+      "oneOf": [
+        {
+          "description": "Full tool surface (default). Maps to Cursor \"Agent\".",
+          "type": "string",
+          "enum": [
+            "agent"
+          ]
+        },
+        {
+          "description": "Only `update_plan` (+ read-only L0 helpers). No side-effect tools.",
+          "type": "string",
+          "enum": [
+            "plan"
+          ]
+        },
+        {
+          "description": "Must maintain goal + steps; delivery gated on plan completion.",
+          "type": "string",
+          "enum": [
+            "goal"
+          ]
+        },
+        {
+          "description": "Q&A / analysis text; tools denied or read-only surface.",
+          "type": "string",
+          "enum": [
+            "ask"
+          ]
+        },
+        {
+          "description": "Root-cause / failure attribution: diagnostics tools + ledger replay. (Renamed from Cursor-ish \"Debug\" — wire name is `diagnose`.)",
+          "type": "string",
+          "enum": [
+            "diagnose"
+          ]
+        }
       ]
     }
   }

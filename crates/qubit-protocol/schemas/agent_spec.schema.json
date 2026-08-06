@@ -68,6 +68,13 @@
         "null"
       ]
     },
+    "system_prompt": {
+      "description": "Full system prompt body (synced from Bun agent_definition). Preferred over stub identity loader.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "tool_surface_ref": {
       "type": "string"
     },

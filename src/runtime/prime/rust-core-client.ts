@@ -5,6 +5,7 @@
 import {
   type AgentSpec,
   type CoreRuntime,
+  type PrimeRuntimeEvent,
   type RuntimeHealth,
   type SessionSnapshot,
   type SessionView,
@@ -131,15 +132,23 @@ export class RustCoreClient implements CoreRuntime {
   /**
    * Prefer SSE `/events?turn_id=` when available; fall back to session.snapshot poll.
    * Transport-only — does not change Core harness.
+   * `onEvent` receives live RuntimeEvent frames (token / reasoning_token / tools…).
    */
   async awaitTurnTerminal(
     sessionId: string,
     turnId: string,
     timeoutMs = 5000,
-    onTick?: (snap: SessionSnapshot) => void | Promise<void>
+    onTick?: (snap: SessionSnapshot) => void | Promise<void>,
+    onEvent?: (event: PrimeRuntimeEvent) => void | Promise<void>
   ): Promise<SessionSnapshot> {
     try {
-      return await this.awaitTurnTerminalViaSse(sessionId, turnId, timeoutMs, onTick);
+      return await this.awaitTurnTerminalViaSse(
+        sessionId,
+        turnId,
+        timeoutMs,
+        onTick,
+        onEvent
+      );
     } catch (err) {
       console.warn(
         "[prime-core] SSE awaitTurnTerminal failed, falling back to poll:",
@@ -159,7 +168,8 @@ export class RustCoreClient implements CoreRuntime {
     sessionId: string,
     turnId: string,
     timeoutMs: number,
-    onTick?: (snap: SessionSnapshot) => void | Promise<void>
+    onTick?: (snap: SessionSnapshot) => void | Promise<void>,
+    onEvent?: (event: PrimeRuntimeEvent) => void | Promise<void>
   ): Promise<SessionSnapshot> {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -216,7 +226,20 @@ export class RustCoreClient implements CoreRuntime {
           if (!dataLine) continue;
           const raw = dataLine.slice(5).trim();
           try {
-            const data = JSON.parse(raw) as { type?: string; turn_id?: string };
+            const data = JSON.parse(raw) as PrimeRuntimeEvent & {
+              type?: string;
+              turn_id?: string;
+            };
+            if (onEvent) {
+              try {
+                await onEvent(data);
+              } catch (err) {
+                console.warn(
+                  "[prime-core] awaitTurnTerminal onEvent failed:",
+                  err instanceof Error ? err.message : err
+                );
+              }
+            }
             if (
               data.type === "turn_completed" ||
               data.type === "turn_failed" ||

@@ -425,16 +425,17 @@ export const TraderLivePanel: FC = () => {
         market: chartExchangeToMarket(spec.exchange),
         symbol: spec.symbol.trim(),
         timeframe: spec.timeframe,
-        executionMode: "paper",
+        // sim = Futu/券商模拟盘（TrdEnv.SIMULATE）；paper = 本地假成交
+        executionMode: "sim",
         autoStart: true,
         params: { orderQty: 100, barLimit: 120 },
       });
       setRuntimes((prev) => [row, ...prev.filter((r) => r.id !== row.id)]);
-      setRuntimeMsg(`已启动模拟运行时 ${row.id.slice(0, 8)}…`);
+      setRuntimeMsg(`已启动模拟盘运行时 ${row.id.slice(0, 8)}…`);
       pushTraderAgentLog({
         kind: "decision",
-        title: "策略运行时已启动",
-        body: `runtime=${row.id} mode=paper symbol=${row.symbol}`,
+        title: "策略运行时已启动（券商模拟盘）",
+        body: `runtime=${row.id} mode=sim symbol=${row.symbol}`,
       });
     } catch (e) {
       setRuntimeMsg(e instanceof Error ? e.message : String(e));
@@ -723,7 +724,7 @@ export const TraderLivePanel: FC = () => {
               disabled={runtimeBusy}
               onClick={() => void startSelectedStrategyRuntime()}
             >
-              启动策略运行时（纸面）
+              启动策略运行时（富途模拟盘）
             </button>
             {runtimeMsg ? <span style={styles.hint}>{runtimeMsg}</span> : null}
           </div>

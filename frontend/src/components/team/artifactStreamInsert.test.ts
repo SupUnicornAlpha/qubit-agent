@@ -11,7 +11,10 @@ describe("artifactStreamInsert", () => {
   test("matches create tools by kind", () => {
     expect(toolMatchesArtifactKind("strategy.create_version", "strategy")).toBe(true);
     expect(toolMatchesArtifactKind("factor.register", "factor")).toBe(true);
+    expect(toolMatchesArtifactKind("backtest.run", "backtest")).toBe(true);
+    expect(toolMatchesArtifactKind("factor.promote_backtest", "backtest")).toBe(true);
     expect(toolMatchesArtifactKind("market.klines", "strategy")).toBe(false);
+    expect(toolMatchesArtifactKind("backtest.run", "unknown")).toBe(false);
   });
 
   test("prefers tool that mentions artifact id", () => {

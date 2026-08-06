@@ -17,7 +17,7 @@ export function isOrderThesisBindingEnabled(): boolean {
 export type EvidenceBindingInput = {
   thesisId?: string | null;
   snapshotId?: string | null;
-  dispatchMode: "paper" | "live";
+  dispatchMode: "paper" | "live" | "sim";
   requireQualityGate?: boolean;
 };
 
@@ -51,6 +51,8 @@ export async function resolveExecutionEvidenceBinding(
   const mustBind =
     isOrderThesisBindingEnabled() &&
     (input.requireQualityGate === true || input.dispatchMode === "live");
+  // sim (券商模拟盘) 默认不强制 thesis，便于规则/因子引擎与实时 reactor 低延迟下单。
+  // 仍可通过 requireQualityGate=true 打开证据绑定。
 
   if (mustBind && !thesisId) {
     return {

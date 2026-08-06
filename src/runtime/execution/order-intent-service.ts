@@ -17,10 +17,11 @@ import { appendAuditLog } from "../audit/audit-chain-service";
 import { resolveExecutionEvidenceBinding } from "../market/contracts/evidence-binding";
 import { linkForecastBookEntry } from "../market/contracts/forecast-book-service";
 import { evaluatePreTradeForIntent } from "./pre-trade-risk";
+import type { DispatchMode } from "./live-trading-gate";
+
+export type { DispatchMode };
 
 const REVIEW_TICKET_TTL_MS = 86_400_000;
-
-export type DispatchMode = "paper" | "live";
 
 export interface CreateOrderIntentInput {
   workflowRunId: string;
@@ -44,7 +45,7 @@ export interface CreateOrderIntentInput {
   timeframe?: string | null;
   strategyRuntimeId?: string | null;
   signalBarTime?: string | null;
-  /** paper (default) or live broker dispatch */
+  /** paper (local) | sim (broker sandbox) | live (broker real) */
   dispatchMode?: DispatchMode;
   brokerAccountId?: string | null;
   /** 调用方幂等键；缺省使用本次 order_intent id。 */

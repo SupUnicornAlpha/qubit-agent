@@ -193,6 +193,7 @@ export async function reasonSpecialistViaCore(input: {
     childTurnId,
     state,
     deliveryStatus: delivery?.status,
+    resultText: text,
   });
 
   await finalizeCoreMonitorTurn({

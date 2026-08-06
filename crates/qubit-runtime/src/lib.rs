@@ -4,6 +4,7 @@ pub mod admission;
 pub mod bridge_host;
 pub mod cancel;
 pub mod cancel_registry;
+pub mod chat_history;
 pub mod checkpoint;
 pub mod context;
 pub mod core_db;
@@ -15,8 +16,10 @@ pub mod hitl_inbox;
 pub mod invocation;
 pub mod model;
 pub mod model_openai;
+pub mod reasoning_extract;
 pub mod ports;
 pub mod session;
+pub mod stall;
 pub mod store;
 pub mod supervisor;
 pub mod tools;
@@ -29,13 +32,15 @@ pub use cancel_registry::TurnCancelRegistry;
 pub use checkpoint::{CheckpointRecord, CheckpointStore, SqliteCheckpointStore};
 pub use context::{
     BridgeRecallPort, BridgeWorkspacePort, ContextAssembler, DefaultContextAssembler,
-    EmptyRecallPort, EmptyWorkspacePort, IdentityPromptLoader, MockIdentityLoader, RecallPort,
-    SlotAssembleInput, StaticIdentityLoader, WorkspaceContextPort, WorkspaceFocus,
+    EmptyRecallPort, EmptyWorkspacePort, IdentityPromptLoader, MockIdentityLoader, RecallBundle,
+    RecallHit, RecallPort, SlotAssembleInput, StaticIdentityLoader, WorkspaceContextPort,
+    WorkspaceFocus,
 };
 pub use core_db::{default_core_db_path, CoreDb};
 pub use delivery::{DeliveryEvaluator, LedgerDeliveryEvaluator};
 pub use engine::{RunTurnOpts, TurnEngine, TurnOutcome};
 pub use error::RuntimeError;
+pub use stall::{stall_fingerprint, strip_tool_from_surface, tool_family};
 pub use hitl_inbox::{HitlInbox, MemoryHitlInbox, SqliteHitlInbox};
 pub use invocation::{AgentInvoker, InvocationService};
 pub use model::{
@@ -43,6 +48,10 @@ pub use model::{
     SampleResponse, ScriptedModelClient,
 };
 pub use model_openai::{OpenAiCompatibleClient, OpenAiCompatibleConfig};
+pub use reasoning_extract::{
+    chunk_reasoning_for_stream, estimate_reasoning_tokens, extract_reasoning_from_chat_completion,
+    extract_reasoning_from_message,
+};
 pub use ports::{CoreRuntimeService, StartedTurn};
 pub use session::SessionManager;
 pub use store::MemoryStore;

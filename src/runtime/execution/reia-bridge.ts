@@ -21,7 +21,8 @@ export interface ReiaOrderPayload {
   rationale?: string;
   market?: string;
   timeframe?: string;
-  executionMode?: "paper" | "live";
+  /** paper=本地假成交；sim=券商模拟盘(Futu sandbox)；live=真钱 */
+  executionMode?: "paper" | "live" | "sim";
   brokerProvider?: BrokerProvider;
   brokerAccountId?: string;
   strategyRuntimeId?: string;
@@ -160,7 +161,22 @@ export async function createOrderIntentFromReiaPayload(
     });
   }
 
-  const dispatchMode = input.executionMode === "live" ? "live" : "paper";
+  const { parseDispatchMode } = await import("./live-trading-gate");
+  const dispatchMode = parseDispatchMode(input.executionMode ?? "paper");
+  let brokerAccountId = input.brokerAccountId ?? null;
+  if (dispatchMode === "sim" && !brokerAccountId) {
+    const { resolveDefaultSimBrokerAccountId } = await import("./resolve-sim-broker-account");
+    brokerAccountId = await resolveDefaultSimBrokerAccountId(
+      input.brokerProvider === "ib" || input.brokerProvider === "supermind"
+        ? input.brokerProvider
+        : "futu"
+    );
+    if (!brokerAccountId) {
+      throw new Error(
+        "sim_execution_requires_broker_account: configure an enabled Futu sandbox account"
+      );
+    }
+  }
 
   const result = await createOrderIntentWithExecution(client, {
     workflowRunId: input.workflowRunId,
@@ -177,7 +193,8 @@ export async function createOrderIntentFromReiaPayload(
     strategyRuntimeId: input.strategyRuntimeId ?? null,
     signalBarTime: input.signalBarTime ?? null,
     dispatchMode,
-    brokerAccountId: input.brokerAccountId ?? null,
+    brokerAccountId,
+    requireDataQualityGate: dispatchMode === "live",
     traceId: randomUUID(),
   });
 

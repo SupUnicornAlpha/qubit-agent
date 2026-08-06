@@ -66,6 +66,41 @@
       }
     },
     {
+      "description": "Hidden provider reasoning (DeepSeek reasoning_content, Anthropic thinking, OpenAI reasoning summary, etc.). Must not be treated as answer text.",
+      "type": "object",
+      "required": [
+        "iteration",
+        "seq",
+        "text",
+        "turn_id",
+        "type"
+      ],
+      "properties": {
+        "iteration": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "text": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "reasoning_token"
+          ]
+        }
+      }
+    },
+    {
       "type": "object",
       "required": [
         "args",

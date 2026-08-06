@@ -5,7 +5,14 @@ import type { QubitBenchCase } from "./qubit-bench-cases";
 export type UpgradeGateStatus = "pass" | "fail" | "incomplete";
 
 export interface UpgradeGateDimension {
-  name: "delivery" | "quality" | "tools" | "resource" | "observability";
+  name:
+    | "delivery"
+    | "quality"
+    | "tools"
+    | "resource"
+    | "observability"
+    | "memory"
+    | "orchestration";
   status: UpgradeGateStatus;
   detail: string;
 }
@@ -38,13 +45,19 @@ export function evaluateUpgradeGate(input: {
   scorecard: RunScorecard;
   durationMs: number;
 }): UpgradeGateResult {
-  const dimensions = [
+  const dimensions: UpgradeGateDimension[] = [
     gateDelivery(input),
     gateQuality(input),
     gateTools(input),
     gateResource(input),
     gateObservability(input),
   ];
+  if (input.benchmarkCase.dimensions.includes("memory")) {
+    dimensions.push(gateMemory(input));
+  }
+  if (input.benchmarkCase.dimensions.includes("orchestration")) {
+    dimensions.push(gateOrchestration(input));
+  }
   const failed = dimensions.some((dimension) => dimension.status === "fail");
   const incomplete = dimensions.some((dimension) => dimension.status === "incomplete");
   const passed = dimensions.filter((dimension) => dimension.status === "pass").length;
@@ -198,6 +211,7 @@ function gateQuality(input: {
 function gateTools(input: {
   snapshot: ReadinessSnapshot;
   scorecard: RunScorecard;
+  benchmarkCase: QubitBenchCase;
 }): UpgradeGateDimension {
   const recall = metric(input.snapshot, "B-1");
   const validParams = metric(input.snapshot, "B-2");
@@ -205,6 +219,19 @@ function gateTools(input: {
   const repeats = metric(input.snapshot, "B-7");
   if (recall === null || validParams === null || errorRate === null || repeats === null) {
     return { name: "tools", status: "incomplete", detail: "tool_quality_metrics_unavailable" };
+  }
+  const recipeRecall = input.scorecard.layers.trajectory.metrics.requiredToolRecall;
+  const minRecall = input.benchmarkCase.expectations?.minRequiredToolRecall;
+  if (
+    typeof minRecall === "number" &&
+    recipeRecall !== null &&
+    recipeRecall < minRecall
+  ) {
+    return {
+      name: "tools",
+      status: "fail",
+      detail: `required_tool_recall=${recipeRecall.toFixed(2)} < ${minRecall}`,
+    };
   }
   // Soft tools: allow exploratory dry-run failures; only fail on no recall / trajectory veto / extreme churn.
   if (recall < 0.5 || repeats > 8 || input.scorecard.layers.trajectory.veto) {
@@ -267,6 +294,97 @@ function gateResource(input: {
     };
   }
   return { name: "resource", status: "pass", detail: "token_latency_and_iteration_budget_passed" };
+}
+
+function softDim(
+  scorecard: RunScorecard,
+  id: "memory" | "orchestration" | "tools" | "recipe" | "content"
+) {
+  return scorecard.layers.soft.dimensions.find((d) => d.id === id);
+}
+
+function gateMemory(input: {
+  benchmarkCase: QubitBenchCase;
+  scorecard: RunScorecard;
+}): UpgradeGateDimension {
+  const dim = softDim(input.scorecard, "memory");
+  const expect = input.benchmarkCase.expectations;
+  if (!dim || dim.status === "skipped") {
+    return {
+      name: "memory",
+      status: "incomplete",
+      detail: "memory_telemetry_unavailable",
+    };
+  }
+  if (expect?.requireMemoryRecall && dim.status === "not_applicable") {
+    return {
+      name: "memory",
+      status: "fail",
+      detail: "memory_recall_required_but_not_attempted",
+    };
+  }
+  if (dim.status === "not_applicable") {
+    return {
+      name: "memory",
+      status: "pass",
+      detail: "memory_not_applicable_no_calls",
+    };
+  }
+  const min = expect?.minMemoryScore ?? 0.35;
+  if (dim.score === null || dim.score < min) {
+    return {
+      name: "memory",
+      status: "fail",
+      detail: `memory_score=${dim.score?.toFixed(2) ?? "na"} < ${min}`,
+    };
+  }
+  return {
+    name: "memory",
+    status: "pass",
+    detail: `memory_score=${dim.score.toFixed(2)} (${dim.detail})`,
+  };
+}
+
+function gateOrchestration(input: {
+  benchmarkCase: QubitBenchCase;
+  scorecard: RunScorecard;
+}): UpgradeGateDimension {
+  const dim = softDim(input.scorecard, "orchestration");
+  const expect = input.benchmarkCase.expectations;
+  if (!dim || dim.status === "skipped") {
+    return {
+      name: "orchestration",
+      status: "incomplete",
+      detail: "orchestration_telemetry_unavailable",
+    };
+  }
+  if (expect?.requireSpecialistInvoke && dim.status === "not_applicable") {
+    return {
+      name: "orchestration",
+      status: "fail",
+      detail: "specialist_invoke_required_but_not_attempted",
+    };
+  }
+  if (dim.status === "not_applicable") {
+    return {
+      name: "orchestration",
+      status: "pass",
+      detail: "orchestration_not_applicable_no_invoke",
+    };
+  }
+  const min = expect?.minOrchestrationScore ?? 0.35;
+  if (dim.score === null || dim.score < min) {
+    return {
+      name: "orchestration",
+      status: "fail",
+      detail: `orchestration_score=${dim.score?.toFixed(2) ?? "na"} < ${min}`,
+    };
+  }
+  return {
+    name: "orchestration",
+    status: "pass",
+    detail: `orchestration_score=${dim.score.toFixed(2)} (${dim.detail})`,
+  };
 }
 
 function gateObservability(input: {

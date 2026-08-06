@@ -2,8 +2,8 @@
  * Bridge helpers: expose Bun MCP servers to Prime Core as L2 tools (01 §8.2 / §11).
  *
  * Wire names:
- *   - `mcp:<server>:<tool>`  — direct tool
- *   - `call_mcp`             — meta tool { serverName, toolName, arguments? }
+ *   - `mcp:<server>:<tool>`  — advertised + preferred
+ *   - `call_mcp`             — still invokable for back-compat, NOT listed on tools.list
  */
 
 import { and, eq, isNull } from "drizzle-orm";
@@ -124,17 +124,8 @@ export async function listBridgedMcpTools(): Promise<BridgedMcpToolSpec[]> {
     }
   }
 
-  if (out.length > 0 || servers.length > 0) {
-    out.unshift({
-      name: MCP_META_TOOL,
-      description:
-        "Call an MCP tool. Args: { serverName, toolName, arguments? }. Prefer mcp:<server>:<tool> when listed.",
-      kind: "mcp",
-      serverName: "*",
-      toolName: "*",
-    });
-  }
-
+  // Do not advertise `call_mcp` — Core/models should use `mcp:<server>:<tool>` only.
+  // Invoke path still accepts call_mcp for back-compat.
   return out;
 }
 

@@ -2,15 +2,20 @@
 /**
  * qubit-bench 升级门禁 runner。
  *
- * 通过生产 HTTP 场景入口启动 20 个真实 workflow，随后以同一 DB 读取 Readiness +
- * RunEnvelope，产出逐 case gate 与汇总报告。它不调用真实下单；LT case 只验证
- * order_intent / risk_decision / HITL 前的研究路径。
+ * 通过生产 HTTP 场景入口启动 qubit-bench-v0.2 真实 workflow，随后以同一 DB 读取
+ * Readiness + RunEnvelope，产出逐 case gate、Soft 多维分与汇总报告。它不调用真实
+ * 下单；LT case 只验证 order_intent / risk_decision / HITL 前的研究路径。
+ *
+ * 过滤：
+ *   QUBIT_BENCH_CASES=QB-RS-01,QB-MEM-01
+ *   QUBIT_BENCH_TAGS=memory,orchestration
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { runReadinessFromWorkflowId } from "../src/runtime/agent-readiness/runner";
 import {
+  listQubitBenchCases,
   QUBIT_BENCH_CASES,
   QUBIT_BENCH_VERSION,
   type QubitBenchCase,
@@ -33,24 +38,44 @@ type CaseResult = {
   workflowRunId: string | null;
   elapsedMs: number;
   gate: UpgradeGateResult | null;
+  soft?: {
+    score: number | null;
+    status: string;
+    dimensions: Array<{ id: string; score: number | null; status: string; detail: string }>;
+  };
+  trajectory?: {
+    score: number | null;
+    toolSuccessRate: number | null;
+    requiredToolRecall: number | null;
+  };
   error?: string;
 };
 
 function resolveCases(): readonly QubitBenchCase[] {
+  const tagFilter = process.env.QUBIT_BENCH_TAGS?.trim();
   const requested = process.env.QUBIT_BENCH_CASES?.trim();
-  if (!requested) return QUBIT_BENCH_CASES;
-  const ids = new Set(
-    requested
+  let cases: QubitBenchCase[] = [...QUBIT_BENCH_CASES];
+  if (tagFilter) {
+    const tags = tagFilter
       .split(",")
       .map((item) => item.trim())
-      .filter(Boolean)
-  );
-  const cases = QUBIT_BENCH_CASES.filter((item) => ids.has(item.id));
-  if (cases.length !== ids.size) {
-    const known = new Set(cases.map((item) => item.id));
-    throw new Error(
-      `unknown benchmark case(s): ${[...ids].filter((id) => !known.has(id)).join(",")}`
+      .filter(Boolean);
+    cases = listQubitBenchCases({ tags });
+  }
+  if (requested) {
+    const ids = new Set(
+      requested
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
     );
+    cases = cases.filter((item) => ids.has(item.id));
+    if (cases.length !== ids.size && !tagFilter) {
+      const known = new Set(cases.map((item) => item.id));
+      throw new Error(
+        `unknown benchmark case(s): ${[...ids].filter((id) => !known.has(id)).join(",")}`
+      );
+    }
   }
   return cases;
 }
@@ -118,6 +143,21 @@ async function runCase(benchmarkCase: QubitBenchCase): Promise<CaseResult> {
         scorecard,
         durationMs: readiness.elapsedMs,
       }),
+      soft: {
+        score: scorecard.layers.soft.score,
+        status: scorecard.layers.soft.status,
+        dimensions: scorecard.layers.soft.dimensions.map((d) => ({
+          id: d.id,
+          score: d.score,
+          status: d.status,
+          detail: d.detail,
+        })),
+      },
+      trajectory: {
+        score: scorecard.layers.trajectory.score,
+        toolSuccessRate: scorecard.layers.trajectory.metrics.toolSuccessRate,
+        requiredToolRecall: scorecard.layers.trajectory.metrics.requiredToolRecall,
+      },
     };
   } catch (error) {
     return {
@@ -146,17 +186,22 @@ function renderSummary(results: readonly CaseResult[]): string {
     `- cases: ${results.length}; upgrade_pass: ${passed}; incomplete: ${incomplete}; fail: ${failed}`,
     `- research_success: ${results.filter((r) => r.gate?.researchSuccess === "pass").length}/${results.length}`,
     "",
-    "| Case | Scenario | Upgrade | Research | Score | Delivery | Quality | Tools | Resource | Observability |",
-    "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | --- |",
+    "| Case | Scenario | Upgrade | Research | Soft | Tools↑ | Memory | Orch | Recipe | Delivery | Quality | Tools | Resource |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |",
   ];
   for (const result of results) {
     if (!result.gate) {
-      lines.push(`| ${result.id} | ${result.scenarioKey} | FAIL | FAIL | 0.00 | - | - | - | - | - |`);
+      lines.push(
+        `| ${result.id} | ${result.scenarioKey} | FAIL | FAIL | 0.00 | - | - | - | - | - | - | - | - |`
+      );
       continue;
     }
     const dimensions = new Map(result.gate.dimensions.map((item) => [item.name, item.status]));
+    const softDims = new Map(
+      (result.soft?.dimensions ?? []).map((d) => [d.id, d.score?.toFixed(2) ?? d.status])
+    );
     lines.push(
-      `| ${result.id} | ${result.scenarioKey} | ${result.gate.status.toUpperCase()} | ${(result.gate.researchSuccess ?? "fail").toUpperCase()} | ${result.gate.score.toFixed(2)} | ${dimensions.get("delivery")} | ${dimensions.get("quality")} | ${dimensions.get("tools")} | ${dimensions.get("resource")} | ${dimensions.get("observability")} |`
+      `| ${result.id} | ${result.scenarioKey} | ${result.gate.status.toUpperCase()} | ${(result.gate.researchSuccess ?? "fail").toUpperCase()} | ${result.soft?.score?.toFixed(2) ?? "-"} | ${result.trajectory?.toolSuccessRate?.toFixed(2) ?? softDims.get("tools") ?? "-"} | ${softDims.get("memory") ?? "-"} | ${softDims.get("orchestration") ?? "-"} | ${softDims.get("recipe") ?? "-"} | ${dimensions.get("delivery")} | ${dimensions.get("quality")} | ${dimensions.get("tools")} | ${dimensions.get("resource")} |`
     );
   }
   lines.push("", "## Failure / incomplete details", "");
@@ -167,10 +212,15 @@ function renderSummary(results: readonly CaseResult[]): string {
       if (dimension.status !== "pass")
         lines.push(`- ${dimension.name}: ${dimension.status} — ${dimension.detail}`);
     }
+    for (const dim of result.soft?.dimensions ?? []) {
+      if (dim.status === "scored" && dim.score !== null && dim.score < 0.5) {
+        lines.push(`- soft.${dim.id}: ${dim.score.toFixed(2)} — ${dim.detail}`);
+      }
+    }
     lines.push("");
   }
   lines.push(
-    "> **Upgrade** = 晋级门禁（严）；**Research** = 研究可用（软）。只有 Upgrade 全 PASS 才可作为 challenger 晋级证据；Research PASS 表示任务已有可验证副作用。",
+    "> **Upgrade** = 晋级门禁（严）；**Research** = 研究可用（软）。**Soft** 列为多维过程分（工具/记忆/编排/recipe/content），不可单独判定 pass。只有 Upgrade 全 PASS 才可作为 challenger 晋级证据。",
     ""
   );
   return lines.join("\n");

@@ -105,6 +105,13 @@ export type RuntimeEvent =
   | { type: "turn_started"; turn_id: string; seq: number; ts: number }
   | { type: "token"; turn_id: string; iteration: number; text: string; seq: number }
   | {
+      type: "reasoning_token";
+      turn_id: string;
+      iteration: number;
+      text: string;
+      seq: number;
+    }
+  | {
       type: "tool_started";
       turn_id: string;
       call_id: string;

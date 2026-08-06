@@ -4,7 +4,7 @@
 
 export type StreamInsertArtifact = {
   id: string;
-  kind: "factor" | "strategy" | "script";
+  kind: "factor" | "strategy" | "script" | "backtest";
   title: string;
   subtitle?: string;
   createdAt?: string | null;
@@ -22,14 +22,17 @@ const CREATE_TOOL_HINTS: Record<StreamInsertArtifact["kind"], RegExp[]> = {
   factor: [/factor\.register/i, /factor\.create/i, /factor_register/i, /factor\.auto/i],
   strategy: [/strategy\.create_version/i, /strategy\.create/i, /create_version/i],
   script: [/script\./i, /strategy_script/i, /indicator_script/i, /save_script/i],
+  backtest: [/backtest\.run/i, /backtest\.create/i, /factor\.promote_backtest/i, /promote_backtest/i],
 };
 
 export function toolMatchesArtifactKind(
   toolName: string | null | undefined,
-  kind: StreamInsertArtifact["kind"]
+  kind: StreamInsertArtifact["kind"] | string
 ): boolean {
   const name = toolName ?? "";
-  return CREATE_TOOL_HINTS[kind].some((re) => re.test(name));
+  const hints = CREATE_TOOL_HINTS[kind as StreamInsertArtifact["kind"]];
+  if (!hints) return false;
+  return hints.some((re) => re.test(name));
 }
 
 export function toolMentionsArtifact(

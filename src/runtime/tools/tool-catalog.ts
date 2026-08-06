@@ -94,7 +94,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "orchestration",
   },
   call_mcp: {
-    description: "调用 MCP 白名单中的外部工具（params: serverName, mcpTool, arguments）",
+    description:
+      "调用**已启用**的 MCP server 工具（params: serverName, mcpTool/toolName, arguments）。" +
+      "**禁止**把 qubit-data / qubit-news / qubit-backtest 等内置 connector 名当作 serverName——" +
+      "行情用 market.snapshot.get；新闻请派 call_team_news_event。仅用 mathjs / investor-agent / fsi-* 等已启用 MCP。",
     category: "orchestration",
   },
   run_screener: {
@@ -139,14 +142,16 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   "research.thesis.write": {
     description:
       "写入结构化 ResearchThesis（Prime D4）：必须绑定 snapshotId，返回幂等 thesisId，并自动开立 forecast book 条目。" +
-      "必填：snapshotId + instrumentScope/symbols + direction(long|short|neutral)。" +
-      "可选：horizon、confidence、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。" +
+      "必填：snapshotId（来自 market.snapshot.get；也可在 evidence[].ref 里放 mkt_snapshot_*）+ instrumentScope/symbols + direction(long|short|neutral，中文看多/看空/震荡亦可)。" +
+      "confidence 用 0–1（也接受 low/medium/high 或 0–100 百分制）。" +
+      "可选：horizon、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。" +
       "研究结论应走本工具，而不是只写 Markdown；后续归因用 research.forecast_book.*。",
     category: "research",
   },
   "research.forecast_book.get": {
     description:
-      "读取 forecast book 条目（thesis ↔ 风险审批 / 订单 / 成交 / 持有期结果）。传 thesisId 或 entryId。",
+      "读取 forecast book 条目（thesis ↔ 风险审批 / 订单 / 成交 / 持有期结果）。" +
+      "传 thesisId、entryId 或 bookId（fb_*，即 thesis.write 返回的 forecastBookEntryId）。",
     category: "research",
   },
   "research.forecast_book.link": {
@@ -158,7 +163,8 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   "portfolio.construct": {
     description:
       "确定性组合构建（Prime D5）：必须绑定 thesisId（snapshot 可从 thesis 派生）。" +
-      "基于 thesis 方向/标的或显式 candidates[] 调用分配引擎，返回 TargetPortfolio（含 portfolioId/rows/exposures）。" +
+      "基于 thesis 方向/标的，或显式 candidates[] / allocation[{symbol,weight,side?}] 调用分配引擎；" +
+      "neutral thesis 必须传 candidates/allocation。返回 TargetPortfolio（含 portfolioId/rows/exposures）。" +
       "不经 LLM 裁决仓位；可选 capital/grossLimit/netLimit/perPositionMax。",
     category: "trading",
   },
@@ -445,14 +451,18 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      */
     description:
       "下达一个交易意向（落 order_intent + 证据绑定 + 数据质量门 + pre-trade risk + execution_task）。**必填**：`strategy_version_id` + `symbol` + `side` + `qty`。" +
-      "可选：`thesis_id`/`thesisId`（Prime D5）、`snapshot_id`/`snapshotId`、`order_type`、`price`、`time_in_force`、`market`、`dispatch_mode`（默认 paper）。" +
-      "**Live 必须传 thesisId**（snapshot 可从 thesis 派生，且 qualityVerdict.tradable=true）。传了 snapshot/thesis 但质量不过关时拒绝。" +
+      "可选：`thesis_id`/`thesisId`（Prime D5）、`snapshot_id`/`snapshotId`、`order_type`、`price`、`time_in_force`、`market`、`broker_account_id`、`dispatch_mode`。" +
+      "`dispatch_mode`：`paper`=本地假成交（默认）；`sim`=券商模拟盘（如 Futu TrdEnv.SIMULATE，可自动解析 sandbox 账户）；`live`=真钱。" +
+      "**Live 必须传 thesisId**（snapshot 可从 thesis 派生，且 qualityVerdict.tradable=true）。sim 不强制 thesis，便于规则/因子快环。" +
       "研究级 paper 可暂不传（会记 warning）。成功后旁路写入 forecast book。",
     category: "trading",
   },
   "recommendation.record": {
     description:
-      "记录结构化 DecisionSignal，并自动进入后验验证。**必填**：symbol/ticker + side(long/short/neutral 或 buy/sell/hold)。强烈建议提供 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[]、watch_conditions[]；可选 confidence、score、horizon_days、rationale、evidence[]、market、benchmark_symbol、expires_at、data_asof。",
+      "记录结构化 DecisionSignal，并自动进入后验验证。**必填**：symbol/ticker（可嵌在 arguments 内）+ side(long/short/neutral 或 buy/sell/hold；缺省时可从 action 推断)。" +
+      "强烈建议提供 entry_low/entry_high、stop_loss、take_profit、position_size_pct、invalidation_conditions[]、watch_conditions[]；" +
+      "可选 confidence(0–1)、score、horizon_days、rationale、evidence[]、market、benchmark_symbol、expires_at、data_asof。" +
+      "必须在真实研究 workflow 内调用（会绑定 workflow_run + project）。",
     category: "research",
   },
 

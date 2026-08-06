@@ -1,7 +1,7 @@
 //! L2 Legacy Bun bridge as a ToolHost (01 §11).
 //!
-//! Includes Bun MCP surface advertised as `call_mcp` / `mcp:<server>:<tool>`
-//! (strangler: L1 MCP eventually moves into qubit-tool-host; today Bun dispatches).
+//! Includes Bun MCP surface advertised as `mcp:<server>:<tool>`
+//! (`call_mcp` remains invokable for back-compat but is not advertised).
 
 use std::sync::Arc;
 
@@ -214,6 +214,8 @@ impl ToolHost for CompositeToolHost {
         cancel: CancelToken,
     ) -> Result<Vec<ToolResult>, RuntimeError> {
         cancel.check()?;
+        // Preserve original call order when merging L0 / bridge / fallback buckets.
+        let mut tags: Vec<u8> = Vec::with_capacity(calls.len());
         let mut l0_calls = Vec::new();
         let mut bridge_calls = Vec::new();
         let mut other = Vec::new();
@@ -221,6 +223,7 @@ impl ToolHost for CompositeToolHost {
         for c in calls {
             let name = c.name.strip_prefix("tool/").unwrap_or(&c.name).to_string();
             if self.l0_names.iter().any(|n| n == &name) {
+                tags.push(0);
                 l0_calls.push(c);
             } else if self
                 .bridge
@@ -228,32 +231,49 @@ impl ToolHost for CompositeToolHost {
                 .map(|b| b.owns_name(&name))
                 .unwrap_or(false)
             {
-                // Normalize tool/ prefix away for Bun bridge wire names.
+                tags.push(1);
                 let mut bridged = c;
                 bridged.name = name;
                 bridge_calls.push(bridged);
             } else {
+                tags.push(2);
                 other.push(c);
             }
         }
 
-        let mut out = Vec::new();
-        if !l0_calls.is_empty() {
-            out.extend(self.l0.invoke_all(l0_calls, cancel.child()).await?);
-        }
-        if !bridge_calls.is_empty() {
-            if let Some(ref b) = self.bridge {
-                out.extend(b.invoke_all(bridge_calls, cancel.child()).await?);
-            } else {
-                out.extend(
-                    self.fallback
-                        .invoke_all(bridge_calls, cancel.child())
-                        .await?,
-                );
+        let l0_out = if l0_calls.is_empty() {
+            Vec::new()
+        } else {
+            self.l0.invoke_all(l0_calls, cancel.child()).await?
+        };
+        let bridge_out = if bridge_calls.is_empty() {
+            Vec::new()
+        } else if let Some(ref b) = self.bridge {
+            b.invoke_all(bridge_calls, cancel.child()).await?
+        } else {
+            self.fallback
+                .invoke_all(bridge_calls, cancel.child())
+                .await?
+        };
+        let other_out = if other.is_empty() {
+            Vec::new()
+        } else {
+            self.fallback.invoke_all(other, cancel.child()).await?
+        };
+
+        let mut l0_iter = l0_out.into_iter();
+        let mut bridge_iter = bridge_out.into_iter();
+        let mut other_iter = other_out.into_iter();
+        let mut out = Vec::with_capacity(tags.len());
+        for tag in tags {
+            let next = match tag {
+                0 => l0_iter.next(),
+                1 => bridge_iter.next(),
+                _ => other_iter.next(),
+            };
+            if let Some(r) = next {
+                out.push(r);
             }
-        }
-        if !other.is_empty() {
-            out.extend(self.fallback.invoke_all(other, cancel.child()).await?);
         }
         Ok(out)
     }

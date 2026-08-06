@@ -13,6 +13,14 @@ pub struct RecallHit {
     pub score: f64,
 }
 
+/// One assemble-round memory pull (finance + skill + general/FS).
+#[derive(Clone, Debug, Default)]
+pub struct RecallBundle {
+    pub finance: Vec<RecallHit>,
+    pub skill: Vec<RecallHit>,
+    pub general: Vec<RecallHit>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceFocus {
     pub open_files: Vec<String>,
@@ -30,6 +38,15 @@ pub trait RecallPort: Send + Sync {
     async fn recall_finance(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError>;
     async fn recall_skill(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError>;
     async fn recall_general(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError>;
+
+    /// Preferred path: one host round-trip. Default fans out to the three methods.
+    async fn recall_bundle(&self, query: &str) -> Result<RecallBundle, RuntimeError> {
+        Ok(RecallBundle {
+            finance: self.recall_finance(query).await?,
+            skill: self.recall_skill(query).await?,
+            general: self.recall_general(query).await?,
+        })
+    }
 }
 
 #[async_trait]

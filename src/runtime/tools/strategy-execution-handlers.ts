@@ -9,12 +9,15 @@ import {
 } from "../../db/sqlite/schema";
 import type { OrderSide, OrderType, TimeInForce } from "../../types/entities";
 import {
-  type RecommendationSide,
   recommendationService,
 } from "../effect-validation/recommendation-service";
 import { createOrderIntentWithExecution } from "../execution/order-intent-service";
 import { factorService } from "../factor/factor-service";
 import { isLikelyProjectIdFormat } from "./context-params";
+import {
+  coerceConfidence01,
+  coerceRecommendationSide,
+} from "./research-arg-normalize";
 export { resolveDelegatedParentTaskId } from "../orchestration/team-dispatch-adapter";
 import { strategyComposer } from "../strategy/strategy-composer";
 import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
@@ -194,7 +197,8 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
    *   - price (limit 必填)：限价
    *   - time_in_force (可选)：'day' | 'gtc'（默认 day）
    *   - market (可选)：'US' | 'CN' 等（用于 instrument 解析；默认 US）
-   *   - dispatch_mode (可选)：'paper' | 'live'（默认 paper，安全起见）
+   *   - dispatch_mode (可选)：'paper' | 'sim' | 'live'（默认 paper；sim=Futu 等券商模拟盘）
+   *   - broker_account_id (sim/live 建议)：sim 可省略，自动解析启用的 Futu sandbox
    *
    * 返回：{ orderIntentId, executionTaskId, riskOutcome, riskReason, riskReviewTicketId }
    */
@@ -269,15 +273,33 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
     const timeInForce: TimeInForce = tifRaw as TimeInForce;
     const market = String(params.market ?? "US").trim();
-    const dispatchModeRaw = String(params.dispatch_mode ?? "paper")
-      .trim()
-      .toLowerCase();
-    if (dispatchModeRaw !== "paper" && dispatchModeRaw !== "live") {
+    const { parseDispatchMode } = await import("../execution/live-trading-gate");
+    const { resolveDefaultSimBrokerAccountId } = await import(
+      "../execution/resolve-sim-broker-account"
+    );
+    let dispatchMode;
+    try {
+      dispatchMode = parseDispatchMode(params.dispatch_mode ?? "paper");
+    } catch {
       throw new Error(
-        `order.create_intent: dispatch_mode 必须是 'paper' 或 'live'，收到: ${dispatchModeRaw}`
+        `order.create_intent: dispatch_mode 必须是 'paper' | 'sim' | 'live'（sim=券商模拟盘如 Futu sandbox），收到: ${String(params.dispatch_mode ?? "")}`
       );
     }
-    const dispatchMode = dispatchModeRaw as "paper" | "live";
+    let brokerAccountId =
+      String(params.broker_account_id ?? params.brokerAccountId ?? "").trim() || null;
+    if (dispatchMode === "sim" && !brokerAccountId) {
+      brokerAccountId = await resolveDefaultSimBrokerAccountId("futu");
+      if (!brokerAccountId) {
+        throw new Error(
+          "order.create_intent: dispatch_mode=sim 需要 broker_account_id，或先配置启用的 Futu sandbox 券商账户"
+        );
+      }
+    }
+    if ((dispatchMode === "live" || dispatchMode === "sim") && !brokerAccountId) {
+      throw new Error(
+        `order.create_intent: dispatch_mode=${dispatchMode} 必须传 broker_account_id`
+      );
+    }
     const snapshotId = String(params.snapshot_id ?? params.snapshotId ?? "").trim() || null;
     const thesisId = String(params.thesis_id ?? params.thesisId ?? "").trim() || null;
     if (dispatchMode === "live" && !thesisId) {
@@ -340,9 +362,10 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       symbol: sym,
       timeframe: typeof params.timeframe === "string" ? (params.timeframe as string) : null,
       dispatchMode,
+      brokerAccountId,
       snapshotId,
       thesisId,
-      requireDataQualityGate: snapshotId != null || thesisId != null,
+      requireDataQualityGate: dispatchMode === "live" || snapshotId != null || thesisId != null,
       ...(ctx.traceId ? { traceId: ctx.traceId } : {}),
     });
 
@@ -371,9 +394,9 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   "recommendation.record": async (ctx, params) => {
-    if (!ctx.workflowId) {
+    if (!ctx.workflowId || ctx.workflowId === "prime-bridge") {
       throw new Error(
-        "recommendation.record: ctx.workflowId is required so recommendation_snapshot binds to the workflow"
+        "recommendation.record: 需要绑定真实 workflow（当前无 workflow 上下文）。请在研究工作流内调用，勿在游离 bridge 会话落库。"
       );
     }
     // Models often nest fields under `arguments`; top-level wins on conflict.
@@ -386,43 +409,33 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     const p: Record<string, unknown> = nested ? { ...nested, ...params } : params;
     delete p.arguments;
 
-    const symbol = String(p.symbol ?? p.ticker ?? "")
+    const symbol = String(p.symbol ?? p.ticker ?? p.code ?? "")
       .trim()
       .replace(/^(US|HK|CN|SH|SZ):/i, "");
     if (!symbol) {
-      throw new Error("recommendation.record: symbol/ticker is required");
-    }
-    const sideRaw = String(p.side ?? "long")
-      .trim()
-      .toLowerCase();
-    const sideMap: Record<string, RecommendationSide> = {
-      buy: "long",
-      long: "long",
-      bullish: "long",
-      sell: "short",
-      short: "short",
-      bearish: "short",
-      hold: "neutral",
-      neutral: "neutral",
-    };
-    const side = sideMap[sideRaw];
-    if (!side) {
       throw new Error(
-        `recommendation.record: side must be long/short/neutral (or buy/sell/hold), got ${sideRaw}`
+        "recommendation.record: symbol/ticker is required（可放在顶层或 arguments 内；US:TICKER 前缀会自动剥掉）"
       );
     }
+    const side =
+      coerceRecommendationSide(p.side) ??
+      coerceRecommendationSide(p.action) ??
+      coerceRecommendationSide(p.conviction) ??
+      "long";
     const horizonDays = Number(p.horizon_days ?? p.horizonDays ?? 20);
-    const confidence = Number(p.confidence ?? 0.5);
+    const confidence = coerceConfidence01(p.confidence ?? p.conviction, 0.5);
     const scoreRaw = p.score;
     const evidenceRaw = p.evidence ?? p.evidence_json;
     const evidence = Array.isArray(evidenceRaw) ? evidenceRaw : [];
-    const result = await recommendationService.record({
+    let result;
+    try {
+      result = await recommendationService.record({
       workflowRunId: ctx.workflowId,
       symbol,
       market: typeof p.market === "string" ? p.market : "US",
       side,
       horizonDays: Number.isFinite(horizonDays) && horizonDays > 0 ? Math.floor(horizonDays) : 20,
-      confidence: Number.isFinite(confidence) ? confidence : 0.5,
+      confidence,
       score: scoreRaw !== undefined && Number.isFinite(Number(scoreRaw)) ? Number(scoreRaw) : null,
       entryLow: optionalFiniteNumber(p.entry_low ?? p.entryLow),
       entryHigh: optionalFiniteNumber(p.entry_high ?? p.entryHigh),
@@ -432,7 +445,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       ),
       positionSizePct: optionalFiniteNumber(p.position_size_pct ?? p.positionSizePct),
       riskRewardRatio: optionalFiniteNumber(p.risk_reward_ratio ?? p.riskRewardRatio),
-      rationale: String(p.rationale ?? p.reasoning ?? ""),
+      rationale: String(p.rationale ?? p.reasoning ?? p.strategy ?? p.action ?? ""),
       evidence,
       invalidation:
         Array.isArray(p.invalidation_conditions) && p.invalidation_conditions.length > 0
@@ -454,6 +467,16 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
       agentInstanceId: ctx.agentInstanceId || null,
       ...(typeof p.asof === "string" ? { asof: p.asof } : {}),
     });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/FOREIGN KEY/i.test(msg)) {
+        throw new Error(
+          `recommendation.record: FK 失败（workflow=${ctx.workflowId}, project=${ctx.projectId ?? "?"}, agentInstance=${ctx.agentInstanceId || "null"}）。` +
+            `通常是 workflow 未绑定 / project 缺失 / agent_instance 无效。原始错误: ${msg}`
+        );
+      }
+      throw err;
+    }
     // Write-after-read: tool success must mean snapshot is queryable for this workflow+side.
     const db = await getDb();
     const verified = await db

@@ -77,6 +77,7 @@ async function searchFsMemory(
   return rows.map((e) => ({
     title: e.title || e.id,
     summary: truncate(e.body ?? "", 400),
+    sub_kind: "fs",
     score: typeof e.score === "number" ? e.score : 0,
     source: "fs" as const,
   }));
@@ -121,8 +122,9 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
 
     const hits: MemoryRecallHit[] = [];
+    const bundle = mode === "bundle" || params.bundle === true;
 
-    if (mode === "finance") {
+    const pushFinance = async () => {
       const financeRecall = new FinanceRecall(recallOpts);
       const financeHits = await financeRecall.recall(recallCtx);
       for (const h of financeHits) {
@@ -130,30 +132,58 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
         hits.push({
           title: truncate(exp.contentJson.summary ?? exp.id, 120),
           summary: truncate(String(exp.contentJson.body ?? exp.contentJson.summary ?? ""), 400),
-          ...(exp.subKind ? { sub_kind: exp.subKind } : {}),
+          sub_kind: exp.subKind ?? "finance",
           score: h.score,
           source: "experience",
         });
       }
-    } else {
+    };
+
+    const pushExperience = async (
+      subKindFallback: string,
+      kinds?: Array<"episodic" | "semantic" | "procedural" | "reflective">
+    ) => {
       const recall = new ExperienceRecall(recallOpts);
-      const results = await recall.recall(recallCtx);
+      const results = await recall.recall({
+        ...recallCtx,
+        ...(kinds ? { kinds } : {}),
+      });
       for (const h of results) {
         const exp = h.experience;
         hits.push({
           title: truncate(exp.contentJson.summary ?? exp.id, 120),
           summary: truncate(String(exp.contentJson.body ?? exp.contentJson.summary ?? ""), 400),
-          ...(exp.subKind ? { sub_kind: exp.subKind } : {}),
+          sub_kind: exp.subKind ?? subKindFallback,
           score: h.score,
           source: "experience",
         });
       }
+    };
+
+    if (bundle) {
+      // Core assemble: one bridge call = finance + experience + optional FS.
+      await pushFinance();
+      await pushExperience("procedural", ["procedural"]);
+    } else if (mode === "finance") {
+      await pushFinance();
+    } else {
+      const wantProcedural =
+        Array.isArray(params.kinds) && params.kinds.includes("procedural");
+      await pushExperience(
+        wantProcedural ? "procedural" : "note",
+        wantProcedural ? ["procedural"] : undefined
+      );
     }
 
-    if (includeFs && fsWorkspaceId) {
+    if ((includeFs || bundle) && fsWorkspaceId) {
       try {
         const fsHits = await searchFsMemory(fsWorkspaceId, query, topK);
-        hits.push(...fsHits);
+        hits.push(
+          ...fsHits.map((h) => ({
+            ...h,
+            sub_kind: h.sub_kind ?? "fs",
+          }))
+        );
       } catch (err) {
         console.warn(
           `[memory.recall] fs search failed workspace=${fsWorkspaceId}:`,
@@ -163,7 +193,8 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     hits.sort((a, b) => b.score - a.score);
-    return { hits: hits.slice(0, topK * 2) };
+    // Bundle returns a bit more so Core can partition into three slots.
+    return { hits: hits.slice(0, bundle ? topK * 3 : topK * 2), ...(bundle ? { mode: "bundle" } : {}) };
   },
 
   "workspace.memory.search": async (_ctx, params) => {

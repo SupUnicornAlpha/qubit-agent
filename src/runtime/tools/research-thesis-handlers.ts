@@ -9,6 +9,13 @@ import {
   isResearchThesisWriteEnabled,
   writeResearchThesis,
 } from "../market/contracts/research-thesis-service";
+import {
+  coerceConfidence01,
+  coerceThesisDirection,
+  extractForecastBookKey,
+  extractSnapshotId,
+  normalizePortfolioCandidates,
+} from "./research-arg-normalize";
 import { applyToolContract, isToolContractEnabled } from "./tool-contract";
 import { getToolContract } from "./tool-contract-registry";
 import type { BuiltinToolHandler } from "./types";
@@ -70,9 +77,13 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       : undefined;
     const canonical = contract ? applyToolContract(contract, params) : params;
 
-    const snapshotId = String(canonical.snapshotId ?? canonical.snapshot_id ?? "").trim();
+    const snapshotId =
+      String(canonical.snapshotId ?? canonical.snapshot_id ?? "").trim() ||
+      extractSnapshotId(canonical);
     if (!snapshotId) {
-      throw new Error("research.thesis.write: snapshotId is required (call market.snapshot.get first)");
+      throw new Error(
+        "research.thesis.write: snapshotId is required — call market.snapshot.get first and pass its snapshotId (evidence[].ref=mkt_snapshot_* also works)"
+      );
     }
 
     const scopeFromParam = asStringArray(
@@ -85,18 +96,16 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       );
     }
 
-    const directionRaw = String(canonical.direction ?? "neutral")
-      .trim()
-      .toLowerCase();
     const direction =
-      directionRaw === "long" || directionRaw === "short" || directionRaw === "neutral"
-        ? directionRaw
-        : null;
+      coerceThesisDirection(canonical.direction) ??
+      (canonical.direction == null ? "neutral" : null);
     if (!direction) {
-      throw new Error("research.thesis.write: direction must be long|short|neutral");
+      throw new Error(
+        "research.thesis.write: direction must be long|short|neutral (中文如看多/看空/震荡亦可)"
+      );
     }
 
-    const confidence = Number(canonical.confidence ?? 0.5);
+    const confidence = coerceConfidence01(canonical.confidence, 0.5);
     const written = await writeResearchThesis({
       snapshotId,
       instrumentScope: symbols,
@@ -138,11 +147,12 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   "research.forecast_book.get": async (_ctx, params) => {
-    const thesisId = String(params.thesisId ?? params.thesis_id ?? "").trim();
-    const entryId = String(params.entryId ?? params.entry_id ?? "").trim();
+    const { thesisId, entryId } = extractForecastBookKey(params);
     const key = entryId || thesisId;
     if (!key) {
-      throw new Error("research.forecast_book.get: thesisId or entryId is required");
+      throw new Error(
+        "research.forecast_book.get: thesisId、entryId 或 bookId(fb_*) 必填其一（thesis.write 返回的 thesisId / forecastBookEntryId）"
+      );
     }
     const entry = await getForecastBookEntry(key);
     if (!entry) throw new Error(`forecast_book_not_found:${key}`);
@@ -201,25 +211,19 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
           ? params.snapshot_id
           : undefined;
 
-    const candidatesRaw = Array.isArray(params.candidates) ? params.candidates : null;
-    const candidates = candidatesRaw
-      ? candidatesRaw
-          .filter((row): row is Record<string, unknown> => !!row && typeof row === "object")
-          .map((row) => ({
-            symbol: String(row.symbol ?? "").trim().toUpperCase(),
-            side: (String(row.side ?? "long").toLowerCase() === "short" ? "short" : "long") as
-              | "long"
-              | "short",
-            price: Number(row.price ?? 0),
-            confidence: Number(row.confidence ?? 0.5),
-            stopLoss:
-              row.stopLoss != null && Number.isFinite(Number(row.stopLoss))
-                ? Number(row.stopLoss)
-                : null,
-            currentQty: Number(row.currentQty ?? 0),
-            sector: typeof row.sector === "string" ? row.sector : null,
-          }))
-          .filter((row) => row.symbol && row.price > 0)
+    const loose = normalizePortfolioCandidates(params);
+    const candidates = loose
+      ? loose.map((row) => ({
+          symbol: row.symbol,
+          side: row.side,
+          // price 0 → service fills from snapshot bars / default
+          price: row.price > 0 ? row.price : 0,
+          confidence: row.confidence,
+          stopLoss: row.stopLoss,
+          currentQty: row.currentQty,
+          sector: row.sector,
+          proposedWeight: row.proposedWeight,
+        }))
       : undefined;
 
     const constructed = await constructTargetPortfolio({

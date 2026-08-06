@@ -27,6 +27,8 @@ impl SampleRequest {
 #[derive(Clone, Debug)]
 pub struct SampleResponse {
     pub text: String,
+    /// Hidden provider reasoning (UI ghost only; never merge into `text`).
+    pub reasoning_text: Option<String>,
     pub tool_calls: Vec<NormalizedToolCall>,
     pub request_hitl: bool,
     pub hitl_title: Option<String>,
@@ -34,6 +36,7 @@ pub struct SampleResponse {
     pub prompt_tokens: Option<u32>,
     pub completion_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
+    pub reasoning_tokens: Option<u32>,
     pub latency_ms: Option<u64>,
     pub model: Option<String>,
     pub provider: Option<String>,
@@ -49,6 +52,7 @@ impl SampleResponse {
     pub fn text_only(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            reasoning_text: None,
             tool_calls: vec![],
             request_hitl: false,
             hitl_title: None,
@@ -56,6 +60,7 @@ impl SampleResponse {
             prompt_tokens: None,
             completion_tokens: None,
             total_tokens: None,
+            reasoning_tokens: None,
             latency_ms: None,
             model: None,
             provider: None,
@@ -94,16 +99,7 @@ impl ModelClient for FakeModelClient {
         cancel.check()?;
         Ok(SampleResponse {
             text: "(Core: no LLM configured. Set QUBIT_LLM_API_KEY / QUBIT_LLM_MODEL, or configure .qubit/model.json and restart.)".into(),
-            tool_calls: vec![],
-            request_hitl: false,
-            hitl_title: None,
-            hitl_body: None,
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-            latency_ms: None,
-            model: None,
-            provider: None,
+            ..SampleResponse::default()
         })
     }
 }

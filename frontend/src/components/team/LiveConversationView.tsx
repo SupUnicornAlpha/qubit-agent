@@ -478,11 +478,11 @@ const InlineArtifactCards: FC<{
             key={`${a.kind}:${a.id}`}
             type="button"
             style={inlineArtifactCardStyle}
-            title={`打开${a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}：${a.title}`}
+            title={`打开${artifactKindLabel(a.kind)}：${a.title}`}
             onClick={() => onOpenArtifact?.(a)}
           >
             <span style={inlineArtifactKindStyle}>
-              {a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}
+              {artifactKindLabel(a.kind)}
             </span>
             <span style={inlineArtifactTitleStyle}>{a.title}</span>
             {a.subtitle ? <span style={inlineArtifactSubStyle}>{a.subtitle}</span> : null}
@@ -493,6 +493,14 @@ const InlineArtifactCards: FC<{
     </div>
   );
 };
+
+function artifactKindLabel(kind: StreamInsertArtifact["kind"] | string): string {
+  if (kind === "factor") return "因子";
+  if (kind === "strategy") return "策略";
+  if (kind === "backtest") return "回测";
+  if (kind === "script") return "脚本";
+  return "产物";
+}
 
 const streamContainerStyle: CSSProperties = {
   display: "flex",

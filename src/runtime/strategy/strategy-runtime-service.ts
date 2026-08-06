@@ -21,7 +21,7 @@ export interface CreateStrategyRuntimeInput {
   market: string;
   symbol: string;
   timeframe?: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
   brokerAccountId?: string | null;
   params?: Record<string, unknown>;
   autoStart?: boolean;
@@ -84,14 +84,32 @@ export async function createStrategyRuntime(
     lookupDefaultBroker: db == null,
   });
 
+  let brokerAccountId = resolved.brokerAccountId;
+  const executionMode = input.executionMode ?? "paper";
+  if ((executionMode === "sim" || executionMode === "live") && !brokerAccountId) {
+    const { resolveDefaultSimBrokerAccountId } = await import(
+      "../execution/resolve-sim-broker-account"
+    );
+    if (executionMode === "sim") {
+      brokerAccountId = await resolveDefaultSimBrokerAccountId("futu");
+      if (!brokerAccountId) {
+        throw new Error(
+          "sim_execution_requires_broker_account: configure an enabled Futu sandbox account"
+        );
+      }
+    } else {
+      throw new Error("live_execution_requires_broker_account");
+    }
+  }
+
   const id = randomUUID();
   const now = new Date().toISOString();
   await client.insert(strategyRuntime).values({
     id,
     strategyScriptId: script.id,
-    brokerAccountId: resolved.brokerAccountId,
+    brokerAccountId,
     status: input.autoStart ? "starting" : "stopped",
-    executionMode: input.executionMode ?? "paper",
+    executionMode,
     market: resolved.market,
     symbol: resolved.symbol,
     timeframe: input.timeframe ?? "1d",
@@ -232,7 +250,12 @@ export async function submitRuntimeOrder(
 
   const { strategyVersionId, workflowRunId } = await ensureStrategyVersionForScript(db, script);
   const instrumentId = await ensureInstrumentForSymbol(db, runtime.symbol, runtime.market);
-  const dispatchMode = runtime.executionMode === "live" ? "live" : "paper";
+  const dispatchMode =
+    runtime.executionMode === "live"
+      ? "live"
+      : runtime.executionMode === "sim"
+        ? "sim"
+        : "paper";
 
   const result = await createOrderIntentWithExecution(db, {
     workflowRunId,
@@ -251,6 +274,7 @@ export async function submitRuntimeOrder(
     dispatchMode,
     brokerAccountId: runtime.brokerAccountId,
     // Live auto-trading always requires a tradable snapshot (Prime D3).
+    // Sim (Futu sandbox) skips thesis gate for low-latency rule/factor loops.
     requireDataQualityGate: dispatchMode === "live",
   });
 

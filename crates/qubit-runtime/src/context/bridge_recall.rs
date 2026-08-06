@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::error::RuntimeError;
 
-use super::ports::{RecallHit, RecallPort};
+use super::ports::{RecallBundle, RecallHit, RecallPort};
 
 pub struct BridgeRecallPort {
     client: Arc<LegacyBridgeClient>,
@@ -101,6 +101,31 @@ fn parse_hits(obs: Option<&Value>) -> Vec<RecallHit> {
         .collect()
 }
 
+fn partition_bundle_hits(hits: Vec<RecallHit>) -> RecallBundle {
+    let mut finance = Vec::new();
+    let mut skill = Vec::new();
+    let mut general = Vec::new();
+    for h in hits {
+        let kind = h
+            .sub_kind
+            .as_deref()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if kind.contains("finance") || kind == "outcome" || kind.starts_with("fin") {
+            finance.push(h);
+        } else if kind.contains("procedural") || kind.contains("skill") {
+            skill.push(h);
+        } else {
+            general.push(h);
+        }
+    }
+    RecallBundle {
+        finance,
+        skill,
+        general,
+    }
+}
+
 #[async_trait]
 impl RecallPort for BridgeRecallPort {
     async fn recall_finance(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError> {
@@ -121,5 +146,53 @@ impl RecallPort for BridgeRecallPort {
         // Dual recall: Experience + FS workspace memory (merged on Bun side).
         self.invoke_hits("memory.recall", query, json!({ "include_fs": true }))
             .await
+    }
+
+    async fn recall_bundle(&self, query: &str) -> Result<RecallBundle, RuntimeError> {
+        // One bridge round-trip: finance + experience + FS (Bun `mode=bundle`).
+        let hits = self
+            .invoke_hits(
+                "memory.recall",
+                query,
+                json!({ "mode": "bundle", "include_fs": true, "top_k": 6 }),
+            )
+            .await?;
+        Ok(partition_bundle_hits(hits))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partition_bundle_by_sub_kind() {
+        let hits = vec![
+            RecallHit {
+                title: "f".into(),
+                summary: "s".into(),
+                sub_kind: Some("finance".into()),
+                asof: None,
+                score: 1.0,
+            },
+            RecallHit {
+                title: "p".into(),
+                summary: "s".into(),
+                sub_kind: Some("procedural".into()),
+                asof: None,
+                score: 1.0,
+            },
+            RecallHit {
+                title: "g".into(),
+                summary: "s".into(),
+                sub_kind: Some("fs".into()),
+                asof: None,
+                score: 1.0,
+            },
+        ];
+        let b = partition_bundle_hits(hits);
+        assert_eq!(b.finance.len(), 1);
+        assert_eq!(b.skill.len(), 1);
+        assert_eq!(b.general.len(), 1);
     }
 }

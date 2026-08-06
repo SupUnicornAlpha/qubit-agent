@@ -9,6 +9,9 @@ use serde_json::{json, Value};
 use crate::cancel::CancelToken;
 use crate::error::RuntimeError;
 use crate::model::{ModelClient, NormalizedToolCall, SampleRequest, SampleResponse};
+use crate::reasoning_extract::{
+    estimate_reasoning_tokens, extract_reasoning_from_chat_completion,
+};
 
 #[derive(Clone, Debug)]
 pub struct OpenAiCompatibleConfig {
@@ -313,15 +316,6 @@ pub fn decode_openai_tool_name(encoded: &str, map: &HashMap<String, String>) -> 
 }
 
 #[derive(Deserialize)]
-struct ChatCompletionResponse {
-    choices: Vec<Choice>,
-    #[serde(default)]
-    usage: Option<ApiUsage>,
-    #[serde(default)]
-    model: Option<String>,
-}
-
-#[derive(Deserialize)]
 struct ApiUsage {
     #[serde(default)]
     prompt_tokens: Option<u32>,
@@ -329,31 +323,14 @@ struct ApiUsage {
     completion_tokens: Option<u32>,
     #[serde(default)]
     total_tokens: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    message: Message,
-}
-
-#[derive(Deserialize)]
-struct Message {
     #[serde(default)]
-    content: Option<String>,
+    completion_tokens_details: Option<CompletionTokensDetails>,
+}
+
+#[derive(Deserialize)]
+struct CompletionTokensDetails {
     #[serde(default)]
-    tool_calls: Option<Vec<ApiToolCall>>,
-}
-
-#[derive(Deserialize)]
-struct ApiToolCall {
-    id: String,
-    function: ApiFunction,
-}
-
-#[derive(Deserialize)]
-struct ApiFunction {
-    name: String,
-    arguments: String,
+    reasoning_tokens: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -362,6 +339,91 @@ struct ChatRequest<'a> {
     messages: Vec<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<Value>>,
+}
+
+/// Prefer string content; Anthropic-compat content arrays use text blocks for answer.
+fn extract_answer_text(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(blocks)) => {
+            let mut texts = Vec::new();
+            for block in blocks {
+                let ty = block
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("text")
+                    .to_ascii_lowercase();
+                if matches!(
+                    ty.as_str(),
+                    "thinking" | "redacted_thinking" | "reasoning" | "reasoning_content"
+                ) {
+                    continue;
+                }
+                if block
+                    .get("thought")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
+                    if !t.is_empty() {
+                        texts.push(t.to_string());
+                    }
+                } else if let Some(t) = block.get("content").and_then(|v| v.as_str()) {
+                    if !t.is_empty() {
+                        texts.push(t.to_string());
+                    }
+                }
+            }
+            texts.join("\n")
+        }
+        Some(Value::Null) | None => String::new(),
+        Some(other) => other
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_default(),
+    }
+}
+
+fn extract_tool_calls(
+    message: &Value,
+    encode_map: &HashMap<String, String>,
+) -> Vec<NormalizedToolCall> {
+    let Some(Value::Array(calls)) = message.get("tool_calls") else {
+        return vec![];
+    };
+    let mut tool_calls = Vec::new();
+    for c in calls {
+        let id = c
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let name = c
+            .pointer("/function/name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let args_raw = c
+            .pointer("/function/arguments")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let args: Value = match args_raw {
+            Value::String(s) => serde_json::from_str(&s)
+                .unwrap_or_else(|_| json!({ "raw": s })),
+            other => other,
+        };
+        if id.is_empty() || name.is_empty() {
+            continue;
+        }
+        tool_calls.push(NormalizedToolCall {
+            call_id: id,
+            name: decode_openai_tool_name(&name, encode_map),
+            args,
+        });
+    }
+    tool_calls
 }
 
 #[async_trait]
@@ -433,35 +495,47 @@ impl ModelClient for OpenAiCompatibleClient {
             let text = resp.text().await.unwrap_or_default();
             return Err(RuntimeError::Model(format!("HTTP {status}: {text}")));
         }
-        let parsed: ChatCompletionResponse = resp
+        let root: Value = resp
             .json()
             .await
             .map_err(|e| RuntimeError::Model(e.to_string()))?;
         let latency_ms = started.elapsed().as_millis() as u64;
-        let usage = parsed.usage;
-        let model_name = parsed.model.or_else(|| Some(self.cfg.model.clone()));
-        let msg = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message)
+
+        let message = root
+            .pointer("/choices/0/message")
+            .cloned()
             .ok_or_else(|| RuntimeError::Model("empty choices".into()))?;
 
-        let mut tool_calls = Vec::new();
-        if let Some(calls) = msg.tool_calls {
-            for c in calls {
-                let args: Value = serde_json::from_str(&c.function.arguments)
-                    .unwrap_or_else(|_| json!({ "raw": c.function.arguments }));
-                tool_calls.push(NormalizedToolCall {
-                    call_id: c.id,
-                    name: decode_openai_tool_name(&c.function.name, &encode_map),
-                    args,
-                });
+        let usage: Option<ApiUsage> = root
+            .get("usage")
+            .cloned()
+            .and_then(|v| serde_json::from_value(v).ok());
+        let model_name = root
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| Some(self.cfg.model.clone()));
+
+        let reasoning_text = extract_reasoning_from_chat_completion(&root);
+        let mut reasoning_tokens = usage
+            .as_ref()
+            .and_then(|u| u.completion_tokens_details.as_ref())
+            .and_then(|d| d.reasoning_tokens);
+        if reasoning_tokens.is_none() {
+            if let Some(ref r) = reasoning_text {
+                let est = estimate_reasoning_tokens(r.chars().count());
+                if est > 0 {
+                    reasoning_tokens = Some(est);
+                }
             }
         }
 
+        let tool_calls = extract_tool_calls(&message, &encode_map);
+        let text = extract_answer_text(&message);
+
         Ok(SampleResponse {
-            text: msg.content.unwrap_or_default(),
+            text,
+            reasoning_text,
             tool_calls,
             request_hitl: false,
             hitl_title: None,
@@ -469,6 +543,7 @@ impl ModelClient for OpenAiCompatibleClient {
             prompt_tokens: usage.as_ref().and_then(|u| u.prompt_tokens),
             completion_tokens: usage.as_ref().and_then(|u| u.completion_tokens),
             total_tokens: usage.as_ref().and_then(|u| u.total_tokens),
+            reasoning_tokens,
             latency_ms: Some(latency_ms),
             model: model_name,
             provider: Some(self.provider.clone()),

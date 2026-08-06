@@ -86,6 +86,7 @@ fn event_turn_id(ev: &RuntimeEvent) -> Option<&TurnId> {
     match ev {
         RuntimeEvent::TurnStarted { turn_id, .. }
         | RuntimeEvent::Token { turn_id, .. }
+        | RuntimeEvent::ReasoningToken { turn_id, .. }
         | RuntimeEvent::ToolStarted { turn_id, .. }
         | RuntimeEvent::ToolFinished { turn_id, .. }
         | RuntimeEvent::PlanUpdated { turn_id, .. }

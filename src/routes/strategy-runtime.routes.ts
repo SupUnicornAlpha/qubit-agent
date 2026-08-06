@@ -44,7 +44,7 @@ strategyRuntimeRouter.post("/", async (c) => {
     market?: string;
     symbol?: string;
     timeframe?: string;
-    executionMode?: "paper" | "live";
+    executionMode?: "paper" | "live" | "sim";
     brokerAccountId?: string;
     params?: Record<string, unknown>;
     autoStart?: boolean;

@@ -83,12 +83,13 @@ interface SessionHooks {
 }
 
 function normalized(input: MarketStreamSubscription): Required<MarketStreamSubscription> {
+  const symbol = typeof input?.symbol === "string" ? input.symbol.trim().toUpperCase() : "";
   return {
-    symbol: input.symbol.trim().toUpperCase(),
-    exchange: input.exchange?.trim().toUpperCase() ?? "",
-    timeframe: input.timeframe?.trim().toLowerCase() || "1m",
+    symbol,
+    exchange: input?.exchange?.trim().toUpperCase() ?? "",
+    timeframe: input?.timeframe?.trim().toLowerCase() || "1m",
     channels:
-      input.channels && input.channels.length > 0
+      input?.channels && input.channels.length > 0
         ? [...new Set(input.channels)]
         : ["quote", "bar"],
   };
@@ -565,6 +566,7 @@ async function emitBackfill(
 class MarketStreamGateway {
   private readonly sessions = new Map<string, StreamSession>();
   private readonly sequences = new Map<string, number>();
+  private readonly globalListeners = new Set<Listener>();
   private readonly latencySamples: number[] = [];
   private readonly metrics: MarketStreamMetrics = {
     activeStreams: 0,
@@ -581,6 +583,16 @@ class MarketStreamGateway {
     mirroredMarketEvents: 0,
     mirrorErrors: 0,
   };
+
+  /** Fan-in listener for all symbol sessions (sim reactor / observability). */
+  subscribeAll(listener: Listener): () => void {
+    this.globalListeners.add(listener);
+    this.refreshCounts();
+    return () => {
+      this.globalListeners.delete(listener);
+      this.refreshCounts();
+    };
+  }
 
   subscribe(inputRaw: MarketStreamSubscription, listener: Listener): () => void {
     const input = normalized(inputRaw);
@@ -614,6 +626,13 @@ class MarketStreamGateway {
             this.sessions.get(key)?.dispatch(event);
           } catch (error) {
             this.metrics.lastError = error instanceof Error ? error.message : String(error);
+          }
+          for (const global of this.globalListeners) {
+            try {
+              global(event);
+            } catch (error) {
+              this.metrics.lastError = error instanceof Error ? error.message : String(error);
+            }
           }
         },
         reconnect: () => {
@@ -683,10 +702,9 @@ class MarketStreamGateway {
 
   private refreshCounts(): void {
     this.metrics.activeStreams = this.sessions.size;
-    this.metrics.activeListeners = [...this.sessions.values()].reduce(
-      (sum, session) => sum + session.listenerCount(),
-      0
-    );
+    this.metrics.activeListeners =
+      this.globalListeners.size +
+      [...this.sessions.values()].reduce((sum, session) => sum + session.listenerCount(), 0);
   }
 
   private observeFreshness(kind: MarketStreamEventKind, data: unknown): void {

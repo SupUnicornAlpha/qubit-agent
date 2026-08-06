@@ -4,7 +4,18 @@ import { checkRequiredArtifacts } from "../agent-readiness/quality/artifact-chec
 import { SCENARIO_EXPECTATIONS } from "../agent-readiness/quality/scenario-expectations";
 import type { ScenarioRecipe } from "../agent-readiness/scenarios";
 import { readLatestDeliveryVerdict } from "../policy/delivery-ledger";
-import type { RunEnvelope, RunTool } from "./contracts";
+import type {
+  RunEnvelope,
+  RunMemoryTelemetry,
+  RunOrchestrationTelemetry,
+  RunRecipeTelemetry,
+  RunTool,
+} from "./contracts";
+import {
+  isInvokeToolName,
+  isMemoryToolName,
+  looksLikeStubNarrative,
+} from "./soft-dimensions";
 
 export interface BuildRunEnvelopeInput {
   workflowRunId: string;
@@ -18,6 +29,8 @@ type WorkflowRow = {
   mode: string;
   researchScenarioId: string | null;
 };
+
+type Sqlite = ReturnType<typeof getSqliteForTesting>;
 
 /**
  * 从现有事实表构建轻量 Envelope。这里不写 DB、也不复制敏感 request/response；缺少
@@ -57,6 +70,9 @@ export async function buildRunEnvelope(input: BuildRunEnvelopeInput): Promise<Ru
   const delivery = readDelivery(sqlite, input.workflowRunId);
   const executionRisk = readExecutionRisk(sqlite, input.workflowRunId, scenarioKey);
   const verdict = readLatestDeliveryVerdict(sqlite, input.workflowRunId);
+  const memory = deriveMemoryTelemetry(toolTelemetry.tools);
+  const orchestration = readOrchestration(sqlite, input.workflowRunId, toolTelemetry.tools);
+  const recipe = deriveRecipeTelemetry(scenarioKey, toolTelemetry.tools);
 
   return {
     workflowRunId: input.workflowRunId,
@@ -93,6 +109,9 @@ export async function buildRunEnvelope(input: BuildRunEnvelopeInput): Promise<Ru
     ...(toolTelemetry.capability ? { capability: toolTelemetry.capability } : {}),
     ...(executionRisk.risk ? { risk: executionRisk.risk } : {}),
     ...(executionRisk.shortRisk ? { shortRisk: executionRisk.shortRisk } : {}),
+    memory,
+    orchestration,
+    ...(recipe ? { recipe } : {}),
   };
 }
 
@@ -102,7 +121,7 @@ function knownScenario(value: string | null): ScenarioRecipe["key"] | null {
 }
 
 function readTools(
-  sqlite: ReturnType<typeof getSqliteForTesting>,
+  sqlite: Sqlite,
   workflowRunId: string
 ): {
   tools: RunTool[];
@@ -145,12 +164,153 @@ function readTools(
       ...(row.latencyMs !== null ? { latencyMs: row.latencyMs } : {}),
       requestFingerprint: fingerprint(row.requestJson),
       semanticEmpty: responseLooksSemanticallyEmpty(row.responseJson),
+      ...(isMemoryToolName(row.name)
+        ? { memoryHitCount: countMemoryHits(row.responseJson) }
+        : {}),
     })),
     ...(contractCovered ? { contract: { telemetryAvailable: true, permanentExecutionCount } } : {}),
     ...(capabilityCovered
       ? { capability: { telemetryAvailable: true, disabledMcpExecutionCount: 0 } }
       : {}),
   };
+}
+
+function deriveMemoryTelemetry(tools: RunTool[]): RunMemoryTelemetry {
+  const recall = tools.filter((t) => /^memory\.recall$/i.test(t.name));
+  const search = tools.filter((t) => /^workspace\.memory\.search$/i.test(t.name));
+  return {
+    telemetryAvailable: true,
+    recallAttempts: recall.length,
+    recallSuccesses: recall.filter((t) => t.status === "success").length,
+    recallHits: recall.reduce((sum, t) => sum + (t.memoryHitCount ?? 0), 0),
+    searchAttempts: search.length,
+    searchSuccesses: search.filter((t) => t.status === "success").length,
+    searchHits: search.reduce((sum, t) => sum + (t.memoryHitCount ?? 0), 0),
+    errorCount: [...recall, ...search].filter((t) => t.status !== "success").length,
+  };
+}
+
+function deriveRecipeTelemetry(
+  scenarioKey: ScenarioRecipe["key"] | null,
+  tools: RunTool[]
+): RunRecipeTelemetry | undefined {
+  if (!scenarioKey) return undefined;
+  const expectation = SCENARIO_EXPECTATIONS[scenarioKey];
+  const required = [...expectation.requiredTools];
+  if (required.length === 0) {
+    return {
+      telemetryAvailable: true,
+      requiredTools: [],
+      matchedTools: [],
+      missedTools: [],
+    };
+  }
+  const names = tools.map((t) => t.name);
+  const matched: string[] = [];
+  const missed: string[] = [];
+  for (const req of required) {
+    const hit = names.some(
+      (name) =>
+        name === req ||
+        name.endsWith(`.${req}`) ||
+        name.includes(req) ||
+        req.includes(name)
+    );
+    if (hit) matched.push(req);
+    else missed.push(req);
+  }
+  return {
+    telemetryAvailable: true,
+    requiredTools: required,
+    matchedTools: matched,
+    missedTools: missed,
+  };
+}
+
+function readOrchestration(
+  sqlite: Sqlite,
+  workflowRunId: string,
+  tools: RunTool[]
+): RunOrchestrationTelemetry {
+  const invokeTools = tools.filter((t) => isInvokeToolName(t.name));
+  let stubNarrativeCount = 0;
+  let narrativeChars = 0;
+  let invokeAttempts = invokeTools.length;
+  let invokeSuccesses = invokeTools.filter((t) => t.status === "success").length;
+
+  // Prefer interaction log narratives when present (Core handoff projection).
+  try {
+    const rows = sqlite
+      .prepare(
+        `SELECT content_text AS content, payload_json AS payloadJson
+         FROM research_team_interaction
+         WHERE workflow_run_id = ?
+           AND kind = 'tool_call'
+           AND (
+             tool_name = 'agent.invoke'
+             OR content_text LIKE 'invoke completed:%'
+           )`
+      )
+      .all(workflowRunId) as Array<{ content: string | null; payloadJson: string | null }>;
+    if (rows.length > 0) {
+      invokeAttempts = Math.max(invokeAttempts, rows.length);
+      let ok = 0;
+      for (const row of rows) {
+        const text = row.content ?? "";
+        const payloadStatus = readPayloadStatus(row.payloadJson);
+        const failed =
+          payloadStatus === "error" ||
+          payloadStatus === "failed" ||
+          /^invoke\s+(failed|error)\b/i.test(text);
+        if (!failed) {
+          ok += 1;
+          if (looksLikeStubNarrative(text)) stubNarrativeCount += 1;
+          else narrativeChars += text.trim().length;
+        }
+      }
+      invokeSuccesses = Math.max(invokeSuccesses, ok);
+    }
+  } catch {
+    /* table/columns may differ in older DBs — tool_call_log path still works */
+  }
+
+  return {
+    telemetryAvailable: true,
+    invokeAttempts,
+    invokeSuccesses,
+    stubNarrativeCount,
+    narrativeChars,
+  };
+}
+
+function countMemoryHits(responseJson: string | null): number {
+  if (!responseJson) return 0;
+  try {
+    const parsed = JSON.parse(responseJson) as unknown;
+    return countHitsInPayload(parsed);
+  } catch {
+    return 0;
+  }
+}
+
+function countHitsInPayload(value: unknown): number {
+  if (!value || typeof value !== "object") return 0;
+  if (Array.isArray(value)) {
+    // Prefer outer array of hits when present.
+    if (value.length > 0 && value.every((item) => item && typeof item === "object")) {
+      return value.length;
+    }
+    return value.reduce<number>((sum, item) => sum + countHitsInPayload(item), 0);
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ["hits", "items", "results", "memories", "entries"]) {
+    if (Array.isArray(record[key])) return (record[key] as unknown[]).length;
+  }
+  if (typeof record.hitCount === "number") return Math.max(0, record.hitCount);
+  if (typeof record.count === "number" && Array.isArray(record.data)) {
+    return record.data.length;
+  }
+  return 0;
 }
 
 function parseGovernance(requestJson: string): {
@@ -178,7 +338,7 @@ function parseGovernance(requestJson: string): {
 }
 
 function readDelivery(
-  sqlite: ReturnType<typeof getSqliteForTesting>,
+  sqlite: Sqlite,
   workflowRunId: string
 ): RunEnvelope["delivery"] {
   try {
@@ -196,7 +356,7 @@ function readDelivery(
 }
 
 function readExecutionRisk(
-  sqlite: ReturnType<typeof getSqliteForTesting>,
+  sqlite: Sqlite,
   workflowRunId: string,
   scenarioKey: ScenarioRecipe["key"] | null
 ): Pick<RunEnvelope, "risk" | "shortRisk"> {
@@ -221,6 +381,17 @@ function readExecutionRisk(
     return { risk, ...(shortRisk ? { shortRisk } : {}) };
   } catch {
     return {};
+  }
+}
+
+function readPayloadStatus(payloadJson: string | null): string | null {
+  if (!payloadJson) return null;
+  try {
+    const parsed = JSON.parse(payloadJson) as Record<string, unknown>;
+    const status = parsed.status ?? parsed.state ?? parsed.phase;
+    return typeof status === "string" ? status.toLowerCase() : null;
+  } catch {
+    return null;
   }
 }
 

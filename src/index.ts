@@ -50,6 +50,8 @@ async function main() {
   executionWorker.start();
   recommendationOutcomeWorker.start();
   strategyRuntimeWorker.start();
+  const { startSimEventReactor } = await import("./runtime/trading/sim-event-reactor");
+  startSimEventReactor();
   // 监控聚合 + 告警扫描 worker（P2-4）：每 5min 跑一次 aggregateMetrics +
   // stuckWorkflowAlerts + scanAllSystemAlerts；任一阶段失败仅 warn，不影响主链路。
   monitorAggregatorWorker.start();
@@ -145,6 +147,8 @@ async function main() {
     executionWorker.stop();
     recommendationOutcomeWorker.stop();
     strategyRuntimeWorker.stop();
+    const { stopSimEventReactor } = await import("./runtime/trading/sim-event-reactor");
+    stopSimEventReactor();
     monitorAggregatorWorker.stop();
     experienceMaintenanceWorker.stop();
     skillSelfEvolveWorker.stop();

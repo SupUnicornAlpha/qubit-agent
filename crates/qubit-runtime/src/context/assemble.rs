@@ -167,9 +167,8 @@ impl ContextAssembler for DefaultContextAssembler {
             .workspace
             .snapshot(input.session.workspace_id.as_str(), &input.focus)
             .await?;
-        let finance = self.recall.recall_finance(&input.goal_text).await?;
-        let skill = self.recall.recall_skill(&input.goal_text).await?;
-        let general = self.recall.recall_general(&input.goal_text).await?;
+        // One host round-trip when BridgeRecallPort implements recall_bundle.
+        let bundle = self.recall.recall_bundle(&input.goal_text).await?;
 
         let mut raw: BTreeMap<String, String> = BTreeMap::new();
         raw.insert("identity".into(), identity);
@@ -187,9 +186,9 @@ impl ContextAssembler for DefaultContextAssembler {
         );
         raw.insert("goal".into(), input.goal_text.clone());
         raw.insert("slot".into(), slot.text);
-        raw.insert("recall_finance".into(), render_hits(&finance));
-        raw.insert("recall_skill".into(), render_hits(&skill));
-        raw.insert("recall_general".into(), render_hits(&general));
+        raw.insert("recall_finance".into(), render_hits(&bundle.finance));
+        raw.insert("recall_skill".into(), render_hits(&bundle.skill));
+        raw.insert("recall_general".into(), render_hits(&bundle.general));
         raw.insert(
             "session".into(),
             format!(

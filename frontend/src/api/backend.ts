@@ -4337,7 +4337,7 @@ export async function placeTraderOrder(input: {
   orderType?: "market" | "limit";
   timeframe?: string;
   rationale?: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
   strategyRuntimeId?: string;
   signalBarTime?: string;
 }): Promise<{
@@ -4370,7 +4370,7 @@ export async function placeTraderBracketOrder(input: {
   takeProfitPrice: number;
   stopLossPrice: number;
   timeframe?: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
 }): Promise<{
   bracketId: string;
   ocoGroupId: string;
@@ -4668,7 +4668,7 @@ export async function runTraderCommand(input: {
   exchange: string;
   timeframe?: string;
   text: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
 }): Promise<{
   data?: {
     orderIntentId: string;
@@ -4723,7 +4723,7 @@ export type StrategyRuntimeRecord = {
   strategyScriptId: string;
   brokerAccountId: string | null;
   status: "stopped" | "starting" | "running" | "error" | "stopping";
-  executionMode: "paper" | "live";
+  executionMode: "paper" | "live" | "sim";
   market: string;
   symbol: string;
   timeframe: string;
@@ -4756,7 +4756,7 @@ export async function createStrategyRuntime(input: {
   market: string;
   symbol: string;
   timeframe?: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
   brokerAccountId?: string;
   params?: Record<string, unknown>;
   autoStart?: boolean;
@@ -4766,6 +4766,24 @@ export async function createStrategyRuntime(input: {
     input
   );
   if (!res.ok) throw new Error(res.error ?? "create_strategy_runtime_failed");
+  return res.data;
+}
+
+/** Push news into sim trading loop: tick strategy_runtime (+ optional Agent wake). */
+export async function ingestSimTradingNews(input: {
+  symbols: string[];
+  headline: string;
+  source?: string;
+  wakeAgent?: boolean;
+  projectId?: string;
+  sessionId?: string;
+}): Promise<{ runtimeMatches: number; agentTriggered: boolean }> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: { runtimeMatches: number; agentTriggered: boolean };
+    error?: string;
+  }>("/api/v1/trading/events/news", input);
+  if (!res.ok) throw new Error(res.error ?? "ingest_sim_news_failed");
   return res.data;
 }
 

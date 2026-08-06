@@ -13,8 +13,8 @@ import {
 
 export type OrderDataQualityGateInput = {
   snapshotId?: string | null;
-  dispatchMode: "paper" | "live";
-  /** Force snapshot+tradable even for paper (auto strategies / explicit callers). */
+  dispatchMode: "paper" | "live" | "sim";
+  /** Force snapshot+tradable even for paper/sim (auto strategies / explicit callers). */
   requireQualityGate?: boolean;
 };
 

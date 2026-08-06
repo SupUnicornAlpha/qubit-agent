@@ -99,6 +99,26 @@ export function unwrapBridgeToolArgs(
   if (out.snapshotId == null && typeof out.snapshot_id === "string") {
     out.snapshotId = out.snapshot_id;
   }
+  if (out.symbol == null && typeof out.ticker === "string") {
+    out.symbol = out.ticker;
+  }
+  if (out.ticker == null && typeof out.symbol === "string") {
+    out.ticker = out.symbol;
+  }
+  if (out.entryId == null) {
+    const bookId =
+      typeof out.bookId === "string"
+        ? out.bookId
+        : typeof out.book_id === "string"
+          ? out.book_id
+          : typeof out.forecastBookId === "string"
+            ? out.forecastBookId
+            : null;
+    if (bookId) out.entryId = bookId;
+  }
+  if (out.candidates == null && Array.isArray(out.allocation)) {
+    out.candidates = out.allocation;
+  }
   return out;
 }
 

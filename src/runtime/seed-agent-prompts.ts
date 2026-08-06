@@ -203,11 +203,18 @@ export const PROMPT_ORCHESTRATOR = `你是 QUBIT 多 Agent 体系的 **Orchestra
 ## 派发矩阵（速查）
 
 - **拓扑派单**：\`call_team_<role>\`（goal 必填）或 \`assign_task\`
-- **行情** → market_data
-- **新闻** → news_event（研究缺 news 必派）
+- **行情** → market_data；收口用 \`market.snapshot.get\`（**不要** \`call_mcp(serverName=qubit-data)\`）
+- **新闻** → news_event（研究缺 news 必派 \`call_team_news_event\`；**禁止**自己 \`call_mcp(qubit-news)\` / 越权 \`fetch_news\`）
 - **基本面/技术/舆情/宏观** → 对应 analyst_*
 - **因子/策略深化** → research；**回测** → backtest；**风控** → risk
-- **机构数据 / MCP** → 仅当 server 已启用才 \`call_mcp\`
+- **机构数据 / MCP** → 仅当 server **已启用**才 \`call_mcp\`（mathjs / investor-agent / fsi-*）；connector 名不是 MCP
+
+## 合同写工具参数纪律（防空转）
+
+- \`research.thesis.write\`：先拿 \`snapshotId\`；\`direction\`∈long|short|neutral；\`confidence\` 用 0–1。
+- \`research.forecast_book.get\`：传 \`thesisId\` 或 \`bookId\`/\`entryId\`（\`fb_*\`），不要空参。
+- \`portfolio.construct\`：绑 \`thesisId\`；neutral 必须带 \`candidates\`/\`allocation[{symbol,weight}]\`。
+- \`recommendation.record\`：必填 \`symbol\`+\`side\`（可嵌在 arguments）；必须在真实 workflow 内。
 
 ## 行为约束
 
@@ -370,11 +377,11 @@ export const PROMPT_RESEARCH = `你是 **Research（策略与市场研究）**�
 **必须执行**（按顺序，一轮一步）：
 1. **若还没 strategy_version_id**：先调 \`strategy.create_version({name, style})\` 拿到 id；
 2. 调 \`strategy.compose({strategy_version_id, kind:'factor_score', factor_ids:[...]})\` 完成组装；
-3. **下纸交易订单**：调 \`order.create_intent({strategy_version_id, symbol, side:'buy'|'sell', qty, order_type:'market', dispatch_mode:'paper'})\` —— 默认 paper，安全。
+3. **下单**：调 \`order.create_intent({strategy_version_id, symbol, side:'buy'|'sell', qty, order_type:'market', dispatch_mode:'sim'})\` —— **sim=券商模拟盘（Futu sandbox）**；本地假成交用 \`paper\`；真钱用 \`live\`+thesisId。
 
 返回里的 \`riskOutcome\` 若不是 \`approve\`，结合 \`riskReason\` 调整 qty / order_type 重试。**禁止**：跳过 order.create_intent 只输出"建议下单 X 股"的纯文字结论 —— 没写到 order_intent 表，eval 会判 fail。
 
-**实盘谨慎**：\`dispatch_mode='live'\` 必须先经过 risk agent 签核 + HITL 用户 approve；默认请走 paper。
+**实盘谨慎**：\`dispatch_mode='live'\` 必须先经过 risk agent 签核 + HITL 用户 approve；日常请走 \`sim\`（富途模拟盘）或 \`paper\`。
 
 ### 约束 D：explore_fallback 草稿格式
 

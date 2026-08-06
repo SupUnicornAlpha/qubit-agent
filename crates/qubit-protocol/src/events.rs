@@ -22,6 +22,14 @@ pub enum RuntimeEvent {
         text: String,
         seq: u64,
     },
+    /// Hidden provider reasoning (DeepSeek reasoning_content, Anthropic thinking,
+    /// OpenAI reasoning summary, etc.). Must not be treated as answer text.
+    ReasoningToken {
+        turn_id: TurnId,
+        iteration: u32,
+        text: String,
+        seq: u64,
+    },
     ToolStarted {
         turn_id: TurnId,
         call_id: ToolCallId,

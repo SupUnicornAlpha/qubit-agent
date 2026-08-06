@@ -81,7 +81,7 @@ export async function placeTraderOrder(input: {
   orderType?: Extract<OrderType, "market" | "limit">;
   timeframe?: string;
   rationale?: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
   strategyRuntimeId?: string;
   signalBarTime?: string;
 }): Promise<{
@@ -163,13 +163,31 @@ export async function placeTraderBracketOrder(input: {
   takeProfitPrice: number;
   stopLossPrice: number;
   timeframe?: string;
-  executionMode?: "paper" | "live";
+  executionMode?: "paper" | "live" | "sim";
   brokerAccountId?: string;
 }) {
   const symbol = input.symbol.trim().toUpperCase();
   const market = chartExchangeToMarket(input.exchange);
   const db = await getDb();
   const context = await resolveExecutionStrategyContext(db, input.workflowRunId, symbol, market);
+  let brokerAccountId = input.brokerAccountId;
+  const dispatchMode =
+    input.executionMode === "live"
+      ? "live"
+      : input.executionMode === "sim"
+        ? "sim"
+        : "paper";
+  if (dispatchMode === "sim" && !brokerAccountId) {
+    const { resolveDefaultSimBrokerAccountId } = await import(
+      "../execution/resolve-sim-broker-account"
+    );
+    brokerAccountId = (await resolveDefaultSimBrokerAccountId("futu")) ?? undefined;
+    if (!brokerAccountId) {
+      throw new Error(
+        "sim_execution_requires_broker_account: configure an enabled Futu sandbox account"
+      );
+    }
+  }
   const result = await createBracketOrder(db, {
     workflowRunId: input.workflowRunId,
     strategyVersionId: context.strategyVersionId,
@@ -182,8 +200,8 @@ export async function placeTraderBracketOrder(input: {
     takeProfitPrice: input.takeProfitPrice,
     stopLossPrice: input.stopLossPrice,
     timeInForce: "gtc",
-    dispatchMode: input.executionMode ?? "paper",
-    ...(input.brokerAccountId ? { brokerAccountId: input.brokerAccountId } : {}),
+    dispatchMode,
+    ...(brokerAccountId ? { brokerAccountId } : {}),
     market,
     symbol,
   });

@@ -139,6 +139,8 @@ export async function projectCoreInvocation(input: {
   childTurnId?: string;
   state?: string;
   deliveryStatus?: string;
+  /** Child answer / handoff narrative — preferred over goal stub in UI. */
+  resultText?: string | null;
   /** When true, only emit start (for mid-turn Running). */
   startOnly?: boolean;
   /** When true, skip start (already emitted). */
@@ -210,30 +212,45 @@ export async function projectCoreInvocation(input: {
   }
 
   if (isTerminal) {
+    const narrative = sanitizeCoreAnswerText(String(input.resultText ?? "").trim());
+    const stubNarrative =
+      /\(no answer_text\)\s*$/i.test(narrative) ||
+      /^invocation\s+\S+\s*→\s*child turn/i.test(narrative);
+    const body =
+      narrative && !stubNarrative
+        ? narrative.slice(0, 8000)
+        : `invoke ${state}: ${input.goal.slice(0, 500)}`;
     await logResearchTeamInteraction({
       workflowRunId: input.workflowRunId,
       fromRole: toRole,
       toRole: input.callerRole ?? "orchestrator",
       kind: "llm_message",
-      contentText: `invoke ${state}: ${input.goal.slice(0, 500)}`,
+      contentText: body,
       payloadJson: {
         backend: "rust",
         phase: "prime_invoke_result",
         invocationId: input.invocationId,
         deliveryStatus: input.deliveryStatus,
+        hasNarrative: Boolean(narrative && !stubNarrative),
       },
     });
   }
 
   const invokeOk =
     state !== "failed" && state !== "cancelled" && state !== "timed_out";
+  const resultPreview = sanitizeCoreAnswerText(String(input.resultText ?? "").trim()).slice(
+    0,
+    240
+  );
   publishCoreToolCallEnd(activityCtx, {
     toolCallId: input.invocationId,
     toolName: "agent.invoke",
     ok: invokeOk,
     status: invokeOk ? "success" : "failed",
     observation: {
-      summary: `invoke ${state} → ${toRole}`,
+      summary: resultPreview
+        ? `invoke ${state} → ${toRole}: ${resultPreview}`
+        : `invoke ${state} → ${toRole}`,
       childSessionId: input.childSessionId,
       deliveryStatus: input.deliveryStatus,
     },
@@ -249,7 +266,9 @@ export async function projectCoreInvocation(input: {
       calleeLabel: toRole,
     },
     observation: {
-      summary: `invoke ${state} → ${toRole}`,
+      summary: resultPreview
+        ? `invoke ${state} → ${toRole}: ${resultPreview}`
+        : `invoke ${state} → ${toRole}`,
       childSessionId: input.childSessionId,
       deliveryStatus: input.deliveryStatus,
     },
@@ -266,6 +285,10 @@ export type CoreInvocationWire = {
   child_turn_id?: string;
   state?: string;
   delivery?: { status?: string };
+  handoff_out?: {
+    narrative?: string | null;
+    goal?: string | null;
+  } | null;
 };
 
 /**
@@ -295,6 +318,10 @@ export async function projectCoreInvocationsFromSnapshot(input: {
 
     const isRunning = state === "running";
     const alreadyStarted = prev != null;
+    const narrative =
+      typeof inv.handoff_out?.narrative === "string"
+        ? inv.handoff_out.narrative.trim()
+        : "";
 
     await projectCoreInvocation({
       workflowRunId: input.workflowRunId,
@@ -308,6 +335,7 @@ export async function projectCoreInvocationsFromSnapshot(input: {
       childTurnId: inv.child_turn_id,
       state,
       deliveryStatus: inv.delivery?.status,
+      ...(narrative ? { resultText: narrative } : {}),
       ...(isRunning
         ? { startOnly: true }
         : alreadyStarted

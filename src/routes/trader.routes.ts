@@ -89,7 +89,7 @@ traderRouter.post("/orders", async (c) => {
     orderType?: Extract<OrderType, "market" | "limit">;
     timeframe?: string;
     rationale?: string;
-    executionMode?: "paper" | "live";
+    executionMode?: "paper" | "live" | "sim";
     strategyRuntimeId?: string;
     signalBarTime?: string;
   };
@@ -157,7 +157,7 @@ traderRouter.post("/orders/bracket", async (c) => {
     takeProfitPrice?: number;
     stopLossPrice?: number;
     timeframe?: string;
-    executionMode?: "paper" | "live";
+    executionMode?: "paper" | "live" | "sim";
     brokerAccountId?: string;
   }>();
   if (
@@ -252,7 +252,7 @@ traderRouter.post("/command", async (c) => {
     exchange?: string;
     timeframe?: string;
     text?: string;
-    executionMode?: "paper" | "live";
+    executionMode?: "paper" | "live" | "sim";
   };
 
   if (!body.workflowRunId || !body.text?.trim()) {

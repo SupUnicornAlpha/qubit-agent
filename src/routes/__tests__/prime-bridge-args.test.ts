@@ -30,4 +30,18 @@ describe("unwrapBridgeToolArgs", () => {
     expect(out.symbols).toEqual(["000001.SZ", "AAPL"]);
     expect(out.snapshotId).toBe("snap-1");
   });
+
+  test("aliases bookId ticker allocation", () => {
+    const out = unwrapBridgeToolArgs({
+      arguments: {
+        bookId: "fb_1",
+        ticker: "ASTS",
+        allocation: [{ symbol: "AAPL", weight: 0.5 }],
+      },
+    });
+    expect(out.entryId).toBe("fb_1");
+    expect(out.symbol).toBe("ASTS");
+    expect(out.ticker).toBe("ASTS");
+    expect(out.candidates).toEqual([{ symbol: "AAPL", weight: 0.5 }]);
+  });
 });

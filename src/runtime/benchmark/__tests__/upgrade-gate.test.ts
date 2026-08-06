@@ -127,4 +127,17 @@ describe("benchmark upgrade gate", () => {
     );
     expect(result.promotionEligible).toBe(false);
   });
+
+  test("memory dimension fails when recall is required but never attempted", () => {
+    const memCase = QUBIT_BENCH_CASES.find((c) => c.id === "QB-MEM-01")!;
+    const result = evaluateUpgradeGate({
+      benchmarkCase: memCase,
+      snapshot: snapshot(),
+      grade,
+      scorecard: completeScorecard(),
+      durationMs: 1_000,
+    });
+    expect(result.dimensions.find((d) => d.name === "memory")?.status).toBe("fail");
+    expect(result.status).toBe("fail");
+  });
 });

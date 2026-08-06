@@ -14,9 +14,12 @@ import {
 import { executeWithPolicy } from "../external-call/policy";
 import { connectorForAccount, resolveBrokerAccount } from "./broker/broker-service";
 import type { BrokerProvider } from "../../types/broker";
-import { isLiveTradingEnabled } from "./live-trading-gate";
+import {
+  assertBrokerDispatchAllowed,
+  type DispatchMode,
+} from "./live-trading-gate";
 
-export type DispatchMode = "paper" | "live";
+export type { DispatchMode };
 
 export interface DispatchExecutionInput {
   executionTaskId: string;
@@ -133,10 +136,6 @@ async function dispatchLiveBroker(
   nowIso: string,
   effectiveOrderType: "market" | "limit",
 ): Promise<DispatchExecutionResult> {
-  if (!isLiveTradingEnabled()) {
-    throw new Error("live_trading_disabled");
-  }
-
   if (!input.brokerAccountId) {
     throw new Error("broker_account_id_required_for_live");
   }
@@ -150,6 +149,11 @@ async function dispatchLiveBroker(
   if (!accountRow || !accountRow.enabled) {
     throw new Error("broker_account_not_found_or_disabled");
   }
+
+  assertBrokerDispatchAllowed(
+    input.dispatchMode,
+    accountRow.mode as "mock" | "sandbox" | "live"
+  );
 
   const provider = accountRow.provider as BrokerProvider;
   const resolved = await resolveBrokerAccount(provider, accountRow.accountRef);
@@ -168,7 +172,7 @@ async function dispatchLiveBroker(
   await appendEvent(db, {
     executionTaskId: input.executionTaskId,
     eventType: "dispatch",
-    payload: { provider, ticker, mode: "live" },
+    payload: { provider, ticker, mode: input.dispatchMode, brokerMode: accountRow.mode },
   });
 
   const live = await executeWithPolicy(
@@ -284,14 +288,17 @@ export async function dispatchExecutionTask(
 
   let fillPrice = intent.price;
   if (fillPrice === null || !Number.isFinite(fillPrice) || fillPrice <= 0) {
-    if (input.dispatchMode === "live" && effectiveOrderType === "market") {
+    if (
+      (input.dispatchMode === "live" || input.dispatchMode === "sim") &&
+      effectiveOrderType === "market"
+    ) {
       fillPrice = 1;
     } else {
       throw new Error("price_required_for_execution");
     }
   }
 
-  if (input.dispatchMode === "live") {
+  if (input.dispatchMode === "live" || input.dispatchMode === "sim") {
     return dispatchLiveBroker(db, input, intent, fillPrice, nowIso, effectiveOrderType);
   }
 

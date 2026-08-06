@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { defaultDataDir } from "../../app-paths";
+import { coerceConfidence01 } from "../../tools/research-arg-normalize";
 import {
   type ResearchThesis,
   ResearchThesisSchema,
@@ -126,9 +127,9 @@ export async function writeResearchThesis(
     throw new Error("missing_instrumentScope: research.thesis.write requires instrumentScope");
   }
 
-  const confidence = Number(input.confidence);
-  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-    throw new Error("invalid_confidence: must be between 0 and 1");
+  const confidence = coerceConfidence01(input.confidence, NaN);
+  if (!Number.isFinite(confidence)) {
+    throw new Error("invalid_confidence: must be between 0 and 1 (or label low/medium/high, or 0-100)");
   }
 
   const body = {

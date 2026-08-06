@@ -736,6 +736,13 @@
       "when": 1815004800000,
       "tag": "0105_agent_definition_execution_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1815091200000,
+      "tag": "0106_sim_dispatch_mode",
+      "breakpoints": true
     }
   ]
 }

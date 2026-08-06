@@ -1,15 +1,30 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { L0_CASES, runL0Suite } from "../l0-suite";
+import { L0_CASES, L0_SOFT_CASES, runL0SoftSuite, runL0Suite } from "../l0-suite";
 import { enqueueHardFailures } from "../regression-queue";
 import { scoreRunEnvelope } from "../scorecard";
+import { listQubitBenchCases, QUBIT_BENCH_CASES, QUBIT_BENCH_VERSION } from "../qubit-bench-cases";
 
 describe("qubit benchmark scorecard", () => {
   test("L0 fixtures enforce all v0.1 hard-assertion semantics", () => {
     const results = runL0Suite();
     expect(results).toHaveLength(10);
     expect(results.every((result) => result.pass)).toBe(true);
+  });
+
+  test("L0 soft fixtures score memory / orchestration / recipe dimensions", () => {
+    const results = runL0SoftSuite();
+    expect(results).toHaveLength(L0_SOFT_CASES.length);
+    expect(results.every((result) => result.pass)).toBe(true);
+  });
+
+  test("soft layer is scored (not skipped) when tools are present", () => {
+    const scorecard = scoreRunEnvelope(L0_CASES[0]!.envelope);
+    expect(scorecard.layers.soft.status).toBe("scored");
+    expect(scorecard.layers.soft.score).not.toBeNull();
+    expect(scorecard.layers.soft.dimensions.some((d) => d.id === "tools")).toBe(true);
+    expect(scorecard.layers.soft.dimensions.some((d) => d.id === "recipe")).toBe(true);
   });
 
   test("a hard failure zeros the total score and disqualifies promotion", () => {
@@ -54,5 +69,16 @@ describe("qubit benchmark scorecard", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  test("qubit-bench-v0.2 covers multi-scenario clusters with memory/orchestration cases", () => {
+    expect(QUBIT_BENCH_VERSION).toBe("qubit-bench-v0.2");
+    expect(QUBIT_BENCH_CASES.length).toBeGreaterThanOrEqual(24);
+    expect(listQubitBenchCases({ tags: ["memory"] }).length).toBeGreaterThanOrEqual(2);
+    expect(listQubitBenchCases({ tags: ["orchestration"] }).length).toBeGreaterThanOrEqual(2);
+    expect(listQubitBenchCases({ tags: ["portfolio"] }).length).toBeGreaterThanOrEqual(1);
+    expect(
+      listQubitBenchCases({ dimensions: ["memory"] }).every((c) => c.dimensions.includes("memory"))
+    ).toBe(true);
   });
 });

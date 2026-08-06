@@ -644,22 +644,28 @@ impl ToolHost for L0ToolHost {
         cancel: CancelToken,
     ) -> Result<Vec<ToolResult>, RuntimeError> {
         cancel.check()?;
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(calls.len());
         let mut rest = Vec::new();
-        for c in calls {
+        let mut rest_idx = Vec::new();
+        for (i, c) in calls.into_iter().enumerate() {
             let name = c.name.strip_prefix("tool/").unwrap_or(&c.name);
             if name == "update_plan" {
-                out.push(self.handle_update_plan(&c).await?);
+                out.push((i, self.handle_update_plan(&c).await?));
             } else if name == "agent.invoke" {
-                out.push(self.handle_agent_invoke(&c, cancel.child()).await?);
+                out.push((i, self.handle_agent_invoke(&c, cancel.child()).await?));
             } else {
+                rest_idx.push(i);
                 rest.push(c);
             }
         }
         if !rest.is_empty() {
-            out.extend(self.fallback.invoke_all(rest, cancel).await?);
+            let fallback = self.fallback.invoke_all(rest, cancel).await?;
+            for (i, r) in rest_idx.into_iter().zip(fallback.into_iter()) {
+                out.push((i, r));
+            }
         }
-        Ok(out)
+        out.sort_by_key(|(i, _)| *i);
+        Ok(out.into_iter().map(|(_, r)| r).collect())
     }
 
     fn tool_names(&self) -> Vec<String> {

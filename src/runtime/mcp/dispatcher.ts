@@ -3,6 +3,7 @@ import { getDb } from "../../db/sqlite/client";
 import { mcpServerConfig, mcpToolBinding } from "../../db/sqlite/schema";
 import { executeWithPolicy } from "../external-call/policy";
 import { assertMcpServerNotOpen, recordMcpCallResult } from "../monitor/mcp-health-tracker";
+import { resolveConnectorForServerAlias } from "../tools/tool-routes";
 import { tryFinancexFallback } from "./financex-fallback";
 import { callMcpHttpTool, httpEndpointFromServer, httpHeadersFromCaps } from "./http-transport";
 import { resolveMcpStdioArgv } from "./package-manager";
@@ -217,6 +218,22 @@ async function assertToolBindingNotDisabled(
 }
 
 export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpDispatchResult> {
+  const connectorAlias = resolveConnectorForServerAlias(input.serverName);
+  if (connectorAlias) {
+    if (connectorAlias === "qubit-news") {
+      throw new Error(
+        `call_mcp: "${input.serverName}" 是内置新闻 connector，不是 MCP server。` +
+          `请派 call_team_news_event / assign_task(role=news_event)，由新闻 Agent 调 fetch_news*；` +
+          `Orchestrator 不要直接 call_mcp(qubit-news)。`
+      );
+    }
+    throw new Error(
+      `call_mcp: "${input.serverName}" 是内置 connector，不是 MCP server。` +
+        `行情请用 market.snapshot.get / market.resolve_symbol，或已启用的 mcp:investor-agent:*；` +
+        `不要把 qubit-data / qubit-backtest 等 connector 名当作 serverName。` +
+        (input.toolName ? `（你想调的是 ${input.toolName}）` : "")
+    );
+  }
   /**
    * P0-4：retry 不再硬编码 —— 真正读 `mcp_tool_binding.retryPolicyJson` 让用户在 UI
    * 改的策略生效。binding 没行 / 字段缺失就退回 DEFAULT_MCP_POLICY.retry。

@@ -21,6 +21,10 @@ use crate::error::RuntimeError;
 use crate::events::EventBus;
 use crate::hitl_inbox::HitlInbox;
 use crate::model::{ModelClient, SampleRequest};
+use crate::reasoning_extract::chunk_reasoning_for_stream;
+use crate::stall::{
+    is_fail_circuit_tool, stall_fingerprint, strip_tool_from_surface, FAIL_CIRCUIT_MAX,
+};
 use crate::store::{initial_turn, new_turn_id, SharedStore};
 use crate::tools::{L0ToolHost, ToolHost};
 use serde_json::json;
@@ -29,22 +33,15 @@ const TOOL_LOOP_HARNESS: &str = r#"
 
 ## 工具调用收敛（Harness · 强制）
 1. 每轮最多并行 1–3 个必要工具；禁止无目的连打同一工具。
-2. 同一工具（含相同参数）成功 ≤3 次后必须停手，用已有 observation 写中文终答。
+2. 同一工具（含相同参数指纹）成功 ≤3 次后必须停手，用已有 observation 写中文终答。
 3. mathjs / historical_prices / technical_indicator 禁止刷屏；算数优先一次表达式。
 4. 有足够证据后下一轮只输出最终回答，不再发 tool_calls。
 5. 宁可给出带 [待核实] 的部分结论，也不要无限取数直到超时。
 6. 若本轮已建立 update_plan 步骤：每完成一块工作必须再调 update_plan 推进 status（in_progress→done/skipped）；禁止计划一直停在全 pending。
 7. 因子相关：只用点号工具名 factor.register / factor.compute / factor.autoEvaluate / factor.mine.llm；禁止 factor_register 等假名；参数平铺勿包 arguments；创建因子必须 register 落库，禁止只写口头因子表或把工具缺口当终答。
+8. MCP 只用 `mcp:<server>:<tool>` 直连名；不要用 call_mcp 元工具。
+9. workspace.context.snapshot / research.thesis.write 参数不全时不要反复重试——缺字段先补齐或改用其它路径。
 "#;
-
-fn stall_fingerprint(tool_name: &str, args: &serde_json::Value, key: &str) -> String {
-    let bare = tool_name.strip_prefix("tool/").unwrap_or(tool_name);
-    match key {
-        "tool_fingerprint" => format!("{bare}|{}", args),
-        "tool_market" => format!("{bare}|market"),
-        _ => bare.to_string(),
-    }
-}
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -303,9 +300,14 @@ impl TurnEngine {
         self.checkpoint(session_id, &turn, seq, None).await?;
 
         let mut tool_names = self.tools.tool_names();
+        // Single MCP channel: advertise `mcp:<server>:<tool>` only (call_mcp still invokable if forced).
+        tool_names.retain(|n| {
+            let bare = n.strip_prefix("tool/").unwrap_or(n);
+            bare != "call_mcp"
+        });
         if !policy_snap.tool_allowlist.is_empty() {
             // Soft intersect: keep tools that appear on allowlist OR are L0 meta.
-            // MCP: keep `call_mcp` / `mcp:<server>:<tool>` when allowlist enables MCP.
+            // MCP: keep `mcp:<server>:<tool>` when allowlist enables MCP.
             let allow_mcp = policy_snap.tool_allowlist.iter().any(|a| {
                 a == "call_mcp" || a.starts_with("mcp:")
             });
@@ -313,11 +315,19 @@ impl TurnEngine {
                 let bare = n.strip_prefix("tool/").unwrap_or(n);
                 bare == "update_plan"
                     || bare == "agent.invoke"
-                    || (allow_mcp && (bare == "call_mcp" || bare.starts_with("mcp:")))
+                    || (allow_mcp && bare.starts_with("mcp:"))
                     || policy_snap.tool_allowlist.iter().any(|a| a == bare || a == n)
             });
             if tool_names.is_empty() {
-                tool_names = self.tools.tool_names();
+                tool_names = self
+                    .tools
+                    .tool_names()
+                    .into_iter()
+                    .filter(|n| {
+                        let bare = n.strip_prefix("tool/").unwrap_or(n);
+                        bare != "call_mcp"
+                    })
+                    .collect();
             }
         }
 
@@ -363,6 +373,9 @@ impl TurnEngine {
         let mut history: Vec<serde_json::Value> = Vec::new();
         // tool_fingerprint → consecutive success count (stall budget)
         let mut stall_hits: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
+        // identical failure fingerprint → fail-circuit strip
+        let mut fail_hits: std::collections::HashMap<String, u32> =
             std::collections::HashMap::new();
         let stall = policy_snap.stall.clone();
         loop {
@@ -459,6 +472,27 @@ impl TurnEngine {
                     sample.provider.clone(),
                 );
                 turn.llm_stats = Some(stats);
+            }
+
+            // Hidden reasoning first (UI ghost); never treat as answer text.
+            if let Some(reasoning) = sample
+                .reasoning_text
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                for chunk in chunk_reasoning_for_stream(reasoning, 96) {
+                    let seq = self.events.next_seq().await;
+                    self.store.bump_event_seq(session_id, seq).await?;
+                    self.events
+                        .emit(RuntimeEvent::ReasoningToken {
+                            turn_id: turn_id.clone(),
+                            iteration,
+                            text: chunk,
+                            seq,
+                        })
+                        .await;
+                }
             }
 
             if !sample.text.is_empty() {
@@ -560,6 +594,10 @@ impl TurnEngine {
                 .await?;
 
             // Feed tool observations back into the next sample (OpenAI chat format).
+            // CRITICAL: every assistant tool_calls message must be followed ONLY by the
+            // matching tool role messages (one per tool_call_id). Stall/fail nudges must
+            // come AFTER the full tool block — inserting system mid-block causes HTTP 400
+            // "insufficient tool messages following tool_calls message" (DeepSeek/OpenAI).
             let assistant_tools: Vec<serde_json::Value> = sample
                 .tool_calls
                 .iter()
@@ -568,7 +606,8 @@ impl TurnEngine {
                         "id": c.call_id,
                         "type": "function",
                         "function": {
-                            "name": c.name,
+                            // Re-encode so history matches what the API advertised.
+                            "name": crate::model_openai::encode_openai_tool_name(&c.name),
                             "arguments": c.args.to_string(),
                         }
                     })
@@ -576,10 +615,39 @@ impl TurnEngine {
                 .collect();
             history.push(json!({
                 "role": "assistant",
-                "content": sample.text,
+                // Providers reject empty-string content alongside tool_calls; prefer null.
+                "content": if sample.text.trim().is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(sample.text.clone())
+                },
                 "tool_calls": assistant_tools,
             }));
-            for (call, result) in sample.tool_calls.iter().zip(results.iter()) {
+
+            let mut pending_nudges: Vec<serde_json::Value> = Vec::new();
+            for call in &sample.tool_calls {
+                let result = results
+                    .iter()
+                    .find(|r| r.call_id.as_str() == call.call_id)
+                    .or_else(|| {
+                        // Fallback: positional if host preserved order but remapped ids.
+                        let idx = sample
+                            .tool_calls
+                            .iter()
+                            .position(|c| c.call_id == call.call_id)?;
+                        results.get(idx)
+                    });
+                let Some(result) = result else {
+                    history.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call.call_id,
+                        "content": json!({
+                            "ok": false,
+                            "error": "missing_tool_result"
+                        }).to_string(),
+                    }));
+                    continue;
+                };
                 let name = call.name.strip_prefix("tool/").unwrap_or(&call.name);
                 ledger.record_tool_results(name, result.ok, result.effects.clone());
                 let content = result
@@ -605,29 +673,52 @@ impl TurnEngine {
 
                 // Stall budget: consecutive same tool/fingerprint successes → strip + nudge.
                 if let Some(ref stall) = stall {
+                    let family = crate::stall::tool_family(name, &call.args);
                     let applies = stall.tools.is_empty()
-                        || stall.tools.iter().any(|t| t == name || name.starts_with(t));
+                        || stall.tools.iter().any(|t| {
+                            t == name
+                                || name.starts_with(t)
+                                || t == &family
+                                || family.starts_with(t)
+                                || (*t == "call_mcp" && family.starts_with("mcp:"))
+                        });
                     if applies && result.ok {
                         let fp = stall_fingerprint(name, &call.args, &stall.key);
                         let hits = stall_hits.entry(fp.clone()).or_insert(0);
                         *hits = hits.saturating_add(1);
                         if *hits >= stall.max_success {
-                            tool_names.retain(|n| {
-                                let bare = n.strip_prefix("tool/").unwrap_or(n);
-                                bare != name && !bare.starts_with(name)
-                            });
-                            history.push(json!({
+                            strip_tool_from_surface(&mut tool_names, name, &call.args);
+                            pending_nudges.push(json!({
                                 "role": "system",
                                 "content": format!(
-                                    "STALL_BUDGET: tool `{name}` (fingerprint) succeeded {hits} times. \
-                                     Do NOT call it again. Write the final Chinese answer now using \
-                                     observations already in this turn. No more tool_calls."
+                                    "STALL_BUDGET: tool `{family}` (fingerprint) succeeded {hits} times. \
+                                     Do NOT call it again (neither mcp:* nor call_mcp). Write the final \
+                                     Chinese answer now using observations already in this turn. No more tool_calls."
                                 ),
                             }));
                         }
                     }
                 }
+
+                // Fail circuit: repeated identical failures on control tools → strip + nudge.
+                if !result.ok && is_fail_circuit_tool(name) {
+                    let fp = stall_fingerprint(name, &call.args, "tool_fingerprint");
+                    let hits = fail_hits.entry(fp.clone()).or_insert(0);
+                    *hits = hits.saturating_add(1);
+                    if *hits >= FAIL_CIRCUIT_MAX {
+                        strip_tool_from_surface(&mut tool_names, name, &call.args);
+                        pending_nudges.push(json!({
+                            "role": "system",
+                            "content": format!(
+                                "FAIL_CIRCUIT: tool `{name}` failed {hits} times with the same args. \
+                                 It has been removed from this turn's tool surface. Do not retry it; \
+                                 fix missing fields in prose or continue with another path / final answer."
+                            ),
+                        }));
+                    }
+                }
             }
+            history.extend(pending_nudges);
 
             turn.state = TurnState::Observing;
             self.store

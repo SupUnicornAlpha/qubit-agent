@@ -304,6 +304,25 @@ export async function runOrchestratorTaskViaCore(
               invocations: tick.invocations,
               projected: projectedInvokes,
             });
+          },
+          async (event) => {
+            // Live Core reasoning → Team UI ThinkingGhostBox (not answer bubbles).
+            if (event.type !== "reasoning_token") return;
+            const piece = typeof event.text === "string" ? event.text : "";
+            if (!piece) return;
+            stepStreamBus.publish({
+              runId,
+              workflowId: msg.workflowId,
+              traceId: msg.traceId,
+              role: "orchestrator",
+              type: "reasoning_token",
+              stepIndex:
+                typeof event.iteration === "number" ? event.iteration : 0,
+              ts: Date.now(),
+              loopKind: "native",
+              source: "a2a",
+              payload: { token: piece, backend: "rust" },
+            });
           }
         );
       } catch (err) {

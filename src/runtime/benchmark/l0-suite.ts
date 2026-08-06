@@ -12,7 +12,7 @@ const baseEnvelope = (): RunEnvelope => ({
   workflowRunId: "l0-fixture",
   suite: "L0",
   scenarioKey: "stock_pick",
-  harnessVersion: "qubit-bench-v0.1",
+  harnessVersion: "qubit-bench-v0.2",
   terminal: { status: "completed" },
   tools: [{ name: "get_quote", status: "success", requestFingerprint: "quote-a" }],
   artifacts: [
@@ -29,6 +29,29 @@ const baseEnvelope = (): RunEnvelope => ({
   delivery: { observed: true, hasUserFinalAnswer: true },
   contract: { telemetryAvailable: true, permanentExecutionCount: 0 },
   capability: { telemetryAvailable: true, disabledMcpExecutionCount: 0 },
+  memory: {
+    telemetryAvailable: true,
+    recallAttempts: 0,
+    recallSuccesses: 0,
+    recallHits: 0,
+    searchAttempts: 0,
+    searchSuccesses: 0,
+    searchHits: 0,
+    errorCount: 0,
+  },
+  orchestration: {
+    telemetryAvailable: true,
+    invokeAttempts: 0,
+    invokeSuccesses: 0,
+    stubNarrativeCount: 0,
+    narrativeChars: 0,
+  },
+  recipe: {
+    telemetryAvailable: true,
+    requiredTools: ["get_quote"],
+    matchedTools: ["get_quote"],
+    missedTools: [],
+  },
 });
 
 /**
@@ -136,6 +159,73 @@ export const L0_CASES: L0Case[] = [
   },
 ];
 
+/** Soft / 多维评分语义 fixtures（与 Hard L0 分开统计，可一并跑）。 */
+export const L0_SOFT_CASES: L0Case[] = [
+  {
+    id: "L0-SOFT-MEM-01",
+    title: "memory recall with hits scores soft.memory",
+    envelope: {
+      ...baseEnvelope(),
+      workflowRunId: "l0-mem-hits",
+      tools: [
+        {
+          name: "memory.recall",
+          status: "success",
+          requestFingerprint: "m1",
+          memoryHitCount: 3,
+        },
+        { name: "get_quote", status: "success", requestFingerprint: "q1" },
+      ],
+      memory: {
+        telemetryAvailable: true,
+        recallAttempts: 1,
+        recallSuccesses: 1,
+        recallHits: 3,
+        searchAttempts: 0,
+        searchSuccesses: 0,
+        searchHits: 0,
+        errorCount: 0,
+      },
+    },
+    expected: { assertionId: "H4", status: "pass" },
+  },
+  {
+    id: "L0-SOFT-ORCH-01",
+    title: "stub invoke narratives lower orchestration score",
+    envelope: {
+      ...baseEnvelope(),
+      workflowRunId: "l0-orch-stub",
+      tools: [
+        { name: "agent.invoke", status: "success", requestFingerprint: "i1" },
+        { name: "get_quote", status: "success", requestFingerprint: "q1" },
+      ],
+      orchestration: {
+        telemetryAvailable: true,
+        invokeAttempts: 2,
+        invokeSuccesses: 2,
+        stubNarrativeCount: 2,
+        narrativeChars: 0,
+      },
+    },
+    expected: { assertionId: "H4", status: "pass" },
+  },
+  {
+    id: "L0-SOFT-RECIPE-01",
+    title: "missed required tools lower recipe recall",
+    envelope: {
+      ...baseEnvelope(),
+      workflowRunId: "l0-recipe-miss",
+      recipe: {
+        telemetryAvailable: true,
+        requiredTools: ["get_quote", "news"],
+        matchedTools: ["get_quote"],
+        missedTools: ["news"],
+      },
+    },
+    expected: { assertionId: "H3", status: "pass" },
+  },
+];
+
 export function runL0Suite(cases: readonly L0Case[] = L0_CASES) {
   return cases.map((testCase) => {
     const scorecard = scoreRunEnvelope(testCase.envelope);
@@ -148,6 +238,37 @@ export function runL0Suite(cases: readonly L0Case[] = L0_CASES) {
       expected: testCase.expected,
       actual: actual?.status ?? "missing",
       pass: actual?.status === testCase.expected.status,
+      scorecard,
+    };
+  });
+}
+
+/** Soft fixtures：验证多维 soft 层已 scored，且关键维度有合理分数。 */
+export function runL0SoftSuite(cases: readonly L0Case[] = L0_SOFT_CASES) {
+  return cases.map((testCase) => {
+    const scorecard = scoreRunEnvelope(testCase.envelope);
+    const soft = scorecard.layers.soft;
+    const memory = soft.dimensions.find((d) => d.id === "memory");
+    const orch = soft.dimensions.find((d) => d.id === "orchestration");
+    const recipe = soft.dimensions.find((d) => d.id === "recipe");
+    let pass = soft.status === "scored";
+    let detail = `soft=${soft.status} score=${soft.score?.toFixed(3) ?? "na"}`;
+    if (testCase.id === "L0-SOFT-MEM-01") {
+      pass = Boolean(memory?.status === "scored" && (memory.score ?? 0) >= 0.5);
+      detail = `memory=${memory?.score?.toFixed(3)}`;
+    } else if (testCase.id === "L0-SOFT-ORCH-01") {
+      // stubs should pull score below a clean narrative run (~0.5 success-only floor).
+      pass = Boolean(orch?.status === "scored" && (orch.score ?? 1) < 0.75);
+      detail = `orchestration=${orch?.score?.toFixed(3)}`;
+    } else if (testCase.id === "L0-SOFT-RECIPE-01") {
+      pass = Boolean(recipe?.status === "scored" && Math.abs((recipe.score ?? 0) - 0.5) < 1e-6);
+      detail = `recipe=${recipe?.score?.toFixed(3)}`;
+    }
+    return {
+      id: testCase.id,
+      title: testCase.title,
+      pass,
+      detail,
       scorecard,
     };
   });

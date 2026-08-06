@@ -209,6 +209,42 @@ export async function processStrategyRuntimes(now = new Date()): Promise<void> {
   await processExecutionTasks(db, now);
 }
 
+/**
+ * Event-driven path: closed bar / news-related symbol → tick matching runtimes only.
+ * Prefer this over the 30s poll for sim/realtime (lower latency, no LLM).
+ */
+export async function processStrategyRuntimesForSymbol(
+  symbol: string,
+  now = new Date()
+): Promise<{ matched: number }> {
+  const db = await getDb();
+  const sym = symbol.trim().toUpperCase();
+  const runtimes = await db
+    .select()
+    .from(strategyRuntime)
+    .where(eq(strategyRuntime.status, "running"));
+  const matched = runtimes.filter(
+    (r) => r.symbol.trim().toUpperCase() === sym || r.symbol.trim().toUpperCase().includes(sym)
+  );
+  for (const runtime of matched) {
+    try {
+      await tickOneRuntime(runtime, now);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await appendStrategyRuntimeLog(db, {
+        strategyRuntimeId: runtime.id,
+        level: "error",
+        message: "runtime_bar_tick_failed",
+        payload: { error: msg, symbol: sym },
+      });
+    }
+  }
+  if (matched.length > 0) {
+    await processExecutionTasks(db, now);
+  }
+  return { matched: matched.length };
+}
+
 export class StrategyRuntimeWorker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;

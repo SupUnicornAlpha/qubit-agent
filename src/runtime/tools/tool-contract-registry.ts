@@ -5,6 +5,12 @@
 
 import { extractSymbolArgs } from "../market/normalize-symbol-args";
 import {
+  coerceConfidence01,
+  coerceThesisDirection,
+  extractForecastBookKey,
+  extractSnapshotId,
+} from "./research-arg-normalize";
+import {
   type ToolContract,
   normalizeMarketSymbolParams,
   normalizePassthrough,
@@ -99,17 +105,23 @@ const MARKET_CONTRACTS: ToolContract[] = [
     category: "research",
     arity: "either",
     normalize: (raw) => {
-      const snapshotId = String(raw.snapshotId ?? raw.snapshot_id ?? "").trim();
+      const snapshotId =
+        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() ||
+        extractSnapshotId(raw);
       const symbols = extractSymbolArgs(raw);
       const scope = Array.isArray(raw.instrumentScope)
         ? (raw.instrumentScope as unknown[]).map(String)
         : Array.isArray(raw.instrument_scope)
           ? (raw.instrument_scope as unknown[]).map(String)
           : symbols;
+      const direction = coerceThesisDirection(raw.direction) ?? raw.direction;
+      const confidence = coerceConfidence01(raw.confidence, 0.5);
       return {
         ...raw,
         ...(snapshotId ? { snapshotId } : {}),
         ...(scope.length > 0 ? { instrumentScope: scope, symbols: scope } : {}),
+        ...(direction ? { direction } : {}),
+        confidence,
       };
     },
     requiredAfterNormalize: ["snapshotId"],
@@ -127,7 +139,14 @@ const MARKET_CONTRACTS: ToolContract[] = [
     kind: "builtin",
     category: "research",
     arity: "either",
-    normalize: normalizePassthrough,
+    normalize: (raw) => {
+      const { thesisId, entryId } = extractForecastBookKey(raw);
+      return {
+        ...raw,
+        ...(thesisId ? { thesisId } : {}),
+        ...(entryId ? { entryId } : {}),
+      };
+    },
     errorCodes: {
       forecast_book_not_found: "permanent",
     },
