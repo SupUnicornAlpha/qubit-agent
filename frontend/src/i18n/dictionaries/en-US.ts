@@ -481,6 +481,7 @@ const pack: LocalePack = {
         drafts: "Drafts",
         factors: "Factors",
         strategies: "Strategies",
+        backtests: "Backtests",
         scripts: "Scripts",
       },
       hitl: {
@@ -560,6 +561,7 @@ const pack: LocalePack = {
         labelExpression: "Expression",
         createdAt: "Created {at}",
         openInWorkbench: "Open in factor workbench",
+        openInBacktest: "Try in backtest studio",
       },
       strategiesBlock: {
         summary: "Agent-generated strategies ({n})",
@@ -580,6 +582,21 @@ const pack: LocalePack = {
         compRules: "Rules ({n})",
         createdAt: "Created {at}",
         openInComposer: "Open in composer",
+        openInBacktest: "Open in backtest studio",
+      },
+      backtestsBlock: {
+        summary: "Agent-generated backtests ({n})",
+        summaryWithSelection: "Agent-generated backtests ({n} · {selected} selected)",
+        scopeBadge: "this workflow only",
+        searchPlaceholder: "Search by id / status / engine",
+        refreshing: "Refreshing…",
+        refresh: "Refresh",
+        emptyNoWorkflow:
+          "Pick or start a workflow first; this panel only shows backtests from the current workflow.",
+        emptyNoOutput:
+          "No backtests yet. Have the agent call backtest.run / factor.promote_backtest, or use Composer → Run backtest.",
+        createdAt: "Started {at}",
+        openInStudio: "Open in backtest studio",
       },
       scriptsBlock: {
         summary: "Agent-generated scripts ({n})",

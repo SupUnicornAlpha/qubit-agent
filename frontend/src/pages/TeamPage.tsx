@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FC } from "react";
 import { createPortal } from "react-dom";
-import { createConversationTurn, getOrCreateDefaultProject, createWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getAnalystTeamGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, subscribeWorkflowEvents } from "../api/backend";
+import { createConversationTurn, getOrCreateDefaultProject, createWorkflow, putFsWorkspaceRun, getDefaultWorkspace, getDefaultProjectSession, getAnalystTeamGraph, deleteWorkflow, listMonitorWorkflows, listProjects, patchWorkflow, updateWorkflowGoal, injectWorkflowMessage, interruptWorkflow, listFactors, listStrategyVersions, listStrategyScripts, listBacktestJobs, subscribeWorkflowEvents } from "../api/backend";
 import type { AnalystTeamGraphPayload, AnalystTeamGraphInteraction, AnalystTeamGraphAgentStep, AnalystTeamGraphToolCall, AnalystTeamGraphMcpCall, StepStreamEvent, AgentControlMode, AgentLoopKind } from "../api/types";
 import { useAppStore } from "../store";
 import { stripToolCallSentinels } from "../lib/chatMessageHydration";
@@ -1247,10 +1247,11 @@ export const TeamDashboardPanel: FC = () => {
       const scriptsRequest = artifactSessionId
         ? listStrategyScripts(artifactSessionId, { workflowRunId: wf })
         : Promise.resolve([]);
-      const [factorResult, strategyResult, scriptResult] = await Promise.allSettled([
+      const [factorResult, strategyResult, scriptResult, backtestResult] = await Promise.allSettled([
         listFactors({ workflowRunId: wf }),
         listStrategyVersions({ workflowRunId: wf }),
         scriptsRequest,
+        listBacktestJobs({ workflowRunId: wf }),
       ]);
       if (!alive) return;
 
@@ -1285,6 +1286,21 @@ export const TeamDashboardPanel: FC = () => {
         );
       } else {
         failures.push("策略");
+      }
+      if (backtestResult.status === "fulfilled") {
+        next.push(
+          ...backtestResult.value.map((b) => ({
+            id: b.id,
+            kind: "backtest" as const,
+            title: `回测 ${b.id.slice(0, 8)}`,
+            subtitle: b.status,
+            projectId: undefined,
+            workflowRunId: b.workflowRunId ?? wf,
+            createdAt: b.startedAt,
+          }))
+        );
+      } else {
+        failures.push("回测");
       }
       if (scriptResult.status === "fulfilled") {
         next.push(
@@ -3073,9 +3089,8 @@ export const TeamDashboardPanel: FC = () => {
             </summary>
             <div style={{ padding: "10px 16px 14px" }}>
               <p style={{ fontSize: 11, color: "#71717a", marginTop: 0, marginBottom: 10, lineHeight: 1.45 }}>
-                展示当前工作流下 Agent 生成的<strong>推荐 / 草稿 / 因子 / 策略 / 脚本</strong>。
-                Rust Core 主路径写入的是「推荐」（recommendation.record）；「策略」需
-                strategy.create_version，「脚本」来自 research 流水线的 Python on_bar。
+                展示当前工作流下 Agent 生成的<strong>推荐 / 草稿 / 因子 / 策略 / 回测 / 脚本</strong>。
+                因子可进因子工坊或回测工坊试跑；策略组合可一键进回测工坊看 equity；回测结果可直接打开可视化。
               </p>
               <ResearchOutputTabs
                 projectId={effectiveResearchProjectId}
@@ -3097,11 +3112,22 @@ export const TeamDashboardPanel: FC = () => {
                   setActiveView("quant");
                   setQuantTab("factor");
                 }}
+                onOpenFactorInBacktest={(factor) => {
+                  setQuantContext({
+                    projectId: factor.projectId,
+                    workflowRunId: factor.workflowRunId ?? workflowRunId,
+                    sourceLabel: factor.name,
+                  });
+                  setQuantHandoff({
+                    kind: "raw",
+                    expr: factor.expr,
+                    lang: "qlib_expr",
+                    note: `来自研究产出 · ${factor.name}`,
+                  });
+                  setActiveView("quant");
+                  setQuantTab("backtest");
+                }}
                 onOpenStrategyInComposer={(version) => {
-                  /**
-                   * 把"打开哪个 strategy_version"的上下文写到全局 store，
-                   * Composer 在 mount / handoff 变化时按 strategyVersionId 自动选中。
-                   */
                   if (version?.id) {
                     setQuantContext({
                       projectId: version.projectId,
@@ -3116,6 +3142,37 @@ export const TeamDashboardPanel: FC = () => {
                   }
                   setActiveView("quant");
                   setQuantTab("composer");
+                }}
+                onOpenCompositionInBacktest={(version, composition) => {
+                  setQuantContext({
+                    projectId: version.projectId,
+                    workflowRunId: version.workflowRunId ?? workflowRunId,
+                    sourceLabel: version.strategyName,
+                  });
+                  setQuantHandoff({
+                    kind: "composition",
+                    compositionId: composition.id,
+                    strategyVersionId: version.id,
+                    note: `来自研究产出 · ${version.strategyName}`,
+                  });
+                  setActiveView("quant");
+                  setQuantTab("backtest");
+                }}
+                onOpenBacktestInStudio={(job) => {
+                  if (effectiveResearchProjectId) {
+                    setQuantContext({
+                      projectId: effectiveResearchProjectId,
+                      workflowRunId: job.workflowRunId ?? workflowRunId,
+                      sourceLabel: `回测 ${job.id.slice(0, 8)}`,
+                    });
+                  }
+                  setQuantHandoff({
+                    kind: "backtest-job",
+                    jobId: job.id,
+                    note: `来自研究产出 · ${job.status}`,
+                  });
+                  setActiveView("quant");
+                  setQuantTab("backtest");
                 }}
                 onOpenScriptInWorkbench={(script) => {
                   const projectId = effectiveResearchProjectId;

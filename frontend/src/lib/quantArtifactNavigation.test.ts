@@ -37,6 +37,16 @@ describe("quantNavigationForArtifact", () => {
     expect(target.handoff).toMatchObject({ kind: "script-to-workbench", scriptId: "script-1" });
   });
 
+  test("backtest 携带 jobId 进入回测工坊", () => {
+    const target = quantNavigationForArtifact(
+      { id: "bt-1", kind: "backtest", title: "Backtest", projectId: "project-a", workflowRunId: "wf-a" },
+      "project-default",
+      "wf-default"
+    );
+    expect(target.tab).toBe("backtest");
+    expect(target.handoff).toMatchObject({ kind: "backtest-job", jobId: "bt-1" });
+  });
+
   test("产物缺 projectId 时使用当前 workflow 项目", () => {
     const target = quantNavigationForArtifact(
       { id: "factor-2", kind: "factor", title: "fallback" },

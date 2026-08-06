@@ -480,6 +480,7 @@ const pack: LocalePack = {
         drafts: "草稿",
         factors: "因子",
         strategies: "策略",
+        backtests: "回测",
         scripts: "脚本",
       },
       hitl: {
@@ -556,6 +557,7 @@ const pack: LocalePack = {
         labelExpression: "Expression",
         createdAt: "创建于 {at}",
         openInWorkbench: "去因子工坊详情",
+        openInBacktest: "去回测工坊试跑",
       },
       strategiesBlock: {
         summary: "Agent 生成的策略（{n}）",
@@ -573,6 +575,20 @@ const pack: LocalePack = {
         compRules: "规则（{n}）",
         createdAt: "创建于 {at}",
         openInComposer: "去组合工坊",
+        openInBacktest: "去回测工坊",
+      },
+      backtestsBlock: {
+        summary: "Agent 生成的回测（{n}）",
+        summaryWithSelection: "Agent 生成的回测（{n} · 已选 {selected}）",
+        scopeBadge: "仅本工作流",
+        searchPlaceholder: "按 id / status / engine 搜索",
+        refreshing: "刷新中…",
+        refresh: "刷新",
+        emptyNoWorkflow: "请先选择或启动一个工作流；研究产出仅展示当前工作流的回测。",
+        emptyNoOutput:
+          "本工作流暂未产出回测。让 Agent 调用 backtest.run / factor.promote_backtest，或在组合工坊点「一键回测」。",
+        createdAt: "开始于 {at}",
+        openInStudio: "打开回测工坊",
       },
       scriptsBlock: {
         summary: "Agent 生成的脚本（{n}）",

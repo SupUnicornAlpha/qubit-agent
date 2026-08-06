@@ -22,6 +22,8 @@ export interface AgentGeneratedFactorsBlockProps {
   workflowRunId: string;
   /** 点击单条因子时的跳转回调，例如打开量化工坊的因子工坊 tab 并定位到该因子。 */
   onOpenInWorkbench?: (factor: FactorRecord) => void;
+  /** 把因子表达式预填到回测工坊 raw signal。 */
+  onOpenInBacktest?: (factor: FactorRecord) => void;
   /** 默认是否展开；不传则 `true`。 */
   defaultOpen?: boolean;
   /**
@@ -55,6 +57,7 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
   projectId: _projectId,
   workflowRunId,
   onOpenInWorkbench,
+  onOpenInBacktest,
   defaultOpen = true,
   chrome = "details",
   onCountChange,
@@ -230,16 +233,28 @@ export const AgentGeneratedFactorsBlock: FC<AgentGeneratedFactorsBlockProps> = (
                   <span style={styles.cardMeta}>
                     {t("team.factorsBlock.createdAt", { at: new Date(f.createdAt).toLocaleString() })}
                   </span>
-                  {onOpenInWorkbench ? (
-                    <button
-                      type="button"
-                      className="qb-btn-secondary"
-                      style={styles.cardBtn}
-                      onClick={() => onOpenInWorkbench(f)}
-                    >
-                      {t("team.factorsBlock.openInWorkbench")}
-                    </button>
-                  ) : null}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {onOpenInBacktest ? (
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={styles.cardBtn}
+                        onClick={() => onOpenInBacktest(f)}
+                      >
+                        {t("team.factorsBlock.openInBacktest")}
+                      </button>
+                    ) : null}
+                    {onOpenInWorkbench ? (
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={styles.cardBtn}
+                        onClick={() => onOpenInWorkbench(f)}
+                      >
+                        {t("team.factorsBlock.openInWorkbench")}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </article>
             ))}

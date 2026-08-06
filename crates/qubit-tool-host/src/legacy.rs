@@ -29,6 +29,8 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "factor.compute",
     "factor.autoEvaluate",
     "factor.mine.llm",
+    "factor.promote_backtest",
+    "backtest.run",
     "workspace.context.snapshot",
 ];
 

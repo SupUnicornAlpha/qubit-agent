@@ -39,7 +39,9 @@ const STATUS_TONES: Record<BacktestJobRecord["status"], string> = {
 };
 
 export const BacktestStudioTab: FC = () => {
-  const { projectId, loading: projectLoading, error: projectError } = useDefaultProject();
+  const { projectId, loading: projectLoading, error: projectError, contextual } = useDefaultProject();
+  const quantContext = useAppStore((s) => s.quantContext);
+  const workflowFilter = quantContext?.workflowRunId?.trim() || null;
 
   const [versions, setVersions] = useState<StrategyVersionFlatRecord[]>([]);
   const [versionId, setVersionId] = useState<string>("");
@@ -66,14 +68,15 @@ export const BacktestStudioTab: FC = () => {
   // 对比模式：多选历史任务在同一 equity 图叠加
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+  /** 有研究上下文时默认只看本工作流回测；可切到项目全部 */
+  const [scopeAllProject, setScopeAllProject] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
   /**
-   * 消费 quantHandoff —— Discovery / Composer 切到这里时预填表单。
-   * 仅在组件挂载时跑一次：消费后立即清空，避免重渲染时重复填表。
+   * 消费 quantHandoff —— Discovery / Composer / 研究产出 切到这里时预填表单。
    */
   const handoff = useAppStore((s) => s.quantHandoff);
   const setQuantHandoff = useAppStore((s) => s.setQuantHandoff);
@@ -87,8 +90,15 @@ export const BacktestStudioTab: FC = () => {
       setQuantHandoff(null);
     } else if (handoff.kind === "composition") {
       setSource("composition");
+      if (handoff.strategyVersionId) setVersionId(handoff.strategyVersionId);
       setCompositionId(handoff.compositionId);
       setInfo(`已预选 composition · ${handoff.note ?? handoff.compositionId.slice(0, 8)}`);
+      setQuantHandoff(null);
+    } else if (handoff.kind === "strategy-version-to-backtest") {
+      setSource("composition");
+      setVersionId(handoff.strategyVersionId);
+      if (handoff.compositionId) setCompositionId(handoff.compositionId);
+      setInfo(`已打开策略版本 · ${handoff.note ?? handoff.strategyVersionId.slice(0, 8)}`);
       setQuantHandoff(null);
     } else if (handoff.kind === "backtest-job") {
       setSelectedId(handoff.jobId);
@@ -97,6 +107,11 @@ export const BacktestStudioTab: FC = () => {
     }
     // factor-ids-to-composer 不属于 backtest 路径：不消费 / 不清空，留给 ComposerTab 接管。
   }, [handoff, setQuantHandoff]);
+
+  useEffect(() => {
+    // 新研究上下文进来时默认回到「本工作流」过滤
+    setScopeAllProject(false);
+  }, [workflowFilter]);
 
   const symbolsList = useMemo(
     () =>
@@ -127,8 +142,10 @@ export const BacktestStudioTab: FC = () => {
     try {
       const rows = await listStrategyCompositions(versionId);
       setCompositions(rows);
-      if (rows.length > 0) setCompositionId(rows[0]!.id);
-      else setCompositionId("");
+      setCompositionId((prev) => {
+        if (prev && rows.some((r) => r.id === prev)) return prev;
+        return rows[0]?.id ?? "";
+      });
     } catch (e) {
       setError((e as Error).message);
     }
@@ -136,13 +153,19 @@ export const BacktestStudioTab: FC = () => {
 
   const reloadJobs = useCallback(async () => {
     try {
-      const rows = await listBacktestJobs({ projectId: projectId ?? undefined });
+      const rows = await listBacktestJobs({
+        projectId: projectId ?? undefined,
+        ...(workflowFilter && !scopeAllProject ? { workflowRunId: workflowFilter } : {}),
+      });
       setJobs(rows);
-      if (!selectedId && rows.length > 0) setSelectedId(rows[0]!.id);
+      setSelectedId((prev) => {
+        if (prev && rows.some((r) => r.id === prev)) return prev;
+        return rows[0]?.id ?? null;
+      });
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [projectId, selectedId]);
+  }, [projectId, workflowFilter, scopeAllProject]);
 
   useEffect(() => {
     void reloadVersions();
@@ -280,6 +303,37 @@ export const BacktestStudioTab: FC = () => {
       data-qb-quant-tab="backtest"
       style={styles.root}
     >
+      {workflowFilter || contextual ? (
+        <div
+          style={{
+            gridColumn: "1 / -1",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 12px",
+            borderBottom: "1px solid var(--qb-border, #27272a)",
+            background: "rgba(16, 185, 129, 0.08)",
+            fontSize: 12,
+            color: "#a7f3d0",
+          }}
+        >
+          <span>
+            {workflowFilter && !scopeAllProject
+              ? `仅展示本工作流回测（${workflowFilter.slice(0, 8)}…）· 共 ${jobs.length} 条`
+              : `研究上下文已绑定 · 展示项目全部回测（${jobs.length}）`}
+          </span>
+          {workflowFilter ? (
+            <button
+              type="button"
+              className="qb-quant-btn qb-quant-btn--ghost"
+              style={{ fontSize: 11, padding: "2px 8px" }}
+              onClick={() => setScopeAllProject((v) => !v)}
+            >
+              {scopeAllProject ? "只看本工作流" : "看项目全部"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <aside className="qb-quant-col qb-quant-col--left" style={styles.colLeft}>
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>发起回测</strong>

@@ -21,6 +21,11 @@ export interface AgentGeneratedStrategiesBlockProps {
    */
   workflowRunId: string;
   onOpenInComposer?: (version: StrategyVersionFlatRecord) => void;
+  /** 打开某个 composition 到回测工坊 */
+  onOpenCompositionInBacktest?: (
+    version: StrategyVersionFlatRecord,
+    composition: StrategyCompositionRecord
+  ) => void;
   defaultOpen?: boolean;
   /**
    * 渲染外壳：
@@ -63,6 +68,7 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
   projectId: _projectId,
   workflowRunId,
   onOpenInComposer,
+  onOpenCompositionInBacktest,
   defaultOpen = true,
   chrome = "details",
   onCountChange,
@@ -271,6 +277,16 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                           <span style={styles.badge}>weight: {c.weightMethod}</span>
                           <span style={styles.badge}>rebalance: {c.rebalanceFreq}</span>
                           <span style={styles.badge}>universe: {c.universe}</span>
+                          {onOpenCompositionInBacktest ? (
+                            <button
+                              type="button"
+                              className="qb-btn-secondary"
+                              style={{ ...styles.cardBtn, marginLeft: "auto" }}
+                              onClick={() => onOpenCompositionInBacktest(r.version, c)}
+                            >
+                              {t("team.strategiesBlock.openInBacktest")}
+                            </button>
+                          ) : null}
                         </div>
                         <div style={styles.compFields}>
                           <div style={styles.compField}>
@@ -302,16 +318,30 @@ export const AgentGeneratedStrategiesBlock: FC<AgentGeneratedStrategiesBlockProp
                   <span style={styles.cardMeta}>
                     {t("team.strategiesBlock.createdAt", { at: new Date(r.version.createdAt).toLocaleString() })}
                   </span>
-                  {onOpenInComposer ? (
-                    <button
-                      type="button"
-                      className="qb-btn-secondary"
-                      style={styles.cardBtn}
-                      onClick={() => onOpenInComposer(r.version)}
-                    >
-                      {t("team.strategiesBlock.openInComposer")}
-                    </button>
-                  ) : null}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {onOpenCompositionInBacktest && r.compositions[0] ? (
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={styles.cardBtn}
+                        onClick={() =>
+                          onOpenCompositionInBacktest(r.version, r.compositions[0]!)
+                        }
+                      >
+                        {t("team.strategiesBlock.openInBacktest")}
+                      </button>
+                    ) : null}
+                    {onOpenInComposer ? (
+                      <button
+                        type="button"
+                        className="qb-btn-secondary"
+                        style={styles.cardBtn}
+                        onClick={() => onOpenInComposer(r.version)}
+                      >
+                        {t("team.strategiesBlock.openInComposer")}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </article>
             ))}

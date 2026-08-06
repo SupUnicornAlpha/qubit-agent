@@ -39,10 +39,10 @@ import { buildChatExecutionActivity } from "../chat/ChatExecutionActivity";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
 
-/** 内联产物卡片（Orchestrator 对话框里直接展示已生成的因子/策略/脚本，点击可打开）。 */
+/** 内联产物卡片（Orchestrator 对话框里直接展示已生成的因子/策略/回测/脚本，点击可打开）。 */
 export interface OrchestratorArtifact {
   id: string;
-  kind: "factor" | "strategy" | "script";
+  kind: "factor" | "strategy" | "script" | "backtest";
   title: string;
   subtitle?: string;
   projectId?: string | null;
@@ -600,11 +600,11 @@ export function OrchestratorChatPanel({
                     key={`${a.kind}:${a.id}`}
                     type="button"
                     style={styles.artifactCard}
-                    title={`打开${a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}：${a.title}`}
+                    title={`打开${a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : a.kind === "backtest" ? "回测" : "脚本"}：${a.title}`}
                     onClick={() => onOpenArtifact(a)}
                   >
                     <span style={styles.artifactKind}>
-                      {a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : "脚本"}
+                      {a.kind === "factor" ? "因子" : a.kind === "strategy" ? "策略" : a.kind === "backtest" ? "回测" : "脚本"}
                     </span>
                     <span style={styles.artifactTitle}>{a.title}</span>
                     {a.subtitle ? <span style={styles.artifactSub}>{a.subtitle}</span> : null}

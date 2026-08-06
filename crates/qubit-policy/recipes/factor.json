@@ -6,9 +6,9 @@
     "factor": "factor"
   },
   "role_tool_allowlist": {
-    "orchestrator": ["update_plan", "topology.dispatch", "factor.register", "factor.list", "factor.mine.llm"],
-    "factor": ["factor.register", "factor.compute", "factor.evaluate", "factor.autoEvaluate", "factor.list", "factor.mine.llm"],
-    "research": ["factor.register", "factor.compute", "factor.autoEvaluate", "factor.list", "factor.mine.llm"]
+    "orchestrator": ["update_plan", "topology.dispatch", "factor.register", "factor.list", "factor.mine.llm", "strategy.create_version", "strategy.compose", "backtest.run"],
+    "factor": ["factor.register", "factor.compute", "factor.evaluate", "factor.autoEvaluate", "factor.list", "factor.mine.llm", "factor.promote_backtest", "backtest.run"],
+    "research": ["factor.register", "factor.compute", "factor.autoEvaluate", "factor.list", "factor.mine.llm", "strategy.create_version", "strategy.compose", "backtest.run"]
   },
   "stall_budget": {
     "tools": [
@@ -52,7 +52,7 @@
     "2. 本轮至少 factor.register 落库 ≥1 条；参数平铺（name/expr/category/lang），不要包在 arguments 里；project_id 可由 runtime 注入",
     "3. 因子族必须多样化：禁止整轮只有 mom/乖离；至少覆盖 2 类——动量、MACD/KDJ 类技术、量价/买卖量（用 volume / IfPos / Corr）",
     "4. 合法 qlib_expr 示例：EMA(close,12)-EMA(close,26)；Sign(EMA(close,12)-EMA(close,26))；(close-Min(low,9))/(Max(high,9)-Min(low,9)+1e-8)；volume/Mean(volume,20)；Corr(volume,Abs(Delta(close,1)),20)",
-    "5. factor.compute → factor.autoEvaluate 闭环；禁止仅 list 旧因子结案",
-    "同类工具连打 ≤3 次后必须写终答"
+    "5. factor.compute → factor.autoEvaluate 闭环；有 composition 后调 backtest.run（点号工具名）并在回测工坊可视化",
+    "6. 禁止仅 list 旧因子结案；同类工具连打 ≤3 次后必须写终答"
   ]
 }

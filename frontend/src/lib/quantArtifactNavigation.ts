@@ -50,6 +50,17 @@ export function quantNavigationForArtifact(
       },
     };
   }
+  if (artifact.kind === "backtest") {
+    return {
+      context,
+      tab: "backtest",
+      handoff: {
+        kind: "backtest-job",
+        jobId: artifact.id,
+        note,
+      },
+    };
+  }
   return {
     context,
     tab: "script",

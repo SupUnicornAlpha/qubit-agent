@@ -54,6 +54,8 @@ const BRIDGED_TOOLS = [
   "factor.compute",
   "factor.autoEvaluate",
   "factor.mine.llm",
+  "factor.promote_backtest",
+  "backtest.run",
   "workspace.context.snapshot",
 ] as const;
 

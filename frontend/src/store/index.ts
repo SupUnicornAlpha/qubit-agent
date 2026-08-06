@@ -77,7 +77,13 @@ export interface QuantContext {
  */
 export type QuantHandoff =
   | { kind: "raw"; expr: string; lang: "qlib_expr"; reverse?: boolean; note?: string }
-  | { kind: "composition"; compositionId: string; note?: string }
+  | {
+      kind: "composition";
+      compositionId: string;
+      /** 有则 BacktestStudio 可直接选中对应 strategy_version */
+      strategyVersionId?: string;
+      note?: string;
+    }
   | { kind: "backtest-job"; jobId: string; note?: string }
   | { kind: "factor-ids-to-composer"; factorIds: string[]; note?: string }
   | {
@@ -97,6 +103,13 @@ export type QuantHandoff =
   | {
       kind: "strategy-version-to-composer";
       strategyVersionId: string;
+      workflowRunId?: string | null;
+      note?: string;
+    }
+  | {
+      kind: "strategy-version-to-backtest";
+      strategyVersionId: string;
+      compositionId?: string;
       workflowRunId?: string | null;
       note?: string;
     }

@@ -243,6 +243,7 @@ export const ComposerTab: FC = () => {
       setQuantHandoff({
         kind: "composition",
         compositionId: c.id,
+        strategyVersionId: c.strategyVersionId,
         note: c.name ? `Composition · ${c.name}` : `Composition ${c.id.slice(0, 8)}`,
       });
       setQuantTab("backtest");

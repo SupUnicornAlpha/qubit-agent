@@ -1,48 +1,47 @@
 import type { CSSProperties, FC } from "react";
 import { useState } from "react";
 import { useTranslation } from "../../i18n";
+import { AgentGeneratedBacktestsBlock } from "./AgentGeneratedBacktestsBlock";
 import { AgentGeneratedFactorsBlock } from "./AgentGeneratedFactorsBlock";
 import { AgentGeneratedRecommendationsBlock } from "./AgentGeneratedRecommendationsBlock";
 import { AgentGeneratedScriptsBlock } from "./AgentGeneratedScriptsBlock";
 import { AgentGeneratedStrategiesBlock } from "./AgentGeneratedStrategiesBlock";
 import { ResearchExploreFallbackBlock } from "./ResearchExploreFallbackBlock";
-import type { FactorRecord, StrategyVersionFlatRecord } from "../../api/backend";
+import type {
+  BacktestJobRecord,
+  FactorRecord,
+  StrategyCompositionRecord,
+  StrategyVersionFlatRecord,
+} from "../../api/backend";
 import type { IndicatorStrategyScriptRecord } from "../../api/types";
 
-type TabKey = "signals" | "drafts" | "factors" | "strategies" | "scripts";
+type TabKey = "signals" | "drafts" | "factors" | "strategies" | "backtests" | "scripts";
 
 export interface ResearchOutputTabsProps {
   projectId: string;
   workflowRunId: string;
-  /**
-   * 当前研究项目的默认 session id（chat_session.id）。
-   * 用于「脚本」tab 拉 indicator_strategy_script —— 该表用 sessionId 作主键关联。
-   * 空字符串则「脚本」tab 展示空态、不发请求。
-   */
   sessionId: string;
   onOpenFactorInWorkbench?: (factor: FactorRecord) => void;
+  onOpenFactorInBacktest?: (factor: FactorRecord) => void;
   onOpenStrategyInComposer?: (version: StrategyVersionFlatRecord) => void;
+  onOpenCompositionInBacktest?: (
+    version: StrategyVersionFlatRecord,
+    composition: StrategyCompositionRecord
+  ) => void;
+  onOpenBacktestInStudio?: (job: BacktestJobRecord) => void;
   onOpenScriptInWorkbench?: (script: IndicatorStrategyScriptRecord) => void;
-  /** 初始 active tab。默认 `signals` —— Core 路径主交付是 recommendation。 */
   defaultTab?: TabKey;
 }
 
-/**
- * 研究产出 tab 切换器。
- *
- * 五个 tab：
- *   - signals    ← recommendation_snapshot（Core recommendation.record 主路径）
- *   - drafts     ← explore fallback
- *   - factors    ← factor_definition
- *   - strategies ← strategy_version
- *   - scripts    ← indicator_strategy_script
- */
 export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   projectId,
   workflowRunId,
   sessionId,
   onOpenFactorInWorkbench,
+  onOpenFactorInBacktest,
   onOpenStrategyInComposer,
+  onOpenCompositionInBacktest,
+  onOpenBacktestInStudio,
   onOpenScriptInWorkbench,
   defaultTab = "signals",
 }) => {
@@ -52,6 +51,7 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
   const [draftCount, setDraftCount] = useState(0);
   const [factorCount, setFactorCount] = useState(0);
   const [strategyCount, setStrategyCount] = useState(0);
+  const [backtestCount, setBacktestCount] = useState(0);
   const [scriptCount, setScriptCount] = useState(0);
 
   const tabs: Array<{ key: TabKey; label: string; count: number; accent: string }> = [
@@ -63,6 +63,12 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
       label: t("team.outputTabs.strategies"),
       count: strategyCount,
       accent: "#a78bfa",
+    },
+    {
+      key: "backtests",
+      label: t("team.outputTabs.backtests"),
+      count: backtestCount,
+      accent: "#34d399",
     },
     { key: "scripts", label: t("team.outputTabs.scripts"), count: scriptCount, accent: "#38bdf8" },
   ];
@@ -144,6 +150,7 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
           chrome="bare"
           onCountChange={setFactorCount}
           {...(onOpenFactorInWorkbench ? { onOpenInWorkbench: onOpenFactorInWorkbench } : {})}
+          {...(onOpenFactorInBacktest ? { onOpenInBacktest: onOpenFactorInBacktest } : {})}
         />
       </div>
 
@@ -158,6 +165,21 @@ export const ResearchOutputTabs: FC<ResearchOutputTabsProps> = ({
           chrome="bare"
           onCountChange={setStrategyCount}
           {...(onOpenStrategyInComposer ? { onOpenInComposer: onOpenStrategyInComposer } : {})}
+          {...(onOpenCompositionInBacktest ? { onOpenCompositionInBacktest } : {})}
+        />
+      </div>
+
+      <div
+        role="tabpanel"
+        aria-hidden={active !== "backtests"}
+        style={{ ...styles.panel, display: active === "backtests" ? "block" : "none" }}
+      >
+        <AgentGeneratedBacktestsBlock
+          projectId={projectId}
+          workflowRunId={workflowRunId}
+          chrome="bare"
+          onCountChange={setBacktestCount}
+          {...(onOpenBacktestInStudio ? { onOpenInStudio: onOpenBacktestInStudio } : {})}
         />
       </div>
 
