@@ -205,25 +205,40 @@ export const BacktestStudioTab: FC = () => {
     });
   }, []);
 
-  // 比较任务 series
-  const compareJobs = useMemo(
-    () => jobs.filter((j) => compareIds.has(j.id) && j.result),
-    [jobs, compareIds]
-  );
+  /** List API strips equityCurve; compare mode loads full jobs on demand. */
+  const [compareFullJobs, setCompareFullJobs] = useState<BacktestJobRecord[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const ids = Array.from(compareIds);
+    if (ids.length === 0) {
+      setCompareFullJobs([]);
+      return;
+    }
+    void (async () => {
+      const rows = await Promise.all(ids.map((id) => getBacktestJob(id).catch(() => null)));
+      if (!cancelled) {
+        setCompareFullJobs(rows.filter((j): j is BacktestJobRecord => Boolean(j)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [compareIds]);
 
   const compareEquitySeries = useMemo<ChartSeries[]>(() => {
-    if (compareJobs.length === 0) return [];
+    if (compareFullJobs.length === 0) return [];
     const out: ChartSeries[] = [];
-    compareJobs.forEach((j, idx) => {
-      const eq = j.result?.equityCurve ?? [];
+    compareFullJobs.forEach((j, idx) => {
+      const eqRaw = j.result?.equityCurve;
+      const eq = Array.isArray(eqRaw) ? eqRaw : [];
       out.push({
-        name: `${j.id.slice(0, 6)}… (${((j.result?.metrics.totalReturn ?? 0) * 100).toFixed(1)}%)`,
+        name: `${j.id.slice(0, 6)}… (${((j.result?.metrics?.totalReturn ?? 0) * 100).toFixed(1)}%)`,
         color: pickColor(idx),
         points: eq.map((p) => ({ x: p.date, y: p.equity })),
       });
     });
     return out;
-  }, [compareJobs]);
+  }, [compareFullJobs]);
 
   const onSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -621,8 +636,8 @@ export const BacktestStudioTab: FC = () => {
       </aside>
 
       <section className="qb-quant-col qb-quant-col--mid" style={styles.colMid}>
-        {compareMode && compareJobs.length >= 2 ? (
-          <CompareView jobs={compareJobs} equitySeries={compareEquitySeries} />
+        {compareMode && compareFullJobs.length >= 2 ? (
+          <CompareView jobs={compareFullJobs} equitySeries={compareEquitySeries} />
         ) : selected ? (
           <BacktestResultView job={selected} onRefresh={reloadSelected} />
         ) : (
@@ -669,7 +684,7 @@ export const BacktestStudioTab: FC = () => {
               </span>
             </div>
           ))}
-          {(selected?.result?.trades.length ?? 0) === 0 ? (
+          {(Array.isArray(selected?.result?.trades) ? selected.result.trades.length : 0) === 0 ? (
             <div className="qb-quant-empty" style={styles.empty}>
               —
             </div>
@@ -696,7 +711,10 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
   onRefresh,
 }) => {
   const m = job.result?.metrics;
-  const equity = job.result?.equityCurve ?? [];
+  const equityRaw = job.result?.equityCurve;
+  const equity = Array.isArray(equityRaw) ? equityRaw : [];
+  const tradesRaw = job.result?.trades;
+  const trades = Array.isArray(tradesRaw) ? tradesRaw : [];
   const [walkForward, setWalkForward] = useState<Awaited<
     ReturnType<typeof runWalkForwardEvaluation>
   > | null>(null);

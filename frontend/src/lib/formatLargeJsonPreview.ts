@@ -131,11 +131,54 @@ export function stringifyJsonFull(value: unknown): string {
 
 export function estimateJsonSizeLabel(value: unknown): string {
   try {
-    const n = JSON.stringify(value)?.length ?? 0;
+    const n = estimateJsonBytes(value);
     if (n < 1024) return `${n} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   } catch {
     return "—";
+  }
+}
+
+/** Cheap size estimate — never full-stringify megabyte tool blobs on every render. */
+function estimateJsonBytes(value: unknown, depth = 0): number {
+  if (value == null) return 4;
+  if (depth > 6) return 16;
+  switch (typeof value) {
+    case "string":
+      return Math.min(value.length, 8_000);
+    case "number":
+    case "boolean":
+      return 8;
+    case "object": {
+      if (Array.isArray(value)) {
+        if (
+          value.length > 0 &&
+          typeof value[0] === "object" &&
+          value[0] !== null &&
+          ("equity" in (value[0] as object) || "date" in (value[0] as object))
+        ) {
+          return 64 + value.length * 48;
+        }
+        let sum = 2;
+        const n = Math.min(value.length, 32);
+        for (let i = 0; i < n; i++) sum += estimateJsonBytes(value[i], depth + 1);
+        if (value.length > n) sum += (value.length - n) * 24;
+        return sum;
+      }
+      if (
+        (value as { __compact?: boolean; length?: number }).__compact === true &&
+        typeof (value as { length?: number }).length === "number"
+      ) {
+        return 48 + ((value as { length: number }).length || 0) * 4;
+      }
+      let sum = 2;
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        sum += k.length + 2 + estimateJsonBytes(v, depth + 1);
+      }
+      return sum;
+    }
+    default:
+      return 8;
   }
 }

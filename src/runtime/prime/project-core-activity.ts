@@ -14,6 +14,7 @@ import {
 } from "../agent-control-mode";
 import { stepStreamBus } from "../react/event-stream";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
+import { compactHeavyJson } from "../util/compact-heavy-json";
 import { writeWorkflowPlanArtifacts } from "../workflow/plan-artifact";
 import { recordCoreMonitorToolCall } from "./project-core-monitor";
 
@@ -232,7 +233,7 @@ export async function projectCoreBridgeToolCall(input: {
       backend: "rust",
       toolCallId: input.toolCallId,
       ok: input.ok,
-      observation: input.observation,
+      observation: compactHeavyJson(input.observation),
       ...(input.mcp ? { mcp: input.mcp } : {}),
     },
   });

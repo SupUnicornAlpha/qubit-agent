@@ -16,6 +16,7 @@ import {
   workflowRun,
 } from "../../db/sqlite/schema";
 import { parseAgentPlanSnapshot, type AgentPlanSnapshot } from "../agent-control-mode";
+import { compactHeavyJson } from "../util/compact-heavy-json";
 
 /** 节点大类，供前端按类型上不同图标（user=人形 / agent=电脑 / tool=扳手 / skill=书）。 */
 export type TeamGraphNodeType = "user" | "agent" | "tool" | "skill";
@@ -294,8 +295,8 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       latencyMs: t.latencyMs,
       createdAt: t.createdAt,
       agentStepId: t.agentStepId,
-      requestJson: t.requestJson,
-      responseJson: t.responseJson,
+      requestJson: compactHeavyJson(t.requestJson),
+      responseJson: compactHeavyJson(t.responseJson),
       errorMessage: t.errorMessage,
     };
   });
@@ -312,8 +313,8 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       status: m.status,
       latencyMs: m.latencyMs,
       createdAt: m.createdAt,
-      requestJson: m.requestJson,
-      responseJson: m.responseJson ?? null,
+      requestJson: compactHeavyJson(m.requestJson),
+      responseJson: compactHeavyJson(m.responseJson ?? null),
       errorCode: m.errorCode ?? null,
     };
   });
@@ -388,7 +389,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       toolKind: r.toolKind,
       toolName: r.toolName,
       contentText: r.contentText,
-      payloadJson: r.payloadJson,
+      payloadJson: compactHeavyJson(r.payloadJson),
       createdAt: r.createdAt,
     })),
     conversationRows.map((row) => row.message),

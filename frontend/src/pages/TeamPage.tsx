@@ -596,7 +596,7 @@ export const TeamDashboardPanel: FC = () => {
         key: `i-${row.id}`,
         t: new Date(row.createdAt).getTime() || 0,
         kind: "interaction",
-        body: `${describeInteractionRouting(row)} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${row.contentText.slice(0, 1200)}`,
+        body: `${describeInteractionRouting(row)} · ${row.kind}${row.toolName ? ` · ${row.toolName}` : ""}\n${String(row.contentText ?? "").slice(0, 1200)}`,
       });
     }
     return rows.sort((a, b) => a.t - b.t).slice(-200);
@@ -892,7 +892,7 @@ export const TeamDashboardPanel: FC = () => {
     }
     const persistedUserContents = new Set<string>();
     for (const row of teamGraph?.interactions ?? []) {
-      if (row.fromRole === "user") persistedUserContents.add(row.contentText.trim());
+      if (row.fromRole === "user") persistedUserContents.add(String(row.contentText ?? "").trim());
       events.push({
         kind: "message",
         id: `i-${row.id}`,
@@ -901,7 +901,7 @@ export const TeamDashboardPanel: FC = () => {
         toRole: row.toRole,
         messageKind: row.kind,
         toolName: row.toolName,
-        contentText: row.contentText,
+        contentText: String(row.contentText ?? ""),
         payloadJson: row.payloadJson,
       });
     }
@@ -937,7 +937,7 @@ export const TeamDashboardPanel: FC = () => {
           typeof row.payloadJson === "object" &&
           (row.payloadJson as Record<string, unknown>).phase === "workflow_final_answer"
       )
-      .map((row) => row.contentText.trim())
+      .map((row) => String(row.contentText ?? "").trim())
       .filter(Boolean);
     const finalAnswerSet = new Set(finalAnswerTexts);
     const seenReasonNarratives: string[] = [];

@@ -36,6 +36,7 @@ import type {
   ProviderScope,
 } from "../provider/types";
 import { strategyComposer } from "../strategy/strategy-composer";
+import { compactBacktestResult } from "../util/compact-heavy-json";
 
 // ─── 类型 ───────────────────────────────────────────────────────────────────
 
@@ -274,10 +275,18 @@ export class BacktestJobService {
             .orderBy(desc(backtestRunTable.startedAt))
         : await db.select().from(backtestRunTable).orderBy(desc(backtestRunTable.startedAt));
     return Promise.all(
-      rows.map(async (r) => ({
-        ...this.rowToRecord(r),
-        evaluation: await strategyEvaluationService.getByBacktestRunId(r.id),
-      }))
+      rows.map(async (r) => {
+        const record = this.rowToRecord(r);
+        // List payloads must stay light — Team research UI loads these for every workflow.
+        // Full equity/trades are available via get(jobId) for BacktestStudio detail/charts.
+        if (record.result) {
+          record.result = compactBacktestResult(record.result) as BacktestResult;
+        }
+        return {
+          ...record,
+          evaluation: await strategyEvaluationService.getByBacktestRunId(r.id),
+        };
+      })
     );
   }
 
