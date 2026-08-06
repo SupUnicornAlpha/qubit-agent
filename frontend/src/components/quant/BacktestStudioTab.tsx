@@ -651,11 +651,13 @@ export const BacktestStudioTab: FC = () => {
         <div className="qb-quant-col-header" style={styles.colHeader}>
           <strong>Trades</strong>
           <span className="qb-quant-muted" style={styles.muted}>
-            {selected?.result?.trades.length ?? 0}
+            {Array.isArray(selected?.result?.trades) ? selected.result.trades.length : 0}
           </span>
         </div>
         <div className="qb-quant-trades-list" style={styles.tradesList}>
-          {(selected?.result?.trades ?? []).slice(0, 200).map((t, i) => (
+          {(Array.isArray(selected?.result?.trades) ? selected.result.trades : [])
+            .slice(0, 200)
+            .map((t, i) => (
             <div
               key={i}
               className="qb-quant-trade-row"
