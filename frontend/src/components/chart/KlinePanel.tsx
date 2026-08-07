@@ -536,7 +536,7 @@ export const KlinePanel: FC<{ embedded?: boolean; linkTraderMarkers?: boolean }>
       summary,
       fetchedAt: new Date().toISOString(),
     });
-    setActiveView(activeView === "ide" ? "ide" : "chat");
+    setActiveView(activeView === "ide" ? "ide" : "team");
   };
 
   useEffect(() => {

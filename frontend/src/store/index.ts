@@ -627,8 +627,16 @@ export const useAppStore = create<AppState>((set) => ({
   setUiTheme: (palette) => {
     useAppStore.getState().setUiPalette(palette);
   },
-  activeView: "chat",
-  setActiveView: (view) => set({ activeView: view }),
+  activeView: "team",
+  setActiveView: (view) => {
+    // 专业壳已无独立对话页：历史/深链仍指向 chat 时落到研究团队 + 打开 Agent 栏
+    if (view === "chat" && useAppStore.getState().interfaceMode !== "simple") {
+      set({ activeView: "team", agentPanelOpen: true });
+      persistAgentPanelOpen(true);
+      return;
+    }
+    set({ activeView: view });
+  },
   monitorWorkflowFocus: null,
   setMonitorWorkflowFocus: (monitorWorkflowFocus) => set({ monitorWorkflowFocus }),
   explorerOpen: readExplorerOpen(),

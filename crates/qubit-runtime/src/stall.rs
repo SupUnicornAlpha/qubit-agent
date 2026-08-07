@@ -7,7 +7,11 @@ use std::collections::BTreeMap;
 pub const FAIL_CIRCUIT_TOOLS: &[&str] = &[
     "workspace.context.snapshot",
     "research.thesis.write",
+    "research.forecast_book.get",
     "workspace.memory.search",
+    "recommendation.record",
+    "strategy.create_version",
+    "factor.compute",
 ];
 
 pub const FAIL_CIRCUIT_MAX: u32 = 2;
@@ -236,6 +240,8 @@ mod tests {
     fn fail_circuit_tools_match() {
         assert!(is_fail_circuit_tool("research.thesis.write"));
         assert!(is_fail_circuit_tool("workspace.context.snapshot"));
+        assert!(is_fail_circuit_tool("recommendation.record"));
+        assert!(is_fail_circuit_tool("strategy.create_version"));
         assert!(!is_fail_circuit_tool("mcp:mathjs:evaluate"));
     }
 }

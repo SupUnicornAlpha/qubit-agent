@@ -6,6 +6,7 @@ import type { AnalystTeamGraphPayload, AnalystTeamGraphInteraction, AnalystTeamG
 import { useAppStore } from "../store";
 import { stripToolCallSentinels } from "../lib/chatMessageHydration";
 import { isNarrativeNearDuplicate } from "../lib/narrativeNearDuplicate";
+import { isUiHiddenAgentThought } from "../lib/uiHiddenAgentThought";
 import { KlinePanel } from "../components/chart/KlinePanel";
 import { NewsBriefSection } from "../components/chart/NewsBriefSection";
 import { TeamAgentGraph, teamGraphUndirectedKey, type TeamGraphActivity, type TeamGraphSelection } from "../components/ide/TeamAgentGraph";
@@ -271,13 +272,6 @@ export const TeamDashboardPanel: FC = () => {
       return "workspace";
     }
   });
-  const [runStripExpanded, setRunStripExpanded] = useState(() => {
-    try {
-      return window.localStorage.getItem("qb.team.runStripExpanded") !== "0";
-    } catch {
-      return true;
-    }
-  });
   const [creatingTeamWorkflow, setCreatingTeamWorkflow] = useState(false);
   /** 新建工作流二次确认（Tauri 下不用 window.confirm） */
   const [pendingCreateWorkflow, setPendingCreateWorkflow] = useState(false);
@@ -289,13 +283,6 @@ export const TeamDashboardPanel: FC = () => {
       /* ignore */
     }
   }, [leftRailMode]);
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("qb.team.runStripExpanded", runStripExpanded ? "1" : "0");
-    } catch {
-      /* ignore */
-    }
-  }, [runStripExpanded]);
 
   const fsWorkspaceCreateDefaults = useMemo(() => {
     const symbolsRaw =
@@ -800,14 +787,24 @@ export const TeamDashboardPanel: FC = () => {
    * 右栏虚框：优先 orchestrator 本轮思考；否则取最近更新的 role（专家也在跑时可见）。
    */
   const liveReasoning = useMemo(() => {
+    const pick = (
+      text: string,
+      status: "streaming" | "done",
+      role: string
+    ) => {
+      const cleaned = text.trim();
+      if (!cleaned || isUiHiddenAgentThought(cleaned)) return null;
+      return { text: cleaned, status, role };
+    };
     const orch = reasoningByRole.orchestrator;
     if (orch?.text?.trim()) {
-      return { text: orch.text, status: orch.status, role: "orchestrator" as const };
+      const hit = pick(orch.text, orch.status, "orchestrator");
+      if (hit) return hit;
     }
     let best: { text: string; status: "streaming" | "done"; role: string; ts: string } | null =
       null;
     for (const [role, row] of Object.entries(reasoningByRole)) {
-      if (!row.text?.trim()) continue;
+      if (!row.text?.trim() || isUiHiddenAgentThought(row.text)) continue;
       if (!best || row.ts > best.ts) {
         best = { text: row.text, status: row.status, role, ts: row.ts };
       }
@@ -944,12 +941,7 @@ export const TeamDashboardPanel: FC = () => {
     for (const step of teamGraph?.agentSteps ?? []) {
       if (step.agentRole !== "orchestrator" || step.phase !== "reason") continue;
       const text = stripToolCallSentinels(step.thought).trim();
-      if (
-        !text ||
-        text === "Reasoning with LLM provider" ||
-        /^Prime Core (reasoning|acting)/i.test(text) ||
-        finalAnswerSet.has(text)
-      ) {
+      if (!text || isUiHiddenAgentThought(text, step.actionJson) || finalAnswerSet.has(text)) {
         continue;
       }
       if (finalAnswerTexts.some((final) => isNarrativeNearDuplicate(text, final))) continue;
@@ -1199,7 +1191,7 @@ export const TeamDashboardPanel: FC = () => {
     for (const step of steps) {
       if (step.phase !== "reason") continue;
       const text = stripToolCallSentinels(step.thought).trim();
-      if (!text || text === "Reasoning with LLM provider") continue;
+      if (!text || isUiHiddenAgentThought(text, step.actionJson)) continue;
       const texts = persistedTextsByRole.get(step.agentRole) ?? new Set<string>();
       texts.add(text);
       persistedTextsByRole.set(step.agentRole, texts);
@@ -1666,13 +1658,43 @@ export const TeamDashboardPanel: FC = () => {
   } | null>(null);
 
   useEffect(() => {
+    const st = selectedWorkflowRow?.status
+      ? String(selectedWorkflowRow.status)
+      : "";
+    // 用服务端工作流状态校准本地 running，避免超时/幽灵 turn 后 UI 仍以为在跑。
+    if (orchestratorChatInFlight) return;
+    if (st === "running") {
+      setRunning(true);
+    } else if (
+      st === "completed" ||
+      st === "partial" ||
+      st === "failed" ||
+      st === "cancelled"
+    ) {
+      setRunning(false);
+    }
+  }, [selectedWorkflowRow?.status, orchestratorChatInFlight]);
+
+  useEffect(() => {
+    const st = selectedWorkflowRow?.status
+      ? String(selectedWorkflowRow.status)
+      : "";
     const next = teamPendingHitl
       ? "awaiting_hitl"
-      : running || orchestratorChatInFlight
+      : running ||
+          orchestratorChatInFlight ||
+          st === "running" ||
+          st === "pending"
         ? "running"
         : "idle";
     setProAgentLifecycle(next);
-  }, [teamPendingHitl, running, orchestratorChatInFlight, setProAgentLifecycle]);
+  }, [
+    teamPendingHitl,
+    running,
+    orchestratorChatInFlight,
+    selectedWorkflowRow?.status,
+    setProAgentLifecycle,
+  ]);
 
   useEffect(() => {
     if (!pendingWorkspaceFile) return;
@@ -1813,7 +1835,6 @@ export const TeamDashboardPanel: FC = () => {
   const requestCreateTeamWorkflow = () => {
     if (creatingTeamWorkflow) return;
     setPendingCreateWorkflow(true);
-    setRunStripExpanded(true);
   };
 
   const cancelPendingCreateWorkflow = () => {
@@ -2052,7 +2073,6 @@ export const TeamDashboardPanel: FC = () => {
             <FsWorkspaceExplorer
               createDefaults={fsWorkspaceCreateDefaults}
               onOpenWorkflowSettings={() => {
-                setRunStripExpanded(true);
                 setLeftRailMode("workflow");
               }}
               activeRunId={workflowRunId.trim() || null}
@@ -2067,28 +2087,15 @@ export const TeamDashboardPanel: FC = () => {
             <div style={teamStyles.leftRailWorkflowPane}>
           <div style={teamStyles.leftRailSettings}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", marginBottom: 8 }}>
+            研究设置
+          </div>
+          {researchSettingsPanel}
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--qb-team-meta, #a1a1aa)", margin: "14px 0 8px" }}>
             工作流列表
           </div>
           <p style={{ fontSize: 11, color: "#71717a", marginBottom: 10, lineHeight: 1.45 }}>
-            研究设置已迁至右侧 Orchestrator 的 <strong>Run 条</strong>（展开即可编辑范围 / 标的 / 提示）。
-            新建工作流等同开启一次新研究，需确认。
+            在此配置研究范围 / 标的 / 提示，再选择或新建工作流；右侧 Orchestrator 仅负责对话与执行。
           </p>
-          <button
-            type="button"
-            style={{
-              border: "none",
-              background: "transparent",
-              color: "#38bdf8",
-              fontSize: 12,
-              cursor: "pointer",
-              padding: 0,
-              marginBottom: 8,
-              textAlign: "left",
-            }}
-            onClick={() => setRunStripExpanded(true)}
-          >
-            打开 Run 条研究设置 →
-          </button>
           </div>
           {/**
            * 下半工作流区独立滚动容器：工作流筛选 + 列表 + 新建按钮 + 拓扑。
@@ -3231,6 +3238,18 @@ export const TeamDashboardPanel: FC = () => {
                 decision === "approved" ? "已批准，分析师团队继续执行…" : "已拒绝，工作流终止"
               );
             }}
+            onWorkflowResumed={() => {
+              setRunning(true);
+              setOrchestratorChatInFlight(true);
+              setRunProgress("正在从检查点继续…");
+              setError(null);
+              void refreshWorkflowOptions();
+            }}
+            workflowStatus={
+              selectedWorkflowRow?.status
+                ? String(selectedWorkflowRow.status)
+                : null
+            }
             composerValue={teamAnalysisContext}
             onComposerChange={setTeamAnalysisContext}
             fsWorkspaceId={activeFsWorkspaceId}
@@ -3367,46 +3386,6 @@ export const TeamDashboardPanel: FC = () => {
             }}
             sendDisabled={!workflowRunId.trim()}
             sendDisabledReason={!workflowRunId.trim() ? "请先选择工作流" : ""}
-            runStrip={{
-              expanded: runStripExpanded,
-              onExpandedChange: setRunStripExpanded,
-              summary: `${scopeModeLabel(scopeMode)} · ${
-                ticker.trim() || sectorName || exploreTheme || "未设标的"
-              } · ${workflowRunId.trim() ? "已选 Run" : "未选 Run"}`,
-              options: workflowOptions.map((row) => ({
-                id: String(row.id ?? ""),
-                label: (typeof row.goal === "string" && row.goal.trim()) || String(row.id ?? "").slice(0, 8),
-                status: String(row.status ?? ""),
-              })),
-              onSelect: (id) => {
-                setWorkflowRunId(id);
-                const row = workflowOptions.find((w) => String(w.id) === id);
-                const sid = typeof row?.sessionId === "string" ? row.sessionId.trim() : "";
-                if (sid) setSelectedConversationSessionId(sid);
-                if (activeFsWorkspaceId && id) {
-                  void putFsWorkspaceRun(activeFsWorkspaceId, id, {
-                    title:
-                      (typeof row?.goal === "string" && row.goal.trim()) ||
-                      id.slice(0, 8),
-                    status: String(row?.status ?? "queued"),
-                    workflowId: id,
-                    sessionId: sid || undefined,
-                  }).catch(() => undefined);
-                }
-              },
-              onCreate: () => {
-                if (pendingCreateWorkflow) {
-                  void handleCreateTeamWorkflow();
-                  return;
-                }
-                requestCreateTeamWorkflow();
-              },
-              onOpenResearchSettings: () => setLeftRailMode("workflow"),
-              creating: creatingTeamWorkflow,
-              createConfirmPending: pendingCreateWorkflow,
-              onCancelCreate: cancelPendingCreateWorkflow,
-              settingsContent: researchSettingsPanel,
-            }}
           />
           );
 
@@ -3543,7 +3522,7 @@ const teamStyles: Record<string, CSSProperties> = {
     overflow: "hidden",
   },
   /**
-   * 上半「设置区」：研究设置入口提示（表单已迁 Run 条）。
+   * 上半「设置区」：研究范围 / 标的 / 提示表单。
    */
   leftRailSettings: {
     minHeight: 0,

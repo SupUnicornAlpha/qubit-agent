@@ -141,6 +141,7 @@ impl TriggerIngress for TriggerIngressService {
                 RunTurnOpts {
                     max_iterations: Some(spec.max_iterations.min(4).max(1)),
                     recipe_key: spec.default_recipe_id.clone().or_else(|| Some("open".into())),
+                    ..Default::default()
                 },
             )
             .await?;

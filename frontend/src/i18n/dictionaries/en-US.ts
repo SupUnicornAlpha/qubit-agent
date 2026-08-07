@@ -741,6 +741,7 @@ const pack: LocalePack = {
         hint: "Sessions live on the left; the Agent rail focuses on run state and chat.",
         empty: "No sessions yet",
         openChatView: "Open chat page →",
+        focusAgent: "Open Agent chat →",
       },
       workspace: {
         hint: "Logical workspace (strategies / factors under the project). File tree will deepen with FS APIs.",

@@ -1,13 +1,18 @@
 import { INTERNET_BUILTIN_TOOLS } from "../tools/internet-tools";
 import {
+  FUTU_CONNECTOR_PLUGIN_ID,
+  GENERIC_OAUTH_PLUGIN_ID,
+  GITHUB_CONNECTOR_PLUGIN_ID,
   INTERNET_PLUGIN_ID,
   QUANT_DATA_PLUGIN_ID,
-  type PluginManifest,
-} from "./types";
+} from "./plugin-ids";
+import type { PluginManifest } from "./types";
 
-export const GITHUB_CONNECTOR_PLUGIN_ID = "connector:github";
-export const GENERIC_OAUTH_PLUGIN_ID = "connector:generic-oauth2";
-export const FUTU_CONNECTOR_PLUGIN_ID = "connector:futu";
+export {
+  FUTU_CONNECTOR_PLUGIN_ID,
+  GENERIC_OAUTH_PLUGIN_ID,
+  GITHUB_CONNECTOR_PLUGIN_ID,
+} from "./plugin-ids";
 
 /** Official packs shown in Plugins UI (展示投影，不新开执行路径). */
 export function listOfficialPluginPacks(): PluginManifest[] {

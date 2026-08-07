@@ -299,13 +299,28 @@ describe("research.thesis.write builtin", () => {
     expect(entry?.description).toContain("thesisId");
   });
 
-  test("requires snapshotId", async () => {
+  test("requires symbols when snapshot and narrative omit them", async () => {
     await expect(
       dispatchBuiltinTool("research.thesis.write", ctx, {
-        symbols: ["AAPL"],
         direction: "long",
       })
-    ).rejects.toThrow(/snapshotId/);
+    ).rejects.toThrow(/instrumentScope|symbols/);
+  });
+
+  test("infers symbols from narrative and soft-binds snapshot", async () => {
+    const out = (await dispatchBuiltinTool("research.thesis.write", ctx, {
+      narrative: "看多 600519.SH 短期反弹",
+      direction: "看多",
+    })) as {
+      ok?: boolean;
+      thesisId?: string;
+      snapshotId?: string;
+      snapshotBinding?: string;
+    };
+    expect(out.ok).toBe(true);
+    expect(out.thesisId).toMatch(/^thesis_/);
+    expect(out.snapshotId).toBeTruthy();
+    expect(["auto", "unbound", "explicit"]).toContain(out.snapshotBinding);
   });
 });
 

@@ -20,6 +20,8 @@ pub struct OpenAiCompatibleConfig {
     pub model: String,
     /// Optional timeout seconds.
     pub timeout_secs: u64,
+    /// Transient body/network failures before giving up (DeepSeek truncations, etc.).
+    pub max_retries: u32,
 }
 
 impl Default for OpenAiCompatibleConfig {
@@ -34,6 +36,15 @@ impl Default for OpenAiCompatibleConfig {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
             });
+        let timeout_secs = std::env::var("QUBIT_LLM_TIMEOUT_SECS")
+            .ok()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(180);
+        let max_retries = std::env::var("QUBIT_LLM_MAX_RETRIES")
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(2);
         Self {
             base_url: std::env::var("QUBIT_LLM_BASE_URL")
                 .ok()
@@ -46,7 +57,8 @@ impl Default for OpenAiCompatibleConfig {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "gpt-4o-mini".into()),
-            timeout_secs: 60,
+            timeout_secs,
+            max_retries,
         }
     }
 }
@@ -65,6 +77,7 @@ impl OpenAiCompatibleClient {
         let provider = resolve_provider_label(&cfg);
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(cfg.timeout_secs))
+            .connect_timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| RuntimeError::Model(e.to_string()))?;
         Ok(Self {
@@ -76,6 +89,34 @@ impl OpenAiCompatibleClient {
 
     pub fn from_env() -> Result<Self, RuntimeError> {
         Self::new(OpenAiCompatibleConfig::default())
+    }
+}
+
+fn is_transient_model_error(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    m.contains("error decoding response body")
+        || m.contains("connection reset")
+        || m.contains("connection closed")
+        || m.contains("broken pipe")
+        || m.contains("timed out")
+        || m.contains("timeout")
+        || m.contains("temporarily unavailable")
+        || m.contains("502")
+        || m.contains("503")
+        || m.contains("504")
+        || m.contains("incomplete")
+        || m.contains("unexpected eof")
+        || m.contains("body") && m.contains("decode")
+}
+
+fn body_preview(bytes: &[u8], max: usize) -> String {
+    let n = bytes.len().min(max);
+    let s = String::from_utf8_lossy(&bytes[..n]);
+    let compact: String = s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if bytes.len() > max {
+        format!("{compact}…(total {} bytes)", bytes.len())
+    } else {
+        compact
     }
 }
 
@@ -475,85 +516,187 @@ impl ModelClient for OpenAiCompatibleClient {
             tools,
         };
 
-        let mut builder = self.http.post(&url).json(&body);
-        if let Some(ref key) = self.cfg.api_key {
-            builder = builder.bearer_auth(key);
-        }
-
         let started = std::time::Instant::now();
-        let resp = tokio::select! {
-            _ = cancel.cancelled() => {
-                return Err(RuntimeError::Cancelled);
+        let attempts = self.cfg.max_retries.saturating_add(1).max(1);
+        let mut last_err = String::new();
+
+        for attempt in 1..=attempts {
+            cancel.check()?;
+            let mut builder = self
+                .http
+                .post(&url)
+                .header("Accept-Encoding", "identity")
+                .json(&body);
+            if let Some(ref key) = self.cfg.api_key {
+                builder = builder.bearer_auth(key);
             }
-            result = builder.send() => {
-                result.map_err(|e| RuntimeError::Model(e.to_string()))?
-            }
-        };
-        cancel.check()?;
-        if !resp.status().is_success() {
+
+            let resp = tokio::select! {
+                _ = cancel.cancelled() => {
+                    return Err(RuntimeError::Cancelled);
+                }
+                result = builder.send() => {
+                    match result {
+                        Ok(r) => r,
+                        Err(e) => {
+                            last_err = e.to_string();
+                            if attempt < attempts && is_transient_model_error(&last_err) {
+                                tracing::warn!(
+                                    attempt,
+                                    attempts,
+                                    error = %last_err,
+                                    "LLM transport error; retrying"
+                                );
+                                tokio::time::sleep(std::time::Duration::from_millis(
+                                    400 * u64::from(attempt),
+                                ))
+                                .await;
+                                continue;
+                            }
+                            return Err(RuntimeError::Model(last_err));
+                        }
+                    }
+                }
+            };
+            cancel.check()?;
+
             let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(RuntimeError::Model(format!("HTTP {status}: {text}")));
-        }
-        let root: Value = resp
-            .json()
-            .await
-            .map_err(|e| RuntimeError::Model(e.to_string()))?;
-        let latency_ms = started.elapsed().as_millis() as u64;
+            let bytes = match resp.bytes().await {
+                Ok(b) => b,
+                Err(e) => {
+                    last_err = format!("error reading response body: {e}");
+                    if attempt < attempts && is_transient_model_error(&last_err) {
+                        tracing::warn!(
+                            attempt,
+                            attempts,
+                            error = %last_err,
+                            "LLM body read failed; retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            400 * u64::from(attempt),
+                        ))
+                        .await;
+                        continue;
+                    }
+                    return Err(RuntimeError::Model(last_err));
+                }
+            };
 
-        let message = root
-            .pointer("/choices/0/message")
-            .cloned()
-            .ok_or_else(|| RuntimeError::Model("empty choices".into()))?;
+            if !status.is_success() {
+                let text = String::from_utf8_lossy(&bytes);
+                last_err = format!("HTTP {status}: {text}");
+                // Retry upstream 5xx; treat 4xx as final.
+                if attempt < attempts
+                    && (status.is_server_error() || is_transient_model_error(&last_err))
+                {
+                    tracing::warn!(
+                        attempt,
+                        attempts,
+                        %status,
+                        "LLM HTTP error; retrying"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        400 * u64::from(attempt),
+                    ))
+                    .await;
+                    continue;
+                }
+                return Err(RuntimeError::Model(last_err));
+            }
 
-        let usage: Option<ApiUsage> = root
-            .get("usage")
-            .cloned()
-            .and_then(|v| serde_json::from_value(v).ok());
-        let model_name = root
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| Some(self.cfg.model.clone()));
+            let root: Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    last_err = format!(
+                        "error decoding response body: {e}; preview={}",
+                        body_preview(&bytes, 480)
+                    );
+                    if attempt < attempts {
+                        tracing::warn!(
+                            attempt,
+                            attempts,
+                            error = %last_err,
+                            "LLM JSON decode failed; retrying"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            400 * u64::from(attempt),
+                        ))
+                        .await;
+                        continue;
+                    }
+                    return Err(RuntimeError::Model(last_err));
+                }
+            };
 
-        let reasoning_text = extract_reasoning_from_chat_completion(&root);
-        let mut reasoning_tokens = usage
-            .as_ref()
-            .and_then(|u| u.completion_tokens_details.as_ref())
-            .and_then(|d| d.reasoning_tokens);
-        if reasoning_tokens.is_none() {
-            if let Some(ref r) = reasoning_text {
-                let est = estimate_reasoning_tokens(r.chars().count());
-                if est > 0 {
-                    reasoning_tokens = Some(est);
+            let latency_ms = started.elapsed().as_millis() as u64;
+            let message = root
+                .pointer("/choices/0/message")
+                .cloned()
+                .ok_or_else(|| RuntimeError::Model("empty choices".into()))?;
+
+            let usage: Option<ApiUsage> = root
+                .get("usage")
+                .cloned()
+                .and_then(|v| serde_json::from_value(v).ok());
+            let model_name = root
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| Some(self.cfg.model.clone()));
+
+            let reasoning_text = extract_reasoning_from_chat_completion(&root);
+            let mut reasoning_tokens = usage
+                .as_ref()
+                .and_then(|u| u.completion_tokens_details.as_ref())
+                .and_then(|d| d.reasoning_tokens);
+            if reasoning_tokens.is_none() {
+                if let Some(ref r) = reasoning_text {
+                    let est = estimate_reasoning_tokens(r.chars().count());
+                    if est > 0 {
+                        reasoning_tokens = Some(est);
+                    }
                 }
             }
+
+            let tool_calls = extract_tool_calls(&message, &encode_map);
+            let text = extract_answer_text(&message);
+
+            return Ok(SampleResponse {
+                text,
+                reasoning_text,
+                tool_calls,
+                request_hitl: false,
+                hitl_title: None,
+                hitl_body: None,
+                prompt_tokens: usage.as_ref().and_then(|u| u.prompt_tokens),
+                completion_tokens: usage.as_ref().and_then(|u| u.completion_tokens),
+                total_tokens: usage.as_ref().and_then(|u| u.total_tokens),
+                reasoning_tokens,
+                latency_ms: Some(latency_ms),
+                model: model_name,
+                provider: Some(self.provider.clone()),
+            });
         }
 
-        let tool_calls = extract_tool_calls(&message, &encode_map);
-        let text = extract_answer_text(&message);
-
-        Ok(SampleResponse {
-            text,
-            reasoning_text,
-            tool_calls,
-            request_hitl: false,
-            hitl_title: None,
-            hitl_body: None,
-            prompt_tokens: usage.as_ref().and_then(|u| u.prompt_tokens),
-            completion_tokens: usage.as_ref().and_then(|u| u.completion_tokens),
-            total_tokens: usage.as_ref().and_then(|u| u.total_tokens),
-            reasoning_tokens,
-            latency_ms: Some(latency_ms),
-            model: model_name,
-            provider: Some(self.provider.clone()),
-        })
+        Err(RuntimeError::Model(if last_err.is_empty() {
+            "LLM request failed after retries".into()
+        } else {
+            last_err
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_transient_decode_errors() {
+        assert!(is_transient_model_error("error decoding response body"));
+        assert!(is_transient_model_error("error reading response body: unexpected EOF"));
+        assert!(is_transient_model_error("HTTP 503: unavailable"));
+        assert!(!is_transient_model_error("HTTP 401: invalid api key"));
+    }
 
     #[test]
     fn encodes_openai_illegal_tool_names() {

@@ -1,4 +1,3 @@
-import { extractSymbolArgs } from "../market/normalize-symbol-args";
 import {
   ensureForecastBookForThesis,
   getForecastBookEntry,
@@ -9,16 +8,40 @@ import {
   isResearchThesisWriteEnabled,
   writeResearchThesis,
 } from "../market/contracts/research-thesis-service";
+import { getOrCreateMarketSnapshot } from "../market/contracts/market-snapshot-service";
 import {
   coerceConfidence01,
-  coerceThesisDirection,
   extractForecastBookKey,
   extractSnapshotId,
   normalizePortfolioCandidates,
+  resolveInstrumentScope,
+  resolveThesisDirection,
 } from "./research-arg-normalize";
 import { applyToolContract, isToolContractEnabled } from "./tool-contract";
 import { getToolContract } from "./tool-contract-registry";
 import type { BuiltinToolHandler } from "./types";
+
+function unboundSnapshotId(symbols: string[], direction: string): string {
+  const key = [...symbols].sort().join("|") || "unknown";
+  let h = 0;
+  const s = `${key}:${direction}`;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return `mkt_snapshot_unbound_${(h >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -77,35 +100,48 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
       : undefined;
     const canonical = contract ? applyToolContract(contract, params) : params;
 
-    const snapshotId =
-      String(canonical.snapshotId ?? canonical.snapshot_id ?? "").trim() ||
-      extractSnapshotId(canonical);
-    if (!snapshotId) {
-      throw new Error(
-        "research.thesis.write: snapshotId is required — call market.snapshot.get first and pass its snapshotId (evidence[].ref=mkt_snapshot_* also works)"
-      );
-    }
-
-    const scopeFromParam = asStringArray(
-      canonical.instrumentScope ?? canonical.instrument_scope ?? canonical.universe
-    );
-    const symbols = scopeFromParam.length > 0 ? scopeFromParam : extractSymbolArgs(canonical);
+    const symbols = resolveInstrumentScope(canonical);
     if (symbols.length === 0) {
       throw new Error(
-        "research.thesis.write: instrumentScope/symbols is required"
+        "research.thesis.write: instrumentScope/symbols is required（也可写在 narrative 里如 600519.SH / AAPL）"
       );
     }
 
-    const direction =
-      coerceThesisDirection(canonical.direction) ??
-      (canonical.direction == null ? "neutral" : null);
-    if (!direction) {
-      throw new Error(
-        "research.thesis.write: direction must be long|short|neutral (中文如看多/看空/震荡亦可)"
-      );
-    }
-
+    const direction = resolveThesisDirection(canonical);
     const confidence = coerceConfidence01(canonical.confidence, 0.5);
+
+    let snapshotId =
+      String(canonical.snapshotId ?? canonical.snapshot_id ?? "").trim() ||
+      extractSnapshotId(canonical);
+    let snapshotBinding: "explicit" | "auto" | "unbound" = snapshotId
+      ? "explicit"
+      : "auto";
+    let snapshotWarning: string | undefined;
+
+    if (!snapshotId) {
+      try {
+        const snap = await withTimeout(
+          getOrCreateMarketSnapshot({
+            symbols,
+            purpose: "research",
+            timeframe: "1d",
+            limit: 60,
+          }),
+          2_500,
+          "snapshot_auto"
+        );
+        snapshotId = snap.snapshotId;
+        snapshotBinding = "auto";
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        snapshotId = unboundSnapshotId(symbols, direction);
+        snapshotBinding = "unbound";
+        snapshotWarning =
+          `snapshot 自动拉取失败（${msg}）；已用 unbound snapshotId=${snapshotId} 落库 thesis。` +
+          `后续请补 market.snapshot.get 并在 evidence 中引用真实 mkt_snapshot_*。`;
+      }
+    }
+
     const written = await writeResearchThesis({
       snapshotId,
       instrumentScope: symbols,
@@ -141,6 +177,8 @@ export const RESEARCH_THESIS_HANDLERS: Record<string, BuiltinToolHandler> = {
 
     return {
       ...written,
+      snapshotBinding,
+      ...(snapshotWarning ? { warning: snapshotWarning } : {}),
       forecastBookEntryId: book.entryId,
       forecastBookStatus: book.holdingPeriodResult?.status ?? "open",
     };

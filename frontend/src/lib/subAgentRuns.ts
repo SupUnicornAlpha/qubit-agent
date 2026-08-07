@@ -9,6 +9,7 @@ import type {
   AnalystTeamGraphPayload,
   AnalystTeamGraphToolCall,
 } from "../api/types";
+import { isUiHiddenAgentThought } from "./uiHiddenAgentThought";
 
 export type SubAgentRunStatus = "queued" | "running" | "done" | "failed";
 
@@ -63,13 +64,16 @@ function latestToolHeadline(tools: AnalystTeamGraphToolCall[]): string | null {
 }
 
 function latestStepHeadline(steps: AnalystTeamGraphAgentStep[]): string | null {
-  if (steps.length === 0) return null;
-  const s = steps[steps.length - 1]!;
-  const thought = (s.thought ?? "").trim().replace(/\s+/g, " ");
-  if (thought) {
-    return thought.length > 80 ? `${thought.slice(0, 80)}…` : thought;
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i]!;
+    if (isUiHiddenAgentThought(s.thought, s.actionJson)) continue;
+    const thought = (s.thought ?? "").trim().replace(/\s+/g, " ");
+    if (thought) {
+      return thought.length > 80 ? `${thought.slice(0, 80)}…` : thought;
+    }
+    return `${s.phase} · ${s.actionType} · step ${s.stepIndex}`;
   }
-  return `${s.phase} · ${s.actionType} · step ${s.stepIndex}`;
+  return null;
 }
 
 function latestOutboundHeadline(outbound: AnalystTeamGraphInteraction[]): string | null {

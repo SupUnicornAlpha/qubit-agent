@@ -181,13 +181,16 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
   }
 
   // ── Wave-1 (2026-06-10) 零-key 公开金融 MCP ──────────────────────────────
+  // 2026-08-06 tool_call 复盘：publicfinance / us-gov-open-data 近 3 天调用
+  // 约 45 次、成功 0（stdio 提前退出 + circuit open）。默认禁用；配齐 key 后可在 UI 手动开启。
   presets.push({
     name: RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
     transport: "stdio",
+    defaultEnabled: false,
     command: "npx -y @leviai/publicfinance-mcp",
     registrySlug: "npm:@leviai/publicfinance-mcp",
     description:
-      "SEC EDGAR / US Treasury 收益曲线 / BLS 失业 CPI PPI / 经济综览（零 API key，MIT）",
+      "SEC EDGAR / US Treasury 收益曲线 / BLS 失业 CPI PPI / 经济综览（零 API key，MIT）。⚠ 默认禁用：本地 stdio 不稳定，见 tool_call 全失败复盘。",
     capabilitiesJson: {
       tools: [
         { name: "company_filings", desc: "按 ticker / CIK 拉 SEC EDGAR 10-K/10-Q/8-K/S-1 等" },
@@ -209,13 +212,13 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
   presets.push({
     name: RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
     transport: "stdio",
+    defaultEnabled: false,
     command: "npx -y us-gov-open-data-mcp",
     registrySlug: "npm:us-gov-open-data-mcp",
     description:
-      "40+ 美国政府开源 API（FRED / Treasury / SEC / BLS / EIA / EPA …）共 300+ 工具；FRED 等可选 API key 升级配额",
+      "40+ 美国政府开源 API（FRED / Treasury / SEC / BLS / EIA / EPA …）。⚠ 默认禁用：缺 BEA_API_KEY 时进程易崩，tool_call 全失败。",
     capabilitiesJson: {
       env: {
-        // 都是可选 key；缺失时 server 会限制相应 module 但不 fail
         ...(process.env.FRED_API_KEY?.trim()
           ? { FRED_API_KEY: process.env.FRED_API_KEY.trim() }
           : {}),
@@ -223,7 +226,6 @@ export function buildRecommendedMcpPresets(): RecommendedMcpPreset[] {
           ? { DATA_GOV_API_KEY: process.env.DATA_GOV_API_KEY.trim() }
           : {}),
       },
-      // 300+ tools 不完整枚举，只挑量化最常用的几个让 LLM 知道这台 server 能干什么
       tools: [
         { name: "fred.series.observations", desc: "FRED 时间序列观测值（GDP/CPI/失业等）" },
         { name: "fred.series.search", desc: "FRED 系列模糊搜索（80 万条）" },
@@ -278,20 +280,23 @@ export function defaultQuantMcpServers(): string[] {
   const names = [
     RECOMMENDED_MCP_NAMES.MATHJS,
     RECOMMENDED_MCP_NAMES.TRADINGCALC,
-    /**
-     * Wave-1：3 个零-key 公开金融 MCP 默认全部派给 quant 角色 —— mcp-financex 1.0.11
-     * 不稳定时这三家是稳定 fallback；同时它们各自侧重不同：
-     *   - investor-agent：Yahoo 股票 / 期权 / 技术指标，最快替代 mcp-financex
-     *   - publicfinance：SEC / Treasury / BLS，分析师做基本面 / 宏观必需
-     *   - us-gov-open-data：FRED 80 万序列等 40+ 美国政府数据源
-     */
+    /** 精品行情 MCP；publicfinance / us-gov 已默认禁用且不进 seed 白名单 */
     RECOMMENDED_MCP_NAMES.INVESTOR_AGENT,
-    RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
-    RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
   ];
   if (process.env.FMP_API_KEY?.trim()) names.push(RECOMMENDED_MCP_NAMES.FMP);
   return names;
 }
+
+/**
+ * Known-broken stdio MCP from 2026-08 tool_call traces (0% success).
+ * Seed force-disables these even if a prior install left them enabled.
+ * Operators can re-enable in UI after fixing env/keys.
+ */
+export const QUARANTINED_MCP_NAMES = new Set<string>([
+  RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
+  RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
+  RECOMMENDED_MCP_NAMES.FINANCEX,
+]);
 
 export function mergeMcpServers(base: string[], extra: string[]): string[] {
   return [...new Set([...base, ...extra])];
@@ -316,8 +321,14 @@ export async function seedRecommendedMcpServers(): Promise<void> {
     };
 
     let enabled = preset.defaultEnabled ?? true;
-    if (existing[0]) {
+    if (QUARANTINED_MCP_NAMES.has(preset.name)) {
+      enabled = false;
+    } else if (existing[0]) {
+      // Seeds refresh metadata and endpoints, but must never undo a user's
+      // disable/quarantine decision for non-quarantined servers.
       enabled = existing[0].enabled;
+    }
+    if (existing[0]) {
       const nextCommand =
         preset.transport === "stdio" ? (preset.command ?? existing[0].command) : null;
       const nextUrl =
@@ -329,8 +340,6 @@ export async function seedRecommendedMcpServers(): Promise<void> {
           command: nextCommand,
           url: nextUrl,
           capabilitiesJson: caps,
-          // Seeds refresh metadata and endpoints, but must never undo a user's
-          // disable/quarantine decision.
           enabled,
         })
         .where(eq(mcpServerConfig.id, existing[0].id));

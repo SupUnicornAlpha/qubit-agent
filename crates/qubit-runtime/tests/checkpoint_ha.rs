@@ -31,6 +31,7 @@ async fn checkpoint_persists_completed_turn() {
                 client_meta: None,
             },
             idempotency_key: "k-cp".into(),
+            context: None,
         })
         .await
         .unwrap();

@@ -1,3 +1,5 @@
+import { desc, eq } from "drizzle-orm";
+import { getDb } from "../../db/sqlite/client";
 import { backtestJobService } from "../backtest/backtest-job-service";
 import { discoveryService } from "../discovery/discovery-service";
 import type { DiscoveryKind } from "../discovery/discovery-service";
@@ -11,6 +13,11 @@ import { ruleService } from "../rule/rule-service";
 import type { RuleAppliesTo, RuleLang, RuleStatus } from "../rule/rule-service";
 import { PYTHON_HANDLER } from "./python-handler";
 import type { BuiltinToolHandler } from "./types";
+import {
+  coerceSymbolList,
+  defaultDateWindow,
+  unwrapToolArgs,
+} from "./unwrap-tool-args";
 
 /**
  * LLM 经常把 `factor.compute / factor.evaluate / factor.autoEvaluate` 的入参写成：
@@ -39,6 +46,21 @@ function pickDateParam(params: Record<string, unknown>, snake: "start_date" | "e
   const camel = snake === "start_date" ? "startDate" : "endDate";
   const v = params[snake] ?? params[camel];
   return typeof v === "string" ? v.trim() : "";
+}
+
+/** Prefer explicit dates; else last ~1y UTC window. */
+function resolveDateWindow(params: Record<string, unknown>): {
+  startDate: string;
+  endDate: string;
+  defaulted: boolean;
+} {
+  let startDate = pickDateParam(params, "start_date");
+  let endDate = pickDateParam(params, "end_date");
+  if (startDate && endDate) return { startDate, endDate, defaulted: false };
+  const d = defaultDateWindow(365);
+  if (!startDate) startDate = d.start_date;
+  if (!endDate) endDate = d.end_date;
+  return { startDate, endDate, defaulted: true };
 }
 
 /** Factor, rule, discovery and backtest handlers. */
@@ -211,7 +233,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     });
   },
 
-  "factor.autoEvaluate": async (ctx, params) => {
+  "factor.autoEvaluate": async (ctx, paramsIn) => {
     /**
      * 一步式自动评估入参兼容（E1 修复）。
      *
@@ -226,6 +248,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
      * 我们就**先 factor.register（dryRun=false）** 拿 id，再 autoEvaluate，
      * 把"一步式"对外暴露的语义补回去。
      */
+    const params = unwrapToolArgs(paramsIn);
     let factorId = pickFactorId(params);
     const exprRaw =
       typeof params.factor_expression === "string"
@@ -235,11 +258,7 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
           : "";
     const isOneShot = exprRaw.trim().length > 0 && !factorId;
 
-    const startDate = pickDateParam(params, "start_date");
-    const endDate = pickDateParam(params, "end_date");
-    if (!startDate || !endDate) {
-      throw new Error("factor.autoEvaluate: start_date and end_date are required");
-    }
+    const { startDate, endDate } = resolveDateWindow(params);
 
     if (!factorId && exprRaw.trim().length > 0) {
       /**
@@ -714,26 +733,63 @@ export const FACTOR_RESEARCH_HANDLERS: Record<string, BuiltinToolHandler> = {
     });
   },
 
-  "backtest.run": async (ctx, params) => {
-    const strategyVersionId = String(params.strategy_version_id ?? "").trim();
+  "backtest.run": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const strategyVersionId = String(
+      params.strategy_version_id ?? params.strategyVersionId ?? ""
+    ).trim();
     if (!strategyVersionId) throw new Error("backtest.run: strategy_version_id is required");
-    const symbolsRaw = params.symbols;
-    const symbols = Array.isArray(symbolsRaw)
-      ? symbolsRaw.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-      : [];
-    if (symbols.length === 0) throw new Error("backtest.run: symbols is required");
-    const startDate = String(params.start_date ?? "").trim();
-    const endDate = String(params.end_date ?? "").trim();
-    if (!startDate || !endDate) throw new Error("backtest.run: start_date / end_date are required");
 
-    const compositionId = params.composition_id ? String(params.composition_id) : undefined;
+    let symbols = coerceSymbolList(params);
+    const { startDate, endDate } = resolveDateWindow(params);
+
+    let compositionId = params.composition_id
+      ? String(params.composition_id)
+      : params.compositionId
+        ? String(params.compositionId)
+        : undefined;
+
+    if (!compositionId) {
+      const db = await getDb();
+      const { strategyComposition } = await import("../../db/sqlite/schema");
+      const latest = await db
+        .select({
+          id: strategyComposition.id,
+          universe: strategyComposition.universe,
+          paramsJson: strategyComposition.paramsJson,
+        })
+        .from(strategyComposition)
+        .where(eq(strategyComposition.strategyVersionId, strategyVersionId))
+        .orderBy(desc(strategyComposition.createdAt))
+        .limit(1);
+      if (latest[0]) {
+        compositionId = latest[0].id;
+        if (symbols.length === 0) {
+          const pj =
+            latest[0].paramsJson &&
+            typeof latest[0].paramsJson === "object" &&
+            !Array.isArray(latest[0].paramsJson)
+              ? (latest[0].paramsJson as Record<string, unknown>)
+              : {};
+          symbols = coerceSymbolList({ ...pj, symbols: pj.symbols ?? pj.tickers });
+        }
+      }
+    }
+
     const rawSignal = params.signals;
     const signals =
       !compositionId && rawSignal && typeof rawSignal === "object" && !Array.isArray(rawSignal)
         ? (rawSignal as Record<string, unknown>)
         : undefined;
     if (!compositionId && !signals) {
-      throw new Error("backtest.run: composition_id or signals is required");
+      throw new Error(
+        "backtest.run: composition_id or signals is required（先 strategy.compose；若刚 compose 过可不传 composition_id，会自动取该 strategy_version 最新组合）"
+      );
+    }
+    if (symbols.length === 0) {
+      throw new Error(
+        "backtest.run: symbols is required（可传 symbols[] 或单标 symbol/ticker；勿只传指数代码当唯一标的）"
+      );
     }
 
     const costsRaw = params.costs;

@@ -71,5 +71,7 @@ export interface PluginListItem extends PluginManifest {
   oauthMcpServerName?: string | null;
 }
 
-export const INTERNET_PLUGIN_ID = "builtin:internet";
-export const QUANT_DATA_PLUGIN_ID = "builtin:quant-data";
+export {
+  INTERNET_PLUGIN_ID,
+  QUANT_DATA_PLUGIN_ID,
+} from "./plugin-ids";

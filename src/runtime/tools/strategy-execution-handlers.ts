@@ -18,6 +18,7 @@ import {
   coerceConfidence01,
   coerceRecommendationSide,
 } from "./research-arg-normalize";
+import { unwrapToolArgs } from "./unwrap-tool-args";
 export { resolveDelegatedParentTaskId } from "../orchestration/team-dispatch-adapter";
 import { strategyComposer } from "../strategy/strategy-composer";
 import type { StrategyKind, WeightMethod } from "../strategy/strategy-composer";
@@ -68,7 +69,16 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
    *
    * 返回：{ strategyId, strategyVersionId, versionTag }
    */
-  "strategy.create_version": async (ctx, params) => {
+  "strategy.create_version": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    // Reject get/list-shaped misuse early with a clear create-only message
+    const action = String(params.action ?? "").trim().toLowerCase();
+    if (action === "get" || action === "list" || action === "read") {
+      throw new Error(
+        "strategy.create_version: 这是**创建**工具，不支持 action=get/list。" +
+          "请传顶层 name（策略名）新建版本；查询请用内存/已返回的 strategyVersionId。"
+      );
+    }
     const nestedStrategy =
       params.strategy && typeof params.strategy === "object" && !Array.isArray(params.strategy)
         ? (params.strategy as Record<string, unknown>)
@@ -78,7 +88,7 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
     ).trim();
     if (!name) {
       throw new Error(
-        "strategy.create_version: name (策略名) is required（也接受 strategyName / strategy.name）"
+        "strategy.create_version: name (策略名) is required（也接受 strategyName / strategy.name；勿包在 arguments 里）"
       );
     }
     /**

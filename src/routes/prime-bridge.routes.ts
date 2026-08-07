@@ -57,6 +57,8 @@ const BRIDGED_TOOLS = [
   "factor.promote_backtest",
   "backtest.run",
   "workspace.context.snapshot",
+  "web.search",
+  "web.fetch",
 ] as const;
 
 const BRIDGED_SET = new Set<string>(BRIDGED_TOOLS);

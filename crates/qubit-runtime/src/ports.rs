@@ -241,6 +241,30 @@ impl CoreRuntimeService {
         for rec in non_term {
             if rec.state == TurnState::AwaitingHitl {
                 n += 1;
+            } else if rec.state.is_orphan_recoverable() {
+                // Kill-9 / crash left Acting|Reasoning|… with no live task.
+                // Fail so Bun timeout/resume path does not empty-run forever.
+                tracing::warn!(
+                    session_id = %rec.session_id,
+                    turn_id = %rec.turn_id,
+                    state = ?rec.state,
+                    "recovering orphan non-terminal turn on boot"
+                );
+                let err = RuntimeError::Internal(format!(
+                    "recovered orphan turn in state {:?}",
+                    rec.state
+                ));
+                if let Err(e) = self
+                    .engine
+                    .fail_turn(&rec.session_id, &rec.turn_id, &err)
+                    .await
+                {
+                    tracing::error!(
+                        turn_id = %rec.turn_id,
+                        error = %e,
+                        "failed to mark orphan turn failed on boot"
+                    );
+                }
             }
         }
         Ok(n)
@@ -295,6 +319,10 @@ impl CoreRuntimeService {
         let cancels = self.cancels.clone();
         let session_id = req.session_id;
         let input = req.input;
+        let turn_opts = RunTurnOpts {
+            context: req.context.unwrap_or_default(),
+            ..Default::default()
+        };
         let tid = turn_id.clone();
 
         let join = tokio::spawn(async move {
@@ -305,18 +333,30 @@ impl CoreRuntimeService {
                     tid.clone(),
                     input,
                     token,
-                    RunTurnOpts::default(),
+                    turn_opts,
                 )
                 .await;
-            if let Err(e) = result {
+            if let Err(e) = &result {
                 tracing::error!(turn_id = %tid, error = %e, "turn task failed");
-                if let Err(fail_err) = engine.fail_turn(&session_id, &tid, &e).await {
+                if let Err(fail_err) = engine.fail_turn(&session_id, &tid, e).await {
                     tracing::error!(
                         turn_id = %tid,
                         error = %fail_err,
                         "failed to mark turn as failed after error"
                     );
                 }
+            }
+            // Heal empty-run orphans: task ended but active_turn still mid-flight
+            // (panic paths / cancel races / incomplete state transitions).
+            if let Err(heal_err) = engine
+                .heal_orphan_turn(
+                    &session_id,
+                    &tid,
+                    "turn task exited without terminal state",
+                )
+                .await
+            {
+                tracing::warn!(turn_id = %tid, error = %heal_err, "orphan turn heal failed");
             }
             cancels.remove(&tid).await;
         });
@@ -368,10 +408,34 @@ impl CoreRuntimeService {
     pub async fn cancel_turn(&self, req: TurnCancel) -> Result<(), RuntimeError> {
         let found = self.cancels.cancel(&req.turn_id).await;
         if !found {
-            // Best-effort: turn may have already finished.
-            tracing::debug!(turn_id = %req.turn_id, "cancel: token not registered (already done?)");
+            // Best-effort: turn may have already finished — or is a zombie Acting
+            // with no live task (active_turns=0). Force-fail so Bun pollers unblock.
+            tracing::debug!(
+                turn_id = %req.turn_id,
+                "cancel: token not registered; healing orphan if needed"
+            );
+            let _ = self
+                .engine
+                .heal_orphan_turn(
+                    &req.session_id,
+                    &req.turn_id,
+                    "turn.cancel on unregistered turn (orphan heal)",
+                )
+                .await;
         }
         Ok(())
+    }
+
+    /// Explicit fail for Bun hard-timeout / zombie Acting (does not require live task).
+    pub async fn fail_turn(&self, req: TurnCancel) -> Result<(), RuntimeError> {
+        let _ = self.cancels.cancel(&req.turn_id).await;
+        self.engine
+            .fail_turn(
+                &req.session_id,
+                &req.turn_id,
+                &RuntimeError::Internal("turn.fail".into()),
+            )
+            .await
     }
 
     pub async fn respond_hitl(&self, req: HitlRespond) -> Result<(), RuntimeError> {

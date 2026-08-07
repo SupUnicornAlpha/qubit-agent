@@ -334,3 +334,66 @@ pub fn user_slot_order() -> &'static [&'static str] {
         // `control` stays system-only (see system_slot_order) — do not duplicate into user.
     ]
 }
+
+/// Per-turn context / recall policy — supplied by host on `turn.start`.
+///
+/// Core applies these knobs mechanically; hosts own product heuristics
+/// (e.g. when to disable finance recall after a topic switch).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct TurnContextOpts {
+    /// When `false`, skip auto `memory.recall` during assemble. Default: `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_recall: Option<bool>,
+    /// Max hits kept per recall bucket after assembly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recall_top_k: Option<u32>,
+    /// Include finance-bucket hits. Default: `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_finance_recall: Option<bool>,
+    /// Include skill/procedural hits. Default: `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_skill_recall: Option<bool>,
+    /// Include general/FS hits. Default: `true`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub include_general_recall: Option<bool>,
+    /// Mark current user text as authoritative and recall as optional background.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prioritize_current_goal: Option<bool>,
+    /// After assembly, remove bootstrap memory/workspace tools from the model surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip_bootstrap_memory_tools: Option<bool>,
+}
+
+impl TurnContextOpts {
+    pub fn auto_recall_enabled(&self) -> bool {
+        self.auto_recall.unwrap_or(true)
+    }
+
+    pub fn recall_top_k_or(&self, default: usize) -> usize {
+        self.recall_top_k
+            .map(|n| n as usize)
+            .filter(|&n| n > 0)
+            .unwrap_or(default)
+    }
+
+    pub fn include_finance_recall(&self) -> bool {
+        self.include_finance_recall.unwrap_or(true)
+    }
+
+    pub fn include_skill_recall(&self) -> bool {
+        self.include_skill_recall.unwrap_or(true)
+    }
+
+    pub fn include_general_recall(&self) -> bool {
+        self.include_general_recall.unwrap_or(true)
+    }
+
+    pub fn prioritize_current_goal(&self) -> bool {
+        self.prioritize_current_goal.unwrap_or(false)
+    }
+
+    pub fn strip_bootstrap_memory_tools(&self) -> bool {
+        self.strip_bootstrap_memory_tools.unwrap_or(false)
+    }
+}

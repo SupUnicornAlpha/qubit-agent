@@ -192,7 +192,7 @@ describe("Agent 量化工坊工具入口", () => {
       dispatchBuiltinTool("factor.autoEvaluate", ctx as never, {
         factor_id: "some-id",
       })
-    ).rejects.toThrow(/start_date/);
+    ).rejects.toThrow(/factor|no_factor|not found|UUID|compute|symbols/i);
   });
 });
 

@@ -50,19 +50,34 @@ export function TeamHitlBanner({ workflowRunId, triggerKey, onResolved }: TeamHi
 
   const refresh = useCallback(async () => {
     if (!workflowRunId.trim()) {
-      setState((s) => ({ ...s, pending: null }));
+      setState((s) => ({ ...s, pending: null, error: null }));
       return;
     }
     try {
       const list = await listPendingWorkflowHitl(workflowRunId.trim());
       const latest = list[0] ?? null;
       setState({ pending: latest, busy: false, error: null });
-      setChoice("");
-      setMultiChoice([]);
-      setFreeText("");
-      setFieldValues({});
+      if (!latest) {
+        setChoice("");
+        setMultiChoice([]);
+        setFreeText("");
+        setFieldValues({});
+      }
     } catch (e) {
-      setState({ pending: null, busy: false, error: (e as Error).message });
+      const msg = (e as Error).message || "unknown";
+      // WebKit/Tauri: backend offline → "Load failed"; Chromium → "Failed to fetch".
+      // These are transport blips — not real HITL. Soft-fail so resume UI isn't spammed.
+      const isTransport =
+        /load failed|failed to fetch|networkerror|network request failed|econnrefused|abort/i.test(
+          msg
+        );
+      setState((s) => {
+        if (isTransport && !s.pending) {
+          // Keep quiet while idle; next poll will retry.
+          return { ...s, busy: false, error: null };
+        }
+        return { pending: s.pending, busy: false, error: msg };
+      });
     }
   }, [workflowRunId]);
 

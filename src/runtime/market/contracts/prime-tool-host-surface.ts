@@ -49,7 +49,8 @@ export const ORCHESTRATOR_PRIME_REQUIRED_TOOLS = [
   "update_plan",
   "assign_task",
   "market.resolve_symbol",
-  "call_mcp",
+  "web.search",
+  "web.fetch",
 ] as const;
 
 /**
@@ -70,5 +71,6 @@ export const ORCHESTRATOR_PRIME_BASE_TOOLS = [
   "skill.create",
   "skill.patch",
   "skill.archive",
-  "call_mcp",
+  "web.search",
+  "web.fetch",
 ] as const;

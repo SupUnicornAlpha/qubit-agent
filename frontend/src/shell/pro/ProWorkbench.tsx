@@ -22,15 +22,17 @@ const WORKBENCH_LAYOUT_ID = "qubit:pro-workbench-v1";
  */
 export const ProWorkbench: FC = () => {
   const activeView = useAppStore((s) => s.activeView);
+  const setActiveView = useAppStore((s) => s.setActiveView);
   const agentPanelOpen = useAppStore((s) => s.agentPanelOpen);
-  const setAgentPanelOpen = useAppStore((s) => s.setAgentPanelOpen);
   const explorerOpen = useAppStore((s) => s.explorerOpen);
   const setExplorerOpen = useAppStore((s) => s.setExplorerOpen);
   const setAgentPanelWidthPx = useAppStore((s) => s.setAgentPanelWidthPx);
   const { t } = useTranslation();
   const sidebarPanelRef = useRef<ImperativePanelHandle>(null);
 
-  const showChatPlaceholder = activeView === "chat" && agentPanelOpen;
+  useEffect(() => {
+    if (activeView === "chat") setActiveView("team");
+  }, [activeView, setActiveView]);
 
   useEffect(() => {
     const panel = sidebarPanelRef.current;
@@ -78,19 +80,7 @@ export const ProWorkbench: FC = () => {
             className="qb-pro-panel qb-pro-panel--center"
           >
             <div className="qb-pro-workbench__center">
-              {showChatPlaceholder ? (
-                <main className="qb-pro-chat-placeholder">
-                  <div>{t("proShell.chat.movedToAgent")}</div>
-                  <button type="button" onClick={() => setAgentPanelOpen(true)}>
-                    {t("proShell.chat.focusAgent")}
-                  </button>
-                  <button type="button" onClick={() => setAgentPanelOpen(false)}>
-                    {t("proShell.chat.showCenterChat")}
-                  </button>
-                </main>
-              ) : (
-                <MainContent />
-              )}
+              <MainContent />
             </div>
           </Panel>
           {agentPanelOpen ? (

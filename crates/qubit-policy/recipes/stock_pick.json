@@ -1,7 +1,7 @@
 {
   "key": "stock_pick",
   "aliases": ["stock_screening", "stock_pick_long", "stock_pick_short", "sp"],
-  "version": "2026-08-05.3",
+  "version": "2026-08-06.1",
   "capability_owners": {
     "screener": "research",
     "get_quote": "research",
@@ -22,7 +22,7 @@
       "mcp:investor-agent:technical_indicator",
       "mcp:investor-agent:get_stock_info"
     ],
-    "key": "tool_fingerprint",
+    "key": "tool",
     "max_success": 3,
     "on_exceed": "strip_from_surface"
   },

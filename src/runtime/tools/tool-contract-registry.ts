@@ -6,9 +6,10 @@
 import { extractSymbolArgs } from "../market/normalize-symbol-args";
 import {
   coerceConfidence01,
-  coerceThesisDirection,
   extractForecastBookKey,
   extractSnapshotId,
+  resolveInstrumentScope,
+  resolveThesisDirection,
 } from "./research-arg-normalize";
 import {
   type ToolContract,
@@ -108,23 +109,19 @@ const MARKET_CONTRACTS: ToolContract[] = [
       const snapshotId =
         String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() ||
         extractSnapshotId(raw);
-      const symbols = extractSymbolArgs(raw);
-      const scope = Array.isArray(raw.instrumentScope)
-        ? (raw.instrumentScope as unknown[]).map(String)
-        : Array.isArray(raw.instrument_scope)
-          ? (raw.instrument_scope as unknown[]).map(String)
-          : symbols;
-      const direction = coerceThesisDirection(raw.direction) ?? raw.direction;
+      const scope = resolveInstrumentScope(raw);
+      const direction = resolveThesisDirection(raw);
       const confidence = coerceConfidence01(raw.confidence, 0.5);
       return {
         ...raw,
         ...(snapshotId ? { snapshotId } : {}),
         ...(scope.length > 0 ? { instrumentScope: scope, symbols: scope } : {}),
-        ...(direction ? { direction } : {}),
+        direction,
         confidence,
       };
     },
-    requiredAfterNormalize: ["snapshotId"],
+    // snapshotId may be auto-filled / unbound in the handler when symbols exist
+    requiredAfterNormalize: [],
     errorCodes: {
       missing_snapshotId: "permanent",
       missing_instrumentScope: "permanent",

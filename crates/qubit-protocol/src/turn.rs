@@ -21,6 +21,29 @@ pub enum TurnState {
     Cancelled,
 }
 
+impl TurnState {
+    /// Terminal for Bun pollers / resume — HITL is pause, not terminal.
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Cancelled
+        )
+    }
+
+    /// Mid-flight states that should not survive process death without a live task.
+    pub fn is_orphan_recoverable(self) -> bool {
+        matches!(
+            self,
+            Self::Accepted
+                | Self::Preparing
+                | Self::Reasoning
+                | Self::Acting
+                | Self::Observing
+                | Self::Finalizing
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Lifecycle {

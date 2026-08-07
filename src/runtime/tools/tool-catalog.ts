@@ -45,15 +45,25 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "web.fetch": {
     description:
-      "读取一个公开网页/接口正文（params: url, maxChars?）。只读外联、仅 http/https、内网/元数据地址被拒；返回 title/finalUrl/text，source=web。用于查阅公开资料/新闻/文档。已知 URL 时用；未知则先 web.search。",
+      "读取公开网页正文（params: url, maxChars?）。只读 http/https；返回 title/finalUrl/text，source=web。" +
+      "**何时用**：已知 URL（研报/公告/新闻链）补定性证据。未知 URL 先 web.search。" +
+      "**不是实盘行情**：价格/K 线请 market.snapshot.get 或派 call_team_market_data；长新闻流派 call_team_news_event。",
     category: "research",
   },
   "web.search": {
     description:
-      "公开网页搜索（params: query, count?≤10）。返回 title/url/snippet 列表，source=web。默认 DuckDuckGo；生产可设 WEB_SEARCH_PROVIDER=brave|serper。查到 URL 后用 web.fetch 读正文。不可作实盘行情源。",
+      "公开网页搜索（params: query, count?≤10）。返回 title/url/snippet，source=web（DuckDuckGo；可配 WEB_SEARCH_PROVIDER）。" +
+      "**研究默认联网入口**：查公司新闻/政策/事件线索 → 再 web.fetch 读正文。" +
+      "批量/结构化新闻流请派 call_team_news_event（fetch_news）；不可替代行情源。",
     category: "research",
   },
-  assign_task: { description: "向指定角色 Agent 派发工作流任务", category: "orchestration" },
+  assign_task: {
+    description:
+      "向指定角色 Agent 派发任务（params: role, goal, …）。" +
+      "行情/K线→market_data；新闻流→news_event；基本面/技术/舆情/宏观→对应 analyst_*；回测工程→backtest；风控→risk。" +
+      "编排器自己用 web.search/web.fetch 做轻量联网检索，不要假装 fetch_klines/fetch_news。",
+    category: "orchestration",
+  },
   run_analyst_team: {
     description:
       "[Deprecated] 兼容性团队批量研究入口。Prime D6 起退出 Orchestrator 默认表面；请用 assign_task / call_team_<role>，再走 snapshot→thesis→portfolio→intent。",
@@ -141,8 +151,9 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
   "research.thesis.write": {
     description:
-      "写入结构化 ResearchThesis（Prime D4）：必须绑定 snapshotId，返回幂等 thesisId，并自动开立 forecast book 条目。" +
-      "必填：snapshotId（来自 market.snapshot.get；也可在 evidence[].ref 里放 mkt_snapshot_*）+ instrumentScope/symbols + direction(long|short|neutral，中文看多/看空/震荡亦可)。" +
+      "写入结构化 ResearchThesis（Prime D4）：返回幂等 thesisId 并自动开立 forecast book。" +
+      "优先传 snapshotId（market.snapshot.get / evidence[].ref=mkt_snapshot_*）；缺省时会按 symbols 自动拉 snapshot，行情失败则用 unbound 占位并 warning。" +
+      "必填：instrumentScope/symbols（也可从 narrative 推断如 600519.SH / AAPL）+ direction(long|short|neutral，中文看多/看空/震荡亦可，缺省从正文推断否则 neutral)。" +
       "confidence 用 0–1（也接受 low/medium/high 或 0–100 百分制）。" +
       "可选：horizon、claims[]、invalidation[]、knownUnknowns、modelAndPromptVersion。" +
       "研究结论应走本工具，而不是只写 Markdown；后续归因用 research.forecast_book.*。",
@@ -284,12 +295,12 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   // 舆情
   fetch_news: {
     description:
-      "抓取带发布时间和来源的新闻。当前行情研究只接受新鲜、标的相关、非 synthetic 证据；未配置真实新闻源时返回空，不生成占位新闻。",
+      "抓取带发布时间、来源与可选正文的新闻。内置 Yahoo Finance / Google News RSS，并可对头条链接做 web 抓取补全文；也可配置自定义 newsApiBaseUrl。只接受新鲜、标的相关、非 synthetic 证据。",
     category: "sentiment",
   },
   fetch_news_sentiment: {
     description:
-      "对通过时效性/相关性证据门的新闻聚合情绪；空数据、过期或 synthetic 结果必须降级，不得当作中性新闻。",
+      "对通过时效性/相关性证据门的新闻聚合情绪；空数据、过期或 synthetic 结果必须降级，不得当作中性新闻。优先使用 fetch_news 拉到的真实条目。",
     category: "sentiment",
   },
   extract_event: {
@@ -431,7 +442,10 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
      * 现在补这个让"最后一公里"能写库。
      */
     description:
-      "创建一个新的策略版本（落 strategy + strategy_version，按 (project_id, name) 幂等）。**必填顶层 `name`**（也接受 `strategyName` / `strategy.name`），可选 `style` ('low_freq'|'mid_freq'|'high_freq'|'options'|'futures'，默认 low_freq) / `description` / `universe` / `version_tag`。参数平铺，不要包在 `arguments` 里。**调用顺序**：① strategy.create_version 拿 strategyVersionId → ② strategy.compose → ③ backtest.run / order.create_intent。",
+      "创建策略版本（落 strategy + strategy_version，按 project+name 幂等）。**仅创建，不支持 action=get/list**。" +
+      "**必填顶层 `name`**（也接受 strategyName / strategy.name）；可选 style/description/universe/version_tag。" +
+      "字段请平铺；若误包在 `arguments` 内也会自动展开。" +
+      "顺序：① create_version → ② strategy.compose → ③ backtest.run / order.create_intent。",
     category: "research",
   },
   "strategy.compose": {
@@ -474,10 +488,13 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   "factor.autoEvaluate": {
     /**
      * 2026-06-05 监控复盘 #3：旧 description 没强调 schema → LLM 经常缺 start_date/end_date/factor_id。
-     * 实测最近 1d 9 次调用 4 次失败：缺日期 / 缺 factor_id / 没先 compute。
+     * 2026-08：缺日期时默认近 1 年窗口；仍建议显式传日期。
      */
     description:
-      "一步式评估因子（自动从 DuckDB 取因子值 + 市场连接器取价格 → IC/RankIC/IR/衰减/分组收益/换手率）。**必填三件套**：`factor_id` (UUID, 来自 factor.register/factor.list) + `start_date` (YYYY-MM-DD) + `end_date`。已有 universe 时不要传指数代码当 symbols；优先省略 symbols，使用 compute 写入的横截面样本。两种入参模式互斥：(A) 已有因子 → 传 factor_id；(B) 新因子一步式 → 传 `factor_expression` + `name` + `project_id`。**前置依赖**：因子值表必须有数据（先调 factor.compute 写入）。",
+      "一步式评估因子（IC/RankIC/IR/衰减/分组收益）。**必填 `factor_id`**（或一步式 `factor_expression`+`name`）。" +
+      "`start_date`/`end_date`（YYYY-MM-DD）强烈建议显式传；缺省则用近 365 天。" +
+      "IC 是横截面指标：symbols 建议 ≥3（更好 ≥10）；单标的请换 factor.compute。" +
+      "已有 universe 时勿把指数代码当唯一 symbols。",
     category: "research",
   },
   "factor.evaluate.batch": {
@@ -508,11 +525,13 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   "backtest.run": {
     /**
      * 2026-06-05 监控复盘 #3：旧 description 没标"必填 strategy_version_id"。
-     * 实测最近 1d 30 次调用 29 次失败：15 次缺 strategy_version_id / 9 次缺 composition_id 或 signals / 1 次 composition_not_found。
-     * 改：把完整 schema + 调用顺序写在最前面，让 LLM 一眼看到。
+     * 2026-08：缺 dates 默认近 1 年；缺 composition_id 时自动取该 version 最新 compose。
      */
     description:
-      "运行事件驱动回测，返回 metrics + equity_curve + trades 并落 backtest_run。**必填**：`strategy_version_id` (UUID) + `symbols[]` + `start_date` + `end_date`，且 `composition_id` 与 `signals` 必须二选一传一个。**完整调用顺序**：① version_strategy 拿 strategy_version_id → ② strategy.compose 拿 composition_id → ③ backtest.run。或者跳过 compose 自己手写 `signals: {[symbol]: [{date, weight}]}` 也行。一上来直接调会失败。",
+      "事件驱动回测并落 backtest_run。**必填**：`strategy_version_id` + `symbols[]`（或单标 symbol/ticker）。" +
+      "`start_date`/`end_date` 建议显式；缺省近 365 天。" +
+      "`composition_id` 与 `signals` 二选一；刚 compose 过可不传 composition_id（自动取该 version 最新组合）。" +
+      "顺序：create_version → compose → backtest.run。",
     category: "research",
   },
 

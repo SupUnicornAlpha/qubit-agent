@@ -5,7 +5,10 @@ import {
   coerceThesisDirection,
   extractForecastBookKey,
   extractSnapshotId,
+  inferSymbolsFromText,
   normalizePortfolioCandidates,
+  resolveInstrumentScope,
+  resolveThesisDirection,
 } from "./research-arg-normalize";
 
 describe("research-arg-normalize", () => {
@@ -53,5 +56,19 @@ describe("research-arg-normalize", () => {
   test("coerceRecommendationSide from action", () => {
     expect(coerceRecommendationSide("t_swing")).toBe("neutral");
     expect(coerceRecommendationSide("buy")).toBe("long");
+  });
+
+  test("inferSymbolsFromText finds A-share and US tickers", () => {
+    expect(inferSymbolsFromText("关注 600519.SH 与 AAPL")).toEqual(
+      expect.arrayContaining(["600519.SH", "AAPL"])
+    );
+  });
+
+  test("resolveInstrumentScope and resolveThesisDirection from narrative", () => {
+    expect(
+      resolveInstrumentScope({ narrative: "偏多持有 002415.SZ" })
+    ).toContain("002415.SZ");
+    expect(resolveThesisDirection({ narrative: "看空回调" })).toBe("short");
+    expect(resolveThesisDirection({ narrative: "观望为主" })).toBe("neutral");
   });
 });

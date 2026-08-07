@@ -1,5 +1,5 @@
 import type { FC } from "react";
-import { MessageSquare, Sparkles } from "lucide-react";
+import { PanelRight, Sparkles } from "lucide-react";
 import { useAppStore, type ConfigSubPage, type ExplorerSection, type QuantTab } from "../../store";
 import type { NavKey } from "../../lib/navIcons";
 import { NavGlyph } from "../../lib/navIcons";
@@ -31,17 +31,10 @@ const CONFIG_CENTER_SUB: readonly { id: ConfigSubPage; i18nKey: string }[] = [
   { id: "env", i18nKey: "sidebar.config.env" },
 ];
 
-const NAV_ITEMS: readonly { key: NavKey; i18nKey: string }[] = [
-  { key: "ide", i18nKey: "sidebar.nav.ide" },
-  { key: "team", i18nKey: "sidebar.nav.team" },
-  { key: "trader", i18nKey: "sidebar.nav.trader" },
-  { key: "quant", i18nKey: "sidebar.nav.quant" },
-  { key: "chart", i18nKey: "sidebar.nav.chart" },
-  { key: "chat", i18nKey: "sidebar.nav.chat" },
-  { key: "monitor", i18nKey: "sidebar.nav.monitor" },
-  { key: "broker", i18nKey: "sidebar.nav.broker" },
-  { key: "config", i18nKey: "sidebar.nav.config" },
-];
+/** 专业壳页面入口：与 registry 同源，永不露出独立对话页。 */
+function proNavPages() {
+  return listPagesForShell("pro").filter((p) => p.id !== "chat");
+}
 
 const ACTIVITY_BAR_WIDTH = 52;
 
@@ -59,16 +52,19 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
   const agentPanelOpen = useAppStore((s) => s.agentPanelOpen);
   const toggleAgentPanelOpen = useAppStore((s) => s.toggleAgentPanelOpen);
   const { t } = useTranslation();
-  const activeItem = NAV_ITEMS.find((n) => n.key === activeView) ?? NAV_ITEMS[0];
-  const activeLabel = t(activeItem.i18nKey);
+  const navPages = proNavPages();
+  const activePage = navPages.find((p) => p.id === activeView) ?? navPages[0];
+  const activeLabel = activePage ? t(activePage.titleKey) : t("sidebar.nav.team");
 
   const goNav = (key: NavKey) => {
+    if (key === "chat") {
+      // 对话常驻右侧 Agent，不再进独立页
+      if (!agentPanelOpen) toggleAgentPanelOpen();
+      setActiveView("team");
+      return;
+    }
     setActiveView(key);
     if (key === "config") setConfigSubPage("llm");
-    if (key === "chat") {
-      // 专业壳：对话优先落到右侧 Agent 栏
-      if (!agentPanelOpen) toggleAgentPanelOpen();
-    }
   };
 
   /** 活动栏：仅再次点击当前图标时切换 Explorer；切换其他视图不改变 Explorer 开闭 */
@@ -111,27 +107,28 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
         >
           <Sparkles className="qb-nav-activity-brand-icon" size={17} strokeWidth={2.25} />
         </button>
-        {NAV_ITEMS.map((item) => {
-          const label = t(item.i18nKey);
+        {navPages.map((page) => {
+          const key = page.id as NavKey;
+          const label = t(page.titleKey);
           return (
             <button
-              key={item.key}
+              key={page.id}
               type="button"
-              onClick={() => onActivityClick(item.key)}
-              title={activityTitle(label, item.key)}
+              onClick={() => onActivityClick(key)}
+              title={activityTitle(label, key)}
               aria-label={label}
-              aria-current={activeView === item.key ? "page" : undefined}
-              aria-expanded={activeView === item.key ? explorerOpen : undefined}
+              aria-current={activeView === page.id ? "page" : undefined}
+              aria-expanded={activeView === page.id ? explorerOpen : undefined}
               className={[
                 "qb-nav-activity-btn",
-                activeView === item.key ? "qb-nav-activity-btn--active" : "",
-                activeView === item.key && !explorerOpen ? "qb-nav-activity-btn--explorer-collapsed" : "",
+                activeView === page.id ? "qb-nav-activity-btn--active" : "",
+                activeView === page.id && !explorerOpen ? "qb-nav-activity-btn--explorer-collapsed" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
             >
               <span style={styles.activityIcon}>
-                <NavGlyph navKey={item.key} size={18} />
+                <NavGlyph navKey={key} size={18} />
               </span>
             </button>
           );
@@ -151,7 +148,7 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
           onClick={() => toggleAgentPanelOpen()}
         >
           <span style={styles.activityIcon}>
-            <MessageSquare size={18} strokeWidth={2} />
+            <PanelRight size={18} strokeWidth={2} />
           </span>
         </button>
       </div>
@@ -194,7 +191,7 @@ export const Sidebar: FC<{ fill?: boolean }> = ({ fill = false }) => {
                 <div className="qb-sidebar-muted-text" style={styles.groupTitle}>
                   {t("sidebar.group.nav")}
                 </div>
-                {listPagesForShell("pro").map((page) => (
+                {navPages.map((page) => (
                   <button
                     key={page.id}
                     type="button"

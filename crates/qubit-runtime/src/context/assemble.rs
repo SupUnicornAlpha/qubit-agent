@@ -7,13 +7,13 @@ use async_trait::async_trait;
 use qubit_protocol::{
     default_slot_budgets, system_slot_order, user_slot_order, AgentSpec, CompressMode,
     ContextEnvelope, ContextSlotBudget, ContextSlotContent, InteractionMode, RenderedPrompt,
-    SessionView, WorkingMemory, CONTEXT_PROTOCOL_VERSION,
+    SessionView, TurnContextOpts, WorkingMemory, CONTEXT_PROTOCOL_VERSION,
 };
 
 use crate::error::RuntimeError;
 
 use super::ports::{
-    IdentityPromptLoader, RecallPort, WorkspaceContextPort, WorkspaceFocus,
+    IdentityPromptLoader, RecallBundle, RecallHit, RecallPort, WorkspaceContextPort, WorkspaceFocus,
 };
 
 #[derive(Clone, Debug)]
@@ -25,6 +25,7 @@ pub struct SlotAssembleInput {
     pub working: Option<WorkingMemory>,
     pub decision_cutoff: Option<String>,
     pub focus: WorkspaceFocus,
+    pub context: TurnContextOpts,
 }
 
 #[async_trait]
@@ -79,7 +80,7 @@ fn apply_budget(text: String, budget: &ContextSlotBudget) -> Option<ContextSlotC
     Some(ContextSlotContent { text: t, meta: None })
 }
 
-fn render_hits(hits: &[super::ports::RecallHit]) -> String {
+fn render_hits(hits: &[RecallHit]) -> String {
     if hits.is_empty() {
         return String::new();
     }
@@ -94,6 +95,16 @@ fn render_hits(hits: &[super::ports::RecallHit]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn maybe_wrap_background(enabled: bool, label: &str, body: String) -> String {
+    if body.trim().is_empty() {
+        return String::new();
+    }
+    if !enabled {
+        return body;
+    }
+    format!("OPTIONAL_BACKGROUND ({label}) — do NOT override CURRENT_USER_TASK:\n{body}")
 }
 
 fn render_working(wm: &WorkingMemory) -> String {
@@ -150,10 +161,36 @@ fn mode_control_text(mode: InteractionMode) -> String {
     }
 }
 
+fn take_top(hits: Vec<RecallHit>, n: usize) -> Vec<RecallHit> {
+    hits.into_iter().take(n).collect()
+}
+
+fn apply_recall_opts(bundle: RecallBundle, opts: &TurnContextOpts) -> RecallBundle {
+    let k = opts.recall_top_k_or(usize::MAX);
+    RecallBundle {
+        finance: if opts.include_finance_recall() {
+            take_top(bundle.finance, k)
+        } else {
+            Vec::new()
+        },
+        skill: if opts.include_skill_recall() {
+            take_top(bundle.skill, k)
+        } else {
+            Vec::new()
+        },
+        general: if opts.include_general_recall() {
+            take_top(bundle.general, k)
+        } else {
+            Vec::new()
+        },
+    }
+}
+
 #[async_trait]
 impl ContextAssembler for DefaultContextAssembler {
     async fn build(&self, input: SlotAssembleInput) -> Result<ContextEnvelope, RuntimeError> {
         let budgets = default_slot_budgets();
+        let opts = &input.context;
         let identity = if let Some(ref prompt) = input.spec.system_prompt {
             if prompt.trim().is_empty() {
                 self.identity.load(&input.spec.identity_prompt_ref).await?
@@ -167,8 +204,25 @@ impl ContextAssembler for DefaultContextAssembler {
             .workspace
             .snapshot(input.session.workspace_id.as_str(), &input.focus)
             .await?;
-        // One host round-trip when BridgeRecallPort implements recall_bundle.
-        let bundle = self.recall.recall_bundle(&input.goal_text).await?;
+
+        let bundle = if opts.auto_recall_enabled() {
+            apply_recall_opts(
+                self.recall.recall_bundle(&input.goal_text).await?,
+                opts,
+            )
+        } else {
+            RecallBundle::default()
+        };
+
+        let prioritize = opts.prioritize_current_goal();
+        let goal_block = if prioritize {
+            format!(
+                "## CURRENT_USER_TASK (authoritative — execute THIS, ignore conflicting background)\n{}",
+                input.goal_text.trim()
+            )
+        } else {
+            input.goal_text.clone()
+        };
 
         let mut raw: BTreeMap<String, String> = BTreeMap::new();
         raw.insert("identity".into(), identity);
@@ -184,11 +238,23 @@ impl ContextAssembler for DefaultContextAssembler {
             "control".into(),
             mode_control_text(input.session.interaction_mode),
         );
-        raw.insert("goal".into(), input.goal_text.clone());
-        raw.insert("slot".into(), slot.text);
-        raw.insert("recall_finance".into(), render_hits(&bundle.finance));
-        raw.insert("recall_skill".into(), render_hits(&bundle.skill));
-        raw.insert("recall_general".into(), render_hits(&bundle.general));
+        raw.insert("goal".into(), goal_block);
+        raw.insert(
+            "slot".into(),
+            maybe_wrap_background(prioritize, "workspace", slot.text),
+        );
+        raw.insert(
+            "recall_finance".into(),
+            maybe_wrap_background(prioritize, "recall_finance", render_hits(&bundle.finance)),
+        );
+        raw.insert(
+            "recall_skill".into(),
+            maybe_wrap_background(prioritize, "recall_skill", render_hits(&bundle.skill)),
+        );
+        raw.insert(
+            "recall_general".into(),
+            maybe_wrap_background(prioritize, "recall_general", render_hits(&bundle.general)),
+        );
         raw.insert(
             "session".into(),
             format!(
@@ -199,7 +265,10 @@ impl ContextAssembler for DefaultContextAssembler {
             ),
         );
         if let Some(ref wm) = input.working {
-            raw.insert("working".into(), render_working(wm));
+            raw.insert(
+                "working".into(),
+                maybe_wrap_background(prioritize, "working_memory", render_working(wm)),
+            );
         }
 
         let mut slots: BTreeMap<String, ContextSlotContent> = BTreeMap::new();
@@ -249,5 +318,57 @@ impl ContextAssembler for DefaultContextAssembler {
                 user: user_parts.join("\n\n"),
             }),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_recall_opts_respects_flags_and_top_k() {
+        let bundle = RecallBundle {
+            finance: vec![
+                RecallHit {
+                    title: "a".into(),
+                    summary: "1".into(),
+                    sub_kind: None,
+                    asof: None,
+                    score: 1.0,
+                },
+                RecallHit {
+                    title: "b".into(),
+                    summary: "2".into(),
+                    sub_kind: None,
+                    asof: None,
+                    score: 0.5,
+                },
+            ],
+            skill: vec![RecallHit {
+                title: "s".into(),
+                summary: "x".into(),
+                sub_kind: None,
+                asof: None,
+                score: 1.0,
+            }],
+            general: vec![RecallHit {
+                title: "g".into(),
+                summary: "y".into(),
+                sub_kind: None,
+                asof: None,
+                score: 1.0,
+            }],
+        };
+        let opts = TurnContextOpts {
+            recall_top_k: Some(1),
+            include_finance_recall: Some(true),
+            include_skill_recall: Some(false),
+            include_general_recall: Some(true),
+            ..Default::default()
+        };
+        let out = apply_recall_opts(bundle, &opts);
+        assert_eq!(out.finance.len(), 1);
+        assert!(out.skill.is_empty());
+        assert_eq!(out.general.len(), 1);
     }
 }

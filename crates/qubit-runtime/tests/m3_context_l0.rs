@@ -38,6 +38,7 @@ async fn context_assembler_renders_slots() {
             working: None,
             decision_cutoff: None,
             focus: WorkspaceFocus::default(),
+            context: Default::default(),
         })
         .await
         .unwrap();
@@ -102,6 +103,7 @@ async fn update_plan_l0_persists_on_session() {
                 client_meta: None,
             },
             idempotency_key: "plan-1".into(),
+            context: None,
         })
         .await
         .unwrap();
@@ -167,6 +169,7 @@ async fn update_plan_l0_accepts_steps_without_id() {
                 client_meta: None,
             },
             idempotency_key: "plan-noid-1".into(),
+            context: None,
         })
         .await
         .unwrap();

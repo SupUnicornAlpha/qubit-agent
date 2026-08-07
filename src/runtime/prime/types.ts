@@ -18,6 +18,29 @@ export interface DeliveryVerdict {
   reasons: string[];
 }
 
+/** Host-owned per-turn recall / context policy (`turn.start.context`). */
+export interface TurnContextOpts {
+  /** When false, skip auto memory.recall during assemble. Default true. */
+  auto_recall?: boolean;
+  /** Max hits kept per recall bucket after assembly. */
+  recall_top_k?: number;
+  include_finance_recall?: boolean;
+  include_skill_recall?: boolean;
+  include_general_recall?: boolean;
+  /** Mark current user text authoritative; recall as optional background. */
+  prioritize_current_goal?: boolean;
+  /** Remove bootstrap memory/workspace tools from model surface after assemble. */
+  strip_bootstrap_memory_tools?: boolean;
+}
+
+/** Defaults for Orchestrator chat turns — keep prior memory from dominating a new prompt. */
+export const ORCHESTRATOR_TURN_CONTEXT: TurnContextOpts = {
+  auto_recall: true,
+  recall_top_k: 3,
+  prioritize_current_goal: true,
+  strip_bootstrap_memory_tools: true,
+};
+
 export interface AgentSpec {
   id: string;
   version: string;
@@ -117,8 +140,11 @@ export interface CoreRuntime {
     session_id: string;
     input: { text: string; attachments?: unknown[]; client_meta?: unknown };
     idempotency_key: string;
+    /** Host-owned recall / context policy for this turn. */
+    context?: TurnContextOpts;
   }): Promise<{ turn_id: string }>;
   cancelTurn(req: { session_id: string; turn_id: string }): Promise<void>;
+  failTurn?(req: { session_id: string; turn_id: string }): Promise<void>;
   invokeAgent(req: Record<string, unknown>): Promise<Record<string, unknown>>;
   ingestTrigger(req: Record<string, unknown>): Promise<{ turn_id?: string | null }>;
   hitlRespond(req: {
@@ -151,6 +177,7 @@ export const PRIME_RPC = {
   SESSION_SNAPSHOT: "session.snapshot",
   TURN_START: "turn.start",
   TURN_CANCEL: "turn.cancel",
+  TURN_FAIL: "turn.fail",
   AGENT_LIST: "agent.list",
   AGENT_UPSERT: "agent.upsert",
   AGENT_INVOKE: "agent.invoke",

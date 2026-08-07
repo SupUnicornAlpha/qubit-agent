@@ -7,7 +7,7 @@ use qubit_policy::{builtin_catalog, load_policy_snapshot, RecipeCatalog};
 use qubit_protocol::{
     DeliveryVerdict, EffectLedger, ErrorObject, HitlChannelHint, HitlInboxId, HitlInboxItem,
     HitlInputKind, HitlPrompt, HitlPromptId, HitlSource, HitlInboxStatus, Lifecycle, ProtocolError,
-    RuntimeEvent, SessionId, TurnId, TurnState, UserInput,
+    RuntimeEvent, SessionId, ToolCallId, ToolResult, TurnId, TurnState, UserInput,
 };
 
 use crate::cancel::CancelToken;
@@ -20,6 +20,9 @@ use crate::delivery::{DeliveryEvaluator, LedgerDeliveryEvaluator};
 use crate::error::RuntimeError;
 use crate::events::EventBus;
 use crate::hitl_inbox::HitlInbox;
+use crate::hitl_policy::{
+    evaluate_tool_batch_hitl, extract_ai_hitl_hint, HitlPolicy, ToolHitlDecision,
+};
 use crate::model::{ModelClient, SampleRequest};
 use crate::reasoning_extract::chunk_reasoning_for_stream;
 use crate::stall::{
@@ -43,6 +46,14 @@ const TOOL_LOOP_HARNESS: &str = r#"
 9. workspace.context.snapshot / research.thesis.write 参数不全时不要反复重试——缺字段先补齐或改用其它路径。
 "#;
 
+/// Tools already exercised during context assembly when auto-recall / workspace
+/// snapshot run. Only stripped when `TurnContextOpts.strip_bootstrap_memory_tools`.
+const BOOTSTRAP_INJECTED_TOOLS: &[&str] = &[
+    "memory.recall",
+    "workspace.memory.search",
+    "workspace.context.snapshot",
+];
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -61,6 +72,7 @@ pub enum TurnOutcome {
 pub struct RunTurnOpts {
     pub max_iterations: Option<u32>,
     pub recipe_key: Option<String>,
+    pub context: qubit_protocol::TurnContextOpts,
 }
 
 pub struct TurnEngine {
@@ -189,6 +201,39 @@ impl TurnEngine {
         Ok(())
     }
 
+    /// If `turn_id` is still the active mid-flight turn, mark it failed (empty-run guard).
+    pub async fn heal_orphan_turn(
+        &self,
+        session_id: &SessionId,
+        turn_id: &TurnId,
+        reason: &str,
+    ) -> Result<(), RuntimeError> {
+        let Some(turn) = self.store.get_session(session_id).await?.active_turn else {
+            return Ok(());
+        };
+        if turn.turn_id != *turn_id {
+            return Ok(());
+        }
+        if turn.state.is_terminal() || turn.state == TurnState::AwaitingHitl {
+            return Ok(());
+        }
+        if !turn.state.is_orphan_recoverable() {
+            return Ok(());
+        }
+        tracing::warn!(
+            turn_id = %turn_id,
+            state = ?turn.state,
+            reason,
+            "healing orphan mid-flight turn"
+        );
+        self.fail_turn(
+            session_id,
+            turn_id,
+            &RuntimeError::Internal(reason.to_string()),
+        )
+        .await
+    }
+
     async fn checkpoint(
         &self,
         session_id: &SessionId,
@@ -212,6 +257,76 @@ impl TurnEngine {
             updated_at_ms: now_ms(),
         })
         .await
+    }
+
+    /// Pause turn into AwaitingHitl + enqueue inbox item (shared by model flag / tool policy / AI hint).
+    async fn raise_hitl(
+        &self,
+        session_id: &SessionId,
+        session: &crate::store::SessionRecord,
+        turn: &mut qubit_protocol::TurnView,
+        turn_id: &TurnId,
+        title: String,
+        body: String,
+        hard_rule: bool,
+        source: HitlSource,
+    ) -> Result<(TurnId, TurnOutcome), RuntimeError> {
+        let prompt = HitlPrompt {
+            id: HitlPromptId::new(format!("hitl_{}", uuid::Uuid::new_v4().simple())),
+            turn_id: turn_id.clone(),
+            input_kind: HitlInputKind::ApproveOnly,
+            title,
+            body,
+            options: vec![],
+            hard_rule,
+            created_at: now_ms(),
+        };
+        let inbox_id = HitlInboxId::new(format!("inbox_{}", uuid::Uuid::new_v4().simple()));
+        let item = HitlInboxItem {
+            inbox_id: inbox_id.clone(),
+            prompt: prompt.clone(),
+            workspace_id: session.view.workspace_id.clone(),
+            session_id: session_id.clone(),
+            turn_id: turn_id.clone(),
+            agent_instance_id: session.view.agent_instance_id.clone(),
+            execution_kind: session.view.execution_kind,
+            source,
+            status: HitlInboxStatus::Pending,
+            created_at_ms: now_ms(),
+            expires_at_ms: None,
+            channel_hints: vec![HitlChannelHint::IdePanel],
+        };
+        self.hitl.enqueue(item.clone()).await?;
+        if let Some(cp) = &self.checkpoints {
+            cp.save_hitl(&item).await?;
+        }
+
+        turn.state = TurnState::AwaitingHitl;
+        turn.lifecycle = Some(Lifecycle::AwaitingHitl);
+        if turn
+            .answer_text
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            turn.answer_text = Some(item.prompt.body.clone());
+        }
+        self.store
+            .set_active_turn(session_id, Some(turn.clone()))
+            .await?;
+
+        let seq = self.events.next_seq().await;
+        self.store.bump_event_seq(session_id, seq).await?;
+        self.checkpoint(session_id, turn, seq, Some(item)).await?;
+        self.events
+            .emit(RuntimeEvent::HitlRequested {
+                prompt,
+                inbox_id: inbox_id.as_str().to_string(),
+                seq,
+            })
+            .await;
+
+        Ok((turn_id.clone(), TurnOutcome::AwaitingHitl { inbox_id }))
     }
 
     pub async fn run_turn(
@@ -258,6 +373,7 @@ impl TurnEngine {
         opts: RunTurnOpts,
     ) -> Result<(TurnId, TurnOutcome), RuntimeError> {
         let session = self.store.get_session(session_id).await?;
+        let mut hitl_policy = HitlPolicy::from_client_meta(input.client_meta.as_ref());
         let spec = self.store.get_spec(&session.view.agent_spec_id).await?;
         let mode = session.view.interaction_mode;
         let mut turn = initial_turn(turn_id.clone());
@@ -341,8 +457,15 @@ impl TurnEngine {
                 working: None,
                 decision_cutoff: None,
                 focus: WorkspaceFocus::default(),
+                context: opts.context.clone(),
             })
             .await?;
+        if opts.context.strip_bootstrap_memory_tools() {
+            tool_names.retain(|n| {
+                let bare = n.strip_prefix("tool/").unwrap_or(n);
+                !BOOTSTRAP_INJECTED_TOOLS.iter().any(|t| *t == bare)
+            });
+        }
         let rendered = envelope.rendered.clone().unwrap_or_default();
         let mut system = if rendered.system.is_empty() {
             format!(
@@ -510,58 +633,40 @@ impl TurnEngine {
             }
 
             if sample.request_hitl {
-                let prompt = HitlPrompt {
-                    id: HitlPromptId::new(format!("hitl_{}", uuid::Uuid::new_v4().simple())),
-                    turn_id: turn_id.clone(),
-                    input_kind: HitlInputKind::ApproveOnly,
-                    title: sample
-                        .hitl_title
-                        .unwrap_or_else(|| "Approval required".into()),
-                    body: sample
-                        .hitl_body
-                        .unwrap_or_else(|| "Please approve to continue.".into()),
-                    options: vec![],
-                    hard_rule: false,
-                    created_at: now_ms(),
-                };
-                let inbox_id = HitlInboxId::new(format!("inbox_{}", uuid::Uuid::new_v4().simple()));
-                let item = HitlInboxItem {
-                    inbox_id: inbox_id.clone(),
-                    prompt: prompt.clone(),
-                    workspace_id: session.view.workspace_id.clone(),
-                    session_id: session_id.clone(),
-                    turn_id: turn_id.clone(),
-                    agent_instance_id: session.view.agent_instance_id.clone(),
-                    execution_kind: session.view.execution_kind,
-                    source: HitlSource::UserTurn,
-                    status: HitlInboxStatus::Pending,
-                    created_at_ms: now_ms(),
-                    expires_at_ms: None,
-                    channel_hints: vec![HitlChannelHint::IdePanel],
-                };
-                self.hitl.enqueue(item.clone()).await?;
-                if let Some(cp) = &self.checkpoints {
-                    cp.save_hitl(&item).await?;
-                }
-
-                turn.state = TurnState::AwaitingHitl;
-                turn.lifecycle = Some(Lifecycle::AwaitingHitl);
-                self.store
-                    .set_active_turn(session_id, Some(turn.clone()))
-                    .await?;
-
-                let seq = self.events.next_seq().await;
-                self.store.bump_event_seq(session_id, seq).await?;
-                self.checkpoint(session_id, &turn, seq, Some(item)).await?;
-                self.events
-                    .emit(RuntimeEvent::HitlRequested {
-                        prompt,
-                        inbox_id: inbox_id.as_str().to_string(),
-                        seq,
-                    })
+                return self
+                    .raise_hitl(
+                        session_id,
+                        &session,
+                        &mut turn,
+                        &turn_id,
+                        sample
+                            .hitl_title
+                            .unwrap_or_else(|| "Approval required".into()),
+                        sample
+                            .hitl_body
+                            .unwrap_or_else(|| "Please approve to continue.".into()),
+                        false,
+                        HitlSource::UserTurn,
+                    )
                     .await;
+            }
 
-                return Ok((turn_id, TurnOutcome::AwaitingHitl { inbox_id }));
+            // mode=ai：模型可用 ---HITL_HINT_JSON--- 主动请求审批（无工具时也可）。
+            if matches!(hitl_policy.mode, crate::hitl_policy::HitlMode::Ai) {
+                if let Some((title, body)) = extract_ai_hitl_hint(&sample.text) {
+                    return self
+                        .raise_hitl(
+                            session_id,
+                            &session,
+                            &mut turn,
+                            &turn_id,
+                            title,
+                            body,
+                            false,
+                            HitlSource::UserTurn,
+                        )
+                        .await;
+                }
             }
 
             if sample.tool_calls.is_empty() {
@@ -581,6 +686,26 @@ impl TurnEngine {
                 }
             }
 
+            // Tool-batch HITL（always / 高危）—— 在 invoke 之前升起，由 Bun 投影到前端。
+            let tool_decision: ToolHitlDecision =
+                evaluate_tool_batch_hitl(&hitl_policy, &sample.tool_calls);
+            // skip_once 只放过本回合第一批工具；后续批次仍按 mode 评估。
+            hitl_policy.skip_tool_gate_once = false;
+            if tool_decision.trigger {
+                return self
+                    .raise_hitl(
+                        session_id,
+                        &session,
+                        &mut turn,
+                        &turn_id,
+                        tool_decision.title,
+                        tool_decision.body,
+                        tool_decision.hard_rule,
+                        HitlSource::Invocation,
+                    )
+                    .await;
+            }
+
             turn.state = TurnState::Acting;
             self.store
                 .set_active_turn(session_id, Some(turn.clone()))
@@ -588,10 +713,50 @@ impl TurnEngine {
             let seq = self.events.next_seq().await;
             self.checkpoint(session_id, &turn, seq, None).await?;
 
-            let results = self
+            // Whole-batch ceiling: per-tool soft timeout alone can still leave Acting
+            // stuck if the host future never settles (lost bridge ack, etc.).
+            let acting_secs: u64 = std::env::var("QUBIT_ACTING_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(180)
+                .clamp(30, 600);
+            let invoke_fut = self
                 .tools
-                .invoke_all(sample.tool_calls.clone(), cancel.child())
-                .await?;
+                .invoke_all(sample.tool_calls.clone(), cancel.child());
+            let results = match tokio::time::timeout(
+                std::time::Duration::from_secs(acting_secs),
+                invoke_fut,
+            )
+            .await
+            {
+                Ok(r) => r?,
+                Err(_) => {
+                    tracing::warn!(
+                        turn_id = %turn_id,
+                        secs = acting_secs,
+                        tools = sample.tool_calls.len(),
+                        "acting batch timed out; soft-failing tool results"
+                    );
+                    sample
+                        .tool_calls
+                        .iter()
+                        .map(|c| ToolResult {
+                            call_id: ToolCallId::new(c.call_id.clone()),
+                            ok: false,
+                            observation: Some(serde_json::json!({
+                                "ok": false,
+                                "error": format!(
+                                    "acting batch timeout after {acting_secs}s"
+                                ),
+                                "error_code": "acting_batch_timeout",
+                            })),
+                            effects: vec![],
+                            retryable: true,
+                            error_code: Some("acting_batch_timeout".into()),
+                        })
+                        .collect()
+                }
+            };
 
             // Feed tool observations back into the next sample (OpenAI chat format).
             // CRITICAL: every assistant tool_calls message must be followed ONLY by the

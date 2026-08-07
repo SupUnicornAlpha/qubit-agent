@@ -223,6 +223,8 @@ export interface NewsData {
   source: string;
   symbols: string[];
   sentimentScore?: number;
+  /** Canonical article URL when available (RSS / HTTP providers). */
+  url?: string;
   /** 明确标记演示/占位数据；不得用于实时研究证据。 */
   isSynthetic?: boolean;
 }

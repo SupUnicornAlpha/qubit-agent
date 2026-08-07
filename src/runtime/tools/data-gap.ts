@@ -27,6 +27,14 @@ const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
     "quote",
     "ticker_price",
     "market_quote",
+    // investor-agent / market MCP surface (Prime Core path)
+    "historical_prices",
+    "technical_indicator",
+    "get_stock_info",
+    "market.snapshot",
+    "market_snapshot",
+    "market.service",
+    "market_service",
   ],
   news: [
     "fetch_news",
@@ -36,8 +44,17 @@ const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
     "filing",
     "earnings",
     "announcement",
+    "get_market_news",
+    "market_news",
+    "company_news",
   ],
-  screener: ["screener", "run_screener", "stock_screen", "screen_stocks"],
+  screener: [
+    "screener",
+    "run_screener",
+    "stock_screen",
+    "screen_stocks",
+    "portfolio.construct",
+  ],
   "recommendation.record": [
     "recommendation.record",
     "recommendation_record",

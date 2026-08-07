@@ -125,20 +125,81 @@ impl ToolHost for BridgeToolHost {
         cancel.check()?;
         let ctx = self.turn_ctx.read().await.clone();
         let mut out = Vec::with_capacity(calls.len());
+        // Per-call timeout: keep below Bun `QUBIT_PRIME_TURN_TIMEOUT_MS` so one hung
+        // MCP cannot pin the turn in Acting until the outer await times out.
+        let per_call = std::time::Duration::from_secs(
+            std::env::var("QUBIT_LEGACY_BRIDGE_TIMEOUT_SECS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(120)
+                .min(90),
+        );
         for c in calls {
             cancel.check()?;
-            let result = self
-                .client
-                .invoke(LegacyInvokeParams {
-                    call_id: c.call_id.clone(),
-                    name: c.name.clone(),
-                    args: c.args,
-                    idempotency_key: Some(format!("{}:{}", c.call_id, c.name)),
-                    workspace_id: ctx.workspace_id.clone(),
-                    session_id: ctx.session_id.clone(),
-                })
-                .await
-                .map_err(|e| RuntimeError::Tool(e.to_string()))?;
+            let call_id = c.call_id.clone();
+            let name = c.name.clone();
+            let invoke = self.client.invoke(LegacyInvokeParams {
+                call_id: call_id.clone(),
+                name: name.clone(),
+                args: c.args,
+                idempotency_key: Some(format!("{}:{}", call_id, name)),
+                workspace_id: ctx.workspace_id.clone(),
+                session_id: ctx.session_id.clone(),
+            });
+            let timed = tokio::time::timeout(per_call, invoke);
+            let result = tokio::select! {
+                _ = cancel.cancelled() => {
+                    out.push(ToolResult {
+                        call_id: ToolCallId::new(call_id),
+                        ok: false,
+                        observation: Some(serde_json::json!({
+                            "ok": false,
+                            "error": "turn cancelled while waiting for bridge tool",
+                            "error_code": "bridge_invoke_cancelled",
+                        })),
+                        effects: vec![],
+                        retryable: false,
+                        error_code: Some("bridge_invoke_cancelled".into()),
+                    });
+                    // Surface cancellation to the engine loop.
+                    return Err(RuntimeError::Cancelled);
+                }
+                timed_out = timed => match timed_out {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(e)) => {
+                        warn!(tool = %name, error = %e, "legacy bridge invoke failed (soft)");
+                        out.push(ToolResult {
+                            call_id: ToolCallId::new(call_id),
+                            ok: false,
+                            observation: Some(serde_json::json!({
+                                "ok": false,
+                                "error": e.to_string(),
+                                "error_code": "bridge_invoke_failed",
+                            })),
+                            effects: vec![],
+                            retryable: true,
+                            error_code: Some("bridge_invoke_failed".into()),
+                        });
+                        continue;
+                    }
+                    Err(_) => {
+                        warn!(tool = %name, secs = per_call.as_secs(), "legacy bridge invoke timed out (soft)");
+                        out.push(ToolResult {
+                            call_id: ToolCallId::new(call_id),
+                            ok: false,
+                            observation: Some(serde_json::json!({
+                                "ok": false,
+                                "error": format!("bridge tool timeout after {}s", per_call.as_secs()),
+                                "error_code": "bridge_invoke_timeout",
+                            })),
+                            effects: vec![],
+                            retryable: true,
+                            error_code: Some("bridge_invoke_timeout".into()),
+                        });
+                        continue;
+                    }
+                }
+            };
             out.push(ToolResult {
                 call_id: ToolCallId::new(result.call_id),
                 ok: result.ok,

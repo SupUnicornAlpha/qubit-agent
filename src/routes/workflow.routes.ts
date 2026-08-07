@@ -600,6 +600,36 @@ workflowRouter.post("/:id/interrupt", async (c) => {
   });
 });
 
+/** Cursor-style resume eligibility (checkpoint / Core session / soft restart). */
+workflowRouter.get("/:id/resume-status", async (c) => {
+  const { getWorkflowResumeStatus } = await import("../runtime/workflow/resume-service");
+  const data = await getWorkflowResumeStatus(c.req.param("id"));
+  return c.json({ data });
+});
+
+/**
+ * Resume a interrupted / partial / failed workflow.
+ * body: { mode?: "checkpoint"|"fresh", note?: string }
+ */
+workflowRouter.post("/:id/resume", async (c) => {
+  const workflowRunId = c.req.param("id");
+  const body = await c.req
+    .json<{ mode?: "checkpoint" | "fresh"; note?: string }>()
+    .catch(() => ({} as { mode?: "checkpoint" | "fresh"; note?: string }));
+  try {
+    const { resumeWorkflow } = await import("../runtime/workflow/resume-service");
+    const data = await resumeWorkflow({
+      workflowId: workflowRunId,
+      ...(body.mode ? { mode: body.mode } : {}),
+      ...(body.note ? { note: body.note } : {}),
+    });
+    return c.json({ ok: true, data });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return c.json({ error: message }, 400);
+  }
+});
+
 /**
  * v2 统一端点 — 推荐使用。
  * body: { decision: 'approved'|'rejected', response?: Record<string,unknown>, resolvedBy?: string }

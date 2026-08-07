@@ -41,6 +41,7 @@ async fn kill9_mid_turn_leaves_non_terminal_checkpoint() {
                 client_meta: None,
             },
             idempotency_key: "soak-1".into(),
+            context: None,
         })
         .await
         .unwrap();

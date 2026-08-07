@@ -20,6 +20,7 @@ import {
   clearPrimeBridgeRunContext,
   setPrimeBridgeRunContext,
 } from "./bridge-run-context";
+import { buildCoreHitlClientMeta } from "./core-hitl-bridge";
 import { asRustCoreClient, ensureCoreSession } from "./ensure-core-session";
 import { resolveCoreBackend } from "./core-runtime";
 import { syncCorePlanToWorkflow } from "./project-core-activity";
@@ -32,7 +33,14 @@ import {
   projectCoreTurnResult,
   sanitizeCoreAnswerText,
 } from "./project-core-to-graph";
+import { persistDeliveryVerdictForCoreTurn } from "./persist-core-delivery";
 import type { InteractionMode, SessionSnapshot } from "./types";
+import { ORCHESTRATOR_TURN_CONTEXT } from "./types";
+
+export {
+  shouldPauseCoreTurnForChatHitl,
+  buildCoreHitlClientMeta,
+} from "./core-hitl-bridge";
 
 function resolveExecutionRunId(payload: TaskAssignPayload): string {
   return payload.executionRunId?.trim() || randomUUID();
@@ -74,8 +82,12 @@ export function buildCoreUserText(input: {
       parts.push(`[prime_core_inbox]\ninbox_id=${params.primeCoreInboxId}`);
     }
     parts.push(
-      "[instruction]\nContinue after human approval or resume. Produce the next user-facing answer."
+      "[instruction]\nContinue after human approval or resume. Produce the next user-facing answer. " +
+        "Reuse prior tool observations and do not re-fetch identical MCP evidence unless necessary."
     );
+    if (typeof params.resumeSource === "string" && params.resumeSource) {
+      parts.push(`[resume_source]\n${params.resumeSource}`);
+    }
   }
 
   if (context) parts.push(`[context]\n${context}`);
@@ -150,6 +162,29 @@ async function projectCoreAwaitingHitl(input: {
 
   const title = item.prompt?.title || "Prime Core 需要审批";
   const body = item.prompt?.body || "请审批后继续。";
+  const promptExtra = item.prompt as
+    | {
+        title?: string;
+        body?: string;
+        input_kind?: string;
+        options?: Array<{ id: string; label: string }>;
+      }
+    | undefined;
+  const inputKind =
+    promptExtra?.input_kind === "single_choice" ||
+    promptExtra?.input_kind === "multi_choice" ||
+    promptExtra?.input_kind === "free_form"
+      ? promptExtra.input_kind
+      : "approve_only";
+  const inputSchema =
+    Array.isArray(promptExtra?.options) && promptExtra.options.length > 0
+      ? {
+          options: promptExtra.options.map((o) => ({
+            label: o.label,
+            value: o.id,
+          })),
+        }
+      : {};
   await createHitlRequest({
     workflowRunId: input.workflowId,
     runId: input.runId,
@@ -167,8 +202,8 @@ async function projectCoreAwaitingHitl(input: {
       primeCoreTurnId: input.turnId,
       source: "prime_core_hitl",
     },
-    inputKind: "approve_only",
-    inputSchema: {},
+    inputKind,
+    inputSchema,
   });
   return { inboxId: item.inbox_id, title, body };
 }
@@ -264,12 +299,22 @@ export async function runOrchestratorTaskViaCore(
     let lastPlanKey = "";
     const projectedInvokes = new Map<string, string>();
     try {
+      const approval = params.hitlApproval as { decision?: string } | undefined;
+      const skipToolGateOnce = approval?.decision === "approved";
       started = await client.startTurn({
         session_id: sessionId,
-        input: { text, attachments: [] },
+        input: {
+          text,
+          attachments: [],
+          client_meta: buildCoreHitlClientMeta({
+            loopOptions,
+            ...(skipToolGateOnce ? { skipToolGateOnce: true } : {}),
+          }),
+        },
         idempotency_key:
           conversationTurnId ??
           `${msg.workflowId}:${payload.taskId}:${randomUUID()}`,
+        context: ORCHESTRATOR_TURN_CONTEXT,
       });
       await beginCoreMonitorTurn({
         workflowId: msg.workflowId,
@@ -333,14 +378,41 @@ export async function runOrchestratorTaskViaCore(
           /* ignore */
         }
         try {
-          await client.cancelTurn({ session_id: sessionId, turn_id: started.turn_id });
+          if (typeof client.failTurn === "function") {
+            await client.failTurn({
+              session_id: sessionId,
+              turn_id: started.turn_id,
+            });
+          } else {
+            await client.cancelTurn({
+              session_id: sessionId,
+              turn_id: started.turn_id,
+            });
+          }
         } catch {
-          /* ignore */
+          try {
+            await client.cancelTurn({
+              session_id: sessionId,
+              turn_id: started.turn_id,
+            });
+          } catch {
+            /* ignore */
+          }
         }
         const partialAnswer =
           typeof snap?.active_turn?.answer_text === "string"
             ? snap.active_turn.answer_text.trim()
             : "";
+        const timeoutMsg = err instanceof Error ? err.message : String(err);
+        const isTimeout = /timeout waiting for turn/i.test(timeoutMsg);
+        await persistDeliveryVerdictForCoreTurn({
+          workflowId: msg.workflowId,
+          answerText: partialAnswer,
+          forceFailed: isTimeout || !partialAnswer,
+          forceReason: isTimeout
+            ? `prime_core_turn_timeout:${started.turn_id}`
+            : `prime_core_turn_error:${timeoutMsg.slice(0, 120)}`,
+        });
         if (partialAnswer) {
           await finalizeCoreMonitorTurn({
             workflowId: msg.workflowId,
@@ -469,6 +541,11 @@ export async function runOrchestratorTaskViaCore(
         ? `Prime Core turn 失败：state=${turn?.state ?? "?"} delivery=${deliveryStatus ?? "n/a"}`
         : "（Prime Core 已完成，无文本）");
 
+    await persistDeliveryVerdictForCoreTurn({
+      workflowId: msg.workflowId,
+      answerText: displayText,
+    });
+
     await projectCoreTurnResult({
       workflowRunId: msg.workflowId,
       snap,
@@ -539,6 +616,7 @@ export async function runOrchestratorTaskViaCore(
     return { finalResponse, terminalStatus };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = /timeout waiting for turn/i.test(message);
     await finalizeCoreMonitorTurn({
       workflowId: msg.workflowId,
       runId,
@@ -549,16 +627,26 @@ export async function runOrchestratorTaskViaCore(
       runId,
       workflowId: msg.workflowId,
       traceId: msg.traceId,
-      text: message,
+      text: isTimeout
+        ? `${message}\n\n（可点击「从检查点继续」恢复；已保留会话与工具观察。）`
+        : message,
       ok: false,
     });
-    await setWorkflowState(msg.workflowId, "failed", { reason: "prime-core-task" });
-    onWorkflowTerminal(msg.workflowId, "failed");
+    // Timeout → partial so UI can offer Cursor-style resume; hard errors stay failed.
+    const terminalStatus = isTimeout ? "partial" : "failed";
+    await setWorkflowState(msg.workflowId, terminalStatus, {
+      reason: isTimeout ? "prime-core-timeout-resumable" : "prime-core-task",
+    });
+    onWorkflowTerminal(msg.workflowId, terminalStatus);
     const taskResultPayload = buildTaskResult(payload.taskId, ctx.definition.role, {
-      status: "failed",
+      status: terminalStatus === "partial" ? "partial" : "failed",
       success: false,
-      errorCode: "prime_core_error",
+      errorCode: isTimeout ? "prime_core_timeout" : "prime_core_error",
       errorMessage: message,
+      result: {
+        resumable: isTimeout,
+        resumeHint: isTimeout ? "checkpoint" : undefined,
+      },
       durationMs: Date.now() - startedAt,
     });
     await completeA2ATask(payload.taskId, taskResultPayload);

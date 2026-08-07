@@ -3,6 +3,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentInstance,
+  project,
   recommendationOutcome,
   recommendationSnapshot,
   workflowRun,
@@ -69,7 +70,12 @@ export interface RecordRecommendationOutcomeInput {
 
 export class RecommendationServiceError extends Error {
   constructor(
-    public code: "workflow_not_found" | "validation_failed",
+    public code:
+      | "workflow_not_found"
+      | "validation_failed"
+      | "project_missing"
+      | "project_not_found"
+      | "fk_failed",
     message: string
   ) {
     super(message);
@@ -84,8 +90,20 @@ export class RecommendationService {
       throw new RecommendationServiceError("validation_failed", "symbol_required");
     }
     const db = await getDb();
-    let projectId = input.projectId;
-    let scenarioKey = input.scenarioKey;
+    const workflowRunId = String(input.workflowRunId ?? "").trim();
+    if (!workflowRunId) {
+      throw new RecommendationServiceError("validation_failed", "workflow_run_id_required");
+    }
+
+    let projectId =
+      typeof input.projectId === "string" && input.projectId.trim()
+        ? input.projectId.trim()
+        : undefined;
+    let scenarioKey =
+      typeof input.scenarioKey === "string" && input.scenarioKey.trim()
+        ? input.scenarioKey.trim()
+        : undefined;
+
     if (!projectId || !scenarioKey) {
       const rows = await db
         .select({
@@ -93,17 +111,37 @@ export class RecommendationService {
           researchScenarioId: workflowRun.researchScenarioId,
         })
         .from(workflowRun)
-        .where(eq(workflowRun.id, input.workflowRunId))
+        .where(eq(workflowRun.id, workflowRunId))
         .limit(1);
       const wf = rows[0];
       if (!wf) {
         throw new RecommendationServiceError(
           "workflow_not_found",
-          `workflow_not_found: ${input.workflowRunId}`
+          `workflow_not_found: ${workflowRunId}`
         );
       }
-      projectId ??= wf.projectId;
-      scenarioKey ??= wf.researchScenarioId ?? "";
+      const wfProject = String(wf.projectId ?? "").trim();
+      if (!projectId) projectId = wfProject || undefined;
+      if (!scenarioKey) scenarioKey = String(wf.researchScenarioId ?? "").trim() || undefined;
+    }
+
+    if (!projectId) {
+      throw new RecommendationServiceError(
+        "project_missing",
+        `workflow ${workflowRunId} has empty projectId — cannot record recommendation`
+      );
+    }
+
+    const projectRows = await db
+      .select({ id: project.id })
+      .from(project)
+      .where(eq(project.id, projectId))
+      .limit(1);
+    if (!projectRows[0]) {
+      throw new RecommendationServiceError(
+        "project_not_found",
+        `project_not_found: ${projectId} (workflow=${workflowRunId})`
+      );
     }
 
     // audit_log.agent_instance_id → agent_instance FK；Prime Bridge 曾用假 id
@@ -114,40 +152,51 @@ export class RecommendationService {
     );
 
     const id = randomUUID();
-    await db.insert(recommendationSnapshot).values({
-      id,
-      workflowRunId: input.workflowRunId,
-      projectId,
-      scenarioKey: scenarioKey || "unknown",
-      symbol,
-      market: input.market ?? "US",
-      side: input.side,
-      horizonDays: input.horizonDays ?? 20,
-      confidence: clamp01(input.confidence ?? 0.5),
-      score: input.score ?? null,
-      entryLow: finiteOrNull(input.entryLow),
-      entryHigh: finiteOrNull(input.entryHigh),
-      stopLoss: finiteOrNull(input.stopLoss),
-      takeProfit: finiteOrNull(input.takeProfit),
-      positionSizePct: computeDeterministicPositionSizePct(input),
-      riskRewardRatio: finiteOrNull(input.riskRewardRatio) ?? computeRiskRewardRatio(input),
-      rationale: input.rationale ?? "",
-      evidenceJson: (input.evidence ?? []) as never,
-      invalidationJson: (input.invalidation ?? []) as never,
-      watchConditionsJson: (input.watchConditions ?? []) as never,
-      benchmarkSymbol: input.benchmarkSymbol?.trim().toUpperCase() || null,
-      status: input.status ?? "active",
-      expiresAt: input.expiresAt ?? null,
-      dataAsof: input.dataAsof ?? input.asof ?? null,
-      sourceArtifactKind: input.sourceArtifactKind ?? null,
-      sourceArtifactId: input.sourceArtifactId ?? null,
-      createdBy: input.createdBy ?? "agent",
-      agentInstanceId,
-      asof: input.asof ?? new Date().toISOString(),
-    });
+    try {
+      await db.insert(recommendationSnapshot).values({
+        id,
+        workflowRunId,
+        projectId,
+        scenarioKey: scenarioKey || "unknown",
+        symbol,
+        market: input.market ?? "US",
+        side: input.side,
+        horizonDays: input.horizonDays ?? 20,
+        confidence: clamp01(input.confidence ?? 0.5),
+        score: input.score ?? null,
+        entryLow: finiteOrNull(input.entryLow),
+        entryHigh: finiteOrNull(input.entryHigh),
+        stopLoss: finiteOrNull(input.stopLoss),
+        takeProfit: finiteOrNull(input.takeProfit),
+        positionSizePct: computeDeterministicPositionSizePct(input),
+        riskRewardRatio: finiteOrNull(input.riskRewardRatio) ?? computeRiskRewardRatio(input),
+        rationale: input.rationale ?? "",
+        evidenceJson: (input.evidence ?? []) as never,
+        invalidationJson: (input.invalidation ?? []) as never,
+        watchConditionsJson: (input.watchConditions ?? []) as never,
+        benchmarkSymbol: input.benchmarkSymbol?.trim().toUpperCase() || null,
+        status: input.status ?? "active",
+        expiresAt: input.expiresAt ?? null,
+        dataAsof: input.dataAsof ?? input.asof ?? null,
+        sourceArtifactKind: input.sourceArtifactKind ?? null,
+        sourceArtifactId: input.sourceArtifactId ?? null,
+        createdBy: input.createdBy ?? "agent",
+        agentInstanceId,
+        asof: input.asof ?? new Date().toISOString(),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/FOREIGN KEY/i.test(msg)) {
+        throw new RecommendationServiceError(
+          "fk_failed",
+          `FOREIGN KEY failed inserting recommendation (workflow=${workflowRunId}, project=${projectId}, agentInstance=${agentInstanceId ?? "null"}): ${msg}`
+        );
+      }
+      throw err;
+    }
     await appendAuditLog(db, {
       traceId: `recommendation:${id}`,
-      workflowRunId: input.workflowRunId,
+      workflowRunId,
       agentInstanceId,
       actorType: input.createdBy === "user" ? "user" : "agent",
       actorId: input.createdBy ?? agentInstanceId ?? "recommendation_service",

@@ -89,10 +89,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "orchestrator",
     name: "编排器",
     /**
-     * 4.0.0（Prime D6）：单 Agent 经 Tool Host 消费 snapshot→thesis→portfolio→intent；
-     * 去掉团队兼容大工具与专家本职探测工具；A2A 仍走旧桥（call_team_* / assign_task）。
+     * 4.1.2：web.* 描述与派发矩阵强化；strategy/backtest/autoEvaluate 入参更宽松。
      */
-    version: "4.0.0",
+    version: "4.1.2",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       // 编排
@@ -125,7 +124,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "skill.create",
       "skill.patch",
       "skill.archive",
-      "call_mcp",
+      // 官方联网（研究默认；不可作实盘行情源）
+      "web.search",
+      "web.fetch",
     ],
     subscriptions: ["TASK_ASSIGN", "TASK_RESULT", "ALERT", "RISK_BLOCK"],
     maxIterations: 12,
@@ -150,12 +151,14 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-news-event",
     role: "news_event",
     name: "新闻事件",
-    /** 3.3.0：新闻双件套 + 最小 skill。 */
-    version: "3.3.0",
+    /** 3.4.1：新闻双件套 + 官方联网（描述强化与编排器 4.1.2 对齐）。 */
+    version: "3.4.1",
     systemPrompt: PROMPT_NEWS_EVENT,
     tools: [
       "fetch_news",
       "fetch_news_sentiment",
+      "web.search",
+      "web.fetch",
       "skill.search",
       "skill.use_record",
     ],
@@ -239,6 +242,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     name: "策略研究",
     /**
      * 4.5.0：因子→策略→回测主链 + 最小 skill（恰 10）。
+     * 官方联网由 resolveEffectiveTools 自动附加 INTERNET_SUPPORT_TOOLS。
      * discovery / 推荐落库 / 下单由 Orchestrator 主责。
      */
     version: "4.5.0",

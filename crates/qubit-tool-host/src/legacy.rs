@@ -32,6 +32,8 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "factor.promote_backtest",
     "backtest.run",
     "workspace.context.snapshot",
+    "web.search",
+    "web.fetch",
 ];
 
 #[derive(Clone, Debug)]

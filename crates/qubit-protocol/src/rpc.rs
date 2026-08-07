@@ -39,6 +39,9 @@ pub struct TurnStart {
     pub session_id: SessionId,
     pub input: UserInput,
     pub idempotency_key: String,
+    /// Host-owned context / recall policy for this turn (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<crate::TurnContextOpts>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -103,6 +106,7 @@ pub mod methods {
     pub const SESSION_SET_MODE: &str = "session.set_mode";
     pub const TURN_START: &str = "turn.start";
     pub const TURN_CANCEL: &str = "turn.cancel";
+    pub const TURN_FAIL: &str = "turn.fail";
     pub const HITL_RESPOND: &str = "hitl.respond";
     pub const HITL_INBOX_LIST: &str = "hitl.inbox.list";
     pub const EVENTS_SUBSCRIBE: &str = "events.subscribe";

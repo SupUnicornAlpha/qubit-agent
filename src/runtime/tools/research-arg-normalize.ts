@@ -79,6 +79,98 @@ export function coerceRecommendationSide(
   return coerceThesisDirection(raw);
 }
 
+/** Pull ticker-like tokens from free text (narrative / body). */
+export function inferSymbolsFromText(text: string, max = 8): string[] {
+  if (!text?.trim()) return [];
+  const found: string[] = [];
+  const seen = new Set<string>();
+  // A-share: 6 digits optional .SH/.SZ/.SS
+  const cn = text.matchAll(/\b([0-9]{6})(?:\.(?:SH|SZ|SS))?\b/gi);
+  for (const m of cn) {
+    const raw = m[0]!.toUpperCase().replace(/\.SS$/, ".SH");
+    const key = raw.includes(".") ? raw : raw;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    found.push(raw.includes(".") ? raw : key);
+    if (found.length >= max) return found;
+  }
+  // US / HK tickers: 1–5 letters, optional market prefix
+  const us = text.matchAll(/\b(?:US:|HK:)?([A-Z]{1,5})\b/g);
+  const stop = new Set([
+    "THE",
+    "AND",
+    "FOR",
+    "WITH",
+    "FROM",
+    "THIS",
+    "THAT",
+    "RSI",
+    "MACD",
+    "SMA",
+    "EMA",
+    "PE",
+    "PB",
+    "CEO",
+    "IPO",
+    "ETF",
+    "USD",
+    "CNY",
+    "HTTP",
+    "HTTPS",
+    "JSON",
+    "NULL",
+  ]);
+  for (const m of us) {
+    const sym = (m[1] ?? "").toUpperCase();
+    if (!sym || stop.has(sym) || sym.length < 2) continue;
+    if (seen.has(sym)) continue;
+    seen.add(sym);
+    found.push(sym);
+    if (found.length >= max) break;
+  }
+  return found;
+}
+
+/** Prefer explicit direction; else infer from narrative/body; else neutral. */
+export function resolveThesisDirection(
+  params: Record<string, unknown>
+): "long" | "short" | "neutral" {
+  const direct = coerceThesisDirection(params.direction);
+  if (direct) return direct;
+  const prose = String(
+    params.narrative ?? params.body ?? params.summary ?? params.text ?? ""
+  );
+  const fromProse = coerceThesisDirection(prose.slice(0, 200));
+  if (fromProse) return fromProse;
+  return "neutral";
+}
+
+/** Resolve instrumentScope: explicit array, aliases, or tickers inferred from prose. */
+export function resolveInstrumentScope(params: Record<string, unknown>): string[] {
+  const raw =
+    params.instrumentScope ??
+    params.instrument_scope ??
+    params.symbols ??
+    params.tickers ??
+    params.symbol;
+  if (typeof raw === "string" && raw.trim()) {
+    const one = raw.trim().toUpperCase();
+    return one.includes(",")
+      ? one.split(",").map((s) => s.trim()).filter(Boolean)
+      : [one];
+  }
+  if (Array.isArray(raw)) {
+    const out = raw
+      .map((x) => String(x ?? "").trim().toUpperCase())
+      .filter(Boolean);
+    if (out.length) return out;
+  }
+  const prose = String(
+    params.narrative ?? params.body ?? params.summary ?? params.text ?? ""
+  );
+  return inferSymbolsFromText(prose);
+}
+
 /** Pull snapshotId from explicit fields or evidence[].ref / evidence string. */
 export function extractSnapshotId(params: Record<string, unknown>): string {
   const direct = String(params.snapshotId ?? params.snapshot_id ?? "").trim();

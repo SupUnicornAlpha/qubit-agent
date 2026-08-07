@@ -731,6 +731,7 @@ const pack: LocalePack = {
         hint: "会话列表在左侧；右侧 Agent 栏专注运行态与对话。",
         empty: "暂无会话",
         openChatView: "打开对话页面 →",
+        focusAgent: "打开右侧 Agent 对话 →",
       },
       workspace: {
         hint: "逻辑工作区（项目下的策略 / 因子等）。文件树将随 FS API 增强。",

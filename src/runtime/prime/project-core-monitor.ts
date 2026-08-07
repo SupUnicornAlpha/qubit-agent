@@ -131,7 +131,8 @@ export async function beginCoreMonitorTurn(input: {
       workflowRunId: input.workflowId,
       stepIndex: 0,
       phase: "reason",
-      thought: "Prime Core reasoning…",
+      // Empty thought — UI must not surface monitor placeholders as chat bubbles.
+      thought: null,
       actionType: "final_answer",
       actionJson: {
         backend: "rust",
@@ -147,12 +148,13 @@ export async function beginCoreMonitorTurn(input: {
       workflowRunId: input.workflowId,
       stepIndex: 1,
       phase: "act",
-      thought: "Prime Core acting…",
+      thought: null,
       actionType: "tool_call",
       actionJson: {
         backend: "rust",
         phase: "prime_core_act",
         runId: input.runId,
+        uiHiddenThought: true,
       },
     });
 

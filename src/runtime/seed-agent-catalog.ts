@@ -20,11 +20,11 @@ export const QUANT_MCP = [
  *   - publicfinance：SEC EDGAR / Treasury / BLS —— 基本面 + 宏观分析必需。
  *   - us-gov-open-data：40+ 美国政府 API（FRED 等）—— 宏观 / 事件研究必备。
  */
-export const PUBLIC_FINANCE_MCP = [
-  RECOMMENDED_MCP_NAMES.INVESTOR_AGENT,
-  RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE,
-  RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA,
-] as const;
+/**
+ * 公开金融 MCP：按角色定向。
+ * 2026-08：仅挂稳定的 investor-agent；publicfinance / us-gov 已隔离（0% 成功率）。
+ */
+export const PUBLIC_FINANCE_MCP = [RECOMMENDED_MCP_NAMES.INVESTOR_AGENT] as const;
 
 /** FSI 机构数据 MCP（DB 中默认 disabled，配置 URL 后启用） */
 export const FSI_DATA_MCP = [
@@ -101,6 +101,8 @@ export const PUBLIC_FINANCE_MCP_ROLES = new Set<AgentRole>([
   "analyst_macro",
   "news_event",
   "analyst_sentiment",
+  "analyst_technical",
+  "market_data",
 ]);
 
 export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[] {
@@ -110,13 +112,14 @@ export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[]
   }
   if (PUBLIC_FINANCE_MCP_ROLES.has(role)) {
     for (const n of PUBLIC_FINANCE_MCP) if (!out.includes(n)) out.push(n);
-  } else if (role === "market_data" || role === "analyst_technical") {
-    // 行情/技术只需 investor-agent 作 MCP 兜底，不必挂 SEC/FRED 全家桶
-    const investor = RECOMMENDED_MCP_NAMES.INVESTOR_AGENT;
-    if (!out.includes(investor)) out.push(investor);
   }
-  // FSI 机构 MCP 默认 DB disabled；不再灌进 seed 白名单（启用后在 UI 勾选即可）
-  return out;
+  // Strip quarantined MCP names from legacy seed rows.
+  return out.filter(
+    (n) =>
+      n !== RECOMMENDED_MCP_NAMES.PUBLIC_FINANCE &&
+      n !== RECOMMENDED_MCP_NAMES.US_GOV_OPEN_DATA &&
+      n !== RECOMMENDED_MCP_NAMES.FINANCEX
+  );
 }
 
 /**

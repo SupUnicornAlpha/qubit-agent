@@ -126,6 +126,24 @@ describe("strategy.create_version (P0-1.b)", () => {
       dispatchBuiltinTool("strategy.create_version", buildCtx() as never, {})
     ).rejects.toThrow(/name \(策略名\) is required/);
   });
+
+  test("嵌套 arguments.name 可创建", async () => {
+    const name = `pp_nested_${randomUUID().slice(0, 6)}`;
+    const res = (await dispatchBuiltinTool("strategy.create_version", buildCtx() as never, {
+      arguments: { name, style: "low_freq", description: "nested bag" },
+    })) as { strategyId: string; strategyVersionId: string };
+    expect(res.strategyId).toBeTruthy();
+    expect(res.strategyVersionId).toBeTruthy();
+  });
+
+  test("action=get 明确拒绝", async () => {
+    await expect(
+      dispatchBuiltinTool("strategy.create_version", buildCtx() as never, {
+        action: "get",
+        strategyId: "oversold_reversal_semi",
+      })
+    ).rejects.toThrow(/仅创建|不支持 action/);
+  });
 });
 
 describe("order.create_intent (P0-1.c)", () => {

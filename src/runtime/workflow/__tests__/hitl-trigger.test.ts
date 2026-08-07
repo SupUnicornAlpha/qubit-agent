@@ -326,6 +326,16 @@ describe("evaluateChatHitlTrigger - 三档模式 × 高危工具", () => {
     expect(d.source).toBe("mode_always");
   });
 
+  test("仅 hitlMode=always（Team 面板）也会触发对话闸门", () => {
+    const d = evaluateChatHitlTrigger({
+      ...chatBase,
+      loopOptions: { hitlMode: "always" },
+      toolName: "fetch_klines",
+    });
+    expect(d.trigger).toBe(true);
+    expect(d.source).toBe("mode_always");
+  });
+
   test("非 orchestrator 角色一律不触发（防止误拦其他 agent）", () => {
     const d = evaluateChatHitlTrigger({
       ...chatBase,

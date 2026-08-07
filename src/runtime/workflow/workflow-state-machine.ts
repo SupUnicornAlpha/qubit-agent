@@ -73,8 +73,9 @@ const ALLOWED_TRANSITIONS: Record<WorkflowStatus, ReadonlySet<WorkflowStatus | "
   awaiting_approval: new Set<WorkflowStatus | "*">(["running", "awaiting_approval"]),
   /** to=completed：必须从 running 或 awaiting_approval 完结；幂等保留 */
   completed: new Set<WorkflowStatus | "*">(["running", "awaiting_approval", "completed"]),
-  /** partial：硬预算/截止时间等导致收口，但已保留可用证据；可被显式 retry/resume。 */
-  partial: new Set<WorkflowStatus | "*">(["running", "awaiting_approval", "partial"]),
+  /** partial：硬预算/截止时间等导致收口，但已保留可用证据；可被显式 retry/resume。
+   *  also from failed：orphan Acting heal / timeout reclassify as resumable partial. */
+  partial: new Set<WorkflowStatus | "*">(["running", "awaiting_approval", "partial", "failed"]),
   /** to=failed：从所有"未终态"都能失败；幂等保留 */
   failed: new Set<WorkflowStatus | "*">(["pending", "running", "awaiting_approval", "failed"]),
   /** to=cancelled：用户/系统在任何时刻都能取消（包括 trader-workflow 取消 dup 幂等） */

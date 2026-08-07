@@ -40,6 +40,14 @@ function rowToNewsData(row: Record<string, unknown>, index: number): NewsData | 
           ? row.time
           : "";
   const source = typeof row.source === "string" ? row.source : "external";
+  const url =
+    typeof row.url === "string"
+      ? row.url
+      : typeof row.link === "string"
+        ? row.link
+        : typeof row.articleUrl === "string"
+          ? row.articleUrl
+          : undefined;
   const symbols = Array.isArray(row.symbols)
     ? row.symbols.map(String)
     : Array.isArray(row.tickers)
@@ -58,25 +66,27 @@ function rowToNewsData(row: Record<string, unknown>, index: number): NewsData | 
     publishedAt,
     source,
     symbols,
+    ...(url ? { url } : {}),
     ...(sentimentScore !== undefined ? { sentimentScore } : {}),
   };
 }
 
 /**
- * Built-in news connector: optional HTTP JSON feed when `newsApiBaseUrl` is set in connector init
- * (persisted via UI → SQLite). Synthetic rows are opt-in and are always marked so
- * they cannot be mistaken for current research evidence.
+ * Built-in news connector:
+ *   1. Optional HTTP JSON feed when `newsApiBaseUrl` is set
+ *   2. Built-in Yahoo Finance + Google News RSS (+ optional article body via web fetch)
+ *   3. Synthetic rows only when explicitly enabled (never research evidence)
  */
 export class QubitNativeNewsConnector extends BaseConnector {
   readonly meta: ConnectorMeta = {
     name: "qubit-news",
-    version: "0.1.0",
+    version: "0.2.0",
     connectorType: "data",
     capabilities: ["fetch_news", "fetch_news_sentiment", "extract_event", "score_sentiment"],
     assetClasses: ["stock"],
     latencyProfile: "batch",
     description:
-      "Built-in news: HTTP JSON when configured; optional marked synthetic rows for demos.",
+      "Built-in news: HTTP JSON and/or Yahoo+Google RSS with optional article body fetch.",
   };
 
   private newsApiBaseUrl: string | undefined;
@@ -100,10 +110,10 @@ export class QubitNativeNewsConnector extends BaseConnector {
       return { status: "healthy", message: `qubit-news: HTTP ${this.newsApiBaseUrl}` };
     }
     return {
-      status: "degraded",
+      status: "healthy",
       message: this.syntheticWhenEmpty
-        ? "qubit-news: synthetic demo mode; unavailable for research evidence"
-        : "qubit-news: no news API URL configured",
+        ? "qubit-news: Yahoo/Google RSS + synthetic fallback (synthetic not research-grade)"
+        : "qubit-news: Yahoo Finance + Google News RSS (network)",
     };
   }
 
@@ -149,9 +159,14 @@ export class QubitNativeNewsConnector extends BaseConnector {
   }
 
   private async fetchNewsResolved(payload: unknown): Promise<NewsData[]> {
-    const p = (payload ?? {}) as Partial<FetchNewsParams>;
+    const p = (payload ?? {}) as Partial<FetchNewsParams> & {
+      enrichBodies?: boolean;
+      fetchBodies?: boolean;
+    };
     const keywords = Array.isArray(p.keywords) ? p.keywords.map(String) : [];
     const symbols = Array.isArray(p.symbols) ? p.symbols.map(String) : [];
+    const limit = typeof p.limit === "number" ? p.limit : 12;
+    const enrichBodies = p.enrichBodies !== false && p.fetchBodies !== false;
 
     if (this.newsApiBaseUrl) {
       try {
@@ -184,26 +199,54 @@ export class QubitNativeNewsConnector extends BaseConnector {
             this.isWithinRequestedWindow(item, p.startDate, p.endDate)
           );
           if (mapped.length > 0) return mapped;
-          if (!this.syntheticWhenEmpty) return [];
         } finally {
           clearTimeout(timer);
         }
       } catch (e) {
         console.warn("[qubit-news] HTTP fetch_news failed:", e instanceof Error ? e.message : e);
-        if (!this.syntheticWhenEmpty) return [];
       }
     }
 
     if (keywords.length === 0 && symbols.length === 0) {
       return [];
     }
+
+    try {
+      const { fetchPublicNewsBundle } = await import("../../runtime/market/public-news-sources");
+      const publicItems = await fetchPublicNewsBundle({
+        symbols,
+        keywords,
+        limit,
+        enrichBodies,
+        enrichTopN: 4,
+      });
+      const mapped: NewsData[] = publicItems
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          content: item.content,
+          publishedAt: item.publishedAt,
+          source: item.source,
+          symbols: item.symbols,
+          ...(item.url ? { url: item.url } : {}),
+        }))
+        .filter((item) => this.isWithinRequestedWindow(item, p.startDate, p.endDate));
+      if (mapped.length > 0) return mapped;
+    } catch (e) {
+      console.warn(
+        "[qubit-news] public RSS/web fetch failed:",
+        e instanceof Error ? e.message : e
+      );
+    }
+
     if (!this.syntheticWhenEmpty) return [];
     const now = new Date().toISOString();
     return [
       {
         id: "stub-1",
         title: `[stub] News for ${symbols.join(",") || keywords.join(",")}`,
-        content: "Synthetic news row from QubitNativeNewsConnector; set news API URL in 配置中心.",
+        content:
+          "Synthetic news row from QubitNativeNewsConnector; network feeds unavailable.",
         publishedAt: now,
         source: "qubit-native",
         symbols,

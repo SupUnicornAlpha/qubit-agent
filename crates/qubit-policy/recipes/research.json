@@ -1,7 +1,7 @@
 {
   "key": "research",
   "aliases": ["research_multi", "research_theme", "rs", "rm", "rt"],
-  "version": "2026-08-06.1",
+  "version": "2026-08-06.2",
   "capability_owners": {
     "get_quote": "research",
     "news": "research"
@@ -27,7 +27,7 @@
       "research.thesis.write",
       "workspace.memory.search"
     ],
-    "key": "tool_fingerprint",
+    "key": "tool",
     "max_success": 3,
     "on_exceed": "strip_from_surface"
   },
@@ -58,11 +58,11 @@
     }
   },
   "checklist_prompt": [
-    "1. fetch_klines 取价（够用即可，禁止对同一证据面空转连打）",
-    "2. fetch_news 取新闻/事件；缺新闻必须显式记录缺口，不得只刷行情",
+    "1. fetch_klines / historical_prices / technical_indicator 取价（够用即可；同一工具族成功 ≤3 次必须停）",
+    "2. fetch_news / get_market_news 取新闻/事件；缺新闻必须显式记录缺口，不得只刷行情",
     "3. 产出结构化判断（research.thesis.write，须绑 snapshotId 若已取快照）",
     "4. 输出五段答案；探活失败走 data-gap，不得当唯一结案",
-    "同类工具（含 mathjs / historical_prices / technical_indicator）成功 ≤3 次后必须停手写终答",
-    "有足够证据后下一轮只输出最终回答，不再发 tool_calls"
+    "禁止对 technical_indicator / historical_prices 按标的×指标无限刷；累计成功 3 次后写终答",
+    "有足够证据后下一轮只输出最终回答，不再发 tool_calls；优先 agent.invoke 委派专家，勿自己刷 MCP"
   ]
 }

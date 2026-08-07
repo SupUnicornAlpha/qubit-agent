@@ -13,6 +13,7 @@ pub mod engine;
 pub mod error;
 pub mod events;
 pub mod hitl_inbox;
+pub mod hitl_policy;
 pub mod invocation;
 pub mod model;
 pub mod model_openai;
@@ -42,6 +43,10 @@ pub use engine::{RunTurnOpts, TurnEngine, TurnOutcome};
 pub use error::RuntimeError;
 pub use stall::{stall_fingerprint, strip_tool_from_surface, tool_family};
 pub use hitl_inbox::{HitlInbox, MemoryHitlInbox, SqliteHitlInbox};
+pub use hitl_policy::{
+    evaluate_tool_batch_hitl, extract_ai_hitl_hint, is_high_risk_tool, HitlMode, HitlPolicy,
+    ToolHitlDecision,
+};
 pub use invocation::{AgentInvoker, InvocationService};
 pub use model::{
     CancellableSlowModel, FakeModelClient, ModelClient, NormalizedToolCall, SampleRequest,

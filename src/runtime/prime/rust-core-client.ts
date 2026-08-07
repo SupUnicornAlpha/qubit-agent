@@ -85,12 +85,17 @@ export class RustCoreClient implements CoreRuntime {
     session_id: string;
     input: { text: string; attachments?: unknown[]; client_meta?: unknown };
     idempotency_key: string;
+    context?: import("./types").TurnContextOpts;
   }): Promise<{ turn_id: string }> {
     return this.rpc(PRIME_RPC.TURN_START, req);
   }
 
   async cancelTurn(req: { session_id: string; turn_id: string }): Promise<void> {
     await this.rpc(PRIME_RPC.TURN_CANCEL, req);
+  }
+
+  async failTurn(req: { session_id: string; turn_id: string }): Promise<void> {
+    await this.rpc(PRIME_RPC.TURN_FAIL, req);
   }
 
   invokeAgent(req: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -131,8 +136,8 @@ export class RustCoreClient implements CoreRuntime {
 
   /**
    * Prefer SSE `/events?turn_id=` when available; fall back to session.snapshot poll.
-   * Transport-only — does not change Core harness.
-   * `onEvent` receives live RuntimeEvent frames (token / reasoning_token / tools…).
+   * Hard wall-clock deadline (Promise.race) so a hung SSE body reader cannot empty-run.
+   * Also detects zombie Acting: mid-flight turn while Core `active_turns === 0`.
    */
   async awaitTurnTerminal(
     sessionId: string,
@@ -141,21 +146,110 @@ export class RustCoreClient implements CoreRuntime {
     onTick?: (snap: SessionSnapshot) => void | Promise<void>,
     onEvent?: (event: PrimeRuntimeEvent) => void | Promise<void>
   ): Promise<SessionSnapshot> {
-    try {
-      return await this.awaitTurnTerminalViaSse(
-        sessionId,
-        turnId,
-        timeoutMs,
-        onTick,
-        onEvent
-      );
-    } catch (err) {
-      console.warn(
-        "[prime-core] SSE awaitTurnTerminal failed, falling back to poll:",
-        err instanceof Error ? err.message : err
-      );
-      return this.awaitTurnTerminalPoll(sessionId, turnId, timeoutMs, onTick);
+    const deadline = Date.now() + Math.max(1_000, timeoutMs);
+    const timeoutErr = () =>
+      new Error(`timeout waiting for turn ${turnId}`);
+
+    const hardTimeout = new Promise<never>((_, reject) => {
+      const left = Math.max(0, deadline - Date.now());
+      setTimeout(() => reject(timeoutErr()), left);
+    });
+
+    const zombieWatch = this.watchOrphanTurn(sessionId, turnId, deadline, onTick);
+
+    const transport = (async () => {
+      try {
+        return await this.awaitTurnTerminalViaSse(
+          sessionId,
+          turnId,
+          Math.max(0, deadline - Date.now()),
+          onTick,
+          onEvent
+        );
+      } catch (err) {
+        const left = deadline - Date.now();
+        if (left <= 50) throw err;
+        console.warn(
+          "[prime-core] SSE awaitTurnTerminal failed, falling back to poll:",
+          err instanceof Error ? err.message : err
+        );
+        return this.awaitTurnTerminalPoll(sessionId, turnId, left, onTick);
+      }
+    })();
+
+    return Promise.race([transport, hardTimeout, zombieWatch]);
+  }
+
+  /** Mid-flight turn with no live Core task → heal + surface as timeout (resumable). */
+  private async watchOrphanTurn(
+    sessionId: string,
+    turnId: string,
+    deadline: number,
+    onTick?: (snap: SessionSnapshot) => void | Promise<void>
+  ): Promise<SessionSnapshot> {
+    const inflight = new Set([
+      "accepted",
+      "preparing",
+      "reasoning",
+      "acting",
+      "observing",
+      "finalizing",
+    ]);
+    let streak = 0;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1_000));
+      let health: RuntimeHealth;
+      let snap: SessionSnapshot;
+      try {
+        [health, snap] = await Promise.all([
+          this.health(),
+          this.sessionSnapshot(sessionId),
+        ]);
+      } catch {
+        continue;
+      }
+      if (onTick) {
+        try {
+          await onTick(snap);
+        } catch {
+          /* ignore */
+        }
+      }
+      const turn = snap.active_turn;
+      if (
+        turn &&
+        turn.turn_id === turnId &&
+        (turn.state === "completed" ||
+          turn.state === "cancelled" ||
+          turn.state === "failed" ||
+          turn.state === "awaiting_hitl")
+      ) {
+        return snap;
+      }
+      if (
+        turn &&
+        turn.turn_id === turnId &&
+        inflight.has(String(turn.state)) &&
+        health.active_turns === 0
+      ) {
+        streak += 1;
+        if (streak >= 3) {
+          try {
+            await this.failTurn({ session_id: sessionId, turn_id: turnId });
+          } catch {
+            try {
+              await this.cancelTurn({ session_id: sessionId, turn_id: turnId });
+            } catch {
+              /* ignore */
+            }
+          }
+          throw new Error(`timeout waiting for turn ${turnId}`);
+        }
+      } else {
+        streak = 0;
+      }
     }
+    throw new Error(`timeout waiting for turn ${turnId}`);
   }
 
   private eventsUrl(turnId: string): string {
@@ -172,7 +266,7 @@ export class RustCoreClient implements CoreRuntime {
     onEvent?: (event: PrimeRuntimeEvent) => void | Promise<void>
   ): Promise<SessionSnapshot> {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const timer = setTimeout(() => ctrl.abort(), Math.max(1, timeoutMs));
     let pollTimer: ReturnType<typeof setInterval> | null = null;
 
     const checkSnap = async (): Promise<SessionSnapshot | null> => {

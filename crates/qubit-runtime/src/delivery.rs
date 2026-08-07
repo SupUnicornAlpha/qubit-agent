@@ -103,14 +103,49 @@ impl DeliveryEvaluator for LedgerDeliveryEvaluator {
 
 fn tool_matches_capability(tool_name: &str, capability: &str) -> bool {
     let name = tool_name.strip_prefix("tool/").unwrap_or(tool_name);
-    if name == capability {
+    let lower = name.to_ascii_lowercase();
+    if name == capability || lower.contains(&capability.to_ascii_lowercase()) {
         return true;
     }
-    // Loose capability aliases used by existing TS recipes.
+    // Loose capability aliases — keep in sync with Bun `REQUIRED_TOOL_ALIASES`.
     match capability {
-        "screener" => name == "run_screener" || name.contains("screener"),
-        "get_quote" => name == "fetch_quote" || name == "fetch_klines" || name.contains("quote"),
-        _ => name.starts_with(capability) || name.contains(capability),
+        "screener" => {
+            lower.contains("screener")
+                || lower.contains("stock_screen")
+                || lower.contains("portfolio.construct")
+        }
+        "get_quote" => {
+            lower.contains("quote")
+                || lower.contains("fetch_klines")
+                || lower.contains("fetch_bars")
+                || lower.contains("historical_prices")
+                || lower.contains("technical_indicator")
+                || lower.contains("get_stock_info")
+                || lower.contains("market.snapshot")
+                || lower.contains("market_service")
+        }
+        "news" => {
+            lower.contains("news")
+                || lower.contains("headline")
+                || lower.contains("filing")
+                || lower.contains("earnings")
+                || lower.contains("announcement")
+        }
+        "recommendation.record" => {
+            lower.contains("recommendation.record") || lower.contains("recommendation_record")
+        }
+        "order" => lower.contains("order.create_intent") || lower.contains("submit_order"),
+        "risk" => {
+            lower.contains("risk")
+                || lower.contains("evaluate_risk")
+                || lower.contains("order.create_intent")
+        }
+        "factor" => {
+            lower.contains("factor.register")
+                || lower.contains("factor.compute")
+                || lower.contains("factor.evaluate")
+        }
+        _ => lower.starts_with(&capability.to_ascii_lowercase()),
     }
 }
 

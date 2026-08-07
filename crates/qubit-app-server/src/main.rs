@@ -229,6 +229,11 @@ async fn dispatch(state: &AppState, method: &str, params: Value) -> Result<Value
             rt.cancel_turn(req).await.map_err(|e| e.to_string())?;
             Ok(json!({ "ok": true }))
         }
+        methods::TURN_FAIL => {
+            let req: TurnCancel = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            rt.fail_turn(req).await.map_err(|e| e.to_string())?;
+            Ok(json!({ "ok": true }))
+        }
         methods::HITL_RESPOND => {
             let req: HitlRespond = serde_json::from_value(params).map_err(|e| e.to_string())?;
             rt.respond_hitl(req).await.map_err(|e| e.to_string())?;

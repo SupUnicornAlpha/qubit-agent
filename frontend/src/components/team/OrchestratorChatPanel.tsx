@@ -11,7 +11,6 @@
 import {
   type CSSProperties,
   type KeyboardEvent,
-  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -34,6 +33,7 @@ import { OrchestratorLiveStatus } from "./OrchestratorLiveStatus";
 import { SubAgentRunsPanel } from "./SubAgentRunsPanel";
 import { AgentRunPanel } from "./AgentRunChatView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
+import { WorkflowResumeBanner } from "./WorkflowResumeBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
 import { buildChatExecutionActivity } from "../chat/ChatExecutionActivity";
 
@@ -77,6 +77,8 @@ export interface OrchestratorChatPanelProps {
   pendingHitlRequestId: string | null;
   /** HITL 解决后回调（同 TeamHitlBanner.onResolved） */
   onHitlResolved: (decision: "approved" | "rejected") => void;
+  /** 从检查点续跑成功后回调（刷新状态 / 进入 running） */
+  onWorkflowResumed?: () => void;
   /** composer 文本（受控；与左栏「分析提示」共享同一 state） */
   composerValue: string;
   onComposerChange: (value: string) => void;
@@ -120,23 +122,8 @@ export interface OrchestratorChatPanelProps {
   sendDisabled: boolean;
   /** 启动禁用原因（tooltip） */
   sendDisabledReason: string;
-  /** 可折叠 Run 条：工作流切换 / 新建 / 研究设置主体 */
-  runStrip?: {
-    expanded: boolean;
-    onExpandedChange: (open: boolean) => void;
-    summary: string;
-    options: Array<{ id: string; label: string; status?: string }>;
-    onSelect: (id: string) => void;
-    onCreate: () => void;
-    /** @deprecated 设置已嵌在 Run 条；保留跳转左栏工作流列表 */
-    onOpenResearchSettings?: () => void;
-    creating?: boolean;
-    /** 已点「新建」待二次确认 */
-    createConfirmPending?: boolean;
-    onCancelCreate?: () => void;
-    /** 研究设置表单（展开后显示） */
-    settingsContent?: ReactNode;
-  };
+  /** 当前工作流 DB 状态（用于 resume 条在 pending/running 时立即隐藏） */
+  workflowStatus?: string | null;
 }
 
 const MODE_OPTIONS: ReadonlyArray<{ id: OrchestratorHitlMode; label: string; hint: string }> = [
@@ -159,6 +146,7 @@ export function OrchestratorChatPanel({
   onAgentModeChange,
   pendingHitlRequestId,
   onHitlResolved,
+  onWorkflowResumed,
   completed,
   composerValue,
   onComposerChange,
@@ -179,7 +167,7 @@ export function OrchestratorChatPanel({
   onOpenArtifact,
   sendDisabled,
   sendDisabledReason,
-  runStrip,
+  workflowStatus = null,
   fsWorkspaceId = null,
 }: OrchestratorChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -409,90 +397,6 @@ export function OrchestratorChatPanel({
         </div>
       </div>
 
-      {runStrip ? (
-        <div style={styles.runStrip} data-qb-orch-run-strip>
-          <button
-            type="button"
-            style={styles.runStripToggle}
-            onClick={() => runStrip.onExpandedChange(!runStrip.expanded)}
-            aria-expanded={runStrip.expanded}
-          >
-            <span style={styles.runStripTitle}>
-              {runStrip.expanded ? "▾" : "▸"} Run · {wfId ? wfId.slice(0, 8) : "未选择"}
-            </span>
-            <span style={styles.runStripSummary}>{runStrip.summary}</span>
-          </button>
-          {runStrip.expanded ? (
-            <div style={styles.runStripBody}>
-              <label style={styles.runStripLabel}>
-                当前工作流
-                <select
-                  style={styles.runStripSelect}
-                  value={wfId}
-                  onChange={(e) => runStrip.onSelect(e.target.value)}
-                >
-                  <option value="">选择工作流…</option>
-                  {runStrip.options.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label}
-                      {opt.status ? ` · ${opt.status}` : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div style={styles.runStripActions}>
-                {runStrip.createConfirmPending ? (
-                  <>
-                    <button
-                      type="button"
-                      className="qb-btn-primary-brand"
-                      style={styles.runStripBtn}
-                      disabled={runStrip.creating}
-                      onClick={() => runStrip.onCreate()}
-                    >
-                      {runStrip.creating ? "创建中…" : "确认新建工作流"}
-                    </button>
-                    <button
-                      type="button"
-                      style={styles.runStripLink}
-                      disabled={runStrip.creating}
-                      onClick={() => runStrip.onCancelCreate?.()}
-                    >
-                      取消
-                    </button>
-                    <span style={styles.runStripConfirmHint}>
-                      新建 = 新研究回合
-                    </span>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="qb-btn-primary-brand"
-                    style={styles.runStripBtn}
-                    disabled={runStrip.creating}
-                    onClick={() => runStrip.onCreate()}
-                  >
-                    {runStrip.creating ? "创建中…" : "新建工作流"}
-                  </button>
-                )}
-                {runStrip.onOpenResearchSettings ? (
-                  <button
-                    type="button"
-                    style={styles.runStripLink}
-                    onClick={() => runStrip.onOpenResearchSettings?.()}
-                  >
-                    工作流列表（左栏）
-                  </button>
-                ) : null}
-              </div>
-              {runStrip.settingsContent ? (
-                <div style={styles.runStripSettings}>{runStrip.settingsContent}</div>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
       {/* 状态轨：Plan / 运行态 / 工具 / A2A 专家进度；可固定顶端或随正文滚走 */}
       {statusRailPinned ? (
         <div style={styles.statusRail} data-qb-orch-status-rail="pinned">
@@ -648,8 +552,16 @@ export function OrchestratorChatPanel({
         <ThinkingGhostBox reasoning={liveReasoning} />
       </div>
 
-      {/* Footer：HITL 在输入框与模式选择之上 */}
+      {/* Footer：Resume 提醒 + HITL 在输入框与模式选择之上 */}
       <div style={styles.footer}>
+        {wfId ? (
+          <WorkflowResumeBanner
+            workflowRunId={wfId}
+            chatInFlight={Boolean(chatInFlight)}
+            workflowStatus={workflowStatus}
+            onResumed={onWorkflowResumed}
+          />
+        ) : null}
         {wfId ? (
           <TeamHitlBanner
             workflowRunId={wfId}
@@ -927,51 +839,6 @@ const styles: Record<string, CSSProperties> = {
     paddingBottom: 10,
     borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
   },
-  runStrip: {
-    flexShrink: 0,
-    borderBottom: "1px solid var(--qb-team-shell-border, #2d2d32)",
-    marginBottom: 8,
-    paddingBottom: 8,
-  },
-  runStripToggle: {
-    width: "100%",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: 2,
-    border: "none",
-    background: "transparent",
-    color: "#e4e4e7",
-    cursor: "pointer",
-    padding: "4px 0",
-    textAlign: "left",
-  },
-  runStripTitle: { fontSize: 12, fontWeight: 600, color: "#93c5fd" },
-  runStripSummary: { fontSize: 11, color: "#a1a1aa" },
-  runStripBody: { display: "flex", flexDirection: "column", gap: 8, marginTop: 8 },
-  runStripLabel: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 4,
-    fontSize: 11,
-    color: "#a1a1aa",
-  },
-  runStripSelect: {
-    fontSize: 12,
-    padding: "6px 8px",
-    borderRadius: 6,
-    border: "1px solid #3f3f46",
-    background: "#18181b",
-    color: "#e4e4e7",
-  },
-  runStripActions: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  runStripConfirmHint: { fontSize: 11, color: "#fbbf24" },
-  runStripSettings: {
-    maxHeight: 360,
-    overflow: "auto",
-    paddingRight: 2,
-  },
-  runStripBtn: { fontSize: 12, padding: "6px 10px" },
   runStripLink: {
     border: "none",
     background: "transparent",

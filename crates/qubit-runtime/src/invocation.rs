@@ -135,6 +135,7 @@ impl InvocationService {
                 crate::engine::RunTurnOpts {
                     max_iterations: Some(max_iters),
                     recipe_key,
+                    ..Default::default()
                 },
             )
             .await;

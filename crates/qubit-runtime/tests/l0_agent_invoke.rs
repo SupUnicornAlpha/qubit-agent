@@ -69,6 +69,7 @@ async fn l0_agent_invoke_tool_records_on_parent_snapshot() {
                 client_meta: None,
             },
             idempotency_key: "l0-inv-1".into(),
+            context: None,
         })
         .await
         .unwrap();

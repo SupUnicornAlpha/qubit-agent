@@ -215,10 +215,14 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "skill.create",
       "skill.patch",
       "skill.archive",
-      "call_mcp",
+      "web.search",
+      "web.fetch",
     ]);
     const def = BY_ID.get("def-orchestrator")!;
     expect(def.version).toMatch(/^4\./);
+    expect(def.tools).toContain("web.search");
+    expect(def.tools).toContain("web.fetch");
+    expect(def.tools).not.toContain("call_mcp");
     expect(def.tools).not.toContain("run_analyst_team");
     expect(def.tools).not.toContain("summarize_team_decision");
     expect(def.tools).not.toContain("fuse_signals");

@@ -133,19 +133,15 @@ export async function buildRuntimeCapabilityManifestForRuntime(
   try {
     const settings = await loadBuiltinConnectorSettings();
     const data = settings["qubit-data"] ?? {};
-    const news = settings["qubit-news"] ?? {};
     const fundamentalsToken = data.tushareToken;
-    const newsApiBaseUrl = news.newsApiBaseUrl;
-    const synthetic = news.syntheticWhenEmpty === true || news.syntheticWhenEmpty === "true";
     return buildRuntimeCapabilityManifest({
       ...input,
       providerSettings: {
-        // Native fetchFundamentals intentionally returns empty periods; only an
-        // explicitly configured provider may be advertised as evidence-grade.
         hasFundamentalsProvider:
           typeof fundamentalsToken === "string" && fundamentalsToken.trim().length > 0,
-        hasNewsProvider: typeof newsApiBaseUrl === "string" && newsApiBaseUrl.trim().length > 0,
-        newsSyntheticOnly: synthetic,
+        // Built-in Yahoo Finance + Google News RSS (+ optional article body fetch).
+        hasNewsProvider: true,
+        newsSyntheticOnly: false,
       },
     });
   } catch {

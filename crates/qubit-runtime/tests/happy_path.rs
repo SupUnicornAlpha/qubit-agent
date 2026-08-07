@@ -35,6 +35,7 @@ async fn happy_path_primary_turn() {
                 client_meta: None,
             },
             idempotency_key: "k1".into(),
+            context: None,
         })
         .await
         .expect("start turn");
@@ -150,6 +151,7 @@ async fn cancel_inflight_turn() {
                 client_meta: None,
             },
             idempotency_key: "k-cancel".into(),
+            context: None,
         })
         .await
         .unwrap();
@@ -212,6 +214,7 @@ async fn supervisor_rejects_when_saturated() {
                 client_meta: None,
             },
             idempotency_key: "k-sat-1".into(),
+            context: None,
         })
         .await
         .unwrap();
@@ -226,6 +229,7 @@ async fn supervisor_rejects_when_saturated() {
                 client_meta: None,
             },
             idempotency_key: "k-sat-2".into(),
+            context: None,
         })
         .await;
     assert!(err.is_err(), "expected saturated");

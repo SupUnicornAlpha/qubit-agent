@@ -170,7 +170,8 @@ export async function resolveEffectiveAgentTools(
   ]);
   const baseRaw =
     scenarioScopedTools.length && def.role === "orchestrator"
-      ? scenarioScopedTools
+      ? // Orchestrator owns scenario contract progress, but must keep research-default internet.
+        normalizeToolNames([...scenarioScopedTools, ...INTERNET_SUPPORT_TOOLS])
       : scenarioScopedTools.length
         ? specialistDeclaredTools
         : normalizeToolNames([...(def.tools ?? []), ...scenarioTools, ...INTERNET_SUPPORT_TOOLS]);

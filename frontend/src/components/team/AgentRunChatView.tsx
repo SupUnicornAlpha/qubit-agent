@@ -20,6 +20,7 @@ import {
 import { avatarColorFor, avatarLabelFor, formatRoleName } from "./conversationAvatar";
 import { looksLikeMarkdown } from "../../lib/looksLikeMarkdown";
 import { MarkdownBubble } from "../chat/MarkdownBubble";
+import { isUiHiddenAgentThought } from "../../lib/uiHiddenAgentThought";
 
 export type AgentRunPanelData = {
   role: string;
@@ -322,6 +323,7 @@ export const AgentRunChatView: FC<AgentRunChatViewProps> = ({
     tools.forEach((t) => list.push({ kind: "tool", ts: t.createdAt, raw: t }));
     mcps.forEach((m) => list.push({ kind: "mcp", ts: m.createdAt, raw: m }));
     steps.forEach((s) => {
+      if (isUiHiddenAgentThought(s.thought, s.actionJson)) return;
       if (compact && !s.thought) return;
       list.push({ kind: "step", ts: s.createdAt, raw: s });
     });
@@ -688,6 +690,7 @@ const McpBubble: FC<{
 
 const StepBubble: FC<{ step: AnalystTeamGraphAgentStep; role: string }> = ({ step, role }) => {
   const { t } = useTranslation();
+  if (isUiHiddenAgentThought(step.thought, step.actionJson)) return null;
   const thoughtText = step.thought ? truncate(step.thought, 3000) : "";
   /**
    * ReAct 思考文本通常是 LLM 自由输出，常带 `## 标题` / `- 列表` / 行内代码，
@@ -917,7 +920,9 @@ const AgentRunCompactView: FC<
       {steps.length > 0 ? (
         <div style={{ maxHeight: 160, overflow: "auto", marginBottom: 8 }}>
           <div style={{ fontSize: 11, color: "#a1a1aa", marginBottom: 4 }}>{t("team.agentRun.sectionReact")}</div>
-          {steps.map((s) => (
+          {steps
+            .filter((s) => !isUiHiddenAgentThought(s.thought, s.actionJson))
+            .map((s) => (
             <details key={s.id} style={{ marginBottom: 6 }}>
               <summary style={{ cursor: "pointer", color: "#e4e4e7" }}>
                 [{formatTs(s.createdAt)}] {s.phase} · {s.actionType} · step {s.stepIndex}

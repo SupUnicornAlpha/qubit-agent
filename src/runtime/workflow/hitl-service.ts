@@ -612,14 +612,13 @@ export function evaluateChatHitlTrigger(input: {
 
 /**
  * Chat orchestrator HITL 模式解析：
- *   - 显式设置过 `hitlChatMode` 优先；
- *   - 否则取 v2 默认 'ai'。
- *
- * v1 字段 `hitlChat` 已通过 migration 0053 统一改写为 `hitlChatMode`，frontend 自
- * P1-H 起也不再写入，因此这里不再需要 v1 fallback 分支。
+ *   - 显式 `hitlChatMode` 优先；
+ *   - 否则回退 `hitlMode`（Team Orchestrator 面板 / 创建工作流只写后者）；
+ *   - 再否则 v2 默认 'ai'。
  */
 function resolveChatHitlMode(loopOptions: LoopOptionsJson): "off" | "ai" | "always" {
   if (loopOptions.hitlChatMode) return loopOptions.hitlChatMode;
+  if (loopOptions.hitlMode) return loopOptions.hitlMode;
   return "ai";
 }
 

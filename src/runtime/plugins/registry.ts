@@ -24,15 +24,12 @@ import {
   getOfficialPluginPack,
   listOfficialPluginPacks,
 } from "./official-packs";
-import {
-  INTERNET_PLUGIN_ID,
-  QUANT_DATA_PLUGIN_ID,
-  type PluginListItem,
-  type PluginManifest,
-  type PluginOriginFormat,
+import type {
+  PluginListItem,
+  PluginManifest,
+  PluginOriginFormat,
 } from "./types";
 import { seedBrokerMcpServer } from "../seed-broker-mcp";
-import { ensureDefaultFutuBrokerAccount, ensureFutuRuntime } from "../market/futu-runtime";
 
 function riskToSafety(risk: string | null | undefined): "low" | "medium" | "high" {
   if (risk === "high") return "high";
@@ -347,6 +344,9 @@ export async function installPlugin(input: {
       warnings.push(`seed qubit-broker MCP: ${(e as Error).message}`);
     }
     try {
+      const { ensureDefaultFutuBrokerAccount, ensureFutuRuntime } = await import(
+        "../market/futu-runtime"
+      );
       await ensureDefaultFutuBrokerAccount();
       const runtime = await ensureFutuRuntime();
       warnings.push(runtime.message);
@@ -428,7 +428,7 @@ export async function uninstallPlugin(input: {
   installKey: string;
 }): Promise<{ ok: true; message: string } | { ok: false; error: string; status?: number }> {
   const key = input.installKey;
-  if (key === INTERNET_PLUGIN_ID || key === QUANT_DATA_PLUGIN_ID || key.startsWith("builtin:")) {
+  if (key === "builtin:internet" || key === "builtin:quant-data" || key.startsWith("builtin:")) {
     return { ok: false, error: "官方 builtin pack 不可卸载", status: 400 };
   }
   if (key.startsWith("mcp:")) {

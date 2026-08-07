@@ -4,6 +4,7 @@ import { checkRequiredArtifacts } from "../agent-readiness/quality/artifact-chec
 import { SCENARIO_EXPECTATIONS } from "../agent-readiness/quality/scenario-expectations";
 import type { ScenarioRecipe } from "../agent-readiness/scenarios";
 import { readLatestDeliveryVerdict } from "../policy/delivery-ledger";
+import { toolMatchesRequiredCapability } from "../tools/data-gap";
 import type {
   RunEnvelope,
   RunMemoryTelemetry,
@@ -209,13 +210,7 @@ function deriveRecipeTelemetry(
   const matched: string[] = [];
   const missed: string[] = [];
   for (const req of required) {
-    const hit = names.some(
-      (name) =>
-        name === req ||
-        name.endsWith(`.${req}`) ||
-        name.includes(req) ||
-        req.includes(name)
-    );
+    const hit = names.some((name) => toolMatchesRequiredCapability(name, req));
     if (hit) matched.push(req);
     else missed.push(req);
   }

@@ -113,11 +113,11 @@ export const ExplorerSessionsPanel: FC = () => {
         type="button"
         className="qb-explorer-assets__row"
         onClick={() => {
-          setActiveView("chat");
+          setActiveView("team");
           setAgentPanelOpen(true);
         }}
       >
-        <span>{t("proShell.sessions.openChatView")}</span>
+        <span>{t("proShell.sessions.focusAgent")}</span>
       </button>
       {error ? <div className="qb-explorer-assets__meta">{error}</div> : null}
       {chatSessions.length === 0 ? (

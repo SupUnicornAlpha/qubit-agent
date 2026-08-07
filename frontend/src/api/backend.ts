@@ -1200,6 +1200,49 @@ export async function interruptWorkflow(
   return res.data;
 }
 
+export type WorkflowResumeStatus = {
+  workflowId: string;
+  status: string;
+  resumable: boolean;
+  reason: string | null;
+  hasBunSnapshot: boolean;
+  hasCoreSession: boolean;
+  snapshot?: { phase: string; stepIndex: number; createdAt: string };
+  suggestedMode: "checkpoint" | "fresh";
+  interruptionHint: string | null;
+};
+
+export async function getWorkflowResumeStatus(
+  workflowId: string
+): Promise<WorkflowResumeStatus> {
+  const res = await httpGet<{ data: WorkflowResumeStatus }>(
+    `/api/v1/workflows/${encodeURIComponent(workflowId)}/resume-status`
+  );
+  return res.data;
+}
+
+/** Cursor-style resume from checkpoint (or fresh restart). */
+export async function resumeWorkflow(
+  workflowId: string,
+  input?: { mode?: "checkpoint" | "fresh"; note?: string }
+): Promise<{
+  ok: boolean;
+  taskId: string;
+  mode: "checkpoint" | "fresh";
+  status: WorkflowResumeStatus;
+}> {
+  const res = await httpPost<{
+    ok: boolean;
+    data: {
+      ok: boolean;
+      taskId: string;
+      mode: "checkpoint" | "fresh";
+      status: WorkflowResumeStatus;
+    };
+  }>(`/api/v1/workflows/${encodeURIComponent(workflowId)}/resume`, input ?? {});
+  return res.data;
+}
+
 /**
  * v2：HITL 卡片支持的交互形态。
  * - approve_only：批准 / 拒绝（v1 兼容默认值）

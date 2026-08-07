@@ -105,7 +105,6 @@ export const CommandPalette: FC = () => {
       keywords: `${p.id} page ${p.titleKey}`,
       run: () => {
         setActiveView(p.id as ActiveView);
-        if (p.id === "chat") setAgentPanelOpen(true);
         close();
       },
     }));
