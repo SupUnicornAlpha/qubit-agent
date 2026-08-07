@@ -1,4 +1,4 @@
-import { eq, inArray, asc } from "drizzle-orm";
+import { eq, inArray, asc, desc } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
@@ -17,6 +17,19 @@ import {
 } from "../../db/sqlite/schema";
 import { parseAgentPlanSnapshot, type AgentPlanSnapshot } from "../agent-control-mode";
 import { compactHeavyJson } from "../util/compact-heavy-json";
+
+/** UI sync budget: long sessions must not dump the whole history in one team-graph GET. */
+const TEAM_GRAPH_INTERACTION_LIMIT = 500;
+const TEAM_GRAPH_STEP_LIMIT = 300;
+const TEAM_GRAPH_MCP_LIMIT = 300;
+const TEAM_GRAPH_TOOL_LIMIT = 500;
+const TEAM_GRAPH_CONTENT_CHARS = 4_000;
+const TEAM_GRAPH_THOUGHT_CHARS = 4_000;
+
+function clipText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…(+${value.length - max} chars)`;
+}
 
 /** 节点大类，供前端按类型上不同图标（user=人形 / agent=电脑 / tool=扳手 / skill=书）。 */
 export type TeamGraphNodeType = "user" | "agent" | "tool" | "skill";
@@ -222,18 +235,39 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
 }> {
   const db = await getDb();
 
-  const [logged, signals, sessions, instances, steps, mcpRows, workflowRows, conversationRows] =
+  const [loggedDesc, signals, sessions, instances, stepsDesc, mcpRowsDesc, workflowRows, conversationRowsDesc] =
     await Promise.all([
       db
         .select()
         .from(researchTeamInteraction)
         .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
-        .orderBy(asc(researchTeamInteraction.createdAt)),
+        .orderBy(desc(researchTeamInteraction.createdAt))
+        .limit(TEAM_GRAPH_INTERACTION_LIMIT),
       db.select().from(analystSignal).where(eq(analystSignal.workflowRunId, workflowRunId)),
       db.select().from(debateSession).where(eq(debateSession.workflowRunId, workflowRunId)),
       db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
-      db.select().from(agentStep).where(eq(agentStep.workflowRunId, workflowRunId)),
-      db.select().from(mcpCallLog).where(eq(mcpCallLog.workflowRunId, workflowRunId)),
+      db
+        .select()
+        .from(agentStep)
+        .where(eq(agentStep.workflowRunId, workflowRunId))
+        .orderBy(desc(agentStep.createdAt))
+        .limit(TEAM_GRAPH_STEP_LIMIT),
+      db
+        .select({
+          id: mcpCallLog.id,
+          agentStepId: mcpCallLog.agentStepId,
+          serverName: mcpCallLog.serverName,
+          toolName: mcpCallLog.toolName,
+          status: mcpCallLog.status,
+          latencyMs: mcpCallLog.latencyMs,
+          createdAt: mcpCallLog.createdAt,
+          requestJson: mcpCallLog.requestJson,
+          errorCode: mcpCallLog.errorCode,
+        })
+        .from(mcpCallLog)
+        .where(eq(mcpCallLog.workflowRunId, workflowRunId))
+        .orderBy(desc(mcpCallLog.createdAt))
+        .limit(TEAM_GRAPH_MCP_LIMIT),
       db
         .select({ planJson: workflowRun.planJson })
         .from(workflowRun)
@@ -244,10 +278,18 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
         .from(chatMessageWorkflowLink)
         .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
         .where(eq(chatMessageWorkflowLink.workflowRunId, workflowRunId))
-        .orderBy(asc(chatMessage.createdAt)),
+        .orderBy(desc(chatMessage.createdAt))
+        .limit(TEAM_GRAPH_INTERACTION_LIMIT),
     ]);
 
-  const definitions = await db.select().from(agentDefinition);
+  const logged = [...loggedDesc].reverse();
+  const steps = [...stepsDesc].reverse();
+  const mcpRows = [...mcpRowsDesc].reverse();
+  const conversationRows = [...conversationRowsDesc].reverse();
+
+  const definitions = await db
+    .select({ id: agentDefinition.id, role: agentDefinition.role })
+    .from(agentDefinition);
   const defRole = new Map(definitions.map((d) => [d.id, d.role]));
 
   const instanceRole = new Map<string, string>();
@@ -256,16 +298,35 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
   }
 
   const stepIds = steps.map((s) => s.id);
-  const allTools =
+  const [allToolsDesc, skillRows] = await Promise.all([
     stepIds.length > 0
-      ? await db.select().from(toolCallLog).where(inArray(toolCallLog.agentStepId, stepIds))
-      : [];
-
-  // Skill 召回（reason 节点检索出的候选 skill）：按 role 聚合成 agent → __skills__ 边。
-  const skillRows = await db
-    .select()
-    .from(skillRecallLog)
-    .where(eq(skillRecallLog.workflowRunId, workflowRunId));
+      ? db
+          .select({
+            id: toolCallLog.id,
+            agentStepId: toolCallLog.agentStepId,
+            toolName: toolCallLog.toolName,
+            toolKind: toolCallLog.toolKind,
+            status: toolCallLog.status,
+            latencyMs: toolCallLog.latencyMs,
+            createdAt: toolCallLog.createdAt,
+            errorMessage: toolCallLog.errorMessage,
+            requestJson: toolCallLog.requestJson,
+            // responseJson omitted: bars/equity/traces dominate payload size
+          })
+          .from(toolCallLog)
+          .where(inArray(toolCallLog.agentStepId, stepIds))
+          .orderBy(desc(toolCallLog.createdAt))
+          .limit(TEAM_GRAPH_TOOL_LIMIT)
+      : Promise.resolve([]),
+    db
+      .select({
+        definitionId: skillRecallLog.definitionId,
+      })
+      .from(skillRecallLog)
+      .where(eq(skillRecallLog.workflowRunId, workflowRunId))
+      .limit(200),
+  ]);
+  const allTools = [...allToolsDesc].reverse();
 
   const stepById = new Map(steps.map((s) => [s.id, s]));
   const agentSteps: TeamGraphAgentStep[] = steps.map((s) => ({
@@ -275,9 +336,9 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     stepIndex: s.stepIndex,
     phase: s.phase,
     actionType: s.actionType,
-    thought: s.thought,
-    actionJson: s.actionJson,
-    observationJson: s.observationJson,
+    thought: clipText(String(s.thought ?? ""), TEAM_GRAPH_THOUGHT_CHARS),
+    actionJson: compactHeavyJson(s.actionJson),
+    observationJson: compactHeavyJson(s.observationJson),
     latencyMs: s.latencyMs,
     createdAt: s.createdAt,
   }));
@@ -296,7 +357,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       createdAt: t.createdAt,
       agentStepId: t.agentStepId,
       requestJson: compactHeavyJson(t.requestJson),
-      responseJson: compactHeavyJson(t.responseJson),
+      responseJson: null,
       errorMessage: t.errorMessage,
     };
   });
@@ -314,7 +375,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       latencyMs: m.latencyMs,
       createdAt: m.createdAt,
       requestJson: compactHeavyJson(m.requestJson),
-      responseJson: compactHeavyJson(m.responseJson ?? null),
+      responseJson: null,
       errorCode: m.errorCode ?? null,
     };
   });
@@ -388,7 +449,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       kind: r.kind,
       toolKind: r.toolKind,
       toolName: r.toolName,
-      contentText: r.contentText,
+      contentText: clipText(String(r.contentText ?? ""), TEAM_GRAPH_CONTENT_CHARS),
       payloadJson: compactHeavyJson(r.payloadJson),
       createdAt: r.createdAt,
     })),

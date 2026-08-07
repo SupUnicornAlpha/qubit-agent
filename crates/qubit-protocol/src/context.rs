@@ -339,6 +339,10 @@ pub fn user_slot_order() -> &'static [&'static str] {
 ///
 /// Core applies these knobs mechanically; hosts own product heuristics
 /// (e.g. when to disable finance recall after a topic switch).
+///
+/// Authority (P3): `prioritize_current_goal` + user `goal` text are authoritative;
+/// `session_chronicle` only fills the `session` slot as optional background.
+/// Display / UI copy must never be sent here.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct TurnContextOpts {
@@ -363,9 +367,21 @@ pub struct TurnContextOpts {
     /// After assembly, remove bootstrap memory/workspace tools from the model surface.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub strip_bootstrap_memory_tools: Option<bool>,
+    /// Host-compressed session chronicle for the `session` slot (never authoritative).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_chronicle: Option<String>,
+    /// Max chars for a single tool observation body in turn history. Default: 6000.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_observation_max_chars: Option<u32>,
+    /// Protect newest tool observation chars; older ones stubbed. Default: 40000. `0` = off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_observation_protect_chars: Option<u32>,
 }
 
 impl TurnContextOpts {
+    pub const DEFAULT_TOOL_OBSERVATION_MAX_CHARS: u32 = 6_000;
+    pub const DEFAULT_TOOL_OBSERVATION_PROTECT_CHARS: u32 = 40_000;
+
     pub fn auto_recall_enabled(&self) -> bool {
         self.auto_recall.unwrap_or(true)
     }
@@ -395,5 +411,29 @@ impl TurnContextOpts {
 
     pub fn strip_bootstrap_memory_tools(&self) -> bool {
         self.strip_bootstrap_memory_tools.unwrap_or(false)
+    }
+
+    pub fn session_chronicle(&self) -> Option<&str> {
+        self.session_chronicle
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn tool_observation_max_chars(&self) -> usize {
+        self.tool_observation_max_chars
+            .unwrap_or(Self::DEFAULT_TOOL_OBSERVATION_MAX_CHARS) as usize
+    }
+
+    /// `None` means prune disabled (`protect_chars == 0`).
+    pub fn tool_observation_protect_chars(&self) -> Option<usize> {
+        let n = self
+            .tool_observation_protect_chars
+            .unwrap_or(Self::DEFAULT_TOOL_OBSERVATION_PROTECT_CHARS);
+        if n == 0 {
+            None
+        } else {
+            Some(n as usize)
+        }
     }
 }

@@ -257,12 +257,21 @@ impl ContextAssembler for DefaultContextAssembler {
         );
         raw.insert(
             "session".into(),
-            format!(
-                "session={} kind={:?} mode={}",
-                input.session.session_id,
-                input.session.execution_kind,
-                input.session.interaction_mode.as_str()
-            ),
+            {
+                let meta = format!(
+                    "session={} kind={:?} mode={}",
+                    input.session.session_id,
+                    input.session.execution_kind,
+                    input.session.interaction_mode.as_str()
+                );
+                match opts.session_chronicle() {
+                    Some(chronicle) => {
+                        let body = format!("{meta}\n\n{chronicle}");
+                        maybe_wrap_background(prioritize, "session_chronicle", body)
+                    }
+                    None => meta,
+                }
+            },
         );
         if let Some(ref wm) = input.working {
             raw.insert(

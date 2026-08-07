@@ -1,13 +1,20 @@
 {
   "key": "strategy",
   "aliases": ["strategy_authoring", "strategy_long_short", "st", "long_short"],
-  "version": "2026-08-05.3",
+  "version": "2026-08-07.1",
   "capability_owners": {
     "strategy": "strategy"
   },
   "role_tool_allowlist": {
-    "orchestrator": ["update_plan", "topology.dispatch"],
-    "strategy": ["strategy.create_version", "strategy.compose", "backtest.run"]
+    "orchestrator": ["update_plan", "topology.dispatch", "agent.invoke"],
+    "strategy": [
+      "strategy.create_version",
+      "strategy.compose",
+      "backtest.run",
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy"
+    ]
   },
   "stall_budget": {
     "tools": [
@@ -49,10 +56,11 @@
     }
   },
   "checklist_prompt": [
-    "1. strategy.create_version",
-    "2. strategy.compose",
-    "3. backtest.run（如工具面允许）",
-    "4. 输出五段答案；禁止 screener/readiness/factor.list 代替策略交付",
+    "双路径择一交付（Prime 06 SC3）：",
+    "A 因子配方：strategy.create_version → strategy.compose → backtest.run",
+    "B Strategy API：agent.invoke(callee_spec_id=def-strategy-coder) 或直接 strategy.compile → strategy.contract_backtest（可选 paper_deploy/paper_run）",
+    "路径 B 写码验证时必须有 compile + contract_backtest 成功 observation；禁止只贴伪代码",
+    "输出五段答案；禁止 screener/readiness/factor.list 代替策略交付",
     "同类工具连打 ≤3 次后必须写终答，禁止无目的刷屏"
   ]
 }

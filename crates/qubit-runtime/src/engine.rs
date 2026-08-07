@@ -11,6 +11,7 @@ use qubit_protocol::{
 };
 
 use crate::cancel::CancelToken;
+use crate::chat_history::{prune_tool_observations, truncate_observation};
 use crate::checkpoint::{CheckpointRecord, CheckpointStore};
 use crate::context::{
     ContextAssembler, DefaultContextAssembler, SlotAssembleInput, StaticIdentityLoader,
@@ -44,6 +45,7 @@ const TOOL_LOOP_HARNESS: &str = r#"
 7. 因子相关：只用点号工具名 factor.register / factor.compute / factor.autoEvaluate / factor.mine.llm；禁止 factor_register 等假名；参数平铺勿包 arguments；创建因子必须 register 落库，禁止只写口头因子表或把工具缺口当终答。
 8. MCP 只用 `mcp:<server>:<tool>` 直连名；不要用 call_mcp 元工具。
 9. workspace.context.snapshot / research.thesis.write 参数不全时不要反复重试——缺字段先补齐或改用其它路径。
+10. 多维研究 / 新闻深度 / 长回测：优先 call_team_* 或 agent.invoke 拆上下文；拿到结构化回报后再写合同，不要一人刷齐专家本职探测。
 "#;
 
 /// Tools already exercised during context assembly when auto-recall / workspace
@@ -541,6 +543,10 @@ impl TurnEngine {
             let seq = self.events.next_seq().await;
             self.checkpoint(session_id, &turn, seq, None).await?;
 
+            if let Some(protect) = opts.context.tool_observation_protect_chars() {
+                prune_tool_observations(&mut history, protect);
+            }
+
             let sample = match self
                 .models
                 .sample(
@@ -830,6 +836,10 @@ impl TurnEngine {
                             .to_string()
                         }
                     });
+                let content = truncate_observation(
+                    &content,
+                    opts.context.tool_observation_max_chars(),
+                );
                 history.push(json!({
                     "role": "tool",
                     "tool_call_id": call.call_id,

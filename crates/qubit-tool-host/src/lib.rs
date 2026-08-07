@@ -7,6 +7,6 @@ pub mod legacy;
 
 pub use error::ToolHostError;
 pub use legacy::{
-    LegacyBridgeClient, LegacyBridgeConfig, LegacyInvokeParams, LegacyInvokeResult,
-    LegacyToolSpec, DEFAULT_BRIDGED_TOOLS,
+    is_default_bridged_tool_name, LegacyBridgeClient, LegacyBridgeConfig, LegacyInvokeParams,
+    LegacyInvokeResult, LegacyToolSpec, DEFAULT_BRIDGED_TOOLS,
 };

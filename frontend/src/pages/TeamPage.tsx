@@ -26,6 +26,12 @@ import { LiveConversationView, type LiveConversationEvent } from "../components/
 import { ResizableY } from "../components/team/ResizableY";
 import { TeamHitlBanner } from "../components/team/TeamHitlBanner";
 import type { OrchestratorPlan } from "../components/team/PlanCard";
+import {
+  latestPlanFromSegments,
+  planStructureKey,
+  type PlanTimelineSegment,
+  upsertPlanSegment,
+} from "../components/team/planSegments";
 import { OrchestratorChatPanel, type OrchestratorArtifact } from "../components/team/OrchestratorChatPanel";
 import { FsWorkspaceExplorer } from "../components/workspace/FsWorkspaceExplorer";
 import { WorkspaceFilePane } from "../components/workspace/WorkspaceFilePane";
@@ -175,6 +181,11 @@ export const TeamDashboardPanel: FC = () => {
   };
 
   const [workflowRunId, setWorkflowRunId] = useState("");
+  /** 始终指向最新选中的 workflow，供慢请求 / 对话收口校验，避免切走后旧响应回写。 */
+  const workflowRunIdRef = useRef(workflowRunId);
+  useEffect(() => {
+    workflowRunIdRef.current = workflowRunId;
+  }, [workflowRunId]);
   const [workflowOptions, setWorkflowOptions] = useState<Array<Record<string, unknown>>>([]);
   const [workflowKindFilter, setWorkflowKindFilter] = useState<WorkflowKind | "all">("all");
   const [running, setRunning] = useState(false);
@@ -427,7 +438,11 @@ export const TeamDashboardPanel: FC = () => {
   /** 收口事件防抖回拉 teamGraph 的 timer（chat 路径无 2.5s 轮询，靠它带出最终答复）。 */
   const settleRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Coding-Agent 体验 P1：Orchestrator 分步计划/TODO + 当前「正在调用什么、为何」活动行。 */
-  const [teamPlan, setTeamPlan] = useState<OrchestratorPlan | null>(null);
+  const [teamPlanSegments, setTeamPlanSegments] = useState<PlanTimelineSegment[]>([]);
+  const teamPlan = useMemo(
+    () => latestPlanFromSegments(teamPlanSegments),
+    [teamPlanSegments]
+  );
   const [activeRationale, setActiveRationale] = useState<{
     tool: string;
     why: string;
@@ -448,6 +463,10 @@ export const TeamDashboardPanel: FC = () => {
   const [userEchoes, setUserEchoes] = useState<Array<{ id: string; content: string; ts: string }>>(
     []
   );
+  const userEchoesRef = useRef(userEchoes);
+  useEffect(() => {
+    userEchoesRef.current = userEchoes;
+  }, [userEchoes]);
   const pushUserEcho = useCallback((content: string) => {
     const text = content.trim();
     if (!text) return;
@@ -461,6 +480,8 @@ export const TeamDashboardPanel: FC = () => {
   const [teamArtifactsError, setTeamArtifactsError] = useState<string | null>(null);
 
   const [teamGraph, setTeamGraph] = useState<AnalystTeamGraphPayload | null>(null);
+  /** 单调递增；切 workflow 后丢弃过期的 getAnalystTeamGraph 响应（长对话尤其容易晚归）。 */
+  const teamGraphLoadGenRef = useRef(0);
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
@@ -506,18 +527,36 @@ export const TeamDashboardPanel: FC = () => {
   }, []);
 
   const loadTeamGraph = useCallback(async (opts?: { preserveSelection?: boolean }) => {
-    if (!workflowRunId.trim()) {
+    const wf = workflowRunId.trim();
+    if (!wf) {
+      teamGraphLoadGenRef.current += 1;
       setTeamGraph(null);
+      setGraphLoading(false);
       return;
     }
+    const gen = ++teamGraphLoadGenRef.current;
     setGraphLoading(true);
     try {
-      const g = await getAnalystTeamGraph(workflowRunId.trim());
+      const g = await getAnalystTeamGraph(wf);
+      // 用户已切到其他工作流：丢掉本响应，否则长对话会把右侧/中栏「钉」回旧任务。
+      if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
+        return;
+      }
       setTeamGraph(g);
-      setTeamPlan(g?.plan ?? null);
+      if (g?.plan?.steps?.length) {
+        const at = g.plan.updatedAt ?? new Date().toISOString();
+        setTeamPlanSegments((prev) => upsertPlanSegment(prev, g.plan as OrchestratorPlan, at));
+      }
       if (!opts?.preserveSelection) setGraphSelection(null);
+    } catch {
+      if (gen !== teamGraphLoadGenRef.current || workflowRunIdRef.current.trim() !== wf) {
+        return;
+      }
+      setTeamGraph(null);
     } finally {
-      setGraphLoading(false);
+      if (gen === teamGraphLoadGenRef.current) {
+        setGraphLoading(false);
+      }
     }
   }, [workflowRunId]);
 
@@ -560,7 +599,23 @@ export const TeamDashboardPanel: FC = () => {
     };
   }, []);
 
+  /**
+   * 切换研究任务：先清空中栏/右栏本地态，再拉新 graph。
+   * 配合 loadTeamGraph 的 gen 校验，避免长对话慢请求把 UI「钉」回旧任务。
+   */
   useEffect(() => {
+    setTeamGraph(null);
+    setGraphSelection(null);
+    setStreamingByRole({});
+    setReasoningByRole({});
+    setUserEchoes([]);
+    setTeamPlanSegments([]);
+    setActiveRationale(null);
+    setOrchestratorStreamEvents([]);
+    setOrchestratorChatInFlight(false);
+    setRunProgress("");
+    pendingFollowUpsRef.current = [];
+    settledRolesRef.current = new Set();
     void loadTeamGraph();
   }, [loadTeamGraph]);
 
@@ -713,25 +768,25 @@ export const TeamDashboardPanel: FC = () => {
     [requestChartReload, setChartSpec]
   );
 
-  // 工具联动：新的成功行情/新闻调用自动同步标的；每个 workflow 首次命中时切到对应画布。
+  // 工具联动：同步标的到 chartSpec；不自动抢走画布 Tab（默认保持拓扑）。
   useEffect(() => {
     const link = latestSuccessfulMarketLink(researchCanvasToolHits);
     if (!link?.symbol) return;
     if (lastLinkedToolIdRef.current === link.id) return;
-    const isFirst = lastLinkedToolIdRef.current == null;
     lastLinkedToolIdRef.current = link.id;
     setChartSpec({
       symbol: link.symbol,
       ...(link.exchange ? { exchange: coerceChartMarketExchange(link.exchange) } : {}),
     });
-    requestChartReload();
-    if (isFirst) {
-      setResearchCanvasTab(link.kind === "news" ? "news" : "market");
+    // 只有用户已在行情/新闻 Tab 时才重拉，避免切 workflow 时拓扑与 klines 抢后端。
+    if (researchCanvasTab === "market" || researchCanvasTab === "news") {
+      requestChartReload();
     }
-  }, [researchCanvasToolHits, requestChartReload, setChartSpec]);
+  }, [researchCanvasToolHits, requestChartReload, setChartSpec, researchCanvasTab]);
 
   useEffect(() => {
     lastLinkedToolIdRef.current = null;
+    setResearchCanvasTab("topology");
   }, [workflowRunId]);
 
   // 左栏研究范围 → 画布标的联动（单标的/篮子首标/板块成分首标/期权标的）
@@ -1004,7 +1059,7 @@ export const TeamDashboardPanel: FC = () => {
     setStreamingByRole({});
     setReasoningByRole({});
     setUserEchoes([]);
-    setTeamPlan(null);
+    setTeamPlanSegments([]);
     setActiveRationale(null);
     setOrchestratorStreamEvents([]);
     settledRolesRef.current = new Set();
@@ -1013,6 +1068,8 @@ export const TeamDashboardPanel: FC = () => {
     const unsubscribe = subscribeWorkflowEvents({
       workflowId: wf,
       onEvent: (event) => {
+        // 已切到其他任务：忽略本订阅迟到事件（长对话更易晚到）。
+        if (workflowRunIdRef.current.trim() !== wf) return;
         const role = event.role || "unknown";
         if (
           event.type === "tool_call_start" ||
@@ -1022,15 +1079,15 @@ export const TeamDashboardPanel: FC = () => {
           setOrchestratorStreamEvents((prev) => [...prev, event].slice(-ORCHESTRATOR_STREAM_CAP));
         }
         if (event.type === "plan") {
-          // Coding-Agent 体验 P1：分步计划/TODO 快照 → 右栏计划卡片。
+          // 分步计划快照 → 任务段落（结构变则新开一段，仅进度则刷新当前段）。
           const steps = Array.isArray(event.payload?.["steps"])
             ? (event.payload["steps"] as OrchestratorPlan["steps"])
             : [];
           const mode = event.payload?.["mode"];
           const goal = event.payload?.["goal"];
-          setTeamPlan({
+          const snapshot: OrchestratorPlan = {
             steps,
-            updatedAt: String(event.payload?.["updatedAt"] ?? ""),
+            updatedAt: String(event.payload?.["updatedAt"] ?? event.ts ?? ""),
             ...(mode === "agent" ||
             mode === "plan" ||
             mode === "goal" ||
@@ -1041,6 +1098,26 @@ export const TeamDashboardPanel: FC = () => {
             ...(goal && typeof goal === "object"
               ? { goal: goal as NonNullable<OrchestratorPlan["goal"]> }
               : {}),
+          };
+          const at = snapshot.updatedAt || event.ts || new Date().toISOString();
+          setTeamPlanSegments((prev) => {
+            const last = prev[prev.length - 1];
+            const isNew =
+              !last || planStructureKey(last.plan) !== planStructureKey(snapshot);
+            let startAt = at;
+            if (isNew) {
+              // 把触发该任务的最近一条用户消息划入新段落（否则仍挂在上一段下面）。
+              const echoes = userEchoesRef.current;
+              const lastEcho = echoes[echoes.length - 1];
+              if (
+                lastEcho?.ts &&
+                (!last || lastEcho.ts >= last.startedAt) &&
+                lastEcho.ts <= at
+              ) {
+                startAt = lastEcho.ts;
+              }
+            }
+            return upsertPlanSegment(prev, snapshot, startAt);
           });
           return;
         }
@@ -1584,12 +1661,7 @@ export const TeamDashboardPanel: FC = () => {
     setGraphSelection(null);
   }, [workflowRunId]);
 
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      void loadTeamGraph();
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [workflowRunId, loadTeamGraph]);
+  // NOTE: team graph 加载见上方依赖 loadTeamGraph 的 effect（含切换清空）；勿再 debounce 双发。
 
   useEffect(() => {
     void (async () => {
@@ -1656,6 +1728,10 @@ export const TeamDashboardPanel: FC = () => {
     title: string;
     summary: string;
   } | null>(null);
+
+  useEffect(() => {
+    setTeamPendingHitl(null);
+  }, [workflowRunId]);
 
   useEffect(() => {
     const st = selectedWorkflowRow?.status
@@ -1756,6 +1832,7 @@ export const TeamDashboardPanel: FC = () => {
     if (!options?.message) setTeamAnalysisContext("");
     setOrchestratorChatInFlight(true);
     setRunProgress("Orchestrator 处理中…（自主判断是否调度团队）");
+    const wfAtStart = wf;
     try {
       const turn = await createConversationTurn({
         sessionId,
@@ -1769,6 +1846,10 @@ export const TeamDashboardPanel: FC = () => {
         ...(options?.preserveGoal ? { preserveGoal: true } : {}),
         ...(activeFsWorkspaceId ? { fsWorkspaceId: activeFsWorkspaceId } : {}),
       });
+      // 用户已切走：丢弃本次收口，避免旧会话把右侧钉回。
+      if (workflowRunIdRef.current.trim() !== wfAtStart) {
+        return;
+      }
       if (activeFsWorkspaceId) {
         void putFsWorkspaceRun(activeFsWorkspaceId, wf, {
           title: msg.slice(0, 120),
@@ -1781,6 +1862,7 @@ export const TeamDashboardPanel: FC = () => {
       void refreshWorkflowOptions();
       void loadTeamGraph({ preserveSelection: true });
     } catch (e) {
+      if (workflowRunIdRef.current.trim() !== wfAtStart) return;
       setOrchestratorChatInFlight(false);
       setError((e as Error).message);
       setRunProgress("");
@@ -3309,6 +3391,7 @@ export const TeamDashboardPanel: FC = () => {
               void refreshWorkflowOptions();
             }}
             plan={teamPlan}
+            planSegments={teamPlanSegments}
             onExecutePlan={() => {
               const approvedMessage =
                 "计划已确认。请严格按照当前 workflow 已保存的计划开始执行，持续更新每一步状态，并在完成后给出证据、结论和未完成项。";
@@ -3338,7 +3421,9 @@ export const TeamDashboardPanel: FC = () => {
                     action,
                     ...(text ? { text } : {}),
                   });
-                  setTeamPlan(result.data);
+                  setTeamPlanSegments((prev) =>
+                    upsertPlanSegment(prev, result.data, result.data.updatedAt ?? new Date().toISOString())
+                  );
                   if (action === "resume") {
                     setTeamAgentMode("goal");
                     await handleOrchestratorChat({
@@ -3459,7 +3544,9 @@ const teamStyles: Record<string, CSSProperties> = {
     padding: "3px 9px",
     fontSize: 11,
     borderRadius: 12,
-    border: "1px solid #3f3f46",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#3f3f46",
     cursor: "pointer",
     transition: "background 0.12s ease, color 0.12s ease, border-color 0.12s ease",
     fontFamily: "inherit",
@@ -3902,15 +3989,25 @@ const workflowListStyles: Record<string, CSSProperties> = {
     flexDirection: "column" as const,
     gap: 6,
     padding: "8px 10px",
-    border: "1px solid transparent",
-    borderLeft: "3px solid transparent",
+    // Avoid mixing border shorthand with borderColor / borderLeftColor on select.
+    borderTopWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderLeftWidth: 3,
+    borderStyle: "solid",
+    borderTopColor: "transparent",
+    borderRightColor: "transparent",
+    borderBottomColor: "transparent",
+    borderLeftColor: "transparent",
     borderRadius: 6,
     background: "transparent",
     minWidth: 0,
   },
   itemSelected: {
     background: "var(--qb-team-screener-btn-active-bg, #221838)",
-    borderColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
+    borderTopColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
+    borderRightColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
+    borderBottomColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
     borderLeftColor: "var(--qb-team-screener-btn-active-border, #7c3aed)",
   },
   /** 主区按钮：撑满一行，display:block 让内部 flex 子元素自由排列。 */

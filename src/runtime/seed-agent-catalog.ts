@@ -225,7 +225,8 @@ export const STRATEGY_PIPELINE_GROUP: BuiltinAgentGroupSpec = {
   id: "grp-strategy-pipeline",
   name: "策略撰写（研究→回测→风控）",
   description:
-    "Orchestrator + research/backtest/risk：基于上游研究报告或本页「补充上下文」直接进入策略撰写与回测，跳过 proceedToStrategy 闸门。",
+    "Orchestrator + research/backtest/risk：因子配方走 compose→backtest.run；" +
+    "需要可运行 Strategy API 源码时，Orchestrator 用 agent.invoke(callee_spec_id=def-strategy-coder) 按需唤起策略编码 subagent（不进固定编组，画布活动后才入图）。",
   memberDefinitionIds: [
     "def-orchestrator",
     "def-research",

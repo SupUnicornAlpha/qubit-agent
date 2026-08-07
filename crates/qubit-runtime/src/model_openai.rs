@@ -137,8 +137,12 @@ fn tool_description(name: &str) -> String {
     let bare = name.strip_prefix("tool/").unwrap_or(name);
     match bare {
         "update_plan" => "Update the structured execution plan (steps/status).".into(),
-        "agent.invoke" => "Invoke an isolated subagent with a goal and optional handoff.".into(),
+        "agent.invoke" => "Invoke an isolated specialist subagent (callee_spec_id + goal) for context-split research; returns structured handoff.".into(),
+        "assign_task" => "Assign a specialist task by role/goal (fallback when call_team_* is unavailable).".into(),
         "call_mcp" => "Call an MCP tool via {serverName, toolName, arguments?}.".into(),
+        n if n.starts_with("call_team_") => {
+            format!("Dispatch specialist via A2A ({n}). Prefer for context-split research; args: {{goal}}.")
+        }
         "market.resolve_symbol" => "Resolve a ticker/symbol to a canonical market id.".into(),
         "market.readiness" => "Check market data source readiness.".into(),
         "market.data_sources" => "List configured market data sources.".into(),

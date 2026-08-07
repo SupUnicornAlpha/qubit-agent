@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use crate::error::ToolHostError;
 
 /// Default allowlisted builtins for M4+ grayscale (+ memory for Core RecallPort).
+/// Topology `call_team_*` are advertised dynamically via Bun `legacy.tools.list`.
 pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "market.resolve_symbol",
     "market.readiness",
@@ -34,7 +35,22 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "workspace.context.snapshot",
     "web.search",
     "web.fetch",
+    "assign_task",
+    "order.create_intent",
+    "evaluate_risk",
 ];
+
+/// Whether a tool name is acceptable on the legacy bridge (static list + team dispatch).
+pub fn is_default_bridged_tool_name(name: &str) -> bool {
+    let n = name.trim();
+    if n.is_empty() {
+        return false;
+    }
+    if DEFAULT_BRIDGED_TOOLS.iter().any(|t| *t == n) {
+        return true;
+    }
+    n == "assign_task" || n.starts_with("call_team_")
+}
 
 #[derive(Clone, Debug)]
 pub struct LegacyBridgeConfig {

@@ -54,15 +54,50 @@ describe("prime core adapter helpers", () => {
     expect(text).toContain("[hitl_approval]");
     expect(text).toContain("inbox_x");
     expect(text).toContain("分析 AAPL");
+    expect(text).toContain("AUTHORITATIVE");
   });
 
-  test("buildCoreUserText for chat keeps goal+context", () => {
+  test("buildCoreUserText resume prefers params.goal over workflowGoal", () => {
+    const text = buildCoreUserText({
+      taskType: "workflow_resume",
+      workflowGoal: "长期研究任务",
+      params: {
+        resume: true,
+        goal: "标的是兆易创新",
+      },
+    });
+    expect(text).toContain("[user]\n标的是兆易创新");
+    expect(text).not.toContain("[user]\n长期研究任务");
+    expect(text).toContain("snapshot_resume=true");
+  });
+
+  test("buildCoreUserText for chat keeps goal+chronicle", () => {
     const text = buildCoreUserText({
       taskType: "orchestrator_chat",
-      params: { goal: "hello", context: "ctx" },
+      params: {
+        goal: "hello",
+        context:
+          "OPTIONAL_BACKGROUND (session_chronicle) — do NOT override CURRENT_USER_TASK:\n- user: hi",
+      },
     });
-    expect(text).toContain("[context]\nctx");
+    expect(text).toContain("[session_chronicle]");
+    expect(text).toContain("OPTIONAL_BACKGROUND");
     expect(text).toContain("[user]\nhello");
+    expect(text.indexOf("[user]")).toBeGreaterThan(text.indexOf("[session_chronicle]"));
+  });
+
+  test("buildCoreUserText omitContext leaves only user task", () => {
+    const text = buildCoreUserText({
+      taskType: "orchestrator_chat",
+      omitContext: true,
+      params: {
+        goal: "帮我选股",
+        context: "OPTIONAL_BACKGROUND (session_chronicle) — big manual",
+      },
+    });
+    expect(text).toContain("[user]\n帮我选股");
+    expect(text).not.toContain("session_chronicle");
+    expect(text).not.toContain("big manual");
   });
 
   test("resolveCalleeSpecId maps role and definitionId", async () => {

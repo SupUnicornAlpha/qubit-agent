@@ -16,6 +16,7 @@ import {
   recencyScore,
   tokenize,
 } from "../experience/pipes/recall";
+import { applyLifecycleToScore } from "../experience/lifecycle";
 import { isPitCutoffEnabled } from "./axioms";
 import { incContextMetric } from "./context-metrics";
 import {
@@ -110,7 +111,10 @@ export class FinanceRecall {
         continue;
       }
 
-      rescored.push(this.scoreFinance(exp, hit, tokens, ctx.symbols));
+      const scored = this.scoreFinance(exp, hit, tokens, ctx.symbols);
+      const life = applyLifecycleToScore(exp, scored.score);
+      if (life === null) continue;
+      rescored.push(life === scored.score ? scored : { ...scored, score: life });
     }
 
     if (pitFiltered > 0) incContextMetric("finance.pit_filtered", pitFiltered);

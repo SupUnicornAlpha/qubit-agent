@@ -40,6 +40,9 @@ describe("scenario harness routing for bench recipe keys", () => {
       "strategy.create_version",
       "strategy.compose",
       "backtest.run",
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy",
     ]);
     expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).not.toContain("evaluate_risk");
     expect(builtinByKey("live_trading")?.toolPreset?.builtinTools).not.toContain("rule.evaluate");
@@ -50,6 +53,9 @@ describe("scenario harness routing for bench recipe keys", () => {
     expect(buildFocusedResearchScenarioPrompt("factor")).toContain("factor.register");
     expect(buildFocusedResearchScenarioPrompt("live_trading")).toContain("order.create_intent");
     expect(buildFocusedResearchScenarioPrompt("live_trading")).toContain("strategy.create_version");
+    expect(buildFocusedResearchScenarioPrompt("strategy")).toMatch(
+      /strategy\.compile|strategy\.create_version|def-strategy-coder/
+    );
   });
 
   test("next-action hint points at primary contract tools", () => {

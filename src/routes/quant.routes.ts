@@ -619,3 +619,428 @@ quantRouter.get("/strategy-scripts/:id", async (c) => {
     return c.json({ ok: false, error: (e as Error).message }, 500);
   }
 });
+
+/**
+ * POST /api/v1/quant/strategy-contract/compile
+ * Body: { code: string }
+ * Prime 06：脚本工坊「验证」= Manifest 编译。
+ */
+quantRouter.post("/strategy-contract/compile", async (c) => {
+  try {
+    const body = await c.req.json<{ code?: string; strategyCode?: string }>();
+    const code = String(body.code ?? body.strategyCode ?? "").trim();
+    if (!code) return c.json({ ok: false, error: "code_required" }, 400);
+    const { compileStrategyContract } = await import(
+      "../runtime/strategy/v2/contract-service"
+    );
+    const result = await compileStrategyContract(code);
+    if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
+    return c.json({ ok: true, data: result });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 500);
+  }
+});
+
+/**
+ * POST /api/v1/quant/strategy-contract/backtest
+ * Body: { code, symbol?, limit?, timeframe?, params?, initialCapital?, bars? }
+ */
+quantRouter.post("/strategy-contract/backtest", async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const code = String(body.code ?? body.strategyCode ?? "").trim();
+    if (!code) return c.json({ ok: false, error: "code_required" }, 400);
+    const {
+      backtestStrategyContract,
+      compileStrategyContract,
+      instrumentIdToKlinesSymbol,
+      primaryInstrumentId,
+    } = await import("../runtime/strategy/v2/contract-service");
+    const compiled = await compileStrategyContract(code);
+    if (!compiled.ok) {
+      return c.json({ ok: false, stage: "compile", error: compiled.error }, 422);
+    }
+    const instrumentId =
+      String(body.symbol ?? "").trim() || primaryInstrumentId(compiled.manifest);
+    const timeframe = String(
+      body.timeframe ?? compiled.manifest.primaryFrequency ?? "1d"
+    ).trim();
+    const limit = Math.max(
+      30,
+      Math.min(Number(body.limit ?? 180) || 180, 2000)
+    );
+    let bars = Array.isArray(body.bars) ? body.bars : null;
+    if (!bars) {
+      const { queryKlines } = await import("../runtime/market/klines-query");
+      const q = await queryKlines({
+        symbol: instrumentIdToKlinesSymbol(instrumentId),
+        timeframe,
+        limit,
+      });
+      if (q.error || q.bars.length < 10) {
+        return c.json(
+          {
+            ok: false,
+            stage: "market_data",
+            error: q.error?.message ?? `klines_insufficient:${q.bars.length}`,
+            manifest: compiled.manifest,
+          },
+          422
+        );
+      }
+      bars = q.bars;
+    }
+    const result = await backtestStrategyContract({
+      strategyCode: code,
+      bars: bars as never,
+      symbol: instrumentId,
+      initialCapital: Number(body.initialCapital ?? body.initial_capital ?? 100_000),
+      commission: Number(body.commission ?? 0.001),
+      ...(body.params && typeof body.params === "object"
+        ? { params: body.params as Record<string, unknown> }
+        : {}),
+    });
+    if (!result.ok) {
+      return c.json({ ok: false, stage: "backtest", error: result.error }, 422);
+    }
+    return c.json({
+      ok: true,
+      data: {
+        ...result,
+        equityCurve: result.equityCurve.slice(-60),
+        equityCurveFullLength: result.equityCurve.length,
+        intents: result.intents.slice(0, 40),
+        trades: result.trades.slice(0, 40),
+      },
+    });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 500);
+  }
+});
+
+/**
+ * POST /api/v1/quant/strategy-contract/paper-deploy
+ * Body: { code, paperCapital?, timeframe?, market?, params? }
+ * 固定纸本金注册 PaperSession（进程内）；不等同于 strategy_runtime。
+ */
+quantRouter.post("/strategy-contract/paper-deploy", async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const code = String(body.code ?? body.strategyCode ?? "").trim();
+    if (!code) return c.json({ ok: false, error: "code_required" }, 400);
+    const {
+      compileStrategyContract,
+      primaryInstrumentId,
+      instrumentIdToKlinesSymbol,
+    } = await import("../runtime/strategy/v2/contract-service");
+    const { createPaperSession } = await import(
+      "../runtime/strategy/v2/paper-session-service"
+    );
+    const compiled = await compileStrategyContract(code);
+    if (!compiled.ok) {
+      return c.json({ ok: false, stage: "compile", error: compiled.error }, 422);
+    }
+    const instrumentId = primaryInstrumentId(compiled.manifest);
+    const market =
+      String(body.market ?? "").trim() ||
+      (instrumentId.includes(":") ? instrumentId.split(":")[0]! : "US");
+    const paperCapital = Number(body.paperCapital ?? body.paper_capital ?? 100_000);
+    const session = createPaperSession({
+      strategyCode: code,
+      manifest: compiled.manifest,
+      paperCapital: Number.isFinite(paperCapital) && paperCapital > 0 ? paperCapital : 100_000,
+      primarySymbol: instrumentId,
+      market,
+      timeframe: String(
+        body.timeframe ?? compiled.manifest.primaryFrequency ?? "1d"
+      ).trim(),
+      ...(body.params && typeof body.params === "object" && !Array.isArray(body.params)
+        ? { params: body.params as Record<string, unknown> }
+        : {}),
+      projectId: typeof body.projectId === "string" ? body.projectId : null,
+      workflowRunId:
+        typeof body.workflowRunId === "string" ? body.workflowRunId : null,
+      strategyVersionId:
+        typeof body.strategyVersionId === "string" ? body.strategyVersionId : null,
+    });
+    return c.json({
+      ok: true,
+      data: {
+        sessionId: session.id,
+        codeHash: session.codeHash,
+        paperCapital: session.paperCapital,
+        primarySymbol: session.primarySymbol,
+        klinesSymbol: instrumentIdToKlinesSymbol(session.primarySymbol),
+        manifest: compiled.manifest,
+        sizingRule: "fixed_paper_capital",
+      },
+    });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 500);
+  }
+});
+
+/**
+ * POST /api/v1/quant/strategy-contract/paper-run
+ * Body: { sessionId?, code?, dryRun?, limit?, maxOrders? }
+ * 默认 dryRun=true（工坊预览 intents）；写库需 workflow + strategyVersion。
+ */
+quantRouter.post("/strategy-contract/paper-run", async (c) => {
+  try {
+    const body = await c.req.json<Record<string, unknown>>();
+    const {
+      getPaperSession,
+      updatePaperSession,
+      createPaperSession,
+      tradesToPaperOrderDrafts,
+    } = await import("../runtime/strategy/v2/paper-session-service");
+    const {
+      backtestStrategyContract,
+      compileStrategyContract,
+      instrumentIdToKlinesSymbol,
+      primaryInstrumentId,
+    } = await import("../runtime/strategy/v2/contract-service");
+
+    let sessionId = String(body.sessionId ?? body.session_id ?? "").trim();
+    if (!sessionId) {
+      const code = String(body.code ?? body.strategyCode ?? "").trim();
+      if (!code) return c.json({ ok: false, error: "sessionId_or_code_required" }, 400);
+      const compiled = await compileStrategyContract(code);
+      if (!compiled.ok) {
+        return c.json({ ok: false, stage: "compile", error: compiled.error }, 422);
+      }
+      const instrumentId = primaryInstrumentId(compiled.manifest);
+      const session = createPaperSession({
+        strategyCode: code,
+        manifest: compiled.manifest,
+        paperCapital: Number(body.paperCapital ?? 100_000) || 100_000,
+        primarySymbol: instrumentId,
+        market:
+          String(body.market ?? "").trim() ||
+          (instrumentId.includes(":") ? instrumentId.split(":")[0]! : "US"),
+      });
+      sessionId = session.id;
+    }
+
+    const session = getPaperSession(sessionId);
+    if (!session) {
+      return c.json({ ok: false, error: `unknown_session:${sessionId}` }, 404);
+    }
+
+    const klinesSymbol = instrumentIdToKlinesSymbol(session.primarySymbol);
+    const limit = Math.max(30, Math.min(Number(body.limit ?? 180) || 180, 2000));
+    const { queryKlines } = await import("../runtime/market/klines-query");
+    const q = await queryKlines({
+      symbol: klinesSymbol,
+      timeframe: session.timeframe,
+      limit,
+    });
+    if (q.error || q.bars.length < 10) {
+      updatePaperSession(sessionId, {
+        status: "error",
+        lastError: q.error?.message ?? "klines_insufficient",
+      });
+      return c.json(
+        {
+          ok: false,
+          stage: "market_data",
+          error: q.error?.message ?? `klines_insufficient:${q.bars.length}`,
+          sessionId,
+        },
+        422
+      );
+    }
+
+    const result = await backtestStrategyContract({
+      strategyCode: session.strategyCode,
+      bars: q.bars,
+      symbol: session.primarySymbol,
+      initialCapital: session.paperCapital,
+      commission: Number(body.commission ?? 0.001) || 0.001,
+      params: session.params,
+    });
+    if (!result.ok) {
+      updatePaperSession(sessionId, { status: "error", lastError: result.error });
+      return c.json({ ok: false, stage: "backtest", error: result.error, sessionId }, 422);
+    }
+
+    const dryRun = body.dryRun !== false && body.dry_run !== false;
+    const drafts = tradesToPaperOrderDrafts(result.trades, {
+      maxOrders: Math.max(1, Math.min(Number(body.maxOrders ?? 40) || 40, 100)),
+    });
+
+    const submitted: Array<Record<string, unknown>> = [];
+    const skipped: Array<Record<string, unknown>> = [];
+    let strategyVersionId = String(
+      body.strategyVersionId ?? body.strategy_version_id ?? session.strategyVersionId ?? ""
+    ).trim();
+    const workflowRunId = String(
+      body.workflowRunId ?? body.workflow_run_id ?? session.workflowRunId ?? ""
+    ).trim();
+    const projectId = String(
+      body.projectId ?? body.project_id ?? session.projectId ?? ""
+    ).trim();
+
+    if (!dryRun) {
+      if (!workflowRunId) {
+        return c.json(
+          {
+            ok: false,
+            error: "write_requires_workflowRunId",
+            hint: "从 Team/研究工作流打开的脚本才有 workflow；否则请用 dry_run 预览或启动纸交易引擎。",
+            sessionId,
+            orderDrafts: drafts.slice(0, 12),
+          },
+          422
+        );
+      }
+      const { getDb } = await import("../db/sqlite/client");
+      const db = await getDb();
+      const { randomUUID } = await import("node:crypto");
+      const {
+        strategy: strategyTable,
+        strategyVersion: strategyVersionTable,
+        instrument: instrumentTable,
+      } = await import("../db/sqlite/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const { createOrderIntentWithExecution } = await import(
+        "../runtime/execution/order-intent-service"
+      );
+
+      if (!strategyVersionId && projectId) {
+        const name =
+          String(body.name ?? "").trim() ||
+          `contract_${session.codeHash.slice(0, 8)}`;
+        const existing = await db
+          .select()
+          .from(strategyTable)
+          .where(and(eq(strategyTable.projectId, projectId), eq(strategyTable.name, name)))
+          .limit(1);
+        let strategyId = existing[0]?.id;
+        if (!strategyId) {
+          strategyId = randomUUID();
+          await db.insert(strategyTable).values({
+            id: strategyId,
+            projectId,
+            name,
+            style: "low_freq",
+            description: `Strategy API paper · ${session.codeHash.slice(0, 12)}`,
+          });
+        }
+        strategyVersionId = randomUUID();
+        await db.insert(strategyVersionTable).values({
+          id: strategyVersionId,
+          strategyId,
+          versionTag: `paper-${Date.now()}`,
+          logicHash: session.codeHash.slice(0, 32),
+          paramSchemaJson: {
+            strategyManifest: session.manifest,
+            codeHash: session.codeHash,
+            paperCapital: session.paperCapital,
+            source: "quant.paper-run",
+          } as never,
+          workflowRunId,
+        });
+        updatePaperSession(sessionId, { strategyVersionId, workflowRunId });
+      }
+
+      if (!strategyVersionId) {
+        return c.json(
+          {
+            ok: false,
+            error: "write_requires_strategyVersionId_or_projectId",
+            sessionId,
+          },
+          422
+        );
+      }
+
+      const symForBook = instrumentIdToKlinesSymbol(session.primarySymbol);
+      let instrumentRowId = "";
+      {
+        const existing = await db
+          .select()
+          .from(instrumentTable)
+          .where(eq(instrumentTable.symbol, symForBook.toUpperCase()))
+          .limit(1);
+        if (existing[0]) instrumentRowId = existing[0].id;
+        else {
+          instrumentRowId = randomUUID();
+          await db.insert(instrumentTable).values({
+            id: instrumentRowId,
+            symbol: symForBook.toUpperCase(),
+            assetClass: "stock",
+            exchange: session.market,
+            metaJson: { source: "quant.paper-run" },
+          });
+        }
+      }
+
+      for (const d of drafts) {
+        try {
+          const r = await createOrderIntentWithExecution(db, {
+            workflowRunId,
+            strategyVersionId,
+            instrumentId: instrumentRowId,
+            side: d.side,
+            qty: d.qty,
+            orderType: "limit",
+            price: d.price,
+            timeInForce: "day",
+            market: session.market,
+            symbol: symForBook,
+            timeframe: session.timeframe,
+            signalBarTime: d.signalBarTime || null,
+            dispatchMode: "paper",
+            requireDataQualityGate: false,
+            clientOrderId: `paper:${sessionId}:${d.signalBarTime}:${d.side}:${d.qty}`,
+          });
+          submitted.push({
+            orderIntentId: r.orderIntentId,
+            riskOutcome: r.riskOutcome,
+            side: d.side,
+            qty: d.qty,
+          });
+        } catch (e) {
+          skipped.push({
+            side: d.side,
+            qty: d.qty,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    }
+
+    updatePaperSession(sessionId, {
+      status: "ready",
+      intentCount: (session.intentCount ?? 0) + submitted.length,
+      lastRunAt: new Date().toISOString(),
+      lastError: null,
+    });
+
+    return c.json({
+      ok: true,
+      data: {
+        sessionId,
+        codeHash: session.codeHash,
+        paperCapital: session.paperCapital,
+        sizingRule: "fixed_paper_capital",
+        dryRun,
+        strategyVersionId: strategyVersionId || null,
+        workflowRunId: workflowRunId || null,
+        metrics: result.metrics,
+        tradeCount: result.trades.length,
+        orderDrafts: drafts.slice(0, 20),
+        intents: result.intents.slice(0, 20),
+        submittedCount: submitted.length,
+        submitted: submitted.slice(0, 20),
+        skipped,
+        note: dryRun
+          ? "dry_run：仅预览 intents。传 dryRun=false + workflowRunId（+ projectId）可写 paper order_intent。"
+          : `已写入 ${submitted.length} 笔 paper order_intent。`,
+      },
+    });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 500);
+  }
+});

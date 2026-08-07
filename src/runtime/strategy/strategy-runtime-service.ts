@@ -73,7 +73,9 @@ export async function createStrategyRuntime(
   if (!script) throw new Error("strategy_script_not_found");
 
   const purpose = script.purpose ?? "both";
-  if (purpose === "research") {
+  const executionMode = input.executionMode ?? "paper";
+  // research-only 脚本允许 paper 本地引擎；sim/live 仍须 both/live_trading
+  if (purpose === "research" && executionMode !== "paper") {
     throw new Error("strategy_script_not_enabled_for_live");
   }
 
@@ -85,7 +87,6 @@ export async function createStrategyRuntime(
   });
 
   let brokerAccountId = resolved.brokerAccountId;
-  const executionMode = input.executionMode ?? "paper";
   if ((executionMode === "sim" || executionMode === "live") && !brokerAccountId) {
     const { resolveDefaultSimBrokerAccountId } = await import(
       "../execution/resolve-sim-broker-account"

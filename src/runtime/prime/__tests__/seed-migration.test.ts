@@ -51,5 +51,12 @@ describe("prime seed → AgentSpec migration", () => {
       kind: "domain_event",
       event_name: "market.news",
     });
+
+    const coder = toPrimeAgentSpec(
+      SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-strategy-coder")!
+    );
+    expect(coder.execution_kind).toBe("subagent");
+    expect(coder.labels).toContain("strategy_coder");
+    expect(coder.labels).toContain("research");
   });
 });

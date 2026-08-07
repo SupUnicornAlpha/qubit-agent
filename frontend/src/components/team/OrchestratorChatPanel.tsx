@@ -11,7 +11,9 @@
 import {
   type CSSProperties,
   type KeyboardEvent,
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -35,6 +37,7 @@ import { AgentRunPanel } from "./AgentRunChatView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { WorkflowResumeBanner } from "./WorkflowResumeBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
+import type { PlanTimelineSegment } from "./planSegments";
 import { buildChatExecutionActivity } from "../chat/ChatExecutionActivity";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
@@ -90,8 +93,10 @@ export interface OrchestratorChatPanelProps {
   onInterrupt: () => Promise<void>;
   /** 当前 FS Workspace：@记忆 引用列表来源 */
   fsWorkspaceId?: string | null;
-  /** Agent / Plan / Goal：Orchestrator 的分步计划（update_plan 推流），置于对话框顶部 */
+  /** 最新 plan（Goal 操作等）；对话内展示优先用 planSegments */
   plan?: OrchestratorPlan | null;
+  /** 任务级 plan 时间线：旧任务在上，结构变化则新开一段 */
+  planSegments?: PlanTimelineSegment[];
   /** Plan 审批后保留计划并以 Goal 模式继续同一 workflow */
   onExecutePlan?: () => void;
   /** Goal 生命周期控制：暂停、恢复、编辑和清除。 */
@@ -154,6 +159,7 @@ export function OrchestratorChatPanel({
   onInject,
   onInterrupt,
   plan,
+  planSegments = [],
   onExecutePlan,
   onGoalAction,
   activity,
@@ -171,6 +177,61 @@ export function OrchestratorChatPanel({
   fsWorkspaceId = null,
 }: OrchestratorChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const chatContentRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Stick-to-bottom: only auto-scroll while the user is near the bottom.
+   * Scrolling up pauses follow so streaming/tool rows do not yank the viewport.
+   */
+  const [chatAutoFollow, setChatAutoFollow] = useState(true);
+  const [chatAtBottom, setChatAtBottom] = useState(true);
+  const chatAutoFollowRef = useRef(true);
+  /** Suppress onScroll while we programmatically pin to bottom (avoids false "user scrolled up"). */
+  const pinningScrollRef = useRef(false);
+  useEffect(() => {
+    chatAutoFollowRef.current = chatAutoFollow;
+  }, [chatAutoFollow]);
+
+  const pinChatToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el || !chatAutoFollowRef.current) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distance <= 1) return;
+    pinningScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      pinningScrollRef.current = false;
+      setChatAtBottom(true);
+    });
+  }, []);
+
+  const scrollChatToBottom = useCallback(() => {
+    setChatAtBottom(true);
+    setChatAutoFollow(true);
+    chatAutoFollowRef.current = true;
+    const el = scrollRef.current;
+    if (!el) return;
+    pinningScrollRef.current = true;
+    el.scrollTop = el.scrollHeight;
+    requestAnimationFrame(() => {
+      pinningScrollRef.current = false;
+      setChatAtBottom(true);
+    });
+  }, []);
+
+  const handleChatScroll = useCallback(() => {
+    if (pinningScrollRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceFromBottom < 24;
+    setChatAtBottom(atBottom);
+    if (atBottom) {
+      if (!chatAutoFollowRef.current) setChatAutoFollow(true);
+    } else if (distanceFromBottom > 64 && chatAutoFollowRef.current) {
+      setChatAutoFollow(false);
+    }
+  }, []);
+
   const [injectHint, setInjectHint] = useState<string | null>(null);
   const [injecting, setInjecting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
@@ -223,21 +284,92 @@ export function OrchestratorChatPanel({
     [events]
   );
 
-  // 新消息进来时自动滚到底（右栏主对话框默认始终跟随最新）
+  /**
+   * 按 plan 段落切对话：
+   *   [preface events] → [plan1 + events until plan2] → [plan2 + ...]
+   * 进度更新不新开段，只刷新对应 PlanCard。
+   */
+  const planTimelineSections = useMemo(() => {
+    const sorted = [...visibleEvents].sort((a, b) =>
+      a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0
+    );
+    type Section = {
+      key: string;
+      plan: OrchestratorPlan | null;
+      segmentIndex: number | null;
+      isLatest: boolean;
+      events: LiveConversationEvent[];
+    };
+    if (planSegments.length === 0) {
+      return [
+        {
+          key: "preface",
+          plan: plan?.steps?.length ? plan : null,
+          segmentIndex: plan?.steps?.length ? 0 : null,
+          isLatest: true,
+          events: sorted,
+        } satisfies Section,
+      ];
+    }
+    const sections: Section[] = [];
+    const firstStart = planSegments[0]!.startedAt;
+    const preface = sorted.filter((e) => e.ts < firstStart);
+    if (preface.length > 0) {
+      sections.push({
+        key: "preface",
+        plan: null,
+        segmentIndex: null,
+        isLatest: false,
+        events: preface,
+      });
+    }
+    for (let i = 0; i < planSegments.length; i++) {
+      const seg = planSegments[i]!;
+      const nextStart = planSegments[i + 1]?.startedAt;
+      const chunk = sorted.filter(
+        (e) => e.ts >= seg.startedAt && (nextStart == null || e.ts < nextStart)
+      );
+      sections.push({
+        key: seg.id,
+        plan: seg.plan,
+        segmentIndex: i,
+        isLatest: i === planSegments.length - 1,
+        events: chunk,
+      });
+    }
+    return sections;
+  }, [visibleEvents, planSegments, plan]);
+
+  // Stick-to-bottom via ResizeObserver (sync with layout) — not a paint-after useEffect
+  // on every SSE/reasoning token, which flashes "refresh then jump".
+  useLayoutEffect(() => {
+    const content = chatContentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      pinChatToBottom();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [pinChatToBottom]);
+
+  useLayoutEffect(() => {
+    if (chatAutoFollow) pinChatToBottom();
+  }, [chatAutoFollow, pinChatToBottom]);
+
+  // User just sent / injected a message → resume follow so their turn is visible.
+  const userMessageCount = useMemo(
+    () => visibleEvents.filter((ev) => ev.fromRole === "user").length,
+    [visibleEvents]
+  );
+  const prevUserMessageCountRef = useRef(userMessageCount);
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [
-    events.length,
-    runProgress,
-    subAgentRuns.length,
-    streamEvents.length,
-    thinkingText,
-    liveReasoning?.text,
-    liveReasoning?.status,
-    activity,
-  ]);
+    if (userMessageCount > prevUserMessageCountRef.current) {
+      prevUserMessageCountRef.current = userMessageCount;
+      scrollChatToBottom();
+      return;
+    }
+    prevUserMessageCountRef.current = userMessageCount;
+  }, [userMessageCount, scrollChatToBottom]);
 
   useEffect(() => {
     if (!focusedSubAgent) setFocusedSubAgentRole(null);
@@ -245,7 +377,9 @@ export function OrchestratorChatPanel({
 
   useEffect(() => {
     if (!focusedSubAgent || !subConversationRef.current) return;
-    subConversationRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Keep the expanded panel in view without hijacking when the user is reading above.
+    if (!chatAutoFollowRef.current) return;
+    subConversationRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [focusedSubAgent]);
 
   /**
@@ -397,15 +531,11 @@ export function OrchestratorChatPanel({
         </div>
       </div>
 
-      {/* 状态轨：Plan / 运行态 / 工具 / A2A 专家进度；可固定顶端或随正文滚走 */}
+      {/* 状态轨：运行态 / 工具 / A2A（Plan 已内联到对话任务段落）；可固定顶端或随正文滚走 */}
       {statusRailPinned ? (
         <div style={styles.statusRail} data-qb-orch-status-rail="pinned">
           <StatusRailToolbar pinned onToggle={toggleStatusRailPinned} />
           <StatusRailContent
-            plan={plan ?? null}
-            onExecutePlan={onExecutePlan}
-            onGoalAction={onGoalAction}
-            executeDisabled={running || chatInFlight || expertsActive}
             running={running}
             chatInFlight={chatInFlight}
             pendingHitlRequestId={pendingHitlRequestId}
@@ -420,16 +550,19 @@ export function OrchestratorChatPanel({
         </div>
       ) : null}
 
-      {/* Body：对话流（工具/A2A 穿插） */}
-      <div ref={scrollRef} style={styles.body} data-qb-orchestrator-chat>
+      {/* Body：对话流（工具/A2A 穿插）— stick-to-bottom，上翻不强制置底 */}
+      <div style={styles.bodyShell}>
+        <div
+          ref={scrollRef}
+          style={styles.body}
+          data-qb-orchestrator-chat
+          onScroll={handleChatScroll}
+        >
+        <div ref={chatContentRef} style={styles.bodyContent}>
         {!statusRailPinned ? (
           <div style={styles.statusRailInScroll} data-qb-orch-status-rail="scroll">
             <StatusRailToolbar pinned={false} onToggle={toggleStatusRailPinned} />
             <StatusRailContent
-              plan={plan ?? null}
-              onExecutePlan={onExecutePlan}
-              onGoalAction={onGoalAction}
-              executeDisabled={running || chatInFlight || expertsActive}
               running={running}
               chatInFlight={chatInFlight}
               pendingHitlRequestId={pendingHitlRequestId}
@@ -519,37 +652,94 @@ export function OrchestratorChatPanel({
             ) : null}
           </div>
         ) : null}
-        <LiveConversationView
-          events={visibleEvents}
-          selfRole="orchestrator"
-          contentMaxLength={12000}
-          collapseA2AFromRole="orchestrator"
-          collapseToolCalls
-          layout="stream"
-          artifacts={artifacts}
-          onOpenArtifact={onOpenArtifact}
-          onOpenRef={(ref) => {
-            // 交接信封里的产物引用 → 复用产物打开逻辑（factor / strategy_version）。
-            const kind =
-              ref.kind === "factor" ? "factor" : ref.kind === "strategy_version" ? "strategy" : null;
-            if (kind) {
-              onOpenArtifact({
-                id: ref.id,
-                kind,
-                title: ref.id,
-                workflowRunId,
-              });
-            }
-          }}
-          emptyText={
-            !wfId
-              ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
-              : running
-                ? "Orchestrator 已启动，正在规划与按需派发专家…"
-                : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
-          }
-        />
+        {planTimelineSections.map((section, sectionIdx) => {
+          const showEmpty =
+            sectionIdx === 0 &&
+            planTimelineSections.every((s) => s.events.length === 0) &&
+            !section.plan;
+          return (
+            <div
+              key={section.key}
+              style={styles.planSection}
+              data-qb-plan-section={section.key}
+            >
+              {sectionIdx > 0 ? (
+                <div style={styles.planSectionDivider} role="separator">
+                  新任务段落
+                </div>
+              ) : null}
+              {section.plan ? (
+                <PlanCard
+                  plan={section.plan}
+                  segmentLabel={
+                    section.segmentIndex != null
+                      ? `任务 ${section.segmentIndex + 1}`
+                      : undefined
+                  }
+                  defaultOpen={section.isLatest}
+                  onExecute={section.isLatest ? onExecutePlan : undefined}
+                  onGoalAction={section.isLatest ? onGoalAction : undefined}
+                  executeDisabled={
+                    !section.isLatest || running || chatInFlight || expertsActive
+                  }
+                />
+              ) : null}
+              {section.events.length > 0 || showEmpty ? (
+                <LiveConversationView
+                  events={section.events}
+                  selfRole="orchestrator"
+                  contentMaxLength={12000}
+                  collapseA2AFromRole="orchestrator"
+                  collapseToolCalls
+                  layout="stream"
+                  artifacts={section.isLatest ? artifacts : []}
+                  onOpenArtifact={onOpenArtifact}
+                  onOpenRef={(ref) => {
+                    const kind =
+                      ref.kind === "factor"
+                        ? "factor"
+                        : ref.kind === "strategy_version"
+                          ? "strategy"
+                          : null;
+                    if (kind) {
+                      onOpenArtifact({
+                        id: ref.id,
+                        kind,
+                        title: ref.id,
+                        workflowRunId,
+                      });
+                    }
+                  }}
+                  emptyText={
+                    showEmpty
+                      ? !wfId
+                        ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
+                        : running
+                          ? "Orchestrator 已启动，正在规划与按需派发专家…"
+                          : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
+                      : undefined
+                  }
+                />
+              ) : null}
+            </div>
+          );
+        })}
         <ThinkingGhostBox reasoning={liveReasoning} />
+        </div>
+        </div>
+        {!chatAtBottom ? (
+          <button
+            type="button"
+            onClick={scrollChatToBottom}
+            title="跳到最新消息并恢复自动跟随"
+            style={styles.jumpLatestBtn}
+          >
+            <span aria-hidden style={{ fontSize: 12, lineHeight: 1 }}>
+              ↓
+            </span>
+            跳到最新{chatAutoFollow ? "" : "（已暂停跟随）"}
+          </button>
+        ) : null}
       </div>
 
       {/* Footer：Resume 提醒 + HITL 在输入框与模式选择之上 */}
@@ -761,10 +951,6 @@ function StatusRailToolbar({
 }
 
 function StatusRailContent({
-  plan,
-  onExecutePlan,
-  onGoalAction,
-  executeDisabled,
   running,
   chatInFlight,
   pendingHitlRequestId,
@@ -776,10 +962,6 @@ function StatusRailContent({
   focusedSubAgentRole,
   onSelectRun,
 }: {
-  plan: OrchestratorPlan | null;
-  onExecutePlan?: () => void;
-  onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
-  executeDisabled: boolean;
   running: boolean;
   chatInFlight: boolean;
   pendingHitlRequestId: string | null;
@@ -793,12 +975,6 @@ function StatusRailContent({
 }) {
   return (
     <>
-      <PlanCard
-        plan={plan}
-        onExecute={onExecutePlan}
-        onGoalAction={onGoalAction}
-        executeDisabled={executeDisabled}
-      />
       <OrchestratorLiveStatus
         running={running}
         chatInFlight={chatInFlight}
@@ -950,12 +1126,60 @@ const styles: Record<string, CSSProperties> = {
     cursor: "pointer",
     fontFamily: "inherit",
   },
+  bodyShell: {
+    position: "relative",
+    flex: "1 1 0",
+    minHeight: 0,
+    display: "flex",
+    flexDirection: "column",
+  },
   body: {
     flex: "1 1 0",
     minHeight: 0,
     overflowY: "auto",
     overflowX: "hidden",
     padding: "10px 2px 12px",
+    // Prevent browser scroll-anchoring from fighting stick-to-bottom pinning.
+    overflowAnchor: "none",
+  },
+  bodyContent: {
+    minHeight: "min-content",
+  },
+  planSection: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+    minWidth: 0,
+  },
+  planSectionDivider: {
+    margin: "14px 0 10px",
+    padding: "4px 0",
+    borderTop: "1px dashed rgba(167,139,250,0.35)",
+    color: "#a78bfa",
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: "0.06em",
+    textAlign: "center",
+  },
+  jumpLatestBtn: {
+    position: "absolute",
+    right: 14,
+    bottom: 12,
+    zIndex: 5,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "5px 11px",
+    borderRadius: 999,
+    border: "1px solid rgba(59,130,246,0.55)",
+    background: "rgba(15,23,42,0.88)",
+    color: "#bfdbfe",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+    backdropFilter: "blur(4px)",
+    fontFamily: "inherit",
   },
   footer: {
     flexShrink: 0,

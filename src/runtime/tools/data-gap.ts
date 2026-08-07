@@ -73,6 +73,10 @@ const REQUIRED_TOOL_ALIASES: Record<string, readonly string[]> = {
     "strategy.compose",
     "strategy.create",
     "version_strategy",
+    "strategy.compile",
+    "strategy.contract_backtest",
+    "strategy.paper_deploy",
+    "strategy.paper_run",
   ],
   order: ["order.create_intent", "submit_order", "order_intent", "create_intent"],
   // order.create_intent runs pre-trade risk and writes risk_decision.

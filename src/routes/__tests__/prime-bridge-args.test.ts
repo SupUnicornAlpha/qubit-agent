@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { unwrapBridgeToolArgs } from "../../routes/prime-bridge.routes";
+import {
+  isBridgedLegacyToolName,
+  unwrapBridgeToolArgs,
+} from "../../routes/prime-bridge.routes";
 
 describe("unwrapBridgeToolArgs", () => {
   test("flattens nested arguments with top-level wins", () => {
@@ -43,5 +46,15 @@ describe("unwrapBridgeToolArgs", () => {
     expect(out.symbol).toBe("ASTS");
     expect(out.ticker).toBe("ASTS");
     expect(out.candidates).toEqual([{ symbol: "AAPL", weight: 0.5 }]);
+  });
+});
+
+describe("isBridgedLegacyToolName", () => {
+  test("allows static builtins and dynamic call_team_*", () => {
+    expect(isBridgedLegacyToolName("market.snapshot.get")).toBe(true);
+    expect(isBridgedLegacyToolName("assign_task")).toBe(true);
+    expect(isBridgedLegacyToolName("call_team_research")).toBe(true);
+    expect(isBridgedLegacyToolName("call_team_news_event")).toBe(true);
+    expect(isBridgedLegacyToolName("not_a_real_tool")).toBe(false);
   });
 });

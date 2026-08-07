@@ -7,12 +7,16 @@
  *   - fresh: Restart from goal without snapshot (workflow_retry).
  *
  * Eligibility: partial / failed / awaiting_approval with recoverable state.
+ *
+ * Critical: resume must replay the *last user prompt* (e.g. 「标的是兆易创新」),
+ * not only the original `workflow.goal`. continue_goal chats do not rewrite goal.
  */
 import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { getDb, getSqliteForTesting } from "../../db/sqlite/client";
 import { agentCheckpointSnapshot, workflowRun } from "../../db/sqlite/schema";
 import { dispatchTaskToRole } from "../agent-pool";
+import { loadWorkflowResumeHandoff } from "../conversation/conversation-turn-service";
 import { resolveCoreBackend } from "../prime/core-runtime";
 import { setWorkflowState } from "./workflow-state-machine";
 
@@ -226,6 +230,29 @@ export async function resumeWorkflow(input: {
   const useCheckpoint = mode === "checkpoint" && (status.hasBunSnapshot || status.hasCoreSession);
   const taskId = randomUUID();
 
+  const handoff = await loadWorkflowResumeHandoff(input.workflowId);
+  const resumeGoal =
+    handoff.lastUserPrompt?.trim() ||
+    wf.goal?.trim() ||
+    "请从检查点继续完成未竟步骤。";
+  const note = input.note?.trim() ?? "";
+  const contextParts: string[] = [];
+  if (handoff.sessionChronicle) {
+    contextParts.push(handoff.sessionChronicle);
+  }
+  if (note) {
+    contextParts.push(`[user_resume_note]\n${note}`);
+  }
+  if (
+    handoff.lastUserPrompt &&
+    wf.goal?.trim() &&
+    handoff.lastUserPrompt.trim() !== wf.goal.trim()
+  ) {
+    contextParts.push(
+      `[original_workflow_goal]\nOPTIONAL_BACKGROUND — do NOT override [user]:\n${wf.goal.trim()}`
+    );
+  }
+
   await setWorkflowState(input.workflowId, "pending", {
     reason: useCheckpoint ? "user-resume-checkpoint" : "user-resume-fresh",
   });
@@ -239,15 +266,18 @@ export async function resumeWorkflow(input: {
       assignedRole: "orchestrator",
       params: {
         workflowRunId: input.workflowId,
-        goal: wf.goal,
+        goal: resumeGoal,
         mode: wf.mode,
         resume: useCheckpoint,
-        ...(input.note?.trim()
+        ...(contextParts.length > 0
           ? {
-              context: `[user_resume_note]\n${input.note.trim()}`,
+              context: contextParts.join("\n\n"),
             }
           : {}),
         resumeSource: "ui_resume_button",
+        ...(handoff.lastUserPrompt
+          ? { pendingUserPrompt: handoff.lastUserPrompt }
+          : {}),
       },
     },
   });

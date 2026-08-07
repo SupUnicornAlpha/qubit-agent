@@ -458,6 +458,37 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
       "把已有的 factor_ids / rule_ids 组合到一个**已存在的** strategy_version 上（落 strategy_composition）。**必填 `strategy_version_id`** (UUID, 来自 strategy.create_version 返回)。**调用顺序**：① strategy.create_version 拿 id → ② strategy.compose 组合 factor/rule → ③ backtest.run。一上来直接调 compose 会失败。",
     category: "research",
   },
+  "strategy.compile": {
+    description:
+      "编译 Strategy API V2 Python 源码为不可变 StrategyManifest（不跑行情）。**必填 `code`**（也接受 strategyCode/source）。" +
+      "initialize 只能声明 universe/subscribe/warmup/benchmark；禁止 get_history/order_*。" +
+      "成功后可用 strategy.contract_backtest 同码回测，或 strategy.paper_deploy 开纸交易 Session。",
+    category: "research",
+  },
+  "strategy.verify": {
+    description: "strategy.compile 的别名：验证 Strategy API V2 源码能否编译为 Manifest。",
+    category: "research",
+  },
+  "strategy.contract_backtest": {
+    description:
+      "同码契约回测：compile + SimBroker（next-open 成交）。**必填 `code`**；可选 symbol/limit/timeframe/params/initial_capital。" +
+      "未传 bars 时按 Manifest 主标的拉 K 线。输出权益曲线摘要 + intents 审计。" +
+      "与旧 backtest.run（因子组合）不同；写码验证优先用本工具。",
+    category: "research",
+  },
+  "strategy.paper_deploy": {
+    description:
+      "同 Manifest 纸交易 Session：编译源码 → 固定纸本金注册 PaperSession（默认 100000）。**必填 `code`**。" +
+      "会尽量 strategy.create_version 并把 Manifest 写入版本元数据。下一步 strategy.paper_run。",
+    category: "trading",
+  },
+  "strategy.paper_run": {
+    description:
+      "推进纸交易 Session：同码回放 → 镜像成交为 dispatch_mode=paper 的 order_intent。" +
+      "**必填 `session_id`**（或直接传 code 以先 deploy）。可选 dry_run/limit/max_orders。" +
+      "权益口径=会话固定纸本金（非账户权益）。需在 research workflow 内且绑定 strategy_version 才会写库。",
+    category: "trading",
+  },
   "order.create_intent": {
     /**
      * P0-1.c（2026-06-08 Round 6 复盘）：trader 没工具下单 → live_trading 团队 0 产物。

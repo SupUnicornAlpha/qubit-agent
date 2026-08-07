@@ -5,6 +5,7 @@ import {
   chatMessage,
   chatMessageWorkflowLink,
   chatSession,
+  researchTeamInteraction,
   workflowRun,
 } from "../../db/sqlite/schema";
 import type { AgentControlMode, AgentLoopKind, WorkflowProcessConfig } from "../../types/loop";
@@ -25,6 +26,14 @@ import {
   type ConversationTurnMode,
   resolveTurnMode,
 } from "./turn-mode";
+import {
+  buildSessionChronicle,
+  inferToolStatus,
+  mergeWorkspaceBackground,
+  parseRollingChronicle,
+  rollChronicleWindow,
+  type RecentToolLine,
+} from "./turn-packet";
 import { buildWorkspaceBootstrapPack, writeRunRecord, openWorkspaceById } from "../workspace";
 
 export interface CreateConversationTurnInput {
@@ -63,10 +72,55 @@ export interface ConversationTurnResult {
   assistantMessage: typeof chatMessage.$inferSelect;
 }
 
-async function buildWorkflowConversationContext(
+async function loadRecentToolLines(workflowRunId: string): Promise<RecentToolLine[]> {
+  const db = await getDb();
+  const rows = await db
+    .select({
+      toolName: researchTeamInteraction.toolName,
+      contentText: researchTeamInteraction.contentText,
+      payloadJson: researchTeamInteraction.payloadJson,
+    })
+    .from(researchTeamInteraction)
+    .where(
+      and(
+        eq(researchTeamInteraction.workflowRunId, workflowRunId),
+        eq(researchTeamInteraction.kind, "tool_call")
+      )
+    )
+    .orderBy(desc(researchTeamInteraction.createdAt))
+    .limit(12);
+
+  return rows
+    .map((row) => {
+      const name = (row.toolName ?? "").trim();
+      if (!name) return null;
+      const payload =
+        row.payloadJson && typeof row.payloadJson === "object" && !Array.isArray(row.payloadJson)
+          ? (row.payloadJson as Record<string, unknown>)
+          : undefined;
+      const status = inferToolStatus(row.contentText ?? "", payload);
+      const detail = (row.contentText ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+      return {
+        toolName: name,
+        status,
+        ...(detail ? { detail } : {}),
+      } satisfies RecentToolLine;
+    })
+    .filter((x): x is RecentToolLine => Boolean(x))
+    .reverse();
+}
+
+/**
+ * Host Turn Packet → params.context.
+ * Full transcript stays in chat_* / UI; Core only sees compressed chronicle.
+ * Returns chronicle text + updated rolling state for loop_options persistence.
+ */
+export async function buildWorkflowConversationContext(
   workflowRunId: string,
-  currentUserMessageId: string
-): Promise<string> {
+  currentUserMessageId: string,
+  currentUserText: string,
+  loopOptions: Record<string, unknown>
+): Promise<{ context: string; rollingChronicle: ReturnType<typeof parseRollingChronicle> }> {
   const db = await getDb();
   const rows = await db
     .select({ message: chatMessage })
@@ -74,25 +128,89 @@ async function buildWorkflowConversationContext(
     .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
     .where(eq(chatMessageWorkflowLink.workflowRunId, workflowRunId))
     .orderBy(desc(chatMessage.createdAt))
-    .limit(32);
-  const transcript = rows
+    .limit(48);
+  const messages = rows
     .reverse()
     .map((row) => row.message)
-    .filter(
-      (message) =>
-        message.id !== currentUserMessageId &&
-        message.content.trim().length > 0 &&
-        message.role !== "system"
+    .map((m) => ({
+      id: m.id,
+      role: m.role,
+      sender: m.sender,
+      content: m.content,
+    }));
+  const rolled = rollChronicleWindow({
+    state: parseRollingChronicle(loopOptions.sessionChronicle),
+    messages,
+    currentUserMessageId,
+    maxEntries: 8,
+  });
+  const recentTools = await loadRecentToolLines(workflowRunId);
+  const context = buildSessionChronicle({
+    messages,
+    currentUserMessageId,
+    currentUserText,
+    recentTools,
+    maxMessages: 8,
+    priorCompactedSummary: rolled.priorCompactedSummary,
+  });
+  return { context, rollingChronicle: rolled.state };
+}
+
+/** Resume handoff: last user chat + compressed chronicle (not workflow.goal alone). */
+export async function loadWorkflowResumeHandoff(workflowRunId: string): Promise<{
+  lastUserPrompt: string | null;
+  lastUserMessageId: string | null;
+  sessionChronicle: string | null;
+  loopOptions: Record<string, unknown>;
+}> {
+  const db = await getDb();
+  const wfRows = await db
+    .select({ loopOptionsJson: workflowRun.loopOptionsJson })
+    .from(workflowRun)
+    .where(eq(workflowRun.id, workflowRunId))
+    .limit(1);
+  const loopOptions =
+    (wfRows[0]?.loopOptionsJson as Record<string, unknown> | null) ?? {};
+  const persisted =
+    typeof loopOptions.lastUserPrompt === "string" &&
+    loopOptions.lastUserPrompt.trim()
+      ? loopOptions.lastUserPrompt.trim()
+      : null;
+
+  const rows = await db
+    .select({ message: chatMessage })
+    .from(chatMessageWorkflowLink)
+    .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
+    .where(
+      and(
+        eq(chatMessageWorkflowLink.workflowRunId, workflowRunId),
+        eq(chatMessage.role, "user")
+      )
     )
-    .slice(-30)
-    .map(
-      (message) =>
-        `- ${message.role === "user" ? "user" : message.sender}: ${message.content.slice(0, 800)}`
-    )
-    .join("\n");
-  return transcript
-    ? `## 统一会话上下文（最近消息，按时间）\n${transcript}`
-    : "（本会话暂无历史对话）";
+    .orderBy(desc(chatMessage.createdAt))
+    .limit(1);
+  const last = rows[0]?.message;
+  const lastUserPrompt =
+    (last?.content?.trim() ? last.content.trim() : null) ?? persisted;
+  const lastUserMessageId = last?.id ?? null;
+
+  let sessionChronicle: string | null = null;
+  if (lastUserPrompt) {
+    const built = await buildWorkflowConversationContext(
+      workflowRunId,
+      lastUserMessageId ?? `resume-${workflowRunId}`,
+      lastUserPrompt,
+      loopOptions
+    );
+    sessionChronicle = built.context.trim() || null;
+  }
+
+  return {
+    lastUserPrompt,
+    lastUserMessageId,
+    sessionChronicle,
+    loopOptions,
+  };
 }
 
 function mergeLoopOptions(
@@ -265,10 +383,24 @@ export async function createConversationTurn(
     content: message,
   });
   const turnId = turn.userMessage.id;
-  const loopOptionsJson = mergeLoopOptions(
+  let loopOptionsJson = mergeLoopOptions(
     (workflow.loopOptionsJson as Record<string, unknown> | null) ?? {},
     input
   );
+  const built = await buildWorkflowConversationContext(
+    workflow.id,
+    turn.userMessage.id,
+    message,
+    loopOptionsJson
+  );
+  let context = built.context;
+  loopOptionsJson = {
+    ...loopOptionsJson,
+    sessionChronicle: built.rollingChronicle,
+    /** Persist every chat utterance so resume can replay after timeout/partial. */
+    lastUserPrompt: message,
+    lastUserPromptAt: new Date().toISOString(),
+  };
   const currentPlan = parseAgentPlanSnapshot(workflow.planJson);
   const promotePlanToGoal =
     input.agentMode === "goal" && currentPlan?.mode === "plan" && Boolean(currentPlan.steps.length);
@@ -317,12 +449,15 @@ export async function createConversationTurn(
     kind: "llm_message",
     contentText: message.slice(0, 4000),
   });
-  let context = await buildWorkflowConversationContext(workflow.id, turn.userMessage.id);
   const fsWorkspaceId = input.fsWorkspaceId?.trim();
   if (fsWorkspaceId) {
     try {
-      const pack = await buildWorkspaceBootstrapPack(fsWorkspaceId);
-      context = `${pack.contextBlock}\n\n${context}`;
+      // Keep workspace pack short — long AGENTS.md must not drown CURRENT_USER_TASK.
+      const pack = await buildWorkspaceBootstrapPack(fsWorkspaceId, {
+        maxInstructionChars: 1600,
+        maxMemoryChars: 800,
+      });
+      context = mergeWorkspaceBackground(context, pack.contextBlock, 2200);
       const { fs, manifest } = await openWorkspaceById(fsWorkspaceId);
       await writeRunRecord(fs, {
         id: workflow.id,

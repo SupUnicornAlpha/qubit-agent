@@ -143,11 +143,7 @@ fn arg_sig_for_family(family: &str, args: &Value) -> String {
             }
         }
         let s = Value::Object(slim).to_string();
-        if s.len() > 120 {
-            format!("{}…", &s[..117])
-        } else {
-            s
-        }
+        truncate_utf8(&s, 120)
     } else {
         let _ = family; // reserved for family-specific rules
         parts
@@ -156,6 +152,16 @@ fn arg_sig_for_family(family: &str, args: &Value) -> String {
             .collect::<Vec<_>>()
             .join("&")
     }
+}
+
+/// Byte-budget truncate that never splits a UTF-8 codepoint (Chinese-safe).
+fn truncate_utf8(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let keep = max_bytes.saturating_sub(3); // room for …
+    let end = s.floor_char_boundary(keep);
+    format!("{}…", &s[..end])
 }
 
 pub fn stall_fingerprint(tool_name: &str, args: &Value, key: &str) -> String {
@@ -243,5 +249,30 @@ mod tests {
         assert!(is_fail_circuit_tool("recommendation.record"));
         assert!(is_fail_circuit_tool("strategy.create_version"));
         assert!(!is_fail_circuit_tool("mcp:mathjs:evaluate"));
+    }
+
+    #[test]
+    fn fingerprint_truncates_chinese_utf8_safely() {
+        // Regression: byte-slice mid-汉字符 used to panic (stall.rs truncate).
+        let goal = format!(
+            "{{\"goal\":{{\"text\":\"{}\"}}}}",
+            "获取半导体相关标的新闻，并在A股半导体板块中筛选超跌反弹个股".repeat(3)
+        );
+        let args: Value = serde_json::from_str(&goal).unwrap_or_else(|_| {
+            json!({ "goal": { "text": "超跌反弹选股方案说明文字".repeat(20) } })
+        });
+        let fp = stall_fingerprint("update_plan", &args, "tool_fingerprint");
+        assert!(!fp.is_empty());
+        assert!(fp.is_char_boundary(fp.len()));
+    }
+
+    #[test]
+    fn truncate_utf8_does_not_split_codepoints() {
+        let s = r#"{"goal":{"text":"筛选A股半导体超跌反弹个股"}}"#;
+        let out = truncate_utf8(s, 40);
+        assert!(out.ends_with('…') || out.len() <= 40);
+        assert!(out.is_char_boundary(out.len().saturating_sub(out.ends_with('…') as usize * "…".len())));
+        // Round-trip: truncated prefix must be valid UTF-8 (already str).
+        let _ = out.chars().count();
     }
 }

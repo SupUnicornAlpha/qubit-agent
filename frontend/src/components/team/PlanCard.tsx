@@ -1,9 +1,8 @@
 /**
  * PlanCard —— Orchestrator 对用户可见的分步计划/TODO 与 Goal 进度。
  *
- * 数据来自后端 `update_plan` 工具：写入 workflow_run.plan_json 并经 SSE `type:"plan"`
- * 推流。本组件纯展示——把步骤按状态渲染成一份会随进展勾选的待办清单，置于右栏
- * Orchestrator 对话框顶部，让用户随时看到「它打算怎么做、做到哪一步」。
+ * 数据来自后端 `update_plan`：SSE `type:"plan"`。在对话流中按「任务段落」内联展示——
+ * 新任务新开一段；同任务进度更新只刷新当前段；旧段留在上方。
  */
 import type { CSSProperties } from "react";
 import { useState } from "react";
@@ -53,13 +52,19 @@ export function PlanCard({
   onExecute,
   onGoalAction,
   executeDisabled = false,
+  defaultOpen = true,
+  segmentLabel,
 }: {
   plan: OrchestratorPlan | null;
   onExecute?: () => void;
   onGoalAction?: (action: "pause" | "resume" | "edit" | "clear") => void;
   executeDisabled?: boolean;
+  /** Past task segments usually start collapsed. */
+  defaultOpen?: boolean;
+  /** e.g. "任务 1" */
+  segmentLabel?: string;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(defaultOpen);
   const steps = plan?.steps ?? [];
   if (steps.length === 0) return null;
 
@@ -108,6 +113,7 @@ export function PlanCard({
         <span aria-hidden style={{ fontSize: 10 }}>
           {open ? "▾" : "▸"}
         </span>
+        {segmentLabel ? <span style={styles.segmentBadge}>{segmentLabel}</span> : null}
         <span style={styles.modeBadge}>{modeLabel}</span>
         {headerLabel}（{done}/{steps.length}）
         {mode === "goal" ? <span style={styles.goalStatus}>{goalStatusLabel}</span> : null}
@@ -230,6 +236,15 @@ const styles: Record<string, CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
     minWidth: 0,
+  },
+  segmentBadge: {
+    padding: "1px 5px",
+    borderRadius: 4,
+    border: "1px solid rgba(167,139,250,0.45)",
+    color: "#c4b5fd",
+    fontSize: 9,
+    letterSpacing: "0.04em",
+    fontWeight: 600,
   },
   modeBadge: {
     padding: "1px 5px",

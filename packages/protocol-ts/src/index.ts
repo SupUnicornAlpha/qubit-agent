@@ -92,6 +92,7 @@ export interface RuntimeHealth {
   status: string;
   uptime_ms: number;
   active_turns: number;
+  registered_turns?: number;
   hitl_waiting: number;
   core_backend: string;
   degraded_reasons: string[];

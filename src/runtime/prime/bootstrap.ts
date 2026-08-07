@@ -14,6 +14,16 @@ import type { AgentSpec } from "./types";
 export async function syncPrimeSpecsToRustCore(
   specs?: AgentSpec[]
 ): Promise<{ upserted: number; summary: ReturnType<typeof summarizePrimeSeed> }> {
+  // Ensure Orchestrator toolsJson includes current call_team_* before Core upsert.
+  try {
+    const { syncOrchestratorTopologyToolsForGroup } = await import(
+      "../orchestration/sync-orchestrator-topology-tools"
+    );
+    await syncOrchestratorTopologyToolsForGroup("decommissioned");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[prime] sync orchestrator topology tools failed: ${msg}`);
+  }
   const resolved = specs ?? (await buildPrimeAgentSpecsFromDb());
   const core = getCoreRuntime();
   for (const spec of resolved) {

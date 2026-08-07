@@ -31,6 +31,15 @@ export interface TurnContextOpts {
   prioritize_current_goal?: boolean;
   /** Remove bootstrap memory/workspace tools from model surface after assemble. */
   strip_bootstrap_memory_tools?: boolean;
+  /**
+   * Compressed session chronicle for Core `session` slot (never authoritative).
+   * Do not put UI/display copy here.
+   */
+  session_chronicle?: string;
+  /** Max chars per tool observation in turn history. Default 6000. */
+  tool_observation_max_chars?: number;
+  /** Protect newest tool observation chars; older stubbed. Default 40000; 0 = off. */
+  tool_observation_protect_chars?: number;
 }
 
 /** Defaults for Orchestrator chat turns — keep prior memory from dominating a new prompt. */
@@ -39,6 +48,8 @@ export const ORCHESTRATOR_TURN_CONTEXT: TurnContextOpts = {
   recall_top_k: 3,
   prioritize_current_goal: true,
   strip_bootstrap_memory_tools: true,
+  tool_observation_max_chars: 6000,
+  tool_observation_protect_chars: 40_000,
 };
 
 export interface AgentSpec {
@@ -115,9 +126,14 @@ export interface RuntimeHealth {
   status: string;
   uptime_ms: number;
   active_turns: number;
+  /** Cancel-registry size; used with active_turns for orphan detection. */
+  registered_turns?: number;
   hitl_waiting: number;
   core_backend: string;
   degraded_reasons: string[];
+  llm_model?: string;
+  llm_base_url?: string;
+  has_llm_key?: boolean;
 }
 
 export interface CoreRuntime {

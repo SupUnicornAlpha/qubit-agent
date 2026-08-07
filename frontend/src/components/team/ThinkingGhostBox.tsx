@@ -21,10 +21,11 @@ export const ThinkingGhostBox: FC<Props> = ({ reasoning }) => {
   const streaming = reasoning?.status === "streaming";
   const [expanded, setExpanded] = useState(true);
 
+  // Only react to stream start/stop — not every token (avoids expand thrash + layout jank).
   useEffect(() => {
-    if (!text) return;
-    setExpanded(streaming);
-  }, [streaming, text]);
+    if (streaming) setExpanded(true);
+    else if (text) setExpanded(false);
+  }, [streaming]); // eslint-disable-line react-hooks/exhaustive-deps -- intentional: ignore token churn
 
   if (!text) return null;
 

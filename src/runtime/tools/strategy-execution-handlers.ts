@@ -616,20 +616,408 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
   },
 
   /**
-   * Self-Evolving Agent P7 — `tool.report_gap`
-   *
-   * agent 在 LLM 推理中识别到「需要某工具但没有 / 不可用 / 不知道怎么用」时主动调用，
-   * 由 ToolGapWatcher 统一 ingest 到 `tool_gap_log`，给 P8 AutoInstaller propose 模式
-   * 提供候选输入。
-   *
-   * 参数（任 1 必填）：
-   *   - toolName / tool_name        ：想要的具体工具名（如 "get_realtime_options_chain"）
-   *   - serverName                  ：MCP server 名（如 "slack"），与 toolName 配合产 mcp: 签名
-   *   - reason / note               ：自由说明；若无 toolName，则用 reason 第一关键词产 concept: 签名
-   *
-   * 可选参数：
-   *   - toolKind / tool_kind        ：'mcp' | 'builtin' | 'unknown'（默认 'unknown'）
-   *
-   * 返回：{ ok, action: 'created'|'incremented'|'skipped', gapId?, signature }
+   * Prime 06：编译 Strategy API 源码 → 不可变 Manifest（不跑行情）。
+   * 入参：code / strategyCode / source（字符串）。
    */
+  "strategy.compile": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const code = String(
+      params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
+    ).trim();
+    if (!code) {
+      throw new Error(
+        "strategy.compile: 需要 code / strategyCode（Strategy API Python 源码全文）"
+      );
+    }
+    const {
+      compileStrategyContract,
+    } = await import("../strategy/v2/contract-service");
+    const result = await compileStrategyContract(code);
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error,
+        hint:
+          "修复 initialize 声明面：只能 set_universe/subscribe/set_warmup/set_benchmark；" +
+          "禁止 get_history/order_*；必须定义 handle_data 或 on_rebalance。",
+      };
+    }
+    return {
+      ok: true,
+      manifest: result.manifest,
+      codeHash: result.manifest.codeHash,
+      primarySymbol: result.manifest.universe.instruments[0]?.instrumentId ?? null,
+      message:
+        "编译成功。下一步可用 strategy.contract_backtest 同码回测；或 strategy.create_version 落库后交给工坊。",
+    };
+  },
+
+  /** alias */
+  "strategy.verify": async (ctx, paramsIn) => {
+    return STRATEGY_EXECUTION_HANDLERS["strategy.compile"]!(ctx, paramsIn);
+  },
+
+  /**
+   * Prime 06：同码回测（compile + SimBroker）。
+   * 入参：code；可选 symbol/limit/timeframe/params/initial_capital/commission。
+   * 若未传 bars，则按 Manifest universe 主标的拉取 K 线。
+   */
+  "strategy.contract_backtest": async (_ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const code = String(
+      params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
+    ).trim();
+    if (!code) {
+      throw new Error("strategy.contract_backtest: 需要 code / strategyCode");
+    }
+    const {
+      backtestStrategyContract,
+      compileStrategyContract,
+      instrumentIdToKlinesSymbol,
+      primaryInstrumentId,
+    } = await import("../strategy/v2/contract-service");
+    const compiled = await compileStrategyContract(code);
+    if (!compiled.ok) {
+      return { ok: false, stage: "compile", error: compiled.error };
+    }
+    const manifest = compiled.manifest;
+    const instrumentId =
+      String(params.symbol ?? params.instrument_id ?? "").trim() ||
+      primaryInstrumentId(manifest);
+    const klinesSymbol = instrumentIdToKlinesSymbol(instrumentId);
+    const timeframe = String(
+      params.timeframe ?? manifest.primaryFrequency ?? "1d"
+    ).trim();
+    const limit = Math.max(
+      30,
+      Math.min(Number(params.limit ?? Math.max(manifest.warmupBars + 80, 180)) || 180, 2000)
+    );
+    const userParams =
+      params.params && typeof params.params === "object" && !Array.isArray(params.params)
+        ? (params.params as Record<string, unknown>)
+        : undefined;
+
+    let bars: import("../../connectors/data/data.connector").BarData[] = [];
+    if (Array.isArray(params.bars) && params.bars.length > 0) {
+      bars = params.bars as import("../../connectors/data/data.connector").BarData[];
+    } else {
+      const { queryKlines } = await import("../market/klines-query");
+      const q = await queryKlines({
+        symbol: klinesSymbol,
+        timeframe,
+        limit,
+      });
+      if (q.error || q.bars.length < 10) {
+        return {
+          ok: false,
+          stage: "market_data",
+          error:
+            q.error?.message ??
+            `K 线不足（${q.bars.length}）：symbol=${klinesSymbol} timeframe=${timeframe}`,
+          manifest,
+        };
+      }
+      bars = q.bars;
+    }
+
+    const result = await backtestStrategyContract({
+      strategyCode: code,
+      bars,
+      symbol: instrumentId,
+      initialCapital: optionalFiniteNumber(params.initial_capital ?? params.initialCapital) ?? 100_000,
+      commission: optionalFiniteNumber(params.commission) ?? 0.001,
+      ...(userParams ? { params: userParams } : {}),
+    });
+    if (!result.ok) {
+      return { ok: false, stage: "backtest", error: result.error, manifest };
+    }
+    return {
+      ok: true,
+      manifest: result.manifest,
+      primarySymbol: result.primarySymbol,
+      metrics: result.metrics,
+      tradeCount: result.trades.length,
+      intentCount: result.intents.length,
+      equityCurve: result.equityCurve.slice(-30),
+      equityCurveFullLength: result.equityCurve.length,
+      sampleIntents: result.intents.slice(0, 12),
+      message:
+        "契约回测完成（SimBroker · next-open）。可把源码写入 Workspace/strategies 或 strategy.create_version 归档。",
+    };
+  },
+
+  /**
+   * Prime 06 SC2：同码纸交易 Session（固定纸本金）。
+   * 编译 Manifest → 可选建 strategy_version → 注册 PaperSession。
+   */
+  "strategy.paper_deploy": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const code = String(
+      params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
+    ).trim();
+    if (!code) {
+      throw new Error("strategy.paper_deploy: 需要 code / strategyCode");
+    }
+    const {
+      compileStrategyContract,
+      primaryInstrumentId,
+      instrumentIdToKlinesSymbol,
+    } = await import("../strategy/v2/contract-service");
+    const { createPaperSession } = await import("../strategy/v2/paper-session-service");
+    const compiled = await compileStrategyContract(code);
+    if (!compiled.ok) {
+      return { ok: false, stage: "compile", error: compiled.error };
+    }
+    const manifest = compiled.manifest;
+    const instrumentId = primaryInstrumentId(manifest);
+    const market =
+      String(params.market ?? "").trim() ||
+      (instrumentId.includes(":") ? instrumentId.split(":")[0]! : "US");
+    const paperCapital =
+      optionalFiniteNumber(params.paper_capital ?? params.paperCapital) ?? 100_000;
+    let strategyVersionId = String(
+      params.strategy_version_id ?? params.strategyVersionId ?? ""
+    ).trim();
+
+    if (!strategyVersionId && (ctx.projectId || params.project_id || params.name)) {
+      const created = (await STRATEGY_EXECUTION_HANDLERS["strategy.create_version"]!(
+        ctx,
+        {
+          name:
+            String(params.name ?? params.strategyName ?? "").trim() ||
+            `contract_${manifest.codeHash.slice(0, 8)}`,
+          style: "low_freq",
+          description: `Strategy API V2 paper · codeHash=${manifest.codeHash.slice(0, 12)}`,
+          universe: instrumentId,
+          params: {
+            strategyManifest: manifest,
+            codeHash: manifest.codeHash,
+            paperCapital,
+            source: "strategy.paper_deploy",
+          },
+        }
+      )) as { strategyVersionId?: string };
+      strategyVersionId = String(created.strategyVersionId ?? "").trim();
+    }
+
+    const session = createPaperSession({
+      strategyCode: code,
+      manifest,
+      paperCapital,
+      strategyVersionId: strategyVersionId || null,
+      workflowRunId: ctx.workflowId ?? null,
+      projectId: ctx.projectId ?? null,
+      primarySymbol: instrumentId,
+      market,
+      timeframe: String(
+        params.timeframe ?? manifest.primaryFrequency ?? "1d"
+      ).trim(),
+      params:
+        params.params && typeof params.params === "object" && !Array.isArray(params.params)
+          ? (params.params as Record<string, unknown>)
+          : {},
+    });
+
+    return {
+      ok: true,
+      sessionId: session.id,
+      codeHash: session.codeHash,
+      paperCapital: session.paperCapital,
+      primarySymbol: session.primarySymbol,
+      klinesSymbol: instrumentIdToKlinesSymbol(session.primarySymbol),
+      strategyVersionId: session.strategyVersionId,
+      manifest,
+      sizingRule: "fixed_paper_capital",
+      next: "调用 strategy.paper_run({session_id}) 推进完成 bar 并落 paper order_intent。",
+    };
+  },
+
+  /**
+   * Prime 06 SC2：推进纸交易 Session —— 同码 SimBroker 回放 → 镜像成交为 paper intents。
+   * 默认 gate=paper；权益口径=会话固定纸本金（与回测同一 SimBroker）。
+   */
+  "strategy.paper_run": async (ctx, paramsIn) => {
+    const params = unwrapToolArgs(paramsIn);
+    const {
+      getPaperSession,
+      updatePaperSession,
+      tradesToPaperOrderDrafts,
+    } = await import("../strategy/v2/paper-session-service");
+    const {
+      backtestStrategyContract,
+      instrumentIdToKlinesSymbol,
+    } = await import("../strategy/v2/contract-service");
+
+    let sessionId = String(params.session_id ?? params.sessionId ?? "").trim();
+    if (!sessionId) {
+      const deployed = (await STRATEGY_EXECUTION_HANDLERS["strategy.paper_deploy"]!(
+        ctx,
+        params
+      )) as { ok?: boolean; sessionId?: string; error?: string };
+      if (!deployed.ok || !deployed.sessionId) {
+        return deployed;
+      }
+      sessionId = deployed.sessionId;
+    }
+    const session = getPaperSession(sessionId);
+    if (!session) {
+      throw new Error(`strategy.paper_run: unknown session_id=${sessionId}`);
+    }
+
+    const klinesSymbol = instrumentIdToKlinesSymbol(session.primarySymbol);
+    const limit = Math.max(
+      30,
+      Math.min(
+        Number(params.limit ?? Math.max(session.manifest.warmupBars + 80, 180)) || 180,
+        2000
+      )
+    );
+    let bars: import("../../connectors/data/data.connector").BarData[] = [];
+    if (Array.isArray(params.bars) && params.bars.length > 0) {
+      bars = params.bars as import("../../connectors/data/data.connector").BarData[];
+    } else {
+      const { queryKlines } = await import("../market/klines-query");
+      const q = await queryKlines({
+        symbol: klinesSymbol,
+        timeframe: session.timeframe,
+        limit,
+      });
+      if (q.error || q.bars.length < 10) {
+        updatePaperSession(sessionId, {
+          status: "error",
+          lastError: q.error?.message ?? "klines_insufficient",
+        });
+        return {
+          ok: false,
+          stage: "market_data",
+          sessionId,
+          error:
+            q.error?.message ??
+            `K 线不足（${q.bars.length}）：symbol=${klinesSymbol}`,
+        };
+      }
+      bars = q.bars;
+    }
+
+    updatePaperSession(sessionId, { status: "running", lastError: null });
+    const result = await backtestStrategyContract({
+      strategyCode: session.strategyCode,
+      bars,
+      symbol: session.primarySymbol,
+      initialCapital: session.paperCapital,
+      commission: optionalFiniteNumber(params.commission) ?? 0.001,
+      params: session.params,
+    });
+    if (!result.ok) {
+      updatePaperSession(sessionId, { status: "error", lastError: result.error });
+      return { ok: false, stage: "backtest", sessionId, error: result.error };
+    }
+
+    const dryRun = Boolean(params.dry_run ?? params.dryRun);
+    const drafts = tradesToPaperOrderDrafts(result.trades, {
+      maxOrders: Math.max(1, Math.min(Number(params.max_orders ?? 40) || 40, 100)),
+    });
+    const submitted: Array<Record<string, unknown>> = [];
+    const skipped: Array<Record<string, unknown>> = [];
+
+    const strategyVersionId =
+      String(params.strategy_version_id ?? "").trim() || session.strategyVersionId || "";
+    const workflowRunId = ctx.workflowId || session.workflowRunId || "";
+
+    if (!dryRun && strategyVersionId && workflowRunId) {
+      const db = await getDb();
+      const symForBook = instrumentIdToKlinesSymbol(session.primarySymbol);
+      let instrumentRowId = "";
+      {
+        const existing = await db
+          .select()
+          .from(instrumentTable)
+          .where(eq(instrumentTable.symbol, symForBook.toUpperCase()))
+          .limit(1);
+        if (existing[0]) {
+          instrumentRowId = existing[0].id;
+        } else {
+          instrumentRowId = randomUUID();
+          await db.insert(instrumentTable).values({
+            id: instrumentRowId,
+            symbol: symForBook.toUpperCase(),
+            assetClass: "stock",
+            exchange: session.market,
+            metaJson: { source: "strategy.paper_run" },
+          });
+        }
+      }
+      for (const d of drafts) {
+        try {
+          const r = await createOrderIntentWithExecution(db, {
+            workflowRunId,
+            strategyVersionId,
+            instrumentId: instrumentRowId,
+            side: d.side,
+            qty: d.qty,
+            orderType: "limit",
+            price: d.price,
+            timeInForce: "day",
+            market: session.market,
+            symbol: symForBook,
+            timeframe: session.timeframe,
+            signalBarTime: d.signalBarTime || null,
+            dispatchMode: "paper",
+            requireDataQualityGate: false,
+            clientOrderId: `paper:${sessionId}:${d.signalBarTime}:${d.side}:${d.qty}`,
+          });
+          submitted.push({
+            orderIntentId: r.orderIntentId,
+            riskOutcome: r.riskOutcome,
+            side: d.side,
+            qty: d.qty,
+            price: d.price,
+            signalBarTime: d.signalBarTime,
+            reason: d.reason,
+          });
+        } catch (e) {
+          skipped.push({
+            side: d.side,
+            qty: d.qty,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    } else if (!dryRun && (!strategyVersionId || !workflowRunId)) {
+      skipped.push({
+        error:
+          "缺少 strategy_version_id 或 workflow_run_id，未写 order_intent。先在 research workflow 内 paper_deploy，或显式传 strategy_version_id。",
+      });
+    }
+
+    updatePaperSession(sessionId, {
+      status: "ready",
+      intentCount: session.intentCount + submitted.length,
+      lastRunAt: new Date().toISOString(),
+      lastError: null,
+    });
+
+    return {
+      ok: true,
+      sessionId,
+      codeHash: session.codeHash,
+      paperCapital: session.paperCapital,
+      sizingRule: "fixed_paper_capital",
+      dispatchMode: "paper",
+      metrics: result.metrics,
+      tradeCount: result.trades.length,
+      intentAuditCount: result.intents.length,
+      orderDrafts: drafts.slice(0, 12),
+      submittedCount: submitted.length,
+      submitted: submitted.slice(0, 20),
+      skipped,
+      dryRun,
+      message:
+        submitted.length > 0
+          ? `纸交易已落 ${submitted.length} 笔 paper order_intent（固定纸本金=${session.paperCapital}）。`
+          : dryRun
+            ? "dry_run：仅回放 intents，未写库。"
+            : "回放完成；若未写库请检查 workflow / strategy_version 绑定。",
+    };
+  },
 };

@@ -195,6 +195,17 @@ export class RustCoreClient implements CoreRuntime {
       "observing",
       "finalizing",
     ]);
+    /** Don't treat brief active_turns blips / early LLM as orphans. */
+    const graceMs = Math.max(
+      10_000,
+      Number(process.env.QUBIT_PRIME_ORPHAN_GRACE_MS ?? 25_000) || 25_000
+    );
+    /** Require sustained orphan signal (was 3s — false-killed turns mid-LLM/news). */
+    const streakNeed = Math.max(
+      5,
+      Number(process.env.QUBIT_PRIME_ORPHAN_STREAK_SECS ?? 15) || 15
+    );
+    const watchStarted = Date.now();
     let streak = 0;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 1_000));
@@ -226,14 +237,32 @@ export class RustCoreClient implements CoreRuntime {
       ) {
         return snap;
       }
+      if (Date.now() - watchStarted < graceMs) {
+        streak = 0;
+        continue;
+      }
+      const registered =
+        typeof health.registered_turns === "number"
+          ? health.registered_turns
+          : null;
+      // Prefer joint signal: semaphore empty AND cancel registry empty (when known).
+      // Legacy cores omit registered_turns — fall back to active_turns alone.
+      const noLiveTask =
+        health.active_turns === 0 &&
+        (registered === null || registered === 0);
       if (
         turn &&
         turn.turn_id === turnId &&
         inflight.has(String(turn.state)) &&
-        health.active_turns === 0
+        noLiveTask
       ) {
         streak += 1;
-        if (streak >= 3) {
+        if (streak >= streakNeed) {
+          console.warn(
+            `[prime-core] orphan turn ${turnId}: active_turns=0` +
+              (registered === null ? "" : ` registered_turns=${registered}`) +
+              ` for ${streak}s — failTurn`
+          );
           try {
             await this.failTurn({ session_id: sessionId, turn_id: turnId });
           } catch {

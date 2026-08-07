@@ -55,12 +55,22 @@ export function buildCoreUserText(input: {
   taskType: string;
   params: Record<string, unknown>;
   workflowGoal?: string;
+  /**
+   * When true, omit params.context from the user text — Host must pass it via
+   * `turn.start.context.session_chronicle` (P3 authority split).
+   */
+  omitContext?: boolean;
 }): string {
   const params = input.params;
   const goal =
     (typeof params.goal === "string" && params.goal.trim()) ||
     (input.workflowGoal?.trim() ?? "");
-  const context = typeof params.context === "string" ? params.context.trim() : "";
+  const context =
+    input.omitContext === true
+      ? ""
+      : typeof params.context === "string"
+        ? params.context.trim()
+        : "";
   const parts: string[] = [];
 
   if (
@@ -82,15 +92,25 @@ export function buildCoreUserText(input: {
       parts.push(`[prime_core_inbox]\ninbox_id=${params.primeCoreInboxId}`);
     }
     parts.push(
-      "[instruction]\nContinue after human approval or resume. Produce the next user-facing answer. " +
-        "Reuse prior tool observations and do not re-fetch identical MCP evidence unless necessary."
+      "[instruction]\nContinue the interrupted turn. The [user] block is the AUTHORITATIVE " +
+        "user request that must still be fulfilled (including symbol/target clarifications). " +
+        "Reuse prior tool observations and do not re-fetch identical MCP evidence unless necessary. " +
+        "Produce the next user-facing answer."
     );
     if (typeof params.resumeSource === "string" && params.resumeSource) {
       parts.push(`[resume_source]\n${params.resumeSource}`);
     }
   }
 
-  if (context) parts.push(`[context]\n${context}`);
+  // Legacy path: chronicle still embedded when omitContext is false.
+  if (context) {
+    const alreadyMarked = context.includes("OPTIONAL_BACKGROUND");
+    parts.push(
+      alreadyMarked
+        ? `[session_chronicle]\n${context}`
+        : `[session_chronicle]\nOPTIONAL_BACKGROUND — do NOT override the [user] task:\n${context}`
+    );
+  }
   if (goal) parts.push(`[user]\n${goal}`);
   if (parts.length === 0) {
     return goal || context || `(task ${input.taskType})`;
@@ -234,11 +254,21 @@ export async function runOrchestratorTaskViaCore(
       ? params.conversationTurnId.trim()
       : undefined;
   const { workflow, loopOptions } = await loadWorkflowLoopContext(msg.workflowId);
+  const sessionChronicle =
+    typeof params.context === "string" && params.context.trim()
+      ? params.context.trim()
+      : undefined;
+  // P3: authoritative user text only in input.text; chronicle via context.session_chronicle.
   const text = buildCoreUserText({
     taskType: payload.taskType,
     params,
     workflowGoal: workflow.goal,
+    omitContext: true,
   });
+  const turnContext = {
+    ...ORCHESTRATOR_TURN_CONTEXT,
+    ...(sessionChronicle ? { session_chronicle: sessionChronicle } : {}),
+  };
   const interactionMode = mapInteractionMode({
     ...loopOptions,
     ...(typeof params.agentMode === "string" ? { agentMode: params.agentMode } : {}),
@@ -314,7 +344,7 @@ export async function runOrchestratorTaskViaCore(
         idempotency_key:
           conversationTurnId ??
           `${msg.workflowId}:${payload.taskId}:${randomUUID()}`,
-        context: ORCHESTRATOR_TURN_CONTEXT,
+        context: turnContext,
       });
       await beginCoreMonitorTurn({
         workflowId: msg.workflowId,

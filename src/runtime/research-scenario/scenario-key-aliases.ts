@@ -27,6 +27,9 @@ export const REQUIRED_CAPABILITY_PRIMARY_TOOL: Record<string, string> = {
   "recommendation.record": "recommendation.record",
   factor: "factor.register",
   strategy: "strategy.create_version",
+  // Strategy API 路径也可算 strategy 能力（B-1 子串/别名匹配见 data-gap）
+  "strategy.compile": "strategy.compile",
+  "strategy.contract_backtest": "strategy.contract_backtest",
   order: "order.create_intent",
   // Prefer order.create_intent: it embeds pre-trade risk and writes risk_decision.
   risk: "order.create_intent",

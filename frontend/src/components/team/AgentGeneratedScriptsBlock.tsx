@@ -1,8 +1,9 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { listStrategyScripts } from "../../api/backend";
+import { listStrategyScripts, compileStrategyContract } from "../../api/backend";
 import type { IndicatorStrategyScriptRecord } from "../../api/types";
 import { useTranslation } from "../../i18n";
+import { isStrategyApiV2Code, preferStrategyApiCode } from "../../lib/strategyApiCode";
 
 export interface AgentGeneratedScriptsBlockProps {
   /**
@@ -63,6 +64,10 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [keyword, setKeyword] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [verifyBusyId, setVerifyBusyId] = useState<string | null>(null);
+  const [manifestById, setManifestById] = useState<
+    Record<string, { codeHash: string; strategyType: string; universe: string; error?: string }>
+  >({});
 
   const reload = useCallback(async () => {
     if (!sessionId || !workflowRunId) {
@@ -122,9 +127,60 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
     onCountChange?.(scripts.length);
   }, [scripts.length, onCountChange]);
 
+  const handleVerifyInline = useCallback(async (script: IndicatorStrategyScriptRecord) => {
+    const code = preferStrategyApiCode({
+      ideCode: script.ideCode,
+      signalCode: script.signalCode,
+    });
+    if (!isStrategyApiV2Code(code)) {
+      setManifestById((prev) => ({
+        ...prev,
+        [script.id]: {
+          codeHash: "",
+          strategyType: "",
+          universe: "",
+          error: "非 Strategy API（需要 initialize + handle_data）",
+        },
+      }));
+      return;
+    }
+    setVerifyBusyId(script.id);
+    try {
+      const r = await compileStrategyContract(code);
+      if (!r.ok) {
+        setManifestById((prev) => ({
+          ...prev,
+          [script.id]: {
+            codeHash: "",
+            strategyType: "",
+            universe: "",
+            error: r.error,
+          },
+        }));
+        return;
+      }
+      setManifestById((prev) => ({
+        ...prev,
+        [script.id]: {
+          codeHash: r.manifest.codeHash,
+          strategyType: r.manifest.strategyType,
+          universe: r.manifest.universe.instruments
+            .map((i) => i.instrumentId)
+            .join(", "),
+        },
+      }));
+    } finally {
+      setVerifyBusyId(null);
+    }
+  }, []);
+
   const handleCopy = useCallback(async (script: IndicatorStrategyScriptRecord) => {
     try {
-      await navigator.clipboard.writeText(script.signalCode ?? "");
+      const code = preferStrategyApiCode({
+        ideCode: script.ideCode,
+        signalCode: script.signalCode,
+      });
+      await navigator.clipboard.writeText(code);
       setCopiedId(script.id);
       setTimeout(() => {
         setCopiedId((cur) => (cur === script.id ? null : cur));
@@ -164,7 +220,9 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
         </button>
       </div>
 
-      <p style={styles.scopeMuted}>{t("team.scriptsBlock.scopeHint")}</p>
+      <p style={styles.scopeMuted}>
+        {t("team.scriptsBlock.scopeHint")} Strategy API（initialize/handle_data）可点「打开工坊」验证并启动纸交易引擎。
+      </p>
 
       {error ? <div style={styles.error}>{error}</div> : null}
       {!error && filtered.length === 0 ? (
@@ -180,6 +238,11 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
       <div style={styles.list}>
         {filtered.map((s) => {
           const checked = selectedIds.has(s.id);
+          const preview = preferStrategyApiCode({
+            ideCode: s.ideCode,
+            signalCode: s.signalCode,
+          });
+          const isV2 = isStrategyApiV2Code(preview);
           return (
             <label
               key={s.id}
@@ -195,11 +258,13 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
                 <div style={styles.rowTitle}>
                   <span style={styles.rowName}>{s.name}</span>
                   <span style={styles.badge}>{s.purpose}</span>
+                  {isV2 ? <span style={styles.badgeV2}>Strategy API</span> : null}
                 </div>
                 <div style={styles.rowMeta}>
                   {t("team.scriptsBlock.createdAt", {
                     at: new Date(s.createdAt).toLocaleString(),
                   })}
+                  {preview ? ` · ${preview.length}c` : ""}
                 </div>
               </div>
             </label>
@@ -210,7 +275,11 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
       {selected.length > 0 ? (
         <div style={styles.cards}>
           {selected.map((s) => {
-            const code = s.signalCode ?? "";
+            const code = preferStrategyApiCode({
+              ideCode: s.ideCode,
+              signalCode: s.signalCode,
+            });
+            const isV2 = isStrategyApiV2Code(code);
             const isCopied = copiedId === s.id;
             return (
               <article key={s.id} style={styles.card}>
@@ -218,16 +287,35 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
                   <div style={styles.cardTitle}>{s.name}</div>
                   <div style={styles.cardHeadMeta}>
                     <span style={styles.badge}>{s.purpose}</span>
+                    {isV2 ? <span style={styles.badgeV2}>Strategy API V2</span> : null}
                   </div>
                 </header>
                 <div style={styles.cardSection}>
                   <div style={styles.cardLabel}>
                     {t("team.scriptsBlock.codeLabel", { n: code.length })}
+                    {isV2 ? " · initialize/handle_data" : ""}
                   </div>
                   <pre style={styles.codeBlock}>
                     <code>{code || "—"}</code>
                   </pre>
                 </div>
+                {isV2 ? (
+                  <div style={styles.cardSection}>
+                    {manifestById[s.id]?.error ? (
+                      <div style={styles.error}>{manifestById[s.id]!.error}</div>
+                    ) : manifestById[s.id]?.codeHash ? (
+                      <div style={styles.manifestBox}>
+                        Manifest · {manifestById[s.id]!.strategyType} ·{" "}
+                        {manifestById[s.id]!.codeHash.slice(0, 12)}… ·{" "}
+                        {manifestById[s.id]!.universe || "—"}
+                      </div>
+                    ) : (
+                      <p style={styles.scopeMuted}>
+                        可内联「验证契约」看 Manifest，或打开脚本工坊回测/进引擎。
+                      </p>
+                    )}
+                  </div>
+                ) : null}
                 {s.aiPromptSnapshot ? (
                   <details style={styles.promptDetails}>
                     <summary style={styles.promptSummary}>
@@ -261,6 +349,17 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
                       ? t("team.scriptsBlock.copied")
                       : t("team.scriptsBlock.copyCode")}
                   </button>
+                  {isV2 ? (
+                    <button
+                      type="button"
+                      className="qb-btn-secondary"
+                      style={styles.cardBtn}
+                      disabled={verifyBusyId === s.id}
+                      onClick={() => void handleVerifyInline(s)}
+                    >
+                      {verifyBusyId === s.id ? "验证中…" : "验证契约"}
+                    </button>
+                  ) : null}
                   {onOpenInWorkbench ? (
                     <button
                       type="button"
@@ -268,7 +367,9 @@ export const AgentGeneratedScriptsBlock: FC<AgentGeneratedScriptsBlockProps> = (
                       style={styles.cardBtn}
                       onClick={() => onOpenInWorkbench(s)}
                     >
-                      {t("team.scriptsBlock.openInWorkbench")}
+                      {isV2
+                        ? "在脚本工坊验证/启动"
+                        : t("team.scriptsBlock.openInWorkbench")}
                     </button>
                   ) : null}
                 </div>
@@ -420,6 +521,24 @@ const styles: Record<string, CSSProperties> = {
     background: "#27272a",
     color: "#a1a1aa",
     flexShrink: 0,
+  },
+  badgeV2: {
+    fontSize: 9,
+    padding: "1px 6px",
+    borderRadius: 10,
+    background: "rgba(52, 211, 153, 0.15)",
+    border: "1px solid rgba(52, 211, 153, 0.4)",
+    color: "#6ee7b7",
+    flexShrink: 0,
+  },
+  manifestBox: {
+    fontSize: 10,
+    color: "#a7f3d0",
+    background: "rgba(16, 185, 129, 0.08)",
+    border: "1px solid rgba(52, 211, 153, 0.35)",
+    borderRadius: 6,
+    padding: "6px 8px",
+    lineHeight: 1.45,
   },
   cards: {
     marginTop: 6,

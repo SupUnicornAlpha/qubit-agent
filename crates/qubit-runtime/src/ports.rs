@@ -327,27 +327,56 @@ impl CoreRuntimeService {
 
         let join = tokio::spawn(async move {
             let _permit = permit;
-            let result = engine
-                .run_turn_preallocated(
-                    &session_id,
-                    tid.clone(),
-                    input,
-                    token,
-                    turn_opts,
-                )
-                .await;
-            if let Err(e) = &result {
-                tracing::error!(turn_id = %tid, error = %e, "turn task failed");
-                if let Err(fail_err) = engine.fail_turn(&session_id, &tid, e).await {
-                    tracing::error!(
-                        turn_id = %tid,
-                        error = %fail_err,
-                        "failed to mark turn as failed after error"
-                    );
+            // Nested spawn so panics inside run_turn still hit JoinError and we
+            // can fail/heal the turn (outer future Drop alone left mid-flight
+            // Acting + active_turns=0 → Bun false "timeout").
+            let run = {
+                let engine = Arc::clone(&engine);
+                let session_id = session_id.clone();
+                let tid = tid.clone();
+                tokio::spawn(async move {
+                    engine
+                        .run_turn_preallocated(
+                            &session_id,
+                            tid,
+                            input,
+                            token,
+                            turn_opts,
+                        )
+                        .await
+                })
+            };
+            match run.await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => {
+                    tracing::error!(turn_id = %tid, error = %e, "turn task failed");
+                    if let Err(fail_err) = engine.fail_turn(&session_id, &tid, &e).await {
+                        tracing::error!(
+                            turn_id = %tid,
+                            error = %fail_err,
+                            "failed to mark turn as failed after error"
+                        );
+                    }
+                }
+                Err(join_err) => {
+                    let msg = if join_err.is_panic() {
+                        format!("turn task panicked: {join_err}")
+                    } else {
+                        format!("turn task join error: {join_err}")
+                    };
+                    tracing::error!(turn_id = %tid, error = %msg, "turn task aborted");
+                    let err = RuntimeError::Internal(msg);
+                    if let Err(fail_err) = engine.fail_turn(&session_id, &tid, &err).await {
+                        tracing::error!(
+                            turn_id = %tid,
+                            error = %fail_err,
+                            "failed to mark turn as failed after panic/abort"
+                        );
+                    }
                 }
             }
             // Heal empty-run orphans: task ended but active_turn still mid-flight
-            // (panic paths / cancel races / incomplete state transitions).
+            // (cancel races / incomplete state transitions).
             if let Err(heal_err) = engine
                 .heal_orphan_turn(
                     &session_id,
@@ -518,6 +547,7 @@ impl CoreRuntimeService {
             },
             uptime_ms: self.started.elapsed().as_millis() as u64,
             active_turns: self.supervisor.active_turns(),
+            registered_turns: self.cancels.len().await as u32,
             hitl_waiting: self
                 .hitl
                 .list_pending(HitlInboxFilter {

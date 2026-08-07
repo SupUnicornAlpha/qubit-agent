@@ -1870,6 +1870,207 @@ export async function getProjectStrategyScript(
   return res.data;
 }
 
+export type StrategyManifestV2 = {
+  apiVersion: number;
+  codeHash: string;
+  strategyType: string;
+  universe: {
+    kind: string;
+    instruments: Array<{ market: string; symbol: string; instrumentId: string }>;
+  };
+  handlers: string[];
+  warmupBars: number;
+  primaryFrequency: string;
+  paramsSchema: Array<{
+    name: string;
+    type: string;
+    default: unknown;
+    description?: string;
+  }>;
+  metadata?: Record<string, unknown>;
+};
+
+export async function compileStrategyContract(code: string): Promise<{
+  ok: true;
+  manifest: StrategyManifestV2;
+} | { ok: false; error: string }> {
+  try {
+    const res = await httpPost<{
+      ok: boolean;
+      data?: { ok: true; manifest: StrategyManifestV2 };
+      error?: string;
+    }>("/api/v1/quant/strategy-contract/compile", { code });
+    if (!res.ok || !res.data?.ok) {
+      return { ok: false, error: res.error ?? "compile_failed" };
+    }
+    return res.data;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function backtestStrategyContractApi(input: {
+  code: string;
+  symbol?: string;
+  limit?: number;
+  timeframe?: string;
+  initialCapital?: number;
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  data?: {
+    manifest: StrategyManifestV2;
+    metrics: {
+      totalReturnPct: number;
+      maxDrawdownPct: number;
+      sharpeApprox: number;
+      tradeCount: number;
+      bars: number;
+    };
+    primarySymbol: string;
+    tradeCount: number;
+    intentCount?: number;
+  };
+}> {
+  try {
+    const res = await httpPost<{
+      ok: boolean;
+      error?: string;
+      data?: {
+        manifest: StrategyManifestV2;
+        metrics: {
+          totalReturnPct: number;
+          maxDrawdownPct: number;
+          sharpeApprox: number;
+          tradeCount: number;
+          bars: number;
+        };
+        primarySymbol: string;
+        tradeCount?: number;
+        intentCount?: number;
+        intents?: unknown[];
+      };
+    }>("/api/v1/quant/strategy-contract/backtest", input);
+    if (!res.ok || !res.data) {
+      return { ok: false, error: res.error ?? "backtest_failed" };
+    }
+    return {
+      ok: true,
+      data: {
+        ...res.data,
+        tradeCount: res.data.tradeCount ?? res.data.metrics.tradeCount,
+        intentCount: res.data.intentCount ?? res.data.intents?.length,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function paperDeployStrategyContract(input: {
+  code: string;
+  paperCapital?: number;
+  market?: string;
+  timeframe?: string;
+  projectId?: string;
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  data?: {
+    sessionId: string;
+    codeHash: string;
+    paperCapital: number;
+    primarySymbol: string;
+    klinesSymbol: string;
+    manifest: StrategyManifestV2;
+  };
+}> {
+  try {
+    const res = await httpPost<{
+      ok: boolean;
+      error?: string;
+      data?: {
+        sessionId: string;
+        codeHash: string;
+        paperCapital: number;
+        primarySymbol: string;
+        klinesSymbol: string;
+        manifest: StrategyManifestV2;
+      };
+    }>("/api/v1/quant/strategy-contract/paper-deploy", input);
+    if (!res.ok || !res.data) {
+      return { ok: false, error: res.error ?? "paper_deploy_failed" };
+    }
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function paperRunStrategyContract(input: {
+  sessionId?: string;
+  code?: string;
+  dryRun?: boolean;
+  limit?: number;
+  workflowRunId?: string;
+  projectId?: string;
+  strategyVersionId?: string;
+  name?: string;
+}): Promise<{
+  ok: boolean;
+  error?: string;
+  data?: {
+    sessionId: string;
+    codeHash: string;
+    paperCapital: number;
+    dryRun: boolean;
+    metrics: {
+      totalReturnPct: number;
+      maxDrawdownPct: number;
+      sharpeApprox: number;
+      tradeCount: number;
+      bars: number;
+    };
+    tradeCount: number;
+    orderDrafts: Array<Record<string, unknown>>;
+    submittedCount?: number;
+    note?: string;
+  };
+}> {
+  try {
+    const res = await httpPost<{
+      ok: boolean;
+      error?: string;
+      data?: {
+        sessionId: string;
+        codeHash: string;
+        paperCapital: number;
+        dryRun: boolean;
+        metrics: {
+          totalReturnPct: number;
+          maxDrawdownPct: number;
+          sharpeApprox: number;
+          tradeCount: number;
+          bars: number;
+        };
+        tradeCount: number;
+        orderDrafts: Array<Record<string, unknown>>;
+        submittedCount?: number;
+        note?: string;
+      };
+    }>("/api/v1/quant/strategy-contract/paper-run", {
+      ...input,
+      dryRun: input.dryRun ?? true,
+    });
+    if (!res.ok || !res.data) {
+      return { ok: false, error: res.error ?? "paper_run_failed" };
+    }
+    return { ok: true, data: res.data };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function createSessionMessage(params: {
   sessionId: string;
   role: "user" | "assistant" | "system";

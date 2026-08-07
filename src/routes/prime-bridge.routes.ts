@@ -31,6 +31,7 @@ import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
 import type { BuiltinToolContext } from "../runtime/tools/types";
 import type { RuntimeAgentDefinition } from "../runtime/types";
+import { loadOrchestratorTopologyForWorkflow } from "../runtime/orchestration/topology-dispatch";
 
 export const primeBridgeRouter = new Hono();
 
@@ -49,6 +50,10 @@ const BRIDGED_TOOLS = [
   "recommendation.record",
   "strategy.create_version",
   "strategy.compose",
+  "strategy.compile",
+  "strategy.contract_backtest",
+  "strategy.paper_deploy",
+  "strategy.paper_run",
   "factor.register",
   "factor.list",
   "factor.compute",
@@ -59,9 +64,22 @@ const BRIDGED_TOOLS = [
   "workspace.context.snapshot",
   "web.search",
   "web.fetch",
+  /** Orchestrator dispatch — list also injects dynamic call_team_* from topology. */
+  "assign_task",
+  "order.create_intent",
+  "evaluate_risk",
 ] as const;
 
 const BRIDGED_SET = new Set<string>(BRIDGED_TOOLS);
+
+/** Static allowlist + topology `call_team_*` (and assign_task). */
+export function isBridgedLegacyToolName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  if (BRIDGED_SET.has(n)) return true;
+  if (n === "assign_task") return true;
+  return n.startsWith("call_team_");
+}
 
 /**
  * Models often nest real params under `arguments`; top-level wins on conflict.
@@ -338,14 +356,24 @@ primeBridgeRouter.post("/rpc", async (c) => {
   try {
     if (body.method === "legacy.tools.list") {
       const mcpTools = await listBridgedMcpTools();
+      const topology = await loadOrchestratorTopologyForWorkflow().catch(() => null);
+      const teamTools = [
+        "assign_task",
+        ...((topology?.toolNames ?? []).filter((n) => n.startsWith("call_team_"))),
+      ];
+      const names = [...new Set<string>([...BRIDGED_TOOLS, ...teamTools])];
       return c.json({
         jsonrpc: "2.0",
         id: body.id,
         result: {
           tools: [
-            ...BRIDGED_TOOLS.map((name) => ({
+            ...names.map((name) => ({
               name,
-              description: `Legacy Bun builtin (bridged): ${name}`,
+              description: name.startsWith("call_team_")
+                ? `Dispatch specialist subagent via A2A (${name}). Prefer for context-split research; pass {goal}.`
+                : name === "assign_task"
+                  ? "Assign a structured subagent task by role/goal (fallback when call_team_* unavailable)."
+                  : `Legacy Bun builtin (bridged): ${name}`,
             })),
             ...mcpTools.map((t) => ({
               name: t.name,
@@ -378,7 +406,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
         });
       }
 
-      if (!BRIDGED_SET.has(name)) {
+      if (!isBridgedLegacyToolName(name)) {
         return c.json({
           jsonrpc: "2.0",
           id: body.id,
@@ -494,9 +522,11 @@ primeBridgeRouter.post("/rpc", async (c) => {
 
 primeBridgeRouter.get("/health", async (c) => {
   const mcpTools = await listBridgedMcpTools().catch(() => []);
+  const topology = await loadOrchestratorTopologyForWorkflow().catch(() => null);
+  const teamTools = topology?.toolNames ?? [];
   return c.json({
     ok: true,
-    bridgedTools: [...BRIDGED_TOOLS],
+    bridgedTools: [...new Set([...BRIDGED_TOOLS, "assign_task", ...teamTools])],
     mcpToolCount: mcpTools.length,
     mcpTools: mcpTools.map((t) => t.name).slice(0, 50),
   });

@@ -56,4 +56,12 @@ impl TurnCancelRegistry {
     pub async fn remove(&self, turn_id: &TurnId) {
         self.inner.write().await.remove(turn_id.as_str());
     }
+
+    pub async fn len(&self) -> usize {
+        self.inner.read().await.len()
+    }
+
+    pub async fn contains(&self, turn_id: &TurnId) -> bool {
+        self.inner.read().await.contains_key(turn_id.as_str())
+    }
 }

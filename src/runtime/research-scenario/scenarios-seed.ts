@@ -121,8 +121,15 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
     { kind: "backtest", level: "required" },
   ],
   toolPreset: {
-    // 精品面：版本 → 组合 → 回测；去掉 list / 旧别名空转
-    builtinTools: ["strategy.create_version", "strategy.compose", "backtest.run"],
+    // SC3：因子配方链 + Strategy API 写码验证链并存
+    builtinTools: [
+      "strategy.create_version",
+      "strategy.compose",
+      "backtest.run",
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy",
+    ],
     connectors: ["qubit-data", "qubit-backtest", "qubit-risk"],
     mcpServers: [],
     defaultParams: {},

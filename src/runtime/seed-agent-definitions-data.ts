@@ -14,6 +14,7 @@ import {
   PROMPT_ORCHESTRATOR,
   PROMPT_RESEARCH,
   PROMPT_RISK,
+  PROMPT_STRATEGY_CODER,
   PROMPT_WALK_FORWARD_VALIDATOR,
 } from "./seed-agent-prompts";
 import {
@@ -89,9 +90,9 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "orchestrator",
     name: "编排器",
     /**
-     * 4.1.2：web.* 描述与派发矩阵强化；strategy/backtest/autoEvaluate 入参更宽松。
+     * 4.2.0：拆上下文派 subagent（call_team_* / agent.invoke）优先；Orchestrator 专责收口合同。
      */
-    version: "4.1.2",
+    version: "4.2.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       // 编排
@@ -112,6 +113,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "discovery.promote",
       "strategy.create_version",
       "strategy.compose",
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy",
+      "strategy.paper_run",
       "backtest.run",
       "evaluate_risk",
       "rule.register",
@@ -319,6 +324,33 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "skill.search",
       "skill.use_record",
     ],
+    maxIterations: 10,
+  }),
+  def({
+    id: "def-strategy-coder",
+    role: "research",
+    name: "策略编码验证",
+    /**
+     * Prime 06 — on-demand subagent（不进 grp-strategy-pipeline 固定成员）。
+     * Orchestrator: agent.invoke({ callee_spec_id: "def-strategy-coder", goal })
+     * 画布：Core 投影后以 strategy_coder 节点入图（idle 不展示）。
+     * 勿用 assign_task(role=research) / call_team_research（会绑到 def-research）。
+     */
+    version: "1.0.0",
+    executionKind: "subagent",
+    systemPrompt: PROMPT_STRATEGY_CODER,
+    tools: [
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy",
+      "strategy.paper_run",
+      "strategy.create_version",
+      "code.run_python",
+      "fetch_klines",
+      "skill.search",
+      "skill.use_record",
+    ],
+    subscriptions: ["TASK_ASSIGN", "MODEL_UPDATE"],
     maxIterations: 10,
   }),
 ];

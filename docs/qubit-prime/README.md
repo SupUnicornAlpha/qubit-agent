@@ -19,7 +19,11 @@
 | [03-quant-agent-data-decision-upgrade.zh-CN.md](./03-quant-agent-data-decision-upgrade.zh-CN.md) | 量化 Agent、实时数据质量、确定性决策与归因闭环；明确 Core / Tool Host / 外部数据面的归属；券商行情桥可插拔骨架 | v0.2 · 归属已对齐 01 |
 | [04-internet-tools-and-plugin-system.zh-CN.md](./04-internet-tools-and-plugin-system.zh-CN.md) | 联网 P0 + 插件双轨 P1 + **OAuth 连接器 P2 已落地** | v0.5 · P2 已落地 |
 | [05-framework-storage-memory-health.zh-CN.md](./05-framework-storage-memory-health.zh-CN.md) | 核心框架健康度 · JSON/FS vs SQLite 分层 · 长期记忆与 Workspace 关联 | **v0.3 · O1 SSE + Recipe 单源 + Bridge 扩** |
-| （后续）`06-protocol-json-schema/` | Session/Turn/Event 的 JSON Schema / protobuf 草案 | 拍板后落地 |
+| [06-strategy-contract.zh-CN.md](./06-strategy-contract.zh-CN.md) | **Strategy 契约硬化**：Manifest · 回测↔纸交易同源 OrderIntent（对标 QD V2） | **v0.3 · SC0–SC3 + 工坊/Team UI** |
+| [07-execution-trader-agent.zh-CN.md](./07-execution-trader-agent.zh-CN.md) | **执行监督 + Trader Ops**：Supervisor ≠ LLM；强化 Worker / 纸交易环 | **v0.1 · 先规划** |
+| [08-data-catalog-pit.zh-CN.md](./08-data-catalog-pit.zh-CN.md) | **数据目录**：Universe PIT · 基本面 available_at · Snapshot 绑订单 | **v0.1 · 主战场** |
+| [09-oss-narrative-demo.zh-CN.md](./09-oss-narrative-demo.zh-CN.md) | **开源叙事减负**：一句话闭环 · `demo-up` · 研究→纸交易演示路径 | **v0.1 · 主战场** |
+| （后续）`10-protocol-json-schema/` | Session/Turn/Event 的 JSON Schema / protobuf 草案 | 拍板后落地 |
 
 上游基线（必读）：
 
@@ -74,6 +78,24 @@
 | O-U2 | 分栏库：自研 vs `react-resizable-panels` | `react-resizable-panels` | 工期 |
 | O-U6 | （已废止）旧「Prime 不带皮肤」 | — | 被 **U2 保留全套风格** 取代 |
 | O-U3 | 默认密度 | A) Default 13/14  B) Compact 12/13 | **仅作用于 pro chrome** |
+| **Q-SC1** | 纸交易 `target_percent` 用固定纸本金还是账户权益 | **固定纸本金**（可复现） | [06](./06-strategy-contract.zh-CN.md) |
+| **Q-EX1** | PaperSession P0 同进程 vs 立刻拆独立执行进程 | **先同进程强化，P1 再拆** | [07](./07-execution-trader-agent.zh-CN.md) |
+| **Q-DC1** | 演示种子池：`US:SP500` vs `CN:CSI300` vs 静态小品 | **静态小品 + 一个公开指数** | [08](./08-data-catalog-pit.zh-CN.md) |
+| **Q-OS1** | 演示默认 `QUBIT_CORE_BACKEND` | **`ts`**（降冷启动失败面） | [09](./09-oss-narrative-demo.zh-CN.md) |
+
+### 3.1 量化闭环四文档依赖（2026-08-07）
+
+```text
+09 OS0–OS1（叙事/demo-up）──── 可立刻开干
+        │
+06 SC0 → SC1 ──┬── 08 DC0–DC2（universe + snapshot 绑 intent）
+               │
+               ▼
+06 SC2 ←── 07 EX1（PaperSession signal_tick）
+               │
+09 OS2（演示打到纸交易）←── 上列齐套
+07 EX3 Trader Ops、08 DC3–DC4、07 EX4 拆进程 ── 随后
+```
 
 讨论方式：**你描述 → 我答 → 改文档 → 回写「已拍板」表 → 再动代码。**
 

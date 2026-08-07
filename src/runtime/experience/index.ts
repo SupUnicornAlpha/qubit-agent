@@ -98,6 +98,13 @@ export {
   type RecallEngineOptions,
 } from "./pipes/recall";
 
+export {
+  applyLifecycleToScore,
+  inferExperienceLifecycle,
+  parseLifecycle,
+  type ExperienceLifecycle,
+} from "./lifecycle";
+
 // ───────────────────────── P1.5 监控 / 维护 / 对账 ─────────────────────────
 export {
   attachMemoryMetrics,

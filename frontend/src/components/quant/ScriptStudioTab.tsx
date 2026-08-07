@@ -19,13 +19,33 @@
 import type { CSSProperties, FC } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  backtestStrategyContractApi,
+  compileStrategyContract,
+  createStrategyRuntime,
   getProjectStrategyScript,
   listProjectStrategyScripts,
+  listStrategyRuntimes,
+  paperDeployStrategyContract,
+  paperRunStrategyContract,
+  putFsWorkspaceFile,
+  stopStrategyRuntime,
+  updateStrategyScript,
   type QuantStrategyScriptDetail,
   type QuantStrategyScriptSummary,
+  type StrategyManifestV2,
+  type StrategyRuntimeRecord,
 } from "../../api/backend";
+import { preferStrategyApiCode } from "../../lib/strategyApiCode";
 import { useAppStore } from "../../store";
 import { useDefaultProject } from "./useDefaultProject";
+
+function chartExchangeToMarket(exchange: string): string {
+  const u = exchange.trim().toUpperCase();
+  if (u === "HK") return "HK";
+  if (u === "US") return "US";
+  if (u === "CRYPTO") return "CRYPTO";
+  return "CN";
+}
 
 type PurposeFilter = "all" | "research" | "live_trading" | "both";
 
@@ -72,6 +92,13 @@ export const ScriptStudioTab: FC = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [manifest, setManifest] = useState<StrategyManifestV2 | null>(null);
+  const [backtestSummary, setBacktestSummary] = useState<string | null>(null);
+  const [paperSessionId, setPaperSessionId] = useState<string | null>(null);
+  const [paperSummary, setPaperSummary] = useState<string | null>(null);
+  const [scriptRuntimes, setScriptRuntimes] = useState<StrategyRuntimeRecord[]>([]);
+  const [engineBusy, setEngineBusy] = useState(false);
 
   /** 研究产物→脚本工坊：精确选中被点击的脚本。 */
   useEffect(() => {
@@ -120,6 +147,12 @@ export const ScriptStudioTab: FC = () => {
       return;
     }
     let cancelled = false;
+    setManifest(null);
+    setBacktestSummary(null);
+    setPaperSessionId(null);
+    setPaperSummary(null);
+    setPaperSessionId(null);
+    setPaperSummary(null);
     (async () => {
       try {
         const d = await getProjectStrategyScript(selectedId);
@@ -158,6 +191,265 @@ export const ScriptStudioTab: FC = () => {
     setActiveView("ide");
     setInfo("已打开研究工作台代码编辑。请从 Explorer 打开 Workspace 中的脚本文件；本工坊可继续只读检视。");
   }, [detail, setActiveStrategyScriptId, setActiveView]);
+
+  const contractCode = useMemo(
+    () =>
+      preferStrategyApiCode({
+        ideCode: detail?.ideCode,
+        signalCode: detail?.signalCode,
+      }),
+    [detail]
+  );
+
+  const reloadRuntimes = useCallback(async () => {
+    if (!detail?.id) {
+      setScriptRuntimes([]);
+      return;
+    }
+    try {
+      const rows = await listStrategyRuntimes({
+        ...(detail.workflowRunId ? { workflowRunId: detail.workflowRunId } : {}),
+        ...(detail.sessionId ? { sessionId: detail.sessionId } : {}),
+      });
+      setScriptRuntimes(rows.filter((r) => r.strategyScriptId === detail.id).slice(0, 8));
+    } catch {
+      setScriptRuntimes([]);
+    }
+  }, [detail]);
+
+  useEffect(() => {
+    void reloadRuntimes();
+  }, [reloadRuntimes]);
+
+  const onVerifyContract = useCallback(async () => {
+    if (!contractCode) {
+      setError("当前脚本没有可验证的代码（需要 Strategy API：initialize + handle_data）");
+      return;
+    }
+    setVerifyBusy(true);
+    setError(null);
+    setBacktestSummary(null);
+    try {
+      const compiled = await compileStrategyContract(contractCode);
+      if (!compiled.ok) {
+        setManifest(null);
+        setError(`契约验证失败：${compiled.error}`);
+        return;
+      }
+      setManifest(compiled.manifest);
+      setInfo(
+        `Manifest OK · codeHash=${compiled.manifest.codeHash.slice(0, 12)}… · type=${compiled.manifest.strategyType}`
+      );
+    } finally {
+      setVerifyBusy(false);
+    }
+  }, [contractCode]);
+
+  const onContractBacktest = useCallback(async () => {
+    if (!contractCode) {
+      setError("当前脚本没有可回测的 Strategy API 源码");
+      return;
+    }
+    setVerifyBusy(true);
+    setError(null);
+    try {
+      const r = await backtestStrategyContractApi({ code: contractCode, limit: 180 });
+      if (!r.ok || !r.data) {
+        setError(`契约回测失败：${r.error ?? "unknown"}`);
+        return;
+      }
+      setManifest(r.data.manifest);
+      const m = r.data.metrics;
+      setBacktestSummary(
+        `${r.data.primarySymbol} · ret ${m.totalReturnPct.toFixed(2)}% · MDD ${m.maxDrawdownPct.toFixed(2)}% · Sharpe~ ${m.sharpeApprox.toFixed(2)} · trades ${m.tradeCount}`
+      );
+      setInfo("契约回测完成（SimBroker · next-open）");
+    } finally {
+      setVerifyBusy(false);
+    }
+  }, [contractCode]);
+
+  const onPaperDeploy = useCallback(async () => {
+    if (!contractCode) {
+      setError("需要 Strategy API 源码才能纸交易部署");
+      return;
+    }
+    setVerifyBusy(true);
+    setError(null);
+    try {
+      const r = await paperDeployStrategyContract({
+        code: contractCode,
+        paperCapital: 100_000,
+        ...(projectId ? { projectId } : {}),
+      });
+      if (!r.ok || !r.data) {
+        setError(`纸交易部署失败：${r.error ?? "unknown"}`);
+        return;
+      }
+      setManifest(r.data.manifest);
+      setPaperSessionId(r.data.sessionId);
+      setPaperSummary(
+        `session ${r.data.sessionId.slice(0, 8)}… · ${r.data.primarySymbol} · 纸本金 ${r.data.paperCapital}`
+      );
+      setInfo("PaperSession 已注册（固定纸本金）。可「纸交易回放」预览 intents。");
+    } finally {
+      setVerifyBusy(false);
+    }
+  }, [contractCode, projectId]);
+
+  const onPaperRun = useCallback(async () => {
+    if (!paperSessionId && !contractCode) {
+      setError("请先「纸交易部署」或提供 Strategy API 源码");
+      return;
+    }
+    setVerifyBusy(true);
+    setError(null);
+    try {
+      const r = await paperRunStrategyContract({
+        ...(paperSessionId ? { sessionId: paperSessionId } : { code: contractCode }),
+        dryRun: true,
+        limit: 180,
+      });
+      if (!r.ok || !r.data) {
+        setError(`纸交易回放失败：${r.error ?? "unknown"}`);
+        return;
+      }
+      setPaperSessionId(r.data.sessionId);
+      const m = r.data.metrics;
+      setPaperSummary(
+        `dry_run · drafts ${r.data.orderDrafts.length} · ret ${m.totalReturnPct.toFixed(2)}% · trades ${m.tradeCount}`
+      );
+      setInfo(r.data.note ?? "纸交易回放完成（dry_run）");
+    } finally {
+      setVerifyBusy(false);
+    }
+  }, [paperSessionId, contractCode]);
+
+  const onPaperRunWrite = useCallback(async () => {
+    if (!paperSessionId && !contractCode) {
+      setError("请先「纸交易部署」");
+      return;
+    }
+    if (!detail?.workflowRunId) {
+      setError("当前脚本没有绑定 workflow_run，无法写 order_intent。请从 Team 研究工作流打开的脚本操作，或仅用 dry_run / 启动引擎。");
+      return;
+    }
+    setVerifyBusy(true);
+    setError(null);
+    try {
+      const r = await paperRunStrategyContract({
+        ...(paperSessionId ? { sessionId: paperSessionId } : { code: contractCode }),
+        dryRun: false,
+        limit: 180,
+        workflowRunId: detail.workflowRunId,
+        ...(projectId ? { projectId } : {}),
+        name: detail.name,
+      });
+      if (!r.ok || !r.data) {
+        setError(`写库回放失败：${r.error ?? "unknown"}`);
+        return;
+      }
+      setPaperSessionId(r.data.sessionId);
+      setPaperSummary(
+        `已写库 · submitted ${r.data.submittedCount ?? 0} · drafts ${r.data.orderDrafts.length}`
+      );
+      setInfo(r.data.note ?? "已写入 paper order_intent");
+    } finally {
+      setVerifyBusy(false);
+    }
+  }, [paperSessionId, contractCode, detail, projectId]);
+
+  const onWriteWorkspace = useCallback(async () => {
+    if (!contractCode || !detail) {
+      setError("没有可写入的 Strategy API 源码");
+      return;
+    }
+    const workspaceId = useAppStore.getState().activeFsWorkspaceId;
+    if (!workspaceId) {
+      setError("未选择 FS Workspace。请先在 Explorer 打开课题 Workspace。");
+      return;
+    }
+    const slug = detail.name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 40);
+    const path = `decision/strategies/${slug || "strategy"}-${detail.id.slice(0, 8)}.py`;
+    try {
+      await putFsWorkspaceFile(workspaceId, path, contractCode);
+      useAppStore.getState().setPendingWorkspaceFile({ workspaceId, path });
+      setActiveView("ide");
+      setInfo(`已写入 Workspace ${path} 并打开编辑器`);
+    } catch (e) {
+      setError(`写入 Workspace 失败：${(e as Error).message}`);
+    }
+  }, [contractCode, detail, setActiveView]);
+
+  const onStartPaperEngine = useCallback(async () => {
+    if (!detail) return;
+    setEngineBusy(true);
+    setError(null);
+    try {
+      if (detail.purpose === "research") {
+        // paper 引擎现已允许 research；同时升档 both 便于后续 sim
+        await updateStrategyScript(detail.id, { purpose: "both" });
+        setDetail({ ...detail, purpose: "both" });
+        setInfo("已将 purpose research → both（paper 引擎可用）");
+      }
+      const spec = useAppStore.getState().chartSpec;
+      let market = chartExchangeToMarket(spec.exchange);
+      let symbol = spec.symbol.trim();
+      if (manifest?.universe.instruments[0]) {
+        const id = manifest.universe.instruments[0].instrumentId;
+        if (id.includes(":")) {
+          market = id.split(":")[0] || market;
+          symbol = id.slice(id.indexOf(":") + 1) || symbol;
+        } else {
+          symbol = id || symbol;
+        }
+      }
+      const row = await createStrategyRuntime({
+        strategyScriptId: detail.id,
+        market,
+        symbol,
+        timeframe: manifest?.primaryFrequency ?? spec.timeframe,
+        executionMode: "paper",
+        autoStart: true,
+        params: {
+          orderQty: 100,
+          barLimit: 120,
+          strategyMode: "script",
+          ...(paperSessionId ? { paperSessionId } : {}),
+          ...(manifest?.codeHash ? { codeHash: manifest.codeHash } : {}),
+        },
+      });
+      setInfo(
+        `已启动纸交易引擎 runtime ${row.id.slice(0, 8)}…（mode=paper · ${row.symbol}）`
+      );
+      await reloadRuntimes();
+    } catch (e) {
+      setError(`启动引擎失败：${(e as Error).message}`);
+    } finally {
+      setEngineBusy(false);
+    }
+  }, [detail, manifest, paperSessionId, reloadRuntimes]);
+
+  const onStopRuntime = useCallback(
+    async (id: string) => {
+      setEngineBusy(true);
+      try {
+        await stopStrategyRuntime(id);
+        setInfo(`已停止 runtime ${id.slice(0, 8)}…`);
+        await reloadRuntimes();
+      } catch (e) {
+        setError(`停止失败：${(e as Error).message}`);
+      } finally {
+        setEngineBusy(false);
+      }
+    },
+    [reloadRuntimes]
+  );
 
   const onCopyCode = useCallback(async (code: string, label: string) => {
     try {
@@ -296,18 +588,174 @@ export const ScriptStudioTab: FC = () => {
                   更新于 {new Date(detail.updatedAt).toLocaleString()}
                 </span>
               </div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={() => void onVerifyContract()}
+                  disabled={verifyBusy || !contractCode}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="Strategy API V2：compile → Manifest"
+                >
+                  {verifyBusy ? "验证中…" : "验证契约"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onContractBacktest()}
+                  disabled={verifyBusy || !contractCode}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="同码 SimBroker 回测"
+                >
+                  契约回测
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onPaperDeploy()}
+                  disabled={verifyBusy || !contractCode}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="注册固定纸本金 PaperSession"
+                >
+                  纸交易部署
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onPaperRun()}
+                  disabled={verifyBusy || (!paperSessionId && !contractCode)}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="dry_run 预览 intents（不写库）"
+                >
+                  纸交易回放
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onPaperRunWrite()}
+                  disabled={verifyBusy || (!paperSessionId && !contractCode) || !detail?.workflowRunId}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="dryRun=false：写 paper order_intent（需绑定 workflow）"
+                >
+                  写库回放
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onWriteWorkspace()}
+                  disabled={!contractCode || !detail}
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="写入 decision/strategies/*.py 并打开 IDE"
+                >
+                  写入 Workspace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onStartPaperEngine()}
+                  disabled={engineBusy || !detail}
+                  className="qb-quant-btn qb-quant-btn--primary"
+                  style={styles.btnPrimary}
+                  title="创建 strategy_runtime（executionMode=paper）并由引擎推进"
+                >
+                  {engineBusy ? "启动中…" : "启动纸交易引擎"}
+                </button>
                 <button
                   type="button"
                   onClick={onOpenInIde}
-                  className="qb-quant-btn qb-quant-btn--primary"
-                  style={styles.btnPrimary}
-                  title="把该脚本灌进 IDE 编辑器（去「研究工作台」左栏切到 Indicator tab）"
+                  className="qb-quant-btn qb-quant-btn--ghost"
+                  style={styles.btnGhost}
+                  title="打开研究工作台编辑"
                 >
                   在 IDE 编辑
                 </button>
               </div>
             </div>
+
+            {manifest ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: 10,
+                  borderRadius: 8,
+                  border: "1px solid var(--qb-border-subtle)",
+                  background: "color-mix(in srgb, var(--qb-quant-accent-3) 8%, var(--qb-bg-elevated))",
+                  fontSize: 11,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div style={{ fontWeight: 650, marginBottom: 4 }}>StrategyManifest</div>
+                <div style={styles.muted}>
+                  codeHash {manifest.codeHash.slice(0, 16)}… · {manifest.strategyType} · warmup{" "}
+                  {manifest.warmupBars} · freq {manifest.primaryFrequency}
+                </div>
+                <div style={styles.muted}>
+                  universe{" "}
+                  {manifest.universe.instruments.map((i) => i.instrumentId).join(", ") || "—"}
+                  {" · handlers "}
+                  {manifest.handlers.join(", ")}
+                </div>
+                {manifest.paramsSchema.length > 0 ? (
+                  <div style={styles.muted}>
+                    params{" "}
+                    {manifest.paramsSchema
+                      .map((p) => `${p.name}=${String(p.default)}`)
+                      .join(", ")}
+                  </div>
+                ) : null}
+                {backtestSummary ? (
+                  <div style={{ marginTop: 4, color: "var(--qb-text-strong)" }}>
+                    回测 {backtestSummary}
+                  </div>
+                ) : null}
+                {paperSummary ? (
+                  <div style={{ marginTop: 4, color: "var(--qb-text-strong)" }}>
+                    纸交易 {paperSummary}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {scriptRuntimes.length > 0 ? (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: 10,
+                  borderRadius: 8,
+                  border: "1px solid var(--qb-border-subtle)",
+                  fontSize: 11,
+                  lineHeight: 1.55,
+                }}
+              >
+                <div style={{ fontWeight: 650, marginBottom: 6 }}>绑定运行时</div>
+                {scriptRuntimes.map((r) => (
+                  <div
+                    key={r.id}
+                    style={{
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 4,
+                    }}
+                  >
+                    <span style={styles.muted}>
+                      {r.id.slice(0, 8)}… · {r.executionMode} · {r.status} · {r.symbol}
+                    </span>
+                    {r.status === "running" || r.status === "starting" ? (
+                      <button
+                        type="button"
+                        className="qb-quant-btn qb-quant-btn--ghost"
+                        style={styles.btnGhost}
+                        disabled={engineBusy}
+                        onClick={() => void onStopRuntime(r.id)}
+                      >
+                        停止
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div style={styles.codeSectionsWrap}>
               {detail.signalCode && detail.signalCode.trim().length > 0 ? (
@@ -362,10 +810,26 @@ export const ScriptStudioTab: FC = () => {
               <strong>组合工坊</strong>：因子配方（factor + rule + 权重） — 纯 TS 执行
             </li>
             <li>
-              <strong>脚本工坊（此处）</strong>：真 Python <code>on_bar()</code> — 跑
-              <code>python_strategy_backtest_runner.py</code> 子进程
+              <strong>脚本工坊（此处）</strong>：Python — 旧路径 <code>on_bar()</code>，或 Strategy API V2
+              （<code>initialize</code> + <code>handle_data</code>）。点「验证契约」编译 Manifest。
             </li>
           </ul>
+
+          <div style={{ fontWeight: 600, color: "var(--qb-text-strong)", marginBottom: 4, marginTop: 12 }}>
+            能做什么
+          </div>
+          <ul style={{ paddingLeft: 18, margin: "4px 0 12px" }}>
+            <li>只读看代码 · 验证契约 · 契约回测</li>
+            <li>纸交易部署 / 回放（dry_run intents）</li>
+            <li>启动纸交易引擎（strategy_runtime · paper）</li>
+          </ul>
+
+          <div style={{ fontWeight: 600, color: "var(--qb-text-strong)", marginBottom: 4, marginTop: 12 }}>
+            Team → 工坊
+          </div>
+          研究产出脚本点「在工坊打开」会跳到本 Tab；再点上方按钮进引擎。
+          Orchestrator 写码请用{" "}
+          <code>agent.invoke(callee_spec_id=def-strategy-coder)</code>。
 
           <div style={{ fontWeight: 600, color: "var(--qb-text-strong)", marginBottom: 4, marginTop: 12 }}>
             在哪里编辑？

@@ -41,6 +41,7 @@ import type { EmbeddingClient } from "../../llm/embedding-client";
 import type { ExperienceBus } from "../experience-bus";
 import type { ExperienceStore } from "../experience-store";
 import type { ExperienceVectorStore, VectorSearchHit } from "../experience-vector-store";
+import { applyLifecycleToScore } from "../lifecycle";
 
 // ───────────────────────── ctx & 结果 ─────────────────────────
 
@@ -180,8 +181,14 @@ export class ExperienceRecall {
     // 4) link 1 跳扩展（仅当池有有效命中时执行）
     const linkScored = await this.expandWithLinks(seedsScored, tokens, vectorHitsMap);
 
-    // 5) 合并 + dedupe + 排序
-    const merged = mergeUnique([...seedsScored, ...linkScored]);
+    // 5) 合并 + dedupe + lifecycle 加权/剔除 + 排序
+    const merged = mergeUnique([...seedsScored, ...linkScored])
+      .map((r) => {
+        const next = applyLifecycleToScore(r.experience, r.score);
+        if (next === null) return null;
+        return next === r.score ? r : { ...r, score: next };
+      })
+      .filter((r): r is RecallResult => r != null);
     merged.sort((a, b) => b.score - a.score);
     const top = merged.slice(0, topK);
     top.forEach((r, i) => {

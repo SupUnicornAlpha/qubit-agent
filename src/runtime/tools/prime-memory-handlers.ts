@@ -10,6 +10,7 @@ import { workflowRun } from "../../db/sqlite/schema";
 import { FinanceRecall } from "../context/finance-recall";
 import { getExperienceBus, getExperienceStore } from "../experience";
 import { ExperienceRecall } from "../experience/pipes/recall";
+import { isDeliveryNarrative } from "../conversation/turn-packet";
 import { buildWorkspaceBootstrapPack, openWorkspaceById, resolveProviders } from "../workspace";
 import type { BuiltinToolHandler } from "./types";
 
@@ -193,8 +194,18 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     hits.sort((a, b) => b.score - a.score);
+    // Demote FS / experience blobs that look like prior delivery manuals (Host filter).
+    const demoted = hits.map((h) => {
+      const blob = `${h.title}\n${h.summary}`;
+      if (!isDeliveryNarrative(blob) && !/人肉说明书|操盘说明书/.test(blob)) return h;
+      return { ...h, score: h.score * 0.12, sub_kind: h.sub_kind ?? "delivered_artifact" };
+    });
+    demoted.sort((a, b) => b.score - a.score);
     // Bundle returns a bit more so Core can partition into three slots.
-    return { hits: hits.slice(0, bundle ? topK * 3 : topK * 2), ...(bundle ? { mode: "bundle" } : {}) };
+    return {
+      hits: demoted.slice(0, bundle ? topK * 3 : topK * 2),
+      ...(bundle ? { mode: "bundle" } : {}),
+    };
   },
 
   "workspace.memory.search": async (_ctx, params) => {

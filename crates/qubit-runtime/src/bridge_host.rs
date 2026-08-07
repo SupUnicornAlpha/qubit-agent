@@ -8,7 +8,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use qubit_protocol::{EffectKind, EffectRecord, SessionId, ToolCallId, ToolResult};
 use qubit_tool_host::{
-    LegacyBridgeClient, LegacyInvokeParams, LegacyToolSpec, DEFAULT_BRIDGED_TOOLS,
+    is_default_bridged_tool_name, LegacyBridgeClient, LegacyInvokeParams, LegacyToolSpec,
+    DEFAULT_BRIDGED_TOOLS,
 };
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -86,10 +87,13 @@ impl BridgeToolHost {
         if is_mcp_bridge_name(name) {
             return true;
         }
+        if is_default_bridged_tool_name(name) {
+            return true;
+        }
         self.names
             .try_read()
             .map(|g| g.iter().any(|n| n == name))
-            .unwrap_or_else(|_| DEFAULT_BRIDGED_TOOLS.iter().any(|n| *n == name))
+            .unwrap_or(false)
     }
 }
 

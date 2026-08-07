@@ -13,6 +13,7 @@ import {
   PORTFOLIO_MANAGEMENT_GROUP,
   RISK_REVIEW_GROUP,
   RULE_RESEARCH_GROUP,
+  STRATEGY_PIPELINE_GROUP,
 } from "../seed-agent-catalog";
 import { BUILTIN_GROUP_LAYOUTS } from "../seed-agent-definitions";
 
@@ -70,6 +71,32 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(research.tools).not.toContain("recommendation.record");
     expect(research.tools).not.toContain("shell.exec");
     expect(research.tools).not.toContain("cli_agent.run");
+  });
+
+  test("def-strategy-coder 持 Strategy API 写码验证链（≤10）", () => {
+    expectTools("def-strategy-coder", [
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy",
+      "strategy.paper_run",
+      "strategy.create_version",
+      "code.run_python",
+      "skill.search",
+      "skill.use_record",
+    ]);
+    const coder = BY_ID.get("def-strategy-coder")!;
+    expect(coder.tools.length).toBeLessThanOrEqual(10);
+    expect(coder.tools).not.toContain("order.create_intent");
+    expect(coder.tools).not.toContain("strategy.compose");
+  });
+
+  test("def-strategy-coder 是 on-demand subagent，不在策略撰写固定编组", () => {
+    const coder = BY_ID.get("def-strategy-coder")!;
+    expect(coder.executionKind).toBe("subagent");
+    expect(STRATEGY_PIPELINE_GROUP.memberDefinitionIds).not.toContain("def-strategy-coder");
+    expect(STRATEGY_PIPELINE_GROUP.memberDefinitionIds.length).toBe(
+      STRATEGY_PIPELINE_GROUP.memberRoles.length
+    );
   });
 
   test("def-backtest 可调用事件驱动 backtest.run + factor 计算", () => {
@@ -204,6 +231,10 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "discovery.promote",
       "strategy.create_version",
       "strategy.compose",
+      "strategy.compile",
+      "strategy.contract_backtest",
+      "strategy.paper_deploy",
+      "strategy.paper_run",
       "backtest.run",
       "evaluate_risk",
       "rule.register",

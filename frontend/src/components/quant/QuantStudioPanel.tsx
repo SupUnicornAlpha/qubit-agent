@@ -35,7 +35,7 @@ const TABS: readonly { id: QuantTab; label: string; desc: string; color: string 
   { id: "discovery", label: "挖掘工坊", desc: "DiscoveryStudio", color: "var(--qb-quant-accent-2)" },
   { id: "composer", label: "组合工坊", desc: "Composer", color: "var(--qb-quant-accent-4)" },
   { id: "backtest", label: "回测工坊", desc: "BacktestStudio", color: "var(--qb-quant-accent-5)" },
-  { id: "script", label: "脚本工坊", desc: "ScriptStudio · Python on_bar", color: "var(--qb-quant-accent-3)" },
+  { id: "script", label: "脚本工坊", desc: "ScriptStudio · 契约/引擎", color: "var(--qb-quant-accent-3)" },
 ];
 
 interface KpiSummary {

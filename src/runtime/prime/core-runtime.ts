@@ -36,6 +36,7 @@ class TsCoreStub implements CoreRuntime {
       status: "ok",
       uptime_ms: 0,
       active_turns: 0,
+      registered_turns: 0,
       hitl_waiting: 0,
       core_backend: "ts",
       degraded_reasons: ["ts_core_stub_not_wired_to_executeAgentReact"],

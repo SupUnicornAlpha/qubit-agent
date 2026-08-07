@@ -67,6 +67,12 @@ pub struct RuntimeHealth {
     pub status: String,
     pub uptime_ms: u64,
     pub active_turns: u32,
+    /// Cancel-registry size (tasks that have not yet cleaned up). Prefer this
+    /// together with `active_turns` when detecting orphan turns: a live task
+    /// may briefly show `active_turns=0` only after panic unwind, but should
+    /// still be registered until cleanup.
+    #[serde(default)]
+    pub registered_turns: u32,
     pub hitl_waiting: u32,
     pub core_backend: String,
     #[serde(default)]

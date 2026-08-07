@@ -789,8 +789,15 @@ const BacktestResultView: FC<{ job: BacktestJobRecord; onRefresh: () => Promise<
               <LineageBadge createdBy={job.createdBy ?? "user"} size="normal" />
             </div>
             <div className="qb-quant-detail-meta" style={styles.detailMeta}>
-              {job.config.startDate} ~ {job.config.endDate} · capital=${job.config.capital} ·{" "}
-              {job.config.symbols.length} symbols · rebalance={job.config.rebalance ?? "daily"}
+              {job.config.startDate} ~ {job.config.endDate}
+              {" · "}
+              <span title={job.config.symbols.join(", ") || "无标的"}>
+                {job.config.symbols.length > 0
+                  ? job.config.symbols.join(" · ")
+                  : "无标的"}
+              </span>
+              {" · "}capital=${job.config.capital}
+              {" · "}rebalance={job.config.rebalance ?? "daily"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>

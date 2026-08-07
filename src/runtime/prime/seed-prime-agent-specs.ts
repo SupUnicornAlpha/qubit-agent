@@ -22,12 +22,16 @@ export function toPrimeAgentSpec(def: RuntimeAgentDefinition): AgentSpec {
       ? ([{ kind: "domain_event" as const, event_name: "market.news" }] as AgentSpec["triggers"])
       : [];
 
+  /** On-demand specialists share a legacy role but need distinct Core labels for invoke alias. */
+  const aliasLabels =
+    def.id === "def-strategy-coder" ? (["strategy_coder", "strategy-coder"] as const) : [];
+
   return {
     id: def.id,
     version: def.version,
     display_name: def.name,
     execution_kind: kind,
-    labels: [def.role, ...(def.outputs ?? [])],
+    labels: [def.role, ...aliasLabels, ...(def.outputs ?? [])],
     identity_prompt_ref: `seed://${def.id}`,
     system_prompt: def.systemPrompt?.trim() || null,
     default_recipe_id: defaultRecipeForRole(def.role),
