@@ -51,7 +51,7 @@ export function stripOrchestratorTeamCompatTools(tools: readonly string[]): stri
 export const ORCHESTRATOR_PRIME_REQUIRED_TOOLS = [
   ...PRIME_HOST_EVIDENCE_TOOLS,
   "update_plan",
-  "assign_task",
+  "agent.invoke",
   "market.resolve_symbol",
   "web.search",
   "web.fetch",
@@ -63,11 +63,11 @@ export const ORCHESTRATOR_PRIME_REQUIRED_TOOLS = [
  */
 export const ORCHESTRATOR_PRIME_BASE_TOOLS = [
   "update_plan",
-  "assign_task",
+  "agent.invoke",
   "market.resolve_symbol",
   ...PRIME_HOST_EVIDENCE_TOOLS,
   ...PRIME_HOST_CONTRACT_TOOLS,
-  "search_memory",
+  "memory.recall",
   "memory.consolidate_longterm",
   "memory.refresh_workspace",
   "skill.search",

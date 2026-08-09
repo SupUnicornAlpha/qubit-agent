@@ -51,7 +51,9 @@ export interface PythonHealthReport {
 const PROBE_TIMEOUT_MS = 30_000;
 const CACHE_TTL_MS = 60_000;
 const REQUIRED_DEPS = ["pandas", "numpy"] as const;
-const OPTIONAL_DEPS = ["scipy"] as const;
+// Data connectors are optional for code.run_python itself, but exposing their
+// status here lets benchmark/readiness wait for a usable market-data runtime.
+const OPTIONAL_DEPS = ["scipy", "yfinance", "akshare"] as const;
 
 let cached: { at: number; report: PythonHealthReport } | null = null;
 let inflight: Promise<PythonHealthReport> | null = null;

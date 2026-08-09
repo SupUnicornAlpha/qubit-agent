@@ -28,7 +28,8 @@ describe("topology-dispatch", () => {
 
   test("merge orchestrator tools", () => {
     const merged = mergeOrchestratorToolsJson(["call_team_research", "call_team_backtest"]);
-    expect(merged).toContain("assign_task");
+    expect(merged).toContain("agent.invoke");
+    expect(merged).not.toContain("assign_task");
     expect(merged).toContain("evaluate_risk");
     expect(merged).toContain("run_screener");
     expect(merged).toContain("recommendation.record");

@@ -37,7 +37,10 @@ describe("parseToolCallFromReason", () => {
   });
 
   test("parses tool none", () => {
-    const r = parseToolCallFromReason('结论如下。\n```json\n{"tool":"none","summary":"无需工具"}\n```', tools);
+    const r = parseToolCallFromReason(
+      '结论如下。\n```json\n{"tool":"none","summary":"无需工具"}\n```',
+      tools
+    );
     expect(r.kind).toBe("none");
   });
 
@@ -79,7 +82,7 @@ describe("parseToolCallFromReason", () => {
 
   test("sentinel 内 tool=none 也能解析", () => {
     const r = parseToolCallFromReason(
-      "结论清楚，不需要工具。\n<TOOL_CALL>\n{\"tool\":\"none\",\"summary\":\"已答\"}\n</TOOL_CALL>",
+      '结论清楚，不需要工具。\n<TOOL_CALL>\n{"tool":"none","summary":"已答"}\n</TOOL_CALL>',
       tools
     );
     expect(r.kind).toBe("none");
@@ -133,22 +136,22 @@ describe("parseToolCallFromReason", () => {
 
   test("Step 3：replacedBy 不在订阅里时，deprecated 别名仍被拒（安全）", () => {
     // 订阅里没有 fetch_klines，调 fetch_bars 应该被拒
-    const r = parseToolCallFromReason(
-      '```json\n{"tool":"fetch_bars","params":{}}\n```',
-      ["run_analyst_team"]
-    );
+    const r = parseToolCallFromReason('```json\n{"tool":"fetch_bars","params":{}}\n```', [
+      "run_analyst_team",
+    ]);
     expect(r.kind).toBe("parse_error");
   });
 });
 
 describe("buildAgentToolsPromptBlock", () => {
-  test("includes tool names and call_mcp hint", () => {
+  test("includes tool names and typed MCP hint", () => {
     const block = buildAgentToolsPromptBlock({
       tools: ["fetch_klines"],
       mcpServers: ["mathjs"],
     });
     expect(block).toContain("fetch_klines");
-    expect(block).toContain("call_mcp");
+    expect(block).not.toContain("使用工具名 `call_mcp`");
+    expect(block).toContain("mcp:mathjs:<tool>");
     expect(block).toContain("mathjs");
   });
 
@@ -178,8 +181,8 @@ describe("buildAgentToolsPromptBlock", () => {
     });
     expect(block).toContain("mcp-financex");
     expect(block).toContain("真实工具清单");
-    expect(block).toContain("`get_quote`");
-    expect(block).toContain("`get_financial_statements`");
+    expect(block).toContain("`mcp:mcp-financex:get_quote`");
+    expect(block).toContain("`mcp:mcp-financex:get_financial_statements`");
     expect(block).toContain("实时行情");
     expect(block).toContain("财报三表");
   });
@@ -207,7 +210,10 @@ describe("assembleAgentSystemPrompt", () => {
   });
 
   test("returns base only when no tools", () => {
-    const { full, toolsBlock } = assembleAgentSystemPrompt("仅正文。", { tools: [], mcpServers: [] });
+    const { full, toolsBlock } = assembleAgentSystemPrompt("仅正文。", {
+      tools: [],
+      mcpServers: [],
+    });
     expect(toolsBlock).toBe("");
     expect(full).toBe("仅正文。");
   });
@@ -216,28 +222,28 @@ describe("assembleAgentSystemPrompt", () => {
 describe("stripToolCallSentinels", () => {
   test("剥掉单个 sentinel 块，保留正文", () => {
     const text =
-      "你好！我是 Orchestrator。\n<TOOL_CALL>\n{\"tool\":\"none\",\"summary\":\"用户只是打招呼\"}\n</TOOL_CALL>";
+      '你好！我是 Orchestrator。\n<TOOL_CALL>\n{"tool":"none","summary":"用户只是打招呼"}\n</TOOL_CALL>';
     expect(stripToolCallSentinels(text)).toBe("你好！我是 Orchestrator。");
   });
 
   test("剥掉多个 sentinel 块（避免循环累积）", () => {
     const text = [
       "你好！👋",
-      "<TOOL_CALL>{\"tool\":\"none\",\"summary\":\"hi\"}</TOOL_CALL>",
+      '<TOOL_CALL>{"tool":"none","summary":"hi"}</TOOL_CALL>',
       "我还在等任务。",
-      "<TOOL_CALL>{\"tool\":\"none\",\"summary\":\"again\"}</TOOL_CALL>",
+      '<TOOL_CALL>{"tool":"none","summary":"again"}</TOOL_CALL>',
     ].join("\n");
     expect(stripToolCallSentinels(text)).toBe("你好！👋\n我还在等任务。");
   });
 
   test("剥掉未闭合的尾部 sentinel（流式输出半截）", () => {
-    const text = "分析结论：估值合理。\n<TOOL_CALL>\n{\"tool\":\"non";
+    const text = '分析结论：估值合理。\n<TOOL_CALL>\n{"tool":"non';
     expect(stripToolCallSentinels(text)).toBe("分析结论：估值合理。");
   });
 
   test("剥掉 fenced JSON tool 块", () => {
     const text =
-      "分析中。\n```json\n{\"tool\":\"fetch_klines\",\"params\":{\"symbol\":\"AAPL\"}}\n```\n继续。";
+      '分析中。\n```json\n{"tool":"fetch_klines","params":{"symbol":"AAPL"}}\n```\n继续。';
     const out = stripToolCallSentinels(text);
     expect(out).not.toContain("fetch_klines");
     expect(out).toContain("分析中");

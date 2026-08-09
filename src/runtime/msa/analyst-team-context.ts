@@ -191,7 +191,7 @@ export async function buildAnalystTeamDataContext(params: {
       "1. **首选**：调 `run_screener` 按主题/板块拿一组真实候选 —— `universe: 'US' / 'CN-A' / 'HK' / 'ALL'`，" +
         "`criteria.industry`（如 `'Semi'` / `'AI'` / `'Banks'` / `'Pharma'`）或 `criteria.sector`（如 `'Tech'` / `'Financials'`），" +
         "`topN: 5`。screener 池含 200+ 真实 ticker 跨 US/CN/HK/Crypto，**不要担心拿不到**；返回 0 个看 `hint` 字段调参数。",
-      "2. **辅助**：`factor.list` / `skill.search` / `search_memory` 复用本项目历史成功研究过的 ticker；",
+      "2. **辅助**：`factor.list` / `skill.search` / `memory.recall` 复用本项目历史成功研究过的 ticker；",
       "3. 拿到候选后用 `fetch_klines` 验证每个 ticker 真实存在 + 有足够日均成交额，无法验证立即剔除；",
       "4. 选定 1-3 个最终标的后再开展基本面/技术面/情绪面分析。",
       ""

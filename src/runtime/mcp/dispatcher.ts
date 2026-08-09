@@ -223,7 +223,7 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
     if (connectorAlias === "qubit-news") {
       throw new Error(
         `call_mcp: "${input.serverName}" 是内置新闻 connector，不是 MCP server。` +
-          `请派 call_team_news_event / assign_task(role=news_event)，由新闻 Agent 调 fetch_news*；` +
+          `请派 call_team_news_event / agent.invoke(callee_spec_id=def-news-event)，由新闻 Agent 调 fetch_news*；` +
           `Orchestrator 不要直接 call_mcp(qubit-news)。`
       );
     }
@@ -375,9 +375,7 @@ export async function dispatchMcpToolCall(input: McpDispatchInput): Promise<McpD
             ...httpHeadersFromCaps(caps),
             ...(await (async () => {
               try {
-                const { resolveMcpOAuthHeaders } = await import(
-                  "../plugins/oauth-service"
-                );
+                const { resolveMcpOAuthHeaders } = await import("../plugins/oauth-service");
                 return await resolveMcpOAuthHeaders({
                   projectId: input.projectId,
                   serverName: server.name,

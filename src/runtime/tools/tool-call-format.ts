@@ -44,11 +44,7 @@ const CATEGORY_HINTS: Record<string, string[]> = {
   exec: ["网页", "代码", "命令", "文件", "web", "exec", "cli"],
 };
 
-function toolRelevanceScore(
-  name: string,
-  query: string,
-  entry: ToolCatalogEntry
-): number {
+function toolRelevanceScore(name: string, query: string, entry: ToolCatalogEntry): number {
   let score = query.includes(name.toLowerCase()) ? 20 : 0;
   const normalizedName = name.toLowerCase().replace(/[._-]/g, " ");
   for (const token of normalizedName.split(/\s+/).filter(Boolean)) {
@@ -62,7 +58,7 @@ function toolRelevanceScore(
 
 /**
  * 只向模型暴露与当前目标最相关的工具；授权集合本身不变，因此不会删除已有能力。
- * 编排、计划与 MCP 路由工具始终保留，剩余槽位按任务关键词和工具类别排序。
+ * 编排、计划与 typed MCP 工具始终保留，剩余槽位按任务关键词和工具类别排序。
  */
 export function selectRelevantToolsForPrompt(
   availableTools: string[],
@@ -76,11 +72,11 @@ export function selectRelevantToolsForPrompt(
   const always = new Set(
     unique.filter(
       (name) =>
-        name === "assign_task" ||
+        name === "agent.invoke" ||
         name === "update_plan" ||
-        name === "call_mcp" ||
+        name.startsWith("mcp:") ||
         name.startsWith("call_team_")
-      )
+    )
   );
   const effectiveMax = Math.max(1, maxTools, always.size);
   const ranked = unique
@@ -142,7 +138,9 @@ export function nativeToolCallToSentinel(
   const tool = typeof call.args["tool"] === "string" ? call.args["tool"] : "";
   if (!isAllowedTool(tool, availableTools)) return null;
   const params =
-    call.args["params"] && typeof call.args["params"] === "object" && !Array.isArray(call.args["params"])
+    call.args["params"] &&
+    typeof call.args["params"] === "object" &&
+    !Array.isArray(call.args["params"])
       ? (call.args["params"] as Record<string, unknown>)
       : {};
   return `<TOOL_CALL>\n${JSON.stringify({ tool, params })}\n</TOOL_CALL>`;
@@ -231,7 +229,9 @@ export function buildAgentToolsPromptBlock(params: {
         : undefined;
       return tools && tools.length > 0 ? { name, tools } : { name };
     })
-    .filter((s): s is { name: string; tools?: Array<{ name: string; desc?: string }> } => s != null);
+    .filter(
+      (s): s is { name: string; tools?: Array<{ name: string; desc?: string }> } => s != null
+    );
 
   if (mcps.length > 0) {
     lines.push("### MCP 服务（本工作流当前真实可用，强约束）");
@@ -239,9 +239,8 @@ export function buildAgentToolsPromptBlock(params: {
       "⚠️ **以下是本轮唯一被启用的 MCP server 列表**。即便 system prompt 中提到其它 server 名（如历史 seed 的示例），**也禁止调用**——未在此列表的 server 一律会返回 `mcp server not found or disabled`，浪费一轮 reason。"
     );
     for (const server of mcps) {
-      lines.push(`- **${server.name}**：使用工具名 \`call_mcp\`，params 示例：`);
       lines.push(
-        `  \`{"tool":"call_mcp","params":{"serverName":"${server.name}","mcpTool":"<工具名>","arguments":{}}}\``
+        `- **${server.name}**：仅使用 typed 工具名 \`mcp:${server.name}:<tool>\`，params 直接填写该工具的 arguments。`
       );
       /**
        * 当 capabilities_json.tools 注入了真实工具清单（如 mcp-financex），
@@ -251,16 +250,13 @@ export function buildAgentToolsPromptBlock(params: {
        * 直接断分析师推理一轮（WF 44ca3acf 实测 2 次）。
        */
       if (server.tools && server.tools.length > 0) {
-        lines.push(`  - **${server.name} 真实工具清单**（仅可调用以下 \`mcpTool\` 名，不要瞎猜）:`);
+        lines.push(`  - **${server.name} 真实工具清单**（仅可调用以下完整工具名，不要瞎猜）:`);
         for (const t of server.tools) {
-          lines.push(`    - \`${t.name}\`${t.desc ? `：${t.desc}` : ""}`);
+          lines.push(`    - \`mcp:${server.name}:${t.name}\`${t.desc ? `：${t.desc}` : ""}`);
         }
       }
     }
-    lines.push(
-      "- 或使用 `mcp:<serverName>:<toolName>` 作为 tool 名，params 为 arguments 对象。",
-      ""
-    );
+    lines.push("- `call_mcp` 元工具已退役；不得把 connector 名伪装成 MCP server。", "");
   } else {
     /**
      * 0 个 MCP server 时也必须显式告知 LLM，否则 deepseek/glm 等模型会
@@ -269,7 +265,7 @@ export function buildAgentToolsPromptBlock(params: {
      */
     lines.push(
       "### MCP 服务",
-      "⚠️ **本轮没有任何 MCP server 启用**。**严禁使用** `call_mcp` 或 `mcp:*:*` 工具名，即便 system prompt 中提到 mcp-financex / fsi-factset / mathjs 等名字也不要尝试调用——会直接失败浪费一轮 reason。需要外部数据时，请使用上方「工具名列表」中的 builtin / connector 工具。",
+      "⚠️ **本轮没有任何 MCP server 启用**。严禁使用任何 `mcp:*:*` 工具名，即便 system prompt 中提到 mcp-financex / fsi-factset / mathjs 等名字也不要尝试调用——会直接失败浪费一轮 reason。需要外部数据时，请使用上方「工具名列表」中的 builtin / connector 工具。",
       ""
     );
   }
@@ -391,7 +387,7 @@ export function parseToolCallFromReason(
     return {
       kind: "parse_error",
       message:
-        "未找到合法的 JSON 工具调用块。请在回复末尾使用 ```json {\"tool\":\"...\",\"params\":{}} ``` 或 {\"tool\":\"none\"}",
+        '未找到合法的 JSON 工具调用块。请在回复末尾使用 ```json {"tool":"...","params":{}} ``` 或 {"tool":"none"}',
     };
   }
 
@@ -433,8 +429,7 @@ export function parseToolCallFromReason(
   if ((toolName === "call_mcp" || toolName.startsWith("mcp:")) && !mcp) {
     return {
       kind: "parse_error",
-      message:
-        'call_mcp 需要 params：serverName + mcpTool（或 tool 名使用 mcp:<server>:<tool>）',
+      message: "call_mcp 需要 params：serverName + mcpTool（或 tool 名使用 mcp:<server>:<tool>）",
     };
   }
 

@@ -66,6 +66,170 @@ const MARKET_CONTRACTS: ToolContract[] = [
     lifecycle: "active",
   },
   {
+    name: "fetch_fundamentals",
+    kind: "connector",
+    category: "market",
+    arity: "one",
+    requiredAfterNormalize: ["symbols"],
+    normalize: (raw) => ({
+      ...normalizeMarketSymbolParams(raw, { arity: "one", toolName: "fetch_fundamentals" }),
+      reportType: raw.reportType === "annual" ? "annual" : "quarterly",
+      periods: Math.max(1, Math.min(Number(raw.periods ?? 4), 12)),
+    }),
+    errorCodes: {
+      ...MARKET_SYMBOL_ERRORS,
+      fundamentals_source_unavailable: "permanent",
+      fundamentals_data_unavailable: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "none",
+    lifecycle: "active",
+  },
+  {
+    name: "factor.compute",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    requiredAfterNormalize: ["factor_id", "symbols"],
+    normalize: (raw) => ({
+      ...normalizeMarketSymbolParams(raw, { arity: "either", toolName: "factor.compute" }),
+      factor_id:
+        raw.factor_id ??
+        raw.factorId ??
+        (Array.isArray(raw.factor_ids) ? raw.factor_ids[0] : undefined),
+    }),
+    errorCodes: { factor_not_found: "permanent", no_factor_values_written: "permanent" },
+    timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "factor.promote_backtest",
+    kind: "builtin",
+    category: "backtest",
+    arity: "either",
+    requiredAfterNormalize: ["factor_ids", "start_date", "end_date"],
+    normalize: (raw) => ({
+      ...raw,
+      factor_ids: raw.factor_ids ?? raw.factorIds ?? (raw.factor_id ? [raw.factor_id] : undefined),
+      start_date: raw.start_date ?? raw.startDate ?? raw.from,
+      end_date: raw.end_date ?? raw.endDate ?? raw.to ?? raw.asOf,
+    }),
+    errorCodes: { factor_not_found: "permanent", missing_factor_ids: "permanent" },
+    timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "backtest.run",
+    kind: "builtin",
+    category: "backtest",
+    arity: "either",
+    requiredAfterNormalize: ["strategy_version_id", "symbols"],
+    normalize: (raw) => ({
+      ...normalizeMarketSymbolParams(raw, { arity: "either", toolName: "backtest.run" }),
+      strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
+    }),
+    errorCodes: { factor_not_found: "permanent", missing_strategy_version_id: "permanent" },
+    timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "strategy.compose",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    requiredAfterNormalize: ["strategy_version_id"],
+    normalize: (raw) => ({
+      ...raw,
+      strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
+    }),
+    errorCodes: { missing_strategy_version_id: "permanent" },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "strategy.compile",
+    kind: "builtin",
+    category: "research",
+    arity: "either",
+    requiredAfterNormalize: ["code"],
+    normalize: (raw) => ({ ...raw, code: raw.code ?? raw.strategyCode ?? raw.source }),
+    errorCodes: { missing_code: "permanent" },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "factor.mine.llm",
+    kind: "builtin",
+    category: "research",
+    arity: "many",
+    requiredAfterNormalize: ["expressions", "symbols", "start_date", "end_date"],
+    normalize: (raw) => ({
+      ...normalizeMarketSymbolParams(raw, { arity: "many", toolName: "factor.mine.llm" }),
+      expressions: raw.expressions ?? raw.factorExpressions ?? raw.factor_expressions,
+      start_date: raw.start_date ?? raw.startDate ?? raw.from,
+      end_date: raw.end_date ?? raw.endDate ?? raw.to,
+      min_count: Math.max(1, Number(raw.min_count ?? raw.minCount ?? 5)),
+    }),
+    validate: (canonical) => {
+      const expressions = Array.isArray(canonical.expressions)
+        ? canonical.expressions.filter((item) => typeof item === "string" && item.trim())
+        : [];
+      const minCount = Number(canonical.min_count ?? 5);
+      if (expressions.length < minCount) {
+        throw new Error(
+          `factor_expression_batch_too_small: factor.mine.llm requires at least ${minCount} expressions`
+        );
+      }
+    },
+    errorCodes: {
+      ...MARKET_SYMBOL_ERRORS,
+      factor_expression_batch_too_small: "permanent",
+      missing_expressions: "permanent",
+      missing_start_date: "permanent",
+      missing_end_date: "permanent",
+    },
+    timeoutClass: "market",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
+    name: "order.create_intent",
+    kind: "builtin",
+    category: "trading",
+    arity: "one",
+    requiredAfterNormalize: ["symbols", "side", "qty"],
+    normalize: (raw) => ({
+      ...normalizeMarketSymbolParams(raw, { arity: "one", toolName: "order.create_intent" }),
+      strategy_version_id: raw.strategy_version_id ?? raw.strategyVersionId,
+      side: raw.side ?? raw.direction ?? raw.action,
+      qty: raw.qty ?? raw.quantity ?? raw.shares,
+      order_type: raw.order_type ?? raw.orderType ?? "market",
+      dispatch_mode: raw.dispatch_mode ?? raw.dispatchMode ?? "paper",
+    }),
+    validate: (canonical) => {
+      const qty = Number(canonical.qty);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error("invalid_qty: order.create_intent qty must be a positive number");
+      }
+    },
+    errorCodes: {
+      ...MARKET_SYMBOL_ERRORS,
+      missing_side: "permanent",
+      missing_qty: "permanent",
+      invalid_qty: "permanent",
+      missing_strategy_version_id: "permanent",
+      invalid_order_type: "permanent",
+    },
+    timeoutClass: "light",
+    sideEffects: "write",
+    lifecycle: "active",
+  },
+  {
     name: "market.readiness",
     kind: "builtin",
     category: "market",
@@ -93,7 +257,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
     errorCodes: {
       ...MARKET_SYMBOL_ERRORS,
       snapshot_not_found: "permanent",
-      market_snapshot_empty: "retryable",
+      market_snapshot_empty: "transient",
       invalid_asOf: "permanent",
     },
     timeoutClass: "market",
@@ -107,8 +271,7 @@ const MARKET_CONTRACTS: ToolContract[] = [
     arity: "either",
     normalize: (raw) => {
       const snapshotId =
-        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() ||
-        extractSnapshotId(raw);
+        String(raw.snapshotId ?? raw.snapshot_id ?? "").trim() || extractSnapshotId(raw);
       const scope = resolveInstrumentScope(raw);
       const direction = resolveThesisDirection(raw);
       const confidence = coerceConfidence01(raw.confidence, 0.5);

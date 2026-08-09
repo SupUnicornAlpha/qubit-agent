@@ -72,13 +72,66 @@ export const SKILL_HANDLERS: Record<string, BuiltinToolHandler> = {
     const projectId = String(params.projectId ?? params.project_id ?? ctx.projectId ?? "");
     if (!projectId) throw new Error("skill.search: projectId is required");
     const query = typeof params.query === "string" ? params.query : "";
-    const rows = await skillService.search({
+    const hits = await skillService.searchWithMeta({
       projectId,
       query,
       definitionId: ctx.definition.id,
       topK: Number(params.topK ?? 5),
     });
-    return { query, count: rows.length, skills: rows };
+    if (ctx.workflowId && ctx.workflowId !== "prime-bridge" && hits.length > 0) {
+      const recallLogger = await import("../monitor/skill-recall-logger");
+      await recallLogger.recordSkillRecall({
+        workflowRunId: ctx.workflowId,
+        definitionId: ctx.definition.id,
+        hits: hits.map((hit) => ({
+          skillId: hit.skill.id,
+          rank: hit.rank,
+          score: hit.score,
+        })),
+      });
+    }
+
+    // Rust Core auto-recall injects the returned Skill bodies into the prompt.
+    // Record that concrete use here so S-1 and topology no longer report zero.
+    const recordUsage = params.recordUsage === true || params.record_usage === true;
+    if (recordUsage) {
+      const workflowId = ctx.workflowId;
+      const benchmarkWorkflow =
+        Boolean(workflowId && workflowId !== "prime-bridge") &&
+        (await import("../benchmark/benchmark-namespace")
+          .then(({ isBenchmarkWorkflow }) => (workflowId ? isBenchmarkWorkflow(workflowId) : false))
+          .catch(() => false));
+      await Promise.all(
+        hits.map((hit) =>
+          skillService.recordUsage({
+            skillId: hit.skill.id,
+            projectId,
+            workflowRunId: ctx.workflowId,
+            ...(ctx.agentInstanceId ? { agentInstanceId: ctx.agentInstanceId } : {}),
+            definitionId: ctx.definition.id,
+            outcome: "success",
+            score: 1,
+            notes: `${benchmarkWorkflow ? "benchmark" : "rust_core"}:${String(params.usageMode ?? "context_injection")}`,
+            updateLifetimeCounters: !benchmarkWorkflow,
+          })
+        )
+      );
+    }
+    return {
+      query,
+      count: hits.length,
+      recordUsage,
+      skills: hits.map((hit) => ({
+        id: hit.skill.id,
+        name: hit.skill.name,
+        description: hit.skill.description,
+        bodyMd: hit.skill.bodyMd,
+        category: hit.skill.category,
+        version: hit.skill.version,
+        score: hit.score,
+        rank: hit.rank,
+      })),
+    };
   },
 
   "skill.patch": async (_ctx, params) => {

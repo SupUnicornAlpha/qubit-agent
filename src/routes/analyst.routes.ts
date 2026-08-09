@@ -58,7 +58,12 @@ analystRouter.post("/run", async (c) => {
     agentMode?: AgentControlMode;
   }>();
 
-  if (body.agentMode === "plan" || body.agentMode === "goal" || body.agentMode === "ask" || body.agentMode === "diagnose") {
+  if (
+    body.agentMode === "plan" ||
+    body.agentMode === "goal" ||
+    body.agentMode === "ask" ||
+    body.agentMode === "diagnose"
+  ) {
     return c.json(
       {
         ok: false,
@@ -100,7 +105,7 @@ analystRouter.post("/run", async (c) => {
  * POST /api/v1/analyst/orchestrator-chat
  *
  * 研究团队页「对话消息」入口（区别于「启动团队分析」按钮）。不再写死跑全队，而是把消息
- * 交给 Orchestrator 跑 ReAct 自主判断：直接回答 / assign_task 派给特定子 agent /
+ * 交给 Orchestrator 跑 ReAct 自主判断：直接回答 / agent.invoke 派给特定子 agent /
  * run_analyst_team 跑全队（决策指引在 reason.ts 注入）。上下文用**本会话的最近对话**
  * （researchTeamInteraction transcript），不载入历史报告。
  *

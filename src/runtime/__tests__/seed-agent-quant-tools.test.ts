@@ -149,7 +149,6 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(fundamental.tools).not.toContain("market.readiness");
     expectTools("def-analyst-fundamental", [
       "fetch_fundamentals",
-      "fetch_financial_data",
       "compute_valuation",
       "research.thesis.write",
     ]);
@@ -223,7 +222,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
   test("Orchestrator 持有合同写工具 + 记忆 + skill 全套，不挂团队兼容大工具", () => {
     expectTools("def-orchestrator", [
       "update_plan",
-      "assign_task",
+      "agent.invoke",
       "market.resolve_symbol",
       "market.snapshot.get",
       "research.thesis.write",
@@ -244,7 +243,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "backtest.run",
       "evaluate_risk",
       "rule.register",
-      "search_memory",
+      "memory.recall",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
       "skill.search",
@@ -270,10 +269,10 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(def.tools).not.toContain("fetch_klines");
   });
 
-  test("装上 consolidate_longterm 的 agent 必须也装 search_memory", () => {
+  test("装上 consolidate_longterm 的 agent 必须也装 memory.recall", () => {
     for (const def of SEED_AGENT_DEFINITIONS) {
       if (def.tools.includes("memory.consolidate_longterm")) {
-        expect(def.tools).toContain("search_memory");
+        expect(def.tools).toContain("memory.recall");
       }
     }
   });
@@ -314,11 +313,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
         "edit_agent_pack",
         "market.readiness",
       ],
-      "def-analyst-fundamental": [
-        "run_screener",
-        "edit_agent_pack",
-        "fetch_klines",
-      ],
+      "def-analyst-fundamental": ["run_screener", "edit_agent_pack", "fetch_klines"],
       "def-analyst-sentiment": [
         "analyze_social_media",
         "extract_event",

@@ -45,7 +45,8 @@ describe("SkillService basic CRUD", () => {
       projectId,
       name: "factor-discovery-loop",
       description: "因子盘点 → 挖掘 → promote → 评估 的闭环（≥5 步）",
-      bodyMd: "# Factor Discovery Loop\n\n## 步骤\n1. factor.list\n2. discovery.run\n3. discovery.promote\n4. factor.autoEvaluate",
+      bodyMd:
+        "# Factor Discovery Loop\n\n## 步骤\n1. factor.list\n2. discovery.run\n3. discovery.promote\n4. factor.autoEvaluate",
     });
     expect(skill.id).toBeTruthy();
     expect(skill.name).toBe("factor-discovery-loop");
@@ -100,6 +101,26 @@ describe("SkillService basic CRUD", () => {
     expect(after?.useCount).toBe(1);
     expect(after?.successCount).toBe(1);
     expect(after?.state).toBe("active"); // 自动复活
+  });
+
+  test("benchmark usage keeps run telemetry without training lifetime counters", async () => {
+    const skill = await skillService.findByName(projectId, "factor-discovery-loop");
+    expect(skill).not.toBeNull();
+    const beforeUseCount = skill!.useCount;
+    await skillService.recordUsage({
+      skillId: skill!.id,
+      outcome: "success",
+      notes: "benchmark:context_injection",
+      updateLifetimeCounters: false,
+    });
+    const after = await skillService.findById(skill!.id);
+    expect(after?.useCount).toBe(beforeUseCount);
+    const db = await getDb();
+    const runs = await db
+      .select()
+      .from(schema.agentSkillRun)
+      .where(eq(schema.agentSkillRun.skillId, skill!.id));
+    expect(runs.some((run) => run.notes === "benchmark:context_injection")).toBe(true);
   });
 
   test("search: pinned > active > stale 软排序", async () => {
@@ -160,19 +181,24 @@ describe("proposeSkillCandidate", () => {
   });
 
   test("满足门槛（≥5 tool / ≥3 distinct / 有 final_answer）→ 创建 pending_review skill", async () => {
-    const steps = ["factor.list", "factor.list", "discovery.run", "discovery.promote", "factor.autoEvaluate", "backtest.run"].map(
-      (tool, idx) => ({
-        id: `step_${idx}`,
-        agentInstanceId: "i1",
-        stepIndex: idx,
-        phase: "act",
-        thought: null,
-        actionType: "tool_call",
-        actionJson: { tool },
-        observationJson: null,
-        createdAt: NOW,
-      })
-    );
+    const steps = [
+      "factor.list",
+      "factor.list",
+      "discovery.run",
+      "discovery.promote",
+      "factor.autoEvaluate",
+      "backtest.run",
+    ].map((tool, idx) => ({
+      id: `step_${idx}`,
+      agentInstanceId: "i1",
+      stepIndex: idx,
+      phase: "act",
+      thought: null,
+      actionType: "tool_call",
+      actionJson: { tool },
+      observationJson: null,
+      createdAt: NOW,
+    }));
     const ok = await proposeSkillCandidate({
       projectId,
       definitionId: null,

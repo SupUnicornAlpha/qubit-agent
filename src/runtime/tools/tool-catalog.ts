@@ -36,6 +36,41 @@ export const TOOL_CATALOG_CATEGORIES: Record<ToolCatalogCategory, { label: strin
     exec: { label: "命令执行", hint: "本地 CLI 工具 + 外部 agentic CLI 子代理" },
   };
 
+/**
+ * Removed from the global/model-visible surface. Dispatch aliases may remain
+ * temporarily so persisted Agent definitions can migrate without breaking an
+ * in-flight workflow, but new Agents and the global benchmark cannot select
+ * these duplicate, stub or superseded names.
+ */
+export const RETIRED_GLOBAL_TOOL_NAMES = new Set([
+  "call_mcp",
+  "assign_task",
+  "run_analyst_team",
+  "summarize_team_decision",
+  "fuse_signals",
+  "check_risk",
+  "fetch_bars",
+  "fetch_price_data",
+  "fetch_financial_data",
+  "compute_factors",
+  "run_experiment",
+  "version_strategy",
+  "factor.evaluate",
+  "fetch_macro_data",
+  "run_backtest",
+  "get_backtest_status",
+  "strategy.verify",
+  "search_memory",
+  "extract_event",
+  "score_sentiment",
+  "analyze_social_media",
+  "cleanup_ttl",
+]);
+
+export function isRetiredGlobalToolName(name: string): boolean {
+  return RETIRED_GLOBAL_TOOL_NAMES.has(name.trim());
+}
+
 const TOOL_META: Record<string, ToolMetaEntry> = {
   // 编排
   update_plan: {
@@ -222,11 +257,15 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
     category: "market",
   },
   fetch_financial_data: {
-    description: "价格统计 + 基本面占位；完整财报需外接数据源",
+    description: "[Retired] 价格统计与基本面混合入口；改用 fetch_klines + fetch_fundamentals",
     category: "market",
+    lifecycle: "deprecated",
+    replacedBy: "fetch_fundamentals",
+    deprecationReason: "混合了价格与财报语义，导致模型把占位结果当作真实基本面",
   },
   fetch_fundamentals: {
-    description: "基本面数据结构（无财报源时为空 periods）",
+    description:
+      "标准化年度/季度基本面数据；通过可用 provider 返回真实 periods，源不可用时明确失败",
     category: "market",
   },
   write_snapshot: { description: "写入行情/研究数据快照供下游复用", category: "market" },
@@ -275,8 +314,20 @@ const TOOL_META: Record<string, ToolMetaEntry> = {
   },
 
   // 回测
-  run_backtest: { description: "SMA 金叉死叉多空回测，写入 backtest_job", category: "backtest" },
-  get_backtest_status: { description: "查询回测任务进度与结果", category: "backtest" },
+  run_backtest: {
+    description: "[Retired] 旧 SMA 回测入口",
+    category: "backtest",
+    lifecycle: "deprecated",
+    replacedBy: "backtest.run",
+    deprecationReason: "与规范 backtest.run 重复",
+  },
+  get_backtest_status: {
+    description: "[Retired] 旧回测状态入口",
+    category: "backtest",
+    lifecycle: "deprecated",
+    replacedBy: "backtest.run",
+    deprecationReason: "规范 job 由 backtest.run 返回并查询",
+  },
 
   // 交易
   submit_order: { description: "提交已风控批准的实盘/券商订单意图", category: "trading" },
@@ -626,24 +677,24 @@ export function buildToolCatalog(): ToolCatalogEntry[] {
   const seen = new Set<string>();
 
   for (const [name, connector] of Object.entries(TOOL_CONNECTOR_ROUTES)) {
+    if (isRetiredGlobalToolName(name)) continue;
     if (seen.has(name)) continue;
     seen.add(name);
     entries.push(metaFor(name, "connector", connector));
   }
   for (const name of listRegisteredBuiltinTools()) {
+    if (isRetiredGlobalToolName(name)) continue;
     if (seen.has(name)) continue;
     seen.add(name);
     entries.push(metaFor(name, "builtin"));
   }
   /** deprecated 别名若已从 connector 路由移除，仍保留在 catalog 供 UI / 契约测试 */
   for (const [name, meta] of Object.entries(TOOL_META)) {
+    if (isRetiredGlobalToolName(name)) continue;
     if (seen.has(name) || meta.lifecycle !== "deprecated") continue;
     seen.add(name);
     const connector = TOOL_CONNECTOR_ROUTES[name];
     entries.push(metaFor(name, connector ? "connector" : "builtin", connector));
-  }
-  if (!seen.has("call_mcp")) {
-    entries.push(metaFor("call_mcp", "builtin"));
   }
   return entries.sort((a, b) => {
     const ca = a.category ?? "orchestration";
@@ -671,11 +722,7 @@ export function resolveToolAlias(name: string): {
   replacedBy?: string;
 } {
   const meta = TOOL_META[name];
-  if (
-    meta?.lifecycle === "deprecated" &&
-    meta.replacedBy &&
-    meta.resolveAlias !== false
-  ) {
+  if (meta?.lifecycle === "deprecated" && meta.replacedBy && meta.resolveAlias !== false) {
     const target = TOOL_META[meta.replacedBy];
     // 防御：target 必须存在且本身不是 deprecated（避免链式跳转）
     if (target && target.lifecycle !== "deprecated") {

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::error::RuntimeError;
 
-use super::ports::{RecallBundle, RecallHit, RecallPort};
+use super::ports::{RecallBundle, RecallHit, RecallPort, RecallRequest};
 
 pub struct BridgeRecallPort {
     client: Arc<LegacyBridgeClient>,
@@ -25,6 +25,8 @@ impl BridgeRecallPort {
         tool: &str,
         query: &str,
         extra: Value,
+        workspace_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<Vec<RecallHit>, RuntimeError> {
         let mut args = json!({ "query": query, "top_k": 5 });
         if let Some(obj) = args.as_object_mut() {
@@ -41,8 +43,8 @@ impl BridgeRecallPort {
                 name: tool.to_string(),
                 args,
                 idempotency_key: None,
-                workspace_id: None,
-                session_id: None,
+                workspace_id: workspace_id.map(str::to_string),
+                session_id: session_id.map(str::to_string),
             })
             .await
             .map_err(|e| RuntimeError::Internal(format!("bridge recall: {e}")))?;
@@ -64,6 +66,7 @@ fn parse_hits(obs: Option<&Value>) -> Vec<RecallHit> {
     };
     let hits = obs
         .get("hits")
+        .or_else(|| obs.get("skills"))
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
@@ -71,12 +74,15 @@ fn parse_hits(obs: Option<&Value>) -> Vec<RecallHit> {
         .filter_map(|h| {
             let title = h
                 .get("title")
+                .or_else(|| h.get("name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("memory")
                 .to_string();
             let summary = h
                 .get("summary")
                 .or_else(|| h.get("body"))
+                .or_else(|| h.get("bodyMd"))
+                .or_else(|| h.get("description"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -106,11 +112,7 @@ fn partition_bundle_hits(hits: Vec<RecallHit>) -> RecallBundle {
     let mut skill = Vec::new();
     let mut general = Vec::new();
     for h in hits {
-        let kind = h
-            .sub_kind
-            .as_deref()
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        let kind = h.sub_kind.as_deref().unwrap_or("").to_ascii_lowercase();
         if kind.contains("finance") || kind == "outcome" || kind.starts_with("fin") {
             finance.push(h);
         } else if kind.contains("procedural") || kind.contains("skill") {
@@ -129,23 +131,37 @@ fn partition_bundle_hits(hits: Vec<RecallHit>) -> RecallBundle {
 #[async_trait]
 impl RecallPort for BridgeRecallPort {
     async fn recall_finance(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError> {
-        self.invoke_hits("memory.recall", query, json!({ "mode": "finance" }))
-            .await
+        self.invoke_hits(
+            "memory.recall",
+            query,
+            json!({ "mode": "finance" }),
+            None,
+            None,
+        )
+        .await
     }
 
     async fn recall_skill(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError> {
         self.invoke_hits(
-            "memory.recall",
+            "skill.search",
             query,
-            json!({ "kinds": ["procedural"] }),
+            json!({ "recordUsage": true, "usageMode": "context_injection" }),
+            None,
+            None,
         )
         .await
     }
 
     async fn recall_general(&self, query: &str) -> Result<Vec<RecallHit>, RuntimeError> {
         // Dual recall: Experience + FS workspace memory (merged on Bun side).
-        self.invoke_hits("memory.recall", query, json!({ "include_fs": true }))
-            .await
+        self.invoke_hits(
+            "memory.recall",
+            query,
+            json!({ "include_fs": true }),
+            None,
+            None,
+        )
+        .await
     }
 
     async fn recall_bundle(&self, query: &str) -> Result<RecallBundle, RuntimeError> {
@@ -155,9 +171,43 @@ impl RecallPort for BridgeRecallPort {
                 "memory.recall",
                 query,
                 json!({ "mode": "bundle", "include_fs": true, "top_k": 6 }),
+                None,
+                None,
             )
             .await?;
         Ok(partition_bundle_hits(hits))
+    }
+
+    async fn recall_bundle_for(
+        &self,
+        request: RecallRequest<'_>,
+    ) -> Result<RecallBundle, RuntimeError> {
+        // Skills have a dedicated source of truth (`agent_skill`). Keep memory
+        // and Skill recall separate, then merge into the Context Protocol slots.
+        let (memory, skills) = tokio::join!(
+            self.invoke_hits(
+                "memory.recall",
+                request.query,
+                json!({ "mode": "bundle", "include_fs": true, "top_k": 6 }),
+                Some(request.workspace_id),
+                Some(request.session_id),
+            ),
+            self.invoke_hits(
+                "skill.search",
+                request.query,
+                json!({
+                    "topK": 3,
+                    "definitionId": request.definition_id,
+                    "recordUsage": true,
+                    "usageMode": "context_injection"
+                }),
+                Some(request.workspace_id),
+                Some(request.session_id),
+            )
+        );
+        let mut bundle = partition_bundle_hits(memory?);
+        bundle.skill = skills?;
+        Ok(bundle)
     }
 }
 
@@ -194,5 +244,22 @@ mod tests {
         assert_eq!(b.finance.len(), 1);
         assert_eq!(b.skill.len(), 1);
         assert_eq!(b.general.len(), 1);
+    }
+
+    #[test]
+    fn parse_skill_search_shape_into_context_hit() {
+        let observation = json!({
+            "skills": [{
+                "name": "backtest-leakage-self-check",
+                "description": "Prevent look-ahead leakage",
+                "bodyMd": "Always shift signals before execution.",
+                "score": 0.91
+            }]
+        });
+        let hits = parse_hits(Some(&observation));
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "backtest-leakage-self-check");
+        assert_eq!(hits[0].summary, "Always shift signals before execution.");
+        assert!((hits[0].score - 0.91).abs() < f64::EPSILON);
     }
 }

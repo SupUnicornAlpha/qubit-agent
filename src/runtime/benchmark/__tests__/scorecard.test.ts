@@ -71,9 +71,9 @@ describe("qubit benchmark scorecard", () => {
     }
   });
 
-  test("qubit-bench-v0.2 covers multi-scenario clusters with memory/orchestration cases", () => {
-    expect(QUBIT_BENCH_VERSION).toBe("qubit-bench-v0.2");
-    expect(QUBIT_BENCH_CASES.length).toBeGreaterThanOrEqual(24);
+  test("qubit-bench-v0.3 is the single 20-case suite with memory/orchestration cases", () => {
+    expect(QUBIT_BENCH_VERSION).toBe("qubit-bench-v0.3");
+    expect(QUBIT_BENCH_CASES).toHaveLength(20);
     expect(listQubitBenchCases({ tags: ["memory"] }).length).toBeGreaterThanOrEqual(2);
     expect(listQubitBenchCases({ tags: ["orchestration"] }).length).toBeGreaterThanOrEqual(2);
     expect(listQubitBenchCases({ tags: ["portfolio"] }).length).toBeGreaterThanOrEqual(1);

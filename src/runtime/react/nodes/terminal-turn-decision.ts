@@ -177,7 +177,7 @@ export function decideTerminalControl(input: {
     const retryCount = input.controlModeGapRetryCount ?? 0;
     const message =
       "你刚预告了下一步动作（拉数/并行工具/建计划后执行），但本轮没有发出合法 TOOL_CALL。" +
-      "请立刻用 <TOOL_CALL> 调用具体工具（如 market.snapshot.get / assign_task / research.thesis.write）；不要用纯文字假装已开始执行。" +
+      "请立刻用 <TOOL_CALL> 调用具体工具（如 market.snapshot.get / agent.invoke / research.thesis.write）；不要用纯文字假装已开始执行。" +
       (!researchFloorMet && successfulBusinessToolCalls > 0
         ? "已有部分工具证据，但仍缺场景研究地板产物——请继续调用下一跳写工具，勿口述收工。"
         : "若已无需工具，请明确给出可交付结论/操作建议（不要再说“即将/立即/接下来会…”）。");

@@ -7,6 +7,7 @@ export type BenchmarkDimension =
   | "resource"
   | "risk"
   | "memory"
+  | "skills"
   | "orchestration";
 
 export interface BenchmarkBudget {
@@ -28,6 +29,9 @@ export interface BenchmarkCaseExpectations {
   minMemoryScore?: number;
   /** Soft.orchestration 下限（仅当 requireSpecialistInvoke 或实际 invoke 时生效）。 */
   minOrchestrationScore?: number;
+  /** Dedicated agent_skill recall → context injection is required. */
+  requireSkillUse?: boolean;
+  minSkillScore?: number;
 }
 
 export interface QubitBenchCase {
@@ -40,7 +44,7 @@ export interface QubitBenchCase {
   budget: BenchmarkBudget;
   /** A-2 下限；不同场景的关键词密度不应一刀切。 */
   minRelevance: number;
-  /** v0.2：多维 Soft 期望（可选）。 */
+  /** v0.3：多维 Soft 期望（可选）。 */
   expectations?: BenchmarkCaseExpectations;
   /** 业务标签，便于按场景簇过滤。 */
   businessTags?: readonly string[];
@@ -68,29 +72,23 @@ const EXECUTION_BUDGET: BenchmarkBudget = {
 
 const CORE_DIMS = ["delivery", "quality", "tools", "resource"] as const;
 const RISK_DIMS = ["delivery", "quality", "tools", "resource", "risk"] as const;
-const MEM_DIMS = ["delivery", "quality", "tools", "resource", "memory"] as const;
-const ORCH_DIMS = [
-  "delivery",
-  "quality",
-  "tools",
-  "resource",
-  "orchestration",
-] as const;
+const MEM_DIMS = ["delivery", "quality", "tools", "resource", "memory", "skills"] as const;
+const ORCH_DIMS = ["delivery", "quality", "tools", "resource", "orchestration"] as const;
 const FULL_DIMS = [
   "delivery",
   "quality",
   "tools",
   "resource",
   "memory",
+  "skills",
   "orchestration",
 ] as const;
 
 /**
- * qubit-bench-v0.2：多业务场景真实对话 case。
+ * qubit-bench-v0.3：唯一的全局 20-case 多业务场景基准。
  *
- * case id 是稳定 API；scenarioKey 复用已有产物契约与统一 launch 入口。v0.2 在
- * 原 20 case 基础上增加记忆召回、编排 handoff、组合/论点等业务簇，Soft 层按
- * dimensions / expectations 评测工具与记忆等细维度。
+ * case id 是稳定 API；scenarioKey 复用已有产物契约与统一 launch 入口。Soft 层按
+ * dimensions / expectations 评测工具、记忆、Skills 与编排等细维度。
  */
 export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
   // ── Research ──────────────────────────────────────────────
@@ -102,18 +100,6 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     businessTags: ["research", "single_ticker"],
     goal: "对 AAPL 最近一次财报后的基本面、估值、技术面与风险做研究；给出三条带证据的交易级结论，并明确哪些数据仍不确定。",
     inputParams: { ticker: "AAPL", debateRounds: 1 },
-    budget: RESEARCH_BUDGET,
-    minRelevance: 0.3,
-    expectations: { minRequiredToolRecall: 0.5 },
-  },
-  {
-    id: "QB-RS-02",
-    title: "高波动事件风险研究",
-    scenarioKey: "research",
-    dimensions: CORE_DIMS,
-    businessTags: ["research", "risk"],
-    goal: "研究 TSLA 在交付量、监管与估值分歧下的多空驱动因素；不确定时必须明确数据缺口，不得编造价格或新闻。",
-    inputParams: { ticker: "TSLA", debateRounds: 1 },
     budget: RESEARCH_BUDGET,
     minRelevance: 0.3,
     expectations: { minRequiredToolRecall: 0.5 },
@@ -144,18 +130,6 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
       minOrchestrationScore: 0.4,
       minRequiredToolRecall: 0.5,
     },
-  },
-  {
-    id: "QB-RM-02",
-    title: "云软件同业估值比较",
-    scenarioKey: "research_multi",
-    dimensions: ORCH_DIMS,
-    businessTags: ["research", "multi_ticker"],
-    goal: "比较 MSFT、CRM、NOW 的收入质量、自由现金流、估值与 AI 变现进展，给出相对强弱排序。",
-    inputParams: { ticker: "MSFT,CRM,NOW", debateRounds: 1 },
-    budget: COMPLEX_RESEARCH_BUDGET,
-    minRelevance: 0.3,
-    expectations: { requireSpecialistInvoke: true, minOrchestrationScore: 0.35 },
   },
   {
     id: "QB-RT-01",
@@ -228,17 +202,6 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
   },
-  {
-    id: "QB-SP-S-02",
-    title: "拥挤交易短仓风险评估",
-    scenarioKey: "stock_pick_short",
-    dimensions: RISK_DIMS,
-    businessTags: ["stock_pick", "short", "crowding"],
-    goal: "研究高估值且叙事拥挤标的的 short 机会，但若缺少空头数据必须拒绝给出虚假的确定性，并写清触发退出的条件。",
-    inputParams: { universe: "US:sp500", topN: 5 },
-    budget: COMPLEX_RESEARCH_BUDGET,
-    minRelevance: 0.3,
-  },
 
   // ── Factor / strategy ─────────────────────────────────────
   {
@@ -251,7 +214,7 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     inputParams: { universe: "US:sp500", factorCategory: "momentum", horizonDays: 5 },
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
-    expectations: { minRequiredToolRecall: 0.5 },
+    expectations: { minRequiredToolRecall: 0.5, requireSkillUse: true, minSkillScore: 0.8 },
   },
   {
     id: "QB-F-02",
@@ -312,17 +275,6 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     budget: COMPLEX_RESEARCH_BUDGET,
     minRelevance: 0.3,
   },
-  {
-    id: "QB-LS-02",
-    title: "市场中性质量对冲策略",
-    scenarioKey: "strategy_long_short",
-    dimensions: RISK_DIMS,
-    businessTags: ["strategy", "market_neutral"],
-    goal: "构建市场中性的质量对冲策略，解释 long/short 选择、beta 控制、行业中性和极端行情止损。",
-    inputParams: { ticker: "SPY", strategyHint: "市场中性质量 long/short", timeframe: "1d" },
-    budget: COMPLEX_RESEARCH_BUDGET,
-    minRelevance: 0.3,
-  },
 
   // ── Live / paper execution ────────────────────────────────
   {
@@ -340,6 +292,7 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     },
     budget: EXECUTION_BUDGET,
     minRelevance: 0.3,
+    expectations: { requireSkillUse: true, minSkillScore: 0.8 },
   },
   {
     id: "QB-LT-02",
@@ -358,7 +311,7 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     minRelevance: 0.3,
   },
 
-  // ── Memory / thesis / Core path（v0.2 新增） ───────────────
+  // ── Memory / thesis / Core path ──────────────────────────
   {
     id: "QB-MEM-01",
     title: "研究前记忆召回",
@@ -371,23 +324,9 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
     minRelevance: 0.3,
     expectations: {
       requireMemoryRecall: true,
+      requireSkillUse: true,
+      minSkillScore: 0.8,
       minMemoryScore: 0.4,
-      minRequiredToolRecall: 0.5,
-    },
-  },
-  {
-    id: "QB-MEM-02",
-    title: "选股结合工作区记忆搜索",
-    scenarioKey: "stock_pick",
-    dimensions: MEM_DIMS,
-    businessTags: ["memory", "stock_pick"],
-    goal: "选股前先 workspace.memory.search 或 memory.recall 查找既有筛选规则/黑名单；将召回结果纳入候选过滤逻辑，禁止无视既有约束直接出 5 只票。",
-    inputParams: { universe: "US:sp500", topN: 5 },
-    budget: COMPLEX_RESEARCH_BUDGET,
-    minRelevance: 0.3,
-    expectations: {
-      requireMemoryRecall: true,
-      minMemoryScore: 0.35,
       minRequiredToolRecall: 0.5,
     },
   },
@@ -426,7 +365,11 @@ export const QUBIT_BENCH_CASES: readonly QubitBenchCase[] = [
   },
 ] as const;
 
-export const QUBIT_BENCH_VERSION = "qubit-bench-v0.2";
+if (QUBIT_BENCH_CASES.length !== 20) {
+  throw new Error(`global_qubit_benchmark_must_have_20_cases:${QUBIT_BENCH_CASES.length}`);
+}
+
+export const QUBIT_BENCH_VERSION = "qubit-bench-v0.3";
 
 export function getQubitBenchCase(id: string): QubitBenchCase {
   const benchmarkCase = QUBIT_BENCH_CASES.find((item) => item.id === id);

@@ -12,6 +12,7 @@ export interface UpgradeGateDimension {
     | "resource"
     | "observability"
     | "memory"
+    | "skills"
     | "orchestration";
   status: UpgradeGateStatus;
   detail: string;
@@ -54,6 +55,9 @@ export function evaluateUpgradeGate(input: {
   ];
   if (input.benchmarkCase.dimensions.includes("memory")) {
     dimensions.push(gateMemory(input));
+  }
+  if (input.benchmarkCase.dimensions.includes("skills")) {
+    dimensions.push(gateSkills(input));
   }
   if (input.benchmarkCase.dimensions.includes("orchestration")) {
     dimensions.push(gateOrchestration(input));
@@ -119,7 +123,10 @@ function gateDelivery(input: {
   const completeness = metric(input.snapshot, "A-1");
 
   // Soft delivery: research-grade verdict or usable terminal with partial artifacts.
-  if (verdict?.available && (verdict.state === "delivered" || verdict.state === "delivered_with_gaps")) {
+  if (
+    verdict?.available &&
+    (verdict.state === "delivered" || verdict.state === "delivered_with_gaps")
+  ) {
     return {
       name: "delivery",
       status: "pass",
@@ -222,11 +229,7 @@ function gateTools(input: {
   }
   const recipeRecall = input.scorecard.layers.trajectory.metrics.requiredToolRecall;
   const minRecall = input.benchmarkCase.expectations?.minRequiredToolRecall;
-  if (
-    typeof minRecall === "number" &&
-    recipeRecall !== null &&
-    recipeRecall < minRecall
-  ) {
+  if (typeof minRecall === "number" && recipeRecall !== null && recipeRecall < minRecall) {
     return {
       name: "tools",
       status: "fail",
@@ -298,9 +301,39 @@ function gateResource(input: {
 
 function softDim(
   scorecard: RunScorecard,
-  id: "memory" | "orchestration" | "tools" | "recipe" | "content"
+  id: "memory" | "skills" | "orchestration" | "tools" | "recipe" | "content"
 ) {
   return scorecard.layers.soft.dimensions.find((d) => d.id === id);
+}
+
+function gateSkills(input: {
+  benchmarkCase: QubitBenchCase;
+  scorecard: RunScorecard;
+}): UpgradeGateDimension {
+  const dim = softDim(input.scorecard, "skills");
+  const expect = input.benchmarkCase.expectations;
+  if (!dim || dim.status === "skipped") {
+    return { name: "skills", status: "incomplete", detail: "skill_telemetry_unavailable" };
+  }
+  if (expect?.requireSkillUse && dim.status === "not_applicable") {
+    return { name: "skills", status: "fail", detail: "agent_skill_use_required_but_not_observed" };
+  }
+  if (dim.status === "not_applicable") {
+    return { name: "skills", status: "pass", detail: "skills_not_applicable" };
+  }
+  const min = expect?.minSkillScore ?? 0.5;
+  if ((dim.score ?? 0) < min) {
+    return {
+      name: "skills",
+      status: "fail",
+      detail: `skill_score=${dim.score?.toFixed(2) ?? "na"} < ${min}`,
+    };
+  }
+  return {
+    name: "skills",
+    status: "pass",
+    detail: `skill_score=${dim.score?.toFixed(2)} (${dim.detail})`,
+  };
 }
 
 function gateMemory(input: {

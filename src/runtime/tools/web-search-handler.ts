@@ -76,7 +76,9 @@ async function searchBrave(
     .map((r) => ({
       title: String(r.title ?? "").trim(),
       url: String(r.url ?? "").trim(),
-      snippet: String(r.description ?? "").trim().slice(0, 500),
+      snippet: String(r.description ?? "")
+        .trim()
+        .slice(0, 500),
     }))
     .filter((r) => r.title && r.url)
     .slice(0, count);
@@ -115,7 +117,9 @@ async function searchSerper(
     .map((r) => ({
       title: String(r.title ?? "").trim(),
       url: String(r.link ?? "").trim(),
-      snippet: String(r.snippet ?? "").trim().slice(0, 500),
+      snippet: String(r.snippet ?? "")
+        .trim()
+        .slice(0, 500),
     }))
     .filter((r) => r.title && r.url)
     .slice(0, count);
@@ -139,6 +143,19 @@ export function parseDuckDuckGoHtml(html: string, count: number): WebSearchResul
     const url = unwrapDuckDuckGoRedirect(href);
     if (!title || !url) continue;
     results.push({ title, url, snippet });
+  }
+  if (results.length > 0) return results;
+
+  // Lite endpoint uses compact table rows and `result-link` instead of the
+  // classic `result__a` class. Keep this parser as a second zero-key shape so
+  // a DuckDuckGo markup rollout does not take web.search down entirely.
+  const liteRe =
+    /<a[^>]*class=["'][^"']*result-link[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>(?:[\s\S]*?<td[^>]*class=["'][^"']*result-snippet[^"']*["'][^>]*>([\s\S]*?)<\/td>)?/gi;
+  while ((m = liteRe.exec(html)) !== null && results.length < count) {
+    const url = unwrapDuckDuckGoRedirect(String(m[1] ?? "").trim());
+    const title = stripHtmlToText(m[2] ?? "").slice(0, 300);
+    const snippet = stripHtmlToText(m[3] ?? "").slice(0, 500);
+    if (title && url) results.push({ title, url, snippet });
   }
   return results;
 }
@@ -182,7 +199,19 @@ async function searchDuckDuckGo(
     };
   }
   const html = decodeBoundedText(await response.arrayBuffer());
-  const results = parseDuckDuckGoHtml(html, count);
+  let results = parseDuckDuckGoHtml(html, count);
+  if (results.length === 0) {
+    const liteUrl = new URL("https://lite.duckduckgo.com/lite/");
+    liteUrl.searchParams.set("q", query);
+    const liteResponse = await fetchImpl(liteUrl.toString(), {
+      method: "GET",
+      headers: { "User-Agent": "qubit-agent/web.search" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (liteResponse.ok) {
+      results = parseDuckDuckGoHtml(decodeBoundedText(await liteResponse.arrayBuffer()), count);
+    }
+  }
   if (results.length === 0) {
     return {
       ok: false,

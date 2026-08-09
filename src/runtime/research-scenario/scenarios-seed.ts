@@ -71,7 +71,7 @@ export const ANALYST_DEBATE_SCENARIO: ResearchScenarioSpec = {
   toolPreset: {
     builtinTools: [
       "update_plan",
-      "assign_task",
+      "agent.invoke",
       "market.snapshot.get",
       "research.thesis.write",
       "portfolio.construct",
@@ -117,9 +117,7 @@ export const STRATEGY_AUTHORING_SCENARIO: ResearchScenarioSpec = {
     },
   },
   outputContract: { primary: "strategy_script", secondary: ["backtest_metrics"] },
-  requiredCapabilities: [
-    { kind: "backtest", level: "required" },
-  ],
+  requiredCapabilities: [{ kind: "backtest", level: "required" }],
   toolPreset: {
     // SC3：因子配方链 + Strategy API 写码验证链并存
     builtinTools: [
@@ -358,9 +356,7 @@ export const RISK_REVIEW_SCENARIO: ResearchScenarioSpec = {
     },
   },
   outputContract: { primary: "rule_definition_batch", secondary: ["risk_audit_report"] },
-  requiredCapabilities: [
-    { kind: "rule_engine", level: "required" },
-  ],
+  requiredCapabilities: [{ kind: "rule_engine", level: "required" }],
   toolPreset: {
     // NOTE: 暂无专门的「读取审计日志」builtin；用 load_rules 读当前规则配置代替
     // TODO: 后续如需 audit log 检索，新增 audit.query builtin（参考 builtin-tools.ts）
@@ -562,9 +558,7 @@ export const LIVE_TRADING_SCENARIO: ResearchScenarioSpec = {
     },
   },
   outputContract: { primary: "live_session_summary", secondary: ["risk_event_log"] },
-  requiredCapabilities: [
-    { kind: "rule_engine", level: "required" },
-  ],
+  requiredCapabilities: [{ kind: "rule_engine", level: "required" }],
   toolPreset: {
     // 精品纸面路径：建版本 → order_intent（内嵌 pre-trade risk）。
     // 禁止 rule.evaluate / evaluate_risk / submit_order 抢路径。
@@ -613,9 +607,7 @@ export const POSTMORTEM_SCENARIO: ResearchScenarioSpec = {
     },
   },
   outputContract: { primary: "attribution_report" },
-  requiredCapabilities: [
-    { kind: "factor_compute", level: "required" },
-  ],
+  requiredCapabilities: [{ kind: "factor_compute", level: "required" }],
   toolPreset: {
     builtinTools: ["factor.list", "get_fills", "fetch_klines"],
     connectors: ["qubit-data", "qubit-research"],

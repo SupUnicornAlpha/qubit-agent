@@ -2,10 +2,7 @@
  * ToolSurfaceResolver — single entry for scenario tool-surface narrowing.
  */
 
-import {
-  applyMissingArtifactToolFilter,
-  applyStallToolFilter,
-} from "./tool-filters";
+import { applyMissingArtifactToolFilter, applyStallToolFilter } from "./tool-filters";
 import type { ScenarioRuntimeSnapshot } from "./scenario-snapshot";
 import type { ScenarioRecipe } from "./types";
 import { toolMatchesRequiredCapability } from "../tools/data-gap";
@@ -150,12 +147,7 @@ export function applyToolSurface(input: {
     !snapshot.researchArtifactsOk &&
     (snapshot.missingArtifactTables.includes("recommendation_snapshot") || !snapshot.artifactsOk)
   ) {
-    const prefer = new Set([
-      "recommendation.record",
-      "fetch_klines",
-      "fetch_bars",
-      "get_quote",
-    ]);
+    const prefer = new Set(["recommendation.record", "fetch_klines", "fetch_bars", "get_quote"]);
     const narrowed = next.filter((toolName) => {
       const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
       return prefer.has(base) || prefer.has(toolName);
@@ -163,10 +155,8 @@ export function applyToolSurface(input: {
     if (narrowed.length > 0) next = narrowed;
   }
 
-  const isLive =
-    snapshot.scenarioKey === "live_trading" || snapshot.recipe?.key === "live_trading";
-  const isStrategy =
-    snapshot.scenarioKey === "strategy" || snapshot.recipe?.key === "strategy";
+  const isLive = snapshot.scenarioKey === "live_trading" || snapshot.recipe?.key === "live_trading";
+  const isStrategy = snapshot.scenarioKey === "strategy" || snapshot.recipe?.key === "strategy";
 
   // Live trading: strip broker submit / standalone risk probes until order_intent exists.
   // rule.evaluate looks like "risk" for B-1 aliases but does not write risk_decision for an intent.
@@ -210,7 +200,7 @@ export function applyToolSurface(input: {
       });
       if (narrowed.length > 0) next = narrowed;
     } else if (openStrategyCompose) {
-      const prefer = new Set(["strategy.compose", "backtest.run", "run_backtest"]);
+      const prefer = new Set(["strategy.compose", "backtest.run"]);
       const narrowed = next.filter((toolName) => {
         const base = toolName.includes("/") ? toolName.split("/").pop()! : toolName;
         return prefer.has(base) || prefer.has(toolName);
@@ -281,7 +271,6 @@ function isLikelyBusinessWrite(base: string): boolean {
     base.startsWith("order.") ||
     base === "recommendation.record" ||
     base === "run_screener" ||
-    base === "backtest.run" ||
-    base === "run_backtest"
+    base === "backtest.run"
   );
 }

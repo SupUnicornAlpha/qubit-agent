@@ -103,7 +103,6 @@ export const EVALUATOR_VERSION = "2026-08-02.1";
 export const BUSINESS_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "factor.register",
   "factor.compute",
-  "factor.evaluate",
   "factor.autoEvaluate",
   "recommendation.record",
   "order.create_intent",
@@ -114,6 +113,5 @@ export const BUSINESS_WRITE_TOOLS: ReadonlySet<string> = new Set([
   "strategy.paper_deploy",
   "strategy.paper_run",
   "backtest.run",
-  "run_backtest",
   "run_screener",
 ]);

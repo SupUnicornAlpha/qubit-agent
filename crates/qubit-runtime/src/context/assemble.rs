@@ -13,7 +13,8 @@ use qubit_protocol::{
 use crate::error::RuntimeError;
 
 use super::ports::{
-    IdentityPromptLoader, RecallBundle, RecallHit, RecallPort, WorkspaceContextPort, WorkspaceFocus,
+    IdentityPromptLoader, RecallBundle, RecallHit, RecallPort, RecallRequest, WorkspaceContextPort,
+    WorkspaceFocus,
 };
 
 #[derive(Clone, Debug)]
@@ -77,7 +78,10 @@ fn apply_budget(text: String, budget: &ContextSlotBudget) -> Option<ContextSlotC
     if t.trim().is_empty() {
         return None;
     }
-    Some(ContextSlotContent { text: t, meta: None })
+    Some(ContextSlotContent {
+        text: t,
+        meta: None,
+    })
 }
 
 fn render_hits(hits: &[RecallHit]) -> String {
@@ -207,7 +211,14 @@ impl ContextAssembler for DefaultContextAssembler {
 
         let bundle = if opts.auto_recall_enabled() {
             apply_recall_opts(
-                self.recall.recall_bundle(&input.goal_text).await?,
+                self.recall
+                    .recall_bundle_for(RecallRequest {
+                        query: &input.goal_text,
+                        workspace_id: input.session.workspace_id.as_str(),
+                        session_id: input.session.session_id.as_str(),
+                        definition_id: input.spec.id.as_str(),
+                    })
+                    .await?,
                 opts,
             )
         } else {
@@ -255,24 +266,21 @@ impl ContextAssembler for DefaultContextAssembler {
             "recall_general".into(),
             maybe_wrap_background(prioritize, "recall_general", render_hits(&bundle.general)),
         );
-        raw.insert(
-            "session".into(),
-            {
-                let meta = format!(
-                    "session={} kind={:?} mode={}",
-                    input.session.session_id,
-                    input.session.execution_kind,
-                    input.session.interaction_mode.as_str()
-                );
-                match opts.session_chronicle() {
-                    Some(chronicle) => {
-                        let body = format!("{meta}\n\n{chronicle}");
-                        maybe_wrap_background(prioritize, "session_chronicle", body)
-                    }
-                    None => meta,
+        raw.insert("session".into(), {
+            let meta = format!(
+                "session={} kind={:?} mode={}",
+                input.session.session_id,
+                input.session.execution_kind,
+                input.session.interaction_mode.as_str()
+            );
+            match opts.session_chronicle() {
+                Some(chronicle) => {
+                    let body = format!("{meta}\n\n{chronicle}");
+                    maybe_wrap_background(prioritize, "session_chronicle", body)
                 }
-            },
-        );
+                None => meta,
+            }
+        });
         if let Some(ref wm) = input.working {
             raw.insert(
                 "working".into(),

@@ -16,12 +16,17 @@ export const CONTRACT_TOOL_PREREQUISITES: Record<string, readonly string[]> = {
 
 export const MISSING_ARTIFACT_TOOL_HINTS: Record<string, readonly string[]> = {
   factor_definition: ["factor.register"],
-  factor_evaluation: ["factor.evaluate", "factor.compute", "factor.autoEvaluate", "factor.register"],
+  factor_evaluation: [
+    "factor.evaluate",
+    "factor.compute",
+    "factor.autoEvaluate",
+    "factor.register",
+  ],
   screener_candidate: ["run_screener"],
   recommendation_snapshot: ["recommendation.record"],
   strategy_version: ["strategy.create_version"],
   strategy_composition: ["strategy.compose"],
-  "quality:strategy_backtest_completed": ["backtest.run", "run_backtest"],
+  "quality:strategy_backtest_completed": ["backtest.run"],
   order_intent: ["order.create_intent"],
   risk_decision: ["order.create_intent", "evaluate_risk"],
 };

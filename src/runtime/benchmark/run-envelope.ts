@@ -10,13 +10,10 @@ import type {
   RunMemoryTelemetry,
   RunOrchestrationTelemetry,
   RunRecipeTelemetry,
+  RunSkillTelemetry,
   RunTool,
 } from "./contracts";
-import {
-  isInvokeToolName,
-  isMemoryToolName,
-  looksLikeStubNarrative,
-} from "./soft-dimensions";
+import { isInvokeToolName, isMemoryToolName, looksLikeStubNarrative } from "./soft-dimensions";
 
 export interface BuildRunEnvelopeInput {
   workflowRunId: string;
@@ -70,8 +67,12 @@ export async function buildRunEnvelope(input: BuildRunEnvelopeInput): Promise<Ru
   }>;
   const delivery = readDelivery(sqlite, input.workflowRunId);
   const executionRisk = readExecutionRisk(sqlite, input.workflowRunId, scenarioKey);
-  const verdict = readLatestDeliveryVerdict(sqlite, input.workflowRunId);
+  const verdict = readLatestDeliveryVerdict(
+    sqlite as unknown as Parameters<typeof readLatestDeliveryVerdict>[0],
+    input.workflowRunId
+  );
   const memory = deriveMemoryTelemetry(toolTelemetry.tools);
+  const skills = readSkillTelemetry(sqlite, input.workflowRunId);
   const orchestration = readOrchestration(sqlite, input.workflowRunId, toolTelemetry.tools);
   const recipe = deriveRecipeTelemetry(scenarioKey, toolTelemetry.tools);
 
@@ -111,9 +112,46 @@ export async function buildRunEnvelope(input: BuildRunEnvelopeInput): Promise<Ru
     ...(executionRisk.risk ? { risk: executionRisk.risk } : {}),
     ...(executionRisk.shortRisk ? { shortRisk: executionRisk.shortRisk } : {}),
     memory,
+    skills,
     orchestration,
     ...(recipe ? { recipe } : {}),
   };
+}
+
+function readSkillTelemetry(sqlite: Sqlite, workflowRunId: string): RunSkillTelemetry {
+  try {
+    const recalls = sqlite
+      .prepare(
+        `SELECT s.name, r.executed
+         FROM skill_recall_log r
+         INNER JOIN agent_skill s ON s.id = r.skill_id
+         WHERE r.workflow_run_id = ?`
+      )
+      .all(workflowRunId) as Array<{ name: string; executed: number }>;
+    const runs = sqlite
+      .prepare(
+        `SELECT DISTINCT s.name
+         FROM agent_skill_run r
+         INNER JOIN agent_skill s ON s.id = r.skill_id
+         WHERE r.workflow_run_id = ? AND r.outcome IN ('success','partial')`
+      )
+      .all(workflowRunId) as Array<{ name: string }>;
+    return {
+      telemetryAvailable: true,
+      recallCount: recalls.length,
+      executedCount: recalls.filter((row) => Boolean(row.executed)).length,
+      recalledNames: [...new Set(recalls.map((row) => row.name))],
+      executedNames: [...new Set(runs.map((row) => row.name))],
+    };
+  } catch {
+    return {
+      telemetryAvailable: false,
+      recallCount: 0,
+      executedCount: 0,
+      recalledNames: [],
+      executedNames: [],
+    };
+  }
 }
 
 function knownScenario(value: string | null): ScenarioRecipe["key"] | null {
@@ -165,9 +203,7 @@ function readTools(
       ...(row.latencyMs !== null ? { latencyMs: row.latencyMs } : {}),
       requestFingerprint: fingerprint(row.requestJson),
       semanticEmpty: responseLooksSemanticallyEmpty(row.responseJson),
-      ...(isMemoryToolName(row.name)
-        ? { memoryHitCount: countMemoryHits(row.responseJson) }
-        : {}),
+      ...(isMemoryToolName(row.name) ? { memoryHitCount: countMemoryHits(row.responseJson) } : {}),
     })),
     ...(contractCovered ? { contract: { telemetryAvailable: true, permanentExecutionCount } } : {}),
     ...(capabilityCovered
@@ -332,10 +368,7 @@ function parseGovernance(requestJson: string): {
   }
 }
 
-function readDelivery(
-  sqlite: Sqlite,
-  workflowRunId: string
-): RunEnvelope["delivery"] {
+function readDelivery(sqlite: Sqlite, workflowRunId: string): RunEnvelope["delivery"] {
   try {
     const row = sqlite
       .prepare(

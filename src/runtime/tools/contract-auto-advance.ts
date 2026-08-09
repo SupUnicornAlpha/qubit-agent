@@ -147,11 +147,7 @@ export function resolveArtifactAutoAdvance(input: {
       };
     }
     if (table === "quality:strategy_backtest_completed") {
-      const toolName = input.availableTools.includes("backtest.run")
-        ? "backtest.run"
-        : input.availableTools.includes("run_backtest")
-          ? "run_backtest"
-          : null;
+      const toolName = input.availableTools.includes("backtest.run") ? "backtest.run" : null;
       if (!toolName) return null;
       return {
         toolName,

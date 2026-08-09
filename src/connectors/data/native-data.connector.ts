@@ -118,7 +118,7 @@ async function tushareCall(
   token: string,
   apiName: string,
   params: Record<string, string>,
-  settings: BuiltinConnectorInitConfigs,
+  settings: BuiltinConnectorInitConfigs
 ): Promise<TushareDailyPayload> {
   const res = await marketDataFetch(
     "tushare_daily",
@@ -129,7 +129,7 @@ async function tushareCall(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_name: apiName, token, params }),
     },
-    DEFAULT_FETCH_TIMEOUT_MS,
+    DEFAULT_FETCH_TIMEOUT_MS
   );
   const json = (await res.json()) as {
     code?: number;
@@ -351,10 +351,7 @@ export class QubitNativeDataConnector extends DataConnector {
             { ...p, symbol: requestedSymbol },
             { timeframe: "1d", limit: 250 }
           );
-          const computedRange = computeDateRangeForLimit(
-            normalized.timeframe,
-            normalized.limit
-          );
+          const computedRange = computeDateRangeForLimit(normalized.timeframe, normalized.limit);
           const startDate = normalized.startDate ?? computedRange.startDate;
           const endDate = normalized.endDate ?? computedRange.endDate;
           const { period } = computedRange;
@@ -524,8 +521,7 @@ export class QubitNativeDataConnector extends DataConnector {
       const closes = bars.map((b) => b.close);
       const last = closes[closes.length - 1] ?? 0;
       const anchor1y = closes.length >= 252 ? closes[closes.length - 252] : undefined;
-      const ret1y =
-        anchor1y !== undefined && anchor1y > 0 ? (last - anchor1y) / anchor1y : null;
+      const ret1y = anchor1y !== undefined && anchor1y > 0 ? (last - anchor1y) / anchor1y : null;
       return {
         symbol,
         exchange,
@@ -716,11 +712,16 @@ export class QubitNativeDataConnector extends DataConnector {
     if (effective === "tushare_daily" && tokenLive) {
       try {
         const tsCode = symbolToTsCode(params.symbol, params.exchange || "");
-        const data = await tushareCall(tokenLive, "daily", {
-          ts_code: tsCode,
-          start_date: parseIsoToYmd(params.startDate),
-          end_date: parseIsoToYmd(params.endDate),
-        }, liveSettings);
+        const data = await tushareCall(
+          tokenLive,
+          "daily",
+          {
+            ts_code: tsCode,
+            start_date: parseIsoToYmd(params.startDate),
+            end_date: parseIsoToYmd(params.endDate),
+          },
+          liveSettings
+        );
         const fields = data.fields ?? [];
         const items = data.items ?? [];
         const iTrade = idx(fields, "trade_date");
@@ -945,17 +946,18 @@ export class QubitNativeDataConnector extends DataConnector {
         );
         if (forcedSource) throw e;
       }
-      if (!forcedSource) try {
-        const fallback = await fetchYahooFinanceBars(params, liveSettings);
-        if (fallback.length > 0) {
-          console.warn(
-            `[qubit-data] yfinance unavailable or empty; fell back to Yahoo Chart for ${params.symbol}`
-          );
-          return fallback;
+      if (!forcedSource)
+        try {
+          const fallback = await fetchYahooFinanceBars(params, liveSettings);
+          if (fallback.length > 0) {
+            console.warn(
+              `[qubit-data] yfinance unavailable or empty; fell back to Yahoo Chart for ${params.symbol}`
+            );
+            return fallback;
+          }
+        } catch {
+          /* logged below if still empty */
         }
-      } catch {
-        /* logged below if still empty */
-      }
       if (mode === "yfinance") return [];
     }
 
@@ -1077,11 +1079,41 @@ export class QubitNativeDataConnector extends DataConnector {
   }
 
   async fetchFundamentals(params: FetchFundamentalsParams): Promise<FundamentalData> {
-    return {
-      symbol: params.symbol,
-      exchange: params.exchange || "UNKNOWN",
-      periods: [],
-    };
+    if (!params.symbol?.trim()) throw new Error("fetch_fundamentals: symbol is required");
+    try {
+      const [earnings, asset] = await Promise.all([
+        fetchYfinanceEarnings({ symbol: params.symbol, exchange: params.exchange }),
+        fetchYfinanceAssetInfo({ symbol: params.symbol, exchange: params.exchange }),
+      ]);
+      const wantedSource = params.reportType === "quarterly" ? "quarterly_income" : "annual_income";
+      const limit = Math.max(1, Math.min(Number(params.periods ?? 4), 12));
+      const periods = earnings
+        .filter((row) => row.source === wantedSource)
+        .slice(0, limit)
+        .map((row, index) => ({
+          periodEnd: row.period,
+          ...(row.revenue != null ? { revenue: row.revenue } : {}),
+          ...(row.netIncome != null ? { netIncome: row.netIncome } : {}),
+          ...(row.eps != null ? { eps: row.eps } : {}),
+          ...(row.operatingIncome != null ? { operatingIncome: row.operatingIncome } : {}),
+          ...(index === 0 && asset.trailingPE != null ? { pe: asset.trailingPE } : {}),
+          source: "yfinance",
+        }));
+      if (periods.length === 0) {
+        throw new Error(
+          `fundamentals_data_unavailable: no ${params.reportType} income periods for ${params.symbol}`
+        );
+      }
+      return {
+        symbol: params.symbol,
+        exchange: params.exchange || asset.exchange || "UNKNOWN",
+        periods,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.startsWith("fundamentals_data_unavailable:")) throw error;
+      throw new Error(`fundamentals_source_unavailable: yfinance: ${message}`);
+    }
   }
 
   /**

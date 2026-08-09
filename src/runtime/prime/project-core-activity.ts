@@ -8,10 +8,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import { workflowRun } from "../../db/sqlite/schema";
-import {
-  type AgentPlanSnapshot,
-  parseAgentPlanSnapshot,
-} from "../agent-control-mode";
+import { type AgentPlanSnapshot, parseAgentPlanSnapshot } from "../agent-control-mode";
 import { stepStreamBus } from "../react/event-stream";
 import { logResearchTeamInteraction } from "../research-team/interaction-log";
 import { compactHeavyJson } from "../util/compact-heavy-json";
@@ -24,6 +21,37 @@ export type CoreActivityContext = {
   traceId: string;
   role?: string;
 };
+
+export type CoreSkillActivity = {
+  id?: unknown;
+  name: string;
+  version?: unknown;
+  score?: unknown;
+};
+
+/** Pure projection used by the topology writer and benchmark tests. */
+export function extractCoreSkillActivities(observation: unknown): CoreSkillActivity[] {
+  const skills =
+    observation &&
+    typeof observation === "object" &&
+    Array.isArray((observation as { skills?: unknown[] }).skills)
+      ? (observation as { skills: unknown[] }).skills
+      : [];
+  const activities: CoreSkillActivity[] = [];
+  for (const raw of skills.slice(0, 5)) {
+    if (!raw || typeof raw !== "object") continue;
+    const skill = raw as { id?: unknown; name?: unknown; version?: unknown; score?: unknown };
+    const name = String(skill.name ?? "").trim();
+    if (!name) continue;
+    activities.push({
+      name,
+      ...(skill.id !== undefined ? { id: skill.id } : {}),
+      ...(skill.version !== undefined ? { version: skill.version } : {}),
+      ...(skill.score !== undefined ? { score: skill.score } : {}),
+    });
+  }
+  return activities;
+}
 
 /** Normalize Core plan wire (snake_case) → Bun AgentPlanSnapshot (camelCase). */
 export function corePlanToBunSnapshot(raw: unknown): AgentPlanSnapshot | null {
@@ -66,10 +94,7 @@ export async function syncCorePlanToWorkflow(
       plan,
     });
   } catch (err) {
-    console.warn(
-      "[prime] plan artifact mirror failed:",
-      err instanceof Error ? err.message : err
-    );
+    console.warn("[prime] plan artifact mirror failed:", err instanceof Error ? err.message : err);
   }
 
   if (opts?.announceToolCall !== false) {
@@ -162,9 +187,7 @@ export function publishCoreToolCallEnd(
       targetName: input.toolName,
       status: input.status ?? (input.ok ? "success" : "failed"),
       backend: "rust",
-      ...(input.observation !== undefined
-        ? { observation: input.observation }
-        : {}),
+      ...(input.observation !== undefined ? { observation: input.observation } : {}),
     },
   });
 }
@@ -195,9 +218,7 @@ export async function projectCoreBridgeToolCall(input: {
     toolCallId: input.toolCallId,
     toolName: input.toolName,
     ok: input.ok,
-    ...(input.observation !== undefined
-      ? { observation: input.observation }
-      : {}),
+    ...(input.observation !== undefined ? { observation: input.observation } : {}),
   });
 
   await recordCoreMonitorToolCall({
@@ -207,9 +228,7 @@ export async function projectCoreBridgeToolCall(input: {
     toolName: input.toolName,
     ok: input.ok,
     ...(input.args ? { args: input.args } : {}),
-    ...(input.observation !== undefined
-      ? { observation: input.observation }
-      : {}),
+    ...(input.observation !== undefined ? { observation: input.observation } : {}),
     ...(input.mcp ? { mcp: input.mcp } : {}),
   });
 
@@ -227,8 +246,7 @@ export async function projectCoreBridgeToolCall(input: {
     toolKind: input.mcp ? "mcp" : "prime_bridge",
     toolName: input.toolName,
     contentText:
-      `${input.ok ? "✓" : "✗"} ${input.toolName}` +
-      (summary ? `\n${summary.slice(0, 1500)}` : ""),
+      `${input.ok ? "✓" : "✗"} ${input.toolName}` + (summary ? `\n${summary.slice(0, 1500)}` : ""),
     payloadJson: {
       backend: "rust",
       toolCallId: input.toolCallId,
@@ -237,4 +255,29 @@ export async function projectCoreBridgeToolCall(input: {
       ...(input.mcp ? { mcp: input.mcp } : {}),
     },
   });
+
+  // Skill nodes are represented as role-local tool activity in the existing
+  // topology graph. This keeps one graph model while making every injected
+  // Skill visible and attributable to the Core caller.
+  if (input.toolName === "skill.search" && input.ok && input.observation) {
+    for (const skill of extractCoreSkillActivities(input.observation)) {
+      await logResearchTeamInteraction({
+        workflowRunId: ctx.workflowId,
+        fromRole: ctx.role ?? "orchestrator",
+        toRole: ctx.role ?? "orchestrator",
+        kind: "tool_call",
+        toolKind: "skill",
+        toolName: skill.name,
+        contentText: `✓ skill injected: ${skill.name}`,
+        payloadJson: {
+          backend: "rust",
+          phase: "skill_context_injection",
+          skillId: skill.id,
+          version: skill.version,
+          score: skill.score,
+          parentToolCallId: input.toolCallId,
+        },
+      });
+    }
+  }
 }

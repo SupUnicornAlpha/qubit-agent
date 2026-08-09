@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isInternetBuiltinTool, INTERNET_BUILTIN_TOOLS } from "../internet-tools";
-import {
-  parseDuckDuckGoHtml,
-  resolveWebSearchProvider,
-  runWebSearch,
-} from "../web-search-handler";
+import { parseDuckDuckGoHtml, resolveWebSearchProvider, runWebSearch } from "../web-search-handler";
 import {
   extractHtmlTitle,
   isBlockedHostname,
@@ -111,10 +107,7 @@ describe("web.search", () => {
   });
 
   test("brave requires API key", async () => {
-    const r = await runWebSearch(
-      { query: "AAPL" },
-      { env: { WEB_SEARCH_PROVIDER: "brave" } }
-    );
+    const r = await runWebSearch({ query: "AAPL" }, { env: { WEB_SEARCH_PROVIDER: "brave" } });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/BRAVE_SEARCH_API_KEY/);
   });
@@ -180,6 +173,28 @@ describe("web.search", () => {
     expect(results[0]?.url).toBe("https://example.com/page");
     expect(results[0]?.title).toBe("Example Title");
     expect(results[1]?.url).toBe("https://other.example/x");
+  });
+
+  test("duckduckgo falls back to the lite markup endpoint", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL | Request) => {
+      calls.push(String(input));
+      if (calls.length === 1) return new Response("<html>changed classic markup</html>");
+      return new Response(`
+        <table><tr><td>
+          <a class="result-link" href="https://example.com/fallback">Fallback Result</a>
+          <td class="result-snippet">Fallback snippet</td>
+        </td></tr></table>
+      `);
+    }) as typeof fetch;
+    const result = await runWebSearch(
+      { query: "fallback query" },
+      { env: { WEB_SEARCH_PROVIDER: "duckduckgo" }, fetchImpl }
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toContain("lite.duckduckgo.com/lite/");
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.results[0]?.url).toBe("https://example.com/fallback");
   });
 });
 

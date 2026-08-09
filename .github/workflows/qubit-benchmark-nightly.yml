@@ -1,0 +1,45 @@
+name: Qubit Benchmark Nightly
+
+on:
+  schedule:
+    - cron: "30 18 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: qubit-benchmark-nightly
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      QUBIT_CORE_BACKEND: rust
+      QUBIT_BENCH_LABEL: nightly-${{ github.run_id }}
+      QUBIT_SERVICE_WAIT_MS: "600000"
+      QUBIT_DATA_DIR: ${{ runner.temp }}/qubit-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bun install --frozen-lockfile
+      - name: Per-tool synthetic smoke
+        run: bun run benchmark:smoke
+      - name: Start Rust Core
+        run: bun run prime:up > /tmp/qubit-prime.log 2>&1 &
+      - name: Start backend
+        run: bun run dev:backend > /tmp/qubit-backend.log 2>&1 &
+      - name: Wait for benchmark services
+        run: bun run scripts/wait-for-benchmark-services.ts
+      - name: Global 20-case recipe benchmark
+        run: bun run benchmark
+      - name: Upload benchmark and unified health panel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qubit-benchmark-${{ github.run_id }}
+          path: |
+            out/qubit-bench/**
+            /tmp/qubit-prime.log
+            /tmp/qubit-backend.log

@@ -6,28 +6,19 @@
 import { randomUUID } from "node:crypto";
 import type { A2AMessageEnvelope, TaskAssignPayload } from "../../types/a2a";
 import { resolveAgentControlMode } from "../../types/loop";
-import {
-  completeA2ATask,
-  markA2ATaskWorking,
-} from "../a2a/a2a-task-service";
+import { completeA2ATask, markA2ATaskWorking } from "../a2a/a2a-task-service";
 import { buildTaskResult } from "../a2a/task-result";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { stepStreamBus } from "../react/event-stream";
 import type { RuntimeHandlerContext } from "../types";
 import { createHitlRequest, loadWorkflowLoopContext } from "../workflow/hitl-service";
 import { setWorkflowState } from "../workflow/workflow-state-machine";
-import {
-  clearPrimeBridgeRunContext,
-  setPrimeBridgeRunContext,
-} from "./bridge-run-context";
+import { clearPrimeBridgeRunContext, setPrimeBridgeRunContext } from "./bridge-run-context";
 import { buildCoreHitlClientMeta } from "./core-hitl-bridge";
 import { asRustCoreClient, ensureCoreSession } from "./ensure-core-session";
 import { resolveCoreBackend } from "./core-runtime";
 import { syncCorePlanToWorkflow } from "./project-core-activity";
-import {
-  beginCoreMonitorTurn,
-  finalizeCoreMonitorTurn,
-} from "./project-core-monitor";
+import { beginCoreMonitorTurn, finalizeCoreMonitorTurn } from "./project-core-monitor";
 import {
   projectCoreInvocationsFromSnapshot,
   projectCoreTurnResult,
@@ -64,8 +55,7 @@ export function buildCoreUserText(input: {
 }): string {
   const params = input.params;
   const goal =
-    (typeof params.goal === "string" && params.goal.trim()) ||
-    (input.workflowGoal?.trim() ?? "");
+    (typeof params.goal === "string" && params.goal.trim()) || (input.workflowGoal?.trim() ?? "");
   const context =
     input.omitContext === true
       ? ""
@@ -82,9 +72,7 @@ export function buildCoreUserText(input: {
     parts.push(`[task_type]\n${input.taskType}`);
     if (params.resume === true) parts.push("[resume]\nsnapshot_resume=true");
     if (params.hitlApproval && typeof params.hitlApproval === "object") {
-      parts.push(
-        `[hitl_approval]\n${JSON.stringify(params.hitlApproval, null, 2)}`
-      );
+      parts.push(`[hitl_approval]\n${JSON.stringify(params.hitlApproval, null, 2)}`);
     }
     if (params.hitlPayload && typeof params.hitlPayload === "object") {
       parts.push(`[hitl_payload]\n${JSON.stringify(params.hitlPayload, null, 2)}`);
@@ -176,9 +164,7 @@ async function projectCoreAwaitingHitl(input: {
     session_id: input.sessionId,
     pending_only: true,
   });
-  const item =
-    inbox.find((i) => i.turn_id === input.turnId) ??
-    inbox[0];
+  const item = inbox.find((i) => i.turn_id === input.turnId) ?? inbox[0];
   if (!item) return null;
 
   const title = item.prompt?.title || "Prime Core 需要审批";
@@ -256,9 +242,7 @@ export async function runOrchestratorTaskViaCore(
       : undefined;
   const { workflow, loopOptions } = await loadWorkflowLoopContext(msg.workflowId);
   const sessionChronicle =
-    typeof params.context === "string" && params.context.trim()
-      ? params.context.trim()
-      : undefined;
+    typeof params.context === "string" && params.context.trim() ? params.context.trim() : undefined;
   // P3: authoritative user text only in input.text; chronicle via context.session_chronicle.
   const text = buildCoreUserText({
     taskType: payload.taskType,
@@ -283,11 +267,9 @@ export async function runOrchestratorTaskViaCore(
   const coreInboxId =
     typeof params.primeCoreInboxId === "string"
       ? params.primeCoreInboxId
-      : typeof (params.hitlPayload as Record<string, unknown> | undefined)
-            ?.primeCoreInboxId === "string"
-        ? String(
-            (params.hitlPayload as Record<string, unknown>).primeCoreInboxId
-          )
+      : typeof (params.hitlPayload as Record<string, unknown> | undefined)?.primeCoreInboxId ===
+          "string"
+        ? String((params.hitlPayload as Record<string, unknown>).primeCoreInboxId)
         : null;
   if (coreInboxId && params.hitlApproval) {
     const approval = params.hitlApproval as { decision?: string };
@@ -296,9 +278,7 @@ export async function runOrchestratorTaskViaCore(
         inbox_id: coreInboxId,
         approved: approval.decision !== "rejected",
         free_form:
-          typeof approval === "object"
-            ? JSON.stringify(approval).slice(0, 2000)
-            : undefined,
+          typeof approval === "object" ? JSON.stringify(approval).slice(0, 2000) : undefined,
       });
     } catch (err) {
       console.warn(
@@ -332,6 +312,14 @@ export async function runOrchestratorTaskViaCore(
     try {
       const approval = params.hitlApproval as { decision?: string } | undefined;
       const skipToolGateOnce = approval?.decision === "approved";
+      // Open correlation before turn.start: Core assembles memory/Skills while
+      // starting the turn, so opening the monitor afterwards loses Skill logs.
+      await beginCoreMonitorTurn({
+        workflowId: msg.workflowId,
+        runId,
+        traceId: msg.traceId,
+        role: "orchestrator",
+      });
       started = await client.startTurn({
         session_id: sessionId,
         input: {
@@ -343,21 +331,13 @@ export async function runOrchestratorTaskViaCore(
           }),
         },
         idempotency_key:
-          conversationTurnId ??
-          `${msg.workflowId}:${payload.taskId}:${randomUUID()}`,
+          conversationTurnId ?? `${msg.workflowId}:${payload.taskId}:${randomUUID()}`,
         context: turnContext,
       });
-      await beginCoreMonitorTurn({
-        workflowId: msg.workflowId,
-        runId,
-        traceId: msg.traceId,
-        role: "orchestrator",
-        turnId: started.turn_id,
-      });
-
       const timeoutMs = Math.max(
         30_000,
-        Number(process.env.QUBIT_PRIME_TURN_TIMEOUT_MS ?? 300_000) || 300_000
+        Number(loopOptions.timeoutMs ?? process.env.QUBIT_PRIME_TURN_TIMEOUT_MS ?? 300_000) ||
+          300_000
       );
       try {
         snap = await client.awaitTurnTerminal(
@@ -392,8 +372,7 @@ export async function runOrchestratorTaskViaCore(
               traceId: msg.traceId,
               role: "orchestrator",
               type: "reasoning_token",
-              stepIndex:
-                typeof event.iteration === "number" ? event.iteration : 0,
+              stepIndex: typeof event.iteration === "number" ? event.iteration : 0,
               ts: Date.now(),
               loopKind: "native",
               source: "a2a",
@@ -509,10 +488,7 @@ export async function runOrchestratorTaskViaCore(
         turnId: started.turn_id,
         snap,
       });
-      const hitlText =
-        projected?.body ||
-        turn.answer_text ||
-        "等待人工审批（Prime Core）";
+      const hitlText = projected?.body || turn.answer_text || "等待人工审批（Prime Core）";
       await finalizeCoreMonitorTurn({
         workflowId: msg.workflowId,
         runId,
@@ -567,8 +543,7 @@ export async function runOrchestratorTaskViaCore(
       turn?.state === "cancelled" ||
       deliveryStatus === "failed" ||
       deliveryStatus === "cancelled";
-    const partial =
-      deliveryStatus === "partial" || deliveryStatus === "delivered_with_gaps";
+    const partial = deliveryStatus === "partial" || deliveryStatus === "delivered_with_gaps";
     const terminalStatus: "completed" | "partial" | "failed" = failed
       ? "failed"
       : partial

@@ -280,7 +280,7 @@ export function buildTopologyToolsPromptBlock(ctx: OrchestratorTopologyContext |
   if (!ctx || ctx.targets.length === 0) {
     return [
       "## 专家调度",
-      "当前没有可用专家工具；请使用 `assign_task` 按需派给具体专家角色。",
+      "当前没有预生成的专家工具；如确需专家支持，请使用统一的 `agent.invoke` 按角色定向派单。",
     ].join("\n");
   }
 
@@ -302,7 +302,7 @@ export function buildTopologyToolsPromptBlock(ctx: OrchestratorTopologyContext |
     "规则：",
     "- 优先用上表中的 `call_team_<role>` 做**定向派单**。",
     "- 由 **Orchestrator 统一派单和收口**；不要让专家再组织其它专家。",
-    "- `assign_task` 仅当目标不在上表时使用。",
+    "- 目标不在上表时，使用统一的 `agent.invoke`；不要使用已退役的 `assign_task`。",
     "- 默认先补数据，再补分析/研究，再决定是否回测与风控。",
     "- 默认拿到足够证据就收口，不要为了“完整报告”把所有角色都跑一遍。"
   );
@@ -314,7 +314,7 @@ export function buildSuggestedCallChainBlock(ctx: OrchestratorTopologyContext | 
   if (!ctx || ctx.targets.length === 0) {
     return [
       "## 建议的调用链（仅供参考）",
-      "当前没有预设专家工具链。你自主决定调用哪些专家：用 `assign_task` 派给任意已启用角色，由你统一整合，不要默认批量拉全队。",
+      "当前没有预设专家工具链。你自主决定调用哪些专家：用 `agent.invoke` 派给任意已启用角色，由你统一整合，不要默认批量拉全队。",
     ].join("\n");
   }
 

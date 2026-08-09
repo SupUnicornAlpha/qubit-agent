@@ -64,7 +64,7 @@ describe("builtin tool handlers", () => {
   test("catalog includes builtin and connector entries", () => {
     const catalog = buildToolCatalog();
     expect(catalog.some((e) => e.name === "fetch_klines" && e.kind === "connector")).toBe(true);
-    expect(catalog.some((e) => e.name === "run_analyst_team" && e.kind === "builtin")).toBe(true);
+    expect(catalog.some((e) => e.name === "run_analyst_team")).toBe(false);
     expect(listRegisteredBuiltinTools().length).toBeGreaterThan(10);
   });
 
@@ -73,14 +73,12 @@ describe("builtin tool handlers", () => {
    * 调用拆成 `summarize_team_decision` builtin tool，由 Orchestrator 在 ReAct loop 中
    * 按需调用。catalog 必须包含此工具且分类为 orchestration，否则 Agent 定义界面拉不到。
    */
-  test("summarize_team_decision is registered in catalog and BUILTIN_HANDLERS", () => {
+  test("summarize_team_decision remains a compatibility handler but is not advertised", () => {
     expect(isBuiltinTool("summarize_team_decision")).toBe(true);
     expect(isRoutedTool("summarize_team_decision")).toBe(false);
     const catalog = buildToolCatalog();
     const entry = catalog.find((e) => e.name === "summarize_team_decision");
-    expect(entry).toBeDefined();
-    expect(entry?.kind).toBe("builtin");
-    expect(entry?.category).toBe("orchestration");
+    expect(entry).toBeUndefined();
   });
 
   test("summarize_team_decision rejects missing required params", async () => {
@@ -361,9 +359,9 @@ describe("market.resolve_symbol ToolContract", () => {
       symbol: "AAPL",
     })) as { symbol?: string; results?: unknown };
     expect(out.results).toBeUndefined();
-    expect(typeof out.symbol === "string" || typeof (out as { ticker?: string }).ticker === "string").toBe(
-      true
-    );
+    expect(
+      typeof out.symbol === "string" || typeof (out as { ticker?: string }).ticker === "string"
+    ).toBe(true);
   });
 
   test("empty params → missing_symbol", async () => {

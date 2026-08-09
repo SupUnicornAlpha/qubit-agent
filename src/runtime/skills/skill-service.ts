@@ -182,6 +182,8 @@ export interface RecordSkillUsageInput {
   outcome?: AgentSkillOutcome;
   score?: number;
   notes?: string;
+  /** Benchmark/replay runs keep per-run telemetry but must not train lifetime ranking. */
+  updateLifetimeCounters?: boolean;
 }
 
 export interface SkillSearchInput {
@@ -540,16 +542,19 @@ export class SkillService {
       startedAt: now,
       endedAt: now,
     });
-    const setters: Record<string, unknown> = {
-      useCount: sql`${agentSkill.useCount} + 1`,
-      lastUsedAt: now,
-      updatedAt: now,
-    };
-    if (input.outcome === "success") setters["successCount"] = sql`${agentSkill.successCount} + 1`;
-    if (input.outcome === "fail") setters["failCount"] = sql`${agentSkill.failCount} + 1`;
-    // active → 复活：被 Curator 标 stale 的 skill 再次被用 → 重新激活
-    if (skill.state === "stale") setters["state"] = "active";
-    await db.update(agentSkill).set(setters).where(eq(agentSkill.id, skillRowId));
+    if (input.updateLifetimeCounters !== false) {
+      const setters: Record<string, unknown> = {
+        useCount: sql`${agentSkill.useCount} + 1`,
+        lastUsedAt: now,
+        updatedAt: now,
+      };
+      if (input.outcome === "success")
+        setters["successCount"] = sql`${agentSkill.successCount} + 1`;
+      if (input.outcome === "fail") setters["failCount"] = sql`${agentSkill.failCount} + 1`;
+      // active → 复活：被 Curator 标 stale 的 skill 再次被用 → 重新激活
+      if (skill.state === "stale") setters["state"] = "active";
+      await db.update(agentSkill).set(setters).where(eq(agentSkill.id, skillRowId));
+    }
 
     /**
      * 监控 V2 P2：把 (workflowRunId, skillId) 对应的最近一条 skill_recall_log

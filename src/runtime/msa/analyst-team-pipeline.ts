@@ -201,7 +201,7 @@ function buildRoleScaffold(role: AgentRole | string): string {
   if (r === "analyst_fundamental") {
     return [
       "**职责**：盈利质量 + 估值偏离 + 资产负债表健康度。",
-      "**工具方向**：fetch_fundamentals → compute_valuation → fetch_financial_data。",
+      "**工具方向**：fetch_fundamentals → compute_valuation。",
       "**不要做**：技术指标 / 情绪 / 宏观（其它角色负责）。",
       "**交付**：一段 JSON 信号 `{signal:'buy|sell|hold', confidence:0-1, reasoning:'...'}`。",
     ].join("\n");
@@ -233,7 +233,7 @@ function buildRoleScaffold(role: AgentRole | string): string {
   if (r === "research") {
     return [
       "**职责**：综合各分析师结论，输出量化研究假设 + 可回测的因子/规则草案。",
-      "**工具方向**：search_memory → factor.register → factor.compute → factor.autoEvaluate。",
+      "**工具方向**：memory.recall → factor.register → factor.compute → factor.autoEvaluate。",
       "**调用顺序约束**：autoEvaluate 之前必须先 register + compute，否则会报 no_factor_values。",
       "**交付**：Markdown 研究纪要 + 至少 1 个 `active` 状态因子（或写明为何无法产出）。",
     ].join("\n");

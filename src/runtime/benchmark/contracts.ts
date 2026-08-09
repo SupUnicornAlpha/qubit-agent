@@ -16,6 +16,7 @@ export type AssertionStatus = "pass" | "fail" | "skipped";
 export type SoftDimensionId =
   | "tools"
   | "memory"
+  | "skills"
   | "orchestration"
   | "recipe"
   | "content";
@@ -55,6 +56,15 @@ export interface RunMemoryTelemetry {
   searchSuccesses: number;
   searchHits: number;
   errorCount: number;
+}
+
+/** Dedicated agent_skill recall/injection telemetry (not procedural memory). */
+export interface RunSkillTelemetry {
+  telemetryAvailable: boolean;
+  recallCount: number;
+  executedCount: number;
+  recalledNames: string[];
+  executedNames: string[];
 }
 
 /** agent.invoke / specialist handoff 遥测摘要。 */
@@ -112,6 +122,8 @@ export interface RunEnvelope {
   shortRisk?: { telemetryAvailable: boolean; coverageRecorded: boolean };
   /** v0.2：记忆搜索遥测；缺省 → soft.memory = skipped。 */
   memory?: RunMemoryTelemetry;
+  /** Rust/Bun unified Skills telemetry. */
+  skills?: RunSkillTelemetry;
   /** v0.2：编排 / specialist invoke 遥测。 */
   orchestration?: RunOrchestrationTelemetry;
   /** v0.2：recipe 必备工具覆盖。 */

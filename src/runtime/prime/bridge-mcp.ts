@@ -14,6 +14,25 @@ import { isMcpServerInCooldown } from "../monitor/mcp-health-tracker";
 export const MCP_META_TOOL = "call_mcp";
 export const MCP_TOOL_PREFIX = "mcp:";
 
+/**
+ * Remote tools whose advertised schema/availability is not reliable enough for
+ * the default model surface. Operators can replace the list with
+ * QUBIT_MCP_QUARANTINED_TOOLS="server:tool,..." after validating a provider.
+ */
+export function quarantinedMcpToolKeys(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+  const raw = env.QUBIT_MCP_QUARANTINED_TOOLS;
+  const values = raw === undefined ? ["investor-agent:market_movers"] : raw.split(",");
+  return new Set(values.map((value) => value.trim()).filter(Boolean));
+}
+
+export function isMcpToolQuarantined(
+  serverName: string,
+  toolName: string,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return quarantinedMcpToolKeys(env).has(`${serverName}:${toolName}`);
+}
+
 export type BridgedMcpToolSpec = {
   name: string;
   description: string;
@@ -80,14 +99,13 @@ export async function listBridgedMcpTools(): Promise<BridgedMcpToolSpec[]> {
     const fromCaps = parseCapabilityTools(server.capabilitiesJson);
     if (fromCaps.length > 0) {
       for (const t of fromCaps) {
+        if (isMcpToolQuarantined(server.name, t.name)) continue;
         const wire = formatMcpBridgeToolName(server.name, t.name);
         if (seen.has(wire)) continue;
         seen.add(wire);
         out.push({
           name: wire,
-          description:
-            t.desc?.trim() ||
-            `MCP ${server.name}/${t.name} (bridged via Bun L2)`,
+          description: t.desc?.trim() || `MCP ${server.name}/${t.name} (bridged via Bun L2)`,
           kind: "mcp",
           serverName: server.name,
           toolName: t.name,
@@ -111,6 +129,7 @@ export async function listBridgedMcpTools(): Promise<BridgedMcpToolSpec[]> {
     for (const b of bindings) {
       const toolName = b.toolName?.trim();
       if (!toolName || toolName === "*") continue;
+      if (isMcpToolQuarantined(server.name, toolName)) continue;
       const wire = formatMcpBridgeToolName(server.name, toolName);
       if (seen.has(wire)) continue;
       seen.add(wire);

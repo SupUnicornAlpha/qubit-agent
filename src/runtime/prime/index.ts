@@ -16,7 +16,11 @@ export {
 } from "./seed-prime-agent-specs";
 export { executionKindForRole, defaultRecipeForRole } from "./role-to-execution-kind";
 export { isExecutionKind, resolveExecutionKind } from "./execution-kind";
-export { smokePrimaryTurn, syncPrimeSpecsFromDbIfRust, syncPrimeSpecsToRustCore } from "./bootstrap";
+export {
+  smokePrimaryTurn,
+  syncPrimeSpecsFromDbIfRust,
+  syncPrimeSpecsToRustCore,
+} from "./bootstrap";
 export {
   projectCoreInvocation,
   projectCoreInvocationsFromSnapshot,
@@ -44,6 +48,7 @@ export {
 export type { CoreMonitorHandle, CoreMonitorMcpMeta } from "./project-core-monitor";
 export {
   formatMcpBridgeToolName,
+  isMcpToolQuarantined,
   isMcpBridgeToolName,
   listBridgedMcpTools,
   parseMcpBridgeToolName,

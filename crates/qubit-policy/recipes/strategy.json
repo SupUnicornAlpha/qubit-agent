@@ -23,7 +23,7 @@
       "factor.list",
       "run_screener",
       "update_plan",
-      "run_backtest",
+      "backtest.run",
       "mcp:mathjs:evaluate"
     ],
     "key": "tool_fingerprint",

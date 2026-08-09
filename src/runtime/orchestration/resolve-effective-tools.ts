@@ -43,8 +43,7 @@ const MARKET_GOVERNANCE_TOOLS = [
 ] as const;
 const MARKET_DATA_TOOLS = new Set([
   "fetch_klines",
-  "fetch_price_data",
-  "fetch_financial_data",
+  "fetch_fundamentals",
   "fetch_ticks",
   "fetch_quote",
   "market.snapshot.get",
@@ -157,7 +156,7 @@ export async function resolveEffectiveAgentTools(
    * made a global progress fact (for example, another analyst already fetched
    * price) narrow a fundamental specialist to `fetch_news`, which it is not
    * authorized to run.  The prompt then had enabled MCP servers but zero
-   * callable tools, so the model's valid `call_mcp` action was rejected.
+   * callable tools, so the model's valid typed `mcp:<server>:<tool>` action was rejected.
    *
    * Keep the preset strict for the orchestrator, which owns contract progress.
    * Specialists instead begin with their declared, sandbox-governed tool set;

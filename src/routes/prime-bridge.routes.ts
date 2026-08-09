@@ -21,6 +21,7 @@ import { workflowRun } from "../db/sqlite/schema";
 import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import { loadOrchestratorTopologyForWorkflow } from "../runtime/orchestration/topology-dispatch";
 import {
+  isMcpToolQuarantined,
   isMcpBridgeToolName,
   listBridgedMcpTools,
   resolveMcpInvokeTarget,
@@ -32,6 +33,9 @@ import {
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
 import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
 import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
+import { getToolContract } from "../runtime/tools/tool-contract-registry";
+import { applyToolContract } from "../runtime/tools/tool-contract";
+import { classifyToolError } from "../runtime/react/nodes/tool-error-classifier";
 import { detectSemanticToolFailure } from "../runtime/tools/semantic-tool-result";
 import { resolveConnectorForTool } from "../runtime/tools/tool-routes";
 import type { BuiltinToolContext } from "../runtime/tools/types";
@@ -46,6 +50,7 @@ const BRIDGED_TOOLS = [
   "market.data_sources",
   "market.snapshot.get",
   "memory.recall",
+  "skill.search",
   "workspace.memory.search",
   "run_screener",
   "research.thesis.write",
@@ -72,8 +77,6 @@ const BRIDGED_TOOLS = [
   // resolved by Core, so every tool a child is expected to call must also be
   // advertised by the legacy bridge (and mirrored in qubit-tool-host).
   "fetch_klines",
-  "fetch_quote",
-  "fetch_financial_data",
   "fetch_fundamentals",
   "fetch_news",
   "fetch_news_sentiment",
@@ -81,8 +84,7 @@ const BRIDGED_TOOLS = [
   "detect_patterns",
   "compute_valuation",
   "compute_macro_indicators",
-  /** Orchestrator dispatch — list also injects dynamic call_team_* from topology. */
-  "assign_task",
+  /** Orchestrator dispatch uses Core agent.invoke + typed topology call_team_* only. */
   "order.create_intent",
   "evaluate_risk",
 ] as const;
@@ -118,12 +120,11 @@ function observationOkFalse(observation: unknown): string | null {
   return null;
 }
 
-/** Static allowlist + topology `call_team_*` (and assign_task). */
+/** Static allowlist + typed topology `call_team_*`. */
 export function isBridgedLegacyToolName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
   if (BRIDGED_SET.has(n)) return true;
-  if (n === "assign_task") return true;
   return n.startsWith("call_team_");
 }
 
@@ -282,9 +283,12 @@ function bridgeContext(
   activity: { workflowId: string; runId: string; traceId: string },
   projectId?: string
 ): BuiltinToolContext {
+  // Prefer the real Core monitor identity. Skills and tool health must be
+  // attributed to the calling topology node, not to a synthetic bridge agent.
+  const monitor = getCoreMonitorHandle(activity.workflowId, activity.runId);
   const definition = {
-    id: "def-prime-bridge",
-    role: "orchestrator",
+    id: monitor?.agentDefinitionId ?? "def-orchestrator",
+    role: (monitor?.role ?? "orchestrator") as RuntimeAgentDefinition["role"],
     executionKind: "primary",
     name: "Prime Bridge",
     version: "0.1.0",
@@ -302,7 +306,6 @@ function bridgeContext(
 
   // Prefer the real monitor agent_instance created for this Core turn.
   // Never invent "inst-prime-bridge" — audit_log FK would fail on recommendation.record.
-  const monitor = getCoreMonitorHandle(activity.workflowId, activity.runId);
   return {
     workflowId: activity.workflowId,
     runId: activity.runId,
@@ -346,6 +349,25 @@ async function invokeMcpViaBridge(input: {
         effects: [],
         retryable: false,
         error_code: "mcp_bad_args",
+      },
+    });
+  }
+
+  if (isMcpToolQuarantined(target.serverName, target.toolName)) {
+    return Response.json({
+      jsonrpc: "2.0",
+      id: rpcId,
+      result: {
+        call_id: callId,
+        ok: false,
+        observation: {
+          summary: `MCP tool ${target.serverName}/${target.toolName} is quarantined from the global surface`,
+          errorClass: "blocked",
+          retryable: false,
+        },
+        effects: [],
+        retryable: false,
+        error_code: "mcp_tool_quarantined",
       },
     });
   }
@@ -432,6 +454,8 @@ async function invokeMcpViaBridge(input: {
     });
   } catch (err) {
     const message = formatUnknownError(err);
+    const errorClass = classifyToolError(message);
+    const retryable = errorClass === "transient";
     if (activity.workflowId !== "prime-bridge") {
       await projectCoreBridgeToolCall({
         ctx: activity,
@@ -439,7 +463,7 @@ async function invokeMcpViaBridge(input: {
         toolName: name,
         ok: false,
         args: normalizedArgs,
-        observation: { summary: message },
+        observation: { summary: message, errorClass, retryable },
         mcp: {
           serverName: target.serverName,
           toolName: target.toolName,
@@ -455,8 +479,8 @@ async function invokeMcpViaBridge(input: {
         ok: false,
         observation: { summary: message },
         effects: [],
-        retryable: true,
-        error_code: "mcp_failed",
+        retryable,
+        error_code: `mcp_${errorClass}`,
       },
     });
   }
@@ -517,10 +541,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
     if (body.method === "legacy.tools.list") {
       const mcpTools = await listBridgedMcpTools();
       const topology = await loadOrchestratorTopologyForWorkflow().catch(() => null);
-      const teamTools = [
-        "assign_task",
-        ...(topology?.toolNames ?? []).filter((n) => n.startsWith("call_team_")),
-      ];
+      const teamTools = (topology?.toolNames ?? []).filter((n) => n.startsWith("call_team_"));
       const names = [...new Set<string>([...BRIDGED_TOOLS, ...teamTools])];
       return c.json({
         jsonrpc: "2.0",
@@ -531,9 +552,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
               name,
               description: name.startsWith("call_team_")
                 ? `Dispatch specialist subagent via A2A (${name}). Prefer for context-split research; pass {goal}.`
-                : name === "assign_task"
-                  ? "Assign a structured subagent task by role/goal (fallback when call_team_* unavailable)."
-                  : `Legacy Bun builtin (bridged): ${name}`,
+                : `Legacy Bun builtin (bridged): ${name}`,
             })),
             ...mcpTools.map((t) => ({
               name: t.name,
@@ -552,7 +571,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
         params.args && typeof params.args === "object"
           ? (params.args as Record<string, unknown>)
           : {};
-      const args = normalizeBridgeToolArgs(name, unwrapBridgeToolArgs(rawArgs));
+      let args = normalizeBridgeToolArgs(name, unwrapBridgeToolArgs(rawArgs));
       const activity = resolveBridgeActivity(params, callId);
       const projectId = await projectIdForWorkflow(activity.workflowId);
 
@@ -597,6 +616,8 @@ primeBridgeRouter.post("/rpc", async (c) => {
       }
 
       try {
+        const contract = getToolContract(name);
+        if (contract) args = applyToolContract(contract, args);
         let observation: unknown;
         if (isBuiltinTool(name)) {
           observation = await dispatchBuiltinTool(
@@ -666,6 +687,8 @@ primeBridgeRouter.post("/rpc", async (c) => {
         });
       } catch (err) {
         const message = formatUnknownError(err);
+        const errorClass = classifyToolError(message);
+        const retryable = errorClass === "transient";
         if (activity.workflowId !== "prime-bridge") {
           await projectCoreBridgeToolCall({
             ctx: activity,
@@ -673,7 +696,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
             toolName: name,
             ok: false,
             args,
-            observation: { summary: message },
+            observation: { summary: message, errorClass, retryable },
           });
         }
         return c.json({
@@ -682,10 +705,10 @@ primeBridgeRouter.post("/rpc", async (c) => {
           result: {
             call_id: callId,
             ok: false,
-            observation: { summary: message },
+            observation: { summary: message, errorClass, retryable },
             effects: [],
-            retryable: true,
-            error_code: "builtin_failed",
+            retryable,
+            error_code: `builtin_${errorClass}`,
           },
         });
       }
@@ -714,7 +737,7 @@ primeBridgeRouter.get("/health", async (c) => {
   const teamTools = topology?.toolNames ?? [];
   return c.json({
     ok: true,
-    bridgedTools: [...new Set([...BRIDGED_TOOLS, "assign_task", ...teamTools])],
+    bridgedTools: [...new Set([...BRIDGED_TOOLS, ...teamTools])],
     mcpToolCount: mcpTools.length,
     mcpTools: mcpTools.map((t) => t.name).slice(0, 50),
   });

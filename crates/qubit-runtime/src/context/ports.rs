@@ -21,6 +21,17 @@ pub struct RecallBundle {
     pub general: Vec<RecallHit>,
 }
 
+/// Correlation required by host-backed recall. Memory and Skills are project /
+/// workflow scoped; dropping this context turns Skill recall into an untracked
+/// global lookup and makes topology/quality attribution impossible.
+#[derive(Clone, Debug)]
+pub struct RecallRequest<'a> {
+    pub query: &'a str,
+    pub workspace_id: &'a str,
+    pub session_id: &'a str,
+    pub definition_id: &'a str,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WorkspaceFocus {
     pub open_files: Vec<String>,
@@ -46,6 +57,15 @@ pub trait RecallPort: Send + Sync {
             skill: self.recall_skill(query).await?,
             general: self.recall_general(query).await?,
         })
+    }
+
+    /// Context-aware path used by Rust Core. Implementations that do not need
+    /// correlation retain the legacy behavior through this default.
+    async fn recall_bundle_for(
+        &self,
+        request: RecallRequest<'_>,
+    ) -> Result<RecallBundle, RuntimeError> {
+        self.recall_bundle(request.query).await
     }
 }
 

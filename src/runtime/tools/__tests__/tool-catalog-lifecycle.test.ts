@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { buildToolCatalog, resolveToolAlias } from "../tool-catalog";
-import type { ToolCatalogEntry, ToolLifecycle } from "../types";
+import { buildToolCatalog, resolveToolAlias, RETIRED_GLOBAL_TOOL_NAMES } from "../tool-catalog";
+import type { ToolCatalogEntry } from "../types";
 
 function find(name: string): ToolCatalogEntry {
   const e = buildToolCatalog().find((x) => x.name === name);
@@ -10,38 +10,22 @@ function find(name: string): ToolCatalogEntry {
 
 describe("tool-catalog lifecycle metadata", () => {
   test("default tools without explicit lifecycle remain stable (lifecycle undefined)", () => {
-    expect(find("assign_task").lifecycle).toBeUndefined();
+    expect(find("memory.recall").lifecycle).toBeUndefined();
     expect(find("fetch_klines").lifecycle).toBeUndefined();
     expect(find("evaluate_risk").lifecycle).toBeUndefined();
   });
 
-  test("Prime D6 team-compat tools are deprecated without transparent alias", () => {
+  test("Prime D6 team-compat tools are absent from the global catalog", () => {
     for (const name of ["run_analyst_team", "summarize_team_decision", "fuse_signals"]) {
-      const e = find(name);
-      expect(e.lifecycle).toBe("deprecated" satisfies ToolLifecycle);
-      expect(e.replacedBy).toBeTruthy();
-      expect(e.deprecationReason).toBeTruthy();
+      expect(buildToolCatalog().some((entry) => entry.name === name)).toBe(false);
       expect(resolveToolAlias(name).aliased).toBe(false);
       expect(resolveToolAlias(name).resolved).toBe(name);
     }
   });
 
-  test("remaining stubs are labeled lifecycle=stub with a deprecationReason", () => {
-    // Step 2 删除了 task_decompose / analyze_industry / analyze_policy / get_analyst_ratings 4 个纯 builtin stub
-    // 留下 4 个仍标 stub 的：connector stub (extract_event/score_sentiment) + 半 stub builtin (analyze_social_media/cleanup_ttl)
-    // run_screener 已在 2026-06-05 监控复盘 #4 / C 升级为真实 universe（200+ ticker + sector/industry 过滤），不再是 stub
-    const stubs = [
-      "score_sentiment",
-      "extract_event",
-      "analyze_social_media",
-      "cleanup_ttl",
-    ];
-    for (const name of stubs) {
-      const e = find(name);
-      expect(e.lifecycle).toBe("stub" satisfies ToolLifecycle);
-      expect(typeof e.deprecationReason).toBe("string");
-      expect((e.deprecationReason ?? "").length).toBeGreaterThan(0);
-    }
+  test("all centralized retired names are absent from the global catalog", () => {
+    const names = new Set(buildToolCatalog().map((entry) => entry.name));
+    for (const name of RETIRED_GLOBAL_TOOL_NAMES) expect(names.has(name)).toBe(false);
   });
 
   test("Step 2 deleted stubs are absent from catalog", () => {
@@ -52,7 +36,7 @@ describe("tool-catalog lifecycle metadata", () => {
     }
   });
 
-  test("7 deprecated aliases carry replacedBy pointing to a valid catalog entry", () => {
+  test("retired aliases still resolve for persisted workflow compatibility", () => {
     const cases: Array<{ name: string; replacedBy: string }> = [
       { name: "fetch_macro_data", replacedBy: "compute_macro_indicators" },
       { name: "fetch_bars", replacedBy: "fetch_klines" },
@@ -62,13 +46,9 @@ describe("tool-catalog lifecycle metadata", () => {
       { name: "run_experiment", replacedBy: "factor.autoEvaluate" },
       { name: "version_strategy", replacedBy: "strategy.create_version" },
     ];
-    const catalogNames = new Set(buildToolCatalog().map((e) => e.name));
     for (const { name, replacedBy } of cases) {
-      const e = find(name);
-      expect(e.lifecycle).toBe("deprecated" satisfies ToolLifecycle);
-      expect(e.replacedBy).toBe(replacedBy);
-      expect(catalogNames.has(replacedBy)).toBe(true);
-      expect(typeof e.deprecationReason).toBe("string");
+      expect(buildToolCatalog().some((entry) => entry.name === name)).toBe(false);
+      expect(resolveToolAlias(name).resolved).toBe(replacedBy);
     }
   });
 
@@ -82,10 +62,9 @@ describe("tool-catalog lifecycle metadata", () => {
     }
   });
 
-  test("migrated research alias 无 connector 路由时仍出现在 catalog", () => {
-    const cf = find("compute_factors");
-    expect(cf.lifecycle).toBe("deprecated");
-    expect(cf.replacedBy).toBe("factor.compute");
+  test("migrated research alias 无 connector 路由时也不再出现在 catalog", () => {
+    expect(buildToolCatalog().some((entry) => entry.name === "compute_factors")).toBe(false);
+    expect(resolveToolAlias("compute_factors").resolved).toBe("factor.compute");
   });
 });
 
@@ -132,7 +111,10 @@ describe("resolveToolAlias (Step 3 — deprecated 别名透明跳转)", () => {
       if (!r.aliased) continue;
       const targetEntry = all.find((e) => e.name === r.resolved);
       expect(targetEntry).toBeDefined();
-      expect(targetEntry!.lifecycle, `${name} -> ${r.resolved}: target must not be deprecated`).not.toBe("deprecated");
+      expect(
+        targetEntry!.lifecycle,
+        `${name} -> ${r.resolved}: target must not be deprecated`
+      ).not.toBe("deprecated");
     }
   });
 });

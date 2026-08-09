@@ -11,10 +11,7 @@
  * Soft 不可单独判定 pass；Hard fail 时总分仍为 0。缺遥测 → skipped，
  * 不得伪装成 pass（与 BENCHMARK_AND_FLYWHEEL_TECH_PLAN 一致）。
  */
-import type {
-  RunEnvelope,
-  SoftDimensionScore,
-} from "./contracts";
+import type { RunEnvelope, SoftDimensionScore } from "./contracts";
 
 const MEMORY_TOOL_RE = /^(memory\.recall|workspace\.memory\.search)$/i;
 const INVOKE_TOOL_RE = /^(agent\.invoke|call_team_)/i;
@@ -44,6 +41,7 @@ export function scoreSoftDimensions(envelope: RunEnvelope): {
   const dimensions: SoftDimensionScore[] = [
     scoreToolsDimension(envelope),
     scoreMemoryDimension(envelope),
+    scoreSkillsDimension(envelope),
     scoreOrchestrationDimension(envelope),
     scoreRecipeDimension(envelope),
     scoreContentDimension(envelope),
@@ -52,9 +50,32 @@ export function scoreSoftDimensions(envelope: RunEnvelope): {
   if (scored.length === 0) {
     return { score: null, status: "skipped", dimensions };
   }
-  const score =
-    scored.reduce((sum, d) => sum + (d.score as number), 0) / scored.length;
+  const score = scored.reduce((sum, d) => sum + (d.score as number), 0) / scored.length;
   return { score, status: "scored", dimensions };
+}
+
+function scoreSkillsDimension(envelope: RunEnvelope): SoftDimensionScore {
+  const skills = envelope.skills;
+  if (!skills?.telemetryAvailable) {
+    return { id: "skills", score: null, status: "skipped", detail: "skill_telemetry_unavailable" };
+  }
+  if (skills.recallCount === 0) {
+    return {
+      id: "skills",
+      score: null,
+      status: "not_applicable",
+      detail: "no_agent_skill_recalled",
+      metrics: { recallCount: 0, executedCount: 0 },
+    };
+  }
+  const score = clamp01(skills.executedCount / skills.recallCount);
+  return {
+    id: "skills",
+    score,
+    status: "scored",
+    detail: `recalls=${skills.recallCount} executed=${skills.executedCount} names=${skills.executedNames.slice(0, 4).join(",")}`,
+    metrics: { recallCount: skills.recallCount, executedCount: skills.executedCount },
+  };
 }
 
 function scoreToolsDimension(envelope: RunEnvelope): SoftDimensionScore {
@@ -152,9 +173,7 @@ function scoreMemoryDimension(envelope: RunEnvelope): SoftDimensionScore {
   };
 }
 
-function scoreMemoryFromTools(
-  memoryTools: RunEnvelope["tools"]
-): SoftDimensionScore {
+function scoreMemoryFromTools(memoryTools: RunEnvelope["tools"]): SoftDimensionScore {
   const attempts = memoryTools.length;
   const successes = memoryTools.filter((t) => t.status === "success").length;
   const hits = memoryTools.reduce((sum, t) => sum + (t.memoryHitCount ?? 0), 0);
@@ -211,10 +230,17 @@ function scoreOrchestrationDimension(envelope: RunEnvelope): SoftDimensionScore 
     };
   }
   const successRate = orch.invokeSuccesses / orch.invokeAttempts;
-  const stubRate = orch.stubNarrativeCount / Math.max(1, orch.invokeSuccesses || orch.invokeAttempts);
+  const stubRate =
+    orch.stubNarrativeCount / Math.max(1, orch.invokeSuccesses || orch.invokeAttempts);
   const stubScore = 1 - Math.min(1, stubRate);
   const narrativeScore =
-    orch.narrativeChars >= 200 ? 1 : orch.narrativeChars >= 80 ? 0.7 : orch.narrativeChars > 0 ? 0.4 : 0;
+    orch.narrativeChars >= 200
+      ? 1
+      : orch.narrativeChars >= 80
+        ? 0.7
+        : orch.narrativeChars > 0
+          ? 0.4
+          : 0;
   const score = clamp01(0.5 * successRate + 0.3 * stubScore + 0.2 * narrativeScore);
   return {
     id: "orchestration",

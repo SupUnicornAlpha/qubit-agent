@@ -11,12 +11,12 @@ describe("filterMcpToolsByAvailability", () => {
     ).toEqual(["fetch_news"]);
   });
 
-  test("keeps call_mcp and only direct tools for enabled servers", () => {
+  test("removes call_mcp and keeps only direct tools for enabled servers", () => {
     expect(
       filterMcpToolsByAvailability(
         ["fetch_news", "call_mcp", "mcp:fsi-mtnewswires:get_latest_headlines", "mcp:mathjs:add"],
         ["mathjs"]
       )
-    ).toEqual(["fetch_news", "call_mcp", "mcp:mathjs:add"]);
+    ).toEqual(["fetch_news", "mcp:mathjs:add"]);
   });
 });

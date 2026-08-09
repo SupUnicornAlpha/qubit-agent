@@ -17,6 +17,7 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "market.data_sources",
     "market.snapshot.get",
     "memory.recall",
+    "skill.search",
     "workspace.memory.search",
     "run_screener",
     "research.thesis.write",
@@ -43,8 +44,6 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     // not resolve tools:// AgentSpec refs yet, so specialists need their
     // domain tools here even when legacy.tools.list is temporarily unavailable.
     "fetch_klines",
-    "fetch_quote",
-    "fetch_financial_data",
     "fetch_fundamentals",
     "fetch_news",
     "fetch_news_sentiment",
@@ -52,7 +51,6 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "detect_patterns",
     "compute_valuation",
     "compute_macro_indicators",
-    "assign_task",
     "order.create_intent",
     "evaluate_risk",
 ];
@@ -66,7 +64,7 @@ pub fn is_default_bridged_tool_name(name: &str) -> bool {
     if DEFAULT_BRIDGED_TOOLS.iter().any(|t| *t == n) {
         return true;
     }
-    n == "assign_task" || n.starts_with("call_team_")
+    n.starts_with("call_team_")
 }
 
 #[cfg(test)]
@@ -77,7 +75,6 @@ mod tests {
     fn fallback_surface_contains_specialist_domain_tools() {
         for name in [
             "fetch_fundamentals",
-            "fetch_financial_data",
             "compute_valuation",
             "fetch_klines",
             "compute_indicators",
@@ -203,16 +200,19 @@ impl LegacyBridgeClient {
 
     pub async fn list_tools(&self) -> Result<Vec<LegacyToolSpec>, ToolHostError> {
         let result = self.rpc("legacy.tools.list", json!({})).await?;
-        let tools = result
-            .get("tools")
-            .cloned()
-            .unwrap_or(Value::Array(vec![]));
+        let tools = result.get("tools").cloned().unwrap_or(Value::Array(vec![]));
         serde_json::from_value(tools).map_err(|e| ToolHostError::Invalid(e.to_string()))
     }
 
-    pub async fn invoke(&self, params: LegacyInvokeParams) -> Result<LegacyInvokeResult, ToolHostError> {
+    pub async fn invoke(
+        &self,
+        params: LegacyInvokeParams,
+    ) -> Result<LegacyInvokeResult, ToolHostError> {
         let result = self
-            .rpc("legacy.tools.invoke", serde_json::to_value(&params).unwrap())
+            .rpc(
+                "legacy.tools.invoke",
+                serde_json::to_value(&params).unwrap(),
+            )
             .await?;
         serde_json::from_value(result).map_err(|e| ToolHostError::Invalid(e.to_string()))
     }

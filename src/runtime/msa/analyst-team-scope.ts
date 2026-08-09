@@ -6,14 +6,16 @@ export function formatResearchScopePreamble(scope: NormalizedResearchScope): str
 
   if (scope.kind === "explore") {
     lines.push(`- **类型**：自由探索（无固定标的）`);
-    lines.push(`- **研究主题**：${scope.theme || "（未明确，请按 Orchestrator 简报与已有数据自行收敛）"}`);
+    lines.push(
+      `- **研究主题**：${scope.theme || "（未明确，请按 Orchestrator 简报与已有数据自行收敛）"}`
+    );
     if (scope.symbols.length > 0) {
       lines.push(`- **候选标的**（用户提供的初步线索，可保留可剔除）：${scope.symbols.join(", ")}`);
     }
     lines.push(
       "- **本角色的探索约束**：",
       "  1. 在职责范围内自主提出 1-3 个备选标的或主题切片；",
-      "  2. 用 `factor.list` / `skill.search` / `search_memory` 优先复用历史成功路径；",
+      "  2. 用 `factor.list` / `skill.search` / `memory.recall` 优先复用历史成功路径；",
       "  3. 任何虚构的 ticker 必须立即用 `fetch_klines` 验证是否真实存在，无法验证则放弃；",
       '  4. 最终交付物里必须明确列出"我选择了哪些标的 + 为何选" — 不能含糊带过。'
     );
@@ -40,9 +42,7 @@ export function formatResearchScopePreamble(scope: NormalizedResearchScope): str
     if (o?.expiry) lines.push(`  - 到期：${o.expiry}`);
     if (o?.strike != null) lines.push(`  - 行权价：${o.strike}`);
     if (o?.right) lines.push(`  - 方向：${o.right === "call" ? "认购 Call" : "认沽 Put"}`);
-    lines.push(
-      "- 关注：隐含波动率、时间价值衰减、Delta/Gamma 风险、流动性；缺数据则标 [待核实]"
-    );
+    lines.push("- 关注：隐含波动率、时间价值衰减、Delta/Gamma 风险、流动性；缺数据则标 [待核实]");
   } else if (scope.positionSide === "short") {
     lines.push(
       "- **工具**：股票做空 / 融券 / 可卖空标的",
@@ -62,9 +62,7 @@ export function defaultResearchUserContext(scope: NormalizedResearchScope): stri
     const themePart = scope.theme ? `「${scope.theme}」` : "用户未明确主题";
     const sidePart = scope.positionSide === "short" ? "（偏向空头机会）" : "（偏向多头机会）";
     const candidates =
-      scope.symbols.length > 0
-        ? `用户提供的候选线索：${scope.symbols.join(", ")}。`
-        : "";
+      scope.symbols.length > 0 ? `用户提供的候选线索：${scope.symbols.join(", ")}。` : "";
     return [
       `本次为自由探索任务：研究主题 ${themePart}${sidePart}。`,
       candidates,

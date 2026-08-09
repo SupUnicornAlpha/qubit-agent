@@ -54,13 +54,13 @@ describe("unwrapBridgeToolArgs", () => {
 describe("isBridgedLegacyToolName", () => {
   test("allows static builtins and dynamic call_team_*", () => {
     expect(isBridgedLegacyToolName("market.snapshot.get")).toBe(true);
-    expect(isBridgedLegacyToolName("assign_task")).toBe(true);
+    expect(isBridgedLegacyToolName("assign_task")).toBe(false);
     expect(isBridgedLegacyToolName("call_team_research")).toBe(true);
     expect(isBridgedLegacyToolName("call_team_news_event")).toBe(true);
     expect(isBridgedLegacyToolName("fetch_news")).toBe(true);
     expect(isBridgedLegacyToolName("fetch_news_sentiment")).toBe(true);
     expect(isBridgedLegacyToolName("fetch_fundamentals")).toBe(true);
-    expect(isBridgedLegacyToolName("fetch_financial_data")).toBe(true);
+    expect(isBridgedLegacyToolName("fetch_financial_data")).toBe(false);
     expect(isBridgedLegacyToolName("compute_valuation")).toBe(true);
     expect(isBridgedLegacyToolName("fetch_klines")).toBe(true);
     expect(isBridgedLegacyToolName("compute_indicators")).toBe(true);

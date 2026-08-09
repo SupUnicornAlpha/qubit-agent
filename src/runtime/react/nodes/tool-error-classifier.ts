@@ -54,6 +54,15 @@ const PERMANENT_PATTERNS: RegExp[] = [
   /\bmissing_symbol\b/i,
   /\barity_violation\b/i,
   /semantic_data_failure:(?:semantic_empty_result|[^:\s]*_empty|bar_count_zero|no_bars|no_data|data_status_unavailable|synthetic_data)/i,
+  /\b(?:fundamentals|market)_data_unavailable\b/i,
+  /\b(?:fundamentals|quote|news)_source_unavailable\b/i,
+  /real-time quote source is not configured/i,
+  /no_factor_values_written/i,
+  /sample_size_too_small/i,
+  /factor_not_found/i,
+  /factor_expression_batch_too_small/i,
+  /invalid_qty/i,
+  /mcp_validation_error/i,
 ];
 
 const BLOCKED_PATTERNS: RegExp[] = [

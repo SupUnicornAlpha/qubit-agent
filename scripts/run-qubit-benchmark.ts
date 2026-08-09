@@ -21,6 +21,10 @@ import {
   type QubitBenchCase,
 } from "../src/runtime/benchmark/qubit-bench-cases";
 import { buildRunEnvelope } from "../src/runtime/benchmark/run-envelope";
+import {
+  buildBenchmarkHealthPanel,
+  renderBenchmarkHealthMarkdown,
+} from "../src/runtime/benchmark/health-panel";
 import { scoreRunEnvelope } from "../src/runtime/benchmark/scorecard";
 import { type UpgradeGateResult, evaluateUpgradeGate } from "../src/runtime/benchmark/upgrade-gate";
 import { DEFAULT_USER_PROJECT_ID } from "../src/runtime/bootstrap/ensure-default-workspace";
@@ -92,7 +96,15 @@ async function launchBenchmarkCase(benchmarkCase: QubitBenchCase): Promise<strin
         inputParams: benchmarkCase.inputParams,
         loopOverrides: {
           maxIterations: benchmarkCase.budget.maxIterations,
-          tokenBudget: { maxTotalTokens: benchmarkCase.budget.maxTotalTokens },
+          timeoutMs: benchmarkCase.budget.maxDurationMs,
+          benchmarkNamespace: true,
+          tokenBudget: {
+            maxTotalTokens: benchmarkCase.budget.maxTotalTokens,
+            softLimitRatio: 0.8,
+            maxPromptTokensPerCall: Math.min(80_000, benchmarkCase.budget.maxTokenP95 * 2),
+            maxSystemPromptChars: 120_000,
+            maxUserPromptChars: 80_000,
+          },
         },
       }),
     }
@@ -186,13 +198,13 @@ function renderSummary(results: readonly CaseResult[]): string {
     `- cases: ${results.length}; upgrade_pass: ${passed}; incomplete: ${incomplete}; fail: ${failed}`,
     `- research_success: ${results.filter((r) => r.gate?.researchSuccess === "pass").length}/${results.length}`,
     "",
-    "| Case | Scenario | Upgrade | Research | Soft | Tools↑ | Memory | Orch | Recipe | Delivery | Quality | Tools | Resource |",
-    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |",
+    "| Case | Scenario | Upgrade | Research | Soft | Tools↑ | Memory | Skills | Orch | Recipe | Delivery | Quality | Tools | Resource |",
+    "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |",
   ];
   for (const result of results) {
     if (!result.gate) {
       lines.push(
-        `| ${result.id} | ${result.scenarioKey} | FAIL | FAIL | 0.00 | - | - | - | - | - | - | - | - |`
+        `| ${result.id} | ${result.scenarioKey} | FAIL | FAIL | 0.00 | - | - | - | - | - | - | - | - | - |`
       );
       continue;
     }
@@ -201,7 +213,7 @@ function renderSummary(results: readonly CaseResult[]): string {
       (result.soft?.dimensions ?? []).map((d) => [d.id, d.score?.toFixed(2) ?? d.status])
     );
     lines.push(
-      `| ${result.id} | ${result.scenarioKey} | ${result.gate.status.toUpperCase()} | ${(result.gate.researchSuccess ?? "fail").toUpperCase()} | ${result.soft?.score?.toFixed(2) ?? "-"} | ${result.trajectory?.toolSuccessRate?.toFixed(2) ?? softDims.get("tools") ?? "-"} | ${softDims.get("memory") ?? "-"} | ${softDims.get("orchestration") ?? "-"} | ${softDims.get("recipe") ?? "-"} | ${dimensions.get("delivery")} | ${dimensions.get("quality")} | ${dimensions.get("tools")} | ${dimensions.get("resource")} |`
+      `| ${result.id} | ${result.scenarioKey} | ${result.gate.status.toUpperCase()} | ${(result.gate.researchSuccess ?? "fail").toUpperCase()} | ${result.soft?.score?.toFixed(2) ?? "-"} | ${result.trajectory?.toolSuccessRate?.toFixed(2) ?? softDims.get("tools") ?? "-"} | ${softDims.get("memory") ?? "-"} | ${softDims.get("skills") ?? "-"} | ${softDims.get("orchestration") ?? "-"} | ${softDims.get("recipe") ?? "-"} | ${dimensions.get("delivery")} | ${dimensions.get("quality")} | ${dimensions.get("tools")} | ${dimensions.get("resource")} |`
     );
   }
   lines.push("", "## Failure / incomplete details", "");
@@ -240,5 +252,10 @@ for (const benchmarkCase of selected) {
 const summary = renderSummary(results);
 await writeFile(join(outputDir, "summary.md"), summary, "utf8");
 await writeFile(join(outputDir, "summary.json"), JSON.stringify(results, null, 2), "utf8");
+const healthPanel = await buildBenchmarkHealthPanel(
+  results.map((result) => result.workflowRunId).filter((id): id is string => Boolean(id))
+);
+await writeFile(join(outputDir, "health.json"), JSON.stringify(healthPanel, null, 2), "utf8");
+await writeFile(join(outputDir, "health.md"), renderBenchmarkHealthMarkdown(healthPanel), "utf8");
 console.log(summary);
 if (results.some((result) => result.error || result.gate?.status !== "pass")) process.exit(1);

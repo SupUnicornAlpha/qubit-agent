@@ -92,7 +92,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     tools: [
       // 编排
       "update_plan",
-      "assign_task",
+      "agent.invoke",
       // Prime HOST 证据链（D2–D5）
       "market.resolve_symbol",
       "market.snapshot.get",
@@ -116,7 +116,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
       "evaluate_risk",
       "rule.register",
       // 记忆 / skill / 逃生舱
-      "search_memory",
+      "memory.recall",
       "memory.consolidate_longterm",
       "memory.refresh_workspace",
       "skill.search",
@@ -173,7 +173,6 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
       "fetch_fundamentals",
-      "fetch_financial_data",
       "compute_valuation",
       "research.thesis.write",
       "code.run_python",
@@ -269,8 +268,6 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     systemPrompt: PROMPT_BACKTEST,
     tools: [
       "backtest.run",
-      "run_backtest",
-      "get_backtest_status",
       "factor.list",
       "factor.compute",
       "fetch_klines",
@@ -309,7 +306,6 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     systemPrompt: PROMPT_WALK_FORWARD_VALIDATOR,
     tools: [
       "backtest.run",
-      "get_backtest_status",
       "factor.list",
       "factor.autoEvaluate",
       "factor.evaluate.batch",
@@ -327,7 +323,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
      * Prime 06 — on-demand subagent（不进 grp-strategy-pipeline 固定成员）。
      * Orchestrator: agent.invoke({ callee_spec_id: "def-strategy-coder", goal })
      * 画布：Core 投影后以 strategy_coder 节点入图（idle 不展示）。
-     * 勿用 assign_task(role=research) / call_team_research（会绑到 def-research）。
+     * 勿用 call_team_research（会绑到 def-research）。
      */
     version: "1.0.0",
     executionKind: "subagent",

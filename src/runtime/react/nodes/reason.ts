@@ -256,8 +256,7 @@ async function loadWorkflowMeta(
       : null;
   const fsFromEnv = process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID?.trim();
   const fsWorkspaceId =
-    fsFromLoop ||
-    (fsFromEnv && !fsFromEnv.startsWith("wf_") ? fsFromEnv : null);
+    fsFromLoop || (fsFromEnv && !fsFromEnv.startsWith("wf_") ? fsFromEnv : null);
   return {
     projectId: wfRows[0].projectId ?? null,
     sessionId: wfRows[0].sessionId ?? null,
@@ -315,9 +314,7 @@ async function loadSessionContext(workflowId: string, limit = 6): Promise<string
     .filter((line) => line.length > 0);
 }
 
-function mergeAbortSignals(
-  ...signals: Array<AbortSignal | undefined>
-): AbortSignal | undefined {
+function mergeAbortSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
   const active = signals.filter((s): s is AbortSignal => Boolean(s));
   if (active.length === 0) return undefined;
   if (active.length === 1) return active[0];
@@ -557,8 +554,11 @@ export async function reasonNode(
     .filter(Boolean)
     .join(" ");
   const configuredMaxPromptTools = Number(process.env["QUBIT_MAX_PROMPT_TOOLS"] ?? "16");
+  const directMcpTools = mcpServers.flatMap(
+    (server) => server.tools?.map((tool) => `mcp:${server.name}:${tool.name}`) ?? []
+  );
   const promptTools = selectRelevantToolsForPrompt(
-    tools,
+    [...tools, ...directMcpTools],
     taskQuery,
     Number.isFinite(configuredMaxPromptTools)
       ? Math.max(4, Math.floor(configuredMaxPromptTools))
@@ -1100,9 +1100,9 @@ export async function reasonNode(
      */
     const systemWithDispatch =
       state.agentDefinition.role === "orchestrator"
-        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，默认由你作为唯一大脑做决策**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只缺一块证据或一个专业判断 → 优先用拓扑中现成的 \`call_team_<role>\` 定向派给该专家；仅当没有对应拓扑工具时才用 \`assign_task\`。\n- 需要多视角时，也只按需分别派给 2-3 个专家，再由你自己比较与裁决；不要为了“完整流程”一次拉起整队。\n- 除非用户明确要求“完整团队报告 / 团队会审”，否则不要使用批量团队编排思路。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 交付纪律（重要）\n- 你和专家都应围绕**当前技术目标**交付最小必要结果：结论、关键证据、下一步。\n- 除非用户明确要求，**不要生成长报告、模板化章节、完整 Executive Summary、冗长复盘**。\n- 若用户要的是某个技术判断、一个候选名单、一段回测结论或一个风险结论，就只交付那个，不要顺手扩写成整份报告。\n\n## 计划可见（重要）\n- 只有需要 **3 个以上不同业务动作** 的任务才调用一次 \`update_plan\` 建计划；单次专家派单、一次行情拉取或一句话能答的任务禁止建计划，直接执行。\n- 建计划后必须立即执行下一项业务工具；禁止连续调用 \`update_plan\`。\n- 只有阶段发生实质变化时才更新计划，整个任务通常不超过“开工一次 + 收口一次”两次计划写入；计划维护不能替代业务执行。${
+        ? `${systemWithHitl}\n\n---\n## 调度决策（重要）\n你是编排者，收到用户消息后**先判断该怎么处理，默认由你作为唯一大脑做决策**：\n- 能用「本次会话上下文 / 已有研究结论」直接回答的（总结、解释、澄清、对比、追问）→ 直接给出最终答复，**不调用任何团队工具、不广播**。\n- 只缺一块证据或一个专业判断 → 优先用拓扑中现成的 \`call_team_<role>\` 定向派给该专家；仅当没有对应拓扑工具时才用统一的 \`agent.invoke\`。\n- 需要多视角时，也只按需分别派给 2-3 个专家，再由你自己比较与裁决；不要为了“完整流程”一次拉起整队。\n- 除非用户明确要求“完整团队报告 / 团队会审”，否则不要使用批量团队编排思路。\n面向用户的回答要清晰、可执行；不要在能直接回答时还去惊动整支团队。\n\n## 交付纪律（重要）\n- 你和专家都应围绕**当前技术目标**交付最小必要结果：结论、关键证据、下一步。\n- 除非用户明确要求，**不要生成长报告、模板化章节、完整 Executive Summary、冗长复盘**。\n- 若用户要的是某个技术判断、一个候选名单、一段回测结论或一个风险结论，就只交付那个，不要顺手扩写成整份报告。\n\n## 计划可见（重要）\n- 只有需要 **3 个以上不同业务动作** 的任务才调用一次 \`update_plan\` 建计划；单次专家派单、一次行情拉取或一句话能答的任务禁止建计划，直接执行。\n- 建计划后必须立即执行下一项业务工具；禁止连续调用 \`update_plan\`。\n- 只有阶段发生实质变化时才更新计划，整个任务通常不超过“开工一次 + 收口一次”两次计划写入；计划维护不能替代业务执行。${
             workflowMeta.agentMode === "goal"
-              ? "\n\n## 按需召唤专家（Goal 模式）\n当前为 Goal 模式：若需要团队当前编组里没有的专长，可以直接 `assign_task` 派给对应专家角色，系统会按需拉入；但必须把结果和验证状态同步回计划。"
+              ? "\n\n## 按需召唤专家（Goal 模式）\n当前为 Goal 模式：若需要团队当前编组里没有的专长，可以用统一的 `agent.invoke` 派给对应专家角色，系统会按需拉入；但必须把结果和验证状态同步回计划。"
               : ""
           }`
         : systemWithHitl;
@@ -1122,7 +1122,7 @@ export async function reasonNode(
     const WORK_STYLE_BLOCK = [
       "## 工作方式（重要）",
       "- **增量推进**：把任务拆成小步，一步步来；每步只做一件事，拿到结果再决定下一步，不要一次性假设整条流程。",
-      "- **先查后做**：动手前若有 `search_memory` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；稳定的方法与产物可以复用。",
+      "- **先查后做**：动手前若有 `memory.recall` / `skill.search` 等工具，先看有没有可复用的先例或既有结论；稳定的方法与产物可以复用。",
       focusedScenarioBlock
         ? "- **场景探活预算**：本场景默认不重复 `market.readiness`；探活失败记为 data-gap，不得当作唯一结案。"
         : "- **实时状态必须重验**：记忆里的“行情源不可用 / 网络失败 / 凭证缺失 / 熔断”是过期风险很高的历史状态，只能作提示，不能替代当前探测。只要当前工具面有 `market.readiness` / `market.data_sources` / `fetch_klines`，在本工作流尚无同类失败证据时，必须至少做一次当前健康检查或真实拉取后，才能宣告数据不可用。",
@@ -1198,7 +1198,7 @@ export async function reasonNode(
       userPrompt,
       sampling: samplingForReason,
       ...(nativeToolDefinition ? { tools: [nativeToolDefinition] } : {}),
-      signal: cancellationSignal,
+      ...(cancellationSignal ? { signal: cancellationSignal } : {}),
       onToken: (token) => {
         emit({
           runId: state.runId,
@@ -1279,7 +1279,7 @@ export async function reasonNode(
             systemPrompt,
             userPrompt: retryUserPrompt,
             sampling: samplingForReason,
-            signal: cancellationSignal,
+            ...(cancellationSignal ? { signal: cancellationSignal } : {}),
             onToken: (token) => {
               emit({
                 runId: state.runId,
@@ -1380,18 +1380,13 @@ export async function reasonNode(
       }
     }
   } catch (error) {
-    if (
-      workflowCancellationSignal.aborted ||
-      isWorkflowCancellationRequested(state.workflowId)
-    ) {
+    if (workflowCancellationSignal.aborted || isWorkflowCancellationRequested(state.workflowId)) {
       throw new WorkflowCancelledError(state.workflowId);
     }
     const errMsg = LlmGatewayError.is(error)
       ? error.toLogLine()
       : ((error as Error).message ?? String(error));
-    const fallback = LlmGatewayError.is(error)
-      ? error.toLogLine()
-      : `LLM gateway error: ${errMsg}`;
+    const fallback = LlmGatewayError.is(error) ? error.toLogLine() : `LLM gateway error: ${errMsg}`;
     if (LlmGatewayError.is(error)) {
       lastGatewayError = error.toJSON();
     }

@@ -23,10 +23,8 @@ export type EnabledMcpServerInfo = {
  * Keep the prompt tool surface consistent with the MCP servers that survived
  * configuration, health/cooldown and sandbox filtering.
  *
- * Merely telling the model "no MCP is enabled" is not enough when `call_mcp`
- * remains in the native tool schema: models can still select that valid enum
- * value from an older system-prompt example. Removing it from the executable
- * surface makes an unavailable MCP call unrepresentable.
+ * The untyped `call_mcp` meta-tool is always removed. Only typed tools for a
+ * currently enabled server remain representable to the model.
  */
 export function filterMcpToolsByAvailability(
   tools: string[],
@@ -34,7 +32,7 @@ export function filterMcpToolsByAvailability(
 ): string[] {
   const enabled = new Set(enabledServerNames);
   return tools.filter((tool) => {
-    if (tool === "call_mcp") return enabled.size > 0;
+    if (tool === "call_mcp") return false;
     if (!tool.startsWith("mcp:")) return true;
     const serverName = tool.split(":", 3)[1] ?? "";
     return enabled.has(serverName);
