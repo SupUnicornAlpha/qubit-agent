@@ -1,5 +1,5 @@
 import { Check, LoaderCircle, Network, Wrench, X } from "lucide-react";
-import { type FC, useMemo, useState } from "react";
+import { type FC, useEffect, useMemo, useRef, useState } from "react";
 import type { StepStreamEvent } from "../../api/types";
 import { formatLargeJsonPreview } from "../../lib/formatLargeJsonPreview";
 
@@ -15,6 +15,9 @@ export type ChatExecutionActivityModel = {
   tools: ToolActivity[];
   a2a: { role: string; status: "running" | "completed" } | null;
 };
+
+/** Collapsed rows shown without scrolling (~matches CSS max-height). */
+export const CHAT_EXECUTION_VISIBLE_ROWS = 10;
 
 function toolStatus(value: unknown): ToolActivity["status"] {
   const status = String(value ?? "success");
@@ -62,13 +65,24 @@ export const ChatExecutionActivity: FC<{
   running: boolean;
 }> = ({ events, running }) => {
   const [open, setOpen] = useState(true);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const { tools, a2a } = useMemo(
     () => buildChatExecutionActivity(events, running),
     [events, running]
   );
 
+  // Keep the newest call in view while the turn is active.
+  useEffect(() => {
+    if (!open || !running) return;
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [open, running, tools.length, a2a?.status]);
+
   if (!a2a && tools.length === 0) return null;
   const activeCount = tools.filter((tool) => tool.status === "running").length;
+  const rowCount = tools.length + (a2a ? 1 : 0);
+  const scrollable = rowCount > CHAT_EXECUTION_VISIBLE_ROWS;
 
   return (
     <section className="qb-chat-execution" aria-label="Agent 调用过程" aria-live="polite">
@@ -81,11 +95,15 @@ export const ChatExecutionActivity: FC<{
         <span>{open ? "▾" : "▸"}</span>
         <span>调用过程</span>
         <span className="qb-chat-execution__summary">
-          {activeCount > 0 ? `${activeCount} 项运行中` : `${tools.length} 次工具调用`}
+          {activeCount > 0
+            ? `${activeCount} 项运行中`
+            : scrollable
+              ? `${tools.length} 次工具调用 · 可滚动`
+              : `${tools.length} 次工具调用`}
         </span>
       </button>
       {open ? (
-        <div className="qb-chat-execution__list">
+        <div ref={listRef} className="qb-chat-execution__list">
           {a2a ? (
             <div className="qb-chat-call-card qb-chat-call-card--a2a">
               <Network size={15} aria-hidden />

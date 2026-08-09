@@ -627,7 +627,15 @@ quantRouter.get("/strategy-scripts/:id", async (c) => {
  */
 quantRouter.post("/strategy-contract/compile", async (c) => {
   try {
-    const body = await c.req.json<{ code?: string; strategyCode?: string }>();
+    const body = await c.req.json<{
+      code?: string;
+      strategyCode?: string;
+      sessionId?: string;
+      workflowRunId?: string;
+      scriptId?: string;
+      name?: string;
+      persist?: boolean;
+    }>();
     const code = String(body.code ?? body.strategyCode ?? "").trim();
     if (!code) return c.json({ ok: false, error: "code_required" }, 400);
     const { compileStrategyContract } = await import(
@@ -635,7 +643,43 @@ quantRouter.post("/strategy-contract/compile", async (c) => {
     );
     const result = await compileStrategyContract(code);
     if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
-    return c.json({ ok: true, data: result });
+    let persistMeta: Record<string, unknown> | undefined;
+    const shouldPersist =
+      body.persist !== false &&
+      Boolean(
+        String(body.sessionId ?? "").trim() ||
+          String(body.workflowRunId ?? "").trim() ||
+          String(body.scriptId ?? "").trim()
+      );
+    if (shouldPersist) {
+      const { persistCompiledStrategyScript } = await import(
+        "../runtime/strategy/v2/persist-compiled-script"
+      );
+      const persist = await persistCompiledStrategyScript({
+        code,
+        manifest: result.manifest,
+        sessionId: body.sessionId,
+        workflowRunId: body.workflowRunId,
+        scriptId: body.scriptId,
+        name: body.name,
+      });
+      persistMeta = persist.persisted
+        ? {
+            persisted: true,
+            scriptId: persist.scriptId,
+            scriptName: persist.name,
+            created: persist.created,
+            artifactDir: persist.artifactDir,
+          }
+        : { persisted: false, persistReason: persist.reason };
+    }
+    return c.json({
+      ok: true,
+      data: {
+        ...result,
+        ...(persistMeta ?? {}),
+      },
+    });
   } catch (e) {
     return c.json({ ok: false, error: (e as Error).message }, 500);
   }

@@ -125,9 +125,31 @@ class DiscoveryContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
 
-    def set_universe(self, symbols: list[str] | None = None, **kwargs: Any) -> None:
-        if symbols:
-            self.universe = [str(s).strip() for s in symbols if str(s).strip()]
+    def set_universe(self, symbols: list[str] | str | None = None, **kwargs: Any) -> None:
+        """Accept list or single symbol string; normalize US-NVDA → US:NVDA."""
+        raw: list[str] = []
+        if isinstance(symbols, str):
+            raw = [symbols]
+        elif symbols:
+            raw = [str(s) for s in symbols]
+        if raw:
+            normalized: list[str] = []
+            for s in raw:
+                t = str(s).strip()
+                if not t:
+                    continue
+                # Common LLM slip: US-NVDA instead of US:NVDA
+                if "-" in t and ":" not in t and t.upper()[:3] in (
+                    "US-",
+                    "HK-",
+                    "CN-",
+                    "SH-",
+                    "SZ-",
+                ):
+                    mkt, _, rest = t.partition("-")
+                    t = f"{mkt.upper()}:{rest}"
+                normalized.append(t)
+            self.universe = normalized
         elif "index" in kwargs:
             self.universe = [f"INDEX:{kwargs['index']}"]
         elif "pool" in kwargs:
@@ -137,8 +159,20 @@ class DiscoveryContext:
         self,
         frequency: str = "1d",
         fields: list[str] | None = None,
-        symbols: list[str] | None = None,
+        symbols: list[str] | str | None = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
+        # Tolerate LLM slips: subscribe("1d"), subscribe(factor_id), subscribe(["close"])
+        if args and not fields and symbols is None:
+            first = args[0]
+            if isinstance(first, str) and first in ("1d", "1h", "5m", "15m", "30m", "1m", "1w"):
+                frequency = first
+            elif isinstance(first, list):
+                fields = [str(x) for x in first]
+            # else ignore bogus factor uuid etc.
+        if isinstance(symbols, str):
+            symbols = [symbols]
         self.subscriptions.append(
             {
                 "frequency": frequency,

@@ -149,6 +149,7 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
     expect(fundamental.tools).not.toContain("market.readiness");
     expectTools("def-analyst-fundamental", [
       "fetch_fundamentals",
+      "fetch_financial_data",
       "compute_valuation",
       "research.thesis.write",
     ]);
@@ -175,6 +176,11 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       expect(BY_ID.get(id)!.version.startsWith("3.")).toBe(true);
     }
     expect(BY_ID.get("def-market-data")!.version.startsWith("2.")).toBe(true);
+  });
+
+  test("基本面挂 investor-agent，news 不挂行情 MCP", () => {
+    expect(BY_ID.get("def-analyst-fundamental")?.mcpServers).toContain("investor-agent");
+    expect(BY_ID.get("def-news-event")?.mcpServers).not.toContain("investor-agent");
   });
 
   test("def-walk-forward-validator 装齐 backtest + batch evaluate", () => {
@@ -311,7 +317,6 @@ describe("Seed Agent 定义 — 精品工具面契约", () => {
       "def-analyst-fundamental": [
         "run_screener",
         "edit_agent_pack",
-        "fetch_financial_data",
         "fetch_klines",
       ],
       "def-analyst-sentiment": [

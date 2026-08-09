@@ -38,32 +38,27 @@
   },
   {
     "id": "def-news-event",
-    "version": "3.4.1",
+    "version": "3.5.3",
     "display_name": "新闻事件",
-    "execution_kind": "reactor",
+    "execution_kind": "subagent",
     "labels": [
       "news_event",
       "events",
       "report"
     ],
     "identity_prompt_ref": "seed://def-news-event",
-    "default_recipe_id": "open",
+    "default_recipe_id": "news",
     "tool_surface_ref": "tools://def-news-event",
     "model_ref": null,
-    "max_iterations": 5,
+    "max_iterations": 4,
     "hitl_profile_ref": null,
     "allowed_callers": [],
-    "triggers": [
-      {
-        "kind": "domain_event",
-        "event_name": "market.news"
-      }
-    ],
+    "triggers": [],
     "enabled": true
   },
   {
     "id": "def-analyst-fundamental",
-    "version": "3.6.0",
+    "version": "3.6.1",
     "display_name": "基本面研究员",
     "execution_kind": "subagent",
     "labels": [

@@ -1,4 +1,4 @@
-import { eq, inArray, asc, desc } from "drizzle-orm";
+import { asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../../db/sqlite/client";
 import {
   agentDefinition,
@@ -15,7 +15,7 @@ import {
   toolCallLog,
   workflowRun,
 } from "../../db/sqlite/schema";
-import { parseAgentPlanSnapshot, type AgentPlanSnapshot } from "../agent-control-mode";
+import { type AgentPlanSnapshot, parseAgentPlanSnapshot } from "../agent-control-mode";
 import { compactHeavyJson } from "../util/compact-heavy-json";
 
 /** UI sync budget: long sessions must not dump the whole history in one team-graph GET. */
@@ -235,52 +235,61 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
 }> {
   const db = await getDb();
 
-  const [loggedDesc, signals, sessions, instances, stepsDesc, mcpRowsDesc, workflowRows, conversationRowsDesc] =
-    await Promise.all([
-      db
-        .select()
-        .from(researchTeamInteraction)
-        .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
-        .orderBy(desc(researchTeamInteraction.createdAt))
-        .limit(TEAM_GRAPH_INTERACTION_LIMIT),
-      db.select().from(analystSignal).where(eq(analystSignal.workflowRunId, workflowRunId)),
-      db.select().from(debateSession).where(eq(debateSession.workflowRunId, workflowRunId)),
-      db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
-      db
-        .select()
-        .from(agentStep)
-        .where(eq(agentStep.workflowRunId, workflowRunId))
-        .orderBy(desc(agentStep.createdAt))
-        .limit(TEAM_GRAPH_STEP_LIMIT),
-      db
-        .select({
-          id: mcpCallLog.id,
-          agentStepId: mcpCallLog.agentStepId,
-          serverName: mcpCallLog.serverName,
-          toolName: mcpCallLog.toolName,
-          status: mcpCallLog.status,
-          latencyMs: mcpCallLog.latencyMs,
-          createdAt: mcpCallLog.createdAt,
-          requestJson: mcpCallLog.requestJson,
-          errorCode: mcpCallLog.errorCode,
-        })
-        .from(mcpCallLog)
-        .where(eq(mcpCallLog.workflowRunId, workflowRunId))
-        .orderBy(desc(mcpCallLog.createdAt))
-        .limit(TEAM_GRAPH_MCP_LIMIT),
-      db
-        .select({ planJson: workflowRun.planJson })
-        .from(workflowRun)
-        .where(eq(workflowRun.id, workflowRunId))
-        .limit(1),
-      db
-        .select({ message: chatMessage })
-        .from(chatMessageWorkflowLink)
-        .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
-        .where(eq(chatMessageWorkflowLink.workflowRunId, workflowRunId))
-        .orderBy(desc(chatMessage.createdAt))
-        .limit(TEAM_GRAPH_INTERACTION_LIMIT),
-    ]);
+  const [
+    loggedDesc,
+    signals,
+    sessions,
+    instances,
+    stepsDesc,
+    mcpRowsDesc,
+    workflowRows,
+    conversationRowsDesc,
+  ] = await Promise.all([
+    db
+      .select()
+      .from(researchTeamInteraction)
+      .where(eq(researchTeamInteraction.workflowRunId, workflowRunId))
+      .orderBy(desc(researchTeamInteraction.createdAt))
+      .limit(TEAM_GRAPH_INTERACTION_LIMIT),
+    db.select().from(analystSignal).where(eq(analystSignal.workflowRunId, workflowRunId)),
+    db.select().from(debateSession).where(eq(debateSession.workflowRunId, workflowRunId)),
+    db.select().from(agentInstance).where(eq(agentInstance.workflowRunId, workflowRunId)),
+    db
+      .select()
+      .from(agentStep)
+      .where(eq(agentStep.workflowRunId, workflowRunId))
+      .orderBy(desc(agentStep.createdAt))
+      .limit(TEAM_GRAPH_STEP_LIMIT),
+    db
+      .select({
+        id: mcpCallLog.id,
+        agentStepId: mcpCallLog.agentStepId,
+        serverName: mcpCallLog.serverName,
+        toolName: mcpCallLog.toolName,
+        status: mcpCallLog.status,
+        latencyMs: mcpCallLog.latencyMs,
+        createdAt: mcpCallLog.createdAt,
+        requestJson: mcpCallLog.requestJson,
+        responseJson: mcpCallLog.responseJson,
+        errorCode: mcpCallLog.errorCode,
+      })
+      .from(mcpCallLog)
+      .where(eq(mcpCallLog.workflowRunId, workflowRunId))
+      .orderBy(desc(mcpCallLog.createdAt))
+      .limit(TEAM_GRAPH_MCP_LIMIT),
+    db
+      .select({ planJson: workflowRun.planJson })
+      .from(workflowRun)
+      .where(eq(workflowRun.id, workflowRunId))
+      .limit(1),
+    db
+      .select({ message: chatMessage })
+      .from(chatMessageWorkflowLink)
+      .innerJoin(chatMessage, eq(chatMessage.id, chatMessageWorkflowLink.chatMessageId))
+      .where(eq(chatMessageWorkflowLink.workflowRunId, workflowRunId))
+      .orderBy(desc(chatMessage.createdAt))
+      .limit(TEAM_GRAPH_INTERACTION_LIMIT),
+  ]);
 
   const logged = [...loggedDesc].reverse();
   const steps = [...stepsDesc].reverse();
@@ -311,7 +320,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
             createdAt: toolCallLog.createdAt,
             errorMessage: toolCallLog.errorMessage,
             requestJson: toolCallLog.requestJson,
-            // responseJson omitted: bars/equity/traces dominate payload size
+            responseJson: toolCallLog.responseJson,
           })
           .from(toolCallLog)
           .where(inArray(toolCallLog.agentStepId, stepIds))
@@ -343,24 +352,29 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     createdAt: s.createdAt,
   }));
 
-  const toolCalls: TeamGraphToolCall[] = allTools.map((t) => {
-    const st = stepById.get(t.agentStepId);
-    const ar = st ? (instanceRole.get(st.agentInstanceId) ?? "unknown") : "unknown";
-    return {
-      id: t.id,
-      agentRole: ar,
-      agentInstanceId: st?.agentInstanceId ?? "",
-      toolName: t.toolName,
-      toolKind: t.toolKind,
-      status: t.status,
-      latencyMs: t.latencyMs,
-      createdAt: t.createdAt,
-      agentStepId: t.agentStepId,
-      requestJson: compactHeavyJson(t.requestJson),
-      responseJson: null,
-      errorMessage: t.errorMessage,
-    };
-  });
+  // MCP calls are persisted in both tool_call_log and mcp_call_log. Excluding
+  // them here prevents double rendering/counting; the dedicated mcpCalls list
+  // below remains the authoritative MCP surface.
+  const toolCalls: TeamGraphToolCall[] = allTools
+    .filter((t) => t.toolKind !== "mcp")
+    .map((t) => {
+      const st = stepById.get(t.agentStepId);
+      const ar = st ? (instanceRole.get(st.agentInstanceId) ?? "unknown") : "unknown";
+      return {
+        id: t.id,
+        agentRole: ar,
+        agentInstanceId: st?.agentInstanceId ?? "",
+        toolName: t.toolName,
+        toolKind: t.toolKind,
+        status: t.status,
+        latencyMs: t.latencyMs,
+        createdAt: t.createdAt,
+        agentStepId: t.agentStepId,
+        requestJson: compactHeavyJson(t.requestJson),
+        responseJson: compactHeavyJson(t.responseJson),
+        errorMessage: t.errorMessage,
+      };
+    });
 
   const mcpCalls: TeamGraphMcpCall[] = mcpRows.map((m) => {
     const st = stepById.get(m.agentStepId);
@@ -375,7 +389,7 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
       latencyMs: m.latencyMs,
       createdAt: m.createdAt,
       requestJson: compactHeavyJson(m.requestJson),
-      responseJson: null,
+      responseJson: compactHeavyJson(m.responseJson),
       errorCode: m.errorCode ?? null,
     };
   });
@@ -400,15 +414,6 @@ export async function buildTeamWorkflowGraph(workflowRunId: string): Promise<{
     toolFailCount: 0,
     skillCount: 0,
   });
-
-  const bumpEdge = (x: string, y: string, messages: number, tools: number) => {
-    if (!x || !y || x === y) return;
-    const k = undirectedKey(x, y);
-    const cur = edgeMap.get(k) ?? emptyAgg();
-    cur.messageCount += messages;
-    cur.toolCount += tools;
-    edgeMap.set(k, cur);
-  };
 
   const bumpDirectedMessage = (from: string, to: string) => {
     if (!from || !to || from === to) return;

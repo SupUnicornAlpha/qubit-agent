@@ -85,6 +85,38 @@ describe("strategy contract v2", () => {
     expect(r.manifest.codeHash.length).toBe(64);
   });
 
+  test("compile normalizes set_universe string US-NVDA", async () => {
+    const code = `
+def initialize(context):
+    context.set_universe("US-NVDA")
+    context.subscribe(frequency="1d", fields=["close"])
+    context.set_warmup(5)
+
+def handle_data(context, data):
+    pass
+`;
+    const r = await compileStrategyContract(code);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.universe.instruments[0]?.instrumentId).toBe("US:NVDA");
+  });
+
+  test("compile accepts set_universe list", async () => {
+    const code = `
+def initialize(context):
+    context.set_universe(["US:AAPL"])
+    context.subscribe(frequency="1d")
+    context.set_warmup(2)
+
+def handle_data(context, data):
+    pass
+`;
+    const r = await compileStrategyContract(code);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.manifest.universe.instruments[0]?.instrumentId).toBe("US:AAPL");
+  });
+
   test("instrumentIdToKlinesSymbol strips prefix", () => {
     expect(instrumentIdToKlinesSymbol("US:SPY")).toBe("SPY");
     expect(instrumentIdToKlinesSymbol("CN:600519.SH")).toBe("600519.SH");

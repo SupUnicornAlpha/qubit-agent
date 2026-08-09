@@ -64,6 +64,32 @@ describe("detectSemanticToolFailure", () => {
     ).toBeNull();
   });
 
+  test("does not reject successful snapshots because optional arrays are empty", () => {
+    expect(
+      detectSemanticToolFailure("market.snapshot.get", {
+        builtinResult: {
+          ok: true,
+          snapshotId: "mkt_snapshot_1",
+          warnings: [],
+          snapshot: { corporateActions: [] },
+        },
+      })
+    ).toBeNull();
+  });
+
+  test("keeps partial financial data when price evidence exists", () => {
+    expect(
+      detectSemanticToolFailure("fetch_financial_data", {
+        connectorResult: {
+          symbol: "603986.SH",
+          barCount: 120,
+          priceStats: { lastClose: 100 },
+          fundamentals: { periods: [] },
+        },
+      })
+    ).toBeNull();
+  });
+
   test("marks a timed-out topology child as semantic failure", () => {
     expect(
       detectSemanticToolFailure("call_team_analyst_technical", {
@@ -146,5 +172,36 @@ describe("detectSemanticToolFailure", () => {
         },
       })
     ).toBeNull();
+  });
+
+  test("marks MCP isError + Invalid arguments as validation failure", () => {
+    expect(
+      detectSemanticToolFailure("mcp:investor-agent:get_stock_info", {
+        accepted: true,
+        output: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: 'MCP error -32602: Invalid arguments for tool get_stock_info: [{"path":["modules"],"message":"Required"}]',
+            },
+          ],
+        },
+      })
+    ).toBe("mcp_validation_error");
+  });
+
+  test("unwraps bridge-shaped mcpResult with isError", () => {
+    expect(
+      detectSemanticToolFailure("mcp:investor-agent:get_stock_info", {
+        mcpResult: {
+          accepted: true,
+          output: {
+            isError: true,
+            content: [{ type: "text", text: "MCP error -32602: Invalid arguments" }],
+          },
+        },
+      })
+    ).toBe("mcp_validation_error");
   });
 });

@@ -14,24 +14,28 @@
 
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { registerBuiltinConnectors } from "../connectors/bootstrap";
+import { connectorRegistry } from "../connectors/registry";
 import { getDb } from "../db/sqlite/client";
 import { workflowRun } from "../db/sqlite/schema";
-import {
-  getPrimeBridgeRunContext,
-  workflowIdFromCoreWorkspace,
-} from "../runtime/prime/bridge-run-context";
+import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
+import { loadOrchestratorTopologyForWorkflow } from "../runtime/orchestration/topology-dispatch";
 import {
   isMcpBridgeToolName,
   listBridgedMcpTools,
   resolveMcpInvokeTarget,
 } from "../runtime/prime/bridge-mcp";
+import {
+  getPrimeBridgeRunContext,
+  workflowIdFromCoreWorkspace,
+} from "../runtime/prime/bridge-run-context";
 import { projectCoreBridgeToolCall } from "../runtime/prime/project-core-activity";
 import { getCoreMonitorHandle } from "../runtime/prime/project-core-monitor";
-import { dispatchMcpToolCall } from "../runtime/mcp/dispatcher";
 import { dispatchBuiltinTool, isBuiltinTool } from "../runtime/tools/builtin-tools";
+import { detectSemanticToolFailure } from "../runtime/tools/semantic-tool-result";
+import { resolveConnectorForTool } from "../runtime/tools/tool-routes";
 import type { BuiltinToolContext } from "../runtime/tools/types";
 import type { RuntimeAgentDefinition } from "../runtime/types";
-import { loadOrchestratorTopologyForWorkflow } from "../runtime/orchestration/topology-dispatch";
 
 export const primeBridgeRouter = new Hono();
 
@@ -64,6 +68,19 @@ const BRIDGED_TOOLS = [
   "workspace.context.snapshot",
   "web.search",
   "web.fetch",
+  // Specialist read/analysis tools. AgentSpec `tool_surface_ref` is not yet
+  // resolved by Core, so every tool a child is expected to call must also be
+  // advertised by the legacy bridge (and mirrored in qubit-tool-host).
+  "fetch_klines",
+  "fetch_quote",
+  "fetch_financial_data",
+  "fetch_fundamentals",
+  "fetch_news",
+  "fetch_news_sentiment",
+  "compute_indicators",
+  "detect_patterns",
+  "compute_valuation",
+  "compute_macro_indicators",
   /** Orchestrator dispatch — list also injects dynamic call_team_* from topology. */
   "assign_task",
   "order.create_intent",
@@ -71,6 +88,35 @@ const BRIDGED_TOOLS = [
 ] as const;
 
 const BRIDGED_SET = new Set<string>(BRIDGED_TOOLS);
+
+function formatUnknownError(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name || "Error";
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    for (const key of ["message", "error", "summary", "errorMessage", "msg"] as const) {
+      const v = o[key];
+      if (typeof v === "string" && v.trim()) return v;
+    }
+    try {
+      return JSON.stringify(err).slice(0, 500);
+    } catch {
+      return Object.prototype.toString.call(err);
+    }
+  }
+  return String(err);
+}
+
+function observationOkFalse(observation: unknown): string | null {
+  if (!observation || typeof observation !== "object" || Array.isArray(observation)) return null;
+  const record = observation as Record<string, unknown>;
+  if (record.ok === false) {
+    if (typeof record.error === "string" && record.error.trim()) return record.error.trim();
+    if (typeof record.summary === "string" && record.summary.trim()) return record.summary.trim();
+    return "tool_returned_ok_false";
+  }
+  return null;
+}
 
 /** Static allowlist + topology `call_team_*` (and assign_task). */
 export function isBridgedLegacyToolName(name: string): boolean {
@@ -85,15 +131,13 @@ export function isBridgedLegacyToolName(name: string): boolean {
  * Models often nest real params under `arguments`; top-level wins on conflict.
  * Also normalizes common aliases so handlers that only look at one key still work.
  */
-export function unwrapBridgeToolArgs(
-  args: Record<string, unknown>
-): Record<string, unknown> {
+export function unwrapBridgeToolArgs(args: Record<string, unknown>): Record<string, unknown> {
   const nested =
     args.arguments && typeof args.arguments === "object" && !Array.isArray(args.arguments)
       ? (args.arguments as Record<string, unknown>)
       : null;
   const out: Record<string, unknown> = nested ? { ...nested, ...args } : { ...args };
-  delete out.arguments;
+  Reflect.deleteProperty(out, "arguments");
 
   if (out.projectId == null && typeof out.project_id === "string") {
     out.projectId = out.project_id;
@@ -142,6 +186,52 @@ export function unwrapBridgeToolArgs(
   return out;
 }
 
+/**
+ * Normalize common model aliases before invoking Bun builtins/connectors.
+ * Core's legacy tool list is intentionally compact and some providers do not
+ * reliably follow array-shaped schemas, so the bridge must be tolerant at the
+ * boundary instead of sending a guaranteed-empty request downstream.
+ */
+export function normalizeBridgeToolArgs(
+  toolName: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...args };
+
+  if (toolName === "web.fetch") {
+    const query = typeof next.query === "string" ? next.query.trim() : "";
+    if (next.url == null && next.uri == null && /^https?:\/\//i.test(query)) {
+      next.url = query;
+    }
+  }
+
+  if (toolName === "fetch_news" || toolName === "fetch_news_sentiment") {
+    if (!Array.isArray(next.symbols) || next.symbols.length === 0) {
+      const symbol =
+        (typeof next.symbol === "string" && next.symbol.trim()) ||
+        (typeof next.ticker === "string" && next.ticker.trim()) ||
+        "";
+      if (symbol) next.symbols = [symbol];
+    }
+    if (!Array.isArray(next.keywords) || next.keywords.length === 0) {
+      const query =
+        (typeof next.query === "string" && next.query.trim()) ||
+        (typeof next.keyword === "string" && next.keyword.trim()) ||
+        "";
+      if (query) next.keywords = [query];
+    }
+    const days = Number(next.days);
+    if (Number.isFinite(days) && days > 0 && next.startDate == null) {
+      const end = new Date();
+      const start = new Date(end.getTime() - Math.min(Math.floor(days), 365) * 86_400_000);
+      next.startDate = start.toISOString();
+      if (next.endDate == null) next.endDate = end.toISOString();
+    }
+  }
+
+  return next;
+}
+
 async function projectIdForWorkflow(workflowId: string): Promise<string | undefined> {
   if (!workflowId || workflowId === "prime-bridge") return undefined;
   try {
@@ -158,7 +248,10 @@ async function projectIdForWorkflow(workflowId: string): Promise<string | undefi
   }
 }
 
-function resolveBridgeActivity(params: Record<string, unknown>, callId: string): {
+function resolveBridgeActivity(
+  params: Record<string, unknown>,
+  callId: string
+): {
   workflowId: string;
   runId: string;
   traceId: string;
@@ -176,8 +269,7 @@ function resolveBridgeActivity(params: Record<string, unknown>, callId: string):
   return {
     workflowId,
     runId:
-      active?.runId ||
-      (typeof params.run_id === "string" ? params.run_id : `bridge-${callId}`),
+      active?.runId || (typeof params.run_id === "string" ? params.run_id : `bridge-${callId}`),
     traceId:
       active?.traceId ||
       (typeof params.trace_id === "string" ? params.trace_id : `bridge-${callId}`),
@@ -258,34 +350,62 @@ async function invokeMcpViaBridge(input: {
     });
   }
 
+  const normalizedArgs = normalizeInvestorAgentArgs(
+    target.serverName,
+    target.toolName,
+    target.arguments
+  );
+
   try {
     const result = await dispatchMcpToolCall({
       serverName: target.serverName,
       toolName: target.toolName,
-      arguments: target.arguments,
+      arguments: normalizedArgs,
     });
+    const wireName = `mcp:${target.serverName}:${target.toolName}`;
+    const semanticFailure = detectSemanticToolFailure(wireName, {
+      mcpResult: {
+        accepted: result.accepted,
+        output: result.output,
+      },
+      ...result,
+    });
+    const outputIsError =
+      result.output &&
+      typeof result.output === "object" &&
+      (result.output as { isError?: unknown }).isError === true;
+    const ok = Boolean(result.accepted) && !outputIsError && !semanticFailure;
+    const failureCode = semanticFailure
+      ? `semantic_data_failure:${semanticFailure}`
+      : outputIsError
+        ? "mcp_is_error"
+        : result.accepted
+          ? null
+          : "mcp_rejected";
     const observation = {
-      summary: result.accepted
+      summary: ok
         ? `mcp ${target.serverName}/${target.toolName} ok`
-        : `mcp ${target.serverName}/${target.toolName} rejected`,
+        : `mcp ${target.serverName}/${target.toolName} failed${semanticFailure ? ` (${semanticFailure})` : outputIsError ? " (isError)" : ""}`,
       serverName: result.serverName,
       toolName: result.toolName,
       transport: result.transport,
       accepted: result.accepted,
       output: result.output,
+      ...(normalizedArgs !== target.arguments ? { normalizedArguments: normalizedArgs } : {}),
+      ...(semanticFailure ? { semanticFailure } : {}),
     };
     if (activity.workflowId !== "prime-bridge") {
       await projectCoreBridgeToolCall({
         ctx: activity,
         toolCallId: callId,
         toolName: name,
-        ok: result.accepted,
-        args,
+        ok,
+        args: normalizedArgs,
         observation,
         mcp: {
           serverName: target.serverName,
           toolName: target.toolName,
-          arguments: target.arguments,
+          arguments: normalizedArgs,
           transport: result.transport,
         },
       });
@@ -295,33 +415,35 @@ async function invokeMcpViaBridge(input: {
       id: rpcId,
       result: {
         call_id: callId,
-        ok: result.accepted,
+        ok,
         observation,
-        effects: [
-          {
-            kind: "other",
-            key: `mcp:${target.serverName}:${target.toolName}`,
-            meta: { via: "prime-bridge", transport: result.transport },
-          },
-        ],
+        effects: ok
+          ? [
+              {
+                kind: "other",
+                key: `mcp:${target.serverName}:${target.toolName}`,
+                meta: { via: "prime-bridge", transport: result.transport },
+              },
+            ]
+          : [],
         retryable: false,
-        error_code: result.accepted ? null : "mcp_rejected",
+        error_code: failureCode,
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = formatUnknownError(err);
     if (activity.workflowId !== "prime-bridge") {
       await projectCoreBridgeToolCall({
         ctx: activity,
         toolCallId: callId,
         toolName: name,
         ok: false,
-        args,
+        args: normalizedArgs,
         observation: { summary: message },
         mcp: {
           serverName: target.serverName,
           toolName: target.toolName,
-          arguments: target.arguments,
+          arguments: normalizedArgs,
         },
       });
     }
@@ -338,6 +460,44 @@ async function invokeMcpViaBridge(input: {
       },
     });
   }
+}
+
+/**
+ * investor-agent get_stock_info requires `modules: string[]`.
+ * Models often pass only symbol/ticker → MCP -32602 while transport still "accepted".
+ */
+export function normalizeInvestorAgentArgs(
+  serverName: string,
+  toolName: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  if (serverName !== "investor-agent") return args;
+  const next: Record<string, unknown> = { ...args };
+  let sym =
+    (typeof next.symbol === "string" && next.symbol.trim()) ||
+    (typeof next.ticker === "string" && next.ticker.trim()) ||
+    "";
+  if (sym) {
+    // investor-agent is Yahoo-backed: Shanghai uses .SS, not the domestic .SH alias.
+    if (/^\d{6}\.SH$/i.test(sym)) sym = `${sym.slice(0, 6)}.SS`;
+    if (/^\d{6}$/.test(sym)) {
+      sym = /^[569]/.test(sym) ? `${sym}.SS` : `${sym}.SZ`;
+    }
+    next.symbol = sym;
+    next.ticker = sym;
+  }
+  if (toolName === "technical_indicator" && typeof next.indicator === "string") {
+    const indicator = next.indicator.trim().toUpperCase().replace(/[ -]+/g, "_");
+    next.indicator =
+      indicator === "BOLLINGER" || indicator === "BOLLINGER_BANDS" ? "BBANDS" : indicator;
+  }
+  if (
+    toolName === "get_stock_info" &&
+    (!Array.isArray(next.modules) || next.modules.length === 0)
+  ) {
+    next.modules = ["price", "summaryDetail", "defaultKeyStatistics", "financialData"];
+  }
+  return next;
 }
 
 primeBridgeRouter.post("/rpc", async (c) => {
@@ -359,7 +519,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
       const topology = await loadOrchestratorTopologyForWorkflow().catch(() => null);
       const teamTools = [
         "assign_task",
-        ...((topology?.toolNames ?? []).filter((n) => n.startsWith("call_team_"))),
+        ...(topology?.toolNames ?? []).filter((n) => n.startsWith("call_team_")),
       ];
       const names = [...new Set<string>([...BRIDGED_TOOLS, ...teamTools])];
       return c.json({
@@ -392,7 +552,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
         params.args && typeof params.args === "object"
           ? (params.args as Record<string, unknown>)
           : {};
-      const args = unwrapBridgeToolArgs(rawArgs);
+      const args = normalizeBridgeToolArgs(name, unwrapBridgeToolArgs(rawArgs));
       const activity = resolveBridgeActivity(params, callId);
       const projectId = await projectIdForWorkflow(activity.workflowId);
 
@@ -421,14 +581,14 @@ primeBridgeRouter.post("/rpc", async (c) => {
         });
       }
 
-      if (!isBuiltinTool(name)) {
+      if (!isBuiltinTool(name) && !resolveConnectorForTool(name)) {
         return c.json({
           jsonrpc: "2.0",
           id: body.id,
           result: {
             call_id: callId,
             ok: false,
-            observation: { summary: `not a builtin tool: ${name}` },
+            observation: { summary: `not a builtin/connector tool: ${name}` },
             effects: [],
             retryable: false,
             error_code: "not_builtin",
@@ -437,22 +597,51 @@ primeBridgeRouter.post("/rpc", async (c) => {
       }
 
       try {
-        const observation = await dispatchBuiltinTool(
-          name,
-          bridgeContext(callId, activity, projectId),
-          args
-        );
+        let observation: unknown;
+        if (isBuiltinTool(name)) {
+          observation = await dispatchBuiltinTool(
+            name,
+            bridgeContext(callId, activity, projectId),
+            args
+          );
+        } else {
+          const connectorName = resolveConnectorForTool(name);
+          if (!connectorName) throw new Error(`connector route not found: ${name}`);
+          await registerBuiltinConnectors();
+          const conn = connectorRegistry.get(connectorName);
+          if (!conn) {
+            throw new Error(`connector not registered: ${connectorName}`);
+          }
+          observation = await conn.execute(name, args);
+        }
+        const semanticFailure = detectSemanticToolFailure(name, {
+          connectorResult: observation,
+          ...(observation && typeof observation === "object"
+            ? (observation as Record<string, unknown>)
+            : {}),
+        });
+        const okFalseReason = observationOkFalse(observation);
+        const failureReason = semanticFailure || okFalseReason;
+        const ok = !failureReason;
+        const summary = ok
+          ? `connector/tool ${name} ok`
+          : `connector/tool ${name} failed (${failureReason})`;
+        const observationOut =
+          observation && typeof observation === "object"
+            ? {
+                ...(observation as object),
+                summary,
+                ...(failureReason ? { semanticFailure: failureReason } : {}),
+              }
+            : { summary };
         if (activity.workflowId !== "prime-bridge") {
           await projectCoreBridgeToolCall({
             ctx: activity,
             toolCallId: callId,
             toolName: name,
-            ok: true,
+            ok,
             args,
-            observation:
-              observation && typeof observation === "object"
-                ? observation
-                : { summary: String(observation) },
+            observation: observationOut,
           });
         }
         return c.json({
@@ -460,24 +649,23 @@ primeBridgeRouter.post("/rpc", async (c) => {
           id: body.id,
           result: {
             call_id: callId,
-            ok: true,
-            observation:
-              observation && typeof observation === "object"
-                ? observation
-                : { summary: String(observation) },
-            effects: [
-              {
-                kind: "other",
-                key: name,
-                meta: { via: "prime-bridge" },
-              },
-            ],
+            ok,
+            observation: observationOut,
+            effects: ok
+              ? [
+                  {
+                    kind: "other",
+                    key: name,
+                    meta: { via: "prime-bridge" },
+                  },
+                ]
+              : [],
             retryable: false,
-            error_code: null,
+            error_code: failureReason ? `semantic_data_failure:${failureReason}` : null,
           },
         });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = formatUnknownError(err);
         if (activity.workflowId !== "prime-bridge") {
           await projectCoreBridgeToolCall({
             ctx: activity,
@@ -514,7 +702,7 @@ primeBridgeRouter.post("/rpc", async (c) => {
       id: body.id ?? null,
       error: {
         code: -32000,
-        message: err instanceof Error ? err.message : String(err),
+        message: formatUnknownError(err),
       },
     });
   }

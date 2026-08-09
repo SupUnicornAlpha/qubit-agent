@@ -24,7 +24,10 @@ import {
   type FsMemoryEntry,
 } from "../../api/backend";
 import { AgentModePicker, getAgentModeOption } from "../chat/AgentModePicker";
-import { ChatExecutionActivity } from "../chat/ChatExecutionActivity";
+import {
+  buildChatExecutionActivity,
+  ChatExecutionActivity,
+} from "../chat/ChatExecutionActivity";
 import type { SubAgentRunSummary } from "../../lib/subAgentRuns";
 import { type LiveConversationEvent, LiveConversationView } from "./LiveConversationView";
 import {
@@ -37,8 +40,10 @@ import { AgentRunPanel } from "./AgentRunChatView";
 import { TeamHitlBanner } from "./TeamHitlBanner";
 import { WorkflowResumeBanner } from "./WorkflowResumeBanner";
 import { type OrchestratorPlan, PlanCard } from "./PlanCard";
-import type { PlanTimelineSegment } from "./planSegments";
-import { buildChatExecutionActivity } from "../chat/ChatExecutionActivity";
+import {
+  splitEventsForPlanPlacement,
+  type PlanTimelineSegment,
+} from "./planSegments";
 
 export type OrchestratorHitlMode = "off" | "ai" | "always";
 
@@ -286,7 +291,8 @@ export function OrchestratorChatPanel({
 
   /**
    * 按 plan 段落切对话：
-   *   [preface events] → [plan1 + events until plan2] → [plan2 + ...]
+   *   [preface events] → [plan1 时段 events] → [plan2 时段 events] …
+   * PlanCard 再插到「触发该 plan 的用户消息」之后（见 splitEventsForPlanPlacement）。
    * 进度更新不新开段，只刷新对应 PlanCard。
    */
   const planTimelineSections = useMemo(() => {
@@ -296,6 +302,7 @@ export function OrchestratorChatPanel({
     type Section = {
       key: string;
       plan: OrchestratorPlan | null;
+      planStartedAt: string | null;
       segmentIndex: number | null;
       isLatest: boolean;
       events: LiveConversationEvent[];
@@ -305,6 +312,7 @@ export function OrchestratorChatPanel({
         {
           key: "preface",
           plan: plan?.steps?.length ? plan : null,
+          planStartedAt: plan?.updatedAt ?? null,
           segmentIndex: plan?.steps?.length ? 0 : null,
           isLatest: true,
           events: sorted,
@@ -318,6 +326,7 @@ export function OrchestratorChatPanel({
       sections.push({
         key: "preface",
         plan: null,
+        planStartedAt: null,
         segmentIndex: null,
         isLatest: false,
         events: preface,
@@ -332,6 +341,7 @@ export function OrchestratorChatPanel({
       sections.push({
         key: seg.id,
         plan: seg.plan,
+        planStartedAt: seg.startedAt,
         segmentIndex: i,
         isLatest: i === planSegments.length - 1,
         events: chunk,
@@ -657,6 +667,66 @@ export function OrchestratorChatPanel({
             sectionIdx === 0 &&
             planTimelineSections.every((s) => s.events.length === 0) &&
             !section.plan;
+          const { leading, trailing } = section.plan
+            ? splitEventsForPlanPlacement(section.events, section.planStartedAt)
+            : { leading: section.events, trailing: [] as typeof section.events };
+          const planCard = section.plan ? (
+            <PlanCard
+              plan={section.plan}
+              segmentLabel={
+                section.segmentIndex != null
+                  ? `任务 ${section.segmentIndex + 1}`
+                  : undefined
+              }
+              defaultOpen={section.isLatest}
+              onExecute={section.isLatest ? onExecutePlan : undefined}
+              onGoalAction={section.isLatest ? onGoalAction : undefined}
+              executeDisabled={
+                !section.isLatest || running || chatInFlight || expertsActive
+              }
+            />
+          ) : null;
+          const renderConv = (
+            events: typeof section.events,
+            opts?: { empty?: boolean; withArtifacts?: boolean }
+          ) =>
+            events.length > 0 || opts?.empty ? (
+              <LiveConversationView
+                events={events}
+                selfRole="orchestrator"
+                contentMaxLength={12000}
+                collapseA2AFromRole="orchestrator"
+                collapseToolCalls
+                layout="stream"
+                artifacts={opts?.withArtifacts ? artifacts : []}
+                onOpenArtifact={onOpenArtifact}
+                onOpenRef={(ref) => {
+                  const kind =
+                    ref.kind === "factor"
+                      ? "factor"
+                      : ref.kind === "strategy_version"
+                        ? "strategy"
+                        : null;
+                  if (kind) {
+                    onOpenArtifact({
+                      id: ref.id,
+                      kind,
+                      title: ref.id,
+                      workflowRunId,
+                    });
+                  }
+                }}
+                emptyText={
+                  opts?.empty
+                    ? !wfId
+                      ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
+                      : running
+                        ? "Orchestrator 已启动，正在规划与按需派发专家…"
+                        : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
+                    : undefined
+                }
+              />
+            ) : null;
           return (
             <div
               key={section.key}
@@ -668,59 +738,21 @@ export function OrchestratorChatPanel({
                   新任务段落
                 </div>
               ) : null}
-              {section.plan ? (
-                <PlanCard
-                  plan={section.plan}
-                  segmentLabel={
-                    section.segmentIndex != null
-                      ? `任务 ${section.segmentIndex + 1}`
-                      : undefined
-                  }
-                  defaultOpen={section.isLatest}
-                  onExecute={section.isLatest ? onExecutePlan : undefined}
-                  onGoalAction={section.isLatest ? onGoalAction : undefined}
-                  executeDisabled={
-                    !section.isLatest || running || chatInFlight || expertsActive
-                  }
-                />
-              ) : null}
-              {section.events.length > 0 || showEmpty ? (
-                <LiveConversationView
-                  events={section.events}
-                  selfRole="orchestrator"
-                  contentMaxLength={12000}
-                  collapseA2AFromRole="orchestrator"
-                  collapseToolCalls
-                  layout="stream"
-                  artifacts={section.isLatest ? artifacts : []}
-                  onOpenArtifact={onOpenArtifact}
-                  onOpenRef={(ref) => {
-                    const kind =
-                      ref.kind === "factor"
-                        ? "factor"
-                        : ref.kind === "strategy_version"
-                          ? "strategy"
-                          : null;
-                    if (kind) {
-                      onOpenArtifact({
-                        id: ref.id,
-                        kind,
-                        title: ref.id,
-                        workflowRunId,
-                      });
-                    }
-                  }}
-                  emptyText={
-                    showEmpty
-                      ? !wfId
-                        ? "请先在左侧选择或新建工作流，再与 Orchestrator 对话。"
-                        : running
-                          ? "Orchestrator 已启动，正在规划与按需派发专家…"
-                          : "输入研究指令并发送。Orchestrator 会直接回答，或按需召唤专家；派发后可在上方「专家进度」查看运行状态。"
-                      : undefined
-                  }
-                />
-              ) : null}
+              {section.plan
+                ? (
+                    <>
+                      {renderConv(leading)}
+                      {planCard}
+                      {renderConv(trailing, {
+                        empty: showEmpty && leading.length === 0 && trailing.length === 0,
+                        withArtifacts: section.isLatest,
+                      })}
+                    </>
+                  )
+                : renderConv(section.events, {
+                    empty: showEmpty,
+                    withArtifacts: section.isLatest,
+                  })}
             </div>
           );
         })}

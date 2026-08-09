@@ -149,6 +149,11 @@ html {
   display: grid;
   gap: 6px;
   padding: 0 8px 8px;
+  /* ~10 collapsed call rows; expand <details> still scrolls inside */
+  max-height: calc(10 * 44px + 9 * 6px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 [data-qb-chat-panel] .qb-chat-call-card,

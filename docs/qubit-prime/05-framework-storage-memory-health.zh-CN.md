@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 文档状态 | **落地跟踪 v0.3 · Core 保持薄；传输/数据/L2 外置** |
+| 文档状态 | **落地跟踪 v0.4 · LTM 双路召回 + Experience→FS 投影** |
 | 日期 | 2026-08-05 |
 | 目的 | 盘点 Runtime / 工具 / Harness 健康度；厘清 JSON(FS) vs SQLite 边界；说明长期记忆现状与 Workspace 关联路径 |
 | 上游 | [README](./README.md) · [01 Runtime](./01-runtime-core-rust.zh-CN.md) · [02 Workbench](./02-ui-cursor-workbench.zh-CN.md) · [04 Plugins](./04-internet-tools-and-plugin-system.zh-CN.md) |
@@ -244,7 +244,8 @@ Rust Core 热路径 checkpoint       → 独立 SQLite（可与 O2 合并评估�
 | **WorkingMemory** | TS `context/working-memory.ts`；协议 `working_memory.schema.json` | Core IN（组装骨架） | 回合内假设/决策/trail；**非**长期持久 |
 | **Memory V2 Experience** | `experience` 表 + Writer/Extractor/Reflector/Janitor/Recall | HOST / 工具 OUT of Core | **长期记忆主热路径** |
 | **Legacy 三层** | `session_memory` / `midterm_memory` / `longterm_memory` | 过渡 | consolidation 可双写；召回已转向 Experience |
-| **FS memory** | `builtin.fs_memory` → `memory/entries/*.json` + `MEMORY.md` | Workspace Provider | 用户可编辑课题记忆；**未进 reason 主召回** |
+| **FS memory** | `builtin.fs_memory` → `memory/entries/*.json` + `MEMORY.md` | Workspace Provider | 用户笔记 + **Experience 投影**；reason / `memory.recall` 双路召回 |
+| **Unified LTM** | `src/runtime/memory/long-term-memory.ts` | HOST | **A 双召回 + B 投影**；可选 Mem0 dual_write |
 | **Agent pack memory** | `agents/<id>/memory.md` 等 | Identity 冷镜像 | 与 FS MEMORY.md 职责不同，易混淆 |
 | **Rust RecallPort** | `EmptyRecallPort` 默认 | 端口 IN，实现 OUT | Core 路径默认空召回 |
 
@@ -277,7 +278,7 @@ Legacy：`memory-consolidation.ts` 仍可写 midterm；可用开关关停。金�
 | Legacy longterm | org/project/strategy + scopeId | 中（过渡） | 弱 / 转向 V2 |
 | `memory_backend_config.workspaceId` | FK → **DB workspace** | 弱（外挂配置） | 视后端 |
 | Agent pack `memory.md` | definitionId | 中（identity） | 间接 |
-| `builtin.fs_memory` | **FS workspace 目录** | 强（文件/UI） | **否（主路径）** |
+| `builtin.fs_memory` | **FS workspace 目录** | 强（文件/UI） | **是（双路 + 合并面板）** |
 | Context `WorkspaceContextPort` | open files / symbols / conventions | 上下文切片 | 非 LTM store |
 
 **结论**：今天 **可关联但未统一**——进化记忆挂 **project**；用户课题记忆挂 **FS 目录**；DB 租户 workspace 是第三套 ID。产品意图（02：长期结论进 `memory/`，transcript 不当记忆）已有 FS 骨架，但与 Experience 召回未打通。
@@ -308,7 +309,7 @@ Legacy：`memory-consolidation.ts` 仍可写 midterm；可用开关关停。金�
 | Memory V2 模型清晰度 | **高**（五 kind + visibility） |
 | 生产召回可用性 | **mid–late**（project 维） |
 | Legacy sunset | **未完**（双写仍在） |
-| FS ↔ Experience 统一 | **early**（最大产品缺口） |
+| FS ↔ Experience 统一 | **mid**（双召回 + Extractor 投影 + 合并面板） |
 | Core 路径记忆 | **early**（Empty ports） |
 | 文档真源 | schema 注释引用 `docs/MEMORY_V2_DESIGN.md`，仓库内 **未见该文件**——建议补回或改指向本文件 §4 |
 
@@ -359,3 +360,4 @@ Legacy：`memory-consolidation.ts` 仍可写 midterm；可用开关关停。金�
 | 2026-08-05 | v0.1 | 初稿：框架健康度 + 存储分层 + 长期记忆与 Workspace 关联分析 |
 | 2026-08-05 | v0.2 | 落地：CoreDb Session/HITL、BridgeRecall、JSON 真源 agents、scope=workspace |
 | 2026-08-05 | v0.3 | O1 SSE `/events`、protocol-ts、Recipe JSON 单源、Bridge L2 扩、BridgeWorkspacePort、fsWorkspaceId |
+| 2026-08-08 | v0.4 | LTM 多路：`long-term-memory` 双召回；Extractor→FS 投影；Workspace 面板合并 Experience |

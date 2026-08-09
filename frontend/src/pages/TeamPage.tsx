@@ -35,6 +35,7 @@ import {
 import { OrchestratorChatPanel, type OrchestratorArtifact } from "../components/team/OrchestratorChatPanel";
 import { FsWorkspaceExplorer } from "../components/workspace/FsWorkspaceExplorer";
 import { WorkspaceFilePane } from "../components/workspace/WorkspaceFilePane";
+import { TeamStrategyContractPane } from "../components/team/TeamStrategyContractPane";
 import { TeamResearchSettingsPanel } from "../components/team/TeamResearchSettingsPanel";
 import { buildSubAgentRunSummaries } from "../lib/subAgentRuns";
 import { classifyWorkflow, groupWorkflowOptions, WORKFLOW_KIND_LABEL, type WorkflowKind } from "../lib/workflowKind";
@@ -485,9 +486,9 @@ export const TeamDashboardPanel: FC = () => {
   const [graphSelection, setGraphSelection] = useState<TeamGraphSelection>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [teamGraphView, setTeamGraphView] = useState<"topology" | "office">("topology");
-  /** 研究中栏画布：拓扑 / 行情 / 新闻 / 工具结果 */
+  /** 研究中栏画布：拓扑 / 行情 / 新闻 / 工具结果 / Strategy API */
   const [researchCanvasTab, setResearchCanvasTab] = useState<
-    "topology" | "market" | "news" | "tools" | "file"
+    "topology" | "market" | "news" | "tools" | "file" | "strategy"
   >("topology");
   const [openWsFile, setOpenWsFile] = useState<{
     workspaceId: string;
@@ -602,6 +603,7 @@ export const TeamDashboardPanel: FC = () => {
   /**
    * 切换研究任务：先清空中栏/右栏本地态，再拉新 graph。
    * 配合 loadTeamGraph 的 gen 校验，避免长对话慢请求把 UI「钉」回旧任务。
+   * 必须清 running：否则从上一个 running 任务切到新建 pending 时徽标仍显示 RUNNING。
    */
   useEffect(() => {
     setTeamGraph(null);
@@ -613,11 +615,13 @@ export const TeamDashboardPanel: FC = () => {
     setActiveRationale(null);
     setOrchestratorStreamEvents([]);
     setOrchestratorChatInFlight(false);
+    setRunning(false);
     setRunProgress("");
+    setError(null);
     pendingFollowUpsRef.current = [];
     settledRolesRef.current = new Set();
     void loadTeamGraph();
-  }, [loadTeamGraph]);
+  }, [workflowRunId, loadTeamGraph]);
 
   /** 分析 / orchestrator-chat 进行中轮询拓扑与台账，便于右栏对话实时更新 */
   useEffect(() => {
@@ -1738,29 +1742,26 @@ export const TeamDashboardPanel: FC = () => {
       ? String(selectedWorkflowRow.status)
       : "";
     // 用服务端工作流状态校准本地 running，避免超时/幽灵 turn 后 UI 仍以为在跑。
+    // 注意：切任务时若仍带着上一轮 chatInFlight，本 effect 会早退一帧；
+    // 切换清理 effect 已置 false，下一帧会按新 workflow 的 DB 状态校准。
     if (orchestratorChatInFlight) return;
     if (st === "running") {
       setRunning(true);
-    } else if (
-      st === "completed" ||
-      st === "partial" ||
-      st === "failed" ||
-      st === "cancelled"
-    ) {
+    } else {
+      // pending / awaiting_approval / terminal / 未知 → 一律不当作在跑
+      // （新建 skipDispatch 工作流是 pending，绝不能继承上一任务的 running）
       setRunning(false);
     }
-  }, [selectedWorkflowRow?.status, orchestratorChatInFlight]);
+  }, [selectedWorkflowRow?.status, selectedWorkflowRow?.id, orchestratorChatInFlight]);
 
   useEffect(() => {
     const st = selectedWorkflowRow?.status
       ? String(selectedWorkflowRow.status)
       : "";
+    // pending = 已创建未开跑，不能显示 Agent: RUNNING（之前把 pending 算进 running）
     const next = teamPendingHitl
       ? "awaiting_hitl"
-      : running ||
-          orchestratorChatInFlight ||
-          st === "running" ||
-          st === "pending"
+      : running || orchestratorChatInFlight || st === "running"
         ? "running"
         : "idle";
     setProAgentLifecycle(next);
@@ -2582,6 +2583,7 @@ export const TeamDashboardPanel: FC = () => {
                 ["topology", "对话拓扑"],
                 ["market", "行情 K 线"],
                 ["news", "新闻资讯"],
+                ["strategy", "策略契约"],
                 ["tools", `工具结果${researchCanvasToolHits.length ? ` (${researchCanvasToolHits.length})` : ""}`],
                 ...(openWsFile
                   ? [["file", `文件 · ${openWsFile.path.split("/").pop() || "编辑"}`] as const]
@@ -2600,6 +2602,14 @@ export const TeamDashboardPanel: FC = () => {
               </button>
             ))}
           </div>
+
+          {researchCanvasTab === "strategy" ? (
+            <TeamStrategyContractPane
+              key={`${workflowSessionId || teamResearchSessionId}:${workflowRunId.trim()}`}
+              sessionId={workflowSessionId || teamResearchSessionId}
+              workflowRunId={workflowRunId.trim()}
+            />
+          ) : null}
 
           {researchCanvasTab === "file" && openWsFile ? (
             <WorkspaceFilePane

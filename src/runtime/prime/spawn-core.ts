@@ -277,12 +277,15 @@ export function shouldRespawnCoreForLlm(input: {
       reason: `llm_base_mismatch have=${haveBase} want=${wantBase}`,
     };
   }
-  // External / manually started Core may still hold a stale key even when model matches.
-  // Bun owns lifecycle by default: refresh once so model.json credentials win.
+  // External / manually started Core: only restart when LLM profile is wrong.
+  // Restarting a *healthy matching* Core just because Bun lost ownedPid (hot reload,
+  // process re-entry) kills in-flight turns via recover_on_boot orphan fail — that caused
+  // orchestrator chat stuck in `running` mid-subagent (see workflow dcd1fe57…).
   if (
     input.ownedPid === null &&
     !input.reuseExternalCore &&
-    process.env.QUBIT_REUSE_EXTERNAL_CORE !== "1"
+    process.env.QUBIT_REUSE_EXTERNAL_CORE !== "1" &&
+    process.env.QUBIT_FORCE_EXTERNAL_CORE_REFRESH === "1"
   ) {
     return { respawn: true, reason: "external_core_refresh_llm" };
   }

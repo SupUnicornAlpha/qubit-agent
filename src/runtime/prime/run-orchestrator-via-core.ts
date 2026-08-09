@@ -36,6 +36,7 @@ import {
 import { persistDeliveryVerdictForCoreTurn } from "./persist-core-delivery";
 import type { InteractionMode, SessionSnapshot } from "./types";
 import { ORCHESTRATOR_TURN_CONTEXT } from "./types";
+import { completeWorkflowConversationAssistant } from "../conversation/conversation-projection";
 
 export {
   shouldPauseCoreTurnForChatHitl,
@@ -435,38 +436,47 @@ export async function runOrchestratorTaskViaCore(
             : "";
         const timeoutMsg = err instanceof Error ? err.message : String(err);
         const isTimeout = /timeout waiting for turn/i.test(timeoutMsg);
+        const handoffFallback = synthesizeHandoffsFromSnapshot(snap);
+        const fallbackText =
+          partialAnswer ||
+          handoffFallback ||
+          (isTimeout
+            ? `${timeoutMsg}\n\n（可点击「从检查点继续」恢复；已保留子代理交付摘要。）`
+            : timeoutMsg);
         await persistDeliveryVerdictForCoreTurn({
           workflowId: msg.workflowId,
-          answerText: partialAnswer,
+          answerText: fallbackText,
           forceFailed: isTimeout || !partialAnswer,
           forceReason: isTimeout
             ? `prime_core_turn_timeout:${started.turn_id}`
             : `prime_core_turn_error:${timeoutMsg.slice(0, 120)}`,
         });
-        if (partialAnswer) {
-          await finalizeCoreMonitorTurn({
-            workflowId: msg.workflowId,
-            runId,
-            ok: false,
-            turn: snap.active_turn ?? null,
-          });
-          const display = sanitizeCoreAnswerText(partialAnswer);
-          publishStreamFrames({
-            runId,
-            workflowId: msg.workflowId,
-            traceId: msg.traceId,
-            text:
-              display ||
-              `（Prime Core 超时前已有部分内容）\n${partialAnswer}`.slice(0, 4000),
-            ok: false,
-          });
-          await projectCoreTurnResult({
-            workflowRunId: msg.workflowId,
-            snap,
-            fallbackText: partialAnswer,
-            sourceTaskType: payload.taskType,
-          });
-        }
+        await finalizeCoreMonitorTurn({
+          workflowId: msg.workflowId,
+          runId,
+          ok: false,
+          turn: snap?.active_turn ?? null,
+        });
+        const display = sanitizeCoreAnswerText(fallbackText);
+        publishStreamFrames({
+          runId,
+          workflowId: msg.workflowId,
+          traceId: msg.traceId,
+          text: display || fallbackText.slice(0, 4000),
+          ok: false,
+        });
+        await projectCoreTurnResult({
+          workflowRunId: msg.workflowId,
+          snap: snap ?? ({ invocations: [] } as SessionSnapshot),
+          fallbackText,
+          sourceTaskType: payload.taskType,
+        });
+        await completeWorkflowConversationAssistant({
+          workflowRunId: msg.workflowId,
+          content: display || fallbackText.slice(0, 4000),
+          status: "failed",
+          errorMessage: isTimeout ? "prime_core_timeout" : timeoutMsg.slice(0, 500),
+        });
         throw err;
       }
     } finally {
@@ -599,6 +609,16 @@ export async function runOrchestratorTaskViaCore(
       ok: !failed,
     });
 
+    // Always close the chat assistant bubble — previously only the timeout/catch
+    // path called this, so terminal-failed turns (orphan recover, Core restart)
+    // left status=`running` forever in the UI.
+    await completeWorkflowConversationAssistant({
+      workflowRunId: msg.workflowId,
+      content: displayText,
+      status: failed ? "failed" : "completed",
+      ...(failed ? { errorMessage: displayText.slice(0, 500) } : {}),
+    });
+
     const finalResponse: Record<string, unknown> = {
       answerText: displayText,
       status: terminalStatus,
@@ -688,8 +708,34 @@ export async function runOrchestratorTaskViaCore(
       payload: taskResultPayload,
       priority: msg.priority,
     });
+    await completeWorkflowConversationAssistant({
+      workflowRunId: msg.workflowId,
+      content: isTimeout
+        ? `${message}\n\n（可点击「从检查点继续」恢复；已保留会话与工具观察。）`
+        : message,
+      status: "failed",
+      errorMessage: isTimeout ? "prime_core_timeout" : message.slice(0, 500),
+    });
     return undefined;
   }
+}
+
+function synthesizeHandoffsFromSnapshot(snap: SessionSnapshot | null | undefined): string {
+  const inv = snap?.invocations;
+  if (!Array.isArray(inv) || inv.length === 0) return "";
+  const parts: string[] = ["## 超时前子代理交付摘要"];
+  for (const row of inv) {
+    const rec = row as {
+      request?: { callee_spec_id?: string };
+      handoff_out?: { narrative?: string | null };
+      state?: string;
+    };
+    const callee = rec.request?.callee_spec_id ?? "?";
+    const narrative = (rec.handoff_out?.narrative ?? "").trim();
+    if (!narrative) continue;
+    parts.push(`### ${callee} (${rec.state ?? "?"})\n${narrative.slice(0, 1200)}`);
+  }
+  return parts.length > 1 ? parts.join("\n\n").slice(0, 6000) : "";
 }
 
 /** @deprecated Prefer runOrchestratorTaskViaCore — kept for call sites. */

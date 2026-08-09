@@ -1,8 +1,5 @@
-import {
-  ROLE_OUTPUTS,
-  ROLE_SKILLS,
-  resolveSeedMcpServers,
-} from "./seed-agent-catalog";
+import { executionKindForRole } from "./prime/role-to-execution-kind";
+import { ROLE_OUTPUTS, ROLE_SKILLS, resolveSeedMcpServers } from "./seed-agent-catalog";
 import {
   PROMPT_ANALYST_FUNDAMENTAL,
   PROMPT_ANALYST_MACRO,
@@ -17,9 +14,6 @@ import {
   PROMPT_STRATEGY_CODER,
   PROMPT_WALK_FORWARD_VALIDATOR,
 } from "./seed-agent-prompts";
-import {
-  executionKindForRole,
-} from "./prime/role-to-execution-kind";
 import type { RuntimeAgentDefinition } from "./types";
 
 type SeedDefinition = Omit<
@@ -90,9 +84,10 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     role: "orchestrator",
     name: "编排器",
     /**
-     * 4.2.0：拆上下文派 subagent（call_team_* / agent.invoke）优先；Orchestrator 专责收口合同。
+     * 4.3.0：Cursor/Codex 式 subagent 纪律 —— 一次派单、结构化 handoff、父代理合成；
+     * 禁止对同专家盲重试同一 goal；空信封必须收口标注缺口。
      */
-    version: "4.2.0",
+    version: "4.3.0",
     systemPrompt: PROMPT_ORCHESTRATOR,
     tools: [
       // 编排
@@ -156,31 +151,29 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
     id: "def-news-event",
     role: "news_event",
     name: "新闻事件",
-    /** 3.4.1：新闻双件套 + 官方联网（描述强化与编排器 4.1.2 对齐）。 */
-    version: "3.4.1",
+    /**
+     * 3.5.3：专用 recipe=`news` 收紧工具面（无 investor-agent MCP / call_team）。
+     * Core bridge 暴露 fetch_news*；失败文案禁止 [object Object]。
+     */
+    version: "3.5.3",
+    executionKind: "subagent",
     systemPrompt: PROMPT_NEWS_EVENT,
-    tools: [
-      "fetch_news",
-      "fetch_news_sentiment",
-      "web.search",
-      "web.fetch",
-      "skill.search",
-      "skill.use_record",
-    ],
-    maxIterations: 5,
+    tools: ["fetch_news", "fetch_news_sentiment", "web.search", "skill.search", "skill.use_record"],
+    maxIterations: 4,
   }),
   def({
     id: "def-analyst-fundamental",
     role: "analyst_fundamental",
     name: "基本面研究员",
     /**
-     * 3.6.0：本职=财报/估值 + 结构化 thesis（Prime D4）。
+     * 3.6.1：补齐财务数据 fallback；真实估值字段优先 investor-agent MCP。
      * 禁止自拉 klines——行情由 market_data 提供。
      */
-    version: "3.6.0",
+    version: "3.6.1",
     systemPrompt: PROMPT_ANALYST_FUNDAMENTAL,
     tools: [
       "fetch_fundamentals",
+      "fetch_financial_data",
       "compute_valuation",
       "research.thesis.write",
       "code.run_python",
@@ -355,9 +348,7 @@ export const SEED_AGENT_DEFINITIONS: RuntimeAgentDefinition[] = [
   }),
 ];
 
-export const BUILTIN_AGENT_DEFINITION_IDS = new Set(
-  SEED_AGENT_DEFINITIONS.map((d) => d.id)
-);
+export const BUILTIN_AGENT_DEFINITION_IDS = new Set(SEED_AGENT_DEFINITIONS.map((d) => d.id));
 
 export const BUILTIN_AGENT_ROLES = new Set(SEED_AGENT_DEFINITIONS.map((d) => d.role));
 

@@ -66,7 +66,7 @@ describe("spawn-core helpers", () => {
     expect(env.QUBIT_LLM_API_KEY).toBe("sk-explicit-core");
   });
 
-  test("shouldRespawnCoreForLlm refreshes external core by default", () => {
+  test("shouldRespawnCoreForLlm adopts matching external core (no restart storm)", () => {
     const decision = shouldRespawnCoreForLlm({
       health: {
         ok: true,
@@ -83,8 +83,36 @@ describe("spawn-core helpers", () => {
       },
       ownedPid: null,
     });
-    expect(decision.respawn).toBe(true);
-    expect(decision.reason).toBe("external_core_refresh_llm");
+    expect(decision.respawn).toBe(false);
+    expect(decision.reason).toBe("llm_ok");
+  });
+
+  test("shouldRespawnCoreForLlm force-refreshes external when QUBIT_FORCE_EXTERNAL_CORE_REFRESH=1", () => {
+    const prev = process.env.QUBIT_FORCE_EXTERNAL_CORE_REFRESH;
+    process.env.QUBIT_FORCE_EXTERNAL_CORE_REFRESH = "1";
+    try {
+      const decision = shouldRespawnCoreForLlm({
+        health: {
+          ok: true,
+          degradedReasons: [],
+          fakeModel: false,
+          llmModel: "deepseek-v4-flash",
+          llmBaseUrl: "https://api.deepseek.com/v1",
+          hasLlmKey: true,
+        },
+        llmEnv: {
+          QUBIT_LLM_API_KEY: "sk-x",
+          QUBIT_LLM_MODEL: "deepseek-v4-flash",
+          QUBIT_LLM_BASE_URL: "https://api.deepseek.com/v1",
+        },
+        ownedPid: null,
+      });
+      expect(decision.respawn).toBe(true);
+      expect(decision.reason).toBe("external_core_refresh_llm");
+    } finally {
+      if (prev === undefined) delete process.env.QUBIT_FORCE_EXTERNAL_CORE_REFRESH;
+      else process.env.QUBIT_FORCE_EXTERNAL_CORE_REFRESH = prev;
+    }
   });
 
   test("shouldRespawnCoreForLlm keeps owned matching core", () => {

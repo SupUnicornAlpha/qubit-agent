@@ -50,11 +50,13 @@ export const WorkspaceMemoryPanel: FC<{
     setBusy(true);
     setError(null);
     try {
+      // Virtual Experience rows are not FS files — confirm→project as editable note.
+      const editingVirtual = selected?.source === "experience" || selected?.id.startsWith("experience:");
       const entry = await upsertFsWorkspaceMemory(workspaceId, {
-        id: selected?.id,
+        id: editingVirtual ? undefined : selected?.id,
         title: title.trim(),
         body,
-        source,
+        source: editingVirtual ? "agent_proposal" : source,
         pinned: selected?.pinned,
       });
       setSelected(entry);
@@ -100,6 +102,11 @@ export const WorkspaceMemoryPanel: FC<{
             }}
           >
             {e.pinned ? "📌 " : ""}
+            {e.source === "experience"
+              ? "🧠 "
+              : e.source === "agent_proposal"
+                ? "✨ "
+                : ""}
             {e.title}
           </button>
         ))}
@@ -129,7 +136,7 @@ export const WorkspaceMemoryPanel: FC<{
           >
             {busy ? "保存中…" : proposeBody ? "确认沉淀" : "保存"}
           </button>
-          {selected ? (
+          {selected && selected.source !== "experience" ? (
             <button
               type="button"
               style={styles.link}
@@ -153,6 +160,9 @@ export const WorkspaceMemoryPanel: FC<{
             >
               删除
             </button>
+          ) : null}
+          {selected?.source === "experience" ? (
+            <span style={styles.meta}>系统 Experience · 终态规则提炼后将投影到可编辑条目</span>
           ) : null}
           {selected ? (
             <button

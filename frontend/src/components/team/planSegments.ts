@@ -68,3 +68,40 @@ export function latestPlanFromSegments(
   const last = segments[segments.length - 1];
   return last?.plan ?? null;
 }
+
+type RoleMessageLike = {
+  kind: string;
+  ts: string;
+  fromRole?: string;
+};
+
+/**
+ * Insert Plan between triggering user prompt and subsequent assistant/tool output:
+ *   leading (…user) → PlanCard → trailing (assistant / tools …)
+ */
+export function splitEventsForPlanPlacement<T extends RoleMessageLike>(
+  events: T[],
+  planStartedAt?: string | null
+): { leading: T[]; trailing: T[] } {
+  if (events.length === 0) return { leading: [], trailing: [] };
+
+  let anchorIdx = -1;
+  if (planStartedAt) {
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i]!;
+      if (e.kind === "message" && e.fromRole === "user" && e.ts <= planStartedAt) {
+        anchorIdx = i;
+      }
+    }
+  }
+  if (anchorIdx < 0) {
+    anchorIdx = events.findIndex((e) => e.kind === "message" && e.fromRole === "user");
+  }
+  if (anchorIdx < 0) {
+    return { leading: [], trailing: events };
+  }
+  return {
+    leading: events.slice(0, anchorIdx + 1),
+    trailing: events.slice(anchorIdx + 1),
+  };
+}

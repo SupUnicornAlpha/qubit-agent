@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 from typing import Any
 
@@ -10,6 +11,7 @@ _lock = threading.Lock()
 _ctx: Any | None = None
 _host = "127.0.0.1"
 _port = 11111
+_OPEND_CONNECT_TIMEOUT_S = 2.0
 
 
 def configure(host: str, port: int) -> None:
@@ -31,12 +33,24 @@ def _close_unlocked() -> None:
         _ctx = None
 
 
+def _ensure_opend_reachable(host: str, port: int, timeout_s: float = _OPEND_CONNECT_TIMEOUT_S) -> None:
+    """Fail fast when OpenD is listening-but-dead (SYN_SENT hang)."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout_s):
+            return
+    except OSError as e:
+        raise ConnectionError(
+            f"OpenD unreachable at {host}:{port} within {timeout_s:.1f}s ({e})"
+        ) from e
+
+
 def _get_ctx():
     global _ctx
     with _lock:
         if _ctx is None:
             from futu import OpenSecTradeContext  # type: ignore
 
+            _ensure_opend_reachable(_host, _port)
             _ctx = OpenSecTradeContext(host=_host, port=_port)
         return _ctx
 
@@ -48,6 +62,7 @@ def healthcheck(provider_config: dict[str, Any]) -> dict[str, Any]:
     try:
         from futu import OpenSecTradeContext  # type: ignore
 
+        _ensure_opend_reachable(host, port)
         ctx = OpenSecTradeContext(host=host, port=port)
         try:
             ret, data = ctx.get_acc_list()
@@ -84,20 +99,28 @@ def submit_order(
     port = int(provider_config.get("opendPort") or provider_config.get("opend_port") or 11111)
     configure(host, port)
     try:
-        from futu import OpenSecTradeContext, OrderType, TrdEnv, TrdSide  # type: ignore
+        from futu import OrderType, TrdEnv, TrdSide  # type: ignore
 
+        _ensure_opend_reachable(host, port)
         ctx = _get_ctx()
         trd_env = TrdEnv.SIMULATE if paper else TrdEnv.REAL
         trd_side = TrdSide.BUY if side == "buy" else TrdSide.SELL
         ot = OrderType.MARKET if order_type == "market" else OrderType.NORMAL
-        ret, data = ctx.place_order(
-            price=limit_price if order_type != "market" else 0,
-            qty=int(qty),
-            code=ticker,
-            trd_side=trd_side,
-            order_type=ot,
-            trd_env=trd_env,
-        )
+        acc_raw = provider_config.get("accId") or provider_config.get("acc_id")
+        place_kwargs: dict[str, Any] = {
+            "price": limit_price if order_type != "market" else 0,
+            "qty": int(qty),
+            "code": ticker,
+            "trd_side": trd_side,
+            "order_type": ot,
+            "trd_env": trd_env,
+        }
+        if acc_raw not in (None, ""):
+            try:
+                place_kwargs["acc_id"] = int(str(acc_raw))
+            except ValueError:
+                place_kwargs["acc_id"] = acc_raw
+        ret, data = ctx.place_order(**place_kwargs)
         broker_order_id = str(data) if data is not None else ""
         ok = ret == 0
         return {

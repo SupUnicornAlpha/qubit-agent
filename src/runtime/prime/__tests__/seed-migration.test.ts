@@ -12,7 +12,8 @@ describe("prime seed → AgentSpec migration", () => {
   test("role maps to execution kind", () => {
     expect(executionKindForRole("orchestrator")).toBe("primary");
     expect(executionKindForRole("research")).toBe("subagent");
-    expect(executionKindForRole("news_event")).toBe("reactor");
+    // Research news is invokable (call_team); event wake uses def-news-reactor.
+    expect(executionKindForRole("news_event")).toBe("subagent");
     expect(executionKindForRole("analyst_technical")).toBe("subagent");
   });
 
@@ -36,7 +37,7 @@ describe("prime seed → AgentSpec migration", () => {
     expect(summary.total).toBe(SEED_AGENT_DEFINITIONS.length);
     expect(summary.byKind.primary).toBeGreaterThanOrEqual(1);
     expect(summary.byKind.subagent).toBeGreaterThanOrEqual(1);
-    expect(summary.byKind.reactor).toBeGreaterThanOrEqual(1);
+    // Reactor specs (def-news-reactor) are Core-bootstrapped, not Bun seed roles.
     expect(summary.primaryId).toBe("def-orchestrator");
 
     const orch = specs.find((s) => s.id === "def-orchestrator")!;
@@ -46,11 +47,9 @@ describe("prime seed → AgentSpec migration", () => {
     const news = toPrimeAgentSpec(
       SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-news-event")!
     );
-    expect(news.execution_kind).toBe("reactor");
-    expect(news.triggers[0]).toEqual({
-      kind: "domain_event",
-      event_name: "market.news",
-    });
+    expect(news.execution_kind).toBe("subagent");
+    expect(news.triggers).toEqual([]);
+    expect(news.labels).toContain("news_event");
 
     const coder = toPrimeAgentSpec(
       SEED_AGENT_DEFINITIONS.find((d) => d.id === "def-strategy-coder")!

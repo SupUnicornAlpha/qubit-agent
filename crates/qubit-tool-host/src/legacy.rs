@@ -25,6 +25,10 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "recommendation.record",
     "strategy.create_version",
     "strategy.compose",
+    "strategy.compile",
+    "strategy.contract_backtest",
+    "strategy.paper_deploy",
+    "strategy.paper_run",
     "factor.register",
     "factor.list",
     "factor.compute",
@@ -35,6 +39,19 @@ pub const DEFAULT_BRIDGED_TOOLS: &[&str] = &[
     "workspace.context.snapshot",
     "web.search",
     "web.fetch",
+    // Keep this fallback surface aligned with Bun's BRIDGED_TOOLS. Core does
+    // not resolve tools:// AgentSpec refs yet, so specialists need their
+    // domain tools here even when legacy.tools.list is temporarily unavailable.
+    "fetch_klines",
+    "fetch_quote",
+    "fetch_financial_data",
+    "fetch_fundamentals",
+    "fetch_news",
+    "fetch_news_sentiment",
+    "compute_indicators",
+    "detect_patterns",
+    "compute_valuation",
+    "compute_macro_indicators",
     "assign_task",
     "order.create_intent",
     "evaluate_risk",
@@ -50,6 +67,28 @@ pub fn is_default_bridged_tool_name(name: &str) -> bool {
         return true;
     }
     n == "assign_task" || n.starts_with("call_team_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_default_bridged_tool_name;
+
+    #[test]
+    fn fallback_surface_contains_specialist_domain_tools() {
+        for name in [
+            "fetch_fundamentals",
+            "fetch_financial_data",
+            "compute_valuation",
+            "fetch_klines",
+            "compute_indicators",
+            "fetch_news",
+        ] {
+            assert!(
+                is_default_bridged_tool_name(name),
+                "missing specialist bridge tool: {name}"
+            );
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

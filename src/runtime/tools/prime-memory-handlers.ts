@@ -11,6 +11,11 @@ import { FinanceRecall } from "../context/finance-recall";
 import { getExperienceBus, getExperienceStore } from "../experience";
 import { ExperienceRecall } from "../experience/pipes/recall";
 import { isDeliveryNarrative } from "../conversation/turn-packet";
+import {
+  resolveActiveFsWorkspaceId,
+  resolveFsWorkspaceIdFromParams,
+} from "../memory/fs-workspace-id";
+import { recallLongTermMemory } from "../memory/long-term-memory";
 import { buildWorkspaceBootstrapPack, openWorkspaceById, resolveProviders } from "../workspace";
 import type { BuiltinToolHandler } from "./types";
 
@@ -19,26 +24,10 @@ export type MemoryRecallHit = {
   summary: string;
   sub_kind?: string;
   score: number;
-  source: "experience" | "fs";
+  source: "experience" | "fs" | "external";
 };
 
-/** FS workspace id from params (not Core `wf_*` session workspace). */
-export function resolveFsWorkspaceIdFromParams(
-  params: Record<string, unknown>
-): string | null {
-  const direct =
-    (typeof params.fs_workspace_id === "string" && params.fs_workspace_id.trim()) ||
-    (typeof params.fsWorkspaceId === "string" && params.fsWorkspaceId.trim()) ||
-    "";
-  if (direct) return direct;
-
-  const raw =
-    (typeof params.workspace_id === "string" && params.workspace_id.trim()) ||
-    (typeof params.workspaceId === "string" && params.workspaceId.trim()) ||
-    "";
-  if (!raw || raw.startsWith("wf_")) return null;
-  return raw;
-}
+export { resolveFsWorkspaceIdFromParams };
 
 async function resolveProjectId(
   ctx: { projectId?: string; workflowId?: string },
@@ -67,23 +56,6 @@ function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-async function searchFsMemory(
-  workspaceId: string,
-  query: string,
-  topK: number
-): Promise<MemoryRecallHit[]> {
-  const { fs, manifest } = await openWorkspaceById(workspaceId);
-  const { memory } = resolveProviders(manifest, { allowBuiltinFallback: true });
-  const rows = await memory.search(fs, query, { limit: topK });
-  return rows.map((e) => ({
-    title: e.title || e.id,
-    summary: truncate(e.body ?? "", 400),
-    sub_kind: "fs",
-    score: typeof e.score === "number" ? e.score : 0,
-    source: "fs" as const,
-  }));
-}
-
 export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
   "memory.recall": async (ctx, params) => {
     const query = String(params.query ?? params.q ?? "").trim();
@@ -95,12 +67,46 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
       throw new Error("memory.recall: project_id required (or workflow must bind a project)");
     }
 
+    const fsWorkspaceId = await resolveActiveFsWorkspaceId({
+      params,
+      workflowId: ctx.workflowId,
+    });
     const includeFs =
       params.include_fs === true ||
       params.includeFs === true ||
-      Boolean(resolveFsWorkspaceIdFromParams(params));
-    const fsWorkspaceId = resolveFsWorkspaceIdFromParams(params);
+      (params.include_fs !== false &&
+        params.includeFs !== false &&
+        Boolean(fsWorkspaceId));
 
+    const bundle = mode === "bundle" || params.bundle === true;
+
+    // Default / finance-adjacent paths use unified multi-path recall.
+    if (!bundle && mode !== "finance") {
+      const wantProcedural =
+        Array.isArray(params.kinds) && params.kinds.includes("procedural");
+      const hits = await recallLongTermMemory({
+        projectId,
+        query,
+        topK,
+        definitionId: ctx.definition?.id ?? null,
+        workflowId: ctx.workflowId,
+        fsWorkspaceId,
+        includeFs,
+        ...(wantProcedural ? { kinds: ["procedural"] as const } : {}),
+      });
+      return {
+        hits: hits.map((h) => ({
+          title: h.title,
+          summary: h.summary,
+          sub_kind: h.sub_kind,
+          score: h.score,
+          source: h.source === "external" ? "experience" : h.source,
+        })),
+        ...(fsWorkspaceId ? { fs_workspace_id: fsWorkspaceId } : {}),
+      };
+    }
+
+    // Bundle / finance: keep FinanceRecall slot + Experience + FS.
     const { getDefaultEmbeddingClient } = await import("../llm/embedding-client");
     const { getExperienceVectorStore } = await import("../experience/experience-vector-store");
     const embeddingClient = getDefaultEmbeddingClient();
@@ -123,7 +129,6 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
 
     const hits: MemoryRecallHit[] = [];
-    const bundle = mode === "bundle" || params.bundle === true;
 
     const pushFinance = async () => {
       const financeRecall = new FinanceRecall(recallOpts);
@@ -162,27 +167,24 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
 
     if (bundle) {
-      // Core assemble: one bridge call = finance + experience + optional FS.
       await pushFinance();
       await pushExperience("procedural", ["procedural"]);
-    } else if (mode === "finance") {
-      await pushFinance();
     } else {
-      const wantProcedural =
-        Array.isArray(params.kinds) && params.kinds.includes("procedural");
-      await pushExperience(
-        wantProcedural ? "procedural" : "note",
-        wantProcedural ? ["procedural"] : undefined
-      );
+      await pushFinance();
     }
 
-    if ((includeFs || bundle) && fsWorkspaceId) {
+    if (includeFs && fsWorkspaceId) {
       try {
-        const fsHits = await searchFsMemory(fsWorkspaceId, query, topK);
+        const { fs, manifest } = await openWorkspaceById(fsWorkspaceId);
+        const { memory } = resolveProviders(manifest, { allowBuiltinFallback: true });
+        const rows = await memory.search(fs, query, { limit: topK });
         hits.push(
-          ...fsHits.map((h) => ({
-            ...h,
-            sub_kind: h.sub_kind ?? "fs",
+          ...rows.map((e) => ({
+            title: e.title || e.id,
+            summary: truncate(e.body ?? "", 400),
+            sub_kind: "fs",
+            score: typeof e.score === "number" ? e.score : 0,
+            source: "fs" as const,
           }))
         );
       } catch (err) {
@@ -194,26 +196,28 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     }
 
     hits.sort((a, b) => b.score - a.score);
-    // Demote FS / experience blobs that look like prior delivery manuals (Host filter).
     const demoted = hits.map((h) => {
       const blob = `${h.title}\n${h.summary}`;
       if (!isDeliveryNarrative(blob) && !/人肉说明书|操盘说明书/.test(blob)) return h;
       return { ...h, score: h.score * 0.12, sub_kind: h.sub_kind ?? "delivered_artifact" };
     });
     demoted.sort((a, b) => b.score - a.score);
-    // Bundle returns a bit more so Core can partition into three slots.
     return {
       hits: demoted.slice(0, bundle ? topK * 3 : topK * 2),
       ...(bundle ? { mode: "bundle" } : {}),
+      ...(fsWorkspaceId ? { fs_workspace_id: fsWorkspaceId } : {}),
     };
   },
 
-  "workspace.memory.search": async (_ctx, params) => {
+  "workspace.memory.search": async (ctx, params) => {
     const query = String(params.query ?? params.q ?? "").trim();
     if (!query) throw new Error("workspace.memory.search: query is required");
-    const workspaceId = resolveFsWorkspaceIdFromParams(params);
+    const workspaceId =
+      (await resolveActiveFsWorkspaceId({
+        params,
+        workflowId: ctx.workflowId,
+      })) ?? resolveFsWorkspaceIdFromParams(params);
     if (!workspaceId) {
-      // Core often only has wf_<uuid>; soft-empty so agent can continue with memory.recall.
       return {
         workspaceId: null,
         query,
@@ -244,10 +248,13 @@ export const PRIME_MEMORY_HANDLERS: Record<string, BuiltinToolHandler> = {
     };
   },
 
-  "workspace.context.snapshot": async (_ctx, params) => {
-    const workspaceId = resolveFsWorkspaceIdFromParams(params);
+  "workspace.context.snapshot": async (ctx, params) => {
+    const workspaceId =
+      (await resolveActiveFsWorkspaceId({
+        params,
+        workflowId: ctx.workflowId,
+      })) ?? resolveFsWorkspaceIdFromParams(params);
     if (!workspaceId) {
-      // Soft-empty: Core injects wf_* as workspace_id; FS pack is optional for research turns.
       return {
         context_block:
           "(no FS workspace bound — Core session uses wf_* id only; continue without workspace rules)",

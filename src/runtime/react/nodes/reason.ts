@@ -222,6 +222,7 @@ async function loadWorkflowMeta(
   agentMode: AgentControlMode;
   processConfig: WorkflowProcessConfig | null;
   benchmarkNamespace: boolean;
+  fsWorkspaceId: string | null;
 }> {
   const db = await getDb();
   const wfRows = await db
@@ -244,7 +245,19 @@ async function loadWorkflowMeta(
       agentMode: "agent",
       processConfig: null,
       benchmarkNamespace: false,
+      fsWorkspaceId: null,
     };
+  const loop = parseLoopOptionsJson(wfRows[0].loopOptionsJson);
+  const fsFromLoop =
+    typeof loop.fsWorkspaceId === "string" &&
+    loop.fsWorkspaceId.trim() &&
+    !loop.fsWorkspaceId.startsWith("wf_")
+      ? loop.fsWorkspaceId.trim()
+      : null;
+  const fsFromEnv = process.env.QUBIT_ACTIVE_FS_WORKSPACE_ID?.trim();
+  const fsWorkspaceId =
+    fsFromLoop ||
+    (fsFromEnv && !fsFromEnv.startsWith("wf_") ? fsFromEnv : null);
   return {
     projectId: wfRows[0].projectId ?? null,
     sessionId: wfRows[0].sessionId ?? null,
@@ -257,7 +270,8 @@ async function loadWorkflowMeta(
     agentMode: iterationContext?.agentMode ?? resolveAgentControlMode(wfRows[0].loopOptionsJson),
     processConfig:
       iterationContext?.processConfig ?? resolveWorkflowProcessConfig(wfRows[0].loopOptionsJson),
-    benchmarkNamespace: parseLoopOptionsJson(wfRows[0].loopOptionsJson).benchmarkNamespace === true,
+    benchmarkNamespace: loop.benchmarkNamespace === true,
+    fsWorkspaceId,
   };
 }
 
@@ -469,6 +483,7 @@ export async function reasonNode(
     agentMode: AgentControlMode;
     processConfig: WorkflowProcessConfig | null;
     benchmarkNamespace: boolean;
+    fsWorkspaceId: string | null;
   } = {
     projectId: null,
     sessionId: null,
@@ -477,6 +492,7 @@ export async function reasonNode(
     agentMode: "agent",
     processConfig: null,
     benchmarkNamespace: false,
+    fsWorkspaceId: null,
   };
   let workflowTokenBudget: WorkflowTokenBudgetStatus | null = null;
   try {
@@ -640,6 +656,7 @@ export async function reasonNode(
               workflowRunId: state.workflowId,
               ...(symbolsFromSlot.length ? { symbols: symbolsFromSlot } : {}),
               ...(decisionCutoff ? { decisionCutoff } : {}),
+              ...(meta.fsWorkspaceId ? { workspaceId: meta.fsWorkspaceId } : {}),
             }),
             []
           );
@@ -657,6 +674,7 @@ export async function reasonNode(
               query,
               topK: 5,
               workflowRunId: state.workflowId,
+              ...(meta.fsWorkspaceId ? { workspaceId: meta.fsWorkspaceId } : {}),
             }),
             []
           );
@@ -664,6 +682,43 @@ export async function reasonNode(
           if (nonFinance.length > 0) {
             recalledGeneralBlock = renderRecallBlockForPrompt(nonFinance);
           }
+
+          // Code-agent 式 FS 课题记忆（与 Experience 双路）
+          if (meta.fsWorkspaceId) {
+            try {
+              const { recallLongTermMemory } = await import("../../memory/long-term-memory");
+              const dual = await withOptionalContextTimeout(
+                "ltm.fs_recall",
+                recallLongTermMemory({
+                  projectId: meta.projectId,
+                  query,
+                  topK: 4,
+                  definitionId: state.agentDefinition.id,
+                  workflowId: state.workflowId,
+                  fsWorkspaceId: meta.fsWorkspaceId,
+                  includeFs: true,
+                  kinds: ["semantic", "procedural", "reflective"],
+                }),
+                []
+              );
+              const fsOnly = dual.filter((h) => h.source === "fs");
+              if (fsOnly.length > 0) {
+                const fsBlock = [
+                  "## Memory · Workspace (FS)",
+                  "> 课题目录 `memory/entries` 召回（用户笔记 / Agent 投影）。",
+                  "",
+                  ...fsOnly.map(
+                    (h) =>
+                      `### ${h.title}\n> score=${h.score.toFixed(3)}\n\n${h.summary.slice(0, 600)}`
+                  ),
+                ].join("\n");
+                recalledGeneralBlock = [recalledGeneralBlock, fsBlock].filter(Boolean).join("\n\n");
+              }
+            } catch {
+              // FS recall is optional
+            }
+          }
+
           recalledExperienceBlock = [recalledFinanceBlock, recalledGeneralBlock]
             .filter(Boolean)
             .join("\n\n");
@@ -678,6 +733,7 @@ export async function reasonNode(
               query,
               topK: 5,
               workflowRunId: state.workflowId,
+              ...(meta.fsWorkspaceId ? { workspaceId: meta.fsWorkspaceId } : {}),
             }),
             []
           );

@@ -1,16 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { A2AMessageEnvelope, TaskAssignPayload, TaskProgressPayload } from "../../types/a2a";
-import { stepStreamBus } from "../react/event-stream";
-import { executeAgentReact } from "../react/execute-agent-react";
-import type { AgentGraphState } from "../react/state";
 import { onWorkflowTerminal } from "../monitor/observability-hook";
 import { resolveTopologyTaskHeartbeatMs } from "../orchestration/topology-dispatch";
 import { resolveCoreBackend } from "../prime/core-runtime";
 import { runOrchestratorTaskViaCore } from "../prime/run-orchestrator-via-core";
-import {
-  reasonSpecialistViaCore,
-  resolveCalleeSpecId,
-} from "../prime/run-specialist-via-core";
+import { reasonSpecialistViaCore, resolveCalleeSpecId } from "../prime/run-specialist-via-core";
+import { stepStreamBus } from "../react/event-stream";
+import { executeAgentReact } from "../react/execute-agent-react";
+import type { AgentGraphState } from "../react/state";
 import type { RuntimeHandlerContext } from "../types";
 import {
   clearA2ATaskCancellation,
@@ -219,7 +216,10 @@ export async function runA2aReactTaskAssign(
   ctx: RuntimeHandlerContext,
   msg: A2AMessageEnvelope
 ): Promise<
-  | { finalResponse: Record<string, unknown>; terminalStatus: "completed" | "partial" | "failed" }
+  | {
+      finalResponse: Record<string, unknown>;
+      terminalStatus: "completed" | "partial" | "failed" | "awaiting_approval";
+    }
   | undefined
 > {
   const payload = msg.payload as TaskAssignPayload;
@@ -295,15 +295,19 @@ export async function runA2aReactTaskAssign(
 
       await markA2ATaskWorking(payload.taskId);
       await emitProgress({ phase: "start", iteration: 0, detail: "prime_core_invoke" });
+      if (!ownsTerminalState) {
+        heartbeatTimer = setInterval(() => {
+          void emitProgress({ phase: "heartbeat", detail: "prime_core_invoke" });
+        }, heartbeatMs);
+        (heartbeatTimer as { unref?: () => void }).unref?.();
+      }
       const params = (payload.params ?? {}) as Record<string, unknown>;
       const goal =
         (typeof params.goal === "string" && params.goal.trim()) ||
         (typeof params.context === "string" && params.context.trim()) ||
         `A2A task ${payload.taskType} for ${ctx.definition.role}`;
       const context =
-        typeof params.context === "string" && params.context !== goal
-          ? params.context
-          : undefined;
+        typeof params.context === "string" && params.context !== goal ? params.context : undefined;
 
       const out = await reasonSpecialistViaCore({
         workflowRunId: workflowId,
@@ -320,9 +324,7 @@ export async function runA2aReactTaskAssign(
       });
 
       const failed = out.state === "failed" || out.state === "cancelled";
-      const terminalStatus: "completed" | "partial" | "failed" = failed
-        ? "failed"
-        : "completed";
+      const terminalStatus: "completed" | "partial" | "failed" = failed ? "failed" : "completed";
       const finalResponse: Record<string, unknown> = {
         answerText: out.text,
         reasonText: out.text,
@@ -363,9 +365,7 @@ export async function runA2aReactTaskAssign(
         status: failure?.status ?? "completed",
         success: terminalStatus === "completed",
         result: finalResponse,
-        ...(failure
-          ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage }
-          : {}),
+        ...(failure ? { errorCode: failure.errorCode, errorMessage: failure.errorMessage } : {}),
         summary: out.text.slice(0, 500),
         durationMs: Date.now() - startedAt,
       });

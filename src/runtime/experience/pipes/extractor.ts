@@ -120,6 +120,7 @@ async function extractOnceInternal(
   const summary = await opts.loader.loadWorkflowSummary(workflowRunId);
   if (!summary) return [];
   const written: string[] = [];
+  const writtenExps: Awaited<ReturnType<typeof opts.store.insert>>[] = [];
 
   // 每条 rule 都用独立 try/catch，单条失败不影响其它
   for (const participant of summary.participants) {
@@ -130,6 +131,7 @@ async function extractOnceInternal(
         const exp = await rule(ctx);
         if (exp) {
           written.push(exp.id);
+          writtenExps.push(exp);
           // 链回 episodic 源头（若有）
           for (const episodicId of summary.episodicIds) {
             try {
@@ -142,6 +144,20 @@ async function extractOnceInternal(
       } catch (e) {
         warn(`rule:${rule.name}`, e);
       }
+    }
+  }
+
+  // §4.4 B：高质量 Experience → FS memory/entries（Workspace 面板可见）
+  if (writtenExps.length > 0) {
+    try {
+      const { onExperiencesWritten } = await import("../../memory/long-term-memory");
+      await onExperiencesWritten({
+        experiences: writtenExps,
+        ...(summary.fsWorkspaceId != null ? { fsWorkspaceId: summary.fsWorkspaceId } : {}),
+        projectId: summary.projectId,
+      });
+    } catch (e) {
+      warn("project_to_fs", e);
     }
   }
 

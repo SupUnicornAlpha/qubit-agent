@@ -28,7 +28,8 @@ export const EXECUTION_KIND_OPTIONS: Array<{
 ];
 
 const PRIMARY_ROLES = new Set(["orchestrator", "portfolio_manager"]);
-const REACTOR_ROLES = new Set(["news_event"]);
+/** Trigger-only defaults; research news_event is a subagent (invoke/call_team). */
+const REACTOR_ROLES = new Set<string>([]);
 
 export function executionKindForRole(role: string): ExecutionKind {
   if (PRIMARY_ROLES.has(role)) return "primary";

@@ -78,7 +78,8 @@ export type MemoryEntry = {
   updatedAt: string;
   pinned?: boolean;
   tags?: string[];
-  source?: "user" | "agent_proposal" | "import";
+  /** experience = virtual Experience row not yet projected to FS */
+  source?: "user" | "agent_proposal" | "import" | "experience";
   relPath?: string;
 };
 

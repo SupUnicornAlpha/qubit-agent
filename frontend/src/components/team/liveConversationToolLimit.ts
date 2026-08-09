@@ -1,6 +1,6 @@
 /**
  * 正文流里连续 tool_call 卡片限流：每段 streak 最多保留最近 N 条。
- * 「调用过程」区仍展示全量，不受此限制。
+ * 「调用过程」区仍展示全量，但 CSS 限制可视约 10 行并滚动。
  */
 
 export type ToolLimitPart =

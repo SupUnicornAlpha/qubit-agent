@@ -3,6 +3,7 @@ import type { OrchestratorPlan } from "./PlanCard";
 import {
   latestPlanFromSegments,
   planStructureKey,
+  splitEventsForPlanPlacement,
   upsertPlanSegment,
 } from "./planSegments";
 
@@ -67,5 +68,30 @@ describe("planSegments", () => {
     expect(segs[0]!.plan.goal?.text).toBe("研究 NVDA");
     expect(segs[1]!.plan.goal?.text).toBe("换标的看 AAPL");
     expect(segs[1]!.startedAt).toBe("2026-08-07T02:00:00.000Z");
+  });
+
+  test("splitEventsForPlanPlacement puts plan after triggering user", () => {
+    const events = [
+      { kind: "message", ts: "2026-08-07T01:00:00.000Z", fromRole: "user" },
+      { kind: "message", ts: "2026-08-07T01:00:10.000Z", fromRole: "orchestrator" },
+      { kind: "message", ts: "2026-08-07T01:00:20.000Z", fromRole: "orchestrator" },
+    ];
+    const { leading, trailing } = splitEventsForPlanPlacement(
+      events,
+      "2026-08-07T01:00:00.000Z"
+    );
+    expect(leading).toHaveLength(1);
+    expect(leading[0]!.fromRole).toBe("user");
+    expect(trailing).toHaveLength(2);
+    expect(trailing.every((e) => e.fromRole === "orchestrator")).toBe(true);
+  });
+
+  test("splitEventsForPlanPlacement falls back to plan-first when no user", () => {
+    const events = [
+      { kind: "message", ts: "2026-08-07T01:00:10.000Z", fromRole: "orchestrator" },
+    ];
+    const { leading, trailing } = splitEventsForPlanPlacement(events, "2026-08-07T01:00:00.000Z");
+    expect(leading).toHaveLength(0);
+    expect(trailing).toHaveLength(1);
   });
 });

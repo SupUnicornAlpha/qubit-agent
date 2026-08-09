@@ -99,10 +99,10 @@ export const PUBLIC_FINANCE_MCP_ROLES = new Set<AgentRole>([
   "research",
   "analyst_fundamental",
   "analyst_macro",
-  "news_event",
   "analyst_sentiment",
   "analyst_technical",
   "market_data",
+  // news_event 故意不挂 investor-agent：避免新闻子代理被行情 MCP 带偏。
 ]);
 
 export function resolveSeedMcpServers(role: AgentRole, base: string[]): string[] {

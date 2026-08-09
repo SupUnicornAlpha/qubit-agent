@@ -121,24 +121,94 @@ impl InvocationService {
             .clone()
             .or_else(|| Some("open".into()));
 
-        let run_result = self
-            .engine
-            .run_turn_preallocated(
-                &child_session.session_id,
-                child_turn_id.clone(),
-                UserInput {
-                    text: goal_text.clone(),
-                    attachments: vec![],
-                    client_meta: None,
-                },
-                cancel,
-                crate::engine::RunTurnOpts {
-                    max_iterations: Some(max_iters),
-                    recipe_key,
-                    ..Default::default()
-                },
+        let child_cancel = CancelToken::new();
+        {
+            let parent_watch = cancel.clone();
+            let child_watch = child_cancel.clone();
+            tokio::spawn(async move {
+                parent_watch.cancelled().await;
+                child_watch.cancel();
+            });
+        }
+        let run_fut = self.engine.run_turn_preallocated(
+            &child_session.session_id,
+            child_turn_id.clone(),
+            UserInput {
+                text: goal_text.clone(),
+                attachments: vec![],
+                client_meta: None,
+            },
+            child_cancel.clone(),
+            crate::engine::RunTurnOpts {
+                max_iterations: Some(max_iters),
+                recipe_key,
+                ..Default::default()
+            },
+        );
+
+        let run_result = if let Some(deadline_ms) = req.deadline_ms.filter(|ms| *ms > 0) {
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(deadline_ms as u64),
+                run_fut,
             )
-            .await;
+            .await
+            {
+                Ok(inner) => inner,
+                Err(_) => {
+                    child_cancel.cancel();
+                    if let Some(reg) = cancels {
+                        reg.remove(&child_turn_id).await;
+                    }
+                    // Best-effort: pull any partial answer already written.
+                    let partial = self
+                        .store
+                        .get_session(&child_session.session_id)
+                        .await
+                        .ok()
+                        .and_then(|s| s.active_turn)
+                        .and_then(|t| t.answer_text)
+                        .filter(|s| !s.trim().is_empty());
+                    let timed_out = InvocationRecord {
+                        request: req.clone(),
+                        child_session_id: child_session.session_id.clone(),
+                        child_turn_id: child_turn_id.clone(),
+                        state: InvocationState::TimedOut,
+                        handoff_out: Some(ContextHandoffV1 {
+                            version: 1,
+                            goal: req.goal.clone(),
+                            symbols: req
+                                .handoff_in
+                                .as_ref()
+                                .map(|h| h.symbols.clone())
+                                .unwrap_or_default(),
+                            asof: None,
+                            claims: vec![],
+                            finance_refs: Default::default(),
+                            evidence: None,
+                            debate: None,
+                            narrative: Some(partial.unwrap_or_else(|| {
+                                format!(
+                                    "CHILD_DEADLINE: invoke of {} exceeded {}ms — parent must synthesize with [待核实] gaps; do not blind-retry same goal.",
+                                    req.callee_spec_id.as_str(),
+                                    deadline_ms
+                                )
+                            })),
+                        }),
+                        delivery: Some(qubit_protocol::DeliveryVerdict {
+                            status: qubit_protocol::DeliveryStatus::Failed,
+                            reasons: vec![format!("child_deadline_ms:{deadline_ms}")],
+                        }),
+                    };
+                    let _ = self
+                        .store
+                        .upsert_invocation(&req.parent_session_id, timed_out.clone())
+                        .await;
+                    return Ok(timed_out);
+                }
+            }
+        } else {
+            run_fut.await
+        };
 
         if let Some(reg) = cancels {
             reg.remove(&child_turn_id).await;

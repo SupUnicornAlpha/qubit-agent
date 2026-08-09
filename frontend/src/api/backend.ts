@@ -830,7 +830,7 @@ export type FsMemoryEntry = {
   updatedAt: string;
   pinned?: boolean;
   tags?: string[];
-  source?: "user" | "agent_proposal" | "import";
+  source?: "user" | "agent_proposal" | "import" | "experience";
   relPath?: string;
   score?: number;
 };
@@ -1890,16 +1890,48 @@ export type StrategyManifestV2 = {
   metadata?: Record<string, unknown>;
 };
 
-export async function compileStrategyContract(code: string): Promise<{
-  ok: true;
-  manifest: StrategyManifestV2;
-} | { ok: false; error: string }> {
+export async function compileStrategyContract(
+  code: string,
+  opts?: {
+    sessionId?: string;
+    workflowRunId?: string;
+    scriptId?: string;
+    name?: string;
+    /** default true when session/workflow/script provided */
+    persist?: boolean;
+  }
+): Promise<
+  | {
+      ok: true;
+      manifest: StrategyManifestV2;
+      persisted?: boolean;
+      scriptId?: string;
+      scriptName?: string;
+      created?: boolean;
+      persistReason?: string;
+    }
+  | { ok: false; error: string }
+> {
   try {
+    const payload: Record<string, unknown> = { code };
+    if (opts?.sessionId) payload.sessionId = opts.sessionId;
+    if (opts?.workflowRunId) payload.workflowRunId = opts.workflowRunId;
+    if (opts?.scriptId) payload.scriptId = opts.scriptId;
+    if (opts?.name) payload.name = opts.name;
+    if (opts?.persist !== undefined) payload.persist = opts.persist;
     const res = await httpPost<{
       ok: boolean;
-      data?: { ok: true; manifest: StrategyManifestV2 };
+      data?: {
+        ok: true;
+        manifest: StrategyManifestV2;
+        persisted?: boolean;
+        scriptId?: string;
+        scriptName?: string;
+        created?: boolean;
+        persistReason?: string;
+      };
       error?: string;
-    }>("/api/v1/quant/strategy-contract/compile", { code });
+    }>("/api/v1/quant/strategy-contract/compile", payload);
     if (!res.ok || !res.data?.ok) {
       return { ok: false, error: res.error ?? "compile_failed" };
     }

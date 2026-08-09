@@ -1,0 +1,58 @@
+{
+  "key": "news",
+  "aliases": ["news_event", "events", "event_radar"],
+  "version": "2026-08-08.1",
+  "capability_owners": {
+    "news": "news_event"
+  },
+  "role_tool_allowlist": {
+    "news_event": [
+      "fetch_news",
+      "fetch_news_sentiment",
+      "web.search",
+      "memory.recall",
+      "workspace.memory.search",
+      "workspace.context.snapshot",
+      "skill.search",
+      "skill.use_record"
+    ]
+  },
+  "stall_budget": {
+    "tools": [
+      "fetch_news",
+      "fetch_news_sentiment",
+      "web.search",
+      "web.fetch",
+      "mcp:investor-agent:get_stock_info",
+      "mcp:investor-agent:historical_prices",
+      "mcp:investor-agent:technical_indicator",
+      "workspace.context.snapshot"
+    ],
+    "key": "tool",
+    "max_success": 2,
+    "on_exceed": "strip_from_surface"
+  },
+  "recovery": {
+    "after_probe_failure": "continue_without_realtime",
+    "forbid_gap_as_final_answer": false
+  },
+  "completion": {
+    "artifacts": [],
+    "required_tools": [
+      {
+        "capability": "news",
+        "min_success": 1
+      }
+    ],
+    "answer_schema": {
+      "required_sections": [],
+      "min_chars": 80
+    }
+  },
+  "checklist_prompt": [
+    "第一个业务工具必须是 fetch_news 或 fetch_news_sentiment",
+    "禁止调用 mcp:investor-agent:* / call_team_* / web.fetch 刷屏",
+    "web.search 仅作线索；成功 ≤2 次后必须用已有证据写中文终答",
+    "工具失败或空结果后立即收口，标注 [待核实]，不要同参重试"
+  ]
+}

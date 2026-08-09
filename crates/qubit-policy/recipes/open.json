@@ -1,20 +1,24 @@
 {
   "key": "open",
   "aliases": ["chat", "freeform"],
-  "version": "2026-08-06.1",
+  "version": "2026-08-08.1",
   "stall_budget": {
     "tools": [
       "mcp:mathjs:evaluate",
       "mcp:investor-agent:historical_prices",
       "mcp:investor-agent:technical_indicator",
       "mcp:investor-agent:get_stock_info",
+      "web.fetch",
+      "web.search",
+      "fetch_news",
+      "fetch_news_sentiment",
       "update_plan",
       "workspace.context.snapshot",
       "research.thesis.write",
       "workspace.memory.search"
     ],
     "key": "tool_fingerprint",
-    "max_success": 3,
+    "max_success": 2,
     "on_exceed": "strip_from_surface"
   },
   "recovery": {
@@ -30,11 +34,11 @@
     }
   },
   "checklist_prompt": [
-    "同类工具（含相同参数指纹）成功 ≤3 次后必须停手，用已有 observation 写中文终答",
-    "禁止把 mathjs evaluate / historical_prices / technical_indicator 当刷屏工具",
+    "同类工具（含相同参数指纹）成功 ≤2 次后必须停手，用已有 observation 写中文终答",
+    "禁止把 web.fetch / web.search / mathjs / historical_prices / get_stock_info 当刷屏工具",
+    "新闻任务优先 fetch_news / fetch_news_sentiment，不要连刷网页正文",
     "MCP 只用 mcp:<server>:<tool> 直连名，不要用 call_mcp",
     "有足够证据后下一轮只输出最终回答，不再发 tool_calls",
-    "算数优先一次表达式；禁止把字符串拼接拆成多次 evaluate",
     "宁可给出带 [待核实] 的部分结论，也不要无限取数直到超时"
   ]
 }

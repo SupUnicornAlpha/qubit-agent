@@ -58,6 +58,7 @@ impl RecipeCatalog {
 pub fn builtin_catalog() -> RecipeCatalog {
     let recipes = vec![
         serde_json::from_str(include_str!("../recipes/open.json")).expect("open.json"),
+        serde_json::from_str(include_str!("../recipes/news.json")).expect("news.json"),
         serde_json::from_str(include_str!("../recipes/stock_pick.json")).expect("stock_pick.json"),
         serde_json::from_str(include_str!("../recipes/factor.json")).expect("factor.json"),
         serde_json::from_str(include_str!("../recipes/strategy.json")).expect("strategy.json"),

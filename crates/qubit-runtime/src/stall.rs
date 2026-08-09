@@ -166,6 +166,14 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> String {
 
 pub fn stall_fingerprint(tool_name: &str, args: &Value, key: &str) -> String {
     let family = tool_family(tool_name, args);
+    // web.* / news connectors: different URLs must share one success budget or agents
+    // burn the turn paging news sites.
+    if family.starts_with("web.")
+        || family == "fetch_news"
+        || family == "fetch_news_sentiment"
+    {
+        return family;
+    }
     match key {
         "tool_fingerprint" => format!("{family}|{}", arg_sig_for_family(&family, args)),
         "tool_market" => format!("{family}|market"),
@@ -191,6 +199,16 @@ pub fn strip_tool_from_surface(tool_names: &mut Vec<String>, tool_name: &str, ar
 
 pub fn is_fail_circuit_tool(name: &str) -> bool {
     let bare = bare_tool_name(name);
+    // MCP / web fetches: validation & upstream errors often look "accepted" to models
+    // and will burn the turn unless we strip after repeated identical failures.
+    // agent.invoke empty_handoff also needs strip to stop blind same-goal retries.
+    if bare == "call_mcp"
+        || bare == "agent.invoke"
+        || bare.starts_with("mcp:")
+        || bare.starts_with("web.")
+    {
+        return true;
+    }
     FAIL_CIRCUIT_TOOLS
         .iter()
         .any(|t| *t == bare || bare.starts_with(&format!("{t}.")))
@@ -248,7 +266,27 @@ mod tests {
         assert!(is_fail_circuit_tool("workspace.context.snapshot"));
         assert!(is_fail_circuit_tool("recommendation.record"));
         assert!(is_fail_circuit_tool("strategy.create_version"));
-        assert!(!is_fail_circuit_tool("mcp:mathjs:evaluate"));
+        assert!(is_fail_circuit_tool("mcp:mathjs:evaluate"));
+        assert!(is_fail_circuit_tool("mcp:investor-agent:get_stock_info"));
+        assert!(is_fail_circuit_tool("call_mcp"));
+        assert!(is_fail_circuit_tool("web.search"));
+        assert!(is_fail_circuit_tool("agent.invoke"));
+    }
+
+    #[test]
+    fn web_fetch_fingerprint_ignores_url() {
+        let a = stall_fingerprint(
+            "web.fetch",
+            &json!({ "url": "https://a.example/1" }),
+            "tool_fingerprint",
+        );
+        let b = stall_fingerprint(
+            "web.fetch",
+            &json!({ "url": "https://b.example/2" }),
+            "tool_fingerprint",
+        );
+        assert_eq!(a, b);
+        assert_eq!(a, "web.fetch");
     }
 
     #[test]

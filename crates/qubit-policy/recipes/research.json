@@ -23,6 +23,10 @@
       "mcp:investor-agent:historical_prices",
       "mcp:investor-agent:technical_indicator",
       "mcp:investor-agent:get_stock_info",
+      "web.fetch",
+      "web.search",
+      "fetch_news",
+      "fetch_news_sentiment",
       "workspace.context.snapshot",
       "research.thesis.write",
       "workspace.memory.search"

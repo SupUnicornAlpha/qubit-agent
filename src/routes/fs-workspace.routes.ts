@@ -171,19 +171,35 @@ fsWorkspaceRouter.put("/:id/file", async (c) => {
 
 fsWorkspaceRouter.get("/:id/memory", async (c) => {
   try {
-    const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
-    const { memory } = resolveProviders(manifest);
+    const workspaceId = c.req.param("id");
     const pinned = c.req.query("pinned");
     const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
     const q = c.req.query("q")?.trim();
+    // Default merge Experience (scope=workspace) + FS notes for Workspace panel.
+    const include = (c.req.query("include") ?? "merged").toLowerCase();
+    if (include === "merged" || include === "all") {
+      const { listMergedWorkspaceMemory } = await import(
+        "../runtime/memory/long-term-memory"
+      );
+      const mergeOpts: { q?: string; pinned?: boolean; limit?: number } = {};
+      if (q) mergeOpts.q = q;
+      if (pinned !== undefined) mergeOpts.pinned = pinned === "1";
+      if (limit !== undefined && !Number.isNaN(limit)) mergeOpts.limit = limit;
+      const rows = await listMergedWorkspaceMemory(workspaceId, mergeOpts);
+      return c.json({ data: rows });
+    }
+    const { fs, manifest } = await openWorkspaceById(workspaceId);
+    const { memory } = resolveProviders(manifest);
     if (q) {
-      const hits = await memory.search(fs, q, { limit });
+      const searchOpts: { limit?: number } = {};
+      if (limit !== undefined && !Number.isNaN(limit)) searchOpts.limit = limit;
+      const hits = await memory.search(fs, q, searchOpts);
       return c.json({ data: hits });
     }
-    const rows = await memory.list(fs, {
-      pinned: pinned === undefined ? undefined : pinned === "1",
-      limit,
-    });
+    const listOpts: { pinned?: boolean; limit?: number } = {};
+    if (pinned !== undefined) listOpts.pinned = pinned === "1";
+    if (limit !== undefined && !Number.isNaN(limit)) listOpts.limit = limit;
+    const rows = await memory.list(fs, listOpts);
     return c.json({ data: rows });
   } catch (e) {
     return jsonError(c, e);
@@ -198,7 +214,7 @@ fsWorkspaceRouter.post("/:id/memory", async (c) => {
       body: string;
       pinned?: boolean;
       tags?: string[];
-      source?: "user" | "agent_proposal" | "import";
+      source?: "user" | "agent_proposal" | "import" | "experience";
     }>();
     if (!body?.title?.trim()) return c.json({ error: "title is required" }, 400);
     const { fs, manifest } = await openWorkspaceById(c.req.param("id"));
@@ -209,7 +225,7 @@ fsWorkspaceRouter.post("/:id/memory", async (c) => {
       body: body.body ?? "",
       pinned: body.pinned,
       tags: body.tags,
-      source: body.source,
+      source: body.source === "experience" ? "agent_proposal" : body.source,
     });
     return c.json({ data: entry }, 201);
   } catch (e) {

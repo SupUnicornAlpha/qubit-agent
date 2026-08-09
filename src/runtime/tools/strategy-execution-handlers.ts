@@ -617,9 +617,10 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
 
   /**
    * Prime 06：编译 Strategy API 源码 → 不可变 Manifest（不跑行情）。
-   * 入参：code / strategyCode / source（字符串）。
+   * 成功后尽量写入 indicator_strategy_script（关联 session / workflow），供 Team 中栏编辑。
+   * 入参：code / strategyCode / source；可选 name / script_id。
    */
-  "strategy.compile": async (_ctx, paramsIn) => {
+  "strategy.compile": async (ctx, paramsIn) => {
     const params = unwrapToolArgs(paramsIn);
     const code = String(
       params.code ?? params.strategyCode ?? params.source ?? params.ide_code ?? ""
@@ -639,16 +640,35 @@ export const STRATEGY_EXECUTION_HANDLERS: Record<string, BuiltinToolHandler> = {
         error: result.error,
         hint:
           "修复 initialize 声明面：只能 set_universe/subscribe/set_warmup/set_benchmark；" +
-          "禁止 get_history/order_*；必须定义 handle_data 或 on_rebalance。",
+          "禁止 get_history/order_*；必须定义 handle_data 或 on_rebalance。" +
+          "set_universe 请传列表，如 context.set_universe([\"US:NVDA\"])，勿传裸字符串。",
       };
     }
+    const { persistCompiledStrategyScript } = await import(
+      "../strategy/v2/persist-compiled-script"
+    );
+    const persist = await persistCompiledStrategyScript({
+      code,
+      manifest: result.manifest,
+      workflowRunId: ctx.workflowId || null,
+      scriptId: String(params.script_id ?? params.scriptId ?? "").trim() || null,
+      name: String(params.name ?? params.strategy_name ?? "").trim() || null,
+    });
     return {
       ok: true,
       manifest: result.manifest,
       codeHash: result.manifest.codeHash,
       primarySymbol: result.manifest.universe.instruments[0]?.instrumentId ?? null,
-      message:
-        "编译成功。下一步可用 strategy.contract_backtest 同码回测；或 strategy.create_version 落库后交给工坊。",
+      scriptId: persist.persisted ? persist.scriptId : null,
+      persisted: persist.persisted,
+      ...(persist.persisted
+        ? { scriptName: persist.name, created: persist.created }
+        : { persistReason: persist.reason }),
+      message: persist.persisted
+        ? "编译成功并已落库。下一步 strategy.contract_backtest；Team 中栏「策略契约」可编辑同码。"
+        : "编译成功（未落库：" +
+          ("reason" in persist ? persist.reason : "unknown") +
+          "）。下一步 strategy.contract_backtest。",
     };
   },
 

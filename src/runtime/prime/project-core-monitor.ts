@@ -284,8 +284,19 @@ export async function recordCoreMonitorToolCall(input: {
         input.observation &&
         typeof input.observation === "object" &&
         "summary" in (input.observation as object)
-          ? String((input.observation as { summary?: unknown }).summary ?? "failed")
-          : String(input.observation ?? "prime_core_tool_failed");
+          ? (() => {
+              const s = (input.observation as { summary?: unknown }).summary;
+              if (typeof s === "string") return s || "failed";
+              if (s == null) return "failed";
+              try {
+                return JSON.stringify(s).slice(0, 500);
+              } catch {
+                return "failed";
+              }
+            })()
+          : typeof input.observation === "string"
+            ? input.observation
+            : "prime_core_tool_failed";
       await recordToolCallError({
         toolCallId: input.toolCallId,
         hasMcp,

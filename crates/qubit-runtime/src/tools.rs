@@ -557,8 +557,8 @@ impl L0ToolHost {
                     .and_then(|b| b.get("max_iterations"))
                     .and_then(|v| v.as_u64())
             })
-            .unwrap_or(8)
-            .clamp(1, 64) as u32;
+            .unwrap_or(5)
+            .clamp(1, 32) as u32;
 
         let invocation_id = call
             .args
@@ -566,6 +566,25 @@ impl L0ToolHost {
             .and_then(|v| v.as_str())
             .map(InvocationId::new)
             .unwrap_or_else(|| InvocationId::new(format!("inv_{}", call.call_id)));
+
+        // Nested child turns eat the parent's wall-clock. Cap so parent can still
+        // synthesize after market+news (QUBIT_PRIME_TURN_TIMEOUT_MS ≈ 300s).
+        let deadline_ms = call
+            .args
+            .get("deadline_ms")
+            .and_then(|v| v.as_i64())
+            .filter(|n| *n > 0)
+            .unwrap_or_else(|| {
+                let id = callee_raw.to_ascii_lowercase();
+                if id.contains("news") {
+                    120_000
+                } else if id.contains("market") {
+                    120_000
+                } else {
+                    120_000
+                }
+            })
+            .clamp(15_000, 180_000);
 
         let req = InvocationRequest {
             invocation_id: invocation_id.clone(),
@@ -575,7 +594,7 @@ impl L0ToolHost {
             callee_spec_id: AgentSpecId::new(callee_raw.clone()),
             goal: goal.clone(),
             handoff_in: None,
-            deadline_ms: None,
+            deadline_ms: Some(deadline_ms),
             budget: InvocationBudget {
                 max_iterations,
                 max_tokens: None,
@@ -583,7 +602,7 @@ impl L0ToolHost {
             },
         };
 
-        let record = match invoker.invoke_agent(req, cancel).await {
+        let mut record = match invoker.invoke_agent(req, cancel).await {
             Ok(r) => r,
             Err(e) => {
                 return Ok(tool_err(
@@ -596,20 +615,55 @@ impl L0ToolHost {
         // Child turn rebinds L0 session; restore parent for subsequent tools.
         self.bind_session(parent_sid).await;
 
-        let ok = matches!(
+        let mut ok = matches!(
             record.state,
             qubit_protocol::InvocationState::Completed
         );
+        // Cursor/Codex-style: empty child answer is a failed handoff, not success.
+        // Mark not-ok so FAIL_CIRCUIT can strip blind retries and parent synthesizes.
+        let empty_handoff = {
+            let narrative = record
+                .handoff_out
+                .as_ref()
+                .and_then(|h| h.narrative.as_deref())
+                .unwrap_or("")
+                .trim();
+            narrative.is_empty()
+                || narrative == "(no model response)"
+                || narrative.contains("(no model response)")
+                || narrative.contains("(no answer_text)")
+        };
+        let mut summary = format!(
+            "invoke {} → {} ({})",
+            callee_raw,
+            record.state.as_wire(),
+            record.child_session_id
+        );
+        let mut error_code = if ok {
+            None
+        } else {
+            Some("invoke_failed".into())
+        };
+        if ok && empty_handoff {
+            ok = false;
+            error_code = Some("empty_handoff".into());
+            summary.push_str(
+                " — EMPTY_HANDOFF: child returned no usable answer. \
+                 Do NOT retry the same goal/callee; synthesize with [数据缺口] or narrow the ask once.",
+            );
+            if let Some(ref mut h) = record.handoff_out {
+                h.narrative = Some(
+                    "EMPTY_HANDOFF: no usable child answer — parent must synthesize gaps; do not blind-retry same goal."
+                        .into(),
+                );
+            }
+        }
+
         Ok(ToolResult {
             call_id: ToolCallId::new(call.call_id.clone()),
             ok,
             observation: Some(json!({
-                "summary": format!(
-                    "invoke {} → {} ({})",
-                    callee_raw,
-                    record.state.as_wire(),
-                    record.child_session_id
-                ),
+                "summary": summary,
                 "invocation_id": invocation_id.as_str(),
                 "callee_spec_id": callee_raw,
                 "child_session_id": record.child_session_id.as_str(),
@@ -617,6 +671,7 @@ impl L0ToolHost {
                 "state": record.state.as_wire(),
                 "handoff_out": record.handoff_out,
                 "delivery": record.delivery,
+                "empty_handoff": empty_handoff,
             })),
             effects: vec![EffectRecord {
                 kind: EffectKind::Other,
@@ -627,11 +682,7 @@ impl L0ToolHost {
                 })),
             }],
             retryable: false,
-            error_code: if ok {
-                None
-            } else {
-                Some("invoke_failed".into())
-            },
+            error_code,
         })
     }
 }
@@ -740,7 +791,7 @@ mod tests {
                 id: AgentSpecId::new("def-news-event"),
                 version: "1".into(),
                 display_name: "新闻事件".into(),
-                execution_kind: ExecutionKind::Reactor,
+                execution_kind: ExecutionKind::Subagent,
                 labels: vec!["news_event".into(), "events".into()],
                 identity_prompt_ref: "x".into(),
                 system_prompt: None,
